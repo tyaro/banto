@@ -1,4 +1,4 @@
-# 独自UIフレームワーク 仕様ドラフト (v0.5)
+# 独自UIフレームワーク 仕様ドラフト (v0.6)
 
 ## 1. 背景・目的
 
@@ -156,7 +156,35 @@ refineのhooks（`useTable`/`useForm`/`useShow`...）に相当する配線層。
 - 通知抽象（`NotificationProvider`）: 成功/失敗トーストの発火先を差し込み
   可能にする（Skeleton/Flowbiteのtoastにも接続できる）。
 
-### 3.5 refineとの主な相違点
+### 3.5 イベント配信（EventProvider）
+
+サーバ→クライアントの変更通知（リアルタイム更新）を扱うトランスポート抽象。
+
+```ts
+interface EventProvider {
+  subscribe(topic: string, handler: (event: AppEvent) => void): Unsubscribe
+}
+```
+
+- 配信するイベントは2種に限定する:
+  - **リソース変更イベント**: 他クライアントの書き込み等。受信すると
+    コンポーザブル（3.4節）が該当リソースの`invalidate`を自動発火する。
+  - **サーバ発の通知イベント**: バックグラウンド処理の完了・警告等。
+    `NotificationProvider`経由でトースト表示に接続する。
+- 実装は環境ごとに差し替える（`DataProvider`と同じパターン）:
+  - **`TauriEventProvider`**: Webview内。Tauriイベントを使用し、
+    ネットワークを介さない。
+  - **`SseEventProvider`**: リモートブラウザ。組み込みWebサーバ（11章）の
+    SSEエンドポイントを購読する。認証トークン・ポートはREST APIと共用。
+- 双方向通信が必要になった時点でSSEをWebSocketに格上げする
+  （`EventProvider`のインターフェースは変えない）。
+- MQTT（over WebSocket含む）やQUIC/WebTransportは、UIへの配信
+  トランスポートとしては採用しない。対象環境（OS標準Webview+LAN内
+  ブラウザ）での互換性が揃わないこと、ブローカー等の追加構成に見合う
+  リターンがないことが理由。MQTTはデバイスデータの取り込み経路
+  （12.4節）としてのみ扱う。
+
+### 3.6 refineとの主な相違点
 
 - React非依存。Svelte 5 Runesベースで実装する。
 - デフォルトのバックエンドはHTTP REST/GraphQLではなく **Tauri `invoke()`
@@ -471,9 +499,11 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
   （`DataProvider`と同じパターン）、Webview/ブラウザで実装を振り分ける
   （12章）。ブラウザから利用できない機能のUIはcapability判定で自動的に
   非表示にする。
-- リアルタイム同期はv1では非対応（画面遷移/手動リロード時の再取得のみ）。
-  必要になった時点でWebSocket/SSEによるイベント抽象を追加する
-  （Tauriイベントとの共通インターフェースを設計してから導入）。
+- リアルタイム同期は`EventProvider`（3.5節）で行う。組み込みサーバは
+  SSEエンドポイント（`GET /api/events`等）を提供し、リソース変更・
+  サーバ通知イベントをブラウザクライアントへ配信する。配信対象イベントは
+  v1では最小限（リソース変更/通知の2種）に絞り、双方向が必要になった
+  時点でWebSocketへ拡張する。
 
 ### 11.4 テンプレートでのUX
 
@@ -541,6 +571,20 @@ store/runesは永続化層として扱わない。
 | センサー値等の時系列データ | 業務データ | TimescaleDB |
 | 認証トークン | セキュア | `keyring` / メモリ |
 
+### 12.4 デバイスデータの取り込み（オプション・将来拡張）
+
+センサー・設備等のデバイスデータをTimescaleDBへ取り込む経路として、
+MQTT購読をオプション構成として想定する。
+
+- 経路: デバイス群 → MQTTブローカー → Rustサービス層（`rumqttc`で購読）
+  → TimescaleDBへ書き込み → `EventProvider`（3.5節）で「新データあり」を
+  UIへ通知。
+- **MQTTは業務データの入口、Tauriイベント/SSEはUIへの出口**として役割を
+  分離する。UI層はどちらの経路にも直接依存しない。
+- ブローカーは外部運用（Mosquitto等）を基本とし、アプリプロセスへの
+  ブローカー組み込み（rumqttd等）は必要になった場合に検討する。
+- QUICベースの独自デバイスプロトコルはスコープ外。
+
 ## 13. 非機能要件
 
 - 対象Webview: Tauri v2が使うOS標準Webview（Windows: WebView2 / macOS:
@@ -566,6 +610,8 @@ store/runesは永続化層として扱わない。
 - [ ] 認証雛形の想定方式（ローカル認証のみか、外部API連携も見せるか）
 - [ ] Rustクレートの命名（`kit-core`/`kit-storage`/`kit-server`は仮）
 - [ ] 外部DB接続情報の管理方法（`keyring`保存 vs 暗号化して設定DBに保存）
+- [ ] MQTTインジェスト（12.4節）を実装するマイルストーンの位置づけ
+      （テンプレートに含めるか、利用アプリ側の実装例ドキュメントに留めるか）
 - [ ] リソース定義からのルート導出方式（動的ルート`[resource]`で汎用ページを
       用意するか、リソースごとに薄いルートファイルを置く規約にするか）
 - [ ] 組み込みHTTPサーバのフレームワーク選定（axum / actix-web 等）
@@ -590,7 +636,7 @@ store/runesは永続化層として扱わない。
 6. **M5**: グリッド サーバーモード（`getList`経由のTauri連携）、グルーピング
 7. **M6**: 組み込みWebサーバ（サービス層のREST公開、静的配信、
    `HttpDataProvider`、認証のREST対応+CSRF、`SettingsProvider`抽象、
-   設定画面トグル+URL/QR表示）
+   SSEイベント配信（`EventProvider`）、設定画面トグル+URL/QR表示）
 8. **M7**: ドッキングレイアウト（フローティングウィンドウのみ）
 9. **M8**: ドッキング（分割・タブ化・スナップ）+ ダッシュボードへの統合
 10. **M9**: テーマ層の整理、npm公開準備、テンプレートのドキュメント整備
