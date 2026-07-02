@@ -11,6 +11,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@banto/admin-core": "workspace:*",
+    "@banto/forms": "workspace:*",
     "@banto/grid-svelte": "workspace:*",
     "@banto/theme": "workspace:*",
     "@tauri-apps/api": "^2.5.0"

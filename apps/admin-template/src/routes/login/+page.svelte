@@ -1,22 +1,33 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { loginStub } from '$lib/auth';
+	import { getAuthProvider } from '@banto/admin-core';
 
 	let username = $state('');
 	let password = $state('');
+	let error: string | null = $state(null);
+	let submitting = $state(false);
 
-	function submit(event: SubmitEvent) {
+	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		// TODO(M2): AuthProvider.login() に置き換える（仕様 §3.3, §8.2）。
-		loginStub();
-		goto('/dashboard');
+		error = null;
+		submitting = true;
+		try {
+			const result = await getAuthProvider().login({ username, password });
+			if (result.success) {
+				goto('/dashboard');
+			} else {
+				error = result.error ?? 'ログインに失敗しました';
+			}
+		} finally {
+			submitting = false;
+		}
 	}
 </script>
 
 <div class="page">
 	<form onsubmit={submit}>
 		<h1>🏮 Banto</h1>
-		<p class="note">M0スタブ: 任意の値でログインできます</p>
+		<p class="note">デモ認証: admin / admin でログイン（M2、Phase BでRust実装に接続）</p>
 
 		<label>
 			ユーザー名
@@ -28,7 +39,11 @@
 			<input type="password" bind:value={password} autocomplete="current-password" />
 		</label>
 
-		<button type="submit">ログイン</button>
+		{#if error}
+			<p class="error">{error}</p>
+		{/if}
+
+		<button type="submit" disabled={submitting}>ログイン</button>
 	</form>
 </div>
 
@@ -84,6 +99,13 @@
 		box-shadow: var(--banto-focus-ring);
 	}
 
+	.error {
+		margin: 0;
+		text-align: center;
+		color: var(--banto-danger);
+		font-size: 0.8rem;
+	}
+
 	button {
 		padding: 0.55rem;
 		border: none;
@@ -94,7 +116,12 @@
 		cursor: pointer;
 	}
 
-	button:hover {
+	button:hover:not(:disabled) {
 		background: var(--banto-primary-hover);
+	}
+
+	button:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 </style>

@@ -1,7 +1,24 @@
 <script lang="ts">
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
+	import { createListResource, getResource } from '@banto/admin-core';
 	import { goto } from '$app/navigation';
-	import { items, type Item } from './data';
+	import type { Item } from '$lib/banto/sampleData';
+
+	const resource = getResource('items');
+
+	// M2: fetch the whole dataset once (limit large enough to cover the demo
+	// 10k-row set) and let the grid keep doing client-side sort/filter/paging,
+	// same as M1. M5 moves sort/filter/paging into ListParams so
+	// InMemoryDataProvider (and later TauriDataProvider) do the work
+	// server-side instead.
+	const list = createListResource<Item>('items', {
+		initialParams: { pagination: { offset: 0, limit: 20_000 } }
+	});
+
+	$effect(() => {
+		void list.load();
+		return () => list.dispose();
+	});
 
 	const columns: GridColumn<Item>[] = [
 		{
@@ -54,15 +71,23 @@
 </script>
 
 <div class="page">
+	<div class="page-header">
+		<h2>{resource.label}</h2>
+		<button type="button" onclick={() => goto('/items/new')}>新規作成</button>
+	</div>
+
 	<p class="note">
-		M1グリッドデモ: @banto/grid-svelte（仮想スクロール・複数列ソート・列フィルタ・列リサイズ/並び替え）で
-		{items.length.toLocaleString()}件のサンプルデータを表示しています。M2でDataProvider経由のRust連携に
-		置き換わります。
+		M2デモ: InMemoryDataProvider経由（createListResource）で{list.totalCount.toLocaleString()}件のサンプルデータを
+		表示しています。Phase BでTauri/Rustに接続します。
 	</p>
 
-	<div class="grid-wrap">
-		<BantoGrid rows={items} {columns} getRowId={(item) => item.id} onRowClick={handleRowClick} />
-	</div>
+	{#if list.loading && list.rows.length === 0}
+		<p class="loading">読み込み中…</p>
+	{:else}
+		<div class="grid-wrap">
+			<BantoGrid rows={list.rows} {columns} getRowId={(item) => item.id} onRowClick={handleRowClick} />
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -73,11 +98,45 @@
 		min-height: 0;
 	}
 
+	.page-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex: 0 0 auto;
+		margin-bottom: 0.5rem;
+	}
+
+	.page-header h2 {
+		margin: 0;
+		font-size: 1.1rem;
+	}
+
+	.page-header button {
+		padding: 0.5rem 1rem;
+		border: none;
+		border-radius: var(--banto-radius);
+		background: var(--banto-primary);
+		color: var(--banto-text-inverse);
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.page-header button:hover {
+		background: var(--banto-primary-hover);
+	}
+
 	.note {
 		flex: 0 0 auto;
 		margin: 0 0 0.75rem;
 		color: var(--banto-text-muted);
 		font-size: 0.8rem;
+	}
+
+	.loading {
+		flex: 1;
+		display: grid;
+		place-items: center;
+		color: var(--banto-text-muted);
 	}
 
 	.grid-wrap {

@@ -1,0 +1,24 @@
+{
+  "name": "@banto/forms",
+  "version": "0.1.0",
+  "description": "Banto schema-driven forms: Svelte 5 (Runes) field UI + validation (spec §7)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.30.0",
+    "svelte-check": "^4.2.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0",
+    "vitest": "^3.0.0"
+  }
+}

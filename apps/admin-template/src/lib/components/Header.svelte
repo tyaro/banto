@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { logoutStub } from '$lib/auth';
+	import { getAuthProvider } from '@banto/admin-core';
 	import { pageTitle } from '$lib/navigation';
 	import { settings } from '$lib/settings.svelte';
 
-	function logout() {
-		logoutStub();
+	async function logout() {
+		await getAuthProvider().logout();
 		goto('/login');
 	}
 </script>

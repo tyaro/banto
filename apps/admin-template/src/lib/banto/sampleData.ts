@@ -1,10 +1,11 @@
 /**
- * Deterministic sample data for the M1 grid demo (spec §4, §8.1 items page).
+ * Deterministic sample data for the items resource (spec §4, §8.1 items
+ * page). 10,000 rows generated from a seeded PRNG so the dataset is stable
+ * across reloads/tests without shipping a static 10k-row fixture.
  *
- * 10,000 rows generated from a seeded PRNG so the dataset is stable across
- * reloads/tests without shipping a static 10k-row fixture. Replaced in M2
- * when the page is wired through createListResource → DataProvider → Rust
- * service layer (spec §8.2).
+ * Moved here from the old routes/(app)/items/data.ts stub in M2: the rows
+ * now seed an InMemoryDataProvider (src/lib/banto/setup.ts) instead of being
+ * imported directly by the items pages.
  */
 export interface Item {
 	id: number;
@@ -12,6 +13,9 @@ export interface Item {
 	price: number;
 	stock: number;
 	updatedAt: string;
+	// Index signature so `Item[]` satisfies @banto/admin-core's
+	// `InMemorySeed.rows: Record<string, unknown>[]`.
+	[key: string]: unknown;
 }
 
 const ROW_COUNT = 10_000;
@@ -70,7 +74,8 @@ function toIsoDate(timeMs: number): string {
 	return new Date(timeMs).toISOString().slice(0, 10);
 }
 
-function generateItems(count: number): Item[] {
+/** Generate `count` deterministic sample items. */
+export function generateSampleItems(count: number = ROW_COUNT): Item[] {
 	const random = mulberry32(SEED);
 	const rows: Item[] = [];
 
@@ -97,10 +102,5 @@ function generateItems(count: number): Item[] {
 	return rows;
 }
 
-export const items: Item[] = generateItems(ROW_COUNT);
-
-/** Look up a single item by id (string or number), for the detail page. */
-export function findItem(id: number | string): Item | undefined {
-	const numericId = typeof id === 'string' ? Number(id) : id;
-	return items.find((item) => item.id === numericId);
-}
+/** Pre-generated dataset used to seed the InMemoryDataProvider. */
+export const sampleItems: Item[] = generateSampleItems();
