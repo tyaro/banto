@@ -35,6 +35,37 @@ export interface FilterState {
 
 export type FilterType = 'text' | 'number';
 
+/** Built-in cell editor kinds (spec §4.5). */
+export type CellEditorType = 'text' | 'number' | 'date' | 'select' | 'checkbox';
+
+/**
+ * One committed (or about-to-be-committed) cell edit, passed to
+ * `onCellEdit`/`onRangePaste` (spec §4.5). `value` is already parsed to the
+ * editor's native type (number for 'number', boolean for 'checkbox', string
+ * otherwise); `oldValue` is the raw value read via the column's accessor
+ * before the edit.
+ */
+export interface CellEdit<TRow> {
+	row: TRow;
+	rowId: string | number;
+	field: string;
+	value: unknown;
+	oldValue: unknown;
+}
+
+/**
+ * Normalized, inclusive rectangular selection, expressed as row indices into
+ * the current (filtered+sorted) row array and field indices into the
+ * current column *display* order (spec §4.5). Shared by `CellSelection`
+ * (src/selection.svelte.ts) and `core/clipboard.ts`.
+ */
+export interface CellRange {
+	rowStart: number;
+	rowEnd: number;
+	fieldStart: number;
+	fieldEnd: number;
+}
+
 export interface GridColumn<TRow> {
 	/** Stable identifier; used as SortState.field / FilterState.field. */
 	id: string;
@@ -56,6 +87,21 @@ export interface GridColumn<TRow> {
 	align?: 'left' | 'right' | 'center';
 	format?: (value: unknown, row: TRow) => string;
 	comparator?: (a: unknown, b: unknown) => number;
+	/** Default false. Function form lets editability depend on the row (spec §4.5). */
+	editable?: boolean | ((row: TRow) => boolean);
+	/** Default 'text'. */
+	editor?: CellEditorType;
+	/** Options for `editor: 'select'`. */
+	editorOptions?: { value: string | number; label: string }[];
+	/** Column-level validator; return a Japanese error message, or null when valid. */
+	validate?: (value: unknown, row: TRow) => string | null;
+	/**
+	 * Minimal cellRenderer escape hatch (the `cellRenderer` mentioned in spec
+	 * §4.1): returns display text and an optional link href, rendered as an
+	 * `<a>` when `href` is present. Not evaluated for cells currently being
+	 * edited.
+	 */
+	cell?: (row: TRow) => { text: string; href?: string };
 }
 
 /** Resolved defaults applied on top of a user-supplied GridColumn. */
