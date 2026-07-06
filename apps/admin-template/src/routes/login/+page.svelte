@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { getAuthProvider } from '@banto/admin-core';
+	import { bantoReady } from '$lib/banto/setup';
 
 	let username = $state('');
 	let password = $state('');
@@ -12,6 +13,7 @@
 		error = null;
 		submitting = true;
 		try {
+			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
 			const result = await getAuthProvider().login({ username, password });
 			if (result.success) {
 				goto('/dashboard');
@@ -27,7 +29,9 @@
 <div class="page">
 	<form onsubmit={submit}>
 		<h1>🏮 Banto</h1>
-		<p class="note">admin / admin でログイン（Tauri時はRustコマンド、ブラウザ時はデモ実装）</p>
+		<p class="note">
+			admin / admin でログイン（Tauri時はRustコマンド、LANブラウザ時はREST/SSE、単体ブラウザ時はデモ実装）
+		</p>
 
 		<label>
 			ユーザー名

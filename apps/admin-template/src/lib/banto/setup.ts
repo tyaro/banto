@@ -1,21 +1,43 @@
 /**
- * Wires @banto/admin-core for the admin-template app (spec §3, §8): the
- * items resource + schema, an AuthProvider, and a DataProvider. Imported
- * once (side-effect) from the root layout, before any route guard runs, so
- * getDataProvider()/getAuthProvider() are ready everywhere.
+ * Wires @banto/admin-core for the admin-template app (spec §3, §8, §11).
+ * Imported once (side-effect) from the root layout, before any route guard
+ * runs.
  *
- * M2 Phase B (spec §10, §11.1): the environment is detected at startup via
- * `isTauri()`. Inside the Tauri webview, `createTauriDataProvider`/
- * `createTauriAuthProvider` map onto the Rust service layer (real SQLite
- * persistence, 1,000-row seed). In a plain browser (no Tauri runtime -
- * e.g. `vite dev` in a regular tab), the InMemoryDataProvider + demo
- * sessionStorage auth from M2 Phase A are used instead, so the app/tests
- * still run without a Tauri backend. The resource/schema definitions and
- * AuthProvider/DataProvider contracts stay identical either way - UI code
- * never branches on environment (spec §11.1).
+ * M6 Phase B (spec §11.1): THREE environments are now distinguished, not
+ * two:
+ * 1. **Tauri webview** (`isTauri()`) — `TauriDataProvider`/
+ *    `TauriAuthProvider` over `invoke()`, `TauriEventProvider` over the
+ *    `banto://event` Tauri event (no network either way).
+ * 2. **LAN browser served by the embedded server** (`isEmbeddedServer()`,
+ *    async probe) — `HttpDataProvider`/`HttpAuthProvider` over `fetch()`
+ *    against the same REST API `admin-template-core::rest` exposes, and
+ *    `SseEventProvider` over `GET /api/events`. This is what a second
+ *    machine on the LAN gets, and it's also what `banto-serve` (this repo's
+ *    Tauri-free dev vehicle) serves.
+ * 3. **Plain `vite dev`/`vite preview`** (neither of the above) — the M2
+ *    Phase A `InMemoryDataProvider` + demo sessionStorage auth, so the app
+ *    still runs with no Rust backend at all (tests, quick UI iteration).
+ *
+ * Detecting (2) requires an async network probe, so provider selection as a
+ * whole is now async: `bantoReady` is the promise every entry point
+ * (`routes/+layout.svelte`, the `(app)` route guard, the login page) awaits
+ * before touching `getDataProvider()`/`getAuthProvider()`. The
+ * resource/schema definitions and AuthProvider/DataProvider/EventProvider
+ * contracts stay identical across all three - UI code never branches on
+ * environment (spec §11.1).
  */
-import { createInMemoryDataProvider, createTauriAuthProvider, createTauriDataProvider, initBanto } from '@banto/admin-core';
-import type { AuthProvider, DataProvider, ResourceDefinition } from '@banto/admin-core';
+import {
+	connectEvents,
+	createHttpAuthProvider,
+	createHttpDataProvider,
+	createInMemoryDataProvider,
+	createSseEventProvider,
+	createTauriAuthProvider,
+	createTauriDataProvider,
+	createTauriEventProvider,
+	initBanto
+} from '@banto/admin-core';
+import type { AuthProvider, DataProvider, Notifier, ResourceDefinition } from '@banto/admin-core';
 import type { FormSchema } from '@banto/forms';
 // Safe to import in a plain browser (no Tauri runtime): only ever *called*
 // when isTauri() is true.
@@ -30,10 +52,35 @@ export function isTauri(): boolean {
 	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+const CSRF_HEADER = { 'X-Banto-Client': 'banto' } as const;
+
+/**
+ * Is this plain-browser tab being served by the embedded Banto server
+ * (`banto-server`/`admin-template-core::rest`, spec §11.1), as opposed to a
+ * bare `vite dev`/`vite preview` tab with no Banto backend at all? Probed by
+ * calling the one `/api` route that needs no auth token
+ * (`GET /api/auth/check`): any HTTP response at all (`200` with a boolean
+ * body when unauthenticated/authenticated, or an unexpected `401`/`403`)
+ * means an `/api/*` route answered on the other end. A network error (no
+ * server listening) or anything that isn't a plain HTTP response (e.g.
+ * `vite dev`'s dev server 404ing with an HTML page for an unknown path)
+ * means this is not our server. Never true inside Tauri - `isTauri()` is
+ * checked first there and takes priority.
+ */
+async function isEmbeddedServer(): Promise<boolean> {
+	if (isTauri()) return false;
+	try {
+		const response = await fetch(`${location.origin}/api/auth/check`, { headers: CSRF_HEADER });
+		return response.status === 200 || response.status === 401;
+	} catch {
+		return false;
+	}
+}
+
 // Rust's ItemInput.price/.stock (apps/admin-template/core/src/items.rs) are
 // `i64`, so a fractional value must be rejected client-side too (not just
 // bounds-checked) - otherwise it passes here and only fails after a round
-// trip to the real Tauri backend. `validateField` (packages/forms/src/
+// trip to the real backend. `validateField` (packages/forms/src/
 // validate.ts) runs required, then min/max, then this `validate` in that
 // order, so the built-in required/min/max checks still run first; this only
 // adds an extra integer check on top.
@@ -57,14 +104,16 @@ const itemsResource: ResourceDefinition = {
 	capabilities: { list: true, create: true, edit: true, delete: true }
 };
 
+const notifier: Notifier = { notify: (kind, message) => toastStore.push(kind, message) };
+
 function isSessionAuthed(): boolean {
 	return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(AUTH_KEY) === '1';
 }
 
 /**
  * Demo AuthProvider (spec §3.3): fixed admin/admin credentials backed by
- * sessionStorage. Used in plain-browser dev only; inside Tauri,
- * `createTauriAuthProvider` below calls the real `auth_*` Rust commands
+ * sessionStorage. Used in plain-browser dev only (mode 3 above); Tauri and
+ * embedded-server modes use the real `auth_*` Rust commands/REST routes
  * instead (same admin/admin demo credentials, checked server-side).
  */
 const demoAuthProvider: AuthProvider = {
@@ -87,18 +136,42 @@ const demoAuthProvider: AuthProvider = {
 	}
 };
 
-// M2 Phase B (spec §10, §11.1): Tauri webview -> Rust+SQLite via invoke();
-// plain browser -> InMemoryDataProvider + demo sessionStorage auth. Neither
-// the resource/schema definitions above nor any UI code branches on this.
-const dataProvider: DataProvider = isTauri()
-	? createTauriDataProvider({ invoke })
-	: createInMemoryDataProvider({ items: { rows: sampleItems } });
+/**
+ * Resolves once `initBanto()` has run AND the matching `EventProvider` (if
+ * any) is connected. Every place that calls `getDataProvider()`/
+ * `getAuthProvider()` before the root layout has definitely mounted (the
+ * `(app)` route guard's `load()`, the login page's submit handler) must
+ * `await` this first; `routes/+layout.svelte` awaits it with `{#await}`
+ * before rendering `children()` at all, so everything downstream of that is
+ * already safe.
+ */
+export const bantoReady: Promise<void> = (async () => {
+	if (isTauri()) {
+		const dataProvider = createTauriDataProvider({ invoke });
+		const authProvider = createTauriAuthProvider({ invoke });
+		initBanto({ dataProvider, authProvider, notifier, resources: [itemsResource] });
 
-const authProvider: AuthProvider = isTauri() ? createTauriAuthProvider({ invoke }) : demoAuthProvider;
+		// Dynamic import: @tauri-apps/api/event's `listen` talks to a real
+		// Tauri IPC channel that does not exist outside the webview, so it must
+		// not be evaluated at module load time in the other two environments.
+		const { listen } = await import('@tauri-apps/api/event');
+		connectEvents(createTauriEventProvider({ listen }));
+		return;
+	}
 
-initBanto({
-	dataProvider,
-	authProvider,
-	notifier: { notify: (kind, message) => toastStore.push(kind, message) },
-	resources: [itemsResource]
-});
+	if (await isEmbeddedServer()) {
+		const authProvider = createHttpAuthProvider();
+		const dataProvider = createHttpDataProvider({ getToken: authProvider.getToken });
+		initBanto({ dataProvider, authProvider, notifier, resources: [itemsResource] });
+		connectEvents(createSseEventProvider({ getToken: authProvider.getToken }));
+		return;
+	}
+
+	// Plain `vite dev`/`vite preview`: no Banto backend at all, no EventProvider.
+	initBanto({
+		dataProvider: createInMemoryDataProvider({ items: { rows: sampleItems } }),
+		authProvider: demoAuthProvider,
+		notifier,
+		resources: [itemsResource]
+	});
+})();

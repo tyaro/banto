@@ -6,12 +6,29 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Embeds the SvelteKit static build (`apps/admin-template/build`, gitignored)
+# into the binary via rust-embed. Off by default so the workspace builds on
+# a fresh clone without requiring `pnpm --filter admin-template build` to
+# have been run first (spec §11.1).
+embed-ui = ["dep:rust-embed"]
+
 [dependencies]
 banto-core = { workspace = true }
 banto-storage = { workspace = true, features = ["sqlite"] }
+banto-server = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal"] }
+rust-embed = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
+tower = { workspace = true, features = ["util"] }
+
+[[bin]]
+name = "banto-serve"
+path = "src/bin/banto-serve.rs"

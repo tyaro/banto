@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.css';
-	import '$lib/banto/setup'; // side-effect: initBanto() before any route guard runs (spec §3)
+	import { bantoReady } from '$lib/banto/setup'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
 	import { settings } from '$lib/settings.svelte';
 	import ToastHost from '$lib/components/ToastHost.svelte';
 
@@ -12,5 +12,18 @@
 	});
 </script>
 
-{@render children()}
-<ToastHost />
+{#await bantoReady}
+	<p class="banto-splash">起動中…</p>
+{:then}
+	{@render children()}
+	<ToastHost />
+{/await}
+
+<style>
+	.banto-splash {
+		min-height: 100vh;
+		display: grid;
+		place-items: center;
+		color: var(--banto-text-muted);
+	}
+</style>

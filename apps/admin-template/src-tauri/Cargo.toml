@@ -10,12 +10,32 @@ repository.workspace = true
 name = "admin_template_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+# Passthrough to admin-template-core's own `embed-ui` feature (spec §11.1).
+# OFF by default so a fresh clone's `cargo build`/`tauri dev` never requires
+# `pnpm --filter admin-template build` to have already run - without it, the
+# embedded server (when LAN access is enabled) serves the small built-in
+# placeholder page instead of the real SvelteKit build. Build with
+# `tauri build --features embed-ui` (or `cargo build -p admin-template
+# --features embed-ui`) AFTER `pnpm --filter admin-template build` to embed
+# the real frontend so LAN clients get the actual UI, not the placeholder.
+embed-ui = ["admin-template-core/embed-ui"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 banto-core = { path = "../../../crates/banto-core" }
+banto-server = { workspace = true }
 admin-template-core = { path = "../core" }
 tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Only for naming `tokio::sync::broadcast::Sender<ServerEvent>` /
+# `tokio::sync::Mutex<Option<RunningServer>>` as AppState field types (spec
+# §3.5, §11.4) - tokio is already pulled in transitively via `tauri` and
+# `admin-template-core`; this just makes a couple of its types nameable in
+# this crate's own source.
+tokio = { workspace = true, features = ["sync"] }
+qrcode = { workspace = true }
