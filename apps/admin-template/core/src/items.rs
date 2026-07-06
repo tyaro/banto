@@ -7,9 +7,11 @@
 //! form inputs.
 
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
+use banto_server::ServerEvent;
 use banto_storage::ColumnMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use tokio::sync::broadcast;
 
 /// A single row of the `items` table, wire-shaped for the frontend
 /// (`updatedAt`, matching `apps/admin-template/src/lib/banto/sampleData.ts::Item`).
@@ -117,13 +119,39 @@ const RESOURCE: &str = "items";
 /// Service layer for the `items` resource (spec §10): the same methods a
 /// REST handler would call in M6. No `tauri` dependency, so it is testable
 /// in a plain `cargo test`.
+///
+/// `Clone` is cheap: `SqlitePool` and `broadcast::Sender` are both
+/// `Arc`-backed handles, so the REST layer (`rest.rs`) can capture an owned
+/// `ItemsService` in each route closure without wrapping it itself.
+#[derive(Clone)]
 pub struct ItemsService {
     pool: SqlitePool,
+    events: Option<broadcast::Sender<ServerEvent>>,
 }
 
 impl ItemsService {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self { pool, events: None }
+    }
+
+    /// Attach an event sender: `create`/`update`/`delete` will emit
+    /// `ServerEvent::ResourceChanged { resource: "items" }` after their SQL
+    /// commits successfully (spec §3.5). Builder-style so callers can write
+    /// `ItemsService::new(pool).with_events(tx)`.
+    pub fn with_events(mut self, events: broadcast::Sender<ServerEvent>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    /// Broadcast a `resource_changed` event for `items`, if an event sender
+    /// is attached. Receivers being absent (`send` returning `Err`, e.g. no
+    /// browser currently connected) is not an error.
+    fn notify_changed(&self) {
+        if let Some(tx) = &self.events {
+            let _ = tx.send(ServerEvent::ResourceChanged {
+                resource: RESOURCE.to_string(),
+            });
+        }
     }
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Item>, BantoError> {
@@ -169,7 +197,7 @@ impl ItemsService {
 
     pub async fn create(&self, input: ItemInput) -> Result<Item, BantoError> {
         validate_item_input(&input)?;
-        sqlx::query_as::<_, Item>(
+        let item = sqlx::query_as::<_, Item>(
             "INSERT INTO items (name, price, stock, updated_at) VALUES (?, ?, ?, date('now')) \
              RETURNING id, name, price, stock, updated_at",
         )
@@ -178,12 +206,14 @@ impl ItemsService {
         .bind(input.stock)
         .fetch_one(&self.pool)
         .await
-        .map_err(banto_storage::storage_error)
+        .map_err(banto_storage::storage_error)?;
+        self.notify_changed();
+        Ok(item)
     }
 
     pub async fn update(&self, id: i64, input: ItemInput) -> Result<Item, BantoError> {
         validate_item_input(&input)?;
-        sqlx::query_as::<_, Item>(
+        let item = sqlx::query_as::<_, Item>(
             "UPDATE items SET name = ?, price = ?, stock = ?, updated_at = date('now') WHERE id = ? \
              RETURNING id, name, price, stock, updated_at",
         )
@@ -193,7 +223,9 @@ impl ItemsService {
         .bind(id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|err| banto_storage::not_found(err, RESOURCE, id.to_string()))
+        .map_err(|err| banto_storage::not_found(err, RESOURCE, id.to_string()))?;
+        self.notify_changed();
+        Ok(item)
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
@@ -208,6 +240,7 @@ impl ItemsService {
                 id: id.to_string(),
             });
         }
+        self.notify_changed();
         Ok(())
     }
 }
@@ -462,5 +495,78 @@ mod tests {
         assert_eq!(result.total_count, 2); // Beta and Gamma match the filter
         assert_eq!(result.rows.len(), 1); // pagination limits the page to 1
         assert_eq!(result.rows[0].name, "Gamma"); // highest price first
+    }
+
+    #[tokio::test]
+    async fn update_emits_resource_changed_event() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let svc = ItemsService::new(pool).with_events(tx);
+
+        let created = svc
+            .create(ItemInput {
+                name: "Before".to_string(),
+                price: 10,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        // Drain the event from `create` so we can assert specifically on
+        // the one from `update` below.
+        rx.try_recv().expect("create should have emitted an event");
+
+        svc.update(
+            created.id,
+            ItemInput {
+                name: "After".to_string(),
+                price: 20,
+                stock: 2,
+            },
+        )
+        .await
+        .expect("update should succeed");
+
+        let event = rx
+            .try_recv()
+            .expect("update should emit a resource_changed event");
+        match event {
+            ServerEvent::ResourceChanged { resource } => assert_eq!(resource, "items"),
+            other => panic!("expected ResourceChanged, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_update_emits_no_event() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let svc = ItemsService::new(pool).with_events(tx);
+
+        let created = svc
+            .create(ItemInput {
+                name: "Before".to_string(),
+                price: 10,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        rx.try_recv().expect("create should have emitted an event");
+
+        let err = svc
+            .update(
+                created.id,
+                ItemInput {
+                    name: "".to_string(), // fails validation
+                    price: 20,
+                    stock: 2,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }));
+
+        assert!(
+            rx.try_recv().is_err(),
+            "a failed validation update must not emit a resource_changed event"
+        );
     }
 }
