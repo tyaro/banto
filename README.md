@@ -73,9 +73,9 @@ pnpm --filter admin-template tauri dev
 
 補足:
 
-- Windows向け`tauri build`（配布物作成）には`.ico`アイコンが別途必要
-  （`pnpm --filter admin-template tauri icon`で`icons/icon.png`から
-  各形式を生成し、`tauri.conf.json`の`bundle.icon`に追加）。
+- Windowsでは`tauri dev`/`tauri build`に`icons/icon.ico`が必須（同梱済み）。
+  独自アイコンに差し替える場合は`pnpm --filter admin-template tauri icon
+  <画像>`で全形式を再生成できる。
 - 認証はデモ実装（admin/admin固定）。実運用の認証方式はアプリ側で
   `AuthProvider`を差し替えて実装する。
 - テーマ設定の保存先は現状localStorage。M6で`SettingsProvider`
