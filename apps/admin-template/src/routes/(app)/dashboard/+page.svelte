@@ -6,7 +6,17 @@
 	 * createListResource) since the dashboard needs the full set to
 	 * aggregate, not a paginated window.
 	 */
-	import { BarChart, LineChart, PieChart, ScatterChart, Sparkline } from '@banto/charts';
+	import {
+		BarChart,
+		ComboChart,
+		Gauge,
+		Heatmap,
+		LineChart,
+		PieChart,
+		RadarChart,
+		ScatterChart,
+		Sparkline
+	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import {
 		DockHost,
@@ -20,11 +30,16 @@
 	import type { Item } from '$lib/banto/sampleData';
 	import {
 		byCategory,
+		categoryCountsTop,
 		computeStatTiles,
+		monthlyWithMovingAvg,
 		priceBuckets,
 		scatterSample,
-		updatesByMonth
+		updatesByMonth,
+		weekdayMonthHeat
 	} from '$lib/banto/dashboard';
+
+	const STOCK_TARGET = 3_000_000;
 
 	const list = createListResource<Item>('items', {
 		initialParams: { pagination: { offset: 0, limit: 20_000 } }
@@ -40,6 +55,11 @@
 	const buckets = $derived(priceBuckets(list.rows));
 	const monthCounts = $derived(updatesByMonth(list.rows));
 	const scatterRows = $derived(scatterSample(list.rows));
+
+	// v2 chart types (spec §6.1): combo (bar+line), radar, heatmap, gauge.
+	const monthlyAvg = $derived(monthlyWithMovingAvg(list.rows));
+	const weekdayHeat = $derived(weekdayMonthHeat(list.rows));
+	const topCategories = $derived(categoryCountsTop(list.rows, 5));
 
 	const yen = (n: number) => `¥${n.toLocaleString()}`;
 	const countLabel = (n: number) => `${n.toLocaleString()}件`;
@@ -173,8 +193,8 @@
 
 <div class="page">
 	<p class="note">
-		商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図はすべて
-		@banto/charts のSVGフルスクラッチ実装。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。
+		商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図に加え、複合（棒+折れ線）・レーダー・ヒートマップ・ゲージも
+		@banto/charts のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。
 	</p>
 
 	<div class="stat-row">
@@ -255,36 +275,88 @@
 					formatY={(v) => countLabel(Number(v))}
 				/>
 			</section>
+			</div>
 
-			<section class="card wide">
-				<h2>ドッキングレイアウト</h2>
-				<p>
-					ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
-				</p>
-				<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
-					{#each DOCK_WINDOW_DEFS as def (def.id)}
-						<button
-							type="button"
-							class="dock-toggle"
-							class:active={isPanelVisible(def.id)}
-							aria-pressed={isPanelVisible(def.id)}
-							disabled={isDocked(def.id)}
-							title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
-							onclick={() => togglePanel(def.id)}
-						>
-							{def.icon}
-							{def.title}
-						</button>
-					{/each}
-					<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
-				</div>
-				<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
-					<DockHost {dock} panel={dockPanel} />
-				</div>
-			</section>
-		</div>
-	{/if}
-</div>
+			<h2 class="section-heading">チャート拡張（v2）</h2>
+			<div class="chart-grid">
+				<section class="card">
+					<h2>月別更新件数と3ヶ月移動平均</h2>
+					<ComboChart
+						data={monthlyAvg}
+						x={(row) => row.month}
+						bars={[{ id: 'count', label: '更新件数', value: (row) => row.count }]}
+						lines={[{ id: 'avg3', label: '3ヶ月移動平均', y: (row) => row.avg3 }]}
+						label="月別更新件数と3ヶ月移動平均の複合グラフ"
+						height={280}
+						formatY={(n) => n.toLocaleString()}
+					/>
+				</section>
+
+				<section class="card">
+					<h2>曜日×月の更新件数</h2>
+					<Heatmap
+						data={weekdayHeat}
+						x={(row) => row.month}
+						y={(row) => row.weekday}
+						value={(row) => row.count}
+						label="曜日と月別の更新件数ヒートマップ"
+						height={300}
+						formatValue={(n) => n.toLocaleString()}
+					/>
+				</section>
+
+				<section class="card">
+					<h2>在庫充足率</h2>
+					<Gauge
+						value={stats.stockTotal}
+						max={STOCK_TARGET}
+						label="在庫充足率のゲージ"
+						height={220}
+						formatValue={(n) => `${Math.round((n / STOCK_TARGET) * 100)}%`}
+					/>
+				</section>
+
+				<section class="card">
+					<h2>上位カテゴリの商品数</h2>
+					<RadarChart
+						data={topCategories}
+						axis={(row) => row.category}
+						series={[{ id: 'count', label: '商品数', value: (row) => row.count }]}
+						label="上位カテゴリ別商品数のレーダーチャート"
+						height={280}
+						formatValue={(n) => n.toLocaleString()}
+					/>
+				</section>
+
+				<section class="card wide">
+					<h2>ドッキングレイアウト</h2>
+					<p>
+						ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
+					</p>
+					<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
+						{#each DOCK_WINDOW_DEFS as def (def.id)}
+							<button
+								type="button"
+								class="dock-toggle"
+								class:active={isPanelVisible(def.id)}
+								aria-pressed={isPanelVisible(def.id)}
+								disabled={isDocked(def.id)}
+								title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
+								onclick={() => togglePanel(def.id)}
+							>
+								{def.icon}
+								{def.title}
+							</button>
+						{/each}
+						<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
+					</div>
+					<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
+						<DockHost {dock} panel={dockPanel} />
+					</div>
+				</section>
+			</div>
+		{/if}
+	</div>
 
 {#snippet dockPanel(content: PanelContent)}
 	{#if content.id === 'monthly'}
@@ -370,6 +442,12 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.75rem;
+	}
+
+	.section-heading {
+		margin: 0.25rem 0 0;
+		font-size: 1rem;
+		color: var(--banto-text-muted);
 	}
 
 	.chart-grid {

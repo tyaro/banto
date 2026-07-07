@@ -38,7 +38,8 @@ export function pieSlices(values: number[], options: { startAngle?: number } = {
 	});
 }
 
-function polarToCartesian(cx: number, cy: number, r: number, deg: number): { x: number; y: number } {
+/** Polar -> cartesian in the same 0deg-at-+x, clockwise convention as this file's angles (also reused by Gauge.svelte for its arc-end labels). */
+export function polarToCartesian(cx: number, cy: number, r: number, deg: number): { x: number; y: number } {
 	const rad = (deg * Math.PI) / 180;
 	return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 }
