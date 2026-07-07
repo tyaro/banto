@@ -2,6 +2,12 @@
   "name": "@banto/forms",
   "version": "0.1.0",
   "description": "Banto schema-driven forms: Svelte 5 (Runes) field UI + validation (spec §7)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tyaro/my-template.git",
+    "directory": "packages/forms"
+  },
   "type": "module",
   "exports": {
     ".": {

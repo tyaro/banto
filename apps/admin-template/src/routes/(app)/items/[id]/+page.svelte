@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
-	import { createFormResource, getResource } from '@banto/admin-core';
+	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;
@@ -26,14 +26,29 @@
 	let store = $state(createFormStore(schema));
 	let storeReady = $state(false);
 
-	$effect(() => {
+	// Shared by the initial mount effect and the "reload" action below (Fix:
+	// a transient/storage error used to be rendered as the generic
+	// resource-not-found copy, indistinguishable from a genuinely missing
+	// id; a `not_found` ProviderError is the only case that should show that
+	// message - anything else gets its own message plus a way to retry
+	// without a full page navigation).
+	async function loadForm() {
 		if (!formResource) return;
-		void formResource.load().then(() => {
-			if (formResource.initialValues) {
-				store = createFormStore(schema, formResource.initialValues);
-				storeReady = true;
-			}
-		});
+		await formResource.load();
+		if (formResource.initialValues) {
+			store = createFormStore(schema, formResource.initialValues);
+			storeReady = true;
+		}
+	}
+
+	$effect(() => {
+		void loadForm();
+	});
+
+	const isNotFoundError = $derived.by(() => {
+		if (!idValid) return true;
+		const err = formResource?.error;
+		return isProviderError(err) && err.body.kind === 'not_found';
 	});
 
 	async function handleSubmit(values: Record<string, unknown>) {
@@ -57,15 +72,17 @@
 <div class="page">
 	<h2>{resource.label}を編集</h2>
 
-	{#if !idValid}
+	{#if isNotFoundError}
 		<p class="not-found">
 			{resource.label}が見つかりません。<a href="/items">一覧へ戻る</a>
 		</p>
 	{:else if formResource?.loading}
 		<p class="loading">読み込み中…</p>
 	{:else if formResource?.error}
-		<p class="not-found">
-			{resource.label}が見つかりません。<a href="/items">一覧へ戻る</a>
+		<p class="load-error">
+			読み込みに失敗しました。
+			<button type="button" class="reload" onclick={() => void loadForm()}>再読み込み</button>
+			<a href="/items">一覧へ戻る</a>
 		</p>
 	{:else if storeReady}
 		<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={formResource?.saving ?? false}>
@@ -100,6 +117,28 @@
 
 	.not-found a {
 		color: var(--banto-primary);
+	}
+
+	.load-error {
+		color: var(--banto-text-muted);
+	}
+
+	.load-error a {
+		color: var(--banto-primary);
+	}
+
+	.reload {
+		padding: 0.15rem 0.6rem;
+		margin: 0 0.4rem;
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius);
+		background: transparent;
+		color: var(--banto-text);
+		cursor: pointer;
+	}
+
+	.reload:hover {
+		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
 	}
 
 	.delete {

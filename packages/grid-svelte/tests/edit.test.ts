@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { prepareCommit } from '../src/core/edit';
+import { isColumnEditable, prepareCommit } from '../src/core/edit';
 import { resolveSelectValue } from '../src/core/clipboard';
 import type { GridColumn } from '../src/types';
 
@@ -129,5 +129,49 @@ describe('prepareCommit', () => {
 		// before calling prepareCommit.
 		expect(prepareCommit(column, categoryRow, 1, '1').kind).toBe('commit');
 		expect(prepareCommit(column, categoryRow, 1, resolveSelectValue('1', column.editorOptions)).kind).toBe('noop');
+	});
+});
+
+describe('isColumnEditable', () => {
+	it('is true when editable: true and no cell renderer', () => {
+		const column: GridColumn<Row> = { id: 'name', header: 'Name', accessor: 'name', editable: true };
+		expect(isColumnEditable(column, row)).toBe(true);
+	});
+
+	it('is false when editable is unset/false', () => {
+		const column: GridColumn<Row> = { id: 'name', header: 'Name', accessor: 'name' };
+		expect(isColumnEditable(column, row)).toBe(false);
+	});
+
+	it('respects a function-form editable based on the row', () => {
+		const column: GridColumn<Row> = {
+			id: 'price',
+			header: 'Price',
+			accessor: 'price',
+			editable: (r) => r.price > 0
+		};
+		expect(isColumnEditable(column, row)).toBe(true);
+		expect(isColumnEditable(column, { ...row, price: 0 })).toBe(false);
+	});
+
+	it('is always false when the column defines a cell renderer, even if editable: true (pre-merge review fix: a link cell must never become editable, or its editor could never render behind the link)', () => {
+		const column: GridColumn<Row> = {
+			id: 'open',
+			header: 'Open',
+			accessor: 'id',
+			editable: true,
+			cell: (r) => ({ text: '開く', href: `/items/${r.id}` })
+		};
+		expect(isColumnEditable(column, row)).toBe(false);
+	});
+
+	it('a cell-only column (no editable at all) is also non-editable, unaffected by the rule (items page open column shape)', () => {
+		const column: GridColumn<Row> = {
+			id: 'open',
+			header: 'Open',
+			accessor: 'id',
+			cell: (r) => ({ text: '開く', href: `/items/${r.id}` })
+		};
+		expect(isColumnEditable(column, row)).toBe(false);
 	});
 });

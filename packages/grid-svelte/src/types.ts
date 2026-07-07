@@ -101,8 +101,10 @@ export interface GridColumn<TRow> {
 	/**
 	 * Minimal cellRenderer escape hatch (the `cellRenderer` mentioned in spec
 	 * §4.1): returns display text and an optional link href, rendered as an
-	 * `<a>` when `href` is present. Not evaluated for cells currently being
-	 * edited.
+	 * `<a>` when `href` is present. A column defining `cell` is never
+	 * editable regardless of `editable` (see `isColumnEditable` in
+	 * `core/edit.ts`), so its rendered link/text and an inline editor can
+	 * never both apply to the same cell.
 	 */
 	cell?: (row: TRow) => { text: string; href?: string };
 	/**
