@@ -98,3 +98,17 @@ export interface FloatingWindowDef {
 
 /** Resize handle positions (4 edges + 4 corners; spec §5.2 "自由な位置・サイズ変更"). */
 export type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+/**
+ * Minimal shape passed to the `panel` snippet (M8 Phase B). Both
+ * `FloatingWindow` and `DockPanelNode` structurally satisfy this (they carry
+ * extra fields the snippet doesn't need), so `DockHost` can share ONE
+ * `Snippet<[PanelContent]>` prop between docked panes (`DockedTree`) and
+ * floating windows (`DockWindow`) instead of the caller having to branch on
+ * which chrome rendered it.
+ */
+export interface PanelContent {
+	id: string;
+	title: string;
+	icon?: string;
+}

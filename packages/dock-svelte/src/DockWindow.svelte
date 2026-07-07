@@ -1,23 +1,31 @@
 <script lang="ts">
 	/**
-	 * Internal chrome for one floating pseudo-window (spec §5.2, M7 scope):
-	 * titlebar (icon + title + close button) + scrollable body + 8 resize
-	 * handles (4 edges, 4 corners). Not exported from index.ts - DockHost is
-	 * the only public surface.
+	 * Internal chrome for one floating pseudo-window: titlebar (icon + title +
+	 * close button) + scrollable body + 8 resize handles (4 edges, 4
+	 * corners). Not exported from index.ts - DockHost is the only public
+	 * surface.
 	 *
-	 * Drag/resize use pointer events with window-level pointermove/pointerup
+	 * Resize uses pointer events with window-level pointermove/pointerup
 	 * listeners added on pointerdown (see grid-svelte's HeaderCell.svelte for
 	 * why: setPointerCapture is per-element and a stray double-click can wedge
-	 * a later, unrelated drag). Each move/resize event applies an INCREMENTAL
-	 * delta (this event's client position minus the previous one, not the
-	 * original pointerdown position) so that once the pointer re-enters the
-	 * host's valid range after dragging past a clamp boundary, the window
-	 * immediately starts following it again instead of staying stuck until
-	 * the cumulative delta "catches up".
+	 * a later, unrelated drag). Each resize event applies an INCREMENTAL delta
+	 * (this event's client position minus the previous one, not the original
+	 * pointerdown position) so that once the pointer re-enters the host's
+	 * valid range after dragging past a clamp boundary, the window immediately
+	 * starts following it again instead of staying stuck until the cumulative
+	 * delta "catches up".
+	 *
+	 * Titlebar drag (M8 Phase B) no longer live-moves the window itself -
+	 * it's a drag SOURCE for the shared `DragController` (`core/drag.svelte.
+	 * ts`), same as a docked pane's titlebar/tab in `DockedTree.svelte`, so a
+	 * floating window can also be dropped onto the docked tree to dock it. A
+	 * plain reposition (dropped back into empty floating space) is applied
+	 * once, on release, via the existing `dock.move` - unchanged from M7.
 	 */
 	import type { Snippet } from 'svelte';
+	import { getDragController } from './core/drag.svelte';
 	import type { DockState } from './state.svelte';
-	import type { FloatingWindow, ResizeEdge } from './types';
+	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
 
 	interface Props {
 		win: FloatingWindow;
@@ -25,10 +33,13 @@
 		hostW: number;
 		hostH: number;
 		frontmost: boolean;
-		panel: Snippet<[FloatingWindow]>;
+		panel: Snippet<[PanelContent]>;
 	}
 
 	let { win, dock, hostW, hostH, frontmost, panel }: Props = $props();
+
+	const DRAG_THRESHOLD_PX = 5;
+	const drag = getDragController();
 
 	function focusThis(): void {
 		dock.focus(win.id);
@@ -63,8 +74,47 @@
 		window.addEventListener('pointerup', onUp);
 	}
 
+	let windowEl: HTMLDivElement | null = $state(null);
+
 	function handleTitlebarPointerDown(event: PointerEvent) {
-		trackPointer(event, (dx, dy) => dock.move(win.id, dx, dy, hostW, hostH));
+		if (event.button !== 0) return;
+		event.preventDefault();
+		focusThis();
+		if (!windowEl) return;
+
+		const startX = event.clientX;
+		const startY = event.clientY;
+		const pointerId = event.pointerId;
+		const winRect = windowEl.getBoundingClientRect();
+		let dragging = false;
+
+		function onMove(moveEvent: PointerEvent) {
+			if (moveEvent.pointerId !== pointerId) return;
+			if (dragging) return;
+			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return;
+			dragging = true;
+			window.removeEventListener('pointermove', onMove);
+			window.removeEventListener('pointerup', onUp);
+			drag.start({
+				panelId: win.id,
+				title: win.title,
+				icon: win.icon,
+				source: 'floating',
+				width: win.width,
+				height: win.height,
+				clientX: moveEvent.clientX,
+				clientY: moveEvent.clientY,
+				originClientX: winRect.left,
+				originClientY: winRect.top
+			});
+		}
+		function onUp(upEvent: PointerEvent) {
+			if (upEvent.pointerId !== pointerId) return;
+			window.removeEventListener('pointermove', onMove);
+			window.removeEventListener('pointerup', onUp);
+		}
+		window.addEventListener('pointermove', onMove);
+		window.addEventListener('pointerup', onUp);
 	}
 
 	function handleResizePointerDown(event: PointerEvent, edge: ResizeEdge) {
@@ -92,6 +142,7 @@
 	role="dialog"
 	aria-label={win.title}
 	tabindex="-1"
+	bind:this={windowEl}
 	style:left={`${win.x}px`}
 	style:top={`${win.y}px`}
 	style:width={`${win.width}px`}
