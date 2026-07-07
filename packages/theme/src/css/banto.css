@@ -50,10 +50,19 @@
   --banto-chart-grid: #e1e0d9;
   --banto-chart-axis: #c3c2b7;
 
-  /* Dock (consumed by @banto/dock-svelte from M7, spec §5: floating
-     pseudo-windows only - v1 has no split/tab/snap chrome yet). */
+  /* Dock (consumed by @banto/dock-svelte). M7 shipped floating pseudo-windows
+     only; M8 Phase B adds the docked-tree chrome (splits/tabs/snap-guide/drag
+     ghost) below, reusing --banto-dock-titlebar-height for both the floating
+     titlebar and the docked pane titlebar/tab-strip height. */
   --banto-dock-titlebar-height: 32px;
   --banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  --banto-dock-divider: var(--banto-border);
+  --banto-dock-divider-hover: var(--banto-primary);
+  --banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 18%, transparent);
+  --banto-dock-snap-border: var(--banto-primary);
+  --banto-dock-tab-active-bg: var(--banto-surface);
+  --banto-dock-ghost-bg: var(--banto-surface-raised);
+  --banto-dock-ghost-border: var(--banto-primary);
 
   /* Typography */
   --banto-font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans",
@@ -89,6 +98,7 @@
   --banto-chart-axis: #383835;
 
   --banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 28%, transparent);
 }
 
 html {

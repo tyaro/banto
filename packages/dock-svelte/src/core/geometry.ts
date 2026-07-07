@@ -4,7 +4,7 @@
  * functions are pure: they return a new `FloatingWindow` (or plain object)
  * rather than mutating the one passed in.
  */
-import type { FloatingWindow, ResizeEdge } from '../types';
+import type { DropRegion, FloatingWindow, ResizeEdge } from '../types';
 
 /** Minimum px of a window that must stay reachable inside the host on drag (spec §5.2: never draggable irretrievably off-screen). */
 export const DEFAULT_MIN_VISIBLE = 48;
@@ -174,4 +174,52 @@ export function cascadePosition(
 	const maxSteps = Math.max(1, Math.floor(avail / CASCADE_STEP) + 1);
 	const step = index % maxSteps;
 	return { x: step * CASCADE_STEP, y: step * CASCADE_STEP };
+}
+
+/**
+ * Plain rectangle in some consistent coordinate space (host-relative px
+ * throughout Phase B's drag/snap-guide code - see `core/drag.svelte.ts`).
+ */
+export interface Rect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * Convert an incremental pointer-drag delta (px) into a split `sizes`
+ * fraction, given the split container's measured size along the drag axis
+ * (spec §5.2 split resizing, M8 Phase B - the divider drag in
+ * `DockedTree.svelte`). Guards the degenerate `containerSizePx <= 0` case
+ * (e.g. a not-yet-measured container) by returning 0 rather than `NaN`/
+ * `Infinity`, so a stray event before layout never corrupts `sizes`.
+ */
+export function pixelDeltaToFraction(deltaPx: number, containerSizePx: number): number {
+	if (!(containerSizePx > 0)) return 0;
+	return deltaPx / containerSizePx;
+}
+
+/**
+ * The snap-guide sub-rectangle for a `DropRegion` within a drop target's full
+ * `rect` (M8 Phase B, spec §5.2 "ドラッグ中のドロップ位置プレビュー（スナップ
+ * ガイド表示）") - half the target for an edge region (matching
+ * `computeDropRegion`'s `edgeRatio`-independent split-in-half convention,
+ * since that's where `core/tree.ts#splitInsert` actually divides the space),
+ * the whole target for `'center'` (a new/joined tab covers the whole pane).
+ */
+export function dropRegionRect(rect: Rect, region: DropRegion): Rect {
+	const { x, y, width, height } = rect;
+	switch (region) {
+		case 'left':
+			return { x, y, width: width / 2, height };
+		case 'right':
+			return { x: x + width / 2, y, width: width / 2, height };
+		case 'top':
+			return { x, y, width, height: height / 2 };
+		case 'bottom':
+			return { x, y: y + height / 2, width, height: height / 2 };
+		default:
+			return rect;
+	}
 }
