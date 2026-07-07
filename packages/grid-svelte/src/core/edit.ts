@@ -14,6 +14,25 @@ export type PrepareCommitResult<TRow> =
 	| { kind: 'commit'; edit: CellEdit<TRow> };
 
 /**
+ * Whether `column` is currently editable for `row` (spec §4.5).
+ *
+ * A column with a `cell` renderer (the `cellRenderer` escape hatch, spec
+ * §4.1 — typically an internal link like the items page's "open" column) is
+ * never editable, regardless of `column.editable`: a link cell being
+ * editable makes no sense, and BantoGrid's row-cell template checks
+ * `column.cell` before edit state, so a column defining both would render
+ * its link forever and its editor could never appear (pre-merge review
+ * regression, deferred fix). Treating `cell` as editable-by-construction
+ * `false` here is the single source of truth every edit entry point
+ * (double-click, F2, Enter, paste, checkbox toggle, `startEditing`) goes
+ * through, so none of them need their own `column.cell` check.
+ */
+export function isColumnEditable<TRow>(column: GridColumn<TRow>, row: TRow): boolean {
+	if (column.cell) return false;
+	return typeof column.editable === 'function' ? column.editable(row) : column.editable === true;
+}
+
+/**
  * `oldValue` is read from `row` via `column.accessor` (the row is not yet
  * mutated at commit time — the caller owns rows and applies the change,
  * typically after a round trip through the DataProvider).

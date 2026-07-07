@@ -26,7 +26,7 @@
 	import { filterRows } from './core/filter';
 	import { computeWindow } from './core/virtual';
 	import { parseCellInput, parseTsv, rangeToTsv, resolveSelectValue } from './core/clipboard';
-	import { prepareCommit } from './core/edit';
+	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
 
@@ -356,8 +356,11 @@
 	/** Any column that could ever be editable switches the row-open interaction (see handleCellClick/handleCellDoubleClick below). */
 	const hasEditableColumns = $derived(columns.some((column) => Boolean(column.editable)));
 
+	// Pre-merge review fix (deferred): delegates to the pure, unit-tested
+	// `isColumnEditable` (core/edit.ts), whose whole point is that a column
+	// with a `cell` renderer is never editable - see its doc comment for why.
 	function isEditable(column: GridColumn<TRow>, row: TRow): boolean {
-		return typeof column.editable === 'function' ? column.editable(row) : column.editable === true;
+		return isColumnEditable(column, row);
 	}
 
 	/**

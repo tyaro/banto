@@ -600,13 +600,14 @@ MQTT購読をオプション構成として想定する。
 - i18n: 文言はコンポーネント外部から差し込み可能にする（ハードコード
   しない）。
 - パフォーマンス目標: 4.2節参照。
-- ライセンス: 未定（社内利用のみか、将来OSS公開するかで変わる）。
+- ライセンス: **MIT**（OSS公開を見据える）。ルートに`LICENSE`、各npm
+  パッケージの`package.json`と`Cargo.toml`ワークスペースに反映済み。
 
 ## 14. 未決事項（要相談）
 
 - [x] 名称 → **Banto（番頭）に決定**。npmスコープ`@banto`、
       Rustクレート`banto-core`/`banto-storage`/`banto-server`
-- [ ] ライセンス（社内限定 or OSS）
+- [x] ライセンス → **MIT に決定**（OSS公開を見据える）
 - [ ] `grid-core`/`grid-svelte` を最初から分離するか、まず`grid-svelte`単体で
       作り始めて肥大化したら切り出すか
 - [ ] Rust側の型生成ツール（tauri-specta等）を採用するか
