@@ -40,6 +40,22 @@ function toProviderError(err: unknown): ProviderError {
 	return new ProviderError({ kind: 'other', message });
 }
 
+/**
+ * `auth_setup`/`auth_change_password` reject with `BantoError::Validation`
+ * (spec §8.2) when the backend rejects a field (short password, wrong
+ * current password, ...); `setup`/`changePassword` below surface the FIRST
+ * field error's message as a plain `{ success: false, error }` result
+ * (rather than rethrowing) so the login/settings forms can show it without
+ * a try/catch of their own - other error kinds still rethrow, since those
+ * are unexpected failures, not "form said no".
+ */
+function firstValidationMessage(err: ProviderError): string {
+	if (err.body.kind === 'validation' && err.body.field_errors.length > 0) {
+		return err.body.field_errors[0].message;
+	}
+	return err.message;
+}
+
 function makeCaller(invoke: TauriInvokeOptions['invoke']) {
 	return async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 		try {
@@ -85,7 +101,8 @@ export function createTauriDataProvider(options: TauriInvokeOptions): DataProvid
 
 /**
  * Standard `AuthProvider` for the Tauri webview (spec §3.3), backed by the
- * `auth_login` / `auth_logout` / `auth_check` / `auth_identity` commands.
+ * `auth_login` / `auth_logout` / `auth_check` / `auth_identity` /
+ * `auth_status` / `auth_setup` / `auth_change_password` commands (spec §8.2).
  */
 export function createTauriAuthProvider(options: TauriInvokeOptions): AuthProvider {
 	const call = makeCaller(options.invoke);
@@ -106,6 +123,27 @@ export function createTauriAuthProvider(options: TauriInvokeOptions): AuthProvid
 		async getIdentity(): Promise<Identity | null> {
 			const identity = await call<Identity | null>('auth_identity');
 			return identity ?? null;
+		},
+
+		async status(): Promise<{ initialized: boolean }> {
+			return call<{ initialized: boolean }>('auth_status');
+		},
+
+		async setup(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+			try {
+				return await call<{ success: boolean; error?: string }>('auth_setup', params);
+			} catch (err) {
+				return { success: false, error: firstValidationMessage(toProviderError(err)) };
+			}
+		},
+
+		async changePassword(current: string, next: string): Promise<{ success: boolean; error?: string }> {
+			try {
+				await call<void>('auth_change_password', { currentPassword: current, newPassword: next });
+				return { success: true };
+			} catch (err) {
+				return { success: false, error: firstValidationMessage(toProviderError(err)) };
+			}
 		}
 	};
 }

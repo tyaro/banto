@@ -133,6 +133,18 @@ const demoAuthProvider: AuthProvider = {
 	},
 	async getIdentity() {
 		return isSessionAuthed() ? { id: 'admin', name: '管理者' } : null;
+	},
+	// Always "initialized": the demo provider's admin/admin account always
+	// exists, so the login page never shows the first-run setup form here
+	// (spec §8.2's setup flow only applies to Tauri/embedded-server modes).
+	async status() {
+		return { initialized: true };
+	},
+	// No account store to change a password on in pure-browser demo mode;
+	// the settings page hides the password-change section when this
+	// resolves to `success: false` (see its "note" fallback).
+	async changePassword() {
+		return { success: false, error: 'デモモードでは変更できません' };
 	}
 };
 

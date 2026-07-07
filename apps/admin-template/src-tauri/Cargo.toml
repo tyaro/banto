@@ -39,3 +39,4 @@ serde_json = { workspace = true }
 # this crate's own source.
 tokio = { workspace = true, features = ["sync"] }
 qrcode = { workspace = true }
+futures-util = { workspace = true }

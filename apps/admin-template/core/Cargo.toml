@@ -24,6 +24,9 @@ serde_json = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal"] }
 rust-embed = { workspace = true, optional = true }
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+futures-util = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

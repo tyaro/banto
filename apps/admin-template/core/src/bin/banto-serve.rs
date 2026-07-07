@@ -24,24 +24,44 @@
 //! the LAN-access URLs printed at startup are actually reachable - the
 //! Tauri app's default of `127.0.0.1`-only is a setting applied at the
 //! settings-screen layer, Phase B, not a property of this dev vehicle),
-//! `BANTO_DB` (default `./banto-dev.sqlite3`).
+//! `BANTO_DB` (default `./banto-dev.sqlite3`), `BANTO_ALLOW_SETUP` (`1` to
+//! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
+//! §8.2 - the Tauri app never sets this, since desktop first-run goes
+//! through the `auth_setup` command instead).
 
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::api_router;
+use admin_template_core::users::UsersService;
 use banto_server::{lan_urls, start, static_router, AuthState, Identity, ServerConfig};
 
 const DEFAULT_PORT: u16 = 8721;
 const DEFAULT_BIND: &str = "0.0.0.0";
 const DEFAULT_DB_PATH: &str = "./banto-dev.sqlite3";
 
-/// Demo credential check (admin/admin) - same placeholder as
-/// `src-tauri`'s `auth_login` command; both will move to a real
-/// credential store together (spec §8.2's TODO).
-fn check_demo_credentials(username: &str, password: &str) -> bool {
-    username == "admin" && password == "admin"
+/// Builds the async credential verifier `AuthState::new` expects (spec
+/// §8.2), backed by `UsersService`'s argon2id-hashed accounts - replaces the
+/// old fixed admin/admin check that used to live here.
+fn credential_verifier(
+    users: UsersService,
+) -> impl Fn(String, String) -> futures_util::future::BoxFuture<'static, Option<Identity>>
+       + Send
+       + Sync
+       + 'static {
+    move |username: String, password: String| {
+        let users = users.clone();
+        Box::pin(async move {
+            match users.verify(&username, &password).await {
+                Ok(Some(identity)) => Some(Identity {
+                    id: identity.username,
+                    name: identity.display_name,
+                }),
+                _ => None,
+            }
+        })
+    }
 }
 
 #[tokio::main]
@@ -52,20 +72,19 @@ async fn main() {
         .unwrap_or(DEFAULT_PORT);
     let bind = std::env::var("BANTO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
     let db_path = std::env::var("BANTO_DB").unwrap_or_else(|_| DEFAULT_DB_PATH.to_string());
+    let allow_setup = std::env::var("BANTO_ALLOW_SETUP")
+        .map(|value| value == "1")
+        .unwrap_or(false);
 
     let pool = init_db(&db_path).await.expect("init_db should succeed");
 
     let events = event_channel();
-    let items = ItemsService::new(pool).with_events(events.clone());
-    let auth = AuthState::new(
-        check_demo_credentials,
-        Identity {
-            id: "admin".to_string(),
-            name: "管理者".to_string(),
-        },
-    );
+    let items = ItemsService::new(pool.clone()).with_events(events.clone());
+    let users = UsersService::new(pool);
+    let auth = AuthState::new(credential_verifier(users.clone()));
 
-    let app = api_router(items, auth, events).merge(static_router::<FrontendAssets>());
+    let app = api_router(items, users, auth, events, allow_setup)
+        .merge(static_router::<FrontendAssets>());
 
     let server = start(ServerConfig { bind, port }, app)
         .await
@@ -76,7 +95,13 @@ async fn main() {
     for url in lan_urls(server.local_addr().port()) {
         println!("  {url}");
     }
-    println!("banto-serve: demo login is admin / admin");
+    if allow_setup {
+        println!("banto-serve: first-run setup is ENABLED (BANTO_ALLOW_SETUP=1) - POST /api/auth/setup will create the first account");
+    } else {
+        println!(
+            "banto-serve: first-run setup is DISABLED - set BANTO_ALLOW_SETUP=1 to allow POST /api/auth/setup"
+        );
+    }
     println!("banto-serve: press Ctrl-C to stop");
 
     tokio::signal::ctrl_c()

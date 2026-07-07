@@ -1,14 +1,58 @@
 <script lang="ts">
 	import type { ThemeMode } from '@banto/theme';
+	import { getAuthProvider } from '@banto/admin-core';
 	import { settings } from '$lib/settings.svelte';
 	import { isTauri } from '$lib/banto/setup';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
+	import { toastStore } from '$lib/toast.svelte';
 
 	const modes: { value: ThemeMode; label: string }[] = [
 		{ value: 'light', label: 'ライト' },
 		{ value: 'dark', label: 'ダーク' },
 		{ value: 'system', label: 'システムに従う' }
 	];
+
+	// Optional on `AuthProvider` (spec §3.3): older/custom providers may not
+	// implement it, in which case the section below shows a note instead of
+	// the form (all three built-in providers - demo/Tauri/HTTP - do
+	// implement it, demo's just always fails with a fixed message).
+	const changePassword = getAuthProvider().changePassword;
+
+	let currentPassword = $state('');
+	let newPassword = $state('');
+	let newPasswordConfirm = $state('');
+	let passwordError: string | null = $state(null);
+	let changingPassword = $state(false);
+
+	async function submitChangePassword(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		passwordError = null;
+
+		if (newPassword.length < 8) {
+			passwordError = 'パスワードは8文字以上で入力してください';
+			return;
+		}
+		if (newPassword !== newPasswordConfirm) {
+			passwordError = 'パスワードが一致しません';
+			return;
+		}
+		if (!changePassword) return;
+
+		changingPassword = true;
+		try {
+			const result = await changePassword(currentPassword, newPassword);
+			if (result.success) {
+				currentPassword = '';
+				newPassword = '';
+				newPasswordConfirm = '';
+				toastStore.push('success', 'パスワードを変更しました');
+			} else {
+				passwordError = result.error ?? 'パスワードの変更に失敗しました';
+			}
+		} finally {
+			changingPassword = false;
+		}
+	}
 
 	// M6 Phase B (spec §11.4): the server controls only exist inside the Tauri
 	// webview - a LAN browser client has nothing here to configure (it IS the
@@ -137,6 +181,34 @@
 			§11）。信頼できるLANでのみ有効にしてください。
 		</p>
 	</section>
+
+	<section>
+		<h2>アカウント</h2>
+		{#if changePassword}
+			<form onsubmit={submitChangePassword}>
+				<label class="field">
+					現在のパスワード
+					<input type="password" bind:value={currentPassword} autocomplete="current-password" />
+				</label>
+				<label class="field">
+					新しいパスワード（8文字以上）
+					<input type="password" bind:value={newPassword} autocomplete="new-password" />
+				</label>
+				<label class="field">
+					新しいパスワード（確認）
+					<input type="password" bind:value={newPasswordConfirm} autocomplete="new-password" />
+				</label>
+
+				{#if passwordError}
+					<p class="error">{passwordError}</p>
+				{/if}
+
+				<button type="submit" disabled={changingPassword}>パスワードを変更</button>
+			</form>
+		{:else}
+			<p class="note">この環境ではパスワード変更に対応していません。</p>
+		{/if}
+	</section>
 </div>
 
 <style>
@@ -200,6 +272,13 @@
 		flex-wrap: wrap;
 		gap: 0.75rem;
 		margin: 0.75rem 0;
+	}
+
+	section form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		max-width: 320px;
 	}
 
 	.field {

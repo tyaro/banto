@@ -180,4 +180,67 @@ describe('createTauriAuthProvider', () => {
 
 		expect(identity).toBeNull();
 	});
+
+	it('status calls auth_status and returns its initialized flag', async () => {
+		const invoke = vi.fn().mockResolvedValue({ initialized: false });
+		const provider = createTauriAuthProvider({ invoke });
+
+		await expect(provider.status?.()).resolves.toEqual({ initialized: false });
+		expect(invoke).toHaveBeenCalledWith('auth_status', undefined);
+	});
+
+	it('setup calls auth_setup with the given params and returns the result on success', async () => {
+		const invoke = vi.fn().mockResolvedValue({ success: true });
+		const provider = createTauriAuthProvider({ invoke });
+
+		const result = await provider.setup?.({
+			username: 'owner',
+			password: 'password123',
+			displayName: 'オーナー'
+		});
+
+		expect(invoke).toHaveBeenCalledWith('auth_setup', {
+			username: 'owner',
+			password: 'password123',
+			displayName: 'オーナー'
+		});
+		expect(result).toEqual({ success: true });
+	});
+
+	it('setup maps a rejected validation ErrorBody to { success: false, error: <first field message> }', async () => {
+		const invoke = vi.fn().mockRejectedValue({
+			kind: 'validation',
+			field_errors: [{ field: 'password', message: 'パスワードは8文字以上で入力してください' }]
+		});
+		const provider = createTauriAuthProvider({ invoke });
+
+		const result = await provider.setup?.({ username: 'owner', password: 'short', displayName: 'オーナー' });
+
+		expect(result).toEqual({ success: false, error: 'パスワードは8文字以上で入力してください' });
+	});
+
+	it('changePassword calls auth_change_password with camelCase args and returns success', async () => {
+		const invoke = vi.fn().mockResolvedValue(undefined);
+		const provider = createTauriAuthProvider({ invoke });
+
+		const result = await provider.changePassword?.('old-password', 'new-password1');
+
+		expect(invoke).toHaveBeenCalledWith('auth_change_password', {
+			currentPassword: 'old-password',
+			newPassword: 'new-password1'
+		});
+		expect(result).toEqual({ success: true });
+	});
+
+	it('changePassword maps a rejected validation ErrorBody to { success: false, error: <first field message> }', async () => {
+		const invoke = vi.fn().mockRejectedValue({
+			kind: 'validation',
+			field_errors: [{ field: 'currentPassword', message: '現在のパスワードが違います' }]
+		});
+		const provider = createTauriAuthProvider({ invoke });
+
+		const result = await provider.changePassword?.('wrong', 'new-password1');
+
+		expect(result).toEqual({ success: false, error: '現在のパスワードが違います' });
+	});
 });

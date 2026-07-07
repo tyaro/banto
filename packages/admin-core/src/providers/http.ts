@@ -51,6 +51,21 @@ function networkError(): ProviderError {
 	return new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
 }
 
+/**
+ * `POST /api/auth/setup`/`/api/auth/change-password` respond `422` with
+ * `{kind:'validation',field_errors}` for bad input (spec §8.2, same
+ * convention as `items_create`'s validation errors). `setup`/
+ * `changePassword` below surface the FIRST field error's message as a plain
+ * `{success:false,error}` result instead of throwing, matching
+ * `createTauriAuthProvider`'s equivalent mapping.
+ */
+function firstValidationMessage(err: ProviderError): string {
+	if (err.body.kind === 'validation' && err.body.field_errors.length > 0) {
+		return err.body.field_errors[0].message;
+	}
+	return err.message;
+}
+
 function headersFor(token: string | null, hasBody: boolean): Record<string, string> {
 	const headers: Record<string, string> = { [CLIENT_HEADER_NAME]: CLIENT_HEADER_VALUE };
 	if (hasBody) headers['Content-Type'] = 'application/json';
@@ -215,6 +230,58 @@ export function createHttpAuthProvider(
 			}
 			if (!response.ok) return null;
 			return (await response.json()) as Identity | null;
+		},
+
+		async status(): Promise<{ initialized: boolean }> {
+			let response: Response;
+			try {
+				response = await fetchFn(`${baseUrl}/api/auth/status`, { method: 'GET', headers: headers(false) });
+			} catch {
+				// No server reachable: treat as "already initialized" so the
+				// caller falls back to the normal login form (which will then
+				// fail with a clear network error) rather than the setup form.
+				return { initialized: true };
+			}
+			if (!response.ok) return { initialized: true };
+			return (await response.json()) as { initialized: boolean };
+		},
+
+		async setup(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+			let response: Response;
+			try {
+				response = await fetchFn(`${baseUrl}/api/auth/setup`, {
+					method: 'POST',
+					headers: headers(true),
+					body: JSON.stringify(params)
+				});
+			} catch {
+				return { success: false, error: NETWORK_ERROR_MESSAGE };
+			}
+			if (!response.ok) {
+				const err = await errorFromResponse(response);
+				return { success: false, error: firstValidationMessage(err) };
+			}
+			const body = (await response.json()) as { success: boolean; error?: string; token?: string };
+			if (body.success && body.token) setToken(body.token);
+			return { success: body.success, error: body.error };
+		},
+
+		async changePassword(current: string, next: string): Promise<{ success: boolean; error?: string }> {
+			let response: Response;
+			try {
+				response = await fetchFn(`${baseUrl}/api/auth/change-password`, {
+					method: 'POST',
+					headers: headers(true),
+					body: JSON.stringify({ currentPassword: current, newPassword: next })
+				});
+			} catch {
+				return { success: false, error: NETWORK_ERROR_MESSAGE };
+			}
+			if (!response.ok) {
+				const err = await errorFromResponse(response);
+				return { success: false, error: firstValidationMessage(err) };
+			}
+			return { success: true };
 		},
 
 		getToken

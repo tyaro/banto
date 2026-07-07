@@ -85,19 +85,24 @@ mod tests {
     use tower::ServiceExt;
 
     fn demo_auth() -> AuthState {
-        AuthState::new(
-            |u, p| u == "admin" && p == "admin",
-            Identity {
-                id: "admin".to_string(),
-                name: "管理者".to_string(),
-            },
-        )
+        AuthState::new(|u: String, p: String| {
+            Box::pin(async move {
+                if u == "admin" && p == "admin" {
+                    Some(Identity {
+                        id: "admin".to_string(),
+                        name: "管理者".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     #[tokio::test]
     async fn sse_stream_delivers_broadcast_event() {
         let auth = demo_auth();
-        let token = auth.login("admin", "admin").unwrap();
+        let token = auth.login("admin", "admin").await.unwrap();
         let (tx, _rx) = broadcast::channel(16);
         let router = sse_route(auth, tx.clone());
 

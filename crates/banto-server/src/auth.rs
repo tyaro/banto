@@ -6,7 +6,7 @@
 //! subsequent request (mirrors `HttpDataProvider`'s planned wire contract,
 //! spec §3.2/§11.1).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use axum::extract::{Request, State};
@@ -16,64 +16,90 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use banto_core::ErrorBody;
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Identity returned by `GET /api/auth/identity` (spec §3.3). Mirrors
 /// `packages/admin-core/src/provider.ts::Identity`.
+///
+/// Convention: `id` is the account's `username` (not a numeric row id) -
+/// both the REST layer (`admin-template-core::rest`) and the `src-tauri`
+/// adapter rely on this to recover "which account is this session for"
+/// (e.g. for `change-password`) from nothing but the `Identity` a session
+/// is keyed on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     pub id: String,
     pub name: String,
 }
 
-type CredentialChecker = Box<dyn Fn(&str, &str) -> bool + Send + Sync>;
+/// Verifies a `username`/`password` pair against whatever credential store
+/// the app crate wires in (spec §8.2), asynchronously (a real store is a
+/// database lookup + password hash verification, both of which may need to
+/// `.await`). Returns the session [`Identity`] on success.
+///
+/// Boxed owned-`String` arguments (rather than `&str` + a lifetime) keep
+/// this object-safe/`'static` without extra lifetime plumbing: the request
+/// body the credentials come from is already owned by the time a handler
+/// calls this.
+pub type CredentialVerifier =
+    Arc<dyn Fn(String, String) -> BoxFuture<'static, Option<Identity>> + Send + Sync>;
 
 struct Inner {
-    tokens: RwLock<HashSet<String>>,
-    check_credentials: CredentialChecker,
-    identity: Identity,
+    tokens: RwLock<HashMap<String, Identity>>,
+    verify_credentials: CredentialVerifier,
 }
 
-/// Shared, cloneable auth state: an in-memory set of valid bearer tokens
-/// plus an injected credential checker. Cloning is cheap (`Arc` handle).
+/// Shared, cloneable auth state: an in-memory map of valid bearer tokens to
+/// the [`Identity`] that logged in with them, plus an injected async
+/// credential verifier. Cloning is cheap (`Arc` handle).
 #[derive(Clone)]
 pub struct AuthState {
     inner: Arc<Inner>,
 }
 
 impl AuthState {
-    /// Build a new [`AuthState`]. `check_credentials` decides whether a
-    /// `username`/`password` pair may log in; `identity` is the identity
-    /// returned to every authenticated session (the template has a single
-    /// demo account, matching `src-tauri`'s `auth_identity` command).
+    /// Build a new [`AuthState`]. `verify_credentials` decides whether a
+    /// `username`/`password` pair may log in and, if so, which [`Identity`]
+    /// the resulting session belongs to.
     pub fn new(
-        check_credentials: impl Fn(&str, &str) -> bool + Send + Sync + 'static,
-        identity: Identity,
+        verify_credentials: impl Fn(String, String) -> BoxFuture<'static, Option<Identity>>
+            + Send
+            + Sync
+            + 'static,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                tokens: RwLock::new(HashSet::new()),
-                check_credentials: Box::new(check_credentials),
-                identity,
+                tokens: RwLock::new(HashMap::new()),
+                verify_credentials: Arc::new(verify_credentials),
             }),
         }
     }
 
     /// Verify credentials and, on success, mint and store a new uuid-v4
-    /// bearer token. Returns `None` on bad credentials.
-    pub fn login(&self, username: &str, password: &str) -> Option<String> {
-        if (self.inner.check_credentials)(username, password) {
-            let token = Uuid::new_v4().to_string();
-            self.inner
-                .tokens
-                .write()
-                .expect("auth token lock poisoned")
-                .insert(token.clone());
-            Some(token)
-        } else {
-            None
-        }
+    /// bearer token bound to the returned identity. Returns `None` on bad
+    /// credentials.
+    pub async fn login(&self, username: &str, password: &str) -> Option<String> {
+        let identity =
+            (self.inner.verify_credentials)(username.to_string(), password.to_string()).await?;
+        Some(self.issue_token(identity))
+    }
+
+    /// Mint and store a new bearer token for an already-verified `identity`,
+    /// without going through `verify_credentials` again. Used by callers
+    /// that just created/authenticated an account through some other path
+    /// (e.g. the REST `/api/auth/setup` handler, right after
+    /// `UsersService::setup_first_user` succeeds) and want to log the new
+    /// session in immediately, the same way `login` would.
+    pub fn issue_token(&self, identity: Identity) -> String {
+        let token = Uuid::new_v4().to_string();
+        self.inner
+            .tokens
+            .write()
+            .expect("auth token lock poisoned")
+            .insert(token.clone(), identity);
+        token
     }
 
     /// Is `token` a currently-valid bearer token?
@@ -82,7 +108,7 @@ impl AuthState {
             .tokens
             .read()
             .expect("auth token lock poisoned")
-            .contains(token)
+            .contains_key(token)
     }
 
     /// Invalidate `token` (idempotent: logging out twice is not an error).
@@ -94,8 +120,19 @@ impl AuthState {
             .remove(token);
     }
 
-    fn identity(&self) -> Identity {
-        self.inner.identity.clone()
+    /// The [`Identity`] bound to `token`, or `None` if it is not a
+    /// currently-valid token. Exposed (beyond what the `/api/auth/*` routes
+    /// below need) so other routers built in the app crate - e.g.
+    /// `admin-template-core::rest`'s `/api/auth/change-password` - can
+    /// recover "which account is this request for" from the same bearer
+    /// token `require_auth` already validated.
+    pub fn identity_for(&self, token: &str) -> Option<Identity> {
+        self.inner
+            .tokens
+            .read()
+            .expect("auth token lock poisoned")
+            .get(token)
+            .cloned()
     }
 }
 
@@ -142,7 +179,7 @@ async fn login_handler(
     State(auth): State<AuthState>,
     Json(body): Json<LoginRequest>,
 ) -> Json<LoginResponse> {
-    match auth.login(&body.username, &body.password) {
+    match auth.login(&body.username, &body.password).await {
         Some(token) => Json(LoginResponse {
             success: true,
             error: None,
@@ -169,9 +206,7 @@ async fn check_handler(State(auth): State<AuthState>, req: Request) -> Json<bool
 }
 
 async fn identity_handler(State(auth): State<AuthState>, req: Request) -> Json<Option<Identity>> {
-    let identity = bearer_token(&req)
-        .filter(|token| auth.verify(token))
-        .map(|_| auth.identity());
+    let identity = bearer_token(&req).and_then(|token| auth.identity_for(token));
     Json(identity)
 }
 
@@ -186,6 +221,12 @@ async fn identity_handler(State(auth): State<AuthState>, req: Request) -> Json<O
 /// - `POST /api/auth/logout` — invalidates the bearer token on the request.
 /// - `GET /api/auth/check` — `bool`, whether the bearer token is valid.
 /// - `GET /api/auth/identity` — `Identity | null`.
+///
+/// First-run account setup (`GET /api/auth/status`, `POST /api/auth/setup`)
+/// and `POST /api/auth/change-password` are NOT here: those need the app
+/// crate's `UsersService` directly, so they are composed alongside this
+/// router in `admin-template-core::rest::api_router` instead (this crate
+/// stays resource/credential-store-agnostic).
 pub fn auth_routes(auth: AuthState) -> Router {
     Router::new()
         .route("/api/auth/login", post(login_handler))
@@ -203,13 +244,18 @@ mod tests {
     use tower::ServiceExt;
 
     fn demo_auth() -> AuthState {
-        AuthState::new(
-            |u, p| u == "admin" && p == "admin",
-            Identity {
-                id: "admin".to_string(),
-                name: "管理者".to_string(),
-            },
-        )
+        AuthState::new(|u: String, p: String| {
+            Box::pin(async move {
+                if u == "admin" && p == "admin" {
+                    Some(Identity {
+                        id: "admin".to_string(),
+                        name: "管理者".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     async fn body_json(response: Response) -> serde_json::Value {
@@ -257,9 +303,41 @@ mod tests {
     #[tokio::test]
     async fn logout_invalidates_token() {
         let auth = demo_auth();
-        let token = auth.login("admin", "admin").expect("login should succeed");
+        let token = auth
+            .login("admin", "admin")
+            .await
+            .expect("login should succeed");
         assert!(auth.verify(&token));
         auth.logout(&token);
         assert!(!auth.verify(&token));
+    }
+
+    #[tokio::test]
+    async fn identity_for_returns_the_identity_bound_to_the_token() {
+        let auth = demo_auth();
+        let token = auth
+            .login("admin", "admin")
+            .await
+            .expect("login should succeed");
+        let identity = auth.identity_for(&token).expect("identity should exist");
+        assert_eq!(identity.id, "admin");
+        assert_eq!(identity.name, "管理者");
+    }
+
+    #[tokio::test]
+    async fn identity_for_is_none_for_an_invalid_token() {
+        let auth = demo_auth();
+        assert!(auth.identity_for("not-a-real-token").is_none());
+    }
+
+    #[tokio::test]
+    async fn issue_token_logs_in_without_calling_verify_credentials() {
+        let auth = demo_auth();
+        let token = auth.issue_token(Identity {
+            id: "owner".to_string(),
+            name: "オーナー".to_string(),
+        });
+        assert!(auth.verify(&token));
+        assert_eq!(auth.identity_for(&token).unwrap().id, "owner");
     }
 }

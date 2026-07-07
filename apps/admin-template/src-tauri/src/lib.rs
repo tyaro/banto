@@ -24,6 +24,7 @@ use admin_template_core::events::event_channel;
 use admin_template_core::items::{Item, ItemInput, ItemsService};
 use admin_template_core::rest::api_router;
 use admin_template_core::settings::{ServerSettings, SettingsService};
+use admin_template_core::users::{UserIdentity, UsersService};
 use banto_core::{BantoError, ListParams, ListResult};
 use banto_server::{
     lan_urls, start, static_router, AuthState, Identity as RestIdentity, RunningServer,
@@ -37,18 +38,20 @@ use tauri::{Emitter, Manager, State};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 /// App-wide state managed by Tauri (spec §10, §11).
-///
-/// TODO(M6+): replace the `Mutex<bool>` webview auth flag AND
-/// `rest_auth`'s admin/admin check with a real credential store (spec §8.2
-/// suggests `keyring`); v1's demo check here is intentionally duplicated
-/// across two independent token spaces rather than unified - see
-/// `rest_auth`'s doc comment for why.
 struct AppState {
     items: ItemsService,
-    /// The webview window's own session flag. Set by `auth_login`/cleared by
-    /// `auth_logout`, both called directly via `invoke()` - this never goes
-    /// through `/api/auth/login`.
-    auth: Mutex<bool>,
+    /// The webview window's own session identity, set by `auth_login`/
+    /// `auth_setup` and cleared by `auth_logout` - all called directly via
+    /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
+    /// carrying the full `UserIdentity` (not just a bool) lets
+    /// `auth_change_password` recover the current `username` without a
+    /// second round trip.
+    auth: Mutex<Option<UserIdentity>>,
+    /// The local credential store (spec §8.2): argon2id-hashed accounts in
+    /// the same SQLite settings DB as `settings` below. Shared with
+    /// `rest_auth`'s verifier closure so the webview session and the
+    /// embedded-server session always check the same accounts.
+    users: UsersService,
     /// App settings (spec §12.1), including the embedded-server config
     /// (spec §11.2/§11.4's enabled/bind/port).
     settings: SettingsService,
@@ -63,7 +66,8 @@ struct AppState {
     /// `auth` above: the webview window never logs in through
     /// `/api/auth/login`, so a LAN browser client logging in does not
     /// implicitly authenticate the desktop window, and vice versa - each is
-    /// its own session, over its own transport.
+    /// its own session, over its own transport (both sessions ultimately
+    /// check the same `users` credential store, though).
     rest_auth: AuthState,
     /// `Some` while LAN access is enabled and successfully bound; `None`
     /// otherwise (disabled, or a previous bind attempt failed - see
@@ -83,17 +87,43 @@ struct Identity {
     name: String,
 }
 
-/// Demo credential check (admin/admin), shared by the webview's `auth_login`
-/// command and the embedded server's `rest_auth` (`AuthState::new`). See the
-/// `TODO` on [`AppState`].
-fn check_demo_credentials(username: &str, password: &str) -> bool {
-    username == "admin" && password == "admin"
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthStatusResult {
+    initialized: bool,
 }
 
-fn demo_rest_identity() -> RestIdentity {
-    RestIdentity {
-        id: "admin".to_string(),
-        name: "管理者".to_string(),
+fn identity_from(user: &UserIdentity) -> Identity {
+    // Convention shared with `admin_template_core::rest` and `banto-serve`:
+    // `Identity.id` is the account's `username` (not `UserIdentity.id`'s
+    // numeric row id), so any layer holding only an `Identity` can still
+    // recover "which account" for things like `change_password`.
+    Identity {
+        id: user.username.clone(),
+        name: user.display_name.clone(),
+    }
+}
+
+/// Wraps `UsersService::verify` as the async verifier
+/// `banto_server::AuthState::new` expects (spec §8.2) - shared by
+/// `rest_auth`'s construction in `setup()` below.
+fn rest_credential_verifier(
+    users: UsersService,
+) -> impl Fn(String, String) -> futures_util::future::BoxFuture<'static, Option<RestIdentity>>
+       + Send
+       + Sync
+       + 'static {
+    move |username: String, password: String| {
+        let users = users.clone();
+        Box::pin(async move {
+            match users.verify(&username, &password).await {
+                Ok(Some(identity)) => Some(RestIdentity {
+                    id: identity.username,
+                    name: identity.display_name,
+                }),
+                _ => None,
+            }
+        })
     }
 }
 
@@ -135,43 +165,111 @@ async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
     state.items.delete(id).await
 }
 
-/// Demo credential check (admin/admin). See the `TODO` on [`AppState`].
+/// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
+/// login page calls this first to decide between the first-run setup form
+/// and the normal login form.
 #[tauri::command]
-fn auth_login(state: State<'_, AppState>, username: String, password: String) -> LoginResult {
-    if check_demo_credentials(&username, &password) {
-        *state.auth.lock().expect("auth mutex poisoned") = true;
-        LoginResult {
-            success: true,
-            error: None,
+async fn auth_status(state: State<'_, AppState>) -> Result<AuthStatusResult, BantoError> {
+    Ok(AuthStatusResult {
+        initialized: state.users.is_initialized().await?,
+    })
+}
+
+/// Create the very first account and log the webview session in as it
+/// (spec §8.2). `BantoError::Validation` (bad username/short password)
+/// propagates as `Err` so the frontend form store can field-map it;
+/// "already initialized" (or any other non-validation failure) surfaces as
+/// `Ok(LoginResult { success: false, .. })` instead, since that is an
+/// expected/retryable outcome, not a form error.
+#[tauri::command]
+async fn auth_setup(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+    display_name: String,
+) -> Result<LoginResult, BantoError> {
+    match state
+        .users
+        .setup_first_user(&username, &password, &display_name)
+        .await
+    {
+        Ok(identity) => {
+            *state.auth.lock().expect("auth mutex poisoned") = Some(identity);
+            Ok(LoginResult {
+                success: true,
+                error: None,
+            })
         }
-    } else {
-        LoginResult {
+        Err(err @ BantoError::Validation { .. }) => Err(err),
+        Err(other) => Ok(LoginResult {
+            success: false,
+            error: Some(other.to_string()),
+        }),
+    }
+}
+
+#[tauri::command]
+async fn auth_login(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<LoginResult, BantoError> {
+    match state.users.verify(&username, &password).await? {
+        Some(identity) => {
+            *state.auth.lock().expect("auth mutex poisoned") = Some(identity);
+            Ok(LoginResult {
+                success: true,
+                error: None,
+            })
+        }
+        None => Ok(LoginResult {
             success: false,
             error: Some("ユーザー名またはパスワードが違います".to_string()),
-        }
+        }),
     }
 }
 
 #[tauri::command]
 fn auth_logout(state: State<'_, AppState>) {
-    *state.auth.lock().expect("auth mutex poisoned") = false;
+    *state.auth.lock().expect("auth mutex poisoned") = None;
 }
 
 #[tauri::command]
 fn auth_check(state: State<'_, AppState>) -> bool {
-    *state.auth.lock().expect("auth mutex poisoned")
+    state.auth.lock().expect("auth mutex poisoned").is_some()
 }
 
 #[tauri::command]
 fn auth_identity(state: State<'_, AppState>) -> Option<Identity> {
-    if *state.auth.lock().expect("auth mutex poisoned") {
-        Some(Identity {
-            id: "admin".to_string(),
-            name: "管理者".to_string(),
-        })
-    } else {
-        None
-    }
+    state
+        .auth
+        .lock()
+        .expect("auth mutex poisoned")
+        .as_ref()
+        .map(identity_from)
+}
+
+/// Requires an active webview session (spec §8.2): looks up the logged-in
+/// account's `username` from `state.auth` rather than taking it as a
+/// parameter, so a caller cannot change a DIFFERENT account's password just
+/// by naming it.
+#[tauri::command]
+async fn auth_change_password(
+    state: State<'_, AppState>,
+    current_password: String,
+    new_password: String,
+) -> Result<(), BantoError> {
+    let username = {
+        let guard = state.auth.lock().expect("auth mutex poisoned");
+        match guard.as_ref() {
+            Some(identity) => identity.username.clone(),
+            None => return Err(BantoError::Unauthorized),
+        }
+    };
+    state
+        .users
+        .change_password(&username, &current_password, &new_password)
+        .await
 }
 
 /// One LAN access URL plus its QR code, rendered as an inline SVG string
@@ -238,11 +336,17 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 /// binding on its way into `banto_server::start`.
 async fn start_embedded_server(
     items: ItemsService,
+    users: UsersService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
 ) -> Result<RunningServer, BantoError> {
-    let router = api_router(items, auth, events).merge(static_router::<FrontendAssets>());
+    // `allow_setup: false` - the Tauri app's first-run setup goes through
+    // the `auth_setup` command above (`invoke()`, no network involved), not
+    // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
+    // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
+    let router =
+        api_router(items, users, auth, events, false).merge(static_router::<FrontendAssets>());
     start(config, router).await
 }
 
@@ -284,6 +388,7 @@ async fn server_apply(
         Some(
             start_embedded_server(
                 state.items.clone(),
+                state.users.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -333,8 +438,9 @@ pub fn run() {
 
             let events = event_channel();
             let items = ItemsService::new(pool.clone()).with_events(events.clone());
+            let users = UsersService::new(pool.clone());
             let settings = SettingsService::new(pool);
-            let rest_auth = AuthState::new(check_demo_credentials, demo_rest_identity());
+            let rest_auth = AuthState::new(rest_credential_verifier(users.clone()));
 
             // Forward every resource-change/notice event onto the webview
             // (spec §3.5's TauriEventProvider side: the webview has no
@@ -370,6 +476,7 @@ pub fn run() {
                 };
                 match tauri::async_runtime::block_on(start_embedded_server(
                     items.clone(),
+                    users.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,
@@ -392,7 +499,8 @@ pub fn run() {
 
             app.manage(AppState {
                 items,
-                auth: Mutex::new(false),
+                auth: Mutex::new(None),
+                users,
                 settings,
                 events,
                 rest_auth,
@@ -408,10 +516,13 @@ pub fn run() {
             items_create,
             items_update,
             items_delete,
+            auth_status,
+            auth_setup,
             auth_login,
             auth_logout,
             auth_check,
             auth_identity,
+            auth_change_password,
             server_status,
             server_apply,
             settings_get,

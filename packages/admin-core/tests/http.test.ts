@@ -286,4 +286,97 @@ describe('createHttpAuthProvider', () => {
 		expect(sessionStorage.getItem('custom.key')).toBe('xyz');
 		expect(sessionStorage.getItem('banto.auth.token')).toBeNull();
 	});
+
+	it('status calls GET /api/auth/status and returns its body', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { initialized: false }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await expect(provider.status?.()).resolves.toEqual({ initialized: false });
+		expect(fetchFn).toHaveBeenCalledWith('/api/auth/status', {
+			method: 'GET',
+			headers: { 'X-Banto-Client': 'banto' },
+			body: undefined
+		});
+	});
+
+	it('status treats a network failure as already initialized (falls back to the login form)', async () => {
+		const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await expect(provider.status?.()).resolves.toEqual({ initialized: true });
+	});
+
+	it('setup POSTs to /api/auth/setup and stores the token on success', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true, token: 'tok' }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		const result = await provider.setup?.({
+			username: 'owner',
+			password: 'password123',
+			displayName: 'オーナー'
+		});
+
+		expect(fetchFn).toHaveBeenCalledWith('/api/auth/setup', {
+			method: 'POST',
+			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json' },
+			body: JSON.stringify({ username: 'owner', password: 'password123', displayName: 'オーナー' })
+		});
+		expect(result).toEqual({ success: true });
+		expect(provider.getToken()).toBe('tok');
+	});
+
+	it('setup maps a 403 (allow_setup disabled) ErrorBody to { success: false, error }', async () => {
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(403, { kind: 'other', message: 'このサーバーでは初期セットアップが許可されていません' }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		const result = await provider.setup?.({ username: 'owner', password: 'password123', displayName: 'オーナー' });
+
+		expect(result).toEqual({ success: false, error: 'このサーバーでは初期セットアップが許可されていません' });
+		expect(provider.getToken()).toBeNull();
+	});
+
+	it('setup maps a 422 validation ErrorBody to { success: false, error: <first field message> }', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(
+			jsonResponse(422, {
+				kind: 'validation',
+				field_errors: [{ field: 'password', message: 'パスワードは8文字以上で入力してください' }]
+			})
+		);
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		const result = await provider.setup?.({ username: 'owner', password: 'short', displayName: 'オーナー' });
+
+		expect(result).toEqual({ success: false, error: 'パスワードは8文字以上で入力してください' });
+	});
+
+	it('changePassword POSTs to /api/auth/change-password with the bearer token and camelCase body', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true }));
+		const provider = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem('banto.auth.token', 'tok');
+
+		const result = await provider.changePassword?.('old-password', 'new-password1');
+
+		expect(fetchFn).toHaveBeenCalledWith('/api/auth/change-password', {
+			method: 'POST',
+			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+			body: JSON.stringify({ currentPassword: 'old-password', newPassword: 'new-password1' })
+		});
+		expect(result).toEqual({ success: true });
+	});
+
+	it('changePassword maps a 422 validation ErrorBody to { success: false, error: <first field message> }', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(
+			jsonResponse(422, {
+				kind: 'validation',
+				field_errors: [{ field: 'currentPassword', message: '現在のパスワードが違います' }]
+			})
+		);
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		const result = await provider.changePassword?.('wrong', 'new-password1');
+
+		expect(result).toEqual({ success: false, error: '現在のパスワードが違います' });
+	});
 });

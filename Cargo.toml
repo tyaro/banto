@@ -28,6 +28,8 @@ if-addrs = "0.13"
 futures-util = "0.3"
 async-stream = "0.3"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["getrandom"] }
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }

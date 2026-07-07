@@ -3,17 +3,35 @@
 	import { getAuthProvider } from '@banto/admin-core';
 	import { bantoReady } from '$lib/banto/setup';
 
+	// Undecided until `status()` resolves (or is absent, treated as
+	// "already initialized" - see below): render nothing rather than
+	// flashing one form then the other.
+	let mode: 'loading' | 'setup' | 'login' = $state('loading');
+
 	let username = $state('');
 	let password = $state('');
+	let displayName = $state('');
+	let passwordConfirm = $state('');
 	let error: string | null = $state(null);
 	let submitting = $state(false);
 
-	async function submit(event: SubmitEvent) {
+	$effect(() => {
+		void (async () => {
+			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
+			const status = await getAuthProvider().status?.();
+			// No `status()` on this provider (an older/custom AuthProvider,
+			// spec §3.3's members are optional for backward compatibility):
+			// behave as if an account already exists, i.e. the normal login
+			// form.
+			mode = status && !status.initialized ? 'setup' : 'login';
+		})();
+	});
+
+	async function submitLogin(event: SubmitEvent) {
 		event.preventDefault();
 		error = null;
 		submitting = true;
 		try {
-			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
 			const result = await getAuthProvider().login({ username, password });
 			if (result.success) {
 				goto('/dashboard');
@@ -24,31 +42,96 @@
 			submitting = false;
 		}
 	}
+
+	async function submitSetup(event: SubmitEvent) {
+		event.preventDefault();
+		error = null;
+
+		if (password.length < 8) {
+			error = 'パスワードは8文字以上で入力してください';
+			return;
+		}
+		if (password !== passwordConfirm) {
+			error = 'パスワードが一致しません';
+			return;
+		}
+
+		submitting = true;
+		try {
+			const setup = getAuthProvider().setup;
+			if (!setup) {
+				error = 'この環境では初期セットアップに対応していません';
+				return;
+			}
+			const result = await setup({ username, password, displayName });
+			if (result.success) {
+				goto('/dashboard');
+			} else {
+				error = result.error ?? 'セットアップに失敗しました';
+			}
+		} finally {
+			submitting = false;
+		}
+	}
 </script>
 
 <div class="page">
-	<form onsubmit={submit}>
-		<h1>🏮 Banto</h1>
-		<p class="note">
-			admin / admin でログイン（Tauri時はRustコマンド、LANブラウザ時はREST/SSE、単体ブラウザ時はデモ実装）
-		</p>
+	{#if mode === 'setup'}
+		<form onsubmit={submitSetup}>
+			<h1>🏮 Banto</h1>
+			<p class="note">初回起動です。管理者アカウントを作成してください。</p>
 
-		<label>
-			ユーザー名
-			<input type="text" bind:value={username} autocomplete="username" />
-		</label>
+			<label>
+				表示名
+				<input type="text" bind:value={displayName} autocomplete="name" />
+			</label>
 
-		<label>
-			パスワード
-			<input type="password" bind:value={password} autocomplete="current-password" />
-		</label>
+			<label>
+				ユーザー名
+				<input type="text" bind:value={username} autocomplete="username" />
+			</label>
 
-		{#if error}
-			<p class="error">{error}</p>
-		{/if}
+			<label>
+				パスワード（8文字以上）
+				<input type="password" bind:value={password} autocomplete="new-password" />
+			</label>
 
-		<button type="submit" disabled={submitting}>ログイン</button>
-	</form>
+			<label>
+				パスワード（確認）
+				<input type="password" bind:value={passwordConfirm} autocomplete="new-password" />
+			</label>
+
+			{#if error}
+				<p class="error">{error}</p>
+			{/if}
+
+			<button type="submit" disabled={submitting}>アカウントを作成</button>
+		</form>
+	{:else if mode === 'login'}
+		<form onsubmit={submitLogin}>
+			<h1>🏮 Banto</h1>
+			<p class="note">
+				単体ブラウザ（デモ）モードは admin / admin でログインできます。Tauri/LANモードでは初回起動時に
+				作成したアカウントでログインしてください。
+			</p>
+
+			<label>
+				ユーザー名
+				<input type="text" bind:value={username} autocomplete="username" />
+			</label>
+
+			<label>
+				パスワード
+				<input type="password" bind:value={password} autocomplete="current-password" />
+			</label>
+
+			{#if error}
+				<p class="error">{error}</p>
+			{/if}
+
+			<button type="submit" disabled={submitting}>ログイン</button>
+		</form>
+	{/if}
 </div>
 
 <style>
