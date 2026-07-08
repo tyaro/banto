@@ -8,6 +8,7 @@ export { FormStore, createFormStore } from './store.svelte';
 
 export { default as BantoForm } from './BantoForm.svelte';
 export { default as TextField } from './fields/TextField.svelte';
+export { default as PasswordField } from './fields/PasswordField.svelte';
 export { default as NumberField } from './fields/NumberField.svelte';
 export { default as TextareaField } from './fields/TextareaField.svelte';
 export { default as SelectField } from './fields/SelectField.svelte';

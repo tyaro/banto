@@ -15,6 +15,13 @@ pub enum BantoError {
     #[error("unauthorized")]
     Unauthorized,
 
+    /// The caller is authenticated but their role does not permit this
+    /// action (spec §10/M10 RBAC), e.g. a `viewer` calling a mutating
+    /// endpoint or a non-`admin` calling user-management routes. Distinct
+    /// from `Unauthorized` (no/invalid session at all), which is a 401.
+    #[error("forbidden")]
+    Forbidden,
+
     #[error("storage error: {0}")]
     Storage(String),
 
@@ -36,6 +43,7 @@ pub enum ErrorBody {
     NotFound { resource: String, id: String },
     Validation { field_errors: Vec<FieldError> },
     Unauthorized,
+    Forbidden,
     Storage { message: String },
     Other { message: String },
 }
@@ -51,6 +59,7 @@ impl From<&BantoError> for ErrorBody {
                 field_errors: field_errors.clone(),
             },
             BantoError::Unauthorized => ErrorBody::Unauthorized,
+            BantoError::Forbidden => ErrorBody::Forbidden,
             BantoError::Storage(message) => ErrorBody::Storage {
                 message: message.clone(),
             },

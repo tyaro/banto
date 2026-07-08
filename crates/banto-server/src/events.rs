@@ -91,6 +91,7 @@ mod tests {
                     Some(Identity {
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
+                        role: "admin".to_string(),
                     })
                 } else {
                     None

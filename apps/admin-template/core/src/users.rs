@@ -14,17 +14,97 @@
 //! caching its *own* login token more securely than `sessionStorage`), which
 //! is an orthogonal concern from where the account database itself lives.
 
+use std::fmt;
+use std::str::FromStr;
 use std::sync::OnceLock;
 
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use banto_core::{BantoError, FieldError};
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 const MIN_USERNAME_LEN: usize = 1;
 const MAX_USERNAME_LEN: usize = 32;
 const MIN_PASSWORD_LEN: usize = 8;
+
+/// Account role (spec M10 RBAC, `docs/roadmap.md`): three fixed levels,
+/// `viewer` < `editor` < `admin`, each a superset of the previous one's
+/// permissions. Stored as lowercase TEXT in the `users.role` column
+/// (migration `0004_user_roles.sql`, which also `CHECK`s the DB-side set of
+/// allowed values) and travels over the wire the same way (`#[serde(rename_all
+/// = "lowercase")]`), so this is the single place both the DB round-trip and
+/// the JSON wire shape agree on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Admin,
+    Editor,
+    Viewer,
+}
+
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Admin => "admin",
+            Role::Editor => "editor",
+            Role::Viewer => "viewer",
+        }
+    }
+
+    /// Total order used by [`Role::at_least`]: `viewer` is the least
+    /// privileged, `admin` the most.
+    fn rank(&self) -> u8 {
+        match self {
+            Role::Viewer => 0,
+            Role::Editor => 1,
+            Role::Admin => 2,
+        }
+    }
+
+    /// Is this role at least as privileged as `min`? The core RBAC
+    /// predicate every role guard (REST middleware, Tauri's `require_role`)
+    /// is built on.
+    pub fn at_least(&self, min: Role) -> bool {
+        self.rank() >= min.rank()
+    }
+
+    /// `editor` or `admin` - resources' create/update/delete (spec M10:
+    /// "editor: + create/update/delete").
+    pub fn can_write_resources(&self) -> bool {
+        self.at_least(Role::Editor)
+    }
+
+    pub fn is_admin(&self) -> bool {
+        matches!(self, Role::Admin)
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Role {
+    type Err = BantoError;
+
+    /// Parses the lowercase DB/wire representation. Used both to read the
+    /// `role` TEXT column back out of SQLite and (in `admin-template-core::rest`)
+    /// to turn a bearer token's `Identity.role` string back into a typed
+    /// `Role` for the REST role-guard middleware. An unrecognized value is a
+    /// `BantoError::Other` (not `Validation`): it does not correspond to any
+    /// particular request field at either call site.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "admin" => Ok(Role::Admin),
+            "editor" => Ok(Role::Editor),
+            "viewer" => Ok(Role::Viewer),
+            other => Err(BantoError::Other(format!("不明なロールです: {other}"))),
+        }
+    }
+}
 
 fn password_too_short_message() -> String {
     "パスワードは8文字以上で入力してください".to_string()
@@ -94,6 +174,22 @@ pub struct UserIdentity {
     pub id: i64,
     pub username: String,
     pub display_name: String,
+    pub role: Role,
+}
+
+/// Public listing of an account (spec M10's user-management screen):
+/// everything the admin grid needs, deliberately NOT `password_hash`. Unlike
+/// [`UserIdentity`] this derives `Serialize` since it is returned directly
+/// over the wire (REST JSON body / Tauri command return value) rather than
+/// only used internally.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSummary {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub role: Role,
+    pub created_at: String,
 }
 
 /// Local credential store (spec §8.2): argon2id password hashes in the
@@ -142,13 +238,17 @@ impl UsersService {
         let display_name = display_name.trim();
         let hash = hash_password(password)?;
 
+        // The very first account is always `admin` (spec M10): there is no
+        // one else yet to have assigned it a lesser role, and the app needs
+        // at least one admin to exist to manage everyone else.
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?) \
+            "INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?) \
              RETURNING id",
         )
         .bind(&username)
         .bind(&hash)
         .bind(display_name)
+        .bind(Role::Admin.as_str())
         .fetch_one(&self.pool)
         .await
         .map_err(banto_storage::storage_error)?;
@@ -157,6 +257,7 @@ impl UsersService {
             id,
             username,
             display_name: display_name.to_string(),
+            role: Role::Admin,
         })
     }
 
@@ -175,20 +276,22 @@ impl UsersService {
         username: &str,
         password: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
-        let row: Option<(i64, String, String)> =
-            sqlx::query_as("SELECT id, password_hash, display_name FROM users WHERE username = ?")
-                .bind(username)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(banto_storage::storage_error)?;
+        let row: Option<(i64, String, String, String)> = sqlx::query_as(
+            "SELECT id, password_hash, display_name, role FROM users WHERE username = ?",
+        )
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(banto_storage::storage_error)?;
 
         match row {
-            Some((id, hash, display_name)) => {
+            Some((id, hash, display_name, role)) => {
                 if verify_password(password, &hash) {
                     Ok(Some(UserIdentity {
                         id,
                         username: username.to_string(),
                         display_name,
+                        role: Role::from_str(&role)?,
                     }))
                 } else {
                     Ok(None)
@@ -247,6 +350,249 @@ impl UsersService {
         .await
         .map_err(banto_storage::storage_error)?;
 
+        Ok(())
+    }
+
+    // --- M10: user management (admin-only CRUD + RBAC) -------------------
+
+    /// All accounts, for the admin user-management grid (spec M10).
+    /// `password_hash` deliberately never leaves this module - see
+    /// [`UserSummary`].
+    pub async fn list_users(&self) -> Result<Vec<UserSummary>, BantoError> {
+        let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
+            "SELECT id, username, display_name, role, created_at FROM users ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(banto_storage::storage_error)?;
+
+        rows.into_iter()
+            .map(|(id, username, display_name, role, created_at)| {
+                Ok(UserSummary {
+                    id,
+                    username,
+                    display_name,
+                    role: Role::from_str(&role)?,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
+    /// Look up an account's full identity by username, without verifying a
+    /// password. Used by the REST layer to recover the acting caller's
+    /// numeric row id (needed by [`UsersService::delete_user`]'s
+    /// self-deletion guard) from a bearer token's `Identity.id`, which
+    /// carries the *username* (spec convention, see
+    /// `banto_server::auth::Identity`'s doc comment), not the row id.
+    pub async fn get_by_username(&self, username: &str) -> Result<Option<UserIdentity>, BantoError> {
+        let row: Option<(i64, String, String)> =
+            sqlx::query_as("SELECT id, display_name, role FROM users WHERE username = ?")
+                .bind(username)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(banto_storage::storage_error)?;
+
+        match row {
+            Some((id, display_name, role)) => Ok(Some(UserIdentity {
+                id,
+                username: username.to_string(),
+                display_name,
+                role: Role::from_str(&role)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// Create an additional account (spec M10; distinct from
+    /// [`UsersService::setup_first_user`], which only ever runs once and
+    /// always assigns `admin`). Validates the same way `setup_first_user`
+    /// does, plus a friendly `BantoError::Validation` on a duplicate
+    /// username (rather than surfacing the raw UNIQUE-constraint storage
+    /// error to the admin form).
+    pub async fn create_user(
+        &self,
+        username: &str,
+        password: &str,
+        display_name: &str,
+        role: Role,
+    ) -> Result<UserIdentity, BantoError> {
+        let username = validate_username(username)?;
+        validate_password_len(password, "password")?;
+        let display_name = display_name.trim();
+
+        let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+            .bind(&username)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        if existing.is_some() {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "username".to_string(),
+                    message: "このユーザー名は既に使用されています".to_string(),
+                }],
+            });
+        }
+
+        let hash = hash_password(password)?;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?) \
+             RETURNING id",
+        )
+        .bind(&username)
+        .bind(&hash)
+        .bind(display_name)
+        .bind(role.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(banto_storage::storage_error)?;
+
+        Ok(UserIdentity {
+            id,
+            username,
+            display_name: display_name.to_string(),
+            role,
+        })
+    }
+
+    /// Current role of account `id`, or `NotFound` if it does not exist.
+    /// Shared by the last-admin guards on [`UsersService::update_user`] and
+    /// [`UsersService::delete_user`].
+    async fn role_of(&self, id: i64) -> Result<Role, BantoError> {
+        let role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        match role {
+            Some(role) => Role::from_str(&role),
+            None => Err(BantoError::NotFound {
+                resource: "users".to_string(),
+                id: id.to_string(),
+            }),
+        }
+    }
+
+    /// Guard (spec M10 completion condition): refuse an operation on
+    /// account `id` that would leave zero `admin` accounts. Counts admins
+    /// OTHER than `id` - if that count is zero, `id` is the last admin and
+    /// the caller must not be allowed to demote or delete it.
+    async fn ensure_not_last_admin(&self, id: i64) -> Result<(), BantoError> {
+        let remaining_admins: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' AND id != ?")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(banto_storage::storage_error)?;
+        if remaining_admins == 0 {
+            return Err(BantoError::Other(
+                "最後の管理者を降格・削除することはできません".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Update an account's `display_name`/`role` (spec M10; password
+    /// changes go through [`UsersService::change_password`] (self-service)
+    /// or [`UsersService::reset_password`] (admin) instead). Refuses to
+    /// demote the last `admin` account.
+    pub async fn update_user(
+        &self,
+        id: i64,
+        display_name: &str,
+        role: Role,
+    ) -> Result<UserSummary, BantoError> {
+        let display_name = display_name.trim();
+
+        let current_role = self.role_of(id).await?;
+        if current_role.is_admin() && !role.is_admin() {
+            self.ensure_not_last_admin(id).await?;
+        }
+
+        let row: Option<(i64, String, String, String, String)> = sqlx::query_as(
+            "UPDATE users SET display_name = ?, role = ?, updated_at = datetime('now') WHERE id = ? \
+             RETURNING id, username, display_name, role, created_at",
+        )
+        .bind(display_name)
+        .bind(role.as_str())
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(banto_storage::storage_error)?;
+
+        let Some((row_id, username, display_name, role_str, created_at)) = row else {
+            return Err(BantoError::NotFound {
+                resource: "users".to_string(),
+                id: id.to_string(),
+            });
+        };
+
+        Ok(UserSummary {
+            id: row_id,
+            username,
+            display_name,
+            role: Role::from_str(&role_str)?,
+            created_at,
+        })
+    }
+
+    /// Admin-initiated password reset (spec M10): unlike
+    /// [`UsersService::change_password`], does not require the account's
+    /// current password - this is an administrative action on someone
+    /// else's account, not self-service.
+    pub async fn reset_password(&self, id: i64, new_password: &str) -> Result<(), BantoError> {
+        validate_password_len(new_password, "newPassword")?;
+        let hash = hash_password(new_password)?;
+
+        let result = sqlx::query(
+            "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&hash)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(banto_storage::storage_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(BantoError::NotFound {
+                resource: "users".to_string(),
+                id: id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Delete account `id` (spec M10). Refuses two cases with a
+    /// `BantoError`, both guards the M10 completion criteria call out
+    /// explicitly: deleting the last `admin`, and an account deleting
+    /// itself (`acting_user_id`, the caller's own numeric row id, is
+    /// resolved by the REST/Tauri layer before calling this - see
+    /// [`UsersService::get_by_username`] for the REST side, which only has
+    /// the caller's username from the session token).
+    pub async fn delete_user(&self, id: i64, acting_user_id: i64) -> Result<(), BantoError> {
+        if id == acting_user_id {
+            return Err(BantoError::Other(
+                "自分自身を削除することはできません".to_string(),
+            ));
+        }
+
+        let role = self.role_of(id).await?;
+        if role.is_admin() {
+            self.ensure_not_last_admin(id).await?;
+        }
+
+        let result = sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        if result.rows_affected() == 0 {
+            return Err(BantoError::NotFound {
+                resource: "users".to_string(),
+                id: id.to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -430,5 +776,237 @@ mod tests {
         let hash = hash_password("hunter2hunter").unwrap();
         assert!(verify_password("hunter2hunter", &hash));
         assert!(!verify_password("wrong", &hash));
+    }
+
+    // --- Role -------------------------------------------------------------
+
+    #[test]
+    fn role_as_str_and_from_str_round_trip() {
+        for role in [Role::Admin, Role::Editor, Role::Viewer] {
+            assert_eq!(Role::from_str(role.as_str()).unwrap(), role);
+        }
+    }
+
+    #[test]
+    fn role_from_str_rejects_unknown_values() {
+        assert!(Role::from_str("superuser").is_err());
+    }
+
+    #[test]
+    fn role_at_least_orders_viewer_editor_admin() {
+        assert!(Role::Admin.at_least(Role::Admin));
+        assert!(Role::Admin.at_least(Role::Editor));
+        assert!(Role::Admin.at_least(Role::Viewer));
+        assert!(Role::Editor.at_least(Role::Editor));
+        assert!(Role::Editor.at_least(Role::Viewer));
+        assert!(!Role::Editor.at_least(Role::Admin));
+        assert!(Role::Viewer.at_least(Role::Viewer));
+        assert!(!Role::Viewer.at_least(Role::Editor));
+        assert!(!Role::Viewer.at_least(Role::Admin));
+    }
+
+    #[test]
+    fn can_write_resources_is_editor_and_above() {
+        assert!(Role::Admin.can_write_resources());
+        assert!(Role::Editor.can_write_resources());
+        assert!(!Role::Viewer.can_write_resources());
+    }
+
+    #[test]
+    fn is_admin_is_admin_only() {
+        assert!(Role::Admin.is_admin());
+        assert!(!Role::Editor.is_admin());
+        assert!(!Role::Viewer.is_admin());
+    }
+
+    // --- M10 user management CRUD -----------------------------------------
+
+    #[tokio::test]
+    async fn setup_first_user_is_always_admin() {
+        let svc = service().await;
+        let created = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        assert_eq!(created.role, Role::Admin);
+
+        let identity = svc
+            .verify("owner", "password123")
+            .await
+            .unwrap()
+            .expect("verify should succeed");
+        assert_eq!(identity.role, Role::Admin);
+    }
+
+    #[tokio::test]
+    async fn create_list_update_reset_password_and_delete_round_trip() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+
+        let created = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .expect("create_user should succeed");
+        assert_eq!(created.role, Role::Editor);
+
+        let listed = svc.list_users().await.unwrap();
+        assert_eq!(listed.len(), 2);
+        let listed_editor = listed
+            .iter()
+            .find(|u| u.username == "editor1")
+            .expect("editor1 should be listed");
+        assert_eq!(listed_editor.role, Role::Editor);
+        assert_eq!(listed_editor.display_name, "編集者1");
+
+        let updated = svc
+            .update_user(created.id, "編集者1改", Role::Viewer)
+            .await
+            .expect("update_user should succeed");
+        assert_eq!(updated.display_name, "編集者1改");
+        assert_eq!(updated.role, Role::Viewer);
+
+        svc.reset_password(created.id, "resetpassword1")
+            .await
+            .expect("reset_password should succeed");
+        assert!(svc
+            .verify("editor1", "password123")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(svc
+            .verify("editor1", "resetpassword1")
+            .await
+            .unwrap()
+            .is_some());
+
+        svc.delete_user(created.id, owner.id)
+            .await
+            .expect("delete_user should succeed");
+        assert_eq!(svc.list_users().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_user_rejects_duplicate_username() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let err = svc
+            .create_user("owner", "password123", "別オーナー", Role::Editor)
+            .await
+            .unwrap_err();
+        match err {
+            BantoError::Validation { field_errors } => {
+                assert_eq!(field_errors[0].field, "username");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_user_rejects_demoting_the_last_admin() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+
+        let err = svc
+            .update_user(owner.id, "オーナー", Role::Editor)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)));
+
+        // Once a second admin exists, the first can be demoted.
+        svc.create_user("owner2", "password123", "オーナー2", Role::Admin)
+            .await
+            .unwrap();
+        let demoted = svc
+            .update_user(owner.id, "オーナー", Role::Editor)
+            .await
+            .expect("demotion should succeed once another admin exists");
+        assert_eq!(demoted.role, Role::Editor);
+    }
+
+    #[tokio::test]
+    async fn update_user_allows_demoting_a_non_last_admin() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        svc.create_user("owner2", "password123", "オーナー2", Role::Admin)
+            .await
+            .unwrap();
+
+        let demoted = svc
+            .update_user(owner.id, "オーナー", Role::Viewer)
+            .await
+            .expect("demoting one of two admins should succeed");
+        assert_eq!(demoted.role, Role::Viewer);
+    }
+
+    #[tokio::test]
+    async fn delete_user_rejects_deleting_the_last_admin() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+
+        // `editor1` deletes `owner` (the only admin) - must be rejected.
+        let err = svc.delete_user(owner.id, editor.id).await.unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)));
+        assert_eq!(svc.list_users().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn delete_user_rejects_self_deletion() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        svc.create_user("owner2", "password123", "オーナー2", Role::Admin)
+            .await
+            .unwrap();
+
+        // Even though a second admin exists, `owner` may not delete itself.
+        let err = svc.delete_user(owner.id, owner.id).await.unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)));
+        assert_eq!(svc.list_users().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn delete_user_missing_id_is_not_found() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let err = svc.delete_user(999, owner.id).await.unwrap_err();
+        assert!(matches!(err, BantoError::NotFound { resource, id } if resource == "users" && id == "999"));
+    }
+
+    #[tokio::test]
+    async fn get_by_username_finds_and_misses() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let found = svc
+            .get_by_username("owner")
+            .await
+            .unwrap()
+            .expect("owner should be found");
+        assert_eq!(found.role, Role::Admin);
+        assert!(svc.get_by_username("nobody").await.unwrap().is_none());
     }
 }

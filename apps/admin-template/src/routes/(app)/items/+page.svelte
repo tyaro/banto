@@ -3,10 +3,17 @@
 	import { getDataProvider, getResource, invalidate, isProviderError, notify } from '@banto/admin-core';
 	import { goto } from '$app/navigation';
 	import type { Item } from '$lib/banto/sampleData';
+	import { sessionStore } from '$lib/session.svelte';
+	import { canWriteResources } from '$lib/permissions';
 	import ItemsClientGrid, { type ItemRow } from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
 
 	const resource = getResource('items');
+
+	// Spec M10 RBAC: `viewer` gets a read-only items page (no 新規作成 button,
+	// no inline cell editing below); `editor`/`admin` are unchanged from
+	// before M10.
+	const canWrite = $derived(canWriteResources(sessionStore.role));
 
 	// M5 Phase A (spec §4.1, §10): the items page demonstrates both grid data
 	// modes side by side via a toggle. Plain $state, not persisted - the
@@ -14,7 +21,7 @@
 	// DataProvider->(Rust+SQLite in Tauri) path this milestone adds.
 	let mode: 'client' | 'server' = $state('server');
 
-	const columns: GridColumn<Item>[] = [
+	const baseColumns: GridColumn<Item>[] = [
 		{
 			id: 'open',
 			header: '',
@@ -104,6 +111,20 @@
 		}
 	];
 
+	/**
+	 * Force every column's `editable` off for `viewer` (spec M10 RBAC):
+	 * `editable: false` disables BantoGrid's inline cell editor for that
+	 * column entirely, same mechanism already used for naturally read-only
+	 * columns like `updatedAt`/`open`. `editor`/`admin` get `baseColumns`
+	 * unchanged.
+	 */
+	function withWritePermission(cols: GridColumn<Item>[]): GridColumn<Item>[] {
+		if (canWrite) return cols;
+		return cols.map((column) => (column.editable ? { ...column, editable: false } : column));
+	}
+
+	const columns = $derived(withWritePermission(baseColumns));
+
 	function columnById(id: string): GridColumn<Item> {
 		return columns.find((column) => column.id === id)!;
 	}
@@ -112,8 +133,10 @@
 	// 「カテゴリ」 column (ItemsClientGrid derives it from `name`) plus
 	// per-column aggregates, so its own column array is built separately from
 	// the shared `columns` above (which stays exactly as-is for サーバー mode -
-	// grouping has no server-mode equivalent yet, spec §4.3).
-	const clientColumns: GridColumn<ItemRow>[] = [
+	// grouping has no server-mode equivalent yet, spec §4.3). `$derived.by`
+	// (rather than a plain `const`, pre-M10) since it now reads `columns`,
+	// itself derived from `canWrite`/`sessionStore.role`.
+	const clientColumns = $derived.by((): GridColumn<ItemRow>[] => [
 		columnById('open'),
 		{ ...columnById('id'), aggregate: 'count' },
 		columnById('name'),
@@ -129,7 +152,7 @@
 		{ ...columnById('price'), aggregate: 'avg' },
 		{ ...columnById('stock'), aggregate: 'sum' },
 		columnById('updatedAt')
-	];
+	]);
 
 	// Owned here (not inside ItemsClientGrid) so the shared header's group-by
 	// <select> below can call `.setGroupBy(...)` directly - same wiring
@@ -247,7 +270,9 @@
 					<option value="updatedAt">更新日</option>
 				</select>
 			</label>
-			<button type="button" onclick={() => goto('/items/new')}>新規作成</button>
+			{#if canWrite}
+				<button type="button" onclick={() => goto('/items/new')}>新規作成</button>
+			{/if}
 		</div>
 	</div>
 

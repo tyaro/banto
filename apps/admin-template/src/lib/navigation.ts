@@ -9,11 +9,14 @@ export interface NavItem {
 	label: string;
 	/** Placeholder icon (emoji) until an icon set is decided. */
 	icon: string;
+	/** Spec M10 RBAC: only shown to the `admin` role. Undefined/false = visible to every role. */
+	adminOnly?: boolean;
 }
 
 export const navItems: NavItem[] = [
 	{ path: '/dashboard', label: 'ダッシュボード', icon: '📊' },
 	{ path: '/items', label: '商品', icon: '📦' },
+	{ path: '/users', label: 'ユーザー管理', icon: '👤', adminOnly: true },
 	{ path: '/settings', label: '設定', icon: '⚙️' }
 ];
 

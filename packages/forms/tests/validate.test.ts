@@ -25,6 +25,13 @@ describe('validateField', () => {
 		expect(validateField(def, 'abc', {})).toBeNull();
 	});
 
+	it('password length min (M10 RBAC user-management create form)', () => {
+		const def: FieldDef = { name: 'password', label: 'Password', type: 'password', required: true, min: 8 };
+		expect(validateField(def, '', {})).toBe('必須項目です');
+		expect(validateField(def, 'short1', {})).toBe('8文字以上で入力してください');
+		expect(validateField(def, 'longenough1', {})).toBeNull();
+	});
+
 	it('pattern', () => {
 		const def: FieldDef = { name: 'code', label: 'Code', type: 'text', pattern: '^[A-Z]{3}$' };
 		expect(validateField(def, 'abc', {})).toBe('形式が正しくありません');

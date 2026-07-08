@@ -142,6 +142,22 @@ describe('createHttpDataProvider', () => {
 		}
 	});
 
+	it('maps a 403 forbidden ErrorBody (spec M10 RBAC) the same way as any other error kind', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(403, { kind: 'forbidden' }));
+		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
+
+		try {
+			await provider.getOne('items', 1);
+			expect.unreachable('expected a ProviderError to be thrown');
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) {
+				expect(err.body).toEqual({ kind: 'forbidden' });
+				expect(err.message).toBe('この操作を行う権限がありません');
+			}
+		}
+	});
+
 	it('maps an unparseable non-2xx body to kind "other" with the HTTP status text', async () => {
 		const fetchFn = vi.fn().mockResolvedValue(new Response('not json', { status: 500, statusText: 'Internal Server Error' }));
 		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
@@ -275,6 +291,14 @@ describe('createHttpAuthProvider', () => {
 		sessionStorage.setItem('banto.auth.token', 'tok');
 
 		await expect(provider.getIdentity()).resolves.toEqual({ id: 'admin', name: '管理者' });
+	});
+
+	it('getIdentity passes the role through unchanged (spec M10 RBAC)', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { id: 'owner', name: 'オーナー', role: 'admin' }));
+		const provider = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem('banto.auth.token', 'tok');
+
+		await expect(provider.getIdentity()).resolves.toEqual({ id: 'owner', name: 'オーナー', role: 'admin' });
 	});
 
 	it('uses a custom storageKey when provided', async () => {

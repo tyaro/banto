@@ -26,7 +26,7 @@ const CLIENT_HEADER_NAME = 'X-Banto-Client';
 const CLIENT_HEADER_VALUE = 'banto';
 const NETWORK_ERROR_MESSAGE = 'サーバーに接続できません';
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'storage', 'other']);
+const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
 
 /** Type guard: does `value` look like a wire `ErrorBody` (spec §10/§11.1)? */
 function isErrorBody(value: unknown): value is ErrorBody {

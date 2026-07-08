@@ -4,7 +4,7 @@
  * the grid columns (future) and the form UI.
  */
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox';
+export type FieldType = 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'password';
 
 export interface FieldOption {
 	value: string | number;
@@ -21,7 +21,7 @@ export interface FieldDef {
 	readonly?: boolean;
 	/** select */
 	options?: FieldOption[];
-	/** number: value bounds. text/textarea: length bounds. */
+	/** number: value bounds. text/textarea/password: length bounds. */
 	min?: number;
 	max?: number;
 	/** text: RegExp source. */

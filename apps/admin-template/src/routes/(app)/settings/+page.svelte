@@ -5,6 +5,8 @@
 	import { isTauri } from '$lib/banto/setup';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
 	import { toastStore } from '$lib/toast.svelte';
+	import { sessionStore } from '$lib/session.svelte';
+	import { isAdmin } from '$lib/permissions';
 
 	const modes: { value: ThemeMode; label: string }[] = [
 		{ value: 'light', label: 'ライト' },
@@ -129,58 +131,60 @@
 		</p>
 	</section>
 
-	<section>
-		<h2>LANアクセス（組み込みWebサーバ）</h2>
-		{#if tauri}
-			<label class="toggle">
-				<input type="checkbox" bind:checked={enabledDraft} />
-				LANアクセスを有効にする
-			</label>
-
-			<div class="server-fields">
-				<label class="field">
-					バインドアドレス
-					<select bind:value={bindDraft}>
-						<option value="127.0.0.1">127.0.0.1 のみ</option>
-						<option value="0.0.0.0">0.0.0.0（LAN公開）</option>
-					</select>
+	{#if isAdmin(sessionStore.role)}
+		<section>
+			<h2>LANアクセス（組み込みWebサーバ）</h2>
+			{#if tauri}
+				<label class="toggle">
+					<input type="checkbox" bind:checked={enabledDraft} />
+					LANアクセスを有効にする
 				</label>
 
-				<label class="field">
-					ポート番号
-					<input type="number" min="1" max="65535" bind:value={portDraft} />
-				</label>
-			</div>
+				<div class="server-fields">
+					<label class="field">
+						バインドアドレス
+						<select bind:value={bindDraft}>
+							<option value="127.0.0.1">127.0.0.1 のみ</option>
+							<option value="0.0.0.0">0.0.0.0（LAN公開）</option>
+						</select>
+					</label>
 
-			<button type="button" onclick={saveAndApply} disabled={applying}>保存して適用</button>
+					<label class="field">
+						ポート番号
+						<input type="number" min="1" max="65535" bind:value={portDraft} />
+					</label>
+				</div>
 
-			{#if serverError}
-				<p class="error">{serverError}</p>
-			{/if}
+				<button type="button" onclick={saveAndApply} disabled={applying}>保存して適用</button>
 
-			{#if serverStatus}
-				<p class="status">
-					状態: <strong>{serverStatus.running ? '稼働中' : '停止中'}</strong>
-				</p>
-				{#if serverStatus.running}
-					<ul class="urls">
-						{#each serverStatus.urls as url (url)}
-							<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
-						{/each}
-					</ul>
-					{#if firstLanQrSvg}
-						<div class="qr">{@html firstLanQrSvg}</div>
+				{#if serverError}
+					<p class="error">{serverError}</p>
+				{/if}
+
+				{#if serverStatus}
+					<p class="status">
+						状態: <strong>{serverStatus.running ? '稼働中' : '停止中'}</strong>
+					</p>
+					{#if serverStatus.running}
+						<ul class="urls">
+							{#each serverStatus.urls as url (url)}
+								<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
+							{/each}
+						</ul>
+						{#if firstLanQrSvg}
+							<div class="qr">{@html firstLanQrSvg}</div>
+						{/if}
 					{/if}
 				{/if}
+			{:else}
+				<p class="note">サーバー設定はデスクトップアプリでのみ変更できます。</p>
 			{/if}
-		{:else}
-			<p class="note">サーバー設定はデスクトップアプリでのみ変更できます。</p>
-		{/if}
-		<p class="note">
-			有効化すると、同一LAN内の他端末のブラウザからREST API + SSEで同じ画面を利用できます（仕様
-			§11）。信頼できるLANでのみ有効にしてください。
-		</p>
-	</section>
+			<p class="note">
+				有効化すると、同一LAN内の他端末のブラウザからREST API + SSEで同じ画面を利用できます（仕様
+				§11）。信頼できるLANでのみ有効にしてください。
+			</p>
+		</section>
+	{/if}
 
 	<section>
 		<h2>アカウント</h2>

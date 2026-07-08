@@ -57,6 +57,7 @@ fn credential_verifier(
                 Ok(Some(identity)) => Some(Identity {
                     id: identity.username,
                     name: identity.display_name,
+                    role: identity.role.to_string(),
                 }),
                 _ => None,
             }
