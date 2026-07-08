@@ -37,6 +37,7 @@ function makeMemoryStorage(): Storage {
 
 beforeEach(() => {
 	vi.stubGlobal('sessionStorage', makeMemoryStorage());
+	vi.stubGlobal('localStorage', makeMemoryStorage());
 });
 
 describe('createHttpDataProvider', () => {
@@ -309,6 +310,64 @@ describe('createHttpAuthProvider', () => {
 
 		expect(sessionStorage.getItem('custom.key')).toBe('xyz');
 		expect(sessionStorage.getItem('banto.auth.token')).toBeNull();
+	});
+
+	it('login without remember stores the token in sessionStorage, not localStorage (spec M11)', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true, token: 'sess-tok' }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await provider.login({ username: 'admin', password: 'admin' });
+
+		expect(sessionStorage.getItem('banto.auth.token')).toBe('sess-tok');
+		expect(localStorage.getItem('banto.auth.token')).toBeNull();
+		expect(provider.getToken()).toBe('sess-tok');
+	});
+
+	it('login with remember:true stores the token in localStorage, not sessionStorage (spec M11)', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true, token: 'remember-tok' }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await provider.login({ username: 'admin', password: 'admin', remember: true });
+
+		expect(localStorage.getItem('banto.auth.token')).toBe('remember-tok');
+		expect(sessionStorage.getItem('banto.auth.token')).toBeNull();
+		expect(provider.getToken()).toBe('remember-tok');
+	});
+
+	it('getToken prefers a localStorage token over a sessionStorage one', async () => {
+		const provider = createHttpAuthProvider({});
+		localStorage.setItem('banto.auth.token', 'from-local');
+		sessionStorage.setItem('banto.auth.token', 'from-session');
+
+		expect(provider.getToken()).toBe('from-local');
+	});
+
+	it('logging in again without remember after a remembered login clears the stale localStorage token (spec M11)', async () => {
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse(200, { success: true, token: 'remember-tok' }))
+			.mockResolvedValueOnce(jsonResponse(200, { success: true, token: 'sess-tok' }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await provider.login({ username: 'admin', password: 'admin', remember: true });
+		expect(localStorage.getItem('banto.auth.token')).toBe('remember-tok');
+
+		await provider.login({ username: 'admin', password: 'admin' });
+		expect(localStorage.getItem('banto.auth.token')).toBeNull();
+		expect(sessionStorage.getItem('banto.auth.token')).toBe('sess-tok');
+	});
+
+	it('logout clears both localStorage and sessionStorage (spec M11)', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+		const provider = createHttpAuthProvider({ fetchFn });
+		localStorage.setItem('banto.auth.token', 'remembered');
+		sessionStorage.setItem('banto.auth.token', 'not-remembered');
+
+		await provider.logout();
+
+		expect(localStorage.getItem('banto.auth.token')).toBeNull();
+		expect(sessionStorage.getItem('banto.auth.token')).toBeNull();
+		expect(provider.getToken()).toBeNull();
 	});
 
 	it('status calls GET /api/auth/status and returns its body', async () => {

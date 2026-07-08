@@ -30,6 +30,13 @@ async-stream = "0.3"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 argon2 = "0.5"
 password-hash = { version = "0.5", features = ["getrandom"] }
+# Desktop-only (spec M11 autologin): OS keyring storage for the auto-login
+# credential. Deliberately only referenced from `apps/admin-template/src-tauri`
+# (NOT `admin-template-core`) - CI's headless containers cannot build
+# `src-tauri` (no webkit2gtk) but must still be able to `cargo test` every
+# other crate, so keeping this off the core crate's dependency graph keeps
+# that path unaffected by this addition.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }

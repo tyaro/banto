@@ -4,6 +4,7 @@
 	import { getAuthProvider } from '@banto/admin-core';
 	import { pageTitle } from '$lib/navigation';
 	import { settings } from '$lib/settings.svelte';
+	import { sessionStore } from '$lib/session.svelte';
 
 	async function logout() {
 		await getAuthProvider().logout();
@@ -25,7 +26,9 @@
 
 	<div class="spacer"></div>
 
-	<button type="button" class="icon-button" onclick={logout}>ログアウト</button>
+	{#if !sessionStore.authDisabled}
+		<button type="button" class="icon-button" onclick={logout}>ログアウト</button>
+	{/if}
 </header>
 
 <style>

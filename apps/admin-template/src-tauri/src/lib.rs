@@ -18,14 +18,16 @@
 //! half (`packages/admin-core/src/events.ts`) - and auto-starts the server
 //! if it was left enabled on a previous run.
 
+mod keyring_store;
+
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::{Item, ItemInput, ItemsService};
 use admin_template_core::rest::api_router;
-use admin_template_core::settings::{ServerSettings, SettingsService};
+use admin_template_core::settings::{AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
-use banto_core::{BantoError, ListParams, ListResult};
+use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::{
     lan_urls, start, static_router, AuthState, Identity as RestIdentity, RunningServer,
     ServerConfig, ServerEvent,
@@ -33,6 +35,7 @@ use banto_server::{
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::Serialize;
+use std::str::FromStr;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
@@ -261,9 +264,22 @@ async fn auth_login(
     }
 }
 
+/// No-op while auth-disabled mode is on (spec M11): that mode has no login
+/// screen to fall back to, so clearing `state.auth` here would strand the
+/// webview with no session at all until the next app restart re-runs the
+/// bootstrap in `run()`. Re-synthesizing the identity inline (instead of
+/// just refusing to clear it) was considered and rejected as needlessly
+/// complex for the same outcome - the simpler "logout does nothing in this
+/// mode" reads clearly at the call site and matches auth-disabled mode's
+/// framing as "this whole device is trusted, there is no session to log out
+/// of".
 #[tauri::command]
-fn auth_logout(state: State<'_, AppState>) {
+async fn auth_logout(state: State<'_, AppState>) -> Result<(), BantoError> {
+    if state.settings.auth_config().await?.disabled {
+        return Ok(());
+    }
     *state.auth.lock().expect("auth mutex poisoned") = None;
+    Ok(())
 }
 
 #[tauri::command]
@@ -302,6 +318,108 @@ async fn auth_change_password(
         .users
         .change_password(&username, &current_password, &new_password)
         .await
+}
+
+// --- M11: auth-disabled mode + desktop autologin ---------------------------
+
+/// Current auth-mode settings (spec M11): any authenticated role may read
+/// this (it only feeds a settings-screen display), and it never carries the
+/// autologin password - `AuthSettings` itself has no such field (see its doc
+/// comment in `admin_template_core::settings`).
+#[tauri::command]
+async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettings, BantoError> {
+    require_role(&state, Role::Viewer)?;
+    state.settings.auth_config().await
+}
+
+/// Toggle auth-disabled mode and its synthetic-identity role (spec M11).
+///
+/// Normally `admin`-only, like every other server/settings-mutating command
+/// here. ESCAPE HATCH: while auth-disabled mode is CURRENTLY active, this
+/// command is allowed regardless of the calling session's role. Reason: in
+/// that mode the webview's only session is the synthetic identity `run()`'s
+/// bootstrap manufactures from `disabled_role` (see that function) - if an
+/// operator had configured `disabled_role` as something below `admin` (e.g.
+/// `viewer`, for a kiosk), that synthetic session could never call this
+/// command to turn auth back ON again, permanently locking the running app
+/// out of re-enabling authentication short of editing the SQLite settings DB
+/// by hand. Auth-disabled mode is already documented as "trust the whole
+/// device" (spec M11), so not gating the one command that re-locks it down
+/// behind a role that mode itself may have suppressed is consistent with
+/// that trust model, not a weakening of it.
+#[tauri::command]
+async fn auth_config_apply(
+    state: State<'_, AppState>,
+    disabled: bool,
+    disabled_role: String,
+) -> Result<AuthSettings, BantoError> {
+    let currently_disabled = state.settings.auth_config().await?.disabled;
+    if !currently_disabled {
+        require_role(&state, Role::Admin)?;
+    }
+
+    // An unrecognized role string falls back to `admin` (same convention as
+    // `SettingsService::auth_config`'s own read-time fallback) rather than
+    // failing the whole command - a bad value here must never leave the app
+    // unable to determine ANY role for the synthetic identity.
+    let role = Role::from_str(&disabled_role).unwrap_or(Role::Admin);
+
+    let mut config = state.settings.auth_config().await?;
+    config.disabled = disabled;
+    config.disabled_role = role;
+    state.settings.set_auth_config(&config).await?;
+    Ok(config)
+}
+
+/// Enable desktop autologin for `username` (spec M11): verifies the
+/// credentials against the same `UsersService` a normal login would (so a
+/// caller cannot register autologin for an account/password it does not
+/// actually know), stores the password in the OS keyring (never in the
+/// settings DB - see `keyring_store`), and flips the setting on. `admin`-only,
+/// same floor as every other server/settings-mutating command.
+#[tauri::command]
+async fn autologin_enable(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<(), BantoError> {
+    require_role(&state, Role::Admin)?;
+
+    if state.users.verify(&username, &password).await?.is_none() {
+        return Err(BantoError::Validation {
+            field_errors: vec![FieldError {
+                field: "password".to_string(),
+                message: "ユーザー名またはパスワードが違います".to_string(),
+            }],
+        });
+    }
+
+    keyring_store::set_password(&username, &password)?;
+
+    let mut config = state.settings.auth_config().await?;
+    config.autologin_enabled = true;
+    config.autologin_username = Some(username);
+    state.settings.set_auth_config(&config).await?;
+    Ok(())
+}
+
+/// Disable desktop autologin (spec M11): removes the stored credential from
+/// the OS keyring (best-effort - a keyring delete failure is logged, not
+/// propagated, so the setting is still turned off even if the OS store is,
+/// say, already gone) and clears the setting.
+#[tauri::command]
+async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError> {
+    require_role(&state, Role::Admin)?;
+
+    let mut config = state.settings.auth_config().await?;
+    if let Some(username) = config.autologin_username.take() {
+        if let Err(err) = keyring_store::delete_password(&username) {
+            eprintln!("banto: 自動ログインの資格情報のキーリング削除に失敗しました: {err}");
+        }
+    }
+    config.autologin_enabled = false;
+    state.settings.set_auth_config(&config).await?;
+    Ok(())
 }
 
 /// One LAN access URL plus its QR code, rendered as an inline SVG string
@@ -644,12 +762,84 @@ pub fn run() {
                 }
             });
 
+            // M11 bootstrap: decide the webview's starting session before
+            // anything else, in priority order -
+            //   1. auth-disabled mode ("ログイン不要モード") - a synthetic
+            //      identity, no login screen at all.
+            //   2. desktop autologin - verify a keyring-stored credential
+            //      against `users`, same as a normal login.
+            //   3. neither - the ordinary login screen (`auth: None`).
+            let auth_config = tauri::async_runtime::block_on(settings.auth_config())
+                .expect("auth_config should succeed");
+            let initial_auth: Option<UserIdentity> = if auth_config.disabled {
+                // `id: 0` is not a real `users` row - nothing here ever looks
+                // it up by id (no change-password/self-deletion flows apply
+                // to a synthetic session), so there is no real row to alias.
+                Some(UserIdentity {
+                    id: 0,
+                    username: "local".to_string(),
+                    display_name: "ローカルユーザー".to_string(),
+                    role: auth_config.disabled_role,
+                })
+            } else if auth_config.autologin_enabled {
+                match &auth_config.autologin_username {
+                    Some(username) => match keyring_store::get_password(username) {
+                        Ok(password) => {
+                            match tauri::async_runtime::block_on(users.verify(username, &password))
+                            {
+                                Ok(Some(identity)) => Some(identity),
+                                Ok(None) => {
+                                    // Credentials no longer valid (e.g. the
+                                    // password was changed since autologin
+                                    // was set up) - spec M11: do NOT
+                                    // auto-disable the setting, just fall
+                                    // through to the login screen.
+                                    eprintln!(
+                                        "banto: 自動ログインの資格情報が無効です（パスワード変更等）。ログイン画面を表示します。"
+                                    );
+                                    None
+                                }
+                                Err(err) => {
+                                    eprintln!("banto: 自動ログインの検証に失敗しました: {err}");
+                                    None
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            // Keyring entry missing / backend unavailable -
+                            // safe degrade to the login screen (spec M11).
+                            eprintln!("banto: 自動ログインの資格情報の取得に失敗しました: {err}");
+                            None
+                        }
+                    },
+                    None => None,
+                }
+            } else {
+                None
+            };
+
             // If LAN access was left enabled on a previous run, start the
             // server immediately (spec §11.4) - from here on, the settings
             // screen only needs to *change* state via `server_apply`.
+            //
+            // Spec M11 exclusivity is enforced at write-time
+            // (`SettingsService::set_server_config`/`set_auth_config`), but a
+            // hand-edited settings DB could still leave both
+            // `auth.disabled` and `server.enabled` set to `true` at once - if
+            // so, refuse to auto-start the (would-be unauthenticated) LAN
+            // server rather than trust a state the app itself would never
+            // have written, and leave the inconsistency for the user to
+            // resolve from the settings screen (this does NOT rewrite either
+            // setting).
             let server_config = tauri::async_runtime::block_on(settings.server_config())
                 .expect("server_config should succeed");
-            let initial_server = if server_config.enabled {
+            let inconsistent_auth_and_server = auth_config.disabled && server_config.enabled;
+            if inconsistent_auth_and_server {
+                eprintln!(
+                    "banto: 認証無効モードとLANアクセスが同時に有効な不整合な設定を検出したため、LANサーバーの自動起動をスキップしました。設定画面でどちらかを無効にしてください。"
+                );
+            }
+            let initial_server = if server_config.enabled && !inconsistent_auth_and_server {
                 let runtime_config = ServerConfig {
                     bind: server_config.bind.clone(),
                     port: server_config.port,
@@ -679,7 +869,7 @@ pub fn run() {
 
             app.manage(AppState {
                 items,
-                auth: Mutex::new(None),
+                auth: Mutex::new(initial_auth),
                 users,
                 settings,
                 events,
@@ -703,6 +893,10 @@ pub fn run() {
             auth_check,
             auth_identity,
             auth_change_password,
+            auth_config_get,
+            auth_config_apply,
+            autologin_enable,
+            autologin_disable,
             server_status,
             server_apply,
             settings_get,

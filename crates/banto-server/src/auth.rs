@@ -13,6 +13,11 @@
 //!   lifetime (default 8h) or an idle timeout (default 1h, refreshed on every
 //!   `verify`/`identity_for`). Without this a session lives forever until an
 //!   explicit `logout`, and abandoned sessions accumulate in memory unbounded.
+//!   Each token individually opts into a second, much longer-lived policy
+//!   (spec M11 "LAN Remember me"): a token issued with `remember: true` is
+//!   evaluated against `AuthState`'s `remembered_policy` (default 30d
+//!   absolute / 7d idle) instead of the regular `token_policy` for the rest
+//!   of its life - see [`TokenRecord::remembered`].
 //! - **Login rate limiting** ([`RateLimitPolicy`]): consecutive failed
 //!   `POST /api/auth/login` attempts, keyed by client IP + username, trip a
 //!   short lockout (default: 5 failures -> 60s). Because credential
@@ -103,6 +108,21 @@ impl Default for TokenPolicy {
     }
 }
 
+impl TokenPolicy {
+    /// 30-day absolute / 7-day idle - the "Remember me" policy (spec M11):
+    /// long-lived enough that a LAN browser client stays logged in across
+    /// restarts for weeks, but still bounded (unlike no expiry at all) so a
+    /// token that leaked or was simply forgotten about does not grant access
+    /// forever, and idle enough to lapse if the client genuinely stops
+    /// using it.
+    pub fn remembered_default() -> Self {
+        Self {
+            absolute_ttl: Duration::from_secs(30 * 24 * 60 * 60),
+            idle_ttl: Duration::from_secs(7 * 24 * 60 * 60),
+        }
+    }
+}
+
 /// Login failed-attempt throttling policy (spec §11.2). Failures are counted
 /// per key (client IP + username, see [`rate_limit_key`]); reaching
 /// `max_failures` consecutive failures starts a `lockout`-long window during
@@ -149,6 +169,13 @@ struct TokenRecord {
     identity: Identity,
     issued_at: Duration,
     last_used: Duration,
+    /// Whether this particular token was issued with "Remember me" (spec
+    /// M11): if so, it is evaluated against `AuthState`'s `remembered_policy`
+    /// instead of its regular `token_policy` for the rest of its life. This
+    /// lives on the token, not on the login/identity, so a single account can
+    /// have both a short-lived desktop session and a long-lived "remembered"
+    /// LAN browser session live at the same time.
+    remembered: bool,
 }
 
 impl TokenRecord {
@@ -240,6 +267,9 @@ struct Inner {
     failures: RwLock<HashMap<String, FailureRecord>>,
     verify_credentials: CredentialVerifier,
     token_policy: TokenPolicy,
+    /// Long-lived policy applied to tokens issued with "Remember me" (spec
+    /// M11) instead of `token_policy` - see [`TokenRecord::remembered`].
+    remembered_policy: TokenPolicy,
     rate_limit: RateLimitPolicy,
     clock: Clock,
 }
@@ -274,7 +304,9 @@ impl AuthState {
     /// Like [`AuthState::new`], but with explicit token-expiry and
     /// login-rate-limit policies (spec §11.2). Callers that need non-default
     /// session lifetimes or lockout thresholds use this; everything else
-    /// stays on [`AuthState::new`]'s defaults.
+    /// stays on [`AuthState::new`]'s defaults. The "Remember me" policy
+    /// (spec M11) stays on [`TokenPolicy::remembered_default`] - use
+    /// [`AuthState::with_policies`] to also override that.
     pub fn with_policy(
         verify_credentials: impl Fn(String, String) -> BoxFuture<'static, Option<Identity>>
             + Send
@@ -283,9 +315,30 @@ impl AuthState {
         token_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
     ) -> Self {
+        Self::with_policies(
+            verify_credentials,
+            token_policy,
+            TokenPolicy::remembered_default(),
+            rate_limit,
+        )
+    }
+
+    /// Like [`AuthState::with_policy`], but also lets the caller override the
+    /// "Remember me" policy (spec M11) applied to tokens issued with
+    /// `remember: true` instead of [`TokenPolicy::remembered_default`].
+    pub fn with_policies(
+        verify_credentials: impl Fn(String, String) -> BoxFuture<'static, Option<Identity>>
+            + Send
+            + Sync
+            + 'static,
+        token_policy: TokenPolicy,
+        remembered_policy: TokenPolicy,
+        rate_limit: RateLimitPolicy,
+    ) -> Self {
         Self::build(
             Arc::new(verify_credentials),
             token_policy,
+            remembered_policy,
             rate_limit,
             Clock::real(),
         )
@@ -294,6 +347,7 @@ impl AuthState {
     fn build(
         verify_credentials: CredentialVerifier,
         token_policy: TokenPolicy,
+        remembered_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
         clock: Clock,
     ) -> Self {
@@ -303,6 +357,7 @@ impl AuthState {
                 failures: RwLock::new(HashMap::new()),
                 verify_credentials,
                 token_policy,
+                remembered_policy,
                 rate_limit,
                 clock,
             }),
@@ -330,11 +385,17 @@ impl AuthState {
     /// expensive credential verifier runs, so a locked-out key cannot be used
     /// to keep argon2 busy. A success clears the key's failure streak; a
     /// failure adds to it (and may start a lockout).
+    ///
+    /// `remember` (spec M11 "LAN Remember me"): when `true`, the issued token
+    /// is evaluated against `remembered_policy` (long-lived) instead of the
+    /// regular `token_policy` for the rest of its life - see
+    /// [`TokenRecord::remembered`].
     pub async fn login_rate_limited(
         &self,
         key: &str,
         username: &str,
         password: &str,
+        remember: bool,
     ) -> LoginOutcome {
         if let Some(retry_after) = self.locked_out(key) {
             return LoginOutcome::RateLimited { retry_after };
@@ -343,7 +404,7 @@ impl AuthState {
         match (self.inner.verify_credentials)(username.to_string(), password.to_string()).await {
             Some(identity) => {
                 self.reset_failures(key);
-                LoginOutcome::Success(self.issue_token(identity))
+                LoginOutcome::Success(self.issue_token_with(identity, remember))
             }
             None => {
                 self.record_failure(key);
@@ -357,22 +418,49 @@ impl AuthState {
     /// that just created/authenticated an account through some other path
     /// (e.g. the REST `/api/auth/setup` handler, right after
     /// `UsersService::setup_first_user` succeeds) and want to log the new
-    /// session in immediately, the same way `login` would.
+    /// session in immediately, the same way `login` would. Not "remembered"
+    /// (spec M11) - use [`AuthState::issue_token_remembered`] for that.
+    pub fn issue_token(&self, identity: Identity) -> String {
+        self.issue_token_with(identity, false)
+    }
+
+    /// Like [`AuthState::issue_token`], but the token is issued as
+    /// "remembered" (spec M11 "LAN Remember me"): it is evaluated against
+    /// `remembered_policy` instead of `token_policy` for the rest of its
+    /// life.
+    pub fn issue_token_remembered(&self, identity: Identity) -> String {
+        self.issue_token_with(identity, true)
+    }
+
+    /// Shared implementation of [`AuthState::issue_token`]/
+    /// [`AuthState::issue_token_remembered`]/[`AuthState::login_rate_limited`].
     ///
     /// Opportunistically sweeps already-expired tokens under the same write
-    /// lock, so the map stays bounded without a background reaper.
-    pub fn issue_token(&self, identity: Identity) -> String {
+    /// lock, so the map stays bounded without a background reaper. Each
+    /// existing record is checked against whichever policy applies to IT
+    /// (its own `remembered` flag), not the policy of the token being
+    /// inserted.
+    fn issue_token_with(&self, identity: Identity, remembered: bool) -> String {
         let token = Uuid::new_v4().to_string();
         let now = self.inner.clock.now();
-        let policy = self.inner.token_policy;
+        let token_policy = self.inner.token_policy;
+        let remembered_policy = self.inner.remembered_policy;
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        tokens.retain(|_, record| !record.is_expired(now, &policy));
+        tokens.retain(|_, record| {
+            let policy = if record.remembered {
+                &remembered_policy
+            } else {
+                &token_policy
+            };
+            !record.is_expired(now, policy)
+        });
         tokens.insert(
             token.clone(),
             TokenRecord {
                 identity,
                 issued_at: now,
                 last_used: now,
+                remembered,
             },
         );
         token
@@ -410,20 +498,36 @@ impl AuthState {
     /// forward, or evict it and return `None` if it has expired. Takes a
     /// write lock (not a read lock) precisely because the idle-timer refresh
     /// mutates the record - an acceptable cost for a single-host LAN server.
+    ///
+    /// Which [`TokenPolicy`] applies is decided per-token by its own
+    /// `remembered` flag (spec M11), not by a single state-wide policy.
     fn touch(&self, token: &str) -> Option<Identity> {
         let now = self.inner.clock.now();
-        let policy = self.inner.token_policy;
+        let token_policy = self.inner.token_policy;
+        let remembered_policy = self.inner.remembered_policy;
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        match tokens.get_mut(token) {
-            Some(record) if !record.is_expired(now, &policy) => {
-                record.last_used = now;
-                Some(record.identity.clone())
+
+        let expired = match tokens.get(token) {
+            Some(record) => {
+                let policy = if record.remembered {
+                    &remembered_policy
+                } else {
+                    &token_policy
+                };
+                record.is_expired(now, policy)
             }
-            Some(_) => {
-                tokens.remove(token);
-                None
-            }
-            None => None,
+            None => return None,
+        };
+
+        if expired {
+            tokens.remove(token);
+            None
+        } else {
+            let record = tokens
+                .get_mut(token)
+                .expect("token was just confirmed present");
+            record.last_used = now;
+            Some(record.identity.clone())
         }
     }
 
@@ -487,11 +591,13 @@ impl AuthState {
             + Sync
             + 'static,
         token_policy: TokenPolicy,
+        remembered_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
     ) -> Self {
         Self::build(
             Arc::new(verify_credentials),
             token_policy,
+            remembered_policy,
             rate_limit,
             Clock::frozen(),
         )
@@ -567,6 +673,11 @@ pub async fn require_auth(State(auth): State<AuthState>, req: Request, next: Nex
 struct LoginRequest {
     username: String,
     password: String,
+    /// LAN "Remember me" checkbox (spec M11). Defaults to `false` so older
+    /// frontend builds that do not send this field at all keep today's
+    /// regular-`TokenPolicy` behavior unchanged.
+    #[serde(default)]
+    remember: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -600,7 +711,7 @@ async fn login_handler(
 ) -> Response {
     let key = rate_limit_key(peer.map(|addr| addr.ip()), &body.username);
     match auth
-        .login_rate_limited(&key, &body.username, &body.password)
+        .login_rate_limited(&key, &body.username, &body.password, body.remember)
         .await
     {
         LoginOutcome::Success(token) => Json(LoginResponse {
@@ -651,11 +762,14 @@ async fn identity_handler(State(auth): State<AuthState>, req: Request) -> Json<O
 /// `auth_login`/`auth_logout`/`auth_check`/`auth_identity` commands and
 /// `packages/admin-core/src/provider.ts::AuthProvider`):
 ///
-/// - `POST /api/auth/login` — `{ username, password }` -> `{ success, error?, token? }`.
+/// - `POST /api/auth/login` — `{ username, password, remember? }` -> `{ success, error?, token? }`.
 ///   The token travels in the JSON body (not a cookie) since a LAN HTTP
 ///   server has no secure-cookie story; the frontend stores it and attaches
 ///   it as `Authorization: Bearer <token>` on every other request. Repeated
 ///   failures are rate-limited to a `429` (spec §11.2, see [`login_handler`]).
+///   `remember` (spec M11, defaults to `false` when omitted) issues a
+///   long-lived token evaluated against [`AuthState`]'s `remembered_policy`
+///   instead of its regular `token_policy` (see [`TokenPolicy::remembered_default`]).
 /// - `POST /api/auth/logout` — invalidates the bearer token on the request.
 /// - `GET /api/auth/check` — `bool`, whether the bearer token is valid.
 /// - `GET /api/auth/identity` — `Identity | null`.
@@ -794,6 +908,16 @@ mod tests {
     }
 
     fn frozen_auth(token_policy: TokenPolicy, rate_limit: RateLimitPolicy) -> AuthState {
+        frozen_auth_with_remembered(token_policy, TokenPolicy::remembered_default(), rate_limit)
+    }
+
+    /// Like [`frozen_auth`], but also lets a test override the "Remember me"
+    /// policy (spec M11) instead of [`TokenPolicy::remembered_default`].
+    fn frozen_auth_with_remembered(
+        token_policy: TokenPolicy,
+        remembered_policy: TokenPolicy,
+        rate_limit: RateLimitPolicy,
+    ) -> AuthState {
         AuthState::with_frozen_clock(
             |u: String, p: String| {
                 Box::pin(async move {
@@ -809,6 +933,7 @@ mod tests {
                 })
             },
             token_policy,
+            remembered_policy,
             rate_limit,
         )
     }
@@ -904,6 +1029,7 @@ mod tests {
                 })
             },
             TokenPolicy::default(),
+            TokenPolicy::remembered_default(),
             rate_limit,
         );
         (auth, calls)
@@ -920,14 +1046,14 @@ mod tests {
 
         for _ in 0..3 {
             assert!(matches!(
-                auth.login_rate_limited(&key, "admin", "wrong").await,
+                auth.login_rate_limited(&key, "admin", "wrong", false).await,
                 LoginOutcome::InvalidCredentials
             ));
         }
         assert_eq!(calls.load(Ordering::SeqCst), 3, "3 real checks so far");
 
         // The 4th attempt is locked out and must NOT run the verifier.
-        match auth.login_rate_limited(&key, "admin", "wrong").await {
+        match auth.login_rate_limited(&key, "admin", "wrong", false).await {
             LoginOutcome::RateLimited { retry_after } => {
                 assert!(retry_after <= Duration::from_secs(60));
             }
@@ -941,7 +1067,7 @@ mod tests {
 
         // Even the CORRECT password is refused while locked out.
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "admin").await,
+            auth.login_rate_limited(&key, "admin", "admin", false).await,
             LoginOutcome::RateLimited { .. }
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 3);
@@ -957,15 +1083,15 @@ mod tests {
         let key = rate_limit_key(None, "admin");
 
         for _ in 0..3 {
-            auth.login_rate_limited(&key, "admin", "wrong").await;
+            auth.login_rate_limited(&key, "admin", "wrong", false).await;
         }
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "admin").await,
+            auth.login_rate_limited(&key, "admin", "admin", false).await,
             LoginOutcome::RateLimited { .. }
         ));
 
         auth.advance(Duration::from_secs(61)); // ride out the cool-off
-        match auth.login_rate_limited(&key, "admin", "admin").await {
+        match auth.login_rate_limited(&key, "admin", "admin", false).await {
             LoginOutcome::Success(token) => assert!(auth.verify(&token)),
             other => panic!("expected Success after cool-off, got {other:?}"),
         }
@@ -981,19 +1107,120 @@ mod tests {
         let key = rate_limit_key(None, "admin");
 
         // Two failures (one short of the threshold)...
-        auth.login_rate_limited(&key, "admin", "wrong").await;
-        auth.login_rate_limited(&key, "admin", "wrong").await;
+        auth.login_rate_limited(&key, "admin", "wrong", false).await;
+        auth.login_rate_limited(&key, "admin", "wrong", false).await;
         // ...then a success clears the streak.
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "admin").await,
+            auth.login_rate_limited(&key, "admin", "admin", false).await,
             LoginOutcome::Success(_)
         ));
         // Two more failures should NOT lock out (streak restarted at 0).
-        auth.login_rate_limited(&key, "admin", "wrong").await;
+        auth.login_rate_limited(&key, "admin", "wrong", false).await;
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "wrong").await,
+            auth.login_rate_limited(&key, "admin", "wrong", false).await,
             LoginOutcome::InvalidCredentials
         ));
+    }
+
+    // --- Remember me (spec M11) --------------------------------------------
+
+    #[tokio::test]
+    async fn remembered_token_survives_the_regular_absolute_ttl_but_not_forever() {
+        let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+        let key = rate_limit_key(None, "admin");
+
+        let token = match auth.login_rate_limited(&key, "admin", "admin", true).await {
+            LoginOutcome::Success(token) => token,
+            other => panic!("expected Success, got {other:?}"),
+        };
+
+        // Well past the regular 8h absolute_ttl - a non-remembered token
+        // would be dead by now (see `token_expires_after_absolute_ttl_even_with_activity`).
+        auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
+        assert!(
+            auth.verify(&token),
+            "remember:true should survive past the regular TokenPolicy's absolute_ttl"
+        );
+
+        // But it is not immortal: past the remembered policy's own absolute
+        // bound, it must lapse too.
+        auth.advance(TokenPolicy::remembered_default().absolute_ttl);
+        assert!(
+            !auth.verify(&token),
+            "remembered tokens must still expire at their own absolute_ttl"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_remembered_login_still_uses_the_regular_policy() {
+        let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+        let key = rate_limit_key(None, "admin");
+
+        let token = match auth.login_rate_limited(&key, "admin", "admin", false).await {
+            LoginOutcome::Success(token) => token,
+            other => panic!("expected Success, got {other:?}"),
+        };
+
+        auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
+        assert!(
+            !auth.verify(&token),
+            "remember:false (the default) must still expire at the regular absolute_ttl"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_handler_remember_true_issues_a_long_lived_token() {
+        let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+        let router = auth_routes(auth.clone());
+
+        let response = router
+            .oneshot(
+                HttpRequest::post("/api/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"username":"admin","password":"admin","remember":true}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(response).await;
+        assert_eq!(json["success"], true);
+        let token = json["token"].as_str().expect("token").to_string();
+
+        auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
+        assert!(
+            auth.verify(&token),
+            "POST /api/auth/login with remember:true should issue a remembered token"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_handler_omitting_remember_defaults_to_false() {
+        // No `remember` field at all (older-frontend-shaped request body) -
+        // must behave exactly like the pre-M11 wire contract.
+        let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+        let router = auth_routes(auth.clone());
+
+        let response = router
+            .oneshot(
+                HttpRequest::post("/api/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"username":"admin","password":"admin"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let token = body_json(response).await["token"]
+            .as_str()
+            .expect("token")
+            .to_string();
+
+        auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
+        assert!(
+            !auth.verify(&token),
+            "omitting remember must default to false (regular policy)"
+        );
     }
 
     #[tokio::test]

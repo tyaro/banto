@@ -144,10 +144,15 @@ const DEFAULT_STORAGE_KEY = 'banto.auth.token';
 
 /**
  * `AuthProvider` backed by `fetch()` against `/api/auth/*` (spec §11.1/
- * §11.2). The bearer token returned by a successful login is kept in
- * `sessionStorage` (cleared on logout, and on a `401` from `check()` -
- * a stale/expired token should not keep failing silently forever). The
- * returned object exposes `getToken()` beyond the plain `AuthProvider`
+ * §11.2/M11). The bearer token returned by a successful login is normally
+ * kept in `sessionStorage` (cleared on logout, and on a `401` from `check()`
+ * - a stale/expired token should not keep failing silently forever). When
+ * `login()`'s `params.remember` is `true` (spec M11 "LAN Remember me"), the
+ * token is kept in `localStorage` instead, so it survives a browser/tab
+ * restart - `getToken()` checks `localStorage` first, then falls back to
+ * `sessionStorage`, and `setToken()` always clears whichever storage it did
+ * NOT just write to, so a token never ends up duplicated in both at once.
+ * The returned object exposes `getToken()` beyond the plain `AuthProvider`
  * interface so `createHttpDataProvider`/`createSseEventProvider` can share
  * the same token without a second source of truth.
  */
@@ -159,12 +164,23 @@ export function createHttpAuthProvider(
 	const storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
 
 	function getToken(): string | null {
-		return sessionStorage.getItem(storageKey);
+		return localStorage.getItem(storageKey) ?? sessionStorage.getItem(storageKey);
 	}
 
-	function setToken(token: string | null): void {
-		if (token) sessionStorage.setItem(storageKey, token);
-		else sessionStorage.removeItem(storageKey);
+	/** `remember` picks the storage a non-null `token` is written to; a `null` token clears BOTH storages regardless of `remember` (logout/expiry must never leave a stale copy behind in the other one). */
+	function setToken(token: string | null, remember = false): void {
+		if (token) {
+			if (remember) {
+				localStorage.setItem(storageKey, token);
+				sessionStorage.removeItem(storageKey);
+			} else {
+				sessionStorage.setItem(storageKey, token);
+				localStorage.removeItem(storageKey);
+			}
+		} else {
+			localStorage.removeItem(storageKey);
+			sessionStorage.removeItem(storageKey);
+		}
 	}
 
 	function headers(hasBody: boolean): Record<string, string> {
@@ -188,7 +204,7 @@ export function createHttpAuthProvider(
 				return { success: false, error: err.message };
 			}
 			const body = (await response.json()) as { success: boolean; error?: string; token?: string };
-			if (body.success && body.token) setToken(body.token);
+			if (body.success && body.token) setToken(body.token, params.remember === true);
 			return { success: body.success, error: body.error };
 		},
 

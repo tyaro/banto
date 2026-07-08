@@ -18,15 +18,38 @@
  */
 import { getAuthProvider, type Identity } from '@banto/admin-core';
 import { parseRole, type Role } from './permissions';
+import { isTauri } from './banto/setup';
+import { getAuthSettings } from './banto/authAdmin';
 
 class SessionStore {
 	identity: Identity | null = $state(null);
 	role: Role = $state('viewer');
 
-	/** Fetch the current identity and derive `role` from it (fail closed - see `parseRole`). */
+	/**
+	 * Login-not-required mode (spec M11), read via `auth_config_get`. Always
+	 * `false` outside the Tauri webview - that mode is v1-scoped to the
+	 * desktop window only (a LAN browser client/the plain-browser demo never
+	 * have it on), and a failed read (e.g. an older backend without the
+	 * command) fails closed to `false` too, so the UI it gates (hiding the
+	 * logout button/password-change section) never disappears based on an
+	 * error.
+	 */
+	authDisabled = $state(false);
+
+	/** Fetch the current identity and derive `role` from it (fail closed - see `parseRole`), then `authDisabled` (Tauri only). */
 	async load(): Promise<void> {
 		this.identity = await getAuthProvider().getIdentity();
 		this.role = parseRole(this.identity);
+
+		if (!isTauri()) {
+			this.authDisabled = false;
+			return;
+		}
+		try {
+			this.authDisabled = (await getAuthSettings()).disabled;
+		} catch {
+			this.authDisabled = false;
+		}
 	}
 }
 

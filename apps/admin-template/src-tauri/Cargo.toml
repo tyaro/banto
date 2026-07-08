@@ -40,3 +40,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 qrcode = { workspace = true }
 futures-util = { workspace = true }
+# OS keyring storage for the auto-login credential (spec M11). See the
+# workspace `Cargo.toml`'s comment on this dependency for why it lives only
+# here and not on `admin-template-core`.
+keyring = { workspace = true }

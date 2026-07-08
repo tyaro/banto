@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { getAuthProvider } from '@banto/admin-core';
-	import { bantoReady } from '$lib/banto/setup';
+	import { bantoReady, getBantoMode } from '$lib/banto/setup';
 
 	// Undecided until `status()` resolves (or is absent, treated as
 	// "already initialized" - see below): render nothing rather than
@@ -15,9 +15,22 @@
 	let error: string | null = $state(null);
 	let submitting = $state(false);
 
+	// "ログイン状態を保持する" (spec M11 "LAN Remember me"): only meaningful
+	// for a LAN browser client (`createHttpAuthProvider` switches its token's
+	// storage between sessionStorage/localStorage based on this flag). Inside
+	// the Tauri webview a session already lives exactly as long as the window
+	// does, and the plain-browser demo provider has no persistence story at
+	// all - showing the checkbox there would offer a choice that does
+	// nothing, so it's gated on `getBantoMode() === 'server'`. Set once
+	// `bantoReady` resolves (below) - `getBantoMode()` reads the real
+	// environment only after that probe finishes, same as `mode`.
+	let showRemember = $state(false);
+	let remember = $state(false);
+
 	$effect(() => {
 		void (async () => {
 			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
+			showRemember = getBantoMode() === 'server';
 			const status = await getAuthProvider().status?.();
 			// No `status()` on this provider (an older/custom AuthProvider,
 			// spec §3.3's members are optional for backward compatibility):
@@ -32,7 +45,12 @@
 		error = null;
 		submitting = true;
 		try {
-			const result = await getAuthProvider().login({ username, password });
+			const params: Record<string, unknown> = { username, password };
+			// Only sent when the checkbox is actually shown (LAN browser mode -
+			// see `showRemember` above); omitting it elsewhere keeps the wire
+			// body identical to the pre-M11 shape.
+			if (showRemember && remember) params.remember = true;
+			const result = await getAuthProvider().login(params);
 			if (result.success) {
 				goto('/dashboard');
 			} else {
@@ -125,6 +143,13 @@
 				<input type="password" bind:value={password} autocomplete="current-password" />
 			</label>
 
+			{#if showRemember}
+				<label class="remember">
+					<input type="checkbox" bind:checked={remember} />
+					ログイン状態を保持する（30日間）
+				</label>
+			{/if}
+
 			{#if error}
 				<p class="error">{error}</p>
 			{/if}
@@ -184,6 +209,18 @@
 	input:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
+	}
+
+	.remember {
+		flex-direction: row;
+		align-items: center;
+		gap: 0.4rem;
+		cursor: pointer;
+	}
+
+	.remember input {
+		padding: 0;
+		width: auto;
 	}
 
 	.error {
