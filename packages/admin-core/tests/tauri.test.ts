@@ -76,6 +76,7 @@ describe('createTauriDataProvider', () => {
 			{ kind: 'not_found', resource: 'items', id: '1' },
 			{ kind: 'validation', field_errors: [{ field: 'name', message: '必須項目です' }] },
 			{ kind: 'unauthorized' },
+			{ kind: 'forbidden' },
 			{ kind: 'storage', message: 'db is locked' },
 			{ kind: 'other', message: 'boom' }
 		];
@@ -179,6 +180,31 @@ describe('createTauriAuthProvider', () => {
 		const identity = await provider.getIdentity();
 
 		expect(identity).toBeNull();
+	});
+
+	it('getIdentity passes the role through unchanged (spec M10 RBAC)', async () => {
+		const invoke = vi.fn().mockResolvedValue({ id: 'owner', name: 'オーナー', role: 'admin' });
+		const provider = createTauriAuthProvider({ invoke });
+
+		const identity = await provider.getIdentity();
+
+		expect(identity).toEqual({ id: 'owner', name: 'オーナー', role: 'admin' });
+	});
+
+	it('a rejected invoke() carrying a forbidden ErrorBody (spec M10 RBAC) rethrows faithfully', async () => {
+		const invoke = vi.fn().mockRejectedValue({ kind: 'forbidden' });
+		const provider = createTauriDataProvider({ invoke });
+
+		try {
+			await provider.deleteOne('users', 1);
+			expect.unreachable('expected a ProviderError to be thrown');
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) {
+				expect(err.body).toEqual({ kind: 'forbidden' });
+				expect(err.message).toBe('この操作を行う権限がありません');
+			}
+		}
 	});
 
 	it('status calls auth_status and returns its initialized flag', async () => {

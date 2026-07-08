@@ -16,6 +16,16 @@ export interface DataProvider {
 export interface Identity {
 	id: string;
 	name: string;
+	/**
+	 * Spec M10 RBAC: the account's role (`'admin' | 'editor' | 'viewer'`,
+	 * lowercase, matching `admin_template_core::users::Role::as_str`/the
+	 * Tauri `Identity`/REST `/api/auth/identity` wire shape). Optional here
+	 * so this generic contract stays usable by an `AuthProvider` that has no
+	 * concept of roles at all — callers that care (this app's
+	 * `$lib/permissions.ts`) must treat a missing/unrecognized value as the
+	 * least-privileged role (fail closed), not assume it is always present.
+	 */
+	role?: string;
 }
 
 /** Authentication abstraction used by the route guard and login page. */

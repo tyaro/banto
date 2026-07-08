@@ -23,7 +23,7 @@ export interface TauriInvokeOptions {
 	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'storage', 'other']);
+const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
 
 /** Type guard: does `value` look like a wire `ErrorBody` (spec §3.2/§10)? */
 function isErrorBody(value: unknown): value is ErrorBody {

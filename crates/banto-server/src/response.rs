@@ -26,6 +26,7 @@ fn status_for(err: &BantoError) -> StatusCode {
         BantoError::NotFound { .. } => StatusCode::NOT_FOUND,
         BantoError::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         BantoError::Unauthorized => StatusCode::UNAUTHORIZED,
+        BantoError::Forbidden => StatusCode::FORBIDDEN,
         BantoError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
         BantoError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
@@ -66,6 +67,7 @@ mod tests {
             status_for(&BantoError::Unauthorized),
             StatusCode::UNAUTHORIZED
         );
+        assert_eq!(status_for(&BantoError::Forbidden), StatusCode::FORBIDDEN);
         assert_eq!(
             status_for(&BantoError::Storage("boom".to_string())),
             StatusCode::INTERNAL_SERVER_ERROR

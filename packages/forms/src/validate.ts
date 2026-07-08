@@ -56,11 +56,17 @@ export function validateField(
 			if (def.max !== undefined && num > def.max) return msg.max(def, def.max);
 		}
 
-		if (def.type === 'text' || def.type === 'textarea') {
+		if (def.type === 'text' || def.type === 'textarea' || def.type === 'password') {
 			const str = String(value);
 			// Length bounds are checked against the TRIMMED length, matching
 			// Rust's `trimmed_name.chars().count() > MAX_NAME_LEN` (items.rs)
 			// exactly. `pattern` still tests the raw (untrimmed) string.
+			//
+			// 'password' shares this branch (M10 RBAC's user-management create
+			// form uses `min: 8` for its password field) - trimming a password
+			// is a little odd in principle, but matches every other field's
+			// semantics and a password that is only whitespace should be
+			// rejected either way.
 			const trimmedLen = str.trim().length;
 			if (def.min !== undefined && trimmedLen < def.min) return msg.minLength(def, def.min);
 			if (def.max !== undefined && trimmedLen > def.max) return msg.maxLength(def, def.max);

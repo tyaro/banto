@@ -2,10 +2,18 @@
 	import { page } from '$app/state';
 	import { navItems } from '$lib/navigation';
 	import { settings } from '$lib/settings.svelte';
+	import { sessionStore } from '$lib/session.svelte';
+	import { isAdmin } from '$lib/permissions';
 
 	function isActive(path: string): boolean {
 		return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
 	}
+
+	// Spec M10 RBAC: hide admin-only entries (「ユーザー管理」) rather than
+	// showing them disabled - navigation-level hiding, same as
+	// routes/(app)/users/+page.ts redirecting a non-admin instead of
+	// rendering a 403 screen.
+	const visibleItems = $derived(navItems.filter((item) => !item.adminOnly || isAdmin(sessionStore.role)));
 </script>
 
 <aside class:collapsed={settings.sidebarCollapsed}>
@@ -17,7 +25,7 @@
 	</div>
 
 	<nav>
-		{#each navItems as item (item.path)}
+		{#each visibleItems as item (item.path)}
 			<a
 				href={item.path}
 				class:active={isActive(item.path)}

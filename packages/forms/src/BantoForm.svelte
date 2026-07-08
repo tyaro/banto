@@ -8,6 +8,7 @@
 	import type { FieldDef, FormSchema } from './types';
 	import type { FormStore } from './store.svelte';
 	import TextField from './fields/TextField.svelte';
+	import PasswordField from './fields/PasswordField.svelte';
 	import TextareaField from './fields/TextareaField.svelte';
 	import NumberField from './fields/NumberField.svelte';
 	import DateField from './fields/DateField.svelte';
@@ -34,6 +35,8 @@
 
 	function fieldComponent(def: FieldDef) {
 		switch (def.type) {
+			case 'password':
+				return PasswordField;
 			case 'textarea':
 				return TextareaField;
 			case 'number':

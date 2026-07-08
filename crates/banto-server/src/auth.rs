@@ -50,10 +50,19 @@ use uuid::Uuid;
 /// adapter rely on this to recover "which account is this session for"
 /// (e.g. for `change-password`) from nothing but the `Identity` a session
 /// is keyed on.
+///
+/// `role` (spec M10 RBAC) is carried as a plain string, not an enum:
+/// `banto-server` is resource/policy-agnostic (see this module's doc
+/// comment) and has no `Role` type of its own - it just ferries whatever
+/// the app crate's credential verifier put here back out again. Callers
+/// that need to make a decision based on it (`admin-template-core::rest`'s
+/// role-guard middleware, `src-tauri`'s `require_role`) parse it into their
+/// own `Role` type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     pub id: String,
     pub name: String,
+    pub role: String,
 }
 
 /// Verifies a `username`/`password` pair against whatever credential store
@@ -680,6 +689,7 @@ mod tests {
                     Some(Identity {
                         id: "admin".to_string(),
                         name: "管理者".to_string(),
+                        role: "admin".to_string(),
                     })
                 } else {
                     None
@@ -766,6 +776,7 @@ mod tests {
         let token = auth.issue_token(Identity {
             id: "owner".to_string(),
             name: "オーナー".to_string(),
+            role: "admin".to_string(),
         });
         assert!(auth.verify(&token));
         assert_eq!(auth.identity_for(&token).unwrap().id, "owner");
@@ -790,6 +801,7 @@ mod tests {
                         Some(Identity {
                             id: "admin".to_string(),
                             name: "管理者".to_string(),
+                            role: "admin".to_string(),
                         })
                     } else {
                         None
@@ -856,6 +868,7 @@ mod tests {
         let fresh = auth.issue_token(Identity {
             id: "admin".to_string(),
             name: "管理者".to_string(),
+            role: "admin".to_string(),
         });
         assert!(auth.verify(&fresh));
         assert_eq!(
@@ -883,6 +896,7 @@ mod tests {
                         Some(Identity {
                             id: "admin".to_string(),
                             name: "管理者".to_string(),
+                            role: "admin".to_string(),
                         })
                     } else {
                         None

@@ -4,9 +4,20 @@
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
+	import { sessionStore } from '$lib/session.svelte';
+	import { canWriteResources } from '$lib/permissions';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;
+
+	// Spec M10 RBAC: `viewer` can still open this page to look at a record
+	// (row-click navigation to it is allowed, per the items list page), but
+	// may not save or delete. `BantoForm`'s `submitting` prop disables every
+	// field AND the submit button together (there is no separate "read-only"
+	// prop) - reusing it here for `!canWrite` doubles as "make the whole form
+	// read-only", which is a fine RBAC outcome, not just an incidental side
+	// effect: a viewer can't usefully edit fields it can never save anyway.
+	const canWrite = $derived(canWriteResources(sessionStore.role));
 	// SvelteKit creates a fresh component instance per [id] value, so reading
 	// the param once at setup time is enough (no need for $derived here).
 	//
@@ -52,7 +63,12 @@
 	});
 
 	async function handleSubmit(values: Record<string, unknown>) {
-		if (!formResource) return;
+		// Defense in depth (spec M10 RBAC): the submit button is disabled for
+		// `!canWrite` via BantoForm's `submitting` prop above, but the backend
+		// is the real enforcement point either way (a `viewer` calling
+		// items_update/PUT gets `BantoError::Forbidden`) - this guard just
+		// avoids a pointless round trip.
+		if (!formResource || !canWrite) return;
 		const result = await formResource.submit(values);
 		if (result.ok) {
 			goto('/items');
@@ -62,7 +78,7 @@
 	}
 
 	async function handleDelete() {
-		if (!formResource) return;
+		if (!formResource || !canWrite) return;
 		if (!window.confirm('削除しますか？')) return;
 		const removed = await formResource.remove();
 		if (removed) goto('/items');
@@ -85,9 +101,11 @@
 			<a href="/items">一覧へ戻る</a>
 		</p>
 	{:else if storeReady}
-		<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={formResource?.saving ?? false}>
+		<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={(formResource?.saving ?? false) || !canWrite}>
 			{#snippet children()}
-				<button type="button" class="delete" onclick={handleDelete}>削除</button>
+				{#if canWrite}
+					<button type="button" class="delete" onclick={handleDelete}>削除</button>
+				{/if}
 			{/snippet}
 		</BantoForm>
 	{/if}

@@ -24,7 +24,7 @@ use admin_template_core::events::event_channel;
 use admin_template_core::items::{Item, ItemInput, ItemsService};
 use admin_template_core::rest::api_router;
 use admin_template_core::settings::{ServerSettings, SettingsService};
-use admin_template_core::users::{UserIdentity, UsersService};
+use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
 use banto_core::{BantoError, ListParams, ListResult};
 use banto_server::{
     lan_urls, start, static_router, AuthState, Identity as RestIdentity, RunningServer,
@@ -85,6 +85,12 @@ struct LoginResult {
 struct Identity {
     id: String,
     name: String,
+    /// Spec M10 RBAC: the account's role, as its lowercase wire string (see
+    /// `admin_template_core::users::Role::as_str`) - kept a plain `String`
+    /// here rather than `Role` itself so this wire type does not need
+    /// `Role: Deserialize` for a command return value that is only ever
+    /// serialized outbound.
+    role: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,6 +107,24 @@ fn identity_from(user: &UserIdentity) -> Identity {
     Identity {
         id: user.username.clone(),
         name: user.display_name.clone(),
+        role: user.role.to_string(),
+    }
+}
+
+/// Require an active webview session with at least role `min` (spec M10
+/// RBAC), returning the caller's [`UserIdentity`] on success so callers that
+/// also need "which account is this" (e.g. `users_delete`'s self-deletion
+/// guard) do not have to re-lock `state.auth`. No session at all ->
+/// `BantoError::Unauthorized` (401-equivalent); a session that exists but is
+/// under-privileged -> `BantoError::Forbidden` (403-equivalent) - mirrors
+/// `admin_template_core::rest`'s `require_auth` then `require_role_at_least`
+/// distinction on the REST side.
+fn require_role(state: &AppState, min: Role) -> Result<UserIdentity, BantoError> {
+    let guard = state.auth.lock().expect("auth mutex poisoned");
+    match guard.as_ref() {
+        Some(identity) if identity.role.at_least(min) => Ok(identity.clone()),
+        Some(_) => Err(BantoError::Forbidden),
+        None => Err(BantoError::Unauthorized),
     }
 }
 
@@ -120,6 +144,7 @@ fn rest_credential_verifier(
                 Ok(Some(identity)) => Some(RestIdentity {
                     id: identity.username,
                     name: identity.display_name,
+                    role: identity.role.to_string(),
                 }),
                 _ => None,
             }
@@ -133,21 +158,26 @@ fn ping() -> &'static str {
     concat!("banto ", env!("CARGO_PKG_VERSION"))
 }
 
+/// Read-only (spec M10 RBAC): any authenticated role (`viewer` and up), so
+/// `require_role`'s floor is the least-privileged role.
 #[tauri::command]
 async fn items_list(
     state: State<'_, AppState>,
     params: ListParams,
 ) -> Result<ListResult<Item>, BantoError> {
+    require_role(&state, Role::Viewer)?;
     state.items.list(params).await
 }
 
 #[tauri::command]
 async fn items_get(state: State<'_, AppState>, id: i64) -> Result<Item, BantoError> {
+    require_role(&state, Role::Viewer)?;
     state.items.get(id).await
 }
 
 #[tauri::command]
 async fn items_create(state: State<'_, AppState>, values: ItemInput) -> Result<Item, BantoError> {
+    require_role(&state, Role::Editor)?;
     state.items.create(values).await
 }
 
@@ -157,11 +187,13 @@ async fn items_update(
     id: i64,
     values: ItemInput,
 ) -> Result<Item, BantoError> {
+    require_role(&state, Role::Editor)?;
     state.items.update(id, values).await
 }
 
 #[tauri::command]
 async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    require_role(&state, Role::Editor)?;
     state.items.delete(id).await
 }
 
@@ -351,9 +383,10 @@ async fn start_embedded_server(
 }
 
 /// `GET`-ish command: current persisted settings + live running state (spec
-/// §11.4's status line).
+/// §11.4's status line). `admin`-only (spec M10: "サーバ制御系 = admin").
 #[tauri::command]
 async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusResult, BantoError> {
+    require_role(&state, Role::Admin)?;
     let config = state.settings.server_config().await?;
     let running = state.server.lock().await.is_some();
     Ok(build_status(&config, running))
@@ -373,6 +406,7 @@ async fn server_apply(
     bind: String,
     port: u16,
 ) -> Result<ServerStatusResult, BantoError> {
+    require_role(&state, Role::Admin)?;
     let config = ServerSettings {
         enabled,
         bind,
@@ -415,13 +449,104 @@ async fn settings_get(
     state.settings.get(&key).await
 }
 
+/// `admin`-only (spec M10): writing settings (which include the embedded
+/// server's enable/bind/port via `server_apply` and, generically, anything
+/// else stored through this key/value command) is a privileged action.
 #[tauri::command]
 async fn settings_set(
     state: State<'_, AppState>,
     key: String,
     value: String,
 ) -> Result<(), BantoError> {
+    require_role(&state, Role::Admin)?;
     state.settings.set(&key, &value).await
+}
+
+/// Wire shape returned by `users_create` (spec M10): everything
+/// `UserIdentity` carries, `Serialize`d for the Tauri command boundary
+/// (`UserIdentity` itself is not `Serialize` - see its doc comment in
+/// `admin_template_core::users`). No `createdAt` (unlike [`UserSummary`],
+/// which `users_list`/`users_update` return): `UsersService::create_user`
+/// does not read it back from the DB, only the row it just inserted.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserIdentityResult {
+    id: i64,
+    username: String,
+    display_name: String,
+    role: Role,
+}
+
+impl From<UserIdentity> for UserIdentityResult {
+    fn from(identity: UserIdentity) -> Self {
+        Self {
+            id: identity.id,
+            username: identity.username,
+            display_name: identity.display_name,
+            role: identity.role,
+        }
+    }
+}
+
+/// `admin`-only (spec M10): the user-management screen's account list.
+#[tauri::command]
+async fn users_list(state: State<'_, AppState>) -> Result<Vec<UserSummary>, BantoError> {
+    require_role(&state, Role::Admin)?;
+    state.users.list_users().await
+}
+
+/// `admin`-only (spec M10): create an additional account.
+#[tauri::command]
+async fn users_create(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+    display_name: String,
+    role: Role,
+) -> Result<UserIdentityResult, BantoError> {
+    require_role(&state, Role::Admin)?;
+    let identity = state
+        .users
+        .create_user(&username, &password, &display_name, role)
+        .await?;
+    Ok(identity.into())
+}
+
+/// `admin`-only (spec M10): update an account's display name/role. Refuses
+/// to demote the last remaining `admin` (`UsersService::update_user`'s
+/// guard).
+#[tauri::command]
+async fn users_update(
+    state: State<'_, AppState>,
+    id: i64,
+    display_name: String,
+    role: Role,
+) -> Result<UserSummary, BantoError> {
+    require_role(&state, Role::Admin)?;
+    state.users.update_user(id, &display_name, role).await
+}
+
+/// `admin`-only (spec M10): reset another account's password without
+/// knowing its current one (unlike self-service `auth_change_password`).
+#[tauri::command]
+async fn users_reset_password(
+    state: State<'_, AppState>,
+    id: i64,
+    new_password: String,
+) -> Result<(), BantoError> {
+    require_role(&state, Role::Admin)?;
+    state.users.reset_password(id, &new_password).await
+}
+
+/// `admin`-only (spec M10): delete an account. Refuses to delete the last
+/// remaining `admin` or the caller's own account
+/// (`UsersService::delete_user`'s guards) - the acting admin's id comes
+/// from the session `require_role` just verified, not from an argument, so
+/// a caller cannot spoof a different acting user.
+#[tauri::command]
+async fn users_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let acting = require_role(&state, Role::Admin)?;
+    state.users.delete_user(id, acting.id).await
 }
 
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
@@ -582,6 +707,11 @@ pub fn run() {
             server_apply,
             settings_get,
             settings_set,
+            users_list,
+            users_create,
+            users_update,
+            users_reset_password,
+            users_delete,
             panel_open,
         ])
         .run(tauri::generate_context!())

@@ -52,7 +52,24 @@ export function isTauri(): boolean {
 	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-const CSRF_HEADER = { 'X-Banto-Client': 'banto' } as const;
+/** Shared with usersAdmin.ts (spec M10's `/api/users/*` calls need the same CSRF header every other fetch() here sends). */
+export const CSRF_HEADER = { 'X-Banto-Client': 'banto' } as const;
+
+/**
+ * Which of the three spec §11.1 environments this tab ended up wired to -
+ * `usersAdmin.ts` (spec M10) needs this to pick invoke() vs fetch() vs "not
+ * available", the same three-way split `bantoReady` below already resolves,
+ * just exposed as a plain synchronous read instead of re-running the async
+ * probe. Set exactly once, at the end of whichever `bantoReady` branch runs;
+ * defaults to 'demo' so a read before `bantoReady` resolves (should not
+ * happen - see that promise's own doc comment) fails toward "unavailable"
+ * rather than silently guessing 'tauri'/'server'.
+ */
+export type BantoMode = 'tauri' | 'server' | 'demo';
+let bantoMode: BantoMode = 'demo';
+export function getBantoMode(): BantoMode {
+	return bantoMode;
+}
 
 /**
  * Is this plain-browser tab being served by the embedded Banto server
@@ -132,7 +149,13 @@ const demoAuthProvider: AuthProvider = {
 		return isSessionAuthed();
 	},
 	async getIdentity() {
-		return isSessionAuthed() ? { id: 'admin', name: '管理者' } : null;
+		// Spec M10 RBAC: the demo provider's one fixed account is always
+		// full 'admin' - this is the only environment where usersAdmin.ts is
+		// unconditionally unavailable anyway (see isUsersAdminAvailable()),
+		// so this only matters for permissions.ts-gated UI elsewhere (nav,
+		// items page, settings page), which should behave exactly as if a
+		// real admin were logged in.
+		return isSessionAuthed() ? { id: 'admin', name: '管理者', role: 'admin' } : null;
 	},
 	// Always "initialized": the demo provider's admin/admin account always
 	// exists, so the login page never shows the first-run setup form here
@@ -159,6 +182,7 @@ const demoAuthProvider: AuthProvider = {
  */
 export const bantoReady: Promise<void> = (async () => {
 	if (isTauri()) {
+		bantoMode = 'tauri';
 		const dataProvider = createTauriDataProvider({ invoke });
 		const authProvider = createTauriAuthProvider({ invoke });
 		initBanto({ dataProvider, authProvider, notifier, resources: [itemsResource] });
@@ -172,6 +196,7 @@ export const bantoReady: Promise<void> = (async () => {
 	}
 
 	if (await isEmbeddedServer()) {
+		bantoMode = 'server';
 		const authProvider = createHttpAuthProvider();
 		const dataProvider = createHttpDataProvider({ getToken: authProvider.getToken });
 		initBanto({ dataProvider, authProvider, notifier, resources: [itemsResource] });
@@ -180,6 +205,7 @@ export const bantoReady: Promise<void> = (async () => {
 	}
 
 	// Plain `vite dev`/`vite preview`: no Banto backend at all, no EventProvider.
+	bantoMode = 'demo';
 	initBanto({
 		dataProvider: createInMemoryDataProvider({ items: { rows: sampleItems } }),
 		authProvider: demoAuthProvider,
