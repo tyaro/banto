@@ -15,6 +15,10 @@ export { default as ComboChart } from './ComboChart.svelte';
 export { default as RadarChart } from './RadarChart.svelte';
 export { default as Heatmap } from './Heatmap.svelte';
 export { default as Gauge } from './Gauge.svelte';
+// M13 new chart types (roadmap.md M13, SPC/QC): histogram, Pareto, box plot.
+export { default as Histogram } from './Histogram.svelte';
+export { default as ParetoChart } from './ParetoChart.svelte';
+export { default as BoxPlot } from './BoxPlot.svelte';
 
 export type {
 	Accessor,
@@ -67,3 +71,4 @@ export { histogramBins, normalCurvePoints, type Bin } from './core/bins';
 export { paretoData, type ParetoItem, type ParetoDatum } from './core/pareto';
 export { boxStats, quantileSorted, type BoxStats } from './core/boxplot';
 export { rollingAppend, evictBefore } from './core/rolling';
+export { serializeChartSvg, downloadSvg, inlineCssVarRefs } from './core/export';
