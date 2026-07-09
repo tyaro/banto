@@ -26,6 +26,18 @@
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
 //! | POST   | `/api/users/{id}/reset-password` | `{newPassword}` | `{success}` (admin) |
 //! | DELETE | `/api/users/{id}`    | -              | 204 (admin)             |
+//! | GET    | `/api/ui-settings/{key}` | -          | `{value: string \| null}` (any role) |
+//! | PUT    | `/api/ui-settings/{key}` | `{value}`  | 204 (any role)          |
+//!
+//! `/api/ui-settings/*` (spec M12 SettingsProvider migration): per-user UI
+//! settings (theme/preset/dock layout), namespaced by the caller's own
+//! `username` (`SettingsService::ui_get`/`ui_set` - see that module for the
+//! `ui.{username}.{key}` storage key scheme). Guarded by `require_auth`
+//! alone - unlike `items`/`users`, there is no role floor: a `viewer` may
+//! freely read/write their OWN UI preferences, they just cannot touch
+//! anyone else's (there is no way to name another user's key over this
+//! wire - `username` always comes from the caller's own bearer token, never
+//! a request parameter).
 //!
 //! `/api/auth/status` and `/api/auth/setup` are deliberately NOT behind
 //! `require_auth` - the login page needs `status` before any session exists,
@@ -73,6 +85,7 @@ use std::str::FromStr;
 use tokio::sync::broadcast;
 
 use crate::items::{Item, ItemInput, ItemsService};
+use crate::settings::SettingsService;
 use crate::users::{Role, UserIdentity, UserSummary, UsersService};
 
 async fn items_list(
@@ -494,17 +507,90 @@ fn extra_auth_router(users: UsersService, auth: AuthState, allow_setup: bool) ->
         .with_state(state)
 }
 
+/// State for the `/api/ui-settings/*` handlers (spec M12): `SettingsService`
+/// for the per-user key/value store itself, plus `AuthState` to resolve the
+/// caller's own `username` from the bearer token `require_auth` already
+/// validated (same pattern as [`UsersAuthState`]/[`acting_user`] above).
+#[derive(Clone)]
+struct UiSettingsState {
+    settings: SettingsService,
+    auth: AuthState,
+}
+
+#[derive(Debug, Serialize)]
+struct UiSettingValueResponse {
+    value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UiSettingSetRequest {
+    value: String,
+}
+
+/// Resolve the calling session's `username` (spec convention: bearer-token
+/// `Identity.id` IS the username, see `banto_server::auth::Identity`'s doc
+/// comment) from its bearer token. `require_auth` has already proven the
+/// token valid by the time a `/api/ui-settings/*` handler runs, so this
+/// should always succeed; `Unauthorized` here is a defensive fallback (e.g.
+/// the token expired between `require_auth` and this handler running), not
+/// an expected path - mirrors [`acting_user`] above.
+fn acting_username(headers: &HeaderMap, auth: &AuthState) -> Result<String, BantoError> {
+    bearer_token(headers)
+        .and_then(|token| auth.identity_for(token))
+        .map(|identity| identity.id)
+        .ok_or(BantoError::Unauthorized)
+}
+
+async fn ui_settings_get(
+    State(state): State<UiSettingsState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<UiSettingValueResponse>, ApiError> {
+    let username = acting_username(&headers, &state.auth)?;
+    let value = state.settings.ui_get(&username, &key).await?;
+    Ok(Json(UiSettingValueResponse { value }))
+}
+
+async fn ui_settings_set(
+    State(state): State<UiSettingsState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<UiSettingSetRequest>,
+) -> Result<StatusCode, ApiError> {
+    let username = acting_username(&headers, &state.auth)?;
+    state.settings.ui_set(&username, &key, &body.value).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `/api/ui-settings/*` (spec M12): `require_auth` only, no
+/// [`require_role_at_least`] floor - see this module's doc comment for why
+/// (every route here only ever touches the caller's OWN namespaced keys).
+fn ui_settings_router(settings: SettingsService, auth: AuthState) -> Router {
+    let state = UiSettingsState {
+        settings,
+        auth: auth.clone(),
+    };
+    Router::new()
+        .route(
+            "/api/ui-settings/{key}",
+            get(ui_settings_get).put(ui_settings_set),
+        )
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server`, plus status/setup/
 /// change-password here since those need `UsersService`), SSE events, the
-/// `items` CRUD routes (RBAC-split read/write, spec M10), and the
-/// `admin`-only `users` management routes (spec M10), all behind the CSRF
-/// header check. Mount the result *before*
-/// `banto_server::static_files::static_router` so `/api/*` takes priority
-/// over the SPA fallback.
+/// `items` CRUD routes (RBAC-split read/write, spec M10), the
+/// `admin`-only `users` management routes (spec M10), and the per-user
+/// `ui-settings` routes (spec M12), all behind the CSRF header check. Mount
+/// the result *before* `banto_server::static_files::static_router` so
+/// `/api/*` takes priority over the SPA fallback.
 pub fn api_router(
     items: ItemsService,
     users: UsersService,
+    settings: SettingsService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     allow_setup: bool,
@@ -514,7 +600,8 @@ pub fn api_router(
         .merge(extra_auth_router(users.clone(), auth.clone(), allow_setup))
         .merge(sse_route(auth.clone(), events))
         .merge(items_router(items, auth.clone()))
-        .merge(users_router(users, auth))
+        .merge(users_router(users, auth.clone()))
+        .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))
 }
 
@@ -559,7 +646,8 @@ mod tests {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-        let users = UsersService::new(pool);
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool);
 
         users
             .setup_first_user("admin", "password123", "管理者")
@@ -602,7 +690,7 @@ mod tests {
             .await
             .expect("viewer login");
         (
-            api_router(items, users, auth, tx, false),
+            api_router(items, users, settings, auth, tx, false),
             admin_token,
             editor_token,
             viewer_token,
@@ -613,13 +701,14 @@ mod tests {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-        let users = UsersService::new(pool);
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool);
         let auth = demo_auth();
         let token = auth
             .login("admin", "admin")
             .await
             .expect("login should succeed");
-        (api_router(items, users, auth, tx, false), token)
+        (api_router(items, users, settings, auth, tx, false), token)
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -816,10 +905,11 @@ mod tests {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, mut rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-        let users = UsersService::new(pool);
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool);
         let auth = demo_auth();
         let token = auth.login("admin", "admin").await.unwrap();
-        let router = api_router(items, users, auth, tx, false);
+        let router = api_router(items, users, settings, auth, tx, false);
 
         let create_response = router
             .clone()
@@ -876,9 +966,10 @@ mod tests {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-        let users = UsersService::new(pool);
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool);
         let auth = demo_auth();
-        api_router(items, users, auth, tx, allow_setup)
+        api_router(items, users, settings, auth, tx, allow_setup)
     }
 
     fn get(path: &str) -> HttpRequest<Body> {
@@ -1066,7 +1157,8 @@ mod tests {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-        let users = UsersService::new(pool);
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool);
         let verify_users = users.clone();
         let auth = AuthState::new(move |u: String, p: String| {
             let users = verify_users.clone();
@@ -1081,7 +1173,7 @@ mod tests {
                 }
             })
         });
-        api_router(items, users, auth, tx, allow_setup)
+        api_router(items, users, settings, auth, tx, allow_setup)
     }
 
     #[tokio::test]
@@ -1381,5 +1473,123 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- M12 per-user UI settings ------------------------------------------
+
+    fn put_ui_setting(key: &str, token: &str, value: &str) -> HttpRequest<Body> {
+        put_json(
+            &format!("/api/ui-settings/{key}"),
+            token,
+            json!({ "value": value }),
+        )
+    }
+
+    #[tokio::test]
+    async fn ui_settings_round_trip_via_rest() {
+        let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+        // Unset key reads back as {"value": null}.
+        let response = router
+            .clone()
+            .oneshot(get_auth("/api/ui-settings/theme", &viewer))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_json(response).await["value"].is_null());
+
+        // PUT then GET round-trips - and note this is the VIEWER role:
+        // writing your own UI settings needs no role floor (unlike
+        // `settings_set`/`/api/users`).
+        let put_response = router
+            .clone()
+            .oneshot(put_ui_setting("theme", &viewer, "glass"))
+            .await
+            .unwrap();
+        assert_eq!(put_response.status(), StatusCode::NO_CONTENT);
+
+        let response = router
+            .oneshot(get_auth("/api/ui-settings/theme", &viewer))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["value"], "glass");
+    }
+
+    #[tokio::test]
+    async fn ui_settings_are_isolated_per_user() {
+        let (router, admin, editor, _viewer) = router_with_role_tokens().await;
+
+        let put_response = router
+            .clone()
+            .oneshot(put_ui_setting("theme", &admin, "glass"))
+            .await
+            .unwrap();
+        assert_eq!(put_response.status(), StatusCode::NO_CONTENT);
+
+        // The admin's value must NOT be visible to the editor's session -
+        // each account reads its own `ui.{username}.*` namespace.
+        let response = router
+            .clone()
+            .oneshot(get_auth("/api/ui-settings/theme", &editor))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(body_json(response).await["value"].is_null());
+
+        // And the admin still sees their own value.
+        let response = router
+            .oneshot(get_auth("/api/ui-settings/theme", &admin))
+            .await
+            .unwrap();
+        assert_eq!(body_json(response).await["value"], "glass");
+    }
+
+    #[tokio::test]
+    async fn ui_settings_reject_an_invalid_key_with_422_validation() {
+        let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+        // `%20` decodes to a space in the path param - an invalid key char.
+        let response = router
+            .clone()
+            .oneshot(put_ui_setting("bad%20key!", &viewer, "x"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = body_json(response).await;
+        assert_eq!(json["kind"], "validation");
+        assert_eq!(json["field_errors"][0]["field"], "key");
+
+        let response = router
+            .oneshot(get_auth("/api/ui-settings/bad%20key!", &viewer))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn ui_settings_routes_are_unauthorized_without_a_token() {
+        let (router, _admin, _editor, _viewer) = router_with_role_tokens().await;
+
+        let response = router
+            .clone()
+            .oneshot(get("/api/ui-settings/theme"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router
+            .oneshot(post_json(
+                "/api/ui-settings/theme",
+                json!({ "value": "glass" }),
+            ))
+            .await
+            .unwrap();
+        // POST is not a registered method on this route, but the request
+        // must still die at `require_auth` (401), not reach any handler.
+        assert!(
+            response.status() == StatusCode::UNAUTHORIZED
+                || response.status() == StatusCode::METHOD_NOT_ALLOWED
+        );
     }
 }

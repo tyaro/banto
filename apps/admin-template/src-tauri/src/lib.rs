@@ -487,6 +487,7 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 async fn start_embedded_server(
     items: ItemsService,
     users: UsersService,
+    settings: SettingsService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
@@ -495,8 +496,8 @@ async fn start_embedded_server(
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
     // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
-    let router =
-        api_router(items, users, auth, events, false).merge(static_router::<FrontendAssets>());
+    let router = api_router(items, users, settings, auth, events, false)
+        .merge(static_router::<FrontendAssets>());
     start(config, router).await
 }
 
@@ -541,6 +542,7 @@ async fn server_apply(
             start_embedded_server(
                 state.items.clone(),
                 state.users.clone(),
+                state.settings.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -578,6 +580,134 @@ async fn settings_set(
 ) -> Result<(), BantoError> {
     require_role(&state, Role::Admin)?;
     state.settings.set(&key, &value).await
+}
+
+// --- M12: per-user UI settings + window vibrancy ----------------------------
+
+/// Read one of the calling user's OWN UI settings (spec M12
+/// SettingsProvider migration: theme mode/preset, dock layout). Any
+/// authenticated role - unlike `settings_get`/`settings_set` these only ever
+/// touch keys namespaced under the caller's own username
+/// (`SettingsService::ui_get`'s `ui.{username}.{key}` scheme), so no
+/// privilege is involved. In auth-disabled mode (spec M11) the synthetic
+/// session's username is `"local"`, so all UI settings share that one
+/// namespace - consistent with that mode's "the whole device is one trusted
+/// user" framing.
+#[tauri::command]
+async fn ui_settings_get(
+    state: State<'_, AppState>,
+    key: String,
+) -> Result<Option<String>, BantoError> {
+    let identity = require_role(&state, Role::Viewer)?;
+    state.settings.ui_get(&identity.username, &key).await
+}
+
+/// Write one of the calling user's OWN UI settings (spec M12). Any
+/// authenticated role - deliberately NOT `admin`-gated like `settings_set`,
+/// see [`ui_settings_get`]'s doc comment.
+#[tauri::command]
+async fn ui_settings_set(
+    state: State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), BantoError> {
+    let identity = require_role(&state, Role::Viewer)?;
+    state
+        .settings
+        .ui_set(&identity.username, &key, &value)
+        .await
+}
+
+/// Settings key for the desktop vibrancy toggle (spec M12): a GLOBAL
+/// setting ("true"/"false", default off), not a per-user `ui.*` one - it
+/// changes the physical window every user of this desktop install shares.
+const KEY_DESKTOP_VIBRANCY: &str = "desktop.vibrancy";
+
+/// `vibrancy_status`'s response shape (spec M12): the persisted toggle
+/// state plus whether this build can apply it at all (`supported` is `false`
+/// on non-Windows, letting the settings screen hide/disable the toggle
+/// instead of showing one that can only error).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VibrancyStatus {
+    enabled: bool,
+    supported: bool,
+}
+
+/// Apply or clear the Acrylic effect on `window` (Windows only, spec M12).
+/// The `(18, 18, 18, 125)` tint keeps the blur legibly dark in both theme
+/// modes without fully occluding the backdrop.
+#[cfg(target_os = "windows")]
+fn set_window_vibrancy(window: &tauri::WebviewWindow, enabled: bool) -> Result<(), BantoError> {
+    let result = if enabled {
+        window_vibrancy::apply_acrylic(window, Some((18, 18, 18, 125)))
+    } else {
+        window_vibrancy::clear_acrylic(window)
+    };
+    result.map_err(|err| {
+        BantoError::Other(format!(
+            "ウィンドウのAcrylic効果の適用に失敗しました: {err}"
+        ))
+    })
+}
+
+/// Toggle real window translucency (Windows Acrylic) for the main window
+/// and persist the choice (spec M12). `admin`-only, same floor as
+/// `settings_set` (this writes a global setting). The setting is only
+/// persisted AFTER the effect applied successfully - a machine that cannot
+/// apply Acrylic (e.g. an old Windows 10 build) keeps its stored value
+/// unchanged instead of persisting a state the window does not reflect.
+/// Returns the applied state.
+///
+/// Non-Windows builds always fail with a clear message (Windows のみ, spec
+/// M12/docs/roadmap.md §6) - the frontend avoids ever calling this there by
+/// checking `vibrancy_status().supported` first.
+#[tauri::command]
+async fn vibrancy_apply(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, BantoError> {
+    require_role(&state, Role::Admin)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| BantoError::Other("メインウィンドウが見つかりません".to_string()))?;
+        set_window_vibrancy(&window, enabled)?;
+        state
+            .settings
+            .set(KEY_DESKTOP_VIBRANCY, if enabled { "true" } else { "false" })
+            .await?;
+        Ok(enabled)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, enabled); // parameters only used on Windows
+        Err(BantoError::Other(
+            "この機能はWindowsでのみ利用できます".to_string(),
+        ))
+    }
+}
+
+/// Current vibrancy state (spec M12): any authenticated role (it only feeds
+/// the settings screen's toggle display). Never errors on non-Windows -
+/// `supported: false` (with `enabled: false`, regardless of any stored
+/// value) is the signal the frontend uses to hide the toggle.
+#[tauri::command]
+async fn vibrancy_status(state: State<'_, AppState>) -> Result<VibrancyStatus, BantoError> {
+    require_role(&state, Role::Viewer)?;
+    let supported = cfg!(target_os = "windows");
+    let enabled = supported
+        && state
+            .settings
+            .get(KEY_DESKTOP_VIBRANCY)
+            .await?
+            .map(|value| value == "true")
+            .unwrap_or(false);
+    Ok(VibrancyStatus { enabled, supported })
 }
 
 /// Wire shape returned by `users_create` (spec M10): everything
@@ -847,6 +977,7 @@ pub fn run() {
                 match tauri::async_runtime::block_on(start_embedded_server(
                     items.clone(),
                     users.clone(),
+                    settings.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,
@@ -866,6 +997,39 @@ pub fn run() {
             } else {
                 None
             };
+
+            // M12: re-apply the persisted vibrancy (Windows Acrylic) choice
+            // on launch. Best-effort by design - a failure (old Windows 10
+            // build, missing window) must never block startup, so it is
+            // logged and otherwise ignored; the settings screen's
+            // `vibrancy_status`/`vibrancy_apply` remain the way to
+            // observe/repair the state.
+            #[cfg(target_os = "windows")]
+            {
+                let vibrancy_enabled = tauri::async_runtime::block_on(
+                    settings.get(KEY_DESKTOP_VIBRANCY),
+                )
+                .unwrap_or_else(|err| {
+                    eprintln!("banto: vibrancy設定の読み取りに失敗しました: {err}");
+                    None
+                })
+                .map(|value| value == "true")
+                .unwrap_or(false);
+                if vibrancy_enabled {
+                    match app.get_webview_window("main") {
+                        Some(window) => {
+                            if let Err(err) = set_window_vibrancy(&window, true) {
+                                eprintln!(
+                                    "banto: 起動時のウィンドウAcrylic効果の適用に失敗しました: {err}"
+                                );
+                            }
+                        }
+                        None => eprintln!(
+                            "banto: メインウィンドウが見つからないため、起動時のAcrylic効果の適用をスキップしました"
+                        ),
+                    }
+                }
+            }
 
             app.manage(AppState {
                 items,
@@ -901,6 +1065,10 @@ pub fn run() {
             server_apply,
             settings_get,
             settings_set,
+            ui_settings_get,
+            ui_settings_set,
+            vibrancy_apply,
+            vibrancy_status,
             users_list,
             users_create,
             users_update,

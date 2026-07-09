@@ -56,6 +56,16 @@ export {
 	type HttpAuthProviderOptions
 } from './providers/http';
 
+export {
+	createLocalUiSettings,
+	createTauriUiSettings,
+	createHttpUiSettings,
+	type UiSettingsProvider,
+	type LocalUiSettingsOptions,
+	type TauriUiSettingsOptions,
+	type HttpUiSettingsOptions
+} from './providers/uiSettings';
+
 export type { AppEvent, EventProvider, TauriEventListenOptions, SseEventProviderOptions } from './events';
 export { createTauriEventProvider, createSseEventProvider, connectEvents } from './events';
 

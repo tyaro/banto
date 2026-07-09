@@ -34,6 +34,7 @@ use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::api_router;
+use admin_template_core::settings::SettingsService;
 use admin_template_core::users::UsersService;
 use banto_server::{lan_urls, start, static_router, AuthState, Identity, ServerConfig};
 
@@ -81,10 +82,11 @@ async fn main() {
 
     let events = event_channel();
     let items = ItemsService::new(pool.clone()).with_events(events.clone());
-    let users = UsersService::new(pool);
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool);
     let auth = AuthState::new(credential_verifier(users.clone()));
 
-    let app = api_router(items, users, auth, events, allow_setup)
+    let app = api_router(items, users, settings, auth, events, allow_setup)
         .merge(static_router::<FrontendAssets>());
 
     let server = start(ServerConfig { bind, port }, app)

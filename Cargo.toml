@@ -37,6 +37,12 @@ password-hash = { version = "0.5", features = ["getrandom"] }
 # other crate, so keeping this off the core crate's dependency graph keeps
 # that path unaffected by this addition.
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Desktop-only (spec M12 Glass theme): real window translucency (Windows
+# Acrylic) behind the glass theme preset. Referenced only from
+# `apps/admin-template/src-tauri`, and there only as a
+# Windows-target-specific dependency (docs/roadmap.md §6: Windows のみ) -
+# same CI reasoning as `keyring` above.
+window-vibrancy = "0.6"
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }

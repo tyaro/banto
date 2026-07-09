@@ -44,3 +44,12 @@ futures-util = { workspace = true }
 # workspace `Cargo.toml`'s comment on this dependency for why it lives only
 # here and not on `admin-template-core`.
 keyring = { workspace = true }
+
+# Real window translucency for the glass theme (spec M12): Windows Acrylic
+# via `window_vibrancy::apply_acrylic`/`clear_acrylic`. Windows-only by
+# decision (docs/roadmap.md §6: macOS vibrancy は非スコープ), hence a
+# target-specific dependency table rather than a crate feature - non-Windows
+# builds never even compile the crate, and the `vibrancy_*` commands in
+# `src/lib.rs` `#[cfg]`-degrade to "not supported" there.
+[target.'cfg(target_os = "windows")'.dependencies]
+window-vibrancy = { workspace = true }

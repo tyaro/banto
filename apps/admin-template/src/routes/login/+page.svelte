@@ -175,6 +175,9 @@
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
 		border-radius: calc(var(--banto-radius) * 2);
+		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	h1 {
@@ -247,5 +250,17 @@
 	button:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	/* Glass preset accent (spec M12): the login button gets the accent
+	   gradient; hover brightens it instead of swapping to the flat hover
+	   color (a gradient has no single hover counterpart). */
+	:global([data-banto-preset='glass']) button {
+		background: var(--banto-accent-gradient);
+	}
+
+	:global([data-banto-preset='glass']) button:hover:not(:disabled) {
+		background: var(--banto-accent-gradient);
+		filter: brightness(1.08);
 	}
 </style>

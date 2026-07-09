@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import { getAuthProvider } from '@banto/admin-core';
 import { bantoReady } from '$lib/banto/setup';
 import { sessionStore } from '$lib/session.svelte';
+import { settings } from '$lib/settings.svelte';
 
 // Auth guard for the whole (app) group (spec §8.1), backed by
 // AuthProvider.check() (spec §3.3). Must wait for provider
@@ -18,4 +19,10 @@ export async function load() {
 		redirect(307, '/login');
 	}
 	await sessionStore.load();
+
+	// M12: now that the session is confirmed, pull theme settings from the
+	// UiSettingsProvider (settings DB) - a value saved from another
+	// client/session beats this tab's localStorage cache. Fire-and-forget:
+	// navigation must not wait on (or fail with) a settings read.
+	void settings.syncFromProvider();
 }

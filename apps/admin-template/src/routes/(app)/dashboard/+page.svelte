@@ -38,7 +38,7 @@
 		weekdayMonthHeat
 	} from '$lib/banto/dashboard';
 	import { PANEL_DEFS } from '$lib/banto/panels';
-	import { isTauri } from '$lib/banto/setup';
+	import { getUiSettings, isTauri } from '$lib/banto/setup';
 	import { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';
 	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
 
@@ -123,14 +123,17 @@
 		};
 	}
 
+	// M12 (spec §12.1): the UiSettingsProvider key the layout is ALSO saved
+	// under (settings DB via Tauri/REST; localStorage in demo mode).
+	// localStorage (DOCK_STORAGE_KEY) stays the synchronous first-paint
+	// source; the provider copy is reconciled once after mount, below.
+	const DOCK_SETTING_KEY = 'dock.dashboard';
+
 	function loadDockLayout(): string | undefined {
 		if (typeof localStorage === 'undefined') return undefined;
 		return localStorage.getItem(DOCK_STORAGE_KEY) ?? undefined;
 	}
 
-	// Persistence is localStorage for now. Per spec §12.1 this moves behind the
-	// SettingsProvider abstraction once it exists (local SQLite settings DB in
-	// the webview, localStorage for remote browser clients).
 	const dock = createDockState(loadDockLayout());
 
 	let dockHostW = $state(0);
@@ -149,6 +152,46 @@
 		}
 	});
 
+	// M12: after the localStorage-seeded first paint, read the provider's
+	// copy once - if it holds a layout that differs from the local cache
+	// (e.g. saved from another client/session), it wins: hydrate + refresh
+	// the cache. A missing key or any provider failure keeps the local state.
+	let providerChecked = false;
+	$effect(() => {
+		if (providerChecked) return;
+		providerChecked = true;
+		void (async () => {
+			try {
+				const remote = await getUiSettings().get(DOCK_SETTING_KEY);
+				if (remote !== null && remote !== localStorage.getItem(DOCK_STORAGE_KEY)) {
+					dock.hydrate(remote);
+					localStorage.setItem(DOCK_STORAGE_KEY, remote);
+				}
+			} catch {
+				// Best-effort: offline/unauthenticated reads keep the local layout.
+			}
+		})();
+	});
+
+	// M12 provider autosave, debounced: a divider/window drag serializes on
+	// every pointermove, and each of those must NOT become a settings-DB
+	// write. localStorage (cheap, synchronous) still saves immediately below;
+	// the provider gets one write 500ms after the layout stops changing (plus
+	// a flush on unmount so the last change is never lost).
+	const DOCK_SAVE_DEBOUNCE_MS = 500;
+	let dockSaveTimer: ReturnType<typeof setTimeout> | undefined;
+	let pendingDockJson: string | null = null;
+	let dockSaveArmed = false;
+
+	function flushDockSave(): void {
+		if (pendingDockJson === null) return;
+		const json = pendingDockJson;
+		pendingDockJson = null;
+		void getUiSettings()
+			.set(DOCK_SETTING_KEY, json)
+			.catch(() => {});
+	}
+
 	// Autosave the whole layout on every change (reading dock.serialize() ties
 	// this effect to every move/resize/dock/undock/tab/close).
 	$effect(() => {
@@ -156,6 +199,24 @@
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(DOCK_STORAGE_KEY, json);
 		}
+		// First run is the just-loaded layout, not a user change - arming
+		// here avoids echoing it straight back into the settings DB.
+		if (!dockSaveArmed) {
+			dockSaveArmed = true;
+			return;
+		}
+		pendingDockJson = json;
+		clearTimeout(dockSaveTimer);
+		dockSaveTimer = setTimeout(flushDockSave, DOCK_SAVE_DEBOUNCE_MS);
+	});
+
+	// Unmount: flush (not drop) a pending provider save, so navigating away
+	// right after a drag still persists the final layout.
+	$effect(() => {
+		return () => {
+			clearTimeout(dockSaveTimer);
+			flushDockSave();
+		};
 	});
 
 	function resetDockLayout() {

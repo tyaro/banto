@@ -273,6 +273,9 @@
 		min-width: 0;
 		min-height: 0;
 		background: var(--banto-surface);
+		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	.titlebar {

@@ -217,6 +217,11 @@
 		border: 1px solid var(--banto-border);
 		box-shadow: var(--banto-dock-shadow);
 		background: var(--banto-surface);
+		/* Glass preset (spec M12): blur what's behind the window when the
+		   theme sets --banto-backdrop; `none` (the standard default) keeps
+		   this a complete no-op. */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	.dock-window.frontmost {

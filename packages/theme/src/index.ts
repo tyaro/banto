@@ -39,3 +39,22 @@ export function watchSystemTheme(onChange: (resolved: ResolvedTheme) => void): (
 export function isThemeMode(value: unknown): value is ThemeMode {
   return value === 'light' || value === 'dark' || value === 'system';
 }
+
+/**
+ * Theme PRESET axis (spec M12), orthogonal to the light/dark mode above:
+ * `data-theme` (light/dark) x `data-banto-preset` (standard/glass) on
+ * <html>. `standard` is the existing opaque look; `glass` switches the
+ * shell surfaces to translucent + backdrop-filter via the variable
+ * overrides in css/banto-glass.css (loaded together with banto.css;
+ * inert unless the attribute says `glass`).
+ */
+export type ThemePreset = 'standard' | 'glass';
+
+/** Apply the preset to the document root (`data-banto-preset`). */
+export function applyPreset(preset: ThemePreset): void {
+  document.documentElement.dataset.bantoPreset = preset;
+}
+
+export function isThemePreset(value: unknown): value is ThemePreset {
+  return value === 'standard' || value === 'glass';
+}

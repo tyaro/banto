@@ -5,7 +5,7 @@
 
 use std::str::FromStr;
 
-use banto_core::BantoError;
+use banto_core::{BantoError, FieldError};
 use serde::Serialize;
 use sqlx::SqlitePool;
 
@@ -18,6 +18,49 @@ const KEY_AUTH_DISABLED: &str = "auth.disabled";
 const KEY_AUTH_DISABLED_ROLE: &str = "auth.disabled_role";
 const KEY_AUTOLOGIN_ENABLED: &str = "auth.autologin.enabled";
 const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
+
+/// Max length (in `char`s) of a per-user UI-settings `key` (spec M12).
+const MAX_UI_KEY_LEN: usize = 64;
+/// Max length (in bytes) of a per-user UI-settings `value` (spec M12): a
+/// dock-layout JSON blob is the largest expected payload; 64KB is generous
+/// headroom over that while still bounding the row size.
+const MAX_UI_VALUE_LEN: usize = 64 * 1024;
+
+/// Validates a UI-settings `key` (spec M12): `[A-Za-z0-9._-]{1,64}`. Guards
+/// against both nonsense input and (defense in depth, not the primary
+/// mechanism) a key containing a literal `.` that could otherwise be crafted
+/// to look like part of the `ui.{username}.` prefix.
+fn validate_ui_key(key: &str) -> Result<(), BantoError> {
+    let ok = !key.is_empty()
+        && key.chars().count() <= MAX_UI_KEY_LEN
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(BantoError::Validation {
+            field_errors: vec![FieldError {
+                field: "key".to_string(),
+                message: format!(
+                    "キーは英数字・`.`・`_`・`-` のみ、1〜{MAX_UI_KEY_LEN}文字で指定してください"
+                ),
+            }],
+        })
+    }
+}
+
+fn validate_ui_value(value: &str) -> Result<(), BantoError> {
+    if value.len() > MAX_UI_VALUE_LEN {
+        return Err(BantoError::Validation {
+            field_errors: vec![FieldError {
+                field: "value".to_string(),
+                message: format!("値は{}KB以内で指定してください", MAX_UI_VALUE_LEN / 1024),
+            }],
+        });
+    }
+    Ok(())
+}
 
 /// Embedded-server settings (spec §11.2, §11.4): whether LAN access is
 /// enabled, and the bind address/port. Defaults to disabled,
@@ -72,6 +115,11 @@ impl Default for AuthSettings {
 /// (migration `0002_settings.sql`). Shares the same sqlite pool as
 /// [`crate::items::ItemsService`] (spec §12.1: app settings live in the
 /// local SQLite settings DB alongside/instead of a separate file).
+///
+/// `Clone` is cheap (`SqlitePool` is an `Arc`-backed handle), matching
+/// `ItemsService`/`UsersService` - needed since M12, when the REST layer's
+/// `/api/ui-settings/*` router started carrying its own handle.
+#[derive(Clone)]
 pub struct SettingsService {
     pool: SqlitePool,
 }
@@ -102,6 +150,43 @@ impl SettingsService {
         .await
         .map_err(banto_storage::storage_error)?;
         Ok(())
+    }
+
+    /// Read a per-user UI setting (spec M12 SettingsProvider migration):
+    /// theme/preset/dock-layout, namespaced per authenticated account so two
+    /// users sharing one app instance never see each other's UI state.
+    /// Stored in the same generic `key`/`value` table as every other
+    /// setting, under the key `ui.{username}.{key}` (simple concatenation -
+    /// see [`SettingsService::ui_set`]'s doc comment for the `username`
+    /// containing `.` caveat this implies).
+    ///
+    /// `key` is validated (`[A-Za-z0-9._-]{1,64}`); `username` is not - it is
+    /// an existing account name already accepted by `UsersService` at
+    /// setup/creation time, not a fresh user-supplied value at this layer.
+    pub async fn ui_get(&self, username: &str, key: &str) -> Result<Option<String>, BantoError> {
+        validate_ui_key(key)?;
+        let storage_key = format!("ui.{username}.{key}");
+        self.get(&storage_key).await
+    }
+
+    /// Upsert a per-user UI setting. See [`SettingsService::ui_get`] for the
+    /// namespacing scheme.
+    ///
+    /// `username` is simply concatenated into the storage key
+    /// (`ui.{username}.{key}`) with no escaping - a username containing `.`
+    /// is technically possible (`UsersService::validate_username` only
+    /// enforces length, not charset) and could in principle make two distinct
+    /// `(username, key)` pairs collide on the same storage key (e.g.
+    /// username `"a.b"` key `"c"` and username `"a"` key `"b.c"` both produce
+    /// `"ui.a.b.c"`). This is accepted as-is for M12 Phase A (per-user
+    /// isolation is "best effort keyed on today's username charset", not a
+    /// hard security boundary) - see the M12 handoff report for the
+    /// investigation of whether `.` is actually reachable in practice.
+    pub async fn ui_set(&self, username: &str, key: &str, value: &str) -> Result<(), BantoError> {
+        validate_ui_key(key)?;
+        validate_ui_value(value)?;
+        let storage_key = format!("ui.{username}.{key}");
+        self.set(&storage_key, value).await
     }
 
     /// Read the embedded-server settings, falling back to
@@ -398,6 +483,97 @@ mod tests {
 
         // The rejected write must not have taken effect.
         assert!(!svc.auth_config().await.unwrap().disabled);
+    }
+
+    // --- Per-user UI settings (spec M12) -----------------------------------
+
+    #[tokio::test]
+    async fn ui_get_missing_key_is_none() {
+        let svc = service().await;
+        assert_eq!(svc.ui_get("alice", "theme").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn ui_set_then_ui_get_round_trips() {
+        let svc = service().await;
+        svc.ui_set("alice", "theme", "glass-dark").await.unwrap();
+        assert_eq!(
+            svc.ui_get("alice", "theme").await.unwrap(),
+            Some("glass-dark".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn ui_set_twice_overwrites_via_upsert() {
+        let svc = service().await;
+        svc.ui_set("alice", "theme", "standard").await.unwrap();
+        svc.ui_set("alice", "theme", "glass").await.unwrap();
+        assert_eq!(
+            svc.ui_get("alice", "theme").await.unwrap(),
+            Some("glass".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn ui_settings_are_isolated_between_users() {
+        let svc = service().await;
+        svc.ui_set("alice", "theme", "glass").await.unwrap();
+        svc.ui_set("bob", "theme", "standard").await.unwrap();
+
+        assert_eq!(
+            svc.ui_get("alice", "theme").await.unwrap(),
+            Some("glass".to_string())
+        );
+        assert_eq!(
+            svc.ui_get("bob", "theme").await.unwrap(),
+            Some("standard".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn ui_get_rejects_invalid_key() {
+        let svc = service().await;
+        let err = svc.ui_get("alice", "not a valid key!").await.unwrap_err();
+        match err {
+            BantoError::Validation { field_errors } => {
+                assert_eq!(field_errors[0].field, "key");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ui_set_rejects_invalid_key() {
+        let svc = service().await;
+        let err = svc
+            .ui_set("alice", "not/a/valid/key", "value")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn ui_set_rejects_oversized_value() {
+        let svc = service().await;
+        let too_big = "x".repeat(MAX_UI_VALUE_LEN + 1);
+        let err = svc.ui_set("alice", "dock", &too_big).await.unwrap_err();
+        match err {
+            BantoError::Validation { field_errors } => {
+                assert_eq!(field_errors[0].field, "value");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ui_set_accepts_value_at_the_max_size() {
+        let svc = service().await;
+        let max_sized = "x".repeat(MAX_UI_VALUE_LEN);
+        svc.ui_set("alice", "dock", &max_sized).await.unwrap();
+        assert_eq!(
+            svc.ui_get("alice", "dock").await.unwrap(),
+            Some(max_sized)
+        );
     }
 
     #[tokio::test]

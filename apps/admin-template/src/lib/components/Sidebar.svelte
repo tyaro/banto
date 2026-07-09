@@ -49,6 +49,9 @@
 		background: var(--banto-surface);
 		border-right: 1px solid var(--banto-border);
 		transition: width 0.15s ease;
+		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	aside.collapsed {
@@ -92,6 +95,14 @@
 		background: color-mix(in srgb, var(--banto-primary) 14%, transparent);
 		color: var(--banto-primary);
 		font-weight: 600;
+	}
+
+	/* Glass preset accent (spec M12): the active nav item gets the accent
+	   gradient. Scoped by the preset attribute so standard keeps the flat
+	   tint above untouched. */
+	:global([data-banto-preset='glass']) nav a.active {
+		background: var(--banto-accent-gradient);
+		color: var(--banto-text-inverse);
 	}
 
 	.icon {

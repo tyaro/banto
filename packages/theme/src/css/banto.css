@@ -3,7 +3,13 @@
  * Components read only these variables; apps override them freely.
  * The resolved theme is set as data-theme="light" | "dark" on <html>
  * by applyTheme() from @banto/theme.
+ *
+ * M12 preset axis: banto-glass.css (imported below - @import must precede
+ * all other rules) overrides the surface/backdrop/bg-image variables under
+ * [data-banto-preset="glass"]; with the default preset (standard) it is
+ * completely inert, so importing it unconditionally costs nothing.
  */
+@import './banto-glass.css';
 
 :root {
   /* Surfaces */
@@ -11,6 +17,14 @@
   --banto-surface: #ffffff;
   --banto-surface-raised: #ffffff;
   --banto-border: #d9dde3;
+
+  /* Preset axis (spec M12). Standard preset: no blur, no page bg image;
+     shell components wire `backdrop-filter: var(--banto-backdrop, none)` /
+     `background-image: var(--banto-bg-image)` so glass is a pure variable
+     swap and standard stays a no-op. */
+  --banto-backdrop: none;
+  --banto-accent-gradient: linear-gradient(135deg, var(--banto-primary), #7c3aed);
+  --banto-bg-image: none;
 
   /* Text */
   --banto-text: #1a1d21;

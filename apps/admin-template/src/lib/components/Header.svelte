@@ -40,6 +40,9 @@
 		padding: 0 1rem;
 		background: var(--banto-surface);
 		border-bottom: 1px solid var(--banto-border);
+		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	h1 {

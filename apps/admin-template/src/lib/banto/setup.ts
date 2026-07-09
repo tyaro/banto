@@ -30,14 +30,23 @@ import {
 	connectEvents,
 	createHttpAuthProvider,
 	createHttpDataProvider,
+	createHttpUiSettings,
 	createInMemoryDataProvider,
+	createLocalUiSettings,
 	createSseEventProvider,
 	createTauriAuthProvider,
 	createTauriDataProvider,
 	createTauriEventProvider,
+	createTauriUiSettings,
 	initBanto
 } from '@banto/admin-core';
-import type { AuthProvider, DataProvider, Notifier, ResourceDefinition } from '@banto/admin-core';
+import type {
+	AuthProvider,
+	DataProvider,
+	Notifier,
+	ResourceDefinition,
+	UiSettingsProvider
+} from '@banto/admin-core';
 import type { FormSchema } from '@banto/forms';
 // Safe to import in a plain browser (no Tauri runtime): only ever *called*
 // when isTauri() is true.
@@ -69,6 +78,22 @@ export type BantoMode = 'tauri' | 'server' | 'demo';
 let bantoMode: BantoMode = 'demo';
 export function getBantoMode(): BantoMode {
 	return bantoMode;
+}
+
+/**
+ * UI-settings persistence (spec §12.1, M12): mode-matched like the
+ * data/auth providers above - Tauri -> `ui_settings_get/set` commands,
+ * embedded server -> `/api/ui-settings/{key}` REST, plain-browser demo ->
+ * localStorage. Defaults to the localStorage implementation so a read
+ * before `bantoReady` resolves (e.g. `settings.svelte.ts`'s eager module
+ * init) degrades to the local cache rather than crashing; the real
+ * provider is swapped in by whichever `bantoReady` branch runs. Callers
+ * treat writes as best-effort (unauthenticated writes fail server-side and
+ * are swallowed - localStorage remains the always-written FOUC cache).
+ */
+let uiSettings: UiSettingsProvider = createLocalUiSettings();
+export function getUiSettings(): UiSettingsProvider {
+	return uiSettings;
 }
 
 /**
@@ -185,6 +210,7 @@ export const bantoReady: Promise<void> = (async () => {
 		bantoMode = 'tauri';
 		const dataProvider = createTauriDataProvider({ invoke });
 		const authProvider = createTauriAuthProvider({ invoke });
+		uiSettings = createTauriUiSettings({ invoke });
 		initBanto({ dataProvider, authProvider, notifier, resources: [itemsResource] });
 
 		// Dynamic import: @tauri-apps/api/event's `listen` talks to a real
@@ -199,6 +225,7 @@ export const bantoReady: Promise<void> = (async () => {
 		bantoMode = 'server';
 		const authProvider = createHttpAuthProvider();
 		const dataProvider = createHttpDataProvider({ getToken: authProvider.getToken });
+		uiSettings = createHttpUiSettings({ getToken: authProvider.getToken });
 		initBanto({ dataProvider, authProvider, notifier, resources: [itemsResource] });
 		connectEvents(createSseEventProvider({ getToken: authProvider.getToken }));
 		return;
