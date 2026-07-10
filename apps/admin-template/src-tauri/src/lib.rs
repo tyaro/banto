@@ -21,16 +21,16 @@
 mod keyring_store;
 
 use admin_template_core::assets::FrontendAssets;
+use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::{Item, ItemInput, ItemsService};
-use admin_template_core::rest::api_router;
+use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::{AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::{
-    lan_urls, start, static_router, AuthState, Identity as RestIdentity, RunningServer,
-    ServerConfig, ServerEvent,
+    lan_urls, start, static_router, AuthState, RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -76,6 +76,14 @@ struct AppState {
     /// otherwise (disabled, or a previous bind attempt failed - see
     /// `server_apply`).
     server: AsyncMutex<Option<RunningServer>>,
+    /// Audit trail (spec M14): every mutating command below records a
+    /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
+    /// `login`/`login_failed`/`logout`/`setup` entry here (`origin:
+    /// "tauri"`) once it has already succeeded, and [`require_role`] records
+    /// `denied` when an active session's role is too low. Shares the same
+    /// pool as `items`/`users`/`settings` (all four are `Clone` handles onto
+    /// the one on-disk SQLite DB, see `run()`'s `setup()`).
+    audit: AuditLogService,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,36 +130,41 @@ fn identity_from(user: &UserIdentity) -> Identity {
 /// under-privileged -> `BantoError::Forbidden` (403-equivalent) - mirrors
 /// `admin_template_core::rest`'s `require_auth` then `require_role_at_least`
 /// distinction on the REST side.
-fn require_role(state: &AppState, min: Role) -> Result<UserIdentity, BantoError> {
-    let guard = state.auth.lock().expect("auth mutex poisoned");
-    match guard.as_ref() {
-        Some(identity) if identity.role.at_least(min) => Ok(identity.clone()),
-        Some(_) => Err(BantoError::Forbidden),
+///
+/// `resource` (spec M14) tags the audit entry recorded when an
+/// AUTHENTICATED session's role is too low - mirrors REST's
+/// `RoleGuard`/`require_role_at_least`. The no-session (`Unauthorized`) case
+/// is deliberately NOT recorded, same reasoning as the REST side: it means
+/// there is nothing resembling a real user to attribute a denial to, not a
+/// meaningful RBAC decision.
+///
+/// `async` (unlike its pre-M14 form) only to `.await` that audit write -
+/// every call site is already inside an `async fn` Tauri command. The
+/// `state.auth` lock is dropped (via the `identity` clone below) BEFORE the
+/// `.await`, since `std::sync::MutexGuard` is `!Send` and holding one across
+/// an await point would make the command's future `!Send` (which `tauri`
+/// requires).
+async fn require_role(state: &AppState, min: Role, resource: &str) -> Result<UserIdentity, BantoError> {
+    let current = state.auth.lock().expect("auth mutex poisoned").clone();
+    match current {
+        Some(identity) if identity.role.at_least(min) => Ok(identity),
+        Some(identity) => {
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&identity.username),
+                    actor_role: Some(identity.role.as_str()),
+                    action: "denied",
+                    resource,
+                    entity_id: None,
+                    detail: None,
+                    origin: "tauri",
+                    result: "denied",
+                })
+                .await;
+            Err(BantoError::Forbidden)
+        }
         None => Err(BantoError::Unauthorized),
-    }
-}
-
-/// Wraps `UsersService::verify` as the async verifier
-/// `banto_server::AuthState::new` expects (spec §8.2) - shared by
-/// `rest_auth`'s construction in `setup()` below.
-fn rest_credential_verifier(
-    users: UsersService,
-) -> impl Fn(String, String) -> futures_util::future::BoxFuture<'static, Option<RestIdentity>>
-       + Send
-       + Sync
-       + 'static {
-    move |username: String, password: String| {
-        let users = users.clone();
-        Box::pin(async move {
-            match users.verify(&username, &password).await {
-                Ok(Some(identity)) => Some(RestIdentity {
-                    id: identity.username,
-                    name: identity.display_name,
-                    role: identity.role.to_string(),
-                }),
-                _ => None,
-            }
-        })
     }
 }
 
@@ -168,20 +181,34 @@ async fn items_list(
     state: State<'_, AppState>,
     params: ListParams,
 ) -> Result<ListResult<Item>, BantoError> {
-    require_role(&state, Role::Viewer)?;
+    require_role(&state, Role::Viewer, "items").await?;
     state.items.list(params).await
 }
 
 #[tauri::command]
 async fn items_get(state: State<'_, AppState>, id: i64) -> Result<Item, BantoError> {
-    require_role(&state, Role::Viewer)?;
+    require_role(&state, Role::Viewer, "items").await?;
     state.items.get(id).await
 }
 
 #[tauri::command]
 async fn items_create(state: State<'_, AppState>, values: ItemInput) -> Result<Item, BantoError> {
-    require_role(&state, Role::Editor)?;
-    state.items.create(values).await
+    let actor = require_role(&state, Role::Editor, "items").await?;
+    let item = state.items.create(values).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "create",
+            resource: "items",
+            entity_id: Some(&item.id.to_string()),
+            detail: Some(serde_json::json!({ "name": item.name })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(item)
 }
 
 #[tauri::command]
@@ -190,14 +217,42 @@ async fn items_update(
     id: i64,
     values: ItemInput,
 ) -> Result<Item, BantoError> {
-    require_role(&state, Role::Editor)?;
-    state.items.update(id, values).await
+    let actor = require_role(&state, Role::Editor, "items").await?;
+    let item = state.items.update(id, values).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "update",
+            resource: "items",
+            entity_id: Some(&item.id.to_string()),
+            detail: Some(serde_json::json!({ "name": item.name })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(item)
 }
 
 #[tauri::command]
 async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    require_role(&state, Role::Editor)?;
-    state.items.delete(id).await
+    let actor = require_role(&state, Role::Editor, "items").await?;
+    state.items.delete(id).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "delete",
+            resource: "items",
+            entity_id: Some(&id.to_string()),
+            detail: None,
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
 }
 
 /// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
@@ -229,6 +284,19 @@ async fn auth_setup(
         .await
     {
         Ok(identity) => {
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&identity.username),
+                    actor_role: Some(identity.role.as_str()),
+                    action: "setup",
+                    resource: "auth",
+                    entity_id: None,
+                    detail: None,
+                    origin: "tauri",
+                    result: "ok",
+                })
+                .await;
             *state.auth.lock().expect("auth mutex poisoned") = Some(identity);
             Ok(LoginResult {
                 success: true,
@@ -251,16 +319,44 @@ async fn auth_login(
 ) -> Result<LoginResult, BantoError> {
     match state.users.verify(&username, &password).await? {
         Some(identity) => {
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&identity.username),
+                    actor_role: Some(identity.role.as_str()),
+                    action: "login",
+                    resource: "auth",
+                    entity_id: None,
+                    detail: None,
+                    origin: "tauri",
+                    result: "ok",
+                })
+                .await;
             *state.auth.lock().expect("auth mutex poisoned") = Some(identity);
             Ok(LoginResult {
                 success: true,
                 error: None,
             })
         }
-        None => Ok(LoginResult {
-            success: false,
-            error: Some("ユーザー名またはパスワードが違います".to_string()),
-        }),
+        None => {
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&username),
+                    actor_role: None,
+                    action: "login_failed",
+                    resource: "auth",
+                    entity_id: None,
+                    detail: None,
+                    origin: "tauri",
+                    result: "failed",
+                })
+                .await;
+            Ok(LoginResult {
+                success: false,
+                error: Some("ユーザー名またはパスワードが違います".to_string()),
+            })
+        }
     }
 }
 
@@ -272,13 +368,30 @@ async fn auth_login(
 /// complex for the same outcome - the simpler "logout does nothing in this
 /// mode" reads clearly at the call site and matches auth-disabled mode's
 /// framing as "this whole device is trusted, there is no session to log out
-/// of".
+/// of". Spec M14: that no-op path deliberately records no `logout` entry
+/// either - nothing actually changed.
 #[tauri::command]
 async fn auth_logout(state: State<'_, AppState>) -> Result<(), BantoError> {
     if state.settings.auth_config().await?.disabled {
         return Ok(());
     }
+    let previous = state.auth.lock().expect("auth mutex poisoned").clone();
     *state.auth.lock().expect("auth mutex poisoned") = None;
+    if let Some(identity) = previous {
+        state
+            .audit
+            .record(AuditEntry {
+                actor_username: Some(&identity.username),
+                actor_role: Some(identity.role.as_str()),
+                action: "logout",
+                resource: "auth",
+                entity_id: None,
+                detail: None,
+                origin: "tauri",
+                result: "ok",
+            })
+            .await;
+    }
     Ok(())
 }
 
@@ -297,6 +410,48 @@ fn auth_identity(state: State<'_, AppState>) -> Option<Identity> {
         .map(identity_from)
 }
 
+/// Body of [`auth_change_password`], split out so the audit-recording
+/// behavior (spec M14) is testable with a plain `&AppState` in this crate's
+/// own `cargo test` - `tauri::State` cannot be constructed outside a running
+/// tauri app, but it derefs to `&AppState`, so the command below is a
+/// one-line adapter.
+async fn change_own_password(
+    state: &AppState,
+    current_password: &str,
+    new_password: &str,
+) -> Result<(), BantoError> {
+    let identity = {
+        let guard = state.auth.lock().expect("auth mutex poisoned");
+        match guard.as_ref() {
+            Some(identity) => identity.clone(),
+            None => return Err(BantoError::Unauthorized),
+        }
+    };
+    state
+        .users
+        .change_password(&identity.username, current_password, new_password)
+        .await?;
+    // Spec M14: a self-service password change is a security event (it is
+    // also what naturally invalidates an M11 autologin credential), so it IS
+    // audited - actor and entity are both the caller. `detail` stays `None`:
+    // neither the old nor the new password (nor any hash) may ever be
+    // recorded.
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&identity.username),
+            actor_role: Some(identity.role.as_str()),
+            action: "password_change",
+            resource: "users",
+            entity_id: Some(&identity.id.to_string()),
+            detail: None,
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
+}
+
 /// Requires an active webview session (spec §8.2): looks up the logged-in
 /// account's `username` from `state.auth` rather than taking it as a
 /// parameter, so a caller cannot change a DIFFERENT account's password just
@@ -307,17 +462,7 @@ async fn auth_change_password(
     current_password: String,
     new_password: String,
 ) -> Result<(), BantoError> {
-    let username = {
-        let guard = state.auth.lock().expect("auth mutex poisoned");
-        match guard.as_ref() {
-            Some(identity) => identity.username.clone(),
-            None => return Err(BantoError::Unauthorized),
-        }
-    };
-    state
-        .users
-        .change_password(&username, &current_password, &new_password)
-        .await
+    change_own_password(&state, &current_password, &new_password).await
 }
 
 // --- M11: auth-disabled mode + desktop autologin ---------------------------
@@ -328,7 +473,7 @@ async fn auth_change_password(
 /// comment in `admin_template_core::settings`).
 #[tauri::command]
 async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettings, BantoError> {
-    require_role(&state, Role::Viewer)?;
+    require_role(&state, Role::Viewer, "settings").await?;
     state.settings.auth_config().await
 }
 
@@ -354,9 +499,16 @@ async fn auth_config_apply(
     disabled_role: String,
 ) -> Result<AuthSettings, BantoError> {
     let currently_disabled = state.settings.auth_config().await?.disabled;
-    if !currently_disabled {
-        require_role(&state, Role::Admin)?;
-    }
+    // Spec M14: the escape hatch means `require_role` may not run at all
+    // (see this command's doc comment) - capture whatever actor identity
+    // exists directly in that case, so the audit entry below still has one
+    // when possible, instead of skipping the escape-hatch path's write
+    // entirely.
+    let actor = if currently_disabled {
+        state.auth.lock().expect("auth mutex poisoned").clone()
+    } else {
+        Some(require_role(&state, Role::Admin, "settings").await?)
+    };
 
     // An unrecognized role string falls back to `admin` (same convention as
     // `SettingsService::auth_config`'s own read-time fallback) rather than
@@ -368,6 +520,19 @@ async fn auth_config_apply(
     config.disabled = disabled;
     config.disabled_role = role;
     state.settings.set_auth_config(&config).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: actor.as_ref().map(|i| i.username.as_str()),
+            actor_role: actor.as_ref().map(|i| i.role.as_str()),
+            action: "settings_change",
+            resource: "settings",
+            entity_id: None,
+            detail: Some(serde_json::json!({ "authDisabled": disabled })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
     Ok(config)
 }
 
@@ -383,7 +548,7 @@ async fn autologin_enable(
     username: String,
     password: String,
 ) -> Result<(), BantoError> {
-    require_role(&state, Role::Admin)?;
+    let actor = require_role(&state, Role::Admin, "settings").await?;
 
     if state.users.verify(&username, &password).await?.is_none() {
         return Err(BantoError::Validation {
@@ -398,8 +563,24 @@ async fn autologin_enable(
 
     let mut config = state.settings.auth_config().await?;
     config.autologin_enabled = true;
-    config.autologin_username = Some(username);
+    config.autologin_username = Some(username.clone());
     state.settings.set_auth_config(&config).await?;
+    // Spec M14: the target `username` (never the password) is fine to
+    // record - it identifies WHICH account autologin now applies to, no
+    // different from `users_update`'s `role` detail.
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "settings_change",
+            resource: "settings",
+            entity_id: None,
+            detail: Some(serde_json::json!({ "autologinEnabled": true, "username": username })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
     Ok(())
 }
 
@@ -409,7 +590,7 @@ async fn autologin_enable(
 /// say, already gone) and clears the setting.
 #[tauri::command]
 async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError> {
-    require_role(&state, Role::Admin)?;
+    let actor = require_role(&state, Role::Admin, "settings").await?;
 
     let mut config = state.settings.auth_config().await?;
     if let Some(username) = config.autologin_username.take() {
@@ -419,6 +600,19 @@ async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError>
     }
     config.autologin_enabled = false;
     state.settings.set_auth_config(&config).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "settings_change",
+            resource: "settings",
+            entity_id: None,
+            detail: Some(serde_json::json!({ "autologinEnabled": false })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
     Ok(())
 }
 
@@ -488,6 +682,7 @@ async fn start_embedded_server(
     items: ItemsService,
     users: UsersService,
     settings: SettingsService,
+    audit: AuditLogService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
@@ -496,7 +691,7 @@ async fn start_embedded_server(
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
     // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
-    let router = api_router(items, users, settings, auth, events, false)
+    let router = api_router(items, users, settings, audit, auth, events, false)
         .merge(static_router::<FrontendAssets>());
     start(config, router).await
 }
@@ -505,7 +700,7 @@ async fn start_embedded_server(
 /// §11.4's status line). `admin`-only (spec M10: "サーバ制御系 = admin").
 #[tauri::command]
 async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusResult, BantoError> {
-    require_role(&state, Role::Admin)?;
+    require_role(&state, Role::Admin, "settings").await?;
     let config = state.settings.server_config().await?;
     let running = state.server.lock().await.is_some();
     Ok(build_status(&config, running))
@@ -525,7 +720,7 @@ async fn server_apply(
     bind: String,
     port: u16,
 ) -> Result<ServerStatusResult, BantoError> {
-    require_role(&state, Role::Admin)?;
+    let actor = require_role(&state, Role::Admin, "settings").await?;
     let config = ServerSettings {
         enabled,
         bind,
@@ -543,6 +738,7 @@ async fn server_apply(
                 state.items.clone(),
                 state.users.clone(),
                 state.settings.clone(),
+                state.audit.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -558,6 +754,23 @@ async fn server_apply(
 
     let running = started.is_some();
     *state.server.lock().await = started;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "settings_change",
+            resource: "settings",
+            entity_id: None,
+            detail: Some(serde_json::json!({
+                "serverEnabled": config.enabled,
+                "bind": config.bind,
+                "port": config.port,
+            })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
     Ok(build_status(&config, running))
 }
 
@@ -578,8 +791,25 @@ async fn settings_set(
     key: String,
     value: String,
 ) -> Result<(), BantoError> {
-    require_role(&state, Role::Admin)?;
-    state.settings.set(&key, &value).await
+    let actor = require_role(&state, Role::Admin, "settings").await?;
+    state.settings.set(&key, &value).await?;
+    // Spec M14: only the KEY is recorded, never the value - this is a
+    // generic key/value store and the value could be anything, including
+    // something sensitive a future setting might store here.
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "settings_change",
+            resource: "settings",
+            entity_id: None,
+            detail: Some(serde_json::json!({ "key": key })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
 }
 
 // --- M12: per-user UI settings + window vibrancy ----------------------------
@@ -598,20 +828,23 @@ async fn ui_settings_get(
     state: State<'_, AppState>,
     key: String,
 ) -> Result<Option<String>, BantoError> {
-    let identity = require_role(&state, Role::Viewer)?;
+    let identity = require_role(&state, Role::Viewer, "settings").await?;
     state.settings.ui_get(&identity.username, &key).await
 }
 
 /// Write one of the calling user's OWN UI settings (spec M12). Any
 /// authenticated role - deliberately NOT `admin`-gated like `settings_set`,
-/// see [`ui_settings_get`]'s doc comment.
+/// see [`ui_settings_get`]'s doc comment. Spec M14: NOT audited, same
+/// reasoning as the REST `/api/ui-settings/*` routes (see `rest.rs`'s module
+/// doc comment) - this is each user's own theme/dock-layout preference, not
+/// an admin-scoped "settings change".
 #[tauri::command]
 async fn ui_settings_set(
     state: State<'_, AppState>,
     key: String,
     value: String,
 ) -> Result<(), BantoError> {
-    let identity = require_role(&state, Role::Viewer)?;
+    let identity = require_role(&state, Role::Viewer, "settings").await?;
     state
         .settings
         .ui_set(&identity.username, &key, &value)
@@ -668,7 +901,7 @@ async fn vibrancy_apply(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<bool, BantoError> {
-    require_role(&state, Role::Admin)?;
+    let actor = require_role(&state, Role::Admin, "settings").await?;
 
     #[cfg(target_os = "windows")]
     {
@@ -680,12 +913,25 @@ async fn vibrancy_apply(
             .settings
             .set(KEY_DESKTOP_VIBRANCY, if enabled { "true" } else { "false" })
             .await?;
+        state
+            .audit
+            .record(AuditEntry {
+                actor_username: Some(&actor.username),
+                actor_role: Some(actor.role.as_str()),
+                action: "settings_change",
+                resource: "settings",
+                entity_id: None,
+                detail: Some(serde_json::json!({ "vibrancyEnabled": enabled })),
+                origin: "tauri",
+                result: "ok",
+            })
+            .await;
         Ok(enabled)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, enabled); // parameters only used on Windows
+        let _ = (app, enabled, actor); // parameters only used on Windows
         Err(BantoError::Other(
             "この機能はWindowsでのみ利用できます".to_string(),
         ))
@@ -698,7 +944,7 @@ async fn vibrancy_apply(
 /// value) is the signal the frontend uses to hide the toggle.
 #[tauri::command]
 async fn vibrancy_status(state: State<'_, AppState>) -> Result<VibrancyStatus, BantoError> {
-    require_role(&state, Role::Viewer)?;
+    require_role(&state, Role::Viewer, "settings").await?;
     let supported = cfg!(target_os = "windows");
     let enabled = supported
         && state
@@ -739,7 +985,7 @@ impl From<UserIdentity> for UserIdentityResult {
 /// `admin`-only (spec M10): the user-management screen's account list.
 #[tauri::command]
 async fn users_list(state: State<'_, AppState>) -> Result<Vec<UserSummary>, BantoError> {
-    require_role(&state, Role::Admin)?;
+    require_role(&state, Role::Admin, "users").await?;
     state.users.list_users().await
 }
 
@@ -752,11 +998,24 @@ async fn users_create(
     display_name: String,
     role: Role,
 ) -> Result<UserIdentityResult, BantoError> {
-    require_role(&state, Role::Admin)?;
+    let actor = require_role(&state, Role::Admin, "users").await?;
     let identity = state
         .users
         .create_user(&username, &password, &display_name, role)
         .await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "create",
+            resource: "users",
+            entity_id: Some(&identity.id.to_string()),
+            detail: Some(serde_json::json!({ "username": identity.username, "role": identity.role })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
     Ok(identity.into())
 }
 
@@ -770,8 +1029,22 @@ async fn users_update(
     display_name: String,
     role: Role,
 ) -> Result<UserSummary, BantoError> {
-    require_role(&state, Role::Admin)?;
-    state.users.update_user(id, &display_name, role).await
+    let actor = require_role(&state, Role::Admin, "users").await?;
+    let updated = state.users.update_user(id, &display_name, role).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "update",
+            resource: "users",
+            entity_id: Some(&id.to_string()),
+            detail: Some(serde_json::json!({ "role": updated.role })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(updated)
 }
 
 /// `admin`-only (spec M10): reset another account's password without
@@ -782,8 +1055,22 @@ async fn users_reset_password(
     id: i64,
     new_password: String,
 ) -> Result<(), BantoError> {
-    require_role(&state, Role::Admin)?;
-    state.users.reset_password(id, &new_password).await
+    let actor = require_role(&state, Role::Admin, "users").await?;
+    state.users.reset_password(id, &new_password).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "password_reset",
+            resource: "users",
+            entity_id: Some(&id.to_string()),
+            detail: None,
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
 }
 
 /// `admin`-only (spec M10): delete an account. Refuses to delete the last
@@ -793,8 +1080,41 @@ async fn users_reset_password(
 /// a caller cannot spoof a different acting user.
 #[tauri::command]
 async fn users_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    let acting = require_role(&state, Role::Admin)?;
-    state.users.delete_user(id, acting.id).await
+    let acting = require_role(&state, Role::Admin, "users").await?;
+    state.users.delete_user(id, acting.id).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&acting.username),
+            actor_role: Some(acting.role.as_str()),
+            action: "delete",
+            resource: "users",
+            entity_id: Some(&id.to_string()),
+            detail: None,
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
+}
+
+/// `admin`-only (spec M14): the audit-log viewer's filtered/sorted/
+/// paginated read. Also opportunistically prunes first - same reasoning as
+/// `admin_template_core::rest::audit_log_list` (see that function's doc
+/// comment).
+#[tauri::command]
+async fn audit_log_list(
+    state: State<'_, AppState>,
+    params: ListParams,
+) -> Result<ListResult<AuditLogEntry>, BantoError> {
+    require_role(&state, Role::Admin, "audit_log").await?;
+    if let Ok(config) = state.settings.audit_config().await {
+        let _ = state
+            .audit
+            .prune(config.retention_days, config.retention_rows)
+            .await;
+    }
+    state.audit.list(params).await
 }
 
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
@@ -867,8 +1187,30 @@ pub fn run() {
             let events = event_channel();
             let items = ItemsService::new(pool.clone()).with_events(events.clone());
             let users = UsersService::new(pool.clone());
-            let settings = SettingsService::new(pool);
-            let rest_auth = AuthState::new(rest_credential_verifier(users.clone()));
+            let settings = SettingsService::new(pool.clone());
+            let audit = AuditLogService::new(pool);
+            // Records `login`/`login_failed` audit entries (spec M14) from
+            // inside the verifier itself - see
+            // `admin_template_core::rest::audited_credential_verifier`'s doc
+            // comment. This is the embedded LAN server's OWN session
+            // (`origin: "rest"`) - the webview's session goes through
+            // `auth_login` below instead.
+            let rest_auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+
+            // Startup prune (spec M14: "アプリ起動時に1回 + list実行時に軽く" -
+            // see `audit_log_list`'s doc comment for why no dedicated
+            // background task is needed beyond this plus that opportunistic
+            // prune). Best-effort: a prune failure must never block startup.
+            match tauri::async_runtime::block_on(settings.audit_config()) {
+                Ok(config) => {
+                    if let Err(err) = tauri::async_runtime::block_on(
+                        audit.prune(config.retention_days, config.retention_rows),
+                    ) {
+                        eprintln!("banto: 起動時の監査ログの剪定に失敗しました: {err}");
+                    }
+                }
+                Err(err) => eprintln!("banto: 監査ログの保持設定の読み取りに失敗しました: {err}"),
+            }
 
             // Forward every resource-change/notice event onto the webview
             // (spec §3.5's TauriEventProvider side: the webview has no
@@ -905,19 +1247,46 @@ pub fn run() {
                 // `id: 0` is not a real `users` row - nothing here ever looks
                 // it up by id (no change-password/self-deletion flows apply
                 // to a synthetic session), so there is no real row to alias.
-                Some(UserIdentity {
+                let local_identity = UserIdentity {
                     id: 0,
                     username: "local".to_string(),
                     display_name: "ローカルユーザー".to_string(),
                     role: auth_config.disabled_role,
-                })
+                };
+                // Spec M14: auth-disabled mode still records a `login` for
+                // its synthetic session, same as a normal login would - it
+                // is still "someone" starting to use the app, just without a
+                // credential check.
+                tauri::async_runtime::block_on(audit.record(AuditEntry {
+                    actor_username: Some(&local_identity.username),
+                    actor_role: Some(local_identity.role.as_str()),
+                    action: "login",
+                    resource: "auth",
+                    entity_id: None,
+                    detail: Some(serde_json::json!({ "mode": "auth_disabled" })),
+                    origin: "tauri",
+                    result: "ok",
+                }));
+                Some(local_identity)
             } else if auth_config.autologin_enabled {
                 match &auth_config.autologin_username {
                     Some(username) => match keyring_store::get_password(username) {
                         Ok(password) => {
                             match tauri::async_runtime::block_on(users.verify(username, &password))
                             {
-                                Ok(Some(identity)) => Some(identity),
+                                Ok(Some(identity)) => {
+                                    tauri::async_runtime::block_on(audit.record(AuditEntry {
+                                        actor_username: Some(&identity.username),
+                                        actor_role: Some(identity.role.as_str()),
+                                        action: "login",
+                                        resource: "auth",
+                                        entity_id: None,
+                                        detail: Some(serde_json::json!({ "via": "autologin" })),
+                                        origin: "tauri",
+                                        result: "ok",
+                                    }));
+                                    Some(identity)
+                                }
                                 Ok(None) => {
                                     // Credentials no longer valid (e.g. the
                                     // password was changed since autologin
@@ -927,10 +1296,30 @@ pub fn run() {
                                     eprintln!(
                                         "banto: 自動ログインの資格情報が無効です（パスワード変更等）。ログイン画面を表示します。"
                                     );
+                                    tauri::async_runtime::block_on(audit.record(AuditEntry {
+                                        actor_username: Some(username),
+                                        actor_role: None,
+                                        action: "login_failed",
+                                        resource: "auth",
+                                        entity_id: None,
+                                        detail: Some(serde_json::json!({ "via": "autologin" })),
+                                        origin: "tauri",
+                                        result: "failed",
+                                    }));
                                     None
                                 }
                                 Err(err) => {
                                     eprintln!("banto: 自動ログインの検証に失敗しました: {err}");
+                                    tauri::async_runtime::block_on(audit.record(AuditEntry {
+                                        actor_username: Some(username),
+                                        actor_role: None,
+                                        action: "login_failed",
+                                        resource: "auth",
+                                        entity_id: None,
+                                        detail: Some(serde_json::json!({ "via": "autologin" })),
+                                        origin: "tauri",
+                                        result: "failed",
+                                    }));
                                     None
                                 }
                             }
@@ -978,6 +1367,7 @@ pub fn run() {
                     items.clone(),
                     users.clone(),
                     settings.clone(),
+                    audit.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,
@@ -1039,6 +1429,7 @@ pub fn run() {
                 events,
                 rest_auth,
                 server: AsyncMutex::new(initial_server),
+                audit,
             });
 
             Ok(())
@@ -1074,8 +1465,101 @@ pub fn run() {
             users_update,
             users_reset_password,
             users_delete,
+            audit_log_list,
             panel_open,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal [`AppState`] over an in-memory DB, no running server, and a
+    /// dummy REST verifier - just enough state to exercise command bodies
+    /// (like [`change_own_password`]) that only touch the service handles.
+    async fn app_state() -> AppState {
+        let pool = admin_template_core::db::init_db_memory()
+            .await
+            .expect("init_db_memory");
+        let events = event_channel();
+        AppState {
+            items: ItemsService::new(pool.clone()).with_events(events.clone()),
+            auth: Mutex::new(None),
+            users: UsersService::new(pool.clone()),
+            settings: SettingsService::new(pool.clone()),
+            events,
+            rest_auth: AuthState::new(|_u: String, _p: String| {
+                Box::pin(async { None::<banto_server::Identity> })
+            }),
+            server: AsyncMutex::new(None),
+            audit: AuditLogService::new(pool),
+        }
+    }
+
+    /// Spec M14: the Tauri-side self-service password change must be
+    /// recorded as `password_change` (actor = entity = the caller), and the
+    /// entry's `detail` must never carry the password.
+    #[tokio::test]
+    async fn change_own_password_is_recorded_as_password_change() {
+        let state = app_state().await;
+        let owner = state
+            .users
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .expect("setup_first_user");
+        let owner_id = owner.id;
+        *state.auth.lock().expect("auth mutex poisoned") = Some(owner);
+
+        change_own_password(&state, "password123", "newpassword1")
+            .await
+            .expect("change_own_password should succeed");
+
+        let result = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = result
+            .rows
+            .iter()
+            .find(|r| r.action == "password_change")
+            .unwrap_or_else(|| panic!("expected a password_change entry, got {:?}", result.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("owner"));
+        assert_eq!(entry.actor_role.as_deref(), Some("admin"));
+        assert_eq!(entry.resource, "users");
+        assert_eq!(entry.entity_id.as_deref(), Some(owner_id.to_string().as_str()));
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+        assert_eq!(entry.detail, None, "detail must never carry the password");
+    }
+
+    /// A FAILED password change (wrong current password) must record
+    /// nothing - only the success path is a completed security event.
+    #[tokio::test]
+    async fn failed_change_own_password_records_nothing() {
+        let state = app_state().await;
+        let owner = state
+            .users
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .expect("setup_first_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(owner);
+
+        change_own_password(&state, "not-the-password", "newpassword1")
+            .await
+            .expect_err("wrong current password should fail");
+
+        let result = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        assert!(
+            result.rows.iter().all(|r| r.action != "password_change"),
+            "a failed change must not be recorded as password_change: {:?}",
+            result.rows
+        );
+    }
 }

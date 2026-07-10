@@ -28,6 +28,7 @@
 //! | DELETE | `/api/users/{id}`    | -              | 204 (admin)             |
 //! | GET    | `/api/ui-settings/{key}` | -          | `{value: string \| null}` (any role) |
 //! | PUT    | `/api/ui-settings/{key}` | `{value}`  | 204 (any role)          |
+//! | POST   | `/api/audit-log/list` | `ListParams`   | `ListResult<AuditLogEntry>` (admin) |
 //!
 //! `/api/ui-settings/*` (spec M12 SettingsProvider migration): per-user UI
 //! settings (theme/preset/dock layout), namespaced by the caller's own
@@ -68,6 +69,19 @@
 //! caller's role is not at least the route's minimum. `viewer` can read
 //! (`items` list/get); `editor` and up can also write; only `admin` can
 //! manage other accounts.
+//!
+//! ## Audit log (spec M14, `docs/roadmap.md`)
+//!
+//! Every mutating handler above (`items`/`users` create/update/delete,
+//! password reset, self-service password change) records a
+//! `crate::audit::AuditEntry` to [`crate::audit::AuditLogService`] once its
+//! underlying service call has already succeeded (`origin: "rest"`);
+//! [`require_role_at_least`] records `action: "denied"` when an
+//! authenticated caller's role is too low; [`audited_credential_verifier`]
+//! records `login`/`login_failed`; [`audit_logout_middleware`] records
+//! `logout`; and `auth_setup_handler` records `setup`. Read routes
+//! (`list`/`get`) are never audited. The trail itself is only readable via
+//! `POST /api/audit-log/list`, `admin`-only.
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -81,12 +95,58 @@ use banto_server::{
     Identity, ServerEvent,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::str::FromStr;
 use tokio::sync::broadcast;
 
+use crate::audit::{AuditEntry, AuditLogService};
 use crate::items::{Item, ItemInput, ItemsService};
 use crate::settings::SettingsService;
 use crate::users::{Role, UserIdentity, UserSummary, UsersService};
+
+/// Resolve the caller's [`Identity`] from its bearer token, best-effort
+/// (spec M14): every audit-recording call site needs "who did this", and
+/// every one of them runs AFTER `require_auth`/`require_role_at_least` has
+/// already proven the token valid, so this should always resolve - `None`
+/// here is a defensive fallback (e.g. the token expired in the instant
+/// between the guard and the handler running), not an expected path. Shared
+/// by the items/users write handlers below; auth-flow events (login/setup/
+/// logout) resolve their own actor differently since they run before or
+/// without a caller session.
+fn actor_identity(headers: &HeaderMap, auth: &AuthState) -> Option<Identity> {
+    bearer_token(headers).and_then(|token| auth.identity_for(token))
+}
+
+/// Record a successful write (spec M14: create/update/delete/password_reset
+/// etc.) once the service call it follows has already succeeded. Resolves
+/// the actor from the same bearer token `require_auth`/`require_role_at_least`
+/// validated - see [`actor_identity`]. `origin` is always `"rest"` at every
+/// call site in this module (the REST layer); kept as a parameter rather
+/// than hardcoded only so this helper reads the same as the audit
+/// entry it builds.
+async fn record_write(
+    audit: &AuditLogService,
+    auth: &AuthState,
+    headers: &HeaderMap,
+    action: &str,
+    resource: &str,
+    entity_id: &str,
+    detail: Option<serde_json::Value>,
+) {
+    let identity = actor_identity(headers, auth);
+    audit
+        .record(AuditEntry {
+            actor_username: identity.as_ref().map(|i| i.id.as_str()),
+            actor_role: identity.as_ref().map(|i| i.role.as_str()),
+            action,
+            resource,
+            entity_id: Some(entity_id),
+            detail,
+            origin: "rest",
+            result: "ok",
+        })
+        .await;
+}
 
 async fn items_list(
     State(items): State<ItemsService>,
@@ -102,36 +162,87 @@ async fn items_get(
     Ok(Json(items.get(id).await?))
 }
 
+/// State for the `items` WRITE handlers (spec M14): `ItemsService` for the
+/// mutation itself, plus `AuditLogService`/`AuthState` so each handler can
+/// record a `create`/`update`/`delete` entry once the mutation has already
+/// succeeded (read handlers - `items_list`/`items_get` above - stay on the
+/// plain `State<ItemsService>` they always had; spec M14: "読み取り系は記録
+/// しない").
+#[derive(Clone)]
+struct ItemsWriteState {
+    items: ItemsService,
+    audit: AuditLogService,
+    auth: AuthState,
+}
+
 async fn items_create(
-    State(items): State<ItemsService>,
+    State(state): State<ItemsWriteState>,
+    headers: HeaderMap,
     Json(input): Json<ItemInput>,
 ) -> Result<Json<Item>, ApiError> {
-    Ok(Json(items.create(input).await?))
+    let item = state.items.create(input).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "create",
+        "items",
+        &item.id.to_string(),
+        Some(json!({ "name": item.name })),
+    )
+    .await;
+    Ok(Json(item))
 }
 
 async fn items_update(
-    State(items): State<ItemsService>,
+    State(state): State<ItemsWriteState>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
     Json(input): Json<ItemInput>,
 ) -> Result<Json<Item>, ApiError> {
-    Ok(Json(items.update(id, input).await?))
+    let item = state.items.update(id, input).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "update",
+        "items",
+        &item.id.to_string(),
+        Some(json!({ "name": item.name })),
+    )
+    .await;
+    Ok(Json(item))
 }
 
 async fn items_delete(
-    State(items): State<ItemsService>,
+    State(state): State<ItemsWriteState>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    items.delete(id).await?;
+    state.items.delete(id).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "delete",
+        "items",
+        &id.to_string(),
+        None,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `State` for [`require_role_at_least`]: the `AuthState` needed to resolve
-/// a bearer token back to an [`Identity`], plus the minimum [`Role`] the
-/// guarded routes require.
+/// a bearer token back to an [`Identity`], the minimum [`Role`] the guarded
+/// routes require, the `resource` name to tag a denial with (spec M14), and
+/// the `AuditLogService` to record that denial to.
 #[derive(Clone)]
 struct RoleGuard {
     auth: AuthState,
     min: Role,
+    resource: &'static str,
+    audit: AuditLogService,
 }
 
 fn forbidden_response() -> Response {
@@ -144,23 +255,48 @@ fn forbidden_response() -> Response {
 /// parses `Identity.role`, and rejects with `403
 /// { "kind": "forbidden" }` unless the caller's role is at least
 /// `guard.min`. Attach via
-/// `middleware::from_fn_with_state(RoleGuard { auth, min }, require_role_at_least)`.
+/// `middleware::from_fn_with_state(RoleGuard { auth, min, resource, audit }, require_role_at_least)`.
 ///
 /// A missing/invalid token at this point (the identity lookup failing) means
 /// `require_auth` did not actually run first - treated as `Forbidden` rather
 /// than panicking, so a misconfigured router fails closed instead of open.
+/// Spec M14: a denial is only recorded to the audit log when there IS a
+/// resolved identity whose role is simply too low - the defensive
+/// missing-token case above is not a meaningful RBAC decision to audit (it
+/// means the router itself is misconfigured, not that a real user got
+/// rejected).
 async fn require_role_at_least(
     State(guard): State<RoleGuard>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let role = bearer_token(req.headers())
-        .and_then(|token| guard.auth.identity_for(token))
+    let identity = bearer_token(req.headers()).and_then(|token| guard.auth.identity_for(token));
+    let role = identity
+        .as_ref()
         .and_then(|identity| Role::from_str(&identity.role).ok());
 
     match role {
         Some(role) if role.at_least(guard.min) => next.run(req).await,
-        _ => forbidden_response(),
+        _ => {
+            if let Some(identity) = &identity {
+                let method = req.method().as_str().to_string();
+                let path = req.uri().path().to_string();
+                guard
+                    .audit
+                    .record(AuditEntry {
+                        actor_username: Some(&identity.id),
+                        actor_role: Some(&identity.role),
+                        action: "denied",
+                        resource: guard.resource,
+                        entity_id: None,
+                        detail: Some(json!({ "method": method, "path": path })),
+                        origin: "rest",
+                        result: "denied",
+                    })
+                    .await;
+            }
+            forbidden_response()
+        }
     }
 }
 
@@ -179,18 +315,25 @@ fn items_read_router(items: ItemsService, auth: AuthState) -> Router {
 /// executes `require_auth` THEN `require_role_at_least` (axum layers run
 /// outside-in from the last one added) - a request must have a valid
 /// session before its role is even considered.
-fn items_write_router(items: ItemsService, auth: AuthState) -> Router {
+fn items_write_router(items: ItemsService, audit: AuditLogService, auth: AuthState) -> Router {
+    let state = ItemsWriteState {
+        items,
+        audit: audit.clone(),
+        auth: auth.clone(),
+    };
     Router::new()
         .route("/api/items", post(items_create))
         .route(
             "/api/items/{id}",
             axum::routing::put(items_update).delete(items_delete),
         )
-        .with_state(items)
+        .with_state(state)
         .layer(middleware::from_fn_with_state(
             RoleGuard {
                 auth: auth.clone(),
                 min: Role::Editor,
+                resource: "items",
+                audit,
             },
             require_role_at_least,
         ))
@@ -200,8 +343,9 @@ fn items_write_router(items: ItemsService, auth: AuthState) -> Router {
 /// `/api/items/*` (spec M10): merges the read (any role) and write
 /// (`editor`+) sub-routers, which share the same `/api/items/{id}` path
 /// split across HTTP methods.
-fn items_router(items: ItemsService, auth: AuthState) -> Router {
-    items_read_router(items.clone(), auth.clone()).merge(items_write_router(items, auth))
+fn items_router(items: ItemsService, audit: AuditLogService, auth: AuthState) -> Router {
+    items_read_router(items.clone(), auth.clone())
+        .merge(items_write_router(items, audit, auth))
 }
 
 #[derive(Debug, Serialize)]
@@ -252,13 +396,16 @@ struct ResetPasswordResponse {
 }
 
 /// State for the `/api/users/*` handlers: `UsersService` for the CRUD
-/// itself, plus `AuthState` so `users_delete` can resolve the acting
-/// caller's numeric row id from its bearer token (spec M10's self-deletion
-/// guard, see `UsersService::delete_user`'s doc comment).
+/// itself, `AuthState` so `users_delete` can resolve the acting caller's
+/// numeric row id from its bearer token (spec M10's self-deletion guard,
+/// see `UsersService::delete_user`'s doc comment), and `AuditLogService`
+/// (spec M14) so every mutation here records a `create`/`update`/
+/// `password_reset`/`delete` entry once it has already succeeded.
 #[derive(Clone)]
 struct UsersAdminState {
     users: UsersService,
     auth: AuthState,
+    audit: AuditLogService,
 }
 
 /// Resolve the [`UserIdentity`] of the caller making this request, from its
@@ -292,34 +439,66 @@ async fn users_list(
 
 async fn users_create(
     State(state): State<UsersAdminState>,
+    headers: HeaderMap,
     Json(body): Json<CreateUserRequest>,
 ) -> Result<Json<UserIdentityResponse>, ApiError> {
     let identity = state
         .users
         .create_user(&body.username, &body.password, &body.display_name, body.role)
         .await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "create",
+        "users",
+        &identity.id.to_string(),
+        Some(json!({ "username": identity.username, "role": identity.role })),
+    )
+    .await;
     Ok(Json(identity.into()))
 }
 
 async fn users_update(
     State(state): State<UsersAdminState>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
     Json(body): Json<UpdateUserRequest>,
 ) -> Result<Json<UserSummary>, ApiError> {
-    Ok(Json(
-        state
-            .users
-            .update_user(id, &body.display_name, body.role)
-            .await?,
-    ))
+    let updated = state
+        .users
+        .update_user(id, &body.display_name, body.role)
+        .await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "update",
+        "users",
+        &id.to_string(),
+        Some(json!({ "role": updated.role })),
+    )
+    .await;
+    Ok(Json(updated))
 }
 
 async fn users_reset_password(
     State(state): State<UsersAdminState>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
     Json(body): Json<ResetPasswordRequest>,
 ) -> Result<Json<ResetPasswordResponse>, ApiError> {
     state.users.reset_password(id, &body.new_password).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "password_reset",
+        "users",
+        &id.to_string(),
+        None,
+    )
+    .await;
     Ok(Json(ResetPasswordResponse { success: true }))
 }
 
@@ -330,16 +509,27 @@ async fn users_delete(
 ) -> Result<StatusCode, ApiError> {
     let acting = acting_user(&headers, &state.auth, &state.users).await?;
     state.users.delete_user(id, acting.id).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "delete",
+        "users",
+        &id.to_string(),
+        None,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// `/api/users/*` (spec M10): `admin`-only account management. Guarded the
 /// same way `items_write_router` is (`require_auth` then
 /// `require_role_at_least`), just with `Role::Admin` as the floor.
-fn users_router(users: UsersService, auth: AuthState) -> Router {
+fn users_router(users: UsersService, audit: AuditLogService, auth: AuthState) -> Router {
     let state = UsersAdminState {
         users,
         auth: auth.clone(),
+        audit: audit.clone(),
     };
     Router::new()
         .route("/api/users", get(users_list).post(users_create))
@@ -353,6 +543,8 @@ fn users_router(users: UsersService, auth: AuthState) -> Router {
             RoleGuard {
                 auth: auth.clone(),
                 min: Role::Admin,
+                resource: "users",
+                audit,
             },
             require_role_at_least,
         ))
@@ -369,6 +561,7 @@ fn users_router(users: UsersService, auth: AuthState) -> Router {
 struct UsersAuthState {
     users: UsersService,
     auth: AuthState,
+    audit: AuditLogService,
     allow_setup: bool,
 }
 
@@ -432,6 +625,19 @@ async fn auth_setup_handler(
                 name: identity.display_name,
                 role: identity.role.to_string(),
             };
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&identity.id),
+                    actor_role: Some(&identity.role),
+                    action: "setup",
+                    resource: "auth",
+                    entity_id: None,
+                    detail: None,
+                    origin: "rest",
+                    result: "ok",
+                })
+                .await;
             let token = state.auth.issue_token(identity);
             Ok(Json(SetupResponse {
                 success: true,
@@ -488,13 +694,45 @@ async fn auth_change_password_handler(
         .users
         .change_password(&identity.id, &body.current_password, &body.new_password)
         .await?;
+    // Spec M14: a self-service password change is a security event (it is
+    // also what naturally invalidates an M11 autologin credential), so it IS
+    // audited - `entity_id` is the caller's own numeric row id (matching the
+    // other `users` entries), recovered from the username since the bearer
+    // token only carries the latter. `detail` stays `None`: neither the old
+    // nor the new password (nor any hash) may ever be recorded.
+    let entity_id = state
+        .users
+        .get_by_username(&identity.id)
+        .await
+        .ok()
+        .flatten()
+        .map(|user| user.id.to_string());
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&identity.id),
+            actor_role: Some(&identity.role),
+            action: "password_change",
+            resource: "users",
+            entity_id: entity_id.as_deref(),
+            detail: None,
+            origin: "rest",
+            result: "ok",
+        })
+        .await;
     Ok(Json(ChangePasswordResponse { success: true }))
 }
 
-fn extra_auth_router(users: UsersService, auth: AuthState, allow_setup: bool) -> Router {
+fn extra_auth_router(
+    users: UsersService,
+    auth: AuthState,
+    audit: AuditLogService,
+    allow_setup: bool,
+) -> Router {
     let state = UsersAuthState {
         users,
         auth,
+        audit,
         allow_setup,
     };
     Router::new()
@@ -579,28 +817,222 @@ fn ui_settings_router(settings: SettingsService, auth: AuthState) -> Router {
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
 
+// --- M14: audit log ---------------------------------------------------------
+
+/// Wraps `UsersService::verify` as the async credential verifier
+/// `banto_server::AuthState::new` expects (spec §8.2), additionally
+/// recording a `login`/`login_failed` audit entry for every attempt (spec
+/// M14). Shared by `banto-serve` (the standalone REST dev server) and
+/// `src-tauri`'s embedded LAN server auth state - both are `origin: "rest"`
+/// sessions (the Tauri webview's OWN session goes through the `auth_login`
+/// command instead, which records its own login/login_failed entries with
+/// `origin: "tauri"`).
+pub fn audited_credential_verifier(
+    users: UsersService,
+    audit: AuditLogService,
+) -> impl Fn(String, String) -> futures_util::future::BoxFuture<'static, Option<Identity>>
+       + Send
+       + Sync
+       + 'static {
+    move |username: String, password: String| {
+        let users = users.clone();
+        let audit = audit.clone();
+        Box::pin(async move {
+            match users.verify(&username, &password).await {
+                Ok(Some(identity)) => {
+                    audit
+                        .record(AuditEntry {
+                            actor_username: Some(&identity.username),
+                            actor_role: Some(identity.role.as_str()),
+                            action: "login",
+                            resource: "auth",
+                            entity_id: None,
+                            detail: None,
+                            origin: "rest",
+                            result: "ok",
+                        })
+                        .await;
+                    Some(Identity {
+                        id: identity.username,
+                        name: identity.display_name,
+                        role: identity.role.to_string(),
+                    })
+                }
+                _ => {
+                    audit
+                        .record(AuditEntry {
+                            actor_username: Some(&username),
+                            actor_role: None,
+                            action: "login_failed",
+                            resource: "auth",
+                            entity_id: None,
+                            detail: None,
+                            origin: "rest",
+                            result: "failed",
+                        })
+                        .await;
+                    None
+                }
+            }
+        })
+    }
+}
+
+/// State for [`audit_logout_middleware`]: needs `AuthState` to resolve the
+/// logging-out session's identity BEFORE the token is invalidated, plus
+/// `AuditLogService` to record it (spec M14).
+#[derive(Clone)]
+struct LogoutAuditState {
+    auth: AuthState,
+    audit: AuditLogService,
+}
+
+/// Wraps the WHOLE `banto_server::auth_routes` sub-router (login/logout/
+/// check/identity) rather than adding a competing `/api/auth/logout` route
+/// of its own (spec M14): `axum::Router::merge` panics if two routers both
+/// register the same path+method, and `banto_server::auth_routes` bundles
+/// all four routes into one `Router` with no way to omit just `logout` - so
+/// this instead inspects each request's path/method, resolving the caller's
+/// identity (before the real handler invalidates the token) only when the
+/// request IS the logout route, letting `next` run the real handler
+/// completely unmodified either way, then recording the `logout` entry
+/// after.
+///
+/// `POST /api/auth/login`'s own login/login_failed events are NOT recorded
+/// here - see [`audited_credential_verifier`], which records those from
+/// inside the credential-verifier closure instead (simpler: no need to peek
+/// at the response body to learn success/failure).
+async fn audit_logout_middleware(
+    State(state): State<LogoutAuditState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let is_logout =
+        req.method() == axum::http::Method::POST && req.uri().path() == "/api/auth/logout";
+    let identity = if is_logout {
+        actor_identity(req.headers(), &state.auth)
+    } else {
+        None
+    };
+
+    let response = next.run(req).await;
+
+    if is_logout {
+        state
+            .audit
+            .record(AuditEntry {
+                actor_username: identity.as_ref().map(|i| i.id.as_str()),
+                actor_role: identity.as_ref().map(|i| i.role.as_str()),
+                action: "logout",
+                resource: "auth",
+                entity_id: None,
+                detail: None,
+                origin: "rest",
+                result: "ok",
+            })
+            .await;
+    }
+
+    response
+}
+
+/// State for `POST /api/audit-log/list` (spec M14): `AuditLogService` for
+/// the read itself, plus `SettingsService` to look up the current retention
+/// policy for the light opportunistic prune below.
+#[derive(Clone)]
+struct AuditLogState {
+    audit: AuditLogService,
+    settings: SettingsService,
+}
+
+/// `POST /api/audit-log/list` (spec M14, `admin`-only): filtered/sorted/
+/// paginated read of the audit trail (spec: read routes themselves are
+/// never audited, only mutations/denials/auth events are). Also
+/// opportunistically prunes (spec: "list実行時に軽く") before answering -
+/// best-effort, a prune failure must never block an admin from viewing
+/// existing entries, so its result is discarded. There is deliberately no
+/// separate background pruning task: this plus a once-at-startup prune
+/// (`bin/banto-serve.rs`'s `main`/`src-tauri`'s `run()`) is judged
+/// sufficient - the audit-log viewer is an admin-only, infrequently-visited
+/// page, and each prune is a couple of indexed `DELETE`s, not an expensive
+/// scan.
+async fn audit_log_list(
+    State(state): State<AuditLogState>,
+    Json(params): Json<ListParams>,
+) -> Result<Json<ListResult<crate::audit::AuditLogEntry>>, ApiError> {
+    if let Ok(config) = state.settings.audit_config().await {
+        let _ = state
+            .audit
+            .prune(config.retention_days, config.retention_rows)
+            .await;
+    }
+    Ok(Json(state.audit.list(params).await?))
+}
+
+/// `/api/audit-log/*` (spec M14): `admin`-only, guarded the same way
+/// `users_router` is (`require_auth` then `require_role_at_least`).
+fn audit_log_router(
+    audit: AuditLogService,
+    settings: SettingsService,
+    auth: AuthState,
+) -> Router {
+    let state = AuditLogState {
+        audit: audit.clone(),
+        settings,
+    };
+    Router::new()
+        .route("/api/audit-log/list", post(audit_log_list))
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            RoleGuard {
+                auth: auth.clone(),
+                min: Role::Admin,
+                resource: "audit_log",
+                audit,
+            },
+            require_role_at_least,
+        ))
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
-/// logout/check/identity from `banto_server`, plus status/setup/
-/// change-password here since those need `UsersService`), SSE events, the
-/// `items` CRUD routes (RBAC-split read/write, spec M10), the
-/// `admin`-only `users` management routes (spec M10), and the per-user
-/// `ui-settings` routes (spec M12), all behind the CSRF header check. Mount
-/// the result *before* `banto_server::static_files::static_router` so
-/// `/api/*` takes priority over the SPA fallback.
+/// logout/check/identity from `banto_server` - wrapped with an audit-log
+/// hook for `logout`, spec M14 - plus status/setup/change-password here
+/// since those need `UsersService`), SSE events, the `items` CRUD routes
+/// (RBAC-split read/write, spec M10), the `admin`-only `users` management
+/// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), and
+/// the per-user `ui-settings` routes (spec M12), all behind the CSRF header
+/// check. Mount the result *before* `banto_server::static_files::static_router`
+/// so `/api/*` takes priority over the SPA fallback.
 pub fn api_router(
     items: ItemsService,
     users: UsersService,
     settings: SettingsService,
+    audit: AuditLogService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     allow_setup: bool,
 ) -> Router {
+    let audited_auth_routes = auth_routes(auth.clone()).layer(middleware::from_fn_with_state(
+        LogoutAuditState {
+            auth: auth.clone(),
+            audit: audit.clone(),
+        },
+        audit_logout_middleware,
+    ));
+
     Router::new()
-        .merge(auth_routes(auth.clone()))
-        .merge(extra_auth_router(users.clone(), auth.clone(), allow_setup))
+        .merge(audited_auth_routes)
+        .merge(extra_auth_router(
+            users.clone(),
+            auth.clone(),
+            audit.clone(),
+            allow_setup,
+        ))
         .merge(sse_route(auth.clone(), events))
-        .merge(items_router(items, auth.clone()))
-        .merge(users_router(users, auth.clone()))
+        .merge(items_router(items, audit.clone(), auth.clone()))
+        .merge(users_router(users, audit.clone(), auth.clone()))
+        .merge(audit_log_router(audit, settings.clone(), auth.clone()))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))
 }
@@ -647,7 +1079,8 @@ mod tests {
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
-        let settings = SettingsService::new(pool);
+        let settings = SettingsService::new(pool.clone());
+        let audit = AuditLogService::new(pool);
 
         users
             .setup_first_user("admin", "password123", "管理者")
@@ -690,7 +1123,7 @@ mod tests {
             .await
             .expect("viewer login");
         (
-            api_router(items, users, settings, auth, tx, false),
+            api_router(items, users, settings, audit, auth, tx, false),
             admin_token,
             editor_token,
             viewer_token,
@@ -702,13 +1135,17 @@ mod tests {
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
-        let settings = SettingsService::new(pool);
+        let settings = SettingsService::new(pool.clone());
+        let audit = AuditLogService::new(pool);
         let auth = demo_auth();
         let token = auth
             .login("admin", "admin")
             .await
             .expect("login should succeed");
-        (api_router(items, users, settings, auth, tx, false), token)
+        (
+            api_router(items, users, settings, audit, auth, tx, false),
+            token,
+        )
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -906,10 +1343,11 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
-        let settings = SettingsService::new(pool);
+        let settings = SettingsService::new(pool.clone());
+        let audit = AuditLogService::new(pool);
         let auth = demo_auth();
         let token = auth.login("admin", "admin").await.unwrap();
-        let router = api_router(items, users, settings, auth, tx, false);
+        let router = api_router(items, users, settings, audit, auth, tx, false);
 
         let create_response = router
             .clone()
@@ -967,9 +1405,10 @@ mod tests {
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
-        let settings = SettingsService::new(pool);
+        let settings = SettingsService::new(pool.clone());
+        let audit = AuditLogService::new(pool);
         let auth = demo_auth();
-        api_router(items, users, settings, auth, tx, allow_setup)
+        api_router(items, users, settings, audit, auth, tx, allow_setup)
     }
 
     fn get(path: &str) -> HttpRequest<Body> {
@@ -1152,33 +1591,25 @@ mod tests {
     /// wire things in production (unlike `router_with_setup` above, whose
     /// `demo_auth()` login verifier is intentionally independent, matching
     /// the other tests in this module that only care about items/CSRF
-    /// behavior).
-    async fn router_with_real_login(allow_setup: bool) -> Router {
+    /// behavior). Also returns the `AuditLogService` sharing the router's
+    /// pool, so M14 tests can assert on what got recorded.
+    async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
-        let settings = SettingsService::new(pool);
-        let verify_users = users.clone();
-        let auth = AuthState::new(move |u: String, p: String| {
-            let users = verify_users.clone();
-            Box::pin(async move {
-                match users.verify(&u, &p).await {
-                    Ok(Some(identity)) => Some(Identity {
-                        id: identity.username,
-                        name: identity.display_name,
-                        role: identity.role.to_string(),
-                    }),
-                    _ => None,
-                }
-            })
-        });
-        api_router(items, users, settings, auth, tx, allow_setup)
+        let settings = SettingsService::new(pool.clone());
+        let audit = AuditLogService::new(pool);
+        let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+        (
+            api_router(items, users, settings, audit.clone(), auth, tx, allow_setup),
+            audit,
+        )
     }
 
     #[tokio::test]
     async fn auth_change_password_success_then_relogin_with_new_password() {
-        let router = router_with_real_login(true).await;
+        let (router, _audit) = router_with_real_login(true).await;
         let token = setup_and_get_token(&router).await;
 
         let change_request = HttpRequest::post("/api/auth/change-password")
@@ -1591,5 +2022,389 @@ mod tests {
             response.status() == StatusCode::UNAUTHORIZED
                 || response.status() == StatusCode::METHOD_NOT_ALLOWED
         );
+    }
+
+    // --- M14 Audit -----------------------------------------------------------
+
+    /// Like `router_with_role_tokens`, but also returns the `AuditLogService`
+    /// sharing the router's pool (so these tests can query
+    /// `/api/audit-log/list` as the admin token and assert on what got
+    /// recorded), and wires the login verifier through
+    /// [`audited_credential_verifier`] so login events are actually recorded
+    /// - `router_with_role_tokens`'s own verifier predates M14 and stays a
+    /// plain credential check since none of ITS callers care about audit
+    /// events.
+    async fn router_with_role_tokens_and_audit(
+    ) -> (Router, AuditLogService, String, String, String) {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let (tx, _rx) = broadcast::channel(16);
+        let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool.clone());
+        let audit = AuditLogService::new(pool);
+
+        users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create editor");
+        users
+            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("create viewer");
+
+        let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+        let admin_token = auth
+            .login("admin", "password123")
+            .await
+            .expect("admin login");
+        let editor_token = auth
+            .login("editor", "password123")
+            .await
+            .expect("editor login");
+        let viewer_token = auth
+            .login("viewer", "password123")
+            .await
+            .expect("viewer login");
+
+        let router = api_router(items, users, settings, audit.clone(), auth, tx, false);
+        (router, audit, admin_token, editor_token, viewer_token)
+    }
+
+    /// (a) `/api/audit-log/list` is admin-only: 200 for admin, 403 for
+    /// editor/viewer.
+    #[tokio::test]
+    async fn audit_log_list_is_admin_only() {
+        let (router, _audit, admin, editor, viewer) = router_with_role_tokens_and_audit().await;
+
+        let admin_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(admin_response.status(), StatusCode::OK);
+
+        for token in [&editor, &viewer] {
+            let response = router
+                .clone()
+                .oneshot(post_json_auth(
+                    "/api/audit-log/list",
+                    token,
+                    json!(ListParams::default()),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "token role mismatch");
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_log_list_requires_a_token() {
+        let (router, _audit, _admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
+        let response = router
+            .oneshot(post_json("/api/audit-log/list", json!(ListParams::default())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// (b) A successful item creation is recorded.
+    #[tokio::test]
+    async fn item_create_is_recorded_in_the_audit_log() {
+        let (router, _audit, admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+        let create_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &admin,
+                json!({ "name": "Widget", "price": 10, "stock": 1 }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let id = body_json(create_response).await["id"].as_i64().unwrap();
+
+        let list_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(list_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        let entry = rows
+            .iter()
+            .find(|r| r["action"] == "create" && r["resource"] == "items")
+            .unwrap_or_else(|| panic!("expected a create/items entry, got {rows:?}"));
+        assert_eq!(entry["actorUsername"], "admin");
+        assert_eq!(entry["actorRole"], "admin");
+        assert_eq!(entry["entityId"], id.to_string().as_str());
+        assert_eq!(entry["origin"], "rest");
+        assert_eq!(entry["result"], "ok");
+    }
+
+    /// A successful item delete is recorded too (not just create) - a quick
+    /// sanity check that every mutation, not just the first one wired up, is
+    /// covered.
+    #[tokio::test]
+    async fn item_delete_is_recorded_in_the_audit_log() {
+        let (router, _audit, admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+        let create_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &admin,
+                json!({ "name": "Doomed", "price": 1, "stock": 1 }),
+            ))
+            .await
+            .unwrap();
+        let id = body_json(create_response).await["id"].as_i64().unwrap();
+
+        router
+            .clone()
+            .oneshot(delete_auth(&format!("/api/items/{id}"), &admin))
+            .await
+            .unwrap();
+
+        let list_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(list_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        assert!(
+            rows.iter()
+                .any(|r| r["action"] == "delete" && r["resource"] == "items"
+                    && r["entityId"] == id.to_string().as_str()),
+            "expected a delete/items entry, got {rows:?}"
+        );
+    }
+
+    /// (c) A viewer's rejected write is recorded as `denied`.
+    #[tokio::test]
+    async fn viewer_write_denial_is_recorded_as_denied() {
+        let (router, _audit, admin, _editor, viewer) = router_with_role_tokens_and_audit().await;
+
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &viewer,
+                json!({ "name": "Nope", "price": 1, "stock": 1 }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let list_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(list_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        let entry = rows
+            .iter()
+            .find(|r| r["action"] == "denied" && r["resource"] == "items")
+            .unwrap_or_else(|| panic!("expected a denied/items entry, got {rows:?}"));
+        assert_eq!(entry["actorUsername"], "viewer");
+        assert_eq!(entry["actorRole"], "viewer");
+        assert_eq!(entry["result"], "denied");
+    }
+
+    /// `users` create/reset-password entries must never leak the plaintext
+    /// password into `detail` (spec M14's hard rule - see
+    /// `crate::audit`'s module doc comment).
+    #[tokio::test]
+    async fn users_create_audit_entry_never_contains_the_password() {
+        let (router, _audit, admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/users",
+                &admin,
+                json!({
+                    "username": "newperson",
+                    "password": "supersecret1",
+                    "displayName": "New Person",
+                    "role": "viewer"
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let list_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(list_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        let entry = rows
+            .iter()
+            .find(|r| r["action"] == "create" && r["resource"] == "users")
+            .expect("expected a create/users entry");
+        assert_eq!(entry["actorUsername"], "admin");
+        let detail = entry["detail"].as_str().expect("detail should be set");
+        assert!(
+            !detail.contains("supersecret1"),
+            "audit detail must never contain the password: {detail}"
+        );
+        assert!(detail.contains("newperson"));
+    }
+
+    /// (d) A failed login attempt is recorded as `login_failed`. Uses
+    /// `router_with_real_login` (not `router_with_role_tokens_and_audit`)
+    /// since it wires `/api/auth/login` through the same
+    /// `audited_credential_verifier` production code path.
+    #[tokio::test]
+    async fn login_failure_is_recorded_as_login_failed() {
+        let (router, audit) = router_with_real_login(true).await;
+        setup_and_get_token(&router).await; // creates the "owner" admin account
+
+        let response = router
+            .oneshot(post_json(
+                "/api/auth/login",
+                json!({ "username": "owner", "password": "wrong-password" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(body_json(response).await["success"], false);
+
+        let result = audit.list(ListParams::default()).await.unwrap();
+        let entry = result
+            .rows
+            .iter()
+            .find(|r| r.action == "login_failed")
+            .unwrap_or_else(|| panic!("expected a login_failed entry, got {:?}", result.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("owner"));
+        assert_eq!(entry.actor_role, None);
+        assert_eq!(entry.result, "failed");
+    }
+
+    #[tokio::test]
+    async fn login_success_is_recorded_as_login() {
+        let (router, audit) = router_with_real_login(true).await;
+        setup_and_get_token(&router).await;
+
+        router
+            .clone()
+            .oneshot(post_json(
+                "/api/auth/login",
+                json!({ "username": "owner", "password": "password123" }),
+            ))
+            .await
+            .unwrap();
+
+        let result = audit.list(ListParams::default()).await.unwrap();
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r.action == "login" && r.actor_username.as_deref() == Some("owner")),
+            "expected a login entry, got {:?}",
+            result.rows
+        );
+    }
+
+    #[tokio::test]
+    async fn logout_is_recorded() {
+        let (router, audit) = router_with_real_login(true).await;
+        let token = setup_and_get_token(&router).await;
+
+        router
+            .oneshot(
+                HttpRequest::post("/api/auth/logout")
+                    .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let result = audit.list(ListParams::default()).await.unwrap();
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r.action == "logout" && r.actor_username.as_deref() == Some("owner")),
+            "expected a logout entry, got {:?}",
+            result.rows
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_is_recorded() {
+        let (router, audit) = router_with_real_login(true).await;
+        setup_and_get_token(&router).await;
+
+        let result = audit.list(ListParams::default()).await.unwrap();
+        assert!(
+            result
+                .rows
+                .iter()
+                .any(|r| r.action == "setup" && r.actor_username.as_deref() == Some("owner")),
+            "expected a setup entry, got {:?}",
+            result.rows
+        );
+    }
+
+    /// Spec M14 (coordinator review): a self-service password change is a
+    /// security event and must be recorded as `password_change` (actor =
+    /// entity = the caller) - and the entry must never carry the password.
+    #[tokio::test]
+    async fn change_password_is_recorded_as_password_change() {
+        let (router, audit) = router_with_real_login(true).await;
+        let token = setup_and_get_token(&router).await;
+
+        let change_request = HttpRequest::post("/api/auth/change-password")
+            .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "currentPassword": "password123", "newPassword": "newpassword1" })
+                    .to_string(),
+            ))
+            .unwrap();
+        let response = router.oneshot(change_request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let result = audit.list(ListParams::default()).await.unwrap();
+        let entry = result
+            .rows
+            .iter()
+            .find(|r| r.action == "password_change")
+            .unwrap_or_else(|| panic!("expected a password_change entry, got {:?}", result.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("owner"));
+        assert_eq!(entry.actor_role.as_deref(), Some("admin"));
+        assert_eq!(entry.resource, "users");
+        // `setup_first_user` creates the very first row -> id 1.
+        assert_eq!(entry.entity_id.as_deref(), Some("1"));
+        assert_eq!(entry.origin, "rest");
+        assert_eq!(entry.result, "ok");
+        assert_eq!(entry.detail, None, "detail must never carry the password");
     }
 }

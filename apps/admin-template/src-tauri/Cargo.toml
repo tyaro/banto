@@ -45,6 +45,12 @@ futures-util = { workspace = true }
 # here and not on `admin-template-core`.
 keyring = { workspace = true }
 
+# `#[tokio::test]` for this crate's own unit tests (spec M14: the
+# `change_own_password` audit-recording test) - the runtime/macros features
+# are test-only so the production dependency above stays "sync"-only.
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
 # Real window translucency for the glass theme (spec M12): Windows Acrylic
 # via `window_vibrancy::apply_acrylic`/`clear_acrylic`. Windows-only by
 # decision (docs/roadmap.md §6: macOS vibrancy は非スコープ), hence a

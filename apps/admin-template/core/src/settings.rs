@@ -18,6 +18,43 @@ const KEY_AUTH_DISABLED: &str = "auth.disabled";
 const KEY_AUTH_DISABLED_ROLE: &str = "auth.disabled_role";
 const KEY_AUTOLOGIN_ENABLED: &str = "auth.autologin.enabled";
 const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
+const KEY_AUDIT_RETENTION_DAYS: &str = "audit.retention_days";
+const KEY_AUDIT_RETENTION_ROWS: &str = "audit.retention_rows";
+
+/// Default audit-log retention (spec M14): 90 days / 100,000 rows. There is
+/// deliberately no "audit enabled" toggle - the audit trail is a standard
+/// part of the template (spec: "監査ログを標準装備する"), only its retention
+/// is configurable.
+const DEFAULT_AUDIT_RETENTION_DAYS: i64 = 90;
+const DEFAULT_AUDIT_RETENTION_ROWS: i64 = 100_000;
+
+/// `0以下は「無制限」として None 扱い` (spec M14): normalizes a parsed
+/// retention value so a non-positive number always reads back as "no
+/// limit" on this dimension, both right after `set_audit_config` and on any
+/// later read.
+fn normalize_retention(value: i64) -> Option<i64> {
+    if value > 0 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+/// Shared by [`SettingsService::audit_config`]'s two fields: an unset key
+/// falls back to `default`; a set-but-corrupt (non-numeric) value ALSO falls
+/// back to `default` (same convention as `auth_config`'s `disabled_role`
+/// fallback); a set, parseable value is normalized (see
+/// [`normalize_retention`]) - notably a value of `"0"` here means "the user
+/// explicitly chose unlimited", which must NOT fall back to `default`.
+fn parse_retention(raw: Option<String>, default: Option<i64>) -> Option<i64> {
+    match raw {
+        Some(value) => value
+            .parse::<i64>()
+            .map(normalize_retention)
+            .unwrap_or(default),
+        None => default,
+    }
+}
 
 /// Max length (in `char`s) of a per-user UI-settings `key` (spec M12).
 const MAX_UI_KEY_LEN: usize = 64;
@@ -107,6 +144,28 @@ impl Default for AuthSettings {
             disabled_role: Role::Admin,
             autologin_enabled: false,
             autologin_username: None,
+        }
+    }
+}
+
+/// Audit-log retention settings (spec M14): a days cap and/or a row-count
+/// cap for [`crate::audit::AuditLogService::prune`]. `None` on either field
+/// means unlimited on that dimension (see [`normalize_retention`]).
+/// Defaults to 90 days / 100,000 rows - generous enough not to surprise a
+/// fresh install, bounded enough that the table does not grow forever with
+/// no configuration at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditSettings {
+    pub retention_days: Option<i64>,
+    pub retention_rows: Option<i64>,
+}
+
+impl Default for AuditSettings {
+    fn default() -> Self {
+        Self {
+            retention_days: Some(DEFAULT_AUDIT_RETENTION_DAYS),
+            retention_rows: Some(DEFAULT_AUDIT_RETENTION_ROWS),
         }
     }
 }
@@ -307,6 +366,47 @@ impl SettingsService {
         self.set(
             KEY_AUTOLOGIN_USERNAME,
             config.autologin_username.as_deref().unwrap_or(""),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Read the audit-log retention settings (spec M14), falling back to
+    /// [`AuditSettings::default`] for any key that has never been set. See
+    /// [`parse_retention`] for how a stored value maps to `Option<i64>`.
+    pub async fn audit_config(&self) -> Result<AuditSettings, BantoError> {
+        let defaults = AuditSettings::default();
+
+        let retention_days = parse_retention(
+            self.get(KEY_AUDIT_RETENTION_DAYS).await?,
+            defaults.retention_days,
+        );
+        let retention_rows = parse_retention(
+            self.get(KEY_AUDIT_RETENTION_ROWS).await?,
+            defaults.retention_rows,
+        );
+
+        Ok(AuditSettings {
+            retention_days,
+            retention_rows,
+        })
+    }
+
+    /// Persist the audit-log retention settings (spec M14). `None` is
+    /// written back as `"0"` - [`parse_retention`] treats a stored `0` (or
+    /// any non-positive value) as unlimited on read, so this round-trips
+    /// correctly without a separate "is this key even set" sentinel (unlike
+    /// [`SettingsService::set_auth_config`]'s `autologin_username`, which
+    /// uses `""` because `0` is not a meaningful username).
+    pub async fn set_audit_config(&self, config: &AuditSettings) -> Result<(), BantoError> {
+        self.set(
+            KEY_AUDIT_RETENTION_DAYS,
+            &config.retention_days.unwrap_or(0).to_string(),
+        )
+        .await?;
+        self.set(
+            KEY_AUDIT_RETENTION_ROWS,
+            &config.retention_rows.unwrap_or(0).to_string(),
         )
         .await?;
         Ok(())
@@ -597,5 +697,61 @@ mod tests {
         })
         .await
         .expect("non-disabling auth config changes should not be blocked by LAN state");
+    }
+
+    // --- Audit-log retention settings (spec M14) ---------------------------
+
+    #[tokio::test]
+    async fn audit_config_defaults_when_unset() {
+        let svc = service().await;
+        let config = svc.audit_config().await.unwrap();
+        assert_eq!(config, AuditSettings::default());
+        assert_eq!(config.retention_days, Some(90));
+        assert_eq!(config.retention_rows, Some(100_000));
+    }
+
+    #[tokio::test]
+    async fn audit_config_round_trips_through_set() {
+        let svc = service().await;
+        let config = AuditSettings {
+            retention_days: Some(30),
+            retention_rows: Some(5_000),
+        };
+        svc.set_audit_config(&config).await.unwrap();
+        assert_eq!(svc.audit_config().await.unwrap(), config);
+    }
+
+    #[tokio::test]
+    async fn audit_config_none_round_trips_as_unlimited() {
+        let svc = service().await;
+        svc.set_audit_config(&AuditSettings {
+            retention_days: None,
+            retention_rows: None,
+        })
+        .await
+        .unwrap();
+        let config = svc.audit_config().await.unwrap();
+        assert_eq!(config.retention_days, None);
+        assert_eq!(config.retention_rows, None);
+    }
+
+    #[tokio::test]
+    async fn audit_config_treats_a_stored_zero_as_unlimited_not_the_default() {
+        // A directly-stored "0" (bypassing the typed setter) must NOT fall
+        // back to the default (90/100_000) - it means the user explicitly
+        // chose unlimited, which is a real, distinct value from "unset".
+        let svc = service().await;
+        svc.set(KEY_AUDIT_RETENTION_DAYS, "0").await.unwrap();
+        let config = svc.audit_config().await.unwrap();
+        assert_eq!(config.retention_days, None);
+        assert_eq!(config.retention_rows, Some(100_000)); // untouched key still defaults
+    }
+
+    #[tokio::test]
+    async fn audit_config_falls_back_to_default_on_a_corrupt_stored_value() {
+        let svc = service().await;
+        svc.set(KEY_AUDIT_RETENTION_DAYS, "not-a-number").await.unwrap();
+        let config = svc.audit_config().await.unwrap();
+        assert_eq!(config.retention_days, Some(90));
     }
 }

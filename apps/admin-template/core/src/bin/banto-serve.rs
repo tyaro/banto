@@ -30,41 +30,18 @@
 //! through the `auth_setup` command instead).
 
 use admin_template_core::assets::FrontendAssets;
+use admin_template_core::audit::AuditLogService;
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
-use admin_template_core::rest::api_router;
+use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::UsersService;
-use banto_server::{lan_urls, start, static_router, AuthState, Identity, ServerConfig};
+use banto_server::{lan_urls, start, static_router, AuthState, ServerConfig};
 
 const DEFAULT_PORT: u16 = 8721;
 const DEFAULT_BIND: &str = "0.0.0.0";
 const DEFAULT_DB_PATH: &str = "./banto-dev.sqlite3";
-
-/// Builds the async credential verifier `AuthState::new` expects (spec
-/// §8.2), backed by `UsersService`'s argon2id-hashed accounts - replaces the
-/// old fixed admin/admin check that used to live here.
-fn credential_verifier(
-    users: UsersService,
-) -> impl Fn(String, String) -> futures_util::future::BoxFuture<'static, Option<Identity>>
-       + Send
-       + Sync
-       + 'static {
-    move |username: String, password: String| {
-        let users = users.clone();
-        Box::pin(async move {
-            match users.verify(&username, &password).await {
-                Ok(Some(identity)) => Some(Identity {
-                    id: identity.username,
-                    name: identity.display_name,
-                    role: identity.role.to_string(),
-                }),
-                _ => None,
-            }
-        })
-    }
-}
 
 #[tokio::main]
 async fn main() {
@@ -83,10 +60,29 @@ async fn main() {
     let events = event_channel();
     let items = ItemsService::new(pool.clone()).with_events(events.clone());
     let users = UsersService::new(pool.clone());
-    let settings = SettingsService::new(pool);
-    let auth = AuthState::new(credential_verifier(users.clone()));
+    let settings = SettingsService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+    // Credential verifier from `admin_template_core::rest` (spec §8.2),
+    // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
+    // fixed admin/admin check that used to live here directly. Also records
+    // `login`/`login_failed` audit entries (spec M14).
+    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
 
-    let app = api_router(items, users, settings, auth, events, allow_setup)
+    // Startup prune (spec M14: "サーバ起動時に1回 + list実行時に軽く" - see
+    // `audit_log_list`'s doc comment in `rest.rs` for why no dedicated
+    // background task is needed beyond this plus that opportunistic prune).
+    // Best-effort: a prune failure here must not stop the server from
+    // starting.
+    match settings.audit_config().await {
+        Ok(config) => {
+            if let Err(err) = audit.prune(config.retention_days, config.retention_rows).await {
+                eprintln!("banto-serve: 起動時の監査ログの剪定に失敗しました: {err}");
+            }
+        }
+        Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
+    }
+
+    let app = api_router(items, users, settings, audit, auth, events, allow_setup)
         .merge(static_router::<FrontendAssets>());
 
     let server = start(ServerConfig { bind, port }, app)
