@@ -24,11 +24,17 @@
 		empty?: boolean;
 		plot: Snippet<[PlotMetrics]>;
 		overlay?: Snippet<[PlotMetrics]>;
+		/**
+		 * Optional read-out of the measured container width. Charts that keep
+		 * their scale/path math in script-level `$derived` (e.g. `LineChart`'s
+		 * zoom/decimation pipeline) bind this so the width lives in component
+		 * state rather than only inside the `plot` snippet scope. Purely an
+		 * output - charts that don't need it simply omit the binding.
+		 */
+		width?: number;
 	}
 
-	let { label, height = 240, empty = false, plot, overlay }: Props = $props();
-
-	let width: number = $state(0);
+	let { label, height = 240, empty = false, plot, overlay, width = $bindable(0) }: Props = $props();
 </script>
 
 <div

@@ -15,8 +15,20 @@ export { default as ComboChart } from './ComboChart.svelte';
 export { default as RadarChart } from './RadarChart.svelte';
 export { default as Heatmap } from './Heatmap.svelte';
 export { default as Gauge } from './Gauge.svelte';
+// M13 new chart types (roadmap.md M13, SPC/QC): histogram, Pareto, box plot.
+export { default as Histogram } from './Histogram.svelte';
+export { default as ParetoChart } from './ParetoChart.svelte';
+export { default as BoxPlot } from './BoxPlot.svelte';
 
-export type { Accessor, ChartMargin, SeriesBase, TooltipRow } from './types';
+export type {
+	Accessor,
+	ChartMargin,
+	SeriesBase,
+	TooltipRow,
+	ChartAxis,
+	ThresholdBand,
+	EventMarker
+} from './types';
 export { getValue, toNumber } from './types';
 
 export { linearScale, niceTicks, bandScale, type LinearScale, type BandScale } from './core/scale';
@@ -42,3 +54,21 @@ export {
 	GAUGE_END_DEG,
 	type GaugeThresholds
 } from './core/gauge';
+
+// M13 headless core additions (roadmap.md M13): zoom/pan viewport state for
+// trend charts, histogram binning + normal-curve overlay, Pareto data,
+// box-plot statistics, and rolling-window helpers for streaming updates.
+export {
+	fullViewport,
+	zoomViewport,
+	panViewport,
+	isFullViewport,
+	visibleRange,
+	type Viewport
+} from './core/viewport';
+export { decimationStride, decimatedIndices } from './core/decimate';
+export { histogramBins, normalCurvePoints, type Bin } from './core/bins';
+export { paretoData, type ParetoItem, type ParetoDatum } from './core/pareto';
+export { boxStats, quantileSorted, type BoxStats } from './core/boxplot';
+export { rollingAppend, evictBefore } from './core/rolling';
+export { serializeChartSvg, downloadSvg, inlineCssVarRefs } from './core/export';

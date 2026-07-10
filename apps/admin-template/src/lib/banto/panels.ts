@@ -19,6 +19,13 @@ import type { FloatingWindowDef } from '@banto/dock-svelte';
 export const PANEL_DEFS: FloatingWindowDef[] = [
 	{ id: 'monthly', title: '月別更新件数', icon: '📈', width: 420, height: 320 },
 	{ id: 'priceBuckets', title: '価格帯分布', icon: '🥧', width: 360, height: 320 },
+	// M13 (roadmap.md): SPC panel (histogram + Pareto + box plot, one SVG
+	// export button) and a streaming trend panel (zoom/pan, bands, markers,
+	// second y-axis). Not in `defaultLayout()`'s docked split - they only
+	// appear once toggled from the toolbar, so an existing saved layout
+	// (seeded before M13) is never disturbed (spec: 既存パネルのレイアウトを壊さない).
+	{ id: 'spc', title: 'SPC', icon: '📊', width: 460, height: 640 },
+	{ id: 'trend', title: 'トレンド', icon: '📉', width: 640, height: 360 },
 	{ id: 'memo', title: 'メモ', icon: '📝', width: 320, height: 220 }
 ];
 

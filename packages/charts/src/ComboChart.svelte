@@ -22,7 +22,15 @@
 	import { roundedTopBarPath, linePath } from './core/path';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { getValue, toNumber, type Accessor, type ChartMargin, type TooltipRow } from './types';
+	import {
+		getValue,
+		toNumber,
+		type Accessor,
+		type ChartMargin,
+		type EventMarker,
+		type ThresholdBand,
+		type TooltipRow
+	} from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
@@ -50,9 +58,25 @@
 		formatX?: (v: unknown) => string;
 		/** Per-side overrides merged over the defaults below. */
 		margins?: Partial<ChartMargin>;
+		/** Shaded horizontal threshold/control-limit bands (M13 しきい値バンド). */
+		bands?: ThresholdBand[];
+		/** Vertical event markers at category indices (M13 注釈). */
+		markers?: EventMarker[];
 	}
 
-	let { data, x, bars, lines, label, height = 240, formatY, formatX, margins }: Props = $props();
+	let {
+		data,
+		x,
+		bars,
+		lines,
+		label,
+		height = 240,
+		formatY,
+		formatX,
+		margins,
+		bands = [],
+		markers = []
+	}: Props = $props();
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 26, left: 48 };
 	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
@@ -139,6 +163,27 @@
 			{@const valueScale = linearScale([domainMin, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
 			{@const catScale = bandScale(data.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
 
+			<!-- Threshold bands (drawn first, under the bars/lines). Bands read
+			     against the single shared value scale (rule 1). -->
+			{#each bands as band, bi (bi)}
+				{@const yTop = valueScale(Math.max(band.from, band.to))}
+				{@const yBottom = valueScale(Math.min(band.from, band.to))}
+				{@const bandColor = band.colorVar ?? 'var(--banto-chart-axis)'}
+				<rect
+					x={m.innerLeft}
+					y={yTop}
+					width={m.innerWidth}
+					height={Math.max(0, yBottom - yTop)}
+					fill={bandColor}
+					fill-opacity="0.1"
+				/>
+				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={yTop} y2={yTop} class="band-edge" stroke={bandColor} />
+				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={yBottom} y2={yBottom} class="band-edge" stroke={bandColor} />
+				{#if band.label}
+					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}>{band.label}</text>
+				{/if}
+			{/each}
+
 			<!-- Gridlines + y ticks (shared axis, rule 1) -->
 			{#each valueTicks as tick (tick)}
 				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={valueScale(tick)} y2={valueScale(tick)} class="gridline" />
@@ -200,7 +245,21 @@
 				{/each}
 			{/each}
 
-			<!-- Shared crosshair (rule 6): hover anywhere snaps to the nearest category. -->
+			<!-- Event markers (vertical dashed line + label) at category centers. -->
+			{#each markers as marker, mi (mi)}
+				{#if marker.at >= 0 && marker.at < data.length}
+					{@const mx = catScale.center(marker.at)}
+					{@const markColor = marker.colorVar ?? 'var(--banto-chart-axis)'}
+					<line x1={mx} x2={mx} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="marker-line" stroke={markColor} />
+					{#if marker.label}
+						<text x={mx} y={m.innerTop + 10} class="marker-label" fill={markColor} text-anchor="middle">
+							{marker.label}
+						</text>
+					{/if}
+				{/if}
+			{/each}
+
+				<!-- Shared crosshair (rule 6): hover anywhere snaps to the nearest category. -->
 			{#if hoveredIndex !== null}
 				<line
 					x1={catScale.center(hoveredIndex)}
@@ -259,6 +318,29 @@
 		stroke: var(--banto-chart-axis);
 		stroke-width: 1;
 		pointer-events: none;
+	}
+
+	.band-edge {
+		stroke-width: 1;
+		stroke-opacity: 0.5;
+		pointer-events: none;
+	}
+
+	.band-label {
+		font-size: 10px;
+		opacity: 0.8;
+	}
+
+	.marker-line {
+		stroke-width: 1;
+		stroke-dasharray: 4 3;
+		stroke-opacity: 0.8;
+		pointer-events: none;
+	}
+
+	.marker-label {
+		font-size: 10px;
+		opacity: 0.85;
 	}
 
 	.tick-label {

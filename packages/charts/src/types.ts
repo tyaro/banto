@@ -45,3 +45,33 @@ export interface TooltipRow {
 	/** CSS color (e.g. `seriesColorVar(i)`); omitted for rows with no series identity (e.g. scatter X/Y). */
 	colorVar?: string;
 }
+
+/** Which y-scale a series/annotation is measured against (roadmap.md M13 第2Y軸). */
+export type ChartAxis = 'left' | 'right';
+
+/**
+ * A shaded horizontal band across the plot marking a value range (roadmap.md
+ * M13, しきい値バンド - e.g. an SPC control limit / acceptable-operating zone).
+ * `from`/`to` are y-values in either order; `axis` picks which y-scale they are
+ * read against when a chart has a second axis (defaults to `'left'`).
+ */
+export interface ThresholdBand {
+	from: number;
+	to: number;
+	label?: string;
+	/** CSS color; defaults to `var(--banto-chart-axis)`. */
+	colorVar?: string;
+	axis?: ChartAxis;
+}
+
+/**
+ * A vertical event marker at a data index (roadmap.md M13, 注釈). `at` is a
+ * DATA INDEX (0-based) rather than an x-value, because these charts treat x as
+ * an index-spaced ordered category axis (see `core/ticks-time.ts`).
+ */
+export interface EventMarker {
+	at: number;
+	label?: string;
+	/** CSS color; defaults to `var(--banto-chart-axis)`. */
+	colorVar?: string;
+}

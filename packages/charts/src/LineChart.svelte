@@ -4,14 +4,51 @@
 	 * (index-spaced, see `core/ticks-time.ts` for why a real time scale is
 	 * out of scope for v1) - a shared vertical crosshair + tooltip (spec rule
 	 * 6) snaps to the nearest data index on hover anywhere over the plot.
-	 * One y-axis only (rule 2); it does NOT force a zero baseline (that rule
-	 * only applies to bar charts) - it "nice-ticks" the actual data range.
+	 *
+	 * M13 (roadmap.md) trend upgrades, all opt-in and API-compatible:
+	 *  - `zoomable`: wheel-zoom (cursor as fixed point) + drag-pan + double-click
+	 *    reset, driven by the pure `core/viewport` window math.
+	 *  - `bands` / `markers`: threshold/control-limit bands and vertical event
+	 *    markers (annotations).
+	 *  - per-series `axis: 'right'`: an independent second y-scale + right axis.
+	 *  - streaming: heavy scale/decimation/path math is coarse-grained `$derived`
+	 *    that recomputes on data/zoom changes but NOT on hover, and a rolling
+	 *    data feed only re-renders the changed paths.
+	 *
+	 * Performance: when the visible window still holds more points than the plot
+	 * is pixels wide, points are decimated (`core/decimate`) so a 10k x 10-series
+	 * trend stays at an interactive frame rate while panning/zooming.
+	 *
+	 * With all M13 options at their defaults (`zoomable=false`, no bands/markers,
+	 * every series on the left axis) the output is byte-identical to the pre-M13
+	 * chart - the viewport stays pinned to the full domain, so x positions and
+	 * the (never-triggered) decimation reduce to the original index spacing.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
 	import { linePath, areaPath } from './core/path';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { getValue, toNumber, type Accessor, type ChartMargin, type TooltipRow } from './types';
+	import { estimateLabelWidth } from './core/labels';
+	import {
+		fullViewport,
+		isFullViewport,
+		panViewport,
+		visibleRange,
+		zoomViewport,
+		type Viewport
+	} from './core/viewport';
+	import { untrack } from 'svelte';
+	import { decimatedIndices } from './core/decimate';
+	import {
+		getValue,
+		toNumber,
+		type Accessor,
+		type ChartAxis,
+		type ChartMargin,
+		type EventMarker,
+		type ThresholdBand,
+		type TooltipRow
+	} from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
@@ -20,6 +57,8 @@
 		id: string;
 		label: string;
 		y: Accessor<TRow>;
+		/** Which y-scale to draw against (M13 第2Y軸). Default 'left'. */
+		axis?: ChartAxis;
 	}
 
 	interface Props {
@@ -33,80 +72,291 @@
 		formatX?: (v: unknown) => string;
 		/** Per-side overrides merged over the defaults below. */
 		margins?: Partial<ChartMargin>;
+		/**
+		 * Enable wheel-zoom / drag-pan / double-click-reset (M13). Default false
+		 * keeps the original fully-static behavior - no API break for callers.
+		 */
+		zoomable?: boolean;
+		/** Shaded horizontal threshold/control-limit bands (M13 しきい値バンド). */
+		bands?: ThresholdBand[];
+		/** Vertical event markers at data indices (M13 注釈). */
+		markers?: EventMarker[];
+		/** Formatter for the RIGHT y-axis tick/tooltip values; defaults to `formatY`. */
+		formatYRight?: (n: number) => string;
 	}
 
-	let { data, x, series, area = false, label, height = 240, formatY, formatX, margins }: Props =
-		$props();
+	let {
+		data,
+		x,
+		series,
+		area = false,
+		label,
+		height = 240,
+		formatY,
+		formatX,
+		margins,
+		zoomable = false,
+		bands = [],
+		markers = [],
+		formatYRight
+	}: Props = $props();
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 28, left: 48 };
-	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
-	// Minimum px per x-axis tick label so dense datasets (e.g. one point per
-	// day over a couple of years) don't overlap on narrower chart cards -
-	// the actual tick count is derived per-render from the measured plot
-	// width (see `maxXTicksFor` below), not a fixed constant.
+	// Minimum px per x-axis tick label so dense datasets don't overlap; the
+	// actual tick count is derived per-render from the measured plot width.
 	const MIN_TICK_SPACING = 70;
+	// Wheel-zoom step: one notch up narrows the window to 80%, one notch down
+	// widens it by the exact inverse so zoom in/out are symmetric.
+	const ZOOM_IN = 0.8;
+	const ZOOM_OUT = 1 / ZOOM_IN;
 
 	const formatYValue = $derived(formatY ?? ((n: number) => n.toLocaleString()));
+	const formatYRightValue = $derived(formatYRight ?? formatYValue);
 	const formatXValue = $derived(formatX ?? ((v: unknown) => String(v ?? '')));
 
+	const count = $derived(data.length);
 	const xLabels = $derived(data.map((row) => getValue(row, x)));
+
+	const isRight = (s: LineSeries): boolean => (s.axis ?? 'left') === 'right';
+	const hasRight = $derived(series.some(isRight));
+
+	// Per-series full numeric arrays. Recomputed only when `data`/`series`
+	// change (e.g. a streaming append) - NOT on hover or zoom. The pixel mapping
+	// that depends on the viewport lives in `seriesPaths` below, so a rolling
+	// data feed re-derives arrays once and the crosshair never rebuilds paths.
 	const seriesValues = $derived(series.map((s) => data.map((row) => toNumber(getValue(row, s.y)))));
 
-	const allFiniteValues = $derived(seriesValues.flat().filter((v) => Number.isFinite(v)));
-	const isEmpty = $derived(data.length === 0 || series.length === 0 || allFiniteValues.length === 0);
+	// Value extents via an explicit loop rather than `Math.min(...arr)` so a
+	// 10k x 10-series dataset can't overflow the argument-spread stack limit.
+	function extentOf(pick: (s: LineSeries) => boolean): [number, number] {
+		let min = Infinity;
+		let max = -Infinity;
+		for (let i = 0; i < series.length; i++) {
+			if (!pick(series[i])) continue;
+			const arr = seriesValues[i];
+			for (let k = 0; k < arr.length; k++) {
+				const v = arr[k];
+				if (Number.isFinite(v)) {
+					if (v < min) min = v;
+					if (v > max) max = v;
+				}
+			}
+		}
+		return [min, max];
+	}
 
-	const yTicks = $derived(
-		isEmpty ? [0, 1] : niceTicks(Math.min(...allFiniteValues), Math.max(...allFiniteValues), 5)
+	const leftExtent = $derived(extentOf((s) => !isRight(s)));
+	const rightExtent = $derived(extentOf(isRight));
+
+	const isEmpty = $derived(
+		count === 0 ||
+			series.length === 0 ||
+			(!Number.isFinite(leftExtent[0]) && !Number.isFinite(rightExtent[0]))
+	);
+
+	// Y domains are pinned to the FULL data extent (not the visible window), so
+	// panning/zooming x never makes the y-axis jump - matches the pre-M13 static
+	// scaling exactly when there is no second axis.
+	const leftTicks = $derived(
+		Number.isFinite(leftExtent[0]) ? niceTicks(leftExtent[0], leftExtent[1], 5) : [0, 1]
+	);
+	const rightTicks = $derived(
+		hasRight && Number.isFinite(rightExtent[0]) ? niceTicks(rightExtent[0], rightExtent[1], 5) : [0, 1]
+	);
+
+	// Right margin auto-expands to fit right-axis tick labels; with no right
+	// series it stays exactly the caller's (or default) right margin, so the
+	// classic single-axis layout is unchanged.
+	const MARGIN = $derived.by(() => {
+		const base = { ...DEFAULT_MARGIN, ...margins };
+		if (!hasRight) return base;
+		let widest = 0;
+		for (const t of rightTicks) widest = Math.max(widest, estimateLabelWidth(formatYRightValue(t)));
+		return { ...base, right: Math.max(base.right, Math.ceil(widest + 12)) };
+	});
+
+	// Measured plot width, bound from ChartContainer so all scale/path math can
+	// live in script-level `$derived` (decoupled from the hover state).
+	let plotWidth: number = $state(0);
+
+	const metrics = $derived.by(() => {
+		const innerLeft = MARGIN.left;
+		const innerTop = MARGIN.top;
+		const innerWidth = Math.max(0, plotWidth - MARGIN.left - MARGIN.right);
+		const innerHeight = Math.max(0, height - MARGIN.top - MARGIN.bottom);
+		return {
+			innerLeft,
+			innerTop,
+			innerWidth,
+			innerHeight,
+			innerRight: innerLeft + innerWidth,
+			innerBottom: innerTop + innerHeight
+		};
+	});
+
+	const leftScale = $derived(
+		linearScale([leftTicks[0], leftTicks[leftTicks.length - 1]], [metrics.innerBottom, metrics.innerTop])
+	);
+	const rightScale = $derived(
+		linearScale([rightTicks[0], rightTicks[rightTicks.length - 1]], [metrics.innerBottom, metrics.innerTop])
+	);
+
+	let hoveredIndex: number | null = $state(null);
+
+	// Viewport is a window into INDEX space (core/viewport). It starts full and,
+	// with zoom disabled, stays full - so `xAt` reduces to the original spacing.
+	// The initial data length is read untracked: this is a one-time seed, the
+	// `$effect` below owns all subsequent viewport updates when `data` changes.
+	const initialCount = untrack(() => data.length);
+	let viewport: Viewport = $state(fullViewport(initialCount));
+	let lastCount = initialCount;
+
+	// Streaming behavior (roadmap.md M13): follow the leading edge only while
+	// fully zoomed out; keep the current window (clamped into the new domain)
+	// while zoomed in. Guarded on a real count change so writing `viewport`
+	// here can't feed back into a loop.
+	$effect(() => {
+		const c = data.length;
+		if (c === lastCount) return;
+		viewport = isFullViewport(viewport, lastCount) ? fullViewport(c) : panViewport(viewport, 0, c);
+		if (hoveredIndex !== null && hoveredIndex > c - 1) hoveredIndex = null;
+		lastCount = c;
+	});
+
+	function xAt(index: number): number {
+		if (count <= 1) return metrics.innerLeft + metrics.innerWidth / 2;
+		const span = viewport.end - viewport.start;
+		if (span <= 0) return metrics.innerLeft + metrics.innerWidth / 2;
+		return metrics.innerLeft + ((index - viewport.start) / span) * metrics.innerWidth;
+	}
+
+	// Visible data indices, then decimated to at most ~1 sample per plot pixel.
+	const range = $derived(visibleRange(viewport, count));
+	const renderIndices = $derived(
+		decimatedIndices(range[0], range[1], Math.max(1, Math.round(metrics.innerWidth)))
+	);
+
+	// Path strings per series. Coarse-grained on purpose: depends on data,
+	// viewport, plot size and scales - NEVER on `hoveredIndex` - so moving the
+	// crosshair does not rebuild these (potentially thousands-of-segment) paths.
+	const seriesPaths = $derived.by(() =>
+		series.map((s, i) => {
+			const scale = isRight(s) ? rightScale : leftScale;
+			const vals = seriesValues[i];
+			const pts: { x: number; y: number }[] = [];
+			for (const idx of renderIndices) {
+				const v = vals[idx];
+				if (Number.isFinite(v)) pts.push({ x: xAt(idx), y: scale(v) });
+			}
+			return {
+				color: seriesColorVar(i),
+				line: linePath(pts),
+				area: area ? areaPath(pts, metrics.innerBottom) : ''
+			};
+		})
 	);
 
 	const legendItems = $derived(
 		series.map((s, i) => ({ id: s.id, label: s.label, colorVar: seriesColorVar(i) }))
 	);
 
+	const zoomed = $derived(zoomable && !isFullViewport(viewport, count));
+
 	function maxXTicksFor(innerWidth: number): number {
 		return Math.max(2, Math.min(8, Math.floor(innerWidth / MIN_TICK_SPACING)));
 	}
 
-	let hoveredIndex: number | null = $state(null);
-
-	function plotMetrics(width: number, plotHeight: number) {
-		const innerLeft = MARGIN.left;
-		const innerTop = MARGIN.top;
-		const innerWidth = Math.max(0, width - MARGIN.left - MARGIN.right);
-		const innerHeight = Math.max(0, plotHeight - MARGIN.top - MARGIN.bottom);
-		return { innerLeft, innerTop, innerWidth, innerHeight };
+	// X tick indices restricted to the visible window (offset the relative
+	// `everyNthIndex` layout by the window's low edge).
+	function xTickIndices(maxTicks: number): number[] {
+		const [lo, hi] = range;
+		const n = hi - lo + 1;
+		if (n <= 0) return [];
+		return everyNthIndex(n, maxTicks).map((r) => lo + r);
 	}
 
-	function xAt(index: number, innerLeft: number, innerWidth: number): number {
-		if (data.length <= 1) return innerLeft + innerWidth / 2;
-		return innerLeft + (index / (data.length - 1)) * innerWidth;
+	// --- Pointer interaction -------------------------------------------------
+	// ChartContainer sets the <svg> viewBox to the exact pixel size, so 1 unit
+	// == 1 screen px and the capture rect's bounding-box left edge sits at
+	// `innerLeft`; `clientX - bounds.left` is therefore the px offset into the
+	// inner plot width, needing no reference to the outer <svg>.
+	function ratioFromClientX(clientX: number, boundsLeft: number): number {
+		if (metrics.innerWidth <= 0) return 0;
+		return Math.max(0, Math.min(1, (clientX - boundsLeft) / metrics.innerWidth));
 	}
 
-	function indexFromX(clientX: number, innerLeft: number, innerWidth: number): number {
-		if (data.length <= 1) return 0;
-		const ratio = (clientX - innerLeft) / innerWidth;
-		const idx = Math.round(ratio * (data.length - 1));
-		return Math.max(0, Math.min(data.length - 1, idx));
+	function indexFromRatio(ratio: number): number {
+		const idx = Math.round(viewport.start + ratio * (viewport.end - viewport.start));
+		return Math.max(0, Math.min(count - 1, idx));
 	}
 
-	// ChartContainer sets the <svg> viewBox to exactly the measured container
-	// pixel size (no `preserveAspectRatio` scaling), so 1 viewBox unit === 1
-	// screen px: the hover rect's own bounding box left edge already sits at
-	// `innerLeft` in viewBox-space, letting us convert clientX -> viewBox-space
-	// without needing a reference to the outer <svg> element at all.
-	function handlePointerMove(event: PointerEvent, innerLeft: number, innerWidth: number) {
+	let panning = $state(false);
+	let panPointerId = -1;
+	let panStartClientX = 0;
+	let panStartViewport: Viewport = { start: 0, end: 1 };
+
+	function handleWheel(event: WheelEvent) {
+		if (!zoomable) return;
+		// Non-passive by default on a non-root element, so this actually stops
+		// the page from scrolling while zooming the chart.
+		event.preventDefault();
+		const bounds = (event.currentTarget as SVGRectElement).getBoundingClientRect();
+		const ratio = ratioFromClientX(event.clientX, bounds.left);
+		const focus = viewport.start + ratio * (viewport.end - viewport.start);
+		viewport = zoomViewport(viewport, focus, event.deltaY < 0 ? ZOOM_IN : ZOOM_OUT, count);
+	}
+
+	function handlePointerDown(event: PointerEvent) {
+		if (!zoomable || event.button !== 0) return;
 		const target = event.currentTarget as SVGRectElement;
-		const bounds = target.getBoundingClientRect();
-		const localX = innerLeft + (event.clientX - bounds.left);
-		hoveredIndex = indexFromX(localX, innerLeft, innerWidth);
+		target.setPointerCapture(event.pointerId);
+		panning = true;
+		panPointerId = event.pointerId;
+		panStartClientX = event.clientX;
+		panStartViewport = viewport;
+	}
+
+	function handlePointerMove(event: PointerEvent) {
+		const bounds = (event.currentTarget as SVGRectElement).getBoundingClientRect();
+		if (panning) {
+			const span = panStartViewport.end - panStartViewport.start;
+			const dxPx = event.clientX - panStartClientX;
+			// Dragging the plot rightward reveals earlier data, so the window
+			// moves backward (negative delta).
+			const delta = metrics.innerWidth > 0 ? -(dxPx / metrics.innerWidth) * span : 0;
+			viewport = panViewport(panStartViewport, delta, count);
+			return; // don't move the crosshair while actively panning
+		}
+		hoveredIndex = indexFromRatio(ratioFromClientX(event.clientX, bounds.left));
+	}
+
+	function endPan(event: PointerEvent) {
+		if (!panning || event.pointerId !== panPointerId) return;
+		const target = event.currentTarget as SVGRectElement;
+		if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
+		panning = false;
+		panPointerId = -1;
+	}
+
+	function handlePointerLeave() {
+		if (!panning) hoveredIndex = null;
+	}
+
+	function resetZoom() {
+		viewport = fullViewport(count);
+	}
+
+	function handleDblClick() {
+		if (zoomable) resetZoom();
 	}
 
 	function tooltipRows(index: number): TooltipRow[] {
 		return series.map((s, i) => {
 			const raw = seriesValues[i][index];
+			const fmt = isRight(s) ? formatYRightValue : formatYValue;
 			return {
 				label: s.label,
-				value: Number.isFinite(raw) ? formatYValue(raw) : '-',
+				value: Number.isFinite(raw) ? fmt(raw) : '-',
 				colorVar: seriesColorVar(i)
 			};
 		});
@@ -115,82 +365,100 @@
 
 <div class="banto-linechart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
-		{#snippet plot({ width, height: plotHeight })}
-			{@const m = plotMetrics(width, plotHeight)}
-			{@const yScale = linearScale([yTicks[0], yTicks[yTicks.length - 1]], [m.innerTop + m.innerHeight, m.innerTop])}
-			<!-- Gridlines (recessive, rule 4) -->
-			{#each yTicks as tick (tick)}
-				<line
-					x1={m.innerLeft}
-					x2={m.innerLeft + m.innerWidth}
-					y1={yScale(tick)}
-					y2={yScale(tick)}
-					class="gridline"
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth}>
+		{#snippet plot()}
+			{@const m = metrics}
+			<!-- Threshold bands (drawn first, under the data). -->
+			{#each bands as band, bi (bi)}
+				{@const scale = band.axis === 'right' ? rightScale : leftScale}
+				{@const yTop = scale(Math.max(band.from, band.to))}
+				{@const yBottom = scale(Math.min(band.from, band.to))}
+				{@const bandColor = band.colorVar ?? 'var(--banto-chart-axis)'}
+				<rect
+					x={m.innerLeft}
+					y={yTop}
+					width={m.innerWidth}
+					height={Math.max(0, yBottom - yTop)}
+					fill={bandColor}
+					fill-opacity="0.1"
 				/>
-				<text x={m.innerLeft - 8} y={yScale(tick)} class="tick-label y-tick" text-anchor="end" dominant-baseline="middle">
+				<line x1={m.innerLeft} x2={m.innerRight} y1={yTop} y2={yTop} class="band-edge" stroke={bandColor} />
+				<line x1={m.innerLeft} x2={m.innerRight} y1={yBottom} y2={yBottom} class="band-edge" stroke={bandColor} />
+				{#if band.label}
+					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}>{band.label}</text>
+				{/if}
+			{/each}
+
+			<!-- Gridlines + left y ticks (recessive, rule 4). -->
+			{#each leftTicks as tick (tick)}
+				<line x1={m.innerLeft} x2={m.innerRight} y1={leftScale(tick)} y2={leftScale(tick)} class="gridline" />
+				<text x={m.innerLeft - 8} y={leftScale(tick)} class="tick-label y-tick" text-anchor="end" dominant-baseline="middle">
 					{formatYValue(tick)}
 				</text>
 			{/each}
 
-			<!-- Axis lines -->
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
-			<line
-				x1={m.innerLeft}
-				x2={m.innerLeft + m.innerWidth}
-				y1={m.innerTop + m.innerHeight}
-				y2={m.innerTop + m.innerHeight}
-				class="axis-line"
-			/>
+			<!-- Left + bottom axis lines. -->
+			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerBottom} class="axis-line" />
+			<line x1={m.innerLeft} x2={m.innerRight} y1={m.innerBottom} y2={m.innerBottom} class="axis-line" />
 
-			<!-- X labels. The last tick sits at the exact right edge of the plot
-			     (everyNthIndex always includes the final index), so a middle-
-			     anchored label there would overhang past the default right
-			     margin and clip - anchor it "end" instead. -->
-			{@const xTickIndices = everyNthIndex(data.length, maxXTicksFor(m.innerWidth))}
-			{#each xTickIndices as i (i)}
+			<!-- Right axis (only when a series opts into axis:'right'). -->
+			{#if hasRight}
+				<line x1={m.innerRight} x2={m.innerRight} y1={m.innerTop} y2={m.innerBottom} class="axis-line" />
+				{#each rightTicks as tick (tick)}
+					{@const ry = rightScale(tick)}
+					<line x1={m.innerRight} x2={m.innerRight + 4} y1={ry} y2={ry} class="axis-line" />
+					<text x={m.innerRight + 8} y={ry} class="tick-label y-tick" text-anchor="start" dominant-baseline="middle">
+						{formatYRightValue(tick)}
+					</text>
+				{/each}
+			{/if}
+
+			<!-- X labels. The right-edge tick is anchored 'end' so it doesn't
+			     overhang the right margin and clip. -->
+			{@const xTicks = xTickIndices(maxXTicksFor(m.innerWidth))}
+			{#each xTicks as i (i)}
 				<text
-					x={xAt(i, m.innerLeft, m.innerWidth)}
-					y={m.innerTop + m.innerHeight + 18}
+					x={xAt(i)}
+					y={m.innerBottom + 18}
 					class="tick-label x-tick"
-					text-anchor={i === data.length - 1 ? 'end' : 'middle'}
+					text-anchor={i === range[1] ? 'end' : 'middle'}
 				>
 					{formatXValue(xLabels[i])}
 				</text>
 			{/each}
 
-			<!-- Series lines/areas -->
+			<!-- Series areas/lines (decimated, viewport-clipped). -->
 			{#each series as s, i (s.id)}
-				{@const points = seriesValues[i]
-					.map((v, idx) => ({ v, idx }))
-					.filter((p) => Number.isFinite(p.v))
-					.map((p) => ({ x: xAt(p.idx, m.innerLeft, m.innerWidth), y: yScale(p.v) }))}
-				{#if area}
-					<path
-						d={areaPath(points, m.innerTop + m.innerHeight)}
-						fill={seriesColorVar(i)}
-						fill-opacity="0.16"
-						stroke="none"
-					/>
+				{#if area && seriesPaths[i].area}
+					<path d={seriesPaths[i].area} fill={seriesPaths[i].color} fill-opacity="0.16" stroke="none" />
 				{/if}
-				<path d={linePath(points)} fill="none" stroke={seriesColorVar(i)} stroke-width="2" />
+				<path d={seriesPaths[i].line} fill="none" stroke={seriesPaths[i].color} stroke-width="2" />
 			{/each}
 
-			<!-- Crosshair + hover markers -->
+			<!-- Event markers (vertical dashed line + label), only when visible. -->
+			{#each markers as marker, mi (mi)}
+				{#if marker.at >= range[0] && marker.at <= range[1]}
+					{@const mx = xAt(marker.at)}
+					{@const markColor = marker.colorVar ?? 'var(--banto-chart-axis)'}
+					<line x1={mx} x2={mx} y1={m.innerTop} y2={m.innerBottom} class="marker-line" stroke={markColor} />
+					{#if marker.label}
+						<text x={mx} y={m.innerTop + 10} class="marker-label" fill={markColor} text-anchor="middle">
+							{marker.label}
+						</text>
+					{/if}
+				{/if}
+			{/each}
+
+			<!-- Crosshair + per-series hover markers (uses each series' own scale). -->
 			{#if hoveredIndex !== null}
-				<line
-					x1={xAt(hoveredIndex, m.innerLeft, m.innerWidth)}
-					x2={xAt(hoveredIndex, m.innerLeft, m.innerWidth)}
-					y1={m.innerTop}
-					y2={m.innerTop + m.innerHeight}
-					class="crosshair"
-				/>
+				{@const hx = xAt(hoveredIndex)}
+				<line x1={hx} x2={hx} y1={m.innerTop} y2={m.innerBottom} class="crosshair" />
 				{#each series as s, i (s.id)}
 					{@const raw = seriesValues[i][hoveredIndex]}
 					{#if Number.isFinite(raw)}
 						<circle
-							cx={xAt(hoveredIndex, m.innerLeft, m.innerWidth)}
-							cy={yScale(raw)}
+							cx={hx}
+							cy={(isRight(s) ? rightScale : leftScale)(raw)}
 							r="4"
 							fill={seriesColorVar(i)}
 							stroke="var(--banto-surface)"
@@ -201,12 +469,10 @@
 			{/if}
 
 			<!--
-				Hover capture surface (mandatory tooltip, rule 6: hover anywhere on
-				the plot). Pointer-only by design: the tooltip is a supplementary
-				visual aid, not the sole way to read a value (every value is also
-				in the accessible-fallback table view planned for a later milestone,
-				per the ChartContainer role="img" comment), so no keyboard
-				equivalent is required here.
+				Hover/zoom/pan capture surface. Pointer-only by design (the tooltip
+				is a supplementary aid, not the sole way to read a value - see the
+				ChartContainer role="img" note on the planned table fallback), so no
+				keyboard equivalent is required here.
 			-->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<rect
@@ -215,18 +481,29 @@
 				width={m.innerWidth}
 				height={m.innerHeight}
 				fill="transparent"
-				onpointermove={(event) => handlePointerMove(event, m.innerLeft, m.innerWidth)}
-				onpointerleave={() => (hoveredIndex = null)}
+				class:zoomable
+				class:panning
+				onpointermove={handlePointerMove}
+				onpointerleave={handlePointerLeave}
+				onpointerdown={handlePointerDown}
+				onpointerup={endPan}
+				onpointercancel={endPan}
+				onwheel={handleWheel}
+				ondblclick={handleDblClick}
 			/>
 		{/snippet}
-		{#snippet overlay({ width, height: plotHeight })}
-			{#if hoveredIndex !== null}
-				{@const m = plotMetrics(width, plotHeight)}
+		{#snippet overlay()}
+			{#if zoomed}
+				<button type="button" class="reset-zoom" onclick={resetZoom} title="ズームをリセット">
+					リセット
+				</button>
+			{/if}
+			{#if hoveredIndex !== null && !panning}
 				<Tooltip
-					x={xAt(hoveredIndex, m.innerLeft, m.innerWidth)}
-					y={m.innerTop}
-					containerWidth={width}
-					containerHeight={plotHeight}
+					x={xAt(hoveredIndex)}
+					y={metrics.innerTop}
+					containerWidth={plotWidth}
+					containerHeight={height}
 					title={formatXValue(xLabels[hoveredIndex])}
 					rows={tooltipRows(hoveredIndex)}
 				/>
@@ -256,9 +533,60 @@
 		pointer-events: none;
 	}
 
+	.band-edge {
+		stroke-width: 1;
+		stroke-opacity: 0.5;
+		pointer-events: none;
+	}
+
+	.band-label {
+		font-size: 10px;
+		opacity: 0.8;
+	}
+
+	.marker-line {
+		stroke-width: 1;
+		stroke-dasharray: 4 3;
+		stroke-opacity: 0.8;
+		pointer-events: none;
+	}
+
+	.marker-label {
+		font-size: 10px;
+		opacity: 0.85;
+	}
+
 	.tick-label {
 		fill: var(--banto-text-muted);
 		font-size: 11px;
 		font-variant-numeric: tabular-nums;
+	}
+
+	/* Zoom/pan affordance: grab cursor when enabled, grabbing while dragging. */
+	.zoomable {
+		cursor: grab;
+	}
+
+	.panning {
+		cursor: grabbing;
+	}
+
+	.reset-zoom {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		z-index: 21;
+		padding: 0.15rem 0.5rem;
+		font-size: 11px;
+		color: var(--banto-text);
+		background: var(--banto-surface-raised, var(--banto-surface));
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius);
+		cursor: pointer;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+	}
+
+	.reset-zoom:hover {
+		border-color: var(--banto-chart-axis);
 	}
 </style>
