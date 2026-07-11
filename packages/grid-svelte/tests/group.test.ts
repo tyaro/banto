@@ -45,7 +45,9 @@ describe('buildGroupedView', () => {
 			{ id: 3, category: 'b', price: 30, stock: 3, label: 'z' }
 		];
 		const result = buildGroupedView(rows, columns, 'category', notCollapsed);
-		const groupKeys = result.filter((e): e is GroupEntry<Row> => e.kind === 'group').map((e) => e.key);
+		const groupKeys = result
+			.filter((e): e is GroupEntry<Row> => e.kind === 'group')
+			.map((e) => e.key);
 		expect(groupKeys).toEqual(['b', 'a']); // b first (its first row appears first), not re-sorted alphabetically
 
 		// b's group gathers BOTH of its rows even though they aren't contiguous in the input.
@@ -92,7 +94,7 @@ describe('buildGroupedView', () => {
 	});
 
 	describe('collapse filtering', () => {
-		it('omits a collapsed group\'s RowEntries but still reports its GroupEntry with the full count', () => {
+		it("omits a collapsed group's RowEntries but still reports its GroupEntry with the full count", () => {
 			const rows: Row[] = [
 				{ id: 1, category: 'a', price: 10, stock: 1, label: 'x' },
 				{ id: 2, category: 'a', price: 20, stock: 2, label: 'y' },
@@ -140,7 +142,7 @@ describe('buildGroupedView', () => {
 			expect((result[0] as GroupEntry<Row>).aggregates.price).toBe('1.67');
 		});
 
-		it('computes count regardless of the column\'s own values', () => {
+		it("computes count regardless of the column's own values", () => {
 			const countColumns: GridColumn<Row>[] = [
 				...columns,
 				{ id: 'idCount', header: 'Count', accessor: 'id', aggregate: 'count' }

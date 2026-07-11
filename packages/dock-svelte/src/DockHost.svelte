@@ -69,7 +69,13 @@
 	setDragController(drag);
 </script>
 
-<div class="dock-host" data-dock-host bind:this={hostEl} bind:clientWidth={hostW} bind:clientHeight={hostH}>
+<div
+	class="dock-host"
+	data-dock-host
+	bind:this={hostEl}
+	bind:clientWidth={hostW}
+	bind:clientHeight={hostH}
+>
 	{#if dock.layout.docked}
 		<div class="docked-layer">
 			<DockedTree node={dock.layout.docked} {dock} {panel} {onPopOut} />
@@ -77,7 +83,15 @@
 	{/if}
 
 	{#each openWindows as win, index (win.id)}
-		<DockWindow {win} {dock} {hostW} {hostH} frontmost={index === openWindows.length - 1} {panel} {onPopOut} />
+		<DockWindow
+			{win}
+			{dock}
+			{hostW}
+			{hostH}
+			frontmost={index === openWindows.length - 1}
+			{panel}
+			{onPopOut}
+		/>
 	{/each}
 
 	{#if drag.state}

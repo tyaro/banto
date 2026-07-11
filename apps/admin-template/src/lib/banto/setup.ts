@@ -42,7 +42,6 @@ import {
 } from '@banto/admin-core';
 import type {
 	AuthProvider,
-	DataProvider,
 	Notifier,
 	ResourceDefinition,
 	UiSettingsProvider
@@ -132,8 +131,23 @@ const integerValidate = (value: unknown): string | null =>
 const itemsSchema: FormSchema = {
 	fields: [
 		{ name: 'name', label: '商品名', type: 'text', required: true, min: 1, max: 40 },
-		{ name: 'price', label: '価格', type: 'number', required: true, min: 0, max: 99999, validate: integerValidate },
-		{ name: 'stock', label: '在庫', type: 'number', required: true, min: 0, validate: integerValidate },
+		{
+			name: 'price',
+			label: '価格',
+			type: 'number',
+			required: true,
+			min: 0,
+			max: 99999,
+			validate: integerValidate
+		},
+		{
+			name: 'stock',
+			label: '在庫',
+			type: 'number',
+			required: true,
+			min: 0,
+			validate: integerValidate
+		},
 		{ name: 'updatedAt', label: '更新日', type: 'date', readonly: true }
 	]
 };

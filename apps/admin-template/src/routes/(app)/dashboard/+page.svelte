@@ -110,7 +110,12 @@
 				id: 'root',
 				direction: 'row',
 				children: [
-					{ type: 'panel', id: 'monthly', title: PANEL_META.monthly.title, icon: PANEL_META.monthly.icon },
+					{
+						type: 'panel',
+						id: 'monthly',
+						title: PANEL_META.monthly.title,
+						icon: PANEL_META.monthly.icon
+					},
 					{
 						type: 'panel',
 						id: 'priceBuckets',
@@ -146,7 +151,10 @@
 	$effect(() => {
 		if (dockHostW === 0 || dockHostH === 0 || seeded) return;
 		seeded = true;
-		const known = new Set([...collectPanelIds(dock.layout.docked), ...dock.layout.floating.map((w) => w.id)]);
+		const known = new Set([
+			...collectPanelIds(dock.layout.docked),
+			...dock.layout.floating.map((w) => w.id)
+		]);
 		if (known.size === 0) {
 			dock.layout = defaultLayout(dockHostW, dockHostH);
 		}
@@ -289,7 +297,8 @@
 <div class="page">
 	<p class="note">
 		商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図に加え、複合（棒+折れ線）・レーダー・ヒートマップ・ゲージも
-		@banto/charts のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
+		@banto/charts
+		のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
 	</p>
 
 	<div class="stat-row">
@@ -370,88 +379,88 @@
 					formatY={(v) => countLabel(Number(v))}
 				/>
 			</section>
-			</div>
+		</div>
 
-			<h2 class="section-heading">チャート拡張（v2）</h2>
-			<div class="chart-grid">
-				<section class="card">
-					<h2>月別更新件数と3ヶ月移動平均</h2>
-					<ComboChart
-						data={monthlyAvg}
-						x={(row) => row.month}
-						bars={[{ id: 'count', label: '更新件数', value: (row) => row.count }]}
-						lines={[{ id: 'avg3', label: '3ヶ月移動平均', y: (row) => row.avg3 }]}
-						label="月別更新件数と3ヶ月移動平均の複合グラフ"
-						height={280}
-						formatY={(n) => n.toLocaleString()}
-					/>
-				</section>
+		<h2 class="section-heading">チャート拡張（v2）</h2>
+		<div class="chart-grid">
+			<section class="card">
+				<h2>月別更新件数と3ヶ月移動平均</h2>
+				<ComboChart
+					data={monthlyAvg}
+					x={(row) => row.month}
+					bars={[{ id: 'count', label: '更新件数', value: (row) => row.count }]}
+					lines={[{ id: 'avg3', label: '3ヶ月移動平均', y: (row) => row.avg3 }]}
+					label="月別更新件数と3ヶ月移動平均の複合グラフ"
+					height={280}
+					formatY={(n) => n.toLocaleString()}
+				/>
+			</section>
 
-				<section class="card">
-					<h2>曜日×月の更新件数</h2>
-					<Heatmap
-						data={weekdayHeat}
-						x={(row) => row.month}
-						y={(row) => row.weekday}
-						value={(row) => row.count}
-						label="曜日と月別の更新件数ヒートマップ"
-						height={300}
-						formatValue={(n) => n.toLocaleString()}
-					/>
-				</section>
+			<section class="card">
+				<h2>曜日×月の更新件数</h2>
+				<Heatmap
+					data={weekdayHeat}
+					x={(row) => row.month}
+					y={(row) => row.weekday}
+					value={(row) => row.count}
+					label="曜日と月別の更新件数ヒートマップ"
+					height={300}
+					formatValue={(n) => n.toLocaleString()}
+				/>
+			</section>
 
-				<section class="card">
-					<h2>在庫充足率</h2>
-					<Gauge
-						value={stats.stockTotal}
-						max={STOCK_TARGET}
-						label="在庫充足率のゲージ"
-						height={220}
-						formatValue={(n) => `${Math.round((n / STOCK_TARGET) * 100)}%`}
-					/>
-				</section>
+			<section class="card">
+				<h2>在庫充足率</h2>
+				<Gauge
+					value={stats.stockTotal}
+					max={STOCK_TARGET}
+					label="在庫充足率のゲージ"
+					height={220}
+					formatValue={(n) => `${Math.round((n / STOCK_TARGET) * 100)}%`}
+				/>
+			</section>
 
-				<section class="card">
-					<h2>上位カテゴリの商品数</h2>
-					<RadarChart
-						data={topCategories}
-						axis={(row) => row.category}
-						series={[{ id: 'count', label: '商品数', value: (row) => row.count }]}
-						label="上位カテゴリ別商品数のレーダーチャート"
-						height={280}
-						formatValue={(n) => n.toLocaleString()}
-					/>
-				</section>
+			<section class="card">
+				<h2>上位カテゴリの商品数</h2>
+				<RadarChart
+					data={topCategories}
+					axis={(row) => row.category}
+					series={[{ id: 'count', label: '商品数', value: (row) => row.count }]}
+					label="上位カテゴリ別商品数のレーダーチャート"
+					height={280}
+					formatValue={(n) => n.toLocaleString()}
+				/>
+			</section>
 
-				<section class="card wide">
-					<h2>ドッキングレイアウト</h2>
-					<p>
-						ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
-					</p>
-					<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
-						{#each PANEL_DEFS as def (def.id)}
-							<button
-								type="button"
-								class="dock-toggle"
-								class:active={isPanelVisible(def.id)}
-								aria-pressed={isPanelVisible(def.id)}
-								disabled={isDocked(def.id)}
-								title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
-								onclick={() => togglePanel(def.id)}
-							>
-								{def.icon}
-								{def.title}
-							</button>
-						{/each}
-						<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
-					</div>
-					<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
-						<DockHost {dock} panel={dockPanel} {onPopOut} />
-					</div>
-				</section>
-			</div>
-		{/if}
-	</div>
+			<section class="card wide">
+				<h2>ドッキングレイアウト</h2>
+				<p>
+					ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
+				</p>
+				<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
+					{#each PANEL_DEFS as def (def.id)}
+						<button
+							type="button"
+							class="dock-toggle"
+							class:active={isPanelVisible(def.id)}
+							aria-pressed={isPanelVisible(def.id)}
+							disabled={isDocked(def.id)}
+							title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
+							onclick={() => togglePanel(def.id)}
+						>
+							{def.icon}
+							{def.title}
+						</button>
+					{/each}
+					<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
+				</div>
+				<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
+					<DockHost {dock} panel={dockPanel} {onPopOut} />
+				</div>
+			</section>
+		</div>
+	{/if}
+</div>
 
 {#snippet dockPanel(content: PanelContent)}
 	<!--

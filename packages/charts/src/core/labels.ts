@@ -50,7 +50,10 @@ export interface AxisMarginOptions {
  */
 export function leftMarginFor(labels: string[], options: AxisMarginOptions = {}): number {
 	const { fontSize = 11, gap = 8, min = 48, max = 140 } = options;
-	const widest = labels.reduce((acc, label) => Math.max(acc, estimateLabelWidth(label, fontSize)), 0);
+	const widest = labels.reduce(
+		(acc, label) => Math.max(acc, estimateLabelWidth(label, fontSize)),
+		0
+	);
 	return Math.round(Math.min(max, Math.max(min, widest + gap)));
 }
 

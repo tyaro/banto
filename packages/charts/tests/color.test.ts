@@ -15,11 +15,11 @@ describe('seriesColorVar', () => {
 });
 
 describe('sequentialColor', () => {
-	it('maps the minimum to the ramp\'s first (lightest) step', () => {
+	it("maps the minimum to the ramp's first (lightest) step", () => {
 		expect(sequentialColor(0, 0, 100)).toBe(SEQ_RAMP[0]);
 	});
 
-	it('maps the maximum to the ramp\'s last (darkest) step', () => {
+	it("maps the maximum to the ramp's last (darkest) step", () => {
 		expect(sequentialColor(100, 0, 100)).toBe(SEQ_RAMP[SEQ_RAMP.length - 1]);
 	});
 

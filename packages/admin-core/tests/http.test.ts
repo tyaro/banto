@@ -42,15 +42,27 @@ beforeEach(() => {
 
 describe('createHttpDataProvider', () => {
 	it('getList POSTs {base}/api/{resource}/list with the ListParams body', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { rows: [{ id: 1, name: 'a', price: 10 }], totalCount: 1 }));
-		const provider = createHttpDataProvider({ baseUrl: 'http://h:8721', getToken: () => 'tok', fetchFn });
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(
+				jsonResponse(200, { rows: [{ id: 1, name: 'a', price: 10 }], totalCount: 1 })
+			);
+		const provider = createHttpDataProvider({
+			baseUrl: 'http://h:8721',
+			getToken: () => 'tok',
+			fetchFn
+		});
 
 		const params = { sort: [], filters: [], pagination: { offset: 0, limit: 10 } };
 		const result = await provider.getList<Item>('items', params);
 
 		expect(fetchFn).toHaveBeenCalledWith('http://h:8721/api/items/list', {
 			method: 'POST',
-			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+			headers: {
+				'X-Banto-Client': 'banto',
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer tok'
+			},
 			body: JSON.stringify(params)
 		});
 		expect(result).toEqual({ rows: [{ id: 1, name: 'a', price: 10 }], totalCount: 1 });
@@ -85,7 +97,11 @@ describe('createHttpDataProvider', () => {
 
 		expect(fetchFn).toHaveBeenCalledWith('/api/items', {
 			method: 'POST',
-			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+			headers: {
+				'X-Banto-Client': 'banto',
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer tok'
+			},
 			body: JSON.stringify({ name: 'b', price: 20 })
 		});
 	});
@@ -98,7 +114,11 @@ describe('createHttpDataProvider', () => {
 
 		expect(fetchFn).toHaveBeenCalledWith('/api/items/1', {
 			method: 'PUT',
-			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+			headers: {
+				'X-Banto-Client': 'banto',
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer tok'
+			},
 			body: JSON.stringify({ price: 30 })
 		});
 	});
@@ -116,9 +136,9 @@ describe('createHttpDataProvider', () => {
 	});
 
 	it('maps a non-2xx ErrorBody JSON response to a matching ProviderError', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(
-			jsonResponse(404, { kind: 'not_found', resource: 'items', id: '42' })
-		);
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(404, { kind: 'not_found', resource: 'items', id: '42' }));
 		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
 
 		try {
@@ -126,7 +146,8 @@ describe('createHttpDataProvider', () => {
 			expect.unreachable('expected a ProviderError to be thrown');
 		} catch (err) {
 			expect(isProviderError(err)).toBe(true);
-			if (isProviderError(err)) expect(err.body).toEqual({ kind: 'not_found', resource: 'items', id: '42' });
+			if (isProviderError(err))
+				expect(err.body).toEqual({ kind: 'not_found', resource: 'items', id: '42' });
 		}
 	});
 
@@ -160,7 +181,11 @@ describe('createHttpDataProvider', () => {
 	});
 
 	it('maps an unparseable non-2xx body to kind "other" with the HTTP status text', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(new Response('not json', { status: 500, statusText: 'Internal Server Error' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(
+				new Response('not json', { status: 500, statusText: 'Internal Server Error' })
+			);
 		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
 
 		try {
@@ -184,14 +209,17 @@ describe('createHttpDataProvider', () => {
 			expect.unreachable('expected a ProviderError to be thrown');
 		} catch (err) {
 			expect(isProviderError(err)).toBe(true);
-			if (isProviderError(err)) expect(err.body).toEqual({ kind: 'other', message: 'サーバーに接続できません' });
+			if (isProviderError(err))
+				expect(err.body).toEqual({ kind: 'other', message: 'サーバーに接続できません' });
 		}
 	});
 });
 
 describe('createHttpAuthProvider', () => {
 	it('login stores the returned token in sessionStorage on success', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true, token: 'abc123' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { success: true, token: 'abc123' }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
 		const result = await provider.login({ username: 'admin', password: 'admin' });
@@ -201,7 +229,11 @@ describe('createHttpAuthProvider', () => {
 	});
 
 	it('login does not store a token when the server rejects credentials', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: false, error: 'ユーザー名またはパスワードが違います' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(
+				jsonResponse(200, { success: false, error: 'ユーザー名またはパスワードが違います' })
+			);
 		const provider = createHttpAuthProvider({ fetchFn });
 
 		const result = await provider.login({ username: 'admin', password: 'wrong' });
@@ -295,11 +327,17 @@ describe('createHttpAuthProvider', () => {
 	});
 
 	it('getIdentity passes the role through unchanged (spec M10 RBAC)', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { id: 'owner', name: 'オーナー', role: 'admin' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { id: 'owner', name: 'オーナー', role: 'admin' }));
 		const provider = createHttpAuthProvider({ fetchFn });
 		sessionStorage.setItem('banto.auth.token', 'tok');
 
-		await expect(provider.getIdentity()).resolves.toEqual({ id: 'owner', name: 'オーナー', role: 'admin' });
+		await expect(provider.getIdentity()).resolves.toEqual({
+			id: 'owner',
+			name: 'オーナー',
+			role: 'admin'
+		});
 	});
 
 	it('uses a custom storageKey when provided', async () => {
@@ -313,7 +351,9 @@ describe('createHttpAuthProvider', () => {
 	});
 
 	it('login without remember stores the token in sessionStorage, not localStorage (spec M11)', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true, token: 'sess-tok' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { success: true, token: 'sess-tok' }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
 		await provider.login({ username: 'admin', password: 'admin' });
@@ -324,7 +364,9 @@ describe('createHttpAuthProvider', () => {
 	});
 
 	it('login with remember:true stores the token in localStorage, not sessionStorage (spec M11)', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: true, token: 'remember-tok' }));
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { success: true, token: 'remember-tok' }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
 		await provider.login({ username: 'admin', password: 'admin', remember: true });
@@ -409,14 +451,24 @@ describe('createHttpAuthProvider', () => {
 	});
 
 	it('setup maps a 403 (allow_setup disabled) ErrorBody to { success: false, error }', async () => {
-		const fetchFn = vi
-			.fn()
-			.mockResolvedValue(jsonResponse(403, { kind: 'other', message: 'このサーバーでは初期セットアップが許可されていません' }));
+		const fetchFn = vi.fn().mockResolvedValue(
+			jsonResponse(403, {
+				kind: 'other',
+				message: 'このサーバーでは初期セットアップが許可されていません'
+			})
+		);
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		const result = await provider.setup?.({ username: 'owner', password: 'password123', displayName: 'オーナー' });
+		const result = await provider.setup?.({
+			username: 'owner',
+			password: 'password123',
+			displayName: 'オーナー'
+		});
 
-		expect(result).toEqual({ success: false, error: 'このサーバーでは初期セットアップが許可されていません' });
+		expect(result).toEqual({
+			success: false,
+			error: 'このサーバーでは初期セットアップが許可されていません'
+		});
 		expect(provider.getToken()).toBeNull();
 	});
 
@@ -429,7 +481,11 @@ describe('createHttpAuthProvider', () => {
 		);
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		const result = await provider.setup?.({ username: 'owner', password: 'short', displayName: 'オーナー' });
+		const result = await provider.setup?.({
+			username: 'owner',
+			password: 'short',
+			displayName: 'オーナー'
+		});
 
 		expect(result).toEqual({ success: false, error: 'パスワードは8文字以上で入力してください' });
 	});
@@ -443,7 +499,11 @@ describe('createHttpAuthProvider', () => {
 
 		expect(fetchFn).toHaveBeenCalledWith('/api/auth/change-password', {
 			method: 'POST',
-			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+			headers: {
+				'X-Banto-Client': 'banto',
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer tok'
+			},
 			body: JSON.stringify({ currentPassword: 'old-password', newPassword: 'new-password1' })
 		});
 		expect(result).toEqual({ success: true });

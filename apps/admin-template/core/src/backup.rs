@@ -132,7 +132,9 @@ fn iso_datetime_from_system_time(time: SystemTime) -> String {
 /// Purely textual (strips `-`/`:`/` `) - never re-parses the number back out,
 /// so it cannot fail on a well-formed input.
 fn compact_stamp(iso_datetime: &str) -> String {
-    let (date_part, time_part) = iso_datetime.split_once(' ').unwrap_or((iso_datetime, "000000"));
+    let (date_part, time_part) = iso_datetime
+        .split_once(' ')
+        .unwrap_or((iso_datetime, "000000"));
     let date_digits: String = date_part.chars().filter(|c| c.is_ascii_digit()).collect();
     let time_digits: String = time_part.chars().filter(|c| c.is_ascii_digit()).collect();
     format!("{date_digits}-{time_digits}")
@@ -246,7 +248,10 @@ impl BackupService {
     /// this mirrors how that file is opened in the first place (a relative
     /// path resolves against the process's current directory either way).
     fn base_dir(&self) -> &Path {
-        self.db_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."))
+        self.db_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
     }
 
     fn backups_dir(&self) -> PathBuf {
@@ -371,7 +376,11 @@ impl BackupService {
         }
 
         // ISO "YYYY-MM-DD HH:MM:SS" sorts lexicographically == chronologically.
-        backups.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.file_name.cmp(&a.file_name)));
+        backups.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.file_name.cmp(&a.file_name))
+        });
         Ok(backups)
     }
 
@@ -437,7 +446,10 @@ impl BackupService {
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let temp_path = dir.join(format!(".restore-upload-{}-{nonce}.tmp", std::process::id()));
+        let temp_path = dir.join(format!(
+            ".restore-upload-{}-{nonce}.tmp",
+            std::process::id()
+        ));
 
         tokio::fs::write(&temp_path, bytes)
             .await
@@ -462,7 +474,9 @@ impl BackupService {
     /// direction (unlike, say, skipping the file's actual content
     /// validation, which only happens at stage/apply time).
     pub async fn pending_restore(&self) -> Option<PendingRestoreInfo> {
-        let metadata = tokio::fs::metadata(self.pending_restore_path()).await.ok()?;
+        let metadata = tokio::fs::metadata(self.pending_restore_path())
+            .await
+            .ok()?;
         if !metadata.is_file() {
             return None;
         }
@@ -538,7 +552,10 @@ impl BackupService {
     pub async fn apply_pending_restore_at_startup(
         db_path: &Path,
     ) -> Result<Option<AppliedRestoreInfo>, BantoError> {
-        let base_dir = db_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let base_dir = db_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         let pending_path = base_dir.join(PENDING_RESTORE_FILE_NAME);
 
         if !tokio::fs::try_exists(&pending_path).await.unwrap_or(false) {
@@ -628,8 +645,13 @@ mod tests {
     /// this codebase's tests. Production code never hits this: `db_path` in
     /// `src-tauri`/`bin/banto-serve.rs` is always a real on-disk file.
     async fn migrated_file_db(path: &Path) -> SqlitePool {
-        let pool = banto_storage::connect_sqlite(path).await.expect("connect_sqlite");
-        sqlx::migrate!("./migrations").run(&pool).await.expect("migrate");
+        let pool = banto_storage::connect_sqlite(path)
+            .await
+            .expect("connect_sqlite");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrate");
         // Force the migration's schema writes out of the WAL and into the
         // main file, so a plain `tokio::fs::read(path)` afterward (as every
         // test fixture below does, to get "the bytes of a valid backup"
@@ -668,7 +690,10 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0], created);
 
-        let bytes = svc.read(&created.file_name).await.expect("read should succeed");
+        let bytes = svc
+            .read(&created.file_name)
+            .await
+            .expect("read should succeed");
         assert_eq!(bytes.len() as u64, created.size_bytes);
         // A real SQLite file starts with this fixed 16-byte header.
         assert_eq!(&bytes[0..16], b"SQLite format 3\0");
@@ -730,7 +755,14 @@ mod tests {
     #[tokio::test]
     async fn read_rejects_path_traversal_attempts() {
         let (svc, _dir) = service().await;
-        for bad in ["../secret.sqlite3", "..\\secret.sqlite3", "/etc/passwd", "a/b.sqlite3", "a\\b.sqlite3", "no-extension"] {
+        for bad in [
+            "../secret.sqlite3",
+            "..\\secret.sqlite3",
+            "/etc/passwd",
+            "a/b.sqlite3",
+            "a\\b.sqlite3",
+            "no-extension",
+        ] {
             let err = svc.read(bad).await.unwrap_err();
             assert!(
                 matches!(err, BantoError::Validation { .. }),
@@ -831,10 +863,14 @@ mod tests {
     async fn cancel_pending_restore_removes_the_staged_file() {
         let (svc, _dir) = service().await;
         let created = svc.create().await.unwrap();
-        svc.stage_restore_from_file(&created.file_name).await.unwrap();
+        svc.stage_restore_from_file(&created.file_name)
+            .await
+            .unwrap();
         assert!(svc.pending_restore().await.is_some());
 
-        svc.cancel_pending_restore().await.expect("cancel should succeed");
+        svc.cancel_pending_restore()
+            .await
+            .expect("cancel should succeed");
         assert!(svc.pending_restore().await.is_none());
     }
 
@@ -879,7 +915,10 @@ mod tests {
         // is fine for THIS role (unlike the source db being staged, which
         // must be a real on-disk file - see `migrated_file_db`'s doc
         // comment).
-        let svc = BackupService::new(db_path.clone(), banto_storage::connect_sqlite_memory().await.unwrap());
+        let svc = BackupService::new(
+            db_path.clone(),
+            banto_storage::connect_sqlite_memory().await.unwrap(),
+        );
         let staged_path = dir.path().join("staged-source.sqlite3");
         let restore_pool = migrated_file_db(&staged_path).await;
         sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (1, 'NEW', 2, 2, '2026-02-02')")
@@ -914,7 +953,10 @@ mod tests {
         after_pool.close().await;
 
         // The pre-restore safety backup preserves the OLD content.
-        let backup_path = dir.path().join("backups").join(&applied.pre_restore_backup_file_name);
+        let backup_path = dir
+            .path()
+            .join("backups")
+            .join(&applied.pre_restore_backup_file_name);
         assert!(backup_path.exists());
         let backup_pool = banto_storage::connect_sqlite(&backup_path).await.unwrap();
         let old_name: String = sqlx::query_scalar("SELECT name FROM items WHERE id = 1")
@@ -932,7 +974,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("admin-template.sqlite3");
 
-        let svc = BackupService::new(db_path.clone(), banto_storage::connect_sqlite_memory().await.unwrap());
+        let svc = BackupService::new(
+            db_path.clone(),
+            banto_storage::connect_sqlite_memory().await.unwrap(),
+        );
         let staged_path = dir.path().join("staged-source.sqlite3");
         let source_pool = migrated_file_db(&staged_path).await;
         source_pool.close().await;
@@ -944,16 +989,22 @@ mod tests {
             .expect("apply should succeed")
             .expect("a restore was staged");
         assert_eq!(applied.pre_restore_backup_file_name, "");
-        assert!(db_path.exists(), "the staged file should now be the live db");
+        assert!(
+            db_path.exists(),
+            "the staged file should now be the live db"
+        );
     }
 
     #[tokio::test]
     async fn apply_pending_restore_deletes_and_skips_a_corrupt_pending_file() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("admin-template.sqlite3");
-        tokio::fs::write(dir.path().join(PENDING_RESTORE_FILE_NAME), b"garbage, not sqlite")
-            .await
-            .unwrap();
+        tokio::fs::write(
+            dir.path().join(PENDING_RESTORE_FILE_NAME),
+            b"garbage, not sqlite",
+        )
+        .await
+        .unwrap();
 
         let applied = BackupService::apply_pending_restore_at_startup(&db_path)
             .await

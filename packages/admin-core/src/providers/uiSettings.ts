@@ -38,7 +38,14 @@ function assertValidKey(key: string): void {
 	}
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Same type guard as providers/tauri.ts / providers/http.ts (spec §10/§11.1). */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -157,10 +164,16 @@ export function createHttpUiSettings(options: HttpUiSettingsOptions): UiSettings
 		try {
 			body = await response.json();
 		} catch {
-			return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+			return new ProviderError({
+				kind: 'other',
+				message: `${response.status} ${response.statusText}`
+			});
 		}
 		if (isErrorBody(body)) return new ProviderError(body);
-		return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+		return new ProviderError({
+			kind: 'other',
+			message: `${response.status} ${response.statusText}`
+		});
 	}
 
 	return {

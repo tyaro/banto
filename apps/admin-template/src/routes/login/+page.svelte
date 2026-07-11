@@ -129,7 +129,8 @@
 		<form onsubmit={submitLogin}>
 			<h1>🏮 Banto</h1>
 			<p class="note">
-				単体ブラウザ（デモ）モードは admin / admin でログインできます。Tauri/LANモードでは初回起動時に
+				単体ブラウザ（デモ）モードは admin / admin
+				でログインできます。Tauri/LANモードでは初回起動時に
 				作成したアカウントでログインしてください。
 			</p>
 

@@ -152,7 +152,11 @@ fn identity_from(user: &UserIdentity) -> Identity {
 /// `.await`, since `std::sync::MutexGuard` is `!Send` and holding one across
 /// an await point would make the command's future `!Send` (which `tauri`
 /// requires).
-async fn require_role(state: &AppState, min: Role, resource: &str) -> Result<UserIdentity, BantoError> {
+async fn require_role(
+    state: &AppState,
+    min: Role,
+    resource: &str,
+) -> Result<UserIdentity, BantoError> {
     let current = state.auth.lock().expect("auth mutex poisoned").clone();
     match current {
         Some(identity) if identity.role.at_least(min) => Ok(identity),
@@ -743,6 +747,10 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 /// be listed in `[dependencies]` to *spell out* one of its types in source,
 /// and the router value here only ever flows through an inferred `let`
 /// binding on its way into `banto_server::start`.
+// Same shape as `admin_template_core::rest::api_router` (which this wraps)
+// and for the same reason: distinct service handles, no natural struct to
+// bundle them into for a single call site.
+#[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
     items: ItemsService,
     users: UsersService,
@@ -1078,7 +1086,9 @@ async fn users_create(
             action: "create",
             resource: "users",
             entity_id: Some(&identity.id.to_string()),
-            detail: Some(serde_json::json!({ "username": identity.username, "role": identity.role })),
+            detail: Some(
+                serde_json::json!({ "username": identity.username, "role": identity.role }),
+            ),
             origin: "tauri",
             result: "ok",
         })
@@ -1315,7 +1325,10 @@ async fn backups_open_folder(state: State<'_, AppState>) -> Result<OpenFolderRes
 
     #[cfg(not(target_os = "windows"))]
     {
-        Ok(OpenFolderResult { opened: false, path })
+        Ok(OpenFolderResult {
+            opened: false,
+            path,
+        })
     }
 }
 
@@ -1353,7 +1366,9 @@ async fn backups_stage_restore(
 /// `admin`-only (spec M17): the currently-staged restore, if any. Read-only,
 /// not audited.
 #[tauri::command]
-async fn backups_pending(state: State<'_, AppState>) -> Result<Option<PendingRestoreInfo>, BantoError> {
+async fn backups_pending(
+    state: State<'_, AppState>,
+) -> Result<Option<PendingRestoreInfo>, BantoError> {
     require_role(&state, Role::Admin, "backups").await?;
     Ok(state.backup.pending_restore().await)
 }
@@ -1882,7 +1897,10 @@ mod tests {
         assert_eq!(entry.actor_username.as_deref(), Some("owner"));
         assert_eq!(entry.actor_role.as_deref(), Some("admin"));
         assert_eq!(entry.resource, "users");
-        assert_eq!(entry.entity_id.as_deref(), Some(owner_id.to_string().as_str()));
+        assert_eq!(
+            entry.entity_id.as_deref(),
+            Some(owner_id.to_string().as_str())
+        );
         assert_eq!(entry.origin, "tauri");
         assert_eq!(entry.result, "ok");
         assert_eq!(entry.detail, None, "detail must never carry the password");
@@ -2036,11 +2054,7 @@ mod tests {
         assert_eq!(result.updated, 0);
         assert_eq!(result.errors.len(), 1);
 
-        let list = state
-            .items
-            .list(ListParams::default())
-            .await
-            .expect("list");
+        let list = state.items.list(ListParams::default()).await.expect("list");
         assert_eq!(
             list.total_count, before,
             "a rolled-back import must not leave partial rows"
@@ -2094,12 +2108,11 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, BantoError::Forbidden));
 
-        let list = state
-            .items
-            .list(ListParams::default())
-            .await
-            .expect("list");
-        assert_eq!(list.total_count, before, "a forbidden import must not touch the table");
+        let list = state.items.list(ListParams::default()).await.expect("list");
+        assert_eq!(
+            list.total_count, before,
+            "a forbidden import must not touch the table"
+        );
     }
 
     // --- M17: SQLite backup/restore -------------------------------------------

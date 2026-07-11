@@ -48,7 +48,13 @@
 	const createSchema: FormSchema = {
 		fields: [
 			{ name: 'username', label: 'ユーザー名', type: 'text', required: true, min: 1, max: 32 },
-			{ name: 'password', label: 'パスワード（8文字以上）', type: 'password', required: true, min: 8 },
+			{
+				name: 'password',
+				label: 'パスワード（8文字以上）',
+				type: 'password',
+				required: true,
+				min: 8
+			},
 			{ name: 'displayName', label: '表示名', type: 'text', required: true, min: 1 },
 			{
 				name: 'role',
@@ -108,8 +114,22 @@
 
 	const columns: GridColumn<UserSummary>[] = [
 		{ id: 'id', header: 'ID', accessor: 'id', width: 70, align: 'right' },
-		{ id: 'username', header: 'ユーザー名', accessor: 'username', width: 160, filterable: true, filterType: 'text' },
-		{ id: 'displayName', header: '表示名', accessor: 'displayName', width: 160, filterable: true, filterType: 'text' },
+		{
+			id: 'username',
+			header: 'ユーザー名',
+			accessor: 'username',
+			width: 160,
+			filterable: true,
+			filterType: 'text'
+		},
+		{
+			id: 'displayName',
+			header: '表示名',
+			accessor: 'displayName',
+			width: 160,
+			filterable: true,
+			filterType: 'text'
+		},
 		{
 			id: 'role',
 			header: 'ロール',
@@ -136,7 +156,10 @@
 		if (!selected) return;
 		saving = true;
 		try {
-			const updated = await updateUser(selected.id, { displayName: editDisplayName, role: editRole });
+			const updated = await updateUser(selected.id, {
+				displayName: editDisplayName,
+				role: editRole
+			});
 			toastStore.push('success', '更新しました');
 			selected = updated;
 			await reload();
@@ -192,7 +215,13 @@
 	{:else}
 		<section class="create">
 			<h3>新規作成</h3>
-			<BantoForm schema={createSchema} store={createStore} onSubmit={handleCreate} submitting={creating} submitLabel="作成" />
+			<BantoForm
+				schema={createSchema}
+				store={createStore}
+				onSubmit={handleCreate}
+				submitting={creating}
+				submitLabel="作成"
+			/>
 		</section>
 
 		<section class="list">
@@ -232,7 +261,9 @@
 						新しいパスワード（8文字以上）
 						<input type="password" bind:value={resetPassword} autocomplete="new-password" />
 					</label>
-					<button type="button" onclick={saveReset} disabled={resetting}>パスワードをリセット</button>
+					<button type="button" onclick={saveReset} disabled={resetting}
+						>パスワードをリセット</button
+					>
 				</div>
 			</section>
 		{/if}

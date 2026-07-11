@@ -10,7 +10,13 @@
  * `crypto.randomUUID`) rather than calling it directly, so tests can pass a
  * deterministic counter and assert on generated ids.
  */
-import type { DockNode, DockPanelNode, DockSplitNode, DockTabGroupNode, DropRegion } from '../types';
+import type {
+	DockNode,
+	DockPanelNode,
+	DockSplitNode,
+	DockTabGroupNode,
+	DropRegion
+} from '../types';
 
 /** Neither pane of a resized split may shrink below this fraction of the split's total (spec §5.2 resizing). */
 export const MIN_PANE_FRACTION = 0.1;
@@ -55,7 +61,10 @@ export function findNode(root: DockNode | null, id: string): DockNode | null {
 }
 
 /** Find the split/tabs-group that directly contains the node with `id` (null for the root itself, or an id not present in the tree). */
-export function findParent(root: DockNode | null, id: string): DockSplitNode | DockTabGroupNode | null {
+export function findParent(
+	root: DockNode | null,
+	id: string
+): DockSplitNode | DockTabGroupNode | null {
 	if (!root || root.id === id) return null;
 	if (root.type === 'split') {
 		for (const child of root.children) {
@@ -165,7 +174,11 @@ function resolveTarget(root: DockNode, targetId: string): DockPanelNode | DockTa
 	return node;
 }
 
-function replaceNodeById(root: DockNode, id: string, replace: (node: DockNode) => DockNode): DockNode {
+function replaceNodeById(
+	root: DockNode,
+	id: string,
+	replace: (node: DockNode) => DockNode
+): DockNode {
 	if (root.id === id) return replace(root);
 	if (root.type === 'split') {
 		let changed = false;
@@ -181,7 +194,11 @@ function replaceNodeById(root: DockNode, id: string, replace: (node: DockNode) =
 	return root;
 }
 
-function appendCenter(node: DockPanelNode | DockTabGroupNode, panel: DockPanelNode, makeId: () => string): DockNode {
+function appendCenter(
+	node: DockPanelNode | DockTabGroupNode,
+	panel: DockPanelNode,
+	makeId: () => string
+): DockNode {
 	if (node.type === 'tabs') {
 		const children = [...node.children, panel];
 		return { ...node, children, activeIndex: children.length - 1 };
@@ -256,7 +273,11 @@ export function dockPanelIntoTree(
 }
 
 /** Change the visible tab of a tab group. Out-of-range indices clamp; an unknown `groupId` (or a `null` tree) is a no-op. */
-export function setActiveTab(root: DockNode | null, groupId: string, index: number): DockNode | null {
+export function setActiveTab(
+	root: DockNode | null,
+	groupId: string,
+	index: number
+): DockNode | null {
 	if (!root) return root;
 	return replaceNodeById(root, groupId, (node) => {
 		if (node.type !== 'tabs') return node;
@@ -275,7 +296,8 @@ export function moveTabWithinGroup(
 	return replaceNodeById(root, groupId, (node) => {
 		if (node.type !== 'tabs') return node;
 		const { children: original, activeIndex: originalActive } = node;
-		if (from < 0 || from >= original.length || to < 0 || to >= original.length || from === to) return node;
+		if (from < 0 || from >= original.length || to < 0 || to >= original.length || from === to)
+			return node;
 		const children = original.slice();
 		const [moved] = children.splice(from, 1);
 		children.splice(to, 0, moved);

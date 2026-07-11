@@ -11,7 +11,9 @@ describe('estimateLabelWidth', () => {
 	});
 
 	it('estimates ASCII narrower than CJK', () => {
-		expect(estimateLabelWidth('12345678', 11)).toBeLessThan(estimateLabelWidth('アップルジュース', 11));
+		expect(estimateLabelWidth('12345678', 11)).toBeLessThan(
+			estimateLabelWidth('アップルジュース', 11)
+		);
 	});
 
 	it('scales with font size', () => {
@@ -26,7 +28,9 @@ describe('estimateLabelWidth', () => {
 describe('leftMarginFor', () => {
 	it('fits the longest label plus the gap', () => {
 		const margin = leftMarginFor(['緑茶', 'アップルジュース'], { fontSize: 11, gap: 8 });
-		expect(margin).toBeGreaterThanOrEqual(Math.round(estimateLabelWidth('アップルジュース', 11) + 8));
+		expect(margin).toBeGreaterThanOrEqual(
+			Math.round(estimateLabelWidth('アップルジュース', 11) + 8)
+		);
 		expect(margin).toBeLessThanOrEqual(140);
 	});
 

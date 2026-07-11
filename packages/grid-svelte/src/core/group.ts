@@ -10,8 +10,13 @@ import { getColumnValue } from './sort';
 /** Group key/label used when the group-by column's value is null/undefined. */
 const EMPTY_GROUP_LABEL = '(なし)';
 
-/** One collapsible group header, standing in for all of its rows in the flattened view. */
-export interface GroupEntry<TRow> {
+/**
+ * One collapsible group header, standing in for all of its rows in the
+ * flattened view. Takes the same `TRow` type parameter as `RowEntry` purely
+ * to keep `FlatEntry<TRow>` symmetric across both union members - not used
+ * in this interface's own body.
+ */
+export interface GroupEntry<_TRow> {
 	kind: 'group';
 	/** Stable identity for the group (also the string passed to `GridState.toggleGroup`). */
 	key: string;
@@ -58,7 +63,9 @@ function computeAggregate<TRow>(column: GridColumn<TRow>, rows: TRow[]): string 
 
 	if (kind === 'count') return rows.length.toLocaleString();
 
-	const numbers = rows.map((row) => toAggregateNumber(getColumnValue(row, column))).filter((n) => !Number.isNaN(n));
+	const numbers = rows
+		.map((row) => toAggregateNumber(getColumnValue(row, column)))
+		.filter((n) => !Number.isNaN(n));
 
 	if (kind === 'sum') {
 		const sum = numbers.reduce((total, n) => total + n, 0);
@@ -121,7 +128,14 @@ export function buildGroupedView<TRow>(
 		}
 
 		const isCollapsed = collapsed(key);
-		entries.push({ kind: 'group', key, label: key, count: bucket.length, aggregates, collapsed: isCollapsed });
+		entries.push({
+			kind: 'group',
+			key,
+			label: key,
+			count: bucket.length,
+			aggregates,
+			collapsed: isCollapsed
+		});
 
 		if (!isCollapsed) {
 			for (const { row, index } of bucket) {

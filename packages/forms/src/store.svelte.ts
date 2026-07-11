@@ -25,7 +25,11 @@ export class FormStore {
 	#messages: ValidationMessages;
 	#initialSnapshot: string;
 
-	constructor(schema: FormSchema, initial?: Record<string, unknown>, messages: ValidationMessages = {}) {
+	constructor(
+		schema: FormSchema,
+		initial?: Record<string, unknown>,
+		messages: ValidationMessages = {}
+	) {
 		this.#schema = schema;
 		this.#messages = messages;
 		this.values = { ...defaultsFrom(schema), ...initial };
@@ -71,7 +75,10 @@ export class FormStore {
 
 	/** Merge server-side field errors (e.g. from a failed submit) onto the current errors. */
 	setServerErrors(fieldErrors: FieldError[]): void {
-		this.errors = { ...this.errors, ...Object.fromEntries(fieldErrors.map((e) => [e.field, e.message])) };
+		this.errors = {
+			...this.errors,
+			...Object.fromEntries(fieldErrors.map((e) => [e.field, e.message]))
+		};
 	}
 
 	/** Reset values to schema defaults merged with `newInitial`, and clear errors/touched. */

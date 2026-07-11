@@ -68,7 +68,14 @@ export function isItemsImportAvailable(): boolean {
 	return getBantoMode() !== 'demo';
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Same type guard as providers/tauri.ts / providers/http.ts / usersAdmin.ts (spec §10/§11.1). */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -117,10 +124,16 @@ async function httpPostJson<T>(path: string, body: unknown): Promise<T> {
 		try {
 			errBody = await response.json();
 		} catch {
-			throw new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+			throw new ProviderError({
+				kind: 'other',
+				message: `${response.status} ${response.statusText}`
+			});
 		}
 		if (isErrorBody(errBody)) throw new ProviderError(errBody);
-		throw new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+		throw new ProviderError({
+			kind: 'other',
+			message: `${response.status} ${response.statusText}`
+		});
 	}
 
 	return (await response.json()) as T;

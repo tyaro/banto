@@ -10,7 +10,14 @@
 	 * unmount whichever side is inactive (see ItemsClientGrid.svelte's doc
 	 * comment for why: no double `onInvalidate` subscriptions).
 	 */
-	import { BantoGrid, GridState, type CellEdit, type FilterState, type GridColumn, type SortState } from '@banto/grid-svelte';
+	import {
+		BantoGrid,
+		GridState,
+		type CellEdit,
+		type FilterState,
+		type GridColumn,
+		type SortState
+	} from '@banto/grid-svelte';
 	import { createWindowedListResource } from '@banto/admin-core';
 	import type { Item } from '$lib/banto/sampleData';
 

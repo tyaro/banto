@@ -30,18 +30,24 @@ describe('filterRows', () => {
 	});
 
 	it('eq / ne', () => {
-		expect(filterRows(rows, [{ field: 'amount', op: 'eq', value: 150 }], columns).map((r) => r.id)).toEqual([2]);
+		expect(
+			filterRows(rows, [{ field: 'amount', op: 'eq', value: 150 }], columns).map((r) => r.id)
+		).toEqual([2]);
 		expect(
 			filterRows(rows, [{ field: 'tags', op: 'ne', value: 'drink' }], columns).map((r) => r.id)
 		).toEqual([4]);
 	});
 
 	it('lt / lte / gt / gte', () => {
-		expect(filterRows(rows, [{ field: 'amount', op: 'lt', value: 140 }], columns).map((r) => r.id)).toEqual([4]);
+		expect(
+			filterRows(rows, [{ field: 'amount', op: 'lt', value: 140 }], columns).map((r) => r.id)
+		).toEqual([4]);
 		expect(
 			filterRows(rows, [{ field: 'amount', op: 'lte', value: 140 }], columns).map((r) => r.id)
 		).toEqual([1, 4]);
-		expect(filterRows(rows, [{ field: 'amount', op: 'gt', value: 140 }], columns).map((r) => r.id)).toEqual([2]);
+		expect(
+			filterRows(rows, [{ field: 'amount', op: 'gt', value: 140 }], columns).map((r) => r.id)
+		).toEqual([2]);
 		expect(
 			filterRows(rows, [{ field: 'amount', op: 'gte', value: 140 }], columns).map((r) => r.id)
 		).toEqual([1, 2]);
@@ -55,7 +61,9 @@ describe('filterRows', () => {
 
 	it('starts_with is case-insensitive', () => {
 		expect(
-			filterRows(rows, [{ field: 'name', op: 'starts_with', value: 'green' }], columns).map((r) => r.id)
+			filterRows(rows, [{ field: 'name', op: 'starts_with', value: 'green' }], columns).map(
+				(r) => r.id
+			)
 		).toEqual([1]);
 	});
 

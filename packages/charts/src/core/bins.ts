@@ -52,7 +52,10 @@ function autoBinCount(sorted: number[], lo: number, hi: number): number {
  * (NaN/Infinity) are always dropped. An empty result (no finite values, or
  * none within `opts.domain`) returns `[]`.
  */
-export function histogramBins(values: number[], opts: { binCount?: number; domain?: [number, number] } = {}): Bin[] {
+export function histogramBins(
+	values: number[],
+	opts: { binCount?: number; domain?: [number, number] } = {}
+): Bin[] {
 	const finite = values.filter((v) => Number.isFinite(v));
 	if (finite.length === 0) return [];
 
@@ -112,7 +115,12 @@ export function histogramBins(values: number[], opts: { binCount?: number; domai
  * overlay it on bin COUNTS, the caller scales each `y` by `binWidth * n`
  * (bin width times total sample count) before mapping through the y scale.
  */
-export function normalCurvePoints(mean: number, stdDev: number, domain: [number, number], samples = 64): Point[] {
+export function normalCurvePoints(
+	mean: number,
+	stdDev: number,
+	domain: [number, number],
+	samples = 64
+): Point[] {
 	if (stdDev <= 0) return [];
 
 	const [d0, d1] = domain[0] <= domain[1] ? domain : [domain[1], domain[0]];

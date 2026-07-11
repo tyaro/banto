@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { connectEvents, createSseEventProvider, createTauriEventProvider, type AppEvent, type EventProvider } from '../src/events';
+import {
+	connectEvents,
+	createSseEventProvider,
+	createTauriEventProvider,
+	type AppEvent,
+	type EventProvider
+} from '../src/events';
 import { onInvalidate } from '../src/invalidate';
 import { initBanto } from '../src/registry.svelte';
 import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
@@ -92,8 +98,14 @@ describe('createSseEventProvider', () => {
 	it('connects with Authorization + X-Banto-Client headers and dispatches parsed events', async () => {
 		const fetchFn = vi
 			.fn()
-			.mockResolvedValue(fakeStreamResponse(['data: {"kind":"notice","level":"info","message":"hi"}\n\n']));
-		const provider = createSseEventProvider({ getToken: () => 'tok123', fetchFn, baseUrl: 'http://x' });
+			.mockResolvedValue(
+				fakeStreamResponse(['data: {"kind":"notice","level":"info","message":"hi"}\n\n'])
+			);
+		const provider = createSseEventProvider({
+			getToken: () => 'tok123',
+			fetchFn,
+			baseUrl: 'http://x'
+		});
 		const handler = vi.fn();
 		const unsubscribe = provider.subscribe(handler);
 
@@ -102,7 +114,10 @@ describe('createSseEventProvider', () => {
 		expect(fetchFn).toHaveBeenCalledWith(
 			'http://x/api/events',
 			expect.objectContaining({
-				headers: expect.objectContaining({ 'X-Banto-Client': 'banto', Authorization: 'Bearer tok123' })
+				headers: expect.objectContaining({
+					'X-Banto-Client': 'banto',
+					Authorization: 'Bearer tok123'
+				})
 			})
 		);
 		expect(handler).toHaveBeenCalledWith({ kind: 'notice', level: 'info', message: 'hi' });

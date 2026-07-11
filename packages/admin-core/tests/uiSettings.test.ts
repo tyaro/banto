@@ -105,7 +105,11 @@ describe('createTauriUiSettings', () => {
 describe('createHttpUiSettings', () => {
 	it('get GETs {base}/api/ui-settings/{key} with CSRF + bearer headers and returns body.value', async () => {
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { value: 'dark' }));
-		const provider = createHttpUiSettings({ baseUrl: 'http://h:8721', getToken: () => 'tok', fetchFn });
+		const provider = createHttpUiSettings({
+			baseUrl: 'http://h:8721',
+			getToken: () => 'tok',
+			fetchFn
+		});
 
 		await expect(provider.get('theme.mode')).resolves.toBe('dark');
 		expect(fetchFn).toHaveBeenCalledWith('http://h:8721/api/ui-settings/theme.mode', {
@@ -128,7 +132,11 @@ describe('createHttpUiSettings', () => {
 		await expect(provider.set('theme.preset', 'glass')).resolves.toBeUndefined();
 		expect(fetchFn).toHaveBeenCalledWith('/api/ui-settings/theme.preset', {
 			method: 'PUT',
-			headers: { 'X-Banto-Client': 'banto', 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+			headers: {
+				'X-Banto-Client': 'banto',
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer tok'
+			},
 			body: JSON.stringify({ value: 'glass' })
 		});
 	});
@@ -165,7 +173,8 @@ describe('createHttpUiSettings', () => {
 			expect.unreachable('expected a ProviderError to be thrown');
 		} catch (err) {
 			expect(isProviderError(err)).toBe(true);
-			if (isProviderError(err)) expect(err.body).toEqual({ kind: 'other', message: 'サーバーに接続できません' });
+			if (isProviderError(err))
+				expect(err.body).toEqual({ kind: 'other', message: 'サーバーに接続できません' });
 		}
 	});
 

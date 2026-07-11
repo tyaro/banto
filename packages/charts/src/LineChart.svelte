@@ -161,7 +161,9 @@
 		Number.isFinite(leftExtent[0]) ? niceTicks(leftExtent[0], leftExtent[1], 5) : [0, 1]
 	);
 	const rightTicks = $derived(
-		hasRight && Number.isFinite(rightExtent[0]) ? niceTicks(rightExtent[0], rightExtent[1], 5) : [0, 1]
+		hasRight && Number.isFinite(rightExtent[0])
+			? niceTicks(rightExtent[0], rightExtent[1], 5)
+			: [0, 1]
 	);
 
 	// Right margin auto-expands to fit right-axis tick labels; with no right
@@ -195,10 +197,16 @@
 	});
 
 	const leftScale = $derived(
-		linearScale([leftTicks[0], leftTicks[leftTicks.length - 1]], [metrics.innerBottom, metrics.innerTop])
+		linearScale(
+			[leftTicks[0], leftTicks[leftTicks.length - 1]],
+			[metrics.innerBottom, metrics.innerTop]
+		)
 	);
 	const rightScale = $derived(
-		linearScale([rightTicks[0], rightTicks[rightTicks.length - 1]], [metrics.innerBottom, metrics.innerTop])
+		linearScale(
+			[rightTicks[0], rightTicks[rightTicks.length - 1]],
+			[metrics.innerBottom, metrics.innerTop]
+		)
 	);
 
 	let hoveredIndex: number | null = $state(null);
@@ -382,32 +390,84 @@
 					fill={bandColor}
 					fill-opacity="0.1"
 				/>
-				<line x1={m.innerLeft} x2={m.innerRight} y1={yTop} y2={yTop} class="band-edge" stroke={bandColor} />
-				<line x1={m.innerLeft} x2={m.innerRight} y1={yBottom} y2={yBottom} class="band-edge" stroke={bandColor} />
+				<line
+					x1={m.innerLeft}
+					x2={m.innerRight}
+					y1={yTop}
+					y2={yTop}
+					class="band-edge"
+					stroke={bandColor}
+				/>
+				<line
+					x1={m.innerLeft}
+					x2={m.innerRight}
+					y1={yBottom}
+					y2={yBottom}
+					class="band-edge"
+					stroke={bandColor}
+				/>
 				{#if band.label}
-					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}>{band.label}</text>
+					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
+						>{band.label}</text
+					>
 				{/if}
 			{/each}
 
 			<!-- Gridlines + left y ticks (recessive, rule 4). -->
 			{#each leftTicks as tick (tick)}
-				<line x1={m.innerLeft} x2={m.innerRight} y1={leftScale(tick)} y2={leftScale(tick)} class="gridline" />
-				<text x={m.innerLeft - 8} y={leftScale(tick)} class="tick-label y-tick" text-anchor="end" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft}
+					x2={m.innerRight}
+					y1={leftScale(tick)}
+					y2={leftScale(tick)}
+					class="gridline"
+				/>
+				<text
+					x={m.innerLeft - 8}
+					y={leftScale(tick)}
+					class="tick-label y-tick"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{formatYValue(tick)}
 				</text>
 			{/each}
 
 			<!-- Left + bottom axis lines. -->
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerBottom} class="axis-line" />
-			<line x1={m.innerLeft} x2={m.innerRight} y1={m.innerBottom} y2={m.innerBottom} class="axis-line" />
+			<line
+				x1={m.innerLeft}
+				x2={m.innerLeft}
+				y1={m.innerTop}
+				y2={m.innerBottom}
+				class="axis-line"
+			/>
+			<line
+				x1={m.innerLeft}
+				x2={m.innerRight}
+				y1={m.innerBottom}
+				y2={m.innerBottom}
+				class="axis-line"
+			/>
 
 			<!-- Right axis (only when a series opts into axis:'right'). -->
 			{#if hasRight}
-				<line x1={m.innerRight} x2={m.innerRight} y1={m.innerTop} y2={m.innerBottom} class="axis-line" />
+				<line
+					x1={m.innerRight}
+					x2={m.innerRight}
+					y1={m.innerTop}
+					y2={m.innerBottom}
+					class="axis-line"
+				/>
 				{#each rightTicks as tick (tick)}
 					{@const ry = rightScale(tick)}
 					<line x1={m.innerRight} x2={m.innerRight + 4} y1={ry} y2={ry} class="axis-line" />
-					<text x={m.innerRight + 8} y={ry} class="tick-label y-tick" text-anchor="start" dominant-baseline="middle">
+					<text
+						x={m.innerRight + 8}
+						y={ry}
+						class="tick-label y-tick"
+						text-anchor="start"
+						dominant-baseline="middle"
+					>
 						{formatYRightValue(tick)}
 					</text>
 				{/each}
@@ -430,7 +490,12 @@
 			<!-- Series areas/lines (decimated, viewport-clipped). -->
 			{#each series as s, i (s.id)}
 				{#if area && seriesPaths[i].area}
-					<path d={seriesPaths[i].area} fill={seriesPaths[i].color} fill-opacity="0.16" stroke="none" />
+					<path
+						d={seriesPaths[i].area}
+						fill={seriesPaths[i].color}
+						fill-opacity="0.16"
+						stroke="none"
+					/>
 				{/if}
 				<path d={seriesPaths[i].line} fill="none" stroke={seriesPaths[i].color} stroke-width="2" />
 			{/each}
@@ -440,9 +505,22 @@
 				{#if marker.at >= range[0] && marker.at <= range[1]}
 					{@const mx = xAt(marker.at)}
 					{@const markColor = marker.colorVar ?? 'var(--banto-chart-axis)'}
-					<line x1={mx} x2={mx} y1={m.innerTop} y2={m.innerBottom} class="marker-line" stroke={markColor} />
+					<line
+						x1={mx}
+						x2={mx}
+						y1={m.innerTop}
+						y2={m.innerBottom}
+						class="marker-line"
+						stroke={markColor}
+					/>
 					{#if marker.label}
-						<text x={mx} y={m.innerTop + 10} class="marker-label" fill={markColor} text-anchor="middle">
+						<text
+							x={mx}
+							y={m.innerTop + 10}
+							class="marker-label"
+							fill={markColor}
+							text-anchor="middle"
+						>
 							{marker.label}
 						</text>
 					{/if}

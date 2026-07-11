@@ -331,7 +331,10 @@ impl SettingsService {
         // "" is the sentinel for "unset" (see set_auth_config below) - a real
         // username is never empty (UsersService enforces a minimum length),
         // so this cannot collide with an actual configured username.
-        let autologin_username = self.get(KEY_AUTOLOGIN_USERNAME).await?.filter(|value| !value.is_empty());
+        let autologin_username = self
+            .get(KEY_AUTOLOGIN_USERNAME)
+            .await?
+            .filter(|value| !value.is_empty());
 
         Ok(AuthSettings {
             disabled,
@@ -677,10 +680,7 @@ mod tests {
         let svc = service().await;
         let max_sized = "x".repeat(MAX_UI_VALUE_LEN);
         svc.ui_set("alice", "dock", &max_sized).await.unwrap();
-        assert_eq!(
-            svc.ui_get("alice", "dock").await.unwrap(),
-            Some(max_sized)
-        );
+        assert_eq!(svc.ui_get("alice", "dock").await.unwrap(), Some(max_sized));
     }
 
     #[tokio::test]
@@ -757,7 +757,9 @@ mod tests {
     #[tokio::test]
     async fn audit_config_falls_back_to_default_on_a_corrupt_stored_value() {
         let svc = service().await;
-        svc.set(KEY_AUDIT_RETENTION_DAYS, "not-a-number").await.unwrap();
+        svc.set(KEY_AUDIT_RETENTION_DAYS, "not-a-number")
+            .await
+            .unwrap();
         let config = svc.audit_config().await.unwrap();
         assert_eq!(config.retention_days, Some(90));
     }

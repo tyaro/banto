@@ -45,6 +45,7 @@ export interface GaugeThresholds {
  */
 export function gaugeColorVar(value: number, thresholds: GaugeThresholds = {}): string {
 	if (thresholds.danger !== undefined && value >= thresholds.danger) return 'var(--banto-danger)';
-	if (thresholds.warning !== undefined && value >= thresholds.warning) return 'var(--banto-warning)';
+	if (thresholds.warning !== undefined && value >= thresholds.warning)
+		return 'var(--banto-warning)';
 	return 'var(--banto-primary)';
 }

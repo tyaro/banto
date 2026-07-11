@@ -14,31 +14,31 @@
 
 /* --- light x glass ------------------------------------------------------ */
 :root[data-banto-preset='glass'] {
-  --banto-surface: rgb(255 255 255 / 0.62);
-  --banto-surface-raised: rgb(255 255 255 / 0.55);
-  --banto-border: rgb(148 158 172 / 0.45);
+	--banto-surface: rgb(255 255 255 / 0.62);
+	--banto-surface-raised: rgb(255 255 255 / 0.55);
+	--banto-border: rgb(148 158 172 / 0.45);
 
-  --banto-backdrop: blur(14px) saturate(1.5);
+	--banto-backdrop: blur(14px) saturate(1.5);
 
-  /* Subtle, dignified gradient so the translucency reads even in a plain
+	/* Subtle, dignified gradient so the translucency reads even in a plain
      browser window (no OS acrylic behind it). Painted by the app shell via
      `background-image: var(--banto-bg-image)` (background-attachment: fixed). */
-  --banto-bg-image:
-    radial-gradient(1100px 750px at 8% -10%, rgb(37 99 235 / 0.16), transparent 60%),
-    radial-gradient(950px 700px at 102% 0%, rgb(124 58 237 / 0.14), transparent 55%),
-    radial-gradient(900px 900px at 50% 112%, rgb(22 163 74 / 0.1), transparent 60%);
+	--banto-bg-image:
+		radial-gradient(1100px 750px at 8% -10%, rgb(37 99 235 / 0.16), transparent 60%),
+		radial-gradient(950px 700px at 102% 0%, rgb(124 58 237 / 0.14), transparent 55%),
+		radial-gradient(900px 900px at 50% 112%, rgb(22 163 74 / 0.1), transparent 60%);
 }
 
 /* --- dark x glass ------------------------------------------------------- */
 :root[data-theme='dark'][data-banto-preset='glass'] {
-  --banto-surface: rgb(30 33 39 / 0.55);
-  --banto-surface-raised: rgb(38 42 49 / 0.5);
-  --banto-border: rgb(255 255 255 / 0.14);
+	--banto-surface: rgb(30 33 39 / 0.55);
+	--banto-surface-raised: rgb(38 42 49 / 0.5);
+	--banto-border: rgb(255 255 255 / 0.14);
 
-  --banto-bg-image:
-    radial-gradient(1100px 750px at 8% -10%, rgb(59 130 246 / 0.22), transparent 60%),
-    radial-gradient(950px 700px at 102% 0%, rgb(139 92 246 / 0.18), transparent 55%),
-    radial-gradient(900px 900px at 50% 112%, rgb(45 212 191 / 0.1), transparent 60%);
+	--banto-bg-image:
+		radial-gradient(1100px 750px at 8% -10%, rgb(59 130 246 / 0.22), transparent 60%),
+		radial-gradient(950px 700px at 102% 0%, rgb(139 92 246 / 0.18), transparent 55%),
+		radial-gradient(900px 900px at 50% 112%, rgb(45 212 191 / 0.1), transparent 60%);
 }
 
 /*
@@ -50,15 +50,15 @@
  * values - keep in sync when those change.
  */
 [data-banto-preset='glass'] .banto-grid {
-  --banto-surface: #ffffff;
-  --banto-surface-raised: #ffffff;
-  --banto-border: #d9dde3;
+	--banto-surface: #ffffff;
+	--banto-surface-raised: #ffffff;
+	--banto-border: #d9dde3;
 }
 
 [data-theme='dark'][data-banto-preset='glass'] .banto-grid {
-  --banto-surface: #1e2127;
-  --banto-surface-raised: #262a31;
-  --banto-border: #363b44;
+	--banto-surface: #1e2127;
+	--banto-surface-raised: #262a31;
+	--banto-border: #363b44;
 }
 
 /*
@@ -68,31 +68,31 @@
  * it is opaque page decoration, not transparency.
  */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root[data-banto-preset='glass'] {
-    --banto-surface: #ffffff;
-    --banto-surface-raised: #ffffff;
-    --banto-border: #d9dde3;
-    --banto-backdrop: none;
-  }
+	:root[data-banto-preset='glass'] {
+		--banto-surface: #ffffff;
+		--banto-surface-raised: #ffffff;
+		--banto-border: #d9dde3;
+		--banto-backdrop: none;
+	}
 
-  :root[data-theme='dark'][data-banto-preset='glass'] {
-    --banto-surface: #1e2127;
-    --banto-surface-raised: #262a31;
-    --banto-border: #363b44;
-  }
+	:root[data-theme='dark'][data-banto-preset='glass'] {
+		--banto-surface: #1e2127;
+		--banto-surface-raised: #262a31;
+		--banto-border: #363b44;
+	}
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-banto-preset='glass'] {
-    --banto-surface: #ffffff;
-    --banto-surface-raised: #ffffff;
-    --banto-border: #d9dde3;
-    --banto-backdrop: none;
-  }
+	:root[data-banto-preset='glass'] {
+		--banto-surface: #ffffff;
+		--banto-surface-raised: #ffffff;
+		--banto-border: #d9dde3;
+		--banto-backdrop: none;
+	}
 
-  :root[data-theme='dark'][data-banto-preset='glass'] {
-    --banto-surface: #1e2127;
-    --banto-surface-raised: #262a31;
-    --banto-border: #363b44;
-  }
+	:root[data-theme='dark'][data-banto-preset='glass'] {
+		--banto-surface: #1e2127;
+		--banto-surface-raised: #262a31;
+		--banto-border: #363b44;
+	}
 }

@@ -207,7 +207,11 @@ export function createInMemoryDataProvider(
 			return row as T;
 		},
 
-		async update<T>(resource: string, id: string | number, values: Record<string, unknown>): Promise<T> {
+		async update<T>(
+			resource: string,
+			id: string | number,
+			values: Record<string, unknown>
+		): Promise<T> {
 			await delay();
 			const entry = table(resource);
 			const index = entry.rows.findIndex((row) => looseEquals(row[entry.idField], id));

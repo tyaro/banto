@@ -13,7 +13,7 @@
 	import { sequentialColor, SEQ_RAMP } from './core/color';
 	import { everyNthIndex } from './core/ticks-time';
 	import { leftMarginFor } from './core/labels';
-	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
+	import type { Accessor, ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
 
@@ -81,8 +81,12 @@
 							width={xScale.bandwidth}
 							height={yScale.bandwidth}
 							fill={sequentialColor(v, grid.min, grid.max, rampColors)}
-							stroke={hovered && hovered.xIndex === xIndex && hovered.yIndex === yIndex ? 'var(--banto-text)' : 'var(--banto-surface)'}
-							stroke-width={hovered && hovered.xIndex === xIndex && hovered.yIndex === yIndex ? 1.5 : 1}
+							stroke={hovered && hovered.xIndex === xIndex && hovered.yIndex === yIndex
+								? 'var(--banto-text)'
+								: 'var(--banto-surface)'}
+							stroke-width={hovered && hovered.xIndex === xIndex && hovered.yIndex === yIndex
+								? 1.5
+								: 1}
 							class="cell"
 							onpointerenter={() => (hovered = { xIndex, yIndex })}
 							onpointerleave={() => (hovered = null)}
@@ -93,13 +97,24 @@
 
 			<!-- Y labels (left), X labels (bottom, thinned when crowded). -->
 			{#each grid.yCats as yCat, i (i)}
-				<text x={m.innerLeft - 8} y={yScale.center(i)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+				<text
+					x={m.innerLeft - 8}
+					y={yScale.center(i)}
+					class="tick-label"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{yCat}
 				</text>
 			{/each}
 			{@const xTickIndices = everyNthIndex(grid.xCats.length, maxXTicksFor(m.innerWidth))}
 			{#each xTickIndices as i (i)}
-				<text x={xScale.center(i)} y={m.innerTop + m.innerHeight + 16} class="tick-label" text-anchor="middle">
+				<text
+					x={xScale.center(i)}
+					y={m.innerTop + m.innerHeight + 16}
+					class="tick-label"
+					text-anchor="middle"
+				>
 					{grid.xCats[i]}
 				</text>
 			{/each}
@@ -116,7 +131,12 @@
 						y={yScale.center(hovered.yIndex)}
 						containerWidth={width}
 						containerHeight={plotHeight}
-						rows={[{ label: `${grid.yCats[hovered.yIndex]} / ${grid.xCats[hovered.xIndex]}`, value: formatValueDisplay(v) }]}
+						rows={[
+							{
+								label: `${grid.yCats[hovered.yIndex]} / ${grid.xCats[hovered.xIndex]}`,
+								value: formatValueDisplay(v)
+							}
+						]}
 					/>
 				{/if}
 			{/if}
@@ -125,7 +145,10 @@
 	{#if !isEmpty}
 		<div class="ramp-legend">
 			<span class="ramp-label">{formatValueDisplay(grid.min)}</span>
-			<span class="ramp-bar" style:background={`linear-gradient(to right, ${rampColors.join(', ')})`}></span>
+			<span
+				class="ramp-bar"
+				style:background={`linear-gradient(to right, ${rampColors.join(', ')})`}
+			></span>
 			<span class="ramp-label">{formatValueDisplay(grid.max)}</span>
 		</div>
 	{/if}

@@ -36,7 +36,14 @@ export function areaPath(points: Point[], y0: number): string {
  * square, per spec §6 rule 3. `r` is clamped to half of the smaller of
  * width/height so a thin/short bar never produces overlapping curves.
  */
-export function roundedTopBarPath(x: number, y: number, w: number, h: number, r: number, horizontal = false): string {
+export function roundedTopBarPath(
+	x: number,
+	y: number,
+	w: number,
+	h: number,
+	r: number,
+	horizontal = false
+): string {
 	const width = Math.max(0, w);
 	const height = Math.max(0, h);
 	const radius = Math.max(0, Math.min(r, width / 2, height / 2));

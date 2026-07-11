@@ -47,10 +47,7 @@
 		dock.focus(win.id);
 	}
 
-	function trackPointer(
-		event: PointerEvent,
-		onDelta: (dx: number, dy: number) => void
-	): void {
+	function trackPointer(event: PointerEvent, onDelta: (dx: number, dy: number) => void): void {
 		if (event.button !== 0) return;
 		event.preventDefault();
 		focusThis();
@@ -93,7 +90,8 @@
 		function onMove(moveEvent: PointerEvent) {
 			if (moveEvent.pointerId !== pointerId) return;
 			if (dragging) return;
-			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return;
+			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
+				return;
 			dragging = true;
 			window.removeEventListener('pointermove', onMove);
 			window.removeEventListener('pointerup', onUp);

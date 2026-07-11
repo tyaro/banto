@@ -86,22 +86,52 @@
 	<ChartContainer {label} {height} empty={isEmpty}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
-			{@const valueScale = linearScale([valueTicks[0], valueTicks[valueTicks.length - 1]], [m.innerTop + m.innerHeight, m.innerTop])}
-			{@const catScale = bandScale(groups.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
+			{@const valueScale = linearScale(
+				[valueTicks[0], valueTicks[valueTicks.length - 1]],
+				[m.innerTop + m.innerHeight, m.innerTop]
+			)}
+			{@const catScale = bandScale(
+				groups.length,
+				[m.innerLeft, m.innerLeft + m.innerWidth],
+				CATEGORY_PADDING
+			)}
 
 			{#each valueTicks as tick (tick)}
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={valueScale(tick)} y2={valueScale(tick)} class="gridline" />
-				<text x={m.innerLeft - 8} y={valueScale(tick)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={valueScale(tick)}
+					y2={valueScale(tick)}
+					class="gridline"
+				/>
+				<text
+					x={m.innerLeft - 8}
+					y={valueScale(tick)}
+					class="tick-label"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{formatValueDisplay(tick)}
 				</text>
 			{/each}
 			{#each groups as g, i (i)}
-				<text x={catScale.center(i)} y={m.innerTop + m.innerHeight + 16} class="tick-label" text-anchor="middle">
+				<text
+					x={catScale.center(i)}
+					y={m.innerTop + m.innerHeight + 16}
+					class="tick-label"
+					text-anchor="middle"
+				>
 					{g.label}
 				</text>
 			{/each}
 
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+			<line
+				x1={m.innerLeft}
+				x2={m.innerLeft}
+				y1={m.innerTop}
+				y2={m.innerTop + m.innerHeight}
+				class="axis-line"
+			/>
 			<line
 				x1={m.innerLeft}
 				x2={m.innerLeft + m.innerWidth}
@@ -130,12 +160,47 @@
 						onpointerleave={() => (hoveredIndex = null)}
 					>
 						<!-- Invisible full-height hit area so hover works over the whole band, not just the box/whiskers. -->
-						<rect x={bandX} y={m.innerTop} width={bandW} height={m.innerHeight} fill="transparent" class="hit-area" />
+						<rect
+							x={bandX}
+							y={m.innerTop}
+							width={bandW}
+							height={m.innerHeight}
+							fill="transparent"
+							class="hit-area"
+						/>
 						<!-- Whiskers: vertical line + end caps. -->
-						<line x1={cx} x2={cx} y1={yWhiskerHigh} y2={yQ3} class="whisker" stroke={seriesColorVar(0)} />
-						<line x1={cx} x2={cx} y1={yQ1} y2={yWhiskerLow} class="whisker" stroke={seriesColorVar(0)} />
-						<line x1={cx - capHalf} x2={cx + capHalf} y1={yWhiskerHigh} y2={yWhiskerHigh} class="whisker" stroke={seriesColorVar(0)} />
-						<line x1={cx - capHalf} x2={cx + capHalf} y1={yWhiskerLow} y2={yWhiskerLow} class="whisker" stroke={seriesColorVar(0)} />
+						<line
+							x1={cx}
+							x2={cx}
+							y1={yWhiskerHigh}
+							y2={yQ3}
+							class="whisker"
+							stroke={seriesColorVar(0)}
+						/>
+						<line
+							x1={cx}
+							x2={cx}
+							y1={yQ1}
+							y2={yWhiskerLow}
+							class="whisker"
+							stroke={seriesColorVar(0)}
+						/>
+						<line
+							x1={cx - capHalf}
+							x2={cx + capHalf}
+							y1={yWhiskerHigh}
+							y2={yWhiskerHigh}
+							class="whisker"
+							stroke={seriesColorVar(0)}
+						/>
+						<line
+							x1={cx - capHalf}
+							x2={cx + capHalf}
+							y1={yWhiskerLow}
+							y2={yWhiskerLow}
+							class="whisker"
+							stroke={seriesColorVar(0)}
+						/>
 						<!-- Box (Q1-Q3). -->
 						<rect
 							x={bandX}
@@ -148,10 +213,24 @@
 							stroke-width="1.5"
 						/>
 						<!-- Median line. -->
-						<line x1={bandX} x2={bandX + bandW} y1={yMedian} y2={yMedian} class="median" stroke={seriesColorVar(0)} />
+						<line
+							x1={bandX}
+							x2={bandX + bandW}
+							y1={yMedian}
+							y2={yMedian}
+							class="median"
+							stroke={seriesColorVar(0)}
+						/>
 						<!-- Outliers. -->
 						{#each s.outliers as v, oi (oi)}
-							<circle cx={cx} cy={valueScale(v)} r={OUTLIER_RADIUS} fill={seriesColorVar(0)} fill-opacity="0.6" class="outlier" />
+							<circle
+								{cx}
+								cy={valueScale(v)}
+								r={OUTLIER_RADIUS}
+								fill={seriesColorVar(0)}
+								fill-opacity="0.6"
+								class="outlier"
+							/>
 						{/each}
 					</g>
 				{/if}
@@ -160,8 +239,15 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hoveredIndex !== null && stats[hoveredIndex]}
 				{@const m = plotMetrics(width, plotHeight)}
-				{@const valueScale = linearScale([valueTicks[0], valueTicks[valueTicks.length - 1]], [m.innerTop + m.innerHeight, m.innerTop])}
-				{@const catScale = bandScale(groups.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
+				{@const valueScale = linearScale(
+					[valueTicks[0], valueTicks[valueTicks.length - 1]],
+					[m.innerTop + m.innerHeight, m.innerTop]
+				)}
+				{@const catScale = bandScale(
+					groups.length,
+					[m.innerLeft, m.innerLeft + m.innerWidth],
+					CATEGORY_PADDING
+				)}
 				{@const s = stats[hoveredIndex]!}
 				<Tooltip
 					x={catScale.center(hoveredIndex)}

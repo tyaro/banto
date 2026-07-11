@@ -101,7 +101,12 @@ export function serializeChartSvg(svg: SVGSVGElement, opts: { background?: boole
 	}
 
 	if (opts.background) {
-		const [x, y, w, h] = viewBoxRect ?? [0, 0, Number(clone.getAttribute('width') ?? 0), Number(clone.getAttribute('height') ?? 0)];
+		const [x, y, w, h] = viewBoxRect ?? [
+			0,
+			0,
+			Number(clone.getAttribute('width') ?? 0),
+			Number(clone.getAttribute('height') ?? 0)
+		];
 		const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
 		bg.setAttribute('x', String(x));
 		bg.setAttribute('y', String(y));

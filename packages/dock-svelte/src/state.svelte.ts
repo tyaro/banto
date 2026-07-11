@@ -29,7 +29,15 @@ import {
 	resizeSplit as resizeSplitTree,
 	setActiveTab as setActiveTabTree
 } from './core/tree';
-import type { DockLayout, DockNode, DockPanelNode, DropRegion, FloatingWindow, FloatingWindowDef, ResizeEdge } from './types';
+import type {
+	DockLayout,
+	DockNode,
+	DockPanelNode,
+	DropRegion,
+	FloatingWindow,
+	FloatingWindowDef,
+	ResizeEdge
+} from './types';
 
 function isFloatingWindow(value: unknown): value is FloatingWindow {
 	if (!value || typeof value !== 'object') return false;
@@ -51,7 +59,10 @@ function isDockNode(value: unknown): value is DockNode {
 	const candidate = value as Record<string, unknown>;
 	if (typeof candidate.id !== 'string') return false;
 	if (candidate.type === 'panel') {
-		return typeof candidate.title === 'string' && (candidate.icon === undefined || typeof candidate.icon === 'string');
+		return (
+			typeof candidate.title === 'string' &&
+			(candidate.icon === undefined || typeof candidate.icon === 'string')
+		);
 	}
 	if (candidate.type === 'tabs') {
 		return (
@@ -88,14 +99,23 @@ function isDockLayoutV2(value: unknown): value is DockLayout {
 function isDockLayoutV1(value: unknown): value is { version: 1; floating: FloatingWindow[] } {
 	if (!value || typeof value !== 'object') return false;
 	const candidate = value as Record<string, unknown>;
-	return candidate.version === 1 && Array.isArray(candidate.floating) && candidate.floating.every(isFloatingWindow);
+	return (
+		candidate.version === 1 &&
+		Array.isArray(candidate.floating) &&
+		candidate.floating.every(isFloatingWindow)
+	);
 }
 
 function emptyLayout(): DockLayout {
 	return { version: 2, floating: [], docked: null };
 }
 
-function placeNew(def: FloatingWindowDef, index: number, hostW: number, hostH: number): FloatingWindow {
+function placeNew(
+	def: FloatingWindowDef,
+	index: number,
+	hostW: number,
+	hostH: number
+): FloatingWindow {
 	const width = def.width ?? DEFAULT_WINDOW_WIDTH;
 	const height = def.height ?? DEFAULT_WINDOW_HEIGHT;
 	const { x, y } = cascadePosition(index, hostW, hostH, width, height);
@@ -185,13 +205,25 @@ export class DockState {
 		targetId?: string
 	): void {
 		const known =
-			this.layout.floating.some((w) => w.id === def.id) || collectPanelIds(this.layout.docked).includes(def.id);
+			this.layout.floating.some((w) => w.id === def.id) ||
+			collectPanelIds(this.layout.docked).includes(def.id);
 		if (known) return;
 
 		if (this.layout.docked !== null || targetId !== undefined) {
-			const panelNode: DockPanelNode = { type: 'panel', id: def.id, title: def.title, icon: def.icon };
+			const panelNode: DockPanelNode = {
+				type: 'panel',
+				id: def.id,
+				title: def.title,
+				icon: def.icon
+			};
 			const effectiveTarget = targetId ?? this.layout.docked!.id;
-			const docked = dockPanelIntoTree(this.layout.docked, panelNode, effectiveTarget, region, this.#makeId);
+			const docked = dockPanelIntoTree(
+				this.layout.docked,
+				panelNode,
+				effectiveTarget,
+				region,
+				this.#makeId
+			);
 			this.layout = { ...this.layout, docked };
 			return;
 		}
@@ -203,7 +235,12 @@ export class DockState {
 	dockPanel(panelId: string, targetId: string, region: DropRegion): void {
 		const win = this.layout.floating.find((w) => w.id === panelId);
 		if (!win) return;
-		const panelNode: DockPanelNode = { type: 'panel', id: win.id, title: win.title, icon: win.icon };
+		const panelNode: DockPanelNode = {
+			type: 'panel',
+			id: win.id,
+			title: win.title,
+			icon: win.icon
+		};
 		const docked = dockPanelIntoTree(this.layout.docked, panelNode, targetId, region, this.#makeId);
 		const floating = this.layout.floating.filter((w) => w.id !== panelId);
 		this.layout = { ...this.layout, floating, docked };
@@ -221,7 +258,10 @@ export class DockState {
 	 * `move`/`resize` call clamps to the real host as usual). A no-op if
 	 * `panelId` isn't currently docked.
 	 */
-	undockPanel(panelId: string, geometry?: Partial<Pick<FloatingWindow, 'x' | 'y' | 'width' | 'height'>>): void {
+	undockPanel(
+		panelId: string,
+		geometry?: Partial<Pick<FloatingWindow, 'x' | 'y' | 'width' | 'height'>>
+	): void {
 		const node = findNode(this.layout.docked, panelId);
 		if (!node || node.type !== 'panel') return;
 
@@ -258,12 +298,18 @@ export class DockState {
 
 	/** Reorder a tab within its group (spec §5.2 "タブの並び替え"). No-op if unknown/out of range. */
 	moveTab(groupId: string, from: number, to: number): void {
-		this.layout = { ...this.layout, docked: moveTabWithinGroup(this.layout.docked, groupId, from, to) };
+		this.layout = {
+			...this.layout,
+			docked: moveTabWithinGroup(this.layout.docked, groupId, from, to)
+		};
 	}
 
 	/** Resize a split's two panes adjacent to `dividerIndex` by `deltaFraction` (spec §5.2 split resizing). No-op if unknown/out of range. */
 	resizeSplit(splitId: string, dividerIndex: number, deltaFraction: number): void {
-		this.layout = { ...this.layout, docked: resizeSplitTree(this.layout.docked, splitId, dividerIndex, deltaFraction) };
+		this.layout = {
+			...this.layout,
+			docked: resizeSplitTree(this.layout.docked, splitId, dividerIndex, deltaFraction)
+		};
 	}
 
 	/** Serialize the whole layout for persistence (spec §5.1). */

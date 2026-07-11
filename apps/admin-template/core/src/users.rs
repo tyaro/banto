@@ -154,7 +154,7 @@ fn validate_password_len(password: &str, field: &str) -> Result<(), BantoError> 
 fn validate_username(username: &str) -> Result<String, BantoError> {
     let trimmed = username.trim();
     let len = trimmed.chars().count();
-    if len < MIN_USERNAME_LEN || len > MAX_USERNAME_LEN {
+    if !(MIN_USERNAME_LEN..=MAX_USERNAME_LEN).contains(&len) {
         return Err(BantoError::Validation {
             field_errors: vec![FieldError {
                 field: "username".to_string(),
@@ -385,7 +385,10 @@ impl UsersService {
     /// self-deletion guard) from a bearer token's `Identity.id`, which
     /// carries the *username* (spec convention, see
     /// `banto_server::auth::Identity`'s doc comment), not the row id.
-    pub async fn get_by_username(&self, username: &str) -> Result<Option<UserIdentity>, BantoError> {
+    pub async fn get_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<UserIdentity>, BantoError> {
         let row: Option<(i64, String, String)> =
             sqlx::query_as("SELECT id, display_name, role FROM users WHERE username = ?")
                 .bind(username)
@@ -992,7 +995,9 @@ mod tests {
             .await
             .unwrap();
         let err = svc.delete_user(999, owner.id).await.unwrap_err();
-        assert!(matches!(err, BantoError::NotFound { resource, id } if resource == "users" && id == "999"));
+        assert!(
+            matches!(err, BantoError::NotFound { resource, id } if resource == "users" && id == "999")
+        );
     }
 
     #[tokio::test]

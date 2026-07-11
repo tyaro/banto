@@ -18,7 +18,15 @@
 	 * app with a heavier data provider would want to add one before relying on
 	 * this pattern for many simultaneous pop-out windows.
 	 */
-	import { BoxPlot, downloadSvg, Histogram, LineChart, ParetoChart, PieChart, rollingAppend } from '@banto/charts';
+	import {
+		BoxPlot,
+		downloadSvg,
+		Histogram,
+		LineChart,
+		ParetoChart,
+		PieChart,
+		rollingAppend
+	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import { onDestroy, onMount } from 'svelte';
 	import type { Item } from '$lib/banto/sampleData';
@@ -137,11 +145,21 @@
 		</section>
 		<section class="spc-chart">
 			<h3>カテゴリ別商品数（パレート図）</h3>
-			<ParetoChart items={paretoItems} label="カテゴリ別商品数のパレート図" height={220} formatValue={countLabel} />
+			<ParetoChart
+				items={paretoItems}
+				label="カテゴリ別商品数のパレート図"
+				height={220}
+				formatValue={countLabel}
+			/>
 		</section>
 		<section class="spc-chart">
 			<h3>カテゴリ別価格分布（箱ひげ図）</h3>
-			<BoxPlot groups={boxGroups} label="カテゴリ別価格分布の箱ひげ図（上位カテゴリ）" height={220} formatValue={yen} />
+			<BoxPlot
+				groups={boxGroups}
+				label="カテゴリ別価格分布の箱ひげ図（上位カテゴリ）"
+				height={220}
+				formatValue={yen}
+			/>
 		</section>
 	</div>
 {:else if id === 'trend'}

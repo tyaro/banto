@@ -234,7 +234,9 @@ export function convertCsvRow<TRow>(
 		}
 
 		const value =
-			editor === 'select' ? resolveSelectValue(parsed.value as string, column.editorOptions) : parsed.value;
+			editor === 'select'
+				? resolveSelectValue(parsed.value as string, column.editorOptions)
+				: parsed.value;
 
 		if (column.validate) {
 			// No full row exists yet during CSV import (the row is still being

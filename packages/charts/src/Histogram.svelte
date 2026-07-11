@@ -41,7 +41,15 @@
 		margins?: Partial<ChartMargin>;
 	}
 
-	let { values, label, height = 240, binCount, normalCurve = false, formatValue, margins }: Props = $props();
+	let {
+		values,
+		label,
+		height = 240,
+		binCount,
+		normalCurve = false,
+		formatValue,
+		margins
+	}: Props = $props();
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 8, right: 16, bottom: 26, left: 48 };
 	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
@@ -93,11 +101,17 @@
 	const valueTicks = $derived(niceTicks(0, Math.max(1, maxBinCount, maxCurveCount), 5));
 	const domainMax = $derived(valueTicks[valueTicks.length - 1]);
 
-	const xTicks = $derived(bins.length === 0 ? [] : niceTicks(domain[0], domain[1], 6).filter((t) => t >= domain[0] && t <= domain[1]));
+	const xTicks = $derived(
+		bins.length === 0
+			? []
+			: niceTicks(domain[0], domain[1], 6).filter((t) => t >= domain[0] && t <= domain[1])
+	);
 
 	const legendItems = $derived([
 		{ id: 'freq', label: '度数', colorVar: seriesColorVar(0) },
-		...(normalCurve && curveCounts.length > 0 ? [{ id: 'normal', label: '正規分布', colorVar: seriesColorVar(1) }] : [])
+		...(normalCurve && curveCounts.length > 0
+			? [{ id: 'normal', label: '正規分布', colorVar: seriesColorVar(1) }]
+			: [])
 	]);
 
 	function plotMetrics(width: number, plotHeight: number) {
@@ -129,18 +143,41 @@
 			{@const valueScale = linearScale([0, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
 
 			{#each valueTicks as tick (tick)}
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={valueScale(tick)} y2={valueScale(tick)} class="gridline" />
-				<text x={m.innerLeft - 8} y={valueScale(tick)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={valueScale(tick)}
+					y2={valueScale(tick)}
+					class="gridline"
+				/>
+				<text
+					x={m.innerLeft - 8}
+					y={valueScale(tick)}
+					class="tick-label"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{formatCount(tick)}
 				</text>
 			{/each}
 			{#each xTicks as tick (tick)}
-				<text x={xScale(tick)} y={m.innerTop + m.innerHeight + 16} class="tick-label" text-anchor="middle">
+				<text
+					x={xScale(tick)}
+					y={m.innerTop + m.innerHeight + 16}
+					class="tick-label"
+					text-anchor="middle"
+				>
 					{formatValueDisplay(tick)}
 				</text>
 			{/each}
 
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+			<line
+				x1={m.innerLeft}
+				x2={m.innerLeft}
+				y1={m.innerTop}
+				y2={m.innerTop + m.innerHeight}
+				class="axis-line"
+			/>
 			<line
 				x1={m.innerLeft}
 				x2={m.innerLeft + m.innerWidth}
@@ -156,7 +193,13 @@
 				<!-- Per-mark hover highlight/tooltip (rule 6); pointer-only, see BarChart's hover-surface comment for rationale. -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<path
-					d={roundedTopBarPath(x0, y0, Math.max(0, x1 - x0), Math.max(0, m.innerTop + m.innerHeight - y0), RADIUS)}
+					d={roundedTopBarPath(
+						x0,
+						y0,
+						Math.max(0, x1 - x0),
+						Math.max(0, m.innerTop + m.innerHeight - y0),
+						RADIUS
+					)}
 					fill={seriesColorVar(0)}
 					stroke="var(--banto-surface)"
 					stroke-width="2"
@@ -169,7 +212,13 @@
 
 			{#if normalCurve && curveCounts.length > 0}
 				{@const points = curveCounts.map((p) => ({ x: xScale(p.x), y: valueScale(p.y) }))}
-				<path d={linePath(points)} fill="none" stroke={seriesColorVar(1)} stroke-width="2" class="curve" />
+				<path
+					d={linePath(points)}
+					fill="none"
+					stroke={seriesColorVar(1)}
+					stroke-width="2"
+					class="curve"
+				/>
 			{/if}
 		{/snippet}
 		{#snippet overlay({ width, height: plotHeight })}

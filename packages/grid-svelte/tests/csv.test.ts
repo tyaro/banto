@@ -38,8 +38,22 @@ const columns: GridColumn<Row>[] = [
 ];
 
 const rows: Row[] = [
-	{ id: 1, name: 'Green Tea', note: null, price: 140, active: true, category: 1 as unknown as string },
-	{ id: 2, name: 'Say "Hi", Bob', note: 'multi\nline', price: 300, active: false, category: 2 as unknown as string }
+	{
+		id: 1,
+		name: 'Green Tea',
+		note: null,
+		price: 140,
+		active: true,
+		category: 1 as unknown as string
+	},
+	{
+		id: 2,
+		name: 'Say "Hi", Bob',
+		note: 'multi\nline',
+		price: 300,
+		active: false,
+		category: 2 as unknown as string
+	}
 ];
 
 describe('toCsv', () => {
@@ -49,7 +63,9 @@ describe('toCsv', () => {
 	});
 
 	it('omits the header row when headers: false', () => {
-		const csv = toCsv(columns.slice(0, 2), [{ id: 1, name: 'Green Tea' } as Row], { headers: false });
+		const csv = toCsv(columns.slice(0, 2), [{ id: 1, name: 'Green Tea' } as Row], {
+			headers: false
+		});
 		expect(csv).toBe('1,Green Tea');
 	});
 
@@ -99,6 +115,8 @@ describe('csvForExcel', () => {
 		const once = csvForExcel('a,b');
 		const twice = csvForExcel(once);
 		expect(twice).toBe(once);
+		// U+FEFF here is the literal BOM under test, not stray whitespace.
+		// eslint-disable-next-line no-irregular-whitespace
 		expect(twice.match(/﻿/g)?.length).toBe(1);
 	});
 });
@@ -218,18 +236,25 @@ describe('convertCsvRow', () => {
 		const priceMapping: CsvMapping<Row>[] = [{ column: columns[3], index: 0 }];
 		const result = convertCsvRow(['abc'], priceMapping);
 		expect(result.values).toEqual({});
-		expect(result.errors).toEqual([{ columnId: 'price', message: 'Price: 値を変換できません（abc）' }]);
+		expect(result.errors).toEqual([
+			{ columnId: 'price', message: 'Price: 値を変換できません（abc）' }
+		]);
 	});
 
 	it('rejects an empty value for a number column', () => {
 		const priceMapping: CsvMapping<Row>[] = [{ column: columns[3], index: 0 }];
 		const result = convertCsvRow([''], priceMapping);
-		expect(result.errors).toEqual([{ columnId: 'price', message: 'Price: 値を変換できません（）' }]);
+		expect(result.errors).toEqual([
+			{ columnId: 'price', message: 'Price: 値を変換できません（）' }
+		]);
 	});
 
 	it('resolves a checkbox cell to a boolean', () => {
 		const activeMapping: CsvMapping<Row>[] = [{ column: columns[4], index: 0 }];
-		expect(convertCsvRow(['true'], activeMapping)).toEqual({ values: { active: true }, errors: [] });
+		expect(convertCsvRow(['true'], activeMapping)).toEqual({
+			values: { active: true },
+			errors: []
+		});
 		expect(convertCsvRow(['0'], activeMapping)).toEqual({ values: { active: false }, errors: [] });
 	});
 

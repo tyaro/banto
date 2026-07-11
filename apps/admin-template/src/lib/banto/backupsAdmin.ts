@@ -65,7 +65,14 @@ export function isBackupsAvailable(): boolean {
 	return getBantoMode() !== 'demo';
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Same type guard as providers/tauri.ts / providers/http.ts / usersAdmin.ts (spec §10/§11.1). */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -110,7 +117,10 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	try {
 		body = await response.json();
 	} catch {
-		return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+		return new ProviderError({
+			kind: 'other',
+			message: `${response.status} ${response.statusText}`
+		});
 	}
 	if (isErrorBody(body)) return new ProviderError(body);
 	return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
@@ -170,13 +180,16 @@ export async function downloadBackup(fileName: string): Promise<void> {
 	if (getBantoMode() === 'tauri') {
 		throw new ProviderError({
 			kind: 'other',
-			message: 'デスクトップアプリではダウンロードできません。「フォルダを開く」から直接コピーしてください'
+			message:
+				'デスクトップアプリではダウンロードできません。「フォルダを開く」から直接コピーしてください'
 		});
 	}
 
 	let response: Response;
 	try {
-		response = await fetch(`/api/backups/${encodeURIComponent(fileName)}`, { headers: authHeaders() });
+		response = await fetch(`/api/backups/${encodeURIComponent(fileName)}`, {
+			headers: authHeaders()
+		});
 	} catch {
 		throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
 	}
@@ -200,7 +213,10 @@ export async function downloadBackup(fileName: string): Promise<void> {
 export async function openBackupsFolder(): Promise<OpenFolderResult> {
 	if (!isBackupsAvailable()) throw demoModeError();
 	if (getBantoMode() !== 'tauri') {
-		throw new ProviderError({ kind: 'other', message: 'この操作はデスクトップアプリでのみ利用できます' });
+		throw new ProviderError({
+			kind: 'other',
+			message: 'この操作はデスクトップアプリでのみ利用できます'
+		});
 	}
 	return invokeCommand<OpenFolderResult>('backups_open_folder');
 }
@@ -255,7 +271,8 @@ export async function uploadAndStageRestore(file: File): Promise<void> {
 /** `admin`-only: the currently-staged restore, if any. */
 export async function getPendingRestore(): Promise<PendingRestoreInfo | null> {
 	if (!isBackupsAvailable()) throw demoModeError();
-	if (getBantoMode() === 'tauri') return invokeCommand<PendingRestoreInfo | null>('backups_pending');
+	if (getBantoMode() === 'tauri')
+		return invokeCommand<PendingRestoreInfo | null>('backups_pending');
 	return httpJson<PendingRestoreInfo | null>('/api/backups/pending-restore', { method: 'GET' });
 }
 

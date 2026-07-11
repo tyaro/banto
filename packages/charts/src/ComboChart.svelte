@@ -96,7 +96,9 @@
 	// The value domain ALWAYS includes 0 (rule 7-equivalent for this chart,
 	// same reasoning as BarChart: bars are always present in a combo chart,
 	// so a truncated axis would misrepresent bar magnitude).
-	const allValues = $derived([...barMatrix.flat(), ...lineMatrix.flat()].filter((v) => Number.isFinite(v)));
+	const allValues = $derived(
+		[...barMatrix.flat(), ...lineMatrix.flat()].filter((v) => Number.isFinite(v))
+	);
 	const dataMin = $derived(Math.min(0, ...(allValues.length ? allValues : [0])));
 	const dataMax = $derived(Math.max(0, ...(allValues.length ? allValues : [1])));
 	const valueTicks = $derived(niceTicks(dataMin, dataMax, 5));
@@ -105,7 +107,11 @@
 
 	const legendItems = $derived([
 		...bars.map((s, i) => ({ id: s.id, label: s.label, colorVar: seriesColorVar(i) })),
-		...lines.map((s, i) => ({ id: s.id, label: s.label, colorVar: seriesColorVar(bars.length + i) }))
+		...lines.map((s, i) => ({
+			id: s.id,
+			label: s.label,
+			colorVar: seriesColorVar(bars.length + i)
+		}))
 	]);
 
 	function maxXTicksFor(innerWidth: number): number {
@@ -160,8 +166,15 @@
 	<ChartContainer {label} {height} empty={isEmpty}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
-			{@const valueScale = linearScale([domainMin, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
-			{@const catScale = bandScale(data.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
+			{@const valueScale = linearScale(
+				[domainMin, domainMax],
+				[m.innerTop + m.innerHeight, m.innerTop]
+			)}
+			{@const catScale = bandScale(
+				data.length,
+				[m.innerLeft, m.innerLeft + m.innerWidth],
+				CATEGORY_PADDING
+			)}
 
 			<!-- Threshold bands (drawn first, under the bars/lines). Bands read
 			     against the single shared value scale (rule 1). -->
@@ -177,22 +190,56 @@
 					fill={bandColor}
 					fill-opacity="0.1"
 				/>
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={yTop} y2={yTop} class="band-edge" stroke={bandColor} />
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={yBottom} y2={yBottom} class="band-edge" stroke={bandColor} />
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={yTop}
+					y2={yTop}
+					class="band-edge"
+					stroke={bandColor}
+				/>
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={yBottom}
+					y2={yBottom}
+					class="band-edge"
+					stroke={bandColor}
+				/>
 				{#if band.label}
-					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}>{band.label}</text>
+					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
+						>{band.label}</text
+					>
 				{/if}
 			{/each}
 
 			<!-- Gridlines + y ticks (shared axis, rule 1) -->
 			{#each valueTicks as tick (tick)}
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={valueScale(tick)} y2={valueScale(tick)} class="gridline" />
-				<text x={m.innerLeft - 8} y={valueScale(tick)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={valueScale(tick)}
+					y2={valueScale(tick)}
+					class="gridline"
+				/>
+				<text
+					x={m.innerLeft - 8}
+					y={valueScale(tick)}
+					class="tick-label"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{formatYValue(tick)}
 				</text>
 			{/each}
 
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+			<line
+				x1={m.innerLeft}
+				x2={m.innerLeft}
+				y1={m.innerTop}
+				y2={m.innerTop + m.innerHeight}
+				class="axis-line"
+			/>
 			<line
 				x1={m.innerLeft}
 				x2={m.innerLeft + m.innerWidth}
@@ -204,7 +251,12 @@
 			<!-- X category labels, thinned when crowded (same everyNthIndex convention as LineChart). -->
 			{@const xTickIndices = everyNthIndex(data.length, maxXTicksFor(m.innerWidth))}
 			{#each xTickIndices as i (i)}
-				<text x={catScale.center(i)} y={m.innerTop + m.innerHeight + 18} class="tick-label" text-anchor="middle">
+				<text
+					x={catScale.center(i)}
+					y={m.innerTop + m.innerHeight + 18}
+					class="tick-label"
+					text-anchor="middle"
+				>
 					{formatXValue(categories[i])}
 				</text>
 			{/each}
@@ -239,9 +291,21 @@
 					.map((row, idx) => ({ v: row[i], idx }))
 					.filter((p) => Number.isFinite(p.v))
 					.map((p) => ({ x: catScale.center(p.idx), y: valueScale(p.v) }))}
-				<path d={linePath(points)} fill="none" stroke={seriesColorVar(bars.length + i)} stroke-width="2" />
+				<path
+					d={linePath(points)}
+					fill="none"
+					stroke={seriesColorVar(bars.length + i)}
+					stroke-width="2"
+				/>
 				{#each points as p, idx (idx)}
-					<circle cx={p.x} cy={p.y} r="3" fill={seriesColorVar(bars.length + i)} stroke="var(--banto-surface)" stroke-width="2" />
+					<circle
+						cx={p.x}
+						cy={p.y}
+						r="3"
+						fill={seriesColorVar(bars.length + i)}
+						stroke="var(--banto-surface)"
+						stroke-width="2"
+					/>
 				{/each}
 			{/each}
 
@@ -250,16 +314,29 @@
 				{#if marker.at >= 0 && marker.at < data.length}
 					{@const mx = catScale.center(marker.at)}
 					{@const markColor = marker.colorVar ?? 'var(--banto-chart-axis)'}
-					<line x1={mx} x2={mx} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="marker-line" stroke={markColor} />
+					<line
+						x1={mx}
+						x2={mx}
+						y1={m.innerTop}
+						y2={m.innerTop + m.innerHeight}
+						class="marker-line"
+						stroke={markColor}
+					/>
 					{#if marker.label}
-						<text x={mx} y={m.innerTop + 10} class="marker-label" fill={markColor} text-anchor="middle">
+						<text
+							x={mx}
+							y={m.innerTop + 10}
+							class="marker-label"
+							fill={markColor}
+							text-anchor="middle"
+						>
 							{marker.label}
 						</text>
 					{/if}
 				{/if}
 			{/each}
 
-				<!-- Shared crosshair (rule 6): hover anywhere snaps to the nearest category. -->
+			<!-- Shared crosshair (rule 6): hover anywhere snaps to the nearest category. -->
 			{#if hoveredIndex !== null}
 				<line
 					x1={catScale.center(hoveredIndex)}
@@ -285,7 +362,11 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hoveredIndex !== null}
 				{@const m = plotMetrics(width, plotHeight)}
-				{@const catScale = bandScale(data.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
+				{@const catScale = bandScale(
+					data.length,
+					[m.innerLeft, m.innerLeft + m.innerWidth],
+					CATEGORY_PADDING
+				)}
 				<Tooltip
 					x={catScale.center(hoveredIndex)}
 					y={m.innerTop}

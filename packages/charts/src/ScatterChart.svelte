@@ -53,10 +53,22 @@
 	const isEmpty = $derived(samples.length === 0);
 
 	const xTicks = $derived(
-		isEmpty ? [0, 1] : niceTicks(Math.min(...samples.map((s) => s.xValue)), Math.max(...samples.map((s) => s.xValue)), 5)
+		isEmpty
+			? [0, 1]
+			: niceTicks(
+					Math.min(...samples.map((s) => s.xValue)),
+					Math.max(...samples.map((s) => s.xValue)),
+					5
+				)
 	);
 	const yTicks = $derived(
-		isEmpty ? [0, 1] : niceTicks(Math.min(...samples.map((s) => s.yValue)), Math.max(...samples.map((s) => s.yValue)), 5)
+		isEmpty
+			? [0, 1]
+			: niceTicks(
+					Math.min(...samples.map((s) => s.yValue)),
+					Math.max(...samples.map((s) => s.yValue)),
+					5
+				)
 	);
 
 	function plotMetrics(width: number, plotHeight: number) {
@@ -75,23 +87,58 @@
 	<ChartContainer {label} {height} empty={isEmpty}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
-			{@const xScale = linearScale([xTicks[0], xTicks[xTicks.length - 1]], [m.innerLeft, m.innerLeft + m.innerWidth])}
-			{@const yScale = linearScale([yTicks[0], yTicks[yTicks.length - 1]], [m.innerTop + m.innerHeight, m.innerTop])}
+			{@const xScale = linearScale(
+				[xTicks[0], xTicks[xTicks.length - 1]],
+				[m.innerLeft, m.innerLeft + m.innerWidth]
+			)}
+			{@const yScale = linearScale(
+				[yTicks[0], yTicks[yTicks.length - 1]],
+				[m.innerTop + m.innerHeight, m.innerTop]
+			)}
 
 			{#each yTicks as tick (tick)}
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={yScale(tick)} y2={yScale(tick)} class="gridline" />
-				<text x={m.innerLeft - 8} y={yScale(tick)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={yScale(tick)}
+					y2={yScale(tick)}
+					class="gridline"
+				/>
+				<text
+					x={m.innerLeft - 8}
+					y={yScale(tick)}
+					class="tick-label"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{formatYValue(tick)}
 				</text>
 			{/each}
 			{#each xTicks as tick (tick)}
-				<line x1={xScale(tick)} x2={xScale(tick)} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="gridline" />
-				<text x={xScale(tick)} y={m.innerTop + m.innerHeight + 16} class="tick-label" text-anchor="middle">
+				<line
+					x1={xScale(tick)}
+					x2={xScale(tick)}
+					y1={m.innerTop}
+					y2={m.innerTop + m.innerHeight}
+					class="gridline"
+				/>
+				<text
+					x={xScale(tick)}
+					y={m.innerTop + m.innerHeight + 16}
+					class="tick-label"
+					text-anchor="middle"
+				>
 					{formatXValue(tick)}
 				</text>
 			{/each}
 
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+			<line
+				x1={m.innerLeft}
+				x2={m.innerLeft}
+				y1={m.innerTop}
+				y2={m.innerTop + m.innerHeight}
+				class="axis-line"
+			/>
 			<line
 				x1={m.innerLeft}
 				x2={m.innerLeft + m.innerWidth}
@@ -119,8 +166,14 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hoveredIndex !== null}
 				{@const m = plotMetrics(width, plotHeight)}
-				{@const xScale = linearScale([xTicks[0], xTicks[xTicks.length - 1]], [m.innerLeft, m.innerLeft + m.innerWidth])}
-				{@const yScale = linearScale([yTicks[0], yTicks[yTicks.length - 1]], [m.innerTop + m.innerHeight, m.innerTop])}
+				{@const xScale = linearScale(
+					[xTicks[0], xTicks[xTicks.length - 1]],
+					[m.innerLeft, m.innerLeft + m.innerWidth]
+				)}
+				{@const yScale = linearScale(
+					[yTicks[0], yTicks[yTicks.length - 1]],
+					[m.innerTop + m.innerHeight, m.innerTop]
+				)}
 				{@const sample = samples[hoveredIndex]}
 				{@const rows = [
 					{ label: 'X', value: formatXValue(sample.xValue) },

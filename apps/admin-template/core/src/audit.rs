@@ -430,7 +430,10 @@ mod tests {
         seed_n(&svc, 5).await;
         let deleted = svc.prune(None, None).await.unwrap();
         assert_eq!(deleted, 0);
-        assert_eq!(svc.list(ListParams::default()).await.unwrap().total_count, 5);
+        assert_eq!(
+            svc.list(ListParams::default()).await.unwrap().total_count,
+            5
+        );
     }
 
     #[tokio::test]
@@ -455,7 +458,10 @@ mod tests {
         seed_n(&svc, 3).await;
         let deleted = svc.prune(None, Some(100)).await.unwrap();
         assert_eq!(deleted, 0);
-        assert_eq!(svc.list(ListParams::default()).await.unwrap().total_count, 3);
+        assert_eq!(
+            svc.list(ListParams::default()).await.unwrap().total_count,
+            3
+        );
     }
 
     #[tokio::test]
@@ -484,6 +490,9 @@ mod tests {
         seed_n(&svc, 5).await;
         let deleted = svc.prune(Some(0), Some(-1)).await.unwrap();
         assert_eq!(deleted, 0);
-        assert_eq!(svc.list(ListParams::default()).await.unwrap().total_count, 5);
+        assert_eq!(
+            svc.list(ListParams::default()).await.unwrap().total_count,
+            5
+        );
     }
 }

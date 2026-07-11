@@ -101,21 +101,46 @@
 	<ChartContainer {label} {height} empty={isEmpty}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
-			{@const valueScale = linearScale([domainMin, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
+			{@const valueScale = linearScale(
+				[domainMin, domainMax],
+				[m.innerTop + m.innerHeight, m.innerTop]
+			)}
 			{@const percentScale = linearScale([0, 100], [m.innerTop + m.innerHeight, m.innerTop])}
-			{@const catScale = bandScale(data.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
+			{@const catScale = bandScale(
+				data.length,
+				[m.innerLeft, m.innerLeft + m.innerWidth],
+				CATEGORY_PADDING
+			)}
 
 			<!-- Gridlines + left (value) ticks - the right axis mirrors LineChart's
 			     hasRight treatment (tick labels + axis line only, no gridlines of
 			     its own, to avoid a double grid). -->
 			{#each valueTicks as tick (tick)}
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={valueScale(tick)} y2={valueScale(tick)} class="gridline" />
-				<text x={m.innerLeft - 8} y={valueScale(tick)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={valueScale(tick)}
+					y2={valueScale(tick)}
+					class="gridline"
+				/>
+				<text
+					x={m.innerLeft - 8}
+					y={valueScale(tick)}
+					class="tick-label"
+					text-anchor="end"
+					dominant-baseline="middle"
+				>
 					{formatValueDisplay(tick)}
 				</text>
 			{/each}
 
-			<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+			<line
+				x1={m.innerLeft}
+				x2={m.innerLeft}
+				y1={m.innerTop}
+				y2={m.innerTop + m.innerHeight}
+				class="axis-line"
+			/>
 			<line
 				x1={m.innerLeft}
 				x2={m.innerLeft + m.innerWidth}
@@ -125,11 +150,29 @@
 			/>
 
 			<!-- Right axis (cumulative %). -->
-			<line x1={m.innerLeft + m.innerWidth} x2={m.innerLeft + m.innerWidth} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+			<line
+				x1={m.innerLeft + m.innerWidth}
+				x2={m.innerLeft + m.innerWidth}
+				y1={m.innerTop}
+				y2={m.innerTop + m.innerHeight}
+				class="axis-line"
+			/>
 			{#each percentTicks as tick (tick)}
 				{@const ry = percentScale(tick)}
-				<line x1={m.innerLeft + m.innerWidth} x2={m.innerLeft + m.innerWidth + 4} y1={ry} y2={ry} class="axis-line" />
-				<text x={m.innerLeft + m.innerWidth + 8} y={ry} class="tick-label y-tick" text-anchor="start" dominant-baseline="middle">
+				<line
+					x1={m.innerLeft + m.innerWidth}
+					x2={m.innerLeft + m.innerWidth + 4}
+					y1={ry}
+					y2={ry}
+					class="axis-line"
+				/>
+				<text
+					x={m.innerLeft + m.innerWidth + 8}
+					y={ry}
+					class="tick-label y-tick"
+					text-anchor="start"
+					dominant-baseline="middle"
+				>
 					{formatPercent(tick)}
 				</text>
 			{/each}
@@ -143,14 +186,24 @@
 				y2={thresholdY}
 				class="threshold-line"
 			/>
-			<text x={m.innerLeft + m.innerWidth - 4} y={thresholdY - 4} class="threshold-label" text-anchor="end">
+			<text
+				x={m.innerLeft + m.innerWidth - 4}
+				y={thresholdY - 4}
+				class="threshold-label"
+				text-anchor="end"
+			>
 				{THRESHOLD_PERCENT}%
 			</text>
 
 			<!-- X category labels, thinned when crowded (same everyNthIndex convention as ComboChart). -->
 			{@const xTickIndices = everyNthIndex(data.length, maxXTicksFor(m.innerWidth))}
 			{#each xTickIndices as i (i)}
-				<text x={catScale.center(i)} y={m.innerTop + m.innerHeight + 18} class="tick-label" text-anchor="middle">
+				<text
+					x={catScale.center(i)}
+					y={m.innerTop + m.innerHeight + 18}
+					class="tick-label"
+					text-anchor="middle"
+				>
 					{categories[i]}
 				</text>
 			{/each}
@@ -162,7 +215,13 @@
 				<!-- Per-mark hover highlight/tooltip (rule 6); pointer-only, see BarChart's hover-surface comment for rationale. -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<path
-					d={roundedTopBarPath(catScale.start(i), y0, catScale.bandwidth, Math.max(0, y1 - y0), d.value >= 0 ? RADIUS : 0)}
+					d={roundedTopBarPath(
+						catScale.start(i),
+						y0,
+						catScale.bandwidth,
+						Math.max(0, y1 - y0),
+						d.value >= 0 ? RADIUS : 0
+					)}
 					fill={seriesColorVar(0)}
 					stroke="var(--banto-surface)"
 					stroke-width="2"
@@ -174,7 +233,10 @@
 			{/each}
 
 			<!-- Cumulative-% line, drawn OVER the bars, on the right axis. -->
-			{@const linePoints = data.map((d, i) => ({ x: catScale.center(i), y: percentScale(d.cumulativePercent) }))}
+			{@const linePoints = data.map((d, i) => ({
+				x: catScale.center(i),
+				y: percentScale(d.cumulativePercent)
+			}))}
 			<path d={linePath(linePoints)} fill="none" stroke={seriesColorVar(1)} stroke-width="2" />
 			{#each linePoints as p, i (i)}
 				<!-- Per-mark hover highlight/tooltip (rule 6); pointer-only, see BarChart's hover-surface comment for rationale. -->
@@ -195,7 +257,11 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hoveredIndex !== null}
 				{@const m = plotMetrics(width, plotHeight)}
-				{@const catScale = bandScale(data.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
+				{@const catScale = bandScale(
+					data.length,
+					[m.innerLeft, m.innerLeft + m.innerWidth],
+					CATEGORY_PADDING
+				)}
 				{@const percentScale = linearScale([0, 100], [m.innerTop + m.innerHeight, m.innerTop])}
 				{@const d = data[hoveredIndex]}
 				<Tooltip

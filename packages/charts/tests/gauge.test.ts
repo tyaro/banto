@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { GAUGE_END_DEG, GAUGE_START_DEG, gaugeAngle, gaugeColorVar, gaugeRatio } from '../src/core/gauge';
+import {
+	GAUGE_END_DEG,
+	GAUGE_START_DEG,
+	gaugeAngle,
+	gaugeColorVar,
+	gaugeRatio
+} from '../src/core/gauge';
 
 describe('gaugeRatio', () => {
 	it('maps min to 0 and max to 1', () => {

@@ -153,7 +153,9 @@
 	// as-is - running it back through the client filter/sort pipeline would
 	// be wrong (holes aren't real rows, and the order is already final).
 	const sorted = $derived(
-		mode === 'server' ? rows : sortRows(filterRows(rows as TRow[], gridState.filters, columns), gridState.sort, columns)
+		mode === 'server'
+			? rows
+			: sortRows(filterRows(rows as TRow[], gridState.filters, columns), gridState.sort, columns)
 	);
 
 	// Client-mode-only row grouping (spec §4.3): filter -> sort -> group ->
@@ -162,7 +164,9 @@
 	// rendering exactly as before M5 Phase B.
 	const groupedEntries: FlatEntry<TRow>[] | null = $derived(
 		mode === 'client' && gridState.groupBy
-			? buildGroupedView(sorted as TRow[], columns, gridState.groupBy, (key) => gridState.collapsedGroups.has(key))
+			? buildGroupedView(sorted as TRow[], columns, gridState.groupBy, (key) =>
+					gridState.collapsedGroups.has(key)
+				)
 			: null
 	);
 
@@ -211,7 +215,10 @@
 	// render as placeholder ("loading") rows rather than being skipped.
 	const visibleRows = $derived(
 		mode === 'server'
-			? Array.from({ length: windowResult.end - windowResult.start }, (_, i) => rows[windowResult.start + i])
+			? Array.from(
+					{ length: windowResult.end - windowResult.start },
+					(_, i) => rows[windowResult.start + i]
+				)
 			: sorted.slice(windowResult.start, windowResult.end)
 	);
 
@@ -229,7 +236,8 @@
 	$effect(() => {
 		if (mode !== 'server' || !onVisibleRangeChange) return;
 		const { start, end } = windowResult;
-		if (lastReportedRange && lastReportedRange.start === start && lastReportedRange.end === end) return;
+		if (lastReportedRange && lastReportedRange.start === start && lastReportedRange.end === end)
+			return;
 		lastReportedRange = { start, end };
 		onVisibleRangeChange({ start, end });
 	});
@@ -539,7 +547,11 @@
 				break;
 			case 'End':
 				event.preventDefault();
-				selection.setActive(selection.active.rowIndex, orderedFieldIds[orderedFieldIds.length - 1], false);
+				selection.setActive(
+					selection.active.rowIndex,
+					orderedFieldIds[orderedFieldIds.length - 1],
+					false
+				);
 				scrollActiveIntoView();
 				break;
 			case 'PageDown': {
@@ -630,7 +642,13 @@
 
 	function startEditing(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
 		if (!isEditable(column, row)) return;
-		editing = { rowIndex, field: column.id, draft: getColumnValue(row, column), error: null, pending: false };
+		editing = {
+			rowIndex,
+			field: column.id,
+			draft: getColumnValue(row, column),
+			error: null,
+			pending: false
+		};
 	}
 
 	/** Runs prepareCommit and, if it decides to commit, awaits onCellEdit. Returns whether the edit session should close. */
@@ -705,12 +723,22 @@
 		}
 	}
 
-	function handleCheckboxToggle(rowIndex: number, column: GridColumn<TRow>, row: TRow, checked: boolean) {
+	function handleCheckboxToggle(
+		rowIndex: number,
+		column: GridColumn<TRow>,
+		row: TRow,
+		checked: boolean
+	) {
 		if (!editing || editing.pending) return;
 		void commitValue(rowIndex, column, row, checked);
 	}
 
-	function handleEditorKeydown(event: KeyboardEvent, rowIndex: number, column: GridColumn<TRow>, row: TRow) {
+	function handleEditorKeydown(
+		event: KeyboardEvent,
+		rowIndex: number,
+		column: GridColumn<TRow>,
+		row: TRow
+	) {
 		// Stop every key from bubbling to the container's navigation handler
 		// (typing "5", moving the text cursor with arrow keys, etc. must not
 		// move the active cell).
@@ -921,7 +949,8 @@
 				style:height={`${gridState.rowHeight}px`}
 			>
 				{#each gridState.orderedColumns as column, fieldIndex (column.id)}
-					{@const isActiveCell = selection.active?.rowIndex === rowIndex && selection.active?.field === column.id}
+					{@const isActiveCell =
+						selection.active?.rowIndex === rowIndex && selection.active?.field === column.id}
 					{@const isInRange = selection.isSelected(rowIndex, fieldIndex, orderedFieldIds)}
 					{@const isEditingCell = editing?.rowIndex === rowIndex && editing?.field === column.id}
 					{@const linkInfo = column.cell?.(row)}
@@ -956,8 +985,8 @@
 									class="cell-link"
 									href={linkInfo.href}
 									onclick={(event) => event.stopPropagation()}
-									ondblclick={(event) => event.stopPropagation()}
-								>{linkInfo.text}</a>
+									ondblclick={(event) => event.stopPropagation()}>{linkInfo.text}</a
+								>
 							{:else}
 								{linkInfo.text}
 							{/if}
@@ -971,7 +1000,10 @@
 									onpointerdown={(event) => event.stopPropagation()}
 									onchange={(event) => {
 										if (editing) {
-											editing.draft = resolveSelectValue(event.currentTarget.value, column.editorOptions);
+											editing.draft = resolveSelectValue(
+												event.currentTarget.value,
+												column.editorOptions
+											);
 										}
 									}}
 									onkeydown={(event) => handleEditorKeydown(event, rowIndex, column, row)}
@@ -1050,7 +1082,6 @@
 									"fixed" by adding a real tabindex here.
 								-->
 								<!-- svelte-ignore a11y_click_events_have_key_events -->
-								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<!-- svelte-ignore a11y_interactive_supports_focus -->
 								<div
 									class="row group-header-row"
@@ -1063,7 +1094,9 @@
 									<span class="disclosure" aria-hidden="true">{entry.collapsed ? '▸' : '▾'}</span>
 									<span class="group-label">{entry.label}（{entry.count.toLocaleString()}件）</span>
 									{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
-										<span class="agg-chip">{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span>
+										<span class="agg-chip"
+											>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
+										>
 									{/each}
 								</div>
 							{:else}
@@ -1093,7 +1126,10 @@
 									style:height={`${gridState.rowHeight}px`}
 								>
 									{#each gridState.orderedColumns as column, fieldIndex (column.id)}
-										<div class="cell placeholder-cell" style:justify-content={justifyFor(column.align)}>
+										<div
+											class="cell placeholder-cell"
+											style:justify-content={justifyFor(column.align)}
+										>
 											{#if fieldIndex === 0}…{/if}
 										</div>
 									{/each}

@@ -26,7 +26,14 @@ const CLIENT_HEADER_NAME = 'X-Banto-Client';
 const CLIENT_HEADER_VALUE = 'banto';
 const NETWORK_ERROR_MESSAGE = 'サーバーに接続できません';
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Type guard: does `value` look like a wire `ErrorBody` (spec §10/§11.1)? */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -41,7 +48,10 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	try {
 		body = await response.json();
 	} catch {
-		return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+		return new ProviderError({
+			kind: 'other',
+			message: `${response.status} ${response.statusText}`
+		});
 	}
 	if (isErrorBody(body)) return new ProviderError(body);
 	return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
@@ -223,7 +233,10 @@ export function createHttpAuthProvider(
 			if (!token) return false;
 			let response: Response;
 			try {
-				response = await fetchFn(`${baseUrl}/api/auth/check`, { method: 'GET', headers: headers(false) });
+				response = await fetchFn(`${baseUrl}/api/auth/check`, {
+					method: 'GET',
+					headers: headers(false)
+				});
 			} catch {
 				return false;
 			}
@@ -240,7 +253,10 @@ export function createHttpAuthProvider(
 			if (!token) return null;
 			let response: Response;
 			try {
-				response = await fetchFn(`${baseUrl}/api/auth/identity`, { method: 'GET', headers: headers(false) });
+				response = await fetchFn(`${baseUrl}/api/auth/identity`, {
+					method: 'GET',
+					headers: headers(false)
+				});
 			} catch {
 				return null;
 			}
@@ -251,7 +267,10 @@ export function createHttpAuthProvider(
 		async status(): Promise<{ initialized: boolean }> {
 			let response: Response;
 			try {
-				response = await fetchFn(`${baseUrl}/api/auth/status`, { method: 'GET', headers: headers(false) });
+				response = await fetchFn(`${baseUrl}/api/auth/status`, {
+					method: 'GET',
+					headers: headers(false)
+				});
 			} catch {
 				// No server reachable: treat as "already initialized" so the
 				// caller falls back to the normal login form (which will then
@@ -282,7 +301,10 @@ export function createHttpAuthProvider(
 			return { success: body.success, error: body.error };
 		},
 
-		async changePassword(current: string, next: string): Promise<{ success: boolean; error?: string }> {
+		async changePassword(
+			current: string,
+			next: string
+		): Promise<{ success: boolean; error?: string }> {
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/change-password`, {

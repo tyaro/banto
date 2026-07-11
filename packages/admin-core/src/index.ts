@@ -47,7 +47,11 @@ export {
 	type InMemoryDataProviderOptions
 } from './providers/inMemory';
 
-export { createTauriDataProvider, createTauriAuthProvider, type TauriInvokeOptions } from './providers/tauri';
+export {
+	createTauriDataProvider,
+	createTauriAuthProvider,
+	type TauriInvokeOptions
+} from './providers/tauri';
 
 export {
 	createHttpDataProvider,
@@ -66,7 +70,12 @@ export {
 	type HttpUiSettingsOptions
 } from './providers/uiSettings';
 
-export type { AppEvent, EventProvider, TauriEventListenOptions, SseEventProviderOptions } from './events';
+export type {
+	AppEvent,
+	EventProvider,
+	TauriEventListenOptions,
+	SseEventProviderOptions
+} from './events';
 export { createTauriEventProvider, createSseEventProvider, connectEvents } from './events';
 
 export type { SseParser } from './sse-parser';

@@ -202,7 +202,14 @@ describe('DockState.reset', () => {
 		dock.move('a', 500, 400, HOST_W, HOST_H);
 		dock.close('a');
 
-		dock.reset([{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }], HOST_W, HOST_H);
+		dock.reset(
+			[
+				{ id: 'a', title: 'A' },
+				{ id: 'b', title: 'B' }
+			],
+			HOST_W,
+			HOST_H
+		);
 
 		expect(dock.layout.floating).toHaveLength(2);
 		expect(dock.layout.floating.every((w) => w.open)).toBe(true);

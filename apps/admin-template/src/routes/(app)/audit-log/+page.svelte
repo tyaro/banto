@@ -18,7 +18,13 @@
 	 * （isAuditLogAvailable()、usersAdmin.ts と同じ流儀）。
 	 */
 	import { untrack } from 'svelte';
-	import { BantoGrid, GridState, type FilterState, type GridColumn, type SortState } from '@banto/grid-svelte';
+	import {
+		BantoGrid,
+		GridState,
+		type FilterState,
+		type GridColumn,
+		type SortState
+	} from '@banto/grid-svelte';
 	import { isProviderError } from '@banto/admin-core';
 	import { toastStore } from '$lib/toast.svelte';
 	import {
@@ -127,7 +133,6 @@
 		}
 	];
 
-	// svelte-ignore state_referenced_locally
 	const gridState = new GridState<AuditLogEntry>(columns);
 	// 既定ソート: 新しい記録が先頭に来るよう ts 降順（spec M14）。
 	gridState.sort = [{ field: 'ts', direction: 'desc' }];
@@ -153,7 +158,6 @@
 		#inFlightBlocks = new Map<number, Promise<void>>();
 		#generation = 0;
 		#hasTotalCountForGeneration = false;
-		#lastRange: { start: number; end: number } | null = null;
 
 		#blocksFor(start: number, end: number): number[] {
 			if (end <= start) return [];
@@ -165,7 +169,6 @@
 		}
 
 		async ensureRange(start: number, end: number): Promise<void> {
-			this.#lastRange = { start, end };
 			const generation = this.#generation;
 			const blocks = this.#blocksFor(start, end).filter(
 				(block) => !this.#loadedBlocks.has(block) && !this.#inFlightBlocks.has(block)
@@ -289,7 +292,8 @@
 			try {
 				const config = await getAuditConfig();
 				const days = config.retentionDays !== null ? `${config.retentionDays}日` : '無期限';
-				const rows = config.retentionRows !== null ? `${config.retentionRows.toLocaleString()}件` : '無制限';
+				const rows =
+					config.retentionRows !== null ? `${config.retentionRows.toLocaleString()}件` : '無制限';
 				retentionNote = `保持ポリシー: 最大${days} / 最大${rows}（「設定」画面で変更できます）`;
 			} catch {
 				// 表示専用の補足情報なので、取得に失敗しても画面は壊さない。
@@ -313,7 +317,9 @@
 			<p class="note">{retentionNote}</p>
 		{/if}
 
-		<p class="note">{windowed.totalCount.toLocaleString()}件の記録があります。行をクリックすると下に詳細が表示されます。</p>
+		<p class="note">
+			{windowed.totalCount.toLocaleString()}件の記録があります。行をクリックすると下に詳細が表示されます。
+		</p>
 
 		<section class="grid-wrap">
 			<BantoGrid

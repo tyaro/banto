@@ -2,7 +2,7 @@
   "name": "@banto/theme",
   "version": "0.1.0",
   "description": "Banto default theme: CSS variables with light/dark modes",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "https://github.com/tyaro/banto.git",
@@ -12,6 +12,13 @@
   "exports": {
     ".": "./src/index.ts",
     "./css": "./src/css/banto.css"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "scripts": {
     "check": "tsc --noEmit"

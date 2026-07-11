@@ -12,117 +12,117 @@
 @import './banto-glass.css';
 
 :root {
-  /* Surfaces */
-  --banto-bg: #f6f7f9;
-  --banto-surface: #ffffff;
-  --banto-surface-raised: #ffffff;
-  --banto-border: #d9dde3;
+	/* Surfaces */
+	--banto-bg: #f6f7f9;
+	--banto-surface: #ffffff;
+	--banto-surface-raised: #ffffff;
+	--banto-border: #d9dde3;
 
-  /* Preset axis (spec M12). Standard preset: no blur, no page bg image;
+	/* Preset axis (spec M12). Standard preset: no blur, no page bg image;
      shell components wire `backdrop-filter: var(--banto-backdrop, none)` /
      `background-image: var(--banto-bg-image)` so glass is a pure variable
      swap and standard stays a no-op. */
-  --banto-backdrop: none;
-  --banto-accent-gradient: linear-gradient(135deg, var(--banto-primary), #7c3aed);
-  --banto-bg-image: none;
+	--banto-backdrop: none;
+	--banto-accent-gradient: linear-gradient(135deg, var(--banto-primary), #7c3aed);
+	--banto-bg-image: none;
 
-  /* Text */
-  --banto-text: #1a1d21;
-  --banto-text-muted: #5c6470;
-  --banto-text-inverse: #ffffff;
+	/* Text */
+	--banto-text: #1a1d21;
+	--banto-text-muted: #5c6470;
+	--banto-text-inverse: #ffffff;
 
-  /* Brand / state */
-  --banto-primary: #2563eb;
-  --banto-primary-hover: #1d4ed8;
-  --banto-danger: #dc2626;
-  --banto-warning: #d97706;
-  --banto-success: #16a34a;
+	/* Brand / state */
+	--banto-primary: #2563eb;
+	--banto-primary-hover: #1d4ed8;
+	--banto-danger: #dc2626;
+	--banto-warning: #d97706;
+	--banto-success: #16a34a;
 
-  /* Focus */
-  --banto-focus-ring: 0 0 0 2px color-mix(in srgb, var(--banto-primary) 45%, transparent);
+	/* Focus */
+	--banto-focus-ring: 0 0 0 2px color-mix(in srgb, var(--banto-primary) 45%, transparent);
 
-  /* Layout */
-  --banto-radius: 6px;
-  --banto-shell-sidebar-width: 240px;
-  --banto-shell-sidebar-width-collapsed: 56px;
-  --banto-shell-header-height: 48px;
+	/* Layout */
+	--banto-radius: 6px;
+	--banto-shell-sidebar-width: 240px;
+	--banto-shell-sidebar-width-collapsed: 56px;
+	--banto-shell-header-height: 48px;
 
-  /* Grid (consumed by @banto/grid-svelte from M1) */
-  --banto-grid-row-height: 36px;
-  --banto-grid-header-height: 40px;
+	/* Grid (consumed by @banto/grid-svelte from M1) */
+	--banto-grid-row-height: 36px;
+	--banto-grid-header-height: 40px;
 
-  /* Charts (consumed by @banto/charts from M4, spec §6). Categorical series
+	/* Charts (consumed by @banto/charts from M4, spec §6). Categorical series
      take slots 1..8 in fixed order by series index - never cycle/reassign. */
-  --banto-chart-1: #2a78d6;
-  --banto-chart-2: #1baf7a;
-  --banto-chart-3: #eda100;
-  --banto-chart-4: #008300;
-  --banto-chart-5: #4a3aa7;
-  --banto-chart-6: #e34948;
-  --banto-chart-7: #e87ba4;
-  --banto-chart-8: #eb6834;
-  --banto-chart-grid: #e1e0d9;
-  --banto-chart-axis: #c3c2b7;
+	--banto-chart-1: #2a78d6;
+	--banto-chart-2: #1baf7a;
+	--banto-chart-3: #eda100;
+	--banto-chart-4: #008300;
+	--banto-chart-5: #4a3aa7;
+	--banto-chart-6: #e34948;
+	--banto-chart-7: #e87ba4;
+	--banto-chart-8: #eb6834;
+	--banto-chart-grid: #e1e0d9;
+	--banto-chart-axis: #c3c2b7;
 
-  /* Dock (consumed by @banto/dock-svelte). M7 shipped floating pseudo-windows
+	/* Dock (consumed by @banto/dock-svelte). M7 shipped floating pseudo-windows
      only; M8 Phase B adds the docked-tree chrome (splits/tabs/snap-guide/drag
      ghost) below, reusing --banto-dock-titlebar-height for both the floating
      titlebar and the docked pane titlebar/tab-strip height. */
-  --banto-dock-titlebar-height: 32px;
-  --banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  --banto-dock-divider: var(--banto-border);
-  --banto-dock-divider-hover: var(--banto-primary);
-  --banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 18%, transparent);
-  --banto-dock-snap-border: var(--banto-primary);
-  --banto-dock-tab-active-bg: var(--banto-surface);
-  --banto-dock-ghost-bg: var(--banto-surface-raised);
-  --banto-dock-ghost-border: var(--banto-primary);
+	--banto-dock-titlebar-height: 32px;
+	--banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+	--banto-dock-divider: var(--banto-border);
+	--banto-dock-divider-hover: var(--banto-primary);
+	--banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 18%, transparent);
+	--banto-dock-snap-border: var(--banto-primary);
+	--banto-dock-tab-active-bg: var(--banto-surface);
+	--banto-dock-ghost-bg: var(--banto-surface-raised);
+	--banto-dock-ghost-border: var(--banto-primary);
 
-  /* Typography */
-  --banto-font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans",
-    "Noto Sans JP", sans-serif;
-  --banto-font-size: 14px;
+	/* Typography */
+	--banto-font-family:
+		system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+	--banto-font-size: 14px;
 }
 
-[data-theme="dark"] {
-  --banto-bg: #15171b;
-  --banto-surface: #1e2127;
-  --banto-surface-raised: #262a31;
-  --banto-border: #363b44;
+[data-theme='dark'] {
+	--banto-bg: #15171b;
+	--banto-surface: #1e2127;
+	--banto-surface-raised: #262a31;
+	--banto-border: #363b44;
 
-  --banto-text: #e8eaed;
-  --banto-text-muted: #9aa3af;
-  --banto-text-inverse: #1a1d21;
+	--banto-text: #e8eaed;
+	--banto-text-muted: #9aa3af;
+	--banto-text-inverse: #1a1d21;
 
-  --banto-primary: #3b82f6;
-  --banto-primary-hover: #60a5fa;
-  --banto-danger: #ef4444;
-  --banto-warning: #f59e0b;
-  --banto-success: #22c55e;
+	--banto-primary: #3b82f6;
+	--banto-primary-hover: #60a5fa;
+	--banto-danger: #ef4444;
+	--banto-warning: #f59e0b;
+	--banto-success: #22c55e;
 
-  --banto-chart-1: #3987e5;
-  --banto-chart-2: #199e70;
-  --banto-chart-3: #c98500;
-  --banto-chart-4: #008300;
-  --banto-chart-5: #9085e9;
-  --banto-chart-6: #e66767;
-  --banto-chart-7: #d55181;
-  --banto-chart-8: #d95926;
-  --banto-chart-grid: #2c2c2a;
-  --banto-chart-axis: #383835;
+	--banto-chart-1: #3987e5;
+	--banto-chart-2: #199e70;
+	--banto-chart-3: #c98500;
+	--banto-chart-4: #008300;
+	--banto-chart-5: #9085e9;
+	--banto-chart-6: #e66767;
+	--banto-chart-7: #d55181;
+	--banto-chart-8: #d95926;
+	--banto-chart-grid: #2c2c2a;
+	--banto-chart-axis: #383835;
 
-  --banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 28%, transparent);
+	--banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+	--banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 28%, transparent);
 }
 
 html {
-  background: var(--banto-bg);
-  color: var(--banto-text);
-  font-family: var(--banto-font-family);
-  font-size: var(--banto-font-size);
-  color-scheme: light;
+	background: var(--banto-bg);
+	color: var(--banto-text);
+	font-family: var(--banto-font-family);
+	font-size: var(--banto-font-size);
+	color-scheme: light;
 }
 
-html[data-theme="dark"] {
-  color-scheme: dark;
+html[data-theme='dark'] {
+	color-scheme: dark;
 }

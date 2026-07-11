@@ -4,7 +4,8 @@
  * the grid columns (future) and the form UI.
  */
 
-export type FieldType = 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'password';
+export type FieldType =
+	'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'password';
 
 export interface FieldOption {
 	value: string | number;

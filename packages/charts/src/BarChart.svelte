@@ -180,7 +180,11 @@
 				}
 			});
 		} else {
-			const catScale = bandScale(data.length, [innerLeft, innerLeft + innerWidth], CATEGORY_PADDING);
+			const catScale = bandScale(
+				data.length,
+				[innerLeft, innerLeft + innerWidth],
+				CATEGORY_PADDING
+			);
 			const valueScale = linearScale([domainMin, domainMax], [innerTop + innerHeight, innerTop]);
 
 			data.forEach((_, catIndex) => {
@@ -229,7 +233,11 @@
 	let hovered: { catIndex: number; seriesIndex: number } | null = $state(null);
 
 	function isHovered(bar: BarRect): boolean {
-		return hovered !== null && hovered.catIndex === bar.catIndex && hovered.seriesIndex === bar.seriesIndex;
+		return (
+			hovered !== null &&
+			hovered.catIndex === bar.catIndex &&
+			hovered.seriesIndex === bar.seriesIndex
+		);
 	}
 
 	function tooltipFor(bar: BarRect): { title: string; rows: TooltipRow[] } {
@@ -254,35 +262,95 @@
 			{@const bars = computeBars(width, plotHeight)}
 
 			{#if horizontal}
-				{@const valueScale = linearScale([domainMin, domainMax], [m.innerLeft, m.innerLeft + m.innerWidth])}
+				{@const valueScale = linearScale(
+					[domainMin, domainMax],
+					[m.innerLeft, m.innerLeft + m.innerWidth]
+				)}
 				{#each valueTicks as tick (tick)}
-					<line x1={valueScale(tick)} x2={valueScale(tick)} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="gridline" />
-					<text x={valueScale(tick)} y={m.innerTop + m.innerHeight + 16} class="tick-label" text-anchor="middle">
+					<line
+						x1={valueScale(tick)}
+						x2={valueScale(tick)}
+						y1={m.innerTop}
+						y2={m.innerTop + m.innerHeight}
+						class="gridline"
+					/>
+					<text
+						x={valueScale(tick)}
+						y={m.innerTop + m.innerHeight + 16}
+						class="tick-label"
+						text-anchor="middle"
+					>
 						{formatValueDisplay(tick)}
 					</text>
 				{/each}
 				{#each categories as cat, i (i)}
-					{@const catScale = bandScale(data.length, [m.innerTop, m.innerTop + m.innerHeight], CATEGORY_PADDING)}
-					<text x={m.innerLeft - 8} y={catScale.center(i)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+					{@const catScale = bandScale(
+						data.length,
+						[m.innerTop, m.innerTop + m.innerHeight],
+						CATEGORY_PADDING
+					)}
+					<text
+						x={m.innerLeft - 8}
+						y={catScale.center(i)}
+						class="tick-label"
+						text-anchor="end"
+						dominant-baseline="middle"
+					>
 						{cat}
 					</text>
 				{/each}
-				<line x1={m.innerLeft} x2={m.innerLeft} y1={m.innerTop} y2={m.innerTop + m.innerHeight} class="axis-line" />
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft}
+					y1={m.innerTop}
+					y2={m.innerTop + m.innerHeight}
+					class="axis-line"
+				/>
 			{:else}
-				{@const valueScale = linearScale([domainMin, domainMax], [m.innerTop + m.innerHeight, m.innerTop])}
+				{@const valueScale = linearScale(
+					[domainMin, domainMax],
+					[m.innerTop + m.innerHeight, m.innerTop]
+				)}
 				{#each valueTicks as tick (tick)}
-					<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={valueScale(tick)} y2={valueScale(tick)} class="gridline" />
-					<text x={m.innerLeft - 8} y={valueScale(tick)} class="tick-label" text-anchor="end" dominant-baseline="middle">
+					<line
+						x1={m.innerLeft}
+						x2={m.innerLeft + m.innerWidth}
+						y1={valueScale(tick)}
+						y2={valueScale(tick)}
+						class="gridline"
+					/>
+					<text
+						x={m.innerLeft - 8}
+						y={valueScale(tick)}
+						class="tick-label"
+						text-anchor="end"
+						dominant-baseline="middle"
+					>
 						{formatValueDisplay(tick)}
 					</text>
 				{/each}
 				{#each categories as cat, i (i)}
-					{@const catScale = bandScale(data.length, [m.innerLeft, m.innerLeft + m.innerWidth], CATEGORY_PADDING)}
-					<text x={catScale.center(i)} y={m.innerTop + m.innerHeight + 16} class="tick-label" text-anchor="middle">
+					{@const catScale = bandScale(
+						data.length,
+						[m.innerLeft, m.innerLeft + m.innerWidth],
+						CATEGORY_PADDING
+					)}
+					<text
+						x={catScale.center(i)}
+						y={m.innerTop + m.innerHeight + 16}
+						class="tick-label"
+						text-anchor="middle"
+					>
 						{cat}
 					</text>
 				{/each}
-				<line x1={m.innerLeft} x2={m.innerLeft + m.innerWidth} y1={m.innerTop + m.innerHeight} y2={m.innerTop + m.innerHeight} class="axis-line" />
+				<line
+					x1={m.innerLeft}
+					x2={m.innerLeft + m.innerWidth}
+					y1={m.innerTop + m.innerHeight}
+					y2={m.innerTop + m.innerHeight}
+					class="axis-line"
+				/>
 			{/if}
 
 			{#each bars as bar (`${bar.catIndex}-${bar.seriesIndex}`)}
@@ -295,7 +363,8 @@
 					stroke-width="2"
 					class="bar"
 					class:hovered={isHovered(bar)}
-					onpointerenter={() => (hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
+					onpointerenter={() =>
+						(hovered = { catIndex: bar.catIndex, seriesIndex: bar.seriesIndex })}
 					onpointerleave={() => (hovered = null)}
 				/>
 			{/each}
@@ -303,7 +372,9 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hovered}
 				{@const bars = computeBars(width, plotHeight)}
-				{@const bar = bars.find((b) => b.catIndex === hovered!.catIndex && b.seriesIndex === hovered!.seriesIndex)}
+				{@const bar = bars.find(
+					(b) => b.catIndex === hovered!.catIndex && b.seriesIndex === hovered!.seriesIndex
+				)}
 				{#if bar}
 					{@const info = tooltipFor(bar)}
 					<Tooltip

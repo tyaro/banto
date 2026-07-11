@@ -32,7 +32,11 @@
 	const slices = $derived(pieSlices(values));
 
 	const legendItems = $derived(
-		categories.map((cat, i) => ({ id: `${i}-${String(cat)}`, label: String(cat ?? ''), colorVar: seriesColorVar(i) }))
+		categories.map((cat, i) => ({
+			id: `${i}-${String(cat)}`,
+			label: String(cat ?? ''),
+			colorVar: seriesColorVar(i)
+		}))
 	);
 
 	const PADDING = 8;

@@ -10,7 +10,9 @@ interface Item {
 
 describe('createTauriDataProvider', () => {
 	it('getList calls `${resource}_list` with { params }', async () => {
-		const invoke = vi.fn().mockResolvedValue({ rows: [{ id: 1, name: 'a', price: 10 }], totalCount: 1 });
+		const invoke = vi
+			.fn()
+			.mockResolvedValue({ rows: [{ id: 1, name: 'a', price: 10 }], totalCount: 1 });
 		const provider = createTauriDataProvider({ invoke });
 
 		const params = { sort: [], filters: [], pagination: { offset: 0, limit: 10 } };
@@ -119,7 +121,8 @@ describe('createTauriDataProvider', () => {
 			expect.unreachable('expected a ProviderError to be thrown');
 		} catch (err) {
 			expect(isProviderError(err)).toBe(true);
-			if (isProviderError(err)) expect(err.body).toEqual({ kind: 'other', message: 'plain string failure' });
+			if (isProviderError(err))
+				expect(err.body).toEqual({ kind: 'other', message: 'plain string failure' });
 		}
 	});
 });
@@ -240,7 +243,11 @@ describe('createTauriAuthProvider', () => {
 		});
 		const provider = createTauriAuthProvider({ invoke });
 
-		const result = await provider.setup?.({ username: 'owner', password: 'short', displayName: 'オーナー' });
+		const result = await provider.setup?.({
+			username: 'owner',
+			password: 'short',
+			displayName: 'オーナー'
+		});
 
 		expect(result).toEqual({ success: false, error: 'パスワードは8文字以上で入力してください' });
 	});

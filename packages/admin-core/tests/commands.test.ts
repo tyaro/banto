@@ -57,7 +57,9 @@ describe('searchCommands', () => {
 	});
 
 	it('matches keywords in addition to title', () => {
-		const commands = [makeCommand({ id: 'a', title: 'ダッシュボード', keywords: ['dashboard', 'home'] })];
+		const commands = [
+			makeCommand({ id: 'a', title: 'ダッシュボード', keywords: ['dashboard', 'home'] })
+		];
 		expect(searchCommands(commands, 'home').map((c) => c.id)).toEqual(['a']);
 		expect(searchCommands(commands, 'dash').map((c) => c.id)).toEqual(['a']);
 	});
@@ -73,7 +75,10 @@ describe('searchCommands', () => {
 	});
 
 	it('excludes commands with no match at all', () => {
-		const commands = [makeCommand({ id: 'a', title: 'Dashboard' }), makeCommand({ id: 'b', title: 'Items' })];
+		const commands = [
+			makeCommand({ id: 'a', title: 'Dashboard' }),
+			makeCommand({ id: 'b', title: 'Items' })
+		];
 		expect(searchCommands(commands, 'zzz').map((c) => c.id)).toEqual([]);
 	});
 
@@ -98,7 +103,11 @@ describe('searchCommands', () => {
 			makeCommand({ id: 'c', title: 'Items export' })
 		];
 		// All three start with "Items" -> same (prefix) score. Recency should reorder them.
-		expect(searchCommands(commands, 'items', ['c', 'a']).map((cmd) => cmd.id)).toEqual(['c', 'a', 'b']);
+		expect(searchCommands(commands, 'items', ['c', 'a']).map((cmd) => cmd.id)).toEqual([
+			'c',
+			'a',
+			'b'
+		]);
 	});
 
 	it('a higher score always wins over recency', () => {

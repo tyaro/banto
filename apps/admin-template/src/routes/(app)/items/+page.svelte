@@ -10,7 +10,13 @@
 		type CellEdit,
 		type GridColumn
 	} from '@banto/grid-svelte';
-	import { getDataProvider, getResource, invalidate, isProviderError, notify } from '@banto/admin-core';
+	import {
+		getDataProvider,
+		getResource,
+		invalidate,
+		isProviderError,
+		notify
+	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
 	import type { Item } from '$lib/banto/sampleData';
 	import { sessionStore } from '$lib/session.svelte';
@@ -222,13 +228,17 @@
 	// triggered refresh() (re-fetching just the currently visible blocks).
 	async function handleCellEdit(edit: CellEdit<Item>) {
 		try {
-			await getDataProvider().update('items', edit.rowId, mergedValues(edit.row, edit.field, edit.value));
+			await getDataProvider().update(
+				'items',
+				edit.rowId,
+				mergedValues(edit.row, edit.field, edit.value)
+			);
 			invalidate('items');
 		} catch (err) {
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				const fieldError =
 					err.body.field_errors.find((fe) => fe.field === edit.field) ?? err.body.field_errors[0];
-				throw new Error(fieldError?.message ?? err.message);
+				throw new Error(fieldError?.message ?? err.message, { cause: err });
 			}
 			notify('error', isProviderError(err) ? err.message : String(err));
 			throw err;
@@ -413,7 +423,9 @@
 		);
 
 		const idMapping = mapped.find((entry) => entry.column.id === 'id');
-		const valueMapping = mapped.filter((entry) => entry.column.id !== 'id' && entry.column.id !== 'updatedAt');
+		const valueMapping = mapped.filter(
+			(entry) => entry.column.id !== 'id' && entry.column.id !== 'updatedAt'
+		);
 
 		const rows: ImportRowPreview[] =
 			missingRequired.length > 0
@@ -552,13 +564,18 @@
 		<section class="import-preview">
 			<h3>CSVインポート確認 — {importPreview.fileName}</h3>
 			{#if importPreview.missingRequired.length > 0}
-				<p class="error">CSVヘッダーに必須列がありません: {importPreview.missingRequired.map(columnLabel).join('、')}</p>
+				<p class="error">
+					CSVヘッダーに必須列がありません: {importPreview.missingRequired
+						.map(columnLabel)
+						.join('、')}
+				</p>
 			{:else}
 				{@const errorRows = importPreview.rows.filter((row) => row.errors.length > 0)}
 				{@const createCount = importPreview.rows.filter((row) => row.id === undefined).length}
 				{@const updateCount = importPreview.rows.filter((row) => row.id !== undefined).length}
 				<p class="summary">
-					新規 {createCount}件 / 更新 {updateCount}件 / エラー {errorRows.length}件（全{importPreview.rows.length}行）
+					新規 {createCount}件 / 更新 {updateCount}件 / エラー {errorRows.length}件（全{importPreview
+						.rows.length}行）
 				</p>
 				{#if importPreview.ignoredHeaders.length > 0}
 					<p class="note">無視される列: {importPreview.ignoredHeaders.join('、')}</p>
@@ -566,7 +583,11 @@
 				{#if errorRows.length > 0}
 					<ul class="error-list">
 						{#each errorRows.slice(0, 20) as row (row.csvLine)}
-							<li>{row.csvLine}行目: {row.errors.map((e) => formatCsvError(e.columnId, e.message)).join(' / ')}</li>
+							<li>
+								{row.csvLine}行目: {row.errors
+									.map((e) => formatCsvError(e.columnId, e.message))
+									.join(' / ')}
+							</li>
 						{/each}
 					</ul>
 					{#if errorRows.length > 20}
@@ -577,7 +598,9 @@
 					<p class="error">サーバーでの処理結果（すべてロールバックされました）:</p>
 					<ul class="error-list">
 						{#each importPreview.serverErrors.slice(0, 20) as serverError, i (i)}
-							<li>{importPreview.rows[serverError.row]?.csvLine ?? serverError.row + 2}行目: {serverError.message}</li>
+							<li>
+								{importPreview.rows[serverError.row]?.csvLine ?? serverError.row + 2}行目: {serverError.message}
+							</li>
 						{/each}
 					</ul>
 					{#if importPreview.serverErrors.length > 20}
@@ -595,7 +618,9 @@
 				>
 					{importSubmitting ? '実行中…' : 'インポート実行'}
 				</button>
-				<button type="button" class="secondary" onclick={cancelImport} disabled={importSubmitting}>キャンセル</button>
+				<button type="button" class="secondary" onclick={cancelImport} disabled={importSubmitting}
+					>キャンセル</button
+				>
 			</div>
 		</section>
 	{/if}

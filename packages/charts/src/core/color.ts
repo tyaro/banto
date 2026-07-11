@@ -38,7 +38,12 @@ export const SEQ_RAMP: readonly string[] = [
  * "low" or "high" to distinguish. `ramp` defaults to `SEQ_RAMP` but accepts a
  * caller-supplied ramp of any length >= 1.
  */
-export function sequentialColor(value: number, min: number, max: number, ramp: readonly string[] = SEQ_RAMP): string {
+export function sequentialColor(
+	value: number,
+	min: number,
+	max: number,
+	ramp: readonly string[] = SEQ_RAMP
+): string {
 	if (ramp.length === 0) return '';
 	if (ramp.length === 1) return ramp[0];
 	if (min === max) return ramp[Math.floor(ramp.length / 2)];

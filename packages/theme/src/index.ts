@@ -10,17 +10,17 @@ export type ResolvedTheme = 'light' | 'dark';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
 export function resolveTheme(mode: ThemeMode): ResolvedTheme {
-  if (mode === 'system') {
-    return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light';
-  }
-  return mode;
+	if (mode === 'system') {
+		return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light';
+	}
+	return mode;
 }
 
 /** Apply the resolved theme to the document root. */
 export function applyTheme(mode: ThemeMode): ResolvedTheme {
-  const resolved = resolveTheme(mode);
-  document.documentElement.dataset.theme = resolved;
-  return resolved;
+	const resolved = resolveTheme(mode);
+	document.documentElement.dataset.theme = resolved;
+	return resolved;
 }
 
 /**
@@ -28,16 +28,16 @@ export function applyTheme(mode: ThemeMode): ResolvedTheme {
  * Returns an unsubscribe function.
  */
 export function watchSystemTheme(onChange: (resolved: ResolvedTheme) => void): () => void {
-  const query = window.matchMedia(DARK_QUERY);
-  const handler = (event: MediaQueryListEvent) => {
-    onChange(event.matches ? 'dark' : 'light');
-  };
-  query.addEventListener('change', handler);
-  return () => query.removeEventListener('change', handler);
+	const query = window.matchMedia(DARK_QUERY);
+	const handler = (event: MediaQueryListEvent) => {
+		onChange(event.matches ? 'dark' : 'light');
+	};
+	query.addEventListener('change', handler);
+	return () => query.removeEventListener('change', handler);
 }
 
 export function isThemeMode(value: unknown): value is ThemeMode {
-  return value === 'light' || value === 'dark' || value === 'system';
+	return value === 'light' || value === 'dark' || value === 'system';
 }
 
 /**
@@ -52,9 +52,9 @@ export type ThemePreset = 'standard' | 'glass';
 
 /** Apply the preset to the document root (`data-banto-preset`). */
 export function applyPreset(preset: ThemePreset): void {
-  document.documentElement.dataset.bantoPreset = preset;
+	document.documentElement.dataset.bantoPreset = preset;
 }
 
 export function isThemePreset(value: unknown): value is ThemePreset {
-  return value === 'standard' || value === 'glass';
+	return value === 'standard' || value === 'glass';
 }

@@ -13,7 +13,12 @@ const row: Row = { id: 1, name: 'Green Tea', price: 140 };
 
 describe('prepareCommit', () => {
 	it('returns noop when the draft equals the current value', () => {
-		const column: GridColumn<Row> = { id: 'name', header: 'Name', accessor: 'name', editable: true };
+		const column: GridColumn<Row> = {
+			id: 'name',
+			header: 'Name',
+			accessor: 'name',
+			editable: true
+		};
 		expect(prepareCommit(column, row, 1, 'Green Tea')).toEqual({ kind: 'noop' });
 	});
 
@@ -43,7 +48,12 @@ describe('prepareCommit', () => {
 	});
 
 	it('commits without a validate function at all', () => {
-		const column: GridColumn<Row> = { id: 'price', header: 'Price', accessor: 'price', editable: true };
+		const column: GridColumn<Row> = {
+			id: 'price',
+			header: 'Price',
+			accessor: 'price',
+			editable: true
+		};
 		expect(prepareCommit(column, row, 1, 200)).toEqual({
 			kind: 'commit',
 			edit: { row, rowId: 1, field: 'price', value: 200, oldValue: 140 }
@@ -66,7 +76,8 @@ describe('prepareCommit', () => {
 			header: 'Price',
 			accessor: 'price',
 			editable: true,
-			validate: (value, r) => (Number(value) > 99999 || r.id < 0 ? '0〜99999で入力してください' : null)
+			validate: (value, r) =>
+				Number(value) > 99999 || r.id < 0 ? '0〜99999で入力してください' : null
 		};
 		expect(prepareCommit(column, row, 1, 999999)).toEqual({
 			kind: 'invalid',
@@ -128,13 +139,20 @@ describe('prepareCommit', () => {
 		// instead of a 'noop' - demonstrating why BantoGrid must resolve
 		// before calling prepareCommit.
 		expect(prepareCommit(column, categoryRow, 1, '1').kind).toBe('commit');
-		expect(prepareCommit(column, categoryRow, 1, resolveSelectValue('1', column.editorOptions)).kind).toBe('noop');
+		expect(
+			prepareCommit(column, categoryRow, 1, resolveSelectValue('1', column.editorOptions)).kind
+		).toBe('noop');
 	});
 });
 
 describe('isColumnEditable', () => {
 	it('is true when editable: true and no cell renderer', () => {
-		const column: GridColumn<Row> = { id: 'name', header: 'Name', accessor: 'name', editable: true };
+		const column: GridColumn<Row> = {
+			id: 'name',
+			header: 'Name',
+			accessor: 'name',
+			editable: true
+		};
 		expect(isColumnEditable(column, row)).toBe(true);
 	});
 

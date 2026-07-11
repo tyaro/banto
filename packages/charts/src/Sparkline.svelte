@@ -30,7 +30,10 @@
 		if (nums.length === 0) return [];
 		const min = Math.min(...nums);
 		const max = Math.max(...nums);
-		const xScale = linearScale([0, Math.max(1, nums.length - 1)], [PAD, Math.max(PAD, width - PAD)]);
+		const xScale = linearScale(
+			[0, Math.max(1, nums.length - 1)],
+			[PAD, Math.max(PAD, width - PAD)]
+		);
 		const yScale = linearScale([min, max], [height - PAD, PAD]);
 		return nums.map((v, i) => ({ x: xScale(i), y: yScale(v) }));
 	});
@@ -47,7 +50,14 @@
 	aria-hidden="true"
 >
 	{#if d}
-		<path {d} fill="none" stroke="var(--banto-chart-1)" stroke-width={STROKE_WIDTH} stroke-linecap="round" stroke-linejoin="round" />
+		<path
+			{d}
+			fill="none"
+			stroke="var(--banto-chart-1)"
+			stroke-width={STROKE_WIDTH}
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		/>
 	{/if}
 </svg>
 

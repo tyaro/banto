@@ -34,7 +34,9 @@ export class FormResource<T> {
 					: {};
 		} catch (err) {
 			this.initialValues = null;
-			this.error = isProviderError(err) ? err : new ProviderError({ kind: 'other', message: String(err) });
+			this.error = isProviderError(err)
+				? err
+				: new ProviderError({ kind: 'other', message: String(err) });
 		} finally {
 			this.loading = false;
 		}

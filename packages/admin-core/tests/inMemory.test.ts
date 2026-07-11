@@ -41,7 +41,9 @@ describe('createInMemoryDataProvider', () => {
 		});
 
 		expect(result.totalCount).toBe(2); // "Green Tea" and "Black Tea" both contain "tea"
-		expect(result.rows).toEqual([{ id: 1, name: 'Green Tea', price: 140, updatedAt: '2024-01-01' }]);
+		expect(result.rows).toEqual([
+			{ id: 1, name: 'Green Tea', price: 140, updatedAt: '2024-01-01' }
+		]);
 	});
 
 	it('getList with no pagination returns all matching rows', async () => {
@@ -123,7 +125,10 @@ describe('createInMemoryDataProvider', () => {
 	}
 
 	it('sorts ascending by a Date-valued field', async () => {
-		const provider = createInMemoryDataProvider({ dated: { rows: seedDatedItems() } }, { latencyMs: 0 });
+		const provider = createInMemoryDataProvider(
+			{ dated: { rows: seedDatedItems() } },
+			{ latencyMs: 0 }
+		);
 		const result = await provider.getList<DatedItem>('dated', {
 			sort: [{ field: 'createdAt', direction: 'asc' }],
 			filters: []
@@ -132,7 +137,10 @@ describe('createInMemoryDataProvider', () => {
 	});
 
 	it('sorts descending by a Date-valued field', async () => {
-		const provider = createInMemoryDataProvider({ dated: { rows: seedDatedItems() } }, { latencyMs: 0 });
+		const provider = createInMemoryDataProvider(
+			{ dated: { rows: seedDatedItems() } },
+			{ latencyMs: 0 }
+		);
 		const result = await provider.getList<DatedItem>('dated', {
 			sort: [{ field: 'createdAt', direction: 'desc' }],
 			filters: []
@@ -141,7 +149,10 @@ describe('createInMemoryDataProvider', () => {
 	});
 
 	it('relational filter (gt) compares Date-valued fields by time', async () => {
-		const provider = createInMemoryDataProvider({ dated: { rows: seedDatedItems() } }, { latencyMs: 0 });
+		const provider = createInMemoryDataProvider(
+			{ dated: { rows: seedDatedItems() } },
+			{ latencyMs: 0 }
+		);
 		const result = await provider.getList<DatedItem>('dated', {
 			sort: [],
 			filters: [{ field: 'createdAt', op: 'gt', value: new Date('2024-02-01') }]

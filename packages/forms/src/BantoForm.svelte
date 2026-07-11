@@ -25,7 +25,14 @@
 		children?: Snippet;
 	}
 
-	let { schema, store, onSubmit, submitting = false, submitLabel = '保存', children }: Props = $props();
+	let {
+		schema,
+		store,
+		onSubmit,
+		submitting = false,
+		submitLabel = '保存',
+		children
+	}: Props = $props();
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();

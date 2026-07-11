@@ -23,17 +23,32 @@ const rows: Row[] = [
 
 describe('rangeToTsv', () => {
 	it('builds a single-cell TSV', () => {
-		const text = rangeToTsv(rows, columns, { rowStart: 0, rowEnd: 0, fieldStart: 1, fieldEnd: 1 }, getColumnValue);
+		const text = rangeToTsv(
+			rows,
+			columns,
+			{ rowStart: 0, rowEnd: 0, fieldStart: 1, fieldEnd: 1 },
+			getColumnValue
+		);
 		expect(text).toBe('Green Tea');
 	});
 
 	it('builds a multi-row, multi-column TSV with tabs between columns and newlines between rows', () => {
-		const text = rangeToTsv(rows, columns, { rowStart: 0, rowEnd: 1, fieldStart: 0, fieldEnd: 2 }, getColumnValue);
+		const text = rangeToTsv(
+			rows,
+			columns,
+			{ rowStart: 0, rowEnd: 1, fieldStart: 0, fieldEnd: 2 },
+			getColumnValue
+		);
 		expect(text).toBe('1\tGreen Tea\t140\n2\tCoffee\t300');
 	});
 
 	it('copies the RAW value, not column.format (round-trip fidelity)', () => {
-		const text = rangeToTsv(rows, columns, { rowStart: 0, rowEnd: 0, fieldStart: 2, fieldEnd: 2 }, getColumnValue);
+		const text = rangeToTsv(
+			rows,
+			columns,
+			{ rowStart: 0, rowEnd: 0, fieldStart: 2, fieldEnd: 2 },
+			getColumnValue
+		);
 		expect(text).toBe('140');
 		expect(text).not.toContain('¥');
 	});
@@ -127,7 +142,7 @@ describe('resolveSelectValue', () => {
 		{ value: 2, label: 'Two' }
 	];
 
-	it('resolves a raw string to the matching option\'s (numeric) value, not a string', () => {
+	it("resolves a raw string to the matching option's (numeric) value, not a string", () => {
 		const resolved = resolveSelectValue('1', numericOptions);
 		expect(resolved).toBe(1);
 		expect(typeof resolved).toBe('number');

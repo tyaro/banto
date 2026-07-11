@@ -97,7 +97,10 @@ export function parseCellInput(
  * matches, `raw` is returned unchanged (the caller's own validation, if any,
  * is responsible for rejecting an unmatched value).
  */
-export function resolveSelectValue(raw: string, editorOptions: EditorOption[] | undefined): unknown {
+export function resolveSelectValue(
+	raw: string,
+	editorOptions: EditorOption[] | undefined
+): unknown {
 	const match = editorOptions?.find((option) => String(option.value) === raw);
 	return match ? match.value : raw;
 }

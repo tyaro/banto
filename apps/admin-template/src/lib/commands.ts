@@ -112,7 +112,9 @@ export function loadRecentCommandIds(): string[] {
 		const raw = localStorage.getItem(RECENT_KEY);
 		if (!raw) return [];
 		const parsed: unknown = JSON.parse(raw);
-		return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+		return Array.isArray(parsed)
+			? parsed.filter((entry): entry is string => typeof entry === 'string')
+			: [];
 	} catch {
 		return [];
 	}
@@ -121,7 +123,10 @@ export function loadRecentCommandIds(): string[] {
 /** Move `id` to the front (or insert it), capped at `MAX_RECENT`. Best-effort - a full/disabled localStorage is silently ignored. */
 export function recordRecentCommand(id: string): void {
 	if (typeof localStorage === 'undefined') return;
-	const next = [id, ...loadRecentCommandIds().filter((existing) => existing !== id)].slice(0, MAX_RECENT);
+	const next = [id, ...loadRecentCommandIds().filter((existing) => existing !== id)].slice(
+		0,
+		MAX_RECENT
+	);
 	try {
 		localStorage.setItem(RECENT_KEY, JSON.stringify(next));
 	} catch {

@@ -361,7 +361,11 @@ impl ItemsService {
             });
         }
 
-        let mut tx = self.pool.begin().await.map_err(banto_storage::storage_error)?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(banto_storage::storage_error)?;
         let mut created = 0usize;
         let mut updated = 0usize;
 
@@ -906,7 +910,10 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel(16);
         let svc = ItemsService::new(pool).with_events(tx);
 
-        let result = svc.import(Vec::new()).await.expect("empty import should succeed");
+        let result = svc
+            .import(Vec::new())
+            .await
+            .expect("empty import should succeed");
         assert_eq!(result.created, 0);
         assert_eq!(result.updated, 0);
         assert!(result.errors.is_empty());

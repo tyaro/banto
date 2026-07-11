@@ -507,16 +507,14 @@ impl AuthState {
         let remembered_policy = self.inner.remembered_policy;
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
 
-        let expired = match tokens.get(token) {
-            Some(record) => {
-                let policy = if record.remembered {
-                    &remembered_policy
-                } else {
-                    &token_policy
-                };
-                record.is_expired(now, policy)
-            }
-            None => return None,
+        let expired = {
+            let record = tokens.get(token)?;
+            let policy = if record.remembered {
+                &remembered_policy
+            } else {
+                &token_policy
+            };
+            record.is_expired(now, policy)
         };
 
         if expired {
@@ -535,7 +533,11 @@ impl AuthState {
     /// otherwise `None`.
     fn locked_out(&self, key: &str) -> Option<Duration> {
         let now = self.inner.clock.now();
-        let failures = self.inner.failures.read().expect("auth failure lock poisoned");
+        let failures = self
+            .inner
+            .failures
+            .read()
+            .expect("auth failure lock poisoned");
         failures.get(key).and_then(|record| {
             record
                 .locked_until
@@ -550,7 +552,11 @@ impl AuthState {
     fn record_failure(&self, key: &str) {
         let now = self.inner.clock.now();
         let policy = self.inner.rate_limit;
-        let mut failures = self.inner.failures.write().expect("auth failure lock poisoned");
+        let mut failures = self
+            .inner
+            .failures
+            .write()
+            .expect("auth failure lock poisoned");
         failures.retain(|_, record| record.is_live(now, &policy));
 
         let record = failures.entry(key.to_string()).or_insert(FailureRecord {
@@ -988,8 +994,8 @@ mod tests {
         let stale = auth.login("admin", "admin").await.unwrap();
 
         auth.advance(Duration::from_secs(200)); // well past absolute_ttl
-        // A write (issuing a fresh token) should opportunistically drop the
-        // stale one rather than leave it lingering in the map.
+                                                // A write (issuing a fresh token) should opportunistically drop the
+                                                // stale one rather than leave it lingering in the map.
         let fresh = auth.issue_token(Identity {
             id: "admin".to_string(),
             name: "管理者".to_string(),

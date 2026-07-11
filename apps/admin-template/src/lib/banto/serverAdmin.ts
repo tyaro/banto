@@ -30,6 +30,10 @@ export function getServerStatus(): Promise<ServerStatus> {
 }
 
 /** Persist new settings, stop/restart the server to match, and return the resulting status. */
-export function applyServerSettings(enabled: boolean, bind: string, port: number): Promise<ServerStatus> {
+export function applyServerSettings(
+	enabled: boolean,
+	bind: string,
+	port: number
+): Promise<ServerStatus> {
 	return invoke('server_apply', { enabled, bind, port });
 }

@@ -13,7 +13,9 @@
 	// showing them disabled - navigation-level hiding, same as
 	// routes/(app)/users/+page.ts redirecting a non-admin instead of
 	// rendering a 403 screen.
-	const visibleItems = $derived(navItems.filter((item) => !item.adminOnly || isAdmin(sessionStore.role)));
+	const visibleItems = $derived(
+		navItems.filter((item) => !item.adminOnly || isAdmin(sessionStore.role))
+	);
 </script>
 
 <aside class:collapsed={settings.sidebarCollapsed}>

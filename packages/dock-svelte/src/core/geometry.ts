@@ -139,7 +139,13 @@ export function applyResize(
 	const horizontal = resizeAxis(win.x, win.width, dx, horizontalMoving, hostW, minW);
 	const vertical = resizeAxis(win.y, win.height, dy, verticalMoving, hostH, minH);
 
-	return { ...win, x: horizontal.pos, y: vertical.pos, width: horizontal.size, height: vertical.size };
+	return {
+		...win,
+		x: horizontal.pos,
+		y: vertical.pos,
+		width: horizontal.size,
+		height: vertical.size
+	};
 }
 
 /**

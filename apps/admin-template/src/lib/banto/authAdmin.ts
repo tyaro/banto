@@ -29,7 +29,14 @@ export interface AuthSettings {
 	autologinUsername: string | null;
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Same type guard as providers/tauri.ts / usersAdmin.ts (spec §10/§11.1). */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -59,7 +66,10 @@ export function getAuthSettings(): Promise<AuthSettings> {
 }
 
 /** Toggle login-not-required mode and its synthetic-identity role. `admin`-only, EXCEPT while the mode is currently on (escape hatch - see `auth_config_apply`'s Rust doc comment). */
-export function applyAuthSettings(disabled: boolean, disabledRole: AuthDisabledRole): Promise<AuthSettings> {
+export function applyAuthSettings(
+	disabled: boolean,
+	disabledRole: AuthDisabledRole
+): Promise<AuthSettings> {
 	return call<AuthSettings>('auth_config_apply', { disabled, disabledRole });
 }
 

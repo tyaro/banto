@@ -32,6 +32,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Lint (ESLint)
+        run: pnpm lint
+
+      - name: Format check (Prettier)
+        run: pnpm format:check
+
       - name: Type check (svelte-check + tsc)
         run: pnpm check
 
@@ -42,7 +48,7 @@ jobs:
         run: pnpm build
 
   rust:
-    name: Rust (check / test)
+    name: Rust (fmt / clippy / check / test)
     strategy:
       fail-fast: false
       matrix:
@@ -55,19 +61,82 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
 
-      # Scope: only the Tauri-independent crates are checked here.
-      # `admin-template` (apps/admin-template/src-tauri) pulls in WebView2 on
-      # Windows and webkit2gtk/libsoup/etc. on Linux, which requires heavy
-      # system dependency installation. It is intentionally excluded from
-      # this v1 CI to keep the pipeline fast and dependency-free; it can be
-      # added back later with the appropriate `tauri-apps/tauri-action` /
-      # apt setup once native builds are needed in CI.
+      # rustfmt only parses/reformats - no compilation, so unlike the steps
+      # below it can safely cover every workspace member (including
+      # `admin-template`/src-tauri) without needing its native system deps.
+      - name: Format check (rustfmt)
+        run: cargo fmt --all -- --check
+
+      # Scope: only the Tauri-independent crates are checked/linted/tested
+      # here. `admin-template` (apps/admin-template/src-tauri) pulls in
+      # WebView2 on Windows and webkit2gtk/libsoup/etc. on Linux, which
+      # requires heavy system dependency installation. It is intentionally
+      # excluded from this v1 CI to keep the pipeline fast and
+      # dependency-free; it can be added back later with the appropriate
+      # `tauri-apps/tauri-action` / apt setup once native builds are needed
+      # in CI.
       - name: Cargo check
         run: cargo check -p banto-core -p banto-storage -p banto-server -p admin-template-core
 
+      - name: Clippy
+        run: cargo clippy -p banto-core -p banto-storage -p banto-server -p admin-template-core --all-targets -- -D warnings
+
       - name: Cargo test
         run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
+
+  e2e:
+    name: E2E (Playwright smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Produces apps/admin-template/build - the static SvelteKit output
+      # `--features embed-ui` (below) embeds into the server binary
+      # (apps/admin-template/core/src/assets.rs).
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      # e2e/playwright.config.ts's webServer launches this binary directly
+      # (not `cargo run`) - it must already exist before `pnpm e2e` below.
+      - name: Build banto-serve (embed-ui)
+        run: cargo build -p admin-template-core --bin banto-serve --features embed-ui
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E smoke suite
+        run: pnpm e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

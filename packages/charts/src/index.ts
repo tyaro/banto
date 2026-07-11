@@ -43,7 +43,13 @@ export {
 	rightMarginForLastTick,
 	type AxisMarginOptions
 } from './core/labels';
-export { radarPoints, ringPolygon, spokeAngle, spokeLabelAnchor, type LabelAnchor } from './core/radar';
+export {
+	radarPoints,
+	ringPolygon,
+	spokeAngle,
+	spokeLabelAnchor,
+	type LabelAnchor
+} from './core/radar';
 export { heatmapGrid, heatmapCellKey, type HeatmapGrid } from './core/heatmap';
 export {
 	gaugeAngle,

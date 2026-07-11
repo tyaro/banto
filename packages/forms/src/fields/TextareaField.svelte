@@ -25,8 +25,7 @@
 	aria-invalid={!!error}
 	rows="4"
 	oninput={(event) => onInput(event.currentTarget.value)}
-	onblur={onBlur}
-></textarea>
+	onblur={onBlur}></textarea>
 
 <style>
 	textarea {

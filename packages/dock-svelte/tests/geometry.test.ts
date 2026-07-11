@@ -16,7 +16,9 @@ function win(overrides: Partial<FloatingWindow> = {}): FloatingWindow {
 
 describe('clampWindowToHost', () => {
 	it('keeps at least minVisible px visible when dragged far negative', () => {
-		const clamped = clampWindowToHost(win({ x: -10_000, y: -10_000 }), 800, 600, { minVisible: 48 });
+		const clamped = clampWindowToHost(win({ x: -10_000, y: -10_000 }), 800, 600, {
+			minVisible: 48
+		});
 		// Right/bottom edge of the window must still cover at least 48px inside the host.
 		expect(clamped.x + clamped.width).toBeGreaterThanOrEqual(48);
 		expect(clamped.y + clamped.height).toBeGreaterThanOrEqual(48);
@@ -37,7 +39,10 @@ describe('clampWindowToHost', () => {
 	});
 
 	it('clamps size to configured minima', () => {
-		const clamped = clampWindowToHost(win({ width: 10, height: 10 }), 800, 600, { minW: 160, minH: 120 });
+		const clamped = clampWindowToHost(win({ width: 10, height: 10 }), 800, 600, {
+			minW: 160,
+			minH: 120
+		});
 		expect(clamped.width).toBe(160);
 		expect(clamped.height).toBe(120);
 	});
@@ -52,7 +57,9 @@ describe('clampWindowToHost', () => {
 		// minVisible=200 with a 160x120 window on a 60x40 host makes both the
 		// horizontal and vertical clamp ranges empty (maxX < minX, maxY < minY),
 		// which is the condition that falls back to centering.
-		const clamped = clampWindowToHost(win({ width: 160, height: 120, x: 0, y: 0 }), 60, 40, { minVisible: 200 });
+		const clamped = clampWindowToHost(win({ width: 160, height: 120, x: 0, y: 0 }), 60, 40, {
+			minVisible: 200
+		});
 		expect(clamped.x).toBeCloseTo((60 - clamped.width) / 2);
 		expect(clamped.y).toBeCloseTo((40 - clamped.height) / 2);
 	});
@@ -172,19 +179,46 @@ describe('applyResize', () => {
 	it('does not grow the east edge past the host bound (when room >= minW)', () => {
 		// x=600 leaves 200px of room to the host's right edge, comfortably
 		// above minW=160, so the host bound - not the minima - is what caps growth.
-		const resized = applyResize(win({ x: 600, y: 100, width: 50, height: 50 }), 'e', 1000, 0, 800, 600, 160, 120);
+		const resized = applyResize(
+			win({ x: 600, y: 100, width: 50, height: 50 }),
+			'e',
+			1000,
+			0,
+			800,
+			600,
+			160,
+			120
+		);
 		expect(resized.x + resized.width).toBe(800);
 	});
 
 	it('lets minW win over the host bound when the two conflict (host room < minW)', () => {
 		// Only 100px of room to the host's right edge but minW=160 - the
 		// documented tradeoff (see clampWindowToHost) is minima wins.
-		const resized = applyResize(win({ x: 700, y: 100, width: 50, height: 50 }), 'e', 1000, 0, 800, 600, 160, 120);
+		const resized = applyResize(
+			win({ x: 700, y: 100, width: 50, height: 50 }),
+			'e',
+			1000,
+			0,
+			800,
+			600,
+			160,
+			120
+		);
 		expect(resized.width).toBe(160);
 	});
 
 	it('does not move the west edge past the host bound (x >= 0)', () => {
-		const resized = applyResize(win({ x: 10, y: 100, width: 300, height: 200 }), 'w', -1000, 0, 800, 600, 160, 120);
+		const resized = applyResize(
+			win({ x: 10, y: 100, width: 300, height: 200 }),
+			'w',
+			-1000,
+			0,
+			800,
+			600,
+			160,
+			120
+		);
 		expect(resized.x).toBeGreaterThanOrEqual(0);
 	});
 

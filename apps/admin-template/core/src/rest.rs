@@ -437,8 +437,7 @@ fn items_write_router(items: ItemsService, audit: AuditLogService, auth: AuthSta
 /// (`editor`+) sub-routers, which share the same `/api/items/{id}` path
 /// split across HTTP methods.
 fn items_router(items: ItemsService, audit: AuditLogService, auth: AuthState) -> Router {
-    items_read_router(items.clone(), auth.clone())
-        .merge(items_write_router(items, audit, auth))
+    items_read_router(items.clone(), auth.clone()).merge(items_write_router(items, audit, auth))
 }
 
 #[derive(Debug, Serialize)]
@@ -537,7 +536,12 @@ async fn users_create(
 ) -> Result<Json<UserIdentityResponse>, ApiError> {
     let identity = state
         .users
-        .create_user(&body.username, &body.password, &body.display_name, body.role)
+        .create_user(
+            &body.username,
+            &body.password,
+            &body.display_name,
+            body.role,
+        )
         .await?;
     record_write(
         &state.audit,
@@ -1110,11 +1114,7 @@ async fn audit_config_apply(
 
 /// `/api/audit-log/*` (spec M14): `admin`-only, guarded the same way
 /// `users_router` is (`require_auth` then `require_role_at_least`).
-fn audit_log_router(
-    audit: AuditLogService,
-    settings: SettingsService,
-    auth: AuthState,
-) -> Router {
+fn audit_log_router(audit: AuditLogService, settings: SettingsService, auth: AuthState) -> Router {
     let state = AuditLogState {
         audit: audit.clone(),
         settings,
@@ -1298,7 +1298,10 @@ fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState
         auth: auth.clone(),
     };
     Router::new()
-        .route("/api/backups", post(backups_create_handler).get(backups_list_handler))
+        .route(
+            "/api/backups",
+            post(backups_create_handler).get(backups_list_handler),
+        )
         .route("/api/backups/restore", post(backups_restore_from_upload))
         .route(
             "/api/backups/pending-restore",
@@ -1310,7 +1313,9 @@ fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState
             post(backups_restore_from_existing),
         )
         .with_state(state)
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_RESTORE_UPLOAD_BYTES))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            MAX_RESTORE_UPLOAD_BYTES,
+        ))
         .layer(middleware::from_fn_with_state(
             RoleGuard {
                 auth: auth.clone(),
@@ -1333,6 +1338,11 @@ fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState
 /// routes (spec M12), all behind the CSRF header check. Mount the result
 /// *before* `banto_server::static_files::static_router` so `/api/*` takes
 /// priority over the SPA fallback.
+// Each parameter is a distinct, already-cloneable service handle threaded
+// through from `main()`/tests (no natural subset to bundle into a struct
+// without adding an indirection layer with a single call site); simpler to
+// allow this than to invent a "Services" struct for one function.
+#[allow(clippy::too_many_arguments)]
 pub fn api_router(
     items: ItemsService,
     users: UsersService,
@@ -1362,7 +1372,11 @@ pub fn api_router(
         .merge(sse_route(auth.clone(), events))
         .merge(items_router(items, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
-        .merge(audit_log_router(audit.clone(), settings.clone(), auth.clone()))
+        .merge(audit_log_router(
+            audit.clone(),
+            settings.clone(),
+            auth.clone(),
+        ))
         .merge(backups_router(backup, audit, auth.clone()))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))
@@ -1955,7 +1969,16 @@ mod tests {
         let audit = AuditLogService::new(pool);
         let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
         (
-            api_router(items, users, settings, audit.clone(), backup, auth, tx, allow_setup),
+            api_router(
+                items,
+                users,
+                settings,
+                audit.clone(),
+                backup,
+                auth,
+                tx,
+                allow_setup,
+            ),
             audit,
         )
     }
@@ -2252,10 +2275,7 @@ mod tests {
     #[tokio::test]
     async fn users_routes_are_unauthorized_without_a_token() {
         let (router, _admin, _editor, _viewer) = router_with_role_tokens().await;
-        let response = router
-            .oneshot(get("/api/users"))
-            .await
-            .unwrap();
+        let response = router.oneshot(get("/api/users")).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -2385,10 +2405,10 @@ mod tests {
     /// recorded), and wires the login verifier through
     /// [`audited_credential_verifier`] so login events are actually recorded
     /// - `router_with_role_tokens`'s own verifier predates M14 and stays a
-    /// plain credential check since none of ITS callers care about audit
-    /// events.
-    async fn router_with_role_tokens_and_audit(
-    ) -> (Router, AuditLogService, String, String, String) {
+    ///   plain credential check since none of ITS callers care about audit
+    ///   events.
+    async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String, String, String)
+    {
         let pool = migrate_memory().await.expect("migrate_memory");
         let (tx, _rx) = broadcast::channel(16);
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
@@ -2424,7 +2444,16 @@ mod tests {
             .await
             .expect("viewer login");
 
-        let router = api_router(items, users, settings, audit.clone(), backup, auth, tx, false);
+        let router = api_router(
+            items,
+            users,
+            settings,
+            audit.clone(),
+            backup,
+            auth,
+            tx,
+            false,
+        );
         (router, audit, admin_token, editor_token, viewer_token)
     }
 
@@ -2518,7 +2547,11 @@ mod tests {
                 ))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN, "token role mismatch");
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "token role mismatch"
+            );
         }
     }
 
@@ -2526,7 +2559,10 @@ mod tests {
     async fn audit_log_list_requires_a_token() {
         let (router, _audit, _admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
         let response = router
-            .oneshot(post_json("/api/audit-log/list", json!(ListParams::default())))
+            .oneshot(post_json(
+                "/api/audit-log/list",
+                json!(ListParams::default()),
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -2538,15 +2574,27 @@ mod tests {
     async fn audit_config_get_is_admin_only() {
         let (router, _audit, admin, editor, viewer) = router_with_role_tokens_and_audit().await;
 
-        let admin_response = router.clone().oneshot(get_auth("/api/audit-log/config", &admin)).await.unwrap();
+        let admin_response = router
+            .clone()
+            .oneshot(get_auth("/api/audit-log/config", &admin))
+            .await
+            .unwrap();
         assert_eq!(admin_response.status(), StatusCode::OK);
         let body = body_json(admin_response).await;
         assert_eq!(body["retentionDays"], 90);
         assert_eq!(body["retentionRows"], 100_000);
 
         for token in [&editor, &viewer] {
-            let response = router.clone().oneshot(get_auth("/api/audit-log/config", token)).await.unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN, "token role mismatch");
+            let response = router
+                .clone()
+                .oneshot(get_auth("/api/audit-log/config", token))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "token role mismatch"
+            );
         }
     }
 
@@ -2569,7 +2617,11 @@ mod tests {
                 ))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN, "token role mismatch");
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "token role mismatch"
+            );
         }
 
         let apply_response = router
@@ -2586,7 +2638,11 @@ mod tests {
         assert_eq!(applied["retentionDays"], 30);
         assert_eq!(applied["retentionRows"], 5000);
 
-        let get_response = router.clone().oneshot(get_auth("/api/audit-log/config", &admin)).await.unwrap();
+        let get_response = router
+            .clone()
+            .oneshot(get_auth("/api/audit-log/config", &admin))
+            .await
+            .unwrap();
         let refetched = body_json(get_response).await;
         assert_eq!(refetched["retentionDays"], 30);
         assert_eq!(refetched["retentionRows"], 5000);
@@ -2683,9 +2739,9 @@ mod tests {
         let rows = body_json(list_response).await["rows"].clone();
         let rows = rows.as_array().unwrap();
         assert!(
-            rows.iter()
-                .any(|r| r["action"] == "delete" && r["resource"] == "items"
-                    && r["entityId"] == id.to_string().as_str()),
+            rows.iter().any(|r| r["action"] == "delete"
+                && r["resource"] == "items"
+                && r["entityId"] == id.to_string().as_str()),
             "expected a delete/items entry, got {rows:?}"
         );
     }
@@ -2966,8 +3022,7 @@ mod tests {
         assert_eq!(entry["origin"], "rest");
         assert_eq!(entry["result"], "ok");
         let detail: serde_json::Value =
-            serde_json::from_str(entry["detail"].as_str().expect("detail should be set"))
-                .unwrap();
+            serde_json::from_str(entry["detail"].as_str().expect("detail should be set")).unwrap();
         assert_eq!(detail, json!({ "created": 1, "updated": 1 }));
     }
 
@@ -3046,8 +3101,7 @@ mod tests {
         assert_eq!(entry["result"], "failed");
         assert_eq!(entry["actorUsername"], "editor");
         let detail: serde_json::Value =
-            serde_json::from_str(entry["detail"].as_str().expect("detail should be set"))
-                .unwrap();
+            serde_json::from_str(entry["detail"].as_str().expect("detail should be set")).unwrap();
         assert_eq!(detail, json!({ "errorCount": 1 }));
     }
 

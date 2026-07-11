@@ -19,7 +19,14 @@ export interface VibrancyStatus {
 	supported: boolean;
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Same type guard as providers/tauri.ts / authAdmin.ts (spec §10/§11.1). */
 function isErrorBody(value: unknown): value is ErrorBody {

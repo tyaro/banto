@@ -29,8 +29,19 @@ function tabs(id: string, children: DockPanelNode[], activeIndex = 0): DockTabGr
 	return { type: 'tabs', id, children, activeIndex };
 }
 
-function split(id: string, direction: 'row' | 'column', children: DockNode[], sizes?: number[]): DockSplitNode {
-	return { type: 'split', id, direction, children, sizes: sizes ?? children.map(() => 1 / children.length) };
+function split(
+	id: string,
+	direction: 'row' | 'column',
+	children: DockNode[],
+	sizes?: number[]
+): DockSplitNode {
+	return {
+		type: 'split',
+		id,
+		direction,
+		children,
+		sizes: sizes ?? children.map(() => 1 / children.length)
+	};
 }
 
 describe('findNode', () => {
@@ -308,14 +319,23 @@ describe('dockPanelIntoTree', () => {
 		['right', ['a', 'new']],
 		['top', ['new', 'a']],
 		['bottom', ['a', 'new']]
-	] as const)('%s onto a bare panel creates a split with correct direction and child order', (region, order) => {
-		const makeId = counterMakeId();
-		const result = dockPanelIntoTree(panel('a'), panel('new'), 'a', region, makeId) as DockSplitNode;
-		expect(result.type).toBe('split');
-		expect(result.direction).toBe(region === 'left' || region === 'right' ? 'row' : 'column');
-		expect(result.children.map((c) => c.id)).toEqual(order);
-		expect(result.sizes).toEqual([0.5, 0.5]);
-	});
+	] as const)(
+		'%s onto a bare panel creates a split with correct direction and child order',
+		(region, order) => {
+			const makeId = counterMakeId();
+			const result = dockPanelIntoTree(
+				panel('a'),
+				panel('new'),
+				'a',
+				region,
+				makeId
+			) as DockSplitNode;
+			expect(result.type).toBe('split');
+			expect(result.direction).toBe(region === 'left' || region === 'right' ? 'row' : 'column');
+			expect(result.children.map((c) => c.id)).toEqual(order);
+			expect(result.sizes).toEqual([0.5, 0.5]);
+		}
+	);
 
 	it('flattens into an existing same-direction split as a sibling instead of nesting', () => {
 		const makeId = counterMakeId();
@@ -356,10 +376,16 @@ describe('dockPanelIntoTree', () => {
 		expect(result.children[1]).toEqual(panel('c'));
 	});
 
-	it('falls back to the tree\'s first leaf when targetId is unknown', () => {
+	it("falls back to the tree's first leaf when targetId is unknown", () => {
 		const makeId = counterMakeId();
 		const root = split('s1', 'row', [panel('a'), panel('b')]);
-		const result = dockPanelIntoTree(root, panel('c'), 'does-not-exist', 'center', makeId) as DockSplitNode;
+		const result = dockPanelIntoTree(
+			root,
+			panel('c'),
+			'does-not-exist',
+			'center',
+			makeId
+		) as DockSplitNode;
 		const aSlot = result.children[0];
 		expect(aSlot.type).toBe('tabs');
 		expect((aSlot as DockTabGroupNode).children.map((c) => c.id)).toEqual(['a', 'c']);

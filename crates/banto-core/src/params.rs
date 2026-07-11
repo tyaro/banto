@@ -166,7 +166,7 @@ mod tests {
             limit: 50,
         };
         assert_eq!(
-            serde_json::to_value(&value).unwrap(),
+            serde_json::to_value(value).unwrap(),
             json!({ "offset": 20, "limit": 50 })
         );
     }

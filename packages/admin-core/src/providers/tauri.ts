@@ -23,7 +23,14 @@ export interface TauriInvokeOptions {
 	invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Type guard: does `value` look like a wire `ErrorBody` (spec §3.2/§10)? */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -137,7 +144,10 @@ export function createTauriAuthProvider(options: TauriInvokeOptions): AuthProvid
 			}
 		},
 
-		async changePassword(current: string, next: string): Promise<{ success: boolean; error?: string }> {
+		async changePassword(
+			current: string,
+			next: string
+		): Promise<{ success: boolean; error?: string }> {
 			try {
 				await call<void>('auth_change_password', { currentPassword: current, newPassword: next });
 				return { success: true };

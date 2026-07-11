@@ -110,28 +110,48 @@ describe('CellSelection', () => {
 			const selection = new CellSelection();
 			selection.setActive(1, 'name', false); // anchor: row 1, field 1
 			selection.setActive(4, 'stock', true); // end: row 4, field 3
-			expect(selection.getRange(fields)).toEqual({ rowStart: 1, rowEnd: 4, fieldStart: 1, fieldEnd: 3 });
+			expect(selection.getRange(fields)).toEqual({
+				rowStart: 1,
+				rowEnd: 4,
+				fieldStart: 1,
+				fieldEnd: 3
+			});
 		});
 
 		it('normalizes an up-left drag (anchor bottom-right, end top-left)', () => {
 			const selection = new CellSelection();
 			selection.setActive(4, 'stock', false); // anchor: row 4, field 3
 			selection.setActive(1, 'name', true); // end: row 1, field 1
-			expect(selection.getRange(fields)).toEqual({ rowStart: 1, rowEnd: 4, fieldStart: 1, fieldEnd: 3 });
+			expect(selection.getRange(fields)).toEqual({
+				rowStart: 1,
+				rowEnd: 4,
+				fieldStart: 1,
+				fieldEnd: 3
+			});
 		});
 
 		it('normalizes a down-left drag (anchor top-right, end bottom-left)', () => {
 			const selection = new CellSelection();
 			selection.setActive(1, 'stock', false); // anchor: row 1, field 3
 			selection.setActive(4, 'name', true); // end: row 4, field 1
-			expect(selection.getRange(fields)).toEqual({ rowStart: 1, rowEnd: 4, fieldStart: 1, fieldEnd: 3 });
+			expect(selection.getRange(fields)).toEqual({
+				rowStart: 1,
+				rowEnd: 4,
+				fieldStart: 1,
+				fieldEnd: 3
+			});
 		});
 
 		it('normalizes an up-right drag (anchor bottom-left, end top-right)', () => {
 			const selection = new CellSelection();
 			selection.setActive(4, 'name', false); // anchor: row 4, field 1
 			selection.setActive(1, 'stock', true); // end: row 1, field 3
-			expect(selection.getRange(fields)).toEqual({ rowStart: 1, rowEnd: 4, fieldStart: 1, fieldEnd: 3 });
+			expect(selection.getRange(fields)).toEqual({
+				rowStart: 1,
+				rowEnd: 4,
+				fieldStart: 1,
+				fieldEnd: 3
+			});
 		});
 	});
 

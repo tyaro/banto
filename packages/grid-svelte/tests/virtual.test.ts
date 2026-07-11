@@ -16,7 +16,13 @@ describe('computeWindow', () => {
 	});
 
 	it('negative scrollTop is treated as 0', () => {
-		const result = computeWindow({ scrollTop: -100, viewportHeight, rowHeight, rowCount, overscan });
+		const result = computeWindow({
+			scrollTop: -100,
+			viewportHeight,
+			rowHeight,
+			rowCount,
+			overscan
+		});
 		expect(result.start).toBe(0);
 		expect(result.offsetY).toBe(0);
 	});
@@ -52,12 +58,24 @@ describe('computeWindow', () => {
 	});
 
 	it('returns an empty window for zero rows', () => {
-		const result = computeWindow({ scrollTop: 0, viewportHeight, rowHeight, rowCount: 0, overscan });
+		const result = computeWindow({
+			scrollTop: 0,
+			viewportHeight,
+			rowHeight,
+			rowCount: 0,
+			overscan
+		});
 		expect(result).toEqual({ start: 0, end: 0, offsetY: 0, totalHeight: 0 });
 	});
 
 	it('handles a zero viewport height (not yet measured) without throwing', () => {
-		const result = computeWindow({ scrollTop: 0, viewportHeight: 0, rowHeight, rowCount, overscan });
+		const result = computeWindow({
+			scrollTop: 0,
+			viewportHeight: 0,
+			rowHeight,
+			rowCount,
+			overscan
+		});
 		expect(result.start).toBe(0);
 		expect(result.end).toBeGreaterThan(0);
 	});

@@ -31,7 +31,9 @@ function isSerializedGridState(value: unknown): value is SerializedGridState {
 		candidate.widths !== null &&
 		// Optional/backward-compatible: a payload serialized before M5 Phase B
 		// (spec §4.3) has no `groupBy` at all - accept that as "no group".
-		(candidate.groupBy === undefined || candidate.groupBy === null || typeof candidate.groupBy === 'string')
+		(candidate.groupBy === undefined ||
+			candidate.groupBy === null ||
+			typeof candidate.groupBy === 'string')
 	);
 }
 

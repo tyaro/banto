@@ -38,7 +38,10 @@
 	function geometry(width: number, plotHeight: number) {
 		const rOuter = Math.max(
 			10,
-			Math.min((width - SIDE_PAD * 2) / 2, (plotHeight - TOP_PAD - BOTTOM_PAD) / ARC_VERTICAL_FACTOR)
+			Math.min(
+				(width - SIDE_PAD * 2) / 2,
+				(plotHeight - TOP_PAD - BOTTOM_PAD) / ARC_VERTICAL_FACTOR
+			)
 		);
 		const cx = width / 2;
 		const cy = TOP_PAD + rOuter;
@@ -58,15 +61,33 @@
 			{@const maxPoint = polarToCartesian(g.cx, g.cy, g.rOuter + LABEL_GAP, GAUGE_START_DEG + 270)}
 
 			<!-- Track (full 270deg sweep). -->
-			<path d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, GAUGE_START_DEG, GAUGE_START_DEG + 270)} class="track" />
+			<path
+				d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, GAUGE_START_DEG, GAUGE_START_DEG + 270)}
+				class="track"
+			/>
 
 			<!-- Value arc, clamped into [min, max] for the geometry (raw value still shown in the hero number below). -->
-			<path d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, GAUGE_START_DEG, endAngle)} fill={colorVar} />
+			<path
+				d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, GAUGE_START_DEG, endAngle)}
+				fill={colorVar}
+			/>
 
-			<text x={minPoint.x} y={minPoint.y} class="range-label" text-anchor="middle" dominant-baseline="hanging">
+			<text
+				x={minPoint.x}
+				y={minPoint.y}
+				class="range-label"
+				text-anchor="middle"
+				dominant-baseline="hanging"
+			>
 				{formatValueDisplay(min)}
 			</text>
-			<text x={maxPoint.x} y={maxPoint.y} class="range-label" text-anchor="middle" dominant-baseline="hanging">
+			<text
+				x={maxPoint.x}
+				y={maxPoint.y}
+				class="range-label"
+				text-anchor="middle"
+				dominant-baseline="hanging"
+			>
 				{formatValueDisplay(max)}
 			</text>
 

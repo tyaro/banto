@@ -86,7 +86,8 @@
 		function onMove(moveEvent: PointerEvent) {
 			if (moveEvent.pointerId !== pointerId) return;
 			if (dragging) return;
-			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return;
+			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
+				return;
 			dragging = true;
 			window.removeEventListener('pointermove', onMove);
 			window.removeEventListener('pointerup', onUp);
@@ -119,7 +120,11 @@
 	let splitW: number = $state(0);
 	let splitH: number = $state(0);
 
-	function startDivider(event: PointerEvent, dividerIndex: number, direction: 'row' | 'column'): void {
+	function startDivider(
+		event: PointerEvent,
+		dividerIndex: number,
+		direction: 'row' | 'column'
+	): void {
 		if (event.button !== 0) return;
 		event.preventDefault();
 		const pointerId = event.pointerId;
@@ -147,8 +152,13 @@
 </script>
 
 {#if node.type === 'panel'}
-	<div class="dock-pane" data-dock-drop-id={node.id} bind:this={panelFrameEl} role="group" aria-label={node.title}>
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="dock-pane"
+		data-dock-drop-id={node.id}
+		bind:this={panelFrameEl}
+		role="group"
+		aria-label={node.title}
+	>
 		<div
 			class="titlebar"
 			role="button"
@@ -187,10 +197,15 @@
 	</div>
 {:else if node.type === 'tabs'}
 	{@const active = node.children[node.activeIndex]}
-	<div class="dock-pane" data-dock-drop-id={node.id} bind:this={tabsFrameEl} role="group" aria-label={active?.title}>
+	<div
+		class="dock-pane"
+		data-dock-drop-id={node.id}
+		bind:this={tabsFrameEl}
+		role="group"
+		aria-label={active?.title}
+	>
 		<div class="tab-strip" role="tablist">
 			{#each node.children as child, i (child.id)}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="tab"
 					class:active={i === node.activeIndex}
@@ -249,7 +264,6 @@
 				<DockedTree node={child} {dock} {panel} {onPopOut} />
 			</div>
 			{#if i < node.children.length - 1}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="divider"
 					class:row={node.direction === 'row'}

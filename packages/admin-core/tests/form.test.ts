@@ -42,7 +42,7 @@ describe('createFormResource', () => {
 
 	it('load() with an id fetches the row via getOne', async () => {
 		initBanto({
-			dataProvider: unusedProvider({ getOne: async <T,>() => ({ id: 1, name: 'a' }) as T }),
+			dataProvider: unusedProvider({ getOne: async <T>() => ({ id: 1, name: 'a' }) as T }),
 			authProvider,
 			resources: [{ name: 'items', label: 'Items' }]
 		});
@@ -67,7 +67,7 @@ describe('createFormResource', () => {
 		const seen: { kind: string; message: string }[] = [];
 		const created = { id: 1, name: 'a' };
 		initBanto({
-			dataProvider: unusedProvider({ create: async <T,>() => created as T }),
+			dataProvider: unusedProvider({ create: async <T>() => created as T }),
 			authProvider,
 			resources: [{ name: 'items', label: 'Items' }],
 			notifier: { notify: (kind, message) => seen.push({ kind, message }) }
@@ -84,7 +84,11 @@ describe('createFormResource', () => {
 		let calledWith: unknown;
 		initBanto({
 			dataProvider: unusedProvider({
-				update: async <T,>(_resource: string, id: string | number, values: Record<string, unknown>) => {
+				update: async <T>(
+					_resource: string,
+					id: string | number,
+					values: Record<string, unknown>
+				) => {
 					calledWith = { id, values };
 					return { id, ...values } as T;
 				}
@@ -111,7 +115,10 @@ describe('createFormResource', () => {
 
 		const form = createFormResource('items');
 		const result = await form.submit({ name: '' });
-		expect(result).toEqual({ ok: false, fieldErrors: [{ field: 'name', message: '必須項目です' }] });
+		expect(result).toEqual({
+			ok: false,
+			fieldErrors: [{ field: 'name', message: '必須項目です' }]
+		});
 	});
 
 	it('submit() notifies and returns empty fieldErrors for non-validation errors', async () => {

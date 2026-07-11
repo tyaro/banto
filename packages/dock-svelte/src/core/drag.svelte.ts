@@ -178,14 +178,33 @@ export class DragController {
 			};
 		}
 
-		this.state = { ...this.state, clientX, clientY, hoverTargetId, hoverRegion, hoverFloating, guideRect };
+		this.state = {
+			...this.state,
+			clientX,
+			clientY,
+			hoverTargetId,
+			hoverRegion,
+			hoverFloating,
+			guideRect
+		};
 	}
 
 	#finish(): void {
 		const snapshot = this.state;
 		if (!snapshot) return;
-		const { panelId, source, hoverTargetId, hoverRegion, hoverFloating, width, height, clientX, clientY, grabDx, grabDy } =
-			snapshot;
+		const {
+			panelId,
+			source,
+			hoverTargetId,
+			hoverRegion,
+			hoverFloating,
+			width,
+			height,
+			clientX,
+			clientY,
+			grabDx,
+			grabDy
+		} = snapshot;
 		const hostEl = this.#getHostEl();
 
 		if (hoverTargetId && hoverRegion) {
@@ -211,7 +230,8 @@ export class DragController {
 				this.#dock.undockPanel(panelId, { x, y, width, height });
 			} else {
 				const win = this.#dock.layout.floating.find((w) => w.id === panelId);
-				if (win) this.#dock.move(panelId, x - win.x, y - win.y, hostEl.clientWidth, hostEl.clientHeight);
+				if (win)
+					this.#dock.move(panelId, x - win.x, y - win.y, hostEl.clientWidth, hostEl.clientHeight);
 			}
 			return;
 		}
@@ -228,7 +248,10 @@ export class DragController {
 	}
 }
 
-export function createDragController(dock: DockState, getHostEl: () => HTMLElement | null): DragController {
+export function createDragController(
+	dock: DockState,
+	getHostEl: () => HTMLElement | null
+): DragController {
 	return new DragController(dock, getHostEl);
 }
 
@@ -243,7 +266,9 @@ export function setDragController(controller: DragController): void {
 export function getDragController(): DragController {
 	const controller = getContext<DragController | undefined>(DRAG_CONTEXT_KEY);
 	if (!controller) {
-		throw new Error('getDragController() called outside a DockHost tree - no DragController in context.');
+		throw new Error(
+			'getDragController() called outside a DockHost tree - no DragController in context.'
+		);
 	}
 	return controller;
 }

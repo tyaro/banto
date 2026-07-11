@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { radarPoints, ringPolygon, spokeAngle, spokeLabelAnchor } from '../src/core/radar';
 
 describe('spokeAngle', () => {
-	it('spaces spokes evenly, 0deg = 12 o\'clock, increasing clockwise', () => {
+	it("spaces spokes evenly, 0deg = 12 o'clock, increasing clockwise", () => {
 		expect(spokeAngle(0, 4)).toBe(0);
 		expect(spokeAngle(1, 4)).toBe(90);
 		expect(spokeAngle(2, 4)).toBe(180);

@@ -151,5 +151,15 @@ apps/admin-template/build/
 # Tauri generated schemas
 apps/admin-template/src-tauri/gen/
 
+# Playwright (M18 Phase B e2e/). `outputDir`/the HTML reporter's
+# `outputFolder` are pinned under e2e/ in playwright.config.ts, but
+# Playwright always writes its own `.last-run.json` relative to the process
+# cwd regardless - `pnpm e2e` runs from the repo root, so a root-level
+# `/test-results/` also needs ignoring.
+e2e/test-results/
+e2e/playwright-report/
+e2e/.cache/
+/test-results/
+
 # Editor settings (personal)
 .vscode/

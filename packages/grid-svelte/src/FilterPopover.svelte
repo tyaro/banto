@@ -78,7 +78,12 @@
 	}
 </script>
 
-<div class="filter-popover" bind:this={rootEl} role="dialog" aria-label={`${column.header}の絞り込み`}>
+<div
+	class="filter-popover"
+	bind:this={rootEl}
+	role="dialog"
+	aria-label={`${column.header}の絞り込み`}
+>
 	<select bind:value={op}>
 		{#each ops as item (item.value)}
 			<option value={item.value}>{item.label}</option>

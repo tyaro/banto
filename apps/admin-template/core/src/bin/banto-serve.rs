@@ -119,15 +119,27 @@ async fn main() {
     // starting.
     match settings.audit_config().await {
         Ok(config) => {
-            if let Err(err) = audit.prune(config.retention_days, config.retention_rows).await {
+            if let Err(err) = audit
+                .prune(config.retention_days, config.retention_rows)
+                .await
+            {
                 eprintln!("banto-serve: 起動時の監査ログの剪定に失敗しました: {err}");
             }
         }
         Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
     }
 
-    let app = api_router(items, users, settings, audit, backup, auth, events, allow_setup)
-        .merge(static_router::<FrontendAssets>());
+    let app = api_router(
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        auth,
+        events,
+        allow_setup,
+    )
+    .merge(static_router::<FrontendAssets>());
 
     let server = start(ServerConfig { bind, port }, app)
         .await

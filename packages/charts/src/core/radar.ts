@@ -26,17 +26,32 @@ function polarPoint(cx: number, cy: number, r: number, angleDeg: number): Point 
  * explicit max of 0") maps every vertex to the center rather than dividing by
  * zero.
  */
-export function radarPoints(values: number[], maxValue: number, cx: number, cy: number, radius: number): Point[] {
+export function radarPoints(
+	values: number[],
+	maxValue: number,
+	cx: number,
+	cy: number,
+	radius: number
+): Point[] {
 	const count = values.length;
 	return values.map((value, index) => {
-		const ratio = maxValue > 0 && Number.isFinite(value) ? Math.min(1, Math.max(0, value / maxValue)) : 0;
+		const ratio =
+			maxValue > 0 && Number.isFinite(value) ? Math.min(1, Math.max(0, value / maxValue)) : 0;
 		return polarPoint(cx, cy, radius * ratio, spokeAngle(index, count));
 	});
 }
 
 /** Vertices of a full ring polygon (a background grid ring, or the outermost spoke guides) at `ratio` of `radius` (1 = the outer ring). */
-export function ringPolygon(count: number, ratio: number, cx: number, cy: number, radius: number): Point[] {
-	return Array.from({ length: count }, (_, index) => polarPoint(cx, cy, radius * ratio, spokeAngle(index, count)));
+export function ringPolygon(
+	count: number,
+	ratio: number,
+	cx: number,
+	cy: number,
+	radius: number
+): Point[] {
+	return Array.from({ length: count }, (_, index) =>
+		polarPoint(cx, cy, radius * ratio, spokeAngle(index, count))
+	);
 }
 
 export interface LabelAnchor {

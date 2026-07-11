@@ -20,7 +20,8 @@ const LOW_STOCK_THRESHOLD = 50;
 export function computeStatTiles(items: Item[]): StatTiles {
 	const count = items.length;
 	const stockTotal = items.reduce((sum, item) => sum + item.stock, 0);
-	const avgPrice = count === 0 ? 0 : Math.round(items.reduce((sum, item) => sum + item.price, 0) / count);
+	const avgPrice =
+		count === 0 ? 0 : Math.round(items.reduce((sum, item) => sum + item.price, 0) / count);
 	const lowStockCount = items.filter((item) => item.stock < LOW_STOCK_THRESHOLD).length;
 	return { count, stockTotal, avgPrice, lowStockCount };
 }
@@ -231,7 +232,10 @@ export interface PriceGroup {
 const BOX_PLOT_TOP_CATEGORIES = 6;
 
 /** Top-N categories by item count (reuses `categoryCountsTop`), each with its raw price array - `BoxPlot` computes five-number summaries itself (`core/boxplot.ts`). Truncated to keep the box plot legible (unlike `categoryCounts` above). */
-export function priceByCategoryGroups(items: Item[], topN: number = BOX_PLOT_TOP_CATEGORIES): PriceGroup[] {
+export function priceByCategoryGroups(
+	items: Item[],
+	topN: number = BOX_PLOT_TOP_CATEGORIES
+): PriceGroup[] {
 	const top = categoryCountsTop(items, topN).map((c) => c.category);
 	const byCategory = new Map<string, number[]>(top.map((cat) => [cat, []]));
 	for (const item of items) {
@@ -261,7 +265,10 @@ const TREND_BASE_PRESSURE = 1.2;
  * has plausible SPC-like noise instead of a flat line. `random` is injectable
  * (defaults to `Math.random`) so the walk can be made deterministic in tests.
  */
-export function nextTrendPoint(prev: TrendPoint | undefined, random: () => number = Math.random): TrendPoint {
+export function nextTrendPoint(
+	prev: TrendPoint | undefined,
+	random: () => number = Math.random
+): TrendPoint {
 	return {
 		t: (prev?.t ?? -1) + 1,
 		temperature: (prev?.temperature ?? TREND_BASE_TEMPERATURE) + (random() - 0.5) * 1.5,

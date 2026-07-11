@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { fullViewport, isFullViewport, panViewport, visibleRange, zoomViewport } from '../src/core/viewport';
+import {
+	fullViewport,
+	isFullViewport,
+	panViewport,
+	visibleRange,
+	zoomViewport
+} from '../src/core/viewport';
 
 describe('fullViewport', () => {
 	it('spans the whole index range for a typical count', () => {

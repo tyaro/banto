@@ -29,8 +29,14 @@ function looseEquals(a: unknown, b: unknown): boolean {
 	return String(a) === String(b);
 }
 
-function matchOne<TRow>(row: TRow, filter: FilterState, column: GridColumn<TRow> | undefined): boolean {
-	const value = column ? getColumnValue(row, column) : (row as Record<string, unknown>)[filter.field];
+function matchOne<TRow>(
+	row: TRow,
+	filter: FilterState,
+	column: GridColumn<TRow> | undefined
+): boolean {
+	const value = column
+		? getColumnValue(row, column)
+		: (row as Record<string, unknown>)[filter.field];
 
 	switch (filter.op) {
 		case 'eq':
@@ -72,5 +78,7 @@ export function filterRows<TRow>(
 ): TRow[] {
 	if (filters.length === 0) return rows.slice();
 	const columnMap = new Map(columns.map((column) => [column.id, column]));
-	return rows.filter((row) => filters.every((filter) => matchOne(row, filter, columnMap.get(filter.field))));
+	return rows.filter((row) =>
+		filters.every((filter) => matchOne(row, filter, columnMap.get(filter.field)))
+	);
 }

@@ -69,7 +69,14 @@ export function isUsersAdminAvailable(): boolean {
 	return getBantoMode() !== 'demo';
 }
 
-const ERROR_KINDS = new Set(['not_found', 'validation', 'unauthorized', 'forbidden', 'storage', 'other']);
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
 
 /** Same type guard as providers/tauri.ts / providers/http.ts (spec §10/§11.1). */
 function isErrorBody(value: unknown): value is ErrorBody {
@@ -131,10 +138,16 @@ async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
 		try {
 			body = await response.json();
 		} catch {
-			throw new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+			throw new ProviderError({
+				kind: 'other',
+				message: `${response.status} ${response.statusText}`
+			});
 		}
 		if (isErrorBody(body)) throw new ProviderError(body);
-		throw new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+		throw new ProviderError({
+			kind: 'other',
+			message: `${response.status} ${response.statusText}`
+		});
 	}
 
 	if (init.expectNoContent) return undefined as T;
@@ -163,7 +176,11 @@ export async function createUser(input: CreateUserInput): Promise<CreatedUser> {
 export async function updateUser(id: number, input: UpdateUserInput): Promise<UserSummary> {
 	if (!isUsersAdminAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
-		return invokeCommand<UserSummary>('users_update', { id, displayName: input.displayName, role: input.role });
+		return invokeCommand<UserSummary>('users_update', {
+			id,
+			displayName: input.displayName,
+			role: input.role
+		});
 	}
 	return httpRequest<UserSummary>(`/api/users/${id}`, { method: 'PUT', body: input });
 }

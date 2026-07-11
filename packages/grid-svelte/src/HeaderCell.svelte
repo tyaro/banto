@@ -159,7 +159,12 @@
 	}
 </script>
 
-<div class="header-cell" role="columnheader" aria-sort={sortable ? ariaSort : undefined} style:width={`${width}px`}>
+<div
+	class="header-cell"
+	role="columnheader"
+	aria-sort={sortable ? ariaSort : undefined}
+	style:width={`${width}px`}
+>
 	<div
 		class="cell-body"
 		class:sortable

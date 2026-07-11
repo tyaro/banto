@@ -67,7 +67,11 @@ function createControllableProvider(datasetSize = 50) {
 describe('createWindowedListResource', () => {
 	it('dedups overlapping ensureRange calls: each covering block is fetched at most once', async () => {
 		const { provider, calls, resolveCall } = createControllableProvider(50);
-		initBanto({ dataProvider: provider, authProvider, resources: [{ name: 'w-dedup', label: 'W' }] });
+		initBanto({
+			dataProvider: provider,
+			authProvider,
+			resources: [{ name: 'w-dedup', label: 'W' }]
+		});
 
 		const windowed = createWindowedListResource<Row>('w-dedup', { blockSize: 10 });
 
@@ -124,7 +128,11 @@ describe('createWindowedListResource', () => {
 
 	it('invalidate(resource) triggers refresh(), which re-fetches the last ensured range', async () => {
 		const { provider, resolveCall } = createControllableProvider(50);
-		initBanto({ dataProvider: provider, authProvider, resources: [{ name: 'w-invalidate', label: 'W' }] });
+		initBanto({
+			dataProvider: provider,
+			authProvider,
+			resources: [{ name: 'w-invalidate', label: 'W' }]
+		});
 
 		const windowed = createWindowedListResource<Row>('w-invalidate', { blockSize: 10 });
 		const load = windowed.ensureRange(0, 10);
@@ -145,7 +153,11 @@ describe('createWindowedListResource', () => {
 
 	it('totalCount is adopted from the first response and rows are written at their absolute offsets (sparse elsewhere)', async () => {
 		const { provider, resolveCall } = createControllableProvider(30);
-		initBanto({ dataProvider: provider, authProvider, resources: [{ name: 'w-sparse', label: 'W' }] });
+		initBanto({
+			dataProvider: provider,
+			authProvider,
+			resources: [{ name: 'w-sparse', label: 'W' }]
+		});
 
 		const windowed = createWindowedListResource<Row>('w-sparse', { blockSize: 10 });
 		expect(windowed.totalCount).toBe(0);
@@ -166,7 +178,11 @@ describe('createWindowedListResource', () => {
 
 	it('dispose stops further invalidate-triggered refreshes', async () => {
 		const { provider, calls, resolveCall } = createControllableProvider(20);
-		initBanto({ dataProvider: provider, authProvider, resources: [{ name: 'w-dispose', label: 'W' }] });
+		initBanto({
+			dataProvider: provider,
+			authProvider,
+			resources: [{ name: 'w-dispose', label: 'W' }]
+		});
 
 		const windowed = createWindowedListResource<Row>('w-dispose', { blockSize: 10 });
 		const load = windowed.ensureRange(0, 10);

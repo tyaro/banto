@@ -57,7 +57,13 @@ export function visibleRange(vp: Viewport, count: number): [number, number] {
  * exceeds the data's full extent and zooming in never collapses past
  * `minSpan` points.
  */
-export function zoomViewport(vp: Viewport, focus: number, factor: number, count: number, minSpan = 2): Viewport {
+export function zoomViewport(
+	vp: Viewport,
+	focus: number,
+	factor: number,
+	count: number,
+	minSpan = 2
+): Viewport {
 	const domainSpan = Math.max(count - 1, 1);
 	// A caller-requested `minSpan` larger than the entire domain (e.g. a tiny
 	// dataset) is impossible to honor - fall back to the domain span itself

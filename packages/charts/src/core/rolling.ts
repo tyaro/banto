@@ -12,7 +12,11 @@
  * entries regardless of how many were appended in one call. `maxCount <= 0`
  * (or non-integer, floored) means "keep nothing" and returns `[]`.
  */
-export function rollingAppend<T>(data: readonly T[], incoming: readonly T[], maxCount: number): T[] {
+export function rollingAppend<T>(
+	data: readonly T[],
+	incoming: readonly T[],
+	maxCount: number
+): T[] {
 	const cap = Math.max(0, Math.floor(maxCount));
 	if (cap === 0) return [];
 

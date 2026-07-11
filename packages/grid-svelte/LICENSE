@@ -1,0 +1,10 @@
+Copyright (c) 2026 tyaro
+
+This package is distributed privately via a restricted npm registry
+(GitHub Packages) and is NOT open source, despite living in the same
+monorepo as the MIT-licensed Banto template (see the repository root
+LICENSE, which covers the admin-template application and documentation,
+not this package). All rights are reserved by the copyright holder. No
+license to use, copy, modify, sublicense, or redistribute this package is
+granted except as agreed separately between the copyright holder and the
+consuming application/repository (see docs/publishing.md).

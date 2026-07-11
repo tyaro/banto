@@ -41,7 +41,9 @@
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 
 	const axisLabels = $derived(data.map((row) => getValue(row, axis)));
-	const valueMatrix = $derived(series.map((s) => data.map((row) => toNumber(getValue(row, s.value)))));
+	const valueMatrix = $derived(
+		series.map((s) => data.map((row) => toNumber(getValue(row, s.value))))
+	);
 
 	const isEmpty = $derived(data.length === 0 || series.length === 0);
 
@@ -101,7 +103,10 @@
 			{#each axisLabels as axisLabel, i (i)}
 				{@const angle = spokeAngle(i, data.length)}
 				{@const anchor = spokeLabelAnchor(angle)}
-				{@const labelPoint = g.radius > 0 ? ringPolygon(data.length, (g.radius + LABEL_GAP) / g.radius, g.cx, g.cy, g.radius)[i] : { x: g.cx, y: g.cy }}
+				{@const labelPoint =
+					g.radius > 0
+						? ringPolygon(data.length, (g.radius + LABEL_GAP) / g.radius, g.cx, g.cy, g.radius)[i]
+						: { x: g.cx, y: g.cy }}
 				<text
 					x={labelPoint.x}
 					y={labelPoint.y}
@@ -143,7 +148,13 @@
 		{#snippet overlay({ width, height: plotHeight })}
 			{#if hovered}
 				{@const g = geometry(width, plotHeight)}
-				{@const anchor = radarPoints(valueMatrix[hovered.seriesIndex], maxValue, g.cx, g.cy, g.radius)[hovered.axisIndex]}
+				{@const anchor = radarPoints(
+					valueMatrix[hovered.seriesIndex],
+					maxValue,
+					g.cx,
+					g.cy,
+					g.radius
+				)[hovered.axisIndex]}
 				<Tooltip
 					x={anchor.x}
 					y={anchor.y}

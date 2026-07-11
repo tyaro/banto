@@ -188,9 +188,13 @@
 	// The QR code shown is for the first LAN-reachable URL (i.e. not the
 	// 127.0.0.1-only one) - that's the one another machine on the LAN would
 	// actually need to scan; showing every URL's QR would just be noise.
-	const firstLanUrl = $derived(serverStatus?.urls.find((url) => !url.includes('127.0.0.1')) ?? null);
+	const firstLanUrl = $derived(
+		serverStatus?.urls.find((url) => !url.includes('127.0.0.1')) ?? null
+	);
 	const firstLanQrSvg = $derived(
-		firstLanUrl ? (serverStatus?.qrSvgs.find((entry) => entry.url === firstLanUrl)?.svg ?? null) : null
+		firstLanUrl
+			? (serverStatus?.qrSvgs.find((entry) => entry.url === firstLanUrl)?.svg ?? null)
+			: null
 	);
 
 	// --- M11: login-not-required mode + desktop autologin (Tauri only) ------
@@ -541,7 +545,8 @@
 				ウィンドウのアクリル効果（Windows）
 			</label>
 			<p class="note">
-				ウィンドウ背面を OS のアクリル（すりガラス）効果で描画します。ガラスプリセットと組み合わせると、デスクトップが透ける本物のガラス感になります（M12、Windows
+				ウィンドウ背面を OS
+				のアクリル（すりガラス）効果で描画します。ガラスプリセットと組み合わせると、デスクトップが透ける本物のガラス感になります（M12、Windows
 				のみ）。
 			</p>
 		</section>
@@ -591,6 +596,8 @@
 							{/each}
 						</ul>
 						{#if firstLanQrSvg}
+							<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 							<div class="qr">{@html firstLanQrSvg}</div>
 						{/if}
 					{/if}
@@ -633,7 +640,11 @@
 
 			{#if authSettings}
 				<p class="status">
-					状態: <strong>{authSettings.disabled ? '有効（ログイン画面なし）' : '無効（通常のログインが必要）'}</strong>
+					状態: <strong
+						>{authSettings.disabled
+							? '有効（ログイン画面なし）'
+							: '無効（通常のログインが必要）'}</strong
+					>
 				</p>
 			{/if}
 
@@ -671,7 +682,11 @@
 						</label>
 						<label class="field">
 							パスワード
-							<input type="password" bind:value={autologinPassword} autocomplete="current-password" />
+							<input
+								type="password"
+								bind:value={autologinPassword}
+								autocomplete="current-password"
+							/>
 						</label>
 						<button type="submit" disabled={enablingAutologin}>自動ログインを有効化</button>
 					</form>
@@ -710,13 +725,16 @@
 					現在の設定:
 					<strong>
 						{auditConfig.retentionDays !== null ? `${auditConfig.retentionDays}日` : '無期限'}
-						/ {auditConfig.retentionRows !== null ? `${auditConfig.retentionRows.toLocaleString()}件` : '無制限'}
+						/ {auditConfig.retentionRows !== null
+							? `${auditConfig.retentionRows.toLocaleString()}件`
+							: '無制限'}
 					</strong>
 				</p>
 			{/if}
 
 			<p class="note">
-				0を入力すると、その項目は無制限になります（既定は90日 / 10万件）。古い記録は一覧の表示時に自動的に整理されます。記録の一覧は「監査ログ」画面から確認できます。
+				0を入力すると、その項目は無制限になります（既定は90日 /
+				10万件）。古い記録は一覧の表示時に自動的に整理されます。記録の一覧は「監査ログ」画面から確認できます。
 			</p>
 		</section>
 	{/if}
@@ -730,7 +748,9 @@
 					{creatingBackup ? '作成中…' : '今すぐバックアップ'}
 				</button>
 				{#if tauri}
-					<button type="button" class="secondary" onclick={handleOpenBackupsFolder}>フォルダを開く</button>
+					<button type="button" class="secondary" onclick={handleOpenBackupsFolder}
+						>フォルダを開く</button
+					>
 				{/if}
 			</div>
 
@@ -740,8 +760,15 @@
 
 			{#if pendingRestore}
 				<p class="pending-restore">
-					再起動後に適用されます: <strong>{pendingRestore.stagedAt}</strong>（{formatBytes(pendingRestore.sizeBytes)}）
-					<button type="button" class="secondary" onclick={handleCancelRestore} disabled={cancellingRestore}>
+					再起動後に適用されます: <strong>{pendingRestore.stagedAt}</strong>（{formatBytes(
+						pendingRestore.sizeBytes
+					)}）
+					<button
+						type="button"
+						class="secondary"
+						onclick={handleCancelRestore}
+						disabled={cancellingRestore}
+					>
 						取消
 					</button>
 				</p>
@@ -761,7 +788,11 @@
 							</div>
 							<div class="backup-actions">
 								{#if !tauri}
-									<button type="button" class="secondary" onclick={() => handleDownloadBackup(backup.fileName)}>
+									<button
+										type="button"
+										class="secondary"
+										onclick={() => handleDownloadBackup(backup.fileName)}
+									>
 										ダウンロード
 									</button>
 								{/if}

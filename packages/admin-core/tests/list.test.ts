@@ -48,7 +48,11 @@ describe('createListResource', () => {
 			{ 'items-reload': { rows: [{ id: 1, name: 'a' }] } },
 			{ latencyMs: 0 }
 		);
-		initBanto({ dataProvider, authProvider, resources: [{ name: 'items-reload', label: 'Items' }] });
+		initBanto({
+			dataProvider,
+			authProvider,
+			resources: [{ name: 'items-reload', label: 'Items' }]
+		});
 
 		const list = createListResource<{ id: number; name: string }>('items-reload');
 		await list.load();
@@ -67,7 +71,11 @@ describe('createListResource', () => {
 			{ 'items-dispose': { rows: [{ id: 1, name: 'a' }] } },
 			{ latencyMs: 0 }
 		);
-		initBanto({ dataProvider, authProvider, resources: [{ name: 'items-dispose', label: 'Items' }] });
+		initBanto({
+			dataProvider,
+			authProvider,
+			resources: [{ name: 'items-dispose', label: 'Items' }]
+		});
 
 		const list = createListResource<{ id: number; name: string }>('items-dispose');
 		await list.load();
