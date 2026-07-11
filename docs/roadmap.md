@@ -1,7 +1,7 @@
 # Banto 機能拡張ロードマップ（M10〜）
 
 作成日: 2026-07-08（同日改訂: スコープをテンプレート汎用機能に限定）
-状態: **M10〜M14 完了（2026-07-11）。M15 進行中**
+状態: **M10〜M17 完了（2026-07-12）。M18 進行中**
 
 [ui-framework-spec.md](ui-framework-spec.md) の M0〜M9（完了）に続く機能拡張計画。
 
@@ -23,11 +23,16 @@
 | M14 | 監査ログ | M10（ロール・ユーザー基盤） | M | 完了 (PR #15) |
 | M15 | CSV/Excel エクスポート・インポート | — | M | 完了 (PR #16) |
 | M16 | コマンドパレット（Ctrl+K） | — | S–M | 完了 (PR #17) |
-| M17 | SQLite バックアップ/リストア | — | M | 進行中 |
+| M17 | SQLite バックアップ/リストア | — | M | 完了 (PR #18) |
+| M18 | 基盤整備（E2E + lint/format + パッケージ配布） | — | M | 進行中 |
+| M19 | 帳票/印刷 `@banto/report`（MDテンプレート方式） | — | M–L | 計画 |
+| M20 | 添付ファイル/画像管理 | — | M | 計画 |
+| M21 | バーコード/QR wedge 入力検出 | — | S | 計画 |
 
-推奨着手順: **M10 → M11 / M12（並行可）→ M13**。
-M12 と M13 は他と独立しており、順序の入替も可能。
-M14 はバックログから昇格（2026-07-10、M10 RBAC との親和性を理由に優先）。
+M14〜M17 はバックログから順次昇格。M18〜M21 は 2026-07-12 の
+テンプレートスコープ整理（[template-scope.md](template-scope.md)）と
+過去アプリ棚卸しに基づく計画。拡張リポジトリ（banto-industrial）と
+記録計アプリの計画は [industrial-plan.md](industrial-plan.md) に分離。
 
 ---
 
@@ -268,6 +273,53 @@ users / settings / audit_log と増えた今、テンプレート標準の運用
 適用前の自動バックアップが残る。admin 以外は全 API 403 + UI 非表示。
 REST/Tauri 両経路のテスト。監査ログに記録される。
 
+### M18: 基盤整備（品質 + 配布）
+
+**目的**: M10〜M17 で機能が揃ったため、機能追加を一旦止めて回帰防止と
+外部消費の基盤を整える。拡張リポジトリ（banto-industrial、別リポジトリ）が
+本リポジトリのパッケージ/クレートを参照する前提条件でもある
+（2026-07-12 決定: E2E/lint と配布整備を1マイルストーンに束ねる）。
+
+**スコープ**:
+- **lint/format**: Prettier（svelteプラグイン）+ ESLint（svelte/TS）を
+  ワークスペース全体に導入し、既存コードを一括整形。Rust は
+  `cargo fmt --check` + `clippy` を CI に追加（improvements.md §5.1）
+- **Playwright スモークE2E**: `banto-serve --features embed-ui` に対して
+  ログイン → ダッシュボード → items CRUD 一巡 → 監査ログ表示の最小シナリオ。
+  CI に E2E ジョブ追加（improvements.md §4）
+- **パッケージ配布可能化**: `@banto/*` を GitHub Packages（私設npm）へ
+  発行できる状態に（publishConfig・files・バージョニング規約）。
+  Rust クレートは git タグ参照で消費する規約を文書化
+- **コピー面積縮小方針の明文化**: `admin-template-core` のロジックを
+  段階的にクレート側へ寄せる方針と対象候補を template-scope.md に追記
+- **導入ドキュメント**: README にデモコンテンツ差し替え手順・
+  オプション資産（dock/charts/glass/パレット）の削除手順を記載
+  （template-scope.md §6 の宿題を回収）
+
+**非スコープ**: E2E の網羅拡大（スモークのみ）、CI での自動 publish
+（初回は手動）、コピー面積縮小の実施（方針文書化のみ、実施は必要時）。
+
+**完了条件**: `pnpm lint` / `pnpm format:check` がゼロ指摘で通り CI ゲートに
+入る。E2E スモークが CI で安定して通る。`pnpm publish --dry-run` が
+全パッケージで成功する。README の手順に従い新規利用者がデモを
+自リソースに差し替えられる。
+
+### M19: 帳票/印刷 `@banto/report`（計画）
+
+MDテンプレート + データバインド → 印刷CSS HTML（→ 将来PDF）。
+日報・写真帳・時系列帳票を同一エンジンの帳票定義違いとして扱う。
+詳細スコープは着手時に確定。記録計 R3（industrial-plan.md）が消費予定。
+
+### M20: 添付ファイル/画像管理（計画）
+
+アップロード・保存・サムネイル・一覧（写真帳/現品写真/検査記録の土台）。
+詳細スコープは着手時に確定。
+
+### M21: バーコード/QR wedge 入力検出（計画）
+
+ハードウェアスキャナのキーボードウェッジ入力を人間のタイプと区別して
+1コードとして通知するヘッドレスコア + フォーカス管理アクション。小粒。
+
 ---
 
 ## 3. バックログ（テンプレートに入れる可能性を残すもの）
@@ -276,11 +328,14 @@ REST/Tauri 両経路のテスト。監査ログに記録される。
 
 - Tauri updater（自動更新）
 - PWA 対応（LANブラウザモードに manifest）
-- i18n 辞書層（アプリ側 ja/en）
+- チャートの Canvas レンダラ（性能天井時のエスカレーション第2段。
+  第1段はサーバ側集約 — template-scope.md §4.2 参照）
 - PostgreSQL / TimescaleDB リポジトリ実装（`banto-storage` の `postgres`
   feature は現状定義のみ。仕様 §12.1 が業務データの標準に位置づけている
   ため、必要になった時点で最優先で昇格）
-- Playwright スモークE2E / lint・format 基盤（improvements.md §4, §5.1）
+
+除外を決めた項目: i18n 辞書層（2026-07-12 削除。理由は
+template-scope.md §4.3）。Playwright E2E / lint・format は M18 に昇格。
 
 ## 4. テンプレートに入れないと決めたもの
 
