@@ -42,7 +42,6 @@ import {
 } from '@banto/admin-core';
 import type {
 	AuthProvider,
-	DataProvider,
 	Notifier,
 	ResourceDefinition,
 	UiSettingsProvider

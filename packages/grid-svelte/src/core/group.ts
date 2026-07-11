@@ -10,8 +10,13 @@ import { getColumnValue } from './sort';
 /** Group key/label used when the group-by column's value is null/undefined. */
 const EMPTY_GROUP_LABEL = '(なし)';
 
-/** One collapsible group header, standing in for all of its rows in the flattened view. */
-export interface GroupEntry<TRow> {
+/**
+ * One collapsible group header, standing in for all of its rows in the
+ * flattened view. Takes the same `TRow` type parameter as `RowEntry` purely
+ * to keep `FlatEntry<TRow>` symmetric across both union members - not used
+ * in this interface's own body.
+ */
+export interface GroupEntry<_TRow> {
 	kind: 'group';
 	/** Stable identity for the group (also the string passed to `GridState.toggleGroup`). */
 	key: string;

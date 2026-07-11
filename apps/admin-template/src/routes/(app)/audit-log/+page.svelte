@@ -127,7 +127,6 @@
 		}
 	];
 
-	// svelte-ignore state_referenced_locally
 	const gridState = new GridState<AuditLogEntry>(columns);
 	// 既定ソート: 新しい記録が先頭に来るよう ts 降順（spec M14）。
 	gridState.sort = [{ field: 'ts', direction: 'desc' }];
@@ -153,7 +152,6 @@
 		#inFlightBlocks = new Map<number, Promise<void>>();
 		#generation = 0;
 		#hasTotalCountForGeneration = false;
-		#lastRange: { start: number; end: number } | null = null;
 
 		#blocksFor(start: number, end: number): number[] {
 			if (end <= start) return [];
@@ -165,7 +163,6 @@
 		}
 
 		async ensureRange(start: number, end: number): Promise<void> {
-			this.#lastRange = { start, end };
 			const generation = this.#generation;
 			const blocks = this.#blocksFor(start, end).filter(
 				(block) => !this.#loadedBlocks.has(block) && !this.#inFlightBlocks.has(block)

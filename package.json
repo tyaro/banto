@@ -3,9 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "description": "Banto — full-stack admin framework/template for Tauri v2 + SvelteKit",
+  "type": "module",
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@tauri-apps/cli"
+    ]
   },
   "engines": {
     "node": ">=24"
@@ -14,6 +18,19 @@
     "dev": "pnpm --filter admin-template dev",
     "build": "pnpm --filter admin-template build",
     "check": "pnpm --recursive --if-present check",
-    "test": "pnpm --recursive --if-present test"
+    "test": "pnpm --recursive --if-present test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.20.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.5",
+    "prettier-plugin-svelte": "^4.1.1",
+    "typescript-eslint": "^8.63.0"
   }
 }

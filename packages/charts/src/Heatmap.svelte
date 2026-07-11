@@ -13,7 +13,7 @@
 	import { sequentialColor, SEQ_RAMP } from './core/color';
 	import { everyNthIndex } from './core/ticks-time';
 	import { leftMarginFor } from './core/labels';
-	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
+	import type { Accessor, ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
 

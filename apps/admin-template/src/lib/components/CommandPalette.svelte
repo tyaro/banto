@@ -67,6 +67,9 @@
 	// A fresh query means a fresh result set - keep selection pinned to the
 	// top rather than pointing at whatever now occupies the old index.
 	$effect(() => {
+		// Bare read registers `query` as this effect's reactive dependency;
+		// nothing else in the body reads it.
+		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 		query;
 		selectedIndex = 0;
 	});

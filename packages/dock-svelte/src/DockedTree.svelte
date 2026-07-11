@@ -148,7 +148,6 @@
 
 {#if node.type === 'panel'}
 	<div class="dock-pane" data-dock-drop-id={node.id} bind:this={panelFrameEl} role="group" aria-label={node.title}>
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="titlebar"
 			role="button"
@@ -190,7 +189,6 @@
 	<div class="dock-pane" data-dock-drop-id={node.id} bind:this={tabsFrameEl} role="group" aria-label={active?.title}>
 		<div class="tab-strip" role="tablist">
 			{#each node.children as child, i (child.id)}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="tab"
 					class:active={i === node.activeIndex}
@@ -249,7 +247,6 @@
 				<DockedTree node={child} {dock} {panel} {onPopOut} />
 			</div>
 			{#if i < node.children.length - 1}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					class="divider"
 					class:row={node.direction === 'row'}

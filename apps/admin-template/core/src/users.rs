@@ -154,7 +154,7 @@ fn validate_password_len(password: &str, field: &str) -> Result<(), BantoError> 
 fn validate_username(username: &str) -> Result<String, BantoError> {
     let trimmed = username.trim();
     let len = trimmed.chars().count();
-    if len < MIN_USERNAME_LEN || len > MAX_USERNAME_LEN {
+    if !(MIN_USERNAME_LEN..=MAX_USERNAME_LEN).contains(&len) {
         return Err(BantoError::Validation {
             field_errors: vec![FieldError {
                 field: "username".to_string(),

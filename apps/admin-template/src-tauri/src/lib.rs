@@ -743,6 +743,10 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 /// be listed in `[dependencies]` to *spell out* one of its types in source,
 /// and the router value here only ever flows through an inferred `let`
 /// binding on its way into `banto_server::start`.
+// Same shape as `admin_template_core::rest::api_router` (which this wraps)
+// and for the same reason: distinct service handles, no natural struct to
+// bundle them into for a single call site.
+#[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
     items: ItemsService,
     users: UsersService,

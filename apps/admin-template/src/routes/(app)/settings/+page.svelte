@@ -591,6 +591,8 @@
 							{/each}
 						</ul>
 						{#if firstLanQrSvg}
+							<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 							<div class="qr">{@html firstLanQrSvg}</div>
 						{/if}
 					{/if}

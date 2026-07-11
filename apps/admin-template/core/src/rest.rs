@@ -1333,6 +1333,11 @@ fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState
 /// routes (spec M12), all behind the CSRF header check. Mount the result
 /// *before* `banto_server::static_files::static_router` so `/api/*` takes
 /// priority over the SPA fallback.
+// Each parameter is a distinct, already-cloneable service handle threaded
+// through from `main()`/tests (no natural subset to bundle into a struct
+// without adding an indirection layer with a single call site); simpler to
+// allow this than to invent a "Services" struct for one function.
+#[allow(clippy::too_many_arguments)]
 pub fn api_router(
     items: ItemsService,
     users: UsersService,
@@ -2385,8 +2390,8 @@ mod tests {
     /// recorded), and wires the login verifier through
     /// [`audited_credential_verifier`] so login events are actually recorded
     /// - `router_with_role_tokens`'s own verifier predates M14 and stays a
-    /// plain credential check since none of ITS callers care about audit
-    /// events.
+    ///   plain credential check since none of ITS callers care about audit
+    ///   events.
     async fn router_with_role_tokens_and_audit(
     ) -> (Router, AuditLogService, String, String, String) {
         let pool = migrate_memory().await.expect("migrate_memory");

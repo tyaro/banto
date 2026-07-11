@@ -228,7 +228,7 @@
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				const fieldError =
 					err.body.field_errors.find((fe) => fe.field === edit.field) ?? err.body.field_errors[0];
-				throw new Error(fieldError?.message ?? err.message);
+				throw new Error(fieldError?.message ?? err.message, { cause: err });
 			}
 			notify('error', isProviderError(err) ? err.message : String(err));
 			throw err;

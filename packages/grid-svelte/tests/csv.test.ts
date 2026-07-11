@@ -99,6 +99,8 @@ describe('csvForExcel', () => {
 		const once = csvForExcel('a,b');
 		const twice = csvForExcel(once);
 		expect(twice).toBe(once);
+		// U+FEFF here is the literal BOM under test, not stray whitespace.
+		// eslint-disable-next-line no-irregular-whitespace
 		expect(twice.match(/﻿/g)?.length).toBe(1);
 	});
 });

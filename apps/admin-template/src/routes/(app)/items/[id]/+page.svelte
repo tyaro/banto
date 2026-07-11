@@ -102,11 +102,9 @@
 		</p>
 	{:else if storeReady}
 		<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={(formResource?.saving ?? false) || !canWrite}>
-			{#snippet children()}
-				{#if canWrite}
-					<button type="button" class="delete" onclick={handleDelete}>削除</button>
-				{/if}
-			{/snippet}
+			{#if canWrite}
+				<button type="button" class="delete" onclick={handleDelete}>削除</button>
+			{/if}
 		</BantoForm>
 	{/if}
 </div>
