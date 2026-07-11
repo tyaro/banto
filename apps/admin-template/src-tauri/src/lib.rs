@@ -24,7 +24,7 @@ use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
-use admin_template_core::items::{Item, ItemInput, ItemsService};
+use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
@@ -253,6 +253,63 @@ async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
         })
         .await;
     Ok(())
+}
+
+/// Body of [`items_import`], split out the same way [`change_own_password`]
+/// is (spec M14 pattern) so the audit-recording behavior is testable with a
+/// plain `&AppState` in this crate's own `cargo test` - `tauri::State`
+/// cannot be constructed outside a running tauri app, but it derefs to
+/// `&AppState`, so the command below is a one-line adapter.
+///
+/// Unlike `items_create`/`update`/`delete` above, [`ItemsService::import`]
+/// itself never fails on bad ROW data - an all-or-nothing rollback comes
+/// back as `Ok(ImportResult)` with `errors` populated (spec M15 design
+/// decision, see that method's doc comment) - so this always records
+/// exactly one `action: "import"` entry: `result: "ok"` with a
+/// `{created,updated}` summary when `errors` is empty, `result: "failed"`
+/// with an `{errorCount}` summary when the batch was rolled back. It only
+/// skips the write the way every other command here does: when the service
+/// call returns `Err` outright (e.g. the row-count limit), which `?`
+/// propagates before this function's audit code runs.
+async fn items_import_body(
+    state: &AppState,
+    rows: Vec<ItemImportRow>,
+) -> Result<ImportResult, BantoError> {
+    let actor = require_role(state, Role::Editor, "items").await?;
+    let result = state.items.import(rows).await?;
+    let (result_tag, detail) = if result.errors.is_empty() {
+        (
+            "ok",
+            serde_json::json!({ "created": result.created, "updated": result.updated }),
+        )
+    } else {
+        (
+            "failed",
+            serde_json::json!({ "errorCount": result.errors.len() }),
+        )
+    };
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "import",
+            resource: "items",
+            entity_id: None,
+            detail: Some(detail),
+            origin: "tauri",
+            result: result_tag,
+        })
+        .await;
+    Ok(result)
+}
+
+#[tauri::command]
+async fn items_import(
+    state: State<'_, AppState>,
+    rows: Vec<ItemImportRow>,
+) -> Result<ImportResult, BantoError> {
+    items_import_body(&state, rows).await
 }
 
 /// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
@@ -1494,6 +1551,7 @@ pub fn run() {
             items_create,
             items_update,
             items_delete,
+            items_import,
             auth_status,
             auth_setup,
             auth_login,
@@ -1616,5 +1674,191 @@ mod tests {
             "a failed change must not be recorded as password_change: {:?}",
             result.rows
         );
+    }
+
+    // --- M15: CSV import -----------------------------------------------------
+
+    /// `editor` can import; a mixed create+update batch succeeds and is
+    /// recorded as exactly ONE `action: "import"` audit entry (spec M15:
+    /// "件数サマリ付き1件記録"), with a `{created,updated}` summary detail
+    /// and no `entityId`.
+    #[tokio::test]
+    async fn items_import_records_one_audit_entry_on_success() {
+        let state = app_state().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
+
+        let existing = state
+            .items
+            .create(ItemInput {
+                name: "Existing".to_string(),
+                price: 10,
+                stock: 1,
+            })
+            .await
+            .expect("seed create");
+
+        let result = items_import_body(
+            &state,
+            vec![
+                ItemImportRow {
+                    id: Some(existing.id),
+                    name: "Updated".to_string(),
+                    price: 20,
+                    stock: 2,
+                },
+                ItemImportRow {
+                    id: None,
+                    name: "Brand New".to_string(),
+                    price: 30,
+                    stock: 3,
+                },
+            ],
+        )
+        .await
+        .expect("items_import_body should succeed");
+        assert_eq!(result.created, 1);
+        assert_eq!(result.updated, 1);
+        assert!(result.errors.is_empty());
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entries: Vec<_> = audit.rows.iter().filter(|r| r.action == "import").collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "expected exactly one import entry, got {:?}",
+            audit.rows
+        );
+        let entry = entries[0];
+        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
+        assert_eq!(entry.actor_role.as_deref(), Some("editor"));
+        assert_eq!(entry.resource, "items");
+        assert_eq!(entry.entity_id, None);
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail should be set")).unwrap();
+        assert_eq!(detail, serde_json::json!({ "created": 1, "updated": 1 }));
+    }
+
+    /// A per-row validation error rolls the whole batch back - including the
+    /// otherwise-valid row in the same batch - and is recorded as a single
+    /// `result: "failed"` entry summarizing the error count (spec M15).
+    #[tokio::test]
+    async fn items_import_validation_error_rolls_back_and_is_recorded_as_failed() {
+        let state = app_state().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
+
+        // `app_state()` is backed by `init_db_memory` (spec §12), which
+        // seeds 1,000 demo rows - capture that baseline rather than
+        // asserting an absolute `0` below, since this test cares about "did
+        // the import add anything", not "is the table empty".
+        let before = state
+            .items
+            .list(ListParams::default())
+            .await
+            .expect("list")
+            .total_count;
+
+        let result = items_import_body(
+            &state,
+            vec![
+                ItemImportRow {
+                    id: None,
+                    name: "Valid".to_string(),
+                    price: 10,
+                    stock: 1,
+                },
+                ItemImportRow {
+                    id: None,
+                    name: "".to_string(), // fails validation
+                    price: 1,
+                    stock: 1,
+                },
+            ],
+        )
+        .await
+        .expect("items_import_body should return Ok with row errors, not Err");
+        assert_eq!(result.created, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.errors.len(), 1);
+
+        let list = state
+            .items
+            .list(ListParams::default())
+            .await
+            .expect("list");
+        assert_eq!(
+            list.total_count, before,
+            "a rolled-back import must not leave partial rows"
+        );
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "import")
+            .unwrap_or_else(|| panic!("expected an import entry, got {:?}", audit.rows));
+        assert_eq!(entry.result, "failed");
+        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail should be set")).unwrap();
+        assert_eq!(detail, serde_json::json!({ "errorCount": 1 }));
+    }
+
+    /// `viewer` cannot import (spec M15: editor+ only, same `require_role`
+    /// floor as `items_create`/`update`/`delete`).
+    #[tokio::test]
+    async fn viewer_cannot_import_items() {
+        let state = app_state().await;
+        let viewer = state
+            .users
+            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(viewer);
+        let before = state
+            .items
+            .list(ListParams::default())
+            .await
+            .expect("list")
+            .total_count;
+
+        let err = items_import_body(
+            &state,
+            vec![ItemImportRow {
+                id: None,
+                name: "Nope".to_string(),
+                price: 1,
+                stock: 1,
+            }],
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, BantoError::Forbidden));
+
+        let list = state
+            .items
+            .list(ListParams::default())
+            .await
+            .expect("list");
+        assert_eq!(list.total_count, before, "a forbidden import must not touch the table");
     }
 }

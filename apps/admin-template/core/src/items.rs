@@ -105,6 +105,61 @@ fn validate_item_input(input: &ItemInput) -> Result<(), BantoError> {
     }
 }
 
+/// One row of a CSV/UI bulk import (spec M15, `docs/roadmap.md`): shaped
+/// like [`ItemInput`] plus an optional `id` that selects UPDATE vs INSERT
+/// (spec: "id あり→UPDATE / なし→INSERT"). Field names mirror `ItemInput`'s
+/// (camelCase over the wire) so the frontend's CSV-to-row mapping can reuse
+/// the same column names as the create/update form.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemImportRow {
+    pub id: Option<i64>,
+    pub name: String,
+    pub price: i64,
+    pub stock: i64,
+}
+
+/// One row-level failure from [`ItemsService::import`] (spec M15). `row` is
+/// the 0-based index into the request's `Vec<ItemImportRow>` - NOT a
+/// database id, since a row can fail before it ever reaches the DB (e.g. a
+/// validation error) - so the frontend's preview screen can point back at
+/// the exact input row that needs fixing.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRowError {
+    pub row: usize,
+    pub message: String,
+}
+
+/// Outcome of [`ItemsService::import`] (spec M15). `errors` non-empty means
+/// the whole import was rolled back (see that method's doc comment for why
+/// this is all-or-nothing) - `created`/`updated` are then always `0`, never
+/// a partial count.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub created: usize,
+    pub updated: usize,
+    pub errors: Vec<ImportRowError>,
+}
+
+/// Upper bound on rows accepted by a single [`ItemsService::import`] call
+/// (spec M15): the whole request runs as one transaction, so this keeps a
+/// runaway file from holding a single DB lock/transaction open over an
+/// unbounded number of rows.
+const MAX_IMPORT_ROWS: usize = 10_000;
+
+/// Format every field violation on one import row into a single
+/// human-readable string (`ImportRowError::message` is one `String`, not a
+/// `Vec<FieldError>`, since the import preview shows one line per row).
+fn format_field_errors(field_errors: &[FieldError]) -> String {
+    field_errors
+        .iter()
+        .map(|e| format!("{}: {}", e.field, e.message))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn column_map() -> ColumnMap {
     ColumnMap::new()
         .column("id", "id")
@@ -242,6 +297,127 @@ impl ItemsService {
         }
         self.notify_changed();
         Ok(())
+    }
+
+    /// Bulk create/update (spec M15, `docs/roadmap.md`): each row carrying
+    /// an `id` is an UPDATE (a missing id is that row's error), each row
+    /// without one is an INSERT. Runs as a SINGLE transaction, and -
+    /// crucially - is all-or-nothing: if ANY row fails validation or names a
+    /// missing id, the ENTIRE import is rolled back and this returns
+    /// `created: 0, updated: 0` with every failing row in `errors`, rather
+    /// than applying the rows that would otherwise have succeeded.
+    ///
+    /// This is a deliberate spec M15 design decision, not the usual
+    /// "skip the bad rows, apply the rest" bulk-import convention: the UI
+    /// flow is "pick a file -> preview counts/errors (computed by calling
+    /// this same validation) -> confirm -> run". If a partial apply were
+    /// allowed, whatever the user confirmed against in the preview could
+    /// silently diverge from what actually lands in the DB the moment any
+    /// row in the batch is bad - there would be no way to show "312 of 400
+    /// imported, 88 failed" honestly up front, only after the fact, and a
+    /// re-run after fixing the 88 would risk re-creating the 312 that
+    /// already went in as duplicates (rows without `id` always INSERT).
+    /// All-or-nothing keeps "what you previewed is what you get" true.
+    pub async fn import(&self, rows: Vec<ItemImportRow>) -> Result<ImportResult, BantoError> {
+        if rows.len() > MAX_IMPORT_ROWS {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "rows".to_string(),
+                    message: format!("一度にインポートできるのは{MAX_IMPORT_ROWS}行までです"),
+                }],
+            });
+        }
+        if rows.is_empty() {
+            return Ok(ImportResult {
+                created: 0,
+                updated: 0,
+                errors: Vec::new(),
+            });
+        }
+
+        // Validate every row BEFORE opening a transaction: since a single
+        // bad row rolls back the whole batch anyway (see doc comment
+        // above), there is no reason to pay for a transaction/DB round trip
+        // that is just going to be thrown away.
+        let mut errors: Vec<ImportRowError> = Vec::new();
+        for (row_index, row) in rows.iter().enumerate() {
+            let input = ItemInput {
+                name: row.name.clone(),
+                price: row.price,
+                stock: row.stock,
+            };
+            if let Err(BantoError::Validation { field_errors }) = validate_item_input(&input) {
+                errors.push(ImportRowError {
+                    row: row_index,
+                    message: format_field_errors(&field_errors),
+                });
+            }
+        }
+        if !errors.is_empty() {
+            return Ok(ImportResult {
+                created: 0,
+                updated: 0,
+                errors,
+            });
+        }
+
+        let mut tx = self.pool.begin().await.map_err(banto_storage::storage_error)?;
+        let mut created = 0usize;
+        let mut updated = 0usize;
+
+        for (row_index, row) in rows.iter().enumerate() {
+            match row.id {
+                Some(id) => {
+                    let result = sqlx::query(
+                        "UPDATE items SET name = ?, price = ?, stock = ?, updated_at = date('now') WHERE id = ?",
+                    )
+                    .bind(row.name.trim())
+                    .bind(row.price)
+                    .bind(row.stock)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                    if result.rows_affected() == 0 {
+                        errors.push(ImportRowError {
+                            row: row_index,
+                            message: format!("id {id} の商品が見つかりません"),
+                        });
+                    } else {
+                        updated += 1;
+                    }
+                }
+                None => {
+                    sqlx::query(
+                        "INSERT INTO items (name, price, stock, updated_at) VALUES (?, ?, ?, date('now'))",
+                    )
+                    .bind(row.name.trim())
+                    .bind(row.price)
+                    .bind(row.stock)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                    created += 1;
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            tx.rollback().await.map_err(banto_storage::storage_error)?;
+            return Ok(ImportResult {
+                created: 0,
+                updated: 0,
+                errors,
+            });
+        }
+
+        tx.commit().await.map_err(banto_storage::storage_error)?;
+        self.notify_changed();
+        Ok(ImportResult {
+            created,
+            updated,
+            errors: Vec::new(),
+        })
     }
 }
 
@@ -567,6 +743,176 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "a failed validation update must not emit a resource_changed event"
+        );
+    }
+
+    // --- import (spec M15) --------------------------------------------------
+
+    #[tokio::test]
+    async fn import_all_success_creates_and_updates_in_one_transaction() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let svc = ItemsService::new(pool).with_events(tx);
+
+        let existing = svc
+            .create(ItemInput {
+                name: "Before".to_string(),
+                price: 10,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        rx.try_recv().expect("create should have emitted an event");
+
+        let result = svc
+            .import(vec![
+                ItemImportRow {
+                    id: Some(existing.id),
+                    name: "After".to_string(),
+                    price: 20,
+                    stock: 2,
+                },
+                ItemImportRow {
+                    id: None,
+                    name: "New Item".to_string(),
+                    price: 30,
+                    stock: 3,
+                },
+            ])
+            .await
+            .expect("import should succeed");
+
+        assert_eq!(result.created, 1);
+        assert_eq!(result.updated, 1);
+        assert!(result.errors.is_empty());
+
+        let updated = svc.get(existing.id).await.unwrap();
+        assert_eq!(updated.name, "After");
+        assert_eq!(updated.price, 20);
+        assert_eq!(updated.stock, 2);
+
+        let all = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(all.total_count, 2);
+
+        // Exactly one resource_changed event for the whole batch, not one
+        // per row (spec M15: "成功時に notify_changed() を1回だけ").
+        rx.try_recv()
+            .expect("import should emit a resource_changed event");
+        assert!(
+            rx.try_recv().is_err(),
+            "import must emit exactly one resource_changed event, not one per row"
+        );
+    }
+
+    #[tokio::test]
+    async fn import_with_missing_id_rolls_back_the_whole_batch() {
+        let svc = service().await;
+
+        let result = svc
+            .import(vec![
+                ItemImportRow {
+                    id: None,
+                    name: "Would Have Been Created".to_string(),
+                    price: 10,
+                    stock: 1,
+                },
+                ItemImportRow {
+                    id: Some(999),
+                    name: "No Such Row".to_string(),
+                    price: 20,
+                    stock: 2,
+                },
+            ])
+            .await
+            .expect("import should return Ok with row errors, not Err");
+
+        assert_eq!(result.created, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].row, 1);
+
+        // The first row must NOT have been committed despite being valid on
+        // its own - the id-not-found error on row 1 rolls back row 0's
+        // insert too.
+        let all = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(all.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn import_with_validation_error_rolls_back_and_reports_the_row() {
+        let svc = service().await;
+
+        let result = svc
+            .import(vec![
+                ItemImportRow {
+                    id: None,
+                    name: "Valid".to_string(),
+                    price: 10,
+                    stock: 1,
+                },
+                ItemImportRow {
+                    id: None,
+                    name: "".to_string(), // fails validation: required
+                    price: -1,            // fails validation: min
+                    stock: 1,
+                },
+            ])
+            .await
+            .expect("import should return Ok with row errors, not Err");
+
+        assert_eq!(result.created, 0);
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].row, 1);
+        assert!(result.errors[0].message.contains("name"));
+        assert!(result.errors[0].message.contains("price"));
+
+        // No transaction was even opened for a pre-validated batch, but
+        // assert on the observable behavior (nothing landed) rather than the
+        // implementation detail.
+        let all = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(all.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn import_rejects_more_than_the_max_row_count() {
+        let svc = service().await;
+
+        let rows: Vec<ItemImportRow> = (0..(MAX_IMPORT_ROWS + 1))
+            .map(|i| ItemImportRow {
+                id: None,
+                name: format!("Item {i}"),
+                price: 1,
+                stock: 1,
+            })
+            .collect();
+
+        let err = svc.import(rows).await.unwrap_err();
+        match err {
+            BantoError::Validation { field_errors } => {
+                assert_eq!(field_errors.len(), 1);
+                assert_eq!(field_errors[0].field, "rows");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+
+        let all = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(all.total_count, 0);
+    }
+
+    #[tokio::test]
+    async fn import_empty_is_a_no_op_ok() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let svc = ItemsService::new(pool).with_events(tx);
+
+        let result = svc.import(Vec::new()).await.expect("empty import should succeed");
+        assert_eq!(result.created, 0);
+        assert_eq!(result.updated, 0);
+        assert!(result.errors.is_empty());
+        assert!(
+            rx.try_recv().is_err(),
+            "an empty import must not emit a resource_changed event"
         );
     }
 }

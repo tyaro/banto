@@ -21,6 +21,7 @@
 //! | POST   | `/api/items`         | `ItemInput`    | `Item` (editor+)        |
 //! | PUT    | `/api/items/{id}`    | `ItemInput`    | `Item` (editor+)        |
 //! | DELETE | `/api/items/{id}`    | -              | 204 (editor+)           |
+//! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -84,6 +85,18 @@
 //! `logout`; and `auth_setup_handler` records `setup`. Read routes
 //! (`list`/`get`) are never audited. The trail itself is only readable via
 //! `POST /api/audit-log/list`, `admin`-only.
+//!
+//! `POST /api/items/import` (spec M15) is a partial exception to "once its
+//! underlying service call has already succeeded": [`ItemsService::import`]
+//! itself never fails on bad ROW data (an all-or-nothing rollback is a
+//! successful `Ok(ImportResult)` with `errors` populated, spec M15 design
+//! decision - see that method's doc comment), so [`items_import`] always
+//! records exactly one `action: "import"` entry - `result: "ok"` with a
+//! `{created,updated}` summary when `errors` is empty, `result: "failed"`
+//! with an `{errorCount}` summary when the batch was rolled back. It only
+//! skips the audit write the way every other handler does: when the
+//! service call returns `Err` outright (e.g. the row-count limit), which
+//! `?`-propagates straight to a `422` before this handler's audit code runs.
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -102,7 +115,7 @@ use std::str::FromStr;
 use tokio::sync::broadcast;
 
 use crate::audit::{AuditEntry, AuditLogService};
-use crate::items::{Item, ItemInput, ItemsService};
+use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::settings::{AuditSettings, SettingsService};
 use crate::users::{Role, UserIdentity, UserSummary, UsersService};
 
@@ -235,6 +248,44 @@ async fn items_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/items/import` (spec M15): bulk create/update, `editor`+
+/// (same `ItemsWriteState`/`RoleGuard` as `items_create`/`update`/`delete`
+/// above). Unlike those, a single `action: "import"` audit entry is written
+/// here directly (not via [`record_write`], which always writes
+/// `result: "ok"` against a single concrete `entity_id`) - see this module's
+/// doc comment ("Audit log" section) for why the result/detail depend on
+/// whether [`ItemsService::import`] rolled the batch back.
+async fn items_import(
+    State(state): State<ItemsWriteState>,
+    headers: HeaderMap,
+    Json(rows): Json<Vec<ItemImportRow>>,
+) -> Result<Json<ImportResult>, ApiError> {
+    let result = state.items.import(rows).await?;
+    let identity = actor_identity(&headers, &state.auth);
+    let (result_tag, detail) = if result.errors.is_empty() {
+        (
+            "ok",
+            json!({ "created": result.created, "updated": result.updated }),
+        )
+    } else {
+        ("failed", json!({ "errorCount": result.errors.len() }))
+    };
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: identity.as_ref().map(|i| i.id.as_str()),
+            actor_role: identity.as_ref().map(|i| i.role.as_str()),
+            action: "import",
+            resource: "items",
+            entity_id: None,
+            detail: Some(detail),
+            origin: "rest",
+            result: result_tag,
+        })
+        .await;
+    Ok(Json(result))
+}
+
 /// `State` for [`require_role_at_least`]: the `AuthState` needed to resolve
 /// a bearer token back to an [`Identity`], the minimum [`Role`] the guarded
 /// routes require, the `resource` name to tag a denial with (spec M14), and
@@ -329,6 +380,7 @@ fn items_write_router(items: ItemsService, audit: AuditLogService, auth: AuthSta
             "/api/items/{id}",
             axum::routing::put(items_update).delete(items_delete),
         )
+        .route("/api/items/import", post(items_import))
         .with_state(state)
         .layer(middleware::from_fn_with_state(
             RoleGuard {
@@ -2537,5 +2589,153 @@ mod tests {
         assert_eq!(entry.origin, "rest");
         assert_eq!(entry.result, "ok");
         assert_eq!(entry.detail, None, "detail must never carry the password");
+    }
+
+    // --- M15: CSV import -----------------------------------------------------
+
+    /// `editor` can import: a mixed create+update batch succeeds, and
+    /// exactly ONE `action: "import"` audit entry is recorded (spec M15:
+    /// "件数サマリ付き1件記録"), with a `{created,updated}` summary detail
+    /// and no `entityId` (the entry represents the whole batch, not one
+    /// row).
+    #[tokio::test]
+    async fn editor_can_import_items_and_it_is_recorded_as_one_audit_entry() {
+        let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+        let create_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &admin,
+                json!({ "name": "Existing", "price": 10, "stock": 1 }),
+            ))
+            .await
+            .unwrap();
+        let existing_id = body_json(create_response).await["id"].as_i64().unwrap();
+
+        let import_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items/import",
+                &editor,
+                json!([
+                    { "id": existing_id, "name": "Updated", "price": 20, "stock": 2 },
+                    { "id": null, "name": "Brand New", "price": 30, "stock": 3 }
+                ]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(import_response.status(), StatusCode::OK);
+        let body = body_json(import_response).await;
+        assert_eq!(body["created"], 1);
+        assert_eq!(body["updated"], 1);
+        assert_eq!(body["errors"], json!([]));
+
+        let list_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(list_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        let import_entries: Vec<_> = rows.iter().filter(|r| r["action"] == "import").collect();
+        assert_eq!(
+            import_entries.len(),
+            1,
+            "expected exactly one import entry, got {rows:?}"
+        );
+        let entry = import_entries[0];
+        assert_eq!(entry["actorUsername"], "editor");
+        assert_eq!(entry["resource"], "items");
+        assert_eq!(entry["entityId"], serde_json::Value::Null);
+        assert_eq!(entry["origin"], "rest");
+        assert_eq!(entry["result"], "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry["detail"].as_str().expect("detail should be set"))
+                .unwrap();
+        assert_eq!(detail, json!({ "created": 1, "updated": 1 }));
+    }
+
+    /// `viewer` cannot import (spec M15: editor+ only, same `RoleGuard` as
+    /// the other `items` write routes).
+    #[tokio::test]
+    async fn viewer_cannot_import_items_forbidden_with_forbidden_kind() {
+        let (router, _audit, _admin, _editor, viewer) = router_with_role_tokens_and_audit().await;
+
+        let response = router
+            .oneshot(post_json_auth(
+                "/api/items/import",
+                &viewer,
+                json!([{ "id": null, "name": "Nope", "price": 1, "stock": 1 }]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let json = body_json(response).await;
+        assert_eq!(json["kind"], "forbidden");
+    }
+
+    /// A batch with a per-row validation error is rolled back entirely - the
+    /// valid row in the same batch must NOT land in the DB either - and is
+    /// recorded as a single `result: "failed"` audit entry summarizing the
+    /// error count (spec M15).
+    #[tokio::test]
+    async fn items_import_validation_error_rolls_back_and_is_recorded_as_failed() {
+        let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+        let import_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items/import",
+                &editor,
+                json!([
+                    { "id": null, "name": "Valid", "price": 10, "stock": 1 },
+                    { "id": null, "name": "", "price": 1, "stock": 1 }
+                ]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(import_response.status(), StatusCode::OK);
+        let body = body_json(import_response).await;
+        assert_eq!(body["created"], 0);
+        assert_eq!(body["updated"], 0);
+        assert_eq!(body["errors"][0]["row"], 1);
+
+        // Nothing from the batch was committed, including the otherwise
+        // valid first row (spec M15: all-or-nothing).
+        let list_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(body_json(list_response).await["totalCount"], 0);
+
+        let audit_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(audit_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        let entry = rows
+            .iter()
+            .find(|r| r["action"] == "import")
+            .unwrap_or_else(|| panic!("expected an import entry, got {rows:?}"));
+        assert_eq!(entry["result"], "failed");
+        assert_eq!(entry["actorUsername"], "editor");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry["detail"].as_str().expect("detail should be set"))
+                .unwrap();
+        assert_eq!(detail, json!({ "errorCount": 1 }));
     }
 }

@@ -20,6 +20,16 @@ export { computeWindow, type ComputeWindowParams, type WindowResult } from './co
 export { rangeToTsv, parseTsv, parseCellInput } from './core/clipboard';
 export { prepareCommit, type PrepareCommitResult } from './core/edit';
 export { buildGroupedView, type GroupEntry, type RowEntry, type FlatEntry } from './core/group';
+export {
+	toCsv,
+	csvForExcel,
+	csvFilename,
+	parseCsv,
+	mapCsvHeader,
+	convertCsvRow,
+	type CsvMapping,
+	type CsvRowResult
+} from './core/csv';
 
 export type {
 	SortDirection,

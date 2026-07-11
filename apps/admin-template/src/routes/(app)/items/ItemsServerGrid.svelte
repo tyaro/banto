@@ -16,21 +16,21 @@
 
 	interface Props {
 		columns: GridColumn<Item>[];
+		/**
+		 * Owned by the parent page (+page.svelte, spec M15 Phase C addition) so
+		 * its CSV export button can read `state.sort`/`state.filters` directly
+		 * and reproduce the exact same ListParams this grid is currently
+		 * showing - same wiring pattern ItemsClientGrid.svelte already uses for
+		 * its own externally-owned GridState (spec §4.3's group-by <select>).
+		 */
+		state: GridState<Item>;
 		onRowClick: (item: Item) => void;
 		onCellEdit: (edit: CellEdit<Item>) => void | Promise<void>;
 		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => void | Promise<void>;
 	}
 
-	let { columns, onRowClick, onCellEdit, onRangePaste }: Props = $props();
+	let { columns, state: gridState, onRowClick, onCellEdit, onRangePaste }: Props = $props();
 
-	// GridState is normally owned internally by BantoGrid, but the page needs
-	// to read `sort`/`filters` itself to build ListParams for the windowed
-	// resource, so it's constructed here and passed in via BantoGrid's
-	// existing `state` prop (spec §4.1 wiring pattern). Capturing only the
-	// initial `columns` value is by design (columns don't change at runtime
-	// on this page), same as BantoGrid's own internal GridState fallback.
-	// svelte-ignore state_referenced_locally
-	const gridState = new GridState<Item>(columns);
 	const windowed = createWindowedListResource<Item>('items');
 
 	// The most recently requested visible window, so a param change (sort/
