@@ -5,6 +5,7 @@
 	import { pageTitle } from '$lib/navigation';
 	import { settings } from '$lib/settings.svelte';
 	import { sessionStore } from '$lib/session.svelte';
+	import { commandPaletteStore } from '$lib/commandPalette.svelte';
 
 	async function logout() {
 		await getAuthProvider().logout();
@@ -25,6 +26,16 @@
 	<h1>{pageTitle(page.url.pathname)}</h1>
 
 	<div class="spacer"></div>
+
+	<button
+		type="button"
+		class="icon-button"
+		onclick={() => commandPaletteStore.show()}
+		title="Ctrl+K"
+		aria-label="コマンドパレットを開く"
+	>
+		🔍
+	</button>
 
 	{#if !sessionStore.authDisabled}
 		<button type="button" class="icon-button" onclick={logout}>ログアウト</button>

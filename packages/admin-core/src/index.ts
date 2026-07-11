@@ -71,3 +71,6 @@ export { createTauriEventProvider, createSseEventProvider, connectEvents } from 
 
 export type { SseParser } from './sse-parser';
 export { createSseParser } from './sse-parser';
+
+export type { PaletteCommand } from './commands';
+export { searchCommands } from './commands';
