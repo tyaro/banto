@@ -50,6 +50,11 @@ keyring = { workspace = true }
 # are test-only so the production dependency above stays "sync"-only.
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
+# Spec M17 backup tests: `BackupService::create`'s `VACUUM INTO` needs a
+# real on-disk pool (see `admin-template-core::backup`'s test module doc
+# comment for why `:memory:` does not work), so these tests cannot reuse
+# `app_state()`'s in-memory `init_db_memory()` - see `app_state_with_tempdir`.
+tempfile = { workspace = true }
 
 # Real window translucency for the glass theme (spec M12): Windows Acrylic
 # via `window_vibrancy::apply_acrylic`/`clear_acrylic`. Windows-only by

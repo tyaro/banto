@@ -32,6 +32,13 @@
 //! | POST   | `/api/audit-log/list` | `ListParams`   | `ListResult<AuditLogEntry>` (admin) |
 //! | GET    | `/api/audit-log/config` | -            | `AuditSettings` (admin) |
 //! | PUT    | `/api/audit-log/config` | `AuditSettings` | `AuditSettings` (admin) |
+//! | POST   | `/api/backups`        | -              | `BackupInfo` (admin, spec M17) |
+//! | GET    | `/api/backups`        | -              | `BackupInfo[]` (admin)  |
+//! | GET    | `/api/backups/{fileName}` | -          | raw bytes, `Content-Disposition: attachment` (admin) |
+//! | POST   | `/api/backups/restore?fileName=` | raw bytes (`application/octet-stream`) | 204 (admin) |
+//! | POST   | `/api/backups/{fileName}/restore` | -   | 204 (admin)             |
+//! | GET    | `/api/backups/pending-restore` | -      | `PendingRestoreInfo \| null` (admin) |
+//! | DELETE | `/api/backups/pending-restore` | -      | 204 (admin)             |
 //!
 //! `/api/ui-settings/*` (spec M12 SettingsProvider migration): per-user UI
 //! settings (theme/preset/dock layout), namespaced by the caller's own
@@ -97,8 +104,32 @@
 //! skips the audit write the way every other handler does: when the
 //! service call returns `Err` outright (e.g. the row-count limit), which
 //! `?`-propagates straight to a `422` before this handler's audit code runs.
+//!
+//! `/api/backups/*` (spec M17): `admin`-only, guarded the same way
+//! `/api/users/*`/`/api/audit-log/*` are. `POST /api/backups` records
+//! `action: "backup"`; either restore-staging route records
+//! `action: "restore_staged"`; `DELETE /api/backups/pending-restore` records
+//! `action: "restore_cancelled"` - all `resource: "backups"`. Reads (`GET
+//! /api/backups`, the per-file download, `GET .../pending-restore`) are
+//! never audited, same "read routes are never audited" convention as
+//! everywhere else in this module. `action: "restore_applied"` is
+//! deliberately NEVER recorded from here - a staged restore is only ever
+//! APPLIED at the next process start, before any REST router (or pool) even
+//! exists yet (spec M17: "稼働中のプールの差し替えはしない") - see
+//! `crate::backup::BackupService::apply_pending_restore_at_startup`'s doc
+//! comment and its callers in `src-tauri`'s `run()`/`bin/banto-serve.rs`'s
+//! `main`, which record that entry themselves once a fresh `AuditLogService`
+//! exists. `POST /api/backups/restore`'s request body is raw bytes
+//! (`Content-Type: application/octet-stream`), not JSON or multipart - this
+//! workspace has no multipart dependency (spec M17 design decision:
+//! "依存追加はしない") - with the uploaded file's original name passed as a
+//! `?fileName=` query parameter purely for the audit `detail`/error
+//! messages, never as a filesystem path (the actual bytes are always staged
+//! under the service's own fixed `restore-pending.sqlite3` name - see
+//! `crate::backup::BackupService::stage_restore_from_bytes`).
 
-use axum::extract::{Path, State};
+use axum::body::Bytes;
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
@@ -115,9 +146,17 @@ use std::str::FromStr;
 use tokio::sync::broadcast;
 
 use crate::audit::{AuditEntry, AuditLogService};
+use crate::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::settings::{AuditSettings, SettingsService};
 use crate::users::{Role, UserIdentity, UserSummary, UsersService};
+
+/// Request-body size cap for `POST /api/backups/restore` (spec M17: "サイズ
+/// 上限（例256MB）を設ける"). Applied via `DefaultBodyLimit` on
+/// [`backups_router`] - axum's own built-in default is 2MB
+/// (`axum::extract::DefaultBodyLimit`), far too small for an uploaded DB
+/// backup.
+const MAX_RESTORE_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 /// Resolve the caller's [`Identity`] from its bearer token, best-effort
 /// (spec M14): every audit-recording call site needs "who did this", and
@@ -1100,20 +1139,206 @@ fn audit_log_router(
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
 
+// --- M17: SQLite backup/restore ---------------------------------------------
+
+/// State for the `/api/backups/*` handlers (spec M17): `BackupService` for
+/// the operation itself, plus `AuditLogService`/`AuthState` so
+/// `backups_create_handler`/`backups_restore_from_upload`/
+/// `backups_restore_from_existing`/`backups_cancel_pending` can each record
+/// their own audit entry once the underlying service call has already
+/// succeeded (same pattern as `ItemsWriteState`/`UsersAdminState`). Read
+/// handlers (`backups_list`/`backups_download`/`backups_pending_status`)
+/// also take this state (rather than a narrower read-only one) purely to
+/// avoid a second near-identical struct - they simply never touch `audit`.
+#[derive(Clone)]
+struct BackupsState {
+    backup: BackupService,
+    audit: AuditLogService,
+    auth: AuthState,
+}
+
+async fn backups_create_handler(
+    State(state): State<BackupsState>,
+    headers: HeaderMap,
+) -> Result<Json<BackupInfo>, ApiError> {
+    let info = state.backup.create().await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "backup",
+        "backups",
+        &info.file_name,
+        Some(json!({ "sizeBytes": info.size_bytes })),
+    )
+    .await;
+    Ok(Json(info))
+}
+
+async fn backups_list_handler(
+    State(state): State<BackupsState>,
+) -> Result<Json<Vec<BackupInfo>>, ApiError> {
+    Ok(Json(state.backup.list().await?))
+}
+
+/// `GET /api/backups/{fileName}` (spec M17): LAN download. Not audited -
+/// same "read routes are never audited" convention as everywhere else (see
+/// this module's doc comment).
+async fn backups_download_handler(
+    State(state): State<BackupsState>,
+    Path(file_name): Path<String>,
+) -> Result<Response, ApiError> {
+    let bytes = state.backup.read(&file_name).await?;
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/octet-stream")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{file_name}\""),
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(|err| ApiError(BantoError::Other(err.to_string())))?;
+    Ok(response)
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreUploadQuery {
+    #[serde(rename = "fileName")]
+    file_name: Option<String>,
+}
+
+/// `POST /api/backups/restore?fileName=` (spec M17): stage a restore from a
+/// raw uploaded file. `fileName` (if present) is ONLY ever used for the
+/// audit `detail` - the uploaded bytes are always staged under
+/// `BackupService`'s own fixed `restore-pending.sqlite3` name, never under
+/// the client-supplied name (see this module's doc comment).
+async fn backups_restore_from_upload(
+    State(state): State<BackupsState>,
+    headers: HeaderMap,
+    Query(query): Query<RestoreUploadQuery>,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    state.backup.stage_restore_from_bytes(&body).await?;
+    let identity = actor_identity(&headers, &state.auth);
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: identity.as_ref().map(|i| i.id.as_str()),
+            actor_role: identity.as_ref().map(|i| i.role.as_str()),
+            action: "restore_staged",
+            resource: "backups",
+            entity_id: None,
+            detail: Some(json!({ "source": "upload", "fileName": query.file_name })),
+            origin: "rest",
+            result: "ok",
+        })
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/backups/{fileName}/restore` (spec M17): stage a restore from
+/// an existing backup already in `backups/`.
+async fn backups_restore_from_existing(
+    State(state): State<BackupsState>,
+    headers: HeaderMap,
+    Path(file_name): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state.backup.stage_restore_from_file(&file_name).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "restore_staged",
+        "backups",
+        &file_name,
+        Some(json!({ "source": "existing", "fileName": file_name })),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn backups_pending_status(
+    State(state): State<BackupsState>,
+) -> Json<Option<PendingRestoreInfo>> {
+    Json(state.backup.pending_restore().await)
+}
+
+async fn backups_cancel_pending(
+    State(state): State<BackupsState>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    state.backup.cancel_pending_restore().await?;
+    let identity = actor_identity(&headers, &state.auth);
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: identity.as_ref().map(|i| i.id.as_str()),
+            actor_role: identity.as_ref().map(|i| i.role.as_str()),
+            action: "restore_cancelled",
+            resource: "backups",
+            entity_id: None,
+            detail: None,
+            origin: "rest",
+            result: "ok",
+        })
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `/api/backups/*` (spec M17): `admin`-only, guarded the same way
+/// `users_router`/`audit_log_router` are. `DefaultBodyLimit::max` raises the
+/// upload route's body cap from axum's 2MB default to
+/// [`MAX_RESTORE_UPLOAD_BYTES`] - applied to the whole router (the other
+/// routes here have no meaningful request body, so this is harmless for
+/// them).
+fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState) -> Router {
+    let state = BackupsState {
+        backup,
+        audit: audit.clone(),
+        auth: auth.clone(),
+    };
+    Router::new()
+        .route("/api/backups", post(backups_create_handler).get(backups_list_handler))
+        .route("/api/backups/restore", post(backups_restore_from_upload))
+        .route(
+            "/api/backups/pending-restore",
+            get(backups_pending_status).delete(backups_cancel_pending),
+        )
+        .route("/api/backups/{fileName}", get(backups_download_handler))
+        .route(
+            "/api/backups/{fileName}/restore",
+            post(backups_restore_from_existing),
+        )
+        .with_state(state)
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_RESTORE_UPLOAD_BYTES))
+        .layer(middleware::from_fn_with_state(
+            RoleGuard {
+                auth: auth.clone(),
+                min: Role::Admin,
+                resource: "backups",
+                audit,
+            },
+            require_role_at_least,
+        ))
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log
 /// hook for `logout`, spec M14 - plus status/setup/change-password here
 /// since those need `UsersService`), SSE events, the `items` CRUD routes
 /// (RBAC-split read/write, spec M10), the `admin`-only `users` management
-/// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), and
-/// the per-user `ui-settings` routes (spec M12), all behind the CSRF header
-/// check. Mount the result *before* `banto_server::static_files::static_router`
-/// so `/api/*` takes priority over the SPA fallback.
+/// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), the
+/// `admin`-only `backups` routes (spec M17), and the per-user `ui-settings`
+/// routes (spec M12), all behind the CSRF header check. Mount the result
+/// *before* `banto_server::static_files::static_router` so `/api/*` takes
+/// priority over the SPA fallback.
 pub fn api_router(
     items: ItemsService,
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
+    backup: BackupService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     allow_setup: bool,
@@ -1137,7 +1362,8 @@ pub fn api_router(
         .merge(sse_route(auth.clone(), events))
         .merge(items_router(items, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
-        .merge(audit_log_router(audit, settings.clone(), auth.clone()))
+        .merge(audit_log_router(audit.clone(), settings.clone(), auth.clone()))
+        .merge(backups_router(backup, audit, auth.clone()))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))
 }
@@ -1150,9 +1376,26 @@ mod tests {
     use axum::http::Request as HttpRequest;
     use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, SortState};
     use serde_json::json;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
     use tower::ServiceExt;
 
     const CLIENT_HEADER: (&str, &str) = ("X-Banto-Client", "banto");
+
+    /// A `BackupService` for router helpers that do not exercise
+    /// `/api/backups/*` at all (the overwhelming majority of this module's
+    /// tests) - `BackupService::new` only stores its arguments, so an
+    /// on-disk path that is never actually written to is harmless. Tests
+    /// that DO exercise backups use [`router_with_role_tokens_and_backup`]
+    /// instead, which points at a real, writable temp directory AND (unlike
+    /// every other helper here) a real on-disk pool - see that function's
+    /// doc comment for why the pool matters too.
+    fn unused_backup_service(pool: sqlx::SqlitePool) -> BackupService {
+        BackupService::new(
+            PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
+            pool,
+        )
+    }
 
     fn demo_auth() -> AuthState {
         AuthState::new(|u: String, p: String| {
@@ -1185,6 +1428,7 @@ mod tests {
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
         let audit = AuditLogService::new(pool);
 
         users
@@ -1228,7 +1472,7 @@ mod tests {
             .await
             .expect("viewer login");
         (
-            api_router(items, users, settings, audit, auth, tx, false),
+            api_router(items, users, settings, audit, backup, auth, tx, false),
             admin_token,
             editor_token,
             viewer_token,
@@ -1241,6 +1485,7 @@ mod tests {
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = demo_auth();
         let token = auth
@@ -1248,7 +1493,7 @@ mod tests {
             .await
             .expect("login should succeed");
         (
-            api_router(items, users, settings, audit, auth, tx, false),
+            api_router(items, users, settings, audit, backup, auth, tx, false),
             token,
         )
     }
@@ -1449,10 +1694,11 @@ mod tests {
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = demo_auth();
         let token = auth.login("admin", "admin").await.unwrap();
-        let router = api_router(items, users, settings, audit, auth, tx, false);
+        let router = api_router(items, users, settings, audit, backup, auth, tx, false);
 
         let create_response = router
             .clone()
@@ -1511,9 +1757,10 @@ mod tests {
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = demo_auth();
-        api_router(items, users, settings, audit, auth, tx, allow_setup)
+        api_router(items, users, settings, audit, backup, auth, tx, allow_setup)
     }
 
     fn get(path: &str) -> HttpRequest<Body> {
@@ -1704,10 +1951,11 @@ mod tests {
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
         (
-            api_router(items, users, settings, audit.clone(), auth, tx, allow_setup),
+            api_router(items, users, settings, audit.clone(), backup, auth, tx, allow_setup),
             audit,
         )
     }
@@ -2146,6 +2394,7 @@ mod tests {
         let items = ItemsService::new(pool.clone()).with_events(tx.clone());
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
         let audit = AuditLogService::new(pool);
 
         users
@@ -2175,8 +2424,71 @@ mod tests {
             .await
             .expect("viewer login");
 
-        let router = api_router(items, users, settings, audit.clone(), auth, tx, false);
+        let router = api_router(items, users, settings, audit.clone(), backup, auth, tx, false);
         (router, audit, admin_token, editor_token, viewer_token)
+    }
+
+    /// Like `router_with_role_tokens_and_audit`, but for the M17
+    /// `/api/backups/*` tests, which need a `BackupService` that ACTUALLY
+    /// WORKS end to end (create/list/read/stage a real file), not
+    /// [`unused_backup_service`]'s placeholder. Two things every other
+    /// helper in this module gets to skip:
+    /// - The router's own pool must be a real ON-DISK sqlite file, not
+    ///   `:memory:` (`migrate_memory()`) - `VACUUM INTO` (which
+    ///   `BackupService::create` uses) silently writes nothing when its
+    ///   SOURCE connection is `:memory:` (see `crate::backup`'s test module
+    ///   doc comment for the empirically-verified reason).
+    /// - The returned `tempfile::TempDir` guard must be kept alive by the
+    ///   caller for as long as the router is in use - dropping it deletes
+    ///   the directory `backups/`/`restore-pending.sqlite3` live in.
+    async fn router_with_role_tokens_and_backup(
+    ) -> (Router, tempfile::TempDir, String, String, String) {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let pool = banto_storage::connect_sqlite(&db_path)
+            .await
+            .expect("connect_sqlite");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrate");
+
+        let (tx, _rx) = broadcast::channel(16);
+        let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool.clone());
+        let backup = BackupService::new(db_path, pool.clone());
+        let audit = AuditLogService::new(pool);
+
+        users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create editor");
+        users
+            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("create viewer");
+
+        let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+        let admin_token = auth
+            .login("admin", "password123")
+            .await
+            .expect("admin login");
+        let editor_token = auth
+            .login("editor", "password123")
+            .await
+            .expect("editor login");
+        let viewer_token = auth
+            .login("viewer", "password123")
+            .await
+            .expect("viewer login");
+
+        let router = api_router(items, users, settings, audit, backup, auth, tx, false);
+        (router, dir, admin_token, editor_token, viewer_token)
     }
 
     /// (a) `/api/audit-log/list` is admin-only: 200 for admin, 403 for
@@ -2737,5 +3049,202 @@ mod tests {
             serde_json::from_str(entry["detail"].as_str().expect("detail should be set"))
                 .unwrap();
         assert_eq!(detail, json!({ "errorCount": 1 }));
+    }
+
+    // --- M17: SQLite backup/restore -------------------------------------------
+
+    fn post_bytes_auth(path: &str, token: &str, bytes: Vec<u8>) -> HttpRequest<Body> {
+        HttpRequest::post(path)
+            .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("content-type", "application/octet-stream")
+            .body(Body::from(bytes))
+            .unwrap()
+    }
+
+    async fn body_bytes(response: axum::response::Response) -> Vec<u8> {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    /// admin can create a backup, see it in the list, and download the exact
+    /// same bytes back (spec M17: "バックアップファイルが作成・ダウンロード
+    /// でき"). `POST /api/backups` is recorded as `action: "backup"`.
+    #[tokio::test]
+    async fn admin_can_create_list_and_download_backups() {
+        let (router, _dir, admin, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+
+        let create_response = router
+            .clone()
+            .oneshot(post_bytes_auth("/api/backups", &admin, Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let created = body_json(create_response).await;
+        let file_name = created["fileName"].as_str().expect("fileName").to_string();
+        assert!(created["sizeBytes"].as_u64().unwrap() > 0);
+
+        let list_response = router
+            .clone()
+            .oneshot(get_auth("/api/backups", &admin))
+            .await
+            .unwrap();
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let listed = body_json(list_response).await;
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed[0]["fileName"], file_name);
+
+        let download_response = router
+            .oneshot(get_auth(&format!("/api/backups/{file_name}"), &admin))
+            .await
+            .unwrap();
+        assert_eq!(download_response.status(), StatusCode::OK);
+        let disposition = download_response
+            .headers()
+            .get(axum::http::header::CONTENT_DISPOSITION)
+            .expect("Content-Disposition header")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.contains("attachment"));
+        assert!(disposition.contains(&file_name));
+        let bytes = body_bytes(download_response).await;
+        assert_eq!(&bytes[0..16], b"SQLite format 3\0");
+    }
+
+    /// `editor`/`viewer` cannot reach ANY `/api/backups/*` route (spec M17:
+    /// "admin以外は全API 403") - checked against both a read route (`GET
+    /// /api/backups`) and a write route (`POST /api/backups`).
+    #[tokio::test]
+    async fn editor_and_viewer_cannot_access_backups_routes() {
+        let (router, _dir, _admin, editor, viewer) = router_with_role_tokens_and_backup().await;
+
+        for token in [&editor, &viewer] {
+            let list_response = router
+                .clone()
+                .oneshot(get_auth("/api/backups", token))
+                .await
+                .unwrap();
+            assert_eq!(list_response.status(), StatusCode::FORBIDDEN);
+            let json = body_json(list_response).await;
+            assert_eq!(json["kind"], "forbidden");
+
+            let create_response = router
+                .clone()
+                .oneshot(post_bytes_auth("/api/backups", token, Vec::new()))
+                .await
+                .unwrap();
+            assert_eq!(create_response.status(), StatusCode::FORBIDDEN);
+        }
+    }
+
+    /// Uploading garbage bytes to `/api/backups/restore` must be rejected
+    /// (spec M17: "壊れたファイルのリストアが検証で拒否される") - `Validation`
+    /// maps to `422` (`banto_server::response::status_for`), and no pending
+    /// restore is left staged.
+    #[tokio::test]
+    async fn restore_upload_of_garbage_bytes_is_rejected_as_validation() {
+        let (router, _dir, admin, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+
+        let response = router
+            .clone()
+            .oneshot(post_bytes_auth(
+                "/api/backups/restore",
+                &admin,
+                b"not a sqlite file".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = body_json(response).await;
+        assert_eq!(json["kind"], "validation");
+
+        let pending_response = router
+            .oneshot(get_auth("/api/backups/pending-restore", &admin))
+            .await
+            .unwrap();
+        assert_eq!(body_json(pending_response).await, serde_json::Value::Null);
+    }
+
+    /// Full stage-from-existing-backup -> cancel round trip (spec M17),
+    /// asserting both the `pending-restore` status endpoint AND the
+    /// `restore_staged`/`restore_cancelled` audit entries it records.
+    #[tokio::test]
+    async fn stage_restore_from_existing_backup_then_cancel_is_recorded_in_the_audit_log() {
+        let (router, _dir, admin, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+
+        let create_response = router
+            .clone()
+            .oneshot(post_bytes_auth("/api/backups", &admin, Vec::new()))
+            .await
+            .unwrap();
+        let file_name = body_json(create_response).await["fileName"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let stage_response = router
+            .clone()
+            .oneshot(post_bytes_auth(
+                &format!("/api/backups/{file_name}/restore"),
+                &admin,
+                Vec::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stage_response.status(), StatusCode::NO_CONTENT);
+
+        let pending_response = router
+            .clone()
+            .oneshot(get_auth("/api/backups/pending-restore", &admin))
+            .await
+            .unwrap();
+        let pending = body_json(pending_response).await;
+        assert!(pending["sizeBytes"].as_u64().unwrap() > 0);
+
+        let cancel_response = router
+            .clone()
+            .oneshot(delete_auth("/api/backups/pending-restore", &admin))
+            .await
+            .unwrap();
+        assert_eq!(cancel_response.status(), StatusCode::NO_CONTENT);
+
+        let pending_after_cancel = router
+            .clone()
+            .oneshot(get_auth("/api/backups/pending-restore", &admin))
+            .await
+            .unwrap();
+        assert_eq!(
+            body_json(pending_after_cancel).await,
+            serde_json::Value::Null
+        );
+
+        let audit_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(audit_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+        assert!(
+            rows.iter()
+                .any(|r| r["action"] == "backup" && r["resource"] == "backups"),
+            "expected a backup entry, got {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r["action"] == "restore_staged" && r["resource"] == "backups"),
+            "expected a restore_staged entry, got {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r["action"] == "restore_cancelled" && r["resource"] == "backups"),
+            "expected a restore_cancelled entry, got {rows:?}"
+        );
     }
 }

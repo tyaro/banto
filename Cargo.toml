@@ -43,6 +43,12 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 # Windows-target-specific dependency (docs/roadmap.md §6: Windows のみ) -
 # same CI reasoning as `keyring` above.
 window-vibrancy = "0.6"
+# Dev-only (spec M17 backup/restore tests): isolated temp directories so
+# `BackupService`'s filesystem-touching tests (create/list/read a real
+# `backups/` dir, stage a pending restore file) never collide with each
+# other or leave litter behind - `std::env::temp_dir()` alone is not enough
+# since tests run concurrently and would otherwise share one directory.
+tempfile = "3"
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }

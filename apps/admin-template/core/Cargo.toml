@@ -22,7 +22,12 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "mig
 serde = { workspace = true }
 serde_json = { workspace = true }
 axum = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal"] }
+# `fs` (spec M17): `crate::backup::BackupService` reads/writes `backups/`
+# and the pending-restore file directly via `tokio::fs`. Cargo's feature
+# unification already pulls this in transitively via `sqlx`'s
+# `runtime-tokio` feature, but naming it explicitly here means this crate
+# does not silently depend on another dependency's feature choices.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "fs"] }
 rust-embed = { workspace = true, optional = true }
 argon2 = { workspace = true }
 password-hash = { workspace = true }
@@ -31,6 +36,7 @@ futures-util = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 tower = { workspace = true, features = ["util"] }
+tempfile = { workspace = true }
 
 [[bin]]
 name = "banto-serve"

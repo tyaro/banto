@@ -22,6 +22,7 @@ mod keyring_store;
 
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
+use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
@@ -84,6 +85,13 @@ struct AppState {
     /// pool as `items`/`users`/`settings` (all four are `Clone` handles onto
     /// the one on-disk SQLite DB, see `run()`'s `setup()`).
     audit: AuditLogService,
+    /// Backup/restore (spec M17): `VACUUM INTO` snapshots into `backups/`
+    /// next to the DB file, plus the restore staging flow. Shares the same
+    /// pool as `items`/`users`/`settings`/`audit` - only its `db_path` is
+    /// unique to this service (needed to resolve `backups/` and
+    /// `restore-pending.sqlite3`'s location, see `crate::backup`'s doc
+    /// comment).
+    backup: BackupService,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -740,6 +748,7 @@ async fn start_embedded_server(
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
+    backup: BackupService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
@@ -748,7 +757,7 @@ async fn start_embedded_server(
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
     // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
-    let router = api_router(items, users, settings, audit, auth, events, false)
+    let router = api_router(items, users, settings, audit, backup, auth, events, false)
         .merge(static_router::<FrontendAssets>());
     start(config, router).await
 }
@@ -796,6 +805,7 @@ async fn server_apply(
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
+                state.backup.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -1227,6 +1237,153 @@ async fn audit_config_apply(
     state.settings.audit_config().await
 }
 
+// --- M17: SQLite backup/restore ---------------------------------------------
+
+/// Body of [`backups_create`], split out the same way [`change_own_password`]/
+/// [`items_import_body`] are (spec M14 pattern) so the audit-recording
+/// behavior is testable with a plain `&AppState` in this crate's own `cargo
+/// test` - `tauri::State` cannot be constructed outside a running tauri app.
+async fn backups_create_body(state: &AppState) -> Result<BackupInfo, BantoError> {
+    let actor = require_role(state, Role::Admin, "backups").await?;
+    let info = state.backup.create().await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "backup",
+            resource: "backups",
+            entity_id: Some(&info.file_name),
+            detail: Some(serde_json::json!({ "sizeBytes": info.size_bytes })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(info)
+}
+
+/// `admin`-only (spec M17): create a new backup (`VACUUM INTO`).
+#[tauri::command]
+async fn backups_create(state: State<'_, AppState>) -> Result<BackupInfo, BantoError> {
+    backups_create_body(&state).await
+}
+
+/// `admin`-only (spec M17): list existing backups, newest first. Read-only,
+/// so - like `backups_pending`/`server_status` - not audited.
+#[tauri::command]
+async fn backups_list(state: State<'_, AppState>) -> Result<Vec<BackupInfo>, BantoError> {
+    require_role(&state, Role::Admin, "backups").await?;
+    state.backup.list().await
+}
+
+/// `backups_open_folder`'s response shape (spec M17): `path` is always the
+/// resolved `backups/` directory; `opened` tells the frontend whether an
+/// actual file-explorer window was launched, so it can show a fallback
+/// message (e.g. "このOSでは非対応です。手動で開いてください: {path}") on
+/// platforms this command deliberately does not attempt to support.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenFolderResult {
+    opened: bool,
+    path: String,
+}
+
+/// `admin`-only (spec M17): open the `backups/` directory in the OS file
+/// explorer. **Windows-only** by design (spec: "非Windowsはエラーでなく
+/// no-op + その旨返す") - every other platform this workspace targets
+/// (macOS/Linux, spec §6) gets `opened: false` instead of an `Err`, since
+/// "please go look at a folder" is not worth failing the command over; the
+/// frontend is expected to show `path` as a fallback instead. Not audited -
+/// this only opens a window, it does not touch any data.
+#[tauri::command]
+async fn backups_open_folder(state: State<'_, AppState>) -> Result<OpenFolderResult, BantoError> {
+    require_role(&state, Role::Admin, "backups").await?;
+    let path = state.backup.backups_dir_display();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Best-effort: `explorer` returning a non-zero exit status (e.g. the
+        // directory does not exist yet because no backup has ever been
+        // created) is still reported as `opened: false` rather than an
+        // `Err` - same non-fatal framing as every other OS in this command.
+        let opened = std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .is_ok();
+        Ok(OpenFolderResult { opened, path })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(OpenFolderResult { opened: false, path })
+    }
+}
+
+/// Body of [`backups_stage_restore`] (spec M14 split-function pattern, see
+/// [`backups_create_body`]).
+async fn backups_stage_restore_body(state: &AppState, file_name: &str) -> Result<(), BantoError> {
+    let actor = require_role(state, Role::Admin, "backups").await?;
+    state.backup.stage_restore_from_file(file_name).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "restore_staged",
+            resource: "backups",
+            entity_id: None,
+            detail: Some(serde_json::json!({ "source": "existing", "fileName": file_name })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
+}
+
+/// `admin`-only (spec M17): stage a restore from an existing backup already
+/// in `backups/`.
+#[tauri::command]
+async fn backups_stage_restore(
+    state: State<'_, AppState>,
+    file_name: String,
+) -> Result<(), BantoError> {
+    backups_stage_restore_body(&state, &file_name).await
+}
+
+/// `admin`-only (spec M17): the currently-staged restore, if any. Read-only,
+/// not audited.
+#[tauri::command]
+async fn backups_pending(state: State<'_, AppState>) -> Result<Option<PendingRestoreInfo>, BantoError> {
+    require_role(&state, Role::Admin, "backups").await?;
+    Ok(state.backup.pending_restore().await)
+}
+
+/// Body of [`backups_cancel_restore`] (spec M14 split-function pattern).
+async fn backups_cancel_restore_body(state: &AppState) -> Result<(), BantoError> {
+    let actor = require_role(state, Role::Admin, "backups").await?;
+    state.backup.cancel_pending_restore().await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "restore_cancelled",
+            resource: "backups",
+            entity_id: None,
+            detail: None,
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    Ok(())
+}
+
+/// `admin`-only (spec M17): cancel a staged restore.
+#[tauri::command]
+async fn backups_cancel_restore(state: State<'_, AppState>) -> Result<(), BantoError> {
+    backups_cancel_restore_body(&state).await
+}
+
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
 /// "ウィンドウ分離" mode the v1 doc comment left as a future extension
 /// point). Thin by design: this is the ONLY Tauri-aware half of the pop-out
@@ -1289,6 +1446,23 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let db_path = data_dir.join("admin-template.sqlite3");
 
+            // Spec M17: apply any staged restore BEFORE `init_db`/the pool is
+            // created - see `BackupService::apply_pending_restore_at_startup`'s
+            // doc comment for why this must run first (no pool may exist yet
+            // when a restore is applied). Best-effort at this top level: a
+            // failure here must never prevent the desktop app from starting
+            // at all - the current db (if any) is left untouched on error,
+            // per that function's own per-step safety notes.
+            let applied_restore = match tauri::async_runtime::block_on(
+                BackupService::apply_pending_restore_at_startup(&db_path),
+            ) {
+                Ok(applied) => applied,
+                Err(err) => {
+                    eprintln!("banto: 起動時のリストア適用に失敗しました: {err}");
+                    None
+                }
+            };
+
             // init_db takes a filesystem path (not a sqlite:// URL) so
             // Windows paths with drive letters/backslashes work unchanged.
             let pool =
@@ -1298,6 +1472,7 @@ pub fn run() {
             let items = ItemsService::new(pool.clone()).with_events(events.clone());
             let users = UsersService::new(pool.clone());
             let settings = SettingsService::new(pool.clone());
+            let backup = BackupService::new(db_path.clone(), pool.clone());
             let audit = AuditLogService::new(pool);
             // Records `login`/`login_failed` audit entries (spec M14) from
             // inside the verifier itself - see
@@ -1306,6 +1481,28 @@ pub fn run() {
             // (`origin: "rest"`) - the webview's session goes through
             // `auth_login` below instead.
             let rest_auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+
+            // Spec M17: record `restore_applied` now that a real
+            // `AuditLogService` exists - `apply_pending_restore_at_startup`
+            // itself cannot record this (it runs before any pool/audit
+            // service exists at all). No caller identity exists at this
+            // point either (nobody has logged in yet) - mirrors how the
+            // auth-disabled bootstrap's synthetic `login` entry below has no
+            // "real" actor either.
+            if let Some(applied) = &applied_restore {
+                tauri::async_runtime::block_on(audit.record(AuditEntry {
+                    actor_username: None,
+                    actor_role: None,
+                    action: "restore_applied",
+                    resource: "backups",
+                    entity_id: None,
+                    detail: Some(serde_json::json!({
+                        "preRestoreBackupFileName": applied.pre_restore_backup_file_name,
+                    })),
+                    origin: "tauri",
+                    result: "ok",
+                }));
+            }
 
             // Startup prune (spec M14: "アプリ起動時に1回 + list実行時に軽く" -
             // see `audit_log_list`'s doc comment for why no dedicated
@@ -1478,6 +1675,7 @@ pub fn run() {
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
+                    backup.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,
@@ -1540,6 +1738,7 @@ pub fn run() {
                 rest_auth,
                 server: AsyncMutex::new(initial_server),
                 audit,
+                backup,
             });
 
             Ok(())
@@ -1579,6 +1778,12 @@ pub fn run() {
             audit_log_list,
             audit_config_get,
             audit_config_apply,
+            backups_create,
+            backups_list,
+            backups_open_folder,
+            backups_stage_restore,
+            backups_pending,
+            backups_cancel_restore,
             panel_open,
         ])
         .run(tauri::generate_context!())
@@ -1588,6 +1793,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     /// A minimal [`AppState`] over an in-memory DB, no running server, and a
     /// dummy REST verifier - just enough state to exercise command bodies
@@ -1607,8 +1813,42 @@ mod tests {
                 Box::pin(async { None::<banto_server::Identity> })
             }),
             server: AsyncMutex::new(None),
-            audit: AuditLogService::new(pool),
+            audit: AuditLogService::new(pool.clone()),
+            backup: BackupService::new(
+                PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
+                pool,
+            ),
         }
+    }
+
+    /// Like [`app_state`], but backed by a REAL on-disk db in a fresh temp
+    /// directory rather than `:memory:` - required for the M17 backup tests
+    /// below, since `BackupService::create`'s `VACUUM INTO` silently writes
+    /// nothing when its source pool is `:memory:` (see
+    /// `admin_template_core::backup`'s test module doc comment for the
+    /// empirically-verified reason). The returned `TempDir` guard must be
+    /// kept alive by the caller for as long as `AppState` is still in use.
+    async fn app_state_with_tempdir() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("admin-template.sqlite3");
+        let pool = admin_template_core::db::init_db(&db_path)
+            .await
+            .expect("init_db");
+        let events = event_channel();
+        let state = AppState {
+            items: ItemsService::new(pool.clone()).with_events(events.clone()),
+            auth: Mutex::new(None),
+            users: UsersService::new(pool.clone()),
+            settings: SettingsService::new(pool.clone()),
+            events,
+            rest_auth: AuthState::new(|_u: String, _p: String| {
+                Box::pin(async { None::<banto_server::Identity> })
+            }),
+            server: AsyncMutex::new(None),
+            audit: AuditLogService::new(pool.clone()),
+            backup: BackupService::new(db_path, pool),
+        };
+        (state, dir)
     }
 
     /// Spec M14: the Tauri-side self-service password change must be
@@ -1860,5 +2100,122 @@ mod tests {
             .await
             .expect("list");
         assert_eq!(list.total_count, before, "a forbidden import must not touch the table");
+    }
+
+    // --- M17: SQLite backup/restore -------------------------------------------
+
+    /// `admin` can create a backup, and it is recorded as `action: "backup"`
+    /// with `entityId` = the created file name (spec M17).
+    #[tokio::test]
+    async fn backups_create_records_a_backup_audit_entry() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let admin = state
+            .users
+            .create_user("admin", "password123", "管理者", Role::Admin)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(admin);
+
+        let info = backups_create_body(&state)
+            .await
+            .expect("backups_create_body should succeed");
+        assert!(info.file_name.starts_with("banto-"));
+        assert!(info.size_bytes > 0);
+
+        let listed = state.backup.list().await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].file_name, info.file_name);
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "backup")
+            .unwrap_or_else(|| panic!("expected a backup entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("admin"));
+        assert_eq!(entry.resource, "backups");
+        assert_eq!(entry.entity_id.as_deref(), Some(info.file_name.as_str()));
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+    }
+
+    /// A `viewer` cannot create a backup (spec M17: "admin以外は全API 403"
+    /// on the Tauri side too).
+    #[tokio::test]
+    async fn viewer_cannot_create_backups() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let viewer = state
+            .users
+            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(viewer);
+
+        let err = backups_create_body(&state).await.unwrap_err();
+        assert!(matches!(err, BantoError::Forbidden));
+        assert!(state.backup.list().await.unwrap().is_empty());
+    }
+
+    /// Stage a restore from an existing backup, then confirm it shows up as
+    /// pending - the round trip `backups_create` -> `backups_stage_restore`
+    /// -> `backups_pending` (spec M17), plus the `restore_staged` audit
+    /// entry.
+    #[tokio::test]
+    async fn stage_restore_then_pending_reports_it() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let admin = state
+            .users
+            .create_user("admin", "password123", "管理者", Role::Admin)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(admin);
+
+        let info = backups_create_body(&state).await.expect("create");
+        assert!(state.backup.pending_restore().await.is_none());
+
+        backups_stage_restore_body(&state, &info.file_name)
+            .await
+            .expect("stage_restore should succeed");
+
+        let pending = state
+            .backup
+            .pending_restore()
+            .await
+            .expect("should now be pending");
+        assert!(pending.size_bytes > 0);
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "restore_staged")
+            .unwrap_or_else(|| panic!("expected a restore_staged entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("admin"));
+        assert_eq!(entry.resource, "backups");
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+
+        backups_cancel_restore_body(&state)
+            .await
+            .expect("cancel_restore should succeed");
+        assert!(state.backup.pending_restore().await.is_none());
+
+        let audit_after_cancel = state.audit.list(ListParams::default()).await.unwrap();
+        assert!(
+            audit_after_cancel
+                .rows
+                .iter()
+                .any(|r| r.action == "restore_cancelled"),
+            "expected a restore_cancelled entry, got {:?}",
+            audit_after_cancel.rows
+        );
     }
 }

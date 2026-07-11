@@ -30,7 +30,8 @@
 //! through the `auth_setup` command instead).
 
 use admin_template_core::assets::FrontendAssets;
-use admin_template_core::audit::AuditLogService;
+use admin_template_core::audit::{AuditEntry, AuditLogService};
+use admin_template_core::backup::BackupService;
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
@@ -38,6 +39,7 @@ use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::UsersService;
 use banto_server::{lan_urls, start, static_router, AuthState, ServerConfig};
+use std::path::PathBuf;
 
 const DEFAULT_PORT: u16 = 8721;
 const DEFAULT_BIND: &str = "0.0.0.0";
@@ -55,18 +57,60 @@ async fn main() {
         .map(|value| value == "1")
         .unwrap_or(false);
 
+    let db_path_buf = PathBuf::from(&db_path);
+
+    // Apply any staged restore (spec M17) BEFORE `init_db`/the pool is
+    // created - see `BackupService::apply_pending_restore_at_startup`'s doc
+    // comment for why this must run first. Best-effort at the top level:
+    // a failure here must not prevent the server from starting at all (the
+    // old db, if any, is left untouched on error - see that function's
+    // per-step safety notes).
+    let applied_restore = match BackupService::apply_pending_restore_at_startup(&db_path_buf).await
+    {
+        Ok(applied) => applied,
+        Err(err) => {
+            eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
+            None
+        }
+    };
+
     let pool = init_db(&db_path).await.expect("init_db should succeed");
 
     let events = event_channel();
     let items = ItemsService::new(pool.clone()).with_events(events.clone());
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
+    let backup = BackupService::new(db_path_buf, pool.clone());
     let audit = AuditLogService::new(pool);
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
     // fixed admin/admin check that used to live here directly. Also records
     // `login`/`login_failed` audit entries (spec M14).
     let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+
+    // Spec M17: record `restore_applied` now that a real `AuditLogService`
+    // exists - `apply_pending_restore_at_startup` itself cannot do this (it
+    // runs before any pool/audit service exists at all).
+    if let Some(applied) = applied_restore {
+        audit
+            .record(AuditEntry {
+                actor_username: None,
+                actor_role: None,
+                action: "restore_applied",
+                resource: "backups",
+                entity_id: None,
+                detail: Some(serde_json::json!({
+                    "preRestoreBackupFileName": applied.pre_restore_backup_file_name,
+                })),
+                origin: "rest",
+                result: "ok",
+            })
+            .await;
+        println!(
+            "banto-serve: 起動時にリストアを適用しました（適用前の自動バックアップ: {}）",
+            applied.pre_restore_backup_file_name
+        );
+    }
 
     // Startup prune (spec M14: "サーバ起動時に1回 + list実行時に軽く" - see
     // `audit_log_list`'s doc comment in `rest.rs` for why no dedicated
@@ -82,7 +126,7 @@ async fn main() {
         Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
     }
 
-    let app = api_router(items, users, settings, audit, auth, events, allow_setup)
+    let app = api_router(items, users, settings, audit, backup, auth, events, allow_setup)
         .merge(static_router::<FrontendAssets>());
 
     let server = start(ServerConfig { bind, port }, app)

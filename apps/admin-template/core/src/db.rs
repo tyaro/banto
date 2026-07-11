@@ -151,7 +151,11 @@ const UPDATED_AT_SPAN_DAYS: i64 = 900; // ~2.5 years of history
 /// Days-since-epoch (1970-01-01) -> `YYYY-MM-DD`, using Howard Hinnant's
 /// `civil_from_days` algorithm (http://howardhinnant.github.io/date_algorithms.html).
 /// No date/time crate dependency for one small conversion.
-fn iso_date_from_days_since_epoch(days: i64) -> String {
+///
+/// `pub(crate)` (not private) since `crate::backup` (spec M17) reuses this to
+/// turn a backup file's filesystem mtime into an ISO date for display,
+/// rather than duplicating the same algorithm a second time.
+pub(crate) fn iso_date_from_days_since_epoch(days: i64) -> String {
     let z = days + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = z - era * 146097; // [0, 146096]
