@@ -2,7 +2,7 @@
   "name": "@banto/dock-svelte",
   "version": "0.1.0",
   "description": "Banto dock layout: floating pseudo-windows in a host container (spec §5, M7 scope only)",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/tyaro/banto.git",

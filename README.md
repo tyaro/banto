@@ -33,10 +33,10 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 
 ## 構成
 
-npm パッケージ（`packages/`、すべて `@banto/*`、現状はモノレポ内で
-ソース直接参照。GitHub Packages（私設npm）へ配布可能な状態
-（`license: "UNLICENSED"`・私設配布・権利留保）にしてあるが、実際に
-publish するには前提の解消が要る — 詳細は [docs/publishing.md](docs/publishing.md)）:
+npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスは
+リポジトリ全体と同じ **MIT**（2026-07-12 公開化に伴い統一）。
+モノレポ内ではソース直接参照、外部からは git 依存（サブディレクトリ
+指定）で消費する — 詳細は [docs/publishing.md](docs/publishing.md)）:
 
 | パッケージ           | 内容                                                          |
 | -------------------- | ------------------------------------------------------------- |

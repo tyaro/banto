@@ -40,12 +40,15 @@ industrial-plan.md §2 の権利の建付け（banto は自社著作物として
 案件アプリには利用許諾で提供する）に合わせ、`@banto/*` パッケージは
 **公開 npm レジストリではなく GitHub Packages の private/restricted
 レジストリ**へ配布する。そのため各 `packages/*/package.json` の
-`license` は `MIT` から **`UNLICENSED`** に変更した（私設配布・権利留保。
-リポジトリ本体・`admin-template` アプリ・ドキュメントのライセンスは
-引き続きルート [LICENSE](../LICENSE)（MIT）のまま — テンプレートとしての
-利用許諾はそちらが担う。`packages/*` の配布物だけが別扱いになる、という
-非対称な状態であることに注意。将来ルートライセンスの扱いも見直す場合は
-別途判断が要る）。
+`license` は `MIT` から **`UNLICENSED`** に変更した。
+
+> **2026-07-12 再改訂**: banto リポジトリの **public 化 + 全 MIT 統一**を
+> 決定したため、上記の UNLICENSED 化は取り消し、`packages/*` も
+> ルート [LICENSE](../LICENSE)（MIT）に揃えた（package-local の LICENSE
+> ファイルも削除 — pnpm がルートの MIT を自動同梱する挙動がそのまま
+> 望ましい状態になった）。権利留保の防衛線は banto ではなく
+> **banto-industrial 側**（非公開・独自ライセンス）に置く。
+> 以降この節の UNLICENSED 記述は経緯の記録。
 
 ## 前提: ソース配布のまま
 

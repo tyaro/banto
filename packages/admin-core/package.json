@@ -2,7 +2,7 @@
   "name": "@banto/admin-core",
   "version": "0.1.0",
   "description": "Banto refine-like headless framework core: resources, providers, Runes composables (spec §3)",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/tyaro/banto.git",

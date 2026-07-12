@@ -2,7 +2,7 @@
   "name": "@banto/charts",
   "version": "0.1.0",
   "description": "Banto charts: dependency-free SVG charts (Svelte 5 Runes UI + pure TS core), spec §6",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/tyaro/banto.git",

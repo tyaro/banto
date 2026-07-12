@@ -2,7 +2,7 @@
   "name": "@banto/grid-svelte",
   "version": "0.1.0",
   "description": "Banto data grid: Svelte 5 (Runes) UI, client-side data handling (spec §4)",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/tyaro/banto.git",
