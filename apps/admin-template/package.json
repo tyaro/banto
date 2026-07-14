@@ -17,6 +17,7 @@
     "@banto/forms": "workspace:*",
     "@banto/grid-svelte": "workspace:*",
     "@banto/theme": "workspace:*",
+    "@lucide/svelte": "^1.24.0",
     "@tauri-apps/api": "^2.5.0"
   },
   "devDependencies": {
