@@ -1,0 +1,30 @@
+[package]
+name = "banto-attachments"
+description = "Banto attachments: resource-agnostic file/image attachment metadata, storage, and thumbnail generation (spec docs/attachments-plan.md §3)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+banto-core = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros"] }
+tokio = { workspace = true, features = ["fs"] }
+serde = { workspace = true }
+# Thumbnail generation (spec §3.4): an explicit, documented exception to the
+# workspace's "do not add dependencies lightly" default - image thumbnails
+# are M20's core value and a self-rolled decoder/encoder is not realistic.
+# `default-features = false` + this exact feature list keeps the dependency
+# tree limited to the four formats attachments actually supports (JPEG/PNG/
+# WebP/GIF magic-byte detection, spec §3.4) - notably no AVIF/HEIF/TIFF/etc.
+image = { version = "0.25", default-features = false, features = [
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+] }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+tempfile = { workspace = true }
