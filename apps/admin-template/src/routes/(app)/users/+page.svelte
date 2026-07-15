@@ -12,11 +12,27 @@
 	 * 「クリックで編集ページへ」と同じ発想を、別ページ遷移ではなくページ内表示
 	 * にしたもの）。
 	 */
+	import type { Component } from 'svelte';
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { isProviderError } from '@banto/admin-core';
+	import {
+		Eye,
+		KeyRound,
+		Pencil,
+		ShieldAlert,
+		ShieldCheck,
+		Trash2,
+		UserRoundPlus,
+		Users
+	} from '@lucide/svelte';
 	import { toastStore } from '$lib/toast.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
+	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 	import {
 		createUser,
 		deleteUser,
@@ -38,6 +54,21 @@
 	function roleLabel(role: UserRole): string {
 		return roleOptions.find((option) => option.value === role)?.label ?? role;
 	}
+
+	// StatusBadge (visual-refresh-design.md §10): role never relies on color
+	// alone - admin gets the "info" variant, editor/viewer both "neutral" but
+	// keep distinct icons so they stay visually distinguishable from each
+	// other too.
+	const roleBadgeVariant: Record<UserRole, StatusBadgeVariant> = {
+		admin: 'info',
+		editor: 'neutral',
+		viewer: 'neutral'
+	};
+	const roleBadgeIcon: Record<UserRole, Component> = {
+		admin: ShieldCheck,
+		editor: Pencil,
+		viewer: Eye
+	};
 
 	function errorMessage(err: unknown): string {
 		return isProviderError(err) ? err.message : String(err);
@@ -206,67 +237,151 @@
 </script>
 
 <div class="page">
-	<h2>ユーザー管理</h2>
+	<PageHeader title="ユーザー管理" description="アカウントの作成・編集・削除・パスワードリセットを行います。" />
 
 	{#if !available}
-		<p class="note">
-			{DEMO_MODE_MESSAGE}。単体ブラウザのデモモードにはアカウントDBがないため、この機能はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ利用できます。
-		</p>
+		<EmptyState
+			title="この環境では利用できません"
+			description={`${DEMO_MODE_MESSAGE}。単体ブラウザのデモモードにはアカウントDBがないため、この機能はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ利用できます。`}
+		/>
 	{:else}
-		<section class="create">
-			<h3>新規作成</h3>
-			<BantoForm
-				schema={createSchema}
-				store={createStore}
-				onSubmit={handleCreate}
-				submitting={creating}
-				submitLabel="作成"
-			/>
-		</section>
+		<!-- >=1100px: list (create + grid) and edit panel side by side; below
+		     that, stacked (plan Phase 5 "作成、一覧、選択ユーザー編集の関係を明確
+		     にする" / "広い画面では一覧と編集を2カラム、狭い画面では縦積み"). -->
+		<div class="workspace">
+			<div class="list-column">
+				<SurfaceCard>
+					<div class="card-head">
+						<UserRoundPlus size={20} aria-hidden="true" />
+						<div>
+							<h2>新規作成</h2>
+							<p>ユーザー名・パスワード・ロールを指定してアカウントを作成します。</p>
+						</div>
+					</div>
+					<!-- class="create" kept as a literal <section> (not SurfaceCard's
+					     own <section>) - e2e smoke scenario 5 scopes its locators to
+					     `section.create` to avoid ambiguity with the grid's column
+					     filter buttons below. -->
+					<section class="create">
+						<BantoForm
+							schema={createSchema}
+							store={createStore}
+							onSubmit={handleCreate}
+							submitting={creating}
+							submitLabel="作成"
+						/>
+					</section>
+				</SurfaceCard>
 
-		<section class="list">
-			<h3>アカウント一覧</h3>
-			<p class="note">行をクリックすると下に編集パネルが表示されます。</p>
-			{#if loading && users.length === 0}
-				<p class="loading">読み込み中…</p>
-			{:else}
-				<div class="grid-wrap">
-					<BantoGrid rows={users} {columns} getRowId={(user) => user.id} onRowClick={selectUser} />
-				</div>
-			{/if}
-		</section>
+				<SurfaceCard>
+					<div class="card-head">
+						<Users size={20} aria-hidden="true" />
+						<div>
+							<h2>アカウント一覧</h2>
+							<p>行をクリックすると右に編集パネルが表示されます。</p>
+						</div>
+					</div>
+					{#if loading && users.length === 0}
+						<LoadingState />
+					{:else}
+						<div class="grid-wrap">
+							<BantoGrid
+								rows={users}
+								{columns}
+								getRowId={(user) => user.id}
+								onRowClick={selectUser}
+							/>
+						</div>
+					{/if}
+				</SurfaceCard>
+			</div>
 
-		{#if selected}
-			<section class="detail">
-				<h3>{selected.username} を編集</h3>
-				<label class="field">
-					表示名
-					<input type="text" bind:value={editDisplayName} />
-				</label>
-				<label class="field">
-					ロール
-					<select bind:value={editRole}>
-						{#each roleOptions as option (option.value)}
-							<option value={option.value}>{option.label}</option>
-						{/each}
-					</select>
-				</label>
-				<div class="actions">
-					<button type="button" onclick={saveEdit} disabled={saving}>保存</button>
-					<button type="button" class="danger" onclick={handleDelete}>削除</button>
-				</div>
+			<div class="edit-column">
+				{#if selected}
+					<SurfaceCard>
+						<div class="card-head">
+							<Pencil size={20} aria-hidden="true" />
+							<div>
+								<h2>{selected.username} を編集</h2>
+								<p>表示名とロールを更新します。</p>
+							</div>
+						</div>
 
-				<div class="reset">
-					<label class="field">
-						新しいパスワード（8文字以上）
-						<input type="password" bind:value={resetPassword} autocomplete="new-password" />
-					</label>
-					<button type="button" onclick={saveReset} disabled={resetting}
-						>パスワードをリセット</button
-					>
-				</div>
-			</section>
-		{/if}
+						<div class="role-row">
+							<StatusBadge
+								variant={roleBadgeVariant[selected.role]}
+								label={roleLabel(selected.role)}
+								icon={roleBadgeIcon[selected.role]}
+							/>
+						</div>
+
+						<label class="field">
+							表示名
+							<input class="banto-input" type="text" bind:value={editDisplayName} />
+						</label>
+						<label class="field">
+							ロール
+							<select class="banto-input" bind:value={editRole}>
+								{#each roleOptions as option (option.value)}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						</label>
+						<button
+							type="button"
+							class="banto-btn banto-btn--primary"
+							onclick={saveEdit}
+							disabled={saving}
+						>
+							保存
+						</button>
+
+						<!-- Danger zone (plan Phase 5): delete + password reset are
+						     visually separated from the normal save action above.
+						     Handlers/confirm dialogs are unchanged. -->
+						<div class="danger-zone">
+							<h3><ShieldAlert size={16} aria-hidden="true" />Danger zone</h3>
+
+							<div class="danger-section">
+								<p class="note">新しいパスワードを設定し、このユーザーへ強制的に反映します。</p>
+								<label class="field">
+									新しいパスワード（8文字以上）
+									<input
+										class="banto-input"
+										type="password"
+										bind:value={resetPassword}
+										autocomplete="new-password"
+									/>
+								</label>
+								<button
+									type="button"
+									class="banto-btn banto-btn--danger"
+									onclick={saveReset}
+									disabled={resetting}
+								>
+									<KeyRound size={16} aria-hidden="true" />
+									パスワードをリセット
+								</button>
+							</div>
+
+							<div class="danger-section">
+								<p class="note">このアカウントを完全に削除します。取り消せません。</p>
+								<button type="button" class="banto-btn banto-btn--danger" onclick={handleDelete}>
+									<Trash2 size={16} aria-hidden="true" />
+									削除
+								</button>
+							</div>
+						</div>
+					</SurfaceCard>
+				{:else}
+					<EmptyState
+						icon={Users}
+						title="ユーザーを選択してください"
+						description="一覧から行をクリックすると、ここに編集パネルが表示されます。"
+					/>
+				{/if}
+			</div>
+		</div>
 	{/if}
 </div>
 
@@ -275,34 +390,56 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		max-width: 720px;
 	}
 
-	h2 {
+	.workspace {
+		display: grid;
+		grid-template-columns: minmax(320px, 1fr) minmax(360px, 1fr);
+		align-items: start;
+		gap: 1rem;
+	}
+
+	@media (max-width: 1099.98px) {
+		.workspace {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.list-column,
+	.edit-column {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.card-head {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.65rem;
+		margin-bottom: 0.75rem;
+		color: var(--banto-text-muted);
+	}
+
+	.card-head h2 {
 		margin: 0;
-		font-size: 1.1rem;
+		font-size: 1rem;
+		color: var(--banto-text);
 	}
 
-	section {
-		background: var(--banto-surface);
-		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
-		padding: 1rem 1.25rem;
+	.card-head p {
+		margin: 0.2rem 0 0;
+		font-size: 0.8rem;
+		color: var(--banto-text-muted);
 	}
 
-	h3 {
-		margin: 0 0 0.75rem;
-		font-size: 0.95rem;
+	.role-row {
+		margin-bottom: 0.75rem;
 	}
 
 	.note {
 		margin: 0 0 0.5rem;
 		color: var(--banto-text-muted);
 		font-size: 0.8rem;
-	}
-
-	.loading {
-		color: var(--banto-text-muted);
 	}
 
 	.grid-wrap {
@@ -318,52 +455,28 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.field input,
-	.field select {
-		padding: 0.4rem 0.5rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
-		background: var(--banto-bg);
-		color: var(--banto-text);
+	.danger-zone {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--banto-danger);
 	}
 
-	.actions {
+	.danger-zone h3 {
 		display: flex;
-		gap: 0.75rem;
-		margin-bottom: 1rem;
-	}
-
-	.reset {
-		border-top: 1px solid var(--banto-border);
-		padding-top: 0.75rem;
-	}
-
-	button {
-		padding: 0.5rem 1rem;
-		border: none;
-		border-radius: var(--banto-radius);
-		background: var(--banto-primary);
-		color: var(--banto-text-inverse);
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	button:hover:not(:disabled) {
-		background: var(--banto-primary-hover);
-	}
-
-	button:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	button.danger {
-		background: transparent;
-		border: 1px solid var(--banto-danger);
+		align-items: center;
+		gap: 0.4rem;
+		margin: 0 0 0.75rem;
+		font-size: 0.875rem;
 		color: var(--banto-danger);
 	}
 
-	button.danger:hover {
-		background: color-mix(in srgb, var(--banto-danger) 10%, transparent);
+	.danger-section + .danger-section {
+		margin-top: 1rem;
+		padding-top: 1rem;
+		border-top: 1px dashed var(--banto-border);
+	}
+
+	.danger-section .banto-btn {
+		margin-top: 0.25rem;
 	}
 </style>
