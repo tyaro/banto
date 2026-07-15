@@ -39,6 +39,11 @@
 //! | POST   | `/api/backups/{fileName}/restore` | -   | 204 (admin)             |
 //! | GET    | `/api/backups/pending-restore` | -      | `PendingRestoreInfo \| null` (admin) |
 //! | DELETE | `/api/backups/pending-restore` | -      | 204 (admin)             |
+//! | POST   | `/api/attachments/list` | `{resource,resourceId}` | `AttachmentMeta[]` (any role, spec M20) |
+//! | GET    | `/api/attachments/{id}/download` | -    | raw bytes, `Content-Disposition: attachment` (any role) |
+//! | GET    | `/api/attachments/{id}/thumbnail` | -   | `image/jpeg`, 404 if none (any role) |
+//! | POST   | `/api/attachments?resource=&resourceId=&fileName=` | raw bytes (`application/octet-stream`) | `AttachmentMeta` (editor+) |
+//! | DELETE | `/api/attachments/{id}` | -              | 204 (editor+)           |
 //!
 //! `/api/ui-settings/*` (spec M12 SettingsProvider migration): per-user UI
 //! settings (theme/preset/dock layout), namespaced by the caller's own
@@ -127,6 +132,24 @@
 //! messages, never as a filesystem path (the actual bytes are always staged
 //! under the service's own fixed `restore-pending.sqlite3` name - see
 //! `crate::backup::BackupService::stage_restore_from_bytes`).
+//!
+//! `/api/attachments/*` (spec `docs/attachments-plan.md` §3.5, M20 unit B):
+//! same read/write RBAC split as `items` (`viewer`+ read, `editor`+ write),
+//! backed by `banto_attachments::AttachmentsService`. Upload is raw `Bytes`
+//! with metadata on the query string, same "no multipart dependency" design
+//! as `/api/backups/restore` above; `?fileName=` here IS actually used
+//! (as display/`Content-Disposition` text, never a filesystem path - see
+//! `banto_attachments`'s module doc comment). `POST /api/attachments`
+//! records `action: "create"`, `DELETE /api/attachments/{id}` records
+//! `action: "delete"`, both `resource: "attachments"` with
+//! `{fileName,sizeBytes,parentResource,parentId}` detail. Reads (`list`/
+//! `download`/`thumbnail`) are never audited. `AttachmentsService` itself
+//! has no `ServerEvent`/`banto-server` awareness (a deliberate crate
+//! boundary - see that crate's module doc comment), so
+//! [`attachments_upload`]/[`attachments_delete`] broadcast
+//! `ServerEvent::ResourceChanged { resource: "attachments" }` directly,
+//! reusing the same `broadcast::Sender` [`api_router`] already threads
+//! through for SSE.
 
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -135,6 +158,7 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment, MAX_ATTACHMENT_BYTES};
 use banto_core::{BantoError, ErrorBody, ListParams, ListResult};
 use banto_server::{
     auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,
@@ -157,6 +181,18 @@ use crate::users::{Role, UserIdentity, UserSummary, UsersService};
 /// (`axum::extract::DefaultBodyLimit`), far too small for an uploaded DB
 /// backup.
 const MAX_RESTORE_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
+
+/// Slack added on top of `banto_attachments::MAX_ATTACHMENT_BYTES` for
+/// [`attachments_write_router`]'s `DefaultBodyLimit` (spec
+/// `docs/attachments-plan.md` §3.5): the limit that actually matters is the
+/// service-layer check in `AttachmentsService::upload` (which returns a
+/// `Validation` error, `422`), not this one - this only needs to be
+/// comfortably above `MAX_ATTACHMENT_BYTES` so a request AT the real limit
+/// is never rejected by axum's transport-level cap before the service layer
+/// even sees it. 1MB of slack is far more than the difference between a
+/// file's raw bytes and its (non-existent, this route has no envelope)
+/// wire overhead.
+const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
 
 /// Resolve the caller's [`Identity`] from its bearer token, best-effort
 /// (spec M14): every audit-recording call site needs "who did this", and
@@ -1328,16 +1364,306 @@ fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
 
+// --- M20: attachments -------------------------------------------------------
+
+/// `POST /api/attachments/list` request body (spec §3.5): `{resource,
+/// resourceId}` - deliberately its own tiny struct rather than two loose
+/// `Query`/`Path` extractors, mirroring why `items_list` takes a JSON body
+/// too (a record's `(resource, resourceId)` pair is conceptually one
+/// value, not two independent path segments).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentsListRequest {
+    resource: String,
+    resource_id: String,
+}
+
+async fn attachments_list(
+    State(attachments): State<AttachmentsService>,
+    Json(params): Json<AttachmentsListRequest>,
+) -> Result<Json<Vec<AttachmentMeta>>, ApiError> {
+    Ok(Json(
+        attachments
+            .list_for_record(&params.resource, &params.resource_id)
+            .await?,
+    ))
+}
+
+/// RFC 5987 `attr-char` set: the characters `filename*=UTF-8''...` may carry
+/// unescaped. Everything else (including every non-ASCII byte) is
+/// percent-encoded. No dependency added for this - the alphabet is small
+/// and fixed, spec convention (this workspace does not add a dependency for
+/// something a dozen lines of code can do, see `banto_attachments`'s own
+/// `image`-dependency doc comment for the contrasting case where it does).
+fn is_rfc5987_attr_char(byte: u8) -> bool {
+    matches!(byte,
+        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'
+        | b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~')
+}
+
+fn rfc5987_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        if is_rfc5987_attr_char(*byte) {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Build a `Content-Disposition: attachment` header value carrying BOTH an
+/// ASCII-safe `filename=` (for clients that only understand the legacy
+/// form) and an RFC 5987 `filename*=UTF-8''...` (for everything else,
+/// including any non-ASCII original name - spec §3.3: `file_name` is
+/// user-supplied display text, never a filesystem path, but it still needs
+/// to survive round-tripping through an HTTP header safely). The ASCII
+/// fallback replaces anything non-ASCII, a quote, a backslash, or a control
+/// character with `_` - it only has to be SOME safe placeholder, since a
+/// `filename*`-aware client (which is effectively all of them) prefers the
+/// RFC 5987 form anyway.
+fn content_disposition_header_value(file_name: &str) -> String {
+    let ascii_fallback: String = file_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii() && c != '"' && c != '\\' && !c.is_control() {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let ascii_fallback = if ascii_fallback.is_empty() {
+        "attachment".to_string()
+    } else {
+        ascii_fallback
+    };
+    format!(
+        "attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{}",
+        rfc5987_encode(file_name)
+    )
+}
+
+/// `GET /api/attachments/{id}/download` (spec §3.5): full attachment body.
+/// `mime` is always the server-detected value from `AttachmentsService::upload`
+/// (spec §3.4), never client-supplied. Not audited - "read routes are never
+/// audited" (see this module's doc comment).
+async fn attachments_download(
+    State(attachments): State<AttachmentsService>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
+    let (meta, bytes) = attachments.read_body(id).await?;
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, meta.mime)
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            content_disposition_header_value(&meta.file_name),
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(|err| ApiError(BantoError::Other(err.to_string())))?;
+    Ok(response)
+}
+
+/// `GET /api/attachments/{id}/thumbnail` (spec §3.5): JPEG thumbnail bytes,
+/// or a `NotFound` (-> `404`) when the attachment has none -
+/// `AttachmentsService::read_thumbnail`'s doc comment covers why "no such
+/// attachment" and "attachment exists but has no thumbnail" are not
+/// distinguished here.
+async fn attachments_thumbnail(
+    State(attachments): State<AttachmentsService>,
+    Path(id): Path<i64>,
+) -> Result<Response, ApiError> {
+    let bytes = attachments.read_thumbnail(id).await?;
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "image/jpeg")
+        .body(axum::body::Body::from(bytes))
+        .map_err(|err| ApiError(BantoError::Other(err.to_string())))?;
+    Ok(response)
+}
+
+/// Read-only `attachments` routes (spec §3.5: `viewer` and up, same RBAC
+/// floor as `items_read_router`).
+fn attachments_read_router(attachments: AttachmentsService, auth: AuthState) -> Router {
+    Router::new()
+        .route("/api/attachments/list", post(attachments_list))
+        .route("/api/attachments/{id}/download", get(attachments_download))
+        .route(
+            "/api/attachments/{id}/thumbnail",
+            get(attachments_thumbnail),
+        )
+        .with_state(attachments)
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+
+/// State for the `attachments` WRITE handlers (spec §3.5): `AttachmentsService`
+/// for the mutation itself, `AuditLogService`/`AuthState` for the same
+/// once-the-mutation-succeeded audit-record pattern every other write
+/// handler in this module uses, and `events` (spec: `banto_attachments` has
+/// no `ServerEvent` awareness by design - see this module's doc comment) so
+/// [`attachments_upload`]/[`attachments_delete`] can broadcast
+/// `ResourceChanged` themselves.
+#[derive(Clone)]
+struct AttachmentsWriteState {
+    attachments: AttachmentsService,
+    audit: AuditLogService,
+    auth: AuthState,
+    events: broadcast::Sender<ServerEvent>,
+}
+
+/// Broadcast `ServerEvent::ResourceChanged { resource: "attachments" }`
+/// (spec §3.5 mirrors `ItemsService::notify_changed`'s "no receiver is not
+/// an error" convention - `send` returning `Err` just means nobody is
+/// currently subscribed).
+fn notify_attachments_changed(events: &broadcast::Sender<ServerEvent>) {
+    let _ = events.send(ServerEvent::ResourceChanged {
+        resource: "attachments".to_string(),
+    });
+}
+
+fn attachment_audit_detail(meta: &AttachmentMeta) -> serde_json::Value {
+    json!({
+        "fileName": meta.file_name,
+        "sizeBytes": meta.size_bytes,
+        "parentResource": meta.resource,
+        "parentId": meta.resource_id,
+    })
+}
+
+/// `POST /api/attachments?resource=&resourceId=&fileName=` query parameters
+/// (spec §3.5). Metadata rides the query string, not the body, since the
+/// body is the raw file bytes (same "no multipart dependency" shape as
+/// `POST /api/backups/restore`'s `?fileName=`, see this module's doc
+/// comment) - unlike that route, `fileName` here is load-bearing (it
+/// becomes `AttachmentMeta.file_name`), not just an audit-detail string.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentUploadQuery {
+    resource: String,
+    resource_id: String,
+    file_name: String,
+}
+
+async fn attachments_upload(
+    State(state): State<AttachmentsWriteState>,
+    headers: HeaderMap,
+    Query(query): Query<AttachmentUploadQuery>,
+    body: Bytes,
+) -> Result<Json<AttachmentMeta>, ApiError> {
+    let created_by = actor_identity(&headers, &state.auth).map(|identity| identity.id);
+    let meta = state
+        .attachments
+        .upload(NewAttachment {
+            resource: query.resource,
+            resource_id: query.resource_id,
+            file_name: query.file_name,
+            created_by,
+            bytes: body.to_vec(),
+        })
+        .await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "create",
+        "attachments",
+        &meta.id.to_string(),
+        Some(attachment_audit_detail(&meta)),
+    )
+    .await;
+    notify_attachments_changed(&state.events);
+    Ok(Json(meta))
+}
+
+async fn attachments_delete(
+    State(state): State<AttachmentsWriteState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let meta = state.attachments.delete(id).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "delete",
+        "attachments",
+        &id.to_string(),
+        Some(attachment_audit_detail(&meta)),
+    )
+    .await;
+    notify_attachments_changed(&state.events);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Mutating `attachments` routes (spec §3.5: `editor` and up, same RBAC
+/// floor as `items_write_router`). `DefaultBodyLimit::max` caps the upload
+/// route at `MAX_ATTACHMENT_BYTES` (+ [`ATTACHMENT_BODY_LIMIT_SLACK_BYTES`]);
+/// the other route here (`DELETE`) has no meaningful request body, so this
+/// is harmless for it (same reasoning as [`backups_router`]'s limit layer).
+fn attachments_write_router(
+    attachments: AttachmentsService,
+    audit: AuditLogService,
+    auth: AuthState,
+    events: broadcast::Sender<ServerEvent>,
+) -> Router {
+    let state = AttachmentsWriteState {
+        attachments,
+        audit: audit.clone(),
+        auth: auth.clone(),
+        events,
+    };
+    Router::new()
+        .route("/api/attachments", post(attachments_upload))
+        .route(
+            "/api/attachments/{id}",
+            axum::routing::delete(attachments_delete),
+        )
+        .with_state(state)
+        .layer(axum::extract::DefaultBodyLimit::max(
+            MAX_ATTACHMENT_BYTES + ATTACHMENT_BODY_LIMIT_SLACK_BYTES,
+        ))
+        .layer(middleware::from_fn_with_state(
+            RoleGuard {
+                auth: auth.clone(),
+                min: Role::Editor,
+                resource: "attachments",
+                audit,
+            },
+            require_role_at_least,
+        ))
+        .layer(middleware::from_fn_with_state(auth, require_auth))
+}
+
+/// `/api/attachments/*` (spec §3.5): merges the read (any role) and write
+/// (`editor`+) sub-routers, mirroring [`items_router`].
+fn attachments_router(
+    attachments: AttachmentsService,
+    audit: AuditLogService,
+    auth: AuthState,
+    events: broadcast::Sender<ServerEvent>,
+) -> Router {
+    attachments_read_router(attachments.clone(), auth.clone()).merge(attachments_write_router(
+        attachments,
+        audit,
+        auth,
+        events,
+    ))
+}
+
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log
 /// hook for `logout`, spec M14 - plus status/setup/change-password here
 /// since those need `UsersService`), SSE events, the `items` CRUD routes
 /// (RBAC-split read/write, spec M10), the `admin`-only `users` management
 /// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), the
-/// `admin`-only `backups` routes (spec M17), and the per-user `ui-settings`
-/// routes (spec M12), all behind the CSRF header check. Mount the result
-/// *before* `banto_server::static_files::static_router` so `/api/*` takes
-/// priority over the SPA fallback.
+/// `admin`-only `backups` routes (spec M17), the `attachments` CRUD routes
+/// (RBAC-split read/write, spec `docs/attachments-plan.md` §3.5 M20 unit
+/// B), and the per-user `ui-settings` routes (spec M12), all behind the
+/// CSRF header check. Mount the result *before*
+/// `banto_server::static_files::static_router` so `/api/*` takes priority
+/// over the SPA fallback.
 // Each parameter is a distinct, already-cloneable service handle threaded
 // through from `main()`/tests (no natural subset to bundle into a struct
 // without adding an indirection layer with a single call site); simpler to
@@ -1349,6 +1675,7 @@ pub fn api_router(
     settings: SettingsService,
     audit: AuditLogService,
     backup: BackupService,
+    attachments: AttachmentsService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     allow_setup: bool,
@@ -1369,7 +1696,7 @@ pub fn api_router(
             audit.clone(),
             allow_setup,
         ))
-        .merge(sse_route(auth.clone(), events))
+        .merge(sse_route(auth.clone(), events.clone()))
         .merge(items_router(items, audit.clone(), auth.clone()))
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
@@ -1377,7 +1704,8 @@ pub fn api_router(
             settings.clone(),
             auth.clone(),
         ))
-        .merge(backups_router(backup, audit, auth.clone()))
+        .merge(backups_router(backup, audit.clone(), auth.clone()))
+        .merge(attachments_router(attachments, audit, auth.clone(), events))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))
 }
@@ -1409,6 +1737,15 @@ mod tests {
             PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
             pool,
         )
+    }
+
+    /// An `AttachmentsService` for router helpers that never exercise
+    /// `/api/attachments/*` - same "never actually written to" reasoning as
+    /// [`unused_backup_service`]. Tests that DO exercise attachments use
+    /// [`router_with_role_tokens_and_attachments`] instead, which points at
+    /// a real, writable temp directory.
+    fn unused_attachments_service(pool: sqlx::SqlitePool) -> AttachmentsService {
+        AttachmentsService::new(pool, PathBuf::from("unused-in-tests").join("attachments"))
     }
 
     fn demo_auth() -> AuthState {
@@ -1443,6 +1780,7 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = unused_backup_service(pool.clone());
+        let attachments = unused_attachments_service(pool.clone());
         let audit = AuditLogService::new(pool);
 
         users
@@ -1486,7 +1824,17 @@ mod tests {
             .await
             .expect("viewer login");
         (
-            api_router(items, users, settings, audit, backup, auth, tx, false),
+            api_router(
+                items,
+                users,
+                settings,
+                audit,
+                backup,
+                attachments,
+                auth,
+                tx,
+                false,
+            ),
             admin_token,
             editor_token,
             viewer_token,
@@ -1500,6 +1848,7 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = unused_backup_service(pool.clone());
+        let attachments = unused_attachments_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = demo_auth();
         let token = auth
@@ -1507,7 +1856,17 @@ mod tests {
             .await
             .expect("login should succeed");
         (
-            api_router(items, users, settings, audit, backup, auth, tx, false),
+            api_router(
+                items,
+                users,
+                settings,
+                audit,
+                backup,
+                attachments,
+                auth,
+                tx,
+                false,
+            ),
             token,
         )
     }
@@ -1709,10 +2068,21 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = unused_backup_service(pool.clone());
+        let attachments = unused_attachments_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = demo_auth();
         let token = auth.login("admin", "admin").await.unwrap();
-        let router = api_router(items, users, settings, audit, backup, auth, tx, false);
+        let router = api_router(
+            items,
+            users,
+            settings,
+            audit,
+            backup,
+            attachments,
+            auth,
+            tx,
+            false,
+        );
 
         let create_response = router
             .clone()
@@ -1772,9 +2142,20 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = unused_backup_service(pool.clone());
+        let attachments = unused_attachments_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = demo_auth();
-        api_router(items, users, settings, audit, backup, auth, tx, allow_setup)
+        api_router(
+            items,
+            users,
+            settings,
+            audit,
+            backup,
+            attachments,
+            auth,
+            tx,
+            allow_setup,
+        )
     }
 
     fn get(path: &str) -> HttpRequest<Body> {
@@ -1966,6 +2347,7 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = unused_backup_service(pool.clone());
+        let attachments = unused_attachments_service(pool.clone());
         let audit = AuditLogService::new(pool);
         let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
         (
@@ -1975,6 +2357,7 @@ mod tests {
                 settings,
                 audit.clone(),
                 backup,
+                attachments,
                 auth,
                 tx,
                 allow_setup,
@@ -2415,6 +2798,7 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = unused_backup_service(pool.clone());
+        let attachments = unused_attachments_service(pool.clone());
         let audit = AuditLogService::new(pool);
 
         users
@@ -2450,6 +2834,7 @@ mod tests {
             settings,
             audit.clone(),
             backup,
+            attachments,
             auth,
             tx,
             false,
@@ -2458,10 +2843,12 @@ mod tests {
     }
 
     /// Like `router_with_role_tokens_and_audit`, but for the M17
-    /// `/api/backups/*` tests, which need a `BackupService` that ACTUALLY
-    /// WORKS end to end (create/list/read/stage a real file), not
-    /// [`unused_backup_service`]'s placeholder. Two things every other
-    /// helper in this module gets to skip:
+    /// `/api/backups/*` (and, since both need a real writable temp
+    /// directory, M20 `/api/attachments/*`) tests, which need services that
+    /// ACTUALLY WORK end to end (create/list/read/stage a real file), not
+    /// [`unused_backup_service`]/[`unused_attachments_service`]'s
+    /// placeholders. Two things every other helper in this module gets to
+    /// skip:
     /// - The router's own pool must be a real ON-DISK sqlite file, not
     ///   `:memory:` (`migrate_memory()`) - `VACUUM INTO` (which
     ///   `BackupService::create` uses) silently writes nothing when its
@@ -2469,7 +2856,8 @@ mod tests {
     ///   doc comment for the empirically-verified reason).
     /// - The returned `tempfile::TempDir` guard must be kept alive by the
     ///   caller for as long as the router is in use - dropping it deletes
-    ///   the directory `backups/`/`restore-pending.sqlite3` live in.
+    ///   the directory `backups/`/`restore-pending.sqlite3`/`attachments/`
+    ///   live in.
     async fn router_with_role_tokens_and_backup(
     ) -> (Router, tempfile::TempDir, String, String, String) {
         let dir = tempdir().expect("tempdir");
@@ -2487,6 +2875,7 @@ mod tests {
         let users = UsersService::new(pool.clone());
         let settings = SettingsService::new(pool.clone());
         let backup = BackupService::new(db_path, pool.clone());
+        let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));
         let audit = AuditLogService::new(pool);
 
         users
@@ -2516,7 +2905,17 @@ mod tests {
             .await
             .expect("viewer login");
 
-        let router = api_router(items, users, settings, audit, backup, auth, tx, false);
+        let router = api_router(
+            items,
+            users,
+            settings,
+            audit,
+            backup,
+            attachments,
+            auth,
+            tx,
+            false,
+        );
         (router, dir, admin_token, editor_token, viewer_token)
     }
 
@@ -3299,6 +3698,328 @@ mod tests {
             rows.iter()
                 .any(|r| r["action"] == "restore_cancelled" && r["resource"] == "backups"),
             "expected a restore_cancelled entry, got {rows:?}"
+        );
+    }
+
+    // --- M20: attachments -------------------------------------------------------
+
+    /// Full upload -> list -> download -> thumbnail(404, non-image) -> delete
+    /// round trip (spec `docs/attachments-plan.md` §3.5/§5): `editor` writes,
+    /// `viewer` reads. Also checks the `Content-Disposition` header carries
+    /// both the ASCII `filename=` and RFC 5987 `filename*=` forms.
+    #[tokio::test]
+    async fn editor_can_upload_list_download_and_delete_an_attachment() {
+        let (router, _dir, _admin, editor, viewer) = router_with_role_tokens_and_backup().await;
+        let bytes = b"hello attachment".to_vec();
+
+        let upload_response = router
+            .clone()
+            .oneshot(post_bytes_auth(
+                "/api/attachments?resource=items&resourceId=42&fileName=notes.txt",
+                &editor,
+                bytes.clone(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(upload_response.status(), StatusCode::OK);
+        let created = body_json(upload_response).await;
+        assert_eq!(created["resource"], "items");
+        assert_eq!(created["resourceId"], "42");
+        assert_eq!(created["fileName"], "notes.txt");
+        assert_eq!(created["mime"], "application/octet-stream");
+        assert_eq!(created["sizeBytes"].as_u64().unwrap() as usize, bytes.len());
+        assert_eq!(created["hasThumbnail"], false);
+        assert_eq!(created["createdBy"], "editor");
+        let id = created["id"].as_i64().unwrap();
+
+        let list_response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/attachments/list",
+                &viewer,
+                json!({ "resource": "items", "resourceId": "42" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let listed = body_json(list_response).await;
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed[0]["id"], id);
+
+        let download_response = router
+            .clone()
+            .oneshot(get_auth(
+                &format!("/api/attachments/{id}/download"),
+                &viewer,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(download_response.status(), StatusCode::OK);
+        let disposition = download_response
+            .headers()
+            .get(axum::http::header::CONTENT_DISPOSITION)
+            .expect("Content-Disposition header")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(disposition.contains("attachment"));
+        assert!(disposition.contains("filename=\"notes.txt\""));
+        assert!(disposition.contains("filename*=UTF-8''notes.txt"));
+        let downloaded = body_bytes(download_response).await;
+        assert_eq!(downloaded, bytes);
+
+        // Non-image upload: no thumbnail generated, so this 404s (spec §3.5).
+        let thumbnail_response = router
+            .clone()
+            .oneshot(get_auth(
+                &format!("/api/attachments/{id}/thumbnail"),
+                &viewer,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(thumbnail_response.status(), StatusCode::NOT_FOUND);
+
+        let delete_response = router
+            .clone()
+            .oneshot(delete_auth(&format!("/api/attachments/{id}"), &editor))
+            .await
+            .unwrap();
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let list_after_delete = router
+            .oneshot(post_json_auth(
+                "/api/attachments/list",
+                &viewer,
+                json!({ "resource": "items", "resourceId": "42" }),
+            ))
+            .await
+            .unwrap();
+        let listed_after = body_json(list_after_delete).await;
+        assert_eq!(listed_after.as_array().unwrap().len(), 0);
+    }
+
+    /// `viewer` cannot upload or delete attachments (spec §3.5: `editor`+
+    /// write floor) - both are rejected `403` with `{"kind":"forbidden"}`,
+    /// same shape as every other RBAC-guarded write route in this module.
+    #[tokio::test]
+    async fn viewer_cannot_upload_or_delete_attachments_forbidden_with_forbidden_kind() {
+        let (router, _dir, _admin, _editor, viewer) = router_with_role_tokens_and_backup().await;
+
+        let upload_response = router
+            .clone()
+            .oneshot(post_bytes_auth(
+                "/api/attachments?resource=items&resourceId=1&fileName=a.txt",
+                &viewer,
+                b"x".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(upload_response.status(), StatusCode::FORBIDDEN);
+        let json = body_json(upload_response).await;
+        assert_eq!(json["kind"], "forbidden");
+
+        let delete_response = router
+            .oneshot(delete_auth("/api/attachments/1", &viewer))
+            .await
+            .unwrap();
+        assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// `POST /api/attachments/list` needs a bearer token, same as every
+    /// other `require_auth`-guarded route (spec §3.5: `viewer`+, but
+    /// AUTHENTICATED viewer+, not anonymous).
+    #[tokio::test]
+    async fn attachments_list_route_requires_a_token() {
+        let (router, _dir, _admin, _editor, _viewer) = router_with_role_tokens_and_backup().await;
+        let response = router
+            .oneshot(post_json(
+                "/api/attachments/list",
+                json!({ "resource": "items", "resourceId": "1" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// Downloading/thumbnailing an id that does not exist is a plain `404`
+    /// (spec §3.5), same `NotFound` -> `404` mapping every other resource
+    /// uses (`banto_server::response::status_for`).
+    #[tokio::test]
+    async fn nonexistent_attachment_download_and_thumbnail_are_404() {
+        let (router, _dir, _admin, _editor, viewer) = router_with_role_tokens_and_backup().await;
+
+        let download_response = router
+            .clone()
+            .oneshot(get_auth("/api/attachments/999/download", &viewer))
+            .await
+            .unwrap();
+        assert_eq!(download_response.status(), StatusCode::NOT_FOUND);
+
+        let thumbnail_response = router
+            .oneshot(get_auth("/api/attachments/999/thumbnail", &viewer))
+            .await
+            .unwrap();
+        assert_eq!(thumbnail_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A body over `MAX_ATTACHMENT_BYTES` but still under the router's
+    /// `DefaultBodyLimit` (spec §7: 25MB cap, one constant) reaches
+    /// `AttachmentsService::upload`'s own size check and is rejected as a
+    /// `422` `Validation` error - the same "service-layer limit, not just a
+    /// transport-layer one" shape `banto_attachments`'s own crate tests
+    /// exercise directly (`upload_rejects_bytes_over_the_max_size`).
+    #[tokio::test]
+    async fn oversized_attachment_upload_is_rejected_as_validation() {
+        let (router, _dir, _admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+        let bytes = vec![0u8; MAX_ATTACHMENT_BYTES + 1];
+
+        let response = router
+            .oneshot(post_bytes_auth(
+                "/api/attachments?resource=items&resourceId=1&fileName=huge.bin",
+                &editor,
+                bytes,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = body_json(response).await;
+        assert_eq!(json["kind"], "validation");
+    }
+
+    /// A body beyond even the router's `DefaultBodyLimit` (spec §3.5: cap +
+    /// [`ATTACHMENT_BODY_LIMIT_SLACK_BYTES`] slack) never reaches the
+    /// handler at all - axum itself rejects it with `413 Payload Too Large`,
+    /// the transport-layer counterpart to the service-layer `422` above.
+    #[tokio::test]
+    async fn attachment_upload_beyond_the_body_limit_is_rejected_with_413() {
+        let (router, _dir, _admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+        let bytes = vec![0u8; MAX_ATTACHMENT_BYTES + ATTACHMENT_BODY_LIMIT_SLACK_BYTES + 1];
+
+        let response = router
+            .oneshot(post_bytes_auth(
+                "/api/attachments?resource=items&resourceId=1&fileName=huge.bin",
+                &editor,
+                bytes,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Upload/delete each record exactly one audit entry (spec §3.5:
+    /// `action: "create"`/`"delete"`, `resource: "attachments"`, detail
+    /// `{fileName,sizeBytes,parentResource,parentId}`) - same "once the
+    /// service call has already succeeded" convention as `items`/`backups`.
+    #[tokio::test]
+    async fn attachment_upload_and_delete_are_recorded_in_the_audit_log() {
+        let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+
+        let upload_response = router
+            .clone()
+            .oneshot(post_bytes_auth(
+                "/api/attachments?resource=items&resourceId=7&fileName=photo.bin",
+                &editor,
+                b"binary".to_vec(),
+            ))
+            .await
+            .unwrap();
+        let id = body_json(upload_response).await["id"].as_i64().unwrap();
+
+        router
+            .clone()
+            .oneshot(delete_auth(&format!("/api/attachments/{id}"), &editor))
+            .await
+            .unwrap();
+
+        let audit_response = router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        let rows = body_json(audit_response).await["rows"].clone();
+        let rows = rows.as_array().unwrap();
+
+        let create_entry = rows
+            .iter()
+            .find(|r| r["action"] == "create" && r["resource"] == "attachments")
+            .unwrap_or_else(|| panic!("expected a create entry, got {rows:?}"));
+        assert_eq!(create_entry["actorUsername"], "editor");
+        let create_detail: serde_json::Value = serde_json::from_str(
+            create_entry["detail"]
+                .as_str()
+                .expect("detail should be set"),
+        )
+        .unwrap();
+        assert_eq!(create_detail["fileName"], "photo.bin");
+        assert_eq!(create_detail["parentResource"], "items");
+        assert_eq!(create_detail["parentId"], "7");
+
+        let delete_entry = rows
+            .iter()
+            .find(|r| r["action"] == "delete" && r["resource"] == "attachments")
+            .unwrap_or_else(|| panic!("expected a delete entry, got {rows:?}"));
+        let delete_detail: serde_json::Value = serde_json::from_str(
+            delete_entry["detail"]
+                .as_str()
+                .expect("detail should be set"),
+        )
+        .unwrap();
+        assert_eq!(delete_detail["fileName"], "photo.bin");
+    }
+
+    /// Upload/delete each broadcast `ServerEvent::ResourceChanged { resource:
+    /// "attachments" }` (spec §3.5) - `AttachmentsService` itself has no
+    /// `ServerEvent` awareness (see this module's doc comment), so this
+    /// checks the handler-level wiring directly, mirroring `items`'s own
+    /// `update_via_rest_is_observable_on_the_event_channel`.
+    #[tokio::test]
+    async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let (tx, mut rx) = broadcast::channel(16);
+        let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+        let users = UsersService::new(pool.clone());
+        let settings = SettingsService::new(pool.clone());
+        let backup = unused_backup_service(pool.clone());
+        let dir = tempdir().expect("tempdir");
+        let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));
+        let audit = AuditLogService::new(pool);
+        let auth = demo_auth();
+        let token = auth.login("admin", "admin").await.unwrap();
+        let router = api_router(
+            items,
+            users,
+            settings,
+            audit,
+            backup,
+            attachments,
+            auth,
+            tx,
+            false,
+        );
+
+        let upload_response = router
+            .clone()
+            .oneshot(post_bytes_auth(
+                "/api/attachments?resource=items&resourceId=1&fileName=note.txt",
+                &token,
+                b"hello".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(upload_response.status(), StatusCode::OK);
+        rx.try_recv().expect("upload should emit an event");
+        let id = body_json(upload_response).await["id"].as_i64().unwrap();
+
+        router
+            .oneshot(delete_auth(&format!("/api/attachments/{id}"), &token))
+            .await
+            .unwrap();
+        let event = rx.try_recv().expect("delete should emit an event");
+        assert!(
+            matches!(event, ServerEvent::ResourceChanged { resource } if resource == "attachments")
         );
     }
 }

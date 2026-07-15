@@ -18,6 +18,10 @@ embed-ui = ["dep:rust-embed"]
 banto-core = { workspace = true }
 banto-storage = { workspace = true, features = ["sqlite"] }
 banto-server = { workspace = true }
+# M20 attachments (spec docs/attachments-plan.md §3.1, unit B): `rest.rs`
+# wires `AttachmentsService` into the REST router the same way it already
+# wires `ItemsService`/`BackupService`.
+banto-attachments = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

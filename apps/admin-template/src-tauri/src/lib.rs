@@ -29,6 +29,7 @@ use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, I
 use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
+use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::{
     lan_urls, start, static_router, AuthState, RunningServer, ServerConfig, ServerEvent,
@@ -36,6 +37,7 @@ use banto_server::{
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::Serialize;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
@@ -92,6 +94,20 @@ struct AppState {
     /// `restore-pending.sqlite3`'s location, see `crate::backup`'s doc
     /// comment).
     backup: BackupService,
+    /// File/image attachments (spec `docs/attachments-plan.md` §3, M20 unit
+    /// B): `banto_attachments::AttachmentsService` has no `tauri`/
+    /// `ServerEvent` awareness by design (see that crate's module doc
+    /// comment), so - unlike `items`, which broadcasts its own
+    /// `ResourceChanged` internally - the `attachments_upload`/
+    /// `attachments_delete` commands below broadcast on `events` themselves,
+    /// mirroring `admin_template_core::rest`'s attachments handlers.
+    attachments: AttachmentsService,
+    /// `attachments/` directory the above service was constructed with
+    /// (spec §3.3: `db_path.parent().join("attachments")`) - kept alongside
+    /// it purely for [`attachments_open_folder`], since
+    /// `AttachmentsService` (unlike `BackupService::backups_dir_display`)
+    /// exposes no accessor for its own `base_dir`.
+    attachments_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -757,6 +773,7 @@ async fn start_embedded_server(
     settings: SettingsService,
     audit: AuditLogService,
     backup: BackupService,
+    attachments: AttachmentsService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
@@ -765,8 +782,18 @@ async fn start_embedded_server(
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
     // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
-    let router = api_router(items, users, settings, audit, backup, auth, events, false)
-        .merge(static_router::<FrontendAssets>());
+    let router = api_router(
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        auth,
+        events,
+        false,
+    )
+    .merge(static_router::<FrontendAssets>());
     start(config, router).await
 }
 
@@ -814,6 +841,7 @@ async fn server_apply(
                 state.settings.clone(),
                 state.audit.clone(),
                 state.backup.clone(),
+                state.attachments.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -1399,6 +1427,257 @@ async fn backups_cancel_restore(state: State<'_, AppState>) -> Result<(), BantoE
     backups_cancel_restore_body(&state).await
 }
 
+// --- M20: attachments --------------------------------------------------------
+
+/// `viewer`+ (spec §3.5): every attachment for one record, newest first.
+#[tauri::command]
+async fn attachments_list(
+    state: State<'_, AppState>,
+    resource: String,
+    resource_id: String,
+) -> Result<Vec<AttachmentMeta>, BantoError> {
+    require_role(&state, Role::Viewer, "attachments").await?;
+    state
+        .attachments
+        .list_for_record(&resource, &resource_id)
+        .await
+}
+
+/// `viewer`+ (spec §3.5): raw thumbnail JPEG bytes, for the panel to wrap in
+/// a `Blob`/object URL (the webview has no `<img src="tauri://...">` file
+/// route to point at directly, same constraint `backups` documents for
+/// downloads - spec §3.6). `NotFound` (-> the same error the frontend
+/// already handles for a missing/never-generated thumbnail) covers both "no
+/// such attachment" and "attachment has no thumbnail" - see
+/// `AttachmentsService::read_thumbnail`'s doc comment.
+#[tauri::command]
+async fn attachments_read_thumbnail(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<tauri::ipc::Response, BantoError> {
+    require_role(&state, Role::Viewer, "attachments").await?;
+    // Raw Response for symmetry with `attachments_read_body` (thumbnails are
+    // small, but the frontend then handles both reads with one ArrayBuffer
+    // code path instead of a JSON number-array special case).
+    let bytes = state.attachments.read_thumbnail(id).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// `viewer`+ (spec §3.5): full attachment body, for in-panel image display
+/// (object URL) - the Tauri-side counterpart to REST's `GET
+/// /api/attachments/{id}/download`, which a browser can point an `<a
+/// download>`/`<img>` at directly but the webview cannot (spec §3.6).
+///
+/// Returns [`tauri::ipc::Response`] (raw bytes on the wire) rather than a
+/// serialized `Vec<u8>`: a JSON number-array would balloon a 25MB body to
+/// ~100MB of JSON to serialize and re-parse. The caller already holds the
+/// `AttachmentMeta` (from `attachments_list`) for the `mime`/`fileName` it
+/// needs to type the resulting `Blob`.
+#[tauri::command]
+async fn attachments_read_body(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<tauri::ipc::Response, BantoError> {
+    require_role(&state, Role::Viewer, "attachments").await?;
+    let (_meta, bytes) = state.attachments.read_body(id).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Decode a `%XX`-percent-encoded header value back to UTF-8 (spec §3.5:
+/// [`attachments_upload`]'s metadata rides `http::HeaderValue`s, which -
+/// unlike a JSON string - can only hold visible ASCII; the frontend
+/// `encodeURIComponent`s `fileName`/etc. before setting them as headers, so
+/// this is the matching decode step). No dependency added for this - same
+/// "small fixed alphabet, a dozen lines of code" reasoning as
+/// `admin_template_core::rest`'s RFC 5987 encoder. Any `%` not followed by
+/// two hex digits, or a final byte sequence that is not valid UTF-8, is
+/// treated as a malformed header value.
+fn percent_decode(value: &str) -> Result<String, BantoError> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+            match hex {
+                Some(byte) => {
+                    out.push(byte);
+                    i += 3;
+                }
+                None => {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| BantoError::Validation {
+        field_errors: vec![FieldError {
+            field: "header".to_string(),
+            message: "ヘッダー値の文字コードが不正です".to_string(),
+        }],
+    })
+}
+
+/// Read one required, percent-encoded header off an upload [`Request`]
+/// (spec §3.5) - see [`percent_decode`]'s doc comment for why the decode
+/// step exists at all.
+fn required_header_field(
+    request: &tauri::ipc::Request<'_>,
+    header_name: &str,
+    field_name: &str,
+) -> Result<String, BantoError> {
+    let raw = request
+        .headers()
+        .get(header_name)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BantoError::Validation {
+            field_errors: vec![FieldError {
+                field: field_name.to_string(),
+                message: "必須項目です".to_string(),
+            }],
+        })?;
+    percent_decode(raw)
+}
+
+/// `editor`+ (spec §3.5): upload a new attachment.
+///
+/// Binary transfer: this command takes [`tauri::ipc::Request`] (spec §3.5's
+/// "第一候補") rather than a typed `contents: Vec<u8>` argument - the
+/// frontend calls `invoke('attachments_upload', uint8ArrayBody, { headers
+/// })`, which Tauri delivers here as `InvokeBody::Raw` (see
+/// `tauri::ipc::Request::body`'s doc comment); `resource`/`resourceId`/
+/// `fileName` ride alongside as percent-encoded headers rather than
+/// ordinary command arguments because a `Raw` body has no JSON object for
+/// per-argument extraction to key into (`tauri::ipc::CommandArg`'s
+/// blanket impl errors out if a plain argument tries that against a `Raw`
+/// body) - `Request`/`State` are the only two argument types this command
+/// can mix, since both read from the invoke message directly rather than
+/// keying into its JSON payload.
+#[tauri::command]
+async fn attachments_upload(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<AttachmentMeta, BantoError> {
+    let actor = require_role(&state, Role::Editor, "attachments").await?;
+
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "file".to_string(),
+                    message: "ファイルのバイナリボディが必要です".to_string(),
+                }],
+            });
+        }
+    };
+    let resource = required_header_field(&request, "x-banto-resource", "resource")?;
+    let resource_id = required_header_field(&request, "x-banto-resource-id", "resourceId")?;
+    let file_name = required_header_field(&request, "x-banto-file-name", "fileName")?;
+
+    let meta = state
+        .attachments
+        .upload(NewAttachment {
+            resource,
+            resource_id,
+            file_name,
+            created_by: Some(actor.username.clone()),
+            bytes,
+        })
+        .await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "create",
+            resource: "attachments",
+            entity_id: Some(&meta.id.to_string()),
+            detail: Some(serde_json::json!({
+                "fileName": meta.file_name,
+                "sizeBytes": meta.size_bytes,
+                "parentResource": meta.resource,
+                "parentId": meta.resource_id,
+            })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    let _ = state.events.send(ServerEvent::ResourceChanged {
+        resource: "attachments".to_string(),
+    });
+    Ok(meta)
+}
+
+/// `editor`+ (spec §3.5): delete one attachment.
+#[tauri::command]
+async fn attachments_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(&state, Role::Editor, "attachments").await?;
+    let meta = state.attachments.delete(id).await?;
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "delete",
+            resource: "attachments",
+            entity_id: Some(&id.to_string()),
+            detail: Some(serde_json::json!({
+                "fileName": meta.file_name,
+                "sizeBytes": meta.size_bytes,
+                "parentResource": meta.resource,
+                "parentId": meta.resource_id,
+            })),
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+    let _ = state.events.send(ServerEvent::ResourceChanged {
+        resource: "attachments".to_string(),
+    });
+    Ok(())
+}
+
+/// `editor`+ (spec §3.6): open the `attachments/` directory in the OS file
+/// explorer - the same "no native save dialog in v1" fallback
+/// `backups_open_folder` uses, gated at the attachments WRITE floor (rather
+/// than `backups_open_folder`'s `admin`-only) since browsing the raw
+/// on-disk files is an attachments-management action, not a full-database
+/// one. **Windows-only** by design, see `backups_open_folder`'s doc comment
+/// for the same non-fatal cross-platform framing (`opened: false` rather
+/// than an `Err` on every other OS).
+#[tauri::command]
+async fn attachments_open_folder(
+    state: State<'_, AppState>,
+) -> Result<OpenFolderResult, BantoError> {
+    require_role(&state, Role::Editor, "attachments").await?;
+    let path = state.attachments_dir.display().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        let opened = std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .is_ok();
+        Ok(OpenFolderResult { opened, path })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(OpenFolderResult {
+            opened: false,
+            path,
+        })
+    }
+}
+
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
 /// "ウィンドウ分離" mode the v1 doc comment left as a future extension
 /// point). Thin by design: this is the ONLY Tauri-aware half of the pop-out
@@ -1488,6 +1767,11 @@ pub fn run() {
             let users = UsersService::new(pool.clone());
             let settings = SettingsService::new(pool.clone());
             let backup = BackupService::new(db_path.clone(), pool.clone());
+            // M20 attachments (spec docs/attachments-plan.md §3.3): same
+            // sibling-directory convention as `backups/` above, next to the
+            // DB file inside the app's own data directory.
+            let attachments_dir = data_dir.join("attachments");
+            let attachments = AttachmentsService::new(pool.clone(), attachments_dir.clone());
             let audit = AuditLogService::new(pool);
             // Records `login`/`login_failed` audit entries (spec M14) from
             // inside the verifier itself - see
@@ -1691,6 +1975,7 @@ pub fn run() {
                     settings.clone(),
                     audit.clone(),
                     backup.clone(),
+                    attachments.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,
@@ -1754,6 +2039,8 @@ pub fn run() {
                 server: AsyncMutex::new(initial_server),
                 audit,
                 backup,
+                attachments,
+                attachments_dir,
             });
 
             Ok(())
@@ -1799,6 +2086,12 @@ pub fn run() {
             backups_stage_restore,
             backups_pending,
             backups_cancel_restore,
+            attachments_list,
+            attachments_read_thumbnail,
+            attachments_read_body,
+            attachments_upload,
+            attachments_delete,
+            attachments_open_folder,
             panel_open,
         ])
         .run(tauri::generate_context!())
@@ -1831,8 +2124,13 @@ mod tests {
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(
                 PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
-                pool,
+                pool.clone(),
             ),
+            attachments: AttachmentsService::new(
+                pool,
+                PathBuf::from("unused-in-tests").join("attachments"),
+            ),
+            attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),
         }
     }
 
@@ -1861,7 +2159,9 @@ mod tests {
             }),
             server: AsyncMutex::new(None),
             audit: AuditLogService::new(pool.clone()),
-            backup: BackupService::new(db_path, pool),
+            backup: BackupService::new(db_path, pool.clone()),
+            attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
+            attachments_dir: dir.path().join("attachments"),
         };
         (state, dir)
     }

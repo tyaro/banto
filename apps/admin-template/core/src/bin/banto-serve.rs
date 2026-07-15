@@ -38,6 +38,7 @@ use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::UsersService;
+use banto_attachments::AttachmentsService;
 use banto_server::{lan_urls, start, static_router, AuthState, ServerConfig};
 use std::path::PathBuf;
 
@@ -80,7 +81,16 @@ async fn main() {
     let items = ItemsService::new(pool.clone()).with_events(events.clone());
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
-    let backup = BackupService::new(db_path_buf, pool.clone());
+    let backup = BackupService::new(db_path_buf.clone(), pool.clone());
+    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
+    // DB's own parent directory (same sibling-directory convention as
+    // `backups/`), falling back to `.` if `db_path` has no parent (e.g. a
+    // bare relative file name).
+    let attachments_base_dir = db_path_buf
+        .parent()
+        .map(|parent| parent.join("attachments"))
+        .unwrap_or_else(|| PathBuf::from("attachments"));
+    let attachments = AttachmentsService::new(pool.clone(), attachments_base_dir);
     let audit = AuditLogService::new(pool);
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
@@ -135,6 +145,7 @@ async fn main() {
         settings,
         audit,
         backup,
+        attachments,
         auth,
         events,
         allow_setup,

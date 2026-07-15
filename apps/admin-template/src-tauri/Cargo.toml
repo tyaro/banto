@@ -28,6 +28,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 banto-core = { path = "../../../crates/banto-core" }
 banto-server = { workspace = true }
+# M20 attachments (spec docs/attachments-plan.md §3.1, unit B): `AppState`
+# holds an `AttachmentsService` directly, same as `admin-template-core`'s
+# `rest.rs`.
+banto-attachments = { workspace = true }
 admin-template-core = { path = "../core" }
 tauri = { version = "2", features = [] }
 serde = { workspace = true }

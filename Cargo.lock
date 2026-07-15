@@ -13,6 +13,7 @@ name = "admin-template"
 version = "0.1.0"
 dependencies = [
  "admin-template-core",
+ "banto-attachments",
  "banto-core",
  "banto-server",
  "futures-util",
@@ -33,6 +34,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
+ "banto-attachments",
  "banto-core",
  "banto-server",
  "banto-storage",
