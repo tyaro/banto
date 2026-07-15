@@ -73,7 +73,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	let page: Page;
 
 	test.beforeAll(async ({ browser }) => {
-		page = await browser.newPage();
+		// This manually-created shared page bypasses the config's `use`
+		// context options, so reduced motion must be passed here explicitly.
+		// Without it, View Transitions (visual-refresh-design.md §11.1) freeze
+		// the OLD page's snapshot for the crossfade after each navigation and
+		// locators can pin an element from the outgoing page (e.g. getByLabel
+		// substring-matching a grid filter button right after goto /items/new).
+		page = await browser.newPage({ reducedMotion: 'reduce' });
 	});
 
 	test.afterAll(async () => {

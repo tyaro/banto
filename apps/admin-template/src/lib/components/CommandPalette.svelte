@@ -197,14 +197,33 @@
 		flex-direction: column;
 		width: min(560px, calc(100vw - 2rem));
 		max-height: min(60vh, 480px);
-		background: var(--banto-surface-raised, var(--banto-surface));
+		background: var(--banto-surface-overlay);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-lg);
 		overflow: hidden;
 		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
 		backdrop-filter: var(--banto-backdrop, none);
 		-webkit-backdrop-filter: var(--banto-backdrop, none);
+		/* Appearance motion (design.md §11.2): fade + scale(0.98→1). Same
+		   @starting-style technique as menu/Menu.svelte's popover, applied
+		   here to a plain mount/unmount ({#if commandPaletteStore.open} in
+		   (app)/+layout.svelte) rather than a popover toggle - @starting-style
+		   also fires on first paint of a freshly-inserted element, not only
+		   on display:none→block. Unsupporting browsers just skip the
+		   @starting-style block and the palette appears without motion. */
+		opacity: 1;
+		transform: scale(1);
+		transition:
+			opacity var(--banto-duration-slow) var(--banto-ease-spring),
+			transform var(--banto-duration-slow) var(--banto-ease-spring);
+	}
+
+	@starting-style {
+		.palette {
+			opacity: 0;
+			transform: scale(0.98);
+		}
 	}
 
 	.search {
@@ -253,12 +272,13 @@
 		box-sizing: border-box;
 		padding: 0.55rem 0.7rem;
 		border: none;
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		background: transparent;
 		color: var(--banto-text);
 		font-size: 0.875rem;
 		text-align: left;
 		cursor: pointer;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.result:disabled {
@@ -266,13 +286,14 @@
 		opacity: 0.6;
 	}
 
+	/* Selection tracks the mouse-hovered/keyboard-active row as one state
+	   (onmouseenter sets selectedIndex - see script) - the same neutral
+	   --banto-surface-hover the rest of the app uses for transient
+	   hover/focus (menu/MenuItem.svelte, Sidebar.svelte's plain :hover),
+	   distinct from a persistent "current page" indicator like
+	   Sidebar's .nav-item.active. */
 	.result.selected {
-		background: color-mix(in srgb, var(--banto-primary) 14%, transparent);
-		color: var(--banto-primary);
-	}
-
-	:global([data-banto-preset='glass']) .result.selected {
-		background: var(--banto-accent-gradient);
-		color: var(--banto-text-inverse);
+		background: var(--banto-surface-hover);
+		color: var(--banto-text);
 	}
 </style>

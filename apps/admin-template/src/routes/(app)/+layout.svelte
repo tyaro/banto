@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
@@ -6,6 +7,24 @@
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
 
 	let { children } = $props();
+
+	// View Transitions on page navigation (design.md §11.1). The
+	// startViewTransition existence check is the only branch - unsupporting
+	// browsers (older LAN clients) fall through to SvelteKit's normal instant
+	// swap. Also skipped under prefers-reduced-motion, on top of the token
+	// mechanism in banto.css that already zeroes --banto-duration-* there
+	// (belt and suspenders: this skips starting a transition at all, rather
+	// than starting one that resolves to a 0ms crossfade).
+	onNavigate((navigation) => {
+		if (!document.startViewTransition) return;
+		if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		return new Promise((resolve) => {
+			document.startViewTransition(async () => {
+				resolve();
+				await navigation.complete;
+			});
+		});
+	});
 
 	// <=900px sidebar overlay (visual-refresh-design.md §8.1). Local state
 	// here (not a new global store, per the design doc) - passed down to

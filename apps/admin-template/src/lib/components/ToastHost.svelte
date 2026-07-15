@@ -35,26 +35,45 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 0.6rem 0.75rem;
-		border-radius: var(--banto-radius);
-		background: var(--banto-surface-raised);
+		padding: 0.65rem 0.8rem;
+		border-radius: var(--banto-radius-md);
+		background: var(--banto-surface-overlay);
 		border: 1px solid var(--banto-border);
 		border-left-width: 4px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		border-left-color: var(--banto-border-strong);
+		box-shadow: var(--banto-shadow-lg);
 		font-size: 0.85rem;
 		color: var(--banto-text);
+		/* Glass preset (spec M12): no-op under standard (--banto-backdrop:
+		   none), same opt-in as CommandPalette.svelte's overlay. */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
+		/* Slide-in from the right (design.md §11.2). Finite animation driven
+		   entirely by the duration token, so prefers-reduced-motion (which
+		   zeroes --banto-duration-base in banto.css) collapses it to an
+		   instant appearance with no extra media query needed here. */
+		animation: banto-toast-in var(--banto-duration-base) var(--banto-ease-spring);
 	}
 
 	.toast.success {
-		border-left-color: var(--banto-success);
+		background: var(--banto-success-tint);
+		border-left-color: var(--banto-success-solid);
+		color: var(--banto-success-tint-text);
 	}
 
 	.toast.error {
-		border-left-color: var(--banto-danger);
+		background: var(--banto-danger-tint);
+		border-left-color: var(--banto-danger-solid);
+		color: var(--banto-danger-tint-text);
 	}
 
 	.toast.info {
+		/* No --banto-primary-tint token exists (plan Appendix A.3 only defines
+		   tint pairs for danger/success/warning) - same color-mix fallback
+		   StatusBadge.svelte's `info` variant already uses. */
+		background: color-mix(in srgb, var(--banto-primary) 16%, var(--banto-surface-overlay));
 		border-left-color: var(--banto-primary);
+		color: var(--banto-primary);
 	}
 
 	.message {
@@ -62,16 +81,42 @@
 	}
 
 	.close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		border: none;
 		background: none;
-		color: var(--banto-text-muted);
+		color: inherit;
+		opacity: 0.65;
 		cursor: pointer;
 		font-size: 1rem;
 		line-height: 1;
-		padding: 0;
+		padding: 0.3rem;
+		border-radius: var(--banto-radius-sm);
+		transition:
+			opacity var(--banto-duration-fast) var(--banto-ease-out),
+			background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.close:hover {
-		color: var(--banto-text);
+		opacity: 1;
+		background: color-mix(in srgb, currentColor 14%, transparent);
+	}
+
+	.close:focus-visible {
+		outline: none;
+		opacity: 1;
+		box-shadow: var(--banto-focus-ring);
+	}
+
+	@keyframes banto-toast-in {
+		from {
+			opacity: 0;
+			transform: translateX(24px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
 	}
 </style>

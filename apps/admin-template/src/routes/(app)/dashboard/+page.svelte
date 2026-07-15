@@ -43,6 +43,7 @@
 	import { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';
 	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
 	const STOCK_TARGET = 3_000_000;
 
@@ -346,7 +347,7 @@
 	</details>
 
 	{#if list.loading && list.rows.length === 0}
-		<p class="loading">読み込み中…</p>
+		<LoadingState label="商品データを読み込み中…" />
 	{:else}
 		<div class="chart-grid">
 			<section class="card primary">
@@ -534,10 +535,6 @@
 
 	.note {
 		margin: 0.5rem 0 0;
-	}
-
-	.loading {
-		color: var(--banto-text-muted);
 	}
 
 	/* KPI tiles (design.md §10): icon + label + tabular-nums value. Tile-only
