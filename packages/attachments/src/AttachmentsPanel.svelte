@@ -13,6 +13,7 @@
 	 * `ProviderError`; see `core/errors.ts`). The app wires a concrete
 	 * client from `attachmentsAdmin.ts`.
 	 */
+	import { untrack } from 'svelte';
 	import type { AttachmentMeta, AttachmentsClient } from './types';
 	import { formatFileSize } from './core/format';
 	import { fileTypeLabel } from './core/fileType';
@@ -111,9 +112,17 @@
 
 	$effect(() => {
 		// Re-run on mount and whenever resource/resourceId change (spec §3.7).
+		// These two reads are the effect's ONLY intended dependencies.
 		const targetResource = resource;
 		const targetResourceId = resourceId;
-		void reload(targetResource, targetResourceId);
+		// untrack: reload()'s synchronous prefix (everything before its first
+		// await) otherwise runs inside this effect's tracking context, and
+		// clearThumbnails() both READS `thumbnails` (registering it as a
+		// dependency) and WRITES it - the effect would then re-trigger itself
+		// forever (effect_update_depth_exceeded, hammering list requests;
+		// caught by smoke scenario 8, which lingers on the panel where the
+		// pre-existing scenarios navigated away too fast to crash).
+		untrack(() => void reload(targetResource, targetResourceId));
 		return () => {
 			loadToken++;
 			clearThumbnails();

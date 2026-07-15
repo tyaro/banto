@@ -1,7 +1,7 @@
 # M20: 添付ファイル/画像管理 計画書
 
 作成日: 2026-07-15  
-状態: 計画（レビュー待ち）  
+状態: 実装済み（単位A〜D完了。単位Dで検出した effect ループは §9 のとおり解消済み）  
 提供形態: `banto-attachments` クレート + `@banto/attachments` パッケージ +
 削除可能なデモ配線（roadmap.md「M19〜M21 の提供形態」の決定に従う）
 
@@ -224,3 +224,42 @@ A→B→C→D の順に依存。各単位でレビューと検証（既存の司
   バックアップアーカイブ」を roadmap バックログへ追加する
 - レコード単位の行レベル認可はない（viewer は任意の添付を閲覧可能）
 - デモモード（ブラウザ単体）では利用不可
+
+## 9. 単位D（E2E）で検出したブロッキング不具合（解消済み）
+
+**解消（2026-07-15）**: 下記の推定原因はレビューで確定し、`$effect` 内の
+`reload()` 呼び出しを Svelte の `untrack()` で包む修正を適用した
+（effect の依存を props の `resource`/`resourceId` の2読取だけに限定し、
+`clearThumbnails()` の `thumbnails` 読み書きを追跡外へ出す）。修正後、
+スモークE2E 11シナリオ（添付シナリオ含む）を3回連続で全件成功させ、
+本節の検出記録は経緯として保存する。
+
+### 検出時の記録（原文）
+
+2026-07-15、スモークE2Eへのシナリオ追加作業中に、items 詳細ページで
+`AttachmentsPanel` をマウントすると即座に Svelte の
+`effect_update_depth_exceeded` が発生し、`/api/attachments/list` への
+リクエストが際限なく（実測1000回以上/数秒）発火し続け、ブラウザタブが
+クラッシュする不具合を検出した。
+
+- **再現条件**: items 詳細ページを開くだけ（`idValid && storeReady &&
+  isAttachmentsAvailable()` が真になった時点）で発生。role（admin/viewer）・
+  添付の有無を問わず再現する。既存のスモークE2E（旧10シナリオ）でこれまで
+  検出されなかったのは、item 詳細ページへの滞在時間が短く（編集して即座に
+  一覧へ戻る）、ページ遷移でパネルがアンマウントされ都度ループが中断されて
+  いたため（`git stash` で旧10シナリオのみに戻し再検証し、22秒で10/10成功
+  することを確認済み）。滞在時間が伸びる操作（添付のアップロード/削除を
+  行うシナリオ、またはページに留まる viewer 閲覧シナリオ）で必ず露呈する。
+- **推定原因**: `packages/attachments/src/AttachmentsPanel.svelte` の
+  `$effect`（`resource`/`resourceId` を読んで `reload()` を呼ぶブロック）が
+  `reload()` を `await` なしで同期的に呼び出しており、`reload()` 冒頭の
+  `clearThumbnails()` が同一 `$state`（`thumbnails`）を
+  `for (const url of thumbnails.values())` で**読み**、直後に
+  `thumbnails = new Map()` で**書く**。この読み書きが `$effect` の同期実行
+  区間内で起きるため、`thumbnails` への書き込みが同じ `$effect` 自身を
+  再スケジュールし、無限ループになっていると推測される（未確定・要検証）。
+- **対応**: 本セッションはテスト/ドキュメントのみに限定されていたため、
+  `packages/attachments` のコード修正は行っていない。次のセッションで
+  上記の推定原因を起点に修正し、`e2e/tests/smoke.spec.ts` のシナリオ6
+  （viewer の読み取り専用確認）・シナリオ8（アップロード/サムネイル/削除）
+  を3回連続成功させてから、roadmap.md M20 を「完了」に更新すること。

@@ -4,7 +4,7 @@
  * Runs against a real `banto-serve --features embed-ui` (LAN/REST mode, no
  * mocked DataProvider - see playwright.config.ts's doc comment) with a
  * brand-new SQLite database, so scenario 1 legitimately hits the first-run
- * setup screen. All ten scenarios share ONE browser page/session and run in
+ * setup screen. All eleven scenarios share ONE browser page/session and run in
  * file order (`describe.serial` + `workers: 1`, config-wide): later
  * scenarios rely on state earlier ones created (the admin account, the
  * item, the viewer account, the audit trail, ...), the same way a person
@@ -12,10 +12,11 @@
  * from-scratch-state-per-test suite - keep new scenarios in this ordering
  * discipline rather than trying to make them independent.
  *
- * Deliberately scoped to a smoke pass (one scenario per screen, ~10 tests
+ * Deliberately scoped to a smoke pass (one scenario per screen, ~11 tests
  * total, per roadmap M18's non-scope note) - not exhaustive coverage of any
- * one feature (M14 audit log, M15 CSV, M16 command palette, M17 backups
- * already have their own focused unit/integration tests elsewhere).
+ * one feature (M14 audit log, M15 CSV, M16 command palette, M17 backups,
+ * M20 attachments already have their own focused unit/integration tests
+ * elsewhere).
  *
  * Flakiness: no explicit `waitForTimeout`/`sleep` anywhere in this file -
  * every wait is either Playwright's built-in locator auto-retry
@@ -41,6 +42,27 @@ const ITEM_NAME = `E2Eテスト商品-${Date.now()}`;
 const ITEM_PRICE = 1200;
 const ITEM_PRICE_UPDATED = 1500;
 const ITEM_STOCK = 10;
+
+// M20 attachments scenario (docs/attachments-plan.md §4 unit D): a
+// dedicated item so uploads/deletes never touch the item scenario 3 already
+// created and deleted.
+const ATTACHMENT_ITEM_NAME = `E2E添付テスト商品-${Date.now()}`;
+const PNG_FILE_NAME = 'attachment-test.png';
+const PNG_FILE_NAME_2 = 'attachment-test-2.png';
+const TXT_FILE_NAME = 'attachment-note.txt';
+
+// Smallest possible valid PNG (1x1, black pixel) inlined as base64 rather
+// than a committed binary fixture (spec's unit D guidance: prefer
+// `setInputFiles({ name, mimeType, buffer })` over adding a binary to the
+// repo) - real bytes so the server's `image::guess_format`/thumbnail
+// pipeline (banto-attachments) actually exercises its real decode path,
+// not a fake MIME label.
+const MIN_PNG_BASE64 =
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+function minimalPngBuffer(): Buffer {
+	return Buffer.from(MIN_PNG_BASE64, 'base64');
+}
 
 /** Open a filterable column's header filter and apply a "contains" filter (the default op) with `value`. Mirrors a user clicking the ▾ icon, typing, and clicking 適用 (FilterPopover.svelte). */
 async function applyColumnFilter(page: Page, columnHeader: string, value: string): Promise<void> {
@@ -210,6 +232,15 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await page.goto('/items');
 		await expect(page.getByRole('button', { name: '新規作成' })).toHaveCount(0);
+
+		// M20 attachments (spec §3.1: "閲覧 = viewer 以上、追加/削除 = editor
+		// 以上"): open any seeded demo item (the grid always has 1,000 rows,
+		// so this doesn't depend on scenario 3's item, which is deleted by
+		// now) and confirm the panel renders read-only - no upload affordance.
+		await page.getByRole('link', { name: '開く' }).first().click();
+		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
+		await expect(page.getByLabel('添付ファイルをアップロード')).toHaveCount(0);
+		await expect(page.getByRole('button', { name: 'アップロード' })).toHaveCount(0);
 	});
 
 	test('7. admin: audit log shows the login and items records', async () => {
@@ -235,7 +266,89 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(rowWithText(page, 'items').first()).toBeVisible();
 	});
 
-	test('8. command palette: search and navigate to the audit log', async () => {
+	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
+		await page.goto('/items');
+		await page.getByRole('button', { name: '新規作成' }).click();
+		await expect(page).toHaveURL(/\/items\/new$/);
+
+		await page.getByLabel('商品名').fill(ATTACHMENT_ITEM_NAME);
+		await page.getByLabel('価格').fill(String(ITEM_PRICE));
+		await page.getByLabel('在庫').fill(String(ITEM_STOCK));
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
+		const row = rowWithText(page, ATTACHMENT_ITEM_NAME);
+		await expect(row).toBeVisible();
+		const href = await row.getByRole('link', { name: '開く' }).getAttribute('href');
+		expect(href).toMatch(/^\/items\/\d+$/);
+
+		await page.goto(href!);
+		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
+		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
+
+		const uploadInput = page.getByLabel('添付ファイルをアップロード');
+
+		// 1. Upload a PNG image - it goes into the thumbnail grid as an <img>
+		// (AttachmentsPanel.svelte's `grouped.withThumbnail`).
+		await uploadInput.setInputFiles({
+			name: PNG_FILE_NAME,
+			mimeType: 'image/png',
+			buffer: minimalPngBuffer()
+		});
+		await expect(page.getByRole('img', { name: PNG_FILE_NAME, exact: true })).toBeVisible();
+
+		// 2. Upload a non-image file - it goes into the plain file-row list
+		// with its name and an extension badge (`fileTypeLabel`), not the
+		// thumbnail grid.
+		await uploadInput.setInputFiles({
+			name: TXT_FILE_NAME,
+			mimeType: 'text/plain',
+			buffer: Buffer.from('e2e attachment smoke test\n', 'utf-8')
+		});
+		const fileRow = page.locator('.file-row').filter({ hasText: TXT_FILE_NAME });
+		await expect(fileRow).toBeVisible();
+		await expect(fileRow.getByText('TXT', { exact: true })).toBeVisible();
+
+		// 3. Delete the text file first (confirm() - accept before the click,
+		// same discipline as scenario 3's item delete). Partial state: the
+		// file-row list empties out but the PNG thumbnail is still there.
+		page.once('dialog', (dialog) => dialog.accept());
+		await fileRow.getByRole('button', { name: '削除' }).click();
+		await expect(fileRow).toHaveCount(0);
+		await expect(page.getByRole('img', { name: PNG_FILE_NAME, exact: true })).toBeVisible();
+
+		// 4. Delete the PNG too - the panel returns to its empty-state copy.
+		const thumbTile = page.locator('.thumb-tile').filter({ hasText: PNG_FILE_NAME });
+		page.once('dialog', (dialog) => dialog.accept());
+		await thumbTile.getByRole('button', { name: '削除' }).click();
+		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
+
+		// 5. Re-upload one attachment and deliberately leave it in place: the
+		// cleanup step below deletes the item itself while it still owns an
+		// attachment, exercising the demo wiring's orphan cleanup
+		// (`delete_for_record("items", id)`, spec §3.8) rather than only ever
+		// deleting items with zero attachments.
+		await uploadInput.setInputFiles({
+			name: PNG_FILE_NAME_2,
+			mimeType: 'image/png',
+			buffer: minimalPngBuffer()
+		});
+		await expect(page.getByRole('img', { name: PNG_FILE_NAME_2, exact: true })).toBeVisible();
+
+		// Cleanup: delete the scenario item (`.form-panel`-scoped - the
+		// attachment tile above has its own same-labelled "削除" button, so an
+		// unscoped getByRole would be ambiguous). Deleting an item that still
+		// has an attachment must not error.
+		page.once('dialog', (dialog) => dialog.accept());
+		await page.locator('.form-panel').getByRole('button', { name: '削除' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		await page.goto(href!);
+		await expect(page.getByText('商品が見つかりません')).toBeVisible();
+	});
+
+	test('9. command palette: search and navigate to the audit log', async () => {
 		await page.goto('/items');
 		// The Ctrl+K listener lives on (app)/+layout.svelte's `<svelte:window>`,
 		// which only mounts after the route guard's async work (bantoReady,
@@ -253,7 +366,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/audit-log$/);
 	});
 
-	test('9. settings: switching to the dark theme sets data-theme', async () => {
+	test('10. settings: switching to the dark theme sets data-theme', async () => {
 		await page.goto('/settings');
 
 		// Not .getByLabel(...).check(): the radio inputs here are visually
@@ -268,7 +381,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 	});
 
-	test('10. backups: create a backup and see it in the list', async () => {
+	test('11. backups: create a backup and see it in the list', async () => {
 		await page.goto('/settings');
 
 		const backupRows = page.locator('.backup-list li');
