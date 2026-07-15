@@ -114,22 +114,33 @@
 		gap: 0.4rem;
 		width: 190px;
 		padding: 0.6rem;
-		background: var(--banto-surface-raised, var(--banto-surface));
+		background: var(--banto-surface-overlay);
 		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+		border-radius: var(--banto-radius-md);
+		box-shadow: var(--banto-shadow-lg);
+		/* Standard preset: no-op (var(--banto-backdrop) is `none`). Glass
+		   preset opts in by overriding --banto-backdrop (spec §9). */
+		backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	select,
 	input {
 		width: 100%;
 		box-sizing: border-box;
-		padding: 0.3rem 0.4rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		height: var(--banto-control-height-sm);
+		padding: 0 0.4rem;
+		border: 1px solid var(--banto-border-strong);
+		border-radius: var(--banto-radius-md);
 		background: var(--banto-surface);
 		color: var(--banto-text);
 		font-size: 0.8rem;
+		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	select:focus-visible,
+	input:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
 	}
 
 	.actions {
@@ -139,18 +150,26 @@
 	}
 
 	button {
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
-		padding: 0.25rem 0.6rem;
+		box-sizing: border-box;
+		height: var(--banto-control-height-sm);
+		border: 1px solid var(--banto-border-strong);
+		border-radius: var(--banto-radius-md);
+		padding: 0 0.6rem;
 		font-size: 0.75rem;
 		cursor: pointer;
 		background: var(--banto-surface);
 		color: var(--banto-text);
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	button.apply {
-		background: var(--banto-primary);
-		border-color: var(--banto-primary);
-		color: var(--banto-text-inverse);
+		background: var(--banto-primary-solid);
+		border-color: var(--banto-primary-solid);
+		color: var(--banto-on-solid);
+	}
+
+	button.apply:hover {
+		background: var(--banto-primary-solid-hover);
+		border-color: var(--banto-primary-solid-hover);
 	}
 </style>

@@ -29,15 +29,19 @@
 
 <style>
 	textarea {
+		/* min-height (not height): a 4-row textarea must stay taller than the
+		   single-line control height token, which only sets a floor here. */
+		min-height: var(--banto-control-height);
 		padding: 0.5rem 0.6rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		border: 1px solid var(--banto-border-strong);
+		border-radius: var(--banto-radius-md);
 		background: var(--banto-bg);
 		color: var(--banto-text);
 		font: inherit;
 		width: 100%;
 		box-sizing: border-box;
 		resize: vertical;
+		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	textarea:focus-visible {
@@ -47,7 +51,7 @@
 
 	textarea:disabled {
 		cursor: not-allowed;
-		opacity: 0.7;
+		opacity: 0.5;
 	}
 
 	textarea.muted {

@@ -1172,8 +1172,8 @@
 		z-index: 10;
 		display: grid;
 		height: var(--banto-grid-header-height);
-		background: var(--banto-surface);
-		border-bottom: 1px solid var(--banto-border);
+		background: var(--banto-surface-subtle);
+		border-bottom: 1px solid var(--banto-border-strong);
 	}
 
 	.drop-indicator {
@@ -1199,10 +1199,11 @@
 		display: grid;
 		border-bottom: 1px solid var(--banto-border);
 		box-sizing: border-box;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.row:hover {
-		background: color-mix(in srgb, var(--banto-primary) 6%, transparent);
+		background: var(--banto-surface-hover);
 	}
 
 	/* Server mode (spec §4.1, M5): a not-yet-fetched sparse-array hole. */
@@ -1265,6 +1266,7 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		color: var(--banto-text);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.cell.active {
@@ -1277,14 +1279,19 @@
 		background: color-mix(in srgb, var(--banto-primary) 12%, transparent);
 	}
 
+	/* Editing uses the solid primary (vs. active's text-toned primary) so the
+	   two states stay visually distinct within the same primary family. */
 	.cell.editing {
 		padding: 0;
 		overflow: visible;
 		z-index: 2;
+		outline: 2px solid var(--banto-primary-solid);
+		outline-offset: -2px;
+		background: var(--banto-surface);
 	}
 
 	.cell.editing.error {
-		outline: 2px solid var(--banto-danger);
+		outline: 2px solid var(--banto-danger-solid);
 		outline-offset: -2px;
 	}
 
@@ -1321,15 +1328,22 @@
 		z-index: 30;
 		margin-top: 2px;
 		padding: 0.25rem 0.5rem;
-		background: var(--banto-danger);
-		color: var(--banto-text-inverse);
-		border-radius: var(--banto-radius);
+		background: var(--banto-danger-solid);
+		/* Fixed white, NOT --banto-on-solid: that token pairs with the PRIMARY
+		   solid and goes dark in dark mode, where danger-solid stays #dc2626
+		   and needs white text (plan Appendix A.3). */
+		color: #ffffff;
+		border-radius: var(--banto-radius-sm);
 		font-size: 0.7rem;
 		white-space: nowrap;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+		box-shadow: var(--banto-shadow-md);
 	}
 
 	.empty-row {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 8rem;
 		padding: 1.5rem;
 		text-align: center;
 		color: var(--banto-text-muted);
