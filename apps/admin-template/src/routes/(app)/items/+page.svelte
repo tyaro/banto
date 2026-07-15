@@ -18,6 +18,7 @@
 		notify
 	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
+	import { Download, Plus, Upload } from '@lucide/svelte';
 	import type { Item } from '$lib/banto/sampleData';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
@@ -27,6 +28,8 @@
 		isItemsImportAvailable,
 		type ItemImportRow
 	} from '$lib/banto/itemsAdmin';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
 	import ItemsClientGrid, { type ItemRow } from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
 
@@ -361,6 +364,27 @@
 	let importSubmitting = $state(false);
 	let importFileInput: HTMLInputElement | undefined = $state();
 
+	// Display-only classification of the current import preview into the
+	// success/warning/danger status-panel tokens (design.md §Phase 4 CSV
+	// result panel). Purely derived from state that already drives the
+	// existing conditional markup below - no import/validation logic changes.
+	const importStatusVariant = $derived.by((): StatusBadgeVariant => {
+		if (!importPreview) return 'neutral';
+		if (importPreview.missingRequired.length > 0) return 'danger';
+		if (importPreview.serverErrors && importPreview.serverErrors.length > 0) return 'danger';
+		if (importPreview.rows.some((row) => row.errors.length > 0)) return 'warning';
+		return 'success';
+	});
+
+	const importStatusLabel = $derived.by((): string => {
+		if (!importPreview) return '';
+		if (importPreview.missingRequired.length > 0) return '必須列が不足しています';
+		if (importPreview.serverErrors && importPreview.serverErrors.length > 0)
+			return 'インポートに失敗しました';
+		if (importPreview.rows.some((row) => row.errors.length > 0)) return '確認が必要な行があります';
+		return 'インポート準備完了';
+	});
+
 	const REQUIRED_IMPORT_COLUMN_IDS = ['name', 'price', 'stock'] as const;
 
 	/** Column header label for an error's `columnId`, falling back to the raw id if unrecognized (e.g. a synthetic 'id' entry - see parseIdCell below). */
@@ -514,20 +538,32 @@
 </script>
 
 <div class="page">
-	<div class="page-header">
-		<h2>{resource.label}</h2>
-		<div class="page-header-actions">
+	<PageHeader title={resource.label} description="在庫と価格を管理します">
+		{#snippet actions()}
 			<div class="mode-toggle" role="group" aria-label="表示モード切り替え">
-				<button type="button" class:active={mode === 'client'} onclick={() => (mode = 'client')}>
+				<button
+					type="button"
+					class="banto-btn banto-btn--ghost"
+					class:active={mode === 'client'}
+					aria-pressed={mode === 'client'}
+					onclick={() => (mode = 'client')}
+				>
 					クライアント
 				</button>
-				<button type="button" class:active={mode === 'server'} onclick={() => (mode = 'server')}>
+				<button
+					type="button"
+					class="banto-btn banto-btn--ghost"
+					class:active={mode === 'server'}
+					aria-pressed={mode === 'server'}
+					onclick={() => (mode = 'server')}
+				>
 					サーバー
 				</button>
 			</div>
 			<label class="group-by">
 				グループ化:
 				<select
+					class="banto-input"
 					disabled={mode !== 'client'}
 					title={mode !== 'client' ? 'グループ化はクライアントモードのみ' : undefined}
 					onchange={handleGroupByChange}
@@ -537,11 +573,24 @@
 					<option value="updatedAt">更新日</option>
 				</select>
 			</label>
-			<button type="button" onclick={handleExport} disabled={exporting}>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={handleExport}
+				disabled={exporting}
+			>
+				<Download size={16} aria-hidden="true" />
 				{exporting ? 'エクスポート中…' : 'CSVエクスポート'}
 			</button>
 			{#if canWrite}
-				<button type="button" onclick={handleImportButtonClick}>CSVインポート</button>
+				<button
+					type="button"
+					class="banto-btn banto-btn--secondary"
+					onclick={handleImportButtonClick}
+				>
+					<Upload size={16} aria-hidden="true" />
+					CSVインポート
+				</button>
 				<input
 					class="file-input"
 					type="file"
@@ -549,10 +598,17 @@
 					bind:this={importFileInput}
 					onchange={handleImportFileChange}
 				/>
-				<button type="button" onclick={() => goto('/items/new')}>新規作成</button>
+				<button
+					type="button"
+					class="banto-btn banto-btn--primary new-item-btn"
+					onclick={() => goto('/items/new')}
+				>
+					<Plus size={16} aria-hidden="true" />
+					新規作成
+				</button>
 			{/if}
-		</div>
-	</div>
+		{/snippet}
+	</PageHeader>
 
 	<p class="note">
 		セル編集（ダブルクリック/Enter）・範囲選択・コピー&ペースト対応（M3）。「クライアント」は全件を一度に取得し、ソート/フィルタ/ページングをブラウザ側（BantoGrid）で行います。「サーバー」ではソート/フィルタ/ページングをDataProvider（単体ブラウザ=InMemory、Tauri/LANブラウザ=Rust+SQLite、REST/SSE経由）が実行し、行はスクロールに応じてブロック単位で遅延取得します（M5）。他クライアントの変更はSSE/Tauriイベント経由で自動反映されます（M6）。M5:
@@ -561,10 +617,13 @@
 	</p>
 
 	{#if importPreview}
-		<section class="import-preview">
-			<h3>CSVインポート確認 — {importPreview.fileName}</h3>
+		<section class="import-panel import-panel--{importStatusVariant}">
+			<header class="import-panel-header">
+				<StatusBadge variant={importStatusVariant} label={importStatusLabel} />
+				<h3>{importPreview.fileName}</h3>
+			</header>
 			{#if importPreview.missingRequired.length > 0}
-				<p class="error">
+				<p class="panel-text">
 					CSVヘッダーに必須列がありません: {importPreview.missingRequired
 						.map(columnLabel)
 						.join('、')}
@@ -573,12 +632,12 @@
 				{@const errorRows = importPreview.rows.filter((row) => row.errors.length > 0)}
 				{@const createCount = importPreview.rows.filter((row) => row.id === undefined).length}
 				{@const updateCount = importPreview.rows.filter((row) => row.id !== undefined).length}
-				<p class="summary">
+				<p class="panel-text summary">
 					新規 {createCount}件 / 更新 {updateCount}件 / エラー {errorRows.length}件（全{importPreview
 						.rows.length}行）
 				</p>
 				{#if importPreview.ignoredHeaders.length > 0}
-					<p class="note">無視される列: {importPreview.ignoredHeaders.join('、')}</p>
+					<p class="panel-text muted">無視される列: {importPreview.ignoredHeaders.join('、')}</p>
 				{/if}
 				{#if errorRows.length > 0}
 					<ul class="error-list">
@@ -591,11 +650,11 @@
 						{/each}
 					</ul>
 					{#if errorRows.length > 20}
-						<p class="note">他{errorRows.length - 20}件</p>
+						<p class="panel-text muted">他{errorRows.length - 20}件</p>
 					{/if}
 				{/if}
 				{#if importPreview.serverErrors}
-					<p class="error">サーバーでの処理結果（すべてロールバックされました）:</p>
+					<p class="panel-text">サーバーでの処理結果（すべてロールバックされました）:</p>
 					<ul class="error-list">
 						{#each importPreview.serverErrors.slice(0, 20) as serverError, i (i)}
 							<li>
@@ -604,13 +663,14 @@
 						{/each}
 					</ul>
 					{#if importPreview.serverErrors.length > 20}
-						<p class="note">他{importPreview.serverErrors.length - 20}件</p>
+						<p class="panel-text muted">他{importPreview.serverErrors.length - 20}件</p>
 					{/if}
 				{/if}
 			{/if}
 			<div class="actions">
 				<button
 					type="button"
+					class="banto-btn banto-btn--primary"
 					onclick={executeImport}
 					disabled={importSubmitting ||
 						importPreview.missingRequired.length > 0 ||
@@ -618,9 +678,14 @@
 				>
 					{importSubmitting ? '実行中…' : 'インポート実行'}
 				</button>
-				<button type="button" class="secondary" onclick={cancelImport} disabled={importSubmitting}
-					>キャンセル</button
+				<button
+					type="button"
+					class="banto-btn banto-btn--ghost"
+					onclick={cancelImport}
+					disabled={importSubmitting}
 				>
+					キャンセル
+				</button>
 			</div>
 		</section>
 	{/if}
@@ -652,69 +717,28 @@
 		min-height: 0;
 	}
 
-	.page-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		flex: 0 0 auto;
-		margin-bottom: 0.5rem;
-		gap: 1rem;
-	}
-
-	.page-header h2 {
-		margin: 0;
-		font-size: 1.1rem;
-	}
-
-	.page-header-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.page-header button {
-		padding: 0.5rem 1rem;
-		border: none;
-		border-radius: var(--banto-radius);
-		background: var(--banto-primary);
-		color: var(--banto-text-inverse);
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.page-header button:hover:not(:disabled) {
-		background: var(--banto-primary-hover);
-	}
-
-	.page-header button:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
+	/* Priority-ordered toolbar (design.md §Phase 4): view-mode/group-by stay
+	   ghost, export/import are secondary, 新規作成 is the sole primary
+	   action. DOM order is left as it always was (existing convention
+	   preserved per the implementation brief); only 新規作成 is pulled to
+	   the front once the toolbar wraps under 768px, below. */
 	.mode-toggle {
 		display: inline-flex;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		border: 1px solid var(--banto-border-strong);
+		border-radius: var(--banto-radius-md);
 		overflow: hidden;
 	}
 
-	.mode-toggle button {
-		padding: 0.4rem 0.8rem;
-		border: none;
-		background: var(--banto-surface);
-		color: var(--banto-text-muted);
+	.mode-toggle .banto-btn {
+		height: var(--banto-control-height-sm);
+		padding: 0 0.75rem;
+		border-radius: 0;
 		font-size: 0.8rem;
-		font-weight: 600;
-		cursor: pointer;
 	}
 
-	.mode-toggle button:hover {
-		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
-	}
-
-	.mode-toggle button.active {
-		background: var(--banto-primary);
-		color: var(--banto-text-inverse);
+	.mode-toggle .banto-btn.active {
+		background: var(--banto-primary-solid);
+		color: var(--banto-on-solid);
 	}
 
 	.group-by {
@@ -726,17 +750,21 @@
 	}
 
 	.group-by select {
-		padding: 0.35rem 0.5rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
-		background: var(--banto-surface);
-		color: var(--banto-text);
+		height: var(--banto-control-height-sm);
 		font-size: 0.8rem;
 	}
 
 	.group-by select:disabled {
 		cursor: not-allowed;
-		opacity: 0.6;
+		opacity: 0.5;
+	}
+
+	/* 768px 前後で折り返した際、主要操作（新規作成）を先頭に維持する
+	   (design.md §Phase 4)。 */
+	@media (max-width: 48rem) {
+		.new-item-btn {
+			order: -1;
+		}
 	}
 
 	.note {
@@ -761,29 +789,69 @@
 		border: 0;
 	}
 
-	.import-preview {
+	/* CSV import result panel (design.md §Phase 4): success/warning/danger
+	   distinguishable via the tint token pairs, StatusBadge carries the
+	   variant icon so the state never depends on color alone. */
+	.import-panel {
 		flex: 0 0 auto;
 		margin: 0 0 0.75rem;
-		padding: 0.75rem 1rem;
-		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		padding: 0.85rem 1rem;
+		border-radius: var(--banto-radius-lg);
 		background: var(--banto-surface);
+		border: 1px solid var(--banto-border);
 	}
 
-	.import-preview h3 {
-		margin: 0 0 0.5rem;
-		font-size: 0.95rem;
+	.import-panel--success {
+		background: var(--banto-success-tint);
+		border-color: transparent;
 	}
 
-	.import-preview .summary {
+	.import-panel--warning {
+		background: var(--banto-warning-tint);
+		border-color: transparent;
+	}
+
+	.import-panel--danger {
+		background: var(--banto-danger-tint);
+		border-color: transparent;
+	}
+
+	.import-panel-header {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
 		margin: 0 0 0.5rem;
+	}
+
+	.import-panel-header h3 {
+		margin: 0;
+		font-size: 0.9rem;
+		color: var(--banto-text-muted);
+	}
+
+	.panel-text {
+		margin: 0 0 0.5rem;
+		font-size: 0.85rem;
+	}
+
+	.panel-text.summary {
 		font-weight: 600;
 	}
 
-	.import-preview .error {
-		margin: 0 0 0.5rem;
-		color: var(--banto-danger);
-		font-weight: 600;
+	.panel-text.muted {
+		color: var(--banto-text-muted);
+	}
+
+	.import-panel--success .panel-text {
+		color: var(--banto-success-tint-text);
+	}
+
+	.import-panel--warning .panel-text {
+		color: var(--banto-warning-tint-text);
+	}
+
+	.import-panel--danger .panel-text {
+		color: var(--banto-danger-tint-text);
 	}
 
 	.error-list {
@@ -799,37 +867,8 @@
 		margin-bottom: 0.25rem;
 	}
 
-	.import-preview .actions {
+	.import-panel .actions {
 		display: flex;
 		gap: 0.75rem;
-	}
-
-	.import-preview button {
-		padding: 0.5rem 1rem;
-		border: none;
-		border-radius: var(--banto-radius);
-		background: var(--banto-primary);
-		color: var(--banto-text-inverse);
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.import-preview button:hover:not(:disabled) {
-		background: var(--banto-primary-hover);
-	}
-
-	.import-preview button:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.import-preview button.secondary {
-		background: transparent;
-		border: 1px solid var(--banto-border);
-		color: var(--banto-text);
-	}
-
-	.import-preview button.secondary:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--banto-text) 8%, transparent);
 	}
 </style>

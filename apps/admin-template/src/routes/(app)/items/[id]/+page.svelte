@@ -6,6 +6,10 @@
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import ErrorState from '$lib/components/ui/ErrorState.svelte';
+	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;
@@ -86,93 +90,72 @@
 </script>
 
 <div class="page">
-	<h2>{resource.label}を編集</h2>
+	<PageHeader title={`${resource.label}を編集`} />
 
-	{#if isNotFoundError}
-		<p class="not-found">
-			{resource.label}が見つかりません。<a href="/items">一覧へ戻る</a>
-		</p>
-	{:else if formResource?.loading}
-		<p class="loading">読み込み中…</p>
-	{:else if formResource?.error}
-		<p class="load-error">
-			読み込みに失敗しました。
-			<button type="button" class="reload" onclick={() => void loadForm()}>再読み込み</button>
-			<a href="/items">一覧へ戻る</a>
-		</p>
-	{:else if storeReady}
-		<BantoForm
-			{schema}
-			{store}
-			onSubmit={handleSubmit}
-			submitting={(formResource?.saving ?? false) || !canWrite}
-		>
-			{#if canWrite}
-				<button type="button" class="delete" onclick={handleDelete}>削除</button>
-			{/if}
-		</BantoForm>
-	{/if}
+	<div class="form-panel">
+		{#if isNotFoundError}
+			<EmptyState
+				title={`${resource.label}が見つかりません`}
+				description="削除されたか、URLが正しくない可能性があります。"
+			>
+				{#snippet action()}
+					<a class="banto-btn banto-btn--secondary" href="/items">一覧へ戻る</a>
+				{/snippet}
+			</EmptyState>
+		{:else if formResource?.loading}
+			<LoadingState label="読み込み中…" />
+		{:else if formResource?.error}
+			<ErrorState title="読み込みに失敗しました" description="通信状態を確認し、再読み込みしてください。">
+				{#snippet action()}
+					<div class="error-actions">
+						<button
+							type="button"
+							class="banto-btn banto-btn--secondary"
+							onclick={() => void loadForm()}
+						>
+							再読み込み
+						</button>
+						<a class="banto-btn banto-btn--ghost" href="/items">一覧へ戻る</a>
+					</div>
+				{/snippet}
+			</ErrorState>
+		{:else if storeReady}
+			<BantoForm
+				{schema}
+				{store}
+				onSubmit={handleSubmit}
+				submitting={(formResource?.saving ?? false) || !canWrite}
+			>
+				{#if canWrite}
+					<button type="button" class="banto-btn banto-btn--danger" onclick={handleDelete}>
+						削除
+					</button>
+				{/if}
+			</BantoForm>
+		{/if}
+	</div>
 </div>
 
 <style>
 	.page {
-		max-width: 480px;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		/* Readable form width (design.md §Phase 4), not the full page width. */
+		max-width: 720px;
+	}
+
+	.form-panel {
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-sm);
 		padding: 1.25rem;
 	}
 
-	h2 {
-		margin: 0 0 1rem;
-		font-size: 1.1rem;
-	}
-
-	.loading {
-		color: var(--banto-text-muted);
-	}
-
-	.not-found {
-		color: var(--banto-text-muted);
-	}
-
-	.not-found a {
-		color: var(--banto-primary);
-	}
-
-	.load-error {
-		color: var(--banto-text-muted);
-	}
-
-	.load-error a {
-		color: var(--banto-primary);
-	}
-
-	.reload {
-		padding: 0.15rem 0.6rem;
-		margin: 0 0.4rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
-		background: transparent;
-		color: var(--banto-text);
-		cursor: pointer;
-	}
-
-	.reload:hover {
-		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
-	}
-
-	.delete {
-		padding: 0.55rem 1rem;
-		border: 1px solid var(--banto-danger);
-		border-radius: var(--banto-radius);
-		background: transparent;
-		color: var(--banto-danger);
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.delete:hover {
-		background: color-mix(in srgb, var(--banto-danger) 10%, transparent);
+	.error-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 </style>
