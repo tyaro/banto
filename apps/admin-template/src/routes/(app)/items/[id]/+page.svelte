@@ -4,8 +4,11 @@
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
+	import { AttachmentsPanel } from '@banto/attachments';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
+	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
+	import { attachmentsClient } from '$lib/banto/attachmentsClient';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import ErrorState from '$lib/components/ui/ErrorState.svelte';
@@ -105,7 +108,10 @@
 		{:else if formResource?.loading}
 			<LoadingState label="読み込み中…" />
 		{:else if formResource?.error}
-			<ErrorState title="読み込みに失敗しました" description="通信状態を確認し、再読み込みしてください。">
+			<ErrorState
+				title="読み込みに失敗しました"
+				description="通信状態を確認し、再読み込みしてください。"
+			>
 				{#snippet action()}
 					<div class="error-actions">
 						<button
@@ -134,6 +140,26 @@
 			</BantoForm>
 		{/if}
 	</div>
+
+	<!--
+		M20 demo wiring (spec docs/attachments-plan.md §3.8, deletable per
+		docs/template-scope.md §3): only mount once the record itself has
+		loaded successfully (`storeReady`, which already implies `idValid` -
+		see `loadForm` above - kept explicit here for readability) so the
+		panel never fires a list request for a not-found/errored/new record.
+		Hidden entirely in demo mode (`isAttachmentsAvailable()` false)
+		rather than showing an "unavailable" placeholder like backups does:
+		this panel sits below an otherwise-complete form, and an inert
+		placeholder there reads as more broken than simply absent.
+	-->
+	{#if idValid && storeReady && isAttachmentsAvailable()}
+		<AttachmentsPanel
+			client={attachmentsClient}
+			resource="items"
+			resourceId={String(parsedId)}
+			{canWrite}
+		/>
+	{/if}
 </div>
 
 <style>

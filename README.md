@@ -157,6 +157,28 @@ Tauriコマンド）を自リソースに書き換え、次にフロント側
 ボタン）を外す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
 されるため、削除してもナビ自体には影響しない。
 
+**添付ファイル機能（`@banto/attachments` + items 添付デモ、M20）**:
+以下の順で外すとビルド・テストが引き続き通る（依存の少ない順）。
+
+1. `apps/admin-template/src/routes/(app)/items/[id]/+page.svelte` の
+   `AttachmentsPanel` 配線（`M20 demo wiring` コメントのブロック）と
+   関連 import（`@banto/attachments`・`isAttachmentsAvailable`・
+   `attachmentsClient`）を削除。
+2. `apps/admin-template/src/lib/banto/attachmentsClient.ts`・
+   `src/lib/banto/attachmentsAdmin.ts` を削除。
+3. `apps/admin-template/core/src/rest.rs` の `attachments_router`
+   一式（`attachments_list`/`attachments_upload`/`attachments_delete`等）と
+   `items_delete` からの `delete_for_record` 呼び出し・`ItemsWriteState`
+   の `attachments` フィールドを外す。`src-tauri/src/lib.rs` も同様に
+   `attachments_*` コマンドと `AppState` の `attachments`/`attachments_dir`
+   フィールド、`items_delete` の `delete_for_record` 呼び出しを外す。
+4. `apps/admin-template/package.json` の `@banto/attachments` 依存、
+   ワークスペースの `crates/banto-attachments`（`Cargo.toml` の
+   `members` と `admin-template-core`/`admin-template` の依存）を外す。
+5. `apps/admin-template/core/migrations/0006_attachments.sql` を削除
+   （`attachments` テーブルは他のテーブルから参照されないため、単独で
+   安全に外せる）。
+
 ## 開発
 
 前提: Node 24+ / pnpm 10+ / Rust（Tauriの[プラットフォーム別前提条件](https://tauri.app/start/prerequisites/)）

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@banto/admin-core": "workspace:*",
+    "@banto/attachments": "workspace:*",
     "@banto/charts": "workspace:*",
     "@banto/dock-svelte": "workspace:*",
     "@banto/forms": "workspace:*",

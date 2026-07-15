@@ -267,6 +267,26 @@ async fn items_update(
 async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
     let actor = require_role(&state, Role::Editor, "items").await?;
     state.items.delete(id).await?;
+    // M20 unit C demo wiring (spec docs/attachments-plan.md §3.8): sweep up
+    // any attachments left pointing at the now-deleted record. Best-effort,
+    // same reasoning as the REST handler (admin-template-core's
+    // `rest.rs::items_delete`) - a storage hiccup here must not turn an
+    // already-successful item delete into a command error.
+    let attachments_removed = match state
+        .attachments
+        .delete_for_record("items", &id.to_string())
+        .await
+    {
+        Ok(count) => count,
+        Err(err) => {
+            eprintln!(
+                "banto: item {id} の添付ファイル削除に失敗しました（item自体の削除は完了済み）: {err}"
+            );
+            0
+        }
+    };
+    let detail = (attachments_removed > 0)
+        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));
     state
         .audit
         .record(AuditEntry {
@@ -275,7 +295,7 @@ async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
             action: "delete",
             resource: "items",
             entity_id: Some(&id.to_string()),
-            detail: None,
+            detail,
             origin: "tauri",
             result: "ok",
         })

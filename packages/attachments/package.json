@@ -1,0 +1,37 @@
+{
+  "name": "@banto/attachments",
+  "version": "0.1.0",
+  "description": "Banto attachments: file/image attachment panel (Svelte 5 Runes UI), spec docs/attachments-plan.md §3.7",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tyaro/banto.git",
+    "directory": "packages/attachments"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.30.0",
+    "svelte-check": "^4.2.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0",
+    "vitest": "^3.0.0"
+  }
+}
