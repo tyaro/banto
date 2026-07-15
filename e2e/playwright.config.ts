@@ -80,7 +80,15 @@ export default defineConfig({
 	use: {
 		baseURL: BASE_URL,
 		trace: 'retain-on-failure',
-		screenshot: 'only-on-failure'
+		screenshot: 'only-on-failure',
+		// View Transitions (visual-refresh-design.md §11.1) freeze the OLD
+		// page's snapshot for the crossfade duration, so right after a
+		// navigation the DOM briefly still shows the previous page - locators
+		// can pin the wrong element in that window. reduced-motion makes
+		// onNavigate skip startViewTransition entirely (and zeroes every
+		// --banto-duration-* token), keeping the suite deterministic - the
+		// same setting §12.1 prescribes for the visual-regression project.
+		reducedMotion: 'reduce'
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 	webServer: {

@@ -26,6 +26,7 @@
 		type DockLayout,
 		type PanelContent
 	} from '@banto/dock-svelte';
+	import { LayoutGrid, JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
 	import type { Item } from '$lib/banto/sampleData';
 	import {
 		byCategory,
@@ -41,6 +42,8 @@
 	import { getUiSettings, isTauri } from '$lib/banto/setup';
 	import { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';
 	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
 	const STOCK_TARGET = 3_000_000;
 
@@ -295,66 +298,61 @@
 </script>
 
 <div class="page">
-	<p class="note">
-		商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図に加え、複合（棒+折れ線）・レーダー・ヒートマップ・ゲージも
-		@banto/charts
-		のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
-	</p>
+	<PageHeader
+		title="ダッシュボード"
+		description={`商品データ ${list.totalCount.toLocaleString()} 件からの集計`}
+	/>
 
 	<div class="stat-row">
 		<section class="stat-tile">
-			<span class="stat-label">商品数</span>
-			<span class="stat-value">{stats.count.toLocaleString()}</span>
-		</section>
-		<section class="stat-tile">
-			<span class="stat-label">在庫合計</span>
-			<div class="stat-value-row">
-				<span class="stat-value">{stats.stockTotal.toLocaleString()}</span>
-				<Sparkline values={monthCounts.map((m) => m.count)} width={72} height={24} />
+			<span class="stat-icon" aria-hidden="true"><Package size={18} /></span>
+			<div class="stat-body">
+				<span class="stat-label">商品数</span>
+				<span class="stat-value">{stats.count.toLocaleString()}</span>
 			</div>
 		</section>
 		<section class="stat-tile">
-			<span class="stat-label">平均価格</span>
-			<span class="stat-value">{yen(stats.avgPrice)}</span>
+			<span class="stat-icon" aria-hidden="true"><Warehouse size={18} /></span>
+			<div class="stat-body">
+				<span class="stat-label">在庫合計</span>
+				<div class="stat-value-row">
+					<span class="stat-value">{stats.stockTotal.toLocaleString()}</span>
+					<Sparkline values={monthCounts.map((m) => m.count)} width={72} height={24} />
+				</div>
+			</div>
 		</section>
 		<section class="stat-tile">
-			<span class="stat-label">在庫僅少（50未満）</span>
-			<span class="stat-value">{stats.lowStockCount.toLocaleString()}</span>
+			<span class="stat-icon" aria-hidden="true"><JapaneseYen size={18} /></span>
+			<div class="stat-body">
+				<span class="stat-label">平均価格</span>
+				<span class="stat-value">{yen(stats.avgPrice)}</span>
+			</div>
+		</section>
+		<section class="stat-tile">
+			<span class="stat-icon" aria-hidden="true"><TriangleAlert size={18} /></span>
+			<div class="stat-body">
+				<span class="stat-label">在庫僅少（50未満）</span>
+				<span class="stat-value">{stats.lowStockCount.toLocaleString()}</span>
+			</div>
 		</section>
 	</div>
 
+	<details class="about-demo">
+		<summary>このデモについて</summary>
+		<p class="note">
+			商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図に加え、複合（棒+折れ線）・レーダー・ヒートマップ・ゲージも
+			@banto/charts
+			のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
+		</p>
+	</details>
+
 	{#if list.loading && list.rows.length === 0}
-		<p class="loading">読み込み中…</p>
+		<LoadingState label="商品データを読み込み中…" />
 	{:else}
 		<div class="chart-grid">
-			<section class="card">
-				<h2>カテゴリ別在庫</h2>
-				<BarChart
-					data={categoryStock}
-					category={(row) => row.category}
-					series={[{ id: 'stock', label: '在庫', value: (row) => row.stock }]}
-					horizontal
-					label="カテゴリ別在庫の横棒グラフ"
-					height={280}
-					formatValue={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card">
-				<h2>価格帯分布</h2>
-				<PieChart
-					data={buckets}
-					category={(row) => row.bucket}
-					value={(row) => row.count}
-					donut
-					label="価格帯分布のドーナツグラフ"
-					height={280}
-					formatValue={countLabel}
-				/>
-			</section>
-
-			<section class="card">
+			<section class="card primary">
 				<h2>月別更新件数</h2>
+				<p class="card-caption">商品データの更新件数を月次で集計した推移です。</p>
 				<LineChart
 					data={monthCounts}
 					x={(row) => row.month}
@@ -366,8 +364,37 @@
 				/>
 			</section>
 
-			<section class="card">
+			<section class="card secondary">
+				<h2>カテゴリ別在庫</h2>
+				<p class="card-caption">カテゴリごとの在庫合計です。</p>
+				<BarChart
+					data={categoryStock}
+					category={(row) => row.category}
+					series={[{ id: 'stock', label: '在庫', value: (row) => row.stock }]}
+					horizontal
+					label="カテゴリ別在庫の横棒グラフ"
+					height={280}
+					formatValue={(n) => n.toLocaleString()}
+				/>
+			</section>
+
+			<section class="card secondary">
+				<h2>価格帯分布</h2>
+				<p class="card-caption">価格帯ごとの商品件数の内訳です。</p>
+				<PieChart
+					data={buckets}
+					category={(row) => row.bucket}
+					value={(row) => row.count}
+					donut
+					label="価格帯分布のドーナツグラフ"
+					height={280}
+					formatValue={countLabel}
+				/>
+			</section>
+
+			<section class="card secondary">
 				<h2>価格×在庫</h2>
+				<p class="card-caption">商品ごとの価格と在庫の関係です（先頭500件）。</p>
 				<ScatterChart
 					data={scatterRows}
 					x={(row) => row.price}
@@ -383,8 +410,9 @@
 
 		<h2 class="section-heading">チャート拡張（v2）</h2>
 		<div class="chart-grid">
-			<section class="card">
+			<section class="card primary">
 				<h2>月別更新件数と3ヶ月移動平均</h2>
+				<p class="card-caption">月次の更新件数に3ヶ月移動平均を重ねた複合グラフです。</p>
 				<ComboChart
 					data={monthlyAvg}
 					x={(row) => row.month}
@@ -396,8 +424,9 @@
 				/>
 			</section>
 
-			<section class="card">
+			<section class="card secondary">
 				<h2>曜日×月の更新件数</h2>
+				<p class="card-caption">直近12ヶ月の更新件数を曜日別に見たヒートマップです。</p>
 				<Heatmap
 					data={weekdayHeat}
 					x={(row) => row.month}
@@ -409,8 +438,9 @@
 				/>
 			</section>
 
-			<section class="card">
+			<section class="card secondary">
 				<h2>在庫充足率</h2>
+				<p class="card-caption">在庫合計 / 目標在庫（{yen(STOCK_TARGET)}）の比率です。</p>
 				<Gauge
 					value={stats.stockTotal}
 					max={STOCK_TARGET}
@@ -420,8 +450,9 @@
 				/>
 			</section>
 
-			<section class="card">
+			<section class="card secondary">
 				<h2>上位カテゴリの商品数</h2>
+				<p class="card-caption">商品件数の多い上位5カテゴリの比較です。</p>
 				<RadarChart
 					data={topCategories}
 					axis={(row) => row.category}
@@ -431,34 +462,34 @@
 					formatValue={(n) => n.toLocaleString()}
 				/>
 			</section>
-
-			<section class="card wide">
-				<h2>ドッキングレイアウト</h2>
-				<p>
-					ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
-				</p>
-				<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
-					{#each PANEL_DEFS as def (def.id)}
-						<button
-							type="button"
-							class="dock-toggle"
-							class:active={isPanelVisible(def.id)}
-							aria-pressed={isPanelVisible(def.id)}
-							disabled={isDocked(def.id)}
-							title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
-							onclick={() => togglePanel(def.id)}
-						>
-							{def.icon}
-							{def.title}
-						</button>
-					{/each}
-					<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
-				</div>
-				<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
-					<DockHost {dock} panel={dockPanel} {onPopOut} />
-				</div>
-			</section>
 		</div>
+
+		<section class="workspace">
+			<h2 class="workspace-heading"><LayoutGrid size={18} aria-hidden="true" />分析ワークスペース</h2>
+			<p class="workspace-caption">
+				ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
+			</p>
+			<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
+				{#each PANEL_DEFS as def (def.id)}
+					<button
+						type="button"
+						class="dock-toggle"
+						class:active={isPanelVisible(def.id)}
+						aria-pressed={isPanelVisible(def.id)}
+						disabled={isDocked(def.id)}
+						title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
+						onclick={() => togglePanel(def.id)}
+					>
+						{def.icon}
+						{def.title}
+					</button>
+				{/each}
+				<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
+			</div>
+			<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
+				<DockHost {dock} panel={dockPanel} {onPopOut} />
+			</div>
+		</section>
 	{/if}
 </div>
 
@@ -482,16 +513,33 @@
 		gap: 1rem;
 	}
 
-	.note {
-		margin: 0;
+	/* "About this demo" collapsible (design.md §10): the long technical note
+	   used to sit at the top of the page, ahead of the KPIs/charts it
+	   describes. Closed by default. */
+	.about-demo {
 		color: var(--banto-text-muted);
 		font-size: 0.8rem;
 	}
 
-	.loading {
-		color: var(--banto-text-muted);
+	.about-demo summary {
+		cursor: pointer;
+		color: var(--banto-text);
+		font-weight: 600;
+		font-size: 0.85rem;
 	}
 
+	.about-demo summary:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
+	}
+
+	.note {
+		margin: 0.5rem 0 0;
+	}
+
+	/* KPI tiles (design.md §10): icon + label + tabular-nums value. Tile-only
+	   card (not SurfaceCard, spec §K3): same face/border/radius/shadow tokens
+	   without SurfaceCard's optional title/description header. */
 	.stat-row {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -501,11 +549,31 @@
 	.stat-tile {
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-sm);
 		padding: 1rem 1.25rem;
 		display: flex;
+		align-items: center;
+		gap: 0.85rem;
+	}
+
+	.stat-icon {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: var(--banto-radius-md);
+		background: color-mix(in srgb, var(--banto-primary) 12%, transparent);
+		color: var(--banto-primary);
+	}
+
+	.stat-body {
+		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
+		gap: 0.3rem;
+		min-width: 0;
 	}
 
 	.stat-label {
@@ -515,7 +583,7 @@
 
 	.stat-value {
 		font-size: 1.6rem;
-		font-weight: 600;
+		font-weight: 650;
 		color: var(--banto-text);
 		font-variant-numeric: tabular-nums;
 	}
@@ -523,7 +591,6 @@
 	.stat-value-row {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		gap: 0.75rem;
 	}
 
@@ -533,33 +600,70 @@
 		color: var(--banto-text-muted);
 	}
 
+	/* Asymmetric 12-column chart grid (design.md §10, plan Phase 3): the
+	   primary (monthly-trend) chart spans 8/12, secondary charts 4/12 each,
+	   collapsing to a single column under 900px. */
 	.chart-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+		grid-template-columns: repeat(12, 1fr);
 		gap: 1rem;
 	}
 
 	.card {
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-sm);
 		padding: 1rem 1.25rem;
 		min-width: 0;
+		grid-column: span 12;
 	}
 
-	.card.wide {
-		grid-column: 1 / -1;
+	@media (min-width: 901px) {
+		.card.primary {
+			grid-column: span 8;
+		}
+
+		.card.secondary {
+			grid-column: span 4;
+		}
 	}
 
 	h2 {
-		margin: 0 0 0.5rem;
+		margin: 0 0 0.25rem;
 		font-size: 1rem;
+		font-feature-settings: 'palt';
 	}
 
-	.card p {
+	.card-caption {
+		margin: 0 0 0.5rem;
+		color: var(--banto-text-muted);
+		font-size: 0.8rem;
+		text-wrap: pretty;
+	}
+
+	/* Docking area (design.md §10): separated from the regular chart cards
+	   as an "analysis workspace" section on the subtle surface tone. */
+	.workspace {
+		background: var(--banto-surface-subtle);
+		border-radius: var(--banto-radius-lg);
+		padding: 1.25rem;
+	}
+
+	.workspace-heading {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: 0 0 0.5rem;
+		font-size: 1rem;
+		font-feature-settings: 'palt';
+	}
+
+	.workspace-caption {
 		margin: 0;
 		color: var(--banto-text-muted);
 		font-size: 0.875rem;
+		text-wrap: pretty;
 	}
 
 	.dock-toolbar {

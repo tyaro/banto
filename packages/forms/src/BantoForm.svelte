@@ -128,21 +128,24 @@
 	}
 
 	button {
-		padding: 0.55rem 1.25rem;
+		height: var(--banto-control-height);
+		box-sizing: border-box;
+		padding: 0 1.25rem;
 		border: none;
-		border-radius: var(--banto-radius);
-		background: var(--banto-primary);
-		color: var(--banto-text-inverse);
+		border-radius: var(--banto-radius-md);
+		background: var(--banto-primary-solid);
+		color: var(--banto-on-solid);
 		font-weight: 600;
 		cursor: pointer;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	button:hover:not(:disabled) {
-		background: var(--banto-primary-hover);
+		background: var(--banto-primary-solid-hover);
 	}
 
 	button:disabled {
-		opacity: 0.6;
+		opacity: 0.5;
 		cursor: not-allowed;
 	}
 </style>

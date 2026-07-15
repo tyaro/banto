@@ -3,6 +3,8 @@
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;
@@ -25,30 +27,31 @@
 </script>
 
 <div class="page">
-	<h2>{resource.label}を新規作成</h2>
+	<PageHeader title={`${resource.label}を新規作成`} />
 
-	{#if formResource.loading}
-		<p class="loading">読み込み中…</p>
-	{:else}
-		<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={formResource.saving} />
-	{/if}
+	<div class="form-panel">
+		{#if formResource.loading}
+			<LoadingState label="読み込み中…" />
+		{:else}
+			<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={formResource.saving} />
+		{/if}
+	</div>
 </div>
 
 <style>
 	.page {
-		max-width: 480px;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		/* Readable form width (design.md §Phase 4), not the full page width. */
+		max-width: 720px;
+	}
+
+	.form-panel {
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-sm);
 		padding: 1.25rem;
-	}
-
-	h2 {
-		margin: 0 0 1rem;
-		font-size: 1.1rem;
-	}
-
-	.loading {
-		color: var(--banto-text-muted);
 	}
 </style>

@@ -42,7 +42,7 @@
 	--banto-focus-ring: 0 0 0 2px color-mix(in srgb, var(--banto-primary) 45%, transparent);
 
 	/* Layout */
-	--banto-radius: 6px;
+	--banto-radius: var(--banto-radius-md); /* visual-refresh-design.md §2.2: alias, value unchanged (6px) */
 	--banto-shell-sidebar-width: 240px;
 	--banto-shell-sidebar-width-collapsed: 56px;
 	--banto-shell-header-height: 48px;
@@ -69,7 +69,7 @@
      ghost) below, reusing --banto-dock-titlebar-height for both the floating
      titlebar and the docked pane titlebar/tab-strip height. */
 	--banto-dock-titlebar-height: 32px;
-	--banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+	--banto-dock-shadow: var(--banto-shadow-lg); /* visual-refresh-design.md §2.2: alias, value unchanged */
 	--banto-dock-divider: var(--banto-border);
 	--banto-dock-divider-hover: var(--banto-primary);
 	--banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 18%, transparent);
@@ -82,6 +82,49 @@
 	--banto-font-family:
 		system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
 	--banto-font-size: 14px;
+
+	/* Surface hierarchy (visual-refresh-plan.md 付録A.1) */
+	--banto-surface-subtle: #f1f3f6;
+	--banto-surface-hover: #eef1f5;
+	--banto-surface-overlay: var(--banto-surface);
+	--banto-border-strong: #848b96;
+
+	/* State colors: text/solid/tint 3-系統 (visual-refresh-plan.md 付録A.3).
+     Existing --banto-primary etc. stay the "text" default; these add the
+     solid (button fill) and tint (soft panel) pairs. */
+	--banto-primary-solid: #2563eb;
+	--banto-primary-solid-hover: #1d4ed8;
+	--banto-on-solid: #ffffff;
+	--banto-danger-solid: #dc2626;
+	--banto-danger-solid-hover: #b91c1c;
+	--banto-success-solid: #15803d;
+	--banto-danger-tint: #fee2e2;
+	--banto-danger-tint-text: #991b1b;
+	--banto-success-tint: #dcfce7;
+	--banto-success-tint-text: #166534;
+	--banto-warning-tint: #fef3c7;
+	--banto-warning-tint-text: #92400e;
+
+	/* Shape and shadow (visual-refresh-plan.md 付録A.4) */
+	--banto-radius-sm: 4px;
+	--banto-radius-md: 6px;
+	--banto-radius-lg: 10px;
+	--banto-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+	--banto-shadow-md: 0 2px 8px rgb(0 0 0 / 0.1);
+	--banto-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.18);
+
+	/* Control dimensions (visual-refresh-plan.md 付録A.4; overridden by the
+     density axis, see [data-banto-density='compact'] below). */
+	--banto-control-height: 36px;
+	--banto-control-height-sm: 28px;
+	--banto-control-height-lg: 40px;
+
+	/* Motion (visual-refresh-plan.md 付録A.6) */
+	--banto-duration-fast: 120ms;
+	--banto-duration-base: 160ms;
+	--banto-duration-slow: 240ms;
+	--banto-ease-out: cubic-bezier(0.2, 0, 0, 1);
+	--banto-ease-spring: linear(0, 0.35 12%, 0.8 24%, 1.04 40%, 0.99 65%, 1);
 }
 
 [data-theme='dark'] {
@@ -111,8 +154,53 @@
 	--banto-chart-grid: #2c2c2a;
 	--banto-chart-axis: #383835;
 
-	--banto-dock-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 	--banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 28%, transparent);
+
+	/* Surface hierarchy (visual-refresh-plan.md 付録A.1, dark column) */
+	--banto-surface-subtle: #23262d;
+	--banto-surface-hover: #2a2f37;
+	--banto-surface-overlay: var(--banto-surface-raised);
+	--banto-border-strong: #6b7480;
+
+	/* State colors (visual-refresh-plan.md 付録A.3, dark column). Danger/success
+     solid keep the light values (--banto-danger-solid #dc2626, --banto-success-solid
+     #15803d stay unset here on purpose) - only primary solid and the tint pairs differ. */
+	--banto-primary-solid: #3b82f6;
+	/* Hover must LIGHTEN here: --banto-on-solid resolves to the dark
+     --banto-text-inverse, so inheriting the light theme's darker hover
+     (#1d4ed8) would drop the label below readable contrast mid-hover. */
+	--banto-primary-solid-hover: #60a5fa;
+	--banto-on-solid: var(--banto-text-inverse);
+	--banto-danger-tint: color-mix(in srgb, #f87171 18%, transparent);
+	--banto-danger-tint-text: #f87171;
+	--banto-success-tint: color-mix(in srgb, #4ade80 18%, transparent);
+	--banto-success-tint-text: #4ade80;
+	--banto-warning-tint: color-mix(in srgb, #fbbf24 18%, transparent);
+	--banto-warning-tint-text: #fbbf24;
+
+	/* Shape and shadow (visual-refresh-plan.md 付録A.4, dark column) */
+	--banto-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.12);
+	--banto-shadow-md: 0 2px 8px rgb(0 0 0 / 0.2);
+	--banto-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.6); /* unifies with the former --banto-dock-shadow literal (§2.2) */
+}
+
+/* Density axis (visual-refresh-design.md §4.1), orthogonal to theme/preset.
+   data-banto-density is applied to <html> by applyDensity() from @banto/theme. */
+[data-banto-density='compact'] {
+	--banto-control-height: 32px;
+	--banto-control-height-lg: 36px;
+	--banto-grid-row-height: 32px;
+	--banto-grid-header-height: 36px;
+}
+
+/* visual-refresh-design.md §2.3: components must read duration only via these
+   tokens so reduced-motion is disabled in one place. */
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--banto-duration-fast: 0ms;
+		--banto-duration-base: 0ms;
+		--banto-duration-slow: 0ms;
+	}
 }
 
 html {

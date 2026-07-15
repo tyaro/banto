@@ -26,7 +26,11 @@
 		type SortState
 	} from '@banto/grid-svelte';
 	import { isProviderError } from '@banto/admin-core';
+	import { Info } from '@lucide/svelte';
 	import { toastStore } from '$lib/toast.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
+	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
 	import {
 		DEMO_MODE_MESSAGE,
 		getAuditConfig,
@@ -264,8 +268,15 @@
 	// 区別する（生色禁止・--banto-danger を使用）。BantoGrid の rowClass
 	// prop が返すクラスに対して、下のスタイル内で :global() セレクタを
 	// 当てている。
+	// Display only: adds a left-accent highlight to whichever row is
+	// currently selected, so the detail panel below reads as connected to
+	// it (design.md §Phase 4 "選択行との関係が分かるレイアウト"). Reads the
+	// existing `selected` state below - selection itself is unchanged.
 	function auditRowClass(row: AuditLogEntry): string | undefined {
-		return row.result === 'denied' || row.result === 'failed' ? 'audit-row-alert' : undefined;
+		const classes: string[] = [];
+		if (row.result === 'denied' || row.result === 'failed') classes.push('audit-row-alert');
+		if (selected?.id === row.id) classes.push('audit-row-selected');
+		return classes.length > 0 ? classes.join(' ') : undefined;
 	}
 
 	let selected: AuditLogEntry | null = $state(null);
@@ -304,14 +315,14 @@
 </script>
 
 <div class="page">
-	<div class="page-header">
-		<h2>監査ログ</h2>
-	</div>
+	<PageHeader title="監査ログ" description="ユーザー操作とシステムイベントの記録です。" />
 
 	{#if !available}
-		<p class="note">
-			{DEMO_MODE_MESSAGE}。単体ブラウザのデモモードには監査ログDBがないため、この機能はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ利用できます。
-		</p>
+		<EmptyState
+			icon={Info}
+			title="監査ログは利用できません"
+			description={`${DEMO_MODE_MESSAGE}。単体ブラウザのデモモードには監査ログDBがないため、この機能はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ利用できます。`}
+		/>
 	{:else}
 		{#if retentionNote}
 			<p class="note">{retentionNote}</p>
@@ -355,8 +366,11 @@
 					<dt>経路</dt>
 					<dd>{originLabel(selected.origin)}</dd>
 					<dt>結果</dt>
-					<dd class:alert={selected.result === 'denied' || selected.result === 'failed'}>
-						{resultLabel(selected.result)}
+					<dd>
+						<StatusBadge
+							variant={selected.result === 'ok' ? 'success' : 'danger'}
+							label={resultLabel(selected.result)}
+						/>
 					</dd>
 				</dl>
 				{#if selectedDetail}
@@ -375,15 +389,6 @@
 		flex-direction: column;
 		min-height: 0;
 		gap: 0.5rem;
-	}
-
-	.page-header {
-		flex: 0 0 auto;
-	}
-
-	.page-header h2 {
-		margin: 0;
-		font-size: 1.1rem;
 	}
 
 	.note {
@@ -407,13 +412,26 @@
 		border-left: 3px solid var(--banto-danger);
 	}
 
+	/* Selected-row highlight (display-only, design.md §Phase 4): ties the
+	   detail panel below to the row it describes. Same left-accent idiom as
+	   .audit-row-alert above, primary hue instead of danger. */
+	:global(.row.audit-row-selected) {
+		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
+		border-left: 3px solid var(--banto-primary);
+	}
+
+	/* Detail panel (design.md §Phase 4 "選択行との関係が分かるレイアウト"):
+	   a primary-accent top border visually connects it to the highlighted
+	   row above, in the same surface/radius/shadow language as SurfaceCard. */
 	.detail {
 		flex: 0 0 auto;
 		max-height: 40%;
 		overflow-y: auto;
 		background: var(--banto-surface);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		border-top: 3px solid var(--banto-primary);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-sm);
 		padding: 1rem 1.25rem;
 	}
 
@@ -442,11 +460,6 @@
 
 	dd {
 		margin: 0;
-	}
-
-	dd.alert {
-		color: var(--banto-danger);
-		font-weight: 600;
 	}
 
 	pre {

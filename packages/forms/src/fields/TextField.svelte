@@ -30,14 +30,16 @@
 
 <style>
 	input {
-		padding: 0.5rem 0.6rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		height: var(--banto-control-height);
+		padding: 0 0.6rem;
+		border: 1px solid var(--banto-border-strong);
+		border-radius: var(--banto-radius-md);
 		background: var(--banto-bg);
 		color: var(--banto-text);
 		font: inherit;
 		width: 100%;
 		box-sizing: border-box;
+		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	input:focus-visible {
@@ -47,7 +49,7 @@
 
 	input:disabled {
 		cursor: not-allowed;
-		opacity: 0.7;
+		opacity: 0.5;
 	}
 
 	input.muted {

@@ -63,11 +63,23 @@ function rowWithText(page: Page, text: string): Locator {
 	return page.getByRole('row').filter({ hasText: text });
 }
 
+/** Opens the header's user menu and clicks "ログアウト" (Header.svelte moved logout off a bare header button into the shared Menu component - visual-refresh-design.md §8.2). */
+async function logout(page: Page): Promise<void> {
+	await page.getByRole('button', { name: 'ユーザーメニューを開く' }).click();
+	await page.getByRole('menuitem', { name: 'ログアウト' }).click();
+}
+
 test.describe.serial('Banto LAN/REST smoke', () => {
 	let page: Page;
 
 	test.beforeAll(async ({ browser }) => {
-		page = await browser.newPage();
+		// This manually-created shared page bypasses the config's `use`
+		// context options, so reduced motion must be passed here explicitly.
+		// Without it, View Transitions (visual-refresh-design.md §11.1) freeze
+		// the OLD page's snapshot for the crossfade after each navigation and
+		// locators can pin an element from the outgoing page (e.g. getByLabel
+		// substring-matching a grid filter button right after goto /items/new).
+		page = await browser.newPage({ reducedMotion: 'reduce' });
 	});
 
 	test.afterAll(async () => {
@@ -79,7 +91,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// Fresh DB -> AuthProvider.status() reports uninitialized -> the login
 		// page renders the setup form, not the login form (login/+page.svelte).
-		await expect(page.getByRole('heading', { name: '🏮 Banto' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Banto' })).toBeVisible();
 		await expect(page.getByLabel('表示名')).toBeVisible();
 
 		await page.getByLabel('表示名').fill(ADMIN_DISPLAY_NAME);
@@ -93,7 +105,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('2. logout returns to the login screen, then login restores the session', async () => {
-		await page.getByRole('button', { name: 'ログアウト' }).click();
+		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
@@ -183,7 +195,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('6. viewer role: no admin nav entries, no items create button', async () => {
-		await page.getByRole('button', { name: 'ログアウト' }).click();
+		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 
 		await page.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
@@ -201,7 +213,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('7. admin: audit log shows the login and items records', async () => {
-		await page.getByRole('button', { name: 'ログアウト' }).click();
+		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);

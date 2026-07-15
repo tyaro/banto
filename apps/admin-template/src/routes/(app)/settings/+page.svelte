@@ -1,6 +1,24 @@
 <script lang="ts">
-	import type { ThemeMode, ThemePreset } from '@banto/theme';
+	import type { Component } from 'svelte';
+	import type { ThemeDensity, ThemeMode, ThemePreset } from '@banto/theme';
+	import {
+		Check,
+		DatabaseBackup,
+		KeyRound,
+		Monitor,
+		Moon,
+		Palette,
+		Rows3,
+		Rows4,
+		ScrollText,
+		ShieldAlert,
+		Sparkles,
+		Sun,
+		Wifi
+	} from '@lucide/svelte';
 	import { getAuthProvider, isProviderError } from '@banto/admin-core';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import { isTauri } from '$lib/banto/setup';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
@@ -65,6 +83,17 @@
 		{ value: 'standard', label: 'スタンダード' },
 		{ value: 'glass', label: 'ガラス' }
 	];
+
+	// Density axis (visual-refresh-design.md §4.3), orthogonal to
+	// theme/preset. settings.setThemeDensity() persistence is unchanged -
+	// this page only adds the picker UI.
+	const densities: { value: ThemeDensity; label: string }[] = [
+		{ value: 'standard', label: '標準' },
+		{ value: 'compact', label: 'コンパクト' }
+	];
+
+	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
+	const densityIcons: Record<ThemeDensity, Component> = { standard: Rows3, compact: Rows4 };
 
 	// Optional on `AuthProvider` (spec §3.3): older/custom providers may not
 	// implement it, in which case the section below shows a note instead of
@@ -493,401 +522,599 @@
 	}
 </script>
 
-<div class="sections">
-	<section>
-		<h2>テーマ</h2>
-		<div class="options" role="radiogroup" aria-label="テーマ">
-			{#each modes as mode (mode.value)}
-				<label class:selected={settings.themeMode === mode.value}>
-					<input
-						type="radio"
-						name="theme"
-						value={mode.value}
-						checked={settings.themeMode === mode.value}
-						onchange={() => settings.setThemeMode(mode.value)}
-					/>
-					{mode.label}
-				</label>
-			{/each}
-		</div>
+<div class="page">
+	<PageHeader title="設定" description="テーマ、LANアクセス、バックアップなど、この端末の動作を設定します。" />
 
-		<h3>プリセット</h3>
-		<div class="options" role="radiogroup" aria-label="テーマプリセット">
-			{#each presets as preset (preset.value)}
-				<label class:selected={settings.themePreset === preset.value}>
-					<input
-						type="radio"
-						name="theme-preset"
-						value={preset.value}
-						checked={settings.themePreset === preset.value}
-						onchange={() => settings.setThemePreset(preset.value)}
-					/>
-					{preset.label}
-				</label>
-			{/each}
-		</div>
-		<p class="note">
-			設定はこの端末に即時保存され、ログイン中は設定DB（Tauri/LANサーバ）にも保存されて他クライアントと共有されます（仕様
-			§12.1 / M12）。
-		</p>
-	</section>
+	<div class="settings-grid">
+		<SurfaceCard>
+			<div class="card-head">
+				<Palette size={20} aria-hidden="true" />
+				<div>
+					<h2>テーマ</h2>
+					<p>配色モード・プリセット・表示密度を切り替えます。</p>
+				</div>
+			</div>
 
-	{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}
-		<section>
-			<h2>ウィンドウ効果</h2>
-			<label class="toggle">
-				<input
-					type="checkbox"
-					checked={vibrancyStatus.enabled}
-					disabled={applyingVibrancy}
-					onchange={toggleVibrancy}
-				/>
-				ウィンドウのアクリル効果（Windows）
-			</label>
+			<div class="options mode-options" role="radiogroup" aria-label="テーマ">
+				{#each modes as mode (mode.value)}
+					{@const ModeIcon = modeIcons[mode.value]}
+					<label class="theme-option" class:selected={settings.themeMode === mode.value}>
+						<input
+							type="radio"
+							name="theme"
+							value={mode.value}
+							checked={settings.themeMode === mode.value}
+							onchange={() => settings.setThemeMode(mode.value)}
+						/>
+						<span class="theme-preview" data-preview-mode={mode.value} aria-hidden="true">
+							<span class="preview-header"></span>
+							<span class="preview-row">
+								<span class="preview-sidebar"></span>
+								<span class="preview-surface"></span>
+							</span>
+						</span>
+						<ModeIcon size={14} aria-hidden="true" />{mode.label}
+						{#if settings.themeMode === mode.value}
+							<Check size={14} aria-hidden="true" />
+						{/if}
+					</label>
+				{/each}
+			</div>
+
+			<h3>プリセット</h3>
+			<div class="options preset-options" role="radiogroup" aria-label="テーマプリセット">
+				{#each presets as preset (preset.value)}
+					<label class="theme-option" class:selected={settings.themePreset === preset.value}>
+						<input
+							type="radio"
+							name="theme-preset"
+							value={preset.value}
+							checked={settings.themePreset === preset.value}
+							onchange={() => settings.setThemePreset(preset.value)}
+						/>
+						<span class="preset-preview" data-preset={preset.value} aria-hidden="true"></span>
+						{preset.label}
+						{#if settings.themePreset === preset.value}
+							<Check size={14} aria-hidden="true" />
+						{/if}
+					</label>
+				{/each}
+			</div>
+
+			<h3>表示密度</h3>
+			<div class="options density-options" role="radiogroup" aria-label="表示密度">
+				{#each densities as density (density.value)}
+					{@const DensityIcon = densityIcons[density.value]}
+					<label class="theme-option" class:selected={settings.themeDensity === density.value}>
+						<input
+							type="radio"
+							name="density"
+							value={density.value}
+							checked={settings.themeDensity === density.value}
+							onchange={() => settings.setThemeDensity(density.value)}
+						/>
+						<DensityIcon size={16} aria-hidden="true" />{density.label}
+						{#if settings.themeDensity === density.value}
+							<Check size={14} aria-hidden="true" />
+						{/if}
+					</label>
+				{/each}
+			</div>
+
 			<p class="note">
-				ウィンドウ背面を OS
-				のアクリル（すりガラス）効果で描画します。ガラスプリセットと組み合わせると、デスクトップが透ける本物のガラス感になります（M12、Windows
-				のみ）。
+				設定はこの端末に即時保存され、ログイン中は設定DB（Tauri/LANサーバ）にも保存されて他クライアントと共有されます（仕様
+				§12.1 / M12）。
 			</p>
-		</section>
-	{/if}
+		</SurfaceCard>
 
-	{#if isAdmin(sessionStore.role)}
-		<section>
-			<h2>LANアクセス（組み込みWebサーバ）</h2>
-			{#if tauri}
-				<label class="toggle" class:disabled={authSettings?.disabled}>
-					<input type="checkbox" bind:checked={enabledDraft} disabled={authSettings?.disabled} />
-					LANアクセスを有効にする
+		{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}
+			<SurfaceCard>
+				<div class="card-head">
+					<Sparkles size={20} aria-hidden="true" />
+					<div>
+						<h2>ウィンドウ効果</h2>
+						<p>デスクトップアプリのウィンドウ背面の描画です（Windowsのみ）。</p>
+					</div>
+				</div>
+				<label class="switch-row">
+					<input
+						type="checkbox"
+						role="switch"
+						class="banto-switch"
+						checked={vibrancyStatus.enabled}
+						disabled={applyingVibrancy}
+						onchange={toggleVibrancy}
+					/>
+					ウィンドウのアクリル効果（Windows）
 				</label>
-				{#if authSettings?.disabled}
-					<p class="note">ログイン不要モード有効中は使用できません。</p>
+				<p class="note">
+					ウィンドウ背面を OS
+					のアクリル（すりガラス）効果で描画します。ガラスプリセットと組み合わせると、デスクトップが透ける本物のガラス感になります（M12、Windows
+					のみ）。
+				</p>
+			</SurfaceCard>
+		{/if}
+
+		{#if isAdmin(sessionStore.role)}
+			<SurfaceCard>
+				<div class="card-head">
+					<Wifi size={20} aria-hidden="true" />
+					<div>
+						<h2>LANアクセス（組み込みWebサーバ）</h2>
+						<p>同一LAN内の他端末のブラウザからこの画面を利用できるようにします。</p>
+					</div>
+				</div>
+				{#if tauri}
+					<label class="switch-row" class:disabled={authSettings?.disabled}>
+						<input
+							type="checkbox"
+							role="switch"
+							class="banto-switch"
+							bind:checked={enabledDraft}
+							disabled={authSettings?.disabled}
+						/>
+						LANアクセスを有効にする
+					</label>
+					{#if authSettings?.disabled}
+						<p class="note">ログイン不要モード有効中は使用できません。</p>
+					{/if}
+
+					<div class="server-fields">
+						<label class="field">
+							バインドアドレス
+							<select class="banto-input" bind:value={bindDraft}>
+								<option value="127.0.0.1">127.0.0.1 のみ</option>
+								<option value="0.0.0.0">0.0.0.0（LAN公開）</option>
+							</select>
+						</label>
+
+						<label class="field">
+							ポート番号
+							<input
+								class="banto-input"
+								type="number"
+								min="1"
+								max="65535"
+								bind:value={portDraft}
+							/>
+						</label>
+					</div>
+
+					<button
+						type="button"
+						class="banto-btn banto-btn--primary"
+						onclick={saveAndApply}
+						disabled={applying}
+					>
+						保存して適用
+					</button>
+
+					{#if serverError}
+						<p class="error">{serverError}</p>
+					{/if}
+
+					{#if serverStatus}
+						<p class="status">
+							状態: <strong>{serverStatus.running ? '稼働中' : '停止中'}</strong>
+						</p>
+						{#if serverStatus.running}
+							<ul class="urls">
+								{#each serverStatus.urls as url (url)}
+									<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
+								{/each}
+							</ul>
+							{#if firstLanQrSvg}
+								<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+								<div class="qr">{@html firstLanQrSvg}</div>
+							{/if}
+						{/if}
+					{/if}
+				{:else}
+					<p class="note">サーバー設定はデスクトップアプリでのみ変更できます。</p>
 				{/if}
+				<p class="note">
+					有効化すると、同一LAN内の他端末のブラウザからREST API + SSEで同じ画面を利用できます（仕様
+					§11）。信頼できるLANでのみ有効にしてください。
+				</p>
+			</SurfaceCard>
+		{/if}
+
+		{#if tauri && isAdmin(sessionStore.role)}
+			<SurfaceCard>
+				<div class="card-head">
+					<KeyRound size={20} aria-hidden="true" />
+					<div>
+						<h2>自動ログイン</h2>
+						<p>起動時に指定アカウントで自動的にログインします（デスクトップのみ）。</p>
+					</div>
+				</div>
+
+				{#if sessionStore.authDisabled}
+					<p class="note">ログイン不要モードでは自動ログインは不要です。</p>
+				{:else}
+					<p class="status">
+						状態:
+						<strong>
+							{authSettings?.autologinEnabled
+								? `有効（${authSettings.autologinUsername ?? ''}）`
+								: '無効'}
+						</strong>
+					</p>
+
+					{#if authSettings?.autologinEnabled}
+						<button
+							type="button"
+							class="banto-btn banto-btn--secondary"
+							onclick={submitDisableAutologin}
+							disabled={disablingAutologin}
+						>
+							自動ログインを解除
+						</button>
+					{:else}
+						<form onsubmit={submitEnableAutologin}>
+							<label class="field">
+								ユーザー名
+								<input
+									class="banto-input"
+									type="text"
+									bind:value={autologinUsername}
+									autocomplete="username"
+								/>
+							</label>
+							<label class="field">
+								パスワード
+								<input
+									class="banto-input"
+									type="password"
+									bind:value={autologinPassword}
+									autocomplete="current-password"
+								/>
+							</label>
+							<button
+								type="submit"
+								class="banto-btn banto-btn--primary"
+								disabled={enablingAutologin}
+							>
+								自動ログインを有効化
+							</button>
+						</form>
+					{/if}
+
+					<p class="note">
+						資格情報はOSのキーリングに保存されます。起動時にこのアカウントで自動的にログインします。
+					</p>
+				{/if}
+			</SurfaceCard>
+		{/if}
+
+		{#if auditAvailable && isAdmin(sessionStore.role)}
+			<SurfaceCard>
+				<div class="card-head">
+					<ScrollText size={20} aria-hidden="true" />
+					<div>
+						<h2>監査ログの保持ポリシー</h2>
+						<p>記録を自動的に整理する保持日数・上限行数を設定します。</p>
+					</div>
+				</div>
 
 				<div class="server-fields">
 					<label class="field">
-						バインドアドレス
-						<select bind:value={bindDraft}>
-							<option value="127.0.0.1">127.0.0.1 のみ</option>
-							<option value="0.0.0.0">0.0.0.0（LAN公開）</option>
-						</select>
+						保持日数
+						<input class="banto-input" type="number" min="0" bind:value={retentionDaysDraft} />
 					</label>
-
 					<label class="field">
-						ポート番号
-						<input type="number" min="1" max="65535" bind:value={portDraft} />
+						上限行数
+						<input class="banto-input" type="number" min="0" bind:value={retentionRowsDraft} />
 					</label>
 				</div>
 
-				<button type="button" onclick={saveAndApply} disabled={applying}>保存して適用</button>
+				<button
+					type="button"
+					class="banto-btn banto-btn--primary"
+					onclick={saveAuditConfig}
+					disabled={applyingAudit}
+				>
+					保存
+				</button>
 
-				{#if serverError}
-					<p class="error">{serverError}</p>
+				{#if auditError}
+					<p class="error">{auditError}</p>
 				{/if}
 
-				{#if serverStatus}
+				{#if auditConfig}
 					<p class="status">
-						状態: <strong>{serverStatus.running ? '稼働中' : '停止中'}</strong>
+						現在の設定:
+						<strong>
+							{auditConfig.retentionDays !== null ? `${auditConfig.retentionDays}日` : '無期限'}
+							/ {auditConfig.retentionRows !== null
+								? `${auditConfig.retentionRows.toLocaleString()}件`
+								: '無制限'}
+						</strong>
 					</p>
-					{#if serverStatus.running}
-						<ul class="urls">
-							{#each serverStatus.urls as url (url)}
-								<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
-							{/each}
-						</ul>
-						{#if firstLanQrSvg}
-							<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
-							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-							<div class="qr">{@html firstLanQrSvg}</div>
-						{/if}
-					{/if}
-				{/if}
-			{:else}
-				<p class="note">サーバー設定はデスクトップアプリでのみ変更できます。</p>
-			{/if}
-			<p class="note">
-				有効化すると、同一LAN内の他端末のブラウザからREST API + SSEで同じ画面を利用できます（仕様
-				§11）。信頼できるLANでのみ有効にしてください。
-			</p>
-		</section>
-	{/if}
-
-	{#if tauri && canManageAuthMode}
-		<section>
-			<h2>認証</h2>
-
-			<label class="toggle">
-				<input type="checkbox" bind:checked={disabledDraft} />
-				ログイン不要モードを有効にする
-			</label>
-
-			<div class="server-fields">
-				<label class="field">
-					起動時のロール
-					<select bind:value={disabledRoleDraft} disabled={!disabledDraft}>
-						{#each authDisabledRoleOptions as option (option.value)}
-							<option value={option.value}>{option.label}</option>
-						{/each}
-					</select>
-				</label>
-			</div>
-
-			<button type="button" onclick={saveAuthSettings} disabled={applyingAuth}>保存して適用</button>
-
-			{#if authError}
-				<p class="error">{authError}</p>
-			{/if}
-
-			{#if authSettings}
-				<p class="status">
-					状態: <strong
-						>{authSettings.disabled
-							? '有効（ログイン画面なし）'
-							: '無効（通常のログインが必要）'}</strong
-					>
-				</p>
-			{/if}
-
-			<p class="note warning">
-				この端末を完全に信頼できる場合のみ有効化してください。LANアクセスとは同時に有効化できません。
-			</p>
-		</section>
-	{/if}
-
-	{#if tauri && isAdmin(sessionStore.role)}
-		<section>
-			<h2>自動ログイン</h2>
-
-			{#if sessionStore.authDisabled}
-				<p class="note">ログイン不要モードでは自動ログインは不要です。</p>
-			{:else}
-				<p class="status">
-					状態:
-					<strong>
-						{authSettings?.autologinEnabled
-							? `有効（${authSettings.autologinUsername ?? ''}）`
-							: '無効'}
-					</strong>
-				</p>
-
-				{#if authSettings?.autologinEnabled}
-					<button type="button" onclick={submitDisableAutologin} disabled={disablingAutologin}>
-						自動ログインを解除
-					</button>
-				{:else}
-					<form onsubmit={submitEnableAutologin}>
-						<label class="field">
-							ユーザー名
-							<input type="text" bind:value={autologinUsername} autocomplete="username" />
-						</label>
-						<label class="field">
-							パスワード
-							<input
-								type="password"
-								bind:value={autologinPassword}
-								autocomplete="current-password"
-							/>
-						</label>
-						<button type="submit" disabled={enablingAutologin}>自動ログインを有効化</button>
-					</form>
 				{/if}
 
 				<p class="note">
-					資格情報はOSのキーリングに保存されます。起動時にこのアカウントで自動的にログインします。
+					0を入力すると、その項目は無制限になります（既定は90日 /
+					10万件）。古い記録は一覧の表示時に自動的に整理されます。記録の一覧は「監査ログ」画面から確認できます。
 				</p>
-			{/if}
-		</section>
-	{/if}
+			</SurfaceCard>
+		{/if}
 
-	{#if auditAvailable && isAdmin(sessionStore.role)}
-		<section>
-			<h2>監査ログの保持ポリシー</h2>
+		<div class="danger-zone">
+			<SurfaceCard>
+				<div class="card-head card-head--danger">
+					<ShieldAlert size={20} aria-hidden="true" />
+					<div>
+						<h2>Danger zone</h2>
+						<p>影響の大きい操作です。実行前に内容をよく確認してください。</p>
+					</div>
+				</div>
 
-			<div class="server-fields">
-				<label class="field">
-					保持日数
-					<input type="number" min="0" bind:value={retentionDaysDraft} />
-				</label>
-				<label class="field">
-					上限行数
-					<input type="number" min="0" bind:value={retentionRowsDraft} />
-				</label>
-			</div>
+				{#if tauri && canManageAuthMode}
+					<div class="danger-section">
+						<h3>認証を無効化</h3>
 
-			<button type="button" onclick={saveAuditConfig} disabled={applyingAudit}>保存</button>
+						<label class="switch-row">
+							<input
+								type="checkbox"
+								role="switch"
+								class="banto-switch"
+								bind:checked={disabledDraft}
+							/>
+							ログイン不要モードを有効にする
+						</label>
 
-			{#if auditError}
-				<p class="error">{auditError}</p>
-			{/if}
+						<div class="server-fields">
+							<label class="field">
+								起動時のロール
+								<select
+									class="banto-input"
+									bind:value={disabledRoleDraft}
+									disabled={!disabledDraft}
+								>
+									{#each authDisabledRoleOptions as option (option.value)}
+										<option value={option.value}>{option.label}</option>
+									{/each}
+								</select>
+							</label>
+						</div>
 
-			{#if auditConfig}
-				<p class="status">
-					現在の設定:
-					<strong>
-						{auditConfig.retentionDays !== null ? `${auditConfig.retentionDays}日` : '無期限'}
-						/ {auditConfig.retentionRows !== null
-							? `${auditConfig.retentionRows.toLocaleString()}件`
-							: '無制限'}
-					</strong>
-				</p>
-			{/if}
+						<button
+							type="button"
+							class="banto-btn banto-btn--primary"
+							onclick={saveAuthSettings}
+							disabled={applyingAuth}
+						>
+							保存して適用
+						</button>
 
-			<p class="note">
-				0を入力すると、その項目は無制限になります（既定は90日 /
-				10万件）。古い記録は一覧の表示時に自動的に整理されます。記録の一覧は「監査ログ」画面から確認できます。
-			</p>
-		</section>
-	{/if}
+						{#if authError}
+							<p class="error">{authError}</p>
+						{/if}
 
-	{#if backupsAvailable && isAdmin(sessionStore.role)}
-		<section>
-			<h2>バックアップ/リストア</h2>
+						{#if authSettings}
+							<p class="status">
+								状態: <strong
+									>{authSettings.disabled
+										? '有効（ログイン画面なし）'
+										: '無効（通常のログインが必要）'}</strong
+								>
+							</p>
+						{/if}
 
-			<div class="backup-toolbar">
-				<button type="button" onclick={handleCreateBackup} disabled={creatingBackup}>
-					{creatingBackup ? '作成中…' : '今すぐバックアップ'}
-				</button>
-				{#if tauri}
-					<button type="button" class="secondary" onclick={handleOpenBackupsFolder}
-						>フォルダを開く</button
-					>
+						<p class="note warning">
+							この端末を完全に信頼できる場合のみ有効化してください。LANアクセスとは同時に有効化できません。
+						</p>
+					</div>
 				{/if}
-			</div>
 
-			{#if backupsError}
-				<p class="error">{backupsError}</p>
-			{/if}
+				{#if backupsAvailable && isAdmin(sessionStore.role)}
+					<div class="danger-section">
+						<h3><DatabaseBackup size={14} aria-hidden="true" />バックアップ/リストア</h3>
 
-			{#if pendingRestore}
-				<p class="pending-restore">
-					再起動後に適用されます: <strong>{pendingRestore.stagedAt}</strong>（{formatBytes(
-						pendingRestore.sizeBytes
-					)}）
-					<button
-						type="button"
-						class="secondary"
-						onclick={handleCancelRestore}
-						disabled={cancellingRestore}
-					>
-						取消
-					</button>
-				</p>
-			{/if}
-
-			{#if loadingBackups}
-				<p class="note">読み込み中…</p>
-			{:else if backups.length === 0}
-				<p class="note">バックアップはまだありません。</p>
-			{:else}
-				<ul class="backup-list">
-					{#each backups as backup (backup.fileName)}
-						<li>
-							<div class="backup-info">
-								<span class="file-name">{backup.fileName}</span>
-								<span class="meta">{formatBytes(backup.sizeBytes)} ・ {backup.createdAt}</span>
-							</div>
-							<div class="backup-actions">
-								{#if !tauri}
-									<button
-										type="button"
-										class="secondary"
-										onclick={() => handleDownloadBackup(backup.fileName)}
-									>
-										ダウンロード
-									</button>
-								{/if}
+						<div class="backup-toolbar">
+							<button
+								type="button"
+								class="banto-btn banto-btn--primary"
+								onclick={handleCreateBackup}
+								disabled={creatingBackup}
+							>
+								{creatingBackup ? '作成中…' : '今すぐバックアップ'}
+							</button>
+							{#if tauri}
 								<button
 									type="button"
-									class="secondary"
-									onclick={() => handleRestoreFromExisting(backup.fileName)}
+									class="banto-btn banto-btn--secondary"
+									onclick={handleOpenBackupsFolder}
+								>
+									フォルダを開く
+								</button>
+							{/if}
+						</div>
+
+						{#if backupsError}
+							<p class="error">{backupsError}</p>
+						{/if}
+
+						{#if pendingRestore}
+							<p class="pending-restore">
+								再起動後に適用されます: <strong>{pendingRestore.stagedAt}</strong>（{formatBytes(
+									pendingRestore.sizeBytes
+								)}）
+								<button
+									type="button"
+									class="banto-btn banto-btn--secondary"
+									onclick={handleCancelRestore}
+									disabled={cancellingRestore}
+								>
+									取消
+								</button>
+							</p>
+						{/if}
+
+						{#if loadingBackups}
+							<p class="note">読み込み中…</p>
+						{:else if backups.length === 0}
+							<p class="note">バックアップはまだありません。</p>
+						{:else}
+							<ul class="backup-list">
+								{#each backups as backup (backup.fileName)}
+									<li>
+										<div class="backup-info">
+											<span class="file-name">{backup.fileName}</span>
+											<span class="meta">{formatBytes(backup.sizeBytes)} ・ {backup.createdAt}</span
+											>
+										</div>
+										<div class="backup-actions">
+											{#if !tauri}
+												<button
+													type="button"
+													class="banto-btn banto-btn--secondary"
+													onclick={() => handleDownloadBackup(backup.fileName)}
+												>
+													ダウンロード
+												</button>
+											{/if}
+											<button
+												type="button"
+												class="banto-btn banto-btn--danger"
+												onclick={() => handleRestoreFromExisting(backup.fileName)}
+												disabled={stagingRestore}
+											>
+												このバックアップからリストア
+											</button>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+
+						{#if !tauri}
+							<div class="restore-upload">
+								<button
+									type="button"
+									class="banto-btn banto-btn--danger"
+									onclick={handleRestoreFileButtonClick}
 									disabled={stagingRestore}
 								>
-									このバックアップからリストア
+									ファイルからリストア
 								</button>
+								<input
+									class="file-input"
+									type="file"
+									accept=".sqlite3"
+									bind:this={restoreFileInput}
+									onchange={handleRestoreFileChange}
+								/>
 							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
+						{/if}
 
-			{#if !tauri}
-				<div class="restore-upload">
-					<button type="button" onclick={handleRestoreFileButtonClick} disabled={stagingRestore}>
-						ファイルからリストア
-					</button>
-					<input
-						class="file-input"
-						type="file"
-						accept=".sqlite3"
-						bind:this={restoreFileInput}
-						onchange={handleRestoreFileChange}
-					/>
-				</div>
-			{/if}
-
-			<p class="note">
-				DBファイル横の backups/ ディレクトリにオンラインバックアップを作成します（VACUUM
-				INTO、稼働中でも安全）。リストアはアップロード/選択したファイルを検証（整合性チェック+スキーマ確認）した上でステージし、次回起動時に自動適用します（稼働中のDB差し替えは行いません）。適用直前の現DBは自動的にバックアップされます（仕様
-				M17）。
-			</p>
-		</section>
-	{/if}
-
-	<section>
-		<h2>アカウント</h2>
-		{#if sessionStore.authDisabled}
-			<p class="note">ログイン不要モードではアカウントがないため、パスワード変更はできません。</p>
-		{:else if changePassword}
-			<form onsubmit={submitChangePassword}>
-				<label class="field">
-					現在のパスワード
-					<input type="password" bind:value={currentPassword} autocomplete="current-password" />
-				</label>
-				<label class="field">
-					新しいパスワード（8文字以上）
-					<input type="password" bind:value={newPassword} autocomplete="new-password" />
-				</label>
-				<label class="field">
-					新しいパスワード（確認）
-					<input type="password" bind:value={newPasswordConfirm} autocomplete="new-password" />
-				</label>
-
-				{#if passwordError}
-					<p class="error">{passwordError}</p>
+						<p class="note">
+							DBファイル横の backups/ ディレクトリにオンラインバックアップを作成します（VACUUM
+							INTO、稼働中でも安全）。リストアはアップロード/選択したファイルを検証（整合性チェック+スキーマ確認）した上でステージし、次回起動時に自動適用します（稼働中のDB差し替えは行いません）。適用直前の現DBは自動的にバックアップされます（仕様
+							M17）。
+						</p>
+					</div>
 				{/if}
 
-				<button type="submit" disabled={changingPassword}>パスワードを変更</button>
-			</form>
-		{:else}
-			<p class="note">この環境ではパスワード変更に対応していません。</p>
-		{/if}
-	</section>
+				<div class="danger-section">
+					<h3>アカウント（パスワード変更）</h3>
+					{#if sessionStore.authDisabled}
+						<p class="note">ログイン不要モードではアカウントがないため、パスワード変更はできません。</p>
+					{:else if changePassword}
+						<form onsubmit={submitChangePassword}>
+							<label class="field">
+								現在のパスワード
+								<input
+									class="banto-input"
+									type="password"
+									bind:value={currentPassword}
+									autocomplete="current-password"
+								/>
+							</label>
+							<label class="field">
+								新しいパスワード（8文字以上）
+								<input
+									class="banto-input"
+									type="password"
+									bind:value={newPassword}
+									autocomplete="new-password"
+								/>
+							</label>
+							<label class="field">
+								新しいパスワード（確認）
+								<input
+									class="banto-input"
+									type="password"
+									bind:value={newPasswordConfirm}
+									autocomplete="new-password"
+								/>
+							</label>
+
+							{#if passwordError}
+								<p class="error">{passwordError}</p>
+							{/if}
+
+							<button
+								type="submit"
+								class="banto-btn banto-btn--primary"
+								disabled={changingPassword}
+							>
+								パスワードを変更
+							</button>
+						</form>
+					{:else}
+						<p class="note">この環境ではパスワード変更に対応していません。</p>
+					{/if}
+				</div>
+			</SurfaceCard>
+		</div>
+	</div>
 </div>
 
 <style>
-	.sections {
+	.page {
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		max-width: 560px;
 	}
 
-	section {
-		background: var(--banto-surface);
-		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
-		padding: 1rem 1.25rem;
-		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
-		backdrop-filter: var(--banto-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-backdrop, none);
+	.settings-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+		align-items: start;
+		gap: 1rem;
 	}
 
-	h2 {
-		margin: 0 0 0.75rem;
+	.card-head {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.65rem;
+		margin-bottom: 0.25rem;
+		color: var(--banto-text-muted);
+	}
+
+	.card-head h2 {
+		margin: 0;
 		font-size: 1rem;
+		color: var(--banto-text);
+	}
+
+	.card-head p {
+		margin: 0.2rem 0 0;
+		font-size: 0.8rem;
+		color: var(--banto-text-muted);
+	}
+
+	.card-head--danger {
+		color: var(--banto-danger);
 	}
 
 	h3 {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
 		margin: 1rem 0 0.5rem;
 		font-size: 0.875rem;
 		color: var(--banto-text-muted);
@@ -895,43 +1122,189 @@
 
 	.options {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
 
-	.options label {
+	.theme-option {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.4rem;
-		padding: 0.45rem 0.8rem;
+		gap: 0.3rem 0.4rem;
+		padding: 0.5rem 0.7rem;
 		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		cursor: pointer;
-		font-size: 0.875rem;
+		font-size: 0.8rem;
 	}
 
-	.options label.selected {
+	.theme-option.selected {
 		border-color: var(--banto-primary);
 		color: var(--banto-primary);
 		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
 	}
 
-	.options input {
+	.theme-option input {
 		position: absolute;
 		opacity: 0;
 		pointer-events: none;
 	}
 
-	.toggle {
+	/* Mode picker previews intentionally hardcode static light/dark swatches
+	   (visual-refresh-design.md §10): each card must always depict what
+	   light/dark looks like, regardless of the CURRENTLY active theme - live
+	   --banto-* tokens only ever hold one theme's values at a time, so they
+	   can't represent "the other" theme here. Values mirror
+	   packages/theme/src/css/banto.css's :root / [data-theme='dark'] blocks. */
+	.theme-preview {
+		flex-basis: 100%;
+		display: flex;
+		flex-direction: column;
+		width: 80px;
+		height: 48px;
+		overflow: hidden;
+		border: 1px solid var(--preview-border, var(--banto-border));
+		border-radius: var(--banto-radius-sm);
+		background: var(--preview-bg, var(--banto-surface));
+	}
+
+	.theme-preview .preview-header {
+		height: 10px;
+		background: var(--preview-header, var(--banto-surface));
+		border-bottom: 1px solid var(--preview-border, var(--banto-border));
+	}
+
+	.theme-preview .preview-row {
+		display: flex;
+		flex: 1;
+	}
+
+	.theme-preview .preview-sidebar {
+		width: 30%;
+		background: var(--preview-sidebar, var(--banto-surface-subtle));
+	}
+
+	.theme-preview .preview-surface {
+		flex: 1;
+		background: var(--preview-surface-bg, var(--banto-surface));
+	}
+
+	.theme-preview[data-preview-mode='light'] {
+		--preview-bg: #f6f7f9;
+		--preview-header: #ffffff;
+		--preview-sidebar: #eef1f5;
+		--preview-surface-bg: #ffffff;
+		--preview-border: #d9dde3;
+	}
+
+	.theme-preview[data-preview-mode='dark'] {
+		--preview-bg: #15171b;
+		--preview-header: #1e2127;
+		--preview-sidebar: #23262d;
+		--preview-surface-bg: #1e2127;
+		--preview-border: #363b44;
+	}
+
+	.theme-preview[data-preview-mode='system'] {
+		background: linear-gradient(135deg, #f6f7f9 0%, #f6f7f9 48%, #15171b 52%, #15171b 100%);
+		border-color: var(--banto-border);
+	}
+
+	.theme-preview[data-preview-mode='system'] .preview-header,
+	.theme-preview[data-preview-mode='system'] .preview-sidebar,
+	.theme-preview[data-preview-mode='system'] .preview-surface {
+		background: transparent;
+		border-color: transparent;
+	}
+
+	/* Preset previews use live tokens (unlike the mode previews above): glass
+	   vs standard is orthogonal to light/dark, so showing the CURRENT theme's
+	   real surface/accent tokens with a fixed illustrative blur is enough to
+	   convey the difference without hardcoding colors. */
+	.preset-preview {
+		flex-basis: 100%;
+		position: relative;
+		width: 80px;
+		height: 48px;
+		overflow: hidden;
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius-sm);
+		background: var(--banto-accent-gradient);
+	}
+
+	.preset-preview::after {
+		content: '';
+		position: absolute;
+		inset: 8px;
+		border-radius: var(--banto-radius-sm);
+		background: var(--banto-surface);
+	}
+
+	.preset-preview[data-preset='glass']::after {
+		background: color-mix(in srgb, var(--banto-surface) 55%, transparent);
+		backdrop-filter: blur(3px);
+		-webkit-backdrop-filter: blur(3px);
+	}
+
+	.switch-row {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
+		gap: 0.6rem;
 		font-size: 0.875rem;
 		cursor: pointer;
 	}
 
-	.toggle.disabled {
+	.switch-row.disabled {
 		cursor: not-allowed;
 		color: var(--banto-text-muted);
+	}
+
+	/* Common boolean-switch look (plan Phase 5: "boolean 設定は共通のスイッチ
+	   表現へ揃える"). role="switch" is set on each usage site; the change
+	   handlers/bindings there are unmodified. */
+	.banto-switch {
+		position: relative;
+		display: inline-flex;
+		flex-shrink: 0;
+		width: 36px;
+		height: 20px;
+		margin: 0;
+		appearance: none;
+		border: none;
+		border-radius: 999px;
+		background: var(--banto-border-strong);
+		cursor: pointer;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.banto-switch::before {
+		content: '';
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--banto-surface);
+		transition: transform var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.banto-switch:checked {
+		background: var(--banto-primary-solid);
+	}
+
+	.banto-switch:checked::before {
+		transform: translateX(16px);
+	}
+
+	.banto-switch:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
+	}
+
+	.banto-switch:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.server-fields {
@@ -941,7 +1314,7 @@
 		margin: 0.75rem 0;
 	}
 
-	section form {
+	form {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -954,45 +1327,6 @@
 		gap: 0.3rem;
 		font-size: 0.8rem;
 		color: var(--banto-text-muted);
-	}
-
-	.field select,
-	.field input {
-		padding: 0.4rem 0.5rem;
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
-		background: var(--banto-bg);
-		color: var(--banto-text);
-	}
-
-	button {
-		padding: 0.5rem 1rem;
-		border: none;
-		border-radius: var(--banto-radius);
-		background: var(--banto-primary);
-		color: var(--banto-text-inverse);
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	button:hover:not(:disabled) {
-		background: var(--banto-primary-hover);
-	}
-
-	button:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	button.secondary {
-		background: transparent;
-		border: 1px solid var(--banto-border);
-		color: var(--banto-text);
-		font-weight: 400;
-	}
-
-	button.secondary:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--banto-text) 8%, transparent);
 	}
 
 	.backup-toolbar {
@@ -1009,7 +1343,7 @@
 		margin: 0.75rem 0 0;
 		padding: 0.6rem 0.8rem;
 		border: 1px solid var(--banto-primary);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
 		font-size: 0.85rem;
 	}
@@ -1031,7 +1365,7 @@
 		flex-wrap: wrap;
 		padding: 0.5rem 0.7rem;
 		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 	}
 
 	.backup-info {
@@ -1056,12 +1390,6 @@
 		display: flex;
 		gap: 0.5rem;
 		flex-wrap: wrap;
-	}
-
-	.backup-actions button,
-	.pending-restore button {
-		padding: 0.35rem 0.7rem;
-		font-size: 0.8rem;
 	}
 
 	.restore-upload {
@@ -1105,7 +1433,7 @@
 		   black-on-white to stay scannable in dark mode too. */
 		background: #fff;
 		padding: 0.5rem;
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 	}
 
 	.error {
@@ -1122,5 +1450,23 @@
 
 	.note.warning {
 		color: var(--banto-danger);
+	}
+
+	/* Danger zone (plan Phase 5): high-impact operations - auth disable,
+	   restore, password change - grouped and visually separated with the
+	   danger border. Only styling; every action inside keeps its original
+	   handler/confirm dialog. */
+	.danger-zone {
+		grid-column: 1 / -1;
+	}
+
+	.danger-zone :global(.surface-card) {
+		border-color: var(--banto-danger);
+	}
+
+	.danger-section + .danger-section {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--banto-border);
 	}
 </style>

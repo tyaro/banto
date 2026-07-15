@@ -28,14 +28,25 @@
 />
 
 <style>
+	/* Note: --banto-control-height (36px) is not applied to the checkbox
+	   itself - a checkbox is a small square control, not a text-input-height
+	   control; the native 1.1rem box is kept and only gains the shared
+	   focus-ring/disabled/transition treatment. */
 	input {
 		width: 1.1rem;
 		height: 1.1rem;
 		accent-color: var(--banto-primary);
+		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	input:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
+		border-radius: var(--banto-radius-sm);
 	}
 
 	input:disabled {
 		cursor: not-allowed;
-		opacity: 0.7;
+		opacity: 0.5;
 	}
 </style>

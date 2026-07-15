@@ -16,9 +16,12 @@
 					document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 					var preset = localStorage.getItem('banto.preset');
 					document.documentElement.dataset.bantoPreset = preset === 'glass' ? 'glass' : 'standard';
+					var density = localStorage.getItem('banto.density');
+					document.documentElement.dataset.bantoDensity = density === 'compact' ? 'compact' : 'standard';
 				} catch (_) {
 					document.documentElement.dataset.theme = 'light';
 					document.documentElement.dataset.bantoPreset = 'standard';
+					document.documentElement.dataset.bantoDensity = 'standard';
 				}
 			})();
 		</script>

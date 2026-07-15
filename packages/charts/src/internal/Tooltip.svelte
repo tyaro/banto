@@ -54,13 +54,17 @@
 		pointer-events: none;
 		z-index: 20;
 		max-width: 220px;
-		background: var(--banto-surface-raised, var(--banto-surface));
+		background: var(--banto-surface-overlay);
 		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		padding: 0.45rem 0.6rem;
 		font-size: 12px;
 		color: var(--banto-text);
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+		box-shadow: var(--banto-shadow-md);
+		/* Glass preset: the overlay surface goes translucent there - blur what's
+		   behind so the text stays readable. No-op under standard. */
+		backdrop-filter: var(--banto-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-backdrop, none);
 	}
 
 	.tt-title {

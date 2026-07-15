@@ -223,6 +223,17 @@
 		border-right: 1px solid var(--banto-border);
 		box-sizing: border-box;
 		user-select: none;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* Sorted or filtered column: tint the whole header cell in the primary
+	   family so the active column reads at a glance (spec: sort/filter state
+	   uses --banto-primary). Keyed off the aria-sort attribute and the
+	   filter button's existing .active class - no extra markup needed. */
+	.header-cell[aria-sort='ascending'],
+	.header-cell[aria-sort='descending'],
+	.header-cell:has(.filter-button.active) {
+		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
 	}
 
 	.cell-body {
@@ -244,7 +255,7 @@
 	.cell-body:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 	}
 
 	.label {
@@ -254,6 +265,11 @@
 		white-space: nowrap;
 		font-weight: 600;
 		color: var(--banto-text-muted);
+	}
+
+	.header-cell[aria-sort='ascending'] .label,
+	.header-cell[aria-sort='descending'] .label {
+		color: var(--banto-primary);
 	}
 
 	.sort-arrow {

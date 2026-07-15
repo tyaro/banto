@@ -125,7 +125,7 @@
 		height: 100%;
 		background: var(--banto-bg);
 		border: 1px solid var(--banto-border);
-		border-radius: calc(var(--banto-radius) * 2);
+		border-radius: var(--banto-radius-lg);
 	}
 
 	.docked-layer {
@@ -133,16 +133,18 @@
 		inset: 0;
 	}
 
+	/* Snap guide follows the pointer every move - no transition, it must track instantly. */
 	.snap-guide {
 		position: absolute;
 		background: var(--banto-dock-snap-fill);
 		border: 2px solid var(--banto-dock-snap-border);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		box-sizing: border-box;
 		pointer-events: none;
 		z-index: 20;
 	}
 
+	/* Drag ghost follows the pointer every move - no transition, same reason as .snap-guide. */
 	.drag-ghost {
 		position: fixed;
 		transform: translate(14px, 14px);
@@ -153,7 +155,7 @@
 		padding: 0.35rem 0.65rem;
 		background: var(--banto-dock-ghost-bg);
 		border: 1px solid var(--banto-dock-ghost-border);
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		box-shadow: var(--banto-dock-shadow);
 		font-size: 0.8rem;
 		font-weight: 600;

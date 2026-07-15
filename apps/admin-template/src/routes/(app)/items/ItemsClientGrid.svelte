@@ -15,6 +15,7 @@
 	import { BantoGrid, GridState, type CellEdit, type GridColumn } from '@banto/grid-svelte';
 	import { createListResource } from '@banto/admin-core';
 	import type { Item } from '$lib/banto/sampleData';
+	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
 	/**
 	 * M5 Phase B (spec §4.3) grouping demo: a client-only derived row shape
@@ -61,7 +62,9 @@
 <p class="note">{list.totalCount.toLocaleString()}件のデータを表示しています。</p>
 
 {#if list.loading && list.rows.length === 0}
-	<p class="loading">読み込み中…</p>
+	<div class="loading">
+		<LoadingState label="商品データを読み込み中…" />
+	</div>
 {:else}
 	<div class="grid-wrap">
 		<BantoGrid

@@ -58,3 +58,21 @@ export function applyPreset(preset: ThemePreset): void {
 export function isThemePreset(value: unknown): value is ThemePreset {
 	return value === 'standard' || value === 'glass';
 }
+
+/**
+ * Theme DENSITY axis (spec visual-refresh-design.md §4), orthogonal to mode
+ * and preset above: `data-banto-density` on <html>. `standard` is the
+ * existing control/grid-row sizing; `compact` switches to the smaller
+ * dimension tokens defined under [data-banto-density="compact"] in
+ * css/banto.css (a pure variable swap, same approach as the preset axis).
+ */
+export type ThemeDensity = 'standard' | 'compact';
+
+/** Apply the density to the document root (`data-banto-density`). */
+export function applyDensity(density: ThemeDensity): void {
+	document.documentElement.dataset.bantoDensity = density;
+}
+
+export function isThemeDensity(value: unknown): value is ThemeDensity {
+	return value === 'standard' || value === 'compact';
+}

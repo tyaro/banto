@@ -211,7 +211,7 @@
 <style>
 	.dock-window {
 		position: absolute;
-		border-radius: calc(var(--banto-radius) * 2);
+		border-radius: var(--banto-radius-lg);
 		border: 1px solid var(--banto-border);
 		box-shadow: var(--banto-dock-shadow);
 		background: var(--banto-surface);
@@ -220,6 +220,7 @@
 		   this a complete no-op. */
 		backdrop-filter: var(--banto-backdrop, none);
 		-webkit-backdrop-filter: var(--banto-backdrop, none);
+		transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.dock-window.frontmost {
@@ -250,6 +251,11 @@
 		user-select: none;
 		touch-action: none;
 		cursor: move;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.titlebar:hover {
+		background: var(--banto-surface-hover);
 	}
 
 	.icon {
@@ -274,12 +280,15 @@
 		align-items: center;
 		justify-content: center;
 		border: none;
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		background: transparent;
 		color: var(--banto-text-muted);
 		cursor: pointer;
 		font-size: 0.75rem;
 		touch-action: none;
+		transition:
+			background var(--banto-duration-fast) var(--banto-ease-out),
+			color var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.close-btn:hover {

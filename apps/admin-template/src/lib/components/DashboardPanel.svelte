@@ -188,16 +188,16 @@
 {/if}
 
 <style>
-	.status {
-		margin: 0;
-		color: var(--banto-text-muted);
-		font-size: 0.85rem;
-	}
-
+	/* Caption-style status/memo text (dashboard page's .card-caption, spec §10). */
+	.status,
 	.memo {
 		margin: 0;
 		color: var(--banto-text-muted);
-		font-size: 0.85rem;
+		font-size: 0.8rem;
+		text-wrap: pretty;
+	}
+
+	.memo {
 		line-height: 1.6;
 	}
 
@@ -209,11 +209,23 @@
 		overflow-y: auto;
 	}
 
+	/* Sub-chart card (dashboard page's .card, spec §10): same face/border/
+	   radius/shadow so the SPC panel's stacked charts read as the same kind
+	   of card as the top-level dashboard grid. */
+	.spc-chart {
+		background: var(--banto-surface);
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius-lg);
+		box-shadow: var(--banto-shadow-sm);
+		padding: 0.85rem 1rem;
+	}
+
 	.spc-chart h3 {
-		margin: 0 0 0.4rem;
-		font-size: 0.8rem;
+		margin: 0 0 0.25rem;
+		font-size: 1rem;
 		font-weight: 600;
-		color: var(--banto-text-muted);
+		color: var(--banto-text);
+		font-feature-settings: 'palt';
 	}
 
 	.spc-chart-header {
@@ -235,6 +247,9 @@
 		padding: 0.2rem 0.7rem;
 		font-size: 0.75rem;
 		cursor: pointer;
+		transition:
+			border-color var(--banto-duration-fast) var(--banto-ease-out),
+			color var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.export-btn:hover {

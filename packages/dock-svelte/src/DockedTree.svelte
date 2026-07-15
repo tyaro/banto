@@ -307,6 +307,11 @@
 		user-select: none;
 		touch-action: none;
 		cursor: move;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.titlebar:hover {
+		background: var(--banto-surface-hover);
 	}
 
 	.tab-strip {
@@ -334,6 +339,14 @@
 		touch-action: none;
 		cursor: pointer;
 		max-width: 12rem;
+		transition:
+			background var(--banto-duration-fast) var(--banto-ease-out),
+			color var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.tab:hover:not(.active) {
+		background: var(--banto-surface-hover);
+		color: var(--banto-text);
 	}
 
 	.tab.active {
@@ -364,12 +377,15 @@
 		align-items: center;
 		justify-content: center;
 		border: none;
-		border-radius: var(--banto-radius);
+		border-radius: var(--banto-radius-md);
 		background: transparent;
 		color: var(--banto-text-muted);
 		cursor: pointer;
 		font-size: 0.7rem;
 		touch-action: none;
+		transition:
+			background var(--banto-duration-fast) var(--banto-ease-out),
+			color var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.close-btn:hover {
@@ -422,6 +438,7 @@
 		flex: 0 0 auto;
 		background: var(--banto-dock-divider);
 		touch-action: none;
+		transition: background var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
 	.divider:hover {
