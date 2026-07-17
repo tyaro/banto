@@ -39,7 +39,9 @@ use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
-use banto_server::{lan_urls, start, static_router, AuthState, ServerConfig};
+use banto_server::{
+    lan_urls, start, static_router, with_security_headers, AuthState, ServerConfig,
+};
 use std::path::PathBuf;
 
 const DEFAULT_PORT: u16 = 8721;
@@ -139,18 +141,24 @@ async fn main() {
         Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
     }
 
-    let app = api_router(
-        items,
-        users,
-        settings,
-        audit,
-        backup,
-        attachments,
-        auth,
-        events,
-        allow_setup,
-    )
-    .merge(static_router::<FrontendAssets>());
+    // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost
+    // so every response - static UI, `/api/*` JSON, and SSE alike - gets
+    // the baseline security headers, regardless of which inner router
+    // produced it.
+    let app = with_security_headers(
+        api_router(
+            items,
+            users,
+            settings,
+            audit,
+            backup,
+            attachments,
+            auth,
+            events,
+            allow_setup,
+        )
+        .merge(static_router::<FrontendAssets>()),
+    );
 
     let server = start(ServerConfig { bind, port }, app)
         .await

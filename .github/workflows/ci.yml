@@ -159,3 +159,53 @@ jobs:
           name: playwright-test-results
           path: e2e/test-results/
           retention-days: 3
+
+  audit:
+    name: Dependency audit (pnpm audit / cargo audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `--prod`: this is a template repo, and devDependencies (build
+      # tooling, linters, Playwright, ...) are never shipped to end users
+      # and turn over far more often than runtime deps. Gating CI on their
+      # advisories would turn every template user's CI red on every new
+      # devDependency-only advisory, with nothing actionable for them to
+      # do about a package that never reaches production. Scoping to
+      # `--prod` keeps this job meaningful: it only fails for advisories in
+      # code that actually ships in the built frontend.
+      - name: pnpm audit (prod dependencies only)
+        run: pnpm audit --prod --audit-level high
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      # Matches this workflow's existing convention (see the `rust` job)
+      # of using dtolnay for the toolchain itself; taiki-e/install-action
+      # is used here specifically because it installs prebuilt `cargo-audit`
+      # binaries instead of compiling from source, which would otherwise
+      # add several minutes to this job.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        run: cargo audit

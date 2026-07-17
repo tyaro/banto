@@ -1,0 +1,29 @@
+# cargo-audit configuration (docs/improvements.md §2.5).
+#
+# Every ignore below is a KNOWN advisory that cannot currently be fixed by a
+# lockfile update - each entry documents why it is acceptable and when to
+# revisit. Do NOT add entries here to silence a fixable advisory; run
+# `cargo update -p <crate>` first.
+
+[advisories]
+ignore = [
+	# rsa: Marvin Attack timing sidechannel (Medium 5.9). NO fixed release
+	# exists upstream. Reachable only through sqlx-mysql, which is in the
+	# dependency graph via sqlx's workspace metadata but never enabled: every
+	# Cargo.toml in this workspace uses sqlite only (grep for `mysql` -
+	# nothing enables that feature), so the vulnerable code is not compiled
+	# into any shipped binary. Revisit if a fixed rsa release appears or if
+	# a MySQL/Postgres backend is ever added (improvements.md §6.1).
+	"RUSTSEC-2023-0071",
+	# quick-xml 0.39.x: quadratic attribute-duplicate check (High 7.5) and
+	# unbounded NsReader allocation (High 7.5), both fixed in >=0.41.0.
+	# Unreachable by an attacker here: quick-xml enters the graph solely via
+	# plist <- tauri-utils/tauri-codegen, where it parses the DEVELOPER'S OWN
+	# macOS Info.plist/bundle config at build/startup - never untrusted
+	# network or user input. plist currently pins quick-xml 0.39, so a plain
+	# `cargo update -p quick-xml` cannot take 0.41 (verified 2026-07-17).
+	# Revisit whenever `cargo update` starts offering quick-xml >=0.41
+	# (upstream plist/tauri-utils bump) - then REMOVE both entries.
+	"RUSTSEC-2026-0194",
+	"RUSTSEC-2026-0195",
+]

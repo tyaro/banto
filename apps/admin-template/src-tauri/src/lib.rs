@@ -32,7 +32,8 @@ use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::{
-    lan_urls, start, static_router, AuthState, RunningServer, ServerConfig, ServerEvent,
+    lan_urls, start, static_router, with_security_headers, AuthState, RunningServer, ServerConfig,
+    ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -802,18 +803,23 @@ async fn start_embedded_server(
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
     // vehicle) opts into `POST /api/auth/setup` via `BANTO_ALLOW_SETUP=1`.
-    let router = api_router(
-        items,
-        users,
-        settings,
-        audit,
-        backup,
-        attachments,
-        auth,
-        events,
-        false,
-    )
-    .merge(static_router::<FrontendAssets>());
+    // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost,
+    // same as `banto-serve.rs`'s equivalent composition, so every response
+    // this embedded server produces carries the baseline security headers.
+    let router = with_security_headers(
+        api_router(
+            items,
+            users,
+            settings,
+            audit,
+            backup,
+            attachments,
+            auth,
+            events,
+            false,
+        )
+        .merge(static_router::<FrontendAssets>()),
+    );
     start(config, router).await
 }
 
