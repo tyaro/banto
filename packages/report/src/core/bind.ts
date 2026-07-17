@@ -100,7 +100,9 @@ function resolvePath(scope: unknown, path: string): { found: boolean; value: unk
 		if (cur === null || typeof cur !== 'object') {
 			return { found: false, value: undefined };
 		}
-		if (!(part in (cur as Record<string, unknown>))) {
+		// Own properties only: `in` would walk the prototype chain and
+		// "resolve" e.g. `{{ toString }}` to Object.prototype.toString.
+		if (!Object.prototype.hasOwnProperty.call(cur, part)) {
 			return { found: false, value: undefined };
 		}
 		cur = (cur as Record<string, unknown>)[part];

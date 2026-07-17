@@ -19,11 +19,14 @@
 //!   absolute / 7d idle) instead of the regular `token_policy` for the rest
 //!   of its life - see [`TokenRecord::remembered`].
 //! - **Login rate limiting** ([`RateLimitPolicy`]): consecutive failed
-//!   `POST /api/auth/login` attempts, keyed by client IP + username, trip a
-//!   short lockout (default: 5 failures -> 60s). Because credential
-//!   verification runs a deliberately expensive argon2id hash (spec §8.2), an
-//!   unthrottled login endpoint is also a CPU-exhaustion DoS vector, not just
-//!   a brute-force one.
+//!   `POST /api/auth/login` attempts trip a short lockout (default 60s) along
+//!   two dimensions - per (IP + username) at 5 failures, and per IP alone at
+//!   20 failures. Because credential verification runs a deliberately
+//!   expensive argon2id hash even for an unknown username (spec §8.2's
+//!   dummy-hash timing defense), an unthrottled login endpoint is also a
+//!   CPU-exhaustion DoS, not just a brute-force one; the per-IP dimension is
+//!   what stops that from being evaded by rotating the `username` field (see
+//!   [`RateLimitPolicy`]).
 //!
 //! Expired tokens and stale failure records are reaped lazily (on lookup) and
 //! opportunistically (a cheap sweep on each write); there is deliberately no
@@ -124,24 +127,41 @@ impl TokenPolicy {
 }
 
 /// Login failed-attempt throttling policy (spec §11.2). Failures are counted
-/// per key (client IP + username, see [`rate_limit_key`]); reaching
-/// `max_failures` consecutive failures starts a `lockout`-long window during
-/// which further attempts are rejected without even running the (expensive)
-/// credential check. A single success clears the counter.
+/// along TWO independent dimensions, each starting a `lockout`-long window on
+/// reaching its threshold (during which attempts are rejected without running
+/// the expensive credential check); a success clears both:
+///
+/// - **per (IP + username)** ([`rate_limit_key`]), threshold `max_failures`:
+///   the classic per-account brute-force guard, and NAT-friendly (one noisy
+///   client behind a shared address doesn't lock out every account).
+/// - **per IP alone** ([`ip_rate_limit_key`]), threshold `max_ip_failures`:
+///   counts failures from an address regardless of username. Without this,
+///   an attacker on one IP evades the per-account lockout entirely just by
+///   varying the `username` field each request - and because credential
+///   verification runs a deliberately expensive argon2id hash even for an
+///   unknown user (dummy-hash timing defense), that is a CPU/memory
+///   exhaustion DoS, not merely brute-force. This dimension bounds argon2
+///   invocations per IP. Its threshold is higher than `max_failures` so a
+///   shared NAT with several genuinely-fumbling users isn't tripped by
+///   normal use.
 #[derive(Debug, Clone, Copy)]
 pub struct RateLimitPolicy {
     pub max_failures: u32,
+    pub max_ip_failures: u32,
     pub lockout: Duration,
 }
 
 impl Default for RateLimitPolicy {
-    /// 5 strikes, then a 60s cool-off: long enough to make online
-    /// brute-forcing / argon2 CPU-flooding impractical, short enough that a
-    /// user who genuinely fat-fingered their password five times is not
-    /// locked out for long.
+    /// 5 per-account strikes / 20 per-IP strikes, then a 60s cool-off. The
+    /// per-account count is long enough to make online brute-forcing
+    /// impractical, short enough that a user who fat-fingered their password
+    /// five times isn't locked out for long. The per-IP count (4x higher)
+    /// caps argon2 to ~20 hashes / 60s / IP under a username-rotation flood
+    /// while leaving generous headroom for a shared NAT's legitimate misses.
     fn default() -> Self {
         Self {
             max_failures: 5,
+            max_ip_failures: 20,
             lockout: Duration::from_secs(60),
         }
     }
@@ -380,11 +400,13 @@ impl AuthState {
     }
 
     /// Rate-limited credential check for the login endpoint (spec §11.2).
-    /// `key` identifies the caller for lockout purposes (see
-    /// [`rate_limit_key`]). Order matters: the lockout is checked *before* the
-    /// expensive credential verifier runs, so a locked-out key cannot be used
-    /// to keep argon2 busy. A success clears the key's failure streak; a
-    /// failure adds to it (and may start a lockout).
+    /// `ip` is the caller's peer address (`None` only when the server was
+    /// started without `ConnectInfo`, e.g. `tower::oneshot` in tests). Both
+    /// throttle dimensions - per (IP+username) and per IP alone (see
+    /// [`RateLimitPolicy`]) - are checked *before* the expensive credential
+    /// verifier runs, so a lockout on either cannot be used to keep argon2
+    /// busy. A success clears both dimensions' streaks; a failure adds to
+    /// both (each against its own threshold) and may start a lockout.
     ///
     /// `remember` (spec M11 "LAN Remember me"): when `true`, the issued token
     /// is evaluated against `remembered_policy` (long-lived) instead of the
@@ -392,22 +414,42 @@ impl AuthState {
     /// [`TokenRecord::remembered`].
     pub async fn login_rate_limited(
         &self,
-        key: &str,
+        ip: Option<IpAddr>,
         username: &str,
         password: &str,
         remember: bool,
     ) -> LoginOutcome {
-        if let Some(retry_after) = self.locked_out(key) {
+        let account_key = rate_limit_key(ip, username);
+        // The per-IP dimension only exists when the peer address is known
+        // (production always wires up `ConnectInfo`; `None` is the test /
+        // no-connect-info fallback, where an IP-wide limit is meaningless).
+        let ip_key = ip.map(ip_rate_limit_key);
+        let policy = self.inner.rate_limit;
+
+        // BOTH dimensions are checked before the expensive verifier runs, so
+        // a lockout on either one short-circuits argon2 (this is the property
+        // that makes the endpoint DoS-resistant, not just brute-force-proof).
+        let mut retry_after = self.locked_out(&account_key);
+        if let Some(ip_key) = &ip_key {
+            retry_after = max_option(retry_after, self.locked_out(ip_key));
+        }
+        if let Some(retry_after) = retry_after {
             return LoginOutcome::RateLimited { retry_after };
         }
 
         match (self.inner.verify_credentials)(username.to_string(), password.to_string()).await {
             Some(identity) => {
-                self.reset_failures(key);
+                self.reset_failures(&account_key);
+                if let Some(ip_key) = &ip_key {
+                    self.reset_failures(ip_key);
+                }
                 LoginOutcome::Success(self.issue_token_with(identity, remember))
             }
             None => {
-                self.record_failure(key);
+                self.record_failure(&account_key, policy.max_failures);
+                if let Some(ip_key) = &ip_key {
+                    self.record_failure(ip_key, policy.max_ip_failures);
+                }
                 LoginOutcome::InvalidCredentials
             }
         }
@@ -547,9 +589,11 @@ impl AuthState {
     }
 
     /// Record a failed attempt for `key`, starting a lockout once the streak
-    /// reaches [`RateLimitPolicy::max_failures`]. Sweeps aged-out records
-    /// under the same write lock.
-    fn record_failure(&self, key: &str) {
+    /// reaches `max_failures` (the caller passes the threshold for this key's
+    /// dimension - `RateLimitPolicy::max_failures` for the per-account key,
+    /// `max_ip_failures` for the per-IP key). Sweeps aged-out records under
+    /// the same write lock.
+    fn record_failure(&self, key: &str, max_failures: u32) {
         let now = self.inner.clock.now();
         let policy = self.inner.rate_limit;
         let mut failures = self
@@ -576,7 +620,7 @@ impl AuthState {
 
         record.count += 1;
         record.last_failure = now;
-        if record.count >= policy.max_failures {
+        if record.count >= max_failures {
             record.locked_until = Some(now + policy.lockout);
         }
     }
@@ -625,6 +669,24 @@ pub fn rate_limit_key(ip: Option<IpAddr>, username: &str) -> String {
     match ip {
         Some(ip) => format!("{ip}|{username}"),
         None => format!("-|{username}"),
+    }
+}
+
+/// Lockout key for the per-IP throttle dimension (spec §11.2, see
+/// [`RateLimitPolicy`]): the client IP alone, username-independent. The
+/// `ip-only|` prefix can never collide with a [`rate_limit_key`] value (whose
+/// first `|`-segment is always an IP address or `-`, never the literal
+/// `ip-only`), so the two dimensions share the one failure map safely.
+pub fn ip_rate_limit_key(ip: IpAddr) -> String {
+    format!("ip-only|{ip}")
+}
+
+/// The larger of two optional retry-after durations (a present value beats
+/// `None`): used to report the longer of the two lockout dimensions.
+fn max_option(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
     }
 }
 
@@ -715,9 +777,13 @@ async fn login_handler(
     MaybePeerAddr(peer): MaybePeerAddr,
     Json(body): Json<LoginRequest>,
 ) -> Response {
-    let key = rate_limit_key(peer.map(|addr| addr.ip()), &body.username);
     match auth
-        .login_rate_limited(&key, &body.username, &body.password, body.remember)
+        .login_rate_limited(
+            peer.map(|addr| addr.ip()),
+            &body.username,
+            &body.password,
+            body.remember,
+        )
         .await
     {
         LoginOutcome::Success(token) => Json(LoginResponse {
@@ -1045,21 +1111,20 @@ mod tests {
     async fn login_locks_out_after_max_consecutive_failures() {
         let policy = RateLimitPolicy {
             max_failures: 3,
+            max_ip_failures: 100,
             lockout: Duration::from_secs(60),
         };
         let (auth, calls) = counting_auth(policy);
-        let key = rate_limit_key(None, "admin");
-
         for _ in 0..3 {
             assert!(matches!(
-                auth.login_rate_limited(&key, "admin", "wrong", false).await,
+                auth.login_rate_limited(None, "admin", "wrong", false).await,
                 LoginOutcome::InvalidCredentials
             ));
         }
         assert_eq!(calls.load(Ordering::SeqCst), 3, "3 real checks so far");
 
         // The 4th attempt is locked out and must NOT run the verifier.
-        match auth.login_rate_limited(&key, "admin", "wrong", false).await {
+        match auth.login_rate_limited(None, "admin", "wrong", false).await {
             LoginOutcome::RateLimited { retry_after } => {
                 assert!(retry_after <= Duration::from_secs(60));
             }
@@ -1073,7 +1138,7 @@ mod tests {
 
         // Even the CORRECT password is refused while locked out.
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "admin", false).await,
+            auth.login_rate_limited(None, "admin", "admin", false).await,
             LoginOutcome::RateLimited { .. }
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 3);
@@ -1083,21 +1148,20 @@ mod tests {
     async fn lockout_expires_after_the_cooloff() {
         let policy = RateLimitPolicy {
             max_failures: 3,
+            max_ip_failures: 100,
             lockout: Duration::from_secs(60),
         };
         let (auth, _calls) = counting_auth(policy);
-        let key = rate_limit_key(None, "admin");
-
         for _ in 0..3 {
-            auth.login_rate_limited(&key, "admin", "wrong", false).await;
+            auth.login_rate_limited(None, "admin", "wrong", false).await;
         }
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "admin", false).await,
+            auth.login_rate_limited(None, "admin", "admin", false).await,
             LoginOutcome::RateLimited { .. }
         ));
 
         auth.advance(Duration::from_secs(61)); // ride out the cool-off
-        match auth.login_rate_limited(&key, "admin", "admin", false).await {
+        match auth.login_rate_limited(None, "admin", "admin", false).await {
             LoginOutcome::Success(token) => assert!(auth.verify(&token)),
             other => panic!("expected Success after cool-off, got {other:?}"),
         }
@@ -1107,25 +1171,113 @@ mod tests {
     async fn success_resets_the_failure_streak() {
         let policy = RateLimitPolicy {
             max_failures: 3,
+            max_ip_failures: 100,
             lockout: Duration::from_secs(60),
         };
         let (auth, _calls) = counting_auth(policy);
-        let key = rate_limit_key(None, "admin");
-
         // Two failures (one short of the threshold)...
-        auth.login_rate_limited(&key, "admin", "wrong", false).await;
-        auth.login_rate_limited(&key, "admin", "wrong", false).await;
+        auth.login_rate_limited(None, "admin", "wrong", false).await;
+        auth.login_rate_limited(None, "admin", "wrong", false).await;
         // ...then a success clears the streak.
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "admin", false).await,
+            auth.login_rate_limited(None, "admin", "admin", false).await,
             LoginOutcome::Success(_)
         ));
         // Two more failures should NOT lock out (streak restarted at 0).
-        auth.login_rate_limited(&key, "admin", "wrong", false).await;
+        auth.login_rate_limited(None, "admin", "wrong", false).await;
         assert!(matches!(
-            auth.login_rate_limited(&key, "admin", "wrong", false).await,
+            auth.login_rate_limited(None, "admin", "wrong", false).await,
             LoginOutcome::InvalidCredentials
         ));
+    }
+
+    #[tokio::test]
+    async fn per_ip_dimension_bounds_a_username_rotation_flood() {
+        // Regression: without a username-independent per-IP limit, an attacker
+        // on one IP evades the per-(IP,username) lockout by varying `username`
+        // every request, keeping the argon2 verifier busy indefinitely (a
+        // CPU/memory DoS). max_ip_failures must trip regardless of username.
+        let policy = RateLimitPolicy {
+            max_failures: 5,
+            max_ip_failures: 3,
+            lockout: Duration::from_secs(60),
+        };
+        let (auth, calls) = counting_auth(policy);
+        let ip = Some(IpAddr::from([203, 0, 113, 7]));
+
+        // Three failures, each under a DIFFERENT username: the per-account
+        // lockout (threshold 5) never trips, but the per-IP one (threshold 3)
+        // does.
+        for i in 0..3 {
+            let username = format!("victim{i}");
+            assert!(matches!(
+                auth.login_rate_limited(ip, &username, "wrong", false).await,
+                LoginOutcome::InvalidCredentials
+            ));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "3 real checks so far");
+
+        // The 4th attempt - yet another fresh username - is now locked out by
+        // the IP dimension WITHOUT running the verifier (argon2 is capped).
+        match auth
+            .login_rate_limited(ip, "victim-new", "wrong", false)
+            .await
+        {
+            LoginOutcome::RateLimited { retry_after } => {
+                assert!(retry_after <= Duration::from_secs(60))
+            }
+            other => panic!("expected RateLimited from the IP dimension, got {other:?}"),
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "IP-locked attempt must short-circuit the verifier"
+        );
+
+        // A DIFFERENT IP is unaffected - the lockout is per-address.
+        let other_ip = Some(IpAddr::from([203, 0, 113, 8]));
+        assert!(matches!(
+            auth.login_rate_limited(other_ip, "victim0", "wrong", false)
+                .await,
+            LoginOutcome::InvalidCredentials
+        ));
+    }
+
+    #[tokio::test]
+    async fn per_ip_dimension_leaves_headroom_above_the_account_threshold() {
+        // The IP threshold is deliberately higher than the per-account one so
+        // a shared NAT with a few genuinely-fumbling users isn't tripped by
+        // normal misses. Below max_ip_failures, distinct-username failures
+        // from one IP keep returning InvalidCredentials (not RateLimited).
+        let policy = RateLimitPolicy {
+            max_failures: 5,
+            max_ip_failures: 4,
+            lockout: Duration::from_secs(60),
+        };
+        let (auth, _calls) = counting_auth(policy);
+        let ip = Some(IpAddr::from([198, 51, 100, 20]));
+
+        for i in 0..3 {
+            let username = format!("user{i}");
+            assert!(matches!(
+                auth.login_rate_limited(ip, &username, "wrong", false).await,
+                LoginOutcome::InvalidCredentials
+            ));
+        }
+        // A legitimate success from the same IP then clears the IP streak...
+        assert!(matches!(
+            auth.login_rate_limited(ip, "admin", "admin", false).await,
+            LoginOutcome::Success(_)
+        ));
+        // ...so the counter restarts and 3 more distinct-user misses still do
+        // not lock the IP (would have, had the streak not reset at 4).
+        for i in 0..3 {
+            let username = format!("again{i}");
+            assert!(matches!(
+                auth.login_rate_limited(ip, &username, "wrong", false).await,
+                LoginOutcome::InvalidCredentials
+            ));
+        }
     }
 
     // --- Remember me (spec M11) --------------------------------------------
@@ -1133,9 +1285,7 @@ mod tests {
     #[tokio::test]
     async fn remembered_token_survives_the_regular_absolute_ttl_but_not_forever() {
         let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
-        let key = rate_limit_key(None, "admin");
-
-        let token = match auth.login_rate_limited(&key, "admin", "admin", true).await {
+        let token = match auth.login_rate_limited(None, "admin", "admin", true).await {
             LoginOutcome::Success(token) => token,
             other => panic!("expected Success, got {other:?}"),
         };
@@ -1160,9 +1310,7 @@ mod tests {
     #[tokio::test]
     async fn non_remembered_login_still_uses_the_regular_policy() {
         let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
-        let key = rate_limit_key(None, "admin");
-
-        let token = match auth.login_rate_limited(&key, "admin", "admin", false).await {
+        let token = match auth.login_rate_limited(None, "admin", "admin", false).await {
             LoginOutcome::Success(token) => token,
             other => panic!("expected Success, got {other:?}"),
         };
@@ -1233,6 +1381,7 @@ mod tests {
     async fn login_handler_returns_429_after_lockout() {
         let policy = RateLimitPolicy {
             max_failures: 2,
+            max_ip_failures: 100,
             lockout: Duration::from_secs(60),
         };
         let auth = frozen_auth(TokenPolicy::default(), policy);

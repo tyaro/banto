@@ -21,7 +21,9 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 - **スキーマ駆動フォーム**（`@banto/forms`）: 定義オブジェクトから入力UI・
   バリデーション・状態管理を自動生成。
 - **チャート**（`@banto/charts`）: 依存ライブラリなしのSVGフルスクラッチ。
-  折れ線/エリア・棒・円/ドーナツ・散布図・スパークライン。
+  折れ線/エリア・棒・円/ドーナツ・散布図・スパークラインに加え、複合
+  （棒+折れ線）・レーダー・ヒートマップ・ゲージ、SPC系（ヒストグラム・
+  パレート図・箱ひげ図）の全12種。
 - **ドッキングレイアウト**（`@banto/dock-svelte`）: フローティングウィンドウ +
   分割・タブ化・ドラッグでの再配置・スナップ、レイアウトのJSON保存/復元。
 - **refineライクなコア**（`@banto/admin-core`）: リソース定義、
@@ -30,6 +32,20 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
   InMemory/HTTP を差し替え可能。
 - **組み込みWebサーバ**（`banto-server`）: 設定でオプトイン有効化すると、
   同一LAN内の他端末のブラウザからREST + SSEで同じ画面を利用可能。
+- **認証・RBAC・ユーザー管理**（M10）: argon2id 資格情報 + 初回セットアップ、
+  admin/editor/viewer の3ロール、ユーザー管理画面。REST/Tauri 両経路で
+  同一の権限判定。
+- **監査ログ**（M14）+ **設定基盤**（M12、SettingsProvider）+ **自動ログイン/
+  ログイン不要モード**（M11）。
+- **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
+  **SQLite バックアップ/リストア**（M17）。
+- **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
+- **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
+  添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
+  スキャナ入力（`@banto/scan-wedge`、M21）。いずれも削除可能なデモ配線付き。
+
+実装済みマイルストーンの全体像は [docs/roadmap.md](docs/roadmap.md)、変更履歴は
+[CHANGELOG.md](CHANGELOG.md) を参照。
 
 ## 構成
 
@@ -45,15 +61,19 @@ npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスは
 | `@banto/forms`       | スキーマ駆動フォーム + 入力コンポーネント                     |
 | `@banto/charts`      | SVGチャート（折れ線/棒/円/散布図/スパークライン）             |
 | `@banto/dock-svelte` | ドッキング/フローティングレイアウト                           |
-| `@banto/theme`       | CSS変数テーマ + ライト/ダーク/システム切替                    |
+| `@banto/theme`       | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット  |
+| `@banto/report`      | 帳票/印刷（Markdownテンプレート + データバインド、M19）       |
+| `@banto/attachments` | 添付ファイル/画像管理UI（M20）                                |
+| `@banto/scan-wedge`  | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）    |
 
 Rust クレート（`crates/`、MIT）:
 
-| クレート        | 内容                                                        |
-| --------------- | ----------------------------------------------------------- |
-| `banto-core`    | 共通型（ListParams/SortState/FilterState/エラー型）         |
-| `banto-storage` | sqlxリポジトリ（SQLite/PostgreSQL、ホワイトリスト式クエリ） |
-| `banto-server`  | 組み込みaxumサーバ（REST・SSE・認証・静的配信）             |
+| クレート            | 内容                                                                            |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `banto-core`        | 共通型（ListParams/SortState/FilterState/エラー型）                             |
+| `banto-storage`     | sqlxリポジトリ（SQLite。PostgreSQLはfeature定義のみで実装未着手）               |
+| `banto-server`      | 組み込みaxumサーバ（REST・SSE・認証・静的配信・セキュリティヘッダ）             |
+| `banto-attachments` | 添付ファイルのメタCRUD・保存・サムネイル生成（M20、`@banto/attachments`の裏側） |
 
 アプリ（`apps/admin-template/`）: Tauri v2 + SvelteKit の管理画面テンプレート
 本体。`core/`（tauri非依存のサービス層 `admin-template-core`）と
@@ -399,8 +419,9 @@ pnpm --filter admin-template tauri dev
   `apps/admin-template/core/src/users.rs`）。`pnpm dev`のブラウザ単体
   デモモード（Tauri/バックエンドなし、InMemoryデータ）のみ、Rustバック
   エンドを持たないため`admin` / `admin`固定の簡易セッション認証のまま。
-- テーマ・ドックレイアウト等のUI設定の保存先は現状localStorage。将来
-  `SettingsProvider`（ローカルSQLite設定DB）に移行予定（仕様 §12.1）。
+- テーマ・ドックレイアウト等のUI設定は、Tauri/LANブラウザでは SQLite 設定DB
+  （`SettingsProvider`、M12で移行済み）へ永続化される。localStorage は初回描画の
+  ちらつき防止キャッシュ兼、ブラウザ単体デモモードのフォールバックとして併用する。
 
 ## ライセンス
 

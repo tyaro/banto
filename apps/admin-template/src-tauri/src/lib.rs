@@ -903,11 +903,21 @@ async fn server_apply(
     Ok(build_status(&config, running))
 }
 
+/// `admin`-only, symmetric with `settings_set` below: the generic key/value
+/// settings store holds privileged config (embedded-server enable/bind/port,
+/// `auth.disabled`/`auth.disabled_role`, `auth.autologin.username`, audit
+/// retention, and every user's `ui.{username}.*` namespace), so reading an
+/// arbitrary key is as privileged as writing one. Without this guard an
+/// unauthenticated webview (the login screen is a real webview whose console
+/// can `invoke`) could read any of those. UI settings for the current user
+/// go through `ui_settings_get` (Viewer-gated, scoped to the caller's own
+/// namespace) instead; this raw command is not called by the frontend.
 #[tauri::command]
 async fn settings_get(
     state: State<'_, AppState>,
     key: String,
 ) -> Result<Option<String>, BantoError> {
+    require_role(&state, Role::Admin, "settings").await?;
     state.settings.get(&key).await
 }
 
