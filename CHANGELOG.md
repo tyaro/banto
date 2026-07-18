@@ -20,6 +20,15 @@
 
 ## [Unreleased]
 
+- docs: 改善計画フェーズ1（README 5分クイックスタート・SQLite期待値明記・
+  リソース追加レシピ `docs/recipes/add-resource.md` 新設・LAN HTTP警告 +
+  Caddy TLS終端例・依存判断基準・AGENTS.md Definition of Done・roadmap
+  M23候補登録）
+- fix(e2e): vite preview を 127.0.0.1 に明示バインドし、CIのE2Eジョブが
+  恒常失敗していた webServer タイムアウトを解消（webServer stdout の
+  パイプ化も恒久化）(#37)
+- docs: AIレビュー統合の改善計画 `docs/improvement-plan-2026-07.md` を
+  新設し、E2E障害の事後記録を improvements.md §4.1 に追記 (#36, #38)
 - M18: 基盤整備の残ギャップ解消（M18 完了。CIのRustジョブへ
   `banto-attachments` 追加、E2E visual regression + axe-coreジョブ追加、
   全9パッケージの `publish --dry-run` 確認、template-scope.md §6の
