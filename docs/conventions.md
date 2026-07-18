@@ -27,11 +27,11 @@
 **REST 経路と Tauri 経路の両方で同一の認可と同一の監査を通す**。origin
 （`"rest"` / `"tauri"`）だけが異なる。
 
-- REST: `admin-template-core` `rest.rs` の `RoleGuard` / `require_role_at_least`
+- REST: `admin-template-core` `rest/mod.rs` の `RoleGuard` / `require_role_at_least`
   + `record_write`。
 - Tauri: `src-tauri/src/lib.rs` の `require_role`（doc コメントに
   「mirrors REST's `RoleGuard`」と明記）+ 各コマンドの `audit.record(...)`。
-- 対応表は `rest.rs` のモジュール doc（仕様 M14）にある。
+- 対応表は `rest/mod.rs` のモジュール doc（仕様 M14）にある。
 - **読み取り系（list/get）は両経路とも監査しない**。denied 記録は
   「認証済みだがロール不足」のみ。無セッション（Unauthorized）は記録しない
   — この判断も両側で揃える。
@@ -64,7 +64,7 @@
 |---|---|---|
 | `chrono` / `time` | 手書きの日付変換 | `backup.rs` の `iso_datetime_from_system_time` / `compact_stamp`、`banto-attachments` は Howard Hinnant の `civil_from_days` を移植 |
 | MIME 検出ライブラリ | マジックバイト判定 | `banto-attachments` `detect_mime`（下記§6） |
-| `multipart` | 生バイト body + `?fileName=` クエリ | `rest.rs` のバックアップ/添付アップロード |
+| `multipart` | 生バイト body + `?fileName=` クエリ | `rest/backups.rs`・`rest/attachments.rs` のアップロード |
 | `tower-http` | `axum::middleware::from_fn` の手書き | `security_headers.rs` / `csrf.rs` |
 | markdown ライブラリ | 自前パーサ + エスケープ | `packages/report/src/core/{parse,bind,html}.ts`（deps 空） |
 | `tracing` | `eprintln!` | `audit.rs` |
@@ -136,7 +136,7 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   呼ばない」ことを検証。
 - **`DefaultBodyLimit` は service 層チェックの上に置く。** transport 上限は
   service 層の実チェック（`MAX_ATTACHMENT_BYTES` 等）より「快適に上」であればよい
-  という順序（`rest.rs`）。
+  という順序（`rest/mod.rs` の doc とルータ各所）。
 - **security headers ミドルウェアは最外層（LAST）に適用する。** `/api/*` と静的
   フォールバックを merge した後に付けることで、新ルートが opt-in を忘れても
   ヘッダが漏れない構造にする（`security_headers.rs`）。

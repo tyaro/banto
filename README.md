@@ -161,7 +161,7 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 | Rust: マイグレーション   | `apps/admin-template/core/migrations/0001_items.sql`                                                                                    | `items` テーブル定義                                                                                   |
 | Rust: シード             | `apps/admin-template/core/src/db.rs`（`SEED_ROW_COUNT`・`seed_if_empty`）                                                               | 初回起動時の1,000件デモ投入                                                                            |
 | Rust: サービス層         | `apps/admin-template/core/src/items.rs`                                                                                                 | `Item`/`ItemInput`/`ItemImportRow`・CRUD・CSVインポート                                                |
-| Rust: REST               | `apps/admin-template/core/src/rest.rs`                                                                                                  | `items` のルーティング（LANブラウザ向け）                                                              |
+| Rust: REST               | `apps/admin-template/core/src/rest/items.rs`                                                                                            | `items` のルーティング（LANブラウザ向け）                                                              |
 | Rust: Tauriコマンド      | `apps/admin-template/src-tauri/src/lib.rs`                                                                                              | `items_list`/`items_get`/`items_create`/`items_update`/`items_delete`/`items_import`、`AppState.items` |
 | フロント: リソース定義   | `apps/admin-template/src/lib/banto/resources/items.ts`・同 `resources/index.ts`                                                         | `itemsSchema`/`itemsResource` の定義と `resources` 配列への登録（`setup.ts` が `initBanto` へ渡す）    |
 | フロント: デモデータ     | `apps/admin-template/src/lib/banto/sampleData.ts`                                                                                       | ブラウザ単体デモモード（InMemory）用の生成データ                                                       |
@@ -225,7 +225,7 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
    `attachmentsClient`）を削除。
 2. `apps/admin-template/src/lib/banto/attachmentsClient.ts`・
    `src/lib/banto/attachmentsAdmin.ts` を削除。
-3. `apps/admin-template/core/src/rest.rs` の `attachments_router`
+3. `apps/admin-template/core/src/rest/attachments.rs`（`attachments_router`
    一式（`attachments_list`/`attachments_upload`/`attachments_delete`等）と
    `items_delete` からの `delete_for_record` 呼び出し・`ItemsWriteState`
    の `attachments` フィールドを外す。`src-tauri/src/lib.rs` も同様に

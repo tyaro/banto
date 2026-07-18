@@ -20,6 +20,11 @@
 
 ## [Unreleased]
 
+- refactor: `rest.rs`（4,069行）をリソース別モジュールへ分割
+  （`rest/mod.rs` = ルート表 doc + 共有ガード + `api_router`、
+  `rest/{items,users,auth,ui_settings,audit,backups,attachments}.rs`、
+  テストは `rest/tests.rs`。公開 API（`api_router` /
+  `audited_credential_verifier`）のパスは不変。improvement-plan P3-1）
 - refactor: `setup.ts` を分割し、リソース定義を `resources/items.ts` +
   `resources/index.ts` へ、環境判定を `environment.ts` へ、デモ認証を
   `providers/demo.ts` へ分離（既存の公開エクスポートは `setup.ts` から
