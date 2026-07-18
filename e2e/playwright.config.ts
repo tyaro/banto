@@ -149,6 +149,10 @@ export default defineConfig({
 			// starts empty" assumption on a second local run.
 			reuseExistingServer: false,
 			timeout: 30_000,
+			// Playwright's default swallows webServer stdout, which turns any
+			// "server never became ready" failure into an undebuggable 30s
+			// timeout in CI logs. Piping it costs a few startup lines per run
+			// and preserves the evidence (bind address, DB path) when it counts.
 			stdout: 'pipe',
 			env: {
 				PORT: String(PORT),
@@ -164,11 +168,21 @@ export default defineConfig({
 			// backend at all, so unlike `banto-serve` above this has no `env`/DB
 			// to isolate - reusing a server left running from a previous local
 			// run is safe (and convenient for `--update-snapshots` iteration).
-			command: `pnpm --filter admin-template preview --port ${VISUAL_PORT} --strictPort`,
+			//
+			// `--host 127.0.0.1` is load-bearing: vite's default host is
+			// `localhost`, which on hosts whose `localhost` resolves to `::1`
+			// first (GitHub's ubuntu runners) makes vite bind ONLY the IPv6
+			// loopback - while Playwright polls the IPv4 `url` below and gets
+			// ECONNREFUSED until the 30s webServer timeout kills the whole run.
+			// Pinning the bind address to the exact address being polled keeps
+			// the two sides agreeing everywhere.
+			command: `pnpm --filter admin-template preview --port ${VISUAL_PORT} --strictPort --host 127.0.0.1`,
 			cwd: repoRoot,
 			url: VISUAL_BASE_URL,
 			reuseExistingServer: !process.env.CI,
 			timeout: 30_000,
+			// Same rationale as the banto-serve entry above - vite's startup
+			// banner records which host it actually bound.
 			stdout: 'pipe'
 		}
 	]
