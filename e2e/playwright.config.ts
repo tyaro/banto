@@ -149,6 +149,7 @@ export default defineConfig({
 			// starts empty" assumption on a second local run.
 			reuseExistingServer: false,
 			timeout: 30_000,
+			stdout: 'pipe',
 			env: {
 				PORT: String(PORT),
 				BANTO_BIND: '127.0.0.1',
@@ -167,7 +168,8 @@ export default defineConfig({
 			cwd: repoRoot,
 			url: VISUAL_BASE_URL,
 			reuseExistingServer: !process.env.CI,
-			timeout: 30_000
+			timeout: 30_000,
+			stdout: 'pipe'
 		}
 	]
 });

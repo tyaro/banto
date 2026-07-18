@@ -132,6 +132,8 @@ jobs:
 
       - name: Run E2E smoke suite
         run: pnpm e2e
+        env:
+          DEBUG: pw:webserver
 
       # Baselines under e2e/visual/**/*-snapshots are committed pre-generated
       # on Linux, so this ubuntu-latest runner diffs against them directly -
