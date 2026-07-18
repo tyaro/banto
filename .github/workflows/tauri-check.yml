@@ -1,0 +1,128 @@
+# Tauri compile check (improvement-plan-2026-07.md P3-2).
+#
+# Scope: `cargo check -p admin-template` (apps/admin-template/src-tauri) on
+# ubuntu + windows. The main CI (ci.yml) deliberately excludes this crate to
+# keep every-PR pipelines fast and system-dependency-free, which left Tauri
+# command signatures / feature wiring / capability config verified only by
+# code review. This workflow closes that gap WITHOUT re-burdening every PR:
+#
+# - `pull_request` + `push`(main) run it only when Tauri-side code or the
+#   dependency graph actually changes (paths filter below).
+# - `schedule` (weekly) catches environment drift (new Rust stable, runner
+#   image updates, upstream tauri point releases) even when the repo itself
+#   is idle - and files/refreshes a tracking issue on failure so a red
+#   scheduled run is noticed without anyone watching the Actions tab.
+# - `workflow_dispatch` allows manual runs.
+#
+# `cargo check` only (no `tauri build`): compiling the crate is what catches
+# the drift this workflow exists for; bundling/installers belong to a future
+# release workflow.
+name: Tauri check
+
+on:
+  schedule:
+    # Weekly, Sunday 18:00 UTC = Monday 03:00 JST.
+    - cron: '0 18 * * 0'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/admin-template/src-tauri/**'
+      - 'apps/admin-template/core/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/tauri-check.yml'
+  pull_request:
+    paths:
+      - 'apps/admin-template/src-tauri/**'
+      - 'apps/admin-template/core/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/tauri-check.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: tauri-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: cargo check -p admin-template
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Tauri v2 Linux prerequisites (https://tauri.app/start/prerequisites/).
+      # Windows needs nothing extra for `cargo check`: the WebView2 SDK comes
+      # in through the webview2-com crate, not a system package.
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo check
+        run: cargo check -p admin-template --all-targets
+
+  # A failed scheduled run has no PR to turn red and nobody staring at the
+  # Actions tab, so surface it as a tracking issue (deduplicated by label:
+  # comment on the existing open issue instead of filing a duplicate).
+  report-scheduled-failure:
+    name: File tracking issue on scheduled failure
+    needs: check
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Create or refresh tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'tauri-check-failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: 'open',
+              labels: label
+            });
+            const body =
+              `週次の Tauri compile check（\`cargo check -p admin-template\`）が失敗しました。\n\n` +
+              `- 失敗した run: ${runUrl}\n` +
+              `- ワークフロー: \`.github/workflows/tauri-check.yml\`（improvement-plan-2026-07.md P3-2）\n\n` +
+              `リポジトリ側の変更なしで赤になった場合は環境ドリフト` +
+              `（Rust stable 更新・ランナーイメージ更新・tauri のポイントリリース等）が疑わしい。`;
+            if (open.length > 0) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: open[0].number,
+                body: `再発: ${runUrl}`
+              });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: '週次 Tauri check が失敗しています',
+                labels: [label],
+                body
+              });
+            }

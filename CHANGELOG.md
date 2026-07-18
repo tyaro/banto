@@ -20,6 +20,10 @@
 
 ## [Unreleased]
 
+- ci: Tauri compile check ワークフロー `tauri-check.yml` を新設
+  （`cargo check -p admin-template` を ubuntu/windows で、Tauri側を触る
+  PR/main push + 週次スケジュールで実行。週次失敗時は Issue 自動起票。
+  improvement-plan P3-2）
 - docs: 改善計画フェーズ1（README 5分クイックスタート・SQLite期待値明記・
   リソース追加レシピ `docs/recipes/add-resource.md` 新設・LAN HTTP警告 +
   Caddy TLS終端例・依存判断基準・AGENTS.md Definition of Done・roadmap

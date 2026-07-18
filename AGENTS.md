@@ -58,8 +58,10 @@ cargo audit         # 依存監査（.cargo/audit.toml の ignore 付き）
 ```
 
 注意: `src-tauri` はこのサンドボックスでは webkit2gtk 不在によりコンパイル不可。
-Tauri コマンド側の変更はコードレビューで担保する。CI（`.github/workflows/ci.yml`）が
-frontend / rust / e2e / audit の各ジョブを回す。
+Tauri コマンド側の変更はコードレビュー + `tauri-check.yml`（Tauri 側/依存
+グラフを触る PR と main push、および週次スケジュールで
+`cargo check -p admin-template` を ubuntu/windows で実行）で担保する。
+CI（`.github/workflows/ci.yml`）が frontend / rust / e2e / audit の各ジョブを回す。
 
 ## Definition of Done（委譲タスクの完了報告様式）
 
