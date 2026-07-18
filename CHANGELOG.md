@@ -20,6 +20,10 @@
 
 ## [Unreleased]
 
+- refactor: `setup.ts` を分割し、リソース定義を `resources/items.ts` +
+  `resources/index.ts` へ、環境判定を `environment.ts` へ、デモ認証を
+  `providers/demo.ts` へ分離（既存の公開エクスポートは `setup.ts` から
+  re-export され後方互換。improvement-plan P3-4）
 - ci: Tauri compile check ワークフロー `tauri-check.yml` を新設
   （`cargo check -p admin-template` を ubuntu/windows で、Tauri側を触る
   PR/main push + 週次スケジュールで実行。週次失敗時は Issue 自動起票。

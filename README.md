@@ -43,7 +43,7 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 動いたら、次に編集する場所は3つ（詳細な手順は
 [docs/recipes/add-resource.md](docs/recipes/add-resource.md)）:
 
-1. `apps/admin-template/src/lib/banto/setup.ts` — リソース定義とスキーマ
+1. `apps/admin-template/src/lib/banto/resources/items.ts` — リソース定義とスキーマ
 2. `apps/admin-template/core/migrations/0001_items.sql` — テーブル定義
 3. `apps/admin-template/core/src/items.rs` — サービス層（CRUD）
 
@@ -163,7 +163,7 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 | Rust: サービス層         | `apps/admin-template/core/src/items.rs`                                                                                                 | `Item`/`ItemInput`/`ItemImportRow`・CRUD・CSVインポート                                                |
 | Rust: REST               | `apps/admin-template/core/src/rest.rs`                                                                                                  | `items` のルーティング（LANブラウザ向け）                                                              |
 | Rust: Tauriコマンド      | `apps/admin-template/src-tauri/src/lib.rs`                                                                                              | `items_list`/`items_get`/`items_create`/`items_update`/`items_delete`/`items_import`、`AppState.items` |
-| フロント: リソース定義   | `apps/admin-template/src/lib/banto/setup.ts`                                                                                            | `itemsSchema`/`itemsResource`、`initBanto({ resources: [...] })` への登録                              |
+| フロント: リソース定義   | `apps/admin-template/src/lib/banto/resources/items.ts`・同 `resources/index.ts`                                                         | `itemsSchema`/`itemsResource` の定義と `resources` 配列への登録（`setup.ts` が `initBanto` へ渡す）    |
 | フロント: デモデータ     | `apps/admin-template/src/lib/banto/sampleData.ts`                                                                                       | ブラウザ単体デモモード（InMemory）用の生成データ                                                       |
 | フロント: ページ         | `apps/admin-template/src/routes/(app)/items/`                                                                                           | 一覧（`ItemsClientGrid.svelte`/`ItemsServerGrid.svelte`）・詳細・新規                                  |
 | フロント: CSVインポート  | `apps/admin-template/src/lib/banto/itemsAdmin.ts`                                                                                       | バルクインポートAPIクライアント（M15）                                                                 |
