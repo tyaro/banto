@@ -20,6 +20,15 @@
 
 ## [Unreleased]
 
+- P3-6/P4-4: CI の全サードパーティ Action をコミット SHA に固定し
+  （checkout/pnpm-action-setup/setup-node/rust-cache/upload-artifact/
+  install-action/github-script の7種。`dtolnay/rust-toolchain@stable` は
+  ref がツールチェーン選択を兼ねる仕様のため意図的に非固定）、Dependabot
+  （`.github/dependabot.yml`、github-actions/npm/cargo をグループ化週次）を
+  導入して追従を自動化
+- P4-6: `docs/improvements.md` を「未解決課題の調査記録」に絞り、対応済み
+  項目の実装記録を `docs/history/improvements-archive.md` へ分離
+  （各項目にスタブ + アーカイブリンクを残し追跡可能に）
 - P3-5: アーキテクチャ規約の機械検査 `pnpm verify:architecture` を新設し
   CI の frontend ジョブで強制（サービス層の tauri/axum 非依存・パッケージ間
   import ゼロ・`$lib` import 禁止・`{@html}`/生色値の理由付き許可リスト・

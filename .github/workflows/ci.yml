@@ -1,5 +1,12 @@
 name: CI
 
+# セキュリティ: サードパーティ Action はコミット SHA でピン留めする
+# （タグは可変 = サプライチェーンリスク。improvement-plan P3-6）。
+# 追従は Dependabot（.github/dependabot.yml）が担う。例外:
+# dtolnay/rust-toolchain@stable は git ref がツールチェーンのチャンネル
+# 選択を兼ねる仕様（@stable = Rust stable を追う）ため、SHA 固定すると
+# ツールチェーンが凍結してしまう。意図的にタグ参照のまま残す。
+
 on:
   push:
     branches: [main]
@@ -16,15 +23,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Version is intentionally omitted: pnpm/action-setup resolves it from
       # the "packageManager" field in the root package.json (pnpm@10.33.0).
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -63,7 +70,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -71,7 +78,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # rustfmt only parses/reformats - no compilation, so unlike the steps
       # below it can safely cover every workspace member (including
@@ -102,13 +109,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -126,7 +133,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # e2e/playwright.config.ts's webServer launches this binary directly
       # (not `cargo run`) - it must already exist before `pnpm e2e` below.
@@ -149,7 +156,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: e2e/playwright-report/
@@ -160,7 +167,7 @@ jobs:
       # short retention since this is only useful for the PR that produced it.
       - name: Upload Playwright test results (diffs)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-test-results
           path: e2e/test-results/
@@ -172,13 +179,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -201,7 +208,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # Matches this workflow's existing convention (see the `rust` job)
       # of using dtolnay for the toolchain itself; taiki-e/install-action
@@ -209,7 +216,7 @@ jobs:
       # binaries instead of compiling from source, which would otherwise
       # add several minutes to this job.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
         with:
           tool: cargo-audit
 

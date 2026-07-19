@@ -17,6 +17,10 @@
 # `cargo check` only (no `tauri build`): compiling the crate is what catches
 # the drift this workflow exists for; bundling/installers belong to a future
 # release workflow.
+#
+# Third-party actions are pinned to commit SHAs (see ci.yml's top-of-file
+# policy comment for the rationale and the dtolnay/rust-toolchain@stable
+# exception); Dependabot (.github/dependabot.yml) keeps them current.
 name: Tauri check
 
 on:
@@ -57,7 +61,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Tauri v2 Linux prerequisites (https://tauri.app/start/prerequisites/).
       # Windows needs nothing extra for `cargo check`: the WebView2 SDK comes
@@ -78,7 +82,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Cargo check
         run: cargo check -p admin-template --all-targets
@@ -96,7 +100,7 @@ jobs:
       issues: write
     steps:
       - name: Create or refresh tracking issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const label = 'tauri-check-failure';
