@@ -11,6 +11,15 @@
 言語スタイル（命名・整形）は eslint/prettier/clippy/rustfmt に委ねており、本書の
 対象外。
 
+ドキュメントの3分類（2026-07-19 追記、improvement-plan P4-7）: 「なぜ」は
+3つに役割分担する — **コードコメント**（その場でしか意味を持たない局所的な
+理由）/ **本書**（横断的な不変条件＝守るべきルール）/
+**[ADR](adr/README.md)**（代替案を比較して1つを選んだ設計判断＝なぜその
+ルールにしたか）。本書の各不変条件の背後にある「なぜ」で、代替案の比較を
+伴うものは対応する ADR から辿れる（例: §1・§2 → [ADR-0001](adr/0001-rest-tauri-two-path-symmetry.md)、
+§3 → [ADR-0002](adr/0002-minimal-dependencies.md)）。同じ「なぜ」を2箇所に
+書かない。
+
 機械検査（2026-07-19 追記、improvement-plan P3-5）: 本書のうち機械検査
 可能な項目は `pnpm verify:architecture`（`scripts/verify-architecture.mjs`、
 CI の frontend ジョブで強制）が検査する。対象は各節に **[機械検査済み]** と

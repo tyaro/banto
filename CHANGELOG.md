@@ -20,6 +20,12 @@
 
 ## [Unreleased]
 
+- P4-7: ADR（Architecture Decision Record）を `docs/adr/` に導入。README
+  （ドキュメント3分類の役割分担: コードコメント / conventions.md / ADR）+
+  テンプレート + 最初の ADR 2件（0001 REST/Tauri 二経路対称、0002 依存
+  最小化）。ADR は「退けた代替案とその理由」に絞り、conventions.md 冒頭
+  から参照。既存判断のバックフィルは一括せず次に触れる時に1件ずつ起こす
+
 - P4-1: `FilterPopover` の dismiss 挙動テストを追加（`@banto/grid-svelte`、
   9件）。実装精査の結果 Tab 巡回型フォーカストラップではなく「Escape /
   外側 pointerdown で閉じる」dismiss 型と判明したため、その実挙動
