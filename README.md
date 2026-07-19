@@ -127,24 +127,42 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 
 1. リポジトリをコピー（GitHubの「Use this template」、または
    `git clone` 後に `rm -rf .git && git init` で履歴を切り離す）。
-2. 名称・識別子を変更する箇所:
+2. **リネームスクリプトを実行**（P2-1。名称・識別子の一括書き換え）:
+
+   ```sh
+   node scripts/rename.mjs \
+     --name my-app \
+     --title "My App" \
+     --identifier com.example.myapp \
+     --repo https://github.com/me/my-app   # 省略可
+   # --dry-run を付けると書き換え内容の事前確認のみ
+   ```
+
+   スクリプトが書き換える箇所（手動でやる場合のチェックリストでもある）:
    - ルート `package.json` の `name`/`description`
-   - `apps/admin-template/package.json` の `name`
+   - `apps/admin-template/package.json` の `name`（`<name>-app`）と、
+     ルート `package.json`・`e2e/playwright.config.ts` の
+     `--filter` 参照の追随
    - `apps/admin-template/src-tauri/tauri.conf.json` の
      `productName`/`identifier`（`dev.banto.admin` を自分の逆順ドメイン
      識別子に）・`app.windows[0].title`
    - アプリ内の表示文言（`src/app.html` の `<title>`、
-     `src/lib/components/Header.svelte`・`src/routes/login/+page.svelte`
-     等の「Banto」表記）
-   - アイコン: `pnpm --filter admin-template tauri icon <画像>`
-     （下記「Windowsでのローカルセットアップ」節を参照）
-   - ルート `README.md`/`LICENSE`（著作権者名）、Rust ワークスペース
-     `Cargo.toml` の `workspace.package.repository` と各
-     `packages/*/package.json` の `repository.url`（フォーク後の
-     自リポジトリURLに変更。`@banto/*` パッケージを独自に配布する場合は
+     `src/lib/components/Sidebar.svelte`・`src/routes/login/+page.svelte`
+     等の「Banto」表記）と、E2E のログイン見出しアサーション
+   - Rust ワークスペース `Cargo.toml` の `workspace.package.repository` と
+     各 `packages/*/package.json` の `repository.url`（`--repo` 指定時。
+     `@banto/*` パッケージを独自に配布する場合は
      [docs/publishing.md](docs/publishing.md) の scope 問題も参照）
-3. `packages/*` は現状 `@banto/*` のままモノレポ内 `workspace:*` 参照で
-   使う分にはリネーム不要（配布する場合のみ上記を検討）。
+
+3. スクリプトが**やらない**こと（実行後に案内も表示される）:
+   - アイコン: `pnpm --filter <name>-app tauri icon <画像>`
+     （下記「Windowsでのローカルセットアップ」節を参照）
+   - ルート `README.md`/`LICENSE`（著作権者名）の文言
+   - visual regression スナップショットの再生成
+     （旧ブランドの見た目で撮られているため
+     `pnpm e2e:visual --update-snapshots`）
+4. `packages/*` は現状 `@banto/*` のままモノレポ内 `workspace:*` 参照で
+   使う分にはリネーム不要（配布する場合のみ検討）。
 
 ### 2. デモコンテンツ（`items`）を自リソースに差し替える
 

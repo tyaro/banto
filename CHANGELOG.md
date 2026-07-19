@@ -20,6 +20,11 @@
 
 ## [Unreleased]
 
+- P2-1: テンプレート初期化スクリプト `scripts/rename.mjs` を新設
+  （`--name`/`--title`/`--identifier`/`--repo` で package.json×2・
+  `--filter` 参照・tauri.conf.json・ブランド表示・E2E アサーション・
+  リポジトリ URL を一括書き換え。Node 標準ライブラリのみ・`--dry-run`
+  対応・再実行安全。README「コピーとリネーム」をスクリプト前提に改訂）
 - M23: スキーマ→グリッド列の自動導出 `columnsFromSchema` を
   `@banto/grid-svelte` に追加（フォームと同一ルール・同一メッセージの
   バリデータ込み。items 一覧を導出ベースへ書き換え、仕様 §3.1 の
