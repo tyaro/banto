@@ -20,6 +20,11 @@
 
 ## [Unreleased]
 
+- P4-3: README LAN 節に「同時書き込みとSQLite（WAL）」節を追加。
+  デスクトップ + 組み込みサーバは同一プロセス・単一プール共有で書き込みが
+  シリアライズされ、DB は WAL モードで開くこと（別プロセスからの同時
+  アクセスは避けるべき点も）を明記
+
 - P4-7: ADR（Architecture Decision Record）を `docs/adr/` に導入。README
   （ドキュメント3分類の役割分担: コードコメント / conventions.md / ADR）+
   テンプレート + 最初の ADR 2件（0001 REST/Tauri 二経路対称、0002 依存

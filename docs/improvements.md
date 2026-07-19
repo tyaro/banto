@@ -262,9 +262,12 @@ i18nは[template-scope.md](template-scope.md) §4.3で
   （improvement-plan P4-2）。
 - `banto-server` にログ基盤がない場合、`tracing` + `tower-http::trace` の
   導入を検討（LAN サーバのトラブルシュートで効く）。
-- SQLite の書き込み競合（Tauri ウィンドウ + LAN クライアント同時書き込み）の
-  挙動を README の LAN 節に一言書いておく（WAL モードの有無を含む。
-  improvement-plan P4-3）。
+- ~~SQLite の書き込み競合（Tauri ウィンドウ + LAN クライアント同時書き込み）の
+  挙動を README の LAN 節に一言書いておく（WAL モードの有無を含む）~~ →
+  **対応済み（2026-07-19、P4-3）**。調査結果: デスクトップ + 組み込みサーバは
+  同一プロセス・単一プール共有のため書き込みはシリアライズされ、DB は WAL
+  モード。README LAN 節に「同時書き込みとSQLite（WAL）」節を追加し、別プロセス
+  からの同時アクセスを避ける注意も明記。
 
 ---
 
@@ -279,8 +282,7 @@ i18nは[template-scope.md](template-scope.md) §4.3で
 - **§5.2**: 既存ファイルの改行コード一括正規化（`--renormalize`）
 - **§6.1**: PostgreSQL リポジトリ実装（実需ドリブン、P4-5）
 - **§7**: npm公開準備一式（公開する場合のみ。現状は非公開方針）
-- **§9**: 仮想スクロールの計測ベンチ（P4-2）・ログ基盤（tracing）・
-  SQLite同時書き込みのREADME記載（P4-3）
+- **§9**: 仮想スクロールの計測ベンチ（P4-2）・ログ基盤（tracing）
 
 着手順の推奨・優先度付けは [improvement-plan-2026-07.md](improvement-plan-2026-07.md)
 が一次情報（本書の「優先度サマリ」節は全項目対応済みとなったため
