@@ -294,10 +294,16 @@ impl BackupService {
 
     /// Create a new backup via `VACUUM INTO` (spec M17: "WAL稼働中でも安全な
     /// オンラインバックアップ") into `backups/banto-YYYYMMDD-HHMMSS(-N)?.sqlite3`.
-    /// `backups/` is created if missing. The timestamp comes from the DB's
-    /// own `datetime('now')` (UTC, same convention as `audit_log.ts`'s
-    /// default) rather than the host clock, so `created_at` and the
-    /// file-name stamp are always derived from the exact same value.
+    /// `backups/` is created if missing. The FILE-NAME stamp comes from the
+    /// DB's own `datetime('now')` (UTC, same convention as `audit_log.ts`'s
+    /// default). `created_at`, however, is derived from the finished file's
+    /// mtime - the exact same source [`list`](Self::list) reads - so a freshly
+    /// created backup and the same backup as later listed always report an
+    /// identical `created_at`. (Deriving it from `datetime('now')` instead
+    /// made the two disagree by up to a second whenever the `VACUUM INTO`
+    /// crossed a second boundary between the query and the file being written:
+    /// a real inconsistency a caller sees, and a Windows-deterministic test
+    /// flake.)
     pub async fn create(&self) -> Result<BackupInfo, BantoError> {
         let dir = self.backups_dir();
         tokio::fs::create_dir_all(&dir)
@@ -329,7 +335,10 @@ impl BackupService {
         Ok(BackupInfo {
             file_name,
             size_bytes: metadata.len(),
-            created_at: now,
+            // Same mtime source as `list()` (not `now`) - see this method's doc.
+            created_at: iso_datetime_from_system_time(
+                metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            ),
         })
     }
 
