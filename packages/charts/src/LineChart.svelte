@@ -661,7 +661,7 @@
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius);
 		cursor: pointer;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+		box-shadow: var(--banto-shadow-sm);
 	}
 
 	.reset-zoom:hover {

@@ -35,6 +35,12 @@ jobs:
       - name: Lint (ESLint)
         run: pnpm lint
 
+      # docs/conventions.md のうち機械検査可能な不変条件（サービス層の
+      # transport 非依存・パッケージ間 import ゼロ・{@html}/生色値の
+      # 許可リスト等）を強制する（improvement-plan P3-5）。
+      - name: Verify architecture invariants
+        run: pnpm verify:architecture
+
       - name: Format check (Prettier)
         run: pnpm format:check
 

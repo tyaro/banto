@@ -7,6 +7,7 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 
 名称は、江戸時代の商家で主人に代わって店を切り盛りした「番頭」に由来。
 
+- English summary: [README.en.md](README.en.md)
 - 仕様書: [docs/ui-framework-spec.md](docs/ui-framework-spec.md)
 - 機能拡張ロードマップ（M10〜）: [docs/roadmap.md](docs/roadmap.md)
 - 保守者向け規約: [docs/conventions.md](docs/conventions.md)

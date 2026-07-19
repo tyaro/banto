@@ -22,6 +22,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
+    "verify:architecture": "node scripts/verify-architecture.mjs",
     "e2e": "playwright test --config=e2e/playwright.config.ts --project=chromium",
     "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual"
   },

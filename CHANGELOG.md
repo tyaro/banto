@@ -20,6 +20,14 @@
 
 ## [Unreleased]
 
+- P3-5: アーキテクチャ規約の機械検査 `pnpm verify:architecture` を新設し
+  CI の frontend ジョブで強制（サービス層の tauri/axum 非依存・パッケージ間
+  import ゼロ・`$lib` import 禁止・`{@html}`/生色値の理由付き許可リスト・
+  依存空の6ルール。conventions.md に [機械検査済み] 注記）。charts の
+  ズームリセットボタンの生 box-shadow をトークン化
+- P2-2: 英語版 README（`README.en.md`、1ページ要約）を追加
+- P2-3: 全9パッケージに README を追加（役割・最小コード例・依存ゼロ方針・
+  git サブディレクトリ依存での消費方法）
 - P2-1: テンプレート初期化スクリプト `scripts/rename.mjs` を新設
   （`--name`/`--title`/`--identifier`/`--repo` で package.json×2・
   `--filter` 参照・tauri.conf.json・ブランド表示・E2E アサーション・

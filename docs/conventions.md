@@ -11,6 +11,12 @@
 言語スタイル（命名・整形）は eslint/prettier/clippy/rustfmt に委ねており、本書の
 対象外。
 
+機械検査（2026-07-19 追記、improvement-plan P3-5）: 本書のうち機械検査
+可能な項目は `pnpm verify:architecture`（`scripts/verify-architecture.mjs`、
+CI の frontend ジョブで強制）が検査する。対象は各節に **[機械検査済み]** と
+注記した — それ以外は引き続きレビューで守る。意図的な例外はコード内の
+正当化コメント + スクリプトの許可リスト（理由付き）のペアで管理する。
+
 削除可能性: 本書はトラックA の資産であり、アップストリームを追わず
 **ハードフォークして独自進化させる**なら丸ごと削除してよい（テンプレートの
 「すべては削除可能」方針に従う）。アップストリームを追い続ける／テンプレートを
@@ -39,7 +45,7 @@
 機能追加時: 新しい mutating コマンドを片方の経路にだけ足さない。両経路 +
 両経路の denied を必ずペアで実装・テストする（template-scope §6 チェックリスト④⑤）。
 
-## 2. サービス層は tauri / axum / RBAC / HTTP を知らない
+## 2. サービス層は tauri / axum / RBAC / HTTP を知らない [機械検査済み: tauri/axum 非依存のみ]
 
 全サービス（`ItemsService` / `AuditLogService` / `BackupService` /
 `SettingsService` / `UsersService` / `banto-attachments` の
@@ -87,7 +93,7 @@
 自前実装（§3 の表）を予防的に置き換えることはしない — 各実装が上記に
 実際に該当し始めた時点で個別に判断する。
 
-## 4. コア → オプションの逆依存禁止
+## 4. コア → オプションの逆依存禁止 [機械検査済み]
 
 コア（`admin-core` / `grid-svelte` / `forms` / `theme`）は
 オプション（`report` / `attachments` / `dock-svelte` / `charts`）を import
@@ -105,7 +111,7 @@
 **削除手順（外すファイル一覧）を明文化する義務**を負う。削除して他が壊れない
 構造を保つ（§6 チェックリスト②③）。
 
-## 5. パッケージはアプリ固有 import を持たない
+## 5. パッケージはアプリ固有 import を持たない [機械検査済み: `$lib` import のみ]
 
 `packages/@banto/*` のコンポーネントは `sessionStore` や
 `@banto/admin-core` の `ProviderError` 等の**アプリ固有シンボルを import しない**。
@@ -152,7 +158,7 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   補間しない）。未知フィールドの sort は無視、filter は hard error。各サービスに
   `column_map()`。
 
-## 7. `{@html}` は自前生成の全エスケープ済み出力のみ
+## 7. `{@html}` は自前生成の全エスケープ済み出力のみ [機械検査済み: 使用箇所の許可リスト]
 
 `{@html}` の使用は最小限に留め、**自前で生成・全エスケープした安全な文字列**に
 限る。現状の2箇所:
@@ -177,7 +183,7 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 - **非同期レースは loadToken で無効化する。** `++loadToken` で superseded な
   リクエストを検出し、結果を破棄して取得済み URL を revoke する。
 
-## 9. テーマトークンのみ・生値は theme に集約
+## 9. テーマトークンのみ・生値は theme に集約 [機械検査済み: packages の色値のみ]
 
 UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生値をコンポーネントに
 書かない**。生値の集約先は `packages/theme/src/css/banto.css`。glass プリセットは
