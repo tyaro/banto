@@ -20,6 +20,17 @@
 
 ## [Unreleased]
 
+- docs: ドキュメントと実装の不整合を修正。(1) ui-framework-spec §2.1 の対象
+  パッケージ表から実在しない `@banto/grid-core`/`@banto/dock-core` を除去し、
+  ヘッドレスロジックは各 `-svelte` パッケージ内 `src/core/` に内包（§14 決着）と
+  明記。(2) 同表の `banto-storage` の PostgreSQL 記述を実装状況（v1 は SQLite
+  のみ、postgres は feature 定義止まり — §12.1 注記）に整合。(3) v1後追加の
+  オプション拡張パッケージ（report/attachments/scan-wedge、M19〜21）への参照を
+  追記。(4) AGENTS.md/CLAUDE.md の E2E 検証コマンドを実在しない
+  `pnpm -C apps/admin-template test:e2e` から実際の `pnpm e2e` に修正。
+  (5) template-scope のクレート化計画表に、`rest.rs` が P3-1 で `rest/` へ
+  分割済みである旨を反映
+
 - P4-9: スキャフォールド・プリセット（`minimal`/`standard`/`full`）の**設計を
   確定**（[docs/scaffold-presets-plan.md](docs/scaffold-presets-plan.md)、設計のみ・
   実装は P2-1 v2 の後）。プリセットは §3 オプション資産の削除手順の自動実行で

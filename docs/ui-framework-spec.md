@@ -48,17 +48,23 @@ Skeleton / Flowbite は引き続き基本コンポーネント（ボタン・モ
 | パッケージ | 内容 |
 |---|---|
 | `@banto/admin-core` | refineライクなフレームワークコア（リソース定義・データ/認証プロバイダ・Runesコンポーザブル） |
-| `@banto/grid-core` | テーブル/データグリッドのヘッドレスロジック |
-| `@banto/grid-svelte` | Svelte 5 (Runes) 向けグリッドUI実装（`grid-core`を利用） |
-| `@banto/dock-core` | ドッキング/フローティングウィンドウのレイアウトエンジン（ヘッドレス） |
-| `@banto/dock-svelte` | Svelte 5向けドッキングUI実装 |
+| `@banto/grid-svelte` | Svelte 5 (Runes) 向けグリッドUI実装。ヘッドレスロジックは同パッケージ内 `src/core/` に内包（独立した `grid-core` パッケージは作らない — §14 決着） |
+| `@banto/dock-svelte` | Svelte 5向けドッキングUI実装。レイアウトエンジン（ヘッドレス）は同パッケージ内 `src/core/` に内包（独立した `dock-core` パッケージは作らない — §14 に準ずる） |
 | `@banto/charts` | SVG/Canvasフルスクラッチのチャートコンポーネント群 |
 | `@banto/forms` | スキーマ駆動フォーム（定義オブジェクトからUI+バリデーション自動生成） |
 | `@banto/theme` | Tailwind前提のデフォルトテーマ + CSS変数によるカスタマイズ層 |
 | `crates/banto-core` | Rust: リソースサービス/リポジトリtrait、ソート/フィルタ/ページングのパラメータ型、エラー型 |
-| `crates/banto-storage` | Rust: sqlxベースのSQLite/PostgreSQL（TimescaleDB）リポジトリ実装とマイグレーション |
+| `crates/banto-storage` | Rust: sqlxベースのリポジトリ実装。v1 は **SQLite のみ実装**（接続ヘルパ・マイグレーション）。PostgreSQL（TimescaleDB）は feature `postgres` で `list_query` の型付けまで用意し、接続/マイグレーションは実需時に着手（§12.1 実装状況の注記） |
 | `crates/banto-server` | Rust: 組み込みaxumサーバ（REST・認証・静的配信、11章） |
 | `apps/admin-template` | 上記全パッケージ+クレートを配線したTauri v2 + SvelteKit管理画面テンプレート |
+
+> **オプション拡張パッケージ（v1後に追加、M19〜M21）**: 上表はv1コアの対象
+> パッケージ。以降のマイルストーンで `@banto/report`（M19）・
+> `@banto/attachments` + `crates/banto-attachments`（M20）・`@banto/scan-wedge`
+> （M21）を「独立パッケージ + 削除可能デモ」方式で追加済み。現行の完全な
+> パッケージ一覧は [README](../README.md) と
+> [template-scope.md](template-scope.md) を参照（本仕様は設計の基準線として
+> v1スコープを保持する）。
 
 - **2層の使い方を保証する**: 各UIコンポーネント（グリッド/フォーム/チャート/
   ドッキング）は`admin-core`を知らなくても単体ライブラリとして使える。

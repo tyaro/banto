@@ -10,5 +10,5 @@
 - 破ってはいけない不変条件（両経路対称 / サービス層非依存 / 依存を足さない /
   逆依存禁止 / セキュリティ / トークンのみ）は
   [docs/conventions.md](docs/conventions.md) に全文。
-- 検証: `pnpm check` / `cargo test` / `pnpm -C apps/admin-template test:e2e` / `cargo audit`。
+- 検証: `pnpm check` / `cargo test` / `pnpm e2e` / `cargo audit`。
   `src-tauri` はこのサンドボックスではコンパイル不可（コードレビューで担保）。
