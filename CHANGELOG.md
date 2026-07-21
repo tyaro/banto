@@ -20,6 +20,13 @@
 
 ## [Unreleased]
 
+- docs: 保守性コードレビュー（Rustサービス+サーバ層、AI中心保守が前提）の所見と
+  不変条件の機械検査化ロードマップ（CR-1〜CR-5）を
+  [maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md) に
+  記録。人間の保守性とAI保守性の分岐点を整理し、conventions.md のうち機械検査に
+  落ちていない不変条件（特に §1 両経路対称）を優先的に検査化する方針。
+  improvement-plan-2026-07.md から参照
+
 - ci/docs: `verify:architecture` に「ドキュメント整合性」ルール（rule 7）を追加。
   `docs/`・README・AGENTS・CLAUDE 内の `@banto/*` 参照が実在パッケージのみで
   あることを機械検査し、実在しない `@banto/grid-core` 等の掲載（今回修正した
