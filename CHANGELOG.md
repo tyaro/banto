@@ -20,6 +20,14 @@
 
 ## [Unreleased]
 
+- P4-9: スキャフォールド・プリセット（`minimal`/`standard`/`full`）の**設計を
+  確定**（[docs/scaffold-presets-plan.md](docs/scaffold-presets-plan.md)、設計のみ・
+  実装は P2-1 v2 の後）。プリセットは §3 オプション資産の削除手順の自動実行で
+  あり、コア（auth/audit/settings/backup/CSV/shell）や runtime 機構には触れない。
+  ChatGPT レビュー当初案の "industrial"（別リポジトリ `banto-industrial` と混同）を
+  避け命名を是正。remover 関数群 + rename.mjs のエンジン再利用・依存追加なしで
+  構成し、各プリセットのビルド緑を受け入れ条件にする方針を明記
+
 - docs: v2 検討事項の決着とドキュメント棚卸し。TLS 本体（組み込み rustls）と
   サーバログ（`tracing`）は、いずれも conventions §3 が退けた依存追加のため
   実装ではなく ADR で決定を記録（[ADR-0003](docs/adr/0003-tls-via-reverse-proxy.md)
