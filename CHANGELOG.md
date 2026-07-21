@@ -20,6 +20,15 @@
 
 ## [Unreleased]
 
+- ci: `verify:architecture` に rule 8「REST/Tauri 両経路対称」を追加（CR-1、
+  conventions §1）。このテンプレートの背骨の不変条件でありながら従来は機械検査が
+  無く、AI が mutating 操作を片方の経路にだけ足しても落ちる検査が無かった
+  （`src-tauri` は非コンパイル環境で実行検証も不可）。`DUAL_PATH` マニフェスト
+  （20対、所有者確認済み分類）+ 完全性チェックで、未分類の Tauri コマンド /
+  REST ルート追加を CI で捕捉する。アンカーは Tauri コマンド定義と
+  `rest/mod.rs` の Route table（実 `.route()` 宣言との doc-sync 併設）。依存追加
+  なし。conventions §1 を [機械検査済み] に更新
+
 - docs: 保守性コードレビュー（Rustサービス+サーバ層、AI中心保守が前提）の所見と
   不変条件の機械検査化ロードマップ（CR-1〜CR-5）を
   [maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md) に
