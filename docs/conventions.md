@@ -36,7 +36,7 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
 
 ---
 
-## 1. REST と Tauri の判定対称性
+## 1. REST と Tauri の判定対称性 [機械検査済み: mutating 操作の両経路存在]
 
 すべての mutating 操作（create/update/delete/import/login/logout/setup）は、
 **REST 経路と Tauri 経路の両方で同一の認可と同一の監査を通す**。origin
@@ -53,6 +53,15 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
 
 機能追加時: 新しい mutating コマンドを片方の経路にだけ足さない。両経路 +
 両経路の denied を必ずペアで実装・テストする（template-scope §6 チェックリスト④⑤）。
+
+**機械検査（`verify:architecture` rule 8、CR-1）**: mutating 操作が REST/Tauri
+両経路に存在することを、`scripts/verify-architecture.mjs` の `DUAL_PATH`
+マニフェスト + 完全性チェックで担保する。新しい Tauri コマンド / REST ルートを
+分類（dual-path / desktop-only / read）に足さない限り CI が落ちるため、**片方の
+経路にだけ足すミスは必ず捕捉される**。ただし機械検査が見るのは「両経路に
+存在するか」まで。**認可レベルと監査記録が実際に同一か**（同じロール床・同じ
+`AuditEntry`）はコード + テストで担保する（rule 8 の対象外）。desktop-only /
+read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 
 ## 2. サービス層は tauri / axum / RBAC / HTTP を知らない [機械検査済み: tauri/axum 非依存のみ]
 

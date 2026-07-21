@@ -18,6 +18,9 @@
  *   7. ドキュメント整合性: docs/・README・AGENTS・CLAUDE の `@banto/*` 参照が
  *      実在パッケージのみ（conventions の不変条件ではなくドキュメントと実装の
  *      ドリフト対策。実在しない `@banto/grid-core` 等の掲載を防ぐ）
+ *   8. §1 REST/Tauri 両経路対称 … mutating 操作が両経路に存在するかを
+ *      DUAL_PATH マニフェスト + 完全性チェックで担保（片側だけ足すのを捕捉）。
+ *      maintainability-review-2026-07.md CR-1
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -217,6 +220,189 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	}
 	if (!results.some((r) => r.includes(`[${rule}]`)))
 		pass(rule, `docs/README/AGENTS/CLAUDE の @banto/* 参照 ${checkedRefs} 件すべて実在`);
+}
+
+// --- 8. REST/Tauri 両経路対称（conventions §1、maintainability-review CR-1） ---
+//
+// このテンプレートの背骨の不変条件（§1）: mutating 操作は REST 経路と Tauri
+// 経路の両方で同一の認可・監査を通す。AI が「片方の経路にだけ mutating
+// コマンドを足す」ミスをしても、従来は落ちる検査が一つも無かった（しかも
+// src-tauri はこのサンドボックスでコンパイルできず実行でも気づけない）。
+//
+// 自動対応は不可（REST ハンドラ名と Tauri コマンド名は食い違い、mutating でも
+// desktop-only が多数、POST でも *_list は読み取り）。そこで下の DUAL_PATH
+// マニフェストで対応を明示し、**完全性チェック**で自己強制する: 新しい
+// コマンド/ルートを分類に足さない限り CI が落ちる → 片側追加を必ず捕捉する。
+//
+// アンカーは信頼できる2つの一次情報のみ:
+//   - Tauri: src-tauri/src/lib.rs のトップレベル `#[tauri::command] fn 名`
+//   - REST : rest/mod.rs モジュール doc の「Route table」（§1 が対応表と
+//            指定する成果物。実ルート宣言との同期は下の doc-sync で担保）
+//
+// 分類はリポジトリ所有者が確認済み（maintainability-review-2026-07.md §3、
+// 2026-07-21）。desktop-only / read の判断を変えるときはここを更新する。
+{
+	const rule = 'two-path-symmetry';
+
+	// mutating な dual-path 操作: REST と Tauri の両方に存在しなければならない。
+	// rest は "METHOD /path"（クエリ文字列は除く）。backups の復元系は経路が
+	// 非対称（Tauri は stage→再起動適用、REST は from-upload/from-existing）
+	// なので、2つの REST ルートを同一 Tauri コマンドに対応させる（所有者確認済み）。
+	const DUAL_PATH = [
+		{ tauri: 'auth_setup', rest: 'POST /api/auth/setup' },
+		{ tauri: 'auth_login', rest: 'POST /api/auth/login' },
+		{ tauri: 'auth_logout', rest: 'POST /api/auth/logout' },
+		{ tauri: 'auth_change_password', rest: 'POST /api/auth/change-password' },
+		{ tauri: 'items_create', rest: 'POST /api/items' },
+		{ tauri: 'items_update', rest: 'PUT /api/items/{id}' },
+		{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}' },
+		{ tauri: 'items_import', rest: 'POST /api/items/import' },
+		{ tauri: 'users_create', rest: 'POST /api/users' },
+		{ tauri: 'users_update', rest: 'PUT /api/users/{id}' },
+		{ tauri: 'users_delete', rest: 'DELETE /api/users/{id}' },
+		{ tauri: 'users_reset_password', rest: 'POST /api/users/{id}/reset-password' },
+		{ tauri: 'ui_settings_set', rest: 'PUT /api/ui-settings/{key}' },
+		{ tauri: 'audit_config_apply', rest: 'PUT /api/audit-log/config' },
+		{ tauri: 'backups_create', rest: 'POST /api/backups' },
+		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/restore' },
+		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/{fileName}/restore' },
+		{ tauri: 'backups_cancel_restore', rest: 'DELETE /api/backups/pending-restore' },
+		{ tauri: 'attachments_upload', rest: 'POST /api/attachments' },
+		{ tauri: 'attachments_delete', rest: 'DELETE /api/attachments/{id}' }
+	];
+
+	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
+	const DESKTOP_ONLY = new Set([
+		'vibrancy_apply',
+		'autologin_enable',
+		'autologin_disable',
+		'server_apply',
+		'settings_set',
+		'auth_config_apply',
+		'panel_open',
+		'backups_open_folder',
+		'attachments_open_folder'
+	]);
+
+	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。
+	const TAURI_READ = new Set([
+		'attachments_list',
+		'attachments_read_body',
+		'attachments_read_thumbnail',
+		'audit_config_get',
+		'audit_log_list',
+		'auth_check',
+		'auth_config_get',
+		'auth_identity',
+		'auth_status',
+		'backups_list',
+		'backups_pending',
+		'items_get',
+		'items_list',
+		'ping',
+		'server_status',
+		'settings_get',
+		'ui_settings_get',
+		'users_list',
+		'vibrancy_status'
+	]);
+
+	// 読み取り系 REST ルート（GET と、body を使うため POST の *_list）。
+	const REST_READ = new Set([
+		'GET /api/auth/status',
+		'GET /api/auth/check',
+		'GET /api/auth/identity',
+		'GET /api/events',
+		'GET /api/items/{id}',
+		'GET /api/users',
+		'GET /api/ui-settings/{key}',
+		'GET /api/audit-log/config',
+		'GET /api/backups',
+		'GET /api/backups/{fileName}',
+		'GET /api/backups/pending-restore',
+		'GET /api/attachments/{id}/download',
+		'GET /api/attachments/{id}/thumbnail',
+		'POST /api/items/list',
+		'POST /api/audit-log/list',
+		'POST /api/attachments/list'
+	]);
+
+	// --- 一次情報のパース ---
+	// Tauri: トップレベルのコマンド。tests は #[tauri::command] を付けないので混入しない。
+	const tauriLib = 'apps/admin-template/src-tauri/src/lib.rs';
+	const tauriCmds = new Set();
+	if (fs.existsSync(path.join(repoRoot, tauriLib))) {
+		const src = read(tauriLib);
+		for (const m of src.matchAll(
+			/#\[tauri::command\][^\n]*\n\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)/g
+		))
+			tauriCmds.add(m[1]);
+	}
+
+	// REST: rest/mod.rs の Route table（doc）。METHOD + path（クエリ除去）。
+	const restRoutes = new Set();
+	for (const line of read('apps/admin-template/core/src/rest/mod.rs').split('\n')) {
+		const m = line.match(/^\/\/!\s*\|\s*(GET|POST|PUT|PATCH|DELETE)\s*\|\s*`([^`]+)`/);
+		if (m) restRoutes.add(`${m[1]} ${m[2].split('?')[0].trim()}`);
+	}
+
+	// 実ルート宣言（doc-sync 用）: app rest/ + banto-server の .route("path")。
+	// 存在確認だけなので test 由来の重複は無害（1件あれば足りる）。
+	const declaredPaths = new Set();
+	for (const dir of ['apps/admin-template/core/src/rest', 'crates/banto-server/src']) {
+		for (const file of walk(dir, ['.rs'])) {
+			for (const m of read(file).matchAll(/\.route\(\s*"([^"]+)"/g)) declaredPaths.add(m[1]);
+		}
+	}
+
+	// --- チェック ---
+	// (a) マニフェストの両端が実在すること。
+	for (const { tauri, rest } of DUAL_PATH) {
+		if (!tauriCmds.has(tauri))
+			fail(rule, tauriLib, `dual-path 操作の Tauri コマンド \`${tauri}\` が見つからない`);
+		if (!restRoutes.has(rest))
+			fail(
+				rule,
+				'rest/mod.rs',
+				`dual-path 操作の REST ルート \`${rest}\` が Route table に無い（片側だけ変更した可能性）`
+			);
+	}
+	// (b) Tauri 完全性: 全コマンドが dual-path / desktop-only / read のいずれか。
+	const dualTauri = new Set(DUAL_PATH.map((d) => d.tauri));
+	for (const cmd of tauriCmds) {
+		if (dualTauri.has(cmd) || DESKTOP_ONLY.has(cmd) || TAURI_READ.has(cmd)) continue;
+		fail(
+			rule,
+			tauriLib,
+			`未分類の Tauri コマンド \`${cmd}\` — REST とペアにして DUAL_PATH に足すか、desktop-only / read に分類（§1 両経路対称）`
+		);
+	}
+	// (c) REST 完全性: 全ルートが dual-path / read のいずれか。
+	const dualRest = new Set(DUAL_PATH.map((d) => d.rest));
+	for (const route of restRoutes) {
+		if (dualRest.has(route) || REST_READ.has(route)) continue;
+		fail(
+			rule,
+			'rest/mod.rs',
+			`未分類の REST ルート \`${route}\` — Tauri コマンドとペアにして DUAL_PATH に足すか REST_READ に分類（§1 両経路対称）`
+		);
+	}
+	// (d) doc-sync: Route table の各 path が実際の .route() 宣言に存在すること。
+	for (const route of restRoutes) {
+		const p = route.split(' ')[1];
+		if (!declaredPaths.has(p))
+			fail(
+				rule,
+				'rest/mod.rs',
+				`Route table の \`${p}\` に対応する .route() 宣言が見当たらない（doc と実装のドリフト）`
+			);
+	}
+
+	if (!results.some((r) => r.includes(`[${rule}]`)))
+		pass(
+			rule,
+			`両経路対称: dual-path ${DUAL_PATH.length} 対 + Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
+		);
 }
 
 // --- 結果 -------------------------------------------------------------------
