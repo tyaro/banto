@@ -145,7 +145,7 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 状態所有権: ロード/空/エラー状態はコンポーネント内部が所有し、ホストページに
 分岐を漏らさない（grid-svelte と同じ規則）。
 
-## 6. セキュリティ不変条件（横断）
+## 6. セキュリティ不変条件（横断）[機械検査済み: 一部（mime 無し / settings 対称）]
 
 これらは「守らないと脆弱性になる」種類の規約。ランタイムガードが無い項目は
 **全 call site のレビューで担保する**。
@@ -153,7 +153,8 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 - **MIME はマジックバイト判定。クライアント申告を使わない。** `banto-attachments`
   `detect_mime` は `image::guess_format` のマジックバイトで4フォーマットに限定、
   それ以外は `application/octet-stream`。`NewAttachment` は `mime` フィールドを
-  持たない（申告を受け取りすらしない）。
+  持たない（申告を受け取りすらしない）。**[機械検査済み: `NewAttachment` に
+  mime フィールド無し（rule 9）]**
 - **ファイルパスにユーザー入力を使わない。** 添付本体は行 id で命名し、`file_name`
   は表示専用。バックアップは `safe_backup_path` がセパレータ・`..`・
   `[A-Za-z0-9._-]` 外を全拒否（Content-Disposition 注入・Windows 予約名も同時に
@@ -175,7 +176,8 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 - **settings の生 key/value 読み取りは admin 対称。** `settings_get` は
   `settings_set` と対称に admin ゲート（任意 key を読めるのは書けるのと同格の
   権限）。UI 設定だけは別コマンド `ui_settings_get`（viewer 可・自名前空間限定）に
-  分離する。「同一ストアでも権限の非対称を作らない」。
+  分離する。「同一ストアでも権限の非対称を作らない」。**[機械検査済み:
+  `settings_get`/`settings_set` が同一 Admin ゲート（rule 9）]**
 - **SQL 列はホワイトリスト経由のみ。** フロント由来のフィールド名は必ず
   `ColumnMap`（`list_query.rs`）で SQL 列に解決し、値は必ずバインドする（文字列
   補間しない）。未知フィールドの sort は無視、filter は hard error。各サービスに

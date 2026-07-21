@@ -20,6 +20,14 @@
 
 ## [Unreleased]
 
+- ci: `verify:architecture` に rule 9「§6 セキュリティ不変条件」を追加（CR-2）。
+  §6 のうち静的テキストで低誤検知に検査できる2件を機械化: (A) `NewAttachment` に
+  `mime` フィールドが無い（クライアント申告 MIME を受け取らず、判定は
+  `detect_mime` のマジックバイトのみ）、(B) `settings_get`/`settings_set` が同一
+  Admin ゲート（「同一ストアでも権限の非対称を作らない」）。順序依存・
+  セマンティックな項目（body limit の順序・監査 detail に秘密を入れない等）は
+  レビュー/テスト担保のまま。conventions §6 の該当2箇所を [機械検査済み] に更新
+
 - ci: `verify:architecture` に rule 8「REST/Tauri 両経路対称」を追加（CR-1、
   conventions §1）。このテンプレートの背骨の不変条件でありながら従来は機械検査が
   無く、AI が mutating 操作を片方の経路にだけ足しても落ちる検査が無かった

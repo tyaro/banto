@@ -21,6 +21,8 @@
  *   8. §1 REST/Tauri 両経路対称 … mutating 操作が両経路に存在するかを
  *      DUAL_PATH マニフェスト + 完全性チェックで担保（片側だけ足すのを捕捉）。
  *      maintainability-review-2026-07.md CR-1
+ *   9. §6 セキュリティ不変条件（grep 可能なもの、CR-2）:
+ *      NewAttachment に mime フィールド無し / settings_get·set は Admin 対称
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -403,6 +405,56 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 			rule,
 			`両経路対称: dual-path ${DUAL_PATH.length} 対 + Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
 		);
+}
+
+// --- 9. §6 セキュリティ不変条件（grep 可能なもの、CR-2） ------------------
+//
+// §6 の不変条件のうち、静的テキストで確実に・低誤検知で検査できるものだけを
+// 機械化する（順序依存やセマンティックなもの＝body limit の順序・監査 detail に
+// 秘密を入れない等はレビュー/テスト担保のまま）。
+{
+	const rule = 'security-invariants';
+
+	// A) `NewAttachment` は mime フィールドを持たない。MIME はクライアント申告を
+	//    受け取らず、`detect_mime`（image::guess_format のマジックバイト）でのみ
+	//    判定する（§6）。mime フィールドの再導入 = 申告 MIME を受け取る退行。
+	const attFile = 'crates/banto-attachments/src/lib.rs';
+	const attSrc = read(attFile);
+	const structM = attSrc.match(/pub struct NewAttachment\s*\{([^}]*)\}/);
+	if (!structM)
+		fail(rule, attFile, 'struct NewAttachment が見つからない（検査の前提が変わった — 検査を更新）');
+	else if (/(^|[\s,])mime\s*:/.test(structM[1]))
+		fail(
+			rule,
+			attFile,
+			'NewAttachment に mime フィールド — クライアント申告 MIME は受け取らない（§6、判定は detect_mime のマジックバイトのみ）'
+		);
+
+	// B) `settings_get` と `settings_set` は同一ロール（Admin）でゲートする。
+	//    「同一ストアでも権限の非対称を作らない」（§6）。任意 key を読めるのは
+	//    書けるのと同格の権限。ui_settings（viewer 可・自名前空間）は別コマンドで
+	//    対象外。
+	const libFile = 'apps/admin-template/src-tauri/src/lib.rs';
+	const libSrc = read(libFile);
+	const settingsRoleOf = (fnName) => {
+		const m = libSrc.match(
+			new RegExp(
+				`async fn ${fnName}\\b[\\s\\S]{0,600}?require_role\\(\\s*&state\\s*,\\s*Role::(\\w+)\\s*,\\s*"settings"`
+			)
+		);
+		return m ? m[1] : null;
+	};
+	const getRole = settingsRoleOf('settings_get');
+	const setRole = settingsRoleOf('settings_set');
+	if (getRole !== 'Admin' || setRole !== 'Admin' || getRole !== setRole)
+		fail(
+			rule,
+			libFile,
+			`settings_get(${getRole ?? '不明'}) と settings_set(${setRole ?? '不明'}) は同一 Admin ゲートであること（§6 権限の非対称を作らない）`
+		);
+
+	if (!results.some((r) => r.includes(`[${rule}]`)))
+		pass(rule, 'NewAttachment に mime 無し / settings_get·set は Admin 対称');
 }
 
 // --- 結果 -------------------------------------------------------------------
