@@ -305,16 +305,28 @@ impl BackupService {
     /// a real inconsistency a caller sees, and a Windows-deterministic test
     /// flake.)
     pub async fn create(&self) -> Result<BackupInfo, BantoError> {
+        let now: String = sqlx::query_scalar("SELECT datetime('now')")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        self.create_at(&now).await
+    }
+
+    /// [`create`](Self::create) with the file-name stamp supplied by the
+    /// caller instead of read from the DB. Split out only so tests can PIN
+    /// that stamp: because `create()` reads `datetime('now')` itself, a test
+    /// that reads the clock separately and predicts the name `create()` will
+    /// pick races the second boundary between the two reads (an observed
+    /// Windows CI flake). Driving this with a fixed `now_iso` makes "two
+    /// backups in the same second" an actual fact of the test rather than
+    /// something the test hopes for.
+    async fn create_at(&self, now_iso: &str) -> Result<BackupInfo, BantoError> {
         let dir = self.backups_dir();
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|err| io_err("バックアップ用ディレクトリの作成に失敗しました", err))?;
 
-        let now: String = sqlx::query_scalar("SELECT datetime('now')")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
-        let stamp = compact_stamp(&now);
+        let stamp = compact_stamp(now_iso);
 
         let path = unique_path(&dir, &format!("banto-{stamp}"), "sqlite3");
         let file_name = path
@@ -710,27 +722,28 @@ mod tests {
 
     #[tokio::test]
     async fn create_twice_in_the_same_second_appends_a_numeric_suffix() {
-        let (svc, dir) = service().await;
-        // Force a same-timestamp collision deterministically rather than
-        // relying on two real `create()` calls landing in the same second
-        // (flaky) - pre-create the exact file name the second `create()`
-        // would otherwise pick.
-        let now: String = sqlx::query_scalar("SELECT datetime('now')")
-            .fetch_one(&svc.pool)
-            .await
-            .unwrap();
-        let stamp = compact_stamp(&now);
-        let backups_dir = dir.path().join("backups");
-        tokio::fs::create_dir_all(&backups_dir).await.unwrap();
-        tokio::fs::write(backups_dir.join(format!("banto-{stamp}.sqlite3")), b"stub")
-            .await
-            .unwrap();
+        let (svc, _dir) = service().await;
+        // Drive the stamp explicitly through `create_at` (see its doc): the
+        // public `create()` reads `datetime('now')` internally, so a test
+        // that reads the clock itself and predicts the resulting name loses
+        // the race whenever the second ticks over in between - the name then
+        // does not collide and no suffix is appended. Pinning `now` makes
+        // all three calls genuinely land in the same second, so every
+        // collision below is guaranteed rather than merely likely.
+        let now = "2026-01-02 03:04:05";
 
-        let created = svc.create().await.expect("create should succeed");
-        assert_eq!(created.file_name, format!("banto-{stamp}-1.sqlite3"));
+        let first = svc.create_at(now).await.expect("first create");
+        assert_eq!(first.file_name, "banto-20260102-030405.sqlite3");
+
+        let second = svc.create_at(now).await.expect("second create");
+        assert_eq!(second.file_name, "banto-20260102-030405-1.sqlite3");
+
+        // The suffix keeps counting up, it is not stuck at -1.
+        let third = svc.create_at(now).await.expect("third create");
+        assert_eq!(third.file_name, "banto-20260102-030405-2.sqlite3");
 
         let listed = svc.list().await.unwrap();
-        assert_eq!(listed.len(), 2);
+        assert_eq!(listed.len(), 3);
     }
 
     #[tokio::test]
