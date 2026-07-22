@@ -19,6 +19,10 @@ export { default as Gauge } from './Gauge.svelte';
 export { default as Histogram } from './Histogram.svelte';
 export { default as ParetoChart } from './ParetoChart.svelte';
 export { default as BoxPlot } from './BoxPlot.svelte';
+// M24 new chart types (roadmap.md M24): stacked area (積立折れ線 — 積立棒は
+// BarChart の `stacked` を使う) and Gantt.
+export { default as StackedAreaChart } from './StackedAreaChart.svelte';
+export { default as GanttChart } from './GanttChart.svelte';
 
 export type {
 	Accessor,
@@ -34,7 +38,8 @@ export { getValue, toNumber } from './types';
 export { linearScale, niceTicks, bandScale, type LinearScale, type BandScale } from './core/scale';
 export { stackSeries, type StackSegment } from './core/stack';
 export { pieSlices, arcPath, polarToCartesian, type PieSlice } from './core/pie';
-export { linePath, areaPath, roundedTopBarPath, type Point } from './core/path';
+export { linePath, areaPath, bandAreaPath, roundedTopBarPath, type Point } from './core/path';
+export { toMs, ganttDomain, ganttLayout, type GanttTask, type GanttBar } from './core/gantt';
 export { everyNthIndex } from './core/ticks-time';
 export { seriesColorVar, MAX_CHART_SERIES, sequentialColor, SEQ_RAMP } from './core/color';
 export {

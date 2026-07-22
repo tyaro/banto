@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { areaPath, linePath, roundedTopBarPath } from '../src/core/path';
+import { areaPath, bandAreaPath, linePath, roundedTopBarPath } from '../src/core/path';
+
+describe('bandAreaPath', () => {
+	it('fills the band between the top polyline (forward) and bottom polyline (reversed)', () => {
+		const d = bandAreaPath(
+			[
+				{ x: 0, y: 5 },
+				{ x: 10, y: 3 }
+			],
+			[
+				{ x: 0, y: 20 },
+				{ x: 10, y: 18 }
+			]
+		);
+		// top forward, then bottom points appended in reverse, then close.
+		expect(d).toBe('M 0 5 L 10 3 L 10 18 L 0 20 Z');
+	});
+
+	it('returns empty when either boundary has no points', () => {
+		expect(bandAreaPath([], [{ x: 0, y: 1 }])).toBe('');
+		expect(bandAreaPath([{ x: 0, y: 1 }], [])).toBe('');
+	});
+});
 
 describe('linePath', () => {
 	it('builds an M + L polyline through the given points', () => {
