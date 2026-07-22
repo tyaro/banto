@@ -51,6 +51,12 @@ generated on Linux; running `--update-snapshots` on macOS or Windows adds
 baselines on Linux (matches CI) unless you specifically need another
 platform's set.
 
+Without a Linux box, dispatch `.github/workflows/visual-baselines.yml` on the
+branch carrying the visual change: it regenerates the `-linux` baselines on
+the same `ubuntu-latest` image CI uses, re-runs the suite against them to
+prove they pass, and uploads them as an artifact. Dispatch it again with
+`commit: true` to push the regenerated PNGs back to that branch.
+
 ## Notes
 
 - Theme/preset are forced explicitly (`light`/`dark`, `standard`/`glass`) -

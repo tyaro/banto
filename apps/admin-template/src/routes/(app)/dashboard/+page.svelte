@@ -9,13 +9,15 @@
 	import {
 		BarChart,
 		ComboChart,
+		GanttChart,
 		Gauge,
 		Heatmap,
 		LineChart,
 		PieChart,
 		RadarChart,
 		ScatterChart,
-		Sparkline
+		Sparkline,
+		StackedAreaChart
 	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import {
@@ -31,10 +33,13 @@
 	import {
 		byCategory,
 		categoryCountsTop,
+		categoryTrendByMonth,
 		computeStatTiles,
+		inventorySchedule,
 		monthlyWithMovingAvg,
 		priceBuckets,
 		scatterSample,
+		type MonthCategoryCount,
 		updatesByMonth,
 		weekdayMonthHeat
 	} from '$lib/banto/dashboard';
@@ -67,8 +72,20 @@
 	const weekdayHeat = $derived(weekdayMonthHeat(list.rows));
 	const topCategories = $derived(categoryCountsTop(list.rows, 5));
 
+	// M24 chart types (spec §6.1, roadmap.md M24): stacked area (積立エリア), Gantt.
+	const categoryTrend = $derived(categoryTrendByMonth(list.rows));
+	const schedule = $derived(inventorySchedule(list.rows));
+
 	const yen = (n: number) => `¥${n.toLocaleString()}`;
 	const countLabel = (n: number) => `${n.toLocaleString()}件`;
+	// UTC getters (not toLocaleDateString): the schedule's dates are UTC
+	// midnight `YYYY-MM-DD` instants (see dashboard.ts inventorySchedule), and
+	// a locale-dependent format would make the visual regression snapshot
+	// unstable across environments.
+	const formatGanttDate = (ms: number) => {
+		const d = new Date(ms);
+		return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+	};
 
 	/**
 	 * M8 dock demo (spec §5, @banto/dock-svelte): the default layout docks the
@@ -342,7 +359,7 @@
 		<p class="note">
 			商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図に加え、複合（棒+折れ線）・レーダー・ヒートマップ・ゲージも
 			@banto/charts
-			のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
+			のSVGフルスクラッチ実装です（v2）。「チャート拡張（M24）」の積立エリア（カテゴリ別更新件数の積み上げ）とガント（棚卸しスケジュール）もM24で追加した@banto/chartsの新しいチャート種のデモです。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
 		</p>
 	</details>
 
@@ -460,6 +477,37 @@
 					label="上位カテゴリ別商品数のレーダーチャート"
 					height={280}
 					formatValue={(n) => n.toLocaleString()}
+				/>
+			</section>
+		</div>
+
+		<h2 class="section-heading">チャート拡張（M24）</h2>
+		<div class="chart-grid">
+			<section class="card">
+				<h2>カテゴリ別更新件数の積立推移</h2>
+				<p class="card-caption">直近12ヶ月の更新件数を上位カテゴリ別に積み上げた面グラフです。</p>
+				<StackedAreaChart
+					data={categoryTrend.rows}
+					x={(row) => row.month}
+					series={categoryTrend.categories.map((c) => ({
+						id: c,
+						label: c,
+						y: (row: MonthCategoryCount) => row.values[c] ?? 0
+					}))}
+					label="カテゴリ別更新件数の積立面グラフ"
+					height={280}
+					formatY={(n) => n.toLocaleString()}
+				/>
+			</section>
+
+			<section class="card">
+				<h2>棚卸しスケジュール</h2>
+				<p class="card-caption">棚卸し工程の進み具合を時間軸で表したガントチャートです。</p>
+				<GanttChart
+					tasks={schedule.tasks}
+					label="棚卸しスケジュールのガントチャート"
+					today={schedule.today}
+					formatDate={formatGanttDate}
 				/>
 			</section>
 		</div>

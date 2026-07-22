@@ -18,6 +18,15 @@
         "cd /d D:\\develop\\banto\\apps\\admin-template && pnpm dev --port 5173 --strictPort"
       ],
       "port": 5173
+    },
+    {
+      "name": "admin-template-preview",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "cd /d D:\\develop\\banto\\apps\\admin-template && pnpm preview --port 4173 --strictPort --host 127.0.0.1"
+      ],
+      "port": 4173
     }
   ]
 }
