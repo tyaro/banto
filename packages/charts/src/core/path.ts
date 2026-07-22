@@ -30,6 +30,23 @@ export function areaPath(points: Point[], y0: number): string {
 }
 
 /**
+ * Filled band between two polylines `top` and `bottom` (spec §6, stacked-area
+ * charts): the region enclosed by the top boundary drawn forward and the
+ * bottom boundary drawn in reverse. Both arrays share the same x positions
+ * (one point per visible data index); either being empty yields no path.
+ */
+export function bandAreaPath(top: Point[], bottom: Point[]): string {
+	if (top.length === 0 || bottom.length === 0) return '';
+	const forward = linePath(top);
+	const back = bottom
+		.slice()
+		.reverse()
+		.map((p) => `L ${p.x} ${p.y}`)
+		.join(' ');
+	return `${forward} ${back} Z`;
+}
+
+/**
  * Rectangle with radius `r` rounded only on the "data end": the top edge for
  * a vertical bar, or the right edge for a horizontal bar (`horizontal` =
  * true). The baseline end (bottom / left respectively) stays perfectly

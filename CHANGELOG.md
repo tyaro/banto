@@ -20,6 +20,16 @@
 
 ## [Unreleased]
 
+- M24: `@banto/charts` に **積立エリア（`StackedAreaChart`）** と
+  **ガントチャート（`GanttChart`）** を追加（全14種）。積立棒は従来どおり
+  `BarChart` の `stacked`。積立エリアは既存 `core/stack.ts` を再利用し、境界間
+  バンドの新規純関数 `bandAreaPath` で塗る（`LineChart` のズーム/第2Y軸と
+  衝突するため専用コンポーネント）。ガントは純関数 `core/gantt.ts`
+  （`toMs`/`ganttDomain`/`ganttLayout`）+ 時間軸バー・進捗・「今日」マーカー
+  （依存線は非スコープ）。日付は `formatDate` 委譲で日付ライブラリ非同梱
+  （依存を足さない）。ユニットテスト14件追加、生色値なし。ダッシュボードデモ
+  への配線は visual baseline 再生成が要るため別 PR（roadmap M24）
+
 - docs: 保守性コードレビューの不変条件機械検査化を **CR-1 / CR-2 で打ち止め**と
   決定し、理由を maintainability-review-2026-07.md §4.1 に記録。機械検査の3条件
   （背骨 / 静かに壊れる / AI が無自覚に壊す）に照らし、CR-4 は不採用、CR-5 は
