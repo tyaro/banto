@@ -25,7 +25,8 @@
     "verify:architecture": "node scripts/verify-architecture.mjs",
     "e2e": "playwright test --config=e2e/playwright.config.ts --project=chromium",
     "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",
-    "bench": "pnpm --filter @banto/grid-svelte bench"
+    "bench": "pnpm --filter @banto/grid-svelte bench",
+    "test:rename": "node --test scripts/rename.test.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
