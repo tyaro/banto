@@ -294,7 +294,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'auth_config_apply',
 		'panel_open',
 		'backups_open_folder',
-		'attachments_open_folder'
+		'attachments_open_folder',
+		'items_export_csv_to_folder'
 	]);
 
 	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。

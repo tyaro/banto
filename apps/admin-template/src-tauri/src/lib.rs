@@ -109,6 +109,13 @@ struct AppState {
     /// `AttachmentsService` (unlike `BackupService::backups_dir_display`)
     /// exposes no accessor for its own `base_dir`.
     attachments_dir: PathBuf,
+    /// `exports/` directory (sibling of `attachments/`/`backups/` under the
+    /// app's data dir) - the desktop counterpart of the LAN browser's
+    /// `<a download>` CSV export (finding⑤ Option A): `items_export_csv_to_folder`
+    /// writes the exported file here and reveals it in the OS file explorer,
+    /// same "no native save dialog in v1" fallback as
+    /// `backups_open_folder`/`attachments_open_folder`.
+    exports_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1717,6 +1724,61 @@ async fn attachments_open_folder(
     }
 }
 
+/// `viewer`+ (items list is Viewer-readable): write an exported CSV to the
+/// app's `exports/` dir and open that folder in the OS file explorer - the desktop
+/// counterpart of the LAN browser's `<a download>` (the same "no native save
+/// dialog in v1" fallback `backups_open_folder`/`attachments_open_folder`
+/// use). The CSV bytes are already client-visible data (the caller can see
+/// the list), so this opens no new authz surface and is not audited, matching
+/// the browser download. **Windows-only** reveal by design (see
+/// `backups_open_folder`); non-Windows returns `opened:false`, not an error.
+#[tauri::command]
+async fn items_export_csv_to_folder(
+    state: State<'_, AppState>,
+    content: String,
+    file_name: String,
+) -> Result<OpenFolderResult, BantoError> {
+    require_role(&state, Role::Viewer, "items").await?;
+    // Sanitize: use ONLY the final path component, reject empty/traversal.
+    let safe = std::path::Path::new(&file_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| BantoError::Other("invalid file name".into()))?;
+    // Self-heal: recreate `exports/` if it was removed since startup (user
+    // deleted it, or a data dir predating this feature) so a missing folder
+    // never silently drops the export - the "folder-missing fallback".
+    std::fs::create_dir_all(&state.exports_dir).map_err(|e| BantoError::Other(e.to_string()))?;
+    let file_path = state.exports_dir.join(safe);
+    std::fs::write(&file_path, content.as_bytes()).map_err(|e| BantoError::Other(e.to_string()))?;
+    let path = file_path.display().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Open the `exports/` folder in Explorer - the SAME invocation as
+        // `backups_open_folder`/`attachments_open_folder` (a single
+        // directory arg). `explorer /select,<file>` to reveal the file
+        // pre-selected is unreliable here: Explorer's non-standard comma/space
+        // command-line parsing (std's arg quoting splits `/select,` and the
+        // path into two tokens) makes it pop a spurious "location unavailable"
+        // dialog even when the file was written fine. `path` (the file) is
+        // still returned for the non-Windows fallback message.
+        let opened = std::process::Command::new("explorer")
+            .arg(&state.exports_dir)
+            .spawn()
+            .is_ok();
+        Ok(OpenFolderResult { opened, path })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(OpenFolderResult {
+            opened: false,
+            path,
+        })
+    }
+}
+
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
 /// "ウィンドウ分離" mode the v1 doc comment left as a future extension
 /// point). Thin by design: this is the ONLY Tauri-aware half of the pop-out
@@ -1811,6 +1873,10 @@ pub fn run() {
             // DB file inside the app's own data directory.
             let attachments_dir = data_dir.join("attachments");
             let attachments = AttachmentsService::new(pool.clone(), attachments_dir.clone());
+            // Desktop CSV export (finding⑤ Option A): same sibling-directory
+            // convention as `attachments/`/`backups/` above.
+            let exports_dir = data_dir.join("exports");
+            std::fs::create_dir_all(&exports_dir).expect("create exports dir");
             let audit = AuditLogService::new(pool);
             // Records `login`/`login_failed` audit entries (spec M14) from
             // inside the verifier itself - see
@@ -2080,6 +2146,7 @@ pub fn run() {
                 backup,
                 attachments,
                 attachments_dir,
+                exports_dir,
             });
 
             Ok(())
@@ -2092,6 +2159,7 @@ pub fn run() {
             items_update,
             items_delete,
             items_import,
+            items_export_csv_to_folder,
             auth_status,
             auth_setup,
             auth_login,
@@ -2170,6 +2238,7 @@ mod tests {
                 PathBuf::from("unused-in-tests").join("attachments"),
             ),
             attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),
+            exports_dir: PathBuf::from("unused-in-tests").join("exports"),
         }
     }
 
@@ -2201,6 +2270,7 @@ mod tests {
             backup: BackupService::new(db_path, pool.clone()),
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
             attachments_dir: dir.path().join("attachments"),
+            exports_dir: dir.path().join("exports"),
         };
         (state, dir)
     }
