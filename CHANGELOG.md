@@ -20,6 +20,33 @@
 
 ## [Unreleased]
 
+- fix (#77, CR-6): `audit_config_get` の両経路ロールを Admin に統一（Tauri が
+  Viewer・REST が Admin という看板不変条件「両経路対称」の実バグを修正）。
+  `verify:architecture` rule 8 に**ロール床照合**（`require_role`/`RoleGuard` の
+  期待ロールを DUAL_PATH/ROLE_READ 宣言と静的照合）を追加
+- docs/tooling (#78, CR-7): ドキュメントと実装の整合を是正（チャート14種・
+  scan-wedge 記述・`pnpm check` 説明、scan-wedge を tsc 化）+ **バージョン整合検査**
+  `check:versions`（全マニフェスト version の相互一致 / タグモードでタグ名照合）を追加
+- ci (#79, AD-5): テンプレート受け入れ CI（copy→rename→check）+ `rename.mjs` の
+  統合テスト（Node 標準 `node:test`）を追加
+- i18n (#81, AD-6 レイヤ①): `@banto/*` 全パッケージの可視文言を**注入対応化**。
+  現行日本語をデフォルトに残した `messages` props / メッセージ引数で上書き可能にし
+  （`forms/validate.ts` の既存パターンを横展開）、辞書・`t()`・依存追加なし・
+  byte-identical・後方互換。②仕組み・③辞書・docs 英語化は実需ドリブンで保留
+- docs (#82, AD-4): template-scope §7 コピー面積縮小の着手トリガに「外部採用者
+  フィードバック」を追加
+- fix (#83, PR-C): Tauri デスクトップ Webview に **CSP を設定**（`app.security.csp` を
+  null → LAN 側 `security_headers.rs` と対称。差分は `connect-src` の Tauri IPC のみ）。
+  実機 Windows のビルド + スモークで確認。app.html インラインスクリプトは SvelteKit
+  ブートストラップのビルド毎ハッシュ変動のため `'unsafe-inline'` を踏襲（LAN と同じ）
+- fix (#84): デスクトップの CSV エクスポートを `exports/` フォルダ書き出し +
+  フォルダを開く方式に（WebView2 が保存ダイアログを出さない問題。backup と同じ
+  流儀・依存追加なし。Tauri コマンド `items_export_csv_to_folder`、`DESKTOP_ONLY` 分類）
+- docs (#85, AD-1/AD-2): README に「対象読者 / 非対象」ポジショニング宣言と
+  スクリーンショット3枚（`docs/assets/`）を追加（採用者向け導線）
+- chore (#86, CR-7): 全マニフェストの version を **0.1.1 に整合**（既存 v0.1.1 タグ /
+  CHANGELOG [0.1.1] とのドリフトを解消）
+
 - M24: `@banto/charts` に **積立エリア（`StackedAreaChart`）** と
   **ガントチャート（`GanttChart`）** を追加（全14種）。積立棒は従来どおり
   `BarChart` の `stacked`。積立エリアは既存 `core/stack.ts` を再利用し、境界間
