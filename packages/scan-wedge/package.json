@@ -1,6 +1,6 @@
 {
   "name": "@banto/scan-wedge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Banto scan-wedge: headless barcode/QR keyboard-wedge scan detection, docs/roadmap.md M21 (recipe-only, not wired into the template)",
   "license": "MIT",
   "repository": {

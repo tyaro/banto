@@ -20,6 +20,8 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-23
+
 - fix (#77, CR-6): `audit_config_get` の両経路ロールを Admin に統一（Tauri が
   Viewer・REST が Admin という看板不変条件「両経路対称」の実バグを修正）。
   `verify:architecture` rule 8 に**ロール床照合**（`require_role`/`RoleGuard` の
