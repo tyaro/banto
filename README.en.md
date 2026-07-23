@@ -18,9 +18,10 @@ the owner's behalf.
   both the list view and the form).
 - **Schema-driven forms** (`@banto/forms`): input UI, validation, and state
   management generated from a definition object.
-- **Charts** (`@banto/charts`): dependency-free SVG charts, 12 types in
-  total — line/area, bar, pie/donut, scatter, sparkline, combo (bar + line),
-  radar, heatmap, gauge, and SPC charts (histogram, Pareto, box plot).
+- **Charts** (`@banto/charts`): dependency-free SVG charts, 14 types in
+  total — line/area, bar (incl. stacked), pie/donut, scatter, sparkline,
+  combo (bar + line), radar, heatmap, gauge, SPC charts (histogram, Pareto,
+  box plot), stacked area, and Gantt.
 - **Docking layout** (`@banto/dock-svelte`): floating windows, split/tab
   panes, drag-to-rearrange with snapping, layout persisted as JSON.
 - **Refine-like headless core** (`@banto/admin-core`): resource definitions,

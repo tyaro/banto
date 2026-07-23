@@ -48,6 +48,12 @@ jobs:
       - name: Verify architecture invariants
         run: pnpm verify:architecture
 
+      # マニフェスト間の version 一致を強制する（CR-7 通常CI。タグ名一致は
+      # リリース/タグワークフローで `node scripts/check-versions.mjs --tag <name>`
+      # として別途検査する）。ルート package.json は private=0.0.0 で例外。
+      - name: Verify version consistency
+        run: pnpm check:versions
+
       - name: Format check (Prettier)
         run: pnpm format:check
 

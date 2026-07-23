@@ -24,7 +24,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",

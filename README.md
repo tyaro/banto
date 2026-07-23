@@ -41,12 +41,16 @@ pnpm install
 pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / admin でログイン）
 ```
 
-動いたら、次に編集する場所は3つ（詳細な手順は
-[docs/recipes/add-resource.md](docs/recipes/add-resource.md)）:
+動いたら、まず見るべき中心の3ファイルはこれ（スキーマ定義・テーブル・サービス層）:
 
 1. `apps/admin-template/src/lib/banto/resources/items.ts` — リソース定義とスキーマ
 2. `apps/admin-template/core/migrations/0001_items.sql` — テーブル定義
 3. `apps/admin-template/core/src/items.rs` — サービス層（CRUD）
+
+ただし**新しい CRUD リソースを1本通す**には、両経路（REST/Tauri）・認可対称テスト・
+ページ・ナビ等を含む**9ステップ**が必要（上の3ファイルはその入口）。正式な手順は
+[docs/recipes/add-resource.md](docs/recipes/add-resource.md) のチェックリストに従う
+（AI にそのまま指示として渡せる）。
 
 ## 主な機能
 
@@ -82,7 +86,9 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 - **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
   添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
-  スキャナ入力（`@banto/scan-wedge`、M21）。いずれも削除可能なデモ配線付き。
+  スキャナ入力（`@banto/scan-wedge`、M21）。帳票と添付は削除可能なデモ配線付き。
+  scan-wedge はバックエンド/DB/UI 依存ゼロの小粒機能のため**本体には配線せず**、
+  README のレシピで各アプリに直接組み込む（後述「バーコード/QRスキャナ入力」節）。
 
 実装済みマイルストーンの全体像は [docs/roadmap.md](docs/roadmap.md)、変更履歴は
 [CHANGELOG.md](CHANGELOG.md) を参照。
