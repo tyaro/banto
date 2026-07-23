@@ -21,6 +21,7 @@
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface BoxGroup {
 		label: string;
@@ -34,9 +35,16 @@
 		formatValue?: (n: number) => string;
 		/** Per-side overrides merged over the defaults below. */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { groups, label, height = 240, formatValue, margins }: Props = $props();
+	let { groups, label, height = 240, formatValue, margins, messages = {} }: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 26, left: 48 };
 	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
@@ -72,18 +80,18 @@
 
 	function tooltipRows(s: BoxStats): TooltipRow[] {
 		return [
-			{ label: '最大', value: formatValueDisplay(s.max), colorVar: seriesColorVar(0) },
+			{ label: t.boxplotMax(), value: formatValueDisplay(s.max), colorVar: seriesColorVar(0) },
 			{ label: 'Q3', value: formatValueDisplay(s.q3) },
-			{ label: '中央値', value: formatValueDisplay(s.median) },
+			{ label: t.boxplotMedian(), value: formatValueDisplay(s.median) },
 			{ label: 'Q1', value: formatValueDisplay(s.q1) },
-			{ label: '最小', value: formatValueDisplay(s.min) },
-			{ label: '外れ値', value: `${s.outliers.length}件` }
+			{ label: t.boxplotMin(), value: formatValueDisplay(s.min) },
+			{ label: t.boxplotOutliers(), value: t.boxplotOutlierCount(s.outliers.length) }
 		];
 	}
 </script>
 
 <div class="banto-boxplot">
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const valueScale = linearScale(

@@ -10,6 +10,7 @@
 	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface Props {
 		data: TRow[];
@@ -22,9 +23,22 @@
 		formatY?: (v: unknown) => string;
 		/** Per-side overrides merged over the defaults below. */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { data, x, y, pointLabel, label, height = 240, formatX, formatY, margins }: Props = $props();
+	let {
+		data,
+		x,
+		y,
+		pointLabel,
+		label,
+		height = 240,
+		formatX,
+		formatY,
+		margins,
+		messages = {}
+	}: Props = $props();
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 28, left: 48 };
 	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
@@ -84,7 +98,7 @@
 </script>
 
 <div class="banto-scatterchart">
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const xScale = linearScale(

@@ -10,6 +10,7 @@
 	import { arcPath, polarToCartesian } from './core/pie';
 	import { gaugeAngle, gaugeColorVar, GAUGE_START_DEG, type GaugeThresholds } from './core/gauge';
 	import ChartContainer from './internal/ChartContainer.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface Props {
 		value: number;
@@ -19,9 +20,20 @@
 		formatValue?: (n: number) => string;
 		thresholds?: GaugeThresholds;
 		height?: number;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { value, min = 0, max, label, formatValue, thresholds, height = 160 }: Props = $props();
+	let {
+		value,
+		min = 0,
+		max,
+		label,
+		formatValue,
+		thresholds,
+		height = 160,
+		messages = {}
+	}: Props = $props();
 
 	const TRACK_WIDTH = 14;
 	const SIDE_PAD = 16;
@@ -54,7 +66,7 @@
 </script>
 
 <div class="banto-gauge">
-	<ChartContainer {label} {height}>
+	<ChartContainer {label} {height} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const g = geometry(width, plotHeight)}
 			{@const minPoint = polarToCartesian(g.cx, g.cy, g.rOuter + LABEL_GAP, GAUGE_START_DEG)}

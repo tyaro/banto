@@ -19,6 +19,7 @@
 	import { fileTypeLabel } from './core/fileType';
 	import { errorMessage } from './core/errors';
 	import { fetchAttachmentList, partitionByThumbnail } from './core/list';
+	import { defaultAttachmentsMessages, type AttachmentsMessages } from './messages';
 
 	interface Props {
 		client: AttachmentsClient;
@@ -26,9 +27,23 @@
 		resourceId: string;
 		canWrite: boolean;
 		title?: string;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
+		messages?: Partial<AttachmentsMessages>;
 	}
 
-	let { client, resource, resourceId, canWrite, title = '添付ファイル' }: Props = $props();
+	let {
+		client,
+		resource,
+		resourceId,
+		canWrite,
+		title = '添付ファイル',
+		messages = {}
+	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultAttachmentsMessages, ...messages };
 
 	let items = $state<AttachmentMeta[]>([]);
 	let loading = $state(true);
@@ -145,21 +160,21 @@
 			await client.upload(resource, resourceId, file);
 			await reload(resource, resourceId);
 		} catch (err) {
-			uploadError = errorMessage(err);
+			uploadError = errorMessage(err, { unknown: t.unknownError });
 		} finally {
 			uploading = false;
 		}
 	}
 
 	async function handleDelete(item: AttachmentMeta): Promise<void> {
-		if (!window.confirm(`「${item.fileName}」を削除しますか？`)) return;
+		if (!window.confirm(t.deleteConfirm(item.fileName))) return;
 		deletingId = item.id;
 		actionError = null;
 		try {
 			await client.remove(item.id);
 			await reload(resource, resourceId);
 		} catch (err) {
-			actionError = errorMessage(err);
+			actionError = errorMessage(err, { unknown: t.unknownError });
 		} finally {
 			deletingId = null;
 		}
@@ -181,7 +196,7 @@
 				URL.revokeObjectURL(url);
 			}
 		} catch (err) {
-			actionError = errorMessage(err);
+			actionError = errorMessage(err, { unknown: t.unknownError });
 		} finally {
 			downloadingId = null;
 		}
@@ -194,7 +209,7 @@
 		{#if canWrite}
 			<div class="upload">
 				<button type="button" onclick={triggerUpload} disabled={uploading}>
-					{uploading ? 'アップロード中…' : 'アップロード'}
+					{uploading ? t.uploading() : t.upload()}
 				</button>
 				<input
 					class="file-input"
@@ -202,7 +217,7 @@
 					bind:this={fileInput}
 					onchange={handleFileChange}
 					disabled={uploading}
-					aria-label={`${title}をアップロード`}
+					aria-label={t.uploadAriaLabel(title)}
 				/>
 			</div>
 		{/if}
@@ -216,14 +231,14 @@
 	{/if}
 
 	{#if loading}
-		<p class="message" role="status" aria-live="polite">読み込み中…</p>
+		<p class="message" role="status" aria-live="polite">{t.loading()}</p>
 	{:else if error}
 		<div class="message message--error" role="alert">
 			<p>{error}</p>
-			<button type="button" onclick={retry}>再試行</button>
+			<button type="button" onclick={retry}>{t.retry()}</button>
 		</div>
 	{:else if items.length === 0}
-		<p class="message">添付ファイルはありません</p>
+		<p class="message">{t.empty()}</p>
 	{:else}
 		{#if grouped.withThumbnail.length > 0}
 			<ul class="thumb-grid">
@@ -251,7 +266,7 @@
 								onclick={() => void handleDelete(item)}
 								disabled={deletingId === item.id}
 							>
-								削除
+								{t.remove()}
 							</button>
 						{/if}
 					</li>
@@ -271,7 +286,7 @@
 							onclick={() => void handleDownload(item)}
 							disabled={downloadingId === item.id}
 						>
-							ダウンロード
+							{t.download()}
 						</button>
 						{#if canWrite}
 							<button
@@ -280,7 +295,7 @@
 								onclick={() => void handleDelete(item)}
 								disabled={deletingId === item.id}
 							>
-								削除
+								{t.remove()}
 							</button>
 						{/if}
 					</li>

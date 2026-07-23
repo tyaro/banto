@@ -26,6 +26,7 @@
 	import { getDragController } from './core/drag.svelte';
 	import type { DockState } from './state.svelte';
 	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
+	import { defaultDockMessages, type DockMessages } from './messages';
 
 	interface Props {
 		win: FloatingWindow;
@@ -36,9 +37,16 @@
 		panel: Snippet<[PanelContent]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
+		messages?: Partial<DockMessages>;
 	}
 
-	let { win, dock, hostW, hostH, frontmost, panel, onPopOut }: Props = $props();
+	let { win, dock, hostW, hostH, frontmost, panel, onPopOut, messages = {} }: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultDockMessages, ...messages };
 
 	const DRAG_THRESHOLD_PX = 5;
 	const drag = getDragController();
@@ -175,7 +183,7 @@
 				<button
 					type="button"
 					class="popout-btn"
-					aria-label={`${win.title}を別ウィンドウで開く`}
+					aria-label={t.popOut(win.title)}
 					onpointerdown={(event) => event.stopPropagation()}
 					onclick={() => onPopOut?.(win)}
 				>
@@ -185,7 +193,7 @@
 			<button
 				type="button"
 				class="close-btn"
-				aria-label={`${win.title}を閉じる`}
+				aria-label={t.close(win.title)}
 				onpointerdown={(event) => event.stopPropagation()}
 				onclick={() => dock.close(win.id)}
 			>

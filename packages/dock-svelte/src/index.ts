@@ -11,6 +11,7 @@
  */
 export { default as DockHost } from './DockHost.svelte';
 export { DockState, createDockState } from './state.svelte';
+export { defaultDockMessages, type DockMessages } from './messages';
 
 export {
 	applyDrag,

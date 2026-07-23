@@ -39,6 +39,7 @@
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
+	import { defaultDockMessages, type DockMessages } from './messages';
 
 	interface Props {
 		node: DockNode;
@@ -46,9 +47,16 @@
 		panel: Snippet<[PanelContent]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings, threaded into recursive `DockedTree` instances. Defaults reproduce today's Japanese output. */
+		messages?: Partial<DockMessages>;
 	}
 
-	let { node, dock, panel, onPopOut }: Props = $props();
+	let { node, dock, panel, onPopOut, messages = {} }: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultDockMessages, ...messages };
 
 	const DRAG_THRESHOLD_PX = 5;
 	const drag = getDragController();
@@ -190,7 +198,7 @@
 				<button
 					type="button"
 					class="popout-btn"
-					aria-label={`${node.title}を別ウィンドウで開く`}
+					aria-label={t.popOut(node.title)}
 					onpointerdown={(event) => event.stopPropagation()}
 					onclick={() => onPopOut?.(node)}
 				>
@@ -200,7 +208,7 @@
 			<button
 				type="button"
 				class="close-btn"
-				aria-label={`${node.title}を閉じる`}
+				aria-label={t.close(node.title)}
 				onpointerdown={(event) => event.stopPropagation()}
 				onclick={() => closeDockedPanel(node.id)}
 			>
@@ -262,7 +270,7 @@
 							<button
 								type="button"
 								class="popout-btn"
-								aria-label={`${child.title}を別ウィンドウで開く`}
+								aria-label={t.popOut(child.title)}
 								onpointerdown={(event) => event.stopPropagation()}
 								onclick={() => onPopOut?.(child)}
 							>
@@ -272,7 +280,7 @@
 						<button
 							type="button"
 							class="close-btn"
-							aria-label={`${child.title}を閉じる`}
+							aria-label={t.close(child.title)}
 							onpointerdown={(event) => event.stopPropagation()}
 							onclick={() => closeDockedPanel(child.id)}
 						>
@@ -300,7 +308,7 @@
 	>
 		{#each node.children as child, i (child.id)}
 			<div class="split-child" style:flex-grow={node.sizes[i] ?? 0} style:flex-basis="0%">
-				<DockedTree node={child} {dock} {panel} {onPopOut} />
+				<DockedTree node={child} {dock} {panel} {onPopOut} {messages} />
 			</div>
 			{#if i < node.children.length - 1}
 				<div
@@ -309,7 +317,7 @@
 					class:column={node.direction === 'column'}
 					role="separator"
 					aria-orientation={node.direction === 'row' ? 'vertical' : 'horizontal'}
-					aria-label="パネルのサイズ変更"
+					aria-label={t.resizeHandle()}
 					onpointerdown={(event) => startDivider(event, i, node.direction)}
 				></div>
 			{/if}

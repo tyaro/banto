@@ -10,6 +10,7 @@
 	 * (toolbar/paper shadow/`@page`), not the `.report-body` content rules.
 	 */
 	import { renderReport, type RenderOptions } from './core/index';
+	import { defaultReportMessages, type ReportMessages } from './messages';
 
 	interface Props {
 		template: string;
@@ -17,9 +18,23 @@
 		formatters?: RenderOptions['formatters'];
 		title?: string;
 		orientation?: 'portrait' | 'landscape';
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ReportMessages>;
 	}
 
-	let { template, data, formatters, title, orientation = 'portrait' }: Props = $props();
+	let {
+		template,
+		data,
+		formatters,
+		title,
+		orientation = 'portrait',
+		messages = {}
+	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultReportMessages, ...messages };
 
 	const result = $derived(renderReport(template, data, { formatters }));
 
@@ -94,7 +109,7 @@
 		<div class="toolbar-actions">
 			{#if result.warnings.length > 0}
 				<details class="warnings">
-					<summary>警告 {result.warnings.length}件</summary>
+					<summary>{t.warningCount(String(result.warnings.length))}</summary>
 					<ul>
 						{#each result.warnings as warning (warning)}
 							<li>{warning}</li>
@@ -102,7 +117,7 @@
 					</ul>
 				</details>
 			{/if}
-			<button type="button" class="print-btn" onclick={handlePrint}>印刷</button>
+			<button type="button" class="print-btn" onclick={handlePrint}>{t.print()}</button>
 		</div>
 	</div>
 

@@ -18,6 +18,7 @@
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface Props {
 		tasks: GanttTask[];
@@ -30,9 +31,18 @@
 		today?: number | Date | string;
 		/** Per-side overrides merged over the defaults (left auto-fits labels). */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { tasks, label, rowHeight = 28, formatDate, today, margins }: Props = $props();
+	let { tasks, label, rowHeight = 28, formatDate, today, margins, messages = {} }: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below. Named `msg` (not
+	// `t`) because `t` is already this file's per-task local variable name in
+	// `tooltipRows` below.
+	// svelte-ignore state_referenced_locally
+	const msg = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 24, right: 16, bottom: 24, left: 96 };
 	const MIN_TICK_SPACING = 80;
@@ -105,17 +115,20 @@
 	function tooltipRows(index: number): TooltipRow[] {
 		const t = tasks[index];
 		const rows: TooltipRow[] = [
-			{ label: '開始', value: formatDateValue(toMs(t.start)) },
-			{ label: '終了', value: formatDateValue(toMs(t.end)) }
+			{ label: msg.ganttStart(), value: formatDateValue(toMs(t.start)) },
+			{ label: msg.ganttEnd(), value: formatDateValue(toMs(t.end)) }
 		];
 		if (Number.isFinite(t.progress ?? NaN))
-			rows.push({ label: '進捗', value: `${Math.round((t.progress as number) * 100)}%` });
+			rows.push({
+				label: msg.ganttProgress(),
+				value: `${Math.round((t.progress as number) * 100)}%`
+			});
 		return rows;
 	}
 </script>
 
 <div class="banto-gantt">
-	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot()}
 			{@const m = metrics}
 			<!-- Time gridlines + top axis ticks. -->
@@ -197,7 +210,9 @@
 			{#if todayVisible && todayMs !== null}
 				{@const tx = timeScale(todayMs)}
 				<line x1={tx} x2={tx} y1={m.innerTop} y2={m.innerBottom} class="today-line" />
-				<text x={tx} y={m.innerBottom + 16} class="today-label" text-anchor="middle">今日</text>
+				<text x={tx} y={m.innerBottom + 16} class="today-label" text-anchor="middle"
+					>{msg.ganttToday()}</text
+				>
 			{/if}
 		{/snippet}
 		{#snippet overlay()}

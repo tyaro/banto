@@ -10,6 +10,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface Props {
 		data: TRow[];
@@ -19,9 +20,20 @@
 		label: string;
 		height?: number;
 		formatValue?: (n: number) => string;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { data, category, value, donut = false, label, height = 240, formatValue }: Props = $props();
+	let {
+		data,
+		category,
+		value,
+		donut = false,
+		label,
+		height = 240,
+		formatValue,
+		messages = {}
+	}: Props = $props();
 
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 
@@ -64,7 +76,7 @@
 
 <div class="banto-piechart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const g = geometry(width, plotHeight)}
 			{#each slices as slice, i (i)}

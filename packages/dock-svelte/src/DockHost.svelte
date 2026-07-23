@@ -33,6 +33,7 @@
 	import type { PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
 	import DockWindow from './DockWindow.svelte';
+	import type { DockMessages } from './messages';
 
 	interface Props {
 		dock: DockState;
@@ -52,9 +53,11 @@
 		 * existed.
 		 */
 		onPopOut?: (content: PanelContent) => void;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings, threaded down to `DockedTree` and `DockWindow`. Defaults reproduce today's Japanese output. */
+		messages?: Partial<DockMessages>;
 	}
 
-	let { dock, panel, onPopOut }: Props = $props();
+	let { dock, panel, onPopOut, messages = {} }: Props = $props();
 
 	let hostW: number = $state(0);
 	let hostH: number = $state(0);
@@ -78,7 +81,7 @@
 >
 	{#if dock.layout.docked}
 		<div class="docked-layer">
-			<DockedTree node={dock.layout.docked} {dock} {panel} {onPopOut} />
+			<DockedTree node={dock.layout.docked} {dock} {panel} {onPopOut} {messages} />
 		</div>
 	{/if}
 
@@ -91,6 +94,7 @@
 			frontmost={index === openWindows.length - 1}
 			{panel}
 			{onPopOut}
+			{messages}
 		/>
 	{/each}
 
