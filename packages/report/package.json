@@ -1,6 +1,6 @@
 {
   "name": "@banto/report",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Banto report: report template parser/binder/renderer (Markdown subset + data binding) + ReportView.svelte preview/print UI + print CSS (docs/report-plan.md M19, unit A + unit B)",
   "license": "MIT",
   "repository": {

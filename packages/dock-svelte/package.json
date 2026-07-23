@@ -1,6 +1,6 @@
 {
   "name": "@banto/dock-svelte",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Banto dock layout: floating pseudo-windows in a host container (spec §5, M7 scope only)",
   "license": "MIT",
   "repository": {
