@@ -55,7 +55,7 @@ tempfile = "3"
 # transitively (via sqlx et al.); promoted to a direct dependency because
 # `banto-attachments` calls it explicitly rather than relying on whatever
 # version its transitive dependents happen to pull in.
-sha2 = "0.10"
+sha2 = "0.11"
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }
