@@ -1725,7 +1725,7 @@ async fn attachments_open_folder(
 }
 
 /// `viewer`+ (items list is Viewer-readable): write an exported CSV to the
-/// app's `exports/` dir and reveal it in the OS file explorer - the desktop
+/// app's `exports/` dir and open that folder in the OS file explorer - the desktop
 /// counterpart of the LAN browser's `<a download>` (the same "no native save
 /// dialog in v1" fallback `backups_open_folder`/`attachments_open_folder`
 /// use). The CSV bytes are already client-visible data (the caller can see
@@ -1752,10 +1752,16 @@ async fn items_export_csv_to_folder(
 
     #[cfg(target_os = "windows")]
     {
-        // Reveal the file (selected) in Explorer.
+        // Open the `exports/` folder in Explorer - the SAME invocation as
+        // `backups_open_folder`/`attachments_open_folder` (a single
+        // directory arg). `explorer /select,<file>` to reveal the file
+        // pre-selected is unreliable here: Explorer's non-standard comma/space
+        // command-line parsing (std's arg quoting splits `/select,` and the
+        // path into two tokens) makes it pop a spurious "location unavailable"
+        // dialog even when the file was written fine. `path` (the file) is
+        // still returned for the non-Windows fallback message.
         let opened = std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(&path)
+            .arg(&state.exports_dir)
             .spawn()
             .is_ok();
         Ok(OpenFolderResult { opened, path })
