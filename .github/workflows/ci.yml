@@ -109,6 +109,48 @@ jobs:
       - name: Cargo test
         run: cargo test -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
 
+  # banto-storage の PostgreSQL 接続ヘルパ（feature `postgres`）向け統合テスト。
+  # 上の `rust` ジョブは default feature（sqlite のみ）でビルドしているため
+  # ここに切り出す。実 PostgreSQL への接続が要る唯一のテスト
+  # (postgres::tests::connect_gives_a_usable_pool) は BANTO_TEST_PG_URL が
+  # 未設定だと早期 return で skip する仕様（ローカル `cargo test` は
+  # PostgreSQL 無しで通る）ので、CI 側でこの env を設定して実接続を検証する。
+  storage-postgres:
+    name: banto-storage (PostgreSQL integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: banto_storage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # `--no-default-features --features postgres`: banto-storage の default
+      # feature は sqlite なので、postgres feature 単独でもビルドできる
+      # ことをここで確認する（sqlite feature を混ぜても良いが、Postgres
+      # 専用ビルドが成立することの検証を優先）。
+      - name: Cargo test (banto-storage, postgres feature)
+        env:
+          BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_storage_test
+        run: cargo test -p banto-storage --no-default-features --features postgres
+
   e2e:
     name: E2E (Playwright smoke)
     runs-on: ubuntu-latest

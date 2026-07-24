@@ -20,6 +20,12 @@
 
 ## [Unreleased]
 
+- feat (P4-5): `banto-storage` に PostgreSQL 接続ヘルパ `postgres.rs`（`connect`、
+  接続プール、feature `postgres`）を追加。`list_query` の Postgres 対応（既存）
+  と合わせて storage クレートが Postgres 接続可能に（接続のみ）。アプリ層
+  （`apps/admin-template/core`）は仕様どおり SQLite 専任のまま（§12.1/§548）。
+  CI に `postgres:16` サービスコンテナで実接続する `storage-postgres` ジョブを追加
+
 ## [0.1.2] - 2026-07-23
 
 - fix (#77, CR-6): `audit_config_get` の両経路ロールを Admin に統一（Tauri が
