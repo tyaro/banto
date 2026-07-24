@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { getAuthProvider } from '@banto/admin-core';
 	import { bantoReady, getBantoMode } from '$lib/banto/setup';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
@@ -59,7 +60,7 @@
 			if (showRemember && remember) params.remember = true;
 			const result = await getAuthProvider().login(params);
 			if (result.success) {
-				goto('/dashboard');
+				goto(`${base}/dashboard`);
 			} else {
 				error = result.error ?? 'ログインに失敗しました';
 			}
@@ -90,7 +91,7 @@
 			}
 			const result = await setup({ username, password, displayName });
 			if (result.success) {
-				goto('/dashboard');
+				goto(`${base}/dashboard`);
 			} else {
 				error = result.error ?? 'セットアップに失敗しました';
 			}

@@ -7,6 +7,7 @@
 	 * renders as a fixed slide-in drawer instead of the flex column.
 	 */
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
 	import { navItems } from '$lib/navigation';
 	import { NAV_ICONS } from './navIcons';
 	import { settings } from '$lib/settings.svelte';
@@ -52,7 +53,7 @@
 		{#each mainItems as item (item.path)}
 			{@const Icon = NAV_ICONS[item.icon]}
 			<a
-				href={item.path}
+				href={`${base}${item.path}`}
 				class="nav-item"
 				class:active={isActive(item.path)}
 				aria-current={isActive(item.path) ? 'page' : undefined}
@@ -71,7 +72,7 @@
 			{#each adminItems as item (item.path)}
 				{@const Icon = NAV_ICONS[item.icon]}
 				<a
-					href={item.path}
+					href={`${base}${item.path}`}
 					class="nav-item"
 					class:active={isActive(item.path)}
 					aria-current={isActive(item.path) ? 'page' : undefined}

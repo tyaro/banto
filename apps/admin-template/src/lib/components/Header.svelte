@@ -4,6 +4,7 @@
 	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
 	 */
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import { getAuthProvider } from '@banto/admin-core';
 	import { pageTitle } from '$lib/navigation';
@@ -29,7 +30,7 @@
 
 	async function logout() {
 		await getAuthProvider().logout();
-		goto('/login');
+		goto(`${base}/login`);
 	}
 </script>
 
@@ -71,7 +72,7 @@
 				</button>
 			{/snippet}
 			<MenuGroup label={displayName}>
-				<MenuItem icon={Settings} label="設定" onSelect={() => goto('/settings')} />
+				<MenuItem icon={Settings} label="設定" onSelect={() => goto(`${base}/settings`)} />
 			</MenuGroup>
 			<MenuSeparator />
 			<MenuItem icon={LogOut} label="ログアウト" danger onSelect={logout} />

@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { base } from '$app/paths';
 import { getAuthProvider } from '@banto/admin-core';
 import { bantoReady } from '$lib/banto/setup';
 import { sessionStore } from '$lib/session.svelte';
@@ -16,7 +17,7 @@ import { settings } from '$lib/settings.svelte';
 export async function load() {
 	await bantoReady;
 	if (!(await getAuthProvider().check())) {
-		redirect(307, '/login');
+		redirect(307, `${base}/login`);
 	}
 	await sessionStore.load();
 

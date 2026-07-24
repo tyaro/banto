@@ -14,6 +14,7 @@
  * zero server round-trip.
  */
 import { goto } from '$app/navigation';
+import { base } from '$app/paths';
 import { getAuthProvider, type PaletteCommand } from '@banto/admin-core';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
@@ -30,7 +31,7 @@ function navigationCommands(): PaletteCommand[] {
 		// (adminOnly entries hidden from non-admin roles).
 		visible: item.adminOnly ? () => isAdmin(sessionStore.role) : undefined,
 		run: () => {
-			void goto(item.path);
+			void goto(`${base}${item.path}`);
 		}
 	}));
 }
@@ -89,7 +90,7 @@ function sessionCommands(): PaletteCommand[] {
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
 				await getAuthProvider().logout();
-				await goto('/login');
+				await goto(`${base}/login`);
 			}
 		}
 	];

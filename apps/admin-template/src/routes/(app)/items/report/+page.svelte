@@ -16,6 +16,7 @@
 	 * page exists to show off - only a small text-link back to the list
 	 * takes PageHeader's place.
 	 */
+	import { base } from '$app/paths';
 	import { createListResource } from '@banto/admin-core';
 	import { ReportView } from '@banto/report';
 	import type { Item } from '$lib/banto/sampleData';
@@ -94,7 +95,7 @@
 </script>
 
 <div class="page">
-	<a class="back-link" href="/items">← 商品一覧へ戻る</a>
+	<a class="back-link" href={`${base}/items`}>← 商品一覧へ戻る</a>
 
 	{#if list.loading && list.rows.length === 0}
 		<LoadingState label="商品データを読み込み中…" />

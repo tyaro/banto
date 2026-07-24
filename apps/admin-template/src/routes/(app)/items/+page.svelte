@@ -19,6 +19,7 @@
 		notify
 	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
 	import type { Item } from '$lib/banto/sampleData';
 	import { itemsSchema } from '$lib/banto/resources/items';
@@ -62,7 +63,7 @@
 			width: 70,
 			resizable: false,
 			sortable: false,
-			cell: (row) => ({ text: '開く', href: `/items/${row.id}` })
+			cell: (row) => ({ text: '開く', href: `${base}/items/${row.id}` })
 		},
 		{
 			id: 'id',
@@ -157,7 +158,7 @@
 	}
 
 	function handleRowClick(item: Item) {
-		goto(`/items/${item.id}`);
+		goto(`${base}/items/${item.id}`);
 	}
 
 	/** Merge one edited field onto the row's other current values (DataProvider.update expects the full editable value set). */
@@ -556,7 +557,7 @@
 			<button
 				type="button"
 				class="banto-btn banto-btn--ghost"
-				onclick={() => goto('/items/report')}
+				onclick={() => goto(`${base}/items/report`)}
 			>
 				<FileText size={16} aria-hidden="true" />
 				日報
@@ -590,7 +591,7 @@
 				<button
 					type="button"
 					class="banto-btn banto-btn--primary new-item-btn"
-					onclick={() => goto('/items/new')}
+					onclick={() => goto(`${base}/items/new`)}
 				>
 					<Plus size={16} aria-hidden="true" />
 					新規作成
