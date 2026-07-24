@@ -28,11 +28,15 @@ on:
     paths:
       - 'scripts/rename.mjs'
       - 'scripts/rename.test.mjs'
+      - 'scripts/scaffold.mjs'
+      - 'scripts/lib/template-edit.mjs'
       - '.github/workflows/template-acceptance.yml'
   pull_request:
     paths:
       - 'scripts/rename.mjs'
       - 'scripts/rename.test.mjs'
+      - 'scripts/scaffold.mjs'
+      - 'scripts/lib/template-edit.mjs'
       - '.github/workflows/template-acceptance.yml'
   workflow_dispatch:
 
@@ -105,3 +109,77 @@ jobs:
       - name: Cargo check the renamed copy (core crates)
         working-directory: ${{ env.DEST }}
         run: cargo check -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
+
+  # プリセット受け入れ（P4-9 / docs/scaffold-presets-plan.md §6）: 各プリセットで
+  # `scaffold.mjs` を適用したクリーンコピーが「ビルド緑」であることを機械で保証する。
+  # これは scaffold のハード要件 — 削除でツリーが壊れるプリセットを出荷しないための
+  # 唯一の防波堤。上の rename と同じコピー/セットアップ様式を踏襲する。
+  #
+  # cargo check は presetによって banto-attachments を含む/含まないため、常に成立する
+  # クレート集合（admin-template-core は banto-attachments を推移的に含むので full でも
+  # 検査される）を明示指定する。src-tauri は非対象（tauri-check.yml の担当）。
+  presets:
+    name: Scaffold ${{ matrix.preset }} → check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [minimal, standard, full]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Copy repo to a scratch dir and scaffold the preset
+        run: |
+          set -euo pipefail
+          DEST="${RUNNER_TEMP}/preset-${{ matrix.preset }}"
+          rsync -a \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude 'target' \
+            --exclude '.svelte-kit' \
+            --exclude 'build' \
+            --exclude 'dist' \
+            ./ "${DEST}/"
+          cd "${DEST}"
+          node scripts/scaffold.mjs --preset ${{ matrix.preset }}
+          echo "DEST=${DEST}" >> "${GITHUB_ENV}"
+
+      - name: Install deps in the scaffolded copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Architecture invariants still hold
+        working-directory: ${{ env.DEST }}
+        run: pnpm verify:architecture
+
+      - name: Type-check the scaffolded copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm --filter admin-template check
+
+      - name: Build the scaffolded copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm --filter admin-template build
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ${{ env.DEST }}
+
+      # プリセットで banto-attachments が消える（minimal/standard）ため、常に成立する
+      # クレート集合を指定（full は admin-template-core 経由で attachments も検査される）。
+      - name: Cargo check the scaffolded copy (core crates)
+        working-directory: ${{ env.DEST }}
+        run: cargo check -p banto-core -p banto-storage -p banto-server -p admin-template-core
