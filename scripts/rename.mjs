@@ -36,6 +36,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { createEditor, replaceAll } from './lib/template-edit.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -94,47 +95,11 @@ const rootName = appName === args.name ? `${args.name}-workspace` : args.name;
 const description = args.description ?? args.title;
 
 // --- 置換エンジン -----------------------------------------------------------
+// エンジン本体（editFile / jsonField / replaceAll / 変更ログ / 失敗報告）は
+// scaffold.mjs と共有する scripts/lib/template-edit.mjs に集約している。
 
-/** 実行予定/実行済みの変更ログ（--dry-run 共用）。 */
-const changes = [];
-let failures = 0;
-
-function editFile(relPath, label, edit) {
-	const abs = path.join(repoRoot, relPath);
-	const before = fs.readFileSync(abs, 'utf8');
-	const result = edit(before);
-	if (result === null) {
-		// 既に目的の値（再実行）— スキップとして報告。
-		changes.push(`  = ${relPath}: ${label}（変更なし・適用済み）`);
-		return;
-	}
-	if (result === undefined) {
-		console.error(
-			`  ✗ ${relPath}: ${label} — 期待したパターンが見つかりません（構造が変わった可能性）`
-		);
-		failures++;
-		return;
-	}
-	changes.push(`  ✔ ${relPath}: ${label}`);
-	if (!args.dryRun) fs.writeFileSync(abs, result);
-}
-
-/** `s` 中の `from` 全出現を `to` に置換。0件なら undefined（失敗）、from===to なら null（適用済み）。 */
-function replaceAll(s, from, to) {
-	if (from === to) return null;
-	if (!s.includes(from)) return undefined;
-	return s.split(from).join(to);
-}
-
-/** JSON ファイルの文字列フィールドを、整形を保ったまま書き換える。 */
-function jsonField(relPath, field, to) {
-	editFile(relPath, `${field} → "${to}"`, (s) => {
-		const current = JSON.parse(s)[field];
-		if (typeof current !== 'string') return undefined;
-		if (current === to) return null;
-		return replaceAll(s, JSON.stringify(current), JSON.stringify(to));
-	});
-}
+const editor = createEditor({ repoRoot, dryRun: args.dryRun });
+const { editFile, jsonField } = editor;
 
 // --- 1. パッケージ名と --filter 参照 ---------------------------------------
 
@@ -231,12 +196,7 @@ if (args.repo) {
 
 // --- 結果 -------------------------------------------------------------------
 
-console.log(args.dryRun ? '--dry-run: 以下を書き換えます\n' : '書き換えました\n');
-for (const line of changes) console.log(line);
-if (failures > 0) {
-	console.error(
-		`\n${failures} 件の置換が適用できませんでした。テンプレートの構造が変わった場合は本スクリプトも更新してください。`
-	);
+if (editor.report(args.dryRun ? '--dry-run: 以下を書き換えます\n' : '書き換えました\n')) {
 	process.exit(1);
 }
 

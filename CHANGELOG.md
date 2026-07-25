@@ -25,6 +25,14 @@
   と合わせて storage クレートが Postgres 接続可能に（接続のみ）。アプリ層
   （`apps/admin-template/core`）は仕様どおり SQLite 専任のまま（§12.1/§548）。
   CI に `postgres:16` サービスコンテナで実接続する `storage-postgres` ジョブを追加
+- feat (P4-9): プリセット・スキャフォールダ `scripts/scaffold.mjs`
+  （`--preset minimal|standard|full`）を追加。コピー直後にプリセットで不要な
+  オプション資産（charts / dock / Glass+vibrancy / コマンドパレット / 添付 /
+  帳票）を README「オプション資産の削除」手順どおりに削除する（ship-full /
+  remove-only、コアは非対象）。rename.mjs のファイル編集エンジンを
+  `scripts/lib/template-edit.mjs` に共有抽出。`template-acceptance.yml` に
+  3プリセット × ビルド緑（scaffold → install → check/build/cargo check /
+  verify:architecture）の受け入れマトリクスを追加（依存追加なし）
 
 ## [0.1.2] - 2026-07-23
 
