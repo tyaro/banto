@@ -29,7 +29,7 @@
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { createEditor, dropBlock, swap, cut } from './lib/template-edit.mjs';
+import { createEditor, dropBlock, swap, cut, cutToEnd } from './lib/template-edit.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -91,6 +91,10 @@ function cutRegion(rel, label, start, end) {
 function drop(rel, label, block) {
 	editFile(rel, label, (s) => dropBlock(s, block));
 }
+/** marker から EOF までを削除（末尾は単一改行に整える・冪等）。章末の付録ブロック向け。 */
+function cutEnd(rel, label, marker) {
+	editFile(rel, label, (s) => cutToEnd(s, marker));
+}
 /** from → to へ冪等に置換（どちらも無ければ失敗）。 */
 function swapText(rel, label, from, to) {
 	editFile(rel, label, (s) => swap(s, from, to));
@@ -116,6 +120,7 @@ const THEME_CSS = 'packages/theme/src/css/banto.css';
 const VERIFY_ARCH = 'scripts/verify-architecture.mjs';
 const REST_MOD = `${APP}/core/src/rest/mod.rs`;
 const REST_ITEMS = `${APP}/core/src/rest/items.rs`;
+const REST_TESTS = `${APP}/core/src/rest/tests.rs`;
 const BANTO_SERVE = `${APP}/core/src/bin/banto-serve.rs`;
 const LIB_RS = `${APP}/src-tauri/src/lib.rs`;
 const WS_CARGO = 'Cargo.toml';
@@ -293,10 +298,10 @@ function removeCommandPalette() {
 }
 
 /**
- * 添付ファイル（`@banto/attachments` + items 添付デモ、M20）。README ~298-317。
- * README の 5 ステップ順（依存の少ない順）で外す。src-tauri（lib.rs / Cargo）は
- * 非コンパイル・コードレビュー担保。rest/tests.rs は cargo check 対象外のため触れない
- * （`cargo test` を通すには別途更新が必要。下部の注記参照）。
+ * 添付ファイル（`@banto/attachments` + items 添付デモ、M20）。README ~298-321。
+ * README の 6 ステップ順（依存の少ない順）で外す。src-tauri（lib.rs / Cargo）は
+ * 非コンパイル・コードレビュー担保。rest/tests.rs（`cargo test` 対象）も併せて
+ * 更新し、全プリセットで `cargo test` が緑になるようにする。
  */
 function removeAttachments() {
 	// (1) フロント: items/[id] の AttachmentsPanel 配線 + 関連 import
@@ -381,6 +386,8 @@ function removeAttachments() {
 		`        &id.to_string(),\n        detail,\n    )`,
 		`        &id.to_string(),\n        None,\n    )`
 	);
+	//   rest/tests.rs（cargo test 対象。api_router の attachments 引数除去に追随）
+	removeAttachmentsFromRestTests();
 	//   banto-serve.rs（AttachmentsService の構築 + api_router 実引数）
 	drop(
 		BANTO_SERVE,
@@ -435,6 +442,60 @@ function removeAttachments() {
 
 	// src-tauri lib.rs（非コンパイル・コードレビュー担保）
 	removeAttachmentsFromLibRs();
+}
+
+/**
+ * rest/tests.rs（`admin-template-core` の `cargo test` 対象）から attachments を外す。
+ * `api_router` から attachments 引数が消えるのに追随しないと、削除済みクレート
+ * `banto_attachments` を参照するテストがコンパイルできず `cargo test` が赤くなる。
+ * 除去箇所は次のとおり（M20 ブロックは crate ごと消えるので丸ごと・他は false positive）:
+ *   (a) 末尾の M20 attachments テストブロック（独自の実サービス+tempdir）を EOF まで。
+ *   (b) `unused_attachments_service` ヘルパ + doc コメント。
+ *   (c) 各ルータビルダの `unused_attachments_service(...)` 宣言（6箇所）。
+ *   (d) backup ヘルパ（M17 テストで生存）の実 `AttachmentsService::new(...)` 宣言。
+ *   (e) `api_router(...)` 実引数の `attachments,`（backup, と auth, の間・両インデント）。
+ * `PathBuf` import は `unused_backup_service` が使うため残す。
+ */
+function removeAttachmentsFromRestTests() {
+	// (a) M20 テストブロックを丸ごと EOF まで削除（他の attachments, 参照より先に消す
+	//     ことで、残る api_router 実引数がビルダの分だけになる）。
+	cutEnd(
+		REST_TESTS,
+		'rest/tests: M20 attachments テストブロック（EOFまで）除去',
+		'// --- M20: attachments'
+	);
+	// (b) unused_attachments_service ヘルパ + doc コメント（直前の空行ごと）を除去。
+	drop(
+		REST_TESTS,
+		'rest/tests: unused_attachments_service ヘルパ除去',
+		`\n/// An \`AttachmentsService\` for router helpers that never exercise\n/// \`/api/attachments/*\` - same "never actually written to" reasoning as\n/// [\`unused_backup_service\`]. Tests that DO exercise attachments use\n/// [\`router_with_role_tokens_and_attachments\`] instead, which points at\n/// a real, writable temp directory.\nfn unused_attachments_service(pool: sqlx::SqlitePool) -> AttachmentsService {\n    AttachmentsService::new(pool, PathBuf::from("unused-in-tests").join("attachments"))\n}\n`
+	);
+	// (c) ビルダの unused_attachments_service 宣言（6箇所を dropBlock が一括除去）。
+	drop(
+		REST_TESTS,
+		'rest/tests: unused_attachments_service 宣言除去',
+		`    let attachments = unused_attachments_service(pool.clone());\n`
+	);
+	// (d) backup ヘルパの実 AttachmentsService 宣言（M17 テストで生き残るヘルパ内）。
+	drop(
+		REST_TESTS,
+		'rest/tests: backup ヘルパの実 attachments 宣言除去',
+		`    let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));\n`
+	);
+	// (e) api_router(...) 実引数の attachments を除去（backup, と auth, の間・両インデント。
+	//     swap は全出現を置換するので 12/8 スペースそれぞれ 1 回で足りる）。
+	swapText(
+		REST_TESTS,
+		'rest/tests: api_router 実引数(attachments)除去（12スペース）',
+		`            backup,\n            attachments,\n            auth,`,
+		`            backup,\n            auth,`
+	);
+	swapText(
+		REST_TESTS,
+		'rest/tests: api_router 実引数(attachments)除去（8スペース）',
+		`        backup,\n        attachments,\n        auth,`,
+		`        backup,\n        auth,`
+	);
 }
 
 /**
@@ -698,5 +759,5 @@ console.log(`
   2. 検証: pnpm --filter admin-template check / build / cargo check
   ${args.preset === 'full' ? '' : '3. 削除で不活性になった未使用 CSS セレクタ等は警告として残ることがあります（ビルドは緑）。\n  '}注: src-tauri（lib.rs / Cargo）はこのサンドボックスではコンパイルできないため、
   そのコード整合はコードレビューで担保します（docs/conventions.md）。attachments の
-  除去は apps/admin-template/core/src/rest/tests.rs には及びません（cargo check 対象外）。
-  \`cargo test\` を通す場合は当該テストの更新が別途必要です。`);
+  除去は apps/admin-template/core/src/rest/tests.rs にも及ぶため、全プリセットで
+  \`cargo test -p admin-template-core\` は緑を維持します。`);

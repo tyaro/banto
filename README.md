@@ -310,10 +310,15 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
    の `attachments` フィールドを外す。`src-tauri/src/lib.rs` も同様に
    `attachments_*` コマンドと `AppState` の `attachments`/`attachments_dir`
    フィールド、`items_delete` の `delete_for_record` 呼び出しを外す。
-4. `apps/admin-template/package.json` の `@banto/attachments` 依存、
+4. `apps/admin-template/core/src/rest/tests.rs` から attachments 参照を外す
+   （`api_router` から attachments 引数が消えるのに追随。外さないと
+   `cargo test` がコンパイルできない）: `unused_attachments_service` ヘルパと
+   その各呼び出し・`api_router(...)` 実引数の `attachments,`、末尾の
+   `// --- M20: attachments` テストブロック（EOF まで、独自の実サービスを含む）を削除。
+5. `apps/admin-template/package.json` の `@banto/attachments` 依存、
    ワークスペースの `crates/banto-attachments`（`Cargo.toml` の
    `members` と `admin-template-core`/`admin-template` の依存）を外す。
-5. `apps/admin-template/core/migrations/0006_attachments.sql` を削除
+6. `apps/admin-template/core/migrations/0006_attachments.sql` を削除
    （`attachments` テーブルは他のテーブルから参照されないため、単独で
    安全に外せる）。
 

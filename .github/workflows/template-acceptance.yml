@@ -115,7 +115,7 @@ jobs:
   # これは scaffold のハード要件 — 削除でツリーが壊れるプリセットを出荷しないための
   # 唯一の防波堤。上の rename と同じコピー/セットアップ様式を踏襲する。
   #
-  # cargo check は presetによって banto-attachments を含む/含まないため、常に成立する
+  # cargo test は presetによって banto-attachments を含む/含まないため、常に成立する
   # クレート集合（admin-template-core は banto-attachments を推移的に含むので full でも
   # 検査される）を明示指定する。src-tauri は非対象（tauri-check.yml の担当）。
   presets:
@@ -180,6 +180,8 @@ jobs:
 
       # プリセットで banto-attachments が消える（minimal/standard）ため、常に成立する
       # クレート集合を指定（full は admin-template-core 経由で attachments も検査される）。
-      - name: Cargo check the scaffolded copy (core crates)
+      # `cargo test`（`check` ではなく）で、削除後も各プリセットのテストが
+      # コンパイル・パスすること＝「cargo test 緑」を機械で保証する。
+      - name: Cargo test the scaffolded copy (core crates)
         working-directory: ${{ env.DEST }}
-        run: cargo check -p banto-core -p banto-storage -p banto-server -p admin-template-core
+        run: cargo test -p banto-core -p banto-storage -p banto-server -p admin-template-core
