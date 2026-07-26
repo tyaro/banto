@@ -33,6 +33,12 @@
   `scripts/lib/template-edit.mjs` に共有抽出。`template-acceptance.yml` に
   3プリセット × ビルド緑（scaffold → install → check/build/cargo check /
   verify:architecture）の受け入れマトリクスを追加（依存追加なし）
+- fix (P4-9, follow-up #94): `scaffold.mjs` の attachments 除去を
+  `apps/admin-template/core/src/rest/tests.rs` にも適用し、全プリセットで
+  `cargo test` が緑になるよう修正（従来は minimal/standard で削除済みクレート
+  参照によりテストがコンパイル不能だった）。`template-edit.mjs` に章末ブロックを
+  EOF ごと消す冪等ヘルパ `cutToEnd` を追加。`template-acceptance.yml` の
+  presets マトリクスを `cargo check` → `cargo test` に強化
 
 ## [0.1.2] - 2026-07-23
 

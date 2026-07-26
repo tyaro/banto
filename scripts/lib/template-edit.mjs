@@ -58,6 +58,21 @@ export function cut(s, start, end) {
 }
 
 /**
+ * 削除系エディット向けの純関数: `marker` の最初の出現から**ファイル末尾まで**を
+ * 丸ごと取り除く。ファイル末尾に付く章末セクション（独自の付録的ブロック）を
+ * EOF ごと消すのに向く。結果は必ず単一の改行で終える（rustfmt/prettier 整合）。
+ * - `marker` が無ければ `null`（適用済み＝再実行安全。`cut`/`dropBlock` と同じ
+ *   「見つからない＝適用済み」規約。`replaceAll` の「見つからない＝失敗」とは
+ *   意図的に区別する）。
+ * - `marker` があれば、その手前までを残し末尾の空白を単一改行に整えて返す。
+ */
+export function cutToEnd(s, marker) {
+	const i = s.indexOf(marker);
+	if (i === -1) return null;
+	return s.slice(0, i).replace(/\s+$/, '') + '\n';
+}
+
+/**
  * 変換系エディット向けの純関数: `from` を `to` に置換するが、**冪等**。
  * - `from` があれば置換（1回目）。
  * - `from` が無く `to` があれば `null`（適用済み・2回目以降）。
