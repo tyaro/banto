@@ -32,13 +32,13 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.61.1",
-    "eslint": "^10.7.0",
+    "@playwright/test": "^1.62.0",
+    "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-svelte": "^3.20.0",
+    "eslint-plugin-svelte": "^3.22.0",
     "globals": "^17.7.0",
-    "prettier": "^3.9.5",
+    "prettier": "^3.9.6",
     "prettier-plugin-svelte": "^4.1.1",
-    "typescript-eslint": "^8.63.0"
+    "typescript-eslint": "^8.65.0"
   }
 }
