@@ -121,8 +121,9 @@ CI に `audit` ジョブ（`pnpm audit --prod --audit-level high` +
 **対応済み（2026-07-16、E2E行のみ）**: Playwright スモークE2E + visual
 regression + axe-core が CI の `e2e` ジョブに組み込み済み。詳細は
 [history/improvements-archive.md §4](history/improvements-archive.md#4-e2e部分-playwright-スモーク-e2e-の導入対応済み2026-07-16)。
-Svelte コンポーネントテストも対応済み（下表参照、P3-3）。残るは
-PostgreSQL 経路・REST 結合テストで、いずれも実需・実装待ち。
+Svelte コンポーネントテストも対応済み（P3-3、詳細は
+[history/improvements-archive.md §4（Svelteコンポーネントテスト部分）](history/improvements-archive.md)）。
+残るは PostgreSQL 経路・REST 結合テストで、いずれも実需・実装待ち。
 
 **現状**: ヘッドレスロジックのユニットテストは充実
 （packages 35 テストファイル、Rust 側も `auth`/`csrf`/`events`/`sqlite` 等
@@ -130,7 +131,6 @@ PostgreSQL 経路・REST 結合テストで、いずれも実需・実装待ち�
 
 | 空白 | 提案 | 優先度 |
 |---|---|---|
-| ~~Svelte コンポーネントテストがない（`.svelte` はテスト対象外）~~ → **対応済み（2026-07-19、improvement-plan P3-3）**: `@testing-library/svelte` + `jsdom`（devDep）で `BantoForm`/`BantoGrid` のマウント+基本操作テストを各5件追加。環境は component テストのみ jsdom に opt-in | — | 済 |
 | PostgreSQL 経路のテストなし（そもそも未実装、§6.1 参照） | 実装時に testcontainers か CI のサービスコンテナで統合テスト | 中 |
 | REST API の結合テスト | `banto-serve` バイナリがあるので、axum の `oneshot` ベースの結合テスト（auth → CRUD → SSE）を `admin-template-core` に追加しやすい。`rest.rs` に一部あるが、認可漏れ（未認証で各エンドポイントを叩く）の網羅があると安心 | 中 |
 
@@ -248,36 +248,26 @@ i18nは[template-scope.md](template-scope.md) §4.3で
   「ユーザー名またはパスワードが違います」）。ライブラリクレートとして
   公開するなら、エラーは kind コードで返しフロントで翻訳する形に寄せる。
   テンプレートアプリ自体は日本語のみだが、これは用途上許容範囲。
-- **アクセシビリティ**: ~~FilterPopoverのフォーカストラップは専用テスト
-  未確認~~ → **対応済み（2026-07-19、P4-1）**。実装を精査した結果、
-  FilterPopover は **Tab 巡回型のフォーカストラップは持たず**、
-  「Escape / 外側 pointerdown で閉じる」dismiss 型の境界制御であることが
-  判明した（当初 §8 の「フォーカストラップ」は推測だった）。この実挙動
-  （Escape で閉じる・外側 pointerdown で閉じる・内側は閉じない・unmount で
-  リスナ解除・dialog ロール/aria-label・apply/clear/Enter）を
-  `packages/grid-svelte/tests/FilterPopover.test.ts`（9件）で固定した。
-  仕様 §4.7（キーボード操作・スクリーンリーダー）の一次棚卸しも完了済み。
+- **アクセシビリティ**: FilterPopover のフォーカス境界制御 — 対応済み
+  （2026-07-19、P4-1）。実挙動（dismiss 型・Escape / 外側 pointerdown で
+  閉じる）を `packages/grid-svelte/tests/FilterPopover.test.ts`（9件）で固定。
+  詳細は
+  [history/improvements-archive.md §8.1](history/improvements-archive.md)。
 
 ## 9. パフォーマンス・運用性（優先度: 低）
 
-- ~~仕様 §4.2 のパフォーマンス目標（仮想スクロール）に対する計測ベンチが
-  ない~~ → **対応済み（2026-07-19、P4-2）**。ブラウザ FPS（非決定的・CI 不可）
-  ではなく、仮想化のホットパスを vitest bench で計測
-  （`packages/grid-svelte/tests/virtual.bench.ts`、`pnpm bench` で実行）。
-  per-frame 処理（`computeWindow` + 可視ウィンドウ slice）が総行数に依存
-  しない（10k と 100k でほぼ同一 ≈0.0002ms/frame）ことを実証し、
-  sort/filter の総行数依存コスト（100k で sort ~235ms・filter ~32ms）も
-  記録。代表結果と読み方はベンチ冒頭コメントに常設。
+- 仮想スクロールの計測ベンチ — 対応済み（2026-07-19、P4-2）。vitest bench
+  （`packages/grid-svelte/tests/virtual.bench.ts`、`pnpm bench`）で per-frame
+  処理が総行数非依存であることを実証。詳細は
+  [history/improvements-archive.md §9](history/improvements-archive.md)。
 - `banto-server` のログ基盤（`tracing` 導入の可否）は
   [ADR-0004](adr/0004-server-logging-eprintln.md) で決定（2026-07-19）:
   当面 `eprintln!` を既定に据え、`tracing` は保留（再検討条件つき）。
   依存を足さない方針（§3 / ADR-0002）との衝突を代替案比較込みで記録。
-- ~~SQLite の書き込み競合（Tauri ウィンドウ + LAN クライアント同時書き込み）の
-  挙動を README の LAN 節に一言書いておく（WAL モードの有無を含む）~~ →
-  **対応済み（2026-07-19、P4-3）**。調査結果: デスクトップ + 組み込みサーバは
-  同一プロセス・単一プール共有のため書き込みはシリアライズされ、DB は WAL
-  モード。README LAN 節に「同時書き込みとSQLite（WAL）」節を追加し、別プロセス
-  からの同時アクセスを避ける注意も明記。
+- SQLite の同時書き込みと WAL — 対応済み（2026-07-19、P4-3）。同一プロセス・
+  単一プール共有で書き込みはシリアライズ、DB は WAL モード。README LAN 節に
+  該当節を追加。詳細は
+  [history/improvements-archive.md §9](history/improvements-archive.md)。
 
 ---
 

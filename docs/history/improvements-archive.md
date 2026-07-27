@@ -363,6 +363,40 @@ Playwright visual regressionジョブ（`e2e/visual/a11y.spec.ts`、8ページ
 `docs/improvements.md` §8 に残す。i18nは[template-scope.md](../template-scope.md)
 §4.3で「テンプレートに入れない」と2026-07-12に決定済み（roadmap.md §3参照）。
 
+## 4 (Svelteコンポーネントテスト部分) BantoForm/BantoGrid のマウントテスト（対応済み、2026-07-19、P3-3）
+
+**対応済み（2026-07-19、improvement-plan P3-3）**: ヘッドレスロジックは既に
+手厚くテスト済みのため、コンポーネント側は「マウント + 基本操作」に絞った
+（roadmap M2 の分離方針どおり）。`@testing-library/svelte` + `jsdom`（devDep、
+ユーザー承認済み）で `BantoForm`/`BantoGrid` のマウント+基本操作テストを各5件
+追加。環境は component テストのみ jsdom に opt-in。
+
+## 8.1 FilterPopover のフォーカス境界制御（対応済み、2026-07-19、P4-1）
+
+**対応済み（2026-07-19、improvement-plan P4-1）**: 実装を精査した結果、
+FilterPopover は **Tab 巡回型のフォーカストラップは持たず**、「Escape / 外側
+pointerdown で閉じる」dismiss 型の境界制御であることが判明した（当初 §8 の
+「フォーカストラップ」は推測だった）。この実挙動（Escape で閉じる・外側
+pointerdown で閉じる・内側は閉じない・unmount でリスナ解除・dialog
+ロール/aria-label・apply/clear/Enter）を
+`packages/grid-svelte/tests/FilterPopover.test.ts`（9件）で固定した。
+仕様 §4.7（キーボード操作・スクリーンリーダー）の一次棚卸しも完了済み。
+
+## 9 (bench/WAL部分) パフォーマンス・運用性（対応済み、2026-07-19、P4-2/P4-3）
+
+**仮想スクロールのベンチ（対応済み、2026-07-19、P4-2）**: ブラウザ FPS
+（非決定的・CI 不可）ではなく、仮想化のホットパスを vitest bench で計測
+（`packages/grid-svelte/tests/virtual.bench.ts`、`pnpm bench` で実行）。
+per-frame 処理（`computeWindow` + 可視ウィンドウ slice）が総行数に依存しない
+（10k と 100k でほぼ同一 ≈0.0002ms/frame）ことを実証し、sort/filter の総行数
+依存コスト（100k で sort ~235ms・filter ~32ms）も記録。代表結果と読み方は
+ベンチ冒頭コメントに常設。
+
+**SQLite の同時書き込みと WAL（対応済み、2026-07-19、P4-3）**: 調査結果、
+デスクトップ + 組み込みサーバは同一プロセス・単一プール共有のため書き込みは
+シリアライズされ、DB は WAL モード。README LAN 節に「同時書き込みとSQLite
+（WAL）」節を追加し、別プロセスからの同時アクセスを避ける注意も明記。
+
 ## 優先度サマリ（着手順の推奨、2026-07-16 棚卸しで更新。全項目対応済みのため本アーカイブへ移動）
 
 1. ~~**CI 導入**（§1）~~ — **対応済み（2026-07-16）**。M18（PR #20, #32）で
