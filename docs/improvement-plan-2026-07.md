@@ -88,7 +88,7 @@ improvements.md 側にも対応履歴として反映し、本書の状態列を�
 | P4-3 | SQLite 同時書き込み(Tauri + LAN 併用時)の挙動と WAL の有無を README LAN 節に記載 | 低 | S | I§9 | **完了（2026-07-19、同一プロセス単一プール + WAL と判明）** |
 | P4-4 | Dependabot/Renovate の導入検討 | 低 | S | I§2.5 | **完了（2026-07-19、`dependabot.yml`。actions/npm/cargo をグループ化週次）** |
 | P4-5 | PostgreSQL リポジトリ実装（`sqlite.rs` を雛形に `postgres.rs`） | 低※ | L | I§6.1 | 未着手 |
-| P4-6 | improvements.md の履歴分離（未解決課題のみ残し、対応済みは `docs/history/` へ） | 低 | S | G | 未着手 |
+| P4-6 | improvements.md の履歴分離（未解決課題のみ残し、対応済みは `docs/history/` へ） | 低 | S | G | **完了（2026-07-27）**。残っていた解決済みインライン項目（P3-3/P4-1/P4-2/P4-3）を archive へ移設しスタブ化。全解決済み項目がスタブ様式に統一。※受け入れ条件「100行程度」は 2026-07-19 確定の「スタブは残す」設計（本文冒頭の3ファイル役割分担）が優先され、スタブ保持のまま 295 行で運用 |
 | P4-7 | ADR（Architecture Decision Record）導入 + コメントの3分類整理（コード内/conventions/ADR） | 低 | M | G | **完了（2026-07-19、`docs/adr/` + テンプレート + ADR 2件）** |
 | P4-8 | 実務寄りサンプルアプリの追加（例: 設備保全管理）— **template-scope 4条件との整合判定が先** | 低 | L | G | 要スコープ判定 |
 | P4-9 | プリセット構成（minimal / standard / full）の生成 — P2-1 の発展形 | 低 | L | G | **設計完了（2026-07-19、[docs/scaffold-presets-plan.md](scaffold-presets-plan.md)）。実装は P2-1 v2 の後** |
