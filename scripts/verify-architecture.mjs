@@ -250,27 +250,38 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	// rest は "METHOD /path"（クエリ文字列は除く）。backups の復元系は経路が
 	// 非対称（Tauri は stage→再起動適用、REST は from-upload/from-existing）
 	// なので、2つの REST ルートを同一 Tauri コマンドに対応させる（所有者確認済み）。
+	// `role` は期待するロール床（CR-6, 2026-07-22）。宣言した対だけロール床の
+	// 対称も照合する（下記 (e)）。auth 系（公開 / 認証のみで resource ロール床が
+	// 無い）は role を付けず、存在チェックのみ対象にする。
 	const DUAL_PATH = [
 		{ tauri: 'auth_setup', rest: 'POST /api/auth/setup' },
 		{ tauri: 'auth_login', rest: 'POST /api/auth/login' },
 		{ tauri: 'auth_logout', rest: 'POST /api/auth/logout' },
 		{ tauri: 'auth_change_password', rest: 'POST /api/auth/change-password' },
-		{ tauri: 'items_create', rest: 'POST /api/items' },
-		{ tauri: 'items_update', rest: 'PUT /api/items/{id}' },
-		{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}' },
-		{ tauri: 'items_import', rest: 'POST /api/items/import' },
-		{ tauri: 'users_create', rest: 'POST /api/users' },
-		{ tauri: 'users_update', rest: 'PUT /api/users/{id}' },
-		{ tauri: 'users_delete', rest: 'DELETE /api/users/{id}' },
-		{ tauri: 'users_reset_password', rest: 'POST /api/users/{id}/reset-password' },
-		{ tauri: 'ui_settings_set', rest: 'PUT /api/ui-settings/{key}' },
-		{ tauri: 'audit_config_apply', rest: 'PUT /api/audit-log/config' },
-		{ tauri: 'backups_create', rest: 'POST /api/backups' },
-		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/restore' },
-		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/{fileName}/restore' },
-		{ tauri: 'backups_cancel_restore', rest: 'DELETE /api/backups/pending-restore' },
-		{ tauri: 'attachments_upload', rest: 'POST /api/attachments' },
-		{ tauri: 'attachments_delete', rest: 'DELETE /api/attachments/{id}' }
+		{ tauri: 'items_create', rest: 'POST /api/items', role: 'Editor' },
+		{ tauri: 'items_update', rest: 'PUT /api/items/{id}', role: 'Editor' },
+		{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}', role: 'Editor' },
+		{ tauri: 'items_import', rest: 'POST /api/items/import', role: 'Editor' },
+		{ tauri: 'users_create', rest: 'POST /api/users', role: 'Admin' },
+		{ tauri: 'users_update', rest: 'PUT /api/users/{id}', role: 'Admin' },
+		{ tauri: 'users_delete', rest: 'DELETE /api/users/{id}', role: 'Admin' },
+		{ tauri: 'users_reset_password', rest: 'POST /api/users/{id}/reset-password', role: 'Admin' },
+		{ tauri: 'ui_settings_set', rest: 'PUT /api/ui-settings/{key}', role: 'Viewer' },
+		{ tauri: 'audit_config_apply', rest: 'PUT /api/audit-log/config', role: 'Admin' },
+		{ tauri: 'backups_create', rest: 'POST /api/backups', role: 'Admin' },
+		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/restore', role: 'Admin' },
+		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/{fileName}/restore', role: 'Admin' },
+		{ tauri: 'backups_cancel_restore', rest: 'DELETE /api/backups/pending-restore', role: 'Admin' },
+		{ tauri: 'attachments_upload', rest: 'POST /api/attachments', role: 'Editor' },
+		{ tauri: 'attachments_delete', rest: 'DELETE /api/attachments/{id}', role: 'Editor' }
+	];
+
+	// ロール床を照合したい読み取り系の対（CR-6）。読み取りは rule 8 の存在対称の
+	// 対象外（TAURI_READ/REST_READ）だが、ロール床の非対称は起こりうる — 実際
+	// `audit_config_get`（Tauri=Viewer / REST=Admin）が非対称だった。
+	const ROLE_READ = [
+		{ tauri: 'audit_config_get', rest: 'GET /api/audit-log/config', role: 'Admin' },
+		{ tauri: 'audit_log_list', rest: 'POST /api/audit-log/list', role: 'Admin' }
 	];
 
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
@@ -283,7 +294,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'auth_config_apply',
 		'panel_open',
 		'backups_open_folder',
-		'attachments_open_folder'
+		'attachments_open_folder',
+		'items_export_csv_to_folder'
 	]);
 
 	// 読み取り系（list/get/status。§1 により両経路とも監査せず、対称強制の対象外）。
@@ -400,10 +412,66 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 			);
 	}
 
+	// (e) ロール床の対称（CR-6, 2026-07-22 / maintainability-review CR-6）。
+	// rule 8 の (a)〜(d) は「両経路に在るか」までで、**同じロール床か**は見ない
+	// （＝ `audit_config_get` の Tauri=Viewer / REST=Admin 非対称を素通しした）。
+	// ここは DUAL_PATH / ROLE_READ に宣言した期待ロールに対し、Tauri 実装
+	// （`require_role(&state, Role::X, …)`。thin wrapper は `<cmd>_body` に委譲する
+	// ため _body フォールバックを持つ）と REST 実装（その route を束ねる
+	// `RoleGuard { min: Role::X }`。無ければ `require_auth` のみ = Viewer 床）の
+	// 双方が宣言と一致するか照合する。`src-tauri` はコンパイルできないため静的解析。
+	if (fs.existsSync(path.join(repoRoot, tauriLib))) {
+		const libSrc = read(tauriLib);
+		// Tauri: 全 async fn → その本体で最初に現れる require_role の Role。
+		const tauriRoles = {};
+		for (const seg of libSrc.split(/\basync fn /).slice(1)) {
+			const nm = seg.match(/^(\w+)/);
+			if (!nm) continue;
+			const rm = seg.match(/require_role\(\s*&?\s*state\s*,\s*Role::(\w+)\s*,/);
+			tauriRoles[nm[1]] = rm ? rm[1] : null;
+		}
+		const tauriRoleOf = (cmd) => tauriRoles[cmd] ?? tauriRoles[`${cmd}_body`] ?? null;
+
+		// REST: "METHOD /path" → ロール床。各 `fn *_router` 本体（rustfmt 済みなので
+		// 関数の閉じ括弧は行頭 `}`）から RoleGuard の min（無ければ require_auth=Auth）を取り、
+		// その本体内の `.route("path", <verbs>(...))` の各メソッドに割り当てる。
+		const restRouteRole = {};
+		for (const file of walk('apps/admin-template/core/src/rest', ['.rs'])) {
+			for (const fnM of read(file).matchAll(/\bfn \w+_router\b[\s\S]*?\n\}/g)) {
+				const body = fnM[0];
+				const minM = body.match(/min:\s*Role::(\w+)/);
+				const role = minM ? minM[1] : /require_auth\b/.test(body) ? 'Auth' : 'Public';
+				for (const chunk of body.split('.route(').slice(1)) {
+					const pathM = chunk.match(/^\s*"([^"]+)"/);
+					if (!pathM) continue;
+					const p = pathM[1].split('?')[0].trim();
+					const methodsSeg = chunk.split(/\.with_state|\.layer|\.route\(/)[0];
+					for (const vm of methodsSeg.matchAll(/\b(get|post|put|delete)\s*\(/g))
+						restRouteRole[`${vm[1].toUpperCase()} ${p}`] = role;
+				}
+			}
+		}
+
+		// `require_auth` のみ（RoleGuard 無し）は最下位ロール = Viewer 床と同値。
+		const normRole = (r) => (r === 'Auth' ? 'Viewer' : r);
+		const roleChecks = [...DUAL_PATH.filter((d) => d.role), ...ROLE_READ];
+		for (const { tauri, rest, role } of roleChecks) {
+			const want = normRole(role);
+			const tr = tauriRoleOf(tauri);
+			const rr = restRouteRole[rest] ?? null;
+			if (normRole(tr) !== want || normRole(rr) !== want)
+				fail(
+					rule,
+					tauriLib,
+					`ロール床の非対称/不一致 \`${tauri}\` ⇔ \`${rest}\`: 期待=${role} / Tauri=${tr ?? '不明'} / REST=${rr ?? '不明'}（§1 両経路で同一の認可、CR-6）`
+				);
+		}
+	}
+
 	if (!results.some((r) => r.includes(`[${rule}]`)))
 		pass(
 			rule,
-			`両経路対称: dual-path ${DUAL_PATH.length} 対 + Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
+			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length}）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
 		);
 }
 

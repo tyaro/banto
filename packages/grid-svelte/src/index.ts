@@ -13,6 +13,7 @@
 export { default as BantoGrid } from './BantoGrid.svelte';
 export { GridState, DEFAULT_ROW_HEIGHT, type GridStateOptions } from './state.svelte';
 export { CellSelection, type CellPos } from './selection.svelte';
+export { defaultGridMessages, type GridMessages } from './messages';
 
 export { sortRows, getColumnValue } from './core/sort';
 export { filterRows } from './core/filter';
@@ -25,7 +26,8 @@ export {
 	type ColumnsSchema,
 	type SchemaField,
 	type SchemaFieldType,
-	type ColumnsFromSchemaOptions
+	type ColumnsFromSchemaOptions,
+	type ColumnValidationMessages
 } from './core/schema';
 export {
 	toCsv,
@@ -35,7 +37,8 @@ export {
 	mapCsvHeader,
 	convertCsvRow,
 	type CsvMapping,
-	type CsvRowResult
+	type CsvRowResult,
+	type CsvConversionMessages
 } from './core/csv';
 
 export type {

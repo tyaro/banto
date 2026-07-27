@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
@@ -78,7 +79,7 @@
 		if (!formResource || !canWrite) return;
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			goto('/items');
+			goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -88,7 +89,7 @@
 		if (!formResource || !canWrite) return;
 		if (!window.confirm('削除しますか？')) return;
 		const removed = await formResource.remove();
-		if (removed) goto('/items');
+		if (removed) goto(`${base}/items`);
 	}
 </script>
 
@@ -102,7 +103,7 @@
 				description="削除されたか、URLが正しくない可能性があります。"
 			>
 				{#snippet action()}
-					<a class="banto-btn banto-btn--secondary" href="/items">一覧へ戻る</a>
+					<a class="banto-btn banto-btn--secondary" href={`${base}/items`}>一覧へ戻る</a>
 				{/snippet}
 			</EmptyState>
 		{:else if formResource?.loading}
@@ -121,7 +122,7 @@
 						>
 							再読み込み
 						</button>
-						<a class="banto-btn banto-btn--ghost" href="/items">一覧へ戻る</a>
+						<a class="banto-btn banto-btn--ghost" href={`${base}/items`}>一覧へ戻る</a>
 					</div>
 				{/snippet}
 			</ErrorState>

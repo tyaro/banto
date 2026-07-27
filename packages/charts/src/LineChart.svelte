@@ -52,6 +52,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface LineSeries {
 		id: string;
@@ -83,6 +84,8 @@
 		markers?: EventMarker[];
 		/** Formatter for the RIGHT y-axis tick/tooltip values; defaults to `formatY`. */
 		formatYRight?: (n: number) => string;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
 	let {
@@ -98,8 +101,14 @@
 		zoomable = false,
 		bands = [],
 		markers = [],
-		formatYRight
+		formatYRight,
+		messages = {}
 	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 28, left: 48 };
 	// Minimum px per x-axis tick label so dense datasets don't overlap; the
@@ -373,7 +382,7 @@
 
 <div class="banto-linechart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot()}
 			{@const m = metrics}
 			<!-- Threshold bands (drawn first, under the data). -->
@@ -572,8 +581,8 @@
 		{/snippet}
 		{#snippet overlay()}
 			{#if zoomed}
-				<button type="button" class="reset-zoom" onclick={resetZoom} title="ズームをリセット">
-					リセット
+				<button type="button" class="reset-zoom" onclick={resetZoom} title={t.lineResetZoomTitle()}>
+					{t.lineReset()}
 				</button>
 			{/if}
 			{#if hoveredIndex !== null && !panning}

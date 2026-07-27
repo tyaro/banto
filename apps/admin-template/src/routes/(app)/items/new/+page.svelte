@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
@@ -19,7 +20,7 @@
 	async function handleSubmit(values: Record<string, unknown>) {
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			goto('/items');
+			goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}

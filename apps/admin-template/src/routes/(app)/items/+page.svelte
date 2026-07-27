@@ -19,6 +19,7 @@
 		notify
 	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
 	import type { Item } from '$lib/banto/sampleData';
 	import { itemsSchema } from '$lib/banto/resources/items';
@@ -26,10 +27,12 @@
 	import { canWriteResources } from '$lib/permissions';
 	import {
 		DEMO_MODE_MESSAGE as ITEMS_IMPORT_DEMO_MESSAGE,
+		exportCsvToFolder,
 		importItems,
 		isItemsImportAvailable,
 		type ItemImportRow
 	} from '$lib/banto/itemsAdmin';
+	import { getBantoMode } from '$lib/banto/setup';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
 	import ItemsClientGrid, { type ItemRow } from './ItemsClientGrid.svelte';
@@ -60,7 +63,7 @@
 			width: 70,
 			resizable: false,
 			sortable: false,
-			cell: (row) => ({ text: '開く', href: `/items/${row.id}` })
+			cell: (row) => ({ text: '開く', href: `${base}/items/${row.id}` })
 		},
 		{
 			id: 'id',
@@ -155,7 +158,7 @@
 	}
 
 	function handleRowClick(item: Item) {
-		goto(`/items/${item.id}`);
+		goto(`${base}/items/${item.id}`);
 	}
 
 	/** Merge one edited field onto the row's other current values (DataProvider.update expects the full editable value set). */
@@ -284,8 +287,27 @@
 				filters
 			});
 			const csv = csvForExcel(toCsv(csvColumns, result.rows));
-			downloadTextFile(csv, csvFilename('items'), 'text/csv;charset=utf-8');
-			notify('success', `${result.rows.length}件をエクスポートしました`);
+			const filename = csvFilename('items');
+			if (getBantoMode() === 'tauri') {
+				// Desktop (finding⑤ Option A): WebView2 has no visible save
+				// dialog for `<a download>`, so write into the app's
+				// `exports/` folder and reveal it in Explorer instead - same
+				// "no native save dialog in v1" fallback as
+				// `openBackupsFolder`/backups' folder UX.
+				const folderResult = await exportCsvToFolder(csv, filename);
+				// Always show the saved path (the folder opens on success, but
+				// the toast makes the location explicit so the file is never
+				// "missing"). `opened: false` = non-Windows, where no folder opens.
+				notify(
+					'success',
+					folderResult.opened
+						? `${result.rows.length}件をエクスポートしました: ${folderResult.path}`
+						: `${result.rows.length}件をエクスポートしました（${folderResult.path}）`
+				);
+			} else {
+				downloadTextFile(csv, filename, 'text/csv;charset=utf-8');
+				notify('success', `${result.rows.length}件をエクスポートしました`);
+			}
 		} catch (err) {
 			notify('error', isProviderError(err) ? err.message : String(err));
 		} finally {
@@ -535,7 +557,7 @@
 			<button
 				type="button"
 				class="banto-btn banto-btn--ghost"
-				onclick={() => goto('/items/report')}
+				onclick={() => goto(`${base}/items/report`)}
 			>
 				<FileText size={16} aria-hidden="true" />
 				日報
@@ -569,7 +591,7 @@
 				<button
 					type="button"
 					class="banto-btn banto-btn--primary new-item-btn"
-					onclick={() => goto('/items/new')}
+					onclick={() => goto(`${base}/items/new`)}
 				>
 					<Plus size={16} aria-hidden="true" />
 					新規作成

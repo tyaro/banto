@@ -14,6 +14,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface RadarSeries<TRow> {
 		id: string;
@@ -29,9 +30,20 @@
 		height?: number;
 		max?: number;
 		formatValue?: (n: number) => string;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { data, axis, series, label, height = 240, max, formatValue }: Props = $props();
+	let {
+		data,
+		axis,
+		series,
+		label,
+		height = 240,
+		max,
+		formatValue,
+		messages = {}
+	}: Props = $props();
 
 	const LABEL_PADDING = 34;
 	const LABEL_GAP = 10;
@@ -85,7 +97,7 @@
 
 <div class="banto-radarchart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const g = geometry(width, plotHeight)}
 

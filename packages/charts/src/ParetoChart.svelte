@@ -22,6 +22,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface ParetoInputItem {
 		label: string;
@@ -35,9 +36,16 @@
 		formatValue?: (n: number) => string;
 		/** Per-side overrides merged over the defaults below. */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { items, label, height = 240, formatValue, margins }: Props = $props();
+	let { items, label, height = 240, formatValue, margins, messages = {} }: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 40, bottom: 26, left: 48 };
 	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
@@ -68,8 +76,8 @@
 	const percentTicks = $derived(niceTicks(0, 100, 5));
 
 	const legendItems = $derived([
-		{ id: 'value', label: '値', colorVar: seriesColorVar(0) },
-		{ id: 'cumulative', label: '累積%', colorVar: seriesColorVar(1) }
+		{ id: 'value', label: t.paretoValue(), colorVar: seriesColorVar(0) },
+		{ id: 'cumulative', label: t.paretoCumulativePct(), colorVar: seriesColorVar(1) }
 	]);
 
 	function maxXTicksFor(innerWidth: number): number {
@@ -90,15 +98,19 @@
 	function tooltipRows(index: number): TooltipRow[] {
 		const d = data[index];
 		return [
-			{ label: '値', value: formatValueDisplay(d.value), colorVar: seriesColorVar(0) },
-			{ label: '累積%', value: formatPercent(d.cumulativePercent), colorVar: seriesColorVar(1) }
+			{ label: t.paretoValue(), value: formatValueDisplay(d.value), colorVar: seriesColorVar(0) },
+			{
+				label: t.paretoCumulativePct(),
+				value: formatPercent(d.cumulativePercent),
+				colorVar: seriesColorVar(1)
+			}
 		];
 	}
 </script>
 
 <div class="banto-paretochart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const valueScale = linearScale(

@@ -6,3 +6,4 @@
  */
 export { renderReport, type RenderOptions, type RenderResult } from './core/index';
 export { default as ReportView } from './ReportView.svelte';
+export { defaultReportMessages, type ReportMessages } from './messages';

@@ -23,15 +23,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Version is intentionally omitted: pnpm/action-setup resolves it from
       # the "packageManager" field in the root package.json (pnpm@10.33.0).
       - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -47,6 +47,12 @@ jobs:
       # 許可リスト等）を強制する（improvement-plan P3-5）。
       - name: Verify architecture invariants
         run: pnpm verify:architecture
+
+      # マニフェスト間の version 一致を強制する（CR-7 通常CI。タグ名一致は
+      # リリース/タグワークフローで `node scripts/check-versions.mjs --tag <name>`
+      # として別途検査する）。ルート package.json は private=0.0.0 で例外。
+      - name: Verify version consistency
+        run: pnpm check:versions
 
       - name: Format check (Prettier)
         run: pnpm format:check
@@ -70,7 +76,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -103,19 +109,61 @@ jobs:
       - name: Cargo test
         run: cargo test -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
 
+  # banto-storage の PostgreSQL 接続ヘルパ（feature `postgres`）向け統合テスト。
+  # 上の `rust` ジョブは default feature（sqlite のみ）でビルドしているため
+  # ここに切り出す。実 PostgreSQL への接続が要る唯一のテスト
+  # (postgres::tests::connect_gives_a_usable_pool) は BANTO_TEST_PG_URL が
+  # 未設定だと早期 return で skip する仕様（ローカル `cargo test` は
+  # PostgreSQL 無しで通る）ので、CI 側でこの env を設定して実接続を検証する。
+  storage-postgres:
+    name: banto-storage (PostgreSQL integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: banto_storage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # `--no-default-features --features postgres`: banto-storage の default
+      # feature は sqlite なので、postgres feature 単独でもビルドできる
+      # ことをここで確認する（sqlite feature を混ぜても良いが、Postgres
+      # 専用ビルドが成立することの検証を優先）。
+      - name: Cargo test (banto-storage, postgres feature)
+        env:
+          BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_storage_test
+        run: cargo test -p banto-storage --no-default-features --features postgres
+
   e2e:
     name: E2E (Playwright smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -179,13 +227,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm

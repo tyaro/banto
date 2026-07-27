@@ -24,6 +24,8 @@ export { default as BoxPlot } from './BoxPlot.svelte';
 export { default as StackedAreaChart } from './StackedAreaChart.svelte';
 export { default as GanttChart } from './GanttChart.svelte';
 
+export { defaultChartMessages, type ChartMessages } from './messages';
+
 export type {
 	Accessor,
 	ChartMargin,

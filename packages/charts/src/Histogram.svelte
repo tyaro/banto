@@ -26,6 +26,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface Props {
 		values: number[];
@@ -39,6 +40,8 @@
 		formatValue?: (n: number) => string;
 		/** Per-side overrides merged over the computed defaults. */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
 	let {
@@ -48,8 +51,14 @@
 		binCount,
 		normalCurve = false,
 		formatValue,
-		margins
+		margins,
+		messages = {}
 	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 8, right: 16, bottom: 26, left: 48 };
 	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
@@ -108,9 +117,9 @@
 	);
 
 	const legendItems = $derived([
-		{ id: 'freq', label: '度数', colorVar: seriesColorVar(0) },
+		{ id: 'freq', label: t.histogramFrequency(), colorVar: seriesColorVar(0) },
 		...(normalCurve && curveCounts.length > 0
-			? [{ id: 'normal', label: '正規分布', colorVar: seriesColorVar(1) }]
+			? [{ id: 'normal', label: t.histogramNormal(), colorVar: seriesColorVar(1) }]
 			: [])
 	]);
 
@@ -129,14 +138,20 @@
 		const bin = bins[index];
 		return {
 			title: `${formatValueDisplay(bin.x0)} - ${formatValueDisplay(bin.x1)}`,
-			rows: [{ label: '度数', value: formatCount(bin.count), colorVar: seriesColorVar(0) }]
+			rows: [
+				{
+					label: t.histogramFrequency(),
+					value: formatCount(bin.count),
+					colorVar: seriesColorVar(0)
+				}
+			]
 		};
 	}
 </script>
 
 <div class="banto-histogram">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const xScale = linearScale(domain, [m.innerLeft, m.innerLeft + m.innerWidth])}

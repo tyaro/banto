@@ -201,6 +201,20 @@ export interface CsvRowResult<TRow> {
 }
 
 /**
+ * i18n layer 1 (docs/i18n-plan.md §3.2): overridable message(s) for
+ * `convertCsvRow`. Mirrors @banto/forms' `validate.ts` convention (message as
+ * a function, default reproduces today's Japanese literal verbatim).
+ */
+export interface CsvConversionMessages {
+	/** Per-cell type-conversion failure, given the column header and the raw (unparsed) cell text. */
+	convertError?: (header: string, raw: string) => string;
+}
+
+const defaultCsvConversionMessages: Required<CsvConversionMessages> = {
+	convertError: (header, raw) => `${header}: 値を変換できません（${raw}）`
+};
+
+/**
  * Convert one CSV data row (`cells`, positioned per `mapping`'s `index`)
  * into typed row values, reusing `parseCellInput` (editor-aware type
  * conversion, same as pasting a TSV cell) and `resolveSelectValue`
@@ -214,8 +228,10 @@ export interface CsvRowResult<TRow> {
  */
 export function convertCsvRow<TRow>(
 	cells: string[],
-	mapping: CsvMapping<TRow>[]
+	mapping: CsvMapping<TRow>[],
+	messages: CsvConversionMessages = {}
 ): CsvRowResult<TRow> {
+	const msg = { ...defaultCsvConversionMessages, ...messages };
 	const values: Partial<TRow> = {};
 	const errors: { columnId: string; message: string }[] = [];
 
@@ -228,7 +244,7 @@ export function convertCsvRow<TRow>(
 		if (!parsed.ok) {
 			errors.push({
 				columnId: column.id,
-				message: `${column.header}: 値を変換できません（${raw}）`
+				message: msg.convertError(column.header, raw)
 			});
 			continue;
 		}

@@ -27,6 +27,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getAuthProvider, isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
+import type { OpenFolderResult } from './backupsAdmin';
 
 /**
  * Mirrors `admin_template_core::items::ItemImportRow` (camelCase on the
@@ -150,4 +151,20 @@ export async function importItems(rows: ItemImportRow[]): Promise<ImportResult> 
 	if (!isItemsImportAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') return invokeCommand<ImportResult>('items_import', { rows });
 	return httpPostJson<ImportResult>('/api/items/import', rows);
+}
+
+/**
+ * Tauri desktop only: write an exported CSV to the app's `exports/` folder
+ * and reveal it in the OS file explorer (finding⑤ Option A) - the desktop
+ * counterpart of the LAN browser's `<a download>` (see `+page.svelte`'s
+ * `downloadTextFile`, which the browser path keeps using unchanged). Mirrors
+ * `backupsAdmin.ts`'s `openBackupsFolder()` folder-reveal UX; not gated by
+ * `isItemsImportAvailable()`/demo-mode since this only runs when
+ * `getBantoMode() === 'tauri'` in the first place.
+ */
+export async function exportCsvToFolder(
+	content: string,
+	fileName: string
+): Promise<OpenFolderResult> {
+	return invokeCommand<OpenFolderResult>('items_export_csv_to_folder', { content, fileName });
 }

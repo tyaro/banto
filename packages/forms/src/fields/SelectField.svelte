@@ -9,9 +9,15 @@
 		disabled?: boolean;
 		onInput: (value: string | number) => void;
 		onBlur?: () => void;
+		/**
+		 * i18n layer 1 (docs/i18n-plan.md §3.2): package-level default for the
+		 * placeholder option, used when `def.placeholder` isn't set. Defaults
+		 * reproduce today's Japanese output.
+		 */
+		messages?: { selectPlaceholder?: string };
 	}
 
-	let { def, value, error, disabled = false, onInput, onBlur }: Props = $props();
+	let { def, value, error, disabled = false, onInput, onBlur, messages = {} }: Props = $props();
 
 	const isDisabled = $derived(disabled || !!def.readonly);
 
@@ -30,7 +36,9 @@
 	onchange={handleChange}
 	onblur={onBlur}
 >
-	<option value="" disabled hidden>{def.placeholder ?? '選択してください'}</option>
+	<option value="" disabled hidden
+		>{def.placeholder ?? messages.selectPlaceholder ?? '選択してください'}</option
+	>
 	{#each def.options ?? [] as option (option.value)}
 		<option value={String(option.value)}>{option.label}</option>
 	{/each}
