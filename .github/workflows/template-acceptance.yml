@@ -28,6 +28,7 @@ on:
     paths:
       - 'scripts/rename.mjs'
       - 'scripts/rename.test.mjs'
+      - 'scripts/scaffold.test.mjs'
       - 'scripts/scaffold.mjs'
       - 'scripts/lib/template-edit.mjs'
       - '.github/workflows/template-acceptance.yml'
@@ -35,6 +36,7 @@ on:
     paths:
       - 'scripts/rename.mjs'
       - 'scripts/rename.test.mjs'
+      - 'scripts/scaffold.test.mjs'
       - 'scripts/scaffold.mjs'
       - 'scripts/lib/template-edit.mjs'
       - '.github/workflows/template-acceptance.yml'
@@ -61,9 +63,9 @@ jobs:
         with:
           node-version: 24
 
-      # 軽量ガード: rename が約束どおりの書き換えを行い、--dry-run が無変更なこと。
-      - name: Rename integration test
-        run: node --test scripts/rename.test.mjs
+      # 軽量ガード: rename/scaffold が約束どおりの書き換えを行い、--dry-run が無変更なこと。
+      - name: rename / scaffold integration tests
+        run: node --test scripts/rename.test.mjs scripts/scaffold.test.mjs
 
       # end-to-end: 実際にコピー＆リネームして、リネーム後のテンプレートが
       # 型検査・cargo check を通ることを確認する（第三者導線の証明）。

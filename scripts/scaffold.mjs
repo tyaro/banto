@@ -22,13 +22,18 @@
  *
  * 使い方:
  *   node scripts/scaffold.mjs --preset minimal|standard|full [--dry-run]
+ *   node scripts/scaffold.mjs --interactive|-i [--dry-run]
  *
- * 注: 対話ラッパ（`create-banto-app` 相当）は本スクリプトのスコープ外
- * （plan §7.3）。本スクリプトは非対話・スクリプタブル・テスト可能な土台。
+ * `--interactive`（plan §7.3）は人間に対話でプリセット（または個別資産の
+ * 残す/削除）を選ばせた上で、`--preset` と**全く同じ削除ロジック**
+ * （`toRemove` の Set → ORDER に沿った remover 呼び出し）を実行する。
+ * 依存を足さない文化に従い Node 標準の `node:readline/promises` のみを使う
+ * （新規依存なし、conventions §3 / ADR-0002）。
  */
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import readline from 'node:readline/promises';
 import { createEditor, dropBlock, swap, cut, cutToEnd } from './lib/template-edit.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,9 +50,12 @@ const PRESETS = {
 function usage(code) {
 	console.log(
 		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full [--dry-run]\n' +
-			'  minimal  … コアのみ（全オプション資産を削除）\n' +
-			'  standard … dock/charts/コマンドパレット/Glass を残し、添付・帳票を削除\n' +
-			'  full     … 何も削除しない（検証のみ）'
+			'       node scripts/scaffold.mjs --interactive|-i [--dry-run]\n' +
+			'  minimal     … コアのみ（全オプション資産を削除）\n' +
+			'  standard    … dock/charts/コマンドパレット/Glass を残し、添付・帳票を削除\n' +
+			'  full        … 何も削除しない（検証のみ）\n' +
+			'  --interactive/-i … プリセット（または資産ごとの残す/削除）を対話で選ぶ。\n' +
+			'                      --preset とは併用不可'
 	);
 	process.exit(code);
 }
@@ -58,13 +66,14 @@ function fail(message) {
 }
 
 function parseArgs(argv) {
-	const args = { dryRun: false };
+	const args = { dryRun: false, interactive: false };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === '--preset') {
 			args.preset = argv[++i];
 			if (args.preset === undefined) fail('--preset に値がありません');
 		} else if (arg === '--dry-run') args.dryRun = true;
+		else if (arg === '--interactive' || arg === '-i') args.interactive = true;
 		else if (arg === '--help' || arg === '-h') usage(0);
 		else fail(`不明な引数: ${arg}`);
 	}
@@ -72,8 +81,10 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-if (!args.preset) usage(1);
-if (!Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
+if (args.interactive && args.preset)
+	fail('--interactive と --preset は同時に指定できません（どちらか一方を選んでください）');
+if (!args.interactive && !args.preset) usage(1);
+if (args.preset && !Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
 	fail(
 		`--preset は ${Object.keys(PRESETS).join(' / ')} のいずれかを指定してください: ${args.preset}`
 	);
@@ -734,30 +745,170 @@ const REMOVERS = {
 // README の資産並び順で実行（remover 間はテキスト領域が独立なので順序非依存だが、
 // ドキュメントの記述順に合わせる）。
 const ORDER = ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report'];
-const toRemove = new Set(PRESETS[args.preset]);
 
-console.log(
-	`プリセット '${args.preset}' を適用${args.dryRun ? '（--dry-run: 変更しません）' : ''}\n` +
-		(toRemove.size === 0
-			? '  （full: 削除する資産はありません。検証のみ）\n'
-			: `  削除する資産: ${ORDER.filter((a) => toRemove.has(a)).join(', ')}\n`)
-);
+// --- 対話モード（--interactive/-i）-----------------------------------------
+//
+// ここで作るのは `toRemove`（削除する資産の Set）だけ。それ以降は --preset と
+// 完全に同じ削除ループ・report・次のステップ表示を共有する（plan §7.3 の
+// 「対話は入力を作るだけ、削除ロジックは単一」という要件）。
 
-for (const asset of ORDER) {
-	if (!toRemove.has(asset)) continue;
-	console.log(`# ${asset}`);
-	REMOVERS[asset]();
+const PRESET_DESCRIPTIONS = {
+	minimal: 'コアのみ（charts/dock/Glass/コマンドパレット/添付/帳票を全削除）',
+	standard: 'dock+charts+パレット+Glass 同梱（添付・帳票のみ削除）',
+	full: '全オプション同梱（何も削除しない）'
+};
+
+/**
+ * readline インターフェースを 1 行ずつ読む `ask()` を作る。
+ *
+ * 注意: `rl.question()`（readline/promises 標準 API）は使わない。pipe された
+ * 非 TTY stdin では「複数行が 1 チャンクで届く」→ readline が 'line' イベントを
+ * 同期的に連続発火 → 2 問目以降の `question()` がリスナー登録前に流れた
+ * 'line' を取りこぼして**永久に停止する**、という既知の挙動があるため
+ * （このスクリプトの手動検証で再現・確認済み）。async イテレータ
+ * （`rl[Symbol.asyncIterator]()`）はキューイングされるためこの問題が無く、
+ * TTY・pipe どちらでも同じコードで安全に動く。モジュールは引き続き
+ * `node:readline/promises` のみ（新規依存なし、conventions §3）。
+ * 入力が尽きた（EOF）場合は `null` を返す。
+ */
+function makeAsk(rl) {
+	const lines = rl[Symbol.asyncIterator]();
+	return async function ask(query) {
+		process.stdout.write(query);
+		const { value, done } = await lines.next();
+		return done ? null : value;
+	};
 }
 
-if (editor.report(args.dryRun ? '\n--dry-run: 以下を適用します\n' : '\n適用しました\n')) {
-	process.exit(1);
+/** EOF（入力が尽きた）を明示的な失敗として扱う。 */
+function failOnEof(value) {
+	if (value === null)
+		fail('対話入力が途中で終了しました（EOF）。パイプ入力の行数を確認してください');
+	return value;
 }
 
-console.log(`
+async function promptPreset(ask) {
+	console.log(
+		'どのプリセットを適用しますか？\n' +
+			`  1) minimal  … ${PRESET_DESCRIPTIONS.minimal}\n` +
+			`  2) standard … ${PRESET_DESCRIPTIONS.standard}\n` +
+			`  3) full     … ${PRESET_DESCRIPTIONS.full}\n` +
+			'  4) custom   … 資産を個別に選ぶ'
+	);
+	const byNumber = { 1: 'minimal', 2: 'standard', 3: 'full', 4: 'custom' };
+	const byName = new Set(['minimal', 'standard', 'full', 'custom']);
+	for (;;) {
+		const answer = failOnEof(await ask('番号または名前を入力してください [1-4]: ')).trim();
+		if (byNumber[answer]) return byNumber[answer];
+		if (byName.has(answer)) return answer;
+		console.log(`入力が正しくありません: ${answer}`);
+	}
+}
+
+/** [Y/n]（デフォルト Yes）を読む。空入力/y/yes は true、n/no は false。 */
+async function promptYesDefaultYes(ask, question) {
+	for (;;) {
+		const answer = failOnEof(await ask(`${question} [Y/n]: `))
+			.trim()
+			.toLowerCase();
+		if (answer === '' || answer === 'y' || answer === 'yes') return true;
+		if (answer === 'n' || answer === 'no') return false;
+		console.log(`入力が正しくありません: ${answer}`);
+	}
+}
+
+/** [y/N]（デフォルト No）を読む。空入力/n/no は false、y/yes は true。 */
+async function promptYesDefaultNo(ask, question) {
+	for (;;) {
+		const answer = failOnEof(await ask(`${question} [y/N]: `))
+			.trim()
+			.toLowerCase();
+		if (answer === '' || answer === 'n' || answer === 'no') return false;
+		if (answer === 'y' || answer === 'yes') return true;
+		console.log(`入力が正しくありません: ${answer}`);
+	}
+}
+
+async function promptCustomToRemove(ask) {
+	const toRemove = new Set();
+	console.log('資産ごとに残す/削除を選んでください（Enter で既定＝残す）:');
+	for (const asset of ORDER) {
+		const keep = await promptYesDefaultYes(ask, `  ${asset} を残しますか?`);
+		if (!keep) toRemove.add(asset);
+	}
+	return toRemove;
+}
+
+/**
+ * 対話フロー全体（プリセット選択 → 必要なら custom → 確認）を一つの
+ * readline インターフェースで進める。pipe された stdin でも取りこぼしが
+ * 起きないよう、途中で `createInterface` を作り直さない（`makeAsk` 参照）。
+ * `--dry-run` のときは確認を省き、そのまま toRemove を返す（既存の
+ * dry-run 経路＝変更を書かない、をそのまま通す）。
+ */
+async function resolveInteractive() {
+	if (!process.stdin.isTTY) {
+		// pipe された stdin でも行単位で読めるのでそのまま動くが、TTY が無い
+		// 環境（CI 等）では対話の意図が伝わりにくいので一言添える。
+		console.log(
+			'（標準入力がターミナルではありません。パイプ入力で対話に応答します。\n' +
+				'  自動化する場合は --preset を使ってください。）'
+		);
+	}
+	const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+	const ask = makeAsk(rl);
+	try {
+		const choice = await promptPreset(ask);
+		const toRemove =
+			choice === 'custom' ? await promptCustomToRemove(ask) : new Set(PRESETS[choice]);
+
+		console.log(
+			toRemove.size === 0
+				? '削除する資産: なし（full 相当。検証のみ）'
+				: `削除する資産: ${ORDER.filter((a) => toRemove.has(a)).join(', ')}`
+		);
+
+		if (args.dryRun) return toRemove;
+
+		const confirmed = await promptYesDefaultNo(ask, '適用しますか?');
+		if (!confirmed) {
+			console.log('中止しました（変更はありません）。');
+			process.exit(0);
+		}
+		return toRemove;
+	} finally {
+		rl.close();
+	}
+}
+
+async function main() {
+	const toRemove = args.preset ? new Set(PRESETS[args.preset]) : await resolveInteractive();
+
+	console.log(
+		`${args.preset ? `プリセット '${args.preset}' を適用` : '選択した内容を適用'}${args.dryRun ? '（--dry-run: 変更しません）' : ''}\n` +
+			(toRemove.size === 0
+				? '  （full: 削除する資産はありません。検証のみ）\n'
+				: `  削除する資産: ${ORDER.filter((a) => toRemove.has(a)).join(', ')}\n`)
+	);
+
+	for (const asset of ORDER) {
+		if (!toRemove.has(asset)) continue;
+		console.log(`# ${asset}`);
+		REMOVERS[asset]();
+	}
+
+	if (editor.report(args.dryRun ? '\n--dry-run: 以下を適用します\n' : '\n適用しました\n')) {
+		process.exit(1);
+	}
+
+	console.log(`
 次のステップ:
   1. pnpm install（削除した依存の反映）
   2. 検証: pnpm --filter admin-template check / build / cargo check
-  ${args.preset === 'full' ? '' : '3. 削除で不活性になった未使用 CSS セレクタ等は警告として残ることがあります（ビルドは緑）。\n  '}注: src-tauri（lib.rs / Cargo）はこのサンドボックスではコンパイルできないため、
+  ${toRemove.size === 0 ? '' : '3. 削除で不活性になった未使用 CSS セレクタ等は警告として残ることがあります（ビルドは緑）。\n  '}注: src-tauri（lib.rs / Cargo）はこのサンドボックスではコンパイルできないため、
   そのコード整合はコードレビューで担保します（docs/conventions.md）。attachments の
   除去は apps/admin-template/core/src/rest/tests.rs にも及ぶため、全プリセットで
   \`cargo test -p admin-template-core\` は緑を維持します。`);
+}
+
+await main();
