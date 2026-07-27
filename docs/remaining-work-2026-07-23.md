@@ -31,6 +31,10 @@ Browser ペインで検証、⑤ の両経路宿題を完了）・**AD-2 ライ�
 **scaffold 対話モード `--interactive`（#100、§7.3）**。これで全ワークフローの Node 20 警告はゼロ、
 scaffold はプリセット選択（非対話 + 対話）まで完成。
 
+**2026-07-27 追記**: **spec §5.3 ウィンドウ分離を「実装済み」に追随更新（#101、§5 消化）**・
+**P4-6 improvements.md 履歴分離を完了（#102、解決済み4項目を archive へ移設・スタブ化）**。
+これで本書 §5 の追随候補と §1 の P4-6 が消化済みとなった。
+
 ---
 
 ## 1. 保留（実需ドリブン・トリガ待ち）
@@ -50,7 +54,7 @@ scaffold はプリセット選択（非対話 + 対話）まで完成。
 | **tracing 導入** | 保留（`eprintln!` 継続） | [ADR-0004](adr/0004-server-logging-eprintln.md) |
 | **CR-3**（依存追加検出を crate/app に拡張） | 実需ドリブンで見送り | [maintainability-review §4.1](maintainability-review-2026-07.md) |
 | **GitHub Packages 公開** | 棚上げ（`publishConfig` は残置） | [publishing](publishing.md) |
-| **P4-6** improvements.md 履歴分離 / **改行コード正規化**（improvements §5.2） | 未着手 | [improvement-plan P4-6](improvement-plan-2026-07.md) |
+| ~~**P4-6** improvements.md 履歴分離 / **改行コード正規化**（improvements §5.2）~~ | **✅ 完了（#102）**。解決済み4項目（P3-3/P4-1/P4-2/P4-3）を archive へ移設しスタブ化、全解決済み項目がスタブ様式に統一。改行コード正規化は CRLF 0 件で既に実質完了。受け入れ条件「100行」はスタブ保持設計を優先し 295 行で運用 | [improvement-plan P4-6](improvement-plan-2026-07.md) |
 | **P4-8** 実務寄りサンプルアプリ追加 | 4条件判定待ち | [improvement-plan P4-8](improvement-plan-2026-07.md) |
 
 ## 2. オーナー判断・手動作業（Web UI / 決めれば動く）
