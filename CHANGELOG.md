@@ -39,6 +39,14 @@
   参照によりテストがコンパイル不能だった）。`template-edit.mjs` に章末ブロックを
   EOF ごと消す冪等ヘルパ `cutToEnd` を追加。`template-acceptance.yml` の
   presets マトリクスを `cargo check` → `cargo test` に強化
+- feat (scaffold-presets-plan §7.3): `scripts/scaffold.mjs` に `--interactive`
+  （`-i`）を追加。プリセット（minimal/standard/full）または資産ごとの
+  残す/削除を対話で選ばせた上で、`--preset` と全く同じ削除ロジック・確認表示
+  を実行する（`--preset` の非対話動作はバイト単位で不変）。依存追加なし
+  （`node:readline/promises` のみ、conventions §3）。pipe された非 TTY stdin
+  でも `question()` の既知の取りこぼしを避けるため async イテレータで
+  1行ずつ読む方式を採用し、軽量テスト `scripts/scaffold.test.mjs` から
+  駆動できるようにした
 
 ## [0.1.2] - 2026-07-23
 
