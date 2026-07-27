@@ -26,7 +26,10 @@ Browser ペインで検証、⑤ の両経路宿題を完了）・**AD-2 ライ�
 さらに後続バッチ: **OG ソーシャル画像（#90）**・**Pages アクションを Node 24 に bump（#91）**・
 **全ワークフローの checkout/setup-node を Node 24 に bump（#92）**・**PostgreSQL 接続ヘルパ
 `banto-storage/postgres.rs`（#93、P4-5 Option A・実 Postgres CI 検証）**・**スキャフォールド・
-プリセット `scripts/scaffold.mjs`（#94、minimal/standard/full・3プリセット CI 緑）**。
+プリセット `scripts/scaffold.mjs`（#94、minimal/standard/full・3プリセット CI 緑）**・
+**scaffold の `cargo test` 対応（#95）**・**pnpm/action-setup を v6 に bump（#99、Node 20 警告ゼロ）**・
+**scaffold 対話モード `--interactive`（#100、§7.3）**。これで全ワークフローの Node 20 警告はゼロ、
+scaffold はプリセット選択（非対話 + 対話）まで完成。
 
 ---
 
@@ -42,7 +45,7 @@ Browser ペインで検証、⑤ の両経路宿題を完了）・**AD-2 ライ�
 | **保守者 docs の英語化**（conventions / recipe / ADR） | 後回し | [i18n-plan §1](i18n-plan.md)（2026-07-22 オーナー決定「他の改修が落ち着いてから」） |
 | **PostgreSQL** | **banto-storage 接続ヘルパ `postgres.rs` は ✅ 実装済み（#93、P4-5 Option A・実 `postgres:16` CI 検証）**。残: アプリ全体の Postgres 対応（service 層汎用化・マイグレーション・backup の VACUUM INTO 代替）＝v2「将来構想」 | [improvement-plan P4-5](improvement-plan-2026-07.md)、[ui-framework-spec §12.1](ui-framework-spec.md)。既定 SQLite 維持 |
 | **コピー面積縮小**（`admin-template-core` → `banto-admin-services` 化 / Tauri コマンドのマクロ化） | 方針記録のみ・未実施 | [template-scope §7](template-scope.md)。トリガ: banto-industrial 要求 / 2本目アプリ / **外部採用者フィードバック**（AD-4 で追加済み） |
-| **スキャフォールド・プリセット** | **✅ 実装済み（#94）。各プリセットで `cargo check` + `cargo test` 両方緑（#95 で attachments 削除後の `rest/tests.rs` 対応・README §3 も追記）**。残: 対話式 CLI ラッパ（§7.3、`pnpm create banto-app` 相当）のみ | [scaffold-presets-plan](scaffold-presets-plan.md)（P4-9） |
+| **スキャフォールド・プリセット** | **✅ 完了（#94/#95/#100）**。非対話 `--preset` + **対話 `--interactive`（#100、§7.3）**、各プリセットで `cargo check` + `cargo test` 両方緑（CI マトリクス + `scaffold.test`）。残るのは任意の `create-banto-app` npm パッケージ化（§7.5、publishing 非公開方針と要調整）のみ | [scaffold-presets-plan](scaffold-presets-plan.md)（P4-9） |
 | **AD-2 発展案**（短尺 GIF / LAN QR デモ） | ライブデモは **✅ 公開済み**（#89、<https://tyaro.github.io/banto/>）。残るは短尺 GIF・LAN 配信の QR デモ | [adoption-plan AD-2](adoption-plan-2026-07.md)。最小案（スクショ）は #85、ライブデモは #89 で完了 |
 | **tracing 導入** | 保留（`eprintln!` 継続） | [ADR-0004](adr/0004-server-logging-eprintln.md) |
 | **CR-3**（依存追加検出を crate/app に拡張） | 実需ドリブンで見送り | [maintainability-review §4.1](maintainability-review-2026-07.md) |
