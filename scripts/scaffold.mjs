@@ -409,7 +409,7 @@ function removeAttachments() {
 		BANTO_SERVE,
 		'banto-serve: AttachmentsService 構築除去',
 		`    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the`,
-		`    let attachments = AttachmentsService::new(pool.clone(), attachments_base_dir);`
+		`    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);`
 	);
 	drop(
 		BANTO_SERVE,
@@ -664,7 +664,7 @@ function removeAttachmentsFromLibRs() {
 		LIB_RS,
 		'lib.rs: AppState 構築の attachments 除去',
 		`            // M20 attachments (spec docs/attachments-plan.md §3.3): same`,
-		`            let attachments = AttachmentsService::new(pool.clone(), attachments_dir.clone());`
+		`            let attachments = AttachmentsService::new(db.clone(), attachments_dir.clone());`
 	);
 	drop(
 		LIB_RS,
