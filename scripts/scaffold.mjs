@@ -495,7 +495,7 @@ function removeAttachmentsFromRestTests() {
 	drop(
 		REST_TESTS,
 		'rest/tests: unused_attachments_service ヘルパ除去',
-		`\n/// An \`AttachmentsService\` for router helpers that never exercise\n/// \`/api/attachments/*\` - same "never actually written to" reasoning as\n/// [\`unused_backup_service\`]. Tests that DO exercise attachments use\n/// [\`router_with_role_tokens_and_attachments\`] instead, which points at\n/// a real, writable temp directory.\nfn unused_attachments_service(pool: sqlx::SqlitePool) -> AttachmentsService {\n    AttachmentsService::new(pool, PathBuf::from("unused-in-tests").join("attachments"))\n}\n`
+		`\n/// An \`AttachmentsService\` for router helpers that never exercise\n/// \`/api/attachments/*\` - same "never actually written to" reasoning as\n/// [\`unused_backup_service\`]. Tests that DO exercise attachments use\n/// [\`router_with_role_tokens_and_attachments\`] instead, which points at\n/// a real, writable temp directory.\nfn unused_attachments_service(db: banto_storage::Db) -> AttachmentsService {\n    AttachmentsService::new(db, PathBuf::from("unused-in-tests").join("attachments"))\n}\n`
 	);
 	// (c) ビルダの unused_attachments_service 宣言（6箇所を dropBlock が一括除去）。
 	drop(
@@ -507,7 +507,7 @@ function removeAttachmentsFromRestTests() {
 	drop(
 		REST_TESTS,
 		'rest/tests: backup ヘルパの実 attachments 宣言除去',
-		`    let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));\n`
+		`    let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));\n`
 	);
 	// (e) api_router(...) 実引数の attachments を除去（backup, と auth, の間・両インデント。
 	//     swap は全出現を置換するので 12/8 スペースそれぞれ 1 回で足りる）。
