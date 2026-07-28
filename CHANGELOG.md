@@ -3,14 +3,16 @@
 このリポジトリの注目すべき変更を記録する。フォーマットは
 [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠する。
 バージョン番号はタグ運用規約（[docs/publishing.md](docs/publishing.md)
-「タグ運用規約」節、0.x系は `minor` = 破壊的変更 / `patch` = 追加・修正）に
-従う。バージョンタグ導入前の M0〜M9 はマイルストーン単位で、M10以降は
-マイルストーン + PR番号単位で記録し、コミット単位までは分解しない。
+「タグ運用規約」節）に従う。**1.0.0（安定版）以降は SemVer 準拠**
+（`major` = 破壊的変更 / `minor` = 機能追加 / `patch` = 修正）。0.x 系は
+`minor` = 破壊的変更 / `patch` = 追加・修正で運用していた。バージョンタグ
+導入前の M0〜M9 はマイルストーン単位で、M10以降はマイルストーン + PR番号
+単位で記録し、コミット単位までは分解しない。
 
 **運用規約**:
 
 - PR ごとに `[Unreleased]` へ変更点を1行追記する。
-- リリース（破壊的変更を伴うgitタグの更新）のタイミングで `[Unreleased]`
+- リリース（バージョンタグの更新）のタイミングで `[Unreleased]`
   の内容を新しいバージョン節に切り出し、日付を入れる。
 - 配布方式はgitタグ参照（npm/crates.ioレジストリへは公開しない、
   [docs/publishing.md](docs/publishing.md)）のため、Changesets 等の
@@ -19,6 +21,14 @@
   記述は本ファイルの新設により本節に置き換え）。
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-07-28
+
+**v1.0.0 — 安定版リリース。** 仕様 M0〜M9 + ロードマップ M10〜M24 までの
+汎用管理画面テンプレートとしての機能が出そろい、v1 スコープを完了。以降の
+拡張テーマ（PostgreSQL アプリ全体対応 / i18n レイヤ②③ / コピー面積縮小）は
+[roadmap.md](docs/roadmap.md) §3「v2 / 将来構想バックログ」に集約。0.1.2 からの
+差分は破壊的変更なし（安定版としての昇格）。以下は 0.1.2 以降のマージ分。
 
 - feat (P4-5): `banto-storage` に PostgreSQL 接続ヘルパ `postgres.rs`（`connect`、
   接続プール、feature `postgres`）を追加。`list_query` の Postgres 対応（既存）
@@ -47,6 +57,21 @@
   でも `question()` の既知の取りこぼしを避けるため async イテレータで
   1行ずつ読む方式を採用し、軽量テスト `scripts/scaffold.test.mjs` から
   駆動できるようにした
+- feat (#89, AD-2): **GitHub Pages ライブデモを公開**（<https://tyaro.github.io/banto/>、
+  InMemory デモ・admin/admin）。アプリを **base-path 対応**にし（`$app/paths` の
+  `base` を全内部遷移へ付与。`BASE_PATH` 既定 `''` で Tauri/LAN ビルドは完全不変）、
+  `deploy-demo.yml` ワークフロー（`BASE_PATH=/banto` ビルド → deploy-pages）を追加。
+  README 冒頭にライブデモリンクを追加
+- docs (#90, AD-3): OG ソーシャルプレビュー画像 `docs/assets/og-image.png` を追加
+- ci (#91): `deploy-demo.yml` の Pages アクションを Node 24 版へ bump（Node 20 deprecation 解消）
+- ci (#92): 全ワークフローの `checkout` / `setup-node` を Node 24（v7）へ bump（Node 20 警告解消）
+- ci (#99): `pnpm/action-setup` を v6 へ bump（最後の Node 20 警告を解消）
+- docs (#101): `ui-framework-spec.md` §5.3 ウィンドウ分離を「実装済み」に追随更新
+  （`panel_open` の real `WebviewWindow` + `popout.ts`、`isTauri()` ガードで両経路対称）
+- docs (#102, P4-6): `improvements.md` の履歴分離を完了。解決済み4項目（P3-3/P4-1/
+  P4-2/P4-3）を `docs/history/improvements-archive.md` へ移設しスタブ化
+- docs (#103): `roadmap.md` §3「v2 / 将来構想バックログ」を新設し大物残項目
+  （PostgreSQL 全体対応 / i18n ②③ / コピー面積縮小）を隔離。**v1（M0〜M24）スコープ完了**を宣言
 
 ## [0.1.2] - 2026-07-23
 
