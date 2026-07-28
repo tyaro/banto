@@ -13,6 +13,17 @@ default = []
 # a fresh clone without requiring `pnpm --filter admin-template build` to
 # have been run first (spec §11.1).
 embed-ui = ["dep:rust-embed"]
+# PostgreSQL backend (V2 "PostgreSQL アプリ全体対応", PR2). Off by default so
+# ordinary (and CI-default) builds stay SQLite-only and byte-for-byte
+# unchanged. Enabling it turns on `banto-storage`/`sqlx`/`banto-attachments`'s
+# Postgres backends so the service layer's enum-dispatch Postgres arms
+# compile. PR2 never *runs* those arms (`db::init_db` builds a SQLite handle
+# only); an actual Postgres pool + migrations arrive in PR3.
+postgres = [
+  "banto-storage/postgres",
+  "sqlx/postgres",
+  "banto-attachments/postgres",
+]
 
 [dependencies]
 banto-core = { workspace = true }

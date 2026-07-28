@@ -1860,24 +1860,26 @@ pub fn run() {
 
             // init_db takes a filesystem path (not a sqlite:// URL) so
             // Windows paths with drive letters/backslashes work unchanged.
-            let pool =
+            // V2 PR2: it returns a backend-agnostic `banto_storage::Db` handle
+            // (SQLite-only in this PR); every service constructor takes `Db`.
+            let db =
                 tauri::async_runtime::block_on(init_db(&db_path)).expect("init_db should succeed");
 
             let events = event_channel();
-            let items = ItemsService::new(pool.clone()).with_events(events.clone());
-            let users = UsersService::new(pool.clone());
-            let settings = SettingsService::new(pool.clone());
-            let backup = BackupService::new(db_path.clone(), pool.clone());
+            let items = ItemsService::new(db.clone()).with_events(events.clone());
+            let users = UsersService::new(db.clone());
+            let settings = SettingsService::new(db.clone());
+            let backup = BackupService::new(db_path.clone(), db.clone());
             // M20 attachments (spec docs/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
             // DB file inside the app's own data directory.
             let attachments_dir = data_dir.join("attachments");
-            let attachments = AttachmentsService::new(pool.clone(), attachments_dir.clone());
+            let attachments = AttachmentsService::new(db.clone(), attachments_dir.clone());
             // Desktop CSV export (finding⑤ Option A): same sibling-directory
             // convention as `attachments/`/`backups/` above.
             let exports_dir = data_dir.join("exports");
             std::fs::create_dir_all(&exports_dir).expect("create exports dir");
-            let audit = AuditLogService::new(pool);
+            let audit = AuditLogService::new(db);
             // Records `login`/`login_failed` audit entries (spec M14) from
             // inside the verifier itself - see
             // `admin_template_core::rest::audited_credential_verifier`'s doc

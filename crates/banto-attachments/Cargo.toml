@@ -6,8 +6,24 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# PostgreSQL backend (V2 "PostgreSQL アプリ全体対応", PR2). Off by default so
+# the crate stays SQLite-only in ordinary builds; enabling it forwards to
+# `banto-storage`'s Postgres backend and links sqlx's Postgres driver so the
+# `AttachmentsService` enum-dispatch code's Postgres arm compiles. Not
+# exercised until PR3 wires an actual Postgres pool.
+postgres = ["banto-storage/postgres", "sqlx/postgres"]
+
 [dependencies]
 banto-core = { workspace = true }
+# V2 PR2: the service now holds a backend-agnostic `banto_storage::Db` handle
+# instead of a concrete `SqlitePool`. `banto-storage` is a lower-level
+# workspace crate (it depends only on `banto-core`), so this is a normal
+# downward dependency - not the forbidden reverse dependency (this crate is
+# meant to be depended ON by `admin-template-core`, and `banto-storage` sits
+# below both).
+banto-storage = { workspace = true, features = ["sqlite"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros"] }
 tokio = { workspace = true, features = ["fs"] }
 serde = { workspace = true }

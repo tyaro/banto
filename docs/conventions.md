@@ -69,8 +69,8 @@ read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 `SettingsService` / `UsersService` / `banto-attachments` の
 `AttachmentsService`）は同じ形を守る:
 
-- `#[derive(Clone)]`（`SqlitePool` / `broadcast::Sender` / `PathBuf` は
-  Arc-backed か read-only で clone が安い）。
+- `#[derive(Clone)]`（`Db`（Arc-backed なプールの enum ラッパ）/
+  `broadcast::Sender` / `PathBuf` は Arc-backed か read-only で clone が安い）。
 - `Result<_, BantoError>` を返す。`tauri` / `axum` に依存しない。
 - 認可・監査・イベント通知は**呼び出し側（REST/Tauri の wiring 層）が付ける**。
   サービスは actor / RBAC / HTTP を知らない（`audit.rs` doc:

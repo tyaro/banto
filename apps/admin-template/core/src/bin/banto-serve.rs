@@ -77,13 +77,15 @@ async fn main() {
         }
     };
 
-    let pool = init_db(&db_path).await.expect("init_db should succeed");
+    // V2 PR2: `init_db` now returns a backend-agnostic `banto_storage::Db`
+    // handle (SQLite-only in this PR); every service constructor takes `Db`.
+    let db = init_db(&db_path).await.expect("init_db should succeed");
 
     let events = event_channel();
-    let items = ItemsService::new(pool.clone()).with_events(events.clone());
-    let users = UsersService::new(pool.clone());
-    let settings = SettingsService::new(pool.clone());
-    let backup = BackupService::new(db_path_buf.clone(), pool.clone());
+    let items = ItemsService::new(db.clone()).with_events(events.clone());
+    let users = UsersService::new(db.clone());
+    let settings = SettingsService::new(db.clone());
+    let backup = BackupService::new(db_path_buf.clone(), db.clone());
     // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
     // DB's own parent directory (same sibling-directory convention as
     // `backups/`), falling back to `.` if `db_path` has no parent (e.g. a
@@ -92,8 +94,8 @@ async fn main() {
         .parent()
         .map(|parent| parent.join("attachments"))
         .unwrap_or_else(|| PathBuf::from("attachments"));
-    let attachments = AttachmentsService::new(pool.clone(), attachments_base_dir);
-    let audit = AuditLogService::new(pool);
+    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);
+    let audit = AuditLogService::new(db);
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
     // fixed admin/admin check that used to live here directly. Also records

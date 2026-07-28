@@ -2,6 +2,7 @@
 //! run embedded migrations, seed demo data on first run.
 
 use banto_core::BantoError;
+use banto_storage::Db;
 use sqlx::SqlitePool;
 
 const SEED_ROW_COUNT: usize = 1_000;
@@ -9,18 +10,25 @@ const SEED_ROW_COUNT: usize = 1_000;
 /// Connect to the SQLite database at `path`, run migrations, and seed demo
 /// data if the `items` table is empty. Used by the `src-tauri` adapter with
 /// a path under the app's data directory.
-pub async fn init_db(path: impl AsRef<std::path::Path>) -> Result<SqlitePool, BantoError> {
-    let pool = banto_storage::connect_sqlite(path).await?;
-    run_migrations_and_seed(&pool).await?;
-    Ok(pool)
+///
+/// Returns a backend-agnostic [`Db`] handle (V2 "PostgreSQL アプリ全体対応"):
+/// the service layer now takes `Db`, not a concrete `SqlitePool`. **This PR
+/// (PR2) still only ever builds a SQLite handle here** - the Postgres
+/// connection + its migrations are PR3's scope - so the migration/seed helpers
+/// below stay SQLite-typed and this function unwraps the SQLite pool out of the
+/// freshly-built handle to run them.
+pub async fn init_db(path: impl AsRef<std::path::Path>) -> Result<Db, BantoError> {
+    let db = Db::connect_sqlite(path).await?;
+    run_migrations_and_seed(sqlite_pool(&db)).await?;
+    Ok(db)
 }
 
 /// Same as [`init_db`] but against a private in-memory database. Used by
 /// tests so each test gets an isolated, migrated, seeded database.
-pub async fn init_db_memory() -> Result<SqlitePool, BantoError> {
-    let pool = banto_storage::connect_sqlite_memory().await?;
-    run_migrations_and_seed(&pool).await?;
-    Ok(pool)
+pub async fn init_db_memory() -> Result<Db, BantoError> {
+    let db = Db::connect_sqlite_memory().await?;
+    run_migrations_and_seed(sqlite_pool(&db)).await?;
+    Ok(db)
 }
 
 /// A migrated but *unseeded* in-memory database. Used by `items` service
@@ -28,13 +36,24 @@ pub async fn init_db_memory() -> Result<SqlitePool, BantoError> {
 /// specific id is absent), where the 1,000-row demo seed from
 /// [`init_db_memory`] would collide with test fixture ids.
 #[cfg(test)]
-pub(crate) async fn migrate_memory() -> Result<SqlitePool, BantoError> {
-    let pool = banto_storage::connect_sqlite_memory().await?;
+pub(crate) async fn migrate_memory() -> Result<Db, BantoError> {
+    let db = Db::connect_sqlite_memory().await?;
     sqlx::migrate!("./migrations")
-        .run(&pool)
+        .run(sqlite_pool(&db))
         .await
         .map_err(|err| BantoError::Storage(err.to_string()))?;
-    Ok(pool)
+    Ok(db)
+}
+
+/// Borrow the SQLite pool out of a [`Db`] built by this module. PR2 only ever
+/// constructs SQLite handles here (Postgres init is PR3), so the `Postgres`
+/// variant is unreachable in practice - hence `expect` rather than surfacing a
+/// recoverable error. When PR3 adds a Postgres init path, the migration/seed
+/// routines gain their own Postgres branch and this helper is confined to the
+/// SQLite path.
+fn sqlite_pool(db: &Db) -> &SqlitePool {
+    db.as_sqlite()
+        .expect("PR2 init_db builds a SQLite handle only (Postgres init is PR3)")
 }
 
 async fn run_migrations_and_seed(pool: &SqlitePool) -> Result<(), BantoError> {
@@ -251,11 +270,11 @@ mod tests {
 
     #[tokio::test]
     async fn init_db_memory_migrates_and_seeds_exactly_once() {
-        let pool = init_db_memory()
+        let db = init_db_memory()
             .await
             .expect("init_db_memory should succeed");
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
-            .fetch_one(&pool)
+            .fetch_one(sqlite_pool(&db))
             .await
             .unwrap();
         assert_eq!(count, SEED_ROW_COUNT as i64);
