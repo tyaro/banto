@@ -435,6 +435,14 @@ function removeAttachments() {
 		'# M20 attachments (spec docs/attachments-plan.md §3.1, unit B): `rest.rs`',
 		'banto-attachments = { workspace = true }'
 	);
+	// postgres feature（V2 PR2）は banto-attachments/postgres を含む。依存を外した
+	// 以上この参照も消さないと `feature includes banto-attachments/postgres, but
+	// banto-attachments is not a dependency` で cargo が manifest 解析に失敗する。
+	drop(
+		CORE_CARGO,
+		'core: postgres feature の banto-attachments 参照除去',
+		`  "banto-attachments/postgres",\n`
+	);
 	cutRegion(
 		TAURI_CARGO,
 		'src-tauri: banto-attachments 依存除去',
