@@ -1149,7 +1149,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let pool = banto_storage::connect_sqlite(&db_path)
         .await
         .expect("connect_sqlite");
-    sqlx::migrate!("./migrations")
+    sqlx::migrate!("./migrations-sqlite")
         .run(&pool)
         .await
         .expect("migrate");

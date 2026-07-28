@@ -295,7 +295,13 @@ impl AuditLogService {
                         .to_string()
                 }
                 Dialect::Postgres => {
-                    "DELETE FROM audit_log WHERE ts < NOW() - make_interval(days => $1::int)"
+                    // `ts` is a TEXT column (`AuditLogEntry.ts` is a `String`),
+                    // so it must be cast to `timestamptz` before comparing
+                    // against the `NOW() - interval` timestamp - Postgres has no
+                    // `text < timestamptz` operator. The stored values are
+                    // `now()::text`, which round-trips through `::timestamptz`
+                    // cleanly (PR3, first real exercise of this arm).
+                    "DELETE FROM audit_log WHERE ts::timestamptz < NOW() - make_interval(days => $1::int)"
                         .to_string()
                 }
             };

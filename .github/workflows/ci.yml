@@ -151,6 +151,49 @@ jobs:
           BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_storage_test
         run: cargo test -p banto-storage --no-default-features --features postgres
 
+  # app 層（admin-template-core）を feature `postgres` でビルドし、実
+  # `postgres:16` に対して migrations-postgres 適用 + 決定的シード + 主要
+  # CRUD（items/users/settings/audit の代表操作）が通ることを検証する
+  # (V2 "PostgreSQL アプリ全体対応", PR3)。上の `storage-postgres` が接続
+  # ヘルパ単体を見るのに対し、こちらはサービス層の Postgres アームを
+  # 実際に exercise する初めてのジョブ。スモークの本体は統合テスト
+  # `tests/pg_smoke.rs`（`BANTO_TEST_PG_URL` 未設定なら早期 return で skip、
+  # ローカルの PostgreSQL 無し環境では通る仕様）。
+  app-postgres:
+    name: admin-template-core (PostgreSQL smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: banto_app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # `--features postgres` keeps the default `sqlite` on too (the app crate
+      # always links SQLite for the desktop path), so this exercises the
+      # both-backends build that `init_db_from_target` selects at runtime.
+      - name: Cargo test (admin-template-core, postgres smoke)
+        env:
+          BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_app_test
+        run: cargo test -p admin-template-core --features postgres --test pg_smoke
+
   e2e:
     name: E2E (Playwright smoke)
     runs-on: ubuntu-latest

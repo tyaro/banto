@@ -443,8 +443,16 @@ function removeAttachments() {
 	);
 	removeDir('crates/banto-attachments', 'crates/banto-attachments 削除');
 
-	// (5) マイグレーション（他テーブルから参照されないため単独で外せる）
-	removeFile(`${APP}/core/migrations/0006_attachments.sql`, '0006_attachments.sql 削除');
+	// (5) マイグレーション（他テーブルから参照されないため単独で外せる）。
+	//     V2 で SQLite/Postgres の2系統に分かれたため両方から削除する。
+	removeFile(
+		`${APP}/core/migrations-sqlite/0006_attachments.sql`,
+		'migrations-sqlite/0006_attachments.sql 削除'
+	);
+	removeFile(
+		`${APP}/core/migrations-postgres/0006_attachments.sql`,
+		'migrations-postgres/0006_attachments.sql 削除'
+	);
 
 	// (6) アーキテクチャ検査（pnpm verify:architecture）の attachments 参照を外す。
 	//     rule 8 の DUAL_PATH/REST_READ/TAURI_READ/DESKTOP_ONLY と rule 9 の

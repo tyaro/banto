@@ -24,7 +24,9 @@
 //! the LAN-access URLs printed at startup are actually reachable - the
 //! Tauri app's default of `127.0.0.1`-only is a setting applied at the
 //! settings-screen layer, Phase B, not a property of this dev vehicle),
-//! `BANTO_DB` (default `./banto-dev.sqlite3`), `BANTO_ALLOW_SETUP` (`1` to
+//! `BANTO_DB` (default `./banto-dev.sqlite3`; a `postgres://`/`postgresql://`
+//! URL selects the PostgreSQL backend instead of a SQLite file - the binary
+//! must be built `--features postgres` for that to link), `BANTO_ALLOW_SETUP` (`1` to
 //! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
 //! §8.2 - the Tauri app never sets this, since desktop first-run goes
 //! through the `auth_setup` command instead).
@@ -32,7 +34,7 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
-use admin_template_core::db::init_db;
+use admin_template_core::db::init_db_from_target;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier};
@@ -77,9 +79,15 @@ async fn main() {
         }
     };
 
-    // V2 PR2: `init_db` now returns a backend-agnostic `banto_storage::Db`
-    // handle (SQLite-only in this PR); every service constructor takes `Db`.
-    let db = init_db(&db_path).await.expect("init_db should succeed");
+    // V2 PR3: `init_db_from_target` selects the backend from `BANTO_DB`'s
+    // value - a `postgres://`/`postgresql://` URL runs on PostgreSQL, anything
+    // else is a SQLite file path (the default). Either way it returns a
+    // backend-agnostic `banto_storage::Db`; every service constructor takes
+    // `Db`. (The staged-restore step above is SQLite-file-only; against a
+    // Postgres target `db_path_buf` simply names no pending-restore file.)
+    let db = init_db_from_target(&db_path)
+        .await
+        .expect("init_db should succeed");
 
     let events = event_channel();
     let items = ItemsService::new(db.clone()).with_events(events.clone());
