@@ -184,10 +184,13 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 - タグは **npm 側（`@banto/*` の git 依存）と共用**（2026-07-12 決定節）。
   したがって `@banto/*` パッケージの公開APIの破壊的変更もタグ更新の
   対象になる
-- 0.x の間の破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約
-  （`minor` = 破壊的変更、`patch` = 追加・修正）を踏襲する
-- タグは軽量タグ（`git tag v0.1.0`）で可。CHANGELOG は当面省略
-  （consuming 側が少数のうちは git log で足りる。必要になれば追加）
+- 破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約（上記
+  「バージョニング規約」）を踏襲する: **0.x は `minor` = 破壊的変更 /
+  `patch` = 追加・修正、1.0.0 以降は標準 SemVer（`major` = 破壊的変更 /
+  `minor` = 機能追加 / `patch` = 修正）**
+- タグは軽量タグ（`git tag v1.0.0`）で可。変更履歴は
+  [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
+  追記 → リリース時に版節へ切り出し）
 
 `admin_template_core`/`src-tauri` はアプリ固有のためタグ参照の対象外
 （`admin-template` は banto リポジトリそのものをクローンして使う前提）。
