@@ -183,12 +183,15 @@ const RESOURCE: &str = "items";
 /// SQLite 経路は挙動不変"). `Dialect` itself only exposes a *datetime*
 /// current-time expression, so the date-only variant is kept here in the app
 /// layer rather than widening PR1's `banto-storage` API for this one call
-/// site. The Postgres rendering (`CURRENT_DATE`) is the date-only equivalent;
-/// its exercise is deferred to PR3 (init_db builds SQLite only in PR2).
+/// site. The Postgres rendering is `CURRENT_DATE::text`: `items.updated_at` is
+/// a TEXT column (it decodes into `String`), and Postgres has no implicit
+/// assignment cast from `date` to `text`, so a bare `CURRENT_DATE` would fail
+/// to insert - the `::text` cast yields the same `YYYY-MM-DD` shape SQLite's
+/// `date('now')` produces (PR3, first time this arm is actually exercised).
 fn today_expr(dialect: Dialect) -> &'static str {
     match dialect {
         Dialect::Sqlite => "date('now')",
-        Dialect::Postgres => "CURRENT_DATE",
+        Dialect::Postgres => "CURRENT_DATE::text",
     }
 }
 

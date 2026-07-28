@@ -409,7 +409,7 @@ function removeAttachments() {
 		BANTO_SERVE,
 		'banto-serve: AttachmentsService 構築除去',
 		`    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the`,
-		`    let attachments = AttachmentsService::new(pool.clone(), attachments_base_dir);`
+		`    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);`
 	);
 	drop(
 		BANTO_SERVE,
@@ -435,6 +435,14 @@ function removeAttachments() {
 		'# M20 attachments (spec docs/attachments-plan.md §3.1, unit B): `rest.rs`',
 		'banto-attachments = { workspace = true }'
 	);
+	// postgres feature（V2 PR2）は banto-attachments/postgres を含む。依存を外した
+	// 以上この参照も消さないと `feature includes banto-attachments/postgres, but
+	// banto-attachments is not a dependency` で cargo が manifest 解析に失敗する。
+	drop(
+		CORE_CARGO,
+		'core: postgres feature の banto-attachments 参照除去',
+		`  "banto-attachments/postgres",\n`
+	);
 	cutRegion(
 		TAURI_CARGO,
 		'src-tauri: banto-attachments 依存除去',
@@ -443,8 +451,16 @@ function removeAttachments() {
 	);
 	removeDir('crates/banto-attachments', 'crates/banto-attachments 削除');
 
-	// (5) マイグレーション（他テーブルから参照されないため単独で外せる）
-	removeFile(`${APP}/core/migrations/0006_attachments.sql`, '0006_attachments.sql 削除');
+	// (5) マイグレーション（他テーブルから参照されないため単独で外せる）。
+	//     V2 で SQLite/Postgres の2系統に分かれたため両方から削除する。
+	removeFile(
+		`${APP}/core/migrations-sqlite/0006_attachments.sql`,
+		'migrations-sqlite/0006_attachments.sql 削除'
+	);
+	removeFile(
+		`${APP}/core/migrations-postgres/0006_attachments.sql`,
+		'migrations-postgres/0006_attachments.sql 削除'
+	);
 
 	// (6) アーキテクチャ検査（pnpm verify:architecture）の attachments 参照を外す。
 	//     rule 8 の DUAL_PATH/REST_READ/TAURI_READ/DESKTOP_ONLY と rule 9 の
@@ -479,7 +495,7 @@ function removeAttachmentsFromRestTests() {
 	drop(
 		REST_TESTS,
 		'rest/tests: unused_attachments_service ヘルパ除去',
-		`\n/// An \`AttachmentsService\` for router helpers that never exercise\n/// \`/api/attachments/*\` - same "never actually written to" reasoning as\n/// [\`unused_backup_service\`]. Tests that DO exercise attachments use\n/// [\`router_with_role_tokens_and_attachments\`] instead, which points at\n/// a real, writable temp directory.\nfn unused_attachments_service(pool: sqlx::SqlitePool) -> AttachmentsService {\n    AttachmentsService::new(pool, PathBuf::from("unused-in-tests").join("attachments"))\n}\n`
+		`\n/// An \`AttachmentsService\` for router helpers that never exercise\n/// \`/api/attachments/*\` - same "never actually written to" reasoning as\n/// [\`unused_backup_service\`]. Tests that DO exercise attachments use\n/// [\`router_with_role_tokens_and_attachments\`] instead, which points at\n/// a real, writable temp directory.\nfn unused_attachments_service(db: banto_storage::Db) -> AttachmentsService {\n    AttachmentsService::new(db, PathBuf::from("unused-in-tests").join("attachments"))\n}\n`
 	);
 	// (c) ビルダの unused_attachments_service 宣言（6箇所を dropBlock が一括除去）。
 	drop(
@@ -491,7 +507,7 @@ function removeAttachmentsFromRestTests() {
 	drop(
 		REST_TESTS,
 		'rest/tests: backup ヘルパの実 attachments 宣言除去',
-		`    let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));\n`
+		`    let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));\n`
 	);
 	// (e) api_router(...) 実引数の attachments を除去（backup, と auth, の間・両インデント。
 	//     swap は全出現を置換するので 12/8 スペースそれぞれ 1 回で足りる）。
@@ -656,7 +672,7 @@ function removeAttachmentsFromLibRs() {
 		LIB_RS,
 		'lib.rs: AppState 構築の attachments 除去',
 		`            // M20 attachments (spec docs/attachments-plan.md §3.3): same`,
-		`            let attachments = AttachmentsService::new(pool.clone(), attachments_dir.clone());`
+		`            let attachments = AttachmentsService::new(db.clone(), attachments_dir.clone());`
 	);
 	drop(
 		LIB_RS,

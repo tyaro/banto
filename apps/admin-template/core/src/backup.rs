@@ -687,7 +687,7 @@ mod tests {
         let pool = banto_storage::connect_sqlite(path)
             .await
             .expect("connect_sqlite");
-        sqlx::migrate!("./migrations")
+        sqlx::migrate!("./migrations-sqlite")
             .run(&pool)
             .await
             .expect("migrate");
@@ -942,7 +942,10 @@ mod tests {
         // A real "current" db on disk, distinguishable from the restore
         // payload by row content.
         let pool = banto_storage::connect_sqlite(&db_path).await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::migrate!("./migrations-sqlite")
+            .run(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (1, 'OLD', 1, 1, '2026-01-01')")
             .execute(&pool)
             .await

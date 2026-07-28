@@ -19,8 +19,9 @@
 //!
 //! The table this service reads/writes (`attachments`) is owned by the
 //! consuming app's own migrations (spec §3.1 "テーブル定義はアプリが所有") -
-//! see `apps/admin-template/core/migrations/0006_attachments.sql` for the
-//! schema this crate requires. A caller wiring this crate into a new app
+//! see `apps/admin-template/core/migrations-sqlite/0006_attachments.sql` (and
+//! its strict-typed `migrations-postgres/0006_attachments.sql` counterpart) for
+//! the schema this crate requires. A caller wiring this crate into a new app
 //! must ship an equivalent migration; this crate does not embed one itself.
 //!
 //! ## Storage layout
@@ -45,7 +46,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use banto_core::{BantoError, FieldError};
-use banto_storage::Db;
+use banto_storage::{Db, Dialect};
 use image::{GenericImageView, ImageEncoder, ImageFormat};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -119,6 +120,21 @@ pub struct AttachmentMeta {
 
 const SELECT_COLUMNS: &str = "id, resource, resource_id, file_name, mime, size_bytes, sha256, \
      has_thumbnail, created_at, created_by";
+
+/// The SQL literal for a `has_thumbnail` boolean, per dialect. On SQLite the
+/// column is a plain `INTEGER` (0/1) so the literals stay `0`/`1`, byte-for-byte
+/// what this crate has always emitted. On Postgres the column is a real
+/// `BOOLEAN` (`migrations-postgres/0006`), and integer `0`/`1` do not implicitly
+/// cast to `BOOLEAN`, so the arm emits `FALSE`/`TRUE` instead. The stored /
+/// decoded `bool` value is identical either way.
+fn bool_literal(dialect: Dialect, value: bool) -> &'static str {
+    match (dialect, value) {
+        (Dialect::Sqlite, false) => "0",
+        (Dialect::Sqlite, true) => "1",
+        (Dialect::Postgres, false) => "FALSE",
+        (Dialect::Postgres, true) => "TRUE",
+    }
+}
 
 /// Input to [`AttachmentsService::upload`]. `bytes` is the raw file body;
 /// `mime` is deliberately NOT a field here - see [`AttachmentsService::upload`]'s
@@ -455,12 +471,13 @@ impl AttachmentsService {
         let created_at = iso_datetime_from_system_time(SystemTime::now());
 
         let dialect = self.db.dialect();
-        // The literal `0` (has_thumbnail default) sits between the placeholders,
-        // so they run 1..=6 then 7..=8 around it.
+        // The `has_thumbnail` literal (initially false) sits between the
+        // placeholders, so they run 1..=6 then 7..=8 around it. The literal is
+        // dialect-aware (`0` on SQLite, `FALSE` on the Postgres BOOLEAN column).
         let insert_sql = format!(
             "INSERT INTO attachments \
              (resource, resource_id, file_name, mime, size_bytes, sha256, has_thumbnail, created_at, created_by) \
-             VALUES ({}, {}, {}, {}, {}, {}, 0, {}, {}) \
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}) \
              RETURNING {SELECT_COLUMNS}",
             dialect.placeholder(1),
             dialect.placeholder(2),
@@ -468,6 +485,7 @@ impl AttachmentsService {
             dialect.placeholder(4),
             dialect.placeholder(5),
             dialect.placeholder(6),
+            bool_literal(dialect, false),
             dialect.placeholder(7),
             dialect.placeholder(8),
         );
@@ -526,7 +544,8 @@ impl AttachmentsService {
             if let Some(thumb_bytes) = make_thumbnail(&input.bytes) {
                 if self.write_thumbnail(meta.id, &thumb_bytes).await.is_ok() {
                     let update_sql = format!(
-                        "UPDATE attachments SET has_thumbnail = 1 WHERE id = {}",
+                        "UPDATE attachments SET has_thumbnail = {} WHERE id = {}",
+                        bool_literal(dialect, true),
                         dialect.placeholder(1)
                     );
                     match &self.db {
@@ -742,9 +761,12 @@ mod tests {
     /// that is what attachment bodies/thumbnails are actually written to.
     ///
     /// The schema below MUST be kept in sync with
-    /// `apps/admin-template/core/migrations/0006_attachments.sql` - this
+    /// `apps/admin-template/core/migrations-sqlite/0006_attachments.sql` - this
     /// crate cannot depend on that app crate's migrations, so it re-states
-    /// the same `CREATE TABLE`/`CREATE INDEX` here instead.
+    /// the same `CREATE TABLE`/`CREATE INDEX` here instead. (This SQLite test
+    /// DDL is deliberately NOT unified with the migration file: doing so would
+    /// require a reverse dependency on the app crate, which conventions §"逆
+    /// 依存禁止" forbids - so the duplication is kept, per PR3 item 4.)
     async fn service() -> (AttachmentsService, tempfile::TempDir) {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
