@@ -35,6 +35,12 @@ scaffold はプリセット選択（非対話 + 対話）まで完成。
 **P4-6 improvements.md 履歴分離を完了（#102、解決済み4項目を archive へ移設・スタブ化）**。
 これで本書 §5 の追随候補と §1 の P4-6 が消化済みとなった。
 
+**2026-07-28 追記**: **roadmap §3「v2 / 将来構想バックログ」を新設し、大物3項目
+（PostgreSQL アプリ全体対応 / i18n レイヤ②③ / コピー面積縮小）を v2 送りに隔離（#103）**。
+保守者 docs の英語化は post-v2（採用が出てから）へ。**これで v1（M0〜M24）スコープは
+完了宣言**でき、§1 に残るのは実需トリガの小物（tracing / CR-3 / GitHub Packages /
+AD-2 発展 / P4-8）と §2 のオーナー判断のみ。
+
 ---
 
 ## 1. 保留（実需ドリブン・トリガ待ち）
@@ -42,13 +48,19 @@ scaffold はプリセット選択（非対話 + 対話）まで完成。
 「必要になった実例が出たら着手」の方針（[maintainability-review §4.1](maintainability-review-2026-07.md)
 の実需ドリブン文化）に従う項目。
 
+> **2026-07-28 整理（#103）**: 大物3項目（PostgreSQL アプリ全体対応 / i18n レイヤ
+> ②③ / コピー面積縮小）は **[roadmap.md §3「v2 / 将来構想バックログ」](roadmap.md)** へ
+> 隔離した。**v1（M0〜M24）スコープは完了**。保守者 docs の英語化は「post-v2
+> （採用が出てから）」へ（外部利用者不在のため。オーナー判断）。下表の該当行は
+> roadmap §3 が一次情報。
+
 | 項目 | 状態 | 一次情報 / 着手トリガ |
 | --- | --- | --- |
-| **i18n レイヤ②**（`t()`・ロケール store・provider 配線・言語切替 UI） | 設計温存・未着手 | [i18n-plan §4.1/§6.1](i18n-plan.md)。②着手前に未決5点（自前 vs ライブラリ / キー命名規約 / ブランド名翻訳 / 日本語一次 vs 英語一次 / conventions 新節） |
-| **i18n レイヤ③**（`en.ts`/`ja.ts` 辞書・対象言語） | アプリ側 | [i18n-plan §1](i18n-plan.md)。各アプリが実需で追加 |
-| **保守者 docs の英語化**（conventions / recipe / ADR） | 後回し | [i18n-plan §1](i18n-plan.md)（2026-07-22 オーナー決定「他の改修が落ち着いてから」） |
-| **PostgreSQL** | **banto-storage 接続ヘルパ `postgres.rs` は ✅ 実装済み（#93、P4-5 Option A・実 `postgres:16` CI 検証）**。残: アプリ全体の Postgres 対応（service 層汎用化・マイグレーション・backup の VACUUM INTO 代替）＝v2「将来構想」 | [improvement-plan P4-5](improvement-plan-2026-07.md)、[ui-framework-spec §12.1](ui-framework-spec.md)。既定 SQLite 維持 |
-| **コピー面積縮小**（`admin-template-core` → `banto-admin-services` 化 / Tauri コマンドのマクロ化） | 方針記録のみ・未実施 | [template-scope §7](template-scope.md)。トリガ: banto-industrial 要求 / 2本目アプリ / **外部採用者フィードバック**（AD-4 で追加済み） |
+| **i18n レイヤ②**（`t()`・ロケール store・provider 配線・言語切替 UI） | **→ v2 バックログ（[roadmap §3](roadmap.md)）**。設計温存・未着手。②着手前に未決5点あり | [i18n-plan §4.1/§6.1](i18n-plan.md)（未決5点: 自前 vs ライブラリ / キー命名規約 / ブランド名翻訳 / 日本語一次 vs 英語一次 / conventions 新節） |
+| **i18n レイヤ③**（`en.ts`/`ja.ts` 辞書・対象言語） | **→ v2 バックログ（[roadmap §3](roadmap.md)）**。アプリ側で実需追加 | [i18n-plan §1](i18n-plan.md) |
+| **保守者 docs の英語化**（conventions / recipe / ADR） | **→ post-v2（採用が出てから、[roadmap §3](roadmap.md)）**。外部利用者不在のため v2 完了後で十分（2026-07-28 オーナー判断） | [i18n-plan §1](i18n-plan.md) |
+| **PostgreSQL アプリ全体対応** | **→ v2 バックログ（[roadmap §3](roadmap.md)）**。接続ヘルパ `postgres.rs` は ✅ 実装済み（#93、実 `postgres:16` CI 検証）。残: service 層汎用化・マイグレーション・backup の VACUUM INTO 代替。既定 SQLite 維持 | [improvement-plan P4-5](improvement-plan-2026-07.md)、[ui-framework-spec §12.1](ui-framework-spec.md) |
+| **コピー面積縮小**（`admin-template-core` → `banto-admin-services` 化 / Tauri コマンドのマクロ化） | **→ v2 バックログ（[roadmap §3](roadmap.md)）**。方針記録のみ・未実施 | [template-scope §7](template-scope.md)。トリガ: banto-industrial 要求 / 2本目アプリ / **外部採用者フィードバック**（AD-4） |
 | **スキャフォールド・プリセット** | **✅ 完了（#94/#95/#100）**。非対話 `--preset` + **対話 `--interactive`（#100、§7.3）**、各プリセットで `cargo check` + `cargo test` 両方緑（CI マトリクス + `scaffold.test`）。残るのは任意の `create-banto-app` npm パッケージ化（§7.5、publishing 非公開方針と要調整）のみ | [scaffold-presets-plan](scaffold-presets-plan.md)（P4-9） |
 | **AD-2 発展案**（短尺 GIF / LAN QR デモ） | ライブデモは **✅ 公開済み**（#89、<https://tyaro.github.io/banto/>）。残るは短尺 GIF・LAN 配信の QR デモ | [adoption-plan AD-2](adoption-plan-2026-07.md)。最小案（スクショ）は #85、ライブデモは #89 で完了 |
 | **tracing 導入** | 保留（`eprintln!` 継続） | [ADR-0004](adr/0004-server-logging-eprintln.md) |
