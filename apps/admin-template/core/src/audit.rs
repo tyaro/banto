@@ -20,9 +20,9 @@
 //! every call site instead.
 
 use banto_core::{BantoError, ListParams, ListResult};
-use banto_storage::ColumnMap;
+use banto_storage::{ColumnMap, Db, Dialect};
 use serde::Serialize;
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite};
 
 /// One row of the `audit_log` table, wire-shaped for the audit-log viewer
 /// (spec M14's admin-only grid). `detail` is the raw JSON-encoded summary
@@ -93,16 +93,16 @@ fn column_map() -> ColumnMap {
 /// Audit trail service (spec M14): append-only writes, a filtered/sorted/
 /// paginated read (admin-only viewer), and retention-based pruning.
 ///
-/// `Clone` is cheap (`SqlitePool` is an `Arc`-backed handle), matching
+/// `Clone` is cheap (`Db` is an `Arc`-backed connection handle), matching
 /// `ItemsService`/`UsersService`/`SettingsService`.
 #[derive(Clone)]
 pub struct AuditLogService {
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl AuditLogService {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// Write one audit entry. `Result`-returning (unlike
@@ -119,20 +119,39 @@ impl AuditLogService {
                 BantoError::Other(format!("監査ログのdetailシリアライズに失敗しました: {err}"))
             })?;
 
-        sqlx::query(
+        let dialect = self.db.dialect();
+        let sql = format!(
             "INSERT INTO audit_log (actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(entry.actor_username)
-        .bind(entry.actor_role)
-        .bind(entry.action)
-        .bind(entry.resource)
-        .bind(entry.entity_id)
-        .bind(detail)
-        .bind(entry.origin)
-        .bind(entry.result)
-        .execute(&self.pool)
-        .await
+             VALUES ({})",
+            dialect.placeholders(8),
+        );
+        match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&sql)
+                .bind(entry.actor_username)
+                .bind(entry.actor_role)
+                .bind(entry.action)
+                .bind(entry.resource)
+                .bind(entry.entity_id)
+                .bind(detail)
+                .bind(entry.origin)
+                .bind(entry.result)
+                .execute(pool)
+                .await
+                .map(|_| ()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&sql)
+                .bind(entry.actor_username)
+                .bind(entry.actor_role)
+                .bind(entry.action)
+                .bind(entry.resource)
+                .bind(entry.entity_id)
+                .bind(detail)
+                .bind(entry.origin)
+                .bind(entry.result)
+                .execute(pool)
+                .await
+                .map(|_| ()),
+        }
         .map_err(banto_storage::storage_error)?;
         Ok(())
     }
@@ -162,35 +181,78 @@ impl AuditLogService {
     /// module's doc comment).
     pub async fn list(&self, params: ListParams) -> Result<ListResult<AuditLogEntry>, BantoError> {
         let columns = column_map();
-
-        let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
+        const SELECT_ROWS: &str =
             "SELECT id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result \
-             FROM audit_log",
-        );
-        banto_storage::list_query::sqlite::apply_list_params(&mut rows_builder, &columns, &params)?;
-        let rows: Vec<AuditLogEntry> = rows_builder
-            .build_query_as::<AuditLogEntry>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+             FROM audit_log";
+        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM audit_log";
 
-        let mut count_builder: QueryBuilder<'_, Sqlite> =
-            QueryBuilder::new("SELECT COUNT(*) FROM audit_log");
-        banto_storage::list_query::sqlite::append_where(
-            &mut count_builder,
-            &columns,
-            &params.filters,
-        )?;
-        let total_count: i64 = count_builder
-            .build_query_scalar()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+        // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
+        // `crate::items::ItemsService::list` (see that method's comment).
+        match &self.db {
+            Db::Sqlite(pool) => {
+                let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_ROWS);
+                banto_storage::list_query::sqlite::apply_list_params(
+                    &mut rows_builder,
+                    &columns,
+                    &params,
+                )?;
+                let rows: Vec<AuditLogEntry> = rows_builder
+                    .build_query_as::<AuditLogEntry>()
+                    .fetch_all(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
 
-        Ok(ListResult {
-            rows,
-            total_count: total_count as u64,
-        })
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                banto_storage::list_query::sqlite::append_where(
+                    &mut count_builder,
+                    &columns,
+                    &params.filters,
+                )?;
+                let total_count: i64 = count_builder
+                    .build_query_scalar()
+                    .fetch_one(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+
+                Ok(ListResult {
+                    rows,
+                    total_count: total_count as u64,
+                })
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                let mut rows_builder: QueryBuilder<'_, sqlx::Postgres> =
+                    QueryBuilder::new(SELECT_ROWS);
+                banto_storage::list_query::postgres::apply_list_params(
+                    &mut rows_builder,
+                    &columns,
+                    &params,
+                )?;
+                let rows: Vec<AuditLogEntry> = rows_builder
+                    .build_query_as::<AuditLogEntry>()
+                    .fetch_all(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+
+                let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
+                    QueryBuilder::new(SELECT_COUNT);
+                banto_storage::list_query::postgres::append_where(
+                    &mut count_builder,
+                    &columns,
+                    &params.filters,
+                )?;
+                let total_count: i64 = count_builder
+                    .build_query_scalar()
+                    .fetch_one(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+
+                Ok(ListResult {
+                    rows,
+                    total_count: total_count as u64,
+                })
+            }
+        }
     }
 
     /// Retention-based pruning (spec M14): delete rows older than
@@ -214,35 +276,80 @@ impl AuditLogService {
         retention_days: Option<i64>,
         retention_rows: Option<i64>,
     ) -> Result<u64, BantoError> {
+        let dialect = self.db.dialect();
         let mut deleted: u64 = 0;
 
         if let Some(days) = retention_days.filter(|d| *d > 0) {
-            let result = sqlx::query(
-                "DELETE FROM audit_log WHERE ts < datetime('now', '-' || ? || ' days')",
-            )
-            .bind(days)
-            .execute(&self.pool)
-            .await
+            // The "N days ago" interval arithmetic is the largest dialect gap
+            // in this crate: SQLite's `datetime('now', '-N days')` modifier has
+            // no Postgres analogue, so each backend gets its own hand-written
+            // SQL (not just a placeholder swap). The SQLite string is
+            // byte-identical to the pre-V2 query (conventions §"既定 SQLite
+            // 経路は挙動不変"). Postgres uses `make_interval(days => $1::int)`
+            // - the `::int` cast is needed because `days` binds as `int8`
+            // while `make_interval`'s `days` parameter is `int4`. Not exercised
+            // in PR2 (SQLite-only init); real PG validation is PR3.
+            let days_sql = match dialect {
+                Dialect::Sqlite => {
+                    "DELETE FROM audit_log WHERE ts < datetime('now', '-' || ? || ' days')"
+                        .to_string()
+                }
+                Dialect::Postgres => {
+                    "DELETE FROM audit_log WHERE ts < NOW() - make_interval(days => $1::int)"
+                        .to_string()
+                }
+            };
+            let affected = match &self.db {
+                Db::Sqlite(pool) => sqlx::query(&days_sql)
+                    .bind(days)
+                    .execute(pool)
+                    .await
+                    .map(|r| r.rows_affected()),
+                #[cfg(feature = "postgres")]
+                Db::Postgres(pool) => sqlx::query(&days_sql)
+                    .bind(days)
+                    .execute(pool)
+                    .await
+                    .map(|r| r.rows_affected()),
+            }
             .map_err(banto_storage::storage_error)?;
-            deleted += result.rows_affected();
+            deleted += affected;
         }
 
         if let Some(max_rows) = retention_rows.filter(|r| *r > 0) {
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(banto_storage::storage_error)?;
+            const COUNT_SQL: &str = "SELECT COUNT(*) FROM audit_log";
+            let total: i64 = match &self.db {
+                Db::Sqlite(pool) => sqlx::query_scalar(COUNT_SQL).fetch_one(pool).await,
+                #[cfg(feature = "postgres")]
+                Db::Postgres(pool) => sqlx::query_scalar(COUNT_SQL).fetch_one(pool).await,
+            }
+            .map_err(banto_storage::storage_error)?;
             let excess = total - max_rows;
             if excess > 0 {
-                let result = sqlx::query(
+                // Oldest-first-by-`id` LIMIT delete: identical across dialects
+                // apart from the placeholder. The "id order == insertion order"
+                // assumption (SQLite `AUTOINCREMENT`) holds on Postgres too via
+                // `BIGSERIAL`/`IDENTITY` (DDL is PR3's scope).
+                let delete_sql = format!(
                     "DELETE FROM audit_log WHERE id IN \
-                     (SELECT id FROM audit_log ORDER BY id ASC LIMIT ?)",
-                )
-                .bind(excess)
-                .execute(&self.pool)
-                .await
+                     (SELECT id FROM audit_log ORDER BY id ASC LIMIT {})",
+                    dialect.placeholder(1),
+                );
+                let affected = match &self.db {
+                    Db::Sqlite(pool) => sqlx::query(&delete_sql)
+                        .bind(excess)
+                        .execute(pool)
+                        .await
+                        .map(|r| r.rows_affected()),
+                    #[cfg(feature = "postgres")]
+                    Db::Postgres(pool) => sqlx::query(&delete_sql)
+                        .bind(excess)
+                        .execute(pool)
+                        .await
+                        .map(|r| r.rows_affected()),
+                }
                 .map_err(banto_storage::storage_error)?;
-                deleted += result.rows_affected();
+                deleted += affected;
             }
         }
 
@@ -473,7 +580,11 @@ mod tests {
         // `banto_server::auth`'s `AuthState`), so this is the simplest way
         // to exercise the days branch deterministically.
         sqlx::query("UPDATE audit_log SET ts = datetime('now', '-10 days') WHERE id = 1")
-            .execute(&svc.pool)
+            .execute(
+                svc.db
+                    .as_sqlite()
+                    .expect("service tests run on a SQLite handle"),
+            )
             .await
             .unwrap();
 

@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use banto_core::{BantoError, FieldError};
+use banto_storage::Db;
 use serde::Serialize;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, SqliteConnection, SqlitePool};
@@ -227,18 +228,35 @@ async fn run_validation_checks(conn: &mut SqliteConnection) -> Result<(), BantoE
     Ok(())
 }
 
-/// Backup/restore service (spec M17): `Clone` is cheap (`SqlitePool` is
-/// `Arc`-backed, `PathBuf` is small and only ever read from) - matches
+/// Backup/restore service (spec M17): `Clone` is cheap (`Db` is `Arc`-backed,
+/// `PathBuf` is small and only ever read from) - matches
 /// `AuditLogService`/`SettingsService`.
+///
+/// V2 note: this service carries a backend-agnostic [`Db`] for signature
+/// symmetry with the other services, **but its logic is SQLite-specific and
+/// stays that way in PR2** - `VACUUM INTO`, `PRAGMA integrity_check`/
+/// `wal_checkpoint`, and raw `.sqlite3` file replacement have no portable
+/// Postgres analogue. Making backup/restore backend-aware (e.g.
+/// `pg_dump`-based) is deferred to PR4; until then [`BackupService::sqlite_pool`]
+/// asserts the SQLite handle at each use site.
 #[derive(Clone)]
 pub struct BackupService {
     db_path: PathBuf,
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl BackupService {
-    pub fn new(db_path: PathBuf, pool: SqlitePool) -> Self {
-        Self { db_path, pool }
+    pub fn new(db_path: PathBuf, db: Db) -> Self {
+        Self { db_path, db }
+    }
+
+    /// The underlying SQLite pool. `BackupService` is SQLite-only for now (see
+    /// the type's doc comment) - PR4 will branch its whole flow by backend
+    /// rather than unwrap here.
+    fn sqlite_pool(&self) -> &SqlitePool {
+        self.db
+            .as_sqlite()
+            .expect("PR2: BackupService is SQLite-only (Postgres backup is PR4)")
     }
 
     /// Directory the DB file lives in (`backups/`'s parent, and where
@@ -306,7 +324,7 @@ impl BackupService {
     /// flake.)
     pub async fn create(&self) -> Result<BackupInfo, BantoError> {
         let now: String = sqlx::query_scalar("SELECT datetime('now')")
-            .fetch_one(&self.pool)
+            .fetch_one(self.sqlite_pool())
             .await
             .map_err(banto_storage::storage_error)?;
         self.create_at(&now).await
@@ -336,7 +354,7 @@ impl BackupService {
             .to_string();
 
         sqlx::query(&vacuum_into_sql(&path))
-            .execute(&self.pool)
+            .execute(self.sqlite_pool())
             .await
             .map_err(banto_storage::storage_error)?;
 
@@ -694,7 +712,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("admin-template.sqlite3");
         let pool = migrated_file_db(&db_path).await;
-        (BackupService::new(db_path, pool), dir)
+        (BackupService::new(db_path, Db::Sqlite(pool)), dir)
     }
 
     #[tokio::test]
@@ -933,13 +951,13 @@ mod tests {
 
         // Stage a DIFFERENT, distinguishable db as the pending restore. The
         // `BackupService` here only needs a valid pool to satisfy its type
-        // (staging from bytes never touches `self.pool`) - an in-memory one
+        // (staging from bytes never touches `self.db`) - an in-memory one
         // is fine for THIS role (unlike the source db being staged, which
         // must be a real on-disk file - see `migrated_file_db`'s doc
         // comment).
         let svc = BackupService::new(
             db_path.clone(),
-            banto_storage::connect_sqlite_memory().await.unwrap(),
+            Db::Sqlite(banto_storage::connect_sqlite_memory().await.unwrap()),
         );
         let staged_path = dir.path().join("staged-source.sqlite3");
         let restore_pool = migrated_file_db(&staged_path).await;
@@ -998,7 +1016,7 @@ mod tests {
 
         let svc = BackupService::new(
             db_path.clone(),
-            banto_storage::connect_sqlite_memory().await.unwrap(),
+            Db::Sqlite(banto_storage::connect_sqlite_memory().await.unwrap()),
         );
         let staged_path = dir.path().join("staged-source.sqlite3");
         let source_pool = migrated_file_db(&staged_path).await;

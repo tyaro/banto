@@ -45,10 +45,10 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use banto_core::{BantoError, FieldError};
+use banto_storage::Db;
 use image::{GenericImageView, ImageEncoder, ImageFormat};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
 
 /// Upper bound on a single uploaded attachment (spec §3.5, §7): 25MB,
 /// conservative for LAN photo-upload use. A single named constant - the
@@ -339,11 +339,17 @@ fn iso_datetime_from_system_time(time: SystemTime) -> String {
 }
 
 /// Service layer for the generic `attachments` table (spec §3.1-§3.4).
-/// `Clone` is cheap: `SqlitePool` is `Arc`-backed and `PathBuf` is only ever
-/// read from, matching `ItemsService`/`BackupService`'s `Clone` convention.
+/// `Clone` is cheap: `Db` is an `Arc`-backed connection handle and `PathBuf`
+/// is only ever read from, matching `ItemsService`/`BackupService`'s `Clone`
+/// convention.
+///
+/// V2 PR2: holds a backend-agnostic [`banto_storage::Db`] and dispatches each
+/// query to the matching backend, so the same service works over SQLite or
+/// PostgreSQL. The metadata SQL here is portable apart from placeholder syntax,
+/// which `Db::dialect()` bridges.
 #[derive(Clone)]
 pub struct AttachmentsService {
-    pool: SqlitePool,
+    db: Db,
     base_dir: PathBuf,
 }
 
@@ -354,8 +360,8 @@ impl AttachmentsService {
     /// derive-everything-else shape, except this service takes the already-
     /// derived directory directly since it has no other use for `db_path`
     /// itself.
-    pub fn new(pool: SqlitePool, base_dir: PathBuf) -> Self {
-        Self { pool, base_dir }
+    pub fn new(db: Db, base_dir: PathBuf) -> Self {
+        Self { db, base_dir }
     }
 
     fn body_path(&self, id: i64) -> PathBuf {
@@ -373,25 +379,54 @@ impl AttachmentsService {
         resource: &str,
         resource_id: &str,
     ) -> Result<Vec<AttachmentMeta>, BantoError> {
+        let dialect = self.db.dialect();
         let sql = format!(
-            "SELECT {SELECT_COLUMNS} FROM attachments WHERE resource = ? AND resource_id = ? \
-             ORDER BY created_at DESC, id DESC"
+            "SELECT {SELECT_COLUMNS} FROM attachments WHERE resource = {} AND resource_id = {} \
+             ORDER BY created_at DESC, id DESC",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
         );
-        sqlx::query_as::<_, AttachmentMeta>(&sql)
-            .bind(resource)
-            .bind(resource_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(storage_error)
+        match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                    .bind(resource)
+                    .bind(resource_id)
+                    .fetch_all(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                    .bind(resource)
+                    .bind(resource_id)
+                    .fetch_all(pool)
+                    .await
+            }
+        }
+        .map_err(storage_error)
     }
 
     pub async fn get(&self, id: i64) -> Result<AttachmentMeta, BantoError> {
-        let sql = format!("SELECT {SELECT_COLUMNS} FROM attachments WHERE id = ?");
-        sqlx::query_as::<_, AttachmentMeta>(&sql)
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|err| not_found(err, id))
+        let sql = format!(
+            "SELECT {SELECT_COLUMNS} FROM attachments WHERE id = {}",
+            self.db.dialect().placeholder(1)
+        );
+        match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
+        }
+        .map_err(|err| not_found(err, id))
     }
 
     /// Store a new attachment (spec §3.2-§3.4):
@@ -419,44 +454,98 @@ impl AttachmentsService {
         let mime = detect_mime(&input.bytes);
         let created_at = iso_datetime_from_system_time(SystemTime::now());
 
-        let sql = format!(
+        let dialect = self.db.dialect();
+        // The literal `0` (has_thumbnail default) sits between the placeholders,
+        // so they run 1..=6 then 7..=8 around it.
+        let insert_sql = format!(
             "INSERT INTO attachments \
              (resource, resource_id, file_name, mime, size_bytes, sha256, has_thumbnail, created_at, created_by) \
-             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) \
-             RETURNING {SELECT_COLUMNS}"
+             VALUES ({}, {}, {}, {}, {}, {}, 0, {}, {}) \
+             RETURNING {SELECT_COLUMNS}",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            dialect.placeholder(4),
+            dialect.placeholder(5),
+            dialect.placeholder(6),
+            dialect.placeholder(7),
+            dialect.placeholder(8),
         );
-        let mut meta = sqlx::query_as::<_, AttachmentMeta>(&sql)
-            .bind(&input.resource)
-            .bind(&input.resource_id)
-            .bind(&input.file_name)
-            .bind(&mime)
-            .bind(input.bytes.len() as i64)
-            .bind(&sha256)
-            .bind(&created_at)
-            .bind(&input.created_by)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(storage_error)?;
+        let mut meta = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as::<_, AttachmentMeta>(&insert_sql)
+                    .bind(&input.resource)
+                    .bind(&input.resource_id)
+                    .bind(&input.file_name)
+                    .bind(&mime)
+                    .bind(input.bytes.len() as i64)
+                    .bind(&sha256)
+                    .bind(&created_at)
+                    .bind(&input.created_by)
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as::<_, AttachmentMeta>(&insert_sql)
+                    .bind(&input.resource)
+                    .bind(&input.resource_id)
+                    .bind(&input.file_name)
+                    .bind(&mime)
+                    .bind(input.bytes.len() as i64)
+                    .bind(&sha256)
+                    .bind(&created_at)
+                    .bind(&input.created_by)
+                    .fetch_one(pool)
+                    .await
+            }
+        }
+        .map_err(storage_error)?;
 
         if let Err(write_err) = self.write_body(meta.id, &input.bytes).await {
             // The row must not outlive its body file - best-effort cleanup;
             // if even the delete fails, the original write error is still
             // what the caller needs to see.
-            let _ = sqlx::query("DELETE FROM attachments WHERE id = ?")
-                .bind(meta.id)
-                .execute(&self.pool)
-                .await;
+            let delete_sql = format!(
+                "DELETE FROM attachments WHERE id = {}",
+                dialect.placeholder(1)
+            );
+            match &self.db {
+                Db::Sqlite(pool) => {
+                    let _ = sqlx::query(&delete_sql).bind(meta.id).execute(pool).await;
+                }
+                #[cfg(feature = "postgres")]
+                Db::Postgres(pool) => {
+                    let _ = sqlx::query(&delete_sql).bind(meta.id).execute(pool).await;
+                }
+            }
             return Err(write_err);
         }
 
         if is_thumbnailable_mime(&mime) {
             if let Some(thumb_bytes) = make_thumbnail(&input.bytes) {
                 if self.write_thumbnail(meta.id, &thumb_bytes).await.is_ok() {
-                    sqlx::query("UPDATE attachments SET has_thumbnail = 1 WHERE id = ?")
-                        .bind(meta.id)
-                        .execute(&self.pool)
-                        .await
-                        .map_err(storage_error)?;
+                    let update_sql = format!(
+                        "UPDATE attachments SET has_thumbnail = 1 WHERE id = {}",
+                        dialect.placeholder(1)
+                    );
+                    match &self.db {
+                        Db::Sqlite(pool) => {
+                            sqlx::query(&update_sql)
+                                .bind(meta.id)
+                                .execute(pool)
+                                .await
+                                .map_err(storage_error)?;
+                        }
+                        #[cfg(feature = "postgres")]
+                        Db::Postgres(pool) => {
+                            sqlx::query(&update_sql)
+                                .bind(meta.id)
+                                .execute(pool)
+                                .await
+                                .map_err(storage_error)?;
+                        }
+                    }
                     meta.has_thumbnail = true;
                 }
                 // A thumbnail write failure is swallowed the same way a
@@ -539,12 +628,27 @@ impl AttachmentsService {
     pub async fn delete(&self, id: i64) -> Result<AttachmentMeta, BantoError> {
         let meta = self.get(id).await?;
 
-        let result = sqlx::query("DELETE FROM attachments WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(storage_error)?;
-        if result.rows_affected() == 0 {
+        let delete_sql = format!(
+            "DELETE FROM attachments WHERE id = {}",
+            self.db.dialect().placeholder(1)
+        );
+        // Map each arm to `rows_affected` (a plain `u64`) so the two backend
+        // query-result types (`SqliteQueryResult` / `PgQueryResult`) unify.
+        let rows_affected = match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&delete_sql)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&delete_sql)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+        }
+        .map_err(storage_error)?;
+        if rows_affected == 0 {
             // Raced with a concurrent delete between the `get` above and
             // here - treat it the same as "already gone".
             return Err(BantoError::NotFound {
@@ -583,13 +687,30 @@ impl AttachmentsService {
         resource: &str,
         resource_id: &str,
     ) -> Result<u64, BantoError> {
-        let ids: Vec<i64> =
-            sqlx::query_scalar("SELECT id FROM attachments WHERE resource = ? AND resource_id = ?")
-                .bind(resource)
-                .bind(resource_id)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(storage_error)?;
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "SELECT id FROM attachments WHERE resource = {} AND resource_id = {}",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+        );
+        let ids: Vec<i64> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(&sql)
+                    .bind(resource)
+                    .bind(resource_id)
+                    .fetch_all(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(&sql)
+                    .bind(resource)
+                    .bind(resource_id)
+                    .fetch_all(pool)
+                    .await
+            }
+        }
+        .map_err(storage_error)?;
 
         let mut deleted = 0u64;
         for id in ids {
@@ -625,7 +746,7 @@ mod tests {
     /// crate cannot depend on that app crate's migrations, so it re-states
     /// the same `CREATE TABLE`/`CREATE INDEX` here instead.
     async fn service() -> (AttachmentsService, tempfile::TempDir) {
-        let pool = SqlitePool::connect("sqlite::memory:")
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .expect("connect in-memory sqlite");
         sqlx::query(
@@ -652,7 +773,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let base_dir = dir.path().join("attachments");
-        (AttachmentsService::new(pool, base_dir), dir)
+        (AttachmentsService::new(Db::Sqlite(pool), base_dir), dir)
     }
 
     fn new_attachment(

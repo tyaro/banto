@@ -18,10 +18,10 @@ const CLIENT_HEADER: (&str, &str) = ("X-Banto-Client", "banto");
 /// instead, which points at a real, writable temp directory AND (unlike
 /// every other helper here) a real on-disk pool - see that function's
 /// doc comment for why the pool matters too.
-fn unused_backup_service(pool: sqlx::SqlitePool) -> BackupService {
+fn unused_backup_service(db: banto_storage::Db) -> BackupService {
     BackupService::new(
         PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
-        pool,
+        db,
     )
 }
 
@@ -30,8 +30,8 @@ fn unused_backup_service(pool: sqlx::SqlitePool) -> BackupService {
 /// [`unused_backup_service`]. Tests that DO exercise attachments use
 /// [`router_with_role_tokens_and_attachments`] instead, which points at
 /// a real, writable temp directory.
-fn unused_attachments_service(pool: sqlx::SqlitePool) -> AttachmentsService {
-    AttachmentsService::new(pool, PathBuf::from("unused-in-tests").join("attachments"))
+fn unused_attachments_service(db: banto_storage::Db) -> AttachmentsService {
+    AttachmentsService::new(db, PathBuf::from("unused-in-tests").join("attachments"))
 }
 
 fn demo_auth() -> AuthState {
@@ -1153,14 +1153,17 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         .run(&pool)
         .await
         .expect("migrate");
+    // V2 PR2: services take a backend-agnostic `Db`; wrap the on-disk SQLite
+    // pool (a real file is required here so `VACUUM INTO` actually writes).
+    let db = banto_storage::Db::Sqlite(pool);
 
     let (tx, _rx) = broadcast::channel(16);
-    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
-    let users = UsersService::new(pool.clone());
-    let settings = SettingsService::new(pool.clone());
-    let backup = BackupService::new(db_path, pool.clone());
-    let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));
-    let audit = AuditLogService::new(pool);
+    let items = ItemsService::new(db.clone()).with_events(tx.clone());
+    let users = UsersService::new(db.clone());
+    let settings = SettingsService::new(db.clone());
+    let backup = BackupService::new(db_path, db.clone());
+    let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));
+    let audit = AuditLogService::new(db);
 
     users
         .setup_first_user("admin", "password123", "管理者")
