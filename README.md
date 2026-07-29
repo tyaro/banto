@@ -268,6 +268,11 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 （[docs/template-scope.md](docs/template-scope.md) §3）。不要なら
 以下の箇所を外す。
 
+まず `pnpm scaffold --preset <preset>`（`minimal` / `standard` / `full`）を試す。
+プリセットに応じてオプション資産をまとめて外す（`--interactive` で対話選択、
+`--dry-run` で変更内容の確認のみ）。以下の手動手順は、scaffold が触らない資産を
+外したい場合や、独自に削りたい場合に参照する。
+
 **`@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）**:
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
 `DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
@@ -438,6 +443,11 @@ embed-ui`を省略すると組み込みのプレースホルダページを返�
   `banto-server`の`TokenPolicy`/`RateLimitPolicy`で変更可能）。
   Tauriウィンドウのセッションと LANブラウザ側（REST/SSE）のセッションは
   独立したトークン空間。
+- セッショントークンはインメモリ保持のため、**サーバ（デスクトップアプリ/
+  常駐プロセス）を再起動すると全セッションが失われ、再ログインが必要**になる。
+  「ログイン状態を保持（Remember me）」の30日/7日は無停止運用時の上限であり、
+  端末を毎日再起動する運用ではその都度セッションが切れる（v1 の受容済み仕様。
+  [docs/roadmap.md](docs/roadmap.md) の未決事項一覧を参照）。
 
 **同時書き込みとSQLite（WAL）:**
 

@@ -84,6 +84,18 @@ node scripts/rename.mjs \
 # add --dry-run to preview the changes first
 ```
 
+To drop the optional assets (dock layout, charts, glass theme, command
+palette, attachments, reporting) as a batch, run the scaffold script and pick
+a preset:
+
+```sh
+pnpm scaffold --preset minimal   # minimal | standard | full
+# --interactive to choose per asset, --dry-run to preview the changes
+```
+
+For assets scaffold doesn't touch, or to remove things by hand, see the
+"オプション資産の削除" section in the Japanese README.
+
 ## Requirements
 
 - Node 24+
@@ -95,6 +107,11 @@ node scripts/rename.mjs \
 The LAN server is plain HTTP by default — enable it only on trusted
 networks. See the Japanese README for the TLS reverse-proxy recipe
 (Caddy example under "LANアクセス").
+
+Session tokens are held in memory, so restarting the server (the desktop app
+/ resident process) drops every session and forces a re-login. The 30-day /
+7-day "Remember me" limits are upper bounds under uninterrupted operation; on
+a device rebooted daily the session ends each time (an accepted v1 tradeoff).
 
 ---
 

@@ -1,10 +1,12 @@
 # Tauri compile check (improvement-plan-2026-07.md P3-2).
 #
-# Scope: `cargo check -p admin-template` (apps/admin-template/src-tauri) on
-# ubuntu + windows. The main CI (ci.yml) deliberately excludes this crate to
-# keep every-PR pipelines fast and system-dependency-free, which left Tauri
-# command signatures / feature wiring / capability config verified only by
-# code review. This workflow closes that gap WITHOUT re-burdening every PR:
+# Scope: `cargo check -p admin-template` + `cargo test -p admin-template`
+# (apps/admin-template/src-tauri) on ubuntu + windows. The main CI (ci.yml)
+# deliberately excludes this crate to keep every-PR pipelines fast and
+# system-dependency-free, which left Tauri command signatures / feature wiring
+# / capability config verified only by code review, and the crate's authz/audit
+# tests unrun anywhere. This workflow closes that gap WITHOUT re-burdening
+# every PR:
 #
 # - `pull_request` + `push`(main) run it only when Tauri-side code or the
 #   dependency graph actually changes (paths filter below).
@@ -14,9 +16,9 @@
 #   scheduled run is noticed without anyone watching the Actions tab.
 # - `workflow_dispatch` allows manual runs.
 #
-# `cargo check` only (no `tauri build`): compiling the crate is what catches
-# the drift this workflow exists for; bundling/installers belong to a future
-# release workflow.
+# `cargo check` + `cargo test` (no `tauri build`): compiling the crate catches
+# signature/wiring drift and running its tests verifies the authz/audit
+# behavior; bundling/installers belong to a future release workflow.
 #
 # Third-party actions are pinned to commit SHAs (see ci.yml's top-of-file
 # policy comment for the rationale and the dtolnay/rust-toolchain@stable
@@ -52,7 +54,7 @@ concurrency:
 
 jobs:
   check:
-    name: cargo check -p admin-template
+    name: cargo check + test -p admin-template
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +88,14 @@ jobs:
 
       - name: Cargo check
         run: cargo check -p admin-template --all-targets
+
+      # `--all-targets` above already compiles the test binaries; running them
+      # is what actually exercises the 48 Tauri command handlers' authz/audit
+      # tests (conventions §1 "両経路対称" — rule 8 checks presence only, so the
+      # levels/records being identical is guaranteed by these tests, not the
+      # architecture verifier). Extra cost here is just the run time.
+      - name: Cargo test
+        run: cargo test -p admin-template
 
   # A failed scheduled run has no PR to turn red and nobody staring at the
   # Actions tab, so surface it as a tracking issue (deduplicated by label:

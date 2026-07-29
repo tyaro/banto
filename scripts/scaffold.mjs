@@ -120,6 +120,7 @@ function removeAppDep(dep) {
 const APP = 'apps/admin-template';
 const APP_PKG = `${APP}/package.json`;
 const DASH = `${APP}/src/routes/(app)/dashboard/+page.svelte`;
+const DASH_LIB = `${APP}/src/lib/banto/dashboard.ts`;
 const LAYOUT = `${APP}/src/routes/(app)/+layout.svelte`;
 const HEADER = `${APP}/src/lib/components/Header.svelte`;
 const SETTINGS = `${APP}/src/routes/(app)/settings/+page.svelte`;
@@ -145,6 +146,13 @@ const TAURI_CARGO = `${APP}/src-tauri/Cargo.toml`;
  * ダッシュボードのチャートデモ配線・DashboardPanel・@banto/charts 依存を外す。
  * `dashboard.ts` はスタットタイルが `computeStatTiles` を使うため残す（未使用の
  * 集計エクスポートはビルドを壊さない）。stat タイルの Sparkline のみ外す。
+ *
+ * ドリフト注意: dashboard/+page.svelte の チャート markup・見出し・派生を
+ * 変えたら（特に #74 M24 で追加した StackedAreaChart/GanttChart セクション、
+ * i18n キー化で可視文言が `m['...']()` になった箇所）このパターンも更新すること。
+ * charts 除去後に dashboard/+page.svelte と dashboard.ts に `@banto/charts` 参照が
+ * 一切残らないことが不変条件（残ると `Cannot find module '@banto/charts'` /
+ * 未定義コンポーネント / 暗黙 any でチェックが赤くなる）。
  */
 function removeCharts() {
 	cutRegion(DASH, 'charts import 除去', `\timport {\n\t\tBarChart,`, `} from '@banto/charts';`);
@@ -153,14 +161,49 @@ function removeCharts() {
 		'DashboardPanel import 除去',
 		`\timport DashboardPanel from '$lib/components/DashboardPanel.svelte';\n`
 	);
+	// #74 M24: 積立エリア/ガントは dashboard.ts の集計に依存する。charts 除去後に
+	// dashboard.ts から `@banto/charts`（GanttTask 型）参照が残らないよう、対応する
+	// import・派生・markup をここで確実に外す。
+	drop(DASH, 'M24 集計 import(categoryTrendByMonth)除去', `\t\tcategoryTrendByMonth,\n`);
+	drop(DASH, 'M24 集計 import(inventorySchedule)除去', `\t\tinventorySchedule,\n`);
+	drop(DASH, 'M24 型 import(MonthCategoryCount)除去', `\t\ttype MonthCategoryCount,\n`);
+	drop(
+		DASH,
+		'M24 派生(categoryTrend/schedule)除去',
+		`\t// M24 chart types (spec §6.1, roadmap.md M24): stacked area (積立エリア), Gantt.\n\tconst categoryTrend = $derived(categoryTrendByMonth(list.rows));\n\tconst schedule = $derived(inventorySchedule(list.rows));\n\n`
+	);
+	cutRegion(
+		DASH,
+		'formatGanttDate ヘルパ除去',
+		`\t// UTC getters (not toLocaleDateString): the schedule's dates are UTC`,
+		`\t};`
+	);
 	drop(
 		DASH,
 		'stat タイルの Sparkline 除去',
-		`\t\t\t\t\t<Sparkline values={monthCounts.map((m) => m.count)} width={72} height={24} />\n`
+		`\t\t\t\t\t<Sparkline values={monthCounts.map((mc) => mc.count)} width={72} height={24} />\n`
 	);
 	cutRegion(DASH, 'チャートグリッド(トレンド系)除去', `\t\t<div class="chart-grid">`, `\t\t</div>`);
-	drop(DASH, 'チャート拡張見出し除去', `\t\t<h2 class="section-heading">チャート拡張（v2）</h2>\n`);
+	drop(
+		DASH,
+		'チャート拡張見出し(v2)除去',
+		`\t\t<h2 class="section-heading">{m['dashboard.chartsV2Heading']()}</h2>\n`
+	);
 	cutRegion(DASH, 'チャートグリッド(拡張)除去', `\t\t<div class="chart-grid">`, `\t\t</div>`);
+	drop(
+		DASH,
+		'チャート拡張見出し(M24)除去',
+		`\t\t<h2 class="section-heading">{m['dashboard.chartsM24Heading']()}</h2>\n`
+	);
+	cutRegion(DASH, 'チャートグリッド(M24)除去', `\t\t<div class="chart-grid">`, `\t\t</div>`);
+	// dashboard.ts（stat タイル用に残すが M24 集計だけは `@banto/charts` の GanttTask に
+	// 依存するので切り離す）。GanttTask import と M24 セクション（EOFまで）を外す。
+	drop(
+		DASH_LIB,
+		'dashboard.ts: GanttTask import 除去',
+		`import type { GanttTask } from '@banto/charts';\n`
+	);
+	cutEnd(DASH_LIB, 'dashboard.ts: M24 集計セクション(EOFまで)除去', `// --- M24 chart demo data`);
 	removeFile(`${APP}/src/lib/components/DashboardPanel.svelte`, 'DashboardPanel.svelte 削除');
 	removeAppDep('@banto/charts');
 }
@@ -232,7 +275,15 @@ function removeGlass() {
 	removeFile('packages/theme/src/css/banto-glass.css', 'banto-glass.css 削除');
 
 	// --- 設定画面: プリセット選択肢 + vibrancy 配線 ---
-	drop(SETTINGS, 'プリセット選択肢からガラス除去', `\t\t{ value: 'glass', label: 'ガラス' }\n`);
+	// ドリフト注意: i18n キー化で label が `m['settings.presetGlass']()` になった。
+	// settings のプリセット選択肢 markup を変えたらこのパターンも更新すること
+	// （残ると ThemePreset から 'glass' を外した後 `Type '"glass"' is not assignable
+	// to type '"standard"'` でチェックが赤くなる）。
+	drop(
+		SETTINGS,
+		'プリセット選択肢からガラス除去',
+		`\t\t{ value: 'glass', label: m['settings.presetGlass']() }\n`
+	);
 	drop(
 		SETTINGS,
 		'vibrancy import 除去',
@@ -541,7 +592,7 @@ function removeReport() {
 		ITEMS,
 		'items ページの日報ボタン除去',
 		`\t\t\t<!-- M19 report demo`,
-		`\t\t\t\t日報\n\t\t\t</button>`
+		`\t\t\t\t{m['items.report']()}\n\t\t\t</button>`
 	);
 	removeDir(`${APP}/src/routes/(app)/items/report`, 'items/report ルート削除');
 	removeDir(`${APP}/src/lib/banto/reports`, 'lib/banto/reports 削除');
