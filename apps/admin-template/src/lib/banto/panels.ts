@@ -16,6 +16,13 @@
  */
 import type { FloatingWindowDef } from '@banto/dock-svelte';
 
+// i18n (ADR-0005, PR-B2): panel titles are deliberately LEFT as Japanese
+// literals. This module is evaluated at app startup and its titles are also
+// serialized into the persisted dock layout, so resolving them via a
+// module-eval `m['…']()` would (a) freeze to the English `baseLocale` before
+// locale.ts registers the `custom-banto` strategy, and (b) bake a locale into
+// saved layouts. Keying panel titles is a PR-B2b residual (needs a
+// locale-ready-safe + layout-migration-safe approach).
 export const PANEL_DEFS: FloatingWindowDef[] = [
 	{ id: 'monthly', title: '月別更新件数', icon: '📈', width: 420, height: 320 },
 	{ id: 'priceBuckets', title: '価格帯分布', icon: '🥧', width: 360, height: 320 },

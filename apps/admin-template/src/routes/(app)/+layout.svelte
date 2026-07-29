@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
+	import * as m from '$lib/paraglide/messages';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -78,7 +79,7 @@
 		<button
 			type="button"
 			class="overlay-backdrop"
-			aria-label="サイドバーを閉じる"
+			aria-label={m['shell.closeSidebar']()}
 			onclick={closeOverlay}
 		></button>
 	{/if}

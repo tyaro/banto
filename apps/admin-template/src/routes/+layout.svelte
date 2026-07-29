@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import * as m from '$lib/paraglide/messages';
 	import { bantoReady } from '$lib/banto/setup'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
 	import { initLocale } from '$lib/banto/locale'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
 	import { settings } from '$lib/settings.svelte';
@@ -17,7 +18,7 @@
 </script>
 
 {#await bantoReady}
-	<p class="banto-splash">起動中…</p>
+	<p class="banto-splash">{m['app.starting']()}</p>
 {:then}
 	{@render children()}
 	<ToastHost />

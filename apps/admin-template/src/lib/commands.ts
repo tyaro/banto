@@ -15,6 +15,7 @@
  */
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
+import * as m from '$lib/paraglide/messages';
 import { getAuthProvider, type PaletteCommand } from '@banto/admin-core';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
@@ -24,8 +25,8 @@ import { isAdmin } from './permissions';
 function navigationCommands(): PaletteCommand[] {
 	return navItems.map((item) => ({
 		id: `nav.${item.path}`,
-		title: item.label,
-		group: 'ナビゲーション',
+		title: m[item.labelKey](),
+		group: m['commandPalette.groupNavigation'](),
 		keywords: [item.path],
 		// Spec M10 RBAC: same condition as Sidebar.svelte's `visibleItems`
 		// (adminOnly entries hidden from non-admin roles).
@@ -36,42 +37,41 @@ function navigationCommands(): PaletteCommand[] {
 	}));
 }
 
-const THEME_GROUP = 'テーマ';
-
 function themeCommands(): PaletteCommand[] {
+	const themeGroup = m['commandPalette.groupTheme']();
 	return [
 		{
 			id: 'theme.mode.light',
-			title: 'ライトテーマにする',
-			group: THEME_GROUP,
+			title: m['commandPalette.themeLight'](),
+			group: themeGroup,
 			keywords: ['light', 'theme', '明るい'],
 			run: () => settings.setThemeMode('light')
 		},
 		{
 			id: 'theme.mode.dark',
-			title: 'ダークテーマにする',
-			group: THEME_GROUP,
+			title: m['commandPalette.themeDark'](),
+			group: themeGroup,
 			keywords: ['dark', 'theme', '暗い'],
 			run: () => settings.setThemeMode('dark')
 		},
 		{
 			id: 'theme.mode.system',
-			title: 'テーマをシステムに従う',
-			group: THEME_GROUP,
+			title: m['commandPalette.themeSystem'](),
+			group: themeGroup,
 			keywords: ['system', 'theme'],
 			run: () => settings.setThemeMode('system')
 		},
 		{
 			id: 'theme.preset.standard',
-			title: 'スタンダードプリセットにする',
-			group: THEME_GROUP,
+			title: m['commandPalette.presetStandard'](),
+			group: themeGroup,
 			keywords: ['standard', 'preset'],
 			run: () => settings.setThemePreset('standard')
 		},
 		{
 			id: 'theme.preset.glass',
-			title: 'ガラスプリセットにする',
-			group: THEME_GROUP,
+			title: m['commandPalette.presetGlass'](),
+			group: themeGroup,
 			keywords: ['glass', 'preset'],
 			run: () => settings.setThemePreset('glass')
 		}
@@ -82,8 +82,8 @@ function sessionCommands(): PaletteCommand[] {
 	return [
 		{
 			id: 'session.logout',
-			title: 'ログアウト',
-			group: 'セッション',
+			title: m['shell.logout'](),
+			group: m['commandPalette.groupSession'](),
 			keywords: ['logout', 'sign out'],
 			// Same condition as Header.svelte's logout button: hidden in
 			// login-not-required mode (spec M11 - there's no session to end).

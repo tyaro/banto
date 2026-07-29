@@ -19,6 +19,8 @@
 		type SortState
 	} from '@banto/grid-svelte';
 	import { createWindowedListResource } from '@banto/admin-core';
+	import * as m from '$lib/paraglide/messages';
+	import { gridMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
 
 	interface Props {
@@ -83,12 +85,13 @@
 	}
 </script>
 
-<p class="note">{windowed.totalCount.toLocaleString()}件のデータを表示しています。</p>
+<p class="note">{m['items.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
 
 <div class="grid-wrap">
 	<BantoGrid
 		mode="server"
 		state={gridState}
+		messages={gridMessages()}
 		rows={windowed.rows}
 		totalRows={windowed.totalCount}
 		{columns}

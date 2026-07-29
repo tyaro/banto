@@ -9,17 +9,22 @@
 	 * `prefers-reduced-motion`, since an infinitely-looping keyframe
 	 * animation should be removed, not merely made instantaneous.
 	 */
+	import * as m from '$lib/paraglide/messages';
+
 	interface Props {
 		label?: string;
 		lines?: number;
 	}
 
-	let { label = '読み込み中…', lines = 3 }: Props = $props();
+	let { label, lines = 3 }: Props = $props();
+	// Default the a11y label to the shared "loading" message when the caller
+	// passes none (i18n layer ②, ADR-0005); resolved lazily so it tracks locale.
+	const resolvedLabel = $derived(label ?? m['common.loading']());
 	const lineIndexes = $derived(Array.from({ length: lines }, (_, index) => index));
 </script>
 
 <div class="state" role="status" aria-live="polite">
-	<span class="visually-hidden">{label}</span>
+	<span class="visually-hidden">{resolvedLabel}</span>
 	<div class="skeleton-lines" aria-hidden="true">
 		{#each lineIndexes as index (index)}
 			<div class="skeleton-line" class:short={index === lines - 1}></div>
