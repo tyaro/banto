@@ -10,8 +10,11 @@
 		     sets a dynamic one, spec §5.3's pop-out windows). -->
 		<title>Banto</title>
 		<script>
-			// Apply the persisted theme + preset before first paint to avoid a
-			// flash. Storage keys must match src/lib/settings.svelte.ts.
+			// Apply the persisted theme + preset + locale before first paint to avoid a
+			// flash. Storage keys must match src/lib/settings.svelte.ts and
+			// src/lib/banto/locale.ts. Locale defaults to 'ja' (the effective
+			// default display locale; base/source locale is 'en') so a fresh tab
+			// renders exactly as before (ADR-0005 / i18n-plan §6.1).
 			(function () {
 				try {
 					var mode = localStorage.getItem('banto.theme') || 'system';
@@ -24,10 +27,13 @@
 					var density = localStorage.getItem('banto.density');
 					document.documentElement.dataset.bantoDensity =
 						density === 'compact' ? 'compact' : 'standard';
+					var locale = localStorage.getItem('banto.locale');
+					document.documentElement.lang = locale === 'en' || locale === 'ja' ? locale : 'ja';
 				} catch (_) {
 					document.documentElement.dataset.theme = 'light';
 					document.documentElement.dataset.bantoPreset = 'standard';
 					document.documentElement.dataset.bantoDensity = 'standard';
+					document.documentElement.lang = 'ja';
 				}
 			})();
 		</script>
