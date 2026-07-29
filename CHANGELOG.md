@@ -22,6 +22,49 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-30
+
+**v1.1.0 — V2 拡張テーマ（PostgreSQL アプリ全体対応 / i18n レイヤ② / コピー面積
+縮小）を完了。** [roadmap.md](docs/roadmap.md) §3 の v2 バックログ3テーマを実装。
+いずれも**後方互換**（既定は SQLite・表示ロケールは日本語のまま挙動 byte 等価、
+移設したサービスは再エクスポートで旧パス保持）のため minor リリース。以下は
+v1.0.0 以降のマージ分。
+
+### Added
+
+- **テーマA: PostgreSQL アプリ全体対応**（#106–#109）。サービス層を
+  `sqlx::SqlitePool` から `banto_storage::Db`（enum ディスパッチ）へ抽象化し、
+  `Dialect` で SQL 方言差（プレースホルダ・日付関数）を吸収。マイグレーションを
+  `migrations-sqlite/` + `migrations-postgres/` に方言分割し、`db::init_db_from_target`
+  が `BANTO_DB=postgres://…` で PostgreSQL 経路を選択（既定は SQLite で無改変）。
+  CI に実 `postgres:16` で app 層 CRUD を検証する `app-postgres` スモークを追加。
+  backup/restore は SQLite 専用として維持（Postgres ハンドルは明示エラー）。
+- **テーマB: i18n レイヤ②**（#110–#113, #75, [ADR-0005](docs/adr/0005-i18n-paraglide.md)）。
+  UI 多言語化ランタイムに **Paraglide JS (inlang)** を採用（ADR-0002 の意図的例外）。
+  app 層の可視文言を全キー化（`messages/{en,ja}.json`・英語一次）、設定画面に
+  言語切替 UI、ロケール解決/永続化を `locale.ts`（既存 provider 層に相乗り）。
+  既定表示は日本語で視覚回帰ゼロ。conventions §13 +「app 層に生の日本語リテラルなし」
+  の機械検査 `raw-jp-in-app` を追加。visual ベースライン手動再生成ワークフロー
+  `visual-baselines.yml` を追加。
+- M24 デモ配線（#74）: `@banto/charts` の積立エリア/ガントをダッシュボードデモに追加。
+- 保守者向け中核ドキュメントの英語版（#119）: `conventions.en.md` / `AGENTS.en.md` /
+  `recipes/add-resource.en.md` / ADR 各 `.en.md`（日本語一次・英語追随）。
+
+### Changed
+
+- **テーマC: コピー面積縮小**（#114–#117）。テンプレート採用者がコピー保守する
+  汎用サービス層を新クレート **`banto-admin-services`**（settings/audit/rbac/users/backup）
+  へ、汎用 REST ルータ（auth/users/audit/backups/ui_settings）を **`banto-server::routes`**
+  へ移設（約4,700行）。`admin-template-core` は再エクスポートで旧パスを保持し
+  REST/Tauri wiring は無改修、両経路対称（rule 8）は移設前と数値一致。依存方向
+  `admin-template-core → banto-server → banto-admin-services → banto-storage → banto-core`。
+  `items.rs`（デモ固有）は据え置き。
+- ドキュメント整合（#118）: V2 リファクタ後の canonical ドキュメント/コード doc
+  コメントを実装に合わせて更新（マイグレーションパス・DB 対応状況・クレート一覧・
+  移設サービスの所在・`SqlitePool`→`Db`）。
+- 依存更新（Dependabot・#47/#50/#55/#57/#59/#96/#97/#105）: vite / vite-plugin-svelte /
+  sha2 / npm・cargo minor-patch グループ / GitHub Actions 各種。
+
 ## [1.0.0] - 2026-07-28
 
 **v1.0.0 — 安定版リリース。** 仕様 M0〜M9 + ロードマップ M10〜M24 までの
