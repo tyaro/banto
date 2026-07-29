@@ -27,6 +27,7 @@
 		type PanelContent
 	} from '@banto/dock-svelte';
 	import { LayoutGrid, JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
+	import * as m from '$lib/paraglide/messages';
 	import type { Item } from '$lib/banto/sampleData';
 	import {
 		byCategory,
@@ -68,7 +69,7 @@
 	const topCategories = $derived(categoryCountsTop(list.rows, 5));
 
 	const yen = (n: number) => `¥${n.toLocaleString()}`;
-	const countLabel = (n: number) => `${n.toLocaleString()}件`;
+	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
 
 	/**
 	 * M8 dock demo (spec §5, @banto/dock-svelte): the default layout docks the
@@ -299,108 +300,104 @@
 
 <div class="page">
 	<PageHeader
-		title="ダッシュボード"
-		description={`商品データ ${list.totalCount.toLocaleString()} 件からの集計`}
+		title={m['nav.dashboard']()}
+		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
 	/>
 
 	<div class="stat-row">
 		<section class="stat-tile">
 			<span class="stat-icon" aria-hidden="true"><Package size={18} /></span>
 			<div class="stat-body">
-				<span class="stat-label">商品数</span>
+				<span class="stat-label">{m['dashboard.statCount']()}</span>
 				<span class="stat-value">{stats.count.toLocaleString()}</span>
 			</div>
 		</section>
 		<section class="stat-tile">
 			<span class="stat-icon" aria-hidden="true"><Warehouse size={18} /></span>
 			<div class="stat-body">
-				<span class="stat-label">在庫合計</span>
+				<span class="stat-label">{m['dashboard.statStockTotal']()}</span>
 				<div class="stat-value-row">
 					<span class="stat-value">{stats.stockTotal.toLocaleString()}</span>
-					<Sparkline values={monthCounts.map((m) => m.count)} width={72} height={24} />
+					<Sparkline values={monthCounts.map((mc) => mc.count)} width={72} height={24} />
 				</div>
 			</div>
 		</section>
 		<section class="stat-tile">
 			<span class="stat-icon" aria-hidden="true"><JapaneseYen size={18} /></span>
 			<div class="stat-body">
-				<span class="stat-label">平均価格</span>
+				<span class="stat-label">{m['dashboard.statAvgPrice']()}</span>
 				<span class="stat-value">{yen(stats.avgPrice)}</span>
 			</div>
 		</section>
 		<section class="stat-tile">
 			<span class="stat-icon" aria-hidden="true"><TriangleAlert size={18} /></span>
 			<div class="stat-body">
-				<span class="stat-label">在庫僅少（50未満）</span>
+				<span class="stat-label">{m['dashboard.statLowStock']()}</span>
 				<span class="stat-value">{stats.lowStockCount.toLocaleString()}</span>
 			</div>
 		</section>
 	</div>
 
 	<details class="about-demo">
-		<summary>このデモについて</summary>
-		<p class="note">
-			商品データ（{list.totalCount.toLocaleString()}件）から集計したダッシュボードです（M4）。折れ線・棒・円・散布図に加え、複合（棒+折れ線）・レーダー・ヒートマップ・ゲージも
-			@banto/charts
-			のSVGフルスクラッチ実装です（v2）。下部のドッキングレイアウトは@banto/dock-svelteによる分割・タブ化・ドラッグ再配置のデモです（M8）。ツールバーの「SPC」「トレンド」パネルはM13の追加機能（ヒストグラム・パレート図・箱ひげ図、SVGエクスポート、ズーム/パン・しきい値バンド・第2Y軸・ストリーミング更新）のデモです。
-		</p>
+		<summary>{m['dashboard.aboutSummary']()}</summary>
+		<p class="note">{m['dashboard.aboutNote']({ count: list.totalCount.toLocaleString() })}</p>
 	</details>
 
 	{#if list.loading && list.rows.length === 0}
-		<LoadingState label="商品データを読み込み中…" />
+		<LoadingState label={m['items.loadingData']()} />
 	{:else}
 		<div class="chart-grid">
 			<section class="card primary">
-				<h2>月別更新件数</h2>
-				<p class="card-caption">商品データの更新件数を月次で集計した推移です。</p>
+				<h2>{m['dashboard.monthlyTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.monthlyCaption']()}</p>
 				<LineChart
 					data={monthCounts}
 					x={(row) => row.month}
-					series={[{ id: 'count', label: '更新件数', y: (row) => row.count }]}
+					series={[{ id: 'count', label: m['dashboard.seriesUpdates'](), y: (row) => row.count }]}
 					area
-					label="月別更新件数の面グラフ"
+					label={m['dashboard.monthlyAria']()}
 					height={280}
 					formatY={(n) => n.toLocaleString()}
 				/>
 			</section>
 
 			<section class="card secondary">
-				<h2>カテゴリ別在庫</h2>
-				<p class="card-caption">カテゴリごとの在庫合計です。</p>
+				<h2>{m['dashboard.categoryStockTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.categoryStockCaption']()}</p>
 				<BarChart
 					data={categoryStock}
 					category={(row) => row.category}
-					series={[{ id: 'stock', label: '在庫', value: (row) => row.stock }]}
+					series={[{ id: 'stock', label: m['dashboard.seriesStock'](), value: (row) => row.stock }]}
 					horizontal
-					label="カテゴリ別在庫の横棒グラフ"
+					label={m['dashboard.categoryStockAria']()}
 					height={280}
 					formatValue={(n) => n.toLocaleString()}
 				/>
 			</section>
 
 			<section class="card secondary">
-				<h2>価格帯分布</h2>
-				<p class="card-caption">価格帯ごとの商品件数の内訳です。</p>
+				<h2>{m['dashboard.priceBucketTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.priceBucketCaption']()}</p>
 				<PieChart
 					data={buckets}
 					category={(row) => row.bucket}
 					value={(row) => row.count}
 					donut
-					label="価格帯分布のドーナツグラフ"
+					label={m['dashboard.priceBucketAria']()}
 					height={280}
 					formatValue={countLabel}
 				/>
 			</section>
 
 			<section class="card secondary">
-				<h2>価格×在庫</h2>
-				<p class="card-caption">商品ごとの価格と在庫の関係です（先頭500件）。</p>
+				<h2>{m['dashboard.scatterTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.scatterCaption']()}</p>
 				<ScatterChart
 					data={scatterRows}
 					x={(row) => row.price}
 					y={(row) => row.stock}
 					pointLabel={(row) => row.name}
-					label="価格と在庫の散布図"
+					label={m['dashboard.scatterAria']()}
 					height={280}
 					formatX={(v) => yen(Number(v))}
 					formatY={(v) => countLabel(Number(v))}
@@ -408,56 +405,58 @@
 			</section>
 		</div>
 
-		<h2 class="section-heading">チャート拡張（v2）</h2>
+		<h2 class="section-heading">{m['dashboard.chartsV2Heading']()}</h2>
 		<div class="chart-grid">
 			<section class="card primary">
-				<h2>月別更新件数と3ヶ月移動平均</h2>
-				<p class="card-caption">月次の更新件数に3ヶ月移動平均を重ねた複合グラフです。</p>
+				<h2>{m['dashboard.comboTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.comboCaption']()}</p>
 				<ComboChart
 					data={monthlyAvg}
 					x={(row) => row.month}
-					bars={[{ id: 'count', label: '更新件数', value: (row) => row.count }]}
-					lines={[{ id: 'avg3', label: '3ヶ月移動平均', y: (row) => row.avg3 }]}
-					label="月別更新件数と3ヶ月移動平均の複合グラフ"
+					bars={[{ id: 'count', label: m['dashboard.seriesUpdates'](), value: (row) => row.count }]}
+					lines={[{ id: 'avg3', label: m['dashboard.series3mAvg'](), y: (row) => row.avg3 }]}
+					label={m['dashboard.comboAria']()}
 					height={280}
 					formatY={(n) => n.toLocaleString()}
 				/>
 			</section>
 
 			<section class="card secondary">
-				<h2>曜日×月の更新件数</h2>
-				<p class="card-caption">直近12ヶ月の更新件数を曜日別に見たヒートマップです。</p>
+				<h2>{m['dashboard.heatmapTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.heatmapCaption']()}</p>
 				<Heatmap
 					data={weekdayHeat}
 					x={(row) => row.month}
 					y={(row) => row.weekday}
 					value={(row) => row.count}
-					label="曜日と月別の更新件数ヒートマップ"
+					label={m['dashboard.heatmapAria']()}
 					height={300}
 					formatValue={(n) => n.toLocaleString()}
 				/>
 			</section>
 
 			<section class="card secondary">
-				<h2>在庫充足率</h2>
-				<p class="card-caption">在庫合計 / 目標在庫（{yen(STOCK_TARGET)}）の比率です。</p>
+				<h2>{m['dashboard.gaugeTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.gaugeCaption']({ target: yen(STOCK_TARGET) })}</p>
 				<Gauge
 					value={stats.stockTotal}
 					max={STOCK_TARGET}
-					label="在庫充足率のゲージ"
+					label={m['dashboard.gaugeAria']()}
 					height={220}
 					formatValue={(n) => `${Math.round((n / STOCK_TARGET) * 100)}%`}
 				/>
 			</section>
 
 			<section class="card secondary">
-				<h2>上位カテゴリの商品数</h2>
-				<p class="card-caption">商品件数の多い上位5カテゴリの比較です。</p>
+				<h2>{m['dashboard.radarTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.radarCaption']()}</p>
 				<RadarChart
 					data={topCategories}
 					axis={(row) => row.category}
-					series={[{ id: 'count', label: '商品数', value: (row) => row.count }]}
-					label="上位カテゴリ別商品数のレーダーチャート"
+					series={[
+						{ id: 'count', label: m['dashboard.seriesProductCount'](), value: (row) => row.count }
+					]}
+					label={m['dashboard.radarAria']()}
 					height={280}
 					formatValue={(n) => n.toLocaleString()}
 				/>
@@ -466,12 +465,10 @@
 
 		<section class="workspace">
 			<h2 class="workspace-heading">
-				<LayoutGrid size={18} aria-hidden="true" />分析ワークスペース
+				<LayoutGrid size={18} aria-hidden="true" />{m['dashboard.workspaceHeading']()}
 			</h2>
-			<p class="workspace-caption">
-				ドッキングレイアウトのデモです（M8、@banto/dock-svelte）。タイトルバーやタブをドラッグしてパネルを分割・タブ化・再配置でき、ペイン中央にドロップするとタブ、端にドロップすると分割になります。タブを外側にドラッグするとフローティング化します。仕切りのドラッグでサイズ変更、レイアウトは自動保存されます。
-			</p>
-			<div class="dock-toolbar" role="toolbar" aria-label="ドックウィンドウ操作">
+			<p class="workspace-caption">{m['dashboard.workspaceCaption']()}</p>
+			<div class="dock-toolbar" role="toolbar" aria-label={m['dashboard.dockToolbarAria']()}>
 				{#each PANEL_DEFS as def (def.id)}
 					<button
 						type="button"
@@ -479,14 +476,16 @@
 						class:active={isPanelVisible(def.id)}
 						aria-pressed={isPanelVisible(def.id)}
 						disabled={isDocked(def.id)}
-						title={isDocked(def.id) ? 'ドック中のパネルは常に表示されます' : undefined}
+						title={isDocked(def.id) ? m['dashboard.dockedAlwaysVisible']() : undefined}
 						onclick={() => togglePanel(def.id)}
 					>
 						{def.icon}
 						{def.title}
 					</button>
 				{/each}
-				<button type="button" class="dock-reset" onclick={resetDockLayout}>リセット</button>
+				<button type="button" class="dock-reset" onclick={resetDockLayout}
+					>{m['dashboard.reset']()}</button
+				>
 			</div>
 			<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
 				<DockHost {dock} panel={dockPanel} {onPopOut} />

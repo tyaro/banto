@@ -21,12 +21,13 @@
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
+	import * as m from '$lib/paraglide/messages';
+	import { columnValidationMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
 	import { itemsSchema } from '$lib/banto/resources/items';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
 	import {
-		DEMO_MODE_MESSAGE as ITEMS_IMPORT_DEMO_MESSAGE,
 		exportCsvToFolder,
 		importItems,
 		isItemsImportAvailable,
@@ -58,12 +59,12 @@
 			// HeaderCell.svelte always renders its cell-body as role="button"
 			// (even for non-sortable columns like this one), so an empty header
 			// left it with no accessible name at all.
-			header: '操作',
+			header: m['items.colActions'](),
 			accessor: () => '',
 			width: 70,
 			resizable: false,
 			sortable: false,
-			cell: (row) => ({ text: '開く', href: `${base}/items/${row.id}` })
+			cell: (row) => ({ text: m['items.open'](), href: `${base}/items/${row.id}` })
 		},
 		{
 			id: 'id',
@@ -89,7 +90,10 @@
 				price: { width: 120, format: (value) => `¥${(value as number).toLocaleString()}` },
 				stock: { width: 100 },
 				updatedAt: { width: 140 }
-			}
+			},
+			// i18n layer ② (ADR-0005): feed the inline-edit validator the same
+			// Paraglide-backed messages the create/edit form uses.
+			messages: columnValidationMessages()
 		})
 	];
 
@@ -124,7 +128,7 @@
 		columnById('name'),
 		{
 			id: 'category',
-			header: 'カテゴリ',
+			header: m['items.groupCategory'](),
 			accessor: 'category',
 			width: 140,
 			filterable: true,
@@ -231,10 +235,10 @@
 
 		if (updated > 0) {
 			invalidate('items');
-			notify('success', `${updated}件更新しました`);
+			notify('success', m['items.updatedCount']({ count: updated }));
 		}
 		if (info.skipped > 0) {
-			notify('info', `${info.skipped}セルはスキップされました`);
+			notify('info', m['items.skippedCells']({ count: info.skipped }));
 		}
 	}
 
@@ -301,12 +305,15 @@
 				notify(
 					'success',
 					folderResult.opened
-						? `${result.rows.length}件をエクスポートしました: ${folderResult.path}`
-						: `${result.rows.length}件をエクスポートしました（${folderResult.path}）`
+						? m['items.exportedToPath']({ count: result.rows.length, path: folderResult.path })
+						: m['items.exportedToPathClosed']({
+								count: result.rows.length,
+								path: folderResult.path
+							})
 				);
 			} else {
 				downloadTextFile(csv, filename, 'text/csv;charset=utf-8');
-				notify('success', `${result.rows.length}件をエクスポートしました`);
+				notify('success', m['items.exported']({ count: result.rows.length }));
 			}
 		} catch (err) {
 			notify('error', isProviderError(err) ? err.message : String(err));
@@ -354,11 +361,12 @@
 
 	const importStatusLabel = $derived.by((): string => {
 		if (!importPreview) return '';
-		if (importPreview.missingRequired.length > 0) return '必須列が不足しています';
+		if (importPreview.missingRequired.length > 0) return m['items.importMissingRequired']();
 		if (importPreview.serverErrors && importPreview.serverErrors.length > 0)
-			return 'インポートに失敗しました';
-		if (importPreview.rows.some((row) => row.errors.length > 0)) return '確認が必要な行があります';
-		return 'インポート準備完了';
+			return m['items.importFailedShort']();
+		if (importPreview.rows.some((row) => row.errors.length > 0))
+			return m['items.importNeedsReview']();
+		return m['items.importReady']();
 	});
 
 	const REQUIRED_IMPORT_COLUMN_IDS = ['name', 'price', 'stock'] as const;
@@ -394,7 +402,7 @@
 		if (trimmed === '') return {};
 		const num = Number(trimmed);
 		if (!Number.isFinite(num) || !Number.isInteger(num)) {
-			return { error: '整数のIDを指定してください（新規作成する場合は空欄にしてください）' };
+			return { error: m['items.importIdInvalid']() };
 		}
 		return { id: num };
 	}
@@ -412,7 +420,7 @@
 	function buildImportPreview(fileName: string, text: string): ImportPreviewState | null {
 		const parsed = parseCsv(text);
 		if (parsed.length === 0) {
-			notify('error', 'CSVにデータがありません');
+			notify('error', m['items.csvEmpty']());
 			return null;
 		}
 		const [header, ...dataRows] = parsed;
@@ -457,7 +465,7 @@
 
 	function handleImportButtonClick(): void {
 		if (!isItemsImportAvailable()) {
-			notify('info', ITEMS_IMPORT_DEMO_MESSAGE);
+			notify('info', m['items.demoImportUnavailable']());
 			return;
 		}
 		importFileInput?.click();
@@ -499,9 +507,12 @@
 				// Rolled back server-side (all-or-nothing) - keep the preview open
 				// so the user can see exactly what to fix and retry.
 				importPreview = { ...importPreview, serverErrors: result.errors };
-				notify('error', `インポートに失敗しました（${result.errors.length}件のエラー）`);
+				notify('error', m['items.importFailedCount']({ count: result.errors.length }));
 			} else {
-				notify('success', `インポートしました（新規${result.created}件・更新${result.updated}件）`);
+				notify(
+					'success',
+					m['items.importSucceeded']({ created: result.created, updated: result.updated })
+				);
 				invalidate('items');
 				importPreview = null;
 			}
@@ -514,9 +525,9 @@
 </script>
 
 <div class="page">
-	<PageHeader title={resource.label} description="在庫と価格を管理します">
+	<PageHeader title={resource.label} description={m['items.description']()}>
 		{#snippet actions()}
-			<div class="mode-toggle" role="group" aria-label="表示モード切り替え">
+			<div class="mode-toggle" role="group" aria-label={m['items.modeToggleAria']()}>
 				<button
 					type="button"
 					class="banto-btn banto-btn--ghost"
@@ -524,7 +535,7 @@
 					aria-pressed={mode === 'client'}
 					onclick={() => (mode = 'client')}
 				>
-					クライアント
+					{m['items.modeClient']()}
 				</button>
 				<button
 					type="button"
@@ -533,20 +544,20 @@
 					aria-pressed={mode === 'server'}
 					onclick={() => (mode = 'server')}
 				>
-					サーバー
+					{m['items.modeServer']()}
 				</button>
 			</div>
 			<label class="group-by">
-				グループ化:
+				{m['items.groupByLabel']()}
 				<select
 					class="banto-input"
 					disabled={mode !== 'client'}
-					title={mode !== 'client' ? 'グループ化はクライアントモードのみ' : undefined}
+					title={mode !== 'client' ? m['items.groupByClientOnly']() : undefined}
 					onchange={handleGroupByChange}
 				>
-					<option value="">グループなし</option>
-					<option value="category">カテゴリ</option>
-					<option value="updatedAt">更新日</option>
+					<option value="">{m['items.groupNone']()}</option>
+					<option value="category">{m['items.groupCategory']()}</option>
+					<option value="updatedAt">{m['items.fieldUpdatedAt']()}</option>
 				</select>
 			</label>
 			<!-- M19 report demo (docs/report-plan.md §3.5, deletable per
@@ -560,7 +571,7 @@
 				onclick={() => goto(`${base}/items/report`)}
 			>
 				<FileText size={16} aria-hidden="true" />
-				日報
+				{m['items.report']()}
 			</button>
 			<button
 				type="button"
@@ -569,7 +580,7 @@
 				disabled={exporting}
 			>
 				<Download size={16} aria-hidden="true" />
-				{exporting ? 'エクスポート中…' : 'CSVエクスポート'}
+				{exporting ? m['items.exporting']() : m['items.exportCsv']()}
 			</button>
 			{#if canWrite}
 				<button
@@ -578,13 +589,13 @@
 					onclick={handleImportButtonClick}
 				>
 					<Upload size={16} aria-hidden="true" />
-					CSVインポート
+					{m['items.importCsv']()}
 				</button>
 				<input
 					class="file-input"
 					type="file"
 					accept=".csv,.txt"
-					aria-label="CSVインポート"
+					aria-label={m['items.importCsv']()}
 					bind:this={importFileInput}
 					onchange={handleImportFileChange}
 				/>
@@ -594,17 +605,13 @@
 					onclick={() => goto(`${base}/items/new`)}
 				>
 					<Plus size={16} aria-hidden="true" />
-					新規作成
+					{m['items.create']()}
 				</button>
 			{/if}
 		{/snippet}
 	</PageHeader>
 
-	<p class="note">
-		セル編集（ダブルクリック/Enter）・範囲選択・コピー&ペースト対応（M3）。「クライアント」は全件を一度に取得し、ソート/フィルタ/ページングをブラウザ側（BantoGrid）で行います。「サーバー」ではソート/フィルタ/ページングをDataProvider（単体ブラウザ=InMemory、Tauri/LANブラウザ=Rust+SQLite、REST/SSE経由）が実行し、行はスクロールに応じてブロック単位で遅延取得します（M5）。他クライアントの変更はSSE/Tauriイベント経由で自動反映されます（M6）。M5:
-		クライアントモードでグループ化・集計に対応（グループ化はクライアントモードのみ。サーバーモードでのグループ化は今後の対応予定です）。CSVエクスポート/インポート（M15）:
-		エクスポートは現在の表示モードのソート/フィルタを反映した全件をダウンロードします。インポートは編集者以上のみ利用でき、id列ありは更新・なしは新規作成として扱われます（1件でもエラーがあると全体がロールバックされます）。
-	</p>
+	<p class="note">{m['items.note']()}</p>
 
 	{#if importPreview}
 		<section class="import-panel import-panel--{importStatusVariant}">
@@ -614,46 +621,60 @@
 			</header>
 			{#if importPreview.missingRequired.length > 0}
 				<p class="panel-text">
-					CSVヘッダーに必須列がありません: {importPreview.missingRequired
-						.map(columnLabel)
-						.join('、')}
+					{m['items.importMissingRequiredDetail']({
+						columns: importPreview.missingRequired.map(columnLabel).join('、')
+					})}
 				</p>
 			{:else}
 				{@const errorRows = importPreview.rows.filter((row) => row.errors.length > 0)}
 				{@const createCount = importPreview.rows.filter((row) => row.id === undefined).length}
 				{@const updateCount = importPreview.rows.filter((row) => row.id !== undefined).length}
 				<p class="panel-text summary">
-					新規 {createCount}件 / 更新 {updateCount}件 / エラー {errorRows.length}件（全{importPreview
-						.rows.length}行）
+					{m['items.importSummary']({
+						create: createCount,
+						update: updateCount,
+						error: errorRows.length,
+						total: importPreview.rows.length
+					})}
 				</p>
 				{#if importPreview.ignoredHeaders.length > 0}
-					<p class="panel-text muted">無視される列: {importPreview.ignoredHeaders.join('、')}</p>
+					<p class="panel-text muted">
+						{m['items.importIgnored']({ columns: importPreview.ignoredHeaders.join('、') })}
+					</p>
 				{/if}
 				{#if errorRows.length > 0}
 					<ul class="error-list">
 						{#each errorRows.slice(0, 20) as row (row.csvLine)}
 							<li>
-								{row.csvLine}行目: {row.errors
-									.map((e) => formatCsvError(e.columnId, e.message))
-									.join(' / ')}
+								{m['items.importErrorLine']({
+									line: row.csvLine,
+									message: row.errors.map((e) => formatCsvError(e.columnId, e.message)).join(' / ')
+								})}
 							</li>
 						{/each}
 					</ul>
 					{#if errorRows.length > 20}
-						<p class="panel-text muted">他{errorRows.length - 20}件</p>
+						<p class="panel-text muted">
+							{m['items.importMore']({ count: errorRows.length - 20 })}
+						</p>
 					{/if}
 				{/if}
 				{#if importPreview.serverErrors}
-					<p class="panel-text">サーバーでの処理結果（すべてロールバックされました）:</p>
+					<p class="panel-text">{m['items.importServerRollback']()}</p>
 					<ul class="error-list">
 						{#each importPreview.serverErrors.slice(0, 20) as serverError, i (i)}
 							<li>
-								{importPreview.rows[serverError.row]?.csvLine ?? serverError.row + 2}行目: {serverError.message}
+								{m['items.importErrorLine']({
+									line: importPreview.rows[serverError.row]?.csvLine ?? serverError.row + 2,
+									message: serverError.message
+								})}
 							</li>
 						{/each}
 					</ul>
 					{#if importPreview.serverErrors.length > 20}
-						<p class="panel-text muted">他{importPreview.serverErrors.length - 20}件</p>
+						<p class="panel-text muted">
+							{m['items.importMore']({ count: importPreview.serverErrors.length - 20 })}
+						</p>
 					{/if}
 				{/if}
 			{/if}
@@ -666,7 +687,7 @@
 						importPreview.missingRequired.length > 0 ||
 						importPreview.rows.some((row) => row.errors.length > 0)}
 				>
-					{importSubmitting ? '実行中…' : 'インポート実行'}
+					{importSubmitting ? m['items.importRunning']() : m['items.importRun']()}
 				</button>
 				<button
 					type="button"
@@ -674,7 +695,7 @@
 					onclick={cancelImport}
 					disabled={importSubmitting}
 				>
-					キャンセル
+					{m['common.cancel']()}
 				</button>
 			</div>
 		</section>

@@ -7,6 +7,7 @@
  */
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FormSchema } from '@banto/forms';
+import * as m from '$lib/paraglide/messages';
 
 // Rust's ItemInput.price/.stock (apps/admin-template/core/src/items.rs) are
 // `i64`, so a fractional value must be rejected client-side too (not just
@@ -15,8 +16,17 @@ import type { FormSchema } from '@banto/forms';
 // validate.ts) runs required, then min/max, then this `validate` in that
 // order, so the built-in required/min/max checks still run first; this only
 // adds an extra integer check on top.
+//
+// i18n (ADR-0005, PR-B2): the custom validator resolves its message lazily at
+// call time (render/validation), so it is locale-correct. The resource `label`
+// and field `label`s below are deliberately LEFT as Japanese literals: this
+// resource-definition module is evaluated at app startup (initBanto), which
+// runs BEFORE locale.ts registers the `custom-banto` client strategy, so a
+// module-eval `m['…']()` here would freeze to the English `baseLocale`.
+// Wiring these three needs a locale-ready-safe mechanism (e.g. the packages
+// accepting label keys, or lazy resolution) — tracked as a PR-B2b residual.
 const integerValidate = (value: unknown): string | null =>
-	Number.isInteger(Number(value)) ? null : '整数で入力してください';
+	Number.isInteger(Number(value)) ? null : m['validation.integer']();
 
 export const itemsSchema: FormSchema = {
 	fields: [
