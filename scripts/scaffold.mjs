@@ -541,7 +541,7 @@ function removeReport() {
 		ITEMS,
 		'items ページの日報ボタン除去',
 		`\t\t\t<!-- M19 report demo`,
-		`\t\t\t\t日報\n\t\t\t</button>`
+		`\t\t\t\t{m['items.report']()}\n\t\t\t</button>`
 	);
 	removeDir(`${APP}/src/routes/(app)/items/report`, 'items/report ルート削除');
 	removeDir(`${APP}/src/lib/banto/reports`, 'lib/banto/reports 削除');

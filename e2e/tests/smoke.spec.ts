@@ -105,7 +105,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test.afterAll(async () => {
-		await page.close();
+		// Optional chaining: if beforeAll throws before `page` is assigned, an
+		// unguarded page.close() raises a TypeError here that masks the real
+		// failure cause (e.g. a missing Playwright browser).
+		await page?.close();
 	});
 
 	test('1. first-run setup creates the admin account and reaches the dashboard', async () => {

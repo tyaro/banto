@@ -39,6 +39,10 @@ track your task belongs to.**
 - **Add a CRUD resource / replace items** →
   [docs/recipes/add-resource.en.md](docs/recipes/add-resource.en.md) (the
   official checklist-form procedure).
+- **Drop the optional assets as a batch (dock/charts/glass/command
+  palette/attachments/reporting)** → `pnpm scaffold --preset
+minimal|standard|full` (`--interactive` / `--dry-run` available; the manual
+  steps live under "オプション資産の削除" in the Japanese README).
 - **Add / change a feature** → first read the invariants in
   [docs/conventions.en.md](docs/conventions.en.md), then decide whether to do
   it with the [template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題)
@@ -89,9 +93,9 @@ cargo audit         # dependency audit (with ignores from .cargo/audit.toml)
 
 Note: `src-tauri` cannot be compiled in this sandbox because webkit2gtk is
 absent. Changes on the Tauri command side are covered by code review +
-`tauri-check.yml` (which runs `cargo check -p admin-template` on ubuntu/windows
-for PRs that touch the Tauri side / dependency graph and on main pushes, plus a
-weekly schedule). CI (`.github/workflows/ci.yml`) runs the frontend / rust /
+`tauri-check.yml` (which runs `cargo check -p admin-template` +
+`cargo test -p admin-template` on ubuntu/windows for PRs that touch the Tauri
+side / dependency graph and on main pushes, plus a weekly schedule). CI (`.github/workflows/ci.yml`) runs the frontend / rust /
 e2e / audit jobs.
 
 ## Definition of Done (completion-report format for delegated tasks)
