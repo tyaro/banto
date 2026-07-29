@@ -1,0 +1,31 @@
+[package]
+name = "banto-admin-services"
+description = "Banto admin services: domain-agnostic service layer (RBAC role vocabulary, settings, audit log) shared by template adopters (docs/template-scope.md §7, theme C PR-C1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# PostgreSQL backend (V2 "PostgreSQL アプリ全体対応"). Off by default so the
+# crate stays SQLite-only in ordinary builds; enabling it forwards to
+# `banto-storage`'s Postgres backend and links sqlx's Postgres driver so the
+# `SettingsService`/`AuditLogService` enum-dispatch code's Postgres arms
+# compile. Same bridging shape as `banto-attachments`'s `postgres` feature.
+postgres = ["banto-storage/postgres", "sqlx/postgres"]
+
+[dependencies]
+banto-core = { workspace = true }
+# The services hold a backend-agnostic `banto_storage::Db` handle (theme A
+# enum), not a concrete `SqlitePool`. `banto-storage` is a lower-level
+# workspace crate (it depends only on `banto-core`), so this is a normal
+# downward dependency - this crate is meant to be depended ON by
+# `admin-template-core`, never the reverse (conventions §"逆依存禁止").
+banto-storage = { workspace = true, features = ["sqlite"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -14,7 +14,6 @@
 //! caching its *own* login token more securely than `sessionStorage`), which
 //! is an orthogonal concern from where the account database itself lives.
 
-use std::fmt;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
@@ -23,88 +22,22 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 const MIN_USERNAME_LEN: usize = 1;
 const MAX_USERNAME_LEN: usize = 32;
 const MIN_PASSWORD_LEN: usize = 8;
 
-/// Account role (spec M10 RBAC, `docs/roadmap.md`): three fixed levels,
-/// `viewer` < `editor` < `admin`, each a superset of the previous one's
-/// permissions. Stored as lowercase TEXT in the `users.role` column
-/// (migration `0004_user_roles.sql`, which also `CHECK`s the DB-side set of
-/// allowed values) and travels over the wire the same way (`#[serde(rename_all
-/// = "lowercase")]`), so this is the single place both the DB round-trip and
-/// the JSON wire shape agree on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    Admin,
-    Editor,
-    Viewer,
-}
-
-impl Role {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Admin => "admin",
-            Role::Editor => "editor",
-            Role::Viewer => "viewer",
-        }
-    }
-
-    /// Total order used by [`Role::at_least`]: `viewer` is the least
-    /// privileged, `admin` the most.
-    fn rank(&self) -> u8 {
-        match self {
-            Role::Viewer => 0,
-            Role::Editor => 1,
-            Role::Admin => 2,
-        }
-    }
-
-    /// Is this role at least as privileged as `min`? The core RBAC
-    /// predicate every role guard (REST middleware, Tauri's `require_role`)
-    /// is built on.
-    pub fn at_least(&self, min: Role) -> bool {
-        self.rank() >= min.rank()
-    }
-
-    /// `editor` or `admin` - resources' create/update/delete (spec M10:
-    /// "editor: + create/update/delete").
-    pub fn can_write_resources(&self) -> bool {
-        self.at_least(Role::Editor)
-    }
-
-    pub fn is_admin(&self) -> bool {
-        matches!(self, Role::Admin)
-    }
-}
-
-impl fmt::Display for Role {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Role {
-    type Err = BantoError;
-
-    /// Parses the lowercase DB/wire representation. Used both to read the
-    /// `role` TEXT column back out of SQLite and (in `admin-template-core::rest`)
-    /// to turn a bearer token's `Identity.role` string back into a typed
-    /// `Role` for the REST role-guard middleware. An unrecognized value is a
-    /// `BantoError::Other` (not `Validation`): it does not correspond to any
-    /// particular request field at either call site.
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "admin" => Ok(Role::Admin),
-            "editor" => Ok(Role::Editor),
-            "viewer" => Ok(Role::Viewer),
-            other => Err(BantoError::Other(format!("不明なロールです: {other}"))),
-        }
-    }
-}
+/// Account role (spec M10 RBAC): re-exported from `banto-admin-services`,
+/// where it moved in theme C PR-C1 (docs/template-scope.md §7). The moved
+/// `SettingsService.AuthSettings.disabled_role` needs `Role`, and settings
+/// moved ahead of `users` (移行順 ①), so the shared RBAC vocabulary had to
+/// drop below both in the dependency graph (conventions §"逆依存禁止"). This
+/// re-export keeps `admin_template_core::users::Role` resolving unchanged for
+/// the REST role-guard middleware and the Tauri `require_role` call sites;
+/// when `users` itself moves it can fold back in alongside this type. See
+/// `banto_admin_services::rbac` for the definition and its unit tests.
+pub use banto_admin_services::Role;
 
 fn password_too_short_message() -> String {
     "パスワードは8文字以上で入力してください".to_string()
@@ -957,46 +890,8 @@ mod tests {
         assert!(!verify_password("wrong", &hash));
     }
 
-    // --- Role -------------------------------------------------------------
-
-    #[test]
-    fn role_as_str_and_from_str_round_trip() {
-        for role in [Role::Admin, Role::Editor, Role::Viewer] {
-            assert_eq!(Role::from_str(role.as_str()).unwrap(), role);
-        }
-    }
-
-    #[test]
-    fn role_from_str_rejects_unknown_values() {
-        assert!(Role::from_str("superuser").is_err());
-    }
-
-    #[test]
-    fn role_at_least_orders_viewer_editor_admin() {
-        assert!(Role::Admin.at_least(Role::Admin));
-        assert!(Role::Admin.at_least(Role::Editor));
-        assert!(Role::Admin.at_least(Role::Viewer));
-        assert!(Role::Editor.at_least(Role::Editor));
-        assert!(Role::Editor.at_least(Role::Viewer));
-        assert!(!Role::Editor.at_least(Role::Admin));
-        assert!(Role::Viewer.at_least(Role::Viewer));
-        assert!(!Role::Viewer.at_least(Role::Editor));
-        assert!(!Role::Viewer.at_least(Role::Admin));
-    }
-
-    #[test]
-    fn can_write_resources_is_editor_and_above() {
-        assert!(Role::Admin.can_write_resources());
-        assert!(Role::Editor.can_write_resources());
-        assert!(!Role::Viewer.can_write_resources());
-    }
-
-    #[test]
-    fn is_admin_is_admin_only() {
-        assert!(Role::Admin.is_admin());
-        assert!(!Role::Editor.is_admin());
-        assert!(!Role::Viewer.is_admin());
-    }
+    // --- Role: unit tests moved to `banto_admin_services::rbac` alongside
+    //     the `Role` definition (theme C PR-C1). -----------------------------
 
     // --- M10 user management CRUD -----------------------------------------
 

@@ -1,16 +1,20 @@
 //! Audit trail service (spec M14, `docs/roadmap.md`): who did what, when,
 //! over which transport, and whether it was allowed. Backed by the
 //! `audit_log` table (migration `0005_audit_log.sql`), same service-layer
-//! pattern as [`crate::items::ItemsService`]/[`crate::users::UsersService`] -
-//! testable in a plain `cargo test`, no `tauri`/`axum` dependency.
+//! pattern as `admin_template_core::items::ItemsService` - testable in a
+//! plain `cargo test`, no `tauri`/`axum` dependency.
+//!
+//! Moved from `admin-template-core::audit` to this crate in theme C PR-C1
+//! (docs/template-scope.md §7 移行順 ①): the logic is domain-agnostic, so it
+//! belongs in the shared crate rather than in code every adopter copies.
 //!
 //! **This service does not know about actors, RBAC, or HTTP** - it only
 //! knows how to store/list/prune rows. Every REST handler and Tauri command
 //! that mutates state (or gets rejected by an RBAC guard) is responsible for
 //! building an [`AuditEntry`] itself and calling
-//! [`AuditLogService::record`] - see `crate::rest`'s and `src-tauri`'s
-//! `require_role`/`require_role_at_least` call sites for where the actor
-//! (`Identity`) and the REST/Tauri "origin" are known.
+//! [`AuditLogService::record`] - see `admin_template_core::rest`'s and
+//! `src-tauri`'s `require_role`/`require_role_at_least` call sites for where
+//! the actor (`Identity`) and the REST/Tauri "origin" are known.
 //!
 //! SECURITY: [`AuditEntry::detail`] is a JSON **summary** (spec: "値の全量は
 //! 入れない") - changed field NAMES, a new role, a method+path, etc. Nothing
@@ -74,8 +78,8 @@ pub struct AuditEntry<'a> {
 }
 
 /// Column whitelist for [`AuditLogService::list`] (spec M14, mirrors
-/// `crate::items::column_map`): wire field name (camelCase, as sent by the
-/// audit-log viewer) -> actual `audit_log` SQL column.
+/// `admin_template_core::items::column_map`): wire field name (camelCase, as
+/// sent by the audit-log viewer) -> actual `audit_log` SQL column.
 fn column_map() -> ColumnMap {
     ColumnMap::new()
         .column("id", "id")
@@ -175,8 +179,8 @@ impl AuditLogService {
 
     /// Filtered/sorted/paginated read (spec M14's admin-only viewer),
     /// same `banto_storage::list_query` pattern as
-    /// [`crate::items::ItemsService::list`]. Deliberately called only from
-    /// the admin-gated `/api/audit-log/list` route / `audit_log_list`
+    /// `admin_template_core::items::ItemsService::list`. Deliberately called
+    /// only from the admin-gated `/api/audit-log/list` route / `audit_log_list`
     /// command - this service itself has no RBAC awareness (see this
     /// module's doc comment).
     pub async fn list(&self, params: ListParams) -> Result<ListResult<AuditLogEntry>, BantoError> {
@@ -187,7 +191,8 @@ impl AuditLogService {
         const SELECT_COUNT: &str = "SELECT COUNT(*) FROM audit_log";
 
         // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
-        // `crate::items::ItemsService::list` (see that method's comment).
+        // `admin_template_core::items::ItemsService::list` (see that method's
+        // comment).
         match &self.db {
             Db::Sqlite(pool) => {
                 let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_ROWS);
@@ -366,13 +371,52 @@ impl AuditLogService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::migrate_memory;
     use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
     use serde_json::json;
 
+    /// An in-memory SQLite handle with the `audit_log` table + indexes
+    /// created inline. This crate owns no migrations (conventions §11: table
+    /// definitions belong to the app); the DDL below MUST be kept in sync
+    /// with `apps/admin-template/core/migrations-sqlite/0005_audit_log.sql`.
+    /// Same pattern `banto-attachments` uses to avoid a backwards dependency
+    /// on the app crate's `db::migrate_memory` (conventions §"逆依存禁止").
     async fn service() -> AuditLogService {
-        let pool = migrate_memory().await.expect("migrate_memory");
-        AuditLogService::new(pool)
+        let db = Db::connect_sqlite_memory()
+            .await
+            .expect("connect in-memory sqlite");
+        let pool = db
+            .as_sqlite()
+            .expect("service tests run on a SQLite handle");
+        sqlx::query(
+            "CREATE TABLE audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL DEFAULT (datetime('now')),
+                actor_username TEXT,
+                actor_role TEXT,
+                action TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                entity_id TEXT,
+                detail TEXT,
+                origin TEXT NOT NULL,
+                result TEXT NOT NULL DEFAULT 'ok'
+            )",
+        )
+        .execute(pool)
+        .await
+        .expect("create audit_log table");
+        sqlx::query("CREATE INDEX idx_audit_log_ts ON audit_log(ts)")
+            .execute(pool)
+            .await
+            .expect("create ts index");
+        sqlx::query("CREATE INDEX idx_audit_log_actor ON audit_log(actor_username)")
+            .execute(pool)
+            .await
+            .expect("create actor index");
+        sqlx::query("CREATE INDEX idx_audit_log_resource ON audit_log(resource, entity_id)")
+            .execute(pool)
+            .await
+            .expect("create resource index");
+        AuditLogService::new(db)
     }
 
     fn sample_entry<'a>(action: &'a str, resource: &'a str, actor: &'a str) -> AuditEntry<'a> {

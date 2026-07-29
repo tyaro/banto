@@ -100,7 +100,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'apps/admin-template/core/src',
 		'crates/banto-core/src',
 		'crates/banto-storage/src',
-		'crates/banto-attachments/src'
+		'crates/banto-attachments/src',
+		'crates/banto-admin-services/src'
 	];
 	for (const dir of dirs) {
 		for (const file of walk(dir, ['.rs'])) {

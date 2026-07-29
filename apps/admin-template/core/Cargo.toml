@@ -23,6 +23,7 @@ postgres = [
   "banto-storage/postgres",
   "sqlx/postgres",
   "banto-attachments/postgres",
+  "banto-admin-services/postgres",
 ]
 
 [dependencies]
@@ -33,6 +34,12 @@ banto-server = { workspace = true }
 # wires `AttachmentsService` into the REST router the same way it already
 # wires `ItemsService`/`BackupService`.
 banto-attachments = { workspace = true }
+# Theme C PR-C1 (docs/template-scope.md §7): the domain-agnostic settings /
+# audit services (and the shared `Role` vocabulary) live here now. This crate
+# re-exports them (`lib.rs`) so existing `admin_template_core::{settings,audit}`
+# / `admin_template_core::users::Role` paths keep resolving unchanged. Same
+# downward `workspace.dependencies` shape as `banto-storage`.
+banto-admin-services = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

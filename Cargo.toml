@@ -5,6 +5,7 @@ members = [
   "crates/banto-storage",
   "crates/banto-server",
   "crates/banto-attachments",
+  "crates/banto-admin-services",
   "apps/admin-template/core",
   "apps/admin-template/src-tauri",
 ]
@@ -60,3 +61,4 @@ banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }
 banto-attachments = { path = "crates/banto-attachments" }
+banto-admin-services = { path = "crates/banto-admin-services" }

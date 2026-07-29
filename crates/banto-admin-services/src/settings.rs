@@ -2,6 +2,11 @@
 //! `key`/`value` table in the local SQLite settings DB, plus a typed view
 //! over the embedded-server settings (spec §11.4's LAN-access toggle +
 //! bind/port fields).
+//!
+//! Moved from `admin-template-core::settings` to this crate in theme C PR-C1
+//! (docs/template-scope.md §7 移行順 ①): the logic is domain-agnostic
+//! (identical for any app regardless of which resources it has), so it
+//! belongs in the shared crate rather than in code every adopter copies.
 
 use std::str::FromStr;
 
@@ -9,7 +14,7 @@ use banto_core::{BantoError, FieldError};
 use banto_storage::Db;
 use serde::{Deserialize, Serialize};
 
-use crate::users::Role;
+use crate::rbac::Role;
 
 const KEY_SERVER_ENABLED: &str = "server.enabled";
 const KEY_SERVER_BIND: &str = "server.bind";
@@ -156,7 +161,7 @@ impl Default for AuthSettings {
 /// no configuration at all.
 ///
 /// `Deserialize` (in addition to `Serialize`) is needed from M14 Phase B: the
-/// REST layer's `PUT /api/audit-log/config` (`crate::rest::audit_config_apply`)
+/// REST layer's `PUT /api/audit-log/config` (`admin_template_core::rest::audit_config_apply`)
 /// decodes the request body straight into this type rather than a bespoke
 /// request struct - it is a plain two-field settings value with no fields
 /// that must never round-trip over the wire (unlike `AuthSettings`, which
@@ -179,8 +184,8 @@ impl Default for AuditSettings {
 
 /// Generic key/value settings store, backed by the `settings` table
 /// (migration `0002_settings.sql`). Shares the same sqlite pool as
-/// [`crate::items::ItemsService`] (spec §12.1: app settings live in the
-/// local SQLite settings DB alongside/instead of a separate file).
+/// `admin_template_core::items::ItemsService` (spec §12.1: app settings live
+/// in the local SQLite settings DB alongside/instead of a separate file).
 ///
 /// `Clone` is cheap (`Db` is an `Arc`-backed connection handle), matching
 /// `ItemsService`/`UsersService` - needed since M12, when the REST layer's
@@ -462,11 +467,25 @@ impl SettingsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::migrate_memory;
 
+    /// An in-memory SQLite handle with the `settings` table created inline.
+    /// This crate owns no migrations (conventions §11: table definitions
+    /// belong to the app); the DDL below MUST be kept in sync with
+    /// `apps/admin-template/core/migrations-sqlite/0002_settings.sql`. Same
+    /// pattern `banto-attachments` uses to avoid a backwards dependency on
+    /// the app crate's `db::migrate_memory` (conventions §"逆依存禁止").
     async fn service() -> SettingsService {
-        let pool = migrate_memory().await.expect("migrate_memory");
-        SettingsService::new(pool)
+        let db = Db::connect_sqlite_memory()
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(
+                db.as_sqlite()
+                    .expect("service tests run on a SQLite handle"),
+            )
+            .await
+            .expect("create settings table");
+        SettingsService::new(db)
     }
 
     #[tokio::test]
