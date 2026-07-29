@@ -33,7 +33,7 @@
     "jsdom": "^29.0.0",
     "svelte": "^5.30.0",
     "svelte-check": "^4.2.0",
-    "typescript": "^5.8.0",
+    "typescript": "^7.0.2",
     "vite": "^6.3.0",
     "vitest": "^3.0.0"
   }
