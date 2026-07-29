@@ -9,13 +9,15 @@
 	import {
 		BarChart,
 		ComboChart,
+		GanttChart,
 		Gauge,
 		Heatmap,
 		LineChart,
 		PieChart,
 		RadarChart,
 		ScatterChart,
-		Sparkline
+		Sparkline,
+		StackedAreaChart
 	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import {
@@ -32,10 +34,13 @@
 	import {
 		byCategory,
 		categoryCountsTop,
+		categoryTrendByMonth,
 		computeStatTiles,
+		inventorySchedule,
 		monthlyWithMovingAvg,
 		priceBuckets,
 		scatterSample,
+		type MonthCategoryCount,
 		updatesByMonth,
 		weekdayMonthHeat
 	} from '$lib/banto/dashboard';
@@ -68,8 +73,20 @@
 	const weekdayHeat = $derived(weekdayMonthHeat(list.rows));
 	const topCategories = $derived(categoryCountsTop(list.rows, 5));
 
+	// M24 chart types (spec §6.1, roadmap.md M24): stacked area (積立エリア), Gantt.
+	const categoryTrend = $derived(categoryTrendByMonth(list.rows));
+	const schedule = $derived(inventorySchedule(list.rows));
+
 	const yen = (n: number) => `¥${n.toLocaleString()}`;
 	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
+	// UTC getters (not toLocaleDateString): the schedule's dates are UTC
+	// midnight `YYYY-MM-DD` instants (see dashboard.ts inventorySchedule), and
+	// a locale-dependent format would make the visual regression snapshot
+	// unstable across environments.
+	const formatGanttDate = (ms: number) => {
+		const d = new Date(ms);
+		return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+	};
 
 	/**
 	 * M8 dock demo (spec §5, @banto/dock-svelte): the default layout docks the
@@ -459,6 +476,37 @@
 					label={m['dashboard.radarAria']()}
 					height={280}
 					formatValue={(n) => n.toLocaleString()}
+				/>
+			</section>
+		</div>
+
+		<h2 class="section-heading">{m['dashboard.chartsM24Heading']()}</h2>
+		<div class="chart-grid">
+			<section class="card">
+				<h2>{m['dashboard.categoryTrendTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.categoryTrendCaption']()}</p>
+				<StackedAreaChart
+					data={categoryTrend.rows}
+					x={(row) => row.month}
+					series={categoryTrend.categories.map((c) => ({
+						id: c,
+						label: c,
+						y: (row: MonthCategoryCount) => row.values[c] ?? 0
+					}))}
+					label={m['dashboard.categoryTrendAria']()}
+					height={280}
+					formatY={(n) => n.toLocaleString()}
+				/>
+			</section>
+
+			<section class="card">
+				<h2>{m['dashboard.scheduleTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.scheduleCaption']()}</p>
+				<GanttChart
+					tasks={schedule.tasks}
+					label={m['dashboard.scheduleAria']()}
+					today={schedule.today}
+					formatDate={formatGanttDate}
 				/>
 			</section>
 		</div>

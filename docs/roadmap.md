@@ -505,7 +505,30 @@ items 一覧の name/price/stock/updatedAt 列を導出ベースへ書き換え�
   （テーマトークンのみ、verify:architecture 緑）。
 - **デモ配線は別途**: ダッシュボードのデモは visual regression でスナップショット
   されており、ベースライン再生成が必要なため、本追加はコンポーネント/コア/
-  テスト/エクスポートに留めた（ダッシュボードへの組み込みは別 PR）。
+  テスト/エクスポートに留めた（ダッシュボードへの組み込みは下記の別 PR）。
+
+**デモ配線（2026-07-22）**:
+
+- `apps/admin-template` のダッシュボードに「チャート拡張（M24）」セクションを
+  追加（`routes/(app)/dashboard/+page.svelte`）。既存の `.card`/`.chart-grid`
+  を流用し新規 CSS なし、`.primary`/`.secondary` を付けずフル幅で 1 枚ずつ
+  並べる（積立エリアは月次で点数が多く、ガントは時間軸が横に広いため、
+  4/12 カラムではどちらも潰れる）。
+- データ生成は `src/lib/banto/dashboard.ts` の純関数 2 本:
+  `categoryTrendByMonth`（積立エリア＝上位カテゴリ別更新件数の月次積み上げ、
+  欠測を 0 で埋めて面の破綻を防ぐ）/ `inventorySchedule`（ガント＝棚卸し工程の
+  見立てタスクと「今日」マーカー）。どちらも壁時計（`Date.now()` / 引数なし
+  `new Date()`）を使わず、`updatesByMonth` が返すデータセット由来の月リスト
+  だけからタイムラインを組む — visual regression が実行日に依存しないため。
+  `formatDate` も `toLocaleDateString()` 既定ではなく UTC ゲッタで明示指定。
+- ドックパネル定義（`panels.ts`）と `DashboardPanel.svelte` は変更していない
+  （保存済みドックレイアウトを壊さない）。
+- **ベースライン再生成が必要**: ダッシュボードの全 12 スナップショットが差し替え
+  になる。ベースラインは Linux 生成のみ（`-linux.png`）なので、Windows/macOS の
+  作業機では `--update-snapshots` を実行してはいけない（`-win32`/`-darwin` が
+  併存して増えるだけ）。手動ワークフロー
+  `.github/workflows/visual-baselines.yml` を対象ブランチで dispatch して
+  ubuntu-latest 上で再生成する。
 
 ## 3. v2 / 将来構想バックログ
 

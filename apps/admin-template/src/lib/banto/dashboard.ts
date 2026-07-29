@@ -5,6 +5,7 @@
  * them into `+page.svelte` (no dedicated Vitest suite for this app-level
  * glue - the chart math itself is covered in @banto/charts).
  */
+import type { GanttTask } from '@banto/charts';
 import type { Item } from './sampleData';
 
 export interface StatTiles {
@@ -285,4 +286,145 @@ export function seedTrendPoints(count: number, random: () => number = Math.rando
 		points.push(prev);
 	}
 	return points;
+}
+
+// --- M24 chart demo data (roadmap.md M24: 積立エリア / ガント) ---
+
+export interface MonthCategoryCount {
+	/** `YYYY-MM`. */
+	month: string;
+	/** カテゴリ名 -> その月の更新件数。上位カテゴリのみを持ち、欠測は 0 で埋める。 */
+	values: Record<string, number>;
+}
+
+export interface StackedCategoryTrend {
+	/** 積立の系列順（＝上位カテゴリを件数降順）。 */
+	categories: string[];
+	rows: MonthCategoryCount[];
+}
+
+const STACKED_TREND_TOP_N = 4;
+const STACKED_TREND_MONTHS = 12;
+
+/**
+ * §6.1 StackedAreaChart demo data (M24): 上位 `topN` カテゴリの更新件数を、
+ * 直近 `months` ヶ月にわたって月次で積み上げる。上位カテゴリの選定は
+ * `categoryCountsTop`（件数降順）を再利用し、月の窓は `weekdayMonthHeat` と
+ * 同じ「直近Nヶ月のみ」（`updatesByMonth` の末尾を切り出す）。積立エリアは
+ * 面の上端がその月までの累積値を表すため、欠測（あるカテゴリがその月に
+ * 1件も更新されない）を undefined のまま残すと面のトップ境界が不連続に
+ * 落ち込みグラフが破綻する — 全 (month × 上位カテゴリ) の組み合わせを先に
+ * 0 で初期化してから加算する。系列数の既定を4に絞るのは `byCategory` の
+ * doc コメントにある「8色スロットは SERIES 数の制約であって bar 数の制約
+ * ではない」という区別に従ったもの: 積立エリアは各カテゴリが専用の色を持つ
+ * "系列" なので、8色スロットに余裕を持って収まる数（4）を既定にした。
+ */
+export function categoryTrendByMonth(
+	items: Item[],
+	topN: number = STACKED_TREND_TOP_N,
+	months: number = STACKED_TREND_MONTHS
+): StackedCategoryTrend {
+	const categories = categoryCountsTop(items, topN).map((c) => c.category);
+	const lastMonths = updatesByMonth(items)
+		.map((m) => m.month)
+		.slice(-months);
+
+	const rows: MonthCategoryCount[] = lastMonths.map((month) => ({
+		month,
+		values: Object.fromEntries(categories.map((c) => [c, 0]))
+	}));
+	const rowByMonth = new Map(rows.map((row) => [row.month, row]));
+	const categorySet = new Set(categories);
+	const monthSet = new Set(lastMonths);
+
+	for (const item of items) {
+		const cat = categoryOf(item.name);
+		if (!categorySet.has(cat)) continue;
+		const month = item.updatedAt.slice(0, 7);
+		if (!monthSet.has(month)) continue;
+		rowByMonth.get(month)!.values[cat] += 1;
+	}
+
+	return { categories, rows };
+}
+
+export interface InventorySchedule {
+	tasks: GanttTask[];
+	/** GanttChart の `today` にそのまま渡す固定インスタント（`YYYY-MM-DD`）。tasks が空のときは undefined。 */
+	today?: string;
+}
+
+const SCHEDULE_MONTHS = 6;
+const SCHEDULE_TASK_LABELS = [
+	'棚卸準備',
+	'実地棚卸',
+	'差異調査',
+	'価格改定',
+	'レポート作成'
+] as const;
+
+/**
+ * §6.1 GanttChart demo data (M24): 棚卸し工程の見立てタスクを、データセット
+ * から導出した固定タイムライン上に配置する。壁時計（`Date.now()` / 引数なし
+ * `new Date()`）は絶対に使わない — ビジュアル回帰スナップショットは実行日に
+ * 依存すると壊れてしまう（sampleData.ts の `updatedAt` は固定シード PRNG +
+ * 固定の `UPDATED_AT_END` 基準日から生成済みなので、ここでも同様に
+ * `updatesByMonth` の集計結果という「データセット由来の値」だけからタイム
+ * ラインを組み、`Date` は文字列組み立てにも一切使わない）。直近
+ * `SCHEDULE_MONTHS` ヶ月の月初（`YYYY-MM-DD`、日付ライブラリを使わない
+ * 単純な文字列連結）を基準点に、5つの工程を月をまたいで少しずつ重なる形で
+ * 配置する。`today` マーカーはその窓のちょうど中ほどの月初にする（tasks と
+ * 同じ月リストから導出するので、必ず tasks の期間内に収まる）。データセットの
+ * 月数が `SCHEDULE_MONTHS` 未満でも配列外参照しないよう、月インデックスは
+ * 末尾でクランプする。items が空（月リストが空）のときは tasks・today とも
+ * 空/undefined。
+ */
+export function inventorySchedule(items: Item[]): InventorySchedule {
+	const months = updatesByMonth(items)
+		.map((m) => m.month)
+		.slice(-SCHEDULE_MONTHS);
+	if (months.length === 0) return { tasks: [] };
+
+	const at = (i: number) => months[Math.min(i, months.length - 1)];
+	const day = (month: string, d: number) => `${month}-${String(d).padStart(2, '0')}`;
+
+	const tasks: GanttTask[] = [
+		{
+			id: 'prep',
+			label: SCHEDULE_TASK_LABELS[0],
+			start: day(at(0), 1),
+			end: day(at(0), 15),
+			progress: 1
+		},
+		{
+			id: 'count',
+			label: SCHEDULE_TASK_LABELS[1],
+			start: day(at(0), 10),
+			end: day(at(1), 5),
+			progress: 1
+		},
+		{
+			id: 'review',
+			label: SCHEDULE_TASK_LABELS[2],
+			start: day(at(1), 1),
+			end: day(at(2), 15),
+			progress: 0.6
+		},
+		{
+			id: 'reprice',
+			label: SCHEDULE_TASK_LABELS[3],
+			start: day(at(2), 10),
+			end: day(at(3), 20),
+			progress: 0.3
+		},
+		{
+			id: 'report',
+			label: SCHEDULE_TASK_LABELS[4],
+			start: day(at(4), 1),
+			end: day(at(5), 15)
+		}
+	];
+
+	const today = day(at(Math.floor(months.length / 2)), 1);
+	return { tasks, today };
 }
