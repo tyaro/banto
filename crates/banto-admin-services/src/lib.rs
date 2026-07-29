@@ -11,8 +11,11 @@
 //! [`users`] (`UsersService`, M10 RBAC), the RBAC-central service with the
 //! most REST/Tauri test coverage. It uses the same [`Role`], which was left
 //! in place in [`rbac`] and re-exported from [`users`] (minimal churn - the
-//! type did not need to move again now that both live in this crate).
-//! `backup` and the REST router move in later PRs.
+//! type did not need to move again now that both live in this crate). PR-C3
+//! (§7 移行順 ③) adds [`backup`] (`BackupService`, M17), the I/O-heavy
+//! (`VACUUM INTO`/`PRAGMA`/startup file-swap) SQLite-only service; it stays
+//! SQLite-only (theme A PR4: a Postgres handle yields an explicit error, never
+//! a panic). The REST router moves in a later PR.
 //!
 //! Like every Banto service (conventions §2), the services here take a
 //! `banto_storage::Db` handle, return `Result<_, banto_core::BantoError>`,
@@ -28,6 +31,7 @@
 //! `banto-attachments` uses to avoid a backwards dependency on the app crate.
 
 pub mod audit;
+pub mod backup;
 pub mod rbac;
 pub mod settings;
 pub mod users;

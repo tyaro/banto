@@ -44,8 +44,6 @@ use serde::Serialize;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, SqliteConnection, SqlitePool};
 
-use crate::db::iso_date_from_days_since_epoch;
-
 const BACKUPS_DIR_NAME: &str = "backups";
 const PENDING_RESTORE_FILE_NAME: &str = "restore-pending.sqlite3";
 
@@ -124,9 +122,32 @@ fn backup_unsupported_on_postgres() -> BantoError {
     )
 }
 
+/// Days-since-epoch (1970-01-01) -> `YYYY-MM-DD`, using Howard Hinnant's
+/// `civil_from_days` algorithm (http://howardhinnant.github.io/date_algorithms.html).
+/// No date/time crate dependency for one small conversion (ADR-0002: no new
+/// external crate anywhere in this workspace - see the root `Cargo.toml`).
+///
+/// Duplicated from `admin-template-core::db`'s seed-data generator rather than
+/// depended on across the crate boundary: this crate must not depend back on
+/// the app crate (conventions §"逆依存禁止"), the same reason its service tests
+/// re-state table DDL inline instead of calling `db::migrate_memory`.
+fn iso_date_from_days_since_epoch(days: i64) -> String {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 /// `SystemTime` -> `"YYYY-MM-DD HH:MM:SS"` (UTC), using the same
-/// dependency-free date algorithm as `crate::db`'s seed-data generator - no
-/// `chrono`/`time` crate anywhere in this workspace (see the root
+/// dependency-free date algorithm as [`iso_date_from_days_since_epoch`] above -
+/// no `chrono`/`time` crate anywhere in this workspace (see the root
 /// `Cargo.toml`), so this is the one small conversion routine rather than
 /// pulling one in just for this.
 fn iso_datetime_from_system_time(time: SystemTime) -> String {
@@ -713,10 +734,41 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    /// A migrated, on-disk (NOT `:memory:`) SQLite pool at `path`. Every
-    /// fixture in this module that needs a pool `VACUUM INTO` will actually
-    /// export data from MUST use this, not `crate::db::migrate_memory`/
-    /// `init_db_memory` - empirically, `VACUUM INTO` against a `:memory:`
+    /// Create the tables [`validate_sqlite_file`] requires ([`REQUIRED_TABLES`])
+    /// inline, with the columns the tests below insert into. This crate owns no
+    /// migrations (conventions §11: table definitions belong to the app); the
+    /// DDL below mirrors the required-table subset of
+    /// `apps/admin-template/core/migrations-sqlite/` and MUST be kept in sync
+    /// with it. Same pattern the other service tests in this crate (see
+    /// `settings`/`audit`) use to avoid a backwards dependency on the app
+    /// crate's `db::migrate_memory` (conventions §"逆依存禁止").
+    async fn create_required_tables(pool: &SqlitePool) {
+        for ddl in [
+            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, \
+             price INTEGER NOT NULL, stock INTEGER NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, \
+             display_name TEXT NOT NULL, \
+             created_at TEXT NOT NULL DEFAULT (datetime('now')), \
+             updated_at TEXT NOT NULL DEFAULT (datetime('now')))",
+            "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             ts TEXT NOT NULL DEFAULT (datetime('now')), actor_username TEXT, \
+             actor_role TEXT, action TEXT NOT NULL, resource TEXT NOT NULL, \
+             entity_id TEXT, detail TEXT, origin TEXT NOT NULL, \
+             result TEXT NOT NULL DEFAULT 'ok')",
+        ] {
+            sqlx::query(ddl)
+                .execute(pool)
+                .await
+                .expect("create required table");
+        }
+    }
+
+    /// An on-disk (NOT `:memory:`) SQLite pool at `path` with the required
+    /// tables created inline. Every fixture in this module that needs a pool
+    /// `VACUUM INTO` will actually export data from MUST use this, not an
+    /// in-memory pool - empirically, `VACUUM INTO` against a `:memory:`
     /// connection returns `Ok` but silently writes no file at all (verified
     /// against this workspace's bundled SQLite 3.46 with a standalone
     /// repro), even though `:memory:` is fine for every OTHER service in
@@ -726,11 +778,8 @@ mod tests {
         let pool = banto_storage::connect_sqlite(path)
             .await
             .expect("connect_sqlite");
-        sqlx::migrate!("./migrations-sqlite")
-            .run(&pool)
-            .await
-            .expect("migrate");
-        // Force the migration's schema writes out of the WAL and into the
+        create_required_tables(&pool).await;
+        // Force the schema writes out of the WAL and into the
         // main file, so a plain `tokio::fs::read(path)` afterward (as every
         // test fixture below does, to get "the bytes of a valid backup"
         // without going through `VACUUM INTO`) sees the real schema instead
@@ -981,10 +1030,7 @@ mod tests {
         // A real "current" db on disk, distinguishable from the restore
         // payload by row content.
         let pool = banto_storage::connect_sqlite(&db_path).await.unwrap();
-        sqlx::migrate!("./migrations-sqlite")
-            .run(&pool)
-            .await
-            .unwrap();
+        create_required_tables(&pool).await;
         sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (1, 'OLD', 1, 1, '2026-01-01')")
             .execute(&pool)
             .await
