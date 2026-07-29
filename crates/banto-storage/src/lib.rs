@@ -12,11 +12,15 @@
 //! - [`postgres`] (feature `postgres`): PostgreSQL connection helper (pooled,
 //!   `postgres://` URL, database pre-provisioned - spec §12.1).
 //!
-//! PostgreSQL/TimescaleDB support (feature `postgres`) currently covers
-//! `list_query`'s `Postgres` instantiation and the connection helper above;
-//! the app service layer (`apps/admin-template/core`) remains SQLite-only by
-//! design (spec §12.1/§548) - this crate is Postgres-connectable, but no
-//! Postgres-backed resource is wired up yet.
+//! PostgreSQL support (feature `postgres`) covers `list_query`'s `Postgres`
+//! instantiation, the connection helper above, and - since V2 "PostgreSQL
+//! アプリ全体対応" - the whole app service layer: services take a `Db` handle
+//! rather than a concrete pool, and `apps/admin-template/core`'s
+//! `init_db_from_target` opens a Postgres backend for a `postgres://` target
+//! and runs the `migrations-postgres/` set, so the app runs end-to-end on
+//! PostgreSQL (spec §12.1). Backup/restore stays SQLite-only (a Postgres
+//! handle yields an explicit error, `banto-admin-services`). TimescaleDB
+//! hypertables / `time_bucket` aggregation remain future work.
 //!
 //! No `sqlx::query!`/`query_as!` compile-time macros are used anywhere in
 //! this crate - only runtime queries, so building never requires a

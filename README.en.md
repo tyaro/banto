@@ -3,7 +3,8 @@
 Banto is a full-stack admin framework/template for **Tauri v2 + SvelteKit**
 (Svelte 5 runes). It pairs a refine-like headless core with a custom data
 grid, schema-driven forms, charts, and a docking layout. The backend is Rust
-(axum + sqlx SQLite). It runs as a desktop app, and — via an embedded web
+(axum + sqlx; SQLite by default, PostgreSQL supported). It runs as a desktop
+app, and — via an embedded web
 server — can serve the same UI to browsers on the local network. The name
 comes from _banto_, the senior clerk who ran an Edo-period merchant house on
 the owner's behalf.
@@ -39,8 +40,11 @@ the owner's behalf.
   auto-login / no-login mode.
 - **CSV/Excel import & export**, a command palette (Ctrl+K), and SQLite
   backup/restore.
-- **v1 supports SQLite only** — PostgreSQL support in `banto-storage` exists
-  only as a feature flag and is not yet implemented.
+- **Databases: SQLite (default) and PostgreSQL.** V2 made the whole app
+  runnable on PostgreSQL too (`banto-storage`'s `Db`/`Dialect` dialect
+  abstraction plus per-dialect migrations); point `banto-serve`'s `BANTO_DB`
+  env var at a `postgres://` URL to use it (default is local SQLite).
+  Backup/restore is SQLite-only (PostgreSQL returns an explicit error).
 - Optional, removable extension packages: reporting/print
   (`@banto/report`), attachment/image management (`@banto/attachments`),
   and barcode/QR scanner input (`@banto/scan-wedge`) — each ships with demo
@@ -64,7 +68,8 @@ walkthrough):
 
 1. `apps/admin-template/src/lib/banto/resources/items.ts` — resource
    definition and schema
-2. `apps/admin-template/core/migrations/0001_items.sql` — table definition
+2. `apps/admin-template/core/migrations-sqlite/0001_items.sql` — table
+   definition (PostgreSQL version in `migrations-postgres/0001_items.sql`)
 3. `apps/admin-template/core/src/items.rs` — service layer (CRUD)
 
 To turn this template into your own app (rename identifiers, replace the

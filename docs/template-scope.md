@@ -43,9 +43,10 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | `@banto/forms` | スキーマ駆動フォーム | CRUD の入力側の中核 |
 | `@banto/theme` | 明暗テーマ・CSS変数 | 全UIの土台 |
 | `crates/banto-core` | サービス/リポジトリ trait・ListParams・エラー型 | Rust側の共通語彙 |
-| `crates/banto-storage` | sqlx SQLite リポジトリ・list_query | 永続化の標準経路 |
-| `crates/banto-server` | axum 組み込みサーバ（REST・認証・静的配信） | LAN形態の成立条件 |
-| `admin-template-core` | サービス層 + REST（Tauri と二経路で同一判定） | 「フロント→サービス→DB貫通」がテンプレートの価値そのもの |
+| `crates/banto-storage` | sqlx リポジトリ・list_query（SQLite/PostgreSQL、`Db`/`Dialect` で方言吸収） | 永続化の標準経路 |
+| `crates/banto-server` | axum 組み込みサーバ（REST・認証・静的配信）+ 汎用 REST ルーター（`routes/`、V2 テーマC で移設） | LAN形態の成立条件 |
+| `crates/banto-admin-services` | 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 テーマC で `admin-template-core` から移設 | 汎用ロジックのコピー面積を削減（§7） |
+| `admin-template-core` | items（デモリソース）固有のサービス層 + REST + 汎用ルーターの `.merge()` 組み立て（Tauri と二経路で同一判定） | 「フロント→サービス→DB貫通」がテンプレートの価値そのもの |
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 

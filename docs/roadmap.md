@@ -533,27 +533,29 @@ items 一覧の name/price/stock/updatedAt 列を導出ベースへ書き換え�
 ## 3. v2 / 将来構想バックログ
 
 v1（M0〜M24）で汎用管理画面テンプレートとしての機能は出そろった。以下は
-**v2 の設計テーマ**として明示的に先送りした項目。優先度は付けず、実需・
-採用（外部利用者）が出た時点で本ドキュメントのマイルストーンに昇格させる
-（[remaining-work-2026-07-23.md](remaining-work-2026-07-23.md) §1 の実需ドリブン
-文化に従う）。
+**v2 の設計テーマ**。優先度は付けず、実需・採用（外部利用者）が出た時点で
+本ドキュメントのマイルストーンに昇格させる実需ドリブン文化に従う。V2 では
+テーマA（PostgreSQL アプリ全体対応、#106-109）・テーマB（i18n レイヤ②/③、
+#110-113）・テーマC（コピー面積縮小、#114-117）を**実施済み**（下記に反映）。
 
 - Tauri updater（自動更新）
 - PWA 対応（LANブラウザモードに manifest）
 - チャートの Canvas レンダラ（性能天井時のエスカレーション第2段。
   第1段はサーバ側集約 — template-scope.md §4.2 参照）
-- **PostgreSQL アプリ全体対応**（接続ヘルパ `banto-storage/postgres.rs` は
-  実装済み #93・実 `postgres:16` CI 検証。残るアプリ全体対応＝service 層汎用化・
-  マイグレーション・backup の VACUUM INTO 代替が v2 テーマ。仕様 §12.1 が業務
-  データの標準に位置づけるため、必要になった時点で最優先で昇格。既定は SQLite 維持）
-- **i18n レイヤ②/③**（`t()`・ロケール store・provider 配線・言語切替 UI ＝②、
-  `en.ts`/`ja.ts` 辞書＝③）。レイヤ①（パッケージ文言の外部化）は実装済み #81。
-  ②着手前に未決5点（自前 vs ライブラリ / キー命名規約 / ブランド名翻訳 /
-  日本語一次 vs 英語一次 / conventions 新節）を決める。設計は
-  [i18n-plan.md](i18n-plan.md)
-- **コピー面積縮小**（`admin-template-core` → `banto-admin-services` 化 /
-  Tauri コマンドのマクロ化）。方針は [template-scope.md](template-scope.md) §7。
-  トリガ: banto-industrial 要求 / 2本目アプリ / 外部採用者フィードバック
+- **[V2 テーマA 実施済み #106-109] PostgreSQL アプリ全体対応**: 接続ヘルパ
+  `banto-storage/postgres.rs`（#93・実 `postgres:16` CI 検証）に加え、service 層を
+  `Db`/`Dialect` で汎用化し、方言別マイグレーション（`migrations-{sqlite,postgres}/`）
+  と `db::init_db_from_target` の `postgres://` 経路を実装。backup は SQLite 専用の
+  まま（PostgreSQL は明示エラー）。既定は SQLite 維持。仕様 §12.1。
+- **[V2 テーマB 実施済み #110-113] i18n レイヤ②/③**: Paraglide JS を採用し
+  （[ADR-0005](adr/0005-i18n-paraglide.md)）、app 層の可視文言を全キー化した
+  （`messages/{en,ja}.json`・`locale.ts`・設定画面の言語切替 UI）。レイヤ①
+  （パッケージ文言の外部化）は #81。規約は conventions §13、機械検査は
+  `verify:architecture` rule `raw-jp-in-app`。
+- **[V2 テーマC 実施済み #114-117] コピー面積縮小**: 汎用サービス層を
+  `crates/banto-admin-services` へ、汎用 REST ルーターを
+  `crates/banto-server/src/routes/` へ移設した（`admin-template-core` には items
+  固有分のみ残置）。方針は [template-scope.md](template-scope.md) §7。
 - 添付を含むバックアップアーカイブ（M17 バックアップは SQLite ファイルのみ
   で添付の実ファイルを含まない。attachments-plan.md §8 の既知の制限）
 

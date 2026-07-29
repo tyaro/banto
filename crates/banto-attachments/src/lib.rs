@@ -1,8 +1,9 @@
 //! Banto attachments (spec `docs/attachments-plan.md` §3): a resource-agnostic
 //! file/image attachment service - metadata CRUD, on-disk storage, and image
 //! thumbnail generation. Same testable, tauri/axum-free service-layer
-//! pattern as `admin-template-core`'s `items.rs`/`backup.rs` (plain `cargo
-//! test`, no HTTP/IPC awareness), but lives in its own crate rather than
+//! pattern as `admin-template-core`'s `items.rs` and the `banto-admin-services`
+//! services (plain `cargo test`, no HTTP/IPC awareness), but lives in its own
+//! crate rather than
 //! `admin-template-core` because it is meant to be reused unmodified by
 //! other apps in this workspace (spec §3.1: "banto-industrial 側の消費も
 //! 見込まれる").
