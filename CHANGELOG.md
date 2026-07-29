@@ -81,7 +81,7 @@ v1.0.0 以降のマージ分。
   走るように。両経路対称の認可/監査の実行検証が復活）。
 - **`scaffold.mjs` のプリセット除去パターンのドリフト**（#122）。#74（M24 デモ配線）と i18n
   キー化で `removeCharts`/`removeGlass`/report ボタン除去のアンカーが陳腐化し、`--preset
-  minimal`/`standard` が失敗していたのを現行コードに追随させて修正（3プリセットで
+minimal`/`standard` が失敗していたのを現行コードに追随させて修正（3プリセットで
   scaffold→check 緑）。`template-acceptance` がフロントのみの変更で起動しないため潜在していた。
 - scaffold をユーザー導線に露出（#122）: `pnpm scaffold` スクリプト + README（日英）/AGENTS
   （日英）に導線。e2e の `afterAll` を `page?.close()` 化、README にセッション再起動消失の注記。
