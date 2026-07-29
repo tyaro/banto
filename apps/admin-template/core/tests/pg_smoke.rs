@@ -17,11 +17,13 @@
 #![cfg(feature = "postgres")]
 
 use admin_template_core::audit::{AuditEntry, AuditLogService};
+use admin_template_core::backup::BackupService;
 use admin_template_core::db::init_db_from_target;
 use admin_template_core::items::{ItemInput, ItemsService};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::{Role, UsersService};
 use banto_core::ListParams;
+use std::path::PathBuf;
 
 /// Drop every table this app owns (plus sqlx's migration bookkeeping) so the
 /// smoke test starts from a clean schema even if a previous run left state
@@ -176,4 +178,43 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .await
         .expect("audit list after prune");
     assert_eq!(remaining.total_count, 1);
+
+    // --- backup: SQLite-only, so every op must Err (never panic) on Postgres --
+    // V2 owner decision D3 (PR4): backup/restore is a SQLite-only feature.
+    // Against a Postgres handle each public operation returns `Err` instead of
+    // the old `sqlite_pool()` `expect` panic. The `db_path` here is irrelevant
+    // (the backend gate fires before any filesystem access), so a placeholder
+    // name is fine.
+    let backup = BackupService::new(PathBuf::from("banto-unused.sqlite3"), db.clone());
+    assert!(
+        backup.create().await.is_err(),
+        "backup create must error on Postgres, not panic"
+    );
+    assert!(
+        backup.list().await.is_err(),
+        "backup list must error on Postgres"
+    );
+    assert!(
+        backup.read("banto-anything.sqlite3").await.is_err(),
+        "backup read must error on Postgres"
+    );
+    assert!(
+        backup
+            .stage_restore_from_file("banto-anything.sqlite3")
+            .await
+            .is_err(),
+        "stage_restore_from_file must error on Postgres"
+    );
+    assert!(
+        backup.stage_restore_from_bytes(b"anything").await.is_err(),
+        "stage_restore_from_bytes must error on Postgres"
+    );
+    assert!(
+        backup.cancel_pending_restore().await.is_err(),
+        "cancel_pending_restore must error on Postgres"
+    );
+    assert!(
+        backup.pending_restore().await.is_none(),
+        "pending_restore reports nothing staged on Postgres"
+    );
 }

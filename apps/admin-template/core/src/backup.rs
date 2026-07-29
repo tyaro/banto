@@ -109,6 +109,21 @@ fn io_err(context: &str, err: std::io::Error) -> BantoError {
     BantoError::Other(format!("{context}: {err}"))
 }
 
+/// The error every [`BackupService`] operation returns when its handle is a
+/// PostgreSQL backend (V2 owner decision D3: backup/restore stays a SQLite-only
+/// feature - `VACUUM INTO` + startup file-swap restore have no Postgres
+/// analogue, and a `pg_dump`-style logical backup is a separate future V2
+/// milestone). PR4 makes each public operation return THIS instead of the old
+/// `sqlite_pool()` `expect` panic. `BantoError::Other` renders the message
+/// verbatim across both the REST and Tauri boundaries, matching this module's
+/// other operational errors ([`io_err`]).
+fn backup_unsupported_on_postgres() -> BantoError {
+    BantoError::Other(
+        "バックアップ／リストアは SQLite バックエンドでのみ利用できます（PostgreSQL では非対応です）"
+            .to_string(),
+    )
+}
+
 /// `SystemTime` -> `"YYYY-MM-DD HH:MM:SS"` (UTC), using the same
 /// dependency-free date algorithm as `crate::db`'s seed-data generator - no
 /// `chrono`/`time` crate anywhere in this workspace (see the root
@@ -234,11 +249,15 @@ async fn run_validation_checks(conn: &mut SqliteConnection) -> Result<(), BantoE
 ///
 /// V2 note: this service carries a backend-agnostic [`Db`] for signature
 /// symmetry with the other services, **but its logic is SQLite-specific and
-/// stays that way in PR2** - `VACUUM INTO`, `PRAGMA integrity_check`/
-/// `wal_checkpoint`, and raw `.sqlite3` file replacement have no portable
-/// Postgres analogue. Making backup/restore backend-aware (e.g.
-/// `pg_dump`-based) is deferred to PR4; until then [`BackupService::sqlite_pool`]
-/// asserts the SQLite handle at each use site.
+/// stays that way** (V2 owner decision D3) - `VACUUM INTO`, `PRAGMA
+/// integrity_check`/`wal_checkpoint`, and raw `.sqlite3` file replacement have
+/// no portable Postgres analogue, and a `pg_dump`-style logical backup is a
+/// separate future V2 milestone. On a PostgreSQL handle every public operation
+/// returns [`backup_unsupported_on_postgres`]'s error (never a panic - PR4
+/// replaced the old `sqlite_pool()` `expect`); the startup restore path
+/// ([`BackupService::apply_pending_restore_at_startup`]) is skipped by its
+/// callers for a Postgres target, since it runs before any [`Db`] handle exists
+/// (see `bin/banto-serve.rs`).
 #[derive(Clone)]
 pub struct BackupService {
     db_path: PathBuf,
@@ -250,13 +269,17 @@ impl BackupService {
         Self { db_path, db }
     }
 
-    /// The underlying SQLite pool. `BackupService` is SQLite-only for now (see
-    /// the type's doc comment) - PR4 will branch its whole flow by backend
-    /// rather than unwrap here.
-    fn sqlite_pool(&self) -> &SqlitePool {
+    /// The underlying SQLite pool, or a clear [`BantoError`] when this handle
+    /// is a PostgreSQL backend. `BackupService` is SQLite-only (see the type's
+    /// doc comment): every public operation gates on this so a Postgres handle
+    /// yields [`backup_unsupported_on_postgres`] rather than the old panic. In a
+    /// default (SQLite-only) build `as_sqlite()` can only ever be `Some`, so the
+    /// error arm is unreachable there yet still compiles under
+    /// `--features postgres` (where `Db` also has a `Postgres` variant).
+    fn sqlite_pool(&self) -> Result<&SqlitePool, BantoError> {
         self.db
             .as_sqlite()
-            .expect("PR2: BackupService is SQLite-only (Postgres backup is PR4)")
+            .ok_or_else(backup_unsupported_on_postgres)
     }
 
     /// Directory the DB file lives in (`backups/`'s parent, and where
@@ -324,7 +347,7 @@ impl BackupService {
     /// flake.)
     pub async fn create(&self) -> Result<BackupInfo, BantoError> {
         let now: String = sqlx::query_scalar("SELECT datetime('now')")
-            .fetch_one(self.sqlite_pool())
+            .fetch_one(self.sqlite_pool()?)
             .await
             .map_err(banto_storage::storage_error)?;
         self.create_at(&now).await
@@ -354,7 +377,7 @@ impl BackupService {
             .to_string();
 
         sqlx::query(&vacuum_into_sql(&path))
-            .execute(self.sqlite_pool())
+            .execute(self.sqlite_pool()?)
             .await
             .map_err(banto_storage::storage_error)?;
 
@@ -380,6 +403,7 @@ impl BackupService {
     /// unnamed/missing `backups/` directory (nothing has ever been backed up
     /// yet) is not an error - it is simply an empty list.
     pub async fn list(&self) -> Result<Vec<BackupInfo>, BantoError> {
+        self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
         let dir = self.backups_dir();
         if !dir.exists() {
             return Ok(Vec::new());
@@ -426,6 +450,7 @@ impl BackupService {
     /// Read a backup file's raw bytes (spec M17: LAN download). Rejects
     /// anything outside `backups/` itself - see [`BackupService::safe_backup_path`].
     pub async fn read(&self, file_name: &str) -> Result<Vec<u8>, BantoError> {
+        self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
         let path = self.safe_backup_path(file_name)?;
         tokio::fs::read(&path).await.map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
@@ -446,6 +471,7 @@ impl BackupService {
     /// `restore-pending.sqlite3` - a failed validation leaves no pending
     /// file behind.
     pub async fn stage_restore_from_file(&self, file_name: &str) -> Result<(), BantoError> {
+        self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
         let source_path = self.safe_backup_path(file_name)?;
         if !tokio::fs::try_exists(&source_path).await.unwrap_or(false) {
             return Err(BantoError::NotFound {
@@ -472,6 +498,7 @@ impl BackupService {
     /// validation deletes the temp file and leaves any previously-staged
     /// pending restore untouched.
     pub async fn stage_restore_from_bytes(&self, bytes: &[u8]) -> Result<(), BantoError> {
+        self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
         let dir = self.base_dir();
         tokio::fs::create_dir_all(dir)
             .await
@@ -513,6 +540,10 @@ impl BackupService {
     /// direction (unlike, say, skipping the file's actual content
     /// validation, which only happens at stage/apply time).
     pub async fn pending_restore(&self) -> Option<PendingRestoreInfo> {
+        // SQLite-only feature: a Postgres handle has no `restore-pending.sqlite3`
+        // to report (and its `db_path` may be a connection URL, not a real
+        // directory) - treat it the same as "nothing pending".
+        self.db.as_sqlite()?;
         let metadata = tokio::fs::metadata(self.pending_restore_path())
             .await
             .ok()?;
@@ -532,6 +563,7 @@ impl BackupService {
     /// idempotent-cancel conventions elsewhere in this codebase (e.g.
     /// `autologin_disable` tolerating an already-missing keyring entry).
     pub async fn cancel_pending_restore(&self) -> Result<(), BantoError> {
+        self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
         match tokio::fs::remove_file(self.pending_restore_path()).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -545,6 +577,13 @@ impl BackupService {
     /// method) precisely because no pool/`BackupService` instance can exist
     /// yet at the call site (`src-tauri`'s `run()`/`bin/banto-serve.rs`'s
     /// `main`, both before `admin_template_core::db::init_db`).
+    ///
+    /// **Postgres**: this operates purely on `db_path` as a filesystem path
+    /// (there is no `Db` handle to inspect this early), so callers that may
+    /// target Postgres must skip it - `bin/banto-serve.rs` guards the call with
+    /// `db::is_postgres_url` (a `postgres://` URL is not a path and names no
+    /// pending-restore file). `src-tauri` is SQLite-fixed and always passes a
+    /// real DB path, so it calls this unconditionally.
     ///
     /// Steps, in order (each one only proceeds if the previous succeeded):
     /// 1. If `restore-pending.sqlite3` does not exist, return `Ok(None)`

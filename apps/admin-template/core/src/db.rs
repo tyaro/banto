@@ -52,7 +52,13 @@ pub async fn init_db_from_target(target: &str) -> Result<Db, BantoError> {
 
 /// Does `target` name a PostgreSQL server (vs. a SQLite filesystem path)?
 /// Matches the two canonical libpq URL schemes.
-fn is_postgres_url(target: &str) -> bool {
+///
+/// `pub` so the single backend-selection rule lives here and is reused rather
+/// than duplicated: `bin/banto-serve.rs` calls this to decide whether to skip
+/// the SQLite-only startup restore (`BackupService::apply_pending_restore_at_startup`)
+/// for a `BANTO_DB` that points at Postgres, keeping that guard in lock-step
+/// with [`init_db_from_target`]'s own scheme check below.
+pub fn is_postgres_url(target: &str) -> bool {
     target.starts_with("postgres://") || target.starts_with("postgresql://")
 }
 
