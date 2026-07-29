@@ -65,6 +65,27 @@ v1.0.0 以降のマージ分。
 - 依存更新（Dependabot・#47/#50/#55/#57/#59/#96/#97/#105）: vite / vite-plugin-svelte /
   sha2 / npm・cargo minor-patch グループ / GitHub Actions 各種。
 
+### Fixed
+
+リリース前のテンプレート実用性レビュー（`docs/review-2026-07-29.md`）で発見した所見に対応。
+
+- **[出荷ブロッカー] i18n ビルドの CDN 依存 + fail-open**（#121）。inlang/Paraglide の
+  コンパイル時プラグインが `project.inlang/settings.json` で jsdelivr CDN URL 参照になっており
+  （lockfile 外・毎ビルド取得）、取得失敗時に空カタログを exit 0 で出力（fail-open）→ 実行時に
+  画面が落ちる問題を修正。プラグインを devDependency（コンパイル時のみ・実行時依存ゼロ）として
+  ローカル化、`scripts/check-i18n-nonempty.mjs` で「メッセージ0件なら異常終了」する fail-closed
+  ガードを追加、CI に CDN 遮断ビルドの `i18n-offline` ジョブを追加。閉域網/社内プロキシ（README の
+  ターゲット）でのビルド再現性を確保。
+- **Tauri コマンドのテストがどの CI でも実行されていなかった**（#122）。`tauri-check.yml` に
+  `cargo test -p admin-template` を追加（`cargo check` だけで実行されていなかった 8 テストが
+  走るように。両経路対称の認可/監査の実行検証が復活）。
+- **`scaffold.mjs` のプリセット除去パターンのドリフト**（#122）。#74（M24 デモ配線）と i18n
+  キー化で `removeCharts`/`removeGlass`/report ボタン除去のアンカーが陳腐化し、`--preset
+  minimal`/`standard` が失敗していたのを現行コードに追随させて修正（3プリセットで
+  scaffold→check 緑）。`template-acceptance` がフロントのみの変更で起動しないため潜在していた。
+- scaffold をユーザー導線に露出（#122）: `pnpm scaffold` スクリプト + README（日英）/AGENTS
+  （日英）に導線。e2e の `afterAll` を `page?.close()` 化、README にセッション再起動消失の注記。
+
 ## [1.0.0] - 2026-07-28
 
 **v1.0.0 — 安定版リリース。** 仕様 M0〜M9 + ロードマップ M10〜M24 までの
