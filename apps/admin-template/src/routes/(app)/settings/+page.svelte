@@ -5,6 +5,7 @@
 		Check,
 		DatabaseBackup,
 		KeyRound,
+		Languages,
 		Monitor,
 		Moon,
 		Palette,
@@ -18,6 +19,7 @@
 	} from '@lucide/svelte';
 	import { getAuthProvider, isProviderError } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
+	import { getLocale, locales, setLocale, type Locale } from '$lib/paraglide/runtime';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { settings } from '$lib/settings.svelte';
@@ -95,6 +97,24 @@
 
 	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
 	const densityIcons: Record<ThemeDensity, Component> = { standard: Rows3, compact: Rows4 };
+
+	// --- i18n layer ② (i18n-plan §6.1, ADR-0005): the language picker ---------
+	// Locale labels are shown in each language's OWN native name (日本語 /
+	// English) rather than translated - a picker reads better when each option
+	// names itself, so these two keys hold the same value in en.json and ja.json.
+	// `getLocale()` is the resolved locale for this page load; changing it goes
+	// through Paraglide's `setLocale()`, whose custom-banto strategy (locale.ts)
+	// persists to localStorage + the M12 provider and reloads so every screen
+	// re-renders in the new locale (the reload is Paraglide's default).
+	const localeLabels: Record<Locale, () => string> = {
+		ja: m['settings.languageJa'],
+		en: m['settings.languageEn']
+	};
+
+	function changeLocale(next: Locale): void {
+		if (next === getLocale()) return;
+		setLocale(next);
+	}
 
 	// Optional on `AuthProvider` (spec §3.3): older/custom providers may not
 	// implement it, in which case the section below shows a note instead of
@@ -605,6 +625,33 @@
 
 			<p class="note">
 				{m['settings.themeNote']()}
+			</p>
+		</SurfaceCard>
+
+		<SurfaceCard>
+			<div class="card-head">
+				<Languages size={20} aria-hidden="true" />
+				<div>
+					<h2>{m['settings.languageHeading']()}</h2>
+					<p>{m['settings.languageDesc']()}</p>
+				</div>
+			</div>
+
+			<label class="field">
+				{m['settings.languageLabel']()}
+				<select
+					class="banto-input"
+					value={getLocale()}
+					onchange={(event) => changeLocale(event.currentTarget.value as Locale)}
+				>
+					{#each locales as loc (loc)}
+						<option value={loc}>{localeLabels[loc]()}</option>
+					{/each}
+				</select>
+			</label>
+
+			<p class="note">
+				{m['settings.languageNote']()}
 			</p>
 		</SurfaceCard>
 

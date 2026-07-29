@@ -249,6 +249,30 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 （現状 Rust 側で 28 ファイル、TS 側で 147 ファイル）。設計の「なぜ」を仕様に
 紐付ける文化を維持する。新モジュールも冒頭で該当仕様節を引く。
 
+## 13. UI 文言はキー経由（Paraglide）で持つ [機械検査済み: app 層の生日本語リテラル] {#i18n-messages}
+
+§9（色・寸法の生値は theme に集約）の**文言版**。UI に出すテキストは
+`messages/{en,ja}.json` のキーに置き、コンポーネントは **Paraglide 経由**
+（`import * as m from '$lib/paraglide/messages'` → `m['key']()`）で参照する。
+生の文言（日本語リテラル等）をコンポーネントに直書きしない
+（i18n-plan §6.1、[ADR-0005](adr/0005-i18n-paraglide.md)）。
+
+- **対象は app 層のみ**（`apps/admin-template/src`）。`@banto/*` パッケージは
+  辞書も i18n 依存も `$lib` import も持たず（§5）、文言は**レイヤ①の
+  `messages` props 経由**で注入された解決済み文字列として受け取る
+  （i18n-plan §4.1 ①）。パッケージに `messages/*.json` を置かない。
+- base/source ロケールは英語（メッセージの真実源）、既定**表示**ロケールは
+  日本語（`locale.ts` の custom-banto 戦略で視覚回帰ゼロ、ADR-0005）。
+- ロケール解決・永続化は provider/設定層（`locale.ts`）に閉じる（§10）。
+  UI コンポーネントはロケール分岐を持たない。
+- ブランド名 "Banto" は翻訳しない。ロケール表示名（日本語 / English）は
+  各言語のネイティブ名で持ち翻訳しない（両ロケールで同値のキー）。
+
+現状の担保: `apps/admin-template/src` の `.svelte`（生成物 `paraglide/` と
+辞書 `messages/*.json` を除く）にコメント外の日本語リテラルが無いことを
+`verify:architecture`（rule `raw-jp-in-app`）が grep で検査する（§9 の
+生色値検査と同型）。正当な例外はスクリプトの許可リストに理由付きで追加する。
+
 ---
 
 ## プロセス（別ドキュメントに既出）

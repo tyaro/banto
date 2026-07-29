@@ -23,6 +23,9 @@
  *      maintainability-review-2026-07.md CR-1
  *   9. §6 セキュリティ不変条件（grep 可能なもの、CR-2）:
  *      NewAttachment に mime フィールド無し / settings_get·set は Admin 対称
+ *  10. §13 app 層コンポーネントに生の日本語リテラルが無い
+ *      … apps/admin-template/src の .svelte（生成物 paraglide/ を除く）に
+ *        コメント外の語構成日本語（ひらがな/カタカナ/CJK）が無いこと
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -51,6 +54,14 @@ const RAW_COLOR_ALLOWLIST = new Map([
 	// 暗転するため使えない — BantoGrid.svelte 内コメント / plan Appendix A.3）
 	['packages/grid-svelte/src/BantoGrid.svelte', new Set(['#ffffff'])]
 ]);
+
+/**
+ * conventions §13: app 層コンポーネントに生の日本語リテラルを許可するファイル
+ * と、その根拠。文言はキー経由（Paraglide messages）で持つのが原則で、例外は
+ * 「設計判断としてコード内コメントで正当化されている」ことを条件に追加する。
+ * 現状なし。
+ */
+const RAW_JP_ALLOWLIST = new Set([]);
 
 let failures = 0;
 const results = [];
@@ -523,6 +534,44 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
 	if (!results.some((r) => r.includes(`[${rule}]`)))
 		pass(rule, 'NewAttachment に mime 無し / settings_get·set は Admin 対称');
+}
+
+// --- 10. app 層コンポーネントの生日本語リテラル（conventions §13） ----------
+//
+// UI 文言はキー経由（Paraglide messages）で持ち、生の日本語を app 層の .svelte
+// コンポーネントに直書きしない（§13、i18n-plan §6.1 / ADR-0005）。§9 の生色値
+// 検査と同型: コメントを除去した本文に「語を構成する」日本語（ひらがな・
+// カタカナ・CJK。区切り「・」等の句読点は翻訳対象の文言ではないので範囲外）が
+// 無いことを grep で担保する。生成物（paraglide/）と辞書（messages/*.json＝
+// .svelte ではない）は対象外。i18n は app 層のみ（§13）なので packages は見ない。
+{
+	const rule = 'raw-jp-in-app';
+	// 語を構成する日本語のみ（句読点・記号は除く）＝翻訳対象の「文言」を狙い撃つ。
+	const JP = /[぀-ゟ゠-ヺー-ヿ一-鿿]/;
+	// コメント除去（raw-colors と同じ割り切り）。行コメントの `//` は `http://`
+	// を誤除去しないよう直前が `:` でない場合のみ落とす。
+	const stripComments = (src) =>
+		src
+			.replace(/<!--[\s\S]*?-->/g, '')
+			.replace(/\/\*[\s\S]*?\*\//g, '')
+			.replace(/(^|[^:])\/\/.*$/gm, '$1');
+	let checked = 0;
+	for (const file of walk('apps/admin-template/src', ['.svelte'])) {
+		if (file.includes('/paraglide/')) continue; // 生成物
+		if (RAW_JP_ALLOWLIST.has(file)) continue;
+		checked++;
+		const lines = stripComments(read(file)).split('\n');
+		for (let i = 0; i < lines.length; i++) {
+			if (JP.test(lines[i]))
+				fail(
+					rule,
+					file,
+					`生の日本語リテラル（${i + 1} 行目）— messages キーに置き Paraglide 経由 \`m['...']()\` で参照する（§13）`
+				);
+		}
+	}
+	if (!results.some((r) => r.includes(`[${rule}]`)))
+		pass(rule, `app 層 ${checked} .svelte コンポーネントに生の日本語リテラルなし`);
 }
 
 // --- 結果 -------------------------------------------------------------------

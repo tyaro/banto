@@ -412,4 +412,28 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const categoryRows = page.locator('.report-body table').first().locator('tbody tr');
 		await expect(categoryRows).toHaveCount(12);
 	});
+
+	// PR-B3 (i18n layer ②, docs/i18n-plan.md §6.1 / ADR-0005): the settings
+	// language picker actually switches the whole UI locale. Deliberately LAST:
+	// Paraglide's setLocale() persists the choice to this shared page's
+	// localStorage and reloads every screen, so switching to English here can't
+	// disturb the Japanese-asserting scenarios above (which run first).
+	test('13. settings: the language picker switches the whole UI to English', async () => {
+		await page.goto('/settings');
+
+		// The <select> is still labelled in Japanese (表示言語) at this point. Its
+		// option labels (日本語 / English) are intentionally NOT translated, so
+		// switch by value. selectOption fires the change handler -> setLocale('en')
+		// -> a full reload into English (Paraglide's default).
+		const languageSelect = page.getByLabel('表示言語');
+		await expect(languageSelect).toBeVisible();
+		await languageSelect.selectOption('en');
+
+		// After the reload the page renders in English: the page header
+		// (nav.settings) and the language card heading (settings.languageHeading)
+		// both flip. Asserting a keyed string proves the switch reached the UI,
+		// not just localStorage.
+		await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Language', exact: true })).toBeVisible();
+	});
 });
