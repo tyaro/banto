@@ -267,6 +267,7 @@ version = "1.0.0"
 dependencies = [
  "async-stream",
  "axum",
+ "banto-admin-services",
  "banto-core",
  "futures-util",
  "http-body-util",

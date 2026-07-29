@@ -45,6 +45,27 @@
 //! | POST   | `/api/attachments?resource=&resourceId=&fileName=` | raw bytes (`application/octet-stream`) | `AttachmentMeta` (editor+) |
 //! | DELETE | `/api/attachments/{id}` | -              | 204 (editor+)           |
 //!
+//! ## Where each router lives (theme C PR-C4, docs/template-scope.md §7 移行順 ④)
+//!
+//! The table above stays here - it is the artifact conventions §1 designates
+//! as the REST side of the Tauri⇔REST correspondence table, and
+//! `scripts/verify-architecture.mjs` rule 8 anchors on it. The router
+//! IMPLEMENTATIONS, however, are split by who owns them:
+//!
+//! - App-specific, and therefore this crate's: `items` (`/api/items/*`,
+//!   the demo resource a template adopter replaces) and `attachments`
+//!   (`/api/attachments/*`, M20 - `resource`/`resourceId` are app data).
+//! - Domain-agnostic, and therefore `banto_server::routes`: the
+//!   `/api/auth/*` extras, `/api/users/*`, `/api/audit-log/*`,
+//!   `/api/backups/*` and `/api/ui-settings/*`. Identical in every adopter,
+//!   so they are a dependency rather than copied code. The RBAC/audit
+//!   helpers the app's own routers use ([`RoleGuard`],
+//!   [`require_role_at_least`], [`record_write`], [`actor_identity`]) come
+//!   from there too.
+//!
+//! [`api_router`] below is the assembly: it owns the `.merge()` order,
+//! the CSRF layer, and nothing else.
+//!
 //! `/api/ui-settings/*` (spec M12 SettingsProvider migration): per-user UI
 //! settings (theme/preset/dock layout), namespaced by the caller's own
 //! `username` (`SettingsService::ui_get`/`ui_set` - see that module for the
@@ -79,7 +100,7 @@
 //! On top of `require_auth` (valid session, any role), mutating `items`
 //! routes and all `/api/users` routes are additionally gated by
 //! [`require_role_at_least`]: it re-resolves the bearer token to an
-//! [`Identity`], parses `Identity.role` into [`Role`], and rejects with
+//! [`banto_server::Identity`], parses `Identity.role` into [`Role`], and rejects with
 //! `403 { "kind": "forbidden" }` (`banto_core::ErrorBody::Forbidden`) if the
 //! caller's role is not at least the route's minimum. `viewer` can read
 //! (`items` list/get); `editor` and up can also write; only `admin` can
@@ -155,52 +176,44 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment, MAX_ATTACHMENT_BYTES};
-use banto_core::{BantoError, ErrorBody, ListParams, ListResult};
+use banto_core::{BantoError, ListParams, ListResult};
+use banto_server::routes::{
+    actor_identity, audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,
+    record_write, require_role_at_least, ui_settings_router, users_router, LogoutAuditState,
+    RoleGuard,
+};
 use banto_server::{
     auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,
-    Identity, ServerEvent,
+    ServerEvent,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
-use std::str::FromStr;
 use tokio::sync::broadcast;
 
 use crate::audit::{AuditEntry, AuditLogService};
-use crate::backup::{BackupInfo, BackupService, PendingRestoreInfo};
+use crate::backup::BackupService;
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
-use crate::settings::{AuditSettings, SettingsService};
-use crate::users::{Role, UserIdentity, UserSummary, UsersService};
+use crate::settings::SettingsService;
+use crate::users::{Role, UsersService};
 
 mod attachments;
-mod audit;
-mod auth;
-mod backups;
 mod items;
 #[cfg(test)]
 mod tests;
-mod ui_settings;
-mod users;
 
-pub use audit::audited_credential_verifier;
+// Theme C PR-C4 (docs/template-scope.md §7 移行順 ④): re-exported so
+// `admin_template_core::rest::audited_credential_verifier` - the path
+// `bin/banto-serve.rs` and `src-tauri`'s `run()` already use - keeps
+// resolving unchanged now that the function itself lives in
+// `banto_server::routes::audit`.
+pub use banto_server::routes::audited_credential_verifier;
 
 use attachments::attachments_router;
-use audit::{audit_log_router, audit_logout_middleware, LogoutAuditState};
-use auth::extra_auth_router;
-use backups::backups_router;
 use items::items_router;
-use ui_settings::ui_settings_router;
-use users::users_router;
-
-/// Request-body size cap for `POST /api/backups/restore` (spec M17: "サイズ
-/// 上限（例256MB）を設ける"). Applied via `DefaultBodyLimit` on
-/// [`backups_router`] - axum's own built-in default is 2MB
-/// (`axum::extract::DefaultBodyLimit`), far too small for an uploaded DB
-/// backup.
-const MAX_RESTORE_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 /// Slack added on top of `banto_attachments::MAX_ATTACHMENT_BYTES` for
 /// [`attachments_write_router`]'s `DefaultBodyLimit` (spec
@@ -213,124 +226,6 @@ const MAX_RESTORE_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 /// file's raw bytes and its (non-existent, this route has no envelope)
 /// wire overhead.
 const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
-
-/// Resolve the caller's [`Identity`] from its bearer token, best-effort
-/// (spec M14): every audit-recording call site needs "who did this", and
-/// every one of them runs AFTER `require_auth`/`require_role_at_least` has
-/// already proven the token valid, so this should always resolve - `None`
-/// here is a defensive fallback (e.g. the token expired in the instant
-/// between the guard and the handler running), not an expected path. Shared
-/// by the items/users write handlers below; auth-flow events (login/setup/
-/// logout) resolve their own actor differently since they run before or
-/// without a caller session.
-fn actor_identity(headers: &HeaderMap, auth: &AuthState) -> Option<Identity> {
-    bearer_token(headers).and_then(|token| auth.identity_for(token))
-}
-
-/// Record a successful write (spec M14: create/update/delete/password_reset
-/// etc.) once the service call it follows has already succeeded. Resolves
-/// the actor from the same bearer token `require_auth`/`require_role_at_least`
-/// validated - see [`actor_identity`]. `origin` is always `"rest"` at every
-/// call site in this module (the REST layer); kept as a parameter rather
-/// than hardcoded only so this helper reads the same as the audit
-/// entry it builds.
-async fn record_write(
-    audit: &AuditLogService,
-    auth: &AuthState,
-    headers: &HeaderMap,
-    action: &str,
-    resource: &str,
-    entity_id: &str,
-    detail: Option<serde_json::Value>,
-) {
-    let identity = actor_identity(headers, auth);
-    audit
-        .record(AuditEntry {
-            actor_username: identity.as_ref().map(|i| i.id.as_str()),
-            actor_role: identity.as_ref().map(|i| i.role.as_str()),
-            action,
-            resource,
-            entity_id: Some(entity_id),
-            detail,
-            origin: "rest",
-            result: "ok",
-        })
-        .await;
-}
-
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-}
-
-/// `State` for [`require_role_at_least`]: the `AuthState` needed to resolve
-/// a bearer token back to an [`Identity`], the minimum [`Role`] the guarded
-/// routes require, the `resource` name to tag a denial with (spec M14), and
-/// the `AuditLogService` to record that denial to.
-#[derive(Clone)]
-struct RoleGuard {
-    auth: AuthState,
-    min: Role,
-    resource: &'static str,
-    audit: AuditLogService,
-}
-
-fn forbidden_response() -> Response {
-    (StatusCode::FORBIDDEN, Json(ErrorBody::Forbidden)).into_response()
-}
-
-/// Axum middleware (spec M10 RBAC): stacked *after* `require_auth` on a
-/// router, so a request has already been proven to carry a valid bearer
-/// token by the time this runs. Re-resolves that token to an [`Identity`],
-/// parses `Identity.role`, and rejects with `403
-/// { "kind": "forbidden" }` unless the caller's role is at least
-/// `guard.min`. Attach via
-/// `middleware::from_fn_with_state(RoleGuard { auth, min, resource, audit }, require_role_at_least)`.
-///
-/// A missing/invalid token at this point (the identity lookup failing) means
-/// `require_auth` did not actually run first - treated as `Forbidden` rather
-/// than panicking, so a misconfigured router fails closed instead of open.
-/// Spec M14: a denial is only recorded to the audit log when there IS a
-/// resolved identity whose role is simply too low - the defensive
-/// missing-token case above is not a meaningful RBAC decision to audit (it
-/// means the router itself is misconfigured, not that a real user got
-/// rejected).
-async fn require_role_at_least(
-    State(guard): State<RoleGuard>,
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    let identity = bearer_token(req.headers()).and_then(|token| guard.auth.identity_for(token));
-    let role = identity
-        .as_ref()
-        .and_then(|identity| Role::from_str(&identity.role).ok());
-
-    match role {
-        Some(role) if role.at_least(guard.min) => next.run(req).await,
-        _ => {
-            if let Some(identity) = &identity {
-                let method = req.method().as_str().to_string();
-                let path = req.uri().path().to_string();
-                guard
-                    .audit
-                    .record(AuditEntry {
-                        actor_username: Some(&identity.id),
-                        actor_role: Some(&identity.role),
-                        action: "denied",
-                        resource: guard.resource,
-                        entity_id: None,
-                        detail: Some(json!({ "method": method, "path": path })),
-                        origin: "rest",
-                        result: "denied",
-                    })
-                    .await;
-            }
-            forbidden_response()
-        }
-    }
-}
 
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log

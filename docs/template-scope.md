@@ -172,7 +172,19 @@ cron的定時実行基盤 / アラーム管理 — いずれも SCADA 等の**�
       [docs/recipes/add-resource.md](recipes/add-resource.md) に固定化し、
       README・AGENTS.md から参照**（improvement-plan-2026-07.md P1-3）
 
-## 7. コピー面積縮小方針（M18 Phase C、方針記録のみ・未実施）
+## 7. コピー面積縮小方針（M18 Phase C 記録 → V2 テーマC で ①〜④ 実施済み）
+
+> **実施状況（2026-07-29 時点）**: 下記「移行順序」の ①〜④ は V2 テーマC
+> （PR-C1 #114 = settings/audit、PR-C2 #115 = users、PR-C3 #116 = backup、
+> PR-C4 = `rest/` の汎用ルーター）で完了。サービス層は
+> `crates/banto-admin-services`、汎用 REST ルーター
+> （`/api/auth/*` の extras・`/api/users/*`・`/api/audit-log/*`・
+> `/api/backups/*`・`/api/ui-settings/*`）は
+> `crates/banto-server/src/routes/` にある。`admin-template-core::rest` に
+> 残るのは `/api/items/*`（アプリ固有）・`attachments`（M20）・Route table
+> の doc・`api_router()` の `.merge()` 組み立てのみ。⑤（`db.rs` ランナー基盤の
+> `banto-storage` 移設）と ⑥（Tauri コマンドの定型整理・優先度低）は未実施。
+> 下表の行数は 2026-07-12 時点のスナップショットで、移設後の現況ではない。
 
 `admin-template-core`（`apps/admin-template/core/src/`）は現状
 テンプレート利用者が**コピーしてそのまま書き換える**前提のアプリ固有
@@ -228,15 +240,19 @@ cron的定時実行基盤 / アラーム管理 — いずれも SCADA 等の**�
 
 ### 移行順序（実施時の目安、依存の少ない順）
 
-1. `settings.rs` + `audit.rs`（他の3つより依存が少なく自己完結的。
-   `backup.rs`/`users.rs` の監査記録がこの2つに依存するため先に動かす）
-2. `users.rs`（RBAC判定の中心。REST/Tauri 両経路のテストが多いため
-   移行時の回帰確認コストが最大 — 2番目に置くことでテスト済みの
-   監査基盤の上に乗せられる）
-3. `backup.rs`（ファイルI/O・ステージング適用があり db.rs のランナー
-   整理と合わせて動かすのが自然）
-4. `rest.rs` の汎用ルーター部分（1〜3のサービスがクレート化された後、
-   ルート定義も一緒に持っていく）
+1. **[実施済 PR-C1 #114]** `settings.rs` + `audit.rs`（他の3つより依存が
+   少なく自己完結的。`backup.rs`/`users.rs` の監査記録がこの2つに依存する
+   ため先に動かす）
+2. **[実施済 PR-C2 #115]** `users.rs`（RBAC判定の中心。REST/Tauri 両経路の
+   テストが多いため移行時の回帰確認コストが最大 — 2番目に置くことで
+   テスト済みの監査基盤の上に乗せられる）
+3. **[実施済 PR-C3 #116]** `backup.rs`（ファイルI/O・ステージング適用が
+   あり db.rs のランナー整理と合わせて動かすのが自然）
+4. **[実施済 PR-C4]** `rest.rs` の汎用ルーター部分（1〜3のサービスが
+   クレート化された後、ルート定義も一緒に持っていく）→ 移設先は
+   `banto-server`（既に axum ホスト基盤クレートで
+   `AuthState`/`ServerEvent`/`ApiError` を持つため、ルーターの自然な置き場。
+   `banto-server → banto-admin-services` の依存を新設。逆向きは無く循環しない）
 5. `db.rs` のランナー基盤の `banto-storage` 移設
 6. （優先度低・任意）Tauri コマンドの定型パターン整理
 

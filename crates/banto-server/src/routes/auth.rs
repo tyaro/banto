@@ -4,8 +4,8 @@ use super::*;
 /// `/api/auth/change-password` (see [`extra_auth_router`]): these need both
 /// `UsersService` (the credential store, spec §8.2) and `AuthState` (to
 /// issue a token on `setup`'s implicit login, and to resolve the calling
-/// account on `change-password`), neither of which `banto_server::auth`
-/// knows about on its own.
+/// account on `change-password`), neither of which [`crate::auth`] knows
+/// about on its own.
 #[derive(Clone)]
 struct UsersAuthState {
     users: UsersService,
@@ -165,7 +165,11 @@ async fn auth_change_password_handler(
     Ok(Json(ChangePasswordResponse { success: true }))
 }
 
-pub(super) fn extra_auth_router(
+/// `/api/auth/{status,setup,change-password}`: the three auth routes that
+/// need a `UsersService` (the credential store), on top of the token-only
+/// login/logout/check/identity routes [`crate::auth_routes`] already
+/// provides. Merged by the app's `api_router`.
+pub fn extra_auth_router(
     users: UsersService,
     auth: AuthState,
     audit: AuditLogService,

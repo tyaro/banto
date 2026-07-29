@@ -65,9 +65,9 @@ pub fn audited_credential_verifier(
 /// logging-out session's identity BEFORE the token is invalidated, plus
 /// `AuditLogService` to record it (spec M14).
 #[derive(Clone)]
-pub(super) struct LogoutAuditState {
-    pub(super) auth: AuthState,
-    pub(super) audit: AuditLogService,
+pub struct LogoutAuditState {
+    pub auth: AuthState,
+    pub audit: AuditLogService,
 }
 
 /// Wraps the WHOLE `banto_server::auth_routes` sub-router (login/logout/
@@ -85,7 +85,7 @@ pub(super) struct LogoutAuditState {
 /// here - see [`audited_credential_verifier`], which records those from
 /// inside the credential-verifier closure instead (simpler: no need to peek
 /// at the response body to learn success/failure).
-pub(super) async fn audit_logout_middleware(
+pub async fn audit_logout_middleware(
     State(state): State<LogoutAuditState>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -146,7 +146,7 @@ struct AuditLogState {
 async fn audit_log_list(
     State(state): State<AuditLogState>,
     Json(params): Json<ListParams>,
-) -> Result<Json<ListResult<crate::audit::AuditLogEntry>>, ApiError> {
+) -> Result<Json<ListResult<banto_admin_services::audit::AuditLogEntry>>, ApiError> {
     if let Ok(config) = state.settings.audit_config().await {
         let _ = state
             .audit
@@ -167,7 +167,8 @@ async fn audit_config_get(
 
 /// `PUT /api/audit-log/config` (spec M14, `admin`-only): persist a new
 /// retention policy (days and/or row-count cap; either may be `null` for
-/// "unlimited" on that dimension, see [`crate::settings::AuditSettings`]),
+/// "unlimited" on that dimension, see
+/// [`banto_admin_services::settings::AuditSettings`]),
 /// mirroring `src-tauri`'s `audit_config_apply` command - same
 /// `settings_change`/`settings` audit entry shape, just `origin: "rest"` and
 /// the actor resolved from the bearer token (`actor_identity`) instead of
@@ -200,7 +201,7 @@ async fn audit_config_apply(
 
 /// `/api/audit-log/*` (spec M14): `admin`-only, guarded the same way
 /// `users_router` is (`require_auth` then `require_role_at_least`).
-pub(super) fn audit_log_router(
+pub fn audit_log_router(
     audit: AuditLogService,
     settings: SettingsService,
     auth: AuthState,

@@ -3,6 +3,10 @@ use crate::db::migrate_memory;
 use axum::body::Body;
 use axum::http::Request as HttpRequest;
 use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, SortState};
+// Theme C PR-C4: `rest/mod.rs` no longer needs `Identity` itself (the helpers
+// that used it moved to `banto_server::routes`), so the test module imports it
+// directly rather than through `use super::*`.
+use banto_server::Identity;
 use serde_json::json;
 use std::path::PathBuf;
 use tempfile::tempdir;
