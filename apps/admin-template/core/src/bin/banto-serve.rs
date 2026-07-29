@@ -34,7 +34,7 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
-use admin_template_core::db::init_db_from_target;
+use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier};
@@ -70,12 +70,23 @@ async fn main() {
     // a failure here must not prevent the server from starting at all (the
     // old db, if any, is left untouched on error - see that function's
     // per-step safety notes).
-    let applied_restore = match BackupService::apply_pending_restore_at_startup(&db_path_buf).await
-    {
-        Ok(applied) => applied,
-        Err(err) => {
-            eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
-            None
+    //
+    // V2 (backup owner decision D3): the startup restore is a SQLite-file-only
+    // concept. When `BANTO_DB` is a `postgres://`/`postgresql://` URL the whole
+    // backend is Postgres, so there is no db FILE to swap and `db_path` is a
+    // connection string, not a path - skip entirely rather than let it probe
+    // for a `restore-pending.sqlite3` next to a URL. The same
+    // `db::is_postgres_url` rule drives `init_db_from_target` below, so the two
+    // never disagree on which backend is in play.
+    let applied_restore = if is_postgres_url(&db_path) {
+        None
+    } else {
+        match BackupService::apply_pending_restore_at_startup(&db_path_buf).await {
+            Ok(applied) => applied,
+            Err(err) => {
+                eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
+                None
+            }
         }
     };
 
