@@ -3,7 +3,8 @@ use super::*;
 /// State for the `/api/ui-settings/*` handlers (spec M12): `SettingsService`
 /// for the per-user key/value store itself, plus `AuthState` to resolve the
 /// caller's own `username` from the bearer token `require_auth` already
-/// validated (same pattern as [`UsersAuthState`]/[`acting_user`] above).
+/// validated (same pattern as `auth::UsersAuthState`/`users::acting_user`
+/// in the sibling modules here).
 #[derive(Clone)]
 struct UiSettingsState {
     settings: SettingsService,
@@ -26,7 +27,7 @@ struct UiSettingSetRequest {
 /// token valid by the time a `/api/ui-settings/*` handler runs, so this
 /// should always succeed; `Unauthorized` here is a defensive fallback (e.g.
 /// the token expired between `require_auth` and this handler running), not
-/// an expected path - mirrors [`acting_user`] above.
+/// an expected path - mirrors `users::acting_user`.
 fn acting_username(headers: &HeaderMap, auth: &AuthState) -> Result<String, BantoError> {
     bearer_token(headers)
         .and_then(|token| auth.identity_for(token))
@@ -56,9 +57,10 @@ async fn ui_settings_set(
 }
 
 /// `/api/ui-settings/*` (spec M12): `require_auth` only, no
-/// [`require_role_at_least`] floor - see this module's doc comment for why
-/// (every route here only ever touches the caller's OWN namespaced keys).
-pub(super) fn ui_settings_router(settings: SettingsService, auth: AuthState) -> Router {
+/// [`require_role_at_least`] floor - see `admin-template-core::rest`'s
+/// module doc comment for why (every route here only ever touches the
+/// caller's OWN namespaced keys).
+pub fn ui_settings_router(settings: SettingsService, auth: AuthState) -> Router {
     let state = UiSettingsState {
         settings,
         auth: auth.clone(),
