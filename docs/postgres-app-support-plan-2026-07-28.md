@@ -8,6 +8,15 @@
 > このブランチ（eval ＝計画ハブ）にのみ置く。コード変更は main から独立ブランチ
 > （`claude/<slug>`）を切って PR し、オーナー承認を待つ（セルフマージ不可）。
 
+> **✅ 完了（2026-07-29）**: PR1〜PR4 すべて main にマージ済み。
+> PR1=#106（storage 基盤 Db/Dialect）/ PR2=#107（app 層 型置換+方言吸収）/
+> PR3=#108（マイグレーション方言分岐+init_db_from_target の Postgres 経路+CI app-postgres
+> スモーク）/ PR4=#109（backup を SQLite 専用化・Postgres は明示エラー）。
+> app 層が SQLite/PostgreSQL 両対応（既定 SQLite 維持・全 PR byte 等価）。
+> Postgres 有効化は `BANTO_DB=postgres://…`（`init_db_from_target`）＋ビルド feature `postgres`。
+> 副産物: PR2 の未 exercise だった Postgres arm の 2 バグ（`CURRENT_DATE::text` /
+> `ts::timestamptz`）と、scaffold の `pool`→`db` 追随漏れ 3 件を PR3 で発見・修正。
+
 ---
 
 ## 0. 現在地（#93 到達点）
