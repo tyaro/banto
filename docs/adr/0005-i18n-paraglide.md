@@ -1,5 +1,7 @@
 # ADR-0005: UI i18n ランタイムに Paraglide JS を採用する（ADR-0002 の意図的な例外）
 
+> English: [0005-i18n-paraglide.en.md](0005-i18n-paraglide.en.md)
+
 - 状態: Accepted
 - 日付: 2026-07-29
 - 関連: [conventions.md §3](../conventions.md)、[ADR-0002](0002-minimal-dependencies.md)、

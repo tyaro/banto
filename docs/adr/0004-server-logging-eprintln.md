@@ -1,5 +1,7 @@
 # ADR-0004: サーバのログは `eprintln!` を既定に据え、`tracing` は保留する
 
+> English: [0004-server-logging-eprintln.en.md](0004-server-logging-eprintln.en.md)
+
 - 状態: Accepted
 - 日付: 2026-07-19
 - 関連: [conventions.md §3](../conventions.md)、[ADR-0002](0002-minimal-dependencies.md)、

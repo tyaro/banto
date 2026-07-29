@@ -1,5 +1,7 @@
 # ADR-0002: 依存を足さず自前実装を既定にする（総保守コスト最小化）
 
+> English: [0002-minimal-dependencies.en.md](0002-minimal-dependencies.en.md)
+
 - 状態: Accepted
 - 日付: 2026-07-19（判断自体は M0 以降の運用で確立、遡及記録）
 - 関連: [conventions.md §3](../conventions.md)、

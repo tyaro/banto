@@ -1,5 +1,7 @@
 # ADR-0003: LAN の TLS はリバースプロキシ終端を正式サポートとし、組み込み TLS は保留する
 
+> English: [0003-tls-via-reverse-proxy.en.md](0003-tls-via-reverse-proxy.en.md)
+
 - 状態: Accepted
 - 日付: 2026-07-19
 - 関連: [conventions.md §3](../conventions.md)、[ADR-0002](0002-minimal-dependencies.md)、
