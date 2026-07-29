@@ -5,10 +5,14 @@
 //! workspace dependency (`admin-template-core` depends ON it, like it already
 //! depends on `banto-storage`), not code the adopter owns.
 //!
-//! Scope of PR-C1 is the two most self-contained services (settings, audit),
-//! plus the shared RBAC [`Role`] vocabulary they need (`SettingsService`'s
-//! `AuthSettings.disabled_role` is a `Role`). `users`/`backup` and the REST
-//! router move in later PRs (§7 移行順 ②〜).
+//! PR-C1 moved the two most self-contained services (settings, audit) plus
+//! the shared RBAC [`Role`] vocabulary they need (`SettingsService`'s
+//! `AuthSettings.disabled_role` is a `Role`). PR-C2 (§7 移行順 ②) adds
+//! [`users`] (`UsersService`, M10 RBAC), the RBAC-central service with the
+//! most REST/Tauri test coverage. It uses the same [`Role`], which was left
+//! in place in [`rbac`] and re-exported from [`users`] (minimal churn - the
+//! type did not need to move again now that both live in this crate).
+//! `backup` and the REST router move in later PRs.
 //!
 //! Like every Banto service (conventions §2), the services here take a
 //! `banto_storage::Db` handle, return `Result<_, banto_core::BantoError>`,
@@ -26,5 +30,6 @@
 pub mod audit;
 pub mod rbac;
 pub mod settings;
+pub mod users;
 
 pub use rbac::Role;

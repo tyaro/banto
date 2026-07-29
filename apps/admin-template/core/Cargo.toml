@@ -34,11 +34,14 @@ banto-server = { workspace = true }
 # wires `AttachmentsService` into the REST router the same way it already
 # wires `ItemsService`/`BackupService`.
 banto-attachments = { workspace = true }
-# Theme C PR-C1 (docs/template-scope.md §7): the domain-agnostic settings /
-# audit services (and the shared `Role` vocabulary) live here now. This crate
-# re-exports them (`lib.rs`) so existing `admin_template_core::{settings,audit}`
-# / `admin_template_core::users::Role` paths keep resolving unchanged. Same
-# downward `workspace.dependencies` shape as `banto-storage`.
+# Theme C (docs/template-scope.md §7): the domain-agnostic services live here
+# now - PR-C1 moved settings/audit (+ the shared `Role` vocabulary), PR-C2
+# moved `users` (`UsersService`, M10 RBAC). This crate re-exports them
+# (`lib.rs`) so existing `admin_template_core::{settings,audit,users}` paths
+# (incl. `users::{UsersService, Role, ...}`) keep resolving unchanged. Same
+# downward `workspace.dependencies` shape as `banto-storage`. Moving `users`
+# out took `argon2`/`password-hash` (the only argon2id password-hash users)
+# with it, so this crate no longer depends on them directly.
 banto-admin-services = { workspace = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 serde = { workspace = true }
@@ -51,8 +54,6 @@ axum = { workspace = true }
 # does not silently depend on another dependency's feature choices.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "signal", "fs"] }
 rust-embed = { workspace = true, optional = true }
-argon2 = { workspace = true }
-password-hash = { workspace = true }
 futures-util = { workspace = true }
 
 [dev-dependencies]
