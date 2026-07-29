@@ -66,6 +66,49 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # i18n サプライチェーン/再現性ガード（テンプレート実用性レビュー §2）。
+  # inlang プラグインは以前 jsdelivr の CDN URL で参照されており、毎ビルド
+  # CDN 取得＝`--frozen-lockfile` の再現性の外だった。取得失敗時 paraglide-js は
+  # WARN 後 exit 0 で空カタログを吐く（fail-open）ため、CI は常に緑・被害は
+  # 閉域網の端末で発生していた。プラグインをローカル devDependency に移した
+  # うえで、このジョブは「依存 install 後に CDN を遮断してから compile」して
+  # (1) CDN に一切依存しないこと (2) fail-closed ガード
+  # (scripts/check-i18n-nonempty.mjs) が非空カタログを保証すること、を検証する。
+  i18n-offline:
+    name: i18n (CDN-blocked reproducibility)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # jsdelivr（および一般的な npm ミラー CDN）をブラックホール化する。
+      # ローカル参照が正しければ compile はこれで一切影響を受けない。もし
+      # 何かが CDN 取得に退行したら 127.0.0.1 への接続が失敗し、空カタログ
+      # → fail-closed ガードが非0終了してこのジョブが赤になる。
+      - name: Block CDN egress (jsdelivr)
+        run: |
+          echo "127.0.0.1 cdn.jsdelivr.net" | sudo tee -a /etc/hosts
+          echo "127.0.0.1 unpkg.com" | sudo tee -a /etc/hosts
+          echo "127.0.0.1 esm.sh" | sudo tee -a /etc/hosts
+
+      # ローカルプラグインから compile が成功し、ガードが非空カタログを
+      # 通すことを確認する（CDN 遮断下でも緑になるのが正しい状態）。
+      - name: Compile i18n from local plugins (offline)
+        run: pnpm --filter admin-template paraglide:compile
+
   rust:
     name: Rust (fmt / clippy / check / test)
     strategy:
