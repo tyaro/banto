@@ -12,6 +12,7 @@
 	 * this palette while its own input has focus.
 	 */
 	import { onMount } from 'svelte';
+	import * as m from '$lib/paraglide/messages';
 	import { isProviderError, notify, searchCommands, type PaletteCommand } from '@banto/admin-core';
 	import { buildCommands, loadRecentCommandIds, recordRecentCommand } from '$lib/commands';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
@@ -134,13 +135,13 @@
 		class="palette"
 		role="dialog"
 		aria-modal="true"
-		aria-label="コマンドパレット"
+		aria-label={m['commandPalette.dialogLabel']()}
 		bind:this={paletteEl}
 	>
 		<input
 			type="text"
 			class="search"
-			placeholder="コマンドを検索…"
+			placeholder={m['commandPalette.placeholder']()}
 			autocomplete="off"
 			spellcheck="false"
 			role="combobox"
@@ -154,9 +155,14 @@
 			onkeydown={handleKeydown}
 		/>
 
-		<div class="results" id="command-palette-list" role="listbox" aria-label="コマンド一覧">
+		<div
+			class="results"
+			id="command-palette-list"
+			role="listbox"
+			aria-label={m['commandPalette.listLabel']()}
+		>
 			{#if orderedCommands.length === 0}
-				<p class="empty">一致するコマンドがありません</p>
+				<p class="empty">{m['commandPalette.empty']()}</p>
 			{/if}
 			{#each displayGroups as group (group.group)}
 				<div class="group-heading">{group.group}</div>

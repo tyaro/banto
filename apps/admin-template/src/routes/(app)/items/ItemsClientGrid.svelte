@@ -14,6 +14,8 @@
 	 */
 	import { BantoGrid, GridState, type CellEdit, type GridColumn } from '@banto/grid-svelte';
 	import { createListResource } from '@banto/admin-core';
+	import * as m from '$lib/paraglide/messages';
+	import { gridMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
@@ -59,11 +61,11 @@
 	const rows = $derived(list.rows.map(toItemRow));
 </script>
 
-<p class="note">{list.totalCount.toLocaleString()}件のデータを表示しています。</p>
+<p class="note">{m['items.rowCount']({ count: list.totalCount.toLocaleString() })}</p>
 
 {#if list.loading && list.rows.length === 0}
 	<div class="loading">
-		<LoadingState label="商品データを読み込み中…" />
+		<LoadingState label={m['items.loadingData']()} />
 	</div>
 {:else}
 	<div class="grid-wrap">
@@ -71,6 +73,7 @@
 			{rows}
 			{columns}
 			state={gridState}
+			messages={gridMessages()}
 			getRowId={(item) => item.id}
 			onRowClick={(row: ItemRow) => onRowClick(row)}
 			onCellEdit={(edit: CellEdit<ItemRow>) => onCellEdit(edit)}

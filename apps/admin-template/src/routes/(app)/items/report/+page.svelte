@@ -19,6 +19,7 @@
 	import { base } from '$app/paths';
 	import { createListResource } from '@banto/admin-core';
 	import { ReportView } from '@banto/report';
+	import * as m from '$lib/paraglide/messages';
 	import type { Item } from '$lib/banto/sampleData';
 	import { byCategory, categoryCounts, computeStatTiles } from '$lib/banto/dashboard';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
@@ -95,12 +96,12 @@
 </script>
 
 <div class="page">
-	<a class="back-link" href={`${base}/items`}>← 商品一覧へ戻る</a>
+	<a class="back-link" href={`${base}/items`}>{m['items.reportBack']()}</a>
 
 	{#if list.loading && list.rows.length === 0}
-		<LoadingState label="商品データを読み込み中…" />
+		<LoadingState label={m['items.loadingData']()} />
 	{:else}
-		<ReportView template={dailyTemplate} data={reportData} title="日報" />
+		<ReportView template={dailyTemplate} data={reportData} title={m['items.report']()} />
 	{/if}
 </div>
 

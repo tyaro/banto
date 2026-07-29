@@ -6,6 +6,8 @@
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
+	import * as m from '$lib/paraglide/messages';
+	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
 	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
@@ -42,7 +44,8 @@
 	const idValid = rawId !== '' && Number.isInteger(parsedId);
 
 	const formResource = idValid ? createFormResource(resource.name, parsedId) : null;
-	let store = $state(createFormStore(schema));
+	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
+	let store = $state(createFormStore(schema, undefined, formValidationMessages()));
 	let storeReady = $state(false);
 
 	// Shared by the initial mount effect and the "reload" action below (Fix:
@@ -55,7 +58,7 @@
 		if (!formResource) return;
 		await formResource.load();
 		if (formResource.initialValues) {
-			store = createFormStore(schema, formResource.initialValues);
+			store = createFormStore(schema, formResource.initialValues, formValidationMessages());
 			storeReady = true;
 		}
 	}
@@ -87,32 +90,31 @@
 
 	async function handleDelete() {
 		if (!formResource || !canWrite) return;
-		if (!window.confirm('削除しますか？')) return;
+		if (!window.confirm(m['items.deleteConfirm']())) return;
 		const removed = await formResource.remove();
 		if (removed) goto(`${base}/items`);
 	}
 </script>
 
 <div class="page">
-	<PageHeader title={`${resource.label}を編集`} />
+	<PageHeader title={m['items.editTitle']({ resource: resource.label })} />
 
 	<div class="form-panel">
 		{#if isNotFoundError}
 			<EmptyState
-				title={`${resource.label}が見つかりません`}
-				description="削除されたか、URLが正しくない可能性があります。"
+				title={m['items.notFoundTitle']({ resource: resource.label })}
+				description={m['items.notFoundDesc']()}
 			>
 				{#snippet action()}
-					<a class="banto-btn banto-btn--secondary" href={`${base}/items`}>一覧へ戻る</a>
+					<a class="banto-btn banto-btn--secondary" href={`${base}/items`}
+						>{m['common.backToList']()}</a
+					>
 				{/snippet}
 			</EmptyState>
 		{:else if formResource?.loading}
-			<LoadingState label="読み込み中…" />
+			<LoadingState label={m['common.loading']()} />
 		{:else if formResource?.error}
-			<ErrorState
-				title="読み込みに失敗しました"
-				description="通信状態を確認し、再読み込みしてください。"
-			>
+			<ErrorState title={m['items.loadError']()} description={m['items.loadErrorDesc']()}>
 				{#snippet action()}
 					<div class="error-actions">
 						<button
@@ -120,9 +122,11 @@
 							class="banto-btn banto-btn--secondary"
 							onclick={() => void loadForm()}
 						>
-							再読み込み
+							{m['common.reload']()}
 						</button>
-						<a class="banto-btn banto-btn--ghost" href={`${base}/items`}>一覧へ戻る</a>
+						<a class="banto-btn banto-btn--ghost" href={`${base}/items`}
+							>{m['common.backToList']()}</a
+						>
 					</div>
 				{/snippet}
 			</ErrorState>
@@ -132,10 +136,11 @@
 				{store}
 				onSubmit={handleSubmit}
 				submitting={(formResource?.saving ?? false) || !canWrite}
+				submitLabel={m['common.save']()}
 			>
 				{#if canWrite}
 					<button type="button" class="banto-btn banto-btn--danger" onclick={handleDelete}>
-						削除
+						{m['common.delete']()}
 					</button>
 				{/if}
 			</BantoForm>

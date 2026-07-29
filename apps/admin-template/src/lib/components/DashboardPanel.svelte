@@ -29,6 +29,7 @@
 	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import { onDestroy, onMount } from 'svelte';
+	import * as m from '$lib/paraglide/messages';
 	import type { Item } from '$lib/banto/sampleData';
 	import {
 		categoryCounts,
@@ -89,8 +90,12 @@
 
 	onDestroy(() => clearInterval(trendTimer));
 
-	const trendBands = [{ from: 66, to: 70, label: '管理範囲', colorVar: 'var(--banto-success)' }];
-	const trendMarkers = [{ at: 10, label: '点検', colorVar: 'var(--banto-warning)' }];
+	const trendBands = [
+		{ from: 66, to: 70, label: m['dashboard.trendBandControl'](), colorVar: 'var(--banto-success)' }
+	];
+	const trendMarkers = [
+		{ at: 10, label: m['dashboard.trendMarkerInspect'](), colorVar: 'var(--banto-warning)' }
+	];
 
 	// M13 SVG export demo (roadmap.md M13, `core/export.ts`): the chart
 	// components don't expose their `<svg>` via a prop/ref, so the caller
@@ -102,19 +107,19 @@
 		if (svg) downloadSvg(svg, 'price-histogram.svg');
 	}
 
-	const countLabel = (n: number) => `${n.toLocaleString()}件`;
+	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
 	const yen = (n: number) => `¥${n.toLocaleString()}`;
 </script>
 
 {#if list.loading && list.rows.length === 0}
-	<p class="status">読み込み中…</p>
+	<p class="status">{m['common.loading']()}</p>
 {:else if id === 'monthly'}
 	<LineChart
 		data={monthCounts}
 		x={(row) => row.month}
-		series={[{ id: 'count', label: '更新件数', y: (row) => row.count }]}
+		series={[{ id: 'count', label: m['dashboard.seriesUpdates'](), y: (row) => row.count }]}
 		area
-		label="月別更新件数の面グラフ"
+		label={m['dashboard.monthlyAria']()}
 		{height}
 		formatY={(n) => n.toLocaleString()}
 	/>
@@ -124,7 +129,7 @@
 		category={(row) => row.bucket}
 		value={(row) => row.count}
 		donut
-		label="価格帯分布のドーナツグラフ"
+		label={m['dashboard.priceBucketAria']()}
 		{height}
 		formatValue={countLabel}
 	/>
@@ -132,31 +137,33 @@
 	<div class="spc-panel">
 		<section class="spc-chart" bind:this={histogramWrapper}>
 			<div class="spc-chart-header">
-				<h3>価格分布（正規分布カーブ）</h3>
-				<button type="button" class="export-btn" onclick={exportHistogram}>SVGエクスポート</button>
+				<h3>{m['dashboard.spcHistogramTitle']()}</h3>
+				<button type="button" class="export-btn" onclick={exportHistogram}
+					>{m['dashboard.svgExport']()}</button
+				>
 			</div>
 			<Histogram
 				values={prices}
-				label="価格分布のヒストグラム（正規分布カーブ重ね描き）"
+				label={m['dashboard.spcHistogramAria']()}
 				height={220}
 				normalCurve
 				formatValue={yen}
 			/>
 		</section>
 		<section class="spc-chart">
-			<h3>カテゴリ別商品数（パレート図）</h3>
+			<h3>{m['dashboard.spcParetoTitle']()}</h3>
 			<ParetoChart
 				items={paretoItems}
-				label="カテゴリ別商品数のパレート図"
+				label={m['dashboard.spcParetoAria']()}
 				height={220}
 				formatValue={countLabel}
 			/>
 		</section>
 		<section class="spc-chart">
-			<h3>カテゴリ別価格分布（箱ひげ図）</h3>
+			<h3>{m['dashboard.spcBoxTitle']()}</h3>
 			<BoxPlot
 				groups={boxGroups}
-				label="カテゴリ別価格分布の箱ひげ図（上位カテゴリ）"
+				label={m['dashboard.spcBoxAria']()}
 				height={220}
 				formatValue={yen}
 			/>
@@ -167,10 +174,15 @@
 		data={trendData}
 		x={(row) => row.t}
 		series={[
-			{ id: 'temperature', label: '温度(℃)', y: (row) => row.temperature },
-			{ id: 'pressure', label: '圧力(MPa)', y: (row) => row.pressure, axis: 'right' }
+			{ id: 'temperature', label: m['dashboard.trendTemp'](), y: (row) => row.temperature },
+			{
+				id: 'pressure',
+				label: m['dashboard.trendPressure'](),
+				y: (row) => row.pressure,
+				axis: 'right'
+			}
 		]}
-		label="温度・圧力トレンド（ズーム/パン、しきい値バンド、イベントマーカー、第2Y軸、1秒間隔ストリーミング更新）"
+		label={m['dashboard.trendAria']()}
 		{height}
 		zoomable
 		bands={trendBands}
@@ -180,11 +192,9 @@
 		formatYRight={(n) => `${n.toFixed(2)}MPa`}
 	/>
 {:else if id === 'memo'}
-	<p class="memo">
-		タイトルバー/タブをドラッグして分割・タブ化・再配置、仕切りでサイズ変更を試せます。レイアウトは自動保存されます。
-	</p>
+	<p class="memo">{m['dashboard.panelMemoBody']()}</p>
 {:else}
-	<p class="status">不明なパネルです</p>
+	<p class="status">{m['dashboard.unknownPanel']()}</p>
 {/if}
 
 <style>
