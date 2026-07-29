@@ -21,6 +21,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface BarSeries {
 		id: string;
@@ -39,6 +40,8 @@
 		formatValue?: (n: number) => string;
 		/** Per-side overrides merged over the computed defaults (see `MARGIN` below). */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
 	let {
@@ -50,7 +53,8 @@
 		label,
 		height = 240,
 		formatValue,
-		margins
+		margins,
+		messages = {}
 	}: Props = $props();
 
 	const RADIUS = 4;
@@ -256,7 +260,7 @@
 
 <div class="banto-barchart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const bars = computeBars(width, plotHeight)}

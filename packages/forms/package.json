@@ -1,6 +1,6 @@
 {
   "name": "@banto/forms",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Banto schema-driven forms: Svelte 5 (Runes) field UI + validation (spec §7)",
   "license": "MIT",
   "repository": {

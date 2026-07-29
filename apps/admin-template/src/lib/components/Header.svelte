@@ -4,7 +4,9 @@
 	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
 	 */
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { page } from '$app/state';
+	import * as m from '$lib/paraglide/messages';
 	import { getAuthProvider } from '@banto/admin-core';
 	import { pageTitle } from '$lib/navigation';
 	import { sessionStore } from '$lib/session.svelte';
@@ -29,14 +31,14 @@
 
 	async function logout() {
 		await getAuthProvider().logout();
-		goto('/login');
+		goto(`${base}/login`);
 	}
 </script>
 
 <header>
 	<div class="hamburger">
 		<IconButton
-			label={overlayOpen ? 'サイドバーを閉じる' : 'サイドバーを開く'}
+			label={overlayOpen ? m['shell.closeSidebar']() : m['shell.expandSidebar']()}
 			icon={MenuIcon}
 			onclick={() => onToggleOverlay?.()}
 		/>
@@ -51,30 +53,39 @@
 
 	<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>
 		<Search size={16} aria-hidden="true" />
-		<span>検索…</span>
+		<span>{m['shell.searchPlaceholder']()}</span>
 		<kbd>Ctrl K</kbd>
 	</button>
 	<div class="search-icon-only">
 		<IconButton
-			label="コマンドパレットを開く"
+			label={m['shell.openCommandPalette']()}
 			icon={Search}
 			onclick={() => commandPaletteStore.show()}
 		/>
 	</div>
 
 	{#if !sessionStore.authDisabled}
-		<Menu label="ユーザーメニュー" placement="bottom-end">
+		<Menu label={m['shell.userMenu']()} placement="bottom-end">
 			{#snippet trigger(props)}
-				<button {...props} type="button" class="user-trigger" aria-label="ユーザーメニューを開く">
+				<button
+					{...props}
+					type="button"
+					class="user-trigger"
+					aria-label={m['shell.openUserMenu']()}
+				>
 					<span class="avatar" aria-hidden="true">{avatarInitial}</span>
 					<span class="user-name">{displayName}</span>
 				</button>
 			{/snippet}
 			<MenuGroup label={displayName}>
-				<MenuItem icon={Settings} label="設定" onSelect={() => goto('/settings')} />
+				<MenuItem
+					icon={Settings}
+					label={m['nav.settings']()}
+					onSelect={() => goto(`${base}/settings`)}
+				/>
 			</MenuGroup>
 			<MenuSeparator />
-			<MenuItem icon={LogOut} label="ログアウト" danger onSelect={logout} />
+			<MenuItem icon={LogOut} label={m['shell.logout']()} danger onSelect={logout} />
 		</Menu>
 	{/if}
 </header>

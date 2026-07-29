@@ -22,8 +22,8 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use banto_core::{BantoError, FieldError};
+use banto_storage::Db;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 const MIN_USERNAME_LEN: usize = 1;
 const MAX_USERNAME_LEN: usize = 32;
@@ -196,26 +196,29 @@ pub struct UserSummary {
 /// `users` table (migration `0003_users.sql`). No seed user - the app starts
 /// "uninitialized" and the first run walks through `setup_first_user`.
 ///
-/// `Clone` is cheap (`SqlitePool` is an `Arc`-backed handle), matching
+/// `Clone` is cheap (`Db` is an `Arc`-backed connection handle), matching
 /// `ItemsService`/`SettingsService`.
 #[derive(Clone)]
 pub struct UsersService {
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl UsersService {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// Has *any* account been created yet? Used by the login page (spec
     /// §3.3/§8.2) to decide between the first-run setup form and the normal
     /// login form.
     pub async fn is_initialized(&self) -> Result<bool, BantoError> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+        const SQL: &str = "SELECT COUNT(*) FROM users";
+        let count: i64 = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
         Ok(count > 0)
     }
 
@@ -241,16 +244,36 @@ impl UsersService {
         // The very first account is always `admin` (spec M10): there is no
         // one else yet to have assigned it a lesser role, and the app needs
         // at least one admin to exist to manage everyone else.
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?) \
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
              RETURNING id",
-        )
-        .bind(&username)
-        .bind(&hash)
-        .bind(display_name)
-        .bind(Role::Admin.as_str())
-        .fetch_one(&self.pool)
-        .await
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            dialect.placeholder(4),
+        );
+        let id: i64 = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(&sql)
+                    .bind(&username)
+                    .bind(&hash)
+                    .bind(display_name)
+                    .bind(Role::Admin.as_str())
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(&sql)
+                    .bind(&username)
+                    .bind(&hash)
+                    .bind(display_name)
+                    .bind(Role::Admin.as_str())
+                    .fetch_one(pool)
+                    .await
+            }
+        }
         .map_err(banto_storage::storage_error)?;
 
         Ok(UserIdentity {
@@ -276,12 +299,25 @@ impl UsersService {
         username: &str,
         password: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
-        let row: Option<(i64, String, String, String)> = sqlx::query_as(
-            "SELECT id, password_hash, display_name, role FROM users WHERE username = ?",
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await
+        let sql = format!(
+            "SELECT id, password_hash, display_name, role FROM users WHERE username = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let row: Option<(i64, String, String, String)> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as(&sql)
+                    .bind(username)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as(&sql)
+                    .bind(username)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
         .map_err(banto_storage::storage_error)?;
 
         match row {
@@ -314,12 +350,26 @@ impl UsersService {
         current: &str,
         new: &str,
     ) -> Result<(), BantoError> {
-        let row: Option<(i64, String)> =
-            sqlx::query_as("SELECT id, password_hash FROM users WHERE username = ?")
-                .bind(username)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(banto_storage::storage_error)?;
+        let select_sql = format!(
+            "SELECT id, password_hash FROM users WHERE username = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let row: Option<(i64, String)> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as(&select_sql)
+                    .bind(username)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as(&select_sql)
+                    .bind(username)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)?;
 
         let wrong_current = || BantoError::Validation {
             field_errors: vec![FieldError {
@@ -341,13 +391,28 @@ impl UsersService {
         validate_password_len(new, "newPassword")?;
         let new_hash = hash_password(new)?;
 
-        sqlx::query(
-            "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?",
-        )
-        .bind(&new_hash)
-        .bind(id)
-        .execute(&self.pool)
-        .await
+        let dialect = self.db.dialect();
+        let update_sql = format!(
+            "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
+            dialect.placeholder(1),
+            dialect.now_expr(),
+            dialect.placeholder(2),
+        );
+        match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&update_sql)
+                .bind(&new_hash)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|_| ()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&update_sql)
+                .bind(&new_hash)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|_| ()),
+        }
         .map_err(banto_storage::storage_error)?;
 
         Ok(())
@@ -359,11 +424,13 @@ impl UsersService {
     /// `password_hash` deliberately never leaves this module - see
     /// [`UserSummary`].
     pub async fn list_users(&self) -> Result<Vec<UserSummary>, BantoError> {
-        let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
-            "SELECT id, username, display_name, role, created_at FROM users ORDER BY id",
-        )
-        .fetch_all(&self.pool)
-        .await
+        const SQL: &str =
+            "SELECT id, username, display_name, role, created_at FROM users ORDER BY id";
+        let rows: Vec<(i64, String, String, String, String)> = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
+        }
         .map_err(banto_storage::storage_error)?;
 
         rows.into_iter()
@@ -389,12 +456,26 @@ impl UsersService {
         &self,
         username: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
-        let row: Option<(i64, String, String)> =
-            sqlx::query_as("SELECT id, display_name, role FROM users WHERE username = ?")
-                .bind(username)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(banto_storage::storage_error)?;
+        let sql = format!(
+            "SELECT id, display_name, role FROM users WHERE username = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let row: Option<(i64, String, String)> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as(&sql)
+                    .bind(username)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as(&sql)
+                    .bind(username)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)?;
 
         match row {
             Some((id, display_name, role)) => Ok(Some(UserIdentity {
@@ -424,11 +505,26 @@ impl UsersService {
         validate_password_len(password, "password")?;
         let display_name = display_name.trim();
 
-        let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-            .bind(&username)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+        let exists_sql = format!(
+            "SELECT id FROM users WHERE username = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let existing: Option<i64> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(&exists_sql)
+                    .bind(&username)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(&exists_sql)
+                    .bind(&username)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)?;
         if existing.is_some() {
             return Err(BantoError::Validation {
                 field_errors: vec![FieldError {
@@ -439,16 +535,36 @@ impl UsersService {
         }
 
         let hash = hash_password(password)?;
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?) \
+        let dialect = self.db.dialect();
+        let insert_sql = format!(
+            "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
              RETURNING id",
-        )
-        .bind(&username)
-        .bind(&hash)
-        .bind(display_name)
-        .bind(role.as_str())
-        .fetch_one(&self.pool)
-        .await
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            dialect.placeholder(4),
+        );
+        let id: i64 = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(&insert_sql)
+                    .bind(&username)
+                    .bind(&hash)
+                    .bind(display_name)
+                    .bind(role.as_str())
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(&insert_sql)
+                    .bind(&username)
+                    .bind(&hash)
+                    .bind(display_name)
+                    .bind(role.as_str())
+                    .fetch_one(pool)
+                    .await
+            }
+        }
         .map_err(banto_storage::storage_error)?;
 
         Ok(UserIdentity {
@@ -463,11 +579,16 @@ impl UsersService {
     /// Shared by the last-admin guards on [`UsersService::update_user`] and
     /// [`UsersService::delete_user`].
     async fn role_of(&self, id: i64) -> Result<Role, BantoError> {
-        let role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+        let sql = format!(
+            "SELECT role FROM users WHERE id = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let role: Option<String> = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_scalar(&sql).bind(id).fetch_optional(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_scalar(&sql).bind(id).fetch_optional(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
         match role {
             Some(role) => Role::from_str(&role),
             None => Err(BantoError::NotFound {
@@ -482,12 +603,16 @@ impl UsersService {
     /// OTHER than `id` - if that count is zero, `id` is the last admin and
     /// the caller must not be allowed to demote or delete it.
     async fn ensure_not_last_admin(&self, id: i64) -> Result<(), BantoError> {
-        let remaining_admins: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' AND id != ?")
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(banto_storage::storage_error)?;
+        let sql = format!(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND id != {}",
+            self.db.dialect().placeholder(1)
+        );
+        let remaining_admins: i64 = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_scalar(&sql).bind(id).fetch_one(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_scalar(&sql).bind(id).fetch_one(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
         if remaining_admins == 0 {
             return Err(BantoError::Other(
                 "最後の管理者を降格・削除することはできません".to_string(),
@@ -513,15 +638,34 @@ impl UsersService {
             self.ensure_not_last_admin(id).await?;
         }
 
-        let row: Option<(i64, String, String, String, String)> = sqlx::query_as(
-            "UPDATE users SET display_name = ?, role = ?, updated_at = datetime('now') WHERE id = ? \
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "UPDATE users SET display_name = {}, role = {}, updated_at = {} WHERE id = {} \
              RETURNING id, username, display_name, role, created_at",
-        )
-        .bind(display_name)
-        .bind(role.as_str())
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.now_expr(),
+            dialect.placeholder(3),
+        );
+        let row: Option<(i64, String, String, String, String)> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as(&sql)
+                    .bind(display_name)
+                    .bind(role.as_str())
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as(&sql)
+                    .bind(display_name)
+                    .bind(role.as_str())
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
         .map_err(banto_storage::storage_error)?;
 
         let Some((row_id, username, display_name, role_str, created_at)) = row else {
@@ -548,16 +692,31 @@ impl UsersService {
         validate_password_len(new_password, "newPassword")?;
         let hash = hash_password(new_password)?;
 
-        let result = sqlx::query(
-            "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?",
-        )
-        .bind(&hash)
-        .bind(id)
-        .execute(&self.pool)
-        .await
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
+            dialect.placeholder(1),
+            dialect.now_expr(),
+            dialect.placeholder(2),
+        );
+        let rows_affected = match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&sql)
+                .bind(&hash)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&sql)
+                .bind(&hash)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+        }
         .map_err(banto_storage::storage_error)?;
 
-        if result.rows_affected() == 0 {
+        if rows_affected == 0 {
             return Err(BantoError::NotFound {
                 resource: "users".to_string(),
                 id: id.to_string(),
@@ -585,12 +744,25 @@ impl UsersService {
             self.ensure_not_last_admin(id).await?;
         }
 
-        let result = sqlx::query("DELETE FROM users WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
-        if result.rows_affected() == 0 {
+        let sql = format!(
+            "DELETE FROM users WHERE id = {}",
+            self.db.dialect().placeholder(1)
+        );
+        let rows_affected = match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&sql)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&sql)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+        }
+        .map_err(banto_storage::storage_error)?;
+        if rows_affected == 0 {
             return Err(BantoError::NotFound {
                 resource: "users".to_string(),
                 id: id.to_string(),
@@ -711,13 +883,17 @@ mod tests {
             .await
             .unwrap();
         let hash = hash_password("password123").unwrap();
+        let pool = svc
+            .db
+            .as_sqlite()
+            .expect("service tests run on a SQLite handle");
         let err = sqlx::query(
             "INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)",
         )
         .bind("owner")
         .bind(&hash)
         .bind("Duplicate")
-        .execute(&svc.pool)
+        .execute(pool)
         .await
         .unwrap_err();
         assert!(err.to_string().to_lowercase().contains("unique"));

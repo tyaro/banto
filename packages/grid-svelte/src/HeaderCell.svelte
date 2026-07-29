@@ -23,6 +23,7 @@
 	import { DEFAULT_COLUMN_WIDTH, type FilterState, type GridColumn } from './types';
 	import type { GridState } from './state.svelte';
 	import FilterPopover from './FilterPopover.svelte';
+	import { defaultGridMessages, type GridMessages } from './messages';
 
 	interface Props {
 		column: GridColumn<TRow>;
@@ -39,6 +40,8 @@
 		 * reactivity already drives the client-side filter/sort pipeline).
 		 */
 		onSortOrFilterChange?: () => void;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's (and FilterPopover's) visible strings. Defaults reproduce today's Japanese output. */
+		messages?: Partial<GridMessages>;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -52,8 +55,14 @@
 		onDragStart,
 		onDragMove,
 		onDragEnd,
-		onSortOrFilterChange
+		onSortOrFilterChange,
+		messages = {}
 	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultGridMessages, ...messages };
 
 	const DRAG_THRESHOLD_PX = 4;
 
@@ -187,7 +196,7 @@
 			type="button"
 			class="filter-button"
 			class:active={!!activeFilter}
-			aria-label={`${column.header}の絞り込み`}
+			aria-label={t.filterAriaLabel(column.header)}
 			onclick={toggleFilter}
 		>
 			▾
@@ -199,6 +208,7 @@
 				onApply={applyFilter}
 				onClear={clearFilter}
 				onClose={() => (filterOpen = false)}
+				{messages}
 			/>
 		{/if}
 	{/if}

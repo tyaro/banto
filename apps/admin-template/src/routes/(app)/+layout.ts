@@ -1,6 +1,8 @@
 import { redirect } from '@sveltejs/kit';
+import { base } from '$app/paths';
 import { getAuthProvider } from '@banto/admin-core';
 import { bantoReady } from '$lib/banto/setup';
+import { syncLocaleFromProvider } from '$lib/banto/locale';
 import { sessionStore } from '$lib/session.svelte';
 import { settings } from '$lib/settings.svelte';
 
@@ -16,13 +18,15 @@ import { settings } from '$lib/settings.svelte';
 export async function load() {
 	await bantoReady;
 	if (!(await getAuthProvider().check())) {
-		redirect(307, '/login');
+		redirect(307, `${base}/login`);
 	}
 	await sessionStore.load();
 
 	// M12: now that the session is confirmed, pull theme settings from the
 	// UiSettingsProvider (settings DB) - a value saved from another
 	// client/session beats this tab's localStorage cache. Fire-and-forget:
-	// navigation must not wait on (or fail with) a settings read.
+	// navigation must not wait on (or fail with) a settings read. Locale (ADR-0005)
+	// rides the same path with its own key.
 	void settings.syncFromProvider();
+	void syncLocaleFromProvider();
 }

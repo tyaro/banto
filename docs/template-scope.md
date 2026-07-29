@@ -73,7 +73,7 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | 認証無効モード / デスクトップ自動ログイン（M11） | 設定オプトイン。既定OFF | キオスク用途限定。LANサーバとの排他は維持必須 |
 | コマンドパレット（M16） | ナビ定義から自動導出のため保守コストほぼゼロ。コンポーネント1つ+シェルの数行 | 無くても操作は成立するが、削除する動機も薄い |
 | デモコンテンツ（items 1万件、ダッシュボード各パネル、SPC/トレンドデモ） | **利用開始時に置き換える前提**。テンプレートの「見本」として同梱 | 雛形の理解材料。README/導入手順で差し替え箇所を明示すべき（→ §6 宿題) |
-| `@banto/attachments` + items 添付デモ（M20） | 独立パッケージ + `crates/banto-attachments`。`items/[id]/+page.svelte` のパネル配線・`attachmentsClient.ts`・`package.json` 依存・REST/Tauri ルータ/コマンド・`core/migrations/0006_attachments.sql` を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式の初適用例。デモモード（ブラウザ単体）では非表示。バックアップ非対象（§8 既知の制限） |
+| `@banto/attachments` + items 添付デモ（M20） | 独立パッケージ + `crates/banto-attachments`。`items/[id]/+page.svelte` のパネル配線・`attachmentsClient.ts`・`package.json` 依存・REST/Tauri ルータ/コマンド・`core/migrations-sqlite/0006_attachments.sql`（+ `migrations-postgres/0006_attachments.sql`）を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式の初適用例。デモモード（ブラウザ単体）では非表示。バックアップ非対象（§8 既知の制限） |
 | `@banto/report` + 日報デモ（M19） | 独立パッケージ（DB/バックエンド依存なし）。items 一覧の「日報」ボタン1行・`items/report/+page.svelte`・`$lib/banto/reports/daily.md?raw`・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。M20と異なりバックエンド/DB配線を持たない最小デモ（roadmap.md M19〜M21の提供形態）。印刷CSSの `.report-body` はテーマ非依存の白地・黒文字固定（帳票の再現性優先、report-plan.md §3.4） |
 
 ### 3.1 今後の機能拡張の提供形態（2026-07-15 決定）
@@ -243,8 +243,10 @@ cron的定時実行基盤 / アラーム管理 — いずれも SCADA 等の**�
 ### 非スコープ（今回は記録のみ）
 
 - 上記の実施そのもの（コード移動・新クレート作成）は M18 Phase C の
-  スコープ外。**必要になった時点**（banto-industrial 側が
-  `banto-admin-services` 相当を必要とする、または2本目のテンプレート
-  利用アプリが立ち上がり実際に重複コピーが発生した時点）で着手する
+  スコープ外。**必要になった時点**で着手する。着手トリガは以下のいずれか:
+  - banto-industrial 側が `banto-admin-services` 相当を必要とする
+  - 2本目のテンプレート利用アプリが立ち上がり実際に重複コピーが発生する
+  - **外部採用者から、コピー面積（重複コピーの保守負担）に関する
+    フィードバックが出る**
 - `items.rs`/`items` 関連のフロント資産は対象外（アプリ固有のデモの
   ままでよい、§3「デモコンテンツ」の扱いを維持）

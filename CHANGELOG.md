@@ -3,14 +3,16 @@
 このリポジトリの注目すべき変更を記録する。フォーマットは
 [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠する。
 バージョン番号はタグ運用規約（[docs/publishing.md](docs/publishing.md)
-「タグ運用規約」節、0.x系は `minor` = 破壊的変更 / `patch` = 追加・修正）に
-従う。バージョンタグ導入前の M0〜M9 はマイルストーン単位で、M10以降は
-マイルストーン + PR番号単位で記録し、コミット単位までは分解しない。
+「タグ運用規約」節）に従う。**1.0.0（安定版）以降は SemVer 準拠**
+（`major` = 破壊的変更 / `minor` = 機能追加 / `patch` = 修正）。0.x 系は
+`minor` = 破壊的変更 / `patch` = 追加・修正で運用していた。バージョンタグ
+導入前の M0〜M9 はマイルストーン単位で、M10以降はマイルストーン + PR番号
+単位で記録し、コミット単位までは分解しない。
 
 **運用規約**:
 
 - PR ごとに `[Unreleased]` へ変更点を1行追記する。
-- リリース（破壊的変更を伴うgitタグの更新）のタイミングで `[Unreleased]`
+- リリース（バージョンタグの更新）のタイミングで `[Unreleased]`
   の内容を新しいバージョン節に切り出し、日付を入れる。
 - 配布方式はgitタグ参照（npm/crates.ioレジストリへは公開しない、
   [docs/publishing.md](docs/publishing.md)）のため、Changesets 等の
@@ -19,6 +21,86 @@
   記述は本ファイルの新設により本節に置き換え）。
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-07-28
+
+**v1.0.0 — 安定版リリース。** 仕様 M0〜M9 + ロードマップ M10〜M24 までの
+汎用管理画面テンプレートとしての機能が出そろい、v1 スコープを完了。以降の
+拡張テーマ（PostgreSQL アプリ全体対応 / i18n レイヤ②③ / コピー面積縮小）は
+[roadmap.md](docs/roadmap.md) §3「v2 / 将来構想バックログ」に集約。0.1.2 からの
+差分は破壊的変更なし（安定版としての昇格）。以下は 0.1.2 以降のマージ分。
+
+- feat (P4-5): `banto-storage` に PostgreSQL 接続ヘルパ `postgres.rs`（`connect`、
+  接続プール、feature `postgres`）を追加。`list_query` の Postgres 対応（既存）
+  と合わせて storage クレートが Postgres 接続可能に（接続のみ）。アプリ層
+  （`apps/admin-template/core`）は仕様どおり SQLite 専任のまま（§12.1/§548）。
+  CI に `postgres:16` サービスコンテナで実接続する `storage-postgres` ジョブを追加
+- feat (P4-9): プリセット・スキャフォールダ `scripts/scaffold.mjs`
+  （`--preset minimal|standard|full`）を追加。コピー直後にプリセットで不要な
+  オプション資産（charts / dock / Glass+vibrancy / コマンドパレット / 添付 /
+  帳票）を README「オプション資産の削除」手順どおりに削除する（ship-full /
+  remove-only、コアは非対象）。rename.mjs のファイル編集エンジンを
+  `scripts/lib/template-edit.mjs` に共有抽出。`template-acceptance.yml` に
+  3プリセット × ビルド緑（scaffold → install → check/build/cargo check /
+  verify:architecture）の受け入れマトリクスを追加（依存追加なし）
+- fix (P4-9, follow-up #94): `scaffold.mjs` の attachments 除去を
+  `apps/admin-template/core/src/rest/tests.rs` にも適用し、全プリセットで
+  `cargo test` が緑になるよう修正（従来は minimal/standard で削除済みクレート
+  参照によりテストがコンパイル不能だった）。`template-edit.mjs` に章末ブロックを
+  EOF ごと消す冪等ヘルパ `cutToEnd` を追加。`template-acceptance.yml` の
+  presets マトリクスを `cargo check` → `cargo test` に強化
+- feat (scaffold-presets-plan §7.3): `scripts/scaffold.mjs` に `--interactive`
+  （`-i`）を追加。プリセット（minimal/standard/full）または資産ごとの
+  残す/削除を対話で選ばせた上で、`--preset` と全く同じ削除ロジック・確認表示
+  を実行する（`--preset` の非対話動作はバイト単位で不変）。依存追加なし
+  （`node:readline/promises` のみ、conventions §3）。pipe された非 TTY stdin
+  でも `question()` の既知の取りこぼしを避けるため async イテレータで
+  1行ずつ読む方式を採用し、軽量テスト `scripts/scaffold.test.mjs` から
+  駆動できるようにした
+- feat (#89, AD-2): **GitHub Pages ライブデモを公開**（<https://tyaro.github.io/banto/>、
+  InMemory デモ・admin/admin）。アプリを **base-path 対応**にし（`$app/paths` の
+  `base` を全内部遷移へ付与。`BASE_PATH` 既定 `''` で Tauri/LAN ビルドは完全不変）、
+  `deploy-demo.yml` ワークフロー（`BASE_PATH=/banto` ビルド → deploy-pages）を追加。
+  README 冒頭にライブデモリンクを追加
+- docs (#90, AD-3): OG ソーシャルプレビュー画像 `docs/assets/og-image.png` を追加
+- ci (#91): `deploy-demo.yml` の Pages アクションを Node 24 版へ bump（Node 20 deprecation 解消）
+- ci (#92): 全ワークフローの `checkout` / `setup-node` を Node 24（v7）へ bump（Node 20 警告解消）
+- ci (#99): `pnpm/action-setup` を v6 へ bump（最後の Node 20 警告を解消）
+- docs (#101): `ui-framework-spec.md` §5.3 ウィンドウ分離を「実装済み」に追随更新
+  （`panel_open` の real `WebviewWindow` + `popout.ts`、`isTauri()` ガードで両経路対称）
+- docs (#102, P4-6): `improvements.md` の履歴分離を完了。解決済み4項目（P3-3/P4-1/
+  P4-2/P4-3）を `docs/history/improvements-archive.md` へ移設しスタブ化
+- docs (#103): `roadmap.md` §3「v2 / 将来構想バックログ」を新設し大物残項目
+  （PostgreSQL 全体対応 / i18n ②③ / コピー面積縮小）を隔離。**v1（M0〜M24）スコープ完了**を宣言
+
+## [0.1.2] - 2026-07-23
+
+- fix (#77, CR-6): `audit_config_get` の両経路ロールを Admin に統一（Tauri が
+  Viewer・REST が Admin という看板不変条件「両経路対称」の実バグを修正）。
+  `verify:architecture` rule 8 に**ロール床照合**（`require_role`/`RoleGuard` の
+  期待ロールを DUAL_PATH/ROLE_READ 宣言と静的照合）を追加
+- docs/tooling (#78, CR-7): ドキュメントと実装の整合を是正（チャート14種・
+  scan-wedge 記述・`pnpm check` 説明、scan-wedge を tsc 化）+ **バージョン整合検査**
+  `check:versions`（全マニフェスト version の相互一致 / タグモードでタグ名照合）を追加
+- ci (#79, AD-5): テンプレート受け入れ CI（copy→rename→check）+ `rename.mjs` の
+  統合テスト（Node 標準 `node:test`）を追加
+- i18n (#81, AD-6 レイヤ①): `@banto/*` 全パッケージの可視文言を**注入対応化**。
+  現行日本語をデフォルトに残した `messages` props / メッセージ引数で上書き可能にし
+  （`forms/validate.ts` の既存パターンを横展開）、辞書・`t()`・依存追加なし・
+  byte-identical・後方互換。②仕組み・③辞書・docs 英語化は実需ドリブンで保留
+- docs (#82, AD-4): template-scope §7 コピー面積縮小の着手トリガに「外部採用者
+  フィードバック」を追加
+- fix (#83, PR-C): Tauri デスクトップ Webview に **CSP を設定**（`app.security.csp` を
+  null → LAN 側 `security_headers.rs` と対称。差分は `connect-src` の Tauri IPC のみ）。
+  実機 Windows のビルド + スモークで確認。app.html インラインスクリプトは SvelteKit
+  ブートストラップのビルド毎ハッシュ変動のため `'unsafe-inline'` を踏襲（LAN と同じ）
+- fix (#84): デスクトップの CSV エクスポートを `exports/` フォルダ書き出し +
+  フォルダを開く方式に（WebView2 が保存ダイアログを出さない問題。backup と同じ
+  流儀・依存追加なし。Tauri コマンド `items_export_csv_to_folder`、`DESKTOP_ONLY` 分類）
+- docs (#85, AD-1/AD-2): README に「対象読者 / 非対象」ポジショニング宣言と
+  スクリーンショット3枚（`docs/assets/`）を追加（採用者向け導線）
+- chore (#86, CR-7): 全マニフェストの version を **0.1.1 に整合**（既存 v0.1.1 タグ /
+  CHANGELOG [0.1.1] とのドリフトを解消）
 
 - M24: `@banto/charts` に **積立エリア（`StackedAreaChart`）** と
   **ガントチャート（`GanttChart`）** を追加（全14種）。積立棒は従来どおり

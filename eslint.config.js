@@ -18,6 +18,9 @@ export default tseslint.config(
 			'**/dist/**',
 			'**/target/**',
 			'apps/admin-template/src-tauri/gen/**',
+			// Paraglide JS compiled output (ADR-0005): generated, ships with
+			// `/* eslint-disable */` headers already; never lint it.
+			'apps/admin-template/src/lib/paraglide/**',
 			'pnpm-lock.yaml'
 		]
 	},

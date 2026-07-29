@@ -24,7 +24,9 @@
 //! the LAN-access URLs printed at startup are actually reachable - the
 //! Tauri app's default of `127.0.0.1`-only is a setting applied at the
 //! settings-screen layer, Phase B, not a property of this dev vehicle),
-//! `BANTO_DB` (default `./banto-dev.sqlite3`), `BANTO_ALLOW_SETUP` (`1` to
+//! `BANTO_DB` (default `./banto-dev.sqlite3`; a `postgres://`/`postgresql://`
+//! URL selects the PostgreSQL backend instead of a SQLite file - the binary
+//! must be built `--features postgres` for that to link), `BANTO_ALLOW_SETUP` (`1` to
 //! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
 //! §8.2 - the Tauri app never sets this, since desktop first-run goes
 //! through the `auth_setup` command instead).
@@ -32,7 +34,7 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
-use admin_template_core::db::init_db;
+use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier};
@@ -68,22 +70,41 @@ async fn main() {
     // a failure here must not prevent the server from starting at all (the
     // old db, if any, is left untouched on error - see that function's
     // per-step safety notes).
-    let applied_restore = match BackupService::apply_pending_restore_at_startup(&db_path_buf).await
-    {
-        Ok(applied) => applied,
-        Err(err) => {
-            eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
-            None
+    //
+    // V2 (backup owner decision D3): the startup restore is a SQLite-file-only
+    // concept. When `BANTO_DB` is a `postgres://`/`postgresql://` URL the whole
+    // backend is Postgres, so there is no db FILE to swap and `db_path` is a
+    // connection string, not a path - skip entirely rather than let it probe
+    // for a `restore-pending.sqlite3` next to a URL. The same
+    // `db::is_postgres_url` rule drives `init_db_from_target` below, so the two
+    // never disagree on which backend is in play.
+    let applied_restore = if is_postgres_url(&db_path) {
+        None
+    } else {
+        match BackupService::apply_pending_restore_at_startup(&db_path_buf).await {
+            Ok(applied) => applied,
+            Err(err) => {
+                eprintln!("banto-serve: 起動時のリストア適用に失敗しました: {err}");
+                None
+            }
         }
     };
 
-    let pool = init_db(&db_path).await.expect("init_db should succeed");
+    // V2 PR3: `init_db_from_target` selects the backend from `BANTO_DB`'s
+    // value - a `postgres://`/`postgresql://` URL runs on PostgreSQL, anything
+    // else is a SQLite file path (the default). Either way it returns a
+    // backend-agnostic `banto_storage::Db`; every service constructor takes
+    // `Db`. (The staged-restore step above is SQLite-file-only; against a
+    // Postgres target `db_path_buf` simply names no pending-restore file.)
+    let db = init_db_from_target(&db_path)
+        .await
+        .expect("init_db should succeed");
 
     let events = event_channel();
-    let items = ItemsService::new(pool.clone()).with_events(events.clone());
-    let users = UsersService::new(pool.clone());
-    let settings = SettingsService::new(pool.clone());
-    let backup = BackupService::new(db_path_buf.clone(), pool.clone());
+    let items = ItemsService::new(db.clone()).with_events(events.clone());
+    let users = UsersService::new(db.clone());
+    let settings = SettingsService::new(db.clone());
+    let backup = BackupService::new(db_path_buf.clone(), db.clone());
     // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
     // DB's own parent directory (same sibling-directory convention as
     // `backups/`), falling back to `.` if `db_path` has no parent (e.g. a
@@ -92,8 +113,8 @@ async fn main() {
         .parent()
         .map(|parent| parent.join("attachments"))
         .unwrap_or_else(|| PathBuf::from("attachments"));
-    let attachments = AttachmentsService::new(pool.clone(), attachments_base_dir);
-    let audit = AuditLogService::new(pool);
+    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);
+    let audit = AuditLogService::new(db);
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
     // fixed admin/admin check that used to live here directly. Also records

@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
+	import * as m from '$lib/paraglide/messages';
+	import { formValidationMessages } from '$lib/banto/i18n';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
@@ -10,7 +13,8 @@
 	const schema = resource.schema as FormSchema;
 
 	const formResource = createFormResource('items');
-	const store = createFormStore(schema);
+	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
+	const store = createFormStore(schema, undefined, formValidationMessages());
 
 	$effect(() => {
 		void formResource.load();
@@ -19,7 +23,7 @@
 	async function handleSubmit(values: Record<string, unknown>) {
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			goto('/items');
+			goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -27,13 +31,19 @@
 </script>
 
 <div class="page">
-	<PageHeader title={`${resource.label}を新規作成`} />
+	<PageHeader title={m['items.createTitle']({ resource: resource.label })} />
 
 	<div class="form-panel">
 		{#if formResource.loading}
-			<LoadingState label="読み込み中…" />
+			<LoadingState label={m['common.loading']()} />
 		{:else}
-			<BantoForm {schema} {store} onSubmit={handleSubmit} submitting={formResource.saving} />
+			<BantoForm
+				{schema}
+				{store}
+				onSubmit={handleSubmit}
+				submitting={formResource.saving}
+				submitLabel={m['common.save']()}
+			/>
 		{/if}
 	</div>
 </div>

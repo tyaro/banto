@@ -8,9 +8,9 @@
 
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::ServerEvent;
-use banto_storage::ColumnMap;
+use banto_storage::{ColumnMap, Db, Dialect};
 use serde::{Deserialize, Serialize};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite};
 use tokio::sync::broadcast;
 
 /// A single row of the `items` table, wire-shaped for the frontend
@@ -171,22 +171,47 @@ fn column_map() -> ColumnMap {
 
 const RESOURCE: &str = "items";
 
+/// The dialect-specific SQL expression for "today's date" (a **date**, not a
+/// datetime), used by `create`/`update`/`import` to stamp `items.updated_at`.
+///
+/// This is deliberately NOT `Dialect::now_expr()`: that helper renders
+/// `datetime('now')` (a `YYYY-MM-DD HH:MM:SS` timestamp) on SQLite, whereas
+/// this crate has always written `items.updated_at` with `date('now')` (a
+/// bare `YYYY-MM-DD` date). Routing this through `now_expr()` would silently
+/// change the stored SQLite value's shape and break byte-for-byte
+/// compatibility with the pre-V2 behavior (see `docs/conventions.md` "既定
+/// SQLite 経路は挙動不変"). `Dialect` itself only exposes a *datetime*
+/// current-time expression, so the date-only variant is kept here in the app
+/// layer rather than widening PR1's `banto-storage` API for this one call
+/// site. The Postgres rendering is `CURRENT_DATE::text`: `items.updated_at` is
+/// a TEXT column (it decodes into `String`), and Postgres has no implicit
+/// assignment cast from `date` to `text`, so a bare `CURRENT_DATE` would fail
+/// to insert - the `::text` cast yields the same `YYYY-MM-DD` shape SQLite's
+/// `date('now')` produces (PR3, first time this arm is actually exercised).
+fn today_expr(dialect: Dialect) -> &'static str {
+    match dialect {
+        Dialect::Sqlite => "date('now')",
+        Dialect::Postgres => "CURRENT_DATE::text",
+    }
+}
+
 /// Service layer for the `items` resource (spec §10): the same methods a
 /// REST handler would call in M6. No `tauri` dependency, so it is testable
 /// in a plain `cargo test`.
 ///
-/// `Clone` is cheap: `SqlitePool` and `broadcast::Sender` are both
-/// `Arc`-backed handles, so the REST layer (`rest.rs`) can capture an owned
-/// `ItemsService` in each route closure without wrapping it itself.
+/// `Clone` is cheap: `Db` (an `Arc`-backed connection handle) and
+/// `broadcast::Sender` are both cheap to clone, so the REST layer (`rest.rs`)
+/// can capture an owned `ItemsService` in each route closure without wrapping
+/// it itself.
 #[derive(Clone)]
 pub struct ItemsService {
-    pool: SqlitePool,
+    db: Db,
     events: Option<broadcast::Sender<ServerEvent>>,
 }
 
 impl ItemsService {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool, events: None }
+    pub fn new(db: Db) -> Self {
+        Self { db, events: None }
     }
 
     /// Attach an event sender: `create`/`update`/`delete` will emit
@@ -211,56 +236,135 @@ impl ItemsService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Item>, BantoError> {
         let columns = column_map();
+        const SELECT_ROWS: &str = "SELECT id, name, price, stock, updated_at FROM items";
+        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM items";
 
-        let mut rows_builder: QueryBuilder<'_, Sqlite> =
-            QueryBuilder::new("SELECT id, name, price, stock, updated_at FROM items");
-        banto_storage::list_query::sqlite::apply_list_params(&mut rows_builder, &columns, &params)?;
-        let rows: Vec<Item> = rows_builder
-            .build_query_as::<Item>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+        // `QueryBuilder`/`list_query` are per-backend (the module is
+        // monomorphized per dialect via macro), so the list path dispatches on
+        // the backend and routes through the matching `list_query::{sqlite,
+        // postgres}` module - each one's `push_bind` handles that backend's
+        // placeholder syntax (conventions §6 "SQL 列はホワイトリスト経由のみ").
+        match &self.db {
+            Db::Sqlite(pool) => {
+                let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_ROWS);
+                banto_storage::list_query::sqlite::apply_list_params(
+                    &mut rows_builder,
+                    &columns,
+                    &params,
+                )?;
+                let rows: Vec<Item> = rows_builder
+                    .build_query_as::<Item>()
+                    .fetch_all(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
 
-        let mut count_builder: QueryBuilder<'_, Sqlite> =
-            QueryBuilder::new("SELECT COUNT(*) FROM items");
-        banto_storage::list_query::sqlite::append_where(
-            &mut count_builder,
-            &columns,
-            &params.filters,
-        )?;
-        let total_count: i64 = count_builder
-            .build_query_scalar()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
+                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                banto_storage::list_query::sqlite::append_where(
+                    &mut count_builder,
+                    &columns,
+                    &params.filters,
+                )?;
+                let total_count: i64 = count_builder
+                    .build_query_scalar()
+                    .fetch_one(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
 
-        Ok(ListResult {
-            rows,
-            total_count: total_count as u64,
-        })
+                Ok(ListResult {
+                    rows,
+                    total_count: total_count as u64,
+                })
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                let mut rows_builder: QueryBuilder<'_, sqlx::Postgres> =
+                    QueryBuilder::new(SELECT_ROWS);
+                banto_storage::list_query::postgres::apply_list_params(
+                    &mut rows_builder,
+                    &columns,
+                    &params,
+                )?;
+                let rows: Vec<Item> = rows_builder
+                    .build_query_as::<Item>()
+                    .fetch_all(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+
+                let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
+                    QueryBuilder::new(SELECT_COUNT);
+                banto_storage::list_query::postgres::append_where(
+                    &mut count_builder,
+                    &columns,
+                    &params.filters,
+                )?;
+                let total_count: i64 = count_builder
+                    .build_query_scalar()
+                    .fetch_one(pool)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+
+                Ok(ListResult {
+                    rows,
+                    total_count: total_count as u64,
+                })
+            }
+        }
     }
 
     pub async fn get(&self, id: i64) -> Result<Item, BantoError> {
-        sqlx::query_as::<_, Item>(
-            "SELECT id, name, price, stock, updated_at FROM items WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "SELECT id, name, price, stock, updated_at FROM items WHERE id = {}",
+            dialect.placeholder(1)
+        );
+        match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as::<_, Item>(&sql)
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as::<_, Item>(&sql)
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
+        }
         .map_err(|err| banto_storage::not_found(err, RESOURCE, id.to_string()))
     }
 
     pub async fn create(&self, input: ItemInput) -> Result<Item, BantoError> {
         validate_item_input(&input)?;
-        let item = sqlx::query_as::<_, Item>(
-            "INSERT INTO items (name, price, stock, updated_at) VALUES (?, ?, ?, date('now')) \
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "INSERT INTO items (name, price, stock, updated_at) VALUES ({}, {}, {}, {}) \
              RETURNING id, name, price, stock, updated_at",
-        )
-        .bind(input.name.trim())
-        .bind(input.price)
-        .bind(input.stock)
-        .fetch_one(&self.pool)
-        .await
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            today_expr(dialect),
+        );
+        let item = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as::<_, Item>(&sql)
+                    .bind(input.name.trim())
+                    .bind(input.price)
+                    .bind(input.stock)
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as::<_, Item>(&sql)
+                    .bind(input.name.trim())
+                    .bind(input.price)
+                    .bind(input.stock)
+                    .fetch_one(pool)
+                    .await
+            }
+        }
         .map_err(banto_storage::storage_error)?;
         self.notify_changed();
         Ok(item)
@@ -268,28 +372,62 @@ impl ItemsService {
 
     pub async fn update(&self, id: i64, input: ItemInput) -> Result<Item, BantoError> {
         validate_item_input(&input)?;
-        let item = sqlx::query_as::<_, Item>(
-            "UPDATE items SET name = ?, price = ?, stock = ?, updated_at = date('now') WHERE id = ? \
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {} WHERE id = {} \
              RETURNING id, name, price, stock, updated_at",
-        )
-        .bind(input.name.trim())
-        .bind(input.price)
-        .bind(input.stock)
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            today_expr(dialect),
+            dialect.placeholder(4),
+        );
+        let item = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as::<_, Item>(&sql)
+                    .bind(input.name.trim())
+                    .bind(input.price)
+                    .bind(input.stock)
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as::<_, Item>(&sql)
+                    .bind(input.name.trim())
+                    .bind(input.price)
+                    .bind(input.stock)
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
+        }
         .map_err(|err| banto_storage::not_found(err, RESOURCE, id.to_string()))?;
         self.notify_changed();
         Ok(item)
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
-        let result = sqlx::query("DELETE FROM items WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)?;
-        if result.rows_affected() == 0 {
+        let dialect = self.db.dialect();
+        let sql = format!("DELETE FROM items WHERE id = {}", dialect.placeholder(1));
+        // Map to `rows_affected` in each arm so the backend query-result types
+        // unify (see the same pattern across the service layer).
+        let rows_affected = match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&sql)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&sql)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected()),
+        }
+        .map_err(banto_storage::storage_error)?;
+        if rows_affected == 0 {
             return Err(BantoError::NotFound {
                 resource: RESOURCE.to_string(),
                 id: id.to_string(),
@@ -361,20 +499,66 @@ impl ItemsService {
             });
         }
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(banto_storage::storage_error)?;
-        let mut created = 0usize;
-        let mut updated = 0usize;
+        // The SQL is dialect-independent apart from placeholders / the
+        // date-stamp expression, so build it once (shared by both backend
+        // arms) and only the transaction execution dispatches per backend.
+        let dialect = self.db.dialect();
+        let update_sql = format!(
+            "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {} WHERE id = {}",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            today_expr(dialect),
+            dialect.placeholder(4),
+        );
+        let insert_sql = format!(
+            "INSERT INTO items (name, price, stock, updated_at) VALUES ({}, {}, {}, {})",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+            dialect.placeholder(3),
+            today_expr(dialect),
+        );
 
-        for (row_index, row) in rows.iter().enumerate() {
-            match row.id {
-                Some(id) => {
-                    let result = sqlx::query(
-                        "UPDATE items SET name = ?, price = ?, stock = ?, updated_at = date('now') WHERE id = ?",
-                    )
+        let result = match &self.db {
+            Db::Sqlite(pool) => import_apply_sqlite(pool, &rows, &update_sql, &insert_sql).await?,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                import_apply_postgres(pool, &rows, &update_sql, &insert_sql).await?
+            }
+        };
+
+        // Exactly one notify for a committed batch (spec M15) - an all-or-
+        // nothing rollback (`errors` non-empty) emits none.
+        if result.errors.is_empty() {
+            self.notify_changed();
+        }
+        Ok(result)
+    }
+}
+
+/// Run one import batch inside a single SQLite transaction (spec M15
+/// all-or-nothing). Free function (not a method) so the identical logic can be
+/// mirrored for Postgres without threading `self` through two backend arms -
+/// `sqlx`'s `Query<Sqlite>` and `Query<Postgres>` are distinct types, so the
+/// two transaction bodies cannot share one generic implementation (the same
+/// enum-dispatch trade-off `banto_storage::list_query` documents). Assumes
+/// every row already passed validation (the caller validates the whole batch
+/// before opening any transaction).
+async fn import_apply_sqlite(
+    pool: &sqlx::SqlitePool,
+    rows: &[ItemImportRow],
+    update_sql: &str,
+    insert_sql: &str,
+) -> Result<ImportResult, BantoError> {
+    let mut errors: Vec<ImportRowError> = Vec::new();
+    let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+    let mut created = 0usize;
+    let mut updated = 0usize;
+
+    for (row_index, row) in rows.iter().enumerate() {
+        match row.id {
+            Some(id) => {
+                let result = sqlx::query(update_sql)
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
@@ -382,47 +566,109 @@ impl ItemsService {
                     .execute(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
-                    if result.rows_affected() == 0 {
-                        errors.push(ImportRowError {
-                            row: row_index,
-                            message: format!("id {id} の商品が見つかりません"),
-                        });
-                    } else {
-                        updated += 1;
-                    }
+                if result.rows_affected() == 0 {
+                    errors.push(ImportRowError {
+                        row: row_index,
+                        message: format!("id {id} の商品が見つかりません"),
+                    });
+                } else {
+                    updated += 1;
                 }
-                None => {
-                    sqlx::query(
-                        "INSERT INTO items (name, price, stock, updated_at) VALUES (?, ?, ?, date('now'))",
-                    )
+            }
+            None => {
+                sqlx::query(insert_sql)
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
                     .execute(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
-                    created += 1;
-                }
+                created += 1;
             }
         }
-
-        if !errors.is_empty() {
-            tx.rollback().await.map_err(banto_storage::storage_error)?;
-            return Ok(ImportResult {
-                created: 0,
-                updated: 0,
-                errors,
-            });
-        }
-
-        tx.commit().await.map_err(banto_storage::storage_error)?;
-        self.notify_changed();
-        Ok(ImportResult {
-            created,
-            updated,
-            errors: Vec::new(),
-        })
     }
+
+    if !errors.is_empty() {
+        tx.rollback().await.map_err(banto_storage::storage_error)?;
+        return Ok(ImportResult {
+            created: 0,
+            updated: 0,
+            errors,
+        });
+    }
+
+    tx.commit().await.map_err(banto_storage::storage_error)?;
+    Ok(ImportResult {
+        created,
+        updated,
+        errors: Vec::new(),
+    })
+}
+
+/// Postgres mirror of [`import_apply_sqlite`] (see that function's doc for why
+/// the two cannot be unified). Not exercised in PR2 - `init_db` builds SQLite
+/// only - but kept a faithful copy so PR3 can wire a Postgres pool with no
+/// further change here.
+#[cfg(feature = "postgres")]
+async fn import_apply_postgres(
+    pool: &sqlx::PgPool,
+    rows: &[ItemImportRow],
+    update_sql: &str,
+    insert_sql: &str,
+) -> Result<ImportResult, BantoError> {
+    let mut errors: Vec<ImportRowError> = Vec::new();
+    let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+    let mut created = 0usize;
+    let mut updated = 0usize;
+
+    for (row_index, row) in rows.iter().enumerate() {
+        match row.id {
+            Some(id) => {
+                let result = sqlx::query(update_sql)
+                    .bind(row.name.trim())
+                    .bind(row.price)
+                    .bind(row.stock)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                if result.rows_affected() == 0 {
+                    errors.push(ImportRowError {
+                        row: row_index,
+                        message: format!("id {id} の商品が見つかりません"),
+                    });
+                } else {
+                    updated += 1;
+                }
+            }
+            None => {
+                sqlx::query(insert_sql)
+                    .bind(row.name.trim())
+                    .bind(row.price)
+                    .bind(row.stock)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                created += 1;
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        tx.rollback().await.map_err(banto_storage::storage_error)?;
+        return Ok(ImportResult {
+            created: 0,
+            updated: 0,
+            errors,
+        });
+    }
+
+    tx.commit().await.map_err(banto_storage::storage_error)?;
+    Ok(ImportResult {
+        created,
+        updated,
+        errors: Vec::new(),
+    })
 }
 
 #[cfg(test)]

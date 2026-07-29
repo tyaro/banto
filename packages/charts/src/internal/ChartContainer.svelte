@@ -12,6 +12,7 @@
 	 * screen-reader users is out of scope for v1 (later milestone).
 	 */
 	import type { Snippet } from 'svelte';
+	import { defaultChartMessages, type ChartMessages } from '../messages';
 
 	export interface PlotMetrics {
 		width: number;
@@ -32,9 +33,24 @@
 		 * output - charts that don't need it simply omit the binding.
 		 */
 		width?: number;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { label, height = 240, empty = false, plot, overlay, width = $bindable(0) }: Props = $props();
+	let {
+		label,
+		height = 240,
+		empty = false,
+		plot,
+		overlay,
+		width = $bindable(0),
+		messages = {}
+	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
 </script>
 
 <div
@@ -45,7 +61,7 @@
 	bind:clientWidth={width}
 >
 	{#if empty}
-		<div class="empty-state">データがありません</div>
+		<div class="empty-state">{t.emptyState()}</div>
 	{:else if width > 0}
 		<svg class="chart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
 			{@render plot({ width, height })}

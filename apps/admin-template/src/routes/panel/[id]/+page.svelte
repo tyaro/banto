@@ -19,6 +19,7 @@
 	 */
 	import { page } from '$app/state';
 	import { getAuthProvider } from '@banto/admin-core';
+	import * as m from '$lib/paraglide/messages';
 	import { bantoReady } from '$lib/banto/setup';
 	import { findPanelDef } from '$lib/banto/panels';
 	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
@@ -47,9 +48,9 @@
 </svelte:head>
 
 {#if authState === 'checking'}
-	<p class="status">確認中…</p>
+	<p class="status">{m['dashboard.panelChecking']()}</p>
 {:else if authState === 'unauthenticated'}
-	<p class="status">ログインが必要です。メインウィンドウでログインしてください。</p>
+	<p class="status">{m['dashboard.panelLoginRequired']()}</p>
 {:else}
 	<div class="panel-window">
 		<header class="panel-header">

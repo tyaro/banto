@@ -1,6 +1,7 @@
 <script lang="ts" generics="TRow">
 	/** Column filter editor, opened from HeaderCell's filter icon (spec §4.3). */
 	import type { FilterOp, FilterState, GridColumn } from './types';
+	import { defaultGridMessages, type GridMessages } from './messages';
 
 	interface Props {
 		column: GridColumn<TRow>;
@@ -8,16 +9,23 @@
 		onApply: (filter: FilterState) => void;
 		onClear: () => void;
 		onClose: () => void;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
+		messages?: Partial<GridMessages>;
 	}
 
-	let { column, current, onApply, onClear, onClose }: Props = $props();
+	let { column, current, onApply, onClear, onClose, messages = {} }: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultGridMessages, ...messages };
 
 	const filterType = $derived(column.filterType ?? 'text');
 
 	const TEXT_OPS: { value: FilterOp; label: string }[] = [
-		{ value: 'contains', label: '含む' },
-		{ value: 'starts_with', label: 'で始まる' },
-		{ value: 'eq', label: '一致する' }
+		{ value: 'contains', label: t.filterOpContains() },
+		{ value: 'starts_with', label: t.filterOpStartsWith() },
+		{ value: 'eq', label: t.filterOpEquals() }
 	];
 	const NUMBER_OPS: { value: FilterOp; label: string }[] = [
 		{ value: 'eq', label: '=' },
@@ -82,7 +90,7 @@
 	class="filter-popover"
 	bind:this={rootEl}
 	role="dialog"
-	aria-label={`${column.header}の絞り込み`}
+	aria-label={t.filterAriaLabel(column.header)}
 >
 	<select bind:value={op}>
 		{#each ops as item (item.value)}
@@ -92,14 +100,14 @@
 	<input
 		type={filterType === 'number' ? 'number' : 'text'}
 		bind:value
-		placeholder="値を入力"
+		placeholder={t.filterValuePlaceholder()}
 		onkeydown={(event) => {
 			if (event.key === 'Enter') apply();
 		}}
 	/>
 	<div class="actions">
-		<button type="button" class="apply" onclick={apply}>適用</button>
-		<button type="button" class="clear" onclick={onClear}>クリア</button>
+		<button type="button" class="apply" onclick={apply}>{t.filterApply()}</button>
+		<button type="button" class="clear" onclick={onClear}>{t.filterClear()}</button>
 	</div>
 </div>
 

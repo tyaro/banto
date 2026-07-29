@@ -7,6 +7,8 @@
 	 * renders as a fixed slide-in drawer instead of the flex column.
 	 */
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
+	import * as m from '$lib/paraglide/messages';
 	import { navItems } from '$lib/navigation';
 	import { NAV_ICONS } from './navIcons';
 	import { settings } from '$lib/settings.svelte';
@@ -45,40 +47,42 @@
 				<rect x="10" y="19" width="4" height="2" rx="1" />
 			</svg>
 		</span>
+		<!-- "Banto" is the product brand (owner-fixed): kept as a component
+		     constant, never keyed (PR-B2 scope rule). -->
 		<span class="brand-name">Banto</span>
 	</div>
 
-	<nav class="nav-section" aria-label="主要ナビゲーション">
+	<nav class="nav-section" aria-label={m['shell.mainNav']()}>
 		{#each mainItems as item (item.path)}
 			{@const Icon = NAV_ICONS[item.icon]}
 			<a
-				href={item.path}
+				href={`${base}${item.path}`}
 				class="nav-item"
 				class:active={isActive(item.path)}
 				aria-current={isActive(item.path) ? 'page' : undefined}
-				title={settings.sidebarCollapsed ? item.label : undefined}
+				title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
 			>
 				<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-				<span class="label">{item.label}</span>
+				<span class="label">{m[item.labelKey]()}</span>
 			</a>
 		{/each}
 	</nav>
 
 	{#if adminItems.length > 0}
 		<div class="section-divider"></div>
-		<nav class="nav-section" aria-label="管理ナビゲーション">
-			<p class="section-heading" aria-hidden="true">管理</p>
+		<nav class="nav-section" aria-label={m['shell.adminNav']()}>
+			<p class="section-heading" aria-hidden="true">{m['shell.adminHeading']()}</p>
 			{#each adminItems as item (item.path)}
 				{@const Icon = NAV_ICONS[item.icon]}
 				<a
-					href={item.path}
+					href={`${base}${item.path}`}
 					class="nav-item"
 					class:active={isActive(item.path)}
 					aria-current={isActive(item.path) ? 'page' : undefined}
-					title={settings.sidebarCollapsed ? item.label : undefined}
+					title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
 				>
 					<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-					<span class="label">{item.label}</span>
+					<span class="label">{m[item.labelKey]()}</span>
 				</a>
 			{/each}
 		</nav>
@@ -86,7 +90,7 @@
 
 	<div class="footer">
 		<IconButton
-			label={settings.sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーをたたむ'}
+			label={settings.sidebarCollapsed ? m['shell.expandSidebar']() : m['shell.collapseSidebar']()}
 			icon={settings.sidebarCollapsed ? PanelLeftOpen : PanelLeftClose}
 			onclick={() => settings.toggleSidebar()}
 		/>

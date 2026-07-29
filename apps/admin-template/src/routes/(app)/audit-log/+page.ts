@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { base } from '$app/paths';
 import { isAdmin } from '$lib/permissions';
 import { sessionStore } from '$lib/session.svelte';
 
@@ -15,6 +16,6 @@ import { sessionStore } from '$lib/session.svelte';
 export async function load({ parent }) {
 	await parent();
 	if (!isAdmin(sessionStore.role)) {
-		redirect(307, '/dashboard');
+		redirect(307, `${base}/dashboard`);
 	}
 }

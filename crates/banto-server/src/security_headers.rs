@@ -38,6 +38,13 @@ use axum::Router;
 /// - `base-uri 'self'` / `form-action 'self'` / `frame-ancestors 'none'`:
 ///   this app has no legitimate cross-origin form target or `<base>` use,
 ///   and is never meant to be embedded in a frame.
+///
+/// Two-path symmetry (conventions.md §1): the Tauri desktop webview enforces
+/// the *same* policy via `apps/admin-template/src-tauri/tauri.conf.json`'s
+/// `app.security.csp`. The only intended delta there is `connect-src`, which
+/// additionally allows Tauri IPC (`ipc: http://ipc.localhost`) in place of
+/// this LAN path's same-origin `fetch`/SSE. Keep the two in sync when either
+/// changes.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
      script-src 'self' 'unsafe-inline'; \
      style-src 'self' 'unsafe-inline'; \

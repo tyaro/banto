@@ -15,6 +15,28 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 - ライセンス: [MIT](LICENSE)
 - npmスコープ: `@banto/*` / Rustクレート: `banto-*`
 
+## スクリーンショット
+
+**ライブデモ: [tyaro.github.io/banto](https://tyaro.github.io/banto/)** — 単体ブラウザ（デモ）
+モード（InMemory・バックエンド不要）で動く。**admin / admin** でログイン可能。
+
+デスクトップ（Tauri）と LAN ブラウザ配信の両方で動く管理画面。1万件のデモデータで、
+仮想スクロールのデータグリッド・スキーマ駆動フォーム・各種チャート（折れ線 / 棒 / 円 /
+散布 / ヒートマップ / ゲージ / レーダー ほか）・ドッキングレイアウト・明暗テーマ
+（standard / glass プリセット）を同梱している。
+
+**ダッシュボード（ライト / standard）**
+
+![Banto ダッシュボード（ライトテーマ）](docs/assets/dashboard-light.png)
+
+**ダッシュボード（ダーク / glass プリセット）**
+
+![Banto ダッシュボード（ダークテーマ・glass）](docs/assets/dashboard-dark.png)
+
+**データグリッド（商品一覧・仮想スクロール / 絞り込み / インライン編集）**
+
+![Banto データグリッド](docs/assets/items-grid.png)
+
 ## ドキュメントの2トラック
 
 読者によってドキュメントを2つのトラックに分けている。
@@ -29,6 +51,35 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 アップストリームを追わずハードフォークするなら、トラックA（`docs/`・`AGENTS.md`・
 `CLAUDE.md`）は不要になれば削除してよい（テンプレートの「すべては削除可能」方針）。
 
+## 対象読者 / 非対象
+
+Banto は特定のニッチに最適化したテンプレートで、汎用の管理画面ジェネレータではない。
+ニッチは隠すより宣言した方が合う人に速く届く。最初の1画面で「自分向きか」を判断できる
+よう、正直に開示する。
+
+**向いている人**
+
+- **デスクトップアプリと LAN ブラウザ配信の両方**が要る業務系（現場端末はデスクトップ、
+  事務所は同じ画面をブラウザで）。
+- 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人。
+- Tauri v2 + SvelteKit（Svelte 5 Runes）+ Rust の構成で、AI 併走で量産したい人。
+
+**向いていない人**
+
+- Web のみ / デスクトップのみで足りる人（二形態の複雑さが不要）。
+- React / Electron の人材・エコシステムに乗りたい人。
+- 大規模 DB（PostgreSQL / 分散）が最初から前提の人。
+
+**言語**: UI は現状**日本語**。共有パッケージ（`@banto/*`）の可視文言は注入で上書き可能に
+外部化済み（既定は日本語のまま見た目不変）だが、UI 全体の多言語化（言語切替・辞書）は
+実需ドリブンで保留している。
+
+**v1 の割り切り（正直な開示）**:
+
+- LAN 配信は標準 HTTP。TLS はリバースプロキシ終端で対応する
+  （[docs/adr/0003-tls-via-reverse-proxy.md](docs/adr/0003-tls-via-reverse-proxy.md)）。
+- DB は SQLite のみ（PostgreSQL は feature スタブ）。
+
 ## 5分で動かす
 
 前提: Node 24+ / pnpm 10+（Tauri デスクトップとして動かす場合のみ Rust も。
@@ -41,12 +92,16 @@ pnpm install
 pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / admin でログイン）
 ```
 
-動いたら、次に編集する場所は3つ（詳細な手順は
-[docs/recipes/add-resource.md](docs/recipes/add-resource.md)）:
+動いたら、まず見るべき中心の3ファイルはこれ（スキーマ定義・テーブル・サービス層）:
 
 1. `apps/admin-template/src/lib/banto/resources/items.ts` — リソース定義とスキーマ
 2. `apps/admin-template/core/migrations/0001_items.sql` — テーブル定義
 3. `apps/admin-template/core/src/items.rs` — サービス層（CRUD）
+
+ただし**新しい CRUD リソースを1本通す**には、両経路（REST/Tauri）・認可対称テスト・
+ページ・ナビ等を含む**9ステップ**が必要（上の3ファイルはその入口）。正式な手順は
+[docs/recipes/add-resource.md](docs/recipes/add-resource.md) のチェックリストに従う
+（AI にそのまま指示として渡せる）。
 
 ## 主な機能
 
@@ -82,7 +137,9 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 - **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
   添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
-  スキャナ入力（`@banto/scan-wedge`、M21）。いずれも削除可能なデモ配線付き。
+  スキャナ入力（`@banto/scan-wedge`、M21）。帳票と添付は削除可能なデモ配線付き。
+  scan-wedge はバックエンド/DB/UI 依存ゼロの小粒機能のため**本体には配線せず**、
+  README のレシピで各アプリに直接組み込む（後述「バーコード/QRスキャナ入力」節）。
 
 実装済みマイルストーンの全体像は [docs/roadmap.md](docs/roadmap.md)、変更履歴は
 [CHANGELOG.md](CHANGELOG.md) を参照。
@@ -253,10 +310,15 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
    の `attachments` フィールドを外す。`src-tauri/src/lib.rs` も同様に
    `attachments_*` コマンドと `AppState` の `attachments`/`attachments_dir`
    フィールド、`items_delete` の `delete_for_record` 呼び出しを外す。
-4. `apps/admin-template/package.json` の `@banto/attachments` 依存、
+4. `apps/admin-template/core/src/rest/tests.rs` から attachments 参照を外す
+   （`api_router` から attachments 引数が消えるのに追随。外さないと
+   `cargo test` がコンパイルできない）: `unused_attachments_service` ヘルパと
+   その各呼び出し・`api_router(...)` 実引数の `attachments,`、末尾の
+   `// --- M20: attachments` テストブロック（EOF まで、独自の実サービスを含む）を削除。
+5. `apps/admin-template/package.json` の `@banto/attachments` 依存、
    ワークスペースの `crates/banto-attachments`（`Cargo.toml` の
    `members` と `admin-template-core`/`admin-template` の依存）を外す。
-5. `apps/admin-template/core/migrations/0006_attachments.sql` を削除
+6. `apps/admin-template/core/migrations/0006_attachments.sql` を削除
    （`attachments` テーブルは他のテーブルから参照されないため、単独で
    安全に外せる）。
 

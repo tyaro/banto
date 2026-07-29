@@ -91,7 +91,13 @@ export function buildGroupedView<TRow>(
 	rows: TRow[],
 	columns: GridColumn<TRow>[],
 	groupBy: string,
-	collapsed: (key: string) => boolean
+	collapsed: (key: string) => boolean,
+	/**
+	 * i18n layer 1 (docs/i18n-plan.md §3.2): overridable label for the
+	 * "null/undefined group value" bucket. Defaults to the current Japanese
+	 * literal verbatim.
+	 */
+	emptyGroupLabel: string = EMPTY_GROUP_LABEL
 ): FlatEntry<TRow>[] {
 	const groupColumn = columns.find((column) => column.id === groupBy);
 	if (!groupColumn) {
@@ -105,7 +111,7 @@ export function buildGroupedView<TRow>(
 	const buckets = new Map<string, { row: TRow; index: number }[]>();
 	rows.forEach((row, index) => {
 		const raw = getColumnValue(row, groupColumn);
-		const key = raw === null || raw === undefined ? EMPTY_GROUP_LABEL : String(raw);
+		const key = raw === null || raw === undefined ? emptyGroupLabel : String(raw);
 		let bucket = buckets.get(key);
 		if (!bucket) {
 			bucket = [];

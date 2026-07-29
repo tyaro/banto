@@ -27,12 +27,12 @@
 	} from '@banto/grid-svelte';
 	import { isProviderError } from '@banto/admin-core';
 	import { Info } from '@lucide/svelte';
+	import * as m from '$lib/paraglide/messages';
 	import { toastStore } from '$lib/toast.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
 	import {
-		DEMO_MODE_MESSAGE,
 		getAuditConfig,
 		isAuditLogAvailable,
 		listAuditLog,
@@ -46,27 +46,27 @@
 	const available = isAuditLogAvailable();
 
 	const actionLabels: Record<string, string> = {
-		create: '作成',
-		update: '更新',
-		delete: '削除',
-		login: 'ログイン',
-		login_failed: 'ログイン失敗',
-		logout: 'ログアウト',
-		setup: '初期セットアップ',
-		password_reset: 'パスワードリセット',
-		settings_change: '設定変更',
-		denied: '権限拒否'
+		create: m['audit.actionCreate'](),
+		update: m['audit.actionUpdate'](),
+		delete: m['audit.actionDelete'](),
+		login: m['audit.actionLogin'](),
+		login_failed: m['audit.actionLoginFailed'](),
+		logout: m['audit.actionLogout'](),
+		setup: m['audit.actionSetup'](),
+		password_reset: m['audit.actionPasswordReset'](),
+		settings_change: m['audit.actionSettingsChange'](),
+		denied: m['audit.actionDenied']()
 	};
 
 	const resultLabels: Record<string, string> = {
-		ok: '成功',
-		denied: '拒否',
-		failed: '失敗'
+		ok: m['audit.resultOk'](),
+		denied: m['audit.resultDenied'](),
+		failed: m['audit.resultFailed']()
 	};
 
 	const originLabels: Record<string, string> = {
-		tauri: 'デスクトップ',
-		rest: 'LAN/ブラウザ'
+		tauri: m['audit.originTauri'](),
+		rest: m['audit.originRest']()
 	};
 
 	function actionLabel(action: string): string {
@@ -82,10 +82,10 @@
 	}
 
 	const columns: GridColumn<AuditLogEntry>[] = [
-		{ id: 'ts', header: '時刻', accessor: 'ts', width: 175 },
+		{ id: 'ts', header: m['audit.colTs'](), accessor: 'ts', width: 175 },
 		{
 			id: 'actorUsername',
-			header: 'ユーザー',
+			header: m['audit.colUser'](),
 			accessor: (row) => row.actorUsername ?? '-',
 			width: 140,
 			filterable: true,
@@ -93,13 +93,13 @@
 		},
 		{
 			id: 'actorRole',
-			header: 'ロール',
+			header: m['common.role'](),
 			accessor: (row) => row.actorRole ?? '-',
 			width: 90
 		},
 		{
 			id: 'action',
-			header: 'アクション',
+			header: m['audit.colAction'](),
 			accessor: 'action',
 			width: 130,
 			filterable: true,
@@ -108,7 +108,7 @@
 		},
 		{
 			id: 'resource',
-			header: 'リソース',
+			header: m['audit.colResource'](),
 			accessor: 'resource',
 			width: 110,
 			filterable: true,
@@ -116,21 +116,21 @@
 		},
 		{
 			id: 'entityId',
-			header: '対象ID',
+			header: m['audit.colEntityId'](),
 			accessor: (row) => row.entityId ?? '-',
 			width: 90,
 			align: 'right'
 		},
 		{
 			id: 'origin',
-			header: '経路',
+			header: m['audit.colOrigin'](),
 			accessor: 'origin',
 			width: 110,
 			format: (value) => originLabel(String(value))
 		},
 		{
 			id: 'result',
-			header: '結果',
+			header: m['audit.colResult'](),
 			accessor: 'result',
 			width: 90,
 			format: (value) => resultLabel(String(value))
@@ -302,10 +302,15 @@
 		void (async () => {
 			try {
 				const config = await getAuditConfig();
-				const days = config.retentionDays !== null ? `${config.retentionDays}日` : '無期限';
+				const days =
+					config.retentionDays !== null
+						? m['audit.retentionDaysValue']({ days: config.retentionDays })
+						: m['audit.retentionUnlimited']();
 				const rows =
-					config.retentionRows !== null ? `${config.retentionRows.toLocaleString()}件` : '無制限';
-				retentionNote = `保持ポリシー: 最大${days} / 最大${rows}（「設定」画面で変更できます）`;
+					config.retentionRows !== null
+						? m['audit.retentionRowsValue']({ rows: config.retentionRows.toLocaleString() })
+						: m['audit.retentionRowsUnlimited']();
+				retentionNote = m['audit.retentionNote']({ days, rows });
 			} catch {
 				// 表示専用の補足情報なので、取得に失敗しても画面は壊さない。
 				retentionNote = null;
@@ -315,13 +320,13 @@
 </script>
 
 <div class="page">
-	<PageHeader title="監査ログ" description="ユーザー操作とシステムイベントの記録です。" />
+	<PageHeader title={m['nav.auditLog']()} description={m['audit.pageDescription']()} />
 
 	{#if !available}
 		<EmptyState
 			icon={Info}
-			title="監査ログは利用できません"
-			description={`${DEMO_MODE_MESSAGE}。単体ブラウザのデモモードには監査ログDBがないため、この機能はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ利用できます。`}
+			title={m['audit.unavailableTitle']()}
+			description={m['audit.unavailableDesc']()}
 		/>
 	{:else}
 		{#if retentionNote}
@@ -329,7 +334,7 @@
 		{/if}
 
 		<p class="note">
-			{windowed.totalCount.toLocaleString()}件の記録があります。行をクリックすると下に詳細が表示されます。
+			{m['audit.recordCountNote']({ count: windowed.totalCount.toLocaleString() })}
 		</p>
 
 		<section class="grid-wrap">
@@ -349,23 +354,23 @@
 
 		{#if selected}
 			<section class="detail">
-				<h3>詳細（ID: {selected.id}）</h3>
+				<h3>{m['audit.detailHeading']({ id: selected.id })}</h3>
 				<dl>
-					<dt>時刻</dt>
+					<dt>{m['audit.colTs']()}</dt>
 					<dd>{selected.ts}</dd>
-					<dt>ユーザー</dt>
+					<dt>{m['audit.colUser']()}</dt>
 					<dd>{selected.actorUsername ?? '-'}</dd>
-					<dt>ロール</dt>
+					<dt>{m['common.role']()}</dt>
 					<dd>{selected.actorRole ?? '-'}</dd>
-					<dt>アクション</dt>
+					<dt>{m['audit.colAction']()}</dt>
 					<dd>{actionLabel(selected.action)}</dd>
-					<dt>リソース</dt>
+					<dt>{m['audit.colResource']()}</dt>
 					<dd>{selected.resource}</dd>
-					<dt>対象ID</dt>
+					<dt>{m['audit.colEntityId']()}</dt>
 					<dd>{selected.entityId ?? '-'}</dd>
-					<dt>経路</dt>
+					<dt>{m['audit.colOrigin']()}</dt>
 					<dd>{originLabel(selected.origin)}</dd>
-					<dt>結果</dt>
+					<dt>{m['audit.colResult']()}</dt>
 					<dd>
 						<StatusBadge
 							variant={selected.result === 'ok' ? 'success' : 'danger'}
@@ -374,7 +379,7 @@
 					</dd>
 				</dl>
 				{#if selectedDetail}
-					<h4>詳細情報（JSON）</h4>
+					<h4>{m['audit.detailJson']()}</h4>
 					<pre>{selectedDetail}</pre>
 				{/if}
 			</section>

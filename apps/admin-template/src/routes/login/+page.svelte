@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { getAuthProvider } from '@banto/admin-core';
+	import * as m from '$lib/paraglide/messages';
 	import { bantoReady, getBantoMode } from '$lib/banto/setup';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 
@@ -59,9 +61,9 @@
 			if (showRemember && remember) params.remember = true;
 			const result = await getAuthProvider().login(params);
 			if (result.success) {
-				goto('/dashboard');
+				goto(`${base}/dashboard`);
 			} else {
-				error = result.error ?? 'ログインに失敗しました';
+				error = result.error ?? m['auth.loginFailed']();
 			}
 		} finally {
 			submitting = false;
@@ -73,11 +75,11 @@
 		error = null;
 
 		if (password.length < 8) {
-			error = 'パスワードは8文字以上で入力してください';
+			error = m['auth.passwordTooShort']();
 			return;
 		}
 		if (password !== passwordConfirm) {
-			error = 'パスワードが一致しません';
+			error = m['auth.passwordMismatch']();
 			return;
 		}
 
@@ -85,14 +87,14 @@
 		try {
 			const setup = getAuthProvider().setup;
 			if (!setup) {
-				error = 'この環境では初期セットアップに対応していません';
+				error = m['auth.setupUnsupported']();
 				return;
 			}
 			const result = await setup({ username, password, displayName });
 			if (result.success) {
-				goto('/dashboard');
+				goto(`${base}/dashboard`);
 			} else {
-				error = result.error ?? 'セットアップに失敗しました';
+				error = result.error ?? m['auth.setupFailed']();
 			}
 		} finally {
 			submitting = false;
@@ -116,27 +118,27 @@
 				</svg>
 			</span>
 			<p class="brand-name">Banto</p>
-			<p class="tagline">業務データを、ひとつの管理画面に。</p>
+			<p class="tagline">{m['auth.tagline']()}</p>
 		</aside>
 
 		<div class="form-pane">
 			{#if mode === 'setup'}
 				<form onsubmit={submitSetup}>
 					<h1>Banto</h1>
-					<p class="note">初回起動です。管理者アカウントを作成してください。</p>
+					<p class="note">{m['auth.setupNote']()}</p>
 
 					<label>
-						表示名
+						{m['common.displayName']()}
 						<input class="banto-input" type="text" bind:value={displayName} autocomplete="name" />
 					</label>
 
 					<label>
-						ユーザー名
+						{m['common.username']()}
 						<input class="banto-input" type="text" bind:value={username} autocomplete="username" />
 					</label>
 
 					<label>
-						パスワード（8文字以上）
+						{m['common.passwordMinLabel']()}
 						<input
 							class="banto-input"
 							type="password"
@@ -146,7 +148,7 @@
 					</label>
 
 					<label>
-						パスワード（確認）
+						{m['auth.passwordConfirmLabel']()}
 						<input
 							class="banto-input"
 							type="password"
@@ -160,23 +162,23 @@
 					{/if}
 
 					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
-						アカウントを作成
+						{m['auth.createAccount']()}
 					</button>
 				</form>
 			{:else if mode === 'login'}
 				<form onsubmit={submitLogin}>
 					<h1>Banto</h1>
 					<p class="note">
-						Tauri/LANモードでは初回起動時に作成したアカウントでログインしてください。
+						{m['auth.loginNote']()}
 					</p>
 
 					<label>
-						ユーザー名
+						{m['common.username']()}
 						<input class="banto-input" type="text" bind:value={username} autocomplete="username" />
 					</label>
 
 					<label>
-						パスワード
+						{m['common.password']()}
 						<input
 							class="banto-input"
 							type="password"
@@ -188,7 +190,7 @@
 					{#if showRemember}
 						<label class="remember">
 							<input type="checkbox" bind:checked={remember} />
-							ログイン状態を保持する（30日間）
+							{m['auth.remember']()}
 						</label>
 					{/if}
 
@@ -197,14 +199,14 @@
 					{/if}
 
 					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
-						ログイン
+						{m['auth.login']()}
 					</button>
 				</form>
 
 				{#if showDemoNote}
-					<SurfaceCard title="デモ環境について">
+					<SurfaceCard title={m['auth.demoTitle']()}>
 						<p class="demo-note">
-							単体ブラウザ（デモ）モードは <strong>admin / admin</strong> でログインできます。
+							{m['auth.demoNotePrefix']()}<strong>admin / admin</strong>{m['auth.demoNoteSuffix']()}
 						</p>
 					</SurfaceCard>
 				{/if}

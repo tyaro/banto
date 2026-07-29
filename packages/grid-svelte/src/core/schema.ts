@@ -57,6 +57,12 @@ export interface ColumnsFromSchemaOptions<TRow> {
 	 * happen only on a detail form.
 	 */
 	editable?: boolean;
+	/**
+	 * i18n layer 1 (docs/i18n-plan.md §3.2): validator message overrides,
+	 * applied to every derived column's validator. Defaults reproduce
+	 * today's Japanese messages verbatim.
+	 */
+	messages?: ColumnValidationMessages;
 }
 
 /**
@@ -70,33 +76,63 @@ function isEmpty(value: unknown): boolean {
 }
 
 /**
- * Column-level validator with the SAME rule order and Japanese messages as
- * @banto/forms' `validateField` (required → number bounds / string length →
- * custom `validate`), so a cell edit and the resource's form reject the
- * same input with the same message. MUST be kept in sync with
+ * i18n layer 1 (docs/i18n-plan.md §3.2): overridable validator messages,
+ * structurally mirroring @banto/forms' `ValidationMessages` (same keys/
+ * signatures, `SchemaField` in place of `FieldDef`) - deliberately NOT
+ * imported from forms (no `@banto/*` cross-package imports, conventions.md
+ * §4/§5; see this module's doc comment on the structural-mirror
+ * convention). Defaults reproduce today's Japanese messages verbatim.
+ */
+export interface ColumnValidationMessages {
+	required?: (field: SchemaField) => string;
+	min?: (field: SchemaField, min: number) => string;
+	max?: (field: SchemaField, max: number) => string;
+	minLength?: (field: SchemaField, min: number) => string;
+	maxLength?: (field: SchemaField, max: number) => string;
+	pattern?: (field: SchemaField) => string;
+}
+
+const defaultColumnValidationMessages: Required<ColumnValidationMessages> = {
+	required: () => '必須項目です',
+	min: (_field, min) => `${min}以上で入力してください`,
+	max: (_field, max) => `${max}以下で入力してください`,
+	minLength: (_field, min) => `${min}文字以上で入力してください`,
+	maxLength: (_field, max) => `${max}文字以内で入力してください`,
+	pattern: () => '形式が正しくありません'
+};
+
+/**
+ * Column-level validator with the SAME rule order and (by default) Japanese
+ * messages as @banto/forms' `validateField` (required → number bounds /
+ * string length → custom `validate`), so a cell edit and the resource's form
+ * reject the same input with the same message. MUST be kept in sync with
  * `packages/forms/src/validate.ts` (structural-mirror convention, see
  * module doc). The row itself is passed as the cross-field `values` record,
  * mirroring the form passing all current values.
  */
-function fieldValidator<TRow>(field: SchemaField): (value: unknown, row: TRow) => string | null {
+function fieldValidator<TRow>(
+	field: SchemaField,
+	messages: ColumnValidationMessages = {}
+): (value: unknown, row: TRow) => string | null {
+	const msg = { ...defaultColumnValidationMessages, ...messages };
 	return (value, row) => {
-		if (field.required && isEmpty(value)) return '必須項目です';
+		if (field.required && isEmpty(value)) return msg.required(field);
 
 		if (!isEmpty(value)) {
 			if (field.type === 'number') {
 				const num = typeof value === 'number' ? value : Number(value);
-				if (field.min !== undefined && num < field.min) return `${field.min}以上で入力してください`;
-				if (field.max !== undefined && num > field.max) return `${field.max}以下で入力してください`;
+				if (field.min !== undefined && num < field.min) return msg.min(field, field.min);
+				if (field.max !== undefined && num > field.max) return msg.max(field, field.max);
 			}
 			if (field.type === 'text' || field.type === 'textarea' || field.type === 'password') {
 				// Trimmed length + raw-string pattern, same as forms' validateField.
 				const str = String(value);
 				const trimmedLen = str.trim().length;
 				if (field.min !== undefined && trimmedLen < field.min)
-					return `${field.min}文字以上で入力してください`;
+					return msg.minLength(field, field.min);
 				if (field.max !== undefined && trimmedLen > field.max)
-					return `${field.max}文字以内で入力してください`;
-				if (field.pattern && !new RegExp(field.pattern).test(str)) return '形式が正しくありません';
+					return msg.maxLength(field, field.max);
+				if (field.pattern && !new RegExp(field.pattern).test(str)) return msg.pattern(field);
 			}
 		}
 
@@ -174,7 +210,7 @@ export function columnsFromSchema<TRow>(
 			column.editable = true;
 			column.editor = editor;
 			if (editor === 'select' && field.options) column.editorOptions = field.options;
-			column.validate = fieldValidator<TRow>(field);
+			column.validate = fieldValidator<TRow>(field, options.messages);
 		}
 
 		columns.push({ ...column, ...options.overrides?.[field.name] });

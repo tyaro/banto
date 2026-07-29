@@ -27,6 +27,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface AreaSeries {
 		id: string;
@@ -44,9 +45,26 @@
 		formatX?: (v: unknown) => string;
 		/** Per-side overrides merged over the defaults. */
 		margins?: Partial<ChartMargin>;
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { data, x, series, label, height = 240, formatY, formatX, margins }: Props = $props();
+	let {
+		data,
+		x,
+		series,
+		label,
+		height = 240,
+		formatY,
+		formatX,
+		margins,
+		messages = {}
+	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 28, left: 48 };
 	const MIN_TICK_SPACING = 70;
@@ -163,14 +181,14 @@
 			};
 		});
 		const last = segments[index][series.length - 1];
-		if (last) rows.push({ label: '合計', value: formatYValue(last.end) });
+		if (last) rows.push({ label: t.stackedAreaTotal(), value: formatYValue(last.end) });
 		return rows;
 	}
 </script>
 
 <div class="banto-stackedarea">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot()}
 			{@const m = metrics}
 			<!-- Gridlines + y ticks (recessive, rule 4). -->

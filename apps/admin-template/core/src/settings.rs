@@ -6,8 +6,8 @@
 use std::str::FromStr;
 
 use banto_core::{BantoError, FieldError};
+use banto_storage::Db;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use crate::users::Role;
 
@@ -182,38 +182,74 @@ impl Default for AuditSettings {
 /// [`crate::items::ItemsService`] (spec §12.1: app settings live in the
 /// local SQLite settings DB alongside/instead of a separate file).
 ///
-/// `Clone` is cheap (`SqlitePool` is an `Arc`-backed handle), matching
+/// `Clone` is cheap (`Db` is an `Arc`-backed connection handle), matching
 /// `ItemsService`/`UsersService` - needed since M12, when the REST layer's
 /// `/api/ui-settings/*` router started carrying its own handle.
 #[derive(Clone)]
 pub struct SettingsService {
-    pool: SqlitePool,
+    db: Db,
 }
 
 impl SettingsService {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// Read a single setting by key, or `None` if it has never been set.
     pub async fn get(&self, key: &str) -> Result<Option<String>, BantoError> {
-        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-            .bind(key)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(banto_storage::storage_error)
+        let sql = format!(
+            "SELECT value FROM settings WHERE key = {}",
+            self.db.dialect().placeholder(1)
+        );
+        match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar::<_, String>(&sql)
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_scalar::<_, String>(&sql)
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await
+            }
+        }
+        .map_err(banto_storage::storage_error)
     }
 
     /// Upsert a single setting.
+    ///
+    /// `ON CONFLICT(key) DO UPDATE SET value = excluded.value` is valid in both
+    /// dialects (the `excluded` pseudo-table is standard in SQLite and
+    /// Postgres alike), so only the placeholders differ between backends.
     pub async fn set(&self, key: &str, value: &str) -> Result<(), BantoError> {
-        sqlx::query(
-            "INSERT INTO settings (key, value) VALUES (?, ?) \
+        let dialect = self.db.dialect();
+        let sql = format!(
+            "INSERT INTO settings (key, value) VALUES ({}, {}) \
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(&self.pool)
-        .await
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+        );
+        // `.map(|_| ())` in each arm so the two backend query-result types
+        // unify (the result itself is unused - an upsert always affects one
+        // row).
+        match &self.db {
+            Db::Sqlite(pool) => sqlx::query(&sql)
+                .bind(key)
+                .bind(value)
+                .execute(pool)
+                .await
+                .map(|_| ()),
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query(&sql)
+                .bind(key)
+                .bind(value)
+                .execute(pool)
+                .await
+                .map(|_| ()),
+        }
         .map_err(banto_storage::storage_error)?;
         Ok(())
     }

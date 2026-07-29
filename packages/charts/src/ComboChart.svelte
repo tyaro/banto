@@ -34,6 +34,7 @@
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface ComboBarSeries<TRow> {
 		id: string;
@@ -62,6 +63,8 @@
 		bands?: ThresholdBand[];
 		/** Vertical event markers at category indices (M13 注釈). */
 		markers?: EventMarker[];
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
 	let {
@@ -75,7 +78,8 @@
 		formatX,
 		margins,
 		bands = [],
-		markers = []
+		markers = [],
+		messages = {}
 	}: Props = $props();
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 26, left: 48 };
@@ -163,7 +167,7 @@
 
 <div class="banto-combochart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const valueScale = linearScale(

@@ -16,6 +16,7 @@
 	import type { Accessor, ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
+	import type { ChartMessages } from './messages';
 
 	interface Props {
 		data: TRow[];
@@ -26,9 +27,21 @@
 		height?: number;
 		formatValue?: (n: number) => string;
 		ramp?: string[];
+		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		messages?: Partial<ChartMessages>;
 	}
 
-	let { data, x, y, value, label, height = 260, formatValue, ramp }: Props = $props();
+	let {
+		data,
+		x,
+		y,
+		value,
+		label,
+		height = 260,
+		formatValue,
+		ramp,
+		messages = {}
+	}: Props = $props();
 
 	const MIN_X_TICK_SPACING = 32;
 
@@ -63,7 +76,7 @@
 </script>
 
 <div class="banto-heatmap">
-	<ChartContainer {label} {height} empty={isEmpty}>
+	<ChartContainer {label} {height} empty={isEmpty} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const xScale = bandScale(grid.xCats.length, [m.innerLeft, m.innerLeft + m.innerWidth], 0)}

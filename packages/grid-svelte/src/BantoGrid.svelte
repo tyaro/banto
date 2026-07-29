@@ -29,6 +29,7 @@
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
+	import { defaultGridMessages, type GridMessages } from './messages';
 
 	interface Props {
 		/**
@@ -72,6 +73,12 @@
 		onParamsChange?: (params: { sort: SortState[]; filters: FilterState[] }) => void;
 		/** Server mode: fires when the virtualized window's [start, end) actually changes (not on every scroll tick). */
 		onVisibleRangeChange?: (range: { start: number; end: number }) => void;
+		/**
+		 * i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's
+		 * visible strings, threaded down to HeaderCell and (through it) to
+		 * FilterPopover. Defaults reproduce today's Japanese output.
+		 */
+		messages?: Partial<GridMessages>;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -90,8 +97,14 @@
 		onRangePaste,
 		onParamsChange,
 		onVisibleRangeChange,
-		rowClass
+		rowClass,
+		messages = {}
 	}: Props = $props();
+
+	// `messages` is merged once (i18n layer 1: an override bundle, not
+	// reactive state) rather than re-read per usage below.
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultGridMessages, ...messages };
 
 	// Created once per component instance. If the caller passes `state`, that
 	// instance is the single source of truth (including its own rowHeight);
@@ -708,7 +721,7 @@
 		} else {
 			const parsed = parseCellInput(String(editing.draft ?? ''), editorType);
 			if (!parsed.ok) {
-				editing = { ...editing, error: '入力値が不正です' };
+				editing = { ...editing, error: t.inlineEditInvalid() };
 				return;
 			}
 			value = parsed.value;
@@ -928,6 +941,7 @@
 					onDragMove={handleDragMove}
 					onDragEnd={handleDragEnd}
 					onSortOrFilterChange={notifyParamsChange}
+					{messages}
 				/>
 			{/each}
 		</div>
@@ -1058,7 +1072,7 @@
 		{/snippet}
 
 		{#if effectiveRowCount === 0}
-			<div class="empty-row">データがありません</div>
+			<div class="empty-row">{t.emptyState()}</div>
 		{:else}
 			<div class="rows-viewport" role="presentation" style:height={`${windowResult.totalHeight}px`}>
 				<div
@@ -1092,7 +1106,9 @@
 									onclick={() => handleGroupHeaderClick(rowIndex, entry.key)}
 								>
 									<span class="disclosure" aria-hidden="true">{entry.collapsed ? '▸' : '▾'}</span>
-									<span class="group-label">{entry.label}（{entry.count.toLocaleString()}件）</span>
+									<span class="group-label"
+										>{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}</span
+									>
 									{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
 										<span class="agg-chip"
 											>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
