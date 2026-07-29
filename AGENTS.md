@@ -1,7 +1,7 @@
 # AGENTS.md — Banto で作業する AI エージェント向けの道案内
 
 Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動く汎用管理画面
-テンプレート**。Rust（axum + sqlx SQLite）バックエンドと SvelteKit（Svelte 5 runes）
+テンプレート**。Rust（axum + sqlx。SQLite 既定・PostgreSQL 対応）バックエンドと SvelteKit（Svelte 5 runes）
 フロントのモノレポ。利用者はこれをコピーして個別アプリを作る。
 
 このファイルは「どのタスクで何を読むか」の索引。中身の規約は各ドキュメントにある。

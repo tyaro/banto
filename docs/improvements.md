@@ -177,7 +177,13 @@ GitHub ランナー上の IPv4/IPv6 バインド不一致（`vite preview` が I
 
 ## 6. アーキテクチャ・機能の残課題（優先度: 中）
 
-### 6.1 PostgreSQL リポジトリが未実装
+### 6.1 PostgreSQL リポジトリが未実装 → **V2 テーマAで解決済み（#106-109）**
+
+> **状況更新**: 本項は V2 テーマA「PostgreSQL アプリ全体対応」で解決済み。
+> `banto-storage` に `postgres.rs`（接続ヘルパ）と `db.rs` の `Db`/`Dialect`
+> 方言吸収が入り、app 層は方言別マイグレーション（`migrations-{sqlite,postgres}/`）
+> と `db::init_db_from_target` の `postgres://` 経路で end-to-end に PostgreSQL 上で
+> 動く。以下は着手前の記述として残す。
 
 `banto-storage` に `postgres` feature は定義されているが、
 `src/` には `sqlite.rs` しかなく **Postgres 実装モジュールが存在しない**。

@@ -54,8 +54,9 @@ Skeleton / Flowbite は引き続き基本コンポーネント（ボタン・モ
 | `@banto/forms` | スキーマ駆動フォーム（定義オブジェクトからUI+バリデーション自動生成） |
 | `@banto/theme` | Tailwind前提のデフォルトテーマ + CSS変数によるカスタマイズ層 |
 | `crates/banto-core` | Rust: リソースサービス/リポジトリtrait、ソート/フィルタ/ページングのパラメータ型、エラー型 |
-| `crates/banto-storage` | Rust: sqlxベースのリポジトリ実装。v1 は **SQLite のみ実装**（接続ヘルパ・マイグレーション）。PostgreSQL（TimescaleDB）は feature `postgres` で `list_query` の型付けまで用意し、接続/マイグレーションは実需時に着手（§12.1 実装状況の注記） |
-| `crates/banto-server` | Rust: 組み込みaxumサーバ（REST・認証・静的配信、11章） |
+| `crates/banto-storage` | Rust: sqlxベースのリポジトリ実装。**SQLite/PostgreSQL 両対応**（接続ヘルパ・方言別マイグレーション・`Db`/`Dialect` 方言吸収、V2 テーマAで app 全体対応。既定は SQLite）。TimescaleDB の hypertable / `time_bucket` 集計は実需時に着手（§12.1 実装状況の注記） |
+| `crates/banto-admin-services` | Rust: 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 テーマC で `admin-template-core` から移設 |
+| `crates/banto-server` | Rust: 組み込みaxumサーバ（REST・認証・静的配信、11章）+ 汎用 REST ルーター（`routes/`、V2 テーマC で移設） |
 | `apps/admin-template` | 上記全パッケージ+クレートを配線したTauri v2 + SvelteKit管理画面テンプレート |
 
 > **オプション拡張パッケージ（v1後に追加、M19〜M21）**: 上表はv1コアの対象
@@ -553,11 +554,14 @@ store/runesは永続化層として扱わない。
 
 ### 12.1 永続化層の役割分担
 
-> **実装状況の注記（2026-07-18）**: v1 の実装は **SQLite のみ**。
-> `banto-storage` の `postgres` feature は定義のみで実装未着手であり、
-> 下表の「外部PostgreSQL（TimescaleDB）」行は将来構想。業務データも
-> 現状はローカル SQLite（同一 trait・同一サービス層）で動かす
-> （improvements.md §6.1、improvement-plan-2026-07.md P4-5）。
+> **実装状況の注記（2026-07-18 記載 / V2 テーマAで更新）**: v1 の実装は
+> SQLite のみだったが、**V2 テーマA で app 全体を PostgreSQL 上でも動かせる
+> ようにした**（`banto-storage` の `Db`/`Dialect` 方言吸収・方言別
+> マイグレーション・`db::init_db_from_target` の `postgres://` 経路）。既定は
+> ローカル SQLite で、`BANTO_DB` を `postgres://` URL にすると PostgreSQL 経路に
+> なる（同一 trait・同一サービス層）。バックアップ/リストアは SQLite 専用
+> （PostgreSQL は明示エラー）。下表の TimescaleDB（hypertable・`time_bucket`
+> 集計）は引き続き将来構想。
 
 | データ | 保存先 |
 |---|---|

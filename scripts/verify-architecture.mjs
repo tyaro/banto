@@ -548,7 +548,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 // --- 10. app 層コンポーネントの生日本語リテラル（conventions §13） ----------
 //
 // UI 文言はキー経由（Paraglide messages）で持ち、生の日本語を app 層の .svelte
-// コンポーネントに直書きしない（§13、i18n-plan §6.1 / ADR-0005）。§9 の生色値
+// コンポーネントに直書きしない（§13、ADR-0005）。§9 の生色値
 // 検査と同型: コメントを除去した本文に「語を構成する」日本語（ひらがな・
 // カタカナ・CJK。区切り「・」等の句読点は翻訳対象の文言ではないので範囲外）が
 // 無いことを grep で担保する。生成物（paraglide/）と辞書（messages/*.json＝

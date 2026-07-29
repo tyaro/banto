@@ -68,17 +68,20 @@ Banto は特定のニッチに最適化したテンプレートで、汎用の�
 
 - Web のみ / デスクトップのみで足りる人（二形態の複雑さが不要）。
 - React / Electron の人材・エコシステムに乗りたい人。
-- 大規模 DB（PostgreSQL / 分散）が最初から前提の人。
+- 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL
+  単体には V2 で対応済み）。
 
-**言語**: UI は現状**日本語**。共有パッケージ（`@banto/*`）の可視文言は注入で上書き可能に
-外部化済み（既定は日本語のまま見た目不変）だが、UI 全体の多言語化（言語切替・辞書）は
-実需ドリブンで保留している。
+**言語**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で切り替えられる
+（V2 テーマB、Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の
+表示ロケールは日本語で見た目は不変。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は
+注入された解決済み文字列で受け取る（i18n は app 層のみ、conventions §13）。
 
 **v1 の割り切り（正直な開示）**:
 
 - LAN 配信は標準 HTTP。TLS はリバースプロキシ終端で対応する
   （[docs/adr/0003-tls-via-reverse-proxy.md](docs/adr/0003-tls-via-reverse-proxy.md)）。
-- DB は SQLite のみ（PostgreSQL は feature スタブ）。
+- DB は既定でローカル SQLite。V2 で PostgreSQL にもアプリ全体で対応した
+  （`BANTO_DB` を `postgres://` にすると切替。バックアップは SQLite 専用）。
 
 ## 5分で動かす
 
@@ -95,7 +98,8 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 動いたら、まず見るべき中心の3ファイルはこれ（スキーマ定義・テーブル・サービス層）:
 
 1. `apps/admin-template/src/lib/banto/resources/items.ts` — リソース定義とスキーマ
-2. `apps/admin-template/core/migrations/0001_items.sql` — テーブル定義
+2. `apps/admin-template/core/migrations-sqlite/0001_items.sql` — テーブル定義
+   （PostgreSQL 版は `migrations-postgres/0001_items.sql`）
 3. `apps/admin-template/core/src/items.rs` — サービス層（CRUD）
 
 ただし**新しい CRUD リソースを1本通す**には、両経路（REST/Tauri）・認可対称テスト・
@@ -132,8 +136,11 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   ログイン不要モード**（M11）。
 - **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
   **SQLite バックアップ/リストア**（M17）。
-- 対応DBは **v1 では SQLite のみ**（`banto-storage` の PostgreSQL は
-  feature 定義のみで実装未着手。仕様 §12.1 の注記参照）。
+- **対応DBは SQLite（既定）と PostgreSQL**。V2 でアプリ全体を PostgreSQL 上でも
+  動かせるようにした（`banto-storage` の `Db`/`Dialect` による方言吸収 + 方言別
+  マイグレーション）。`banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL に
+  すると PostgreSQL 経路になる（既定はローカル SQLite）。バックアップ/リストアは
+  SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1 参照。
 - **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
   添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
@@ -165,12 +172,13 @@ npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスは
 
 Rust クレート（`crates/`、MIT）:
 
-| クレート            | 内容                                                                            |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `banto-core`        | 共通型（ListParams/SortState/FilterState/エラー型）                             |
-| `banto-storage`     | sqlxリポジトリ（SQLite。PostgreSQLはfeature定義のみで実装未着手）               |
-| `banto-server`      | 組み込みaxumサーバ（REST・SSE・認証・静的配信・セキュリティヘッダ）             |
-| `banto-attachments` | 添付ファイルのメタCRUD・保存・サムネイル生成（M20、`@banto/attachments`の裏側） |
+| クレート               | 内容                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| `banto-core`           | 共通型（ListParams/SortState/FilterState/エラー型）                                           |
+| `banto-storage`        | sqlxリポジトリ（SQLite/PostgreSQL。`Db`/`Dialect` で方言を吸収）                              |
+| `banto-server`         | 組み込みaxumサーバ（REST・SSE・認証・静的配信・セキュリティヘッダ・汎用ルーター）             |
+| `banto-admin-services` | 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 で `admin-template-core` から移設 |
+| `banto-attachments`    | 添付ファイルのメタCRUD・保存・サムネイル生成（M20、`@banto/attachments`の裏側）               |
 
 アプリ（`apps/admin-template/`）: Tauri v2 + SvelteKit の管理画面テンプレート
 本体。`core/`（tauri非依存のサービス層 `admin-template-core`）と
@@ -237,7 +245,7 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 
 | 層                       | ファイル                                                                                                                                | 内容                                                                                                   |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Rust: マイグレーション   | `apps/admin-template/core/migrations/0001_items.sql`                                                                                    | `items` テーブル定義                                                                                   |
+| Rust: マイグレーション   | `apps/admin-template/core/migrations-sqlite/0001_items.sql`（+ `migrations-postgres/0001_items.sql`）                                   | `items` テーブル定義                                                                                   |
 | Rust: シード             | `apps/admin-template/core/src/db.rs`（`SEED_ROW_COUNT`・`seed_if_empty`）                                                               | 初回起動時の1,000件デモ投入                                                                            |
 | Rust: サービス層         | `apps/admin-template/core/src/items.rs`                                                                                                 | `Item`/`ItemInput`/`ItemImportRow`・CRUD・CSVインポート                                                |
 | Rust: REST               | `apps/admin-template/core/src/rest/items.rs`                                                                                            | `items` のルーティング（LANブラウザ向け）                                                              |
@@ -318,9 +326,9 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 5. `apps/admin-template/package.json` の `@banto/attachments` 依存、
    ワークスペースの `crates/banto-attachments`（`Cargo.toml` の
    `members` と `admin-template-core`/`admin-template` の依存）を外す。
-6. `apps/admin-template/core/migrations/0006_attachments.sql` を削除
-   （`attachments` テーブルは他のテーブルから参照されないため、単独で
-   安全に外せる）。
+6. `apps/admin-template/core/migrations-sqlite/0006_attachments.sql`（および
+   `migrations-postgres/0006_attachments.sql`）を削除（`attachments` テーブルは
+   他のテーブルから参照されないため、単独で安全に外せる）。
 
 **帳票デモ（`@banto/report` + 日報デモ、M19）**:
 DB/バックエンド配線を一切持たない最小デモのため、以下だけで外せる。
@@ -424,7 +432,7 @@ embed-ui`を省略すると組み込みのプレースホルダページを返�
   未実装（v2以降で検討）。**信頼できるLAN以外では有効化しないこと。**
   HTTPのみのため、ログイン情報やセッショントークンは平文でLAN内を流れる。
 - 認証はargon2id資格情報ストア + 初回セットアップ実装済み
-  （`apps/admin-template/core/src/users.rs`。固定パスワードのデモ実装
+  （`crates/banto-admin-services/src/users.rs`。固定パスワードのデモ実装
   ではない）。セッショントークンは絶対8時間/アイドル1時間で自動失効し、
   ログインは5回連続失敗で60秒ロックアウトされる（いずれも
   `banto-server`の`TokenPolicy`/`RateLimitPolicy`で変更可能）。
@@ -590,7 +598,7 @@ pnpm --filter admin-template tauri dev
   独自アイコンに差し替える場合は`pnpm --filter admin-template tauri icon
 <画像>`で全形式を再生成できる。
 - 認証はargon2id資格情報ストア + 初回セットアップ実装済み（`users`テーブル、
-  `apps/admin-template/core/src/users.rs`）。`pnpm dev`のブラウザ単体
+  `crates/banto-admin-services/src/users.rs`）。`pnpm dev`のブラウザ単体
   デモモード（Tauri/バックエンドなし、InMemoryデータ）のみ、Rustバック
   エンドを持たないため`admin` / `admin`固定の簡易セッション認証のまま。
 - テーマ・ドックレイアウト等のUI設定は、Tauri/LANブラウザでは SQLite 設定DB

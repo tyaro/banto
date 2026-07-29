@@ -159,7 +159,8 @@ M18 の非スコープ（初回は手動、roadmap.md M18 節）。
 
 ## Rust クレート: git タグ参照（crates.io へは発行しない）
 
-`banto-core` / `banto-storage` / `banto-server` は **crates.io へ発行しない**。
+`banto-core` / `banto-storage` / `banto-server` / `banto-admin-services` /
+`banto-attachments` は **crates.io へ発行しない**。
 理由は npm 側と同じ（私設配布・権利留保の方針、industrial-plan.md §2）。
 消費側（banto-industrial 等）は `Cargo.toml` で **git タグ参照**する:
 
@@ -180,7 +181,8 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 - **マイルストーンマージ毎にタグを打たない**。banto-industrial 等の
   消費側が固定参照する必要がある**破壊的変更時のみ**タグを更新する
   （trait シグネチャ変更・`ListParams`/エラー型の変更など、
-  `banto-core`/`banto-storage`/`banto-server` の公開APIに影響する変更）
+  `banto-core`/`banto-storage`/`banto-server`/`banto-admin-services` の
+  公開APIに影響する変更）
 - タグは **npm 側（`@banto/*` の git 依存）と共用**（2026-07-12 決定節）。
   したがって `@banto/*` パッケージの公開APIの破壊的変更もタグ更新の
   対象になる
