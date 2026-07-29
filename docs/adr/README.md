@@ -1,5 +1,7 @@
 # Architecture Decision Records (ADR)
 
+> English: [README.en.md](README.en.md)
+
 作成日: 2026-07-19（improvement-plan-2026-07.md P4-7）
 
 このディレクトリは Banto の**基盤的な設計判断**を、代替案の比較込みで

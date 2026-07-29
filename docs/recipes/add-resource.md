@@ -1,5 +1,7 @@
 # レシピ: CRUD リソースを追加する（items を手本にする正式手順）
 
+> English: [add-resource.en.md](add-resource.en.md)
+
 作成日: 2026-07-18（improvement-plan-2026-07.md P1-3。spec §14 の
 「ルート導出方式」の決着に伴う成果物）
 

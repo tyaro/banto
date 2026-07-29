@@ -1,5 +1,7 @@
 # ADR-0001: REST と Tauri を同格の二経路にし、単一サービス層を対称に通す
 
+> English: [0001-rest-tauri-two-path-symmetry.en.md](0001-rest-tauri-two-path-symmetry.en.md)
+
 - 状態: Accepted
 - 日付: 2026-07-19（判断自体は M6/M10/M14 で確立、遡及記録）
 - 関連: [conventions.md §1・§2](../conventions.md)、spec §11、

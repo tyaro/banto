@@ -1,5 +1,7 @@
 # ADR-NNNN: <判断を一文で（動詞で終える）>
 
+> English: [0000-template.en.md](0000-template.en.md)
+
 - 状態: Proposed | Accepted | Superseded by ADR-NNNN | Deprecated
 - 日付: YYYY-MM-DD
 - 関連: <conventions.md §N / spec §N / 関連 ADR / PR 番号 など>
