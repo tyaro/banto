@@ -2,6 +2,13 @@ use super::*;
 
 // --- M17: SQLite backup/restore ---------------------------------------------
 
+/// Request-body size cap for `POST /api/backups/restore` (spec M17: "サイズ
+/// 上限（例256MB）を設ける"). Applied via `DefaultBodyLimit` on
+/// [`backups_router`] - axum's own built-in default is 2MB
+/// (`axum::extract::DefaultBodyLimit`), far too small for an uploaded DB
+/// backup.
+const MAX_RESTORE_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
+
 /// State for the `/api/backups/*` handlers (spec M17): `BackupService` for
 /// the operation itself, plus `AuditLogService`/`AuthState` so
 /// `backups_create_handler`/`backups_restore_from_upload`/
@@ -149,14 +156,10 @@ async fn backups_cancel_pending(
 /// `/api/backups/*` (spec M17): `admin`-only, guarded the same way
 /// `users_router`/`audit_log_router` are. `DefaultBodyLimit::max` raises the
 /// upload route's body cap from axum's 2MB default to
-/// [`MAX_RESTORE_UPLOAD_BYTES`] - applied to the whole router (the other
+/// `MAX_RESTORE_UPLOAD_BYTES` - applied to the whole router (the other
 /// routes here have no meaningful request body, so this is harmless for
 /// them).
-pub(super) fn backups_router(
-    backup: BackupService,
-    audit: AuditLogService,
-    auth: AuthState,
-) -> Router {
+pub fn backups_router(backup: BackupService, audit: AuditLogService, auth: AuthState) -> Router {
     let state = BackupsState {
         backup,
         audit: audit.clone(),

@@ -100,7 +100,8 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'apps/admin-template/core/src',
 		'crates/banto-core/src',
 		'crates/banto-storage/src',
-		'crates/banto-attachments/src'
+		'crates/banto-attachments/src',
+		'crates/banto-admin-services/src'
 	];
 	for (const dir of dirs) {
 		for (const file of walk(dir, ['.rs'])) {
@@ -373,8 +374,12 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
 	// 実ルート宣言（doc-sync 用）: app rest/ + banto-server の .route("path")。
 	// 存在確認だけなので test 由来の重複は無害（1件あれば足りる）。
+	// ドメイン非依存のルータは theme C PR-C4（docs/template-scope.md §7 移行順
+	// ④）で `banto-server` に移設済み。実装がどちらのクレートにあっても
+	// Route table（doc）との同期とロール床の対称は同じように検査する。
+	const restRouterDirs = ['apps/admin-template/core/src/rest', 'crates/banto-server/src'];
 	const declaredPaths = new Set();
-	for (const dir of ['apps/admin-template/core/src/rest', 'crates/banto-server/src']) {
+	for (const dir of restRouterDirs) {
 		for (const file of walk(dir, ['.rs'])) {
 			for (const m of read(file).matchAll(/\.route\(\s*"([^"]+)"/g)) declaredPaths.add(m[1]);
 		}
@@ -446,8 +451,12 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		// REST: "METHOD /path" → ロール床。各 `fn *_router` 本体（rustfmt 済みなので
 		// 関数の閉じ括弧は行頭 `}`）から RoleGuard の min（無ければ require_auth=Auth）を取り、
 		// その本体内の `.route("path", <verbs>(...))` の各メソッドに割り当てる。
+		// 走査先は上の doc-sync (d) と同じ2ディレクトリ: ドメイン非依存のルータは
+		// `banto-server`（theme C PR-C4, docs/template-scope.md §7 移行順 ④）、
+		// アプリ固有の `items`/`attachments` はアプリの `rest/` にある。ロール床は
+		// どちらに実装があっても同一でなければならない。
 		const restRouteRole = {};
-		for (const file of walk('apps/admin-template/core/src/rest', ['.rs'])) {
+		for (const file of restRouterDirs.flatMap((dir) => [...walk(dir, ['.rs'])])) {
 			for (const fnM of read(file).matchAll(/\bfn \w+_router\b[\s\S]*?\n\}/g)) {
 				const body = fnM[0];
 				const minM = body.match(/min:\s*Role::(\w+)/);

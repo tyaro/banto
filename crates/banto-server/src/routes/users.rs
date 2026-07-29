@@ -182,7 +182,7 @@ async fn users_delete(
 /// `/api/users/*` (spec M10): `admin`-only account management. Guarded the
 /// same way `items_write_router` is (`require_auth` then
 /// `require_role_at_least`), just with `Role::Admin` as the floor.
-pub(super) fn users_router(users: UsersService, audit: AuditLogService, auth: AuthState) -> Router {
+pub fn users_router(users: UsersService, audit: AuditLogService, auth: AuthState) -> Router {
     let state = UsersAdminState {
         users,
         auth: auth.clone(),

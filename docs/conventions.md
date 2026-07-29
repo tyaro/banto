@@ -42,8 +42,9 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
 **REST 経路と Tauri 経路の両方で同一の認可と同一の監査を通す**。origin
 （`"rest"` / `"tauri"`）だけが異なる。
 
-- REST: `admin-template-core` `rest/mod.rs` の `RoleGuard` / `require_role_at_least`
-  + `record_write`。
+- REST: `banto-server` `routes/mod.rs` の `RoleGuard` / `require_role_at_least`
+  + `record_write`（V2 テーマC PR-C4 で `admin-template-core` `rest/mod.rs` から
+  移設。アプリ側 `rest/items.rs`・`rest/attachments.rs` はこれを import して使う）。
 - Tauri: `src-tauri/src/lib.rs` の `require_role`（doc コメントに
   「mirrors REST's `RoleGuard`」と明記）+ 各コマンドの `audit.record(...)`。
 - 対応表は `rest/mod.rs` のモジュール doc（仕様 M14）にある。
@@ -88,7 +89,7 @@ read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 |---|---|---|
 | `chrono` / `time` | 手書きの日付変換 | `backup.rs` の `iso_datetime_from_system_time` / `compact_stamp`、`banto-attachments` は Howard Hinnant の `civil_from_days` を移植 |
 | MIME 検出ライブラリ | マジックバイト判定 | `banto-attachments` `detect_mime`（下記§6） |
-| `multipart` | 生バイト body + `?fileName=` クエリ | `rest/backups.rs`・`rest/attachments.rs` のアップロード |
+| `multipart` | 生バイト body + `?fileName=` クエリ | `banto-server` `routes/backups.rs`・app `rest/attachments.rs` のアップロード |
 | `tower-http` | `axum::middleware::from_fn` の手書き | `security_headers.rs` / `csrf.rs` |
 | markdown ライブラリ | 自前パーサ + エスケープ | `packages/report/src/core/{parse,bind,html}.ts`（deps 空） |
 | `tracing` | `eprintln!` | `audit.rs` |
