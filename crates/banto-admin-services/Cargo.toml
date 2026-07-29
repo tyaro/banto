@@ -26,6 +26,13 @@ banto-storage = { workspace = true, features = ["sqlite"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# `users::UsersService` stores argon2id password hashes (spec §8.2). Moved
+# here with `users` in theme C PR-C2 (docs/template-scope.md §7 移行順 ②);
+# both were already `admin-template-core` workspace deps, so this adds no new
+# external crate to the workspace (ADR-0002). `password-hash`'s `getrandom`
+# feature is what makes `OsRng` available for salt generation.
+argon2 = { workspace = true }
+password-hash = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

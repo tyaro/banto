@@ -3,6 +3,15 @@
 //! admin/admin demo credential check that used to live on `AppState` in
 //! `src-tauri` (see that crate's former TODO).
 //!
+//! Moved from `admin-template-core::users` to this crate in theme C PR-C2
+//! (docs/template-scope.md §7 移行順 ②): `UsersService` is domain-agnostic
+//! (identical for any app regardless of which resources it has) and is the
+//! RBAC-central service, so it belongs in the shared crate rather than in
+//! code every adopter copies. `admin-template-core` re-exports it (`lib.rs`)
+//! so existing `admin_template_core::users::*` paths keep resolving unchanged:
+//! the location changed, not the REST/Tauri exposure (conventions §1
+//! 両経路対称は不変).
+//!
 //! Design note (spec §8.2 mentions `keyring` for credentials): keyring is a
 //! *client-side, single-user* OS credential store, which does not fit a
 //! multi-user LAN-server app where any device on the network - not just the
@@ -28,16 +37,19 @@ const MIN_USERNAME_LEN: usize = 1;
 const MAX_USERNAME_LEN: usize = 32;
 const MIN_PASSWORD_LEN: usize = 8;
 
-/// Account role (spec M10 RBAC): re-exported from `banto-admin-services`,
-/// where it moved in theme C PR-C1 (docs/template-scope.md §7). The moved
-/// `SettingsService.AuthSettings.disabled_role` needs `Role`, and settings
-/// moved ahead of `users` (移行順 ①), so the shared RBAC vocabulary had to
-/// drop below both in the dependency graph (conventions §"逆依存禁止"). This
-/// re-export keeps `admin_template_core::users::Role` resolving unchanged for
-/// the REST role-guard middleware and the Tauri `require_role` call sites;
-/// when `users` itself moves it can fold back in alongside this type. See
-/// `banto_admin_services::rbac` for the definition and its unit tests.
-pub use banto_admin_services::Role;
+/// Account role (spec M10 RBAC): re-exported from [`crate::rbac`], where the
+/// definition lives. `Role` moved to this crate ahead of `users` in theme C
+/// PR-C1 (docs/template-scope.md §7 移行順 ①, because `SettingsService`'s
+/// `AuthSettings.disabled_role` needed it); PR-C2 (移行順 ②) brought `users`
+/// into the same crate, and `Role` was deliberately left in [`crate::rbac`]
+/// rather than folded back in here - the type has no `users`-specific
+/// dependency and both settings and users use it, so keeping it in one shared
+/// module (re-exported from both call sites) is the minimal-churn placement.
+/// This re-export keeps `banto_admin_services::users::Role` (hence
+/// `admin_template_core::users::Role`, via the app's re-export) resolving
+/// unchanged for the REST role-guard middleware and the Tauri `require_role`
+/// call sites. See [`crate::rbac`] for the definition and its unit tests.
+pub use crate::rbac::Role;
 
 fn password_too_short_message() -> String {
     "パスワードは8文字以上で入力してください".to_string()
@@ -708,11 +720,37 @@ impl UsersService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::migrate_memory;
 
+    /// An in-memory SQLite handle with the `users` table (including the M10
+    /// `role` column) created inline. This crate owns no migrations
+    /// (conventions §11: table definitions belong to the app); the DDL below
+    /// MUST be kept in sync with the app's `0003_users.sql` +
+    /// `0004_user_roles.sql` (the `role` column that `0004` adds is folded
+    /// into the `CREATE TABLE` here). Same pattern `settings`/`audit` use to
+    /// avoid a backwards dependency on the app crate's `db::migrate_memory`
+    /// (conventions §"逆依存禁止").
     async fn service() -> UsersService {
-        let pool = migrate_memory().await.expect("migrate_memory");
-        UsersService::new(pool)
+        let db = Db::connect_sqlite_memory()
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query(
+            "CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer'))
+            )",
+        )
+        .execute(
+            db.as_sqlite()
+                .expect("service tests run on a SQLite handle"),
+        )
+        .await
+        .expect("create users table");
+        UsersService::new(db)
     }
 
     #[tokio::test]
@@ -890,8 +928,8 @@ mod tests {
         assert!(!verify_password("wrong", &hash));
     }
 
-    // --- Role: unit tests moved to `banto_admin_services::rbac` alongside
-    //     the `Role` definition (theme C PR-C1). -----------------------------
+    // --- Role: unit tests live in `crate::rbac` alongside the `Role`
+    //     definition (theme C PR-C1). -----------------------------------------
 
     // --- M10 user management CRUD -----------------------------------------
 
