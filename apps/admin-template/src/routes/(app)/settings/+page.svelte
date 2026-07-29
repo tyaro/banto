@@ -17,6 +17,7 @@
 		Wifi
 	} from '@lucide/svelte';
 	import { getAuthProvider, isProviderError } from '@banto/admin-core';
+	import * as m from '$lib/paraglide/messages';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { settings } from '$lib/settings.svelte';
@@ -73,23 +74,23 @@
 	}
 
 	const modes: { value: ThemeMode; label: string }[] = [
-		{ value: 'light', label: 'ライト' },
-		{ value: 'dark', label: 'ダーク' },
-		{ value: 'system', label: 'システムに従う' }
+		{ value: 'light', label: m['settings.modeLight']() },
+		{ value: 'dark', label: m['settings.modeDark']() },
+		{ value: 'system', label: m['settings.modeSystem']() }
 	];
 
 	// M12 preset axis (standard/glass), orthogonal to light/dark above.
 	const presets: { value: ThemePreset; label: string }[] = [
-		{ value: 'standard', label: 'スタンダード' },
-		{ value: 'glass', label: 'ガラス' }
+		{ value: 'standard', label: m['settings.presetStandard']() },
+		{ value: 'glass', label: m['settings.presetGlass']() }
 	];
 
 	// Density axis (visual-refresh-design.md §4.3), orthogonal to
 	// theme/preset. settings.setThemeDensity() persistence is unchanged -
 	// this page only adds the picker UI.
 	const densities: { value: ThemeDensity; label: string }[] = [
-		{ value: 'standard', label: '標準' },
-		{ value: 'compact', label: 'コンパクト' }
+		{ value: 'standard', label: m['settings.densityStandard']() },
+		{ value: 'compact', label: m['settings.densityCompact']() }
 	];
 
 	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
@@ -112,11 +113,11 @@
 		passwordError = null;
 
 		if (newPassword.length < 8) {
-			passwordError = 'パスワードは8文字以上で入力してください';
+			passwordError = m['auth.passwordTooShort']();
 			return;
 		}
 		if (newPassword !== newPasswordConfirm) {
-			passwordError = 'パスワードが一致しません';
+			passwordError = m['auth.passwordMismatch']();
 			return;
 		}
 		if (!changePassword) return;
@@ -128,9 +129,9 @@
 				currentPassword = '';
 				newPassword = '';
 				newPasswordConfirm = '';
-				toastStore.push('success', 'パスワードを変更しました');
+				toastStore.push('success', m['settings.passwordChanged']());
 			} else {
-				passwordError = result.error ?? 'パスワードの変更に失敗しました';
+				passwordError = result.error ?? m['settings.passwordChangeFailed']();
 			}
 		} finally {
 			changingPassword = false;
@@ -229,9 +230,9 @@
 	// --- M11: login-not-required mode + desktop autologin (Tauri only) ------
 
 	const authDisabledRoleOptions: { value: AuthDisabledRole; label: string }[] = [
-		{ value: 'admin', label: '管理者' },
-		{ value: 'editor', label: '編集者' },
-		{ value: 'viewer', label: '閲覧者' }
+		{ value: 'admin', label: m['role.admin']() },
+		{ value: 'editor', label: m['role.editor']() },
+		{ value: 'viewer', label: m['role.viewer']() }
 	];
 
 	let authSettings = $state<AuthSettings | null>(null);
@@ -268,12 +269,7 @@
 	const canManageAuthMode = $derived(isAdmin(sessionStore.role) || sessionStore.authDisabled);
 
 	async function saveAuthSettings(): Promise<void> {
-		if (
-			disabledDraft &&
-			!window.confirm(
-				'ログイン不要モードを有効にすると、この端末を開いた人は誰でもログインなしで操作できるようになります。この端末を完全に信頼できる場合のみ続行してください。'
-			)
-		) {
+		if (disabledDraft && !window.confirm(m['settings.authDisableConfirm']())) {
 			return;
 		}
 
@@ -281,7 +277,7 @@
 		try {
 			applyAuthSettingsToDrafts(await applyAuthSettings(disabledDraft, disabledRoleDraft));
 			sessionStore.authDisabled = authSettings?.disabled ?? false;
-			toastStore.push('success', '認証設定を更新しました');
+			toastStore.push('success', m['settings.authSettingsUpdated']());
 		} catch (err) {
 			// 排他違反（LANアクセス有効中の有効化など）はサーバ側の日本語メッセージ
 			// (kind: 'other') をそのままトーストに出す（spec M11）。
@@ -302,7 +298,7 @@
 		try {
 			await enableAutologin(autologinUsername, autologinPassword);
 			autologinPassword = '';
-			toastStore.push('success', '自動ログインを有効にしました');
+			toastStore.push('success', m['settings.autologinEnabledToast']());
 			await reloadAuthSettings();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -315,7 +311,7 @@
 		disablingAutologin = true;
 		try {
 			await disableAutologin();
-			toastStore.push('success', '自動ログインを解除しました');
+			toastStore.push('success', m['settings.autologinDisabledToast']());
 			await reloadAuthSettings();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -370,7 +366,7 @@
 					retentionRows: retentionRowsDraft > 0 ? retentionRowsDraft : null
 				})
 			);
-			toastStore.push('success', '監査ログの保持ポリシーを更新しました');
+			toastStore.push('success', m['settings.auditUpdated']());
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
 		} finally {
@@ -433,7 +429,7 @@
 		backupsError = null;
 		try {
 			await createBackup();
-			toastStore.push('success', 'バックアップを作成しました');
+			toastStore.push('success', m['backup.created']());
 			await reloadBackups();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -454,7 +450,7 @@
 		try {
 			const result = await openBackupsFolder();
 			if (!result.opened) {
-				toastStore.push('info', `このOSでは非対応です。手動で開いてください: ${result.path}`);
+				toastStore.push('info', m['backup.openFolderUnsupported']({ path: result.path }));
 			}
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -466,17 +462,15 @@
 	// only the leading line describing the source (existing file vs upload)
 	// varies between the two callers below.
 	function confirmRestore(sourceDescription: string): boolean {
-		return window.confirm(
-			`${sourceDescription}\n\n現在のデータは適用時に自動バックアップされます。適用には再起動が必要です。よろしいですか？`
-		);
+		return window.confirm(m['backup.restoreConfirm']({ source: sourceDescription }));
 	}
 
 	async function handleRestoreFromExisting(fileName: string): Promise<void> {
-		if (!confirmRestore(`このバックアップからリストアします: ${fileName}`)) return;
+		if (!confirmRestore(m['backup.restoreSourceExisting']({ fileName }))) return;
 		stagingRestore = true;
 		try {
 			await stageRestoreFromBackup(fileName);
-			toastStore.push('success', 'リストアをステージしました（再起動後に適用されます）');
+			toastStore.push('success', m['backup.restoreStaged']());
 			await reloadPendingRestore();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -494,12 +488,12 @@
 		const file = input.files?.[0];
 		input.value = ''; // allow re-selecting the same file (e.g. after fixing it) later
 		if (!file) return;
-		if (!confirmRestore(`アップロードしたファイルからリストアします: ${file.name}`)) return;
+		if (!confirmRestore(m['backup.restoreSourceUpload']({ fileName: file.name }))) return;
 
 		stagingRestore = true;
 		try {
 			await uploadAndStageRestore(file);
-			toastStore.push('success', 'リストアをステージしました（再起動後に適用されます）');
+			toastStore.push('success', m['backup.restoreStaged']());
 			await reloadPendingRestore();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -512,7 +506,7 @@
 		cancellingRestore = true;
 		try {
 			await cancelPendingRestore();
-			toastStore.push('success', 'リストアの予約を取り消しました');
+			toastStore.push('success', m['backup.restoreCancelled']());
 			pendingRestore = null;
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -523,22 +517,19 @@
 </script>
 
 <div class="page">
-	<PageHeader
-		title="設定"
-		description="テーマ、LANアクセス、バックアップなど、この端末の動作を設定します。"
-	/>
+	<PageHeader title={m['nav.settings']()} description={m['settings.pageDescription']()} />
 
 	<div class="settings-grid">
 		<SurfaceCard>
 			<div class="card-head">
 				<Palette size={20} aria-hidden="true" />
 				<div>
-					<h2>テーマ</h2>
-					<p>配色モード・プリセット・表示密度を切り替えます。</p>
+					<h2>{m['settings.themeHeading']()}</h2>
+					<p>{m['settings.themeDesc']()}</p>
 				</div>
 			</div>
 
-			<div class="options mode-options" role="radiogroup" aria-label="テーマ">
+			<div class="options mode-options" role="radiogroup" aria-label={m['settings.themeHeading']()}>
 				{#each modes as mode (mode.value)}
 					{@const ModeIcon = modeIcons[mode.value]}
 					<label class="theme-option" class:selected={settings.themeMode === mode.value}>
@@ -564,8 +555,12 @@
 				{/each}
 			</div>
 
-			<h3>プリセット</h3>
-			<div class="options preset-options" role="radiogroup" aria-label="テーマプリセット">
+			<h3>{m['settings.presetHeading']()}</h3>
+			<div
+				class="options preset-options"
+				role="radiogroup"
+				aria-label={m['settings.presetGroupAria']()}
+			>
 				{#each presets as preset (preset.value)}
 					<label class="theme-option" class:selected={settings.themePreset === preset.value}>
 						<input
@@ -584,8 +579,12 @@
 				{/each}
 			</div>
 
-			<h3>表示密度</h3>
-			<div class="options density-options" role="radiogroup" aria-label="表示密度">
+			<h3>{m['settings.densityHeading']()}</h3>
+			<div
+				class="options density-options"
+				role="radiogroup"
+				aria-label={m['settings.densityHeading']()}
+			>
 				{#each densities as density (density.value)}
 					{@const DensityIcon = densityIcons[density.value]}
 					<label class="theme-option" class:selected={settings.themeDensity === density.value}>
@@ -605,8 +604,7 @@
 			</div>
 
 			<p class="note">
-				設定はこの端末に即時保存され、ログイン中は設定DB（Tauri/LANサーバ）にも保存されて他クライアントと共有されます（仕様
-				§12.1 / M12）。
+				{m['settings.themeNote']()}
 			</p>
 		</SurfaceCard>
 
@@ -615,8 +613,8 @@
 				<div class="card-head">
 					<Sparkles size={20} aria-hidden="true" />
 					<div>
-						<h2>ウィンドウ効果</h2>
-						<p>デスクトップアプリのウィンドウ背面の描画です（Windowsのみ）。</p>
+						<h2>{m['settings.vibrancyHeading']()}</h2>
+						<p>{m['settings.vibrancyDesc']()}</p>
 					</div>
 				</div>
 				<label class="switch-row">
@@ -628,12 +626,10 @@
 						disabled={applyingVibrancy}
 						onchange={toggleVibrancy}
 					/>
-					ウィンドウのアクリル効果（Windows）
+					{m['settings.vibrancyToggle']()}
 				</label>
 				<p class="note">
-					ウィンドウ背面を OS
-					のアクリル（すりガラス）効果で描画します。ガラスプリセットと組み合わせると、デスクトップが透ける本物のガラス感になります（M12、Windows
-					のみ）。
+					{m['settings.vibrancyNote']()}
 				</p>
 			</SurfaceCard>
 		{/if}
@@ -643,8 +639,8 @@
 				<div class="card-head">
 					<Wifi size={20} aria-hidden="true" />
 					<div>
-						<h2>LANアクセス（組み込みWebサーバ）</h2>
-						<p>同一LAN内の他端末のブラウザからこの画面を利用できるようにします。</p>
+						<h2>{m['settings.lanHeading']()}</h2>
+						<p>{m['settings.lanDesc']()}</p>
 					</div>
 				</div>
 				{#if tauri}
@@ -656,23 +652,23 @@
 							bind:checked={enabledDraft}
 							disabled={authSettings?.disabled}
 						/>
-						LANアクセスを有効にする
+						{m['settings.lanToggle']()}
 					</label>
 					{#if authSettings?.disabled}
-						<p class="note">ログイン不要モード有効中は使用できません。</p>
+						<p class="note">{m['settings.lanDisabledByAuth']()}</p>
 					{/if}
 
 					<div class="server-fields">
 						<label class="field">
-							バインドアドレス
+							{m['settings.bindAddress']()}
 							<select class="banto-input" bind:value={bindDraft}>
-								<option value="127.0.0.1">127.0.0.1 のみ</option>
-								<option value="0.0.0.0">0.0.0.0（LAN公開）</option>
+								<option value="127.0.0.1">{m['settings.bindLocalOnly']()}</option>
+								<option value="0.0.0.0">{m['settings.bindLanPublic']()}</option>
 							</select>
 						</label>
 
 						<label class="field">
-							ポート番号
+							{m['settings.port']()}
 							<input class="banto-input" type="number" min="1" max="65535" bind:value={portDraft} />
 						</label>
 					</div>
@@ -683,7 +679,7 @@
 						onclick={saveAndApply}
 						disabled={applying}
 					>
-						保存して適用
+						{m['settings.saveAndApply']()}
 					</button>
 
 					{#if serverError}
@@ -692,7 +688,10 @@
 
 					{#if serverStatus}
 						<p class="status">
-							状態: <strong>{serverStatus.running ? '稼働中' : '停止中'}</strong>
+							{m['settings.statusLabel']()}
+							<strong
+								>{serverStatus.running ? m['settings.running']() : m['settings.stopped']()}</strong
+							>
 						</p>
 						{#if serverStatus.running}
 							<ul class="urls">
@@ -708,11 +707,10 @@
 						{/if}
 					{/if}
 				{:else}
-					<p class="note">サーバー設定はデスクトップアプリでのみ変更できます。</p>
+					<p class="note">{m['settings.serverDesktopOnly']()}</p>
 				{/if}
 				<p class="note">
-					有効化すると、同一LAN内の他端末のブラウザからREST API + SSEで同じ画面を利用できます（仕様
-					§11）。信頼できるLANでのみ有効にしてください。
+					{m['settings.lanNote']()}
 				</p>
 			</SurfaceCard>
 		{/if}
@@ -722,20 +720,22 @@
 				<div class="card-head">
 					<KeyRound size={20} aria-hidden="true" />
 					<div>
-						<h2>自動ログイン</h2>
-						<p>起動時に指定アカウントで自動的にログインします（デスクトップのみ）。</p>
+						<h2>{m['settings.autologinHeading']()}</h2>
+						<p>{m['settings.autologinDesc']()}</p>
 					</div>
 				</div>
 
 				{#if sessionStore.authDisabled}
-					<p class="note">ログイン不要モードでは自動ログインは不要です。</p>
+					<p class="note">{m['settings.autologinUnneeded']()}</p>
 				{:else}
 					<p class="status">
-						状態:
+						{m['settings.statusLabel']()}
 						<strong>
 							{authSettings?.autologinEnabled
-								? `有効（${authSettings.autologinUsername ?? ''}）`
-								: '無効'}
+								? m['settings.autologinEnabledWith']({
+										username: authSettings.autologinUsername ?? ''
+									})
+								: m['settings.autologinStatusDisabled']()}
 						</strong>
 					</p>
 
@@ -746,12 +746,12 @@
 							onclick={submitDisableAutologin}
 							disabled={disablingAutologin}
 						>
-							自動ログインを解除
+							{m['settings.autologinDisable']()}
 						</button>
 					{:else}
 						<form onsubmit={submitEnableAutologin}>
 							<label class="field">
-								ユーザー名
+								{m['common.username']()}
 								<input
 									class="banto-input"
 									type="text"
@@ -760,7 +760,7 @@
 								/>
 							</label>
 							<label class="field">
-								パスワード
+								{m['common.password']()}
 								<input
 									class="banto-input"
 									type="password"
@@ -773,13 +773,13 @@
 								class="banto-btn banto-btn--primary"
 								disabled={enablingAutologin}
 							>
-								自動ログインを有効化
+								{m['settings.autologinEnable']()}
 							</button>
 						</form>
 					{/if}
 
 					<p class="note">
-						資格情報はOSのキーリングに保存されます。起動時にこのアカウントで自動的にログインします。
+						{m['settings.autologinNote']()}
 					</p>
 				{/if}
 			</SurfaceCard>
@@ -790,18 +790,18 @@
 				<div class="card-head">
 					<ScrollText size={20} aria-hidden="true" />
 					<div>
-						<h2>監査ログの保持ポリシー</h2>
-						<p>記録を自動的に整理する保持日数・上限行数を設定します。</p>
+						<h2>{m['settings.auditHeading']()}</h2>
+						<p>{m['settings.auditDesc']()}</p>
 					</div>
 				</div>
 
 				<div class="server-fields">
 					<label class="field">
-						保持日数
+						{m['settings.retentionDays']()}
 						<input class="banto-input" type="number" min="0" bind:value={retentionDaysDraft} />
 					</label>
 					<label class="field">
-						上限行数
+						{m['settings.retentionRows']()}
 						<input class="banto-input" type="number" min="0" bind:value={retentionRowsDraft} />
 					</label>
 				</div>
@@ -812,7 +812,7 @@
 					onclick={saveAuditConfig}
 					disabled={applyingAudit}
 				>
-					保存
+					{m['common.save']()}
 				</button>
 
 				{#if auditError}
@@ -821,19 +821,22 @@
 
 				{#if auditConfig}
 					<p class="status">
-						現在の設定:
+						{m['settings.currentConfig']()}
 						<strong>
-							{auditConfig.retentionDays !== null ? `${auditConfig.retentionDays}日` : '無期限'}
+							{auditConfig.retentionDays !== null
+								? m['audit.retentionDaysValue']({ days: auditConfig.retentionDays })
+								: m['audit.retentionUnlimited']()}
 							/ {auditConfig.retentionRows !== null
-								? `${auditConfig.retentionRows.toLocaleString()}件`
-								: '無制限'}
+								? m['audit.retentionRowsValue']({
+										rows: auditConfig.retentionRows.toLocaleString()
+									})
+								: m['audit.retentionRowsUnlimited']()}
 						</strong>
 					</p>
 				{/if}
 
 				<p class="note">
-					0を入力すると、その項目は無制限になります（既定は90日 /
-					10万件）。古い記録は一覧の表示時に自動的に整理されます。記録の一覧は「監査ログ」画面から確認できます。
+					{m['settings.auditNote']()}
 				</p>
 			</SurfaceCard>
 		{/if}
@@ -844,13 +847,13 @@
 					<ShieldAlert size={20} aria-hidden="true" />
 					<div>
 						<h2>Danger zone</h2>
-						<p>影響の大きい操作です。実行前に内容をよく確認してください。</p>
+						<p>{m['settings.dangerDesc']()}</p>
 					</div>
 				</div>
 
 				{#if tauri && canManageAuthMode}
 					<div class="danger-section">
-						<h3>認証を無効化</h3>
+						<h3>{m['settings.authDisableHeading']()}</h3>
 
 						<label class="switch-row">
 							<input
@@ -859,12 +862,12 @@
 								class="banto-switch"
 								bind:checked={disabledDraft}
 							/>
-							ログイン不要モードを有効にする
+							{m['settings.authDisableToggle']()}
 						</label>
 
 						<div class="server-fields">
 							<label class="field">
-								起動時のロール
+								{m['settings.startupRole']()}
 								<select
 									class="banto-input"
 									bind:value={disabledRoleDraft}
@@ -883,7 +886,7 @@
 							onclick={saveAuthSettings}
 							disabled={applyingAuth}
 						>
-							保存して適用
+							{m['settings.saveAndApply']()}
 						</button>
 
 						{#if authError}
@@ -892,23 +895,24 @@
 
 						{#if authSettings}
 							<p class="status">
-								状態: <strong
+								{m['settings.statusLabel']()}
+								<strong
 									>{authSettings.disabled
-										? '有効（ログイン画面なし）'
-										: '無効（通常のログインが必要）'}</strong
+										? m['settings.authDisabledOn']()
+										: m['settings.authDisabledOff']()}</strong
 								>
 							</p>
 						{/if}
 
 						<p class="note warning">
-							この端末を完全に信頼できる場合のみ有効化してください。LANアクセスとは同時に有効化できません。
+							{m['settings.authDisableNote']()}
 						</p>
 					</div>
 				{/if}
 
 				{#if backupsAvailable && isAdmin(sessionStore.role)}
 					<div class="danger-section">
-						<h3><DatabaseBackup size={14} aria-hidden="true" />バックアップ/リストア</h3>
+						<h3><DatabaseBackup size={14} aria-hidden="true" />{m['backup.heading']()}</h3>
 
 						<div class="backup-toolbar">
 							<button
@@ -917,7 +921,7 @@
 								onclick={handleCreateBackup}
 								disabled={creatingBackup}
 							>
-								{creatingBackup ? '作成中…' : '今すぐバックアップ'}
+								{creatingBackup ? m['backup.creating']() : m['backup.createNow']()}
 							</button>
 							{#if tauri}
 								<button
@@ -925,7 +929,7 @@
 									class="banto-btn banto-btn--secondary"
 									onclick={handleOpenBackupsFolder}
 								>
-									フォルダを開く
+									{m['backup.openFolder']()}
 								</button>
 							{/if}
 						</div>
@@ -936,24 +940,23 @@
 
 						{#if pendingRestore}
 							<p class="pending-restore">
-								再起動後に適用されます: <strong>{pendingRestore.stagedAt}</strong>（{formatBytes(
-									pendingRestore.sizeBytes
-								)}）
+								{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
+								>（{formatBytes(pendingRestore.sizeBytes)}）
 								<button
 									type="button"
 									class="banto-btn banto-btn--secondary"
 									onclick={handleCancelRestore}
 									disabled={cancellingRestore}
 								>
-									取消
+									{m['backup.cancel']()}
 								</button>
 							</p>
 						{/if}
 
 						{#if loadingBackups}
-							<p class="note">読み込み中…</p>
+							<p class="note">{m['common.loading']()}</p>
 						{:else if backups.length === 0}
-							<p class="note">バックアップはまだありません。</p>
+							<p class="note">{m['backup.empty']()}</p>
 						{:else}
 							<ul class="backup-list">
 								{#each backups as backup (backup.fileName)}
@@ -970,7 +973,7 @@
 													class="banto-btn banto-btn--secondary"
 													onclick={() => handleDownloadBackup(backup.fileName)}
 												>
-													ダウンロード
+													{m['backup.download']()}
 												</button>
 											{/if}
 											<button
@@ -979,7 +982,7 @@
 												onclick={() => handleRestoreFromExisting(backup.fileName)}
 												disabled={stagingRestore}
 											>
-												このバックアップからリストア
+												{m['backup.restoreFromThis']()}
 											</button>
 										</div>
 									</li>
@@ -995,13 +998,13 @@
 									onclick={handleRestoreFileButtonClick}
 									disabled={stagingRestore}
 								>
-									ファイルからリストア
+									{m['backup.restoreFromFile']()}
 								</button>
 								<input
 									class="file-input"
 									type="file"
 									accept=".sqlite3"
-									aria-label="ファイルからリストア"
+									aria-label={m['backup.restoreFromFile']()}
 									bind:this={restoreFileInput}
 									onchange={handleRestoreFileChange}
 								/>
@@ -1009,23 +1012,21 @@
 						{/if}
 
 						<p class="note">
-							DBファイル横の backups/ ディレクトリにオンラインバックアップを作成します（VACUUM
-							INTO、稼働中でも安全）。リストアはアップロード/選択したファイルを検証（整合性チェック+スキーマ確認）した上でステージし、次回起動時に自動適用します（稼働中のDB差し替えは行いません）。適用直前の現DBは自動的にバックアップされます（仕様
-							M17）。
+							{m['backup.note']()}
 						</p>
 					</div>
 				{/if}
 
 				<div class="danger-section">
-					<h3>アカウント（パスワード変更）</h3>
+					<h3>{m['settings.accountHeading']()}</h3>
 					{#if sessionStore.authDisabled}
 						<p class="note">
-							ログイン不要モードではアカウントがないため、パスワード変更はできません。
+							{m['settings.passwordChangeUnavailableAuth']()}
 						</p>
 					{:else if changePassword}
 						<form onsubmit={submitChangePassword}>
 							<label class="field">
-								現在のパスワード
+								{m['settings.currentPassword']()}
 								<input
 									class="banto-input"
 									type="password"
@@ -1034,7 +1035,7 @@
 								/>
 							</label>
 							<label class="field">
-								新しいパスワード（8文字以上）
+								{m['common.newPasswordMinLabel']()}
 								<input
 									class="banto-input"
 									type="password"
@@ -1043,7 +1044,7 @@
 								/>
 							</label>
 							<label class="field">
-								新しいパスワード（確認）
+								{m['settings.newPasswordConfirm']()}
 								<input
 									class="banto-input"
 									type="password"
@@ -1061,11 +1062,11 @@
 								class="banto-btn banto-btn--primary"
 								disabled={changingPassword}
 							>
-								パスワードを変更
+								{m['settings.changePassword']()}
 							</button>
 						</form>
 					{:else}
-						<p class="note">この環境ではパスワード変更に対応していません。</p>
+						<p class="note">{m['settings.passwordChangeUnsupported']()}</p>
 					{/if}
 				</div>
 			</SurfaceCard>

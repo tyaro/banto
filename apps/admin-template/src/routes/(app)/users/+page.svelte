@@ -27,6 +27,7 @@
 		UserRoundPlus,
 		Users
 	} from '@lucide/svelte';
+	import * as m from '$lib/paraglide/messages';
 	import { toastStore } from '$lib/toast.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
@@ -40,15 +41,14 @@
 		listUsers,
 		resetUserPassword,
 		updateUser,
-		DEMO_MODE_MESSAGE,
 		type Role as UserRole,
 		type UserSummary
 	} from '$lib/banto/usersAdmin';
 
 	const roleOptions: { value: UserRole; label: string }[] = [
-		{ value: 'admin', label: '管理者' },
-		{ value: 'editor', label: '編集者' },
-		{ value: 'viewer', label: '閲覧者' }
+		{ value: 'admin', label: m['role.admin']() },
+		{ value: 'editor', label: m['role.editor']() },
+		{ value: 'viewer', label: m['role.viewer']() }
 	];
 
 	function roleLabel(role: UserRole): string {
@@ -78,18 +78,31 @@
 
 	const createSchema: FormSchema = {
 		fields: [
-			{ name: 'username', label: 'ユーザー名', type: 'text', required: true, min: 1, max: 32 },
+			{
+				name: 'username',
+				label: m['common.username'](),
+				type: 'text',
+				required: true,
+				min: 1,
+				max: 32
+			},
 			{
 				name: 'password',
-				label: 'パスワード（8文字以上）',
+				label: m['common.passwordMinLabel'](),
 				type: 'password',
 				required: true,
 				min: 8
 			},
-			{ name: 'displayName', label: '表示名', type: 'text', required: true, min: 1 },
+			{
+				name: 'displayName',
+				label: m['common.displayName'](),
+				type: 'text',
+				required: true,
+				min: 1
+			},
 			{
 				name: 'role',
-				label: 'ロール',
+				label: m['common.role'](),
 				type: 'select',
 				required: true,
 				default: 'viewer',
@@ -129,7 +142,7 @@
 				displayName: String(values.displayName),
 				role: values.role as UserRole
 			});
-			toastStore.push('success', '作成しました');
+			toastStore.push('success', m['users.created']());
 			createStore = createFormStore(createSchema);
 			await reload();
 		} catch (err) {
@@ -147,7 +160,7 @@
 		{ id: 'id', header: 'ID', accessor: 'id', width: 70, align: 'right' },
 		{
 			id: 'username',
-			header: 'ユーザー名',
+			header: m['common.username'](),
 			accessor: 'username',
 			width: 160,
 			filterable: true,
@@ -155,7 +168,7 @@
 		},
 		{
 			id: 'displayName',
-			header: '表示名',
+			header: m['common.displayName'](),
 			accessor: 'displayName',
 			width: 160,
 			filterable: true,
@@ -163,12 +176,12 @@
 		},
 		{
 			id: 'role',
-			header: 'ロール',
+			header: m['common.role'](),
 			accessor: 'role',
 			width: 110,
 			format: (value) => roleLabel(value as UserRole)
 		},
-		{ id: 'createdAt', header: '作成日時', accessor: 'createdAt', width: 180 }
+		{ id: 'createdAt', header: m['users.colCreatedAt'](), accessor: 'createdAt', width: 180 }
 	];
 
 	let selected: UserSummary | null = $state(null);
@@ -191,7 +204,7 @@
 				displayName: editDisplayName,
 				role: editRole
 			});
-			toastStore.push('success', '更新しました');
+			toastStore.push('success', m['users.updated']());
 			selected = updated;
 			await reload();
 		} catch (err) {
@@ -207,13 +220,13 @@
 	async function saveReset(): Promise<void> {
 		if (!selected) return;
 		if (resetPassword.length < 8) {
-			toastStore.push('error', 'パスワードは8文字以上で入力してください');
+			toastStore.push('error', m['auth.passwordTooShort']());
 			return;
 		}
 		resetting = true;
 		try {
 			await resetUserPassword(selected.id, resetPassword);
-			toastStore.push('success', 'パスワードをリセットしました');
+			toastStore.push('success', m['users.passwordReset']());
 			resetPassword = '';
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -224,10 +237,10 @@
 
 	async function handleDelete(): Promise<void> {
 		if (!selected) return;
-		if (!window.confirm(`${selected.username} を削除しますか？`)) return;
+		if (!window.confirm(m['users.deleteConfirm']({ username: selected.username }))) return;
 		try {
 			await deleteUser(selected.id);
-			toastStore.push('success', '削除しました');
+			toastStore.push('success', m['users.deleted']());
 			selected = null;
 			await reload();
 		} catch (err) {
@@ -237,16 +250,10 @@
 </script>
 
 <div class="page">
-	<PageHeader
-		title="ユーザー管理"
-		description="アカウントの作成・編集・削除・パスワードリセットを行います。"
-	/>
+	<PageHeader title={m['nav.users']()} description={m['users.pageDescription']()} />
 
 	{#if !available}
-		<EmptyState
-			title="この環境では利用できません"
-			description={`${DEMO_MODE_MESSAGE}。単体ブラウザのデモモードにはアカウントDBがないため、この機能はTauriアプリまたはLANアクセス（組み込みサーバー）でのみ利用できます。`}
-		/>
+		<EmptyState title={m['users.unavailableTitle']()} description={m['users.unavailableDesc']()} />
 	{:else}
 		<!-- >=1100px: list (create + grid) and edit panel side by side; below
 		     that, stacked (plan Phase 5 "作成、一覧、選択ユーザー編集の関係を明確
@@ -257,8 +264,8 @@
 					<div class="card-head">
 						<UserRoundPlus size={20} aria-hidden="true" />
 						<div>
-							<h2>新規作成</h2>
-							<p>ユーザー名・パスワード・ロールを指定してアカウントを作成します。</p>
+							<h2>{m['users.createHeading']()}</h2>
+							<p>{m['users.createDesc']()}</p>
 						</div>
 					</div>
 					<!-- class="create" kept as a literal <section> (not SurfaceCard's
@@ -271,7 +278,7 @@
 							store={createStore}
 							onSubmit={handleCreate}
 							submitting={creating}
-							submitLabel="作成"
+							submitLabel={m['common.create']()}
 						/>
 					</section>
 				</SurfaceCard>
@@ -280,8 +287,8 @@
 					<div class="card-head">
 						<Users size={20} aria-hidden="true" />
 						<div>
-							<h2>アカウント一覧</h2>
-							<p>行をクリックすると右に編集パネルが表示されます。</p>
+							<h2>{m['users.listHeading']()}</h2>
+							<p>{m['users.listDesc']()}</p>
 						</div>
 					</div>
 					{#if loading && users.length === 0}
@@ -305,8 +312,8 @@
 						<div class="card-head">
 							<Pencil size={20} aria-hidden="true" />
 							<div>
-								<h2>{selected.username} を編集</h2>
-								<p>表示名とロールを更新します。</p>
+								<h2>{m['users.editHeading']({ username: selected.username })}</h2>
+								<p>{m['users.editDesc']()}</p>
 							</div>
 						</div>
 
@@ -319,11 +326,11 @@
 						</div>
 
 						<label class="field">
-							表示名
+							{m['common.displayName']()}
 							<input class="banto-input" type="text" bind:value={editDisplayName} />
 						</label>
 						<label class="field">
-							ロール
+							{m['common.role']()}
 							<select class="banto-input" bind:value={editRole}>
 								{#each roleOptions as option (option.value)}
 									<option value={option.value}>{option.label}</option>
@@ -336,7 +343,7 @@
 							onclick={saveEdit}
 							disabled={saving}
 						>
-							保存
+							{m['common.save']()}
 						</button>
 
 						<!-- Danger zone (plan Phase 5): delete + password reset are
@@ -346,9 +353,9 @@
 							<h3><ShieldAlert size={16} aria-hidden="true" />Danger zone</h3>
 
 							<div class="danger-section">
-								<p class="note">新しいパスワードを設定し、このユーザーへ強制的に反映します。</p>
+								<p class="note">{m['users.resetDesc']()}</p>
 								<label class="field">
-									新しいパスワード（8文字以上）
+									{m['common.newPasswordMinLabel']()}
 									<input
 										class="banto-input"
 										type="password"
@@ -363,15 +370,15 @@
 									disabled={resetting}
 								>
 									<KeyRound size={16} aria-hidden="true" />
-									パスワードをリセット
+									{m['users.resetPassword']()}
 								</button>
 							</div>
 
 							<div class="danger-section">
-								<p class="note">このアカウントを完全に削除します。取り消せません。</p>
+								<p class="note">{m['users.deleteDesc']()}</p>
 								<button type="button" class="banto-btn banto-btn--danger" onclick={handleDelete}>
 									<Trash2 size={16} aria-hidden="true" />
-									削除
+									{m['common.delete']()}
 								</button>
 							</div>
 						</div>
@@ -379,8 +386,8 @@
 				{:else}
 					<EmptyState
 						icon={Users}
-						title="ユーザーを選択してください"
-						description="一覧から行をクリックすると、ここに編集パネルが表示されます。"
+						title={m['users.selectPrompt']()}
+						description={m['users.selectHint']()}
 					/>
 				{/if}
 			</div>
