@@ -1,0 +1,6 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "common.save": "Save",
+  "common.cancel": "Cancel",
+  "items.list.empty": "No data"
+}

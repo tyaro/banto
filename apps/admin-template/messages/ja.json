@@ -1,0 +1,6 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "common.save": "保存",
+  "common.cancel": "キャンセル",
+  "items.list.empty": "データがありません"
+}

@@ -116,6 +116,11 @@ read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 **LAN の TLS（rustls を入れずリバースプロキシ終端）は [ADR-0003](adr/0003-tls-via-reverse-proxy.md)**。
 いずれも「今は足さない・再検討条件つき」の Accepted。
 
+**依存を足す側の例外も ADR に残す**: UI i18n ランタイムに Paraglide JS を引く判断は
+[ADR-0005](adr/0005-i18n-paraglide.md)（本表・本方針は維持したまま、i18n に限った
+意図的な例外。コンパイル時 i18n で実行時依存は極小・型安全という P1-5 基準での採用）。
+i18n は app 層のみで、`@banto/*` には辞書も i18n 依存も入れない（§5）。
+
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 
 コア（`admin-core` / `grid-svelte` / `forms` / `theme`）は
