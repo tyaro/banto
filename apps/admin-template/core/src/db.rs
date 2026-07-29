@@ -2,25 +2,72 @@
 //! run embedded migrations, seed demo data on first run.
 
 use banto_core::BantoError;
-use sqlx::SqlitePool;
+use banto_storage::Db;
 
 const SEED_ROW_COUNT: usize = 1_000;
 
-/// Connect to the SQLite database at `path`, run migrations, and seed demo
-/// data if the `items` table is empty. Used by the `src-tauri` adapter with
-/// a path under the app's data directory.
-pub async fn init_db(path: impl AsRef<std::path::Path>) -> Result<SqlitePool, BantoError> {
-    let pool = banto_storage::connect_sqlite(path).await?;
-    run_migrations_and_seed(&pool).await?;
-    Ok(pool)
+/// Connect to the **SQLite** database at `path`, run migrations, and seed demo
+/// data if the `items` table is empty. Used by the `src-tauri` adapter with a
+/// path under the app's data directory - desktop is always local SQLite, so
+/// this entry point stays SQLite-fixed (V2 "PostgreSQL アプリ全体対応": the
+/// Postgres path is opt-in via [`init_db_from_target`], never here).
+///
+/// Returns a backend-agnostic [`Db`] handle: the service layer takes `Db`, not
+/// a concrete pool. The migration/seed helpers dispatch on the handle's
+/// backend, so this function simply builds the SQLite handle and hands it off.
+pub async fn init_db(path: impl AsRef<std::path::Path>) -> Result<Db, BantoError> {
+    let db = Db::connect_sqlite(path).await?;
+    run_migrations_and_seed(&db).await?;
+    Ok(db)
 }
 
-/// Same as [`init_db`] but against a private in-memory database. Used by
+/// Connect using a backend selected by the `target` connection string, run the
+/// matching migrations, and seed if empty (V2 "PostgreSQL アプリ全体対応", PR3).
+///
+/// Backend selection is by URL scheme: a `postgres://` / `postgresql://`
+/// `target` opens a **PostgreSQL** backend (feature `postgres`); anything else
+/// is treated as a **SQLite** filesystem path (the default, byte-for-byte
+/// identical to [`init_db`]). This is what `bin/banto-serve.rs` calls with its
+/// `BANTO_DB` env value, so pointing `BANTO_DB` at a `postgres://` URL is all
+/// it takes to run the whole app on Postgres; a plain path keeps the existing
+/// SQLite behavior untouched.
+pub async fn init_db_from_target(target: &str) -> Result<Db, BantoError> {
+    if is_postgres_url(target) {
+        #[cfg(feature = "postgres")]
+        {
+            let db = Db::connect_postgres(target).await?;
+            run_migrations_and_seed(&db).await?;
+            Ok(db)
+        }
+        #[cfg(not(feature = "postgres"))]
+        {
+            Err(BantoError::Storage(format!(
+                "connection target {target:?} is a PostgreSQL URL but this build was compiled without the `postgres` feature"
+            )))
+        }
+    } else {
+        init_db(target).await
+    }
+}
+
+/// Does `target` name a PostgreSQL server (vs. a SQLite filesystem path)?
+/// Matches the two canonical libpq URL schemes.
+///
+/// `pub` so the single backend-selection rule lives here and is reused rather
+/// than duplicated: `bin/banto-serve.rs` calls this to decide whether to skip
+/// the SQLite-only startup restore (`BackupService::apply_pending_restore_at_startup`)
+/// for a `BANTO_DB` that points at Postgres, keeping that guard in lock-step
+/// with [`init_db_from_target`]'s own scheme check below.
+pub fn is_postgres_url(target: &str) -> bool {
+    target.starts_with("postgres://") || target.starts_with("postgresql://")
+}
+
+/// Same as [`init_db`] but against a private in-memory SQLite database. Used by
 /// tests so each test gets an isolated, migrated, seeded database.
-pub async fn init_db_memory() -> Result<SqlitePool, BantoError> {
-    let pool = banto_storage::connect_sqlite_memory().await?;
-    run_migrations_and_seed(&pool).await?;
-    Ok(pool)
+pub async fn init_db_memory() -> Result<Db, BantoError> {
+    let db = Db::connect_sqlite_memory().await?;
+    run_migrations_and_seed(&db).await?;
+    Ok(db)
 }
 
 /// A migrated but *unseeded* in-memory database. Used by `items` service
@@ -28,49 +75,114 @@ pub async fn init_db_memory() -> Result<SqlitePool, BantoError> {
 /// specific id is absent), where the 1,000-row demo seed from
 /// [`init_db_memory`] would collide with test fixture ids.
 #[cfg(test)]
-pub(crate) async fn migrate_memory() -> Result<SqlitePool, BantoError> {
-    let pool = banto_storage::connect_sqlite_memory().await?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|err| BantoError::Storage(err.to_string()))?;
-    Ok(pool)
+pub(crate) async fn migrate_memory() -> Result<Db, BantoError> {
+    let db = Db::connect_sqlite_memory().await?;
+    run_migrations(&db).await?;
+    Ok(db)
 }
 
-async fn run_migrations_and_seed(pool: &SqlitePool) -> Result<(), BantoError> {
-    sqlx::migrate!("./migrations")
-        .run(pool)
-        .await
-        .map_err(|err| BantoError::Storage(err.to_string()))?;
-    seed_if_empty(pool).await?;
+/// Run the embedded migrations matching the handle's backend. The two migration
+/// sets are byte-distinct SQL (`migrations-sqlite/` is the historical DDL kept
+/// unchanged for backward compatibility; `migrations-postgres/` is the
+/// strict-typed Postgres port), so each backend embeds and runs its own.
+async fn run_migrations(db: &Db) -> Result<(), BantoError> {
+    match db {
+        Db::Sqlite(pool) => sqlx::migrate!("./migrations-sqlite")
+            .run(pool)
+            .await
+            .map_err(|err| BantoError::Storage(err.to_string())),
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => sqlx::migrate!("./migrations-postgres")
+            .run(pool)
+            .await
+            .map_err(|err| BantoError::Storage(err.to_string())),
+    }
+}
+
+async fn run_migrations_and_seed(db: &Db) -> Result<(), BantoError> {
+    run_migrations(db).await?;
+    seed_if_empty(db).await?;
     Ok(())
 }
 
-async fn seed_if_empty(pool: &SqlitePool) -> Result<(), BantoError> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
-        .fetch_one(pool)
-        .await
-        .map_err(banto_storage::storage_error)?;
+async fn seed_if_empty(db: &Db) -> Result<(), BantoError> {
+    let count: i64 = match db {
+        Db::Sqlite(pool) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM items")
+                .fetch_one(pool)
+                .await
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM items")
+                .fetch_one(pool)
+                .await
+        }
+    }
+    .map_err(banto_storage::storage_error)?;
     if count > 0 {
         return Ok(());
     }
 
     let rows = generate_sample_items(SEED_ROW_COUNT);
-    let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
-    for row in &rows {
-        sqlx::query(
-            "INSERT INTO items (id, name, price, stock, updated_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(row.id)
-        .bind(&row.name)
-        .bind(row.price)
-        .bind(row.stock)
-        .bind(&row.updated_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(banto_storage::storage_error)?;
+    // Positional placeholders via the shared `Dialect` helper so the same
+    // INSERT text works on both backends (`?` on SQLite, `$1..$5` on Postgres).
+    let dialect = db.dialect();
+    let insert_sql = format!(
+        "INSERT INTO items (id, name, price, stock, updated_at) VALUES ({}, {}, {}, {}, {})",
+        dialect.placeholder(1),
+        dialect.placeholder(2),
+        dialect.placeholder(3),
+        dialect.placeholder(4),
+        dialect.placeholder(5),
+    );
+
+    match db {
+        Db::Sqlite(pool) => {
+            let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+            for row in &rows {
+                sqlx::query(&insert_sql)
+                    .bind(row.id)
+                    .bind(&row.name)
+                    .bind(row.price)
+                    .bind(row.stock)
+                    .bind(&row.updated_at)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+            }
+            tx.commit().await.map_err(banto_storage::storage_error)?;
+        }
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => {
+            let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+            for row in &rows {
+                sqlx::query(&insert_sql)
+                    .bind(row.id)
+                    .bind(&row.name)
+                    .bind(row.price)
+                    .bind(row.stock)
+                    .bind(&row.updated_at)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+            }
+            tx.commit().await.map_err(banto_storage::storage_error)?;
+            // The seed inserted explicit ids 1..=N into a `GENERATED BY DEFAULT
+            // AS IDENTITY` column, which does NOT advance the identity sequence.
+            // Without this, the next app INSERT (which omits `id`) would try to
+            // generate id=1 and collide. `setval(..., MAX(id))` moves the
+            // sequence past the seed so the first real insert gets N+1. SQLite's
+            // AUTOINCREMENT tracks this from the explicit inserts automatically,
+            // so this fix-up is Postgres-only.
+            sqlx::query(
+                "SELECT setval(pg_get_serial_sequence('items', 'id'), (SELECT MAX(id) FROM items))",
+            )
+            .execute(pool)
+            .await
+            .map_err(banto_storage::storage_error)?;
+        }
     }
-    tx.commit().await.map_err(banto_storage::storage_error)?;
     Ok(())
 }
 
@@ -251,11 +363,11 @@ mod tests {
 
     #[tokio::test]
     async fn init_db_memory_migrates_and_seeds_exactly_once() {
-        let pool = init_db_memory()
+        let db = init_db_memory()
             .await
             .expect("init_db_memory should succeed");
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
-            .fetch_one(&pool)
+            .fetch_one(db.as_sqlite().expect("sqlite handle"))
             .await
             .unwrap();
         assert_eq!(count, SEED_ROW_COUNT as i64);
@@ -263,13 +375,22 @@ mod tests {
 
     #[tokio::test]
     async fn seeding_is_idempotent_across_two_inits_on_the_same_db() {
-        let pool = banto_storage::connect_sqlite_memory().await.unwrap();
-        run_migrations_and_seed(&pool).await.unwrap();
-        run_migrations_and_seed(&pool).await.unwrap(); // second init: must not double-seed
+        let db = Db::connect_sqlite_memory().await.unwrap();
+        run_migrations_and_seed(&db).await.unwrap();
+        run_migrations_and_seed(&db).await.unwrap(); // second init: must not double-seed
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
-            .fetch_one(&pool)
+            .fetch_one(db.as_sqlite().expect("sqlite handle"))
             .await
             .unwrap();
         assert_eq!(count, SEED_ROW_COUNT as i64);
+    }
+
+    #[test]
+    fn postgres_url_detection_selects_backend_by_scheme() {
+        assert!(is_postgres_url("postgres://user:pass@localhost/db"));
+        assert!(is_postgres_url("postgresql://localhost/db"));
+        assert!(!is_postgres_url("./banto-dev.sqlite3"));
+        assert!(!is_postgres_url("/var/lib/banto/app.sqlite3"));
+        assert!(!is_postgres_url("C:\\data\\app.sqlite3"));
     }
 }

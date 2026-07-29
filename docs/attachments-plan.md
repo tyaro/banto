@@ -45,7 +45,7 @@ items への添付として「core/Tauri/REST 三経路配線の見本」を削�
 | 層 | 場所 | 責務 |
 |---|---|---|
 | サービス | `crates/banto-attachments`（新クレート） | メタデータ CRUD、ファイル保存/削除、サムネイル生成。リソース非依存（`resource: &str` + `resource_id: &str`）。tauri/axum 非依存で cargo test 可能 |
-| マイグレーション | `apps/admin-template/core/migrations/0006_attachments.sql` | テーブル定義はアプリが所有（既存方針どおり）。クレートは要求スキーマをドキュメントで規定 |
+| マイグレーション | `apps/admin-template/core/migrations-sqlite/0006_attachments.sql`（+ `migrations-postgres/0006_attachments.sql`） | テーブル定義はアプリが所有（既存方針どおり）。クレートは要求スキーマをドキュメントで規定 |
 | 配線 | `core/src/rest.rs`・`src-tauri/src/lib.rs` | ルータ/コマンド、認証・RBAC（RoleGuard / require_role）、監査記録。既存 items/backups と同型 |
 | フロント通信 | `apps/admin-template/src/lib/banto/attachmentsAdmin.ts` | backupsAdmin.ts と同型の 3-way 分岐（tauri/server/demo）。アプリ側（コピーして書き換える対象） |
 | UI | `packages/attachments`（`@banto/attachments`） | AttachmentsPanel ほか。通信は `AttachmentsClient` インターフェース経由で受け取り、アプリ固有 import なし（昇格済みパッケージの規律) |
@@ -174,7 +174,7 @@ webview にダウンロード機構がないため（backups と同じ制約）:
 
 | 順序 | 内容 | 主な対象 | 規模 |
 |---|---|---|---|
-| A | クレート本体（サービス・ストレージ・サムネイル・単体テスト）+ マイグレーション | `crates/banto-attachments`, `core/migrations/0006` | M |
+| A | クレート本体（サービス・ストレージ・サムネイル・単体テスト）+ マイグレーション | `crates/banto-attachments`, `core/migrations-sqlite/0006`（+ `migrations-postgres/0006`） | M |
 | B | 配線（REST ルータ・Tauri コマンド・監査・attachmentsAdmin.ts） | `rest.rs`, `src-tauri/lib.rs`, `attachmentsAdmin.ts` | M |
 | C | UI パッケージ + items デモ配線 + ドキュメント | `packages/attachments`, `items/[id]`, template-scope/README | M |
 | D | E2E（スモークにシナリオ追加: アップロード→一覧→サムネ→削除）+ 全体 QA | `e2e/tests/smoke.spec.ts` | S |
