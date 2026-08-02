@@ -31,7 +31,7 @@ futures-util = "0.3"
 async-stream = "0.3"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 argon2 = "0.5"
-password-hash = { version = "0.5", features = ["getrandom"] }
+password-hash = { version = "0.6", features = ["getrandom"] }
 # Desktop-only (spec M11 autologin): OS keyring storage for the auto-login
 # credential. Deliberately only referenced from `apps/admin-template/src-tauri`
 # (NOT `admin-template-core`) - CI's headless containers cannot build
