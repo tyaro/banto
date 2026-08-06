@@ -39,13 +39,14 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 
 ## 索引
 
-| #                                            | タイトル                                                       | 状態     |
-| -------------------------------------------- | -------------------------------------------------------------- | -------- |
-| [0001](0001-rest-tauri-two-path-symmetry.md) | REST と Tauri を同格の二経路にし、単一サービス層を対称に通す   | Accepted |
-| [0002](0002-minimal-dependencies.md)         | 依存を足さず自前実装を既定にする（総保守コスト最小化）         | Accepted |
-| [0003](0003-tls-via-reverse-proxy.md)        | LAN の TLS はリバースプロキシ終端を正式とし組み込み TLS は保留 | Accepted |
-| [0004](0004-server-logging-eprintln.md)      | サーバのログは `eprintln!` を既定に据え `tracing` は保留       | Accepted |
-| [0005](0005-i18n-paraglide.md)               | UI i18n ランタイムに Paraglide JS を採用（ADR-0002 の例外）    | Accepted |
+| #                                                 | タイトル                                                                             | 状態     |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------ | -------- |
+| [0001](0001-rest-tauri-two-path-symmetry.md)      | REST と Tauri を同格の二経路にし、単一サービス層を対称に通す                         | Accepted |
+| [0002](0002-minimal-dependencies.md)              | 依存を足さず自前実装を既定にする（総保守コスト最小化）                               | Accepted |
+| [0003](0003-tls-via-reverse-proxy.md)             | LAN の TLS はリバースプロキシ終端を正式とし組み込み TLS は保留                       | Accepted |
+| [0004](0004-server-logging-eprintln.md)           | サーバのログは `eprintln!` を既定に据え `tracing` は保留                             | Accepted |
+| [0005](0005-i18n-paraglide.md)                    | UI i18n ランタイムに Paraglide JS を採用（ADR-0002 の例外）                          | Accepted |
+| [0006](0006-docs-in-repo-projects-status-only.md) | 知識ドキュメントは in-repo に集約し GitHub Projects は揮発的ステータス専用に限定する | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
