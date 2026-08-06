@@ -49,7 +49,7 @@ implementation plans, recipes) continues to be consolidated in the in-repo
 **GitHub Projects, if adopted at all, is confined to an "ephemeral execution
 status / coordination" layer** — roadmap milestone status tracking, future task
 management, and the like. **Knowledge is not moved into Projects.** The dividing
-line is not "README vs docs" but the one running *through* the docs:
+line is not "README vs docs" but the one running _through_ the docs:
 **durable knowledge (in-repo) vs mutable status (Projects allowed).**
 
 The adoption trigger (the condition to stand Projects up as a status layer) is

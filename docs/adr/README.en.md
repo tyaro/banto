@@ -40,14 +40,14 @@ corresponding ADR exists, be traced from there.
 
 ## Index
 
-| #                                               | Title                                                                                              | Status   |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
-| [0001](0001-rest-tauri-two-path-symmetry.en.md) | Make REST and Tauri two peer paths and route a single service layer symmetrically through both     | Accepted |
-| [0002](0002-minimal-dependencies.en.md)         | Add no dependencies and make in-house implementation the default (minimize total maintenance cost) | Accepted |
-| [0003](0003-tls-via-reverse-proxy.en.md)        | Officially support LAN TLS via reverse-proxy termination and defer built-in TLS                    | Accepted |
-| [0004](0004-server-logging-eprintln.en.md)      | Set `eprintln!` as the default for server logging and defer `tracing`                              | Accepted |
-| [0005](0005-i18n-paraglide.en.md)               | Adopt Paraglide JS as the UI i18n runtime (an exception to ADR-0002)                               | Accepted |
-| [0006](0006-docs-in-repo-projects-status-only.en.md) | Consolidate knowledge docs in-repo and confine GitHub Projects to ephemeral status only       | Accepted |
+| #                                                    | Title                                                                                              | Status   |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
+| [0001](0001-rest-tauri-two-path-symmetry.en.md)      | Make REST and Tauri two peer paths and route a single service layer symmetrically through both     | Accepted |
+| [0002](0002-minimal-dependencies.en.md)              | Add no dependencies and make in-house implementation the default (minimize total maintenance cost) | Accepted |
+| [0003](0003-tls-via-reverse-proxy.en.md)             | Officially support LAN TLS via reverse-proxy termination and defer built-in TLS                    | Accepted |
+| [0004](0004-server-logging-eprintln.en.md)           | Set `eprintln!` as the default for server logging and defer `tracing`                              | Accepted |
+| [0005](0005-i18n-paraglide.en.md)                    | Adopt Paraglide JS as the UI i18n runtime (an exception to ADR-0002)                               | Accepted |
+| [0006](0006-docs-in-repo-projects-status-only.en.md) | Consolidate knowledge docs in-repo and confine GitHub Projects to ephemeral status only            | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 
