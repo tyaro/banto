@@ -48,3 +48,14 @@ updates:
     commit-message:
       prefix: 'chore(deps)'
     open-pull-requests-limit: 5
+    # password-hash 0.6+ は rand_core 0.10 世代で、採用には argon2 0.6 が要る。
+    # だが argon2 の安定版は 0.5.3 が最新で、0.6 系は RC のみ（2026-08 時点）。
+    # テンプレートの認証中核（argon2id パスワードハッシュ、spec §8.2）を
+    # プレリリース依存に載せないため、argon2 0.6 が安定版を出すまで両クレートの
+    # 0.6+ 追従を止める。解除条件: argon2 0.6.0（stable）リリース時にこの
+    # ignore を削除し、password-hash と揃えて追従する（conventions §3 / ADR-0002）。
+    ignore:
+      - dependency-name: 'password-hash'
+        versions: ['>=0.6.0']
+      - dependency-name: 'argon2'
+        versions: ['>=0.6.0']
