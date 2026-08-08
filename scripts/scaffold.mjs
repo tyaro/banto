@@ -779,7 +779,7 @@ function removeWindowVibrancyDeps() {
 		WS_CARGO,
 		'workspace: window-vibrancy 依存除去',
 		'# Desktop-only (spec M12 Glass theme): real window translucency (Windows',
-		'window-vibrancy = "0.6"'
+		'window-vibrancy = "0.8"'
 	);
 	cutRegion(
 		TAURI_CARGO,
