@@ -545,7 +545,17 @@ v1（M0〜M24）で汎用管理画面テンプレートとしての機能は出�
 Projects へ移さない。線引きと退けた代替案は
 [ADR-0006](adr/0006-docs-in-repo-projects-status-only.md)。
 
-- Tauri updater（自動更新）
+**外部レビューの棚卸し（2026-08）**: 外部AIレビューが提案した機能群を実測で裏取り
+し、本バックログへの取捨を [feature-review-2026-08.md](feature-review-2026-08.md) に
+記録した。下記バックログ項目のうち updater / PWA / バックアップアーカイブ /
+API Token はそのレビューの設計上の但し書き（依存ゲート・リリースパイプライン前提・
+HTTP制約・ロール紐付け設計）を参照。version 表示・System Info カード・PWA manifest・
+`Notice` 発火レシピは「今すぐ着手できる小粒（依存ゼロ）」として同 §4 に分類。
+
+- Tauri updater（自動更新。**依存2件**は §3 設計判断ゲート＝ADR、**バイナリ
+  リリースパイプライン新設**が前提、定期チェックは「cron 相当を持たない」除外と
+  衝突するため起動時/手動チェックに限定。詳細は
+  [feature-review-2026-08.md](feature-review-2026-08.md) §2.3）
 - PWA 対応（LANブラウザモードに manifest）
 - チャートの Canvas レンダラ（性能天井時のエスカレーション第2段。
   第1段はサーバ側集約 — template-scope.md §4.2 参照）
@@ -564,7 +574,14 @@ Projects へ移さない。線引きと退けた代替案は
   `crates/banto-server/src/routes/` へ移設した（`admin-template-core` には items
   固有分のみ残置）。方針は [template-scope.md](template-scope.md) §7。
 - 添付を含むバックアップアーカイブ（M17 バックアップは SQLite ファイルのみ
-  で添付の実ファイルを含まない。attachments-plan.md §8 の既知の制限）
+  で添付の実ファイルを含まない。attachments-plan.md §8 の既知の制限）。設計上の
+  但し書き（zip は依存追加＝ADR、依存ゼロのディレクトリ方式から始める、restore の
+  ツリー差し替えが本丸）は [feature-review-2026-08.md](feature-review-2026-08.md) §2.1
+- API Token / Service Account（機械・非人間アクセス。現状トークンはインメモリの
+  人間セッションのみで機械アクセス手段はゼロ。**自由形式 scope ではなく既存ロールに
+  紐付けたトークン**が設計指針。依存追加ゼロで実装可、規模は M10+M14 級。
+  最初の外部連携需要が出た時点で昇格。詳細は
+  [feature-review-2026-08.md](feature-review-2026-08.md) §2.2）
 
 **post-v2（採用が出てから）**: **保守者 docs の英語化**（conventions / recipe /
 ADR）。現時点でテンプレートの外部利用者はいないため、英語化は **v2 完了後・
