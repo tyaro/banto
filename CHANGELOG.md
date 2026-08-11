@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### ドキュメント
+
+- 外部AIレビュー（ChatGPT）の機能スコープ提案を実測で検証・取捨した棚卸しを
+  [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) に追加。
+  roadmap §3 v2 バックログに **API Token / Service Account**（既存ロール紐付け設計）
+  を追加し、updater / バックアップアーカイブへ設計上の但し書き参照を付した
+  （実装は伴わない実需ドリブンのバックログ整理）。
+
 ## [1.1.0] - 2026-07-30
 
 **v1.1.0 — V2 拡張テーマ（PostgreSQL アプリ全体対応 / i18n レイヤ② / コピー面積
