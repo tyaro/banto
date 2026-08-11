@@ -28,7 +28,7 @@
   "devDependencies": {
     "@inlang/paraglide-js": "^2.23.1",
     "@inlang/plugin-m-function-matcher": "2.2.9",
-    "@inlang/plugin-message-format": "4.4.0",
+    "@inlang/plugin-message-format": "4.4.1",
     "@sveltejs/adapter-static": "^3.0.8",
     "@sveltejs/kit": "^2.70.2",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
