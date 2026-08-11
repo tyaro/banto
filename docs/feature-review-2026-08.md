@@ -191,7 +191,8 @@ Header へのベル追加。Header に拡張ポイントは無く直接編集）
 - 本体に入れる: (a) `Notice` イベントの発火例 + README レシピ化（ほぼタダ）、
   (b) `NotificationKind` への `warning` 追加（小。現行は success/error/info）。
 - 永続通知センターは**実需が出てから**。入れるとしても本体焼き込みではなく
-  **オプションパッケージ `@banto/notifications`**（削除可能義務つき、§3.1 方式）。
+  **オプションパッケージ**（`notifications` パッケージ相当、仮称。`@banto/*` 系として
+  切り出す。削除可能義務つき、§3.1 方式）。
 
 ### 2.6 詳細RBAC（Role→Permission 間接層）— 判定: **反対（レシピで応える）**
 
