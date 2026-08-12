@@ -531,7 +531,7 @@ function removeAttachments() {
  *   (b) `unused_attachments_service` ヘルパ + doc コメント。
  *   (c) 各ルータビルダの `unused_attachments_service(...)` 宣言（6箇所）。
  *   (d) backup ヘルパ（M17 テストで生存）の実 `AttachmentsService::new(...)` 宣言。
- *   (e) `api_router(...)` 実引数の `attachments,`（backup, と auth, の間・両インデント）。
+ *   (e) `api_router(...)` 実引数の `attachments,`（backup, と system_info, の間・両インデント）。
  * `PathBuf` import は `unused_backup_service` が使うため残す。
  */
 function removeAttachmentsFromRestTests() {
@@ -560,19 +560,20 @@ function removeAttachmentsFromRestTests() {
 		'rest/tests: backup ヘルパの実 attachments 宣言除去',
 		`    let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));\n`
 	);
-	// (e) api_router(...) 実引数の attachments を除去（backup, と auth, の間・両インデント。
-	//     swap は全出現を置換するので 12/8 スペースそれぞれ 1 回で足りる）。
+	// (e) api_router(...) 実引数の attachments を除去（backup, と system_info, の間・
+	//     両インデント。system_info はコア機能なので残す＝アンカーに使う。swap は
+	//     全出現を置換するので 12/8 スペースそれぞれ 1 回で足りる）。
 	swapText(
 		REST_TESTS,
 		'rest/tests: api_router 実引数(attachments)除去（12スペース）',
-		`            backup,\n            attachments,\n            auth,`,
-		`            backup,\n            auth,`
+		`            backup,\n            attachments,\n            system_info,`,
+		`            backup,\n            system_info,`
 	);
 	swapText(
 		REST_TESTS,
 		'rest/tests: api_router 実引数(attachments)除去（8スペース）',
-		`        backup,\n        attachments,\n        auth,`,
-		`        backup,\n        auth,`
+		`        backup,\n        attachments,\n        system_info,`,
+		`        backup,\n        system_info,`
 	);
 }
 
@@ -702,12 +703,13 @@ function removeAttachmentsFromLibRs() {
 		`    attachments: AttachmentsService,\n`
 	);
 	// api_router 呼び出しの attachments 実引数（12スペースの裸 `attachments,`）。
-	// 16スペースの AppState リテラル行の部分文字列にならないよう前後行込みで指定する。
+	// 16スペースの AppState リテラル行の部分文字列にならないよう前後行込みで指定する
+	// （backup, と、コアなので残る system_info, の間）。
 	swapText(
 		LIB_RS,
 		'lib.rs: api_router 実引数(attachments)除去',
-		`            backup,\n            attachments,\n            auth,`,
-		`            backup,\n            auth,`
+		`            backup,\n            attachments,\n            system_info,`,
+		`            backup,\n            system_info,`
 	);
 	drop(
 		LIB_RS,
