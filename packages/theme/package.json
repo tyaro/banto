@@ -1,6 +1,6 @@
 {
   "name": "@banto/theme",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Banto default theme: CSS variables with light/dark modes",
   "license": "MIT",
   "repository": {
