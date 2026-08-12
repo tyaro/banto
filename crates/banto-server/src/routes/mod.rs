@@ -51,6 +51,7 @@ use crate::{require_auth, ApiError, AuthState, Identity};
 mod audit;
 mod auth;
 mod backups;
+mod system_info;
 mod ui_settings;
 mod users;
 
@@ -59,6 +60,7 @@ pub use audit::{
 };
 pub use auth::extra_auth_router;
 pub use backups::backups_router;
+pub use system_info::{system_info_router, SystemInfo};
 pub use ui_settings::ui_settings_router;
 pub use users::users_router;
 

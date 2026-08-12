@@ -32,6 +32,7 @@
 //! | POST   | `/api/audit-log/list` | `ListParams`   | `ListResult<AuditLogEntry>` (admin) |
 //! | GET    | `/api/audit-log/config` | -            | `AuditSettings` (admin) |
 //! | PUT    | `/api/audit-log/config` | `AuditSettings` | `AuditSettings` (admin) |
+//! | GET    | `/api/system/info`   | -              | `SystemInfo` (admin, M-review 2026-08 §2.4) |
 //! | POST   | `/api/backups`        | -              | `BackupInfo` (admin, spec M17) |
 //! | GET    | `/api/backups`        | -              | `BackupInfo[]` (admin)  |
 //! | GET    | `/api/backups/{fileName}` | -          | raw bytes, `Content-Disposition: attachment` (admin) |
@@ -183,8 +184,8 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment, MAX_A
 use banto_core::{BantoError, ListParams, ListResult};
 use banto_server::routes::{
     actor_identity, audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,
-    record_write, require_role_at_least, ui_settings_router, users_router, LogoutAuditState,
-    RoleGuard,
+    record_write, require_role_at_least, system_info_router, ui_settings_router, users_router,
+    LogoutAuditState, RoleGuard,
 };
 use banto_server::{
     auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,
@@ -198,6 +199,7 @@ use crate::audit::{AuditEntry, AuditLogService};
 use crate::backup::BackupService;
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use crate::settings::SettingsService;
+use crate::system_info::SystemInfoService;
 use crate::users::{Role, UsersService};
 
 mod attachments;
@@ -251,6 +253,7 @@ pub fn api_router(
     audit: AuditLogService,
     backup: BackupService,
     attachments: AttachmentsService,
+    system_info: SystemInfoService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     allow_setup: bool,
@@ -285,6 +288,7 @@ pub fn api_router(
             auth.clone(),
         ))
         .merge(backups_router(backup, audit.clone(), auth.clone()))
+        .merge(system_info_router(system_info, auth.clone(), audit.clone()))
         .merge(attachments_router(attachments, audit, auth.clone(), events))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))

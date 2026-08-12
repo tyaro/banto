@@ -12,6 +12,7 @@
 		Rows3,
 		Rows4,
 		ScrollText,
+		Server,
 		ShieldAlert,
 		Sparkles,
 		Sun,
@@ -40,6 +41,7 @@
 		setAuditConfig,
 		type AuditSettings
 	} from '$lib/banto/auditLogAdmin';
+	import { getSystemInfo, isSystemInfoAvailable, type SystemInfo } from '$lib/banto/systemAdmin';
 	import {
 		cancelPendingRestore,
 		createBackup,
@@ -393,6 +395,27 @@
 			applyingAudit = false;
 		}
 	}
+
+	// --- System Info (M-review 2026-08 §2.4, Tauri + LAN browser, admin only)
+	// Read-only diagnostics: version, migration version, DB dialect+latency,
+	// uptime, active LAN sessions, attachment storage. Same availability gate
+	// as the audit/backups sections (real backend, not the plain-browser demo,
+	// which has no live server to probe). Loaded once on mount for an admin.
+	const systemInfoAvailable = isSystemInfoAvailable();
+
+	let systemInfo = $state<SystemInfo | null>(null);
+	let systemInfoError: string | null = $state(null);
+
+	$effect(() => {
+		if (!systemInfoAvailable || !isAdmin(sessionStore.role)) return;
+		void (async () => {
+			try {
+				systemInfo = await getSystemInfo();
+			} catch (err) {
+				systemInfoError = errorMessage(err);
+			}
+		})();
+	});
 
 	// --- M17: SQLite backup/restore (Tauri + LAN browser, admin only) -------
 	// Same availability gate as the audit-log section above (real backend,
@@ -885,6 +908,55 @@
 				<p class="note">
 					{m['settings.auditNote']()}
 				</p>
+			</SurfaceCard>
+		{/if}
+
+		{#if systemInfoAvailable && isAdmin(sessionStore.role)}
+			<SurfaceCard>
+				<div class="card-head">
+					<Server size={20} aria-hidden="true" />
+					<div>
+						<h2>{m['settings.systemInfoHeading']()}</h2>
+						<p>{m['settings.systemInfoDesc']()}</p>
+					</div>
+				</div>
+
+				{#if systemInfoError}
+					<p class="error">{systemInfoError}</p>
+				{:else if systemInfo}
+					<p class="status">
+						{m['settings.systemInfoAppVersion']()} <strong>{systemInfo.appVersion}</strong>
+					</p>
+					<p class="status">
+						{m['settings.systemInfoMigration']()}
+						<strong>{systemInfo.migrationVersion ?? '—'}</strong>
+					</p>
+					<p class="status">
+						{m['settings.systemInfoDatabase']()}
+						<strong>
+							{systemInfo.dbDialect} ({m['settings.systemInfoLatencyValue']({
+								ms: systemInfo.dbLatencyMs.toFixed(1)
+							})})
+						</strong>
+					</p>
+					<p class="status">
+						{m['settings.systemInfoUptime']()}
+						<strong>{m['settings.systemInfoUptimeValue']({ secs: systemInfo.uptimeSecs })}</strong>
+					</p>
+					<p class="status">
+						{m['settings.systemInfoSessions']()} <strong>{systemInfo.activeSessions}</strong>
+					</p>
+					<p class="status">
+						{m['settings.systemInfoStorage']()}
+						<strong>
+							{systemInfo.attachmentBytes === null ? '—' : formatBytes(systemInfo.attachmentBytes)}
+						</strong>
+					</p>
+				{:else}
+					<p class="note">{m['settings.systemInfoLoading']()}</p>
+				{/if}
+
+				<p class="note">{m['settings.systemInfoNote']()}</p>
 			</SurfaceCard>
 		{/if}
 

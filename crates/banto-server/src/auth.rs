@@ -524,6 +524,25 @@ impl AuthState {
             .remove(token);
     }
 
+    /// Number of bearer tokens currently held in memory, for the admin System
+    /// Info card (M-review 2026-08 §2.4).
+    ///
+    /// CAVEAT - this is an UPPER BOUND on genuinely-active sessions, not an
+    /// exact count. Per this module's design, "expired tokens … are reaped
+    /// lazily (on lookup) and opportunistically (a cheap sweep on each write);
+    /// there is deliberately no background reaper task", so a token whose
+    /// absolute/idle TTL has already lapsed still counts here until the next
+    /// `verify`/`identity_for` on it, or the next token issue, sweeps it out.
+    /// The card labels this accordingly. A read lock suffices; unlike
+    /// [`verify`](Self::verify) this does not slide any idle timer.
+    pub fn session_count(&self) -> usize {
+        self.inner
+            .tokens
+            .read()
+            .expect("auth token lock poisoned")
+            .len()
+    }
+
     /// The [`Identity`] bound to `token`, or `None` if it is not a
     /// currently-valid, unexpired token. Refreshes the idle timer on success
     /// (same as [`AuthState::verify`]). Exposed (beyond what the `/api/auth/*`

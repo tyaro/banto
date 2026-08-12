@@ -144,13 +144,13 @@ jobs:
       # `tauri-apps/tauri-action` / apt setup once native builds are needed
       # in CI.
       - name: Cargo check
-        run: cargo check -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
+        run: cargo check -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core
 
       - name: Clippy
-        run: cargo clippy -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core --all-targets -- -D warnings
+        run: cargo clippy -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core --all-targets -- -D warnings
 
       - name: Cargo test
-        run: cargo test -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
+        run: cargo test -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core
 
   # banto-storage の PostgreSQL 接続ヘルパ（feature `postgres`）向け統合テスト。
   # 上の `rust` ジョブは default feature（sqlite のみ）でビルドしているため
