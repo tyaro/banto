@@ -76,6 +76,7 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | デモコンテンツ（items 1万件、ダッシュボード各パネル、SPC/トレンドデモ） | **利用開始時に置き換える前提**。テンプレートの「見本」として同梱 | 雛形の理解材料。README/導入手順で差し替え箇所を明示すべき（→ §6 宿題) |
 | `@banto/attachments` + items 添付デモ（M20） | 独立パッケージ + `crates/banto-attachments`。`items/[id]/+page.svelte` のパネル配線・`attachmentsClient.ts`・`package.json` 依存・REST/Tauri ルータ/コマンド・`core/migrations-sqlite/0006_attachments.sql`（+ `migrations-postgres/0006_attachments.sql`）を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式の初適用例。デモモード（ブラウザ単体）では非表示。バックアップ非対象（§8 既知の制限） |
 | `@banto/report` + 日報デモ（M19） | 独立パッケージ（DB/バックエンド依存なし）。items 一覧の「日報」ボタン1行・`items/report/+page.svelte`・`$lib/banto/reports/daily.md?raw`・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。M20と異なりバックエンド/DB配線を持たない最小デモ（roadmap.md M19〜M21の提供形態）。印刷CSSの `.report-body` はテーマ非依存の白地・黒文字固定（帳票の再現性優先、report-plan.md §3.4） |
+| `@banto/tree-svelte` + ツリーデモ（M-review 2026-08） | 独立パッケージ（DB/バックエンド依存なし）。ナビ1行（`navigation.ts` の union + navItems、`navIcons.ts` の対応アイコン）・`routes/(app)/tree/+page.svelte`・`$lib/banto/treeSample.ts`・`i18n.ts` の `treeMessages()`・`messages/{ja,en}.json` の `nav.tree`/`tree.*` キー・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。report と同じくバックエンド/DB 非依存。ナビ追加でサイドバーが写る認証ページの視覚回帰ベースラインを再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。デモページ自体は e2e/visual の撮影対象外 |
 
 ### 3.1 今後の機能拡張の提供形態（2026-07-15 決定）
 
@@ -89,11 +90,14 @@ M19〜M21 以降の機能拡張は、テンプレート本体へ焼き込まず
 - テンプレートアプリへの同梱はデモ配線としてのみ行い、同梱する場合は
   本節の表へ行を追加して「消せる」義務（削除しても他が壊れない構造 +
   削除手順の明文化）を負う
-- デモを同梱しない拡張（例: M21 wedge 入力 `@banto/scan-wedge`、
-  ツリービュー `@banto/tree-svelte`）は README のレシピで組み込み方法を示す
-  （本体アプリへ配線しない = 本表の「削除可能デモ」義務も負わない。ナビ/デモ
-  ページを足すとサイドバー変化で全ビジュアル回帰ベースラインが drift するため、
-  汎用 UI パッケージは recipe-only を既定とする）
+- デモを同梱しない拡張（例: M21 wedge 入力 `@banto/scan-wedge`）は
+  README のレシピで組み込み方法を示す（本体アプリへ配線しない = 本表の
+  「削除可能デモ」義務も負わない）。ナビ/デモページを足すとサイドバー変化で
+  全ビジュアル回帰ベースラインが drift するため、汎用 UI パッケージは
+  recipe-only を既定とする。ただしショーケース価値が高いものは、ベースライン
+  再生成（`.github/workflows/visual-baselines.yml` の dispatch）を受け入れて
+  デモ配線してよい — ツリービュー `@banto/tree-svelte` は `/tree` デモとして
+  配線した（上表に行あり。2026-08 決定）
 - 別リポジトリへの分離はドメイン特化（banto-industrial）に限る。
   汎用拡張は本体モノレポに置き、拡張増加で本体 CI が圧迫され始めた
   時点で banto-extensions への分離を再検討する

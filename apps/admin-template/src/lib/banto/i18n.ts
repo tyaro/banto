@@ -12,6 +12,7 @@
  */
 import type { GridMessages, ColumnValidationMessages } from '@banto/grid-svelte';
 import type { ValidationMessages } from '@banto/forms';
+import type { TreeMessages } from '@banto/tree-svelte';
 import * as m from '$lib/paraglide/messages';
 
 /** @banto/grid-svelte `messages` prop: FilterPopover / HeaderCell / BantoGrid strings. */
@@ -51,5 +52,29 @@ export function columnValidationMessages(): ColumnValidationMessages {
 		minLength: (_field, min) => m['validation.minLength']({ min }),
 		maxLength: (_field, max) => m['validation.maxLength']({ max }),
 		pattern: () => m['validation.pattern']()
+	};
+}
+
+/**
+ * `@banto/tree-svelte` `messages` prop: BantoTree aria strings + TreeSelect's
+ * two extra keys (placeholder / selectedCount). One bundle for both — BantoTree
+ * ignores the two select-only keys, TreeSelect uses them (the return type widens
+ * `Partial<TreeMessages>` since TreeSelectMessages isn't exported).
+ */
+export function treeMessages(): Partial<TreeMessages> & {
+	placeholder?: () => string;
+	selectedCount?: (n: number) => string;
+} {
+	return {
+		expand: (label) => m['tree.expand']({ label }),
+		collapse: (label) => m['tree.collapse']({ label }),
+		checkbox: (label) => m['tree.checkbox']({ label }),
+		loading: () => m['tree.loading'](),
+		loadError: () => m['tree.loadError'](),
+		empty: () => m['tree.empty'](),
+		rename: (label) => m['tree.rename']({ label }),
+		nameColumn: () => m['tree.nameColumn'](),
+		placeholder: () => m['tree.selectPlaceholder'](),
+		selectedCount: (n) => m['tree.selectedCount']({ n })
 	};
 }

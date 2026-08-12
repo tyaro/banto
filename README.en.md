@@ -54,9 +54,10 @@ the owner's behalf.
   barcode/QR scanner input (`@banto/scan-wedge`), and a **tree view**
   (`@banto/tree-svelte`: expand/collapse, single/multi selection with tri-state
   checkboxes, lazy loading, drag reorder, inline rename, an optional tree-grid
-  columns mode, and a tree-select popover). report/attachments ship with
-  deletable demo wiring; scan-wedge/tree-svelte are recipe-only (not wired into
-  the demo app — see the README recipes).
+  columns mode, and a tree-select popover). report/attachments/tree-svelte ship
+  with deletable demo wiring (the tree view is the sidebar "Tree view" = `/tree`
+  demo, reachable on the live demo too); scan-wedge is recipe-only (not wired
+  into the demo app — see the README recipes).
 
 ## Quick start
 
