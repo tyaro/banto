@@ -68,6 +68,15 @@
 		color: var(--banto-danger-tint-text);
 	}
 
+	.toast.warning {
+		/* No --banto-warning-solid token (only danger/success have a -solid
+		   variant); the base --banto-warning accent plays that role, paired
+		   with the warning tint/tint-text (theme Appendix A.3). */
+		background: var(--banto-warning-tint);
+		border-left-color: var(--banto-warning);
+		color: var(--banto-warning-tint-text);
+	}
+
 	.toast.info {
 		/* No --banto-primary-tint token exists (plan Appendix A.3 only defines
 		   tint pairs for danger/success/warning) - same color-mix fallback

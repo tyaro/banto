@@ -182,7 +182,9 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 	};
 }
 
-const NOTIFICATION_KINDS = new Set<NotificationKind>(['success', 'error', 'info']);
+// Keep in sync with the `NotificationKind` union in provider.ts: a `notice`
+// event's `level` maps to the kind when it is one of these, else `'info'`.
+const NOTIFICATION_KINDS = new Set<NotificationKind>(['success', 'error', 'info', 'warning']);
 
 function toNotificationKind(level: string): NotificationKind {
 	return NOTIFICATION_KINDS.has(level as NotificationKind) ? (level as NotificationKind) : 'info';
