@@ -57,6 +57,45 @@ export function byCategory(items: Item[]): CategoryStock[] {
 		.sort((a, b) => b.stock - a.stock);
 }
 
+export interface CategoryPriceBandStock {
+	category: string;
+	/** price <= 99 の在庫合計。 */
+	low: number;
+	/** 100 <= price <= 199 の在庫合計。 */
+	mid: number;
+	/** price >= 200 の在庫合計。 */
+	high: number;
+}
+
+const STACKED_BAR_TOP_N = 5;
+
+/**
+ * §6 積立棒(BarChart stacked)デモ用: 在庫合計が上位 `topN` のカテゴリについて、
+ * その在庫を価格帯(低/中/高)で積み上げる。積立エリア(`categoryTrendByMonth`,
+ * 時系列)とは別軸の「構成比」ビューにするため、x をカテゴリ・積層を価格帯にした。
+ * 系列は3(低/中/高)で 8 色スロット規則(byCategory の doc 参照: 制約は系列数)に
+ * 収まる。壁時計非依存・純関数なのでビジュアル回帰でも決定的。
+ */
+export function stockByCategoryPriceBand(
+	items: Item[],
+	topN: number = STACKED_BAR_TOP_N
+): CategoryPriceBandStock[] {
+	const top = byCategory(items)
+		.slice(0, topN)
+		.map((c) => c.category);
+	const topSet = new Set(top);
+	const acc = new Map<string, { low: number; mid: number; high: number }>(
+		top.map((c) => [c, { low: 0, mid: 0, high: 0 }])
+	);
+	for (const item of items) {
+		const cat = categoryOf(item.name);
+		if (!topSet.has(cat)) continue;
+		const band = item.price <= 99 ? 'low' : item.price <= 199 ? 'mid' : 'high';
+		acc.get(cat)![band] += item.stock;
+	}
+	return top.map((category) => ({ category, ...acc.get(category)! }));
+}
+
 export interface PriceBucket {
 	bucket: string;
 	count: number;
