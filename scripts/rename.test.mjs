@@ -78,6 +78,14 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 		const appHtml = fs.readFileSync(path.join(dir, 'apps/admin-template/src/app.html'), 'utf8');
 		assert.match(appHtml, new RegExp(`<title>${SAMPLE.title}</title>`));
 
+		// PWA のインストール名（manifest name/short_name + apple-title）も追随。
+		const manifest = JSON.parse(
+			fs.readFileSync(path.join(dir, 'apps/admin-template/static/manifest.webmanifest'), 'utf8')
+		);
+		assert.equal(manifest.name, SAMPLE.title);
+		assert.equal(manifest.short_name, SAMPLE.title);
+		assert.match(appHtml, new RegExp(`apple-mobile-web-app-title" content="${SAMPLE.title}"`));
+
 		// 旧ブランド識別子が主要マニフェストに残っていないこと（回帰の早期検出）。
 		assert.doesNotMatch(
 			JSON.stringify(tauri),

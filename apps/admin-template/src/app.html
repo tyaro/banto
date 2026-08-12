@@ -4,6 +4,20 @@
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- PWA installable-only (M-review 2026-08 §2.8): a web manifest + icons
+		     so the LAN-browser build can be "Add to Home Screen"/installed. No
+		     service worker (no offline scope). `%sveltekit.assets%` keeps the
+		     manifest URL correct under BASE_PATH (Pages demo); the manifest's
+		     own paths are relative, so it needs no base awareness. NOTE: browsers
+		     only offer install over a secure context — the embedded LAN server is
+		     plain HTTP by design (ADR-0003, TLS via reverse proxy), so install is
+		     available on HTTPS / localhost / behind a TLS proxy, inert on plain
+		     HTTP LAN. -->
+		<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/icon-192.png" />
+		<meta name="theme-color" content="#2563eb" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="Banto" />
 		<!-- axe-core wcag2a document-title (visual-refresh-plan.md §7.1): a
 		     static fallback so every route has a non-empty <title> even
 		     without its own <svelte:head> override (only routes/panel/[id]
