@@ -51,8 +51,12 @@ the owner's behalf.
   Backup/restore is SQLite-only (PostgreSQL returns an explicit error).
 - Optional, removable extension packages: reporting/print
   (`@banto/report`), attachment/image management (`@banto/attachments`),
-  and barcode/QR scanner input (`@banto/scan-wedge`) — each ships with demo
-  wiring that can be deleted.
+  barcode/QR scanner input (`@banto/scan-wedge`), and a **tree view**
+  (`@banto/tree-svelte`: expand/collapse, single/multi selection with tri-state
+  checkboxes, lazy loading, drag reorder, inline rename, an optional tree-grid
+  columns mode, and a tree-select popover). report/attachments ship with
+  deletable demo wiring; scan-wedge/tree-svelte are recipe-only (not wired into
+  the demo app — see the README recipes).
 
 ## Quick start
 

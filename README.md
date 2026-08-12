@@ -144,9 +144,10 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 - **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
   添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
-  スキャナ入力（`@banto/scan-wedge`、M21）。帳票と添付は削除可能なデモ配線付き。
-  scan-wedge はバックエンド/DB/UI 依存ゼロの小粒機能のため**本体には配線せず**、
-  README のレシピで各アプリに直接組み込む（後述「バーコード/QRスキャナ入力」節）。
+  スキャナ入力（`@banto/scan-wedge`、M21）、ツリービュー（`@banto/tree-svelte`）。
+  帳票と添付は削除可能なデモ配線付き。scan-wedge / tree-svelte はバックエンド/DB
+  依存ゼロのため**本体には配線せず**、README のレシピで各アプリに直接組み込む
+  （後述「バーコード/QRスキャナ入力」「ツリービュー」節）。
 
 実装済みマイルストーンの全体像は [docs/roadmap.md](docs/roadmap.md)、変更履歴は
 [CHANGELOG.md](CHANGELOG.md) を参照。
@@ -158,17 +159,18 @@ npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスは
 モノレポ内ではソース直接参照、外部からは git 依存（サブディレクトリ
 指定）で消費する — 詳細は [docs/publishing.md](docs/publishing.md)）:
 
-| パッケージ           | 内容                                                                   |
-| -------------------- | ---------------------------------------------------------------------- |
-| `@banto/admin-core`  | リソース定義・データ/認証プロバイダ・Runesコンポーザブル               |
-| `@banto/grid-svelte` | データグリッド（仮想化・編集・ソート/フィルタ・グルーピング）          |
-| `@banto/forms`       | スキーマ駆動フォーム + 入力コンポーネント                              |
-| `@banto/charts`      | SVGチャート（折れ線/棒/円/散布図/スパークライン/積立エリア/ガント 他） |
-| `@banto/dock-svelte` | ドッキング/フローティングレイアウト                                    |
-| `@banto/theme`       | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット           |
-| `@banto/report`      | 帳票/印刷（Markdownテンプレート + データバインド、M19）                |
-| `@banto/attachments` | 添付ファイル/画像管理UI（M20）                                         |
-| `@banto/scan-wedge`  | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）             |
+| パッケージ           | 内容                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `@banto/admin-core`  | リソース定義・データ/認証プロバイダ・Runesコンポーザブル                                |
+| `@banto/grid-svelte` | データグリッド（仮想化・編集・ソート/フィルタ・グルーピング）                           |
+| `@banto/forms`       | スキーマ駆動フォーム + 入力コンポーネント                                               |
+| `@banto/charts`      | SVGチャート（折れ線/棒/円/散布図/スパークライン/積立エリア/ガント 他）                  |
+| `@banto/dock-svelte` | ドッキング/フローティングレイアウト                                                     |
+| `@banto/theme`       | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット                            |
+| `@banto/report`      | 帳票/印刷（Markdownテンプレート + データバインド、M19）                                 |
+| `@banto/attachments` | 添付ファイル/画像管理UI（M20）                                                          |
+| `@banto/scan-wedge`  | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）                              |
+| `@banto/tree-svelte` | ツリービュー（展開/選択/チェックボックス/遅延/ドラッグ/リネーム/tree-grid/tree-select） |
 
 Rust クレート（`crates/`、MIT）:
 
@@ -619,6 +621,135 @@ let _ = events.send(ServerEvent::Notice {
 トーストの永続化・既読管理・ベル型の履歴 UI（通知センター）は本テンプレートの
 スコープ外（実需が出た時点でオプションパッケージとして検討。判断は
 [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) §2.5）。
+
+## ツリービュー（`@banto/tree-svelte`）
+
+階層データのツリービュー。**依存ゼロのヘッドレスコア + 薄い Svelte 5 (Runes) UI**
+で、展開/折りたたみ・単一/複数選択・三状態チェックボックス・遅延読み込み・
+ドラッグ並べ替え/親子変更・インライン名前変更に対応する。`columns` を渡すと
+階層データグリッド（tree-grid）、`TreeSelect` はポップオーバー型の選択入力になる。
+`@banto/scan-wedge` と同じく**本体には配線していない**（バックエンド/DB 依存ゼロ、
+UI は各アプリで使う）ので、以下のレシピで自分のアプリへ直接組み込む。
+
+利用するアプリの `package.json` に依存を追加する（モノレポ内なら `workspace:*`、
+本リポジトリ外から消費する場合は [docs/publishing.md](docs/publishing.md) の git 依存
+
+- `path:` 指定）:
+
+```jsonc
+{ "dependencies": { "@banto/tree-svelte": "workspace:*" } }
+```
+
+`ja` 文言（既定は日本語）はアプリ側の解決済み文字列を `messages` prop で上書きできる
+（`@banto/grid-svelte` 等と同じ i18n レイヤ①方式）。
+
+**(a) 基本のツリー**（展開・単一選択・アクティブ化）:
+
+```svelte
+<script lang="ts">
+	import { BantoTree, type TreeNode } from '@banto/tree-svelte';
+
+	const nodes: TreeNode[] = [
+		{
+			id: 'src',
+			label: 'src',
+			children: [
+				{ id: 'app', label: 'app.ts' },
+				{ id: 'lib', label: 'lib', children: [{ id: 'util', label: 'util.ts' }] }
+			]
+		},
+		{ id: 'readme', label: 'README.md' }
+	];
+</script>
+
+<BantoTree
+	{nodes}
+	expanded={['src']}
+	onSelectionChange={(ids) => console.log('selected', ids)}
+	onActivate={(node) => console.log('open', node.id)}
+/>
+```
+
+**(b) 複数選択 + チェックボックス**（三状態。親チェックで子も連動）:
+
+```svelte
+<BantoTree {nodes} selectionMode="multi" checkboxes onCheckChange={(ids) => (picked = ids)} />
+```
+
+**(c) 遅延読み込み**（`hasChildren: true` の枝を初回展開時に取得）:
+
+```svelte
+<script lang="ts">
+	import { BantoTree, type TreeNode } from '@banto/tree-svelte';
+
+	const roots: TreeNode[] = [{ id: 'root', label: 'ルート', hasChildren: true }];
+
+	async function loadChildren(node: TreeNode): Promise<TreeNode[]> {
+		const res = await dataProvider.list('categories', { filter: { parentId: node.id } });
+		return res.rows.map((r) => ({ id: r.id, label: r.name, hasChildren: r.childCount > 0 }));
+	}
+</script>
+
+<BantoTree nodes={roots} {loadChildren} />
+```
+
+**(d) 階層データグリッド（tree-grid）**（`columns` を渡す）:
+
+```svelte
+<script lang="ts">
+	import { BantoTree, type TreeColumn } from '@banto/tree-svelte';
+
+	const columns: TreeColumn<{ size: number }>[] = [
+		{ id: 'size', header: 'サイズ', accessor: 'size', align: 'right' }
+	];
+</script>
+
+<BantoTree {nodes} {columns} />
+```
+
+**(e) ツリー選択の入力欄（tree-select）** — `@banto/forms` の `FormStore` へは
+`bind:value` + `store.setValue` で手配線する（パッケージ間 import は禁止のため、
+アプリ側で合成する）:
+
+```svelte
+<script lang="ts">
+	import { TreeSelect } from '@banto/tree-svelte';
+
+	let categoryId = $state<string | null>(null);
+</script>
+
+<label class="field">
+	カテゴリ
+	<TreeSelect
+		{nodes}
+		bind:value={categoryId}
+		onChange={(v) => store.setValue('categoryId', v as string)}
+		onBlur={() => store.touch('categoryId')}
+	/>
+</label>
+```
+
+**(f) ドラッグ並べ替え + インライン名前変更**（`draggable` / `editable`。F2 または
+ダブルクリックでリネーム。`onMove`/`onRename` を渡すとデータ更新をアプリが持つ。
+未指定なら内部の不変操作で反映する）:
+
+```svelte
+<BantoTree
+	{nodes}
+	draggable
+	editable
+	onMove={(dragId, targetId, position) => persistMove(dragId, targetId, position)}
+	onRename={(id, label) => persistRename(id, label)}
+/>
+```
+
+ツリー演算（可視行のフラット化・move/reparent・三状態計算・リネーム patch）は
+すべて `packages/tree-svelte/src/core/` の依存ゼロ純関数で、DOM 無しで単体テスト
+できる（`packages/tree-svelte/tests/`）。詳細な API は
+`packages/tree-svelte/src/index.ts` の re-export と各 JSDoc を参照。
+
+このパッケージを使わない場合は `packages/tree-svelte/` ごと削除してよい
+（本体はこのパッケージに一切依存していない）。
 
 ## Windowsでのローカルセットアップ
 
