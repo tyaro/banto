@@ -2126,6 +2126,7 @@ pub fn run() {
                     audit.clone(),
                     backup.clone(),
                     attachments.clone(),
+                    system_info.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,

@@ -80,13 +80,15 @@ impl SystemInfoService {
     /// Liveness round-trip. Uses `sqlx::query` (not `query_scalar`) so the
     /// column value is never decoded - `SELECT 1` is `int4` on Postgres but
     /// `INTEGER` on SQLite, and we only care about the round-trip, not the 1.
+    /// The per-arm `.map(|_| ())` unifies the two backends' distinct row types
+    /// (`SqliteRow`/`PgRow`) to `()` *before* the match so they type-check
+    /// under `--features postgres` (same idiom as `SettingsService::set`).
     async fn select_one(&self) -> Result<(), BantoError> {
         match &self.db {
-            Db::Sqlite(pool) => sqlx::query("SELECT 1").fetch_one(pool).await,
+            Db::Sqlite(pool) => sqlx::query("SELECT 1").fetch_one(pool).await.map(|_| ()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query("SELECT 1").fetch_one(pool).await,
+            Db::Postgres(pool) => sqlx::query("SELECT 1").fetch_one(pool).await.map(|_| ()),
         }
-        .map(|_| ())
         .map_err(banto_storage::storage_error)
     }
 
@@ -162,7 +164,8 @@ mod tests {
     }
 
     fn sqlite_pool(db: &Db) -> &sqlx::SqlitePool {
-        db.as_sqlite().expect("service tests run on a SQLite handle")
+        db.as_sqlite()
+            .expect("service tests run on a SQLite handle")
     }
 
     async fn create_migrations_table(db: &Db) {
@@ -214,12 +217,10 @@ mod tests {
     #[tokio::test]
     async fn attachment_bytes_sums_when_table_present() {
         let db = db().await;
-        sqlx::query(
-            "CREATE TABLE attachments (id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL)",
-        )
-        .execute(sqlite_pool(&db))
-        .await
-        .expect("create attachments table");
+        sqlx::query("CREATE TABLE attachments (id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL)")
+            .execute(sqlite_pool(&db))
+            .await
+            .expect("create attachments table");
         for (id, size) in [("a", 100_i64), ("b", 250)] {
             sqlx::query("INSERT INTO attachments (id, size_bytes) VALUES (?, ?)")
                 .bind(id)
@@ -244,12 +245,10 @@ mod tests {
     #[tokio::test]
     async fn attachment_bytes_is_zero_when_table_empty() {
         let db = db().await;
-        sqlx::query(
-            "CREATE TABLE attachments (id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL)",
-        )
-        .execute(sqlite_pool(&db))
-        .await
-        .expect("create attachments table");
+        sqlx::query("CREATE TABLE attachments (id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL)")
+            .execute(sqlite_pool(&db))
+            .await
+            .expect("create attachments table");
         let svc = SystemInfoService::new(db);
         let probe = svc.probe().await.expect("probe should succeed");
         assert_eq!(probe.attachment_bytes, Some(0));
