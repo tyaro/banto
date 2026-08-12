@@ -45,6 +45,15 @@
   アセット）。ブラウザはセキュアコンテキストでのみインストールを提供するため、標準の
   平文 HTTP LAN では機能せず HTTPS/localhost/TLS リバースプロキシ配下が前提
   （ADR-0003）。`rename.mjs` が manifest の name/short_name も追随。
+- **通知に `warning` 種別を追加 + サーバ発通知（`ServerEvent::Notice`）のレシピ化**
+  （M-review 2026-08 §2.5 の「無料部分」）。`@banto/admin-core` の `NotificationKind`
+  を `success`/`error`/`info` に **`warning`** を加えた4種に拡張（後方互換な union
+  拡張。`events.ts` の `notice` レベル照合と `ToastHost` の `.toast.warning`
+  スタイル（warning トークン）を追加）。既に配線済みだが未使用だった
+  `ServerEvent::Notice { level, message }` の**発火例**を `banto-server` の doc
+  コメント（doctest）+ SSE 配信テストで示し、README に「通知（トースト）」レシピ節
+  （自タブ `notify('warning', …)` / 全クライアント一斉 `ServerEvent::Notice`
+  ブロードキャスト）を追加。永続通知センターは引き続き非スコープ（§2.5）。**依存追加ゼロ**。
 
 ### ドキュメント
 

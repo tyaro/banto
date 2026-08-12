@@ -16,14 +16,17 @@
 [improvement-plan-2026-07.md](improvement-plan-2026-07.md)（外部AIレビュー統合の
 アクションプラン）。本書は同じ「外部レビューを実測で裏取りして取捨する」系譜。
 
-実施状況（2026-08-12）: §4「今すぐ」分類のうち **(a) バージョン表示 + System Info
-カード（§2.4 の縮小版⑤）** と **(b) PWA installable-only（§2.8）** を実装済み。
-(a) は設定画面の admin 専用「システム情報」カード + `GET /api/system/info` / Tauri
-`system_info` / `SystemInfoService`。(b) は `static/manifest.webmanifest` + アイコン +
-`app.html` の link/meta + `banto-server` `guess_mime` の `webmanifest` arm（HTTPS/
-localhost/TLS プロキシ配下でのみインストール可、Service Worker なし）。いずれも依存
-追加ゼロ（CHANGELOG [Unreleased] 参照）。残る「今すぐ」（`Notice` 発火レシピ +
-`warning` kind）とバックログ昇格候補（Backup アーカイブ・API Token・Updater）は未着手。
+実施状況（2026-08-12）: §4「今すぐ」分類は **3件すべて実装済み** —
+**(a) バージョン表示 + System Info カード（§2.4 の縮小版⑤）**、
+**(b) PWA installable-only（§2.8）**、**(c) `warning` kind 追加 + `Notice` 発火
+レシピ（§2.5 の無料部分）**。(a) は admin 専用「システム情報」カード +
+`GET /api/system/info` / Tauri `system_info` / `SystemInfoService`。(b) は
+`static/manifest.webmanifest` + アイコン + `app.html` の link/meta + `banto-server`
+`guess_mime` の `webmanifest` arm（HTTPS/localhost/TLS プロキシ配下でのみインストール
+可、Service Worker なし）。(c) は `NotificationKind` を4種へ拡張 + `ToastHost` の
+warning スタイル + `ServerEvent::Notice` の doctest/SSE テスト/README レシピ。いずれも
+依存追加ゼロ（CHANGELOG [Unreleased] 参照）。**残るはバックログ昇格候補（Backup
+アーカイブ・API Token・Updater）で、いずれも実需トリガ待ち**（§4）。
 
 ## 0. 結論
 

@@ -173,10 +173,12 @@ describe('connectEvents', () => {
 
 		connectEvents(fakeProvider);
 		handler!({ kind: 'notice', level: 'error', message: 'oops' });
+		handler!({ kind: 'notice', level: 'warning', message: 'careful' });
 		handler!({ kind: 'notice', level: 'weird', message: 'fallback' });
 
 		expect(seen).toEqual([
 			{ kind: 'error', message: 'oops' },
+			{ kind: 'warning', message: 'careful' },
 			{ kind: 'info', message: 'fallback' }
 		]);
 	});

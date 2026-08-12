@@ -29,8 +29,33 @@ use crate::auth::{require_auth, AuthState};
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServerEvent {
-    ResourceChanged { resource: String },
-    Notice { level: String, message: String },
+    ResourceChanged {
+        resource: String,
+    },
+    /// A free-form server notice, surfaced as a toast on every connected
+    /// client (LAN browsers via SSE + the Tauri webview via the forwarding
+    /// task). `level` maps to the frontend `NotificationKind`
+    /// (`success`/`error`/`info`/`warning`, else `info`).
+    ///
+    /// To push one, broadcast on the same `events` channel `ItemsService`
+    /// mutations already use (spec §3.5) - e.g. from a Tauri command or a
+    /// `banto-serve` handler that holds the `Sender`:
+    ///
+    /// ```
+    /// use banto_server::ServerEvent;
+    /// use tokio::sync::broadcast;
+    ///
+    /// let (events, _rx) = broadcast::channel::<ServerEvent>(16);
+    /// // `send` errors only when there are no receivers - harmless here.
+    /// let _ = events.send(ServerEvent::Notice {
+    ///     level: "warning".to_string(),
+    ///     message: "在庫が下限を下回りました".to_string(),
+    /// });
+    /// ```
+    Notice {
+        level: String,
+        message: String,
+    },
 }
 
 async fn sse_handler(
@@ -140,6 +165,47 @@ mod tests {
         let text = String::from_utf8(bytes.to_vec()).unwrap();
         assert!(text.contains("resource_changed"));
         assert!(text.contains("items"));
+    }
+
+    #[tokio::test]
+    async fn sse_stream_delivers_notice_event() {
+        let auth = demo_auth();
+        let token = auth.login("admin", "admin").await.unwrap();
+        let (tx, _rx) = broadcast::channel(16);
+        let router = sse_route(auth, tx.clone());
+
+        let response = router
+            .oneshot(
+                HttpRequest::get("/api/events")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // The documented emission recipe: broadcast a Notice on the events
+        // channel; every subscriber gets it as a toast.
+        tx.send(ServerEvent::Notice {
+            level: "warning".to_string(),
+            message: "careful".to_string(),
+        })
+        .unwrap();
+
+        let mut body = response.into_body();
+        let frame = tokio::time::timeout(Duration::from_secs(2), body.frame())
+            .await
+            .expect("timed out waiting for SSE frame")
+            .expect("stream ended unexpectedly")
+            .expect("frame error");
+        let bytes = frame.into_data().expect("expected a data frame");
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        // Wire shape the frontend `SseEventProvider` parses (kind-tagged,
+        // snake_case), carrying the level so it maps to the `warning` kind.
+        assert!(text.contains("\"kind\":\"notice\""));
+        assert!(text.contains("\"level\":\"warning\""));
+        assert!(text.contains("careful"));
     }
 
     #[tokio::test]

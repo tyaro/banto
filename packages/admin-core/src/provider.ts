@@ -54,9 +54,16 @@ export interface AuthProvider {
 	changePassword?(current: string, next: string): Promise<{ success: boolean; error?: string }>;
 }
 
-export type NotificationKind = 'success' | 'error' | 'info';
+export type NotificationKind = 'success' | 'error' | 'info' | 'warning';
 
-/** Toast/notification sink, wired by the app (e.g. to a toast store). */
+/**
+ * Toast/notification sink, wired by the app (e.g. to a toast store). The app
+ * calls `notify(kind, message)` directly for in-tab toasts; a server can also
+ * push a toast to every connected client by broadcasting a
+ * `ServerEvent::Notice { level, message }` (see `connectEvents`, which bridges
+ * `notice` -> `notify`). `level` maps to `NotificationKind` when it is one of
+ * the four kinds, else falls back to `'info'`.
+ */
 export interface Notifier {
 	notify(kind: NotificationKind, message: string): void;
 }
