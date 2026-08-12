@@ -22,6 +22,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **システム情報カード + バージョン表示**（M-review 2026-08 §2.4「縮小版⑤」）。
+  設定画面に admin 専用の「システム情報」カードを追加し、稼働中バージョン・
+  マイグレーション版・DB 方言/レイテンシ・稼働時間・アクティブ LAN セッション数・
+  添付ファイル容量を表示する。バックエンドは新サービス
+  `banto_admin_services::system_info::SystemInfoService`（DB 専用・transport 非依存、
+  best-effort 項目は None に劣化）と、両経路対称な `GET /api/system/info`（admin、
+  読み取りのため非監査）+ Tauri `system_info` コマンド。`AuthState::session_count()`
+  を追加。**依存追加ゼロ**（`std::time::Instant` でレイテンシ/稼働時間、既存 sqlx で
+  クエリ）。従来 UI のどこにも出ていなかったバージョンをこのカードで可視化。
+  なお CI の rust ジョブ（check/clippy/test）に欠落していた `-p banto-admin-services`
+  を追加した（theme C でのクレート追加時からの漏れ）。
+
 ### ドキュメント
 
 - 外部AIレビュー（ChatGPT）の機能スコープ提案を実測で検証・取捨した棚卸しを

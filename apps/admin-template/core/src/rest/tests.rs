@@ -71,6 +71,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
 
     users
@@ -121,6 +122,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
             audit,
             backup,
             attachments,
+            system_info,
             auth,
             tx,
             false,
@@ -139,6 +141,7 @@ async fn router_with_token() -> (Router, String) {
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
     let token = auth
@@ -153,6 +156,7 @@ async fn router_with_token() -> (Router, String) {
             audit,
             backup,
             attachments,
+            system_info,
             auth,
             tx,
             false,
@@ -359,6 +363,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
     let token = auth.login("admin", "admin").await.unwrap();
@@ -369,6 +374,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         audit,
         backup,
         attachments,
+        system_info,
         auth,
         tx,
         false,
@@ -433,6 +439,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
     api_router(
@@ -442,6 +449,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         audit,
         backup,
         attachments,
+        system_info,
         auth,
         tx,
         allow_setup,
@@ -638,6 +646,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
     (
@@ -648,6 +657,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
             audit.clone(),
             backup,
             attachments,
+            system_info,
             auth,
             tx,
             allow_setup,
@@ -1087,6 +1097,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
     let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
 
     users
@@ -1123,6 +1134,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         audit.clone(),
         backup,
         attachments,
+        system_info,
         auth,
         tx,
         false,
@@ -1167,6 +1179,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
     let settings = SettingsService::new(db.clone());
     let backup = BackupService::new(db_path, db.clone());
     let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));
+    let system_info = SystemInfoService::new(db.clone());
     let audit = AuditLogService::new(db);
 
     users
@@ -1203,6 +1216,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         audit,
         backup,
         attachments,
+        system_info,
         auth,
         tx,
         false,
@@ -1286,6 +1300,50 @@ async fn audit_config_get_is_admin_only() {
             "token role mismatch"
         );
     }
+}
+
+/// `GET /api/system/info` (M-review 2026-08 §2.4) is admin-only and needs a
+/// token: 200 with the diagnostics payload for admin, 403 for editor/viewer,
+/// 401 for no token. Read-only, so nothing is audited.
+#[tokio::test]
+async fn system_info_is_admin_only() {
+    let (router, admin, editor, viewer) = router_with_role_tokens().await;
+
+    let admin_response = router
+        .clone()
+        .oneshot(get_auth("/api/system/info", &admin))
+        .await
+        .unwrap();
+    assert_eq!(admin_response.status(), StatusCode::OK);
+    let body = body_json(admin_response).await;
+    // The migrated in-memory DB reports the sqlite dialect and a version.
+    assert_eq!(body["dbDialect"], "sqlite");
+    assert!(body["appVersion"].is_string());
+    assert!(body["migrationVersion"].is_number());
+    assert!(body["activeSessions"].as_u64().unwrap() >= 3); // admin+editor+viewer logged in
+
+    for token in [&editor, &viewer] {
+        let response = router
+            .clone()
+            .oneshot(get_auth("/api/system/info", token))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "system info is admin-only"
+        );
+    }
+}
+
+#[tokio::test]
+async fn system_info_requires_a_token() {
+    let (router, _admin, _editor, _viewer) = router_with_role_tokens().await;
+    let response = router
+        .oneshot(get_auth("/api/system/info", "not-a-real-token"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 /// `PUT /api/audit-log/config` (admin) persists the new policy - a
@@ -2275,6 +2333,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let backup = unused_backup_service(pool.clone());
     let dir = tempdir().expect("tempdir");
     let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));
+    let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
     let token = auth.login("admin", "admin").await.unwrap();
@@ -2285,6 +2344,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         audit,
         backup,
         attachments,
+        system_info,
         auth,
         tx,
         false,

@@ -39,6 +39,7 @@ use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::SettingsService;
+use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
 use banto_server::{
@@ -114,6 +115,7 @@ async fn main() {
         .map(|parent| parent.join("attachments"))
         .unwrap_or_else(|| PathBuf::from("attachments"));
     let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);
+    let system_info = SystemInfoService::new(db.clone());
     let audit = AuditLogService::new(db);
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
@@ -174,6 +176,7 @@ async fn main() {
             audit,
             backup,
             attachments,
+            system_info,
             auth,
             events,
             allow_setup,

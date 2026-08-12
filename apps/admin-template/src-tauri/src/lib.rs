@@ -28,9 +28,11 @@ use admin_template_core::events::event_channel;
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::rest::{api_router, audited_credential_verifier};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
+use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
+use banto_server::routes::SystemInfo;
 use banto_server::{
     lan_urls, start, static_router, with_security_headers, AuthState, RunningServer, ServerConfig,
     ServerEvent,
@@ -116,6 +118,14 @@ struct AppState {
     /// same "no native save dialog in v1" fallback as
     /// `backups_open_folder`/`attachments_open_folder`.
     exports_dir: PathBuf,
+    /// System diagnostics probe (M-review 2026-08 §2.4), backing the admin
+    /// `system_info` command and its symmetric `GET /api/system/info` route.
+    /// DB-only (dialect/latency/migration version/attachment size); the
+    /// command folds in `app_version`/`uptime_secs`/`active_sessions`.
+    system_info: SystemInfoService,
+    /// Process start, for the `system_info` command's `uptime_secs` (app
+    /// uptime on the desktop path; captured first thing in `setup()`).
+    started_at: std::time::Instant,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -802,6 +812,7 @@ async fn start_embedded_server(
     audit: AuditLogService,
     backup: BackupService,
     attachments: AttachmentsService,
+    system_info: SystemInfoService,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
@@ -821,6 +832,7 @@ async fn start_embedded_server(
             audit,
             backup,
             attachments,
+            system_info,
             auth,
             events,
             false,
@@ -838,6 +850,29 @@ async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusResult,
     let config = state.settings.server_config().await?;
     let running = state.server.lock().await.is_some();
     Ok(build_status(&config, running))
+}
+
+/// `GET`-ish command (M-review 2026-08 §2.4): admin-only system diagnostics
+/// for the settings「システム情報」card. Symmetric with `GET /api/system/info`
+/// (conventions §1) - both call `SystemInfoService::probe` and fold in the
+/// same wiring-layer fields, so the wire shape ([`SystemInfo`]) is identical.
+/// Read-only, so nothing is audited. `active_sessions` reports the embedded
+/// LAN server's bearer-token count (`rest_auth`, the same space the REST route
+/// counts), not the single desktop webview session; `uptime_secs` is this
+/// desktop process's uptime.
+#[tauri::command]
+async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoError> {
+    require_role(&state, Role::Admin, "system").await?;
+    let probe = state.system_info.probe().await?;
+    Ok(SystemInfo {
+        app_version: env!("CARGO_PKG_VERSION"),
+        db_dialect: probe.dialect,
+        db_latency_ms: probe.db_latency_ms,
+        migration_version: probe.migration_version,
+        uptime_secs: state.started_at.elapsed().as_secs(),
+        active_sessions: state.rest_auth.session_count(),
+        attachment_bytes: probe.attachment_bytes,
+    })
 }
 
 /// Persist new settings, stop whatever is currently running, and start a
@@ -875,6 +910,7 @@ async fn server_apply(
                 state.audit.clone(),
                 state.backup.clone(),
                 state.attachments.clone(),
+                state.system_info.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -1837,6 +1873,10 @@ async fn panel_open(app: tauri::AppHandle, id: String, title: String) -> Result<
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // Process start, for the `system_info` command's `uptime_secs`
+            // (M-review 2026-08 §2.4). Captured first thing so it reflects app
+            // start, not the tail of the setup sequence below.
+            let started_at = std::time::Instant::now();
             let data_dir = app.path().app_data_dir().expect("resolve app data dir");
             std::fs::create_dir_all(&data_dir).expect("create app data dir");
             let db_path = data_dir.join("admin-template.sqlite3");
@@ -1879,6 +1919,9 @@ pub fn run() {
             // convention as `attachments/`/`backups/` above.
             let exports_dir = data_dir.join("exports");
             std::fs::create_dir_all(&exports_dir).expect("create exports dir");
+            // System diagnostics probe (M-review 2026-08 §2.4). Built before
+            // `audit` moves `db`, same as the other services above.
+            let system_info = SystemInfoService::new(db.clone());
             let audit = AuditLogService::new(db);
             // Records `login`/`login_failed` audit entries (spec M14) from
             // inside the verifier itself - see
@@ -2149,6 +2192,8 @@ pub fn run() {
                 attachments,
                 attachments_dir,
                 exports_dir,
+                system_info,
+                started_at,
             });
 
             Ok(())
@@ -2175,6 +2220,7 @@ pub fn run() {
             autologin_disable,
             server_status,
             server_apply,
+            system_info,
             settings_get,
             settings_set,
             ui_settings_get,
@@ -2235,12 +2281,14 @@ mod tests {
                 PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
                 pool.clone(),
             ),
+            system_info: SystemInfoService::new(pool.clone()),
             attachments: AttachmentsService::new(
                 pool,
                 PathBuf::from("unused-in-tests").join("attachments"),
             ),
             attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),
             exports_dir: PathBuf::from("unused-in-tests").join("exports"),
+            started_at: std::time::Instant::now(),
         }
     }
 
@@ -2270,9 +2318,11 @@ mod tests {
             server: AsyncMutex::new(None),
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(db_path, pool.clone()),
+            system_info: SystemInfoService::new(pool.clone()),
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
             attachments_dir: dir.path().join("attachments"),
             exports_dir: dir.path().join("exports"),
+            started_at: std::time::Instant::now(),
         };
         (state, dir)
     }

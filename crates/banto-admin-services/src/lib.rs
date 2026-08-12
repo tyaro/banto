@@ -34,6 +34,7 @@ pub mod audit;
 pub mod backup;
 pub mod rbac;
 pub mod settings;
+pub mod system_info;
 pub mod users;
 
 pub use rbac::Role;
