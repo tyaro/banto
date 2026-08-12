@@ -37,6 +37,10 @@ pub fn guess_mime(path: &str) -> &'static str {
         "png" => "image/png",
         "ico" => "image/x-icon",
         "json" => "application/json",
+        // PWA manifest (M-review 2026-08 §2.8): without this arm the embedded
+        // LAN server would serve `manifest.webmanifest` as octet-stream and the
+        // browser would ignore it, so the install prompt never appears.
+        "webmanifest" => "application/manifest+json",
         "woff2" => "font/woff2",
         _ => "application/octet-stream",
     }
@@ -141,6 +145,10 @@ mod tests {
         assert_eq!(guess_mime("logo.png"), "image/png");
         assert_eq!(guess_mime("favicon.ico"), "image/x-icon");
         assert_eq!(guess_mime("manifest.json"), "application/json");
+        assert_eq!(
+            guess_mime("manifest.webmanifest"),
+            "application/manifest+json"
+        );
         assert_eq!(guess_mime("font.woff2"), "font/woff2");
         assert_eq!(guess_mime("unknown.bin"), "application/octet-stream");
     }

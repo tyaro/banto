@@ -556,7 +556,10 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   リリースパイプライン新設**が前提、定期チェックは「cron 相当を持たない」除外と
   衝突するため起動時/手動チェックに限定。詳細は
   [feature-review-2026-08.md](feature-review-2026-08.md) §2.3）
-- PWA 対応（LANブラウザモードに manifest）
+- ~~PWA 対応（LANブラウザモードに manifest）~~ → **実装済み（2026-08）**:
+  installable-only（manifest + アイコン + `guess_mime` の webmanifest arm）。
+  Service Worker なし。HTTPS/localhost/TLS プロキシ配下でのみインストール可。
+  [feature-review-2026-08.md](feature-review-2026-08.md) §2.8 / CHANGELOG
 - チャートの Canvas レンダラ（性能天井時のエスカレーション第2段。
   第1段はサーバ側集約 — template-scope.md §4.2 参照）
 - **[V2 テーマA 実施済み #106-109] PostgreSQL アプリ全体対応**: 接続ヘルパ

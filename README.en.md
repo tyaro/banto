@@ -31,7 +31,11 @@ the owner's behalf.
   Rust), swappable for InMemory or HTTP.
 - **Embedded web server** (`banto-server`): opt-in; once enabled, other
   devices on the same LAN can use the same admin UI in a browser over
-  REST + SSE.
+  REST + SSE. Ships a web manifest + icons so the browser build is an
+  **installable PWA** ("Add to Home Screen"), though — since browsers only
+  offer install over a secure context — that requires HTTPS/localhost or a
+  TLS reverse proxy, not the default plain-HTTP LAN. No service worker
+  (no offline mode).
 - **Auth, RBAC, and user management**: argon2id credential store with
   first-run setup, three roles (admin/editor/viewer), a user management
   screen, and identical permission checks across both the REST and Tauri

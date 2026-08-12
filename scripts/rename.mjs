@@ -22,8 +22,10 @@
  *     `--filter <旧アプリ名>` 参照 … 新アプリ名へ追随
  *   - src-tauri/tauri.conf.json    … productName（--title）/ identifier
  *     （--identifier）/ app.windows[0].title（--title）
- *   - src/app.html <title> / Sidebar・ログイン画面のブランド表示 /
+ *   - src/app.html <title> + PWA の apple-mobile-web-app-title /
+ *     Sidebar・ログイン画面のブランド表示 /
  *     panel ページの <title> 接尾辞 … --title
+ *   - static/manifest.webmanifest name / short_name（PWA インストール名）… --title
  *   - e2e のログイン見出しアサーション（smoke / visual / a11y）… --title
  *   - Cargo.toml workspace.package.repository /
  *     packages/星/package.json repository.url … --repo（指定時のみ）
@@ -141,6 +143,27 @@ const oldBrand = brandMatch[1];
 
 editFile('apps/admin-template/src/app.html', `<title> → ${args.title}`, (s) =>
 	replaceAll(s, `<title>${oldBrand}</title>`, `<title>${args.title}</title>`)
+);
+// PWA (M-review 2026-08 §2.8): the install/home-screen name comes from the
+// manifest's name/short_name and the apple-mobile-web-app-title meta, so those
+// must follow --title too or a renamed app still installs as "Banto".
+editFile('apps/admin-template/src/app.html', `apple-mobile-web-app-title → ${args.title}`, (s) =>
+	replaceAll(
+		s,
+		`name="apple-mobile-web-app-title" content="${oldBrand}"`,
+		`name="apple-mobile-web-app-title" content="${args.title}"`
+	)
+);
+editFile(
+	'apps/admin-template/static/manifest.webmanifest',
+	`PWA name/short_name → ${args.title}`,
+	(s) => {
+		const step1 = replaceAll(s, `"name": "${oldBrand}"`, `"name": "${args.title}"`);
+		if (step1 === undefined || step1 === null) return step1;
+		return (
+			replaceAll(step1, `"short_name": "${oldBrand}"`, `"short_name": "${args.title}"`) ?? step1
+		);
+	}
 );
 editFile('apps/admin-template/src/lib/components/Sidebar.svelte', 'ブランド表示', (s) =>
 	replaceAll(s, `class="brand-name">${oldBrand}<`, `class="brand-name">${args.title}<`)

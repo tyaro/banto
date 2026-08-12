@@ -16,10 +16,13 @@
 [improvement-plan-2026-07.md](improvement-plan-2026-07.md)（外部AIレビュー統合の
 アクションプラン）。本書は同じ「外部レビューを実測で裏取りして取捨する」系譜。
 
-実施状況（2026-08-12）: §4「今すぐ」分類のうち **バージョン表示 + System Info
-カード（§2.4 の縮小版⑤）を実装済み**（設定画面の admin 専用「システム情報」カード +
-`GET /api/system/info` / Tauri `system_info` / `SystemInfoService`、依存追加ゼロ。
-CHANGELOG [Unreleased] 参照）。残る「今すぐ」（PWA manifest・`Notice` 発火レシピ +
+実施状況（2026-08-12）: §4「今すぐ」分類のうち **(a) バージョン表示 + System Info
+カード（§2.4 の縮小版⑤）** と **(b) PWA installable-only（§2.8）** を実装済み。
+(a) は設定画面の admin 専用「システム情報」カード + `GET /api/system/info` / Tauri
+`system_info` / `SystemInfoService`。(b) は `static/manifest.webmanifest` + アイコン +
+`app.html` の link/meta + `banto-server` `guess_mime` の `webmanifest` arm（HTTPS/
+localhost/TLS プロキシ配下でのみインストール可、Service Worker なし）。いずれも依存
+追加ゼロ（CHANGELOG [Unreleased] 参照）。残る「今すぐ」（`Notice` 発火レシピ +
 `warning` kind）とバックログ昇格候補（Backup アーカイブ・API Token・Updater）は未着手。
 
 ## 0. 結論

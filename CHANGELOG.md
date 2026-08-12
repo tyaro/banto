@@ -35,6 +35,16 @@
   クエリ）。従来 UI のどこにも出ていなかったバージョンをこのカードで可視化。
   なお CI の rust ジョブ（check/clippy/test）に欠落していた `-p banto-admin-services`
   を追加した（theme C でのクレート追加時からの漏れ）。
+- **PWA（installable-only）**（M-review 2026-08 §2.8）。LAN ブラウザ配信に
+  Web マニフェスト（`static/manifest.webmanifest`）+ アイコン（192/512/512-maskable、
+  提灯モチーフ）を同梱し、「ホーム画面に追加」/インストールでアプリのように起動可能に。
+  `app.html` に manifest link・apple-touch-icon・theme-color・apple-mobile-web-app
+  メタを追加。埋め込み LAN サーバが `.webmanifest` を正しく配信するよう
+  `banto-server` の `guess_mime` に `application/manifest+json` arm を追加。
+  Service Worker（オフライン）は非対応。**依存追加ゼロ**（アイコンはコミット済み静的
+  アセット）。ブラウザはセキュアコンテキストでのみインストールを提供するため、標準の
+  平文 HTTP LAN では機能せず HTTPS/localhost/TLS リバースプロキシ配下が前提
+  （ADR-0003）。`rename.mjs` が manifest の name/short_name も追随。
 
 ### ドキュメント
 
