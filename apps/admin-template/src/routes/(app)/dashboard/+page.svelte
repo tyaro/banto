@@ -40,6 +40,7 @@
 		monthlyWithMovingAvg,
 		priceBuckets,
 		scatterSample,
+		stockByCategoryPriceBand,
 		type MonthCategoryCount,
 		updatesByMonth,
 		weekdayMonthHeat
@@ -64,6 +65,7 @@
 
 	const stats = $derived(computeStatTiles(list.rows));
 	const categoryStock = $derived(byCategory(list.rows));
+	const categoryPriceBand = $derived(stockByCategoryPriceBand(list.rows));
 	const buckets = $derived(priceBuckets(list.rows));
 	const monthCounts = $derived(updatesByMonth(list.rows));
 	const scatterRows = $derived(scatterSample(list.rows));
@@ -387,6 +389,24 @@
 					series={[{ id: 'stock', label: m['dashboard.seriesStock'](), value: (row) => row.stock }]}
 					horizontal
 					label={m['dashboard.categoryStockAria']()}
+					height={280}
+					formatValue={(n) => n.toLocaleString()}
+				/>
+			</section>
+
+			<section class="card secondary">
+				<h2>{m['dashboard.stackedBarTitle']()}</h2>
+				<p class="card-caption">{m['dashboard.stackedBarCaption']()}</p>
+				<BarChart
+					data={categoryPriceBand}
+					category={(row) => row.category}
+					series={[
+						{ id: 'low', label: m['dashboard.priceBandLow'](), value: (row) => row.low },
+						{ id: 'mid', label: m['dashboard.priceBandMid'](), value: (row) => row.mid },
+						{ id: 'high', label: m['dashboard.priceBandHigh'](), value: (row) => row.high }
+					]}
+					stacked
+					label={m['dashboard.stackedBarAria']()}
 					height={280}
 					formatValue={(n) => n.toLocaleString()}
 				/>

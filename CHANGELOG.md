@@ -24,6 +24,11 @@
 
 ### Added
 
+- **積立棒グラフのデモを追加**（`@banto/charts` の `BarChart` stacked）。ダッシュボードに
+  「カテゴリ別在庫（価格帯積立）」パネルを追加し、上位カテゴリの在庫を価格帯(低/中/高)で
+  積み上げる（集計は `dashboard.ts` の `stockByCategoryPriceBand`、純関数・壁時計非依存）。
+  これで README が挙げる全14チャート種が Pages ライブデモで実際に描画される（従来は積立が
+  `StackedAreaChart` のみで、棒の stacked バリアントだけデモ未掲載だった）。
 - **ツリービュー `@banto/tree-svelte`**（新規オプションパッケージ、利用者要望）。
   依存ゼロのヘッドレスコア（`core/` の純関数: 可視行フラット化・move/reparent・
   三状態チェック計算・リネーム patch、全て単体テスト済み）+ 薄い Svelte 5 (Runes)
