@@ -32,8 +32,11 @@
   で階層データグリッド（tree-grid）化。`TreeSelect` はポップオーバー型の選択入力
   （`popover="auto"` でトップレイヤ + light-dismiss）。**依存追加ゼロ・パッケージ間
   import なし**（`@banto/grid-svelte`/`forms` の型は構造ミラーで非 import）。
-  `@banto/scan-wedge` と同じ recipe-only 提供（本体アプリへ配線せず README レシピで
-  組み込む）。テスト 37 件（コア/状態/コンポーネント）。
+  テンプレート本体には**削除可能なデモ配線**付き（サイドバー「ツリービュー」=
+  `/tree` デモページ。ライブデモでも到達可。サンプルデータ `treeSample.ts`・
+  `treeMessages()` ブリッジ・`nav.tree`/`tree.*` 文言を含む）。ナビ追加に伴い
+  サイドバーが写る認証ページのビジュアル回帰ベースラインを再生成
+  （`.github/workflows/visual-baselines.yml`）。テスト 37 件（コア/状態/コンポーネント）。
 - **システム情報カード + バージョン表示**（M-review 2026-08 §2.4「縮小版⑤」）。
   設定画面に admin 専用の「システム情報」カードを追加し、稼働中バージョン・
   マイグレーション版・DB 方言/レイテンシ・稼働時間・アクティブ LAN セッション数・

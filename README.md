@@ -145,9 +145,11 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
   添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
   スキャナ入力（`@banto/scan-wedge`、M21）、ツリービュー（`@banto/tree-svelte`）。
-  帳票と添付は削除可能なデモ配線付き。scan-wedge / tree-svelte はバックエンド/DB
-  依存ゼロのため**本体には配線せず**、README のレシピで各アプリに直接組み込む
-  （後述「バーコード/QRスキャナ入力」「ツリービュー」節）。
+  帳票・添付・ツリービューは削除可能なデモ配線付き（ツリービューはサイドバーの
+  「ツリービュー」= `/tree` デモページ。ライブデモでも触れる）。scan-wedge は
+  バックエンド/DB 依存ゼロのため**本体には配線せず**、README のレシピで各アプリに
+  直接組み込む（後述「バーコード/QRスキャナ入力」節）。ツリービューの使い方
+  レシピも後述「ツリービュー」節に用意。
 
 実装済みマイルストーンの全体像は [docs/roadmap.md](docs/roadmap.md)、変更履歴は
 [CHANGELOG.md](CHANGELOG.md) を参照。
@@ -351,6 +353,22 @@ DB/バックエンド配線を一切持たない最小デモのため、以下�
    `@banto/report` パッケージ自体（`packages/report`）はテンプレートに
    同梱したままでも他に影響しないが、完全に外す場合は
    `pnpm-workspace.yaml` の対象から漏れないことを確認する。
+
+**ツリーデモ（`@banto/tree-svelte` + `/tree` デモ、M-review 2026-08）**:
+DB/バックエンド配線を持たない最小デモ。以下だけで外せる。
+
+1. `apps/admin-template/src/routes/(app)/tree/`（ルート丸ごと）と
+   `src/lib/banto/treeSample.ts` を削除。
+2. `src/lib/navigation.ts` の `'tree'`/`'nav.tree'`（`NavIconKey`/`NavLabelKey`
+   の union と navItems の `/tree` 行）、`src/lib/components/navIcons.ts` の
+   `tree:` エントリと `ListTree` の import を削除（union とアイコンマップは
+   型で連結しているため対で外す）。
+3. `src/lib/banto/i18n.ts` の `treeMessages()` と `TreeMessages` import、
+   `messages/{ja,en}.json` の `nav.tree`・`tree.*` キーを削除。
+4. `apps/admin-template/package.json` の `@banto/tree-svelte` 依存を外す。
+   パッケージ本体（`packages/tree-svelte`）は同梱のままでも他に影響しないが、
+   ナビが1項目減るぶんサイドバーが写る認証ページのビジュアル回帰ベースライン
+   を再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。
 
 ## 開発
 
@@ -628,8 +646,9 @@ let _ = events.send(ServerEvent::Notice {
 で、展開/折りたたみ・単一/複数選択・三状態チェックボックス・遅延読み込み・
 ドラッグ並べ替え/親子変更・インライン名前変更に対応する。`columns` を渡すと
 階層データグリッド（tree-grid）、`TreeSelect` はポップオーバー型の選択入力になる。
-`@banto/scan-wedge` と同じく**本体には配線していない**（バックエンド/DB 依存ゼロ、
-UI は各アプリで使う）ので、以下のレシピで自分のアプリへ直接組み込む。
+テンプレート本体では**サイドバーの「ツリービュー」= `/tree` デモページ**として
+配線済み（削除可能。外し方は後述「オプション資産の削除」節）。ライブデモでも
+上記の全形態を触れる。自分のアプリへ組み込むには以下のレシピを使う。
 
 利用するアプリの `package.json` に依存を追加する（モノレポ内なら `workspace:*`、
 本リポジトリ外から消費する場合は [docs/publishing.md](docs/publishing.md) の git 依存
