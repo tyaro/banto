@@ -29,7 +29,18 @@ track your task belongs to.**
   - [docs/publishing.md](docs/publishing.md) — distribution (git tag / `path:`
     dependency)
   - `docs/*-plan.md` — implementation plans for individual features
-    (attachments/report/visual-refresh, etc.)
+    (attachments/report/visual-refresh, etc. — living spec anchors that code
+    keeps referencing by `§` even after implementation)
+  - **Survey / review records**:
+    [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md)
+    (latest inventory + consolidation plan),
+    [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) (a.k.a.
+    M-review 2026-08),
+    [docs/maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md)
+    (defines the CR numbering).
+    **Documents that are fully resolved and frozen move to
+    [docs/history/](docs/history/)** (count inbound code references with `rg`
+    before moving — see the grammar table in conventions §12)
 - **Track B (for app authors) = [README](README.en.md)**: for people building
   their own app from this template. Renaming, replacing the demo, removing
   options, the scanner-input recipe, Windows setup.
@@ -42,7 +53,10 @@ track your task belongs to.**
 - **Drop the optional assets as a batch (dock/charts/glass/command
   palette/attachments/reporting)** → `pnpm scaffold --preset
 minimal|standard|full` (`--interactive` / `--dry-run` available; the manual
-  steps live under "オプション資産の削除" in the Japanese README).
+  steps live under "オプション資産の削除" in the Japanese README —
+  `pnpm scaffold --interactive` is the equivalent for English readers). The
+  tree view (tree-svelte) is currently outside scaffold's scope and is removed
+  manually only (steps in the same README section).
 - **Add / change a feature** → first read the invariants in
   [docs/conventions.en.md](docs/conventions.en.md), then decide whether to do
   it with the [template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題)
@@ -76,16 +90,17 @@ minimal|standard|full` (`--interactive` / `--dry-run` available; the manual
    columns only through the ColumnMap whitelist, and `{@html}` only with
    self-generated, fully escaped output.
 6. The UI uses only `--banto-*` tokens (raw values are consolidated in the
-   theme). Provider branching is confined to the provider layer across the
-   three kinds tauri/server/demo.
+   theme). **UI text also goes through message keys** (conventions §13,
+   enforced by the raw-jp-in-app CI check). Provider branching is confined to
+   the provider layer across the three kinds tauri/server/demo.
 
 ## Build and verification
 
 ```bash
 pnpm check          # frontend type checks (svelte-check / tsc per package).
                     # lint is pnpm lint, build is pnpm build separately (the CI
-                    # frontend job runs lint→verify:architecture→format→check→test→build
-                    # in order)
+                    # frontend job runs lint→verify:architecture→check:versions→
+                    # format→check→test→build in order)
 cargo test          # all tests in the Rust workspace
 pnpm e2e            # Playwright smoke (e2e/playwright.config.ts, starts banto-serve)
 cargo audit         # dependency audit (with ignores from .cargo/audit.toml)
@@ -95,8 +110,13 @@ Note: `src-tauri` cannot be compiled in this sandbox because webkit2gtk is
 absent. Changes on the Tauri command side are covered by code review +
 `tauri-check.yml` (which runs `cargo check -p admin-template` +
 `cargo test -p admin-template` on ubuntu/windows for PRs that touch the Tauri
-side / dependency graph and on main pushes, plus a weekly schedule). CI (`.github/workflows/ci.yml`) runs the frontend / rust /
-e2e / audit jobs.
+side / dependency graph and on main pushes, plus a weekly schedule). CI runs
+the jobs in `.github/workflows/ci.yml` (frontend / i18n-offline / rust /
+storage-postgres / app-postgres / e2e / audit), plus the weekly/triggered
+workflows `template-acceptance.yml` (copy→rename→check + the three scaffold
+presets), `visual-baselines.yml` (Linux visual-baseline regeneration,
+dispatch), and `deploy-demo.yml` (GitHub Pages live demo). ci.yml is the
+source of truth for the job list.
 
 ## Definition of Done (completion-report format for delegated tasks)
 

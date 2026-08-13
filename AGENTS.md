@@ -19,7 +19,17 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
   - [docs/roadmap.md](docs/roadmap.md) — マイルストーン計画と §7 実施プロセス
   - [docs/template-scope.md](docs/template-scope.md) — 何を入れる/入れない、削除可能性の判定
   - [docs/publishing.md](docs/publishing.md) — 配布（git tag / `path:` 依存）
-  - `docs/*-plan.md` — 個別機能の実装計画（attachments/report/visual-refresh 等）
+  - `docs/*-plan.md` — 個別機能の実装計画（attachments/report/visual-refresh 等。
+    実装完了後もコードが `§` 参照する現役仕様アンカー）
+  - **調査・レビュー記録**:
+    [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md)
+    （最新の棚卸し + 整理統合プラン）、
+    [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md)（通称
+    M-review 2026-08）、
+    [docs/maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md)
+    （CR 番号体系の定義元）。
+    **対応が完了して凍結した文書は [docs/history/](docs/history/) へ移す**
+    （移動前にコード被参照を `rg` で確認 — conventions §12 の文法表参照）
 - **トラックB（アプリ作者向け）= [README](README.md)**: このテンプレートから自分の
   アプリを作る人向け。リネーム・デモ差し替え・オプション削除・スキャナ入力レシピ・
   Windows セットアップ。
@@ -30,7 +40,8 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
   [docs/recipes/add-resource.md](docs/recipes/add-resource.md)（チェックリスト形式の正式手順）。
 - **オプション資産を一括で外す（dock/charts/glass/コマンドパレット/添付/帳票）** →
   `pnpm scaffold --preset minimal|standard|full`（`--interactive` / `--dry-run` あり。
-  手動手順は README「オプション資産の削除」）。
+  手動手順は README「オプション資産の削除」）。ツリービュー（tree-svelte）は
+  現状 scaffold 対象外で手動削除のみ（手順は README 同節）。
 - **機能を追加/変更する** → まず [docs/conventions.md](docs/conventions.md) の不変条件を
   読み、[template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題) の
   チェックリストで是非を判断。実装計画は `docs/*-plan.md` に倣う。
@@ -53,7 +64,8 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
 5. セキュリティ: MIME はマジックバイト判定・**ファイルパスにユーザー入力を使わない**・
    argon2 の前にスロットル・**監査 detail に秘密を入れない**・SQL 列は ColumnMap
    ホワイトリスト経由のみ・`{@html}` は自前生成の全エスケープ済み出力のみ。
-6. UI は `--banto-*` トークンのみ（生値は theme に集約）。provider 分岐は
+6. UI は `--banto-*` トークンのみ（生値は theme に集約）。**UI 文言もキー経由**
+   （conventions §13、CI の raw-jp-in-app 検査対象）。provider 分岐は
    tauri/server/demo の3種で provider 層に閉じる。
 
 ## ビルドと検証
@@ -61,7 +73,8 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
 ```bash
 pnpm check          # フロントの型検査（各パッケージ svelte-check / tsc）。
                     # lint は pnpm lint、build は pnpm build が別（CI frontend
-                    # ジョブは lint→verify:architecture→format→check→test→build を順に回す）
+                    # ジョブは lint→verify:architecture→check:versions→format→
+                    # check→test→build を順に回す）
 cargo test          # Rust ワークスペース全テスト
 pnpm e2e            # Playwright スモーク（e2e/playwright.config.ts、banto-serve 起動）
 cargo audit         # 依存監査（.cargo/audit.toml の ignore 付き）
@@ -72,7 +85,12 @@ Tauri コマンド側の変更はコードレビュー + `tauri-check.yml`（Tau
 グラフを触る PR と main push、および週次スケジュールで
 `cargo check -p admin-template` + `cargo test -p admin-template` を
 ubuntu/windows で実行）で担保する。
-CI（`.github/workflows/ci.yml`）が frontend / rust / e2e / audit の各ジョブを回す。
+CI は `.github/workflows/ci.yml` の各ジョブ（frontend / i18n-offline / rust /
+storage-postgres / app-postgres / e2e / audit）に加えて、週次+トリガ型の
+`template-acceptance.yml`（copy→rename→check + scaffold 3プリセットの受け入れ）、
+`visual-baselines.yml`（Linux visual ベースライン再生成、dispatch）、
+`deploy-demo.yml`（GitHub Pages ライブデモ配信）が回る。ジョブの増減は
+ci.yml を一次情報とする。
 
 ## Definition of Done（委譲タスクの完了報告様式）
 

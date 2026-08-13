@@ -57,6 +57,17 @@ the same `ubuntu-latest` image CI uses, re-runs the suite against them to
 prove they pass, and uploads them as an artifact. Dispatch it again with
 `commit: true` to push the regenerated PNGs back to that branch.
 
+One more step after `commit: true`: the workflow pushes with the built-in
+`GITHUB_TOKEN`, and GitHub **does not trigger workflows for pushes made with
+that token** — so `ci.yml` will NOT re-run on the baseline commit by itself.
+Push an empty commit to re-trigger CI (this has been needed on every baseline
+update so far):
+
+```sh
+git commit --allow-empty -m "ci: 再生成ベースラインで CI を再実行"
+git push
+```
+
 ## Notes
 
 - Theme/preset are forced explicitly (`light`/`dark`, `standard`/`glass`) -

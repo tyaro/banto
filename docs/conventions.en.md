@@ -71,10 +71,11 @@ operation exists on both the REST/Tauri paths is guaranteed by the `DUAL_PATH`
 manifest + completeness check in `scripts/verify-architecture.mjs`. Unless you
 add a new Tauri command / REST route to a classification (dual-path /
 desktop-only / read), CI fails — so **the mistake of adding to only one path is
-always caught**. However, the machine check only looks as far as "does it exist
-on both paths." **Whether the authorization level and audit record are actually
-identical** (same role floor, same `AuditEntry`) is guaranteed by code + tests
-(out of scope for rule 8). The rationale for the desktop-only / read
+always caught**. For declared pairs, **rule 8 also cross-checks the role floor
+(authorization level) on both paths** (CR-6: the `role` field of `DUAL_PATH`
+plus `ROLE_READ` for reads). The only part outside the machine check is
+**whether the audit records are identical** (same `AuditEntry` shape), which is
+guaranteed by code + tests. The rationale for the desktop-only / read
 classification is in maintainability-review-2026-07.md §3.
 
 ## 2. The service layer knows nothing of tauri / axum / RBAC / HTTP [machine-checked: tauri/axum non-dependence only]
@@ -104,7 +105,7 @@ implementation:
 
 | Dependency you might want | Instead | Where it is implemented |
 |---|---|---|
-| `chrono` / `time` | hand-written date conversion | `iso_datetime_from_system_time` / `compact_stamp` in `backup.rs`; `banto-attachments` ports Howard Hinnant's `civil_from_days` |
+| `chrono` / `time` | hand-written date conversion | `iso_datetime_from_system_time` / `compact_stamp` in `backup.rs`. Howard Hinnant's `civil_from_days` is ported in three places (`banto-attachments`, `backup.rs`, the app's `core/src/db.rs`; if a fourth appears, decide on consolidating into `banto-core`) |
 | MIME detection library | magic-byte detection | `banto-attachments` `detect_mime` (see §6 below) |
 | `multipart` | raw byte body + `?fileName=` query | uploads in `banto-server` `routes/backups.rs` · app `rest/attachments.rs` |
 | `tower-http` | hand-written `axum::middleware::from_fn` | `security_headers.rs` / `csrf.rs` |
@@ -153,10 +154,12 @@ in the app layer only; neither dictionaries nor i18n dependencies go into
 
 ## 4. No reverse dependency from core → options [machine-checked]
 
-Core (`admin-core` / `grid-svelte` / `forms` / `theme`) does not import options
-(`report` / `attachments` / `dock-svelte` / `charts`). The dependency direction
-is "shell → option allowed, option → core allowed, **core → option not
-allowed**" (template-scope §3).
+Core (`admin-core` / `grid-svelte` / `forms` / `theme`) does not import
+options. The dependency direction is "shell → option allowed, option → core
+allowed, **core → option not allowed**". **The canonical core/option list is
+the table in [template-scope.md §3](template-scope.md)** (do not duplicate the
+enumeration here — duplication is a drift source; machine checks rule 2/6 walk
+`packages/` dynamically, so new packages are covered automatically).
 
 Current guarantees:
 
@@ -224,8 +227,16 @@ without a runtime guard are **upheld by reviewing every call site**.
 - **SQL columns only through the whitelist.** Field names originating from the
   frontend must always be resolved to SQL columns via `ColumnMap`
   (`list_query.rs`), and values must always be bound (never string-interpolated).
-  Sort on an unknown field is ignored; filter is a hard error. Each service has
-  a `column_map()`.
+  Sort on an unknown field is ignored; filter is a hard error. Services that
+  accept `ListParams` (currently items / audit) have a `column_map()` (services
+  with a fixed ORDER BY only do not need one).
+- **Keep the two CSP definitions in sync.** Desktop uses `app.security.csp` in
+  `tauri.conf.json`; LAN uses `CONTENT_SECURITY_POLICY` in `banto-server`'s
+  `security_headers.rs`. **The only intended delta is connect-src** (Tauri
+  IPC); everything else must match directive-by-directive (the rationale, and
+  why `unsafe-inline` is required, live in the doc comment at the top of
+  `security_headers.rs`). The sync is currently manual — whenever you change
+  one, always update both.
 
 ## 7. `{@html}` only with self-generated, fully escaped output [machine-checked: allowlist of use sites]
 
@@ -262,6 +273,11 @@ UI CSS uses only `var(--banto-*)` tokens and **does not write raw values of
 color or dimension into components**. Raw values are consolidated in
 `packages/theme/src/css/banto.css`. The glass preset is applied opt-in, as in
 `backdrop-filter: var(--banto-backdrop, none)` (visual-refresh-design.md).
+Scope note: the machine check (rule 5, raw-colors) walks `packages/` only. Raw
+values in the app layer (`apps/admin-template/src`) are tolerated **only as
+deliberate exceptions with a justification comment** (existing examples: the
+login brand pane, the static theme-preview swatches; never write a raw value
+without a reason comment).
 
 ## 10. 3-way provider branching + demo explicitly refuses
 

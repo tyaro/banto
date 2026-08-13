@@ -1,8 +1,11 @@
 # Banto ビジュアルリフレッシュ設計書
 
 作成日: 2026-07-15  
-状態: 設計  
-対応計画: [visual-refresh-plan.md](visual-refresh-plan.md)（M22 候補）
+状態: **実装済み**（M22 完了。本書はコンポーネント API・DOM・キーボード挙動の
+仕様アンカーとして現役）  
+対応計画: [visual-refresh-plan.md](visual-refresh-plan.md)（M22）  
+運用: 以後トークン値を変える場合は `banto.css` と計画書付録 A を同時更新する
+（値の正は付録 A、本書 §2.1 は再掲）
 
 本書は計画書の各 Phase を実装可能なレベルまで具体化する。トークンの確定値は
 計画書の付録 A を正とし、本書では CSS・型・コンポーネント API・DOM 構造・

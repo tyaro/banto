@@ -1,8 +1,11 @@
 # Banto テンプレートスコープ整理 — 必要な物と除外すべき物
 
-作成日: 2026-07-11（M10〜M17 実装完了時点の棚卸し。M16/M17 は PR レビュー中）
+作成日: 2026-07-11（M10〜M17 時点の棚卸しとして作成、以後追随更新。
+最終更新 2026-08-13）
 位置づけ: [roadmap.md](roadmap.md) の「スコープ方針」を、実装済み資産の全量に
 対して適用し直した結果の記録。今後の機能追加・削除の判断基準として使う。
+判定基準の最新の適用例は [feature-review-2026-08.md](feature-review-2026-08.md)
+（外部提案の実測検証と取捨。詳細RBAC反対・PWA賛成などの判定記録）。
 
 トラック: 本書は**保守者向け（トラックA）**。何を入れる/入れないの判定と、
 実装不変条件（[conventions.md](conventions.md)）とは役割が別 — こちらは「スコープ」、
@@ -191,7 +194,11 @@ cron的定時実行基盤 / アラーム管理 — いずれも SCADA 等の**�
 > `crates/banto-server/src/routes/` にある。`admin-template-core::rest` に
 > 残るのは `/api/items/*`（アプリ固有）・`attachments`（M20）・Route table
 > の doc・`api_router()` の `.merge()` 組み立てのみ。⑤（`db.rs` ランナー基盤の
-> `banto-storage` 移設）と ⑥（Tauri コマンドの定型整理・優先度低）は未実施。
+> `banto-storage` 移設）は**「やらない」判断で確定**（2026-08-13 判定:
+> 核心の `sqlx::migrate!` は呼び出し側クレートの manifest 相対で SQL を埋め込む
+> マクロのため、移設は Migrator 受け渡し API の新設に対して割に合わない。
+> maintenance-review-2026-08 §5.1）。⑥（Tauri コマンドの定型整理・優先度低）は
+> 未実施のまま。
 > 下表の行数は 2026-07-12 時点のスナップショットで、移設後の現況ではない。
 
 `admin-template-core`（`apps/admin-template/core/src/`）は現状

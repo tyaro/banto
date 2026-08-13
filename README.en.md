@@ -1,5 +1,11 @@
 # Banto
 
+> This is an abridged English summary; the Japanese [README.md](README.md) is
+> canonical and much more complete.
+
+**Live demo**: <https://tyaro.github.io/banto/> (log in as `admin` / `admin` —
+a browser-only demo with in-memory data).
+
 Banto is a full-stack admin framework/template for **Tauri v2 + SvelteKit**
 (Svelte 5 runes). It pairs a refine-like headless core with a custom data
 grid, schema-driven forms, charts, and a docking layout. The backend is Rust
@@ -44,6 +50,10 @@ the owner's behalf.
   auto-login / no-login mode.
 - **CSV/Excel import & export**, a command palette (Ctrl+K), and SQLite
   backup/restore.
+- **Toast notifications** with four kinds (info/success/warning/error) and a
+  server-pushed `Notice` event recipe (SSE), plus an admin-only **system info
+  card** (v1.2.0) on the settings page showing app version, DB backend, and
+  runtime form (`GET /api/system/info` / Tauri `system_info`).
 - **Databases: SQLite (default) and PostgreSQL.** V2 made the whole app
   runnable on PostgreSQL too (`banto-storage`'s `Db`/`Dialect` dialect
   abstraction plus per-dialect migrations); point `banto-serve`'s `BANTO_DB`
@@ -103,13 +113,8 @@ pnpm scaffold --preset minimal   # minimal | standard | full
 ```
 
 For assets scaffold doesn't touch, or to remove things by hand, see the
-"オプション資産の削除" section in the Japanese README.
-
-## Requirements
-
-- Node 24+
-- pnpm 10+
-- Rust (only needed to build/run the Tauri desktop app)
+"オプション資産の削除" section in the Japanese README
+(`pnpm scaffold --interactive` covers most of it without reading Japanese).
 
 ## Security note
 

@@ -9,11 +9,11 @@
 ignore = [
 	# rsa: Marvin Attack timing sidechannel (Medium 5.9). NO fixed release
 	# exists upstream. Reachable only through sqlx-mysql, which is in the
-	# dependency graph via sqlx's workspace metadata but never enabled: every
-	# Cargo.toml in this workspace uses sqlite only (grep for `mysql` -
-	# nothing enables that feature), so the vulnerable code is not compiled
-	# into any shipped binary. Revisit if a fixed rsa release appears or if
-	# a MySQL/Postgres backend is ever added (improvements.md §6.1).
+	# dependency graph via sqlx's workspace metadata but never enabled: this
+	# workspace enables the sqlite and (since V2, #106-109) postgres features
+	# only — nothing enables `mysql` (grep for it), so the vulnerable MySQL
+	# auth path is not compiled into any shipped binary. Revisit if a fixed
+	# rsa release appears or if the mysql feature is ever enabled.
 	"RUSTSEC-2023-0071",
 	# quick-xml 0.39.x: quadratic attribute-duplicate check (High 7.5) and
 	# unbounded NsReader allocation (High 7.5), both fixed in >=0.41.0.

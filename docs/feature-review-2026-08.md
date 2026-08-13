@@ -12,8 +12,8 @@
 本書はそれらへの入力（バックログ候補・宿題）を生成する棚卸しであり、確定した
 判断は各一次ドキュメントへ反映する（§5 参照）。
 
-関連: [review-2026-07-29.md](review-2026-07-29.md)（利用者視点の実用性レビュー）、
-[improvement-plan-2026-07.md](improvement-plan-2026-07.md)（外部AIレビュー統合の
+関連: [review-2026-07-29.md](history/review-2026-07-29.md)（利用者視点の実用性レビュー）、
+[improvement-plan-2026-07.md](history/improvement-plan-2026-07.md)（外部AIレビュー統合の
 アクションプラン）。本書は同じ「外部レビューを実測で裏取りして取捨する」系譜。
 
 実施状況（2026-08-12）: §4「今すぐ」分類は **3件すべて実装済み** —
@@ -301,16 +301,18 @@ roadmap §4・template-scope §4.1 で全部既決。industrial 系の別リポ�
 
 本書は棚卸しであり、確定した判断は各一次ドキュメントへ反映する:
 
-- [ ] roadmap.md §3 v2 バックログに **API Token / Service Account**（ロール紐付け
-      設計）を追加し、本書へリンク（§2.2）
-- [ ] roadmap.md §3 の既存バックログ項目（Backup アーカイブ / Tauri updater /
+- [x] roadmap.md §3 v2 バックログに **API Token / Service Account**（ロール紐付け
+      設計）を追加し、本書へリンク（§2.2）—（2026-08-12 反映済み）
+- [x] roadmap.md §3 の既存バックログ項目（Backup アーカイブ / Tauri updater /
       PWA）に、本書の設計上の但し書き（依存ゲート・リリースパイプライン前提・
-      HTTP制約）への参照を1行ずつ付す（§2.1 / §2.3 / §2.8）
-- [ ] 「今すぐ」分類（version 表示・System Info カード・PWA manifest・Notice
-      レシピ）を improvement-plan もしくは roadmap の小粒タスクとして起票（§4）
+      HTTP制約）への参照を1行ずつ付す（§2.1 / §2.3 / §2.8）—（2026-08-12 反映済み）
+- [x] 「今すぐ」分類（version 表示・System Info カード・PWA manifest・Notice
+      レシピ）の起票 —（起票を経ず PR #140〜#142 で実装完了。冒頭の実施状況参照）
 - [ ] `docs/recipes/add-role.md` を新設（ロール追加チェックリスト、add-resource.md
       の姉妹編）。AGENTS.md「タスク別の入り口」から参照（§2.6）
-- [ ] 本書を AGENTS.md / template-scope.md の関連リンクに追加（発見性・ドリフト防止）
+      —（未実施。maintenance-review-2026-08 §4 の PR-6 で実施予定）
+- [x] 本書を AGENTS.md / template-scope.md の関連リンクに追加（発見性・ドリフト防止）
+      —（2026-08-13 反映: AGENTS.md「調査・レビュー記録」索引 + template-scope 関連リンク）
 
 各項目は**実装ではなくドキュメント反映**。実装は実需トリガに従い roadmap §7 の
 プロセスで別途着手する。
