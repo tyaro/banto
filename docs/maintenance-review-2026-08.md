@@ -102,6 +102,9 @@ ADR（0001〜0006）・recipes・AGENTS/CLAUDE/README は現位置固定（ADR �
 | 0-4 | publishing 経緯の切り出し先名 | **docs/history/publishing-github-packages-2026-07.md** に一本化（2案併存していた） |
 | 0-5 | tree-svelte 文書の正位置 | **packages/tree-svelte/README.md 新設（grid-svelte 雛形・API/使用例）+ アプリへの配線レシピは docs/recipes/tree-svelte.md**。二重定義にしない |
 
+**裁定（2026-08-13、保守者承認）: 0-1〜0-5 とも推奨案（太字）を採用。** 以降の
+Phase 1〜4 と §4 の PR 分割はこの裁定を前提に実施する。
+
 #### Phase 1 — 破れの修復（§2.2 の3点）
 
 - i18n-plan 参照の書き換え（0-3 の裁定どおり、43箇所/39ファイル）。
