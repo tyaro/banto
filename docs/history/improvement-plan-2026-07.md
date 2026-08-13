@@ -10,6 +10,13 @@ improvements.md 側にも対応履歴として反映し、本書の状態列を�
 
 トラック: 本書は**保守者向け（トラックA）**。
 
+> **凍結（2026-08-13）**: 2026-07 改善サイクルは完了し、本書は凍結した
+> （経緯は [maintenance-review-2026-08.md](../maintenance-review-2026-08.md) §2）。
+> 現役のバックログは [roadmap.md §3](../roadmap.md#3-v2--将来構想バックログ) に
+> 一本化する。未消化のまま引き継いだのは P4-8（実務サンプル、要スコープ判定）と
+> P1-4残（設定画面 LAN 警告の warning 化。ブロッカーだったベースライン再生成環境は
+> `visual-baselines.yml` で解消済み）の2点で、roadmap §3 へ転記済み。
+
 ---
 
 ## 1. レビュー総括
@@ -87,11 +94,11 @@ improvements.md 側にも対応履歴として反映し、本書の状態列を�
 | P4-2 | 仮想スクロールの計測ベンチ（10万行 fps/初期描画、items ページ + 行数パラメータ） | 低 | S–M | I§9 | **完了（2026-07-19、vitest bench でホットパス計測。`pnpm bench`）** |
 | P4-3 | SQLite 同時書き込み(Tauri + LAN 併用時)の挙動と WAL の有無を README LAN 節に記載 | 低 | S | I§9 | **完了（2026-07-19、同一プロセス単一プール + WAL と判明）** |
 | P4-4 | Dependabot/Renovate の導入検討 | 低 | S | I§2.5 | **完了（2026-07-19、`dependabot.yml`。actions/npm/cargo をグループ化週次）** |
-| P4-5 | PostgreSQL リポジトリ実装（`sqlite.rs` を雛形に `postgres.rs`） | 低※ | L | I§6.1 | 未着手 |
+| P4-5 | PostgreSQL リポジトリ実装（`sqlite.rs` を雛形に `postgres.rs`） | 低※ | L | I§6.1 | **完了（v1.0.0 #93 で `postgres.rs`、V2 テーマA #106-109 でアプリ全体対応。CHANGELOG 参照）** |
 | P4-6 | improvements.md の履歴分離（未解決課題のみ残し、対応済みは `docs/history/` へ） | 低 | S | G | **完了（2026-07-27）**。残っていた解決済みインライン項目（P3-3/P4-1/P4-2/P4-3）を archive へ移設しスタブ化。全解決済み項目がスタブ様式に統一。※受け入れ条件「100行程度」は 2026-07-19 確定の「スタブは残す」設計（本文冒頭の3ファイル役割分担）が優先され、スタブ保持のまま 295 行で運用 |
 | P4-7 | ADR（Architecture Decision Record）導入 + コメントの3分類整理（コード内/conventions/ADR） | 低 | M | G | **完了（2026-07-19、`docs/adr/` + テンプレート + ADR 2件）** |
 | P4-8 | 実務寄りサンプルアプリの追加（例: 設備保全管理）— **template-scope 4条件との整合判定が先** | 低 | L | G | 要スコープ判定 |
-| P4-9 | プリセット構成（minimal / standard / full）の生成 — P2-1 の発展形 | 低 | L | G | **設計完了（2026-07-19、[docs/scaffold-presets-plan.md](scaffold-presets-plan.md)）。実装は P2-1 v2 の後** |
+| P4-9 | プリセット構成（minimal / standard / full）の生成 — P2-1 の発展形 | 低 | L | G | **完了（`scripts/scaffold.mjs` + `--interactive`。CHANGELOG v1.0.0 feat(P4-9)。設計は [scaffold-presets-plan.md](../scaffold-presets-plan.md)）** |
 
 ※ P4-5 は P1-1 で期待値を明記すれば緊急性が下がる、という関係。実需
 （外部 PostgreSQL を使う個別アプリ）が出た時点で優先度を再評価する。
@@ -105,8 +112,8 @@ visual regression の fullPage スナップショット対象のため、UI 変�
 補足（2026-07-19、「B. セキュリティ・運用の v2 検討事項」の決着）: 当初
 v2 検討事項としていた TLS 本体と `tracing` 導入は、いずれも conventions §3 が
 退けた依存を足す判断のため、実装ではなく **ADR で決定を記録**した —
-TLS は [ADR-0003](adr/0003-tls-via-reverse-proxy.md)（リバースプロキシ終端を
-正式・組み込みは保留）、ログは [ADR-0004](adr/0004-server-logging-eprintln.md)
+TLS は [ADR-0003](../adr/0003-tls-via-reverse-proxy.md)（リバースプロキシ終端を
+正式・組み込みは保留）、ログは [ADR-0004](../adr/0004-server-logging-eprintln.md)
 （`eprintln!` 継続・`tracing` は保留）。改行コード一括正規化（improvements §5.2）は
 CRLF 混入 0 件で実質完了と確認。
 
@@ -458,7 +465,7 @@ vitest bench で計測**する方針にした（既存 vitest のみ・依存追
 
 - P4-3〜P4-5: improvements.md の該当節（§9, §2.5, §6.1）を
   そのまま実施内容とする。
-- P4-9（プリセット構成）: **設計完了**（[docs/scaffold-presets-plan.md](scaffold-presets-plan.md)）。
+- P4-9（プリセット構成）: **設計完了**（[docs/scaffold-presets-plan.md](../scaffold-presets-plan.md)）。
   プリセットは §3 オプション資産の削除手順の自動実行であり、コアや runtime
   機構には手を入れない。命名は当初案の "industrial"（別リポジトリ
   `banto-industrial` と混同）を避け `minimal`/`standard`/`full` に是正。
@@ -543,5 +550,5 @@ Claude レビューと一致し、本計画のフェーズ構成（§4）に反�
 本計画（外部AIレビュー統合版）の項目が概ね完了した後、Rustサービス+サーバ層を
 対象に**AI中心保守を前提とした保守性コードレビュー**を実施した。所見と、そこから
 導いた不変条件の機械検査化ロードマップ（CR-1〜CR-5）は
-[maintainability-review-2026-07.md](maintainability-review-2026-07.md) に分離して
+[maintainability-review-2026-07.md](../maintainability-review-2026-07.md) に分離して
 記録する。最優先は CR-1（REST/Tauri 両経路対称の機械検査）。

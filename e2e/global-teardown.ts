@@ -21,7 +21,7 @@ export default function globalTeardown(): void {
 		// after Playwright signals it to stop, which turns a same-tick rmSync
 		// into EPERM. Leaving one temp dir behind under the OS temp folder is
 		// harmless (the OS reclaims it eventually) - it must never fail the
-		// overall `pnpm e2e` run, which all ten scenarios already passed by
+		// overall `pnpm e2e` run, which all scenarios already passed by
 		// the time this hook runs.
 	}
 }

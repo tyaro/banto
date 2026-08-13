@@ -6,11 +6,12 @@
 先進要素追加、v2候補の分離）  
 改訂2: 2026-07-15（メニューコンポーネント一式を Phase 1 共通 UI へ追加。
 実装詳細は設計書へ分離）  
-状態: 計画  
+状態: **実装済み**（roadmap **M22** として実施・完了、PR #25。検証基盤は後続 PR。
+§11 の v2 候補のみ未実施のバックログとして現役）  
 対象: `apps/admin-template` とフロントエンド UI パッケージ  
 設計書: [visual-refresh-design.md](visual-refresh-design.md)（本計画の実装レベル設計）  
-ロードマップ連携: 実施が決まった時点で `docs/roadmap.md` に **M22** として登録する
-（roadmap §7 の実施プロセスに従う）
+付録 A のトークン確定値は `packages/theme/src/css/banto.css` の仕様アンカーとして
+実装完了後も現役（値を変える場合は banto.css と付録 A を同時更新すること）
 
 ## 1. 目的
 
@@ -407,7 +408,7 @@ Playwright project とし、決定的なシードデータで撮影する。
 - `pnpm lint`
 - `pnpm test`
 - `pnpm build`
-- 既存 E2E スモーク（10 シナリオ。回帰範囲は限定的である点に留意）
+- 既存 E2E スモーク一式（回帰範囲は限定的である点に留意）
 - Phase 0 のビジュアルリグレッション（各 PR で差分レビュー）
 - E2E に **axe-core**（`@axe-core/playwright`）による主要画面のアクセシビリティ
   スキャンを追加し、コントラスト・ロール・ラベルの自動検出を行う

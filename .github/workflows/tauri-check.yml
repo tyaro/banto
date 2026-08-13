@@ -90,7 +90,7 @@ jobs:
         run: cargo check -p admin-template --all-targets
 
       # `--all-targets` above already compiles the test binaries; running them
-      # is what actually exercises the 48 Tauri command handlers' authz/audit
+      # is what actually exercises every Tauri command handler's authz/audit
       # tests (conventions §1 "両経路対称" — rule 8 checks presence only, so the
       # levels/records being identical is guaranteed by these tests, not the
       # architecture verifier). Extra cost here is just the run time.

@@ -1,54 +1,41 @@
 # パッケージ配布手順（M18 Phase C）
 
 作成日: 2026-07-11。2026-07-12（M18 Phase C）に全面改訂: 配布方式を
-「公開 npm レジストリ + crates.io」から「GitHub Packages（私設npm）+
-Rust は git タグ参照」へ変更した。banto-industrial（別リポジトリ、
+「公開 npm レジストリ + crates.io」から「npm も Rust も **git タグ参照**」へ
+変更した。banto-industrial（別リポジトリ、
 [industrial-plan.md](industrial-plan.md)）が本リポジトリの
 `@banto/*` パッケージ/`banto-*` クレートを消費する前提条件。
 
-**同日再改訂（最終決定）**: GitHub の organization 名 `banto` が取得
-不能と判明（既存アカウントが存在）したため、npm 側も**レジストリを
-使わず git 依存（サブディレクトリ参照）で配布する**方式に確定した。
-`@banto/*` のパッケージ名はそのまま維持できる。詳細は次節。
+> 決着済みの経緯（UNLICENSED 化と取り消し・GitHub Packages 案の棚上げ・
+> `@banto` スコープ制約・再開時の手順）は
+> [history/publishing-github-packages-2026-07.md](history/publishing-github-packages-2026-07.md)
+> に切り出した。本書は現行の規範のみを保持する。
 
 ## 決定: npm パッケージも git 依存で配布する（2026-07-12）
 
-消費側（banto-industrial 等）は pnpm の git 依存 + `path:` 指定で
-`@banto/*` を導入する。レジストリ・`.npmrc`・トークン設定は不要
-（private リポジトリへの git 認証のみ。ローカルは gh/資格情報
-マネージャ、CI は checkout 用 PAT）:
+GitHub の organization 名 `banto` が取得不能（既存アカウントが存在）のため、
+npm 側も**レジストリを使わず git 依存（サブディレクトリ参照）で配布する**。
+`@banto/*` のパッケージ名はそのまま維持できる。消費側（banto-industrial 等）は
+pnpm の git 依存 + `path:` 指定で導入する。レジストリ・`.npmrc`・トークン設定は
+不要（private リポジトリへの git 認証のみ。ローカルは gh/資格情報マネージャ、
+CI は checkout 用 PAT）:
 
 ```sh
-# ブランチ/タグ + モノレポ内サブディレクトリを指定（動作検証済み 2026-07-12）
-pnpm add "github:tyaro/banto#v0.1.0&path:packages/admin-core"
+# ブランチ/タグ + モノレポ内サブディレクトリを指定（機構は 2026-07-12 に動作検証済み）
+pnpm add "github:tyaro/banto#v1.2.0&path:packages/admin-core"
 pnpm add "github:tyaro/banto#main&path:packages/theme"
 ```
 
 - インストール結果はパッケージ名 `@banto/admin-core` のままで、
   中身は `files: ["src"]` に従い `src/` + `package.json` + `LICENSE` のみ
   （pnpm は git 依存でも pack 相当の `files` フィルタを通す — 実測確認済み。
-  つまり本ドキュメント後半の `files`/`LICENSE` 整備はこの方式でも有効）
+  `LICENSE` はルートの MIT を pnpm が自動同梱する）
 - 参照の固定は Rust クレートと同じ **git タグ**（`vX.Y.Z`、下記タグ運用
   規約を共用）。npm/Rust が同一タグで揃うのはむしろ管理が単純
 - GitHub Packages 案は**棚上げ**（`publishConfig` は package.json に残すが
   不活性。将来、外部配布や複数消費者で semver range 解決が必要になったら
-  再検討 — その時はスコープ改名の判断も同時に行う）
-
-## 方針転換の背景
-
-industrial-plan.md §2 の権利の建付け（banto は自社著作物として保持し、
-案件アプリには利用許諾で提供する）に合わせ、`@banto/*` パッケージは
-**公開 npm レジストリではなく GitHub Packages の private/restricted
-レジストリ**へ配布する。そのため各 `packages/*/package.json` の
-`license` は `MIT` から **`UNLICENSED`** に変更した。
-
-> **2026-07-12 再改訂**: banto リポジトリの **public 化 + 全 MIT 統一**を
-> 決定したため、上記の UNLICENSED 化は取り消し、`packages/*` も
-> ルート [LICENSE](../LICENSE)（MIT）に揃えた（package-local の LICENSE
-> ファイルも削除 — pnpm がルートの MIT を自動同梱する挙動がそのまま
-> 望ましい状態になった）。権利留保の防衛線は banto ではなく
-> **banto-industrial 側**（非公開・独自ライセンス）に置く。
-> 以降この節の UNLICENSED 記述は経緯の記録。
+  再検討 — その時はスコープ改名の判断も同時に行う。経緯と再開手順は上記
+  history 文書）
 
 ## 前提: ソース配布のまま
 
@@ -64,13 +51,14 @@ Banto の `@banto/*` パッケージは**モノレポ内でソース直接参照
 - ビルドパイプライン（`@sveltejs/package` 導入等）を追加しない分、
   M18 のスコープ（配布可能化の最小限）に収まる
 
-各パッケージの `package.json` に以下を追加済み:
+各パッケージの `package.json` の現行設定:
 
 ```jsonc
 {
-  "license": "UNLICENSED",
+  "license": "MIT", // リポジトリ全体でルート LICENSE（MIT）に統一
   "files": ["src"],
   "publishConfig": {
+    // GitHub Packages 案の名残（不活性のまま残置）
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"
   }
@@ -79,83 +67,22 @@ Banto の `@banto/*` パッケージは**モノレポ内でソース直接参照
 
 `files: ["src"]` により `tests/`・`svelte.config.js`・`vite.config.ts`・
 `tsconfig.json`（消費側には不要な開発時専用ファイル）はパッケージから
-除外される。各パッケージには専用の `LICENSE`（"All rights reserved" 文言）
-も追加した — pnpm はワークスペース内パッケージに `LICENSE` が無いと
-**ルートの `LICENSE`（MIT）を自動的にタルボールへコピーする**ため、これを
-入れておかないと `license: "UNLICENSED"` と矛盾する MIT 全文が配布物に
-混入する（`pnpm publish --dry-run` で実際に確認・修正済み）。
-
-## `@banto` スコープと GitHub Packages の制約（記録・決着済み）
-
-> **2026-07-12 決着**: 下記の選択肢 1（org `banto` 作成）は **GitHub 上で
-> 名前が既に取得されており不可能**と判明。選択肢 2（改名）は影響過大、
-> 3（publish しない）では banto-industrial 連携が塞がるため、
-> **第4の方式 = git 依存 + `path:` 指定**（冒頭の決定節）を採用した。
-> 以下は経緯の記録として残す。
-
-**GitHub Packages の npm レジストリは、スコープ名が GitHub の
-ユーザー/Organizationアカウント名と一致している必要がある**
-（`@NAMESPACE/PACKAGE-NAME` の `NAMESPACE` が公開先アカウント名そのもの。
-GitHub公式ドキュメント準拠）。本リポジトリの所有者は GitHub ユーザー
-`tyaro`（`origin` = `https://github.com/tyaro/banto.git`）であり、
-`banto` という名前の GitHub org/user は存在しない。
-
-つまり**現状のパッケージ名 `@banto/*` のままでは GitHub Packages に
-publish できない**（スコープに対応するアカウントが無く、認証・権限解決の
-時点で失敗する）。`pnpm publish --dry-run` はレジストリ認証を行わない
-検証（ローカルのファイル構成チェックのみ）のため全パッケージで成功するが、
-実際の `pnpm publish`（dry-runなし）はここで失敗する見込み。
-
-**対応方針は未決定・本ドキュメントでは実施しない**（影響が大きいため
-判断のみ提示、リネームは行わない）。選択肢:
-
-1. **GitHub Organization `banto` を新規作成**し、そちらの権限で publish
-   する（リポジトリ自体は `tyaro/banto` のままでも、publish 先アカウントを
-   org にすれば `@banto/*` の名前を維持できる）。org 作成・招待管理という
-   運用コストが増える
-2. **npmスコープを `@tyaro/*` にリネーム**する。パッケージ名の変更は
-   `admin-template` 内の全 import（`@banto/admin-core` 等、数十ファイル）・
-   `package.json` の依存関係名・banto-industrial 側の将来的な参照を含む
-   広範囲な変更になるため影響が大きい
-3. **当面 publish しない**（社内はモノレポ内 `workspace:*` 参照のまま、
-   banto-industrial 側の連携が必要になった時点で 1 か 2 を選ぶ）
-
-banto-industrial 連携が必要になった時点で、上記いずれかを選定すること。
-
-## 消費側の認証設定（GitHub Packages 案を再開する場合のみ・現在不要）
-
-GitHub Packages の restricted access パッケージを `pnpm add`/`npm install`
-するには、消費側リポジトリに `.npmrc` で scope→registry のマッピングと
-`GITHUB_TOKEN`（`read:packages` 権限）が要る:
-
-```ini
-# .npmrc（消費側リポジトリ、例: banto-industrial）
-@banto:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
-```
+除外される。package-local の `LICENSE` は置かない（pnpm がルートの
+MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history 文書）。
 
 ## バージョニング規約
 
-- 全パッケージ `0.1.0` から開始（統一済み）。相互依存は無い
-  （`admin-template` からの依存のみ、パッケージ間の依存関係はゼロ）ため
-  依存順の publish 制約はない
+- 現行バージョンは **v1.2.0**（全 `@banto/*` パッケージ・`banto-*` クレート・
+  `tauri.conf.json`・git タグで統一）。バージョンとタグの整合は
+  `pnpm check:versions`（CR-7、`scripts/check-versions.mjs`）が機械検査する
+- 相互依存は無い（`admin-template` からの依存のみ、パッケージ間の依存関係は
+  ゼロ）ため依存順の publish 制約はない
 - **0.x の間（〜0.1.2、履歴）**: `minor` = 破壊的変更、`patch` = 追加・修正
-  （SemVer の 1.0 未満の慣例に合わせる。`0.1.0` → `0.2.0` は破壊的変更、
-  `0.1.0` → `0.1.1` は後方互換の修正/追加）
-- **1.0.0 以降（現行）**: 標準の SemVer に移行する。`major` = 破壊的変更、
+  （SemVer の 1.0 未満の慣例）
+- **1.0.0 以降（現行）**: 標準の SemVer。`major` = 破壊的変更、
   `minor` = 後方互換の機能追加、`patch` = 後方互換の修正。v1.0.0 は v1
   スコープ（仕様 M0〜M9 + roadmap M10〜M24）完了に伴う**安定版宣言**として
   発行した（0.1.2 からの破壊的変更はなし。2026-07-28）
-
-## 公開手順（GitHub Packages 案を再開する場合のみ・現在不要）
-
-```sh
-cd packages/<name>
-pnpm publish --no-git-checks   # dist を生成しない（ソース配布のため build 不要）
-```
-
-パッケージ間の依存が無いため公開順序に制約はない。CI での自動 publish は
-M18 の非スコープ（初回は手動、roadmap.md M18 節）。
 
 ## Rust クレート: git タグ参照（crates.io へは発行しない）
 
@@ -166,9 +93,9 @@ M18 の非スコープ（初回は手動、roadmap.md M18 節）。
 
 ```toml
 [dependencies]
-banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v0.1.0" }
-banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v0.1.0", features = ["sqlite"] }
-banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v0.1.0" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.2.0" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.2.0", features = ["sqlite"] }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.2.0" }
 ```
 
 private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
@@ -177,7 +104,8 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 ### タグ運用規約
 
 - タグ形式は `vX.Y.Z`（`workspace.package.version`、ルート `Cargo.toml`
-  と揃える。現状 `v0.1.0` から開始）
+  と揃える。現行 `v1.2.0`）。タグとマニフェストの整合は
+  `pnpm check:versions --tag` が機械検査する（CR-7）
 - **マイルストーンマージ毎にタグを打たない**。banto-industrial 等の
   消費側が固定参照する必要がある**破壊的変更時のみ**タグを更新する
   （trait シグネチャ変更・`ListParams`/エラー型の変更など、
@@ -187,10 +115,8 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   したがって `@banto/*` パッケージの公開APIの破壊的変更もタグ更新の
   対象になる
 - 破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約（上記
-  「バージョニング規約」）を踏襲する: **0.x は `minor` = 破壊的変更 /
-  `patch` = 追加・修正、1.0.0 以降は標準 SemVer（`major` = 破壊的変更 /
-  `minor` = 機能追加 / `patch` = 修正）**
-- タグは軽量タグ（`git tag v1.0.0`）で可。変更履歴は
+  「バージョニング規約」）を踏襲する
+- タグは軽量タグ（`git tag v1.2.0`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）
 
@@ -199,7 +125,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 
 ## 公開しない選択
 
-社内テンプレートとして使い続ける、または `@banto` スコープ問題（上記）が
-未解決の間は、上記は不要。`workspace:*` のソース参照のままで、
-`pnpm --filter admin-template tauri dev` / `build` はそのまま動く。
-Rust クレートも `path` 依存のまま本リポジトリ内で完結する。
+社内テンプレートとして使い続ける間は、上記の消費側設定は不要。
+`workspace:*` のソース参照のままで、`pnpm --filter admin-template tauri dev` /
+`build` はそのまま動く。Rust クレートも `path` 依存のまま本リポジトリ内で
+完結する。

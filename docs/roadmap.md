@@ -578,6 +578,11 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   `crates/banto-admin-services` へ、汎用 REST ルーターを
   `crates/banto-server/src/routes/` へ移設した（`admin-template-core` には items
   固有分のみ残置）。方針は [template-scope.md](template-scope.md) §7。
+- 設定画面 LAN 節の注意書きを warning 表示へ格上げ（2026-07 サイクルの P1-4 残。
+  ブロッカーだったベースライン再生成環境は `visual-baselines.yml` で解消済み。
+  経緯は [history/improvement-plan-2026-07.md](history/improvement-plan-2026-07.md) P1-4 ※2）
+- 実務寄りサンプルアプリの追加（2026-07 サイクルの P4-8。着手前に
+  [template-scope.md §4](template-scope.md) の4条件でスコープ判定を行うこと）
 - 添付を含むバックアップアーカイブ（M17 バックアップは SQLite ファイルのみ
   で添付の実ファイルを含まない。attachments-plan.md §8 の既知の制限）。設計上の
   但し書き（zip は依存追加＝ADR、依存ゼロのディレクトリ方式から始める、restore の

@@ -61,10 +61,11 @@ CI の frontend ジョブで強制）が検査する。対象は各節に **[機
 両経路に存在することを、`scripts/verify-architecture.mjs` の `DUAL_PATH`
 マニフェスト + 完全性チェックで担保する。新しい Tauri コマンド / REST ルートを
 分類（dual-path / desktop-only / read）に足さない限り CI が落ちるため、**片方の
-経路にだけ足すミスは必ず捕捉される**。ただし機械検査が見るのは「両経路に
-存在するか」まで。**認可レベルと監査記録が実際に同一か**（同じロール床・同じ
-`AuditEntry`）はコード + テストで担保する（rule 8 の対象外）。desktop-only /
-read の分類判断は maintainability-review-2026-07.md §3 に根拠。
+経路にだけ足すミスは必ず捕捉される**。宣言済みの対は**ロール床（認可レベル）も
+rule 8 が両経路で照合する**（CR-6。`DUAL_PATH` の `role` フィールド +
+読み取り系の `ROLE_READ`）。機械検査の対象外は**監査記録の同一性**
+（同じ `AuditEntry` 形状か）のみで、そこはコード + テストで担保する。
+desktop-only / read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 
 ## 2. サービス層は tauri / axum / RBAC / HTTP を知らない [機械検査済み: tauri/axum 非依存のみ]
 
@@ -89,7 +90,7 @@ read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 
 | 引きたくなる依存 | 代わりに | 実装箇所 |
 |---|---|---|
-| `chrono` / `time` | 手書きの日付変換 | `backup.rs` の `iso_datetime_from_system_time` / `compact_stamp`、`banto-attachments` は Howard Hinnant の `civil_from_days` を移植 |
+| `chrono` / `time` | 手書きの日付変換 | `backup.rs` の `iso_datetime_from_system_time` / `compact_stamp`。Howard Hinnant の `civil_from_days` は3箇所に移植（`banto-attachments`・`backup.rs`・app `core/src/db.rs`。4箇所目が生えたら `banto-core` への一本化を判断する） |
 | MIME 検出ライブラリ | マジックバイト判定 | `banto-attachments` `detect_mime`（下記§6） |
 | `multipart` | 生バイト body + `?fileName=` クエリ | `banto-server` `routes/backups.rs`・app `rest/attachments.rs` のアップロード |
 | `tower-http` | `axum::middleware::from_fn` の手書き | `security_headers.rs` / `csrf.rs` |
@@ -126,10 +127,12 @@ i18n は app 層のみで、`@banto/*` には辞書も i18n 依存も入れな�
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 
-コア（`admin-core` / `grid-svelte` / `forms` / `theme`）は
-オプション（`report` / `attachments` / `dock-svelte` / `charts`）を import
+コア（`admin-core` / `grid-svelte` / `forms` / `theme`）はオプションを import
 しない。依存方向は「シェル→オプション 可、オプション→コア 可、
-**コア→オプション 不可**」（template-scope §3）。
+**コア→オプション 不可**」。**コア/オプションの正準リストは
+[template-scope.md §3](template-scope.md) の表**（ここに列挙を複製しない —
+複製はドリフト源。機械検査 rule 2/6 は `packages/` を動的走査するため
+新パッケージも自動で対象になる）。
 
 現状の担保:
 
@@ -188,8 +191,15 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   `settings_get`/`settings_set` が同一 Admin ゲート（rule 9）]**
 - **SQL 列はホワイトリスト経由のみ。** フロント由来のフィールド名は必ず
   `ColumnMap`（`list_query.rs`）で SQL 列に解決し、値は必ずバインドする（文字列
-  補間しない）。未知フィールドの sort は無視、filter は hard error。各サービスに
-  `column_map()`。
+  補間しない）。未知フィールドの sort は無視、filter は hard error。
+  `ListParams` を受けるサービス（現状 items / audit）に `column_map()` を置く
+  （固定 ORDER BY のみのサービスには不要）。
+- **CSP は2定義を同期する。** デスクトップは `tauri.conf.json` の
+  `app.security.csp`、LAN は `banto-server` の `security_headers.rs`
+  `CONTENT_SECURITY_POLICY`。**意図的な差分は connect-src のみ**（Tauri IPC）で、
+  それ以外はディレクティブ単位で一字一句一致させる（根拠と `unsafe-inline` が
+  必要な理由は `security_headers.rs` 冒頭の doc が一次情報）。同期は現状
+  手動 — どちらかを変えるときは必ず両方を更新する。
 
 ## 7. `{@html}` は自前生成の全エスケープ済み出力のみ [機械検査済み: 使用箇所の許可リスト]
 
@@ -221,7 +231,10 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生値をコンポーネントに
 書かない**。生値の集約先は `packages/theme/src/css/banto.css`。glass プリセットは
 `backdrop-filter: var(--banto-backdrop, none)` のようにオプトインで効かせる
-（visual-refresh-design.md）。
+（visual-refresh-design.md）。適用範囲の注記: 機械検査（rule 5 raw-colors）が
+走査するのは `packages/` のみ。app 層（`apps/admin-template/src`）の生値は
+**正当化コメント付きの意図的例外としてのみ**許容する（login のブランド面・
+テーマプレビューの静的スウォッチ等が既存例。理由コメント無しの生値は書かない）。
 
 ## 10. 3-way provider 分岐 + demo は明示拒否
 

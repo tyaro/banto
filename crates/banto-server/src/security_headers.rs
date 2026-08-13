@@ -1,4 +1,4 @@
-//! Baseline security response headers (`docs/improvements.md` §2.4): CSP,
+//! Baseline security response headers (`docs/history/improvements.md` §2.4): CSP,
 //! `nosniff`, frame-deny, `Referrer-Policy`. Applied uniformly to every
 //! response - static UI assets and `/api/*` (JSON *and* SSE) alike - via a
 //! single outermost layer, so a new route can never forget to opt in.

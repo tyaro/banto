@@ -20,7 +20,7 @@
  *
  * ---
  *
- * `chromium` project scope (docs/roadmap.md M18, docs/improvements.md §4):
+ * `chromium` project scope (docs/roadmap.md M18, docs/history/improvements.md §4):
  * a LAN/REST-mode smoke pass, NOT a mocked-frontend test. `pnpm --filter
  * admin-template build` produces the static SvelteKit build, and a `cargo
  * build -p admin-template-core --bin banto-serve --features embed-ui`

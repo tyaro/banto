@@ -1,9 +1,9 @@
 # Banto 改善提案ドキュメント — 対応済み実装記録アーカイブ
 
-本ファイルは [docs/improvements.md](../improvements.md)（2026-07-08 調査）の
+本ファイルは [docs/improvements.md](improvements.md)（2026-07-08 調査）の
 うち対応済みになった項目の実装記録アーカイブ。現在の未解決課題は
 `docs/improvements.md`、これからやることは
-[docs/improvement-plan-2026-07.md](../improvement-plan-2026-07.md) にある。
+[docs/improvement-plan-2026-07.md](improvement-plan-2026-07.md) にある。
 
 節番号・見出しは移動元の `improvements.md` の番号を踏襲している
 （`improvements.md` 側には1〜2行のスタブと本ファイルへのリンクが残る）。

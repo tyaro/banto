@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+### ドキュメント
+
+- 保守レビュー 2026-08（ドキュメント整理統合の実測プラン + 保守性再点検）を
+  [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md) に追加（#148）。
+- 消失文書への参照46箇所を実在参照へ修復（#149、maintenance-review PR-1）:
+  i18n-plan 参照を conventions §13 / ADR-0005 へ、CR-6/CR-7/AD 系の定義を
+  maintainability-review §7 追補へ、spec §6.4「チャートデザインルール」新設、
+  `spec §3.7/3.8` → `attachments-plan §3.7/3.8` 正規化、conventions §12 に
+  参照文法表。Cargo.lock の v1.2.0 追随も同 PR。
+- 追随更新とアーカイブ（maintenance-review PR-2）: review-2026-07-29 /
+  improvements / improvement-plan-2026-07 を `docs/history/` へ凍結移動し、
+  現役バックログを roadmap §3 に一本化。publishing.md の決着済み経緯を
+  `docs/history/publishing-github-packages-2026-07.md` へ切り出し。
+  visual-refresh plan/design・scaffold-presets-plan の状態ヘッダを実装済みに
+  更新（§7 未決事項の決定結果を追記）。AGENTS.md の CI 記述・オプション一覧・
+  不変条件要約（§13）を実態化しレビュー記録の索引を新設。conventions
+  §1/§3/§4/§6/§9 のピンポイント追随（CR-6 後の rule 8・CSP 2定義同期・app 層
+  生値の例外規約ほか、en 同時）。README の壊れた箇条書き修復 + システム情報
+  カード追記、README.en にライブデモ URL と要約宣言。CHANGELOG v1.2.0 節に
+  PR 番号を対応付け、版比較リンクを新設。
+
 ## [1.2.0] - 2026-08-12
 
 **v1.2.0 — UI / デモ拡充テーマ。** ツリービュー（新規オプションパッケージ
@@ -33,12 +54,12 @@ v1.1.0 以降のマージ分。
 
 ### Added
 
-- **積立棒グラフのデモを追加**（`@banto/charts` の `BarChart` stacked）。ダッシュボードに
+- **積立棒グラフのデモを追加**（#145、`@banto/charts` の `BarChart` stacked）。ダッシュボードに
   「カテゴリ別在庫（価格帯積立）」パネルを追加し、上位カテゴリの在庫を価格帯(低/中/高)で
   積み上げる（集計は `dashboard.ts` の `stockByCategoryPriceBand`、純関数・壁時計非依存）。
   これで README が挙げる全14チャート種が Pages ライブデモで実際に描画される（従来は積立が
   `StackedAreaChart` のみで、棒の stacked バリアントだけデモ未掲載だった）。
-- **ツリービュー `@banto/tree-svelte`**（新規オプションパッケージ、利用者要望）。
+- **ツリービュー `@banto/tree-svelte`**（#143 パッケージ + #144 デモ配線。新規オプションパッケージ、利用者要望）。
   依存ゼロのヘッドレスコア（`core/` の純関数: 可視行フラット化・move/reparent・
   三状態チェック計算・リネーム patch、全て単体テスト済み）+ 薄い Svelte 5 (Runes)
   UI。`BantoTree` は展開/折りたたみ・単一/複数選択・三状態チェックボックス・
@@ -51,7 +72,7 @@ v1.1.0 以降のマージ分。
   `treeMessages()` ブリッジ・`nav.tree`/`tree.*` 文言を含む）。ナビ追加に伴い
   サイドバーが写る認証ページのビジュアル回帰ベースラインを再生成
   （`.github/workflows/visual-baselines.yml`）。テスト 37 件（コア/状態/コンポーネント）。
-- **システム情報カード + バージョン表示**（M-review 2026-08 §2.4「縮小版⑤」）。
+- **システム情報カード + バージョン表示**（#140、M-review 2026-08 §2.4「縮小版⑤」）。
   設定画面に admin 専用の「システム情報」カードを追加し、稼働中バージョン・
   マイグレーション版・DB 方言/レイテンシ・稼働時間・アクティブ LAN セッション数・
   添付ファイル容量を表示する。バックエンドは新サービス
@@ -62,7 +83,7 @@ v1.1.0 以降のマージ分。
   クエリ）。従来 UI のどこにも出ていなかったバージョンをこのカードで可視化。
   なお CI の rust ジョブ（check/clippy/test）に欠落していた `-p banto-admin-services`
   を追加した（theme C でのクレート追加時からの漏れ）。
-- **PWA（installable-only）**（M-review 2026-08 §2.8）。LAN ブラウザ配信に
+- **PWA（installable-only）**（#141、M-review 2026-08 §2.8）。LAN ブラウザ配信に
   Web マニフェスト（`static/manifest.webmanifest`）+ アイコン（192/512/512-maskable、
   提灯モチーフ）を同梱し、「ホーム画面に追加」/インストールでアプリのように起動可能に。
   `app.html` に manifest link・apple-touch-icon・theme-color・apple-mobile-web-app
@@ -73,7 +94,7 @@ v1.1.0 以降のマージ分。
   平文 HTTP LAN では機能せず HTTPS/localhost/TLS リバースプロキシ配下が前提
   （ADR-0003）。`rename.mjs` が manifest の name/short_name も追随。
 - **通知に `warning` 種別を追加 + サーバ発通知（`ServerEvent::Notice`）のレシピ化**
-  （M-review 2026-08 §2.5 の「無料部分」）。`@banto/admin-core` の `NotificationKind`
+  （#142、M-review 2026-08 §2.5 の「無料部分」）。`@banto/admin-core` の `NotificationKind`
   を `success`/`error`/`info` に **`warning`** を加えた4種に拡張（後方互換な union
   拡張。`events.ts` の `notice` レベル照合と `ToastHost` の `.toast.warning`
   スタイル（warning トークン）を追加）。既に配線済みだが未使用だった
@@ -85,7 +106,7 @@ v1.1.0 以降のマージ分。
 ### ドキュメント
 
 - 外部AIレビュー（ChatGPT）の機能スコープ提案を実測で検証・取捨した棚卸しを
-  [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) に追加。
+  [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) に追加（#139）。
   roadmap §3 v2 バックログに **API Token / Service Account**（既存ロール紐付け設計）
   を追加し、updater / バックアップアーカイブへ設計上の但し書き参照を付した
   （実装は伴わない実需ドリブンのバックログ整理）。
@@ -454,7 +475,7 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 補足（M9〜M10のあいだ、2026-07-08、マイルストーン番号なし）: CI導入
 （GitHub Actions）、リポジトリを `my-template` から `banto` へ改名、
 セッション有効期限・ログインレート制限の実装、Node 24 LTS対応
-（[improvements.md](docs/improvements.md) §0/§1/§2.1/§2.2/§3.2）。
+（[improvements.md](docs/history/improvements.md) §0/§1/§2.1/§2.2/§3.2）。
 
 **M10〜M18**（[roadmap.md](docs/roadmap.md)、PR番号付き）:
 
@@ -475,3 +496,11 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
   ステージング方式リストア）
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
+
+[unreleased]: https://github.com/tyaro/banto/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/tyaro/banto/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/tyaro/banto/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/tyaro/banto/compare/v0.1.2...v1.0.0
+[0.1.2]: https://github.com/tyaro/banto/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/tyaro/banto/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/tyaro/banto/releases/tag/v0.1.0

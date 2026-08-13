@@ -136,6 +136,8 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   ログイン不要モード**（M11）。
 - **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
   **SQLite バックアップ/リストア**（M17）。
+- **システム情報カード**（v1.2.0）: 設定画面に admin 専用でアプリバージョン・
+  DB 種別・稼働形態などを表示（`GET /api/system/info` / Tauri `system_info`）。
 - **対応DBは SQLite（既定）と PostgreSQL**。V2 でアプリ全体を PostgreSQL 上でも
   動かせるようにした（`banto-storage` の `Db`/`Dialect` による方言吸収 + 方言別
   マイグレーション）。`banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL に
@@ -650,10 +652,9 @@ let _ = events.send(ServerEvent::Notice {
 配線済み（削除可能。外し方は後述「オプション資産の削除」節）。ライブデモでも
 上記の全形態を触れる。自分のアプリへ組み込むには以下のレシピを使う。
 
-利用するアプリの `package.json` に依存を追加する（モノレポ内なら `workspace:*`、
-本リポジトリ外から消費する場合は [docs/publishing.md](docs/publishing.md) の git 依存
-
-- `path:` 指定）:
+利用するアプリの `package.json` に依存を追加する（モノレポ内なら
+`workspace:*`、本リポジトリ外から消費する場合は
+[docs/publishing.md](docs/publishing.md) の git 依存と `path:` 指定）:
 
 ```jsonc
 { "dependencies": { "@banto/tree-svelte": "workspace:*" } }

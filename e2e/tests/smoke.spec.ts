@@ -1,10 +1,10 @@
 /**
- * M18 Phase B smoke E2E (docs/roadmap.md M18, docs/improvements.md §4).
+ * M18 Phase B smoke E2E (docs/roadmap.md M18, docs/history/improvements.md §4).
  *
  * Runs against a real `banto-serve --features embed-ui` (LAN/REST mode, no
  * mocked DataProvider - see playwright.config.ts's doc comment) with a
  * brand-new SQLite database, so scenario 1 legitimately hits the first-run
- * setup screen. All eleven scenarios share ONE browser page/session and run in
+ * setup screen. All scenarios share ONE browser page/session and run in
  * file order (`describe.serial` + `workers: 1`, config-wide): later
  * scenarios rely on state earlier ones created (the admin account, the
  * item, the viewer account, the audit trail, ...), the same way a person

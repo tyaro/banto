@@ -33,7 +33,7 @@ corresponding ADR exists, be traced from there.
 - When you make a new foundational decision (one with alternatives, tipped in
   one direction), write one ADR at that moment.
 - File name: `NNNN-kebab-title.md` (sequential number). The format is
-  [0000-template.md](0000-template.en.md).
+  [0000-template.en.md](0000-template.en.md).
 - Status is `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`. **Do not
   rewrite a past ADR; when overturning one, supersede it with a new ADR**
   (retaining the history of decisions is the value of ADRs).

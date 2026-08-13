@@ -7,8 +7,7 @@
 
 - ドキュメントは2トラック — **保守者向け = `docs/`**（特に
   [docs/conventions.md](docs/conventions.md) の不変条件）、**アプリ作者向け = [README](README.md)**。
-- 破ってはいけない不変条件（両経路対称 / サービス層非依存 / 依存を足さない /
-  逆依存禁止 / セキュリティ / トークンのみ）は
-  [docs/conventions.md](docs/conventions.md) に全文。
+- 破ってはいけない不変条件は [docs/conventions.md](docs/conventions.md) に全文 —
+  要約に頼らず必ず本文を読むこと（不変条件は増えることがある）。
 - 検証: `pnpm check` / `cargo test` / `pnpm e2e` / `cargo audit`。
   `src-tauri` はこのサンドボックスではコンパイル不可（コードレビューで担保）。
