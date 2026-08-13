@@ -34,8 +34,10 @@
 
 **コードと構成は高水準。** 6不変条件すべてが「実装 + 機械検査 + テスト」の三点で確認でき、
 サービス層純度・両経路対称（rule 8）・attachments の多層防御・認証系の敵対的テストは模範的。
-直すべきは少数の具体点（§4）で、最重要は **scaffold の tree-svelte 欠落**
-（minimal プリセットでもツリーデモが残る）と **Tauri 側監査記録の31箇所手書き反復**。
+直すべきは少数の具体点（§3.2, §5）で、最重要は **scaffold の tree-svelte 欠落**
+（minimal プリセットでもツリーデモが残る）、**Tauri 側監査記録の31箇所手書き反復**、そして
+補完監査で見つかった本監査唯一の不変条件の実違反 **audit_config 系 denied 監査の
+resource 非対称**（§5.3 H-4）。
 
 ## 2. ドキュメント監査
 
@@ -165,7 +167,8 @@ ADR（0001〜0006）・recipes・AGENTS/CLAUDE/README は現位置固定（ADR �
 各班から新規検査7案が出た: ja/en 見出しパリティ / **コード → docs の `spec §N` 参照が
 見出しに解決するか**（今回の宙に浮いた参照63件は全てこれで CI 捕捉できた）/ toComparable
 鏡像一致 / migration ファイル名パリティ / §3 依存 denylist / raw-colors の app 層拡大 /
-raw-jp の .ts 拡大。ただし maintainability-review-2026-07 §4.1 の「機械検査打ち止め3条件」
+raw-jp の .ts 拡大。補完監査（§5）から **CSP 2定義のディレクティブ単位一致検査**と
+**denied の resource タグ照合（rule 8 拡張）**の2案が加わり計9案。ただし maintainability-review-2026-07 §4.1 の「機械検査打ち止め3条件」
 （CR-3〜5 を意図的に不採用とした判断）と正面衝突しうるため、**先に打ち止め条件を ADR 化し、
 その基準で7案を選別してから実装する**（reviews 班提案の採用）。
 
@@ -258,12 +261,18 @@ eslint warn がノーゲート / Playwright ブラウザキャッシュなし / 
 
 1. **PR-1（方針 + 破れの修復）**: Phase 0 裁定を本書に追記 → Phase 1 実施。
 2. **PR-2（追随更新 + アーカイブ）**: Phase 2 一式（機械的変更のみ、ja/en 同一コミット）。
+   §5 由来の文書分も含める: conventions §3 表の civil_from_days 3箇所化・CSP 項の追記、
+   e2e/visual/README の空コミット手順、template-scope §7 ⑤ の恒久 deferral 注記、
+   docs/assets スクリーンショット4枚の再撮。
 3. **PR-3（scaffold / CI 健全化）**: H-1 + H-2（tree remover、paths 拡大、カンマ修正、--strict）。
-4. **PR-4（Rust 保守性）**: M-1〜M-4（監査ヘルパー2件 + BadRequest + 形状テスト）。
-   着手前に §5 の両経路 detail 実測を確認。
-5. **PR-5（テスト增強）**: H-3（Postgres list_query）+ M-5 + M-8。
-6. **PR-6（構造改善）**: Phase 3（README レシピ切り出し、レシピ増補、add-role、spec 決着追記）。
-7. **PR-7（機械検査拡張）**: 打ち止め条件の ADR 化 → Phase 4 の7案選別 → 採択分の実装。
+4. **PR-4（監査対称 + Rust 保守性）**: **先に §5.3 の H-4 / M-15 / M-16 の canonical 形状を
+   決着**させ、その上で M-1〜M-4（監査ヘルパー2件 + BadRequest + 形状テスト）。M-17 の方針も
+   ここで明文化。
+5. **PR-5（テスト増強）**: H-3（Postgres list_query）+ M-5 + M-8 + M-12（PG import）+
+   M-14（import body limit + 境界テスト）。
+6. **PR-6（構造改善）**: Phase 3（README レシピ切り出し、レシピ増補、add-role、spec 決着追記）
+   + M-13（api_router の Services 構造体化）。
+7. **PR-7（機械検査拡張）**: 打ち止め条件の ADR 化 → Phase 4 の9案選別 → 採択分の実装。
 
 各 PR は独立レビュー可能で、1〜2 は文書のみ、3〜5 はコード、6〜7 は判断を伴う。
 検証はいずれも `pnpm check` / `pnpm verify:architecture` / `cargo test` / `pnpm e2e`
@@ -271,10 +280,68 @@ eslint warn がノーゲート / Playwright ブラウザキャッシュなし / 
 
 ## 5. 補完監査（批評班が特定した空白の充足）
 
-批評班が13班の担当割りの空白として特定した3領域（apps/admin-template/core クレート
-約5,000行・deploy-demo.yml と Tauri CSP 設定・両経路の監査 detail 同一性の実測）は
-追加班で監査した。所見は以下のとおり。
+批評班が13班の担当割りの空白として特定した3領域を追加3班で監査した。結果、
+**本監査全体で唯一の「不変条件の実違反」が両経路監査の実測比較から見つかった**（§5.3）。
 
-状態: **補完監査 実施中**。3班の所見が揃い次第、本節に追記する（本書の他節の結論は
-補完監査の結果に依存しない — 依存する唯一の箇所は M-1 の「着手前に detail 一致を確認」で、
-その確認自体が本補完監査である）。
+### 5.1 apps/admin-template/core クレート（約5,000行 — 担当割りの谷間）
+
+状態は良好（high なし）。`cargo test -p admin-template-core` 85 passed を実測。
+監査前提の修正2点: CSV のテキスト処理は core に存在しない（解析/生成はフロント側で、
+Rust 側は JSON 化済み行の一括適用のみ）。rest/attachments.rs は「自前 multipart」ではなく
+**multipart 回避設計**（raw bytes + クエリメタデータ。境界パースという攻撃面が最初から無い —
+欠陥ではなく強み）。items.rs（1,171行）は分割不要・現状維持が正しい（利用者が丸ごと
+書き換える対象として1ファイル凝集は設計どおり）。
+
+指摘（§3.2 の続番）:
+
+| # | 指摘 | 対処 |
+| --- | --- | --- |
+| M-12 | import_apply_postgres（SQLite 版の手書き複製、items.rs:608-672）が**どのテスト・CI からも一度も実行されない** | pg_smoke.rs に import の round trip + ロールバック系を各1本（PG ジョブは既存） |
+| M-13 | api_router の10位置引数が10箇所（テストヘルパー6本含む）に展開され、scaffold が字面位置依存のテキスト除去を行う。「single call site」コメントは実態と乖離 | Services 構造体に束ねて api_router(services, auth, events, allow_setup) へ。利用者のサービス追加コストと scaffold の頑健性が同時に改善 |
+| M-14 | POST /api/items/import に明示 body limit がなく、仕様上有効な10,000行が axum 既定 2MB に先に当たり 422 でなく 413 で落ち得る（attachments は二段構えを明文化済みで import だけ欠落） | attachments と同型の明示 DefaultBodyLimit + 境界テスト1本 |
+| low | RFC5987（非 ASCII ファイル名）の単体テスト空白 / attachments の resource/resourceId 無検証（脆弱性ではない・孤児行のみ）/ banto-serve が SIGTERM 非対応 + init_db 失敗が生 panic / **civil_from_days が3クレート目に複製されたが conventions §3 の表は2箇所のまま** | conventions §3 表の更新は PR-2 へ。「4箇所目が生えたら banto-core へ」の判断を脚注に残す |
+
+template-scope §7 の宿題⑤（db.rs ランナー移設）は**「やらない」が正しい**と判定
+（sqlx::migrate! はマクロ呼び出し側クレート相対で SQL を埋め込むため、移設は Migrator
+受け渡し API 新設に対して割に合わない）。§7 の注記に恒久 deferral として1行残し閉じる。
+
+### 5.2 Tauri CSP / deploy-demo.yml / docs/assets
+
+- **CSP**: 実体は健全（unsafe-inline 以外は堅く絞られ、capabilities は core:default のみ・
+  plugin ゼロ）。`script-src 'unsafe-inline'` の必要性は実在（app.html の first-paint テーマ
+  スクリプト + adapter-static が生成するハイドレーション起動スクリプトの2系統。撤去には
+  kit.csp hash mode + 両 CSP 定義へのビルド時 hash 注入が必要で「依存を足さない」制約下では
+  コスト過大 → **現状維持 + 明文化が妥当**）。ただし **Tauri 側と LAN 側の2定義の
+  「connect-src 以外一字一句一致」がコメントの手動運用のみ**（medium）— Phase 4 の検査候補に
+  「CSP 2定義のディレクティブ単位一致検査」を追加する（8案目）。conventions のセキュリティ節に
+  CSP の項が無い点も PR-2 で追記。
+- **deploy-demo.yml**: 健全（SHA ピン・BASE_PATH 一点集中・デモ認証の本番隔離はサーバ側
+  トークン検証が独立に効くため構造的に成立）。low のみ: visual-baselines の setup-node だけ
+  古い SHA / permissions のジョブ降格と deploy の timeout / 環境判定プローブが base 非対応
+  （`${location.origin}/api/auth/check` 固定 — Pages では 404 依存で偶然成立）。
+- **docs/assets**: README 掲載のスクリーンショット4枚が **v1.2.0 UI と乖離ほぼ確定**（medium。
+  assets 最終更新 2026-07-27 vs ツリービュー #144・積立棒グラフ #145 が 2026-08-12。ライブデモは
+  最新 UI を配信中のため不一致が外部から見える）。再撮して差し替え。
+  **e2e/visual/README.md に「空コミット儀式」が未文書化**（M-10 の文書側。直近1日で2回実施
+  されたのに口伝のまま）— 手順1段落を追記。
+
+### 5.3 両経路の監査記録の同一性（実測比較 — M-1 の前提確認）
+
+verify-architecture の DUAL_PATH 全19対について AuditEntry 構築コードを対で読み比べた。
+**16対は action / resource / entity_id / detail キー構成まで完全一致**（条件付き detail や
+ok/failed 分岐のロジックレベルまで）。秘密の非記録・denied の「無セッションは記録しない」
+ポリシー・Role 文字列表現も両経路で一貫。その上で食い違い3件 + 記録条件の差2件:
+
+| # | 指摘 | 根拠 |
+| --- | --- | --- |
+| **H-4** | **audit_config_get/apply の denied 監査が Tauri=resource "settings" / REST=resource "audit_log" で非対称（不変条件1違反の実物）**。REST 内でも成功時は "settings" で denied と食い違う | lib.rs:1313,1328 vs routes/audit.rs:221-229（成功時 188-190） |
+| M-15 | backups_stage_restore の entity_id が REST=Some(fileName) / Tauri=None。REST 内でも from-upload と from-existing で不揃い | backups.rs:115-124 vs lib.rs:1450-1462 |
+| M-16 | denied の detail が REST={method,path} / Tauri=None で系統的に非対称（Tauri 側はどの操作の拒否か事後判別不能） | routes/mod.rs:167-182 vs lib.rs:197-211 |
+| M-17 | REST のロックアウト中 login 試行（429）は login_failed が記録されず監査証跡から消える（Tauri は全失敗を記録。しかも verifier の doc は「every attempt を記録」と主張し実態と不一致） | auth.rs:432-438 / routes/audit.rs:5-7 |
+| low | REST は token 無し logout でも actor NULL の ok 行を書く（Tauri は直前セッションがある時のみ） | auth.rs:835-840 / lib.rs:501-517 |
+
+**帰結: M-1（監査ヘルパー導入）はこの3件（H-4 / M-15 / M-16）の canonical 形状を決めてから
+着手する**。ヘルパーは現状の形状を規約として固定化するため、先にドリフトを決着させないと
+非対称が恒久化する。M-17 は方針（記録しない=自己 DoS 防止 or "login_throttled" を1行記録）を
+決めて doc と conventions §1 に明文化。denied の resource タグ照合は rule 8 への追加候補
+（Phase 4 の9案目）。
