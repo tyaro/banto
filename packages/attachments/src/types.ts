@@ -30,7 +30,7 @@ export interface AttachmentMeta {
  * plain static URL) because every real transport must authenticate the byte
  * fetch itself (see `attachmentsAdmin.ts`'s module doc comment) - the panel
  * owns calling `URL.revokeObjectURL()` once an object URL is no longer
- * displayed/needed (spec §3.7: "呼び出し側が revoke を所有").
+ * displayed/needed (attachments-plan §3.7: "呼び出し側が revoke を所有").
  */
 export interface AttachmentsClient {
 	list(resource: string, resourceId: string): Promise<AttachmentMeta[]>;

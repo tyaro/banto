@@ -10,7 +10,7 @@
 		onInput: (value: string | number) => void;
 		onBlur?: () => void;
 		/**
-		 * i18n layer 1 (docs/i18n-plan.md §3.2): package-level default for the
+		 * i18n layer 1 (docs/conventions.md §13): package-level default for the
 		 * placeholder option, used when `def.placeholder` isn't set. Defaults
 		 * reproduce today's Japanese output.
 		 */

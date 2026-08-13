@@ -12,7 +12,7 @@
  * This is the "アプリ側（コピーして書き換える対象）" layer (spec §3.1
  * table): `@banto/attachments`'s `AttachmentsPanel` (unit C) receives an
  * `AttachmentsClient` built from the exports below via props - the package
- * itself never imports this file (spec §3.7: "アプリ固有 import なし").
+ * itself never imports this file (attachments-plan §3.7: "アプリ固有 import なし").
  *
  * ## Binary transfer
  *

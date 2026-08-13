@@ -1,13 +1,13 @@
 /**
- * i18n locale runtime for the admin-template app (docs/i18n-plan.md §4.1 ② /
- * §6.1, ADR-0005). **App layer ONLY** — the `@banto/*` packages never import
+ * i18n locale runtime for the admin-template app (ADR-0005). **App layer
+ * ONLY** — the `@banto/*` packages never import
  * this (conventions §5); they receive already-resolved strings via `messages`
  * props (i18n layer ①). This module bridges Paraglide's compiled runtime
  * (`$lib/paraglide`) to Banto's existing provider/settings plumbing so locale
  * resolution + persistence stay in the provider/setup layer (conventions §10),
  * exactly like theme/vibrancy in settings.svelte.ts.
  *
- * base/source locale is English (the message source of truth, i18n-plan §6.1),
+ * base/source locale is English (the message source of truth, conventions §13),
  * but the effective **default display locale is Japanese** so single-language
  * installs see zero visual change. That split is implemented by a custom
  * Paraglide client strategy `"custom-banto"` (registered below; compiled into
@@ -22,7 +22,7 @@
  * server/prerender (the empty SPA shell), keeping `en` as the compile-time
  * base without ever showing English by default in a real tab. adapter-static
  * has no server runtime, so locale is resolved entirely client-side — no URL
- * prefixes, cookies parsed on a server, or SvelteKit hooks (i18n-plan §3.3).
+ * prefixes, cookies parsed on a server, or SvelteKit hooks (ADR-0005).
  *
  * Persistence rides on the mode-matched `UiSettingsProvider` (M12,
  * `getUiSettings()`) like theme: localStorage is the always-written FOUC cache
@@ -36,7 +36,7 @@ import { getUiSettings } from './setup';
 /**
  * Effective default display locale when nothing is stored. Japanese keeps the
  * current UI byte-identical for single-language installs (zero visual
- * regression), even though the base/source locale is English (i18n-plan §6.1).
+ * regression), even though the base/source locale is English (conventions §13).
  */
 const DEFAULT_LOCALE: Locale = 'ja';
 

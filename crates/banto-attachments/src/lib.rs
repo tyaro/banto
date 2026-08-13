@@ -695,7 +695,7 @@ impl AttachmentsService {
         Ok(meta)
     }
 
-    /// Delete every attachment belonging to one record (spec §3.8: items
+    /// Delete every attachment belonging to one record (attachments-plan §3.8: items
     /// deletion cleans up its attachments). Returns the number of rows
     /// deleted. Built on [`AttachmentsService::delete`] (same row-then-file
     /// ordering per attachment, one at a time) rather than a bulk `DELETE`

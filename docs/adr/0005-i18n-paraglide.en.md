@@ -116,3 +116,15 @@ judgment and the comparison of alternatives.
   breaking change makes maintaining the compile wiring heavy, or if the
   requirements no longer fit Paraglide's design (e.g. "runtime dictionary
   loading"), supersede this ADR and decide anew (ADRs are not rewritten).
+
+---
+
+Addendum (2026-08-13): `docs/i18n-plan.md`, referenced by the body and the
+"related" list, does not exist in the repository (lost before the history
+truncation; see
+[maintenance-review-2026-08.md §2.2](../maintenance-review-2026-08.md)).
+The current primary sources are
+[conventions.md §13](../conventions.en.md#i18n-messages) (layer-① injection /
+message-key rule) and this ADR (the layer decision). The old references in code
+were rewritten to conventions §13 / ADR-0005 on the same day. The body itself
+stays unchanged per the ADR immutability rule.

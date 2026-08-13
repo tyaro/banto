@@ -330,7 +330,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// 5. Re-upload one attachment and deliberately leave it in place: the
 		// cleanup step below deletes the item itself while it still owns an
 		// attachment, exercising the demo wiring's orphan cleanup
-		// (`delete_for_record("items", id)`, spec §3.8) rather than only ever
+		// (`delete_for_record("items", id)`, attachments-plan §3.8) rather than only ever
 		// deleting items with zero attachments.
 		await uploadInput.setInputFiles({
 			name: PNG_FILE_NAME_2,
@@ -416,7 +416,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(categoryRows).toHaveCount(12);
 	});
 
-	// PR-B3 (i18n layer ②, docs/i18n-plan.md §6.1 / ADR-0005): the settings
+	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's
 	// localStorage and reloads every screen, so switching to English here can't

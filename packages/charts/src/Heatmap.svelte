@@ -2,7 +2,7 @@
 	/**
 	 * Heatmap (spec §6.1 v2 chart types): two categorical axes (x, y), one
 	 * numeric value per (x, y) cell, encoded as a SEQUENTIAL (single-hue,
-	 * light -> dark) color ramp (design rule 5) - never the categorical
+	 * light -> dark) color ramp (spec §6.4 rule 9) - never the categorical
 	 * `seriesColorVar` slots, since a cell's color here is a magnitude, not an
 	 * entity. Category order on both axes is FIRST-APPEARANCE order in `data`
 	 * (see `core/heatmap.ts`); callers wanting a specific order (e.g. a fixed
@@ -27,7 +27,7 @@
 		height?: number;
 		formatValue?: (n: number) => string;
 		ramp?: string[];
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
 	}
 

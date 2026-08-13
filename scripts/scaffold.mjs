@@ -439,7 +439,7 @@ function removeAttachments() {
 	cutRegion(
 		REST_ITEMS,
 		'rest/items: items_delete の delete_for_record 除去',
-		`    // M20 unit C demo wiring (spec §3.8): sweep up any attachments left`,
+		`    // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left`,
 		`        (attachments_removed > 0).then(|| json!({ "attachmentsRemoved": attachments_removed }));`
 	);
 	swapText(

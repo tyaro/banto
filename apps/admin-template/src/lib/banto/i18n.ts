@@ -1,5 +1,5 @@
 /**
- * i18n layer ② bridge (docs/i18n-plan.md §3.2, ADR-0005, PR-B2): builds the
+ * i18n layer ② bridge (docs/conventions.md §13, ADR-0005, PR-B2): builds the
  * `messages` override bundles that the `@banto/*` packages accept (i18n layer
  * ①), sourcing every string from Paraglide (`$lib/paraglide/messages`).
  *

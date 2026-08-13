@@ -1,5 +1,5 @@
 /**
- * Categorical series color slots (spec §6 design rules, rule 1):
+ * Categorical series color slots (spec §6.4 rule 1):
  * series take CSS var slots 1..8 IN FIXED ORDER by series index - never
  * cycle, never reassign when a series is removed (color follows the
  * entity, i.e. its position in the caller's `series`/`data` array).
@@ -16,7 +16,7 @@ export function seriesColorVar(index: number): string {
 
 /**
  * Sequential (single-hue, light -> dark) ramp for magnitude encodings (spec
- * §6.1 design rule 5: a heatmap cell's color is a MAGNITUDE, not a category,
+ * §6.4 rule 9: a heatmap cell's color is a MAGNITUDE, not a category,
  * so it must never borrow from the categorical `seriesColorVar` slots - one
  * hue only, varying in lightness). Validated blue ramp, light to dark.
  */

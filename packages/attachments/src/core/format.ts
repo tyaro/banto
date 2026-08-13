@@ -1,5 +1,5 @@
 /**
- * Human-readable file size formatting (spec §3.7: "サイズ表示は KB/MB の
+ * Human-readable file size formatting (attachments-plan §3.7: "サイズ表示は KB/MB の
  * 人間可読形式"). Pure function, unit-tested directly (no component render
  * needed) per the package's existing testing convention (charts/forms keep
  * logic in `core/*.ts` for exactly this reason).

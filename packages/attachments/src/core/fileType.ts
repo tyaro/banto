@@ -1,5 +1,5 @@
 /**
- * Short type badge for non-thumbnail file rows (spec §3.7: "非画像は
+ * Short type badge for non-thumbnail file rows (attachments-plan §3.7: "非画像は
  * ファイル行（種別アイコン + fileName + サイズ表示）"). No icon library
  * dependency is added for this (forms/charts/grid-svelte don't carry one
  * either) - a short uppercase extension badge fills the same "what kind of

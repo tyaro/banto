@@ -3,7 +3,7 @@
 	 * Gauge / KPI dial (spec §6.1 v2 chart types). A single value on a 270deg
 	 * arc, not a data series - no legend, no tooltip (a gauge is a stat-like
 	 * display, not something you hover to read individual points). Threshold
-	 * colors use the THEME status vars (design rule 6: never a chart series
+	 * colors use the THEME status vars (spec §6.4 rule 10: never a chart series
 	 * slot) - crossing `warning` or `danger` recolors the value arc, with
 	 * danger taking precedence when both are crossed.
 	 */
@@ -20,7 +20,7 @@
 		formatValue?: (n: number) => string;
 		thresholds?: GaugeThresholds;
 		height?: number;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
 	}
 

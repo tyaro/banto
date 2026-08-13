@@ -6,7 +6,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [
 		tailwindcss(),
-		// i18n compile (ADR-0005, docs/i18n-plan.md §4.1). Runs on dev/build and
+		// i18n compile (ADR-0005). Runs on dev/build and
 		// (re)generates src/lib/paraglide/ from project.inlang + messages/*.json.
 		// `strategy` MUST stay in sync with the `paraglide:compile` script in
 		// package.json (used by `pnpm check`, which never runs Vite). `custom-banto`

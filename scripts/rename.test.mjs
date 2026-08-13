@@ -1,5 +1,5 @@
 /**
- * `scripts/rename.mjs` の統合テスト（AD-5 / plan-review-integration §6）。
+ * `scripts/rename.mjs` の統合テスト（AD-5 / maintainability-review-2026-07.md §7 追補）。
  * 第三者オンボーディングの第一歩＝「コピー → リネーム」が壊れていないことを
  * 機械で保証する。依存を足さない（Node 標準の `node:test` のみ、conventions §3）。
  *

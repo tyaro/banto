@@ -1,5 +1,5 @@
 /**
- * i18n layer 1 (docs/i18n-plan.md §3.2): package-level overridable UI string
+ * i18n layer 1 (docs/conventions.md §13): package-level overridable UI string
  * bundle for @banto/report's `ReportView.svelte`. Mirrors
  * @banto/grid-svelte's `messages.ts` convention - every message is a function
  * (parameterized ones take the relevant arguments, static ones take none) so

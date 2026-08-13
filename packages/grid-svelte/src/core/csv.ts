@@ -201,7 +201,7 @@ export interface CsvRowResult<TRow> {
 }
 
 /**
- * i18n layer 1 (docs/i18n-plan.md §3.2): overridable message(s) for
+ * i18n layer 1 (docs/conventions.md §13): overridable message(s) for
  * `convertCsvRow`. Mirrors @banto/forms' `validate.ts` convention (message as
  * a function, default reproduces today's Japanese literal verbatim).
  */

@@ -26,7 +26,7 @@ export async function fetchAttachmentList(
 	}
 }
 
-/** Splits a list into thumbnail-eligible (images) vs. plain file rows (spec §3.7). */
+/** Splits a list into thumbnail-eligible (images) vs. plain file rows (attachments-plan §3.7). */
 export function partitionByThumbnail(items: AttachmentMeta[]): {
 	withThumbnail: AttachmentMeta[];
 	withoutThumbnail: AttachmentMeta[];

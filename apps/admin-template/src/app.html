@@ -28,7 +28,7 @@
 			// flash. Storage keys must match src/lib/settings.svelte.ts and
 			// src/lib/banto/locale.ts. Locale defaults to 'ja' (the effective
 			// default display locale; base/source locale is 'en') so a fresh tab
-			// renders exactly as before (ADR-0005 / i18n-plan §6.1).
+			// renders exactly as before (ADR-0005).
 			(function () {
 				try {
 					var mode = localStorage.getItem('banto.theme') || 'system';

@@ -5,7 +5,7 @@
 	 * mode here - that's `BarChart`'s job); lines are drawn OVER the bars,
 	 * sampled at the same band centers as the bars' x positions.
 	 *
-	 * ONE Y AXIS ONLY (spec §6.1 design rule 1): bars and lines share a single
+	 * ONE Y AXIS ONLY (spec §6.4 rule 2): bars and lines share a single
 	 * linear y-scale, always zero-baselined because bars are present (same
 	 * rule `BarChart` follows). This means every bar series and every line
 	 * series plotted here MUST share one unit/magnitude - if a line's values
@@ -63,7 +63,7 @@
 		bands?: ThresholdBand[];
 		/** Vertical event markers at category indices (M13 注釈). */
 		markers?: EventMarker[];
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
 	}
 
@@ -181,7 +181,7 @@
 			)}
 
 			<!-- Threshold bands (drawn first, under the bars/lines). Bands read
-			     against the single shared value scale (rule 1). -->
+			     against the single shared value scale (spec §6.4 rule 2). -->
 			{#each bands as band, bi (bi)}
 				{@const yTop = valueScale(Math.max(band.from, band.to))}
 				{@const yBottom = valueScale(Math.min(band.from, band.to))}
@@ -217,7 +217,7 @@
 				{/if}
 			{/each}
 
-			<!-- Gridlines + y ticks (shared axis, rule 1) -->
+			<!-- Gridlines + y ticks (shared axis, spec §6.4 rule 2) -->
 			{#each valueTicks as tick (tick)}
 				<line
 					x1={m.innerLeft}

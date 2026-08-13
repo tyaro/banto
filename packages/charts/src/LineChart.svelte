@@ -84,7 +84,7 @@
 		markers?: EventMarker[];
 		/** Formatter for the RIGHT y-axis tick/tooltip values; defaults to `formatY`. */
 		formatYRight?: (n: number) => string;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
 	}
 
