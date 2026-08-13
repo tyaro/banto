@@ -37,7 +37,7 @@ export interface GaugeThresholds {
 }
 
 /**
- * Value-arc color: a THEME status var (spec §6.1 design rule 6 - never a
+ * Value-arc color: a THEME status var (spec §6.4 rule 10 - never a
  * chart series slot), chosen by which threshold `value` has reached or
  * crossed ("crossed above", i.e. `value >= threshold`). Danger wins when
  * both thresholds are crossed (checked first); omitted thresholds never

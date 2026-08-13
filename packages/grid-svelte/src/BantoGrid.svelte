@@ -74,7 +74,7 @@
 		/** Server mode: fires when the virtualized window's [start, end) actually changes (not on every scroll tick). */
 		onVisibleRangeChange?: (range: { start: number; end: number }) => void;
 		/**
-		 * i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's
+		 * i18n layer 1 (docs/conventions.md §13): overrides for this component's
 		 * visible strings, threaded down to HeaderCell and (through it) to
 		 * FilterPopover. Defaults reproduce today's Japanese output.
 		 */

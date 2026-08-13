@@ -9,7 +9,7 @@
 	let { children } = $props();
 
 	// Start theme handling (applies persisted mode, watches OS changes) and sync
-	// <html lang> to the persisted locale (i18n-plan §3.3; the strategy itself is
+	// <html lang> to the persisted locale (ADR-0005; the strategy itself is
 	// registered at locale.ts import time, above, before any message renders).
 	$effect(() => {
 		settings.init();

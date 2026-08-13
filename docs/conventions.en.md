@@ -293,10 +293,26 @@ are also expressed in the provider layer.
 
 ## 12. Doc comments reference spec sections
 
-The top of a module and individual design decisions cite `spec §` / `spec M` /
-`docs/*-plan.md §` (currently 28 files on the Rust side and 147 on the TS side).
-Maintain the culture of tying the "why" of a design to the spec. New modules
-also cite the relevant spec section at the top.
+The top of a module and individual design decisions cite spec sections,
+maintaining the culture of tying the "why" of a design to the spec. New modules
+also cite the relevant spec section at the top (measure the number of
+referencing files with `rg -l 'spec §|spec M'`; as of 2026-08 roughly 40 Rust /
+159 TS+Svelte files).
+
+**Reference grammar** (prefix → target). Before consolidating, moving, or
+renaming a document, count inbound references with `rg` in **both the path
+form (`docs/xxx.md`) and the label/section form (`spec §N` etc.)** — measuring
+only one form has produced real misjudgements (maintenance-review-2026-08 §2.1):
+
+| Notation | Target |
+| --- | --- |
+| `spec §N` | §N of `ui-framework-spec.md` (**this notation is reserved for ui-framework-spec**) |
+| `roadmap MN` / `spec MN` | the MN section of `roadmap.md` (M10+ live in roadmap; spec §15 only holds the initial draft M0–M9; prefer `roadmap MN` for new code) |
+| `<plan> §N` | §N of `docs/<plan>.md` (e.g. `attachments-plan §3.7`) |
+| `conventions §N` | §N of this document (section numbers are immutable) |
+| `M-review YYYY-MM §N` | §N of `feature-review-YYYY-MM.md` |
+| `CR-N` / `AD-N` | `maintainability-review-2026-07.md` (§4 and the §7 addendum) |
+| `ADR-000N` | `adr/000N-*.md` |
 
 ## 13. UI text is held through keys (Paraglide) [machine-checked: raw Japanese literals in the app layer] {#i18n-messages}
 

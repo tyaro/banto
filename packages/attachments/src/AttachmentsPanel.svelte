@@ -27,7 +27,7 @@
 		resourceId: string;
 		canWrite: boolean;
 		title?: string;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
 		messages?: Partial<AttachmentsMessages>;
 	}
 
@@ -48,7 +48,7 @@
 	let items = $state<AttachmentMeta[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	/** Object URLs for `hasThumbnail` items that resolved successfully - keyed by attachment id. Caller (this component) owns revoking every entry (spec §3.7). */
+	/** Object URLs for `hasThumbnail` items that resolved successfully - keyed by attachment id. Caller (this component) owns revoking every entry (attachments-plan §3.7). */
 	let thumbnails = $state<Map<number, string>>(new Map());
 
 	let uploading = $state(false);
@@ -126,7 +126,7 @@
 	}
 
 	$effect(() => {
-		// Re-run on mount and whenever resource/resourceId change (spec §3.7).
+		// Re-run on mount and whenever resource/resourceId change (attachments-plan §3.7).
 		// These two reads are the effect's ONLY intended dependencies.
 		const targetResource = resource;
 		const targetResourceId = resourceId;

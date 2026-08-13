@@ -75,7 +75,7 @@ async fn items_delete(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     state.items.delete(id).await?;
-    // M20 unit C demo wiring (spec §3.8): sweep up any attachments left
+    // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left
     // pointing at the now-deleted record. Best-effort - a storage hiccup
     // here must not turn an already-successful item delete into a client
     // error (the item is gone either way; a stray attachment row is a

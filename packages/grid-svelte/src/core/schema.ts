@@ -58,7 +58,7 @@ export interface ColumnsFromSchemaOptions<TRow> {
 	 */
 	editable?: boolean;
 	/**
-	 * i18n layer 1 (docs/i18n-plan.md §3.2): validator message overrides,
+	 * i18n layer 1 (docs/conventions.md §13): validator message overrides,
 	 * applied to every derived column's validator. Defaults reproduce
 	 * today's Japanese messages verbatim.
 	 */
@@ -76,7 +76,7 @@ function isEmpty(value: unknown): boolean {
 }
 
 /**
- * i18n layer 1 (docs/i18n-plan.md §3.2): overridable validator messages,
+ * i18n layer 1 (docs/conventions.md §13): overridable validator messages,
  * structurally mirroring @banto/forms' `ValidationMessages` (same keys/
  * signatures, `SchemaField` in place of `FieldDef`) - deliberately NOT
  * imported from forms (no `@banto/*` cross-package imports, conventions.md

@@ -40,7 +40,7 @@
 		 * reactivity already drives the client-side filter/sort pipeline).
 		 */
 		onSortOrFilterChange?: () => void;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's (and FilterPopover's) visible strings. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's (and FilterPopover's) visible strings. Defaults reproduce today's Japanese output. */
 		messages?: Partial<GridMessages>;
 	}
 

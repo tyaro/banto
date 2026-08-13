@@ -1,5 +1,5 @@
 /**
- * i18n layer 1 (docs/i18n-plan.md §3.2): package-level overridable UI string
+ * i18n layer 1 (docs/conventions.md §13): package-level overridable UI string
  * bundle for @banto/grid-svelte's Svelte components (FilterPopover,
  * HeaderCell, BantoGrid). Mirrors @banto/forms' `validate.ts` convention -
  * every message is a function (parameterized ones take the relevant

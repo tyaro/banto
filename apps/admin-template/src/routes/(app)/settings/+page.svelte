@@ -100,7 +100,7 @@
 	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
 	const densityIcons: Record<ThemeDensity, Component> = { standard: Rows3, compact: Rows4 };
 
-	// --- i18n layer ② (i18n-plan §6.1, ADR-0005): the language picker ---------
+	// --- i18n layer ② (ADR-0005): the language picker ---------
 	// Locale labels are shown in each language's OWN native name (日本語 /
 	// English) rather than translated - a picker reads better when each option
 	// names itself, so these two keys hold the same value in en.json and ja.json.

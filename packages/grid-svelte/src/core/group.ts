@@ -93,7 +93,7 @@ export function buildGroupedView<TRow>(
 	groupBy: string,
 	collapsed: (key: string) => boolean,
 	/**
-	 * i18n layer 1 (docs/i18n-plan.md §3.2): overridable label for the
+	 * i18n layer 1 (docs/conventions.md §13): overridable label for the
 	 * "null/undefined group value" bucket. Defaults to the current Japanese
 	 * literal verbatim.
 	 */

@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * バージョン整合検査（CR-7。maintainability-review-2026-07.md /
- * plan-review-integration-2026-07.md §5.2）。依存を足さない文化（conventions §3）
- * に従い Node 標準ライブラリのみ。
+ * バージョン整合検査（CR-7。maintainability-review-2026-07.md §7 追補）。
+ * 依存を足さない文化（conventions §3）に従い Node 標準ライブラリのみ。
  *
  * 背景: `v0.1.1` タグが存在する一方でマニフェストは `0.1.0` のまま、というドリフトが
  * 観測された（ChatGPT 計画レビュー #5）。これを機械で防ぐ。

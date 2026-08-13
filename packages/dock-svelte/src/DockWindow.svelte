@@ -37,7 +37,7 @@
 		panel: Snippet<[PanelContent]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
 		messages?: Partial<DockMessages>;
 	}
 

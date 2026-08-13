@@ -33,7 +33,7 @@
 		 * output - charts that don't need it simply omit the binding.
 		 */
 		width?: number;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides for this component's empty-state text. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's empty-state text. Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
 	}
 

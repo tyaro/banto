@@ -248,9 +248,23 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 
 ## 12. doc コメントは仕様節を参照する
 
-モジュール冒頭と個別の設計判断に `spec §` / `spec M` / `docs/*-plan.md §` を引く
-（現状 Rust 側で 28 ファイル、TS 側で 147 ファイル）。設計の「なぜ」を仕様に
-紐付ける文化を維持する。新モジュールも冒頭で該当仕様節を引く。
+モジュール冒頭と個別の設計判断で仕様節を引き、設計の「なぜ」を仕様に紐付ける
+文化を維持する。新モジュールも冒頭で該当仕様節を引く（参照ファイル数は
+`rg -l 'spec §|spec M'` で測る。2026-08 時点で Rust 約40 / TS+Svelte 約159）。
+
+**参照の文法**（接頭辞と参照先の対応）。文書を統合・移動・改名する前に、被参照を
+**パス形式（`docs/xxx.md`）とラベル/節番号形式（`spec §N` 等）の両方**で `rg`
+して数えること（片形式のみの計測は誤判定の実績あり、maintenance-review-2026-08 §2.1）:
+
+| 表記 | 参照先 |
+| --- | --- |
+| `spec §N` | `ui-framework-spec.md` の §N（**この表記は ui-framework-spec 限定**） |
+| `roadmap MN` / `spec MN` | `roadmap.md` の MN 節（M10 以降の実体は roadmap。spec §15 は初期案 M0〜M9 のみ。新規は `roadmap MN` 表記を推奨） |
+| `<plan名> §N` | `docs/<plan名>.md` の §N（例 `attachments-plan §3.7`） |
+| `conventions §N` | 本書の §N（節番号は不変に保つ） |
+| `M-review YYYY-MM §N` | `feature-review-YYYY-MM.md` の §N |
+| `CR-N` / `AD-N` | `maintainability-review-2026-07.md`（§4 と §7 追補） |
+| `ADR-000N` | `adr/000N-*.md` |
 
 ## 13. UI 文言はキー経由（Paraglide）で持つ [機械検査済み: app 層の生日本語リテラル] {#i18n-messages}
 

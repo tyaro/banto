@@ -23,7 +23,7 @@
 		formatY?: (v: unknown) => string;
 		/** Per-side overrides merged over the defaults below. */
 		margins?: Partial<ChartMargin>;
-		/** i18n layer 1 (docs/i18n-plan.md §3.2): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
+		/** i18n layer 1 (docs/conventions.md §13): overrides forwarded to `ChartContainer`'s empty-state text. Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
 	}
 
