@@ -51,12 +51,11 @@ track your task belongs to.**
   [docs/recipes/add-resource.en.md](docs/recipes/add-resource.en.md) (the
   official checklist-form procedure).
 - **Drop the optional assets as a batch (dock/charts/glass/command
-  palette/attachments/reporting)** → `pnpm scaffold --preset
+  palette/attachments/reporting/tree)** → `pnpm scaffold --preset
 minimal|standard|full` (`--interactive` / `--dry-run` available; the manual
   steps live under "オプション資産の削除" in the Japanese README —
-  `pnpm scaffold --interactive` is the equivalent for English readers). The
-  tree view (tree-svelte) is currently outside scaffold's scope and is removed
-  manually only (steps in the same README section).
+  `pnpm scaffold --interactive` is the equivalent for English readers).
+  scan-wedge is recipe-only / unwired, so scaffold never touches it.
 - **Add / change a feature** → first read the invariants in
   [docs/conventions.en.md](docs/conventions.en.md), then decide whether to do
   it with the [template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題)

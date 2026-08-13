@@ -62,6 +62,7 @@ roadmap §5 / industrial-plan.md は、SCADA 系ドメイン機能（MQTT/タグ
 | Glass テーマ + Windows vibrancy（M12） | ✗ | ✓ | ✓ |
 | `@banto/attachments` + items 添付デモ（M20） | ✗ | ✗ | ✓ |
 | `@banto/report` + 日報デモ（M19） | ✗ | ✗ | ✓ |
+| `@banto/tree-svelte` + `/tree` デモ（M-review 2026-08、2026-08-13 追加） | ✗ | ✗ | ✓ |
 | `@banto/scan-wedge` レシピ配線（M21） | ✗ | ✗ | ✓※ |
 
 設定の既定値（全プリセット共通の安全既定。プリセットでは変えない）:
