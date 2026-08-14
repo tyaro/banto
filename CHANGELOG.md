@@ -22,6 +22,24 @@
 
 ## [Unreleased]
 
+### ドキュメント
+
+- **README の利用パッケージ別レシピ3節を `docs/recipes/` へ切り出し**
+  （maintenance-review PR-6）。scan-wedge / 通知（トースト）/ tree-svelte の各節
+  （計約240行）を `docs/recipes/{scan-wedge,notifications,tree-svelte}.md` へ移し、
+  README には紹介 + リンクのスタブを残した（README は「コピー→リネーム→差し替え→
+  削除→配信」の背骨に集中。節アンカーへの被参照ゼロを実測して切り出し）。
+  欠落していた `packages/tree-svelte/README.md` を新設（他9パッケージと同形式）。
+- **`docs/recipes/add-role.md`（ja/en）を新設**（feature-review-2026-08 §2.6 の宿題）。
+  RBAC ロール追加のチェックリスト（Role enum → DB CHECK → 両経路の認可床 → rule 8 →
+  フロント選択 UI/i18n → 対称テスト）。add-resource.md の姉妹編。AGENTS（ja/en）の
+  「タスク別の入り口」に add-role とレシピ群を索引追加。
+- **ui-framework-spec の §14/§15 に決着を追記**（maintenance-review PR-6）。§14 の
+  解決済み未決2件（ドッキング初期スコープ→M7/M8 段階リリース、REST エラー
+  フォーマット→ErrorBody + response.rs のステータス写像。バージョニングは未導入と明記）
+  に [x] と決着先を記入。§15 に M0〜M9 完了印と「M10 以降は roadmap」の誘導。
+  ヘッダを v0.7 → v0.8。
+
 ### Fixed
 
 - **派生アプリの `pnpm dev` が `.svelte.ts` で 500 になる問題を修正**（issue #150 /
