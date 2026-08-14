@@ -450,8 +450,8 @@ function removeAttachments() {
 	swapText(
 		REST_ITEMS,
 		'rest/items: items_delete の detail を None に',
-		`        &id.to_string(),\n        detail,\n    )`,
-		`        &id.to_string(),\n        None,\n    )`
+		`        Some(&id.to_string()),\n        detail,\n    )`,
+		`        Some(&id.to_string()),\n        None,\n    )`
 	);
 	//   rest/tests.rs（cargo test 対象。api_router の attachments 引数除去に追随）
 	removeAttachmentsFromRestTests();
