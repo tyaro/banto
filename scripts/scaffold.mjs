@@ -777,6 +777,17 @@ function removeAttachmentsFromLibRs() {
 		'lib.rs: test app_state_with_tempdir の attachments 除去',
 		`            attachments: AttachmentsService::new(pool, dir.path().join("attachments")),\n            attachments_dir: dir.path().join("attachments"),\n`
 	);
+	// test の attachments コマンドテスト（M-5、upload/delete の _body を叩く2本）を
+	// マーカーごと丸ごと除去。attachments_*_body は上の M20 コマンド cutRegion で
+	// 消えるので、テスト側もここで消さないと未定義シンボル参照で cargo test が赤くなる。
+	// マーカーは mod tests の閉じ括弧の手前にあるため、cutRegion（両端含む）で
+	// モジュールの `}` は残る。
+	cutRegion(
+		LIB_RS,
+		'lib.rs: test の M20 attachments コマンドテスト除去',
+		`    // --- M20: attachments command tests -----------------------------------`,
+		`    // --- end M20 attachments command tests ---------------------------------`
+	);
 }
 
 function removeVibrancyFromLibRs() {

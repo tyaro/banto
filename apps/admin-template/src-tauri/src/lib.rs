@@ -316,9 +316,11 @@ async fn items_update(
     Ok(item)
 }
 
-#[tauri::command]
-async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    let actor = require_role(&state, Role::Editor, "items").await?;
+/// Body of [`items_delete`], split out (spec M14 pattern, see
+/// [`items_import_body`]) so its authz + attachment-sweep + audit behavior is
+/// testable with a plain `&AppState` in this crate's own `cargo test`.
+async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(state, Role::Editor, "items").await?;
     state.items.delete(id).await?;
     // M20 unit C demo wiring (spec docs/attachments-plan.md §3.8): sweep up
     // any attachments left pointing at the now-deleted record. Best-effort,
@@ -350,6 +352,11 @@ async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
     )
     .await;
     Ok(())
+}
+
+#[tauri::command]
+async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    items_delete_body(&state, id).await
 }
 
 /// Body of [`items_import`], split out the same way [`change_own_password`]
@@ -606,11 +613,13 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettings, Ban
 /// device" (spec M11), so not gating the one command that re-locks it down
 /// behind a role that mode itself may have suppressed is consistent with
 /// that trust model, not a weakening of it.
-#[tauri::command]
-async fn auth_config_apply(
-    state: State<'_, AppState>,
+/// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch
+/// authz (the actor may be `None`) + audit behavior is testable with a plain
+/// `&AppState`.
+async fn auth_config_apply_body(
+    state: &AppState,
     disabled: bool,
-    disabled_role: String,
+    disabled_role: &str,
 ) -> Result<AuthSettings, BantoError> {
     let currently_disabled = state.settings.auth_config().await?.disabled;
     // Spec M14: the escape hatch means `require_role` may not run at all
@@ -621,14 +630,14 @@ async fn auth_config_apply(
     let actor = if currently_disabled {
         state.auth.lock().expect("auth mutex poisoned").clone()
     } else {
-        Some(require_role(&state, Role::Admin, "settings").await?)
+        Some(require_role(state, Role::Admin, "settings").await?)
     };
 
     // An unrecognized role string falls back to `admin` (same convention as
     // `SettingsService::auth_config`'s own read-time fallback) rather than
     // failing the whole command - a bad value here must never leave the app
     // unable to determine ANY role for the synthetic identity.
-    let role = Role::from_str(&disabled_role).unwrap_or(Role::Admin);
+    let role = Role::from_str(disabled_role).unwrap_or(Role::Admin);
 
     let mut config = state.settings.auth_config().await?;
     config.disabled = disabled;
@@ -650,21 +659,33 @@ async fn auth_config_apply(
     Ok(config)
 }
 
+#[tauri::command]
+async fn auth_config_apply(
+    state: State<'_, AppState>,
+    disabled: bool,
+    disabled_role: String,
+) -> Result<AuthSettings, BantoError> {
+    auth_config_apply_body(&state, disabled, &disabled_role).await
+}
+
 /// Enable desktop autologin for `username` (spec M11): verifies the
 /// credentials against the same `UsersService` a normal login would (so a
 /// caller cannot register autologin for an account/password it does not
 /// actually know), stores the password in the OS keyring (never in the
 /// settings DB - see `keyring_store`), and flips the setting on. `admin`-only,
 /// same floor as every other server/settings-mutating command.
-#[tauri::command]
-async fn autologin_enable(
-    state: State<'_, AppState>,
-    username: String,
-    password: String,
+/// Body of [`autologin_enable`] (spec M14 pattern) so its authz + keyring +
+/// audit behavior is testable with a plain `&AppState` (the test installs an
+/// in-memory keyring so `keyring_store::set_password` does not hit the OS
+/// store on a headless runner).
+async fn autologin_enable_body(
+    state: &AppState,
+    username: &str,
+    password: &str,
 ) -> Result<(), BantoError> {
-    let actor = require_role(&state, Role::Admin, "settings").await?;
+    let actor = require_role(state, Role::Admin, "settings").await?;
 
-    if state.users.verify(&username, &password).await?.is_none() {
+    if state.users.verify(username, password).await?.is_none() {
         return Err(BantoError::Validation {
             field_errors: vec![FieldError {
                 field: "password".to_string(),
@@ -673,11 +694,11 @@ async fn autologin_enable(
         });
     }
 
-    keyring_store::set_password(&username, &password)?;
+    keyring_store::set_password(username, password)?;
 
     let mut config = state.settings.auth_config().await?;
     config.autologin_enabled = true;
-    config.autologin_username = Some(username.clone());
+    config.autologin_username = Some(username.to_string());
     state.settings.set_auth_config(&config).await?;
     // Spec M14: the target `username` (never the password) is fine to
     // record - it identifies WHICH account autologin now applies to, no
@@ -694,13 +715,25 @@ async fn autologin_enable(
     Ok(())
 }
 
+#[tauri::command]
+async fn autologin_enable(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<(), BantoError> {
+    autologin_enable_body(&state, &username, &password).await
+}
+
 /// Disable desktop autologin (spec M11): removes the stored credential from
 /// the OS keyring (best-effort - a keyring delete failure is logged, not
 /// propagated, so the setting is still turned off even if the OS store is,
 /// say, already gone) and clears the setting.
-#[tauri::command]
-async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError> {
-    let actor = require_role(&state, Role::Admin, "settings").await?;
+/// Body of [`autologin_disable`] (spec M14 pattern) so its authz + audit
+/// behavior is testable with a plain `&AppState`. No keyring is needed when
+/// `autologin_username` is unset (the delete is skipped) and is best-effort
+/// regardless.
+async fn autologin_disable_body(state: &AppState) -> Result<(), BantoError> {
+    let actor = require_role(state, Role::Admin, "settings").await?;
 
     let mut config = state.settings.auth_config().await?;
     if let Some(username) = config.autologin_username.take() {
@@ -720,6 +753,11 @@ async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError>
     )
     .await;
     Ok(())
+}
+
+#[tauri::command]
+async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError> {
+    autologin_disable_body(&state).await
 }
 
 /// One LAN access URL plus its QR code, rendered as an inline SVG string
@@ -1578,28 +1616,21 @@ fn required_header_field(
 /// body) - `Request`/`State` are the only two argument types this command
 /// can mix, since both read from the invoke message directly rather than
 /// keying into its JSON payload.
-#[tauri::command]
-async fn attachments_upload(
-    state: State<'_, AppState>,
-    request: tauri::ipc::Request<'_>,
+/// Body of [`attachments_upload`] (spec M14 pattern) so its authz + upload +
+/// audit + event behavior is testable with a plain `&AppState`. The command
+/// adapter extracts the raw request (binary body + the three metadata headers)
+/// - request-shaped parsing that cannot run outside a real invoke - and this
+/// body does everything else. Authz therefore runs AFTER the adapter reads the
+/// request shape; a denied caller is still recorded via [`require_role`], and
+/// the parse is a cheap read of an already-received local IPC message.
+async fn attachments_upload_body(
+    state: &AppState,
+    resource: String,
+    resource_id: String,
+    file_name: String,
+    bytes: Vec<u8>,
 ) -> Result<AttachmentMeta, BantoError> {
-    let actor = require_role(&state, Role::Editor, "attachments").await?;
-
-    let bytes = match request.body() {
-        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
-        tauri::ipc::InvokeBody::Json(_) => {
-            return Err(BantoError::Validation {
-                field_errors: vec![FieldError {
-                    field: "file".to_string(),
-                    message: "ファイルのバイナリボディが必要です".to_string(),
-                }],
-            });
-        }
-    };
-    let resource = required_header_field(&request, "x-banto-resource", "resource")?;
-    let resource_id = required_header_field(&request, "x-banto-resource-id", "resourceId")?;
-    let file_name = required_header_field(&request, "x-banto-file-name", "fileName")?;
-
+    let actor = require_role(state, Role::Editor, "attachments").await?;
     let meta = state
         .attachments
         .upload(NewAttachment {
@@ -1630,10 +1661,32 @@ async fn attachments_upload(
     Ok(meta)
 }
 
-/// `editor`+ (spec §3.5): delete one attachment.
 #[tauri::command]
-async fn attachments_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    let actor = require_role(&state, Role::Editor, "attachments").await?;
+async fn attachments_upload(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<AttachmentMeta, BantoError> {
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "file".to_string(),
+                    message: "ファイルのバイナリボディが必要です".to_string(),
+                }],
+            });
+        }
+    };
+    let resource = required_header_field(&request, "x-banto-resource", "resource")?;
+    let resource_id = required_header_field(&request, "x-banto-resource-id", "resourceId")?;
+    let file_name = required_header_field(&request, "x-banto-file-name", "fileName")?;
+    attachments_upload_body(&state, resource, resource_id, file_name, bytes).await
+}
+
+/// Body of [`attachments_delete`] (spec M14 pattern) so its authz + delete +
+/// audit + event behavior is testable with a plain `&AppState`.
+async fn attachments_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
+    let actor = require_role(state, Role::Editor, "attachments").await?;
     let meta = state.attachments.delete(id).await?;
     record_ok(
         &state.audit,
@@ -1653,6 +1706,12 @@ async fn attachments_delete(state: State<'_, AppState>, id: i64) -> Result<(), B
         resource: "attachments".to_string(),
     });
     Ok(())
+}
+
+/// `editor`+ (spec §3.5): delete one attachment.
+#[tauri::command]
+async fn attachments_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
+    attachments_delete_body(&state, id).await
 }
 
 /// `editor`+ (spec §3.6): open the `attachments/` directory in the OS file
@@ -2617,4 +2676,286 @@ mod tests {
             audit_after_cancel.rows
         );
     }
+
+    /// [`items_delete_body`] records one `delete`/`items` entry; with no
+    /// attachments swept for the record, `detail` is `None` (M-review 2026-08
+    /// M-5).
+    #[tokio::test]
+    async fn items_delete_is_recorded_as_delete() {
+        let state = app_state().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
+        let item = state
+            .items
+            .create(ItemInput {
+                name: "Doomed".to_string(),
+                price: 1,
+                stock: 1,
+            })
+            .await
+            .expect("seed item");
+
+        items_delete_body(&state, item.id)
+            .await
+            .expect("delete should succeed");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "delete" && r.resource == "items")
+            .unwrap_or_else(|| panic!("expected a delete/items entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
+        assert_eq!(entry.actor_role.as_deref(), Some("editor"));
+        assert_eq!(
+            entry.entity_id.as_deref(),
+            Some(item.id.to_string().as_str())
+        );
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+        assert_eq!(entry.detail, None, "no attachments removed -> detail None");
+    }
+
+    /// [`auth_config_apply_body`]'s normal (non-escape-hatch) path records a
+    /// `settings_change`/`settings` entry attributed to the admin, with an
+    /// `{authDisabled}` detail (M-review 2026-08 M-5).
+    #[tokio::test]
+    async fn auth_config_apply_is_recorded_as_settings_change() {
+        let state = app_state().await;
+        let admin = state
+            .users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(admin);
+
+        auth_config_apply_body(&state, true, "viewer")
+            .await
+            .expect("auth_config_apply should succeed");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "settings_change" && r.resource == "settings")
+            .unwrap_or_else(|| panic!("expected a settings_change entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("admin"));
+        assert_eq!(entry.actor_role.as_deref(), Some("admin"));
+        assert_eq!(entry.entity_id, None);
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(detail, serde_json::json!({ "authDisabled": true }));
+    }
+
+    /// [`autologin_enable_body`] records a `settings_change`/`settings` entry
+    /// with an `{autologinEnabled,username}` detail (M-review 2026-08 M-5).
+    /// Installs the in-memory keyring first so `keyring_store::set_password`
+    /// does not hit the OS secret service on a headless CI runner (the Linux
+    /// leg has no D-Bus/secret-service).
+    #[tokio::test]
+    async fn autologin_enable_is_recorded_as_settings_change() {
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        let state = app_state().await;
+        let admin = state
+            .users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(admin);
+
+        autologin_enable_body(&state, "admin", "password123")
+            .await
+            .expect("autologin_enable should succeed");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "settings_change" && r.resource == "settings")
+            .unwrap_or_else(|| panic!("expected a settings_change entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("admin"));
+        assert_eq!(entry.entity_id, None);
+        assert_eq!(entry.result, "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(
+            detail,
+            serde_json::json!({ "autologinEnabled": true, "username": "admin" })
+        );
+    }
+
+    /// [`autologin_disable_body`] records a `settings_change`/`settings` entry
+    /// with an `{autologinEnabled:false}` detail (M-review 2026-08 M-5). No
+    /// keyring is touched: with `autologin_username` unset the delete is
+    /// skipped.
+    #[tokio::test]
+    async fn autologin_disable_is_recorded_as_settings_change() {
+        let state = app_state().await;
+        let admin = state
+            .users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(admin);
+
+        autologin_disable_body(&state)
+            .await
+            .expect("autologin_disable should succeed");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "settings_change" && r.resource == "settings")
+            .unwrap_or_else(|| panic!("expected a settings_change entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("admin"));
+        assert_eq!(entry.entity_id, None);
+        assert_eq!(entry.result, "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(detail, serde_json::json!({ "autologinEnabled": false }));
+    }
+
+    // --- M20: attachments command tests -----------------------------------
+    // scaffold.mjs (`removeAttachmentsFromLibRs`) cuts this whole block for
+    // the minimal/standard presets, exactly as it removes the attachments
+    // commands themselves. These tests reference ONLY `attachments_*_body`
+    // (also removed by scaffold), so nothing survives the cut - keep it that
+    // way if you add more here.
+
+    /// [`attachments_upload_body`] records a `create`/`attachments` entry with
+    /// the `{fileName,sizeBytes,parentResource,parentId}` detail (M-review
+    /// 2026-08 M-5). Uses a real temp attachments dir so the upload can write.
+    #[tokio::test]
+    async fn attachments_upload_is_recorded_as_create() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
+
+        let meta = attachments_upload_body(
+            &state,
+            "items".to_string(),
+            "1".to_string(),
+            "note.txt".to_string(),
+            b"hello attachment".to_vec(),
+        )
+        .await
+        .expect("upload should succeed");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "create" && r.resource == "attachments")
+            .unwrap_or_else(|| panic!("expected a create/attachments entry, got {:?}", audit.rows));
+        assert_eq!(entry.actor_username.as_deref(), Some("editor"));
+        assert_eq!(
+            entry.entity_id.as_deref(),
+            Some(meta.id.to_string().as_str())
+        );
+        assert_eq!(entry.origin, "tauri");
+        assert_eq!(entry.result, "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(
+            detail,
+            serde_json::json!({
+                "fileName": "note.txt",
+                "sizeBytes": 16,
+                "parentResource": "items",
+                "parentId": "1"
+            })
+        );
+    }
+
+    /// [`attachments_delete_body`] records a `delete`/`attachments` entry with
+    /// the deleted meta's detail (M-review 2026-08 M-5). Seeds one attachment
+    /// via [`attachments_upload_body`] (transitively exercising its happy
+    /// path).
+    #[tokio::test]
+    async fn attachments_delete_is_recorded_as_delete() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        *state.auth.lock().expect("auth mutex poisoned") = Some(editor);
+        let meta = attachments_upload_body(
+            &state,
+            "items".to_string(),
+            "1".to_string(),
+            "note.txt".to_string(),
+            b"hello attachment".to_vec(),
+        )
+        .await
+        .expect("seed upload");
+
+        attachments_delete_body(&state, meta.id)
+            .await
+            .expect("delete should succeed");
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let entry = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "delete" && r.resource == "attachments")
+            .unwrap_or_else(|| panic!("expected a delete/attachments entry, got {:?}", audit.rows));
+        assert_eq!(
+            entry.entity_id.as_deref(),
+            Some(meta.id.to_string().as_str())
+        );
+        assert_eq!(entry.result, "ok");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(
+            detail,
+            serde_json::json!({
+                "fileName": "note.txt",
+                "sizeBytes": 16,
+                "parentResource": "items",
+                "parentId": "1"
+            })
+        );
+    }
+    // --- end M20 attachments command tests ---------------------------------
 }
