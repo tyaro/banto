@@ -86,9 +86,14 @@ struct AppState {
     /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
     /// `login`/`login_failed`/`logout`/`setup` entry here (`origin:
     /// "tauri"`) once it has already succeeded, and [`require_role`] records
-    /// `denied` when an active session's role is too low. Shares the same
-    /// pool as `items`/`users`/`settings` (all four are `Clone` handles onto
-    /// the one on-disk SQLite DB, see `run()`'s `setup()`).
+    /// `denied` when an active session's role is too low. The successful,
+    /// actor-attributed writes go through the [`record_ok`] helper (the
+    /// desktop counterpart to REST's `record_write`, conventions §1); the few
+    /// whose shape differs (import's `ok`/`failed`, `login_failed`, the
+    /// escape-hatch config write, the startup `restore_applied`) build their
+    /// entry by hand. Shares the same pool as `items`/`users`/`settings` (all
+    /// four are `Clone` handles onto the one on-disk SQLite DB, see `run()`'s
+    /// `setup()`).
     audit: AuditLogService,
     /// Backup/restore (spec M17): `VACUUM INTO` snapshots into `backups/`
     /// next to the DB file, plus the restore staging flow. Shares the same
@@ -214,6 +219,44 @@ async fn require_role(
     }
 }
 
+/// Record a successful, actor-attributed audit event from a Tauri command
+/// (spec M14) - the desktop counterpart to
+/// `admin_template_core::rest::record_write` (conventions §1: both paths
+/// record the SAME shape, so a helper on each side keeps them from drifting).
+/// The REST helper re-resolves the actor from the request's bearer token; the
+/// Tauri side already holds the caller's [`UserIdentity`] - from the
+/// [`require_role`] guard that ran first, or the auth flow that just
+/// established the session - so it is passed in directly. `origin` is always
+/// `"tauri"` and `result` always `"ok"`.
+///
+/// The handlers whose entry does not fit this shape build their `AuditEntry`
+/// by hand, exactly as their REST counterparts do: [`items_import_body`]'s
+/// `ok`/`failed` result, [`auth_login`]'s `login_failed` (no [`UserIdentity`],
+/// `result: "failed"`), [`auth_config_apply`]'s escape hatch (actor may be
+/// absent), the `denied` entry in [`require_role`] itself, and the startup
+/// `restore_applied` (no caller identity exists yet).
+async fn record_ok(
+    audit: &AuditLogService,
+    actor: &UserIdentity,
+    action: &str,
+    resource: &str,
+    entity_id: Option<&str>,
+    detail: Option<serde_json::Value>,
+) {
+    audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action,
+            resource,
+            entity_id,
+            detail,
+            origin: "tauri",
+            result: "ok",
+        })
+        .await;
+}
+
 /// Smoke-test command used by the frontend to verify the bridge.
 #[tauri::command]
 fn ping() -> &'static str {
@@ -241,19 +284,15 @@ async fn items_get(state: State<'_, AppState>, id: i64) -> Result<Item, BantoErr
 async fn items_create(state: State<'_, AppState>, values: ItemInput) -> Result<Item, BantoError> {
     let actor = require_role(&state, Role::Editor, "items").await?;
     let item = state.items.create(values).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "create",
-            resource: "items",
-            entity_id: Some(&item.id.to_string()),
-            detail: Some(serde_json::json!({ "name": item.name })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "items",
+        Some(&item.id.to_string()),
+        Some(serde_json::json!({ "name": item.name })),
+    )
+    .await;
     Ok(item)
 }
 
@@ -265,19 +304,15 @@ async fn items_update(
 ) -> Result<Item, BantoError> {
     let actor = require_role(&state, Role::Editor, "items").await?;
     let item = state.items.update(id, values).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "update",
-            resource: "items",
-            entity_id: Some(&item.id.to_string()),
-            detail: Some(serde_json::json!({ "name": item.name })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "items",
+        Some(&item.id.to_string()),
+        Some(serde_json::json!({ "name": item.name })),
+    )
+    .await;
     Ok(item)
 }
 
@@ -305,19 +340,15 @@ async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
     };
     let detail = (attachments_removed > 0)
         .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "delete",
-            resource: "items",
-            entity_id: Some(&id.to_string()),
-            detail,
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "items",
+        Some(&id.to_string()),
+        detail,
+    )
+    .await;
     Ok(())
 }
 
@@ -407,19 +438,7 @@ async fn auth_setup(
         .await
     {
         Ok(identity) => {
-            state
-                .audit
-                .record(AuditEntry {
-                    actor_username: Some(&identity.username),
-                    actor_role: Some(identity.role.as_str()),
-                    action: "setup",
-                    resource: "auth",
-                    entity_id: None,
-                    detail: None,
-                    origin: "tauri",
-                    result: "ok",
-                })
-                .await;
+            record_ok(&state.audit, &identity, "setup", "auth", None, None).await;
             *state.auth.lock().expect("auth mutex poisoned") = Some(identity);
             Ok(LoginResult {
                 success: true,
@@ -442,19 +461,7 @@ async fn auth_login(
 ) -> Result<LoginResult, BantoError> {
     match state.users.verify(&username, &password).await? {
         Some(identity) => {
-            state
-                .audit
-                .record(AuditEntry {
-                    actor_username: Some(&identity.username),
-                    actor_role: Some(identity.role.as_str()),
-                    action: "login",
-                    resource: "auth",
-                    entity_id: None,
-                    detail: None,
-                    origin: "tauri",
-                    result: "ok",
-                })
-                .await;
+            record_ok(&state.audit, &identity, "login", "auth", None, None).await;
             *state.auth.lock().expect("auth mutex poisoned") = Some(identity);
             Ok(LoginResult {
                 success: true,
@@ -501,19 +508,7 @@ async fn auth_logout(state: State<'_, AppState>) -> Result<(), BantoError> {
     let previous = state.auth.lock().expect("auth mutex poisoned").clone();
     *state.auth.lock().expect("auth mutex poisoned") = None;
     if let Some(identity) = previous {
-        state
-            .audit
-            .record(AuditEntry {
-                actor_username: Some(&identity.username),
-                actor_role: Some(identity.role.as_str()),
-                action: "logout",
-                resource: "auth",
-                entity_id: None,
-                detail: None,
-                origin: "tauri",
-                result: "ok",
-            })
-            .await;
+        record_ok(&state.audit, &identity, "logout", "auth", None, None).await;
     }
     Ok(())
 }
@@ -559,19 +554,15 @@ async fn change_own_password(
     // audited - actor and entity are both the caller. `detail` stays `None`:
     // neither the old nor the new password (nor any hash) may ever be
     // recorded.
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&identity.username),
-            actor_role: Some(identity.role.as_str()),
-            action: "password_change",
-            resource: "users",
-            entity_id: Some(&identity.id.to_string()),
-            detail: None,
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &identity,
+        "password_change",
+        "users",
+        Some(&identity.id.to_string()),
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -691,19 +682,15 @@ async fn autologin_enable(
     // Spec M14: the target `username` (never the password) is fine to
     // record - it identifies WHICH account autologin now applies to, no
     // different from `users_update`'s `role` detail.
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(serde_json::json!({ "autologinEnabled": true, "username": username })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({ "autologinEnabled": true, "username": username })),
+    )
+    .await;
     Ok(())
 }
 
@@ -723,19 +710,15 @@ async fn autologin_disable(state: State<'_, AppState>) -> Result<(), BantoError>
     }
     config.autologin_enabled = false;
     state.settings.set_auth_config(&config).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(serde_json::json!({ "autologinEnabled": false })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({ "autologinEnabled": false })),
+    )
+    .await;
     Ok(())
 }
 
@@ -925,23 +908,19 @@ async fn server_apply(
 
     let running = started.is_some();
     *state.server.lock().await = started;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(serde_json::json!({
-                "serverEnabled": config.enabled,
-                "bind": config.bind,
-                "port": config.port,
-            })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({
+            "serverEnabled": config.enabled,
+            "bind": config.bind,
+            "port": config.port,
+        })),
+    )
+    .await;
     Ok(build_status(&config, running))
 }
 
@@ -977,19 +956,15 @@ async fn settings_set(
     // Spec M14: only the KEY is recorded, never the value - this is a
     // generic key/value store and the value could be anything, including
     // something sensitive a future setting might store here.
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(serde_json::json!({ "key": key })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({ "key": key })),
+    )
+    .await;
     Ok(())
 }
 
@@ -1094,19 +1069,15 @@ async fn vibrancy_apply(
             .settings
             .set(KEY_DESKTOP_VIBRANCY, if enabled { "true" } else { "false" })
             .await?;
-        state
-            .audit
-            .record(AuditEntry {
-                actor_username: Some(&actor.username),
-                actor_role: Some(actor.role.as_str()),
-                action: "settings_change",
-                resource: "settings",
-                entity_id: None,
-                detail: Some(serde_json::json!({ "vibrancyEnabled": enabled })),
-                origin: "tauri",
-                result: "ok",
-            })
-            .await;
+        record_ok(
+            &state.audit,
+            &actor,
+            "settings_change",
+            "settings",
+            None,
+            Some(serde_json::json!({ "vibrancyEnabled": enabled })),
+        )
+        .await;
         Ok(enabled)
     }
 
@@ -1184,21 +1155,15 @@ async fn users_create(
         .users
         .create_user(&username, &password, &display_name, role)
         .await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "create",
-            resource: "users",
-            entity_id: Some(&identity.id.to_string()),
-            detail: Some(
-                serde_json::json!({ "username": identity.username, "role": identity.role }),
-            ),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "users",
+        Some(&identity.id.to_string()),
+        Some(serde_json::json!({ "username": identity.username, "role": identity.role })),
+    )
+    .await;
     Ok(identity.into())
 }
 
@@ -1214,19 +1179,15 @@ async fn users_update(
 ) -> Result<UserSummary, BantoError> {
     let actor = require_role(&state, Role::Admin, "users").await?;
     let updated = state.users.update_user(id, &display_name, role).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "update",
-            resource: "users",
-            entity_id: Some(&id.to_string()),
-            detail: Some(serde_json::json!({ "role": updated.role })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "update",
+        "users",
+        Some(&id.to_string()),
+        Some(serde_json::json!({ "role": updated.role })),
+    )
+    .await;
     Ok(updated)
 }
 
@@ -1240,19 +1201,15 @@ async fn users_reset_password(
 ) -> Result<(), BantoError> {
     let actor = require_role(&state, Role::Admin, "users").await?;
     state.users.reset_password(id, &new_password).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "password_reset",
-            resource: "users",
-            entity_id: Some(&id.to_string()),
-            detail: None,
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "password_reset",
+        "users",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -1265,19 +1222,15 @@ async fn users_reset_password(
 async fn users_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
     let acting = require_role(&state, Role::Admin, "users").await?;
     state.users.delete_user(id, acting.id).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&acting.username),
-            actor_role: Some(acting.role.as_str()),
-            action: "delete",
-            resource: "users",
-            entity_id: Some(&id.to_string()),
-            detail: None,
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &acting,
+        "delete",
+        "users",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -1330,22 +1283,18 @@ async fn audit_config_apply(
         retention_rows,
     };
     state.settings.set_audit_config(&config).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(serde_json::json!({
-                "retentionDays": config.retention_days,
-                "retentionRows": config.retention_rows,
-            })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({
+            "retentionDays": config.retention_days,
+            "retentionRows": config.retention_rows,
+        })),
+    )
+    .await;
     // Re-read rather than echo `config` back directly: `set_audit_config`/
     // `audit_config` round-trip a non-positive value as `None` (spec:
     // "0以下は「無制限」" - see `normalize_retention`), so if the caller
@@ -1365,19 +1314,15 @@ async fn audit_config_apply(
 async fn backups_create_body(state: &AppState) -> Result<BackupInfo, BantoError> {
     let actor = require_role(state, Role::Admin, "backups").await?;
     let info = state.backup.create().await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "backup",
-            resource: "backups",
-            entity_id: Some(&info.file_name),
-            detail: Some(serde_json::json!({ "sizeBytes": info.size_bytes })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "backup",
+        "backups",
+        Some(&info.file_name),
+        Some(serde_json::json!({ "sizeBytes": info.size_bytes })),
+    )
+    .await;
     Ok(info)
 }
 
@@ -1446,19 +1391,15 @@ async fn backups_open_folder(state: State<'_, AppState>) -> Result<OpenFolderRes
 async fn backups_stage_restore_body(state: &AppState, file_name: &str) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Admin, "backups").await?;
     state.backup.stage_restore_from_file(file_name).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "restore_staged",
-            resource: "backups",
-            entity_id: None,
-            detail: Some(serde_json::json!({ "source": "existing", "fileName": file_name })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "restore_staged",
+        "backups",
+        None,
+        Some(serde_json::json!({ "source": "existing", "fileName": file_name })),
+    )
+    .await;
     Ok(())
 }
 
@@ -1486,19 +1427,15 @@ async fn backups_pending(
 async fn backups_cancel_restore_body(state: &AppState) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Admin, "backups").await?;
     state.backup.cancel_pending_restore().await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "restore_cancelled",
-            resource: "backups",
-            entity_id: None,
-            detail: None,
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "restore_cancelled",
+        "backups",
+        None,
+        None,
+    )
+    .await;
     Ok(())
 }
 
@@ -1673,24 +1610,20 @@ async fn attachments_upload(
             bytes,
         })
         .await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "create",
-            resource: "attachments",
-            entity_id: Some(&meta.id.to_string()),
-            detail: Some(serde_json::json!({
-                "fileName": meta.file_name,
-                "sizeBytes": meta.size_bytes,
-                "parentResource": meta.resource,
-                "parentId": meta.resource_id,
-            })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "create",
+        "attachments",
+        Some(&meta.id.to_string()),
+        Some(serde_json::json!({
+            "fileName": meta.file_name,
+            "sizeBytes": meta.size_bytes,
+            "parentResource": meta.resource,
+            "parentId": meta.resource_id,
+        })),
+    )
+    .await;
     let _ = state.events.send(ServerEvent::ResourceChanged {
         resource: "attachments".to_string(),
     });
@@ -1702,24 +1635,20 @@ async fn attachments_upload(
 async fn attachments_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
     let actor = require_role(&state, Role::Editor, "attachments").await?;
     let meta = state.attachments.delete(id).await?;
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: Some(&actor.username),
-            actor_role: Some(actor.role.as_str()),
-            action: "delete",
-            resource: "attachments",
-            entity_id: Some(&id.to_string()),
-            detail: Some(serde_json::json!({
-                "fileName": meta.file_name,
-                "sizeBytes": meta.size_bytes,
-                "parentResource": meta.resource,
-                "parentId": meta.resource_id,
-            })),
-            origin: "tauri",
-            result: "ok",
-        })
-        .await;
+    record_ok(
+        &state.audit,
+        &actor,
+        "delete",
+        "attachments",
+        Some(&id.to_string()),
+        Some(serde_json::json!({
+            "fileName": meta.file_name,
+            "sizeBytes": meta.size_bytes,
+            "parentResource": meta.resource,
+            "parentId": meta.resource_id,
+        })),
+    )
+    .await;
     let _ = state.events.send(ServerEvent::ResourceChanged {
         resource: "attachments".to_string(),
     });
@@ -2012,16 +1941,14 @@ pub fn run() {
                 // its synthetic session, same as a normal login would - it
                 // is still "someone" starting to use the app, just without a
                 // credential check.
-                tauri::async_runtime::block_on(audit.record(AuditEntry {
-                    actor_username: Some(&local_identity.username),
-                    actor_role: Some(local_identity.role.as_str()),
-                    action: "login",
-                    resource: "auth",
-                    entity_id: None,
-                    detail: Some(serde_json::json!({ "mode": "auth_disabled" })),
-                    origin: "tauri",
-                    result: "ok",
-                }));
+                tauri::async_runtime::block_on(record_ok(
+                    &audit,
+                    &local_identity,
+                    "login",
+                    "auth",
+                    None,
+                    Some(serde_json::json!({ "mode": "auth_disabled" })),
+                ));
                 Some(local_identity)
             } else if auth_config.autologin_enabled {
                 match &auth_config.autologin_username {
@@ -2030,16 +1957,14 @@ pub fn run() {
                             match tauri::async_runtime::block_on(users.verify(username, &password))
                             {
                                 Ok(Some(identity)) => {
-                                    tauri::async_runtime::block_on(audit.record(AuditEntry {
-                                        actor_username: Some(&identity.username),
-                                        actor_role: Some(identity.role.as_str()),
-                                        action: "login",
-                                        resource: "auth",
-                                        entity_id: None,
-                                        detail: Some(serde_json::json!({ "via": "autologin" })),
-                                        origin: "tauri",
-                                        result: "ok",
-                                    }));
+                                    tauri::async_runtime::block_on(record_ok(
+                                        &audit,
+                                        &identity,
+                                        "login",
+                                        "auth",
+                                        None,
+                                        Some(serde_json::json!({ "via": "autologin" })),
+                                    ));
                                     Some(identity)
                                 }
                                 Ok(None) => {
