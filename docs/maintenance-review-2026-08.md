@@ -268,9 +268,16 @@ eslint warn がノーゲート / Playwright ブラウザキャッシュなし / 
    e2e/visual/README の空コミット手順、template-scope §7 ⑤ の恒久 deferral 注記、
    docs/assets スクリーンショット4枚の再撮。
 3. **PR-3（scaffold / CI 健全化）**: H-1 + H-2（tree remover、paths 拡大、カンマ修正、--strict）。
-4. **PR-4（監査対称 + Rust 保守性）**: **先に §5.3 の H-4 / M-15 / M-16 の canonical 形状を
-   決着**させ、その上で M-1〜M-4（監査ヘルパー2件 + BadRequest + 形状テスト）。M-17 の方針も
-   ここで明文化。
+4. **PR-4（監査対称 + Rust 保守性）**: **完了分** — H-4（audit config denied の
+   resource 非対称是正。`audit_log_router` を2ガードに分割し両ガードをテストで固定）/
+   M-15（backups entity_id を canonical 化）/ M-2（`record_write` を `Option<&str>` 化し
+   entity_id 無しの4ハンドラを集約）/ M-4（`BadRequest` variant + list_query 5箇所移行 +
+   `ErrorBody` ワイヤ形状テスト）。M-16（denied detail 非対称）と M-17（429 login 非記録）は
+   「意図的な非対称」として conventions §1 に明文化する方針を採用（コード変更なし）。
+   **繰り越し（PR-4b）** — M-1（Tauri 側 record_ok ヘルパーで31箇所の手書き `AuditEntry` を
+   集約）は src-tauri がサンドボックスでコンパイル不可のため、tauri-check CI で担保する単独 PR
+   に分離。両経路 detail の現状一致は §5.3 の実測（16/19 完全一致 + 食い違い3件は本 PR で是正）で
+   確認済みなので、既存形状を安全に畳める状態にある。
 5. **PR-5（テスト増強）**: H-3（Postgres list_query）+ M-5 + M-8 + M-12（PG import）+
    M-14（import body limit + 境界テスト）。
 6. **PR-6（構造改善）**: Phase 3（README レシピ切り出し、レシピ増補、add-role、spec 決着追記）

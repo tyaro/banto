@@ -65,6 +65,7 @@ export function isAuditLogAvailable(): boolean {
 const ERROR_KINDS = new Set([
 	'not_found',
 	'validation',
+	'bad_request',
 	'unauthorized',
 	'forbidden',
 	'storage',

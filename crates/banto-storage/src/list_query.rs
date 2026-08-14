@@ -8,7 +8,7 @@
 //!
 //! - Sorting by an unknown field is silently skipped (a client asking to
 //!   sort by a field that doesn't exist is not an error worth surfacing).
-//! - Filtering by an unknown field is a hard `Err(BantoError::Other(_))`
+//! - Filtering by an unknown field is a hard `Err(BantoError::BadRequest(_))`
 //!   (bad request) since silently ignoring a filter could return more rows
 //!   than the caller expects.
 //!
@@ -78,7 +78,7 @@ fn value_as_like_operand(value: &Value) -> Result<String, BantoError> {
         Value::String(s) => Ok(s.clone()),
         Value::Number(n) => Ok(n.to_string()),
         Value::Bool(b) => Ok(b.to_string()),
-        other => Err(BantoError::Other(format!(
+        other => Err(BantoError::BadRequest(format!(
             "unsupported filter value for text match: {other}"
         ))),
     }
@@ -121,7 +121,7 @@ macro_rules! impl_list_query {
                 let mut first = true;
                 for filter in filters {
                     let column = columns.resolve(&filter.field).ok_or_else(|| {
-                        BantoError::Other(format!("unknown filter field: {}", filter.field))
+                        BantoError::BadRequest(format!("unknown filter field: {}", filter.field))
                     })?;
                     if !first {
                         builder.push(" AND ");
@@ -244,13 +244,13 @@ macro_rules! impl_list_query {
                         } else if let Some(f) = n.as_f64() {
                             builder.push_bind(f);
                         } else {
-                            return Err(BantoError::Other(
+                            return Err(BantoError::BadRequest(
                                 "invalid numeric filter value".to_string(),
                             ));
                         }
                     }
                     other => {
-                        return Err(BantoError::Other(format!(
+                        return Err(BantoError::BadRequest(format!(
                             "unsupported filter value: {other}"
                         )));
                     }
@@ -298,7 +298,7 @@ macro_rules! impl_list_query {
                 let items = match value {
                     Value::Array(items) => items,
                     other => {
-                        return Err(BantoError::Other(format!(
+                        return Err(BantoError::BadRequest(format!(
                             "'in' filter requires an array value, got: {other}"
                         )));
                     }
@@ -797,6 +797,6 @@ mod tests {
         };
         let mut builder = QueryBuilder::new("SELECT name FROM widgets");
         let result = apply_list_params(&mut builder, &columns(), &params);
-        assert!(matches!(result, Err(BantoError::Other(_))));
+        assert!(matches!(result, Err(BantoError::BadRequest(_))));
     }
 }

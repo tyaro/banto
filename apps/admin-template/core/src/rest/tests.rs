@@ -1257,6 +1257,28 @@ async fn audit_log_list_is_admin_only() {
             "token role mismatch"
         );
     }
+
+    // The list denial keeps `resource: "audit_log"` - it reads the audit log
+    // body itself, unlike the config routes whose denial is "settings" (the
+    // two-guard split in `audit_log_router`, maintenance-review-2026-08 §5.3
+    // H-4). Pinning both sides here guards against the split regressing into a
+    // single shared resource tag again.
+    let list_rows = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    let rows = body_json(list_rows).await["rows"].clone();
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["action"] == "denied" && r["resource"] == "audit_log"),
+        "expected a denied/audit_log entry, got {rows:?}"
+    );
 }
 
 #[tokio::test]
@@ -1412,6 +1434,20 @@ async fn audit_config_apply_persists_and_is_admin_only() {
     assert_eq!(entry["actorUsername"], "admin");
     assert_eq!(entry["origin"], "rest");
     assert_eq!(entry["result"], "ok");
+
+    // The editor/viewer denials above are tagged `resource: "settings"` (NOT
+    // "audit_log"): the config routes read/write the audit *settings*, so
+    // their denial matches the `settings_change` success entry and the Tauri
+    // twin (`audit_config_apply` calls `require_role(.., "settings")`), keeping
+    // denied/success filterable under one resource. `audit-log/list` denials
+    // keep "audit_log" - see `audit_log_list_is_admin_only`
+    // (maintenance-review-2026-08 §5.3 H-4).
+    let denial = rows
+        .iter()
+        .find(|r| r["action"] == "denied" && r["resource"] == "settings")
+        .unwrap_or_else(|| panic!("expected a denied/settings entry, got {rows:?}"));
+    assert_eq!(denial["origin"], "rest");
+    assert_eq!(denial["result"], "denied");
 }
 
 /// (b) A successful item creation is recorded.

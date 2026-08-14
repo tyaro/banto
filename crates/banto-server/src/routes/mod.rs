@@ -101,7 +101,7 @@ pub async fn record_write(
     headers: &HeaderMap,
     action: &str,
     resource: &str,
-    entity_id: &str,
+    entity_id: Option<&str>,
     detail: Option<serde_json::Value>,
 ) {
     let identity = actor_identity(headers, auth);
@@ -111,7 +111,7 @@ pub async fn record_write(
             actor_role: identity.as_ref().map(|i| i.role.as_str()),
             action,
             resource,
-            entity_id: Some(entity_id),
+            entity_id,
             detail,
             origin: "rest",
             result: "ok",

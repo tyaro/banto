@@ -78,6 +78,32 @@ plus `ROLE_READ` for reads). The only part outside the machine check is
 guaranteed by code + tests. The rationale for the desktop-only / read
 classification is in maintainability-review-2026-07.md §3.
 
+**Canonical audit shape** (outside the machine check = aligned by code + tests;
+deviations were measured and fixed in maintenance-review-2026-08 §5.3):
+
+- **`resource` follows the operation's target.** The audit-log *retention
+  policy* config (`audit_config_get`/`apply`) reads/writes settings, not the
+  audit log itself, so both its success and denial use `resource: "settings"`
+  (only `audit-log/list`, which reads the log body, keeps `"audit_log"`). On
+  REST this is done by splitting `audit_log_router` into a list guard and a
+  config guard. Tagging denial and success alike lets an admin filtering by
+  resource see refusals and successes in one bucket.
+- **`entity_id` is "the target's real name".** Backup operations always use the
+  backup file's real name (`backups_create` and restore-from-existing are
+  `Some`; restore-from-upload has no server-assigned name yet, so `None` with
+  the display name in `detail.fileName`).
+- **A denial's `detail` may be asymmetric between paths.** REST carries
+  `{method, path}` (a side effect of the RoleGuard middleware) while Tauri is
+  `None`. A denial records an operation that did NOT run, so what matters is
+  "who was refused which `resource`"; identifying the specific operation is
+  unnecessary (an operation that ran leaves its `action`/`entity_id` on the
+  success entry). This asymmetry is deliberate.
+- **REST login does not record throttled (429) attempts** — `login_failed` is
+  recorded only once the request reaches the argon2 verifier. This is a
+  deliberate asymmetry to avoid audit-log self-DoS; the Tauri path (local
+  input, no throttle) records every failure. The lockout itself is separately
+  observable as rate-limiter state.
+
 ## 2. The service layer knows nothing of tauri / axum / RBAC / HTTP [machine-checked: tauri/axum non-dependence only]
 
 All services (`ItemsService` / `AuditLogService` / `BackupService` /
