@@ -326,6 +326,20 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 `verify:architecture`（rule `raw-jp-in-app`）が grep で検査する（§9 の
 生色値検査と同型）。正当な例外はスクリプトの許可リストに理由付きで追加する。
 
+## 14. `.svelte.ts` ソース配布パッケージは dev optimizer から除外する [機械検査済み]
+
+`@banto/*` はソース配布（`exports` が `./src/index.ts`、`.svelte.ts` を生で出荷。
+[publishing.md](publishing.md) / [ADR-0007](adr/0007-derived-app-dev-optimizer-exclude.md)）。
+派生アプリでは node_modules 実体になり、Vite dev の依存オプティマイザが `.svelte.ts` を
+preprocess せず `svelte.compileModule` に渡して `import type` 等で 500 になる（issue #150）。
+
+不変条件: **`.svelte.ts` を `src/` にソース配布する `@banto/*` パッケージのうち
+`apps/admin-template` が依存するものは、`apps/admin-template/vite.config.ts` の
+`optimizeDeps.exclude` に必ず列挙する**（新規追加時も同期）。`.svelte` コンポーネント
+のみのパッケージ（charts/attachments/report）は preprocess 経路を通るため対象外。
+`verify:architecture`（rule `optimizedeps-svelte-source`）が「admin-template が依存し
+`.svelte.ts` を持つ `@banto/*`」と exclude リストの一致を機械検査する。
+
 ---
 
 ## プロセス（別ドキュメントに既出）

@@ -48,6 +48,7 @@ corresponding ADR exists, be traced from there.
 | [0004](0004-server-logging-eprintln.en.md)           | Set `eprintln!` as the default for server logging and defer `tracing`                              | Accepted |
 | [0005](0005-i18n-paraglide.en.md)                    | Adopt Paraglide JS as the UI i18n runtime (an exception to ADR-0002)                               | Accepted |
 | [0006](0006-docs-in-repo-projects-status-only.en.md) | Consolidate knowledge docs in-repo and confine GitHub Projects to ephemeral status only            | Accepted |
+| [0007](0007-derived-app-dev-optimizer-exclude.en.md) | Reconcile source-shipped `.svelte.ts` with derived-app dev via consumer `optimizeDeps.exclude`     | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 
