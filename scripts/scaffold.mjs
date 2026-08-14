@@ -709,11 +709,15 @@ function removeAttachmentsFromLibRs() {
 		`    // M20 unit C demo wiring (spec docs/attachments-plan.md §3.8): sweep up`,
 		`        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));`
 	);
+	// items_delete は監査記録を `record_ok(…, Some(&id.to_string()), detail)` で書く
+	// （M-1 で AuditEntry から record_ok へ集約）。attachments を外すと sweep が
+	// 消え `detail` 変数が無くなるので、6番目の実引数 `detail` を `None` に差し替える。
+	// rest/items.rs 側の同名 swap（record_write 呼び出し）と同形。
 	swapText(
 		LIB_RS,
 		'lib.rs: items_delete の detail を None に',
-		`            entity_id: Some(&id.to_string()),\n            detail,\n            origin: "tauri",`,
-		`            entity_id: Some(&id.to_string()),\n            detail: None,\n            origin: "tauri",`
+		`        Some(&id.to_string()),\n        detail,\n    )`,
+		`        Some(&id.to_string()),\n        None,\n    )`
 	);
 	drop(
 		LIB_RS,

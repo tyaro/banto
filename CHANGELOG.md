@@ -32,6 +32,14 @@
   「構造体フィールド1つ」に下がり、scaffold の attachments 除去も位置依存スロットから
   名前付きフィールドの除去になった。呼び出し箇所（`bin/banto-serve` / `src-tauri` の
   `start_embedded_server` / `rest::tests` の各ルータヘルパ）を追随。振る舞いの変更なし。
+- **Tauri 側の監査記録に `record_ok` ヘルパーを導入**（maintenance-review M-1）。
+  `src-tauri/lib.rs` の手書き `AuditEntry` 31箇所のうち、成功・アクター付き書き込み
+  24箇所を REST の `record_write` に対応する `record_ok(&audit, &actor, action,
+resource, entity_id, detail)` へ集約（`origin: "tauri"` / `result: "ok"` を固定）。
+  両経路が各サイドのヘルパー経由になり、監査記録の形状ドリフト（conventions §1）を
+  抑止。形状が異なる7箇所（import の ok/failed、login_failed、認証無効モードの
+  エスケープハッチ書き込み、起動時 restore_applied、denied）は REST 同様に手書きのまま。
+  振る舞いの変更なし（着手前提の両経路 detail 一致は maintenance-review §5.3 で実測済み）。
 
 ### ドキュメント
 
