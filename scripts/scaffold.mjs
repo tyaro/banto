@@ -9,8 +9,8 @@
  * 決定）。コア（auth/RBAC/audit/settings/backup/CSV/shell）には一切触れない。
  *
  * プリセット（✓＝残す / ✗＝削除。plan §3）:
- *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report を全削除）
- *   - standard … ダッシュボード体験を残す（attachments/report のみ削除）
+ *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report/tree を全削除）
+ *   - standard … ダッシュボード体験を残す（attachments/report/tree を削除）
  *   - full     … 何も削除しない（検証のみ）
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
  *
@@ -42,20 +42,22 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 const PRESETS = {
 	// 値 = 削除する資産の集合（残すものは書かない）。
-	minimal: ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report'],
-	standard: ['attachments', 'report'],
+	minimal: ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report', 'tree'],
+	standard: ['attachments', 'report', 'tree'],
 	full: []
 };
 
 function usage(code) {
 	console.log(
-		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full [--dry-run]\n' +
+		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full [--dry-run] [--strict]\n' +
 			'       node scripts/scaffold.mjs --interactive|-i [--dry-run]\n' +
 			'  minimal     … コアのみ（全オプション資産を削除）\n' +
-			'  standard    … dock/charts/コマンドパレット/Glass を残し、添付・帳票を削除\n' +
+			'  standard    … dock/charts/コマンドパレット/Glass を残し、添付・帳票・ツリーを削除\n' +
 			'  full        … 何も削除しない（検証のみ）\n' +
 			'  --interactive/-i … プリセット（または資産ごとの残す/削除）を対話で選ぶ。\n' +
-			'                      --preset とは併用不可'
+			'                      --preset とは併用不可\n' +
+			'  --strict    … pristine コピー専用: 「適用済み扱い」をアンカードリフトとして失敗にする\n' +
+			'                （再実行安全性が消えるため通常運用では付けない。CI の受け入れ検査用）'
 	);
 	process.exit(code);
 }
@@ -66,13 +68,14 @@ function fail(message) {
 }
 
 function parseArgs(argv) {
-	const args = { dryRun: false, interactive: false };
+	const args = { dryRun: false, interactive: false, strict: false };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === '--preset') {
 			args.preset = argv[++i];
 			if (args.preset === undefined) fail('--preset に値がありません');
 		} else if (arg === '--dry-run') args.dryRun = true;
+		else if (arg === '--strict') args.strict = true;
 		else if (arg === '--interactive' || arg === '-i') args.interactive = true;
 		else if (arg === '--help' || arg === '-h') usage(0);
 		else fail(`不明な引数: ${arg}`);
@@ -83,6 +86,8 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 if (args.interactive && args.preset)
 	fail('--interactive と --preset は同時に指定できません（どちらか一方を選んでください）');
+if (args.interactive && args.strict)
+	fail('--strict は --preset 専用です（CI の pristine コピー検査用。対話モードでは使えません）');
 if (!args.interactive && !args.preset) usage(1);
 if (args.preset && !Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
 	fail(
@@ -91,7 +96,7 @@ if (args.preset && !Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
 
 // --- 編集エンジン -----------------------------------------------------------
 
-const editor = createEditor({ repoRoot, dryRun: args.dryRun });
+const editor = createEditor({ repoRoot, dryRun: args.dryRun, strict: args.strict });
 const { editFile, removeFile, removeDir } = editor;
 
 /** 連続領域を start..end（両端含む）で削除。短い一意アンカーで巨大ブロックを消す。 */
@@ -618,7 +623,7 @@ function removeAttachmentsFromVerifyArch() {
 	drop(
 		VERIFY_ARCH,
 		'verify: 対象ディレクトリから banto-attachments/src 除去',
-		`\t\t'crates/banto-attachments/src'\n`
+		`\t\t'crates/banto-attachments/src',\n`
 	);
 	// rule 8: 両経路対称マニフェストの attachments エントリ
 	drop(
@@ -797,6 +802,72 @@ function removeGlassSrcTauri() {
 	removeWindowVibrancyDeps();
 }
 
+// --- tree（ツリービュー・デモ、M-review 2026-08）----------------------------
+//
+// README「オプション資産の削除」の「ツリーデモ」手順 1〜4 の 1 対 1 自動化。
+// DB/バックエンド配線を持たない最小デモなので、フロントのみで完結する。
+// packages/tree-svelte 本体は同梱のまま（他 remover と同方針: パッケージは
+// 残しても他に影響しない）。
+
+function removeTree() {
+	const NAV = `${APP}/src/lib/navigation.ts`;
+	const NAV_ICONS = `${APP}/src/lib/components/navIcons.ts`;
+	const I18N = `${APP}/src/lib/banto/i18n.ts`;
+
+	// (1) デモルートとサンプルデータ
+	removeDir(`${APP}/src/routes/(app)/tree`, 'tree デモルート削除');
+	removeFile(`${APP}/src/lib/banto/treeSample.ts`, 'treeSample.ts 削除');
+
+	// (2) ナビゲーション（union とアイコンマップは型で連結しているため対で外す）
+	swapText(
+		NAV,
+		'nav: NavIconKey union から tree 除去',
+		`'dashboard' | 'items' | 'tree' | 'users'`,
+		`'dashboard' | 'items' | 'users'`
+	);
+	swapText(
+		NAV,
+		'nav: NavLabelKey union から nav.tree 除去',
+		`'nav.dashboard' | 'nav.items' | 'nav.tree' | 'nav.users'`,
+		`'nav.dashboard' | 'nav.items' | 'nav.users'`
+	);
+	drop(
+		NAV,
+		'nav: navItems の /tree 行除去',
+		`\t{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },\n`
+	);
+	swapText(
+		NAV_ICONS,
+		'navIcons: ListTree import 除去',
+		`import { LayoutDashboard, Package, ListTree, Users, ScrollText, Settings } from '@lucide/svelte';`,
+		`import { LayoutDashboard, Package, Users, ScrollText, Settings } from '@lucide/svelte';`
+	);
+	drop(NAV_ICONS, 'navIcons: tree エントリ除去', `\ttree: ListTree,\n`);
+
+	// (3) i18n ブリッジ（treeMessages はファイル末尾の章なので EOF まで削除）と文言キー
+	drop(
+		I18N,
+		'i18n: TreeMessages import 除去',
+		`import type { TreeMessages } from '@banto/tree-svelte';\n`
+	);
+	cutEnd(I18N, 'i18n: treeMessages() 除去', '/**\n * `@banto/tree-svelte` `messages` prop:');
+	cutRegion(
+		`${APP}/messages/ja.json`,
+		'messages/ja: nav.tree + tree.* キー除去',
+		`,\n  "nav.tree": "ツリービュー"`,
+		`"tree.demo.none": "（なし）"`
+	);
+	cutRegion(
+		`${APP}/messages/en.json`,
+		'messages/en: nav.tree + tree.* キー除去',
+		`,\n  "nav.tree": "Tree view"`,
+		`"tree.demo.none": "(none)"`
+	);
+
+	// (4) 依存
+	removeAppDep('@banto/tree-svelte');
+}
+
 // --- 実行 -------------------------------------------------------------------
 
 const REMOVERS = {
@@ -808,12 +879,13 @@ const REMOVERS = {
 	},
 	commandPalette: removeCommandPalette,
 	attachments: removeAttachments,
-	report: removeReport
+	report: removeReport,
+	tree: removeTree
 };
 
 // README の資産並び順で実行（remover 間はテキスト領域が独立なので順序非依存だが、
 // ドキュメントの記述順に合わせる）。
-const ORDER = ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report'];
+const ORDER = ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report', 'tree'];
 
 // --- 対話モード（--interactive/-i）-----------------------------------------
 //
@@ -822,8 +894,8 @@ const ORDER = ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'repo
 // 「対話は入力を作るだけ、削除ロジックは単一」という要件）。
 
 const PRESET_DESCRIPTIONS = {
-	minimal: 'コアのみ（charts/dock/Glass/コマンドパレット/添付/帳票を全削除）',
-	standard: 'dock+charts+パレット+Glass 同梱（添付・帳票のみ削除）',
+	minimal: 'コアのみ（charts/dock/Glass/コマンドパレット/添付/帳票/ツリーを全削除）',
+	standard: 'dock+charts+パレット+Glass 同梱（添付・帳票・ツリーを削除）',
 	full: '全オプション同梱（何も削除しない）'
 };
 

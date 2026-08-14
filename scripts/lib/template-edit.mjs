@@ -87,9 +87,16 @@ export function swap(s, from, to) {
 
 /**
  * 変更ログと失敗数を閉じ込めたエディタを生成する。
- * @param {{ repoRoot: string, dryRun?: boolean }} options
+ *
+ * `strict` は「pristine なコピー上での適用」専用モード: 削除系の
+ * 「見つからない＝適用済み（null）」と removeFile/removeDir の「既に無い」を
+ * **失敗に昇格**する。出荷ツリーには全アンカーが必ず在るはずなので、null は
+ * アンカードリフト（対象ファイル側の変更に scaffold が追随していない）の
+ * 兆候になる。再実行安全性が要る通常運用では strict を付けないこと
+ * （template-acceptance の presets ジョブが唯一の想定利用者）。
+ * @param {{ repoRoot: string, dryRun?: boolean, strict?: boolean }} options
  */
-export function createEditor({ repoRoot, dryRun = false }) {
+export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	/** 実行予定/実行済みの変更ログ（`--dry-run` 共用）。 */
 	const changes = [];
 	let failures = 0;
@@ -110,6 +117,14 @@ export function createEditor({ repoRoot, dryRun = false }) {
 		}
 		const result = edit(before);
 		if (result === null) {
+			if (strict) {
+				// pristine コピーに「適用済み」は在り得ない = アンカードリフトの疑い。
+				console.error(
+					`  ✗ ${relPath}: ${label} — strict: 適用済み扱い（null）はアンカー不一致の疑い`
+				);
+				failures++;
+				return;
+			}
 			// 既に目的の値（再実行）— スキップとして報告。
 			changes.push(`  = ${relPath}: ${label}（変更なし・適用済み）`);
 			return;
@@ -142,6 +157,11 @@ export function createEditor({ repoRoot, dryRun = false }) {
 	function removeFile(relPath, label) {
 		const abs = path.join(repoRoot, relPath);
 		if (!fs.existsSync(abs)) {
+			if (strict) {
+				console.error(`  ✗ ${relPath}: ${label} — strict: 削除対象が存在しません`);
+				failures++;
+				return;
+			}
 			changes.push(`  = ${relPath}: ${label}（削除済み）`);
 			return;
 		}
@@ -156,6 +176,11 @@ export function createEditor({ repoRoot, dryRun = false }) {
 	function removeDir(relPath, label) {
 		const abs = path.join(repoRoot, relPath);
 		if (!fs.existsSync(abs)) {
+			if (strict) {
+				console.error(`  ✗ ${relPath}: ${label} — strict: 削除対象が存在しません`);
+				failures++;
+				return;
+			}
 			changes.push(`  = ${relPath}: ${label}（削除済み）`);
 			return;
 		}

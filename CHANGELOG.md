@@ -22,6 +22,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **scaffold にツリーデモの remover を追加**（maintenance-review PR-3 / H-1）。
+  v1.2.0 で追加された `@banto/tree-svelte` + `/tree` デモが scaffold 未登録で、
+  minimal プリセットでもツリーデモが残っていた（#122 と同型のプリセット定義
+  ドリフト）。README の手動4ステップを 1 対 1 で `removeTree()` 化し
+  minimal / standard へ登録。`packages/` と scaffold の判断（remover / コア /
+  除外）の同期を `scaffold.test.mjs` のトリップワイヤで機械検査化。
+- **scaffold のアンカードリフト対策**（maintenance-review PR-3 / H-2）:
+  (a) `verify-architecture.mjs` 対象ディレクトリ除去アンカーのカンマ欠落で
+  dropBlock が無音スキップしていた実バグを修正。(b) `template-edit.mjs` に
+  `--strict` モードを追加（pristine コピーでは「適用済み扱い」= アンカー不一致
+  として失敗）し、template-acceptance の presets ジョブで有効化。
+  (c) template-acceptance の paths トリガに scaffold のアンカー対象
+  （アプリ側ファイル群）を追加 — アプリ側 PR でアンカーが壊れても週次まで
+  潜伏せず毎 PR で検出される。
+
 ### ドキュメント
 
 - 保守レビュー 2026-08（ドキュメント整理統合の実測プラン + 保守性再点検）を

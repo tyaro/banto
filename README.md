@@ -357,7 +357,8 @@ DB/バックエンド配線を一切持たない最小デモのため、以下�
    `pnpm-workspace.yaml` の対象から漏れないことを確認する。
 
 **ツリーデモ（`@banto/tree-svelte` + `/tree` デモ、M-review 2026-08）**:
-DB/バックエンド配線を持たない最小デモ。以下だけで外せる。
+DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の minimal / standard
+プリセット（または `--interactive`）で自動削除できる。手動で外す場合は以下。
 
 1. `apps/admin-template/src/routes/(app)/tree/`（ルート丸ごと）と
    `src/lib/banto/treeSample.ts` を削除。
