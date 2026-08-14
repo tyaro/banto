@@ -22,6 +22,17 @@
 
 ## [Unreleased]
 
+### 変更
+
+- **`api_router` の10位置引数を `Services` 構造体へ集約**（maintenance-review M-13）。
+  `api_router(items, users, …, auth, events, allow_setup)` を
+  `api_router(services, auth, events, allow_setup)` に変更し、7つのサービスハンドル
+  （items/users/settings/audit/backup/attachments/system_info）を `rest::Services`
+  に束ねた。アプリ作者がサービスを足すコストが「位置引数を全呼び出し箇所へ波及」から
+  「構造体フィールド1つ」に下がり、scaffold の attachments 除去も位置依存スロットから
+  名前付きフィールドの除去になった。呼び出し箇所（`bin/banto-serve` / `src-tauri` の
+  `start_embedded_server` / `rest::tests` の各ルータヘルパ）を追随。振る舞いの変更なし。
+
 ### ドキュメント
 
 - **README の利用パッケージ別レシピ3節を `docs/recipes/` へ切り出し**

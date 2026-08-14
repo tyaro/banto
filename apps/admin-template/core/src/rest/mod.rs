@@ -229,6 +229,26 @@ use items::items_router;
 /// wire overhead.
 const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
 
+/// The already-cloneable service handles [`api_router`] threads into its
+/// route builders (spec §11.1). Bundled into one struct (M-review 2026-08
+/// M-13) so adding a service is a single field here rather than a new
+/// positional parameter rippled through every `api_router` call site
+/// (`bin/banto-serve.rs`, `src-tauri`'s `start_embedded_server`, and the
+/// six `rest::tests` router helpers). `scaffold.mjs`'s attachments remover
+/// likewise drops one named field instead of a position-dependent argument
+/// slot. Every field is an independent handle over the same pool - no
+/// ordering or lifetime relationship between them, so the caller may build
+/// this in any order.
+pub struct Services {
+    pub items: ItemsService,
+    pub users: UsersService,
+    pub settings: SettingsService,
+    pub audit: AuditLogService,
+    pub backup: BackupService,
+    pub attachments: AttachmentsService,
+    pub system_info: SystemInfoService,
+}
+
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
 /// logout/check/identity from `banto_server` - wrapped with an audit-log
 /// hook for `logout`, spec M14 - plus status/setup/change-password here
@@ -241,23 +261,22 @@ const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
 /// CSRF header check. Mount the result *before*
 /// `banto_server::static_files::static_router` so `/api/*` takes priority
 /// over the SPA fallback.
-// Each parameter is a distinct, already-cloneable service handle threaded
-// through from `main()`/tests (no natural subset to bundle into a struct
-// without adding an indirection layer with a single call site); simpler to
-// allow this than to invent a "Services" struct for one function.
-#[allow(clippy::too_many_arguments)]
 pub fn api_router(
-    items: ItemsService,
-    users: UsersService,
-    settings: SettingsService,
-    audit: AuditLogService,
-    backup: BackupService,
-    attachments: AttachmentsService,
-    system_info: SystemInfoService,
+    services: Services,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     allow_setup: bool,
 ) -> Router {
+    let Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+    } = services;
+
     let audited_auth_routes = auth_routes(auth.clone()).layer(middleware::from_fn_with_state(
         LogoutAuditState {
             auth: auth.clone(),
