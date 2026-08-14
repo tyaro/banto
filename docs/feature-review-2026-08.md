@@ -308,9 +308,9 @@ roadmap §4・template-scope §4.1 で全部既決。industrial 系の別リポ�
       HTTP制約）への参照を1行ずつ付す（§2.1 / §2.3 / §2.8）—（2026-08-12 反映済み）
 - [x] 「今すぐ」分類（version 表示・System Info カード・PWA manifest・Notice
       レシピ）の起票 —（起票を経ず PR #140〜#142 で実装完了。冒頭の実施状況参照）
-- [ ] `docs/recipes/add-role.md` を新設（ロール追加チェックリスト、add-resource.md
+- [x] `docs/recipes/add-role.md` を新設（ロール追加チェックリスト、add-resource.md
       の姉妹編）。AGENTS.md「タスク別の入り口」から参照（§2.6）
-      —（未実施。maintenance-review-2026-08 §4 の PR-6 で実施予定）
+      —（2026-08-14 実施。ja/en 両方 + AGENTS ja/en の索引追加。PR-6）
 - [x] 本書を AGENTS.md / template-scope.md の関連リンクに追加（発見性・ドリフト防止）
       —（2026-08-13 反映: AGENTS.md「調査・レビュー記録」索引 + template-scope 関連リンク）
 

@@ -38,6 +38,10 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
 
 - **CRUD リソースを追加する / items を差し替える** →
   [docs/recipes/add-resource.md](docs/recipes/add-resource.md)（チェックリスト形式の正式手順）。
+- **RBAC ロールを追加する（admin/editor/viewer に足す）** →
+  [docs/recipes/add-role.md](docs/recipes/add-role.md)。
+- **利用パッケージをアプリへ組み込む**（scan-wedge / 通知トースト / tree-svelte）→
+  [docs/recipes/](docs/recipes/)（README から切り出したトラックB レシピ群）。
 - **オプション資産を一括で外す（dock/charts/glass/コマンドパレット/添付/帳票/ツリー）** →
   `pnpm scaffold --preset minimal|standard|full`（`--interactive` / `--dry-run` あり。
   手動手順は README「オプション資産の削除」）。scan-wedge はレシピのみ・未配線の

@@ -50,6 +50,11 @@ track your task belongs to.**
 - **Add a CRUD resource / replace items** →
   [docs/recipes/add-resource.en.md](docs/recipes/add-resource.en.md) (the
   official checklist-form procedure).
+- **Add an RBAC role (extend admin/editor/viewer)** →
+  [docs/recipes/add-role.en.md](docs/recipes/add-role.en.md).
+- **Integrate a package into your app** (scan-wedge / toast notifications /
+  tree-svelte) → [docs/recipes/](docs/recipes/) (Track-B recipes split out of
+  the README; Japanese).
 - **Drop the optional assets as a batch (dock/charts/glass/command
   palette/attachments/reporting/tree)** → `pnpm scaffold --preset
 minimal|standard|full` (`--interactive` / `--dry-run` available; the manual

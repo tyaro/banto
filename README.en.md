@@ -67,7 +67,8 @@ the owner's behalf.
   columns mode, and a tree-select popover). report/attachments/tree-svelte ship
   with deletable demo wiring (the tree view is the sidebar "Tree view" = `/tree`
   demo, reachable on the live demo too); scan-wedge is recipe-only (not wired
-  into the demo app — see the README recipes).
+  into the demo app). Per-package integration recipes live under
+  [docs/recipes/](docs/recipes/) (scan-wedge, notifications, tree-svelte).
 
 ## Quick start
 
