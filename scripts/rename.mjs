@@ -131,6 +131,19 @@ editFile(tauriConf, `app.windows[0].title → "${args.title}"`, (s) => {
 	return replaceAll(s, JSON.stringify(current), JSON.stringify(args.title));
 });
 
+// OS keyring service 名を新アプリの identifier へ追随させる（issue #147）。
+// テンプレート出荷時は `dev.banto.admin-template` 固定だが、そのままだと同一 OS
+// ユーザー上の複数派生アプリが同じ `(service, account)` を共有し、自動ログイン
+// 資格情報が衝突・上書きされる。identifier は逆順ドメインで一意なので、初回
+// リネームで keyring namespace をアプリ単位に分離する。以後のクレート改名で
+// 資格情報を孤立させない配慮（keyring_store.rs のコメント）は、この初回1回の
+// 名前空間分離とは別物。
+editFile(
+	'apps/admin-template/src-tauri/src/keyring_store.rs',
+	`keyring SERVICE_NAME → "${args.identifier}"`,
+	(s) => replaceAll(s, '"dev.banto.admin-template"', `"${args.identifier}"`)
+);
+
 // --- 3. 表示ブランド（現在の Sidebar 表記を正として全 UI を追随） -----------
 
 const sidebarSrc = fs.readFileSync(

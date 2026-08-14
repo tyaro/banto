@@ -74,6 +74,19 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 		assert.equal(tauri.productName, SAMPLE.title);
 		assert.notEqual(tauri.identifier, 'dev.banto.admin', '旧 identifier が残っている');
 
+		// keyring SERVICE_NAME が identifier に追随（issue #147: 派生アプリ間の
+		// 資格情報 namespace 分離）。旧テンプレート既定が残っていないこと。
+		const keyring = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src-tauri/src/keyring_store.rs'),
+			'utf8'
+		);
+		assert.match(keyring, new RegExp(`const SERVICE_NAME: &str = "${SAMPLE.identifier}";`));
+		assert.doesNotMatch(
+			keyring,
+			/const SERVICE_NAME: &str = "dev\.banto\.admin-template";/,
+			'keyring SERVICE_NAME にテンプレート既定が残っている'
+		);
+
 		// app.html の <title> が新タイトルに。
 		const appHtml = fs.readFileSync(path.join(dir, 'apps/admin-template/src/app.html'), 'utf8');
 		assert.match(appHtml, new RegExp(`<title>${SAMPLE.title}</title>`));
