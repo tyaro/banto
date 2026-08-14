@@ -586,6 +586,54 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		pass(rule, `app 層 ${checked} .svelte コンポーネントに生の日本語リテラルなし`);
 }
 
+// --- 11. dev optimizer から .svelte.ts ソース配布パッケージを除外（issue #150 / ADR-0007）
+//
+// ソース配布された `.svelte.ts`（runes モジュール）は、派生アプリでは node_modules
+// 実体になり Vite dev の依存オプティマイザが preprocess 無しで svelte.compileModule に
+// 渡すため `import type` 等で 500 になる（ADR-0007）。対策として admin-template の
+// vite.config.ts の optimizeDeps.exclude に列挙するが、新しい .svelte.ts 同梱パッケージを
+// 足したときに列挙を忘れると静かに再発する。ここで「admin-template が依存し .svelte.ts を
+// src/ に持つ @banto/*」= exclude リストの一致を機械検査する（scaffold の packages 同期
+// トリップワイヤと同型）。
+{
+	const rule = 'optimizedeps-svelte-source';
+	const APP_PKG = 'apps/admin-template/package.json';
+	const VITE = 'apps/admin-template/vite.config.ts';
+	// admin-template が依存する @banto/* のうち、src/ に .svelte.ts を持つもの。
+	const deps = Object.keys(JSON.parse(read(APP_PKG)).dependencies ?? {}).filter((d) =>
+		d.startsWith('@banto/')
+	);
+	const needsExclude = deps
+		.filter((d) => {
+			const pkgDir = `packages/${d.slice('@banto/'.length)}/src`;
+			return [...walk(pkgDir, ['.svelte.ts'])].length > 0;
+		})
+		.sort();
+	// vite.config.ts の optimizeDeps.exclude 配列に載っている @banto/* を抽出。
+	const viteSrc = read(VITE);
+	const excludeBlock = viteSrc.match(/exclude:\s*\[([^\]]*)\]/s)?.[1] ?? '';
+	const excluded = [...excludeBlock.matchAll(/'(@banto\/[^']+)'/g)].map((m) => m[1]).sort();
+	const missing = needsExclude.filter((d) => !excluded.includes(d));
+	const extra = excluded.filter((d) => !needsExclude.includes(d));
+	for (const d of missing)
+		fail(
+			rule,
+			VITE,
+			`${d} は .svelte.ts をソース配布するのに optimizeDeps.exclude 未登録（issue #150 の再発。派生アプリの dev が 500 になる）`
+		);
+	for (const d of extra)
+		fail(
+			rule,
+			VITE,
+			`${d} は .svelte.ts を持たないのに optimizeDeps.exclude に登録（不要。削除するかコメントで理由を明記）`
+		);
+	if (missing.length === 0 && extra.length === 0)
+		pass(
+			rule,
+			`optimizeDeps.exclude が .svelte.ts ソース配布 ${needsExclude.length} パッケージと一致`
+		);
+}
+
 // --- 結果 -------------------------------------------------------------------
 
 console.log('verify:architecture — docs/conventions.md の機械検査\n');

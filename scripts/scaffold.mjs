@@ -124,6 +124,7 @@ function removeAppDep(dep) {
 
 const APP = 'apps/admin-template';
 const APP_PKG = `${APP}/package.json`;
+const VITE = `${APP}/vite.config.ts`;
 const DASH = `${APP}/src/routes/(app)/dashboard/+page.svelte`;
 const DASH_LIB = `${APP}/src/lib/banto/dashboard.ts`;
 const LAYOUT = `${APP}/src/routes/(app)/+layout.svelte`;
@@ -254,6 +255,10 @@ function removeDock() {
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
 	removeDir(`${APP}/src/routes/panel`, 'pop-out panel ルート削除');
 	removeAppDep('@banto/dock-svelte');
+	// dock-svelte は .svelte.ts を持つので optimizeDeps.exclude（issue #150 / ADR-0007）に
+	// も載っている。依存を外すと verify:architecture の optimizedeps-svelte-source が
+	// 「不要なのに登録」で落ちるため、exclude 行も外す（末尾要素ではないので行ごと）。
+	drop(VITE, 'vite: optimizeDeps.exclude から dock-svelte 除去', `\t\t\t'@banto/dock-svelte',\n`);
 }
 
 /**
@@ -866,6 +871,10 @@ function removeTree() {
 
 	// (4) 依存
 	removeAppDep('@banto/tree-svelte');
+	// tree-svelte も .svelte.ts を持つので optimizeDeps.exclude（issue #150 / ADR-0007）
+	// に載っている。exclude の末尾要素なので、直前（grid-svelte 行）のカンマごと外して
+	// trailingComma:none を保つ（prettier 準拠のまま grid-svelte が末尾要素になる）。
+	drop(VITE, 'vite: optimizeDeps.exclude から tree-svelte 除去', `,\n\t\t\t'@banto/tree-svelte'`);
 }
 
 // --- 実行 -------------------------------------------------------------------

@@ -24,6 +24,18 @@
 
 ### Fixed
 
+- **派生アプリの `pnpm dev` が `.svelte.ts` で 500 になる問題を修正**（issue #150 /
+  [ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)）。`@banto/*` は
+  ソース配布（`.svelte.ts` を生で出荷）のため、git 依存で node_modules 化した派生
+  アプリでは Vite 8 dev の依存オプティマイザ（Rolldown）が preprocess せず
+  `svelte.compileModule` に渡し `import type` 等で「Unexpected token」→ 500 になって
+  いた（`pnpm build`/`check` は成功）。`apps/admin-template/vite.config.ts` の
+  `optimizeDeps.exclude` に `.svelte.ts` を持つ5パッケージ（admin-core / dock-svelte /
+  forms / grid-svelte / tree-svelte）を列挙して回避。テンプレート本体は workspace
+  symlink 解決で元々 prebundle されないため no-op。列挙漏れの再発を
+  `verify:architecture`（新 rule `optimizedeps-svelte-source`）で機械検査。
+  publishing.md / conventions §14 に不変条件を明文化。
+
 - **両経路の監査記録の非対称を是正**（maintenance-review PR-4 / H-4・M-15）。
   `audit-log/config` の denied 監査が REST=`resource:"audit_log"` /
   Tauri=`resource:"settings"` と食い違い、REST 内でも成功時（`settings`）と

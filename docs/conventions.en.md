@@ -386,6 +386,24 @@ have no Japanese literals outside comments is checked by grep in
 check in §9). Legitimate exceptions are added to the script's allowlist with a
 reason.
 
+## 14. Exclude source-shipped `.svelte.ts` packages from the dev optimizer [machine-checked]
+
+`@banto/*` ship source (`exports` point at `./src/index.ts`, raw `.svelte.ts`
+published as-is;
+[publishing.md](publishing.md) / [ADR-0007](adr/0007-derived-app-dev-optimizer-exclude.en.md)).
+In a derived app they become real node_modules packages, and Vite's dev
+dependency optimizer hands `.svelte.ts` to `svelte.compileModule` without
+preprocessing, so TS-only syntax like `import type` throws 500 (issue #150).
+
+Invariant: **every `@banto/*` package that source-ships a `.svelte.ts` under
+`src/` and is a dependency of `apps/admin-template` MUST be listed in
+`apps/admin-template/vite.config.ts`'s `optimizeDeps.exclude`** (kept in sync on
+new additions). Packages with only `.svelte` components
+(charts/attachments/report) go through the preprocessing path and are exempt.
+`verify:architecture` (rule `optimizedeps-svelte-source`) machine-checks that
+the exclude list matches "the `@banto/*` deps of admin-template that carry a
+`.svelte.ts`".
+
 ---
 
 ## Process (already covered in other documents)
