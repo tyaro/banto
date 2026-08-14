@@ -146,8 +146,10 @@ pub struct ImportResult {
 /// Upper bound on rows accepted by a single [`ItemsService::import`] call
 /// (spec M15): the whole request runs as one transaction, so this keeps a
 /// runaway file from holding a single DB lock/transaction open over an
-/// unbounded number of rows.
-const MAX_IMPORT_ROWS: usize = 10_000;
+/// unbounded number of rows. `pub(crate)` so the REST layer can size the
+/// import route's `DefaultBodyLimit` off the same single source of truth
+/// (spec M14-review M-14; see `rest::items::items_write_router`).
+pub(crate) const MAX_IMPORT_ROWS: usize = 10_000;
 
 /// Format every field violation on one import row into a single
 /// human-readable string (`ImportRowError::message` is one `String`, not a
