@@ -26,7 +26,7 @@ use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo}
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
-use admin_template_core::rest::{api_router, audited_credential_verifier};
+use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
@@ -801,9 +801,11 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 /// be listed in `[dependencies]` to *spell out* one of its types in source,
 /// and the router value here only ever flows through an inferred `let`
 /// binding on its way into `banto_server::start`.
-// Same shape as `admin_template_core::rest::api_router` (which this wraps)
-// and for the same reason: distinct service handles, no natural struct to
-// bundle them into for a single call site.
+// Keeps positional service params rather than taking a `Services` like the
+// `api_router` it wraps (M-review 2026-08 M-13): its two call sites
+// (`setup`/`server_apply`) construct these handles inline, so it assembles
+// the `Services` for `api_router` locally in its body - threading a
+// `Services` through this wrapper too would only add an assembly hop.
 #[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
     items: ItemsService,
@@ -824,20 +826,17 @@ async fn start_embedded_server(
     // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost,
     // same as `banto-serve.rs`'s equivalent composition, so every response
     // this embedded server produces carries the baseline security headers.
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+    };
     let router = with_security_headers(
-        api_router(
-            items,
-            users,
-            settings,
-            audit,
-            backup,
-            attachments,
-            system_info,
-            auth,
-            events,
-            false,
-        )
-        .merge(static_router::<FrontendAssets>()),
+        api_router(services, auth, events, false).merge(static_router::<FrontendAssets>()),
     );
     start(config, router).await
 }

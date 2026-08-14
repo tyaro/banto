@@ -426,8 +426,19 @@ function removeAttachments() {
 	);
 	drop(
 		REST_MOD,
-		'rest: api_router の attachments 引数除去',
-		`    attachments: AttachmentsService,\n`
+		'rest: Services 構造体の attachments フィールド除去',
+		`    pub attachments: AttachmentsService,\n`
+	);
+	// api_router 冒頭の `let Services { … } = services;` destructure から
+	// attachments を外す（M-13 で位置引数→構造体化）。backup と、コアなので
+	// 残る system_info に挟んで一意指定する（8スペースの裸 `attachments,` を
+	// より深いインデント行の部分文字列として拾わないため。lib.rs の AppState
+	// リテラルと同じ配慮）。
+	swapText(
+		REST_MOD,
+		'rest: api_router destructure の attachments 除去',
+		`        backup,\n        attachments,\n        system_info,`,
+		`        backup,\n        system_info,`
 	);
 	drop(
 		REST_MOD,
@@ -472,10 +483,11 @@ function removeAttachments() {
 		`    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the`,
 		`    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);`
 	);
-	drop(
+	swapText(
 		BANTO_SERVE,
-		'banto-serve: api_router の attachments 実引数除去',
-		`            attachments,\n`
+		'banto-serve: Services リテラルから attachments 除去',
+		`        backup,\n        attachments,\n        system_info,`,
+		`        backup,\n        system_info,`
 	);
 
 	// (4) 依存: @banto/attachments + crates/banto-attachments を workspace から外す
@@ -541,7 +553,7 @@ function removeAttachments() {
  *   (b) `unused_attachments_service` ヘルパ + doc コメント。
  *   (c) 各ルータビルダの `unused_attachments_service(...)` 宣言（6箇所）。
  *   (d) backup ヘルパ（M17 テストで生存）の実 `AttachmentsService::new(...)` 宣言。
- *   (e) `api_router(...)` 実引数の `attachments,`（backup, と system_info, の間・両インデント）。
+ *   (e) 各ルータヘルパの `Services { … }` リテラルの `attachments,`（backup, と system_info, の間、全て8スペース）。
  * `PathBuf` import は `unused_backup_service` が使うため残す。
  */
 function removeAttachmentsFromRestTests() {
@@ -570,18 +582,14 @@ function removeAttachmentsFromRestTests() {
 		'rest/tests: backup ヘルパの実 attachments 宣言除去',
 		`    let attachments = AttachmentsService::new(db.clone(), dir.path().join("attachments"));\n`
 	);
-	// (e) api_router(...) 実引数の attachments を除去（backup, と system_info, の間・
-	//     両インデント。system_info はコア機能なので残す＝アンカーに使う。swap は
-	//     全出現を置換するので 12/8 スペースそれぞれ 1 回で足りる）。
+	// (e) 各ルータヘルパの `Services { … }` リテラル（M-13 で位置引数→構造体化）から
+	//     attachments フィールドを除去。全リテラルが 8スペース field 一段で揃うので、
+	//     backup と（コアなので残る）system_info に挟んで前後行込みで一意指定する
+	//     一つの swap で足りる（swap は全出現を置換）。深いインデント行の部分文字列
+	//     として拾わないための前後行アンカーでもある。
 	swapText(
 		REST_TESTS,
-		'rest/tests: api_router 実引数(attachments)除去（12スペース）',
-		`            backup,\n            attachments,\n            system_info,`,
-		`            backup,\n            system_info,`
-	);
-	swapText(
-		REST_TESTS,
-		'rest/tests: api_router 実引数(attachments)除去（8スペース）',
+		'rest/tests: Services リテラルから attachments 除去',
 		`        backup,\n        attachments,\n        system_info,`,
 		`        backup,\n        system_info,`
 	);
@@ -712,14 +720,15 @@ function removeAttachmentsFromLibRs() {
 		'lib.rs: start_embedded_server の attachments 引数除去',
 		`    attachments: AttachmentsService,\n`
 	);
-	// api_router 呼び出しの attachments 実引数（12スペースの裸 `attachments,`）。
+	// start_embedded_server 内 `let services = Services { … };` リテラルの
+	// attachments フィールド（8スペースの裸 `attachments,`、M-13 で位置引数→構造体化）。
 	// 16スペースの AppState リテラル行の部分文字列にならないよう前後行込みで指定する
 	// （backup, と、コアなので残る system_info, の間）。
 	swapText(
 		LIB_RS,
-		'lib.rs: api_router 実引数(attachments)除去',
-		`            backup,\n            attachments,\n            system_info,`,
-		`            backup,\n            system_info,`
+		'lib.rs: Services リテラルから attachments 除去',
+		`        backup,\n        attachments,\n        system_info,`,
+		`        backup,\n        system_info,`
 	);
 	drop(
 		LIB_RS,

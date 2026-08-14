@@ -114,19 +114,17 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         .login("viewer", "password123")
         .await
         .expect("viewer login");
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+    };
     (
-        api_router(
-            items,
-            users,
-            settings,
-            audit,
-            backup,
-            attachments,
-            system_info,
-            auth,
-            tx,
-            false,
-        ),
+        api_router(services, auth, tx, false),
         admin_token,
         editor_token,
         viewer_token,
@@ -148,21 +146,16 @@ async fn router_with_token() -> (Router, String) {
         .login("admin", "admin")
         .await
         .expect("login should succeed");
-    (
-        api_router(
-            items,
-            users,
-            settings,
-            audit,
-            backup,
-            attachments,
-            system_info,
-            auth,
-            tx,
-            false,
-        ),
-        token,
-    )
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+    };
+    (api_router(services, auth, tx, false), token)
 }
 
 async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -367,7 +360,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
     let token = auth.login("admin", "admin").await.unwrap();
-    let router = api_router(
+    let services = Services {
         items,
         users,
         settings,
@@ -375,10 +368,8 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         backup,
         attachments,
         system_info,
-        auth,
-        tx,
-        false,
-    );
+    };
+    let router = api_router(services, auth, tx, false);
 
     let create_response = router
         .clone()
@@ -442,7 +433,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
     let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
-    api_router(
+    let services = Services {
         items,
         users,
         settings,
@@ -450,10 +441,8 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         backup,
         attachments,
         system_info,
-        auth,
-        tx,
-        allow_setup,
-    )
+    };
+    api_router(services, auth, tx, allow_setup)
 }
 
 fn get(path: &str) -> HttpRequest<Body> {
@@ -649,21 +638,16 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
     let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
-    (
-        api_router(
-            items,
-            users,
-            settings,
-            audit.clone(),
-            backup,
-            attachments,
-            system_info,
-            auth,
-            tx,
-            allow_setup,
-        ),
-        audit,
-    )
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit: audit.clone(),
+        backup,
+        attachments,
+        system_info,
+    };
+    (api_router(services, auth, tx, allow_setup), audit)
 }
 
 #[tokio::test]
@@ -1127,18 +1111,16 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         .await
         .expect("viewer login");
 
-    let router = api_router(
+    let services = Services {
         items,
         users,
         settings,
-        audit.clone(),
+        audit: audit.clone(),
         backup,
         attachments,
         system_info,
-        auth,
-        tx,
-        false,
-    );
+    };
+    let router = api_router(services, auth, tx, false);
     (router, audit, admin_token, editor_token, viewer_token)
 }
 
@@ -1209,7 +1191,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         .await
         .expect("viewer login");
 
-    let router = api_router(
+    let services = Services {
         items,
         users,
         settings,
@@ -1217,10 +1199,8 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         backup,
         attachments,
         system_info,
-        auth,
-        tx,
-        false,
-    );
+    };
+    let router = api_router(services, auth, tx, false);
     (router, dir, admin_token, editor_token, viewer_token)
 }
 
@@ -2373,7 +2353,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let audit = AuditLogService::new(pool);
     let auth = demo_auth();
     let token = auth.login("admin", "admin").await.unwrap();
-    let router = api_router(
+    let services = Services {
         items,
         users,
         settings,
@@ -2381,10 +2361,8 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         backup,
         attachments,
         system_info,
-        auth,
-        tx,
-        false,
-    );
+    };
+    let router = api_router(services, auth, tx, false);
 
     let upload_response = router
         .clone()
