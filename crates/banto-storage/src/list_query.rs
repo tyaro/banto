@@ -279,9 +279,19 @@ macro_rules! impl_list_query {
                 if suffix_wildcard {
                     pattern.push('%');
                 }
-                builder.push("LOWER(");
+                // `CAST(column AS TEXT)` before `LOWER(...)` (M-review 2026-08
+                // H-3): `contains`/`starts_with` may target a NUMERIC column
+                // (the operand can be a number, and the whitelisted column can
+                // be a numeric one). Postgres `lower()` only accepts text, so
+                // `LOWER(<numeric column>)` errors at runtime ("function
+                // lower(double precision) does not exist") -> a 500. SQLite is
+                // dynamically typed and silently coerces, which is why the
+                // SQLite-only tests never caught it. The cast is a no-op for
+                // text columns and makes both backends agree (the mirrored
+                // `postgres_tests` module exercises the Postgres branch).
+                builder.push("LOWER(CAST(");
                 builder.push(column);
-                builder.push(") LIKE LOWER(");
+                builder.push(" AS TEXT)) LIKE LOWER(");
                 builder.push_bind(pattern);
                 builder.push(") ESCAPE '\\'");
                 Ok(())
@@ -503,6 +513,30 @@ mod tests {
                 field: "name".to_string(),
                 op: FilterOp::StartsWith,
                 value: json!("alpha"),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(fetch_names(&pool, &params).await, vec!["Alpha Widget"]);
+    }
+
+    /// Regression (M-review 2026-08 H-3): a `contains`/`starts_with` filter on
+    /// a NUMERIC column must match against the column's text form without
+    /// erroring. The generated SQL wraps the column in `CAST(.. AS TEXT)`
+    /// before `LOWER(..)`; without that cast Postgres rejects
+    /// `lower(<numeric>)` at runtime (a 500), while SQLite silently coerces.
+    /// This SQLite test pins the match semantics; the Postgres branch is
+    /// exercised by `postgres_tests::like_on_a_numeric_column_does_not_error`.
+    #[tokio::test]
+    async fn like_on_a_numeric_column_matches_its_text_form() {
+        let pool = setup().await;
+        // `id` is an INTEGER column; "contains 1" matches only id=1 by its
+        // decimal text form (ids are 1..=5), and integers render identically
+        // on both backends so the expectation is backend-independent.
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "id".to_string(),
+                op: FilterOp::Contains,
+                value: json!(1),
             }],
             ..Default::default()
         };
@@ -796,6 +830,297 @@ mod tests {
             ..Default::default()
         };
         let mut builder = QueryBuilder::new("SELECT name FROM widgets");
+        let result = apply_list_params(&mut builder, &columns(), &params);
+        assert!(matches!(result, Err(BantoError::BadRequest(_))));
+    }
+}
+
+/// Mirror of the priority `tests` above against a REAL PostgreSQL server
+/// (M-review 2026-08 H-3): the SQLite tests run on an in-memory,
+/// dynamically-typed engine and so never exercised the `Postgres`
+/// instantiation of the query builder. This module connects to
+/// `BANTO_TEST_PG_URL` and is skipped (not failed) when it is unset, the same
+/// idiom as `crate::postgres::tests` - CI's `storage-postgres` job sets it
+/// against a `postgres:16` service container. Coverage is deliberately
+/// focused on what actually differs by backend: `LIKE`/`LOWER` (including on a
+/// numeric column, the H-3 regression), numeric binding, and `NULLS LAST`.
+#[cfg(all(test, feature = "postgres"))]
+mod postgres_tests {
+    use super::postgres::apply_list_params;
+    use super::*;
+    use serde_json::json;
+    use sqlx::{PgPool, QueryBuilder, Row};
+
+    /// A pool against `BANTO_TEST_PG_URL`, or `None` so a plain `cargo test`
+    /// with no server still passes (same skip idiom as
+    /// `crate::postgres::tests::connect_gives_a_usable_pool`).
+    async fn pool_or_skip() -> Option<PgPool> {
+        let url = std::env::var("BANTO_TEST_PG_URL").ok()?;
+        Some(
+            crate::postgres::connect(&url)
+                .await
+                .expect("connect to BANTO_TEST_PG_URL should succeed"),
+        )
+    }
+
+    fn columns() -> ColumnMap {
+        ColumnMap::new()
+            .column("id", "id")
+            .column("name", "name")
+            .column("price", "price")
+            .column("active", "active")
+    }
+
+    /// (Re)create `table` and seed the same 5-row fixture the SQLite tests
+    /// use. `table` is always a hardcoded literal below (never user input),
+    /// so interpolating it into DDL is safe. The whole `storage-postgres` run
+    /// shares one ephemeral CI database, so each test uses its OWN table name
+    /// to stay independent under `cargo test`'s parallelism.
+    async fn seed(pool: &PgPool, table: &str) {
+        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
+            .execute(pool)
+            .await
+            .expect("drop table");
+        sqlx::query(&format!(
+            "CREATE TABLE {table} (\
+                id BIGINT PRIMARY KEY, \
+                name TEXT NOT NULL, \
+                price DOUBLE PRECISION NOT NULL, \
+                active BIGINT NOT NULL\
+            )"
+        ))
+        .execute(pool)
+        .await
+        .expect("create table");
+        let rows: &[(i64, &str, f64, i64)] = &[
+            (1, "Alpha Widget", 10.0, 1),
+            (2, "Beta Widget", 20.0, 0),
+            (3, "100% Off Widget", 5.0, 1),
+            (4, "gamma_widget", 30.0, 1),
+            (5, "Delta", 15.0, 0),
+        ];
+        for (id, name, price, active) in rows {
+            sqlx::query(&format!(
+                "INSERT INTO {table} (id, name, price, active) VALUES ($1, $2, $3, $4)"
+            ))
+            .bind(id)
+            .bind(*name)
+            .bind(price)
+            .bind(active)
+            .execute(pool)
+            .await
+            .expect("insert row");
+        }
+    }
+
+    async fn fetch_names(pool: &PgPool, table: &str, params: &ListParams) -> Vec<String> {
+        let mut builder = QueryBuilder::new(format!("SELECT name FROM {table}"));
+        apply_list_params(&mut builder, &columns(), params).expect("apply params");
+        let rows = builder
+            .build()
+            .fetch_all(pool)
+            .await
+            .expect("query should succeed");
+        rows.into_iter().map(|r| r.get::<String, _>(0)).collect()
+    }
+
+    /// `eq` on text, `>` on a `DOUBLE PRECISION` column with a JSON float
+    /// operand, and `in` on a `BIGINT` column with JSON ints - the numeric
+    /// `bind_value` branches (`as_i64`/`as_f64`) against real Postgres types.
+    #[tokio::test]
+    async fn eq_and_numeric_binding() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_num";
+        seed(&pool, table).await;
+
+        let eq = ListParams {
+            filters: vec![FilterState {
+                field: "name".to_string(),
+                op: FilterOp::Eq,
+                value: json!("Alpha Widget"),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(fetch_names(&pool, table, &eq).await, vec!["Alpha Widget"]);
+
+        let gt = ListParams {
+            filters: vec![FilterState {
+                field: "price".to_string(),
+                op: FilterOp::Gt,
+                value: json!(20.0),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(fetch_names(&pool, table, &gt).await, vec!["gamma_widget"]);
+
+        let in_ = ListParams {
+            filters: vec![FilterState {
+                field: "id".to_string(),
+                op: FilterOp::In,
+                value: json!([1, 3]),
+            }],
+            sort: vec![SortState {
+                field: "id".to_string(),
+                direction: SortDirection::Asc,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            fetch_names(&pool, table, &in_).await,
+            vec!["Alpha Widget", "100% Off Widget"]
+        );
+    }
+
+    #[tokio::test]
+    async fn like_on_text_is_case_insensitive() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_like_text";
+        seed(&pool, table).await;
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "name".to_string(),
+                op: FilterOp::Contains,
+                value: json!("WIDGET"),
+            }],
+            sort: vec![SortState {
+                field: "id".to_string(),
+                direction: SortDirection::Asc,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            fetch_names(&pool, table, &params).await,
+            vec![
+                "Alpha Widget",
+                "Beta Widget",
+                "100% Off Widget",
+                "gamma_widget"
+            ]
+        );
+    }
+
+    /// The H-3 regression itself: `contains` on a NUMERIC column. Before the
+    /// `CAST(.. AS TEXT)` fix this generated `lower(<bigint>)`, which Postgres
+    /// rejects at runtime ("function lower(bigint) does not exist") - so the
+    /// list endpoint would 500. It must now match by the integer's text form.
+    #[tokio::test]
+    async fn like_on_a_numeric_column_does_not_error() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_like_num";
+        seed(&pool, table).await;
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "id".to_string(),
+                op: FilterOp::Contains,
+                value: json!(1),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            fetch_names(&pool, table, &params).await,
+            vec!["Alpha Widget"]
+        );
+    }
+
+    /// `NULLS LAST` for both directions. Postgres's native default is
+    /// nulls-FIRST on `DESC`, so the explicit `NULLS LAST` the builder emits
+    /// matters here specifically (SQLite defaults differently again - the
+    /// point of the drift fix is that all backends agree).
+    #[tokio::test]
+    async fn nulls_sort_last_both_directions() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_nulls";
+        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
+            .execute(&pool)
+            .await
+            .expect("drop table");
+        sqlx::query(&format!(
+            "CREATE TABLE {table} (id BIGINT PRIMARY KEY, label TEXT NOT NULL, score DOUBLE PRECISION)"
+        ))
+        .execute(&pool)
+        .await
+        .expect("create table");
+        let rows: &[(i64, &str, Option<f64>)] = &[
+            (1, "has-score-low", Some(1.0)),
+            (2, "null-score", None),
+            (3, "has-score-high", Some(2.0)),
+        ];
+        for (id, label, score) in rows {
+            sqlx::query(&format!(
+                "INSERT INTO {table} (id, label, score) VALUES ($1, $2, $3)"
+            ))
+            .bind(id)
+            .bind(*label)
+            .bind(score)
+            .execute(&pool)
+            .await
+            .expect("insert row");
+        }
+
+        let cols = ColumnMap::new()
+            .column("label", "label")
+            .column("score", "score");
+
+        async fn labels(
+            pool: &PgPool,
+            table: &str,
+            cols: &ColumnMap,
+            direction: SortDirection,
+        ) -> Vec<String> {
+            let mut builder = QueryBuilder::new(format!("SELECT label FROM {table}"));
+            apply_list_params(
+                &mut builder,
+                cols,
+                &ListParams {
+                    sort: vec![SortState {
+                        field: "score".to_string(),
+                        direction,
+                    }],
+                    ..Default::default()
+                },
+            )
+            .expect("apply params");
+            builder
+                .build()
+                .fetch_all(pool)
+                .await
+                .expect("query should succeed")
+                .into_iter()
+                .map(|r| r.get::<String, _>(0))
+                .collect()
+        }
+
+        assert_eq!(
+            labels(&pool, table, &cols, SortDirection::Asc).await,
+            vec!["has-score-low", "has-score-high", "null-score"]
+        );
+        assert_eq!(
+            labels(&pool, table, &cols, SortDirection::Desc).await,
+            vec!["has-score-high", "has-score-low", "null-score"]
+        );
+    }
+
+    /// An unknown filter field is a `BadRequest` on the Postgres path too
+    /// (pure SQL building - no server needed, so this one is not skipped).
+    #[tokio::test]
+    async fn unknown_filter_field_is_rejected() {
+        let mut builder = QueryBuilder::<sqlx::Postgres>::new("SELECT name FROM whatever");
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "does_not_exist".to_string(),
+                op: FilterOp::Eq,
+                value: json!(1),
+            }],
+            ..Default::default()
+        };
         let result = apply_list_params(&mut builder, &columns(), &params);
         assert!(matches!(result, Err(BantoError::BadRequest(_))));
     }
