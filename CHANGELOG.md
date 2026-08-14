@@ -24,6 +24,30 @@
 
 ### Fixed
 
+- **両経路の監査記録の非対称を是正**（maintenance-review PR-4 / H-4・M-15）。
+  `audit-log/config` の denied 監査が REST=`resource:"audit_log"` /
+  Tauri=`resource:"settings"` と食い違い、REST 内でも成功時（`settings`）と
+  denied が不一致だった不変条件1違反を是正: REST の `audit_log_router` を
+  list（`audit_log`）と config（`settings`）の2ガードに分割し、成功・denied・
+  両経路すべてを `settings` に統一（`audit-log/list` は `audit_log` 維持）。
+  両ガードの resource タグを `rest/tests.rs` でピン留め。backups restore の
+  `entity_id` を canonical 化（対象ファイルの実名。upload は実体名が無いため
+  `None`）。conventions §1 に監査 canonical 形状（resource / entity_id /
+  denied detail 非対称 / 429 login 非記録）を明文化（ja/en）。
+- **クライアント起因の不正入力を 500 でなく 400 で返す**（maintenance-review
+  PR-4 / M-4）。`BantoError::BadRequest`（→ HTTP 400）を新設し、`list_query` の
+  未知フィルタ列・不正なフィルタ値・`in` の非配列など5箇所を `Other`（500）から
+  移行。`ErrorBody` に `bad_request` kind を追加し、フロント（`errors.ts` +
+  全 `ERROR_KINDS`）とワイヤ形状パリティテスト（`error.rs`）を追随。サーバ
+  エラー監視がクライアント起因の 500 で汚染されなくなる。
+
+### Changed
+
+- **`record_write` の `entity_id` を `Option<&str>` に**（maintenance-review
+  PR-4 / M-2）。entity_id を持たない mutating ハンドラ4箇所（audit config /
+  backups restore-upload・cancel）が手書き `AuditEntry` を複製していたのを
+  `record_write` ヘルパーに集約。
+
 - **scaffold にツリーデモの remover を追加**（maintenance-review PR-3 / H-1）。
   v1.2.0 で追加された `@banto/tree-svelte` + `/tree` デモが scaffold 未登録で、
   minimal プリセットでもツリーデモが残っていた（#122 と同型のプリセット定義

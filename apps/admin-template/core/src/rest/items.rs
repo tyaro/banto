@@ -42,7 +42,7 @@ async fn items_create(
         &headers,
         "create",
         "items",
-        &item.id.to_string(),
+        Some(&item.id.to_string()),
         Some(json!({ "name": item.name })),
     )
     .await;
@@ -62,7 +62,7 @@ async fn items_update(
         &headers,
         "update",
         "items",
-        &item.id.to_string(),
+        Some(&item.id.to_string()),
         Some(json!({ "name": item.name })),
     )
     .await;
@@ -101,7 +101,7 @@ async fn items_delete(
         &headers,
         "delete",
         "items",
-        &id.to_string(),
+        Some(&id.to_string()),
         detail,
     )
     .await;

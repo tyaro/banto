@@ -67,6 +67,28 @@ rule 8 が両経路で照合する**（CR-6。`DUAL_PATH` の `role` フィー�
 （同じ `AuditEntry` 形状か）のみで、そこはコード + テストで担保する。
 desktop-only / read の分類判断は maintainability-review-2026-07.md §3 に根拠。
 
+**監査記録の canonical 形状**（機械検査外＝コード+テストで揃える規約。逸脱は
+maintenance-review-2026-08 §5.3 で実測・是正済み）:
+
+- **`resource` は操作対象で決める。** audit-log の**保持ポリシー設定**
+  （`audit_config_get`/`apply`）は監査ログ本体ではなく設定の読み書きなので、
+  成功・denied とも `resource: "settings"`（監査ログ本体を読む
+  `audit-log/list` だけが `"audit_log"`）。REST では `audit_log_router` を
+  list / config の2ガードに分けて実現。denied と成功で `resource` を揃えると、
+  管理者が resource でフィルタしたとき拒否と成功が同じ束に入る。
+- **`entity_id` は「対象の実体名」。** backup 系は必ずバックアップファイルの
+  実名（`backups_create` / 既存ファイルからの restore は `Some`、アップロード
+  からの restore はサーバ採番前で実体名が無いので `None` + `detail.fileName`）。
+- **denied の `detail` は経路で非対称を許容する。** REST は RoleGuard
+  ミドルウェアの都合で `{method, path}` が付くが Tauri は `None`。denied は
+  「操作が実行されなかった」記録なので監査の主眼は「誰がどの `resource` へ
+  拒否されたか」であり、個別操作の特定は不要（実行された操作は成功時の
+  `action`/`entity_id` に残る）。この非対称は意図的。
+- **REST のログインは argon2 前スロットルでロックアウト中の試行（429）を
+  記録しない**（`login_failed` は verifier 到達時のみ）。監査ログ自己 DoS を
+  避けるための意図的な非対称で、Tauri 経路（ローカル入力・スロットル無し）は
+  全失敗を記録する。ロックアウト自体はレート制限器の状態として別途観測できる。
+
 ## 2. サービス層は tauri / axum / RBAC / HTTP を知らない [機械検査済み: tauri/axum 非依存のみ]
 
 全サービス（`ItemsService` / `AuditLogService` / `BackupService` /

@@ -25,6 +25,7 @@ fn status_for(err: &BantoError) -> StatusCode {
     match err {
         BantoError::NotFound { .. } => StatusCode::NOT_FOUND,
         BantoError::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+        BantoError::BadRequest(_) => StatusCode::BAD_REQUEST,
         BantoError::Unauthorized => StatusCode::UNAUTHORIZED,
         BantoError::Forbidden => StatusCode::FORBIDDEN,
         BantoError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -62,6 +63,10 @@ mod tests {
                 }]
             }),
             StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            status_for(&BantoError::BadRequest("unknown filter field".to_string())),
+            StatusCode::BAD_REQUEST
         );
         assert_eq!(
             status_for(&BantoError::Unauthorized),

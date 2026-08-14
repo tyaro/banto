@@ -12,6 +12,14 @@ export interface FieldError {
 export type ErrorBody =
 	| { kind: 'not_found'; resource: string; id: string }
 	| { kind: 'validation'; field_errors: FieldError[] }
+	/**
+	 * Client-caused malformed request that is not per-field validation (an
+	 * unknown filter column, a bad `in` operand, etc.) - HTTP 400. Mirrors
+	 * `crates/banto-core/src/error.rs`'s `BantoError::BadRequest` /
+	 * `ErrorBody::BadRequest`. Distinct from `validation` (422, form field
+	 * errors) and `other` (500, a real server failure).
+	 */
+	| { kind: 'bad_request'; message: string }
 	| { kind: 'unauthorized' }
 	/**
 	 * Spec M10 RBAC: the caller is authenticated but their role does not
@@ -31,6 +39,8 @@ function describe(body: ErrorBody): string {
 			return `resource not found: ${body.resource}/${body.id}`;
 		case 'validation':
 			return 'validation failed';
+		case 'bad_request':
+			return body.message;
 		case 'unauthorized':
 			return 'unauthorized';
 		// Same convention as 'unauthorized' above (a plain describe() string,

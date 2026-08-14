@@ -29,6 +29,7 @@ const NETWORK_ERROR_MESSAGE = 'サーバーに接続できません';
 const ERROR_KINDS = new Set([
 	'not_found',
 	'validation',
+	'bad_request',
 	'unauthorized',
 	'forbidden',
 	'storage',

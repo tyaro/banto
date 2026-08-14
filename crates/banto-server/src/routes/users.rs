@@ -109,7 +109,7 @@ async fn users_create(
         &headers,
         "create",
         "users",
-        &identity.id.to_string(),
+        Some(&identity.id.to_string()),
         Some(json!({ "username": identity.username, "role": identity.role })),
     )
     .await;
@@ -132,7 +132,7 @@ async fn users_update(
         &headers,
         "update",
         "users",
-        &id.to_string(),
+        Some(&id.to_string()),
         Some(json!({ "role": updated.role })),
     )
     .await;
@@ -152,7 +152,7 @@ async fn users_reset_password(
         &headers,
         "password_reset",
         "users",
-        &id.to_string(),
+        Some(&id.to_string()),
         None,
     )
     .await;
@@ -172,7 +172,7 @@ async fn users_delete(
         &headers,
         "delete",
         "users",
-        &id.to_string(),
+        Some(&id.to_string()),
         None,
     )
     .await;

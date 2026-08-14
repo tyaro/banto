@@ -205,7 +205,7 @@ async fn attachments_upload(
         &headers,
         "create",
         "attachments",
-        &meta.id.to_string(),
+        Some(&meta.id.to_string()),
         Some(attachment_audit_detail(&meta)),
     )
     .await;
@@ -225,7 +225,7 @@ async fn attachments_delete(
         &headers,
         "delete",
         "attachments",
-        &id.to_string(),
+        Some(&id.to_string()),
         Some(attachment_audit_detail(&meta)),
     )
     .await;

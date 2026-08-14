@@ -36,7 +36,7 @@ async fn backups_create_handler(
         &headers,
         "backup",
         "backups",
-        &info.file_name,
+        Some(&info.file_name),
         Some(json!({ "sizeBytes": info.size_bytes })),
     )
     .await;
@@ -87,20 +87,21 @@ async fn backups_restore_from_upload(
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
     state.backup.stage_restore_from_bytes(&body).await?;
-    let identity = actor_identity(&headers, &state.auth);
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: identity.as_ref().map(|i| i.id.as_str()),
-            actor_role: identity.as_ref().map(|i| i.role.as_str()),
-            action: "restore_staged",
-            resource: "backups",
-            entity_id: None,
-            detail: Some(json!({ "source": "upload", "fileName": query.file_name })),
-            origin: "rest",
-            result: "ok",
-        })
-        .await;
+    // `entity_id` stays `None` here on purpose: the canonical rule is
+    // "entity_id = the backup file's real name" (like `backups_create` /
+    // restore-from-existing on BOTH paths), and an upload has no real backup
+    // file identity - the client-supplied display name is untrusted and only
+    // ever recorded inside `detail` (maintenance-review-2026-08 §5.3 M-15).
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "restore_staged",
+        "backups",
+        None,
+        Some(json!({ "source": "upload", "fileName": query.file_name })),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -118,7 +119,7 @@ async fn backups_restore_from_existing(
         &headers,
         "restore_staged",
         "backups",
-        &file_name,
+        Some(&file_name),
         Some(json!({ "source": "existing", "fileName": file_name })),
     )
     .await;
@@ -136,20 +137,16 @@ async fn backups_cancel_pending(
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     state.backup.cancel_pending_restore().await?;
-    let identity = actor_identity(&headers, &state.auth);
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: identity.as_ref().map(|i| i.id.as_str()),
-            actor_role: identity.as_ref().map(|i| i.role.as_str()),
-            action: "restore_cancelled",
-            resource: "backups",
-            entity_id: None,
-            detail: None,
-            origin: "rest",
-            result: "ok",
-        })
-        .await;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "restore_cancelled",
+        "backups",
+        None,
+        None,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

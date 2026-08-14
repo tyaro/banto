@@ -179,28 +179,33 @@ async fn audit_config_apply(
     Json(config): Json<AuditSettings>,
 ) -> Result<Json<AuditSettings>, ApiError> {
     state.settings.set_audit_config(&config).await?;
-    let identity = actor_identity(&headers, &state.auth);
-    state
-        .audit
-        .record(AuditEntry {
-            actor_username: identity.as_ref().map(|i| i.id.as_str()),
-            actor_role: identity.as_ref().map(|i| i.role.as_str()),
-            action: "settings_change",
-            resource: "settings",
-            entity_id: None,
-            detail: Some(serde_json::json!({
-                "retentionDays": config.retention_days,
-                "retentionRows": config.retention_rows,
-            })),
-            origin: "rest",
-            result: "ok",
-        })
-        .await;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({
+            "retentionDays": config.retention_days,
+            "retentionRows": config.retention_rows,
+        })),
+    )
+    .await;
     Ok(Json(state.settings.audit_config().await?))
 }
 
 /// `/api/audit-log/*` (spec M14): `admin`-only, guarded the same way
 /// `users_router` is (`require_auth` then `require_role_at_least`).
+///
+/// Two guards, one router: the `config` routes read/write the audit
+/// *settings* (their success records use `resource: "settings"`), so their
+/// denial is tagged `"settings"` too — matching the Tauri twin
+/// (`audit_config_get`/`audit_config_apply` call
+/// `require_role(.., "settings")`) and keeping denied/success filterable
+/// under one resource. Only `list` is a read of the audit log itself and
+/// keeps `resource: "audit_log"` (conventions §1: identical audit on both
+/// paths; drift found by maintenance-review-2026-08 §5.3 H-4).
 pub fn audit_log_router(
     audit: AuditLogService,
     settings: SettingsService,
@@ -211,8 +216,19 @@ pub fn audit_log_router(
         settings,
         auth: auth.clone(),
     };
-    Router::new()
+    let list = Router::new()
         .route("/api/audit-log/list", post(audit_log_list))
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            RoleGuard {
+                auth: auth.clone(),
+                min: Role::Admin,
+                resource: "audit_log",
+                audit: audit.clone(),
+            },
+            require_role_at_least,
+        ));
+    let config = Router::new()
         .route(
             "/api/audit-log/config",
             get(audit_config_get).put(audit_config_apply),
@@ -222,10 +238,11 @@ pub fn audit_log_router(
             RoleGuard {
                 auth: auth.clone(),
                 min: Role::Admin,
-                resource: "audit_log",
+                resource: "settings",
                 audit,
             },
             require_role_at_least,
-        ))
+        ));
+    list.merge(config)
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
