@@ -19,7 +19,7 @@
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
 use admin_template_core::db::init_db_from_target;
-use admin_template_core::items::{ItemInput, ItemsService};
+use admin_template_core::items::{ImportResult, ItemImportRow, ItemInput, ItemsService};
 use admin_template_core::settings::SettingsService;
 use admin_template_core::users::{Role, UsersService};
 use banto_core::ListParams;
@@ -114,6 +114,103 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .await
         .expect("items list after delete");
     assert_eq!(after_delete.total_count, 1_000);
+
+    // --- items import: round-trip + all-or-nothing rollback (spec M15) --------
+    // Exercises `import_apply_postgres` - the hand-written Postgres mirror of
+    // the SQLite transaction body that no other test or CI path reached
+    // (M-review 2026-08 M-12). Both of its branches (commit / rollback) run
+    // here against real Postgres.
+    //
+    // Round-trip: two INSERTs (`id: None`) plus one UPDATE of a seeded row
+    // (ids 1..=1000) commit together.
+    let import_ok = items
+        .import(vec![
+            ItemImportRow {
+                id: None,
+                name: "取込A".to_string(),
+                price: 111,
+                stock: 1,
+            },
+            ItemImportRow {
+                id: None,
+                name: "取込B".to_string(),
+                price: 222,
+                stock: 2,
+            },
+            ItemImportRow {
+                id: Some(1),
+                name: "既存1(改)".to_string(),
+                price: 333,
+                stock: 3,
+            },
+        ])
+        .await
+        .expect("items import (round-trip)");
+    assert_eq!(
+        import_ok,
+        ImportResult {
+            created: 2,
+            updated: 1,
+            errors: Vec::new(),
+        }
+    );
+    let after_import = items
+        .list(ListParams::default())
+        .await
+        .expect("items list after import");
+    assert_eq!(
+        after_import.total_count, 1_002,
+        "the two INSERTs in the batch committed"
+    );
+    let seeded_one = items.get(1).await.expect("get updated seed row");
+    assert_eq!(
+        seeded_one.price, 333,
+        "the UPDATE in the same batch committed too"
+    );
+
+    // All-or-nothing rollback: a batch whose second row UPDATEs a NON-existent
+    // id (so `rows_affected == 0`) must roll the WHOLE thing back - the
+    // otherwise-valid INSERT before it must NOT land, and `import` returns
+    // `Ok(ImportResult { errors })`, not `Err`. NOTE: the trigger has to be a
+    // missing-id UPDATE, not a bad-value row - validation runs BEFORE any
+    // transaction opens, so a validation error never reaches
+    // `import_apply_postgres`'s rollback branch.
+    let import_rollback = items
+        .import(vec![
+            ItemImportRow {
+                id: None,
+                name: "巻き戻るはず".to_string(),
+                price: 999,
+                stock: 9,
+            },
+            ItemImportRow {
+                id: Some(10_000_000),
+                name: "存在しないid".to_string(),
+                price: 1,
+                stock: 1,
+            },
+        ])
+        .await
+        .expect("items import rollback returns Ok(with errors), never Err");
+    assert_eq!(import_rollback.created, 0);
+    assert_eq!(import_rollback.updated, 0);
+    assert_eq!(
+        import_rollback.errors.len(),
+        1,
+        "only the missing-id row is an error"
+    );
+    assert_eq!(
+        import_rollback.errors[0].row, 1,
+        "0-based index of the failing row"
+    );
+    let after_rollback = items
+        .list(ListParams::default())
+        .await
+        .expect("items list after rollback");
+    assert_eq!(
+        after_rollback.total_count, 1_002,
+        "the valid INSERT in the rolled-back batch must not have landed"
+    );
 
     // --- users: create + list ------------------------------------------------
     let users = UsersService::new(db.clone());

@@ -1808,6 +1808,46 @@ async fn viewer_cannot_import_items_forbidden_with_forbidden_kind() {
     assert_eq!(json["kind"], "forbidden");
 }
 
+/// A max-import-sized payload (`MAX_IMPORT_ROWS * 3` rows, each a valid
+/// 40-char name -> ~2.6MB, comfortably past axum's 2MB `DefaultBodyLimit`
+/// default but under `items_write_router`'s raised 10MiB cap) must reach
+/// `ItemsService::import`'s row-count check and come back as the intended
+/// `422` row-count `Validation` error, NOT axum's transport-level `413`
+/// (spec M-review 2026-08 M-14). Without the router's raised `DefaultBodyLimit`
+/// this body is rejected before the handler runs. Transport-layer twin of the
+/// attachments `413` boundary test; a genuine regression guard (413 before the
+/// fix, 422 after). The row-count check is `import`'s FIRST step, so the
+/// oversized-COUNT body never runs per-row validation or any DB work.
+#[tokio::test]
+async fn oversized_import_payload_reaches_the_row_count_check_not_413() {
+    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
+
+    let row_count = crate::items::MAX_IMPORT_ROWS * 3;
+    let name = "a".repeat(40); // valid (<=40 chars); only the COUNT is over-limit
+    let rows: Vec<serde_json::Value> = (0..row_count)
+        .map(|_| json!({ "id": null, "name": name.as_str(), "price": 99999, "stock": 1 }))
+        .collect();
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/items/import",
+            &editor,
+            serde_json::Value::Array(rows),
+        ))
+        .await
+        .unwrap();
+
+    assert_ne!(
+        response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "import payload was rejected by the transport body cap before reaching the service"
+    );
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let json = body_json(response).await;
+    assert_eq!(json["kind"], "validation");
+    assert_eq!(json["field_errors"][0]["field"], "rows");
+}
+
 /// A batch with a per-row validation error is rolled back entirely - the
 /// valid row in the same batch must NOT land in the DB either - and is
 /// recorded as a single `result: "failed"` audit entry summarizing the

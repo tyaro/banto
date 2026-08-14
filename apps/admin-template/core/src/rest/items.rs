@@ -1,5 +1,18 @@
 use super::*;
 
+/// Per-row byte budget backing `items_write_router`'s import
+/// `DefaultBodyLimit` (spec M15 / M-review 2026-08 M-14). Same two-tier
+/// reasoning as `ATTACHMENT_BODY_LIMIT_SLACK_BYTES`: the limit that actually
+/// matters is the service-layer row-count check in `ItemsService::import`
+/// (`crate::items::MAX_IMPORT_ROWS`, which returns a `422` `Validation`
+/// error), NOT this transport cap. This only needs to sit comfortably above
+/// the largest spec-valid `MAX_IMPORT_ROWS`-row JSON payload so a request AT
+/// the row-count limit reaches the service layer (a `200`/`422`) instead of
+/// being rejected by axum's 2MB transport default (a `413`) first. A single
+/// spec-valid row is at most ~230 wire bytes (a 40-char name, three small
+/// integers, a `null` id); 1KiB/row is a comfortable round budget over that.
+const IMPORT_BODY_LIMIT_BYTES_PER_ROW: usize = 1024;
+
 async fn items_list(
     State(items): State<ItemsService>,
     Json(params): Json<ListParams>,
@@ -161,6 +174,15 @@ fn items_read_router(items: ItemsService, auth: AuthState) -> Router {
 /// executes `require_auth` THEN `require_role_at_least` (axum layers run
 /// outside-in from the last one added) - a request must have a valid
 /// session before its role is even considered.
+///
+/// `DefaultBodyLimit::max` also raises this router's body cap past axum's 2MB
+/// default to `MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW` (spec
+/// M-review 2026-08 M-14), so a spec-valid `/api/items/import` payload AT the
+/// row-count limit reaches the service layer (a `422` row-count error)
+/// instead of being rejected by the transport cap (a `413`) first - same
+/// two-tier reasoning as `attachments_write_router`/`backups_router`. The
+/// create/update routes on this router carry only a small single-item JSON
+/// body, so the raised cap is harmless for them.
 fn items_write_router(
     items: ItemsService,
     audit: AuditLogService,
@@ -181,6 +203,9 @@ fn items_write_router(
         )
         .route("/api/items/import", post(items_import))
         .with_state(state)
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::items::MAX_IMPORT_ROWS * IMPORT_BODY_LIMIT_BYTES_PER_ROW,
+        ))
         .layer(middleware::from_fn_with_state(
             RoleGuard {
                 auth: auth.clone(),

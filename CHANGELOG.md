@@ -22,6 +22,33 @@
 
 ## [Unreleased]
 
+### 修正
+
+- **Postgres で数値カラムへの `contains`/`starts_with` フィルタが 500 になるバグを修正**
+  （maintenance-review PR-5 / H-3）。`list_query` の LIKE が `LOWER(<数値カラム>)` を
+  生成し、Postgres の `lower()` は text 専用のため実行時エラー（500）になっていた
+  （SQLite は動的型で暗黙変換するため既存テストが素通り）。`LOWER(CAST(col AS TEXT))`
+  に変更（text カラムでは no-op、両バックエンド一致）。SQLite 回帰テスト + 実 Postgres の
+  `postgres_tests`（LIKE/数値バインド/NULLS LAST、storage-postgres CI）を新設。
+- **items import に明示 body limit を追加し 413 でなく 422 を返す**（maintenance-review
+  PR-5 / M-14）。仕様上有効な最大行数のペイロードが axum 既定 2MB に先に当たり 413 で
+  落ち得たのを、`items_write_router` に `DefaultBodyLimit::max(MAX_IMPORT_ROWS *
+IMPORT_BODY_LIMIT_BYTES_PER_ROW)`（10MiB）を層付けして service 層の行数チェック
+  （422）へ到達させる。境界テスト1本（修正を外すと 413 で落ちる回帰ガード）。
+
+### テスト
+
+- **Tauri の6コマンドを `_body` 分割し監査記録テストを追加**（maintenance-review PR-5 /
+  M-5）。items_delete / auth_config_apply / autologin_enable / autologin_disable /
+  attachments_upload / attachments_delete を `<cmd>_body(&AppState, …)` に切り出し（1行
+  アダプタ）、各 body の監査エントリ（actor/action/resource/detail）を検証。attachments
+  テストは scaffold で minimal/standard から除去（cutRegion 1本追加）。
+- **pg_smoke に import の round-trip + rollback を追加**（maintenance-review PR-5 /
+  M-12）。未実行だった `import_apply_postgres` の commit / rollback 両ブランチを実 Postgres で検証。
+- **dock-svelte にドラッグ移動・フロート化のコンポーネントテストを追加**
+  （maintenance-review PR-5 / M-8）。grid/tree の @testing-library/svelte + jsdom
+  パターンを流用（devDeps + svelteTesting プラグイン追加）。
+
 ### 変更
 
 - **`api_router` の10位置引数を `Services` 構造体へ集約**（maintenance-review M-13）。
