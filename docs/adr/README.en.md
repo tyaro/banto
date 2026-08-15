@@ -49,6 +49,7 @@ corresponding ADR exists, be traced from there.
 | [0005](0005-i18n-paraglide.en.md)                    | Adopt Paraglide JS as the UI i18n runtime (an exception to ADR-0002)                               | Accepted |
 | [0006](0006-docs-in-repo-projects-status-only.en.md) | Consolidate knowledge docs in-repo and confine GitHub Projects to ephemeral status only            | Accepted |
 | [0007](0007-derived-app-dev-optimizer-exclude.en.md) | Reconcile source-shipped `.svelte.ts` with derived-app dev via consumer `optimizeDeps.exclude`     | Accepted |
+| [0008](0008-machine-check-stop-gate.en.md)           | Gate new machine checks on a three-condition test to stop unbounded growth                         | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 

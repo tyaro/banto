@@ -22,6 +22,21 @@
 
 ## [Unreleased]
 
+### 機械検査
+
+- **機械検査を足すかの判断基準を [ADR-0008](docs/adr/0008-machine-check-stop-gate.md)
+  に昇格し、rule を2本追加**（maintenance-review PR-7）。maintainability-review §4.1 が
+  口伝で持っていた「打ち止め3条件」（背骨 / 静かに壊れる / AI が壊しうる を全て満たす）を
+  ADR 化し、保守レビューの9案を選別（採用2・見送り2・却下5。全採否を ADR の台帳に記録）。
+  採用分を `verify-architecture.mjs` に実装:
+  - **rule 11 `migration-dialect-parity`**: `migrations-{sqlite,postgres}/` のファイル名/
+    連番が1対1（片系統だけ足すと PG は smoke CI のみのため静かに欠落。中身の型差は §11 の
+    意図的分岐でレビュー担保）。
+  - **rule 12 `csp-two-definitions`**: `security_headers.rs` の const と `tauri.conf.json` の
+    `app.security.csp` を connect-src の IPC 差分を除きディレクティブ単位で照合（cross-check
+    テスト無し + src-tauri 非コンパイルのため片方だけ緩む退行を静かに見逃していた）。
+    conventions §6/§11 に機械検査済みの旨を追記。両 rule とも意図的破壊で fail することを実測確認。
+
 ### 修正
 
 - **Postgres で数値カラムへの `contains`/`starts_with` フィルタが 500 になるバグを修正**

@@ -26,6 +26,12 @@
  *  10. §13 app 層コンポーネントに生の日本語リテラルが無い
  *      … apps/admin-template/src の .svelte（生成物 paraglide/ を除く）に
  *        コメント外の語構成日本語（ひらがな/カタカナ/CJK）が無いこと
+ *  11. §11 マイグレーション方言のファイル名対称 … migrations-{sqlite,postgres}/
+ *      のファイル名/連番が1対1（片系統だけ足すと該当 backend で静かに欠落）。
+ *      中身の型差は §11 の意図的分岐でレビュー担保。ADR-0008
+ *  12. §6 CSP 2定義のディレクティブ単位一致 … security_headers.rs の const と
+ *      tauri.conf.json の app.security.csp が connect-src の IPC 差分を除き一致。
+ *      ADR-0008
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -632,6 +638,132 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 			rule,
 			`optimizeDeps.exclude が .svelte.ts ソース配布 ${needsExclude.length} パッケージと一致`
 		);
+}
+
+// --- rule 11: マイグレーション方言のファイル名対称（conventions §11、ADR-0008） -
+// SQLite と Postgres の2系統マイグレーションは歩調同期。中身は byte 別物でよい
+// （db.rs の型分岐 = 意図的）が、ファイル名/連番は一致必須。片系統だけに足すと
+// その backend のスキーマが静かに欠落する（各 sqlx::migrate! はディレクトリ独立、
+// PG CI は smoke のみで捕捉しない = 「静かに壊れる」）。本検査はファイル名/連番の
+// 対称のみ — 同名ペア内の型差は §11 の意図的分岐でレビュー担保。
+{
+	const rule = 'migration-dialect-parity';
+	const base = 'apps/admin-template/core';
+	const listSql = (d) => {
+		const abs = path.join(repoRoot, base, d);
+		if (!fs.existsSync(abs)) return null;
+		return fs
+			.readdirSync(abs)
+			.filter((f) => f.endsWith('.sql'))
+			.sort();
+	};
+	const sq = listSql('migrations-sqlite');
+	const pg = listSql('migrations-postgres');
+	if (!sq || !pg) {
+		fail(
+			rule,
+			base,
+			'migrations-sqlite/ か migrations-postgres/ が見つからない（検査の前提が変わった — 本検査を更新）'
+		);
+	} else {
+		const onlySq = sq.filter((f) => !pg.includes(f));
+		const onlyPg = pg.filter((f) => !sq.includes(f));
+		for (const f of onlySq)
+			fail(
+				rule,
+				`${base}/migrations-sqlite/${f}`,
+				'postgres 側に対応ファイルが無い — 片系統だけにマイグレーションを足した（§11: 方言2系統は歩調同期。中身は byte 別物でよいがファイル名/連番は一致させる）'
+			);
+		for (const f of onlyPg)
+			fail(rule, `${base}/migrations-postgres/${f}`, 'sqlite 側に対応ファイルが無い（同上、§11）');
+		if (onlySq.length === 0 && onlyPg.length === 0)
+			pass(
+				rule,
+				`方言2系統のマイグレーション ${sq.length} 本がファイル名一致（同名ペア内の型差は §11 の意図的分岐でレビュー担保。本検査はファイル名/連番の対称のみ）`
+			);
+	}
+}
+
+// --- rule 12: CSP 2定義のディレクティブ単位一致（conventions §6、ADR-0008） ------
+// Content-Security-Policy は LAN サーバ（security_headers.rs の const）と Tauri
+// webview（tauri.conf.json の app.security.csp）の2箇所に別形式で定義される。
+// 唯一の意図的差分は connect-src（Tauri は IPC 用に ipc: http://ipc.localhost を
+// 追加）。他は全ディレクティブ一致必須。cross-check テストは無く src-tauri は
+// 非コンパイルなので、片方だけ緩める編集は静かに XSS/exfil 面を広げる（= 背骨 +
+// 静かに壊れる + AI が踏みやすい）。
+{
+	const rule = 'csp-two-definitions';
+	const SERVER = 'crates/banto-server/src/security_headers.rs';
+	const TAURI = 'apps/admin-template/src-tauri/tauri.conf.json';
+	// Tauri 側が connect-src に追加してよい source（§6 の唯一の意図的差分）。
+	const CONNECT_SRC_TAURI_EXTRA = ['ipc:', 'http://ipc.localhost'];
+
+	// "name 'a' b; …" → Map(name -> sorted sources[])。source 集合をソートして
+	// 順不同で比較する。
+	const parseDirectives = (csp) => {
+		const map = new Map();
+		for (const part of csp.split(';')) {
+			const tokens = part.trim().split(/\s+/).filter(Boolean);
+			if (tokens.length === 0) continue;
+			const [name, ...sources] = tokens;
+			map.set(name, sources.sort());
+		}
+		return map;
+	};
+
+	const serverSrc = read(SERVER);
+	// const 文字列を取り出し、Rust の行継続（`\` + 改行 + 先頭空白）を畳んで
+	// 実行時文字列を復元する。
+	const m = serverSrc.match(/CONTENT_SECURITY_POLICY: &str = "([\s\S]*?)";/);
+	const tauriCsp = JSON.parse(read(TAURI))?.app?.security?.csp;
+
+	if (!m || typeof tauriCsp !== 'string') {
+		fail(
+			rule,
+			!m ? SERVER : TAURI,
+			'CSP 定義が抽出できない（const 名か JSON パスが変わった — 本検査を更新）'
+		);
+	} else {
+		const server = parseDirectives(m[1].replace(/\\\r?\n\s*/g, ''));
+		const tauri = parseDirectives(tauriCsp);
+		const names = new Set([...server.keys(), ...tauri.keys()]);
+		let mismatches = 0;
+		for (const name of names) {
+			const s = server.get(name);
+			const t = tauri.get(name);
+			if (!s || !t) {
+				mismatches++;
+				fail(
+					rule,
+					!s ? SERVER : TAURI,
+					`ディレクティブ ${name} が片方の CSP にしか無い（§6: connect-src 以外は両定義一致）`
+				);
+			} else if (name === 'connect-src') {
+				// tauri 側 = server 側 ∪ {ipc:, http://ipc.localhost}。
+				const expected = [...new Set([...s, ...CONNECT_SRC_TAURI_EXTRA])].sort();
+				if (t.join(' ') !== expected.join(' ')) {
+					mismatches++;
+					fail(
+						rule,
+						TAURI,
+						`connect-src が「server ∪ {ipc:, http://ipc.localhost}」と不一致（§6 の唯一の許容差分。server=[${s.join(' ')}] tauri=[${t.join(' ')}]）`
+					);
+				}
+			} else if (s.join(' ') !== t.join(' ')) {
+				mismatches++;
+				fail(
+					rule,
+					TAURI,
+					`ディレクティブ ${name} が2定義で不一致（§6: 片方だけ緩めると防御が崩れる。server=[${s.join(' ')}] tauri=[${t.join(' ')}]）`
+				);
+			}
+		}
+		if (mismatches === 0)
+			pass(
+				rule,
+				`CSP 2定義（security_headers.rs / tauri.conf.json）が ${names.size} ディレクティブで一致（connect-src の IPC 差分のみ許容、§6）`
+			);
+	}
 }
 
 // --- 結果 -------------------------------------------------------------------
