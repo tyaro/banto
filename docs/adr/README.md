@@ -48,6 +48,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0005](0005-i18n-paraglide.md)                    | UI i18n ランタイムに Paraglide JS を採用（ADR-0002 の例外）                          | Accepted |
 | [0006](0006-docs-in-repo-projects-status-only.md) | 知識ドキュメントは in-repo に集約し GitHub Projects は揮発的ステータス専用に限定する | Accepted |
 | [0007](0007-derived-app-dev-optimizer-exclude.md) | `.svelte.ts` ソース配布と派生アプリ dev の両立は消費側 `optimizeDeps.exclude` で解く | Accepted |
+| [0008](0008-machine-check-stop-gate.md)           | 機械検査を足すかは「3条件ゲート」で判断し無限追加を止める                            | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
