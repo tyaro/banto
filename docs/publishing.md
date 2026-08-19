@@ -37,6 +37,32 @@ pnpm add "github:tyaro/banto#main&path:packages/theme"
   再検討 — その時はスコープ改名の判断も同時に行う。経緯と再開手順は上記
   history 文書）
 
+## 消費実績と消費側の手順
+
+2026-07-13、別リポジトリが本リポジトリの `v0.1.1` を実際に消費し、npm git
+依存（`&path:` 指定）・Rust git タグ依存とも `pnpm install`/`cargo check`/
+`cargo test --workspace` が通ることを確認した。この配布形態は動作する。
+
+**消費側で必要になる作業の一覧は README の
+[「4. 別リポジトリから git 依存として消費する場合」](../README.md#4-別リポジトリから-git-依存として消費する場合)**
+にまとめてある（npm/Rust の依存書き換え、`[workspace.package].repository`、
+lint 設定の持ち込み、e2e スイートの移植など）。消費者はアプリ作者なので、
+手順そのものはトラックB（README）側が正となる。
+
+このとき最初に踏んだ罠が2点あり、どちらも既に本体で手当て済み:
+
+- **ソース配布パッケージが Vite の依存事前バンドルで壊れる**（issue #150）→
+  テンプレートの `apps/admin-template/vite.config.ts` に
+  `optimizeDeps.exclude` を同梱して解決。判断の経緯は
+  [ADR-0007](adr/0007-derived-app-dev-optimizer-exclude.md)。なお
+  「`packages/*/package.json` に `svelte` フィールドを足せば自動除外される」
+  という案は**採らない** — `svelte` export condition は既に付いており、
+  ADR-0007 の調査どおり、それこそが `vite-plugin-svelte` に
+  「Svelte ライブラリなので事前バンドルしてよい」と判断させる原因側だった。
+- **同一DBに対する `sqlx::migrate!` の二重使用**（`_sqlx_migrations` が
+  DB 全体で1つしか無いことによるバージョン衝突）→ README
+  「2. デモコンテンツ（`items`）を自リソースに差し替える」の注記を参照。
+
 ## 前提: ソース配布のまま
 
 Banto の `@banto/*` パッケージは**モノレポ内でソース直接参照**

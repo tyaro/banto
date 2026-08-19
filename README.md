@@ -222,10 +222,23 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
    - アプリ内の表示文言（`src/app.html` の `<title>`、
      `src/lib/components/Sidebar.svelte`・`src/routes/login/+page.svelte`
      等の「Banto」表記）と、E2E のログイン見出しアサーション
+   - OS keyring のサービス名: `apps/admin-template/src-tauri/src/keyring_store.rs`
+     の `SERVICE_NAME`（既定 `"dev.banto.admin-template"` → `--identifier`
+     の値。手動でやる場合に見落とすと、新アプリの資格情報が旧テンプレートの
+     keyring 識別子のまま同居する）
    - Rust ワークスペース `Cargo.toml` の `workspace.package.repository` と
      各 `packages/*/package.json` の `repository.url`（`--repo` 指定時。
      `@banto/*` パッケージを独自に配布する場合は
      [docs/publishing.md](docs/publishing.md) の scope 問題も参照）
+
+   > **リネームしてはいけないもの**: `X-Banto-Client: banto` CSRFヘッダは
+   > 「Banto」の文字列に見えるが、LAN REST の固定プロトコル値であって
+   > ブランド名ではない。送信側（`packages/admin-core/src/providers/http.ts`
+   > 等の `CLIENT_HEADER_NAME`）と検証側（`crates/banto-server/src/csrf.rs`）
+   > の両方にハードコードされており、`banto` を機械的に一括置換すると
+   > LAN REST 認証が 403 で全滅する。リネームスクリプトは対象ファイルを
+   > 明示列挙するため安全だが、手動置換や `sed -i` での一括置換をする場合は
+   > このヘッダを除外すること。
 
 3. スクリプトが**やらない**こと（実行後に案内も表示される）:
    - アイコン: `pnpm --filter <name>-app tauri icon <画像>`
@@ -236,6 +249,12 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
      `pnpm e2e:visual --update-snapshots`）
 4. `packages/*` は現状 `@banto/*` のままモノレポ内 `workspace:*` 参照で
    使う分にはリネーム不要（配布する場合のみ検討）。
+
+> ここまでは「banto 自体をフォークして1リポジトリ内で使い続ける」場合の手順。
+> **別リポジトリが `@banto/*`/`banto-*` を git 依存として参照する**（コピー
+> せず消費する）場合は追加の作業が要る —
+> [4. 別リポジトリから git 依存として消費する場合](#4-別リポジトリから-git-依存として消費する場合)
+> を参照。
 
 ### 2. デモコンテンツ（`items`）を自リソースに差し替える
 
@@ -268,6 +287,26 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 リストに従う。`admin-template-core`/Tauri/REST の三経路で同一のサービス層を
 通す構造（[docs/template-scope.md](docs/template-scope.md) §2.1）は維持すること。
 
+> **注意（`sqlx::migrate!` は同一DBに1クレートまで）**:
+> `apps/admin-template/core/src/db.rs` はアプリ自身のスキーマを
+> `sqlx::migrate!("./migrations-sqlite")` /
+> `sqlx::migrate!("./migrations-postgres")` で適用する。`sqlx` の
+> マイグレーション管理テーブル（`_sqlx_migrations`）は**データベース全体で
+> 1つ**であり、クレートごとにテーブル名を分ける機能は無い。そのため
+> `_sqlx_migrations` を内部で使う別クレート（自作の共通クレート等）を
+> **同一プール**に対して併用すると、バージョン番号が衝突して
+> `MigrateError::VersionMismatch`/`VersionMissing` で必ず失敗する
+> （空DBへの初回実行から発生する）。回避策は次のどちらか:
+>
+> - 併用するクレート側を `sqlx::migrate!` ではなく冪等な DDL
+>   （`CREATE TABLE IF NOT EXISTS`、列追加は存在確認してから
+>   `ALTER TABLE`）にする
+> - アプリ側の `db.rs` を冪等 DDL に寄せ、`sqlx::migrate!` を使うクレートを
+>   1つに絞る
+>
+> いずれにせよ「同一プールに対して `sqlx::migrate!` を呼ぶクレートは常に
+> 1つまで」を保つこと。
+
 ### 3. オプション資産の削除
 
 以下は「同梱するが削除できる」ことが保証されたオプション資産
@@ -282,9 +321,22 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 **`@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）**:
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
 `DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
-`src/lib/banto/popout.ts` を削除し、ダッシュボードページを固定レイアウトの
-パネル羅列に置き換える。`apps/admin-template/package.json` の
-`@banto/dock-svelte` 依存を外す。
+`src/lib/banto/popout.ts`・`src/routes/panel/[id]/`（ポップアウト先の
+スタンドアロンウィンドウ用ルート）を削除し、ダッシュボードページを固定
+レイアウトのパネル羅列に置き換える。`apps/admin-template/package.json` の
+`@banto/dock-svelte` 依存と、`apps/admin-template/vite.config.ts` の
+`optimizeDeps.exclude` にある `'@banto/dock-svelte'` 行を外す（残すと
+`pnpm verify:architecture` の `optimizedeps-svelte-source` が「不要なのに
+登録」で落ちる。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)）。
+
+あわせて **`src-tauri` 側**の以下も外す。ポップアウト専用の配線であり、
+残すと呼び出し元のない孤立コード + 不要なウィンドウ権限になる
+（`pnpm scaffold` は `src-tauri` を書き換えないため、ここは常に手作業）:
+
+- `apps/admin-template/src-tauri/src/lib.rs` の `panel_open` コマンド
+  （関数本体と `invoke_handler` への登録の2箇所）
+- `apps/admin-template/src-tauri/capabilities/default.json` の `"windows"`
+  配列内 `"panel-*"` エントリ（ポップアウトウィンドウのケイパビリティ許可）
 
 **`@banto/charts`（SVGチャート）**:
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
@@ -372,6 +424,64 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
    パッケージ本体（`packages/tree-svelte`）は同梱のままでも他に影響しないが、
    ナビが1項目減るぶんサイドバーが写る認証ページのビジュアル回帰ベースライン
    を再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。
+
+### 4. 別リポジトリから git 依存として消費する場合
+
+§1〜3 はすべて「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」
+手順。これに対し、**別リポジトリ（例: 社内の案件アプリ）がコピーせずに
+`@banto/*`/`banto-*` を git 依存として参照する**構成も取れる。git 依存の
+記法そのものは [docs/publishing.md](docs/publishing.md) を参照。ここでは、
+§1〜3 の手順を流用する際に追加で必要になる作業を挙げる。
+
+- **npm: `workspace:*` → git 依存への書き換え**: モノレポ内で
+  `"@banto/admin-core": "workspace:*"` と参照している箇所を、
+  `"@banto/admin-core": "github:tyaro/banto#v1.2.0&path:packages/admin-core"`
+  のような git 依存にパッケージ単位で書き換える。
+- **Rust: path 依存 → git タグ依存への書き換え**: 消費側 root `Cargo.toml`
+  の `[workspace.dependencies]` に
+  `banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.2.0" }`
+  等を追加し、各クレートの依存を `{ workspace = true }` に揃える。特に
+  `apps/admin-template/src-tauri/Cargo.toml` の
+  `banto-core = { path = "../../../crates/banto-core" }` は**同一リポジトリ内
+  であることを前提にした相対パス参照**で、コピー先には `crates/banto-core`
+  が存在せず即ビルド不能になる。必ず `{ workspace = true }` に書き換える。
+- **`[workspace.package]` に `repository` が必要**: コピーしたクレートの
+  `Cargo.toml` は `repository.workspace = true` を持つ。消費側 root
+  `Cargo.toml` の `[workspace.package]` に `repository` が無いとビルドエラーに
+  なるので、`repository` を追加するか `repository.workspace = true` ごと削除
+  する。
+- **root `package.json` の devDependencies**: ルートの `eslint.config.js` は
+  `@eslint/js`・`typescript-eslint`・`eslint-plugin-svelte`・
+  `eslint-config-prettier`・`globals` を import する。lint 設定ごと持ち込む
+  なら、この5つを消費側 root の devDependency に入れる。加えて banto 自身は
+  `typescript` をパッケージ単位に置いている（root には無い）ため、pnpm の
+  非 hoist なワークスペース構成では `typescript-eslint` のパーサ解決のために
+  root にも `typescript` が要る場合がある。
+- **prettier を新規導入するなら `.prettierignore` を先に整える**: 既存の
+  別リポジトリに `.prettierrc.json` を初めて持ち込むと、既存ファイル全部
+  （特に `pnpm-lock.yaml`）が整形対象になり巨大な差分が出る。本リポジトリ
+  直下の `.prettierignore` を出発点にすること。
+- **Vite `optimizeDeps.exclude`**: `@banto/*` はソース配布（未コンパイルの
+  `.svelte`/`.svelte.ts`）のため、git 依存として実 node_modules パッケージに
+  なると Vite の依存事前バンドルが `.svelte.ts` を解析できず、`pnpm dev` が
+  `js_parse_error` で失敗する（`pnpm build`/`pnpm check` は通るため気づき
+  にくい）。テンプレートの `apps/admin-template/vite.config.ts` には対策済みの
+  `optimizeDeps.exclude` が同梱されているので、**vite 設定を自前で書く場合は
+  この exclude を移植する**こと。背景と判断は
+  [ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)。
+- **コピー・リネーム後は `cargo fmt --all` と clippy を通す**: クレート名の
+  リネームで `use` 文の並び順が変わったり、デモ（`items`）削除で未使用 import
+  が残ったりする。`cargo fmt --all` と
+  `cargo clippy --all-targets -- -D warnings` を一度通せば機械的に拾える。
+- **e2e スイート（`e2e/`）も移植できる**: `e2e/playwright.config.ts`・
+  `global-teardown.ts`・`tsconfig.json` は、ポート番号・クレート名
+  （`--filter` / `-p <core-crate>`）・一時DBのプレフィックス程度の差し替えで、
+  `PORT`/`BANTO_DB`/`BANTO_ALLOW_SETUP` の環境変数契約（`banto-serve` 由来）
+  のまま持っていける。spec 側の落とし穴として、
+  `getByRole('heading', { name: '...' })` を `level` 指定なしで使うと、
+  ページ本体に同名の見出しを足した画面で Header 側の `<h1>` と二重マッチして
+  strict mode violation になる — `{ level: 2, name: '...' }` のようにレベルを
+  指定して本体側に絞ること。
 
 ## 開発
 
