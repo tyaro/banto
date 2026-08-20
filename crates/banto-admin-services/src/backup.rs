@@ -1078,12 +1078,11 @@ mod tests {
 
         // The live db_path now contains the RESTORED content.
         let after_pool = banto_storage::connect_sqlite(&db_path).await.unwrap();
-        let marker: String = sqlx::query_scalar(
-            "SELECT value FROM settings WHERE key = 'restore-marker'",
-        )
-        .fetch_one(&after_pool)
-        .await
-        .unwrap();
+        let marker: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'restore-marker'")
+                .fetch_one(&after_pool)
+                .await
+                .unwrap();
         assert_eq!(marker, "NEW");
         after_pool.close().await;
 
@@ -1094,12 +1093,11 @@ mod tests {
             .join(&applied.pre_restore_backup_file_name);
         assert!(backup_path.exists());
         let backup_pool = banto_storage::connect_sqlite(&backup_path).await.unwrap();
-        let old_marker: String = sqlx::query_scalar(
-            "SELECT value FROM settings WHERE key = 'restore-marker'",
-        )
-        .fetch_one(&backup_pool)
-        .await
-        .unwrap();
+        let old_marker: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'restore-marker'")
+                .fetch_one(&backup_pool)
+                .await
+                .unwrap();
         assert_eq!(old_marker, "OLD");
         backup_pool.close().await;
     }
