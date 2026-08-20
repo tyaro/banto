@@ -22,20 +22,19 @@
 
 ## [Unreleased]
 
-### 機械検査
+## [1.3.0] - 2026-08-20
 
-- **機械検査を足すかの判断基準を [ADR-0008](docs/adr/0008-machine-check-stop-gate.md)
-  に昇格し、rule を2本追加**（maintenance-review PR-7）。maintainability-review §4.1 が
-  口伝で持っていた「打ち止め3条件」（背骨 / 静かに壊れる / AI が壊しうる を全て満たす）を
-  ADR 化し、保守レビューの9案を選別（採用2・見送り2・却下5。全採否を ADR の台帳に記録）。
-  採用分を `verify-architecture.mjs` に実装:
-  - **rule 11 `migration-dialect-parity`**: `migrations-{sqlite,postgres}/` のファイル名/
-    連番が1対1（片系統だけ足すと PG は smoke CI のみのため静かに欠落。中身の型差は §11 の
-    意図的分岐でレビュー担保）。
-  - **rule 12 `csp-two-definitions`**: `security_headers.rs` の const と `tauri.conf.json` の
-    `app.security.csp` を connect-src の IPC 差分を除きディレクティブ単位で照合（cross-check
-    テスト無し + src-tauri 非コンパイルのため片方だけ緩む退行を静かに見逃していた）。
-    conventions §6/§11 に機械検査済みの旨を追記。両 rule とも意図的破壊で fail することを実測確認。
+**v1.3.0 — 保守レビュー 2026-08 の反映テーマ。** 新機能の追加は無く、
+maintenance-review 2026-08 で洗い出した修正・対称性是正・テスト増強・
+機械検査の追加が中心。**後方互換**（既存の公開 API は削除・改名とも無し、
+依存追加ゼロ）のため minor リリース。以下は v1.2.0 以降のマージ分。
+
+なお、クライアントから見えるステータスコードが2箇所変わる（不正な
+フィルタ入力が 500 → 400、items import の大きなペイロードが 413 → 422）。
+いずれも誤ったレスポンスの是正だが、ステータスコードで分岐している消費側は
+確認すること。また `banto-core` の `BantoError` に `BadRequest`
+バリアントが増えたため、この enum を網羅 `match` している消費側は
+追随が必要（`ErrorBody` 経由で扱っている場合は影響なし）。
 
 ### 修正
 
@@ -50,58 +49,6 @@
   落ち得たのを、`items_write_router` に `DefaultBodyLimit::max(MAX_IMPORT_ROWS *
 IMPORT_BODY_LIMIT_BYTES_PER_ROW)`（10MiB）を層付けして service 層の行数チェック
   （422）へ到達させる。境界テスト1本（修正を外すと 413 で落ちる回帰ガード）。
-
-### テスト
-
-- **Tauri の6コマンドを `_body` 分割し監査記録テストを追加**（maintenance-review PR-5 /
-  M-5）。items_delete / auth_config_apply / autologin_enable / autologin_disable /
-  attachments_upload / attachments_delete を `<cmd>_body(&AppState, …)` に切り出し（1行
-  アダプタ）、各 body の監査エントリ（actor/action/resource/detail）を検証。attachments
-  テストは scaffold で minimal/standard から除去（cutRegion 1本追加）。
-- **pg_smoke に import の round-trip + rollback を追加**（maintenance-review PR-5 /
-  M-12）。未実行だった `import_apply_postgres` の commit / rollback 両ブランチを実 Postgres で検証。
-- **dock-svelte にドラッグ移動・フロート化のコンポーネントテストを追加**
-  （maintenance-review PR-5 / M-8）。grid/tree の @testing-library/svelte + jsdom
-  パターンを流用（devDeps + svelteTesting プラグイン追加）。
-
-### 変更
-
-- **`api_router` の10位置引数を `Services` 構造体へ集約**（maintenance-review M-13）。
-  `api_router(items, users, …, auth, events, allow_setup)` を
-  `api_router(services, auth, events, allow_setup)` に変更し、7つのサービスハンドル
-  （items/users/settings/audit/backup/attachments/system_info）を `rest::Services`
-  に束ねた。アプリ作者がサービスを足すコストが「位置引数を全呼び出し箇所へ波及」から
-  「構造体フィールド1つ」に下がり、scaffold の attachments 除去も位置依存スロットから
-  名前付きフィールドの除去になった。呼び出し箇所（`bin/banto-serve` / `src-tauri` の
-  `start_embedded_server` / `rest::tests` の各ルータヘルパ）を追随。振る舞いの変更なし。
-- **Tauri 側の監査記録に `record_ok` ヘルパーを導入**（maintenance-review M-1）。
-  `src-tauri/lib.rs` の手書き `AuditEntry` 31箇所のうち、成功・アクター付き書き込み
-  24箇所を REST の `record_write` に対応する `record_ok(&audit, &actor, action,
-resource, entity_id, detail)` へ集約（`origin: "tauri"` / `result: "ok"` を固定）。
-  両経路が各サイドのヘルパー経由になり、監査記録の形状ドリフト（conventions §1）を
-  抑止。形状が異なる7箇所（import の ok/failed、login_failed、認証無効モードの
-  エスケープハッチ書き込み、起動時 restore_applied、denied）は REST 同様に手書きのまま。
-  振る舞いの変更なし（着手前提の両経路 detail 一致は maintenance-review §5.3 で実測済み）。
-
-### ドキュメント
-
-- **README の利用パッケージ別レシピ3節を `docs/recipes/` へ切り出し**
-  （maintenance-review PR-6）。scan-wedge / 通知（トースト）/ tree-svelte の各節
-  （計約240行）を `docs/recipes/{scan-wedge,notifications,tree-svelte}.md` へ移し、
-  README には紹介 + リンクのスタブを残した（README は「コピー→リネーム→差し替え→
-  削除→配信」の背骨に集中。節アンカーへの被参照ゼロを実測して切り出し）。
-  欠落していた `packages/tree-svelte/README.md` を新設（他9パッケージと同形式）。
-- **`docs/recipes/add-role.md`（ja/en）を新設**（feature-review-2026-08 §2.6 の宿題）。
-  RBAC ロール追加のチェックリスト（Role enum → DB CHECK → 両経路の認可床 → rule 8 →
-  フロント選択 UI/i18n → 対称テスト）。add-resource.md の姉妹編。AGENTS（ja/en）の
-  「タスク別の入り口」に add-role とレシピ群を索引追加。
-- **ui-framework-spec の §14/§15 に決着を追記**（maintenance-review PR-6）。§14 の
-  解決済み未決2件（ドッキング初期スコープ→M7/M8 段階リリース、REST エラー
-  フォーマット→ErrorBody + response.rs のステータス写像。バージョニングは未導入と明記）
-  に [x] と決着先を記入。§15 に M0〜M9 完了印と「M10 以降は roadmap」の誘導。
-  ヘッダを v0.7 → v0.8。
-
-### Fixed
 
 - **派生アプリの `pnpm dev` が `.svelte.ts` で 500 になる問題を修正**（issue #150 /
   [ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)）。`@banto/*` は
@@ -132,7 +79,24 @@ resource, entity_id, detail)` へ集約（`origin: "tauri"` / `result: "ok"` を
   全 `ERROR_KINDS`）とワイヤ形状パリティテスト（`error.rs`）を追随。サーバ
   エラー監視がクライアント起因の 500 で汚染されなくなる。
 
-### Changed
+### 変更
+
+- **`api_router` の10位置引数を `Services` 構造体へ集約**（maintenance-review M-13）。
+  `api_router(items, users, …, auth, events, allow_setup)` を
+  `api_router(services, auth, events, allow_setup)` に変更し、7つのサービスハンドル
+  （items/users/settings/audit/backup/attachments/system_info）を `rest::Services`
+  に束ねた。アプリ作者がサービスを足すコストが「位置引数を全呼び出し箇所へ波及」から
+  「構造体フィールド1つ」に下がり、scaffold の attachments 除去も位置依存スロットから
+  名前付きフィールドの除去になった。呼び出し箇所（`bin/banto-serve` / `src-tauri` の
+  `start_embedded_server` / `rest::tests` の各ルータヘルパ）を追随。振る舞いの変更なし。
+- **Tauri 側の監査記録に `record_ok` ヘルパーを導入**（maintenance-review M-1）。
+  `src-tauri/lib.rs` の手書き `AuditEntry` 31箇所のうち、成功・アクター付き書き込み
+  24箇所を REST の `record_write` に対応する `record_ok(&audit, &actor, action,
+resource, entity_id, detail)` へ集約（`origin: "tauri"` / `result: "ok"` を固定）。
+  両経路が各サイドのヘルパー経由になり、監査記録の形状ドリフト（conventions §1）を
+  抑止。形状が異なる7箇所（import の ok/failed、login_failed、認証無効モードの
+  エスケープハッチ書き込み、起動時 restore_applied、denied）は REST 同様に手書きのまま。
+  振る舞いの変更なし（着手前提の両経路 detail 一致は maintenance-review §5.3 で実測済み）。
 
 - **`record_write` の `entity_id` を `Option<&str>` に**（maintenance-review
   PR-4 / M-2）。entity_id を持たない mutating ハンドラ4箇所（audit config /
@@ -154,7 +118,51 @@ resource, entity_id, detail)` へ集約（`origin: "tauri"` / `result: "ok"` を
   （アプリ側ファイル群）を追加 — アプリ側 PR でアンカーが壊れても週次まで
   潜伏せず毎 PR で検出される。
 
+### テスト
+
+- **Tauri の6コマンドを `_body` 分割し監査記録テストを追加**（maintenance-review PR-5 /
+  M-5）。items_delete / auth_config_apply / autologin_enable / autologin_disable /
+  attachments_upload / attachments_delete を `<cmd>_body(&AppState, …)` に切り出し（1行
+  アダプタ）、各 body の監査エントリ（actor/action/resource/detail）を検証。attachments
+  テストは scaffold で minimal/standard から除去（cutRegion 1本追加）。
+- **pg_smoke に import の round-trip + rollback を追加**（maintenance-review PR-5 /
+  M-12）。未実行だった `import_apply_postgres` の commit / rollback 両ブランチを実 Postgres で検証。
+- **dock-svelte にドラッグ移動・フロート化のコンポーネントテストを追加**
+  （maintenance-review PR-5 / M-8）。grid/tree の @testing-library/svelte + jsdom
+  パターンを流用（devDeps + svelteTesting プラグイン追加）。
+
+### 機械検査
+
+- **機械検査を足すかの判断基準を [ADR-0008](docs/adr/0008-machine-check-stop-gate.md)
+  に昇格し、rule を2本追加**（maintenance-review PR-7）。maintainability-review §4.1 が
+  口伝で持っていた「打ち止め3条件」（背骨 / 静かに壊れる / AI が壊しうる を全て満たす）を
+  ADR 化し、保守レビューの9案を選別（採用2・見送り2・却下5。全採否を ADR の台帳に記録）。
+  採用分を `verify-architecture.mjs` に実装:
+  - **rule 11 `migration-dialect-parity`**: `migrations-{sqlite,postgres}/` のファイル名/
+    連番が1対1（片系統だけ足すと PG は smoke CI のみのため静かに欠落。中身の型差は §11 の
+    意図的分岐でレビュー担保）。
+  - **rule 12 `csp-two-definitions`**: `security_headers.rs` の const と `tauri.conf.json` の
+    `app.security.csp` を connect-src の IPC 差分を除きディレクティブ単位で照合（cross-check
+    テスト無し + src-tauri 非コンパイルのため片方だけ緩む退行を静かに見逃していた）。
+    conventions §6/§11 に機械検査済みの旨を追記。両 rule とも意図的破壊で fail することを実測確認。
+
 ### ドキュメント
+
+- **README の利用パッケージ別レシピ3節を `docs/recipes/` へ切り出し**
+  （maintenance-review PR-6）。scan-wedge / 通知（トースト）/ tree-svelte の各節
+  （計約240行）を `docs/recipes/{scan-wedge,notifications,tree-svelte}.md` へ移し、
+  README には紹介 + リンクのスタブを残した（README は「コピー→リネーム→差し替え→
+  削除→配信」の背骨に集中。節アンカーへの被参照ゼロを実測して切り出し）。
+  欠落していた `packages/tree-svelte/README.md` を新設（他9パッケージと同形式）。
+- **`docs/recipes/add-role.md`（ja/en）を新設**（feature-review-2026-08 §2.6 の宿題）。
+  RBAC ロール追加のチェックリスト（Role enum → DB CHECK → 両経路の認可床 → rule 8 →
+  フロント選択 UI/i18n → 対称テスト）。add-resource.md の姉妹編。AGENTS（ja/en）の
+  「タスク別の入り口」に add-role とレシピ群を索引追加。
+- **ui-framework-spec の §14/§15 に決着を追記**（maintenance-review PR-6）。§14 の
+  解決済み未決2件（ドッキング初期スコープ→M7/M8 段階リリース、REST エラー
+  フォーマット→ErrorBody + response.rs のステータス写像。バージョニングは未導入と明記）
+  に [x] と決着先を記入。§15 に M0〜M9 完了印と「M10 以降は roadmap」の誘導。
+  ヘッダを v0.7 → v0.8。
 
 - 保守レビュー 2026-08（ドキュメント整理統合の実測プラン + 保守性再点検）を
   [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md) に追加（#148）。
@@ -629,7 +637,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.2.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/tyaro/banto/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/tyaro/banto/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tyaro/banto/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tyaro/banto/compare/v0.1.2...v1.0.0
