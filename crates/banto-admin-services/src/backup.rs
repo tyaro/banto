@@ -938,11 +938,15 @@ mod tests {
         let (svc, _dir) = service().await;
         assert!(svc.pending_restore().await.is_none());
 
-        // A second, independent, fully-migrated db's bytes - a realistic
-        // "restore from an uploaded backup" payload.
+        // A second, independent db carrying ONLY the Banto-owned base tables
+        // - i.e. what a derived app that dropped the `items` demo uploads as
+        // its "restore from an uploaded backup" payload (issue #166).
         let other_dir = tempdir().unwrap();
         let other_path = other_dir.path().join("source.sqlite3");
         let other_pool = migrated_file_db(&other_path).await;
+        // Guard the fixture itself: if `create_required_tables` ever grows a
+        // domain table back, this test would silently stop covering the
+        // no-domain-tables case it exists for.
         let items_table: Option<String> = sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'items'",
         )
