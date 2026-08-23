@@ -284,8 +284,10 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 - **テーブル定義はアプリが所有**。`banto-attachments` は自前マイグレーションを
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。
-- リストア検証（`REQUIRED_TABLES`）は**テーブル存在のみ**確認し列は見ない（粗いが
-  安価な「Banto の DB か」判定）。
+- リストア検証（`REQUIRED_TABLES`）は Banto 基盤が所有する `settings` / `users` /
+  `audit_log` の**テーブル存在のみ**確認し、列は見ない（粗いが安価な「Banto の
+  DB か」判定）。派生アプリが差し替え・削除する `items` 等のドメインテーブルは
+  必須にしない。
 - 検証で開いた接続は全パスで `conn.close()`（Windows のファイルロック残り対策）。
 
 ## 12. doc コメントは仕様節を参照する

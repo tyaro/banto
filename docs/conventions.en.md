@@ -337,8 +337,10 @@ are also expressed in the provider layer.
 - **The app owns the table definitions.** `banto-attachments` has no migrations
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").
-- Restore validation (`REQUIRED_TABLES`) checks **only table existence** and not
-  columns (a coarse but cheap "is this a Banto DB" judgment).
+- Restore validation (`REQUIRED_TABLES`) checks **only table existence** for the
+  Banto-owned `settings`, `users`, and `audit_log` tables, not columns (a coarse
+  but cheap "is this a Banto DB" judgment). Domain tables such as `items`, which
+  derived apps replace or remove, are deliberately not required.
 - Every connection opened for validation is `conn.close()`d on all paths (a
   countermeasure against lingering file locks on Windows).
 
