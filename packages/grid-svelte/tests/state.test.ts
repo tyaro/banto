@@ -203,6 +203,17 @@ describe('GridState', () => {
 			expect(state.isHidden('name')).toBe(true);
 		});
 
+		it('keeps the first column visible when every definition is hidden', () => {
+			const state = new GridState(
+				columns.map((column) => ({ ...column, hidden: true })) as GridColumn<Row>[]
+			);
+
+			// A column set that hides everything is not renderable - clamped the
+			// same way hydrate() and setColumnHidden() clamp.
+			expect(state.hidden).toEqual(['name', 'price']);
+			expect(state.orderedColumns.map((c) => c.id)).toEqual(['id']);
+		});
+
 		it("toggles visibility and keeps the column's slot in the display order", () => {
 			const state = new GridState(columns);
 			state.moveColumn('price', 0);
@@ -230,6 +241,38 @@ describe('GridState', () => {
 			const state = new GridState(columns);
 			state.setColumnHidden('nope', true);
 			expect(state.hidden).toEqual([]);
+		});
+	});
+
+	describe('moveColumn with hidden columns', () => {
+		it('treats toIndex as a VISIBLE position, not an index into order', () => {
+			const state = new GridState(columns);
+			state.setColumnHidden('name', true); // order stays [id, name, price]
+
+			// Visible order is [id, price]; drop `id` past the last visible column.
+			// An index into `order` would have read as "before price" and left the
+			// visible order unchanged.
+			state.moveColumn('id', 2);
+
+			expect(state.orderedColumns.map((c) => c.id)).toEqual(['price', 'id']);
+			expect(state.order).toEqual(['name', 'price', 'id']);
+		});
+
+		it('inserts before the visible column at toIndex', () => {
+			const state = new GridState(columns);
+			state.setColumnHidden('id', true); // visible: [name, price]
+
+			state.moveColumn('price', 0);
+
+			expect(state.orderedColumns.map((c) => c.id)).toEqual(['price', 'name']);
+			// The hidden column keeps its own slot in the full order.
+			expect(state.order).toContain('id');
+		});
+
+		it('matches plain order semantics when nothing is hidden', () => {
+			const state = new GridState(columns);
+			state.moveColumn('price', 0);
+			expect(state.order).toEqual(['price', 'id', 'name']);
 		});
 	});
 
@@ -277,7 +320,7 @@ describe('GridState', () => {
 			expect(restored.hidden).toEqual([]);
 		});
 
-		it('ignores a payload that would hide every current column', () => {
+		it('clamps a payload that would hide every current column', () => {
 			const state = new GridState(columns);
 			const json = JSON.stringify({
 				...JSON.parse(state.serialize()),
@@ -286,8 +329,21 @@ describe('GridState', () => {
 
 			state.hydrate(json);
 
-			expect(state.hidden).toEqual([]);
-			expect(state.orderedColumns).toHaveLength(3);
+			expect(state.hidden).toEqual(['name', 'price']);
+			expect(state.orderedColumns.map((c) => c.id)).toEqual(['id']);
+		});
+
+		it('de-duplicates a payload\'s hidden ids instead of reading them as "all hidden"', () => {
+			const state = new GridState(columns);
+			const json = JSON.stringify({
+				...JSON.parse(state.serialize()),
+				hidden: ['id', 'id', 'name']
+			});
+
+			state.hydrate(json);
+
+			expect(state.hidden).toEqual(['id', 'name']);
+			expect(state.orderedColumns.map((c) => c.id)).toEqual(['price']);
 		});
 
 		it('rejects a payload with no hidden list at all', () => {

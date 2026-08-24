@@ -73,7 +73,9 @@ export class GridState<TRow = unknown> {
 	constructor(columns: GridColumn<TRow>[], options: GridStateOptions = {}) {
 		this.#columns = columns;
 		this.order = columns.map((column) => column.id);
-		this.hidden = columns.filter((column) => column.hidden).map((column) => column.id);
+		this.hidden = this.#clampHidden(
+			columns.filter((column) => column.hidden).map((column) => column.id)
+		);
 		this.widths = Object.fromEntries(
 			columns.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
 		);
@@ -98,6 +100,21 @@ export class GridState<TRow = unknown> {
 	 */
 	get allColumns(): GridColumn<TRow>[] {
 		return this.#inOrder();
+	}
+
+	/**
+	 * Normalize a set of hidden ids: de-duplicated, restricted to columns
+	 * that actually exist, and never covering ALL of them. "Every column
+	 * hidden" is not a renderable state (see `setColumnHidden`), and both
+	 * entry points into `hidden` can otherwise produce it - a column set
+	 * where every definition carries `hidden: true`, and a persisted payload
+	 * hiding everything - so both clamp here by keeping the first column in
+	 * display order visible rather than silently rendering an empty grid.
+	 */
+	#clampHidden(ids: string[]): string[] {
+		const known = new Set(this.#columns.map((column) => column.id));
+		const unique = [...new Set(ids)].filter((id) => known.has(id));
+		return unique.length < known.size ? unique : unique.filter((id) => id !== this.order[0]);
 	}
 
 	#inOrder(): GridColumn<TRow>[] {
@@ -215,16 +232,25 @@ export class GridState<TRow = unknown> {
 
 	/**
 	 * Move a column in the display order (drag-reorder). `toIndex` is the
-	 * insertion position expressed in the PRE-removal order (what the drop
-	 * indicator points at); when the column moves rightward, removing it
-	 * first shifts later indices left by one, so compensate before splicing.
+	 * insertion position in the PRE-removal VISIBLE order (`orderedColumns`)
+	 * - what the drop indicator points at - because a hidden column has no
+	 * on-screen slot to drop beside (spec §4.4). It is translated here into a
+	 * position in `order`, which still carries the hidden ids: the dragged
+	 * column lands immediately before the visible column currently at
+	 * `toIndex`, or last when `toIndex` is past the final visible one. Hidden
+	 * columns keep their own slots and may therefore end up on either side of
+	 * the moved column - they have no visible position to preserve. When the
+	 * column moves rightward, removing it first shifts later indices left by
+	 * one, so compensate before splicing.
 	 */
 	moveColumn(field: string, toIndex: number): void {
 		const current = this.order.slice();
 		const fromIndex = current.indexOf(field);
 		if (fromIndex === -1) return;
+		const targetId = this.orderedColumns[toIndex]?.id;
+		const insertBefore = targetId === undefined ? current.length : current.indexOf(targetId);
 		current.splice(fromIndex, 1);
-		const insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex;
+		const insertIndex = fromIndex < insertBefore ? insertBefore - 1 : insertBefore;
 		const clampedIndex = Math.max(0, Math.min(insertIndex, current.length));
 		current.splice(clampedIndex, 0, field);
 		this.order = current;
@@ -264,13 +290,12 @@ export class GridState<TRow = unknown> {
 		const missing = this.order.filter((id) => !restoredOrder.includes(id));
 		this.order = [...restoredOrder, ...missing];
 		this.widths = { ...this.widths, ...parsed.widths };
-		// Same "keep only ids that still exist" rule as the order above. A
-		// payload that hides EVERY current column (every visible one was
-		// renamed away since it was saved, say) is dropped wholesale rather
-		// than applied - see `setColumnHidden` on why zero visible columns is
-		// not a renderable state.
-		const restoredHidden = parsed.hidden.filter((id) => knownIds.has(id));
-		this.hidden = restoredHidden.length < knownIds.size ? restoredHidden : [];
+		// Same "keep only ids that still exist" rule as the order above, plus
+		// the de-duplication and never-hide-everything clamp `#clampHidden`
+		// applies to the constructor's seed (a hand-edited or stale payload
+		// can carry duplicates, or hide every column the current set still
+		// has).
+		this.hidden = this.#clampHidden(parsed.hidden);
 	}
 
 	/** Construct a GridState and immediately hydrate it from a serialized string. */
