@@ -52,6 +52,19 @@ export interface ColumnsFromSchemaOptions<TRow> {
 	 */
 	overrides?: Record<string, Partial<GridColumn<TRow>>>;
 	/**
+	 * Explicit column order, by `SchemaField.name` (spec §4.4). Listed ids
+	 * come first in this order; every other derived column follows in schema
+	 * order. Ids that are not in the schema are ignored.
+	 *
+	 * Exists because the list's column order and the form's field order are
+	 * different concerns that the schema alone conflates: moving an
+	 * auto-numbered field to the end of the FORM (fewer keystrokes) would
+	 * otherwise move it to the end of the GRID too. Note this is the
+	 * DERIVATION order - the user's own drag-reorder lives in
+	 * `GridState.order` and overrides it once a persisted state is hydrated.
+	 */
+	order?: string[];
+	/**
 	 * Default true. Set false to derive a read-only grid (no cell editors at
 	 * all) regardless of per-field `readonly` - e.g. a list page whose edits
 	 * happen only on a detail form.
@@ -172,7 +185,11 @@ const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
  *
  * The result is a plain array: compose freely with hand-written columns
  * (row-link/actions columns, columns for fields outside the schema) via
- * array spread, and fine-tune per field via `options.overrides`.
+ * array spread, and fine-tune per field via `options.overrides` - including
+ * `{ hidden: true }` for a column that should exist but not show by default
+ * (spec §4.4), which is what a derived app wants instead of filtering the
+ * column out of the array (a filtered-out column can never be brought back
+ * by the user).
  */
 export function columnsFromSchema<TRow>(
 	schema: ColumnsSchema,
@@ -216,5 +233,19 @@ export function columnsFromSchema<TRow>(
 		columns.push({ ...column, ...options.overrides?.[field.name] });
 	}
 
-	return columns;
+	return options.order ? applyOrder(columns, options.order) : columns;
+}
+
+/** Listed ids first (in `order`), everything else after in derivation order. */
+function applyOrder<TRow>(columns: GridColumn<TRow>[], order: string[]): GridColumn<TRow>[] {
+	const byId = new Map(columns.map((column) => [column.id, column]));
+	const ordered: GridColumn<TRow>[] = [];
+	for (const id of order) {
+		const column = byId.get(id);
+		if (column) {
+			ordered.push(column);
+			byId.delete(id);
+		}
+	}
+	return [...ordered, ...byId.values()];
 }

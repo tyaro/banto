@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		ColumnsMenu,
 		GridState,
 		convertCsvRow,
 		csvFilename,
@@ -22,7 +23,7 @@
 	import { base } from '$app/paths';
 	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
-	import { columnValidationMessages } from '$lib/banto/i18n';
+	import { columnValidationMessages, gridMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
 	import { itemsSchema } from '$lib/banto/resources/items';
 	import { sessionStore } from '$lib/session.svelte';
@@ -560,6 +561,16 @@
 					<option value="updatedAt">{m['items.fieldUpdatedAt']()}</option>
 				</select>
 			</label>
+			<!-- Column manager (spec §4.4, issue #168): takes the SAME GridState
+			     the active grid was handed, so hiding a column here immediately
+			     drops it from that grid. Deliberately per-mode - クライアント and
+			     サーバー own separate GridStates (and separate column sets), so
+			     one shared menu would show the wrong list for whichever mode is
+			     not active. -->
+			<ColumnsMenu
+				state={mode === 'client' ? clientGridState : serverGridState}
+				messages={gridMessages()}
+			/>
 			<!-- M19 report demo (docs/report-plan.md §3.5, deletable per
 			     docs/template-scope.md §3): ghost so it reads as a secondary,
 			     non-mutating action alongside CSVエクスポート below - `canWrite`

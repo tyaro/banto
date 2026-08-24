@@ -104,6 +104,23 @@ describe('BantoGrid', () => {
 		expect(links[1].getAttribute('href')).toBe('/items/2');
 	});
 
+	it('renders neither header nor cells for a hidden column (spec §4.4)', () => {
+		const state = new GridState<Row>(columns);
+		state.setColumnHidden('price', true);
+		render(BantoGrid<Row>, {
+			rows,
+			columns,
+			state,
+			getRowId: (row: Row) => row.id
+		});
+
+		expect(screen.queryByText('価格')).toBeNull();
+		expect(screen.queryByText('¥100')).toBeNull();
+		// The remaining columns still render, and the count follows.
+		expect(screen.getByText('商品名')).toBeTruthy();
+		expect(screen.getByRole('grid').getAttribute('aria-colcount')).toBe('2');
+	});
+
 	it('shows the empty state when there are no rows', () => {
 		renderGrid([]);
 		expect(screen.getByText('データがありません')).toBeTruthy();

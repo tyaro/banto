@@ -22,6 +22,28 @@
 
 ## [Unreleased]
 
+### 追加
+
+- **グリッドの列表示/非表示（列マネージャー UI）**（issue #168、spec §4.4）。
+  `GridColumn.hidden` で「定義は持つが既定では出さない」列を表現でき、
+  `GridState` が `setColumnHidden` / `toggleColumnHidden` / `isHidden` /
+  `allColumns` で表示状態を所有する（`orderedColumns` は可視列のみを返すため、
+  セル選択やコピー&ペーストの列インデックスも自動的に追随する）。切り替え UI は
+  新コンポーネント `ColumnsMenu`（ページ側ツールバーに置く。BantoGrid のヘッダ行は
+  可視列幅から `grid-template-columns` を組むため、ヘッダ内には入れない）。
+  admin-template の商品ページのツールバーに配線済み。
+- **`columnsFromSchema` の `order` オプション**（issue #168）。一覧の列順を
+  スキーマの定義順（＝フォームの入力順）から切り離して指定できる。列の既定非表示は
+  `overrides: { code: { hidden: true } }` で表現する。
+
+### 変更
+
+- **`SerializedGridState` に `hidden: string[]` を追加（破壊的）**。
+  `GridState.serialize()` の出力に列の表示状態が含まれるようになり、
+  `hydrate()` は `hidden` を持たない旧ペイロードを**受け付けない**（不正な
+  ペイロードと同じく無視され、レイアウトは既定値のまま）。永続化した
+  グリッドレイアウトを持つ派生アプリは、保存済みの値が一度リセットされる。
+
 ### 修正
 
 - **`items` デモを削除した派生アプリでバックアップをリストアできない問題を修正**。

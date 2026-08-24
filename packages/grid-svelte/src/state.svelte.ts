@@ -1,8 +1,8 @@
 /**
- * Reactive grid state (Svelte 5 runes): sort, filters, column order and
- * column widths. This is the client-mode state today; the shape is kept
- * wire-compatible with the Rust `ListParams` type (spec §4.1, §10) so the
- * same class can drive server mode from M5 onward.
+ * Reactive grid state (Svelte 5 runes): sort, filters, column order, column
+ * widths and column visibility. This is the client-mode state today; the
+ * shape is kept wire-compatible with the Rust `ListParams` type (spec §4.1,
+ * §10) so the same class can drive server mode from M5 onward.
  */
 import { SvelteSet } from 'svelte/reactivity';
 import {
@@ -27,6 +27,7 @@ function isSerializedGridState(value: unknown): value is SerializedGridState {
 		Array.isArray(candidate.sort) &&
 		Array.isArray(candidate.filters) &&
 		Array.isArray(candidate.order) &&
+		Array.isArray(candidate.hidden) &&
 		typeof candidate.widths === 'object' &&
 		candidate.widths !== null &&
 		// Optional/backward-compatible: a payload serialized before M5 Phase B
@@ -42,6 +43,15 @@ export class GridState<TRow = unknown> {
 	filters: FilterState[] = $state([]);
 	order: string[] = $state([]);
 	widths: Record<string, number> = $state({});
+	/**
+	 * Ids of the columns hidden from the rendered grid (spec §4.4). Seeded
+	 * from each column's `hidden` flag, then owned here: the column manager
+	 * UI (`ColumnsMenu`) writes through `setColumnHidden`/
+	 * `toggleColumnHidden`, and `serialize()` carries the result so a user's
+	 * choice survives a reload. Kept separate from `order` (which keeps a
+	 * hidden column's slot) so unhiding restores the column where it was.
+	 */
+	hidden: string[] = $state([]);
 	/** Client-mode-only group-by column id, or null for a flat view (spec §4.3). Server mode ignores this (see BantoGrid.svelte). */
 	groupBy: string | null = $state(null);
 	/**
@@ -63,14 +73,34 @@ export class GridState<TRow = unknown> {
 	constructor(columns: GridColumn<TRow>[], options: GridStateOptions = {}) {
 		this.#columns = columns;
 		this.order = columns.map((column) => column.id);
+		this.hidden = columns.filter((column) => column.hidden).map((column) => column.id);
 		this.widths = Object.fromEntries(
 			columns.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
 		);
 		this.rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
 	}
 
-	/** Columns definitions in current display order (post drag-reorder). */
+	/**
+	 * VISIBLE column definitions in current display order (post drag-reorder,
+	 * minus everything in `hidden`). This is what BantoGrid renders and what
+	 * every field index (cell selection, TSV copy/paste) counts against, so
+	 * hiding a column shifts those indices exactly like removing it would -
+	 * no separate "is this one visible" bookkeeping anywhere downstream.
+	 */
 	get orderedColumns(): GridColumn<TRow>[] {
+		return this.#inOrder().filter((column) => !this.hidden.includes(column.id));
+	}
+
+	/**
+	 * EVERY column definition in display order, hidden ones included - the
+	 * list a column manager UI offers (spec §4.4). Use `orderedColumns` for
+	 * anything that renders data.
+	 */
+	get allColumns(): GridColumn<TRow>[] {
+		return this.#inOrder();
+	}
+
+	#inOrder(): GridColumn<TRow>[] {
 		const byId = new Map(this.#columns.map((column) => [column.id, column]));
 		const ordered: GridColumn<TRow>[] = [];
 		for (const id of this.order) {
@@ -78,6 +108,35 @@ export class GridState<TRow = unknown> {
 			if (column) ordered.push(column);
 		}
 		return ordered;
+	}
+
+	/** Whether `field` is currently hidden (spec §4.4). */
+	isHidden(field: string): boolean {
+		return this.hidden.includes(field);
+	}
+
+	/**
+	 * Show/hide one column (spec §4.4). Hiding the LAST visible column is
+	 * refused (a no-op): a grid with zero columns has no header row to
+	 * re-open the column manager from, and every field index downstream
+	 * would be out of range. UIs should disable that checkbox rather than
+	 * rely on this, but the guard keeps the state itself always renderable.
+	 * Unknown ids are ignored.
+	 */
+	setColumnHidden(field: string, hidden: boolean): void {
+		if (!this.#columns.some((column) => column.id === field)) return;
+		if (hidden === this.isHidden(field)) return;
+		if (hidden) {
+			if (this.orderedColumns.length <= 1) return;
+			this.hidden = [...this.hidden, field];
+		} else {
+			this.hidden = this.hidden.filter((id) => id !== field);
+		}
+	}
+
+	/** Flip one column's visibility (spec §4.4). Subject to `setColumnHidden`'s last-column guard. */
+	toggleColumnHidden(field: string): void {
+		this.setColumnHidden(field, !this.isHidden(field));
 	}
 
 	/** Cycle a column's sort state: asc -> desc -> removed. */
@@ -171,13 +230,14 @@ export class GridState<TRow = unknown> {
 		this.order = current;
 	}
 
-	/** Serialize sort/filters/order/widths/groupBy for persistence (spec §4.4, §4.3). `collapsedGroups` is deliberately excluded - it's ephemeral. */
+	/** Serialize sort/filters/order/widths/hidden/groupBy for persistence (spec §4.4, §4.3). `collapsedGroups` is deliberately excluded - it's ephemeral. */
 	serialize(): string {
 		const payload: SerializedGridState = {
 			sort: this.sort,
 			filters: this.filters,
 			order: this.order,
 			widths: this.widths,
+			hidden: this.hidden,
 			groupBy: this.groupBy
 		};
 		return JSON.stringify(payload);
@@ -204,6 +264,13 @@ export class GridState<TRow = unknown> {
 		const missing = this.order.filter((id) => !restoredOrder.includes(id));
 		this.order = [...restoredOrder, ...missing];
 		this.widths = { ...this.widths, ...parsed.widths };
+		// Same "keep only ids that still exist" rule as the order above. A
+		// payload that hides EVERY current column (every visible one was
+		// renamed away since it was saved, say) is dropped wholesale rather
+		// than applied - see `setColumnHidden` on why zero visible columns is
+		// not a renderable state.
+		const restoredHidden = parsed.hidden.filter((id) => knownIds.has(id));
+		this.hidden = restoredHidden.length < knownIds.size ? restoredHidden : [];
 	}
 
 	/** Construct a GridState and immediately hydrate it from a serialized string. */

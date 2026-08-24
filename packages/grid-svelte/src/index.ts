@@ -5,12 +5,15 @@
  * M3 (spec §4.5) adds cell navigation/range selection, inline editing with
  * built-in editors + validation, and TSV copy/paste.
  * M5 Phase A adds server mode (windowed loading). M5 Phase B (spec §4.3)
- * adds client-mode-only row grouping/collapsing/aggregates. Still no
+ * adds client-mode-only row grouping/collapsing/aggregates. Column
+ * visibility (spec §4.4: `GridColumn.hidden`, `GridState.setColumnHidden`
+ * and the `ColumnsMenu` manager UI) lands with issue #168. Still no
  * column pinning or row reordering (later milestones); grouping has no
  * server-mode equivalent yet (SQL GROUP BY integration is a later
  * milestone) - BantoGrid ignores `GridState.groupBy` when `mode==='server'`.
  */
 export { default as BantoGrid } from './BantoGrid.svelte';
+export { default as ColumnsMenu } from './ColumnsMenu.svelte';
 export { GridState, DEFAULT_ROW_HEIGHT, type GridStateOptions } from './state.svelte';
 export { CellSelection, type CellPos } from './selection.svelte';
 export { defaultGridMessages, type GridMessages } from './messages';
