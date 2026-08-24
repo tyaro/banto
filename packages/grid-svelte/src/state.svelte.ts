@@ -1,8 +1,8 @@
 /**
- * Reactive grid state (Svelte 5 runes): sort, filters, column order and
- * column widths. This is the client-mode state today; the shape is kept
- * wire-compatible with the Rust `ListParams` type (spec §4.1, §10) so the
- * same class can drive server mode from M5 onward.
+ * Reactive grid state (Svelte 5 runes): sort, filters, column order, column
+ * widths and column visibility. This is the client-mode state today; the
+ * shape is kept wire-compatible with the Rust `ListParams` type (spec §4.1,
+ * §10) so the same class can drive server mode from M5 onward.
  */
 import { SvelteSet } from 'svelte/reactivity';
 import {
@@ -27,6 +27,7 @@ function isSerializedGridState(value: unknown): value is SerializedGridState {
 		Array.isArray(candidate.sort) &&
 		Array.isArray(candidate.filters) &&
 		Array.isArray(candidate.order) &&
+		Array.isArray(candidate.hidden) &&
 		typeof candidate.widths === 'object' &&
 		candidate.widths !== null &&
 		// Optional/backward-compatible: a payload serialized before M5 Phase B
@@ -42,6 +43,15 @@ export class GridState<TRow = unknown> {
 	filters: FilterState[] = $state([]);
 	order: string[] = $state([]);
 	widths: Record<string, number> = $state({});
+	/**
+	 * Ids of the columns hidden from the rendered grid (spec §4.4). Seeded
+	 * from each column's `hidden` flag, then owned here: the column manager
+	 * UI (`ColumnsMenu`) writes through `setColumnHidden`/
+	 * `toggleColumnHidden`, and `serialize()` carries the result so a user's
+	 * choice survives a reload. Kept separate from `order` (which keeps a
+	 * hidden column's slot) so unhiding restores the column where it was.
+	 */
+	hidden: string[] = $state([]);
 	/** Client-mode-only group-by column id, or null for a flat view (spec §4.3). Server mode ignores this (see BantoGrid.svelte). */
 	groupBy: string | null = $state(null);
 	/**
@@ -63,14 +73,51 @@ export class GridState<TRow = unknown> {
 	constructor(columns: GridColumn<TRow>[], options: GridStateOptions = {}) {
 		this.#columns = columns;
 		this.order = columns.map((column) => column.id);
+		this.hidden = this.#clampHidden(
+			columns.filter((column) => column.hidden).map((column) => column.id)
+		);
 		this.widths = Object.fromEntries(
 			columns.map((column) => [column.id, column.width ?? DEFAULT_COLUMN_WIDTH])
 		);
 		this.rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
 	}
 
-	/** Columns definitions in current display order (post drag-reorder). */
+	/**
+	 * VISIBLE column definitions in current display order (post drag-reorder,
+	 * minus everything in `hidden`). This is what BantoGrid renders and what
+	 * every field index (cell selection, TSV copy/paste) counts against, so
+	 * hiding a column shifts those indices exactly like removing it would -
+	 * no separate "is this one visible" bookkeeping anywhere downstream.
+	 */
 	get orderedColumns(): GridColumn<TRow>[] {
+		return this.#inOrder().filter((column) => !this.hidden.includes(column.id));
+	}
+
+	/**
+	 * EVERY column definition in display order, hidden ones included - the
+	 * list a column manager UI offers (spec §4.4). Use `orderedColumns` for
+	 * anything that renders data.
+	 */
+	get allColumns(): GridColumn<TRow>[] {
+		return this.#inOrder();
+	}
+
+	/**
+	 * Normalize a set of hidden ids: de-duplicated, restricted to columns
+	 * that actually exist, and never covering ALL of them. "Every column
+	 * hidden" is not a renderable state (see `setColumnHidden`), and both
+	 * entry points into `hidden` can otherwise produce it - a column set
+	 * where every definition carries `hidden: true`, and a persisted payload
+	 * hiding everything - so both clamp here by keeping the first column in
+	 * display order visible rather than silently rendering an empty grid.
+	 */
+	#clampHidden(ids: string[]): string[] {
+		const known = new Set(this.#columns.map((column) => column.id));
+		const unique = [...new Set(ids)].filter((id) => known.has(id));
+		return unique.length < known.size ? unique : unique.filter((id) => id !== this.order[0]);
+	}
+
+	#inOrder(): GridColumn<TRow>[] {
 		const byId = new Map(this.#columns.map((column) => [column.id, column]));
 		const ordered: GridColumn<TRow>[] = [];
 		for (const id of this.order) {
@@ -78,6 +125,35 @@ export class GridState<TRow = unknown> {
 			if (column) ordered.push(column);
 		}
 		return ordered;
+	}
+
+	/** Whether `field` is currently hidden (spec §4.4). */
+	isHidden(field: string): boolean {
+		return this.hidden.includes(field);
+	}
+
+	/**
+	 * Show/hide one column (spec §4.4). Hiding the LAST visible column is
+	 * refused (a no-op): a grid with zero columns has no header row to
+	 * re-open the column manager from, and every field index downstream
+	 * would be out of range. UIs should disable that checkbox rather than
+	 * rely on this, but the guard keeps the state itself always renderable.
+	 * Unknown ids are ignored.
+	 */
+	setColumnHidden(field: string, hidden: boolean): void {
+		if (!this.#columns.some((column) => column.id === field)) return;
+		if (hidden === this.isHidden(field)) return;
+		if (hidden) {
+			if (this.orderedColumns.length <= 1) return;
+			this.hidden = [...this.hidden, field];
+		} else {
+			this.hidden = this.hidden.filter((id) => id !== field);
+		}
+	}
+
+	/** Flip one column's visibility (spec §4.4). Subject to `setColumnHidden`'s last-column guard. */
+	toggleColumnHidden(field: string): void {
+		this.setColumnHidden(field, !this.isHidden(field));
 	}
 
 	/** Cycle a column's sort state: asc -> desc -> removed. */
@@ -156,28 +232,38 @@ export class GridState<TRow = unknown> {
 
 	/**
 	 * Move a column in the display order (drag-reorder). `toIndex` is the
-	 * insertion position expressed in the PRE-removal order (what the drop
-	 * indicator points at); when the column moves rightward, removing it
-	 * first shifts later indices left by one, so compensate before splicing.
+	 * insertion position in the PRE-removal VISIBLE order (`orderedColumns`)
+	 * - what the drop indicator points at - because a hidden column has no
+	 * on-screen slot to drop beside (spec §4.4). It is translated here into a
+	 * position in `order`, which still carries the hidden ids: the dragged
+	 * column lands immediately before the visible column currently at
+	 * `toIndex`, or last when `toIndex` is past the final visible one. Hidden
+	 * columns keep their own slots and may therefore end up on either side of
+	 * the moved column - they have no visible position to preserve. When the
+	 * column moves rightward, removing it first shifts later indices left by
+	 * one, so compensate before splicing.
 	 */
 	moveColumn(field: string, toIndex: number): void {
 		const current = this.order.slice();
 		const fromIndex = current.indexOf(field);
 		if (fromIndex === -1) return;
+		const targetId = this.orderedColumns[toIndex]?.id;
+		const insertBefore = targetId === undefined ? current.length : current.indexOf(targetId);
 		current.splice(fromIndex, 1);
-		const insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex;
+		const insertIndex = fromIndex < insertBefore ? insertBefore - 1 : insertBefore;
 		const clampedIndex = Math.max(0, Math.min(insertIndex, current.length));
 		current.splice(clampedIndex, 0, field);
 		this.order = current;
 	}
 
-	/** Serialize sort/filters/order/widths/groupBy for persistence (spec §4.4, §4.3). `collapsedGroups` is deliberately excluded - it's ephemeral. */
+	/** Serialize sort/filters/order/widths/hidden/groupBy for persistence (spec §4.4, §4.3). `collapsedGroups` is deliberately excluded - it's ephemeral. */
 	serialize(): string {
 		const payload: SerializedGridState = {
 			sort: this.sort,
 			filters: this.filters,
 			order: this.order,
 			widths: this.widths,
+			hidden: this.hidden,
 			groupBy: this.groupBy
 		};
 		return JSON.stringify(payload);
@@ -204,6 +290,12 @@ export class GridState<TRow = unknown> {
 		const missing = this.order.filter((id) => !restoredOrder.includes(id));
 		this.order = [...restoredOrder, ...missing];
 		this.widths = { ...this.widths, ...parsed.widths };
+		// Same "keep only ids that still exist" rule as the order above, plus
+		// the de-duplication and never-hide-everything clamp `#clampHidden`
+		// applies to the constructor's seed (a hand-edited or stale payload
+		// can carry duplicates, or hide every column the current set still
+		// has).
+		this.hidden = this.#clampHidden(parsed.hidden);
 	}
 
 	/** Construct a GridState and immediately hydrate it from a serialized string. */

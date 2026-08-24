@@ -18,11 +18,14 @@ the owner's behalf.
 ## Features
 
 - **Data grid** (`@banto/grid-svelte`): virtual scrolling, multi-column sort,
-  column filters, column resize/reorder, Excel-like cell editing, range
-  selection, copy & paste, client and server modes, grouping with
-  aggregation. Columns can be **auto-derived from a form schema**
-  (`columnsFromSchema`, M23, validation included — write one schema and get
-  both the list view and the form).
+  column filters, column resize/reorder, **column show/hide** (the
+  `ColumnsMenu` manager UI plus `GridColumn.hidden` for columns that start
+  hidden), Excel-like cell editing, range selection, copy & paste, client
+  and server modes, grouping with aggregation. Columns can be
+  **auto-derived from a form schema** (`columnsFromSchema`, M23, validation
+  included — write one schema and get both the list view and the form; the
+  grid's column order is set with `order`, independent of the form's field
+  order).
 - **Schema-driven forms** (`@banto/forms`): input UI, validation, and state
   management generated from a definition object.
 - **Charts** (`@banto/charts`): dependency-free SVG charts, 14 types in

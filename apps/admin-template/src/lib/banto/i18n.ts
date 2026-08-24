@@ -15,7 +15,7 @@ import type { ValidationMessages } from '@banto/forms';
 import type { TreeMessages } from '@banto/tree-svelte';
 import * as m from '$lib/paraglide/messages';
 
-/** @banto/grid-svelte `messages` prop: FilterPopover / HeaderCell / BantoGrid strings. */
+/** @banto/grid-svelte `messages` prop: FilterPopover / HeaderCell / BantoGrid / ColumnsMenu strings. */
 export function gridMessages(): Partial<GridMessages> {
 	return {
 		filterOpContains: () => m['grid.filterContains'](),
@@ -27,7 +27,11 @@ export function gridMessages(): Partial<GridMessages> {
 		filterClear: () => m['grid.filterClear'](),
 		inlineEditInvalid: () => m['grid.inlineEditInvalid'](),
 		emptyState: () => m['items.list.empty'](),
-		groupCountSuffix: (count) => m['grid.groupCountSuffix']({ count })
+		groupCountSuffix: (count) => m['grid.groupCountSuffix']({ count }),
+		columnsMenuButton: () => m['grid.columnsMenuButton'](),
+		columnsMenuTitle: () => m['grid.columnsMenuTitle'](),
+		columnsMenuCount: (visible, total) => m['grid.columnsMenuCount']({ visible, total }),
+		columnsMenuLastColumn: () => m['grid.columnsMenuLastColumn']()
 	};
 }
 
