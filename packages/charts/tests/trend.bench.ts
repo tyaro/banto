@@ -1,13 +1,13 @@
 /**
  * Trend (LineChart) streaming-append performance bench (roadmap.md §3,
- * 性能エスカレーション梯子・第0段; GitHub Discussion #173).
+ * 性能エスカレーション梯子・第0段; ADR-0009).
  *
  * Run with `pnpm --filter @banto/charts bench` (NOT part of `vitest run` /
  * CI - timing benchmarks are machine-dependent and must not gate merges,
  * same rule as `packages/grid-svelte/tests/virtual.bench.ts`, which this
  * file's shape follows).
  *
- * Why: Discussion #173 decided the UI declarative layer's next step is
+ * Why: ADR-0009 decided the UI declarative layer's next step is
  * schema-driven incremental extension, NOT a renderer swap - but a
  * Canvas/native trend renderer is still on the v2 backlog as the roadmap §3
  * escalation ladder's 第2段 (第1段 is server-side aggregation, see
@@ -20,8 +20,11 @@
  * source of truth - if the two drift, the component wins and this file
  * should be updated to match):
  *
- *   1. `rollingAppend` (core/rolling.ts) appends one new row to a
- *      already-full rolling window of `W` rows, evicting the oldest.
+ *   1. `rollingAppend` (core/rolling.ts) appends one new row to the rolling
+ *      window and evicts the oldest, keeping it at `W` rows - reproducing
+ *      the real usage pattern `data = rollingAppend(data, [row], W)`, where
+ *      each append's output becomes the next append's input (LineChart never
+ *      re-derives from a fixed base window; the window itself advances).
  *   2. `seriesValues` (LineChart.svelte:136): per series, `data.map` through
  *      `getValue`/`toNumber` to a plain number array.
  *   3. `extentOf` (LineChart.svelte:140-155): an explicit min/max loop across
@@ -49,13 +52,15 @@
  * Two describes, so the relationship between them is readable directly:
  *
  * - **"full re-derive per append"**: steps 1-5 above, i.e. exactly what
- *   `LineChart.svelte` pays today on every streaming append (a brand-new
- *   `data` array reference forces its whole coarse-grained `$derived` chain
- *   to rerun). Expected scaling: **O(S x W)** - `seriesValues`/`extentOf`
- *   both touch every row of every series. That "full rebuild is the
- *   dominant cost, not the render math" reading is the whole point of this
- *   bench: it is the argument for (or against) reaching for
- *   incremental/windowed derivation before reaching for a renderer change.
+ *   `LineChart.svelte` pays today on every streaming append, reproducing the
+ *   real usage pattern `data = rollingAppend(data, [row], W)` - each
+ *   append's new `data` array reference forces its whole coarse-grained
+ *   `$derived` chain to rerun. Expected scaling: **O(S x W)** -
+ *   `seriesValues`/`extentOf` both touch every row of every series. That
+ *   "full rebuild is the dominant cost, not the render math" reading is the
+ *   whole point of this bench: it is the argument for (or against) reaching
+ *   for incremental/windowed derivation before reaching for a renderer
+ *   change.
  * - **"decimation+path only"**: steps 4-5 only (skips the append + the
  *   O(S x W) `seriesValues`/`extentOf` rebuild, which only reruns when the
  *   underlying data changes) - this is what a pan/zoom frame costs once
@@ -74,31 +79,31 @@
  *
  * | bench                 |  S=2, W=1k | S=2, W=10k | S=2, W=100k | S=10, W=1k | S=10, W=10k | S=10, W=100k |
  * | ---------------------- | ---------: | ---------: | ----------: | ---------: | ----------: | -----------: |
- * | full re-derive         | ~1.21k ops/s (0.82ms) | ~472 ops/s (2.12ms) | ~40.7 ops/s (24.6ms) | ~319 ops/s (3.14ms) | ~86.5 ops/s (11.6ms) | ~6.07 ops/s (165ms) |
- * | decimation+path only   | ~3.42k ops/s (0.29ms) | ~2.24k ops/s (0.45ms) | ~1.75k ops/s (0.57ms) | ~480 ops/s (2.08ms) | ~196 ops/s (5.09ms) | ~189 ops/s (5.28ms) |
+ * | full re-derive         | ~1.22k ops/s (0.82ms) | ~330 ops/s (3.03ms) | ~29.2 ops/s (34.2ms) | ~160 ops/s (6.27ms) | ~50.6 ops/s (19.8ms) | ~4.76 ops/s (210ms) |
+ * | decimation+path only   | ~3.07k ops/s (0.33ms) | ~2.27k ops/s (0.44ms) | ~1.79k ops/s (0.56ms) | ~401 ops/s (2.50ms) | ~156 ops/s (6.42ms) | ~118 ops/s (8.49ms) |
  *
  * Reading:
  *
  * - "full re-derive" is close to O(W) only once `W` is large enough for the
  *   O(S x W) term to dominate fixed per-call overhead (closures, small
- *   allocations): 10k->100k drops ~11.6x (S=2) / ~14.2x (S=10) for a 10x `W`
+ *   allocations): 10k->100k drops ~11.3x (S=2) / ~10.6x (S=10) for a 10x `W`
  *   increase (roughly linear, the mild excess plausibly GC/allocation cost
- *   on megabyte-scale intermediate arrays), while 1k->10k drops only ~2.6x /
- *   ~3.7x - well under 10x, i.e. sub-linear at small `W` because per-call
+ *   on megabyte-scale intermediate arrays), while 1k->10k drops only ~3.7x /
+ *   ~3.2x - well under 10x, i.e. sub-linear at small `W` because per-call
  *   overhead is still a comparable fraction of the total. The asymptotic
  *   O(S x W) reading is a large-`W` property, not a claim that every step
  *   scales exactly 10x.
  * - "decimation+path only" moves far less than "full re-derive" across the
- *   same 100x range of `W` (S=2: 3.42k -> 1.75k ops/s, under 2x; S=10: 480
- *   -> 189 ops/s, under 2.6x) - consistent with the bounded, sawtoothing
+ *   same 100x range of `W` (S=2: 3.07k -> 1.79k ops/s, under 2x; S=10: 401
+ *   -> 118 ops/s, under 3.5x) - consistent with the bounded, sawtoothing
  *   output-index count above (501 -> 771 -> 801), not with O(W). This is
  *   the "pan/zoom stays cheap regardless of window size" property the
  *   escalation ladder's 第0段 needs confirmed before arguing 第2段 (Canvas)
  *   is necessary.
  * - The ratio between the two describes at a given (S, W) is the clearest
  *   read on where a streaming append's cost actually goes: at W=1,000 full
- *   re-derive is only ~2.8x (S=2) / ~1.5x (S=10) the decimation-only cost,
- *   but at W=100,000 that gap widens to ~43x (S=2) / ~31x (S=10) - as the
+ *   re-derive is only ~2.5x (S=2) / ~2.5x (S=10) the decimation-only cost,
+ *   but at W=100,000 that gap widens to ~61x (S=2) / ~25x (S=10) - as the
  *   window grows, the O(S x W) `seriesValues`/`extentOf`/`rollingAppend`
  *   rebuild increasingly dominates the bounded decimate+draw stage. That
  *   growing gap - not the render math - is where an incremental/windowed
@@ -216,19 +221,19 @@ function pathsFor(
 describe('full re-derive per append (O(S x W); should scale ~linearly with W)', () => {
 	for (const S of SERIES_COUNTS) {
 		for (const W of WINDOW_SIZES) {
-			const baseWindow = makeFullWindow(S, W);
+			let window = makeFullWindow(S, W);
 			const appendRand = makeLcg(S * 7 + W * 13 + 1);
 			let tick = W; // continues the base window's t sequence
 
 			bench(`S=${S}, W=${W.toLocaleString()}`, () => {
 				const newRow = makeRow(tick++, S, appendRand);
-				const data = rollingAppend(baseWindow, [newRow], W);
+				window = rollingAppend(window, [newRow], W);
 
-				const seriesValues = seriesValuesOf(data, S);
+				const seriesValues = seriesValuesOf(window, S);
 				const [lo, hi] = extentOf(seriesValues);
 
-				const indices = decimatedIndices(0, data.length - 1, PLOT_WIDTH_PX);
-				const scaleX = linearScale([0, data.length - 1], [0, PLOT_WIDTH_PX]);
+				const indices = decimatedIndices(0, window.length - 1, PLOT_WIDTH_PX);
+				const scaleX = linearScale([0, window.length - 1], [0, PLOT_WIDTH_PX]);
 				const scaleY = linearScale([lo, hi], [INNER_BOTTOM, INNER_TOP]);
 
 				pathsFor(seriesValues, indices, scaleX, scaleY);

@@ -35,8 +35,8 @@
 - **`columnsFromSchema` の `order` オプション**（issue #168）。一覧の列順を
   スキーマの定義順（＝フォームの入力順）から切り離して指定できる。列の既定非表示は
   `overrides: { code: { hidden: true } }` で表現する。
-- **UI 宣言境界と Discussions 運用の ADR 化 + チャート性能ベンチ**
-  （Discussion #173）。UI 宣言はスキーマ駆動の漸進拡張・追加レンダラは REST
+- **UI 宣言境界と Discussions 運用の ADR 化 + チャート性能ベンチ**。UI 宣言は
+  スキーマ駆動の漸進拡張・追加レンダラは REST
   クライアント境界と決めた判断を ADR-0009 に、Discussions を決定前検討専用と
   する運用を ADR-0010 に記録。roadmap §3 のバックログを「チャート性能
   エスカレーション梯子」（SVG 実測→サーバ側間引き→Canvas→WebGL→ネイティブ

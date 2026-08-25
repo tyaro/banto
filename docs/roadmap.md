@@ -562,8 +562,8 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   installable-only（manifest + アイコン + `guess_mime` の webmanifest arm）。
   Service Worker なし。HTTPS/localhost/TLS プロキシ配下でのみインストール可。
   [feature-review-2026-08.md](feature-review-2026-08.md) §2.8 / CHANGELOG
-- **チャート性能エスカレーション梯子**（Discussion #173 /
-  [ADR-0009](adr/0009-schema-ui-rest-renderer-boundary.md)。手前の段で
+- **チャート性能エスカレーション梯子**
+  （[ADR-0009](adr/0009-schema-ui-rest-renderer-boundary.md)。手前の段で
   要件が満たされる限り次の段に進まない）:
   - 第0段: 現行 SVG の実測ベースライン（`packages/charts/tests/trend.bench.ts`、
     `pnpm bench` — 2026-08 新設）
