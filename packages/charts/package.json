@@ -24,6 +24,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "bench": "vitest bench --run",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
