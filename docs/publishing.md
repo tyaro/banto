@@ -35,7 +35,8 @@ pnpm add "github:tyaro/banto#main&path:packages/theme"
 - GitHub Packages 案は**棚上げ**（`publishConfig` は package.json に残すが
   不活性。将来、外部配布や複数消費者で semver range 解決が必要になったら
   再検討 — その時はスコープ改名の判断も同時に行う。経緯と再開手順は上記
-  history 文書）
+  history 文書。再検討条件は [ADR-0011](adr/0011-git-tag-distribution.md)
+  に統合）
 
 ## 消費実績と消費側の手順
 
@@ -124,7 +125,7 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 `banto-core` / `banto-storage` / `banto-server` / `banto-admin-services` /
 `banto-attachments` は **crates.io へ発行しない**。
-理由は npm 側と同じ（私設配布・権利留保の方針、industrial-plan.md §2）。
+理由と再検討条件は [ADR-0011](adr/0011-git-tag-distribution.md)。
 消費側（banto-industrial 等）は `Cargo.toml` で **git タグ参照**する:
 
 ```toml

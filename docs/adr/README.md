@@ -51,6 +51,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0008](0008-machine-check-stop-gate.md)           | 機械検査を足すかは「3条件ゲート」で判断し無限追加を止める                               | Accepted |
 | [0009](0009-schema-ui-rest-renderer-boundary.md)  | UI 宣言はスキーマ駆動の漸進拡張とし追加レンダラは REST クライアントとして境界の外に置く | Accepted |
 | [0010](0010-discussions-predecision-layer.md)     | GitHub Discussions は決定前検討専用レイヤとする                                         | Accepted |
+| [0011](0011-git-tag-distribution.md)              | 配布は git タグ参照とし npm/crates.io 公開は保留する                                    | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
@@ -59,7 +60,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 - なぜ SQLite を既定にし PostgreSQL を後回しにするか（仕様 §12.1 / P4-5）
 - なぜ Provider 方式（Tauri/HTTP/InMemory の3環境吸収）か（仕様 §11.1）
 - なぜ「コピー型テンプレート」で runtime プラグイン機構を作らないか
-  （template-scope §3.1）
-- なぜ npm/crates.io 公開ではなく git 依存配布か（publishing.md）
+  （template-scope §3.1）→ ADR-0009 と template-scope §4.2（2026-08-25
+  追記）で実質記録済み。独立 ADR は起こさない
 - なぜリソースのルートを動的化せず「items をコピーする規約」にしたか
   （recipes/add-resource.md、spec §14 決着）

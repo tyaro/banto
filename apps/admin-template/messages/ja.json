@@ -287,6 +287,7 @@
   "settings.passwordChanged": "パスワードを変更しました",
   "settings.passwordChangeFailed": "パスワードの変更に失敗しました",
   "backup.heading": "バックアップ/リストア",
+  "backup.postgresNotice": "内蔵バックアップ/リストアは SQLite 専用です。PostgreSQL では pg_dump でバックアップ、pg_restore で復元してください。",
   "backup.createNow": "今すぐバックアップ",
   "backup.creating": "作成中…",
   "backup.openFolder": "フォルダを開く",

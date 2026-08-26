@@ -44,6 +44,15 @@
   レンダラ共通ウィジェット DSL / 画面エディタ）、conventions §12 に
   Discussion 参照の文法行を追加。`packages/charts/tests/trend.bench.ts` を
   新設し、ルートの `pnpm bench` を recursive 化した。
+- **初期ルールの棚卸し（ADR-0011 + トリガー修正 + PG バックアップ案内）**。
+  ADR-0011（git タグ配布）を新設して publishing.md の失効理由を修正し、
+  roadmap §3 に実需の供給源3系統（外部採用者/banto-industrial/メンテナ実案件）
+  の明示と、判断昇格の記録ルール・12ヶ月時限の運用則を追加した。
+  template-scope には i18n 辞書層の反転記録（§4.3/§5）と §7 の2026-08 現況を
+  追記し、maintenance-review-2026-08 §2.4 に反転プロトコルと「条件付き判断の
+  棚卸し」の定型節を追加した。README（ja/en）に PostgreSQL のバックアップ
+  運用（`pg_dump`/`pg_restore`）を案内し、設定画面のバックアップ節も
+  PostgreSQL 利用時の出し分け表示に対応した。
 
 ### 変更
 

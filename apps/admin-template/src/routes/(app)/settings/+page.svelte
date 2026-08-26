@@ -432,6 +432,13 @@
 	let backupsError: string | null = $state(null);
 	let restoreFileInput: HTMLInputElement | undefined = $state();
 
+	// Built-in backup/restore is SQLite-only (V2 added PostgreSQL support to the
+	// rest of the app, but not to the backup service, which errors explicitly on
+	// PG). Swap the operation UI for a notice once the dialect is known via
+	// System Info above; while it's unknown (demo mode, not yet loaded, or the
+	// System Info fetch failed) keep showing the SQLite UI unchanged.
+	const backupPostgresDialect = $derived(systemInfo?.dbDialect === 'postgres');
+
 	function formatBytes(bytes: number): string {
 		if (bytes < 1024) return `${bytes} B`;
 		const units = ['KB', 'MB', 'GB', 'TB'];
@@ -1033,106 +1040,111 @@
 					<div class="danger-section">
 						<h3><DatabaseBackup size={14} aria-hidden="true" />{m['backup.heading']()}</h3>
 
-						<div class="backup-toolbar">
-							<button
-								type="button"
-								class="banto-btn banto-btn--primary"
-								onclick={handleCreateBackup}
-								disabled={creatingBackup}
-							>
-								{creatingBackup ? m['backup.creating']() : m['backup.createNow']()}
-							</button>
-							{#if tauri}
-								<button
-									type="button"
-									class="banto-btn banto-btn--secondary"
-									onclick={handleOpenBackupsFolder}
-								>
-									{m['backup.openFolder']()}
-								</button>
-							{/if}
-						</div>
-
-						{#if backupsError}
-							<p class="error">{backupsError}</p>
-						{/if}
-
-						{#if pendingRestore}
-							<p class="pending-restore">
-								{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
-								>（{formatBytes(pendingRestore.sizeBytes)}）
-								<button
-									type="button"
-									class="banto-btn banto-btn--secondary"
-									onclick={handleCancelRestore}
-									disabled={cancellingRestore}
-								>
-									{m['backup.cancel']()}
-								</button>
-							</p>
-						{/if}
-
-						{#if loadingBackups}
-							<p class="note">{m['common.loading']()}</p>
-						{:else if backups.length === 0}
-							<p class="note">{m['backup.empty']()}</p>
+						{#if backupPostgresDialect}
+							<p class="note">{m['backup.postgresNotice']()}</p>
 						{:else}
-							<ul class="backup-list">
-								{#each backups as backup (backup.fileName)}
-									<li>
-										<div class="backup-info">
-											<span class="file-name">{backup.fileName}</span>
-											<span class="meta">{formatBytes(backup.sizeBytes)} ・ {backup.createdAt}</span
-											>
-										</div>
-										<div class="backup-actions">
-											{#if !tauri}
+							<div class="backup-toolbar">
+								<button
+									type="button"
+									class="banto-btn banto-btn--primary"
+									onclick={handleCreateBackup}
+									disabled={creatingBackup}
+								>
+									{creatingBackup ? m['backup.creating']() : m['backup.createNow']()}
+								</button>
+								{#if tauri}
+									<button
+										type="button"
+										class="banto-btn banto-btn--secondary"
+										onclick={handleOpenBackupsFolder}
+									>
+										{m['backup.openFolder']()}
+									</button>
+								{/if}
+							</div>
+
+							{#if backupsError}
+								<p class="error">{backupsError}</p>
+							{/if}
+
+							{#if pendingRestore}
+								<p class="pending-restore">
+									{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
+									>（{formatBytes(pendingRestore.sizeBytes)}）
+									<button
+										type="button"
+										class="banto-btn banto-btn--secondary"
+										onclick={handleCancelRestore}
+										disabled={cancellingRestore}
+									>
+										{m['backup.cancel']()}
+									</button>
+								</p>
+							{/if}
+
+							{#if loadingBackups}
+								<p class="note">{m['common.loading']()}</p>
+							{:else if backups.length === 0}
+								<p class="note">{m['backup.empty']()}</p>
+							{:else}
+								<ul class="backup-list">
+									{#each backups as backup (backup.fileName)}
+										<li>
+											<div class="backup-info">
+												<span class="file-name">{backup.fileName}</span>
+												<span class="meta"
+													>{formatBytes(backup.sizeBytes)} ・ {backup.createdAt}</span
+												>
+											</div>
+											<div class="backup-actions">
+												{#if !tauri}
+													<button
+														type="button"
+														class="banto-btn banto-btn--secondary"
+														onclick={() => handleDownloadBackup(backup.fileName)}
+													>
+														{m['backup.download']()}
+													</button>
+												{/if}
 												<button
 													type="button"
-													class="banto-btn banto-btn--secondary"
-													onclick={() => handleDownloadBackup(backup.fileName)}
+													class="banto-btn banto-btn--danger"
+													onclick={() => handleRestoreFromExisting(backup.fileName)}
+													disabled={stagingRestore}
 												>
-													{m['backup.download']()}
+													{m['backup.restoreFromThis']()}
 												</button>
-											{/if}
-											<button
-												type="button"
-												class="banto-btn banto-btn--danger"
-												onclick={() => handleRestoreFromExisting(backup.fileName)}
-												disabled={stagingRestore}
-											>
-												{m['backup.restoreFromThis']()}
-											</button>
-										</div>
-									</li>
-								{/each}
-							</ul>
-						{/if}
+											</div>
+										</li>
+									{/each}
+								</ul>
+							{/if}
 
-						{#if !tauri}
-							<div class="restore-upload">
-								<button
-									type="button"
-									class="banto-btn banto-btn--danger"
-									onclick={handleRestoreFileButtonClick}
-									disabled={stagingRestore}
-								>
-									{m['backup.restoreFromFile']()}
-								</button>
-								<input
-									class="file-input"
-									type="file"
-									accept=".sqlite3"
-									aria-label={m['backup.restoreFromFile']()}
-									bind:this={restoreFileInput}
-									onchange={handleRestoreFileChange}
-								/>
-							</div>
-						{/if}
+							{#if !tauri}
+								<div class="restore-upload">
+									<button
+										type="button"
+										class="banto-btn banto-btn--danger"
+										onclick={handleRestoreFileButtonClick}
+										disabled={stagingRestore}
+									>
+										{m['backup.restoreFromFile']()}
+									</button>
+									<input
+										class="file-input"
+										type="file"
+										accept=".sqlite3"
+										aria-label={m['backup.restoreFromFile']()}
+										bind:this={restoreFileInput}
+										onchange={handleRestoreFileChange}
+									/>
+								</div>
+							{/if}
 
-						<p class="note">
-							{m['backup.note']()}
-						</p>
+							<p class="note">
+								{m['backup.note']()}
+							</p>
+						{/if}
 					</div>
 				{/if}
 
