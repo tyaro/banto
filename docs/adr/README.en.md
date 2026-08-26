@@ -52,6 +52,7 @@ corresponding ADR exists, be traced from there.
 | [0008](0008-machine-check-stop-gate.en.md)           | Gate new machine checks on a three-condition test to stop unbounded growth                                                    | Accepted |
 | [0009](0009-schema-ui-rest-renderer-boundary.en.md)  | Make UI declaration a schema-driven incremental extension and place additional renderers outside the boundary as REST clients | Accepted |
 | [0010](0010-discussions-predecision-layer.en.md)     | Make GitHub Discussions a pre-decision deliberation-only layer                                                                | Accepted |
+| [0011](0011-git-tag-distribution.en.md)              | Distribute via git tag references and defer npm/crates.io registry publishing                                                 | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 
@@ -60,8 +61,7 @@ Raise one at a time when you next touch the decision (P4-7):
 - Why make SQLite the default and defer PostgreSQL (spec §12.1 / P4-5)
 - Why the Provider approach (absorbing the three environments Tauri/HTTP/InMemory) (spec §11.1)
 - Why not build a runtime plugin mechanism in a "copy-type template"
-  (template-scope §3.1)
-- Why distribute via git dependencies rather than publishing to npm/crates.io
-  (publishing.md)
+  (template-scope §3.1) → already effectively recorded by ADR-0009 and
+  template-scope §4.2 (added 2026-08-25). No separate ADR will be raised.
 - Why we did not make resource routes dynamic but chose "a convention of copying
   items" (recipes/add-resource.en.md, spec §14 resolution)

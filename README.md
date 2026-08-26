@@ -146,6 +146,12 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   マイグレーション）。`banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL に
   すると PostgreSQL 経路になる（既定はローカル SQLite）。バックアップ/リストアは
   SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1 参照。
+- **PostgreSQL 利用時のバックアップ運用**: 内蔵バックアップ/リストア（設定
+  画面のバックアップ節）は SQLite 専用で、PostgreSQL では明示エラーになる。
+  PostgreSQL のバックアップは `pg_dump`（例: `pg_dump -Fc banto > banto.dump`）、
+  復元は `pg_restore`（または平文形式なら `psql`）を使う。理由（VACUUM INTO /
+  起動時ファイル差し替えの PG 対応物が無い）は roadmap §3 の V2 テーマA 項
+  （D3）参照。
 - **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
   添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR

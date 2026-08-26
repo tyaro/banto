@@ -62,6 +62,12 @@ the owner's behalf.
   abstraction plus per-dialect migrations); point `banto-serve`'s `BANTO_DB`
   env var at a `postgres://` URL to use it (default is local SQLite).
   Backup/restore is SQLite-only (PostgreSQL returns an explicit error).
+- **PostgreSQL backup**: the built-in backup/restore (Settings page backup
+  section) is SQLite-only and returns an explicit error on PostgreSQL. Back
+  it up with `pg_dump` (e.g. `pg_dump -Fc banto > banto.dump`) and restore
+  with `pg_restore` (or `psql` for the plain-text format) — PostgreSQL has
+  no equivalent of SQLite's `VACUUM INTO` or the startup-time file swap the
+  built-in restore relies on.
 - Optional, removable extension packages: reporting/print
   (`@banto/report`), attachment/image management (`@banto/attachments`),
   barcode/QR scanner input (`@banto/scan-wedge`), and a **tree view**
