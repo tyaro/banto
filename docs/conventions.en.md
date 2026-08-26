@@ -366,6 +366,7 @@ only one form has produced real misjudgements (maintenance-review-2026-08 §2.1)
 | `M-review YYYY-MM §N` | §N of `feature-review-YYYY-MM.md` |
 | `CR-N` / `AD-N` | `maintainability-review-2026-07.md` (§4 and the §7 addendum) |
 | `ADR-000N` | `adr/000N-*.md` |
+| `Discussion #N` | GitHub Discussion (**provenance notes only** — allowed in an ADR's "Related" line and review-document context notes; never as a normative reference in code or docs body. Body text must stand alone without reading the Discussion. [ADR-0010](adr/0010-discussions-predecision-layer.en.md)) |
 
 ## 13. UI text is held through keys (Paraglide) [machine-checked: raw Japanese literals in the app layer] {#i18n-messages}
 

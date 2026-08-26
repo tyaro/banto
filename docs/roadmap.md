@@ -562,8 +562,29 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   installable-only（manifest + アイコン + `guess_mime` の webmanifest arm）。
   Service Worker なし。HTTPS/localhost/TLS プロキシ配下でのみインストール可。
   [feature-review-2026-08.md](feature-review-2026-08.md) §2.8 / CHANGELOG
-- チャートの Canvas レンダラ（性能天井時のエスカレーション第2段。
-  第1段はサーバ側集約 — template-scope.md §4.2 参照）
+- **チャート性能エスカレーション梯子**
+  （[ADR-0009](adr/0009-schema-ui-rest-renderer-boundary.md)。手前の段で
+  要件が満たされる限り次の段に進まない）:
+  - 第0段: 現行 SVG の実測ベースライン（`packages/charts/tests/trend.bench.ts`、
+    `pnpm bench` — 2026-08 新設）
+  - 第1段: サーバ側集約/間引き（バケットごと min/max 保存 — 現行 stride
+    間引きのスパイク欠落は `decimate.ts` が自認しており、SCADA 的には
+    データ忠実性の課題でもある）+ サンプル配送経路の設計（現行 SSE は
+    `ResourceChanged`→全件リフェッチのみでストリーミング用途の経路が無い。
+    テンプレート本体か banto-industrial かのスコープ判定を含む）
+  - 第2段: Canvas 2D レンダラ（同一チャート API の裏に差す。
+    core/scale・viewport・decimate はレンダラ非依存の純関数で流用可）
+  - 第3段: WebGL/WebGPU（Tauri WebView 実環境での確認必須 — 特に Linux
+    webkit2gtk は WebGPU 未対応。WebView エンジン差し替え経路として
+    tauri-runtime-verso を定点観測）
+  - 第4段: ネイティブレンダラ候補ウォッチ（テンプレート外の研究。接続は
+    REST/SSE クライアント限定 — ADR-0009）
+  - 第4段の着手条件: 第2段の実測性能限界に当たる実案件 + 複数回の再発 +
+    候補がフォーク非依存の収斂条件（組織バック体制・6〜12ヶ月の定期
+    リリース・コンポーネント資産の稼働・Windows で production 品質。
+    GPUI 系は Zed 本体の活動も見る）を満たすこと。撤退条件: 手前の段で
+    要件充足 / 候補の停滞継続 / PoC 予算超過。2026-08 時点の候補状況は
+    ADR-0009 帰結に記録。
 - **[V2 テーマA 実施済み #106-109] PostgreSQL アプリ全体対応**: 接続ヘルパ
   `banto-storage/postgres.rs`（#93・実 `postgres:16` CI 検証）に加え、service 層を
   `Db`/`Dialect` で汎用化し、方言別マイグレーション（`migrations-{sqlite,postgres}/`）

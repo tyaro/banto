@@ -309,6 +309,7 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 | `M-review YYYY-MM §N` | `feature-review-YYYY-MM.md` の §N |
 | `CR-N` / `AD-N` | `maintainability-review-2026-07.md`（§4 と §7 追補） |
 | `ADR-000N` | `adr/000N-*.md` |
+| `Discussion #N` | GitHub Discussion（**出典メモ限定** — ADR の「関連」欄・レビュー文書の経緯注のみ可。コード・docs 本文の正規参照には使わない。本文は Discussion を読まずに自立していること。[ADR-0010](adr/0010-discussions-predecision-layer.md)） |
 
 ## 13. UI 文言はキー経由（Paraglide）で持つ [機械検査済み: app 層の生日本語リテラル] {#i18n-messages}
 
