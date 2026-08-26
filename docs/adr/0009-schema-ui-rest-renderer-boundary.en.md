@@ -14,8 +14,8 @@
 ## Context
 
 The emergence of Rust-native UI toolkits such as GPUI prompted a look at a
-"Core → shared UI definition → both Web and native renderers" concept
-(#173). Two things needed deciding: (1) how far to unify the UI declaration
+"Core → shared UI definition → both Web and native renderers" concept.
+Two things needed deciding: (1) how far to unify the UI declaration
 layer, and (2) where to attach additional renderers. As a premise, LAN
 browser delivery is the template's core form
 ([ADR-0001](0001-rest-tauri-two-path-symmetry.en.md)) and the Web renderer

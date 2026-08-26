@@ -10,8 +10,8 @@
 
 ## Context
 
-GitHub Discussions is being introduced as a venue for design deliberation
-(#173). [ADR-0006](0006-docs-in-repo-projects-status-only.en.md) decided
+GitHub Discussions is being introduced as a venue for design deliberation.
+[ADR-0006](0006-docs-in-repo-projects-status-only.en.md) decided
 that "knowledge lives in-repo; Projects is confined to ephemeral status,"
 leaving undefined where a third genre — "undecided deliberation" — should
 live. The reasons ADR-0006 rejected the Wiki (it fails PR review, is not
@@ -51,8 +51,8 @@ at rest).
 - **Option B (rejected)**: five categories (Architecture/Ideas/UI-UX/
   Development/Q&A) plus title prefixes like `[Architecture]` `[GPUI]`. With
   one participant plus AI, classification routes to no one and empty
-  categories pile up. Even the first topic (#173) straddles Architecture
-  and UI/UX, breaking the boundary. Prefixes duplicate the label feature,
+  categories pile up. Even the first topic straddles Architecture and
+  UI/UX, breaking the boundary. Prefixes duplicate the label feature,
   don't work with `label:` search, and turn any reclassification into
   editing every title by hand.
 - **Option C (rejected)**: skip Discussions and deliberate only in
@@ -71,6 +71,7 @@ at rest).
 - **Retreat condition for the practice itself**: if external participation
   stays at zero for 12 months, close Discussions and revert to the
   traditional dated-review-document style.
-- #173 itself is the first application of this discipline (fed back into
-  this ADR plus ADR-0009 and the roadmap/template-scope additions, then
-  closed with a resolution link).
+- The Discussion this ADR settles (see the Related line) is itself the
+  first application of this discipline (fed back into this ADR plus
+  ADR-0009 and the roadmap/template-scope additions, then closed with a
+  resolution link).

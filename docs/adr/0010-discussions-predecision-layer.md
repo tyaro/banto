@@ -10,7 +10,7 @@
 
 ## コンテキスト
 
-設計検討の場として GitHub Discussions を導入する（#173）。
+設計検討の場として GitHub Discussions を導入する。
 [ADR-0006](0006-docs-in-repo-projects-status-only.md) は「知識は
 in-repo・Projects は揮発的ステータス専用」と決めており、「未決の検討」
 という第3ジャンルの置き場が未定義だった。ADR-0006 が Wiki を退けた理由
@@ -46,8 +46,8 @@ issue/PR = 0 の非滞留文化）。
 - **案A（採用）**: 上記。
 - **案B（不採用）**: 5カテゴリ（Architecture/Ideas/UI-UX/Development/
   Q&A）+ タイトル接頭辞 `[Architecture]` `[GPUI]` 等。参加者1人+AI では
-  分類が誰のルーティングにもならず空カテゴリが並ぶ。最初の議題（#173）
-  からして Architecture と UI/UX に跨り境界が破綻する。接頭辞はラベル
+  分類が誰のルーティングにもならず空カテゴリが並ぶ。最初の議題からして
+  Architecture と UI/UX に跨り境界が破綻する。接頭辞はラベル
   機能と重複し、`label:` 検索が効かず、分類変更が全タイトル手編集になる。
 - **案C（不採用）**: Discussions を使わず `docs/*-plan.md` とレビュー
   文書のみで検討する。生煮えの構想が docs に入るたび棚卸し負債になる
@@ -63,5 +63,6 @@ issue/PR = 0 の非滞留文化）。
   帰結を Discussions 時代にも維持する）。
 - **運用自体の撤退条件**: 外部参加が12ヶ月ゼロなら Discussions を閉じ、
   従来の日付付きレビュー文書様式に戻す。
-- #173 自身が本規律の最初の適用例（本 ADR + ADR-0009 + roadmap/
-  template-scope 追記へ還流し、決着リンクを残してクローズする）。
+- 本 ADR の出自である Discussion（関連欄参照）自身が本規律の最初の
+  適用例（本 ADR + ADR-0009 + roadmap/template-scope 追記へ還流し、
+  決着リンクを残してクローズする）。

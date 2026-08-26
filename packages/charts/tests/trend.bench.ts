@@ -71,7 +71,7 @@
  *   `stride = ceil(W / 800)` per call, so the actual output size sawtooths
  *   between roughly `target/2` and `target` depending on where `W` falls
  *   relative to the nearest stride boundary (measured: 501 indices at
- *   W=1,000, 771 at W=10,000, 801 at W=100,000 - NOT the flat "always ~800"
+ *   W=1k, 771 at W=10k, 801 at W=100k - NOT the flat "always ~800"
  *   an idealized reducer would give). The bench numbers below reflect that.
  *
  * Representative results (machine-dependent; re-run to refresh - Node
@@ -101,9 +101,9 @@
  *   escalation ladder's 第0段 needs confirmed before arguing 第2段 (Canvas)
  *   is necessary.
  * - The ratio between the two describes at a given (S, W) is the clearest
- *   read on where a streaming append's cost actually goes: at W=1,000 full
+ *   read on where a streaming append's cost actually goes: at W=1k full
  *   re-derive is only ~2.5x (S=2) / ~2.5x (S=10) the decimation-only cost,
- *   but at W=100,000 that gap widens to ~61x (S=2) / ~25x (S=10) - as the
+ *   but at W=100k that gap widens to ~61x (S=2) / ~25x (S=10) - as the
  *   window grows, the O(S x W) `seriesValues`/`extentOf`/`rollingAppend`
  *   rebuild increasingly dominates the bounded decimate+draw stage. That
  *   growing gap - not the render math - is where an incremental/windowed
@@ -150,6 +150,11 @@ const INNER_BOTTOM = CHART_HEIGHT - 28;
 
 function seriesKey(i: number): string {
 	return `s${i}`;
+}
+
+/** Locale-independent bench label for a window size (W is always one of `WINDOW_SIZES`, so plain division is exact). */
+function kLabel(w: number): string {
+	return `${w / 1_000}k`;
 }
 
 function makeRow(t: number, seriesCount: number, rand: () => number): TrendRow {
@@ -225,7 +230,7 @@ describe('full re-derive per append (O(S x W); should scale ~linearly with W)', 
 			const appendRand = makeLcg(S * 7 + W * 13 + 1);
 			let tick = W; // continues the base window's t sequence
 
-			bench(`S=${S}, W=${W.toLocaleString()}`, () => {
+			bench(`S=${S}, W=${kLabel(W)}`, () => {
 				const newRow = makeRow(tick++, S, appendRand);
 				window = rollingAppend(window, [newRow], W);
 
@@ -251,7 +256,7 @@ describe('decimation+path only (pan/zoom cost, data unchanged; bounded near targ
 			const scaleX = linearScale([0, data.length - 1], [0, PLOT_WIDTH_PX]);
 			const scaleY = linearScale([lo, hi], [INNER_BOTTOM, INNER_TOP]);
 
-			bench(`S=${S}, W=${W.toLocaleString()}`, () => {
+			bench(`S=${S}, W=${kLabel(W)}`, () => {
 				const indices = decimatedIndices(0, data.length - 1, PLOT_WIDTH_PX);
 				pathsFor(seriesValues, indices, scaleX, scaleY);
 			});
