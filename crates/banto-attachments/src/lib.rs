@@ -397,6 +397,14 @@ impl AttachmentsService {
         resource_id: &str,
     ) -> Result<Vec<AttachmentMeta>, BantoError> {
         let dialect = self.db.dialect();
+        // sqlx 0.9: `sqlx::query_as` requires `impl SqlSafeStr`, which a
+        // runtime `String` does not implement directly. `AssertSqlSafe` is
+        // safe here because every interpolated piece is internally
+        // generated, never caller-controlled: `SELECT_COLUMNS` is a
+        // compile-time `const`, and `dialect.placeholder(n)` only ever
+        // renders `?`/`$n` from the `Dialect` enum (see `banto_storage::db`).
+        // `resource`/`resource_id` themselves never touch the SQL text -
+        // they are always passed via `.bind(...)`.
         let sql = format!(
             "SELECT {SELECT_COLUMNS} FROM attachments WHERE resource = {} AND resource_id = {} \
              ORDER BY created_at DESC, id DESC",
@@ -405,7 +413,7 @@ impl AttachmentsService {
         );
         match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                sqlx::query_as::<_, AttachmentMeta>(sqlx::AssertSqlSafe(sql))
                     .bind(resource)
                     .bind(resource_id)
                     .fetch_all(pool)
@@ -413,7 +421,7 @@ impl AttachmentsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                sqlx::query_as::<_, AttachmentMeta>(sqlx::AssertSqlSafe(sql))
                     .bind(resource)
                     .bind(resource_id)
                     .fetch_all(pool)
@@ -424,20 +432,24 @@ impl AttachmentsService {
     }
 
     pub async fn get(&self, id: i64) -> Result<AttachmentMeta, BantoError> {
+        // AssertSqlSafe: safe for the same reason as `list_for_record` above
+        // - only `SELECT_COLUMNS` (const) and `dialect.placeholder(1)`
+        // (internal enum, never caller input) are interpolated; `id` is
+        // bound below, never placed in the SQL text.
         let sql = format!(
             "SELECT {SELECT_COLUMNS} FROM attachments WHERE id = {}",
             self.db.dialect().placeholder(1)
         );
         match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                sqlx::query_as::<_, AttachmentMeta>(sqlx::AssertSqlSafe(sql))
                     .bind(id)
                     .fetch_one(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, AttachmentMeta>(&sql)
+                sqlx::query_as::<_, AttachmentMeta>(sqlx::AssertSqlSafe(sql))
                     .bind(id)
                     .fetch_one(pool)
                     .await
@@ -475,6 +487,10 @@ impl AttachmentsService {
         // The `has_thumbnail` literal (initially false) sits between the
         // placeholders, so they run 1..=6 then 7..=8 around it. The literal is
         // dialect-aware (`0` on SQLite, `FALSE` on the Postgres BOOLEAN column).
+        // AssertSqlSafe below is safe for the same reason as `get`/
+        // `list_for_record`: every interpolated fragment
+        // (`SELECT_COLUMNS`/placeholders/`bool_literal`) is internally
+        // generated; the actual row data is all bound via `.bind(...)`.
         let insert_sql = format!(
             "INSERT INTO attachments \
              (resource, resource_id, file_name, mime, size_bytes, sha256, has_thumbnail, created_at, created_by) \
@@ -492,7 +508,7 @@ impl AttachmentsService {
         );
         let mut meta = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, AttachmentMeta>(&insert_sql)
+                sqlx::query_as::<_, AttachmentMeta>(sqlx::AssertSqlSafe(insert_sql))
                     .bind(&input.resource)
                     .bind(&input.resource_id)
                     .bind(&input.file_name)
@@ -506,7 +522,7 @@ impl AttachmentsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, AttachmentMeta>(&insert_sql)
+                sqlx::query_as::<_, AttachmentMeta>(sqlx::AssertSqlSafe(insert_sql))
                     .bind(&input.resource)
                     .bind(&input.resource_id)
                     .bind(&input.file_name)
@@ -525,17 +541,26 @@ impl AttachmentsService {
             // The row must not outlive its body file - best-effort cleanup;
             // if even the delete fails, the original write error is still
             // what the caller needs to see.
+            // AssertSqlSafe: `dialect.placeholder(1)` is the only
+            // interpolated fragment, internally generated (never caller
+            // input); `meta.id` is bound below.
             let delete_sql = format!(
                 "DELETE FROM attachments WHERE id = {}",
                 dialect.placeholder(1)
             );
             match &self.db {
                 Db::Sqlite(pool) => {
-                    let _ = sqlx::query(&delete_sql).bind(meta.id).execute(pool).await;
+                    let _ = sqlx::query(sqlx::AssertSqlSafe(delete_sql))
+                        .bind(meta.id)
+                        .execute(pool)
+                        .await;
                 }
                 #[cfg(feature = "postgres")]
                 Db::Postgres(pool) => {
-                    let _ = sqlx::query(&delete_sql).bind(meta.id).execute(pool).await;
+                    let _ = sqlx::query(sqlx::AssertSqlSafe(delete_sql))
+                        .bind(meta.id)
+                        .execute(pool)
+                        .await;
                 }
             }
             return Err(write_err);
@@ -544,6 +569,10 @@ impl AttachmentsService {
         if is_thumbnailable_mime(&mime) {
             if let Some(thumb_bytes) = make_thumbnail(&input.bytes) {
                 if self.write_thumbnail(meta.id, &thumb_bytes).await.is_ok() {
+                    // AssertSqlSafe: `bool_literal(...)` and
+                    // `dialect.placeholder(1)` are both internally generated
+                    // from the `Dialect`/bool arguments (never caller input);
+                    // `meta.id` is bound below.
                     let update_sql = format!(
                         "UPDATE attachments SET has_thumbnail = {} WHERE id = {}",
                         bool_literal(dialect, true),
@@ -551,7 +580,7 @@ impl AttachmentsService {
                     );
                     match &self.db {
                         Db::Sqlite(pool) => {
-                            sqlx::query(&update_sql)
+                            sqlx::query(sqlx::AssertSqlSafe(update_sql))
                                 .bind(meta.id)
                                 .execute(pool)
                                 .await
@@ -559,7 +588,7 @@ impl AttachmentsService {
                         }
                         #[cfg(feature = "postgres")]
                         Db::Postgres(pool) => {
-                            sqlx::query(&update_sql)
+                            sqlx::query(sqlx::AssertSqlSafe(update_sql))
                                 .bind(meta.id)
                                 .execute(pool)
                                 .await
@@ -648,6 +677,9 @@ impl AttachmentsService {
     pub async fn delete(&self, id: i64) -> Result<AttachmentMeta, BantoError> {
         let meta = self.get(id).await?;
 
+        // AssertSqlSafe: `dialect().placeholder(1)` is the only interpolated
+        // fragment, internally generated (never caller input); `id` is
+        // bound below.
         let delete_sql = format!(
             "DELETE FROM attachments WHERE id = {}",
             self.db.dialect().placeholder(1)
@@ -655,13 +687,13 @@ impl AttachmentsService {
         // Map each arm to `rows_affected` (a plain `u64`) so the two backend
         // query-result types (`SqliteQueryResult` / `PgQueryResult`) unify.
         let rows_affected = match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&delete_sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(delete_sql))
                 .bind(id)
                 .execute(pool)
                 .await
                 .map(|r| r.rows_affected()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&delete_sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(delete_sql))
                 .bind(id)
                 .execute(pool)
                 .await
@@ -708,6 +740,9 @@ impl AttachmentsService {
         resource_id: &str,
     ) -> Result<u64, BantoError> {
         let dialect = self.db.dialect();
+        // AssertSqlSafe: only `dialect.placeholder(n)` (internal enum,
+        // never caller input) is interpolated; `resource`/`resource_id`
+        // are bound below, never placed in the SQL text.
         let sql = format!(
             "SELECT id FROM attachments WHERE resource = {} AND resource_id = {}",
             dialect.placeholder(1),
@@ -715,7 +750,7 @@ impl AttachmentsService {
         );
         let ids: Vec<i64> = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar(&sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                     .bind(resource)
                     .bind(resource_id)
                     .fetch_all(pool)
@@ -723,7 +758,7 @@ impl AttachmentsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar(&sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                     .bind(resource)
                     .bind(resource_id)
                     .fetch_all(pool)

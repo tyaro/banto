@@ -248,7 +248,7 @@ impl ItemsService {
         // placeholder syntax (conventions §6 "SQL 列はホワイトリスト経由のみ").
         match &self.db {
             Db::Sqlite(pool) => {
-                let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_ROWS);
+                let mut rows_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_ROWS);
                 banto_storage::list_query::sqlite::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -260,7 +260,7 @@ impl ItemsService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -279,8 +279,7 @@ impl ItemsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                let mut rows_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_ROWS);
+                let mut rows_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(SELECT_ROWS);
                 banto_storage::list_query::postgres::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -292,7 +291,7 @@ impl ItemsService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
+                let mut count_builder: QueryBuilder<sqlx::Postgres> =
                     QueryBuilder::new(SELECT_COUNT);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
@@ -315,20 +314,24 @@ impl ItemsService {
 
     pub async fn get(&self, id: i64) -> Result<Item, BantoError> {
         let dialect = self.db.dialect();
+        // AssertSqlSafe (here and throughout this impl): only
+        // `dialect.placeholder(n)`/`today_expr(dialect)` are interpolated -
+        // both internally generated from the `Dialect` enum, never caller
+        // input. Every actual value is bound below via `.bind(...)`.
         let sql = format!(
             "SELECT id, name, price, stock, updated_at FROM items WHERE id = {}",
             dialect.placeholder(1)
         );
         match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, Item>(&sql)
+                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(id)
                     .fetch_one(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, Item>(&sql)
+                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(id)
                     .fetch_one(pool)
                     .await
@@ -340,6 +343,7 @@ impl ItemsService {
     pub async fn create(&self, input: ItemInput) -> Result<Item, BantoError> {
         validate_item_input(&input)?;
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `get` above.
         let sql = format!(
             "INSERT INTO items (name, price, stock, updated_at) VALUES ({}, {}, {}, {}) \
              RETURNING id, name, price, stock, updated_at",
@@ -350,7 +354,7 @@ impl ItemsService {
         );
         let item = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, Item>(&sql)
+                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
@@ -359,7 +363,7 @@ impl ItemsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, Item>(&sql)
+                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
@@ -375,6 +379,7 @@ impl ItemsService {
     pub async fn update(&self, id: i64, input: ItemInput) -> Result<Item, BantoError> {
         validate_item_input(&input)?;
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `get` above.
         let sql = format!(
             "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {} WHERE id = {} \
              RETURNING id, name, price, stock, updated_at",
@@ -386,7 +391,7 @@ impl ItemsService {
         );
         let item = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, Item>(&sql)
+                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
@@ -396,7 +401,7 @@ impl ItemsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, Item>(&sql)
+                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
@@ -412,17 +417,18 @@ impl ItemsService {
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `get` above.
         let sql = format!("DELETE FROM items WHERE id = {}", dialect.placeholder(1));
         // Map to `rows_affected` in each arm so the backend query-result types
         // unify (see the same pattern across the service layer).
         let rows_affected = match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .execute(pool)
                 .await
                 .map(|r| r.rows_affected()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .execute(pool)
                 .await
@@ -546,6 +552,12 @@ impl ItemsService {
 /// enum-dispatch trade-off `banto_storage::list_query` documents). Assumes
 /// every row already passed validation (the caller validates the whole batch
 /// before opening any transaction).
+///
+/// `update_sql`/`insert_sql` are wrapped in `sqlx::AssertSqlSafe` at their
+/// call sites below: both are built once by [`ItemsService::import`] from
+/// `dialect.placeholder(n)`/`today_expr(dialect)` only (internally
+/// generated, never caller input) - every row's actual field values are
+/// bound, never interpolated.
 async fn import_apply_sqlite(
     pool: &sqlx::SqlitePool,
     rows: &[ItemImportRow],
@@ -560,7 +572,7 @@ async fn import_apply_sqlite(
     for (row_index, row) in rows.iter().enumerate() {
         match row.id {
             Some(id) => {
-                let result = sqlx::query(update_sql)
+                let result = sqlx::query(sqlx::AssertSqlSafe(update_sql))
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
@@ -578,7 +590,7 @@ async fn import_apply_sqlite(
                 }
             }
             None => {
-                sqlx::query(insert_sql)
+                sqlx::query(sqlx::AssertSqlSafe(insert_sql))
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
@@ -626,7 +638,7 @@ async fn import_apply_postgres(
     for (row_index, row) in rows.iter().enumerate() {
         match row.id {
             Some(id) => {
-                let result = sqlx::query(update_sql)
+                let result = sqlx::query(sqlx::AssertSqlSafe(update_sql))
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
@@ -644,7 +656,7 @@ async fn import_apply_postgres(
                 }
             }
             None => {
-                sqlx::query(insert_sql)
+                sqlx::query(sqlx::AssertSqlSafe(insert_sql))
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)

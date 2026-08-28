@@ -97,7 +97,7 @@ macro_rules! impl_list_query {
             /// `params` onto `builder`. Field names are resolved only
             /// through `columns` (whitelist).
             pub fn apply_list_params(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 columns: &ColumnMap,
                 params: &ListParams,
             ) -> Result<(), BantoError> {
@@ -110,7 +110,7 @@ macro_rules! impl_list_query {
             /// Append only the `WHERE` clause (used by services that need
             /// a separate `COUNT(*)` query sharing the same filters).
             pub fn append_where(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 columns: &ColumnMap,
                 filters: &[FilterState],
             ) -> Result<(), BantoError> {
@@ -148,7 +148,7 @@ macro_rules! impl_list_query {
             /// SQLite supports `NULLS LAST` since 3.30 (sqlx bundles a
             /// newer version); Postgres supports it natively.
             pub fn append_order_by(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 columns: &ColumnMap,
                 sort: &[SortState],
             ) {
@@ -175,7 +175,7 @@ macro_rules! impl_list_query {
             /// Append only `LIMIT .. OFFSET ..` (no-op when `pagination`
             /// is `None`).
             pub fn append_pagination(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 pagination: Option<Pagination>,
             ) {
                 if let Some(p) = pagination {
@@ -187,7 +187,7 @@ macro_rules! impl_list_query {
             }
 
             fn push_condition(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 column: &str,
                 filter: &FilterState,
             ) -> Result<(), BantoError> {
@@ -214,7 +214,7 @@ macro_rules! impl_list_query {
             }
 
             fn push_binop(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 column: &str,
                 op: &str,
                 value: &Value,
@@ -228,7 +228,7 @@ macro_rules! impl_list_query {
             }
 
             fn bind_value(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 value: &Value,
             ) -> Result<(), BantoError> {
                 match value {
@@ -263,7 +263,7 @@ macro_rules! impl_list_query {
             /// leading `%` (contains only); `suffix_wildcard` adds a
             /// trailing `%` (both contains and starts_with).
             fn push_like(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 column: &str,
                 value: &Value,
                 prefix_wildcard: bool,
@@ -301,7 +301,7 @@ macro_rules! impl_list_query {
             /// clause that can never match (`1=0`), matching the semantics
             /// of "value is in the empty set" being always false.
             fn push_in(
-                builder: &mut QueryBuilder<'_, $db>,
+                builder: &mut QueryBuilder<$db>,
                 column: &str,
                 value: &Value,
             ) -> Result<(), BantoError> {
@@ -877,18 +877,21 @@ mod postgres_tests {
     /// shares one ephemeral CI database, so each test uses its OWN table name
     /// to stay independent under `cargo test`'s parallelism.
     async fn seed(pool: &PgPool, table: &str) {
-        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
+        // AssertSqlSafe: `table` is always one of this test module's own
+        // hardcoded literal fixture names (see this function's doc comment
+        // above) - never user/external input.
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
             .execute(pool)
             .await
             .expect("drop table");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE {table} (\
                 id BIGINT PRIMARY KEY, \
                 name TEXT NOT NULL, \
                 price DOUBLE PRECISION NOT NULL, \
                 active BIGINT NOT NULL\
             )"
-        ))
+        )))
         .execute(pool)
         .await
         .expect("create table");
@@ -900,9 +903,9 @@ mod postgres_tests {
             (5, "Delta", 15.0, 0),
         ];
         for (id, name, price, active) in rows {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {table} (id, name, price, active) VALUES ($1, $2, $3, $4)"
-            ))
+            )))
             .bind(id)
             .bind(*name)
             .bind(price)
@@ -1038,13 +1041,15 @@ mod postgres_tests {
             return;
         };
         let table = "lq_pg_nulls";
-        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
+        // AssertSqlSafe: `table` is the hardcoded literal above (never
+        // user/external input), same as `seed`'s doc comment.
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
             .execute(&pool)
             .await
             .expect("drop table");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE {table} (id BIGINT PRIMARY KEY, label TEXT NOT NULL, score DOUBLE PRECISION)"
-        ))
+        )))
         .execute(&pool)
         .await
         .expect("create table");
@@ -1054,9 +1059,9 @@ mod postgres_tests {
             (3, "has-score-high", Some(2.0)),
         ];
         for (id, label, score) in rows {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {table} (id, label, score) VALUES ($1, $2, $3)"
-            ))
+            )))
             .bind(id)
             .bind(*label)
             .bind(score)
