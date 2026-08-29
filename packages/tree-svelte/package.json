@@ -1,6 +1,6 @@
 {
   "name": "@banto/tree-svelte",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Banto tree view: headless pure-TS core + Svelte 5 (Runes) UI — expand/collapse, single/multi selection with tri-state checkboxes, lazy loading, drag reorder, inline rename, optional columns (tree-grid) and a tree-select popover",
   "license": "MIT",
   "repository": {

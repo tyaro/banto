@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-29
+
+**v1.4.0 — `sqlx` 0.8→0.9 移行を主とするリリース。** オーナー判断により
+**minor** とするが、消費側にとっては破壊的変更を含む: `banto_storage::connect_sqlite`/
+`connect_postgres` の戻り値・`storage_error`/`not_found` が受ける `sqlx::Error` は
+sqlx 0.9 の型になるため、消費側（banto-industrial 等）は同じ sqlx 0.9 系へ追従する
+必要がある。スキーマ・SQL 文の意味・公開 API の形自体は変更なし。また sqlx 0.9 は
+**rustc 1.94.0 以上**を要求するため、消費側のツールチェーンにも影響する。
+
 ### 追加
 
 - **グリッドの列表示/非表示（列マネージャー UI）**（issue #168、spec §4.4）。
@@ -700,7 +709,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.3.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/tyaro/banto/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tyaro/banto/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/tyaro/banto/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tyaro/banto/compare/v1.0.0...v1.1.0

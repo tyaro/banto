@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "admin-template"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "admin-template-core",
  "banto-attachments",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "admin-template-core"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "axum",
  "banto-admin-services",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "banto-admin-services"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "argon2",
  "banto-core",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "banto-attachments"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "banto-core",
  "banto-storage",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "banto-core"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "banto-server"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "async-stream",
  "axum",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "banto-storage"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "banto-core",
  "serde_json",
