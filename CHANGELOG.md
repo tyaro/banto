@@ -22,6 +22,45 @@
 
 ## [Unreleased]
 
+### 追加
+
+- **グリッドの列表示/非表示（列マネージャー UI）**（issue #168、spec §4.4）。
+  `GridColumn.hidden` で「定義は持つが既定では出さない」列を表現でき、
+  `GridState` が `setColumnHidden` / `toggleColumnHidden` / `isHidden` /
+  `allColumns` で表示状態を所有する（`orderedColumns` は可視列のみを返すため、
+  セル選択やコピー&ペーストの列インデックスも自動的に追随する）。切り替え UI は
+  新コンポーネント `ColumnsMenu`（ページ側ツールバーに置く。BantoGrid のヘッダ行は
+  可視列幅から `grid-template-columns` を組むため、ヘッダ内には入れない）。
+  admin-template の商品ページのツールバーに配線済み。
+- **`columnsFromSchema` の `order` オプション**（issue #168）。一覧の列順を
+  スキーマの定義順（＝フォームの入力順）から切り離して指定できる。列の既定非表示は
+  `overrides: { code: { hidden: true } }` で表現する。
+- **UI 宣言境界と Discussions 運用の ADR 化 + チャート性能ベンチ**。UI 宣言は
+  スキーマ駆動の漸進拡張・追加レンダラは REST
+  クライアント境界と決めた判断を ADR-0009 に、Discussions を決定前検討専用と
+  する運用を ADR-0010 に記録。roadmap §3 のバックログを「チャート性能
+  エスカレーション梯子」（SVG 実測→サーバ側間引き→Canvas→WebGL→ネイティブ
+  候補ウォッチ）へ拡張し、template-scope §4.2 に非スコープ2行（クロス
+  レンダラ共通ウィジェット DSL / 画面エディタ）、conventions §12 に
+  Discussion 参照の文法行を追加。`packages/charts/tests/trend.bench.ts` を
+  新設し、ルートの `pnpm bench` を recursive 化した。
+- **初期ルールの棚卸し（ADR-0011 + トリガー修正 + PG バックアップ案内）**。
+  ADR-0011（git タグ配布）を新設して publishing.md の失効理由を修正し、
+  roadmap §3 に実需の供給源3系統（外部採用者/banto-industrial/メンテナ実案件）
+  の明示と、判断昇格の記録ルール・12ヶ月時限の運用則を追加した。
+  template-scope には i18n 辞書層の反転記録（§4.3/§5）と §7 の2026-08 現況を
+  追記し、maintenance-review-2026-08 §2.4 に反転プロトコルと「条件付き判断の
+  棚卸し」の定型節を追加した。README（ja/en）に PostgreSQL のバックアップ
+  運用（`pg_dump`/`pg_restore`）を案内し、設定画面のバックアップ節も
+  PostgreSQL 利用時の出し分け表示に対応した。
+- **AI 対話による機能作成の設計方向を記録**。タグ定義・トレンドグループ構成・
+  帳票テンプレートをシリアライズ可能な DB データとして持ち、AI アシスタント
+  （claude CLI サイドカー + MCP → REST）が対話で作成できるようにする設計方向を
+  industrial-plan §5 に追記した（宣言データの範囲 = 対話で作れる範囲、
+  ADR-0009 の境界と同一線）。
+
+### 変更
+
 - **`sqlx` を 0.8 系から 0.9 系へ移行**。banto-industrial 側の 0.9 移行が
   `banto-storage` の 0.8 固定でブロックされていたための追従。
   `QueryBuilder<'a, DB>` のライフタイム引数削除（`QueryBuilder<DB>`）に
@@ -33,6 +72,18 @@
   `connect_postgres` の戻り値・`storage_error`/`not_found` が受ける
   `sqlx::Error` は sqlx 0.9 の型になる（消費側の追従が必要）。
   スキーマ・SQL 文の意味・公開 API の形は変更なし。
+- **`SerializedGridState` に `hidden: string[]` を追加（破壊的）**。
+  `GridState.serialize()` の出力に列の表示状態が含まれるようになり、
+  `hydrate()` は `hidden` を持たない旧ペイロードを**受け付けない**（不正な
+  ペイロードと同じく無視され、レイアウトは既定値のまま）。永続化した
+  グリッドレイアウトを持つ派生アプリは、保存済みの値が一度リセットされる。
+
+### 修正
+
+- **`items` デモを削除した派生アプリでバックアップをリストアできない問題を修正**。
+  リストア検証の `REQUIRED_TABLES` を Banto 基盤所有の `settings` / `users` /
+  `audit_log` に限定し、派生アプリが差し替え・削除するドメインテーブルを必須条件から
+  除外した。ドメインテーブル無しの有効な Banto DB を受理する回帰テストを追加。
 
 ## [1.3.0] - 2026-08-20
 

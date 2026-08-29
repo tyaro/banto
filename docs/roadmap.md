@@ -535,9 +535,20 @@ items 一覧の name/price/stock/updatedAt 列を導出ベースへ書き換え�
 ## 3. v2 / 将来構想バックログ
 
 v1（M0〜M24）で汎用管理画面テンプレートとしての機能は出そろった。以下は
-**v2 の設計テーマ**。優先度は付けず、実需・採用（外部利用者）が出た時点で
-本ドキュメントのマイルストーンに昇格させる実需ドリブン文化に従う。V2 では
-テーマA（PostgreSQL アプリ全体対応、#106-109）・テーマB（i18n レイヤ②/③、
+**v2 の設計テーマ**。優先度は付けず、実需・採用が出た時点で本ドキュメントの
+マイルストーンに昇格させる実需ドリブン文化に従う。実需の供給源は3系統ある
+— (a) 外部採用者 (b) banto-industrial / 記録計アプリ
+（[industrial-plan.md](industrial-plan.md)） (c) メンテナ自身の実案件 —
+であり、**当面の第一供給源は (b)**。あわせて以下の2つの運用則を置く:
+
+- トリガ未発火のままメンテナ判断で昇格・実施する場合は、当該項目に
+  **「判断昇格（トリガ未発火）」**と明記して記録する（V2 テーマA〜C は
+  この例外経路の前例 — 遡及記録として本文に1語追記してよい）。
+- **外部採用者のみを発火源とするトリガには12ヶ月の時限を付す**:
+  未発火のまま12ヶ月経過したら、項目を削除するか内部観測トリガへ
+  書き換える（ADR-0010 の撤退条項と同じ様式）。
+
+V2 ではテーマA（PostgreSQL アプリ全体対応、#106-109）・テーマB（i18n レイヤ②/③、
 #110-113）・テーマC（コピー面積縮小、#114-117）を**実施済み**（下記に反映）。
 
 **進捗管理**: このバックログが並行実行フェーズに入る（複数テーマが同時進行、
@@ -562,13 +573,36 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   installable-only（manifest + アイコン + `guess_mime` の webmanifest arm）。
   Service Worker なし。HTTPS/localhost/TLS プロキシ配下でのみインストール可。
   [feature-review-2026-08.md](feature-review-2026-08.md) §2.8 / CHANGELOG
-- チャートの Canvas レンダラ（性能天井時のエスカレーション第2段。
-  第1段はサーバ側集約 — template-scope.md §4.2 参照）
+- **チャート性能エスカレーション梯子**
+  （[ADR-0009](adr/0009-schema-ui-rest-renderer-boundary.md)。手前の段で
+  要件が満たされる限り次の段に進まない）:
+  - 第0段: 現行 SVG の実測ベースライン（`packages/charts/tests/trend.bench.ts`、
+    `pnpm bench` — 2026-08 新設）
+  - 第1段: サーバ側集約/間引き（バケットごと min/max 保存 — 現行 stride
+    間引きのスパイク欠落は `decimate.ts` が自認しており、SCADA 的には
+    データ忠実性の課題でもある）+ サンプル配送経路の設計（現行 SSE は
+    `ResourceChanged`→全件リフェッチのみでストリーミング用途の経路が無い。
+    テンプレート本体か banto-industrial かのスコープ判定を含む）
+  - 第2段: Canvas 2D レンダラ（同一チャート API の裏に差す。
+    core/scale・viewport・decimate はレンダラ非依存の純関数で流用可）
+  - 第3段: WebGL/WebGPU（Tauri WebView 実環境での確認必須 — 特に Linux
+    webkit2gtk は WebGPU 未対応。WebView エンジン差し替え経路として
+    tauri-runtime-verso を定点観測）
+  - 第4段: ネイティブレンダラ候補ウォッチ（テンプレート外の研究。接続は
+    REST/SSE クライアント限定 — ADR-0009）
+  - 第4段の着手条件: 第2段の実測性能限界に当たる実案件 + 複数回の再発 +
+    候補がフォーク非依存の収斂条件（組織バック体制・6〜12ヶ月の定期
+    リリース・コンポーネント資産の稼働・Windows で production 品質。
+    GPUI 系は Zed 本体の活動も見る）を満たすこと。撤退条件: 手前の段で
+    要件充足 / 候補の停滞継続 / PoC 予算超過。2026-08 時点の候補状況は
+    ADR-0009 帰結に記録。
 - **[V2 テーマA 実施済み #106-109] PostgreSQL アプリ全体対応**: 接続ヘルパ
   `banto-storage/postgres.rs`（#93・実 `postgres:16` CI 検証）に加え、service 層を
   `Db`/`Dialect` で汎用化し、方言別マイグレーション（`migrations-{sqlite,postgres}/`）
   と `db::init_db_from_target` の `postgres://` 経路を実装。backup は SQLite 専用の
-  まま（PostgreSQL は明示エラー）。既定は SQLite 維持。仕様 §12.1。
+  まま（PostgreSQL は明示エラー）。（V2 判断 D3: VACUUM INTO と起動時ファイル
+  差し替えに PostgreSQL の対応物が無く、論理バックアップは pg_dump が定石の
+  ため。運用案内は README の PostgreSQL 節）。既定は SQLite 維持。仕様 §12.1。
 - **[V2 テーマB 実施済み #110-113] i18n レイヤ②/③**: Paraglide JS を採用し
   （[ADR-0005](adr/0005-i18n-paraglide.md)）、app 層の可視文言を全キー化した
   （`messages/{en,ja}.json`・`locale.ts`・設定画面の言語切替 UI）。レイヤ①
@@ -593,10 +627,13 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   最初の外部連携需要が出た時点で昇格。詳細は
   [feature-review-2026-08.md](feature-review-2026-08.md) §2.2）
 
-**post-v2（採用が出てから）**: **保守者 docs の英語化**（conventions / recipe /
-ADR）。現時点でテンプレートの外部利用者はいないため、英語化は **v2 完了後・
-採用が生まれた段階**で着手すれば十分（2026-07-28 オーナー判断）。README は
-既に日英2言語（[README.en.md](../README.en.md)）を用意済み。
+**post-v2（採用が出てから）**: 中核（conventions / AGENTS / ADR 全件 / README）は
+#119 で英語化済み（2026-08-26 追記、新設 ADR-0011 分は同日追随で翻訳済み）。
+残りは docs 本体13ファイル（roadmap / template-scope / ui-framework-spec /
+publishing / `*-plan.md` 系 / レビュー系）・recipes 3ファイル（notifications /
+scan-wedge / tree-svelte）・history 5ファイルの計21ファイルで、着手は採用が
+生まれた段階（12ヶ月時限の対象。実測は `ls docs/*.en.md docs/adr/*.en.md
+docs/recipes/*.en.md`、2026-08-26）。
 
 除外を決めた項目: i18n **辞書層**は 2026-07-12 に一度バックログから削除したが、
 2026-07-22 に「段階導入」へ方針転換（レイヤ①実装済み #81、②/③は上記 v2

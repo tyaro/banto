@@ -12,7 +12,8 @@
  * height lets rows virtualize into view - the minimum needed to render, not a
  * real layout engine.
  */
-import { cleanup, render, screen, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { GridState } from '../src/state.svelte';
@@ -102,6 +103,75 @@ describe('BantoGrid', () => {
 		expect(links).toHaveLength(2);
 		expect(links[0].getAttribute('href')).toBe('/items/1');
 		expect(links[1].getAttribute('href')).toBe('/items/2');
+	});
+
+	it('renders neither header nor cells for a hidden column (spec §4.4)', () => {
+		const state = new GridState<Row>(columns);
+		state.setColumnHidden('price', true);
+		render(BantoGrid<Row>, {
+			rows,
+			columns,
+			state,
+			getRowId: (row: Row) => row.id
+		});
+
+		expect(screen.queryByText('価格')).toBeNull();
+		expect(screen.queryByText('¥100')).toBeNull();
+		// The remaining columns still render, and the count follows.
+		expect(screen.getByText('商品名')).toBeTruthy();
+		expect(screen.getByRole('grid').getAttribute('aria-colcount')).toBe('2');
+	});
+
+	it('drops a cell selection that pointed at a column being hidden (spec §4.4)', async () => {
+		const state = new GridState<Row>(columns);
+		const { container } = render(BantoGrid<Row>, {
+			rows,
+			columns,
+			state,
+			getRowId: (row: Row) => row.id
+		});
+
+		const priceCell = container.querySelector('[data-cell-field="price"]')!;
+		await fireEvent.pointerDown(priceCell);
+		expect(container.querySelector('.cell.active')).not.toBeNull();
+
+		state.setColumnHidden('price', true);
+		await tick();
+		state.setColumnHidden('price', false);
+		await tick();
+
+		// Bringing the column back must NOT resurrect the old active cell: a
+		// selection left pointing at a hidden field keeps copy/paste and
+		// Enter/F2 acting on a field with no DOM node while it is away.
+		expect(container.querySelector('.cell.active')).toBeNull();
+	});
+
+	it('falls back to single-click row open once every editable column is hidden', async () => {
+		const editableColumns: GridColumn<Row>[] = [
+			{ id: 'name', header: '商品名', accessor: 'name', editable: true },
+			{ id: 'price', header: '価格', accessor: 'price' }
+		];
+		const state = new GridState<Row>(editableColumns);
+		const opened: Row[] = [];
+		const { container } = render(BantoGrid<Row>, {
+			rows,
+			columns: editableColumns,
+			state,
+			getRowId: (row: Row) => row.id,
+			onRowClick: (row: Row) => opened.push(row)
+		});
+
+		// While an editable column shows, single click is reserved for cell
+		// selection (double click opens the row instead).
+		await fireEvent.click(container.querySelector('[data-cell-field="price"]')!);
+		expect(opened).toHaveLength(0);
+
+		state.setColumnHidden('name', true);
+		await tick();
+		await fireEvent.click(container.querySelector('[data-cell-field="price"]')!);
+
+		// The grid on screen is now read-only, so single click opens the row.
+		expect(opened).toHaveLength(1);
 	});
 
 	it('shows the empty state when there are no rows', () => {

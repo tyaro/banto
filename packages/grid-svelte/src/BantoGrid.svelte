@@ -12,6 +12,7 @@
 	 * pure decision logic it calls into (`prepareCommit`, TSV helpers) is
 	 * factored into `core/*.ts` and unit-tested there.
 	 */
+	import { untrack } from 'svelte';
 	import {
 		DEFAULT_COLUMN_WIDTH,
 		type CellEdit,
@@ -343,7 +344,11 @@
 
 	function handleDragStart(columnId: string) {
 		dragColumnId = columnId;
-		dropIndex = gridState.order.indexOf(columnId);
+		// A VISIBLE-order index, like the one handleDragMove computes below
+		// and the one `moveColumn` expects - `gridState.order` also carries
+		// hidden ids (spec §4.4), so an index into it would point at the
+		// wrong drop slot as soon as a column is hidden.
+		dropIndex = orderedFieldIds.indexOf(columnId);
 	}
 
 	function handleDragMove(clientX: number) {
@@ -385,8 +390,46 @@
 	// --- Cell selection / navigation (spec §4.5) ---
 	const selection = new CellSelection();
 
-	/** Any column that could ever be editable switches the row-open interaction (see handleCellClick/handleCellDoubleClick below). */
-	const hasEditableColumns = $derived(columns.some((column) => Boolean(column.editable)));
+	/**
+	 * Hiding a column (spec §4.4) can strand cell state that names it: the
+	 * active/anchor cell and an open editor are stored by FIELD ID, so a
+	 * column leaving `orderedColumns` would otherwise leave `getRange`
+	 * returning null (copy/paste silently stops) and Enter/F2 acting on a
+	 * cell with no DOM node. Drop whatever points at a now-invisible column.
+	 * Only `orderedFieldIds` is a tracked dependency - the writes read and
+	 * mutate the very state they touch, so they run inside `untrack`
+	 * (conventions §8).
+	 */
+	$effect(() => {
+		const visible = new Set(orderedFieldIds);
+		untrack(() => {
+			const stale = (pos: { field: string } | null) => pos !== null && !visible.has(pos.field);
+			if (stale(selection.active)) {
+				selection.clear();
+			} else if (stale(selection.anchor) || stale(selection.rangeEnd)) {
+				// The active cell survived but a range corner did not: collapse
+				// to the single active cell rather than keep a rectangle whose
+				// edge no longer exists.
+				if (selection.active) {
+					selection.setActive(selection.active.rowIndex, selection.active.field, false);
+				} else {
+					selection.clear();
+				}
+			}
+			if (editing && !visible.has(editing.field)) editing = null;
+		});
+	});
+
+	/**
+	 * Any VISIBLE column that could ever be editable switches the row-open
+	 * interaction (see handleCellClick/handleCellDoubleClick below). Read off
+	 * `orderedColumns`, not the `columns` prop: with every editable column
+	 * hidden (spec §4.4) the grid on screen is read-only, and single click
+	 * should open the row again instead of being reserved for cell selection.
+	 */
+	const hasEditableColumns = $derived(
+		gridState.orderedColumns.some((column) => Boolean(column.editable))
+	);
 
 	// Pre-merge review fix (deferred): delegates to the pure, unit-tested
 	// `isColumnEditable` (core/edit.ts), whose whole point is that a column

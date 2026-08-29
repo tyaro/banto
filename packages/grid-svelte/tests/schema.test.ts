@@ -104,6 +104,28 @@ describe('columnsFromSchema', () => {
 		expect(readOnly.every((c) => c.editable === undefined && c.editor === undefined)).toBe(true);
 	});
 
+	it('derives a hidden column from an override instead of dropping it', () => {
+		const derived = columnsFromSchema<Row>(schema, { overrides: { updatedAt: { hidden: true } } });
+		const updatedAt = derived.find((c) => c.id === 'updatedAt')!;
+		expect(updatedAt.hidden).toBe(true);
+		// Still derived in full: hiding is a display decision, not a removal.
+		expect(updatedAt.header).toBe(byId('updatedAt').header);
+	});
+
+	it('reorders derived columns via the order option, keeping unlisted ones after', () => {
+		const ids = columnsFromSchema<Row>(schema, { order: ['updatedAt', 'price'] }).map((c) => c.id);
+		const rest = columnsFromSchema<Row>(schema)
+			.map((c) => c.id)
+			.filter((id) => id !== 'updatedAt' && id !== 'price');
+		expect(ids).toEqual(['updatedAt', 'price', ...rest]);
+	});
+
+	it('ignores order entries that are not derived columns', () => {
+		const ids = columnsFromSchema<Row>(schema, { order: ['nope', 'price'] }).map((c) => c.id);
+		expect(ids[0]).toBe('price');
+		expect(ids).not.toContain('nope');
+	});
+
 	it('applies per-field overrides on top of the derivation', () => {
 		const overridden = columnsFromSchema<Row>(schema, {
 			overrides: {

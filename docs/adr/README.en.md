@@ -40,16 +40,19 @@ corresponding ADR exists, be traced from there.
 
 ## Index
 
-| #                                                    | Title                                                                                              | Status   |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
-| [0001](0001-rest-tauri-two-path-symmetry.en.md)      | Make REST and Tauri two peer paths and route a single service layer symmetrically through both     | Accepted |
-| [0002](0002-minimal-dependencies.en.md)              | Add no dependencies and make in-house implementation the default (minimize total maintenance cost) | Accepted |
-| [0003](0003-tls-via-reverse-proxy.en.md)             | Officially support LAN TLS via reverse-proxy termination and defer built-in TLS                    | Accepted |
-| [0004](0004-server-logging-eprintln.en.md)           | Set `eprintln!` as the default for server logging and defer `tracing`                              | Accepted |
-| [0005](0005-i18n-paraglide.en.md)                    | Adopt Paraglide JS as the UI i18n runtime (an exception to ADR-0002)                               | Accepted |
-| [0006](0006-docs-in-repo-projects-status-only.en.md) | Consolidate knowledge docs in-repo and confine GitHub Projects to ephemeral status only            | Accepted |
-| [0007](0007-derived-app-dev-optimizer-exclude.en.md) | Reconcile source-shipped `.svelte.ts` with derived-app dev via consumer `optimizeDeps.exclude`     | Accepted |
-| [0008](0008-machine-check-stop-gate.en.md)           | Gate new machine checks on a three-condition test to stop unbounded growth                         | Accepted |
+| #                                                    | Title                                                                                                                         | Status   |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------- |
+| [0001](0001-rest-tauri-two-path-symmetry.en.md)      | Make REST and Tauri two peer paths and route a single service layer symmetrically through both                                | Accepted |
+| [0002](0002-minimal-dependencies.en.md)              | Add no dependencies and make in-house implementation the default (minimize total maintenance cost)                            | Accepted |
+| [0003](0003-tls-via-reverse-proxy.en.md)             | Officially support LAN TLS via reverse-proxy termination and defer built-in TLS                                               | Accepted |
+| [0004](0004-server-logging-eprintln.en.md)           | Set `eprintln!` as the default for server logging and defer `tracing`                                                         | Accepted |
+| [0005](0005-i18n-paraglide.en.md)                    | Adopt Paraglide JS as the UI i18n runtime (an exception to ADR-0002)                                                          | Accepted |
+| [0006](0006-docs-in-repo-projects-status-only.en.md) | Consolidate knowledge docs in-repo and confine GitHub Projects to ephemeral status only                                       | Accepted |
+| [0007](0007-derived-app-dev-optimizer-exclude.en.md) | Reconcile source-shipped `.svelte.ts` with derived-app dev via consumer `optimizeDeps.exclude`                                | Accepted |
+| [0008](0008-machine-check-stop-gate.en.md)           | Gate new machine checks on a three-condition test to stop unbounded growth                                                    | Accepted |
+| [0009](0009-schema-ui-rest-renderer-boundary.en.md)  | Make UI declaration a schema-driven incremental extension and place additional renderers outside the boundary as REST clients | Accepted |
+| [0010](0010-discussions-predecision-layer.en.md)     | Make GitHub Discussions a pre-decision deliberation-only layer                                                                | Accepted |
+| [0011](0011-git-tag-distribution.en.md)              | Distribute via git tag references and defer npm/crates.io registry publishing                                                 | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 
@@ -58,8 +61,7 @@ Raise one at a time when you next touch the decision (P4-7):
 - Why make SQLite the default and defer PostgreSQL (spec §12.1 / P4-5)
 - Why the Provider approach (absorbing the three environments Tauri/HTTP/InMemory) (spec §11.1)
 - Why not build a runtime plugin mechanism in a "copy-type template"
-  (template-scope §3.1)
-- Why distribute via git dependencies rather than publishing to npm/crates.io
-  (publishing.md)
+  (template-scope §3.1) → already effectively recorded by ADR-0009 and
+  template-scope §4.2 (added 2026-08-25). No separate ADR will be raised.
 - Why we did not make resource routes dynamic but chose "a convention of copying
   items" (recipes/add-resource.en.md, spec §14 resolution)

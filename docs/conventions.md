@@ -284,8 +284,10 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 - **テーブル定義はアプリが所有**。`banto-attachments` は自前マイグレーションを
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。
-- リストア検証（`REQUIRED_TABLES`）は**テーブル存在のみ**確認し列は見ない（粗いが
-  安価な「Banto の DB か」判定）。
+- リストア検証（`REQUIRED_TABLES`）は Banto 基盤が所有する `settings` / `users` /
+  `audit_log` の**テーブル存在のみ**確認し、列は見ない（粗いが安価な「Banto の
+  DB か」判定）。派生アプリが差し替え・削除する `items` 等のドメインテーブルは
+  必須にしない。
 - 検証で開いた接続は全パスで `conn.close()`（Windows のファイルロック残り対策）。
 
 ## 12. doc コメントは仕様節を参照する
@@ -307,6 +309,7 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 | `M-review YYYY-MM §N` | `feature-review-YYYY-MM.md` の §N |
 | `CR-N` / `AD-N` | `maintainability-review-2026-07.md`（§4 と §7 追補） |
 | `ADR-000N` | `adr/000N-*.md` |
+| `Discussion #N` | GitHub Discussion（**出典メモ限定** — ADR の「関連」欄・レビュー文書の経緯注のみ可。コード・docs 本文の正規参照には使わない。本文は Discussion を読まずに自立していること。[ADR-0010](adr/0010-discussions-predecision-layer.md)） |
 
 ## 13. UI 文言はキー経由（Paraglide）で持つ [機械検査済み: app 層の生日本語リテラル] {#i18n-messages}
 

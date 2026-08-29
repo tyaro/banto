@@ -124,6 +124,22 @@ export interface GridColumn<TRow> {
 	 * picker UI (e.g. a <select>) to filter its option list against.
 	 */
 	groupable?: boolean;
+	/**
+	 * Default false: the column starts hidden (spec §4.4 "列の表示/非表示
+	 * 切り替え"). Lets a definition exist without occupying screen width -
+	 * internal ids, auto-numbered codes, anything "rarely read but
+	 * occasionally needed" - instead of the caller dropping the column from
+	 * the array entirely (which also drops the user's ability to bring it
+	 * back).
+	 *
+	 * This is the INITIAL value only: `GridState` seeds `hidden` from it and
+	 * owns live visibility from then on (`setColumnHidden`/
+	 * `toggleColumnHidden`, persisted through `serialize()`). Reading
+	 * `column.hidden` to decide whether a column renders is therefore always
+	 * wrong - ask `GridState.isHidden(id)`, or iterate
+	 * `GridState.orderedColumns`, which already excludes hidden columns.
+	 */
+	hidden?: boolean;
 }
 
 /** Resolved defaults applied on top of a user-supplied GridColumn. */
@@ -136,6 +152,8 @@ export interface SerializedGridState {
 	filters: FilterState[];
 	order: string[];
 	widths: Record<string, number>;
+	/** Ids of the columns currently hidden (spec §4.4). Ids absent here are visible. */
+	hidden: string[];
 	/** Client-mode group-by column id, or null (spec §4.3). `collapsedGroups` is deliberately NOT persisted - it's ephemeral UI state. */
 	groupBy: string | null;
 }

@@ -337,8 +337,10 @@ are also expressed in the provider layer.
 - **The app owns the table definitions.** `banto-attachments` has no migrations
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").
-- Restore validation (`REQUIRED_TABLES`) checks **only table existence** and not
-  columns (a coarse but cheap "is this a Banto DB" judgment).
+- Restore validation (`REQUIRED_TABLES`) checks **only table existence** for the
+  Banto-owned `settings`, `users`, and `audit_log` tables, not columns (a coarse
+  but cheap "is this a Banto DB" judgment). Domain tables such as `items`, which
+  derived apps replace or remove, are deliberately not required.
 - Every connection opened for validation is `conn.close()`d on all paths (a
   countermeasure against lingering file locks on Windows).
 
@@ -364,6 +366,7 @@ only one form has produced real misjudgements (maintenance-review-2026-08 §2.1)
 | `M-review YYYY-MM §N` | §N of `feature-review-YYYY-MM.md` |
 | `CR-N` / `AD-N` | `maintainability-review-2026-07.md` (§4 and the §7 addendum) |
 | `ADR-000N` | `adr/000N-*.md` |
+| `Discussion #N` | GitHub Discussion (**provenance notes only** — allowed in an ADR's "Related" line and review-document context notes; never as a normative reference in code or docs body. Body text must stand alone without reading the Discussion. [ADR-0010](adr/0010-discussions-predecision-layer.en.md)) |
 
 ## 13. UI text is held through keys (Paraglide) [machine-checked: raw Japanese literals in the app layer] {#i18n-messages}
 

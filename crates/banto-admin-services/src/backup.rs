@@ -47,13 +47,13 @@ use sqlx::{Connection, SqliteConnection, SqlitePool};
 const BACKUPS_DIR_NAME: &str = "backups";
 const PENDING_RESTORE_FILE_NAME: &str = "restore-pending.sqlite3";
 
-/// Tables a file must have to be accepted as a restorable Banto database
-/// (spec M17 "スキーマ妥当性: 必須テーブル（items, settings, users,
-/// audit_log）が存在すること"). Deliberately does not check COLUMNS, only
-/// table presence - a coarse but cheap sanity check that this is a Banto DB
-/// at all (not, say, a random unrelated `.sqlite3` file), not a full schema
-/// migration compatibility check.
-const REQUIRED_TABLES: [&str; 4] = ["items", "settings", "users", "audit_log"];
+/// Banto-owned tables a file must have to be accepted as a restorable Banto
+/// database (spec M17 "スキーマ妥当性"). Domain tables such as the template's
+/// `items` demo are deliberately excluded: derived apps are expected to replace
+/// or remove them. This checks only table presence, not columns - a coarse but
+/// cheap sanity check that this is a Banto DB at all (not, say, a random
+/// unrelated `.sqlite3` file), not a full schema migration compatibility check.
+const REQUIRED_TABLES: [&str; 3] = ["settings", "users", "audit_log"];
 
 /// One backup file, as listed/created by [`BackupService::list`]/
 /// [`BackupService::create`]. `created_at` for [`BackupService::create`]
@@ -751,8 +751,6 @@ mod tests {
     /// crate's `db::migrate_memory` (conventions §"逆依存禁止").
     async fn create_required_tables(pool: &SqlitePool) {
         for ddl in [
-            "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, \
-             price INTEGER NOT NULL, stock INTEGER NOT NULL, updated_at TEXT NOT NULL)",
             "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
             "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, \
              username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, \
@@ -943,15 +941,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stage_restore_from_bytes_accepts_a_valid_db_and_pending_restore_reports_it() {
+    async fn stage_restore_from_bytes_accepts_a_valid_db_without_domain_tables() {
         let (svc, _dir) = service().await;
         assert!(svc.pending_restore().await.is_none());
 
-        // A second, independent, fully-migrated db's bytes - a realistic
-        // "restore from an uploaded backup" payload.
+        // A second, independent db carrying ONLY the Banto-owned base tables
+        // - i.e. what a derived app that dropped the `items` demo uploads as
+        // its "restore from an uploaded backup" payload (issue #166).
         let other_dir = tempdir().unwrap();
         let other_path = other_dir.path().join("source.sqlite3");
         let other_pool = migrated_file_db(&other_path).await;
+        // Guard the fixture itself: if `create_required_tables` ever grows a
+        // domain table back, this test would silently stop covering the
+        // no-domain-tables case it exists for.
+        let items_table: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'items'",
+        )
+        .fetch_optional(&other_pool)
+        .await
+        .unwrap();
+        assert!(items_table.is_none());
         other_pool.close().await;
         let bytes = tokio::fs::read(&other_path).await.unwrap();
 
@@ -1038,7 +1047,7 @@ mod tests {
         // payload by row content.
         let pool = banto_storage::connect_sqlite(&db_path).await.unwrap();
         create_required_tables(&pool).await;
-        sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (1, 'OLD', 1, 1, '2026-01-01')")
+        sqlx::query("INSERT INTO settings (key, value) VALUES ('restore-marker', 'OLD')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1056,7 +1065,7 @@ mod tests {
         );
         let staged_path = dir.path().join("staged-source.sqlite3");
         let restore_pool = migrated_file_db(&staged_path).await;
-        sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (1, 'NEW', 2, 2, '2026-02-02')")
+        sqlx::query("INSERT INTO settings (key, value) VALUES ('restore-marker', 'NEW')")
             .execute(&restore_pool)
             .await
             .unwrap();
@@ -1080,11 +1089,12 @@ mod tests {
 
         // The live db_path now contains the RESTORED content.
         let after_pool = banto_storage::connect_sqlite(&db_path).await.unwrap();
-        let name: String = sqlx::query_scalar("SELECT name FROM items WHERE id = 1")
-            .fetch_one(&after_pool)
-            .await
-            .unwrap();
-        assert_eq!(name, "NEW");
+        let marker: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'restore-marker'")
+                .fetch_one(&after_pool)
+                .await
+                .unwrap();
+        assert_eq!(marker, "NEW");
         after_pool.close().await;
 
         // The pre-restore safety backup preserves the OLD content.
@@ -1094,11 +1104,12 @@ mod tests {
             .join(&applied.pre_restore_backup_file_name);
         assert!(backup_path.exists());
         let backup_pool = banto_storage::connect_sqlite(&backup_path).await.unwrap();
-        let old_name: String = sqlx::query_scalar("SELECT name FROM items WHERE id = 1")
-            .fetch_one(&backup_pool)
-            .await
-            .unwrap();
-        assert_eq!(old_name, "OLD");
+        let old_marker: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'restore-marker'")
+                .fetch_one(&backup_pool)
+                .await
+                .unwrap();
+        assert_eq!(old_marker, "OLD");
         backup_pool.close().await;
     }
 

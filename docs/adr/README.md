@@ -39,16 +39,19 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 
 ## 索引
 
-| #                                                 | タイトル                                                                             | 状態     |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------ | -------- |
-| [0001](0001-rest-tauri-two-path-symmetry.md)      | REST と Tauri を同格の二経路にし、単一サービス層を対称に通す                         | Accepted |
-| [0002](0002-minimal-dependencies.md)              | 依存を足さず自前実装を既定にする（総保守コスト最小化）                               | Accepted |
-| [0003](0003-tls-via-reverse-proxy.md)             | LAN の TLS はリバースプロキシ終端を正式とし組み込み TLS は保留                       | Accepted |
-| [0004](0004-server-logging-eprintln.md)           | サーバのログは `eprintln!` を既定に据え `tracing` は保留                             | Accepted |
-| [0005](0005-i18n-paraglide.md)                    | UI i18n ランタイムに Paraglide JS を採用（ADR-0002 の例外）                          | Accepted |
-| [0006](0006-docs-in-repo-projects-status-only.md) | 知識ドキュメントは in-repo に集約し GitHub Projects は揮発的ステータス専用に限定する | Accepted |
-| [0007](0007-derived-app-dev-optimizer-exclude.md) | `.svelte.ts` ソース配布と派生アプリ dev の両立は消費側 `optimizeDeps.exclude` で解く | Accepted |
-| [0008](0008-machine-check-stop-gate.md)           | 機械検査を足すかは「3条件ゲート」で判断し無限追加を止める                            | Accepted |
+| #                                                 | タイトル                                                                                | 状態     |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------- | -------- |
+| [0001](0001-rest-tauri-two-path-symmetry.md)      | REST と Tauri を同格の二経路にし、単一サービス層を対称に通す                            | Accepted |
+| [0002](0002-minimal-dependencies.md)              | 依存を足さず自前実装を既定にする（総保守コスト最小化）                                  | Accepted |
+| [0003](0003-tls-via-reverse-proxy.md)             | LAN の TLS はリバースプロキシ終端を正式とし組み込み TLS は保留                          | Accepted |
+| [0004](0004-server-logging-eprintln.md)           | サーバのログは `eprintln!` を既定に据え `tracing` は保留                                | Accepted |
+| [0005](0005-i18n-paraglide.md)                    | UI i18n ランタイムに Paraglide JS を採用（ADR-0002 の例外）                             | Accepted |
+| [0006](0006-docs-in-repo-projects-status-only.md) | 知識ドキュメントは in-repo に集約し GitHub Projects は揮発的ステータス専用に限定する    | Accepted |
+| [0007](0007-derived-app-dev-optimizer-exclude.md) | `.svelte.ts` ソース配布と派生アプリ dev の両立は消費側 `optimizeDeps.exclude` で解く    | Accepted |
+| [0008](0008-machine-check-stop-gate.md)           | 機械検査を足すかは「3条件ゲート」で判断し無限追加を止める                               | Accepted |
+| [0009](0009-schema-ui-rest-renderer-boundary.md)  | UI 宣言はスキーマ駆動の漸進拡張とし追加レンダラは REST クライアントとして境界の外に置く | Accepted |
+| [0010](0010-discussions-predecision-layer.md)     | GitHub Discussions は決定前検討専用レイヤとする                                         | Accepted |
+| [0011](0011-git-tag-distribution.md)              | 配布は git タグ参照とし npm/crates.io 公開は保留する                                    | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
@@ -57,7 +60,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 - なぜ SQLite を既定にし PostgreSQL を後回しにするか（仕様 §12.1 / P4-5）
 - なぜ Provider 方式（Tauri/HTTP/InMemory の3環境吸収）か（仕様 §11.1）
 - なぜ「コピー型テンプレート」で runtime プラグイン機構を作らないか
-  （template-scope §3.1）
-- なぜ npm/crates.io 公開ではなく git 依存配布か（publishing.md）
+  （template-scope §3.1）→ ADR-0009 と template-scope §4.2（2026-08-25
+  追記）で実質記録済み。独立 ADR は起こさない
 - なぜリソースのルートを動的化せず「items をコピーする規約」にしたか
   （recipes/add-resource.md、spec §14 決着）
