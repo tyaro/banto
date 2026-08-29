@@ -397,7 +397,14 @@ impl BackupService {
             .to_string_lossy()
             .to_string();
 
-        sqlx::query(&vacuum_into_sql(&path))
+        // AssertSqlSafe: `path` is built above from `self.backups_dir()`
+        // (server-configured backup directory) and `stamp` (derived from the
+        // DB's own `datetime('now')`/a caller-supplied test timestamp via
+        // `compact_stamp`) - never from external/caller-controlled text -
+        // and `vacuum_into_sql` already escapes embedded `'` per the SQL
+        // string-literal rule (see its doc comment on why `VACUUM INTO` can't
+        // use a bound parameter for its destination).
+        sqlx::query(sqlx::AssertSqlSafe(vacuum_into_sql(&path)))
             .execute(self.sqlite_pool()?)
             .await
             .map_err(banto_storage::storage_error)?;

@@ -61,6 +61,17 @@
 
 ### 変更
 
+- **`sqlx` を 0.8 系から 0.9 系へ移行**。banto-industrial 側の 0.9 移行が
+  `banto-storage` の 0.8 固定でブロックされていたための追従。
+  `QueryBuilder<'a, DB>` のライフタイム引数削除（`QueryBuilder<DB>`）に
+  伴う内部シグネチャ変更と、`sqlx::query`/`query_as`/`query_scalar` が
+  `impl SqlSafeStr` を要求するようになったことに伴う `sqlx::AssertSqlSafe`
+  ラップ（動的に組み立てる SQL 文のうち、埋め込む断片が `Dialect`
+  由来のプレースホルダ／内部定数のみで外部入力を含まないことを確認した
+  箇所のみ）を追加。**破壊的変更**: `banto_storage::connect_sqlite`/
+  `connect_postgres` の戻り値・`storage_error`/`not_found` が受ける
+  `sqlx::Error` は sqlx 0.9 の型になる（消費側の追従が必要）。
+  スキーマ・SQL 文の意味・公開 API の形は変更なし。
 - **`SerializedGridState` に `hidden: string[]` を追加（破壊的）**。
   `GridState.serialize()` の出力に列の表示状態が含まれるようになり、
   `hydrate()` は `hidden` を持たない旧ペイロードを**受け付けない**（不正な

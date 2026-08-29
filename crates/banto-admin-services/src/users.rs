@@ -190,6 +190,14 @@ impl UsersService {
         // one else yet to have assigned it a lesser role, and the app needs
         // at least one admin to exist to manage everyone else.
         let dialect = self.db.dialect();
+        // AssertSqlSafe (here and throughout this file): the only
+        // interpolated fragments in these `format!`-built statements are
+        // `dialect.placeholder(n)`/`dialect.now_expr()` (internally
+        // generated from the `Dialect` enum, never caller input) and,
+        // occasionally, a hardcoded literal like `'admin'`. Every actual
+        // value - username, password hash, display name, role, id - is
+        // always passed via `.bind(...)`, never interpolated into the SQL
+        // text.
         let sql = format!(
             "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
              RETURNING id",
@@ -200,7 +208,7 @@ impl UsersService {
         );
         let id: i64 = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar(&sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -210,7 +218,7 @@ impl UsersService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar(&sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -244,20 +252,21 @@ impl UsersService {
         username: &str,
         password: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "SELECT id, password_hash, display_name, role FROM users WHERE username = {}",
             self.db.dialect().placeholder(1)
         );
         let row: Option<(i64, String, String, String)> = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as(&sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
                     .fetch_optional(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as(&sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
                     .fetch_optional(pool)
                     .await
@@ -295,20 +304,21 @@ impl UsersService {
         current: &str,
         new: &str,
     ) -> Result<(), BantoError> {
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let select_sql = format!(
             "SELECT id, password_hash FROM users WHERE username = {}",
             self.db.dialect().placeholder(1)
         );
         let row: Option<(i64, String)> = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as(&select_sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(select_sql))
                     .bind(username)
                     .fetch_optional(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as(&select_sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(select_sql))
                     .bind(username)
                     .fetch_optional(pool)
                     .await
@@ -337,6 +347,7 @@ impl UsersService {
         let new_hash = hash_password(new)?;
 
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let update_sql = format!(
             "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
             dialect.placeholder(1),
@@ -344,14 +355,14 @@ impl UsersService {
             dialect.placeholder(2),
         );
         match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&update_sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(update_sql))
                 .bind(&new_hash)
                 .bind(id)
                 .execute(pool)
                 .await
                 .map(|_| ()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&update_sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(update_sql))
                 .bind(&new_hash)
                 .bind(id)
                 .execute(pool)
@@ -401,20 +412,21 @@ impl UsersService {
         &self,
         username: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "SELECT id, display_name, role FROM users WHERE username = {}",
             self.db.dialect().placeholder(1)
         );
         let row: Option<(i64, String, String)> = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as(&sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
                     .fetch_optional(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as(&sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
                     .fetch_optional(pool)
                     .await
@@ -450,20 +462,21 @@ impl UsersService {
         validate_password_len(password, "password")?;
         let display_name = display_name.trim();
 
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let exists_sql = format!(
             "SELECT id FROM users WHERE username = {}",
             self.db.dialect().placeholder(1)
         );
         let existing: Option<i64> = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar(&exists_sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(exists_sql))
                     .bind(&username)
                     .fetch_optional(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar(&exists_sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(exists_sql))
                     .bind(&username)
                     .fetch_optional(pool)
                     .await
@@ -481,6 +494,7 @@ impl UsersService {
 
         let hash = hash_password(password)?;
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let insert_sql = format!(
             "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
              RETURNING id",
@@ -491,7 +505,7 @@ impl UsersService {
         );
         let id: i64 = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar(&insert_sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -501,7 +515,7 @@ impl UsersService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar(&insert_sql)
+                sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -524,14 +538,25 @@ impl UsersService {
     /// Shared by the last-admin guards on [`UsersService::update_user`] and
     /// [`UsersService::delete_user`].
     async fn role_of(&self, id: i64) -> Result<Role, BantoError> {
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "SELECT role FROM users WHERE id = {}",
             self.db.dialect().placeholder(1)
         );
         let role: Option<String> = match &self.db {
-            Db::Sqlite(pool) => sqlx::query_scalar(&sql).bind(id).fetch_optional(pool).await,
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+            }
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query_scalar(&sql).bind(id).fetch_optional(pool).await,
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+            }
         }
         .map_err(banto_storage::storage_error)?;
         match role {
@@ -548,14 +573,27 @@ impl UsersService {
     /// OTHER than `id` - if that count is zero, `id` is the last admin and
     /// the caller must not be allowed to demote or delete it.
     async fn ensure_not_last_admin(&self, id: i64) -> Result<(), BantoError> {
+        // AssertSqlSafe: `'admin'` is a hardcoded literal and
+        // `dialect.placeholder(1)` is internally generated (never caller
+        // input); `id` is bound below.
         let sql = format!(
             "SELECT COUNT(*) FROM users WHERE role = 'admin' AND id != {}",
             self.db.dialect().placeholder(1)
         );
         let remaining_admins: i64 = match &self.db {
-            Db::Sqlite(pool) => sqlx::query_scalar(&sql).bind(id).fetch_one(pool).await,
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query_scalar(&sql).bind(id).fetch_one(pool).await,
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+            }
         }
         .map_err(banto_storage::storage_error)?;
         if remaining_admins == 0 {
@@ -584,6 +622,7 @@ impl UsersService {
         }
 
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "UPDATE users SET display_name = {}, role = {}, updated_at = {} WHERE id = {} \
              RETURNING id, username, display_name, role, created_at",
@@ -594,7 +633,7 @@ impl UsersService {
         );
         let row: Option<(i64, String, String, String, String)> = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as(&sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(display_name)
                     .bind(role.as_str())
                     .bind(id)
@@ -603,7 +642,7 @@ impl UsersService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as(&sql)
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(display_name)
                     .bind(role.as_str())
                     .bind(id)
@@ -638,6 +677,7 @@ impl UsersService {
         let hash = hash_password(new_password)?;
 
         let dialect = self.db.dialect();
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
             dialect.placeholder(1),
@@ -645,14 +685,14 @@ impl UsersService {
             dialect.placeholder(2),
         );
         let rows_affected = match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(&hash)
                 .bind(id)
                 .execute(pool)
                 .await
                 .map(|r| r.rows_affected()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(&hash)
                 .bind(id)
                 .execute(pool)
@@ -689,18 +729,19 @@ impl UsersService {
             self.ensure_not_last_admin(id).await?;
         }
 
+        // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "DELETE FROM users WHERE id = {}",
             self.db.dialect().placeholder(1)
         );
         let rows_affected = match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .execute(pool)
                 .await
                 .map(|r| r.rows_affected()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .execute(pool)
                 .await

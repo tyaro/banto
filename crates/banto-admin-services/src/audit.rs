@@ -124,13 +124,18 @@ impl AuditLogService {
             })?;
 
         let dialect = self.db.dialect();
+        // sqlx 0.9: `sqlx::query` requires `impl SqlSafeStr`, which a runtime
+        // `String` does not implement directly. AssertSqlSafe is safe here
+        // because the only interpolated fragment is `dialect.placeholders(8)`,
+        // which is internally generated from the `Dialect` enum (never
+        // caller input) - every actual value is bound below via `.bind(...)`.
         let sql = format!(
             "INSERT INTO audit_log (actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
              VALUES ({})",
             dialect.placeholders(8),
         );
         match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(entry.actor_username)
                 .bind(entry.actor_role)
                 .bind(entry.action)
@@ -143,7 +148,7 @@ impl AuditLogService {
                 .await
                 .map(|_| ()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(entry.actor_username)
                 .bind(entry.actor_role)
                 .bind(entry.action)
@@ -195,7 +200,7 @@ impl AuditLogService {
         // comment).
         match &self.db {
             Db::Sqlite(pool) => {
-                let mut rows_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_ROWS);
+                let mut rows_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_ROWS);
                 banto_storage::list_query::sqlite::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -207,7 +212,7 @@ impl AuditLogService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -226,8 +231,7 @@ impl AuditLogService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                let mut rows_builder: QueryBuilder<'_, sqlx::Postgres> =
-                    QueryBuilder::new(SELECT_ROWS);
+                let mut rows_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(SELECT_ROWS);
                 banto_storage::list_query::postgres::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -239,7 +243,7 @@ impl AuditLogService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                let mut count_builder: QueryBuilder<'_, sqlx::Postgres> =
+                let mut count_builder: QueryBuilder<sqlx::Postgres> =
                     QueryBuilder::new(SELECT_COUNT);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
@@ -310,14 +314,17 @@ impl AuditLogService {
                         .to_string()
                 }
             };
+            // AssertSqlSafe: `days_sql` is one of two hardcoded literal
+            // strings selected by `dialect` above (never caller input);
+            // `days` is bound below, never placed in the SQL text.
             let affected = match &self.db {
-                Db::Sqlite(pool) => sqlx::query(&days_sql)
+                Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(days_sql))
                     .bind(days)
                     .execute(pool)
                     .await
                     .map(|r| r.rows_affected()),
                 #[cfg(feature = "postgres")]
-                Db::Postgres(pool) => sqlx::query(&days_sql)
+                Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(days_sql))
                     .bind(days)
                     .execute(pool)
                     .await
@@ -341,19 +348,22 @@ impl AuditLogService {
                 // apart from the placeholder. The "id order == insertion order"
                 // assumption (SQLite `AUTOINCREMENT`) holds on Postgres too via
                 // `BIGSERIAL`/`IDENTITY` (DDL is PR3's scope).
+                // AssertSqlSafe: only `dialect.placeholder(1)` is
+                // interpolated (internal enum, never caller input); `excess`
+                // is bound below.
                 let delete_sql = format!(
                     "DELETE FROM audit_log WHERE id IN \
                      (SELECT id FROM audit_log ORDER BY id ASC LIMIT {})",
                     dialect.placeholder(1),
                 );
                 let affected = match &self.db {
-                    Db::Sqlite(pool) => sqlx::query(&delete_sql)
+                    Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(delete_sql))
                         .bind(excess)
                         .execute(pool)
                         .await
                         .map(|r| r.rows_affected()),
                     #[cfg(feature = "postgres")]
-                    Db::Postgres(pool) => sqlx::query(&delete_sql)
+                    Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(delete_sql))
                         .bind(excess)
                         .execute(pool)
                         .await

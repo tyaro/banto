@@ -202,20 +202,22 @@ impl SettingsService {
 
     /// Read a single setting by key, or `None` if it has never been set.
     pub async fn get(&self, key: &str) -> Result<Option<String>, BantoError> {
+        // AssertSqlSafe: only `dialect.placeholder(1)` is interpolated
+        // (internal enum, never caller input); `key` is bound below.
         let sql = format!(
             "SELECT value FROM settings WHERE key = {}",
             self.db.dialect().placeholder(1)
         );
         match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar::<_, String>(&sql)
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
                     .bind(key)
                     .fetch_optional(pool)
                     .await
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar::<_, String>(&sql)
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
                     .bind(key)
                     .fetch_optional(pool)
                     .await
@@ -231,6 +233,8 @@ impl SettingsService {
     /// Postgres alike), so only the placeholders differ between backends.
     pub async fn set(&self, key: &str, value: &str) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
+        // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
+        // (internal enum, never caller input); `key`/`value` are bound below.
         let sql = format!(
             "INSERT INTO settings (key, value) VALUES ({}, {}) \
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -241,14 +245,14 @@ impl SettingsService {
         // unify (the result itself is unused - an upsert always affects one
         // row).
         match &self.db {
-            Db::Sqlite(pool) => sqlx::query(&sql)
+            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(key)
                 .bind(value)
                 .execute(pool)
                 .await
                 .map(|_| ()),
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(&sql)
+            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(key)
                 .bind(value)
                 .execute(pool)

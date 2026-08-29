@@ -128,6 +128,10 @@ async fn seed_if_empty(db: &Db) -> Result<(), BantoError> {
     // Positional placeholders via the shared `Dialect` helper so the same
     // INSERT text works on both backends (`?` on SQLite, `$1..$5` on Postgres).
     let dialect = db.dialect();
+    // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
+    // (internal enum, never caller input); each row's fields are bound
+    // below. `.as_str()` (not moving `insert_sql`) because this statement is
+    // reused across every iteration of the loops below.
     let insert_sql = format!(
         "INSERT INTO items (id, name, price, stock, updated_at) VALUES ({}, {}, {}, {}, {})",
         dialect.placeholder(1),
@@ -141,7 +145,7 @@ async fn seed_if_empty(db: &Db) -> Result<(), BantoError> {
         Db::Sqlite(pool) => {
             let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
             for row in &rows {
-                sqlx::query(&insert_sql)
+                sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
                     .bind(row.id)
                     .bind(&row.name)
                     .bind(row.price)
@@ -157,7 +161,7 @@ async fn seed_if_empty(db: &Db) -> Result<(), BantoError> {
         Db::Postgres(pool) => {
             let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
             for row in &rows {
-                sqlx::query(&insert_sql)
+                sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
                     .bind(row.id)
                     .bind(&row.name)
                     .bind(row.price)
