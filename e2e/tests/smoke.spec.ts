@@ -416,12 +416,67 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(categoryRows).toHaveCount(12);
 	});
 
+	// Nav badge (choiapp-feedback-2026-09 §4.1): a `resource_changed` server
+	// event for a resource whose page is NOT on screen shows an
+	// unseen-updates badge on that resource's sidebar entry
+	// ($lib/navBadges.svelte.ts), and visiting the page clears it. The
+	// "another client" is simulated by calling the REST API directly from
+	// the page context with the session's own bearer token - the server
+	// broadcasts the same SSE event either way. Creates then deletes one
+	// item (net zero), so scenario 14's state is untouched.
+	test('13. sidebar: an item change from another client shows an unseen-updates badge', async () => {
+		await page.goto('/dashboard');
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+
+		const badge = page.locator('.nav-badge');
+		await expect(badge).toHaveCount(0);
+
+		const createdId = await page.evaluate(async () => {
+			// Same lookup order as admin-core's `createHttpAuthProvider().getToken`
+			// (localStorage only when "remember me" was used - this login wasn't).
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch('/api/items', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-Banto-Client': 'banto',
+					Authorization: `Bearer ${token}`
+				},
+				body: JSON.stringify({ name: 'E2Eバッジ確認商品', price: 100, stock: 1 })
+			});
+			if (!res.ok) throw new Error(`create failed: ${res.status}`);
+			return ((await res.json()) as { id: number }).id;
+		});
+
+		// SSE delivery -> onInvalidate('items') -> badge on 商品 (the
+		// auto-retrying expect absorbs the event latency).
+		await expect(badge).toHaveText('1');
+
+		// Cleanup while still on the dashboard: the delete broadcasts another
+		// resource_changed, so the same badge counts it too.
+		await page.evaluate(async (id) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch(`/api/items/${id}`, {
+				method: 'DELETE',
+				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+		}, createdId);
+		await expect(badge).toHaveText('2');
+
+		// Landing on the page marks the changes as seen.
+		await page.goto('/items');
+		await expect(badge).toHaveCount(0);
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's
 	// localStorage and reloads every screen, so switching to English here can't
 	// disturb the Japanese-asserting scenarios above (which run first).
-	test('13. settings: the language picker switches the whole UI to English', async () => {
+	test('14. settings: the language picker switches the whole UI to English', async () => {
 		await page.goto('/settings');
 
 		// The <select> is still labelled in Japanese (表示言語) at this point. Its

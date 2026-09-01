@@ -37,7 +37,11 @@ track your task belongs to.**
     [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) (a.k.a.
     M-review 2026-08),
     [docs/maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md)
-    (defines the CR numbering).
+    (defines the CR numbering),
+    [docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)
+    (the "choi-app" feedback record — the target of
+    `choiapp-feedback-2026-09 §N` references from the pinned shell /
+    settings categories / nav badges code).
     **Documents that are fully resolved and frozen move to
     [docs/history/](docs/history/)** (count inbound code references with `rg`
     before moving — see the grammar table in conventions §12)
