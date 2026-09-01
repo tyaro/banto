@@ -613,21 +613,34 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettings, Ban
 /// device" (spec M11), so not gating the one command that re-locks it down
 /// behind a role that mode itself may have suppressed is consistent with
 /// that trust model, not a weakening of it.
-/// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch
-/// authz (the actor may be `None`) + audit behavior is testable with a plain
-/// `&AppState`.
+///
+/// BOOTSTRAP WINDOW (choiapp-feedback-2026-09 §5): while NO account exists
+/// yet (`users.is_initialized() == false`), this command is also allowed
+/// with no session at all - the first-run setup screen's
+/// 「ログインなしで使い始める」path. This grants nothing [`auth_setup`] does
+/// not already grant in the same state: with zero accounts, whoever sits at
+/// the device can create the first admin unauthenticated anyway, so letting
+/// that same person pick no-login mode instead is the same trust decision,
+/// not a wider one. The window closes the moment the first account exists.
+/// Enabling the mode with no current session also synthesizes the same
+/// local identity `run()`'s bootstrap would create on the next launch (and
+/// records the same synthetic `login` entry), so the webview enters the app
+/// without a restart.
+/// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch /
+/// bootstrap-window authz (the actor may be `None`) + audit behavior is
+/// testable with a plain `&AppState`.
 async fn auth_config_apply_body(
     state: &AppState,
     disabled: bool,
     disabled_role: &str,
 ) -> Result<AuthSettings, BantoError> {
     let currently_disabled = state.settings.auth_config().await?.disabled;
-    // Spec M14: the escape hatch means `require_role` may not run at all
-    // (see this command's doc comment) - capture whatever actor identity
-    // exists directly in that case, so the audit entry below still has one
-    // when possible, instead of skipping the escape-hatch path's write
-    // entirely.
-    let actor = if currently_disabled {
+    // Spec M14: the escape hatch and the bootstrap window (see this
+    // command's doc comment) mean `require_role` may not run at all -
+    // capture whatever actor identity exists directly in those cases, so
+    // the audit entry below still has one when possible, instead of
+    // skipping those paths' write entirely.
+    let actor = if currently_disabled || !state.users.is_initialized().await? {
         state.auth.lock().expect("auth mutex poisoned").clone()
     } else {
         Some(require_role(state, Role::Admin, "settings").await?)
@@ -656,6 +669,49 @@ async fn auth_config_apply_body(
             result: "ok",
         })
         .await;
+
+    // Setup-skip flow (choiapp-feedback-2026-09 §5): enabling the mode from
+    // the first-run screen happens with no session at all - synthesize the
+    // same identity `run()`'s bootstrap would create on the next launch so
+    // the webview can enter the app without a restart. The settings-screen
+    // paths (admin / escape hatch) always run with a session, so this is a
+    // no-op there. The is-none check and the write happen under ONE lock
+    // scope (Copilot review on PR #182: a check/await/write split could
+    // overwrite a real session another in-flight command established), and
+    // the synthetic `login` entry is recorded after installing - the guard
+    // itself must never live across an await.
+    if config.disabled {
+        // Mirrors run()'s bootstrap exactly: `id: 0` is not a real `users`
+        // row (nothing looks a synthetic session up by id), and the same
+        // synthetic `login` entry is recorded - it is still "someone"
+        // starting to use the app, just without a credential check.
+        let local_identity = UserIdentity {
+            id: 0,
+            username: "local".to_string(),
+            display_name: "ローカルユーザー".to_string(),
+            role: config.disabled_role,
+        };
+        let installed = {
+            let mut auth = state.auth.lock().expect("auth mutex poisoned");
+            if auth.is_none() {
+                *auth = Some(local_identity.clone());
+                true
+            } else {
+                false
+            }
+        };
+        if installed {
+            record_ok(
+                &state.audit,
+                &local_identity,
+                "login",
+                "auth",
+                None,
+                Some(serde_json::json!({ "mode": "auth_disabled" })),
+            )
+            .await;
+        }
+    }
     Ok(config)
 }
 
@@ -2760,6 +2816,70 @@ mod tests {
             serde_json::from_str(entry.detail.as_deref().expect("detail present"))
                 .expect("detail is json");
         assert_eq!(detail, serde_json::json!({ "authDisabled": true }));
+    }
+
+    /// [`auth_config_apply_body`]'s bootstrap window (choiapp-feedback-2026-09
+    /// §5): with ZERO accounts and no session, enabling no-login mode from
+    /// the first-run setup screen succeeds, records the `settings_change`
+    /// with no actor, synthesizes the same "local" session `run()`'s
+    /// bootstrap would, and records its synthetic `login` entry.
+    #[tokio::test]
+    async fn auth_config_apply_bootstrap_window_enables_and_synthesizes_session() {
+        let state = app_state().await;
+
+        let config = auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("bootstrap-window apply should succeed with zero users");
+        assert!(config.disabled);
+
+        let session = state
+            .auth
+            .lock()
+            .expect("auth mutex poisoned")
+            .clone()
+            .expect("a synthetic session should exist without a restart");
+        assert_eq!(session.username, "local");
+        assert_eq!(session.role, Role::Admin);
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        let change = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "settings_change" && r.resource == "settings")
+            .unwrap_or_else(|| panic!("expected a settings_change entry, got {:?}", audit.rows));
+        assert_eq!(change.actor_username, None, "nobody exists yet");
+        let login = audit
+            .rows
+            .iter()
+            .find(|r| r.action == "login" && r.resource == "auth")
+            .unwrap_or_else(|| panic!("expected a synthetic login entry, got {:?}", audit.rows));
+        assert_eq!(login.actor_username.as_deref(), Some("local"));
+        let detail: serde_json::Value =
+            serde_json::from_str(login.detail.as_deref().expect("detail present"))
+                .expect("detail is json");
+        assert_eq!(detail, serde_json::json!({ "mode": "auth_disabled" }));
+    }
+
+    /// The bootstrap window closes the moment the first account exists
+    /// (choiapp-feedback-2026-09 §5): once initialized, a session-less call
+    /// is `Unauthorized` again, exactly as before the window existed.
+    #[tokio::test]
+    async fn auth_config_apply_bootstrap_window_closes_once_initialized() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+
+        let err = auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect_err("a session-less apply must be rejected once initialized");
+        assert!(matches!(err, BantoError::Unauthorized));
     }
 
     /// [`autologin_enable_body`] records a `settings_change`/`settings` entry

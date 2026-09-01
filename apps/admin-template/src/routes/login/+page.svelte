@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
-	import { getAuthProvider } from '@banto/admin-core';
+	import { getAuthProvider, isProviderError } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { bantoReady, getBantoMode } from '$lib/banto/setup';
+	import { applyAuthSettings } from '$lib/banto/authAdmin';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 
 	// Undecided until `status()` resolves (or is absent, treated as
@@ -35,11 +36,19 @@
 	// would be misleading noise.
 	let showDemoNote = $state(false);
 
+	// Setup-skip / no-login start (choiapp-feedback-2026-09 §5): Tauri only,
+	// like the rest of M11 - a LAN browser's first run is already a
+	// multi-device context where no-login mode is prohibited, and the
+	// plain-browser demo has no real backend to configure.
+	let showSkipLogin = $state(false);
+	let skippingLogin = $state(false);
+
 	$effect(() => {
 		void (async () => {
 			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
 			showRemember = getBantoMode() === 'server';
 			showDemoNote = getBantoMode() === 'demo';
+			showSkipLogin = getBantoMode() === 'tauri';
 			const status = await getAuthProvider().status?.();
 			// No `status()` on this provider (an older/custom AuthProvider,
 			// spec §3.3's members are optional for backward compatibility):
@@ -98,6 +107,27 @@
 			}
 		} finally {
 			submitting = false;
+		}
+	}
+
+	// Choi-app default path (choiapp-feedback-2026-09 §5): enable no-login
+	// mode straight from the first-run screen instead of creating an
+	// account. `auth_config_apply`'s zero-users bootstrap window authorizes
+	// this exact call and synthesizes the session, so the goto lands on a
+	// live dashboard with no restart. Role is `admin` - a choi-app's single
+	// operator needs everything; it stays changeable later under
+	// 設定 → セキュリティ.
+	async function skipLogin(): Promise<void> {
+		if (!window.confirm(m['settings.authDisableConfirm']())) return;
+		error = null;
+		skippingLogin = true;
+		try {
+			await applyAuthSettings(true, 'admin');
+			goto(`${base}/dashboard`);
+		} catch (err) {
+			error = isProviderError(err) ? err.message : m['auth.skipLoginFailed']();
+		} finally {
+			skippingLogin = false;
 		}
 	}
 </script>
@@ -161,9 +191,31 @@
 						<p class="error">{error}</p>
 					{/if}
 
-					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
+					<!-- Also locked while the skip path runs (Copilot review on PR
+					     #182): the two paths mutate the same auth state, so
+					     neither may start while the other is in flight - mirrors
+					     the skip button's own `submitting || skippingLogin`. -->
+					<button
+						type="submit"
+						class="banto-btn banto-btn--primary"
+						disabled={submitting || skippingLogin}
+					>
 						{m['auth.createAccount']()}
 					</button>
+
+					{#if showSkipLogin}
+						<div class="skip-login">
+							<button
+								type="button"
+								class="banto-btn banto-btn--secondary"
+								onclick={skipLogin}
+								disabled={submitting || skippingLogin}
+							>
+								{m['auth.skipLoginButton']()}
+							</button>
+							<p class="note">{m['auth.skipLoginNote']()}</p>
+						</div>
+					{/if}
 				</form>
 			{:else if mode === 'login'}
 				<form onsubmit={submitLogin}>
@@ -300,6 +352,19 @@
 		text-align: center;
 		color: var(--banto-danger);
 		font-size: 0.8rem;
+	}
+
+	.skip-login {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--banto-border);
+	}
+
+	.skip-login .banto-btn--secondary {
+		justify-content: center;
 	}
 
 	.banto-btn--primary {

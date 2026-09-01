@@ -76,8 +76,18 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      # `=all`, not the default `changed` mode: `changed` only rewrites the
+      # snapshots that FAILED, so any real change small enough to fit under
+      # `maxDiffPixelRatio` (playwright.config.ts, 0.001 of a fullPage
+      # screenshot's pixels) leaves its baseline untouched and silently
+      # stale - and the drift accumulates run after run until one day it
+      # crosses the threshold as a mystery diff. Measured instance: the
+      # 2026-09 header status chips changed dashboard/items/users visibly,
+      # passed within tolerance, and left those baselines showing a header
+      # that no longer existed. `=all` rewrites every baseline from the
+      # current build, so what is committed always depicts the real UI.
       - name: Regenerate baselines
-        run: pnpm e2e:visual --update-snapshots
+        run: pnpm e2e:visual --update-snapshots=all
 
       # A regenerated baseline that does not then PASS a normal run would be a
       # broken baseline (non-deterministic rendering), so prove it here rather
