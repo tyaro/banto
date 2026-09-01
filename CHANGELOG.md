@@ -29,11 +29,14 @@
   データ管理/セキュリティへ、警告色は `.danger-card` で維持）、③サイドバーの
   未確認更新バッジ（`NavItem.badgeResource` + `$lib/navBadges.svelte.ts`、
   smoke シナリオ 13 で SSE 実経路を検証）とヘッダのステータスチップ
-  （デモ/ログイン不要/ロール）を追加、④ログイン無しチョイアプリの経路を
-  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md) に整備
-  （デフォルト化はオーナー判断待ちの提案として同文書 §5 に記録）。付随して
-  `StatusBadge` info 変種のコントラスト不足（4.1:1）を `--banto-primary-hover`
-  で修正。
+  （デモ/ロール）を追加、④初回セットアップ画面（Tauri）に
+  「ログインなしで使い始める」を追加 — `auth_config_apply` にユーザー0人の
+  ブートストラップ窓を開け、synthetic session をその場で合成して再起動なしで
+  M11 ログイン不要モードに入れる（オーナー承認済み、手順は
+  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)）。ログイン
+  不要モードはチョイアプリの常態のためヘッダにチップは出さない（オーナー
+  決定）。付随して `StatusBadge` info 変種のコントラスト不足（4.1:1）を
+  `--banto-primary-hover` で修正。
 
 ## [1.4.0] - 2026-08-29
 

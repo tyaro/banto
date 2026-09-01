@@ -50,14 +50,15 @@ the owner's behalf.
   screen, and identical permission checks across both the REST and Tauri
   paths.
 - **Audit log**, a settings framework (`SettingsProvider`), and an
-  auto-login / no-login mode. To start a small app without a login screen
-  (and add logins later as it grows), see
+  auto-login / no-login mode. The desktop first-run screen offers "Start
+  without a login" - a small app can begin with no account at all and
+  switch to login-based operation later as it grows; see
   [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md) (Japanese).
 - **Pinned header/sidebar, nav badges, and status chips** (2026-09): the
   header and sidebar stay pinned while the content scrolls; sidebar nav
   entries show an unseen-updates badge when another client changes their
   resource (declare `NavItem.badgeResource` to opt your own resources in);
-  the header shows demo-mode / no-login-mode / current-role status chips.
+  the header shows demo-mode / current-role status chips.
   The settings page is organized into titled category sections with an
   in-page jump nav.
 - **CSV/Excel import & export**, a command palette (Ctrl+K), and SQLite

@@ -66,16 +66,18 @@
 
 	<div class="spacer"></div>
 
-	<!-- Status area: chips render only while their state applies, so a
-	     plain logged-in session shows just the role chip. Hidden on narrow
-	     viewports (same breakpoint as .user-name) to keep the bar usable. -->
+	<!-- Status area: chips render only while their state applies. Hidden on
+	     narrow viewports (same breakpoint as .user-name) to keep the bar
+	     usable. No-login mode (M11) deliberately shows NOTHING here - for a
+	     choi-app started via the setup-skip path it is the app's normal
+	     state, not a condition to warn about, and its synthetic role is not
+	     an identity worth a chip (owner decision, choiapp-feedback-2026-09
+	     §4.2/§5). -->
 	<div class="status-area">
 		{#if demoMode}
 			<StatusBadge variant="info" label={m['shell.statusDemo']()} />
 		{/if}
-		{#if sessionStore.authDisabled}
-			<StatusBadge variant="warning" label={m['shell.statusNoAuth']()} />
-		{:else}
+		{#if !sessionStore.authDisabled}
 			<StatusBadge variant="neutral" label={roleLabels[sessionStore.role]()} />
 		{/if}
 	</div>
