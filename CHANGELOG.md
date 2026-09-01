@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+- ci(visual): ベースライン再生成を `--update-snapshots=all` に変更し、通過中の
+  スナップショットも必ず作り直すようにした。既定の `changed` モードは失敗した
+  分しか書き換えないため、`maxDiffPixelRatio`（0.001）に収まる小さな変更は
+  ベースラインが古いまま残り、ズレが蓄積していた（実例: 2026-09 のヘッダ
+  ステータスチップは dashboard/items/users で可視だったが許容内で通過し、
+  ベースラインは存在しないヘッダを写したままだった）。許容量が fullPage の
+  総画素比であることに由来する検知限界も `e2e/visual/README.md` に明記。
+
 - feat(shell/settings): チョイアプリ・フィードバック対応
   （[docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)）—
   ①ヘッダ/サイドバーを sticky 化（本文スクロールから独立）、②設定ページを

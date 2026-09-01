@@ -38,11 +38,28 @@ diff like any other source change:
 
 ```sh
 pnpm --filter admin-template build
-pnpm e2e:visual --update-snapshots
+pnpm e2e:visual --update-snapshots=all
 ```
 
 Re-run `pnpm e2e:visual` (without `--update-snapshots`) afterwards to
 confirm the new baselines actually pass.
+
+**Always `=all`, never the bare `--update-snapshots`.** The bare form is
+Playwright's `changed` mode, which rewrites only the snapshots that
+FAILED - so a real change small enough to fit under the tolerance below
+keeps its old baseline, and that staleness accumulates silently until a
+later run trips over it as a mystery diff. `=all` regenerates every
+baseline from the current build.
+
+**The tolerance can hide small changes** (`maxDiffPixelRatio: 0.001` in
+`e2e/playwright.config.ts`). It is a ratio of the whole `fullPage`
+screenshot, so a tall page gets a proportionally larger absolute
+allowance - the 1440x3255 dashboard tolerates ~4,700 differing pixels,
+the 1440x900 items page ~1,300. Adding, removing, or restyling something
+small and low-contrast (a header chip, a nav badge, a compact control)
+can therefore pass unnoticed. Treat this suite as a net for gross layout
+and theme breakage; cover small elements with a behavioral assertion in
+`e2e/tests/smoke.spec.ts` instead of relying on pixels.
 
 **Baseline images are OS-specific.** Playwright appends the platform to
 each snapshot's filename (e.g. `...-linux.png`). This repo's baselines were
@@ -58,15 +75,20 @@ prove they pass, and uploads them as an artifact. Dispatch it again with
 `commit: true` to push the regenerated PNGs back to that branch.
 
 One more step after `commit: true`: the workflow pushes with the built-in
-`GITHUB_TOKEN`, and GitHub **does not trigger workflows for pushes made with
-that token** — so `ci.yml` will NOT re-run on the baseline commit by itself.
-Push an empty commit to re-trigger CI (this has been needed on every baseline
-update so far):
+`GITHUB_TOKEN`, so `ci.yml` does not start on the baseline commit by itself.
+It is **parked, not missing** — GitHub still creates the `pull_request` run
+for that commit but leaves it awaiting approval (`action_required`, zero
+jobs, no checks on the PR head). Start it from the run's page in the Actions
+tab (Approve / Re-run all jobs) or from the CLI:
 
 ```sh
-git commit --allow-empty -m "ci: 再生成ベースラインで CI を再実行"
-git push
+gh run rerun <run-id>   # the action_required CI run on the baseline commit
 ```
+
+An empty commit also works and is what this file used to recommend, but it
+is not needed — the run is already there, waiting. (Verified 2026-09-01 on
+PRs #182/#183: both baseline commits produced an `action_required` CI run
+with zero jobs; re-running #183's started it and it went green.)
 
 ## Notes
 
