@@ -61,7 +61,13 @@
 
 	.status-badge--info {
 		background: color-mix(in srgb, var(--banto-primary) 16%, var(--banto-surface));
-		color: var(--banto-primary);
+		/* axe-core wcag2aa color-contrast: same fix as Sidebar.svelte's
+		   .nav-item.active - plain --banto-primary on this tint background
+		   measures ~4.1:1, just under the 4.5:1 text minimum;
+		   --banto-primary-hover is darker/lighter enough per theme to clear
+		   it. Surfaced once the header status area put an info badge on
+		   every page the a11y suite scans. */
+		color: var(--banto-primary-hover);
 	}
 
 	.status-badge--success {

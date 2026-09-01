@@ -27,7 +27,10 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
     [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md)（通称
     M-review 2026-08）、
     [docs/maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md)
-    （CR 番号体系の定義元）。
+    （CR 番号体系の定義元）、
+    [docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)
+    （チョイアプリ・フィードバック対応の記録。シェル固定/設定カテゴリ/
+    ナビバッジの `choiapp-feedback-2026-09 §N` 参照の実体）。
     **対応が完了して凍結した文書は [docs/history/](docs/history/) へ移す**
     （移動前にコード被参照を `rg` で確認 — conventions §12 の文法表参照）
 - **トラックB（アプリ作者向け）= [README](README.md)**: このテンプレートから自分の

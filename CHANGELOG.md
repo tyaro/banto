@@ -22,6 +22,39 @@
 
 ## [Unreleased]
 
+- ci(visual): スクリーンショット比較の許容を比率から絶対値へ
+  （`maxDiffPixelRatio: 0.001` → `maxDiffPixels: 250`）。比率は fullPage の総画素
+  基準だったため縦長ページほど検知が甘く（dashboard 約4,700px / items 約1,300px）、
+  実測 568〜828px のヘッダチップ追加が全ページで見逃されていた
+  （[docs/choiapp-feedback-2026-09.md §6](docs/choiapp-feedback-2026-09.md)）。
+  同一環境の再描画差分は 0px のため 250 はアンチエイリアス用のバッファ。
+  以後 Playwright/Chromium/ランナー更新で描画が変わるとスイートは赤くなる
+  （意図した挙動。差分確認後に `visual-baselines.yml` で再生成する）。
+
+- ci(visual): ベースライン再生成を `--update-snapshots=all` に変更し、通過中の
+  スナップショットも必ず作り直すようにした。既定の `changed` モードは失敗した
+  分しか書き換えないため、`maxDiffPixelRatio`（0.001）に収まる小さな変更は
+  ベースラインが古いまま残り、ズレが蓄積していた（実例: 2026-09 のヘッダ
+  ステータスチップは dashboard/items/users で可視だったが許容内で通過し、
+  ベースラインは存在しないヘッダを写したままだった）。許容量が fullPage の
+  総画素比であることに由来する検知限界も `e2e/visual/README.md` に明記。
+
+- feat(shell/settings): チョイアプリ・フィードバック対応
+  （[docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)）—
+  ①ヘッダ/サイドバーを sticky 化（本文スクロールから独立）、②設定ページを
+  5カテゴリ節 + カテゴリジャンプナビに再編（旧 Danger zone は解体し
+  データ管理/セキュリティへ、警告色は `.danger-card` で維持）、③サイドバーの
+  未確認更新バッジ（`NavItem.badgeResource` + `$lib/navBadges.svelte.ts`、
+  smoke シナリオ 13 で SSE 実経路を検証）とヘッダのステータスチップ
+  （デモ/ロール）を追加、④初回セットアップ画面（Tauri）に
+  「ログインなしで使い始める」を追加 — `auth_config_apply` にユーザー0人の
+  ブートストラップ窓を開け、synthetic session をその場で合成して再起動なしで
+  M11 ログイン不要モードに入れる（オーナー承認済み、手順は
+  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)）。ログイン
+  不要モードはチョイアプリの常態のためヘッダにチップは出さない（オーナー
+  決定）。付随して `StatusBadge` info 変種のコントラスト不足（4.1:1）を
+  `--banto-primary-hover` で修正。
+
 ## [1.4.0] - 2026-08-29
 
 **v1.4.0 — `sqlx` 0.8→0.9 移行を主とするリリース。** オーナー判断により

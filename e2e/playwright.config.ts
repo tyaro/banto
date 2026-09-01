@@ -136,7 +136,30 @@ export default defineConfig({
 			expect: {
 				// §12.1: pixel-level tolerance for the whole project, so specs
 				// only need to name the screenshot, not repeat these options.
-				toHaveScreenshot: { animations: 'disabled', maxDiffPixelRatio: 0.001 }
+				//
+				// ABSOLUTE, not a ratio (choiapp-feedback-2026-09 §6). The former
+				// `maxDiffPixelRatio: 0.001` was a share of the WHOLE fullPage
+				// screenshot, so a tall page bought itself a proportionally larger
+				// blind spot: the 1440x3255 dashboard tolerated ~4,700 differing
+				// pixels, the 1440x900 items page ~1,300. Measured consequence: the
+				// 2026-09 header status chips register as only 568-828 perceptually
+				// different pixels (pixelmatch YIQ at the default `threshold: 0.2`),
+				// so a visible new element slipped past every page's tolerance and
+				// the baselines silently went stale.
+				//
+				// 250 sits below that 568 floor (so a chip/badge-sized change is
+				// caught) and above the observed noise: re-rendering the same build
+				// twice in one environment differs by exactly 0 pixels - Chromium is
+				// deterministic given the same binary, fonts and `reducedMotion`, and
+				// CI pins both the runner image and the Playwright version. The
+				// buffer is there for incidental antialiasing, not for jitter.
+				//
+				// Trade-off accepted: a Playwright/Chromium/runner-image bump that
+				// shifts rendering now turns this suite red instead of passing
+				// unnoticed. That is the intended behavior - review the diff, then
+				// regenerate via `.github/workflows/visual-baselines.yml`
+				// (see e2e/visual/README.md).
+				toHaveScreenshot: { animations: 'disabled', maxDiffPixels: 250 }
 			}
 		}
 	],

@@ -11,6 +11,7 @@
 	import * as m from '$lib/paraglide/messages';
 	import { navItems } from '$lib/navigation';
 	import { NAV_ICONS } from './navIcons';
+	import { navBadges } from '$lib/navBadges.svelte';
 	import { settings } from '$lib/settings.svelte';
 	import { sessionStore } from '$lib/session.svelte';
 	import { isAdmin } from '$lib/permissions';
@@ -36,6 +37,11 @@
 	const adminItems = $derived(
 		isAdmin(sessionStore.role) ? navItems.filter((item) => item.adminOnly) : []
 	);
+
+	/** Unseen-change badge text (wired by (app)/+layout.svelte). Capped for layout stability. */
+	function badgeText(count: number): string {
+		return count > 99 ? '99+' : String(count);
+	}
 </script>
 
 <aside class:collapsed={settings.sidebarCollapsed} class:overlay-open={overlayOpen}>
@@ -55,6 +61,7 @@
 	<nav class="nav-section" aria-label={m['shell.mainNav']()}>
 		{#each mainItems as item (item.path)}
 			{@const Icon = NAV_ICONS[item.icon]}
+			{@const badgeCount = navBadges.count(item.path)}
 			<a
 				href={`${base}${item.path}`}
 				class="nav-item"
@@ -64,6 +71,11 @@
 			>
 				<span class="icon"><Icon size={20} aria-hidden="true" /></span>
 				<span class="label">{m[item.labelKey]()}</span>
+				{#if badgeCount > 0}
+					<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
+						>{badgeText(badgeCount)}</span
+					>
+				{/if}
 			</a>
 		{/each}
 	</nav>
@@ -74,6 +86,7 @@
 			<p class="section-heading" aria-hidden="true">{m['shell.adminHeading']()}</p>
 			{#each adminItems as item (item.path)}
 				{@const Icon = NAV_ICONS[item.icon]}
+				{@const badgeCount = navBadges.count(item.path)}
 				<a
 					href={`${base}${item.path}`}
 					class="nav-item"
@@ -83,6 +96,11 @@
 				>
 					<span class="icon"><Icon size={20} aria-hidden="true" /></span>
 					<span class="label">{m[item.labelKey]()}</span>
+					{#if badgeCount > 0}
+						<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
+							>{badgeText(badgeCount)}</span
+						>
+					{/if}
 				</a>
 			{/each}
 		</nav>
@@ -99,6 +117,16 @@
 
 <style>
 	aside {
+		/* Pinned to the viewport while the page body scrolls
+		   (choiapp-feedback-2026-09 §2): sticky keeps the document itself as the one
+		   scroll container (SvelteKit scroll handling, anchor links and
+		   full-page screenshots all keep working), unlike an inner
+		   overflow pane. Long nav lists scroll within the aside. */
+		position: sticky;
+		top: 0;
+		height: 100vh;
+		height: 100dvh;
+		overflow-y: auto;
 		width: var(--banto-shell-sidebar-width);
 		flex-shrink: 0;
 		display: flex;
@@ -186,8 +214,9 @@
 		display: grid;
 		/* Fixed icon column (design.md §8.3): the icon's X coordinate never
 		   moves on collapse - only the label track shrinks with the aside's
-		   own width transition above. */
-		grid-template-columns: 20px minmax(0, 1fr);
+		   own width transition above. The third (auto) track holds the
+		   unseen-change badge and collapses to 0 when absent. */
+		grid-template-columns: 20px minmax(0, 1fr) auto;
 		align-items: center;
 		column-gap: 0.6rem;
 		padding: 0.5rem 0.6rem;
@@ -249,6 +278,36 @@
 		opacity: 0;
 	}
 
+	.nav-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 999px;
+		background: var(--banto-primary-solid);
+		color: var(--banto-on-solid);
+		font-size: 0.7rem;
+		font-weight: 700;
+		line-height: 1;
+	}
+
+	/* Collapsed fold (>900px): the label track is gone, so the count pill
+	   degrades to an unread dot pinned to the icon's corner. The count text
+	   stays in the DOM for the aria-label; it is hidden visually via a zero
+	   font-size (an sr-only clip would collapse the dot box itself). */
+	aside.collapsed .nav-badge {
+		position: absolute;
+		top: 4px;
+		left: 24px;
+		min-width: 8px;
+		width: 8px;
+		height: 8px;
+		padding: 0;
+		font-size: 0;
+	}
+
 	.footer {
 		margin-top: auto;
 		padding: 0.5rem;
@@ -276,6 +335,17 @@
 		aside.collapsed .brand-name,
 		aside.collapsed .section-heading {
 			opacity: 1;
+		}
+
+		/* Overlay mode always shows labels, so the badge stays a count pill
+		   (undo the collapsed-fold dot above). */
+		aside.collapsed .nav-badge {
+			position: static;
+			min-width: 18px;
+			width: auto;
+			height: 18px;
+			padding: 0 5px;
+			font-size: 0.7rem;
 		}
 
 		aside.overlay-open {
