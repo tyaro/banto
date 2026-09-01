@@ -23,11 +23,18 @@ export interface NavItem {
 	icon: NavIconKey;
 	/** Spec M10 RBAC: only shown to the `admin` role. Undefined/false = visible to every role. */
 	adminOnly?: boolean;
+	/**
+	 * admin-core resource name whose `invalidate()` bus (spec §3.4 - own
+	 * mutations AND `resource_changed` server events) feeds this entry's
+	 * unseen-change badge ($lib/navBadges.svelte.ts, wired by
+	 * routes/(app)/+layout.svelte). Undefined = no badge for this entry.
+	 */
+	badgeResource?: string;
 }
 
 export const navItems: NavItem[] = [
 	{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard' },
-	{ path: '/items', labelKey: 'nav.items', icon: 'items' },
+	{ path: '/items', labelKey: 'nav.items', icon: 'items', badgeResource: 'items' },
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },

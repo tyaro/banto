@@ -1,13 +1,43 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
+	import { onInvalidate } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
+	import { navItems } from '$lib/navigation';
+	import { navBadges, pathOwns } from '$lib/navBadges.svelte';
 
 	let { children } = $props();
+
+	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
+	// ownership split). Subscribed once for the app shell's lifetime; the
+	// handler reads `page.url.pathname` non-reactively at event time - an
+	// invalidation for the resource of the page currently on screen is not
+	// an "unseen" change (the page's own list resource refetches it live),
+	// so it never increments.
+	$effect(() => {
+		const unsubscribes = navItems
+			.filter((item) => item.badgeResource !== undefined)
+			.map((item) =>
+				onInvalidate(item.badgeResource as string, () => {
+					if (!pathOwns(item.path, page.url.pathname)) navBadges.increment(item.path);
+				})
+			);
+		return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+	});
+
+	// Landing on a page marks its nav entry's changes as seen. `untrack`
+	// keeps `pathname` as this effect's only dependency (conventions §8):
+	// `clearFor` both reads and writes the store's count map, which would
+	// otherwise re-trigger this effect on every badge increment.
+	$effect(() => {
+		const pathname = page.url.pathname;
+		untrack(() => navBadges.clearFor(pathname));
+	});
 
 	// View Transitions on page navigation (design.md §11.1). The
 	// startViewTransition existence check is the only branch - unsupporting
