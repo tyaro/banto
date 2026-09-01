@@ -38,11 +38,28 @@ diff like any other source change:
 
 ```sh
 pnpm --filter admin-template build
-pnpm e2e:visual --update-snapshots
+pnpm e2e:visual --update-snapshots=all
 ```
 
 Re-run `pnpm e2e:visual` (without `--update-snapshots`) afterwards to
 confirm the new baselines actually pass.
+
+**Always `=all`, never the bare `--update-snapshots`.** The bare form is
+Playwright's `changed` mode, which rewrites only the snapshots that
+FAILED - so a real change small enough to fit under the tolerance below
+keeps its old baseline, and that staleness accumulates silently until a
+later run trips over it as a mystery diff. `=all` regenerates every
+baseline from the current build.
+
+**The tolerance can hide small changes** (`maxDiffPixelRatio: 0.001` in
+`e2e/playwright.config.ts`). It is a ratio of the whole `fullPage`
+screenshot, so a tall page gets a proportionally larger absolute
+allowance - the 1440x3255 dashboard tolerates ~4,700 differing pixels,
+the 1440x900 items page ~1,300. Adding, removing, or restyling something
+small and low-contrast (a header chip, a nav badge, a compact control)
+can therefore pass unnoticed. Treat this suite as a net for gross layout
+and theme breakage; cover small elements with a behavioral assertion in
+`e2e/tests/smoke.spec.ts` instead of relying on pixels.
 
 **Baseline images are OS-specific.** Playwright appends the platform to
 each snapshot's filename (e.g. `...-linux.png`). This repo's baselines were
