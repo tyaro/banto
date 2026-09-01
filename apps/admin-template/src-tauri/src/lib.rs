@@ -675,11 +675,12 @@ async fn auth_config_apply_body(
     // same identity `run()`'s bootstrap would create on the next launch so
     // the webview can enter the app without a restart. The settings-screen
     // paths (admin / escape hatch) always run with a session, so this is a
-    // no-op there. The `is_none` check and the write below are two separate
-    // lock scopes (a std::sync guard must never live across an await);
-    // nothing can create a session in between - the webview is single-user
-    // and still sitting on the setup screen.
-    if config.disabled && state.auth.lock().expect("auth mutex poisoned").is_none() {
+    // no-op there. The is-none check and the write happen under ONE lock
+    // scope (Copilot review on PR #182: a check/await/write split could
+    // overwrite a real session another in-flight command established), and
+    // the synthetic `login` entry is recorded after installing - the guard
+    // itself must never live across an await.
+    if config.disabled {
         // Mirrors run()'s bootstrap exactly: `id: 0` is not a real `users`
         // row (nothing looks a synthetic session up by id), and the same
         // synthetic `login` entry is recorded - it is still "someone"
@@ -690,16 +691,26 @@ async fn auth_config_apply_body(
             display_name: "ローカルユーザー".to_string(),
             role: config.disabled_role,
         };
-        record_ok(
-            &state.audit,
-            &local_identity,
-            "login",
-            "auth",
-            None,
-            Some(serde_json::json!({ "mode": "auth_disabled" })),
-        )
-        .await;
-        *state.auth.lock().expect("auth mutex poisoned") = Some(local_identity);
+        let installed = {
+            let mut auth = state.auth.lock().expect("auth mutex poisoned");
+            if auth.is_none() {
+                *auth = Some(local_identity.clone());
+                true
+            } else {
+                false
+            }
+        };
+        if installed {
+            record_ok(
+                &state.audit,
+                &local_identity,
+                "login",
+                "auth",
+                None,
+                Some(serde_json::json!({ "mode": "auth_disabled" })),
+            )
+            .await;
+        }
     }
     Ok(config)
 }

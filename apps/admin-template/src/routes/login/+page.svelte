@@ -191,7 +191,15 @@
 						<p class="error">{error}</p>
 					{/if}
 
-					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
+					<!-- Also locked while the skip path runs (Copilot review on PR
+					     #182): the two paths mutate the same auth state, so
+					     neither may start while the other is in flight - mirrors
+					     the skip button's own `submitting || skippingLogin`. -->
+					<button
+						type="submit"
+						class="banto-btn banto-btn--primary"
+						disabled={submitting || skippingLogin}
+					>
 						{m['auth.createAccount']()}
 					</button>
 
