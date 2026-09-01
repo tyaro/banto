@@ -564,422 +564,664 @@
 			cancellingRestore = false;
 		}
 	}
+
+	// --- Category sections (choiapp-feedback-2026-09 §3) -----------------------
+	// Cards are grouped into titled category sections instead of one flat
+	// grid. A section renders only when at least one of its cards does, and
+	// the in-page category nav below mirrors exactly the rendered sections
+	// (capability-hide, spec §11.3 - no greyed-out entries). Everything
+	// stays on ONE page (anchor jumps, not tabs): every card keeps rendering
+	// for the e2e smoke/visual/axe suites, and a settings page short enough
+	// not to scroll simply ignores the anchors.
+	const showConnectivity = $derived(isAdmin(sessionStore.role));
+	const showData = $derived(isAdmin(sessionStore.role) && (auditAvailable || backupsAvailable));
+	const showSecurity = $derived(tauri && canManageAuthMode);
+
+	const sectionNavEntries = $derived(
+		[
+			{ id: 'appearance', label: m['settings.sectionAppearance'], visible: true },
+			{ id: 'account', label: m['settings.sectionAccount'], visible: true },
+			{ id: 'connectivity', label: m['settings.sectionConnectivity'], visible: showConnectivity },
+			{ id: 'data', label: m['settings.sectionData'], visible: showData },
+			{ id: 'security', label: m['settings.sectionSecurity'], visible: showSecurity }
+		].filter((entry) => entry.visible)
+	);
 </script>
 
 <div class="page">
 	<PageHeader title={m['nav.settings']()} description={m['settings.pageDescription']()} />
 
-	<div class="settings-grid">
-		<SurfaceCard>
-			<div class="card-head">
-				<Palette size={20} aria-hidden="true" />
-				<div>
-					<h2>{m['settings.themeHeading']()}</h2>
-					<p>{m['settings.themeDesc']()}</p>
-				</div>
-			</div>
+	<nav class="section-nav" aria-label={m['settings.sectionNavAria']()}>
+		{#each sectionNavEntries as entry (entry.id)}
+			<a href="#{entry.id}">{entry.label()}</a>
+		{/each}
+	</nav>
 
-			<div class="options mode-options" role="radiogroup" aria-label={m['settings.themeHeading']()}>
-				{#each modes as mode (mode.value)}
-					{@const ModeIcon = modeIcons[mode.value]}
-					<label class="theme-option" class:selected={settings.themeMode === mode.value}>
-						<input
-							type="radio"
-							name="theme"
-							value={mode.value}
-							checked={settings.themeMode === mode.value}
-							onchange={() => settings.setThemeMode(mode.value)}
-						/>
-						<span class="theme-preview" data-preview-mode={mode.value} aria-hidden="true">
-							<span class="preview-header"></span>
-							<span class="preview-row">
-								<span class="preview-sidebar"></span>
-								<span class="preview-surface"></span>
-							</span>
-						</span>
-						<ModeIcon size={14} aria-hidden="true" />{mode.label}
-						{#if settings.themeMode === mode.value}
-							<Check size={14} aria-hidden="true" />
-						{/if}
-					</label>
-				{/each}
-			</div>
-
-			<h3>{m['settings.presetHeading']()}</h3>
-			<div
-				class="options preset-options"
-				role="radiogroup"
-				aria-label={m['settings.presetGroupAria']()}
-			>
-				{#each presets as preset (preset.value)}
-					<label class="theme-option" class:selected={settings.themePreset === preset.value}>
-						<input
-							type="radio"
-							name="theme-preset"
-							value={preset.value}
-							checked={settings.themePreset === preset.value}
-							onchange={() => settings.setThemePreset(preset.value)}
-						/>
-						<span class="preset-preview" data-preset={preset.value} aria-hidden="true"></span>
-						{preset.label}
-						{#if settings.themePreset === preset.value}
-							<Check size={14} aria-hidden="true" />
-						{/if}
-					</label>
-				{/each}
-			</div>
-
-			<h3>{m['settings.densityHeading']()}</h3>
-			<div
-				class="options density-options"
-				role="radiogroup"
-				aria-label={m['settings.densityHeading']()}
-			>
-				{#each densities as density (density.value)}
-					{@const DensityIcon = densityIcons[density.value]}
-					<label class="theme-option" class:selected={settings.themeDensity === density.value}>
-						<input
-							type="radio"
-							name="density"
-							value={density.value}
-							checked={settings.themeDensity === density.value}
-							onchange={() => settings.setThemeDensity(density.value)}
-						/>
-						<DensityIcon size={16} aria-hidden="true" />{density.label}
-						{#if settings.themeDensity === density.value}
-							<Check size={14} aria-hidden="true" />
-						{/if}
-					</label>
-				{/each}
-			</div>
-
-			<p class="note">
-				{m['settings.themeNote']()}
-			</p>
-		</SurfaceCard>
-
-		<SurfaceCard>
-			<div class="card-head">
-				<Languages size={20} aria-hidden="true" />
-				<div>
-					<h2>{m['settings.languageHeading']()}</h2>
-					<p>{m['settings.languageDesc']()}</p>
-				</div>
-			</div>
-
-			<label class="field">
-				{m['settings.languageLabel']()}
-				<select
-					class="banto-input"
-					value={getLocale()}
-					onchange={(event) => changeLocale(event.currentTarget.value as Locale)}
-				>
-					{#each locales as loc (loc)}
-						<option value={loc}>{localeLabels[loc]()}</option>
-					{/each}
-				</select>
-			</label>
-
-			<p class="note">
-				{m['settings.languageNote']()}
-			</p>
-		</SurfaceCard>
-
-		{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}
+	<section id="appearance" class="settings-section" aria-labelledby="appearance-heading">
+		<h2 id="appearance-heading" class="section-heading">{m['settings.sectionAppearance']()}</h2>
+		<div class="settings-grid">
 			<SurfaceCard>
 				<div class="card-head">
-					<Sparkles size={20} aria-hidden="true" />
+					<Palette size={20} aria-hidden="true" />
 					<div>
-						<h2>{m['settings.vibrancyHeading']()}</h2>
-						<p>{m['settings.vibrancyDesc']()}</p>
+						<h3>{m['settings.themeHeading']()}</h3>
+						<p>{m['settings.themeDesc']()}</p>
 					</div>
 				</div>
-				<label class="switch-row">
-					<input
-						type="checkbox"
-						role="switch"
-						class="banto-switch"
-						checked={vibrancyStatus.enabled}
-						disabled={applyingVibrancy}
-						onchange={toggleVibrancy}
-					/>
-					{m['settings.vibrancyToggle']()}
-				</label>
+
+				<div
+					class="options mode-options"
+					role="radiogroup"
+					aria-label={m['settings.themeHeading']()}
+				>
+					{#each modes as mode (mode.value)}
+						{@const ModeIcon = modeIcons[mode.value]}
+						<label class="theme-option" class:selected={settings.themeMode === mode.value}>
+							<input
+								type="radio"
+								name="theme"
+								value={mode.value}
+								checked={settings.themeMode === mode.value}
+								onchange={() => settings.setThemeMode(mode.value)}
+							/>
+							<span class="theme-preview" data-preview-mode={mode.value} aria-hidden="true">
+								<span class="preview-header"></span>
+								<span class="preview-row">
+									<span class="preview-sidebar"></span>
+									<span class="preview-surface"></span>
+								</span>
+							</span>
+							<ModeIcon size={14} aria-hidden="true" />{mode.label}
+							{#if settings.themeMode === mode.value}
+								<Check size={14} aria-hidden="true" />
+							{/if}
+						</label>
+					{/each}
+				</div>
+
+				<h4>{m['settings.presetHeading']()}</h4>
+				<div
+					class="options preset-options"
+					role="radiogroup"
+					aria-label={m['settings.presetGroupAria']()}
+				>
+					{#each presets as preset (preset.value)}
+						<label class="theme-option" class:selected={settings.themePreset === preset.value}>
+							<input
+								type="radio"
+								name="theme-preset"
+								value={preset.value}
+								checked={settings.themePreset === preset.value}
+								onchange={() => settings.setThemePreset(preset.value)}
+							/>
+							<span class="preset-preview" data-preset={preset.value} aria-hidden="true"></span>
+							{preset.label}
+							{#if settings.themePreset === preset.value}
+								<Check size={14} aria-hidden="true" />
+							{/if}
+						</label>
+					{/each}
+				</div>
+
+				<h4>{m['settings.densityHeading']()}</h4>
+				<div
+					class="options density-options"
+					role="radiogroup"
+					aria-label={m['settings.densityHeading']()}
+				>
+					{#each densities as density (density.value)}
+						{@const DensityIcon = densityIcons[density.value]}
+						<label class="theme-option" class:selected={settings.themeDensity === density.value}>
+							<input
+								type="radio"
+								name="density"
+								value={density.value}
+								checked={settings.themeDensity === density.value}
+								onchange={() => settings.setThemeDensity(density.value)}
+							/>
+							<DensityIcon size={16} aria-hidden="true" />{density.label}
+							{#if settings.themeDensity === density.value}
+								<Check size={14} aria-hidden="true" />
+							{/if}
+						</label>
+					{/each}
+				</div>
+
 				<p class="note">
-					{m['settings.vibrancyNote']()}
+					{m['settings.themeNote']()}
 				</p>
 			</SurfaceCard>
-		{/if}
 
-		{#if isAdmin(sessionStore.role)}
 			<SurfaceCard>
 				<div class="card-head">
-					<Wifi size={20} aria-hidden="true" />
+					<Languages size={20} aria-hidden="true" />
 					<div>
-						<h2>{m['settings.lanHeading']()}</h2>
-						<p>{m['settings.lanDesc']()}</p>
+						<h3>{m['settings.languageHeading']()}</h3>
+						<p>{m['settings.languageDesc']()}</p>
 					</div>
 				</div>
-				{#if tauri}
-					<label class="switch-row" class:disabled={authSettings?.disabled}>
+
+				<label class="field">
+					{m['settings.languageLabel']()}
+					<select
+						class="banto-input"
+						value={getLocale()}
+						onchange={(event) => changeLocale(event.currentTarget.value as Locale)}
+					>
+						{#each locales as loc (loc)}
+							<option value={loc}>{localeLabels[loc]()}</option>
+						{/each}
+					</select>
+				</label>
+
+				<p class="note">
+					{m['settings.languageNote']()}
+				</p>
+			</SurfaceCard>
+
+			{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}
+				<SurfaceCard>
+					<div class="card-head">
+						<Sparkles size={20} aria-hidden="true" />
+						<div>
+							<h3>{m['settings.vibrancyHeading']()}</h3>
+							<p>{m['settings.vibrancyDesc']()}</p>
+						</div>
+					</div>
+					<label class="switch-row">
 						<input
 							type="checkbox"
 							role="switch"
 							class="banto-switch"
-							bind:checked={enabledDraft}
-							disabled={authSettings?.disabled}
+							checked={vibrancyStatus.enabled}
+							disabled={applyingVibrancy}
+							onchange={toggleVibrancy}
 						/>
-						{m['settings.lanToggle']()}
+						{m['settings.vibrancyToggle']()}
 					</label>
-					{#if authSettings?.disabled}
-						<p class="note">{m['settings.lanDisabledByAuth']()}</p>
-					{/if}
+					<p class="note">
+						{m['settings.vibrancyNote']()}
+					</p>
+				</SurfaceCard>
+			{/if}
+		</div>
+	</section>
 
-					<div class="server-fields">
-						<label class="field">
-							{m['settings.bindAddress']()}
-							<select class="banto-input" bind:value={bindDraft}>
-								<option value="127.0.0.1">{m['settings.bindLocalOnly']()}</option>
-								<option value="0.0.0.0">{m['settings.bindLanPublic']()}</option>
-							</select>
-						</label>
-
-						<label class="field">
-							{m['settings.port']()}
-							<input class="banto-input" type="number" min="1" max="65535" bind:value={portDraft} />
-						</label>
-					</div>
-
-					<button
-						type="button"
-						class="banto-btn banto-btn--primary"
-						onclick={saveAndApply}
-						disabled={applying}
-					>
-						{m['settings.saveAndApply']()}
-					</button>
-
-					{#if serverError}
-						<p class="error">{serverError}</p>
-					{/if}
-
-					{#if serverStatus}
-						<p class="status">
-							{m['settings.statusLabel']()}
-							<strong
-								>{serverStatus.running ? m['settings.running']() : m['settings.stopped']()}</strong
-							>
-						</p>
-						{#if serverStatus.running}
-							<ul class="urls">
-								{#each serverStatus.urls as url (url)}
-									<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
-								{/each}
-							</ul>
-							{#if firstLanQrSvg}
-								<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
-								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-								<div class="qr">{@html firstLanQrSvg}</div>
-							{/if}
-						{/if}
-					{/if}
-				{:else}
-					<p class="note">{m['settings.serverDesktopOnly']()}</p>
-				{/if}
-				<p class="note">
-					{m['settings.lanNote']()}
-				</p>
-			</SurfaceCard>
-		{/if}
-
-		{#if tauri && isAdmin(sessionStore.role)}
+	<section id="account" class="settings-section" aria-labelledby="account-heading">
+		<h2 id="account-heading" class="section-heading">{m['settings.sectionAccount']()}</h2>
+		<div class="settings-grid">
 			<SurfaceCard>
 				<div class="card-head">
 					<KeyRound size={20} aria-hidden="true" />
 					<div>
-						<h2>{m['settings.autologinHeading']()}</h2>
-						<p>{m['settings.autologinDesc']()}</p>
+						<h3>{m['settings.passwordHeading']()}</h3>
+						<p>{m['settings.passwordDesc']()}</p>
 					</div>
 				</div>
-
 				{#if sessionStore.authDisabled}
-					<p class="note">{m['settings.autologinUnneeded']()}</p>
-				{:else}
-					<p class="status">
-						{m['settings.statusLabel']()}
-						<strong>
-							{authSettings?.autologinEnabled
-								? m['settings.autologinEnabledWith']({
-										username: authSettings.autologinUsername ?? ''
-									})
-								: m['settings.autologinStatusDisabled']()}
-						</strong>
+					<p class="note">
+						{m['settings.passwordChangeUnavailableAuth']()}
 					</p>
+				{:else if changePassword}
+					<form onsubmit={submitChangePassword}>
+						<label class="field">
+							{m['settings.currentPassword']()}
+							<input
+								class="banto-input"
+								type="password"
+								bind:value={currentPassword}
+								autocomplete="current-password"
+							/>
+						</label>
+						<label class="field">
+							{m['common.newPasswordMinLabel']()}
+							<input
+								class="banto-input"
+								type="password"
+								bind:value={newPassword}
+								autocomplete="new-password"
+							/>
+						</label>
+						<label class="field">
+							{m['settings.newPasswordConfirm']()}
+							<input
+								class="banto-input"
+								type="password"
+								bind:value={newPasswordConfirm}
+								autocomplete="new-password"
+							/>
+						</label>
 
-					{#if authSettings?.autologinEnabled}
+						{#if passwordError}
+							<p class="error">{passwordError}</p>
+						{/if}
+
+						<button type="submit" class="banto-btn banto-btn--primary" disabled={changingPassword}>
+							{m['settings.changePassword']()}
+						</button>
+					</form>
+				{:else}
+					<p class="note">{m['settings.passwordChangeUnsupported']()}</p>
+				{/if}
+			</SurfaceCard>
+
+			{#if tauri && isAdmin(sessionStore.role)}
+				<SurfaceCard>
+					<div class="card-head">
+						<KeyRound size={20} aria-hidden="true" />
+						<div>
+							<h3>{m['settings.autologinHeading']()}</h3>
+							<p>{m['settings.autologinDesc']()}</p>
+						</div>
+					</div>
+
+					{#if sessionStore.authDisabled}
+						<p class="note">{m['settings.autologinUnneeded']()}</p>
+					{:else}
+						<p class="status">
+							{m['settings.statusLabel']()}
+							<strong>
+								{authSettings?.autologinEnabled
+									? m['settings.autologinEnabledWith']({
+											username: authSettings.autologinUsername ?? ''
+										})
+									: m['settings.autologinStatusDisabled']()}
+							</strong>
+						</p>
+
+						{#if authSettings?.autologinEnabled}
+							<button
+								type="button"
+								class="banto-btn banto-btn--secondary"
+								onclick={submitDisableAutologin}
+								disabled={disablingAutologin}
+							>
+								{m['settings.autologinDisable']()}
+							</button>
+						{:else}
+							<form onsubmit={submitEnableAutologin}>
+								<label class="field">
+									{m['common.username']()}
+									<input
+										class="banto-input"
+										type="text"
+										bind:value={autologinUsername}
+										autocomplete="username"
+									/>
+								</label>
+								<label class="field">
+									{m['common.password']()}
+									<input
+										class="banto-input"
+										type="password"
+										bind:value={autologinPassword}
+										autocomplete="current-password"
+									/>
+								</label>
+								<button
+									type="submit"
+									class="banto-btn banto-btn--primary"
+									disabled={enablingAutologin}
+								>
+									{m['settings.autologinEnable']()}
+								</button>
+							</form>
+						{/if}
+
+						<p class="note">
+							{m['settings.autologinNote']()}
+						</p>
+					{/if}
+				</SurfaceCard>
+			{/if}
+		</div>
+	</section>
+
+	{#if showConnectivity}
+		<section id="connectivity" class="settings-section" aria-labelledby="connectivity-heading">
+			<h2 id="connectivity-heading" class="section-heading">
+				{m['settings.sectionConnectivity']()}
+			</h2>
+			<div class="settings-grid">
+				<SurfaceCard>
+					<div class="card-head">
+						<Wifi size={20} aria-hidden="true" />
+						<div>
+							<h3>{m['settings.lanHeading']()}</h3>
+							<p>{m['settings.lanDesc']()}</p>
+						</div>
+					</div>
+					{#if tauri}
+						<label class="switch-row" class:disabled={authSettings?.disabled}>
+							<input
+								type="checkbox"
+								role="switch"
+								class="banto-switch"
+								bind:checked={enabledDraft}
+								disabled={authSettings?.disabled}
+							/>
+							{m['settings.lanToggle']()}
+						</label>
+						{#if authSettings?.disabled}
+							<p class="note">{m['settings.lanDisabledByAuth']()}</p>
+						{/if}
+
+						<div class="server-fields">
+							<label class="field">
+								{m['settings.bindAddress']()}
+								<select class="banto-input" bind:value={bindDraft}>
+									<option value="127.0.0.1">{m['settings.bindLocalOnly']()}</option>
+									<option value="0.0.0.0">{m['settings.bindLanPublic']()}</option>
+								</select>
+							</label>
+
+							<label class="field">
+								{m['settings.port']()}
+								<input
+									class="banto-input"
+									type="number"
+									min="1"
+									max="65535"
+									bind:value={portDraft}
+								/>
+							</label>
+						</div>
+
 						<button
 							type="button"
-							class="banto-btn banto-btn--secondary"
-							onclick={submitDisableAutologin}
-							disabled={disablingAutologin}
+							class="banto-btn banto-btn--primary"
+							onclick={saveAndApply}
+							disabled={applying}
 						>
-							{m['settings.autologinDisable']()}
+							{m['settings.saveAndApply']()}
 						</button>
+
+						{#if serverError}
+							<p class="error">{serverError}</p>
+						{/if}
+
+						{#if serverStatus}
+							<p class="status">
+								{m['settings.statusLabel']()}
+								<strong
+									>{serverStatus.running
+										? m['settings.running']()
+										: m['settings.stopped']()}</strong
+								>
+							</p>
+							{#if serverStatus.running}
+								<ul class="urls">
+									{#each serverStatus.urls as url (url)}
+										<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
+									{/each}
+								</ul>
+								{#if firstLanQrSvg}
+									<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+									<div class="qr">{@html firstLanQrSvg}</div>
+								{/if}
+							{/if}
+						{/if}
 					{:else}
-						<form onsubmit={submitEnableAutologin}>
-							<label class="field">
-								{m['common.username']()}
-								<input
-									class="banto-input"
-									type="text"
-									bind:value={autologinUsername}
-									autocomplete="username"
-								/>
-							</label>
-							<label class="field">
-								{m['common.password']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={autologinPassword}
-									autocomplete="current-password"
-								/>
-							</label>
-							<button
-								type="submit"
-								class="banto-btn banto-btn--primary"
-								disabled={enablingAutologin}
-							>
-								{m['settings.autologinEnable']()}
-							</button>
-						</form>
+						<p class="note">{m['settings.serverDesktopOnly']()}</p>
 					{/if}
-
 					<p class="note">
-						{m['settings.autologinNote']()}
+						{m['settings.lanNote']()}
 					</p>
-				{/if}
-			</SurfaceCard>
-		{/if}
+				</SurfaceCard>
 
-		{#if auditAvailable && isAdmin(sessionStore.role)}
-			<SurfaceCard>
-				<div class="card-head">
-					<ScrollText size={20} aria-hidden="true" />
-					<div>
-						<h2>{m['settings.auditHeading']()}</h2>
-						<p>{m['settings.auditDesc']()}</p>
+				{#if systemInfoAvailable}
+					<SurfaceCard>
+						<div class="card-head">
+							<Server size={20} aria-hidden="true" />
+							<div>
+								<h3>{m['settings.systemInfoHeading']()}</h3>
+								<p>{m['settings.systemInfoDesc']()}</p>
+							</div>
+						</div>
+
+						{#if systemInfoError}
+							<p class="error">{systemInfoError}</p>
+						{:else if systemInfo}
+							<p class="status">
+								{m['settings.systemInfoAppVersion']()} <strong>{systemInfo.appVersion}</strong>
+							</p>
+							<p class="status">
+								{m['settings.systemInfoMigration']()}
+								<strong>{systemInfo.migrationVersion ?? '—'}</strong>
+							</p>
+							<p class="status">
+								{m['settings.systemInfoDatabase']()}
+								<strong>
+									{systemInfo.dbDialect} ({m['settings.systemInfoLatencyValue']({
+										ms: systemInfo.dbLatencyMs.toFixed(1)
+									})})
+								</strong>
+							</p>
+							<p class="status">
+								{m['settings.systemInfoUptime']()}
+								<strong
+									>{m['settings.systemInfoUptimeValue']({ secs: systemInfo.uptimeSecs })}</strong
+								>
+							</p>
+							<p class="status">
+								{m['settings.systemInfoSessions']()} <strong>{systemInfo.activeSessions}</strong>
+							</p>
+							<p class="status">
+								{m['settings.systemInfoStorage']()}
+								<strong>
+									{systemInfo.attachmentBytes === null
+										? '—'
+										: formatBytes(systemInfo.attachmentBytes)}
+								</strong>
+							</p>
+						{:else}
+							<p class="note">{m['settings.systemInfoLoading']()}</p>
+						{/if}
+
+						<p class="note">{m['settings.systemInfoNote']()}</p>
+					</SurfaceCard>
+				{/if}
+			</div>
+		</section>
+	{/if}
+
+	{#if showData}
+		<section id="data" class="settings-section" aria-labelledby="data-heading">
+			<h2 id="data-heading" class="section-heading">{m['settings.sectionData']()}</h2>
+			<div class="settings-grid">
+				{#if auditAvailable}
+					<SurfaceCard>
+						<div class="card-head">
+							<ScrollText size={20} aria-hidden="true" />
+							<div>
+								<h3>{m['settings.auditHeading']()}</h3>
+								<p>{m['settings.auditDesc']()}</p>
+							</div>
+						</div>
+
+						<div class="server-fields">
+							<label class="field">
+								{m['settings.retentionDays']()}
+								<input class="banto-input" type="number" min="0" bind:value={retentionDaysDraft} />
+							</label>
+							<label class="field">
+								{m['settings.retentionRows']()}
+								<input class="banto-input" type="number" min="0" bind:value={retentionRowsDraft} />
+							</label>
+						</div>
+
+						<button
+							type="button"
+							class="banto-btn banto-btn--primary"
+							onclick={saveAuditConfig}
+							disabled={applyingAudit}
+						>
+							{m['common.save']()}
+						</button>
+
+						{#if auditError}
+							<p class="error">{auditError}</p>
+						{/if}
+
+						{#if auditConfig}
+							<p class="status">
+								{m['settings.currentConfig']()}
+								<strong>
+									{auditConfig.retentionDays !== null
+										? m['audit.retentionDaysValue']({ days: auditConfig.retentionDays })
+										: m['audit.retentionUnlimited']()}
+									/ {auditConfig.retentionRows !== null
+										? m['audit.retentionRowsValue']({
+												rows: auditConfig.retentionRows.toLocaleString()
+											})
+										: m['audit.retentionRowsUnlimited']()}
+								</strong>
+							</p>
+						{/if}
+
+						<p class="note">
+							{m['settings.auditNote']()}
+						</p>
+					</SurfaceCard>
+				{/if}
+
+				{#if backupsAvailable}
+					<div class="danger-card">
+						<SurfaceCard>
+							<div class="card-head card-head--danger">
+								<DatabaseBackup size={20} aria-hidden="true" />
+								<div>
+									<h3>{m['backup.heading']()}</h3>
+									<p>{m['backup.desc']()}</p>
+								</div>
+							</div>
+
+							{#if backupPostgresDialect}
+								<p class="note">{m['backup.postgresNotice']()}</p>
+							{:else}
+								<div class="backup-toolbar">
+									<button
+										type="button"
+										class="banto-btn banto-btn--primary"
+										onclick={handleCreateBackup}
+										disabled={creatingBackup}
+									>
+										{creatingBackup ? m['backup.creating']() : m['backup.createNow']()}
+									</button>
+									{#if tauri}
+										<button
+											type="button"
+											class="banto-btn banto-btn--secondary"
+											onclick={handleOpenBackupsFolder}
+										>
+											{m['backup.openFolder']()}
+										</button>
+									{/if}
+								</div>
+
+								{#if backupsError}
+									<p class="error">{backupsError}</p>
+								{/if}
+
+								{#if pendingRestore}
+									<p class="pending-restore">
+										{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
+										>（{formatBytes(pendingRestore.sizeBytes)}）
+										<button
+											type="button"
+											class="banto-btn banto-btn--secondary"
+											onclick={handleCancelRestore}
+											disabled={cancellingRestore}
+										>
+											{m['backup.cancel']()}
+										</button>
+									</p>
+								{/if}
+
+								{#if loadingBackups}
+									<p class="note">{m['common.loading']()}</p>
+								{:else if backups.length === 0}
+									<p class="note">{m['backup.empty']()}</p>
+								{:else}
+									<ul class="backup-list">
+										{#each backups as backup (backup.fileName)}
+											<li>
+												<div class="backup-info">
+													<span class="file-name">{backup.fileName}</span>
+													<span class="meta"
+														>{formatBytes(backup.sizeBytes)} ・ {backup.createdAt}</span
+													>
+												</div>
+												<div class="backup-actions">
+													{#if !tauri}
+														<button
+															type="button"
+															class="banto-btn banto-btn--secondary"
+															onclick={() => handleDownloadBackup(backup.fileName)}
+														>
+															{m['backup.download']()}
+														</button>
+													{/if}
+													<button
+														type="button"
+														class="banto-btn banto-btn--danger"
+														onclick={() => handleRestoreFromExisting(backup.fileName)}
+														disabled={stagingRestore}
+													>
+														{m['backup.restoreFromThis']()}
+													</button>
+												</div>
+											</li>
+										{/each}
+									</ul>
+								{/if}
+
+								{#if !tauri}
+									<div class="restore-upload">
+										<button
+											type="button"
+											class="banto-btn banto-btn--danger"
+											onclick={handleRestoreFileButtonClick}
+											disabled={stagingRestore}
+										>
+											{m['backup.restoreFromFile']()}
+										</button>
+										<input
+											class="file-input"
+											type="file"
+											accept=".sqlite3"
+											aria-label={m['backup.restoreFromFile']()}
+											bind:this={restoreFileInput}
+											onchange={handleRestoreFileChange}
+										/>
+									</div>
+								{/if}
+
+								<p class="note">
+									{m['backup.note']()}
+								</p>
+							{/if}
+						</SurfaceCard>
 					</div>
-				</div>
-
-				<div class="server-fields">
-					<label class="field">
-						{m['settings.retentionDays']()}
-						<input class="banto-input" type="number" min="0" bind:value={retentionDaysDraft} />
-					</label>
-					<label class="field">
-						{m['settings.retentionRows']()}
-						<input class="banto-input" type="number" min="0" bind:value={retentionRowsDraft} />
-					</label>
-				</div>
-
-				<button
-					type="button"
-					class="banto-btn banto-btn--primary"
-					onclick={saveAuditConfig}
-					disabled={applyingAudit}
-				>
-					{m['common.save']()}
-				</button>
-
-				{#if auditError}
-					<p class="error">{auditError}</p>
 				{/if}
+			</div>
+		</section>
+	{/if}
 
-				{#if auditConfig}
-					<p class="status">
-						{m['settings.currentConfig']()}
-						<strong>
-							{auditConfig.retentionDays !== null
-								? m['audit.retentionDaysValue']({ days: auditConfig.retentionDays })
-								: m['audit.retentionUnlimited']()}
-							/ {auditConfig.retentionRows !== null
-								? m['audit.retentionRowsValue']({
-										rows: auditConfig.retentionRows.toLocaleString()
-									})
-								: m['audit.retentionRowsUnlimited']()}
-						</strong>
-					</p>
-				{/if}
-
-				<p class="note">
-					{m['settings.auditNote']()}
-				</p>
-			</SurfaceCard>
-		{/if}
-
-		{#if systemInfoAvailable && isAdmin(sessionStore.role)}
-			<SurfaceCard>
-				<div class="card-head">
-					<Server size={20} aria-hidden="true" />
-					<div>
-						<h2>{m['settings.systemInfoHeading']()}</h2>
-						<p>{m['settings.systemInfoDesc']()}</p>
-					</div>
-				</div>
-
-				{#if systemInfoError}
-					<p class="error">{systemInfoError}</p>
-				{:else if systemInfo}
-					<p class="status">
-						{m['settings.systemInfoAppVersion']()} <strong>{systemInfo.appVersion}</strong>
-					</p>
-					<p class="status">
-						{m['settings.systemInfoMigration']()}
-						<strong>{systemInfo.migrationVersion ?? '—'}</strong>
-					</p>
-					<p class="status">
-						{m['settings.systemInfoDatabase']()}
-						<strong>
-							{systemInfo.dbDialect} ({m['settings.systemInfoLatencyValue']({
-								ms: systemInfo.dbLatencyMs.toFixed(1)
-							})})
-						</strong>
-					</p>
-					<p class="status">
-						{m['settings.systemInfoUptime']()}
-						<strong>{m['settings.systemInfoUptimeValue']({ secs: systemInfo.uptimeSecs })}</strong>
-					</p>
-					<p class="status">
-						{m['settings.systemInfoSessions']()} <strong>{systemInfo.activeSessions}</strong>
-					</p>
-					<p class="status">
-						{m['settings.systemInfoStorage']()}
-						<strong>
-							{systemInfo.attachmentBytes === null ? '—' : formatBytes(systemInfo.attachmentBytes)}
-						</strong>
-					</p>
-				{:else}
-					<p class="note">{m['settings.systemInfoLoading']()}</p>
-				{/if}
-
-				<p class="note">{m['settings.systemInfoNote']()}</p>
-			</SurfaceCard>
-		{/if}
-
-		<div class="danger-zone">
-			<SurfaceCard>
-				<div class="card-head card-head--danger">
-					<ShieldAlert size={20} aria-hidden="true" />
-					<div>
-						<h2>Danger zone</h2>
-						<p>{m['settings.dangerDesc']()}</p>
-					</div>
-				</div>
-
-				{#if tauri && canManageAuthMode}
-					<div class="danger-section">
-						<h3>{m['settings.authDisableHeading']()}</h3>
+	{#if showSecurity}
+		<section id="security" class="settings-section" aria-labelledby="security-heading">
+			<h2 id="security-heading" class="section-heading">{m['settings.sectionSecurity']()}</h2>
+			<div class="settings-grid">
+				<div class="danger-card">
+					<SurfaceCard>
+						<div class="card-head card-head--danger">
+							<ShieldAlert size={20} aria-hidden="true" />
+							<div>
+								<h3>{m['settings.authDisableHeading']()}</h3>
+								<p>{m['settings.authDisableDesc']()}</p>
+							</div>
+						</div>
 
 						<label class="switch-row">
 							<input
@@ -1033,176 +1275,11 @@
 						<p class="note warning">
 							{m['settings.authDisableNote']()}
 						</p>
-					</div>
-				{/if}
-
-				{#if backupsAvailable && isAdmin(sessionStore.role)}
-					<div class="danger-section">
-						<h3><DatabaseBackup size={14} aria-hidden="true" />{m['backup.heading']()}</h3>
-
-						{#if backupPostgresDialect}
-							<p class="note">{m['backup.postgresNotice']()}</p>
-						{:else}
-							<div class="backup-toolbar">
-								<button
-									type="button"
-									class="banto-btn banto-btn--primary"
-									onclick={handleCreateBackup}
-									disabled={creatingBackup}
-								>
-									{creatingBackup ? m['backup.creating']() : m['backup.createNow']()}
-								</button>
-								{#if tauri}
-									<button
-										type="button"
-										class="banto-btn banto-btn--secondary"
-										onclick={handleOpenBackupsFolder}
-									>
-										{m['backup.openFolder']()}
-									</button>
-								{/if}
-							</div>
-
-							{#if backupsError}
-								<p class="error">{backupsError}</p>
-							{/if}
-
-							{#if pendingRestore}
-								<p class="pending-restore">
-									{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
-									>（{formatBytes(pendingRestore.sizeBytes)}）
-									<button
-										type="button"
-										class="banto-btn banto-btn--secondary"
-										onclick={handleCancelRestore}
-										disabled={cancellingRestore}
-									>
-										{m['backup.cancel']()}
-									</button>
-								</p>
-							{/if}
-
-							{#if loadingBackups}
-								<p class="note">{m['common.loading']()}</p>
-							{:else if backups.length === 0}
-								<p class="note">{m['backup.empty']()}</p>
-							{:else}
-								<ul class="backup-list">
-									{#each backups as backup (backup.fileName)}
-										<li>
-											<div class="backup-info">
-												<span class="file-name">{backup.fileName}</span>
-												<span class="meta"
-													>{formatBytes(backup.sizeBytes)} ・ {backup.createdAt}</span
-												>
-											</div>
-											<div class="backup-actions">
-												{#if !tauri}
-													<button
-														type="button"
-														class="banto-btn banto-btn--secondary"
-														onclick={() => handleDownloadBackup(backup.fileName)}
-													>
-														{m['backup.download']()}
-													</button>
-												{/if}
-												<button
-													type="button"
-													class="banto-btn banto-btn--danger"
-													onclick={() => handleRestoreFromExisting(backup.fileName)}
-													disabled={stagingRestore}
-												>
-													{m['backup.restoreFromThis']()}
-												</button>
-											</div>
-										</li>
-									{/each}
-								</ul>
-							{/if}
-
-							{#if !tauri}
-								<div class="restore-upload">
-									<button
-										type="button"
-										class="banto-btn banto-btn--danger"
-										onclick={handleRestoreFileButtonClick}
-										disabled={stagingRestore}
-									>
-										{m['backup.restoreFromFile']()}
-									</button>
-									<input
-										class="file-input"
-										type="file"
-										accept=".sqlite3"
-										aria-label={m['backup.restoreFromFile']()}
-										bind:this={restoreFileInput}
-										onchange={handleRestoreFileChange}
-									/>
-								</div>
-							{/if}
-
-							<p class="note">
-								{m['backup.note']()}
-							</p>
-						{/if}
-					</div>
-				{/if}
-
-				<div class="danger-section">
-					<h3>{m['settings.accountHeading']()}</h3>
-					{#if sessionStore.authDisabled}
-						<p class="note">
-							{m['settings.passwordChangeUnavailableAuth']()}
-						</p>
-					{:else if changePassword}
-						<form onsubmit={submitChangePassword}>
-							<label class="field">
-								{m['settings.currentPassword']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={currentPassword}
-									autocomplete="current-password"
-								/>
-							</label>
-							<label class="field">
-								{m['common.newPasswordMinLabel']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={newPassword}
-									autocomplete="new-password"
-								/>
-							</label>
-							<label class="field">
-								{m['settings.newPasswordConfirm']()}
-								<input
-									class="banto-input"
-									type="password"
-									bind:value={newPasswordConfirm}
-									autocomplete="new-password"
-								/>
-							</label>
-
-							{#if passwordError}
-								<p class="error">{passwordError}</p>
-							{/if}
-
-							<button
-								type="submit"
-								class="banto-btn banto-btn--primary"
-								disabled={changingPassword}
-							>
-								{m['settings.changePassword']()}
-							</button>
-						</form>
-					{:else}
-						<p class="note">{m['settings.passwordChangeUnsupported']()}</p>
-					{/if}
+					</SurfaceCard>
 				</div>
-			</SurfaceCard>
-		</div>
-	</div>
+			</div>
+		</section>
+	{/if}
 </div>
 
 <style>
@@ -1210,6 +1287,54 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+	}
+
+	/* In-page category jump nav (choiapp-feedback-2026-09 §3). Anchor links,
+	   not tabs: every card stays rendered/scannable on one page. */
+	.section-nav {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	.section-nav a {
+		padding: 0.3rem 0.7rem;
+		border: 1px solid var(--banto-border);
+		border-radius: 999px;
+		color: var(--banto-text-muted);
+		font-size: 0.8rem;
+		font-weight: 600;
+		text-decoration: none;
+		transition:
+			background var(--banto-duration-fast) var(--banto-ease-out),
+			color var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.section-nav a:hover {
+		background: var(--banto-surface-hover);
+		color: var(--banto-text);
+	}
+
+	.section-nav a:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
+	}
+
+	.settings-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		/* Anchor jumps land below the sticky app header (Header.svelte). */
+		scroll-margin-top: calc(var(--banto-shell-header-height) + 0.75rem);
+	}
+
+	.section-heading {
+		margin: 0.5rem 0 0;
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--banto-text-muted);
 	}
 
 	.settings-grid {
@@ -1227,7 +1352,7 @@
 		color: var(--banto-text-muted);
 	}
 
-	.card-head h2 {
+	.card-head h3 {
 		margin: 0;
 		font-size: 1rem;
 		color: var(--banto-text);
@@ -1243,7 +1368,7 @@
 		color: var(--banto-danger);
 	}
 
-	h3 {
+	h4 {
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
@@ -1587,21 +1712,12 @@
 		color: var(--banto-danger);
 	}
 
-	/* Danger zone (plan Phase 5): high-impact operations - auth disable,
-	   restore, password change - grouped and visually separated with the
-	   danger border. Only styling; every action inside keeps its original
-	   handler/confirm dialog. */
-	.danger-zone {
-		grid-column: 1 / -1;
-	}
-
-	.danger-zone :global(.surface-card) {
+	/* High-impact cards (successor of plan Phase 5's danger zone; the choi-app
+	   feedback 2026-09 recategorization moved its cards into their own
+	   categories - backup/restore under data, auth disable under security).
+	   Only styling; every action inside keeps its original handler/confirm
+	   dialog. */
+	.danger-card :global(.surface-card) {
 		border-color: var(--banto-danger);
-	}
-
-	.danger-section + .danger-section {
-		margin-top: 1.25rem;
-		padding-top: 1.25rem;
-		border-top: 1px solid var(--banto-border);
 	}
 </style>

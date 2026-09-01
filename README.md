@@ -136,7 +136,16 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   admin/editor/viewer の3ロール、ユーザー管理画面。REST/Tauri 両経路で
   同一の権限判定。
 - **監査ログ**（M14）+ **設定基盤**（M12、SettingsProvider）+ **自動ログイン/
-  ログイン不要モード**（M11）。
+  ログイン不要モード**（M11）。ログイン無しの小さなアプリとして始めて、育ったら
+  ログイン運用へ切り替える手順は
+  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)。
+- **固定ヘッダ/サイドバー + 通知バッジ + ステータス表示**（2026-09）: 本文
+  スクロール中もヘッダと左ペインは画面に固定。サイドバーのナビ項目には
+  「他クライアントの変更」を知らせる未確認更新バッジ（`NavItem.badgeResource`
+  を宣言するだけで自リソースにも付く）、ヘッダにはデモモード/ログイン不要
+  モード/現在ロールのステータスチップが標準で付く。設定画面はカテゴリ節
+  （外観・言語/アカウント/サーバ・接続/データ管理/セキュリティ）+
+  カテゴリジャンプナビに整理。
 - **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
   **SQLite バックアップ/リストア**（M17）。
 - **システム情報カード**（v1.2.0）: 設定画面に admin 専用でアプリバージョン・
@@ -660,6 +669,9 @@ Worker）は入れていない。**ただしブラウザはセキュアコンテ
 - **通知（トースト）**: 画面右下のトースト（`success`/`error`/`info`/`warning`）。
   自タブへの `notify()` と、全クライアント一斉の `ServerEvent::Notice`
   ブロードキャスト。→ [docs/recipes/notifications.md](docs/recipes/notifications.md)
+- **ログイン無しの小さなアプリ（チョイアプリ）として始める**: M11 ログイン
+  不要モードで始めて、育ったらログイン運用・LAN 配信へ切り替える手順。→
+  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)
 - **ツリービュー**（`@banto/tree-svelte`）: 展開/選択/三状態チェック/遅延読み込み/
   tree-grid/tree-select/ドラッグ・リネーム。サイドバーの「ツリービュー」= `/tree`
   デモとして配線済み（削除可能）。→

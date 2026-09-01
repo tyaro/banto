@@ -22,6 +22,19 @@
 
 ## [Unreleased]
 
+- feat(shell/settings): チョイアプリ・フィードバック対応
+  （[docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)）—
+  ①ヘッダ/サイドバーを sticky 化（本文スクロールから独立）、②設定ページを
+  5カテゴリ節 + カテゴリジャンプナビに再編（旧 Danger zone は解体し
+  データ管理/セキュリティへ、警告色は `.danger-card` で維持）、③サイドバーの
+  未確認更新バッジ（`NavItem.badgeResource` + `$lib/navBadges.svelte.ts`、
+  smoke シナリオ 13 で SSE 実経路を検証）とヘッダのステータスチップ
+  （デモ/ログイン不要/ロール）を追加、④ログイン無しチョイアプリの経路を
+  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md) に整備
+  （デフォルト化はオーナー判断待ちの提案として同文書 §5 に記録）。付随して
+  `StatusBadge` info 変種のコントラスト不足（4.1:1）を `--banto-primary-hover`
+  で修正。
+
 ## [1.4.0] - 2026-08-29
 
 **v1.4.0 — `sqlx` 0.8→0.9 移行を主とするリリース。** オーナー判断により
