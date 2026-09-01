@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+- ci(visual): スクリーンショット比較の許容を比率から絶対値へ
+  （`maxDiffPixelRatio: 0.001` → `maxDiffPixels: 250`）。比率は fullPage の総画素
+  基準だったため縦長ページほど検知が甘く（dashboard 約4,700px / items 約1,300px）、
+  実測 568〜828px のヘッダチップ追加が全ページで見逃されていた
+  （[docs/choiapp-feedback-2026-09.md §6](docs/choiapp-feedback-2026-09.md)）。
+  同一環境の再描画差分は 0px のため 250 はアンチエイリアス用のバッファ。
+  以後 Playwright/Chromium/ランナー更新で描画が変わるとスイートは赤くなる
+  （意図した挙動。差分確認後に `visual-baselines.yml` で再生成する）。
+
 - ci(visual): ベースライン再生成を `--update-snapshots=all` に変更し、通過中の
   スナップショットも必ず作り直すようにした。既定の `changed` モードは失敗した
   分しか書き換えないため、`maxDiffPixelRatio`（0.001）に収まる小さな変更は
