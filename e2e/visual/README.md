@@ -75,15 +75,20 @@ prove they pass, and uploads them as an artifact. Dispatch it again with
 `commit: true` to push the regenerated PNGs back to that branch.
 
 One more step after `commit: true`: the workflow pushes with the built-in
-`GITHUB_TOKEN`, and GitHub **does not trigger workflows for pushes made with
-that token** — so `ci.yml` will NOT re-run on the baseline commit by itself.
-Push an empty commit to re-trigger CI (this has been needed on every baseline
-update so far):
+`GITHUB_TOKEN`, so `ci.yml` does not start on the baseline commit by itself.
+It is **parked, not missing** — GitHub still creates the `pull_request` run
+for that commit but leaves it awaiting approval (`action_required`, zero
+jobs, no checks on the PR head). Start it from the run's page in the Actions
+tab (Approve / Re-run all jobs) or from the CLI:
 
 ```sh
-git commit --allow-empty -m "ci: 再生成ベースラインで CI を再実行"
-git push
+gh run rerun <run-id>   # the action_required CI run on the baseline commit
 ```
+
+An empty commit also works and is what this file used to recommend, but it
+is not needed — the run is already there, waiting. (Verified 2026-09-01 on
+PRs #182/#183: both baseline commits produced an `action_required` CI run
+with zero jobs; re-running #183's started it and it went green.)
 
 ## Notes
 
