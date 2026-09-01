@@ -51,15 +51,22 @@ keeps its old baseline, and that staleness accumulates silently until a
 later run trips over it as a mystery diff. `=all` regenerates every
 baseline from the current build.
 
-**The tolerance can hide small changes** (`maxDiffPixelRatio: 0.001` in
-`e2e/playwright.config.ts`). It is a ratio of the whole `fullPage`
-screenshot, so a tall page gets a proportionally larger absolute
-allowance - the 1440x3255 dashboard tolerates ~4,700 differing pixels,
-the 1440x900 items page ~1,300. Adding, removing, or restyling something
-small and low-contrast (a header chip, a nav badge, a compact control)
-can therefore pass unnoticed. Treat this suite as a net for gross layout
-and theme breakage; cover small elements with a behavioral assertion in
-`e2e/tests/smoke.spec.ts` instead of relying on pixels.
+**The tolerance is absolute: `maxDiffPixels: 250`** (`e2e/playwright.config.ts`).
+It was a ratio (`maxDiffPixelRatio: 0.001`) until 2026-09, which meant a
+tall page bought a proportionally larger blind spot - the 1440x3255
+dashboard tolerated ~4,700 differing pixels, the 1440x900 items page
+~1,300. The 2026-09 header status chips measured only a few hundred
+differing pixels and slipped past every page, leaving the baselines
+stale. A flat 250 sits under that floor, so a chip/badge-sized change is
+caught on every page regardless of its height (verified: restoring a
+pre-chip dashboard baseline now fails with "514 pixels are different",
+where the old ratio passed it).
+
+What this means in practice: **a Playwright/Chromium/runner-image bump
+that shifts rendering will turn this suite red.** That is intended, not a
+flake - review the diff, then regenerate the baselines with the workflow
+below. Re-rendering the same build twice in one environment differs by
+exactly 0 pixels, so a red run always means something actually changed.
 
 **Baseline images are OS-specific.** Playwright appends the platform to
 each snapshot's filename (e.g. `...-linux.png`). This repo's baselines were
