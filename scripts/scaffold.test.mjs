@@ -45,11 +45,19 @@ test('--interactive --dry-run はプリセット選択（1=minimal）を pipe st
 	);
 });
 
-test('--interactive --dry-run は custom（4）で資産ごとの残す/削除を pipe stdin から読む', () => {
+test('--interactive --dry-run は custom（5）で資産ごとの残す/削除を pipe stdin から読む', () => {
 	// charts/dock は残す(Y)、それ以外（glass/commandPalette/attachments/report/tree）は削除する(n)。
-	const res = run(['--interactive', '--dry-run'], '4\nY\nY\nn\nn\nn\nn\nn\n');
+	// custom で聞かれるのは**オプション資産7種だけ**（display の items/画面削除は
+	// 一括適用なので個別トグルの対象外 — scaffold.mjs の `CUSTOM_TOGGLEABLE`）。
+	const res = run(['--interactive', '--dry-run'], '5\nY\nY\nn\nn\nn\nn\nn\n');
 	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
 	assert.match(res.stdout, /削除する資産: glass, commandPalette, attachments, report, tree/);
+});
+
+test('--interactive --dry-run は display（4）を選べる', () => {
+	const res = run(['--interactive', '--dry-run'], '4\n');
+	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
+	assert.match(res.stdout, /足す工程: displayDefaults/);
 });
 
 test('--interactive は確認で n を選ぶと変更せずに正常終了する', () => {
@@ -59,6 +67,38 @@ test('--interactive は確認で n を選ぶと変更せずに正常終了する
 	// --dry-run を付けていないため書き込みが走り得る経路だが、n で中止したので
 	// 「適用しました」やファイル編集ログは出てこないはず。
 	assert.doesNotMatch(res.stdout, /適用しました/);
+});
+
+// display プリセット（docs/display-preset-plan.md §3.2、Issue #190）の計画テスト。
+// `--dry-run --strict` は「pristine な出荷ツリーで全アンカーが一致すること」の
+// 機械検査そのものなので、アンカーがドリフトすればここで落ちる（
+// template-acceptance.yml の presets ジョブが実際に適用する前の軽量ガード）。
+test('--preset display --dry-run --strict が全アンカー一致で通り、削除と追加の両方を計画する', () => {
+	const res = run(['--preset', 'display', '--dry-run', '--strict'], '');
+	assert.equal(res.status, 0, `非0終了:\n${res.stdout}\n${res.stderr}`);
+	// minimal の7資産 + display 固有の3 remover、そして唯一の「足す」工程。
+	assert.match(
+		res.stdout,
+		/削除する資産: charts, dock, glass, commandPalette, attachments, report, tree, items, adminPages, dashboard/
+	);
+	assert.match(res.stdout, /足す工程: displayDefaults/);
+	// display の「足す」側の要（plan §3.2）。どれが欠けても表示専用アプリとして
+	// 起動しないので、計画に出ていることをキーとなる4点で確かめる。
+	assert.match(res.stdout, /monitor ページ配置/);
+	assert.match(res.stdout, /FIRST_BOOT_SETTINGS に display の既定を設定/);
+	assert.match(res.stdout, /KIOSK_DEFAULT を true に/);
+	assert.match(res.stdout, /banto\.i18n を raw に/);
+});
+
+test('--preset minimal|standard|full|display は --dry-run --strict で全て通る', () => {
+	for (const preset of ['minimal', 'standard', 'full', 'display']) {
+		const res = run(['--preset', preset, '--dry-run', '--strict'], '');
+		assert.equal(
+			res.status,
+			0,
+			`preset ${preset} が --strict で失敗:\n${res.stdout}\n${res.stderr}`
+		);
+	}
 });
 
 test('--strict と --interactive の併用はエラー', () => {
@@ -101,5 +141,40 @@ test('packages/ の全パッケージが scaffold の判断（remover / コア /
 				`scripts/scaffold.mjs の REMOVERS に '${asset}' が見つかりません（packages/${dir} 用）`
 			);
 		}
+	}
+});
+
+// PRESETS / ORDER / REMOVERS の三者一致（display で工程が3倍に増えたので、
+// 「ORDER に載せ忘れた工程は黙って実行されない」事故を機械で止める）。
+// `--dry-run` の計画出力を一次情報にする（scaffold.mjs を import せずに済む —
+// あのモジュールはトップレベルで引数を解析し process.exit するため）。
+test('各プリセットの全工程が ORDER に載っていて、計画出力に現れる', () => {
+	const EXPECTED = {
+		minimal: ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report', 'tree'],
+		standard: ['attachments', 'report', 'tree'],
+		full: [],
+		display: [
+			'charts',
+			'dock',
+			'glass',
+			'commandPalette',
+			'attachments',
+			'report',
+			'tree',
+			'items',
+			'adminPages',
+			'dashboard',
+			'displayDefaults'
+		]
+	};
+	for (const [preset, steps] of Object.entries(EXPECTED)) {
+		const res = run(['--preset', preset, '--dry-run'], '');
+		assert.equal(res.status, 0, `preset ${preset} が失敗:\n${res.stdout}\n${res.stderr}`);
+		for (const step of steps)
+			assert.ok(
+				res.stdout.includes(`\n# ${step}\n`),
+				`preset ${preset} の計画に工程 '${step}' が出ていません（ORDER への登録漏れ？）`
+			);
+		if (steps.length === 0) assert.match(res.stdout, /削除する資産: なし/);
 	}
 });

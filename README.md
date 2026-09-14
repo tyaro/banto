@@ -336,10 +336,62 @@ Banto は**コピーして使う**前提のテンプレート（[docs/template-s
 （[docs/template-scope.md](docs/template-scope.md) §3）。不要なら
 以下の箇所を外す。
 
-まず `pnpm scaffold --preset <preset>`（`minimal` / `standard` / `full`）を試す。
-プリセットに応じてオプション資産をまとめて外す（`--interactive` で対話選択、
-`--dry-run` で変更内容の確認のみ）。以下の手動手順は、scaffold が触らない資産を
-外したい場合や、独自に削りたい場合に参照する。
+まず `pnpm scaffold --preset <preset>`（`minimal` / `standard` / `full` /
+`display`）を試す。プリセットに応じてオプション資産をまとめて外す
+（`--interactive` で対話選択、`--dry-run` で変更内容の確認のみ）。以下の手動手順は、
+scaffold が触らない資産を外したい場合や、独自に削りたい場合に参照する。
+表示専用アプリを作るなら、まず下の「`--preset display`」を読む。
+
+#### `--preset display`（表示専用アプリ）
+
+```bash
+pnpm scaffold --preset display
+pnpm install          # 外れた依存の反映（lockfile も更新される）
+```
+
+カンバン（アンドン）・常設ダッシュボード・展示デモのように、**画面を出しっぱなしに
+して眺めるだけ**のアプリ向けの初期状態にする。唯一「外す」だけでなく「足す」も
+行うプリセット（他は削除のみ）。
+
+**外れるもの**
+
+| 区分               | 内容                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| オプション資産     | `minimal` と同じ（charts / dock / Glass / コマンドパレット / 添付 / 帳票 / ツリー）                                                                                                                                                                                                                                                                                        |
+| items デモリソース | `core/src/items.rs`・`core/src/rest/items.rs`・`migrations-{sqlite,postgres}/0001_items.sql`・`src-tauri` の `items_*` コマンド・`routes/(app)/items/**`・`$lib/banto/{itemsAdmin,resources/items,sampleData,dashboard}.ts`・ナビ項目・`messages` の `items.*`／`nav.items`・`verify-architecture` の items マニフェスト行                                                 |
+| 管理画面           | `routes/(app)/users/**` と `routes/(app)/audit-log/**`（**画面だけ**。サービス層・REST・Tauri コマンドは残るので、ルートを足し直せば戻せる）                                                                                                                                                                                                                               |
+| ダッシュボード     | `routes/(app)/dashboard/**`。ホーム（`/`）とログイン後の遷移先は `/monitor` になる                                                                                                                                                                                                                                                                                         |
+| e2e / ビジュアル   | 同梱スモークは items/users 画面前提なので、**シナリオ1本**のスモークに差し替わる（未ログインの `/` が `/monitor` に着く）。`e2e/tests-public-viewer/`・`e2e/visual/`（ベースライン画像を含む）・`playwright.config.ts` の該当 project／webServer・ルート `package.json` の `e2e:visual`／`e2e:public-viewer`・`ci.yml` の該当ステップ・`visual-baselines.yml` は削除される |
+
+**足されるもの / 既定値が変わるもの**
+
+- `src/routes/(app)/monitor/+page.svelte` — 時計と「最終更新」だけの最小ページ。
+  `$effect` + 世代トークンのポーリング雛形が入っているので、`load()` を自分の
+  **読み取り専用**の取得に差し替えて使う。ナビは `{ publicViewer: true }` で登録される。
+- **初回起動の既定**（`apps/admin-template/core/src/first_boot.rs` の
+  `FIRST_BOOT_SETTINGS`。`settings` テーブルが空のときだけ書き込まれる）:
+  `auth.disabled=true` / `auth.disabled_role=admin` / `server.viewer_public=true` /
+  `server.enabled=true` / `server.bind=0.0.0.0`。
+  つまり**コピーして起動した瞬間から、LAN の未ログイン端末が合成 `viewer`
+  セッションで `/monitor` を見られる**（[ADR-0012](docs/adr/0012-lan-public-viewer-synthetic-session.md)）。
+  書き込みは RBAC の `viewer` 床で 403 のまま。既定を変えたければこの const を編集する。
+- **キオスクシェル既定 ON**（`src/lib/settings.svelte.ts` の `KIOSK_DEFAULT`）:
+  サイドバー折り畳み・ヘッダのコンパクト化・全画面ボタン。設定画面「外観」で戻せる。
+- **`banto.i18n = "raw"`**（`apps/admin-template/package.json`）: 単一言語アプリとして
+  UI 文言を直書きしてよい opt-out。`verify:architecture` の `raw-jp-in-app` と
+  `check-i18n-nonempty` が自身をスキップする（[docs/conventions.md §13](docs/conventions.md#i18n-messages)）。
+  多言語に戻したいときは `"keys"` に戻し、`/monitor` の文言を `messages/{ja,en}.json` へ移す。
+
+**注意**
+
+- **セキュリティ**: 初回起動の既定は「LAN に閲覧公開する」設定。社外ネットワークに
+  出す用途では、`first_boot.rs` の `server.viewer_public` / `server.bind` を見直すこと。
+- [docs/recipes/add-resource.md](docs/recipes/add-resource.md) は **items がある前提**で
+  書かれている。display では items 一式が無いので、「items をコピーして書き換える」
+  ステップは「レシピ本文のコード片を新規ファイルとして起こす」と読み替える
+  （層別のファイル一覧と配線先はそのまま使える）。
+- `pnpm install --frozen-lockfile` は通らない（`apps/admin-template/package.json` から
+  workspace 依存が5つ消えるため）。scaffold 直後は `pnpm install` を使う。
 
 **`@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）**:
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の

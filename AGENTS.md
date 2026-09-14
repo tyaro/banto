@@ -46,9 +46,15 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
 - **利用パッケージをアプリへ組み込む**（scan-wedge / 通知トースト / tree-svelte）→
   [docs/recipes/](docs/recipes/)（README から切り出したトラックB レシピ群）。
 - **オプション資産を一括で外す（dock/charts/glass/コマンドパレット/添付/帳票/ツリー）** →
-  `pnpm scaffold --preset minimal|standard|full`（`--interactive` / `--dry-run` あり。
-  手動手順は README「オプション資産の削除」）。scan-wedge はレシピのみ・未配線の
+  `pnpm scaffold --preset minimal|standard|full|display`（`--interactive` / `--dry-run`
+  あり。手動手順は README「オプション資産の削除」）。scan-wedge はレシピのみ・未配線の
   ため scaffold は触れない。
+- **表示専用アプリ（カンバン/常設ダッシュボード/展示デモ）の初期状態を作る** →
+  `pnpm scaffold --preset display`。minimal の削除に加えて items デモ一式・
+  users/audit-log **画面**・`/dashboard` を外し、`/monitor` と初回起動シード
+  （閲覧公開）・キオスク既定・i18n `raw` を入れる唯一の「足す」プリセット。
+  設計は [docs/display-preset-plan.md](docs/display-preset-plan.md)、利用者向け説明は
+  README「オプション資産の削除 → `--preset display`」。
 - **機能を追加/変更する** → まず [docs/conventions.md](docs/conventions.md) の不変条件を
   読み、[template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題) の
   チェックリストで是非を判断。実装計画は `docs/*-plan.md` に倣う。
@@ -94,7 +100,7 @@ Tauri コマンド側の変更はコードレビュー + `tauri-check.yml`（Tau
 ubuntu/windows で実行）で担保する。
 CI は `.github/workflows/ci.yml` の各ジョブ（frontend / i18n-offline / rust /
 storage-postgres / app-postgres / e2e / audit）に加えて、週次+トリガ型の
-`template-acceptance.yml`（copy→rename→check + scaffold 3プリセットの受け入れ）、
+`template-acceptance.yml`（copy→rename→check + scaffold 4プリセットの受け入れ）、
 `visual-baselines.yml`（Linux visual ベースライン再生成、dispatch）、
 `deploy-demo.yml`（GitHub Pages ライブデモ配信）が回る。ジョブの増減は
 ci.yml を一次情報とする。

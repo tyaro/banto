@@ -61,10 +61,18 @@ track your task belongs to.**
   the README; Japanese).
 - **Drop the optional assets as a batch (dock/charts/glass/command
   palette/attachments/reporting/tree)** → `pnpm scaffold --preset
-minimal|standard|full` (`--interactive` / `--dry-run` available; the manual
+minimal|standard|full|display` (`--interactive` / `--dry-run` available; the manual
   steps live under "オプション資産の削除" in the Japanese README —
   `pnpm scaffold --interactive` is the equivalent for English readers).
   scan-wedge is recipe-only / unwired, so scaffold never touches it.
+- **Bootstrap a display-only app (andon board / always-on dashboard / kiosk
+  demo)** → `pnpm scaffold --preset display`. On top of what `minimal`
+  removes it drops the `items` demo resource, the users / audit-log **screens**
+  and `/dashboard`, then adds `/monitor` plus the first-boot seed (LAN public
+  viewing), kiosk defaults and `banto.i18n = "raw"`. It is the only preset that
+  adds anything. Design: [docs/display-preset-plan.md](docs/display-preset-plan.md)
+  (Japanese); user-facing notes live under "オプション資産の削除" in the
+  Japanese README.
 - **Add / change a feature** → first read the invariants in
   [docs/conventions.en.md](docs/conventions.en.md), then decide whether to do
   it with the [template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題)
@@ -121,7 +129,7 @@ absent. Changes on the Tauri command side are covered by code review +
 side / dependency graph and on main pushes, plus a weekly schedule). CI runs
 the jobs in `.github/workflows/ci.yml` (frontend / i18n-offline / rust /
 storage-postgres / app-postgres / e2e / audit), plus the weekly/triggered
-workflows `template-acceptance.yml` (copy→rename→check + the three scaffold
+workflows `template-acceptance.yml` (copy→rename→check + the four scaffold
 presets), `visual-baselines.yml` (Linux visual-baseline regeneration,
 dispatch), and `deploy-demo.yml` (GitHub Pages live demo). ci.yml is the
 source of truth for the job list.

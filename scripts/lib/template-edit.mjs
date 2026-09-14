@@ -104,6 +104,14 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	/**
 	 * `relPath` を読み、`edit(before)` の戻り値で書き換える（契約は本ファイル
 	 * 冒頭のとおり）。`--dry-run` では書き込まない。
+	 *
+	 * **対象ファイルが無い場合は「適用済み」扱い**（`removeFile`/`removeDir` と
+	 * 同じ規約）。そのファイルを丸ごと消す remover が先に走った後の再実行では、
+	 * 個別の行編集は既に用済みだからで、これが無いと「ディレクトリごと消す
+	 * remover を含むプリセット（display）の2回目の実行」が常に赤くなる。
+	 * パス綴りの誤りを見逃さないための担保は `--strict`: pristine コピーには
+	 * 対象ファイルが必ず在るはずなので、そこでは失敗に昇格する（CI の
+	 * template-acceptance は `--strict` で走る）。
 	 */
 	function editFile(relPath, label, edit) {
 		const abs = path.join(repoRoot, relPath);
@@ -111,8 +119,12 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 		try {
 			before = fs.readFileSync(abs, 'utf8');
 		} catch {
-			console.error(`  ✗ ${relPath}: ${label} — ファイルが見つかりません`);
-			failures++;
+			if (strict) {
+				console.error(`  ✗ ${relPath}: ${label} — strict: ファイルが見つかりません`);
+				failures++;
+				return;
+			}
+			changes.push(`  = ${relPath}: ${label}（対象ファイルなし・適用済み）`);
 			return;
 		}
 		const result = edit(before);
@@ -188,6 +200,39 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 		if (!dryRun) fs.rmSync(abs, { recursive: true, force: true });
 	}
 
+	/**
+	 * ファイルを冪等に**作成**する（プリセットの「足す」工程用。
+	 * display-preset-plan.md §3.2 / scaffold.mjs の `applyDisplayDefaults`）。
+	 *
+	 * 削除系の「見つからない＝適用済み」の鏡像として:
+	 * - 既に**同じ内容**で在る … 適用済み（`--strict` では失敗＝2回目の適用を
+	 *   pristine コピー検査に紛れ込ませない）。
+	 * - 既に**違う内容**で在る … 明示的失敗（想定外の衝突を黙って上書きしない）。
+	 * - 無い … 作成（`--dry-run` では書かない）。親ディレクトリは作る。
+	 */
+	function addFile(relPath, label, content) {
+		const abs = path.join(repoRoot, relPath);
+		if (fs.existsSync(abs)) {
+			if (fs.readFileSync(abs, 'utf8') === content) {
+				if (strict) {
+					console.error(`  ✗ ${relPath}: ${label} — strict: 既に同内容で存在します（適用済み）`);
+					failures++;
+					return;
+				}
+				changes.push(`  = ${relPath}: ${label}（変更なし・適用済み）`);
+				return;
+			}
+			console.error(`  ✗ ${relPath}: ${label} — 既存ファイルと内容が異なります（上書きしません）`);
+			failures++;
+			return;
+		}
+		changes.push(`  ✔ ${relPath}: ${label}（ファイル作成）`);
+		if (!dryRun) {
+			fs.mkdirSync(path.dirname(abs), { recursive: true });
+			fs.writeFileSync(abs, content);
+		}
+	}
+
 	/** 結果を標準出力へ。失敗があれば true を返す（呼び出し側で非0終了）。 */
 	function report(header) {
 		console.log(header);
@@ -203,6 +248,7 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 
 	return {
 		changes,
+		addFile,
 		editFile,
 		jsonField,
 		removeFile,

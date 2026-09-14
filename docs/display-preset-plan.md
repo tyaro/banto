@@ -1,7 +1,11 @@
 # scaffold `--preset display` 計画書 — Issue #190
 
 作成日: 2026-09-14
-状態: **PR-D1 実装済み（本体準備）、PR-D2（scaffold）は未着手**。前提の Issue #189（閲覧公開、PR #191）はマージ済み。
+状態: **PR-D1 / PR-D2 とも実装済み**（PR-D1 = 本体準備、PR-D2 =
+`scripts/scaffold.mjs --preset display`）。前提の Issue #189（閲覧公開、PR #191）は
+マージ済み。利用者向けの説明は README「オプション資産の削除 → `--preset display`」、
+受け入れ検査は `.github/workflows/template-acceptance.yml` の `presets` matrix
+（`[minimal, standard, full, display]`）。
 トラック: 保守者向け（トラックA）
 関連: [scaffold-presets-plan.md](scaffold-presets-plan.md)（P4-9、minimal/standard/full の
 設計）、[viewer-public-plan.md](viewer-public-plan.md)、ADR-0012、
@@ -54,6 +58,54 @@ verify-architecture）で一切検証されない。したがって:
 | 足す | `routes/(app)/monitor/+page.svelte`（`$effect` + 世代トークンでポーリングする最小例、`publicViewer: true` の nav 項目、ホームを `/monitor` に）。`scripts/lib/templates/monitor.svelte` から複製 |
 | 既定値を反転 | `FIRST_BOOT_SETTINGS` = `auth.disabled=true` / `auth.disabled_role=admin` / `server.viewer_public=true` / `server.enabled=true` / `server.bind=0.0.0.0`、`shell.kiosk` 既定 ON、`banto.i18n = "raw"` |
 | 検証 | `scaffold.test.mjs` に display の dry-run 計画テスト、`template-acceptance.yml` の matrix に `display` を追加（scaffold → verify:architecture → check → build → cargo test）、README「オプション資産の削除」と AGENTS.md のプリセット一覧を更新 |
+
+#### PR-D2 の実装結果（2026-09、確定した差分）
+
+計画からの差分と、実装時に決めたことを記録する（表の記述が一次情報ではなく、
+`scripts/scaffold.mjs` の `removeItems` / `removeAdminPages` / `removeDashboard` /
+`applyDisplayDefaults` が一次情報）。
+
+- **remover の実装単位**は計画どおり `items` / `adminPages` / `dashboard` の3つ。
+  これに加えて**唯一の「足す」工程** `displayDefaults`（`applyDisplayDefaults`）を
+  `ORDER` の末尾に置いた。`--dry-run` の計画表示にも `--strict` にも removers と
+  同じ編集エンジンで乗る（`scripts/lib/template-edit.mjs` に `addFile` を追加）。
+- **`ORDER` は display で順序依存**になる（`items` は attachments/report/tree の
+  後、`adminPages`/`dashboard` は `items` の後、`displayDefaults` は最後）。
+  理由は `navigation.ts` の union を段階的に縮めるためと、attachments remover が
+  先に外す行に依存するアンカーが1箇所あるため。
+- **アンカーは `// [scaffold:items]` マーカーを一次手段にした。** PR-D1 が入れた
+  マーカーに加えて PR-D2 で追加した箇所: `core/src/db.rs` の `SEED_ROW_COUNT`、
+  `core/src/rest/tests.rs` の3区画（setup テストの items ガード確認 / M14 の
+  items 監査ステップ / 閲覧公開の items シナリオ）、`src-tauri/src/lib.rs` の7区画
+  （`start_embedded_server` の引数と `Services` リテラル、`server_apply` と `setup`
+  の実引数、`AppState` 構築リテラル、M15 CSV テスト章、`items_delete` 監査テスト）。
+- **PR-D1 の積み残しの是正**: attachments remover が `rest/tests.rs` を
+  「`// --- M20: attachments` から EOF まで」削っていたため、その後ろに追記された
+  閲覧公開スイート（Issue #189）まで巻き添えで消えていた。終端マーカー
+  （`// --- end M20 attachments`）を置いて範囲を閉じた。`minimal`/`standard` でも
+  閲覧公開テストが残るようになる（`cargo test -p admin-template-core` は
+  minimal で 92 件）。
+- **`rest/mod.rs` の import 整理**: `rest/{items,attachments}.rs` が `use super::*;`
+  で借りていた import が両方消えると unused_imports 警告が10件以上出るため、
+  `removeItemsFromRestModImports()` で絞り、テストだけが使う `StatusCode` /
+  `ListParams` / `Role` は `rest/tests.rs` の直接 import に移した（display の
+  scaffold 出力は `cargo test` が**警告ゼロ**で緑）。
+- **e2e の扱い（§3.3 の「非スコープ」の具体化）**: display の出力では e2e を
+  「走らせない」のではなく、**items/users 画面を前提としたスイートを外し、
+  シナリオ1本のスモークに差し替える**ことにした
+  （`scripts/lib/templates/display/smoke.spec.ts`: 未ログインの `/` が `/monitor` に
+  着く = 初回起動シード + 合成 viewer + `/monitor` の結線確認）。
+  `e2e/tests-public-viewer/`・`e2e/visual/`（ベースライン画像含む）・
+  `playwright.config.ts` の該当 project/webServer・ルート `package.json` の
+  `e2e:visual`/`e2e:public-viewer`・`ci.yml` の該当ステップ・`visual-baselines.yml`
+  は削除する。
+- **`--interactive` の custom モード**はオプション資産7種のみを対象に保った
+  （items/画面削除・追加は一括適用。プロンプト文にその旨を明記）。
+- **`messages` の扱い**: JSON をパース→キー接頭辞でフィルタ→
+  `JSON.stringify(…, null, 2)` で書き戻す（prettier 整形とバイト等価なことを確認済み）。
+  `audit.*` は設定画面の保持ポリシー表示が使う4キー
+  （`audit.retention{Days,Rows}Value` / `audit.retentionRowsUnlimited` /
+  `audit.retentionUnlimited`）だけ残す。
 
 ### 3.3 非スコープ
 

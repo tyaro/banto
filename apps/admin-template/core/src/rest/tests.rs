@@ -828,7 +828,10 @@ async fn auth_setup_creates_account_and_the_token_works_for_guarded_routes() {
     assert_eq!(setup_response.status(), StatusCode::OK);
     let setup_json = body_json(setup_response).await;
     assert_eq!(setup_json["success"], true);
-    let token = setup_json["token"].as_str().expect("token").to_string();
+    assert!(
+        setup_json["token"].as_str().is_some(),
+        "setup should mint a token"
+    );
 
     // `initialized` should now be true.
     let status_response = router
@@ -838,6 +841,9 @@ async fn auth_setup_creates_account_and_the_token_works_for_guarded_routes() {
         .unwrap();
     assert_eq!(body_json(status_response).await["initialized"], true);
 
+    // [scaffold:items] begin (the guarded route this step asserts against is
+    // an items route; an app without `items` keeps the setup assertions above)
+    let token = setup_json["token"].as_str().expect("token").to_string();
     // And the freshly-issued token should work on a guarded route.
     let list_request = HttpRequest::post("/api/items/list")
         .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
@@ -847,6 +853,7 @@ async fn auth_setup_creates_account_and_the_token_works_for_guarded_routes() {
         .unwrap();
     let list_response = router.oneshot(list_request).await.unwrap();
     assert_eq!(list_response.status(), StatusCode::OK);
+    // [scaffold:items] end
 }
 
 #[tokio::test]
@@ -1711,6 +1718,10 @@ async fn audit_config_apply_persists_and_is_admin_only() {
     assert_eq!(denial["result"], "denied");
 }
 
+// [scaffold:items] begin (M14 coverage steps (b)/(c) use `items` as their
+// vehicle - an app without `items` keeps the (a) settings_change step and the
+// users/backups entries below, which cover the same recording contract)
+
 /// (b) A successful item creation is recorded.
 #[tokio::test]
 async fn item_create_is_recorded_in_the_audit_log() {
@@ -1825,6 +1836,7 @@ async fn viewer_write_denial_is_recorded_as_denied() {
     assert_eq!(entry["actorRole"], "viewer");
     assert_eq!(entry["result"], "denied");
 }
+// [scaffold:items] end
 
 /// `users` create/reset-password entries must never leak the plaintext
 /// password into `detail` (spec M14's hard rule - see
@@ -2523,6 +2535,13 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     );
 }
 
+// --- end M20 attachments -----------------------------------------------------
+//
+// `scripts/scaffold.mjs`'s attachments remover cuts the block above BETWEEN
+// these two markers (it used to cut "to EOF", which silently took every
+// section appended after it - the 閲覧公開 suite below was the first casualty).
+// Keep any new section strictly outside the pair.
+
 // --- Synthetic viewer sessions (LAN 閲覧公開, Issue #189) ------------------
 //
 // `docs/viewer-public-plan.md` §5 / ADR-0012. The security property under
@@ -2671,6 +2690,8 @@ async fn public_viewer_token_identifies_as_public_viewer_and_passes_check() {
     assert_eq!(body_json(check_response).await, json!(true));
 }
 
+// [scaffold:items] begin (this scenario reads/writes `/api/items`; the other
+// 閲覧公開 scenarios around it are resource-independent and stay)
 #[tokio::test]
 async fn public_viewer_token_can_read_items_but_not_write_them() {
     let (router, _settings, audit, _users) = router_with_viewer_public(true).await;
@@ -2718,6 +2739,7 @@ async fn public_viewer_token_can_read_items_but_not_write_them() {
         "minting a public viewing session must not be audited, got {rows:?}"
     );
 }
+// [scaffold:items] end
 
 #[tokio::test]
 async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
