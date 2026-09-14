@@ -176,7 +176,15 @@ pull in Paraglide JS for the UI i18n runtime is
 an intentional exception limited to i18n — adopted under the P1-5 criteria of
 "compile-time i18n so the runtime dependency is minimal and type-safe"). i18n is
 in the app layer only; neither dictionaries nor i18n dependencies go into
-`@banto/*` (§5).
+`@banto/*` (§5). The decision to pull in `sysinfo`, feature-limited, for the
+System Info card's CPU/memory readout is
+[ADR-0013](adr/0013-sysinfo-system-metrics-feature.en.md) (a second "add it"
+exception, after Paraglide — justified by multiple P1-5 criteria at once: std
+alone cannot read this cross-platform, three apps had already started
+reimplementing it, the crate's `system` feature scopes it down, the crate is
+mature, and the binary-size delta was measured in the implementing PR). It is
+scoped to `banto-admin-services`'s opt-in `system-metrics` feature; the
+`SystemMetrics` type itself always compiles, feature or not.
 
 ## 4. No reverse dependency from core → options [machine-checked]
 

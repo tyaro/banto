@@ -40,6 +40,35 @@ export interface SystemInfo {
 	activeSessions: number;
 	/** Total attachment size in bytes, or `null` when the feature is absent/unknown. */
 	attachmentBytes: number | null;
+	/**
+	 * Host/process CPU and memory (ADR-0013, Issue #185), or `null` when the
+	 * `system-metrics` Cargo feature is off, or the host platform is
+	 * unsupported by `sysinfo`.
+	 */
+	metrics: SystemMetrics | null;
+}
+
+/**
+ * Mirrors `banto_admin_services::system_metrics::SystemMetrics` (camelCase on
+ * the wire), folded into {@link SystemInfo.metrics} by both backends.
+ */
+export interface SystemMetrics {
+	/** Host-wide CPU usage, as a percentage (0..=100). */
+	hostCpuPercent: number;
+	/** Total host physical memory, in bytes. */
+	hostMemoryTotalBytes: number;
+	/** Used host physical memory, in bytes. */
+	hostMemoryUsedBytes: number;
+	/** Total host swap, in bytes. `0` on a host with no swap configured. */
+	hostSwapTotalBytes: number;
+	/** Used host swap, in bytes. */
+	hostSwapUsedBytes: number;
+	/** This process's own CPU usage, as a percentage (can exceed 100 on a multi-core host). */
+	processCpuPercent: number;
+	/** This process's resident memory (RSS), in bytes. */
+	processMemoryBytes: number;
+	/** Logical CPU count, for interpreting `processCpuPercent`. */
+	cpuCount: number;
 }
 
 export const DEMO_MODE_MESSAGE = 'デモモードでは利用できません';

@@ -175,6 +175,14 @@ net-new は version / migration version / DB レイテンシ / uptime / セッ�
 - 未認証 liveness（`/health`）を足すなら `/api/auth/status` 同様の明示的な CSRF/認証
   免除が要る（セキュリティ面の判断であり既定ではない）。
 
+**2026-09-14 追記**: 上の「disk free だけは落とす」判断は維持しつつ、CPU/メモリ
+（ホスト total/used・スワップ・プロセス RSS・CPU%）は `sysinfo`（feature 限定、
+`system` のみ）を採用して追加した（[ADR-0013](adr/0013-sysinfo-system-metrics-feature.md)、
+Issue #185）。複数の下流アプリが個別に `sysinfo` を抱え始めていたという新事実が
+根拠で、当時の「disk free だけのために§3ゲートを通す価値がない」という判断
+そのものは変えていない - disk free は引き続き非スコープ（要るときは本ADRを
+supersedeせず feature を1つ足す小PRで足りる旨、ADR-0013の帰結節に明記）。
+
 **特筆すべき発見（監視以前の問題）**: バージョン `1.1.0` が UI のどこにも表示されて
 いない。version を返す `ping` コマンドは存在するが呼ぶ側がゼロ（src-tauri/src/lib.rs、
 frontend からの invoke は0ヒット）。「なんか変」と言われた時にユーザーがバージョン

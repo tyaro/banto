@@ -146,6 +146,13 @@ maintenance-review-2026-08 §5.3 で実測・是正済み）:
 [ADR-0005](adr/0005-i18n-paraglide.md)（本表・本方針は維持したまま、i18n に限った
 意図的な例外。コンパイル時 i18n で実行時依存は極小・型安全という P1-5 基準での採用）。
 i18n は app 層のみで、`@banto/*` には辞書も i18n 依存も入れない（§5）。
+System Info カードの CPU/メモリ取得に `sysinfo` を feature 限定で引く判断は
+[ADR-0013](adr/0013-sysinfo-system-metrics-feature.md)（Paraglide に続く2件目の
+「足す」側の例外。P1-5 の複数基準該当 - std だけではクロスプラットフォームに
+取れない・3アプリで再実装済み・`system` feature 限定・成熟クレート・バイナリ
+増分を実装 PR で測定 - を根拠に採用。`banto-admin-services` の opt-in feature
+`system-metrics` に限定し、`SystemMetrics` 型自体は feature 無しでも常時
+コンパイルされる）。
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 

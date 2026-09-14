@@ -57,6 +57,19 @@ tempfile = "3"
 # `banto-attachments` calls it explicitly rather than relying on whatever
 # version its transitive dependents happen to pull in.
 sha2 = "0.11"
+# ADR-0013 (Issue #185): CPU/memory usage for the admin System Info card.
+# An exception to §3's "add no dependency" default (conventions §3's "依存を
+# 足す側の例外" table, alongside Paraglide/ADR-0005) - std alone cannot read
+# cross-platform CPU%/memory (Linux `/proc`, Windows Win32 API, macOS
+# Mach/sysctl FFI), and three apps (this template + two downstream) were each
+# about to reimplement it. `default-features = false, features = ["system"]`
+# drops `component`/`disk`/`gpu`/`network`/`user` (the ADR's P1-5 ④
+# feature-limiting) - only process/CPU/memory stays. `sysinfo` 0.39's MSRV is
+# 1.95, but the workspace already requires 1.94+ for sqlx 0.9, so this is not
+# a new floor in practice. Feature-gated behind `banto-admin-services`'s
+# `system-metrics` (off by default there; the template app crates turn it on
+# by default per the ADR - see their own Cargo.toml comments).
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }

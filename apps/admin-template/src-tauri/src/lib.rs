@@ -29,10 +29,12 @@ use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, I
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
+#[cfg(feature = "system-metrics")]
+use admin_template_core::system_metrics::SystemMetricsSampler;
 use admin_template_core::users::{Role, UserIdentity, UserSummary, UsersService};
 use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
-use banto_server::routes::SystemInfo;
+use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
     lan_urls, start, static_router, with_security_headers, AuthState, RunningServer, ServerConfig,
     ServerEvent,
@@ -128,6 +130,14 @@ struct AppState {
     /// DB-only (dialect/latency/migration version/attachment size); the
     /// command folds in `app_version`/`uptime_secs`/`active_sessions`.
     system_info: SystemInfoService,
+    /// CPU/memory probe (ADR-0013, Issue #185): `Some` when the
+    /// `system-metrics` feature is on and the host platform is supported;
+    /// `None` otherwise, in which case the `system_info` command reports
+    /// `metrics: null` (same degrade path as the REST route). Built in
+    /// `setup()` under `#[cfg(feature = "system-metrics")]`, and re-shared
+    /// with the embedded server in [`start_embedded_server`] (cloning an
+    /// `Arc` closure, not re-sampling).
+    metrics: Option<MetricsProbe>,
     /// Process start, for the `system_info` command's `uptime_secs` (app
     /// uptime on the desktop path; captured first thing in `setup()`).
     started_at: std::time::Instant,
@@ -892,6 +902,7 @@ async fn start_embedded_server(
     backup: BackupService,
     attachments: AttachmentsService,
     system_info: SystemInfoService,
+    metrics: Option<MetricsProbe>,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
     config: ServerConfig,
@@ -911,6 +922,7 @@ async fn start_embedded_server(
         backup,
         attachments,
         system_info,
+        metrics,
     };
     let router = with_security_headers(
         api_router(services, auth, events, false).merge(static_router::<FrontendAssets>()),
@@ -940,6 +952,18 @@ async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusResult,
 async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoError> {
     require_role(&state, Role::Admin, "system").await?;
     let probe = state.system_info.probe().await?;
+
+    // Symmetric with the REST handler (`banto_server::routes::system_info`,
+    // ADR-0013): `sample()` is synchronous, blocking I/O, so it runs via
+    // `spawn_blocking` rather than directly on this async command's thread,
+    // even though Tauri commands run on tokio the same as the REST server.
+    let metrics = match state.metrics.clone() {
+        Some(probe_fn) => tokio::task::spawn_blocking(move || probe_fn())
+            .await
+            .map_err(|err| BantoError::Other(err.to_string()))?,
+        None => None,
+    };
+
     Ok(SystemInfo {
         app_version: env!("CARGO_PKG_VERSION"),
         db_dialect: probe.dialect,
@@ -948,6 +972,7 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
         uptime_secs: state.started_at.elapsed().as_secs(),
         active_sessions: state.rest_auth.session_count(),
         attachment_bytes: probe.attachment_bytes,
+        metrics,
     })
 }
 
@@ -987,6 +1012,7 @@ async fn server_apply(
                 state.backup.clone(),
                 state.attachments.clone(),
                 state.system_info.clone(),
+                state.metrics.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
                 ServerConfig {
@@ -1965,6 +1991,18 @@ pub fn run() {
             // System diagnostics probe (M-review 2026-08 §2.4). Built before
             // `audit` moves `db`, same as the other services above.
             let system_info = SystemInfoService::new(db.clone());
+            // CPU/memory probe (ADR-0013, Issue #185): built once, here,
+            // same "share one stateful sampler" reasoning as `banto-serve`'s
+            // main() - see `SystemMetricsSampler::sample`'s doc comment for
+            // why. Type-erased to a `MetricsProbe` so `AppState`/`Services`
+            // stay `sysinfo`-feature-agnostic.
+            #[cfg(feature = "system-metrics")]
+            let metrics: Option<MetricsProbe> = {
+                let sampler = SystemMetricsSampler::new();
+                Some(std::sync::Arc::new(move || sampler.sample()))
+            };
+            #[cfg(not(feature = "system-metrics"))]
+            let metrics: Option<MetricsProbe> = None;
             let audit = AuditLogService::new(db);
             // Records `login`/`login_failed` audit entries (spec M14) from
             // inside the verifier itself - see
@@ -2166,6 +2204,7 @@ pub fn run() {
                     backup.clone(),
                     attachments.clone(),
                     system_info.clone(),
+                    metrics.clone(),
                     rest_auth.clone(),
                     events.clone(),
                     runtime_config,
@@ -2233,6 +2272,7 @@ pub fn run() {
                 attachments_dir,
                 exports_dir,
                 system_info,
+                metrics,
                 started_at,
             });
 
@@ -2322,6 +2362,9 @@ mod tests {
                 pool.clone(),
             ),
             system_info: SystemInfoService::new(pool.clone()),
+            // ADR-0013: no probe wired in this minimal test state - these
+            // tests exercise command bodies that never touch `metrics`.
+            metrics: None,
             attachments: AttachmentsService::new(
                 pool,
                 PathBuf::from("unused-in-tests").join("attachments"),
@@ -2359,6 +2402,7 @@ mod tests {
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(db_path, pool.clone()),
             system_info: SystemInfoService::new(pool.clone()),
+            metrics: None,
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
             attachments_dir: dir.path().join("attachments"),
             exports_dir: dir.path().join("exports"),

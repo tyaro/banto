@@ -149,8 +149,9 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   カテゴリジャンプナビに整理。
 - **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
   **SQLite バックアップ/リストア**（M17）。
-- **システム情報カード**（v1.2.0）: 設定画面に admin 専用でアプリバージョン・
-  DB 種別・稼働形態などを表示（`GET /api/system/info` / Tauri `system_info`）。
+- **システム情報カード**（v1.2.0、CPU/メモリは Issue #185 で追加）: 設定画面に
+  admin 専用でアプリバージョン・DB 種別・稼働形態・ホスト/プロセスの
+  CPU・メモリ使用率などを表示（`GET /api/system/info` / Tauri `system_info`）。
 - **対応DBは SQLite（既定）と PostgreSQL**。V2 でアプリ全体を PostgreSQL 上でも
   動かせるようにした（`banto-storage` の `Db`/`Dialect` による方言吸収 + 方言別
   マイグレーション）。`banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL に
@@ -443,6 +444,14 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
    パッケージ本体（`packages/tree-svelte`）は同梱のままでも他に影響しないが、
    ナビが1項目減るぶんサイドバーが写る認証ページのビジュアル回帰ベースライン
    を再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。
+
+**システムメトリクス（`sysinfo`）を外す（ADR-0013、Issue #185）**:
+`apps/admin-template/core/Cargo.toml` と `apps/admin-template/src-tauri/Cargo.toml`
+の `default` から `system-metrics` を外す。System Info カードの CPU/メモリの
+行は `metrics` が `null` になり自動的に消える（他の行は従来どおり）。
+`banto-admin-services` 自体の `system-metrics` feature（`sysinfo` 依存の実体）
+はそのまま残しておいて構わない（無効化されたテンプレート側から到達しなく
+なるだけ）。
 
 ### 4. 別リポジトリから git 依存として消費する場合
 
