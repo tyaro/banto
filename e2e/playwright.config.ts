@@ -52,6 +52,15 @@ const repoRoot = path.resolve(dirname, '..');
 const PORT = 8799;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
+// `public-viewer` project (viewer-public-plan.md §3.1-8, Issue #189): a SECOND
+// `banto-serve` on its own port and its own fresh DB, started with
+// `BANTO_VIEWER_PUBLIC=1`. It has to be a separate server: viewer-public is a
+// settings-DB flag with no REST route to toggle it (server settings are
+// desktop-only), and switching it on the smoke server would change scenario
+// 1's "unauthenticated visit shows the setup screen" premise.
+const PUBLIC_VIEWER_PORT = 8798;
+const PUBLIC_VIEWER_BASE_URL = `http://127.0.0.1:${PUBLIC_VIEWER_PORT}`;
+
 // `visual` project (browser demo mode, vite preview - see doc comment above).
 const VISUAL_PORT = 4173;
 const VISUAL_BASE_URL = `http://127.0.0.1:${VISUAL_PORT}`;
@@ -61,6 +70,9 @@ const VISUAL_BASE_URL = `http://127.0.0.1:${VISUAL_PORT}`;
 // the temp dir itself must exist before banto-serve starts.
 const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'banto-e2e-'));
 const dbPath = path.join(dbDir, 'banto-e2e.sqlite3');
+// Same temp dir (one teardown removes both), separate file: the two servers
+// must never share a users table.
+const publicViewerDbPath = path.join(dbDir, 'banto-e2e-public-viewer.sqlite3');
 // Read by global-teardown.ts to remove `dbDir` again after the run - see
 // that file's doc comment for why an env var, not a direct import.
 process.env.BANTO_E2E_DB_DIR = dbDir;
@@ -119,6 +131,15 @@ export default defineConfig({
 		// `visual` project below can never pull tests/visual/*.spec.ts into the
 		// wrong project or vice versa.
 		{ name: 'chromium', testDir: './tests', use: { ...devices['Desktop Chrome'] } },
+		// Viewer-public mode (Issue #189): LAN/REST mode like `chromium`, but
+		// against the second banto-serve started with BANTO_VIEWER_PUBLIC=1
+		// (see `webServer` below). Own testDir so neither project can pick up
+		// the other's specs.
+		{
+			name: 'public-viewer',
+			testDir: './tests-public-viewer',
+			use: { ...devices['Desktop Chrome'], baseURL: PUBLIC_VIEWER_BASE_URL }
+		},
 		// Phase 0 visual regression + axe-core (visual-refresh-design.md §12).
 		// 1440x900 is the project-wide default viewport; individual specs
 		// override it per visual-refresh-plan.md's Phase 0 matrix (1024x768,
@@ -184,6 +205,25 @@ export default defineConfig({
 				// spec §8.2 / banto-serve.rs: POST /api/auth/setup is 403'd unless
 				// explicitly opted into - required for scenario 1.
 				BANTO_ALLOW_SETUP: '1'
+			}
+		},
+		{
+			// Second banto-serve for the `public-viewer` project (Issue #189) -
+			// same binary, own port/DB, viewer-public seeded ON at startup.
+			// BANTO_ALLOW_SETUP stays on so the spec can also create the first
+			// admin from the LAN login screen and prove the "ログイン" path back
+			// into the normal UI.
+			command: bantoServeBin,
+			url: PUBLIC_VIEWER_BASE_URL,
+			reuseExistingServer: false,
+			timeout: 30_000,
+			stdout: 'pipe',
+			env: {
+				PORT: String(PUBLIC_VIEWER_PORT),
+				BANTO_BIND: '127.0.0.1',
+				BANTO_DB: publicViewerDbPath,
+				BANTO_ALLOW_SETUP: '1',
+				BANTO_VIEWER_PUBLIC: '1'
 			}
 		},
 		{

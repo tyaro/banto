@@ -9,7 +9,7 @@
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
 	import * as m from '$lib/paraglide/messages';
-	import { navItems } from '$lib/navigation';
+	import { navItems, publicNavItems } from '$lib/navigation';
 	import { NAV_ICONS } from './navIcons';
 	import { navBadges } from '$lib/navBadges.svelte';
 	import { settings } from '$lib/settings.svelte';
@@ -33,9 +33,19 @@
 	// showing them disabled - navigation-level hiding, same as
 	// routes/(app)/users/+page.ts redirecting a non-admin instead of
 	// rendering a 403 screen.
-	const mainItems = $derived(navItems.filter((item) => !item.adminOnly));
+	//
+	// viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session
+	// sees ONLY the `publicViewer` allowlist and never the admin section,
+	// regardless of role (a public-viewer identity's role is always
+	// `viewer`, so `adminItems` would already be empty, but the explicit
+	// check keeps this correct even if that ever changed).
+	const mainItems = $derived(
+		sessionStore.publicViewer ? publicNavItems() : navItems.filter((item) => !item.adminOnly)
+	);
 	const adminItems = $derived(
-		isAdmin(sessionStore.role) ? navItems.filter((item) => item.adminOnly) : []
+		!sessionStore.publicViewer && isAdmin(sessionStore.role)
+			? navItems.filter((item) => item.adminOnly)
+			: []
 	);
 
 	/** Unseen-change badge text (wired by (app)/+layout.svelte). Capped for layout stability. */

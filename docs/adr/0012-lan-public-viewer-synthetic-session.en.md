@@ -46,7 +46,7 @@ The normative text lives in conventions §6 (synthetic viewer session rules).
   classified.
   Cons: an anonymous device reaches **everything** the `viewer` role may read
   (the screen allowlist `NavItem.publicViewer` only narrows the UI). Accepted
-  because in a display-only app the viewer read surface *is* the public
+  because in a display-only app the viewer read surface _is_ the public
   surface. Token issuance needs no credentials, so a cap on concurrent
   sessions prevents unbounded growth.
 - **Option B (rejected): merge an auth-bypassing read-only public router into

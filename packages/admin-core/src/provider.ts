@@ -28,6 +28,17 @@ export interface Identity {
 	role?: string;
 }
 
+/**
+ * Fixed `id` of the synthetic viewer identity issued by
+ * `AuthProvider.enterPublicViewer()` (viewer-public-plan §2.2/§3.1-6,
+ * ADR-0012): `POST /api/auth/public-viewer` always returns
+ * `{ id: "public", name: "public", role: "viewer" }`. Account ids are `i64`
+ * on the wire, so this string can never collide with one. `sessionStore`
+ * (app layer) derives `publicViewer` by comparing `identity.id` against this
+ * constant rather than hardcoding the literal.
+ */
+export const PUBLIC_VIEWER_ID = 'public';
+
 /** Authentication abstraction used by the route guard and login page. */
 export interface AuthProvider {
 	login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
@@ -40,8 +51,15 @@ export interface AuthProvider {
 	 * pre-existing `AuthProvider` implementations stay valid: the login page
 	 * only calls this via `authProvider.status?.()` and falls back to the
 	 * normal login form when it is absent (or resolves `{ initialized: true }`).
+	 *
+	 * `viewerPublic` (viewer-public-plan §3.1-2/-6, ADR-0012) reports whether
+	 * `server.viewerPublic` is ON - i.e. whether `enterPublicViewer()` below
+	 * can currently succeed. Optional/possibly-absent for the same backward-
+	 * compatibility reason as `initialized`: an older backend's
+	 * `/api/auth/status` response has no such field, and a caller must treat
+	 * a missing value as `false` (fail closed - no public viewer entry).
 	 */
-	status?(): Promise<{ initialized: boolean }>;
+	status?(): Promise<{ initialized: boolean; viewerPublic?: boolean }>;
 
 	/**
 	 * Create the first account and log in as it (spec §8.2's first-run
@@ -52,6 +70,26 @@ export interface AuthProvider {
 
 	/** Change the current session's password. */
 	changePassword?(current: string, next: string): Promise<{ success: boolean; error?: string }>;
+
+	/**
+	 * Mint the synthetic `{ id: PUBLIC_VIEWER_ID, role: 'viewer' }` session
+	 * used by LAN "viewer-public" access (viewer-public-plan §2.1-2.2,
+	 * ADR-0012): no credentials, no bearer token required on the request.
+	 * Resolves `true` and leaves the provider logged in as that identity on
+	 * success; resolves `false` on any failure (403 when
+	 * `server.viewerPublic` is OFF, or a network error) without throwing -
+	 * callers (the `(app)` route guard) fall back to the normal `/login`
+	 * redirect in that case.
+	 *
+	 * Optional and implemented ONLY by the HTTP provider
+	 * (`createHttpAuthProvider`): the Tauri window has no LAN-facing surface
+	 * for this (M11's desktop synthetic session already covers "no login in
+	 * this window"), and the plain-browser demo provider has no backend to
+	 * call. Both leave this undefined = unsupported, same convention as
+	 * `setup`/`changePassword` being absent on a provider that doesn't need
+	 * them.
+	 */
+	enterPublicViewer?(): Promise<boolean>;
 }
 
 export type NotificationKind = 'success' | 'error' | 'info' | 'warning';

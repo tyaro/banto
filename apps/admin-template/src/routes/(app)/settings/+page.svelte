@@ -204,6 +204,10 @@
 	let bindDraft = $state('127.0.0.1');
 	let portDraft = $state(8721);
 	let enabledDraft = $state(false);
+	// viewer-public-plan §3.1-6 (ADR-0012): `server.viewerPublic` toggle,
+	// same draft/apply pattern as `enabledDraft`/`bindDraft`/`portDraft`
+	// above - `applyServerSettings`'s 4th argument.
+	let viewerPublicDraft = $state(false);
 	let applying = $state(false);
 	let serverError: string | null = $state(null);
 
@@ -212,6 +216,7 @@
 		enabledDraft = status.enabled;
 		bindDraft = status.bind;
 		portDraft = status.port;
+		viewerPublicDraft = status.viewerPublic;
 	}
 
 	$effect(() => {
@@ -229,7 +234,9 @@
 		applying = true;
 		serverError = null;
 		try {
-			applyStatusToDrafts(await applyServerSettings(enabledDraft, bindDraft, portDraft));
+			applyStatusToDrafts(
+				await applyServerSettings(enabledDraft, bindDraft, portDraft, viewerPublicDraft)
+			);
 		} catch (err) {
 			serverError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -758,7 +765,13 @@
 						<p>{m['settings.passwordDesc']()}</p>
 					</div>
 				</div>
-				{#if sessionStore.authDisabled}
+				{#if sessionStore.publicViewer}
+					<!-- viewer-public-plan §3.1-6 (ADR-0012): "change-password は失敗
+					     する（users に行が無い）" - this page is not in the
+					     public-viewer nav allowlist so it should be unreachable
+					     anyway; hide the account UI here too as a second line of
+					     defense (belt-and-braces). -->
+				{:else if sessionStore.authDisabled}
 					<p class="note">
 						{m['settings.passwordChangeUnavailableAuth']()}
 					</p>
@@ -892,13 +905,28 @@
 						</div>
 					</div>
 					{#if tauri}
-						<label class="switch-row" class:disabled={authSettings?.disabled}>
+						<!-- viewer-public-plan §3.1-6 (ADR-0012): the opt-in that lets
+						     "auth disabled + LAN enabled" pass validation at all (§2.3).
+						     Shown above the LAN toggle so the dependency reads top to
+						     bottom - check this, then the toggle below unlocks. -->
+						<label class="switch-row">
+							<input
+								type="checkbox"
+								role="switch"
+								class="banto-switch"
+								bind:checked={viewerPublicDraft}
+							/>
+							{m['settings.viewerPublicToggle']()}
+						</label>
+						<p class="note warning">{m['settings.viewerPublicNote']()}</p>
+
+						<label class="switch-row" class:disabled={authSettings?.disabled && !viewerPublicDraft}>
 							<input
 								type="checkbox"
 								role="switch"
 								class="banto-switch"
 								bind:checked={enabledDraft}
-								disabled={authSettings?.disabled}
+								disabled={authSettings?.disabled && !viewerPublicDraft}
 							/>
 							{m['settings.lanToggle']()}
 						</label>

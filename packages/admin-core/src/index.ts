@@ -16,6 +16,7 @@ export type {
 } from './types';
 
 export type { DataProvider, AuthProvider, Identity, NotificationKind, Notifier } from './provider';
+export { PUBLIC_VIEWER_ID } from './provider';
 
 export type { FieldError, ErrorBody } from './errors';
 export { ProviderError, isProviderError, notFound, validation } from './errors';

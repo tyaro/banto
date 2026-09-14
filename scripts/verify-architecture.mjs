@@ -303,6 +303,15 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		{ tauri: 'system_info', rest: 'GET /api/system/info', role: 'Admin' }
 	];
 
+	// REST-only（Tauri 側に対を持たないのが正しい mutating ルート）。
+	// `POST /api/auth/public-viewer` は LAN の未ログイン端末に `viewer` 固定の
+	// 合成セッションを発行する口（Issue #189 / ADR-0012）。Tauri ウィンドウでの
+	// 等価物は M11 ログイン不要モードの synthetic session であり、これは
+	// `auth_config_apply` の設定で入る別機構なので、同名の Tauri コマンドを
+	// 足すのは誤り（窓の中に「公開閲覧に入る」という操作は存在しない）。
+	// desktop-only の鏡像として、ここに分類することで rule 8 (c) を通す。
+	const REST_ONLY = new Set(['POST /api/auth/public-viewer']);
+
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
 	const DESKTOP_ONLY = new Set([
 		'vibrancy_apply',
@@ -416,14 +425,14 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 			`未分類の Tauri コマンド \`${cmd}\` — REST とペアにして DUAL_PATH に足すか、desktop-only / read に分類（§1 両経路対称）`
 		);
 	}
-	// (c) REST 完全性: 全ルートが dual-path / read のいずれか。
+	// (c) REST 完全性: 全ルートが dual-path / read / rest-only のいずれか。
 	const dualRest = new Set(DUAL_PATH.map((d) => d.rest));
 	for (const route of restRoutes) {
-		if (dualRest.has(route) || REST_READ.has(route)) continue;
+		if (dualRest.has(route) || REST_READ.has(route) || REST_ONLY.has(route)) continue;
 		fail(
 			rule,
 			'rest/mod.rs',
-			`未分類の REST ルート \`${route}\` — Tauri コマンドとペアにして DUAL_PATH に足すか REST_READ に分類（§1 両経路対称）`
+			`未分類の REST ルート \`${route}\` — Tauri コマンドとペアにして DUAL_PATH に足すか REST_READ / REST_ONLY に分類（§1 両経路対称）`
 		);
 	}
 	// (d) doc-sync: Route table の各 path が実際の .route() 宣言に存在すること。
@@ -500,7 +509,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	if (!results.some((r) => r.includes(`[${rule}]`)))
 		pass(
 			rule,
-			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length}）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルートを分類済み`
+			`両経路対称: dual-path ${DUAL_PATH.length} 対（ロール床照合 ${DUAL_PATH.filter((d) => d.role).length} + read ${ROLE_READ.length}）+ Tauri ${tauriCmds.size} コマンド / REST ${restRoutes.size} ルート（うち rest-only ${REST_ONLY.size}）を分類済み`
 		);
 }
 

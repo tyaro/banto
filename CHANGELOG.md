@@ -22,6 +22,23 @@
 
 ## [Unreleased]
 
+- feat(auth): 閲覧公開モード（viewer-public、#189）— 「認証を外す」を書き込み軸
+  （従来の M11、デスクトップ限定）と閲覧公開軸（新設）に分けた。
+  `server.viewerPublic` を ON にすると LAN クライアントは
+  `POST /api/auth/public-viewer` で **`viewer` 固定の合成セッション**
+  （ユーザー名 `public`、同時 256 まで・古い順に失効）を得てログイン無しで
+  閲覧でき、`GET /api/auth/status` が `viewerPublic` を返す（アプリ固有
+  フィールドを足す `AuthStatusExtras` フックも追加）。「認証無効 + LAN 有効」の
+  排他は閲覧公開 ON のときだけ緩む（両方向のバリデーション）。フロントは
+  `(app)` のゲートが合成セッションを透過的に取得し、`NavItem.publicViewer`
+  の許可リスト（既定 dashboard / items）で画面を絞り、ヘッダは「ログイン」
+  ボタンに切り替わる。書き込みは合成セッションから常に 403 + `denied` 監査。
+  設計は [docs/viewer-public-plan.md](docs/viewer-public-plan.md)、方式選定は
+  [ADR-0012](docs/adr/0012-lan-public-viewer-synthetic-session.md)、
+  手順は [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)。
+  `banto-serve` は `BANTO_VIEWER_PUBLIC=1` で seed 可。e2e に
+  `public-viewer` プロジェクト（別ポートの 2 本目の banto-serve）を追加。
+
 - ci(visual): スクリーンショット比較の許容を比率から絶対値へ
   （`maxDiffPixelRatio: 0.001` → `maxDiffPixels: 250`）。比率は fullPage の総画素
   基準だったため縦長ページほど検知が甘く（dashboard 約4,700px / items 約1,300px）、

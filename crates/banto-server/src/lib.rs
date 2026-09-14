@@ -29,11 +29,12 @@ pub mod static_files;
 
 pub use auth::{
     auth_routes, rate_limit_key, require_auth, AuthState, Identity, LoginOutcome, RateLimitPolicy,
-    TokenPolicy,
+    TokenPolicy, MAX_PUBLIC_VIEWER_SESSIONS, PUBLIC_VIEWER_ID,
 };
 pub use csrf::require_banto_client_header;
 pub use events::{sse_route, ServerEvent};
 pub use response::ApiError;
+pub use routes::AuthStatusExtras;
 pub use security_headers::with_security_headers;
 pub use server::{lan_urls, start, RunningServer, ServerConfig};
 pub use static_files::{guess_mime, static_router, UiAssets};

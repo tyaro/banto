@@ -280,6 +280,11 @@ jobs:
       - name: Run E2E smoke suite
         run: pnpm e2e
 
+      # Viewer-public mode (Issue #189): second banto-serve started with
+      # BANTO_VIEWER_PUBLIC=1 by the same playwright config.
+      - name: Run E2E viewer-public suite
+        run: pnpm e2e:public-viewer
+
       # Baselines under e2e/visual/**/*-snapshots are committed pre-generated
       # on Linux, so this ubuntu-latest runner diffs against them directly -
       # no --update-snapshots step needed here. Uses the same `vite preview`

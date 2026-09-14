@@ -416,7 +416,7 @@ describe('createHttpAuthProvider', () => {
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { initialized: false }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		await expect(provider.status?.()).resolves.toEqual({ initialized: false });
+		await expect(provider.status?.()).resolves.toEqual({ initialized: false, viewerPublic: false });
 		expect(fetchFn).toHaveBeenCalledWith('/api/auth/status', {
 			method: 'GET',
 			headers: { 'X-Banto-Client': 'banto' },
@@ -429,6 +429,22 @@ describe('createHttpAuthProvider', () => {
 		const provider = createHttpAuthProvider({ fetchFn });
 
 		await expect(provider.status?.()).resolves.toEqual({ initialized: true });
+	});
+
+	it('status passes viewerPublic:true through unchanged (viewer-public-plan §3.1-2)', async () => {
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { initialized: true, viewerPublic: true }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await expect(provider.status?.()).resolves.toEqual({ initialized: true, viewerPublic: true });
+	});
+
+	it('status defaults viewerPublic to false when an older backend omits the field', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { initialized: true }));
+		const provider = createHttpAuthProvider({ fetchFn });
+
+		await expect(provider.status?.()).resolves.toEqual({ initialized: true, viewerPublic: false });
 	});
 
 	it('setup POSTs to /api/auth/setup and stores the token on success', async () => {
@@ -521,5 +537,49 @@ describe('createHttpAuthProvider', () => {
 		const result = await provider.changePassword?.('wrong', 'new-password1');
 
 		expect(result).toEqual({ success: false, error: '現在のパスワードが違います' });
+	});
+
+	describe('enterPublicViewer (viewer-public-plan §2.1/§3.1-2, ADR-0012)', () => {
+		it('POSTs /api/auth/public-viewer with the CSRF header and no Authorization, and stores the token in sessionStorage on success', async () => {
+			const fetchFn = vi
+				.fn()
+				.mockResolvedValue(jsonResponse(200, { success: true, token: 'viewer-tok' }));
+			const provider = createHttpAuthProvider({ fetchFn });
+
+			await expect(provider.enterPublicViewer?.()).resolves.toBe(true);
+
+			expect(fetchFn).toHaveBeenCalledWith('/api/auth/public-viewer', {
+				method: 'POST',
+				headers: { 'X-Banto-Client': 'banto' },
+				body: undefined
+			});
+			expect(sessionStorage.getItem('banto.auth.token')).toBe('viewer-tok');
+			expect(localStorage.getItem('banto.auth.token')).toBeNull();
+			expect(provider.getToken()).toBe('viewer-tok');
+		});
+
+		it('resolves false on a 403 (server.viewerPublic OFF) without storing a token', async () => {
+			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(403, { kind: 'forbidden' }));
+			const provider = createHttpAuthProvider({ fetchFn });
+
+			await expect(provider.enterPublicViewer?.()).resolves.toBe(false);
+			expect(provider.getToken()).toBeNull();
+		});
+
+		it('resolves false on a network failure without throwing', async () => {
+			const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+			const provider = createHttpAuthProvider({ fetchFn });
+
+			await expect(provider.enterPublicViewer?.()).resolves.toBe(false);
+			expect(provider.getToken()).toBeNull();
+		});
+
+		it('resolves false when the response body has success:false', async () => {
+			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: false }));
+			const provider = createHttpAuthProvider({ fetchFn });
+
+			await expect(provider.enterPublicViewer?.()).resolves.toBe(false);
+			expect(provider.getToken()).toBeNull();
+		});
 	});
 });

@@ -1,29 +1,108 @@
 use super::*;
 
-/// State shared by `/api/auth/status`, `/api/auth/setup` and
-/// `/api/auth/change-password` (see [`extra_auth_router`]): these need both
-/// `UsersService` (the credential store, spec §8.2) and `AuthState` (to
-/// issue a token on `setup`'s implicit login, and to resolve the calling
-/// account on `change-password`), neither of which [`crate::auth`] knows
-/// about on its own.
+/// Extension point for app-specific `GET /api/auth/status` fields
+/// (`docs/viewer-public-plan.md` §3.1-2). The returned map is flattened into
+/// the status response alongside `initialized`/`viewerPublic`, so an adopter
+/// that needs to tell its login screen something extra (a tenant name, a
+/// branding flag, ...) can do it without wrapping this router in a
+/// response-rewriting layer of its own.
+///
+/// Synchronous on purpose: `status` is the very first request a cold login
+/// screen makes, and every field the template itself needs is already read
+/// inside the handler - an app-supplied hook that wants to `.await` should
+/// keep its own cached value and read it here instead of turning this route
+/// into an arbitrary async fan-out.
+pub type AuthStatusExtras =
+    std::sync::Arc<dyn Fn() -> serde_json::Map<String, serde_json::Value> + Send + Sync>;
+
+/// State shared by `/api/auth/status`, `/api/auth/setup`,
+/// `/api/auth/public-viewer` and `/api/auth/change-password` (see
+/// [`extra_auth_router`]): these need `UsersService` (the credential store,
+/// spec §8.2), `AuthState` (to issue a token on `setup`'s implicit login and
+/// on the public-viewer route, and to resolve the calling account on
+/// `change-password`) and `SettingsService` (the live `server.viewer_public`
+/// flag, Issue #189) - none of which [`crate::auth`] knows about on its own.
 #[derive(Clone)]
 struct UsersAuthState {
     users: UsersService,
     auth: AuthState,
     audit: AuditLogService,
     allow_setup: bool,
+    settings: SettingsService,
+    status_extras: Option<AuthStatusExtras>,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AuthStatusResponse {
     initialized: bool,
+    /// Whether this server hands out synthetic `viewer` sessions to LAN
+    /// clients that have not logged in (Issue #189). Read live from
+    /// `SettingsService` on every request - toggling 閲覧公開 in the settings
+    /// screen takes effect without a server restart, and the Tauri and
+    /// banto-serve hosts behave identically because both read the same key.
+    viewer_public: bool,
+    /// App-supplied extra fields, flattened into the same JSON object (see
+    /// [`AuthStatusExtras`]). Empty for the template itself.
+    #[serde(flatten)]
+    extras: serde_json::Map<String, serde_json::Value>,
 }
 
 async fn auth_status_handler(
     State(state): State<UsersAuthState>,
 ) -> Result<Json<AuthStatusResponse>, ApiError> {
     let initialized = state.users.is_initialized().await?;
-    Ok(Json(AuthStatusResponse { initialized }))
+    let viewer_public = state.settings.server_config().await?.viewer_public;
+    let extras = state
+        .status_extras
+        .as_ref()
+        .map(|hook| hook())
+        .unwrap_or_default();
+    Ok(Json(AuthStatusResponse {
+        initialized,
+        viewer_public,
+        extras,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+struct PublicViewerResponse {
+    success: bool,
+    token: String,
+}
+
+/// `POST /api/auth/public-viewer` (Issue #189, ADR-0012,
+/// `docs/viewer-public-plan.md` §2.2): hand an un-authenticated LAN client a
+/// bearer token for the fixed synthetic `viewer` identity, so a wall display
+/// or tablet can read without a login. Like every `/api/*` route it still
+/// requires the `X-Banto-Client` header (`crate::csrf`); unlike almost every
+/// other one it requires no bearer token, which is the entire point - it is
+/// how the first token is obtained.
+///
+/// `403 { "kind": "forbidden" }` unless `server.viewer_public` is ON. The
+/// flag is read from `SettingsService` on every call rather than captured at
+/// router-build time, so turning 閲覧公開 off takes effect immediately
+/// (already-issued tokens keep working until they expire or the admin
+/// restarts the server - the flag gates ISSUANCE, and revoking live sessions
+/// is deliberately out of scope for v1).
+///
+/// Deliberately NOT audited (`docs/viewer-public-plan.md` §2.2): this is not
+/// a credential check, and a tablet re-issuing on every page reload would
+/// bury the audit log in `login` entries. What matters for the trail is what
+/// a public session then tries to DO - and that is unchanged: the existing
+/// `RoleGuard` records a `denied` entry (actor `public`) for any mutating
+/// request made with this token.
+async fn auth_public_viewer_handler(
+    State(state): State<UsersAuthState>,
+) -> Result<Json<PublicViewerResponse>, ApiError> {
+    if !state.settings.server_config().await?.viewer_public {
+        return Err(ApiError(BantoError::Forbidden));
+    }
+    let token = state.auth.issue_public_viewer_token();
+    Ok(Json(PublicViewerResponse {
+        success: true,
+        token,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,25 +244,35 @@ async fn auth_change_password_handler(
     Ok(Json(ChangePasswordResponse { success: true }))
 }
 
-/// `/api/auth/{status,setup,change-password}`: the three auth routes that
-/// need a `UsersService` (the credential store), on top of the token-only
+/// `/api/auth/{status,setup,public-viewer,change-password}`: the auth routes
+/// that need more than a token - a `UsersService` (the credential store)
+/// and/or the live `SettingsService` - on top of the token-only
 /// login/logout/check/identity routes [`crate::auth_routes`] already
 /// provides. Merged by the app's `api_router`.
+///
+/// `status_extras` (optional, [`AuthStatusExtras`]) lets an adopter add
+/// app-specific fields to `GET /api/auth/status`; the template passes
+/// `None`.
 pub fn extra_auth_router(
     users: UsersService,
     auth: AuthState,
     audit: AuditLogService,
     allow_setup: bool,
+    settings: SettingsService,
+    status_extras: Option<AuthStatusExtras>,
 ) -> Router {
     let state = UsersAuthState {
         users,
         auth,
         audit,
         allow_setup,
+        settings,
+        status_extras,
     };
     Router::new()
         .route("/api/auth/status", get(auth_status_handler))
         .route("/api/auth/setup", post(auth_setup_handler))
+        .route("/api/auth/public-viewer", post(auth_public_viewer_handler))
         .route(
             "/api/auth/change-password",
             post(auth_change_password_handler),
