@@ -269,7 +269,8 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 - `report/src/ReportView.svelte`: 自前エンジン `renderHtml` の出力のみ。
   `html.ts` は全 text/attribute を例外なくエスケープし、`javascript:` src も
   ブロック（「no 'trusted' string anywhere in this module」）。
-- `settings/+page.svelte`: `qrcode` クレート生成の SVG（LAN 接続 QR）。
+- `settings/ConnectivitySection.svelte`: `qrcode` クレート生成の SVG（LAN 接続 QR。
+  settings-split で `settings/+page.svelte` から移動、choiapp-feedback-2026-09 §3.1）。
 
 外部由来・未エスケープの文字列を `{@html}` に流さない。
 
