@@ -53,6 +53,7 @@ corresponding ADR exists, be traced from there.
 | [0009](0009-schema-ui-rest-renderer-boundary.en.md)  | Make UI declaration a schema-driven incremental extension and place additional renderers outside the boundary as REST clients | Accepted |
 | [0010](0010-discussions-predecision-layer.en.md)     | Make GitHub Discussions a pre-decision deliberation-only layer                                                                | Accepted |
 | [0011](0011-git-tag-distribution.en.md)              | Distribute via git tag references and defer npm/crates.io registry publishing                                                 | Accepted |
+| [0012](0012-lan-public-viewer-synthetic-session.en.md) | Implement LAN viewer-public as a viewer-only synthetic session, not an auth-bypassing public router                        | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 

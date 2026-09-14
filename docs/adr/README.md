@@ -52,6 +52,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0009](0009-schema-ui-rest-renderer-boundary.md)  | UI 宣言はスキーマ駆動の漸進拡張とし追加レンダラは REST クライアントとして境界の外に置く | Accepted |
 | [0010](0010-discussions-predecision-layer.md)     | GitHub Discussions は決定前検討専用レイヤとする                                         | Accepted |
 | [0011](0011-git-tag-distribution.md)              | 配布は git タグ参照とし npm/crates.io 公開は保留する                                    | Accepted |
+| [0012](0012-lan-public-viewer-synthetic-session.md) | LAN の閲覧公開は viewer 固定の合成セッション発行で実現し認証バイパスの公開ルータは作らない | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
