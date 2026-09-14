@@ -5,22 +5,26 @@
 	 * ラッパー（Tauri かつ管理可）から描画される（settings-split refactor:
 	 * markup/state/CSS の移動のみ、挙動は変えない）。
 	 *
-	 * このセクションが `authSettingsStore`（authSettingsStore.svelte.ts、
-	 * AccountSection.svelte / ConnectivitySection.svelte とも共有）の初期
-	 * ロード effect と、実際にモードを変更する唯一のコントロールを持つ。
-	 * `disabledDraft`/`disabledRoleDraft` は `authSettingsStore.value` が
-	 * 変わるたび（このセクション自身の保存でも、AccountSection の自動ログイン
+	 * このセクションは `authSettingsStore`（authSettingsStore.svelte.ts、
+	 * AccountSection.svelte / ConnectivitySection.svelte とも共有）を実際に
+	 * モードを変更する唯一のコントロールとして持つ。初期ロード effect は
+	 * settings-routes step 2（Copilot review on PR #198）で
+	 * `settings/+layout.svelte` へ移した（`/settings/account` 等への直接
+	 * 遷移でもこの値が要るため）- エラー表示は下の `authSettingsStore.error`
+	 * を直接読む。`disabledDraft`/`disabledRoleDraft` は `authSettingsStore.value`
+	 * が変わるたび（このセクション自身の保存でも、AccountSection の自動ログイン
 	 * 操作による再取得でも）下の `$effect` で再同期する - 元の単一
 	 * `applyAuthSettingsToDrafts()` が両方を同時に更新していたのと同じ結合を
 	 * 保つため。
 	 */
+	import { invalidateAll } from '$app/navigation';
 	import { ShieldAlert } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyAuthSettings, type AuthDisabledRole } from '$lib/banto/authAdmin';
 	import { toastStore } from '$lib/toast.svelte';
 	import { sessionStore } from '$lib/session.svelte';
-	import { errorMessage, tauri } from './shared';
+	import { errorMessage } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 
 	const authDisabledRoleOptions: { value: AuthDisabledRole; label: string }[] = [
@@ -32,18 +36,6 @@
 	let disabledDraft = $state(false);
 	let disabledRoleDraft = $state<AuthDisabledRole>('admin');
 	let applyingAuth = $state(false);
-	let authError: string | null = $state(null);
-
-	$effect(() => {
-		if (!tauri) return;
-		void (async () => {
-			try {
-				await authSettingsStore.load();
-			} catch (err) {
-				authError = errorMessage(err);
-			}
-		})();
-	});
 
 	// Keep the disable-mode drafts in sync with the shared AuthSettings value
 	// whenever it changes (see module doc comment above).
@@ -65,6 +57,24 @@
 			authSettingsStore.value = await applyAuthSettings(disabledDraft, disabledRoleDraft);
 			sessionStore.authDisabled = authSettingsStore.value?.disabled ?? false;
 			toastStore.push('success', m['settings.authSettingsUpdated']());
+
+			// Copilot review on PR #198: `settings/+layout.ts`'s visible-category
+			// snapshot (`categories`) is computed once from `sessionStore.authDisabled`
+			// at load time and does NOT rerun on its own when that flips here - left
+			// stale, a non-admin whose auth was just re-enabled would keep seeing the
+			// セキュリティ category in the nav (or the opposite: re-disabling it
+			// wouldn't restore it) until some unrelated navigation happened to
+			// reload the layout. `invalidateAll()` reruns every load() in the
+			// hierarchy - `(app)/+layout.ts` (session reload) -> `settings/+layout.ts`
+			// (categories, from the freshly-reloaded `sessionStore.authDisabled`) ->
+			// this route's own `+page.ts` (`guardCategory`, redirecting away if
+			// セキュリティ is no longer visible) - the same chain a fresh navigation
+			// to this URL would trigger. This is additive to, not a replacement for,
+			// the M11 escape-hatch flow: `sessionStore.authDisabled` above already
+			// flips synchronously so "disable auth, then the rest of the app (e.g.
+			// the dashboard) works without a restart" keeps working even before
+			// `invalidateAll()`'s own loads resolve.
+			await invalidateAll();
 		} catch (err) {
 			// 排他違反（LANアクセス有効中の有効化など）はサーバ側の日本語メッセージ
 			// (kind: 'other') をそのままトーストに出す（spec M11）。
@@ -111,8 +121,8 @@
 				{m['settings.saveAndApply']()}
 			</button>
 
-			{#if authError}
-				<p class="error">{authError}</p>
+			{#if authSettingsStore.error}
+				<p class="error">{authSettingsStore.error}</p>
 			{/if}
 
 			{#if authSettingsStore.value}

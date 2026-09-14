@@ -31,6 +31,15 @@
   `AppearanceSection.svelte` に追従（4 プリセット `--dry-run --strict` 通過）。
   ページ分割（カテゴリごとのルート化）の前段
   （[docs/choiapp-feedback-2026-09.md §3.1](docs/choiapp-feedback-2026-09.md)）。
+- feat(settings): 設定画面の5カテゴリ（外観・言語/アカウント/サーバ・接続/
+  データ管理/セキュリティ）を実ルート（`/settings/{appearance,account,
+connectivity,data,security}`）に分割。`/settings` は先頭の可視カテゴリへ
+  307 redirect、非可視カテゴリへの直接遷移も同様に先頭へ redirect（挙動:
+  URL 構造が変わる - ブックマーク/ディープリンクは新しいパスを使うこと）。
+  カテゴリナビは ≥1024px で左レール（sticky）・それ未満で横タブ。
+  section コンポーネント/`settings.css`/ストアは移動なし。e2e smoke
+  シナリオ 11 と visual/a11y の settings 系エントリを更新
+  （[docs/choiapp-feedback-2026-09.md §3.2](docs/choiapp-feedback-2026-09.md)）。
 
 ## [1.5.0] - 2026-09-14
 

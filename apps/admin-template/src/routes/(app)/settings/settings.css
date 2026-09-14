@@ -1,16 +1,22 @@
 /*
- * settings/ ページの共有スタイル（choiapp-feedback-2026-09 §3 のカテゴリ分け +
- * settings-split refactor）。プレーン CSS として `+page.svelte` から
- * `import './settings.css';` する - Svelte の per-component scoping は
- * コンポーネントを跨いでは効かない（5つの section コンポーネントに分割した
- * カード markup が、このファイルを import する +page.svelte 自身の
+ * settings/ 配下の共有スタイル（choiapp-feedback-2026-09 §3 のカテゴリ分け +
+ * settings-split refactor、§3.2 のルート化で更新）。プレーン CSS として
+ * `+layout.svelte` から `import './settings.css';` する - Svelte の
+ * per-component scoping はコンポーネントを跨いでは効かない（5つの section
+ * コンポーネント + 5つのカテゴリルートの `+page.svelte` に分かれた
+ * カード markup が、このファイルを import する +layout.svelte 自身の
  * <style> スコープには入らない）ため、代わりに全セレクタを
- * `.settings-page`（+page.svelte のルート div が持つ、このページ専用の
- * クラス）祖先で名前空間化する。`.note`/`.status`/`.error`/`.field`/
- * 裸の `form`/`h4` のような汎用的なセレクタが他ルートへ漏れるのを防ぐため
- * （他ルートも同じ汎用クラス名を独立して使っている - 生の Svelte scoped
- * <style> のままなら起きなかった衝突）。トークンのみ・生値は理由コメント
- * 付きの意図的例外のみ（conventions §9）。
+ * `.settings-page`（+layout.svelte のルート div が持つ、settings/ 配下の
+ * どのページでも変わらないクラス）祖先で名前空間化する。`.note`/`.status`/
+ * `.error`/`.field`/裸の `form`/`h4` のような汎用的なセレクタが他ルートへ
+ * 漏れるのを防ぐため（他ルートも同じ汎用クラス名を独立して使っている -
+ * 生の Svelte scoped <style> のままなら起きなかった衝突）。トークンのみ・
+ * 生値は理由コメント付きの意図的例外のみ（conventions §9）。
+ *
+ * カテゴリナビ自体（レール/タブ + active 状態）は §3.2 でルート専用の
+ * `+layout.svelte` に一本化されたため、その CSS はここではなく
+ * +layout.svelte の scoped `<style>` にある（旧 `.settings-page
+ * .section-nav` ルールはそちらへ移設済み）。
  */
 
 .settings-page {
@@ -19,43 +25,10 @@
 	gap: 1rem;
 }
 
-/* In-page category jump nav (choiapp-feedback-2026-09 §3). Anchor links,
-   not tabs: every card stays rendered/scannable on one page. */
-.settings-page .section-nav {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.4rem;
-}
-
-.settings-page .section-nav a {
-	padding: 0.3rem 0.7rem;
-	border: 1px solid var(--banto-border);
-	border-radius: 999px;
-	color: var(--banto-text-muted);
-	font-size: 0.8rem;
-	font-weight: 600;
-	text-decoration: none;
-	transition:
-		background var(--banto-duration-fast) var(--banto-ease-out),
-		color var(--banto-duration-fast) var(--banto-ease-out);
-}
-
-.settings-page .section-nav a:hover {
-	background: var(--banto-surface-hover);
-	color: var(--banto-text);
-}
-
-.settings-page .section-nav a:focus-visible {
-	outline: none;
-	box-shadow: var(--banto-focus-ring);
-}
-
 .settings-page .settings-section {
 	display: flex;
 	flex-direction: column;
 	gap: 0.75rem;
-	/* Anchor jumps land below the sticky app header (Header.svelte). */
-	scroll-margin-top: calc(var(--banto-shell-header-height) + 0.75rem);
 }
 
 .settings-page .section-heading {

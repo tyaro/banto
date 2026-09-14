@@ -385,13 +385,38 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('11. backups: create a backup and see it in the list', async () => {
-		await page.goto('/settings');
+		// settings-routes step 2 (choiapp-feedback-2026-09 §3.2): backups live
+		// on the データ管理 category's own route now, not on `/settings`
+		// (which redirects to 外観・言語).
+		await page.goto('/settings/data');
 
 		const backupRows = page.locator('.backup-list li');
 		await expect(backupRows).toHaveCount(0);
 
 		await page.getByRole('button', { name: '今すぐバックアップ' }).click();
 		await expect(backupRows).toHaveCount(1);
+	});
+
+	// Copilot review on PR #198 (settings-routes step 2): authSettingsStore/
+	// systemInfoStore used to be loaded by whichever section's own mount
+	// effect happened to own the fetch (SecuritySection/ConnectivitySection),
+	// which silently no-oped on a direct visit to any OTHER category's route
+	// since that section never mounts there. The fix moved both initial
+	// loads to the persistent `settings/+layout.svelte`. Assert that
+	// directly - not via scenario 11's `/settings/data` visit above, which
+	// would still pass even if the layout-level load were broken as long as
+	// ConnectivitySection had happened to run first in the same session -
+	// by going straight to `/settings/connectivity` and confirming the
+	// System Info card (systemInfoStore) is populated, plus that the nav
+	// marks the current category via `aria-current` (base-aware `isActive`).
+	test('11a. settings: a direct visit to /settings/connectivity loads System Info via the layout', async () => {
+		await page.goto('/settings/connectivity');
+
+		await expect(page.getByRole('link', { name: 'サーバ・接続' })).toHaveAttribute(
+			'aria-current',
+			'page'
+		);
+		await expect(page.getByText('sqlite', { exact: false })).toBeVisible();
 	});
 
 	// M19 report demo (docs/report-plan.md §3.6, docs/template-scope.md §3):
