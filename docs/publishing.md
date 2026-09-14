@@ -22,7 +22,7 @@ CI は checkout 用 PAT）:
 
 ```sh
 # ブランチ/タグ + モノレポ内サブディレクトリを指定（機構は 2026-07-12 に動作検証済み）
-pnpm add "github:tyaro/banto#v1.5.0&path:packages/admin-core"
+pnpm add "github:tyaro/banto#v1.6.0&path:packages/admin-core"
 pnpm add "github:tyaro/banto#main&path:packages/theme"
 ```
 
@@ -109,7 +109,7 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 ## バージョニング規約
 
-- 現行バージョンは **v1.5.0**（全 `@banto/*` パッケージ・`banto-*` クレート・
+- 現行バージョンは **v1.6.0**（全 `@banto/*` パッケージ・`banto-*` クレート・
   `tauri.conf.json`・git タグで統一）。バージョンとタグの整合は
   `pnpm check:versions`（CR-7、`scripts/check-versions.mjs`）が機械検査する
 - 相互依存は無い（`admin-template` からの依存のみ、パッケージ間の依存関係は
@@ -118,7 +118,7 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
   （SemVer の 1.0 未満の慣例）
 - **1.0.0 以降（現行）**: 標準の SemVer。`major` = 破壊的変更、
   `minor` = 後方互換の機能追加、`patch` = 後方互換の修正。
-  **1.x 系の運用上の例外**（v1.4.0 / v1.5.0 で適用）: 公開 API の削除・改名を
+  **1.x 系の運用上の例外**（v1.4.0 / v1.6.0 で適用）: 公開 API の削除・改名を
   伴わない「フィールド追加・引数追加」によるソース互換の破壊は、消費側の追従
   作業を CHANGELOG のリード文（「消費側への注意」）に明記した上で `minor` と
   してよい（オーナー判断）。`major` は API の削除・改名・意味変更に使う。v1.0.0 は v1
@@ -134,9 +134,9 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 ```toml
 [dependencies]
-banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.5.0" }
-banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.5.0", features = ["sqlite"] }
-banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.5.0" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.6.0" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.6.0", features = ["sqlite"] }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.6.0" }
 ```
 
 private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
@@ -145,7 +145,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 ### タグ運用規約
 
 - タグ形式は `vX.Y.Z`（`workspace.package.version`、ルート `Cargo.toml`
-  と揃える。現行 `v1.5.0`）。タグとマニフェストの整合は
+  と揃える。現行 `v1.6.0`）。タグとマニフェストの整合は
   `pnpm check:versions --tag` が機械検査する（CR-7）
 - **タグはリリース単位で打つ**（CHANGELOG の `[Unreleased]` を版節に
   切り出すとき。v1.1.0 以降の実運用）。**マイルストーンマージ毎には打たない**。
@@ -158,7 +158,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   対象になる
 - 破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約（上記
   「バージョニング規約」）を踏襲する
-- タグは軽量タグ（`git tag v1.5.0`）で可。変更履歴は
+- タグは軽量タグ（`git tag v1.6.0`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）
 
