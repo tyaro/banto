@@ -48,8 +48,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const HTML_ALLOWLIST = new Set([
 	// 自前エンジン renderHtml の出力のみ（html.ts が全 text/attribute をエスケープ）
 	'packages/report/src/ReportView.svelte',
-	// qrcode クレート生成の SVG（LAN 接続 QR）
-	'apps/admin-template/src/routes/(app)/settings/+page.svelte'
+	// qrcode クレート生成の SVG（LAN 接続 QR）。settings-split refactor で
+	// +page.svelte から ConnectivitySection.svelte へ移動（choiapp-feedback-2026-09 §3）。
+	'apps/admin-template/src/routes/(app)/settings/ConnectivitySection.svelte'
 ]);
 
 /** conventions §9: 生の色値を許可するファイルと、その根拠。 */
