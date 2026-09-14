@@ -22,6 +22,30 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-14
+
+**v1.5.0 — 「表示専用アプリを配れる」リリース。** v1.4.0（2026-08-29）以降に
+main へ積まれた PR #182〜#184・#191〜#195 と dependabot 更新をまとめる。
+後方互換の機能追加のみ（既定挙動は不変。ワイヤは `GET /api/auth/status` の
+`viewerPublic`、`SystemInfo.metrics`、`ServerSettings.viewerPublic` の項目追加）
+のため **minor**。主な内容:
+
+- **閲覧公開モード**（#189、ADR-0012）: LAN 端末がログイン無しで `viewer` 固定の
+  合成セッションを得て閲覧できる。書き込みは常にログイン必須。
+- **CPU/メモリ使用率の共通 API**（#185、ADR-0013）: `sysinfo` を feature
+  `system-metrics` 限定で採用。下流アプリは自前の `sysinfo` 実装を
+  `SystemMetricsSampler` に寄せ替えられる。
+- **`pnpm scaffold --preset display`**（#190）: items 雛形・管理画面・
+  ダッシュボードを外し、ログイン不要 + 閲覧公開 + キオスク表示を初期状態にする
+  表示専用アプリ向けプリセット。本体側にはキオスク表示トグル・初回起動 seed 機構・
+  `banto.i18n` opt-out が既定 OFF で入る。
+- チョイアプリ・フィードバック対応（#182〜#184）: 固定シェル・設定カテゴリ・
+  ナビバッジ・「ログインなしで使い始める」。
+
+消費側への注意: `sysinfo` は Windows で `windows` 0.62 系を引く（`src-tauri` の
+0.61 系と並存）。不要なら `system-metrics` feature を `default` から外す
+（README「オプション資産の削除」）。
+
 - feat(scaffold): `pnpm scaffold --preset display`（#190、PR-D2、
   [docs/display-preset-plan.md](docs/display-preset-plan.md) §3.2）— カンバン/常設
   ダッシュボード/展示デモ向けの**表示専用アプリ**を1コマンドで作れるようにした。
@@ -810,7 +834,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.4.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/tyaro/banto/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/tyaro/banto/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tyaro/banto/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/tyaro/banto/compare/v1.1.0...v1.2.0
