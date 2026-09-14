@@ -8,8 +8,9 @@
 //!
 //! | Method | Path               | Body           | Response              |
 //! |--------|--------------------|----------------|------------------------|
-//! | GET    | `/api/auth/status`   | -              | `{initialized}` (NO auth required) |
+//! | GET    | `/api/auth/status`   | -              | `{initialized,viewerPublic}` (NO auth required) |
 //! | POST   | `/api/auth/setup`     | `{username,password,displayName}` | `{success,error?,token?}` (needs `allow_setup`) |
+//! | POST   | `/api/auth/public-viewer` | -         | `{success,token}` (NO auth required; 403 unless `server.viewer_public`, Issue #189) |
 //! | POST   | `/api/auth/login`    | `{username,password}` | `{success,error?,token?}` |
 //! | POST   | `/api/auth/logout`   | -              | 200                    |
 //! | GET    | `/api/auth/check`    | -              | `bool`                 |
@@ -77,13 +78,26 @@
 //! wire - `username` always comes from the caller's own bearer token, never
 //! a request parameter).
 //!
-//! `/api/auth/status` and `/api/auth/setup` are deliberately NOT behind
-//! `require_auth` - the login page needs `status` before any session exists,
-//! and `setup` is how the very first session gets created. `setup` is
-//! additionally gated by an `allow_setup` flag (spec §8.2): the Tauri app
-//! always passes `false` (desktop first-run goes through the `auth_setup`
-//! Tauri command instead, spec §10), while `banto-serve` enables it via
-//! `BANTO_ALLOW_SETUP=1` so this REST path is exercisable standalone.
+//! `/api/auth/status`, `/api/auth/setup` and `/api/auth/public-viewer` are
+//! deliberately NOT behind `require_auth` - the login page needs `status`
+//! before any session exists, `setup` is how the very first session gets
+//! created, and `public-viewer` is how a LAN viewing session obtains its
+//! first token. Each of the latter two carries its own gate instead of a
+//! bearer token: `setup` is gated by an `allow_setup` flag (spec §8.2) - the
+//! Tauri app always passes `false` (desktop first-run goes through the
+//! `auth_setup` Tauri command instead, spec §10), while `banto-serve`
+//! enables it via `BANTO_ALLOW_SETUP=1` so this REST path is exercisable
+//! standalone - and `public-viewer` is gated by the `server.viewer_public`
+//! setting, returning `403 { "kind": "forbidden" }` unless 閲覧公開 is
+//! explicitly on (Issue #189, ADR-0012, `docs/viewer-public-plan.md` §2.2;
+//! `banto-serve` seeds the setting via `BANTO_VIEWER_PUBLIC=1`). The token
+//! `public-viewer` returns is an ordinary bearer token for the fixed
+//! synthetic identity `{ id: "public", role: "viewer" }`, so everything
+//! after that point - `require_auth`, [`require_role_at_least`], the audit
+//! trail - treats a public viewing session exactly like any other `viewer`
+//! session, and a mutating request made with it is rejected `403` and
+//! recorded as `denied` with actor `public`. Issuance itself is not audited
+//! (see `banto_server::routes::extra_auth_router`).
 //!
 //! `POST /api/items/list` (rather than `GET` with query-string encoded
 //! `ListParams`) is chosen deliberately: `ListParams` (sort/filters/
@@ -287,11 +301,19 @@ pub fn api_router(
 
     Router::new()
         .merge(audited_auth_routes)
+        // `settings` is threaded in for `server.viewer_public` (Issue #189):
+        // `GET /api/auth/status` reports it and `POST /api/auth/public-viewer`
+        // gates on it, both re-read live so the settings screen's toggle takes
+        // effect without a restart. `None` extras - the template itself adds no
+        // app-specific `status` fields (`banto_server::AuthStatusExtras` is the
+        // hook an adopter fills in here).
         .merge(extra_auth_router(
             users.clone(),
             auth.clone(),
             audit.clone(),
             allow_setup,
+            settings.clone(),
+            None,
         ))
         .merge(sse_route(auth.clone(), events.clone()))
         .merge(items_router(

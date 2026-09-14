@@ -29,7 +29,19 @@
 //! must be built `--features postgres` for that to link), `BANTO_ALLOW_SETUP` (`1` to
 //! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
 //! §8.2 - the Tauri app never sets this, since desktop first-run goes
-//! through the `auth_setup` command instead).
+//! through the `auth_setup` command instead), `BANTO_VIEWER_PUBLIC` (`1` to
+//! seed `server.viewer_public = true` at startup so LAN clients may mint a
+//! synthetic `viewer` session through `POST /api/auth/public-viewer` without
+//! logging in - Issue #189, `docs/viewer-public-plan.md` §3.1-5, ADR-0012).
+//!
+//! `BANTO_VIEWER_PUBLIC` is a dev/e2e entry point in the same spirit as
+//! `BANTO_ALLOW_SETUP`: it WRITES the persisted setting (rather than
+//! overriding it per-process) because the flag is read live from
+//! `SettingsService` by `/api/auth/status` and `/api/auth/public-viewer`, so
+//! there is nowhere else for a process-local override to live. Unsetting the
+//! variable therefore does NOT turn 閲覧公開 back off - use the settings
+//! screen, or a fresh DB. It only ever sets the one flag; `server.enabled`
+//! and the bind/port keys are left exactly as they were.
 
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
@@ -38,7 +50,7 @@ use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
-use admin_template_core::settings::SettingsService;
+use admin_template_core::settings::{ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
@@ -60,6 +72,9 @@ async fn main() {
     let bind = std::env::var("BANTO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
     let db_path = std::env::var("BANTO_DB").unwrap_or_else(|_| DEFAULT_DB_PATH.to_string());
     let allow_setup = std::env::var("BANTO_ALLOW_SETUP")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+    let seed_viewer_public = std::env::var("BANTO_VIEWER_PUBLIC")
         .map(|value| value == "1")
         .unwrap_or(false);
 
@@ -164,6 +179,28 @@ async fn main() {
         Err(err) => eprintln!("banto-serve: 監査ログの保持設定の読み取りに失敗しました: {err}"),
     }
 
+    // Issue #189: seed 閲覧公開 when asked. Read-modify-write rather than
+    // constructing a fresh `ServerSettings` so `enabled`/`bind`/`port`
+    // (whatever a previous run or the settings screen persisted) survive - the
+    // LAN listener this binary starts comes from `BANTO_BIND`/`PORT`, not from
+    // these keys, so flipping `enabled` here would silently change what the
+    // Tauri app does with the same DB. Best-effort, like the prune above: a
+    // failure must not stop the server from starting.
+    if seed_viewer_public {
+        match settings.server_config().await {
+            Ok(config) => {
+                let seeded = ServerSettings {
+                    viewer_public: true,
+                    ..config
+                };
+                if let Err(err) = settings.set_server_config(&seeded).await {
+                    eprintln!("banto-serve: 閲覧公開設定の保存に失敗しました: {err}");
+                }
+            }
+            Err(err) => eprintln!("banto-serve: サーバー設定の読み取りに失敗しました: {err}"),
+        }
+    }
+
     // `with_security_headers` (spec improvements §2.4) wraps LAST/outermost
     // so every response - static UI, `/api/*` JSON, and SSE alike - gets
     // the baseline security headers, regardless of which inner router
@@ -196,6 +233,9 @@ async fn main() {
         println!(
             "banto-serve: first-run setup is DISABLED - set BANTO_ALLOW_SETUP=1 to allow POST /api/auth/setup"
         );
+    }
+    if seed_viewer_public {
+        println!("banto-serve: public viewing is ENABLED (BANTO_VIEWER_PUBLIC=1) - POST /api/auth/public-viewer will hand out anonymous viewer sessions");
     }
     println!("banto-serve: press Ctrl-C to stop");
 

@@ -43,6 +43,13 @@
 	let showSkipLogin = $state(false);
 	let skippingLogin = $state(false);
 
+	// "閲覧のみで続ける" (viewer-public-plan §3.1-6, ADR-0012): LAN browser
+	// only (`server` mode, same gate as `showRemember`) - a Tauri window has
+	// no LAN-facing viewer-public surface (M11 already covers "no login in
+	// this window") and the plain-browser demo has no backend to mint a
+	// token from. Set once `status()` resolves below.
+	let showContinueAsViewer = $state(false);
+
 	$effect(() => {
 		void (async () => {
 			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
@@ -55,8 +62,16 @@
 			// behave as if an account already exists, i.e. the normal login
 			// form.
 			mode = status && !status.initialized ? 'setup' : 'login';
+			showContinueAsViewer = getBantoMode() === 'server' && status?.viewerPublic === true;
 		})();
 	});
+
+	// The (app) route guard mints the synthetic viewer session itself
+	// (`+layout.ts`'s `enterPublicViewer()` call) - this just needs to land
+	// on a gated route so that guard runs.
+	function continueAsViewer(): void {
+		goto(`${base}/dashboard`);
+	}
 
 	async function submitLogin(event: SubmitEvent) {
 		event.preventDefault();
@@ -253,6 +268,16 @@
 					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
 						{m['auth.login']()}
 					</button>
+
+					{#if showContinueAsViewer}
+						<button
+							type="button"
+							class="banto-btn banto-btn--ghost continue-as-viewer"
+							onclick={continueAsViewer}
+						>
+							{m['auth.continueAsViewer']()}
+						</button>
+					{/if}
 				</form>
 
 				{#if showDemoNote}
@@ -370,6 +395,10 @@
 	.banto-btn--primary {
 		justify-content: center;
 		height: var(--banto-control-height-lg);
+	}
+
+	.continue-as-viewer {
+		justify-content: center;
 	}
 
 	/* Glass preset accent (spec M12): the submit button gets the accent

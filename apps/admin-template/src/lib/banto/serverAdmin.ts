@@ -20,6 +20,13 @@ export interface ServerStatus {
 	running: boolean;
 	bind: string;
 	port: number;
+	/**
+	 * 閲覧公開 (Issue #189): whether LAN clients may obtain a synthetic
+	 * `viewer` session without logging in (`POST /api/auth/public-viewer`).
+	 * Persisted with the other server settings; it has no effect inside this
+	 * window, only on the LAN surface.
+	 */
+	viewerPublic: boolean;
 	urls: string[];
 	qrSvgs: QrSvg[];
 }
@@ -33,7 +40,8 @@ export function getServerStatus(): Promise<ServerStatus> {
 export function applyServerSettings(
 	enabled: boolean,
 	bind: string,
-	port: number
+	port: number,
+	viewerPublic: boolean
 ): Promise<ServerStatus> {
-	return invoke('server_apply', { enabled, bind, port });
+	return invoke('server_apply', { enabled, bind, port, viewerPublic });
 }

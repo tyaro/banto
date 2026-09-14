@@ -27,6 +27,7 @@
     "check:versions": "node scripts/check-versions.mjs",
     "e2e": "playwright test --config=e2e/playwright.config.ts --project=chromium",
     "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",
+    "e2e:public-viewer": "playwright test --config=e2e/playwright.config.ts --project=public-viewer",
     "bench": "pnpm --recursive --if-present bench",
     "test:rename": "node --test scripts/rename.test.mjs"
   },

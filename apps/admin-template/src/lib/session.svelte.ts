@@ -16,7 +16,7 @@
  * such race - SvelteKit does not mount a route's components until its own
  * load() (and thus this store's `load()` call inside it) has resolved.
  */
-import { getAuthProvider, type Identity } from '@banto/admin-core';
+import { getAuthProvider, PUBLIC_VIEWER_ID, type Identity } from '@banto/admin-core';
 import { parseRole, type Role } from './permissions';
 import { isTauri } from './banto/setup';
 import { getAuthSettings } from './banto/authAdmin';
@@ -36,10 +36,23 @@ class SessionStore {
 	 */
 	authDisabled = $state(false);
 
+	/**
+	 * Is this the synthetic LAN "viewer-public" session (viewer-public-plan
+	 * §2.2/§3.1-6, ADR-0012)? Derived from `identity.id === PUBLIC_VIEWER_ID`
+	 * rather than a server-provided flag - the identity IS the source of
+	 * truth, same as `role` above being derived via `parseRole`. This is a
+	 * session-layer concern (conventions §10: `publicViewer` lives here, not
+	 * in the provider layer), consumed by the nav allowlist (`navigation.ts`),
+	 * `Header.svelte`'s login button, and `(app)/settings/+page.svelte`'s
+	 * account-UI guard.
+	 */
+	publicViewer = $state(false);
+
 	/** Fetch the current identity and derive `role` from it (fail closed - see `parseRole`), then `authDisabled` (Tauri only). */
 	async load(): Promise<void> {
 		this.identity = await getAuthProvider().getIdentity();
 		this.role = parseRole(this.identity);
+		this.publicViewer = this.identity?.id === PUBLIC_VIEWER_ID;
 
 		if (!isTauri()) {
 			this.authDisabled = false;

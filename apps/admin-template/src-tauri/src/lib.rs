@@ -155,6 +155,17 @@ struct Identity {
 #[serde(rename_all = "camelCase")]
 struct AuthStatusResult {
     initialized: bool,
+    /// Always `false` in the Tauri window (Issue #189,
+    /// `docs/viewer-public-plan.md` §3.1-4, ADR-0012). 閲覧公開 is a property
+    /// of the LAN surface: it lets a BROWSER on the network obtain a
+    /// synthetic `viewer` session over REST. Inside the desktop webview there
+    /// is no such thing to enter - a login-free desktop is M11's
+    /// auth-disabled mode (`auth_config_get`), whose synthetic session is
+    /// already established before the frontend asks for `status`. Reported as
+    /// a constant rather than omitted so the field's shape matches
+    /// `GET /api/auth/status` and the frontend's `status()` never has to
+    /// branch on which host it is running under.
+    viewer_public: bool,
 }
 
 fn identity_from(user: &UserIdentity) -> Identity {
@@ -423,6 +434,8 @@ async fn items_import(
 async fn auth_status(state: State<'_, AppState>) -> Result<AuthStatusResult, BantoError> {
     Ok(AuthStatusResult {
         initialized: state.users.is_initialized().await?,
+        // See `AuthStatusResult::viewer_public`: never true in this window.
+        viewer_public: false,
     })
 }
 
@@ -833,6 +846,11 @@ struct ServerStatusResult {
     running: bool,
     bind: String,
     port: u16,
+    /// 閲覧公開 (Issue #189): whether LAN clients may obtain a synthetic
+    /// `viewer` session without logging in. Persisted alongside the other
+    /// server settings and therefore reported (and applied) here, even though
+    /// it only ever has an effect on the LAN surface, not in this window.
+    viewer_public: bool,
     urls: Vec<String>,
     qr_svgs: Vec<QrSvgEntry>,
 }
@@ -862,6 +880,7 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
         running,
         bind: config.bind.clone(),
         port: config.port,
+        viewer_public: config.viewer_public,
         urls,
         qr_svgs,
     }
@@ -958,18 +977,30 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// no-op restart when the caller "changes" settings to the same values -
 /// an acceptable trade for a settings-screen action a user triggers
 /// explicitly and infrequently.
+///
+/// `viewer_public` (Issue #189, `docs/viewer-public-plan.md` §3.1-4) is
+/// persisted like the other three fields and otherwise ignored here: whether
+/// LAN clients may mint a synthetic `viewer` session is decided per request
+/// by `POST /api/auth/public-viewer`, which re-reads the setting, so a
+/// restart is not needed for it to take effect and this command does not have
+/// to treat it as part of the listener's configuration. The
+/// auth-disabled/LAN exclusivity it relaxes is validated in the service layer
+/// (`SettingsService::set_server_config`, conventions §2), so an illegal
+/// combination fails the `?` below before anything is stopped or started.
 #[tauri::command]
 async fn server_apply(
     state: State<'_, AppState>,
     enabled: bool,
     bind: String,
     port: u16,
+    viewer_public: bool,
 ) -> Result<ServerStatusResult, BantoError> {
     let actor = require_role(&state, Role::Admin, "settings").await?;
     let config = ServerSettings {
         enabled,
         bind,
         port,
+        viewer_public,
     };
     state.settings.set_server_config(&config).await?;
 
@@ -1012,6 +1043,7 @@ async fn server_apply(
             "serverEnabled": config.enabled,
             "bind": config.bind,
             "port": config.port,
+            "viewerPublic": config.viewer_public,
         })),
     )
     .await;

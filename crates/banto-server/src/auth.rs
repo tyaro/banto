@@ -32,8 +32,28 @@
 //! opportunistically (a cheap sweep on each write); there is deliberately no
 //! background reaper task, to keep this a plain library type with no owned
 //! runtime.
+//!
+//! ## Synthetic viewer sessions (LAN 閲覧公開, Issue #189)
+//!
+//! [`AuthState::issue_public_viewer_token`] mints a bearer token bound to the
+//! fixed identity `{ id: "public", name: "public", role: "viewer" }`
+//! ([`PUBLIC_VIEWER_ID`]) with no credentials at all - it is what
+//! `POST /api/auth/public-viewer` hands a LAN client when
+//! `server.viewer_public` is ON (ADR-0012, conventions §6). Three properties
+//! matter and are asserted by this module's tests:
+//!
+//! - It takes NO identity/role argument, so there is no escalation path: a
+//!   public viewer token can only ever be `viewer`.
+//! - Issuance is uncredentialed and therefore free to repeat, so the public
+//!   tokens are additionally held in a bounded FIFO capped at
+//!   [`MAX_PUBLIC_VIEWER_SESSIONS`] - minting past the cap evicts the OLDEST
+//!   public token (issuance itself never fails, so a tablet reloading its
+//!   page never gets stuck). Only public tokens are evicted this way; real
+//!   login sessions are untouched.
+//! - `logout` of a public token revokes only that token, exactly like any
+//!   other session, so one wall display signing out never blanks the others.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -72,6 +92,25 @@ pub struct Identity {
     pub name: String,
     pub role: String,
 }
+
+/// `Identity.id` (and `name`) of every synthetic LAN 閲覧公開 viewer session
+/// (Issue #189, ADR-0012, conventions §6). Real accounts cannot collide with
+/// it: `Identity.id` is the account's `username`, and a username is only ever
+/// created through `UsersService`, where "public" would have to be typed
+/// deliberately - the frontend instead distinguishes a public viewing session
+/// by comparing against this exact constant (`PUBLIC_VIEWER_ID` is re-exported
+/// from `packages/admin-core`).
+pub const PUBLIC_VIEWER_ID: &str = "public";
+
+/// Upper bound on simultaneously-live synthetic viewer sessions
+/// (`docs/viewer-public-plan.md` §2.2). Minting one needs no credentials, so
+/// without a cap a LAN client could grow the token map without bound; a cap
+/// (rather than a rate limit) is the right shape because issuance is cheap and
+/// legitimate - a wall display reloading its page must never be refused, so
+/// reaching the cap evicts the OLDEST public token instead of failing.
+/// 256 is far above any plausible number of kiosk screens on one LAN while
+/// keeping the map's memory trivially bounded.
+pub const MAX_PUBLIC_VIEWER_SESSIONS: usize = 256;
 
 /// Verifies a `username`/`password` pair against whatever credential store
 /// the app crate wires in (spec §8.2), asynchronously (a real store is a
@@ -284,6 +323,16 @@ impl Clock {
 
 struct Inner {
     tokens: RwLock<HashMap<String, TokenRecord>>,
+    /// Issue order of the synthetic 閲覧公開 viewer tokens currently held in
+    /// `tokens` (Issue #189). Kept as a separate FIFO rather than scanning
+    /// `tokens` for `identity.id == PUBLIC_VIEWER_ID` because the cap needs
+    /// the *oldest* one and `HashMap` has no order. Entries may name a token
+    /// that has since been logged out or expired out of `tokens`; eviction
+    /// simply removes whatever it finds (a `HashMap::remove` of an absent key
+    /// is a no-op). The queue itself is capped at
+    /// [`MAX_PUBLIC_VIEWER_SESSIONS`] entries, so live public sessions are
+    /// bounded by the cap whether or not stale entries are present.
+    public_tokens: RwLock<VecDeque<String>>,
     failures: RwLock<HashMap<String, FailureRecord>>,
     verify_credentials: CredentialVerifier,
     token_policy: TokenPolicy,
@@ -374,6 +423,7 @@ impl AuthState {
         Self {
             inner: Arc::new(Inner {
                 tokens: RwLock::new(HashMap::new()),
+                public_tokens: RwLock::new(VecDeque::new()),
                 failures: RwLock::new(HashMap::new()),
                 verify_credentials,
                 token_policy,
@@ -472,6 +522,67 @@ impl AuthState {
     /// life.
     pub fn issue_token_remembered(&self, identity: Identity) -> String {
         self.issue_token_with(identity, true)
+    }
+
+    /// Mint a synthetic LAN 閲覧公開 viewer session (Issue #189, ADR-0012,
+    /// conventions §6): a regular (non-remembered) bearer token bound to the
+    /// FIXED identity `{ id: PUBLIC_VIEWER_ID, name: PUBLIC_VIEWER_ID,
+    /// role: "viewer" }`.
+    ///
+    /// It deliberately takes NO [`Identity`]/role argument. That is the whole
+    /// security property: the caller (`POST /api/auth/public-viewer`, which
+    /// requires no credentials at all) has no way to ask for anything but
+    /// `viewer`, so there is no escalation path to review. Everything
+    /// downstream is unchanged - the token goes through the same
+    /// [`require_auth`] + `RoleGuard` + audit path as a logged-in session, so
+    /// a mutating request made with it is rejected `403` and recorded as a
+    /// `denied` entry with actor `public`.
+    ///
+    /// Not "remembered" (spec M11): a public viewing session expires on the
+    /// regular [`TokenPolicy`] and the frontend's route gate transparently
+    /// mints a fresh one, so there is no reason to hand an anonymous LAN
+    /// client a 30-day token.
+    ///
+    /// Issuance never fails: once [`MAX_PUBLIC_VIEWER_SESSIONS`] public
+    /// tokens are outstanding, the OLDEST is revoked to make room (see
+    /// `Inner::public_tokens`). Only public tokens are eligible for that
+    /// eviction - real login sessions are never touched by it.
+    pub fn issue_public_viewer_token(&self) -> String {
+        let token = self.issue_token_with(
+            Identity {
+                id: PUBLIC_VIEWER_ID.to_string(),
+                name: PUBLIC_VIEWER_ID.to_string(),
+                role: "viewer".to_string(),
+            },
+            false,
+        );
+
+        // Locks are taken one at a time (never nested) and `issue_token_with`
+        // has already released the token map's write lock by now, so this
+        // cannot deadlock against it.
+        let evicted = {
+            let mut public_tokens = self
+                .inner
+                .public_tokens
+                .write()
+                .expect("public viewer token lock poisoned");
+            public_tokens.push_back(token.clone());
+            let mut evicted = Vec::new();
+            while public_tokens.len() > MAX_PUBLIC_VIEWER_SESSIONS {
+                if let Some(oldest) = public_tokens.pop_front() {
+                    evicted.push(oldest);
+                }
+            }
+            evicted
+        };
+        if !evicted.is_empty() {
+            let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
+            for oldest in evicted {
+                tokens.remove(&oldest);
+            }
+        }
+
+        token
     }
 
     /// Shared implementation of [`AuthState::issue_token`]/
@@ -1426,6 +1537,90 @@ mod tests {
         let json = body_json(locked).await;
         assert_eq!(json["kind"], "other");
         assert!(json["message"].as_str().unwrap().contains("ロック"));
+    }
+
+    // --- Synthetic viewer sessions (LAN 閲覧公開, Issue #189) ---------------
+
+    #[tokio::test]
+    async fn public_viewer_token_is_always_the_fixed_viewer_identity() {
+        let auth = demo_auth();
+        let token = auth.issue_public_viewer_token();
+
+        assert!(auth.verify(&token));
+        let identity = auth.identity_for(&token).expect("identity should exist");
+        assert_eq!(identity.id, PUBLIC_VIEWER_ID);
+        assert_eq!(identity.name, PUBLIC_VIEWER_ID);
+        assert_eq!(
+            identity.role, "viewer",
+            "there is no escalation path: the role is fixed (ADR-0012)"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_viewer_tokens_are_not_remembered() {
+        // A public viewing session rides the regular TokenPolicy - the
+        // frontend gate re-issues transparently, so an anonymous LAN client
+        // never holds a 30-day token.
+        let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+        let token = auth.issue_public_viewer_token();
+
+        auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
+        assert!(!auth.verify(&token));
+    }
+
+    #[tokio::test]
+    async fn public_viewer_issuance_past_the_cap_evicts_the_oldest() {
+        let auth = demo_auth();
+        let mut tokens = Vec::new();
+        for _ in 0..MAX_PUBLIC_VIEWER_SESSIONS {
+            tokens.push(auth.issue_public_viewer_token());
+        }
+        assert!(
+            tokens.iter().all(|token| auth.verify(token)),
+            "every token up to the cap stays valid"
+        );
+
+        // One past the cap: issuance still succeeds (a reloading wall display
+        // must never be refused), and the FIRST token is the one revoked.
+        let overflow = auth.issue_public_viewer_token();
+        assert!(auth.verify(&overflow));
+        assert!(
+            !auth.verify(&tokens[0]),
+            "the oldest public token should have been evicted"
+        );
+        assert!(
+            auth.verify(&tokens[1]),
+            "only the oldest is evicted, not the whole pool"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_viewer_eviction_never_touches_a_real_login_session() {
+        let auth = demo_auth();
+        let admin_token = auth.login("admin", "admin").await.expect("admin login");
+
+        for _ in 0..(MAX_PUBLIC_VIEWER_SESSIONS + 10) {
+            auth.issue_public_viewer_token();
+        }
+
+        assert!(
+            auth.verify(&admin_token),
+            "the cap must only ever evict public viewer tokens"
+        );
+    }
+
+    #[tokio::test]
+    async fn logout_of_a_public_viewer_token_revokes_only_that_token() {
+        // One wall display signing out must not blank the others (conventions
+        // §6) - `logout` is the plain per-token revoke, nothing public-specific.
+        let auth = demo_auth();
+        let first = auth.issue_public_viewer_token();
+        let second = auth.issue_public_viewer_token();
+
+        auth.logout(&first);
+
+        assert!(!auth.verify(&first));
+        assert!(auth.verify(&second));
     }
 
     #[test]

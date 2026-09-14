@@ -18,7 +18,7 @@
 	import MenuItem from './menu/MenuItem.svelte';
 	import MenuSeparator from './menu/MenuSeparator.svelte';
 	import StatusBadge from './ui/StatusBadge.svelte';
-	import { Menu as MenuIcon, Search, Settings, LogOut } from '@lucide/svelte';
+	import { Menu as MenuIcon, Search, Settings, LogOut, LogIn } from '@lucide/svelte';
 
 	interface Props {
 		/** <=900px overlay drawer state, owned by (app)/+layout.svelte (design.md §8.1). */
@@ -95,7 +95,20 @@
 		/>
 	</div>
 
-	{#if !sessionStore.authDisabled}
+	{#if sessionStore.publicViewer}
+		<!-- viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session
+		     has no account/menu at all - offer the way back to a real login
+		     instead of the user menu. Role chip above still shows 閲覧者
+		     (unchanged). -->
+		<button
+			type="button"
+			class="banto-btn banto-btn--secondary login-button"
+			onclick={() => goto(`${base}/login`)}
+		>
+			<LogIn size={16} aria-hidden="true" />
+			{m['shell.login']()}
+		</button>
+	{:else if !sessionStore.authDisabled}
 		<Menu label={m['shell.userMenu']()} placement="bottom-end">
 			{#snippet trigger(props)}
 				<button
@@ -251,6 +264,11 @@
 	.user-trigger:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
+	}
+
+	.login-button {
+		flex-shrink: 0;
+		white-space: nowrap;
 	}
 
 	.avatar {
