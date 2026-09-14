@@ -199,7 +199,7 @@ use banto_core::{BantoError, ListParams, ListResult};
 use banto_server::routes::{
     actor_identity, audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,
     record_write, require_role_at_least, system_info_router, ui_settings_router, users_router,
-    LogoutAuditState, RoleGuard,
+    LogoutAuditState, MetricsProbe, RoleGuard,
 };
 use banto_server::{
     auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,
@@ -261,6 +261,14 @@ pub struct Services {
     pub backup: BackupService,
     pub attachments: AttachmentsService,
     pub system_info: SystemInfoService,
+    /// CPU/memory probe (ADR-0013, Issue #185), or `None` when the
+    /// `system-metrics` feature is off (or the host platform is
+    /// unsupported) - the app layer builds the `Some` case, see
+    /// `bin/banto-serve.rs`/`src-tauri`'s `start_embedded_server`. This
+    /// struct/`api_router` do not know about the `sysinfo` feature at all;
+    /// they only pass the already-type-erased closure through to
+    /// [`system_info_router`].
+    pub metrics: Option<MetricsProbe>,
 }
 
 /// Compose the full `/api/*` router (spec §11.1): auth routes (login/
@@ -289,6 +297,7 @@ pub fn api_router(
         backup,
         attachments,
         system_info,
+        metrics,
     } = services;
 
     let audited_auth_routes = auth_routes(auth.clone()).layer(middleware::from_fn_with_state(
@@ -329,7 +338,12 @@ pub fn api_router(
             auth.clone(),
         ))
         .merge(backups_router(backup, audit.clone(), auth.clone()))
-        .merge(system_info_router(system_info, auth.clone(), audit.clone()))
+        .merge(system_info_router(
+            system_info,
+            auth.clone(),
+            audit.clone(),
+            metrics,
+        ))
         .merge(attachments_router(attachments, audit, auth.clone(), events))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))

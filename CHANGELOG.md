@@ -39,6 +39,19 @@
   `banto-serve` は `BANTO_VIEWER_PUBLIC=1` で seed 可。e2e に
   `public-viewer` プロジェクト（別ポートの 2 本目の banto-serve）を追加。
 
+- feat(system-info): System Info カードに CPU/メモリ（ホスト total/used・
+  スワップ・プロセス RSS・CPU%・論理コア数）を追加（Issue #185、
+  [ADR-0013](docs/adr/0013-sysinfo-system-metrics-feature.md)）。`sysinfo`
+  （`default-features = false, features = ["system"]`）を `banto-admin-services`
+  の opt-in feature `system-metrics` に限定して採用 - conventions §3
+  「依存を足す側の例外」の2件目（Paraglide/ADR-0005 に続く）。
+  `banto_server::routes::SystemInfo` に `metrics: Option<SystemMetrics>` が
+  増えるのみで既存フィールドは不変（後方互換、REST/Tauri 対称は維持）。
+  テンプレート側（`admin-template-core`/`src-tauri`）は既定でこの feature を
+  有効化（README「オプション資産の削除」に外し方）。実測バイナリ増分:
+  `admin-template-core --bin banto-serve` の release ビルド（`embed-ui` 無し）
+  で 8,996,864 → 9,048,576 bytes（+51,712 bytes、約 +50.5 KiB、+0.6%）。
+
 - ci(visual): スクリーンショット比較の許容を比率から絶対値へ
   （`maxDiffPixelRatio: 0.001` → `maxDiffPixels: 250`）。比率は fullPage の総画素
   基準だったため縦長ページほど検知が甘く（dashboard 約4,700px / items 約1,300px）、

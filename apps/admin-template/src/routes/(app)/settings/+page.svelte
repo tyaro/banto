@@ -1043,6 +1043,46 @@
 										: formatBytes(systemInfo.attachmentBytes)}
 								</strong>
 							</p>
+							{#if systemInfo.metrics}
+								<p class="status">
+									{m['settings.systemInfoHostCpu']()}
+									<strong>
+										{m['settings.systemInfoHostCpuValue']({
+											percent: systemInfo.metrics.hostCpuPercent.toFixed(1),
+											count: systemInfo.metrics.cpuCount
+										})}
+									</strong>
+								</p>
+								<p class="status">
+									{m['settings.systemInfoHostMemory']()}
+									<strong>
+										{m['settings.systemInfoMemoryValue']({
+											used: formatBytes(systemInfo.metrics.hostMemoryUsedBytes),
+											total: formatBytes(systemInfo.metrics.hostMemoryTotalBytes)
+										})}
+									</strong>
+								</p>
+								{#if systemInfo.metrics.hostSwapTotalBytes > 0}
+									<p class="status">
+										{m['settings.systemInfoSwap']()}
+										<strong>
+											{m['settings.systemInfoMemoryValue']({
+												used: formatBytes(systemInfo.metrics.hostSwapUsedBytes),
+												total: formatBytes(systemInfo.metrics.hostSwapTotalBytes)
+											})}
+										</strong>
+									</p>
+								{/if}
+								<p class="status">
+									{m['settings.systemInfoProcess']()}
+									<strong>
+										{m['settings.systemInfoProcessValue']({
+											percent: systemInfo.metrics.processCpuPercent.toFixed(1),
+											rss: formatBytes(systemInfo.metrics.processMemoryBytes)
+										})}
+									</strong>
+								</p>
+							{/if}
 						{:else}
 							<p class="note">{m['settings.systemInfoLoading']()}</p>
 						{/if}

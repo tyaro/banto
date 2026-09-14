@@ -60,7 +60,7 @@ pub use audit::{
 };
 pub use auth::{extra_auth_router, AuthStatusExtras};
 pub use backups::backups_router;
-pub use system_info::{system_info_router, SystemInfo};
+pub use system_info::{system_info_router, MetricsProbe, SystemInfo, SystemMetrics};
 pub use ui_settings::ui_settings_router;
 pub use users::users_router;
 

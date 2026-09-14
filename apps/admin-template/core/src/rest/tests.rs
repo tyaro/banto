@@ -6,6 +6,7 @@ use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, S
 // Theme C PR-C4: `rest/mod.rs` no longer needs `Identity` itself (the helpers
 // that used it moved to `banto_server::routes`), so the test module imports it
 // directly rather than through `use super::*`.
+use banto_admin_services::system_metrics::SystemMetrics;
 use banto_server::Identity;
 use serde_json::json;
 use std::path::PathBuf;
@@ -122,6 +123,7 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     (
         api_router(services, auth, tx, false),
@@ -154,6 +156,7 @@ async fn router_with_token() -> (Router, String) {
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     (api_router(services, auth, tx, false), token)
 }
@@ -368,6 +371,7 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     let router = api_router(services, auth, tx, false);
 
@@ -441,6 +445,7 @@ async fn router_with_setup(allow_setup: bool) -> Router {
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     api_router(services, auth, tx, allow_setup)
 }
@@ -646,6 +651,7 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     (api_router(services, auth, tx, allow_setup), audit)
 }
@@ -1119,6 +1125,7 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     let router = api_router(services, auth, tx, false);
     (router, audit, admin_token, editor_token, viewer_token)
@@ -1199,6 +1206,7 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     let router = api_router(services, auth, tx, false);
     (router, dir, admin_token, editor_token, viewer_token)
@@ -1323,6 +1331,11 @@ async fn system_info_is_admin_only() {
     assert!(body["appVersion"].is_string());
     assert!(body["migrationVersion"].is_number());
     assert!(body["activeSessions"].as_u64().unwrap() >= 3); // admin+editor+viewer logged in
+                                                            // ADR-0013 (Issue #185): `router_with_role_tokens` wires `metrics: None`
+                                                            // (no probe) - the field must still be present on the wire, as `null`,
+                                                            // not simply absent (see `system_info_reports_metrics_when_probe_is_present`
+                                                            // below for the `Some` case).
+    assert!(body["metrics"].is_null());
 
     for token in [&editor, &viewer] {
         let response = router
@@ -1346,6 +1359,72 @@ async fn system_info_requires_a_token() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// ADR-0013 (Issue #185): when the app layer wires a `metrics` probe (the
+/// `Some` case - `banto-serve`/`src-tauri` do this via
+/// `SystemMetricsSampler::sample` under `#[cfg(feature = "system-metrics")]`),
+/// `GET /api/system/info` folds its snapshot into the wire response verbatim.
+/// This test stands in for that feature with a fixed stub closure - it does
+/// not need the `system-metrics` feature (or a real `sysinfo` sample) to
+/// prove the plumbing between `MetricsProbe` and the JSON body round-trips.
+#[tokio::test]
+async fn system_info_reports_metrics_when_probe_is_present() {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let (tx, _rx) = broadcast::channel(16);
+    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool.clone());
+    let backup = unused_backup_service(pool.clone());
+    let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+    let auth = demo_auth();
+    let token = auth.login("admin", "admin").await.unwrap();
+
+    let stub = SystemMetrics {
+        host_cpu_percent: 12.5,
+        host_memory_total_bytes: 16_000_000_000,
+        host_memory_used_bytes: 8_000_000_000,
+        host_swap_total_bytes: 2_000_000_000,
+        host_swap_used_bytes: 0,
+        process_cpu_percent: 1.25,
+        process_memory_bytes: 42_000_000,
+        cpu_count: 8,
+    };
+    let metrics: MetricsProbe = std::sync::Arc::new({
+        let stub = stub.clone();
+        move || Some(stub.clone())
+    });
+
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+        metrics: Some(metrics),
+    };
+    let router = api_router(services, auth, tx, false);
+
+    let response = router
+        .oneshot(get_auth("/api/system/info", &token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    let metrics_json = &body["metrics"];
+    assert!(!metrics_json.is_null());
+    assert_eq!(metrics_json["hostCpuPercent"], 12.5);
+    assert_eq!(metrics_json["hostMemoryTotalBytes"], 16_000_000_000_u64);
+    assert_eq!(metrics_json["hostMemoryUsedBytes"], 8_000_000_000_u64);
+    assert_eq!(metrics_json["hostSwapTotalBytes"], 2_000_000_000_u64);
+    assert_eq!(metrics_json["hostSwapUsedBytes"], 0);
+    assert_eq!(metrics_json["processCpuPercent"], 1.25);
+    assert_eq!(metrics_json["processMemoryBytes"], 42_000_000_u64);
+    assert_eq!(metrics_json["cpuCount"], 8);
 }
 
 /// `PUT /api/audit-log/config` (admin) persists the new policy - a
@@ -2401,6 +2480,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     let router = api_router(services, auth, tx, false);
 
@@ -2475,6 +2555,7 @@ async fn router_with_viewer_public(
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     (
         api_router(services, auth, tx, false),

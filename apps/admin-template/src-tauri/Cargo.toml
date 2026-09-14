@@ -11,7 +11,14 @@ name = "admin_template_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = []
+default = ["system-metrics"]
+# CPU/memory metrics (ADR-0013, Issue #185): passthrough to
+# `admin-template-core`'s own feature of the same name, ON by default here
+# for the same "template is the wiring sample" reason as that crate's
+# Cargo.toml comment. To remove `sysinfo` from a derived app, drop this
+# feature from `default` here AND in `apps/admin-template/core/Cargo.toml`
+# (README「オプション資産の削除」「システムメトリクス（`sysinfo`）を外す」).
+system-metrics = ["admin-template-core/system-metrics"]
 # Passthrough to admin-template-core's own `embed-ui` feature (spec §11.1).
 # OFF by default so a fresh clone's `cargo build`/`tauri dev` never requires
 # `pnpm --filter admin-template build` to have already run - without it, the
@@ -40,8 +47,13 @@ serde_json = { workspace = true }
 # `tokio::sync::Mutex<Option<RunningServer>>` as AppState field types (spec
 # §3.5, §11.4) - tokio is already pulled in transitively via `tauri` and
 # `admin-template-core`; this just makes a couple of its types nameable in
-# this crate's own source.
-tokio = { workspace = true, features = ["sync"] }
+# this crate's own source. `rt` (ADR-0013, Issue #185): the `system_info`
+# command calls `tokio::task::spawn_blocking` to run the (synchronous,
+# blocking) CPU/memory sampler off the async command's own thread, symmetric
+# with `banto_server::routes::system_info`'s handler - already pulled in
+# transitively via `tauri`'s own tokio runtime, named explicitly for the same
+# "do not silently depend on another dependency's feature choices" reason.
+tokio = { workspace = true, features = ["sync", "rt"] }
 qrcode = { workspace = true }
 futures-util = { workspace = true }
 # OS keyring storage for the auto-login credential (spec M11). See the

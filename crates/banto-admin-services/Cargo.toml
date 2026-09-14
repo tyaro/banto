@@ -14,6 +14,14 @@ default = []
 # `SettingsService`/`AuditLogService` enum-dispatch code's Postgres arms
 # compile. Same bridging shape as `banto-attachments`'s `postgres` feature.
 postgres = ["banto-storage/postgres", "sqlx/postgres"]
+# CPU/memory metrics (ADR-0013, Issue #185). Off by default so ordinary
+# builds of this crate stay dependency-free of `sysinfo`; the template app
+# crates (`admin-template-core`, `src-tauri`) turn it on by default (ADR-0013:
+# the template is the wiring sample, and a feature nothing enables in the
+# template would be dead code there). `SystemMetrics` itself (the wire type)
+# always compiles regardless of this feature - only `SystemMetricsSampler`
+# (the `sysinfo`-backed stateful sampler) is gated.
+system-metrics = ["dep:sysinfo"]
 
 [dependencies]
 banto-core = { workspace = true }
@@ -40,6 +48,10 @@ password-hash = { workspace = true }
 # server / `src-tauri`). Already a workspace dependency (ADR-0002: no new
 # external crate).
 tokio = { workspace = true, features = ["fs"] }
+# `system_metrics::SystemMetricsSampler` (ADR-0013, Issue #185), optional
+# behind the `system-metrics` feature above - see the workspace `Cargo.toml`'s
+# comment on this dependency for the ADR-0002 exception reasoning.
+sysinfo = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

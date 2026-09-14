@@ -42,6 +42,10 @@
 //! variable therefore does NOT turn 閲覧公開 back off - use the settings
 //! screen, or a fresh DB. It only ever sets the one flag; `server.enabled`
 //! and the bind/port keys are left exactly as they were.
+//!
+//! `--features system-metrics` (ON by default, ADR-0013, Issue #185): wires a
+//! `SystemMetricsSampler` into the System Info card's `metrics` field. Off
+//! (`--no-default-features`), or on an unsupported host, `metrics` is `null`.
 
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
@@ -52,6 +56,8 @@ use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
+#[cfg(feature = "system-metrics")]
+use admin_template_core::system_metrics::SystemMetricsSampler;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
 use banto_server::{
@@ -131,6 +137,19 @@ async fn main() {
         .unwrap_or_else(|| PathBuf::from("attachments"));
     let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);
     let system_info = SystemInfoService::new(db.clone());
+    // ADR-0013 (Issue #185): the sampler is stateful (CPU% needs a delta
+    // between refreshes, see `SystemMetricsSampler::sample`'s doc comment),
+    // so it is built once here and shared - same lifetime as `system_info`
+    // above. Type-erased into a `MetricsProbe` closure because
+    // `admin_template_core::rest::Services`/`banto_server::routes::system_info_router`
+    // do not depend on `sysinfo` and do not know this feature exists.
+    #[cfg(feature = "system-metrics")]
+    let metrics: Option<banto_server::routes::MetricsProbe> = {
+        let sampler = SystemMetricsSampler::new();
+        Some(std::sync::Arc::new(move || sampler.sample()))
+    };
+    #[cfg(not(feature = "system-metrics"))]
+    let metrics: Option<banto_server::routes::MetricsProbe> = None;
     let audit = AuditLogService::new(db);
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
@@ -213,6 +232,7 @@ async fn main() {
         backup,
         attachments,
         system_info,
+        metrics,
     };
     let app = with_security_headers(
         api_router(services, auth, events, allow_setup).merge(static_router::<FrontendAssets>()),

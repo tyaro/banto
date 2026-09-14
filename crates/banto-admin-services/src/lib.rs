@@ -17,6 +17,11 @@
 //! SQLite-only (theme A PR4: a Postgres handle yields an explicit error, never
 //! a panic). The REST router moves in a later PR.
 //!
+//! [`system_metrics`] (ADR-0013, Issue #185) adds host/process CPU and memory
+//! sampling behind the opt-in `system-metrics` feature (`sysinfo`, feature
+//! `["system"]` only) - a deliberate exception to §3's "add no dependency"
+//! stance, see the ADR for the alternatives considered.
+//!
 //! Like every Banto service (conventions §2), the services here take a
 //! `banto_storage::Db` handle, return `Result<_, banto_core::BantoError>`,
 //! and know nothing about `axum`/`tauri`/RBAC/HTTP - authorization, audit,
@@ -35,6 +40,7 @@ pub mod backup;
 pub mod rbac;
 pub mod settings;
 pub mod system_info;
+pub mod system_metrics;
 pub mod users;
 
 pub use rbac::Role;
