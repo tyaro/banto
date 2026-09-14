@@ -54,7 +54,11 @@
 	}
 </script>
 
-<aside class:collapsed={settings.sidebarCollapsed} class:overlay-open={overlayOpen}>
+<aside
+	class:collapsed={settings.sidebarCollapsed}
+	class:overlay-open={overlayOpen}
+	class:compact={settings.kiosk}
+>
 	<div class="brand">
 		<span class="brand-mark" aria-hidden="true">
 			<svg viewBox="0 0 24 24" width="14" height="14">
@@ -161,6 +165,12 @@
 		padding: 0 0.9rem;
 		border-bottom: 1px solid var(--banto-border);
 		font-weight: 700;
+	}
+
+	/* Kiosk shell (display-preset-plan.md D1-b): keep the brand row aligned
+	   with Header.svelte's compact height. */
+	aside.compact .brand {
+		height: var(--banto-shell-header-height-compact);
 	}
 
 	.brand-mark {

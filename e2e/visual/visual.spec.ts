@@ -21,6 +21,7 @@ import {
 	FULL_MATRIX,
 	VIEWPORTS,
 	comboLabel,
+	primeKiosk,
 	primeTheme,
 	primeThemeAndAuth
 } from './theme';
@@ -71,6 +72,26 @@ test.describe('dashboard', () => {
 			});
 		}
 	}
+});
+
+// Kiosk shell (display-preset-plan.md D1-b): one screenshot, not the full
+// matrix - this only proves the ON state renders (collapsed sidebar,
+// compact header, no search pill, fullscreen button) at the baseline
+// viewport; the default-OFF path is already covered by every other test in
+// this file (none of them prime the kiosk key, so they stay byte-for-byte
+// unaffected by this unit per display-preset-plan.md's design principle).
+test.describe('kiosk shell', () => {
+	test('dashboard kiosk light-standard 1440x900', async ({ page }) => {
+		await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
+		await primeKiosk(page);
+		await page.goto('/dashboard');
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		await expect(page.locator('svg').first()).toBeVisible();
+		await page.waitForTimeout(SETTLE_MS);
+		await expect(page).toHaveScreenshot('dashboard-kiosk-light-standard-1440x900.png', {
+			fullPage: true
+		});
+	});
 });
 
 interface DiagonalPage {

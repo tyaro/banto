@@ -47,6 +47,8 @@ export function comboLabel(combo: ThemeCombo): string {
 const THEME_KEY = 'banto.theme';
 const PRESET_KEY = 'banto.preset';
 const DENSITY_KEY = 'banto.density';
+/** settings.svelte.ts's kiosk-shell key (display-preset-plan.md D1-b). Not part of app.html's FOUC script - kiosk only affects layout (sidebar fold/header height), not color, so there is nothing to avoid flashing. */
+const KIOSK_KEY = 'banto.kiosk';
 /** setup.ts's `AUTH_KEY` - the demo `AuthProvider`'s one sessionStorage flag. */
 const DEMO_AUTH_KEY = 'banto.auth.demo';
 
@@ -88,5 +90,20 @@ export async function primeThemeAndAuth(page: Page, combo: ThemeCombo): Promise<
 			window.sessionStorage.setItem(authKey, '1');
 		},
 		{ authKey: DEMO_AUTH_KEY }
+	);
+}
+
+/**
+ * Forces the kiosk shell on via localStorage (display-preset-plan.md D1-b) -
+ * `settings.svelte.ts`'s `loadKiosk()` reads this key synchronously at
+ * module init, the same mechanism `primeTheme` uses for theme/preset/density.
+ * Call alongside `primeThemeAndAuth`, before the test's first `page.goto()`.
+ */
+export async function primeKiosk(page: Page): Promise<void> {
+	await page.addInitScript(
+		({ kioskKey }) => {
+			window.localStorage.setItem(kioskKey, 'true');
+		},
+		{ kioskKey: KIOSK_KEY }
 	);
 }

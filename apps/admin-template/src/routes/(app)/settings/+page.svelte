@@ -7,6 +7,7 @@
 		KeyRound,
 		Languages,
 		Monitor,
+		MonitorPlay,
 		Moon,
 		Palette,
 		Rows3,
@@ -724,6 +725,26 @@
 				<p class="note">
 					{m['settings.languageNote']()}
 				</p>
+			</SurfaceCard>
+
+			<SurfaceCard>
+				<div class="card-head">
+					<MonitorPlay size={20} aria-hidden="true" />
+					<div>
+						<h3>{m['settings.kioskHeading']()}</h3>
+						<p>{m['settings.kioskDesc']()}</p>
+					</div>
+				</div>
+				<label class="switch-row">
+					<input
+						type="checkbox"
+						role="switch"
+						class="banto-switch"
+						checked={settings.kiosk}
+						onchange={(event) => settings.setKiosk(event.currentTarget.checked)}
+					/>
+					{m['settings.kioskToggle']()}
+				</label>
 			</SurfaceCard>
 
 			{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}

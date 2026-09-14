@@ -19,10 +19,17 @@
  *     paraglide は 1 メッセージ = 1 モジュールを出力するため、これが生成件数。
  *   - しきい値 = ソース辞書 `messages/en.json` の非メタキー数（`$` 始まりを除く）。
  *     生成件数がこれ未満なら失敗（0 件は当然失敗）。
+ *
+ * D1-c (display-preset-plan.md, Issue #190 prep): `apps/admin-template/package.json`
+ * の `banto.i18n = "raw"` は「単一言語アプリが UI 文言を直書きする」opt-out
+ * （display プリセット）。paraglide の辞書自体は空のまま残る想定なので、この
+ * ガードは意味を持たない（catalog が空でも fail-open ではなく「そもそも辞書を
+ * 使わない」）— skip して理由を出力する。既定は今日どおり `"keys"`。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readI18nMode } from './lib/i18n-mode.mjs';
 
 const appRoot = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
@@ -32,6 +39,15 @@ const appRoot = path.resolve(
 );
 const messagesDir = path.join(appRoot, 'src', 'lib', 'paraglide', 'messages');
 const sourceCatalog = path.join(appRoot, 'messages', 'en.json');
+const appPkgJson = path.join(appRoot, 'package.json');
+
+const i18nMode = readI18nMode(appPkgJson);
+if (i18nMode === 'raw') {
+	console.log(
+		`− [check-i18n-nonempty] スキップ（apps/admin-template/package.json banto.i18n = "raw"）`
+	);
+	process.exit(0);
+}
 
 function fail(msg) {
 	console.error(`\n[check-i18n-nonempty] FAIL: ${msg}`);

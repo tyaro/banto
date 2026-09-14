@@ -378,6 +378,15 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
 `verify:architecture`（rule `raw-jp-in-app`）が grep で検査する（§9 の
 生色値検査と同型）。正当な例外はスクリプトの許可リストに理由付きで追加する。
 
+**app 層は preset ごとに opt-out できる**（display-preset-plan.md D1-c、
+Issue #190）: `apps/admin-template/package.json` の `banto.i18n` が
+`"raw"`（既定は `"keys"` = 今日の挙動）のとき、単一言語アプリとして UI 文言を
+直書きしてよい（キオスク／常設ダッシュボードのような display プリセット向け）。
+`@banto/*` パッケージ側は無関係— レイヤ①の `messages` props 注入方式は不変。
+`banto.i18n = "raw"` のときは `verify:architecture`（rule `raw-jp-in-app`）と
+`scripts/check-i18n-nonempty.mjs` が**自身をスキップし、理由を出力**する
+（`scripts/lib/i18n-mode.mjs` の `readI18nMode` を両者が共有）。
+
 ## 14. `.svelte.ts` ソース配布パッケージは dev optimizer から除外する [機械検査済み]
 
 `@banto/*` はソース配布（`exports` が `./src/index.ts`、`.svelte.ts` を生で出荷。

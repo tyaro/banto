@@ -48,6 +48,10 @@
 	--banto-shell-sidebar-width: 240px;
 	--banto-shell-sidebar-width-collapsed: 56px;
 	--banto-shell-header-height: 48px;
+	/* Kiosk shell (display-preset-plan.md D1-b): a shorter header for
+     permanently-mounted dashboards. Opt-in via Header.svelte's
+     `class:compact` - the plain height above is unaffected. */
+	--banto-shell-header-height-compact: 40px;
 
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;

@@ -9,8 +9,9 @@
 	import * as m from '$lib/paraglide/messages';
 	import { getAuthProvider } from '@banto/admin-core';
 	import { pageTitle } from '$lib/navigation';
-	import { getBantoMode } from '$lib/banto/setup';
+	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
+	import { settings } from '$lib/settings.svelte';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
 	import IconButton from './ui/IconButton.svelte';
 	import Menu from './menu/Menu.svelte';
@@ -18,7 +19,15 @@
 	import MenuItem from './menu/MenuItem.svelte';
 	import MenuSeparator from './menu/MenuSeparator.svelte';
 	import StatusBadge from './ui/StatusBadge.svelte';
-	import { Menu as MenuIcon, Search, Settings, LogOut, LogIn } from '@lucide/svelte';
+	import {
+		Menu as MenuIcon,
+		Search,
+		Settings,
+		LogOut,
+		LogIn,
+		Maximize,
+		Minimize
+	} from '@lucide/svelte';
 
 	interface Props {
 		/** <=900px overlay drawer state, owned by (app)/+layout.svelte (design.md §8.1). */
@@ -48,9 +57,70 @@
 		await getAuthProvider().logout();
 		goto(`${base}/login`);
 	}
+
+	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two
+	// independent state sources depending on environment (spec §10: the
+	// branch lives here in the provider-ish helper below, not spread across
+	// the template):
+	// - Browser/LAN: the real Fullscreen API - `document.fullscreenElement`
+	//   is the source of truth, kept in sync via the `fullscreenchange` event
+	//   (also fires for an ESC-key exit, which this component never sees
+	//   directly).
+	// - Tauri: `setFullscreen`/`isFullscreen` from `@tauri-apps/api/window`
+	//   change the OS window, not the DOM - there is no DOM event to listen
+	//   for, so `isFullscreen` is a plain local flag this component owns,
+	//   seeded once from the window's actual state on mount.
+	// Dynamic import (not a static one) keeps this module loadable in the
+	// `visual` project's plain-browser preview, which has no Tauri runtime.
+	let isFullscreen = $state(false);
+
+	$effect(() => {
+		if (!settings.kiosk) return;
+		if (isTauri()) {
+			let cancelled = false;
+			void (async () => {
+				try {
+					const { getCurrentWindow } = await import('@tauri-apps/api/window');
+					const current = await getCurrentWindow().isFullscreen();
+					if (!cancelled) isFullscreen = current;
+				} catch {
+					// Older backend/webview without the window plugin permission:
+					// keep the button working as a pure toggle (state just starts
+					// at `false`, same as a fresh browser tab).
+				}
+			})();
+			return () => {
+				cancelled = true;
+			};
+		}
+
+		function onFullscreenChange(): void {
+			isFullscreen = document.fullscreenElement !== null;
+		}
+		document.addEventListener('fullscreenchange', onFullscreenChange);
+		onFullscreenChange();
+		return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+	});
+
+	async function toggleFullscreen(): Promise<void> {
+		const next = !isFullscreen;
+		if (isTauri()) {
+			const { getCurrentWindow } = await import('@tauri-apps/api/window');
+			await getCurrentWindow().setFullscreen(next);
+			isFullscreen = next;
+			return;
+		}
+		if (next) {
+			await document.documentElement.requestFullscreen();
+		} else {
+			await document.exitFullscreen();
+		}
+		// `fullscreenchange` (bound above) updates `isFullscreen` for the
+		// browser path - no need to set it here too.
+	}
 </script>
 
-<header>
+<header class:compact={settings.kiosk}>
 	<div class="hamburger">
 		<IconButton
 			label={overlayOpen ? m['shell.closeSidebar']() : m['shell.expandSidebar']()}
@@ -82,18 +152,29 @@
 		{/if}
 	</div>
 
-	<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>
-		<Search size={16} aria-hidden="true" />
-		<span>{m['shell.searchPlaceholder']()}</span>
-		<kbd>Ctrl K</kbd>
-	</button>
-	<div class="search-icon-only">
+	<!-- Kiosk shell (display-preset-plan.md D1-b): the search pill/command
+	     palette icon is hidden entirely rather than just shrunk - a
+	     permanently-mounted dashboard has no keyboard operator to invoke it. -->
+	{#if !settings.kiosk}
+		<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>
+			<Search size={16} aria-hidden="true" />
+			<span>{m['shell.searchPlaceholder']()}</span>
+			<kbd>Ctrl K</kbd>
+		</button>
+		<div class="search-icon-only">
+			<IconButton
+				label={m['shell.openCommandPalette']()}
+				icon={Search}
+				onclick={() => commandPaletteStore.show()}
+			/>
+		</div>
+	{:else}
 		<IconButton
-			label={m['shell.openCommandPalette']()}
-			icon={Search}
-			onclick={() => commandPaletteStore.show()}
+			label={isFullscreen ? m['shell.exitFullscreen']() : m['shell.enterFullscreen']()}
+			icon={isFullscreen ? Minimize : Maximize}
+			onclick={toggleFullscreen}
 		/>
-	</div>
+	{/if}
 
 	{#if sessionStore.publicViewer}
 		<!-- viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session
@@ -154,6 +235,12 @@
 		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
 		backdrop-filter: var(--banto-backdrop, none);
 		-webkit-backdrop-filter: var(--banto-backdrop, none);
+	}
+
+	/* Kiosk shell (display-preset-plan.md D1-b): shorter header for a
+	   permanently-mounted dashboard. Sticky/z-index above are unchanged. */
+	header.compact {
+		height: var(--banto-shell-header-height-compact);
 	}
 
 	.status-area {

@@ -101,9 +101,19 @@ async fn run_migrations(db: &Db) -> Result<(), BantoError> {
 
 async fn run_migrations_and_seed(db: &Db) -> Result<(), BantoError> {
     run_migrations(db).await?;
+    // [scaffold:items] begin
     seed_if_empty(db).await?;
+    // [scaffold:items] end
     Ok(())
 }
+
+// [scaffold:items] begin
+//
+// D1-d (display-preset-plan.md, Issue #190 prep): the `items` demo-seed
+// generator (row-count check, the deterministic mulberry32 PRNG port, the
+// product tables, and `generate_sample_items` itself) - everything below is
+// items-only, contiguous through the end of `generate_sample_items`, so a
+// future `display`/`items` remover can delete it with one `cutRegion`.
 
 async fn seed_if_empty(db: &Db) -> Result<(), BantoError> {
     let count: i64 = match db {
@@ -326,10 +336,14 @@ fn generate_sample_items(count: usize) -> Vec<SeedItem> {
 
     rows
 }
+// [scaffold:items] end
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // [scaffold:items] begin (demo-seed tests; `postgres_url_detection_*`
+    // below stays outside - it tests generic backend selection, not the seed)
 
     #[test]
     fn iso_date_round_trips_known_epoch_days() {
@@ -390,6 +404,8 @@ mod tests {
             .unwrap();
         assert_eq!(count, SEED_ROW_COUNT as i64);
     }
+
+    // [scaffold:items] end
 
     #[test]
     fn postgres_url_detection_selects_backend_by_scheme() {

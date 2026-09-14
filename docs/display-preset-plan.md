@@ -1,7 +1,7 @@
 # scaffold `--preset display` 計画書 — Issue #190
 
 作成日: 2026-09-14
-状態: **設計（着手前）**。前提 = Issue #189（閲覧公開、PR #191）のマージ。
+状態: **PR-D1 実装済み（本体準備）、PR-D2（scaffold）は未着手**。前提の Issue #189（閲覧公開、PR #191）はマージ済み。
 トラック: 保守者向け（トラックA）
 関連: [scaffold-presets-plan.md](scaffold-presets-plan.md)（P4-9、minimal/standard/full の
 設計）、[viewer-public-plan.md](viewer-public-plan.md)、ADR-0012、

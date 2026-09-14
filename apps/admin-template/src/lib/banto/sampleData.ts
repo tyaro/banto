@@ -6,6 +6,11 @@
  * Moved here from the old routes/(app)/items/data.ts stub in M2: the rows
  * now seed an InMemoryDataProvider (src/lib/banto/setup.ts) instead of being
  * imported directly by the items pages.
+ *
+ * D1-d note (display-preset-plan.md, Issue #190 prep): this whole file is
+ * the items demo dataset - already listed as a whole-file `removeFile`
+ * target in display-preset-plan.md §3.2, so no internal `cutRegion` markers
+ * are added here.
  */
 export interface Item {
 	id: number;
