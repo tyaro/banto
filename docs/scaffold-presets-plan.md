@@ -54,16 +54,33 @@ roadmap §5 / industrial-plan.md は、SCADA 系ドメイン機能（MQTT/タグ
 
 各プリセットが**残す**オプション資産（✓＝残す / ✗＝削除）。コアは全て常在。
 
-| オプション資産（§3） | minimal | standard | full |
-| --- | :---: | :---: | :---: |
-| `@banto/charts` + ダッシュボードのチャートデモ | ✗ | ✓ | ✓ |
-| `@banto/dock-svelte`（ダッシュボードのドッキング） | ✗ | ✓ | ✓ |
-| コマンドパレット（Ctrl+K、M16） | ✗ | ✓ | ✓ |
-| Glass テーマ + Windows vibrancy（M12） | ✗ | ✓ | ✓ |
-| `@banto/attachments` + items 添付デモ（M20） | ✗ | ✗ | ✓ |
-| `@banto/report` + 日報デモ（M19） | ✗ | ✗ | ✓ |
-| `@banto/tree-svelte` + `/tree` デモ（M-review 2026-08、2026-08-13 追加） | ✗ | ✗ | ✓ |
-| `@banto/scan-wedge` レシピ配線（M21） | ✗ | ✗ | ✓※ |
+| オプション資産（§3） | minimal | standard | full | display |
+| --- | :---: | :---: | :---: | :---: |
+| `@banto/charts` + ダッシュボードのチャートデモ | ✗ | ✓ | ✓ | ✗ |
+| `@banto/dock-svelte`（ダッシュボードのドッキング） | ✗ | ✓ | ✓ | ✗ |
+| コマンドパレット（Ctrl+K、M16） | ✗ | ✓ | ✓ | ✗ |
+| Glass テーマ + Windows vibrancy（M12） | ✗ | ✓ | ✓ | ✗ |
+| `@banto/attachments` + items 添付デモ（M20） | ✗ | ✗ | ✓ | ✗ |
+| `@banto/report` + 日報デモ（M19） | ✗ | ✗ | ✓ | ✗ |
+| `@banto/tree-svelte` + `/tree` デモ（M-review 2026-08、2026-08-13 追加） | ✗ | ✗ | ✓ | ✗ |
+| `@banto/scan-wedge` レシピ配線（M21） | ✗ | ✗ | ✓※ | ✗ |
+
+**`display` 列は本書の想定（オプション資産だけを動かす）を超える**ので、別枠で
+整理する（[display-preset-plan.md](display-preset-plan.md)、Issue #190。2026-09 追加）。
+display は上の7資産を全部外したうえで、さらに**デモ資産**と**設定の既定値**に
+まで及ぶ:
+
+| display が追加で動かすもの | 内容 |
+| --- | --- |
+| items（デモリソース） | template-scope §2.2 の「コア」から**デモリソース**へ再分類（§3 の表に行を追加）。サービス層・REST・Tauri コマンド・マイグレーション・画面・ナビ・文言・`verify-architecture` のマニフェスト行まで丸ごと削除 |
+| users / audit-log **画面** | 画面（`routes/(app)/{users,audit-log}/**`）だけ削除。サービス層・REST・Tauri コマンドは**残す**（ルートを足し直せば戻せる escape hatch） |
+| `/dashboard` | 画面ごと削除し、ホームとログイン後の遷移先を `/monitor` に付け替える |
+| **足す**: `/monitor` | `scripts/lib/templates/display/monitor/+page.svelte` の複製 + ナビ1行 + `nav.monitor` の文言キー |
+| **既定値の反転** | `FIRST_BOOT_SETTINGS`（閲覧公開の初回起動シード）・`KIOSK_DEFAULT`・`banto.i18n = "raw"`。いずれも**テンプレート本体に既定 OFF で実装済みのトグル**（display-preset-plan §2 原則 1） |
+
+§4 の「scaffold は削除手順の自動実行であって新機構ではない」という原則は display でも
+守る: 追加されるのは**本体トグルの既定値**と**雛形ファイルの複製**だけで、scaffold の
+出力にしか存在しないロジックは作らない。
 
 設定の既定値（全プリセット共通の安全既定。プリセットでは変えない）:
 
@@ -130,6 +147,10 @@ report が配線済み・scan-wedge 未配線なので、**`standard` と `full`
 - `verify:architecture` は適用後も通ること（オプション削除で逆依存等が
   壊れないことの再確認）。
 - 3プリセット × ビルド緑、を「プリセットの受け入れ条件」とする。
+  → 実装後は `.github/workflows/template-acceptance.yml` の `presets` ジョブが
+  この受け入れを毎回実行する（matrix は `[minimal, standard, full, display]`。
+  scaffold `--strict` → `pnpm install` → `verify:architecture` → `check` →
+  `build` → `cargo test`）。
 
 ## 7. 実装時に決める未決事項（決定結果を追記済み）
 
@@ -138,6 +159,11 @@ report が配線済み・scan-wedge 未配線なので、**`standard` と `full`
    持つか。引くだけ（＝ full 出荷）が README §3 の削除手順とそのまま対応し
    実装が単純。
    → **決定: full 出荷・引くだけ**（`scaffold.mjs` ヘッダに明記）。
+   → **2026-09 追補（display、Issue #190）**: この決定は「オプション資産」に
+   ついては不変。display だけが例外的に「足す」工程（`applyDisplayDefaults`）を
+   持つが、足すのは①本体に既定 OFF で実装済みのトグルの**既定値の反転**と
+   ②`scripts/lib/templates/display/` の**雛形ファイルの複製**に限る
+   （display-preset-plan §2 原則 1）。ロジックを scaffold 出力にだけ生やさない。
 2. **scan-wedge を `full` で配線するか**: 配線する（items 検索欄に
    `use:wedgeInput` の雛形）か、レシピ参照に留めるか。
    → **決定: レシピ参照に留め、scaffold は scan-wedge に触れない**
@@ -149,6 +175,8 @@ report が配線済み・scan-wedge 未配線なので、**`standard` と `full`
    オプション資産の採否、リソース差し替えは P1-3 レシピ。両者は直交。
    scaffold で「デモ items を残す/最小化する」オプションを足すかは別途。
    → **現状: 直交のまま（scaffold はデモ items に触れない）**。
+   → **2026-09 変更（Issue #190）**: `display` プリセットに限り items を丸ごと
+   削除する（remover `items`）。他のプリセットは引き続き items に触れない。
 5. **`create-banto-app` 化**: 別リポジトリの npm パッケージにするか、
    本リポジトリ同梱スクリプトのままか（publishing.md の非公開方針との関係）。
    → **現状: 本リポジトリ同梱スクリプトのまま**（非公開方針と整合）。

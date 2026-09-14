@@ -926,7 +926,9 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 // `Services` through this wrapper too would only add an assembly hop.
 #[allow(clippy::too_many_arguments)]
 async fn start_embedded_server(
+    // [scaffold:items] begin
     items: ItemsService,
+    // [scaffold:items] end
     users: UsersService,
     settings: SettingsService,
     audit: AuditLogService,
@@ -946,7 +948,9 @@ async fn start_embedded_server(
     // same as `banto-serve.rs`'s equivalent composition, so every response
     // this embedded server produces carries the baseline security headers.
     let services = Services {
+        // [scaffold:items] begin
         items,
+        // [scaffold:items] end
         users,
         settings,
         audit,
@@ -1048,7 +1052,9 @@ async fn server_apply(
     let started = if config.enabled {
         Some(
             start_embedded_server(
+                // [scaffold:items] begin
                 state.items.clone(),
+                // [scaffold:items] end
                 state.users.clone(),
                 state.settings.clone(),
                 state.audit.clone(),
@@ -2261,7 +2267,9 @@ pub fn run() {
                     port: server_config.port,
                 };
                 match tauri::async_runtime::block_on(start_embedded_server(
+                    // [scaffold:items] begin
                     items.clone(),
+                    // [scaffold:items] end
                     users.clone(),
                     settings.clone(),
                     audit.clone(),
@@ -2323,7 +2331,9 @@ pub fn run() {
             }
 
             app.manage(AppState {
+                // [scaffold:items] begin
                 items,
+                // [scaffold:items] end
                 auth: Mutex::new(initial_auth),
                 users,
                 settings,
@@ -2549,7 +2559,11 @@ mod tests {
         );
     }
 
+    // [scaffold:items] begin
     // --- M15: CSV import -----------------------------------------------------
+    //
+    // D1-d/PR-D2: the whole M15 suite exercises `items_import_body`, so it is
+    // items-only and travels with the `items` remover.
 
     /// `editor` can import; a mixed create+update batch succeeds and is
     /// recorded as exactly ONE `action: "import"` audit entry (spec M15:
@@ -2729,6 +2743,7 @@ mod tests {
             "a forbidden import must not touch the table"
         );
     }
+    // [scaffold:items] end
 
     // --- M17: SQLite backup/restore -------------------------------------------
 
@@ -2847,6 +2862,7 @@ mod tests {
         );
     }
 
+    // [scaffold:items] begin
     /// [`items_delete_body`] records one `delete`/`items` entry; with no
     /// attachments swept for the record, `detail` is `None` (M-review 2026-08
     /// M-5).
@@ -2893,6 +2909,7 @@ mod tests {
         assert_eq!(entry.result, "ok");
         assert_eq!(entry.detail, None, "no attachments removed -> detail None");
     }
+    // [scaffold:items] end
 
     /// [`auth_config_apply_body`]'s normal (non-escape-hatch) path records a
     /// `settings_change`/`settings` entry attributed to the admin, with an

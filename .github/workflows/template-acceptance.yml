@@ -35,20 +35,25 @@ on:
       - 'scripts/scaffold.test.mjs'
       - 'scripts/scaffold.mjs'
       - 'scripts/lib/template-edit.mjs'
+      - 'scripts/lib/templates/**'
       - '.github/workflows/template-acceptance.yml'
       # scaffold のアンカー対象（remover が編集するファイル群）
-      - 'apps/admin-template/src/routes/(app)/**'
+      - 'apps/admin-template/src/routes/**'
       - 'apps/admin-template/src/lib/**'
       - 'apps/admin-template/src/app.css'
       - 'apps/admin-template/src/app.html'
       - 'apps/admin-template/messages/*.json'
       - 'apps/admin-template/package.json'
-      - 'apps/admin-template/core/src/rest/**'
+      - 'apps/admin-template/core/src/**'
       - 'apps/admin-template/src-tauri/src/lib.rs'
       - 'apps/admin-template/src-tauri/Cargo.toml'
       - 'packages/theme/**'
       - 'scripts/verify-architecture.mjs'
       - 'Cargo.toml'
+      # display プリセットのアンカー対象（e2e / CI 定義も書き換える）
+      - 'e2e/**'
+      - 'package.json'
+      - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'scripts/rename.mjs'
@@ -56,20 +61,25 @@ on:
       - 'scripts/scaffold.test.mjs'
       - 'scripts/scaffold.mjs'
       - 'scripts/lib/template-edit.mjs'
+      - 'scripts/lib/templates/**'
       - '.github/workflows/template-acceptance.yml'
       # scaffold のアンカー対象（push 側と同一に保つ）
-      - 'apps/admin-template/src/routes/(app)/**'
+      - 'apps/admin-template/src/routes/**'
       - 'apps/admin-template/src/lib/**'
       - 'apps/admin-template/src/app.css'
       - 'apps/admin-template/src/app.html'
       - 'apps/admin-template/messages/*.json'
       - 'apps/admin-template/package.json'
-      - 'apps/admin-template/core/src/rest/**'
+      - 'apps/admin-template/core/src/**'
       - 'apps/admin-template/src-tauri/src/lib.rs'
       - 'apps/admin-template/src-tauri/Cargo.toml'
       - 'packages/theme/**'
       - 'scripts/verify-architecture.mjs'
       - 'Cargo.toml'
+      # display プリセットのアンカー対象（e2e / CI 定義も書き換える）
+      - 'e2e/**'
+      - 'package.json'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 concurrency:
@@ -150,6 +160,15 @@ jobs:
   # cargo test は presetによって banto-attachments を含む/含まないため、常に成立する
   # クレート集合（admin-template-core は banto-attachments を推移的に含むので full でも
   # 検査される）を明示指定する。src-tauri は非対象（tauri-check.yml の担当）。
+  #
+  # `display`（docs/display-preset-plan.md、Issue #190）も同じ工程で検査する。
+  # display は items デモ・users/audit-log 画面・ダッシュボードを外したうえで
+  # `/monitor` と初回起動シードを**足す**唯一のプリセットなので、
+  # 「引いた後もビルド緑」に加えて「足した後も型検査/テスト緑」がここで担保される。
+  # e2e（display 用の1シナリオ・スモーク）はここでは走らせない — banto-serve の
+  # ビルドと Playwright ブラウザの用意が要り、このジョブの目的（コピーが壊れて
+  # いないこと）に対して重すぎるため。ci.yml の e2e ジョブがテンプレート本体で
+  # 同じ結線（閲覧公開 + 合成 viewer）を毎 PR で検証している。
   presets:
     name: Scaffold ${{ matrix.preset }} → check
     runs-on: ubuntu-latest
@@ -157,7 +176,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [minimal, standard, full]
+        preset: [minimal, standard, full, display]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

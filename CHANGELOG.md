@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+- feat(scaffold): `pnpm scaffold --preset display`（#190、PR-D2、
+  [docs/display-preset-plan.md](docs/display-preset-plan.md) §3.2）— カンバン/常設
+  ダッシュボード/展示デモ向けの**表示専用アプリ**を1コマンドで作れるようにした。
+  `minimal` の7資産に加えて、新 remover **`items`**（デモリソース一式: サービス層・
+  REST・Tauri コマンド・マイグレーション・画面・ナビ・文言・`verify-architecture` の
+  マニフェスト行）、**`adminPages`**（users / audit-log の**画面のみ**。サービス層・
+  REST・Tauri は escape hatch として残す）、**`dashboard`**（`/dashboard` を外し
+  ホームを `/monitor` へ）を削除し、唯一の「足す」工程 **`displayDefaults`** が
+  `/monitor` ページ雛形（`$effect` + 世代トークンのポーリング例）・ナビ項目
+  （`publicViewer: true`）と、PR-D1 で本体に入れたトグルの既定値の反転
+  （`FIRST_BOOT_SETTINGS` = 認証無効 + 閲覧公開 + LAN 有効 / `KIOSK_DEFAULT` /
+  `banto.i18n = "raw"`）を適用する。e2e は items/users 前提のスイート
+  （`tests/smoke.spec.ts` の全シナリオ・`tests-public-viewer/`・`visual/`）を
+  シナリオ1本（未ログインの `/` が `/monitor` に着く）に差し替える。
+  `template-acceptance.yml` の `presets` matrix に `display` を追加。
+  `template-scope.md` §3 は `items` を「デモリソース（display で削除可）」に再分類。
+- fix(scaffold): attachments remover が `core/src/rest/tests.rs` を
+  「M20 章から EOF まで」削っていたため、その後に追記された閲覧公開スイート
+  （Issue #189）まで巻き添えで消えていたのを修正（終端マーカーで範囲を閉じた）。
+  `minimal` / `standard` プリセットの `cargo test -p admin-template-core` に
+  閲覧公開の 6 テストが戻る。
 - feat(shell/scaffold): `--preset display`（#190）の準備 PR-D1 — テンプレート本体に
   既定 OFF のトグルを足す（[docs/display-preset-plan.md](docs/display-preset-plan.md)
   §2「display が足すものは先に本体のトグルにする」）。①初回起動 seed 機構
