@@ -117,7 +117,11 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 - **0.x の間（〜0.1.2、履歴）**: `minor` = 破壊的変更、`patch` = 追加・修正
   （SemVer の 1.0 未満の慣例）
 - **1.0.0 以降（現行）**: 標準の SemVer。`major` = 破壊的変更、
-  `minor` = 後方互換の機能追加、`patch` = 後方互換の修正。v1.0.0 は v1
+  `minor` = 後方互換の機能追加、`patch` = 後方互換の修正。
+  **1.x 系の運用上の例外**（v1.4.0 / v1.5.0 で適用）: 公開 API の削除・改名を
+  伴わない「フィールド追加・引数追加」によるソース互換の破壊は、消費側の追従
+  作業を CHANGELOG のリード文（「消費側への注意」）に明記した上で `minor` と
+  してよい（オーナー判断）。`major` は API の削除・改名・意味変更に使う。v1.0.0 は v1
   スコープ（仕様 M0〜M9 + roadmap M10〜M24）完了に伴う**安定版宣言**として
   発行した（0.1.2 からの破壊的変更はなし。2026-07-28）
 
@@ -143,11 +147,12 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 - タグ形式は `vX.Y.Z`（`workspace.package.version`、ルート `Cargo.toml`
   と揃える。現行 `v1.5.0`）。タグとマニフェストの整合は
   `pnpm check:versions --tag` が機械検査する（CR-7）
-- **マイルストーンマージ毎にタグを打たない**。banto-industrial 等の
-  消費側が固定参照する必要がある**破壊的変更時のみ**タグを更新する
-  （trait シグネチャ変更・`ListParams`/エラー型の変更など、
-  `banto-core`/`banto-storage`/`banto-server`/`banto-admin-services` の
-  公開APIに影響する変更）
+- **タグはリリース単位で打つ**（CHANGELOG の `[Unreleased]` を版節に
+  切り出すとき。v1.1.0 以降の実運用）。**マイルストーンマージ毎には打たない**。
+  消費側（banto-industrial 等）が追従作業を要するのは、リード文に
+  「消費側への注意」がある版だけ（trait シグネチャ変更・`ListParams`/エラー型・
+  公開 struct のフィールド追加など `banto-core`/`banto-storage`/`banto-server`/
+  `banto-admin-services` の公開 API に影響する変更）
 - タグは **npm 側（`@banto/*` の git 依存）と共用**（2026-07-12 決定節）。
   したがって `@banto/*` パッケージの公開APIの破壊的変更もタグ更新の
   対象になる

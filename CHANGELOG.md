@@ -26,9 +26,13 @@
 
 **v1.5.0 — 「表示専用アプリを配れる」リリース。** v1.4.0（2026-08-29）以降に
 main へ積まれた PR #182〜#184・#191〜#195 と dependabot 更新をまとめる。
-後方互換の機能追加のみ（既定挙動は不変。ワイヤは `GET /api/auth/status` の
-`viewerPublic`、`SystemInfo.metrics`、`ServerSettings.viewerPublic` の項目追加）
-のため **minor**。主な内容:
+**JSON ワイヤは項目追加のみ**（`GET /api/auth/status` の `viewerPublic`、
+`SystemInfo.metrics`）で既定挙動は不変だが、**Rust 消費側にはソース互換の
+破壊がある**（下記「消費側への注意」の 4 点。いずれもテンプレートからコピーした
+`src-tauri/src/lib.rs` / `core/src/rest/mod.rs` が直接触る箇所）。公開 API の
+削除・改名は無く、v1.4.0（sqlx 0.9 移行）と同じくオーナー判断で **minor** とする
+（1.x 系では「消費側の追従作業を CHANGELOG のリード文に明記した上で minor」
+を運用とする。docs/publishing.md「バージョニング規約」参照）。主な内容:
 
 - **閲覧公開モード**（#189、ADR-0012）: LAN 端末がログイン無しで `viewer` 固定の
   合成セッションを得て閲覧できる。書き込みは常にログイン必須。
@@ -42,9 +46,22 @@ main へ積まれた PR #182〜#184・#191〜#195 と dependabot 更新をまと
 - チョイアプリ・フィードバック対応（#182〜#184）: 固定シェル・設定カテゴリ・
   ナビバッジ・「ログインなしで使い始める」。
 
-消費側への注意: `sysinfo` は Windows で `windows` 0.62 系を引く（`src-tauri` の
-0.61 系と並存）。不要なら `system-metrics` feature を `default` から外す
-（README「オプション資産の削除」）。
+**消費側への注意（Rust、v1.4.0 → v1.5.0 の追従作業）:**
+
+- `banto_admin_services::settings::ServerSettings` に `viewer_public: bool` が増えた。
+  構造体リテラルで組み立てている箇所（テンプレートの `server_apply`）は
+  `viewer_public` を足すか `..Default::default()` を使う。
+- `banto_server::routes::SystemInfo` に `metrics: Option<SystemMetrics>` が増えた。
+  Tauri 側の `system_info` コマンドで組み立てている箇所は `metrics: None`（または
+  `system-metrics` feature の `SystemMetricsSampler` で取得した値）を足す。
+- `banto_server::routes::extra_auth_router(users, auth, audit, allow_setup)` が
+  `(…, allow_setup, settings: SettingsService, status_extras: Option<AuthStatusExtras>)`
+  になった。テンプレートどおり `settings.clone()` と `None` を渡す。
+- `banto_server::routes::system_info_router(service, auth, audit)` が
+  `(…, audit, metrics: Option<MetricsProbe>)` になった。`None` で従来どおり。
+- `sysinfo` は Windows で `windows` 0.62 系を引く（`src-tauri` の 0.61 系と並存）。
+  不要なら `system-metrics` feature を `default` から外す（README「オプション資産の
+  削除」）。
 
 - feat(scaffold): `pnpm scaffold --preset display`（#190、PR-D2、
   [docs/display-preset-plan.md](docs/display-preset-plan.md) §3.2）— カンバン/常設
