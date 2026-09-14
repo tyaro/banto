@@ -12,6 +12,10 @@
  *   - minimal  … コアのみ（charts/dock/glass/commandPalette/attachments/report/tree を全削除）
  *   - standard … ダッシュボード体験を残す（attachments/report/tree を削除）
  *   - full     … 何も削除しない（検証のみ）
+ *   - display  … 表示専用アプリ（カンバン/常設ダッシュボード/展示デモ）。
+ *                minimal が外すもの全部 + items デモリソース一式 + users /
+ *                audit-log **画面** + /dashboard を外し、`/monitor` を足して
+ *                既定値を反転する（docs/display-preset-plan.md §3.2、Issue #190）。
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
  *
  * 各資産の削除は README「3. オプション資産の削除」の手順を 1 対 1 で自動化した
@@ -20,8 +24,15 @@
  * パターンは明示的失敗）は rename.mjs と共有する scripts/lib/template-edit.mjs。
  * 依存は足さない（Node 標準のみ、conventions §3 / ADR-0002）。
  *
+ * **display だけは「引く」に加えて「足す」工程を持つ**（plan §2 原則 1 の
+ * 範囲内: 足すのは①既にテンプレート本体にあるトグルの**既定値の反転**と、
+ * ②`scripts/lib/templates/display/` に置いた**雛形ファイルの複製**だけで、
+ * scaffold 出力にしか存在しないロジックは作らない）。この工程は
+ * `applyDisplayDefaults()` に閉じ、他の remover と同じ編集エンジンを通るので
+ * `--dry-run` の計画表示も `--strict` の扱いも removers と同一になる。
+ *
  * 使い方:
- *   node scripts/scaffold.mjs --preset minimal|standard|full [--dry-run]
+ *   node scripts/scaffold.mjs --preset minimal|standard|full|display [--dry-run]
  *   node scripts/scaffold.mjs --interactive|-i [--dry-run]
  *
  * `--interactive`（plan §7.3）は人間に対話でプリセット（または個別資産の
@@ -30,6 +41,7 @@
  * 依存を足さない文化に従い Node 標準の `node:readline/promises` のみを使う
  * （新規依存なし、conventions §3 / ADR-0002）。
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -40,20 +52,37 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 // --- 引数 -------------------------------------------------------------------
 
+/** minimal が外すオプション資産（display はこれを全部含む）。 */
+const OPTIONAL_ASSETS = [
+	'charts',
+	'dock',
+	'glass',
+	'commandPalette',
+	'attachments',
+	'report',
+	'tree'
+];
+
 const PRESETS = {
 	// 値 = 削除する資産の集合（残すものは書かない）。
-	minimal: ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report', 'tree'],
+	minimal: [...OPTIONAL_ASSETS],
 	standard: ['attachments', 'report', 'tree'],
-	full: []
+	full: [],
+	// display だけ「デモ資産」（items / 管理画面 / ダッシュボード）にも及ぶ。
+	// 末尾の `displayDefaults` は唯一の「足す」工程（ファイル冒頭 doc 参照）。
+	display: [...OPTIONAL_ASSETS, 'items', 'adminPages', 'dashboard', 'displayDefaults']
 };
 
 function usage(code) {
 	console.log(
-		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full [--dry-run] [--strict]\n' +
+		'使い方: node scripts/scaffold.mjs --preset minimal|standard|full|display [--dry-run] [--strict]\n' +
 			'       node scripts/scaffold.mjs --interactive|-i [--dry-run]\n' +
 			'  minimal     … コアのみ（全オプション資産を削除）\n' +
 			'  standard    … dock/charts/コマンドパレット/Glass を残し、添付・帳票・ツリーを削除\n' +
 			'  full        … 何も削除しない（検証のみ）\n' +
+			'  display     … 表示専用アプリ: minimal の削除 + items デモ一式 + users/audit-log 画面\n' +
+			'                + /dashboard を削除し、/monitor・初回起動シード・キオスク既定・\n' +
+			'                i18n raw を入れる（docs/display-preset-plan.md）\n' +
 			'  --interactive/-i … プリセット（または資産ごとの残す/削除）を対話で選ぶ。\n' +
 			'                      --preset とは併用不可\n' +
 			'  --strict    … pristine コピー専用: 「適用済み扱い」をアンカードリフトとして失敗にする\n' +
@@ -97,7 +126,7 @@ if (args.preset && !Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
 // --- 編集エンジン -----------------------------------------------------------
 
 const editor = createEditor({ repoRoot, dryRun: args.dryRun, strict: args.strict });
-const { editFile, removeFile, removeDir } = editor;
+const { addFile, editFile, removeFile, removeDir } = editor;
 
 /** 連続領域を start..end（両端含む）で削除。短い一意アンカーで巨大ブロックを消す。 */
 function cutRegion(rel, label, start, end) {
@@ -118,6 +147,86 @@ function swapText(rel, label, from, to) {
 /** apps/admin-template/package.json から workspace 依存 1 行を削除。 */
 function removeAppDep(dep) {
 	drop(APP_PKG, `dependency ${dep} を除去`, `    "${dep}": "workspace:*",\n`);
+}
+
+/**
+ * `// [scaffold:<tag>] begin` … `// [scaffold:<tag>] end` で挟まれた領域を
+ * **1つ**削除する（display-preset-plan.md D1-d のマーカー方式）。
+ *
+ * アンカーに直前の改行と `indent` を含めるので、(1) 同じファイル内の
+ * インデント違いのマーカーを取り違えない（`\n// …` は列0のマーカーにしか
+ * 当たらない）、(2) 削除後に空白だけの行が残らない（rustfmt/prettier 整合）。
+ * 同じ tag/indent の領域が複数あるファイルでは、**出現順に 1 回ずつ**呼ぶ
+ * （`cut` は最初の一致を消すので、n 回呼べば n 個が上から順に消える）。
+ */
+function cutMarked(rel, label, tag, indent = '') {
+	cutRegion(rel, label, `\n${indent}// [scaffold:${tag}] begin`, `// [scaffold:${tag}] end`);
+}
+
+/**
+ * `messages/{ja,en}.json` から**キー接頭辞**でメッセージを取り除く
+ * （`prefix` そのもの、または `prefix + '.'` で始まるキー）。
+ *
+ * 辞書は「1行1キー・2スペース・キー順保持」の prettier 整形なので、
+ * JSON としてパース→フィルタ→`JSON.stringify(…, null, 2)` で往復しても
+ * バイト等価になる（本リポジトリで検証済み）。行単位の正規表現より安全で、
+ * 末尾要素のカンマ問題も起きない。
+ * 1件も消えなければ `null`（適用済み＝再実行安全 / `--strict` では失敗）。
+ */
+function removeMessageKeys(rel, label, prefixes, keep = []) {
+	const keepSet = new Set(keep);
+	const matches = (key) =>
+		!keepSet.has(key) && prefixes.some((p) => key === p || key.startsWith(`${p}.`));
+	editFile(rel, label, (s) => {
+		const before = JSON.parse(s);
+		const after = Object.fromEntries(Object.entries(before).filter(([key]) => !matches(key)));
+		if (Object.keys(after).length === Object.keys(before).length) return null;
+		return `${JSON.stringify(after, null, 2)}\n`;
+	});
+}
+
+/**
+ * `messages/{ja,en}.json` に 1 キーを `anchor` の**直前**へ挿入する
+ * （キー順を保つための位置指定。`removeMessageKeys` と同じ往復整形）。
+ * 既に同じ値で在れば `null`（適用済み）、`anchor` が無ければ `undefined`（失敗）。
+ */
+function addMessageKey(rel, label, anchor, key, value) {
+	editFile(rel, label, (s) => {
+		const before = JSON.parse(s);
+		if (before[key] === value) return null;
+		if (!(anchor in before)) return undefined;
+		const after = {};
+		for (const [k, v] of Object.entries(before)) {
+			if (k === anchor) after[key] = value;
+			if (k !== key) after[k] = v;
+		}
+		return `${JSON.stringify(after, null, 2)}\n`;
+	});
+}
+
+/** `scripts/lib/templates/` の雛形を読む（display の「足す」工程の素材）。 */
+function readTemplate(templateRel) {
+	const abs = path.join(repoRoot, 'scripts/lib/templates', templateRel);
+	try {
+		return fs.readFileSync(abs, 'utf8');
+	} catch {
+		return fail(`雛形 scripts/lib/templates/${templateRel} が見つかりません`);
+	}
+}
+
+/** 雛形を**新規ファイル**として置く（既存があれば衝突として失敗）。 */
+function copyTemplate(templateRel, destRel, label) {
+	addFile(destRel, label, readTemplate(templateRel));
+}
+
+/**
+ * 雛形で**既存ファイルを丸ごと差し替える**（内容が既に一致していれば適用済み）。
+ * 「削除してから作る」にすると `--dry-run`（実際には消さない）で衝突扱いに
+ * なってしまうため、1つの冪等な編集として表現する。
+ */
+function copyTemplateOver(templateRel, destRel, label) {
+	const content = readTemplate(templateRel);
+	editFile(destRel, label, (s) => (s === content ? null : content));
 }
 
 // --- パス定数 ---------------------------------------------------------------
@@ -144,6 +253,24 @@ const LIB_RS = `${APP}/src-tauri/src/lib.rs`;
 const WS_CARGO = 'Cargo.toml';
 const CORE_CARGO = `${APP}/core/Cargo.toml`;
 const TAURI_CARGO = `${APP}/src-tauri/Cargo.toml`;
+// display プリセット（items / adminPages / dashboard / displayDefaults）の対象。
+const NAV = `${APP}/src/lib/navigation.ts`;
+const NAV_ICONS = `${APP}/src/lib/components/navIcons.ts`;
+const I18N = `${APP}/src/lib/banto/i18n.ts`;
+const MSG_JA = `${APP}/messages/ja.json`;
+const MSG_EN = `${APP}/messages/en.json`;
+const CORE_LIB = `${APP}/core/src/lib.rs`;
+const CORE_DB = `${APP}/core/src/db.rs`;
+const FIRST_BOOT = `${APP}/core/src/first_boot.rs`;
+const SETUP_TS = `${APP}/src/lib/banto/setup.ts`;
+const RESOURCES_INDEX = `${APP}/src/lib/banto/resources/index.ts`;
+const SETTINGS_STORE = `${APP}/src/lib/settings.svelte.ts`;
+const ROOT_PAGE_TS = `${APP}/src/routes/+page.ts`;
+const LOGIN = `${APP}/src/routes/login/+page.svelte`;
+const ROOT_PKG = 'package.json';
+const PLAYWRIGHT_CONFIG = 'e2e/playwright.config.ts';
+const E2E_SMOKE = 'e2e/tests/smoke.spec.ts';
+const CI_WORKFLOW = '.github/workflows/ci.yml';
 
 // --- removers（README「3. オプション資産の削除」の 1 対 1 自動化） ----------
 
@@ -567,7 +694,7 @@ function removeAttachments() {
  * `api_router` から attachments 引数が消えるのに追随しないと、削除済みクレート
  * `banto_attachments` を参照するテストがコンパイルできず `cargo test` が赤くなる。
  * 除去箇所は次のとおり（M20 ブロックは crate ごと消えるので丸ごと・他は false positive）:
- *   (a) 末尾の M20 attachments テストブロック（独自の実サービス+tempdir）を EOF まで。
+ *   (a) M20 attachments テストブロック（独自の実サービス+tempdir）を章マーカー間で。
  *   (b) `unused_attachments_service` ヘルパ + doc コメント。
  *   (c) 各ルータビルダの `unused_attachments_service(...)` 宣言（6箇所）。
  *   (d) backup ヘルパ（M17 テストで生存）の実 `AttachmentsService::new(...)` 宣言。
@@ -575,12 +702,16 @@ function removeAttachments() {
  * `PathBuf` import は `unused_backup_service` が使うため残す。
  */
 function removeAttachmentsFromRestTests() {
-	// (a) M20 テストブロックを丸ごと EOF まで削除（他の attachments, 参照より先に消す
-	//     ことで、残る api_router 実引数がビルダの分だけになる）。
-	cutEnd(
+	// (a) M20 テストブロックを章マーカー間で丸ごと削除（他の attachments, 参照より
+	//     先に消すことで、残る api_router 実引数がビルダの分だけになる）。
+	//     かつては `cutEnd`（マーカーから EOF まで）だったが、M20 章の**後ろ**に
+	//     追記された章（Issue #189 の 閲覧公開スイート）まで巻き添えで消していた。
+	//     終端マーカーを置いて範囲を閉じる（tests.rs の該当コメント参照）。
+	cutRegion(
 		REST_TESTS,
-		'rest/tests: M20 attachments テストブロック（EOFまで）除去',
-		'// --- M20: attachments'
+		'rest/tests: M20 attachments テストブロック除去',
+		'\n\n// --- M20: attachments',
+		'// Keep any new section strictly outside the pair.'
 	);
 	// (b) unused_attachments_service ヘルパ + doc コメント（直前の空行ごと）を除去。
 	drop(
@@ -857,38 +988,22 @@ function removeGlassSrcTauri() {
 // 残しても他に影響しない）。
 
 function removeTree() {
-	const NAV = `${APP}/src/lib/navigation.ts`;
-	const NAV_ICONS = `${APP}/src/lib/components/navIcons.ts`;
-	const I18N = `${APP}/src/lib/banto/i18n.ts`;
-
 	// (1) デモルートとサンプルデータ
 	removeDir(`${APP}/src/routes/(app)/tree`, 'tree デモルート削除');
 	removeFile(`${APP}/src/lib/banto/treeSample.ts`, 'treeSample.ts 削除');
 
 	// (2) ナビゲーション（union とアイコンマップは型で連結しているため対で外す）
-	swapText(
-		NAV,
-		'nav: NavIconKey union から tree 除去',
-		`'dashboard' | 'items' | 'tree' | 'users'`,
-		`'dashboard' | 'items' | 'users'`
-	);
-	swapText(
-		NAV,
-		'nav: NavLabelKey union から nav.tree 除去',
-		`'nav.dashboard' | 'nav.items' | 'nav.tree' | 'nav.users'`,
-		`'nav.dashboard' | 'nav.items' | 'nav.users'`
-	);
+	//     union は「自分の1語だけ」を drop する — 同じ行を後続の remover
+	//     （display の items / adminPages / dashboard）も縮めるので、行全体を
+	//     アンカーにすると再実行が壊れる。
+	drop(NAV, 'nav: NavIconKey union から tree 除去', `'tree' | `);
+	drop(NAV, 'nav: NavLabelKey union から nav.tree 除去', `'nav.tree' | `);
 	drop(
 		NAV,
 		'nav: navItems の /tree 行除去',
 		`\t{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },\n`
 	);
-	swapText(
-		NAV_ICONS,
-		'navIcons: ListTree import 除去',
-		`import { LayoutDashboard, Package, ListTree, Users, ScrollText, Settings } from '@lucide/svelte';`,
-		`import { LayoutDashboard, Package, Users, ScrollText, Settings } from '@lucide/svelte';`
-	);
+	drop(NAV_ICONS, 'navIcons: ListTree import 除去', `ListTree, `);
 	drop(NAV_ICONS, 'navIcons: tree エントリ除去', `\ttree: ListTree,\n`);
 
 	// (3) i18n ブリッジ（treeMessages はファイル末尾の章なので EOF まで削除）と文言キー
@@ -919,6 +1034,595 @@ function removeTree() {
 	drop(VITE, 'vite: optimizeDeps.exclude から tree-svelte 除去', `,\n\t\t\t'@banto/tree-svelte'`);
 }
 
+// --- items（デモリソース一式、display プリセット専用）------------------------
+//
+// docs/display-preset-plan.md §3.2 / template-scope §3。items は長らく「コア」
+// 扱いだったが、実体は**差し替え前提のデモリソース**なので display で
+// 丸ごと外せるように再分類した（README「デモコンテンツ（items）を自リソースに
+// 差し替える」の層別ファイル一覧と1対1）。
+//
+// 実装方針: 巨大な items 区画には PR-D1 が `// [scaffold:items] begin/end`
+// マーカーを入れてある（Rust 3ファイル + src-tauri + フロント 2ファイル）ので、
+// ここは `cutMarked` をマーカーの出現順に呼ぶだけ。マーカーの無い小さな参照
+// （import 1行・union 1語・マニフェスト行）だけ drop/swap で個別に外す。
+//
+// **順序の前提**: ORDER で attachments より後に走る。attachments remover が
+// rest/mod.rs・src-tauri・verify-architecture の attachments 行を先に外して
+// いることを前提にしたアンカー（DESKTOP_ONLY の末尾整形）が1箇所ある。
+// display は必ず attachments も外すので、この前提は常に成立する。
+
+function removeItems() {
+	// (1) Rust: サービス層 + REST ルータ + マイグレーション
+	removeFile(`${APP}/core/src/items.rs`, 'core/items.rs 削除');
+	removeFile(REST_ITEMS, 'core/rest/items.rs 削除');
+	removeFile(
+		`${APP}/core/migrations-sqlite/0001_items.sql`,
+		'migrations-sqlite/0001_items.sql 削除'
+	);
+	removeFile(
+		`${APP}/core/migrations-postgres/0001_items.sql`,
+		'migrations-postgres/0001_items.sql 削除'
+	);
+	cutMarked(CORE_LIB, 'core/lib.rs: pub mod items 除去', 'items');
+
+	// db.rs: 列0のマーカー2つ（SEED_ROW_COUNT / デモ seed 生成一式）と
+	// インデント4のマーカー2つ（seed 呼び出し / seed テスト）を出現順に。
+	cutMarked(CORE_DB, 'db.rs: SEED_ROW_COUNT 除去', 'items');
+	cutMarked(CORE_DB, 'db.rs: デモ seed 生成一式除去', 'items');
+	cutMarked(CORE_DB, 'db.rs: run_migrations_and_seed の seed 呼び出し除去', 'items', '    ');
+	cutMarked(CORE_DB, 'db.rs: デモ seed テスト除去', 'items', '    ');
+
+	// rest/mod.rs: 列0が4つ（Route table doc 行 / use crate::items / mod items /
+	// use items_router）、インデント4が1つ（Services のフィールド）、
+	// インデント8が2つ（destructure / merge）。
+	cutMarked(REST_MOD, 'rest: Route table の items 行除去（doc）', 'items');
+	cutMarked(REST_MOD, 'rest: use crate::items 除去', 'items');
+	cutMarked(REST_MOD, 'rest: mod items 除去', 'items');
+	cutMarked(REST_MOD, 'rest: use items_router 除去', 'items');
+	cutMarked(REST_MOD, 'rest: Services の items フィールド除去', 'items', '    ');
+	cutMarked(REST_MOD, 'rest: api_router destructure の items 除去', 'items', '        ');
+	cutMarked(REST_MOD, 'rest: items_router の合流除去', 'items', '        ');
+	removeItemsFromRestModImports();
+
+	// rest/tests.rs: 列0が3つ（items テスト本体 / M14 の items ステップ /
+	// 閲覧公開の items シナリオ）、インデント4が1つ（setup テストの
+	// 「ガード済みルート」確認）。共有ヘルパの items 宣言と `Services` リテラルは
+	// マーカー外なので drop/swap で外す。
+	// `rest/tests.rs` は `use super::*;` で mod.rs の import を借りている。
+	// `removeItemsFromRestModImports()` がそこを絞るので、テストだけが使う
+	// `StatusCode` / `ListParams` / `Role` はここで直接 import に移す（同時に、
+	// items 一覧テスト専用だったフィルタ/ソート型の import を落とす）。
+	swapText(
+		REST_TESTS,
+		'rest/tests: テスト専用 import を直接 import に移す',
+		`use axum::http::Request as HttpRequest;\nuse banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, SortState};`,
+		`use axum::http::{Request as HttpRequest, StatusCode};\nuse banto_core::{BantoError, ListParams};\nuse crate::users::Role;`
+	);
+	cutMarked(REST_TESTS, 'rest/tests: items テストブロック除去', 'items');
+	cutMarked(REST_TESTS, 'rest/tests: setup テストの items ガード確認除去', 'items', '    ');
+	cutMarked(REST_TESTS, 'rest/tests: M14 の items 監査ステップ除去', 'items');
+	cutMarked(REST_TESTS, 'rest/tests: 閲覧公開の items シナリオ除去', 'items');
+	drop(
+		REST_TESTS,
+		'rest/tests: ルータヘルパの ItemsService 宣言除去（pool）',
+		`    let items = ItemsService::new(pool.clone()).with_events(tx.clone());\n`
+	);
+	drop(
+		REST_TESTS,
+		'rest/tests: ルータヘルパの ItemsService 宣言除去（db）',
+		`    let items = ItemsService::new(db.clone()).with_events(tx.clone());\n`
+	);
+	// `Services { … }` リテラルの先頭フィールド。直前行ごと指定して、より深い
+	// インデントの `items,` を部分文字列として拾わないようにする（attachments
+	// remover の同型 swap と同じ配慮）。
+	swapText(
+		REST_TESTS,
+		'rest/tests: Services リテラルから items 除去',
+		`Services {\n        items,\n`,
+		`Services {\n`
+	);
+
+	// banto-serve.rs（LAN 配信バイナリ。マーカー不要な3行）
+	drop(
+		BANTO_SERVE,
+		'banto-serve: ItemsService use 除去',
+		`use admin_template_core::items::ItemsService;\n`
+	);
+	drop(
+		BANTO_SERVE,
+		'banto-serve: ItemsService 構築除去',
+		`    let items = ItemsService::new(db.clone()).with_events(events.clone());\n`
+	);
+	swapText(
+		BANTO_SERVE,
+		'banto-serve: Services リテラルから items 除去',
+		`let services = Services {\n        items,\n`,
+		`let services = Services {\n`
+	);
+
+	// (2) src-tauri（非コンパイル・コードレビュー担保）
+	removeItemsFromLibRs();
+
+	// (3) フロント: ルート・リソース定義・デモデータ・ナビ
+	removeDir(`${APP}/src/routes/(app)/items`, 'items ルート一式削除');
+	removeFile(`${APP}/src/lib/banto/itemsAdmin.ts`, 'itemsAdmin.ts 削除');
+	removeFile(`${APP}/src/lib/banto/resources/items.ts`, 'resources/items.ts 削除');
+	removeFile(`${APP}/src/lib/banto/sampleData.ts`, 'sampleData.ts 削除');
+	// dashboard.ts は丸ごと items 集計（ファイル冒頭の D1-d メモ参照）。charts/dock
+	// remover が先に `@banto/charts` 参照を外しているので、ここで消して問題ない。
+	removeFile(DASH_LIB, 'dashboard.ts（items 集計）削除');
+
+	cutMarked(RESOURCES_INDEX, 'resources: itemsResource import 除去', 'items');
+	swapText(
+		RESOURCES_INDEX,
+		'resources: 登録配列を空に',
+		`// D1-d note (display-preset-plan.md, Issue #190 prep): the future \`items\`\n// remover needs a \`swapText\` here, not a \`cutRegion\` delete - \`resources\`\n// must still be a valid (possibly empty) array afterwards:\n//   \`[itemsResource]\` -> \`[]\`\nexport const resources: ResourceDefinition[] = [itemsResource];`,
+		`export const resources: ResourceDefinition[] = [];`
+	);
+	drop(SETUP_TS, 'setup: sampleItems import 除去', `import { sampleItems } from './sampleData';\n`);
+	swapText(
+		SETUP_TS,
+		'setup: デモ provider の items シード除去',
+		`createInMemoryDataProvider({ items: { rows: sampleItems } })`,
+		`createInMemoryDataProvider({})`
+	);
+	swapText(
+		SETUP_TS,
+		'setup: doc コメントの items 参照を更新',
+		` * - \`resources/items.ts\` + \`resources/index.ts\` — resource definitions and\n *   registration (**the files you replace**, docs/recipes/add-resource.md)`,
+		` * - \`resources/index.ts\` — resource definitions and registration\n *   (docs/recipes/add-resource.md。display プリセットは items デモを外した\n *   空配列から始まる)`
+	);
+
+	// union の縮小は「自分の1語だけ」を落とす形にする（他の remover の編集結果に
+	// 依存しない = `--dry-run`（＝書き込まないので連鎖しない）でも計画が出せる）。
+	cutMarked(NAV, 'nav: navItems の /items 行除去', 'items', '\t');
+	drop(NAV, 'nav: NavIconKey union から items 除去', `'items' | `);
+	drop(NAV, 'nav: NavLabelKey union から nav.items 除去', `'nav.items' | `);
+	drop(NAV_ICONS, 'navIcons: Package import 除去', `Package, `);
+	drop(NAV_ICONS, 'navIcons: items エントリ除去', `\titems: Package,\n`);
+	// grid の空状態だけ items 辞書を借りていた（パッケージ既定の日本語に戻す）。
+	drop(
+		I18N,
+		'i18n: grid emptyState の items キー参照除去',
+		`\t\temptyState: () => m['items.list.empty'](),\n`
+	);
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(file, `${label}: items.* / nav.items キー除去`, ['items', 'nav.items']);
+
+	// (4) アーキテクチャ検査のマニフェスト（rule 8）
+	removeItemsFromVerifyArch();
+
+	// (5) e2e（display は items/users を叩くシナリオが全滅するので組み替える）
+	replaceE2eForDisplay();
+}
+
+/**
+ * `rest/mod.rs` の共有 import を、items（と先に外れた attachments）が消えた
+ * 後の実使用に合わせて絞る。`rest/{items,attachments}.rs` が `use super::*;`
+ * で借りていた分が丸ごと不要になるため、放置すると unused_imports 警告が
+ * 大量に出る（`cargo clippy -- -D warnings` を回す派生アプリで赤になる）。
+ */
+function removeItemsFromRestModImports() {
+	drop(REST_MOD, 'rest: axum::body::Bytes import 除去', `use axum::body::Bytes;\n`);
+	drop(REST_MOD, 'rest: axum::extract import 除去', `use axum::extract::{Path, Query, State};\n`);
+	drop(REST_MOD, 'rest: axum::http import 除去', `use axum::http::{HeaderMap, StatusCode};\n`);
+	drop(REST_MOD, 'rest: axum::response::Response import 除去', `use axum::response::Response;\n`);
+	drop(REST_MOD, 'rest: axum::routing import 除去', `use axum::routing::{get, post};\n`);
+	swapText(
+		REST_MOD,
+		'rest: axum::Json import 除去',
+		`use axum::{Json, Router};`,
+		`use axum::Router;`
+	);
+	drop(
+		REST_MOD,
+		'rest: banto_core import 除去',
+		`use banto_core::{BantoError, ListParams, ListResult};\n`
+	);
+	swapText(
+		REST_MOD,
+		'rest: banto_server::routes の items/attachments 専用ヘルパ除去',
+		`use banto_server::routes::{\n    actor_identity, audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,\n    record_write, require_role_at_least, system_info_router, ui_settings_router, users_router,\n    LogoutAuditState, MetricsProbe, RoleGuard,\n};`,
+		`use banto_server::routes::{\n    audit_log_router, audit_logout_middleware, backups_router, extra_auth_router,\n    system_info_router, ui_settings_router, users_router, LogoutAuditState, MetricsProbe,\n};`
+	);
+	swapText(
+		REST_MOD,
+		'rest: banto_server の require_auth/ApiError 除去',
+		`use banto_server::{\n    auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,\n    ServerEvent,\n};`,
+		`use banto_server::{\n    auth_routes, require_banto_client_header, sse_route, AuthState, ServerEvent,\n};`
+	);
+	drop(REST_MOD, 'rest: serde::Deserialize import 除去', `use serde::Deserialize;\n`);
+	drop(REST_MOD, 'rest: serde_json::json import 除去', `use serde_json::json;\n`);
+	drop(
+		REST_MOD,
+		'rest: AuditEntry import 除去',
+		`use crate::audit::{AuditEntry, AuditLogService};\n`
+	);
+	editFile(REST_MOD, 'rest: AuditLogService import を再追加', (s) =>
+		s.includes('use crate::audit::AuditLogService;')
+			? null
+			: s.includes('use crate::backup::BackupService;')
+				? s.replace(
+						'use crate::backup::BackupService;',
+						'use crate::audit::AuditLogService;\nuse crate::backup::BackupService;'
+					)
+				: undefined
+	);
+	swapText(
+		REST_MOD,
+		'rest: users の Role import 除去',
+		`use crate::users::{Role, UsersService};`,
+		`use crate::users::UsersService;`
+	);
+}
+
+/** `src-tauri/src/lib.rs` の items 区画（マーカー15箇所）を出現順に外す。 */
+function removeItemsFromLibRs() {
+	// 列0（3）: use・items_* コマンド群・items_export_csv_to_folder
+	cutMarked(LIB_RS, 'lib.rs: items use 除去', 'items');
+	cutMarked(LIB_RS, 'lib.rs: items_* コマンド群除去', 'items');
+	cutMarked(LIB_RS, 'lib.rs: items_export_csv_to_folder 除去', 'items');
+	// インデント4（4）: AppState フィールド・start_embedded_server 引数・
+	//                   M15 テスト章・items_delete 監査テスト
+	cutMarked(LIB_RS, 'lib.rs: AppState の items フィールド除去', 'items', '    ');
+	cutMarked(LIB_RS, 'lib.rs: start_embedded_server の items 引数除去', 'items', '    ');
+	cutMarked(LIB_RS, 'lib.rs: test の M15 CSV import 章除去', 'items', '    ');
+	cutMarked(LIB_RS, 'lib.rs: test の items_delete 監査テスト除去', 'items', '    ');
+	// インデント8（1）: start_embedded_server の Services リテラル
+	cutMarked(LIB_RS, 'lib.rs: Services リテラルから items 除去', 'items', '        ');
+	// インデント12（4）: setup の ItemsService 構築・invoke_handler 登録・
+	//                    test app_state / app_state_with_tempdir
+	cutMarked(LIB_RS, 'lib.rs: setup の ItemsService 構築除去', 'items', '            ');
+	cutMarked(LIB_RS, 'lib.rs: invoke_handler の items コマンド登録除去', 'items', '            ');
+	cutMarked(LIB_RS, 'lib.rs: test app_state の items 除去', 'items', '            ');
+	cutMarked(LIB_RS, 'lib.rs: test app_state_with_tempdir の items 除去', 'items', '            ');
+	// インデント16（2）: server_apply の実引数・AppState 構築リテラル
+	cutMarked(LIB_RS, 'lib.rs: server_apply の items 実引数除去', 'items', '                ');
+	cutMarked(LIB_RS, 'lib.rs: AppState 構築リテラルの items 除去', 'items', '                ');
+	// インデント20（1）: setup の start_embedded_server 実引数
+	cutMarked(LIB_RS, 'lib.rs: setup の items 実引数除去', 'items', '                    ');
+}
+
+/** `verify:architecture` rule 8 のマニフェストから items のエントリを外す。 */
+function removeItemsFromVerifyArch() {
+	drop(
+		VERIFY_ARCH,
+		'verify: DUAL_PATH の items 4対除去',
+		`\t\t{ tauri: 'items_create', rest: 'POST /api/items', role: 'Editor' },\n` +
+			`\t\t{ tauri: 'items_update', rest: 'PUT /api/items/{id}', role: 'Editor' },\n` +
+			`\t\t{ tauri: 'items_delete', rest: 'DELETE /api/items/{id}', role: 'Editor' },\n` +
+			`\t\t{ tauri: 'items_import', rest: 'POST /api/items/import', role: 'Editor' },\n`
+	);
+	// DESKTOP_ONLY の**末尾要素**（カンマ無し）なので、直前の行のカンマごと外して
+	// trailingComma:none を保つ（prettier 準拠）。前の行が何かに依存しない形。
+	editFile(VERIFY_ARCH, 'verify: DESKTOP_ONLY の items_export_csv_to_folder 除去', (s) => {
+		const withComma = `,\n\t\t'items_export_csv_to_folder'\n`;
+		if (s.includes(withComma)) return s.replace(withComma, '\n');
+		if (!s.includes(`'items_export_csv_to_folder'`)) return null; // 適用済み
+		return undefined; // 末尾要素でなくなった＝構造が変わった
+	});
+	drop(
+		VERIFY_ARCH,
+		'verify: TAURI_READ の items_get/items_list 除去',
+		`\t\t'items_get',\n\t\t'items_list',\n`
+	);
+	drop(
+		VERIFY_ARCH,
+		'verify: REST_READ の GET /api/items/{id} 除去',
+		`\t\t'GET /api/items/{id}',\n`
+	);
+	drop(
+		VERIFY_ARCH,
+		'verify: REST_READ の POST /api/items/list 除去',
+		`\t\t'POST /api/items/list',\n`
+	);
+}
+
+/**
+ * e2e を display 向けに組み替える。
+ *
+ * 同梱の3スイートはいずれも items / users 画面（とダッシュボード）を前提に
+ * している: `tests/smoke.spec.ts`（items CRUD/CSV/添付/ユーザー管理）、
+ * `tests-public-viewer/`（`/items` の読み取り専用確認）、`visual/`（items /
+ * users / dashboard のスクリーンショットと axe-core）。display ではその画面が
+ * 存在しないので、**1シナリオのスモークだけを残す**:
+ *   「まっさらな DB で未ログインの `/` が `/monitor` に着く」
+ * ＝ 初回起動シード（viewer_public）+ 合成 viewer + `/monitor` の結線確認。
+ * ビジュアル回帰はベースライン画像ごと外す（派生アプリが自分の画面で
+ * 撮り直すもので、テンプレートの画像を引き継ぐ意味が無い）。
+ */
+function replaceE2eForDisplay() {
+	copyTemplateOver(
+		'display/smoke.spec.ts',
+		E2E_SMOKE,
+		'e2e: スモークを display の1シナリオに差し替え'
+	);
+	removeDir('e2e/tests-public-viewer', 'e2e: 閲覧公開スイート削除');
+	removeDir('e2e/visual', 'e2e: ビジュアル回帰 + axe-core スイート削除');
+	removeFile('.github/workflows/visual-baselines.yml', 'CI: visual-baselines ワークフロー削除');
+
+	// playwright.config.ts: 先頭の doc コメントを display 版に差し替える
+	// （3スイート前提の説明が丸ごと嘘になるため）。
+	editFile(PLAYWRIGHT_CONFIG, 'playwright: 先頭の doc コメントを display 版に', (s) => {
+		const NEW_DOC =
+			`/**\n` +
+			` * Playwright config（display プリセット）。\n` +
+			` *\n` +
+			` * project は \`chromium\`（testDir \`./tests\`）の1つだけ。テンプレート同梱の\n` +
+			` * \`public-viewer\` / \`visual\` スイートは items・users・ダッシュボードの画面を\n` +
+			` * 前提にしていたため display では外してある（\`scripts/scaffold.mjs\`）。\n` +
+			` *\n` +
+			` * \`webServer\` は \`banto-serve --features embed-ui\` を**直接**起動する\n` +
+			` * （\`cargo run\` ではない）。実行前に次の2つを済ませておくこと:\n` +
+			` *   pnpm --filter admin-template build\n` +
+			` *   cargo build -p admin-template-core --bin banto-serve --features embed-ui\n` +
+			` *\n` +
+			` * DB は毎回まっさらな一時ディレクトリに作る。display のスモークは\n` +
+			` * 「初回起動シードが効いて未ログインでも \`/monitor\` に着く」ことを見るので、\n` +
+			` * 前回の残骸を再利用すると前提が崩れる。\n` +
+			` */\n`;
+		if (s.startsWith(NEW_DOC)) return null;
+		const end = s.indexOf(' */\n');
+		if (!s.startsWith(`/**\n * Playwright config for Banto's E2E suites`) || end === -1)
+			return undefined;
+		return NEW_DOC + s.slice(end + ' */\n'.length);
+	});
+	swapText(
+		PLAYWRIGHT_CONFIG,
+		'playwright: chromium project のコメントを整理',
+		`\t\t// M18 smoke suite (unchanged behavior): explicit testDir so adding the\n\t\t// \`visual\` project below can never pull tests/visual/*.spec.ts into the\n\t\t// wrong project or vice versa.\n`,
+		`\t\t// display スモーク（1シナリオ）。\n`
+	);
+
+	// playwright.config.ts: project 2つ（public-viewer / visual）と、その
+	// webServer エントリ（2つ目の banto-serve / vite preview）を、**直前の
+	// カンマごと**まとめて外す（残る要素が配列の末尾になるので trailingComma:none
+	// を保つ）。どちらも「残す要素の直後 … 配列の最後の要素の終わり」の1領域。
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: public-viewer / visual project 除去',
+		`,\n\t\t// Viewer-public mode (Issue #189)`,
+		`toHaveScreenshot: { animations: 'disabled', maxDiffPixels: 250 }\n\t\t\t}\n\t\t}`
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: 2つ目の banto-serve / vite preview webServer 除去',
+		`,\n\t\t{\n\t\t\t// Second banto-serve for the \`public-viewer\` project`,
+		`\t\t\tstdout: 'pipe'\n\t\t}`
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: public-viewer 用の定数/DB パス除去',
+		`// \`public-viewer\` project (viewer-public-plan.md §3.1-8, Issue #189)`,
+		`const PUBLIC_VIEWER_BASE_URL = \`http://127.0.0.1:\${PUBLIC_VIEWER_PORT}\`;\n\n`
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: visual 用の定数除去',
+		`// \`visual\` project (browser demo mode, vite preview`,
+		`const VISUAL_BASE_URL = \`http://127.0.0.1:\${VISUAL_PORT}\`;\n\n`
+	);
+	cutRegion(
+		PLAYWRIGHT_CONFIG,
+		'playwright: public-viewer 用 DB パス除去',
+		`// Same temp dir (one teardown removes both), separate file`,
+		`const publicViewerDbPath = path.join(dbDir, 'banto-e2e-public-viewer.sqlite3');\n`
+	);
+
+	// ルート package.json のスクリプトと ci.yml のステップ
+	drop(
+		ROOT_PKG,
+		'root package.json: e2e:visual スクリプト除去',
+		`    "e2e:visual": "playwright test --config=e2e/playwright.config.ts --project=visual",\n`
+	);
+	drop(
+		ROOT_PKG,
+		'root package.json: e2e:public-viewer スクリプト除去',
+		`    "e2e:public-viewer": "playwright test --config=e2e/playwright.config.ts --project=public-viewer",\n`
+	);
+	cutRegion(
+		CI_WORKFLOW,
+		'ci: 閲覧公開 e2e ステップ除去',
+		`      # Viewer-public mode (Issue #189)`,
+		`        run: pnpm e2e:public-viewer\n\n`
+	);
+	cutRegion(
+		CI_WORKFLOW,
+		'ci: ビジュアル回帰 + axe-core ステップ除去',
+		`      # Baselines under e2e/visual/**/*-snapshots`,
+		`        run: pnpm e2e:visual\n\n`
+	);
+}
+
+// --- adminPages（users / audit-log の「画面」だけ外す）----------------------
+//
+// display-preset-plan.md §3.2。**サービス層 / REST / Tauri コマンドは残す** —
+// 表示専用アプリでもユーザー管理・監査ログの機能自体は裏に必要（LAN で誰かが
+// ログインして設定を変える導線）で、画面を戻したくなったらルートを足すだけで
+// 済む escape hatch を保つため。`auditLogAdmin.ts` は設定画面（監査ログの保持
+// ポリシー）が使い続けるので残し、`usersAdmin.ts` は参照元が消えるので外す。
+
+function removeAdminPages() {
+	removeDir(`${APP}/src/routes/(app)/users`, 'users 画面削除');
+	removeDir(`${APP}/src/routes/(app)/audit-log`, 'audit-log 画面削除');
+	removeFile(`${APP}/src/lib/banto/usersAdmin.ts`, 'usersAdmin.ts 削除（参照元なし）');
+
+	drop(
+		NAV,
+		'nav: navItems の /users 行除去',
+		`\t{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },\n`
+	);
+	drop(
+		NAV,
+		'nav: navItems の /audit-log 行除去',
+		`\t{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },\n`
+	);
+	drop(NAV, 'nav: NavIconKey union から users/audit-log 除去', `'users' | 'audit-log' | `);
+	drop(
+		NAV,
+		'nav: NavLabelKey union から nav.users/nav.auditLog 除去',
+		`'nav.users' | 'nav.auditLog' | `
+	);
+	drop(NAV_ICONS, 'navIcons: Users/ScrollText import 除去', `Users, ScrollText, `);
+	drop(NAV_ICONS, 'navIcons: users エントリ除去', `\tusers: Users,\n`);
+	drop(NAV_ICONS, 'navIcons: audit-log エントリ除去', `\t'audit-log': ScrollText,\n`);
+
+	// 文言キー。`audit.*` は設定画面（保持ポリシーの表示）が 4 キーだけ使い
+	// 続けるので、それらを除いて外す。
+	const KEEP_AUDIT = [
+		'audit.retentionDaysValue',
+		'audit.retentionRowsValue',
+		'audit.retentionRowsUnlimited',
+		'audit.retentionUnlimited'
+	];
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(
+			file,
+			`${label}: users.* / audit.*（設定画面が使う4キーを除く）/ nav キー除去`,
+			['users', 'audit', 'nav.users', 'nav.auditLog'],
+			KEEP_AUDIT
+		);
+}
+
+// --- dashboard（/dashboard を外し、ホームを /monitor に向ける）--------------
+//
+// display-preset-plan.md §3.3: dock / charts / items 集計を失ったダッシュボードを
+// 残す価値が無いので、ページごと外して `/monitor` をホームにする。
+// `/monitor` の実体（ナビ項目・ページ・文言）は次の `applyDisplayDefaults()` が
+// 足す — ここは「外す」と「リダイレクト先の付け替え」だけ。
+
+function removeDashboard() {
+	removeDir(`${APP}/src/routes/(app)/dashboard`, 'dashboard 画面削除');
+	swapText(
+		ROOT_PAGE_TS,
+		'routes/+page.ts: ルートのリダイレクト先を /monitor に',
+		`// The root path only dispatches: guests to /login, users to /dashboard\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, \`\${base}/dashboard\`);\n}`,
+		`// The root path only dispatches: guests to /login, users to /monitor\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, \`\${base}/monitor\`);\n}`
+	);
+	// login ページの goto は4箇所とも同じ式（swap は全出現を置換する）。
+	swapText(
+		LOGIN,
+		'login: ログイン後の遷移先を /monitor に',
+		`goto(\`\${base}/dashboard\`)`,
+		`goto(\`\${base}/monitor\`)`
+	);
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(file, `${label}: dashboard.* / panels.* キー除去`, ['dashboard', 'panels']);
+}
+
+// --- display の「足す」工程 --------------------------------------------------
+//
+// 冒頭 doc のとおり、ここが scaffold 唯一の additions。足すのは2種類だけ:
+//   (a) **テンプレート本体に既にあるトグルの既定値の反転**
+//       （`FIRST_BOOT_SETTINGS` / `KIOSK_DEFAULT` / `banto.i18n`）。
+//   (b) **`scripts/lib/templates/display/` の雛形の複製**（`/monitor` ページ）
+//       と、それを繋ぐ最小の配線（ナビ1行 + 文言キー1つ）。
+// 出力にしか無いロジックは作らない（plan §2 原則 1）。冪等性・`--strict` の
+// 扱いは removers と同じ（`swap` は「置換後の値が在る＝適用済み」、`addFile` は
+// 「同内容で既存＝適用済み」）。
+
+function applyDisplayDefaults() {
+	// (a) 既定値の反転 -------------------------------------------------------
+	// 初回起動シード（`settings` テーブルが空のときだけ書かれる。D1-a）。
+	// キー文字列は crates/banto-admin-services/src/settings.rs の
+	// KEY_* 定数と一致させること。
+	swapText(
+		FIRST_BOOT,
+		'first_boot: FIRST_BOOT_SETTINGS に display の既定を設定',
+		`pub const FIRST_BOOT_SETTINGS: &[(&str, &str)] = &[];`,
+		`pub const FIRST_BOOT_SETTINGS: &[(&str, &str)] = &[\n` +
+			`    ("auth.disabled", "true"),\n` +
+			`    ("auth.disabled_role", "admin"),\n` +
+			`    ("server.viewer_public", "true"),\n` +
+			`    ("server.enabled", "true"),\n` +
+			`    ("server.bind", "0.0.0.0"),\n` +
+			`];`
+	);
+	// 空 const 前提のユニットテストを、新しい既定を検証する形に置き換える。
+	swapText(
+		FIRST_BOOT,
+		'first_boot: 既定シードのテストを display 版に',
+		`    async fn seed_first_boot_settings_is_a_no_op_with_todays_empty_const() {\n` +
+			`        let settings = service().await;\n` +
+			`        let wrote = seed_first_boot_settings(&settings).await.unwrap();\n` +
+			`        assert!(!wrote);\n` +
+			`    }`,
+		`    async fn seed_first_boot_settings_writes_the_display_defaults() {\n` +
+			`        let settings = service().await;\n` +
+			`        let wrote = seed_first_boot_settings(&settings).await.unwrap();\n` +
+			`        assert!(wrote);\n` +
+			`        assert_eq!(\n` +
+			`            settings.get("server.viewer_public").await.unwrap(),\n` +
+			`            Some("true".to_string())\n` +
+			`        );\n` +
+			`    }`
+	);
+	// キオスクシェル（D1-b。サイドバー折り畳み既定 + ヘッダのコンパクト化 +
+	// 全画面ボタン）。
+	swapText(
+		SETTINGS_STORE,
+		'settings: KIOSK_DEFAULT を true に',
+		`export const KIOSK_DEFAULT = false;`,
+		`export const KIOSK_DEFAULT = true;`
+	);
+	// i18n opt-out（D1-c。conventions §13）。`raw-jp-in-app` と
+	// `check-i18n-nonempty` が自身をスキップする。
+	swapText(APP_PKG, 'package.json: banto.i18n を raw に', `"i18n": "keys"`, `"i18n": "raw"`);
+
+	// (b) /monitor -----------------------------------------------------------
+	copyTemplate(
+		'display/monitor/+page.svelte',
+		`${APP}/src/routes/(app)/monitor/+page.svelte`,
+		'monitor ページ配置'
+	);
+	// ナビは dashboard 行を置き換える（アイコンキーも dashboard → monitor に
+	// 改名して LayoutDashboard を流用する）。`publicViewer: true` が
+	// `(app)/+layout.ts` のガードの着地点（＝合成 viewer のホーム）になる。
+	swapText(
+		NAV,
+		'nav: /dashboard 行を /monitor に置換',
+		`\t{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', publicViewer: true },\n`,
+		`\t{ path: '/monitor', labelKey: 'nav.monitor', icon: 'monitor', publicViewer: true },\n`
+	);
+	swapText(
+		NAV,
+		'nav: NavIconKey union を monitor に',
+		`NavIconKey = 'dashboard' | `,
+		`NavIconKey = 'monitor' | `
+	);
+	swapText(
+		NAV,
+		'nav: NavLabelKey union を nav.monitor に',
+		`\n\t'nav.dashboard' | `,
+		`\n\t'nav.monitor' | `
+	);
+	swapText(
+		NAV,
+		'nav: publicViewer の doc コメントを更新',
+		`\t * public-viewer session. Template default: \`/dashboard\` and \`/items\`.`,
+		`\t * public-viewer session. display preset default: \`/monitor\` only.`
+	);
+	swapText(
+		NAV_ICONS,
+		'navIcons: dashboard エントリを monitor に改名',
+		`\tdashboard: LayoutDashboard,\n`,
+		`\tmonitor: LayoutDashboard,\n`
+	);
+	// 文言キーは1つだけ足す（`banto.i18n = "raw"` でもナビのラベルは Paraglide
+	// 経由のまま = サイドバー/ページタイトルの解決経路を変えない）。
+	addMessageKey(MSG_JA, 'messages/ja: nav.monitor 追加', 'nav.settings', 'nav.monitor', 'モニター');
+	addMessageKey(MSG_EN, 'messages/en: nav.monitor 追加', 'nav.settings', 'nav.monitor', 'Monitor');
+}
+
 // --- 実行 -------------------------------------------------------------------
 
 const REMOVERS = {
@@ -931,12 +1635,55 @@ const REMOVERS = {
 	commandPalette: removeCommandPalette,
 	attachments: removeAttachments,
 	report: removeReport,
-	tree: removeTree
+	tree: removeTree,
+	// display 専用（PRESETS.display からのみ選ばれる）。
+	items: removeItems,
+	adminPages: removeAdminPages,
+	dashboard: removeDashboard,
+	displayDefaults: applyDisplayDefaults
 };
 
-// README の資産並び順で実行（remover 間はテキスト領域が独立なので順序非依存だが、
-// ドキュメントの記述順に合わせる）。
-const ORDER = ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'report', 'tree'];
+// 前半（オプション資産）は README の資産並び順。remover 間はテキスト領域が
+// 独立なので順序非依存。
+//
+// 後半（display 専用）は**順序依存**なので、この並びを崩さないこと:
+//   - `items` は attachments / report / tree より後（それらが items のファイル
+//     やマニフェスト行を先に触るアンカーを持つ）。
+//   - `adminPages` / `dashboard` は `items` より後（navigation.ts の union を
+//     順番に縮めていくため）。
+//   - `displayDefaults` は最後（縮み切った union に /monitor を足す）。
+const ORDER = [
+	'charts',
+	'dock',
+	'glass',
+	'commandPalette',
+	'attachments',
+	'report',
+	'tree',
+	'items',
+	'adminPages',
+	'dashboard',
+	'displayDefaults'
+];
+
+/** `--interactive` の custom モードで個別トグルできる資産（オプション資産だけ）。 */
+const CUSTOM_TOGGLEABLE = OPTIONAL_ASSETS;
+
+/** ORDER のうち「足す」工程（削除ではない）。表示を分けるためだけの集合。 */
+const ADDITIONS = new Set(['displayDefaults']);
+
+/** 選択内容を「削除 … / 追加 …」の1〜2行にまとめる（--dry-run と本適用で共用）。 */
+function describeSelection(toRemove) {
+	const picked = ORDER.filter((a) => toRemove.has(a));
+	if (picked.length === 0) return '削除する資産: なし（full 相当。検証のみ）';
+	const removed = picked.filter((a) => !ADDITIONS.has(a));
+	const added = picked.filter((a) => ADDITIONS.has(a));
+	const lines = [];
+	if (removed.length > 0) lines.push(`削除する資産: ${removed.join(', ')}`);
+	if (added.length > 0)
+		lines.push(`足す工程: ${added.join(', ')}（既定値の反転 + /monitor の雛形）`);
+	return lines.join('\n');
+}
 
 // --- 対話モード（--interactive/-i）-----------------------------------------
 //
@@ -947,7 +1694,10 @@ const ORDER = ['charts', 'dock', 'glass', 'commandPalette', 'attachments', 'repo
 const PRESET_DESCRIPTIONS = {
 	minimal: 'コアのみ（charts/dock/Glass/コマンドパレット/添付/帳票/ツリーを全削除）',
 	standard: 'dock+charts+パレット+Glass 同梱（添付・帳票・ツリーを削除）',
-	full: '全オプション同梱（何も削除しない）'
+	full: '全オプション同梱（何も削除しない）',
+	display:
+		'表示専用（minimal + items デモ/users・audit-log 画面/ダッシュボードを削除、' +
+		'/monitor・初回起動シード・キオスク・i18n raw を追加）'
 };
 
 /**
@@ -985,12 +1735,15 @@ async function promptPreset(ask) {
 			`  1) minimal  … ${PRESET_DESCRIPTIONS.minimal}\n` +
 			`  2) standard … ${PRESET_DESCRIPTIONS.standard}\n` +
 			`  3) full     … ${PRESET_DESCRIPTIONS.full}\n` +
-			'  4) custom   … 資産を個別に選ぶ'
+			`  4) display  … ${PRESET_DESCRIPTIONS.display}\n` +
+			`  5) custom   … オプション資産（${CUSTOM_TOGGLEABLE.length}種）を個別に選ぶ\n` +
+			'              ※ custom で選べるのはオプション資産だけです。display の\n' +
+			'                items/画面削除・追加は一括適用なので 4) を選んでください'
 	);
-	const byNumber = { 1: 'minimal', 2: 'standard', 3: 'full', 4: 'custom' };
-	const byName = new Set(['minimal', 'standard', 'full', 'custom']);
+	const byNumber = { 1: 'minimal', 2: 'standard', 3: 'full', 4: 'display', 5: 'custom' };
+	const byName = new Set(['minimal', 'standard', 'full', 'display', 'custom']);
 	for (;;) {
-		const answer = failOnEof(await ask('番号または名前を入力してください [1-4]: ')).trim();
+		const answer = failOnEof(await ask('番号または名前を入力してください [1-5]: ')).trim();
 		if (byNumber[answer]) return byNumber[answer];
 		if (byName.has(answer)) return answer;
 		console.log(`入力が正しくありません: ${answer}`);
@@ -1023,8 +1776,8 @@ async function promptYesDefaultNo(ask, question) {
 
 async function promptCustomToRemove(ask) {
 	const toRemove = new Set();
-	console.log('資産ごとに残す/削除を選んでください（Enter で既定＝残す）:');
-	for (const asset of ORDER) {
+	console.log('オプション資産ごとに残す/削除を選んでください（Enter で既定＝残す）:');
+	for (const asset of CUSTOM_TOGGLEABLE) {
 		const keep = await promptYesDefaultYes(ask, `  ${asset} を残しますか?`);
 		if (!keep) toRemove.add(asset);
 	}
@@ -1054,11 +1807,7 @@ async function resolveInteractive() {
 		const toRemove =
 			choice === 'custom' ? await promptCustomToRemove(ask) : new Set(PRESETS[choice]);
 
-		console.log(
-			toRemove.size === 0
-				? '削除する資産: なし（full 相当。検証のみ）'
-				: `削除する資産: ${ORDER.filter((a) => toRemove.has(a)).join(', ')}`
-		);
+		console.log(describeSelection(toRemove));
 
 		if (args.dryRun) return toRemove;
 
@@ -1078,9 +1827,10 @@ async function main() {
 
 	console.log(
 		`${args.preset ? `プリセット '${args.preset}' を適用` : '選択した内容を適用'}${args.dryRun ? '（--dry-run: 変更しません）' : ''}\n` +
-			(toRemove.size === 0
-				? '  （full: 削除する資産はありません。検証のみ）\n'
-				: `  削除する資産: ${ORDER.filter((a) => toRemove.has(a)).join(', ')}\n`)
+			`${describeSelection(toRemove)
+				.split('\n')
+				.map((line) => `  ${line}`)
+				.join('\n')}\n`
 	);
 
 	for (const asset of ORDER) {
@@ -1100,7 +1850,20 @@ async function main() {
   ${toRemove.size === 0 ? '' : '3. 削除で不活性になった未使用 CSS セレクタ等は警告として残ることがあります（ビルドは緑）。\n  '}注: src-tauri（lib.rs / Cargo）はこのサンドボックスではコンパイルできないため、
   そのコード整合はコードレビューで担保します（docs/conventions.md）。attachments の
   除去は apps/admin-template/core/src/rest/tests.rs にも及ぶため、全プリセットで
-  \`cargo test -p admin-template-core\` は緑を維持します。`);
+  \`cargo test -p admin-template-core\` は緑を維持します。${
+		toRemove.has('displayDefaults')
+			? `
+
+display の既定（docs/display-preset-plan.md §3.2）:
+  - 初回起動シード: auth.disabled / auth.disabled_role=admin / server.viewer_public /
+    server.enabled / server.bind=0.0.0.0 を、settings テーブルが空のときだけ書き込む
+    （apps/admin-template/core/src/first_boot.rs で調整できます）
+  - キオスクシェル既定 ON（設定画面「外観」で戻せます）
+  - package.json の banto.i18n = "raw"（UI 文言の直書きを許可。conventions §13）
+  - ホームは /monitor（src/routes/(app)/monitor/+page.svelte を書き換えて使います）
+  - e2e はシナリオ1本のスモークのみ。ビジュアル回帰スイートは外れています`
+			: ''
+	}`);
 }
 
 await main();

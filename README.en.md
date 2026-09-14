@@ -128,9 +128,15 @@ palette, attachments, reporting) as a batch, run the scaffold script and pick
 a preset:
 
 ```sh
-pnpm scaffold --preset minimal   # minimal | standard | full
+pnpm scaffold --preset minimal   # minimal | standard | full | display
 # --interactive to choose per asset, --dry-run to preview the changes
 ```
+
+`display` is the display-only preset (andon board / always-on dashboard /
+kiosk demo): on top of what `minimal` removes it drops the `items` demo
+resource, the users / audit-log **screens** and `/dashboard`, then adds a
+`/monitor` page plus LAN-public-viewing first-boot defaults, kiosk shell
+defaults and `banto.i18n = "raw"`. See docs/display-preset-plan.md.
 
 For assets scaffold doesn't touch, or to remove things by hand, see the
 "オプション資産の削除" section in the Japanese README

@@ -49,7 +49,7 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | `crates/banto-storage` | sqlx リポジトリ・list_query（SQLite/PostgreSQL、`Db`/`Dialect` で方言吸収） | 永続化の標準経路 |
 | `crates/banto-server` | axum 組み込みサーバ（REST・認証・静的配信）+ 汎用 REST ルーター（`routes/`、V2 テーマC で移設） | LAN形態の成立条件 |
 | `crates/banto-admin-services` | 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 テーマC で `admin-template-core` から移設 | 汎用ロジックのコピー面積を削減（§7） |
-| `admin-template-core` | items（デモリソース）固有のサービス層 + REST + 汎用ルーターの `.merge()` 組み立て（Tauri と二経路で同一判定） | 「フロント→サービス→DB貫通」がテンプレートの価値そのもの |
+| `admin-template-core` | items（デモリソース）固有のサービス層 + REST + 汎用ルーターの `.merge()` 組み立て（Tauri と二経路で同一判定） | 「フロント→サービス→DB貫通」がテンプレートの価値そのもの。**クレート自体はコア**（`.merge()` 組み立て・`first_boot`・`db`・`assets` が常在）だが、その中の `items` 一式は §3 のデモリソース（`display` で削除可） |
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 
@@ -77,6 +77,7 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | 認証無効モード / デスクトップ自動ログイン（M11） | 設定オプトイン。既定OFF | キオスク用途限定。LANサーバとの排他は維持必須 |
 | コマンドパレット（M16） | ナビ定義から自動導出のため保守コストほぼゼロ。コンポーネント1つ+シェルの数行 | 無くても操作は成立するが、削除する動機も薄い |
 | デモコンテンツ（items 1万件、ダッシュボード各パネル、SPC/トレンドデモ） | **利用開始時に置き換える前提**。テンプレートの「見本」として同梱 | 雛形の理解材料。README/導入手順で差し替え箇所を明示すべき（→ §6 宿題) |
+| **`items` デモリソース一式**（2026-09 再分類、Issue #190 / display-preset-plan §2 原則 2） | `pnpm scaffold --preset display` が丸ごと削除する。手作業なら: `core/src/items.rs`・`core/src/rest/items.rs`・`core/migrations-{sqlite,postgres}/0001_items.sql`・`core/src/{lib,db}.rs` と `core/src/rest/{mod,tests}.rs`・`src-tauri/src/lib.rs` の `// [scaffold:items]` マーカー区画・`src/routes/(app)/items/**`・`$lib/banto/{itemsAdmin,resources/items,sampleData,dashboard}.ts`・`src/lib/navigation.ts` / `navIcons.ts` の items 行・`messages/{ja,en}.json` の `items.*`/`nav.items`・`scripts/verify-architecture.mjs` の items マニフェスト行（DUAL_PATH 4 / TAURI_READ 2 / REST_READ 2 / DESKTOP_ONLY 1）を外す | 長く §2.2「コア」扱いだったが、実体は**差し替え前提のデモリソース**。削除経路を機械検査（template-acceptance の `display` matrix）で保証するため §3 に移した。**削除しても壊れない義務**は他のオプション資産と同じ。区画にマーカーコメントを置いてあるので、items 側を大きく動かす PR はマーカーの内外が正しいか確認すること |
 | `@banto/attachments` + items 添付デモ（M20） | 独立パッケージ + `crates/banto-attachments`。`items/[id]/+page.svelte` のパネル配線・`attachmentsClient.ts`・`package.json` 依存・REST/Tauri ルータ/コマンド・`core/migrations-sqlite/0006_attachments.sql`（+ `migrations-postgres/0006_attachments.sql`）を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式の初適用例。デモモード（ブラウザ単体）では非表示。バックアップ非対象（§8 既知の制限） |
 | `@banto/report` + 日報デモ（M19） | 独立パッケージ（DB/バックエンド依存なし）。items 一覧の「日報」ボタン1行・`items/report/+page.svelte`・`$lib/banto/reports/daily.md?raw`・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。M20と異なりバックエンド/DB配線を持たない最小デモ（roadmap.md M19〜M21の提供形態）。印刷CSSの `.report-body` はテーマ非依存の白地・黒文字固定（帳票の再現性優先、report-plan.md §3.4） |
 | `@banto/tree-svelte` + ツリーデモ（M-review 2026-08） | 独立パッケージ（DB/バックエンド依存なし）。ナビ1行（`navigation.ts` の union + navItems、`navIcons.ts` の対応アイコン）・`routes/(app)/tree/+page.svelte`・`$lib/banto/treeSample.ts`・`i18n.ts` の `treeMessages()`・`messages/{ja,en}.json` の `nav.tree`/`tree.*` キー・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。report と同じくバックエンド/DB 非依存。ナビ追加でサイドバーが写る認証ページの視覚回帰ベースラインを再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。デモページ自体は e2e/visual の撮影対象外 |

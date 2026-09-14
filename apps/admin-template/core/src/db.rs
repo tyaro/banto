@@ -4,7 +4,9 @@
 use banto_core::BantoError;
 use banto_storage::Db;
 
+// [scaffold:items] begin
 const SEED_ROW_COUNT: usize = 1_000;
+// [scaffold:items] end
 
 /// Connect to the **SQLite** database at `path`, run migrations, and seed demo
 /// data if the `items` table is empty. Used by the `src-tauri` adapter with a
