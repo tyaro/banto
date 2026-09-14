@@ -26,7 +26,12 @@ interface ScannedPage {
 const PAGES: ScannedPage[] = [
 	{ name: 'dashboard', path: '/dashboard', heading: 'ダッシュボード', authed: true },
 	{ name: 'items', path: '/items', heading: '商品', authed: true },
+	// settings-routes step 2 (choiapp-feedback-2026-09 §3.2): categories are
+	// now separate routes, so axe scans each one individually instead of
+	// relying on a single page showing everything at once.
 	{ name: 'settings', path: '/settings', heading: '設定', authed: true },
+	{ name: 'settings-account', path: '/settings/account', heading: '設定', authed: true },
+	{ name: 'settings-connectivity', path: '/settings/connectivity', heading: '設定', authed: true },
 	{ name: 'login', path: '/login', heading: 'Banto', authed: false }
 ];
 

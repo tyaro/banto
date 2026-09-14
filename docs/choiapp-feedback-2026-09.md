@@ -78,6 +78,45 @@ scaffold の glass remover が持つ anchor は `AppearanceSection.svelte` へ�
 「タブではなくアンカー」判断はこの段階では維持しており、ルート化するときに
 本節へ判断を追記する。
 
+### 3.2 追記（2026-09-14）: カテゴリごとのルート化（段階 2）
+
+段階 1（§3.1）の co-located な section コンポーネントを土台に、5 カテゴリを
+`settings/{appearance,account,connectivity,data,security}/+page.svelte` の
+実ルートへ分けた。`settings/+layout.svelte` が `PageHeader` + カテゴリナビ
+（≥1024px は左レール、それ未満は横タブ）+ `{@render children()}` を持ち、
+`settings/+layout.ts` が可視カテゴリ（§3 の表の表示条件をそのまま流用）を
+`await parent()` 経由で計算して各ページに配る。`/settings` 自体は
+`+page.ts` が先頭の可視カテゴリへ 307 redirect するだけ、非可視カテゴリへ
+直接遷移した場合は各カテゴリの `+page.ts` が `categories.ts` の
+`guardCategory()` で同じ先頭カテゴリへ redirect する（`users/+page.ts` の
+「ナビゲーションで隠す」方針をカテゴリ単位に一般化しただけ）。
+
+**§3 の「タブではなくアンカー」判断をここで上書きする。** 段階 1 時点の
+Tauri + admin 設定画面は 5 カテゴリ・11 カードで、1440×900 でも
+スクロールが必要な 3〜4 画面分の縦幅になっていた — 「全部 1 ページに
+残るのでスイート側の前提が壊れない」という §3 の利点は、その 1 ページ自体が
+既に長すぎて「開いたら全部見える」の実感を失っていた。ルート化の理由:
+
+- **保守面積**: 派生アプリがカテゴリを増やすとき、既存の1ページ
+  コンポーネントを編集するのではなく `settings/newcategory/` を1つ追加
+  するだけで済む（削除も同様 - scaffold の remover がディレクトリごと
+  削除できる）。
+- **ディープリンク**: `/settings/security` のように特定カテゴリへ直接
+  リンク・ブックマークできる（アンカーの `#security` は同一ページの
+  スクロール位置に過ぎず、他ページから踏んだ直後は反映されないケースが
+  あった）。
+- **画面の長さ**: カテゴリごとに独立したスクロール領域になるので、
+  カード数が今後さらに増えても1カテゴリぶんの縦幅にしかならない。
+
+**引き換えのコスト**: e2e smoke（スモークシナリオ 10/11/14）・visual・axe の
+各スイートは「`/settings` を開けば全カテゴリが同時に見える」という前提を
+失った。smoke シナリオ 11（バックアップ）は `/settings/data` へ、
+visual/a11y は `settings`（`/settings` → 外観・言語）に加えて
+`settings-account`（`/settings/account`）・`settings-connectivity`
+（`/settings/connectivity`、デモモードでも admin として表示される）を
+個別に撮る/スキャンするよう変更した。全カテゴリを横断する確認が要る場合は
+今後カテゴリの数だけスイートを足す必要がある。
+
 ## 4. ナビバッジとヘッダステータス（フィードバック 4）
 
 ### 4.1 サイドバーの未確認更新バッジ

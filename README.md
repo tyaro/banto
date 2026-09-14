@@ -147,9 +147,10 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   スクロール中もヘッダと左ペインは画面に固定。サイドバーのナビ項目には
   「他クライアントの変更」を知らせる未確認更新バッジ（`NavItem.badgeResource`
   を宣言するだけで自リソースにも付く）、ヘッダにはデモモード/現在ロールの
-  ステータスチップが標準で付く。設定画面はカテゴリ節
-  （外観・言語/アカウント/サーバ・接続/データ管理/セキュリティ）+
-  カテゴリジャンプナビに整理。
+  ステータスチップが標準で付く。設定画面はカテゴリ
+  （外観・言語/アカウント/サーバ・接続/データ管理/セキュリティ）ごとの
+  ルート（`/settings/appearance` 等）に分割し、カテゴリナビ
+  （≥1024pxは左レール、それ未満はタブ）で切り替え。
 - **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
   **SQLite バックアップ/リストア**（M17）。
 - **システム情報カード**（v1.2.0、CPU/メモリは Issue #185 で追加）: 設定画面に
@@ -424,7 +425,7 @@ pnpm install          # 外れた依存の反映（lockfile も更新される�
 `packages/theme/src/css/banto-glass.css` を削除し
 `packages/theme/src/css/banto.css` の `@import './banto-glass.css'`
 を外す。`packages/theme/src/index.ts` の `ThemePreset` から `'glass'` を
-除去。設定画面（`apps/admin-template/src/routes/(app)/settings/+page.svelte`）
+除去。設定画面（`apps/admin-template/src/routes/(app)/settings/AppearanceSection.svelte`）
 のプリセット選択肢から「ガラス」を外す。デスクトップの本物のガラス感
 （Windows Acrylic）も併せて外す場合は `src/lib/banto/vibrancy.ts`、
 `src-tauri/src/lib.rs` の `vibrancy_apply`/`vibrancy_status`/

@@ -106,7 +106,14 @@ interface DiagonalPage {
 const DIAGONAL_PAGES: DiagonalPage[] = [
 	{ name: 'items', path: '/items', heading: '商品' },
 	{ name: 'users', path: '/users', heading: 'ユーザー管理' },
-	{ name: 'settings', path: '/settings', heading: '設定' }
+	// settings-routes step 2 (choiapp-feedback-2026-09 §3.2): each category
+	// is now its own route, so no single settings screenshot shows all of
+	// them anymore - `/settings` (lands on appearance) plus one more
+	// category per visibility tier (account: always visible; connectivity:
+	// admin-only, but visible in this demo-mode admin session too).
+	{ name: 'settings', path: '/settings', heading: '設定' },
+	{ name: 'settings-account', path: '/settings/account', heading: '設定' },
+	{ name: 'settings-connectivity', path: '/settings/connectivity', heading: '設定' }
 ];
 
 test.describe('diagonal pages', () => {

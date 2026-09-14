@@ -385,7 +385,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('11. backups: create a backup and see it in the list', async () => {
-		await page.goto('/settings');
+		// settings-routes step 2 (choiapp-feedback-2026-09 §3.2): backups live
+		// on the データ管理 category's own route now, not on `/settings`
+		// (which redirects to 外観・言語).
+		await page.goto('/settings/data');
 
 		const backupRows = page.locator('.backup-list li');
 		await expect(backupRows).toHaveCount(0);

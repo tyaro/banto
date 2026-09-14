@@ -43,7 +43,7 @@ class SessionStore {
 	 * truth, same as `role` above being derived via `parseRole`. This is a
 	 * session-layer concern (conventions §10: `publicViewer` lives here, not
 	 * in the provider layer), consumed by the nav allowlist (`navigation.ts`),
-	 * `Header.svelte`'s login button, and `(app)/settings/+page.svelte`'s
+	 * `Header.svelte`'s login button, and `settings/AccountSection.svelte`'s
 	 * account-UI guard.
 	 */
 	publicViewer = $state(false);
