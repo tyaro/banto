@@ -232,6 +232,34 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   CI で捕捉する**（[ADR-0008](adr/0008-machine-check-stop-gate.md)。cross-check
   テストが無く src-tauri も非コンパイルのため、静かに片方だけ緩む退行を防ぐ）—
   どちらかを変えるときは両方を更新する。
+- **合成 viewer セッション（LAN 閲覧公開、#189）。** `server.viewer_public` が
+  ON のとき `POST /api/auth/public-viewer` が**ログイン無しで**閲覧用の bearer
+  トークンを発行する（[ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)、
+  [viewer-public-plan §2.2](viewer-public-plan.md)）。認証をバイパスする公開
+  ルータは作らない — 発行後は既存の `require_auth` + `RoleGuard` + 監査に
+  そのまま乗る。以下はレビューで担保する規約:
+  - **role は常に `viewer`。** `AuthState::issue_public_viewer_token()` は
+    `Identity`/role を引数に取らず `{ id: "public", name: "public",
+    role: "viewer" }` を固定発行する。**昇格経路を作らない**（レビューは
+    まずここを見る）。
+  - **`viewer_public` OFF のとき発行は 403 `forbidden`。** 判定は毎回
+    `SettingsService::server_config()` を読む（再起動不要。banto-serve と
+    Tauri 組み込みサーバで同一挙動）。
+  - **同時セッション数の上限 `MAX_PUBLIC_VIEWER_SESSIONS = 256`。** 資格情報
+    無しで発行できるので、レート制限ではなく上限で無限増殖を防ぐ。上限到達
+    でも発行は失敗せず**最古の公開トークンを失効**させる（壁のモニターの
+    再読み込みが閲覧を止めない）。失効対象は公開トークンのみで、実ログイン
+    セッションは巻き込まない。
+  - **発行は監査しない**（資格情報の検証ではなく、再読み込みのたびに `login`
+    を積むと監査ログが埋まる）。公開セッションが mutating を叩いた際の
+    `denied` は既存の `RoleGuard` が actor `public` で記録する。
+  - **`POST /api/auth/logout` は自分のトークンだけ失効する**（他の公開閲覧端末に
+    影響しない）。
+  - **`change-password` は失敗する**（`users` に `public` 行が無い）。公開閲覧
+    セッションでアカウント系 UI を出さない。
+  - 「認証無効 + LAN 有効」は**閲覧公開 ON のときだけ**許可する
+    （`SettingsService` の両方向ガード、viewer-public-plan §2.3）。OFF のときの
+    排他は 2026-07-08 決定のまま。
 
 ## 7. `{@html}` は自前生成の全エスケープ済み出力のみ [機械検査済み: 使用箇所の許可リスト]
 
@@ -275,6 +303,13 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 持たない。demo モードは InMemory 実装を作らず `DEMO_MODE_MESSAGE` で拒否する
 （ブラウザ単体で backend 機能を使わせない）。一部操作のモード制限
 （download/upload は server 限定、folder は tauri 限定 等）も provider 層で表現。
+
+LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではない**。これは
+`server` モードの中で「ログイン済みか、合成 viewer セッションか」を区別する
+**session 層の状態**（`identity.id === PUBLIC_VIEWER_ID`）であり、provider の
+選択には影響しない — 公開閲覧端末も通常の http provider が bearer トークンで
+既存 API を叩く（[ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)
+案B の不採用理由）。
 
 ## 11. マイグレーションの流儀
 

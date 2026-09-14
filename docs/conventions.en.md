@@ -274,6 +274,39 @@ without a runtime guard are **upheld by reviewing every call site**.
   ([ADR-0008](adr/0008-machine-check-stop-gate.md); there is no cross-check test
   and src-tauri does not compile, so it guards against one side silently
   loosening) — whenever you change one, update both.
+- **Synthetic viewer sessions (LAN public viewing, #189).** When
+  `server.viewer_public` is ON, `POST /api/auth/public-viewer` issues a
+  read-only bearer token **without any login**
+  ([ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md),
+  [viewer-public-plan §2.2](viewer-public-plan.md)). No auth-bypassing public
+  router is created — once issued, the token rides the existing
+  `require_auth` + `RoleGuard` + audit path unchanged. The rules below are
+  guaranteed by review:
+  - **The role is always `viewer`.** `AuthState::issue_public_viewer_token()`
+    takes no `Identity`/role argument and always issues
+    `{ id: "public", name: "public", role: "viewer" }`. **There is no
+    escalation path** (look here first in review).
+  - **Issuance is `403 forbidden` while `viewer_public` is OFF.** The flag is
+    read from `SettingsService::server_config()` on every call (no restart
+    needed; banto-serve and the Tauri embedded server behave identically).
+  - **Concurrent sessions are capped at `MAX_PUBLIC_VIEWER_SESSIONS = 256`.**
+    Issuance needs no credentials, so a cap (not a rate limit) is what bounds
+    unlimited growth. Reaching the cap never fails issuance — it **revokes the
+    oldest public token** instead, so a wall display reloading its page never
+    loses its view. Only public tokens are eligible; real login sessions are
+    never evicted this way.
+  - **Issuance is not audited** (it is not a credential check, and a tablet
+    re-issuing on every reload would bury the log in `login` entries). A
+    `denied` entry is still recorded by the existing `RoleGuard` with actor
+    `public` when a public session attempts a mutation.
+  - **`POST /api/auth/logout` revokes only its own token** (other public
+    viewing devices are unaffected).
+  - **`change-password` fails** (there is no `public` row in `users`). The
+    frontend shows no account UI in a public viewing session.
+  - "auth disabled + LAN enabled" is allowed **only when public viewing is
+    ON** (guarded from both directions in `SettingsService`, viewer-public-plan
+    §2.3). With it OFF the exclusivity is unchanged from the 2026-07-08
+    decision.
 
 ## 7. `{@html}` only with self-generated, fully escaped output [machine-checked: allowlist of use sites]
 
@@ -325,6 +358,14 @@ does not create an InMemory implementation but refuses with `DEMO_MODE_MESSAGE`
 (do not let a standalone browser use backend features). Mode restrictions on
 some operations (download/upload are server-only, folder is tauri-only, etc.)
 are also expressed in the provider layer.
+
+LAN public viewing (#189) adds no fourth mode. `publicViewer` is **session-layer
+state** (`identity.id === PUBLIC_VIEWER_ID`) that distinguishes "logged in" from
+"synthetic viewer session" *within* `server` mode; it does not affect which
+provider is selected — a public viewing device uses the ordinary http provider
+and its bearer token against the existing APIs
+([ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md), the reason
+alternative B was rejected).
 
 ## 11. The migration style
 

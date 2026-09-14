@@ -562,6 +562,28 @@ git config core.hooksPath .githooks
    管理者アカウントでログイン。まだアカウントがなければ初回セットアップ
    画面が表示される。
 
+**閲覧公開（ログイン無しで LAN から閲覧を許可）:**
+
+表示専用アプリ（アンドン・常設ダッシュボード・展示デモ）向けに、LAN 上の
+端末が**ログイン無しで閲覧画面と読み取り API だけ**を使える「閲覧公開」を
+用意している（Issue #189、[docs/adr/0012](docs/adr/0012-lan-public-viewer-synthetic-session.md)）。
+設定画面「サーバ・接続」→「ログイン無しで LAN から閲覧を許可する（閲覧公開）」
+を ON にして「保存して適用」。
+
+- LAN のブラウザは `/dashboard` を開くだけで **`viewer` ロールの合成
+  セッション**（ユーザー名 `public`）に入る。ヘッダの「ログイン」から通常の
+  アカウントでログインすれば編集系 UI に切り替わる。
+- 書き込み（作成・更新・削除・インポート）は従来どおりログイン必須。合成
+  セッションからの書き込みは REST が 403 で拒否し `denied` として監査する。
+- 公開される画面は `src/lib/navigation.ts` の `publicViewer: true` を付けた
+  項目だけ（テンプレート既定は dashboard と items）。データ面の境界は RBAC
+  の `viewer` ロールそのもの（viewer に見せたくない読み取りは閲覧公開ではなく
+  ロール床で絞る）。
+- ログイン不要モード（M11）と LAN アクセスは閲覧公開 ON のときだけ併用できる
+  （書き込みはデスクトップだけ、閲覧は LAN 全体、が表示専用アプリの標準形）。
+- **LAN 上の誰でも閲覧できる**設定なので、上記「セキュリティ注意」の信頼できる
+  LAN 限定の前提はそのまま。
+
 **`banto-serve`（Tauri不要の開発用バイナリ）:**
 
 ```sh
@@ -572,7 +594,8 @@ cargo run -p admin-template-core --bin banto-serve --features embed-ui
 Tauriを起動せずにREST + 静的配信のフルスタックを試せる（`--features
 embed-ui`を省略すると組み込みのプレースホルダページを返す）。環境変数
 `PORT`（既定8721）/ `BANTO_BIND`（既定`0.0.0.0`）/ `BANTO_DB`（既定
-`./banto-dev.sqlite3`）。
+`./banto-dev.sqlite3`）/ `BANTO_VIEWER_PUBLIC=1`（起動時に閲覧公開を ON に
+seed する。e2e とローカル確認用）。
 
 **`embed-ui`フィーチャー:**
 

@@ -265,7 +265,7 @@ export function createHttpAuthProvider(
 			return (await response.json()) as Identity | null;
 		},
 
-		async status(): Promise<{ initialized: boolean }> {
+		async status(): Promise<{ initialized: boolean; viewerPublic?: boolean }> {
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/status`, {
@@ -276,10 +276,17 @@ export function createHttpAuthProvider(
 				// No server reachable: treat as "already initialized" so the
 				// caller falls back to the normal login form (which will then
 				// fail with a clear network error) rather than the setup form.
+				// viewerPublic omitted (defaults to false downstream) - an
+				// unreachable server cannot mint a public-viewer session either.
 				return { initialized: true };
 			}
 			if (!response.ok) return { initialized: true };
-			return (await response.json()) as { initialized: boolean };
+			const body = (await response.json()) as { initialized: boolean; viewerPublic?: boolean };
+			// An older backend's response has no `viewerPublic` field at all
+			// (viewer-public-plan §3.1-2): default to `false` here so every
+			// caller can read `status().viewerPublic` as a plain boolean without
+			// re-deriving the "absent means off" rule itself.
+			return { initialized: body.initialized, viewerPublic: body.viewerPublic ?? false };
 		},
 
 		async setup(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
@@ -321,6 +328,34 @@ export function createHttpAuthProvider(
 				return { success: false, error: firstValidationMessage(err) };
 			}
 			return { success: true };
+		},
+
+		/**
+		 * `POST /api/auth/public-viewer` (viewer-public-plan §2.1/§3.1-2,
+		 * ADR-0012): no request body, no bearer token required - `headers(false)`
+		 * still adds the CSRF `X-Banto-Client` header (every request needs it)
+		 * but never `Authorization`, since `getToken()` is null before this call
+		 * succeeds. On success the returned token is stored the same way a
+		 * normal login's is (`setToken`, `remember: false` - sessionStorage
+		 * only, viewer-public-plan §3.1-6 "Remember me は適用しない"). Never
+		 * throws: a 403 (viewerPublic OFF) or a network failure both resolve
+		 * `false` so the route guard can fall back to `/login`.
+		 */
+		async enterPublicViewer(): Promise<boolean> {
+			let response: Response;
+			try {
+				response = await fetchFn(`${baseUrl}/api/auth/public-viewer`, {
+					method: 'POST',
+					headers: headers(false)
+				});
+			} catch {
+				return false;
+			}
+			if (!response.ok) return false;
+			const body = (await response.json()) as { success: boolean; token?: string };
+			if (!body.success || !body.token) return false;
+			setToken(body.token, false);
+			return true;
 		},
 
 		getToken

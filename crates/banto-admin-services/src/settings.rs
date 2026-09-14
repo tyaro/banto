@@ -19,6 +19,7 @@ use crate::rbac::Role;
 const KEY_SERVER_ENABLED: &str = "server.enabled";
 const KEY_SERVER_BIND: &str = "server.bind";
 const KEY_SERVER_PORT: &str = "server.port";
+const KEY_SERVER_VIEWER_PUBLIC: &str = "server.viewer_public";
 const KEY_AUTH_DISABLED: &str = "auth.disabled";
 const KEY_AUTH_DISABLED_ROLE: &str = "auth.disabled_role";
 const KEY_AUTOLOGIN_ENABLED: &str = "auth.autologin.enabled";
@@ -107,11 +108,21 @@ fn validate_ui_value(value: &str) -> Result<(), BantoError> {
 /// Embedded-server settings (spec §11.2, §11.4): whether LAN access is
 /// enabled, and the bind address/port. Defaults to disabled,
 /// localhost-only - "attack surface zero" until the user opts in.
+///
+/// `viewer_public` (Issue #189, `docs/viewer-public-plan.md` §2.3, ADR-0012)
+/// is the "閲覧公開" opt-in: when ON, a LAN client may mint a
+/// `viewer`-role synthetic session without logging in
+/// (`POST /api/auth/public-viewer`). It defaults to `false`, so an existing
+/// install behaves exactly as before. It is deliberately part of the SERVER
+/// settings rather than the auth settings: it describes what the LAN
+/// surface exposes, and it is what relaxes the auth-disabled/LAN
+/// exclusivity guard below.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerSettings {
     pub enabled: bool,
     pub bind: String,
     pub port: u16,
+    pub viewer_public: bool,
 }
 
 impl Default for ServerSettings {
@@ -120,6 +131,7 @@ impl Default for ServerSettings {
             enabled: false,
             bind: "127.0.0.1".to_string(),
             port: 8721,
+            viewer_public: false,
         }
     }
 }
@@ -317,25 +329,38 @@ impl SettingsService {
             .await?
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(defaults.port);
+        let viewer_public = self
+            .get(KEY_SERVER_VIEWER_PUBLIC)
+            .await?
+            .map(|value| value == "true")
+            .unwrap_or(defaults.viewer_public);
 
         Ok(ServerSettings {
             enabled,
             bind,
             port,
+            viewer_public,
         })
     }
 
     /// Persist the embedded-server settings as individual keys
-    /// (`server.enabled`/`server.bind`/`server.port`).
+    /// (`server.enabled`/`server.bind`/`server.port`/`server.viewer_public`).
     ///
-    /// Refuses to enable LAN access while auth-disabled mode is on (spec
-    /// M11: auth-disabled mode is v1-scoped to the Tauri window only - it
-    /// must never be combined with an unauthenticated LAN-exposed server).
-    /// See [`SettingsService::set_auth_config`] for the mirror-image guard.
+    /// Refuses to enable LAN access while auth-disabled mode is on UNLESS
+    /// 閲覧公開 (`viewer_public`) is also on (spec M11 + Issue #189,
+    /// `docs/viewer-public-plan.md` §2.3). The original M11 rule
+    /// (2026-07-08「LAN 側を無認証公開しない」) existed to keep the WRITE
+    /// surface off an unauthenticated LAN; `viewer_public` opens only the
+    /// READ surface, through a `viewer`-role synthetic session that still
+    /// goes through the normal `require_auth` + `RoleGuard` + audit path
+    /// (ADR-0012), so the combination is explicitly allowed. With
+    /// `viewer_public` OFF the exclusivity is unchanged. See
+    /// [`SettingsService::set_auth_config`] for the mirror-image guard.
     pub async fn set_server_config(&self, config: &ServerSettings) -> Result<(), BantoError> {
-        if config.enabled && self.auth_config().await?.disabled {
+        if config.enabled && self.auth_config().await?.disabled && !config.viewer_public {
             return Err(BantoError::Other(
-                "認証無効モード中はLANアクセスを有効化できません".to_string(),
+                "認証無効モード中は、閲覧公開を有効にした場合のみLANアクセスを有効化できます"
+                    .to_string(),
             ));
         }
 
@@ -346,6 +371,15 @@ impl SettingsService {
         .await?;
         self.set(KEY_SERVER_BIND, &config.bind).await?;
         self.set(KEY_SERVER_PORT, &config.port.to_string()).await?;
+        self.set(
+            KEY_SERVER_VIEWER_PUBLIC,
+            if config.viewer_public {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await?;
         Ok(())
     }
 
@@ -392,13 +426,18 @@ impl SettingsService {
     /// Persist the auth-mode settings (spec M11).
     ///
     /// Refuses to turn auth-disabled mode ON while LAN access is currently
-    /// enabled (mirror image of [`SettingsService::set_server_config`]'s
-    /// guard) - both directions are checked so whichever settings screen the
-    /// user acts on second is the one that catches the conflict.
+    /// enabled, UNLESS 閲覧公開 (`ServerSettings::viewer_public`) is also on
+    /// (mirror image of [`SettingsService::set_server_config`]'s guard,
+    /// Issue #189 / `docs/viewer-public-plan.md` §2.3) - both directions are
+    /// checked so whichever settings screen the user acts on second is the
+    /// one that catches the conflict, and so the two can never disagree on
+    /// whether a given combination is legal.
     pub async fn set_auth_config(&self, config: &AuthSettings) -> Result<(), BantoError> {
-        if config.disabled && self.server_config().await?.enabled {
+        let server = self.server_config().await?;
+        if config.disabled && server.enabled && !server.viewer_public {
             return Err(BantoError::Other(
-                "LANアクセスが有効な間は認証無効モードを有効化できません".to_string(),
+                "LANアクセスが有効な間は、閲覧公開が有効な場合のみ認証無効モードを有効化できます"
+                    .to_string(),
             ));
         }
 
@@ -521,6 +560,7 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.bind, "127.0.0.1");
         assert_eq!(config.port, 8721);
+        assert!(!config.viewer_public);
     }
 
     #[tokio::test]
@@ -530,6 +570,7 @@ mod tests {
             enabled: true,
             bind: "0.0.0.0".to_string(),
             port: 9000,
+            viewer_public: true,
         };
         svc.set_server_config(&config).await.unwrap();
         assert_eq!(svc.server_config().await.unwrap(), config);
@@ -652,6 +693,161 @@ mod tests {
 
         // The rejected write must not have taken effect.
         assert!(!svc.auth_config().await.unwrap().disabled);
+    }
+
+    // --- 閲覧公開 (viewer_public) exclusivity matrix ------------------------
+    //
+    // Issue #189 / `docs/viewer-public-plan.md` §2.3: the three
+    // `auth.disabled` × `server.enabled` × `viewer_public` combinations, each
+    // asserted from BOTH directions (`set_server_config` and
+    // `set_auth_config`) so no state is reachable through only one of the two
+    // settings screens.
+
+    #[tokio::test]
+    async fn set_server_config_allows_enabling_lan_while_auth_is_disabled_when_viewer_public() {
+        // Combination 2 (auth.disabled + server.enabled + viewerPublic ON),
+        // approached from the server side: the standard shape of a
+        // display-only app.
+        let svc = service().await;
+        svc.set_auth_config(&AuthSettings {
+            disabled: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+
+        svc.set_server_config(&ServerSettings {
+            enabled: true,
+            viewer_public: true,
+            ..ServerSettings::default()
+        })
+        .await
+        .expect("閲覧公開 ON should permit LAN access while auth-disabled mode is on");
+
+        let config = svc.server_config().await.unwrap();
+        assert!(config.enabled);
+        assert!(config.viewer_public);
+    }
+
+    #[tokio::test]
+    async fn set_auth_config_allows_disabling_auth_while_lan_is_enabled_when_viewer_public() {
+        // Combination 2, approached from the auth side (mirror image of the
+        // test above): the same end state must be reachable either way.
+        let svc = service().await;
+        svc.set_server_config(&ServerSettings {
+            enabled: true,
+            viewer_public: true,
+            ..ServerSettings::default()
+        })
+        .await
+        .unwrap();
+
+        svc.set_auth_config(&AuthSettings {
+            disabled: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .expect("閲覧公開 ON should permit auth-disabled mode while LAN access is on");
+
+        assert!(svc.auth_config().await.unwrap().disabled);
+    }
+
+    #[tokio::test]
+    async fn viewer_public_with_auth_enabled_is_allowed_from_both_directions() {
+        // Combination 3 (!auth.disabled + server.enabled + viewerPublic ON):
+        // a normal login-based deployment that additionally allows anonymous
+        // read-only viewing. Nothing guards this, but it is asserted so a
+        // future guard cannot tighten it by accident.
+        let svc = service().await;
+        svc.set_server_config(&ServerSettings {
+            enabled: true,
+            viewer_public: true,
+            ..ServerSettings::default()
+        })
+        .await
+        .expect("viewer_public with auth enabled should always be allowed");
+
+        svc.set_auth_config(&AuthSettings::default())
+            .await
+            .expect("leaving auth enabled should always be allowed");
+
+        let config = svc.server_config().await.unwrap();
+        assert!(config.enabled && config.viewer_public);
+        assert!(!svc.auth_config().await.unwrap().disabled);
+    }
+
+    #[tokio::test]
+    async fn set_server_config_still_rejects_enabling_lan_while_auth_is_disabled_without_viewer_public(
+    ) {
+        // Combination 1 (viewerPublic OFF) is unchanged from the 2026-07-08
+        // decision - spelled out here next to the ON cases so the matrix is
+        // readable in one place, and asserting the NEW error message.
+        let svc = service().await;
+        svc.set_auth_config(&AuthSettings {
+            disabled: true,
+            ..AuthSettings::default()
+        })
+        .await
+        .unwrap();
+
+        let err = svc
+            .set_server_config(&ServerSettings {
+                enabled: true,
+                viewer_public: false,
+                ..ServerSettings::default()
+            })
+            .await
+            .unwrap_err();
+        match err {
+            BantoError::Other(message) => assert!(message.contains("閲覧公開")),
+            other => panic!("expected Other, got {other:?}"),
+        }
+        assert!(!svc.server_config().await.unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn set_auth_config_still_rejects_disabling_auth_while_lan_is_enabled_without_viewer_public(
+    ) {
+        // Combination 1, the other direction.
+        let svc = service().await;
+        svc.set_server_config(&ServerSettings {
+            enabled: true,
+            viewer_public: false,
+            ..ServerSettings::default()
+        })
+        .await
+        .unwrap();
+
+        let err = svc
+            .set_auth_config(&AuthSettings {
+                disabled: true,
+                ..AuthSettings::default()
+            })
+            .await
+            .unwrap_err();
+        match err {
+            BantoError::Other(message) => assert!(message.contains("閲覧公開")),
+            other => panic!("expected Other, got {other:?}"),
+        }
+        assert!(!svc.auth_config().await.unwrap().disabled);
+    }
+
+    #[tokio::test]
+    async fn viewer_public_can_be_enabled_while_lan_access_is_off() {
+        // The guard only looks at `enabled`, so `viewer_public` may be turned
+        // on ahead of (or without) LAN access - the shape
+        // `admin-template-core`'s REST tests use to exercise
+        // `POST /api/auth/public-viewer` over `tower::oneshot` without
+        // binding a socket.
+        let svc = service().await;
+        svc.set_server_config(&ServerSettings {
+            enabled: false,
+            viewer_public: true,
+            ..ServerSettings::default()
+        })
+        .await
+        .expect("viewer_public without LAN access should be allowed");
+        assert!(svc.server_config().await.unwrap().viewer_public);
     }
 
     // --- Per-user UI settings (spec M12) -----------------------------------

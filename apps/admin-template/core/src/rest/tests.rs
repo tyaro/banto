@@ -2506,3 +2506,267 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
         matches!(event, ServerEvent::ResourceChanged { resource } if resource == "attachments")
     );
 }
+
+// --- Synthetic viewer sessions (LAN 閲覧公開, Issue #189) ------------------
+//
+// `docs/viewer-public-plan.md` §5 / ADR-0012. The security property under
+// test is that `POST /api/auth/public-viewer` is the ONLY thing the new
+// setting unlocks: the token it hands out is an ordinary `viewer` session, so
+// every existing guard (`require_auth`, `RoleGuard`, the audit trail) applies
+// to it unchanged, and there is no path from it to a write.
+
+/// Router + the service handles the 閲覧公開 tests need to set up and assert:
+/// `SettingsService` to flip `server.viewer_public` (the routes re-read it
+/// live, so this works after the router is already built), `AuditLogService`
+/// to assert on `denied` entries without needing an admin token, and
+/// `UsersService` to prove no `public` account row is ever created.
+///
+/// `server.enabled` stays `false` - this router is driven through
+/// `tower::oneshot`, never an actual socket, and `set_server_config`'s
+/// exclusivity guard only looks at `enabled` (see that method's
+/// `viewer_public_can_be_enabled_while_lan_access_is_off` test).
+async fn router_with_viewer_public(
+    viewer_public: bool,
+) -> (Router, SettingsService, AuditLogService, UsersService) {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let (tx, _rx) = broadcast::channel(16);
+    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool.clone());
+    let backup = unused_backup_service(pool.clone());
+    let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+
+    settings
+        .set_server_config(&crate::settings::ServerSettings {
+            viewer_public,
+            ..crate::settings::ServerSettings::default()
+        })
+        .await
+        .expect("seed server config");
+
+    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let services = Services {
+        items,
+        users: users.clone(),
+        settings: settings.clone(),
+        audit: audit.clone(),
+        backup,
+        attachments,
+        system_info,
+    };
+    (
+        api_router(services, auth, tx, false),
+        settings,
+        audit,
+        users,
+    )
+}
+
+fn post_empty(path: &str) -> HttpRequest<Body> {
+    HttpRequest::post(path)
+        .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// Mint a public viewing session through the real route, asserting the wire
+/// shape on the way (`{success:true, token}`).
+async fn public_viewer_token(router: &Router) -> String {
+    let response = router
+        .clone()
+        .oneshot(post_empty("/api/auth/public-viewer"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["success"], true);
+    json["token"].as_str().expect("token").to_string()
+}
+
+#[tokio::test]
+async fn public_viewer_is_forbidden_while_viewer_public_is_off() {
+    let (router, _settings, _audit, _users) = router_with_viewer_public(false).await;
+
+    let response = router
+        .oneshot(post_empty("/api/auth/public-viewer"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(response).await["kind"], "forbidden");
+}
+
+#[tokio::test]
+async fn public_viewer_issues_a_token_when_viewer_public_is_on() {
+    let (router, _settings, _audit, _users) = router_with_viewer_public(true).await;
+    let token = public_viewer_token(&router).await;
+    assert!(!token.is_empty());
+}
+
+#[tokio::test]
+async fn public_viewer_gate_follows_the_setting_without_a_restart() {
+    // The flag is read from `SettingsService` per request (not captured at
+    // router-build time), so flipping it in the settings screen takes effect
+    // immediately on an already-running server.
+    let (router, settings, _audit, _users) = router_with_viewer_public(false).await;
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(post_empty("/api/auth/public-viewer"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    settings
+        .set_server_config(&crate::settings::ServerSettings {
+            viewer_public: true,
+            ..crate::settings::ServerSettings::default()
+        })
+        .await
+        .unwrap();
+
+    public_viewer_token(&router).await;
+}
+
+#[tokio::test]
+async fn public_viewer_token_identifies_as_public_viewer_and_passes_check() {
+    let (router, _settings, _audit, _users) = router_with_viewer_public(true).await;
+    let token = public_viewer_token(&router).await;
+
+    let identity_response = router
+        .clone()
+        .oneshot(get_auth("/api/auth/identity", &token))
+        .await
+        .unwrap();
+    assert_eq!(identity_response.status(), StatusCode::OK);
+    let identity = body_json(identity_response).await;
+    assert_eq!(identity["id"], "public");
+    assert_eq!(identity["role"], "viewer");
+
+    let check_response = router
+        .oneshot(get_auth("/api/auth/check", &token))
+        .await
+        .unwrap();
+    assert_eq!(check_response.status(), StatusCode::OK);
+    assert_eq!(body_json(check_response).await, json!(true));
+}
+
+#[tokio::test]
+async fn public_viewer_token_can_read_items_but_not_write_them() {
+    let (router, _settings, audit, _users) = router_with_viewer_public(true).await;
+    let token = public_viewer_token(&router).await;
+
+    // Reading is the whole point of 閲覧公開.
+    let list_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/list",
+            &token,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(list_response.status(), StatusCode::OK);
+
+    // Writing goes through the SAME `RoleGuard` as any other viewer session.
+    let create_response = router
+        .oneshot(post_json_auth(
+            "/api/items",
+            &token,
+            json!({ "name": "Widget", "price": 10, "stock": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create_response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(create_response).await["kind"], "forbidden");
+
+    // ...and the denial is audited with actor `public` (spec M14 / ADR-0012:
+    // issuance is not audited, but what a public session TRIES to do is).
+    let rows = audit.list(ListParams::default()).await.unwrap().rows;
+    let denial = rows
+        .iter()
+        .find(|row| row.action == "denied" && row.resource == "items")
+        .unwrap_or_else(|| panic!("expected a denied/items entry, got {rows:?}"));
+    assert_eq!(denial.actor_username.as_deref(), Some("public"));
+    assert_eq!(denial.actor_role.as_deref(), Some("viewer"));
+    assert_eq!(denial.origin, "rest");
+    assert_eq!(denial.result, "denied");
+
+    // Issuance itself left no `login` entry behind.
+    assert!(
+        !rows.iter().any(|row| row.action == "login"),
+        "minting a public viewing session must not be audited, got {rows:?}"
+    );
+}
+
+#[tokio::test]
+async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
+    let (router, _settings, _audit, users) = router_with_viewer_public(true).await;
+    let token = public_viewer_token(&router).await;
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/auth/change-password",
+            &token,
+            json!({ "currentPassword": "whatever", "newPassword": "newpassword1" }),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        !response.status().is_success(),
+        "there is no `public` row in `users`, so change-password must fail"
+    );
+
+    // And the failed attempt must not have conjured an account into existence.
+    assert!(users.get_by_username("public").await.unwrap().is_none());
+    assert!(
+        !users.is_initialized().await.unwrap(),
+        "a public viewing session must never count as a provisioned install"
+    );
+}
+
+#[tokio::test]
+async fn auth_status_reports_viewer_public_both_ways() {
+    let (off_router, _s, _a, _u) = router_with_viewer_public(false).await;
+    let off = off_router.oneshot(get("/api/auth/status")).await.unwrap();
+    assert_eq!(body_json(off).await["viewerPublic"], false);
+
+    let (on_router, _s, _a, _u) = router_with_viewer_public(true).await;
+    let on = on_router.oneshot(get("/api/auth/status")).await.unwrap();
+    let json = body_json(on).await;
+    assert_eq!(json["viewerPublic"], true);
+    assert_eq!(json["initialized"], false);
+}
+
+#[tokio::test]
+async fn auth_status_flattens_app_supplied_extras() {
+    // `AuthStatusExtras` (viewer-public-plan §3.1-2) is the hook an adopter
+    // uses to add app-specific fields to `status` without wrapping this router
+    // in a response-rewriting layer. The template passes `None`; this test
+    // stands in for an adopter passing `Some`.
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+    let auth = demo_auth();
+
+    let extras: banto_server::AuthStatusExtras = std::sync::Arc::new(|| {
+        let mut map = serde_json::Map::new();
+        map.insert("tenant".to_string(), json!("factory-a"));
+        map
+    });
+    let router = extra_auth_router(users, auth, audit, false, settings, Some(extras))
+        .layer(middleware::from_fn(require_banto_client_header));
+
+    let response = router.oneshot(get("/api/auth/status")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    // The extra field sits alongside the built-in ones, not nested under a
+    // wrapper key.
+    assert_eq!(json["tenant"], "factory-a");
+    assert_eq!(json["initialized"], false);
+    assert_eq!(json["viewerPublic"], false);
+}

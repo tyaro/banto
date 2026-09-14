@@ -58,7 +58,7 @@ mod users;
 pub use audit::{
     audit_log_router, audit_logout_middleware, audited_credential_verifier, LogoutAuditState,
 };
-pub use auth::extra_auth_router;
+pub use auth::{extra_auth_router, AuthStatusExtras};
 pub use backups::backups_router;
 pub use system_info::{system_info_router, MetricsProbe, SystemInfo, SystemMetrics};
 pub use ui_settings::ui_settings_router;
