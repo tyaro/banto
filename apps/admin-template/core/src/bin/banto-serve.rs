@@ -52,6 +52,7 @@ use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
 use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
+use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{ServerSettings, SettingsService};
@@ -126,6 +127,16 @@ async fn main() {
     let items = ItemsService::new(db.clone()).with_events(events.clone());
     let users = UsersService::new(db.clone());
     let settings = SettingsService::new(db.clone());
+    // D1-a (display-preset-plan.md, Issue #190 prep): seed
+    // `FIRST_BOOT_SETTINGS` before any `auth_config`/`server_config` read
+    // below, so a display-preset app's seeded `auth.disabled = true` (say)
+    // takes effect on the very first launch. No-op today: the const ships
+    // empty.
+    match seed_first_boot_settings(&settings).await {
+        Ok(true) => println!("banto-serve: 初回起動の既定設定を書き込みました"),
+        Ok(false) => {}
+        Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
+    }
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
     // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
     // DB's own parent directory (same sibling-directory convention as

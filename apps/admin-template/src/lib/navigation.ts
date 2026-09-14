@@ -46,6 +46,7 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
 	{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', publicViewer: true },
+	// [scaffold:items] begin
 	{
 		path: '/items',
 		labelKey: 'nav.items',
@@ -53,6 +54,7 @@ export const navItems: NavItem[] = [
 		badgeResource: 'items',
 		publicViewer: true
 	},
+	// [scaffold:items] end
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },

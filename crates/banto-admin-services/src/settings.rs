@@ -275,6 +275,24 @@ impl SettingsService {
         Ok(())
     }
 
+    /// Is the `settings` table completely empty (no rows at all, not even
+    /// one key)? Used by the app-level first-boot seed
+    /// (`admin_template_core::first_boot::seed_first_boot_settings`,
+    /// display-preset-plan.md D1-a) to detect "this is a genuinely fresh
+    /// install" without hardcoding any particular key name here - the
+    /// service layer stays app-agnostic (conventions §2) while still giving
+    /// the app a reliable one-shot signal.
+    pub async fn is_empty(&self) -> Result<bool, BantoError> {
+        const SQL: &str = "SELECT COUNT(*) FROM settings";
+        let count: i64 = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
+        Ok(count == 0)
+    }
+
     /// Read a per-user UI setting (spec M12 SettingsProvider migration):
     /// theme/preset/dock-layout, namespaced per authenticated account so two
     /// users sharing one app instance never see each other's UI state.
@@ -550,6 +568,19 @@ mod tests {
         svc.set("theme", "dark").await.unwrap();
         svc.set("theme", "light").await.unwrap();
         assert_eq!(svc.get("theme").await.unwrap(), Some("light".to_string()));
+    }
+
+    #[tokio::test]
+    async fn is_empty_true_on_a_fresh_table() {
+        let svc = service().await;
+        assert!(svc.is_empty().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn is_empty_false_after_any_set() {
+        let svc = service().await;
+        svc.set("theme", "dark").await.unwrap();
+        assert!(!svc.is_empty().await.unwrap());
     }
 
     #[tokio::test]

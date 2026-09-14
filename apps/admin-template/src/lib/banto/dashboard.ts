@@ -4,6 +4,12 @@
  * type-checked and trivially testable even though this milestone only wires
  * them into `+page.svelte` (no dedicated Vitest suite for this app-level
  * glue - the chart math itself is covered in @banto/charts).
+ *
+ * D1-d note (display-preset-plan.md, Issue #190 prep): every export in this
+ * file takes `Item[]` - there is no non-items content to carve out with a
+ * `cutRegion`. A future `display`/`items` remover should `removeFile` this
+ * whole module (same treatment as `sampleData.ts`) rather than mark internal
+ * regions here.
  */
 import type { GanttTask } from '@banto/charts';
 import type { Item } from './sampleData';

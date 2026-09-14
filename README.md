@@ -74,7 +74,10 @@ Banto は特定のニッチに最適化したテンプレートで、汎用の�
 **言語**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で切り替えられる
 （V2 テーマB、Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の
 表示ロケールは日本語で見た目は不変。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は
-注入された解決済み文字列で受け取る（i18n は app 層のみ、conventions §13）。
+注入された解決済み文字列で受け取る（i18n は app 層のみ、conventions §13）。単一言語の
+display 系アプリ（カンバン・常設ダッシュボード等）は `apps/admin-template/package.json`
+の `banto.i18n` を `"raw"` にすると、この対訳キー方式を opt-out して UI 文言を直書き
+できる（既定 `"keys"` = 上記の挙動、display-preset-plan.md D1-c）。
 
 **v1 の割り切り（正直な開示）**:
 

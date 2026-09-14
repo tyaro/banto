@@ -7,7 +7,10 @@
 pub mod assets;
 pub mod db;
 pub mod events;
+pub mod first_boot;
+// [scaffold:items] begin
 pub mod items;
+// [scaffold:items] end
 pub mod rest;
 
 // Theme C (docs/template-scope.md §7): the domain-agnostic services moved to

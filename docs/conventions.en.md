@@ -447,6 +447,16 @@ have no Japanese literals outside comments is checked by grep in
 check in §9). Legitimate exceptions are added to the script's allowlist with a
 reason.
 
+**The app layer may opt out per preset** (display-preset-plan.md D1-c, Issue
+#190): when `apps/admin-template/package.json`'s `banto.i18n` is `"raw"`
+(default `"keys"` = today's behavior), a single-language app may write UI
+strings directly (for a display preset such as a kiosk/standing dashboard).
+`@banto/*` packages are unaffected - the layer-① `messages`-props injection
+method is unchanged. When `banto.i18n = "raw"`, both `verify:architecture`
+(rule `raw-jp-in-app`) and `scripts/check-i18n-nonempty.mjs` skip themselves
+and print a reason (both share `readI18nMode` from
+`scripts/lib/i18n-mode.mjs`).
+
 ## 14. Exclude source-shipped `.svelte.ts` packages from the dev optimizer [machine-checked]
 
 `@banto/*` ship source (`exports` point at `./src/index.ts`, raw `.svelte.ts`

@@ -6,6 +6,12 @@
  * alike.
  */
 import type { ResourceDefinition } from '@banto/admin-core';
+// [scaffold:items] begin
 import { itemsResource } from './items';
+// [scaffold:items] end
 
+// D1-d note (display-preset-plan.md, Issue #190 prep): the future `items`
+// remover needs a `swapText` here, not a `cutRegion` delete - `resources`
+// must still be a valid (possibly empty) array afterwards:
+//   `[itemsResource]` -> `[]`
 export const resources: ResourceDefinition[] = [itemsResource];

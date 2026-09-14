@@ -17,12 +17,14 @@
 //! | GET    | `/api/auth/identity` | -              | `Identity \| null`     |
 //! | POST   | `/api/auth/change-password` | `{currentPassword,newPassword}` | `{success}` (auth required) |
 //! | GET    | `/api/events`        | -              | SSE stream of `ServerEvent` |
+// [scaffold:items] begin (Route table doc rows)
 //! | POST   | `/api/items/list`    | `ListParams`   | `ListResult<Item>` (any role) |
 //! | GET    | `/api/items/{id}`    | -              | `Item` (any role)      |
 //! | POST   | `/api/items`         | `ItemInput`    | `Item` (editor+)        |
 //! | PUT    | `/api/items/{id}`    | `ItemInput`    | `Item` (editor+)        |
 //! | DELETE | `/api/items/{id}`    | -              | 204 (editor+)           |
 //! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
+// [scaffold:items] end
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
 //! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
@@ -211,13 +213,17 @@ use tokio::sync::broadcast;
 
 use crate::audit::{AuditEntry, AuditLogService};
 use crate::backup::BackupService;
+// [scaffold:items] begin
 use crate::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
+// [scaffold:items] end
 use crate::settings::SettingsService;
 use crate::system_info::SystemInfoService;
 use crate::users::{Role, UsersService};
 
 mod attachments;
+// [scaffold:items] begin
 mod items;
+// [scaffold:items] end
 #[cfg(test)]
 mod tests;
 
@@ -229,7 +235,9 @@ mod tests;
 pub use banto_server::routes::audited_credential_verifier;
 
 use attachments::attachments_router;
+// [scaffold:items] begin
 use items::items_router;
+// [scaffold:items] end
 
 /// Slack added on top of `banto_attachments::MAX_ATTACHMENT_BYTES` for
 /// [`attachments_write_router`]'s `DefaultBodyLimit` (spec
@@ -254,7 +262,9 @@ const ATTACHMENT_BODY_LIMIT_SLACK_BYTES: usize = 1024 * 1024;
 /// ordering or lifetime relationship between them, so the caller may build
 /// this in any order.
 pub struct Services {
+    // [scaffold:items] begin
     pub items: ItemsService,
+    // [scaffold:items] end
     pub users: UsersService,
     pub settings: SettingsService,
     pub audit: AuditLogService,
@@ -290,7 +300,9 @@ pub fn api_router(
     allow_setup: bool,
 ) -> Router {
     let Services {
+        // [scaffold:items] begin
         items,
+        // [scaffold:items] end
         users,
         settings,
         audit,
@@ -325,12 +337,14 @@ pub fn api_router(
             None,
         ))
         .merge(sse_route(auth.clone(), events.clone()))
+        // [scaffold:items] begin
         .merge(items_router(
             items,
             audit.clone(),
             auth.clone(),
             attachments.clone(),
         ))
+        // [scaffold:items] end
         .merge(users_router(users, audit.clone(), auth.clone()))
         .merge(audit_log_router(
             audit.clone(),

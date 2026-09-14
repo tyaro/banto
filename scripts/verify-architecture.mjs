@@ -40,6 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { readI18nMode } from './lib/i18n-mode.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,6 +80,11 @@ function fail(rule, file, detail) {
 
 function pass(rule, summary) {
 	results.push(`  ✔ [${rule}] ${summary}`);
+}
+
+/** D1-c (display-preset-plan.md, Issue #190 prep): opt-out スキップの報告。 */
+function skip(rule, reason) {
+	results.push(`  − [${rule}] スキップ（${reason}）`);
 }
 
 function* walk(dir, exts) {
@@ -573,32 +579,41 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 // .svelte ではない）は対象外。i18n は app 層のみ（§13）なので packages は見ない。
 {
 	const rule = 'raw-jp-in-app';
-	// 語を構成する日本語のみ（句読点・記号は除く）＝翻訳対象の「文言」を狙い撃つ。
-	const JP = /[぀-ゟ゠-ヺー-ヿ一-鿿]/;
-	// コメント除去（raw-colors と同じ割り切り）。行コメントの `//` は `http://`
-	// を誤除去しないよう直前が `:` でない場合のみ落とす。
-	const stripComments = (src) =>
-		src
-			.replace(/<!--[\s\S]*?-->/g, '')
-			.replace(/\/\*[\s\S]*?\*\//g, '')
-			.replace(/(^|[^:])\/\/.*$/gm, '$1');
-	let checked = 0;
-	for (const file of walk('apps/admin-template/src', ['.svelte'])) {
-		if (file.includes('/paraglide/')) continue; // 生成物
-		if (RAW_JP_ALLOWLIST.has(file)) continue;
-		checked++;
-		const lines = stripComments(read(file)).split('\n');
-		for (let i = 0; i < lines.length; i++) {
-			if (JP.test(lines[i]))
-				fail(
-					rule,
-					file,
-					`生の日本語リテラル（${i + 1} 行目）— messages キーに置き Paraglide 経由 \`m['...']()\` で参照する（§13）`
-				);
+	const APP_PKG = 'apps/admin-template/package.json';
+	const i18nMode = readI18nMode(path.join(repoRoot, APP_PKG));
+	if (i18nMode === 'raw') {
+		// D1-c (display-preset-plan.md, Issue #190 prep): app 層は preset
+		// ごとに opt-out できる。`@banto/*` パッケージ側は messages 注入方式の
+		// まま不変 — このスキップは apps/admin-template/src の検査だけに効く。
+		skip(rule, `${APP_PKG} banto.i18n = "raw"`);
+	} else {
+		// 語を構成する日本語のみ（句読点・記号は除く）＝翻訳対象の「文言」を狙い撃つ。
+		const JP = /[぀-ゟ゠-ヺー-ヿ一-鿿]/;
+		// コメント除去（raw-colors と同じ割り切り）。行コメントの `//` は `http://`
+		// を誤除去しないよう直前が `:` でない場合のみ落とす。
+		const stripComments = (src) =>
+			src
+				.replace(/<!--[\s\S]*?-->/g, '')
+				.replace(/\/\*[\s\S]*?\*\//g, '')
+				.replace(/(^|[^:])\/\/.*$/gm, '$1');
+		let checked = 0;
+		for (const file of walk('apps/admin-template/src', ['.svelte'])) {
+			if (file.includes('/paraglide/')) continue; // 生成物
+			if (RAW_JP_ALLOWLIST.has(file)) continue;
+			checked++;
+			const lines = stripComments(read(file)).split('\n');
+			for (let i = 0; i < lines.length; i++) {
+				if (JP.test(lines[i]))
+					fail(
+						rule,
+						file,
+						`生の日本語リテラル（${i + 1} 行目）— messages キーに置き Paraglide 経由 \`m['...']()\` で参照する（§13）`
+					);
+			}
 		}
+		if (!results.some((r) => r.includes(`[${rule}]`)))
+			pass(rule, `app 層 ${checked} .svelte コンポーネントに生の日本語リテラルなし`);
 	}
-	if (!results.some((r) => r.includes(`[${rule}]`)))
-		pass(rule, `app 層 ${checked} .svelte コンポーネントに生の日本語リテラルなし`);
 }
 
 // --- 11. dev optimizer から .svelte.ts ソース配布パッケージを除外（issue #150 / ADR-0007）

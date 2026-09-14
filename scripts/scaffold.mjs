@@ -351,17 +351,35 @@ function removeCommandPalette() {
 		'commandPaletteStore import 除去',
 		`\timport { commandPaletteStore } from '$lib/commandPalette.svelte';\n`
 	);
-	swapText(
+	drop(
 		HEADER,
 		'lucide から Search 除去',
-		`Menu as MenuIcon, Search, Settings`,
-		`Menu as MenuIcon, Settings`
+		`		Search,
+`
 	);
-	cutRegion(
+	// キオスク表示（display-preset-plan.md D1-b）で検索ピルは `{#if !settings.kiosk}`
+	// 分岐に入った。パレットを外すときは分岐ごと消し、`{:else}` 側（全画面ボタン）
+	// だけを `{#if settings.kiosk}` として残す。
+	swapText(
 		HEADER,
 		'検索ピル/コマンドパレット起動ボタン除去',
-		`\t<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>`,
-		`icon={Search}\n\t\t\tonclick={() => commandPaletteStore.show()}\n\t\t/>\n\t</div>`
+		`{#if !settings.kiosk}
+		<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>
+			<Search size={16} aria-hidden="true" />
+			<span>{m['shell.searchPlaceholder']()}</span>
+			<kbd>Ctrl K</kbd>
+		</button>
+		<div class="search-icon-only">
+			<IconButton
+				label={m['shell.openCommandPalette']()}
+				icon={Search}
+				onclick={() => commandPaletteStore.show()}
+			/>
+		</div>
+	{:else}
+`,
+		`{#if settings.kiosk}
+`
 	);
 
 	removeFile(`${APP}/src/lib/components/CommandPalette.svelte`, 'CommandPalette.svelte 削除');

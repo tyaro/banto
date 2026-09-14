@@ -167,6 +167,20 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
+// [scaffold:items] begin
+//
+// D1-d (display-preset-plan.md, Issue #190 prep): every items-only REST
+// test in this file (CRUD/list/RBAC/CSV-import), grouped into one
+// contiguous region so a future `display` remover can delete it with a
+// single `cutRegion` on these markers instead of many separate `drop`
+// calls. Shared router helpers (`router_with_*`, `unused_*_service`,
+// `demo_auth`, `body_json`, and the small HTTP-request builders) stay
+// OUTSIDE this block - other resources' tests still need them. Tests
+// that exercise items only incidentally to verify a cross-cutting
+// concern (CSRF via `/api/auth/check`, the M14 audit-log coverage suite's
+// (a)/(b)/(c) steps, the M11/Issue #189 public-viewer suite's items-read
+// check) are classified by what they test, not by which route they call,
+// and are intentionally left where they were.
 
 #[tokio::test]
 async fn items_list_supports_sort_filter_and_pagination() {
@@ -336,21 +350,6 @@ async fn items_routes_are_guarded_without_token() {
 }
 
 #[tokio::test]
-async fn missing_csrf_header_is_forbidden_even_with_a_token() {
-    let (router, token) = router_with_token().await;
-    let response = router
-        .oneshot(
-            HttpRequest::get("/api/auth/check")
-                .header("Authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
 async fn update_via_rest_is_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, mut rx) = broadcast::channel(16);
@@ -409,6 +408,318 @@ async fn update_via_rest_is_observable_on_the_event_channel() {
 
     let event = rx.try_recv().expect("update should emit an event");
     assert!(matches!(event, ServerEvent::ResourceChanged { resource } if resource == "items"));
+}
+
+#[tokio::test]
+async fn viewer_can_list_and_get_items() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    let list_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/list",
+            &viewer,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(list_response.status(), StatusCode::OK);
+
+    let get_response = router
+        .oneshot(get_auth("/api/items/999", &viewer))
+        .await
+        .unwrap();
+    // Not the point of this test (no such item), but it proves the
+    // request got PAST the role guard and into the handler.
+    assert_eq!(get_response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn viewer_cannot_create_items_forbidden_with_forbidden_kind() {
+    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/items",
+            &viewer,
+            json!({ "name": "Nope", "price": 1, "stock": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let json = body_json(response).await;
+    assert_eq!(json["kind"], "forbidden");
+}
+
+#[tokio::test]
+async fn viewer_cannot_update_or_delete_items() {
+    let (router, admin, _editor, viewer) = router_with_role_tokens().await;
+
+    // Seed one item as admin so there is something to try updating.
+    let create_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items",
+            &admin,
+            json!({ "name": "Seed", "price": 10, "stock": 1 }),
+        ))
+        .await
+        .unwrap();
+    let id = body_json(create_response).await["id"].as_i64().unwrap();
+
+    let update_response = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/items/{id}"),
+            &viewer,
+            json!({ "name": "Changed", "price": 20, "stock": 2 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(update_response.status(), StatusCode::FORBIDDEN);
+
+    let delete_response = router
+        .oneshot(delete_auth(&format!("/api/items/{id}"), &viewer))
+        .await
+        .unwrap();
+    assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn editor_can_create_update_and_delete_items() {
+    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
+
+    let create_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items",
+            &editor,
+            json!({ "name": "Editable", "price": 10, "stock": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(create_response.status(), StatusCode::OK);
+    let id = body_json(create_response).await["id"].as_i64().unwrap();
+
+    let update_response = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/items/{id}"),
+            &editor,
+            json!({ "name": "Edited", "price": 20, "stock": 2 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(update_response.status(), StatusCode::OK);
+
+    let delete_response = router
+        .oneshot(delete_auth(&format!("/api/items/{id}"), &editor))
+        .await
+        .unwrap();
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+}
+
+// --- M15: CSV import -----------------------------------------------------
+
+/// `editor` can import: a mixed create+update batch succeeds, and
+/// exactly ONE `action: "import"` audit entry is recorded (spec M15:
+/// "件数サマリ付き1件記録"), with a `{created,updated}` summary detail
+/// and no `entityId` (the entry represents the whole batch, not one
+/// row).
+#[tokio::test]
+async fn editor_can_import_items_and_it_is_recorded_as_one_audit_entry() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+    let create_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items",
+            &admin,
+            json!({ "name": "Existing", "price": 10, "stock": 1 }),
+        ))
+        .await
+        .unwrap();
+    let existing_id = body_json(create_response).await["id"].as_i64().unwrap();
+
+    let import_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/import",
+            &editor,
+            json!([
+                { "id": existing_id, "name": "Updated", "price": 20, "stock": 2 },
+                { "id": null, "name": "Brand New", "price": 30, "stock": 3 }
+            ]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(import_response.status(), StatusCode::OK);
+    let body = body_json(import_response).await;
+    assert_eq!(body["created"], 1);
+    assert_eq!(body["updated"], 1);
+    assert_eq!(body["errors"], json!([]));
+
+    let list_response = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    let rows = body_json(list_response).await["rows"].clone();
+    let rows = rows.as_array().unwrap();
+    let import_entries: Vec<_> = rows.iter().filter(|r| r["action"] == "import").collect();
+    assert_eq!(
+        import_entries.len(),
+        1,
+        "expected exactly one import entry, got {rows:?}"
+    );
+    let entry = import_entries[0];
+    assert_eq!(entry["actorUsername"], "editor");
+    assert_eq!(entry["resource"], "items");
+    assert_eq!(entry["entityId"], serde_json::Value::Null);
+    assert_eq!(entry["origin"], "rest");
+    assert_eq!(entry["result"], "ok");
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().expect("detail should be set")).unwrap();
+    assert_eq!(detail, json!({ "created": 1, "updated": 1 }));
+}
+
+/// `viewer` cannot import (spec M15: editor+ only, same `RoleGuard` as
+/// the other `items` write routes).
+#[tokio::test]
+async fn viewer_cannot_import_items_forbidden_with_forbidden_kind() {
+    let (router, _audit, _admin, _editor, viewer) = router_with_role_tokens_and_audit().await;
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/items/import",
+            &viewer,
+            json!([{ "id": null, "name": "Nope", "price": 1, "stock": 1 }]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let json = body_json(response).await;
+    assert_eq!(json["kind"], "forbidden");
+}
+
+/// A max-import-sized payload (`MAX_IMPORT_ROWS * 3` rows, each a valid
+/// 40-char name -> ~2.6MB, comfortably past axum's 2MB `DefaultBodyLimit`
+/// default but under `items_write_router`'s raised 10MiB cap) must reach
+/// `ItemsService::import`'s row-count check and come back as the intended
+/// `422` row-count `Validation` error, NOT axum's transport-level `413`
+/// (spec M-review 2026-08 M-14). Without the router's raised `DefaultBodyLimit`
+/// this body is rejected before the handler runs. Transport-layer twin of the
+/// attachments `413` boundary test; a genuine regression guard (413 before the
+/// fix, 422 after). The row-count check is `import`'s FIRST step, so the
+/// oversized-COUNT body never runs per-row validation or any DB work.
+#[tokio::test]
+async fn oversized_import_payload_reaches_the_row_count_check_not_413() {
+    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
+
+    let row_count = crate::items::MAX_IMPORT_ROWS * 3;
+    let name = "a".repeat(40); // valid (<=40 chars); only the COUNT is over-limit
+    let rows: Vec<serde_json::Value> = (0..row_count)
+        .map(|_| json!({ "id": null, "name": name.as_str(), "price": 99999, "stock": 1 }))
+        .collect();
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/items/import",
+            &editor,
+            serde_json::Value::Array(rows),
+        ))
+        .await
+        .unwrap();
+
+    assert_ne!(
+        response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "import payload was rejected by the transport body cap before reaching the service"
+    );
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let json = body_json(response).await;
+    assert_eq!(json["kind"], "validation");
+    assert_eq!(json["field_errors"][0]["field"], "rows");
+}
+
+/// A batch with a per-row validation error is rolled back entirely - the
+/// valid row in the same batch must NOT land in the DB either - and is
+/// recorded as a single `result: "failed"` audit entry summarizing the
+/// error count (spec M15).
+#[tokio::test]
+async fn items_import_validation_error_rolls_back_and_is_recorded_as_failed() {
+    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
+
+    let import_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/import",
+            &editor,
+            json!([
+                { "id": null, "name": "Valid", "price": 10, "stock": 1 },
+                { "id": null, "name": "", "price": 1, "stock": 1 }
+            ]),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(import_response.status(), StatusCode::OK);
+    let body = body_json(import_response).await;
+    assert_eq!(body["created"], 0);
+    assert_eq!(body["updated"], 0);
+    assert_eq!(body["errors"][0]["row"], 1);
+
+    // Nothing from the batch was committed, including the otherwise
+    // valid first row (spec M15: all-or-nothing).
+    let list_response = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/items/list",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(body_json(list_response).await["totalCount"], 0);
+
+    let audit_response = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    let rows = body_json(audit_response).await["rows"].clone();
+    let rows = rows.as_array().unwrap();
+    let entry = rows
+        .iter()
+        .find(|r| r["action"] == "import")
+        .unwrap_or_else(|| panic!("expected an import entry, got {rows:?}"));
+    assert_eq!(entry["result"], "failed");
+    assert_eq!(entry["actorUsername"], "editor");
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().expect("detail should be set")).unwrap();
+    assert_eq!(detail, json!({ "errorCount": 1 }));
+}
+
+// [scaffold:items] end
+
+#[tokio::test]
+async fn missing_csrf_header_is_forbidden_even_with_a_token() {
+    let (router, token) = router_with_token().await;
+    let response = router
+        .oneshot(
+            HttpRequest::get("/api/auth/check")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
 /// Sanity check that `BantoError` variants used elsewhere still map the
@@ -731,115 +1042,6 @@ fn delete_auth(path: &str, token: &str) -> HttpRequest<Body> {
         .header("Authorization", format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap()
-}
-
-#[tokio::test]
-async fn viewer_can_list_and_get_items() {
-    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
-
-    let list_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items/list",
-            &viewer,
-            json!(ListParams::default()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(list_response.status(), StatusCode::OK);
-
-    let get_response = router
-        .oneshot(get_auth("/api/items/999", &viewer))
-        .await
-        .unwrap();
-    // Not the point of this test (no such item), but it proves the
-    // request got PAST the role guard and into the handler.
-    assert_eq!(get_response.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn viewer_cannot_create_items_forbidden_with_forbidden_kind() {
-    let (router, _admin, _editor, viewer) = router_with_role_tokens().await;
-
-    let response = router
-        .oneshot(post_json_auth(
-            "/api/items",
-            &viewer,
-            json!({ "name": "Nope", "price": 1, "stock": 1 }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let json = body_json(response).await;
-    assert_eq!(json["kind"], "forbidden");
-}
-
-#[tokio::test]
-async fn viewer_cannot_update_or_delete_items() {
-    let (router, admin, _editor, viewer) = router_with_role_tokens().await;
-
-    // Seed one item as admin so there is something to try updating.
-    let create_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items",
-            &admin,
-            json!({ "name": "Seed", "price": 10, "stock": 1 }),
-        ))
-        .await
-        .unwrap();
-    let id = body_json(create_response).await["id"].as_i64().unwrap();
-
-    let update_response = router
-        .clone()
-        .oneshot(put_json(
-            &format!("/api/items/{id}"),
-            &viewer,
-            json!({ "name": "Changed", "price": 20, "stock": 2 }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(update_response.status(), StatusCode::FORBIDDEN);
-
-    let delete_response = router
-        .oneshot(delete_auth(&format!("/api/items/{id}"), &viewer))
-        .await
-        .unwrap();
-    assert_eq!(delete_response.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn editor_can_create_update_and_delete_items() {
-    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
-
-    let create_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items",
-            &editor,
-            json!({ "name": "Editable", "price": 10, "stock": 1 }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let id = body_json(create_response).await["id"].as_i64().unwrap();
-
-    let update_response = router
-        .clone()
-        .oneshot(put_json(
-            &format!("/api/items/{id}"),
-            &editor,
-            json!({ "name": "Edited", "price": 20, "stock": 2 }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(update_response.status(), StatusCode::OK);
-
-    let delete_response = router
-        .oneshot(delete_auth(&format!("/api/items/{id}"), &editor))
-        .await
-        .unwrap();
-    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -1799,192 +2001,6 @@ async fn change_password_is_recorded_as_password_change() {
     assert_eq!(entry.origin, "rest");
     assert_eq!(entry.result, "ok");
     assert_eq!(entry.detail, None, "detail must never carry the password");
-}
-
-// --- M15: CSV import -----------------------------------------------------
-
-/// `editor` can import: a mixed create+update batch succeeds, and
-/// exactly ONE `action: "import"` audit entry is recorded (spec M15:
-/// "件数サマリ付き1件記録"), with a `{created,updated}` summary detail
-/// and no `entityId` (the entry represents the whole batch, not one
-/// row).
-#[tokio::test]
-async fn editor_can_import_items_and_it_is_recorded_as_one_audit_entry() {
-    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
-
-    let create_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items",
-            &admin,
-            json!({ "name": "Existing", "price": 10, "stock": 1 }),
-        ))
-        .await
-        .unwrap();
-    let existing_id = body_json(create_response).await["id"].as_i64().unwrap();
-
-    let import_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items/import",
-            &editor,
-            json!([
-                { "id": existing_id, "name": "Updated", "price": 20, "stock": 2 },
-                { "id": null, "name": "Brand New", "price": 30, "stock": 3 }
-            ]),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(import_response.status(), StatusCode::OK);
-    let body = body_json(import_response).await;
-    assert_eq!(body["created"], 1);
-    assert_eq!(body["updated"], 1);
-    assert_eq!(body["errors"], json!([]));
-
-    let list_response = router
-        .oneshot(post_json_auth(
-            "/api/audit-log/list",
-            &admin,
-            json!(ListParams::default()),
-        ))
-        .await
-        .unwrap();
-    let rows = body_json(list_response).await["rows"].clone();
-    let rows = rows.as_array().unwrap();
-    let import_entries: Vec<_> = rows.iter().filter(|r| r["action"] == "import").collect();
-    assert_eq!(
-        import_entries.len(),
-        1,
-        "expected exactly one import entry, got {rows:?}"
-    );
-    let entry = import_entries[0];
-    assert_eq!(entry["actorUsername"], "editor");
-    assert_eq!(entry["resource"], "items");
-    assert_eq!(entry["entityId"], serde_json::Value::Null);
-    assert_eq!(entry["origin"], "rest");
-    assert_eq!(entry["result"], "ok");
-    let detail: serde_json::Value =
-        serde_json::from_str(entry["detail"].as_str().expect("detail should be set")).unwrap();
-    assert_eq!(detail, json!({ "created": 1, "updated": 1 }));
-}
-
-/// `viewer` cannot import (spec M15: editor+ only, same `RoleGuard` as
-/// the other `items` write routes).
-#[tokio::test]
-async fn viewer_cannot_import_items_forbidden_with_forbidden_kind() {
-    let (router, _audit, _admin, _editor, viewer) = router_with_role_tokens_and_audit().await;
-
-    let response = router
-        .oneshot(post_json_auth(
-            "/api/items/import",
-            &viewer,
-            json!([{ "id": null, "name": "Nope", "price": 1, "stock": 1 }]),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    let json = body_json(response).await;
-    assert_eq!(json["kind"], "forbidden");
-}
-
-/// A max-import-sized payload (`MAX_IMPORT_ROWS * 3` rows, each a valid
-/// 40-char name -> ~2.6MB, comfortably past axum's 2MB `DefaultBodyLimit`
-/// default but under `items_write_router`'s raised 10MiB cap) must reach
-/// `ItemsService::import`'s row-count check and come back as the intended
-/// `422` row-count `Validation` error, NOT axum's transport-level `413`
-/// (spec M-review 2026-08 M-14). Without the router's raised `DefaultBodyLimit`
-/// this body is rejected before the handler runs. Transport-layer twin of the
-/// attachments `413` boundary test; a genuine regression guard (413 before the
-/// fix, 422 after). The row-count check is `import`'s FIRST step, so the
-/// oversized-COUNT body never runs per-row validation or any DB work.
-#[tokio::test]
-async fn oversized_import_payload_reaches_the_row_count_check_not_413() {
-    let (router, _admin, editor, _viewer) = router_with_role_tokens().await;
-
-    let row_count = crate::items::MAX_IMPORT_ROWS * 3;
-    let name = "a".repeat(40); // valid (<=40 chars); only the COUNT is over-limit
-    let rows: Vec<serde_json::Value> = (0..row_count)
-        .map(|_| json!({ "id": null, "name": name.as_str(), "price": 99999, "stock": 1 }))
-        .collect();
-
-    let response = router
-        .oneshot(post_json_auth(
-            "/api/items/import",
-            &editor,
-            serde_json::Value::Array(rows),
-        ))
-        .await
-        .unwrap();
-
-    assert_ne!(
-        response.status(),
-        StatusCode::PAYLOAD_TOO_LARGE,
-        "import payload was rejected by the transport body cap before reaching the service"
-    );
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let json = body_json(response).await;
-    assert_eq!(json["kind"], "validation");
-    assert_eq!(json["field_errors"][0]["field"], "rows");
-}
-
-/// A batch with a per-row validation error is rolled back entirely - the
-/// valid row in the same batch must NOT land in the DB either - and is
-/// recorded as a single `result: "failed"` audit entry summarizing the
-/// error count (spec M15).
-#[tokio::test]
-async fn items_import_validation_error_rolls_back_and_is_recorded_as_failed() {
-    let (router, _audit, admin, editor, _viewer) = router_with_role_tokens_and_audit().await;
-
-    let import_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items/import",
-            &editor,
-            json!([
-                { "id": null, "name": "Valid", "price": 10, "stock": 1 },
-                { "id": null, "name": "", "price": 1, "stock": 1 }
-            ]),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(import_response.status(), StatusCode::OK);
-    let body = body_json(import_response).await;
-    assert_eq!(body["created"], 0);
-    assert_eq!(body["updated"], 0);
-    assert_eq!(body["errors"][0]["row"], 1);
-
-    // Nothing from the batch was committed, including the otherwise
-    // valid first row (spec M15: all-or-nothing).
-    let list_response = router
-        .clone()
-        .oneshot(post_json_auth(
-            "/api/items/list",
-            &admin,
-            json!(ListParams::default()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(body_json(list_response).await["totalCount"], 0);
-
-    let audit_response = router
-        .oneshot(post_json_auth(
-            "/api/audit-log/list",
-            &admin,
-            json!(ListParams::default()),
-        ))
-        .await
-        .unwrap();
-    let rows = body_json(audit_response).await["rows"].clone();
-    let rows = rows.as_array().unwrap();
-    let entry = rows
-        .iter()
-        .find(|r| r["action"] == "import")
-        .unwrap_or_else(|| panic!("expected an import entry, got {rows:?}"));
-    assert_eq!(entry["result"], "failed");
-    assert_eq!(entry["actorUsername"], "editor");
-    let detail: serde_json::Value =
-        serde_json::from_str(entry["detail"].as_str().expect("detail should be set")).unwrap();
-    assert_eq!(detail, json!({ "errorCount": 1 }));
 }
 
 // --- M17: SQLite backup/restore -------------------------------------------

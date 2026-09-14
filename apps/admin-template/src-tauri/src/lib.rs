@@ -25,7 +25,10 @@ use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
+use admin_template_core::first_boot::seed_first_boot_settings;
+// [scaffold:items] begin
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
+// [scaffold:items] end
 use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
 use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
@@ -50,7 +53,9 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 /// App-wide state managed by Tauri (spec §10, §11).
 struct AppState {
+    // [scaffold:items] begin
     items: ItemsService,
+    // [scaffold:items] end
     /// The webview window's own session identity, set by `auth_login`/
     /// `auth_setup` and cleared by `auth_logout` - all called directly via
     /// `invoke()`, never through `/api/auth/login`. `Some` means logged in;
@@ -284,6 +289,12 @@ fn ping() -> &'static str {
     concat!("banto ", env!("CARGO_PKG_VERSION"))
 }
 
+// [scaffold:items] begin
+//
+// D1-d (display-preset-plan.md, Issue #190 prep): the items_* command group
+// (CRUD + import), contiguous so a future `display`/`items` remover can
+// delete it with one `cutRegion` on these markers.
+
 /// Read-only (spec M10 RBAC): any authenticated role (`viewer` and up), so
 /// `require_role`'s floor is the least-privileged role.
 #[tauri::command]
@@ -436,6 +447,7 @@ async fn items_import(
 ) -> Result<ImportResult, BantoError> {
     items_import_body(&state, rows).await
 }
+// [scaffold:items] end
 
 /// `GET`-ish command: has an account been created yet (spec §3.3/§8.2)? The
 /// login page calls this first to decide between the first-run setup form
@@ -1861,6 +1873,12 @@ async fn attachments_open_folder(
     }
 }
 
+// [scaffold:items] begin
+//
+// D1-d: `items_export_csv_to_folder` is desktop-only CSV export - not
+// contiguous with the items_* CRUD/import block above (it lives next to the
+// other `*_open_folder` desktop commands), so it gets its own marker pair.
+
 /// `viewer`+ (items list is Viewer-readable): write an exported CSV to the
 /// app's `exports/` dir and open that folder in the OS file explorer - the desktop
 /// counterpart of the LAN browser's `<a download>` (the same "no native save
@@ -1915,6 +1933,7 @@ async fn items_export_csv_to_folder(
         })
     }
 }
+// [scaffold:items] end
 
 /// Pop a dock panel out into a REAL native window (spec §5.3 v2 - the
 /// "ウィンドウ分離" mode the v1 doc comment left as a future extension
@@ -2007,9 +2026,22 @@ pub fn run() {
                 tauri::async_runtime::block_on(init_db(&db_path)).expect("init_db should succeed");
 
             let events = event_channel();
+            // [scaffold:items] begin
             let items = ItemsService::new(db.clone()).with_events(events.clone());
+            // [scaffold:items] end
             let users = UsersService::new(db.clone());
             let settings = SettingsService::new(db.clone());
+            // D1-a (display-preset-plan.md, Issue #190 prep): seed
+            // `FIRST_BOOT_SETTINGS` BEFORE the M11 bootstrap below reads
+            // `settings.auth_config()`, so a display-preset app's seeded
+            // `auth.disabled = true` (say) takes effect on the very first
+            // launch rather than one launch late. No-op today: the const
+            // ships empty.
+            match tauri::async_runtime::block_on(seed_first_boot_settings(&settings)) {
+                Ok(true) => println!("banto: 初回起動の既定設定を書き込みました"),
+                Ok(false) => {}
+                Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
+            }
             let backup = BackupService::new(db_path.clone(), db.clone());
             // M20 attachments (spec docs/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
@@ -2312,6 +2344,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ping,
+            // [scaffold:items] begin
             items_list,
             items_get,
             items_create,
@@ -2319,6 +2352,7 @@ pub fn run() {
             items_delete,
             items_import,
             items_export_csv_to_folder,
+            // [scaffold:items] end
             auth_status,
             auth_setup,
             auth_login,
@@ -2379,7 +2413,9 @@ mod tests {
             .expect("init_db_memory");
         let events = event_channel();
         AppState {
+            // [scaffold:items] begin
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
+            // [scaffold:items] end
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
@@ -2422,7 +2458,9 @@ mod tests {
             .expect("init_db");
         let events = event_channel();
         let state = AppState {
+            // [scaffold:items] begin
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
+            // [scaffold:items] end
             auth: Mutex::new(None),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),

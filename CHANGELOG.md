@@ -22,6 +22,23 @@
 
 ## [Unreleased]
 
+- feat(shell/scaffold): `--preset display`（#190）の準備 PR-D1 — テンプレート本体に
+  既定 OFF のトグルを足す（[docs/display-preset-plan.md](docs/display-preset-plan.md)
+  §2「display が足すものは先に本体のトグルにする」）。①初回起動 seed 機構
+  `admin_template_core::first_boot::FIRST_BOOT_SETTINGS`（既定は空。`settings`
+  テーブルが空のときだけ書き込む。`banto-serve` / Tauri 起動時に M11 の判定より前に
+  実行）、②キオスク表示トグル（UI 設定 `shell.kiosk`。ON でサイドバー折り畳み既定・
+  ヘッダーコンパクト（`--banto-shell-header-height-compact`）・全画面ボタン
+  （ブラウザ Fullscreen API / Tauri `setFullscreen`、capability
+  `core:window:allow-set-fullscreen` を追加）。設定画面「外観・言語」に追加、
+  visual スペック 1 枚追加 — ベースラインは `visual-baselines.yml` で生成）、
+  ③`apps/admin-template/package.json` の `banto.i18n = "keys" | "raw"`
+  （`raw` で `raw-jp-in-app` と `check-i18n-nonempty` を理由付きでスキップ、
+  conventions §13）、④items デモ区画に `// [scaffold:items] begin/end` マーカー
+  （`rest/tests.rs` の items テストを 1 ブロックに集約。挙動不変、テスト件数不変）。
+  付随: コマンドパレット remover の Header.svelte anchor をキオスク分岐に追従
+  （3 プリセットの `--dry-run --strict` で確認）。
+
 - feat(auth): 閲覧公開モード（viewer-public、#189）— 「認証を外す」を書き込み軸
   （従来の M11、デスクトップ限定）と閲覧公開軸（新設）に分けた。
   `server.viewerPublic` を ON にすると LAN クライアントは

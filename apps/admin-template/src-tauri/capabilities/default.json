@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Capabilities for the main window",
   "windows": ["main", "panel-*"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-set-fullscreen"]
 }

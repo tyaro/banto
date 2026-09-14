@@ -31,11 +31,22 @@ import { getUiSettings } from './banto/setup';
 const THEME_KEY = 'banto.theme';
 const PRESET_KEY = 'banto.preset';
 const DENSITY_KEY = 'banto.density';
+const KIOSK_KEY = 'banto.kiosk';
 
 /** `UiSettingsProvider` keys (wire contract, spec M12). */
 const MODE_SETTING = 'theme.mode';
 const PRESET_SETTING = 'theme.preset';
 const DENSITY_SETTING = 'theme.density';
+const KIOSK_SETTING = 'shell.kiosk';
+
+/**
+ * Kiosk shell default (display-preset-plan.md D1-b/§3.2). `false` here keeps
+ * this unit's behavior byte-for-byte unchanged for every existing app -
+ * `scripts/scaffold.mjs --preset display` (PR-D2, not yet implemented) flips
+ * ONLY this constant to `true` so a fresh display-preset app boots straight
+ * into the kiosk shell. Do not seed `kiosk` from anywhere else.
+ */
+export const KIOSK_DEFAULT = false;
 
 function loadThemeMode(): ThemeMode {
 	if (typeof localStorage === 'undefined') return 'system';
@@ -55,6 +66,14 @@ function loadThemeDensity(): ThemeDensity {
 	return isThemeDensity(stored) ? stored : 'standard';
 }
 
+function loadKiosk(): boolean {
+	if (typeof localStorage === 'undefined') return KIOSK_DEFAULT;
+	const stored = localStorage.getItem(KIOSK_KEY);
+	if (stored === 'true') return true;
+	if (stored === 'false') return false;
+	return KIOSK_DEFAULT;
+}
+
 /** Best-effort provider write: an unauthenticated/offline failure is expected and ignored (localStorage already holds the value). */
 function persistRemote(key: string, value: string): void {
 	void getUiSettings()
@@ -66,7 +85,16 @@ class Settings {
 	themeMode: ThemeMode = $state(loadThemeMode());
 	themePreset: ThemePreset = $state(loadThemePreset());
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
-	sidebarCollapsed = $state(false);
+	kiosk: boolean = $state(loadKiosk());
+	/**
+	 * Kiosk shell (display-preset-plan.md D1-b): the fold is not itself
+	 * persisted (unchanged from before this unit - it always started at
+	 * `false`), so "unless the user has a persisted sidebarCollapsed value"
+	 * never applies today. The initial value only is seeded from `kiosk` so a
+	 * kiosk app starts collapsed; nothing re-forces it afterwards, so the
+	 * user can still expand it via `toggleSidebar()`.
+	 */
+	sidebarCollapsed = $state(this.kiosk);
 
 	#unwatchSystem: (() => void) | undefined;
 
@@ -95,6 +123,12 @@ class Settings {
 		applyDensity(density);
 	}
 
+	/** Apply + cache locally, WITHOUT the provider write - same split as the theme appliers above. Deliberately does NOT touch `sidebarCollapsed` (only the field's initial value is seeded from `kiosk`; a value arriving later via `syncFromProvider()` must not yank a fold the user already changed this session). */
+	#applyKiosk(kiosk: boolean) {
+		this.kiosk = kiosk;
+		localStorage.setItem(KIOSK_KEY, String(kiosk));
+	}
+
 	setThemeMode(mode: ThemeMode) {
 		this.#applyThemeMode(mode);
 		persistRemote(MODE_SETTING, mode);
@@ -110,11 +144,17 @@ class Settings {
 		persistRemote(DENSITY_SETTING, density);
 	}
 
+	setKiosk(kiosk: boolean) {
+		this.#applyKiosk(kiosk);
+		persistRemote(KIOSK_SETTING, String(kiosk));
+	}
+
 	/** Call once on app mount to sync the DOM and start OS-theme watching. No provider write - nothing changed yet. */
 	init() {
 		this.#applyThemeMode(this.themeMode);
 		this.#applyThemePreset(this.themePreset);
 		this.#applyThemeDensity(this.themeDensity);
+		this.#applyKiosk(this.kiosk);
 	}
 
 	/**
@@ -128,14 +168,16 @@ class Settings {
 	async syncFromProvider(): Promise<void> {
 		const ui = getUiSettings();
 		try {
-			const [mode, preset, density] = await Promise.all([
+			const [mode, preset, density, kiosk] = await Promise.all([
 				ui.get(MODE_SETTING),
 				ui.get(PRESET_SETTING),
-				ui.get(DENSITY_SETTING)
+				ui.get(DENSITY_SETTING),
+				ui.get(KIOSK_SETTING)
 			]);
 			if (isThemeMode(mode)) this.#applyThemeMode(mode);
 			if (isThemePreset(preset)) this.#applyThemePreset(preset);
 			if (isThemeDensity(density)) this.#applyThemeDensity(density);
+			if (kiosk === 'true' || kiosk === 'false') this.#applyKiosk(kiosk === 'true');
 		} catch {
 			// Best-effort: offline/unauthenticated reads keep the local values.
 		}
