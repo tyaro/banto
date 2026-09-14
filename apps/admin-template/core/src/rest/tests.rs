@@ -2555,6 +2555,7 @@ async fn router_with_viewer_public(
         backup,
         attachments,
         system_info,
+        metrics: None,
     };
     (
         api_router(services, auth, tx, false),
