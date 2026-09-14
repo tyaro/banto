@@ -8,14 +8,25 @@
  * - `ConnectivitySection.svelte`'s LAN-toggle gating (read-only:
  *   `value?.disabled`).
  * - `SecuritySection.svelte`, which owns the mutating controls
- *   (`disabledDraft`/`disabledRoleDraft`), the initial load effect, and
- *   re-syncs its own drafts via its own `$effect` whenever `.value` changes
- *   here - including when AccountSection's autologin actions call `load()`.
+ *   (`disabledDraft`/`disabledRoleDraft`) and re-syncs its own drafts via its
+ *   own `$effect` whenever `.value` changes here - including when
+ *   AccountSection's autologin actions call `load()`.
+ *
+ * The INITIAL load (settings-routes step 2, Copilot review on PR #198) now
+ * runs once in the persistent `settings/+layout.svelte` instead of inside
+ * SecuritySection's own mount effect - a direct visit to
+ * `/settings/account` or `/settings/connectivity` needs this value too
+ * (autologin status / the LAN auth-disabled gate) and neither of those
+ * sections' own routes used to run SecuritySection's effect. `error` mirrors
+ * that same move: the layout's load effect writes here instead of a
+ * SecuritySection-local `authError`, so the section can keep showing the
+ * same error text without owning the fetch.
  */
 import { getAuthSettings, type AuthSettings } from '$lib/banto/authAdmin';
 
 class AuthSettingsStore {
 	value: AuthSettings | null = $state(null);
+	error: string | null = $state(null);
 
 	async load(): Promise<void> {
 		// Module singleton (unlike the former page-local `$state(null)`): a

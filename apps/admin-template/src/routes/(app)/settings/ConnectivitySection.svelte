@@ -5,17 +5,17 @@
 	 * `<section id="connectivity">` ラッパー（admin 限定）から描画される
 	 * （settings-split refactor: markup/state/CSS の移動のみ、挙動は変えない）。
 	 *
-	 * `systemInfoStore`（systemInfoStore.svelte.ts）はこのセクションが所有する
-	 * ロード effect の書き込み先で、DataSection.svelte の
-	 * `backupPostgresDialect` からも読まれる（spec M17）。
+	 * `systemInfoStore`（systemInfoStore.svelte.ts）は DataSection.svelte の
+	 * `backupPostgresDialect` からも読まれる（spec M17）。初期ロード effect は
+	 * settings-routes step 2（Copilot review on PR #198）で
+	 * `settings/+layout.svelte` へ移した（`/settings/data` 等への直接遷移でも
+	 * この値が要るため）- エラー表示は下の `systemInfoStore.error` を直接読む。
 	 */
 	import { Server, Wifi } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
-	import { sessionStore } from '$lib/session.svelte';
-	import { isAdmin } from '$lib/permissions';
-	import { errorMessage, formatBytes, tauri } from './shared';
+	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
 
@@ -79,19 +79,9 @@
 	// Read-only diagnostics: version, migration version, DB dialect+latency,
 	// uptime, active LAN sessions, attachment storage. Same availability gate
 	// as the audit/backups sections (real backend, not the plain-browser demo,
-	// which has no live server to probe). Loaded once on mount for an admin.
-	let systemInfoError: string | null = $state(null);
-
-	$effect(() => {
-		if (!systemInfoStore.available || !isAdmin(sessionStore.role)) return;
-		void (async () => {
-			try {
-				await systemInfoStore.load();
-			} catch (err) {
-				systemInfoError = errorMessage(err);
-			}
-		})();
-	});
+	// which has no live server to probe). Loaded by `settings/+layout.svelte`
+	// (Copilot review on PR #198) rather than here - see `systemInfoStore.svelte.ts`'s
+	// doc comment - so `systemInfoStore.error` below is written by that effect.
 </script>
 
 <div class="settings-grid">
@@ -201,8 +191,8 @@
 				</div>
 			</div>
 
-			{#if systemInfoError}
-				<p class="error">{systemInfoError}</p>
+			{#if systemInfoStore.error}
+				<p class="error">{systemInfoStore.error}</p>
 			{:else if systemInfoStore.value}
 				<p class="status">
 					{m['settings.systemInfoAppVersion']()} <strong>{systemInfoStore.value.appVersion}</strong>

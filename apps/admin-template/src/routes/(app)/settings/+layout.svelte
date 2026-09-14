@@ -18,21 +18,80 @@
 	 * step, so it lives in this component's own scoped style block instead of
 	 * settings.css's global namespace (moved out of the old
 	 * `.settings-page .section-nav` rules there).
+	 *
+	 * Copilot review on PR #198 also moved the shared cross-category stores'
+	 * INITIAL loads here (see the `$effect`s below) - previously
+	 * `authSettingsStore.load()`/`systemInfoStore.load()` only ran inside
+	 * whichever section happened to own the mount effect
+	 * (SecuritySection/ConnectivitySection), which was fine back when every
+	 * category rendered on one page but left a direct visit to a
+	 * READ-ONLY-consumer route (`/settings/account`'s autologin status,
+	 * `/settings/connectivity`'s auth-disabled LAN gate,
+	 * `/settings/data`'s `backupPostgresDialect`) with a `null` store
+	 * forever. This layout is the one thing every category route shares, so
+	 * loading here - with the exact same conditions those sections used -
+	 * guarantees the value is fetched regardless of which category is opened
+	 * first. Sections keep their own POST-SAVE reloads unchanged (only the
+	 * mount-time fetch moved); see `authSettingsStore.svelte.ts` /
+	 * `systemInfoStore.svelte.ts`'s doc comments for the corresponding
+	 * `error` fields these effects write to.
 	 */
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
 	import * as m from '$lib/paraglide/messages';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
+	import { sessionStore } from '$lib/session.svelte';
+	import { isAdmin } from '$lib/permissions';
+	import { errorMessage, tauri } from './shared';
+	import { authSettingsStore } from './authSettingsStore.svelte';
+	import { systemInfoStore } from './systemInfoStore.svelte';
 	import type { SettingsCategory } from './categories';
 	import type { LayoutProps } from './$types';
 	import './settings.css';
 
 	let { data, children }: LayoutProps = $props();
 
-	/** Mirrors Sidebar.svelte's `isActive` / `navBadges.svelte.ts`'s `pathOwns`: a category owns its own path and any sub-path. */
+	/**
+	 * Mirrors Sidebar.svelte's `isActive` / `navBadges.svelte.ts`'s
+	 * `pathOwns`: a category owns its own path and any sub-path.
+	 * `base`-prefixed (Copilot review on PR #198): `page.url.pathname`
+	 * always includes the app's base path (e.g. the GitHub Pages demo's
+	 * `BASE_PATH=/banto`), but `category.path` from `categories.ts` never
+	 * does - comparing the bare path against it meant no category was ever
+	 * active there.
+	 */
 	function isActive(category: SettingsCategory): boolean {
-		return page.url.pathname === category.path || page.url.pathname.startsWith(category.path + '/');
+		const fullPath = `${base}${category.path}`;
+		return page.url.pathname === fullPath || page.url.pathname.startsWith(fullPath + '/');
 	}
+
+	// authSettingsStore's initial load (M11 login-not-required mode) - Tauri
+	// only, same condition SecuritySection's own mount effect used.
+	$effect(() => {
+		if (!tauri) return;
+		void (async () => {
+			authSettingsStore.error = null;
+			try {
+				await authSettingsStore.load();
+			} catch (err) {
+				authSettingsStore.error = errorMessage(err);
+			}
+		})();
+	});
+
+	// systemInfoStore's initial load (M-review 2026-08 §2.4) - same
+	// availability/role gate ConnectivitySection's own mount effect used.
+	$effect(() => {
+		if (!systemInfoStore.available || !isAdmin(sessionStore.role)) return;
+		void (async () => {
+			systemInfoStore.error = null;
+			try {
+				await systemInfoStore.load();
+			} catch (err) {
+				systemInfoStore.error = errorMessage(err);
+			}
+		})();
+	});
 </script>
 
 <div class="page settings-page">
