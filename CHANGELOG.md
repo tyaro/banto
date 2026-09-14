@@ -22,6 +22,16 @@
 
 ## [Unreleased]
 
+- refactor(settings): 設定画面をカテゴリごとの section コンポーネントに分割
+  （`AppearanceSection` / `AccountSection` / `ConnectivitySection` /
+  `DataSection` / `SecuritySection` + `settings.css` + 共有ストア 2 本。
+  `+page.svelte` 1,812 行 → 約 110 行）。挙動・DOM・e2e/visual は不変
+  （`main` の outerHTML 比較で `settings-page` クラス追加とコンポーネント境界の
+  コメントノード以外に差分なし）。scaffold の glass remover の anchor を
+  `AppearanceSection.svelte` に追従（4 プリセット `--dry-run --strict` 通過）。
+  ページ分割（カテゴリごとのルート化）の前段
+  （[docs/choiapp-feedback-2026-09.md §3.1](docs/choiapp-feedback-2026-09.md)）。
+
 ## [1.5.0] - 2026-09-14
 
 **v1.5.0 — 「表示専用アプリを配れる」リリース。** v1.4.0（2026-08-29）以降に

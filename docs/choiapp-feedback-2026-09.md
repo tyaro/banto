@@ -61,6 +61,23 @@
   ダイアログ・文言・ハンドラは一切変えていない。
 - 見出し階層は h1（ページ）> h2（カテゴリ）> h3（カード）> h4（カード内小見出し）。
 
+### 3.1 追記（2026-09-14）: カテゴリごとのコンポーネント分割（段階 1）
+
+v1.5.0 時点で Tauri + admin の設定画面は 5 カテゴリ・11 カード、
+`settings/+page.svelte` は 1,812 行の単一コンポーネントになっていた
+（キオスク表示・閲覧公開・CPU/メモリの各カードが同週に加わった）。保守面積を
+下げるため、**挙動・DOM を変えずに**カテゴリごとの section コンポーネント
+（`AppearanceSection` / `AccountSection` / `ConnectivitySection` /
+`DataSection` / `SecuritySection`、co-located）へ分割し、`+page.svelte` は
+見出し・カテゴリナビ・`<section>` ラッパーだけ（約 110 行）にした。CSS は
+`settings.css`（`.settings-page` 配下にスコープ）へ、section 間で共有する
+`SystemInfo` / `AuthSettings` は小さな `.svelte.ts` ストアへ移した。
+scaffold の glass remover が持つ anchor は `AppearanceSection.svelte` へ追従。
+
+これは「ページを分ける（カテゴリごとのルート化）」の前段。§3 の
+「タブではなくアンカー」判断はこの段階では維持しており、ルート化するときに
+本節へ判断を追記する。
+
 ## 4. ナビバッジとヘッダステータス（フィードバック 4）
 
 ### 4.1 サイドバーの未確認更新バッジ

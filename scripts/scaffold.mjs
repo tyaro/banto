@@ -238,7 +238,10 @@ const DASH = `${APP}/src/routes/(app)/dashboard/+page.svelte`;
 const DASH_LIB = `${APP}/src/lib/banto/dashboard.ts`;
 const LAYOUT = `${APP}/src/routes/(app)/+layout.svelte`;
 const HEADER = `${APP}/src/lib/components/Header.svelte`;
-const SETTINGS = `${APP}/src/routes/(app)/settings/+page.svelte`;
+// settings-split refactor (choiapp-feedback-2026-09 §3): the glass/vibrancy
+// UI removeGlass() edits below live in the 外観 (appearance) category's own
+// section component, not in +page.svelte itself anymore.
+const SETTINGS_APPEARANCE = `${APP}/src/routes/(app)/settings/AppearanceSection.svelte`;
 const ITEMS = `${APP}/src/routes/(app)/items/+page.svelte`;
 const ITEM_EDIT = `${APP}/src/routes/(app)/items/[id]/+page.svelte`;
 const APP_CSS = `${APP}/src/app.css`;
@@ -412,32 +415,35 @@ function removeGlass() {
 	removeFile('packages/theme/src/css/banto-glass.css', 'banto-glass.css 削除');
 
 	// --- 設定画面: プリセット選択肢 + vibrancy 配線 ---
+	// settings-split refactor（choiapp-feedback-2026-09 §3）で、これらは
+	// +page.svelte から外観カテゴリの AppearanceSection.svelte へ移った
+	// （SETTINGS_APPEARANCE）。
 	// ドリフト注意: i18n キー化で label が `m['settings.presetGlass']()` になった。
-	// settings のプリセット選択肢 markup を変えたらこのパターンも更新すること
-	// （残ると ThemePreset から 'glass' を外した後 `Type '"glass"' is not assignable
+	// プリセット選択肢 markup を変えたらこのパターンも更新すること（残ると
+	// ThemePreset から 'glass' を外した後 `Type '"glass"' is not assignable
 	// to type '"standard"'` でチェックが赤くなる）。
 	drop(
-		SETTINGS,
+		SETTINGS_APPEARANCE,
 		'プリセット選択肢からガラス除去',
 		`\t\t{ value: 'glass', label: m['settings.presetGlass']() }\n`
 	);
 	drop(
-		SETTINGS,
+		SETTINGS_APPEARANCE,
 		'vibrancy import 除去',
 		`\timport { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '$lib/banto/vibrancy';\n`
 	);
-	drop(SETTINGS, 'Sparkles アイコン import 除去', `\t\tSparkles,\n`);
+	drop(SETTINGS_APPEARANCE, 'Sparkles アイコン import 除去', `\t\tSparkles,\n`);
 	cutRegion(
-		SETTINGS,
+		SETTINGS_APPEARANCE,
 		'vibrancy 状態/ロジック除去',
 		`\t// --- M12: window vibrancy`,
 		`\t\t\tapplyingVibrancy = false;\n\t\t}\n\t}`
 	);
 	cutRegion(
-		SETTINGS,
+		SETTINGS_APPEARANCE,
 		'ウィンドウ効果カード(markup)除去',
-		`\t\t{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}`,
-		`\t\t{/if}`
+		`\t{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}`,
+		`\t{/if}`
 	);
 	removeFile(`${APP}/src/lib/banto/vibrancy.ts`, 'vibrancy.ts 削除');
 	// src-tauri（lib.rs / Cargo）は removeGlassSrcTauri() で別途実行（非コンパイル）。
