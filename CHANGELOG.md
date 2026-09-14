@@ -22,6 +22,21 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-14
+
+**v1.6.0 — 設定画面のページ分割。** v1.5.0（同日）以降の PR #197・#198 をまとめる。
+変更は app 層（`apps/admin-template`）のみで、**`@banto/*` パッケージと `banto-*`
+クレートは版数が 1.6.0 に上がるだけで実装内容は v1.5.0 と同一**（公開 API の
+変更なし。タグ参照で消費している側に追従作業は無く、v1.5.0 のまま留まっても
+差は無い。テンプレートを再同期する派生アプリだけが対象）。後方互換の機能追加の
+ため minor。
+
+- 設定画面をカテゴリごとのルート `/settings/{appearance,account,connectivity,data,security}`
+  に分割（共通レイアウトに sticky の左レール / 狭い画面は横タブ、`/settings` と
+  非可視カテゴリは先頭の可視カテゴリへリダイレクト）。派生アプリは「ルートを足す」
+  形で設定を拡張できる。段階 1（section コンポーネント分割、挙動不変）を経て実施
+  （[docs/choiapp-feedback-2026-09.md §3.1/§3.2](docs/choiapp-feedback-2026-09.md)）。
+
 - refactor(settings): 設定画面をカテゴリごとの section コンポーネントに分割
   （`AppearanceSection` / `AccountSection` / `ConnectivitySection` /
   `DataSection` / `SecuritySection` + `settings.css` + 共有ストア 2 本。
@@ -870,7 +885,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.5.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/tyaro/banto/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tyaro/banto/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/tyaro/banto/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tyaro/banto/compare/v1.2.0...v1.3.0
