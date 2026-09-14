@@ -22,6 +22,47 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-14
+
+**v1.5.0 — 「表示専用アプリを配れる」リリース。** v1.4.0（2026-08-29）以降に
+main へ積まれた PR #182〜#184・#191〜#195 と dependabot 更新をまとめる。
+**JSON ワイヤは項目追加のみ**（`GET /api/auth/status` の `viewerPublic`、
+`SystemInfo.metrics`）で既定挙動は不変だが、**Rust 消費側にはソース互換の
+破壊がある**（下記「消費側への注意」の 4 点。いずれもテンプレートからコピーした
+`src-tauri/src/lib.rs` / `core/src/rest/mod.rs` が直接触る箇所）。公開 API の
+削除・改名は無く、v1.4.0（sqlx 0.9 移行）と同じくオーナー判断で **minor** とする
+（1.x 系では「消費側の追従作業を CHANGELOG のリード文に明記した上で minor」
+を運用とする。docs/publishing.md「バージョニング規約」参照）。主な内容:
+
+- **閲覧公開モード**（#189、ADR-0012）: LAN 端末がログイン無しで `viewer` 固定の
+  合成セッションを得て閲覧できる。書き込みは常にログイン必須。
+- **CPU/メモリ使用率の共通 API**（#185、ADR-0013）: `sysinfo` を feature
+  `system-metrics` 限定で採用。下流アプリは自前の `sysinfo` 実装を
+  `SystemMetricsSampler` に寄せ替えられる。
+- **`pnpm scaffold --preset display`**（#190）: items 雛形・管理画面・
+  ダッシュボードを外し、ログイン不要 + 閲覧公開 + キオスク表示を初期状態にする
+  表示専用アプリ向けプリセット。本体側にはキオスク表示トグル・初回起動 seed 機構・
+  `banto.i18n` opt-out が既定 OFF で入る。
+- チョイアプリ・フィードバック対応（#182〜#184）: 固定シェル・設定カテゴリ・
+  ナビバッジ・「ログインなしで使い始める」。
+
+**消費側への注意（Rust、v1.4.0 → v1.5.0 の追従作業）:**
+
+- `banto_admin_services::settings::ServerSettings` に `viewer_public: bool` が増えた。
+  構造体リテラルで組み立てている箇所（テンプレートの `server_apply`）は
+  `viewer_public` を足すか `..Default::default()` を使う。
+- `banto_server::routes::SystemInfo` に `metrics: Option<SystemMetrics>` が増えた。
+  Tauri 側の `system_info` コマンドで組み立てている箇所は `metrics: None`（または
+  `system-metrics` feature の `SystemMetricsSampler` で取得した値）を足す。
+- `banto_server::routes::extra_auth_router(users, auth, audit, allow_setup)` が
+  `(…, allow_setup, settings: SettingsService, status_extras: Option<AuthStatusExtras>)`
+  になった。テンプレートどおり `settings.clone()` と `None` を渡す。
+- `banto_server::routes::system_info_router(service, auth, audit)` が
+  `(…, audit, metrics: Option<MetricsProbe>)` になった。`None` で従来どおり。
+- `sysinfo` は Windows で `windows` 0.62 系を引く（`src-tauri` の 0.61 系と並存）。
+  不要なら `system-metrics` feature を `default` から外す（README「オプション資産の
+  削除」）。
+
 - feat(scaffold): `pnpm scaffold --preset display`（#190、PR-D2、
   [docs/display-preset-plan.md](docs/display-preset-plan.md) §3.2）— カンバン/常設
   ダッシュボード/展示デモ向けの**表示専用アプリ**を1コマンドで作れるようにした。
@@ -810,7 +851,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.4.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/tyaro/banto/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/tyaro/banto/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/tyaro/banto/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/tyaro/banto/compare/v1.1.0...v1.2.0
