@@ -687,6 +687,7 @@
 
 	// --- Inline editing (spec §4.5) ---
 	interface EditingState {
+		sessionId: number;
 		rowId: string | number;
 		field: string;
 		draft: unknown;
@@ -695,6 +696,10 @@
 	}
 
 	let editing: EditingState | null = $state(null);
+	// spec §4.5 / conventions §8 / #210: even reopening the same cell
+	// starts a new session. Keep the counter after a session closes so a
+	// delayed post-commit navigation cannot move a newer selection.
+	let editSessionId = 0;
 	// Saving/validation replaces `editing`; keep those state changes from
 	// invalidating the row lookup or taking over a user's newer selection.
 	const editingRowId = $derived.by(() => editing?.rowId);
@@ -765,6 +770,7 @@
 		selection.setActive(rowIndex, column.id, false);
 		previousEditingPosition = { rowId, field: column.id, rowIndex };
 		editing = {
+			sessionId: ++editSessionId,
 			rowId,
 			field: column.id,
 			draft: getColumnValue(row, column),
@@ -780,7 +786,7 @@
 		value: unknown
 	): Promise<boolean> {
 		if (!editing || editing.rowId !== getRowId(row) || editing.field !== column.id) return false;
-		const rowId = editing.rowId;
+		const { sessionId, rowId } = editing;
 		// Re-resolve at the commit boundary too: a removed editor can emit
 		// blur before the cancellation effect runs, carrying its old row.
 		const currentRow = rowAtDisplayIndex(editingRowIndex);
@@ -792,7 +798,14 @@
 			return true;
 		}
 		if (result.kind === 'invalid') {
-			editing = { rowId, field: column.id, draft: value, error: result.message, pending: false };
+			editing = {
+				sessionId,
+				rowId,
+				field: column.id,
+				draft: value,
+				error: result.message,
+				pending: false
+			};
 			return false;
 		}
 
@@ -800,14 +813,25 @@
 			editing = null;
 			return true;
 		}
-		editing = { rowId, field: column.id, draft: value, error: null, pending: true };
+		editing = { sessionId, rowId, field: column.id, draft: value, error: null, pending: true };
 		try {
 			await onCellEdit(result.edit);
+			// The caller's save still completes, but only the session that
+			// submitted it owns these UI updates (including the failure path).
+			if (editing?.sessionId !== sessionId) return false;
 			editing = null;
 			return true;
 		} catch (err) {
+			if (editing?.sessionId !== sessionId) return false;
 			const message = err instanceof Error ? err.message : String(err);
-			editing = { rowId, field: column.id, draft: value, error: message, pending: false };
+			editing = {
+				sessionId,
+				rowId,
+				field: column.id,
+				draft: value,
+				error: message,
+				pending: false
+			};
 			return false;
 		}
 	}
@@ -819,6 +843,7 @@
 		moveAfter?: 'down' | 'left' | 'right'
 	) {
 		if (!editing || editing.pending) return;
+		const sessionId = editing.sessionId;
 		const editorType = column.editor ?? 'text';
 		let value: unknown;
 		if (editorType === 'select') {
@@ -839,7 +864,9 @@
 			value = parsed.value;
 		}
 		const closed = await commitValue(column, row, value);
-		if (closed && moveAfter) {
+		// A newer session may start between commitValue closing this one
+		// and this continuation running, including after a synchronous save.
+		if (closed && moveAfter && editSessionId === sessionId) {
 			const rowCount = effectiveRowCount;
 			if (moveAfter === 'down') selection.moveActive(1, 0, false, rowCount, orderedFieldIds);
 			else if (moveAfter === 'left') selection.moveActive(0, -1, false, rowCount, orderedFieldIds);
