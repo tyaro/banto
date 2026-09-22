@@ -162,6 +162,43 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(href).toMatch(/^\/items\/\d+$/);
 		const itemUrl = new RegExp(`${href}$`);
 
+		// Non-editing Tab follows native focus order (spec §4.5, #211).
+		// jsdom cannot perform default Tab navigation, so exercise both grid
+		// boundaries here, with one filtered row to keep the sequence bounded.
+		const grid = page.getByRole('grid');
+		const createButton = page.getByRole('button', { name: '新規作成' });
+		await row.locator('[data-cell-field="name"]').click();
+		await expect(grid).toBeFocused();
+		await page.keyboard.press('Home');
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'open');
+		await page.keyboard.press('Shift+Tab');
+		await expect(createButton).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(grid).toBeFocused();
+		await page.keyboard.press('End');
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'updatedAt');
+
+		// Keep header sort/filter controls and the row link reachable. Tab
+		// events bubbling from those controls must not move the selected cell
+		// or trap focus either; the non-sortable actions header is not a tab stop.
+		const headerControls = await grid
+			.getByRole('row')
+			.first()
+			.locator('[tabindex="0"], button')
+			.all();
+		expect(headerControls.length).toBeGreaterThan(0);
+		for (const control of [...headerControls, openLink]) {
+			await page.keyboard.press('Tab');
+			await expect(control).toBeFocused();
+		}
+		await page.keyboard.press('Tab');
+		await expect(grid.locator(':focus')).toHaveCount(0);
+		for (const control of [openLink, ...[...headerControls].reverse(), grid, createButton]) {
+			await page.keyboard.press('Shift+Tab');
+			await expect(control).toBeFocused();
+		}
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'updatedAt');
+
 		// Edit: change price, save, and independently re-open the record (by
 		// URL, not via the grid/filter again) to confirm the new value
 		// actually persisted server-side.

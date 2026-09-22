@@ -552,6 +552,9 @@
 		// Enter/Tab/typing and stops propagation for every key, so this never
 		// runs; the guard is a defensive no-op if that ever changes.
 		if (editing) return;
+		// Outside an editor, Tab/Shift+Tab follow the browser's focus order,
+		// including header controls and row links, so focus can leave the grid.
+		if (event.key === 'Tab') return;
 		if (!selection.active) return;
 
 		const rowCount = effectiveRowCount;
@@ -590,11 +593,6 @@
 					selection.moveActive(0, 1, event.shiftKey, rowCount, orderedFieldIds);
 					scrollActiveIntoView();
 				}
-				break;
-			case 'Tab':
-				event.preventDefault();
-				selection.moveActive(0, event.shiftKey ? -1 : 1, false, rowCount, orderedFieldIds);
-				scrollActiveIntoView();
 				break;
 			case 'Home':
 				event.preventDefault();
