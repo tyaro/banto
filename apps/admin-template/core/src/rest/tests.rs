@@ -2754,10 +2754,7 @@ async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
         ))
         .await
         .unwrap();
-    assert!(
-        !response.status().is_success(),
-        "there is no `public` row in `users`, so change-password must fail"
-    );
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // And the failed attempt must not have conjured an account into existence.
     assert!(users.get_by_username("public").await.unwrap().is_none());
@@ -2765,6 +2762,112 @@ async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
         !users.is_initialized().await.unwrap(),
         "a public viewing session must never count as a provisioned install"
     );
+}
+
+// #209: the account name is not reserved; provenance comes from issuance.
+#[tokio::test]
+async fn real_public_accounts_keep_identity_and_password_ownership() {
+    for role in [Role::Admin, Role::Viewer] {
+        let (router, _settings, audit, users) = router_with_viewer_public(true).await;
+        users
+            .setup_first_user("owner", "password123", "Owner")
+            .await
+            .unwrap();
+        users
+            .create_user("public", "password123", "public", role)
+            .await
+            .unwrap();
+        let login = router
+            .clone()
+            .oneshot(post_json(
+                "/api/auth/login",
+                json!({ "username": "public", "password": "password123", "remember": true }),
+            ))
+            .await
+            .unwrap();
+        let login = body_json(login).await;
+        assert_eq!(login["success"], true);
+        let real = login["token"].as_str().unwrap();
+        let synthetic = public_viewer_token(&router).await;
+
+        for _ in 0..2 {
+            for (token, expected_public) in [(real, false), (synthetic.as_str(), true)] {
+                let response = router
+                    .clone()
+                    .oneshot(get_auth("/api/auth/identity", token))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let identity = body_json(response).await;
+                assert_eq!(identity["id"], "public");
+                assert_eq!(identity["name"], "public");
+                assert_eq!(identity["publicViewer"], expected_public);
+                let expected_role = if expected_public { Role::Viewer } else { role };
+                assert_eq!(identity["role"], expected_role.as_str());
+            }
+        }
+
+        // Even knowing the real account password cannot make a synthetic
+        // session its owner. Denied audit must carry no secrets or row id.
+        let denied = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/auth/change-password",
+                &synthetic,
+                json!({ "currentPassword": "password123", "newPassword": "newpassword1" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        assert!(users.verify("public", "password123").await.unwrap().is_some());
+        let entries = audit.list(ListParams::default()).await.unwrap();
+        let denied = entries
+            .rows
+            .iter()
+            .find(|entry| entry.action == "password_change" && entry.result == "denied")
+            .expect("denied password change audit");
+        assert_eq!(denied.actor_username.as_deref(), Some("public"));
+        assert_eq!(denied.actor_role.as_deref(), Some("viewer"));
+        assert_eq!(denied.entity_id, None);
+        assert_eq!(denied.detail, None);
+        assert_eq!(denied.origin, "rest");
+
+        let changed = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/auth/change-password",
+                real,
+                json!({ "currentPassword": "password123", "newPassword": "newpassword1" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(changed.status(), StatusCode::OK);
+        assert!(users.verify("public", "newpassword1").await.unwrap().is_some());
+    }
+}
+
+#[tokio::test]
+async fn setup_public_account_returns_a_regular_session_identity() {
+    let (router, _audit) = router_with_real_login(true).await;
+    let setup = router
+        .clone()
+        .oneshot(post_json(
+            "/api/auth/setup",
+            json!({ "username": "public", "password": "password123", "displayName": "public" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(setup.status(), StatusCode::OK);
+    let setup = body_json(setup).await;
+    let token = setup["token"].as_str().unwrap();
+    let identity = router
+        .oneshot(get_auth("/api/auth/identity", token))
+        .await
+        .unwrap();
+    let identity = body_json(identity).await;
+    assert_eq!(identity["id"], "public");
+    assert_eq!(identity["role"], "admin");
+    assert_eq!(identity["publicViewer"], false);
 }
 
 #[tokio::test]

@@ -301,7 +301,8 @@ without a runtime guard are **upheld by reviewing every call site**.
     `public` when a public session attempts a mutation.
   - **`POST /api/auth/logout` revokes only its own token** (other public
     viewing devices are unaffected).
-  - **`change-password` fails** (there is no `public` row in `users`). The
+  - **`change-password` explicitly rejects synthetic sessions**, even if a
+    normal account has the same username. The
     frontend shows no account UI in a public viewing session.
   - "auth disabled + LAN enabled" is allowed **only when public viewing is
     ON** (guarded from both directions in `SettingsService`, viewer-public-plan
@@ -360,12 +361,15 @@ some operations (download/upload are server-only, folder is tauri-only, etc.)
 are also expressed in the provider layer.
 
 LAN public viewing (#189) adds no fourth mode. `publicViewer` is **session-layer
-state** (`identity.id === PUBLIC_VIEWER_ID`) that distinguishes "logged in" from
+state** (the issuer-provided `identity.publicViewer === true`) that distinguishes "logged in" from
 "synthetic viewer session" *within* `server` mode; it does not affect which
 provider is selected — a public viewing device uses the ordinary http provider
 and its bearer token against the existing APIs
 ([ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md), the reason
 alternative B was rejected).
+Normal accounts may also use the username `public`, so never infer a synthetic
+session from identity id, name, or role. Providers without the marker represent
+ordinary sessions.
 
 ## 11. The migration style
 

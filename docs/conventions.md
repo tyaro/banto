@@ -255,8 +255,8 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
     `denied` は既存の `RoleGuard` が actor `public` で記録する。
   - **`POST /api/auth/logout` は自分のトークンだけ失効する**（他の公開閲覧端末に
     影響しない）。
-  - **`change-password` は失敗する**（`users` に `public` 行が無い）。公開閲覧
-    セッションでアカウント系 UI を出さない。
+  - **`change-password` は合成セッションを明示的に拒否する。** 同名の通常
+    アカウントが存在しても対象にしない。公開閲覧セッションでアカウント系 UI を出さない。
   - 「認証無効 + LAN 有効」は**閲覧公開 ON のときだけ**許可する
     （`SettingsService` の両方向ガード、viewer-public-plan §2.3）。OFF のときの
     排他は 2026-07-08 決定のまま。
@@ -307,10 +307,12 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 
 LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではない**。これは
 `server` モードの中で「ログイン済みか、合成 viewer セッションか」を区別する
-**session 層の状態**（`identity.id === PUBLIC_VIEWER_ID`）であり、provider の
+**session 層の状態**（発行元が返す `identity.publicViewer === true`）であり、provider の
 選択には影響しない — 公開閲覧端末も通常の http provider が bearer トークンで
 既存 API を叩く（[ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)
 案B の不採用理由）。
+通常アカウントも `public` という username を持てるため、identity の id・name・role
+から合成セッションを推測しない。属性がない provider は通常セッションとして扱う。
 
 ## 11. マイグレーションの流儀
 

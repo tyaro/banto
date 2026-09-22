@@ -206,10 +206,29 @@ async fn auth_change_password_handler(
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Json<ChangePasswordResponse>, ApiError> {
-    let identity = bearer_token(&headers).and_then(|token| state.auth.identity_for(token));
-    let Some(identity) = identity else {
+    let session = bearer_token(&headers).and_then(|token| state.auth.session_for(token));
+    let Some(session) = session else {
         return Err(ApiError(BantoError::Unauthorized));
     };
+    let identity = session.identity;
+    // #209, conventions §6: synthetic sessions are never credential owners,
+    // even when a real account happens to share the "public" display label.
+    if session.public_viewer {
+        state
+            .audit
+            .record(AuditEntry {
+                actor_username: Some(&identity.id),
+                actor_role: Some(&identity.role),
+                action: "password_change",
+                resource: "users",
+                entity_id: None,
+                detail: None,
+                origin: "rest",
+                result: "denied",
+            })
+            .await;
+        return Err(ApiError(BantoError::Forbidden));
+    }
 
     state
         .users
