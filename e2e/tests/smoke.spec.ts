@@ -388,13 +388,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const save = panel.getByRole('button', { name: '保存', exact: true });
 		const viewerRow = rowWithText(page, VIEWER_USERNAME);
 		const adminRow = rowWithText(page, ADMIN_USERNAME);
+		async function selectUserRow(username: string): Promise<void> {
+			await rowWithText(page, username).locator('[data-cell-field="username"]').click();
+			// Activate the selected read-only row through the grid's keyboard
+			// contract; assert the panel before testing asynchronous mutations.
+			await page.keyboard.press('Enter');
+			await expect(panel.getByRole('heading', { level: 2 })).toContainText(username);
+		}
 		const viewerId = Number(await viewerRow.locator('[data-cell-field="id"]').innerText());
 		const adminId = Number(await adminRow.locator('[data-cell-field="id"]').innerText());
 		expect(viewerId).toBeGreaterThan(0);
 		expect(adminId).toBeGreaterThan(0);
 
 		for (const outcome of ['success', 'failure', 'reselect'] as const) {
-			await viewerRow.locator('[data-cell-field="username"]').click();
+			await selectUserRow(VIEWER_USERNAME);
 			const savedName = `${VIEWER_DISPLAY_NAME}-${outcome}`;
 			await displayName.fill(savedName);
 			if (outcome === 'reselect') await role.selectOption('editor');
@@ -425,8 +432,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			try {
 				await save.click();
 				await arrived;
-				await adminRow.locator('[data-cell-field="username"]').click();
-				if (outcome === 'reselect') await viewerRow.locator('[data-cell-field="username"]').click();
+				await selectUserRow(ADMIN_USERNAME);
+				if (outcome === 'reselect') await selectUserRow(VIEWER_USERNAME);
 				const targetUsername = outcome === 'reselect' ? VIEWER_USERNAME : ADMIN_USERNAME;
 				const targetId = outcome === 'reselect' ? viewerId : adminId;
 				const targetRole = outcome === 'reselect' ? 'viewer' : 'admin';
@@ -480,7 +487,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// A password-reset reply must also leave the newly selected user's
 		// password draft alone. Reset only the viewer to its existing password.
-		await viewerRow.locator('[data-cell-field="username"]').click();
+		await selectUserRow(VIEWER_USERNAME);
 		const password = panel.getByLabel('新しいパスワード（8文字以上）', { exact: true });
 		await password.fill(VIEWER_PASSWORD);
 		let releaseReset!: () => void;
@@ -502,7 +509,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		try {
 			await panel.getByRole('button', { name: 'パスワードをリセット', exact: true }).click();
 			await resetStarted;
-			await adminRow.locator('[data-cell-field="username"]').click();
+			await selectUserRow(ADMIN_USERNAME);
 			await password.fill('E2E unsent admin password');
 			releaseReset();
 			await expect(page.getByText('パスワードをリセットしました', { exact: true })).toBeVisible();
@@ -520,7 +527,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			[VIEWER_USERNAME, VIEWER_DISPLAY_NAME],
 			[ADMIN_USERNAME, ADMIN_DISPLAY_NAME]
 		]) {
-			await rowWithText(page, username).locator('[data-cell-field="username"]').click();
+			await selectUserRow(username);
 			await displayName.fill(name);
 			await save.click();
 			await expect(
