@@ -54,7 +54,7 @@ tokio = { workspace = true, features = ["fs"] }
 sysinfo = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 # `backup`'s tests need real on-disk SQLite files (a `VACUUM INTO` against an
 # in-memory pool silently writes nothing - see `backup`'s test module), so they
 # stage tempdirs. Already a workspace dev-dep (`admin-template-core` used it for
