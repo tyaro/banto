@@ -276,6 +276,8 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("audit list after prune");
     assert_eq!(remaining.total_count, 1);
 
+    concurrent_admin_removals_on_postgres(&url).await;
+
     // --- backup: SQLite-only, so every op must Err (never panic) on Postgres --
     // V2 owner decision D3 (PR4): backup/restore is a SQLite-only feature.
     // Against a Postgres handle each public operation returns `Err` instead of
@@ -314,4 +316,138 @@ async fn app_layer_crud_round_trips_on_postgres() {
         backup.pending_restore().await.is_none(),
         "pending_restore reports nothing staged on Postgres"
     );
+}
+
+// Issue #207 / roadmap M10: keep this in the existing smoke test so no other
+// test resets the shared schema while these concurrent transactions are live.
+async fn concurrent_admin_removals_on_postgres(url: &str) {
+    use banto_core::BantoError;
+    use banto_storage::Db;
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+
+    // Separate pools rule out a service-local mutex masquerading as DB locking.
+    // A stricter session default verifies that the service explicitly selects
+    // READ COMMITTED, so a lock waiter sees the preceding writer's commit.
+    let options = PgPoolOptions::new()
+        .max_connections(2)
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::query("SET default_transaction_isolation = 'repeatable read'")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        });
+    let first_pool = options.clone().connect(url).await.unwrap();
+    let second_pool = options.connect(url).await.unwrap();
+    let control = banto_storage::connect_postgres(url).await.unwrap();
+    let first = UsersService::new(Db::Postgres(first_pool.clone()));
+    let second = UsersService::new(Db::Postgres(second_pool.clone()));
+
+    for (delete_first, delete_second) in [(false, false), (true, true), (false, true)] {
+        sqlx::query("DELETE FROM users")
+            .execute(&control)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, display_name, role) VALUES
+             ('owner1', 'unused', 'Original 1', 'admin'),
+             ('owner2', 'unused', 'Original 2', 'admin')",
+        )
+        .execute(&control)
+        .await
+        .unwrap();
+        let before = first.list_users().await.unwrap();
+        let first_id = before
+            .iter()
+            .find(|user| user.username == "owner1")
+            .unwrap()
+            .id;
+        let second_id = before
+            .iter()
+            .find(|user| user.username == "owner2")
+            .unwrap()
+            .id;
+        let mut gate = control.begin().await.unwrap();
+        sqlx::query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+
+        let launch = |svc: UsersService, id, actor_id, delete| {
+            tokio::spawn(async move {
+                if delete {
+                    svc.delete_user(id, actor_id).await
+                } else {
+                    svc.update_user(id, "Changed", Role::Viewer)
+                        .await
+                        .map(|_| ())
+                }
+            })
+        };
+        let a = launch(first.clone(), first_id, second_id, delete_first);
+        let b = launch(second.clone(), second_id, first_id, delete_second);
+        // The gate allows SELECTs but blocks mutations. In the old code both
+        // calls pass the count check before waiting at their writes; with the
+        // fix both wait before their protected reads. Observe real lock waits,
+        // rather than assuming an arbitrary sleep was enough to reach them.
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM pg_locks
+                     WHERE relation = 'users'::regclass AND NOT granted",
+                )
+                .fetch_one(&control)
+                .await
+                .unwrap();
+                if waiting == 2 {
+                    break;
+                }
+                assert!(
+                    !a.is_finished() && !b.is_finished(),
+                    "operations must wait for the gate"
+                );
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both concurrent operations must reach the database lock gate");
+        gate.commit().await.unwrap();
+        let (a, b) = tokio::time::timeout(Duration::from_secs(15), async {
+            let (a, b) = tokio::join!(a, b);
+            (a.unwrap(), b.unwrap())
+        })
+        .await
+        .expect("both operations must complete once the gate opens");
+        assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+        let (refused_id, error) = if let Err(error) = a {
+            (first_id, error)
+        } else {
+            (second_id, b.unwrap_err())
+        };
+        match error {
+            BantoError::Other(message) => {
+                assert_eq!(message, "最後の管理者を降格・削除することはできません");
+            }
+            other => panic!("expected last-admin refusal, got {other:?}"),
+        }
+        let after = first.list_users().await.unwrap();
+        assert_eq!(after.iter().filter(|user| user.role.is_admin()).count(), 1);
+        assert_eq!(
+            after.iter().find(|user| user.id == refused_id),
+            before.iter().find(|user| user.id == refused_id),
+            "a refused operation must preserve its display name and role"
+        );
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            second.update_user(refused_id, "Still admin", Role::Admin),
+        )
+        .await
+        .expect("refusal must release its transaction lock")
+        .unwrap();
+    }
+    first_pool.close().await;
+    second_pool.close().await;
+    control.close().await;
 }

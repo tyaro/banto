@@ -148,6 +148,67 @@ pub struct UsersService {
     db: Db,
 }
 
+// Issue #207 / roadmap M10: the last-admin predicate and its write must
+// share a database lock, including across independently constructed pools.
+// SQLx owns the transaction so errors and cancellation roll it back. The
+// body is expanded for each concrete backend without a generic SQL layer.
+macro_rules! with_users_write_transaction {
+    ($db:expr, |$tx:ident| $body:block) => {{
+        match $db {
+            Db::Sqlite(pool) => {
+                // Reserve the writer BEFORE reading; a deferred transaction
+                // could read a snapshot that another writer invalidates.
+                let mut $tx = pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                let result = $body;
+                $tx.commit().await.map_err(banto_storage::storage_error)?;
+                result
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                let mut $tx = pool
+                    .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                // Lock before reading either role or count. This conflicts
+                // with other user writes but allows ordinary readers. An
+                // explicit isolation level keeps a pool's repeatable-read
+                // default from pinning a snapshot before a lock wait ends.
+                sqlx::query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
+                    .execute(&mut *$tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                let result = $body;
+                $tx.commit().await.map_err(banto_storage::storage_error)?;
+                result
+            }
+        }
+    }};
+}
+
+/// Validate the locked snapshot (spec M10's last-admin condition). An
+/// update to admin cannot remove an admin; a delete always potentially can.
+fn ensure_admin_removal_allowed(
+    id: i64,
+    state: Option<(String, i64)>,
+    removes_admin: bool,
+) -> Result<(), BantoError> {
+    let Some((role, admin_count)) = state else {
+        return Err(BantoError::NotFound {
+            resource: "users".to_string(),
+            id: id.to_string(),
+        });
+    };
+    if Role::from_str(&role)?.is_admin() && removes_admin && admin_count <= 1 {
+        return Err(BantoError::Other(
+            "最後の管理者を降格・削除することはできません".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl UsersService {
     pub fn new(db: Db) -> Self {
         Self { db }
@@ -534,76 +595,6 @@ impl UsersService {
         })
     }
 
-    /// Current role of account `id`, or `NotFound` if it does not exist.
-    /// Shared by the last-admin guards on [`UsersService::update_user`] and
-    /// [`UsersService::delete_user`].
-    async fn role_of(&self, id: i64) -> Result<Role, BantoError> {
-        // AssertSqlSafe: see the note in `setup_first_user` above.
-        let sql = format!(
-            "SELECT role FROM users WHERE id = {}",
-            self.db.dialect().placeholder(1)
-        );
-        let role: Option<String> = match &self.db {
-            Db::Sqlite(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-                    .bind(id)
-                    .fetch_optional(pool)
-                    .await
-            }
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-                    .bind(id)
-                    .fetch_optional(pool)
-                    .await
-            }
-        }
-        .map_err(banto_storage::storage_error)?;
-        match role {
-            Some(role) => Role::from_str(&role),
-            None => Err(BantoError::NotFound {
-                resource: "users".to_string(),
-                id: id.to_string(),
-            }),
-        }
-    }
-
-    /// Guard (spec M10 completion condition): refuse an operation on
-    /// account `id` that would leave zero `admin` accounts. Counts admins
-    /// OTHER than `id` - if that count is zero, `id` is the last admin and
-    /// the caller must not be allowed to demote or delete it.
-    async fn ensure_not_last_admin(&self, id: i64) -> Result<(), BantoError> {
-        // AssertSqlSafe: `'admin'` is a hardcoded literal and
-        // `dialect.placeholder(1)` is internally generated (never caller
-        // input); `id` is bound below.
-        let sql = format!(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND id != {}",
-            self.db.dialect().placeholder(1)
-        );
-        let remaining_admins: i64 = match &self.db {
-            Db::Sqlite(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await
-            }
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await
-            }
-        }
-        .map_err(banto_storage::storage_error)?;
-        if remaining_admins == 0 {
-            return Err(BantoError::Other(
-                "最後の管理者を降格・削除することはできません".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
     /// Update an account's `display_name`/`role` (spec M10; password
     /// changes go through [`UsersService::change_password`] (self-service)
     /// or [`UsersService::reset_password`] (admin) instead). Refuses to
@@ -616,11 +607,6 @@ impl UsersService {
     ) -> Result<UserSummary, BantoError> {
         let display_name = display_name.trim();
 
-        let current_role = self.role_of(id).await?;
-        if current_role.is_admin() && !role.is_admin() {
-            self.ensure_not_last_admin(id).await?;
-        }
-
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
@@ -631,26 +617,28 @@ impl UsersService {
             dialect.now_expr(),
             dialect.placeholder(3),
         );
-        let row: Option<(i64, String, String, String, String)> = match &self.db {
-            Db::Sqlite(pool) => {
+        let guard_sql = format!(
+            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin') \
+             FROM users WHERE id = {}",
+            dialect.placeholder(1),
+        );
+        let row: Option<(i64, String, String, String, String)> =
+            with_users_write_transaction!(&self.db, |tx| {
+                let state: Option<(String, i64)> =
+                    sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
+                        .bind(id)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                ensure_admin_removal_allowed(id, state, !role.is_admin())?;
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(display_name)
                     .bind(role.as_str())
                     .bind(id)
-                    .fetch_optional(pool)
+                    .fetch_optional(&mut *tx)
                     .await
-            }
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => {
-                sqlx::query_as(sqlx::AssertSqlSafe(sql))
-                    .bind(display_name)
-                    .bind(role.as_str())
-                    .bind(id)
-                    .fetch_optional(pool)
-                    .await
-            }
-        }
-        .map_err(banto_storage::storage_error)?;
+                    .map_err(banto_storage::storage_error)?
+            });
 
         let Some((row_id, username, display_name, role_str, created_at)) = row else {
             return Err(BantoError::NotFound {
@@ -724,30 +712,30 @@ impl UsersService {
             ));
         }
 
-        let role = self.role_of(id).await?;
-        if role.is_admin() {
-            self.ensure_not_last_admin(id).await?;
-        }
-
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "DELETE FROM users WHERE id = {}",
             self.db.dialect().placeholder(1)
         );
-        let rows_affected = match &self.db {
-            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
+        let guard_sql = format!(
+            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin') \
+             FROM users WHERE id = {}",
+            self.db.dialect().placeholder(1),
+        );
+        let rows_affected = with_users_write_transaction!(&self.db, |tx| {
+            let state: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
                 .bind(id)
-                .execute(pool)
+                .fetch_optional(&mut *tx)
                 .await
-                .map(|r| r.rows_affected()),
-            #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
+                .map_err(banto_storage::storage_error)?;
+            ensure_admin_removal_allowed(id, state, true)?;
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
-                .map(|r| r.rows_affected()),
-        }
-        .map_err(banto_storage::storage_error)?;
+                .map_err(banto_storage::storage_error)?
+                .rows_affected()
+        });
         if rows_affected == 0 {
             return Err(BantoError::NotFound {
                 resource: "users".to_string(),
@@ -1163,5 +1151,132 @@ mod tests {
             .expect("owner should be found");
         assert_eq!(found.role, Role::Admin);
         assert!(svc.get_by_username("nobody").await.unwrap().is_none());
+    }
+
+    // Issue #207 / roadmap M10: two independent service pools must serialize
+    // the last-admin check with the write, including mixed update/delete calls.
+    async fn concurrent_admin_removals(delete_first: bool, delete_second: bool) {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(dir.path().join("users.sqlite3"))
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(Duration::from_secs(5));
+        let first_pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options.clone())
+            .await
+            .unwrap();
+        let second_pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .unwrap();
+        // Same app-owned schema as service(); no hashing is needed because
+        // these fixtures exercise management operations, never authentication.
+        sqlx::query(
+            "CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer'))
+            )",
+        )
+        .execute(&first_pool)
+        .await
+        .unwrap();
+        let first = UsersService::new(Db::Sqlite(first_pool.clone()));
+        let second = UsersService::new(Db::Sqlite(second_pool.clone()));
+
+        for _ in 0..3 {
+            sqlx::query("DELETE FROM users")
+                .execute(&first_pool)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO users (id, username, password_hash, display_name, role) VALUES
+                 (1, 'owner1', 'unused', 'Original 1', 'admin'),
+                 (2, 'owner2', 'unused', 'Original 2', 'admin')",
+            )
+            .execute(&first_pool)
+            .await
+            .unwrap();
+            let before = first.list_users().await.unwrap();
+            let barrier = tokio::sync::Barrier::new(2);
+            async fn mutate(
+                svc: &UsersService,
+                barrier: &tokio::sync::Barrier,
+                id: i64,
+                delete: bool,
+            ) -> Result<(), BantoError> {
+                barrier.wait().await;
+                if delete {
+                    svc.delete_user(id, 3 - id).await
+                } else {
+                    svc.update_user(id, "Changed", Role::Viewer)
+                        .await
+                        .map(|_| ())
+                }
+            }
+            let (a, b) = tokio::time::timeout(Duration::from_secs(15), async {
+                tokio::join!(
+                    mutate(&first, &barrier, 1, delete_first),
+                    mutate(&second, &barrier, 2, delete_second)
+                )
+            })
+            .await
+            .expect("concurrent operations must finish without leaked locks");
+            assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+            let (refused_id, error) = if let Err(error) = a {
+                (1, error)
+            } else {
+                (2, b.unwrap_err())
+            };
+            match error {
+                BantoError::Other(message) => {
+                    assert_eq!(message, "最後の管理者を降格・削除することはできません");
+                }
+                other => panic!("expected last-admin refusal, got {other:?}"),
+            }
+            let after = first.list_users().await.unwrap();
+            assert_eq!(after.iter().filter(|user| user.role.is_admin()).count(), 1);
+            assert_eq!(
+                after.iter().find(|user| user.id == refused_id),
+                before.iter().find(|user| user.id == refused_id),
+                "a refused operation must leave the entire public row unchanged"
+            );
+            // Reusing the connection after the refusal also verifies rollback
+            // releases its transaction lock rather than leaking it into the pool.
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                second.update_user(refused_id, "Still admin", Role::Admin),
+            )
+            .await
+            .expect("refusal must release the write lock")
+            .unwrap();
+        }
+        first_pool.close().await;
+        second_pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_demotions_preserve_one_sqlite_admin() {
+        concurrent_admin_removals(false, false).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_deletions_preserve_one_sqlite_admin() {
+        concurrent_admin_removals(true, true).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_demotion_and_deletion_preserve_one_sqlite_admin() {
+        concurrent_admin_removals(false, true).await;
     }
 }
