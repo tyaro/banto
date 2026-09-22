@@ -162,10 +162,43 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(href).toMatch(/^\/items\/\d+$/);
 		const itemUrl = new RegExp(`${href}$`);
 
+		// Keyboard edit completion returns focus for the next action (#212,
+		// spec §4.5). Use real server saves before continuing without a mouse.
+		const grid = page.getByRole('grid');
+		const priceCell = row.locator('[data-cell-field="price"]');
+		const editor = grid.locator('.cell-editor');
+		await priceCell.dblclick();
+		for (const price of [ITEM_PRICE + 1, ITEM_PRICE]) {
+			await expect(editor).toBeFocused();
+			await editor.fill(String(price));
+			await page.keyboard.press('Enter');
+			await expect(grid).toBeFocused();
+			// Wait for the provider's refresh before opening the next draft.
+			await expect(priceCell).toHaveText(`¥${price.toLocaleString('en-US')}`);
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(price));
+		}
+		await editor.fill('9999');
+		await page.keyboard.press('Escape');
+		await expect(editor).toHaveCount(0);
+		await expect(grid).toBeFocused();
+		await page.keyboard.press('ArrowRight');
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'stock');
+		await page.keyboard.press('F2');
+		await expect(editor).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(grid).toBeFocused();
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'updatedAt');
+		await page.keyboard.press('ArrowLeft');
+		await page.keyboard.press('F2');
+		await expect(editor).toBeFocused();
+		await page.keyboard.press('Shift+Tab');
+		await expect(grid).toBeFocused();
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'price');
+
 		// Non-editing Tab follows native focus order (spec §4.5, #211).
 		// jsdom cannot perform default Tab navigation, so exercise both grid
 		// boundaries here, with one filtered row to keep the sequence bounded.
-		const grid = page.getByRole('grid');
 		const createButton = page.getByRole('button', { name: '新規作成' });
 		await row.locator('[data-cell-field="name"]').click();
 		await expect(grid).toBeFocused();
@@ -234,6 +267,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// actually persisted server-side.
 		await page.keyboard.press('Enter');
 		await expect(page).toHaveURL(itemUrl);
+		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE));
 		await page.getByLabel('価格').fill(String(ITEM_PRICE_UPDATED));
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/items$/);

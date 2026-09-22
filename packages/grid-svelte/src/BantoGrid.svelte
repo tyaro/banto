@@ -144,17 +144,44 @@
 		return () => observer.disconnect();
 	});
 
-	// Focus the editor input/select whenever an edit session (re)starts, or
-	// re-enters after a failed commit (a new `editing` object is assigned in
-	// both cases). Re-selecting text on every reassignment (including the
-	// error path) is intentional: it keeps the invalid input selected so the
-	// user can immediately retype.
+	// spec §4.5 / #212: removing a saved editor can leave body focused.
+	// Track explicit user intent separately from that incidental focus loss,
+	// including clicks on non-focusable elements. Never reclaim abandoned focus.
+	let editFocus: { sessionId: number; owned: boolean } | null = null;
 	$effect(() => {
-		if (editing && editorEl) {
-			editorEl.focus();
-			if (editorEl instanceof HTMLInputElement && editorEl.type !== 'checkbox') {
-				editorEl.select();
+		const container = containerEl;
+		if (!container) return;
+		const document = container.ownerDocument;
+		function relinquishFocus(event: Event) {
+			if (editFocus && (event.type === 'focusin' || event.target !== editorEl)) {
+				editFocus.owned = event.target === editorEl;
 			}
+		}
+		function leaveWindow() {
+			if (editFocus) editFocus.owned = false;
+		}
+		document.addEventListener('pointerdown', relinquishFocus, true);
+		document.addEventListener('focusin', relinquishFocus, true);
+		document.defaultView?.addEventListener('blur', leaveWindow);
+		return () => {
+			document.removeEventListener('pointerdown', relinquishFocus, true);
+			document.removeEventListener('focusin', relinquishFocus, true);
+			document.defaultView?.removeEventListener('blur', leaveWindow);
+			if (editFocus) editFocus.owned = false;
+		};
+	});
+
+	// Focus a new editor or a failed draft only while this session still owns
+	// focus. In particular, pending/error assignments must not steal it back.
+	$effect(() => {
+		const current = editing;
+		const editor = editorEl;
+		if (current && editor && !current.pending) {
+			untrack(() => {
+				if (editFocus?.sessionId !== current.sessionId || !editFocus.owned) return;
+				editor.focus();
+				if (editor instanceof HTMLInputElement && editor.type !== 'checkbox') editor.select();
+			});
 		}
 	});
 
@@ -770,8 +797,9 @@
 		const rowId = getRowId(row);
 		selection.setActive(rowIndex, column.id, false);
 		previousEditingPosition = { rowId, field: column.id, rowIndex };
+		editFocus = { sessionId: ++editSessionId, owned: true };
 		editing = {
-			sessionId: ++editSessionId,
+			sessionId: editSessionId,
 			rowId,
 			field: column.id,
 			draft: getColumnValue(row, column),
@@ -845,6 +873,7 @@
 	) {
 		if (!editing || editing.pending) return;
 		const sessionId = editing.sessionId;
+		const focus = editFocus;
 		const editorType = column.editor ?? 'text';
 		let value: unknown;
 		if (editorType === 'select') {
@@ -867,12 +896,19 @@
 		const closed = await commitValue(column, row, value);
 		// A newer session may start between commitValue closing this one
 		// and this continuation running, including after a synchronous save.
-		if (closed && moveAfter && editSessionId === sessionId) {
+		if (
+			closed &&
+			moveAfter &&
+			editSessionId === sessionId &&
+			focus?.owned &&
+			containerEl?.isConnected
+		) {
 			const rowCount = effectiveRowCount;
 			if (moveAfter === 'down') selection.moveActive(1, 0, false, rowCount, orderedFieldIds);
 			else if (moveAfter === 'left') selection.moveActive(0, -1, false, rowCount, orderedFieldIds);
 			else selection.moveActive(0, 1, false, rowCount, orderedFieldIds);
 			scrollActiveIntoView();
+			containerEl.focus({ preventScroll: true });
 		}
 	}
 
@@ -890,9 +926,18 @@
 			event.preventDefault();
 			return;
 		}
+		// Returning from another window need not emit focusin on the editor.
+		// A fresh key action on the focused, non-pending draft renews ownership.
+		if (
+			editFocus?.sessionId === editing.sessionId &&
+			editorEl?.ownerDocument.activeElement === event.currentTarget
+		)
+			editFocus.owned = true;
 		if (event.key === 'Escape') {
 			event.preventDefault();
+			const restoreFocus = editFocus?.owned;
 			editing = null;
+			if (restoreFocus) containerEl?.focus({ preventScroll: true });
 			return;
 		}
 		if (event.key === 'Enter') {
