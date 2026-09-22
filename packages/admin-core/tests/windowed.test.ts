@@ -33,13 +33,15 @@ function createControllableProvider(datasetSize = 50) {
 	const dataset = makeDataset(datasetSize);
 	const calls: { offset: number; limit: number }[] = [];
 	const resolvers: ((value: { rows: Row[]; totalCount: number }) => void)[] = [];
+	const rejectors: ((reason: Error) => void)[] = [];
 
 	const provider: DataProvider = {
 		getList: (_resource: string, params) =>
-			new Promise((resolve) => {
+			new Promise((resolve, reject) => {
 				const offset = params.pagination?.offset ?? 0;
 				const limit = params.pagination?.limit ?? dataset.length;
 				calls.push({ offset, limit });
+				rejectors.push(reject);
 				resolvers.push(resolve as (value: { rows: Row[]; totalCount: number }) => void);
 			}),
 		getOne: async () => {
@@ -61,7 +63,13 @@ function createControllableProvider(datasetSize = 50) {
 		resolvers[index]({ rows, totalCount: overrideTotal ?? dataset.length });
 	}
 
-	return { provider, calls, resolveCall, dataset };
+	return {
+		provider,
+		calls,
+		resolveCall,
+		rejectCall: (index: number) => rejectors[index](new Error('Refresh failed')),
+		dataset
+	};
 }
 
 describe('createWindowedListResource', () => {
@@ -193,5 +201,167 @@ describe('createWindowedListResource', () => {
 		invalidate('w-dispose');
 		await tick();
 		expect(calls).toHaveLength(1); // no refetch after dispose
+	});
+});
+
+function setupRefresh(name: string, size = 6) {
+	const controlled = createControllableProvider(size);
+	initBanto({ dataProvider: controlled.provider, authProvider, resources: [{ name, label: 'W' }] });
+	return { ...controlled, windowed: createWindowedListResource<Row>(name, { blockSize: 2 }) };
+}
+
+describe('atomic window refresh (#212)', () => {
+	it('keeps the published snapshot and total until all refreshed blocks settle', async () => {
+		const { windowed, resolveCall } = setupRefresh('w-atomic');
+		const load = windowed.ensureRange(0, 6);
+		resolveCall(0);
+		resolveCall(1);
+		resolveCall(2);
+		await load;
+		await windowed.ensureRange(0, 4);
+		const previous = windowed.rows;
+		const refresh = windowed.refresh();
+		expect(windowed.rows).toBe(previous);
+		// A deletion/reorder affects absolute offsets; old and new blocks must not mix.
+		resolveCall(
+			3,
+			[
+				{ id: 2, name: 'new-2' },
+				{ id: 3, name: 'new-3' }
+			],
+			4
+		);
+		await tick();
+		expect(windowed.rows).toBe(previous);
+		expect(windowed.totalCount).toBe(6);
+		expect(windowed.loading).toBe(true);
+		resolveCall(
+			4,
+			[
+				{ id: 4, name: 'new-4' },
+				{ id: 5, name: 'new-5' }
+			],
+			4
+		);
+		await refresh;
+		expect(windowed.rows.map((row) => row?.id)).toEqual([2, 3, 4, 5]);
+		expect(windowed.totalCount).toBe(4);
+		expect(windowed.rows).toHaveLength(4);
+		expect(windowed.loading).toBe(false);
+		windowed.dispose();
+	});
+
+	it('includes concurrent range requests in the same atomic publication', async () => {
+		const { windowed, resolveCall, calls } = setupRefresh('w-atomic-concurrent');
+		const load = windowed.ensureRange(0, 2);
+		resolveCall(0);
+		await load;
+		const previous = windowed.rows;
+		const refresh = windowed.refresh();
+		const scroll = windowed.ensureRange(0, 4);
+		expect(calls).toHaveLength(3);
+		resolveCall(1, [{ id: 10, name: 'replacement' }]);
+		await refresh;
+		expect(windowed.rows).toBe(previous);
+		expect(windowed.loading).toBe(true);
+		resolveCall(2, [{ id: 12, name: 'new block' }]);
+		await scroll;
+		expect(windowed.rows[0]?.id).toBe(10);
+		expect(windowed.rows[2]?.id).toBe(12);
+		expect(windowed.loading).toBe(false);
+		windowed.dispose();
+	});
+
+	it('setParams discards a staged refresh and immediately clears rows under the new params', async () => {
+		const { windowed, resolveCall } = setupRefresh('w-atomic-params');
+		const load = windowed.ensureRange(0, 2);
+		resolveCall(0);
+		await load;
+		const refresh = windowed.refresh();
+		windowed.setParams({ sort: [{ field: 'name', direction: 'desc' }] });
+		expect(windowed.rows[0]).toBeUndefined();
+		const sorted = windowed.ensureRange(0, 2);
+		resolveCall(2, [{ id: 5, name: 'sorted' }]);
+		await sorted;
+		resolveCall(1, [{ id: 99, name: 'stale' }]);
+		await refresh;
+		expect(windowed.rows[0]?.id).toBe(5);
+		expect(windowed.loading).toBe(false);
+		windowed.dispose();
+	});
+
+	it('a newer refresh discards the older staged results and bookkeeping', async () => {
+		const { windowed, resolveCall } = setupRefresh('w-atomic-generation');
+		const load = windowed.ensureRange(0, 4);
+		resolveCall(0);
+		resolveCall(1);
+		await load;
+		const previous = windowed.rows;
+		const first = windowed.refresh();
+		resolveCall(2, [{ id: 99, name: 'stale first block' }]);
+		await tick();
+		const second = windowed.refresh();
+		resolveCall(3, [{ id: 98, name: 'stale second block' }]);
+		await first;
+		expect(windowed.rows).toBe(previous);
+		expect(windowed.loading).toBe(true);
+		resolveCall(4, [{ id: 20, name: 'latest first block' }]);
+		resolveCall(5, [{ id: 22, name: 'latest second block' }]);
+		await second;
+		expect(windowed.rows[0]?.id).toBe(20);
+		expect(windowed.rows[2]?.id).toBe(22);
+		windowed.dispose();
+	});
+
+	it('publishes successful refreshed blocks with holes for failures and permits retry', async () => {
+		const { windowed, resolveCall, rejectCall } = setupRefresh('w-atomic-failure');
+		const load = windowed.ensureRange(0, 4);
+		resolveCall(0);
+		resolveCall(1);
+		await load;
+		const previous = windowed.rows;
+		const refresh = windowed.refresh();
+		resolveCall(2, [{ id: 10, name: 'replacement' }]);
+		await tick();
+		expect(windowed.rows).toBe(previous);
+		rejectCall(3);
+		await refresh;
+		expect(windowed.rows[0]?.id).toBe(10);
+		expect(windowed.rows[2]).toBeUndefined();
+		expect(windowed.error?.message).toContain('Refresh failed');
+		expect(windowed.loading).toBe(false);
+		const retry = windowed.ensureRange(2, 4);
+		resolveCall(4, [{ id: 12, name: 'retried' }]);
+		await retry;
+		expect(windowed.rows[2]?.id).toBe(12);
+		expect(windowed.error).toBeNull();
+		windowed.dispose();
+	});
+
+	it('initial loads remain incremental even while another block is pending', async () => {
+		const { windowed, resolveCall } = setupRefresh('w-atomic-initial');
+		const load = windowed.ensureRange(0, 4);
+		resolveCall(0);
+		await tick();
+		expect(windowed.rows[0]?.id).toBe(0);
+		expect(windowed.rows[2]).toBeUndefined();
+		expect(windowed.loading).toBe(true);
+		resolveCall(1);
+		await load;
+		windowed.dispose();
+	});
+
+	it('a refresh with no range issues no request and an empty range clears cached rows', async () => {
+		const { windowed, resolveCall, calls } = setupRefresh('w-atomic-empty');
+		await windowed.refresh();
+		expect(calls).toHaveLength(0);
+		const load = windowed.ensureRange(0, 2);
+		resolveCall(0);
+		await load;
+		await windowed.ensureRange(0, 0);
+		await windowed.refresh();
+		expect(calls).toHaveLength(1);
+		expect(windowed.rows[0]).toBeUndefined();
+		windowed.dispose();
 	});
 });
