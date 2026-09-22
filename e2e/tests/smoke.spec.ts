@@ -176,12 +176,17 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 		let heldLists = 0;
 		const listUrl = /\/api\/items\/list$/;
-		await page.route(listUrl, async (route) => {
-			if (route.request().method() !== 'POST') return route.continue();
-			const response = await route.fetch();
-			heldLists++;
-			await listGate;
-			await route.fulfill({ response });
+		const pendingLists = new Set<Promise<void>>();
+		await page.route(listUrl, (route) => {
+			const pending = (async () => {
+				if (route.request().method() !== 'POST') return route.continue();
+				const response = await route.fetch();
+				heldLists++;
+				await listGate;
+				await route.fulfill({ response });
+			})();
+			pendingLists.add(pending);
+			return pending.finally(() => pendingLists.delete(pending));
 		});
 		try {
 			await priceCell.dblclick();
@@ -218,6 +223,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(grid).toBeFocused();
 		} finally {
 			releaseLists();
+			// Finish the held replies before disabling network interception.
+			while (pendingLists.size > 0) await Promise.all([...pendingLists]);
 			await page.unrouteAll({ behavior: 'wait' });
 		}
 		await priceCell.dblclick();
