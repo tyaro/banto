@@ -687,7 +687,7 @@
 
 	// --- Inline editing (spec §4.5) ---
 	interface EditingState {
-		rowIndex: number;
+		rowId: string | number;
 		field: string;
 		draft: unknown;
 		error: string | null;
@@ -696,10 +696,39 @@
 
 	let editing: EditingState | null = $state(null);
 
+	// spec §4.5 / #205: an edit belongs to a record, not a display slot.
+	// Resolve against the full displayed dataset (including loaded server
+	// rows), so virtualization alone does not cancel an off-screen edit.
+	const editingRowIndex = $derived.by(() => {
+		if (!editing) return -1;
+		const rowId = editing.rowId;
+		const index = groupedEntries
+			? groupedEntries.findIndex((entry) => entry.kind === 'row' && getRowId(entry.row) === rowId)
+			: sorted.findIndex((row) => row !== undefined && getRowId(row) === rowId);
+		return index < effectiveRowCount ? index : -1;
+	});
+
+	$effect(() => {
+		const rowIndex = editingRowIndex;
+		const field = editing?.field;
+		if (field === undefined) return;
+		untrack(() => {
+			if (rowIndex < 0) {
+				// Deleted, filtered out, collapsed, or unloaded: never leave a
+				// draft waiting to attach to a replacement row at the old index.
+				editing = null;
+				selection.clear();
+			} else if (selection.active?.rowIndex !== rowIndex || selection.active?.field !== field) {
+				selection.setActive(rowIndex, field, false);
+			}
+		});
+	});
+
 	function startEditing(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
 		if (!isEditable(column, row)) return;
+		selection.setActive(rowIndex, column.id, false);
 		editing = {
-			rowIndex,
+			rowId: getRowId(row),
 			field: column.id,
 			draft: getColumnValue(row, column),
 			error: null,
@@ -709,20 +738,24 @@
 
 	/** Runs prepareCommit and, if it decides to commit, awaits onCellEdit. Returns whether the edit session should close. */
 	async function commitValue(
-		rowIndex: number,
 		column: GridColumn<TRow>,
 		row: TRow,
 		value: unknown
 	): Promise<boolean> {
-		const rowId = getRowId(row);
-		const result = prepareCommit(column, row, rowId, value);
+		if (!editing || editing.rowId !== getRowId(row) || editing.field !== column.id) return false;
+		const rowId = editing.rowId;
+		// Re-resolve at the commit boundary too: a removed editor can emit
+		// blur before the cancellation effect runs, carrying its old row.
+		const currentRow = rowAtDisplayIndex(editingRowIndex);
+		if (currentRow === undefined || getRowId(currentRow) !== rowId) return false;
+		const result = prepareCommit(column, currentRow, rowId, value);
 
 		if (result.kind === 'noop') {
 			editing = null;
 			return true;
 		}
 		if (result.kind === 'invalid') {
-			editing = { rowIndex, field: column.id, draft: value, error: result.message, pending: false };
+			editing = { rowId, field: column.id, draft: value, error: result.message, pending: false };
 			return false;
 		}
 
@@ -730,21 +763,20 @@
 			editing = null;
 			return true;
 		}
-		editing = { rowIndex, field: column.id, draft: value, error: null, pending: true };
+		editing = { rowId, field: column.id, draft: value, error: null, pending: true };
 		try {
 			await onCellEdit(result.edit);
 			editing = null;
 			return true;
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			editing = { rowIndex, field: column.id, draft: value, error: message, pending: false };
+			editing = { rowId, field: column.id, draft: value, error: message, pending: false };
 			return false;
 		}
 	}
 
 	/** Parse the current draft text and commit; optionally move the active cell afterward on success. */
 	async function commitFromEditor(
-		rowIndex: number,
 		column: GridColumn<TRow>,
 		row: TRow,
 		moveAfter?: 'down' | 'left' | 'right'
@@ -769,7 +801,7 @@
 			}
 			value = parsed.value;
 		}
-		const closed = await commitValue(rowIndex, column, row, value);
+		const closed = await commitValue(column, row, value);
 		if (closed && moveAfter) {
 			const rowCount = effectiveRowCount;
 			if (moveAfter === 'down') selection.moveActive(1, 0, false, rowCount, orderedFieldIds);
@@ -779,22 +811,12 @@
 		}
 	}
 
-	function handleCheckboxToggle(
-		rowIndex: number,
-		column: GridColumn<TRow>,
-		row: TRow,
-		checked: boolean
-	) {
+	function handleCheckboxToggle(column: GridColumn<TRow>, row: TRow, checked: boolean) {
 		if (!editing || editing.pending) return;
-		void commitValue(rowIndex, column, row, checked);
+		void commitValue(column, row, checked);
 	}
 
-	function handleEditorKeydown(
-		event: KeyboardEvent,
-		rowIndex: number,
-		column: GridColumn<TRow>,
-		row: TRow
-	) {
+	function handleEditorKeydown(event: KeyboardEvent, column: GridColumn<TRow>, row: TRow) {
 		// Stop every key from bubbling to the container's navigation handler
 		// (typing "5", moving the text cursor with arrow keys, etc. must not
 		// move the active cell).
@@ -810,19 +832,19 @@
 		}
 		if (event.key === 'Enter') {
 			event.preventDefault();
-			void commitFromEditor(rowIndex, column, row, 'down');
+			void commitFromEditor(column, row, 'down');
 			return;
 		}
 		if (event.key === 'Tab') {
 			event.preventDefault();
-			void commitFromEditor(rowIndex, column, row, event.shiftKey ? 'left' : 'right');
+			void commitFromEditor(column, row, event.shiftKey ? 'left' : 'right');
 			return;
 		}
 	}
 
-	function handleEditorBlur(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
-		if (!editing || editing.rowIndex !== rowIndex || editing.field !== column.id) return;
-		void commitFromEditor(rowIndex, column, row);
+	function handleEditorBlur(column: GridColumn<TRow>, row: TRow) {
+		if (!editing || editing.rowId !== getRowId(row) || editing.field !== column.id) return;
+		void commitFromEditor(column, row);
 	}
 
 	/**
@@ -1009,7 +1031,7 @@
 					{@const isActiveCell =
 						selection.active?.rowIndex === rowIndex && selection.active?.field === column.id}
 					{@const isInRange = selection.isSelected(rowIndex, fieldIndex, orderedFieldIds)}
-					{@const isEditingCell = editing?.rowIndex === rowIndex && editing?.field === column.id}
+					{@const isEditingCell = editing?.rowId === getRowId(row) && editing?.field === column.id}
 					{@const linkInfo = column.cell?.(row)}
 					<!--
 						Keyboard focus/activation for cells is handled at the grid
@@ -1063,8 +1085,8 @@
 											);
 										}
 									}}
-									onkeydown={(event) => handleEditorKeydown(event, rowIndex, column, row)}
-									onblur={() => handleEditorBlur(rowIndex, column, row)}
+									onkeydown={(event) => handleEditorKeydown(event, column, row)}
+									onblur={() => handleEditorBlur(column, row)}
 								>
 									{#each column.editorOptions ?? [] as option (option.value)}
 										<option value={String(option.value)}>{option.label}</option>
@@ -1080,9 +1102,9 @@
 									onpointerdown={(event) => event.stopPropagation()}
 									onclick={(event) => event.stopPropagation()}
 									onchange={(event) =>
-										handleCheckboxToggle(rowIndex, column, row, event.currentTarget.checked)}
-									onkeydown={(event) => handleEditorKeydown(event, rowIndex, column, row)}
-									onblur={() => handleEditorBlur(rowIndex, column, row)}
+										handleCheckboxToggle(column, row, event.currentTarget.checked)}
+									onkeydown={(event) => handleEditorKeydown(event, column, row)}
+									onblur={() => handleEditorBlur(column, row)}
 								/>
 							{:else}
 								<input
@@ -1099,8 +1121,8 @@
 									oninput={(event) => {
 										if (editing) editing.draft = event.currentTarget.value;
 									}}
-									onkeydown={(event) => handleEditorKeydown(event, rowIndex, column, row)}
-									onblur={() => handleEditorBlur(rowIndex, column, row)}
+									onkeydown={(event) => handleEditorKeydown(event, column, row)}
+									onblur={() => handleEditorBlur(column, row)}
 								/>
 							{/if}
 							{#if editing.error}
