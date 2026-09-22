@@ -49,6 +49,10 @@ export class WindowedListResource<T> {
 	// Whether a response in the *current* generation has already supplied
 	// totalCount/resized `rows`; only the first one per generation should.
 	#hasTotalCountForGeneration = false;
+	// Refreshes replace one dataset snapshot with another. Keep the published
+	// rows until all current-generation requests settle, so grids do not lose
+	// their edit/selection to temporary holes or mix old and reordered rows.
+	#refreshSnapshot: { rows: (T | undefined)[]; totalCount: number } | null = null;
 	// Last range passed to ensureRange(), so refresh() can re-fetch it.
 	#lastRange: { start: number; end: number } | null = null;
 
@@ -99,6 +103,11 @@ export class WindowedListResource<T> {
 			if (generation === this.#generation) {
 				blocks.forEach((block) => this.#inFlightBlocks.delete(block));
 				this.loading = this.#inFlightBlocks.size > 0;
+				if (!this.loading && this.#refreshSnapshot) {
+					this.rows = this.#refreshSnapshot.rows;
+					this.totalCount = this.#refreshSnapshot.totalCount;
+					this.#refreshSnapshot = null;
+				}
 			}
 		}
 	}
@@ -113,16 +122,19 @@ export class WindowedListResource<T> {
 			});
 			if (generation !== this.#generation) return; // superseded by setParams()/refresh()
 
+			const snapshot = this.#refreshSnapshot;
+			const targetRows = snapshot ? snapshot.rows : this.rows;
 			if (!this.#hasTotalCountForGeneration) {
 				this.#hasTotalCountForGeneration = true;
-				this.totalCount = result.totalCount;
-				this.rows.length = result.totalCount;
+				if (snapshot) snapshot.totalCount = result.totalCount;
+				else this.totalCount = result.totalCount;
+				targetRows.length = result.totalCount;
 			}
-			if (this.rows.length < offset + result.rows.length) {
-				this.rows.length = offset + result.rows.length;
+			if (targetRows.length < offset + result.rows.length) {
+				targetRows.length = offset + result.rows.length;
 			}
 			for (let i = 0; i < result.rows.length; i++) {
-				this.rows[offset + i] = result.rows[i];
+				targetRows[offset + i] = result.rows[i];
 			}
 			this.#loadedBlocks.add(block);
 			this.error = null;
@@ -151,16 +163,25 @@ export class WindowedListResource<T> {
 		this.rows = new Array(this.totalCount);
 	}
 
-	/** Clear the cache and re-fetch the last range passed to `ensureRange()` (e.g. after `invalidate()`). */
+	/**
+	 * Re-fetch the last ensured range and publish its replacement atomically
+	 * (spec §4.1 / #212). Initial loads and setParams still expose holes while
+	 * loading; refresh alone preserves the prior snapshot until completion.
+	 * Failed blocks become holes in the new snapshot and remain retryable.
+	 */
 	refresh(): Promise<void> {
 		this.#bumpGeneration();
-		this.rows = new Array(this.totalCount);
-		if (!this.#lastRange) return Promise.resolve();
+		if (!this.#lastRange || this.#lastRange.end <= this.#lastRange.start) {
+			this.rows = new Array(this.totalCount);
+			return Promise.resolve();
+		}
+		this.#refreshSnapshot = { rows: new Array(this.totalCount), totalCount: this.totalCount };
 		return this.ensureRange(this.#lastRange.start, this.#lastRange.end);
 	}
 
 	#bumpGeneration(): void {
 		this.#generation++;
+		this.#refreshSnapshot = null;
 		this.#loadedBlocks.clear();
 		this.#inFlightBlocks.clear();
 		this.#hasTotalCountForGeneration = false;

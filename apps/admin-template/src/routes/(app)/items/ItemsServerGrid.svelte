@@ -18,7 +18,7 @@
 		type GridColumn,
 		type SortState
 	} from '@banto/grid-svelte';
-	import { createWindowedListResource } from '@banto/admin-core';
+	import { createWindowedListResource, invalidate } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { gridMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
@@ -34,8 +34,8 @@
 		 */
 		state: GridState<Item>;
 		onRowClick: (item: Item) => void;
-		onCellEdit: (edit: CellEdit<Item>) => void | Promise<void>;
-		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => void | Promise<void>;
+		onCellEdit: (edit: CellEdit<Item>) => Promise<Item>;
+		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => Promise<Item[]>;
 	}
 
 	let { columns, state: gridState, onRowClick, onCellEdit, onRangePaste }: Props = $props();
@@ -83,6 +83,33 @@
 		visibleRange = range;
 		void windowed.ensureRange(range.start, range.end);
 	}
+
+	// Publish confirmed saves before allowing another edit (spec §4.5).
+	// Replace by ID only: a changed query may have removed or moved the row.
+	// Invalidation is synchronous with publication, superseding older GETs.
+	function publishSaved(saved: Item[]): void {
+		if (saved.length === 0) return;
+		const byId = new Map(saved.map((item) => [item.id, item]));
+		// Only enumerate loaded slots; rows.length can span millions of holes.
+		for (const key of Object.keys(windowed.rows)) {
+			const index = Number(key);
+			const row = windowed.rows[index];
+			const replacement = row && byId.get(row.id);
+			if (replacement) windowed.rows[index] = replacement;
+		}
+		invalidate('items');
+	}
+
+	async function handleCellEdit(edit: CellEdit<Item>): Promise<void> {
+		publishSaved([await onCellEdit(edit)]);
+	}
+
+	async function handleRangePaste(
+		edits: CellEdit<Item>[],
+		info: { skipped: number }
+	): Promise<void> {
+		publishSaved(await onRangePaste(edits, info));
+	}
 </script>
 
 <p class="note">{m['items.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
@@ -97,8 +124,8 @@
 		{columns}
 		getRowId={(item) => item.id}
 		{onRowClick}
-		{onCellEdit}
-		{onRangePaste}
+		onCellEdit={handleCellEdit}
+		onRangePaste={handleRangePaste}
 		onParamsChange={handleParamsChange}
 		onVisibleRangeChange={handleVisibleRangeChange}
 	/>

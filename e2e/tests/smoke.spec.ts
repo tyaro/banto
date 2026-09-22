@@ -162,10 +162,103 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(href).toMatch(/^\/items\/\d+$/);
 		const itemUrl = new RegExp(`${href}$`);
 
+		// Keyboard edit completion returns focus for the next action (#212,
+		// spec §4.5). Use real server saves before continuing without a mouse.
+		const grid = page.getByRole('grid');
+		const priceCell = row.locator('[data-cell-field="price"]');
+		const editor = grid.locator('.cell-editor');
+		// Hold every list response while saving two different columns (#212,
+		// PR #225 P1). A successful update must become the next edit's row
+		// before refresh completes, otherwise its full payload loses a save.
+		let releaseLists!: () => void;
+		const listGate = new Promise<void>((resolve) => {
+			releaseLists = resolve;
+		});
+		let heldLists = 0;
+		const listUrl = /\/api\/items\/list$/;
+		const pendingLists = new Set<Promise<void>>();
+		await page.route(listUrl, (route) => {
+			const pending = (async () => {
+				if (route.request().method() !== 'POST') return route.continue();
+				const response = await route.fetch();
+				heldLists++;
+				await listGate;
+				await route.fulfill({ response });
+			})();
+			pendingLists.add(pending);
+			return pending.finally(() => pendingLists.delete(pending));
+		});
+		try {
+			await priceCell.dblclick();
+			await editor.fill(String(ITEM_PRICE + 1));
+			await page.keyboard.press('Tab');
+			await expect(grid).toBeFocused();
+			await expect.poll(() => heldLists).toBeGreaterThan(0);
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(ITEM_STOCK));
+			await editor.fill(String(ITEM_STOCK + 1));
+			await page.keyboard.press('Enter');
+			await expect(grid).toBeFocused();
+			const saved = await page.evaluate(async (url) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const response = await fetch(`/api${url}`, {
+					headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+				});
+				if (!response.ok) throw new Error(`get item failed: ${response.status}`);
+				return response.json();
+			}, href!);
+			expect(saved).toMatchObject({ price: ITEM_PRICE + 1, stock: ITEM_STOCK + 1 });
+			// Restore through the same keyboard path, still without any list
+			// response reaching the app, for the existing CRUD assertions below.
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(ITEM_STOCK + 1));
+			await editor.fill(String(ITEM_STOCK));
+			await page.keyboard.press('Shift+Tab');
+			await expect(grid).toBeFocused();
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(ITEM_PRICE + 1));
+			await editor.fill(String(ITEM_PRICE));
+			await page.keyboard.press('Enter');
+			await expect(grid).toBeFocused();
+		} finally {
+			releaseLists();
+			// Finish the held replies before disabling network interception.
+			while (pendingLists.size > 0) await Promise.all([...pendingLists]);
+			await page.unrouteAll({ behavior: 'wait' });
+		}
+		await priceCell.dblclick();
+		for (const price of [ITEM_PRICE + 1, ITEM_PRICE]) {
+			await expect(editor).toBeFocused();
+			await editor.fill(String(price));
+			await page.keyboard.press('Enter');
+			await expect(grid).toBeFocused();
+			// The saved row is available even before the provider's refresh.
+			await expect(priceCell).toHaveText(`¥${price.toLocaleString('en-US')}`);
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(price));
+		}
+		await editor.fill('9999');
+		await page.keyboard.press('Escape');
+		await expect(editor).toHaveCount(0);
+		await expect(grid).toBeFocused();
+		await page.keyboard.press('ArrowRight');
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'stock');
+		await page.keyboard.press('F2');
+		await expect(editor).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(grid).toBeFocused();
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'updatedAt');
+		await page.keyboard.press('ArrowLeft');
+		await page.keyboard.press('F2');
+		await expect(editor).toBeFocused();
+		await page.keyboard.press('Shift+Tab');
+		await expect(grid).toBeFocused();
+		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'price');
+
 		// Non-editing Tab follows native focus order (spec §4.5, #211).
 		// jsdom cannot perform default Tab navigation, so exercise both grid
 		// boundaries here, with one filtered row to keep the sequence bounded.
-		const grid = page.getByRole('grid');
 		const createButton = page.getByRole('button', { name: '新規作成' });
 		await row.locator('[data-cell-field="name"]').click();
 		await expect(grid).toBeFocused();
@@ -234,6 +327,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// actually persisted server-side.
 		await page.keyboard.press('Enter');
 		await expect(page).toHaveURL(itemUrl);
+		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE));
 		await page.getByLabel('価格').fill(String(ITEM_PRICE_UPDATED));
 		await page.getByRole('button', { name: '保存' }).click();
 		await expect(page).toHaveURL(/\/items$/);
