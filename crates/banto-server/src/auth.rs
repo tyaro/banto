@@ -593,7 +593,12 @@ impl AuthState {
     /// existing record is checked against whichever policy applies to IT
     /// (its own `remembered` flag), not the policy of the token being
     /// inserted.
-    fn issue_token_with(&self, identity: Identity, remembered: bool, public_viewer: bool) -> String {
+    fn issue_token_with(
+        &self,
+        identity: Identity,
+        remembered: bool,
+        public_viewer: bool,
+    ) -> String {
         let token = Uuid::new_v4().to_string();
         let now = self.inner.clock.now();
         let token_policy = self.inner.token_policy;
@@ -969,7 +974,10 @@ pub(crate) struct SessionIdentity {
     pub(crate) public_viewer: bool,
 }
 
-async fn identity_handler(State(auth): State<AuthState>, req: Request) -> Json<Option<SessionIdentity>> {
+async fn identity_handler(
+    State(auth): State<AuthState>,
+    req: Request,
+) -> Json<Option<SessionIdentity>> {
     let identity = bearer_token(&req).and_then(|token| auth.session_for(token));
     Json(identity)
 }
@@ -1671,7 +1679,12 @@ mod tests {
             auth.verify(&admin_token),
             "the cap must only ever evict public viewer tokens"
         );
-        assert!(!auth.session_for(&same_identity_token).unwrap().public_viewer);
+        assert!(
+            !auth
+                .session_for(&same_identity_token)
+                .unwrap()
+                .public_viewer
+        );
     }
 
     #[tokio::test]

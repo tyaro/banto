@@ -2819,7 +2819,11 @@ async fn real_public_accounts_keep_identity_and_password_ownership() {
             .await
             .unwrap();
         assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-        assert!(users.verify("public", "password123").await.unwrap().is_some());
+        assert!(users
+            .verify("public", "password123")
+            .await
+            .unwrap()
+            .is_some());
         let entries = audit.list(ListParams::default()).await.unwrap();
         let denied = entries
             .rows
@@ -2842,7 +2846,11 @@ async fn real_public_accounts_keep_identity_and_password_ownership() {
             .await
             .unwrap();
         assert_eq!(changed.status(), StatusCode::OK);
-        assert!(users.verify("public", "newpassword1").await.unwrap().is_some());
+        assert!(users
+            .verify("public", "newpassword1")
+            .await
+            .unwrap()
+            .is_some());
     }
 }
 
