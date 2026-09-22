@@ -126,6 +126,72 @@ it('continues to use arrow keys for cell navigation', async () => {
 	}
 });
 
+describe('keyboard actions on focused grid descendants', () => {
+	it.each(['Enter', ' '])('lets the sort header handle %s exactly once', async (key) => {
+		const { container } = setup();
+		const selected = await selectCell(container, 0, 'name');
+		const target = screen.getByRole('button', { name: 'Name' });
+		const header = target.closest('[role="columnheader"]')!;
+		expect(header.getAttribute('aria-sort')).toBe('none');
+		target.focus();
+		await fireEvent.keyDown(target, { key });
+		expect(header.getAttribute('aria-sort')).toBe('ascending');
+		expect(document.activeElement).toBe(target);
+		expect(container.querySelector('.cell.active')).toBe(selected);
+		expect(screen.queryByRole('textbox')).toBeNull();
+	});
+
+	it.each([
+		{ role: 'button', name: 'Nameの絞り込み' },
+		{ role: 'link', name: 'Open Alpha' }
+	])('preserves native Enter activation on $name', async ({ role, name }) => {
+		const { container } = setup();
+		const selected = await selectCell(container, 0, 'name');
+		const target = screen.getByRole(role, { name });
+		target.focus();
+		const event = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			bubbles: true,
+			cancelable: true
+		});
+		await fireEvent(target, event);
+		// jsdom does not synthesize the native click; browser E2E covers activation.
+		expect(event.defaultPrevented).toBe(false);
+		expect(document.activeElement).toBe(target);
+		expect(container.querySelector('.cell.active')).toBe(selected);
+		expect(screen.queryByRole('textbox')).toBeNull();
+	});
+
+	it.each(['ArrowDown', 'Home', 'End', 'F2'])(
+		'does not apply the grid %s shortcut while a child control has focus',
+		async (key) => {
+			const { container } = setup();
+			const selected = await selectCell(container, 0, 'category');
+			const target = screen.getByRole('button', { name: 'Nameの絞り込み' });
+			target.focus();
+			const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+			await fireEvent(target, event);
+			expect(event.defaultPrevented).toBe(false);
+			expect(document.activeElement).toBe(target);
+			expect(container.querySelector('.cell.active')).toBe(selected);
+			expect(screen.queryByRole('textbox')).toBeNull();
+		}
+	);
+});
+
+it.each(['Enter', 'F2'])(
+	'still starts editing with %s when the grid itself has focus',
+	async (key) => {
+		const { container } = setup();
+		const selected = await selectCell(container, 0, 'name');
+		const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+		await fireEvent(screen.getByRole('grid'), event);
+		expect(event.defaultPrevented).toBe(true);
+		expect(screen.getByRole('textbox')).toHaveProperty('value', 'Alpha');
+		expect(container.querySelector('.cell.active')).toBe(selected);
+	}
+);
+
 it.each([
 	{ direction: 'Tab', shiftKey: false, nextField: 'open' },
 	{ direction: 'Shift+Tab', shiftKey: true, nextField: 'name' }

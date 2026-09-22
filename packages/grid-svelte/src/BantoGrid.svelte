@@ -548,6 +548,9 @@
 
 	// --- Keyboard navigation (grid container; spec §4.5, §4.7) ---
 	function handleContainerKeydown(event: KeyboardEvent) {
+		// Header controls, filter inputs and row links own their keyboard
+		// actions. A retained cell selection must not intercept bubbled keys.
+		if (event.target !== event.currentTarget) return;
 		// While editing, the editor input/select's own onkeydown owns Escape/
 		// Enter/Tab/typing and stops propagation for every key, so this never
 		// runs; the guard is a defensive no-op if that ever changes.
