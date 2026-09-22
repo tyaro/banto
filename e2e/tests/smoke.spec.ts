@@ -384,7 +384,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// while leaving another user's draft attached to the wrong identity.
 		const panel = page.locator('.edit-column');
 		const displayName = panel.getByLabel('表示名', { exact: true });
-		const role = panel.getByLabel('ロール', { exact: true });
+		const role = panel.getByLabel('ロール');
 		const save = panel.getByRole('button', { name: '保存', exact: true });
 		const viewerRow = rowWithText(page, VIEWER_USERNAME);
 		const adminRow = rowWithText(page, ADMIN_USERNAME);
