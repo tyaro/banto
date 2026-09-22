@@ -198,7 +198,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				const token =
 					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
 				const response = await fetch(`/api${url}`, {
-					headers: { Authorization: `Bearer ${token}` }
+					headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
 				});
 				if (!response.ok) throw new Error(`get item failed: ${response.status}`);
 				return response.json();
