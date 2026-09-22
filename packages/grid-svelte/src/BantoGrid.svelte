@@ -695,13 +695,36 @@
 	}
 
 	let editing: EditingState | null = $state(null);
+	// Saving/validation replaces `editing`; keep those state changes from
+	// invalidating the row lookup or taking over a user's newer selection.
+	const editingRowId = $derived.by(() => editing?.rowId);
+	const editingField = $derived.by(() => editing?.field);
+	let previousEditingPosition: { rowId: string | number; field: string; rowIndex: number } | null =
+		null;
+
+	// spec §4.1 / #205: a server array's extent includes unloaded holes.
+	// Enumerate present slots only; findIndex/forEach would visit or test
+	// every index and create reactive dependencies on the missing rows.
+	// Object.keys also tracks additions/deletions in a caller's $state array.
+	const serverRowIndexById = $derived.by(() => {
+		const indices = new Map<string | number, number>();
+		const rowCount = effectiveRowCount;
+		for (const key of Object.keys(rows)) {
+			const index = Number(key);
+			if (!Number.isInteger(index) || index < 0 || index >= rowCount) continue;
+			const row = rows[index];
+			if (row !== undefined) indices.set(getRowId(row), index);
+		}
+		return indices;
+	});
 
 	// spec §4.5 / #205: an edit belongs to a record, not a display slot.
 	// Resolve against the full displayed dataset (including loaded server
 	// rows), so virtualization alone does not cancel an off-screen edit.
 	const editingRowIndex = $derived.by(() => {
-		if (!editing) return -1;
-		const rowId = editing.rowId;
+		const rowId = editingRowId;
+		if (rowId === undefined) return -1;
+		if (mode === 'server') return serverRowIndexById.get(rowId) ?? -1;
 		const index = groupedEntries
 			? groupedEntries.findIndex((entry) => entry.kind === 'row' && getRowId(entry.row) === rowId)
 			: sorted.findIndex((row) => row !== undefined && getRowId(row) === rowId);
@@ -709,16 +732,28 @@
 	});
 
 	$effect(() => {
+		const rowId = editingRowId;
 		const rowIndex = editingRowIndex;
-		const field = editing?.field;
-		if (field === undefined) return;
+		const field = editingField;
 		untrack(() => {
+			const previous = previousEditingPosition;
+			previousEditingPosition =
+				rowId === undefined || field === undefined ? null : { rowId, field, rowIndex };
+			if (rowId === undefined || field === undefined) return;
+			// Follow an edit only while its previous cell is still selected.
+			// A click elsewhere during blur-save owns the new selection.
+			const followsEdit =
+				previous !== null &&
+				previous.rowId === rowId &&
+				previous.field === field &&
+				selection.active?.rowIndex === previous.rowIndex &&
+				selection.active.field === field;
 			if (rowIndex < 0) {
 				// Deleted, filtered out, collapsed, or unloaded: never leave a
 				// draft waiting to attach to a replacement row at the old index.
 				editing = null;
-				selection.clear();
-			} else if (selection.active?.rowIndex !== rowIndex || selection.active?.field !== field) {
+				if (followsEdit) selection.clear();
+			} else if (followsEdit && previous.rowIndex !== rowIndex) {
 				selection.setActive(rowIndex, field, false);
 			}
 		});
@@ -726,9 +761,11 @@
 
 	function startEditing(rowIndex: number, column: GridColumn<TRow>, row: TRow) {
 		if (!isEditable(column, row)) return;
+		const rowId = getRowId(row);
 		selection.setActive(rowIndex, column.id, false);
+		previousEditingPosition = { rowId, field: column.id, rowIndex };
 		editing = {
-			rowId: getRowId(row),
+			rowId,
 			field: column.id,
 			draft: getColumnValue(row, column),
 			error: null,
