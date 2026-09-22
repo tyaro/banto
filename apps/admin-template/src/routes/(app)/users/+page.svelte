@@ -258,12 +258,13 @@
 		if (!selected || deleting) return;
 		if (!window.confirm(m['users.deleteConfirm']({ username: selected.username }))) return;
 		const targetId = selected.id;
-		const epoch = selectionEpoch;
 		deleting = true;
 		try {
 			await deleteUser(targetId);
 			toastStore.push('success', m['users.deleted']());
-			if (epoch === selectionEpoch && selected?.id === targetId) {
+			// roadmap M10: even a new selection of this ID no longer exists.
+			// Advance the epoch so pending saves cannot reopen the deleted user.
+			if (selected?.id === targetId) {
 				selectionEpoch++;
 				selected = null;
 			}

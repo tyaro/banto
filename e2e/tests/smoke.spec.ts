@@ -536,6 +536,82 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	test('5b. delayed deletion preserves another user but closes a reselected deleted user', async () => {
+		test.setTimeout(60_000);
+		await page.goto('/users');
+		const createForm = page.locator('section.create');
+		const panel = page.locator('.edit-column');
+		const displayName = panel.getByLabel('表示名', { exact: true });
+		async function selectUserRow(username: string): Promise<void> {
+			await rowWithText(page, username).locator('[data-cell-field="username"]').click();
+			await page.keyboard.press('Enter');
+			await expect(panel.getByRole('heading', { level: 2 })).toContainText(username);
+		}
+
+		for (const reselect of [false, true]) {
+			// Real disposable accounts: the existing viewer is needed by scenario 6.
+			const username = `e2e-delete-${reselect ? 'reselect' : 'other'}`;
+			await createForm.getByLabel('ユーザー名').fill(username);
+			await createForm.getByLabel('パスワード（8文字以上）').fill(VIEWER_PASSWORD);
+			await createForm.getByLabel('表示名').fill('E2E削除対象');
+			await createForm.getByLabel('ロール').selectOption('viewer');
+			await createForm.getByRole('button', { name: '作成' }).click();
+			const deletedRow = rowWithText(page, username);
+			await expect(deletedRow).toBeVisible();
+			const id = Number(await deletedRow.locator('[data-cell-field="id"]').innerText());
+			expect(id).toBeGreaterThan(0);
+			await selectUserRow(username);
+
+			let releaseDelete!: () => void;
+			const replyGate = new Promise<void>((resolve) => (releaseDelete = resolve));
+			let deleteArrived!: () => void;
+			const deleted = new Promise<void>((resolve) => (deleteArrived = resolve));
+			const pendingReplies = new Set<Promise<void>>();
+			await page.route(`**/api/users/${id}`, (route) => {
+				if (route.request().method() !== 'DELETE') return route.continue();
+				const pending = (async () => {
+					// Delete in the real database now, but let the user change
+					// selection before the browser receives the success response.
+					const response = await route.fetch();
+					expect(response.status()).toBe(204);
+					deleteArrived();
+					await replyGate;
+					await route.fulfill({ response });
+				})();
+				pendingReplies.add(pending);
+				return pending.finally(() => pendingReplies.delete(pending));
+			});
+			try {
+				page.once('dialog', (dialog) => dialog.accept());
+				await panel.getByRole('button', { name: '削除', exact: true }).click();
+				await deleted;
+				await selectUserRow(ADMIN_USERNAME);
+				if (reselect) await selectUserRow(username);
+				const draft = 'E2E draft during deletion';
+				await displayName.fill(draft);
+				releaseDelete();
+				// Row removal establishes that the delayed callback and its list
+				// refresh completed before inspecting the selected edit panel.
+				await expect(deletedRow).toHaveCount(0);
+				if (reselect) {
+					await expect(
+						panel.getByText('ユーザーを選択してください', { exact: true })
+					).toBeVisible();
+					await expect(panel.locator('input, select, button')).toHaveCount(0);
+				} else {
+					await expect(panel.getByRole('heading', { level: 2 })).toContainText(ADMIN_USERNAME);
+					await expect(displayName).toHaveValue(draft);
+					await expect(panel.getByLabel('ロール')).toHaveValue('admin');
+					await expect(panel.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
+				}
+			} finally {
+				releaseDelete();
+				while (pendingReplies.size > 0) await Promise.all([...pendingReplies]);
+				await page.unrouteAll({ behavior: 'wait' });
+			}
+		}
+	});
+
 	test('6. viewer role: no admin nav entries, no items create button', async () => {
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
