@@ -394,7 +394,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(adminId).toBeGreaterThan(0);
 
 		for (const outcome of ['success', 'failure', 'reselect'] as const) {
-			await viewerRow.click();
+			await viewerRow.locator('[data-cell-field="username"]').click();
 			const savedName = `${VIEWER_DISPLAY_NAME}-${outcome}`;
 			await displayName.fill(savedName);
 			if (outcome === 'reselect') await role.selectOption('editor');
@@ -425,8 +425,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			try {
 				await save.click();
 				await arrived;
-				await adminRow.click();
-				if (outcome === 'reselect') await viewerRow.click();
+				await adminRow.locator('[data-cell-field="username"]').click();
+				if (outcome === 'reselect') await viewerRow.locator('[data-cell-field="username"]').click();
 				const targetUsername = outcome === 'reselect' ? VIEWER_USERNAME : ADMIN_USERNAME;
 				const targetId = outcome === 'reselect' ? viewerId : adminId;
 				const targetRole = outcome === 'reselect' ? 'viewer' : 'admin';
@@ -480,7 +480,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// A password-reset reply must also leave the newly selected user's
 		// password draft alone. Reset only the viewer to its existing password.
-		await viewerRow.click();
+		await viewerRow.locator('[data-cell-field="username"]').click();
 		const password = panel.getByLabel('新しいパスワード（8文字以上）', { exact: true });
 		await password.fill(VIEWER_PASSWORD);
 		let releaseReset!: () => void;
@@ -502,7 +502,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		try {
 			await panel.getByRole('button', { name: 'パスワードをリセット', exact: true }).click();
 			await resetStarted;
-			await adminRow.click();
+			await adminRow.locator('[data-cell-field="username"]').click();
 			await password.fill('E2E unsent admin password');
 			releaseReset();
 			await expect(page.getByText('パスワードをリセットしました', { exact: true })).toBeVisible();
@@ -520,7 +520,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			[VIEWER_USERNAME, VIEWER_DISPLAY_NAME],
 			[ADMIN_USERNAME, ADMIN_DISPLAY_NAME]
 		]) {
-			await rowWithText(page, username).click();
+			await rowWithText(page, username).locator('[data-cell-field="username"]').click();
 			await displayName.fill(name);
 			await save.click();
 			await expect(
