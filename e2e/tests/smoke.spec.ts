@@ -167,13 +167,66 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const grid = page.getByRole('grid');
 		const priceCell = row.locator('[data-cell-field="price"]');
 		const editor = grid.locator('.cell-editor');
+		// Hold every list response while saving two different columns (#212,
+		// PR #225 P1). A successful update must become the next edit's row
+		// before refresh completes, otherwise its full payload loses a save.
+		let releaseLists!: () => void;
+		const listGate = new Promise<void>((resolve) => {
+			releaseLists = resolve;
+		});
+		let heldLists = 0;
+		const listUrl = /\/api\/items(?:\?.*)?$/;
+		await page.route(listUrl, async (route) => {
+			if (route.request().method() !== 'GET') return route.continue();
+			const response = await route.fetch();
+			heldLists++;
+			await listGate;
+			await route.fulfill({ response });
+		});
+		try {
+			await priceCell.dblclick();
+			await editor.fill(String(ITEM_PRICE + 1));
+			await page.keyboard.press('Tab');
+			await expect(grid).toBeFocused();
+			await expect.poll(() => heldLists).toBeGreaterThan(0);
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(ITEM_STOCK));
+			await editor.fill(String(ITEM_STOCK + 1));
+			await page.keyboard.press('Enter');
+			await expect(grid).toBeFocused();
+			const saved = await page.evaluate(async (url) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const response = await fetch(`/api${url}`, {
+					headers: { Authorization: `Bearer ${token}` }
+				});
+				if (!response.ok) throw new Error(`get item failed: ${response.status}`);
+				return response.json();
+			}, href!);
+			expect(saved).toMatchObject({ price: ITEM_PRICE + 1, stock: ITEM_STOCK + 1 });
+			// Restore through the same keyboard path, still without any list
+			// response reaching the app, for the existing CRUD assertions below.
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(ITEM_STOCK + 1));
+			await editor.fill(String(ITEM_STOCK));
+			await page.keyboard.press('Shift+Tab');
+			await expect(grid).toBeFocused();
+			await page.keyboard.press('F2');
+			await expect(editor).toHaveValue(String(ITEM_PRICE + 1));
+			await editor.fill(String(ITEM_PRICE));
+			await page.keyboard.press('Enter');
+			await expect(grid).toBeFocused();
+		} finally {
+			releaseLists();
+			await page.unrouteAll({ behavior: 'wait' });
+		}
 		await priceCell.dblclick();
 		for (const price of [ITEM_PRICE + 1, ITEM_PRICE]) {
 			await expect(editor).toBeFocused();
 			await editor.fill(String(price));
 			await page.keyboard.press('Enter');
 			await expect(grid).toBeFocused();
-			// Wait for the provider's refresh before opening the next draft.
+			// The saved row is available even before the provider's refresh.
 			await expect(priceCell).toHaveText(`¥${price.toLocaleString('en-US')}`);
 			await page.keyboard.press('F2');
 			await expect(editor).toHaveValue(String(price));

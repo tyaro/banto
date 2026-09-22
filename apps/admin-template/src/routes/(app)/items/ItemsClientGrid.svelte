@@ -13,7 +13,7 @@
 	 * the `$effect` cleanup below) when the toggle flips to サーバー.
 	 */
 	import { BantoGrid, GridState, type CellEdit, type GridColumn } from '@banto/grid-svelte';
-	import { createListResource } from '@banto/admin-core';
+	import { createListResource, invalidate } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { gridMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
@@ -38,8 +38,8 @@
 		 */
 		state: GridState<ItemRow>;
 		onRowClick: (item: Item) => void;
-		onCellEdit: (edit: CellEdit<Item>) => void | Promise<void>;
-		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => void | Promise<void>;
+		onCellEdit: (edit: CellEdit<Item>) => Promise<Item>;
+		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => Promise<Item[]>;
 	}
 
 	let { columns, state: gridState, onRowClick, onCellEdit, onRangePaste }: Props = $props();
@@ -59,6 +59,27 @@
 	}
 
 	const rows = $derived(list.rows.map(toItemRow));
+
+	// Publish confirmed saves before allowing another edit (spec §4.5).
+	// Replace by ID only: a changed query may have removed or moved the row.
+	// Invalidation is synchronous with publication, superseding older GETs.
+	function publishSaved(saved: Item[]): void {
+		if (saved.length === 0) return;
+		const byId = new Map(saved.map((item) => [item.id, item]));
+		list.rows = list.rows.map((item) => byId.get(item.id) ?? item);
+		invalidate('items');
+	}
+
+	async function handleCellEdit(edit: CellEdit<Item>): Promise<void> {
+		publishSaved([await onCellEdit(edit)]);
+	}
+
+	async function handleRangePaste(
+		edits: CellEdit<Item>[],
+		info: { skipped: number }
+	): Promise<void> {
+		publishSaved(await onRangePaste(edits, info));
+	}
 </script>
 
 <p class="note">{m['items.rowCount']({ count: list.totalCount.toLocaleString() })}</p>
@@ -76,8 +97,8 @@
 			messages={gridMessages()}
 			getRowId={(item) => item.id}
 			onRowClick={(row: ItemRow) => onRowClick(row)}
-			onCellEdit={(edit: CellEdit<ItemRow>) => onCellEdit(edit)}
-			onRangePaste={(edits: CellEdit<ItemRow>[], info) => onRangePaste(edits, info)}
+			onCellEdit={handleCellEdit}
+			onRangePaste={handleRangePaste}
 		/>
 	</div>
 {/if}

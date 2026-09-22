@@ -187,18 +187,16 @@
 	// This is a known limitation of the current onCellEdit contract, pending
 	// a richer (multi-field) error shape in a later milestone.
 	//
-	// Works unchanged in both grid modes: on success it calls invalidate(),
-	// which client mode picks up via ListResource's onInvalidate-triggered
-	// reload and server mode via WindowedListResource's onInvalidate-
-	// triggered refresh() (re-fetching just the currently visible blocks).
-	async function handleCellEdit(edit: CellEdit<Item>) {
+	// Return the saved row to the resource-owning grid. It publishes that
+	// row before invalidating, so the next edit merges against confirmed
+	// values even while the follow-up list request is still in flight (spec §4.5).
+	async function handleCellEdit(edit: CellEdit<Item>): Promise<Item> {
 		try {
-			await getDataProvider().update(
+			return await getDataProvider().update<Item>(
 				'items',
 				edit.rowId,
 				mergedValues(edit.row, edit.field, edit.value)
 			);
-			invalidate('items');
 		} catch (err) {
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				const fieldError =
@@ -213,7 +211,10 @@
 	// M3 (spec §4.5): a pasted TSV range can touch several rows/columns at
 	// once. Group by row so multi-column pastes on one row become a single
 	// `update()` call with all of that row's edited fields merged.
-	async function handleRangePaste(edits: CellEdit<Item>[], info: { skipped: number }) {
+	async function handleRangePaste(
+		edits: CellEdit<Item>[],
+		info: { skipped: number }
+	): Promise<Item[]> {
 		const byRow = new Map<string | number, { row: Item; values: Record<string, unknown> }>();
 		for (const edit of edits) {
 			const entry = byRow.get(edit.rowId) ?? {
@@ -224,23 +225,22 @@
 			byRow.set(edit.rowId, entry);
 		}
 
-		let updated = 0;
+		const saved: Item[] = [];
 		for (const [rowId, entry] of byRow) {
 			try {
-				await getDataProvider().update('items', rowId, entry.values);
-				updated++;
+				saved.push(await getDataProvider().update<Item>('items', rowId, entry.values));
 			} catch (err) {
 				notify('error', isProviderError(err) ? err.message : String(err));
 			}
 		}
 
-		if (updated > 0) {
-			invalidate('items');
-			notify('success', m['items.updatedCount']({ count: updated }));
+		if (saved.length > 0) {
+			notify('success', m['items.updatedCount']({ count: saved.length }));
 		}
 		if (info.skipped > 0) {
 			notify('info', m['items.skippedCells']({ count: info.skipped }));
 		}
+		return saved;
 	}
 
 	// --- M15 Phase C: CSV export/import ------------------------------------
