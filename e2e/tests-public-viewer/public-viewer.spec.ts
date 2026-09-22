@@ -25,7 +25,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 
-const ADMIN_USERNAME = 'e2e-pv-admin';
+// #209: a normal account may share the synthetic identity's string ID.
+const ADMIN_USERNAME = 'public';
 const ADMIN_PASSWORD = 'E2ePvAdminPass1';
 const ADMIN_DISPLAY_NAME = 'E2E閲覧公開管理者';
 
@@ -85,7 +86,12 @@ test.describe.serial('Banto viewer-public mode', () => {
 		const identity = await page.request.get('/api/auth/identity', {
 			headers: { ...CLIENT_HEADER, Authorization: `Bearer ${token}` }
 		});
-		expect(await identity.json()).toMatchObject({ id: 'public', role: 'viewer' });
+		expect(identity.ok()).toBe(true);
+		expect(await identity.json()).toMatchObject({
+			id: 'public',
+			role: 'viewer',
+			publicViewer: true
+		});
 
 		const write = await page.request.post('/api/items', {
 			headers: { ...CLIENT_HEADER, Authorization: `Bearer ${token}` },
@@ -110,6 +116,29 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 		await expect(loginButton(page)).toHaveCount(0);
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
+
+		// Restoring an ordinary "public" account must keep its normal UI
+		// while anonymous public viewing is enabled on the same server.
+		const restoredIdentity = page.waitForResponse(
+			(response) => new URL(response.url()).pathname === '/api/auth/identity'
+		);
+		await page.reload();
+		const identity = await restoredIdentity;
+		expect(identity.ok()).toBe(true);
+		expect(await identity.json()).toMatchObject({
+			id: 'public',
+			role: 'admin',
+			publicViewer: false
+		});
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+		await expect(loginButton(page)).toHaveCount(0);
+		await page.goto('/users');
+		await expect(page).toHaveURL(/\/users$/);
+		await expect(page.locator('section.create')).toBeVisible();
+		await page.goto('/settings');
+		await expect(page).toHaveURL(/\/settings$/);
+		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 	});
 
 	test('6. logging out offers "閲覧のみで続ける", which re-enters the synthetic session', async () => {
@@ -121,5 +150,25 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(page).toHaveURL(/\/dashboard$/);
 		await expect(loginButton(page)).toBeVisible();
 		await expect(page.getByRole('banner').getByText('閲覧者')).toBeVisible();
+
+		const restoredIdentity = page.waitForResponse(
+			(response) => new URL(response.url()).pathname === '/api/auth/identity'
+		);
+		await page.reload();
+		const identity = await restoredIdentity;
+		expect(identity.ok()).toBe(true);
+		expect(await identity.json()).toMatchObject({
+			id: 'public',
+			role: 'viewer',
+			publicViewer: true
+		});
+		await expect(loginButton(page)).toBeVisible();
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toHaveCount(0);
+		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
+		await expect(page.getByRole('link', { name: '設定' })).toHaveCount(0);
+		await page.goto('/users');
+		await expect(page).toHaveURL(/\/dashboard$/);
+		await page.goto('/settings');
+		await expect(page).toHaveURL(/\/dashboard$/);
 	});
 });

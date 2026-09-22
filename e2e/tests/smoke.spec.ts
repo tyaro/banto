@@ -26,7 +26,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fs from 'node:fs';
 
-const ADMIN_USERNAME = 'e2e-admin';
+// #209: this ordinary account must not be confused with a synthetic session.
+const ADMIN_USERNAME = 'public';
 const ADMIN_PASSWORD = 'E2eAdminPass1';
 const ADMIN_DISPLAY_NAME = 'E2E管理者';
 
@@ -127,6 +128,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await expect(page).toHaveURL(/\/dashboard$/);
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		// With public viewing disabled, reload restores the ordinary account
+		// from the identity endpoint even though its username is "public".
+		const restoredIdentity = page.waitForResponse(
+			(response) => new URL(response.url()).pathname === '/api/auth/identity'
+		);
+		await page.reload();
+		const identity = await restoredIdentity;
+		expect(identity.ok()).toBe(true);
+		expect(await identity.json()).toMatchObject({
+			id: 'public',
+			role: 'admin',
+			publicViewer: false
+		});
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 	});
 
 	test('2. logout returns to the login screen, then login restores the session', async () => {

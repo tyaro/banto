@@ -94,12 +94,9 @@ pub struct Identity {
 }
 
 /// `Identity.id` (and `name`) of every synthetic LAN 閲覧公開 viewer session
-/// (Issue #189, ADR-0012, conventions §6). Real accounts cannot collide with
-/// it: `Identity.id` is the account's `username`, and a username is only ever
-/// created through `UsersService`, where "public" would have to be typed
-/// deliberately - the frontend instead distinguishes a public viewing session
-/// by comparing against this exact constant (`PUBLIC_VIEWER_ID` is re-exported
-/// from `packages/admin-core`).
+/// (Issue #189, ADR-0012, conventions §6). Real accounts may share this
+/// username, so this is a display/audit label, never a session discriminator.
+/// `GET /api/auth/identity` exposes issuance metadata as `publicViewer` (#209).
 pub const PUBLIC_VIEWER_ID: &str = "public";
 
 /// Upper bound on simultaneously-live synthetic viewer sessions
@@ -235,6 +232,8 @@ struct TokenRecord {
     /// have both a short-lived desktop session and a long-lived "remembered"
     /// LAN browser session live at the same time.
     remembered: bool,
+    /// Issuance provenance, independent of account name/role (#209, conventions §6).
+    public_viewer: bool,
 }
 
 impl TokenRecord {
@@ -493,7 +492,7 @@ impl AuthState {
                 if let Some(ip_key) = &ip_key {
                     self.reset_failures(ip_key);
                 }
-                LoginOutcome::Success(self.issue_token_with(identity, remember))
+                LoginOutcome::Success(self.issue_token_with(identity, remember, false))
             }
             None => {
                 self.record_failure(&account_key, policy.max_failures);
@@ -513,7 +512,7 @@ impl AuthState {
     /// session in immediately, the same way `login` would. Not "remembered"
     /// (spec M11) - use [`AuthState::issue_token_remembered`] for that.
     pub fn issue_token(&self, identity: Identity) -> String {
-        self.issue_token_with(identity, false)
+        self.issue_token_with(identity, false, false)
     }
 
     /// Like [`AuthState::issue_token`], but the token is issued as
@@ -521,7 +520,7 @@ impl AuthState {
     /// `remembered_policy` instead of `token_policy` for the rest of its
     /// life.
     pub fn issue_token_remembered(&self, identity: Identity) -> String {
-        self.issue_token_with(identity, true)
+        self.issue_token_with(identity, true, false)
     }
 
     /// Mint a synthetic LAN 閲覧公開 viewer session (Issue #189, ADR-0012,
@@ -555,6 +554,7 @@ impl AuthState {
                 role: "viewer".to_string(),
             },
             false,
+            true,
         );
 
         // Locks are taken one at a time (never nested) and `issue_token_with`
@@ -593,7 +593,12 @@ impl AuthState {
     /// existing record is checked against whichever policy applies to IT
     /// (its own `remembered` flag), not the policy of the token being
     /// inserted.
-    fn issue_token_with(&self, identity: Identity, remembered: bool) -> String {
+    fn issue_token_with(
+        &self,
+        identity: Identity,
+        remembered: bool,
+        public_viewer: bool,
+    ) -> String {
         let token = Uuid::new_v4().to_string();
         let now = self.inner.clock.now();
         let token_policy = self.inner.token_policy;
@@ -614,6 +619,7 @@ impl AuthState {
                 issued_at: now,
                 last_used: now,
                 remembered,
+                public_viewer,
             },
         );
         token
@@ -623,7 +629,7 @@ impl AuthState {
     /// check refreshes the token's idle timer (spec §11.2); an expired token
     /// is removed as a side effect.
     pub fn verify(&self, token: &str) -> bool {
-        self.touch(token).is_some()
+        self.session_for(token).is_some()
     }
 
     /// Invalidate `token` (idempotent: logging out twice is not an error).
@@ -662,7 +668,7 @@ impl AuthState {
     /// recover "which account is this request for" from the same bearer
     /// token `require_auth` already validated.
     pub fn identity_for(&self, token: &str) -> Option<Identity> {
-        self.touch(token)
+        self.session_for(token).map(|session| session.identity)
     }
 
     /// Shared lookup for [`verify`](Self::verify)/[`identity_for`](Self::identity_for):
@@ -673,7 +679,7 @@ impl AuthState {
     ///
     /// Which [`TokenPolicy`] applies is decided per-token by its own
     /// `remembered` flag (spec M11), not by a single state-wide policy.
-    fn touch(&self, token: &str) -> Option<Identity> {
+    pub(crate) fn session_for(&self, token: &str) -> Option<SessionIdentity> {
         let now = self.inner.clock.now();
         let token_policy = self.inner.token_policy;
         let remembered_policy = self.inner.remembered_policy;
@@ -697,7 +703,10 @@ impl AuthState {
                 .get_mut(token)
                 .expect("token was just confirmed present");
             record.last_used = now;
-            Some(record.identity.clone())
+            Some(SessionIdentity {
+                identity: record.identity.clone(),
+                public_viewer: record.public_viewer,
+            })
         }
     }
 
@@ -955,8 +964,21 @@ async fn check_handler(State(auth): State<AuthState>, req: Request) -> Json<bool
     Json(ok)
 }
 
-async fn identity_handler(State(auth): State<AuthState>, req: Request) -> Json<Option<Identity>> {
-    let identity = bearer_token(&req).and_then(|token| auth.identity_for(token));
+/// Wire-only session metadata (#209, conventions §6): preserve the public
+/// Rust `Identity` API while distinguishing real accounts from public issuance.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionIdentity {
+    #[serde(flatten)]
+    pub(crate) identity: Identity,
+    pub(crate) public_viewer: bool,
+}
+
+async fn identity_handler(
+    State(auth): State<AuthState>,
+    req: Request,
+) -> Json<Option<SessionIdentity>> {
+    let identity = bearer_token(&req).and_then(|token| auth.session_for(token));
     Json(identity)
 }
 
@@ -974,7 +996,7 @@ async fn identity_handler(State(auth): State<AuthState>, req: Request) -> Json<O
 ///   instead of its regular `token_policy` (see [`TokenPolicy::remembered_default`]).
 /// - `POST /api/auth/logout` — invalidates the bearer token on the request.
 /// - `GET /api/auth/check` — `bool`, whether the bearer token is valid.
-/// - `GET /api/auth/identity` — `Identity | null`.
+/// - `GET /api/auth/identity` — `(Identity & { publicViewer: bool }) | null`.
 ///
 /// First-run account setup (`GET /api/auth/status`, `POST /api/auth/setup`)
 /// and `POST /api/auth/change-password` are NOT here: those need the app
@@ -1542,6 +1564,51 @@ mod tests {
     // --- Synthetic viewer sessions (LAN 閲覧公開, Issue #189) ---------------
 
     #[tokio::test]
+    async fn public_viewer_metadata_follows_token_lifetime_and_not_identity() {
+        let auth = frozen_auth(short_token_policy(), RateLimitPolicy::default());
+        let public = auth.issue_public_viewer_token();
+        let identity = auth.identity_for(&public).unwrap();
+        let regular = auth.issue_token(identity.clone());
+        let remembered = auth.issue_token_remembered(identity);
+        let router = auth_routes(auth.clone());
+
+        // Fresh identity requests (including reload) must recover provenance,
+        // even when every Identity field matches a synthetic viewer exactly.
+        for _ in 0..2 {
+            for (token, expected) in [(&public, true), (&regular, false), (&remembered, false)] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        HttpRequest::get("/api/auth/identity")
+                            .header("Authorization", format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(body_json(response).await["publicViewer"], expected);
+            }
+        }
+        auth.advance(Duration::from_secs(31));
+        let fresh = auth.issue_public_viewer_token();
+        auth.logout(&fresh);
+        for token in [&public, &regular, &fresh] {
+            let response = router
+                .clone()
+                .oneshot(
+                    HttpRequest::get("/api/auth/identity")
+                        .header("Authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(body_json(response).await.is_null());
+        }
+        assert!(!auth.session_for(&remembered).unwrap().public_viewer);
+    }
+
+    #[tokio::test]
     async fn public_viewer_token_is_always_the_fixed_viewer_identity() {
         let auth = demo_auth();
         let token = auth.issue_public_viewer_token();
@@ -1598,6 +1665,11 @@ mod tests {
     async fn public_viewer_eviction_never_touches_a_real_login_session() {
         let auth = demo_auth();
         let admin_token = auth.login("admin", "admin").await.expect("admin login");
+        let same_identity_token = auth.issue_token(Identity {
+            id: PUBLIC_VIEWER_ID.to_string(),
+            name: PUBLIC_VIEWER_ID.to_string(),
+            role: "viewer".to_string(),
+        });
 
         for _ in 0..(MAX_PUBLIC_VIEWER_SESSIONS + 10) {
             auth.issue_public_viewer_token();
@@ -1606,6 +1678,12 @@ mod tests {
         assert!(
             auth.verify(&admin_token),
             "the cap must only ever evict public viewer tokens"
+        );
+        assert!(
+            !auth
+                .session_for(&same_identity_token)
+                .unwrap()
+                .public_viewer
         );
     }
 

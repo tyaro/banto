@@ -60,7 +60,8 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
   `denied` は既存の `RoleGuard` がそのまま記録する（actor `public`）。
 - **`POST /api/auth/logout` は自分のトークンだけ失効する**（他の公開閲覧端末に
   影響しない）。
-- **`change-password` は失敗する**（`users` に行が無い）。フロントは公開閲覧
+- **`change-password` は合成セッションを明示的に拒否する**（同名の通常アカウントの
+  存在に依存しない）。フロントは公開閲覧
   セッションでアカウント系 UI を出さない。
 - ui-settings は `ui.public.*` 名前空間を**全公開閲覧端末で共有**する
   （デスクトップ M11 の `ui.local.*` と同じ）。壁のモニターが同じレイアウトを
@@ -107,9 +108,14 @@ LANアクセスを有効化できます」（逆方向も同旨）。
    - `(app)/+layout.ts`: `check()` が false のとき `status().viewerPublic` なら
      `enterPublicViewer()` を試み、成功したらそのまま通す。失敗時は従来どおり
      `/login` へ。
-   - `sessionStore.publicViewer`（`identity.id === PUBLIC_VIEWER_ID`。
-     `PUBLIC_VIEWER_ID = 'public'` は admin-core から export。ユーザー id は
-     i64 なので衝突しない）。
+   - `sessionStore.publicViewer` は `identity.publicViewer === true` で判定する。
+     REST の identity 応答はトークン発行時の種別からこの属性を返す。通常ログインは
+     false、公開閲覧は true。属性を持たない Tauri/demo/provider は false とする。
+     `PUBLIC_VIEWER_ID = 'public'` は表示・監査用の識別子で、通常アカウントの
+     username と重複し得るため、セッションの判定には使わない（#209）。
+     更新時はサーバーとコピーした session store、admin-core の型を合わせて取り込む。
+     旧サーバーの属性欠落をユーザー名で補完しない。データアクセスの境界は引き続き
+     RBAC であり、この属性は公開閲覧用 UI の識別に用いる。
    - `NavItem.publicViewer?: boolean`（**opt-in 許可リスト**）。公開閲覧
      セッションでは `publicViewer: true` の項目だけをナビに出し、それ以外の
      パスは `(app)/+layout.ts` で先頭の公開項目へリダイレクトする（RBAC が

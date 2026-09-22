@@ -26,16 +26,23 @@ export interface Identity {
 	 * least-privileged role (fail closed), not assume it is always present.
 	 */
 	role?: string;
+	/**
+	 * Synthetic LAN viewer session marker (viewer-public-plan §3.1-6).
+	 * Supplied by the session issuer, never inferred from an account id or
+	 * role: a real account can also have the username `public`. Missing is
+	 * false for providers that do not implement public-viewer sessions.
+	 */
+	publicViewer?: boolean;
 }
 
 /**
  * Fixed `id` of the synthetic viewer identity issued by
  * `AuthProvider.enterPublicViewer()` (viewer-public-plan §2.2/§3.1-6,
- * ADR-0012): `POST /api/auth/public-viewer` always returns
- * `{ id: "public", name: "public", role: "viewer" }`. Account ids are `i64`
- * on the wire, so this string can never collide with one. `sessionStore`
- * (app layer) derives `publicViewer` by comparing `identity.id` against this
- * constant rather than hardcoding the literal.
+ * ADR-0012): `POST /api/auth/public-viewer` mints a token bound to
+ * `{ id: "public", name: "public", role: "viewer" }`.
+ * This is a display/audit identifier, not a session discriminator: real
+ * account identities use usernames and can have the same id. Use the
+ * issuer-provided `Identity.publicViewer` marker to distinguish sessions.
  */
 export const PUBLIC_VIEWER_ID = 'public';
 
