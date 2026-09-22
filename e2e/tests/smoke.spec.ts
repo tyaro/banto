@@ -175,9 +175,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			releaseLists = resolve;
 		});
 		let heldLists = 0;
-		const listUrl = /\/api\/items(?:\?.*)?$/;
+		const listUrl = /\/api\/items\/list$/;
 		await page.route(listUrl, async (route) => {
-			if (route.request().method() !== 'GET') return route.continue();
+			if (route.request().method() !== 'POST') return route.continue();
 			const response = await route.fetch();
 			heldLists++;
 			await listGate;
