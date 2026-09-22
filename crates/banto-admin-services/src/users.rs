@@ -624,12 +624,11 @@ impl UsersService {
         );
         let row: Option<(i64, String, String, String, String)> =
             with_users_write_transaction!(&self.db, |tx| {
-                let state: Option<(String, i64)> =
-                    sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
-                        .bind(id)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(banto_storage::storage_error)?;
+                let state: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
                 ensure_admin_removal_allowed(id, state, !role.is_admin())?;
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(display_name)
