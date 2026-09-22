@@ -12,7 +12,7 @@
 	 * 「クリックで編集ページへ」と同じ発想を、別ページ遷移ではなくページ内表示
 	 * にしたもの）。
 	 */
-	import type { Component } from 'svelte';
+	import { untrack, type Component } from 'svelte';
 	import { BantoGrid, type GridColumn } from '@banto/grid-svelte';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
@@ -116,21 +116,24 @@
 
 	let users: UserSummary[] = $state([]);
 	let loading = $state(false);
+	let loadToken = 0;
 
 	async function reload(): Promise<void> {
 		if (!available) return;
+		const token = ++loadToken;
 		loading = true;
 		try {
-			users = await listUsers();
+			const loaded = await listUsers();
+			if (token === loadToken) users = loaded;
 		} catch (err) {
-			toastStore.push('error', errorMessage(err));
+			if (token === loadToken) toastStore.push('error', errorMessage(err));
 		} finally {
-			loading = false;
+			if (token === loadToken) loading = false;
 		}
 	}
 
 	$effect(() => {
-		void reload();
+		untrack(() => void reload());
 	});
 
 	async function handleCreate(values: Record<string, unknown>): Promise<void> {
@@ -185,11 +188,15 @@
 	];
 
 	let selected: UserSummary | null = $state(null);
+	// Issue #206 / roadmap M10: identity alone cannot distinguish A → B → A
+	// from the original edit session.
+	let selectionEpoch = 0;
 	let editDisplayName = $state('');
 	let editRole: UserRole = $state('viewer');
 	let saving = $state(false);
 
 	function selectUser(user: UserSummary): void {
+		selectionEpoch++;
 		selected = user;
 		editDisplayName = user.displayName;
 		editRole = user.role;
@@ -197,15 +204,20 @@
 	}
 
 	async function saveEdit(): Promise<void> {
-		if (!selected) return;
+		if (!selected || saving) return;
+		const targetId = selected.id;
+		const epoch = selectionEpoch;
+		const draft = { displayName: editDisplayName, role: editRole };
 		saving = true;
 		try {
-			const updated = await updateUser(selected.id, {
-				displayName: editDisplayName,
-				role: editRole
-			});
+			const updated = await updateUser(targetId, draft);
 			toastStore.push('success', m['users.updated']());
-			selected = updated;
+			if (epoch === selectionEpoch && selected?.id === targetId) {
+				selected = updated;
+				// Fields remain editable while saving; retain input made after submission.
+				if (editDisplayName === draft.displayName) editDisplayName = updated.displayName;
+				if (editRole === draft.role) editRole = updated.role;
+			}
 			await reload();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
@@ -218,16 +230,21 @@
 	let resetting = $state(false);
 
 	async function saveReset(): Promise<void> {
-		if (!selected) return;
+		if (!selected || resetting) return;
 		if (resetPassword.length < 8) {
 			toastStore.push('error', m['auth.passwordTooShort']());
 			return;
 		}
+		const targetId = selected.id;
+		const epoch = selectionEpoch;
+		const password = resetPassword;
 		resetting = true;
 		try {
-			await resetUserPassword(selected.id, resetPassword);
+			await resetUserPassword(targetId, password);
 			toastStore.push('success', m['users.passwordReset']());
-			resetPassword = '';
+			if (epoch === selectionEpoch && selected?.id === targetId && resetPassword === password) {
+				resetPassword = '';
+			}
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
 		} finally {
@@ -235,16 +252,26 @@
 		}
 	}
 
+	let deleting = $state(false);
+
 	async function handleDelete(): Promise<void> {
-		if (!selected) return;
+		if (!selected || deleting) return;
 		if (!window.confirm(m['users.deleteConfirm']({ username: selected.username }))) return;
+		const targetId = selected.id;
+		const epoch = selectionEpoch;
+		deleting = true;
 		try {
-			await deleteUser(selected.id);
+			await deleteUser(targetId);
 			toastStore.push('success', m['users.deleted']());
-			selected = null;
+			if (epoch === selectionEpoch && selected?.id === targetId) {
+				selectionEpoch++;
+				selected = null;
+			}
 			await reload();
 		} catch (err) {
 			toastStore.push('error', errorMessage(err));
+		} finally {
+			deleting = false;
 		}
 	}
 </script>
@@ -348,7 +375,7 @@
 
 						<!-- Danger zone (plan Phase 5): delete + password reset are
 						     visually separated from the normal save action above.
-						     Handlers/confirm dialogs are unchanged. -->
+						     Confirmation is still required before deletion. -->
 						<div class="danger-zone">
 							<h3><ShieldAlert size={16} aria-hidden="true" />Danger zone</h3>
 
@@ -376,7 +403,12 @@
 
 							<div class="danger-section">
 								<p class="note">{m['users.deleteDesc']()}</p>
-								<button type="button" class="banto-btn banto-btn--danger" onclick={handleDelete}>
+								<button
+									type="button"
+									class="banto-btn banto-btn--danger"
+									onclick={handleDelete}
+									disabled={deleting}
+								>
 									<Trash2 size={16} aria-hidden="true" />
 									{m['common.delete']()}
 								</button>

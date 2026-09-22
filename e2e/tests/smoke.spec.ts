@@ -362,7 +362,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(Buffer.from(firstBytes)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
 	});
 
-	test('5. user management: create a viewer account', async () => {
+	test('5. user management: create a viewer account and preserve selection across replies', async () => {
+		test.setTimeout(60_000);
 		await page.goto('/users');
 
 		// Scoped to the create form (not just page.getByLabel(...)): the
@@ -378,6 +379,154 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await createForm.getByRole('button', { name: '作成' }).click();
 
 		await expect(rowWithText(page, VIEWER_USERNAME)).toBeVisible();
+
+		// #206: a reply for an earlier selection must not replace the panel
+		// while leaving another user's draft attached to the wrong identity.
+		const panel = page.locator('.edit-column');
+		const displayName = panel.getByLabel('表示名', { exact: true });
+		const role = panel.getByLabel('ロール', { exact: true });
+		const save = panel.getByRole('button', { name: '保存', exact: true });
+		const viewerRow = rowWithText(page, VIEWER_USERNAME);
+		const adminRow = rowWithText(page, ADMIN_USERNAME);
+		const viewerId = Number(await viewerRow.locator('[data-cell-field="id"]').innerText());
+		const adminId = Number(await adminRow.locator('[data-cell-field="id"]').innerText());
+		expect(viewerId).toBeGreaterThan(0);
+		expect(adminId).toBeGreaterThan(0);
+
+		for (const outcome of ['success', 'failure', 'reselect'] as const) {
+			await viewerRow.click();
+			const savedName = `${VIEWER_DISPLAY_NAME}-${outcome}`;
+			await displayName.fill(savedName);
+			if (outcome === 'reselect') await role.selectOption('editor');
+			let releaseReply!: () => void;
+			const replyGate = new Promise<void>((resolve) => (releaseReply = resolve));
+			let requestArrived!: () => void;
+			const arrived = new Promise<void>((resolve) => (requestArrived = resolve));
+			const pendingReplies = new Set<Promise<void>>();
+			await page.route(`**/api/users/${viewerId}`, (route) => {
+				if (route.request().method() !== 'PUT') return route.continue();
+				const pending = (async () => {
+					// Successful saves reach the real API, including its normal auth
+					// and CSRF headers; only delivery of the reply is delayed.
+					const response = outcome === 'failure' ? null : await route.fetch();
+					if (response) expect(response.ok()).toBe(true);
+					requestArrived();
+					await replyGate;
+					if (response) await route.fulfill({ response });
+					else
+						await route.fulfill({
+							status: 500,
+							json: { kind: 'other', message: 'E2E delayed user save failure' }
+						});
+				})();
+				pendingReplies.add(pending);
+				return pending.finally(() => pendingReplies.delete(pending));
+			});
+			try {
+				await save.click();
+				await arrived;
+				await adminRow.click();
+				if (outcome === 'reselect') await viewerRow.click();
+				const targetUsername = outcome === 'reselect' ? VIEWER_USERNAME : ADMIN_USERNAME;
+				const targetId = outcome === 'reselect' ? viewerId : adminId;
+				const targetRole = outcome === 'reselect' ? 'viewer' : 'admin';
+				const draft = `E2E newer ${outcome} draft`;
+				await displayName.fill(draft);
+				await expect(role).toHaveValue(targetRole);
+				const lateReply = page.waitForResponse(
+					(response) =>
+						new URL(response.url()).pathname === `/api/users/${viewerId}` &&
+						response.request().method() === 'PUT'
+				);
+				releaseReply();
+				await (await lateReply).finished();
+				if (outcome === 'failure') {
+					await expect(
+						page.getByText('E2E delayed user save failure', { exact: true })
+					).toBeVisible();
+				} else {
+					await expect(viewerRow.locator('[data-cell-field="displayName"]')).toHaveText(savedName);
+				}
+				await expect(panel.getByRole('heading', { level: 2 })).toContainText(targetUsername);
+				await expect(displayName).toHaveValue(draft);
+				if (outcome === 'reselect') {
+					// An ID-only guard would accept the old A reply and replace
+					// this new selection's saved-role badge with editor.
+					await expect(panel.locator('.role-row')).toHaveText('閲覧者');
+				}
+				await expect(role).toHaveValue(targetRole);
+				await expect(save).toBeEnabled();
+
+				const subsequentSave = page.waitForRequest(
+					(request) =>
+						/\/api\/users\/\d+$/.test(new URL(request.url()).pathname) && request.method() === 'PUT'
+				);
+				await save.click();
+				const request = await subsequentSave;
+				expect(new URL(request.url()).pathname).toBe(`/api/users/${targetId}`);
+				expect(request.postDataJSON()).toEqual({ displayName: draft, role: targetRole });
+				await expect(
+					rowWithText(page, targetUsername).locator('[data-cell-field="displayName"]')
+				).toHaveText(draft);
+				if (outcome === 'success') {
+					await expect(viewerRow.locator('[data-cell-field="displayName"]')).toHaveText(savedName);
+				}
+			} finally {
+				releaseReply();
+				while (pendingReplies.size > 0) await Promise.all([...pendingReplies]);
+				await page.unrouteAll({ behavior: 'wait' });
+			}
+		}
+
+		// A password-reset reply must also leave the newly selected user's
+		// password draft alone. Reset only the viewer to its existing password.
+		await viewerRow.click();
+		const password = panel.getByLabel('新しいパスワード（8文字以上）', { exact: true });
+		await password.fill(VIEWER_PASSWORD);
+		let releaseReset!: () => void;
+		const resetGate = new Promise<void>((resolve) => (releaseReset = resolve));
+		let resetArrived!: () => void;
+		const resetStarted = new Promise<void>((resolve) => (resetArrived = resolve));
+		const pendingResets = new Set<Promise<void>>();
+		await page.route(`**/api/users/${viewerId}/reset-password`, (route) => {
+			const pending = (async () => {
+				const response = await route.fetch();
+				expect(response.ok()).toBe(true);
+				resetArrived();
+				await resetGate;
+				await route.fulfill({ response });
+			})();
+			pendingResets.add(pending);
+			return pending.finally(() => pendingResets.delete(pending));
+		});
+		try {
+			await panel.getByRole('button', { name: 'パスワードをリセット', exact: true }).click();
+			await resetStarted;
+			await adminRow.click();
+			await password.fill('E2E unsent admin password');
+			releaseReset();
+			await expect(page.getByText('パスワードをリセットしました', { exact: true })).toBeVisible();
+			await expect(panel.getByRole('heading', { level: 2 })).toContainText(ADMIN_USERNAME);
+			await expect(password).toHaveValue('E2E unsent admin password');
+		} finally {
+			releaseReset();
+			while (pendingResets.size > 0) await Promise.all([...pendingResets]);
+			await page.unrouteAll({ behavior: 'wait' });
+		}
+
+		// Later scenarios log into the viewer account; preserve both roles and
+		// restore display names through the same UI after exercising the race.
+		for (const [username, name] of [
+			[VIEWER_USERNAME, VIEWER_DISPLAY_NAME],
+			[ADMIN_USERNAME, ADMIN_DISPLAY_NAME]
+		]) {
+			await rowWithText(page, username).click();
+			await displayName.fill(name);
+			await save.click();
+			await expect(
+				rowWithText(page, username).locator('[data-cell-field="displayName"]')
+			).toHaveText(name);
+		}
 	});
 
 	test('6. viewer role: no admin nav entries, no items create button', async () => {
