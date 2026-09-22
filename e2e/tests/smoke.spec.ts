@@ -311,8 +311,47 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const filterDialog = page.getByRole('dialog', { name: '商品名の絞り込み' });
 		await expect(filterDialog).toBeVisible();
 		await expect(grid.locator('.cell-editor')).toHaveCount(0);
-		await filterDialog.getByPlaceholder('値を入力').fill(ITEM_NAME);
+		// #213: keyboard events inside the filter retain native control
+		// behavior even while an editable grid cell remains selected.
+		const filterInput = filterDialog.getByPlaceholder('値を入力');
+		const filterOperator = filterDialog.getByRole('combobox');
+		await filterInput.fill(ITEM_NAME);
+		for (const [key, caret] of [
+			['Home', 0],
+			['ArrowRight', 1],
+			['ArrowLeft', 0],
+			['End', ITEM_NAME.length]
+		] as const) {
+			await page.keyboard.press(key);
+			await expect(filterInput).toBeFocused();
+			await expect
+				.poll(() => filterInput.evaluate((input: HTMLInputElement) => input.selectionStart))
+				.toBe(caret);
+			await expect(row.locator('.cell.active')).toHaveAttribute('data-cell-field', 'name');
+			await expect(editor).toHaveCount(0);
+		}
+		await page.keyboard.press('Shift+Tab');
+		await expect(filterOperator).toBeFocused();
+		await page.keyboard.press('ArrowDown');
+		await expect(filterOperator).toHaveValue('starts_with');
+		await page.keyboard.press('ArrowDown');
+		await expect(filterOperator).toHaveValue('eq');
+		await page.keyboard.press('Tab');
+		await expect(filterInput).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(filterDialog.getByRole('button', { name: '適用', exact: true })).toBeFocused();
+		await page.keyboard.press('Shift+Tab');
+		await expect(filterInput).toBeFocused();
+		await expect(row.locator('.cell.active')).toHaveAttribute('data-cell-field', 'name');
+		await expect(editor).toHaveCount(0);
+		const appliedFilter = page.waitForRequest(
+			(request) =>
+				new URL(request.url()).pathname === '/api/items/list' && request.method() === 'POST'
+		);
 		await page.keyboard.press('Enter');
+		expect((await appliedFilter).postDataJSON().filters).toEqual([
+			{ field: 'name', op: 'eq', value: ITEM_NAME }
+		]);
 		await expect(filterDialog).toHaveCount(0);
 		await expect(grid.locator('.cell-editor')).toHaveCount(0);
 		await expect(row).toBeVisible();
