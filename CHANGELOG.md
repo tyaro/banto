@@ -32,10 +32,12 @@ v1.6.0（2026-09-14）以降の PR #222〜#234（12 件、#204/#205/#206/#207/#2
 
 - **`banto_server::AuthState` の全コンストラクタ（`new`/`with_policy`/
   `with_policies`）が `SessionValidation` を必須引数に取るようになった**（#204）。
-  タグを上げると既存の呼び出しはコンパイルエラーになる。アカウントと照合する
-  `SessionValidation::Lookup` を組み込むか、従来どおり照合しない
-  `SessionValidation::DisabledNoRevocation` を明示的に選ぶ。移行手順は下記
-  #204 の項目に手順 1〜6 で記載。
+  タグを上げると既存の呼び出しはコンパイルエラーになる。**実アカウントを持つ
+  アプリでは、アカウントと照合する `SessionValidation::Lookup` を組み込む。**
+  `SessionValidation::DisabledNoRevocation` はアカウントの保存先を持たない
+  テスト・公開閲覧専用サーバ向けで、削除・降格・パスワード変更によるセッション
+  失効は行われない（コンパイルエラーを消すためだけに選ばないこと）。移行手順は
+  下記 #204 の項目に手順 1〜6 で記載。
 - **PostgreSQL では環境変数 `BANTO_ATTACHMENTS_DIR` が必須になった**（#208）。
   未設定だと `banto-serve` は起動しない（作業ディレクトリ基準の既定値は廃止）。
   SQLite は変更なし。移行手順（旧保存先からのコピー）は下記 #208 の項目に記載。
