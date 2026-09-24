@@ -36,11 +36,21 @@
 - `users.auth_epoch` は、ロール変更・パスワード変更・パスワードリセットの `UPDATE`
   と**同じ文**で増やす（読んでから書く分割をしない）。削除は行が消えるので不要。
   行 id は再利用されないため、同名で作り直したアカウントは旧セッションを継がない。
-- REST: `AuthState::with_session_validator(lookup)` で読み直し関数を差し込み、
-  `require_auth`（`AuthState::authenticate`）が照合する。`RoleGuard`・`check`・
-  `identity`・`change-password` も同じ照合を通る。
-- Tauri: `require_role` が `current_session` で同じ照合をし、キャッシュを
-  比較してから書き換える（compare-and-set）。
+- REST: `AuthState` のすべてのコンストラクタが `SessionValidation` を**必須の引数**で
+  受ける。`SessionValidation::Lookup(読み直し関数)` なら `require_auth`
+  （`AuthState::authenticate`）が照合する。`RoleGuard`・`check`・`identity`・
+  `change-password` も同じ照合を通る。照合しない
+  `SessionValidation::DisabledNoRevocation`（従来の挙動。アカウントの保存先を持たない
+  テストや公開閲覧専用のサーバのためだけ）も、名前で選ばないと作れない。
+  既定値は無い。旧来の 1 引数の `AuthState::new(verifier)` はコンパイルエラーになる
+  （`compile_fail` の doctest で固定）。後から差し込む口も無いので、配線し忘れと
+  二重の差し込みが起こらない。
+- Tauri: ウィンドウのセッションを `DesktopSession::Account` と
+  `DesktopSession::AuthDisabledLocal`（ログイン不要モードの合成セッション）の
+  enum で持つ。`require_role` が `current_session` で、前者は `users` の行、
+  後者はログイン不要モードが今も ON か（と今のロール）を照合する。キャッシュは
+  比較してから書き換える（compare-and-set）。合成セッションかどうかを
+  `id == 0` のような値で判定しないので、行 id 0 のアカウントが照合を素通りしない。
 - ログイン時の世代は資格情報の検証（argon2）より**前**に読む。検証中に確定した
   変更を新しいトークンが生き延びない。
 - DB が答えられないときは失効させず、その要求だけ失敗させる（一時的な障害で全員を
@@ -75,17 +85,29 @@
 
 ## 帰結
 
-- 派生アプリは `users` に `auth_epoch` を足し、世代を増やす書き込みと、
-  `with_session_validator`・Tauri 側の照合を配線する必要がある（CHANGELOG の
-  移行手順）。配線しない `AuthState::new` だけの構成は、従来どおり発行時の
-  権限を期限まで信じる。
+- 派生アプリは、タグを上げると `AuthState` の組み立てで**必ずコンパイルエラーに
+  なる**。そこで照合を組み込む（`SessionValidation::Lookup`、`users` への
+  `auth_epoch` 追加と世代を増やす書き込み、Tauri 側の照合）か、明示的に
+  `SessionValidation::DisabledNoRevocation` を選ぶかを決める（CHANGELOG の
+  移行手順）。後者は従来どおり発行時の権限を期限まで信じる。Tauri 側の照合は
+  派生アプリ自身のコードなので banto の型では強制できず、移行手順とレビューで担保する。
 - 照合を差し込んだ `AuthState` では、世代を持たないトークン（`issue_token`）は
   最初の使用で拒否される（fail closed）。アカウントを作ってそのままログインさせる
   経路は `issue_account_token` を使う。
 - 同期の `verify`/`identity_for` はメモリだけを見る。アクセスの判断は
   `authenticate`（`require_auth`）を通すこと。`identity_for` は `require_auth` の
   後ろでだけ現在の値を返す（照合のたびに書き戻す）。
-- 合成 viewer セッション（ADR-0012）と Tauri のログイン不要モードの合成セッションは
-  アカウントを持たないので照合しない。
+- 合成 viewer セッション（ADR-0012）はアカウントを持たないので照合しない。
+  Tauri のログイン不要モードの合成セッションは、アカウントの代わりにモードが ON で
+  あることを照合する（OFF にすると次のコマンドで終わる）。
+- 照合の結果が照合開始時の世代と食い違っても、そのセッション自身が照合中に
+  付け替えられていて（自分のパスワード変更）、付け替え後の世代が DB と一致する
+  なら有効とする。DB の最新の世代へ無条件に追従はさせない（付け替えられていない
+  他のセッションは終わる）。REST（`AuthState::authenticate`）と Tauri
+  （`settle_session`）で同じ判断。
+- 「照合できなかった」は「無効」と区別してフロントまで運ぶ。`/api/auth/check` の
+  500 や接続不能で `AuthProvider.check()` は reject し、保護ルート
+  （`resolveProtectedSession`）はログイン画面へも閲覧者へも切り替えず、トークンを
+  残したままエラー画面と再試行にする。
 - SSE（`/api/events`）は接続時に照合する。失効後も、すでに開いている接続は
   切れるまで通知（リソース名と通知文）を受け続ける。

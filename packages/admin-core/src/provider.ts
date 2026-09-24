@@ -50,6 +50,15 @@ export const PUBLIC_VIEWER_ID = 'public';
 export interface AuthProvider {
 	login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
 	logout(): Promise<void>;
+	/**
+	 * Is the current session valid? Resolves `false` ONLY when that is
+	 * established (no session, or the backend answered "not valid" / `401`).
+	 * Rejects (with a `ProviderError`) when validity could not be determined -
+	 * the backend failed to check the account (Issue #204: a DB error is a
+	 * `500`, not a revocation) or could not be reached. Callers must not treat
+	 * a rejection as "logged out": the session and its stored token are kept
+	 * (see `resolveProtectedSession`).
+	 */
 	check(): Promise<boolean>;
 	getIdentity(): Promise<Identity | null>;
 

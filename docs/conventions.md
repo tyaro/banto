@@ -272,9 +272,14 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   - **アクセスの判断に同期の `verify`/`identity_for` を使わない。**
     `authenticate`（`require_auth`）を通す。`require_auth` の外にあるルート
     （`check`/`identity`/`change-password`）は自分で呼ぶ。
-  - **実アカウントの REST `AuthState` は照合関数付きで組み立てる**
-    （`user_auth_state`）。照合付きの状態で「作ってそのままログイン」させる経路は
+  - **実アカウントの REST `AuthState` は `SessionValidation::Lookup` で組み立てる**
+    （`user_auth_state`）。`SessionValidation` はコンストラクタの必須引数で既定値は
+    無い。`DisabledNoRevocation` はアカウントの保存先を持たないテスト・公開閲覧専用
+    サーバ以外で使わない。照合付きの状態で「作ってそのままログイン」させる経路は
     `issue_account_token` を使う（世代を持たないトークンは拒否される）。
+  - **Tauri のウィンドウのセッションは `DesktopSession` の enum で持つ**
+    （`Account` / `AuthDisabledLocal`）。読むのは `current_session` だけで、合成
+    セッションを `id` などの値で見分けない。
   - 保存先が答えられないときは要求を失敗させる。失効も素通りもさせない。
 
 ## 7. `{@html}` は自前生成の全エスケープ済み出力のみ [機械検査済み: 使用箇所の許可リスト]

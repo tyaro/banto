@@ -7,7 +7,7 @@ use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, S
 // that used it moved to `banto_server::routes`), so the test module imports it
 // directly rather than through `use super::*`.
 use banto_admin_services::system_metrics::SystemMetrics;
-use banto_server::Identity;
+use banto_server::{Identity, SessionValidation};
 use serde_json::json;
 use std::path::PathBuf;
 use tempfile::tempdir;
@@ -40,19 +40,22 @@ fn unused_attachments_service(db: banto_storage::Db) -> AttachmentsService {
 }
 
 fn demo_auth() -> AuthState {
-    AuthState::new(|u: String, p: String| {
-        Box::pin(async move {
-            if u == "admin" && p == "admin" {
-                Some(Identity {
-                    id: "admin".to_string(),
-                    name: "管理者".to_string(),
-                    role: "admin".to_string(),
-                })
-            } else {
-                None
-            }
-        })
-    })
+    AuthState::new(
+        |u: String, p: String| {
+            Box::pin(async move {
+                if u == "admin" && p == "admin" {
+                    Some(Identity {
+                        id: "admin".to_string(),
+                        name: "管理者".to_string(),
+                        role: "admin".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+        },
+        SessionValidation::DisabledNoRevocation,
+    )
 }
 
 /// Router + one bearer token per role (admin/editor/viewer), for the
@@ -89,19 +92,22 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         .expect("create viewer");
 
     let verify_users = users.clone();
-    let auth = AuthState::new(move |u: String, p: String| {
-        let users = verify_users.clone();
-        Box::pin(async move {
-            match users.verify(&u, &p).await {
-                Ok(Some(identity)) => Some(Identity {
-                    id: identity.username,
-                    name: identity.display_name,
-                    role: identity.role.to_string(),
-                }),
-                _ => None,
-            }
-        })
-    });
+    let auth = AuthState::new(
+        move |u: String, p: String| {
+            let users = verify_users.clone();
+            Box::pin(async move {
+                match users.verify(&u, &p).await {
+                    Ok(Some(identity)) => Some(Identity {
+                        id: identity.username,
+                        name: identity.display_name,
+                        role: identity.role.to_string(),
+                    }),
+                    _ => None,
+                }
+            })
+        },
+        SessionValidation::DisabledNoRevocation,
+    );
 
     let admin_token = auth
         .login("admin", "password123")
@@ -960,7 +966,10 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let services = Services {
         items,
         users,
@@ -1312,7 +1321,10 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         .await
         .expect("create viewer");
 
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let admin_token = auth
         .login("admin", "password123")
         .await
@@ -1393,7 +1405,10 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         .await
         .expect("create viewer");
 
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let admin_token = auth
         .login("admin", "password123")
         .await
@@ -2581,7 +2596,10 @@ async fn router_with_viewer_public(
         .await
         .expect("seed server config");
 
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let services = Services {
         items,
         users: users.clone(),

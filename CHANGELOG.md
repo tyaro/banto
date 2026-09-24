@@ -30,14 +30,36 @@
   認可する。変更はどちらの経路から行っても、他方の経路・別プロセス・Remember me の
   セッションにも効く。自分のパスワード変更では、変更した当のセッションだけ残る
   （[ADR-0014](docs/adr/0014-account-bound-session-revocation.md)、conventions §6）。
-  **Rust API の破壊的変更**: `banto_admin_services::users::UserIdentity` に
-  `auth_epoch` を追加、`UsersService::change_password` が新しい世代（`i64`）を返す、
+  **Rust API の破壊的変更（タグを上げると必ずコンパイルエラーになる）**:
+  `banto_server::AuthState` のすべてのコンストラクタ（`new`/`with_policy`/
+  `with_policies`）が `SessionValidation` を**必須の引数**に取る（既定値は無い）。
+  `SessionValidation::Lookup`（アカウントと照合する。実アカウントでは唯一の選択肢）か、
+  `SessionValidation::DisabledNoRevocation`（照合しない＝従来の挙動。アカウントの
+  保存先を持たないテスト・公開閲覧専用サーバのためだけ）を名前で選ぶ。ほかに
+  `banto_admin_services::users::UserIdentity` に `auth_epoch` を追加、
+  `UsersService::change_password` が新しい世代（`i64`）を返す、
   `banto_server::LoginOutcome` に `Unavailable` を追加（`POST /api/auth/login` が
   503 を返し得る）。`/api/auth/{check,identity}` は照合中の DB エラーを 500 で
-  返す。フロントエンドの変更は不要。
+  返す。
+
+  **フロントエンド（`@banto/admin-core`）の挙動変更**: `AuthProvider.check()` は、
+  セッションが無効と**確認できたとき**（トークン無し・`401`・`200 false`）だけ
+  `false` を返し、サーバーが照合できなかったとき（`500`・接続不能）は
+  `ProviderError` で**reject** する（従来は `false`。一時的な DB エラーで
+  ログイン画面へ飛ぶ・閲覧公開 ON なら閲覧者トークンで元のトークンを上書きする、
+  が起きていた）。保護ルートの判断は新しい `resolveProtectedSession(auth)` に
+  まとめた（`'session' | 'publicViewer' | 'login'` を返し、照合できなければ
+  reject。reject 時は `status()`・`enterPublicViewer()` を呼ばず、トークンにも
+  触れない）。admin-template の `(app)/+layout.ts` は reject を 503 のエラー画面
+  （新設の `routes/+error.svelte`、再試行ボタン付き）にし、`panel/[id]` は
+  「確認できませんでした」を表示する。Tauri の `auth_check` も DB エラーは
+  `Err`（reject）で、同じ区別になる。
 
   **派生アプリの移行手順**（`banto-server` をタグで使い、`users` テーブル・
-  サービス・`src-tauri` を自前で持つアプリ。**配線するまでは従来どおり失効しない**）:
+  サービス・`src-tauri` を自前で持つアプリ）: タグを上げると `AuthState::new(verifier)`
+  などの呼び出しが**コンパイルエラー**になる。そこで、**照合を組み込む**（手順 1〜5）
+  か、**明示的に無効化する**（`SessionValidation::DisabledNoRevocation` を渡す。
+  失効は起きないまま。実アカウントを持つアプリでは選ばない）かを選ぶ。
 
   1. **マイグレーション**: 両方の方言に 1 本ずつ足す（既存の行は 0 で始まる。
      セッションはメモリにしか無いので既存セッションの移行は不要）。
@@ -49,12 +71,14 @@
      ロール変更（`auth_epoch = auth_epoch + CASE WHEN role = ? THEN 0 ELSE 1 END`）・
      パスワード変更・パスワードリセットの **`UPDATE` と同じ文で**増やす。
      パスワード変更は `RETURNING auth_epoch` で新しい世代を返す。
-  3. **REST の `AuthState`**: `AuthState::new(verifier)` に
-     `.with_session_validator(lookup)` を足す。`lookup` はユーザー名から
-     `SessionAccount { identity（今のロール）, stamp: SessionStamp { account_id: 行 id,
-auth_epoch } }` を返す（無ければ `Ok(None)`、DB エラーは `Err`。ログイン時は入力どおりのユーザー名で呼ばれるので、ユーザー名を正規化する検証関数なら lookup も同じ正規化をする）。
+  3. **REST の `AuthState`**: `AuthState::new(verifier, SessionValidation::lookup(lookup))`
+     にする。`lookup` はユーザー名から `SessionAccount { identity（今のロール）,
+stamp: SessionStamp { account_id: 行 id, auth_epoch } }` を返す（無ければ
+     `Ok(None)`、DB エラーは `Err`。ログイン時は入力どおりのユーザー名で呼ばれるので、
+     ユーザー名を正規化する検証関数なら lookup も同じ正規化をする）。
      `banto_admin_services::UsersService` なら
-     `banto_server::routes::user_auth_state(users, audit)` で済む。
+     `banto_server::routes::user_auth_state(users, audit)` で済む。テストで固定の
+     検証関数を使う箇所は `SessionValidation::DisabledNoRevocation` でよい。
   4. **REST のハンドラ**: `require_auth` の**外**でトークンから本人を引く箇所
      （自前の `change-password` など）は `auth.identity_for(token)` をやめ、
      `auth.authenticate(token).await?` を使う。`require_auth` の後ろの
@@ -65,16 +89,31 @@ auth_epoch } }` を返す（無ければ `Ok(None)`、DB エラーは `Err`。�
      （世代の無いトークンは拒否される）。自分のパスワード変更の後、そのセッションを
      残すなら `new_epoch == stamp.auth_epoch + 1` のときだけ
      `auth.rotate_session_epoch(token, stamp, new_epoch)` を呼ぶ。
-  5. **`src-tauri`**: `require_role` の先頭で、キャッシュした `UserIdentity` を
-     信用せず `users.get_by_username(&cached.username)` で読み直し、行 id と
-     `auth_epoch` が一致しなければキャッシュを消して `Unauthorized`、一致すれば
-     **読み直した値**（今のロール）で判定する。キャッシュの書き換えは、読む前の
-     値と比べてから行う。ログイン不要モードの合成セッション（`id: 0`）は照合しない。
-     `auth_check`・`auth_identity` も同じ照合を通す `async` コマンドにし、
-     `change_own_password` は新しい世代へキャッシュを付け替える。
-     admin-template の `current_session` / `require_role` / `change_own_password`
-     （`apps/admin-template/src-tauri/src/lib.rs`）をそのまま写せる。組み込み
-     サーバの `rest_auth` も手順 3 の状態で作る。
+  5. **`src-tauri`**（banto の型では強制できないので、ここは移行手順どおりに行う）:
+     ウィンドウのセッションを `Mutex<Option<UserIdentity>>` から admin-template の
+     `DesktopSession`（`Account` / `AuthDisabledLocal` の enum）に替える。こうすると
+     セッションを作る箇所・読む箇所がすべてコンパイルエラーになり、種類の選択と
+     照合の通し忘れを型で拾える。`require_role` の先頭で `current_session` を通し、
+     `Account` は `users.get_by_username` で読み直して行 id と `auth_epoch` が
+     一致しなければキャッシュを消して `Unauthorized`、一致すれば**読み直した値**
+     （今のロール）で判定する。`AuthDisabledLocal` はログイン不要モードが今も ON かを
+     読み直す（OFF なら消す）。合成セッションを `id == 0` のような値で判定しない。
+     キャッシュの書き換えは、読む前の値と比べてから行う。`auth_check`・
+     `auth_identity` も同じ照合を通す `async` コマンドにし、`change_own_password` は
+     新しい世代へキャッシュを付け替える（合成セッションからは `Forbidden`）。
+     admin-template の `DesktopSession` / `current_session` / `require_role` /
+     `change_own_password`（`apps/admin-template/src-tauri/src/lib.rs`）をそのまま
+     写せる。組み込みサーバの `rest_auth` も手順 3 の状態で作る。
+  6. **フロントのルートガード**（`@banto/admin-core` を更新すると `check()` が
+     reject し得るようになる）: `(app)/+layout.ts` をコピーして持っている場合は、
+     `check()` → `status()` → `enterPublicViewer()` の手書きの分岐を
+     `resolveProtectedSession(getAuthProvider())` に置き換え、reject は
+     `/login` への遷移にも閲覧者への切り替えにもせず、エラー画面と再試行にする
+     （admin-template の `(app)/+layout.ts` と `routes/+error.svelte`、メッセージ
+     キー `app.sessionCheckFailed.*`・`app.error.*` を写せる）。そのままでも
+     reject は SvelteKit の既定のエラー画面になり、トークンは消えない。
+     `check()` を直接呼ぶ他の画面（admin-template では `panel/[id]`）も reject を
+     「未ログイン」と区別する。
 
 - fix(users): 管理者の同時降格・削除で管理者が0人になる競合を修正（#207）。
   SQLite・PostgreSQLの両方で判定から更新までをDBトランザクションで保護し、

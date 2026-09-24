@@ -40,11 +40,23 @@ role from the database.
   a password change and a password reset (no read-then-write split). Deletion
   needs no epoch: the row is gone. Row ids are never reused, so an account
   re-created under the same username does not inherit old sessions.
-- REST: `AuthState::with_session_validator(lookup)` installs the re-read, and
-  `require_auth` (`AuthState::authenticate`) checks it. `RoleGuard`, `check`,
-  `identity` and `change-password` go through the same check.
-- Tauri: `require_role` runs the same check via `current_session`, and only
-  rewrites the cached session after comparing it (compare-and-set).
+- REST: every `AuthState` constructor takes a `SessionValidation` as a
+  **required argument**. With `SessionValidation::Lookup(re-read)`,
+  `require_auth` (`AuthState::authenticate`) checks it; `RoleGuard`, `check`,
+  `identity` and `change-password` go through the same check. The unchecked
+  `SessionValidation::DisabledNoRevocation` (the old behavior, only for tests
+  and servers with no account store, e.g. public-viewer-only) can only be had
+  by naming it. There is no default: the old one-argument
+  `AuthState::new(verifier)` is a compile error (pinned by a `compile_fail`
+  doctest), and there is no after-the-fact installer, so the lookup can be
+  neither forgotten nor installed twice.
+- Tauri: the window's session is an enum, `DesktopSession::Account` or
+  `DesktopSession::AuthDisabledLocal` (the no-login mode's synthetic session).
+  `require_role` checks it via `current_session` - the former against its
+  `users` row, the latter against no-login mode still being ON (and its
+  current role) - and only rewrites the cached session after comparing it
+  (compare-and-set). Synthetic sessions are never recognized by a value such as
+  `id == 0`, so an account with row id 0 cannot skip the check.
 - At login the stamp is read **before** the credential check (argon2), so a
   change committed during verification cannot be outlived by the new token.
 - When the database cannot answer, the session is not revoked; only that
@@ -82,18 +94,34 @@ role from the database.
 
 ## Consequences
 
-- Derived apps must add `auth_epoch` to `users`, increment it in the writes
-  above, and wire `with_session_validator` plus the Tauri-side check (migration
-  steps in CHANGELOG). A plain `AuthState::new` without the lookup keeps
-  trusting login-time permissions until expiry, as before.
+- Upgrading **always breaks the build** of a derived app where it constructs
+  its `AuthState`. It must then either wire the check in
+  (`SessionValidation::Lookup`, `auth_epoch` on `users` plus the writes that
+  advance it, and the Tauri-side check) or explicitly choose
+  `SessionValidation::DisabledNoRevocation` (migration steps in CHANGELOG),
+  which keeps trusting login-time permissions until expiry. The Tauri-side check
+  lives in the derived app's own code, so banto's types cannot force it; the
+  migration steps and review cover it.
 - With a lookup installed, tokens without a stamp (`issue_token`) are rejected
   on first use (fail closed). Paths that create an account and log it straight
   in use `issue_account_token`.
 - The synchronous `verify`/`identity_for` look at memory only. Access decisions
   must go through `authenticate` (`require_auth`). `identity_for` is current only
   behind `require_auth` (each check writes the current identity back).
-- Synthetic viewer sessions (ADR-0012) and the Tauri no-login mode's synthetic
-  session have no account and are not checked.
+- Synthetic viewer sessions (ADR-0012) have no account and are not checked. The
+  Tauri no-login mode's synthetic session is checked against the mode instead of
+  an account (turning the mode off ends it on the next command).
+- If a lookup disagrees with the epoch the check started from, the session is
+  still valid when it was itself re-bound during the check (its own password
+  change) and its new epoch matches the database. It is never moved to the
+  database's newest epoch unconditionally (sessions that were not re-bound
+  still end). REST (`AuthState::authenticate`) and Tauri (`settle_session`)
+  decide the same way.
+- "Could not verify" is carried to the frontend as distinct from "invalid". A
+  `500` from `/api/auth/check` or an unreachable server makes
+  `AuthProvider.check()` reject, and the protected-route gate
+  (`resolveProtectedSession`) neither goes to the login screen nor switches to
+  the viewer; it keeps the token and shows an error with a retry.
 - SSE (`/api/events`) is checked when the connection opens. After revocation, an
   already-open stream keeps receiving notifications (resource names and notice
   text) until it disconnects.

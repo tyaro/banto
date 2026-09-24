@@ -62,10 +62,10 @@
 //! So a session is additionally bound to a [`SessionStamp`] - the account's
 //! stable row id plus its current *authentication epoch*, a counter the
 //! credential store increments whenever existing sessions must end - and,
-//! once a [`SessionLookup`] is installed with
-//! [`AuthState::with_session_validator`], every authenticated request
-//! re-reads the account through it ([`AuthState::authenticate`], which
-//! [`require_auth`] runs):
+//! with [`SessionValidation::Lookup`] (a required constructor argument),
+//! every authenticated request re-reads the account through the
+//! [`SessionLookup`] ([`AuthState::authenticate`], which [`require_auth`]
+//! runs):
 //!
 //! - account missing, or a different stamp -> the token is revoked and the
 //!   request gets `401`;
@@ -87,13 +87,16 @@
 //! cache would re-open exactly the window this closes. Synthetic public
 //! viewer sessions have no account and are not looked up.
 //!
-//! Without a lookup ([`AuthState::new`] alone) sessions keep the pre-#204
+//! Every constructor takes the [`SessionValidation`] explicitly, so an
+//! application cannot end up without revocation by omission (upgrading from
+//! the one-argument `AuthState::new` is a compile error, not a silent
+//! downgrade). [`SessionValidation::DisabledNoRevocation`] keeps the pre-#204
 //! behavior of trusting the identity captured at login until the token
-//! expires.
+//! expires, and exists only for states with no account store behind them.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
@@ -184,12 +187,54 @@ pub struct SessionAccount {
 /// Re-reads an account by [`Identity::id`] (the username) from the
 /// credential store (Issue #204). `Ok(None)` means the account no longer
 /// exists (the session is revoked); `Err` means the store could not answer
-/// (the request fails, the session is kept). Installed with
-/// [`AuthState::with_session_validator`]; for `banto-admin-services`'
+/// (the request fails, the session is kept). Passed in as
+/// [`SessionValidation::Lookup`]; for `banto-admin-services`'
 /// `UsersService` use `crate::routes::user_session_lookup`.
 pub type SessionLookup = Arc<
     dyn Fn(String) -> BoxFuture<'static, Result<Option<SessionAccount>, BantoError>> + Send + Sync,
 >;
+
+/// How an [`AuthState`] decides that a session is still valid (Issue #204).
+/// A required argument of every constructor, so no application ends up
+/// without revocation by omission - see the module doc's "Account-bound
+/// sessions".
+pub enum SessionValidation {
+    /// Re-read the account through the [`SessionLookup`] on every
+    /// authenticated request: sessions of deleted accounts, and of accounts
+    /// whose [`SessionStamp`] changed (role change, password change/reset),
+    /// are revoked, and requests are authorized with the account's current
+    /// role. **The only choice for states whose sessions belong to real
+    /// accounts.**
+    ///
+    /// At login the lookup receives the username exactly as submitted (it
+    /// runs before the verifier, see [`AuthState::login_rate_limited`]); the
+    /// login succeeds only when the account it returns is the one the
+    /// verifier accepted ([`Identity::id`]). A verifier that normalizes
+    /// usernames (trimming, case folding) needs a lookup that accepts the
+    /// submitted form too, or such logins report [`LoginOutcome::Unavailable`].
+    Lookup(SessionLookup),
+    /// **DANGER: no revocation.** Sessions trust the identity (role included)
+    /// captured at login until the token expires (up to 30 days with
+    /// "Remember me"): deleting, demoting or re-keying the account does NOT
+    /// end them. This is the pre-#204 behavior, kept only for states with no
+    /// account store behind them - tests with a fixed verifier, or a server
+    /// that only ever issues synthetic public viewer sessions. Never use it
+    /// for real accounts.
+    DisabledNoRevocation,
+}
+
+impl SessionValidation {
+    /// [`SessionValidation::Lookup`] from a plain closure (wraps it in the
+    /// `Arc` [`SessionLookup`] is).
+    pub fn lookup(
+        lookup: impl Fn(String) -> BoxFuture<'static, Result<Option<SessionAccount>, BantoError>>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        Self::Lookup(Arc::new(lookup))
+    }
+}
 
 /// A session that passed [`AuthState::authenticate`] (Issue #204): the
 /// identity to authorize with - re-read from the account store when a
@@ -449,11 +494,10 @@ struct Inner {
     public_tokens: RwLock<VecDeque<String>>,
     failures: RwLock<HashMap<String, FailureRecord>>,
     verify_credentials: CredentialVerifier,
-    /// Issue #204: set once by [`AuthState::with_session_validator`]. A
-    /// `OnceLock` rather than a constructor argument so the existing
-    /// constructors keep their signatures, and so every clone of this state
-    /// (they share `Inner`) sees it.
-    session_lookup: OnceLock<SessionLookup>,
+    /// Issue #204: `Some` for [`SessionValidation::Lookup`], `None` for
+    /// [`SessionValidation::DisabledNoRevocation`]. Fixed at construction,
+    /// shared by every clone of this state (they share `Inner`).
+    session_lookup: Option<SessionLookup>,
     token_policy: TokenPolicy,
     /// Long-lived policy applied to tokens issued with "Remember me" (spec
     /// M11) instead of `token_policy` - see [`TokenRecord::remembered`].
@@ -476,14 +520,32 @@ impl AuthState {
     /// [`RateLimitPolicy`]. `verify_credentials` decides whether a
     /// `username`/`password` pair may log in and, if so, which [`Identity`]
     /// the resulting session belongs to.
+    ///
+    /// `validation` (Issue #204) is required on purpose: every caller must
+    /// decide whether sessions are re-checked against the account store
+    /// ([`SessionValidation::Lookup`] - the only safe choice for real
+    /// accounts) or not ([`SessionValidation::DisabledNoRevocation`]). There
+    /// is deliberately no constructor that picks for you, so upgrading to
+    /// this version fails to compile until that choice is written down:
+    ///
+    /// ```compile_fail,E0061
+    /// # use banto_server::{AuthState, Identity};
+    /// # use futures_util::future::BoxFuture;
+    /// // The pre-#204 one-argument form no longer exists.
+    /// let auth = AuthState::new(|_u: String, _p: String| -> BoxFuture<'static, Option<Identity>> {
+    ///     Box::pin(async { None })
+    /// });
+    /// ```
     pub fn new(
         verify_credentials: impl Fn(String, String) -> BoxFuture<'static, Option<Identity>>
             + Send
             + Sync
             + 'static,
+        validation: SessionValidation,
     ) -> Self {
         Self::with_policy(
             verify_credentials,
+            validation,
             TokenPolicy::default(),
             RateLimitPolicy::default(),
         )
@@ -500,11 +562,13 @@ impl AuthState {
             + Send
             + Sync
             + 'static,
+        validation: SessionValidation,
         token_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
     ) -> Self {
         Self::with_policies(
             verify_credentials,
+            validation,
             token_policy,
             TokenPolicy::remembered_default(),
             rate_limit,
@@ -519,12 +583,14 @@ impl AuthState {
             + Send
             + Sync
             + 'static,
+        validation: SessionValidation,
         token_policy: TokenPolicy,
         remembered_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
     ) -> Self {
         Self::build(
             Arc::new(verify_credentials),
+            validation,
             token_policy,
             remembered_policy,
             rate_limit,
@@ -534,18 +600,23 @@ impl AuthState {
 
     fn build(
         verify_credentials: CredentialVerifier,
+        validation: SessionValidation,
         token_policy: TokenPolicy,
         remembered_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
         clock: Clock,
     ) -> Self {
+        let session_lookup = match validation {
+            SessionValidation::Lookup(lookup) => Some(lookup),
+            SessionValidation::DisabledNoRevocation => None,
+        };
         Self {
             inner: Arc::new(Inner {
                 tokens: RwLock::new(HashMap::new()),
                 public_tokens: RwLock::new(VecDeque::new()),
                 failures: RwLock::new(HashMap::new()),
                 verify_credentials,
-                session_lookup: OnceLock::new(),
+                session_lookup,
                 token_policy,
                 remembered_policy,
                 rate_limit,
@@ -554,46 +625,9 @@ impl AuthState {
         }
     }
 
-    /// Bind every session of this state to the account store (Issue #204,
-    /// see the module doc's "Account-bound sessions"): from now on
-    /// [`AuthState::authenticate`] (hence [`require_auth`]) re-reads the
-    /// account through `lookup` on every request and revokes sessions whose
-    /// account is gone or whose [`SessionStamp`] changed.
-    ///
-    /// Call it once, right after construction (before any token is issued):
-    /// tokens issued without a stamp are rejected afterwards. The lookup is
-    /// shared by every clone of this state.
-    ///
-    /// At login the lookup receives the username exactly as submitted (it
-    /// runs before the verifier, see [`AuthState::login_rate_limited`]); the
-    /// login succeeds only when the account it returns is the one the
-    /// verifier accepted ([`Identity::id`]). A verifier that normalizes
-    /// usernames (trimming, case folding) needs a lookup that accepts the
-    /// submitted form too, or such logins report [`LoginOutcome::Unavailable`].
-    ///
-    /// # Panics
-    ///
-    /// If a lookup was already installed - replacing the store a live state
-    /// validates against would be a wiring bug, not a runtime decision.
-    pub fn with_session_validator(
-        self,
-        lookup: impl Fn(String) -> BoxFuture<'static, Result<Option<SessionAccount>, BantoError>>
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self {
-        let installed = self.inner.session_lookup.set(Arc::new(lookup)).is_ok();
-        assert!(
-            installed,
-            "AuthState::with_session_validator called twice on the same state"
-        );
-        self
-    }
-
     fn session_lookup(&self) -> Option<&SessionLookup> {
-        self.inner.session_lookup.get()
+        self.inner.session_lookup.as_ref()
     }
-
     /// Run the credential check and, when a [`SessionLookup`] is installed,
     /// establish the [`SessionStamp`] the new session is bound to (Issue
     /// #204). The stamp is read BEFORE the credential check: if the account
@@ -941,11 +975,59 @@ impl AuthState {
                     stamp: Some(stamp),
                 }))
             }
-            _ => {
-                self.revoke_if_stamp(token, Some(stamp));
-                Ok(None)
+            account => {
+                // The stamp this lookup started from may be stale for a reason
+                // other than revocation: THIS token may have been re-bound
+                // meanwhile ([`AuthState::rotate_session_epoch`], its own
+                // password change). Decide on the token's CURRENT stamp.
+                let rebound = self.settle_stamp_mismatch(token, stamp, account.as_ref());
+                Ok(match (rebound, account) {
+                    (Some(rebound), Some(account)) => Some(AuthenticatedSession {
+                        identity: account.identity,
+                        public_viewer: false,
+                        stamp: Some(rebound),
+                    }),
+                    _ => None,
+                })
             }
         }
+    }
+
+    /// Resolve a lookup whose result does not match the stamp the request
+    /// started from (`validated`), under one lock:
+    ///
+    /// - the token is still bound to `validated` -> it really is stale:
+    ///   revoke it, `None`;
+    /// - the token was re-bound meanwhile to EXACTLY the stamp the store now
+    ///   reports -> it is valid under its new binding: refresh its identity
+    ///   and return that stamp. Only the token's own re-binding counts; this
+    ///   never adopts the store's newest epoch on a token's behalf, so the
+    ///   account's other sessions still end;
+    /// - anything else (re-bound to something the store no longer reports,
+    ///   or already gone) -> `None`, leaving the token for its next request
+    ///   to decide against a fresh lookup.
+    fn settle_stamp_mismatch(
+        &self,
+        token: &str,
+        validated: SessionStamp,
+        account: Option<&SessionAccount>,
+    ) -> Option<SessionStamp> {
+        let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
+        let current = tokens.get(token)?.stamp;
+        if current == Some(validated) {
+            tokens.remove(token);
+            return None;
+        }
+        let (Some(current), Some(account)) = (current, account) else {
+            return None;
+        };
+        if current != account.stamp {
+            return None;
+        }
+        if let Some(record) = tokens.get_mut(token) {
+            record.identity = account.identity.clone();
+        }
+        Some(current)
     }
 
     /// Keep `token` alive across its own account's password change (Issue
@@ -1112,12 +1194,14 @@ impl AuthState {
             + Send
             + Sync
             + 'static,
+        validation: SessionValidation,
         token_policy: TokenPolicy,
         remembered_policy: TokenPolicy,
         rate_limit: RateLimitPolicy,
     ) -> Self {
         Self::build(
             Arc::new(verify_credentials),
+            validation,
             token_policy,
             remembered_policy,
             rate_limit,
@@ -1388,19 +1472,22 @@ mod tests {
     use tower::ServiceExt;
 
     fn demo_auth() -> AuthState {
-        AuthState::new(|u: String, p: String| {
-            Box::pin(async move {
-                if u == "admin" && p == "admin" {
-                    Some(Identity {
-                        id: "admin".to_string(),
-                        name: "管理者".to_string(),
-                        role: "admin".to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
-        })
+        AuthState::new(
+            |u: String, p: String| {
+                Box::pin(async move {
+                    if u == "admin" && p == "admin" {
+                        Some(Identity {
+                            id: "admin".to_string(),
+                            name: "管理者".to_string(),
+                            role: "admin".to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+            },
+            SessionValidation::DisabledNoRevocation,
+        )
     }
 
     async fn body_json(response: Response) -> serde_json::Value {
@@ -1523,6 +1610,7 @@ mod tests {
                     }
                 })
             },
+            SessionValidation::DisabledNoRevocation,
             token_policy,
             remembered_policy,
             rate_limit,
@@ -1619,6 +1707,7 @@ mod tests {
                     }
                 })
             },
+            SessionValidation::DisabledNoRevocation,
             TokenPolicy::default(),
             TokenPolicy::remembered_default(),
             rate_limit,
@@ -2091,7 +2180,15 @@ mod tests {
         lookups: Arc<AtomicUsize>,
         /// Run once inside the verifier, i.e. while a login is "in flight".
         during_verify: Arc<std::sync::Mutex<Option<VerifyHook>>>,
+        /// Holds the NEXT lookup in flight: it signals the first sender on
+        /// entry, then waits for the second channel before reading.
+        lookup_gate: Arc<std::sync::Mutex<Option<LookupGate>>>,
     }
+
+    type LookupGate = (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    );
 
     impl FakeStore {
         fn put(&self, username: &str, role: &str, account_id: i64, auth_epoch: i64) {
@@ -2122,6 +2219,22 @@ mod tests {
         fn auth(&self) -> AuthState {
             let verify_store = self.clone();
             let lookup_store = self.clone();
+            let lookup = SessionValidation::lookup(move |u: String| {
+                let store = lookup_store.clone();
+                Box::pin(async move {
+                    store.lookups.fetch_add(1, Ordering::SeqCst);
+                    let gate = store.lookup_gate.lock().unwrap().take();
+                    if let Some((entered, release)) = gate {
+                        let _ = entered.send(());
+                        let _ = release.await;
+                    }
+                    if store.failing.load(Ordering::SeqCst) {
+                        Err(BantoError::Other("store unavailable".to_string()))
+                    } else {
+                        Ok(store.get(&u))
+                    }
+                })
+            });
             AuthState::with_frozen_clock(
                 move |u: String, p: String| {
                     let store = verify_store.clone();
@@ -2137,22 +2250,130 @@ mod tests {
                         }
                     })
                 },
+                lookup,
                 TokenPolicy::default(),
                 TokenPolicy::remembered_default(),
                 RateLimitPolicy::default(),
             )
-            .with_session_validator(move |u: String| {
-                let store = lookup_store.clone();
-                Box::pin(async move {
-                    store.lookups.fetch_add(1, Ordering::SeqCst);
-                    if store.failing.load(Ordering::SeqCst) {
-                        Err(BantoError::Other("store unavailable".to_string()))
-                    } else {
-                        Ok(store.get(&u))
-                    }
-                })
-            })
         }
+    }
+
+    impl FakeStore {
+        /// The same verifier, with [`SessionValidation::DisabledNoRevocation`].
+        fn auth_without_revocation(&self) -> AuthState {
+            let verify_store = self.clone();
+            AuthState::with_frozen_clock(
+                move |u: String, p: String| {
+                    let store = verify_store.clone();
+                    Box::pin(async move {
+                        if p == "pw" {
+                            store.get(&u).map(|account| account.identity)
+                        } else {
+                            None
+                        }
+                    })
+                },
+                SessionValidation::DisabledNoRevocation,
+                TokenPolicy::default(),
+                TokenPolicy::remembered_default(),
+                RateLimitPolicy::default(),
+            )
+        }
+    }
+
+    /// Start `authenticate(token)` and hold its lookup in flight; returns the
+    /// pending check and the switch that lets the lookup continue.
+    async fn check_held_in_lookup(
+        store: &FakeStore,
+        auth: &AuthState,
+        token: &str,
+    ) -> (
+        tokio::task::JoinHandle<Result<Option<AuthenticatedSession>, BantoError>>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        *store.lookup_gate.lock().unwrap() = Some((entered_tx, release_rx));
+        let pending = {
+            let auth = auth.clone();
+            let token = token.to_string();
+            tokio::spawn(async move { auth.authenticate(&token).await })
+        };
+        entered_rx.await.expect("the lookup started");
+        (pending, release_tx)
+    }
+
+    #[tokio::test]
+    async fn a_session_rebound_while_its_check_was_in_flight_stays_valid() {
+        // Review of #230: the check snapshotted epoch 0, the password change
+        // committed epoch 1 and re-bound this very token, then the lookup
+        // (epoch 1) came back. The token is valid under its new binding.
+        let store = FakeStore::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let changer = login_token(&auth, "alice", false).await;
+        let other = login_token(&auth, "alice", true).await;
+        let epoch0 = SessionStamp {
+            account_id: 1,
+            auth_epoch: 0,
+        };
+
+        let (changer_check, release_changer) = check_held_in_lookup(&store, &auth, &changer).await;
+        store.put("alice", "admin", 1, 1);
+        assert!(auth.rotate_session_epoch(&changer, epoch0, 1));
+        release_changer.send(()).unwrap();
+        let session = changer_check
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("the re-bound session must not be reported as revoked");
+        assert_eq!(
+            session.stamp,
+            Some(SessionStamp {
+                account_id: 1,
+                auth_epoch: 1
+            })
+        );
+        assert!(is_live(&auth, &changer).await);
+
+        // The same interleaving for a session that was NOT re-bound: the
+        // store's new epoch is not adopted on its behalf.
+        let (other_check, release_other) = check_held_in_lookup(&store, &auth, &other).await;
+        release_other.send(()).unwrap();
+        assert!(other_check.await.unwrap().unwrap().is_none());
+        assert!(!auth.verify(&other), "the stale session is revoked");
+        assert!(is_live(&auth, &changer).await);
+    }
+
+    #[tokio::test]
+    async fn disabled_validation_keeps_the_pre_204_behavior() {
+        // The explicit opt-out: nothing is looked up, account changes do not
+        // revoke, and the login-time role is what authorizes - exactly what
+        // every state did before #204 (and why it must be chosen by name).
+        let store = FakeStore::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth_without_revocation();
+        let normal = login_token(&auth, "alice", false).await;
+        let remembered = login_token(&auth, "alice", true).await;
+        let unstamped = auth.issue_token(store.get("alice").unwrap().identity);
+
+        store.put("alice", "viewer", 1, 5);
+        store.remove("alice");
+
+        for token in [&normal, &remembered, &unstamped] {
+            let session = auth.authenticate(token).await.unwrap().unwrap();
+            assert_eq!(session.identity.role, "admin");
+            assert_eq!(session.stamp, None);
+        }
+        assert_eq!(store.lookups.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            protected_router(&auth)
+                .oneshot(bearer_get("/protected", &normal))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
     }
 
     async fn login_token(auth: &AuthState, username: &str, remember: bool) -> String {

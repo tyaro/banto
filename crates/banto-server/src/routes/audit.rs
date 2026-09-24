@@ -108,8 +108,10 @@ pub(crate) fn session_account(user: &UserIdentity) -> SessionAccount {
 /// `banto-serve` and the Tauri app's embedded server both build their state
 /// here, so neither can forget the lookup.
 pub fn user_auth_state(users: UsersService, audit: AuditLogService) -> AuthState {
-    AuthState::new(audited_credential_verifier(users.clone(), audit))
-        .with_session_validator(user_session_lookup(users))
+    AuthState::new(
+        audited_credential_verifier(users.clone(), audit),
+        SessionValidation::lookup(user_session_lookup(users)),
+    )
 }
 
 /// State for [`audit_logout_middleware`]: needs `AuthState` to resolve the

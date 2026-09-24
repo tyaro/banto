@@ -322,9 +322,15 @@ without a runtime guard are **upheld by reviewing every call site**.
   - **Access decisions never use the synchronous `verify`/`identity_for`**;
     they go through `authenticate` (`require_auth`). Routes not behind
     `require_auth` (`check`/`identity`/`change-password`) call it themselves.
-  - **REST `AuthState`s for real accounts are built with a session lookup**
-    (`user_auth_state`). With a lookup installed, create-and-login paths use
-    `issue_account_token` (unstamped tokens are rejected).
+  - **REST `AuthState`s for real accounts are built with
+    `SessionValidation::Lookup`** (`user_auth_state`). `SessionValidation` is a
+    required constructor argument with no default; `DisabledNoRevocation` is only
+    for tests and public-viewer-only servers with no account store. With a lookup,
+    create-and-login paths use `issue_account_token` (unstamped tokens are
+    rejected).
+  - **The Tauri window's session is a `DesktopSession` enum** (`Account` /
+    `AuthDisabledLocal`). It is read only through `current_session`, and
+    synthetic sessions are never recognized by a value such as their `id`.
   - A store failure fails the request; it neither revokes nor passes.
 
 ## 7. `{@html}` only with self-generated, fully escaped output [machine-checked: allowlist of use sites]

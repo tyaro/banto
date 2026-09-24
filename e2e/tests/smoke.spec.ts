@@ -25,6 +25,7 @@
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fs from 'node:fs';
+import { expectCheckOutageKeepsTheSession } from './session-check-outage';
 
 // #209: this ordinary account must not be confused with a synthetic session.
 const ADMIN_USERNAME = 'public';
@@ -941,6 +942,24 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Landing on the page marks the changes as seen.
 		await page.goto('/items');
 		await expect(badge).toHaveCount(0);
+	});
+
+	// Issue #204 review: a session the server could not verify (500 from
+	// /api/auth/check) stays - regular and "Remember me" tokens alike - and
+	// resumes after "再試行". Public viewing is OFF on this server, so the old
+	// behavior would have bounced to /login.
+	test('13a. an auth-check outage keeps the session instead of logging out', async () => {
+		await expectCheckOutageKeepsTheSession(page, false);
+
+		await logout(page);
+		await expect(page).toHaveURL(/\/login$/);
+		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('ログイン状態を保持する（30日間）').check();
+		await page.getByRole('button', { name: 'ログイン' }).click();
+		await expect(page).toHaveURL(/\/dashboard$/);
+
+		await expectCheckOutageKeepsTheSession(page, true);
 	});
 
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
