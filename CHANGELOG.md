@@ -22,6 +22,12 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-25
+
+**v1.7.1 — グリッドの初回クリック取りこぼしを直す修正リリース。破壊的変更は無い。**
+v1.7.0 から上げるだけで直り、`@banto/grid-svelte` を使っている派生アプリの
+追従作業は不要。
+
 - fix(grid): グリッドの下端が画面の外に出ているとき（画面を開いた直後に多い）、
   行をクリックするとセルは選択されるのに `onRowClick` が呼ばれない問題を修正
   （#236）。セルの `pointerdown` でグリッドにフォーカスを移す際、グリッドを
@@ -1179,7 +1185,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.7.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/tyaro/banto/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tyaro/banto/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tyaro/banto/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tyaro/banto/compare/v1.4.0...v1.5.0

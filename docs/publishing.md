@@ -22,7 +22,7 @@ CI は checkout 用 PAT）:
 
 ```sh
 # ブランチ/タグ + モノレポ内サブディレクトリを指定（機構は 2026-07-12 に動作検証済み）
-pnpm add "github:tyaro/banto#v1.7.0&path:packages/admin-core"
+pnpm add "github:tyaro/banto#v1.7.1&path:packages/admin-core"
 pnpm add "github:tyaro/banto#main&path:packages/theme"
 ```
 
@@ -109,7 +109,7 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 ## バージョニング規約
 
-- 現行バージョンは **v1.7.0**（全 `@banto/*` パッケージ・`banto-*` クレート・
+- 現行バージョンは **v1.7.1**（全 `@banto/*` パッケージ・`banto-*` クレート・
   `tauri.conf.json`・git タグで統一）。バージョンとタグの整合は
   `pnpm check:versions`（CR-7、`scripts/check-versions.mjs`）が機械検査する
 - 相互依存は無い（`admin-template` からの依存のみ、パッケージ間の依存関係は
@@ -134,9 +134,9 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 ```toml
 [dependencies]
-banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.0" }
-banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.0", features = ["sqlite"] }
-banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.0" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.1" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.1", features = ["sqlite"] }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.1" }
 ```
 
 private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
@@ -145,7 +145,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 ### タグ運用規約
 
 - タグ形式は `vX.Y.Z`（`workspace.package.version`、ルート `Cargo.toml`
-  と揃える。現行 `v1.7.0`）。タグとマニフェストの整合は
+  と揃える。現行 `v1.7.1`）。タグとマニフェストの整合は
   `pnpm check:versions --tag` が機械検査する（CR-7）
 - **タグはリリース単位で打つ**（CHANGELOG の `[Unreleased]` を版節に
   切り出すとき。v1.1.0 以降の実運用）。**マイルストーンマージ毎には打たない**。
@@ -158,7 +158,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   対象になる
 - 破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約（上記
   「バージョニング規約」）を踏襲する
-- タグは軽量タグ（`git tag v1.7.0`）で可。変更履歴は
+- タグは軽量タグ（`git tag v1.7.1`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）
 
