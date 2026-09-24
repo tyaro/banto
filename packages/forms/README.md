@@ -59,7 +59,8 @@ textarea/number/date/select/checkbox/password の各フィールド
 			saving = false; // 保存中のままだと、次の goto でも確認が出る
 		}
 		store.markClean(); // 移動の前に「保存済み」にする（確認を出さない）
-		if (!guard.disposed) await goto('/list'); // 離脱済みなら引き戻さない
+		// 別の画面を選んだあと（遷移先の読み込み中も含む）は、自動で一覧へ戻らない
+		if (guard.canAutoNavigate) await goto('/list');
 	}
 </script>
 

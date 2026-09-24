@@ -27,7 +27,7 @@
 	import { sessionStore } from '$lib/session.svelte';
 	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { errorMessage } from './shared';
-	import { authSettingsStore } from './authSettingsStore.svelte';
+	import { authSettingsStore, reloadAuthSettings } from './authSettingsStore.svelte';
 
 	const authDisabledRoleOptions: { value: AuthDisabledRole; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
@@ -62,6 +62,20 @@
 		);
 	});
 	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applyingAuth });
+	// Owner review on PR #232: without the saved AuthSettings the drafts are
+	// placeholders with nothing to compare against - an edit could never be
+	// detected as unsaved - so they stay disabled until it loads (retry below).
+	const editable = $derived(authSettingsStore.value !== null);
+	let reloading = $state(false);
+
+	async function retryLoad(): Promise<void> {
+		reloading = true;
+		try {
+			await reloadAuthSettings();
+		} finally {
+			reloading = false;
+		}
+	}
 
 	/** Put the drafts back to the saved AuthSettings (the "discard" button, and after a save). */
 	function resetDraftsToSaved(): void {
@@ -128,14 +142,24 @@
 			</div>
 
 			<label class="switch-row">
-				<input type="checkbox" role="switch" class="banto-switch" bind:checked={disabledDraft} />
+				<input
+					type="checkbox"
+					role="switch"
+					class="banto-switch"
+					bind:checked={disabledDraft}
+					disabled={!editable}
+				/>
 				{m['settings.authDisableToggle']()}
 			</label>
 
 			<div class="server-fields">
 				<label class="field">
 					{m['settings.startupRole']()}
-					<select class="banto-input" bind:value={disabledRoleDraft} disabled={!disabledDraft}>
+					<select
+						class="banto-input"
+						bind:value={disabledRoleDraft}
+						disabled={!editable || !disabledDraft}
+					>
 						{#each authDisabledRoleOptions as option (option.value)}
 							<option value={option.value}>{option.label}</option>
 						{/each}
@@ -149,7 +173,7 @@
 					type="button"
 					class="banto-btn banto-btn--primary"
 					onclick={saveAuthSettings}
-					disabled={applyingAuth}
+					disabled={applyingAuth || !editable}
 				>
 					{m['settings.saveAndApply']()}
 				</button>
@@ -167,7 +191,15 @@
 			</div>
 
 			{#if authSettingsStore.error}
-				<p class="error">{authSettingsStore.error}</p>
+				<p class="error">{m['settings.savedValuesUnavailable']()} {authSettingsStore.error}</p>
+				<button
+					type="button"
+					class="banto-btn banto-btn--secondary"
+					onclick={retryLoad}
+					disabled={reloading}
+				>
+					{m['common.reload']()}
+				</button>
 			{/if}
 
 			{#if authSettingsStore.value}

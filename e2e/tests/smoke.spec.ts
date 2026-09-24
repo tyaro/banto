@@ -503,6 +503,83 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// Owner review on PR #232: agreeing to leave while a save is in flight,
+	// then the save finishing BEFORE the chosen screen has loaded, must still
+	// end on the chosen screen - not be overridden by the post-save goto back
+	// to the list. The save reply and the chosen screen's code (its route
+	// chunk - this page was freshly loaded, so the dashboard's is not in the
+	// module cache yet) are both held so the order is fixed:
+	// agree to leave -> save succeeds -> the chosen screen finishes loading.
+	test('3b. items: a save that finishes after agreeing to leave does not override the chosen screen', async () => {
+		const dialogs = trackDialogs(page);
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		let releaseSave!: () => void;
+		const saveGate = new Promise<void>((resolve) => (releaseSave = resolve));
+		let releaseChunks!: () => void;
+		const chunkGate = new Promise<void>((resolve) => (releaseChunks = resolve));
+		let chunkHeld = false;
+		let createdId: number | undefined;
+		try {
+			await page.goto('/items/new');
+			await page.getByLabel('商品名').fill(`E2E離脱中の保存-${Date.now()}`);
+			await page.getByLabel('価格').fill('10');
+			await page.getByLabel('在庫').fill('1');
+
+			await page.route('**/api/items', async (route) => {
+				if (route.request().method() !== 'POST') return route.continue();
+				await saveGate;
+				return route.continue();
+			});
+			const created = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/items' &&
+					response.request().method() === 'POST'
+			);
+			await page.getByRole('button', { name: '保存' }).click();
+
+			// Hold every app chunk requested from now on: the chosen screen
+			// cannot finish loading until they are released.
+			await page.route('**/_app/immutable/**', async (route) => {
+				chunkHeld = true;
+				await chunkGate;
+				return route.continue();
+			});
+			dialogs.answer(true);
+			await mainNav.getByRole('link', { name: 'ダッシュボード' }).click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect.poll(() => chunkHeld).toBe(true);
+
+			// The save wins the race while the dashboard is still loading.
+			releaseSave();
+			createdId = ((await (await created).json()) as { id: number }).id;
+			await expect(page.getByText('保存しました')).toBeVisible();
+
+			releaseChunks();
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(page).toHaveURL(/\/dashboard$/);
+			expect(dialogs.messages).toHaveLength(1);
+		} finally {
+			releaseSave();
+			releaseChunks();
+			await page.unrouteAll({ behavior: 'wait' });
+			dialogs.stop();
+		}
+		// A late goto('/items') would have replaced the dashboard by now:
+		// every request it makes has been let through above.
+		await expect(page).toHaveURL(/\/dashboard$/);
+
+		// Keep the item count at its seed baseline for later scenarios.
+		await page.evaluate(async (id) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch(`/api/items/${id}`, {
+				method: 'DELETE',
+				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+		}, createdId!);
+	});
+
 	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {
 		await page.goto('/items');
 

@@ -31,10 +31,11 @@
 		const result = await formResource.submit(values);
 		if (result.ok) {
 			// Saved: the values are no longer unsaved, so the move back to the
-			// list must not prompt. Skip the move if the user already left
-			// while the save was in flight (don't drag them back).
+			// list must not prompt. Skip the move if the user already chose
+			// another screen while the save was in flight - even if that screen
+			// is still loading (don't override their choice).
 			store.markClean();
-			if (!guard.disposed) goto(`${base}/items`);
+			if (guard.canAutoNavigate) goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}

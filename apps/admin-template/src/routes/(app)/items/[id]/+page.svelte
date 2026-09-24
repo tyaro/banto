@@ -92,10 +92,10 @@
 		const result = await formResource.submit(values);
 		if (result.ok) {
 			// Saved: nothing is unsaved any more, so the move back to the list
-			// must not prompt; and don't drag back a user who already left
-			// while the save was in flight.
+			// must not prompt; and don't override a screen the user already
+			// chose while the save was in flight (even if it is still loading).
 			store.markClean();
-			if (!guard.disposed) goto(`${base}/items`);
+			if (guard.canAutoNavigate) goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -108,7 +108,7 @@
 		if (!removed) return;
 		// The record is gone: unsaved edits to it are moot, don't prompt.
 		store.markClean();
-		if (!guard.disposed) goto(`${base}/items`);
+		if (guard.canAutoNavigate) goto(`${base}/items`);
 	}
 </script>
 

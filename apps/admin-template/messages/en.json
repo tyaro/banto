@@ -265,6 +265,7 @@
   "settings.port": "Port number",
   "settings.saveAndApply": "Save and apply",
   "settings.explicitSaveHint": "Changes on this screen take effect only when you press \"Save and apply\" (Appearance & Language settings are applied and saved as soon as you pick them).",
+  "settings.savedValuesUnavailable": "The saved settings could not be loaded, so they cannot be changed. Please reload.",
   "settings.statusLabel": "Status:",
   "settings.running": "Running",
   "settings.stopped": "Stopped",

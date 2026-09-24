@@ -33,6 +33,12 @@ export interface LeaveNavigation {
 	from: { url: URL } | null;
 	to: { url: URL } | null;
 	cancel(): void;
+	/**
+	 * Settles when the navigation finishes: resolves on success, rejects when
+	 * it is cancelled, superseded or fails (SvelteKit's `Navigation.complete`).
+	 * Used to know how long "the user already agreed to leave" lasts.
+	 */
+	complete?: Promise<void>;
 }
 
 /** Structural type of SvelteKit's `beforeNavigate` from `$app/navigation`. */
@@ -90,8 +96,10 @@ export interface LeaveCheckOptions {
 
 export type LeaveCheckResult = LeaveDecision | 'confirmed' | 'kept' | 'already-handled';
 
-// Navigations one guard has already answered for (see module doc comment).
-const handled = new WeakSet<object>();
+// Navigations one guard has already answered for, with the answer (see
+// module doc comment): later guards reuse it to learn whether the user agreed
+// to leave.
+const handled = new WeakMap<object, LeaveCheckResult>();
 
 function defaultConfirm(message: string): boolean {
 	return typeof window === 'undefined' ? true : window.confirm(message);
@@ -113,8 +121,37 @@ export function runLeaveCheck(
 	options: LeaveCheckOptions = {}
 ): LeaveCheckResult {
 	if (handled.has(navigation)) return 'already-handled';
-	handled.add(navigation);
+	const result = decideAndAct(navigation, sources, options);
+	handled.set(navigation, result);
+	return result;
+}
 
+/** The answer the first guard gave for `navigation` (`undefined` if none yet). */
+export function leaveCheckOutcome(navigation: LeaveNavigation): LeaveCheckResult | undefined {
+	return handled.get(navigation);
+}
+
+/**
+ * True when `outcome` means the page is about to be left: the navigation
+ * goes ahead (asked-and-agreed, or nothing to ask) to another page, and its
+ * end can be observed (`complete`). Reloads/tab closes (`type: 'leave'`) are
+ * excluded: if the browser's unload is called off, nothing would ever end the
+ * "leaving" state. Pure; see tests/unsavedChanges.test.ts.
+ */
+export function isApprovedExit(
+	outcome: LeaveCheckResult | undefined,
+	navigation: LeaveNavigation
+): boolean {
+	if (outcome !== 'allow' && outcome !== 'confirmed') return false;
+	if (navigation.type === 'leave' || navigation.complete === undefined) return false;
+	return !isSamePage(navigation);
+}
+
+function decideAndAct(
+	navigation: LeaveNavigation,
+	sources: Iterable<UnsavedChangesSource>,
+	options: LeaveCheckOptions
+): LeaveCheckResult {
 	let firstPending: UnsavedChangesSource | undefined;
 	for (const source of sources) {
 		if (source.isPending()) {
@@ -170,12 +207,21 @@ export interface UnsavedChangesGuardOptions extends LeaveCheckOptions {
 export interface UnsavedChangesGuard {
 	/** `isDirty() || isSaving()` right now. */
 	readonly pending: boolean;
-	/**
-	 * True once the owning component was destroyed. Check it before a
-	 * post-save `goto` so a save that finishes after the user already left
-	 * does not drag them back.
-	 */
+	/** True once the owning component was destroyed. */
 	readonly disposed: boolean;
+	/**
+	 * True from the moment a navigation away from this page goes ahead (the
+	 * user agreed to leave, or there was nothing to ask) until it settles.
+	 * If it is cancelled, superseded or fails, this turns false again.
+	 */
+	readonly leaving: boolean;
+	/**
+	 * `!disposed && !leaving`. Check it before a post-save `goto`: a save
+	 * that finishes after the user chose another screen - while that screen
+	 * is still loading, or after this page is gone - must not override the
+	 * user's choice.
+	 */
+	readonly canAutoNavigate: boolean;
 }
 
 /**
@@ -193,6 +239,8 @@ export function guardUnsavedChanges(options: UnsavedChangesGuardOptions): Unsave
 		message: options.message
 	};
 	let disposed = false;
+	// The navigation this page is currently being left by (null = staying).
+	let leavingBy: LeaveNavigation | null = null;
 
 	onMount(() => {
 		registry.add(source);
@@ -204,6 +252,14 @@ export function guardUnsavedChanges(options: UnsavedChangesGuardOptions): Unsave
 
 	options.beforeNavigate((navigation) => {
 		runLeaveCheck(navigation, registry, options);
+		if (!isApprovedExit(leaveCheckOutcome(navigation), navigation)) return;
+		leavingBy = navigation;
+		const settle = () => {
+			// Only the latest exit may clear it (an older, superseded one
+			// settles after a newer one started).
+			if (leavingBy === navigation) leavingBy = null;
+		};
+		navigation.complete!.then(settle, settle);
 	});
 
 	return {
@@ -212,6 +268,12 @@ export function guardUnsavedChanges(options: UnsavedChangesGuardOptions): Unsave
 		},
 		get disposed() {
 			return disposed;
+		},
+		get leaving() {
+			return leavingBy !== null;
+		},
+		get canAutoNavigate() {
+			return !disposed && leavingBy === null;
 		}
 	};
 }

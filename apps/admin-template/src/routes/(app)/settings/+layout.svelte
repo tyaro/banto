@@ -43,7 +43,7 @@
 	import { sessionStore } from '$lib/session.svelte';
 	import { isAdmin } from '$lib/permissions';
 	import { errorMessage, tauri } from './shared';
-	import { authSettingsStore } from './authSettingsStore.svelte';
+	import { reloadAuthSettings } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
 	import type { SettingsCategory } from './categories';
 	import type { LayoutProps } from './$types';
@@ -69,14 +69,7 @@
 	// only, same condition SecuritySection's own mount effect used.
 	$effect(() => {
 		if (!tauri) return;
-		void (async () => {
-			authSettingsStore.error = null;
-			try {
-				await authSettingsStore.load();
-			} catch (err) {
-				authSettingsStore.error = errorMessage(err);
-			}
-		})();
+		void reloadAuthSettings();
 	});
 
 	// systemInfoStore's initial load (M-review 2026-08 §2.4) - same

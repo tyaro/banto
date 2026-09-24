@@ -265,6 +265,7 @@
   "settings.port": "ポート番号",
   "settings.saveAndApply": "保存して適用",
   "settings.explicitSaveHint": "この画面の変更は「保存して適用」を押すまで反映されません（外観・言語の設定は選んだ時点で反映・保存されます）。",
+  "settings.savedValuesUnavailable": "保存済みの設定を読み込めなかったため、変更できません。再読み込みしてください。",
   "settings.statusLabel": "状態:",
   "settings.running": "稼働中",
   "settings.stopped": "停止中",

@@ -7,6 +7,7 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import {
 	decideLeave,
+	isApprovedExit,
 	isSamePage,
 	runLeaveCheck,
 	type LeaveDecision,
@@ -126,5 +127,24 @@ describe('runLeaveCheck', () => {
 		const isForced = (n: LeaveNavigation) => n.to?.url.pathname === '/login';
 		expect(runLeaveCheck(navigation, [source(true)], { confirm, isForced })).toBe('allow');
 		expect(confirm).not.toHaveBeenCalled();
+	});
+});
+
+describe('isApprovedExit', () => {
+	const withComplete = (n: LeaveNavigation) => ({ ...n, complete: Promise.resolve() });
+
+	it('is true only for a go-ahead to another page whose end is observable', () => {
+		const away = withComplete(nav('link', '/items/new', '/dashboard'));
+		expect(isApprovedExit('confirmed', away)).toBe(true);
+		expect(isApprovedExit('allow', away)).toBe(true);
+		expect(isApprovedExit('kept', away)).toBe(false);
+		expect(isApprovedExit('block', away)).toBe(false);
+		expect(isApprovedExit(undefined, away)).toBe(false);
+	});
+
+	it('excludes same-page moves, unloads and navigations without `complete`', () => {
+		expect(isApprovedExit('allow', withComplete(nav('link', '/a', '/a#x')))).toBe(false);
+		expect(isApprovedExit('allow', withComplete(nav('leave', '/a', null)))).toBe(false);
+		expect(isApprovedExit('confirmed', nav('link', '/a', '/b'))).toBe(false);
 	});
 });
