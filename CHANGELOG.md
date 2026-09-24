@@ -22,6 +22,24 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-24
+
+**v1.7.0 — セッション失効・添付ストレージの堅牢化とグリッド操作の安定化リリース。**
+v1.6.0（2026-09-14）以降の PR #222〜#234（12 件、#204/#205/#206/#207/#208/#209/
+#210/#211/#212/#213/#214/#231）をまとめる。
+
+**破壊的変更（派生アプリはタグを上げる前に確認）**:
+
+- **`banto_server::AuthState` の全コンストラクタ（`new`/`with_policy`/
+  `with_policies`）が `SessionValidation` を必須引数に取るようになった**（#204）。
+  タグを上げると既存の呼び出しはコンパイルエラーになる。アカウントと照合する
+  `SessionValidation::Lookup` を組み込むか、従来どおり照合しない
+  `SessionValidation::DisabledNoRevocation` を明示的に選ぶ。移行手順は下記
+  #204 の項目に手順 1〜6 で記載。
+- **PostgreSQL では環境変数 `BANTO_ATTACHMENTS_DIR` が必須になった**（#208）。
+  未設定だと `banto-serve` は起動しない（作業ディレクトリ基準の既定値は廃止）。
+  SQLite は変更なし。移行手順（旧保存先からのコピー）は下記 #208 の項目に記載。
+
 - feat(forms/settings): 保存型の画面で未保存の変更を示し、保存せずに離れようとしたら
   確認する（#214、P2）。対象は商品の新規作成・詳細、設定の「サーバ・接続」
   「セキュリティ」と「アカウント」のパスワード変更。未保存の間は保存ボタンの横に
@@ -1150,7 +1168,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.6.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/tyaro/banto/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tyaro/banto/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tyaro/banto/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/tyaro/banto/compare/v1.3.0...v1.4.0
