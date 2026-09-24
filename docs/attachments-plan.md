@@ -88,7 +88,9 @@ CREATE INDEX idx_attachments_record ON attachments(resource, resource_id);
   を作る（`banto_attachments::base_dir_for_target` / `postgres_storage_key`）。
   ユーザー名・パスワードは含めない（変えても保存先は変わらない）。以前の版が
   URL から作った資格情報入りの旧保存先は、起動のたびに sha256 を照合して新しい
-  保存先へコピーする（`import_legacy_files`。旧保存先のファイルは消さない）
+  保存先へコピーする（`import_legacy_files`。旧保存先のファイルは消さない。
+  一時ファイルは処理ごとに一意、確定はハードリンクで既存を上書きしない。既にある
+  本体も sha256 を照合し、サムネイルは本体と別に欠けていれば再試行する）
 - **本体は上書きしない**（#208）: `{id}` が既にあればアップロードを失敗させる
   （`create_new`）。id はどちらのバックエンドでも再利用されないので、既存の
   ファイルは保存先の共有か、古い DB の復元でしか起きない

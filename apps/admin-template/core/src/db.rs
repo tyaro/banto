@@ -65,19 +65,94 @@ pub fn is_postgres_url(target: &str) -> bool {
     target.starts_with("postgres://") || target.starts_with("postgresql://")
 }
 
+/// What [`display_target`] shows for a PostgreSQL URL it cannot take apart
+/// safely.
+pub const REDACTED_POSTGRES_TARGET: &str = "postgres://<redacted>";
+/// What [`display_target`] shows for a non-PostgreSQL target that looks like
+/// a connection string rather than a file path.
+pub const REDACTED_TARGET: &str = "<redacted>";
+
 /// `target` with its credentials removed, for logs and error messages (Issue
-/// #208). A SQLite path is returned as-is. For a PostgreSQL URL the user
-/// info (`user:password@`) and the whole query string (it may carry
-/// `?password=`/`?user=`) are dropped, leaving `scheme://host:port/database`.
+/// #208).
+///
+/// - A PostgreSQL URL (per [`is_postgres_url`]) is shown as
+///   `scheme://host:port/database`: the user info (`user:password@`) and the
+///   whole query string / fragment (`?password=` ...) are dropped. This only
+///   happens when the URL has an unambiguous shape - the host part is a
+///   plain host name / IP (optionally `[IPv6]`) with an all-digit port, and
+///   no `@` follows the host part. Anything else, e.g. a password containing
+///   an unescaped `/`, `?`, `#` or `@` (which makes the host part end inside
+///   the credentials), becomes the fixed [`REDACTED_POSTGRES_TARGET`] that
+///   contains nothing of the input.
+/// - Anything else is a SQLite file path and shown as-is - unless it contains
+///   `://` or `@` (a mistyped connection string such as `Postgres://...` or
+///   `user:pw@host/db`), which becomes the fixed [`REDACTED_TARGET`].
 pub fn display_target(target: &str) -> String {
-    let Some((scheme, rest)) = target.split_once("://").filter(|_| is_postgres_url(target)) else {
+    if !is_postgres_url(target) {
+        if target.contains("://") || target.contains('@') {
+            return REDACTED_TARGET.to_string();
+        }
         return target.to_string();
+    }
+    display_postgres_url(target).unwrap_or_else(|| REDACTED_POSTGRES_TARGET.to_string())
+}
+
+/// The credential-free form of a PostgreSQL URL, or `None` if its shape is
+/// not unambiguous (see [`display_target`]).
+fn display_postgres_url(target: &str) -> Option<String> {
+    let (scheme, rest) = target.split_once("://")?;
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    // An `@` after the authority means the authority ended early - inside the
+    // credentials - so we cannot tell which part is the host.
+    if tail.contains('@') {
+        return None;
+    }
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if !is_plain_host_port(host_port) {
+        return None;
+    }
+    let path = tail.split(['?', '#']).next().unwrap_or("");
+    let path_is_plain = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.' | '%'));
+    if !path_is_plain {
+        return None;
+    }
+    Some(format!("{scheme}://{host_port}{path}"))
+}
+
+/// `host`, `host:port`, `[v6]` or `[v6]:port` (empty allowed - libpq's
+/// default host), with a host of name/IP characters and an all-digit port.
+fn is_plain_host_port(value: &str) -> bool {
+    let (host, port) = if let Some(bracketed) = value.strip_prefix('[') {
+        let Some((v6, after)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if !v6
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.' | '%'))
+        {
+            return false;
+        }
+        match after.strip_prefix(':') {
+            Some(port) => ("", Some(port)),
+            None if after.is_empty() => ("", None),
+            None => return false,
+        }
+    } else {
+        match value.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (value, None),
+        }
     };
-    let rest = rest.split(['?', '#']).next().unwrap_or("");
-    // Cut at the LAST `@` rather than parsing the authority: a password with
-    // an unescaped `/` or `@` must not survive either way.
-    let host_and_path = rest.rsplit_once('@').map_or(rest, |(_, after)| after);
-    format!("{scheme}://{host_and_path}")
+    let host_is_plain = host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '%'));
+    let port_is_plain = port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    host_is_plain && port_is_plain
 }
 
 /// Same as [`init_db`] but against a private in-memory SQLite database. Used by
@@ -453,12 +528,97 @@ mod tests {
                 "postgres://localhost/db",
             ),
             ("postgres://a@b:c@host/db", "postgres://host/db"),
-            ("postgres://u:p/ss@host/db", "postgres://host/db"),
+            ("postgres:///banto", "postgres:///banto"),
+            ("postgres://host", "postgres://host"),
             ("./banto-dev.sqlite3", "./banto-dev.sqlite3"),
             ("C:\\data\\app.sqlite3", "C:\\data\\app.sqlite3"),
+            ("/var/lib/banto/app.sqlite3", "/var/lib/banto/app.sqlite3"),
         ];
         for (target, expected) in cases {
             assert_eq!(display_target(target), expected, "{target}");
+        }
+    }
+
+    /// Review of #233 (3): malformed connection strings - an unescaped `?`,
+    /// `#`, `/` or `@` inside the credentials, a missing or mistyped scheme -
+    /// never let a secret through; they fall back to a fixed text.
+    #[test]
+    fn display_target_redacts_what_it_cannot_parse_safely() {
+        const SECRET: &str = "ExampleSecret";
+        let cases = [
+            (
+                "postgres://alice:ExampleSecret?tail@localhost/db",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            (
+                "postgres://alice:ExampleSecret#tail@localhost/db",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            (
+                "postgres://alice:Example/Secret@localhost/db",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            (
+                "postgresql://alice:ExampleSecret?a#b@localhost:5432/db?x=1",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            // No `@` at all: the credentials would be read as host:port.
+            ("postgres://alice:ExampleSecret", REDACTED_POSTGRES_TARGET),
+            (
+                "postgres://alice:ExampleSecret/db",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            (
+                "postgres://u:p@[::1:ExampleSecret",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            (
+                "postgres://u:p@host/db name ExampleSecret",
+                REDACTED_POSTGRES_TARGET,
+            ),
+            // Mistyped or missing scheme: not PostgreSQL, but not a path either.
+            (
+                "Postgres://alice:ExampleSecret@localhost/db",
+                REDACTED_TARGET,
+            ),
+            (
+                "postgres:/alice:ExampleSecret@localhost/db",
+                REDACTED_TARGET,
+            ),
+            ("alice:ExampleSecret@localhost:5432/db", REDACTED_TARGET),
+            ("mysql://alice:ExampleSecret@localhost/db", REDACTED_TARGET),
+        ];
+        for (target, expected) in cases {
+            let shown = display_target(target);
+            assert_eq!(shown, expected, "{target}");
+            assert!(
+                !shown.contains(SECRET) && !shown.contains("alice"),
+                "{target}"
+            );
+        }
+    }
+
+    /// Review of #233 (3): the one error that prints `BANTO_DB` - a PostgreSQL
+    /// URL given to a build without the `postgres` feature - keeps no secret,
+    /// even for a malformed URL.
+    #[cfg(not(feature = "postgres"))]
+    #[tokio::test]
+    async fn postgres_url_without_the_feature_errors_without_the_secret() {
+        for target in [
+            "postgres://alice:ExampleSecret@localhost/db",
+            "postgres://alice:ExampleSecret?tail@localhost/db",
+            "postgres://alice:ExampleSecret#tail@localhost/db",
+        ] {
+            let err = match init_db_from_target(target).await {
+                Ok(_) => panic!("{target}: a build without `postgres` must refuse"),
+                Err(err) => err,
+            };
+            let text = format!("{err} {err:?}");
+            assert!(text.contains("postgres"), "{text}");
+            assert!(
+                !text.contains("ExampleSecret") && !text.contains("alice"),
+                "{text}"
+            );
         }
     }
 

@@ -44,5 +44,6 @@ image = { version = "0.25", default-features = false, features = [
 sha2 = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+# `rt-multi-thread`: the concurrent-import test runs imports in parallel.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 tempfile = { workspace = true }

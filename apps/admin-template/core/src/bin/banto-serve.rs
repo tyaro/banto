@@ -182,16 +182,18 @@ async fn main() {
             .import_legacy_files(&banto_attachments::legacy_base_dir(&db_path))
             .await
         {
-            Ok(report) if report.copied > 0 || report.not_imported() > 0 => {
+            Ok(report) if report.is_noteworthy() => {
                 println!(
                     "banto-serve: 旧保存先（作業ディレクトリ下の、接続 URL から作られた postgres: で始まるディレクトリ）からの添付の移行: \
-                     コピー {} 件 / 移行済み {} 件 / 旧保存先に無い {} 件 / 別の DB のファイル {} 件 / 失敗 {} 件 / サムネイルの失敗 {} 件。\
+                     コピー {} 件 / 移行済み {} 件 / 新しい保存先に内容の違うファイルがある {} 件 / 旧保存先に無い {} 件 / 別の DB のファイル {} 件 / 失敗 {} 件 / サムネイルのコピー {} 件 / サムネイルの失敗 {} 件。\
                      旧保存先のファイルは消していません",
                     report.copied,
                     report.already_present,
+                    report.existing_mismatched,
                     report.missing,
                     report.mismatched,
                     report.failed,
+                    report.thumbnails_copied,
                     report.thumbnails_failed
                 );
             }
