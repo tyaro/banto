@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+- feat(banto-server): `AuthState::revalidate` を `pub` にした（#239）。
+  `authenticate` と同じ照合（再バインドの扱いを含む）をしつつ、無操作期限
+  （idle）のタイマーを延ばさない再検証で、`/api/events` の定期再検証
+  （#231）が使っているのと同じもの。派生アプリが自前の長時間ストリーム
+  （banto-industrial の `/api/tag-stream`・`/api/v1/stream`、
+  banto-industrial#430）で同様の再検証をできるようにするための公開。破壊的
+  変更ではない（既存の可視性を広げるだけ）。
+
 - fix(grid): グリッドの下端が画面の外に出ているとき（画面を開いた直後に多い）、
   行をクリックするとセルは選択されるのに `onRowClick` が呼ばれない問題を修正
   （#236）。セルの `pointerdown` でグリッドにフォーカスを移す際、グリッドを

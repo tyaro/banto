@@ -145,3 +145,10 @@ role from the database.
   (logout, revocation by a check, expiry, public-viewer eviction, a change
   made by another process) would need its own notification, and the
   same-process paths already close within one interval.
+- `AuthState::revalidate` is `pub`, exposed to derived apps (Issue #239,
+  banto-industrial#430): so a derived app's own long-lived stream (e.g.
+  banto-industrial's `/api/tag-stream` / `/api/v1/stream`) can re-check with
+  the same verdicts as `authenticate` without sliding the idle window. The
+  verdicts are identical to this section's re-check; its doc points callers
+  at this crate's own `/api/events` implementation (`events.rs`) for how to
+  call it (period, timeout, when to re-arm the next deadline).
