@@ -23,7 +23,7 @@
  * (`expect(locator)...`) or a real event (`page.waitForEvent('download')`,
  * `page.once('dialog', ...)`).
  */
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Dialog, type Locator, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import { expectCheckOutageKeepsTheSession } from './session-check-outage';
 
@@ -91,6 +91,34 @@ function rowWithText(page: Page, text: string): Locator {
 async function logout(page: Page): Promise<void> {
 	await page.getByRole('button', { name: 'ユーザーメニューを開く' }).click();
 	await page.getByRole('menuitem', { name: 'ログアウト' }).click();
+}
+
+/** Issue #214: the unsaved-changes guard's prompt (messages/ja.json `unsaved.confirmLeave`). */
+const LEAVE_PROMPT = '保存していない変更があります。変更を破棄してこの画面から移動しますか？';
+
+/**
+ * Answers `window.confirm` dialogs from a queue and records every message, so
+ * a test can assert both that a prompt appeared and that NO unexpected one
+ * did. A dialog with no queued answer is dismissed (= "stay"), which also
+ * makes an unexpected prompt fail the following URL assertion.
+ */
+function trackDialogs(page: Page): {
+	messages: string[];
+	answer(accept: boolean): void;
+	stop(): void;
+} {
+	const messages: string[] = [];
+	const answers: boolean[] = [];
+	const onDialog = (dialog: Dialog) => {
+		messages.push(dialog.message());
+		void (answers.shift() ? dialog.accept() : dialog.dismiss());
+	};
+	page.on('dialog', onDialog);
+	return {
+		messages,
+		answer: (accept) => answers.push(accept),
+		stop: () => page.off('dialog', onDialog)
+	};
 }
 
 test.describe.serial('Banto LAN/REST smoke', () => {
@@ -397,6 +425,159 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await page.goto(href!);
 		await expect(page.getByText('商品が見つかりません')).toBeVisible();
+	});
+
+	// Issue #214: leaving the item form with unsaved input asks first. "Stay"
+	// keeps the input, "leave" moves; no prompt after a save, after undoing
+	// the edit, or for a clean form.
+	test('3a. items: unsaved input asks before leaving, save and a clean form do not', async () => {
+		const dialogs = trackDialogs(page);
+		const unsaved = page.getByText('未保存の変更があります');
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		try {
+			await page.goto('/items/new');
+			const name = page.getByLabel('商品名');
+			await expect(name).toBeVisible();
+			await expect(unsaved).toHaveCount(0);
+
+			await name.fill('E2E未保存の入力');
+			await expect(unsaved).toBeVisible();
+
+			// Stay: the navigation is cancelled and the input survives.
+			dialogs.answer(false);
+			await mainNav.getByRole('link', { name: 'ダッシュボード' }).click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect(page).toHaveURL(/\/items\/new$/);
+			await expect(name).toHaveValue('E2E未保存の入力');
+			await expect(page.getByRole('button', { name: '保存' })).toBeEnabled();
+
+			// Leave via the form's own "back to list" (= cancel).
+			dialogs.answer(true);
+			await page.getByRole('link', { name: '一覧へ戻る' }).click();
+			await expect(page).toHaveURL(/\/items$/);
+			expect(dialogs.messages).toHaveLength(2);
+
+			// Typing and then undoing the edit is not "unsaved".
+			await page.getByRole('button', { name: '新規作成' }).click();
+			await expect(page).toHaveURL(/\/items\/new$/);
+			await page.getByLabel('商品名').fill('一時的');
+			await expect(unsaved).toBeVisible();
+			await page.getByLabel('商品名').fill('');
+			await expect(unsaved).toHaveCount(0);
+			// Blur first: the now-empty required field shows its error on
+			// blur, which shifts the footer - clicking straight away would let
+			// that layout shift swallow the click.
+			await page.getByLabel('商品名').blur();
+			await expect(page.getByText('必須項目です')).toBeVisible();
+			await page.getByRole('link', { name: '一覧へ戻る' }).click();
+			await expect(page).toHaveURL(/\/items$/);
+
+			// A successful save goes back to the list without a prompt.
+			await page.getByRole('button', { name: '新規作成' }).click();
+			await expect(page).toHaveURL(/\/items\/new$/);
+			await page.getByLabel('商品名').fill(`E2E未保存ガード-${Date.now()}`);
+			await page.getByLabel('価格').fill('10');
+			await page.getByLabel('在庫').fill('1');
+			const created = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/items' &&
+					response.request().method() === 'POST'
+			);
+			await page.getByRole('button', { name: '保存' }).click();
+			const createdId = ((await (await created).json()) as { id: number }).id;
+			await expect(page).toHaveURL(/\/items$/);
+			expect(dialogs.messages).toHaveLength(2);
+
+			// Keep the item count at its seed baseline for later scenarios.
+			await page.evaluate(async (id) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const res = await fetch(`/api/items/${id}`, {
+					method: 'DELETE',
+					headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+				});
+				if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+			}, createdId);
+		} finally {
+			dialogs.stop();
+		}
+	});
+
+	// Owner review on PR #232: agreeing to leave while a save is in flight,
+	// then the save finishing BEFORE the chosen screen has loaded, must still
+	// end on the chosen screen - not be overridden by the post-save goto back
+	// to the list. The save reply and the chosen screen's code (its route
+	// chunk - this page was freshly loaded, so the dashboard's is not in the
+	// module cache yet) are both held so the order is fixed:
+	// agree to leave -> save succeeds -> the chosen screen finishes loading.
+	test('3b. items: a save that finishes after agreeing to leave does not override the chosen screen', async () => {
+		const dialogs = trackDialogs(page);
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		let releaseSave!: () => void;
+		const saveGate = new Promise<void>((resolve) => (releaseSave = resolve));
+		let releaseChunks!: () => void;
+		const chunkGate = new Promise<void>((resolve) => (releaseChunks = resolve));
+		let chunkHeld = false;
+		let createdId: number | undefined;
+		try {
+			await page.goto('/items/new');
+			await page.getByLabel('商品名').fill(`E2E離脱中の保存-${Date.now()}`);
+			await page.getByLabel('価格').fill('10');
+			await page.getByLabel('在庫').fill('1');
+
+			await page.route('**/api/items', async (route) => {
+				if (route.request().method() !== 'POST') return route.continue();
+				await saveGate;
+				return route.continue();
+			});
+			const created = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/items' &&
+					response.request().method() === 'POST'
+			);
+			await page.getByRole('button', { name: '保存' }).click();
+
+			// Hold every app chunk requested from now on: the chosen screen
+			// cannot finish loading until they are released.
+			await page.route('**/_app/immutable/**', async (route) => {
+				chunkHeld = true;
+				await chunkGate;
+				return route.continue();
+			});
+			dialogs.answer(true);
+			await mainNav.getByRole('link', { name: 'ダッシュボード' }).click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect.poll(() => chunkHeld).toBe(true);
+
+			// The save wins the race while the dashboard is still loading.
+			releaseSave();
+			createdId = ((await (await created).json()) as { id: number }).id;
+			await expect(page.getByText('保存しました')).toBeVisible();
+
+			releaseChunks();
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(page).toHaveURL(/\/dashboard$/);
+			expect(dialogs.messages).toHaveLength(1);
+		} finally {
+			releaseSave();
+			releaseChunks();
+			await page.unrouteAll({ behavior: 'wait' });
+			dialogs.stop();
+		}
+		// A late goto('/items') would have replaced the dashboard by now:
+		// every request it makes has been let through above.
+		await expect(page).toHaveURL(/\/dashboard$/);
+
+		// Keep the item count at its seed baseline for later scenarios.
+		await page.evaluate(async (id) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch(`/api/items/${id}`, {
+				method: 'DELETE',
+				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+		}, createdId!);
 	});
 
 	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {
@@ -830,6 +1011,79 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			.getByText('ダーク', { exact: true })
 			.click();
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+	});
+
+	// Issue #214: the account page's password form is the save-type settings
+	// form this LAN/REST run can reach (サーバ・接続 / セキュリティ drafts are
+	// desktop-only). Unsaved input asks before switching category; a failed
+	// save keeps it unsaved; "discard" and a successful save do not ask.
+	test('10a. settings: unsaved password input asks before switching category', async () => {
+		const dialogs = trackDialogs(page);
+		const unsaved = page.getByText('未保存の変更があります');
+		const categoryNav = page.getByRole('navigation', { name: '設定カテゴリ' });
+		const current = page.getByLabel('現在のパスワード');
+		const next = page.getByLabel('新しいパスワード（8文字以上）');
+		const confirmNext = page.getByLabel('新しいパスワード（確認）');
+		const changePassword = '**/api/auth/change-password';
+		try {
+			await categoryNav.getByRole('link', { name: 'アカウント' }).click();
+			await expect(page).toHaveURL(/\/settings\/account$/);
+			await expect(unsaved).toHaveCount(0);
+
+			await current.fill('typed-but-not-saved');
+			await expect(unsaved).toBeVisible();
+
+			dialogs.answer(false);
+			await categoryNav.getByRole('link', { name: '外観・言語' }).click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect(page).toHaveURL(/\/settings\/account$/);
+			await expect(current).toHaveValue('typed-but-not-saved');
+
+			// A failed save keeps the input and the unsaved marker (network
+			// failure stubbed: no password attempt reaches the server).
+			await next.fill('E2eUnsavedNew1');
+			await confirmNext.fill('E2eUnsavedNew1');
+			await page.route(changePassword, (route) => route.abort());
+			try {
+				await page.getByRole('button', { name: 'パスワードを変更' }).click();
+				await expect(page.locator('.settings-page .error')).toBeVisible();
+			} finally {
+				await page.unroute(changePassword);
+			}
+			await expect(unsaved).toBeVisible();
+			await expect(current).toHaveValue('typed-but-not-saved');
+
+			// Explicit discard clears it: switching category no longer asks.
+			await page.getByRole('button', { name: '変更を取り消す' }).click();
+			await expect(current).toHaveValue('');
+			await expect(unsaved).toHaveCount(0);
+			await categoryNav.getByRole('link', { name: '外観・言語' }).click();
+			await expect(page).toHaveURL(/\/settings\/appearance$/);
+			expect(dialogs.messages).toHaveLength(1);
+
+			// A successful save (stubbed, so the admin password stays as is)
+			// clears the form: switching category does not ask either.
+			await categoryNav.getByRole('link', { name: 'アカウント' }).click();
+			await expect(page).toHaveURL(/\/settings\/account$/);
+			await current.fill(ADMIN_PASSWORD);
+			await next.fill('E2eUnsavedNew1');
+			await confirmNext.fill('E2eUnsavedNew1');
+			await page.route(changePassword, (route) =>
+				route.fulfill({ status: 200, json: { success: true } })
+			);
+			try {
+				await page.getByRole('button', { name: 'パスワードを変更' }).click();
+				await expect(current).toHaveValue('');
+			} finally {
+				await page.unroute(changePassword);
+			}
+			await expect(unsaved).toHaveCount(0);
+			await categoryNav.getByRole('link', { name: '外観・言語' }).click();
+			await expect(page).toHaveURL(/\/settings\/appearance$/);
+			expect(dialogs.messages).toHaveLength(1);
+		} finally {
+			dialogs.stop();
+		}
 	});
 
 	test('11. backups: create a backup and see it in the list', async () => {

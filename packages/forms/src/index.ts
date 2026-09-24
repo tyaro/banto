@@ -5,6 +5,25 @@ export type { FieldType, FieldOption, FieldDef, FormSchema, FieldError } from '.
 
 export { validateField, validateAll, type ValidationMessages } from './validate';
 export { FormStore, createFormStore } from './store.svelte';
+export {
+	guardUnsavedChanges,
+	hasUnsavedChanges,
+	decideLeave,
+	isApprovedExit,
+	isSamePage,
+	leaveCheckOutcome,
+	runLeaveCheck,
+	type BeforeNavigateHook,
+	type LeaveCheckOptions,
+	type LeaveCheckResult,
+	type LeaveDecision,
+	type LeaveDecisionInput,
+	type LeaveNavigation,
+	type UnsavedChangesGuard,
+	type UnsavedChangesGuardOptions,
+	type UnsavedChangesSource
+} from './unsavedChanges.svelte';
+export { default as UnsavedChangesNotice } from './UnsavedChangesNotice.svelte';
 
 export { default as BantoForm } from './BantoForm.svelte';
 export { default as TextField } from './fields/TextField.svelte';

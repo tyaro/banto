@@ -23,7 +23,10 @@ export class FormStore {
 
 	#schema: FormSchema;
 	#messages: ValidationMessages;
-	#initialSnapshot: string;
+	// `$state` (issue #214): `markClean()` moves the baseline without touching
+	// `values`, so `isDirty` must also track the snapshot itself - otherwise an
+	// "unsaved changes" indicator would keep showing after a successful save.
+	#initialSnapshot = $state('');
 
 	constructor(
 		schema: FormSchema,
@@ -79,6 +82,16 @@ export class FormStore {
 			...this.errors,
 			...Object.fromEntries(fieldErrors.map((e) => [e.field, e.message]))
 		};
+	}
+
+	/**
+	 * Adopt the current `values` as the clean baseline without changing them
+	 * (issue #214: call right after a successful save, so `isDirty` - and an
+	 * unsaved-changes guard reading it - stops reporting the saved values as
+	 * unsaved). Unlike `reset()`, values/errors/touched are left as they are.
+	 */
+	markClean(): void {
+		this.#initialSnapshot = JSON.stringify(this.values);
 	}
 
 	/** Reset values to schema defaults merged with `newInitial`, and clear errors/touched. */

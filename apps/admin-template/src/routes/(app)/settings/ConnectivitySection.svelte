@@ -11,10 +11,13 @@
 	 * `settings/+layout.svelte` へ移した（`/settings/data` 等への直接遷移でも
 	 * この値が要るため）- エラー表示は下の `systemInfoStore.error` を直接読む。
 	 */
+	import { untrack } from 'svelte';
 	import { Server, Wifi } from '@lucide/svelte';
+	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
@@ -29,6 +32,13 @@
 	let viewerPublicDraft = $state(false);
 	let applying = $state(false);
 	let serverError: string | null = $state(null);
+	// The saved status could not be read (yet). Owner review on PR #232:
+	// until it is, the drafts are only placeholders with nothing to compare
+	// against, so they are NOT editable (an edit here could never be detected
+	// as unsaved) - `loadError` offers a retry instead.
+	let loadingStatus = $state(false);
+	let loadError: string | null = $state(null);
+	const editable = $derived(serverStatus !== null && !loadingStatus);
 
 	function applyStatusToDrafts(status: ServerStatus): void {
 		serverStatus = status;
@@ -38,16 +48,40 @@
 		viewerPublicDraft = status.viewerPublic;
 	}
 
+	/** Initial load, and the retry button while it keeps failing. */
+	async function loadServerStatus(): Promise<void> {
+		loadingStatus = true;
+		loadError = null;
+		try {
+			applyStatusToDrafts(await getServerStatus());
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : String(err);
+		} finally {
+			loadingStatus = false;
+		}
+	}
+
 	$effect(() => {
 		if (!tauri) return;
-		void (async () => {
-			try {
-				applyStatusToDrafts(await getServerStatus());
-			} catch (err) {
-				serverError = err instanceof Error ? err.message : String(err);
-			}
-		})();
+		untrack(() => void loadServerStatus());
 	});
+
+	// Issue #214: the drafts above differ from the last loaded/applied
+	// status. While the status is not loaded the inputs are disabled
+	// (`editable`), so there is nothing unsaved to protect.
+	const dirty = $derived(
+		serverStatus !== null &&
+			(enabledDraft !== serverStatus.enabled ||
+				bindDraft !== serverStatus.bind ||
+				portDraft !== serverStatus.port ||
+				viewerPublicDraft !== serverStatus.viewerPublic)
+	);
+	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applying });
+
+	/** The "discard" button: put the drafts back to the applied status. */
+	function resetDraftsToSaved(): void {
+		if (serverStatus) applyStatusToDrafts(serverStatus);
+	}
 
 	async function saveAndApply(): Promise<void> {
 		applying = true;
@@ -104,6 +138,7 @@
 					role="switch"
 					class="banto-switch"
 					bind:checked={viewerPublicDraft}
+					disabled={!editable}
 				/>
 				{m['settings.viewerPublicToggle']()}
 			</label>
@@ -118,7 +153,7 @@
 					role="switch"
 					class="banto-switch"
 					bind:checked={enabledDraft}
-					disabled={authSettingsStore.value?.disabled && !viewerPublicDraft}
+					disabled={!editable || (authSettingsStore.value?.disabled && !viewerPublicDraft)}
 				/>
 				{m['settings.lanToggle']()}
 			</label>
@@ -129,7 +164,7 @@
 			<div class="server-fields">
 				<label class="field">
 					{m['settings.bindAddress']()}
-					<select class="banto-input" bind:value={bindDraft}>
+					<select class="banto-input" bind:value={bindDraft} disabled={!editable}>
 						<option value="127.0.0.1">{m['settings.bindLocalOnly']()}</option>
 						<option value="0.0.0.0">{m['settings.bindLanPublic']()}</option>
 					</select>
@@ -137,18 +172,51 @@
 
 				<label class="field">
 					{m['settings.port']()}
-					<input class="banto-input" type="number" min="1" max="65535" bind:value={portDraft} />
+					<input
+						class="banto-input"
+						type="number"
+						min="1"
+						max="65535"
+						bind:value={portDraft}
+						disabled={!editable}
+					/>
 				</label>
 			</div>
 
-			<button
-				type="button"
-				class="banto-btn banto-btn--primary"
-				onclick={saveAndApply}
-				disabled={applying}
-			>
-				{m['settings.saveAndApply']()}
-			</button>
+			{#if loadError}
+				<p class="error">{m['settings.savedValuesUnavailable']()} {loadError}</p>
+				<button
+					type="button"
+					class="banto-btn banto-btn--secondary"
+					onclick={loadServerStatus}
+					disabled={loadingStatus}
+				>
+					{m['common.reload']()}
+				</button>
+			{/if}
+
+			<p class="note">{m['settings.explicitSaveHint']()}</p>
+			<div class="save-row">
+				<button
+					type="button"
+					class="banto-btn banto-btn--primary"
+					onclick={saveAndApply}
+					disabled={applying || !editable}
+				>
+					{m['settings.saveAndApply']()}
+				</button>
+				{#if dirty}
+					<button
+						type="button"
+						class="banto-btn banto-btn--ghost"
+						onclick={resetDraftsToSaved}
+						disabled={applying}
+					>
+						{m['unsaved.discard']()}
+					</button>
+				{/if}
+				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
+			</div>
 
 			{#if serverError}
 				<p class="error">{serverError}</p>

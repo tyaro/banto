@@ -12,12 +12,14 @@
 	 */
 	import { KeyRound } from '@lucide/svelte';
 	import { getAuthProvider } from '@banto/admin-core';
+	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { toastStore } from '$lib/toast.svelte';
 	import { sessionStore } from '$lib/session.svelte';
 	import { isAdmin } from '$lib/permissions';
 	import { enableAutologin, disableAutologin } from '$lib/banto/authAdmin';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { errorMessage, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 
@@ -32,6 +34,29 @@
 	let newPasswordConfirm = $state('');
 	let passwordError: string | null = $state(null);
 	let changingPassword = $state(false);
+
+	// Issue #214: typed-but-not-submitted password fields. Only while the
+	// form is actually shown (same conditions as the markup below). A failed
+	// change keeps the fields, so the marker stays; a successful one clears
+	// them. (The Tauri-only autologin form below is not guarded yet.)
+	const passwordFormShown = $derived(
+		!sessionStore.publicViewer && !sessionStore.authDisabled && !!changePassword
+	);
+	const passwordDirty = $derived(
+		passwordFormShown && (currentPassword !== '' || newPassword !== '' || newPasswordConfirm !== '')
+	);
+	const passwordGuard = guardUnsavedChanges({
+		isDirty: () => passwordDirty,
+		isSaving: () => changingPassword
+	});
+
+	/** The "discard" button: clear the typed password fields. */
+	function discardPasswordDraft(): void {
+		currentPassword = '';
+		newPassword = '';
+		newPasswordConfirm = '';
+		passwordError = null;
+	}
 
 	async function submitChangePassword(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
@@ -153,6 +178,19 @@
 				<button type="submit" class="banto-btn banto-btn--primary" disabled={changingPassword}>
 					{m['settings.changePassword']()}
 				</button>
+				{#if passwordGuard.pending}
+					<div class="save-row">
+						<button
+							type="button"
+							class="banto-btn banto-btn--ghost"
+							onclick={discardPasswordDraft}
+							disabled={changingPassword}
+						>
+							{m['unsaved.discard']()}
+						</button>
+						<UnsavedChangesNotice pending label={m['unsaved.notice']()} />
+					</div>
+				{/if}
 			</form>
 		{:else}
 			<p class="note">{m['settings.passwordChangeUnsupported']()}</p>

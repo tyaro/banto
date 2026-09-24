@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
-	import { BantoForm, createFormStore } from '@banto/forms';
+	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { formValidationMessages } from '$lib/banto/i18n';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
 
@@ -16,6 +17,12 @@
 	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
 	const store = createFormStore(schema, undefined, formValidationMessages());
 
+	// Issue #214: ask before leaving with unsaved input (or mid-save).
+	const guard = guardUnsavedChanges({
+		isDirty: () => store.isDirty,
+		isSaving: () => formResource.saving
+	});
+
 	$effect(() => {
 		void formResource.load();
 	});
@@ -23,7 +30,12 @@
 	async function handleSubmit(values: Record<string, unknown>) {
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			goto(`${base}/items`);
+			// Saved: the values are no longer unsaved, so the move back to the
+			// list must not prompt. Skip the move if the user already chose
+			// another screen while the save was in flight - even if that screen
+			// is still loading (don't override their choice).
+			store.markClean();
+			if (guard.canAutoNavigate) goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -43,7 +55,11 @@
 				onSubmit={handleSubmit}
 				submitting={formResource.saving}
 				submitLabel={m['common.save']()}
-			/>
+			>
+				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
+				<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
+				<a class="banto-btn banto-btn--ghost" href={`${base}/items`}>{m['common.backToList']()}</a>
+			</BantoForm>
 		{/if}
 	</div>
 </div>

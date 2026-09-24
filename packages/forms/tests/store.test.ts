@@ -65,4 +65,18 @@ describe('FormStore', () => {
 		store.setValue('name', 'a');
 		expect(store.isDirty).toBe(false);
 	});
+
+	// Issue #214: after a successful save the saved values become the new
+	// baseline, without clearing what is on screen.
+	it('markClean adopts the current values as the clean baseline', () => {
+		const store = createFormStore(schema, { name: 'a' });
+		store.setValue('name', 'b');
+		store.setServerErrors([{ field: 'price', message: 'x' }]);
+		store.markClean();
+		expect(store.isDirty).toBe(false);
+		expect(store.values).toEqual({ name: 'b', price: 0 });
+		expect(store.errors.price).toBe('x');
+		store.setValue('name', 'a');
+		expect(store.isDirty).toBe(true);
+	});
 });

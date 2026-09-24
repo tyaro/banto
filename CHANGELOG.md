@@ -22,6 +22,67 @@
 
 ## [Unreleased]
 
+- feat(forms/settings): 保存型の画面で未保存の変更を示し、保存せずに離れようとしたら
+  確認する（#214、P2）。対象は商品の新規作成・詳細、設定の「サーバ・接続」
+  「セキュリティ」と「アカウント」のパスワード変更。未保存の間は保存ボタンの横に
+  「未保存の変更があります」を出し、商品フォームには「一覧へ戻る」（＝取り消し）、
+  設定には「変更を取り消す」を足した。「サーバ・接続」「セキュリティ」には、
+  「保存して適用」を押すまで反映されない（外観・言語はすぐ反映される）ことを短く書いた。
+  確認は既存の削除確認と同じ `window.confirm`。再読み込み・タブを閉じるは
+  ブラウザ標準の確認、Tauri のウィンドウを閉じるときも確認する（未保存の間だけ
+  close-requested を購読。capability に `core:window:allow-destroy` を追加）。
+  変更なし・値を元に戻した・保存に成功した・取り消した後は確認しない。保存中の
+  離脱は確認し、離脱後に保存が終わっても元の画面へ引き戻さない。ログイン画面への
+  移動（ログアウト・セッション失効）は確認しない。ドラフトの復元はしない（保存先・
+  古いドラフト・複数タブの扱いが要るため、確認のみ）。
+
+  **`@banto/forms` の追加 API**（破壊的変更なし）: `guardUnsavedChanges(options)`
+  （コンポーネント初期化中に呼ぶ）、`hasUnsavedChanges()`（リアクティブ。どれか
+  1 つでも未保存なら `true`）、`UnsavedChangesNotice`（未保存マーカー）、
+  `FormStore.markClean()`（今の値を「保存済み」にする）。判定表は純関数
+  `decideLeave` / `runLeaveCheck` で公開。パッケージは SvelteKit に依存しないため、
+  `beforeNavigate` は呼び出し側が渡す。同じ画面に複数のガードがあっても、確認は
+  1 回だけ出る。`guard.canAutoNavigate` は、離脱を承認して遷移中の間（遷移先の
+  読み込み中を含む）とアンマウント後に `false` になり、遷移が中止・失敗すると
+  `true` に戻る。保存後の自動遷移はこれを見て行う（`guard.leaving` /
+  `guard.disposed` も個別に読める）。
+
+  **保存済みの値を読み込んで下書きと比べる画面**（「サーバ・接続」「セキュリティ」）は、
+  保存済みの値が取れるまで入力と保存を無効にし、取得に失敗したら「再読み込み」を出す。
+  取得前の下書きは比べる相手がないため、編集を許すと未保存として検知できない。
+  派生アプリで同じ作りの画面を守るときも、同じようにすること。
+
+  **派生アプリでの使い方**（タグを上げたあと、保存型の画面ごとに）:
+
+  ```ts
+  import { beforeNavigate, goto } from '$app/navigation';
+  import { base } from '$app/paths';
+  import { guardUnsavedChanges } from '@banto/forms';
+
+  const guard = guardUnsavedChanges({
+  	isDirty: () => store.isDirty, // 自前の下書きなら「下書き !== 保存済みの値」
+  	isSaving: () => saving, // 保存中も離脱を確認する
+  	beforeNavigate,
+  	message: () => '保存していない変更があります。変更を破棄してこの画面から移動しますか？',
+  	isForced: (nav) => nav.to?.url.pathname === `${base}/login` // ログアウト等は確認しない
+  });
+
+  // 保存に成功したら、移動の前に「未保存でない」状態にする（保存中フラグも先に下ろす。
+  // 立ったままだと、この goto にも確認が出る）
+  store.markClean(); // FormStore の場合。自前の下書きは保存済みの値に揃える
+  // 利用者が別の画面を選んだあと（遷移先の読み込み中も含む）は、保存後の自動遷移をしない
+  if (guard.canAutoNavigate) await goto(`${base}/list`);
+  ```
+
+  マーカーは `<UnsavedChangesNotice pending={guard.pending} label="未保存の変更があります" />`。
+  admin-template では `$lib/unsavedChanges.ts` が `beforeNavigate`・文言・
+  `isForced` を束ねた薄い包みなので、これを写して使うのが早い。Tauri の
+  ウィンドウ終了も確認するなら、`$lib/banto/windowCloseGuard.ts` と
+  `(app)/+layout.svelte` の `$effect`（`hasUnsavedChanges()` が `true` の間だけ
+  `guardWindowClose` を登録）を写し、capability に `core:window:allow-destroy`
+  を足す（close-requested を JS で購読すると、閉じる処理を JS の `destroy()` が
+  行うため。足さないと未保存の間はウィンドウが閉じられなくなる）。
+
 - fix(attachments): `BANTO_DB` が PostgreSQL の接続 URL のときも、その文字列を
   ファイルパスとみなして添付の保存先を作っていた問題を修正（#208、P2）。同じ
   サーバーの別の DB（`…/banto_a` と `…/banto_b`）が同じ保存先を共有して、

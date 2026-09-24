@@ -19,13 +19,15 @@
 	 */
 	import { invalidateAll } from '$app/navigation';
 	import { ShieldAlert } from '@lucide/svelte';
+	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyAuthSettings, type AuthDisabledRole } from '$lib/banto/authAdmin';
 	import { toastStore } from '$lib/toast.svelte';
 	import { sessionStore } from '$lib/session.svelte';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { errorMessage } from './shared';
-	import { authSettingsStore } from './authSettingsStore.svelte';
+	import { authSettingsStore, reloadAuthSettings } from './authSettingsStore.svelte';
 
 	const authDisabledRoleOptions: { value: AuthDisabledRole; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },
@@ -47,6 +49,42 @@
 		}
 	});
 
+	// Issue #214: drafts differ from the saved AuthSettings. While the value
+	// is not loaded (`null`) there is nothing to compare, so never unsaved.
+	// A successful save re-syncs the drafts to the new value (see
+	// `saveAuthSettings`), so this turns false; a failed save leaves both as
+	// they were, so the unsaved marker stays.
+	const dirty = $derived.by(() => {
+		const value = authSettingsStore.value;
+		return (
+			value !== null &&
+			(disabledDraft !== value.disabled || disabledRoleDraft !== value.disabledRole)
+		);
+	});
+	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applyingAuth });
+	// Owner review on PR #232: without the saved AuthSettings the drafts are
+	// placeholders with nothing to compare against - an edit could never be
+	// detected as unsaved - so they stay disabled until it loads (retry below).
+	const editable = $derived(authSettingsStore.value !== null);
+	let reloading = $state(false);
+
+	async function retryLoad(): Promise<void> {
+		reloading = true;
+		try {
+			await reloadAuthSettings();
+		} finally {
+			reloading = false;
+		}
+	}
+
+	/** Put the drafts back to the saved AuthSettings (the "discard" button, and after a save). */
+	function resetDraftsToSaved(): void {
+		const value = authSettingsStore.value;
+		if (!value) return;
+		disabledDraft = value.disabled;
+		disabledRoleDraft = value.disabledRole;
+	}
+
 	async function saveAuthSettings(): Promise<void> {
 		if (disabledDraft && !window.confirm(m['settings.authDisableConfirm']())) {
 			return;
@@ -57,6 +95,13 @@
 			authSettingsStore.value = await applyAuthSettings(disabledDraft, disabledRoleDraft);
 			sessionStore.authDisabled = authSettingsStore.value?.disabled ?? false;
 			toastStore.push('success', m['settings.authSettingsUpdated']());
+			// Issue #214: the save is done - clear the unsaved state NOW, not
+			// after `invalidateAll()` below. Its `guardCategory` redirect (when
+			// セキュリティ is no longer visible) goes through `beforeNavigate`,
+			// and a still-pending guard would prompt on it. Drafts are synced
+			// here directly instead of waiting for the re-sync effect above.
+			resetDraftsToSaved();
+			applyingAuth = false;
 
 			// Copilot review on PR #198: `settings/+layout.ts`'s visible-category
 			// snapshot (`categories`) is computed once from `sessionStore.authDisabled`
@@ -97,14 +142,24 @@
 			</div>
 
 			<label class="switch-row">
-				<input type="checkbox" role="switch" class="banto-switch" bind:checked={disabledDraft} />
+				<input
+					type="checkbox"
+					role="switch"
+					class="banto-switch"
+					bind:checked={disabledDraft}
+					disabled={!editable}
+				/>
 				{m['settings.authDisableToggle']()}
 			</label>
 
 			<div class="server-fields">
 				<label class="field">
 					{m['settings.startupRole']()}
-					<select class="banto-input" bind:value={disabledRoleDraft} disabled={!disabledDraft}>
+					<select
+						class="banto-input"
+						bind:value={disabledRoleDraft}
+						disabled={!editable || !disabledDraft}
+					>
 						{#each authDisabledRoleOptions as option (option.value)}
 							<option value={option.value}>{option.label}</option>
 						{/each}
@@ -112,17 +167,39 @@
 				</label>
 			</div>
 
-			<button
-				type="button"
-				class="banto-btn banto-btn--primary"
-				onclick={saveAuthSettings}
-				disabled={applyingAuth}
-			>
-				{m['settings.saveAndApply']()}
-			</button>
+			<p class="note">{m['settings.explicitSaveHint']()}</p>
+			<div class="save-row">
+				<button
+					type="button"
+					class="banto-btn banto-btn--primary"
+					onclick={saveAuthSettings}
+					disabled={applyingAuth || !editable}
+				>
+					{m['settings.saveAndApply']()}
+				</button>
+				{#if dirty}
+					<button
+						type="button"
+						class="banto-btn banto-btn--ghost"
+						onclick={resetDraftsToSaved}
+						disabled={applyingAuth}
+					>
+						{m['unsaved.discard']()}
+					</button>
+				{/if}
+				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
+			</div>
 
 			{#if authSettingsStore.error}
-				<p class="error">{authSettingsStore.error}</p>
+				<p class="error">{m['settings.savedValuesUnavailable']()} {authSettingsStore.error}</p>
+				<button
+					type="button"
+					class="banto-btn banto-btn--secondary"
+					onclick={retryLoad}
+					disabled={reloading}
+				>
+					{m['common.reload']()}
+				</button>
 			{/if}
 
 			{#if authSettingsStore.value}

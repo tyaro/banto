@@ -23,6 +23,7 @@
  * same error text without owning the fetch.
  */
 import { getAuthSettings, type AuthSettings } from '$lib/banto/authAdmin';
+import { errorMessage } from './shared';
 
 class AuthSettingsStore {
 	value: AuthSettings | null = $state(null);
@@ -41,3 +42,17 @@ class AuthSettingsStore {
 }
 
 export const authSettingsStore = new AuthSettingsStore();
+
+/**
+ * Load with the error written to `authSettingsStore.error` instead of thrown:
+ * the layout's initial load, and SecuritySection's retry button (owner
+ * review on PR #232 - its drafts stay disabled until this succeeds).
+ */
+export async function reloadAuthSettings(): Promise<void> {
+	authSettingsStore.error = null;
+	try {
+		await authSettingsStore.load();
+	} catch (err) {
+		authSettingsStore.error = errorMessage(err);
+	}
+}
