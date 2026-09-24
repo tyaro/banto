@@ -127,12 +127,19 @@ role from the database.
   `REVALIDATE_INTERVAL`) and ends once it is revoked (Issue #231, owner
   decision 2026-09-24; this was originally a known limitation: "keeps
   receiving notifications until it disconnects"). Notifications stop at most
-  one interval after revocation. The verdict is the request's
-  (`authenticate`: a session re-bound by its own change during the check is
-  kept; when the store cannot answer, the stream is kept and re-checked next
-  interval), except that the re-check does not slide the idle window (an open
-  tab does not keep an idle session alive). Each stream owns its one timer
-  (no spawned task), so a disconnect drops the timer and any check in flight.
+  one interval (plus one check) after revocation. The verdict is the
+  request's (`authenticate`: a session re-bound by its own change during the
+  check is kept; when the store cannot answer, the stream is kept and
+  re-checked next interval). A check is abandoned after `REVALIDATE_TIMEOUT`
+  (5 s, shorter than the interval), which also counts as "could not check"
+  and keeps the stream (the abandoned lookup is dropped and never changes the
+  session later). The next check is due one interval after the previous one
+  FINISHED, so slow checks always leave the delivery its turn (review of
+  #234: counting from the check's start let checks slower than the interval
+  run back to back and starve the notifications). The re-check does not
+  slide the idle window (an open tab does not keep an idle session alive).
+  Each stream owns its one deadline (no spawned task), so a disconnect drops
+  the deadline and any check in flight.
   Closing a stream immediately when the same process learns of a logout or
   revocation (option C) was not added: every path that ends a token
   (logout, revocation by a check, expiry, public-viewer eviction, a change

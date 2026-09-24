@@ -17,21 +17,28 @@
 //! [`REVALIDATE_INTERVAL`] - the keepalive's interval - and ends when the
 //! session is no longer valid (account deleted, role/password changed or
 //! reset, token logged out or expired). Revocation therefore reaches an open
-//! stream within one interval, in any process sharing the account store.
+//! stream within one interval (plus one check), in any process sharing the
+//! account store.
 //!
-//! - One timer per stream, owned by the stream itself (no spawned task):
-//!   when the client disconnects, axum drops the stream, and the timer and
-//!   any re-check in flight are dropped with it.
-//! - A store failure (`Err`) does NOT end the stream (#230: a session that
-//!   cannot be checked is kept); the next tick checks again.
+//! - One deadline per stream, owned by the stream itself (no spawned task,
+//!   no second timer): when the client disconnects, axum drops the stream,
+//!   and the deadline and any re-check in flight are dropped with it.
+//! - A due re-check runs before further events are taken, exactly once; the
+//!   next deadline is set one interval after that check FINISHED. However
+//!   long checks take, events get a whole interval between two checks - the
+//!   checks can never starve the delivery (review of #234).
+//! - A check is abandoned after [`REVALIDATE_TIMEOUT`] (shorter than the
+//!   interval). A timeout counts as "could not check", like a store failure
+//!   (`Err`): neither ends the stream (#230: a session that cannot be
+//!   checked is kept); the next deadline checks again. The abandoned lookup
+//!   future is dropped, and since `authenticate` only changes the session
+//!   after its lookup returns, an abandoned check never changes it later.
 //! - A session re-bound while its check was in flight (its own password
 //!   change) is judged on its current binding, exactly as for a request
 //!   ([`AuthState::authenticate`]'s `settle_stamp_mismatch`).
 //! - Public viewer sessions and `SessionValidation::DisabledNoRevocation`
 //!   never look anything up, so the re-check is an in-memory token check:
 //!   those streams end only when the token itself does.
-//! - At most one check per interval per stream, whether or not events flow;
-//!   a slow check delays the next tick instead of queueing a burst.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -43,10 +50,9 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use futures_util::stream::{BoxStream, StreamExt};
 use serde::Serialize;
 use tokio::sync::broadcast;
-use tokio::time::MissedTickBehavior;
+use tokio::time::Instant;
 
 use crate::auth::{bearer_token, require_auth, unauthorized_response, AuthState};
 
@@ -55,33 +61,67 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Interval of an open stream's session re-check (Issue #231): the
 /// keepalive's, so a revoked session loses its stream within one keepalive
-/// period. Costs one indexed account read per open account stream per
-/// interval (none for public viewer / no-revocation sessions).
+/// period. Measured from the end of the previous check. Costs one indexed
+/// account read per open account stream per interval (none for public
+/// viewer / no-revocation sessions).
 pub const REVALIDATE_INTERVAL: Duration = KEEPALIVE_INTERVAL;
 
-/// The re-check ticks of one stream. Production: [`interval_ticks`]; tests
-/// drive them by hand.
-type Ticks = BoxStream<'static, ()>;
+/// How long one re-check may take before it is abandoned as "could not
+/// check" (the session is kept). Shorter than [`REVALIDATE_INTERVAL`], so a
+/// store that stops answering cannot hold the stream inside one check.
+pub const REVALIDATE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Makes the [`Ticks`] for each newly opened stream.
-type TickSource = Arc<dyn Fn() -> Ticks + Send + Sync>;
+const _: () = assert!(REVALIDATE_TIMEOUT.as_nanos() < REVALIDATE_INTERVAL.as_nanos());
 
-/// Ticks every `period`, the first one `period` after the stream opens (the
-/// open itself was just checked by [`require_auth`]). A tick that could not
-/// be taken on time (a slow re-check) is delayed, not bunched up.
-fn interval_ticks(period: Duration) -> Ticks {
-    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    futures_util::stream::unfold(interval, |mut interval| async move {
-        interval.tick().await;
-        Some(((), interval))
-    })
-    .boxed()
+/// When one stream's re-checks are due.
+enum Schedule {
+    /// Production: due `period` after the stream opened (the open itself
+    /// was just checked by [`require_auth`]), then `period` after the END of
+    /// each check ([`Schedule::rearm`]).
+    Every { period: Duration, next: Instant },
+    /// Tests: due whenever the test sends a tick; ends when it drops the
+    /// sender.
+    #[cfg(test)]
+    Manual(tokio::sync::mpsc::UnboundedReceiver<()>),
 }
+
+impl Schedule {
+    fn every(period: Duration) -> Self {
+        Self::Every {
+            period,
+            next: Instant::now() + period,
+        }
+    }
+
+    /// Resolves when a re-check is due; `false` if the schedule ended.
+    /// Cancel-safe: the deadline lives in `self`, not in this future.
+    async fn due(&mut self) -> bool {
+        match self {
+            Self::Every { next, .. } => {
+                tokio::time::sleep_until(*next).await;
+                true
+            }
+            #[cfg(test)]
+            Self::Manual(ticks) => ticks.recv().await.is_some(),
+        }
+    }
+
+    /// Set the next deadline, after a check has finished.
+    fn rearm(&mut self) {
+        match self {
+            Self::Every { period, next } => *next = Instant::now() + *period,
+            #[cfg(test)]
+            Self::Manual(_) => {}
+        }
+    }
+}
+
+/// Makes the [`Schedule`] for each newly opened stream.
+type ScheduleSource = Arc<dyn Fn() -> Schedule + Send + Sync>;
 
 /// What the stream's loop does next.
 enum Step {
-    /// A re-check is due (`false`: the tick source ended).
+    /// A re-check is due (`false`: the schedule ended).
     Recheck(bool),
     Deliver(Result<ServerEvent, broadcast::error::RecvError>),
 }
@@ -127,7 +167,8 @@ pub enum ServerEvent {
 #[derive(Clone)]
 struct Revalidation {
     auth: AuthState,
-    ticks: TickSource,
+    schedule: ScheduleSource,
+    timeout: Duration,
 }
 
 /// The event stream of one connection: broadcast events, ended when the
@@ -136,27 +177,32 @@ fn event_stream(
     auth: AuthState,
     token: String,
     mut rx: broadcast::Receiver<ServerEvent>,
-    mut ticks: Ticks,
+    mut schedule: Schedule,
+    timeout: Duration,
 ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
         loop {
             // Both branches are cancel-safe (an event not taken stays in the
-            // receiver; an interval tick not taken stays due). `biased`: a
-            // due re-check runs before further events are delivered.
+            // receiver; the deadline stays in `schedule`). `biased`: a due
+            // re-check runs before further events are taken - once, since
+            // `rearm` then puts the next one a whole interval away.
             let step = tokio::select! {
                 biased;
-                tick = ticks.next() => Step::Recheck(tick.is_some()),
+                due = schedule.due() => Step::Recheck(due),
                 received = rx.recv() => Step::Deliver(received),
             };
             match step {
-                Step::Recheck(true) => match auth.revalidate(&token).await {
-                    Ok(Some(_)) => {}
-                    // Revoked, logged out or expired: end the stream.
-                    Ok(None) => break,
-                    // The store could not answer: keep the stream (#230) and
-                    // check again on the next tick.
-                    Err(_) => {}
-                },
+                Step::Recheck(true) => {
+                    let verdict = tokio::time::timeout(timeout, auth.revalidate(&token)).await;
+                    schedule.rearm();
+                    // Revoked, logged out or expired: end the stream. Valid,
+                    // or the store could not answer (`Err`) or not in time
+                    // (the lookup is dropped): keep the stream (#230) and
+                    // check again next time.
+                    if let Ok(Ok(None)) = verdict {
+                        break;
+                    }
+                }
                 // Never keep streaming without the re-check.
                 Step::Recheck(false) => break,
                 Step::Deliver(Ok(event)) => {
@@ -187,7 +233,8 @@ async fn sse_handler(
         revalidation.auth,
         token,
         tx.subscribe(),
-        (revalidation.ticks)(),
+        (revalidation.schedule)(),
+        revalidation.timeout,
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL))
@@ -200,20 +247,27 @@ async fn sse_handler(
 /// session every [`REVALIDATE_INTERVAL`] and ends once it is revoked
 /// (Issue #231, see the module doc).
 pub fn sse_route(auth: AuthState, tx: broadcast::Sender<ServerEvent>) -> Router {
-    sse_route_with_ticks(auth, tx, Arc::new(|| interval_ticks(REVALIDATE_INTERVAL)))
+    sse_route_with(
+        auth,
+        tx,
+        Arc::new(|| Schedule::every(REVALIDATE_INTERVAL)),
+        REVALIDATE_TIMEOUT,
+    )
 }
 
-fn sse_route_with_ticks(
+fn sse_route_with(
     auth: AuthState,
     tx: broadcast::Sender<ServerEvent>,
-    ticks: TickSource,
+    schedule: ScheduleSource,
+    timeout: Duration,
 ) -> Router {
     Router::new()
         .route("/api/events", get(sse_handler))
         .layer(Extension(tx))
         .layer(Extension(Revalidation {
             auth: auth.clone(),
-            ticks,
+            schedule,
+            timeout,
         }))
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
@@ -364,13 +418,16 @@ mod tests {
 
     /// A minimal account store (like `auth::tests::FakeStore`): the verifier
     /// accepts password `"pw"`, the lookup reports the stored account, fails
-    /// on demand, and can be held in flight once (`gate`).
+    /// on demand, can be held in flight once (`gate`), can take `delay`
+    /// per lookup, or never answer (`hanging`).
     #[derive(Clone, Default)]
     struct Store {
         accounts: Arc<Mutex<HashMap<String, SessionAccount>>>,
         failing: Arc<AtomicBool>,
         lookups: Arc<AtomicUsize>,
         gate: Arc<Mutex<Option<Gate>>>,
+        delay: Arc<Mutex<Option<Duration>>>,
+        hanging: Arc<AtomicBool>,
     }
 
     impl Store {
@@ -430,6 +487,13 @@ mod tests {
                             let _ = entered.send(());
                             let _ = release.await;
                         }
+                        if store.hanging.load(Ordering::SeqCst) {
+                            std::future::pending::<()>().await;
+                        }
+                        let delay = *store.delay.lock().unwrap();
+                        if let Some(delay) = delay {
+                            tokio::time::sleep(delay).await;
+                        }
                         if store.failing.load(Ordering::SeqCst) {
                             Err(BantoError::Other("store unavailable".to_string()))
                         } else {
@@ -454,32 +518,34 @@ mod tests {
         }
     }
 
-    /// A tick source the test drives by hand (it serves one stream).
-    fn manual_ticks() -> (TickSource, mpsc::UnboundedSender<()>) {
+    /// A schedule the test drives by hand (it serves one stream).
+    fn manual_ticks() -> (ScheduleSource, mpsc::UnboundedSender<()>) {
         let (tx, rx) = mpsc::unbounded_channel();
         let rx = Mutex::new(Some(rx));
-        let source: TickSource = Arc::new(move || {
-            let rx = rx
-                .lock()
-                .unwrap()
-                .take()
-                .expect("a manual tick source serves one stream");
-            futures_util::stream::unfold(
-                rx,
-                |mut rx| async move { rx.recv().await.map(|()| ((), rx)) },
+        let source: ScheduleSource = Arc::new(move || {
+            Schedule::Manual(
+                rx.lock()
+                    .unwrap()
+                    .take()
+                    .expect("a manual schedule serves one stream"),
             )
-            .boxed()
         });
         (source, tx)
+    }
+
+    /// The production schedule, with a short period.
+    fn every(period: Duration) -> ScheduleSource {
+        Arc::new(move || Schedule::every(period))
     }
 
     async fn open_with(
         auth: &AuthState,
         tx: &broadcast::Sender<ServerEvent>,
         token: &str,
-        source: TickSource,
+        source: ScheduleSource,
+        timeout: Duration,
     ) -> Body {
-        let response = sse_route_with_ticks(auth.clone(), tx.clone(), source)
+        let response = sse_route_with(auth.clone(), tx.clone(), source, timeout)
             .oneshot(
                 HttpRequest::get("/api/events")
                     .header("Authorization", format!("Bearer {token}"))
@@ -498,7 +564,10 @@ mod tests {
         token: &str,
     ) -> (Body, mpsc::UnboundedSender<()>) {
         let (source, ticks) = manual_ticks();
-        (open_with(auth, tx, token, source).await, ticks)
+        (
+            open_with(auth, tx, token, source, REVALIDATE_TIMEOUT).await,
+            ticks,
+        )
     }
 
     /// The next frame's text, or `None` once the stream has ended. The
@@ -732,8 +801,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_interval_ticks_end_a_revoked_stream() {
-        // The production tick source, with a short period: no manual ticks.
+    async fn the_production_schedule_ends_a_revoked_stream() {
+        // The production schedule, with a short period: no manual ticks.
         let store = Store::default();
         store.put("alice", "admin", 1, 0);
         let auth = store.auth();
@@ -743,12 +812,153 @@ mod tests {
             &auth,
             &tx,
             &token,
-            Arc::new(|| interval_ticks(Duration::from_millis(20))),
+            every(Duration::from_millis(20)),
+            REVALIDATE_TIMEOUT,
         )
         .await;
 
         store.remove("alice");
         assert_eq!(next_frame(&mut body).await, None);
+        assert!(!auth.verify(&token));
+    }
+
+    // ---- Review of #234: slow checks must not starve the delivery ----
+
+    const PERIOD: Duration = Duration::from_millis(30);
+    /// Longer than [`PERIOD`]: every check overruns its interval.
+    const SLOW_LOOKUP: Duration = Duration::from_millis(60);
+
+    /// Keep sending and receiving events until at least `checks` lookups
+    /// have run in total: the delivery keeps pace with checks that overrun
+    /// the interval. Each event must arrive (a starved stream fails in
+    /// `next_frame`'s timeout).
+    async fn keeps_delivering_through(
+        body: &mut Body,
+        tx: &broadcast::Sender<ServerEvent>,
+        store: &Store,
+        checks: usize,
+    ) {
+        let mut sent = 0usize;
+        while store.lookups() < checks {
+            sent += 1;
+            let resource = format!("event-{sent}");
+            tx.send(changed(&resource)).unwrap();
+            let text = next_frame(body)
+                .await
+                .expect("the stream must stay open while the checks overrun");
+            assert!(text.contains(&resource), "{text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn checks_slower_than_the_interval_do_not_starve_the_delivery() {
+        // Every lookup succeeds, but only after SLOW_LOOKUP > PERIOD (the
+        // timeout is generous here, so the checks really complete late).
+        let store = Store::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let token = auth.login("alice", "pw").await.unwrap();
+        let (tx, _rx) = broadcast::channel(16);
+        let mut body = open_with(&auth, &tx, &token, every(PERIOD), Duration::from_secs(1)).await;
+        *store.delay.lock().unwrap() = Some(SLOW_LOOKUP);
+
+        keeps_delivering_through(&mut body, &tx, &store, 4).await;
+        assert!(auth.verify(&token));
+
+        // The checks are still effective: a revocation ends the stream.
+        store.remove("alice");
+        assert_eq!(next_frame(&mut body).await, None);
+    }
+
+    #[tokio::test]
+    async fn slow_failing_checks_do_not_starve_the_delivery_and_revocation_applies_after_recovery()
+    {
+        let store = Store::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let token = auth.login("alice", "pw").await.unwrap();
+        let (tx, _rx) = broadcast::channel(16);
+        let mut body = open_with(&auth, &tx, &token, every(PERIOD), Duration::from_secs(1)).await;
+        *store.delay.lock().unwrap() = Some(SLOW_LOOKUP);
+        store.failing.store(true, Ordering::SeqCst);
+
+        // Revoked during the outage: the failing checks cannot see it.
+        store.remove("alice");
+        keeps_delivering_through(&mut body, &tx, &store, 4).await;
+        assert!(auth.verify(&token), "a failed check keeps the session");
+
+        // Recovered: the next check ends the stream.
+        store.failing.store(false, Ordering::SeqCst);
+        assert_eq!(next_frame(&mut body).await, None);
+        assert!(!auth.verify(&token));
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_never_answers_times_out_and_the_delivery_goes_on() {
+        let store = Store::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let token = auth.login("alice", "pw").await.unwrap();
+        let (tx, _rx) = broadcast::channel(16);
+        let mut body =
+            open_with(&auth, &tx, &token, every(PERIOD), Duration::from_millis(20)).await;
+        store.hanging.store(true, Ordering::SeqCst);
+
+        store.remove("alice");
+        keeps_delivering_through(&mut body, &tx, &store, 4).await;
+        assert!(auth.verify(&token), "a timed-out check keeps the session");
+
+        // Answering again: the next check ends the revoked stream.
+        store.hanging.store(false, Ordering::SeqCst);
+        assert_eq!(next_frame(&mut body).await, None);
+        assert!(!auth.verify(&token));
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_lookup_is_dropped_and_cannot_change_the_session_later() {
+        let store = Store::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let token = auth.login("alice", "pw").await.unwrap();
+        let (tx, _rx) = broadcast::channel(16);
+        // Manual ticks (checks run only when the test says) with a short
+        // timeout, so the assertions below cannot race a second check.
+        let (source, ticks) = manual_ticks();
+        let mut body = open_with(&auth, &tx, &token, source, Duration::from_millis(20)).await;
+
+        // The check's lookup is held; meanwhile the account changes, so a
+        // late answer from THAT lookup would revoke the session.
+        let before = store.lookups();
+        let (entered, mut release) = store.hold_next_lookup();
+        ticks.send(()).unwrap();
+        let reading = tokio::spawn(async move {
+            let frame = next_frame(&mut body).await;
+            (frame, body)
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered)
+            .await
+            .expect("timed out waiting for the check's lookup")
+            .expect("the check's lookup started");
+        store.put("alice", "admin", 1, 1);
+        // The timeout dropped the held lookup (its release receiver is gone)
+        // while the stream stays open...
+        tokio::time::timeout(Duration::from_secs(5), release.closed())
+            .await
+            .expect("the timed-out lookup must be dropped");
+        assert!(release.send(()).is_err());
+        tx.send(changed("after-timeout")).unwrap();
+        let (frame, mut body) = reading.await.unwrap();
+        assert!(frame.unwrap().contains("after-timeout"));
+        // ...and nothing it could have answered was applied (the token is
+        // untouched until a check that completes decides).
+        assert_eq!(
+            store.lookups(),
+            before + 1,
+            "only the held lookup has run so far"
+        );
+        assert!(auth.verify(&token));
+        // The next, completing check sees the change and ends the stream.
+        recheck_closes(&mut body, &ticks, &tx).await;
         assert!(!auth.verify(&token));
     }
 }
