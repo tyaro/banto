@@ -22,6 +22,58 @@
 
 ## [Unreleased]
 
+- feat(forms/settings): 保存型の画面で未保存の変更を示し、保存せずに離れようとしたら
+  確認する（#214、P2）。対象は商品の新規作成・詳細、設定の「サーバ・接続」
+  「セキュリティ」と「アカウント」のパスワード変更。未保存の間は保存ボタンの横に
+  「未保存の変更があります」を出し、商品フォームには「一覧へ戻る」（＝取り消し）、
+  設定には「変更を取り消す」を足した。「サーバ・接続」「セキュリティ」には、
+  「保存して適用」を押すまで反映されない（外観・言語はすぐ反映される）ことを短く書いた。
+  確認は既存の削除確認と同じ `window.confirm`。再読み込み・タブを閉じるは
+  ブラウザ標準の確認、Tauri のウィンドウを閉じるときも確認する（未保存の間だけ
+  close-requested を購読。capability に `core:window:allow-destroy` を追加）。
+  変更なし・値を元に戻した・保存に成功した・取り消した後は確認しない。保存中の
+  離脱は確認し、離脱後に保存が終わっても元の画面へ引き戻さない。ログイン画面への
+  移動（ログアウト・セッション失効）は確認しない。ドラフトの復元はしない（保存先・
+  古いドラフト・複数タブの扱いが要るため、確認のみ）。
+
+  **`@banto/forms` の追加 API**（破壊的変更なし）: `guardUnsavedChanges(options)`
+  （コンポーネント初期化中に呼ぶ）、`hasUnsavedChanges()`（リアクティブ。どれか
+  1 つでも未保存なら `true`）、`UnsavedChangesNotice`（未保存マーカー）、
+  `FormStore.markClean()`（今の値を「保存済み」にする）。判定表は純関数
+  `decideLeave` / `runLeaveCheck` で公開。パッケージは SvelteKit に依存しないため、
+  `beforeNavigate` は呼び出し側が渡す。同じ画面に複数のガードがあっても、確認は
+  1 回だけ出る。
+
+  **派生アプリでの使い方**（タグを上げたあと、保存型の画面ごとに）:
+
+  ```ts
+  import { beforeNavigate, goto } from '$app/navigation';
+  import { base } from '$app/paths';
+  import { guardUnsavedChanges } from '@banto/forms';
+
+  const guard = guardUnsavedChanges({
+  	isDirty: () => store.isDirty, // 自前の下書きなら「下書き !== 保存済みの値」
+  	isSaving: () => saving, // 保存中も離脱を確認する
+  	beforeNavigate,
+  	message: () => '保存していない変更があります。変更を破棄してこの画面から移動しますか？',
+  	isForced: (nav) => nav.to?.url.pathname === `${base}/login` // ログアウト等は確認しない
+  });
+
+  // 保存に成功したら、移動の前に「未保存でない」状態にする（保存中フラグも先に下ろす。
+  // 立ったままだと、この goto にも確認が出る）
+  store.markClean(); // FormStore の場合。自前の下書きは保存済みの値に揃える
+  if (!guard.disposed) await goto(`${base}/list`); // 離脱済みなら引き戻さない
+  ```
+
+  マーカーは `<UnsavedChangesNotice pending={guard.pending} label="未保存の変更があります" />`。
+  admin-template では `$lib/unsavedChanges.ts` が `beforeNavigate`・文言・
+  `isForced` を束ねた薄い包みなので、これを写して使うのが早い。Tauri の
+  ウィンドウ終了も確認するなら、`$lib/banto/windowCloseGuard.ts` と
+  `(app)/+layout.svelte` の `$effect`（`hasUnsavedChanges()` が `true` の間だけ
+  `guardWindowClose` を登録）を写し、capability に `core:window:allow-destroy`
+  を足す（close-requested を JS で購読すると、閉じる処理を JS の `destroy()` が
+  行うため。足さないと未保存の間はウィンドウが閉じられなくなる）。
+
 - fix(auth): ユーザーの削除・降格・パスワード変更・パスワードリセットで既存の
   セッションが失効しなかった問題を修正（#204、P1）。`users.auth_epoch`（認証の世代、
   migration `0007`）を追加し、セッションを確立時の「行 id + 世代」に結び付けて、

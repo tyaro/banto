@@ -3,7 +3,9 @@
 	import { onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onInvalidate } from '@banto/admin-core';
+	import { hasUnsavedChanges } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
+	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -12,6 +14,17 @@
 	import { navBadges, pathOwns } from '$lib/navBadges.svelte';
 
 	let { children } = $props();
+
+	// Issue #214: while any page's unsaved-changes guard is pending, also
+	// ask before the desktop window closes. Watched only while something is
+	// unsaved - see windowCloseGuard.ts's doc comment for why (no-op outside
+	// Tauri). `$derived` so the effect re-runs only when the boolean flips,
+	// not on every keystroke that re-evaluates a form's `isDirty`.
+	const unsaved = $derived(hasUnsavedChanges());
+	$effect(() => {
+		if (!unsaved) return;
+		return guardWindowClose(hasUnsavedChanges, () => m['unsaved.confirmClose']());
+	});
 
 	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the

@@ -277,6 +277,18 @@
 	margin: 0.75rem 0;
 }
 
+/* Save button + "discard" + unsaved marker (issue #214). */
+.settings-page .save-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.settings-page .note + .save-row {
+	margin-top: 0.5rem;
+}
+
 .settings-page form {
 	display: flex;
 	flex-direction: column;

@@ -12,9 +12,11 @@
 	 * この値が要るため）- エラー表示は下の `systemInfoStore.error` を直接読む。
 	 */
 	import { Server, Wifi } from '@lucide/svelte';
+	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
@@ -48,6 +50,23 @@
 			}
 		})();
 	});
+
+	// Issue #214: the drafts above differ from the last loaded/applied
+	// status. `null` status (not loaded yet / load failed) has nothing to
+	// compare against, so it never counts as unsaved.
+	const dirty = $derived(
+		serverStatus !== null &&
+			(enabledDraft !== serverStatus.enabled ||
+				bindDraft !== serverStatus.bind ||
+				portDraft !== serverStatus.port ||
+				viewerPublicDraft !== serverStatus.viewerPublic)
+	);
+	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applying });
+
+	/** The "discard" button: put the drafts back to the applied status. */
+	function resetDraftsToSaved(): void {
+		if (serverStatus) applyStatusToDrafts(serverStatus);
+	}
 
 	async function saveAndApply(): Promise<void> {
 		applying = true;
@@ -141,14 +160,28 @@
 				</label>
 			</div>
 
-			<button
-				type="button"
-				class="banto-btn banto-btn--primary"
-				onclick={saveAndApply}
-				disabled={applying}
-			>
-				{m['settings.saveAndApply']()}
-			</button>
+			<p class="note">{m['settings.explicitSaveHint']()}</p>
+			<div class="save-row">
+				<button
+					type="button"
+					class="banto-btn banto-btn--primary"
+					onclick={saveAndApply}
+					disabled={applying}
+				>
+					{m['settings.saveAndApply']()}
+				</button>
+				{#if dirty}
+					<button
+						type="button"
+						class="banto-btn banto-btn--ghost"
+						onclick={resetDraftsToSaved}
+						disabled={applying}
+					>
+						{m['unsaved.discard']()}
+					</button>
+				{/if}
+				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
+			</div>
 
 			{#if serverError}
 				<p class="error">{serverError}</p>

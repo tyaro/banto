@@ -19,11 +19,13 @@
 	 */
 	import { invalidateAll } from '$app/navigation';
 	import { ShieldAlert } from '@lucide/svelte';
+	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyAuthSettings, type AuthDisabledRole } from '$lib/banto/authAdmin';
 	import { toastStore } from '$lib/toast.svelte';
 	import { sessionStore } from '$lib/session.svelte';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { errorMessage } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 
@@ -47,6 +49,28 @@
 		}
 	});
 
+	// Issue #214: drafts differ from the saved AuthSettings. While the value
+	// is not loaded (`null`) there is nothing to compare, so never unsaved.
+	// A successful save re-syncs the drafts to the new value (see
+	// `saveAuthSettings`), so this turns false; a failed save leaves both as
+	// they were, so the unsaved marker stays.
+	const dirty = $derived.by(() => {
+		const value = authSettingsStore.value;
+		return (
+			value !== null &&
+			(disabledDraft !== value.disabled || disabledRoleDraft !== value.disabledRole)
+		);
+	});
+	const guard = guardUnsavedChanges({ isDirty: () => dirty, isSaving: () => applyingAuth });
+
+	/** Put the drafts back to the saved AuthSettings (the "discard" button, and after a save). */
+	function resetDraftsToSaved(): void {
+		const value = authSettingsStore.value;
+		if (!value) return;
+		disabledDraft = value.disabled;
+		disabledRoleDraft = value.disabledRole;
+	}
+
 	async function saveAuthSettings(): Promise<void> {
 		if (disabledDraft && !window.confirm(m['settings.authDisableConfirm']())) {
 			return;
@@ -57,6 +81,13 @@
 			authSettingsStore.value = await applyAuthSettings(disabledDraft, disabledRoleDraft);
 			sessionStore.authDisabled = authSettingsStore.value?.disabled ?? false;
 			toastStore.push('success', m['settings.authSettingsUpdated']());
+			// Issue #214: the save is done - clear the unsaved state NOW, not
+			// after `invalidateAll()` below. Its `guardCategory` redirect (when
+			// セキュリティ is no longer visible) goes through `beforeNavigate`,
+			// and a still-pending guard would prompt on it. Drafts are synced
+			// here directly instead of waiting for the re-sync effect above.
+			resetDraftsToSaved();
+			applyingAuth = false;
 
 			// Copilot review on PR #198: `settings/+layout.ts`'s visible-category
 			// snapshot (`categories`) is computed once from `sessionStore.authDisabled`
@@ -112,14 +143,28 @@
 				</label>
 			</div>
 
-			<button
-				type="button"
-				class="banto-btn banto-btn--primary"
-				onclick={saveAuthSettings}
-				disabled={applyingAuth}
-			>
-				{m['settings.saveAndApply']()}
-			</button>
+			<p class="note">{m['settings.explicitSaveHint']()}</p>
+			<div class="save-row">
+				<button
+					type="button"
+					class="banto-btn banto-btn--primary"
+					onclick={saveAuthSettings}
+					disabled={applyingAuth}
+				>
+					{m['settings.saveAndApply']()}
+				</button>
+				{#if dirty}
+					<button
+						type="button"
+						class="banto-btn banto-btn--ghost"
+						onclick={resetDraftsToSaved}
+						disabled={applyingAuth}
+					>
+						{m['unsaved.discard']()}
+					</button>
+				{/if}
+				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
+			</div>
 
 			{#if authSettingsStore.error}
 				<p class="error">{authSettingsStore.error}</p>

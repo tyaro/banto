@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
-	import { BantoForm, createFormStore } from '@banto/forms';
+	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
@@ -10,6 +10,7 @@
 	import { formValidationMessages } from '$lib/banto/i18n';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
+	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
 	import { attachmentsClient } from '$lib/banto/attachmentsClient';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
@@ -48,6 +49,14 @@
 	let store = $state(createFormStore(schema, undefined, formValidationMessages()));
 	let storeReady = $state(false);
 
+	// Issue #214: ask before leaving with unsaved edits (or mid-save). `store`
+	// is re-created by `loadForm()`, so read it at call time. The attachments
+	// panel below saves immediately and has nothing to guard.
+	const guard = guardUnsavedChanges({
+		isDirty: () => storeReady && store.isDirty,
+		isSaving: () => formResource?.saving ?? false
+	});
+
 	// Shared by the initial mount effect and the "reload" action below (Fix:
 	// a transient/storage error used to be rendered as the generic
 	// resource-not-found copy, indistinguishable from a genuinely missing
@@ -82,7 +91,11 @@
 		if (!formResource || !canWrite) return;
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			goto(`${base}/items`);
+			// Saved: nothing is unsaved any more, so the move back to the list
+			// must not prompt; and don't drag back a user who already left
+			// while the save was in flight.
+			store.markClean();
+			if (!guard.disposed) goto(`${base}/items`);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -92,7 +105,10 @@
 		if (!formResource || !canWrite) return;
 		if (!window.confirm(m['items.deleteConfirm']())) return;
 		const removed = await formResource.remove();
-		if (removed) goto(`${base}/items`);
+		if (!removed) return;
+		// The record is gone: unsaved edits to it are moot, don't prompt.
+		store.markClean();
+		if (!guard.disposed) goto(`${base}/items`);
 	}
 </script>
 
@@ -138,11 +154,14 @@
 				submitting={(formResource?.saving ?? false) || !canWrite}
 				submitLabel={m['common.save']()}
 			>
+				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 				{#if canWrite}
 					<button type="button" class="banto-btn banto-btn--danger" onclick={handleDelete}>
 						{m['common.delete']()}
 					</button>
 				{/if}
+				<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
+				<a class="banto-btn banto-btn--ghost" href={`${base}/items`}>{m['common.backToList']()}</a>
 			</BantoForm>
 		{/if}
 	</div>
