@@ -25,7 +25,9 @@ banto-core = { workspace = true }
 # below both).
 banto-storage = { workspace = true, features = ["sqlite"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros"] }
-tokio = { workspace = true, features = ["fs"] }
+# `io-util`: `AsyncWriteExt::write_all` on a `create_new` file (Issue #208 -
+# bodies are never written over an existing file).
+tokio = { workspace = true, features = ["fs", "io-util"] }
 serde = { workspace = true }
 # Thumbnail generation (spec §3.4): an explicit, documented exception to the
 # workspace's "do not add dependencies lightly" default - image thumbnails
@@ -42,5 +44,6 @@ image = { version = "0.25", default-features = false, features = [
 sha2 = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+# `rt-multi-thread`: the concurrent-import test runs imports in parallel.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 tempfile = { workspace = true }

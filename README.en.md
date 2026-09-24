@@ -71,6 +71,9 @@ the owner's behalf.
   runnable on PostgreSQL too (`banto-storage`'s `Db`/`Dialect` dialect
   abstraction plus per-dialect migrations); point `banto-serve`'s `BANTO_DB`
   env var at a `postgres://` URL to use it (default is local SQLite).
+  On PostgreSQL, `BANTO_ATTACHMENTS_DIR` (where attachment files go, one
+  subdirectory per database) is required - `banto-serve` refuses to start
+  without it (#208).
   Backup/restore is SQLite-only (PostgreSQL returns an explicit error).
 - **PostgreSQL backup**: the built-in backup/restore (Settings page backup
   section) is SQLite-only and returns an explicit error on PostgreSQL. Back
