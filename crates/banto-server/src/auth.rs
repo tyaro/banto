@@ -373,6 +373,17 @@ enum StampedLogin {
     Unavailable,
 }
 
+/// Whether a token lookup counts as use of the session (Issue #231): a
+/// request does ([`AuthState::authenticate`]), the server's own periodic
+/// re-check of an open event stream does not ([`AuthState::revalidate`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdleWindow {
+    /// Slide the idle window forward (spec §11.2).
+    Slide,
+    /// Leave `last_used` as it is.
+    Keep,
+}
+
 /// One stored session token: the identity it authenticates plus the two
 /// timestamps [`TokenPolicy`] is evaluated against. Times are measured on
 /// [`Clock`]'s monotonic scale (a `Duration` since the state was created).
@@ -951,7 +962,31 @@ impl AuthState {
         &self,
         token: &str,
     ) -> Result<Option<AuthenticatedSession>, BantoError> {
-        let Some(session) = self.session_for(token) else {
+        self.authenticate_with(token, IdleWindow::Slide).await
+    }
+
+    /// [`AuthState::authenticate`] for a check the client did not ask for
+    /// (Issue #231: the periodic re-check of an open `/api/events` stream).
+    /// Same verdicts - including the in-flight re-binding rule of
+    /// [`AuthState::settle_stamp_mismatch`] and "a store failure is `Err`,
+    /// the token is kept" - but it does NOT slide the token's idle window:
+    /// an open tab's event stream must not keep an otherwise idle session
+    /// alive (spec §11.2's `idle_ttl` would never lapse while a browser tab
+    /// stays open). A token that lapsed meanwhile is reported (and evicted)
+    /// as `Ok(None)`, like any other invalid token.
+    pub(crate) async fn revalidate(
+        &self,
+        token: &str,
+    ) -> Result<Option<AuthenticatedSession>, BantoError> {
+        self.authenticate_with(token, IdleWindow::Keep).await
+    }
+
+    async fn authenticate_with(
+        &self,
+        token: &str,
+        idle: IdleWindow,
+    ) -> Result<Option<AuthenticatedSession>, BantoError> {
+        let Some(session) = self.session_for_with(token, idle) else {
             return Ok(None);
         };
         let Some(lookup) = self.session_lookup() else {
@@ -1094,6 +1129,12 @@ impl AuthState {
     /// Which [`TokenPolicy`] applies is decided per-token by its own
     /// `remembered` flag (spec M11), not by a single state-wide policy.
     pub(crate) fn session_for(&self, token: &str) -> Option<AuthenticatedSession> {
+        self.session_for_with(token, IdleWindow::Slide)
+    }
+
+    /// [`AuthState::session_for`], sliding the idle window only for
+    /// [`IdleWindow::Slide`] (expiry is enforced either way).
+    fn session_for_with(&self, token: &str, idle: IdleWindow) -> Option<AuthenticatedSession> {
         let now = self.inner.clock.now();
         let token_policy = self.inner.token_policy;
         let remembered_policy = self.inner.remembered_policy;
@@ -1116,7 +1157,9 @@ impl AuthState {
             let record = tokens
                 .get_mut(token)
                 .expect("token was just confirmed present");
-            record.last_used = now;
+            if idle == IdleWindow::Slide {
+                record.last_used = now;
+            }
             Some(AuthenticatedSession {
                 identity: record.identity.clone(),
                 public_viewer: record.public_viewer,
@@ -1269,11 +1312,11 @@ impl<S: Send + Sync> FromRequestParts<S> for MaybePeerAddr {
     }
 }
 
-fn unauthorized_response() -> Response {
+pub(crate) fn unauthorized_response() -> Response {
     (StatusCode::UNAUTHORIZED, Json(ErrorBody::Unauthorized)).into_response()
 }
 
-fn bearer_token(req: &Request) -> Option<&str> {
+pub(crate) fn bearer_token(req: &Request) -> Option<&str> {
     req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -2343,6 +2386,39 @@ mod tests {
         assert!(other_check.await.unwrap().unwrap().is_none());
         assert!(!auth.verify(&other), "the stale session is revoked");
         assert!(is_live(&auth, &changer).await);
+    }
+
+    #[tokio::test]
+    async fn revalidate_judges_like_authenticate_but_does_not_slide_the_idle_window() {
+        // Issue #231: the SSE stream's periodic re-check must not keep an
+        // idle session alive (default idle_ttl = 1h, absolute = 8h).
+        let store = FakeStore::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let revalidated = login_token(&auth, "alice", false).await;
+        let used = login_token(&auth, "alice", false).await;
+
+        auth.advance(Duration::from_secs(50 * 60));
+        assert!(auth.revalidate(&revalidated).await.unwrap().is_some());
+        assert!(is_live(&auth, &used).await, "a request slides the window");
+
+        auth.advance(Duration::from_secs(20 * 60));
+        assert!(
+            auth.revalidate(&revalidated).await.unwrap().is_none(),
+            "70 min since the last request: idle-expired despite the re-check"
+        );
+        assert!(!auth.verify(&revalidated), "and evicted");
+        assert!(auth.revalidate(&used).await.unwrap().is_some());
+
+        // Same verdicts as authenticate otherwise: a store failure keeps the
+        // token, an epoch change revokes it.
+        store.failing.store(true, Ordering::SeqCst);
+        assert!(auth.revalidate(&used).await.is_err());
+        store.failing.store(false, Ordering::SeqCst);
+        assert!(auth.revalidate(&used).await.unwrap().is_some());
+        store.put("alice", "admin", 1, 1);
+        assert!(auth.revalidate(&used).await.unwrap().is_none());
+        assert!(!auth.verify(&used));
     }
 
     #[tokio::test]
