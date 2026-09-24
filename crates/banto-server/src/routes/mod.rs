@@ -46,7 +46,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::str::FromStr;
 
-use crate::{require_auth, ApiError, AuthState, Identity};
+use crate::{
+    require_auth, ApiError, AuthState, AuthenticatedSession, Identity, SessionAccount, SessionStamp,
+};
 
 mod audit;
 mod auth;
@@ -56,7 +58,8 @@ mod ui_settings;
 mod users;
 
 pub use audit::{
-    audit_log_router, audit_logout_middleware, audited_credential_verifier, LogoutAuditState,
+    audit_log_router, audit_logout_middleware, audited_credential_verifier, user_auth_state,
+    user_session_lookup, LogoutAuditState,
 };
 pub use auth::{extra_auth_router, AuthStatusExtras};
 pub use backups::backups_router;
@@ -151,12 +154,31 @@ fn forbidden_response() -> Response {
 /// missing-token case above is not a meaningful RBAC decision to audit (it
 /// means the router itself is misconfigured, not that a real user got
 /// rejected).
+///
+/// Issue #204: the role comes from the [`AuthenticatedSession`] that
+/// `require_auth` validated for THIS request (the account's current role,
+/// re-read from the account store when a session lookup is installed). If
+/// that is missing, the token is validated here the same way rather than
+/// trusting the identity cached on it at login.
 pub async fn require_role_at_least(
     State(guard): State<RoleGuard>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let identity = bearer_token(req.headers()).and_then(|token| guard.auth.identity_for(token));
+    let validated = req.extensions().get::<AuthenticatedSession>().cloned();
+    let session = match validated {
+        Some(session) => Some(session),
+        // Owned token: a borrow of `req` held across the `.await` would make
+        // this middleware's future `!Send`.
+        None => match bearer_token(req.headers()).map(str::to_owned) {
+            Some(token) => match guard.auth.authenticate(&token).await {
+                Ok(session) => session,
+                Err(err) => return ApiError(err).into_response(),
+            },
+            None => None,
+        },
+    };
+    let identity = session.map(|session| session.identity);
     let role = identity
         .as_ref()
         .and_then(|identity| Role::from_str(&identity.role).ok());

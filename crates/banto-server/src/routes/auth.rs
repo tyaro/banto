@@ -147,12 +147,12 @@ async fn auth_setup_handler(
         .setup_first_user(&body.username, &body.password, &body.display_name)
         .await
     {
-        Ok(identity) => {
-            let identity = Identity {
-                id: identity.username,
-                name: identity.display_name,
-                role: identity.role.to_string(),
-            };
+        Ok(user) => {
+            // Issue #204: bound to the new account's stamp, so the session
+            // is accepted by a lookup-enabled `AuthState` (and ends like
+            // any other once the account changes).
+            let account = super::audit::session_account(&user);
+            let identity = account.identity.clone();
             state
                 .audit
                 .record(AuditEntry {
@@ -166,7 +166,7 @@ async fn auth_setup_handler(
                     result: "ok",
                 })
                 .await;
-            let token = state.auth.issue_token(identity);
+            let token = state.auth.issue_account_token(account, false);
             Ok(Json(SetupResponse {
                 success: true,
                 error: None,
@@ -201,13 +201,24 @@ struct ChangePasswordResponse {
 /// (not `require_auth` middleware) since it also needs the token's bound
 /// `Identity` to know *which* account to update - `require_auth` only
 /// proves the token is valid, it does not thread the identity through.
+///
+/// Issue #204: the token is validated with [`AuthState::authenticate`] (a
+/// deleted/re-keyed account's session is `401`, not a password change).
+/// The change advances the account's epoch, ending every session of it -
+/// other devices, the other transport's session, "Remember me" tokens - and
+/// then re-binds only THIS token to the new epoch
+/// ([`AuthState::rotate_session_epoch`]): the caller just proved the current
+/// password, so it keeps working, while anything that might have been
+/// obtained with the old password does not.
 async fn auth_change_password_handler(
     State(state): State<UsersAuthState>,
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Json<ChangePasswordResponse>, ApiError> {
-    let session = bearer_token(&headers).and_then(|token| state.auth.session_for(token));
-    let Some(session) = session else {
+    let Some(token) = bearer_token(&headers) else {
+        return Err(ApiError(BantoError::Unauthorized));
+    };
+    let Some(session) = state.auth.authenticate(token).await? else {
         return Err(ApiError(BantoError::Unauthorized));
     };
     let identity = session.identity;
@@ -230,10 +241,20 @@ async fn auth_change_password_handler(
         return Err(ApiError(BantoError::Forbidden));
     }
 
-    state
+    let new_epoch = state
         .users
         .change_password(&identity.id, &body.current_password, &body.new_password)
         .await?;
+    // Re-bind only when this change was the ONLY one since the session was
+    // validated (`UsersService` advances the epoch by one per change): if a
+    // role change interleaved, the session must end like every other one.
+    // A `false` from the compare-and-set (revoked meanwhile) is likewise
+    // left as is - the password change itself did succeed.
+    if let Some(stamp) = session.stamp {
+        if new_epoch == stamp.auth_epoch + 1 {
+            state.auth.rotate_session_epoch(token, stamp, new_epoch);
+        }
+    }
     // Spec M14: a self-service password change is a security event (it is
     // also what naturally invalidates an M11 autologin credential), so it IS
     // audited - `entity_id` is the caller's own numeric row id (matching the
