@@ -159,7 +159,9 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 - **対応DBは SQLite（既定）と PostgreSQL**。V2 でアプリ全体を PostgreSQL 上でも
   動かせるようにした（`banto-storage` の `Db`/`Dialect` による方言吸収 + 方言別
   マイグレーション）。`banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL に
-  すると PostgreSQL 経路になる（既定はローカル SQLite）。バックアップ/リストアは
+  すると PostgreSQL 経路になる（既定はローカル SQLite）。PostgreSQL のときは
+  添付ファイルの保存先 `BANTO_ATTACHMENTS_DIR` の指定が必須（DB ごとに
+  サブディレクトリを分ける。未指定なら起動しない。#208）。バックアップ/リストアは
   SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1 参照。
 - **PostgreSQL 利用時のバックアップ運用**: 内蔵バックアップ/リストア（設定
   画面のバックアップ節）は SQLite 専用で、PostgreSQL では明示エラーになる。
@@ -650,7 +652,10 @@ cargo run -p admin-template-core --bin banto-serve --features embed-ui
 Tauriを起動せずにREST + 静的配信のフルスタックを試せる（`--features
 embed-ui`を省略すると組み込みのプレースホルダページを返す）。環境変数
 `PORT`（既定8721）/ `BANTO_BIND`（既定`0.0.0.0`）/ `BANTO_DB`（既定
-`./banto-dev.sqlite3`）/ `BANTO_VIEWER_PUBLIC=1`（起動時に閲覧公開を ON に
+`./banto-dev.sqlite3`）/ `BANTO_ATTACHMENTS_DIR`（`BANTO_DB` が PostgreSQL のとき
+必須。添付ファイルの保存先の親ディレクトリで、DB ごとに `pg_<ホスト>_<ポート>_<DB名>_<ハッシュ>`
+のサブディレクトリを作る。SQLite では使わず、添付は DB ファイルの隣の `attachments`）/
+`BANTO_VIEWER_PUBLIC=1`（起動時に閲覧公開を ON に
 seed する。e2e とローカル確認用）。
 
 **`embed-ui`フィーチャー:**

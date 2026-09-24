@@ -27,9 +27,11 @@
 //!
 //! ## Storage layout
 //!
-//! Given a `base_dir` (spec §3.3: the caller passes
-//! `db_path.parent().join("attachments")`, mirroring `backup.rs`'s
-//! `backups/` sibling-directory convention):
+//! Given a `base_dir` (spec §3.3; the caller computes it with
+//! [`base_dir_for_target`] - for SQLite `db_path.parent().join("attachments")`,
+//! mirroring `backup.rs`'s `backups/` sibling-directory convention, and for
+//! PostgreSQL an explicitly configured root plus a per-database subdirectory,
+//! see the [`location`] module for why, Issue #208):
 //! - `{base_dir}/{id}` - the attachment body, named ONLY by its
 //!   server-assigned row id. The user-supplied `file_name` is never used to
 //!   build a filesystem path (path traversal defense-in-depth: even if
@@ -39,11 +41,27 @@
 //! - `{base_dir}/{id}.thumb.jpg` - the generated thumbnail, only present
 //!   when the row's `has_thumbnail` is `1`.
 //!
+//! **One `base_dir` per database.** Row ids are only unique within one
+//! database, so a directory shared by two databases maps two different
+//! attachments to the same file name. [`base_dir_for_target`] keeps databases
+//! apart; as a second line of defense the body is written with `create_new`,
+//! so an upload whose id already has a file on disk FAILS instead of
+//! overwriting it (Issue #208: before this, the second database's upload
+//! silently replaced the first database's body). Ids are never reused by
+//! either backend (SQLite `AUTOINCREMENT`, PostgreSQL sequences), so in a
+//! directory owned by one database an existing file at a fresh id can only
+//! come from sharing or from restoring an older database over newer files -
+//! both cases where refusing is safer than guessing which file is garbage.
+//!
 //! The directory is created lazily on first write, not in [`AttachmentsService::new`]
 //! (same "no I/O until actually needed" convention as `backup.rs`'s
 //! `backups_dir()`).
 
-use std::path::PathBuf;
+pub mod location;
+
+pub use location::{base_dir_for_target, legacy_base_dir, postgres_storage_key, sqlite_base_dir};
+
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use banto_core::{BantoError, FieldError};
@@ -134,6 +152,34 @@ fn bool_literal(dialect: Dialect, value: bool) -> &'static str {
         (Dialect::Sqlite, true) => "1",
         (Dialect::Postgres, false) => "FALSE",
         (Dialect::Postgres, true) => "TRUE",
+    }
+}
+
+/// Outcome of [`AttachmentsService::import_legacy_files`], counted per
+/// attachment row. Carries no paths: the legacy directory name embeds
+/// connection credentials, so callers can log this as-is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegacyImportReport {
+    /// Body copied (and verified) into the new directory.
+    pub copied: u64,
+    /// Body already in the new directory; nothing done.
+    pub already_present: u64,
+    /// No file for this id in the legacy directory.
+    pub missing: u64,
+    /// A legacy file exists but its SHA-256 is not this row's - it belongs to
+    /// (or was overwritten by) another database. Left where it is.
+    pub mismatched: u64,
+    /// Reading or writing failed; the legacy file is untouched.
+    pub failed: u64,
+    /// Body copied, but its thumbnail could not be (the attachment still
+    /// downloads; only the preview is missing).
+    pub thumbnails_failed: u64,
+}
+
+impl LegacyImportReport {
+    /// Rows whose body is still not in the new directory after the import.
+    pub fn not_imported(&self) -> u64 {
+        self.missing + self.mismatched + self.failed
     }
 }
 
@@ -372,11 +418,10 @@ pub struct AttachmentsService {
 
 impl AttachmentsService {
     /// `base_dir` is NOT created here (see this module's doc comment) - the
-    /// caller is expected to pass `db_path.parent().join("attachments")`
-    /// (spec §3.3), mirroring `BackupService::new`'s `db_path`-in,
-    /// derive-everything-else shape, except this service takes the already-
-    /// derived directory directly since it has no other use for `db_path`
-    /// itself.
+    /// caller is expected to pass the directory [`base_dir_for_target`]
+    /// returns for its DB target (spec §3.3, Issue #208). This service takes
+    /// the already-derived directory directly since it has no other use for
+    /// the DB target itself. `base_dir` must belong to this database alone.
     pub fn new(db: Db, base_dir: PathBuf) -> Self {
         Self { db, base_dir }
     }
@@ -607,15 +652,48 @@ impl AttachmentsService {
         Ok(meta)
     }
 
+    /// Write a new body file. Never overwrites: if `{base_dir}/{id}` already
+    /// exists the upload fails (see "One `base_dir` per database" in this
+    /// module's doc comment). A file this call created but could not finish
+    /// writing is removed again, best-effort.
     async fn write_body(&self, id: i64, bytes: &[u8]) -> Result<(), BantoError> {
+        use tokio::io::AsyncWriteExt;
+
         tokio::fs::create_dir_all(&self.base_dir)
             .await
             .map_err(|err| io_err("添付ファイル保存用ディレクトリの作成に失敗しました", err))?;
-        tokio::fs::write(self.body_path(id), bytes)
+        let path = self.body_path(id);
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
             .await
-            .map_err(|err| io_err("添付ファイルの書き込みに失敗しました", err))
+            .map_err(|err| {
+                if err.kind() == std::io::ErrorKind::AlreadyExists {
+                    BantoError::Other(format!(
+                        "添付ファイルの保存先に同じ番号（{id}）のファイルが既にあるため、上書きせずに中止しました。\
+                         保存先ディレクトリを別のデータベースと共有していないか確認してください"
+                    ))
+                } else {
+                    io_err("添付ファイルの書き込みに失敗しました", err)
+                }
+            })?;
+        let written = async {
+            file.write_all(bytes).await?;
+            file.flush().await
+        }
+        .await;
+        drop(file);
+        if let Err(err) = written {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(io_err("添付ファイルの書き込みに失敗しました", err));
+        }
+        Ok(())
     }
 
+    /// Overwriting is fine here: it only runs after [`Self::write_body`]
+    /// claimed this id with `create_new`, so a thumbnail already at this id
+    /// is a leftover no row of this database refers to.
     async fn write_thumbnail(&self, id: i64, bytes: &[u8]) -> Result<(), BantoError> {
         tokio::fs::create_dir_all(&self.base_dir)
             .await
@@ -725,6 +803,121 @@ impl AttachmentsService {
         }
 
         Ok(meta)
+    }
+
+    /// Copy this database's attachment files out of a pre-#208 directory
+    /// (see [`legacy_base_dir`]) into `base_dir` (Issue #208 migration).
+    ///
+    /// For every row of this database's `attachments` table:
+    /// - if `{base_dir}/{id}` already exists, it is left alone
+    ///   (`already_present`) - this makes the import safe to run on every
+    ///   startup;
+    /// - otherwise `{legacy_dir}/{id}` is read and **only copied if its
+    ///   SHA-256 matches the row's `sha256`** (`mismatched` otherwise). The
+    ///   legacy directory was shared by every database reachable with the same
+    ///   credentials, so a file with this id may belong to - or have been
+    ///   overwritten by - another database; the hash is what tells them
+    ///   apart;
+    /// - the copy goes to a temporary name first and is renamed into place,
+    ///   so an interrupted import never leaves a truncated `{id}` behind
+    ///   that a later run would count as `already_present`;
+    /// - the thumbnail (`{id}.thumb.jpg`) follows its body when the row has
+    ///   one. It has no stored hash; it was generated from the body that just
+    ///   matched.
+    ///
+    /// **Nothing in `legacy_dir` is ever modified or deleted**, whether the
+    /// import succeeds or fails: another database may still need the same
+    /// files, and the operator removes the old directory by hand once every
+    /// database has been imported. Per-file failures are counted, not
+    /// returned; only failing to list the rows is an `Err`. A missing
+    /// `legacy_dir`, or one that is `base_dir` itself, is a no-op.
+    pub async fn import_legacy_files(
+        &self,
+        legacy_dir: &Path,
+    ) -> Result<LegacyImportReport, BantoError> {
+        let mut report = LegacyImportReport::default();
+        if legacy_dir == self.base_dir.as_path() || !legacy_dir.is_dir() {
+            return Ok(report);
+        }
+
+        // AssertSqlSafe: no interpolation at all - a constant statement.
+        let sql = "SELECT id, sha256, has_thumbnail FROM attachments ORDER BY id";
+        let rows: Vec<(i64, String, bool)> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                    .fetch_all(pool)
+                    .await
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                    .fetch_all(pool)
+                    .await
+            }
+        }
+        .map_err(storage_error)?;
+
+        for (id, sha256, has_thumbnail) in rows {
+            let target = self.body_path(id);
+            if tokio::fs::try_exists(&target).await.unwrap_or(false) {
+                report.already_present += 1;
+                continue;
+            }
+            let bytes = match tokio::fs::read(legacy_dir.join(id.to_string())).await {
+                Ok(bytes) => bytes,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    report.missing += 1;
+                    continue;
+                }
+                Err(_) => {
+                    report.failed += 1;
+                    continue;
+                }
+            };
+            if sha256_hex(&bytes) != sha256 {
+                report.mismatched += 1;
+                continue;
+            }
+            if self.place_imported(&target, &bytes).await.is_err() {
+                report.failed += 1;
+                continue;
+            }
+            report.copied += 1;
+
+            if has_thumbnail {
+                let thumb_target = self.thumbnail_path(id);
+                let thumb_source = legacy_dir.join(format!("{id}.thumb.jpg"));
+                let placed = match tokio::fs::read(&thumb_source).await {
+                    Ok(thumb) => self.place_imported(&thumb_target, &thumb).await.is_ok(),
+                    Err(_) => false,
+                };
+                if !placed {
+                    report.thumbnails_failed += 1;
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    /// Write `bytes` to `{target}.import-tmp`, then rename it to `target`
+    /// (never over an existing file). Removes the temporary file on failure.
+    async fn place_imported(&self, target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.base_dir).await?;
+        let mut tmp_name = target.as_os_str().to_owned();
+        tmp_name.push(".import-tmp");
+        let tmp = PathBuf::from(tmp_name);
+        let result = async {
+            tokio::fs::write(&tmp, bytes).await?;
+            if tokio::fs::try_exists(target).await? {
+                return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
+            }
+            tokio::fs::rename(&tmp, target).await
+        }
+        .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+        }
+        result
     }
 
     /// Delete every attachment belonging to one record (attachments-plan §3.8: items
@@ -1114,6 +1307,167 @@ mod tests {
         let (svc, _dir) = service().await;
         let count = svc.delete_for_record("items", "999").await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    // --- Issue #208: no overwrite, legacy import ------------------------------
+
+    #[tokio::test]
+    async fn upload_refuses_to_overwrite_an_existing_body_file() {
+        let (svc, _dir) = service().await;
+        // Another database sharing this directory already stored its id 1.
+        std::fs::create_dir_all(&svc.base_dir).unwrap();
+        std::fs::write(svc.body_path(1), b"belongs to another database").unwrap();
+
+        let err = svc
+            .upload(new_attachment("items", "1", "mine.txt", b"mine".to_vec()))
+            .await
+            .expect_err("upload must not overwrite an existing body");
+        assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+
+        assert_eq!(
+            std::fs::read(svc.body_path(1)).unwrap(),
+            b"belongs to another database"
+        );
+        // The row does not outlive the failed write.
+        assert!(svc.list_for_record("items", "1").await.unwrap().is_empty());
+        // Ids are not reused, so the next upload gets a fresh one and works.
+        let next = svc
+            .upload(new_attachment("items", "1", "mine.txt", b"mine".to_vec()))
+            .await
+            .unwrap();
+        assert_ne!(next.id, 1);
+        assert_eq!(svc.read_body(next.id).await.unwrap().1, b"mine");
+    }
+
+    /// Uploads through a service pointed at `legacy` (the old layout), then
+    /// returns a service over the same DB pointed at a fresh `base_dir`.
+    async fn legacy_fixture() -> (
+        AttachmentsService,
+        AttachmentsService,
+        PathBuf,
+        Vec<AttachmentMeta>,
+        tempfile::TempDir,
+    ) {
+        let (old, dir) = service().await;
+        let legacy = old.base_dir.clone();
+        let text = old
+            .upload(new_attachment("items", "1", "a.txt", b"alpha".to_vec()))
+            .await
+            .unwrap();
+        let image = old
+            .upload(new_attachment("items", "1", "p.png", png_bytes(32, 32)))
+            .await
+            .unwrap();
+        assert!(image.has_thumbnail);
+        let new = AttachmentsService::new(old.db.clone(), dir.path().join("new-root").join("db"));
+        (old, new, legacy, vec![text, image], dir)
+    }
+
+    fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).unwrap(),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    #[tokio::test]
+    async fn import_legacy_files_copies_verified_files_and_keeps_the_originals() {
+        let (_old, new, legacy, created, _dir) = legacy_fixture().await;
+        let before = files_in(&legacy);
+
+        let report = new.import_legacy_files(&legacy).await.unwrap();
+        assert_eq!(
+            report,
+            LegacyImportReport {
+                copied: 2,
+                ..LegacyImportReport::default()
+            }
+        );
+        assert_eq!(new.read_body(created[0].id).await.unwrap().1, b"alpha");
+        assert_eq!(
+            new.read_body(created[1].id).await.unwrap().1,
+            png_bytes(32, 32)
+        );
+        assert_eq!(
+            new.read_thumbnail(created[1].id).await.unwrap(),
+            std::fs::read(legacy.join(format!("{}.thumb.jpg", created[1].id))).unwrap()
+        );
+        // The originals are untouched, and no temporary file is left behind.
+        assert_eq!(files_in(&legacy), before);
+        assert!(files_in(&new.base_dir)
+            .iter()
+            .all(|(name, _)| !name.ends_with(".import-tmp")));
+
+        // Running it again (every startup does) changes nothing.
+        let again = new.import_legacy_files(&legacy).await.unwrap();
+        assert_eq!(
+            again,
+            LegacyImportReport {
+                already_present: 2,
+                ..LegacyImportReport::default()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn import_legacy_files_skips_a_file_that_belongs_to_another_database() {
+        let (_old, new, legacy, created, _dir) = legacy_fixture().await;
+        // Another database sharing the legacy directory overwrote id 1's body.
+        std::fs::write(legacy.join(created[0].id.to_string()), b"not ours").unwrap();
+
+        let report = new.import_legacy_files(&legacy).await.unwrap();
+        assert_eq!(report.copied, 1);
+        assert_eq!(report.mismatched, 1);
+        assert_eq!(report.not_imported(), 1);
+        assert!(!new.body_path(created[0].id).exists());
+        assert_eq!(
+            std::fs::read(legacy.join(created[0].id.to_string())).unwrap(),
+            b"not ours"
+        );
+    }
+
+    #[tokio::test]
+    async fn import_legacy_files_failure_leaves_the_originals_in_place() {
+        let (old, _new, legacy, created, dir) = legacy_fixture().await;
+        let before = files_in(&legacy);
+        // The new root's parent is a regular file, so nothing can be written.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"").unwrap();
+        let broken = AttachmentsService::new(old.db.clone(), blocker.join("db"));
+
+        let report = broken.import_legacy_files(&legacy).await.unwrap();
+        assert_eq!(report.copied, 0);
+        assert_eq!(report.failed, 2);
+        assert_eq!(files_in(&legacy), before);
+
+        // Once the destination is fixed, a later run imports everything.
+        let fixed = AttachmentsService::new(old.db.clone(), dir.path().join("fixed"));
+        let report = fixed.import_legacy_files(&legacy).await.unwrap();
+        assert_eq!(report.copied, 2);
+        assert_eq!(fixed.read_body(created[0].id).await.unwrap().1, b"alpha");
+    }
+
+    #[tokio::test]
+    async fn import_legacy_files_is_a_no_op_without_a_legacy_directory() {
+        let (svc, dir) = service().await;
+        let report = svc
+            .import_legacy_files(&dir.path().join("does-not-exist"))
+            .await
+            .unwrap();
+        assert_eq!(report, LegacyImportReport::default());
+        let same = svc
+            .import_legacy_files(&svc.base_dir.clone())
+            .await
+            .unwrap();
+        assert_eq!(same, LegacyImportReport::default());
     }
 
     // --- ISO 8601 formatter --------------------------------------------------

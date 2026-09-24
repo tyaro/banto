@@ -44,7 +44,8 @@ pub async fn init_db_from_target(target: &str) -> Result<Db, BantoError> {
         #[cfg(not(feature = "postgres"))]
         {
             Err(BantoError::Storage(format!(
-                "connection target {target:?} is a PostgreSQL URL but this build was compiled without the `postgres` feature"
+                "connection target {:?} is a PostgreSQL URL but this build was compiled without the `postgres` feature",
+                display_target(target)
             )))
         }
     } else {
@@ -62,6 +63,21 @@ pub async fn init_db_from_target(target: &str) -> Result<Db, BantoError> {
 /// with [`init_db_from_target`]'s own scheme check below.
 pub fn is_postgres_url(target: &str) -> bool {
     target.starts_with("postgres://") || target.starts_with("postgresql://")
+}
+
+/// `target` with its credentials removed, for logs and error messages (Issue
+/// #208). A SQLite path is returned as-is. For a PostgreSQL URL the user
+/// info (`user:password@`) and the whole query string (it may carry
+/// `?password=`/`?user=`) are dropped, leaving `scheme://host:port/database`.
+pub fn display_target(target: &str) -> String {
+    let Some((scheme, rest)) = target.split_once("://").filter(|_| is_postgres_url(target)) else {
+        return target.to_string();
+    };
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    // Cut at the LAST `@` rather than parsing the authority: a password with
+    // an unescaped `/` or `@` must not survive either way.
+    let host_and_path = rest.rsplit_once('@').map_or(rest, |(_, after)| after);
+    format!("{scheme}://{host_and_path}")
 }
 
 /// Same as [`init_db`] but against a private in-memory SQLite database. Used by
@@ -416,6 +432,34 @@ mod tests {
         assert!(!is_postgres_url("./banto-dev.sqlite3"));
         assert!(!is_postgres_url("/var/lib/banto/app.sqlite3"));
         assert!(!is_postgres_url("C:\\data\\app.sqlite3"));
+    }
+
+    /// Issue #208: what `banto-serve` prints for `BANTO_DB` carries no
+    /// credentials.
+    #[test]
+    fn display_target_drops_postgres_credentials() {
+        let cases = [
+            (
+                "postgres://review_user:example_password@localhost:5432/banto_a",
+                "postgres://localhost:5432/banto_a",
+            ),
+            (
+                "postgresql://u:p%40ss@db.example/banto?sslmode=require&password=q",
+                "postgresql://db.example/banto",
+            ),
+            ("postgres://u:p@[::1]:5432", "postgres://[::1]:5432"),
+            (
+                "postgres://localhost/db?user=x&password=y",
+                "postgres://localhost/db",
+            ),
+            ("postgres://a@b:c@host/db", "postgres://host/db"),
+            ("postgres://u:p/ss@host/db", "postgres://host/db"),
+            ("./banto-dev.sqlite3", "./banto-dev.sqlite3"),
+            ("C:\\data\\app.sqlite3", "C:\\data\\app.sqlite3"),
+        ];
+        for (target, expected) in cases {
+            assert_eq!(display_target(target), expected, "{target}");
+        }
     }
 
     /// Issue #204: a database created before migration 0007 upgrades in

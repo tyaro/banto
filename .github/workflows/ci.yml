@@ -232,10 +232,14 @@ jobs:
       # `--features postgres` keeps the default `sqlite` on too (the app crate
       # always links SQLite for the desktop path), so this exercises the
       # both-backends build that `init_db_from_target` selects at runtime.
+      # `pg_attachments` (Issue #208) creates and drops its own databases/role
+      # on the same server (the `postgres` superuser has CREATEDB/CREATEROLE)
+      # to check that attachments stay per-database and survive a password
+      # change.
       - name: Cargo test (admin-template-core, postgres smoke)
         env:
           BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_app_test
-        run: cargo test -p admin-template-core --features postgres --test pg_smoke
+        run: cargo test -p admin-template-core --features postgres --test pg_smoke --test pg_attachments
 
   e2e:
     name: E2E (Playwright smoke)

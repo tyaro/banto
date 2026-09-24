@@ -1,7 +1,8 @@
 # M20: 添付ファイル/画像管理 計画書
 
 作成日: 2026-07-15  
-状態: 実装済み（単位A〜D完了。単位Dで検出した effect ループは §9 のとおり解消済み）  
+状態: 実装済み（単位A〜D完了。単位Dで検出した effect ループは §9 のとおり解消済み。
+2026-09-24: PostgreSQL の保存先を §3.3 のとおり変更、#208）  
 提供形態: `banto-attachments` クレート + `@banto/attachments` パッケージ +
 削除可能なデモ配線（roadmap.md「M19〜M21 の提供形態」の決定に従う）
 
@@ -80,7 +81,17 @@ CREATE INDEX idx_attachments_record ON attachments(resource, resource_id);
 ### 3.3 ファイルストレージ
 
 - 保存先: `db_path.parent()/attachments/`（`backup.rs` の `base_dir()`
-  パターンを踏襲。Tauri は app_data_dir、banto-serve は BANTO_DB の隣）
+  パターンを踏襲。Tauri は app_data_dir、banto-serve は BANTO_DB の隣）。
+  **PostgreSQL のときは別規則**（2026-09-24、#208）: 接続 URL はパスではない
+  ので、`BANTO_ATTACHMENTS_DIR`（必須。未指定なら banto-serve は起動しない）の
+  下に、DB ごとのサブディレクトリ `pg_<ホスト>_<ポート>_<DB名>_<ハッシュ16桁>`
+  を作る（`banto_attachments::base_dir_for_target` / `postgres_storage_key`）。
+  ユーザー名・パスワードは含めない（変えても保存先は変わらない）。以前の版が
+  URL から作った資格情報入りの旧保存先は、起動のたびに sha256 を照合して新しい
+  保存先へコピーする（`import_legacy_files`。旧保存先のファイルは消さない）
+- **本体は上書きしない**（#208）: `{id}` が既にあればアップロードを失敗させる
+  （`create_new`）。id はどちらのバックエンドでも再利用されないので、既存の
+  ファイルは保存先の共有か、古い DB の復元でしか起きない
 - ファイル名は **サーバ採番の `{id}` のみ**（本体 `{id}`、サムネイル
   `{id}.thumb.jpg`）。ユーザー入力の `file_name` はパスに一切使わない
   （パストラバーサル対策。表示と Content-Disposition のみに使用し、
