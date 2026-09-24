@@ -26,7 +26,11 @@
 //! settings-screen layer, Phase B, not a property of this dev vehicle),
 //! `BANTO_DB` (default `./banto-dev.sqlite3`; a `postgres://`/`postgresql://`
 //! URL selects the PostgreSQL backend instead of a SQLite file - the binary
-//! must be built `--features postgres` for that to link), `BANTO_ALLOW_SETUP` (`1` to
+//! must be built `--features postgres` for that to link),
+//! `BANTO_ATTACHMENTS_DIR` (required when `BANTO_DB` is PostgreSQL: the root
+//! under which each database gets its own attachments subdirectory, Issue
+//! #208; ignored for SQLite, whose attachments stay next to the DB file),
+//! `BANTO_ALLOW_SETUP` (`1` to
 //! enable `POST /api/auth/setup`; unset/anything else keeps it `403`'d, spec
 //! §8.2 - the Tauri app never sets this, since desktop first-run goes
 //! through the `auth_setup` command instead), `BANTO_VIEWER_PUBLIC` (`1` to
@@ -50,7 +54,7 @@
 use admin_template_core::assets::FrontendAssets;
 use admin_template_core::audit::{AuditEntry, AuditLogService};
 use admin_template_core::backup::BackupService;
-use admin_template_core::db::{init_db_from_target, is_postgres_url};
+use admin_template_core::db::{display_target, init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
@@ -137,13 +141,66 @@ async fn main() {
     }
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
     // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
-    // DB's own parent directory (same sibling-directory convention as
-    // `backups/`), falling back to `.` if `db_path` has no parent (e.g. a
-    // bare relative file name).
-    let attachments_base_dir = db_path_buf
-        .parent()
-        .map(|parent| parent.join("attachments"))
-        .unwrap_or_else(|| PathBuf::from("attachments"));
+    // directory `banto_attachments::base_dir_for_target` picks (Issue #208):
+    // - SQLite: the DB file's own parent directory + `attachments` (same
+    //   sibling-directory convention as `backups/`), exactly as before.
+    //   `BANTO_ATTACHMENTS_DIR` does not apply.
+    // - PostgreSQL: `BANTO_ATTACHMENTS_DIR` is required, and each database
+    //   gets its own subdirectory keyed by host/port/database name (never the
+    //   credentials). Unset -> refuse to start rather than invent a location.
+    //   Files an older version wrote under the credential-bearing path
+    //   derived from the URL are copied over (verified by sha256, originals
+    //   never touched) on every start while that old directory exists.
+    // Nothing printed here may contain `db_path` itself: it carries the
+    // connection credentials.
+    let attachments_root = std::env::var_os("BANTO_ATTACHMENTS_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let attachments_on_postgres = is_postgres_url(&db_path);
+    if !attachments_on_postgres && attachments_root.is_some() {
+        eprintln!(
+            "banto-serve: BANTO_ATTACHMENTS_DIR は PostgreSQL のときだけ使います。SQLite の添付は DB ファイルの隣の attachments に保存します"
+        );
+    }
+    let attachments_base_dir = match banto_attachments::base_dir_for_target(
+        &db_path,
+        attachments_on_postgres,
+        attachments_root.as_deref(),
+    ) {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("banto-serve: 起動できません: {err}");
+            std::process::exit(1);
+        }
+    };
+    if attachments_on_postgres {
+        println!(
+            "banto-serve: 添付ファイルの保存先: {}",
+            attachments_base_dir.display()
+        );
+        match AttachmentsService::new(db.clone(), attachments_base_dir.clone())
+            .import_legacy_files(&banto_attachments::legacy_base_dir(&db_path))
+            .await
+        {
+            Ok(report) if report.is_noteworthy() => {
+                println!(
+                    "banto-serve: 旧保存先（作業ディレクトリ下の、接続 URL から作られた postgres: で始まるディレクトリ）からの添付の移行: \
+                     コピー {} 件 / 移行済み {} 件 / 新しい保存先に内容の違うファイルがある {} 件 / 旧保存先に無い {} 件 / 別の DB のファイル {} 件 / 失敗 {} 件 / サムネイルのコピー {} 件 / サムネイルの失敗 {} 件。\
+                     旧保存先のファイルは消していません",
+                    report.copied,
+                    report.already_present,
+                    report.existing_mismatched,
+                    report.missing,
+                    report.mismatched,
+                    report.failed,
+                    report.thumbnails_copied,
+                    report.thumbnails_failed
+                );
+            }
+            Ok(_) => {}
+            Err(err) => eprintln!("banto-serve: 旧保存先からの添付の移行に失敗しました: {err}"),
+        }
+    }
     let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);
     let system_info = SystemInfoService::new(db.clone());
     // ADR-0013 (Issue #185): the sampler is stateful (CPU% needs a delta
@@ -253,7 +310,8 @@ async fn main() {
         .await
         .expect("server should start");
 
-    println!("banto-serve: DB at {db_path}");
+    // Issue #208: never print the connection credentials.
+    println!("banto-serve: DB at {}", display_target(&db_path));
     println!("banto-serve: listening at:");
     for url in lan_urls(server.local_addr().port()) {
         println!("  {url}");
