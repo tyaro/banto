@@ -54,6 +54,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0011](0011-git-tag-distribution.md)                | 配布は git タグ参照とし npm/crates.io 公開は保留する                                       | Accepted |
 | [0012](0012-lan-public-viewer-synthetic-session.md) | LAN の閲覧公開は viewer 固定の合成セッション発行で実現し認証バイパスの公開ルータは作らない | Accepted |
 | [0013](0013-sysinfo-system-metrics-feature.md)      | CPU/メモリ使用率は `sysinfo` を feature 限定で採用して共通 API にする（ADR-0002 の例外）   | Accepted |
+| [0014](0014-account-bound-session-revocation.md)    | セッションは行 id + 認証の世代に結び付け、要求ごとに DB で確かめて失効させる               | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

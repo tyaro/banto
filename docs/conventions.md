@@ -260,6 +260,22 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   - 「認証無効 + LAN 有効」は**閲覧公開 ON のときだけ**許可する
     （`SettingsService` の両方向ガード、viewer-public-plan §2.3）。OFF のときの
     排他は 2026-07-08 決定のまま。
+- **セッションは要求ごとにアカウントと照合する（Issue #204）。** セッションは
+  確立時のアカウントの行 id と `auth_epoch` を持ち、REST の `require_auth`
+  （`AuthState::authenticate`）と Tauri の `require_role`（`current_session`）が
+  毎回 `users` の行を読み直す。アカウントが無い・どちらかの値が違えば失効させ、
+  一致すれば**今の**ロールで認可する
+  （[ADR-0014](adr/0014-account-bound-session-revocation.md)）。レビューで担保する規約:
+  - **セッションを終わらせるべき書き込みは、同じ `UPDATE` で `auth_epoch` を
+    増やす**（ロール変更・パスワード変更・パスワードリセット）。同種の操作
+    （アカウントの無効化など）を足すときも同じにする。
+  - **アクセスの判断に同期の `verify`/`identity_for` を使わない。**
+    `authenticate`（`require_auth`）を通す。`require_auth` の外にあるルート
+    （`check`/`identity`/`change-password`）は自分で呼ぶ。
+  - **実アカウントの REST `AuthState` は照合関数付きで組み立てる**
+    （`user_auth_state`）。照合付きの状態で「作ってそのままログイン」させる経路は
+    `issue_account_token` を使う（世代を持たないトークンは拒否される）。
+  - 保存先が答えられないときは要求を失敗させる。失効も素通りもさせない。
 
 ## 7. `{@html}` は自前生成の全エスケープ済み出力のみ [機械検査済み: 使用箇所の許可リスト]
 

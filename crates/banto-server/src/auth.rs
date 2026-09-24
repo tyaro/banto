@@ -564,6 +564,13 @@ impl AuthState {
     /// tokens issued without a stamp are rejected afterwards. The lookup is
     /// shared by every clone of this state.
     ///
+    /// At login the lookup receives the username exactly as submitted (it
+    /// runs before the verifier, see [`AuthState::login_rate_limited`]); the
+    /// login succeeds only when the account it returns is the one the
+    /// verifier accepted ([`Identity::id`]). A verifier that normalizes
+    /// usernames (trimming, case folding) needs a lookup that accepts the
+    /// submitted form too, or such logins report [`LoginOutcome::Unavailable`].
+    ///
     /// # Panics
     ///
     /// If a lookup was already installed - replacing the store a live state

@@ -22,6 +22,60 @@
 
 ## [Unreleased]
 
+- fix(auth): ユーザーの削除・降格・パスワード変更・パスワードリセットで既存の
+  セッションが失効しなかった問題を修正（#204、P1）。`users.auth_epoch`（認証の世代、
+  migration `0007`）を追加し、セッションを確立時の「行 id + 世代」に結び付けて、
+  REST（`require_auth`）と Tauri（`require_role`）の両経路で**要求ごとに DB と照合**
+  する。アカウントが無い・世代が違えば失効（401）、一致すれば DB の今のロールで
+  認可する。変更はどちらの経路から行っても、他方の経路・別プロセス・Remember me の
+  セッションにも効く。自分のパスワード変更では、変更した当のセッションだけ残る
+  （[ADR-0014](docs/adr/0014-account-bound-session-revocation.md)、conventions §6）。
+  **Rust API の破壊的変更**: `banto_admin_services::users::UserIdentity` に
+  `auth_epoch` を追加、`UsersService::change_password` が新しい世代（`i64`）を返す、
+  `banto_server::LoginOutcome` に `Unavailable` を追加（`POST /api/auth/login` が
+  503 を返し得る）。`/api/auth/{check,identity}` は照合中の DB エラーを 500 で
+  返す。フロントエンドの変更は不要。
+
+  **派生アプリの移行手順**（`banto-server` をタグで使い、`users` テーブル・
+  サービス・`src-tauri` を自前で持つアプリ。**配線するまでは従来どおり失効しない**）:
+
+  1. **マイグレーション**: 両方の方言に 1 本ずつ足す（既存の行は 0 で始まる。
+     セッションはメモリにしか無いので既存セッションの移行は不要）。
+     SQLite: `ALTER TABLE users ADD COLUMN auth_epoch INTEGER NOT NULL DEFAULT 0;`
+     / PostgreSQL: `ALTER TABLE users ADD COLUMN auth_epoch BIGINT NOT NULL DEFAULT 0;`
+  2. **ユーザーサービス**（自前の `users.rs` を持つ場合。`banto_admin_services` の
+     `UsersService` を使うなら不要）: `UserIdentity` に `auth_epoch` を持たせ、
+     `verify`・`get_by_username` の `SELECT` と作成時の `RETURNING` で読む。
+     ロール変更（`auth_epoch = auth_epoch + CASE WHEN role = ? THEN 0 ELSE 1 END`）・
+     パスワード変更・パスワードリセットの **`UPDATE` と同じ文で**増やす。
+     パスワード変更は `RETURNING auth_epoch` で新しい世代を返す。
+  3. **REST の `AuthState`**: `AuthState::new(verifier)` に
+     `.with_session_validator(lookup)` を足す。`lookup` はユーザー名から
+     `SessionAccount { identity（今のロール）, stamp: SessionStamp { account_id: 行 id,
+auth_epoch } }` を返す（無ければ `Ok(None)`、DB エラーは `Err`。ログイン時は入力どおりのユーザー名で呼ばれるので、ユーザー名を正規化する検証関数なら lookup も同じ正規化をする）。
+     `banto_admin_services::UsersService` なら
+     `banto_server::routes::user_auth_state(users, audit)` で済む。
+  4. **REST のハンドラ**: `require_auth` の**外**でトークンから本人を引く箇所
+     （自前の `change-password` など）は `auth.identity_for(token)` をやめ、
+     `auth.authenticate(token).await?` を使う。`require_auth` の後ろの
+     `identity_for`・自前のロールガードはそのままでよい（照合のたびに今の値へ
+     書き戻される。ガードは `req.extensions()` の `AuthenticatedSession` も読める）。
+     初期セットアップで作ったアカウントをそのままログインさせる箇所は
+     `issue_token` を `issue_account_token(SessionAccount { .. }, false)` に替える
+     （世代の無いトークンは拒否される）。自分のパスワード変更の後、そのセッションを
+     残すなら `new_epoch == stamp.auth_epoch + 1` のときだけ
+     `auth.rotate_session_epoch(token, stamp, new_epoch)` を呼ぶ。
+  5. **`src-tauri`**: `require_role` の先頭で、キャッシュした `UserIdentity` を
+     信用せず `users.get_by_username(&cached.username)` で読み直し、行 id と
+     `auth_epoch` が一致しなければキャッシュを消して `Unauthorized`、一致すれば
+     **読み直した値**（今のロール）で判定する。キャッシュの書き換えは、読む前の
+     値と比べてから行う。ログイン不要モードの合成セッション（`id: 0`）は照合しない。
+     `auth_check`・`auth_identity` も同じ照合を通す `async` コマンドにし、
+     `change_own_password` は新しい世代へキャッシュを付け替える。
+     admin-template の `current_session` / `require_role` / `change_own_password`
+     （`apps/admin-template/src-tauri/src/lib.rs`）をそのまま写せる。組み込み
+     サーバの `rest_auth` も手順 3 の状態で作る。
+
 - fix(users): 管理者の同時降格・削除で管理者が0人になる競合を修正（#207）。
   SQLite・PostgreSQLの両方で判定から更新までをDBトランザクションで保護し、
   最後の管理者への変更を拒否する。REST・Tauri共通のユーザーサービスに適用。
