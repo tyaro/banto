@@ -530,7 +530,17 @@
 		// keeps working after a click. This synchronously blurs whatever was
 		// previously focused (e.g. another cell's editor <input>), which is
 		// exactly the "blur commits" behavior we want (spec §4.5).
-		containerEl?.focus();
+		//
+		// #236: `preventScroll` is load-bearing. A plain focus() scrolls the page
+		// (every scrolling ancestor) to bring the container into view, so when the
+		// grid sits partly below the fold (e.g. right after a page loads, before
+		// the content above it settles) the page moves between pointerdown and
+		// pointerup. The pointer is then released over a different element, the
+		// browser dispatches `click` to their common ancestor instead of this
+		// cell, and onRowClick never runs although the cell was selected here.
+		// The clicked cell is already under the pointer, so nothing needs to
+		// be scrolled into view; keyboard moves scroll via scrollActiveIntoView.
+		containerEl?.focus({ preventScroll: true });
 		selection.setActive(rowIndex, field, event.shiftKey);
 
 		const pointerId = event.pointerId;

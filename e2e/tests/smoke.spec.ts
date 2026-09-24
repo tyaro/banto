@@ -772,6 +772,31 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	test('5a. users: a row click right after opening the page opens its edit panel (#236)', async () => {
+		await page.goto('/users');
+		// No wait between the page load and the click: the click must work in
+		// the state the user first sees.
+		const grid = page.getByRole('grid');
+		const cell = rowWithText(page, ADMIN_USERNAME).locator('[data-cell-field="username"]');
+		await expect(cell).toBeVisible();
+		// Precondition that makes this scenario meaningful: the grid sits below
+		// the create form and runs past the bottom of the viewport. Focusing it
+		// on pointerdown without `preventScroll` scrolled the page between press
+		// and release, so the click landed on the grid instead of the cell and
+		// onRowClick never ran (the cell was still selected). If the layout ever
+		// fits the whole grid on screen, this fails instead of passing vacuously.
+		const gridBottom = await grid.evaluate((element) => element.getBoundingClientRect().bottom);
+		expect(gridBottom).toBeGreaterThan(page.viewportSize()!.height);
+		const scrollBefore = await page.evaluate(() => window.scrollY);
+
+		await cell.click();
+
+		await expect(page.locator('.edit-column').getByRole('heading', { level: 2 })).toContainText(
+			ADMIN_USERNAME
+		);
+		expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+	});
+
 	test('5b. delayed deletion preserves another user but closes a reselected deleted user', async () => {
 		test.setTimeout(60_000);
 		await page.goto('/users');
