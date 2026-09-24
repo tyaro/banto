@@ -115,6 +115,23 @@ stamp: SessionStamp { account_id: 行 id, auth_epoch } }` を返す（無けれ�
      `check()` を直接呼ぶ他の画面（admin-template では `panel/[id]`）も reject を
      「未ログイン」と区別する。
 
+- fix(auth): 失効したセッションで開いたままの SSE（`/api/events`）が通知を受け
+  続けた問題を修正（#231、#204 の既知の制約）。開いているストリームは keepalive と
+  同じ 15 秒（`banto_server::events::REVALIDATE_INTERVAL`）ごとにセッションを
+  照合し直し、アカウントの削除・降格・パスワード変更/リセット・ログアウト・期限切れで
+  失効していればストリームを終える（失効から最大 1 間隔）。DB が照合に答えられない
+  ときは終えず、次の間隔で照合し直す（#204 の「照合できないときはセッションを残す」）。
+  照合中に自分のパスワード変更で付け替えられたセッションは、要求と同じ判断で残る。
+  この照合はセッションの無操作期限（idle）を延ばさない（開いたタブが無操作の
+  セッションを生かし続けない）。公開閲覧のセッションと
+  `SessionValidation::DisabledNoRevocation` は DB を読まず、アカウントの変更では
+  終わらない（トークン自体が終わったときだけ終わる）。照合するのは
+  `SessionValidation::Lookup` のアカウントのセッションで、開いているストリーム 1 本
+  につき 15 秒に 1 回の索引読み。**派生アプリの対応は不要**（`sse_route` の
+  シグネチャは同じ。フロントの `createSseEventProvider` は、終わったストリームを
+  従来どおり再接続し、失効したトークンは `401` になる）
+  （[ADR-0014](docs/adr/0014-account-bound-session-revocation.md)）。
+
 - fix(users): 管理者の同時降格・削除で管理者が0人になる競合を修正（#207）。
   SQLite・PostgreSQLの両方で判定から更新までをDBトランザクションで保護し、
   最後の管理者への変更を拒否する。REST・Tauri共通のユーザーサービスに適用。

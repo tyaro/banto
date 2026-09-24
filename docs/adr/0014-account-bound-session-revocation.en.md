@@ -122,6 +122,19 @@ role from the database.
   `AuthProvider.check()` reject, and the protected-route gate
   (`resolveProtectedSession`) neither goes to the login screen nor switches to
   the viewer; it keeps the token and shows an error with a retry.
-- SSE (`/api/events`) is checked when the connection opens. After revocation, an
-  already-open stream keeps receiving notifications (resource names and notice
-  text) until it disconnects.
+- SSE (`/api/events`) is checked when the connection opens, and an open stream
+  re-checks its session at the keepalive's interval (15 s,
+  `REVALIDATE_INTERVAL`) and ends once it is revoked (Issue #231, owner
+  decision 2026-09-24; this was originally a known limitation: "keeps
+  receiving notifications until it disconnects"). Notifications stop at most
+  one interval after revocation. The verdict is the request's
+  (`authenticate`: a session re-bound by its own change during the check is
+  kept; when the store cannot answer, the stream is kept and re-checked next
+  interval), except that the re-check does not slide the idle window (an open
+  tab does not keep an idle session alive). Each stream owns its one timer
+  (no spawned task), so a disconnect drops the timer and any check in flight.
+  Closing a stream immediately when the same process learns of a logout or
+  revocation (option C) was not added: every path that ends a token
+  (logout, revocation by a check, expiry, public-viewer eviction, a change
+  made by another process) would need its own notification, and the
+  same-process paths already close within one interval.
