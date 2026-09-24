@@ -29,12 +29,24 @@ export const CSRF_HEADER = { 'X-Banto-Client': 'banto' } as const;
  * `vite dev`'s dev server 404ing with an HTML page for an unknown path)
  * means this is not our server. Never true inside Tauri - `isTauri()` is
  * checked first there and takes priority.
+ *
+ * Issue #204: `/api/auth/check` answers a `500` with Banto's JSON error body
+ * (`{ "kind": ... }`) when the server could not check an account. That is
+ * still our server - falling back to the in-memory demo providers there would
+ * silently swap a real (if momentarily broken) backend for fake data - so any
+ * response carrying that error body counts too.
  */
 export async function isEmbeddedServer(): Promise<boolean> {
 	if (isTauri()) return false;
 	try {
 		const response = await fetch(`${location.origin}/api/auth/check`, { headers: CSRF_HEADER });
-		return response.status === 200 || response.status === 401;
+		if (response.status === 200 || response.status === 401) return true;
+		const body: unknown = await response.json().catch(() => null);
+		return (
+			typeof body === 'object' &&
+			body !== null &&
+			typeof (body as { kind?: unknown }).kind === 'string'
+		);
 	} catch {
 		return false;
 	}

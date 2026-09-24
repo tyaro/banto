@@ -110,19 +110,22 @@ mod tests {
     use tower::ServiceExt;
 
     fn demo_auth() -> AuthState {
-        AuthState::new(|u: String, p: String| {
-            Box::pin(async move {
-                if u == "admin" && p == "admin" {
-                    Some(Identity {
-                        id: "admin".to_string(),
-                        name: "管理者".to_string(),
-                        role: "admin".to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
-        })
+        AuthState::new(
+            |u: String, p: String| {
+                Box::pin(async move {
+                    if u == "admin" && p == "admin" {
+                        Some(Identity {
+                            id: "admin".to_string(),
+                            name: "管理者".to_string(),
+                            role: "admin".to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+            },
+            crate::auth::SessionValidation::DisabledNoRevocation,
+        )
     }
 
     #[tokio::test]

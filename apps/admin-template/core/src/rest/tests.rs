@@ -7,7 +7,7 @@ use banto_core::{BantoError, FilterOp, FilterState, Pagination, SortDirection, S
 // that used it moved to `banto_server::routes`), so the test module imports it
 // directly rather than through `use super::*`.
 use banto_admin_services::system_metrics::SystemMetrics;
-use banto_server::Identity;
+use banto_server::{Identity, SessionValidation};
 use serde_json::json;
 use std::path::PathBuf;
 use tempfile::tempdir;
@@ -40,19 +40,22 @@ fn unused_attachments_service(db: banto_storage::Db) -> AttachmentsService {
 }
 
 fn demo_auth() -> AuthState {
-    AuthState::new(|u: String, p: String| {
-        Box::pin(async move {
-            if u == "admin" && p == "admin" {
-                Some(Identity {
-                    id: "admin".to_string(),
-                    name: "管理者".to_string(),
-                    role: "admin".to_string(),
-                })
-            } else {
-                None
-            }
-        })
-    })
+    AuthState::new(
+        |u: String, p: String| {
+            Box::pin(async move {
+                if u == "admin" && p == "admin" {
+                    Some(Identity {
+                        id: "admin".to_string(),
+                        name: "管理者".to_string(),
+                        role: "admin".to_string(),
+                    })
+                } else {
+                    None
+                }
+            })
+        },
+        SessionValidation::DisabledNoRevocation,
+    )
 }
 
 /// Router + one bearer token per role (admin/editor/viewer), for the
@@ -89,19 +92,22 @@ async fn router_with_role_tokens() -> (Router, String, String, String) {
         .expect("create viewer");
 
     let verify_users = users.clone();
-    let auth = AuthState::new(move |u: String, p: String| {
-        let users = verify_users.clone();
-        Box::pin(async move {
-            match users.verify(&u, &p).await {
-                Ok(Some(identity)) => Some(Identity {
-                    id: identity.username,
-                    name: identity.display_name,
-                    role: identity.role.to_string(),
-                }),
-                _ => None,
-            }
-        })
-    });
+    let auth = AuthState::new(
+        move |u: String, p: String| {
+            let users = verify_users.clone();
+            Box::pin(async move {
+                match users.verify(&u, &p).await {
+                    Ok(Some(identity)) => Some(Identity {
+                        id: identity.username,
+                        name: identity.display_name,
+                        role: identity.role.to_string(),
+                    }),
+                    _ => None,
+                }
+            })
+        },
+        SessionValidation::DisabledNoRevocation,
+    );
 
     let admin_token = auth
         .login("admin", "password123")
@@ -960,7 +966,10 @@ async fn router_with_real_login(allow_setup: bool) -> (Router, AuditLogService) 
     let attachments = unused_attachments_service(pool.clone());
     let system_info = SystemInfoService::new(pool.clone());
     let audit = AuditLogService::new(pool);
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let services = Services {
         items,
         users,
@@ -1312,7 +1321,10 @@ async fn router_with_role_tokens_and_audit() -> (Router, AuditLogService, String
         .await
         .expect("create viewer");
 
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let admin_token = auth
         .login("admin", "password123")
         .await
@@ -1393,7 +1405,10 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         .await
         .expect("create viewer");
 
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let admin_token = auth
         .login("admin", "password123")
         .await
@@ -2581,7 +2596,10 @@ async fn router_with_viewer_public(
         .await
         .expect("seed server config");
 
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
     let services = Services {
         items,
         users: users.clone(),
@@ -2919,4 +2937,351 @@ async fn auth_status_flattens_app_supplied_extras() {
     assert_eq!(json["tenant"], "factory-a");
     assert_eq!(json["initialized"], false);
     assert_eq!(json["viewerPublic"], false);
+}
+
+// --- Session revocation (Issue #204) -----------------------------------------
+
+const REVOCATION_PASSWORD: &str = "password123";
+
+/// Router over REAL `UsersService` accounts with the production
+/// `user_auth_state` (verifier + per-request account re-check): `operator`
+/// (admin, performs the changes), `target` (admin, the account changed) and
+/// `bystander` (editor, must never be affected).
+async fn router_with_user_sessions() -> (Router, UsersService) {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let (tx, _rx) = broadcast::channel(16);
+    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool.clone());
+    let backup = unused_backup_service(pool.clone());
+    let attachments = unused_attachments_service(pool.clone());
+    let system_info = SystemInfoService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+
+    users
+        .setup_first_user("operator", REVOCATION_PASSWORD, "操作者")
+        .await
+        .expect("setup_first_user");
+    users
+        .create_user("target", REVOCATION_PASSWORD, "対象", Role::Admin)
+        .await
+        .expect("create target");
+    users
+        .create_user("bystander", REVOCATION_PASSWORD, "無関係", Role::Editor)
+        .await
+        .expect("create bystander");
+
+    let auth = user_auth_state(users.clone(), audit.clone());
+    let services = Services {
+        items,
+        users: users.clone(),
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+        metrics: None,
+    };
+    (api_router(services, auth, tx, false), users)
+}
+
+/// `POST /api/auth/login` - one call per "device". `remember` selects the
+/// 30-day "Remember me" token (spec M11).
+async fn rest_login(router: &Router, username: &str, password: &str, remember: bool) -> String {
+    let response = router
+        .clone()
+        .oneshot(post_json(
+            "/api/auth/login",
+            json!({ "username": username, "password": password, "remember": remember }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    json["token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("login of {username} failed: {json}"))
+        .to_string()
+}
+
+async fn status_of(router: &Router, request: HttpRequest<Body>) -> StatusCode {
+    router.clone().oneshot(request).await.unwrap().status()
+}
+
+async fn rest_check(router: &Router, token: &str) -> bool {
+    let response = router
+        .clone()
+        .oneshot(get_auth("/api/auth/check", token))
+        .await
+        .unwrap();
+    body_json(response).await == json!(true)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AccountChange {
+    Delete,
+    Demote,
+    PasswordChange,
+    PasswordReset,
+}
+
+/// One account change made over REST, then every session the target held
+/// on OTHER devices - a regular and a "Remember me" token - must be refused
+/// by protected routes, while other accounts' sessions keep working.
+/// Returns nothing; panics with the change's name on failure.
+async fn rest_change_ends_the_other_sessions(change: AccountChange) {
+    let (router, users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let bystander = rest_login(&router, "bystander", REVOCATION_PASSWORD, true).await;
+    let target_normal = rest_login(&router, "target", REVOCATION_PASSWORD, false).await;
+    let target_remembered = rest_login(&router, "target", REVOCATION_PASSWORD, true).await;
+    let target_id = users
+        .get_by_username("target")
+        .await
+        .unwrap()
+        .expect("target exists")
+        .id;
+    for token in [&target_normal, &target_remembered] {
+        assert_eq!(
+            status_of(&router, get_auth("/api/users", token)).await,
+            StatusCode::OK,
+            "{change:?}: precondition - the target is an admin"
+        );
+    }
+
+    let survivor = match change {
+        AccountChange::Delete => {
+            let path = format!("/api/users/{target_id}");
+            assert_eq!(
+                status_of(&router, delete_auth(&path, &operator)).await,
+                StatusCode::NO_CONTENT
+            );
+            None
+        }
+        AccountChange::Demote => {
+            let path = format!("/api/users/{target_id}");
+            let body = json!({ "displayName": "対象", "role": "viewer" });
+            assert_eq!(
+                status_of(&router, put_json(&path, &operator, body)).await,
+                StatusCode::OK
+            );
+            None
+        }
+        AccountChange::PasswordReset => {
+            let path = format!("/api/users/{target_id}/reset-password");
+            let body = json!({ "newPassword": "resetpassword1" });
+            assert_eq!(
+                status_of(&router, post_json_auth(&path, &operator, body)).await,
+                StatusCode::OK
+            );
+            None
+        }
+        AccountChange::PasswordChange => {
+            // The target changes it themselves, from a third device.
+            let device = rest_login(&router, "target", REVOCATION_PASSWORD, false).await;
+            let body = json!({
+                "currentPassword": REVOCATION_PASSWORD,
+                "newPassword": "newpassword1",
+            });
+            assert_eq!(
+                status_of(
+                    &router,
+                    post_json_auth("/api/auth/change-password", &device, body)
+                )
+                .await,
+                StatusCode::OK
+            );
+            Some(device)
+        }
+    };
+
+    for (label, token) in [
+        ("regular", &target_normal),
+        ("remember-me", &target_remembered),
+    ] {
+        // The issue's reproduction: create an admin with the old token.
+        let intruder = json!({
+            "username": format!("intruder-{label}"),
+            "password": "password123",
+            "displayName": "侵入者",
+            "role": "admin",
+        });
+        assert_eq!(
+            status_of(&router, post_json_auth("/api/users", token, intruder)).await,
+            StatusCode::UNAUTHORIZED,
+            "{change:?}: the {label} session must be refused"
+        );
+        assert_eq!(
+            status_of(&router, get_auth("/api/ui-settings/theme", token)).await,
+            StatusCode::UNAUTHORIZED,
+            "{change:?}: the {label} session must be refused on require_auth-only routes too"
+        );
+        assert!(
+            !rest_check(&router, token).await,
+            "{change:?}: the {label} session must report logged out"
+        );
+    }
+    for label in ["regular", "remember-me"] {
+        assert!(
+            users
+                .get_by_username(&format!("intruder-{label}"))
+                .await
+                .unwrap()
+                .is_none(),
+            "{change:?}: no account may have been created"
+        );
+    }
+
+    // Other accounts' sessions are untouched.
+    assert_eq!(
+        status_of(&router, get_auth("/api/users", &operator)).await,
+        StatusCode::OK,
+        "{change:?}: the operator's session must survive"
+    );
+    assert!(
+        rest_check(&router, &bystander).await,
+        "{change:?}: bystander"
+    );
+    assert_eq!(
+        status_of(&router, get_auth("/api/ui-settings/theme", &bystander)).await,
+        StatusCode::OK,
+        "{change:?}: bystander"
+    );
+    // A self-service password change keeps the session that made it.
+    if let Some(device) = survivor {
+        assert_eq!(
+            status_of(&router, get_auth("/api/users", &device)).await,
+            StatusCode::OK,
+            "{change:?}: the changing session keeps working"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rest_delete_ends_the_accounts_regular_and_remembered_sessions() {
+    rest_change_ends_the_other_sessions(AccountChange::Delete).await;
+}
+
+#[tokio::test]
+async fn rest_demotion_ends_the_accounts_regular_and_remembered_sessions() {
+    rest_change_ends_the_other_sessions(AccountChange::Demote).await;
+}
+
+#[tokio::test]
+async fn rest_password_change_ends_the_accounts_other_sessions() {
+    rest_change_ends_the_other_sessions(AccountChange::PasswordChange).await;
+}
+
+#[tokio::test]
+async fn rest_password_reset_ends_the_accounts_regular_and_remembered_sessions() {
+    rest_change_ends_the_other_sessions(AccountChange::PasswordReset).await;
+}
+
+#[tokio::test]
+async fn a_demoted_account_logs_back_in_with_its_new_role() {
+    let (router, users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let target_id = users.get_by_username("target").await.unwrap().unwrap().id;
+    let body = json!({ "displayName": "対象", "role": "viewer" });
+    assert_eq!(
+        status_of(
+            &router,
+            put_json(&format!("/api/users/{target_id}"), &operator, body)
+        )
+        .await,
+        StatusCode::OK
+    );
+
+    let fresh = rest_login(&router, "target", REVOCATION_PASSWORD, true).await;
+    assert_eq!(
+        status_of(&router, get_auth("/api/users", &fresh)).await,
+        StatusCode::FORBIDDEN
+    );
+    let identity = router
+        .clone()
+        .oneshot(get_auth("/api/auth/identity", &fresh))
+        .await
+        .unwrap();
+    assert_eq!(body_json(identity).await["role"], "viewer");
+}
+
+#[tokio::test]
+async fn a_display_name_edit_keeps_the_accounts_sessions() {
+    let (router, users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let target = rest_login(&router, "target", REVOCATION_PASSWORD, true).await;
+    let target_id = users.get_by_username("target").await.unwrap().unwrap().id;
+    let body = json!({ "displayName": "対象（改名）", "role": "admin" });
+    assert_eq!(
+        status_of(
+            &router,
+            put_json(&format!("/api/users/{target_id}"), &operator, body)
+        )
+        .await,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        status_of(&router, get_auth("/api/users", &target)).await,
+        StatusCode::OK
+    );
+    let identity = router
+        .clone()
+        .oneshot(get_auth("/api/auth/identity", &target))
+        .await
+        .unwrap();
+    assert_eq!(body_json(identity).await["name"], "対象（改名）");
+}
+
+#[tokio::test]
+async fn role_guard_revalidates_when_require_auth_is_missing() {
+    // A misconfigured router (RoleGuard without require_auth in front) must
+    // not fall back to the identity cached on the token at login.
+    let (router, users) = router_with_user_sessions().await;
+    let operator = rest_login(&router, "operator", REVOCATION_PASSWORD, false).await;
+    let target = rest_login(&router, "target", REVOCATION_PASSWORD, false).await;
+    let pool_users = users.clone();
+    let audit = AuditLogService::new(migrate_memory().await.expect("migrate_memory"));
+    let auth = user_auth_state(pool_users, audit.clone());
+    // Log the target in on THIS state too (the guard below uses it).
+    let token = auth
+        .login("target", REVOCATION_PASSWORD)
+        .await
+        .expect("target login");
+    let guarded = Router::new()
+        .route("/guarded", axum::routing::get(|| async { "ok" }))
+        // Fully qualified: the display preset's scaffold narrows
+        // `rest/mod.rs`'s imports (which this module borrows via
+        // `use super::*`) and drops these two.
+        .layer(axum::middleware::from_fn_with_state(
+            banto_server::routes::RoleGuard {
+                auth: auth.clone(),
+                min: Role::Admin,
+                resource: "users",
+                audit,
+            },
+            banto_server::routes::require_role_at_least,
+        ));
+    let request = |token: &str| {
+        HttpRequest::get("/guarded")
+            .header("Authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(status_of(&guarded, request(&token)).await, StatusCode::OK);
+
+    let target_id = users.get_by_username("target").await.unwrap().unwrap().id;
+    assert_eq!(
+        status_of(
+            &router,
+            delete_auth(&format!("/api/users/{target_id}"), &operator)
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(!rest_check(&router, &target).await);
+    assert_eq!(
+        status_of(&guarded, request(&token)).await,
+        StatusCode::FORBIDDEN
+    );
 }

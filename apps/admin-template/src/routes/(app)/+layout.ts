@@ -1,6 +1,11 @@
-import { redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
-import { getAuthProvider } from '@banto/admin-core';
+import {
+	getAuthProvider,
+	resolveProtectedSession,
+	type ProtectedSessionOutcome
+} from '@banto/admin-core';
+import * as m from '$lib/paraglide/messages';
 import { bantoReady } from '$lib/banto/setup';
 import { syncLocaleFromProvider } from '$lib/banto/locale';
 import { sessionStore } from '$lib/session.svelte';
@@ -26,15 +31,26 @@ import { publicNavItems } from '$lib/navigation';
 // `viewerPublic` field and `enterPublicViewer()`; Tauri/demo leave both
 // undefined, so `status?.()`/`enterPublicViewer?.()` fall through to
 // `undefined`/`false` there and the guard behaves exactly as before.
+//
+// Issue #204: `resolveProtectedSession` only falls through to the
+// public-viewer entry / login screen when the session is CONFIRMED invalid.
+// When it could not be verified (the server's account check failed with a
+// 500, or the server is unreachable) the guard stops with an error page that
+// offers a retry (`routes/+error.svelte`) - the stored token (Remember me
+// included) is kept, and the session resumes once the server answers.
 export async function load({ url }) {
 	await bantoReady;
 	const authProvider = getAuthProvider();
-	if (!(await authProvider.check())) {
-		const status = await authProvider.status?.();
-		const entered = status?.viewerPublic ? await authProvider.enterPublicViewer?.() : false;
-		if (!entered) {
-			redirect(307, `${base}/login`);
-		}
+	let outcome: ProtectedSessionOutcome;
+	try {
+		outcome = await resolveProtectedSession(authProvider);
+	} catch {
+		error(503, {
+			message: `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`
+		});
+	}
+	if (outcome === 'login') {
+		redirect(307, `${base}/login`);
 	}
 	await sessionStore.load();
 

@@ -417,4 +417,47 @@ mod tests {
         assert!(!is_postgres_url("/var/lib/banto/app.sqlite3"));
         assert!(!is_postgres_url("C:\\data\\app.sqlite3"));
     }
+
+    /// Issue #204: a database created before migration 0007 upgrades in
+    /// place - accounts that already exist get `auth_epoch = 0` and keep
+    /// working (the SQLite half; `tests/pg_smoke.rs` covers the PostgreSQL
+    /// DDL on CI).
+    #[tokio::test]
+    async fn a_database_from_before_0007_upgrades_with_existing_accounts_at_epoch_zero() {
+        let db = Db::connect_sqlite_memory().await.unwrap();
+        let pool = db.as_sqlite().expect("sqlite handle");
+        sqlx::migrate!("./migrations-sqlite")
+            .run_to(6, pool)
+            .await
+            .expect("pre-#204 schema");
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, display_name, role) \
+             VALUES ('existing', 'unused', '既存', 'admin')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        run_migrations(&db)
+            .await
+            .expect("upgrade to the current schema");
+
+        let users = crate::users::UsersService::new(db.clone());
+        let existing = users
+            .get_by_username("existing")
+            .await
+            .unwrap()
+            .expect("the existing account survives the upgrade");
+        assert_eq!(existing.auth_epoch, 0);
+        users
+            .reset_password(existing.id, "password123")
+            .await
+            .unwrap();
+        let verified = users
+            .verify("existing", "password123")
+            .await
+            .unwrap()
+            .expect("the upgraded account can log in");
+        assert_eq!(verified.auth_epoch, 1);
+    }
 }

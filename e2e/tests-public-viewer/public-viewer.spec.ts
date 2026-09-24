@@ -24,6 +24,7 @@
  * No `waitForTimeout`/`sleep`: every wait is a locator auto-retry.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { expectCheckOutageKeepsTheSession } from '../tests/session-check-outage';
 
 // #209: a normal account may share the synthetic identity's string ID.
 const ADMIN_USERNAME = 'public';
@@ -139,6 +140,24 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(page).toHaveURL(/\/settings$/);
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+	});
+
+	// Issue #204 review: with public viewing ON, an auth-check outage (500) used
+	// to fall through to enterPublicViewer(), replacing the login token with a
+	// viewer one (and wiping a "Remember me" token). It must keep the session.
+	test('5a. an auth-check outage keeps the login session instead of switching to the viewer', async () => {
+		await expectCheckOutageKeepsTheSession(page, false);
+
+		await page.getByRole('button', { name: 'ユーザーメニューを開く' }).click();
+		await page.getByRole('menuitem', { name: 'ログアウト' }).click();
+		await expect(page).toHaveURL(/\/login$/);
+		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+		await page.getByLabel('ログイン状態を保持する（30日間）').check();
+		await page.getByRole('button', { name: 'ログイン', exact: true }).click();
+		await expect(page).toHaveURL(/\/dashboard$/);
+
+		await expectCheckOutageKeepsTheSession(page, true);
 	});
 
 	test('6. logging out offers "閲覧のみで続ける", which re-enters the synthetic session', async () => {

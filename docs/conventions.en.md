@@ -308,6 +308,30 @@ without a runtime guard are **upheld by reviewing every call site**.
     ON** (guarded from both directions in `SettingsService`, viewer-public-plan
     §2.3). With it OFF the exclusivity is unchanged from the 2026-07-08
     decision.
+- **Sessions are re-checked against the account on every request (Issue
+  #204).** A session carries the account's row id + `auth_epoch` from when it
+  was established; REST's `require_auth` (`AuthState::authenticate`) and
+  Tauri's `require_role` (`current_session`) re-read the `users` row each time,
+  revoke the session if the account is gone or either value differs, and
+  otherwise authorize with the role stored **now**
+  ([ADR-0014](adr/0014-account-bound-session-revocation.en.md)). Reviewed by
+  hand:
+  - **Every write that must end sessions advances `auth_epoch` in the same
+    `UPDATE`** (role change, password change, password reset). A new such
+    operation (e.g. disabling an account) must do the same.
+  - **Access decisions never use the synchronous `verify`/`identity_for`**;
+    they go through `authenticate` (`require_auth`). Routes not behind
+    `require_auth` (`check`/`identity`/`change-password`) call it themselves.
+  - **REST `AuthState`s for real accounts are built with
+    `SessionValidation::Lookup`** (`user_auth_state`). `SessionValidation` is a
+    required constructor argument with no default; `DisabledNoRevocation` is only
+    for tests and public-viewer-only servers with no account store. With a lookup,
+    create-and-login paths use `issue_account_token` (unstamped tokens are
+    rejected).
+  - **The Tauri window's session is a `DesktopSession` enum** (`Account` /
+    `AuthDisabledLocal`). It is read only through `current_session`, and
+    synthetic sessions are never recognized by a value such as their `id`.
+  - A store failure fails the request; it neither revokes nor passes.
 
 ## 7. `{@html}` only with self-generated, fully escaped output [machine-checked: allowlist of use sites]
 

@@ -229,6 +229,14 @@ export function createHttpAuthProvider(
 			setToken(null);
 		},
 
+		/**
+		 * `false` only when the session is known to be invalid: no token, a
+		 * `401`, or a `200 false` (the server revoked it - Issue #204). A
+		 * server that could not check the account (`500` on a DB error) or
+		 * could not be reached REJECTS instead, and the stored token - regular
+		 * or "Remember me" - is left untouched, so a transient failure never
+		 * logs the client out or lets a caller replace the token.
+		 */
 		async check(): Promise<boolean> {
 			const token = getToken();
 			if (!token) return false;
@@ -239,13 +247,13 @@ export function createHttpAuthProvider(
 					headers: headers(false)
 				});
 			} catch {
-				return false;
+				throw networkError();
 			}
 			if (response.status === 401) {
 				setToken(null);
 				return false;
 			}
-			if (!response.ok) return false;
+			if (!response.ok) throw await errorFromResponse(response);
 			return (await response.json()) as boolean;
 		},
 

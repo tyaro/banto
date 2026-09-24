@@ -233,6 +233,10 @@ mod tests;
 // resolving unchanged now that the function itself lives in
 // `banto_server::routes::audit`.
 pub use banto_server::routes::audited_credential_verifier;
+// Issue #204: the REST `AuthState` with session revocation wired in
+// (`audited_credential_verifier` + the per-request account re-check).
+// `bin/banto-serve.rs` and `src-tauri`'s `run()` build their state with it.
+pub use banto_server::routes::user_auth_state;
 
 use attachments::attachments_router;
 // [scaffold:items] begin

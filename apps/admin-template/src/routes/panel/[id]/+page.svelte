@@ -27,12 +27,19 @@
 	const id = $derived(page.params.id ?? '');
 	const def = $derived(findPanelDef(id));
 
-	let authState: 'checking' | 'ok' | 'unauthenticated' = $state('checking');
+	// 'unverified' (Issue #204): the server could not check the session (a
+	// 500 / unreachable). Not the same as logged out - say so, and keep the
+	// stored token for the next attempt (reopening the panel retries).
+	let authState: 'checking' | 'ok' | 'unauthenticated' | 'unverified' = $state('checking');
 
 	$effect(() => {
 		void (async () => {
 			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
-			authState = (await getAuthProvider().check()) ? 'ok' : 'unauthenticated';
+			try {
+				authState = (await getAuthProvider().check()) ? 'ok' : 'unauthenticated';
+			} catch {
+				authState = 'unverified';
+			}
 		})();
 	});
 
@@ -51,6 +58,8 @@
 	<p class="status">{m['dashboard.panelChecking']()}</p>
 {:else if authState === 'unauthenticated'}
 	<p class="status">{m['dashboard.panelLoginRequired']()}</p>
+{:else if authState === 'unverified'}
+	<p class="status">{m['app.sessionCheckFailed.title']()}</p>
 {:else}
 	<div class="panel-window">
 		<header class="panel-header">

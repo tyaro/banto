@@ -114,12 +114,18 @@ fn validate_username(username: &str) -> Result<String, BantoError> {
 /// only `id`/`name`; this carries the full row needed by the REST/Tauri
 /// command layers (e.g. `username`, to look the account back up for
 /// `change_password`).
+///
+/// `auth_epoch` (Issue #204) is the account's authentication epoch as read in
+/// the same statement as the rest of the row. A session records it (together
+/// with `id`) when it is established, and is ended as soon as the stored
+/// value differs - see [`UsersService`]'s "Session revocation" section.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UserIdentity {
     pub id: i64,
     pub username: String,
     pub display_name: String,
     pub role: Role,
+    pub auth_epoch: i64,
 }
 
 /// Public listing of an account (spec M10's user-management screen):
@@ -143,6 +149,26 @@ pub struct UserSummary {
 ///
 /// `Clone` is cheap (`Db` is an `Arc`-backed connection handle), matching
 /// `ItemsService`/`SettingsService`.
+///
+/// ## Session revocation (Issue #204)
+///
+/// Sessions (REST bearer tokens and the Tauri webview's session alike) are
+/// bound to `(id, auth_epoch)` and re-checked against this table on every
+/// request/command, so the account's CURRENT row is what authorizes. Three
+/// writes end every existing session of an account, each by incrementing
+/// `auth_epoch` in the same `UPDATE` that makes the change (never a separate
+/// read-then-write, so a concurrent change cannot be overwritten with a stale
+/// epoch):
+///
+/// - [`UsersService::update_user`] when the role actually changes (a
+///   display-name-only edit keeps sessions);
+/// - [`UsersService::change_password`] (returns the new epoch, so the caller
+///   can keep only the session that made the change);
+/// - [`UsersService::reset_password`].
+///
+/// [`UsersService::delete_user`] needs no epoch: the row is gone, and ids are
+/// never reused (`AUTOINCREMENT` / identity column), so a later account with
+/// the same username cannot inherit a deleted account's sessions.
 #[derive(Clone)]
 pub struct UsersService {
     db: Db,
@@ -261,15 +287,15 @@ impl UsersService {
         // text.
         let sql = format!(
             "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
-             RETURNING id",
+             RETURNING id, auth_epoch",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
             dialect.placeholder(4),
         );
-        let id: i64 = match &self.db {
+        let (id, auth_epoch): (i64, i64) = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -279,7 +305,7 @@ impl UsersService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -295,6 +321,7 @@ impl UsersService {
             username,
             display_name: display_name.to_string(),
             role: Role::Admin,
+            auth_epoch,
         })
     }
 
@@ -315,10 +342,10 @@ impl UsersService {
     ) -> Result<Option<UserIdentity>, BantoError> {
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "SELECT id, password_hash, display_name, role FROM users WHERE username = {}",
+            "SELECT id, password_hash, display_name, role, auth_epoch FROM users WHERE username = {}",
             self.db.dialect().placeholder(1)
         );
-        let row: Option<(i64, String, String, String)> = match &self.db {
+        let row: Option<(i64, String, String, String, i64)> = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
@@ -336,13 +363,14 @@ impl UsersService {
         .map_err(banto_storage::storage_error)?;
 
         match row {
-            Some((id, hash, display_name, role)) => {
+            Some((id, hash, display_name, role, auth_epoch)) => {
                 if verify_password(password, &hash) {
                     Ok(Some(UserIdentity {
                         id,
                         username: username.to_string(),
                         display_name,
                         role: Role::from_str(&role)?,
+                        auth_epoch,
                     }))
                 } else {
                     Ok(None)
@@ -359,12 +387,20 @@ impl UsersService {
     /// (validated the same way as `setup_first_user`'s password, but with
     /// field name `newPassword` so the Tauri/REST layers can map the error
     /// straight onto the change-password form's second input).
+    ///
+    /// Issue #204: the same `UPDATE` increments `auth_epoch`, which ends
+    /// every existing session of the account; the new epoch is returned so
+    /// the caller can re-bind just the session that made the change (see
+    /// the "Session revocation" section on [`UsersService`]). The `UPDATE`
+    /// also requires the hash it verified against to still be current, so
+    /// a password changed or reset in between is not silently overwritten
+    /// (reported as a wrong current password, which it now is).
     pub async fn change_password(
         &self,
         username: &str,
         current: &str,
         new: &str,
-    ) -> Result<(), BantoError> {
+    ) -> Result<i64, BantoError> {
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let select_sql = format!(
             "SELECT id, password_hash FROM users WHERE username = {}",
@@ -410,29 +446,38 @@ impl UsersService {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let update_sql = format!(
-            "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
+            "UPDATE users SET password_hash = {}, auth_epoch = auth_epoch + 1, updated_at = {} \
+             WHERE id = {} AND password_hash = {} RETURNING auth_epoch",
             dialect.placeholder(1),
             dialect.now_expr(),
             dialect.placeholder(2),
+            dialect.placeholder(3),
         );
-        match &self.db {
-            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(update_sql))
-                .bind(&new_hash)
-                .bind(id)
-                .execute(pool)
-                .await
-                .map(|_| ()),
+        let new_epoch: Option<i64> = match &self.db {
+            Db::Sqlite(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(update_sql))
+                    .bind(&new_hash)
+                    .bind(id)
+                    .bind(&hash)
+                    .fetch_optional(pool)
+                    .await
+            }
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(update_sql))
-                .bind(&new_hash)
-                .bind(id)
-                .execute(pool)
-                .await
-                .map(|_| ()),
+            Db::Postgres(pool) => {
+                sqlx::query_scalar(sqlx::AssertSqlSafe(update_sql))
+                    .bind(&new_hash)
+                    .bind(id)
+                    .bind(&hash)
+                    .fetch_optional(pool)
+                    .await
+            }
         }
         .map_err(banto_storage::storage_error)?;
 
-        Ok(())
+        // No row: the account was deleted, or its password changed after the
+        // verification above. Either way the supplied current password is no
+        // longer the account's password.
+        new_epoch.ok_or_else(wrong_current)
     }
 
     // --- M10: user management (admin-only CRUD + RBAC) -------------------
@@ -469,16 +514,22 @@ impl UsersService {
     /// self-deletion guard) from a bearer token's `Identity.id`, which
     /// carries the *username* (spec convention, see
     /// `banto_server::auth::Identity`'s doc comment), not the row id.
+    ///
+    /// Also the per-request session re-check (Issue #204): the REST session
+    /// lookup (`banto_server::routes::user_session_lookup`) and the Tauri
+    /// `require_role` compare the returned `id`/`auth_epoch` with the ones
+    /// the session was established under and authorize with the returned
+    /// (current) `role`. One indexed lookup on the `UNIQUE` `username`.
     pub async fn get_by_username(
         &self,
         username: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "SELECT id, display_name, role FROM users WHERE username = {}",
+            "SELECT id, display_name, role, auth_epoch FROM users WHERE username = {}",
             self.db.dialect().placeholder(1)
         );
-        let row: Option<(i64, String, String)> = match &self.db {
+        let row: Option<(i64, String, String, i64)> = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(username)
@@ -496,11 +547,12 @@ impl UsersService {
         .map_err(banto_storage::storage_error)?;
 
         match row {
-            Some((id, display_name, role)) => Ok(Some(UserIdentity {
+            Some((id, display_name, role, auth_epoch)) => Ok(Some(UserIdentity {
                 id,
                 username: username.to_string(),
                 display_name,
                 role: Role::from_str(&role)?,
+                auth_epoch,
             })),
             None => Ok(None),
         }
@@ -558,15 +610,15 @@ impl UsersService {
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let insert_sql = format!(
             "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
-             RETURNING id",
+             RETURNING id, auth_epoch",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
             dialect.placeholder(4),
         );
-        let id: i64 = match &self.db {
+        let (id, auth_epoch): (i64, i64) = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
+                sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -576,7 +628,7 @@ impl UsersService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
+                sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
@@ -592,6 +644,7 @@ impl UsersService {
             username,
             display_name: display_name.to_string(),
             role,
+            auth_epoch,
         })
     }
 
@@ -599,6 +652,11 @@ impl UsersService {
     /// changes go through [`UsersService::change_password`] (self-service)
     /// or [`UsersService::reset_password`] (admin) instead). Refuses to
     /// demote the last `admin` account.
+    ///
+    /// Issue #204: a role change increments `auth_epoch`, ending the
+    /// account's existing sessions; a display-name-only update does not.
+    /// Whether the role changed is decided by the `UPDATE` itself (SQL `SET`
+    /// expressions see the row's pre-update values), not by a separate read.
     pub async fn update_user(
         &self,
         id: i64,
@@ -610,12 +668,15 @@ impl UsersService {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "UPDATE users SET display_name = {}, role = {}, updated_at = {} WHERE id = {} \
+            "UPDATE users SET display_name = {}, \
+             auth_epoch = auth_epoch + CASE WHEN role = {} THEN 0 ELSE 1 END, \
+             role = {}, updated_at = {} WHERE id = {} \
              RETURNING id, username, display_name, role, created_at",
             dialect.placeholder(1),
             dialect.placeholder(2),
-            dialect.now_expr(),
             dialect.placeholder(3),
+            dialect.now_expr(),
+            dialect.placeholder(4),
         );
         let guard_sql = format!(
             "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin') \
@@ -632,6 +693,7 @@ impl UsersService {
                 ensure_admin_removal_allowed(id, state, !role.is_admin())?;
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(display_name)
+                    .bind(role.as_str())
                     .bind(role.as_str())
                     .bind(id)
                     .fetch_optional(&mut *tx)
@@ -659,6 +721,10 @@ impl UsersService {
     /// [`UsersService::change_password`], does not require the account's
     /// current password - this is an administrative action on someone
     /// else's account, not self-service.
+    ///
+    /// Issue #204: also increments `auth_epoch`, ending every existing
+    /// session of the account (including the caller's own, when an admin
+    /// resets their own password through this administrative path).
     pub async fn reset_password(&self, id: i64, new_password: &str) -> Result<(), BantoError> {
         validate_password_len(new_password, "newPassword")?;
         let hash = hash_password(new_password)?;
@@ -666,7 +732,8 @@ impl UsersService {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "UPDATE users SET password_hash = {}, updated_at = {} WHERE id = {}",
+            "UPDATE users SET password_hash = {}, auth_epoch = auth_epoch + 1, updated_at = {} \
+             WHERE id = {}",
             dialect.placeholder(1),
             dialect.now_expr(),
             dialect.placeholder(2),
@@ -769,7 +836,8 @@ mod tests {
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer'))
+                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
+                auth_epoch INTEGER NOT NULL DEFAULT 0
             )",
         )
         .execute(
@@ -1152,6 +1220,119 @@ mod tests {
         assert!(svc.get_by_username("nobody").await.unwrap().is_none());
     }
 
+    // --- Issue #204: auth_epoch (session revocation) ------------------------
+
+    async fn epoch_of(svc: &UsersService, username: &str) -> i64 {
+        svc.get_by_username(username)
+            .await
+            .unwrap()
+            .expect("account exists")
+            .auth_epoch
+    }
+
+    #[tokio::test]
+    async fn new_accounts_start_at_epoch_zero_everywhere_they_are_read() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        assert_eq!((owner.auth_epoch, editor.auth_epoch), (0, 0));
+        let verified = svc.verify("editor1", "password123").await.unwrap().unwrap();
+        assert_eq!(verified.auth_epoch, 0);
+        assert_eq!(verified.id, editor.id);
+    }
+
+    #[tokio::test]
+    async fn role_change_password_change_and_reset_each_advance_the_epoch() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+
+        // Display-name-only edit: sessions survive.
+        svc.update_user(editor.id, "改名", Role::Editor)
+            .await
+            .unwrap();
+        assert_eq!(epoch_of(&svc, "editor1").await, 0);
+
+        // Demotion and promotion are both role changes.
+        svc.update_user(editor.id, "改名", Role::Viewer)
+            .await
+            .unwrap();
+        assert_eq!(epoch_of(&svc, "editor1").await, 1);
+        svc.update_user(editor.id, "改名", Role::Admin)
+            .await
+            .unwrap();
+        assert_eq!(epoch_of(&svc, "editor1").await, 2);
+
+        // Self-service change returns the epoch it wrote.
+        let returned = svc
+            .change_password("editor1", "password123", "newpassword1")
+            .await
+            .unwrap();
+        assert_eq!(returned, 3);
+        assert_eq!(epoch_of(&svc, "editor1").await, 3);
+
+        svc.reset_password(editor.id, "resetpassword1")
+            .await
+            .unwrap();
+        assert_eq!(epoch_of(&svc, "editor1").await, 4);
+        let verified = svc
+            .verify("editor1", "resetpassword1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(verified.auth_epoch, 4);
+    }
+
+    #[tokio::test]
+    async fn refused_updates_and_failed_password_changes_keep_the_epoch() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        // Last-admin refusal rolls back, epoch included.
+        svc.update_user(owner.id, "オーナー", Role::Viewer)
+            .await
+            .unwrap_err();
+        svc.change_password("owner", "wrong-password", "newpassword1")
+            .await
+            .unwrap_err();
+        svc.change_password("owner", "password123", "short")
+            .await
+            .unwrap_err();
+        assert_eq!(epoch_of(&svc, "owner").await, 0);
+    }
+
+    #[tokio::test]
+    async fn epoch_changes_leave_other_accounts_untouched() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        svc.update_user(editor.id, "編集者1", Role::Viewer)
+            .await
+            .unwrap();
+        svc.reset_password(editor.id, "resetpassword1")
+            .await
+            .unwrap();
+        assert_eq!(epoch_of(&svc, "owner").await, 0);
+    }
+
     // Issue #207 / roadmap M10: two independent service pools must serialize
     // the last-admin check with the write, including mixed update/delete calls.
     async fn concurrent_admin_removals(delete_first: bool, delete_second: bool) {
@@ -1184,7 +1365,8 @@ mod tests {
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer'))
+                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
+                auth_epoch INTEGER NOT NULL DEFAULT 0
             )",
         )
         .execute(&first_pool)

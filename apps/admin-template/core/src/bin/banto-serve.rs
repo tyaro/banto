@@ -54,16 +54,14 @@ use admin_template_core::db::{init_db_from_target, is_postgres_url};
 use admin_template_core::events::event_channel;
 use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::ItemsService;
-use admin_template_core::rest::{api_router, audited_credential_verifier, Services};
+use admin_template_core::rest::{api_router, user_auth_state, Services};
 use admin_template_core::settings::{ServerSettings, SettingsService};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
-use banto_server::{
-    lan_urls, start, static_router, with_security_headers, AuthState, ServerConfig,
-};
+use banto_server::{lan_urls, start, static_router, with_security_headers, ServerConfig};
 use std::path::PathBuf;
 
 const DEFAULT_PORT: u16 = 8721;
@@ -165,8 +163,10 @@ async fn main() {
     // Credential verifier from `admin_template_core::rest` (spec §8.2),
     // backed by `UsersService`'s argon2id-hashed accounts - replaces the old
     // fixed admin/admin check that used to live here directly. Also records
-    // `login`/`login_failed` audit entries (spec M14).
-    let auth = AuthState::new(audited_credential_verifier(users.clone(), audit.clone()));
+    // `login`/`login_failed` audit entries (spec M14), and re-checks the
+    // account on every request so deleting/demoting/re-keying it ends its
+    // sessions (Issue #204).
+    let auth = user_auth_state(users.clone(), audit.clone());
 
     // Spec M17: record `restore_applied` now that a real `AuditLogService`
     // exists - `apply_pending_restore_at_startup` itself cannot do this (it

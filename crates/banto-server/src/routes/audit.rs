@@ -61,6 +61,59 @@ pub fn audited_credential_verifier(
     }
 }
 
+/// The [`crate::SessionLookup`] for `UsersService` accounts (Issue #204):
+/// re-reads the account by username and reports its current identity and
+/// `(id, auth_epoch)` stamp, so [`AuthState::authenticate`] ends the sessions
+/// of deleted accounts and of accounts whose epoch `UsersService` advanced
+/// (role change, password change/reset), and authorizes with the current
+/// role. One indexed `SELECT` per authenticated request.
+pub fn user_session_lookup(
+    users: UsersService,
+) -> impl Fn(
+    String,
+) -> futures_util::future::BoxFuture<'static, Result<Option<SessionAccount>, BantoError>>
+       + Send
+       + Sync
+       + 'static {
+    move |username: String| {
+        let users = users.clone();
+        Box::pin(async move {
+            Ok(users
+                .get_by_username(&username)
+                .await?
+                .map(|user| session_account(&user)))
+        })
+    }
+}
+
+/// `UserIdentity` -> the wire [`Identity`] + [`SessionStamp`] a session is
+/// bound to (`Identity.id` is the username, see its doc comment).
+pub(crate) fn session_account(user: &UserIdentity) -> SessionAccount {
+    SessionAccount {
+        identity: Identity {
+            id: user.username.clone(),
+            name: user.display_name.clone(),
+            role: user.role.to_string(),
+        },
+        stamp: SessionStamp {
+            account_id: user.id,
+            auth_epoch: user.auth_epoch,
+        },
+    }
+}
+
+/// The REST [`AuthState`] for a `UsersService` credential store, with
+/// session revocation wired in (Issue #204): [`audited_credential_verifier`]
+/// for login plus [`user_session_lookup`] for the per-request re-check.
+/// `banto-serve` and the Tauri app's embedded server both build their state
+/// here, so neither can forget the lookup.
+pub fn user_auth_state(users: UsersService, audit: AuditLogService) -> AuthState {
+    AuthState::new(
+        audited_credential_verifier(users.clone(), audit),
+        SessionValidation::lookup(user_session_lookup(users)),
+    )
+}
+
 /// State for [`audit_logout_middleware`]: needs `AuthState` to resolve the
 /// logging-out session's identity BEFORE the token is invalidated, plus
 /// `AuditLogService` to record it (spec M14).

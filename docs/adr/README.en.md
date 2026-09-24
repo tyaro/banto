@@ -55,6 +55,7 @@ corresponding ADR exists, be traced from there.
 | [0011](0011-git-tag-distribution.en.md)                | Distribute via git tag references and defer npm/crates.io registry publishing                                                 | Accepted |
 | [0012](0012-lan-public-viewer-synthetic-session.en.md) | Implement LAN viewer-public as a viewer-only synthetic session, not an auth-bypassing public router                           | Accepted |
 | [0013](0013-sysinfo-system-metrics-feature.en.md)      | Provide CPU/memory usage as a shared API by adopting `sysinfo` behind a feature (an exception to ADR-0002)                    | Accepted |
+| [0014](0014-account-bound-session-revocation.en.md)    | Bind sessions to account row id + authentication epoch and revoke them by checking the database per request                   | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 

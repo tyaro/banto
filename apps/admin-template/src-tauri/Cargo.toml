@@ -65,7 +65,12 @@ keyring = { workspace = true }
 # `change_own_password` audit-recording test) - the runtime/macros features
 # are test-only so the production dependency above stays "sync"-only.
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+# `net`/`io-util` (Issue #204): the cross-process session tests drive a real
+# embedded-server port with plain HTTP/1.1 over `tokio::net::TcpStream`
+# instead of adding an HTTP client crate. Both are already compiled into the
+# graph through `banto-server`; named here so the tests do not silently
+# depend on another crate's feature choices.
+tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
 # Spec M17 backup tests: `BackupService::create`'s `VACUUM INTO` needs a
 # real on-disk pool (see `admin-template-core::backup`'s test module doc
 # comment for why `:memory:` does not work), so these tests cannot reuse

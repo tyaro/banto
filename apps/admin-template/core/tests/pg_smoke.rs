@@ -54,10 +54,36 @@ async fn app_layer_crud_round_trips_on_postgres() {
 
     reset_schema(&url).await;
 
+    // Issue #204: start from the pre-0007 schema with an existing account, so
+    // `init_db_from_target` below exercises the in-place upgrade.
+    {
+        let pool = banto_storage::connect_postgres(&url)
+            .await
+            .expect("connect for the pre-#204 schema");
+        sqlx::migrate!("./migrations-postgres")
+            .run_to(6, &pool)
+            .await
+            .expect("pre-#204 schema");
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, display_name, role) \
+             VALUES ('existing', 'unused', 'Existing', 'admin')",
+        )
+        .execute(&pool)
+        .await
+        .expect("pre-#204 account");
+        pool.close().await;
+    }
+
     // migrations-postgres + deterministic 1,000-row seed.
     let db = init_db_from_target(&url)
         .await
         .expect("init_db_from_target should run migrations-postgres and seed");
+    let existing = UsersService::new(db.clone())
+        .get_by_username("existing")
+        .await
+        .expect("users get_by_username after the upgrade")
+        .expect("the pre-#204 account survives the upgrade");
+    assert_eq!(existing.auth_epoch, 0);
 
     // --- items: seed count, create, update, list, delete ---------------------
     let items = ItemsService::new(db.clone());
@@ -224,6 +250,45 @@ async fn app_layer_crud_round_trips_on_postgres() {
         listed_users.iter().any(|u| u.username == "alice"),
         "created user should appear in list"
     );
+
+    // --- users: auth_epoch (Issue #204, migration 0007) ---------------------
+    // The Postgres arms of the epoch writes: `CASE WHEN role = $2` reuses a
+    // text parameter, and `RETURNING auth_epoch` decodes BIGINT -> i64.
+    assert_eq!(identity.auth_epoch, 0);
+    let epoch = |users: UsersService| async move {
+        users
+            .get_by_username("alice")
+            .await
+            .expect("users get_by_username")
+            .expect("alice exists")
+            .auth_epoch
+    };
+    users
+        .update_user(identity.id, "Alice A.", Role::Editor)
+        .await
+        .expect("users update_user (name only)");
+    assert_eq!(epoch(users.clone()).await, 0, "a name edit keeps sessions");
+    users
+        .update_user(identity.id, "Alice A.", Role::Viewer)
+        .await
+        .expect("users update_user (role)");
+    assert_eq!(epoch(users.clone()).await, 1, "a role change ends sessions");
+    let changed = users
+        .change_password("alice", "correct horse battery", "battery staple horse")
+        .await
+        .expect("users change_password");
+    assert_eq!(changed, 2);
+    users
+        .reset_password(identity.id, "reset horse battery")
+        .await
+        .expect("users reset_password");
+    assert_eq!(epoch(users.clone()).await, 3);
+    let verified = users
+        .verify("alice", "reset horse battery")
+        .await
+        .expect("users verify")
+        .expect("alice verifies with the reset password");
+    assert_eq!(verified.auth_epoch, 3);
 
     // --- settings: set + get -------------------------------------------------
     let settings = SettingsService::new(db.clone());
