@@ -20,7 +20,7 @@ import { invalidate } from './invalidate';
 import { notify } from './registry.svelte';
 import type { NotificationKind } from './provider';
 import { createSseParser } from './sse-parser';
-import { confirmSessionEnded } from './sessionEnded';
+import { createSessionEndConfirmation } from './sessionEnded';
 
 export type AppEvent =
 	| { kind: 'resource_changed'; resource: string }
@@ -39,6 +39,16 @@ export interface EventSubscriptionHooks {
 	 * `confirmSessionEnded` (sessionEnded.ts).
 	 */
 	onUnauthorized?: () => void;
+	/**
+	 * The token this stream was using disappeared from storage without this
+	 * stream being rejected - typically another tab sharing the "Remember me"
+	 * token (localStorage) confirmed the revocation and cleared it first
+	 * (review of #242). Called once per disappearance, and only for a token
+	 * this stream had actually used: the first wait before any login and a
+	 * new login replacing the token are not disappearances. `connectEvents`
+	 * wires this to the same confirmation as `onUnauthorized`.
+	 */
+	onTokenCleared?: () => void;
 }
 
 /** Backend-agnostic subscription to `AppEvent`s. Returns an unsubscribe function. */
@@ -134,6 +144,11 @@ const SSE_HEADERS = { 'X-Banto-Client': 'banto' } as const;
  *   `getToken()` returns a different token (a new login; the check is a
  *   local read, same as the not-logged-in wait). `hooks.onUnauthorized` is
  *   called once so the app can run its route guard.
+ * - the token it had been using is gone from storage at the next
+ *   (re)connect, without a `401` here: another tab sharing the "Remember
+ *   me" token already confirmed the revocation and cleared it.
+ *   `hooks.onTokenCleared` is called once so this tab confirms too (review
+ *   of #242). Never for the wait before the first login.
  * - any other failure (`500`, `503`, a network error, the stream ending -
  *   e.g. the server's periodic revalidation closing it): the session could
  *   not be verified or the stream simply ended, so reconnect after
@@ -154,6 +169,10 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 			// The last token the server answered `401` for (see the doc comment
 			// above): never sent again.
 			let rejectedToken: string | null = null;
+			// The token this stream last connected with, while it is still the
+			// one to watch for disappearing (`onTokenCleared`). Reset on a `401`,
+			// whose own path (`onUnauthorized`) already covers that token.
+			let usedToken: string | null = null;
 
 			function dispatch(payload: string): void {
 				try {
@@ -172,10 +191,15 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 
 			async function connectOnce(): Promise<void> {
 				const token = options.getToken();
+				if (token === null && usedToken !== null) {
+					usedToken = null;
+					if (!stopped) hooks?.onTokenCleared?.();
+				}
 				if (token === null || token === rejectedToken) {
 					scheduleReconnect(tokenWaitDelayMs);
 					return;
 				}
+				usedToken = token;
 
 				controller = new AbortController();
 				try {
@@ -186,6 +210,7 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 					if (response.status === 401) {
 						void response.body?.cancel().catch(() => {});
 						rejectedToken = token;
+						usedToken = null;
 						if (!stopped) hooks?.onUnauthorized?.();
 						scheduleReconnect(tokenWaitDelayMs);
 						return;
@@ -236,13 +261,17 @@ function toNotificationKind(level: string): NotificationKind {
  * `resource_changed` -> `invalidate(resource)` (so `ListResource`/
  * `WindowedListResource` subscribers refetch); `notice` -> `notify(...)`
  * (falls back to `'info'` for an unrecognized `level`). A stream the server
- * rejected (`onUnauthorized`, Issue #241) -> `confirmSessionEnded()`, which
- * confirms through `AuthProvider.check()` (clearing the stored token) and
- * then tells `onSessionEnded` listeners so the app can run its route guard.
- * Returns the `EventProvider`'s own unsubscribe function.
+ * rejected (`onUnauthorized`, Issue #241) or whose token another tab cleared
+ * (`onTokenCleared`) -> a confirmation loop (`createSessionEndConfirmation`):
+ * `AuthProvider.check()` (clearing the stored token), then `onSessionEnded`
+ * listeners so the app can run its route guard. While the server cannot
+ * verify, the confirmation is retried with backoff (the stream itself stays
+ * stopped for a rejected token). Returns an unsubscribe function that also
+ * stops the confirmation.
  */
 export function connectEvents(provider: EventProvider): () => void {
-	return provider.subscribe(
+	const confirmation = createSessionEndConfirmation();
+	const unsubscribe = provider.subscribe(
 		(event) => {
 			if (event.kind === 'resource_changed') {
 				invalidate(event.resource);
@@ -250,6 +279,10 @@ export function connectEvents(provider: EventProvider): () => void {
 				notify(toNotificationKind(event.level), event.message);
 			}
 		},
-		{ onUnauthorized: () => void confirmSessionEnded() }
+		{ onUnauthorized: confirmation.start, onTokenCleared: confirmation.start }
 	);
+	return () => {
+		confirmation.stop();
+		unsubscribe();
+	};
 }

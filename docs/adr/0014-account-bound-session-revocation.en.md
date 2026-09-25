@@ -155,8 +155,15 @@ role from the database.
   invalid; a failed lookup is a `500`) stops reconnecting with that token and
   sends nothing until a different token (a new login) appears. `connectEvents`
   passes that to `confirmSessionEnded`, which tells `onSessionEnded` listeners
-  only when `check()` returns `false` (concurrent confirmations share one, and
-  a `check()` that never answers is given up after 10 s without notifying); the app re-runs its route guard there
+  only when `check()` returns `false` (concurrent confirmations share one). A
+  confirmation that cannot verify (`500`, unreachable, no answer within 10 s) is
+  retried with backoff (1 s doubling to 30 s) while the stream stays stopped for
+  the rejected token; a `false` arriving after the 10 s clears the token, and the
+  next retry, finding no token, confirms and notifies. When another tab clears
+  the shared Remember me token first, the stream notices at its reconnect that
+  the token it used is gone and starts the same confirmation (not for the wait
+  before the first login, nor for a new login replacing the token; review of
+  #242). The app re-runs its route guard there
   (admin-template: `invalidateAll()` in `(app)/+layout.svelte`). A `500`, an
   unreachable server or a stream that ended is retried as before, and the token
   is kept.

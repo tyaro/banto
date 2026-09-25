@@ -1344,6 +1344,92 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// Review of #242: two tabs of ONE browser share the "Remember me" token
+	// (localStorage). The first tab's stream gets the `401`, confirms and
+	// clears the shared token; the second tab's reconnect then finds no token
+	// at all (no `401` of its own) and must still leave for /login. The second
+	// tab's `/api/events` requests are aborted after the reset so it cannot
+	// take the `401` path itself - only the "token disappeared" path.
+	test('13c. a revoked Remember me session shared by two tabs sends both to the login page', async ({
+		browser
+	}) => {
+		test.setTimeout(120_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const first = await context.newPage();
+		const second = await context.newPage();
+		try {
+			const isEvents = (url: string) => new URL(url).pathname === '/api/events';
+			const secondEventStatuses: number[] = [];
+			second.on('response', (response) => {
+				if (isEvents(response.url())) secondEventStatuses.push(response.status());
+			});
+
+			await first.goto('/login');
+			await first.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await first.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await first.getByLabel('ログイン状態を保持する（30日間）').check();
+			const firstStream = first.waitForResponse(
+				(response) => isEvents(response.url()) && response.status() === 200
+			);
+			await first.getByRole('button', { name: 'ログイン' }).click();
+			await expect(first).toHaveURL(/\/dashboard$/);
+			await firstStream;
+
+			const secondStream = second.waitForResponse(
+				(response) => isEvents(response.url()) && response.status() === 200
+			);
+			await second.goto('/dashboard');
+			await expect(second.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+			await secondStream;
+			const shared = await first.evaluate(() => localStorage.getItem('banto.auth.token'));
+			expect(shared, 'one shared Remember me token').toBeTruthy();
+			expect(await second.evaluate(() => localStorage.getItem('banto.auth.token'))).toBe(shared);
+
+			// From here on the second tab cannot reach the server's `401`.
+			await second.route('**/api/events', (route) => route.abort());
+
+			await page.evaluate(
+				async ({ username, password }) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const headers = { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` };
+					const list = await fetch('/api/users', { headers });
+					if (!list.ok) throw new Error(`list failed: ${list.status}`);
+					const body = (await list.json()) as
+						{ id: number; username: string }[] | { rows: { id: number; username: string }[] };
+					const rows = Array.isArray(body) ? body : body.rows;
+					const viewer = rows.find((row) => row.username === username);
+					if (!viewer) throw new Error('viewer account not found');
+					const reset = await fetch(`/api/users/${viewer.id}/reset-password`, {
+						method: 'POST',
+						headers: { ...headers, 'Content-Type': 'application/json' },
+						body: JSON.stringify({ newPassword: password })
+					});
+					if (!reset.ok) throw new Error(`reset failed: ${reset.status}`);
+				},
+				{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
+			);
+
+			await expect(first).toHaveURL(/\/login$/, { timeout: 40_000 });
+			expect(
+				await first.evaluate(() => localStorage.getItem('banto.auth.token')),
+				'the first tab cleared the shared token'
+			).toBeNull();
+			// The second tab's stream ends at the server's next revalidation;
+			// its reconnect finds the token gone.
+			await expect(second).toHaveURL(/\/login$/, { timeout: 40_000 });
+			expect(
+				await second.evaluate(() => ({
+					local: localStorage.getItem('banto.auth.token'),
+					session: sessionStorage.getItem('banto.auth.token')
+				}))
+			).toEqual({ local: null, session: null });
+			expect(secondEventStatuses, 'the second tab never got a 401 itself').not.toContain(401);
+		} finally {
+			await context.close();
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's

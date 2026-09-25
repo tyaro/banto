@@ -174,6 +174,51 @@ describe('createSseEventProvider', () => {
 			unsubscribe();
 		});
 
+		it('a token cleared after its own 401 is not reported again as cleared', async () => {
+			let token: string | null = 'revoked';
+			const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+			const onUnauthorized = vi.fn(() => {
+				token = null; // what the confirmation's check() does
+			});
+			const onTokenCleared = vi.fn();
+			const provider = createSseEventProvider({
+				getToken: () => token,
+				fetchFn,
+				reconnectDelayMs: 5,
+				tokenWaitDelayMs: 5
+			});
+			const unsubscribe = provider.subscribe(vi.fn(), { onUnauthorized, onTokenCleared });
+
+			await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+			await sleep(60);
+			expect(onTokenCleared).not.toHaveBeenCalled();
+			unsubscribe();
+		});
+
+		it('reports a cleared token once, then waits quietly for a new login', async () => {
+			let token: string | null = 'shared';
+			const fetchFn = vi.fn(
+				async () => new Response(new ReadableStream({ start: (c) => c.close() }))
+			);
+			const onTokenCleared = vi.fn();
+			const provider = createSseEventProvider({
+				getToken: () => token,
+				fetchFn,
+				reconnectDelayMs: 5,
+				tokenWaitDelayMs: 5
+			});
+			const unsubscribe = provider.subscribe(vi.fn(), { onTokenCleared });
+
+			await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+			token = null;
+			await vi.waitFor(() => expect(onTokenCleared).toHaveBeenCalledTimes(1));
+			const sent = fetchFn.mock.calls.length;
+			await sleep(60);
+			expect(onTokenCleared).toHaveBeenCalledTimes(1);
+			expect(fetchFn.mock.calls.length).toBe(sent);
+			unsubscribe();
+		});
+
 		for (const [label, failure] of [
 			[
 				'a 500 (the server could not verify)',

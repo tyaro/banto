@@ -27,8 +27,8 @@
 	});
 
 	// Issue #241: a session revoked while this screen is open (the event
-	// stream got a `401` and `check()` confirmed it, clearing the stored
-	// token) re-runs the route guard (`+layout.ts`'s `resolveProtectedSession`),
+	// stream got a `401`, or another tab already cleared the shared Remember
+	// me token, and `check()` confirmed it, clearing the stored token) re-runs the route guard (`+layout.ts`'s `resolveProtectedSession`),
 	// which sends the screen to /login - or into a public-viewer session -
 	// exactly like a navigation would. The login target is a forced
 	// navigation for the unsaved-changes guard (`$lib/unsavedChanges.ts`).
