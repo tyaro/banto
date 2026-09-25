@@ -1430,6 +1430,91 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// Third review of #242: the revocation is confirmed while the FIRST
+	// protected load is still waiting for its guard's check (judged valid by
+	// the server, delivered late) - before the protected layout subscribes to
+	// `onSessionEnded`. Once the held answer lets the route through and the
+	// layout mounts, it must still leave for /login.
+	test('13d. a revocation confirmed before the protected layout mounts still reaches it', async ({
+		browser
+	}) => {
+		test.setTimeout(120_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		try {
+			const isPath = (url: string, path: string) => new URL(url).pathname === path;
+			await tab.goto('/login');
+			await tab.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await tab.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await tab.getByLabel('ログイン状態を保持する（30日間）').check();
+			await tab.getByRole('button', { name: 'ログイン' }).click();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+
+			// Revocation seen by the stream, then its confirmation's check.
+			const rejected = tab.waitForResponse(
+				(response) => isPath(response.url(), '/api/events') && response.status() === 401,
+				{ timeout: 60_000 }
+			);
+			let held = 0;
+			let released!: () => void;
+			const guardReleased = new Promise<void>((resolve) => (released = resolve));
+			await tab.route('**/api/auth/check', async (route) => {
+				// The environment probe (no bearer token) and the confirmation's
+				// own check pass through; only the guard's first check is held.
+				if (held > 0 || !route.request().headers()['authorization']) return route.continue();
+				held += 1;
+				// The first guard's check of the next load: the server judges the
+				// session valid now...
+				const response = await route.fetch();
+				expect(await response.json()).toBe(true);
+				// ...then it is revoked, the stream gets its 401 and the
+				// confirmation clears the token - all before this answer arrives.
+				await page.evaluate(
+					async ({ username, password }) => {
+						const token =
+							localStorage.getItem('banto.auth.token') ??
+							sessionStorage.getItem('banto.auth.token');
+						const headers = { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` };
+						const list = await fetch('/api/users', { headers });
+						const body = (await list.json()) as
+							{ id: number; username: string }[] | { rows: { id: number; username: string }[] };
+						const rows = Array.isArray(body) ? body : body.rows;
+						const viewer = rows.find((row) => row.username === username);
+						if (!viewer) throw new Error('viewer account not found');
+						const reset = await fetch(`/api/users/${viewer.id}/reset-password`, {
+							method: 'POST',
+							headers: { ...headers, 'Content-Type': 'application/json' },
+							body: JSON.stringify({ newPassword: password })
+						});
+						if (!reset.ok) throw new Error(`reset failed: ${reset.status}`);
+					},
+					{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
+				);
+				await rejected;
+				await expect
+					.poll(() => tab.evaluate(() => localStorage.getItem('banto.auth.token')), {
+						timeout: 10_000
+					})
+					.toBeNull();
+				await route.fulfill({ response });
+				released();
+			});
+
+			// A fresh load of a protected screen: the guard waits on the held check.
+			await tab.goto('/items', { waitUntil: 'commit' });
+			await guardReleased;
+			await expect(tab).toHaveURL(/\/login$/, { timeout: 20_000 });
+			expect(
+				await tab.evaluate(() => ({
+					local: localStorage.getItem('banto.auth.token'),
+					session: sessionStorage.getItem('banto.auth.token')
+				}))
+			).toEqual({ local: null, session: null });
+		} finally {
+			await context.close();
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's

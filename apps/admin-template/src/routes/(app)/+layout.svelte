@@ -33,7 +33,9 @@
 	// exactly like a navigation would. The login target is a forced
 	// navigation for the unsaved-changes guard (`$lib/unsavedChanges.ts`).
 	// admin-core notifies at most once per confirmation, so this never
-	// stacks invalidations.
+	// stacks invalidations. An ending confirmed before this subscribed (e.g.
+	// during this very load) is confirmed again and delivered after it
+	// subscribes - never synchronously inside the `$effect`.
 	$effect(() => onSessionEnded(() => void invalidateAll()));
 
 	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the

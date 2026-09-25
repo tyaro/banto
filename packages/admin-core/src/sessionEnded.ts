@@ -39,6 +39,17 @@
  * screen - and `check()` clears only the token it checked, so the two paths
  * cannot undo each other.
  *
+ * Unheard endings (third review of #242). The stream is connected before the
+ * first protected route has loaded, and a listener (the protected layout)
+ * only subscribes once that route has mounted - and none is subscribed while
+ * the app is on the login page. An ending confirmed with no listener is
+ * remembered (`unheardAt`); the next `onSessionEnded` subscription confirms
+ * it again (asynchronously, through the same retrying confirmation) and
+ * notifies if the session is still ended. Confirming again - instead of
+ * replaying the old notification - is what keeps a stale ending from logging
+ * out a NEW login: a check that started after the ending and answers `true`
+ * forgets it. A notification heard by a listener forgets it too.
+ *
  * A confirmation whose `check()` never answers gives up after
  * `CONFIRM_TIMEOUT_MS` (treated as "could not verify": no notification).
  *
@@ -66,6 +77,11 @@ function tick(): number {
 	return clock;
 }
 let lastNotifiedAt = 0;
+// When an ending was confirmed while NO listener was subscribed (the
+// protected layout not mounted yet, or already gone): the stamp of that
+// notification, else 0. See "Unheard endings".
+let unheardAt = 0;
+let unheardConfirmation: SessionEndConfirmation | null = null;
 
 /**
  * Subscribe to "the current session was confirmed ended in the background".
@@ -75,6 +91,13 @@ let lastNotifiedAt = 0;
  */
 export function onSessionEnded(listener: Listener): () => void {
 	listeners.add(listener);
+	if (unheardAt !== 0) {
+		// Confirm again rather than replaying: a new login may have happened
+		// since. Asynchronous - the listener never runs inside this call (it
+		// is typically made from a component's `$effect`).
+		unheardConfirmation ??= createSessionEndConfirmation();
+		unheardConfirmation.start();
+	}
 	return () => {
 		listeners.delete(listener);
 	};
@@ -110,9 +133,15 @@ async function runConfirmation(): Promise<{ outcome: SessionEndOutcome; startedA
 	} finally {
 		clearTimeout(timer);
 	}
-	if (valid) return { outcome: 'valid', startedAt };
+	if (valid) {
+		// The session is valid as of a check that started after the unheard
+		// ending: that ending is no longer this session's (a new login).
+		if (unheardAt !== 0 && startedAt > unheardAt) unheardAt = 0;
+		return { outcome: 'valid', startedAt };
+	}
 	if (lastNotifiedAt < startedAt) {
 		lastNotifiedAt = tick();
+		unheardAt = listeners.size === 0 ? lastNotifiedAt : 0;
 		for (const listener of [...listeners]) {
 			try {
 				listener();

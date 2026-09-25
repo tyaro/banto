@@ -157,7 +157,10 @@ role from the database.
   passes that to `confirmSessionEnded`, which tells `onSessionEnded` listeners
   only when `check()` returns `false` (overlapping confirmations notify once, and a
   signal that arrives while a check is in flight is never settled by that check's
-  answer: it is checked again). A
+  answer: it is checked again; an ending confirmed while nothing is subscribed -
+  during the first protected load, or on the login page - is remembered and
+  confirmed again by `check()` when the next listener subscribes, so a new login
+  is never logged out by an older ending). A
   confirmation that cannot verify (`500`, unreachable, no answer within 10 s) is
   retried with backoff (1 s doubling to 30 s) while the stream stays stopped for
   the rejected token; a `false` arriving after the 10 s clears the token, and the
