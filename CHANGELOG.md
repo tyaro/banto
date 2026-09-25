@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-09-26
+
+**v1.7.2 — セッション失効（強制ログアウト・パスワード変更・降格）を、開いている画面に即座に伝える修正。破壊的変更は無い。**
+`admin-core` の `EventProvider`（SSE）が、失効したセッションで再試行を止め、
+`/api/auth/check` の `200 false` でもトークンを消すようになった。**開いている
+画面をログイン画面へ移すには、保護ルートのレイアウトに `onSessionEnded` の
+購読を 1 行足す**必要がある（下記参照）。足さなくても次の画面遷移でログイン
+画面へ移るため、動作は壊れない。
+
 - fix(admin-core): 失効したセッションで、SSE（`/api/events`）が再試行を続け、
   `/api/auth/check` の `200 false` でもトークンが残る問題を修正（#241）。
   - `check()`（`createHttpAuthProvider`）は、`401` に加えて `200 false`（失効が
@@ -1243,7 +1252,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.7.1...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/tyaro/banto/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/tyaro/banto/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tyaro/banto/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tyaro/banto/compare/v1.5.0...v1.6.0
