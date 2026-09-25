@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { onNavigate } from '$app/navigation';
+	import { invalidateAll, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { onInvalidate } from '@banto/admin-core';
+	import { onInvalidate, onSessionEnded } from '@banto/admin-core';
 	import { hasUnsavedChanges } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
@@ -25,6 +25,18 @@
 		if (!unsaved) return;
 		return guardWindowClose(hasUnsavedChanges, () => m['unsaved.confirmClose']());
 	});
+
+	// Issue #241: a session revoked while this screen is open (the event
+	// stream got a `401`, or another tab already cleared the shared Remember
+	// me token, and `check()` confirmed it, clearing the stored token) re-runs the route guard (`+layout.ts`'s `resolveProtectedSession`),
+	// which sends the screen to /login - or into a public-viewer session -
+	// exactly like a navigation would. The login target is a forced
+	// navigation for the unsaved-changes guard (`$lib/unsavedChanges.ts`).
+	// admin-core notifies at most once per confirmation, so this never
+	// stacks invalidations. An ending confirmed before this subscribed (e.g.
+	// during this very load) is confirmed again and delivered after it
+	// subscribes - never synchronously inside the `$effect`.
+	$effect(() => onSessionEnded(() => void invalidateAll()));
 
 	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the

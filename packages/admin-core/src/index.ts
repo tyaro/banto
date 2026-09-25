@@ -34,6 +34,13 @@ export {
 export { onInvalidate, invalidate } from './invalidate';
 
 export { resolveProtectedSession, type ProtectedSessionOutcome } from './sessionGate';
+export {
+	onSessionEnded,
+	confirmSessionEnded,
+	createSessionEndConfirmation,
+	type SessionEndOutcome,
+	type SessionEndConfirmation
+} from './sessionEnded';
 
 export { ListResource, createListResource, type CreateListResourceOptions } from './list.svelte';
 export {
@@ -76,6 +83,7 @@ export {
 export type {
 	AppEvent,
 	EventProvider,
+	EventSubscriptionHooks,
 	TauriEventListenOptions,
 	SseEventProviderOptions
 } from './events';

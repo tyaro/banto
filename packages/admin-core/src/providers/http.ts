@@ -156,8 +156,9 @@ const DEFAULT_STORAGE_KEY = 'banto.auth.token';
 /**
  * `AuthProvider` backed by `fetch()` against `/api/auth/*` (spec §11.1/
  * §11.2/M11). The bearer token returned by a successful login is normally
- * kept in `sessionStorage` (cleared on logout, and on a `401` from `check()`
- * - a stale/expired token should not keep failing silently forever). When
+ * kept in `sessionStorage` (cleared on logout, and when `check()` confirms
+ * the session invalid - a `401` or a `200 false`, Issue #241 - so a
+ * stale/revoked token does not linger in storage). When
  * `login()`'s `params.remember` is `true` (spec M11 "LAN Remember me"), the
  * token is kept in `localStorage` instead, so it survives a browser/tab
  * restart - `getToken()` checks `localStorage` first, then falls back to
@@ -198,6 +199,43 @@ export function createHttpAuthProvider(
 		return headersFor(getToken(), hasBody);
 	}
 
+	/**
+	 * Clear the stored token only if it is still `token` (compare-and-clear).
+	 * A confirmation that arrives after the user logged in again must not wipe
+	 * the NEW token - the answer is about the token that was checked.
+	 */
+	function clearTokenIfCurrent(token: string): void {
+		if (getToken() === token) setToken(null);
+	}
+
+	/** One `/api/auth/check` for `token`; see `check()` below. */
+	async function checkToken(token: string): Promise<boolean> {
+		let response: Response;
+		try {
+			response = await fetchFn(`${baseUrl}/api/auth/check`, {
+				method: 'GET',
+				headers: headersFor(token, false)
+			});
+		} catch {
+			throw networkError();
+		}
+		if (response.status === 401) {
+			clearTokenIfCurrent(token);
+			return false;
+		}
+		if (!response.ok) throw await errorFromResponse(response);
+		const valid: unknown = await response.json();
+		if (typeof valid !== 'boolean') {
+			// Not an answer to "is it valid?": could not verify, keep the token.
+			throw new ProviderError({
+				kind: 'other',
+				message: `${response.status} ${response.statusText}`
+			});
+		}
+		if (!valid) clearTokenIfCurrent(token);
+		return valid;
+	}
+
 	return {
 		async login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
 			let response: Response;
@@ -231,30 +269,23 @@ export function createHttpAuthProvider(
 
 		/**
 		 * `false` only when the session is known to be invalid: no token, a
-		 * `401`, or a `200 false` (the server revoked it - Issue #204). A
+		 * `401`, or a `200 false` (the server revoked it - Issue #204). Both
+		 * confirmed answers clear the stored token - regular or "Remember me"
+		 * (Issue #241) - but only if it is still the token that was checked. A
 		 * server that could not check the account (`500` on a DB error) or
-		 * could not be reached REJECTS instead, and the stored token - regular
-		 * or "Remember me" - is left untouched, so a transient failure never
-		 * logs the client out or lets a caller replace the token.
+		 * could not be reached REJECTS instead, and the stored token is left
+		 * untouched, so a transient failure never logs the client out or lets
+		 * a caller replace the token.
+		 *
+		 * Each call sends its own request (no sharing): a request that never
+		 * answers must not hold up a later check - e.g. the next navigation's
+		 * route guard. Concurrent checks cannot conflict: each clears only the
+		 * token it checked (`clearTokenIfCurrent`).
 		 */
-		async check(): Promise<boolean> {
+		check(): Promise<boolean> {
 			const token = getToken();
-			if (!token) return false;
-			let response: Response;
-			try {
-				response = await fetchFn(`${baseUrl}/api/auth/check`, {
-					method: 'GET',
-					headers: headers(false)
-				});
-			} catch {
-				throw networkError();
-			}
-			if (response.status === 401) {
-				setToken(null);
-				return false;
-			}
-			if (!response.ok) throw await errorFromResponse(response);
-			return (await response.json()) as boolean;
+			if (!token) return Promise.resolve(false);
+			return checkToken(token);
 		},
 
 		async getIdentity(): Promise<Identity | null> {

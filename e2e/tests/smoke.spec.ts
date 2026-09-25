@@ -18,10 +18,11 @@
  * M20 attachments already have their own focused unit/integration tests
  * elsewhere).
  *
- * Flakiness: no explicit `waitForTimeout`/`sleep` anywhere in this file -
+ * Flakiness: no explicit `waitForTimeout`/`sleep` in this file except one -
  * every wait is either Playwright's built-in locator auto-retry
  * (`expect(locator)...`) or a real event (`page.waitForEvent('download')`,
- * `page.once('dialog', ...)`).
+ * `page.once('dialog', ...)`). The exception is scenario 13b's "the event
+ * stream sends nothing more" check, which can only be observed over a window.
  */
 import { expect, test, type Dialog, type Locator, type Page } from '@playwright/test';
 import fs from 'node:fs';
@@ -1249,6 +1250,269 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/dashboard$/);
 
 		await expectCheckOutageKeepsTheSession(page, true);
+	});
+
+	// Issue #241: a session revoked while its screen is open. A second
+	// browser (its own storage) logs in as the viewer with "Remember me"; the
+	// admin page then resets that account's password (Issue #204: this ends
+	// every session of the account). The viewer's event stream is closed by
+	// the server's periodic revalidation (15 s), its reconnect gets a `401`,
+	// `check()` confirms `200 false` and clears the stored token, and the route
+	// guard sends the open screen to /login. The stream must then stop
+	// retrying (it used to retry every 3 s forever).
+	test('13b. a session revoked from another session leaves its open screen for the login page', async ({
+		browser
+	}) => {
+		test.setTimeout(90_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const other = await context.newPage();
+		try {
+			const events: { at: number; status: number }[] = [];
+			const checks: { status: number; body: string }[] = [];
+			other.on('response', async (response) => {
+				const path = new URL(response.url()).pathname;
+				if (path === '/api/events') events.push({ at: Date.now(), status: response.status() });
+				if (path === '/api/auth/check') {
+					checks.push({ status: response.status(), body: await response.text() });
+				}
+			});
+
+			await other.goto('/login');
+			await other.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await other.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await other.getByLabel('ログイン状態を保持する（30日間）').check();
+			const streamOpened = other.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/events' && response.status() === 200
+			);
+			await other.getByRole('button', { name: 'ログイン' }).click();
+			await expect(other).toHaveURL(/\/dashboard$/);
+			await streamOpened;
+			expect(
+				await other.evaluate(() => localStorage.getItem('banto.auth.token')),
+				'a Remember me token'
+			).toBeTruthy();
+
+			// Reset the viewer's password (to the same value, so nothing else in
+			// this suite changes) from the admin's own session.
+			await page.evaluate(
+				async ({ username, password }) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const headers = { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` };
+					const list = await fetch('/api/users', { headers });
+					if (!list.ok) throw new Error(`list failed: ${list.status}`);
+					const body = (await list.json()) as
+						{ id: number; username: string }[] | { rows: { id: number; username: string }[] };
+					const rows = Array.isArray(body) ? body : body.rows;
+					const viewer = rows.find((row) => row.username === username);
+					if (!viewer) throw new Error('viewer account not found');
+					const reset = await fetch(`/api/users/${viewer.id}/reset-password`, {
+						method: 'POST',
+						headers: { ...headers, 'Content-Type': 'application/json' },
+						body: JSON.stringify({ newPassword: password })
+					});
+					if (!reset.ok) throw new Error(`reset failed: ${reset.status}`);
+				},
+				{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
+			);
+
+			// Up to one revalidation interval (15 s) + one reconnect (3 s).
+			await expect(other).toHaveURL(/\/login$/, { timeout: 40_000 });
+			expect(
+				await other.evaluate(() => ({
+					local: localStorage.getItem('banto.auth.token'),
+					session: sessionStorage.getItem('banto.auth.token')
+				})),
+				'the revoked token is cleared'
+			).toEqual({ local: null, session: null });
+			expect(checks, 'check() confirmed the revocation').toContainEqual({
+				status: 200,
+				body: 'false'
+			});
+
+			// The stream stops: after its one 401 there is no further request.
+			// The only fixed wait in this file - "nothing more happens" needs a
+			// window; 2 reconnect intervals (3 s each) plus margin.
+			const rejected = events.filter((event) => event.status === 401);
+			expect(rejected, 'exactly one rejected reconnect').toHaveLength(1);
+			await other.waitForTimeout(7_000);
+			expect(events.filter((event) => event.at > rejected[0].at)).toEqual([]);
+			expect(events.filter((event) => event.status === 401)).toHaveLength(1);
+		} finally {
+			await context.close();
+		}
+	});
+
+	// Review of #242: two tabs of ONE browser share the "Remember me" token
+	// (localStorage). The first tab's stream gets the `401`, confirms and
+	// clears the shared token; the second tab's reconnect then finds no token
+	// at all (no `401` of its own) and must still leave for /login. The second
+	// tab's `/api/events` requests are aborted after the reset so it cannot
+	// take the `401` path itself - only the "token disappeared" path.
+	test('13c. a revoked Remember me session shared by two tabs sends both to the login page', async ({
+		browser
+	}) => {
+		test.setTimeout(120_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const first = await context.newPage();
+		const second = await context.newPage();
+		try {
+			const isEvents = (url: string) => new URL(url).pathname === '/api/events';
+			const secondEventStatuses: number[] = [];
+			second.on('response', (response) => {
+				if (isEvents(response.url())) secondEventStatuses.push(response.status());
+			});
+
+			await first.goto('/login');
+			await first.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await first.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await first.getByLabel('ログイン状態を保持する（30日間）').check();
+			const firstStream = first.waitForResponse(
+				(response) => isEvents(response.url()) && response.status() === 200
+			);
+			await first.getByRole('button', { name: 'ログイン' }).click();
+			await expect(first).toHaveURL(/\/dashboard$/);
+			await firstStream;
+
+			const secondStream = second.waitForResponse(
+				(response) => isEvents(response.url()) && response.status() === 200
+			);
+			await second.goto('/dashboard');
+			await expect(second.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+			await secondStream;
+			const shared = await first.evaluate(() => localStorage.getItem('banto.auth.token'));
+			expect(shared, 'one shared Remember me token').toBeTruthy();
+			expect(await second.evaluate(() => localStorage.getItem('banto.auth.token'))).toBe(shared);
+
+			// From here on the second tab cannot reach the server's `401`.
+			await second.route('**/api/events', (route) => route.abort());
+
+			await page.evaluate(
+				async ({ username, password }) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const headers = { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` };
+					const list = await fetch('/api/users', { headers });
+					if (!list.ok) throw new Error(`list failed: ${list.status}`);
+					const body = (await list.json()) as
+						{ id: number; username: string }[] | { rows: { id: number; username: string }[] };
+					const rows = Array.isArray(body) ? body : body.rows;
+					const viewer = rows.find((row) => row.username === username);
+					if (!viewer) throw new Error('viewer account not found');
+					const reset = await fetch(`/api/users/${viewer.id}/reset-password`, {
+						method: 'POST',
+						headers: { ...headers, 'Content-Type': 'application/json' },
+						body: JSON.stringify({ newPassword: password })
+					});
+					if (!reset.ok) throw new Error(`reset failed: ${reset.status}`);
+				},
+				{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
+			);
+
+			await expect(first).toHaveURL(/\/login$/, { timeout: 40_000 });
+			expect(
+				await first.evaluate(() => localStorage.getItem('banto.auth.token')),
+				'the first tab cleared the shared token'
+			).toBeNull();
+			// The second tab's stream ends at the server's next revalidation;
+			// its reconnect finds the token gone.
+			await expect(second).toHaveURL(/\/login$/, { timeout: 40_000 });
+			expect(
+				await second.evaluate(() => ({
+					local: localStorage.getItem('banto.auth.token'),
+					session: sessionStorage.getItem('banto.auth.token')
+				}))
+			).toEqual({ local: null, session: null });
+			expect(secondEventStatuses, 'the second tab never got a 401 itself').not.toContain(401);
+		} finally {
+			await context.close();
+		}
+	});
+
+	// Third review of #242: the revocation is confirmed while the FIRST
+	// protected load is still waiting for its guard's check (judged valid by
+	// the server, delivered late) - before the protected layout subscribes to
+	// `onSessionEnded`. Once the held answer lets the route through and the
+	// layout mounts, it must still leave for /login.
+	test('13d. a revocation confirmed before the protected layout mounts still reaches it', async ({
+		browser
+	}) => {
+		test.setTimeout(120_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		try {
+			const isPath = (url: string, path: string) => new URL(url).pathname === path;
+			await tab.goto('/login');
+			await tab.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await tab.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await tab.getByLabel('ログイン状態を保持する（30日間）').check();
+			await tab.getByRole('button', { name: 'ログイン' }).click();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+
+			// Revocation seen by the stream, then its confirmation's check.
+			const rejected = tab.waitForResponse(
+				(response) => isPath(response.url(), '/api/events') && response.status() === 401,
+				{ timeout: 60_000 }
+			);
+			let held = 0;
+			let released!: () => void;
+			const guardReleased = new Promise<void>((resolve) => (released = resolve));
+			await tab.route('**/api/auth/check', async (route) => {
+				// The environment probe (no bearer token) and the confirmation's
+				// own check pass through; only the guard's first check is held.
+				if (held > 0 || !route.request().headers()['authorization']) return route.continue();
+				held += 1;
+				// The first guard's check of the next load: the server judges the
+				// session valid now...
+				const response = await route.fetch();
+				expect(await response.json()).toBe(true);
+				// ...then it is revoked, the stream gets its 401 and the
+				// confirmation clears the token - all before this answer arrives.
+				await page.evaluate(
+					async ({ username, password }) => {
+						const token =
+							localStorage.getItem('banto.auth.token') ??
+							sessionStorage.getItem('banto.auth.token');
+						const headers = { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` };
+						const list = await fetch('/api/users', { headers });
+						const body = (await list.json()) as
+							{ id: number; username: string }[] | { rows: { id: number; username: string }[] };
+						const rows = Array.isArray(body) ? body : body.rows;
+						const viewer = rows.find((row) => row.username === username);
+						if (!viewer) throw new Error('viewer account not found');
+						const reset = await fetch(`/api/users/${viewer.id}/reset-password`, {
+							method: 'POST',
+							headers: { ...headers, 'Content-Type': 'application/json' },
+							body: JSON.stringify({ newPassword: password })
+						});
+						if (!reset.ok) throw new Error(`reset failed: ${reset.status}`);
+					},
+					{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
+				);
+				await rejected;
+				await expect
+					.poll(() => tab.evaluate(() => localStorage.getItem('banto.auth.token')), {
+						timeout: 10_000
+					})
+					.toBeNull();
+				await route.fulfill({ response });
+				released();
+			});
+
+			// A fresh load of a protected screen: the guard waits on the held check.
+			await tab.goto('/items', { waitUntil: 'commit' });
+			await guardReleased;
+			await expect(tab).toHaveURL(/\/login$/, { timeout: 20_000 });
+			expect(
+				await tab.evaluate(() => ({
+					local: localStorage.getItem('banto.auth.token'),
+					session: sessionStorage.getItem('banto.auth.token')
+				}))
+			).toEqual({ local: null, session: null });
+		} finally {
+			await context.close();
+		}
 	});
 
 	// PR-B3 (i18n layer ②, ADR-0005): the settings

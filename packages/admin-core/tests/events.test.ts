@@ -4,8 +4,10 @@ import {
 	createSseEventProvider,
 	createTauriEventProvider,
 	type AppEvent,
-	type EventProvider
+	type EventProvider,
+	type EventSubscriptionHooks
 } from '../src/events';
+import { onSessionEnded } from '../src/sessionEnded';
 import { onInvalidate } from '../src/invalidate';
 import { initBanto } from '../src/registry.svelte';
 import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
@@ -124,6 +126,125 @@ describe('createSseEventProvider', () => {
 		unsubscribe();
 	});
 
+	// Issue #241: the stream's reconnect policy after the session is revoked.
+	describe('reconnect policy (Issue #241)', () => {
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+		it('a 401 stops reconnecting with that token and reports it once', async () => {
+			const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+			const onUnauthorized = vi.fn();
+			const provider = createSseEventProvider({
+				getToken: () => 'revoked',
+				fetchFn,
+				reconnectDelayMs: 5,
+				tokenWaitDelayMs: 5
+			});
+			const unsubscribe = provider.subscribe(vi.fn(), { onUnauthorized });
+
+			await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+			await sleep(80);
+			expect(fetchFn).toHaveBeenCalledTimes(1);
+			expect(onUnauthorized).toHaveBeenCalledTimes(1);
+			unsubscribe();
+		});
+
+		it('resumes with a different token after a 401 (a new login)', async () => {
+			let token = 'revoked';
+			const fetchFn = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+				const auth = (init?.headers as Record<string, string>).Authorization;
+				if (auth === 'Bearer revoked') return Promise.resolve(new Response(null, { status: 401 }));
+				return new Promise<Response>(() => {
+					// the new session's stream stays open
+				});
+			});
+			const onUnauthorized = vi.fn();
+			const provider = createSseEventProvider({
+				getToken: () => token,
+				fetchFn,
+				reconnectDelayMs: 5,
+				tokenWaitDelayMs: 5
+			});
+			const unsubscribe = provider.subscribe(vi.fn(), { onUnauthorized });
+
+			await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+			token = 'fresh';
+			await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+			const headers = fetchFn.mock.calls[1][1]?.headers as Record<string, string>;
+			expect(headers.Authorization).toBe('Bearer fresh');
+			unsubscribe();
+		});
+
+		it('a token cleared after its own 401 is not reported again as cleared', async () => {
+			let token: string | null = 'revoked';
+			const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+			const onUnauthorized = vi.fn(() => {
+				token = null; // what the confirmation's check() does
+			});
+			const onTokenCleared = vi.fn();
+			const provider = createSseEventProvider({
+				getToken: () => token,
+				fetchFn,
+				reconnectDelayMs: 5,
+				tokenWaitDelayMs: 5
+			});
+			const unsubscribe = provider.subscribe(vi.fn(), { onUnauthorized, onTokenCleared });
+
+			await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+			await sleep(60);
+			expect(onTokenCleared).not.toHaveBeenCalled();
+			unsubscribe();
+		});
+
+		it('reports a cleared token once, then waits quietly for a new login', async () => {
+			let token: string | null = 'shared';
+			const fetchFn = vi.fn(
+				async () => new Response(new ReadableStream({ start: (c) => c.close() }))
+			);
+			const onTokenCleared = vi.fn();
+			const provider = createSseEventProvider({
+				getToken: () => token,
+				fetchFn,
+				reconnectDelayMs: 5,
+				tokenWaitDelayMs: 5
+			});
+			const unsubscribe = provider.subscribe(vi.fn(), { onTokenCleared });
+
+			await vi.waitFor(() => expect(fetchFn).toHaveBeenCalled());
+			token = null;
+			await vi.waitFor(() => expect(onTokenCleared).toHaveBeenCalledTimes(1));
+			const sent = fetchFn.mock.calls.length;
+			await sleep(60);
+			expect(onTokenCleared).toHaveBeenCalledTimes(1);
+			expect(fetchFn.mock.calls.length).toBe(sent);
+			unsubscribe();
+		});
+
+		for (const [label, failure] of [
+			[
+				'a 500 (the server could not verify)',
+				() => Promise.resolve(new Response(null, { status: 500 }))
+			],
+			['an unreachable server', () => Promise.reject(new TypeError('Failed to fetch'))],
+			['a stream the server ended', () => Promise.resolve(fakeStreamResponse([]))]
+		] as const) {
+			it(`${label} keeps reconnecting with the same token`, async () => {
+				const fetchFn = vi.fn(failure);
+				const onUnauthorized = vi.fn();
+				const provider = createSseEventProvider({
+					getToken: () => 'tok',
+					fetchFn,
+					reconnectDelayMs: 5,
+					tokenWaitDelayMs: 5
+				});
+				const unsubscribe = provider.subscribe(vi.fn(), { onUnauthorized });
+
+				await vi.waitFor(() => expect(fetchFn.mock.calls.length).toBeGreaterThanOrEqual(3));
+				unsubscribe();
+				expect(onUnauthorized).not.toHaveBeenCalled();
+			});
+		}
+	});
+
 	it('aborts the in-flight request on unsubscribe', async () => {
 		let capturedSignal: AbortSignal | undefined;
 		const fetchFn: typeof fetch = vi.fn((_input, init) => {
@@ -181,6 +302,70 @@ describe('connectEvents', () => {
 			{ kind: 'warning', message: 'careful' },
 			{ kind: 'info', message: 'fallback' }
 		]);
+	});
+
+	// Issue #241: a stream the server rejected runs the confirmation.
+	describe('a rejected stream (Issue #241)', () => {
+		function stubCheck(check: AuthProvider['check']): void {
+			initBanto({
+				dataProvider: {} as DataProvider,
+				authProvider: {
+					login: async () => ({ success: true }),
+					logout: async () => {},
+					check,
+					getIdentity: async () => null
+				},
+				resources: []
+			});
+		}
+
+		function capturedHooks(): { hooks: () => EventSubscriptionHooks; provider: EventProvider } {
+			let captured: EventSubscriptionHooks | undefined;
+			return {
+				hooks: () => captured!,
+				provider: {
+					subscribe: (_h, hooks) => {
+						captured = hooks;
+						return vi.fn();
+					}
+				}
+			};
+		}
+
+		it('notifies onSessionEnded once when check() confirms the session ended', async () => {
+			const check = vi.fn(async () => false);
+			stubCheck(check);
+			const ended = vi.fn();
+			const off = onSessionEnded(ended);
+			const { hooks, provider } = capturedHooks();
+			connectEvents(provider);
+
+			hooks().onUnauthorized!();
+			await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
+			expect(check).toHaveBeenCalledTimes(1);
+			off();
+		});
+
+		for (const [label, check] of [
+			['the session is still valid', async () => true],
+			['check() could not verify (500 / unreachable)', async () => Promise.reject(new Error('500'))]
+		] as const) {
+			it(`does not notify onSessionEnded when ${label}`, async () => {
+				const checkFn = vi.fn(check);
+				stubCheck(checkFn);
+				const ended = vi.fn();
+				const off = onSessionEnded(ended);
+				const { hooks, provider } = capturedHooks();
+				connectEvents(provider);
+
+				hooks().onUnauthorized!();
+				await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
+				await Promise.resolve();
+				await Promise.resolve();
+				expect(ended).not.toHaveBeenCalled();
+				off();
+			});
+		}
 	});
 
 	it('returns the provider unsubscribe function', () => {
