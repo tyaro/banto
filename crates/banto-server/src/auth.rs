@@ -965,16 +965,48 @@ impl AuthState {
         self.authenticate_with(token, IdleWindow::Slide).await
     }
 
-    /// [`AuthState::authenticate`] for a check the client did not ask for
-    /// (Issue #231: the periodic re-check of an open `/api/events` stream).
-    /// Same verdicts - including the in-flight re-binding rule of
-    /// [`AuthState::settle_stamp_mismatch`] and "a store failure is `Err`,
+    /// [`AuthState::authenticate`] for a check the client did not ask for -
+    /// the periodic re-check of a long-lived stream that is already open
+    /// (Issue #231: this crate's own `/api/events`; Issue #239: exposed so a
+    /// derived app's own stream, e.g. banto-industrial's `/api/tag-stream` /
+    /// `/api/v1/stream`, banto-industrial#430, can do the same). Same
+    /// verdicts - including the in-flight re-binding rule of
+    /// `AuthState::settle_stamp_mismatch` and "a store failure is `Err`,
     /// the token is kept" - but it does NOT slide the token's idle window:
-    /// an open tab's event stream must not keep an otherwise idle session
-    /// alive (spec §11.2's `idle_ttl` would never lapse while a browser tab
-    /// stays open). A token that lapsed meanwhile is reported (and evicted)
-    /// as `Ok(None)`, like any other invalid token.
-    pub(crate) async fn revalidate(
+    /// an open tab's stream must not keep an otherwise idle session alive
+    /// (spec §11.2's `idle_ttl` would never lapse while a browser tab stays
+    /// open). This is the ONLY difference from [`AuthState::authenticate`];
+    /// use `authenticate` (or `require_auth`) for anything the client
+    /// actually asked for.
+    ///
+    /// Return value (the same verdicts as `authenticate`):
+    ///
+    /// - `Ok(Some(_))`: valid right now; the returned identity is current.
+    /// - `Ok(None)`: not valid right now - e.g. an unknown or logged-out
+    ///   token, idle or absolute expiry, a deleted account, a changed
+    ///   role/password (stamp mismatch) or an unstamped session. Whether the
+    ///   token is also dropped from the in-memory store is NOT part of this
+    ///   contract (a token re-bound while this check was in flight is left
+    ///   for its next check to decide).
+    /// - `Err(BantoError)`: the backing account store could not be checked.
+    ///   The token is kept, and the caller may simply try again later.
+    ///
+    /// Policy for a long-lived stream (this crate's own use in `events.rs`;
+    /// see [`crate::events`]'s module doc and `event_stream`) - a caller
+    /// decision, not part of `revalidate`'s meaning:
+    ///
+    /// - end the stream on `Ok(None)`;
+    /// - keep the stream open (fail-open) on `Err`, and likewise when the
+    ///   caller's own timeout around this call elapses (that is the
+    ///   wrapper's error, e.g. `tokio::time::error::Elapsed`, not a
+    ///   `revalidate` `Err`) - a transient store failure must not drop every
+    ///   open stream;
+    /// - re-check on a fixed period, wrap the call in a timeout shorter than
+    ///   that period (so a stuck lookup cannot delay the next check), and
+    ///   re-arm the next deadline only after the check finishes (from
+    ///   completion, not from when it was scheduled) so a slow check cannot
+    ///   starve later ones.
+    pub async fn revalidate(
         &self,
         token: &str,
     ) -> Result<Option<AuthenticatedSession>, BantoError> {
