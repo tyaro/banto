@@ -179,6 +179,54 @@ describe('background session end, end to end (review of #242)', () => {
 		tab.dispose();
 	});
 
+	it('re-login, then a new 401 while a check is in flight, then a late true: checks again (re-review of #242)', async () => {
+		// The owner's sequence: token A is rejected and its check fails (500),
+		// the user logs in again as B, the retry checks B (valid at the time,
+		// but the 200 true is slow), B is revoked and its stream gets a 401
+		// while that check is in flight, then the stale true arrives.
+		localStorage.setItem(TOKEN_KEY, 'A');
+		let bRevoked = false;
+		let checks = 0;
+		const server = fakeServer({
+			events: async (init) => {
+				const auth = (init?.headers as Record<string, string>).Authorization;
+				if (auth === 'Bearer A' || bRevoked) return new Response(null, { status: 401 });
+				return endedStream();
+			},
+			check: () => {
+				checks += 1;
+				if (checks === 1)
+					return Promise.resolve(jsonResponse(500, { kind: 'storage', message: 'x' }));
+				if (checks === 2) {
+					// Judged valid now, delivered at 6 s.
+					return new Promise((resolve) =>
+						setTimeout(() => resolve(jsonResponse(200, true)), 5_000)
+					);
+				}
+				return Promise.resolve(jsonResponse(200, !bRevoked));
+			}
+		});
+		const tab = wireTab(server.fetchFn);
+
+		await vi.advanceTimersByTimeAsync(100);
+		localStorage.setItem(TOKEN_KEY, 'B'); // re-login
+		await vi.advanceTimersByTimeAsync(1_000); // the retry checks B (slow true)
+		expect(checks).toBe(2);
+		bRevoked = true; // B revoked; B's next reconnect gets a 401
+		await vi.advanceTimersByTimeAsync(5_000); // the stale true arrives
+
+		await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_MAX_MS);
+		expect(tab.ended).toHaveBeenCalledTimes(1);
+		expect(tab.auth.getToken()).toBeNull();
+		expect(checks).toBe(3);
+		// B is never sent to /api/events again after its 401.
+		const eventsAtEnd = server.calls.events;
+		await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_MAX_MS * 2);
+		expect(server.calls.events).toBe(eventsAtEnd);
+		expect(tab.ended).toHaveBeenCalledTimes(1);
+		tab.dispose();
+	});
+
 	it('stops retrying once the event subscription ends', async () => {
 		localStorage.setItem(TOKEN_KEY, 'revoked');
 		const server = fakeServer({

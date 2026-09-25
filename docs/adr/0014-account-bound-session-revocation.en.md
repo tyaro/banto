@@ -155,7 +155,9 @@ role from the database.
   invalid; a failed lookup is a `500`) stops reconnecting with that token and
   sends nothing until a different token (a new login) appears. `connectEvents`
   passes that to `confirmSessionEnded`, which tells `onSessionEnded` listeners
-  only when `check()` returns `false` (concurrent confirmations share one). A
+  only when `check()` returns `false` (overlapping confirmations notify once, and a
+  signal that arrives while a check is in flight is never settled by that check's
+  answer: it is checked again). A
   confirmation that cannot verify (`500`, unreachable, no answer within 10 s) is
   retried with backoff (1 s doubling to 30 s) while the stream stays stopped for
   the rejected token; a `false` arriving after the 10 s clears the token, and the
