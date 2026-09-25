@@ -20,14 +20,30 @@ import { invalidate } from './invalidate';
 import { notify } from './registry.svelte';
 import type { NotificationKind } from './provider';
 import { createSseParser } from './sse-parser';
+import { confirmSessionEnded } from './sessionEnded';
 
 export type AppEvent =
 	| { kind: 'resource_changed'; resource: string }
 	| { kind: 'notice'; level: string; message: string };
 
+/**
+ * Optional callbacks for things that happen to the subscription itself
+ * rather than events it carries (Issue #241).
+ */
+export interface EventSubscriptionHooks {
+	/**
+	 * The server rejected the stream's session (`/api/events` answered
+	 * `401`): the session is no longer valid. Called once per rejected token;
+	 * the provider stops reconnecting with that token and resumes only when a
+	 * different token appears (a new login). `connectEvents` wires this to
+	 * `confirmSessionEnded` (sessionEnded.ts).
+	 */
+	onUnauthorized?: () => void;
+}
+
 /** Backend-agnostic subscription to `AppEvent`s. Returns an unsubscribe function. */
 export interface EventProvider {
-	subscribe(handler: (event: AppEvent) => void): () => void;
+	subscribe(handler: (event: AppEvent) => void, hooks?: EventSubscriptionHooks): () => void;
 }
 
 function isAppEvent(value: unknown): value is AppEvent {
@@ -105,9 +121,24 @@ const SSE_HEADERS = { 'X-Banto-Client': 'banto' } as const;
  * (spec §11.3) via `fetch` + a `ReadableStream` reader (not `EventSource`,
  * see sse-parser.ts's doc comment for why), auto-reconnecting on
  * disconnect/error. While `getToken()` returns `null` (not logged in yet),
- * connecting is skipped and retried after `reconnectDelayMs` instead of
+ * connecting is skipped and retried after `tokenWaitDelayMs` instead of
  * failing loudly - the same token is shared with `HttpDataProvider`/
  * `HttpAuthProvider`.
+ *
+ * Reconnect policy (Issue #241). Because this reads the stream with `fetch`,
+ * the HTTP status of every (re)connect is visible:
+ * - `401`: the server's `require_auth` CONFIRMED the session invalid (a
+ *   revoked, expired or logged-out token - a failed account lookup is a
+ *   `500`, never a `401`, ADR-0014). Retrying with the same token can never
+ *   succeed, so the provider stops using it: no more requests until
+ *   `getToken()` returns a different token (a new login; the check is a
+ *   local read, same as the not-logged-in wait). `hooks.onUnauthorized` is
+ *   called once so the app can run its route guard.
+ * - any other failure (`500`, `503`, a network error, the stream ending -
+ *   e.g. the server's periodic revalidation closing it): the session could
+ *   not be verified or the stream simply ended, so reconnect after
+ *   `reconnectDelayMs` as before. A revoked session's stream ends on the
+ *   server's next revalidation, and the reconnect then gets the `401`.
  */
 export function createSseEventProvider(options: SseEventProviderOptions): EventProvider {
 	const baseUrl = options.baseUrl ?? '';
@@ -116,10 +147,13 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 	const tokenWaitDelayMs = options.tokenWaitDelayMs ?? DEFAULT_TOKEN_WAIT_DELAY_MS;
 
 	return {
-		subscribe(handler: (event: AppEvent) => void): () => void {
+		subscribe(handler: (event: AppEvent) => void, hooks?: EventSubscriptionHooks): () => void {
 			let stopped = false;
 			let controller: AbortController | null = null;
 			let timer: ReturnType<typeof setTimeout> | null = null;
+			// The last token the server answered `401` for (see the doc comment
+			// above): never sent again.
+			let rejectedToken: string | null = null;
 
 			function dispatch(payload: string): void {
 				try {
@@ -138,7 +172,7 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 
 			async function connectOnce(): Promise<void> {
 				const token = options.getToken();
-				if (token === null) {
+				if (token === null || token === rejectedToken) {
 					scheduleReconnect(tokenWaitDelayMs);
 					return;
 				}
@@ -149,6 +183,13 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 						headers: { ...SSE_HEADERS, Authorization: `Bearer ${token}` },
 						signal: controller.signal
 					});
+					if (response.status === 401) {
+						void response.body?.cancel().catch(() => {});
+						rejectedToken = token;
+						if (!stopped) hooks?.onUnauthorized?.();
+						scheduleReconnect(tokenWaitDelayMs);
+						return;
+					}
 					if (!response.ok || !response.body) {
 						scheduleReconnect();
 						return;
@@ -194,15 +235,21 @@ function toNotificationKind(level: string): NotificationKind {
  * Bridge an `EventProvider` into the rest of admin-core (spec §3.5):
  * `resource_changed` -> `invalidate(resource)` (so `ListResource`/
  * `WindowedListResource` subscribers refetch); `notice` -> `notify(...)`
- * (falls back to `'info'` for an unrecognized `level`). Returns the
- * `EventProvider`'s own unsubscribe function.
+ * (falls back to `'info'` for an unrecognized `level`). A stream the server
+ * rejected (`onUnauthorized`, Issue #241) -> `confirmSessionEnded()`, which
+ * confirms through `AuthProvider.check()` (clearing the stored token) and
+ * then tells `onSessionEnded` listeners so the app can run its route guard.
+ * Returns the `EventProvider`'s own unsubscribe function.
  */
 export function connectEvents(provider: EventProvider): () => void {
-	return provider.subscribe((event) => {
-		if (event.kind === 'resource_changed') {
-			invalidate(event.resource);
-		} else {
-			notify(toNotificationKind(event.level), event.message);
-		}
-	});
+	return provider.subscribe(
+		(event) => {
+			if (event.kind === 'resource_changed') {
+				invalidate(event.resource);
+			} else {
+				notify(toNotificationKind(event.level), event.message);
+			}
+		},
+		{ onUnauthorized: () => void confirmSessionEnded() }
+	);
 }

@@ -18,10 +18,11 @@
  * M20 attachments already have their own focused unit/integration tests
  * elsewhere).
  *
- * Flakiness: no explicit `waitForTimeout`/`sleep` anywhere in this file -
+ * Flakiness: no explicit `waitForTimeout`/`sleep` in this file except one -
  * every wait is either Playwright's built-in locator auto-retry
  * (`expect(locator)...`) or a real event (`page.waitForEvent('download')`,
- * `page.once('dialog', ...)`).
+ * `page.once('dialog', ...)`). The exception is scenario 13b's "the event
+ * stream sends nothing more" check, which can only be observed over a window.
  */
 import { expect, test, type Dialog, type Locator, type Page } from '@playwright/test';
 import fs from 'node:fs';
@@ -1249,6 +1250,98 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/dashboard$/);
 
 		await expectCheckOutageKeepsTheSession(page, true);
+	});
+
+	// Issue #241: a session revoked while its screen is open. A second
+	// browser (its own storage) logs in as the viewer with "Remember me"; the
+	// admin page then resets that account's password (Issue #204: this ends
+	// every session of the account). The viewer's event stream is closed by
+	// the server's periodic revalidation (15 s), its reconnect gets a `401`,
+	// `check()` confirms `200 false` and clears the stored token, and the route
+	// guard sends the open screen to /login. The stream must then stop
+	// retrying (it used to retry every 3 s forever).
+	test('13b. a session revoked from another session leaves its open screen for the login page', async ({
+		browser
+	}) => {
+		test.setTimeout(90_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const other = await context.newPage();
+		try {
+			const events: { at: number; status: number }[] = [];
+			const checks: { status: number; body: string }[] = [];
+			other.on('response', async (response) => {
+				const path = new URL(response.url()).pathname;
+				if (path === '/api/events') events.push({ at: Date.now(), status: response.status() });
+				if (path === '/api/auth/check') {
+					checks.push({ status: response.status(), body: await response.text() });
+				}
+			});
+
+			await other.goto('/login');
+			await other.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await other.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await other.getByLabel('ログイン状態を保持する（30日間）').check();
+			const streamOpened = other.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/events' && response.status() === 200
+			);
+			await other.getByRole('button', { name: 'ログイン' }).click();
+			await expect(other).toHaveURL(/\/dashboard$/);
+			await streamOpened;
+			expect(
+				await other.evaluate(() => localStorage.getItem('banto.auth.token')),
+				'a Remember me token'
+			).toBeTruthy();
+
+			// Reset the viewer's password (to the same value, so nothing else in
+			// this suite changes) from the admin's own session.
+			await page.evaluate(
+				async ({ username, password }) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const headers = { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` };
+					const list = await fetch('/api/users', { headers });
+					if (!list.ok) throw new Error(`list failed: ${list.status}`);
+					const body = (await list.json()) as
+						{ id: number; username: string }[] | { rows: { id: number; username: string }[] };
+					const rows = Array.isArray(body) ? body : body.rows;
+					const viewer = rows.find((row) => row.username === username);
+					if (!viewer) throw new Error('viewer account not found');
+					const reset = await fetch(`/api/users/${viewer.id}/reset-password`, {
+						method: 'POST',
+						headers: { ...headers, 'Content-Type': 'application/json' },
+						body: JSON.stringify({ newPassword: password })
+					});
+					if (!reset.ok) throw new Error(`reset failed: ${reset.status}`);
+				},
+				{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
+			);
+
+			// Up to one revalidation interval (15 s) + one reconnect (3 s).
+			await expect(other).toHaveURL(/\/login$/, { timeout: 40_000 });
+			expect(
+				await other.evaluate(() => ({
+					local: localStorage.getItem('banto.auth.token'),
+					session: sessionStorage.getItem('banto.auth.token')
+				})),
+				'the revoked token is cleared'
+			).toEqual({ local: null, session: null });
+			expect(checks, 'check() confirmed the revocation').toContainEqual({
+				status: 200,
+				body: 'false'
+			});
+
+			// The stream stops: after its one 401 there is no further request.
+			// The only fixed wait in this file - "nothing more happens" needs a
+			// window; 2 reconnect intervals (3 s each) plus margin.
+			const rejected = events.filter((event) => event.status === 401);
+			expect(rejected, 'exactly one rejected reconnect').toHaveLength(1);
+			await other.waitForTimeout(7_000);
+			expect(events.filter((event) => event.at > rejected[0].at)).toEqual([]);
+			expect(events.filter((event) => event.status === 401)).toHaveLength(1);
+		} finally {
+			await context.close();
+		}
 	});
 
 	// PR-B3 (i18n layer ②, ADR-0005): the settings

@@ -4,7 +4,7 @@
 
 - 状態: Accepted
 - 日付: 2026-09-24
-- 関連: Issue #204 / conventions §1・§6 / roadmap M10・M11 / ADR-0001（両経路対称）/
+- 関連: Issue #204・#241 / conventions §1・§6 / roadmap M10・M11 / ADR-0001（両経路対称）/
   ADR-0012（合成 viewer セッション）
 
 ## コンテキスト
@@ -127,6 +127,19 @@
   （案 C）は入れていない: トークンが終わる経路（ログアウト・照合での失効・
   期限切れ・公開閲覧の追い出し・別プロセスでの変更）ごとに通知を足す必要があり、
   同じプロセスの経路でも最大 1 間隔で閉じるため。
+- フロント（`@banto/admin-core`）は、失効が**確認できた**ときだけトークンを消し、
+  開いている画面をルートガードに乗せる（Issue #241）。`AuthProvider.check()`
+  （HTTP）は `401` と `200 false` のどちらでも保存しているトークン（Remember me の
+  localStorage を含む）を消す。消すのは確認したトークンがまだ保存されているとき
+  だけで、確認中に新しくログインしたトークンは消さない。SSE のクライアントは `fetch` で読むので状態
+  コードが見える: 再接続が `401`（`require_auth` が照合して無効と答えた。照合
+  できなければ `500` になる）なら、そのトークンでの再接続をやめ、別のトークン
+  （再ログイン）が現れるまで要求しない。`connectEvents` がそれを
+  `confirmSessionEnded` に渡し、`check()` が `false` を返したときだけ
+  `onSessionEnded` の購読者に知らせる（同時の確認は 1 回にまとめ、応答しない
+  `check()` は 10 秒であきらめて通知しない）。アプリはそこでルートガードを再実行する
+  （admin-template は `(app)/+layout.svelte` の `invalidateAll()`）。`500`・
+  到達不能・ストリームの終了は従来どおり再試行し、トークンも消さない。
 - `AuthState::revalidate` は `pub` にして派生アプリへ公開している（Issue #239、
   banto-industrial#430）: 独自の長時間ストリーム（例: banto-industrial の
   `/api/tag-stream`・`/api/v1/stream`）が、`authenticate` と同じ照合をしつつ

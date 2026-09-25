@@ -4,7 +4,7 @@
 
 - Status: Accepted
 - Date: 2026-09-24
-- Related: Issue #204 / conventions §1, §6 / roadmap M10, M11 / ADR-0001 (two-path symmetry) /
+- Related: Issue #204, #241 / conventions §1, §6 / roadmap M10, M11 / ADR-0001 (two-path symmetry) /
   ADR-0012 (synthetic viewer session)
 
 ## Context
@@ -145,6 +145,21 @@ role from the database.
   (logout, revocation by a check, expiry, public-viewer eviction, a change
   made by another process) would need its own notification, and the
   same-process paths already close within one interval.
+- The frontend (`@banto/admin-core`) clears the token and hands the open screen
+  to the route guard only when revocation is CONFIRMED (Issue #241).
+  `AuthProvider.check()` (HTTP) clears the stored token (the Remember me
+  localStorage copy included) on both a `401` and a `200 false`, but only if the
+  checked token is still the stored one, so a login made while the check was in
+  flight is kept. The SSE client reads the stream with `fetch`, so it sees the status:
+  a reconnect answered `401` (`require_auth` looked the session up and found it
+  invalid; a failed lookup is a `500`) stops reconnecting with that token and
+  sends nothing until a different token (a new login) appears. `connectEvents`
+  passes that to `confirmSessionEnded`, which tells `onSessionEnded` listeners
+  only when `check()` returns `false` (concurrent confirmations share one, and
+  a `check()` that never answers is given up after 10 s without notifying); the app re-runs its route guard there
+  (admin-template: `invalidateAll()` in `(app)/+layout.svelte`). A `500`, an
+  unreachable server or a stream that ended is retried as before, and the token
+  is kept.
 - `AuthState::revalidate` is `pub`, exposed to derived apps (Issue #239,
   banto-industrial#430): so a derived app's own long-lived stream (e.g.
   banto-industrial's `/api/tag-stream` / `/api/v1/stream`) can re-check with
