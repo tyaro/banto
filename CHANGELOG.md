@@ -22,6 +22,13 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-25
+
+**v1.7.1 — グリッドの初回クリック取りこぼしの修正と、`AuthState::revalidate` の公開。破壊的変更は無い。**
+v1.7.0 から上げるだけで直り、`@banto/grid-svelte` を使っている派生アプリの
+追従作業は不要。`revalidate` の公開は可視性を広げるだけの追加で、派生アプリは
+自前の長時間ストリームの再検証に使える（使わなければ変更不要）。
+
 - feat(banto-server): `AuthState::revalidate` を `pub` にした（#239）。
   `authenticate` と同じ照合（再バインドの扱いを含む）をしつつ、無操作期限
   （idle）のタイマーを延ばさない再検証で、`/api/events` の定期再検証
@@ -1187,7 +1194,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.7.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/tyaro/banto/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tyaro/banto/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tyaro/banto/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tyaro/banto/compare/v1.4.0...v1.5.0
