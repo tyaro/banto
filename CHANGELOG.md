@@ -22,6 +22,18 @@
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-09-26
+
+**v1.7.2 — セッション失効（強制ログアウト・パスワード変更・降格）を、開いている画面に即座に伝える修正。破壊的変更は無い。**
+`admin-core` の `EventProvider`（SSE）が、失効したセッションで再試行を止め、
+`/api/auth/check` の `200 false` でもトークンを消すようになった。**開いている
+画面をログイン画面へ移すには、保護ルートのレイアウトに `onSessionEnded` の
+購読を 1 行足す**必要がある（下記参照）。足さない場合も、失効したセッションでの
+API はサーバーが `401` で拒否するので認可は破られないが、画面への反映は次に
+ルートガードが再評価されるとき（再読み込みや明示的な `invalidateAll()` など）に
+なる。同じレイアウトの中の通常の画面遷移だけでは、ログイン画面へ移ることは
+保証されない（SvelteKit はレイアウトの `load` を再実行しない場合がある）。
+
 - fix(admin-core): 失効したセッションで、SSE（`/api/events`）が再試行を続け、
   `/api/auth/check` の `200 false` でもトークンが残る問題を修正（#241）。
   - `check()`（`createHttpAuthProvider`）は、`401` に加えて `200 false`（失効が
@@ -61,7 +73,10 @@
     `routes/(app)/+layout.svelte` の
     `$effect(() => onSessionEnded(() => void invalidateAll()));`）。ルートガード
     （`resolveProtectedSession`）が再実行され、ログイン画面（公開閲覧が ON なら
-    閲覧者セッション）へ移る。足さない場合も、次の画面遷移でログイン画面へ移る。
+    閲覧者セッション）へ移る。足さない場合、画面への反映は次にルートガードが
+    再評価されるとき（再読み込みや明示的な `invalidateAll()` など）になり、同じ
+    レイアウトの中の通常の画面遷移だけではログイン画面へ移ることは保証されない
+    （失効したセッションでの API は、サーバーが `401` で拒否する）。
     `EventProvider` を自前で実装している場合、`subscribe` の第 2 引数
     （`EventSubscriptionHooks`、任意）は無視してかまわない。`connectEvents` の
     戻り値の関数は、購読の解除と一緒に確認の再試行も止める。
@@ -69,7 +84,8 @@
     パスワードのリセットのあとログイン画面へ移り、トークンが消え、SSE の再試行が
     止まることを確かめるシナリオ 13b と、同じブラウザの 2 つのタブで Remember me の
     トークンを共有し、片方が消したあと両方がログイン画面へ移ることを確かめる
-    シナリオ 13c を追加。
+    シナリオ 13c、最初の保護ルートの読み込み中（レイアウトが購読を始める前）に
+    失効が確定してもログイン画面へ移ることを確かめるシナリオ 13d を追加。
 
 ## [1.7.1] - 2026-09-25
 
@@ -1243,7 +1259,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.7.1...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/tyaro/banto/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/tyaro/banto/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tyaro/banto/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tyaro/banto/compare/v1.5.0...v1.6.0
