@@ -196,7 +196,12 @@
 	const sorted = $derived(
 		mode === 'server'
 			? rows
-			: sortRows(filterRows(rows as TRow[], gridState.filters, columns), gridState.sort, columns)
+			: sortRows(
+					filterRows(rows as TRow[], gridState.filters, columns),
+					gridState.sort,
+					columns,
+					getRowId
+				)
 	);
 
 	// Client-mode-only row grouping (spec §4.3): filter -> sort -> group ->

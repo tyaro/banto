@@ -223,6 +223,20 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   補間しない）。未知フィールドの sort は無視、filter は hard error。
   `ListParams` を受けるサービス（現状 items / audit）に `column_map()` を置く
   （固定 ORDER BY のみのサービスには不要）。
+  **`ORDER BY` の最後には一意キーが付く**（Issue #243）: `append_order_by` は
+  `ColumnMap` の一意キー（既定は登録された `id`、別名なら
+  `ColumnMap::unique_key`、無いなら `without_unique_key`）を最後の並べ替えと
+  同じ向き（並べ替えが無ければ昇順）で足し、`LIMIT`/`OFFSET` のページングで
+  同順位の行が重複・欠落しないようにする。`column_map()` の `id` は**一意な列に
+  だけ**割り当てる。
+  **この並びの決まりは 3 つの実装で共通**（#243 レビュー対応）: SQL
+  （`banto-storage`）・InMemory の `DataProvider`（`idField`、既定 `id`）・grid の
+  client sort（行の `id`、無ければ `getRowId`）は、**未知の列（SQL は `ColumnMap`
+  に無い列、grid は列定義に無い列、InMemory はどの行にも無いフィールド）を先に
+  除いてから**、同順位の行を一意キーで残った最後の並べ替えと同じ向きに並べ、NULL はどちらの向きでも最後、並べ替えが無ければ
+  一意キーの昇順（grid の client sort だけは、受け取った配列の順を保つ）。
+  共通の fixture `crates/banto-storage/testdata/list-order-parity.json` を 3 つの
+  テストが読むので、どれかを変えるときは fixture と 3 つを同時に直す。
 - **CSP は2定義を同期する。** デスクトップは `tauri.conf.json` の
   `app.security.csp`、LAN は `banto-server` の `security_headers.rs`
   `CONTENT_SECURITY_POLICY`。**意図的な差分は connect-src のみ**（Tauri IPC）で、

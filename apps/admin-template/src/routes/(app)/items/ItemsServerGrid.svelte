@@ -74,6 +74,15 @@
 		return () => windowed.dispose();
 	});
 
+	// "Reload" for a failed block (Issue #243). `refresh()` re-reads the
+	// visible range, every block whose failure is still shown, and block 0
+	// when the grid's window is empty (a failed first fetch leaves
+	// totalCount 0, so BantoGrid reports `{0, 0}`). Never disabled while
+	// loading: a hung request times out, and a refresh supersedes it.
+	function handleReload(): void {
+		void windowed.refresh();
+	}
+
 	function handleParamsChange(params: { sort: SortState[]; filters: FilterState[] }): void {
 		windowed.setParams(params);
 		void windowed.ensureRange(visibleRange.start, visibleRange.end);
@@ -114,6 +123,18 @@
 
 <p class="note">{m['items.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
 
+{#if windowed.error}
+	<div class="load-error" role="alert">
+		<p>
+			<strong>{m['items.loadError']()}</strong>
+			<span>{m['items.loadErrorDesc']()}</span>
+		</p>
+		<button type="button" class="banto-btn banto-btn--secondary" onclick={handleReload}>
+			{m['common.reload']()}
+		</button>
+	</div>
+{/if}
+
 <div class="grid-wrap">
 	<BantoGrid
 		mode="server"
@@ -137,6 +158,28 @@
 		margin: 0 0 0.75rem;
 		color: var(--banto-text-muted);
 		font-size: 0.8rem;
+	}
+
+	.load-error {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin: 0 0 0.75rem;
+		padding: 0.5rem 0.75rem;
+		border-left: 3px solid var(--banto-danger-solid);
+		border-radius: var(--banto-radius-sm);
+		background: var(--banto-danger-tint);
+		color: var(--banto-danger-tint-text);
+		font-size: 0.85rem;
+	}
+
+	.load-error p {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem 0.5rem;
 	}
 
 	.grid-wrap {

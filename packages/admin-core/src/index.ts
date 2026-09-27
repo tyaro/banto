@@ -46,6 +46,7 @@ export { ListResource, createListResource, type CreateListResourceOptions } from
 export {
 	WindowedListResource,
 	createWindowedListResource,
+	DEFAULT_WINDOWED_REQUEST_TIMEOUT_MS,
 	type CreateWindowedListResourceOptions,
 	type WindowedParams
 } from './windowed.svelte';
