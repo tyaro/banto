@@ -11,6 +11,10 @@
 //! - Filtering by an unknown field is a hard `Err(BantoError::BadRequest(_))`
 //!   (bad request) since silently ignoring a filter could return more rows
 //!   than the caller expects.
+//! - The `ORDER BY` always ends with the resource's unique key (normally
+//!   `id`, see [`ColumnMap`]) so the order is total and `LIMIT`/`OFFSET`
+//!   paging neither repeats nor skips rows that tie on the sort column
+//!   (Issue #243).
 //!
 //! A single generic implementation over `sqlx::Database` fights sqlx's
 //! trait bounds hard enough (see the module-level discussion in the spec
@@ -31,16 +35,45 @@ use serde_json::Value;
 /// Whitelist mapping a wire field name (as sent by the frontend) to the
 /// actual SQL column name. Built once per resource/service; field names not
 /// present here can never reach raw SQL.
+///
+/// It also names the resource's **unique key** (Issue #243), which
+/// [`sqlite::append_order_by`] / [`postgres::append_order_by`] append as the
+/// last `ORDER BY` key so the order is total: without it, rows that tie on
+/// the requested sort column come back in an engine-chosen order that may
+/// differ between two `LIMIT .. OFFSET ..` queries (Postgres's top-N sort
+/// does this in practice), so paging duplicates some rows and never returns
+/// others. The unique key is, in order of precedence:
+///
+/// - the field given to [`ColumnMap::unique_key`],
+/// - none, after [`ColumnMap::without_unique_key`] (the pre-#243 behaviour),
+/// - otherwise, by convention, the wire field `id` **if it is registered**
+///   (every Banto resource and every known derived-app resource maps `id`
+///   to its primary key). A map without an `id` column and without an
+///   explicit declaration has no unique key and keeps the pre-#243 order.
 #[derive(Debug, Clone, Default)]
 pub struct ColumnMap {
     columns: HashMap<String, String>,
+    unique_key: UniqueKey,
 }
+
+/// See [`ColumnMap`]'s doc comment for the precedence.
+#[derive(Debug, Clone, Default)]
+enum UniqueKey {
+    /// The wire field `id`, if registered.
+    #[default]
+    ConventionalId,
+    /// A field declared with [`ColumnMap::unique_key`].
+    Field(String),
+    /// Declared absent with [`ColumnMap::without_unique_key`].
+    Disabled,
+}
+
+/// The wire field used as the unique key when none is declared.
+const CONVENTIONAL_UNIQUE_KEY: &str = "id";
 
 impl ColumnMap {
     pub fn new() -> Self {
-        Self {
-            columns: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Register `field` (wire name) -> `sql_column` (actual SQL column).
@@ -50,9 +83,72 @@ impl ColumnMap {
         self
     }
 
+    /// Declare `field` (a wire name, which must ALSO be registered with
+    /// [`ColumnMap::column`] - the order of the two calls does not matter) as
+    /// the resource's unique key: a column whose values are unique and not
+    /// NULL, normally the primary key. Only needed when that field is not
+    /// named `id`; see [`ColumnMap`]'s doc comment.
+    pub fn unique_key(mut self, field: &str) -> Self {
+        self.unique_key = UniqueKey::Field(field.to_string());
+        self
+    }
+
+    /// Declare that this resource has no unique key to order by (for
+    /// example, when its `id` field is not actually unique). `ORDER BY` then
+    /// contains only the requested sort keys, as before #243, and paging
+    /// through ties is not guaranteed to be stable.
+    pub fn without_unique_key(mut self) -> Self {
+        self.unique_key = UniqueKey::Disabled;
+        self
+    }
+
     /// Resolve a wire field name to its SQL column name, if whitelisted.
     pub fn resolve(&self, field: &str) -> Option<&str> {
         self.columns.get(field).map(String::as_str)
+    }
+
+    /// The SQL column of the unique key, if the resource has one (see
+    /// [`ColumnMap`]'s doc comment). `None` also when a key was declared with
+    /// [`ColumnMap::unique_key`] but never registered with
+    /// [`ColumnMap::column`] (a programming error, which `append_order_by`
+    /// reports with a `debug_assert!`).
+    pub fn unique_key_column(&self) -> Option<&str> {
+        match &self.unique_key {
+            UniqueKey::ConventionalId => self.resolve(CONVENTIONAL_UNIQUE_KEY),
+            UniqueKey::Field(field) => self.resolve(field),
+            UniqueKey::Disabled => None,
+        }
+    }
+
+    /// `true` when [`ColumnMap::unique_key`] named a field that is not
+    /// registered (see [`ColumnMap::unique_key_column`]).
+    fn declared_unique_key_is_unregistered(&self) -> bool {
+        matches!(&self.unique_key, UniqueKey::Field(field) if self.resolve(field).is_none())
+    }
+
+    /// The `ORDER BY` entries for `sort`: the whitelisted sort keys (unknown
+    /// fields skipped), then the unique key in the direction of the last
+    /// entry (ascending when there is none), unless it is already among
+    /// them. Shared by both backends so they cannot disagree.
+    fn order_by_entries(&self, sort: &[SortState]) -> Vec<(&str, SortDirection)> {
+        debug_assert!(
+            !self.declared_unique_key_is_unregistered(),
+            "ColumnMap::unique_key names a field that is not registered with ColumnMap::column"
+        );
+        let mut entries: Vec<(&str, SortDirection)> = sort
+            .iter()
+            .filter_map(|s| self.resolve(&s.field).map(|col| (col, s.direction)))
+            .collect();
+        if let Some(key) = self.unique_key_column() {
+            if !entries.iter().any(|(col, _)| *col == key) {
+                let direction = entries
+                    .last()
+                    .map(|(_, direction)| *direction)
+                    .unwrap_or(SortDirection::Asc);
+                entries.push((key, direction));
+            }
+        }
+        entries
     }
 }
 
@@ -147,15 +243,22 @@ macro_rules! impl_list_query {
             /// directions, keeps all three implementations in agreement.
             /// SQLite supports `NULLS LAST` since 3.30 (sqlx bundles a
             /// newer version); Postgres supports it natively.
+            ///
+            /// The order is made **total** (Issue #243): the resource's
+            /// unique key ([`ColumnMap::unique_key_column`], normally `id`)
+            /// is appended as the last entry, in the direction of the last
+            /// requested sort key, unless the sort already uses it. With no
+            /// (known) sort key at all, the rows are ordered by the unique
+            /// key ascending - the order SQLite's rowid scan and the
+            /// InMemory provider already gave an unsorted list, now
+            /// guaranteed instead of incidental. A resource without a unique
+            /// key keeps the pre-#243 clause (no `ORDER BY` when unsorted).
             pub fn append_order_by(
                 builder: &mut QueryBuilder<$db>,
                 columns: &ColumnMap,
                 sort: &[SortState],
             ) {
-                let resolved: Vec<(&str, SortDirection)> = sort
-                    .iter()
-                    .filter_map(|s| columns.resolve(&s.field).map(|col| (col, s.direction)))
-                    .collect();
+                let resolved = columns.order_by_entries(sort);
                 if resolved.is_empty() {
                     return;
                 }
@@ -734,8 +837,18 @@ mod tests {
             }],
             ..Default::default()
         };
-        // No error, and no ORDER BY applied (rows come back in insertion order).
-        assert_eq!(fetch_names(&pool, &params).await.len(), 5);
+        // No error; the unknown key is dropped, leaving only the unique key
+        // (`id` ascending, Issue #243) - here also the insertion order.
+        assert_eq!(
+            fetch_names(&pool, &params).await,
+            vec![
+                "Alpha Widget",
+                "Beta Widget",
+                "100% Off Widget",
+                "gamma_widget",
+                "Delta"
+            ]
+        );
     }
 
     /// NULLs must sort last regardless of direction, matching the two JS
@@ -832,6 +945,273 @@ mod tests {
         let mut builder = QueryBuilder::new("SELECT name FROM widgets");
         let result = apply_list_params(&mut builder, &columns(), &params);
         assert!(matches!(result, Err(BantoError::BadRequest(_))));
+    }
+
+    // ---- Issue #243: a total order for paging --------------------------
+
+    /// Rows in the `ties` fixture. `grp` has only 3 distinct values, so almost
+    /// every row ties with many others on it.
+    const TIE_ROWS: i64 = 97;
+
+    /// A table where a plain `ORDER BY grp` leaves the order inside each tie
+    /// up to the engine, and where an unsorted `SELECT id` is answered from
+    /// the `name` index (so the "natural" order is NOT the id order): `name`
+    /// is assigned in the reverse of `id`.
+    async fn setup_ties() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        pool.execute(
+            "CREATE TABLE ties (id INTEGER PRIMARY KEY, grp INTEGER NOT NULL, name TEXT NOT NULL)",
+        )
+        .await
+        .expect("create table");
+        pool.execute("CREATE INDEX ties_name ON ties (name)")
+            .await
+            .expect("create index");
+        for id in 1..=TIE_ROWS {
+            sqlx::query("INSERT INTO ties (id, grp, name) VALUES (?, ?, ?)")
+                .bind(id)
+                .bind(id % 3)
+                .bind(format!("n{:04}", TIE_ROWS - id))
+                .execute(&pool)
+                .await
+                .expect("insert row");
+        }
+        pool
+    }
+
+    fn tie_columns() -> ColumnMap {
+        ColumnMap::new()
+            .column("id", "id")
+            .column("grp", "grp")
+            .column("name", "name")
+    }
+
+    async fn fetch_tie_ids(
+        pool: &SqlitePool,
+        columns: &ColumnMap,
+        params: &ListParams,
+    ) -> Vec<i64> {
+        let mut builder = QueryBuilder::new("SELECT id FROM ties");
+        apply_list_params(&mut builder, columns, params).expect("apply params");
+        builder
+            .build()
+            .fetch_all(pool)
+            .await
+            .expect("query should succeed")
+            .into_iter()
+            .map(|r| r.get::<i64, _>(0))
+            .collect()
+    }
+
+    /// Fetch every row block by block with `LIMIT`/`OFFSET` (what a paged
+    /// list or `WindowedListResource` does) and concatenate the blocks.
+    async fn fetch_tie_ids_in_blocks(
+        pool: &SqlitePool,
+        columns: &ColumnMap,
+        sort: &[SortState],
+        block: u64,
+    ) -> Vec<i64> {
+        let mut all = Vec::new();
+        let mut offset = 0;
+        while offset < TIE_ROWS as u64 {
+            let params = ListParams {
+                sort: sort.to_vec(),
+                pagination: Some(Pagination {
+                    offset,
+                    limit: block,
+                }),
+                ..Default::default()
+            };
+            all.extend(fetch_tie_ids(pool, columns, &params).await);
+            offset += block;
+        }
+        all
+    }
+
+    fn by_grp(direction: SortDirection) -> Vec<SortState> {
+        vec![SortState {
+            field: "grp".to_string(),
+            direction,
+        }]
+    }
+
+    /// The order the list must have: `grp` in `direction`, then `id` in the
+    /// SAME direction (the unique key follows the last sort key).
+    fn expected_tie_order(direction: SortDirection) -> Vec<i64> {
+        let mut ids: Vec<i64> = (1..=TIE_ROWS).collect();
+        ids.sort_by(|a, b| {
+            let ord = (a % 3).cmp(&(b % 3)).then(a.cmp(b));
+            match direction {
+                SortDirection::Asc => ord,
+                SortDirection::Desc => ord.reverse(),
+            }
+        });
+        ids
+    }
+
+    /// Ties on the sort column are broken by the unique key (`id`), in the
+    /// direction of the last sort key - so the order is fully defined and
+    /// does not depend on how the engine happens to scan.
+    #[tokio::test]
+    async fn ties_are_broken_by_the_unique_key_in_the_last_sort_direction() {
+        let pool = setup_ties().await;
+        for direction in [SortDirection::Asc, SortDirection::Desc] {
+            let params = ListParams {
+                sort: by_grp(direction),
+                ..Default::default()
+            };
+            assert_eq!(
+                fetch_tie_ids(&pool, &tie_columns(), &params).await,
+                expected_tie_order(direction),
+                "direction {direction:?}"
+            );
+        }
+    }
+
+    /// Paging through a column full of ties, block by block with `OFFSET`,
+    /// yields every row exactly once (no duplicate, no gap at a block
+    /// boundary) and in the defined order.
+    #[tokio::test]
+    async fn paging_through_ties_has_no_duplicates_or_gaps() {
+        let pool = setup_ties().await;
+        for direction in [SortDirection::Asc, SortDirection::Desc] {
+            for block in [1, 7, 10, 50] {
+                let ids =
+                    fetch_tie_ids_in_blocks(&pool, &tie_columns(), &by_grp(direction), block).await;
+                assert_eq!(
+                    ids,
+                    expected_tie_order(direction),
+                    "direction {direction:?}, block {block}"
+                );
+            }
+        }
+    }
+
+    /// No sort at all, but paged: the rows are still ordered by the unique
+    /// key (ascending), not by whatever index the engine chose to scan
+    /// (here the `name` index, whose order is the reverse of `id`).
+    #[tokio::test]
+    async fn paging_without_a_sort_orders_by_the_unique_key_ascending() {
+        let pool = setup_ties().await;
+        let expected: Vec<i64> = (1..=TIE_ROWS).collect();
+        for block in [1, 7, 50] {
+            assert_eq!(
+                fetch_tie_ids_in_blocks(&pool, &tie_columns(), &[], block).await,
+                expected,
+                "block {block}"
+            );
+        }
+    }
+
+    fn order_by_sql(columns: &ColumnMap, sort: &[SortState]) -> String {
+        let mut builder = QueryBuilder::<sqlx::Sqlite>::new("SELECT 1");
+        super::sqlite::append_order_by(&mut builder, columns, sort);
+        builder.sql().as_str().to_string()
+    }
+
+    fn sort_by(entries: &[(&str, SortDirection)]) -> Vec<SortState> {
+        entries
+            .iter()
+            .map(|(field, direction)| SortState {
+                field: field.to_string(),
+                direction: *direction,
+            })
+            .collect()
+    }
+
+    /// The unique key is not appended a second time when the sort already
+    /// uses it - last or not - and its direction follows the LAST sort key.
+    #[test]
+    fn unique_key_is_appended_once_in_the_last_direction() {
+        let cols = tie_columns();
+        assert_eq!(
+            order_by_sql(&cols, &sort_by(&[("id", SortDirection::Desc)])),
+            "SELECT 1 ORDER BY id DESC NULLS LAST"
+        );
+        assert_eq!(
+            order_by_sql(
+                &cols,
+                &sort_by(&[("id", SortDirection::Desc), ("grp", SortDirection::Asc)])
+            ),
+            "SELECT 1 ORDER BY id DESC NULLS LAST, grp ASC NULLS LAST"
+        );
+        assert_eq!(
+            order_by_sql(
+                &cols,
+                &sort_by(&[("grp", SortDirection::Asc), ("name", SortDirection::Desc)])
+            ),
+            "SELECT 1 ORDER BY grp ASC NULLS LAST, name DESC NULLS LAST, id DESC NULLS LAST"
+        );
+        // Unknown sort fields are skipped before the direction is taken.
+        assert_eq!(
+            order_by_sql(
+                &cols,
+                &sort_by(&[("grp", SortDirection::Desc), ("nope", SortDirection::Asc)])
+            ),
+            "SELECT 1 ORDER BY grp DESC NULLS LAST, id DESC NULLS LAST"
+        );
+        assert_eq!(
+            order_by_sql(&cols, &[]),
+            "SELECT 1 ORDER BY id ASC NULLS LAST"
+        );
+    }
+
+    /// A key with another wire name is declared with `unique_key`; the
+    /// comparison is on the SQL column, so a sort by a different wire alias
+    /// of the same column also counts as "already sorted by it".
+    #[test]
+    fn a_declared_unique_key_replaces_the_id_convention() {
+        let cols = ColumnMap::new()
+            .unique_key("code")
+            .column("code", "item_code")
+            .column("id", "legacy_id")
+            .column("grp", "grp");
+        assert_eq!(cols.unique_key_column(), Some("item_code"));
+        assert_eq!(
+            order_by_sql(&cols, &sort_by(&[("grp", SortDirection::Desc)])),
+            "SELECT 1 ORDER BY grp DESC NULLS LAST, item_code DESC NULLS LAST"
+        );
+        let aliased = cols.clone().column("codeAlias", "item_code");
+        assert_eq!(
+            order_by_sql(&aliased, &sort_by(&[("codeAlias", SortDirection::Asc)])),
+            "SELECT 1 ORDER BY item_code ASC NULLS LAST"
+        );
+    }
+
+    /// Without an `id` column and without a declaration there is no unique
+    /// key, and `without_unique_key` opts out explicitly: both keep the
+    /// pre-#243 clause (derived apps whose `id` is not unique stay as they
+    /// were).
+    #[test]
+    fn no_unique_key_keeps_the_previous_clause() {
+        let no_id = ColumnMap::new().column("grp", "grp");
+        assert_eq!(no_id.unique_key_column(), None);
+        assert_eq!(order_by_sql(&no_id, &[]), "SELECT 1");
+        assert_eq!(
+            order_by_sql(&no_id, &sort_by(&[("grp", SortDirection::Asc)])),
+            "SELECT 1 ORDER BY grp ASC NULLS LAST"
+        );
+
+        let opted_out = tie_columns().without_unique_key();
+        assert_eq!(opted_out.unique_key_column(), None);
+        assert_eq!(order_by_sql(&opted_out, &[]), "SELECT 1");
+        assert_eq!(
+            order_by_sql(&opted_out, &sort_by(&[("grp", SortDirection::Desc)])),
+            "SELECT 1 ORDER BY grp DESC NULLS LAST"
+        );
+    }
+
+    /// Declaring a key that is never registered is a programming error,
+    /// caught in debug builds.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "not registered")]
+    fn an_unregistered_declared_unique_key_is_a_debug_assertion() {
+        let cols = ColumnMap::new().column("grp", "grp").unique_key("code");
+        order_by_sql(&cols, &[]);
     }
 }
 
@@ -1110,6 +1490,140 @@ mod postgres_tests {
         assert_eq!(
             labels(&pool, table, &cols, SortDirection::Desc).await,
             vec!["has-score-high", "has-score-low", "null-score"]
+        );
+    }
+
+    // ---- Issue #243: a total order for paging --------------------------
+
+    /// Enough rows that Postgres picks a top-N heapsort for `ORDER BY ..
+    /// LIMIT`, whose order among tied rows differs with `LIMIT`/`OFFSET`.
+    const PG_TIE_ROWS: i64 = 3000;
+
+    /// `grp` has 3 distinct values; rows are inserted in a scrambled order
+    /// so the heap order is not the id order either.
+    async fn seed_ties(pool: &PgPool, table: &str) {
+        // AssertSqlSafe: `table` is always a hardcoded literal fixture name
+        // from this module (see `seed`'s doc comment) - never user input.
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
+            .execute(pool)
+            .await
+            .expect("drop table");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TABLE {table} (id BIGINT PRIMARY KEY, grp BIGINT NOT NULL)"
+        )))
+        .execute(pool)
+        .await
+        .expect("create table");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO {table} (id, grp) \
+             SELECT id, id % 3 FROM generate_series(1, {PG_TIE_ROWS}) AS id \
+             ORDER BY (id * 7919) % {PG_TIE_ROWS}"
+        )))
+        .execute(pool)
+        .await
+        .expect("insert rows");
+        sqlx::query(sqlx::AssertSqlSafe(format!("ANALYZE {table}")))
+            .execute(pool)
+            .await
+            .expect("analyze");
+    }
+
+    fn tie_columns() -> ColumnMap {
+        ColumnMap::new().column("id", "id").column("grp", "grp")
+    }
+
+    async fn fetch_tie_ids_in_blocks(
+        pool: &PgPool,
+        table: &str,
+        sort: &[SortState],
+        block: u64,
+    ) -> Vec<i64> {
+        let mut all = Vec::new();
+        let mut offset = 0;
+        while offset < PG_TIE_ROWS as u64 {
+            let mut builder = QueryBuilder::new(format!("SELECT id FROM {table}"));
+            apply_list_params(
+                &mut builder,
+                &tie_columns(),
+                &ListParams {
+                    sort: sort.to_vec(),
+                    pagination: Some(banto_core::Pagination {
+                        offset,
+                        limit: block,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .expect("apply params");
+            all.extend(
+                builder
+                    .build()
+                    .fetch_all(pool)
+                    .await
+                    .expect("query should succeed")
+                    .into_iter()
+                    .map(|r| r.get::<i64, _>(0)),
+            );
+            offset += block;
+        }
+        all
+    }
+
+    fn expected_tie_order(direction: Option<SortDirection>) -> Vec<i64> {
+        let mut ids: Vec<i64> = (1..=PG_TIE_ROWS).collect();
+        match direction {
+            None => {}
+            Some(SortDirection::Asc) => ids.sort_by_key(|id| (id % 3, *id)),
+            Some(SortDirection::Desc) => ids.sort_by_key(|id| std::cmp::Reverse((id % 3, *id))),
+        }
+        ids
+    }
+
+    /// The #243 reproduction on a real server: paging with `OFFSET` through
+    /// a column full of ties must return every row exactly once, in the
+    /// defined order (ties broken by `id` in the last sort direction). Without
+    /// the unique-key tiebreaker Postgres returns overlapping blocks.
+    #[tokio::test]
+    async fn paging_through_ties_has_no_duplicates_or_gaps() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_ties";
+        seed_ties(&pool, table).await;
+        for direction in [SortDirection::Asc, SortDirection::Desc] {
+            let sort = vec![SortState {
+                field: "grp".to_string(),
+                direction,
+            }];
+            for block in [50, 200] {
+                let ids = fetch_tie_ids_in_blocks(&pool, table, &sort, block).await;
+                let unique: std::collections::HashSet<i64> = ids.iter().copied().collect();
+                assert_eq!(
+                    (ids.len(), unique.len()),
+                    (PG_TIE_ROWS as usize, PG_TIE_ROWS as usize),
+                    "direction {direction:?}, block {block}: duplicates or gaps"
+                );
+                assert_eq!(
+                    ids,
+                    expected_tie_order(Some(direction)),
+                    "direction {direction:?}, block {block}"
+                );
+            }
+        }
+    }
+
+    /// No sort, but paged: ordered by the unique key ascending, so the
+    /// blocks still tile the table exactly.
+    #[tokio::test]
+    async fn paging_without_a_sort_orders_by_the_unique_key_ascending() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_ties_unsorted";
+        seed_ties(&pool, table).await;
+        assert_eq!(
+            fetch_tie_ids_in_blocks(&pool, table, &[], 200).await,
+            expected_tie_order(None)
         );
     }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { invalidate } from '../src/invalidate';
 import type { DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
@@ -351,7 +351,7 @@ describe('atomic window refresh (#212)', () => {
 		windowed.dispose();
 	});
 
-	it('a refresh with no range issues no request and an empty range clears cached rows', async () => {
+	it('a refresh before any ensureRange issues no request; after an empty range it re-reads block 0 (#243)', async () => {
 		const { windowed, resolveCall, calls } = setupRefresh('w-atomic-empty');
 		await windowed.refresh();
 		expect(calls).toHaveLength(0);
@@ -359,9 +359,287 @@ describe('atomic window refresh (#212)', () => {
 		resolveCall(0);
 		await load;
 		await windowed.ensureRange(0, 0);
-		await windowed.refresh();
-		expect(calls).toHaveLength(1);
+		const previous = windowed.rows;
+		const refresh = windowed.refresh();
+		// Before #243 this issued no request at all, so a list that had
+		// collapsed to an empty window could never be re-read.
+		expect(calls).toHaveLength(2);
+		expect(calls[1].offset).toBe(0);
+		expect(windowed.rows).toBe(previous);
+		resolveCall(1, [{ id: 7, name: 'only row now' }], 1);
+		await refresh;
+		expect(windowed.rows).toEqual([{ id: 7, name: 'only row now' }]);
+		expect(windowed.totalCount).toBe(1);
+		windowed.dispose();
+	});
+});
+
+function setupRecovery(name: string, size = 30, options: { requestTimeoutMs?: number } = {}) {
+	const controlled = createControllableProvider(size);
+	initBanto({ dataProvider: controlled.provider, authProvider, resources: [{ name, label: 'W' }] });
+	return {
+		...controlled,
+		windowed: createWindowedListResource<Row>(name, { blockSize: 10, ...options })
+	};
+}
+
+/**
+ * Issue #243: failures are held per block, recovery (setParams/refresh) works
+ * even when the visible range has collapsed to `{0, 0}`, and a request that
+ * never answers cannot keep `loading` up forever.
+ */
+describe('failure state and recovery (#243)', () => {
+	it('recovers from a failed first fetch: refresh() refetches block 0 although the grid now reports {0, 0}', async () => {
+		const { windowed, calls, resolveCall, rejectCall } = setupRecovery('w243-first-failure');
+		const first = windowed.ensureRange(0, 10);
+		rejectCall(0);
+		await first;
+		expect(windowed.error).not.toBeNull();
+		expect(windowed.loading).toBe(false);
+		expect(windowed.totalCount).toBe(0);
+		// totalCount 0 -> BantoGrid's virtual window is empty.
+		await windowed.ensureRange(0, 0);
+		const callsBeforeReload = calls.length;
+
+		const reload = windowed.refresh();
+		expect(calls.length).toBe(callsBeforeReload + 1);
+		expect(calls.at(-1)?.offset).toBe(0);
+		resolveCall(calls.length - 1);
+		await reload;
+		expect(windowed.totalCount).toBe(30);
+		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
+		expect(windowed.error).toBeNull();
+		expect(windowed.loading).toBe(false);
+		windowed.dispose();
+	});
+
+	it('an invalidate() after a failed first fetch also refetches block 0', async () => {
+		const { windowed, calls, rejectCall } = setupRecovery('w243-first-failure-invalidate');
+		const first = windowed.ensureRange(0, 10);
+		rejectCall(0);
+		await first;
+		await windowed.ensureRange(0, 0);
+		const callsBefore = calls.length;
+		invalidate('w243-first-failure-invalidate');
+		await tick();
+		expect(calls.length).toBe(callsBefore + 1);
+		expect(calls.at(-1)?.offset).toBe(0);
+		windowed.dispose();
+	});
+
+	it('after a filter matched 0 rows, removing the filter fetches again (range {0, 0})', async () => {
+		const { windowed, calls, resolveCall } = setupRecovery('w243-zero-rows');
+		const first = windowed.ensureRange(0, 10);
+		resolveCall(0, [], 0);
+		await first;
+		expect(windowed.totalCount).toBe(0);
+		await windowed.ensureRange(0, 0); // the grid's empty window
+		const callsBefore = calls.length;
+
+		// Exactly what ItemsServerGrid's handleParamsChange does.
+		windowed.setParams({ filters: [] });
+		const reload = windowed.ensureRange(0, 0);
+		expect(calls.length).toBe(callsBefore + 1);
+		expect(calls.at(-1)?.offset).toBe(0);
+		resolveCall(calls.length - 1);
+		await reload;
+		expect(windowed.totalCount).toBe(30);
+		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
+		windowed.dispose();
+	});
+
+	it('setParams alone refetches the last range (and block 0 when it is empty)', async () => {
+		const { windowed, calls, resolveCall } = setupRecovery('w243-setparams-alone');
+		const first = windowed.ensureRange(0, 10);
+		resolveCall(0, [], 0);
+		await first;
+		await windowed.ensureRange(0, 0);
+		const callsBefore = calls.length;
+		windowed.setParams({ filters: [] });
+		expect(calls.length).toBe(callsBefore + 1);
+		expect(calls.at(-1)?.offset).toBe(0);
+		windowed.dispose();
+	});
+
+	it('a refresh after 0 rows (e.g. from invalidate) fetches block 0', async () => {
+		const { windowed, calls, resolveCall } = setupRecovery('w243-zero-rows-refresh');
+		const first = windowed.ensureRange(0, 10);
+		resolveCall(0, [], 0);
+		await first;
+		await windowed.ensureRange(0, 0);
+		const callsBefore = calls.length;
+		const reload = windowed.refresh();
+		expect(calls.length).toBe(callsBefore + 1);
+		resolveCall(calls.length - 1);
+		await reload;
+		expect(windowed.totalCount).toBe(30);
+		windowed.dispose();
+	});
+
+	it("another block's success does not clear a block's failure", async () => {
+		const { windowed, resolveCall, rejectCall } = setupRecovery('w243-per-block');
+		const load = windowed.ensureRange(0, 20); // blocks 0 and 1
+		rejectCall(0);
+		await tick();
+		resolveCall(1);
+		await load;
+		expect(windowed.error).not.toBeNull();
+		expect(windowed.failedBlocks).toEqual([0]);
+		expect(windowed.rows[10]).toEqual({ id: 10, name: 'row-10' });
+		expect(windowed.loading).toBe(false);
+		windowed.dispose();
+	});
+
+	it('a failure stays visible through refresh() until that block is fetched successfully', async () => {
+		const { windowed, calls, resolveCall, rejectCall } = setupRecovery('w243-refresh-keeps');
+		const load = windowed.ensureRange(0, 20);
+		resolveCall(0);
+		rejectCall(1);
+		await load;
+		expect(windowed.failedBlocks).toEqual([1]);
+
+		const reload = windowed.refresh();
+		expect(windowed.error).not.toBeNull(); // kept while the retry is in flight
+		const offsets = calls.slice(2).map((c) => c.offset);
+		expect(offsets.sort((a, b) => a - b)).toEqual([0, 10]);
+		resolveCall(2);
+		resolveCall(3);
+		await reload;
+		expect(windowed.error).toBeNull();
+		expect(windowed.failedBlocks).toEqual([]);
+		windowed.dispose();
+	});
+
+	it('refresh() retries a failed block even when it is outside the last range', async () => {
+		const { windowed, calls, resolveCall, rejectCall } = setupRecovery(
+			'w243-refresh-retry-outside'
+		);
+		const far = windowed.ensureRange(20, 30); // block 2
+		rejectCall(0);
+		await far;
+		const near = windowed.ensureRange(0, 10); // block 0
+		resolveCall(1);
+		await near;
+		expect(windowed.failedBlocks).toEqual([2]);
+
+		const reload = windowed.refresh();
+		const offsets = calls.slice(2).map((c) => c.offset);
+		expect(offsets.sort((a, b) => a - b)).toEqual([0, 20]);
+		resolveCall(2);
+		resolveCall(3);
+		await reload;
+		expect(windowed.failedBlocks).toEqual([]);
+		expect(windowed.rows[20]).toEqual({ id: 20, name: 'row-20' });
+		windowed.dispose();
+	});
+
+	it('setParams drops the failures of the previous query', async () => {
+		const { windowed, rejectCall } = setupRecovery('w243-setparams-clears');
+		const load = windowed.ensureRange(0, 10);
+		rejectCall(0);
+		await load;
+		expect(windowed.error).not.toBeNull();
+		windowed.setParams({ sort: [{ field: 'name', direction: 'desc' }] });
+		expect(windowed.error).toBeNull();
+		expect(windowed.failedBlocks).toEqual([]);
+		windowed.dispose();
+	});
+
+	it('an empty range does not silently retry block 0 after it failed in this generation (no retry loop)', async () => {
+		const { windowed, calls, rejectCall } = setupRecovery('w243-no-loop');
+		const first = windowed.ensureRange(0, 10);
+		rejectCall(0);
+		await first;
+		const callsBefore = calls.length;
+		await windowed.ensureRange(0, 0);
+		await windowed.ensureRange(0, 0);
+		expect(calls.length).toBe(callsBefore);
+		windowed.dispose();
+	});
+
+	it('a stale generation response after a failure is not adopted', async () => {
+		const { windowed, calls, resolveCall, rejectCall } = setupRecovery('w243-stale');
+		const first = windowed.ensureRange(0, 10);
+		rejectCall(0);
+		await first;
+		const reloadA = windowed.refresh(); // call 1
+		const reloadB = windowed.refresh(); // call 2, supersedes call 1
+		expect(calls).toHaveLength(3);
+		resolveCall(1, [{ id: 99, name: 'stale' }], 1);
+		await reloadA;
 		expect(windowed.rows[0]).toBeUndefined();
+		expect(windowed.error).not.toBeNull();
+		resolveCall(2);
+		await reloadB;
+		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
+		expect(windowed.error).toBeNull();
+		windowed.dispose();
+	});
+});
+
+describe('request timeout (#243)', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('a request that never answers fails after the timeout and loading goes down', async () => {
+		vi.useFakeTimers();
+		const { windowed, calls, resolveCall } = setupRecovery('w243-timeout', 30, {
+			requestTimeoutMs: 1000
+		});
+		const load = windowed.ensureRange(0, 10);
+		expect(windowed.loading).toBe(true);
+		await vi.advanceTimersByTimeAsync(999);
+		expect(windowed.loading).toBe(true);
+		await vi.advanceTimersByTimeAsync(1);
+		await load;
+		expect(windowed.loading).toBe(false);
+		expect(windowed.error?.message).toContain('timed out');
+		expect(windowed.failedBlocks).toEqual([0]);
+
+		// The late answer of the timed-out request is not adopted...
+		resolveCall(0, [{ id: 99, name: 'late' }], 1);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(windowed.rows[0]).toBeUndefined();
+		expect(windowed.totalCount).toBe(0);
+
+		// ...and refresh() recovers.
+		const reload = windowed.refresh();
+		expect(calls).toHaveLength(2);
+		resolveCall(1);
+		await reload;
+		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
+		expect(windowed.error).toBeNull();
+		windowed.dispose();
+	});
+
+	it('has a default timeout of 30 s', async () => {
+		vi.useFakeTimers();
+		const { windowed } = setupRecovery('w243-timeout-default');
+		const load = windowed.ensureRange(0, 10);
+		await vi.advanceTimersByTimeAsync(29_999);
+		expect(windowed.loading).toBe(true);
+		await vi.advanceTimersByTimeAsync(1);
+		await load;
+		expect(windowed.loading).toBe(false);
+		expect(windowed.error).not.toBeNull();
+		windowed.dispose();
+	});
+
+	it('refresh() while a request hangs lowers loading once the new generation settles', async () => {
+		vi.useFakeTimers();
+		const { windowed, calls, resolveCall } = setupRecovery('w243-timeout-refresh', 30, {
+			requestTimeoutMs: 1000
+		});
+		void windowed.ensureRange(0, 10); // call 0 hangs
+		const reload = windowed.refresh(); // call 1
+		expect(calls).toHaveLength(2);
+		resolveCall(1);
+		await reload;
+		expect(windowed.loading).toBe(false);
+		await vi.advanceTimersByTimeAsync(1000); // call 0 times out: stale, ignored
+		expect(windowed.loading).toBe(false);
+		expect(windowed.error).toBeNull();
 		windowed.dispose();
 	});
 });

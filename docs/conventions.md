@@ -223,6 +223,12 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   補間しない）。未知フィールドの sort は無視、filter は hard error。
   `ListParams` を受けるサービス（現状 items / audit）に `column_map()` を置く
   （固定 ORDER BY のみのサービスには不要）。
+  **`ORDER BY` の最後には一意キーが付く**（Issue #243）: `append_order_by` は
+  `ColumnMap` の一意キー（既定は登録された `id`、別名なら
+  `ColumnMap::unique_key`、無いなら `without_unique_key`）を最後の並べ替えと
+  同じ向き（並べ替えが無ければ昇順）で足し、`LIMIT`/`OFFSET` のページングで
+  同順位の行が重複・欠落しないようにする。`column_map()` の `id` は**一意な列に
+  だけ**割り当てる。
 - **CSP は2定義を同期する。** デスクトップは `tauri.conf.json` の
   `app.security.csp`、LAN は `banto-server` の `security_headers.rs`
   `CONTENT_SECURITY_POLICY`。**意図的な差分は connect-src のみ**（Tauri IPC）で、
