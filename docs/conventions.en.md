@@ -272,8 +272,10 @@ without a runtime guard are **upheld by reviewing every call site**.
   to a unique column**.
   **This ordering contract is shared by three implementations** (#243 review):
   SQL (`banto-storage`), the InMemory `DataProvider` (`idField`, default `id`)
-  and the grid's client sort (the row's `id`, else `getRowId`) all break ties by
-  the unique key in the direction of the last sort key, put NULLs last in both
+  and the grid's client sort (the row's `id`, else `getRowId`) all **first drop
+  unknown sort fields** (not in the `ColumnMap` / not a grid column / not a
+  field of any InMemory row), then break ties by the unique key in the
+  direction of the last remaining sort key, put NULLs last in both
   directions, and order an unsorted list by the unique key ascending (only the
   grid's client sort keeps the order of the array it was given). One fixture,
   `crates/banto-storage/testdata/list-order-parity.json`, is read by all three

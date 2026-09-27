@@ -77,14 +77,30 @@ interface BlockFailure {
 	seq: number;
 }
 
-function isWellFormed<T>(result: ListResult<T>): boolean {
+/** The largest valid JavaScript array length (2 ** 32 - 1). */
+const MAX_ARRAY_LENGTH = 0xffff_ffff;
+
+/**
+ * Whether a block answer can be written without throwing: `rows` is an
+ * array, `totalCount` is a non-negative integer that is also a valid array
+ * length (a safe integer is not enough - `2 ** 32` passes that and then
+ * throws `RangeError` on `rows.length = ...`), and the rows written at
+ * `offset` stay within that limit too.
+ */
+function isWellFormed<T>(result: ListResult<T>, offset: number): boolean {
 	return (
 		result !== null &&
 		typeof result === 'object' &&
 		Array.isArray(result.rows) &&
-		Number.isSafeInteger(result.totalCount) &&
-		result.totalCount >= 0
+		Number.isInteger(result.totalCount) &&
+		result.totalCount >= 0 &&
+		result.totalCount <= MAX_ARRAY_LENGTH &&
+		offset + result.rows.length <= MAX_ARRAY_LENGTH
 	);
+}
+
+function toProviderError(err: unknown): ProviderError {
+	return isProviderError(err) ? err : new ProviderError({ kind: 'other', message: String(err) });
 }
 
 export class WindowedListResource<T> {
@@ -247,12 +263,7 @@ export class WindowedListResource<T> {
 			const result = await this.#withTimeout(request);
 			outcome = { ok: true, result };
 		} catch (err) {
-			outcome = {
-				ok: false,
-				error: isProviderError(err)
-					? err
-					: new ProviderError({ kind: 'other', message: String(err) })
-			};
+			outcome = { ok: false, error: toProviderError(err) };
 		}
 
 		// Superseded by setParams()/refresh() (which also dropped this block
@@ -264,7 +275,7 @@ export class WindowedListResource<T> {
 		// A malformed answer (a buggy custom provider) must not throw while
 		// writing below - that would skip the settlement at the end and leave
 		// `loading` up - so it is recorded as this block's failure instead.
-		if (outcome.ok && !isWellFormed(outcome.result)) {
+		if (outcome.ok && !isWellFormed(outcome.result, offset)) {
 			outcome = {
 				ok: false,
 				error: new ProviderError({ kind: 'other', message: 'malformed list result' })
@@ -272,24 +283,16 @@ export class WindowedListResource<T> {
 		}
 
 		if (outcome.ok) {
-			const { result } = outcome;
-			const snapshot = this.#refreshSnapshot;
-			const targetRows = snapshot ? snapshot.rows : this.rows;
-			if (!this.#hasTotalCountForGeneration) {
-				this.#hasTotalCountForGeneration = true;
-				if (snapshot) snapshot.totalCount = result.totalCount;
-				else this.totalCount = result.totalCount;
-				targetRows.length = result.totalCount;
+			// The check above makes this write non-throwing; the catch is the
+			// structural guarantee that, whatever happens, the block still
+			// reaches the settlement below (#246 re-review).
+			try {
+				this.#writeBlock(block, offset, outcome.result);
+			} catch (err) {
+				outcome = { ok: false, error: toProviderError(err) };
 			}
-			if (targetRows.length < offset + result.rows.length) {
-				targetRows.length = offset + result.rows.length;
-			}
-			for (let i = 0; i < result.rows.length; i++) {
-				targetRows[offset + i] = result.rows[i];
-			}
-			this.#loadedBlocks.add(block);
-			this.#failures.delete(block);
-		} else {
+		}
+		if (!outcome.ok) {
 			this.#failures.set(block, { error: outcome.error, generation, seq: ++this.#failureSeq });
 		}
 		this.#publishFailures();
@@ -304,6 +307,34 @@ export class WindowedListResource<T> {
 				// Ignored on purpose (see above).
 			}
 		}
+	}
+
+	/**
+	 * Write one block's rows. Everything that can throw (resizing the target
+	 * array) happens before any state is changed, so a throw leaves
+	 * `totalCount` and the generation's bookkeeping untouched; `totalCount`
+	 * therefore always stays a valid array length, which `setParams()` and
+	 * `refresh()` rely on (`new Array(this.totalCount)`).
+	 */
+	#writeBlock(block: number, offset: number, result: ListResult<T>): void {
+		const snapshot = this.#refreshSnapshot;
+		const targetRows = snapshot ? snapshot.rows : this.rows;
+		const first = !this.#hasTotalCountForGeneration;
+		const end = offset + result.rows.length;
+		// Resize first (the only step that can throw)...
+		if (first) targetRows.length = result.totalCount;
+		if (targetRows.length < end) targetRows.length = end;
+		// ...then publish.
+		if (first) {
+			this.#hasTotalCountForGeneration = true;
+			if (snapshot) snapshot.totalCount = result.totalCount;
+			else this.totalCount = result.totalCount;
+		}
+		for (let i = 0; i < result.rows.length; i++) {
+			targetRows[offset + i] = result.rows[i];
+		}
+		this.#loadedBlocks.add(block);
+		this.#failures.delete(block);
 	}
 
 	#withTimeout<R>(request: Promise<R>): Promise<R> {

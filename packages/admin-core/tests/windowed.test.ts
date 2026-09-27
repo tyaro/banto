@@ -687,6 +687,48 @@ describe('settlement cannot be skipped (#243 review)', () => {
 		expect(windowed.failedBlocks).toEqual([]);
 		windowed.dispose();
 	});
+
+	// #246 re-review: a count that passes a safe-integer check can still be
+	// an impossible array length (the limit is 2 ** 32 - 1).
+	it.each([
+		['totalCount = 2 ** 32', 2 ** 32],
+		['totalCount = 2 ** 53 - 1', Number.MAX_SAFE_INTEGER]
+	])('an impossible array length (%s) is a failure, not a stuck load', async (_label, total) => {
+		const { windowed, calls, resolveCall } = setupRecovery('w243-huge-count');
+		const load = windowed.ensureRange(0, 10);
+		resolveCall(0, [], total);
+		await expect(load).resolves.toBeUndefined();
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([0]);
+		expect(windowed.totalCount).toBe(0);
+		// The published count stayed valid, so recovery (which sizes arrays
+		// from it) works.
+		const reload = windowed.refresh();
+		resolveCall(calls.length - 1);
+		await reload;
+		expect(windowed.totalCount).toBe(30);
+		expect(windowed.failedBlocks).toEqual([]);
+		windowed.setParams({ filters: [] });
+		expect(windowed.rows).toHaveLength(30);
+		windowed.dispose();
+	});
+
+	it('rows that would extend past the array length limit are a failure', async () => {
+		const { windowed, calls, resolveCall } = setupRecovery('w243-past-limit');
+		// Block 429496729 starts at offset 4294967290; 10 rows would end at
+		// 2 ** 32 + 4, past the 2 ** 32 - 1 limit.
+		const load = windowed.ensureRange(4_294_967_290, 4_294_967_295);
+		resolveCall(0, makeDataset(10), 5);
+		await expect(load).resolves.toBeUndefined();
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([429_496_729]);
+		expect(windowed.totalCount).toBe(0);
+		const near = windowed.ensureRange(0, 10);
+		resolveCall(calls.length - 1);
+		await near;
+		expect(windowed.totalCount).toBe(30);
+		windowed.dispose();
+	});
 });
 
 describe('request timeout (#243)', () => {

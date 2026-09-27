@@ -117,24 +117,45 @@ function compareForSort(
 }
 
 /**
+ * The table's columns: every field that is an own property of at least one
+ * of its rows (a field present with a `null` value counts, like a SQL column
+ * whose values are all NULL). Taken over the whole table, not the filtered
+ * rows, so a filter never changes which sort keys count - the InMemory
+ * counterpart of banto-storage's `ColumnMap` whitelist.
+ */
+function tableColumns(rows: Record<string, unknown>[]): Set<string> {
+	const columns = new Set<string>();
+	for (const row of rows) for (const field of Object.keys(row)) columns.add(field);
+	return columns;
+}
+
+/**
  * Multi-column sort (priority = array order) with the list-order contract
- * shared with banto-storage's SQL (Issue #243, conventions §6): ties are
- * broken by the unique key `idField` in the direction of the last sort key,
- * and an unsorted list is ordered by `idField` ascending. NULLs sort last in
- * both directions (`compareForSort`). The original index is the final
- * tie-breaker, for rows whose key is missing or duplicated. Parity with SQL
- * is pinned by `tests/listOrderParity.test.ts` (shared fixture).
+ * shared with banto-storage's SQL and the grid's client sort (Issue #243,
+ * conventions §6):
  *
- * Unlike SQL there is no column whitelist here, so a sort entry naming a
- * field no row has still counts as "the last sort key" for the direction.
+ * - sort entries naming a field that is not one of the table's `columns`
+ *   are skipped, **before** the tie-break direction is chosen (SQL skips
+ *   fields missing from its `ColumnMap` the same way);
+ * - ties are broken by the unique key `idField` in the direction of the
+ *   last remaining sort key, and a list with no remaining sort key is
+ *   ordered by `idField` ascending;
+ * - NULLs sort last in both directions (`compareForSort`);
+ * - the original index is the final tie-breaker, for rows whose key is
+ *   missing or duplicated.
+ *
+ * Parity with SQL and the grid is pinned by `tests/listOrderParity.test.ts`
+ * (shared fixture).
  */
 function applySort(
 	rows: Record<string, unknown>[],
 	sort: SortState[],
-	idField: string
+	idField: string,
+	columns: Set<string>
 ): Record<string, unknown>[] {
-	const last = sort.at(-1)?.direction ?? 'asc';
-	const keys: SortState[] = [...sort, { field: idField, direction: last }];
+	const known = sort.filter((entry) => columns.has(entry.field));
+	const last = known.at(-1)?.direction ?? 'asc';
+	const keys: SortState[] = [...known, { field: idField, direction: last }];
 	const indexed = rows.map((row, index) => ({ row, index }));
 	indexed.sort((a, b) => {
 		for (const entry of keys) {
@@ -188,7 +209,7 @@ export function createInMemoryDataProvider(
 			await delay();
 			const { rows, idField } = table(resource);
 			const filtered = applyFilters(rows, params.filters);
-			const sorted = applySort(filtered, params.sort, idField);
+			const sorted = applySort(filtered, params.sort, idField, tableColumns(rows));
 			const totalCount = sorted.length;
 			const paged = params.pagination
 				? sorted.slice(

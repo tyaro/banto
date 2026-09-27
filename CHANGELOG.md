@@ -65,12 +65,16 @@
     SQL・InMemory・grid の 3 つが共通の fixture
     （`crates/banto-storage/testdata/list-order-parity.json`）で一致を確かめる。
     **派生アプリへの影響: クライアントモード・InMemory でも、同じ値の行の並びが
-    変わりうる**（降順では `id` の大きい行が先）。
+    変わりうる**（降順では `id` の大きい行が先）。未知の列の並べ替え（SQL は
+    `ColumnMap` に無い列、grid は列定義に無い列、InMemory はどの行にも無い
+    フィールド）は、向きを決める前に 3 つとも除く。
   - `WindowedListResource`（レビュー対応）: `getList` が同期的に throw しても、
     処理中の記録が残って `loading` が降りなくなることは無い（記録を先に作って
     から要求を始め、同期の throw は reject した Promise として扱う）。通知
     （`notifier`）の throw や、形の崩れた応答（`rows` が配列でない・`totalCount`
-    が 0 以上の整数でない）もそのブロックの失敗として扱い、状態を取り残さない。
+    が 0 以上の整数でない・`totalCount` や書き込み先の末尾が配列の長さの上限
+    `2 ** 32 - 1` を超える）もそのブロックの失敗として扱い、状態を取り残さない
+    （公開する `totalCount` は常に配列の長さとして有効な値に保つ）。
 
 ## [1.7.2] - 2026-09-26
 
