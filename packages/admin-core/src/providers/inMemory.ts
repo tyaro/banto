@@ -116,12 +116,28 @@ function compareForSort(
 	return sort.direction === 'asc' ? base : -base;
 }
 
-/** Stable multi-column sort (priority = array order). */
-function applySort(rows: Record<string, unknown>[], sort: SortState[]): Record<string, unknown>[] {
-	if (sort.length === 0) return rows.slice();
+/**
+ * Multi-column sort (priority = array order) with the list-order contract
+ * shared with banto-storage's SQL (Issue #243, conventions §6): ties are
+ * broken by the unique key `idField` in the direction of the last sort key,
+ * and an unsorted list is ordered by `idField` ascending. NULLs sort last in
+ * both directions (`compareForSort`). The original index is the final
+ * tie-breaker, for rows whose key is missing or duplicated. Parity with SQL
+ * is pinned by `tests/listOrderParity.test.ts` (shared fixture).
+ *
+ * Unlike SQL there is no column whitelist here, so a sort entry naming a
+ * field no row has still counts as "the last sort key" for the direction.
+ */
+function applySort(
+	rows: Record<string, unknown>[],
+	sort: SortState[],
+	idField: string
+): Record<string, unknown>[] {
+	const last = sort.at(-1)?.direction ?? 'asc';
+	const keys: SortState[] = [...sort, { field: idField, direction: last }];
 	const indexed = rows.map((row, index) => ({ row, index }));
 	indexed.sort((a, b) => {
-		for (const entry of sort) {
+		for (const entry of keys) {
 			const result = compareForSort(a.row, b.row, entry);
 			if (result !== 0) return result;
 		}
@@ -170,9 +186,9 @@ export function createInMemoryDataProvider(
 	return {
 		async getList<T>(resource: string, params: ListParams): Promise<ListResult<T>> {
 			await delay();
-			const { rows } = table(resource);
+			const { rows, idField } = table(resource);
 			const filtered = applyFilters(rows, params.filters);
-			const sorted = applySort(filtered, params.sort);
+			const sorted = applySort(filtered, params.sort, idField);
 			const totalCount = sorted.length;
 			const paged = params.pagination
 				? sorted.slice(

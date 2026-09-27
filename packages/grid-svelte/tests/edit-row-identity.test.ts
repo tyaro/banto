@@ -154,9 +154,15 @@ describe.each(['client', 'server'] as const)('inline edit row identity (%s)', (m
 it('preserves the edited row when client sorting changes its position', async () => {
 	const { container, state, edits } = setup();
 	await startDraft(container, 1);
-	// Ascending category puts Second rows first after the second toggle.
-	state.toggleSort('category', false);
-	state.toggleSort('category', false);
+	// Category descending puts the Second rows first; name ascending orders
+	// them Beta, Gamma, so the edited Beta moves from index 1 to 0. (A
+	// category-only sort would break the Beta/Gamma tie by id in the same
+	// descending direction - Issue #243's list-order contract - and leave
+	// Beta where it was.)
+	state.sort = [
+		{ field: 'category', direction: 'desc' },
+		{ field: 'name', direction: 'asc' }
+	];
 	await tick();
 	await assertDraftAndCommit(0, edits);
 });

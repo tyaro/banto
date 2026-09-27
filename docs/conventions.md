@@ -229,6 +229,13 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   同じ向き（並べ替えが無ければ昇順）で足し、`LIMIT`/`OFFSET` のページングで
   同順位の行が重複・欠落しないようにする。`column_map()` の `id` は**一意な列に
   だけ**割り当てる。
+  **この並びの決まりは 3 つの実装で共通**（#243 レビュー対応）: SQL
+  （`banto-storage`）・InMemory の `DataProvider`（`idField`、既定 `id`）・grid の
+  client sort（行の `id`、無ければ `getRowId`）は、同順位の行を一意キーで最後の
+  並べ替えと同じ向きに並べ、NULL はどちらの向きでも最後、並べ替えが無ければ
+  一意キーの昇順（grid の client sort だけは、受け取った配列の順を保つ）。
+  共通の fixture `crates/banto-storage/testdata/list-order-parity.json` を 3 つの
+  テストが読むので、どれかを変えるときは fixture と 3 つを同時に直す。
 - **CSP は2定義を同期する。** デスクトップは `tauri.conf.json` の
   `app.security.csp`、LAN は `banto-server` の `security_headers.rs`
   `CONTENT_SECURITY_POLICY`。**意図的な差分は connect-src のみ**（Tauri IPC）で、

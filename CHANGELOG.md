@@ -49,6 +49,21 @@
     `DataProvider.getList` の API 変更を伴うため入れていない。一般の CRUD 画面は
     SSE の `invalidate` で取り直される。
   - admin-template: `ItemsServerGrid` に読み込み失敗の表示と「再読み込み」を追加。
+  - **並びの決まりを JS 側にもそろえた**（レビュー対応）: InMemory の
+    `DataProvider` は同順位の行を `idField`（既定 `id`）で最後の並べ替えと同じ
+    向きに並べ、並べ替えが無ければ `idField` の昇順で返す（従来は挿入順）。
+    grid の client sort（`sortRows`）も同順位の行を行の `id`（無ければ新しい
+    第 4 引数 `getRowId`。`BantoGrid` は自分の `getRowId` を渡す）で同じ向きに
+    並べる（従来は元の配列の順。並べ替えが無いときは従来どおり配列の順）。
+    SQL・InMemory・grid の 3 つが共通の fixture
+    （`crates/banto-storage/testdata/list-order-parity.json`）で一致を確かめる。
+    **派生アプリへの影響: クライアントモード・InMemory でも、同じ値の行の並びが
+    変わりうる**（降順では `id` の大きい行が先）。
+  - `WindowedListResource`（レビュー対応）: `getList` が同期的に throw しても、
+    処理中の記録が残って `loading` が降りなくなることは無い（記録を先に作って
+    から要求を始め、同期の throw は reject した Promise として扱う）。通知
+    （`notifier`）の throw や、形の崩れた応答（`rows` が配列でない・`totalCount`
+    が 0 以上の整数でない）もそのブロックの失敗として扱い、状態を取り残さない。
 
 ## [1.7.2] - 2026-09-26
 

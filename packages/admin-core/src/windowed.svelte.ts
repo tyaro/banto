@@ -77,6 +77,16 @@ interface BlockFailure {
 	seq: number;
 }
 
+function isWellFormed<T>(result: ListResult<T>): boolean {
+	return (
+		result !== null &&
+		typeof result === 'object' &&
+		Array.isArray(result.rows) &&
+		Number.isSafeInteger(result.totalCount) &&
+		result.totalCount >= 0
+	);
+}
+
 export class WindowedListResource<T> {
 	/** Sparse: index i holds row i once its covering block has loaded, `undefined` (a hole) otherwise. */
 	rows: (T | undefined)[] = $state([]);
@@ -178,10 +188,18 @@ export class WindowedListResource<T> {
 			blocks.push(0);
 		}
 
-		for (const block of toFetch) {
-			const attempt = ++this.#attempts;
-			const promise = this.#fetchBlock(block, generation, attempt);
-			this.#inFlightBlocks.set(block, { promise, attempt });
+		// Bookkeeping first, requests second (#243 review): every block of
+		// this load is in the in-flight map before any request starts, so no
+		// settlement - even one that runs early - can see a half-registered
+		// load (a missing entry, or an empty map that publishes a staged
+		// refresh while later blocks are still to be requested).
+		const started = toFetch.map((block) => {
+			const entry: InFlightBlock = { promise: Promise.resolve(), attempt: ++this.#attempts };
+			this.#inFlightBlocks.set(block, entry);
+			return { block, entry };
+		});
+		for (const { block, entry } of started) {
+			entry.promise = this.#fetchBlock(block, generation, entry.attempt);
 		}
 		this.#settleLoading();
 
@@ -208,14 +226,25 @@ export class WindowedListResource<T> {
 	async #fetchBlock(block: number, generation: number, attempt: number): Promise<void> {
 		const offset = block * this.#blockSize;
 		let outcome: { ok: true; result: ListResult<T> } | { ok: false; error: ProviderError };
+		// The provider is still called synchronously (callers rely on the
+		// request being issued before ensureRange() returns), but a
+		// synchronous throw - from getDataProvider() or a custom getList() -
+		// becomes a rejected promise, so this block always settles after
+		// the `await` below, never in the middle of `#load`.
+		let request: Promise<ListResult<T>>;
 		try {
-			const result = await this.#withTimeout(
+			request = Promise.resolve(
 				getDataProvider().getList<T>(this.#resource, {
 					pagination: { offset, limit: this.#blockSize },
 					sort: this.params.sort,
 					filters: this.params.filters
 				})
 			);
+		} catch (err) {
+			request = Promise.reject(err);
+		}
+		try {
+			const result = await this.#withTimeout(request);
 			outcome = { ok: true, result };
 		} catch (err) {
 			outcome = {
@@ -231,6 +260,16 @@ export class WindowedListResource<T> {
 		if (generation !== this.#generation) return;
 		if (this.#inFlightBlocks.get(block)?.attempt !== attempt) return;
 		this.#inFlightBlocks.delete(block);
+
+		// A malformed answer (a buggy custom provider) must not throw while
+		// writing below - that would skip the settlement at the end and leave
+		// `loading` up - so it is recorded as this block's failure instead.
+		if (outcome.ok && !isWellFormed(outcome.result)) {
+			outcome = {
+				ok: false,
+				error: new ProviderError({ kind: 'other', message: 'malformed list result' })
+			};
+		}
 
 		if (outcome.ok) {
 			const { result } = outcome;
@@ -252,10 +291,19 @@ export class WindowedListResource<T> {
 			this.#failures.delete(block);
 		} else {
 			this.#failures.set(block, { error: outcome.error, generation, seq: ++this.#failureSeq });
-			notify('error', outcome.error.message);
 		}
 		this.#publishFailures();
 		this.#settleLoading();
+		// Last, after the state is consistent: the notifier is app code and
+		// may throw; that must neither leave `loading` up nor reject the
+		// promise ensureRange()/refresh() callers await.
+		if (!outcome.ok) {
+			try {
+				notify('error', outcome.error.message);
+			} catch {
+				// Ignored on purpose (see above).
+			}
+		}
 	}
 
 	#withTimeout<R>(request: Promise<R>): Promise<R> {

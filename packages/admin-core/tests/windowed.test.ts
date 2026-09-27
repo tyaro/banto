@@ -577,6 +577,118 @@ describe('failure state and recovery (#243)', () => {
 	});
 });
 
+describe('synchronous provider failures (#243 review)', () => {
+	function throwingProvider(onCall: () => void): DataProvider {
+		return {
+			getList: () => {
+				onCall();
+				throw new Error('sync boom');
+			},
+			getOne: async () => {
+				throw new Error('unused');
+			},
+			create: async () => {
+				throw new Error('unused');
+			},
+			update: async () => {
+				throw new Error('unused');
+			},
+			deleteOne: async () => {}
+		};
+	}
+
+	it('a getList that throws synchronously leaves no in-flight entry behind', async () => {
+		let calls = 0;
+		initBanto({
+			dataProvider: throwingProvider(() => calls++),
+			authProvider,
+			resources: [{ name: 'w243-sync-throw', label: 'W' }]
+		});
+		const windowed = createWindowedListResource<Row>('w243-sync-throw', { blockSize: 10 });
+		await windowed.ensureRange(0, 20);
+		expect(calls).toBe(2);
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([0, 1]);
+		expect(windowed.error?.message).toContain('sync boom');
+
+		// Recovery still works: the blocks are neither loaded nor in flight.
+		await windowed.refresh();
+		expect(calls).toBe(4);
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([0, 1]);
+		windowed.dispose();
+	});
+
+	it('a synchronous throw during refresh() does not publish the staged snapshot early', async () => {
+		const { windowed, resolveCall, provider } = setupRecovery('w243-sync-throw-refresh');
+		const load = windowed.ensureRange(0, 20);
+		resolveCall(0);
+		resolveCall(1);
+		await load;
+		const previous = windowed.rows;
+		// Block 0 throws synchronously, block 1 stays pending.
+		const original = provider.getList;
+		let first = true;
+		provider.getList = ((resource, params) => {
+			if (first) {
+				first = false;
+				throw new Error('sync boom');
+			}
+			return original(resource, params);
+		}) as DataProvider['getList'];
+		const reload = windowed.refresh();
+		await tick();
+		expect(windowed.rows).toBe(previous); // block 1 still in flight
+		expect(windowed.loading).toBe(true);
+		resolveCall(2);
+		await reload;
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([0]);
+		expect(windowed.rows[10]).toEqual({ id: 10, name: 'row-10' });
+		windowed.dispose();
+	});
+});
+
+describe('settlement cannot be skipped (#243 review)', () => {
+	it('a throwing notifier still settles the block', async () => {
+		const controlled = createControllableProvider(30);
+		initBanto({
+			dataProvider: controlled.provider,
+			authProvider,
+			notifier: {
+				notify: () => {
+					throw new Error('notifier broke');
+				}
+			},
+			resources: [{ name: 'w243-throwing-notifier', label: 'W' }]
+		});
+		const windowed = createWindowedListResource<Row>('w243-throwing-notifier', { blockSize: 10 });
+		const load = windowed.ensureRange(0, 10);
+		controlled.rejectCall(0);
+		await expect(load).resolves.toBeUndefined();
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([0]);
+		windowed.dispose();
+	});
+
+	it('a malformed answer is recorded as a failure instead of throwing mid-write', async () => {
+		const { windowed, calls, resolveCall } = setupRecovery('w243-malformed');
+		const load = windowed.ensureRange(0, 10);
+		resolveCall(0, undefined, -1);
+		await load;
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failedBlocks).toEqual([0]);
+		expect(windowed.totalCount).toBe(0);
+		// The generation still has no total count, so recovery reaches block 0.
+		const reload = windowed.refresh();
+		resolveCall(calls.length - 1);
+		await reload;
+		expect(windowed.totalCount).toBe(30);
+		expect(windowed.failedBlocks).toEqual([]);
+		windowed.dispose();
+	});
+});
+
 describe('request timeout (#243)', () => {
 	afterEach(() => {
 		vi.useRealTimers();

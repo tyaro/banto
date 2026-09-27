@@ -270,6 +270,14 @@ without a runtime guard are **upheld by reviewing every call site**.
   direction of the last sort key (ascending when unsorted), so `LIMIT`/`OFFSET`
   paging neither repeats nor skips tied rows. Map `id` in `column_map()` **only
   to a unique column**.
+  **This ordering contract is shared by three implementations** (#243 review):
+  SQL (`banto-storage`), the InMemory `DataProvider` (`idField`, default `id`)
+  and the grid's client sort (the row's `id`, else `getRowId`) all break ties by
+  the unique key in the direction of the last sort key, put NULLs last in both
+  directions, and order an unsorted list by the unique key ascending (only the
+  grid's client sort keeps the order of the array it was given). One fixture,
+  `crates/banto-storage/testdata/list-order-parity.json`, is read by all three
+  test suites - change the fixture and all three together.
 - **Keep the two CSP definitions in sync.** Desktop uses `app.security.csp` in
   `tauri.conf.json`; LAN uses `CONTENT_SECURITY_POLICY` in `banto-server`'s
   `security_headers.rs`. **The only intended delta is connect-src** (Tauri

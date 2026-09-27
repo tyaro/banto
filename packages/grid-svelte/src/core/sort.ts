@@ -43,25 +43,57 @@ function compareForSort<TRow>(
 }
 
 /**
- * Stable multi-column sort. Returns a new array; `rows` is not mutated.
- * Sort priority follows the order of entries in `sort`.
+ * The row's unique key for tie-breaking: its `id` field (the same default as
+ * banto-storage's `ColumnMap`, so client and server modes agree), else
+ * `getRowId(row)` for rows without one, else none.
+ */
+function tieBreakKey<TRow>(row: TRow, getRowId?: (row: TRow) => unknown): unknown {
+	if (row !== null && typeof row === 'object' && 'id' in row) {
+		const id = (row as { id?: unknown }).id;
+		if (!isNullish(id)) return id;
+	}
+	return getRowId ? getRowId(row) : undefined;
+}
+
+/**
+ * Multi-column sort. Returns a new array; `rows` is not mutated. Sort
+ * priority follows the order of entries in `sort`; entries naming an unknown
+ * column are skipped.
+ *
+ * List-order contract (Issue #243, conventions §6), shared with
+ * banto-storage's SQL and the InMemory provider: ties are broken by the
+ * row's unique key (see `tieBreakKey`) in the direction of the last known
+ * sort key; the original index is the final tie-breaker (rows without a key
+ * or with duplicate keys keep their relative order). With no sort at all the
+ * input order is kept - the data source already returns unsorted lists by
+ * `id` ascending, and a host may pass a deliberately ordered array.
  */
 export function sortRows<TRow>(
 	rows: TRow[],
 	sort: SortState[],
-	columns: GridColumn<TRow>[]
+	columns: GridColumn<TRow>[],
+	getRowId?: (row: TRow) => unknown
 ): TRow[] {
 	if (sort.length === 0) return rows.slice();
 
 	const columnMap = new Map(columns.map((column) => [column.id, column]));
-	const indexed = rows.map((row, index) => ({ row, index }));
+	const known = sort.filter((entry) => columnMap.has(entry.field));
+	const tieDirection: SortDirection = known.at(-1)?.direction ?? 'asc';
+	const indexed = rows.map((row, index) => ({ row, index, key: tieBreakKey(row, getRowId) }));
 
 	indexed.sort((a, b) => {
-		for (const entry of sort) {
-			const column = columnMap.get(entry.field);
-			if (!column) continue;
+		for (const entry of known) {
+			const column = columnMap.get(entry.field)!;
 			const result = compareForSort(a.row, b.row, column, entry.direction);
 			if (result !== 0) return result;
+		}
+		const aKey = isNullish(a.key);
+		const bKey = isNullish(b.key);
+		if (!aKey && !bKey) {
+			const base = compareNonNull(a.key, b.key);
+			if (base !== 0) return tieDirection === 'asc' ? base : -base;
+		} else if (aKey !== bKey) {
+			return aKey ? 1 : -1;
 		}
 		// Explicit index tie-breaker guarantees stability independent of the
 		// host engine's Array#sort implementation.

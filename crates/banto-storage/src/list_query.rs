@@ -441,6 +441,67 @@ impl_list_query!(sqlite, sqlx::Sqlite);
 #[cfg(feature = "postgres")]
 impl_list_query!(postgres, sqlx::Postgres);
 
+/// The shared list-order fixture (Issue #243 review): the same rows and
+/// expected orders are asserted by this crate (SQLite + PostgreSQL), the
+/// InMemory `DataProvider` and the grid's client sort, so the three
+/// implementations cannot drift apart on ties, NULLs or unsorted lists.
+#[cfg(test)]
+pub(crate) mod parity_fixture {
+    use banto_core::{SortDirection, SortState};
+    use serde_json::Value;
+
+    pub const JSON: &str = include_str!("../testdata/list-order-parity.json");
+
+    /// `(id, grp, score)` in insertion order.
+    pub fn rows() -> Vec<(i64, i64, Option<i64>)> {
+        let v: Value = serde_json::from_str(JSON).expect("fixture is JSON");
+        v["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|r| {
+                (
+                    r["id"].as_i64().expect("id"),
+                    r["grp"].as_i64().expect("grp"),
+                    r["score"].as_i64(),
+                )
+            })
+            .collect()
+    }
+
+    /// `(sort, expected ids)` per case.
+    pub fn cases() -> Vec<(Vec<SortState>, Vec<i64>)> {
+        let v: Value = serde_json::from_str(JSON).expect("fixture is JSON");
+        v["cases"]
+            .as_array()
+            .expect("cases")
+            .iter()
+            .map(|c| {
+                let sort = c["sort"]
+                    .as_array()
+                    .expect("sort")
+                    .iter()
+                    .map(|s| SortState {
+                        field: s["field"].as_str().expect("field").to_string(),
+                        direction: match s["direction"].as_str() {
+                            Some("asc") => SortDirection::Asc,
+                            Some("desc") => SortDirection::Desc,
+                            other => panic!("bad direction {other:?}"),
+                        },
+                    })
+                    .collect();
+                let ids = c["expectedIds"]
+                    .as_array()
+                    .expect("expectedIds")
+                    .iter()
+                    .map(|id| id.as_i64().expect("id"))
+                    .collect();
+                (sort, ids)
+            })
+            .collect()
+    }
+}
+
 #[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::sqlite::apply_list_params;
@@ -1106,6 +1167,55 @@ mod tests {
         }
     }
 
+    /// The shared list-order contract (fixture `testdata/list-order-parity.json`,
+    /// also asserted by the InMemory provider and the grid's client sort).
+    #[tokio::test]
+    async fn list_order_matches_the_shared_parity_fixture() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        pool.execute(
+            "CREATE TABLE parity (id INTEGER PRIMARY KEY, grp INTEGER NOT NULL, score INTEGER)",
+        )
+        .await
+        .expect("create table");
+        for (id, grp, score) in super::parity_fixture::rows() {
+            sqlx::query("INSERT INTO parity (id, grp, score) VALUES (?, ?, ?)")
+                .bind(id)
+                .bind(grp)
+                .bind(score)
+                .execute(&pool)
+                .await
+                .expect("insert row");
+        }
+        let cols = ColumnMap::new()
+            .column("id", "id")
+            .column("grp", "grp")
+            .column("score", "score");
+        for (sort, expected) in super::parity_fixture::cases() {
+            let mut builder = QueryBuilder::new("SELECT id FROM parity");
+            apply_list_params(
+                &mut builder,
+                &cols,
+                &ListParams {
+                    sort: sort.clone(),
+                    ..Default::default()
+                },
+            )
+            .expect("apply params");
+            let ids: Vec<i64> = builder
+                .build()
+                .fetch_all(&pool)
+                .await
+                .expect("query")
+                .into_iter()
+                .map(|r| r.get::<i64, _>(0))
+                .collect();
+            assert_eq!(ids, expected, "sort {sort:?}");
+        }
+    }
+
     fn order_by_sql(columns: &ColumnMap, sort: &[SortState]) -> String {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new("SELECT 1");
         super::sqlite::append_order_by(&mut builder, columns, sort);
@@ -1625,6 +1735,62 @@ mod postgres_tests {
             fetch_tie_ids_in_blocks(&pool, table, &[], 200).await,
             expected_tie_order(None)
         );
+    }
+
+    /// The shared list-order contract on a real server (see the SQLite twin).
+    #[tokio::test]
+    async fn list_order_matches_the_shared_parity_fixture() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_parity";
+        // AssertSqlSafe: `table` is the hardcoded literal above.
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
+            .execute(&pool)
+            .await
+            .expect("drop table");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TABLE {table} (id BIGINT PRIMARY KEY, grp BIGINT NOT NULL, score BIGINT)"
+        )))
+        .execute(&pool)
+        .await
+        .expect("create table");
+        for (id, grp, score) in super::parity_fixture::rows() {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO {table} (id, grp, score) VALUES ($1, $2, $3)"
+            )))
+            .bind(id)
+            .bind(grp)
+            .bind(score)
+            .execute(&pool)
+            .await
+            .expect("insert row");
+        }
+        let cols = ColumnMap::new()
+            .column("id", "id")
+            .column("grp", "grp")
+            .column("score", "score");
+        for (sort, expected) in super::parity_fixture::cases() {
+            let mut builder = QueryBuilder::new(format!("SELECT id FROM {table}"));
+            apply_list_params(
+                &mut builder,
+                &cols,
+                &ListParams {
+                    sort: sort.clone(),
+                    ..Default::default()
+                },
+            )
+            .expect("apply params");
+            let ids: Vec<i64> = builder
+                .build()
+                .fetch_all(&pool)
+                .await
+                .expect("query")
+                .into_iter()
+                .map(|r| r.get::<i64, _>(0))
+                .collect();
+            assert_eq!(ids, expected, "sort {sort:?}");
+        }
     }
 
     /// An unknown filter field is a `BadRequest` on the Postgres path too
