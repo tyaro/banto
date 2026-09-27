@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+- fix(admin-template): `systemInfoStore.available` がモジュール読み込み時に
+  1 回だけ判定され、`bantoReady` がモードを `'server'` にする前に評価される
+  と `false` のまま固定される問題を修正（#244）。System Info のカードが
+  出ず、読み込みの effect も走らなかった（E2E 11a がモジュール評価順次第で
+  落ちる原因）。`available` をゲッターにして読むたびに再評価する。回帰
+  テストを追加（`systemInfoStore.test.ts`、admin-template に vitest 一式を
+  新設）。
+
 ## [1.7.2] - 2026-09-26
 
 **v1.7.2 — セッション失効（強制ログアウト・パスワード変更・降格）を、開いている画面に即座に伝える修正。破壊的変更は無い。**

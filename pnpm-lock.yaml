@@ -114,6 +114,9 @@ importers:
       vite:
         specifier: ^8.2.2
         version: 8.2.2(jiti@2.7.0)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(jsdom@30.0.1)(vite@8.2.2(jiti@2.7.0))
 
   packages/admin-core:
     devDependencies:
