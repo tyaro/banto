@@ -264,6 +264,22 @@ without a runtime guard are **upheld by reviewing every call site**.
   Sort on an unknown field is ignored; filter is a hard error. Services that
   accept `ListParams` (currently items / audit) have a `column_map()` (services
   with a fixed ORDER BY only do not need one).
+  **`ORDER BY` always ends with a unique key** (Issue #243): `append_order_by`
+  appends the `ColumnMap`'s unique key (by default the registered `id`; declare
+  another with `ColumnMap::unique_key`, or none with `without_unique_key`) in the
+  direction of the last sort key (ascending when unsorted), so `LIMIT`/`OFFSET`
+  paging neither repeats nor skips tied rows. Map `id` in `column_map()` **only
+  to a unique column**.
+  **This ordering contract is shared by three implementations** (#243 review):
+  SQL (`banto-storage`), the InMemory `DataProvider` (`idField`, default `id`)
+  and the grid's client sort (the row's `id`, else `getRowId`) all **first drop
+  unknown sort fields** (not in the `ColumnMap` / not a grid column / not a
+  field of any InMemory row), then break ties by the unique key in the
+  direction of the last remaining sort key, put NULLs last in both
+  directions, and order an unsorted list by the unique key ascending (only the
+  grid's client sort keeps the order of the array it was given). One fixture,
+  `crates/banto-storage/testdata/list-order-parity.json`, is read by all three
+  test suites - change the fixture and all three together.
 - **Keep the two CSP definitions in sync.** Desktop uses `app.security.csp` in
   `tauri.conf.json`; LAN uses `CONTENT_SECURITY_POLICY` in `banto-server`'s
   `security_headers.rs`. **The only intended delta is connect-src** (Tauri

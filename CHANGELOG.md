@@ -26,6 +26,59 @@
   / uuid / npm minor-patch グループ（@playwright/test・eslint・prettier・
   typescript-eslint・vite・jsdom・@lucide/svelte・@inlang/paraglide-js・
   @inlang/plugin-m-function-matcher）。
+- fix(admin-template): `systemInfoStore.available` がモジュール読み込み時に
+  1 回だけ判定され、`bantoReady` がモードを `'server'` にする前に評価される
+  と `false` のまま固定される問題を修正（#244）。System Info のカードが
+  出ず、読み込みの effect も走らなかった（E2E 11a がモジュール評価順次第で
+  落ちる原因）。`available` をゲッターにして読むたびに再評価する。回帰
+  テストを追加（`systemInfoStore.test.ts`、admin-template に vitest 一式を
+  新設）。
+- fix(banto-storage, admin-core): 一覧のページングで行が重複・欠落する問題と、
+  `WindowedListResource` が失敗から回復できなくなる問題を修正（#243）。
+  **派生アプリへの影響: 一覧の並びが変わりうる**（API の破壊的変更は無い）。
+  - `banto-storage`: `append_order_by`（`apply_list_params`）は `ORDER BY` の
+    最後に一意キーを、最後の並べ替えと同じ向きで足す（すでにその列で並べて
+    いれば足さない）。並べ替えの指定が無ければ一意キーの昇順で並べる（従来は
+    `ORDER BY` 無し。SQLite の rowid 順・InMemory の挿入順と同じ向き）。同じ値の
+    行が多い列で `LIMIT`/`OFFSET` を使うと、PostgreSQL では実際にブロック間で
+    重複・欠落していた（3000 行・3 値の列で 771 行）。
+  - 一意キーは既定で `ColumnMap` に登録された `id`。**`id` が一意でない
+    `ColumnMap` は `.without_unique_key()` で外す**か、別の列を
+    `.unique_key("field")` で宣言する（追加 API。`unique_key_column()` で確認
+    できる）。`id` を登録していない `ColumnMap` は従来どおり（一意キー無し）。
+  - `WindowedListResource`: 失敗をブロック単位で持つ（追加: `failedBlocks`。
+    `error` はまだ回復していない最新の失敗で、別のブロックの成功では消えない。
+    `setParams()` で消え、`refresh()` では再取得が成功するまで残る）。取得世代に
+    総件数がまだ無い間は、表示範囲が `{0, 0}` でも先頭ブロックを取りに行く
+    （最初の取得の失敗や 0 件の後に、`refresh()`・通知・絞り込みの解除が要求を
+    出さなかった）。`setParams()` は最後の範囲を自分で取り直す（呼び出し側の
+    `ensureRange()` はその要求に合流する）。`ensureRange()` の Promise は、範囲に
+    かかる処理中のブロックの完了も待つ。応答しない要求は `requestTimeoutMs`
+    （追加オプション、既定 `DEFAULT_WINDOWED_REQUEST_TIMEOUT_MS` = 30 秒）で
+    失敗にし、`loading` が降りなくなることを防ぐ。
+  - 取得の合間の行の増減による `OFFSET` のずれ（世代のスナップショット境界）は
+    `DataProvider.getList` の API 変更を伴うため入れていない。一般の CRUD 画面は
+    SSE の `invalidate` で取り直される。
+  - admin-template: `ItemsServerGrid` に読み込み失敗の表示と「再読み込み」を追加。
+  - **並びの決まりを JS 側にもそろえた**（レビュー対応）: InMemory の
+    `DataProvider` は同順位の行を `idField`（既定 `id`）で最後の並べ替えと同じ
+    向きに並べ、並べ替えが無ければ `idField` の昇順で返す（従来は挿入順）。
+    grid の client sort（`sortRows`）も同順位の行を行の `id`（無ければ新しい
+    第 4 引数 `getRowId`。`BantoGrid` は自分の `getRowId` を渡す）で同じ向きに
+    並べる（従来は元の配列の順。並べ替えが無いときは従来どおり配列の順）。
+    SQL・InMemory・grid の 3 つが共通の fixture
+    （`crates/banto-storage/testdata/list-order-parity.json`）で一致を確かめる。
+    **派生アプリへの影響: クライアントモード・InMemory でも、同じ値の行の並びが
+    変わりうる**（降順では `id` の大きい行が先）。未知の列の並べ替え（SQL は
+    `ColumnMap` に無い列、grid は列定義に無い列、InMemory はどの行にも無い
+    フィールド）は、向きを決める前に 3 つとも除く。
+  - `WindowedListResource`（レビュー対応）: `getList` が同期的に throw しても、
+    処理中の記録が残って `loading` が降りなくなることは無い（記録を先に作って
+    から要求を始め、同期の throw は reject した Promise として扱う）。通知
+    （`notifier`）の throw や、形の崩れた応答（`rows` が配列でない・`totalCount`
+    が 0 以上の整数でない・`totalCount` や書き込み先の末尾が配列の長さの上限
+    `2 ** 32 - 1` を超える）もそのブロックの失敗として扱い、状態を取り残さない
+    （公開する `totalCount` は常に配列の長さとして有効な値に保つ）。
 
 ## [1.7.2] - 2026-09-26
 
