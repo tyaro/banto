@@ -22,6 +22,11 @@
 
 ## [Unreleased]
 
+- 依存更新（Dependabot・#200/#201/#202）: pnpm/action-setup / taiki-e/install-action
+  / uuid / npm minor-patch グループ（@playwright/test・eslint・prettier・
+  typescript-eslint・vite・jsdom・@lucide/svelte・@inlang/paraglide-js・
+  @inlang/plugin-m-function-matcher）。
+
 ## [1.7.2] - 2026-09-26
 
 **v1.7.2 — セッション失効（強制ログアウト・パスワード変更・降格）を、開いている画面に即座に伝える修正。破壊的変更は無い。**
