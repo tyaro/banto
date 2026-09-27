@@ -22,6 +22,13 @@
 
 ## [Unreleased]
 
+- fix(admin-template): `systemInfoStore.available` がモジュール読み込み時に
+  1 回だけ判定され、`bantoReady` がモードを `'server'` にする前に評価される
+  と `false` のまま固定される問題を修正（#244）。System Info のカードが
+  出ず、読み込みの effect も走らなかった（E2E 11a がモジュール評価順次第で
+  落ちる原因）。`available` をゲッターにして読むたびに再評価する。回帰
+  テストを追加（`systemInfoStore.test.ts`、admin-template に vitest 一式を
+  新設）。
 - fix(banto-storage, admin-core): 一覧のページングで行が重複・欠落する問題と、
   `WindowedListResource` が失敗から回復できなくなる問題を修正（#243）。
   **派生アプリへの影響: 一覧の並びが変わりうる**（API の破壊的変更は無い）。

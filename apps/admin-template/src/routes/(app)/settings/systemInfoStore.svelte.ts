@@ -25,7 +25,23 @@
 import { getSystemInfo, isSystemInfoAvailable, type SystemInfo } from '$lib/banto/systemAdmin';
 
 class SystemInfoStore {
-	readonly available = isSystemInfoAvailable();
+	/**
+	 * Getter, not a field evaluated once at construction (Issue #244): this
+	 * module is a singleton instantiated at import time, which can happen
+	 * before `bantoReady` (setup.ts) resolves and sets the real
+	 * `getBantoMode()` result (route-level code splitting can prefetch this
+	 * module ahead of `+layout.svelte`'s `{#await bantoReady}` gate). A
+	 * fixed field would freeze at the default `'demo'` reading (`false`)
+	 * forever in that case, hiding the System Info card and skipping its
+	 * load effect (E2E 11a flake). Every consumer here (the settings layout
+	 * effect, ConnectivitySection's `{#if}`) only actually reads `.available`
+	 * after `bantoReady` has resolved, so a plain re-evaluating getter is
+	 * enough - no reactive `$state`/`$derived` needed on `getBantoMode()`
+	 * itself.
+	 */
+	get available(): boolean {
+		return isSystemInfoAvailable();
+	}
 	value: SystemInfo | null = $state(null);
 	error: string | null = $state(null);
 
