@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+- 依存更新（Dependabot・#200/#201/#202）: pnpm/action-setup / taiki-e/install-action
+  / uuid / npm minor-patch グループ（@playwright/test・eslint・prettier・
+  typescript-eslint・vite・jsdom・@lucide/svelte・@inlang/paraglide-js・
+  @inlang/plugin-m-function-matcher）。
 - fix(admin-template): `systemInfoStore.available` がモジュール読み込み時に
   1 回だけ判定され、`bantoReady` がモードを `'server'` にする前に評価される
   と `false` のまま固定される問題を修正（#244）。System Info のカードが
