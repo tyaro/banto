@@ -101,10 +101,12 @@ export {
 	saveListViewState,
 	loadListViewState,
 	clearListViewState,
+	clearAllListViewState,
 	saveActiveListMode,
 	loadActiveListMode,
 	saveLastOpenedId,
 	loadLastOpenedId,
 	noteLastEditedRecord,
-	takeLastEditedRecord
+	takeLastEditedRecord,
+	withListViewStateClearing
 } from './listViewState';

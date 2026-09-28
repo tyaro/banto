@@ -189,13 +189,27 @@
 	// `GridState.hydrate()`: that also restores column order/widths/hidden,
 	// which is issue #168's scope, not this one's - mixing the two would
 	// silently start persisting column layout as a side effect of this fix.
-	const clientSnapshot = loadListViewState(CLIENT_VIEW_KEY);
+	// `knownFields` (#255 review): drop any restored sort/filter whose field
+	// isn't one of THIS session's actual columns - a schema/column change
+	// between sessions must not resurrect a filter/sort the current screen
+	// has no column for (`loadListViewState`'s own doc comment has the full
+	// reasoning). `groupBy` gets the same treatment inline below, since it's
+	// a single field id outside the array `loadListViewState` already checks.
+	// svelte-ignore state_referenced_locally
+	const clientFieldIds = clientColumns.map((column) => column.id);
+	const clientSnapshot = loadListViewState(CLIENT_VIEW_KEY, clientFieldIds);
 	if (clientSnapshot) {
 		clientGridState.sort = clientSnapshot.sort;
 		clientGridState.filters = clientSnapshot.filters;
-		if (clientSnapshot.groupBy !== undefined) clientGridState.setGroupBy(clientSnapshot.groupBy);
+		if (clientSnapshot.groupBy && clientFieldIds.includes(clientSnapshot.groupBy)) {
+			clientGridState.setGroupBy(clientSnapshot.groupBy);
+		}
 	}
-	const serverSnapshot = loadListViewState(SERVER_VIEW_KEY);
+	// svelte-ignore state_referenced_locally
+	const serverSnapshot = loadListViewState(
+		SERVER_VIEW_KEY,
+		columns.map((column) => column.id)
+	);
 	if (serverSnapshot) {
 		serverGridState.sort = serverSnapshot.sort;
 		serverGridState.filters = serverSnapshot.filters;

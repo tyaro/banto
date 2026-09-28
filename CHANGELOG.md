@@ -59,6 +59,30 @@
     絞り込み条件から外れた場合の通知）。users/audit-log は詳細を別
     ルートに持たず本 issue の往復パターンに該当しないため対象外
     （調査済み・別 issue 化は不要と判断）。
+  - レビュー対応（#255）: `sessionStorage` はタブ寿命であって
+    ログイン中の識別情報に紐付かないため、同一タブで別ユーザーがログイン
+    すると前のユーザーの絞り込み・並び順・直前に開いた行が引き継がれて
+    しまう問題を修正。`@banto/admin-core` の認証まわりの3箇所
+    （`initBanto` が `AuthProvider` に施す `login`/`setup`/
+    `enterPublicViewer` 成功時・`logout`のラップ、
+    `resolveProtectedSession` の `'login'` 判定、`confirmSessionEnded` の
+    セッション失効確定時）で新規 `clearAllListViewState()` を自動的に
+    呼ぶ設計とし、派生アプリ側の追加対応を不要にした（既存の
+    `initBanto`/`resolveProtectedSession`/`onSessionEnded` 統合をそのまま
+    使っていれば効く）。公開閲覧者（public viewer）セッションへの遷移も
+    同じ経路（`enterPublicViewer`）でクリアする。新規 API
+    `clearAllListViewState`/`withListViewStateClearing` を追加。
+    また `loadListViewState` に任意引数 `knownFields` を追加し、画面の
+    現在の列定義に無い `field` を持つ sort/filter エントリを個別に破棄
+    できるようにした（列の削除・改名を跨いだ場合の保険）。`isSnapshot`
+    の検証も配列の有無だけでなく各要素の形（`field`/`direction`/`op`/
+    `value`）まで見るよう強化 — 壊れたペイロードは丸ごと既定状態に
+    フォールバックする。テストはこの PR のレビューで
+    `packages/admin-core/tests/{listViewState,registry,sessionGate,
+sessionEnded}.test.ts` に追加、E2E はシナリオ6を拡張
+    （admin が絞り込み・並び替え・行を開いた直後にログアウトし、
+    別ユーザー（viewer）でログインしても一覧が既定状態であることを確認。
+    実装を戻すと落ちることも確認済み）。
 
 ## [1.7.3] - 2026-09-28
 

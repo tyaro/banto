@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	getAuthProvider,
 	getDataProvider,
@@ -42,9 +42,45 @@ describe('registry', () => {
 		});
 
 		expect(getDataProvider()).toBe(dataProvider);
-		expect(getAuthProvider()).toBe(authProvider);
+		// NOT `.toBe(authProvider)` (#215/#255 review): `initBanto` wraps the
+		// given AuthProvider (`withListViewStateClearing`,
+		// `listViewState.ts`) so `logout`/`login`/`setup`/`enterPublicViewer`
+		// also clear this session's saved list view state - `getAuthProvider()`
+		// therefore returns that wrapper, not the exact object passed in.
+		// Behavior (not identity) is what a caller can rely on; see
+		// `listViewState.test.ts`'s `withListViewStateClearing` suite for the
+		// wrapper's own contract.
+		expect(getAuthProvider()).not.toBe(authProvider);
+		expect(getAuthProvider().check).toBe(authProvider.check);
+		expect(getAuthProvider().getIdentity).toBe(authProvider.getIdentity);
 		expect(getResource('items').label).toBe('商品');
 		expect(listResources()).toHaveLength(1);
+	});
+
+	it('getAuthProvider().logout() clears saved list view state (Issue #215/#255)', async () => {
+		const { dataProvider, authProvider } = makeProviders();
+		const storage = (() => {
+			const map = new Map<string, string>();
+			return {
+				getItem: (key: string) => map.get(key) ?? null,
+				setItem: (key: string, value: string) => void map.set(key, value),
+				removeItem: (key: string) => void map.delete(key),
+				clear: () => map.clear(),
+				key: (index: number) => Array.from(map.keys())[index] ?? null,
+				get length() {
+					return map.size;
+				}
+			} as Storage;
+		})();
+		vi.stubGlobal('sessionStorage', storage);
+		try {
+			storage.setItem('banto.listView.items:server', JSON.stringify({ sort: [], filters: [] }));
+			initBanto({ dataProvider, authProvider, resources: [] });
+			await getAuthProvider().logout();
+			expect(storage.getItem('banto.listView.items:server')).toBeNull();
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it('getResource throws for an unknown resource', () => {

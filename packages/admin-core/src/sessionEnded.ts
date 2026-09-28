@@ -61,6 +61,7 @@
  * `check()` resolves `false` without a request, and listeners are notified -
  * the notification follows the cleared token within one retry delay.
  */
+import { clearAllListViewState } from './listViewState';
 import { getAuthProvider } from './registry.svelte';
 
 type Listener = () => void;
@@ -142,6 +143,14 @@ async function runConfirmation(): Promise<{ outcome: SessionEndOutcome; startedA
 	if (lastNotifiedAt < startedAt) {
 		lastNotifiedAt = tick();
 		unheardAt = listeners.size === 0 ? lastNotifiedAt : 0;
+		// Issue #215/#255 review: this branch runs once per actual ending
+		// (the surrounding "Duplicates" de-dup above), so this call is not
+		// repeated for overlapping confirmations of the same revocation.
+		// Whoever was signed in when this session ended must not leave their
+		// list filter/sort/last-opened-row (`listViewState.ts`) behind for
+		// whoever the app's own guard sends this tab to next (login or a
+		// public-viewer session) once the listeners below re-run it.
+		clearAllListViewState();
 		for (const listener of [...listeners]) {
 			try {
 				listener();

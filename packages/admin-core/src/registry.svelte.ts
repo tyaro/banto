@@ -4,6 +4,7 @@
  * runs one instance of this registry, so a module singleton is sufficient;
  * `initBanto` may be called again (e.g. between tests) to fully replace it.
  */
+import { withListViewStateClearing } from './listViewState';
 import type { AuthProvider, DataProvider, NotificationKind, Notifier } from './provider';
 
 export interface ResourceDefinition {
@@ -35,10 +36,22 @@ let resources: ResourceDefinition[] = $state([]);
 const NOT_INITIALIZED_MESSAGE =
 	'initBanto() has not been called yet — call it once at app startup before using admin-core composables.';
 
-/** Register providers/resources for the app. Safe to call again (e.g. in tests) to fully replace state. */
+/**
+ * Register providers/resources for the app. Safe to call again (e.g. in
+ * tests) to fully replace state.
+ *
+ * Issue #215/#255 review: `config.authProvider` is wrapped
+ * (`withListViewStateClearing`, `listViewState.ts`) before it's stored, so
+ * `getAuthProvider()` below returns that wrapper, NOT the exact object the
+ * caller passed in - every `login`/`setup`/`enterPublicViewer` success and
+ * every `logout` also clears this session's saved list view state
+ * (Issue #215's sort/filters/last-opened-row memory), so a second identity
+ * signing into the same tab never inherits the first one's. This needs no
+ * cooperation from the app beyond calling `initBanto` as already documented.
+ */
 export function initBanto(config: InitBantoConfig): void {
 	dataProvider = config.dataProvider;
-	authProvider = config.authProvider;
+	authProvider = withListViewStateClearing(config.authProvider);
 	notifier = config.notifier ?? null;
 	resources = config.resources;
 }
@@ -48,6 +61,7 @@ export function getDataProvider(): DataProvider {
 	return dataProvider;
 }
 
+/** Returns the `AuthProvider` passed to `initBanto`, wrapped (see its doc comment) - not the exact same object reference. */
 export function getAuthProvider(): AuthProvider {
 	if (!authProvider) throw new Error(NOT_INITIALIZED_MESSAGE);
 	return authProvider;

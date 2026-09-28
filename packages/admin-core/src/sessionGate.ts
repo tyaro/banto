@@ -4,6 +4,7 @@
  * here against real providers.
  */
 import type { AuthProvider } from './provider';
+import { clearAllListViewState } from './listViewState';
 
 /**
  * How a protected route may proceed:
@@ -26,6 +27,14 @@ export type ProtectedSessionOutcome = 'session' | 'publicViewer' | 'login';
  * would replace the stored token, "Remember me" included), no redirect. The
  * caller shows the error and offers a retry; the session resumes once the
  * backend can answer again.
+ *
+ * Issue #215/#255 review: landing on `'login'` here means no session
+ * survives this guard - whatever `sessionStorage` state (Issue #215's list
+ * filter/sort/last-opened-row memory, `listViewState.ts`) was left by
+ * whoever was last signed in must not carry over to whoever logs in next in
+ * this same tab, so it's cleared right here. `'publicViewer'` doesn't need
+ * the same call: `auth.enterPublicViewer` already went through
+ * `registry.svelte.ts`'s wrapping, which clears on a successful entry.
  */
 export async function resolveProtectedSession(
 	auth: AuthProvider
@@ -33,5 +42,7 @@ export async function resolveProtectedSession(
 	if (await auth.check()) return 'session';
 	const status = await auth.status?.();
 	const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : false;
-	return entered ? 'publicViewer' : 'login';
+	if (entered) return 'publicViewer';
+	clearAllListViewState();
+	return 'login';
 }

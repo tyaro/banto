@@ -26,12 +26,15 @@
  * tests can inject a fake without touching global state - same convention as
  * `LocalUiSettingsOptions.storage`.
  */
-import type { FilterState, SortState } from './types';
+import type { AuthProvider } from './provider';
+import type { FilterOp, FilterState, SortDirection, SortState } from './types';
 
-const SNAPSHOT_PREFIX = 'banto.listView.';
-const MODE_PREFIX = 'banto.listView.mode.';
-const LAST_OPENED_PREFIX = 'banto.listView.lastOpened.';
-const LAST_EDITED_PREFIX = 'banto.listView.lastEdited.';
+/** Every key this module ever writes starts with this - `clearAllListViewState` sweeps by it alone. */
+const NAMESPACE = 'banto.listView.';
+const SNAPSHOT_PREFIX = NAMESPACE;
+const MODE_PREFIX = `${NAMESPACE}mode.`;
+const LAST_OPENED_PREFIX = `${NAMESPACE}lastOpened.`;
+const LAST_EDITED_PREFIX = `${NAMESPACE}lastEdited.`;
 
 export interface ListViewSnapshot {
 	sort: SortState[];
@@ -40,10 +43,75 @@ export interface ListViewSnapshot {
 	groupBy?: string | null;
 }
 
+const SORT_DIRECTIONS: ReadonlySet<SortDirection> = new Set(['asc', 'desc']);
+// Mirrors `FilterOp` (types.ts) exactly - kept as its own literal list (not
+// derived from the type, which doesn't exist at runtime) so an op added to
+// one and not the other is a compile error at the call site below, not a
+// silently-accepted new string here.
+const FILTER_OPS: ReadonlySet<FilterOp> = new Set([
+	'eq',
+	'ne',
+	'lt',
+	'lte',
+	'gt',
+	'gte',
+	'contains',
+	'starts_with',
+	'in',
+	'is_null',
+	'not_null'
+]);
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === 'string' && value !== '';
+}
+
+/**
+ * A saved payload is untrusted input (#215/#255 review): a column can be
+ * renamed/removed between sessions, a hand-edited/corrupted `sessionStorage`
+ * entry can carry any shape at all, and a future version of this module
+ * could change `FilterOp`'s members. Validate every ELEMENT's shape, not
+ * just "the arrays exist" - a single malformed sort/filter entry (missing
+ * `field`, an unrecognized `op`, a `direction` that isn't `asc`/`desc`, no
+ * `value` key at all) rejects the WHOLE snapshot rather than risk feeding a
+ * half-formed `FilterState`/`SortState` into `DataProvider.getList` or
+ * `@banto/grid-svelte`'s `filterRows` (an unknown `op` there matches
+ * nothing, silently emptying the grid instead of failing loudly - #215).
+ */
+function isSortState(value: unknown): value is SortState {
+	if (!value || typeof value !== 'object') return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		isNonEmptyString(candidate.field) &&
+		typeof candidate.direction === 'string' &&
+		SORT_DIRECTIONS.has(candidate.direction as SortDirection)
+	);
+}
+
+function isFilterState(value: unknown): value is FilterState {
+	if (!value || typeof value !== 'object') return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		isNonEmptyString(candidate.field) &&
+		typeof candidate.op === 'string' &&
+		FILTER_OPS.has(candidate.op as FilterOp) &&
+		'value' in candidate
+	);
+}
+
 function isSnapshot(value: unknown): value is ListViewSnapshot {
 	if (!value || typeof value !== 'object') return false;
 	const candidate = value as Record<string, unknown>;
-	return Array.isArray(candidate.sort) && Array.isArray(candidate.filters);
+	if (!Array.isArray(candidate.sort) || !candidate.sort.every(isSortState)) return false;
+	if (!Array.isArray(candidate.filters) || !candidate.filters.every(isFilterState)) return false;
+	if (
+		candidate.groupBy !== undefined &&
+		candidate.groupBy !== null &&
+		typeof candidate.groupBy !== 'string'
+	) {
+		return false;
+	}
+	return true;
 }
 
 /** The global `sessionStorage`, or `null` when unavailable (SSR, disabled storage, ...). Never throws. */
@@ -96,12 +164,33 @@ export function saveListViewState(
 	writeJson(store, `${SNAPSHOT_PREFIX}${key}`, snapshot);
 }
 
-/** Load a previously-saved snapshot for `key`, or `null` if there is none (or it's invalid). */
-export function loadListViewState(key: string, storage?: Storage | null): ListViewSnapshot | null {
+/**
+ * Load a previously-saved snapshot for `key`, or `null` if there is none (or
+ * it's invalid - see `isSnapshot`'s doc comment).
+ *
+ * `knownFields`, when given, drops any `sort`/`filters` entry whose `field`
+ * isn't in it (#215/#255 review: a column removed/renamed since the
+ * snapshot was saved must not restore a filter/sort the current screen has
+ * no column for) - the REST of the snapshot still loads; only the stale
+ * entries disappear. Omit it to skip this check (the caller has no fixed
+ * column set to check against, or already trusts the source).
+ */
+export function loadListViewState(
+	key: string,
+	knownFields?: readonly string[],
+	storage?: Storage | null
+): ListViewSnapshot | null {
 	const store = resolveStorage(storage);
 	if (!store) return null;
 	const parsed = readJson(store, `${SNAPSHOT_PREFIX}${key}`);
-	return isSnapshot(parsed) ? parsed : null;
+	if (!isSnapshot(parsed)) return null;
+	if (!knownFields) return parsed;
+	const known = new Set(knownFields);
+	return {
+		...parsed,
+		sort: parsed.sort.filter((entry) => known.has(entry.field)),
+		filters: parsed.filters.filter((entry) => known.has(entry.field))
+	};
 }
 
 /** Drop a saved snapshot for `key` (e.g. a caller offering its own "reset filters" action that should also forget the saved state). */
@@ -112,6 +201,41 @@ export function clearListViewState(key: string, storage?: Storage | null): void 
 		store.removeItem(`${SNAPSHOT_PREFIX}${key}`);
 	} catch {
 		// Ignore.
+	}
+}
+
+/**
+ * Drop EVERY key this module has ever written - every snapshot (any
+ * resource/mode), every active-mode marker, every last-opened-id marker,
+ * and any pending last-edited-record marker.
+ *
+ * #215/#255 review: `sessionStorage` outlives logout/session-end (it is
+ * tab-scoped, not identity-scoped), so without this a second identity
+ * logging into the SAME tab - a different account, a re-entered public
+ * viewer, a fresh login after the previous session expired - would silently
+ * inherit whoever was there before: their filter text, sort, and which row
+ * they had open. Called automatically at every identity-transition point
+ * admin-core itself owns (`registry.svelte.ts`'s `initBanto` wraps
+ * `AuthProvider.login`/`setup`/`enterPublicViewer`/`logout` to call this on
+ * success; `sessionGate.ts`'s `resolveProtectedSession` calls it when a
+ * guard finds no valid session at all; `sessionEnded.ts` calls it the moment
+ * a background revocation is confirmed) - a derived app gets this for free
+ * by using those APIs as already documented, no extra wiring of its own.
+ */
+export function clearAllListViewState(storage?: Storage | null): void {
+	const store = resolveStorage(storage);
+	if (!store) return;
+	const keysToRemove: string[] = [];
+	for (let i = 0; i < store.length; i++) {
+		const key = store.key(i);
+		if (key && key.startsWith(NAMESPACE)) keysToRemove.push(key);
+	}
+	for (const key of keysToRemove) {
+		try {
+			store.removeItem(key);
+		} catch {
+			// Ignore.
+		}
 	}
 }
 
@@ -245,4 +369,60 @@ export function takeLastEditedRecord(
 		// Ignore.
 	}
 	return isLastEditedRecord(parsed) ? parsed : null;
+}
+
+/**
+ * Wraps `provider` so every method that BEGINS or ENDS a session
+ * (`login`/`setup`/`enterPublicViewer` on success, `logout` unconditionally)
+ * also calls `clearAllListViewState()` - see that function's doc comment for
+ * why. `registry.svelte.ts`'s `initBanto` applies this to whatever
+ * `AuthProvider` the app passes in, so every existing call site
+ * (`getAuthProvider().logout()`, the login page's `getAuthProvider().login()`,
+ * `resolveProtectedSession`'s own `enterPublicViewer()` call) gets this for
+ * free without change.
+ *
+ * A failed `login`/`setup` (`{ success: false }`) does NOT clear anything -
+ * no identity actually changed, so wiping the CURRENT (still valid, if any)
+ * session's list state over a mistyped password would be pure UX loss.
+ * `logout` has no such signal (`Promise<void>`) and always represents
+ * "this identity is done with this tab" from the caller's perspective even
+ * if the network call itself fails, so it always clears.
+ *
+ * Every wrapped method delegates to the original one first and only then
+ * clears, so a rejection from the original method propagates exactly as
+ * before (no state is cleared for a login/logout that never actually
+ * completed) - existing call sites that already `await` these calls without
+ * their own try/catch (`Header.svelte`, `commands.ts`) are unaffected.
+ */
+export function withListViewStateClearing(provider: AuthProvider): AuthProvider {
+	const wrapped: AuthProvider = { ...provider };
+	wrapped.logout = async () => {
+		try {
+			await provider.logout();
+		} finally {
+			clearAllListViewState();
+		}
+	};
+	wrapped.login = async (params: Record<string, unknown>) => {
+		const result = await provider.login(params);
+		if (result.success) clearAllListViewState();
+		return result;
+	};
+	if (provider.setup) {
+		const setup = provider.setup;
+		wrapped.setup = async (params: Record<string, unknown>) => {
+			const result = await setup(params);
+			if (result.success) clearAllListViewState();
+			return result;
+		};
+	}
+	if (provider.enterPublicViewer) {
+		const enterPublicViewer = provider.enterPublicViewer;
+		wrapped.enterPublicViewer = async () => {
+			const entered = await enterPublicViewer();
+			if (entered) clearAllListViewState();
+			return entered;
+		};
+	}
+	return wrapped;
 }

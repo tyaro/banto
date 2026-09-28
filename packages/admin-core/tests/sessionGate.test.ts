@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isProviderError } from '../src/errors';
+import { loadListViewState, saveListViewState } from '../src/listViewState';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { createTauriAuthProvider } from '../src/providers/tauri';
 import { resolveProtectedSession } from '../src/sessionGate';
@@ -14,7 +15,7 @@ import { resolveProtectedSession } from '../src/sessionGate';
 
 const KEY = 'banto.auth.token';
 
-/** In-memory Storage stand-in: Node has no global sessionStorage. */
+/** In-memory Storage stand-in: Node has no global sessionStorage. `key()` is real (not a stub) - `clearAllListViewState` enumerates keys. */
 function makeMemoryStorage(): Storage {
 	const map = new Map<string, string>();
 	return {
@@ -22,7 +23,7 @@ function makeMemoryStorage(): Storage {
 		setItem: (key, value) => void map.set(key, value),
 		removeItem: (key) => void map.delete(key),
 		clear: () => map.clear(),
-		key: () => null,
+		key: (index) => Array.from(map.keys())[index] ?? null,
 		get length() {
 			return map.size;
 		}
@@ -172,5 +173,45 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 		await expect(resolveProtectedSession(createTauriAuthProvider({ invoke }))).resolves.toBe(
 			'login'
 		);
+	});
+});
+
+// Issue #215/#255 review (P2): landing on 'login' means no session survives
+// this guard at all - whoever's saved list view state (Issue #215's
+// sort/filters/last-opened-row memory) is in this tab must not carry over to
+// whoever logs in next.
+describe('resolveProtectedSession clears saved list view state (#215/#255)', () => {
+	it("outcome 'login' (viewerPublic OFF): clears", async () => {
+		const { fetchFn } = fakeServer({ viewerPublic: false });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'revoked-token');
+		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
+		expect(loadListViewState('items:server', undefined, sessionStorage)).toBeNull();
+	});
+
+	it("outcome 'session' (still valid): does NOT clear", async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: false });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'user-token');
+		state.validTokens.add('user-token');
+		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+		expect(loadListViewState('items:server', undefined, sessionStorage)).not.toBeNull();
+	});
+
+	it("outcome 'publicViewer': already cleared by the wrapped enterPublicViewer, not double-handled here", async () => {
+		const { fetchFn } = fakeServer({ viewerPublic: true });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'revoked-token');
+		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
+
+		// resolveProtectedSession itself never calls clearAllListViewState for
+		// 'publicViewer' (registry.svelte.ts's initBanto wrapping owns that) -
+		// this only proves the OUTCOME is right; registry.test.ts covers the
+		// actual clearing.
+		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
 	});
 });

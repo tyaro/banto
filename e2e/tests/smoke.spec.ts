@@ -1028,7 +1028,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	test('6. viewer role: no admin nav entries, no items create button', async () => {
+	test('6. viewer role: no admin nav entries, no items create button; #215 list state does not leak to a different user logging in', async () => {
+		// #215/#255 review (P2): the admin sets a filter/sort and opens a row
+		// right before logging out - none of it may resurrect for the VIEWER
+		// who logs into this same tab next (it would show them the admin's
+		// search term and which row the admin had open).
+		await page.goto('/items');
+		await applyColumnFilter(page, '商品名', '茶');
+		const grid = page.getByRole('grid');
+		const priceHeader = grid.getByRole('columnheader', { name: '価格' });
+		await priceHeader.locator('.cell-body').click();
+		await expect(priceHeader).toHaveAttribute('aria-sort', 'ascending');
+		await rowWithText(page, '茶').first().getByRole('link', { name: '開く' }).click();
+		await expect(page).toHaveURL(/\/items\/\d+$/);
+		await page.goBack();
+		await expect(page).toHaveURL(/\/items$/);
+
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 
@@ -1044,6 +1059,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await page.goto('/items');
 		await expect(page.getByRole('button', { name: '新規作成' })).toHaveCount(0);
+
+		// The filter, sort and highlighted row the admin left behind must all
+		// be gone - `registry.svelte.ts`'s `initBanto` clears
+		// `banto.listView.*` on every successful login (Issue #215/#255).
+		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue('');
+		await page.keyboard.press('Escape');
+		await expect(grid.getByRole('columnheader', { name: '価格' })).toHaveAttribute(
+			'aria-sort',
+			'none'
+		);
+		await expect(page.locator('.items-row-last-opened')).toHaveCount(0);
 
 		// M20 attachments (spec §3.1: "閲覧 = viewer 以上、追加/削除 = editor
 		// 以上"): open any seeded demo item (the grid always has 1,000 rows,

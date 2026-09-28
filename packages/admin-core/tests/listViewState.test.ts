@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthProvider } from '../src/provider';
 import {
+	clearAllListViewState,
 	clearListViewState,
 	loadActiveListMode,
 	loadLastOpenedId,
@@ -8,10 +10,11 @@ import {
 	saveActiveListMode,
 	saveLastOpenedId,
 	saveListViewState,
-	takeLastEditedRecord
+	takeLastEditedRecord,
+	withListViewStateClearing
 } from '../src/listViewState';
 
-/** In-memory Storage stand-in: Node has no global sessionStorage (same helper as uiSettings.test.ts). */
+/** In-memory Storage stand-in: Node has no global sessionStorage (same helper as uiSettings.test.ts). `key()`/`length` are real (not stubs) - `clearAllListViewState` enumerates keys, unlike every other function here. */
 function makeMemoryStorage(): Storage {
 	const map = new Map<string, string>();
 	return {
@@ -19,7 +22,7 @@ function makeMemoryStorage(): Storage {
 		setItem: (key, value) => void map.set(key, value),
 		removeItem: (key) => void map.delete(key),
 		clear: () => map.clear(),
-		key: () => null,
+		key: (index) => Array.from(map.keys())[index] ?? null,
 		get length() {
 			return map.size;
 		}
@@ -35,11 +38,11 @@ describe('saveListViewState / loadListViewState', () => {
 			groupBy: 'category'
 		};
 		saveListViewState('items:server', snapshot, storage);
-		expect(loadListViewState('items:server', storage)).toEqual(snapshot);
+		expect(loadListViewState('items:server', undefined, storage)).toEqual(snapshot);
 	});
 
 	it('returns null when nothing was saved for the key', () => {
-		expect(loadListViewState('items:server', makeMemoryStorage())).toBeNull();
+		expect(loadListViewState('items:server', undefined, makeMemoryStorage())).toBeNull();
 	});
 
 	it('keeps different keys independent (client vs server mode, or a different resource)', () => {
@@ -48,33 +51,153 @@ describe('saveListViewState / loadListViewState', () => {
 		saveListViewState('items:server', { sort: [], filters: [] }, storage);
 		saveListViewState('users:server', { sort: [], filters: [] }, storage);
 
-		expect(loadListViewState('items:client', storage)?.groupBy).toBe('category');
-		expect(loadListViewState('items:server', storage)?.groupBy).toBeUndefined();
-		expect(loadListViewState('users:server', storage)).toEqual({ sort: [], filters: [] });
+		expect(loadListViewState('items:client', undefined, storage)?.groupBy).toBe('category');
+		expect(loadListViewState('items:server', undefined, storage)?.groupBy).toBeUndefined();
+		expect(loadListViewState('users:server', undefined, storage)).toEqual({
+			sort: [],
+			filters: []
+		});
 	});
 
 	it('ignores malformed JSON rather than throwing', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.listView.items:server', '{not json');
-		expect(loadListViewState('items:server', storage)).toBeNull();
+		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
 	});
 
 	it('ignores a payload missing sort/filters arrays', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.listView.items:server', JSON.stringify({ groupBy: 'category' }));
-		expect(loadListViewState('items:server', storage)).toBeNull();
+		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
 	});
 
 	it('resolveStorage(null) (e.g. SSR/disabled storage) no-ops on save and returns null on load', () => {
 		expect(() => saveListViewState('items:server', { sort: [], filters: [] }, null)).not.toThrow();
-		expect(loadListViewState('items:server', null)).toBeNull();
+		expect(loadListViewState('items:server', undefined, null)).toBeNull();
 	});
 
 	it('clearListViewState removes a saved snapshot', () => {
 		const storage = makeMemoryStorage();
 		saveListViewState('items:server', { sort: [], filters: [] }, storage);
 		clearListViewState('items:server', storage);
-		expect(loadListViewState('items:server', storage)).toBeNull();
+		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+	});
+
+	// #215/#255 review: a saved payload is untrusted (a column removed/
+	// renamed since, a hand-edited/corrupted sessionStorage entry, a future
+	// FilterOp this version doesn't know) - every element's shape is checked,
+	// not just "the arrays exist".
+	describe('deep shape validation (#255 review)', () => {
+		const validSort = { field: 'price', direction: 'desc' };
+		const validFilter = { field: 'name', op: 'contains', value: 'tea' };
+
+		it('accepts a fully well-formed snapshot', () => {
+			const storage = makeMemoryStorage();
+			storage.setItem(
+				'banto.listView.items:server',
+				JSON.stringify({ sort: [validSort], filters: [validFilter] })
+			);
+			expect(loadListViewState('items:server', undefined, storage)).toEqual({
+				sort: [validSort],
+				filters: [validFilter]
+			});
+		});
+
+		it.each([
+			['a sort entry missing field', { sort: [{ direction: 'asc' }], filters: [] }],
+			[
+				'a sort entry with an empty field',
+				{ sort: [{ field: '', direction: 'asc' }], filters: [] }
+			],
+			[
+				'a sort entry with an invalid direction',
+				{ sort: [{ field: 'price', direction: 'sideways' }], filters: [] }
+			],
+			['a sort entry that is not an object', { sort: ['price'], filters: [] }],
+			['a filter entry missing field', { sort: [], filters: [{ op: 'eq', value: 1 }] }],
+			[
+				'a filter entry with an unknown op',
+				{ sort: [], filters: [{ field: 'price', op: 'fuzzy_match', value: 1 }] }
+			],
+			[
+				'a filter entry with no value key at all',
+				{ sort: [], filters: [{ field: 'price', op: 'eq' }] }
+			],
+			['groupBy that is neither a string nor null', { sort: [], filters: [], groupBy: 42 }]
+		])(
+			'rejects the WHOLE snapshot for %s (falls back to null -> caller default)',
+			(_label, bad) => {
+				const storage = makeMemoryStorage();
+				storage.setItem('banto.listView.items:server', JSON.stringify(bad));
+				expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+			}
+		);
+
+		it('a filter value of null/0/false is still valid (falsy but present)', () => {
+			const storage = makeMemoryStorage();
+			storage.setItem(
+				'banto.listView.items:server',
+				JSON.stringify({ sort: [], filters: [{ field: 'stock', op: 'eq', value: 0 }] })
+			);
+			expect(loadListViewState('items:server', undefined, storage)?.filters).toEqual([
+				{ field: 'stock', op: 'eq', value: 0 }
+			]);
+		});
+	});
+
+	// #215/#255 review: "捨てる" - drop a sort/filter entry whose `field`
+	// isn't a column the CURRENT screen has, rather than reject the whole
+	// snapshot (a column can be renamed/removed between sessions).
+	describe('knownFields filtering (#255 review)', () => {
+		it('drops sort/filter entries for fields outside knownFields, keeping the rest', () => {
+			const storage = makeMemoryStorage();
+			saveListViewState(
+				'items:server',
+				{
+					sort: [
+						{ field: 'price', direction: 'desc' },
+						{ field: 'removedColumn', direction: 'asc' }
+					],
+					filters: [
+						{ field: 'name', op: 'contains', value: 'tea' },
+						{ field: 'renamedColumn', op: 'eq', value: 1 }
+					]
+				},
+				storage
+			);
+			expect(loadListViewState('items:server', ['price', 'name'], storage)).toEqual({
+				sort: [{ field: 'price', direction: 'desc' }],
+				filters: [{ field: 'name', op: 'contains', value: 'tea' }]
+			});
+		});
+
+		it('every field unknown -> empty (default) sort/filters, snapshot still loads', () => {
+			const storage = makeMemoryStorage();
+			saveListViewState(
+				'items:server',
+				{
+					sort: [{ field: 'removedColumn', direction: 'asc' }],
+					filters: [{ field: 'alsoRemoved', op: 'eq', value: 1 }]
+				},
+				storage
+			);
+			expect(loadListViewState('items:server', ['price', 'name'], storage)).toEqual({
+				sort: [],
+				filters: []
+			});
+		});
+
+		it('omitting knownFields skips the check entirely (unchanged behavior)', () => {
+			const storage = makeMemoryStorage();
+			saveListViewState(
+				'items:server',
+				{ sort: [{ field: 'anyField', direction: 'asc' }], filters: [] },
+				storage
+			);
+			expect(loadListViewState('items:server', undefined, storage)?.sort).toEqual([
+				{ field: 'anyField', direction: 'asc' }
+			]);
+		});
 	});
 });
 
@@ -174,5 +297,175 @@ describe('noteLastEditedRecord / takeLastEditedRecord', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.listView.lastEdited.items', '{not json');
 		expect(takeLastEditedRecord('items', storage)).toBeNull();
+	});
+});
+
+// Issue #215/#255 review (P2): a second identity signing into the same tab
+// must not inherit the first identity's saved list state.
+describe('clearAllListViewState', () => {
+	it('removes every banto.listView.* key: snapshots (any resource/mode), active mode, last-opened-id, last-edited-record', () => {
+		const storage = makeMemoryStorage();
+		saveListViewState('items:server', { sort: [], filters: [] }, storage);
+		saveListViewState('items:client', { sort: [], filters: [] }, storage);
+		saveListViewState('users:server', { sort: [], filters: [] }, storage);
+		saveActiveListMode('items', 'client', storage);
+		saveLastOpenedId('items', 42, storage);
+		noteLastEditedRecord('items', { id: 1, values: {} }, storage);
+
+		clearAllListViewState(storage);
+
+		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+		expect(loadListViewState('items:client', undefined, storage)).toBeNull();
+		expect(loadListViewState('users:server', undefined, storage)).toBeNull();
+		expect(loadActiveListMode('items', storage)).toBeNull();
+		expect(loadLastOpenedId('items', storage)).toBeNull();
+		expect(takeLastEditedRecord('items', storage)).toBeNull();
+	});
+
+	it('never touches keys outside the banto.listView. namespace', () => {
+		const storage = makeMemoryStorage();
+		storage.setItem('banto.auth.token', 'user-a-token');
+		storage.setItem('banto.ui.theme.mode', 'dark');
+		saveListViewState('items:server', { sort: [], filters: [] }, storage);
+
+		clearAllListViewState(storage);
+
+		expect(storage.getItem('banto.auth.token')).toBe('user-a-token');
+		expect(storage.getItem('banto.ui.theme.mode')).toBe('dark');
+	});
+
+	it('is a no-op (never throws) when nothing was ever saved', () => {
+		expect(() => clearAllListViewState(makeMemoryStorage())).not.toThrow();
+	});
+
+	it('resolveStorage(null) no-ops', () => {
+		expect(() => clearAllListViewState(null)).not.toThrow();
+	});
+});
+
+describe('withListViewStateClearing', () => {
+	// The wrapper's `clearAllListViewState()` calls default to the global
+	// `sessionStorage` (same DI convention as every other function here,
+	// but these specific calls are internal to the wrapper - there's no
+	// `storage` parameter to pass through), so these tests stub the global
+	// for their duration instead.
+	let storage: Storage;
+
+	beforeEach(() => {
+		storage = makeMemoryStorage();
+		vi.stubGlobal('sessionStorage', storage);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function makeAuthProvider(overrides: Partial<AuthProvider> = {}): AuthProvider {
+		return {
+			login: async () => ({ success: true }),
+			logout: async () => {},
+			check: async () => true,
+			getIdentity: async () => null,
+			...overrides
+		};
+	}
+
+	function primeState(): void {
+		saveListViewState(
+			'items:server',
+			{ sort: [{ field: 'price', direction: 'desc' }], filters: [] },
+			storage
+		);
+		saveLastOpenedId('items', 42, storage);
+	}
+
+	it('logout clears list view state after the underlying logout resolves', async () => {
+		primeState();
+		let logoutCalled = false;
+		const provider = withListViewStateClearing(
+			makeAuthProvider({
+				logout: async () => {
+					logoutCalled = true;
+				}
+			})
+		);
+		await provider.logout();
+		expect(logoutCalled).toBe(true);
+		expect(loadLastOpenedId('items', storage)).toBeNull();
+	});
+
+	it('logout clears even when the underlying logout rejects (still "done with this tab")', async () => {
+		primeState();
+		const provider = withListViewStateClearing(
+			makeAuthProvider({
+				logout: async () => {
+					throw new Error('network error');
+				}
+			})
+		);
+		await expect(provider.logout()).rejects.toThrow('network error');
+		expect(loadLastOpenedId('items', storage)).toBeNull();
+	});
+
+	it('a successful login clears the PREVIOUS identity state', async () => {
+		primeState();
+		const provider = withListViewStateClearing(
+			makeAuthProvider({ login: async () => ({ success: true }) })
+		);
+		await provider.login({ username: 'b', password: 'x' });
+		expect(loadLastOpenedId('items', storage)).toBeNull();
+	});
+
+	it('a FAILED login does not clear anything (no identity actually changed)', async () => {
+		primeState();
+		const provider = withListViewStateClearing(
+			makeAuthProvider({ login: async () => ({ success: false, error: 'bad password' }) })
+		);
+		await provider.login({ username: 'a', password: 'wrong' });
+		expect(loadLastOpenedId('items', storage)).toBe(42);
+	});
+
+	it('a successful setup() (first-run account creation) clears', async () => {
+		primeState();
+		const provider = withListViewStateClearing(
+			makeAuthProvider({ setup: async () => ({ success: true }) })
+		);
+		await provider.setup?.({ username: 'admin', password: 'x' });
+		expect(loadLastOpenedId('items', storage)).toBeNull();
+	});
+
+	it('a successful enterPublicViewer() clears', async () => {
+		primeState();
+		const provider = withListViewStateClearing(
+			makeAuthProvider({ enterPublicViewer: async () => true })
+		);
+		await provider.enterPublicViewer?.();
+		expect(loadLastOpenedId('items', storage)).toBeNull();
+	});
+
+	it('a FAILED enterPublicViewer() does not clear', async () => {
+		primeState();
+		const provider = withListViewStateClearing(
+			makeAuthProvider({ enterPublicViewer: async () => false })
+		);
+		await provider.enterPublicViewer?.();
+		expect(loadLastOpenedId('items', storage)).toBe(42);
+	});
+
+	it('other methods (check/getIdentity) pass through unchanged', async () => {
+		const provider = withListViewStateClearing(
+			makeAuthProvider({
+				check: async () => false,
+				getIdentity: async () => ({ id: 'x', name: 'x' })
+			})
+		);
+		await expect(provider.check()).resolves.toBe(false);
+		await expect(provider.getIdentity()).resolves.toEqual({ id: 'x', name: 'x' });
+	});
+
+	it('omits setup/enterPublicViewer on the wrapper when absent on the original (optional methods stay optional)', () => {
+		const provider = withListViewStateClearing(makeAuthProvider());
+		expect(provider.setup).toBeUndefined();
+		expect(provider.enterPublicViewer).toBeUndefined();
 	});
 });
