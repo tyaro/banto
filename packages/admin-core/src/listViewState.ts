@@ -18,6 +18,29 @@
  * are shown (sort/filters/groupBy) plus a lightweight work-position marker
  * (`lastOpenedId`).
  *
+ * Ownership (Issue #215/#255, 4th review - redesign): `sessionStorage`
+ * belongs to the TAB, not to whoever is signed in, and the tab's identity
+ * can change behind its back (another tab replaces the shared "Remember me"
+ * token; a session ends and the guard moves the tab to the public viewer).
+ * So every entry is written as `{ owner, data }` and every function takes
+ * the caller's `SessionScope` (`sessionScope.svelte.ts`, captured with
+ * `currentSessionScope()` when the screen/operation started):
+ *
+ * - a READ returns only an entry whose `owner` is the scope's owner - state
+ *   saved for anyone else is invisible, however the identity changed;
+ * - a WRITE happens only while the scope is still the live session
+ *   (`isCurrentSessionScope`) - a screen or an in-flight save that outlived
+ *   its session (a new generation, even for the same account) cannot write
+ *   the old session's state back;
+ * - a scope with no confirmed owner (`owner === null`: before the route
+ *   guard's `getIdentity()`, after the session ended, or an `AuthProvider`
+ *   that cannot say who is signed in) neither reads nor writes - the
+ *   feature is simply off rather than guessing.
+ *
+ * `sessionLifecycle.ts`'s `beginSession` additionally deletes entries owned
+ * by anyone else, and `endSession` deletes everything - hygiene, not the
+ * safety boundary: the owner check above holds even if those never ran.
+ *
  * Every read/write is best-effort: a full, disabled, or private-mode
  * `sessionStorage` silently no-ops rather than breaking the page (same
  * stance as `providers/uiSettings.ts`'s localStorage backend and
@@ -26,7 +49,7 @@
  * tests can inject a fake without touching global state - same convention as
  * `LocalUiSettingsOptions.storage`.
  */
-import type { AuthProvider } from './provider';
+import { isCurrentSessionScope, type SessionScope } from './sessionScope.svelte';
 import type { FilterOp, FilterState, SortDirection, SortState } from './types';
 
 /** Every key this module ever writes starts with this - `clearAllListViewState` sweeps by it alone. */
@@ -150,23 +173,84 @@ function writeJson(storage: Storage, key: string, value: unknown): void {
 	}
 }
 
+/** What is actually stored under every key: the data plus the `sessionOwnerKey` it was saved for. */
+interface OwnedEntry {
+	owner: string;
+	data: unknown;
+}
+
+function isOwnedEntry(value: unknown): value is OwnedEntry {
+	if (!value || typeof value !== 'object') return false;
+	const candidate = value as Record<string, unknown>;
+	return isNonEmptyString(candidate.owner) && 'data' in candidate;
+}
+
+/** May `scope` touch storage at all? Only a confirmed owner of the LIVE session. */
+function isUsableScope(scope: SessionScope): scope is SessionScope & { owner: string } {
+	return scope.owner !== null && isCurrentSessionScope(scope);
+}
+
+function writeOwned(
+	scope: SessionScope,
+	key: string,
+	data: unknown,
+	storage: Storage | null | undefined
+): void {
+	const store = resolveStorage(storage);
+	if (!store || !isUsableScope(scope)) return;
+	const entry: OwnedEntry = { owner: scope.owner, data };
+	writeJson(store, key, entry);
+}
+
+/** The stored data for `key` if it belongs to `scope`'s owner, else `undefined`. */
+function readOwned(scope: SessionScope, key: string, storage: Storage | null | undefined): unknown {
+	const store = resolveStorage(storage);
+	if (!store || !isUsableScope(scope)) return undefined;
+	const parsed = readJson(store, key);
+	if (!isOwnedEntry(parsed) || parsed.owner !== scope.owner) return undefined;
+	return parsed.data;
+}
+
+function removeKey(store: Storage, key: string): void {
+	try {
+		store.removeItem(key);
+	} catch {
+		// Ignore.
+	}
+}
+
+function namespaceKeys(store: Storage): string[] {
+	const keys: string[] = [];
+	try {
+		for (let i = 0; i < store.length; i++) {
+			const key = store.key(i);
+			if (key && key.startsWith(NAMESPACE)) keys.push(key);
+		}
+	} catch {
+		// Ignore: an unreadable storage has nothing we could remove anyway.
+	}
+	return keys;
+}
+
 /**
- * Persist `snapshot` for `key` (caller-composed, e.g. `items:server`).
+ * Persist `snapshot` for `key` (caller-composed, e.g. `items:server`) on
+ * behalf of `scope`'s owner. A no-op unless `scope` is the live session with
+ * a confirmed owner (see the module doc comment).
  * `storage` is for tests only - omit it in application code.
  */
 export function saveListViewState(
+	scope: SessionScope,
 	key: string,
 	snapshot: ListViewSnapshot,
 	storage?: Storage | null
 ): void {
-	const store = resolveStorage(storage);
-	if (!store) return;
-	writeJson(store, `${SNAPSHOT_PREFIX}${key}`, snapshot);
+	writeOwned(scope, `${SNAPSHOT_PREFIX}${key}`, snapshot, storage);
 }
 
 /**
- * Load a previously-saved snapshot for `key`, or `null` if there is none (or
- * it's invalid - see `isSnapshot`'s doc comment).
+ * Load the snapshot `scope`'s owner saved for `key`, or `null` if there is
+ * none, it belongs to someone else, `scope` is no longer the live session,
+ * or it's invalid (see `isSnapshot`'s doc comment).
  *
  * `knownFields`, when given, drops any `sort`/`filters` entry whose `field`
  * isn't in it (#215/#255 review: a column removed/renamed since the
@@ -176,13 +260,12 @@ export function saveListViewState(
  * column set to check against, or already trusts the source).
  */
 export function loadListViewState(
+	scope: SessionScope,
 	key: string,
 	knownFields?: readonly string[],
 	storage?: Storage | null
 ): ListViewSnapshot | null {
-	const store = resolveStorage(storage);
-	if (!store) return null;
-	const parsed = readJson(store, `${SNAPSHOT_PREFIX}${key}`);
+	const parsed = readOwned(scope, `${SNAPSHOT_PREFIX}${key}`, storage);
 	if (!isSnapshot(parsed)) return null;
 	if (!knownFields) return parsed;
 	const known = new Set(knownFields);
@@ -193,49 +276,38 @@ export function loadListViewState(
 	};
 }
 
-/** Drop a saved snapshot for `key` (e.g. a caller offering its own "reset filters" action that should also forget the saved state). */
+/** Drop a saved snapshot for `key` (e.g. a caller offering its own "reset filters" action that should also forget the saved state). Removing is always safe, so no scope is needed. */
 export function clearListViewState(key: string, storage?: Storage | null): void {
 	const store = resolveStorage(storage);
 	if (!store) return;
-	try {
-		store.removeItem(`${SNAPSHOT_PREFIX}${key}`);
-	} catch {
-		// Ignore.
-	}
+	removeKey(store, `${SNAPSHOT_PREFIX}${key}`);
 }
 
 /**
  * Drop EVERY key this module has ever written - every snapshot (any
  * resource/mode), every active-mode marker, every last-opened-id marker,
- * and any pending last-edited-record marker.
- *
- * #215/#255 review: `sessionStorage` outlives logout/session-end (it is
- * tab-scoped, not identity-scoped), so without this a second identity
- * logging into the SAME tab - a different account, a re-entered public
- * viewer, a fresh login after the previous session expired - would silently
- * inherit whoever was there before: their filter text, sort, and which row
- * they had open. Called automatically at every identity-transition point
- * admin-core itself owns (`registry.svelte.ts`'s `initBanto` wraps
- * `AuthProvider.login`/`setup`/`enterPublicViewer`/`logout` to call this on
- * success; `sessionGate.ts`'s `resolveProtectedSession` calls it when a
- * guard finds no valid session at all; `sessionEnded.ts` calls it the moment
- * a background revocation is confirmed) - a derived app gets this for free
- * by using those APIs as already documented, no extra wiring of its own.
+ * and any pending last-edited-record marker, whoever owns it.
+ * `sessionLifecycle.ts`'s `endSession` calls this.
  */
 export function clearAllListViewState(storage?: Storage | null): void {
 	const store = resolveStorage(storage);
 	if (!store) return;
-	const keysToRemove: string[] = [];
-	for (let i = 0; i < store.length; i++) {
-		const key = store.key(i);
-		if (key && key.startsWith(NAMESPACE)) keysToRemove.push(key);
-	}
-	for (const key of keysToRemove) {
-		try {
-			store.removeItem(key);
-		} catch {
-			// Ignore.
-		}
+	for (const key of namespaceKeys(store)) removeKey(store, key);
+}
+
+/**
+ * Drop every entry NOT owned by `owner` (malformed/legacy entries without
+ * an owner included); `owner === null` drops everything.
+ * `sessionLifecycle.ts`'s `beginSession` calls this once the new identity is
+ * confirmed, so another identity's search terms do not linger in this tab
+ * even though reads would never return them.
+ */
+export function purgeListViewStateNotOwnedBy(owner: string | null, storage?: Storage | null): void {
+	const store = resolveStorage(storage);
+	if (!store) return;
+	for (const key of namespaceKeys(store)) {
+		const parsed = owner === null ? undefined : readJson(store, key);
+		if (!isOwnedEntry(parsed) || parsed.owner !== owner) removeKey(store, key);
 	}
 }
 
@@ -246,25 +318,23 @@ export function clearAllListViewState(storage?: Storage | null): void {
  * one the user had, not always its default - otherwise the restored
  * filters/sort of the OTHER mode would silently go unused.
  */
-export function saveActiveListMode(resource: string, mode: string, storage?: Storage | null): void {
-	const store = resolveStorage(storage);
-	if (!store) return;
-	try {
-		store.setItem(`${MODE_PREFIX}${resource}`, mode);
-	} catch {
-		// Ignore.
-	}
+export function saveActiveListMode(
+	scope: SessionScope,
+	resource: string,
+	mode: string,
+	storage?: Storage | null
+): void {
+	writeOwned(scope, `${MODE_PREFIX}${resource}`, mode, storage);
 }
 
-/** The last mode saved by `saveActiveListMode` for `resource`, or `null` if none. */
-export function loadActiveListMode(resource: string, storage?: Storage | null): string | null {
-	const store = resolveStorage(storage);
-	if (!store) return null;
-	try {
-		return store.getItem(`${MODE_PREFIX}${resource}`);
-	} catch {
-		return null;
-	}
+/** The last mode `scope`'s owner saved with `saveActiveListMode` for `resource`, or `null` if none. */
+export function loadActiveListMode(
+	scope: SessionScope,
+	resource: string,
+	storage?: Storage | null
+): string | null {
+	const parsed = readOwned(scope, `${MODE_PREFIX}${resource}`, storage);
+	return typeof parsed === 'string' ? parsed : null;
 }
 
 /**
@@ -287,31 +357,27 @@ export function loadActiveListMode(resource: string, storage?: Storage | null): 
  * URL, the browser back button) reliably passes through.
  */
 export function saveLastOpenedId(
+	scope: SessionScope,
 	resource: string,
 	id: string | number | null,
 	storage?: Storage | null
 ): void {
-	const store = resolveStorage(storage);
-	if (!store) return;
-	try {
-		if (id === null) {
-			store.removeItem(`${LAST_OPENED_PREFIX}${resource}`);
-		} else {
-			store.setItem(`${LAST_OPENED_PREFIX}${resource}`, JSON.stringify(id));
-		}
-	} catch {
-		// Ignore.
+	const key = `${LAST_OPENED_PREFIX}${resource}`;
+	if (id !== null) {
+		writeOwned(scope, key, id, storage);
+		return;
 	}
+	const store = resolveStorage(storage);
+	if (store && isUsableScope(scope)) removeKey(store, key);
 }
 
-/** The id saved by `saveLastOpenedId` for `resource`, or `null` if none (or it's malformed). */
+/** The id `scope`'s owner saved with `saveLastOpenedId` for `resource`, or `null` if none (or it's malformed). */
 export function loadLastOpenedId(
+	scope: SessionScope,
 	resource: string,
 	storage?: Storage | null
 ): string | number | null {
-	const store = resolveStorage(storage);
-	if (!store) return null;
-	const parsed = readJson(store, `${LAST_OPENED_PREFIX}${resource}`);
+	const parsed = readOwned(scope, `${LAST_OPENED_PREFIX}${resource}`, storage);
 	return typeof parsed === 'string' || typeof parsed === 'number' ? parsed : null;
 }
 
@@ -343,124 +409,32 @@ function isLastEditedRecord(value: unknown): value is LastEditedRecord {
  * Record the row a detail screen just saved. One-shot by design:
  * `takeLastEditedRecord` clears it on read, so a later revisit (without a
  * fresh save) shows nothing.
+ *
+ * Pass the scope the detail screen captured when it STARTED (not a fresh
+ * `currentSessionScope()` taken after the save resolves): a save still in
+ * flight when the session ended - or ended and began again, even as the
+ * same account - must not leave its marker for the new session (#255
+ * review).
  */
 export function noteLastEditedRecord(
+	scope: SessionScope,
 	resource: string,
 	record: LastEditedRecord,
 	storage?: Storage | null
 ): void {
-	const store = resolveStorage(storage);
-	if (!store) return;
-	writeJson(store, `${LAST_EDITED_PREFIX}${resource}`, record);
+	writeOwned(scope, `${LAST_EDITED_PREFIX}${resource}`, record, storage);
 }
 
-/** Read and clear the last-edited-record marker for `resource` (see `noteLastEditedRecord`). */
+/** Read and clear `scope`'s owner's last-edited-record marker for `resource` (see `noteLastEditedRecord`). A stale or ownerless `scope` neither reads nor clears anything. */
 export function takeLastEditedRecord(
+	scope: SessionScope,
 	resource: string,
 	storage?: Storage | null
 ): LastEditedRecord | null {
 	const store = resolveStorage(storage);
-	if (!store) return null;
+	if (!store || !isUsableScope(scope)) return null;
 	const key = `${LAST_EDITED_PREFIX}${resource}`;
-	const parsed = readJson(store, key);
-	try {
-		store.removeItem(key);
-	} catch {
-		// Ignore.
-	}
+	const parsed = readOwned(scope, key, store);
+	removeKey(store, key);
 	return isLastEditedRecord(parsed) ? parsed : null;
-}
-
-/**
- * Wraps `provider` so every method that BEGINS or ENDS a session
- * (`login`/`setup`/`enterPublicViewer` on success, `logout` unconditionally)
- * also calls `onTransition` (defaults to `clearAllListViewState` - see that
- * function's doc comment for why). `registry.svelte.ts`'s `initBanto`
- * applies this to whatever `AuthProvider` the app passes in (with its own
- * `onTransition` that ALSO bumps `sessionGeneration()`, Issue #215/#255
- * review's fix 2), so every existing call site (`getAuthProvider().logout()`,
- * the login page's `getAuthProvider().login()`, `resolveProtectedSession`'s
- * own `enterPublicViewer()` call) gets this for free without change.
- *
- * A failed `login`/`setup` (`{ success: false }`) does NOT call `onTransition`
- * - no identity actually changed, so wiping the CURRENT (still valid, if any)
- * session's list state over a mistyped password would be pure UX loss.
- * `logout` has no such signal (`Promise<void>`) and always represents
- * "this identity is done with this tab" from the caller's perspective even
- * if the network call itself fails, so it always calls it.
- *
- * Every wrapped method delegates to the original one first and only then
- * calls `onTransition`, so a rejection from the original method propagates
- * exactly as before (nothing fires for a login/logout that never actually
- * completed) - existing call sites that already `await` these calls without
- * their own try/catch (`Header.svelte`, `commands.ts`) are unaffected.
- *
- * #215/#255 review (fix 1): a plain `{ ...provider }` spread breaks any
- * `AuthProvider` that isn't a flat object of arrow functions - a class
- * instance's methods live on its PROTOTYPE (`{ ...provider }` only copies
- * OWN enumerable properties, so `check`/`getIdentity`/etc. would be
- * missing entirely and calling them would throw), and even a plain object
- * whose methods read/write shared `this` state (e.g. `login()` sets
- * `this.signedIn = true`, `check()` reads it) would split that state
- * between the copied `check` (still bound to the ORIGINAL `provider` as
- * its lexical/property owner, but invoked as `wrapped.check()` - a method
- * call sets `this` from the call-site object, so it would silently run
- * against the WRAPPER instead) - the very state the real object relies on.
- * A `Proxy` fixes this generally: every property access - the four we
- * override AND any other method/property the concrete `AuthProvider` adds -
- * resolves through `Reflect.get`/`.bind(provider)` against the ORIGINAL
- * `provider` as receiver, so `this` inside any method (prototype or own,
- * known or not) is always the real instance, never the proxy.
- */
-export function withListViewStateClearing(
-	provider: AuthProvider,
-	onTransition: () => void = clearAllListViewState
-): AuthProvider {
-	const overrides: Partial<AuthProvider> = {
-		logout: async () => {
-			try {
-				await provider.logout();
-			} finally {
-				onTransition();
-			}
-		},
-		login: async (params: Record<string, unknown>) => {
-			const result = await provider.login(params);
-			if (result.success) onTransition();
-			return result;
-		}
-	};
-	if (provider.setup) {
-		overrides.setup = async (params: Record<string, unknown>) => {
-			const result = await provider.setup!(params);
-			if (result.success) onTransition();
-			return result;
-		};
-	}
-	if (provider.enterPublicViewer) {
-		overrides.enterPublicViewer = async () => {
-			const entered = await provider.enterPublicViewer!();
-			if (entered) onTransition();
-			return entered;
-		};
-	}
-
-	return new Proxy(provider, {
-		get(target, prop, _receiver) {
-			if (prop in overrides) return overrides[prop as keyof AuthProvider];
-			// Reflect.get walks the prototype chain (so a class instance's
-			// prototype methods resolve too, unlike `{ ...provider }`), and
-			// passing `target` (not the proxy) as the receiver is what makes
-			// a getter/accessor on `provider` see the REAL instance as `this`.
-			const value: unknown = Reflect.get(target, prop, target);
-			// A method called as `wrapper.foo()` would otherwise run with
-			// `this === wrapper` (the proxy) - rebinding to `target` here is
-			// what keeps `this`-based shared state (fix 1's second failure
-			// mode) working exactly as it would unwrapped.
-			return typeof value === 'function' ? value.bind(target) : value;
-		},
-		has(target, prop) {
-			return prop in overrides || prop in target;
-		}
-	}) as AuthProvider;
 }

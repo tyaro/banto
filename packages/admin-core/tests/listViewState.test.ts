@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthProvider } from '../src/provider';
 import {
 	clearAllListViewState,
 	clearListViewState,
@@ -7,12 +6,41 @@ import {
 	loadLastOpenedId,
 	loadListViewState,
 	noteLastEditedRecord,
+	purgeListViewStateNotOwnedBy,
 	saveActiveListMode,
 	saveLastOpenedId,
 	saveListViewState,
-	takeLastEditedRecord,
-	withListViewStateClearing
+	takeLastEditedRecord
 } from '../src/listViewState';
+import { beginSession, endSession } from '../src/sessionLifecycle';
+import {
+	currentSessionScope,
+	isCurrentSessionScope,
+	sessionGeneration,
+	sessionOwnerKey,
+	type SessionScope
+} from '../src/sessionScope.svelte';
+
+const ALICE = { id: 'alice', name: 'Alice' };
+const BOB = { id: 'bob', name: 'Bob' };
+
+/**
+ * Every test starts inside a confirmed session for ALICE (`scope`). Node has
+ * no global `sessionStorage`, so `beginSession`/`endSession`'s own
+ * purge/clear of the GLOBAL storage no-op here; each test passes its own
+ * in-memory storage explicitly.
+ */
+let scope: SessionScope;
+beforeEach(() => {
+	endSession();
+	beginSession(ALICE);
+	scope = currentSessionScope();
+});
+
+/** The on-disk shape: `{ owner, data }` - what a raw `setItem` in a test must write to be readable by `scope`. */
+function owned(data: unknown, owner: string | null = scope.owner): string {
+	return JSON.stringify({ owner, data });
+}
 
 /** In-memory Storage stand-in: Node has no global sessionStorage (same helper as uiSettings.test.ts). `key()`/`length` are real (not stubs) - `clearAllListViewState` enumerates keys, unlike every other function here. */
 function makeMemoryStorage(): Storage {
@@ -37,23 +65,28 @@ describe('saveListViewState / loadListViewState', () => {
 			filters: [{ field: 'name', op: 'contains' as const, value: 'tea' }],
 			groupBy: 'category'
 		};
-		saveListViewState('items:server', snapshot, storage);
-		expect(loadListViewState('items:server', undefined, storage)).toEqual(snapshot);
+		saveListViewState(scope, 'items:server', snapshot, storage);
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).toEqual(snapshot);
 	});
 
 	it('returns null when nothing was saved for the key', () => {
-		expect(loadListViewState('items:server', undefined, makeMemoryStorage())).toBeNull();
+		expect(loadListViewState(scope, 'items:server', undefined, makeMemoryStorage())).toBeNull();
 	});
 
 	it('keeps different keys independent (client vs server mode, or a different resource)', () => {
 		const storage = makeMemoryStorage();
-		saveListViewState('items:client', { sort: [], filters: [], groupBy: 'category' }, storage);
-		saveListViewState('items:server', { sort: [], filters: [] }, storage);
-		saveListViewState('users:server', { sort: [], filters: [] }, storage);
+		saveListViewState(
+			scope,
+			'items:client',
+			{ sort: [], filters: [], groupBy: 'category' },
+			storage
+		);
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
+		saveListViewState(scope, 'users:server', { sort: [], filters: [] }, storage);
 
-		expect(loadListViewState('items:client', undefined, storage)?.groupBy).toBe('category');
-		expect(loadListViewState('items:server', undefined, storage)?.groupBy).toBeUndefined();
-		expect(loadListViewState('users:server', undefined, storage)).toEqual({
+		expect(loadListViewState(scope, 'items:client', undefined, storage)?.groupBy).toBe('category');
+		expect(loadListViewState(scope, 'items:server', undefined, storage)?.groupBy).toBeUndefined();
+		expect(loadListViewState(scope, 'users:server', undefined, storage)).toEqual({
 			sort: [],
 			filters: []
 		});
@@ -62,25 +95,27 @@ describe('saveListViewState / loadListViewState', () => {
 	it('ignores malformed JSON rather than throwing', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.listView.items:server', '{not json');
-		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).toBeNull();
 	});
 
 	it('ignores a payload missing sort/filters arrays', () => {
 		const storage = makeMemoryStorage();
-		storage.setItem('banto.listView.items:server', JSON.stringify({ groupBy: 'category' }));
-		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+		storage.setItem('banto.listView.items:server', owned({ groupBy: 'category' }));
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).toBeNull();
 	});
 
 	it('resolveStorage(null) (e.g. SSR/disabled storage) no-ops on save and returns null on load', () => {
-		expect(() => saveListViewState('items:server', { sort: [], filters: [] }, null)).not.toThrow();
-		expect(loadListViewState('items:server', undefined, null)).toBeNull();
+		expect(() =>
+			saveListViewState(scope, 'items:server', { sort: [], filters: [] }, null)
+		).not.toThrow();
+		expect(loadListViewState(scope, 'items:server', undefined, null)).toBeNull();
 	});
 
 	it('clearListViewState removes a saved snapshot', () => {
 		const storage = makeMemoryStorage();
-		saveListViewState('items:server', { sort: [], filters: [] }, storage);
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
 		clearListViewState('items:server', storage);
-		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).toBeNull();
 	});
 
 	// #215/#255 review: a saved payload is untrusted (a column removed/
@@ -95,9 +130,9 @@ describe('saveListViewState / loadListViewState', () => {
 			const storage = makeMemoryStorage();
 			storage.setItem(
 				'banto.listView.items:server',
-				JSON.stringify({ sort: [validSort], filters: [validFilter] })
+				owned({ sort: [validSort], filters: [validFilter] })
 			);
-			expect(loadListViewState('items:server', undefined, storage)).toEqual({
+			expect(loadListViewState(scope, 'items:server', undefined, storage)).toEqual({
 				sort: [validSort],
 				filters: [validFilter]
 			});
@@ -128,8 +163,8 @@ describe('saveListViewState / loadListViewState', () => {
 			'rejects the WHOLE snapshot for %s (falls back to null -> caller default)',
 			(_label, bad) => {
 				const storage = makeMemoryStorage();
-				storage.setItem('banto.listView.items:server', JSON.stringify(bad));
-				expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+				storage.setItem('banto.listView.items:server', owned(bad));
+				expect(loadListViewState(scope, 'items:server', undefined, storage)).toBeNull();
 			}
 		);
 
@@ -137,9 +172,9 @@ describe('saveListViewState / loadListViewState', () => {
 			const storage = makeMemoryStorage();
 			storage.setItem(
 				'banto.listView.items:server',
-				JSON.stringify({ sort: [], filters: [{ field: 'stock', op: 'eq', value: 0 }] })
+				owned({ sort: [], filters: [{ field: 'stock', op: 'eq', value: 0 }] })
 			);
-			expect(loadListViewState('items:server', undefined, storage)?.filters).toEqual([
+			expect(loadListViewState(scope, 'items:server', undefined, storage)?.filters).toEqual([
 				{ field: 'stock', op: 'eq', value: 0 }
 			]);
 		});
@@ -152,6 +187,7 @@ describe('saveListViewState / loadListViewState', () => {
 		it('drops sort/filter entries for fields outside knownFields, keeping the rest', () => {
 			const storage = makeMemoryStorage();
 			saveListViewState(
+				scope,
 				'items:server',
 				{
 					sort: [
@@ -165,7 +201,7 @@ describe('saveListViewState / loadListViewState', () => {
 				},
 				storage
 			);
-			expect(loadListViewState('items:server', ['price', 'name'], storage)).toEqual({
+			expect(loadListViewState(scope, 'items:server', ['price', 'name'], storage)).toEqual({
 				sort: [{ field: 'price', direction: 'desc' }],
 				filters: [{ field: 'name', op: 'contains', value: 'tea' }]
 			});
@@ -174,6 +210,7 @@ describe('saveListViewState / loadListViewState', () => {
 		it('every field unknown -> empty (default) sort/filters, snapshot still loads', () => {
 			const storage = makeMemoryStorage();
 			saveListViewState(
+				scope,
 				'items:server',
 				{
 					sort: [{ field: 'removedColumn', direction: 'asc' }],
@@ -181,7 +218,7 @@ describe('saveListViewState / loadListViewState', () => {
 				},
 				storage
 			);
-			expect(loadListViewState('items:server', ['price', 'name'], storage)).toEqual({
+			expect(loadListViewState(scope, 'items:server', ['price', 'name'], storage)).toEqual({
 				sort: [],
 				filters: []
 			});
@@ -190,11 +227,12 @@ describe('saveListViewState / loadListViewState', () => {
 		it('omitting knownFields skips the check entirely (unchanged behavior)', () => {
 			const storage = makeMemoryStorage();
 			saveListViewState(
+				scope,
 				'items:server',
 				{ sort: [{ field: 'anyField', direction: 'asc' }], filters: [] },
 				storage
 			);
-			expect(loadListViewState('items:server', undefined, storage)?.sort).toEqual([
+			expect(loadListViewState(scope, 'items:server', undefined, storage)?.sort).toEqual([
 				{ field: 'anyField', direction: 'asc' }
 			]);
 		});
@@ -204,71 +242,71 @@ describe('saveListViewState / loadListViewState', () => {
 describe('saveActiveListMode / loadActiveListMode', () => {
 	it('round-trips the last active mode per resource', () => {
 		const storage = makeMemoryStorage();
-		saveActiveListMode('items', 'client', storage);
-		expect(loadActiveListMode('items', storage)).toBe('client');
+		saveActiveListMode(scope, 'items', 'client', storage);
+		expect(loadActiveListMode(scope, 'items', storage)).toBe('client');
 	});
 
 	it('returns null when nothing was saved', () => {
-		expect(loadActiveListMode('items', makeMemoryStorage())).toBeNull();
+		expect(loadActiveListMode(scope, 'items', makeMemoryStorage())).toBeNull();
 	});
 
 	it('keeps different resources independent', () => {
 		const storage = makeMemoryStorage();
-		saveActiveListMode('items', 'client', storage);
-		saveActiveListMode('widgets', 'server', storage);
-		expect(loadActiveListMode('items', storage)).toBe('client');
-		expect(loadActiveListMode('widgets', storage)).toBe('server');
+		saveActiveListMode(scope, 'items', 'client', storage);
+		saveActiveListMode(scope, 'widgets', 'server', storage);
+		expect(loadActiveListMode(scope, 'items', storage)).toBe('client');
+		expect(loadActiveListMode(scope, 'widgets', storage)).toBe('server');
 	});
 });
 
 describe('saveLastOpenedId / loadLastOpenedId', () => {
 	it('round-trips a string or number id for a resource', () => {
 		const storage = makeMemoryStorage();
-		saveLastOpenedId('items', 42, storage);
-		expect(loadLastOpenedId('items', storage)).toBe(42);
+		saveLastOpenedId(scope, 'items', 42, storage);
+		expect(loadLastOpenedId(scope, 'items', storage)).toBe(42);
 
-		saveLastOpenedId('users', 'abc-123', storage);
-		expect(loadLastOpenedId('users', storage)).toBe('abc-123');
+		saveLastOpenedId(scope, 'users', 'abc-123', storage);
+		expect(loadLastOpenedId(scope, 'users', storage)).toBe('abc-123');
 	});
 
 	it('returns null when nothing was saved', () => {
-		expect(loadLastOpenedId('items', makeMemoryStorage())).toBeNull();
+		expect(loadLastOpenedId(scope, 'items', makeMemoryStorage())).toBeNull();
 	});
 
 	it('saving null clears a previously-saved id', () => {
 		const storage = makeMemoryStorage();
-		saveLastOpenedId('items', 42, storage);
-		saveLastOpenedId('items', null, storage);
-		expect(loadLastOpenedId('items', storage)).toBeNull();
+		saveLastOpenedId(scope, 'items', 42, storage);
+		saveLastOpenedId(scope, 'items', null, storage);
+		expect(loadLastOpenedId(scope, 'items', storage)).toBeNull();
 	});
 
 	it('keeps different resources independent', () => {
 		const storage = makeMemoryStorage();
-		saveLastOpenedId('items', 1, storage);
-		saveLastOpenedId('users', 2, storage);
-		expect(loadLastOpenedId('items', storage)).toBe(1);
-		expect(loadLastOpenedId('users', storage)).toBe(2);
+		saveLastOpenedId(scope, 'items', 1, storage);
+		saveLastOpenedId(scope, 'users', 2, storage);
+		expect(loadLastOpenedId(scope, 'items', storage)).toBe(1);
+		expect(loadLastOpenedId(scope, 'users', storage)).toBe(2);
 	});
 
 	it('is NOT one-shot (unlike takeLastEditedRecord): repeated loads return the same id', () => {
 		const storage = makeMemoryStorage();
-		saveLastOpenedId('items', 42, storage);
-		expect(loadLastOpenedId('items', storage)).toBe(42);
-		expect(loadLastOpenedId('items', storage)).toBe(42);
+		saveLastOpenedId(scope, 'items', 42, storage);
+		expect(loadLastOpenedId(scope, 'items', storage)).toBe(42);
+		expect(loadLastOpenedId(scope, 'items', storage)).toBe(42);
 	});
 
 	it('ignores a malformed payload rather than throwing', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.listView.lastOpened.items', '{not json');
-		expect(loadLastOpenedId('items', storage)).toBeNull();
+		expect(loadLastOpenedId(scope, 'items', storage)).toBeNull();
 	});
 });
 
 describe('noteLastEditedRecord / takeLastEditedRecord', () => {
 	it('round-trips id/values for a resource', () => {
 		const storage = makeMemoryStorage();
-		noteLastEditedRecord('items', { id: 7, values: { name: 'tea', price: 300 } }, storage);
-		expect(takeLastEditedRecord('items', storage)).toEqual({
+		noteLastEditedRecord(scope, 'items', { id: 7, values: { name: 'tea', price: 300 } }, storage);
+		expect(takeLastEditedRecord(scope, 'items', storage)).toEqual({
 			id: 7,
 			values: { name: 'tea', price: 300 }
 		});
@@ -276,27 +314,27 @@ describe('noteLastEditedRecord / takeLastEditedRecord', () => {
 
 	it('is one-shot: a second take (without a new note) returns null', () => {
 		const storage = makeMemoryStorage();
-		noteLastEditedRecord('items', { id: 7, values: { name: 'tea' } }, storage);
-		takeLastEditedRecord('items', storage);
-		expect(takeLastEditedRecord('items', storage)).toBeNull();
+		noteLastEditedRecord(scope, 'items', { id: 7, values: { name: 'tea' } }, storage);
+		takeLastEditedRecord(scope, 'items', storage);
+		expect(takeLastEditedRecord(scope, 'items', storage)).toBeNull();
 	});
 
 	it('returns null when nothing was noted', () => {
-		expect(takeLastEditedRecord('items', makeMemoryStorage())).toBeNull();
+		expect(takeLastEditedRecord(scope, 'items', makeMemoryStorage())).toBeNull();
 	});
 
 	it('keeps different resources independent', () => {
 		const storage = makeMemoryStorage();
-		noteLastEditedRecord('items', { id: 1, values: {} }, storage);
-		noteLastEditedRecord('users', { id: 2, values: {} }, storage);
-		expect(takeLastEditedRecord('items', storage)?.id).toBe(1);
-		expect(takeLastEditedRecord('users', storage)?.id).toBe(2);
+		noteLastEditedRecord(scope, 'items', { id: 1, values: {} }, storage);
+		noteLastEditedRecord(scope, 'users', { id: 2, values: {} }, storage);
+		expect(takeLastEditedRecord(scope, 'items', storage)?.id).toBe(1);
+		expect(takeLastEditedRecord(scope, 'users', storage)?.id).toBe(2);
 	});
 
 	it('ignores a malformed payload rather than throwing', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.listView.lastEdited.items', '{not json');
-		expect(takeLastEditedRecord('items', storage)).toBeNull();
+		expect(takeLastEditedRecord(scope, 'items', storage)).toBeNull();
 	});
 });
 
@@ -305,28 +343,28 @@ describe('noteLastEditedRecord / takeLastEditedRecord', () => {
 describe('clearAllListViewState', () => {
 	it('removes every banto.listView.* key: snapshots (any resource/mode), active mode, last-opened-id, last-edited-record', () => {
 		const storage = makeMemoryStorage();
-		saveListViewState('items:server', { sort: [], filters: [] }, storage);
-		saveListViewState('items:client', { sort: [], filters: [] }, storage);
-		saveListViewState('users:server', { sort: [], filters: [] }, storage);
-		saveActiveListMode('items', 'client', storage);
-		saveLastOpenedId('items', 42, storage);
-		noteLastEditedRecord('items', { id: 1, values: {} }, storage);
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
+		saveListViewState(scope, 'items:client', { sort: [], filters: [] }, storage);
+		saveListViewState(scope, 'users:server', { sort: [], filters: [] }, storage);
+		saveActiveListMode(scope, 'items', 'client', storage);
+		saveLastOpenedId(scope, 'items', 42, storage);
+		noteLastEditedRecord(scope, 'items', { id: 1, values: {} }, storage);
 
 		clearAllListViewState(storage);
 
-		expect(loadListViewState('items:server', undefined, storage)).toBeNull();
-		expect(loadListViewState('items:client', undefined, storage)).toBeNull();
-		expect(loadListViewState('users:server', undefined, storage)).toBeNull();
-		expect(loadActiveListMode('items', storage)).toBeNull();
-		expect(loadLastOpenedId('items', storage)).toBeNull();
-		expect(takeLastEditedRecord('items', storage)).toBeNull();
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).toBeNull();
+		expect(loadListViewState(scope, 'items:client', undefined, storage)).toBeNull();
+		expect(loadListViewState(scope, 'users:server', undefined, storage)).toBeNull();
+		expect(loadActiveListMode(scope, 'items', storage)).toBeNull();
+		expect(loadLastOpenedId(scope, 'items', storage)).toBeNull();
+		expect(takeLastEditedRecord(scope, 'items', storage)).toBeNull();
 	});
 
 	it('never touches keys outside the banto.listView. namespace', () => {
 		const storage = makeMemoryStorage();
 		storage.setItem('banto.auth.token', 'user-a-token');
 		storage.setItem('banto.ui.theme.mode', 'dark');
-		saveListViewState('items:server', { sort: [], filters: [] }, storage);
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
 
 		clearAllListViewState(storage);
 
@@ -343,221 +381,202 @@ describe('clearAllListViewState', () => {
 	});
 });
 
-describe('withListViewStateClearing', () => {
-	// The wrapper's `clearAllListViewState()` calls default to the global
-	// `sessionStorage` (same DI convention as every other function here,
-	// but these specific calls are internal to the wrapper - there's no
-	// `storage` parameter to pass through), so these tests stub the global
-	// for their duration instead.
-	let storage: Storage;
+// Issue #215/#255 4th review (P2 1): the tab's identity can change behind
+// its back (another tab's "Remember me" login, a reload) - state saved for
+// one owner must never be handed to another, whatever path changed it.
+describe('owner matching (#255 4th review)', () => {
+	it('A saves -> B (confirmed by beginSession) restores nothing, from any function', () => {
+		const storage = makeMemoryStorage();
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
+		saveActiveListMode(scope, 'items', 'client', storage);
+		saveLastOpenedId(scope, 'items', 42, storage);
+		noteLastEditedRecord(scope, 'items', { id: 42, values: {} }, storage);
 
-	beforeEach(() => {
-		storage = makeMemoryStorage();
-		vi.stubGlobal('sessionStorage', storage);
+		beginSession(BOB);
+		const bob = currentSessionScope();
+		expect(loadListViewState(bob, 'items:server', undefined, storage)).toBeNull();
+		expect(loadActiveListMode(bob, 'items', storage)).toBeNull();
+		expect(loadLastOpenedId(bob, 'items', storage)).toBeNull();
+		expect(takeLastEditedRecord(bob, 'items', storage)).toBeNull();
 	});
 
+	it('the SAME owner restores its own state, even across a new session generation (reload / re-login)', () => {
+		const storage = makeMemoryStorage();
+		saveListViewState(
+			scope,
+			'items:server',
+			{ sort: [{ field: 'price', direction: 'asc' }], filters: [] },
+			storage
+		);
+		saveLastOpenedId(scope, 'items', 7, storage);
+
+		// Like a page reload: no owner until the guard confirms ALICE again.
+		endSession();
+		beginSession({ ...ALICE });
+		const again = currentSessionScope();
+		expect(again.generation).not.toBe(scope.generation);
+		expect(loadListViewState(again, 'items:server', undefined, storage)?.sort).toEqual([
+			{ field: 'price', direction: 'asc' }
+		]);
+		expect(loadLastOpenedId(again, 'items', storage)).toBe(7);
+	});
+
+	it('a real account whose id is "public" and the synthetic public viewer never share state (#209)', () => {
+		expect(sessionOwnerKey({ id: 'public', name: 'x' })).not.toBe(
+			sessionOwnerKey({ id: 'public', name: 'x', publicViewer: true })
+		);
+		const storage = makeMemoryStorage();
+		beginSession({ id: 'public', name: 'admin named public' });
+		const account = currentSessionScope();
+		saveLastOpenedId(account, 'items', 1, storage);
+
+		beginSession({ id: 'public', name: 'viewer', publicViewer: true });
+		const viewer = currentSessionScope();
+		expect(viewer.generation).not.toBe(account.generation);
+		expect(loadLastOpenedId(viewer, 'items', storage)).toBeNull();
+	});
+
+	it('an entry without an owner envelope (legacy/hand-written) is never restored', () => {
+		const storage = makeMemoryStorage();
+		storage.setItem('banto.listView.items:server', JSON.stringify({ sort: [], filters: [] }));
+		storage.setItem('banto.listView.lastOpened.items', JSON.stringify(42));
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).toBeNull();
+		expect(loadLastOpenedId(scope, 'items', storage)).toBeNull();
+	});
+
+	describe('no confirmed owner: nothing is saved or restored (fail closed)', () => {
+		it.each([
+			['before any beginSession / after endSession', () => endSession()],
+			['identity null (provider cannot say who)', () => beginSession(null)],
+			['identity without an id', () => beginSession({ id: '', name: 'nobody' })]
+		])('%s', (_label, enter) => {
+			const storage = makeMemoryStorage();
+			saveLastOpenedId(scope, 'items', 42, storage);
+			enter();
+			const ownerless = currentSessionScope();
+			expect(ownerless.owner).toBeNull();
+			expect(loadLastOpenedId(ownerless, 'items', storage)).toBeNull();
+
+			saveListViewState(ownerless, 'items:server', { sort: [], filters: [] }, storage);
+			saveLastOpenedId(ownerless, 'users', 1, storage);
+			expect(storage.getItem('banto.listView.items:server')).toBeNull();
+			expect(storage.getItem('banto.listView.lastOpened.users')).toBeNull();
+		});
+	});
+});
+
+// Issue #215/#255 4th review (P2 2): a screen built for one session
+// generation (e.g. a list page SvelteKit kept alive across invalidateAll())
+// must not write its in-memory state back once the session moved on.
+describe('writes from a stale scope are refused (#255 4th review)', () => {
+	it.each([
+		['the session ended', () => endSession()],
+		['the owner changed', () => beginSession(BOB)],
+		[
+			'ended and began again as the SAME owner (new generation)',
+			() => {
+				endSession();
+				beginSession(ALICE);
+			}
+		]
+	])('%s', (_label, move) => {
+		const storage = makeMemoryStorage();
+		const stale = scope;
+		move();
+		expect(isCurrentSessionScope(stale)).toBe(false);
+
+		saveListViewState(
+			stale,
+			'items:server',
+			{ sort: [], filters: [{ field: 'name', op: 'contains', value: 'old search' }] },
+			storage
+		);
+		saveActiveListMode(stale, 'items', 'client', storage);
+		saveLastOpenedId(stale, 'items', 42, storage);
+		noteLastEditedRecord(stale, 'items', { id: 42, values: {} }, storage);
+		expect(storage.length).toBe(0);
+	});
+
+	it("a stale scope neither reads nor consumes the live session's last-edited marker", () => {
+		const storage = makeMemoryStorage();
+		const stale = scope;
+		endSession();
+		beginSession(ALICE);
+		const live = currentSessionScope();
+		noteLastEditedRecord(live, 'items', { id: 3, values: {} }, storage);
+
+		expect(takeLastEditedRecord(stale, 'items', storage)).toBeNull();
+		expect(takeLastEditedRecord(live, 'items', storage)?.id).toBe(3);
+	});
+
+	it('a guard re-run confirming the SAME owner keeps the generation (screens stay writable)', () => {
+		const before = sessionGeneration();
+		beginSession({ ...ALICE });
+		expect(sessionGeneration()).toBe(before);
+		expect(isCurrentSessionScope(scope)).toBe(true);
+	});
+
+	it('currentSessionScope() is a frozen snapshot', () => {
+		expect(Object.isFrozen(scope)).toBe(true);
+	});
+});
+
+// Hygiene on top of the owner check: the GLOBAL sessionStorage is tidied by
+// beginSession (another owner's entries) and endSession (everything).
+describe('beginSession / endSession tidy the global sessionStorage', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
 
-	function makeAuthProvider(overrides: Partial<AuthProvider> = {}): AuthProvider {
-		return {
-			login: async () => ({ success: true }),
-			logout: async () => {},
-			check: async () => true,
-			getIdentity: async () => null,
-			...overrides
-		};
-	}
+	it("beginSession(B) removes A's entries; beginSession(A) again keeps them", () => {
+		const storage = makeMemoryStorage();
+		vi.stubGlobal('sessionStorage', storage);
+		saveLastOpenedId(scope, 'items', 42);
 
-	function primeState(): void {
-		saveListViewState(
-			'items:server',
-			{ sort: [{ field: 'price', direction: 'desc' }], filters: [] },
-			storage
+		beginSession({ ...ALICE });
+		expect(storage.getItem('banto.listView.lastOpened.items')).not.toBeNull();
+
+		beginSession(BOB);
+		expect(storage.getItem('banto.listView.lastOpened.items')).toBeNull();
+	});
+
+	it('endSession removes every entry', () => {
+		const storage = makeMemoryStorage();
+		vi.stubGlobal('sessionStorage', storage);
+		saveLastOpenedId(scope, 'items', 42);
+		endSession();
+		expect(storage.length).toBe(0);
+	});
+});
+
+describe('purgeListViewStateNotOwnedBy', () => {
+	it("keeps only the given owner's entries (and never touches other namespaces)", () => {
+		const storage = makeMemoryStorage();
+		storage.setItem('banto.auth.token', 'token');
+		storage.setItem('banto.listView.items:server', owned({ sort: [], filters: [] }, 'account:bob'));
+		storage.setItem(
+			'banto.listView.items:client',
+			owned({ sort: [], filters: [] }, 'account:alice')
 		);
-		saveLastOpenedId('items', 42, storage);
-	}
+		storage.setItem('banto.listView.lastOpened.items', JSON.stringify(42));
+		storage.setItem('banto.listView.mode.items', '{not json');
 
-	it('logout clears list view state after the underlying logout resolves', async () => {
-		primeState();
-		let logoutCalled = false;
-		const provider = withListViewStateClearing(
-			makeAuthProvider({
-				logout: async () => {
-					logoutCalled = true;
-				}
-			})
+		purgeListViewStateNotOwnedBy('account:alice', storage);
+
+		expect(storage.getItem('banto.listView.items:client')).not.toBeNull();
+		expect(storage.getItem('banto.listView.items:server')).toBeNull();
+		expect(storage.getItem('banto.listView.lastOpened.items')).toBeNull();
+		expect(storage.getItem('banto.listView.mode.items')).toBeNull();
+		expect(storage.getItem('banto.auth.token')).toBe('token');
+	});
+
+	it('owner null drops every entry', () => {
+		const storage = makeMemoryStorage();
+		storage.setItem(
+			'banto.listView.items:client',
+			owned({ sort: [], filters: [] }, 'account:alice')
 		);
-		await provider.logout();
-		expect(logoutCalled).toBe(true);
-		expect(loadLastOpenedId('items', storage)).toBeNull();
-	});
-
-	it('logout clears even when the underlying logout rejects (still "done with this tab")', async () => {
-		primeState();
-		const provider = withListViewStateClearing(
-			makeAuthProvider({
-				logout: async () => {
-					throw new Error('network error');
-				}
-			})
-		);
-		await expect(provider.logout()).rejects.toThrow('network error');
-		expect(loadLastOpenedId('items', storage)).toBeNull();
-	});
-
-	it('a successful login clears the PREVIOUS identity state', async () => {
-		primeState();
-		const provider = withListViewStateClearing(
-			makeAuthProvider({ login: async () => ({ success: true }) })
-		);
-		await provider.login({ username: 'b', password: 'x' });
-		expect(loadLastOpenedId('items', storage)).toBeNull();
-	});
-
-	it('a FAILED login does not clear anything (no identity actually changed)', async () => {
-		primeState();
-		const provider = withListViewStateClearing(
-			makeAuthProvider({ login: async () => ({ success: false, error: 'bad password' }) })
-		);
-		await provider.login({ username: 'a', password: 'wrong' });
-		expect(loadLastOpenedId('items', storage)).toBe(42);
-	});
-
-	it('a successful setup() (first-run account creation) clears', async () => {
-		primeState();
-		const provider = withListViewStateClearing(
-			makeAuthProvider({ setup: async () => ({ success: true }) })
-		);
-		await provider.setup?.({ username: 'admin', password: 'x' });
-		expect(loadLastOpenedId('items', storage)).toBeNull();
-	});
-
-	it('a successful enterPublicViewer() clears', async () => {
-		primeState();
-		const provider = withListViewStateClearing(
-			makeAuthProvider({ enterPublicViewer: async () => true })
-		);
-		await provider.enterPublicViewer?.();
-		expect(loadLastOpenedId('items', storage)).toBeNull();
-	});
-
-	it('a FAILED enterPublicViewer() does not clear', async () => {
-		primeState();
-		const provider = withListViewStateClearing(
-			makeAuthProvider({ enterPublicViewer: async () => false })
-		);
-		await provider.enterPublicViewer?.();
-		expect(loadLastOpenedId('items', storage)).toBe(42);
-	});
-
-	it('other methods (check/getIdentity) pass through unchanged', async () => {
-		const provider = withListViewStateClearing(
-			makeAuthProvider({
-				check: async () => false,
-				getIdentity: async () => ({ id: 'x', name: 'x' })
-			})
-		);
-		await expect(provider.check()).resolves.toBe(false);
-		await expect(provider.getIdentity()).resolves.toEqual({ id: 'x', name: 'x' });
-	});
-
-	it('omits setup/enterPublicViewer on the wrapper when absent on the original (optional methods stay optional)', () => {
-		const provider = withListViewStateClearing(makeAuthProvider());
-		expect(provider.setup).toBeUndefined();
-		expect(provider.enterPublicViewer).toBeUndefined();
-	});
-
-	it('accepts an explicit onTransition callback in place of the clearAllListViewState default', async () => {
-		const onTransition = vi.fn();
-		const provider = withListViewStateClearing(makeAuthProvider(), onTransition);
-		await provider.login({ username: 'a', password: 'x' });
-		await provider.logout();
-		expect(onTransition).toHaveBeenCalledTimes(2);
-	});
-
-	// #255 review (fix 1): `{ ...provider }` only copies OWN enumerable
-	// properties - a class instance's methods live on its PROTOTYPE, so they
-	// were silently dropped and calling them threw. A regression test with an
-	// actual class, not just an object literal.
-	describe('preserves a class-based AuthProvider (fix 1 of #255 review)', () => {
-		class ClassAuthProvider implements AuthProvider {
-			signedIn = false;
-			async login(): Promise<{ success: boolean }> {
-				this.signedIn = true;
-				return { success: true };
-			}
-			async logout(): Promise<void> {
-				this.signedIn = false;
-			}
-			async check(): Promise<boolean> {
-				return this.signedIn;
-			}
-			async getIdentity() {
-				return this.signedIn ? { id: 'a', name: 'a' } : null;
-			}
-		}
-
-		it('prototype methods (check/getIdentity) are callable at all (previously threw)', async () => {
-			const provider = withListViewStateClearing(new ClassAuthProvider());
-			await expect(provider.check()).resolves.toBe(false);
-			await expect(provider.getIdentity()).resolves.toBeNull();
-		});
-
-		it('this-based shared state survives a login -> check round trip through the wrapper', async () => {
-			const provider = withListViewStateClearing(new ClassAuthProvider());
-			await expect(provider.check()).resolves.toBe(false);
-			await provider.login({ username: 'a', password: 'x' });
-			// Before the fix: `login()` (wrapped, delegates to the real
-			// instance) sets `this.signedIn = true` on the REAL instance, but
-			// a naive `{ ...provider }` copy's `check` - invoked as
-			// `wrapper.check()` - runs with `this === wrapper`, which never
-			// got `signedIn` set, so this incorrectly resolved `false`.
-			await expect(provider.check()).resolves.toBe(true);
-			await expect(provider.getIdentity()).resolves.toEqual({ id: 'a', name: 'a' });
-			await provider.logout();
-			await expect(provider.check()).resolves.toBe(false);
-		});
-	});
-
-	// #255 review (fix 1): a plain OBJECT (not a class) whose methods share
-	// state via `this` has the identical failure mode - `login`/`check` here
-	// are two different functions on the same object, not a class's methods,
-	// but the wrapper must still resolve `this` to the real object for both.
-	it('preserves this-based shared state on a plain object AuthProvider (fix 1 of #255 review)', async () => {
-		const rawProvider = {
-			signedIn: false,
-			login: async function (this: { signedIn: boolean }) {
-				this.signedIn = true;
-				return { success: true };
-			},
-			logout: async function (this: { signedIn: boolean }) {
-				this.signedIn = false;
-			},
-			check: async function (this: { signedIn: boolean }) {
-				return this.signedIn;
-			},
-			getIdentity: async () => null
-		};
-		const provider = withListViewStateClearing(rawProvider as unknown as AuthProvider);
-		await expect(provider.check()).resolves.toBe(false);
-		await provider.login({});
-		await expect(provider.check()).resolves.toBe(true);
-	});
-
-	it('an unknown/custom method (not part of AuthProvider) still resolves this to the real provider', async () => {
-		const rawProvider = {
-			login: async () => ({ success: true }),
-			logout: async () => {},
-			check: async () => true,
-			getIdentity: async () => null,
-			label: 'real',
-			whoAmI(this: { label: string }) {
-				return this.label;
-			}
-		};
-		const provider = withListViewStateClearing(rawProvider as unknown as AuthProvider);
-		expect((provider as unknown as { whoAmI(): string }).whoAmI()).toBe('real');
+		purgeListViewStateNotOwnedBy(null, storage);
+		expect(storage.length).toBe(0);
 	});
 });

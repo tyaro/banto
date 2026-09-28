@@ -3,7 +3,8 @@ import { isProviderError } from '../src/errors';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { createTauriAuthProvider } from '../src/providers/tauri';
-import { sessionGeneration } from '../src/registry.svelte';
+import { beginSession } from '../src/sessionLifecycle';
+import { currentSessionScope, isCurrentSessionScope } from '../src/sessionScope.svelte';
 import { resolveProtectedSession } from '../src/sessionGate';
 
 /**
@@ -177,44 +178,52 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 	});
 });
 
-// Issue #215/#255 review (P2): landing on 'login' means no session survives
-// this guard at all - whoever's saved list view state (Issue #215's
-// sort/filters/last-opened-row memory) is in this tab must not carry over to
-// whoever logs in next.
-describe('resolveProtectedSession clears saved list view state (#215/#255)', () => {
-	it("outcome 'login' (viewerPublic OFF): clears and bumps sessionGeneration (fix 2 of #255 review)", async () => {
+// Issue #215/#255 (4th review): once check() CONFIRMED the session is not
+// valid, the previous identity is gone whichever way the guard continues -
+// endSession() runs (new generation, saved list view state dropped) before
+// either the public-viewer entry or the login redirect. A still-valid
+// session is left alone.
+describe('resolveProtectedSession ends the confirmed-invalid session (#215/#255)', () => {
+	function establishedScope() {
+		beginSession({ id: 'alice', name: 'Alice' });
+		const scope = currentSessionScope();
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, sessionStorage);
+		return scope;
+	}
+
+	it("outcome 'login' (viewerPublic OFF): ends the session", async () => {
 		const { fetchFn } = fakeServer({ viewerPublic: false });
 		const auth = createHttpAuthProvider({ fetchFn });
 		sessionStorage.setItem(KEY, 'revoked-token');
-		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
-		const before = sessionGeneration();
+		const scope = establishedScope();
 
 		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
-		expect(loadListViewState('items:server', undefined, sessionStorage)).toBeNull();
-		expect(sessionGeneration()).toBe(before + 1);
+		expect(isCurrentSessionScope(scope)).toBe(false);
+		expect(currentSessionScope().owner).toBeNull();
+		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
 	});
 
-	it("outcome 'session' (still valid): does NOT clear", async () => {
+	it("outcome 'publicViewer': ends the previous session before entering the synthetic one", async () => {
+		const { fetchFn } = fakeServer({ viewerPublic: true });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'revoked-token');
+		const scope = establishedScope();
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
+		expect(isCurrentSessionScope(scope)).toBe(false);
+		expect(currentSessionScope().owner).toBeNull();
+		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
+	});
+
+	it("outcome 'session' (still valid): leaves the session and its state alone", async () => {
 		const { state, fetchFn } = fakeServer({ viewerPublic: false });
 		const auth = createHttpAuthProvider({ fetchFn });
 		sessionStorage.setItem(KEY, 'user-token');
 		state.validTokens.add('user-token');
-		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
+		const scope = establishedScope();
 
 		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
-		expect(loadListViewState('items:server', undefined, sessionStorage)).not.toBeNull();
-	});
-
-	it("outcome 'publicViewer': already cleared by the wrapped enterPublicViewer, not double-handled here", async () => {
-		const { fetchFn } = fakeServer({ viewerPublic: true });
-		const auth = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem(KEY, 'revoked-token');
-		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
-
-		// resolveProtectedSession itself never calls clearAllListViewState for
-		// 'publicViewer' (registry.svelte.ts's initBanto wrapping owns that) -
-		// this only proves the OUTCOME is right; registry.test.ts covers the
-		// actual clearing.
-		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
+		expect(isCurrentSessionScope(scope)).toBe(true);
+		expect(loadListViewState(scope, 'items:server', undefined, sessionStorage)).not.toBeNull();
 	});
 });

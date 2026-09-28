@@ -4,7 +4,7 @@
  * here against real providers.
  */
 import type { AuthProvider } from './provider';
-import { endSession } from './registry.svelte';
+import { endSession } from './sessionLifecycle';
 
 /**
  * How a protected route may proceed:
@@ -28,22 +28,21 @@ export type ProtectedSessionOutcome = 'session' | 'publicViewer' | 'login';
  * caller shows the error and offers a retry; the session resumes once the
  * backend can answer again.
  *
- * Issue #215/#255 review: landing on `'login'` here means no session
- * survives this guard - whatever `sessionStorage` state (Issue #215's list
- * filter/sort/last-opened-row memory, `listViewState.ts`) was left by
- * whoever was last signed in must not carry over to whoever logs in next in
- * this same tab, so `endSession()` (`registry.svelte.ts` - bumps
- * `sessionGeneration()` and clears it) runs right here. `'publicViewer'`
- * doesn't need the same call: `auth.enterPublicViewer` already went through
- * `registry.svelte.ts`'s wrapping, which does the same on a successful entry.
+ * Issue #215/#255 (4th review): once `check()` has CONFIRMED the session is
+ * not valid, whoever was signed in in this tab is gone - whether the guard
+ * then enters a public-viewer session or sends the tab to /login.
+ * `endSession()` (`sessionLifecycle.ts`) runs right here, before either: it
+ * starts a new session generation (screens and in-flight saves of the old
+ * session can no longer write) and drops the saved list view state. The
+ * public-viewer session that may follow is confirmed as a NEW owner by the
+ * app's own `beginSession()` after `getIdentity()`.
  */
 export async function resolveProtectedSession(
 	auth: AuthProvider
 ): Promise<ProtectedSessionOutcome> {
 	if (await auth.check()) return 'session';
+	endSession();
 	const status = await auth.status?.();
 	const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : false;
-	if (entered) return 'publicViewer';
-	endSession();
-	return 'login';
+	return entered ? 'publicViewer' : 'login';
 }

@@ -791,10 +791,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await logout(page);
 			await expect(page).toHaveURL(/\/login$/);
 
-			// Re-login (same account is enough - `endSession()` bumps
-			// `sessionGeneration()` on every successful login regardless of
-			// which identity, so this alone proves the fix without needing a
-			// second account to exist yet at this point in the suite).
+			// Re-login as the SAME account: the owner matches again, so only
+			// the session generation (the logout ended the session; the
+			// detail page's captured scope is stale) and the page's own
+			// teardown keep the old save from writing its marker.
 			await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
 			await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
 			await page.getByRole('button', { name: 'ログイン' }).click();
@@ -1225,8 +1225,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByRole('button', { name: '新規作成' })).toHaveCount(0);
 
 		// The filter, sort and highlighted row the admin left behind must all
-		// be gone - `registry.svelte.ts`'s `initBanto` clears
-		// `banto.listView.*` on every successful login (Issue #215/#255).
+		// be gone - saved list state carries its owner and is only restored
+		// for the identity the guard confirmed (the logout also cleared it;
+		// scenario 6a covers the case where no logout happened in this tab).
 		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
@@ -1246,6 +1247,91 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
 		await expect(page.getByLabel('添付ファイルをアップロード')).toHaveCount(0);
 		await expect(page.getByRole('button', { name: 'アップロード' })).toHaveCount(0);
+	});
+
+	// Issue #215/#255 4th review (P2 1): two tabs of ONE browser share the
+	// "Remember me" token (localStorage) but not their sessionStorage. The
+	// first tab saves the admin's list state; the second tab logs the admin
+	// out and logs in as the viewer with Remember me - an identity change the
+	// first tab's own login/logout never saw. Reloading the first tab then
+	// passes the guard with the VIEWER's valid token, and must not restore
+	// the admin's search term, sort or highlighted row: saved state carries
+	// its owner and is only restored for the identity the guard confirmed.
+	test('6a. items: after another tab switches the Remember me user, reloading this tab does not restore the previous user list state', async ({
+		browser
+	}) => {
+		test.setTimeout(90_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const first = await context.newPage();
+		const second = await context.newPage();
+		try {
+			// Hold the first tab's event stream open without ever answering:
+			// otherwise a reconnect that happens to fall between the second
+			// tab's logout and login would find the token gone, end the first
+			// tab's session and clear its state by itself - this test is about
+			// the case where nothing told the first tab.
+			await first.route('**/api/events', () => {});
+
+			await first.goto('/login');
+			await first.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+			await first.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await first.getByLabel('ログイン状態を保持する（30日間）').check();
+			await first.getByRole('button', { name: 'ログイン' }).click();
+			await expect(first).toHaveURL(/\/dashboard$/);
+
+			await first.goto('/items');
+			await applyColumnFilter(first, '商品名', '茶');
+			const firstGrid = first.getByRole('grid');
+			const firstPrice = firstGrid.getByRole('columnheader', { name: '価格' });
+			await firstPrice.locator('.cell-body').click();
+			await expect(firstPrice).toHaveAttribute('aria-sort', 'ascending');
+			await rowWithText(first, '茶').first().getByRole('link', { name: '開く' }).click();
+			await expect(first).toHaveURL(/\/items\/\d+$/);
+			// Wait for the detail page itself (it records the opened row when it
+			// is created) - the URL changes before it has rendered.
+			await expect(first.getByRole('heading', { name: '商品を編集' })).toBeVisible();
+			await first.goBack();
+			await expect(first).toHaveURL(/\/items$/);
+			await expect(first.locator('.items-row-last-opened')).toHaveCount(1);
+			const savedState = () =>
+				first.evaluate(() =>
+					Object.keys(sessionStorage)
+						.filter((key) => key.startsWith('banto.listView.'))
+						.map((key) => sessionStorage.getItem(key))
+						.join('\n')
+				);
+			expect(await savedState(), 'precondition: the admin state is saved').toContain('茶');
+
+			// The second tab: same shared token, so it opens as the admin; then
+			// the admin logs out there and the viewer logs in with Remember me.
+			await second.goto('/dashboard');
+			await expect(second.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+			await logout(second);
+			await expect(second).toHaveURL(/\/login$/);
+			await second.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await second.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await second.getByLabel('ログイン状態を保持する（30日間）').check();
+			await second.getByRole('button', { name: 'ログイン' }).click();
+			await expect(second).toHaveURL(/\/dashboard$/);
+
+			// The first tab still holds the admin's state in its own
+			// sessionStorage; reloading passes the guard as the viewer.
+			await first.reload();
+			await expect(first).toHaveURL(/\/items$/);
+			await expect(firstGrid).toBeVisible();
+			await expect(first.getByRole('button', { name: '新規作成' })).toHaveCount(0);
+
+			await first.getByRole('button', { name: '商品名の絞り込み' }).click();
+			await expect(
+				first.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
+			).toHaveValue('');
+			await first.keyboard.press('Escape');
+			await expect(firstPrice).toHaveAttribute('aria-sort', 'none');
+			await expect(first.locator('.items-row-last-opened')).toHaveCount(0);
+			expect(await savedState(), "the admin's search term is gone").not.toContain('茶');
+		} finally {
+			await context.close();
+		}
 	});
 
 	test('7. admin: audit log shows the login and items records', async () => {

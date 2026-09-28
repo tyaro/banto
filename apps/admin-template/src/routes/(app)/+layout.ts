@@ -3,6 +3,7 @@ import { base } from '$app/paths';
 import {
 	getAuthProvider,
 	resolveProtectedSession,
+	sessionGeneration,
 	type ProtectedSessionOutcome
 } from '@banto/admin-core';
 import * as m from '$lib/paraglide/messages';
@@ -78,4 +79,10 @@ export async function load({ url }) {
 	// rides the same path with its own key.
 	void settings.syncFromProvider();
 	void syncLocaleFromProvider();
+
+	// Issue #215/#255: the session generation this load confirmed (after
+	// `sessionStore.load()`'s `beginSession`). `+layout.svelte` renders the
+	// page only while it is still the live generation and rebuilds the page
+	// when it changes - see the comment there.
+	return { sessionGeneration: sessionGeneration() };
 }

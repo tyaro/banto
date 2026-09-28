@@ -28,9 +28,7 @@ export {
 	getAuthProvider,
 	getResource,
 	listResources,
-	notify,
-	sessionGeneration,
-	endSession
+	notify
 } from './registry.svelte';
 
 export { onInvalidate, invalidate } from './invalidate';
@@ -118,6 +116,15 @@ export {
 	saveLastOpenedId,
 	loadLastOpenedId,
 	noteLastEditedRecord,
-	takeLastEditedRecord,
-	withListViewStateClearing
+	takeLastEditedRecord
 } from './listViewState';
+
+export type { SessionScope } from './sessionScope.svelte';
+export {
+	currentSessionScope,
+	isCurrentSessionScope,
+	isSessionEstablished,
+	sessionGeneration,
+	sessionOwnerKey
+} from './sessionScope.svelte';
+export { beginSession, endSession } from './sessionLifecycle';

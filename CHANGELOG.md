@@ -26,95 +26,62 @@
   絞り込み・並び順・直前に開いた行を復元する（#215）。一覧を絞り込んで
   複数行を順に確認・修正する操作で、1件保存するたびに一覧条件が
   リセットされ作業対象を探し直す必要があった。
-  **派生アプリへの影響**: `@banto/admin-core` に新規 API
-  `saveListViewState`/`loadListViewState`/`clearListViewState`
-  （sort/filters/groupBy をキー文字列単位でセッション保持）、
-  `saveActiveListMode`/`loadActiveListMode`（複数モードを持つ一覧の
-  直近モード）、`saveLastOpenedId`/`loadLastOpenedId`（リソース単位の
-  「直前に開いた行」マーカー）、`noteLastEditedRecord`/
-  `takeLastEditedRecord`（保存直後の行が現在の絞り込み条件から外れて
-  いないかを判定するための一度きりのマーカー）を追加。いずれも
-  `sessionStorage` バックエンドで同一タブ・同一セッションの間だけ有効
-  （タブを閉じると消える。列設定の保存は対象外 — #168 の範囲）。
-  自前の一覧画面を持つ派生アプリは、GridState の sort/filters/groupBy を
-  これらの API で保存・復元し、詳細画面の mount 時に
-  `saveLastOpenedId(resource, id)` を呼ぶことで同じ挙動を得られる
-  （admin-template の `items` 一覧が参照実装）。
-  - `packages/admin-core/src/listViewState.ts`（新規）+
-    `packages/admin-core/tests/listViewState.test.ts`（vitest 21件）。
-  - `apps/admin-template`: items 一覧（クライアント/サーバー両モード）に
-    配線。編集結果が絞り込み条件から外れた場合はフィルタを解除せず、
-    「商品 #{id} は現在の絞り込み条件に当てはまりません」と説明する通知を
-    表示（`items.filterExcludedNotice`）。直前に開いた行は
+  - 保存先は `sessionStorage`（同一タブ・同一セッションの作業文脈。列設定の
+    保存は対象外 — #168 の範囲）。各エントリは**所有者（ログイン中の
+    アカウント、または公開閲覧者）付き**で書き、**確定した今の所有者と
+    一致するときだけ**復元する。別タブで Remember me のユーザーが切り替わった
+    後の再読み込み・公開閲覧者への自動移行・同じタブでの別ユーザーの
+    ログインのいずれでも、前のユーザーの検索語・並び順・強調行は出ない。
+    identity が取れない（`getIdentity()` が `null`・id なし）ときは保存も
+    復元もしない（fail closed）。
+  - 画面や保存中の処理は、作られたときの**セッションの世代**を持ち、世代が
+    変わった後（セッション終了・所有者の変更。同じアカウントの再ログインも
+    新しい世代）は書き込めない。admin-template の `(app)/+layout.svelte` は
+    世代が変わるとページを作り直す（SvelteKit は load を再実行してもページを
+    作り直さないため、旧セッションの GridState・強調行・通知・未保存の入力が
+    次のセッションに残っていた）。
+  - 編集結果が絞り込み条件から外れた場合はフィルタを解除せず、「商品 #{id}
+    は現在の絞り込み条件に当てはまりません」と説明する通知を表示
+    （`items.filterExcludedNotice`）。クライアントモードの判定はグリッドと
+    同じ派生行（`itemRow.ts` の `toItemRow()`）で行う。直前に開いた行は
     `rowClass`（`items-row-last-opened`）で強調表示。
-  - 副次的なバグ修正: `ItemsServerGrid`（サーバーモード）は
-    `GridState` を外部から事前設定しても、内部の
-    `WindowedListResource.params` が既定値 `{ sort: [], filters: [] }`
-    のまま最初のフェッチを行っていた（ヘッダー操作を経由しない限り
-    同期されない）ため、復元した並び替え・絞り込みが見た目には
-    反映されつつ実際のフェッチには効いていなかった。マウント時に
-    `windowed.setParams()` で初期値を同期する。
-  - E2E: `e2e/tests/smoke.spec.ts` シナリオ 3c
-    （絞り込み・並び替え→詳細→保存→一覧で状態が残ること、および
-    絞り込み条件から外れた場合の通知）。users/audit-log は詳細を別
-    ルートに持たず本 issue の往復パターンに該当しないため対象外
-    （調査済み・別 issue 化は不要と判断）。
-  - レビュー対応（#255）: `sessionStorage` はタブ寿命であって
-    ログイン中の識別情報に紐付かないため、同一タブで別ユーザーがログイン
-    すると前のユーザーの絞り込み・並び順・直前に開いた行が引き継がれて
-    しまう問題を修正。`@banto/admin-core` の認証まわりの3箇所
-    （`initBanto` が `AuthProvider` に施す `login`/`setup`/
-    `enterPublicViewer` 成功時・`logout`のラップ、
-    `resolveProtectedSession` の `'login'` 判定、`confirmSessionEnded` の
-    セッション失効確定時）で新規 `clearAllListViewState()` を自動的に
-    呼ぶ設計とし、派生アプリ側の追加対応を不要にした（既存の
-    `initBanto`/`resolveProtectedSession`/`onSessionEnded` 統合をそのまま
-    使っていれば効く）。公開閲覧者（public viewer）セッションへの遷移も
-    同じ経路（`enterPublicViewer`）でクリアする。新規 API
-    `clearAllListViewState`/`withListViewStateClearing` を追加。
-    また `loadListViewState` に任意引数 `knownFields` を追加し、画面の
-    現在の列定義に無い `field` を持つ sort/filter エントリを個別に破棄
-    できるようにした（列の削除・改名を跨いだ場合の保険）。`isSnapshot`
-    の検証も配列の有無だけでなく各要素の形（`field`/`direction`/`op`/
-    `value`）まで見るよう強化 — 壊れたペイロードは丸ごと既定状態に
-    フォールバックする。テストはこの PR のレビューで
-    `packages/admin-core/tests/{listViewState,registry,sessionGate,
-sessionEnded}.test.ts` に追加、E2E はシナリオ6を拡張
-    （admin が絞り込み・並び替え・行を開いた直後にログアウトし、
-    別ユーザー（viewer）でログインしても一覧が既定状態であることを確認。
-    実装を戻すと落ちることも確認済み）。
-  - オーナーレビュー対応（#255 再レビュー、P2×3）:
-    1. `withListViewStateClearing` が `{ ...provider }` で `AuthProvider` を
-       複製していたため、クラス実装のプロトタイプメソッド（`check`/
-       `getIdentity` 等）が欠落して呼び出し時に例外になり、`this` で状態を
-       共有する実装（`login()` が `this.signedIn = true` にし `check()` が
-       それを読む、等）も壊れていた。`Proxy` + `Reflect.get`/`.bind(target)`
-       に置き換え、元の `provider` を receiver として全メソッド（既知・
-       未知問わず）に委譲するよう修正。
-    2. 詳細画面の保存中にログアウト→別ユーザーでログインが完了したあと
-       保存応答が届くと、前のユーザーの行が `lastEdited` マーカーとして
-       書き戻されてしまう問題を修正。`@banto/admin-core` に新規
-       `sessionGeneration()`/`endSession()` を追加（ログイン・ログアウト・
-       セッション失効確定・ガードでの未ログイン判定のすべてでカウンタを
-       進める）。保存開始時に取得したカウンタと保存完了時のカウンタが
-       食い違う場合、またはページが破棄済みの場合はマーカーを書かない。
-    3. クライアントモードの絞り込み除外判定が、グリッドが実際に描画・
-       絞り込みに使う派生行（`toItemRow()` でカテゴリを付与した行）では
-       なく保存結果の生の値で判定していたため、カテゴリで絞り込んだまま
-       別フィールドだけを保存すると、実際には表示され続けている行に
-       誤って除外通知が出ていた。`toItemRow()` を
-       `routes/(app)/items/itemRow.ts`（新規）に切り出し、一覧側と
-       `ItemsClientGrid.svelte` の双方で共有するよう修正。
-    - テスト: `withListViewStateClearing` にクラスベース実装・`this` 共有
-      実装の回帰テストを追加。`sessionGeneration`/`endSession` の単体
-      テストを追加。E2E に新規シナリオ 3d（ログアウト→再ログイン後に
-      届いた保存応答でマーカーが復活しないこと。実際の検証では、実サーバー
-      がログアウト時にトークンを失効させるため保存応答は常に401になり
-      修正の有無で差が出ないことが判明したため、`route.fulfill` で成功
-      応答を直接返すよう組み直した）・3e（クライアントモードでカテゴリ
-      絞り込み中に別フィールドのみ保存しても行が表示され続け、誤通知が
-      出ないこと）を追加。いずれも実装を戻すと期待どおり落ちることを
-      確認済み。
+  - 副次的なバグ修正: `ItemsServerGrid`（サーバーモード）は `GridState` を
+    外部から事前設定しても `WindowedListResource.params` が既定値のまま最初の
+    取得を行っていたため、復元した条件が取得に効いていなかった。マウント時に
+    `windowed.setParams()` で同期する。
+  - **派生アプリへの影響（API の追加のみ。既存 API の変更・削除なし）**:
+    `@banto/admin-core` に次を追加。
+    - 一覧状態: `saveListViewState`/`loadListViewState`/`clearListViewState`/
+      `clearAllListViewState`、`saveActiveListMode`/`loadActiveListMode`、
+      `saveLastOpenedId`/`loadLastOpenedId`、`noteLastEditedRecord`/
+      `takeLastEditedRecord`、型 `ListViewSnapshot`/`LastEditedRecord`。
+      `clear*` 以外は**第1引数に `SessionScope` を取る**。
+    - セッションの所有者と世代: `beginSession(identity)`/`endSession()`、
+      `currentSessionScope()`/`isCurrentSessionScope(scope)`/
+      `sessionGeneration()`/`isSessionEstablished()`/`sessionOwnerKey()`、
+      型 `SessionScope`。
+    - `resolveProtectedSession` と `confirmSessionEnded` は、セッションが
+      無効と**確定した**ときに `endSession()` を呼ぶようになった（戻り値・
+      通知は従来どおり）。`initBanto` は `AuthProvider` を**ラップしない**
+      （`getAuthProvider()` は渡したオブジェクトそのものを返す）。
+    - 一覧状態を使う派生アプリは、ガードで identity を取った直後に
+      `beginSession(identity)`、ログアウト成功後に `endSession()` を呼び、
+      一覧・詳細ページは生成時に `currentSessionScope()` を取って各 API に
+      渡す。画面の作り直しは `(app)/+layout.ts`/`+layout.svelte` の配線を
+      写す。手順は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)
+      「一覧の絞り込み・並び順の保持」。`beginSession` を呼ばないアプリでは
+      一覧状態は保存も復元もされない（安全側に倒れる）。
+  - テスト: `packages/admin-core/tests/listViewState.test.ts`（所有者の照合・
+    古い世代からの書き込み拒否・形の検証ほか）、`registry.test.ts`（凍結した・
+    クラスの・`this` を共有する `AuthProvider` をそのまま保持）、
+    `sessionGate.test.ts`/`sessionEnded.test.ts`。E2E はシナリオ 3c〜3e・6・
+    6a（同じブラウザの2タブで Remember me のユーザーを切り替え、元のタブを
+    再読み込み）と公開閲覧シナリオ 7（失効 → 公開閲覧者 → 並べ替え → 往復）。
+  - 経緯: レビュー 2〜3 回目の対応では認証の各経路（`AuthProvider` の
+    `Proxy` ラップ・ガード・失効確定）で**消す**方式だったが、経路の見落とし
+    （別タブでの切り替え・作り直されない画面からの再保存）と凍結した
+    `AuthProvider` での `TypeError` が続いたため、4 回目で上記の
+    **所有者で照合する**方式に切り替えた（#255）。
 - fix(admin-core, banto-admin-services, banto-server, admin-template): 監査ログ画面の
   縮小コピー（`AuditLogWindow`）に残っていた #243 と同じ欠陥を直し、ブロックの合間の
   行の増減で重複・欠落しないよう**境界（`asOfId`）付きのブロック読み込み**を入れる

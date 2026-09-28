@@ -7,11 +7,11 @@
 	import type { FormSchema } from '@banto/forms';
 	import {
 		createFormResource,
+		currentSessionScope,
 		getResource,
 		isProviderError,
 		noteLastEditedRecord,
-		saveLastOpenedId,
-		sessionGeneration
+		saveLastOpenedId
 	} from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
@@ -64,7 +64,13 @@
 	// `formResource.load()` confirms the record still exists - a stale
 	// marker pointing at a since-deleted row is harmless (no row to
 	// highlight).
-	if (idValid) saveLastOpenedId(resource.name, parsedId);
+	//
+	// Issue #215/#255 (4th review): `scope` is the session this page was
+	// built for - the marker is saved for its owner only, and the save
+	// handler below passes the SAME scope, so a response that arrives after
+	// the session ended (or ended and began again) writes nothing.
+	const scope = currentSessionScope();
+	if (idValid) saveLastOpenedId(scope, resource.name, parsedId);
 
 	const formResource = idValid ? createFormResource(resource.name, parsedId) : null;
 	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
@@ -85,9 +91,9 @@
 	// while it was in flight. `guard.canAutoNavigate` only decides whether
 	// `goto()` below runs; it does nothing to stop `noteLastEditedRecord`
 	// from writing a marker that outlives this page either way. `destroyed`
-	// covers "the user moved on" in general; `sessionGeneration()` covers
-	// the specific case where whoever's marker this would be is no longer
-	// signed in at all.
+	// covers "the user moved on" in general; `scope` (above) covers the case
+	// where the session this page was built for has ended - even if the same
+	// account has signed in again since (a new session generation).
 	let destroyed = false;
 	onDestroy(() => {
 		destroyed = true;
@@ -125,21 +131,18 @@
 		// items_update/PUT gets `BantoError::Forbidden`) - this guard just
 		// avoids a pointless round trip.
 		if (!formResource || !canWrite) return;
-		const startedAtGeneration = sessionGeneration();
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			// Issue #215/#255 review (fix 2): only write the marker if this
-			// tab's session is still the one that started this save AND this
-			// page hasn't been torn down since. Without the generation check,
-			// a reproducible sequence - user A's save is held in flight, A
-			// logs out, B logs in (both `endSession()` calls run and clear
-			// A's state), THEN A's save response finally arrives - would
-			// resurrect A's row under B's now-active session, defeating the
-			// very clearing #255's fix 2 review targets. `result.row` is the
-			// server-confirmed row; `parsedId` is included too since some
-			// DataProviders' create/update responses don't echo `id` back.
-			if (!destroyed && sessionGeneration() === startedAtGeneration) {
-				noteLastEditedRecord(resource.name, {
+			// Issue #215/#255 review: only write the marker if this page
+			// hasn't been torn down since AND its session is still the live
+			// one (`noteLastEditedRecord` refuses a stale `scope` itself).
+			// Otherwise user A's save held in flight across a logout and the
+			// next login (B, or A again) would leave A's row as the marker
+			// of the new session. `result.row` is the server-confirmed row;
+			// `parsedId` is included too since some DataProviders'
+			// create/update responses don't echo `id` back.
+			if (!destroyed) {
+				noteLastEditedRecord(scope, resource.name, {
 					id: parsedId,
 					values: { id: parsedId, ...(result.row as Record<string, unknown>) }
 				});

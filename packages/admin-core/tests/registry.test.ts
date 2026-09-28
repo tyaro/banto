@@ -1,13 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-	endSession,
 	getAuthProvider,
 	getDataProvider,
 	getResource,
 	initBanto,
 	listResources,
-	notify,
-	sessionGeneration
+	notify
 } from '../src/registry.svelte';
 import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
 
@@ -35,7 +33,7 @@ describe('registry', () => {
 		expect(() => getAuthProvider()).toThrow(/initBanto/);
 	});
 
-	it('registers providers/resources and exposes them', async () => {
+	it('registers providers/resources and exposes them', () => {
 		const { dataProvider, authProvider } = makeProviders();
 		initBanto({
 			dataProvider,
@@ -44,86 +42,83 @@ describe('registry', () => {
 		});
 
 		expect(getDataProvider()).toBe(dataProvider);
-		// NOT `.toBe(authProvider)` (#215/#255 review): `initBanto` wraps the
-		// given AuthProvider in a `Proxy` (`withListViewStateClearing`,
-		// `listViewState.ts`) so `logout`/`login`/`setup`/`enterPublicViewer`
-		// also end the session (`registry.svelte.ts`'s `endSession`) -
-		// `getAuthProvider()` therefore returns that proxy, not the exact
-		// object passed in. Un-overridden methods are rebound
-		// (`value.bind(target)`, fix 1 of the #255 review) so a NEW function
-		// object comes back on every access too - `.check`/`.getIdentity`
-		// are therefore behavior-equivalent, not reference-equal. Behavior is
-		// what a caller can rely on; see `listViewState.test.ts`'s
-		// `withListViewStateClearing` suite (including a class-based
-		// `AuthProvider` and one sharing state via `this`) for the wrapper's
-		// full contract.
-		expect(getAuthProvider()).not.toBe(authProvider);
-		await expect(getAuthProvider().check()).resolves.toBe(true);
-		await expect(getAuthProvider().getIdentity()).resolves.toBeNull();
+		expect(getAuthProvider()).toBe(authProvider);
 		expect(getResource('items').label).toBe('商品');
 		expect(listResources()).toHaveLength(1);
 	});
 
-	it('getAuthProvider().logout() clears saved list view state (Issue #215/#255)', async () => {
-		const { dataProvider, authProvider } = makeProviders();
-		const storage = (() => {
-			const map = new Map<string, string>();
-			return {
-				getItem: (key: string) => map.get(key) ?? null,
-				setItem: (key: string, value: string) => void map.set(key, value),
-				removeItem: (key: string) => void map.delete(key),
-				clear: () => map.clear(),
-				key: (index: number) => Array.from(map.keys())[index] ?? null,
-				get length() {
-					return map.size;
-				}
-			} as Storage;
-		})();
-		vi.stubGlobal('sessionStorage', storage);
-		try {
-			storage.setItem('banto.listView.items:server', JSON.stringify({ sort: [], filters: [] }));
-			initBanto({ dataProvider, authProvider, resources: [] });
-			await getAuthProvider().logout();
-			expect(storage.getItem('banto.listView.items:server')).toBeNull();
-		} finally {
-			vi.unstubAllGlobals();
-		}
-	});
+	// Issue #215/#255 (4th review): initBanto stores the AuthProvider exactly
+	// as given - no wrapper. Earlier rounds of #255 wrapped it (a shallow
+	// copy, then a Proxy) to hook login/logout, which broke class-based
+	// providers, `this`-sharing providers and - via the Proxy invariants -
+	// frozen ones. These pin every shape so a wrapper cannot come back
+	// unnoticed.
+	describe('keeps the AuthProvider as given (#215/#255)', () => {
+		const { dataProvider } = makeProviders();
 
-	// Issue #215/#255 review (fix 2): `sessionGeneration()` is what a caller
-	// (e.g. the items detail page) compares before/after an in-flight
-	// request to detect "the identity changed while this was pending".
-	describe('sessionGeneration / endSession (#215/#255 review, fix 2)', () => {
-		it('endSession() bumps sessionGeneration()', () => {
-			const before = sessionGeneration();
-			endSession();
-			expect(sessionGeneration()).toBe(before + 1);
-		});
-
-		it('a successful login/logout through the wrapped AuthProvider bumps it too', async () => {
-			const { dataProvider, authProvider } = makeProviders();
-			initBanto({ dataProvider, authProvider, resources: [] });
-			const before = sessionGeneration();
-
-			await getAuthProvider().login({ username: 'a', password: 'x' });
-			expect(sessionGeneration()).toBe(before + 1);
-
-			await getAuthProvider().logout();
-			expect(sessionGeneration()).toBe(before + 2);
-		});
-
-		it('a FAILED login does not bump it (no identity actually changed)', async () => {
-			const dataProvider = makeProviders().dataProvider;
-			const authProvider: AuthProvider = {
-				login: async () => ({ success: false, error: 'bad password' }),
+		it('a frozen object provider', async () => {
+			const authProvider: AuthProvider = Object.freeze({
+				login: async () => ({ success: true }),
 				logout: async () => {},
 				check: async () => true,
 				getIdentity: async () => null
+			});
+			initBanto({ dataProvider, authProvider, resources: [] });
+			expect(getAuthProvider()).toBe(authProvider);
+			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await expect(getAuthProvider().logout()).resolves.toBeUndefined();
+		});
+
+		it('a class-based provider (prototype methods, state on `this`)', async () => {
+			class MyAuth implements AuthProvider {
+				private signedIn = false;
+				async login() {
+					this.signedIn = true;
+					return { success: true };
+				}
+				async logout() {
+					this.signedIn = false;
+				}
+				async check() {
+					return this.signedIn;
+				}
+				async getIdentity() {
+					return this.signedIn ? { id: 'alice', name: 'Alice' } : null;
+				}
+			}
+			const authProvider = new MyAuth();
+			initBanto({ dataProvider, authProvider, resources: [] });
+			expect(getAuthProvider()).toBe(authProvider);
+			await getAuthProvider().login({});
+			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await expect(getAuthProvider().getIdentity()).resolves.toEqual({
+				id: 'alice',
+				name: 'Alice'
+			});
+		});
+
+		it('a plain object sharing state through `this`', async () => {
+			const authProvider = {
+				signedIn: false,
+				async login() {
+					this.signedIn = true;
+					return { success: true };
+				},
+				async logout() {
+					this.signedIn = false;
+				},
+				async check() {
+					return this.signedIn;
+				},
+				async getIdentity() {
+					return null;
+				}
 			};
 			initBanto({ dataProvider, authProvider, resources: [] });
-			const before = sessionGeneration();
-			await getAuthProvider().login({ username: 'a', password: 'wrong' });
-			expect(sessionGeneration()).toBe(before);
+			await getAuthProvider().login({});
+			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await getAuthProvider().logout();
+			await expect(getAuthProvider().check()).resolves.toBe(false);
 		});
 	});
 

@@ -14,6 +14,7 @@
 		type GridColumn
 	} from '@banto/grid-svelte';
 	import {
+		currentSessionScope,
 		getDataProvider,
 		getResource,
 		invalidate,
@@ -66,6 +67,16 @@
 	const CLIENT_VIEW_KEY = `${RESOURCE_NAME}:client`;
 	const SERVER_VIEW_KEY = `${RESOURCE_NAME}:server`;
 
+	// Issue #215/#255 (4th review): the session this page instance was built
+	// for. Every list-state read/write below passes it: reads only return
+	// state saved by this scope's owner (another account's - or the public
+	// viewer's - search terms are never restored, however the identity
+	// changed), and writes stop the moment the session ends or changes
+	// owner, so this instance cannot save its (old session's) GridState back
+	// on behalf of the next session. `(app)/+layout.svelte` rebuilds the page
+	// for the new session, which captures a fresh scope.
+	const scope = currentSessionScope();
+
 	// M5 Phase A (spec §4.1, §10): the items page demonstrates both grid data
 	// modes side by side via a toggle. Restored from the last mode the user
 	// had (#215) - without this, `lastOpenedId`/the restored filters of
@@ -74,10 +85,10 @@
 	// default below) regardless. Falls back to サーバー the same as before
 	// #215 when nothing was saved yet (first visit this session).
 	let mode: 'client' | 'server' = $state(
-		loadActiveListMode(RESOURCE_NAME) === 'client' ? 'client' : 'server'
+		loadActiveListMode(scope, RESOURCE_NAME) === 'client' ? 'client' : 'server'
 	);
 	$effect(() => {
-		saveActiveListMode(RESOURCE_NAME, mode);
+		saveActiveListMode(scope, RESOURCE_NAME, mode);
 	});
 
 	const baseColumns: GridColumn<Item>[] = [
@@ -198,7 +209,7 @@
 	// a single field id outside the array `loadListViewState` already checks.
 	// svelte-ignore state_referenced_locally
 	const clientFieldIds = clientColumns.map((column) => column.id);
-	const clientSnapshot = loadListViewState(CLIENT_VIEW_KEY, clientFieldIds);
+	const clientSnapshot = loadListViewState(scope, CLIENT_VIEW_KEY, clientFieldIds);
 	if (clientSnapshot) {
 		clientGridState.sort = clientSnapshot.sort;
 		clientGridState.filters = clientSnapshot.filters;
@@ -208,6 +219,7 @@
 	}
 	// svelte-ignore state_referenced_locally
 	const serverSnapshot = loadListViewState(
+		scope,
 		SERVER_VIEW_KEY,
 		columns.map((column) => column.id)
 	);
@@ -220,14 +232,14 @@
 	// into sessionStorage) and keeps the saved snapshot live even if the user
 	// never leaves this page instance before closing the tab mid-session.
 	$effect(() => {
-		saveListViewState(CLIENT_VIEW_KEY, {
+		saveListViewState(scope, CLIENT_VIEW_KEY, {
 			sort: clientGridState.sort,
 			filters: clientGridState.filters,
 			groupBy: clientGridState.groupBy
 		});
 	});
 	$effect(() => {
-		saveListViewState(SERVER_VIEW_KEY, {
+		saveListViewState(scope, SERVER_VIEW_KEY, {
 			sort: serverGridState.sort,
 			filters: serverGridState.filters
 		});
@@ -250,7 +262,7 @@
 	// enough - the list page never mutates it itself, and a NEW value only
 	// ever matters on a fresh mount of this page (returning from the
 	// detail page always remounts it).
-	const lastOpenedId = loadLastOpenedId(RESOURCE_NAME);
+	const lastOpenedId = loadLastOpenedId(scope, RESOURCE_NAME);
 
 	type GroupByOption = '' | 'category' | 'updatedAt';
 
@@ -283,7 +295,7 @@
 	// finds nothing and leaves `filterExclusionNotice` alone.
 	let filterExclusionNotice: { id: string | number } | null = $state(null);
 	$effect(() => {
-		const record = takeLastEditedRecord(RESOURCE_NAME);
+		const record = takeLastEditedRecord(scope, RESOURCE_NAME);
 		if (!record) return;
 		// #255 review: the CLIENT grid never filters the raw saved row - it
 		// filters `toItemRow(row)` (ItemsClientGrid.svelte, shared via
