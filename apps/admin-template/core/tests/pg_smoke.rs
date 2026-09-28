@@ -485,6 +485,64 @@ async fn audit_snapshot_boundary_on_postgres(audit: &AuditLogService, db: &banto
         .expect("list without a boundary");
     assert_eq!(old.total_count, fresh.total_count);
     assert_eq!(old.rows, fresh.rows);
+
+    // Issue #248 review: a row with a lower id committing late (+1) and a
+    // prune of the same size (-1) leave the pinned count unchanged while the
+    // set changed - the block after the edge repeats a row. Reproduced with a
+    // real open transaction: IDENTITY hands out ids outside transactions, so
+    // the row inserted in `late` gets a lower id than the one committed
+    // after it. Only the deletion epoch tells the two reads apart.
+    let by_id_desc = |offset: u64| ListParams {
+        pagination: Some(Pagination { offset, limit: 2 }),
+        sort: vec![SortState {
+            field: "id".to_string(),
+            direction: SortDirection::Desc,
+        }],
+        ..Default::default()
+    };
+    let mut late = pool.begin().await.expect("begin the late writer");
+    sqlx::query(
+        "INSERT INTO audit_log (action, resource, origin) VALUES ('create', 'items', 'rest')",
+    )
+    .execute(&mut *late)
+    .await
+    .expect("insert in the late transaction");
+    record(1).await;
+
+    let first = audit
+        .list_as_of(by_id_desc(0), None)
+        .await
+        .expect("first block before the late commit");
+    let before = audit
+        .list(ListParams::default())
+        .await
+        .expect("count before the late commit")
+        .total_count;
+    assert_eq!(first.total_count, before);
+
+    late.commit().await.expect("the late writer commits");
+    let pruned = audit
+        .prune(None, Some(before as i64))
+        .await
+        .expect("another tab's unbounded read prunes");
+    assert_eq!(pruned, 1);
+
+    let second = audit
+        .list_as_of(by_id_desc(2), Some(first.as_of_id))
+        .await
+        .expect("second block after the late commit and the prune");
+    assert_eq!(
+        second.total_count, first.total_count,
+        "the count alone cannot see the change"
+    );
+    assert_eq!(
+        second.rows[0].id, first.rows[1].id,
+        "the edge row repeats: the set shifted"
+    );
+    assert_ne!(
+        second.deletion_epoch, first.deletion_epoch,
+        "the deletion epoch catches it"
+    );
 }
 
 // Issue #207 / roadmap M10: keep this in the existing smoke test so no other

@@ -38,9 +38,12 @@ interface Call {
 	reject: (reason: unknown) => void;
 }
 
-function createServer(initial: number) {
+function createServer(initial: number, { epoch = true }: { epoch?: boolean } = {}) {
 	let ids = Array.from({ length: initial }, (_, i) => i + 1);
 	let nextId = initial + 1;
+	// Ids handed out but not committed yet (a concurrent writer, PostgreSQL).
+	const pending = new Set<number>();
+	let deletionEpoch = 0;
 	const calls: Call[] = [];
 
 	const fetcher = vi.fn(
@@ -52,17 +55,19 @@ function createServer(initial: number) {
 
 	/** The server's answer to `request` against the data as it is now. */
 	function respond(request: SnapshotListRequest): SnapshotListResult<Row> {
-		const boundary = request.asOfId ?? (ids.length > 0 ? Math.max(...ids) : 0);
+		const visible = ids.filter((id) => !pending.has(id));
+		const boundary = request.asOfId ?? (visible.length > 0 ? Math.max(...visible) : 0);
 		const minId = request.filters.find((f) => f.field === 'id' && f.op === 'gt')?.value as
 			number | undefined;
 		const set = ids
-			.filter((id) => id <= boundary && (minId === undefined || id > minId))
+			.filter((id) => !pending.has(id) && id <= boundary && (minId === undefined || id > minId))
 			.sort((a, b) => b - a);
 		const { offset, limit } = request.pagination;
 		return {
 			rows: set.slice(offset, offset + limit).map((id) => ({ id })),
 			totalCount: set.length,
-			asOfId: boundary
+			asOfId: boundary,
+			...(epoch ? { deletionEpoch } : {})
 		};
 	}
 
@@ -80,9 +85,24 @@ function createServer(initial: number) {
 		add(n: number): void {
 			for (let i = 0; i < n; i++) ids.push(nextId++);
 		},
-		/** Retention prune: delete the `n` oldest entries. */
+		/** Retention prune: delete the `n` oldest committed entries. */
 		pruneOldest(n: number): void {
-			ids = [...ids].sort((a, b) => a - b).slice(n);
+			const oldest = ids
+				.filter((id) => !pending.has(id))
+				.sort((a, b) => a - b)
+				.slice(0, n);
+			ids = ids.filter((id) => !oldest.includes(id));
+			if (oldest.length > 0) deletionEpoch++;
+		},
+		/** A writer takes the next id but has not committed. */
+		begin(): number {
+			const id = nextId++;
+			ids.push(id);
+			pending.add(id);
+			return id;
+		},
+		commit(id: number): void {
+			pending.delete(id);
 		}
 	};
 }
@@ -206,6 +226,64 @@ describe('SnapshotListResource: the boundary', () => {
 		await tick();
 		expect(list.failedBlocks).toEqual([]);
 		expect(loadedIds(list.rows).slice(10, 20)).toEqual(descending(15, 10));
+	});
+
+	it.each([
+		['with a deletion epoch: expires', true],
+		['without one (count only): misses it', false]
+	])('a late commit offset by a prune of the same size, %s', async (_name, epoch) => {
+		// Issue #248 review: ids 1..3 committed, id 4 taken but not
+		// committed, id 5 committed after it.
+		const server = createServer(3, { epoch });
+		const late = server.begin();
+		server.add(1);
+		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: 2 });
+		list.ensureRange(0, 2);
+		server.answer(0);
+		await tick();
+		expect(loadedIds(list.rows)).toEqual([5, 3, null, null]);
+
+		// Id 4 commits (+1), another tab's read prunes id 1 (-1).
+		server.commit(late);
+		server.pruneOldest(1);
+		list.ensureRange(2, 4);
+		server.answer(1);
+		await tick();
+
+		expect(list.totalCount).toBe(4);
+		if (epoch) {
+			expect(list.expired).toBe(true);
+			expect(loadedIds(list.rows)).toEqual([5, 3, null, null]);
+		} else {
+			// What the count alone lets through: row 3 twice.
+			expect(list.expired).toBe(false);
+			expect(loadedIds(list.rows)).toEqual([5, 3, 3, 2]);
+		}
+	});
+
+	it('expires on a changed deletion epoch alone, and a late commit alone on the count', async () => {
+		const server = createServer(6);
+		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: 2 });
+		list.ensureRange(0, 2);
+		server.answer(0);
+		await tick();
+		list.ensureRange(2, 4);
+		server.answer(1, { deletionEpoch: 7 });
+		await tick();
+		expect(list.expired).toBe(true);
+
+		const lateServer = createServer(3);
+		const late = lateServer.begin();
+		lateServer.add(1);
+		const lateList = createSnapshotListResource<Row>(lateServer.fetcher, { blockSize: 2 });
+		lateList.ensureRange(0, 2);
+		lateServer.answer(0);
+		await tick();
+		lateServer.commit(late);
+		lateList.ensureRange(2, 4);
+		lateServer.answer(1);
+		await tick();
+		expect(lateList.expired).toBe(true);
 	});
 
 	it('records an answer with another boundary as an error, not rows', async () => {
@@ -466,7 +544,8 @@ describe('SnapshotListResource: misbehaving fetchers', () => {
 		['a fractional count', { totalCount: 1.5 }],
 		['rows that are not an array', { rows: 'nope' as unknown as Row[] }],
 		['a missing boundary', { asOfId: undefined as unknown as number }],
-		['a boundary that is not a safe integer', { asOfId: 2 ** 53 }]
+		['a boundary that is not a safe integer', { asOfId: 2 ** 53 }],
+		['a deletion epoch that is not a safe integer', { deletionEpoch: 1.5 }]
 	])('records %s as malformed', async (_name, override) => {
 		const server = createServer(5);
 		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: BLOCK });

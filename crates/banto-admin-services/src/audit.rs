@@ -24,7 +24,7 @@
 //! every call site instead.
 
 use banto_core::{BantoError, ListParams, ListResult};
-use banto_storage::{ColumnMap, Db, Dialect};
+use banto_storage::{ColumnMap, Db};
 use serde::Serialize;
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -58,12 +58,31 @@ pub struct AuditLogEntry {
 /// Both `rows` and `total_count` are taken from the rows with
 /// `id <= as_of_id`. On an empty table `as_of_id` is `0` (ids start at 1, so
 /// it is a boundary containing no row), never `null`.
+///
+/// `deletion_epoch` (`deletionEpoch`, Issue #248 review) is the retention
+/// prune's counter ([`DELETION_EPOCH_KEY`]) read in the same transaction:
+/// it advances with every prune that deleted rows, in the prune's own
+/// transaction. A viewer compares it (and the count) with its generation's
+/// first answer - see [`AuditLogService::list_as_of`] for why the count
+/// alone is not enough.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditLogList {
     pub rows: Vec<AuditLogEntry>,
     pub total_count: u64,
     pub as_of_id: i64,
+    pub deletion_epoch: i64,
+}
+
+/// `settings` key of the retention prune's deletion epoch (Issue #248
+/// review, [`AuditLogList::deletion_epoch`]). Absent (never pruned) or not an
+/// integer reads as `0`. Lives in `settings` (a Banto base table every
+/// adopter has, conventions §11) so no migration is needed.
+pub const DELETION_EPOCH_KEY: &str = "audit.deletion_epoch";
+
+/// The stored epoch text as a number (`0` when absent or not an integer).
+fn parse_epoch(value: Option<String>) -> i64 {
+    value.and_then(|v| v.trim().parse().ok()).unwrap_or(0)
 }
 
 /// One record to write to the `audit_log` table (spec M14). Borrowed string
@@ -235,19 +254,26 @@ impl AuditLogService {
     /// `IDENTITY`; migration `0005_audit_log.sql`) and on audit rows never
     /// being updated.
     ///
-    /// The boundary does **not** cover deletions: retention pruning
-    /// ([`AuditLogService::prune`]) can remove rows inside the boundary and
-    /// shift `OFFSET`. The viewer detects that as "the same boundary and
-    /// the same filters now count a different total" and stops reading the
-    /// generation (the count can only change through a deletion - or, on
-    /// PostgreSQL, a writer that allocated a lower `id` committing late,
-    /// which the same check catches). The callers skip the opportunistic
-    /// prune for bounded reads for the same reason (see the REST route /
-    /// Tauri command).
+    /// The boundary does **not** keep the set fixed by itself: retention
+    /// pruning ([`AuditLogService::prune`]) removes rows inside it, and on
+    /// PostgreSQL a writer that allocated a lower `id` can commit after the
+    /// boundary was picked and add a row inside it (SQLite writes one at a
+    /// time, so there a row below the boundary is always committed before a
+    /// higher id exists). Either shifts `OFFSET`. The viewer stops reading
+    /// the generation when an answer differs from the generation's first in
+    /// **the count or the deletion epoch** ([`AuditLogList::deletion_epoch`]):
+    /// a late commit alone raises the count, a prune alone lowers the count
+    /// and advances the epoch, and a late commit plus an equally large prune
+    /// (the count is unchanged) still advances the epoch. The count alone
+    /// would miss that last case (a duplicated row, no expiry, Issue #248
+    /// review). Rows are never deleted outside `prune` (restoring a backup
+    /// replaces the whole database and restarts the app). The callers also
+    /// skip the opportunistic prune for bounded reads (see the REST route /
+    /// Tauri command) so a page's own reads do not expire it.
     ///
     /// **The boundary, the rows and the count come from one read
-    /// transaction**, so one answer never mixes two points in time (the
-    /// count comparison above depends on it). PostgreSQL runs it as
+    /// transaction** together with the deletion epoch, so one answer never
+    /// mixes two points in time (the comparisons above depend on it). PostgreSQL runs it as
     /// `REPEATABLE READ, READ ONLY` - its default `READ COMMITTED` would
     /// give every statement its own snapshot; a SQLite read transaction
     /// already reads one snapshot.
@@ -272,6 +298,9 @@ impl AuditLogService {
         const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (SELECT * FROM audit_log WHERE id <= ";
         const BOUNDED_ALIAS: &str = ") AS audit_log";
         const SELECT_MAX_ID: &str = "SELECT MAX(id) FROM audit_log";
+        // The key literal here and in `prune` is [`DELETION_EPOCH_KEY`]
+        // (`deletion_epoch_uses_the_documented_settings_key` pins it).
+        const SELECT_EPOCH: &str = "SELECT value FROM settings WHERE key = 'audit.deletion_epoch'";
 
         // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
         // `admin_template_core::items::ItemsService::list` (see that method's
@@ -316,11 +345,19 @@ impl AuditLogService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
+                let deletion_epoch = parse_epoch(
+                    sqlx::query_scalar::<_, String>(SELECT_EPOCH)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?,
+                );
+
                 tx.commit().await.map_err(banto_storage::storage_error)?;
                 Ok(AuditLogList {
                     rows,
                     total_count: total_count as u64,
                     as_of_id,
+                    deletion_epoch,
                 })
             }
             #[cfg(feature = "postgres")]
@@ -370,11 +407,19 @@ impl AuditLogService {
                     .await
                     .map_err(banto_storage::storage_error)?;
 
+                let deletion_epoch = parse_epoch(
+                    sqlx::query_scalar::<_, String>(SELECT_EPOCH)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?,
+                );
+
                 tx.commit().await.map_err(banto_storage::storage_error)?;
                 Ok(AuditLogList {
                     rows,
                     total_count: total_count as u64,
                     as_of_id,
+                    deletion_epoch,
                 })
             }
         }
@@ -395,102 +440,114 @@ impl AuditLogService {
     /// 軽く") rather than from a dedicated background task - see the REST/
     /// Tauri call sites' comments for why that is sufficient here.
     ///
+    /// **The deletions and the deletion epoch move together** (Issue #248
+    /// review): both deletes run in one transaction that, when it deleted
+    /// anything, also advances [`DELETION_EPOCH_KEY`] in `settings`. A
+    /// reader's snapshot therefore sees either the rows and the old epoch or
+    /// neither and the new one - the invariant [`AuditLogList::deletion_epoch`]
+    /// relies on. The row-cap delete computes its excess inside the `DELETE`
+    /// (no read-then-write gap between counting and deleting).
+    ///
     /// Returns the total number of rows deleted.
     pub async fn prune(
         &self,
         retention_days: Option<i64>,
         retention_rows: Option<i64>,
     ) -> Result<u64, BantoError> {
-        let dialect = self.db.dialect();
-        let mut deleted: u64 = 0;
-
-        if let Some(days) = retention_days.filter(|d| *d > 0) {
-            // The "N days ago" interval arithmetic is the largest dialect gap
-            // in this crate: SQLite's `datetime('now', '-N days')` modifier has
-            // no Postgres analogue, so each backend gets its own hand-written
-            // SQL (not just a placeholder swap). The SQLite string is
-            // byte-identical to the pre-V2 query (conventions §"既定 SQLite
-            // 経路は挙動不変"). Postgres uses `make_interval(days => $1::int)`
-            // - the `::int` cast is needed because `days` binds as `int8`
-            // while `make_interval`'s `days` parameter is `int4`. Not exercised
-            // in PR2 (SQLite-only init); real PG validation is PR3.
-            let days_sql = match dialect {
-                Dialect::Sqlite => {
-                    "DELETE FROM audit_log WHERE ts < datetime('now', '-' || ? || ' days')"
-                        .to_string()
-                }
-                Dialect::Postgres => {
-                    // `ts` is a TEXT column (`AuditLogEntry.ts` is a `String`),
-                    // so it must be cast to `timestamptz` before comparing
-                    // against the `NOW() - interval` timestamp - Postgres has no
-                    // `text < timestamptz` operator. The stored values are
-                    // `now()::text`, which round-trips through `::timestamptz`
-                    // cleanly (PR3, first real exercise of this arm).
-                    "DELETE FROM audit_log WHERE ts::timestamptz < NOW() - make_interval(days => $1::int)"
-                        .to_string()
-                }
-            };
-            // AssertSqlSafe: `days_sql` is one of two hardcoded literal
-            // strings selected by `dialect` above (never caller input);
-            // `days` is bound below, never placed in the SQL text.
-            let affected = match &self.db {
-                Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(days_sql))
-                    .bind(days)
-                    .execute(pool)
-                    .await
-                    .map(|r| r.rows_affected()),
-                #[cfg(feature = "postgres")]
-                Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(days_sql))
-                    .bind(days)
-                    .execute(pool)
-                    .await
-                    .map(|r| r.rows_affected()),
-            }
-            .map_err(banto_storage::storage_error)?;
-            deleted += affected;
+        let days = retention_days.filter(|d| *d > 0);
+        let max_rows = retention_rows.filter(|r| *r > 0);
+        if days.is_none() && max_rows.is_none() {
+            return Ok(0);
         }
 
-        if let Some(max_rows) = retention_rows.filter(|r| *r > 0) {
-            const COUNT_SQL: &str = "SELECT COUNT(*) FROM audit_log";
-            let total: i64 = match &self.db {
-                Db::Sqlite(pool) => sqlx::query_scalar(COUNT_SQL).fetch_one(pool).await,
-                #[cfg(feature = "postgres")]
-                Db::Postgres(pool) => sqlx::query_scalar(COUNT_SQL).fetch_one(pool).await,
-            }
-            .map_err(banto_storage::storage_error)?;
-            let excess = total - max_rows;
-            if excess > 0 {
-                // Oldest-first-by-`id` LIMIT delete: identical across dialects
-                // apart from the placeholder. The "id order == insertion order"
-                // assumption (SQLite `AUTOINCREMENT`) holds on Postgres too via
-                // `BIGSERIAL`/`IDENTITY` (DDL is PR3's scope).
-                // AssertSqlSafe: only `dialect.placeholder(1)` is
-                // interpolated (internal enum, never caller input); `excess`
-                // is bound below.
-                let delete_sql = format!(
-                    "DELETE FROM audit_log WHERE id IN \
-                     (SELECT id FROM audit_log ORDER BY id ASC LIMIT {})",
-                    dialect.placeholder(1),
-                );
-                let affected = match &self.db {
-                    Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(delete_sql))
-                        .bind(excess)
-                        .execute(pool)
+        // The "N days ago" interval arithmetic is the largest dialect gap in
+        // this crate: SQLite's `datetime('now', '-N days')` modifier has no
+        // Postgres analogue, so each backend gets its own hand-written SQL.
+        // The SQLite string is byte-identical to the pre-V2 query. Postgres
+        // casts the TEXT `ts` to `timestamptz` (it has no `text <
+        // timestamptz` operator; the stored `now()::text` values round-trip)
+        // and binds `days` as `int8` while `make_interval` wants `int4`.
+        const SQLITE_DAYS: &str =
+            "DELETE FROM audit_log WHERE ts < datetime('now', '-' || ? || ' days')";
+        // Oldest-first-by-`id` delete of everything beyond the cap; the excess
+        // is computed in the same statement.
+        const SQLITE_ROWS: &str = "DELETE FROM audit_log WHERE id IN \
+             (SELECT id FROM audit_log ORDER BY id ASC \
+              LIMIT max(0, (SELECT COUNT(*) FROM audit_log) - ?))";
+        // `CAST('garbage' AS INTEGER)` is 0 in SQLite, so a hand-edited value
+        // restarts from 1 instead of failing the prune.
+        const SQLITE_BUMP: &str = "INSERT INTO settings (key, value) VALUES ('audit.deletion_epoch', '1') \
+             ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(settings.value AS INTEGER) + 1 AS TEXT)";
+
+        match &self.db {
+            Db::Sqlite(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let mut deleted: u64 = 0;
+                if let Some(days) = days {
+                    deleted += sqlx::query(SQLITE_DAYS)
+                        .bind(days)
+                        .execute(&mut *tx)
                         .await
-                        .map(|r| r.rows_affected()),
-                    #[cfg(feature = "postgres")]
-                    Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(delete_sql))
-                        .bind(excess)
-                        .execute(pool)
-                        .await
-                        .map(|r| r.rows_affected()),
+                        .map_err(banto_storage::storage_error)?
+                        .rows_affected();
                 }
-                .map_err(banto_storage::storage_error)?;
-                deleted += affected;
+                if let Some(max_rows) = max_rows {
+                    deleted += sqlx::query(SQLITE_ROWS)
+                        .bind(max_rows)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .rows_affected();
+                }
+                if deleted > 0 {
+                    sqlx::query(SQLITE_BUMP)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                }
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(deleted)
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                const PG_DAYS: &str = "DELETE FROM audit_log WHERE ts::timestamptz < NOW() - make_interval(days => $1::int)";
+                const PG_ROWS: &str = "DELETE FROM audit_log WHERE id IN \
+                     (SELECT id FROM audit_log ORDER BY id ASC \
+                      LIMIT GREATEST(0, (SELECT COUNT(*) FROM audit_log) - $1))";
+                // `ON CONFLICT DO UPDATE` locks the row, so two concurrent
+                // prunes each advance the epoch. A value that is not an integer
+                // (hand-edited) restarts from 1 instead of failing the prune.
+                const PG_BUMP: &str = "INSERT INTO settings (key, value) VALUES ('audit.deletion_epoch', '1') \
+                     ON CONFLICT (key) DO UPDATE SET value = ((CASE WHEN settings.value ~ '^-?[0-9]{1,18}$' \
+                     THEN settings.value::bigint ELSE 0 END) + 1)::text";
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let mut deleted: u64 = 0;
+                if let Some(days) = days {
+                    deleted += sqlx::query(PG_DAYS)
+                        .bind(days)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .rows_affected();
+                }
+                if let Some(max_rows) = max_rows {
+                    deleted += sqlx::query(PG_ROWS)
+                        .bind(max_rows)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .rows_affected();
+                }
+                if deleted > 0 {
+                    sqlx::query(PG_BUMP)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                }
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(deleted)
             }
         }
-
-        Ok(deleted)
     }
 }
 
@@ -530,6 +587,12 @@ mod tests {
         .execute(pool)
         .await
         .expect("create audit_log table");
+        // `prune`/`list_as_of` keep the deletion epoch in `settings`
+        // (Issue #248 review); MUST match `0002_settings.sql`.
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(pool)
+            .await
+            .expect("create settings table");
         sqlx::query("CREATE INDEX idx_audit_log_ts ON audit_log(ts)")
             .execute(pool)
             .await
@@ -977,5 +1040,112 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second.total_count, 3);
+    }
+
+    // --- deletion epoch (Issue #248 review) -----------------------------------
+
+    fn pool_of(svc: &AuditLogService) -> &sqlx::SqlitePool {
+        svc.db
+            .as_sqlite()
+            .expect("service tests run on a SQLite handle")
+    }
+
+    /// A late commit below the boundary (+1) and a prune of the same size
+    /// (-1) leave the pinned count unchanged while the set changed - the
+    /// block after the edge repeats a row. The deletion epoch still moves.
+    ///
+    /// SQLite writes one at a time, so a row below the boundary cannot
+    /// commit late there; the late commit is simulated by inserting an
+    /// explicit lower id (the PostgreSQL smoke test reproduces it with real
+    /// transactions).
+    #[tokio::test]
+    async fn a_late_commit_offset_by_a_prune_keeps_the_count_but_moves_the_epoch() {
+        let svc = service().await;
+        seed_n(&svc, 5).await;
+        // Id 4 "has not committed yet".
+        sqlx::query("DELETE FROM audit_log WHERE id = 4")
+            .execute(pool_of(&svc))
+            .await
+            .unwrap();
+
+        let first = svc.list_as_of(page(0, 2, ts_desc()), None).await.unwrap();
+        assert_eq!(ids(&first), vec![5, 3]);
+        assert_eq!((first.as_of_id, first.total_count), (5, 4));
+
+        // Id 4 commits, then another tab's unbounded read prunes to 4 rows.
+        sqlx::query(
+            "INSERT INTO audit_log (id, action, resource, origin) VALUES (4, 'create', 'items', 'rest')",
+        )
+        .execute(pool_of(&svc))
+        .await
+        .unwrap();
+        assert_eq!(svc.prune(None, Some(4)).await.unwrap(), 1);
+
+        let second = svc
+            .list_as_of(page(2, 2, ts_desc()), Some(first.as_of_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            second.total_count, first.total_count,
+            "the count alone misses it"
+        );
+        assert_eq!(
+            ids(&second),
+            vec![3, 2],
+            "row 3 comes back: the set shifted"
+        );
+        assert_ne!(
+            second.deletion_epoch, first.deletion_epoch,
+            "the deletion epoch catches it"
+        );
+    }
+
+    /// The epoch starts at 0, advances once per prune that deleted rows
+    /// (both dimensions in one prune count once), and not for a prune that
+    /// deleted nothing. It is stored under `DELETION_EPOCH_KEY`.
+    #[tokio::test]
+    async fn deletion_epoch_uses_the_documented_settings_key() {
+        let svc = service().await;
+        seed_n(&svc, 5).await;
+        let epoch = |svc: &AuditLogService| {
+            let svc = svc.clone();
+            async move {
+                svc.list_as_of(ListParams::default(), None)
+                    .await
+                    .unwrap()
+                    .deletion_epoch
+            }
+        };
+        assert_eq!(epoch(&svc).await, 0);
+
+        assert_eq!(svc.prune(None, Some(100)).await.unwrap(), 0);
+        assert_eq!(epoch(&svc).await, 0, "nothing deleted, no advance");
+
+        sqlx::query("UPDATE audit_log SET ts = datetime('now', '-10 days') WHERE id = 1")
+            .execute(pool_of(&svc))
+            .await
+            .unwrap();
+        assert_eq!(svc.prune(Some(1), Some(3)).await.unwrap(), 2);
+        assert_eq!(epoch(&svc).await, 1);
+        let stored: String = sqlx::query_scalar("SELECT value FROM settings WHERE key = ?")
+            .bind(DELETION_EPOCH_KEY)
+            .fetch_one(pool_of(&svc))
+            .await
+            .unwrap();
+        assert_eq!(stored, "1");
+
+        assert_eq!(svc.prune(None, Some(2)).await.unwrap(), 1);
+        assert_eq!(epoch(&svc).await, 2);
+
+        // A hand-edited value that is not a number restarts from 1 instead
+        // of failing the prune.
+        sqlx::query("UPDATE settings SET value = 'x' WHERE key = ?")
+            .bind(DELETION_EPOCH_KEY)
+            .execute(pool_of(&svc))
+            .await
+            .unwrap();
+        assert_eq!(epoch(&svc).await, 0);
+        assert_eq!(svc.prune(None, Some(1)).await.unwrap(), 1);
+        assert_eq!(epoch(&svc).await, 1);
     }
 }

@@ -195,8 +195,8 @@ struct AuditLogState {
 /// ([`AuditLogService::list_as_of`]): only rows with `id <= asOfId` are
 /// listed and counted. Omitted, every row is covered as before. The answer
 /// is [`AuditLogList`] - `ListResult`'s `rows`/`totalCount` plus the
-/// boundary it used in `asOfId`, so a client that ignores the new field
-/// keeps working.
+/// boundary it used in `asOfId` and the prune's `deletionEpoch`, so a client
+/// that ignores the new fields keeps working.
 ///
 /// An unbounded read also opportunistically prunes (spec: "list実行時に
 /// 軽く") before answering - best-effort, a prune failure must never block

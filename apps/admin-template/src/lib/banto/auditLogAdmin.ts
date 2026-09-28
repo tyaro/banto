@@ -48,7 +48,9 @@ export interface AuditLogEntry {
 /**
  * Mirrors `banto_admin_services::audit::AuditLogList` (Issue #248):
  * `ListResult`'s `rows`/`totalCount` plus the snapshot boundary `asOfId`
- * the server used (`0` on an empty table).
+ * the server used (`0` on an empty table) and the retention prune's
+ * `deletionEpoch` (always sent by this server; the page's
+ * `SnapshotListResource` expires a generation when it changes).
  */
 export type AuditLogList = SnapshotListResult<AuditLogEntry>;
 

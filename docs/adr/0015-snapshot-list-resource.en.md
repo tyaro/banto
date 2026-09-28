@@ -37,9 +37,34 @@ owner's decision).
   **takes an injected fetcher**; `DataProvider.getList` is unchanged.
 - The boundary `asOfId` returned by a generation's first answer is pinned and
   sent with every later block. Until it is known, only one request is in
-  flight. An answer whose count differs under the same boundary is not
-  written and the generation stops reading (expired). The generation is not
-  restarted automatically; `refresh()` (the page's "Reload") starts a new one.
+  flight. An answer whose **count or deletion epoch (`deletionEpoch`)**
+  differs from the generation's first under the same boundary is not written
+  and the generation stops reading (expired). The generation is not restarted
+  automatically; `refresh()` (the page's "Reload") starts a new one.
+- **The boundary alone does not fix the set** (added after the #256 review).
+  The set inside it shrinks through deletions (retention) and, on
+  PostgreSQL, grows when **a writer that allocated a lower `id` commits
+  late** (`IDENTITY` hands out ids outside transactions). A per-request
+  `REPEATABLE READ` only makes one answer consistent. A late commit plus a
+  deletion of the same size keeps the count while the set changes, so the
+  count alone misses it (rows repeat, e.g. `[5,3,3,2]`). The server therefore
+  keeps a **deletion epoch**: when retention pruning deletes rows it advances
+  `audit.deletion_epoch` in `settings` in the same transaction, and the list
+  reads it in the same read transaction as the rows and the count. The client
+  compares both with the generation's first answer:
+
+  | What happened inside the boundary       | Count   | Deletion epoch | Detected by    |
+  | --------------------------------------- | ------- | -------------- | -------------- |
+  | Late commit only                        | up      | same           | count          |
+  | Deletion only                           | down    | advanced       | both           |
+  | Late commit + deletion of the same size | same    | advanced       | deletion epoch |
+  | Late commit + larger/smaller deletion   | changed | advanced       | both           |
+
+  SQLite writes one at a time, so a row below the boundary never commits late
+  there (the count alone would do), but it runs the same mechanism. Rows are
+  assumed to be deleted only by `prune` (restoring a backup replaces the whole
+  database and restarts).
+
 - Failures per block, recovery from `{0, 0}`, the time limit and dropping
   answers from another generation follow the same promises as
   `WindowedListResource` (#243). The small shared pieces (array-length check,
@@ -71,6 +96,22 @@ owner's decision).
   app wrote - would have to decide whether to honour the boundary or silently
   ignore it. An ignored boundary cannot be told apart from an expiry, and CRUD
   lists that need no boundary would pay for it.
+- For the deletion epoch (#256 review), other ways of detecting the change:
+  - **Return `SUM(id)` (or a set hash) inside the boundary with the count
+    (rejected).** Needs no change on the write side and costs about the same
+    as the count (same scan). But detection is probabilistic: two late
+    commits and two deletions with equal id sums slip through (e.g. `{2,5}`
+    in, `{3,4}` out). A hash collides less, but there is no set hash that is
+    cheap in SQL and identical in both dialects.
+  - **`(max(id), count, min(id))` (rejected).** Row-cap deletion is oldest
+    first, so `min(id)` usually moves, but not when no deleted row is inside
+    the filter, nor for day-based deletion (`ts` order and `id` order are not
+    guaranteed to match). A filtered `min(id)` needs the same scan as the
+    count.
+  - **A deletion epoch (chosen).** Costs one `settings` row update when a
+    prune deleted rows (in the prune's transaction) and one primary-key read
+    per list. With `prune` as the only deletion path it misses nothing (table
+    above). No migration (`settings` is a Banto base table).
 - **D (rejected): fix the reduced copy per page** (banto-industrial #427 keeps
   `blockCache.ts` as a duplicate plus a sync test). Template users would copy
   it for every list of this kind, and a copy is exactly what #248 found left
@@ -80,8 +121,11 @@ owner's decision).
 
 - A new list that changes without events uses `SnapshotListResource`, and its
   server side follows conventions §6 (one read transaction, count inside the
-  boundary, `id` monotonic without reuse, no deleting side effect on a
-  bounded read, unchanged result without `asOfId`).
+  boundary, `id` monotonic without reuse, anything that deletes rows
+  advances the deletion epoch in the same transaction, no deleting side
+  effect on a bounded read, unchanged result without `asOfId`). A list with
+  deletions on a database that commits writes concurrently must return
+  `deletionEpoch`.
 - Keep `WindowedListResource` and `SnapshotListResource` aligned on failures,
   recovery and time limits; when fixing one, check the other (shared pieces
   are in `blockFetch.ts`).
@@ -90,4 +134,5 @@ owner's decision).
   aborted).
 - On PostgreSQL a writer that allocated a lower `id` and commits late raises
   the count under the same boundary. That is treated as an expiry too
-  (re-reading is correct).
+  (re-reading is correct). When a deletion offsets the count, the deletion
+  epoch still expires the generation.

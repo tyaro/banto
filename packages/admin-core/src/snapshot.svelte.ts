@@ -35,14 +35,22 @@
  * are never reused, rows are not updated in ways that move them in the
  * order, and `totalCount` is counted inside the boundary.
  *
- * ### Deletions expire the generation
+ * ### Changes inside the boundary expire the generation
  *
- * A boundary cannot keep **deleted** rows (retention pruning) in the set.
- * Inside one boundary with the same query the count can only change through
- * a deletion, so an answer whose `totalCount` differs from the generation's
- * is not written: the block records an expiry, `expired` becomes `true` and
- * **the generation fetches nothing more** (every further block would shift
- * the same way). It is not restarted automatically - with the row cap
+ * A boundary cannot keep the set fixed on its own: **deleted** rows
+ * (retention pruning) leave it, and on a server that commits writes
+ * concurrently (PostgreSQL) a row with a lower id can **commit late** and
+ * enter it. Either shifts `OFFSET`. So an answer that differs from the
+ * generation's first in `totalCount` **or** in `deletionEpoch` (optional: a
+ * value the server advances, atomically with the deletion, whenever rows
+ * are deleted) is not written: the block records an expiry, `expired`
+ * becomes `true` and **the generation fetches nothing more** (every further
+ * block would shift the same way). The count alone is not enough: a late
+ * commit and a deletion of the same size keep it unchanged while the set
+ * changed (Issue #248 review) - the epoch catches that. A server that
+ * deletes rows while other writes can commit late must send
+ * `deletionEpoch`; one that writes one at a time (SQLite) can rely on the
+ * count, since without late commits every change moves it. It is not restarted automatically - with the row cap
  * reached and entries still arriving, an automatic restart would never
  * finish reading. `refresh()` starts a new generation. An answer with a
  * different `asOfId` than the one sent (a server that ignored the boundary)
@@ -109,6 +117,14 @@ export interface SnapshotListRequest {
 /** One block answer: `ListResult` plus the boundary the server used. */
 export interface SnapshotListResult<T> extends ListResult<T> {
 	asOfId: number;
+	/**
+	 * Optional: a counter the server advances whenever it deletes rows (in
+	 * the deleting transaction) and reads in the same transaction as the
+	 * rows. An answer whose value differs from the generation's first
+	 * expires the generation (see the module doc comment). Must be a safe
+	 * integer when present.
+	 */
+	deletionEpoch?: number;
 }
 
 /**
@@ -155,8 +171,11 @@ type Outcome<T> = { ok: true; result: SnapshotListResult<T> } | { ok: false; err
 export const SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE = 'list snapshot boundary mismatch';
 
 function isWritableSnapshot(result: unknown, offset: number): boolean {
+	if (!isWritableList(result, offset)) return false;
+	const { asOfId, deletionEpoch } = result as { asOfId?: unknown; deletionEpoch?: unknown };
 	return (
-		isWritableList(result, offset) && Number.isSafeInteger((result as { asOfId?: unknown }).asOfId)
+		Number.isSafeInteger(asOfId) &&
+		(deletionEpoch === undefined || Number.isSafeInteger(deletionEpoch))
 	);
 }
 
@@ -197,7 +216,8 @@ export class SnapshotListResource<T> {
 	// `ensureRange()` inside a caller's `$effect` does not track `params`.
 	#params: WindowedParams = { sort: [], filters: [] };
 	#generation = 0;
-	#snapshot: { asOfId: number; totalCount: number } | null = null;
+	#snapshot: { asOfId: number; totalCount: number; deletionEpoch: number | undefined } | null =
+		null;
 	#loaded = new Set<number>();
 	#inFlight = new Map<number, InFlightRequest>();
 	#failures = new Map<number, FailureRecord>();
@@ -444,7 +464,13 @@ export class SnapshotListResource<T> {
 					new ProviderError({ kind: 'other', message: SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE })
 				);
 			}
-			if (result.totalCount !== snapshot.totalCount) return { kind: 'expired' };
+			// Either one differing means the set inside the boundary changed.
+			if (
+				result.totalCount !== snapshot.totalCount ||
+				result.deletionEpoch !== snapshot.deletionEpoch
+			) {
+				return { kind: 'expired' };
+			}
 		}
 		try {
 			this.#write(block, offset, result);
@@ -465,7 +491,11 @@ export class SnapshotListResource<T> {
 			const rows = new Array<T | undefined>(result.totalCount);
 			if (rows.length < end) rows.length = end;
 			for (let i = 0; i < result.rows.length; i++) rows[offset + i] = result.rows[i];
-			this.#snapshot = { asOfId: result.asOfId, totalCount: result.totalCount };
+			this.#snapshot = {
+				asOfId: result.asOfId,
+				totalCount: result.totalCount,
+				deletionEpoch: result.deletionEpoch
+			};
 			this.rows = rows;
 			this.totalCount = result.totalCount;
 			// A failure recorded for a block past the new count addresses no

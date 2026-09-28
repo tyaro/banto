@@ -1629,7 +1629,9 @@ async fn audit_log_list_with_as_of_id_does_not_prune() {
         .await
         .unwrap();
     assert_eq!(bounded.status(), StatusCode::OK);
-    assert_eq!(body_json(bounded).await["totalCount"], before);
+    let bounded = body_json(bounded).await;
+    assert_eq!(bounded["totalCount"], before);
+    assert_eq!(bounded["deletionEpoch"], 0, "nothing pruned yet: {bounded}");
     assert_eq!(
         audit.list(ListParams::default()).await.unwrap().total_count,
         before,
@@ -1644,7 +1646,12 @@ async fn audit_log_list_with_as_of_id_does_not_prune() {
         ))
         .await
         .unwrap();
-    assert_eq!(body_json(unbounded).await["totalCount"], 3);
+    let unbounded = body_json(unbounded).await;
+    assert_eq!(unbounded["totalCount"], 3);
+    assert_eq!(
+        unbounded["deletionEpoch"], 1,
+        "the prune advanced the deletion epoch in the same answer: {unbounded}"
+    );
     assert_eq!(
         audit.list(ListParams::default()).await.unwrap().total_count,
         3,

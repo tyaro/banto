@@ -287,7 +287,12 @@ without a runtime guard are **upheld by reviewing every call site**.
   these rules - pick the boundary, read the rows and count them in **one read
   transaction** (PostgreSQL `REPEATABLE READ`; the default `READ COMMITTED`
   reads each statement at its own point in time), count inside the boundary,
-  let `id` grow monotonically without reuse and never update rows, and **run
+  let `id` grow monotonically without reuse and never update rows, **have
+  anything that deletes rows advance a deletion epoch in the same transaction
+  (the audit log's is `audit.deletion_epoch` in `settings`) and return it as
+  `deletionEpoch`, read in the same read transaction as the rows and count**
+  (on PostgreSQL a late commit of a lower `id` plus a deletion of the same
+  size leaves the count unchanged; #256 review), and **run
   no deleting side effect (such as retention pruning) on a bounded read** (the
   page treats a deletion inside the boundary as an expired snapshot, so
   deleting on every read would expire every generation at its second block).

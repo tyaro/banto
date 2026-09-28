@@ -37,15 +37,23 @@ options)` / `SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE` と型 `SnapshotListFetcher` /
     失敗はブロック単位（`failedBlocks` / `error`）、`{0, 0}` からも回復、応答しない
     要求は `requestTimeoutMs`（既定 30 秒）で失敗にして `AbortSignal` を中断、新しい
     世代は処理中の要求を中断し、世代の違う応答は捨てる。`totalCount` は未取得のあいだ
-    `null`（「未取得」「取得失敗」「正常な 0 件」を区別できる）。`WindowedListResource`
+    `null`（「未取得」「取得失敗」「正常な 0 件」を区別できる）。応答の任意の
+    `deletionEpoch` が世代の最初と違っても失効にする。`WindowedListResource`
     の公開 API・挙動は変えていない（内部の小さい判断を `blockFetch.ts` へ共有化）。
   - `banto-admin-services`（追加）: `AuditLogService::list_as_of(params, as_of_id)` と
     `AuditLogList`（`rows` / `totalCount` + `asOfId`）。境界の決定・行・件数を 1 つの
     読み取りトランザクションで行う（PostgreSQL は `REPEATABLE READ, READ ONLY`）。
     `list(params)` の型と結果は従来どおり。並びは `ColumnMap` の一意キー `id` で
     一意（同じ時刻の行も `id` の順。SQLite / PostgreSQL の両方でテスト）。
+    **削除の世代**（`AuditLogList::deletion_epoch` / `deletionEpoch`、定数
+    `DELETION_EPOCH_KEY` = `settings` の `audit.deletion_epoch`）: `prune` は削除を
+    1 つのトランザクションで行い、行を消したときは同じトランザクションで世代を
+    1 進める（行数の上限の削除は件数を数える `SELECT` と削除を 1 つの文にまとめた）。
+    一覧は行・件数と同じ読み取りトランザクションでそれを読んで返す。PostgreSQL で
+    小さい `id` の遅れたコミットと同じ件数の削除が重なっても、件数は同じまま集合が
+    入れ替わったことを検出できる（#256 レビュー）。マイグレーションは不要。
   - `banto-server`: `POST /api/audit-log/list` が任意の `?asOfId=` を受け取り、応答に
-    `asOfId` を足す（`rows` / `totalCount` は従来どおり）。**`asOfId` 付きの取得では
+    `asOfId` と `deletionEpoch` を足す（`rows` / `totalCount` は従来どおり）。**`asOfId` 付きの取得では
     保持期間の削除を走らせない**（上限に張り付くと 2 ブロック目以降がいつも失効する
     ため。banto-industrial #448 / #464 と同じ）。不正な `asOfId` は 400 `bad_request`。
     admin 限定は変えていない。
@@ -56,7 +64,9 @@ options)` / `SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE` と型 `SnapshotListFetcher` /
     （i18n キー 7 件を ja / en に追加）。
   - banto-industrial（chronogazer / banto-hub）: 自前の `AuditLogService` と
     `blockCache.ts` を持ち、banto の監査ログ API・`AuditLogService` は使っていない
-    ため影響なし。`@banto/admin-core` を上げたあと、`blockCache.ts` /
+    ため影響なし。`auditBlocks.ts` の失効判定も件数だけに頼っているが、どちらも
+    SQLite（書き込みが 1 本ずつで遅れたコミットが無い）なので実害は無い。
+    PostgreSQL に移すときは削除の世代が要る。`@banto/admin-core` を上げたあと、`blockCache.ts` /
     `auditBlocks.ts` を `SnapshotListResource` に置き換えるかは任意。
 
 ## [1.7.3] - 2026-09-28
