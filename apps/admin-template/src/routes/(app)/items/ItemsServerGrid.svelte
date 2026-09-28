@@ -36,11 +36,43 @@
 		onRowClick: (item: Item) => void;
 		onCellEdit: (edit: CellEdit<Item>) => Promise<Item>;
 		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => Promise<Item[]>;
+		/**
+		 * Issue #215: forwarded straight to BantoGrid's own `rowClass` prop so
+		 * the parent page can highlight the row it was last opened/saved from
+		 * (the round trip's "work position" marker) - same passthrough as
+		 * `columns`/`state` above, no grid-mode-specific logic here.
+		 */
+		rowClass?: (row: Item) => string | undefined;
 	}
 
-	let { columns, state: gridState, onRowClick, onCellEdit, onRangePaste }: Props = $props();
+	let {
+		columns,
+		state: gridState,
+		onRowClick,
+		onCellEdit,
+		onRangePaste,
+		rowClass
+	}: Props = $props();
 
 	const windowed = createWindowedListResource<Item>('items');
+
+	// Issue #215: `windowed.params` starts at `{ sort: [], filters: [] }`
+	// (windowed.svelte.ts) regardless of what `gridState` was constructed
+	// with - it only ever changes through `setParams()`, which BantoGrid
+	// calls after a HEADER interaction (sort click / filter apply), never on
+	// mount. Before #215 this was unobservable (`gridState` itself always
+	// started empty too), but restoring a saved sort/filters onto
+	// `gridState` (+page.svelte) now means the two can start out of sync:
+	// the grid's header would show the restored sort arrow and filter while
+	// `ensureRange()` below quietly fetches the unfiltered/unsorted first
+	// page. Seed `windowed.params` from whatever `gridState` already holds
+	// at construction time so the very first fetch matches what's on
+	// screen. Deliberately only the INITIAL value - a later change to
+	// `gridState.sort`/`filters` reaches `windowed` through the normal
+	// `onParamsChange` -> `handleParamsChange` -> `windowed.setParams()` path
+	// below, same as before this fix.
+	// svelte-ignore state_referenced_locally
+	windowed.setParams({ sort: gridState.sort, filters: gridState.filters });
 
 	// The most recently requested visible window, so a param change (sort/
 	// filter) knows which range to re-fetch under the new params. Updated
@@ -149,6 +181,7 @@
 		onRangePaste={handleRangePaste}
 		onParamsChange={handleParamsChange}
 		onVisibleRangeChange={handleVisibleRangeChange}
+		{rowClass}
 	/>
 </div>
 

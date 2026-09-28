@@ -4,7 +4,13 @@
 	import { base } from '$app/paths';
 	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
-	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
+	import {
+		createFormResource,
+		getResource,
+		isProviderError,
+		noteLastEditedRecord,
+		saveLastOpenedId
+	} from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
 	import { formValidationMessages } from '$lib/banto/i18n';
@@ -43,6 +49,20 @@
 	const rawId = page.params.id ?? '';
 	const parsedId = Number(rawId);
 	const idValid = rawId !== '' && Number.isInteger(parsedId);
+
+	// Issue #215: mark this as the row the items list should highlight once
+	// the user goes back. Done HERE, not from the list's row-click handler,
+	// because the list's "開く" cell is a plain link and navigates via its
+	// own `href` without ever running the grid's `onRowClick` callback once
+	// it has editable columns (`admin-core`'s `saveLastOpenedId` doc comment
+	// has the full reasoning) - this detail page is the one place every way
+	// of getting here (a grid link click, a double-click on a read-only
+	// cell, a pasted URL, the browser back button) actually passes through.
+	// Set unconditionally for any syntactically valid id, even before
+	// `formResource.load()` confirms the record still exists - a stale
+	// marker pointing at a since-deleted row is harmless (no row to
+	// highlight).
+	if (idValid) saveLastOpenedId(resource.name, parsedId);
 
 	const formResource = idValid ? createFormResource(resource.name, parsedId) : null;
 	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
@@ -91,6 +111,16 @@
 		if (!formResource || !canWrite) return;
 		const result = await formResource.submit(values);
 		if (result.ok) {
+			// Issue #215: leave a one-shot marker with this row's saved values so
+			// the list page (whichever mode it's in) can tell whether the row
+			// still matches its own restored filters, and explain the mismatch
+			// rather than silently clearing them. `result.row` is the
+			// server-confirmed row; `parsedId` is included too since some
+			// DataProviders' create/update responses don't echo `id` back.
+			noteLastEditedRecord(resource.name, {
+				id: parsedId,
+				values: { id: parsedId, ...(result.row as Record<string, unknown>) }
+			});
 			// Saved: nothing is unsaved any more, so the move back to the list
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).

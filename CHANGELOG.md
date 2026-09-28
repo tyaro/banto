@@ -22,6 +22,44 @@
 
 ## [Unreleased]
 
+- feat(admin-core, admin-template): 一覧→詳細→保存/戻る→一覧の往復で
+  絞り込み・並び順・直前に開いた行を復元する（#215）。一覧を絞り込んで
+  複数行を順に確認・修正する操作で、1件保存するたびに一覧条件が
+  リセットされ作業対象を探し直す必要があった。
+  **派生アプリへの影響**: `@banto/admin-core` に新規 API
+  `saveListViewState`/`loadListViewState`/`clearListViewState`
+  （sort/filters/groupBy をキー文字列単位でセッション保持）、
+  `saveActiveListMode`/`loadActiveListMode`（複数モードを持つ一覧の
+  直近モード）、`saveLastOpenedId`/`loadLastOpenedId`（リソース単位の
+  「直前に開いた行」マーカー）、`noteLastEditedRecord`/
+  `takeLastEditedRecord`（保存直後の行が現在の絞り込み条件から外れて
+  いないかを判定するための一度きりのマーカー）を追加。いずれも
+  `sessionStorage` バックエンドで同一タブ・同一セッションの間だけ有効
+  （タブを閉じると消える。列設定の保存は対象外 — #168 の範囲）。
+  自前の一覧画面を持つ派生アプリは、GridState の sort/filters/groupBy を
+  これらの API で保存・復元し、詳細画面の mount 時に
+  `saveLastOpenedId(resource, id)` を呼ぶことで同じ挙動を得られる
+  （admin-template の `items` 一覧が参照実装）。
+  - `packages/admin-core/src/listViewState.ts`（新規）+
+    `packages/admin-core/tests/listViewState.test.ts`（vitest 21件）。
+  - `apps/admin-template`: items 一覧（クライアント/サーバー両モード）に
+    配線。編集結果が絞り込み条件から外れた場合はフィルタを解除せず、
+    「商品 #{id} は現在の絞り込み条件に当てはまりません」と説明する通知を
+    表示（`items.filterExcludedNotice`）。直前に開いた行は
+    `rowClass`（`items-row-last-opened`）で強調表示。
+  - 副次的なバグ修正: `ItemsServerGrid`（サーバーモード）は
+    `GridState` を外部から事前設定しても、内部の
+    `WindowedListResource.params` が既定値 `{ sort: [], filters: [] }`
+    のまま最初のフェッチを行っていた（ヘッダー操作を経由しない限り
+    同期されない）ため、復元した並び替え・絞り込みが見た目には
+    反映されつつ実際のフェッチには効いていなかった。マウント時に
+    `windowed.setParams()` で初期値を同期する。
+  - E2E: `e2e/tests/smoke.spec.ts` シナリオ 3c
+    （絞り込み・並び替え→詳細→保存→一覧で状態が残ること、および
+    絞り込み条件から外れた場合の通知）。users/audit-log は詳細を別
+    ルートに持たず本 issue の往復パターンに該当しないため対象外
+    （調査済み・別 issue 化は不要と判断）。
+
 ## [1.7.3] - 2026-09-28
 
 **v1.7.3 — 一覧のページングの重複・欠落を直す修正。派生アプリへの影響: 一覧の並びが変わりうる（API の破壊的変更は無い）。**

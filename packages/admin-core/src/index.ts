@@ -95,3 +95,16 @@ export { createSseParser } from './sse-parser';
 
 export type { PaletteCommand } from './commands';
 export { searchCommands } from './commands';
+
+export type { ListViewSnapshot, LastEditedRecord } from './listViewState';
+export {
+	saveListViewState,
+	loadListViewState,
+	clearListViewState,
+	saveActiveListMode,
+	loadActiveListMode,
+	saveLastOpenedId,
+	loadLastOpenedId,
+	noteLastEditedRecord,
+	takeLastEditedRecord
+} from './listViewState';

@@ -40,9 +40,23 @@
 		onRowClick: (item: Item) => void;
 		onCellEdit: (edit: CellEdit<Item>) => Promise<Item>;
 		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => Promise<Item[]>;
+		/**
+		 * Issue #215: forwarded straight to BantoGrid's own `rowClass` prop so
+		 * the parent page can highlight the row it was last opened/saved from
+		 * (the round trip's "work position" marker) - same passthrough as
+		 * `columns`/`state` above, no grid-mode-specific logic here.
+		 */
+		rowClass?: (row: ItemRow) => string | undefined;
 	}
 
-	let { columns, state: gridState, onRowClick, onCellEdit, onRangePaste }: Props = $props();
+	let {
+		columns,
+		state: gridState,
+		onRowClick,
+		onCellEdit,
+		onRangePaste,
+		rowClass
+	}: Props = $props();
 
 	const list = createListResource<Item>('items', {
 		initialParams: { pagination: { offset: 0, limit: 20_000 } }
@@ -99,6 +113,7 @@
 			onRowClick={(row: ItemRow) => onRowClick(row)}
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
+			{rowClass}
 		/>
 	</div>
 {/if}

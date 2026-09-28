@@ -46,6 +46,11 @@ const ITEM_PRICE = 1200;
 const ITEM_PRICE_UPDATED = 1500;
 const ITEM_STOCK = 10;
 
+// Issue #215 scenario 3c: a dedicated item so its filter/sort round trip
+// never touches (or is touched by) scenario 3's own item, which scenario 3
+// deletes at its end.
+const ROUNDTRIP_ITEM_NAME = `E2E往復テスト商品-${Date.now()}`;
+
 // M20 attachments scenario (docs/attachments-plan.md §4 unit D): a
 // dedicated item so uploads/deletes never touch the item scenario 3 already
 // created and deleted.
@@ -73,6 +78,21 @@ async function applyColumnFilter(page: Page, columnHeader: string, value: string
 	await page.getByRole('button', { name: label }).click();
 	const dialog = page.getByRole('dialog', { name: label });
 	await dialog.getByPlaceholder('値を入力').fill(value);
+	await dialog.getByRole('button', { name: '適用' }).click();
+}
+
+/** Same as `applyColumnFilter` but for a number-typed column: picks `op` (FilterPopover.svelte's `<select>`, e.g. `'gte'`) before filling the numeric value. */
+async function applyNumberFilter(
+	page: Page,
+	columnHeader: string,
+	op: string,
+	value: number
+): Promise<void> {
+	const label = `${columnHeader}の絞り込み`;
+	await page.getByRole('button', { name: label }).click();
+	const dialog = page.getByRole('dialog', { name: label });
+	await dialog.getByRole('combobox').selectOption(op);
+	await dialog.getByPlaceholder('値を入力').fill(String(value));
 	await dialog.getByRole('button', { name: '適用' }).click();
 }
 
@@ -579,6 +599,130 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			});
 			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 		}, createdId!);
+	});
+
+	// Issue #215: a list -> detail -> save -> list round trip must restore
+	// the filter/sort the user had (not reset to the page's defaults), mark
+	// the row that was just worked on, and - if the save moved the row
+	// outside the still-active filter - explain that instead of silently
+	// clearing the filter. サーバーモード grid (the page's default), which is
+	// also what scenario 3 above exercises.
+	test('3c. items: a save round trip restores the filter/sort and marks the row; an edit that no longer matches the filter is explained, not hidden by clearing it', async () => {
+		await page.goto('/items');
+		await page.getByRole('button', { name: '新規作成' }).click();
+		await expect(page).toHaveURL(/\/items\/new$/);
+		await page.getByLabel('商品名').fill(ROUNDTRIP_ITEM_NAME);
+		await page.getByLabel('価格').fill('800');
+		await page.getByLabel('在庫').fill('3');
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		// Narrow to just this row (name filter) and add a second, numeric
+		// filter that price=800 currently satisfies - so editing price alone
+		// can later violate ONLY the second filter without the row ever
+		// leaving view via the first. Also sort - a second axis of "state"
+		// that must survive the round trip alongside the filters.
+		await applyColumnFilter(page, '商品名', ROUNDTRIP_ITEM_NAME);
+		await applyNumberFilter(page, '価格', 'gte', 500);
+		const row = rowWithText(page, ROUNDTRIP_ITEM_NAME);
+		await expect(row).toBeVisible();
+
+		const grid = page.getByRole('grid');
+		// Substring match on the columnheader is stable across a sort toggle
+		// (no other column's name contains "価格"); the inner `.cell-body` is
+		// clicked directly rather than by accessible name, since HeaderCell
+		// appends the sort arrow to THAT name once sorted (e.g. "価格 ▲"),
+		// which would make an `exact: true` button-name lookup stop matching
+		// after the first click.
+		const priceHeader = grid.getByRole('columnheader', { name: '価格' });
+		const priceSortBody = priceHeader.locator('.cell-body');
+		await priceSortBody.click();
+		await expect(priceHeader).toHaveAttribute('aria-sort', 'ascending');
+		await priceSortBody.click();
+		await expect(priceHeader).toHaveAttribute('aria-sort', 'descending');
+
+		const openLink = row.getByRole('link', { name: '開く' });
+		const href = await openLink.getAttribute('href');
+		expect(href).toMatch(/^\/items\/\d+$/);
+		const itemId = href!.split('/').pop();
+		const itemUrl = new RegExp(`${href}$`);
+
+		// Edit 1: price still satisfies both filters (name unaffected, price
+		// 850 >= 500) - the row must still be there, under the same filters
+		// and sort, AND marked as the one just worked on (rowClass
+		// `items-row-last-opened`, +page.svelte).
+		await openLink.click();
+		await expect(page).toHaveURL(itemUrl);
+		await page.getByLabel('価格').fill('850');
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		await expect(priceHeader).toHaveAttribute('aria-sort', 'descending');
+		await expect(row).toBeVisible();
+		await expect(row).toHaveClass(/items-row-last-opened/);
+		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue(ROUNDTRIP_ITEM_NAME);
+		await page.keyboard.press('Escape');
+		await page.getByRole('button', { name: '価格の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '価格の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue('500');
+		await page.keyboard.press('Escape');
+		await expect(page.getByText(/現在の絞り込み条件に当てはまりません/)).toHaveCount(0);
+
+		// Edit 2: price now FAILS the 価格>=500 filter (still passes the name
+		// filter). The row must disappear from view (真面目にフィルタが効いて
+		// いる証拠) - but the filter itself must NOT be reset, and a notice
+		// must explain why this item no longer shows.
+		await page.goto(href!);
+		await expect(page.getByLabel('価格')).toHaveValue('850');
+		await page.getByLabel('価格').fill('100');
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		await expect(row).toHaveCount(0);
+		await expect(
+			page.getByText(new RegExp(`商品 #${itemId} は現在の絞り込み条件に当てはまりません`))
+		).toBeVisible();
+		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue(ROUNDTRIP_ITEM_NAME);
+		await page.keyboard.press('Escape');
+		await page.getByRole('button', { name: '価格の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '価格の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue('500');
+		await page.keyboard.press('Escape');
+
+		// Dismissing the notice hides it without touching the filters again.
+		await page.locator('.filter-exclusion-notice').getByRole('button', { name: '閉じる' }).click();
+		await expect(page.locator('.filter-exclusion-notice')).toHaveCount(0);
+		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue(ROUNDTRIP_ITEM_NAME);
+		await page.keyboard.press('Escape');
+
+		// Cleanup: clear the filters and sort (leaves the grid exactly as
+		// later scenarios expect it - unfiltered, unsorted) and delete the
+		// item via the API, same pattern scenario 3a/3b use for their own
+		// leftover items.
+		await clearColumnFilter(page, '商品名');
+		await clearColumnFilter(page, '価格');
+		await priceSortBody.click(); // desc -> removed (toggleSort)
+		await expect(priceHeader).not.toHaveAttribute('aria-sort', 'descending');
+		await page.evaluate(async (id) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch(`/api/items/${id}`, {
+				method: 'DELETE',
+				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+		}, itemId!);
 	});
 
 	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {

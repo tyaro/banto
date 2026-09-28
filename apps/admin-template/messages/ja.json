@@ -120,6 +120,7 @@
   "items.loadErrorDesc": "通信状態を確認し、再読み込みしてください。",
   "items.deleteConfirm": "削除しますか？",
   "items.reportBack": "← 商品一覧へ戻る",
+  "items.filterExcludedNotice": "商品 #{id} は現在の絞り込み条件に当てはまりません",
   "dashboard.summary": "商品データ {count} 件からの集計",
   "dashboard.statCount": "商品数",
   "dashboard.statStockTotal": "在庫合計",
