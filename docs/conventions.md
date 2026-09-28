@@ -237,6 +237,19 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   一意キーの昇順（grid の client sort だけは、受け取った配列の順を保つ）。
   共通の fixture `crates/banto-storage/testdata/list-order-parity.json` を 3 つの
   テストが読むので、どれかを変えるときは fixture と 3 つを同時に直す。
+  **境界（`asOfId`）付きの一覧**（Issue #248、[ADR-0015](adr/0015-snapshot-list-resource.md)）:
+  通知なしに行が増減する一覧（監査ログ）は `@banto/admin-core` の
+  `SnapshotListResource` で読み、サーバー側は次を守る — 境界の決定・行・件数を
+  **1 つの読み取りトランザクション**で行う（PostgreSQL は `REPEATABLE READ`。既定の
+  `READ COMMITTED` は文ごとに別の時点を読む）、件数は境界の中で数える、`id` は単調
+  増加で再利用しない・行を書き換えない、**行を消す処理は削除の世代（監査ログは
+  `settings` の `audit.deletion_epoch`）を削除と同じトランザクションで進め、一覧は
+  それを行・件数と同じ読み取りトランザクションで読んで `deletionEpoch` として返す**
+  （PostgreSQL では小さい `id` の遅れたコミットと同じ件数の削除が重なると件数が
+  変わらない。#256 レビュー）、**境界付きの取得では削除系の副作用（保持期間の
+  削除など）を走らせない**（境界の中の削除は画面側で失効として扱うため、取得のたびに
+  削除すると 2 ブロック目以降がいつも失効する）。`asOfId` を省略した取得は従来と同じ
+  結果にする。
 - **CSP は2定義を同期する。** デスクトップは `tauri.conf.json` の
   `app.security.csp`、LAN は `banto-server` の `security_headers.rs`
   `CONTENT_SECURITY_POLICY`。**意図的な差分は connect-src のみ**（Tauri IPC）で、

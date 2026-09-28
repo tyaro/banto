@@ -50,6 +50,15 @@ export {
 	type CreateWindowedListResourceOptions,
 	type WindowedParams
 } from './windowed.svelte';
+export {
+	SnapshotListResource,
+	createSnapshotListResource,
+	SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE,
+	type CreateSnapshotListResourceOptions,
+	type SnapshotListFetcher,
+	type SnapshotListRequest,
+	type SnapshotListResult
+} from './snapshot.svelte';
 export { FormResource, createFormResource, type SubmitResult } from './form.svelte';
 
 export {

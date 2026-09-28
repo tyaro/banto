@@ -32,13 +32,17 @@
  * and ordinary CRUD screens re-fetch anyway on the `invalidate()` their own
  * change events trigger. The server side guarantees a total order
  * (`banto-storage` appends the unique key to `ORDER BY`), so with unchanged
- * data the blocks tile the list exactly.
+ * data the blocks tile the list exactly. A list that changes without
+ * events (an append-only log such as the audit log) uses
+ * `SnapshotListResource` (snapshot.svelte.ts, Issue #248) instead, which
+ * takes an injected fetcher that carries the boundary.
  *
  * Runes constraint: this class never creates an `$effect` itself (no effect
  * context in a plain module, same rule as ListResource); components wire
  * `$effect`/cleanup around `ensureRange()`/`dispose()`.
  */
-import { isProviderError, ProviderError } from './errors';
+import { hasTimeLimit, isWritableList, timeoutError, toProviderError } from './blockFetch';
+import { ProviderError } from './errors';
 import { onInvalidate } from './invalidate';
 import { getDataProvider, notify } from './registry.svelte';
 import type { FilterState, ListResult, SortState } from './types';
@@ -75,32 +79,6 @@ interface BlockFailure {
 	generation: number;
 	/** Recording order, so `error` can show the most recent failure. */
 	seq: number;
-}
-
-/** The largest valid JavaScript array length (2 ** 32 - 1). */
-const MAX_ARRAY_LENGTH = 0xffff_ffff;
-
-/**
- * Whether a block answer can be written without throwing: `rows` is an
- * array, `totalCount` is a non-negative integer that is also a valid array
- * length (a safe integer is not enough - `2 ** 32` passes that and then
- * throws `RangeError` on `rows.length = ...`), and the rows written at
- * `offset` stay within that limit too.
- */
-function isWellFormed<T>(result: ListResult<T>, offset: number): boolean {
-	return (
-		result !== null &&
-		typeof result === 'object' &&
-		Array.isArray(result.rows) &&
-		Number.isInteger(result.totalCount) &&
-		result.totalCount >= 0 &&
-		result.totalCount <= MAX_ARRAY_LENGTH &&
-		offset + result.rows.length <= MAX_ARRAY_LENGTH
-	);
-}
-
-function toProviderError(err: unknown): ProviderError {
-	return isProviderError(err) ? err : new ProviderError({ kind: 'other', message: String(err) });
 }
 
 export class WindowedListResource<T> {
@@ -275,7 +253,7 @@ export class WindowedListResource<T> {
 		// A malformed answer (a buggy custom provider) must not throw while
 		// writing below - that would skip the settlement at the end and leave
 		// `loading` up - so it is recorded as this block's failure instead.
-		if (outcome.ok && !isWellFormed(outcome.result, offset)) {
+		if (outcome.ok && !isWritableList(outcome.result, offset)) {
 			outcome = {
 				ok: false,
 				error: new ProviderError({ kind: 'other', message: 'malformed list result' })
@@ -339,19 +317,10 @@ export class WindowedListResource<T> {
 
 	#withTimeout<R>(request: Promise<R>): Promise<R> {
 		const ms = this.#requestTimeoutMs;
-		if (!(ms > 0) || !Number.isFinite(ms)) return request;
+		if (!hasTimeLimit(ms)) return request;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timeout = new Promise<never>((_, reject) => {
-			timer = setTimeout(
-				() =>
-					reject(
-						new ProviderError({
-							kind: 'other',
-							message: `list request timed out after ${ms} ms`
-						})
-					),
-				ms
-			);
+			timer = setTimeout(() => reject(timeoutError(ms)), ms);
 		});
 		return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
 	}

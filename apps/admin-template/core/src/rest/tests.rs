@@ -1506,6 +1506,190 @@ async fn audit_log_list_requires_a_token() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// `?asOfId=` (Issue #248): an omitted boundary answers with every row and
+/// the newest `id` in `asOfId` (the old result plus one field); a given one
+/// is echoed back and pins the set - rows recorded after it are neither
+/// listed nor counted.
+#[tokio::test]
+async fn audit_log_list_as_of_id_pins_the_snapshot() {
+    let (router, audit, admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let newest_first = json!({
+        "sort": [{ "field": "ts", "direction": "desc" }],
+        "filters": [],
+        "pagination": { "offset": 0, "limit": 2 }
+    });
+
+    let first = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                newest_first.clone(),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let everything = audit.list(ListParams::default()).await.unwrap();
+    let max_id = everything.rows.iter().map(|r| r.id).max().unwrap();
+    let as_of_id = first["asOfId"].as_i64().expect("asOfId is returned");
+    assert_eq!(
+        as_of_id, max_id,
+        "an omitted boundary is the newest id: {first}"
+    );
+    assert_eq!(first["totalCount"], everything.total_count);
+    assert_eq!(first["rows"][0]["id"], max_id);
+
+    for action in ["create", "update"] {
+        audit
+            .try_record(crate::audit::AuditEntry {
+                actor_username: Some("admin"),
+                actor_role: Some("admin"),
+                action,
+                resource: "items",
+                entity_id: None,
+                detail: None,
+                origin: "rest",
+                result: "ok",
+            })
+            .await
+            .unwrap();
+    }
+
+    let pinned = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                &format!("/api/audit-log/list?asOfId={as_of_id}"),
+                &admin,
+                newest_first.clone(),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(pinned["asOfId"], as_of_id);
+    assert_eq!(pinned["totalCount"], first["totalCount"]);
+    assert_eq!(pinned["rows"], first["rows"], "the new rows stay out");
+
+    let fresh = body_json(
+        router
+            .oneshot(post_json_auth("/api/audit-log/list", &admin, newest_first))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(fresh["asOfId"], max_id + 2);
+    assert_eq!(fresh["totalCount"], everything.total_count + 2);
+}
+
+/// A bounded read does not run the retention prune (Issue #248, same as
+/// banto-industrial #448/#464): with the row cap reached, pruning on every
+/// read would delete rows inside the viewer's boundary and expire each
+/// generation at its second block. The unbounded read still prunes.
+#[tokio::test]
+async fn audit_log_list_with_as_of_id_does_not_prune() {
+    let (router, audit, admin, _editor, _viewer) = router_with_role_tokens_and_audit().await;
+    let response = router
+        .clone()
+        .oneshot(put_json(
+            "/api/audit-log/config",
+            &admin,
+            json!({ "retentionDays": null, "retentionRows": 3 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    for _ in 0..5 {
+        audit
+            .try_record(crate::audit::AuditEntry {
+                actor_username: Some("admin"),
+                actor_role: Some("admin"),
+                action: "create",
+                resource: "items",
+                entity_id: None,
+                detail: None,
+                origin: "rest",
+                result: "ok",
+            })
+            .await
+            .unwrap();
+    }
+    let before = audit.list(ListParams::default()).await.unwrap().total_count;
+    assert!(before > 3, "more rows than the cap: {before}");
+
+    let bounded = router
+        .clone()
+        .oneshot(post_json_auth(
+            "/api/audit-log/list?asOfId=1000000",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(bounded.status(), StatusCode::OK);
+    let bounded = body_json(bounded).await;
+    assert_eq!(bounded["totalCount"], before);
+    assert_eq!(bounded["deletionEpoch"], 0, "nothing pruned yet: {bounded}");
+    assert_eq!(
+        audit.list(ListParams::default()).await.unwrap().total_count,
+        before,
+        "a bounded read deletes nothing"
+    );
+
+    let unbounded = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    let unbounded = body_json(unbounded).await;
+    assert_eq!(unbounded["totalCount"], 3);
+    assert_eq!(
+        unbounded["deletionEpoch"], 1,
+        "the prune advanced the deletion epoch in the same answer: {unbounded}"
+    );
+    assert_eq!(
+        audit.list(ListParams::default()).await.unwrap().total_count,
+        3,
+        "the unbounded read still prunes"
+    );
+}
+
+/// The admin floor is unchanged for a bounded read: `editor`/`viewer` get
+/// 403 with or without `asOfId`, and a malformed `asOfId` is a 400
+/// `bad_request` (the `ErrorBody` shape, not axum's plain-text rejection).
+#[tokio::test]
+async fn audit_log_list_with_as_of_id_is_admin_only_and_validated() {
+    let (router, _audit, admin, editor, viewer) = router_with_role_tokens_and_audit().await;
+    for token in [&editor, &viewer] {
+        let response = router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/audit-log/list?asOfId=1",
+                token,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    let response = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list?asOfId=abc",
+            &admin,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(response).await["kind"], "bad_request");
+}
+
 /// `GET /api/audit-log/config` is admin-only: 200 (with the default
 /// retention policy) for admin, 403 for editor/viewer.
 #[tokio::test]
