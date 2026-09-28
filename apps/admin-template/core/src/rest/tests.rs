@@ -1543,7 +1543,7 @@ async fn audit_log_list_as_of_id_pins_the_snapshot() {
 
     for action in ["create", "update"] {
         audit
-            .try_record(AuditEntry {
+            .try_record(crate::audit::AuditEntry {
                 actor_username: Some("admin"),
                 actor_role: Some("admin"),
                 action,
@@ -1603,7 +1603,7 @@ async fn audit_log_list_with_as_of_id_does_not_prune() {
     assert_eq!(response.status(), StatusCode::OK);
     for _ in 0..5 {
         audit
-            .try_record(AuditEntry {
+            .try_record(crate::audit::AuditEntry {
                 actor_username: Some("admin"),
                 actor_role: Some("admin"),
                 action: "create",
