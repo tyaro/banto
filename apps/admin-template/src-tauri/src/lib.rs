@@ -39,8 +39,8 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
-    lan_urls, start, static_router, with_security_headers, AuthState, RunningServer, ServerConfig,
-    ServerEvent,
+    lan_urls_for_bind, start, static_router, with_security_headers, AuthState, RunningServer,
+    ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -1064,7 +1064,7 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
     // Issue #216: scope the advertised URLs (and therefore the QR codes
     // below) to what `config.bind` actually listens on - a loopback bind
     // must not advertise a LAN URL nobody outside this PC can reach.
-    let urls = lan_urls(&config.bind, config.port);
+    let urls = lan_urls_for_bind(&config.bind, config.port);
     let qr_svgs = urls
         .iter()
         .map(|url| QrSvgEntry {

@@ -92,6 +92,30 @@ pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer
     })
 }
 
+/// URLs a client could use to reach a server bound to `port`, assuming it
+/// listens on every interface (`0.0.0.0`): always `http://127.0.0.1:{port}`,
+/// plus one entry per non-loopback IPv4 interface. This is `lan_urls`'s
+/// pre-#216 behavior, kept unchanged and under its original name.
+///
+/// **Exists only for source/binary compatibility with derived apps already
+/// built against this signature** (`banto-server` is consumed by derived
+/// apps via a git-tag/`path:` dependency - see `docs/publishing.md` - so
+/// changing a `pub fn`'s signature breaks every such app's next build, not
+/// just this repo's). New callers should use [`lan_urls_for_bind`] instead,
+/// which is what this function now delegates to (hardcoding `"0.0.0.0"`) -
+/// **this one reintroduces Issue #216's bug** for any server actually bound
+/// to something else, because it cannot know the caller's real `bind`.
+///
+/// Deliberately not `#[deprecated]`: derived apps commonly build with
+/// `-D warnings` (this repo's CI `rust` job does too), so marking this
+/// deprecated would turn a routine dependency bump into a broken build for
+/// every caller that has not yet migrated - that migration should be a
+/// deliberate change a maintainer chooses to make, not a side effect of
+/// picking up a patch release.
+pub fn lan_urls(port: u16) -> Vec<String> {
+    lan_urls_for_bind("0.0.0.0", port)
+}
+
 /// URLs a client could use to reach a server bound to `bind`:`port` (spec
 /// §11.4's access-URL display; Issue #216). The set returned is scoped to
 /// what `bind` actually listens on, so callers building "you can reach this
@@ -113,7 +137,7 @@ pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer
 /// - anything `bind` fails to parse as an IP (defensive; the settings UI
 ///   only ever sends the addresses above): the raw `bind:port` string,
 ///   unchanged from today's behavior for an unrecognized value.
-pub fn lan_urls(bind: &str, port: u16) -> Vec<String> {
+pub fn lan_urls_for_bind(bind: &str, port: u16) -> Vec<String> {
     use std::net::IpAddr;
 
     match bind.parse::<IpAddr>() {
@@ -165,27 +189,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lan_urls_ipv4_loopback_bind_is_loopback_only() {
+    fn lan_urls_for_bind_ipv4_loopback_bind_is_loopback_only() {
         // Issue #216: a loopback bind must never advertise a LAN URL - the
         // whole regression was this case falling through to the 0.0.0.0
         // (enumerate every interface) behavior instead.
         assert_eq!(
-            lan_urls("127.0.0.1", 8721),
+            lan_urls_for_bind("127.0.0.1", 8721),
             vec!["http://127.0.0.1:8721".to_string()]
         );
     }
 
     #[test]
-    fn lan_urls_ipv6_loopback_bind_is_loopback_only() {
-        assert_eq!(lan_urls("::1", 8721), vec!["http://[::1]:8721".to_string()]);
+    fn lan_urls_for_bind_ipv6_loopback_bind_is_loopback_only() {
+        assert_eq!(
+            lan_urls_for_bind("::1", 8721),
+            vec!["http://[::1]:8721".to_string()]
+        );
     }
 
     #[test]
-    fn lan_urls_ipv4_unspecified_bind_includes_loopback_and_lan_ipv4() {
+    fn lan_urls_for_bind_ipv4_unspecified_bind_includes_loopback_and_lan_ipv4() {
         // 0.0.0.0: same shape as the original `lan_urls(port)` - loopback
         // first, then whatever non-loopback IPv4 interfaces this machine
         // has (0 or more; CI runners commonly have none besides loopback).
-        let urls = lan_urls("0.0.0.0", 8721);
+        let urls = lan_urls_for_bind("0.0.0.0", 8721);
         assert_eq!(urls[0], "http://127.0.0.1:8721");
         assert!(
             urls[1..].iter().all(|u| !u.contains("[")),
@@ -194,38 +221,74 @@ mod tests {
     }
 
     #[test]
-    fn lan_urls_ipv6_unspecified_bind_includes_loopback_v4_v6_and_lan() {
-        let urls = lan_urls("::", 8721);
+    fn lan_urls_for_bind_ipv6_unspecified_bind_includes_loopback_v4_v6_and_lan() {
+        let urls = lan_urls_for_bind("::", 8721);
         assert_eq!(urls[0], "http://127.0.0.1:8721");
         assert_eq!(urls[1], "http://[::1]:8721");
     }
 
     #[test]
-    fn lan_urls_specific_ipv4_bind_is_that_address_only() {
+    fn lan_urls_for_bind_specific_ipv4_bind_is_that_address_only() {
         // Binding one NIC must not also list every other interface - only
         // that NIC's clients can actually reach this listener.
         assert_eq!(
-            lan_urls("192.168.1.50", 8721),
+            lan_urls_for_bind("192.168.1.50", 8721),
             vec!["http://192.168.1.50:8721".to_string()]
         );
     }
 
     #[test]
-    fn lan_urls_specific_ipv6_bind_is_that_address_only() {
+    fn lan_urls_for_bind_specific_ipv6_bind_is_that_address_only() {
         assert_eq!(
-            lan_urls("2001:db8::1", 8721),
+            lan_urls_for_bind("2001:db8::1", 8721),
             vec!["http://[2001:db8::1]:8721".to_string()]
         );
     }
 
     #[test]
-    fn lan_urls_unparseable_bind_falls_back_to_the_raw_string() {
+    fn lan_urls_for_bind_unparseable_bind_falls_back_to_the_raw_string() {
         // Defensive only - the settings UI never sends a non-IP bind - but
         // must not panic, and must not silently claim LAN reachability for
         // something we could not classify.
         assert_eq!(
-            lan_urls("not-an-ip", 8721),
+            lan_urls_for_bind("not-an-ip", 8721),
             vec!["http://not-an-ip:8721".to_string()]
+        );
+    }
+
+    // --- Back-compat: `lan_urls(port)` (pre-#216 signature) --------------
+    //
+    // Owner review on PR #254: `lan_urls`'s signature must not change (it is
+    // `pub` in a crate derived apps depend on via a git-tag/`path:`
+    // dependency - a signature change breaks their build on the next
+    // dependency bump, not just this repo). These pin its old, bind-agnostic
+    // behavior so a future edit cannot silently fold it back into
+    // `lan_urls_for_bind`'s signature or change what it returns.
+
+    #[test]
+    fn lan_urls_kept_for_compat_matches_its_pre_216_shape() {
+        // Old callers get exactly the old shape: loopback first, then
+        // non-loopback IPv4 interfaces - same as `lan_urls_for_bind("0.0.0.0", ..)`.
+        let old = lan_urls(8721);
+        let new = lan_urls_for_bind("0.0.0.0", 8721);
+        assert_eq!(old, new);
+        assert_eq!(old[0], "http://127.0.0.1:8721");
+    }
+
+    #[test]
+    fn lan_urls_kept_for_compat_counter_proof_it_is_not_bind_aware() {
+        // Documents the known limitation this compat shim carries forward:
+        // unlike `lan_urls_for_bind`, `lan_urls(port)` has no way to learn
+        // the caller's actual bind, so it cannot avoid Issue #216's bug for
+        // a caller that is not actually listening on 0.0.0.0. A caller
+        // bound to loopback must migrate to `lan_urls_for_bind` to get the
+        // fix - this test fails if `lan_urls` is ever "fixed" to somehow
+        // guess a narrower scope on its own (it can't, and shouldn't try).
+        let old = lan_urls(8721);
+        let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
+        assert_ne!(
+            old, loopback_scoped,
+            "lan_urls(port) must keep behaving like a 0.0.0.0 bind, not a loopback one"
         );
     }
 

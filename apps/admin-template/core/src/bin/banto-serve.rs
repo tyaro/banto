@@ -65,7 +65,7 @@ use admin_template_core::system_info::SystemInfoService;
 use admin_template_core::system_metrics::SystemMetricsSampler;
 use admin_template_core::users::UsersService;
 use banto_attachments::AttachmentsService;
-use banto_server::{lan_urls, start, static_router, with_security_headers, ServerConfig};
+use banto_server::{lan_urls_for_bind, start, static_router, with_security_headers, ServerConfig};
 use std::path::PathBuf;
 
 const DEFAULT_PORT: u16 = 8721;
@@ -322,7 +322,7 @@ async fn main() {
     // Issue #216: scope the printed URLs to `bind` (a loopback `BANTO_BIND`
     // override must not print a LAN URL nobody outside this machine can
     // reach), same fix as the Tauri settings screen's `build_status`.
-    for url in lan_urls(&bind, server.local_addr().port()) {
+    for url in lan_urls_for_bind(&bind, server.local_addr().port()) {
         println!("  {url}");
     }
     if allow_setup {
