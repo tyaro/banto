@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	connectivityScope,
 	isLoopbackHost,
+	isUnspecifiedHost,
+	isUnspecifiedUrl,
 	pickPrimaryLanUrl,
 	type ConnectivityScope
 } from './connectivityScope';
@@ -18,13 +20,20 @@ describe('isLoopbackHost / connectivityScope (Issue #216, PR #254 P2 follow-up)'
 		['127.255.255.255', true, 'local'],
 		['::1', true, 'local'],
 		['0:0:0:0:0:0:0:1', true, 'local'], // same address, unabbreviated form
+		['[::1]', true, 'local'], // bracketed
+		[' 127.0.0.1 ', true, 'local'], // whitespace-padded
+		['::ffff:127.0.0.1', true, 'local'], // IPv4-mapped IPv6 spelling of loopback
 		['localhost', true, 'local'],
 		['LOCALHOST', true, 'local'], // case-insensitive
 		['0.0.0.0', false, 'lan'],
 		['::', false, 'lan'],
+		['[::]', false, 'lan'], // bracketed wildcard (PR #254 review, 3rd round)
+		['[0:0:0:0:0:0:0:0]', false, 'lan'], // unabbreviated bracketed wildcard
+		['::ffff:0.0.0.0', false, 'lan'], // IPv4-mapped IPv6 spelling of the wildcard
 		['192.168.1.50', false, 'lan'],
 		['2001:db8::1', false, 'lan'],
-		['not-an-ip', false, 'lan'] // unparseable: conservative default is "not loopback"
+		['not-an-ip', false, 'lan'], // unparseable: conservative default is "not loopback"
+		['fe80::1%eth0', false, 'lan'] // zone id: deliberately not specially handled
 	];
 
 	for (const [host, loopback, scope] of cases) {
@@ -43,6 +52,50 @@ describe('isLoopbackHost / connectivityScope (Issue #216, PR #254 P2 follow-up)'
 			new Set(['127.0.0.1', '::1', 'localhost']).has(bind) ? 'local' : 'lan';
 		expect(oldSetBasedScope('127.0.0.2')).toBe('lan');
 		expect(connectivityScope('127.0.0.2')).toBe('local');
+	});
+
+	it('counter-proof: an unbracketed-only check misses the bracketed IPv6 wildcard', () => {
+		// PR #254 review, 3rd round: `"[::]"` is a value `ServerConfig.bind`
+		// accepts and `start` can actually bind (a bracketed IPv6 literal is
+		// a valid `SocketAddr` string with a port) - a check that only tried
+		// `"::".parse()`-equivalent logic without stripping brackets first
+		// would treat it as an unparseable string, not the wildcard it is.
+		const oldUnbracketedOnlyIsUnspecified = (host: string): boolean => host === '::';
+		expect(oldUnbracketedOnlyIsUnspecified('[::]')).toBe(false);
+		expect(isUnspecifiedHost('[::]')).toBe(true);
+	});
+});
+
+describe('isUnspecifiedHost (Issue #216, PR #254 P2 3rd round)', () => {
+	// Table: host literal -> whether it is the unspecified/wildcard address
+	// (never a connectable destination, RFC 4291 §2.5.2).
+	const cases: Array<[host: string, unspecified: boolean]> = [
+		['0.0.0.0', true],
+		['::', true],
+		['[::]', true],
+		['0:0:0:0:0:0:0:0', true],
+		['[0:0:0:0:0:0:0:0]', true],
+		['::ffff:0.0.0.0', true], // IPv4-mapped IPv6 spelling of the wildcard
+		['[::ffff:0.0.0.0]', true],
+		[' :: ', true], // whitespace-padded
+		['127.0.0.1', false], // loopback is not the wildcard
+		['::1', false],
+		['192.168.1.50', false],
+		['not-an-ip', false],
+		['fe80::1%eth0', false] // zone id: deliberately not specially handled
+	];
+
+	for (const [host, unspecified] of cases) {
+		it(`classifies "${host}" as unspecified=${unspecified}`, () => {
+			expect(isUnspecifiedHost(host)).toBe(unspecified);
+		});
+	}
+
+	it('isUnspecifiedUrl reads the same test through a URL, hostname and all', () => {
+		expect(isUnspecifiedUrl('http://[::]:8721')).toBe(true);
+		expect(isUnspecifiedUrl('http://0.0.0.0:8721')).toBe(true);
+		expect(isUnspecifiedUrl('http://192.168.1.50:8721')).toBe(false);
+		expect(isUnspecifiedUrl('http://127.0.0.1:8721')).toBe(false);
 	});
 });
 
@@ -93,6 +146,20 @@ describe('pickPrimaryLanUrl (Issue #216, PR #254 P2 follow-up)', () => {
 			name: 'a specific non-loopback bind (192.168.1.50): that single URL is the QR target',
 			urls: ['http://192.168.1.50:8721'],
 			expected: 'http://192.168.1.50:8721'
+		},
+		{
+			// PR #254 review, 3rd round: defense in depth - `lan_urls_for_bind`
+			// should never actually put the wildcard itself in `urls`, but if
+			// it somehow did, the QR must not be built from it (RFC 4291
+			// §2.5.2: not a connectable destination).
+			name: 'defense in depth: a bracketed IPv6 wildcard entry is never picked, even alongside a real LAN URL',
+			urls: ['http://127.0.0.1:8721', 'http://[::]:8721', 'http://192.168.1.50:8721'],
+			expected: 'http://192.168.1.50:8721'
+		},
+		{
+			name: 'defense in depth: an all-wildcard/loopback list (no real LAN URL) yields no QR',
+			urls: ['http://127.0.0.1:8721', 'http://[::]:8721'],
+			expected: null
 		}
 	];
 
@@ -111,5 +178,19 @@ describe('pickPrimaryLanUrl (Issue #216, PR #254 P2 follow-up)', () => {
 			urls.find((url) => !url.includes('127.0.0.1')) ?? null;
 		expect(oldSubstringPicker(['http://127.0.0.2:8721'])).toBe('http://127.0.0.2:8721');
 		expect(pickPrimaryLanUrl(['http://127.0.0.2:8721'])).toBeNull();
+	});
+
+	it('counter-proof: a loopback-only check (without the unspecified-address exclusion) wrongly picks the wildcard', () => {
+		// PR #254 review, 3rd round: before `isUnspecifiedUrl` was added,
+		// `pickPrimaryLanUrl` only excluded loopback - a bracketed wildcard
+		// entry is not loopback, so it would have been picked as "the LAN
+		// URL" and encoded into a QR, even though it is not a connectable
+		// destination (RFC 4291 §2.5.2).
+		const oldLoopbackOnlyPicker = (urls: string[]): string | null =>
+			urls.find((url) => !url.includes('127.0.0.1') && !url.includes('::1')) ?? null;
+		expect(oldLoopbackOnlyPicker(['http://127.0.0.1:8721', 'http://[::]:8721'])).toBe(
+			'http://[::]:8721'
+		);
+		expect(pickPrimaryLanUrl(['http://127.0.0.1:8721', 'http://[::]:8721'])).toBeNull();
 	});
 });

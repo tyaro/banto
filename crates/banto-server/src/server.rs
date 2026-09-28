@@ -121,38 +121,85 @@ pub fn lan_urls(port: u16) -> Vec<String> {
 /// what `bind` actually listens on, so callers building "you can reach this
 /// server at..." UI never advertise an address nothing is listening on:
 ///
-/// - **loopback** (`127.0.0.1`, `::1`): only that loopback URL - a LAN URL
-///   would be misleading since no other machine can reach it.
+/// - **loopback** (`127.0.0.1`, `::1`, any bracketed/whitespace/IPv4-mapped
+///   spelling of either - see [`parse_bind`]): only that loopback URL - a
+///   LAN URL would be misleading since no other machine can reach it.
 /// - **unspecified IPv4** (`0.0.0.0`): loopback plus one entry per
 ///   non-loopback IPv4 interface (unchanged from the original `lan_urls`
 ///   behavior - this is the "LAN公開" case).
-/// - **unspecified IPv6** (`::`): the IPv4 set above, plus one entry per
-///   non-loopback IPv6 interface (bracketed per RFC 3986). `ServerConfig`
-///   does not currently produce a listener that actually binds `::` (see
-///   `start`'s plain `{bind}:{port}` formatting, which is not IPv6-bracket
-///   aware) - this arm exists so the pure classification is correct and
-///   tested ahead of that being wired up, not because it is reachable today.
+/// - **unspecified IPv6** (`::`, `[::]`, ...): the IPv4 set above, plus one
+///   entry per non-loopback IPv6 interface (bracketed per RFC 3986). Never
+///   returns the unspecified address itself as a destination (PR #254
+///   review, 3rd round: `[::]` is a valid `bind` - `start`'s
+///   `TcpListener::bind` accepts a bracketed IPv6 literal fine - but is not
+///   a connectable address per RFC 4291 §2.5.2, so it must never appear as
+///   one of the URLs handed to a "connect to this address" UI).
 /// - **a specific address**: only that address's URL - binding to one NIC
 ///   means only that NIC's clients can connect, so nothing else is listed.
-/// - anything `bind` fails to parse as an IP (defensive; the settings UI
-///   only ever sends the addresses above): the raw `bind:port` string,
-///   unchanged from today's behavior for an unrecognized value.
+/// - anything `bind` fails to parse as an IP even after the normalization
+///   [`parse_bind`] does (defensive; the settings UI only ever sends the
+///   addresses above): the raw, unnormalized `bind:port` string, unchanged
+///   from today's behavior for an unrecognized value.
 pub fn lan_urls_for_bind(bind: &str, port: u16) -> Vec<String> {
     use std::net::IpAddr;
 
-    match bind.parse::<IpAddr>() {
-        Ok(IpAddr::V4(v4)) if v4.is_loopback() => vec![format!("http://{v4}:{port}")],
-        Ok(IpAddr::V6(v6)) if v6.is_loopback() => vec![format!("http://[{v6}]:{port}")],
-        Ok(IpAddr::V4(v4)) if v4.is_unspecified() => {
+    match parse_bind(bind) {
+        Some(IpAddr::V4(v4)) if v4.is_loopback() => vec![format!("http://{v4}:{port}")],
+        Some(IpAddr::V6(v6)) if v6.is_loopback() => vec![format!("http://[{v6}]:{port}")],
+        Some(IpAddr::V4(v4)) if v4.is_unspecified() => {
             unspecified_v4_urls(&non_loopback_addrs(false), port)
         }
-        Ok(IpAddr::V6(v6)) if v6.is_unspecified() => {
+        Some(IpAddr::V6(v6)) if v6.is_unspecified() => {
             unspecified_v6_urls(&non_loopback_addrs(true), port)
         }
-        Ok(IpAddr::V4(v4)) => vec![format!("http://{v4}:{port}")],
-        Ok(IpAddr::V6(v6)) => vec![format!("http://[{v6}]:{port}")],
-        Err(_) => vec![format!("http://{bind}:{port}")],
+        Some(IpAddr::V4(v4)) => vec![format!("http://{v4}:{port}")],
+        Some(IpAddr::V6(v6)) => vec![format!("http://[{v6}]:{port}")],
+        None => vec![format!("http://{bind}:{port}")],
     }
+}
+
+/// Parses `bind` into the address it actually represents, tolerating forms
+/// a real `ServerConfig.bind`/`BANTO_BIND` value can take beyond the bare
+/// dotted/colon notation `IpAddr::from_str` accepts on its own (PR #254
+/// review, 3rd round):
+///
+/// - **Surrounding whitespace** (`" ::1 "`) is trimmed.
+/// - **A bracketed IPv6 literal** (`"[::]"`, `"[::1]"` - the form a
+///   `[host]:port` address carries, and a form `start`'s
+///   `TcpListener::bind` already accepts today) has its brackets stripped
+///   before parsing - without this, `"[::]".parse::<IpAddr>()` fails and
+///   the caller falls through to the raw-string fallback, which is how the
+///   unspecified-address bug this function fixes slipped in for the
+///   bracketed form specifically.
+/// - **An IPv4-mapped IPv6 address** (`"::ffff:127.0.0.1"`,
+///   `"[::ffff:0.0.0.0]"`) is normalized to its plain IPv4 form via
+///   [`Ipv6Addr::to_ipv4_mapped`], so the `is_loopback`/`is_unspecified`
+///   checks in [`lan_urls_for_bind`] see the address it actually is -
+///   `Ipv6Addr::is_loopback` itself does not recognize this form (it only
+///   matches the literal `::1`), so without this an IPv4-mapped loopback or
+///   unspecified address would fall through as "a specific address" and be
+///   advertised as directly connectable.
+///
+/// Deliberately does **not** support a zone id (`"fe80::1%eth0"`):
+/// `IpAddr::from_str` already rejects it outright, and a link-local,
+/// zone-qualified bind is not a realistic input for this desktop app's
+/// LAN-exposure setting. It falls through to the `None`/raw-string fallback
+/// in [`lan_urls_for_bind`] like any other unparseable value - safe (no
+/// panic, no false LAN-reachability claim), just not specially classified.
+fn parse_bind(bind: &str) -> Option<std::net::IpAddr> {
+    use std::net::IpAddr;
+
+    let trimmed = bind.trim();
+    let unbracketed = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+
+    let addr = unbracketed.parse::<IpAddr>().ok()?;
+    Some(match addr {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        v4 => v4,
+    })
 }
 
 /// This machine's non-loopback interface addresses (IPv4 always, IPv6
@@ -260,6 +307,93 @@ mod tests {
         let urls = lan_urls_for_bind("::", 8721);
         assert_eq!(urls[0], "http://127.0.0.1:8721");
         assert_eq!(urls[1], "http://[::1]:8721");
+    }
+
+    // --- PR #254 review, 3rd round: bracketed / whitespace / IPv4-mapped
+    // spellings of the addresses above must classify the same as their bare
+    // form, and a bracketed unspecified address must never appear as its
+    // own destination URL.
+
+    #[test]
+    fn lan_urls_for_bind_bracketed_ipv6_wildcard_never_returns_the_wildcard_itself() {
+        // The review's core example: `start`'s `TcpListener::bind` accepts
+        // `"[::]"` fine (it is a valid `SocketAddr` string with a port), but
+        // `"[::]".parse::<IpAddr>()` used to fail and fall through to the
+        // raw-string fallback, returning `["http://[::]:8721"]` - the
+        // unspecified address itself, which is not a connectable
+        // destination (RFC 4291 §2.5.2).
+        let urls = lan_urls_for_bind("[::]", 8721);
+        assert_eq!(urls[0], "http://127.0.0.1:8721");
+        assert_eq!(urls[1], "http://[::1]:8721");
+        assert!(
+            !urls.iter().any(|u| u.contains("[::]")),
+            "the unspecified address itself must never be a destination URL: {urls:?}"
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_unabbreviated_bracketed_ipv6_wildcard_is_also_a_wildcard() {
+        let urls = lan_urls_for_bind("[0:0:0:0:0:0:0:0]", 8721);
+        assert_eq!(urls[0], "http://127.0.0.1:8721");
+        assert_eq!(urls[1], "http://[::1]:8721");
+    }
+
+    #[test]
+    fn lan_urls_for_bind_bracketed_ipv6_loopback_is_loopback_only() {
+        assert_eq!(
+            lan_urls_for_bind("[::1]", 8721),
+            vec!["http://[::1]:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_whitespace_padded_bind_is_trimmed() {
+        assert_eq!(
+            lan_urls_for_bind("  127.0.0.1  ", 8721),
+            vec!["http://127.0.0.1:8721".to_string()]
+        );
+        assert_eq!(
+            lan_urls_for_bind(" [::1] ", 8721),
+            vec!["http://[::1]:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_ipv4_mapped_ipv6_loopback_is_loopback_only() {
+        // "::ffff:127.0.0.1" is IPv6 syntax for the IPv4 address
+        // 127.0.0.1 - `Ipv6Addr::is_loopback` does not recognize this form
+        // on its own (it only matches the literal `::1`), so without
+        // `to_ipv4_mapped` normalization this would fall through as "a
+        // specific [IPv6] address" and be advertised as directly
+        // connectable, which it is not (it is loopback).
+        assert_eq!(
+            lan_urls_for_bind("::ffff:127.0.0.1", 8721),
+            vec!["http://127.0.0.1:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_bracketed_ipv4_mapped_ipv6_wildcard_is_also_a_wildcard() {
+        let urls = lan_urls_for_bind("[::ffff:0.0.0.0]", 8721);
+        assert_eq!(urls[0], "http://127.0.0.1:8721");
+        assert!(
+            !urls.iter().any(|u| u.contains("0.0.0.0")),
+            "the unspecified address itself must never be a destination URL: {urls:?}"
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_zone_id_is_not_specially_classified_but_does_not_panic() {
+        // Documented decision (PR #254 review, 3rd round): a zone-qualified
+        // link-local address is not supported - `IpAddr::from_str` already
+        // rejects it, so this exercises the existing raw-string fallback,
+        // not a new code path. Asserting the exact (mildly malformed, but
+        // harmless) fallback shape pins that this remains a fallback, not a
+        // silent misclassification as loopback/unspecified/LAN-reachable.
+        assert_eq!(
+            lan_urls_for_bind("fe80::1%eth0", 8721),
+            vec!["http://fe80::1%eth0:8721".to_string()]
+        );
     }
 
     #[test]
