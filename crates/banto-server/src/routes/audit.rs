@@ -1,4 +1,6 @@
 use super::*;
+use axum::extract::rejection::QueryRejection;
+use banto_admin_services::audit::AuditLogList;
 
 // --- M14: audit log ---------------------------------------------------------
 
@@ -185,28 +187,57 @@ struct AuditLogState {
     auth: AuthState,
 }
 
-/// `POST /api/audit-log/list` (spec M14, `admin`-only): filtered/sorted/
-/// paginated read of the audit trail (spec: read routes themselves are
-/// never audited, only mutations/denials/auth events are). Also
-/// opportunistically prunes (spec: "list実行時に軽く") before answering -
-/// best-effort, a prune failure must never block an admin from viewing
-/// existing entries, so its result is discarded. There is deliberately no
-/// separate background pruning task: this plus a once-at-startup prune
-/// (`bin/banto-serve.rs`'s `main`/`src-tauri`'s `run()`) is judged
-/// sufficient - the audit-log viewer is an admin-only, infrequently-visited
-/// page, and each prune is a couple of indexed `DELETE`s, not an expensive
-/// scan.
+/// `POST /api/audit-log/list?asOfId=` (spec M14, `admin`-only): filtered/
+/// sorted/paginated read of the audit trail (spec: read routes themselves
+/// are never audited, only mutations/denials/auth events are).
+///
+/// `?asOfId=` (optional, Issue #248) is the snapshot boundary
+/// ([`AuditLogService::list_as_of`]): only rows with `id <= asOfId` are
+/// listed and counted. Omitted, every row is covered as before. The answer
+/// is [`AuditLogList`] - `ListResult`'s `rows`/`totalCount` plus the
+/// boundary it used in `asOfId`, so a client that ignores the new field
+/// keeps working.
+///
+/// An unbounded read also opportunistically prunes (spec: "list実行時に
+/// 軽く") before answering - best-effort, a prune failure must never block
+/// an admin from viewing existing entries, so its result is discarded.
+/// There is deliberately no separate background pruning task: this plus a
+/// once-at-startup prune (`bin/banto-serve.rs`'s `main`/`src-tauri`'s
+/// `run()`) is judged sufficient - the audit-log viewer is an admin-only,
+/// infrequently-visited page, and each prune is a couple of indexed
+/// `DELETE`s, not an expensive scan.
+///
+/// **A bounded read (`asOfId` given = block 2+ of a viewer generation) does
+/// not prune** (Issue #248, same as banto-industrial #448/#464): a prune
+/// deletes rows inside the boundary, which the viewer must treat as an
+/// expired snapshot. With the row cap reached and entries still being
+/// written, every list call deletes the oldest rows, so pruning here would
+/// expire every generation at its second block. The unbounded read (the
+/// first block of a generation, i.e. the viewer's "reload") and startup
+/// still prune.
 async fn audit_log_list(
     State(state): State<AuditLogState>,
+    query: Result<Query<AuditLogListQuery>, QueryRejection>,
     Json(params): Json<ListParams>,
-) -> Result<Json<ListResult<banto_admin_services::audit::AuditLogEntry>>, ApiError> {
-    if let Ok(config) = state.settings.audit_config().await {
-        let _ = state
-            .audit
-            .prune(config.retention_days, config.retention_rows)
-            .await;
+) -> Result<Json<AuditLogList>, ApiError> {
+    let Query(query) = query.map_err(|err| BantoError::BadRequest(err.body_text()))?;
+    if query.as_of_id.is_none() {
+        if let Ok(config) = state.settings.audit_config().await {
+            let _ = state
+                .audit
+                .prune(config.retention_days, config.retention_rows)
+                .await;
+        }
     }
-    Ok(Json(state.audit.list(params).await?))
+    Ok(Json(state.audit.list_as_of(params, query.as_of_id).await?))
+}
+
+/// `POST /api/audit-log/list?asOfId=`'s query string (Issue #248).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuditLogListQuery {
+    #[serde(default)]
+    as_of_id: Option<i64>,
 }
 
 /// `GET /api/audit-log/config` (spec M14, `admin`-only): current retention

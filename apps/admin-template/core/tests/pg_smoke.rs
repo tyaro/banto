@@ -341,6 +341,8 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("audit list after prune");
     assert_eq!(remaining.total_count, 1);
 
+    audit_snapshot_boundary_on_postgres(&audit, &db).await;
+
     concurrent_admin_removals_on_postgres(&url).await;
 
     // --- backup: SQLite-only, so every op must Err (never panic) on Postgres --
@@ -381,6 +383,108 @@ async fn app_layer_crud_round_trips_on_postgres() {
         backup.pending_restore().await.is_none(),
         "pending_restore reports nothing staged on Postgres"
     );
+}
+
+// Issue #248: `list_as_of` on PostgreSQL - the boundary pins the set across
+// blocks (rows recorded between two blocks stay out, the count stays), rows
+// sharing one `ts` keep one order across `OFFSET` blocks in both directions
+// (`ORDER BY` ends with `id`), and an omitted boundary keeps `list`'s result.
+// Runs inside the smoke test (shared schema, see the note below).
+async fn audit_snapshot_boundary_on_postgres(audit: &AuditLogService, db: &banto_storage::Db) {
+    use banto_core::{Pagination, SortDirection, SortState};
+
+    let record = |n: usize| async move {
+        for _ in 0..n {
+            audit
+                .try_record(AuditEntry {
+                    actor_username: Some("alice"),
+                    actor_role: Some("admin"),
+                    action: "create",
+                    resource: "items",
+                    entity_id: None,
+                    detail: None,
+                    origin: "rest",
+                    result: "ok",
+                })
+                .await
+                .expect("audit try_record");
+        }
+    };
+    let page = |offset: u64, direction: SortDirection| ListParams {
+        pagination: Some(Pagination { offset, limit: 3 }),
+        sort: vec![SortState {
+            field: "ts".to_string(),
+            direction,
+        }],
+        ..Default::default()
+    };
+    let ids = |list: &admin_template_core::audit::AuditLogList| -> Vec<i64> {
+        list.rows.iter().map(|r| r.id).collect()
+    };
+
+    record(5).await;
+    let pool = db.as_postgres().expect("a PostgreSQL handle");
+    sqlx::query("UPDATE audit_log SET ts = '2026-09-29 12:00:00+00'")
+        .execute(pool)
+        .await
+        .expect("same ts for every row");
+    let all = audit.list(ListParams::default()).await.expect("audit list");
+    let mut all_ids: Vec<i64> = all.rows.iter().map(|r| r.id).collect();
+    all_ids.sort();
+    assert_eq!(all_ids.len(), 6);
+    let max_id = *all_ids.last().unwrap();
+
+    let first = audit
+        .list_as_of(page(0, SortDirection::Desc), None)
+        .await
+        .expect("first block");
+    assert_eq!(
+        first.as_of_id, max_id,
+        "an omitted boundary is the newest id"
+    );
+    assert_eq!(first.total_count, 6);
+
+    // Two rows recorded between the blocks (same second as the rest).
+    record(2).await;
+    sqlx::query("UPDATE audit_log SET ts = '2026-09-29 12:00:00+00'")
+        .execute(pool)
+        .await
+        .expect("same ts for the new rows");
+
+    let second = audit
+        .list_as_of(page(3, SortDirection::Desc), Some(first.as_of_id))
+        .await
+        .expect("second block");
+    assert_eq!(second.as_of_id, first.as_of_id);
+    assert_eq!(second.total_count, 6, "the pinned count is unchanged");
+    let mut seen = ids(&first);
+    seen.extend(ids(&second));
+    let mut expected_desc = all_ids.clone();
+    expected_desc.reverse();
+    assert_eq!(seen, expected_desc, "no duplicate, no gap, id DESC on ties");
+
+    let mut seen_asc = Vec::new();
+    for offset in [0, 3] {
+        let block = audit
+            .list_as_of(page(offset, SortDirection::Asc), Some(first.as_of_id))
+            .await
+            .expect("ascending block");
+        seen_asc.extend(ids(&block));
+    }
+    assert_eq!(seen_asc, all_ids, "id ASC on ties");
+
+    let fresh = audit
+        .list_as_of(page(0, SortDirection::Desc), None)
+        .await
+        .expect("fresh generation");
+    assert_eq!(fresh.total_count, 8);
+    assert_eq!(fresh.as_of_id, max_id + 2);
+    let old = audit
+        .list(page(0, SortDirection::Desc))
+        .await
+        .expect("list without a boundary");
+    assert_eq!(old.total_count, fresh.total_count);
+    assert_eq!(old.rows, fresh.rows);
 }
 
 // Issue #207 / roadmap M10: keep this in the existing smoke test so no other

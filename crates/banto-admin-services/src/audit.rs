@@ -48,6 +48,24 @@ pub struct AuditLogEntry {
     pub result: String,
 }
 
+/// One page of the audit-log viewer's read with its snapshot boundary
+/// (Issue #248, [`AuditLogService::list_as_of`]). `rows`/`totalCount` are
+/// spelled exactly like `banto_core::ListResult` (which lives in
+/// `banto-core` and cannot grow a field), plus the boundary this answer
+/// used, `asOfId` - a client that reads only `rows`/`totalCount` keeps
+/// working unchanged.
+///
+/// Both `rows` and `total_count` are taken from the rows with
+/// `id <= as_of_id`. On an empty table `as_of_id` is `0` (ids start at 1, so
+/// it is a boundary containing no row), never `null`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditLogList {
+    pub rows: Vec<AuditLogEntry>,
+    pub total_count: u64,
+    pub as_of_id: i64,
+}
+
 /// One record to write to the `audit_log` table (spec M14). Borrowed string
 /// fields keep call sites cheap - this is built fresh at each call site and
 /// consumed immediately by [`AuditLogService::record`]/[`AuditLogService::try_record`],
@@ -182,25 +200,97 @@ impl AuditLogService {
         }
     }
 
-    /// Filtered/sorted/paginated read (spec M14's admin-only viewer),
-    /// same `banto_storage::list_query` pattern as
+    /// Filtered/sorted/paginated read (spec M14's admin-only viewer) with no
+    /// snapshot boundary. Same result as [`AuditLogService::list_as_of`] with
+    /// `as_of_id: None` minus the boundary it picked (that boundary is the
+    /// newest row at the time of the read, so the result covers the whole
+    /// table exactly as before Issue #248). Kept with its original return
+    /// type so existing callers (and derived apps) stay unchanged.
+    pub async fn list(&self, params: ListParams) -> Result<ListResult<AuditLogEntry>, BantoError> {
+        let list = self.list_as_of(params, None).await?;
+        Ok(ListResult {
+            rows: list.rows,
+            total_count: list.total_count,
+        })
+    }
+
+    /// Filtered/sorted/paginated read (spec M14's admin-only viewer), same
+    /// `banto_storage::list_query` pattern as
     /// `admin_template_core::items::ItemsService::list`. Deliberately called
     /// only from the admin-gated `/api/audit-log/list` route / `audit_log_list`
     /// command - this service itself has no RBAC awareness (see this
     /// module's doc comment).
-    pub async fn list(&self, params: ListParams) -> Result<ListResult<AuditLogEntry>, BantoError> {
+    ///
+    /// **`as_of_id` is a snapshot boundary** (Issue #248, spec §4.1): when
+    /// given, only rows with `id <= as_of_id` are counted and listed. When
+    /// omitted, the boundary is the largest `id` at the time of this read
+    /// (`0` for an empty table), which covers every row - so a caller that
+    /// omits it gets the same rows and count as before. The boundary used
+    /// is returned in [`AuditLogList::as_of_id`]; a block-fetching viewer
+    /// (`@banto/admin-core`'s `SnapshotListResource`) pins the one its first
+    /// answer returned and sends it with every later block of the same
+    /// generation, so rows **added** between two block requests do not
+    /// shift `OFFSET`. This relies on `audit_log.id` growing monotonically
+    /// and never being reused (SQLite `AUTOINCREMENT`, PostgreSQL
+    /// `IDENTITY`; migration `0005_audit_log.sql`) and on audit rows never
+    /// being updated.
+    ///
+    /// The boundary does **not** cover deletions: retention pruning
+    /// ([`AuditLogService::prune`]) can remove rows inside the boundary and
+    /// shift `OFFSET`. The viewer detects that as "the same boundary and
+    /// the same filters now count a different total" and stops reading the
+    /// generation (the count can only change through a deletion - or, on
+    /// PostgreSQL, a writer that allocated a lower `id` committing late,
+    /// which the same check catches). The callers skip the opportunistic
+    /// prune for bounded reads for the same reason (see the REST route /
+    /// Tauri command).
+    ///
+    /// **The boundary, the rows and the count come from one read
+    /// transaction**, so one answer never mixes two points in time (the
+    /// count comparison above depends on it). PostgreSQL runs it as
+    /// `REPEATABLE READ, READ ONLY` - its default `READ COMMITTED` would
+    /// give every statement its own snapshot; a SQLite read transaction
+    /// already reads one snapshot.
+    ///
+    /// The order is total: `column_map()` registers `id`, so
+    /// `append_order_by` ends `ORDER BY` with `id` in the direction of the
+    /// last sort key (Issue #243) - rows sharing a `ts` second keep one
+    /// order across blocks.
+    pub async fn list_as_of(
+        &self,
+        params: ListParams,
+        as_of_id: Option<i64>,
+    ) -> Result<AuditLogList, BantoError> {
         let columns = column_map();
+        // The bounded set is wrapped as a subquery aliased `audit_log`, so the
+        // column whitelist (`column_map`) and `apply_list_params` apply to it
+        // unchanged (`append_where` writes its own ` WHERE `, so the bound
+        // cannot simply be appended to the outer query).
         const SELECT_ROWS: &str =
             "SELECT id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result \
-             FROM audit_log";
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM audit_log";
+             FROM (SELECT * FROM audit_log WHERE id <= ";
+        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (SELECT * FROM audit_log WHERE id <= ";
+        const BOUNDED_ALIAS: &str = ") AS audit_log";
+        const SELECT_MAX_ID: &str = "SELECT MAX(id) FROM audit_log";
 
         // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
         // `admin_template_core::items::ItemsService::list` (see that method's
         // comment).
         match &self.db {
             Db::Sqlite(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let as_of_id = match as_of_id {
+                    Some(id) => id,
+                    None => sqlx::query_scalar::<_, Option<i64>>(SELECT_MAX_ID)
+                        .fetch_one(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .unwrap_or(0),
+                };
+
                 let mut rows_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_ROWS);
+                rows_builder.push_bind(as_of_id);
+                rows_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::sqlite::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -208,11 +298,13 @@ impl AuditLogService {
                 )?;
                 let rows: Vec<AuditLogEntry> = rows_builder
                     .build_query_as::<AuditLogEntry>()
-                    .fetch_all(pool)
+                    .fetch_all(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                count_builder.push_bind(as_of_id);
+                count_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::sqlite::append_where(
                     &mut count_builder,
                     &columns,
@@ -220,18 +312,38 @@ impl AuditLogService {
                 )?;
                 let total_count: i64 = count_builder
                     .build_query_scalar()
-                    .fetch_one(pool)
+                    .fetch_one(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                Ok(ListResult {
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(AuditLogList {
                     rows,
                     total_count: total_count as u64,
+                    as_of_id,
                 })
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                // Must be the transaction's first statement (PostgreSQL rejects
+                // it after a query has run).
+                sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                let as_of_id = match as_of_id {
+                    Some(id) => id,
+                    None => sqlx::query_scalar::<_, Option<i64>>(SELECT_MAX_ID)
+                        .fetch_one(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .unwrap_or(0),
+                };
+
                 let mut rows_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(SELECT_ROWS);
+                rows_builder.push_bind(as_of_id);
+                rows_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::postgres::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -239,12 +351,14 @@ impl AuditLogService {
                 )?;
                 let rows: Vec<AuditLogEntry> = rows_builder
                     .build_query_as::<AuditLogEntry>()
-                    .fetch_all(pool)
+                    .fetch_all(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<sqlx::Postgres> =
                     QueryBuilder::new(SELECT_COUNT);
+                count_builder.push_bind(as_of_id);
+                count_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::postgres::append_where(
                     &mut count_builder,
                     &columns,
@@ -252,13 +366,15 @@ impl AuditLogService {
                 )?;
                 let total_count: i64 = count_builder
                     .build_query_scalar()
-                    .fetch_one(pool)
+                    .fetch_one(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
 
-                Ok(ListResult {
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                Ok(AuditLogList {
                     rows,
                     total_count: total_count as u64,
+                    as_of_id,
                 })
             }
         }
@@ -665,5 +781,201 @@ mod tests {
             svc.list(ListParams::default()).await.unwrap().total_count,
             5
         );
+    }
+
+    // --- list_as_of: snapshot boundary (Issue #248) ----------------------------
+
+    fn page(offset: u64, limit: u64, sort: Vec<SortState>) -> ListParams {
+        ListParams {
+            pagination: Some(Pagination { offset, limit }),
+            sort,
+            ..Default::default()
+        }
+    }
+
+    fn ts_desc() -> Vec<SortState> {
+        vec![SortState {
+            field: "ts".to_string(),
+            direction: SortDirection::Desc,
+        }]
+    }
+
+    fn ids(list: &AuditLogList) -> Vec<i64> {
+        list.rows.iter().map(|r| r.id).collect()
+    }
+
+    /// Rows written between two block reads do not enter a pinned
+    /// generation: the second block continues the first one's set exactly
+    /// (no duplicate at the block edge), and its count is the first one's.
+    /// A new unbounded read (the viewer's "reload") sees the new rows.
+    #[tokio::test]
+    async fn list_as_of_pins_the_set_across_blocks() {
+        let svc = service().await;
+        seed_n(&svc, 5).await;
+
+        let first = svc.list_as_of(page(0, 2, ts_desc()), None).await.unwrap();
+        assert_eq!(first.as_of_id, 5, "an omitted boundary is the newest id");
+        assert_eq!(first.total_count, 5);
+        assert_eq!(ids(&first), vec![5, 4]);
+
+        // Two entries recorded between the blocks.
+        seed_n(&svc, 2).await;
+
+        let second = svc
+            .list_as_of(page(2, 2, ts_desc()), Some(first.as_of_id))
+            .await
+            .unwrap();
+        let third = svc
+            .list_as_of(page(4, 2, ts_desc()), Some(first.as_of_id))
+            .await
+            .unwrap();
+        assert_eq!(second.as_of_id, 5, "the given boundary is echoed back");
+        assert_eq!(second.total_count, 5, "the pinned set's count is unchanged");
+        assert_eq!(ids(&second), vec![3, 2]);
+        assert_eq!(ids(&third), vec![1]);
+
+        let fresh = svc.list_as_of(page(0, 2, ts_desc()), None).await.unwrap();
+        assert_eq!(fresh.as_of_id, 7);
+        assert_eq!(fresh.total_count, 7);
+        assert_eq!(ids(&fresh), vec![7, 6]);
+    }
+
+    /// Without the boundary the same interleaving duplicates a row at the
+    /// block edge - the failure `asOfId` exists to prevent (the "before"
+    /// half of the test above).
+    #[tokio::test]
+    async fn unbounded_blocks_shift_when_rows_are_added_between_them() {
+        let svc = service().await;
+        seed_n(&svc, 5).await;
+        let first = svc.list(page(0, 2, ts_desc())).await.unwrap();
+        seed_n(&svc, 2).await;
+        let second = svc.list(page(2, 2, ts_desc())).await.unwrap();
+        let first_ids: Vec<i64> = first.rows.iter().map(|r| r.id).collect();
+        let second_ids: Vec<i64> = second.rows.iter().map(|r| r.id).collect();
+        assert_eq!(first_ids, vec![5, 4]);
+        assert_eq!(second_ids, vec![5, 4], "the edge rows come back again");
+    }
+
+    /// Omitting `as_of_id` keeps `list`'s old result: every row, the same
+    /// count, and on an empty table the boundary `0` (a boundary that holds
+    /// no row, never `null`).
+    #[tokio::test]
+    async fn list_as_of_without_a_boundary_matches_list() {
+        let svc = service().await;
+        let empty = svc.list_as_of(ListParams::default(), None).await.unwrap();
+        assert_eq!(empty.as_of_id, 0);
+        assert_eq!(empty.total_count, 0);
+        assert!(empty.rows.is_empty());
+        let pinned_empty = svc
+            .list_as_of(ListParams::default(), Some(0))
+            .await
+            .unwrap();
+        assert_eq!(pinned_empty.total_count, 0);
+
+        svc.record(sample_entry("create", "items", "alice")).await;
+        svc.record(sample_entry("delete", "users", "bob")).await;
+        svc.record(sample_entry("create", "users", "alice")).await;
+
+        let params = ListParams {
+            sort: ts_desc(),
+            filters: vec![FilterState {
+                field: "actorUsername".to_string(),
+                op: FilterOp::Eq,
+                value: json!("alice"),
+            }],
+            ..Default::default()
+        };
+        let old = svc.list(params.clone()).await.unwrap();
+        let new = svc.list_as_of(params, None).await.unwrap();
+        assert_eq!(new.as_of_id, 3);
+        assert_eq!(new.total_count, old.total_count);
+        assert_eq!(new.rows, old.rows);
+        assert_eq!(ids(&new), vec![3, 1]);
+    }
+
+    /// The boundary and the filters combine: the count is the filtered
+    /// count inside the boundary.
+    #[tokio::test]
+    async fn list_as_of_combines_with_filters() {
+        let svc = service().await;
+        svc.record(sample_entry("create", "items", "alice")).await;
+        svc.record(sample_entry("create", "items", "bob")).await;
+        svc.record(sample_entry("create", "items", "alice")).await;
+        svc.record(sample_entry("create", "items", "alice")).await;
+
+        let bounded = svc
+            .list_as_of(
+                ListParams {
+                    filters: vec![FilterState {
+                        field: "actorUsername".to_string(),
+                        op: FilterOp::Eq,
+                        value: json!("alice"),
+                    }],
+                    ..Default::default()
+                },
+                Some(3),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bounded.total_count, 2);
+        assert_eq!(ids(&bounded), vec![1, 3]);
+    }
+
+    /// Rows sharing one `ts` (several entries within one second) keep one
+    /// order across `OFFSET` blocks: `ORDER BY ts DESC` ends with `id DESC`
+    /// (`column_map()` registers `id`, Issue #243), `ts ASC` with `id ASC`.
+    #[tokio::test]
+    async fn rows_with_the_same_ts_are_ordered_by_id_in_both_directions() {
+        let svc = service().await;
+        seed_n(&svc, 7).await;
+        sqlx::query("UPDATE audit_log SET ts = '2026-09-29 12:00:00'")
+            .execute(
+                svc.db
+                    .as_sqlite()
+                    .expect("service tests run on a SQLite handle"),
+            )
+            .await
+            .unwrap();
+
+        for (direction, expected) in [
+            (SortDirection::Desc, vec![7, 6, 5, 4, 3, 2, 1]),
+            (SortDirection::Asc, vec![1, 2, 3, 4, 5, 6, 7]),
+        ] {
+            let sort = vec![SortState {
+                field: "ts".to_string(),
+                direction,
+            }];
+            let first = svc
+                .list_as_of(page(0, 3, sort.clone()), None)
+                .await
+                .unwrap();
+            let mut seen = ids(&first);
+            for offset in [3, 6] {
+                let block = svc
+                    .list_as_of(page(offset, 3, sort.clone()), Some(first.as_of_id))
+                    .await
+                    .unwrap();
+                seen.extend(ids(&block));
+            }
+            assert_eq!(seen, expected, "{direction:?}");
+        }
+    }
+
+    /// A prune inside a pinned boundary changes the pinned set's count -
+    /// the signal the viewer uses to expire the generation (the boundary
+    /// only covers additions).
+    #[tokio::test]
+    async fn a_prune_inside_the_boundary_changes_the_pinned_count() {
+        let svc = service().await;
+        seed_n(&svc, 5).await;
+        let first = svc.list_as_of(page(0, 2, ts_desc()), None).await.unwrap();
+        assert_eq!(first.total_count, 5);
+
+        svc.prune(None, Some(3)).await.unwrap();
+        let second = svc
+            .list_as_of(page(2, 2, ts_desc()), Some(first.as_of_id))
+            .await
+            .unwrap();
+        assert_eq!(second.total_count, 3);
     }
 }
