@@ -22,6 +22,18 @@
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-09-28
+
+**v1.7.3 — 一覧のページングの重複・欠落を直す修正。派生アプリへの影響: 一覧の並びが変わりうる（API の破壊的変更は無い）。**
+`banto-storage` の `ORDER BY` に一意キー（既定 `id`）を足すようになり、
+`LIMIT`/`OFFSET` を使う一覧で同じ値の行が多い列でも重複・欠落しなくなる。
+並べ替えの指定が無いときは一意キーの昇順（従来と同じ向き）。InMemory の
+`DataProvider` と grid の client sort も同じ規則にそろえた。追加 API:
+`ColumnMap::unique_key` / `without_unique_key` / `unique_key_column`、
+`WindowedListResource` の `failedBlocks` / `requestTimeoutMs`。あわせて、
+`systemInfoStore.available` がモジュール読み込み時に固定される不具合の
+修正と、Dependabot 依存更新を含む。
+
 - 依存更新（Dependabot・#200/#201/#202）: pnpm/action-setup / taiki-e/install-action
   / uuid / npm minor-patch グループ（@playwright/test・eslint・prettier・
   typescript-eslint・vite・jsdom・@lucide/svelte・@inlang/paraglide-js・
@@ -1317,7 +1329,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.7.2...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/tyaro/banto/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/tyaro/banto/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/tyaro/banto/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/tyaro/banto/compare/v1.6.0...v1.7.0
