@@ -26,7 +26,7 @@ import {
 	ProviderError,
 	type ErrorBody,
 	type ListParams,
-	type ListResult
+	type SnapshotListResult
 } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
 
@@ -44,6 +44,15 @@ export interface AuditLogEntry {
 	origin: string;
 	result: string;
 }
+
+/**
+ * Mirrors `banto_admin_services::audit::AuditLogList` (Issue #248):
+ * `ListResult`'s `rows`/`totalCount` plus the snapshot boundary `asOfId`
+ * the server used (`0` on an empty table) and the retention prune's
+ * `deletionEpoch` (always sent by this server; the page's
+ * `SnapshotListResource` expires a generation when it changes).
+ */
+export type AuditLogList = SnapshotListResult<AuditLogEntry>;
 
 /** Mirrors `admin_template_core::settings::AuditSettings` (camelCase on the wire). `null` on either field means unlimited on that dimension (spec M14: "0以下は無制限"). */
 export interface AuditSettings {
@@ -99,6 +108,7 @@ const NETWORK_ERROR_MESSAGE = 'サーバーに接続できません';
 interface HttpInit {
 	method: string;
 	body?: unknown;
+	signal?: AbortSignal;
 }
 
 /** Same token lookup as usersAdmin.ts - see that file's doc comment. */
@@ -119,7 +129,8 @@ async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
 		response = await fetch(path, {
 			method: init.method,
 			headers,
-			body: hasBody ? JSON.stringify(init.body) : undefined
+			body: hasBody ? JSON.stringify(init.body) : undefined,
+			signal: init.signal
 		});
 	} catch {
 		throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
@@ -145,14 +156,34 @@ async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
 	return (await response.json()) as T;
 }
 
-/** Filtered/sorted/paginated audit-log read (spec M14's admin-only viewer). */
-export async function listAuditLog(params: ListParams): Promise<ListResult<AuditLogEntry>> {
+/**
+ * Filtered/sorted/paginated audit-log read (spec M14's admin-only viewer).
+ *
+ * `asOfId` (Issue #248) is the snapshot boundary: `null` (the default) reads
+ * every row and lets the server pick the boundary it returns; a number
+ * limits the read to rows with `id <= asOfId` (the audit-log page's
+ * `SnapshotListResource` passes its generation's boundary for every block
+ * after the first). A bounded read does not run the retention prune
+ * server-side. `signal` aborts the REST request (the Tauri `invoke()` cannot
+ * be aborted; its late answer is ignored by the caller).
+ */
+export async function listAuditLog(
+	params: ListParams,
+	asOfId: number | null = null,
+	signal?: AbortSignal
+): Promise<AuditLogList> {
 	if (!isAuditLogAvailable()) throw demoModeError();
-	if (getBantoMode() === 'tauri')
-		return invokeCommand<ListResult<AuditLogEntry>>('audit_log_list', { params });
-	return httpRequest<ListResult<AuditLogEntry>>('/api/audit-log/list', {
+	if (getBantoMode() === 'tauri') {
+		return invokeCommand<AuditLogList>(
+			'audit_log_list',
+			asOfId === null ? { params } : { params, asOfId }
+		);
+	}
+	const query = asOfId === null ? '' : `?asOfId=${encodeURIComponent(String(asOfId))}`;
+	return httpRequest<AuditLogList>(`/api/audit-log/list${query}`, {
 		method: 'POST',
-		body: params
+		body: params,
+		signal
 	});
 }
 
