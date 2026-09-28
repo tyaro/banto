@@ -21,7 +21,7 @@
 mod keyring_store;
 
 use admin_template_core::assets::FrontendAssets;
-use admin_template_core::audit::{AuditEntry, AuditLogEntry, AuditLogService};
+use admin_template_core::audit::{AuditEntry, AuditLogList, AuditLogService};
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use admin_template_core::db::init_db;
 use admin_template_core::events::event_channel;
@@ -1617,22 +1617,30 @@ async fn users_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> 
 }
 
 /// `admin`-only (spec M14): the audit-log viewer's filtered/sorted/
-/// paginated read. Also opportunistically prunes first - same reasoning as
-/// `admin_template_core::rest::audit_log_list` (see that function's doc
-/// comment).
+/// paginated read, mirroring REST's `POST /api/audit-log/list?asOfId=`
+/// (`banto_server::routes::audit_log_router`). `as_of_id` (the `asOfId`
+/// argument, optional, Issue #248) is the snapshot boundary
+/// (`AuditLogService::list_as_of`); the answer carries the boundary it used.
+/// An unbounded read opportunistically prunes first; **a bounded read does
+/// not** - same reasoning as the REST route (see its doc comment: pruning
+/// inside a pinned boundary would expire every viewer generation at its
+/// second block once the row cap is reached).
 #[tauri::command]
 async fn audit_log_list(
     state: State<'_, AppState>,
     params: ListParams,
-) -> Result<ListResult<AuditLogEntry>, BantoError> {
+    as_of_id: Option<i64>,
+) -> Result<AuditLogList, BantoError> {
     require_role(&state, Role::Admin, "audit_log").await?;
-    if let Ok(config) = state.settings.audit_config().await {
-        let _ = state
-            .audit
-            .prune(config.retention_days, config.retention_rows)
-            .await;
+    if as_of_id.is_none() {
+        if let Ok(config) = state.settings.audit_config().await {
+            let _ = state
+                .audit
+                .prune(config.retention_days, config.retention_rows)
+                .await;
+        }
     }
-    state.audit.list(params).await
+    state.audit.list_as_of(params, as_of_id).await
 }
 
 /// Current audit-log retention policy (spec M14 Phase B). `admin`-only, to

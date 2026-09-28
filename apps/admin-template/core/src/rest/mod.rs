@@ -32,7 +32,7 @@
 //! | DELETE | `/api/users/{id}`    | -              | 204 (admin)             |
 //! | GET    | `/api/ui-settings/{key}` | -          | `{value: string \| null}` (any role) |
 //! | PUT    | `/api/ui-settings/{key}` | `{value}`  | 204 (any role)          |
-//! | POST   | `/api/audit-log/list` | `ListParams`   | `ListResult<AuditLogEntry>` (admin) |
+//! | POST   | `/api/audit-log/list?asOfId=` | `ListParams` | `AuditLogList` (`ListResult` + `asOfId`/`deletionEpoch`, admin; #248) |
 //! | GET    | `/api/audit-log/config` | -            | `AuditSettings` (admin) |
 //! | PUT    | `/api/audit-log/config` | `AuditSettings` | `AuditSettings` (admin) |
 //! | GET    | `/api/system/info`   | -              | `SystemInfo` (admin, M-review 2026-08 §2.4) |

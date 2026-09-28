@@ -41,7 +41,7 @@ use banto_admin_services::audit::{AuditEntry, AuditLogService};
 use banto_admin_services::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use banto_admin_services::settings::{AuditSettings, SettingsService};
 use banto_admin_services::users::{Role, UserIdentity, UserSummary, UsersService};
-use banto_core::{BantoError, ErrorBody, ListParams, ListResult};
+use banto_core::{BantoError, ErrorBody, ListParams};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::str::FromStr;

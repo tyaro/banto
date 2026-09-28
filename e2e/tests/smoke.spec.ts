@@ -934,6 +934,67 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(rowWithText(page, 'items').first()).toBeVisible();
 	});
 
+	test('7a. audit log: a 0-row filter recovers when cleared, and reload shows failures and new records', async () => {
+		// Issue #248. Continues on /audit-log from scenario 7 (resource filter set).
+		const countNote = page.getByTestId('audit-count-note');
+		const reload = page.getByRole('button', { name: '再読み込み', exact: true });
+		await clearColumnFilter(page, 'リソース');
+		await expect(countNote).toContainText('件の記録があります');
+
+		// A filter that matches nothing is a real 0-row result, not "not loaded".
+		await applyColumnFilter(page, 'アクション', 'no-such-action');
+		await expect(countNote).toHaveText('該当する記録はありません（0件）。');
+		// Clearing it must reach the server although the grid now reports an
+		// empty window {0, 0} (the old page made no request here).
+		await clearColumnFilter(page, 'アクション');
+		await expect(countNote).toContainText('件の記録があります');
+		const before = Number((await countNote.innerText()).replace(/[^0-9]/g, ''));
+		expect(before).toBeGreaterThan(0);
+
+		// A failed read is shown on the page (not only as a toast) and
+		// "再読み込み" recovers from it.
+		await page.route('**/api/audit-log/list**', (route) =>
+			route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ kind: 'other', message: 'e2e: list failed' })
+			})
+		);
+		await reload.click();
+		await expect(
+			page.getByRole('alert').filter({ hasText: '監査ログを読み込めませんでした' })
+		).toBeVisible();
+		await page.unrouteAll({ behavior: 'wait' });
+
+		// Record one more entry (a no-op retention-policy save is audited as
+		// settings_change). The list keeps its snapshot until "再読み込み".
+		await page.evaluate(async () => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const headers = {
+				'X-Banto-Client': 'banto',
+				Authorization: `Bearer ${token}`,
+				'Content-Type': 'application/json'
+			};
+			const current = await fetch('/api/audit-log/config', { headers });
+			if (!current.ok) throw new Error(`get config failed: ${current.status}`);
+			const saved = await fetch('/api/audit-log/config', {
+				method: 'PUT',
+				headers,
+				body: JSON.stringify(await current.json())
+			});
+			if (!saved.ok) throw new Error(`put config failed: ${saved.status}`);
+		});
+		await reload.click();
+		await expect(
+			page.getByRole('alert').filter({ hasText: '監査ログを読み込めませんでした' })
+		).toHaveCount(0);
+		await expect(countNote).toContainText(
+			`${(before + 1).toLocaleString('ja-JP')}件の記録があります`
+		);
+		await expect(rowWithText(page, '設定変更').first()).toBeVisible();
+	});
+
 	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
 		await page.goto('/items');
 		await page.getByRole('button', { name: '新規作成' }).click();
