@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
@@ -9,7 +10,8 @@
 		getResource,
 		isProviderError,
 		noteLastEditedRecord,
-		saveLastOpenedId
+		saveLastOpenedId,
+		sessionGeneration
 	} from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
@@ -77,6 +79,20 @@
 		isSaving: () => formResource?.saving ?? false
 	});
 
+	// Issue #215/#255 review (fix 2): a save's response can arrive after this
+	// page is no longer relevant - the user logged out and someone else
+	// logged in before the request settled, or simply navigated elsewhere
+	// while it was in flight. `guard.canAutoNavigate` only decides whether
+	// `goto()` below runs; it does nothing to stop `noteLastEditedRecord`
+	// from writing a marker that outlives this page either way. `destroyed`
+	// covers "the user moved on" in general; `sessionGeneration()` covers
+	// the specific case where whoever's marker this would be is no longer
+	// signed in at all.
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
+	});
+
 	// Shared by the initial mount effect and the "reload" action below (Fix:
 	// a transient/storage error used to be rendered as the generic
 	// resource-not-found copy, indistinguishable from a genuinely missing
@@ -109,18 +125,25 @@
 		// items_update/PUT gets `BantoError::Forbidden`) - this guard just
 		// avoids a pointless round trip.
 		if (!formResource || !canWrite) return;
+		const startedAtGeneration = sessionGeneration();
 		const result = await formResource.submit(values);
 		if (result.ok) {
-			// Issue #215: leave a one-shot marker with this row's saved values so
-			// the list page (whichever mode it's in) can tell whether the row
-			// still matches its own restored filters, and explain the mismatch
-			// rather than silently clearing them. `result.row` is the
+			// Issue #215/#255 review (fix 2): only write the marker if this
+			// tab's session is still the one that started this save AND this
+			// page hasn't been torn down since. Without the generation check,
+			// a reproducible sequence - user A's save is held in flight, A
+			// logs out, B logs in (both `endSession()` calls run and clear
+			// A's state), THEN A's save response finally arrives - would
+			// resurrect A's row under B's now-active session, defeating the
+			// very clearing #255's fix 2 review targets. `result.row` is the
 			// server-confirmed row; `parsedId` is included too since some
 			// DataProviders' create/update responses don't echo `id` back.
-			noteLastEditedRecord(resource.name, {
-				id: parsedId,
-				values: { id: parsedId, ...(result.row as Record<string, unknown>) }
-			});
+			if (!destroyed && sessionGeneration() === startedAtGeneration) {
+				noteLastEditedRecord(resource.name, {
+					id: parsedId,
+					values: { id: parsedId, ...(result.row as Record<string, unknown>) }
+				});
+			}
 			// Saved: nothing is unsaved any more, so the move back to the list
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).

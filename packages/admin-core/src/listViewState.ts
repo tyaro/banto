@@ -374,55 +374,93 @@ export function takeLastEditedRecord(
 /**
  * Wraps `provider` so every method that BEGINS or ENDS a session
  * (`login`/`setup`/`enterPublicViewer` on success, `logout` unconditionally)
- * also calls `clearAllListViewState()` - see that function's doc comment for
- * why. `registry.svelte.ts`'s `initBanto` applies this to whatever
- * `AuthProvider` the app passes in, so every existing call site
- * (`getAuthProvider().logout()`, the login page's `getAuthProvider().login()`,
- * `resolveProtectedSession`'s own `enterPublicViewer()` call) gets this for
- * free without change.
+ * also calls `onTransition` (defaults to `clearAllListViewState` - see that
+ * function's doc comment for why). `registry.svelte.ts`'s `initBanto`
+ * applies this to whatever `AuthProvider` the app passes in (with its own
+ * `onTransition` that ALSO bumps `sessionGeneration()`, Issue #215/#255
+ * review's fix 2), so every existing call site (`getAuthProvider().logout()`,
+ * the login page's `getAuthProvider().login()`, `resolveProtectedSession`'s
+ * own `enterPublicViewer()` call) gets this for free without change.
  *
- * A failed `login`/`setup` (`{ success: false }`) does NOT clear anything -
- * no identity actually changed, so wiping the CURRENT (still valid, if any)
+ * A failed `login`/`setup` (`{ success: false }`) does NOT call `onTransition`
+ * - no identity actually changed, so wiping the CURRENT (still valid, if any)
  * session's list state over a mistyped password would be pure UX loss.
  * `logout` has no such signal (`Promise<void>`) and always represents
  * "this identity is done with this tab" from the caller's perspective even
- * if the network call itself fails, so it always clears.
+ * if the network call itself fails, so it always calls it.
  *
  * Every wrapped method delegates to the original one first and only then
- * clears, so a rejection from the original method propagates exactly as
- * before (no state is cleared for a login/logout that never actually
+ * calls `onTransition`, so a rejection from the original method propagates
+ * exactly as before (nothing fires for a login/logout that never actually
  * completed) - existing call sites that already `await` these calls without
  * their own try/catch (`Header.svelte`, `commands.ts`) are unaffected.
+ *
+ * #215/#255 review (fix 1): a plain `{ ...provider }` spread breaks any
+ * `AuthProvider` that isn't a flat object of arrow functions - a class
+ * instance's methods live on its PROTOTYPE (`{ ...provider }` only copies
+ * OWN enumerable properties, so `check`/`getIdentity`/etc. would be
+ * missing entirely and calling them would throw), and even a plain object
+ * whose methods read/write shared `this` state (e.g. `login()` sets
+ * `this.signedIn = true`, `check()` reads it) would split that state
+ * between the copied `check` (still bound to the ORIGINAL `provider` as
+ * its lexical/property owner, but invoked as `wrapped.check()` - a method
+ * call sets `this` from the call-site object, so it would silently run
+ * against the WRAPPER instead) - the very state the real object relies on.
+ * A `Proxy` fixes this generally: every property access - the four we
+ * override AND any other method/property the concrete `AuthProvider` adds -
+ * resolves through `Reflect.get`/`.bind(provider)` against the ORIGINAL
+ * `provider` as receiver, so `this` inside any method (prototype or own,
+ * known or not) is always the real instance, never the proxy.
  */
-export function withListViewStateClearing(provider: AuthProvider): AuthProvider {
-	const wrapped: AuthProvider = { ...provider };
-	wrapped.logout = async () => {
-		try {
-			await provider.logout();
-		} finally {
-			clearAllListViewState();
+export function withListViewStateClearing(
+	provider: AuthProvider,
+	onTransition: () => void = clearAllListViewState
+): AuthProvider {
+	const overrides: Partial<AuthProvider> = {
+		logout: async () => {
+			try {
+				await provider.logout();
+			} finally {
+				onTransition();
+			}
+		},
+		login: async (params: Record<string, unknown>) => {
+			const result = await provider.login(params);
+			if (result.success) onTransition();
+			return result;
 		}
 	};
-	wrapped.login = async (params: Record<string, unknown>) => {
-		const result = await provider.login(params);
-		if (result.success) clearAllListViewState();
-		return result;
-	};
 	if (provider.setup) {
-		const setup = provider.setup;
-		wrapped.setup = async (params: Record<string, unknown>) => {
-			const result = await setup(params);
-			if (result.success) clearAllListViewState();
+		overrides.setup = async (params: Record<string, unknown>) => {
+			const result = await provider.setup!(params);
+			if (result.success) onTransition();
 			return result;
 		};
 	}
 	if (provider.enterPublicViewer) {
-		const enterPublicViewer = provider.enterPublicViewer;
-		wrapped.enterPublicViewer = async () => {
-			const entered = await enterPublicViewer();
-			if (entered) clearAllListViewState();
+		overrides.enterPublicViewer = async () => {
+			const entered = await provider.enterPublicViewer!();
+			if (entered) onTransition();
 			return entered;
 		};
 	}
-	return wrapped;
+
+	return new Proxy(provider, {
+		get(target, prop, _receiver) {
+			if (prop in overrides) return overrides[prop as keyof AuthProvider];
+			// Reflect.get walks the prototype chain (so a class instance's
+			// prototype methods resolve too, unlike `{ ...provider }`), and
+			// passing `target` (not the proxy) as the receiver is what makes
+			// a getter/accessor on `provider` see the REAL instance as `this`.
+			const value: unknown = Reflect.get(target, prop, target);
+			// A method called as `wrapper.foo()` would otherwise run with
+			// `this === wrapper` (the proxy) - rebinding to `target` here is
+			// what keeps `this`-based shared state (fix 1's second failure
+			// mode) working exactly as it would unwrapped.
+			return typeof value === 'function' ? value.bind(target) : value;
+		},
+		has(target, prop) {
+			return prop in overrides || prop in target;
+		}
+	}) as AuthProvider;
 }

@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+	endSession,
 	getAuthProvider,
 	getDataProvider,
 	getResource,
 	initBanto,
 	listResources,
-	notify
+	notify,
+	sessionGeneration
 } from '../src/registry.svelte';
 import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
 
@@ -33,7 +35,7 @@ describe('registry', () => {
 		expect(() => getAuthProvider()).toThrow(/initBanto/);
 	});
 
-	it('registers providers/resources and exposes them', () => {
+	it('registers providers/resources and exposes them', async () => {
 		const { dataProvider, authProvider } = makeProviders();
 		initBanto({
 			dataProvider,
@@ -43,16 +45,21 @@ describe('registry', () => {
 
 		expect(getDataProvider()).toBe(dataProvider);
 		// NOT `.toBe(authProvider)` (#215/#255 review): `initBanto` wraps the
-		// given AuthProvider (`withListViewStateClearing`,
+		// given AuthProvider in a `Proxy` (`withListViewStateClearing`,
 		// `listViewState.ts`) so `logout`/`login`/`setup`/`enterPublicViewer`
-		// also clear this session's saved list view state - `getAuthProvider()`
-		// therefore returns that wrapper, not the exact object passed in.
-		// Behavior (not identity) is what a caller can rely on; see
-		// `listViewState.test.ts`'s `withListViewStateClearing` suite for the
-		// wrapper's own contract.
+		// also end the session (`registry.svelte.ts`'s `endSession`) -
+		// `getAuthProvider()` therefore returns that proxy, not the exact
+		// object passed in. Un-overridden methods are rebound
+		// (`value.bind(target)`, fix 1 of the #255 review) so a NEW function
+		// object comes back on every access too - `.check`/`.getIdentity`
+		// are therefore behavior-equivalent, not reference-equal. Behavior is
+		// what a caller can rely on; see `listViewState.test.ts`'s
+		// `withListViewStateClearing` suite (including a class-based
+		// `AuthProvider` and one sharing state via `this`) for the wrapper's
+		// full contract.
 		expect(getAuthProvider()).not.toBe(authProvider);
-		expect(getAuthProvider().check).toBe(authProvider.check);
-		expect(getAuthProvider().getIdentity).toBe(authProvider.getIdentity);
+		await expect(getAuthProvider().check()).resolves.toBe(true);
+		await expect(getAuthProvider().getIdentity()).resolves.toBeNull();
 		expect(getResource('items').label).toBe('商品');
 		expect(listResources()).toHaveLength(1);
 	});
@@ -81,6 +88,43 @@ describe('registry', () => {
 		} finally {
 			vi.unstubAllGlobals();
 		}
+	});
+
+	// Issue #215/#255 review (fix 2): `sessionGeneration()` is what a caller
+	// (e.g. the items detail page) compares before/after an in-flight
+	// request to detect "the identity changed while this was pending".
+	describe('sessionGeneration / endSession (#215/#255 review, fix 2)', () => {
+		it('endSession() bumps sessionGeneration()', () => {
+			const before = sessionGeneration();
+			endSession();
+			expect(sessionGeneration()).toBe(before + 1);
+		});
+
+		it('a successful login/logout through the wrapped AuthProvider bumps it too', async () => {
+			const { dataProvider, authProvider } = makeProviders();
+			initBanto({ dataProvider, authProvider, resources: [] });
+			const before = sessionGeneration();
+
+			await getAuthProvider().login({ username: 'a', password: 'x' });
+			expect(sessionGeneration()).toBe(before + 1);
+
+			await getAuthProvider().logout();
+			expect(sessionGeneration()).toBe(before + 2);
+		});
+
+		it('a FAILED login does not bump it (no identity actually changed)', async () => {
+			const dataProvider = makeProviders().dataProvider;
+			const authProvider: AuthProvider = {
+				login: async () => ({ success: false, error: 'bad password' }),
+				logout: async () => {},
+				check: async () => true,
+				getIdentity: async () => null
+			};
+			initBanto({ dataProvider, authProvider, resources: [] });
+			const before = sessionGeneration();
+			await getAuthProvider().login({ username: 'a', password: 'wrong' });
+			expect(sessionGeneration()).toBe(before);
+		});
 	});
 
 	it('getResource throws for an unknown resource', () => {

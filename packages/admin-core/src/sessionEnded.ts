@@ -61,8 +61,7 @@
  * `check()` resolves `false` without a request, and listeners are notified -
  * the notification follows the cleared token within one retry delay.
  */
-import { clearAllListViewState } from './listViewState';
-import { getAuthProvider } from './registry.svelte';
+import { endSession, getAuthProvider } from './registry.svelte';
 
 type Listener = () => void;
 
@@ -149,8 +148,11 @@ async function runConfirmation(): Promise<{ outcome: SessionEndOutcome; startedA
 		// Whoever was signed in when this session ended must not leave their
 		// list filter/sort/last-opened-row (`listViewState.ts`) behind for
 		// whoever the app's own guard sends this tab to next (login or a
-		// public-viewer session) once the listeners below re-run it.
-		clearAllListViewState();
+		// public-viewer session) once the listeners below re-run it -
+		// `endSession()` (`registry.svelte.ts`) also bumps
+		// `sessionGeneration()`, so an in-flight save/request started before
+		// this ending can tell its own screen no longer owns the session.
+		endSession();
 		for (const listener of [...listeners]) {
 			try {
 				listener();

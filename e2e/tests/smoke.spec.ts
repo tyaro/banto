@@ -725,6 +725,170 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}, itemId!);
 	});
 
+	// Issue #215/#255 review (fix 2): a detail-page save's response can
+	// arrive after this tab's session has already moved on - the user (or
+	// someone else) logged out and a login (same or different account)
+	// completed while the request was still in flight. That response must
+	// not resurrect the OLD session's "last edited row" marker under the
+	// NEW session, or the exclusion-notice check (scenario 3c) would run
+	// against a row that has nothing to do with what's on screen now.
+	test('3d. items: a save response that arrives after logout+re-login does not resurrect the last-edited marker', async () => {
+		await page.goto('/items');
+		await page.getByRole('button', { name: '新規作成' }).click();
+		await expect(page).toHaveURL(/\/items\/new$/);
+		const STALE_SAVE_ITEM_NAME = `E2E陳腐化保存-${Date.now()}`;
+		await page.getByLabel('商品名').fill(STALE_SAVE_ITEM_NAME);
+		await page.getByLabel('価格').fill('300');
+		await page.getByLabel('在庫').fill('2');
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		await applyColumnFilter(page, '商品名', STALE_SAVE_ITEM_NAME);
+		const row = rowWithText(page, STALE_SAVE_ITEM_NAME);
+		const href = await row.getByRole('link', { name: '開く' }).getAttribute('href');
+		expect(href).toMatch(/^\/items\/\d+$/);
+		const itemId = href!.split('/').pop();
+
+		await page.goto(href!);
+		await expect(page.getByLabel('価格')).toHaveValue('300');
+
+		let releaseSave!: () => void;
+		const saveGate = new Promise<void>((resolve) => (releaseSave = resolve));
+		// Fulfill with a FAKE success instead of `route.continue()`: the real
+		// backend revokes the bearer token on logout, so a request that was
+		// only IN FLIGHT before the logout below would come back 401 either
+		// way once actually forwarded - which would make this test pass
+		// regardless of whether the fix exists (confirmed while writing this
+		// test: `result.ok` was already `false` via the real server, so the
+		// marker-write code this scenario targets was never even reached).
+		// Faking the response is what actually exercises "a save that
+		// SUCCEEDS after the session moved on", the case the fix guards.
+		await page.route(`**/api/items/${itemId}`, async (route) => {
+			if (route.request().method() !== 'PUT') return route.continue();
+			await saveGate;
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					id: Number(itemId),
+					name: STALE_SAVE_ITEM_NAME,
+					price: 850,
+					stock: 2,
+					updatedAt: '2026-01-01'
+				})
+			});
+		});
+		try {
+			await page.getByLabel('価格').fill('850');
+			await page.getByRole('button', { name: '保存' }).click();
+			// The click starts `formResource.submit()`, which is now held at
+			// the route above - no response yet, so nothing to `waitForResponse`
+			// on until `releaseSave()` below.
+
+			// Logging out is a FORCED navigation (unsavedChanges.ts:
+			// "every path to /login means the session is ending") - no
+			// confirm dialog, unlike scenario 3b's leave-to-dashboard case.
+			await logout(page);
+			await expect(page).toHaveURL(/\/login$/);
+
+			// Re-login (same account is enough - `endSession()` bumps
+			// `sessionGeneration()` on every successful login regardless of
+			// which identity, so this alone proves the fix without needing a
+			// second account to exist yet at this point in the suite).
+			await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+			await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await page.getByRole('button', { name: 'ログイン' }).click();
+			await expect(page).toHaveURL(/\/dashboard$/);
+
+			// NOW let the held (faked-success) save resolve - after both the
+			// logout and the next login have fully completed.
+			releaseSave();
+
+			// A deliberate, bounded exception to this file's no-waitForTimeout
+			// policy (like scenario 13b's own exception): there is no visible
+			// UI signal for "handleSubmit's `.then` continuation has run" once
+			// its page has already navigated away twice - `expect.poll` would
+			// wrongly PASS on its very first check (before the write has had a
+			// chance to happen) rather than catch a write that happens a
+			// moment later, since a poll stops at its first matching read.
+			await page.waitForTimeout(500);
+			expect(
+				await page.evaluate(() => sessionStorage.getItem('banto.listView.lastEdited.items'))
+			).toBeNull();
+			// The dashboard is still what's on screen - the stale save did not
+			// drag this tab back to /items either (guard.canAutoNavigate is
+			// false once the user has already left, same as scenario 3b).
+			await expect(page).toHaveURL(/\/dashboard$/);
+		} finally {
+			releaseSave();
+			await page.unrouteAll({ behavior: 'wait' });
+		}
+
+		await page.goto('/items');
+		await page.evaluate(() => sessionStorage.removeItem('banto.listView.lastEdited.items'));
+		await page.evaluate(async (id) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch(`/api/items/${id}`, {
+				method: 'DELETE',
+				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
+		}, itemId!);
+	});
+
+	// Issue #215/#255 review (fix 3): the CLIENT grid filters/shows rows
+	// through `toItemRow()` (adds the synthetic `category` field), not the
+	// raw `Item`. The exclusion check must run the SAME derivation, or a
+	// category-filtered row whose non-category field was the only thing
+	// saved gets wrongly flagged as excluded even though it's still plainly
+	// visible in the grid.
+	test('3e. items: client mode - saving a field other than category keeps a category-filtered row visible, no false exclusion notice', async () => {
+		await page.goto('/items');
+		await page.getByRole('button', { name: 'クライアント' }).click();
+		await expect(page.getByRole('button', { name: 'クライアント' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+
+		await applyColumnFilter(page, 'カテゴリ', '緑茶');
+		const row = page.getByRole('row').filter({ hasText: '緑茶' }).first();
+		await expect(row).toBeVisible();
+		const openLink = row.getByRole('link', { name: '開く' });
+		const href = await openLink.getAttribute('href');
+		expect(href).toMatch(/^\/items\/\d+$/);
+		// `href` (the row's item id) is unique, unlike its name/category text
+		// (many seeded rows share e.g. "緑茶 350ml") - identify the row again
+		// after the round trip by the exact link it renders, not by text.
+		const rowAfterHref = (): Locator =>
+			page.getByRole('row').filter({ has: page.locator(`a[href="${href}"]`) });
+
+		await openLink.click();
+		await expect(page).toHaveURL(new RegExp(`${href}$`));
+		const currentPrice = await page.getByLabel('価格').inputValue();
+		await page.getByLabel('価格').fill(String(Number(currentPrice) + 1));
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		// Still visible under the same カテゴリ filter, and no false "この行
+		// は現在の絞り込み条件に当てはまりません" notice.
+		await expect(page.getByRole('button', { name: 'クライアント' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+		await expect(rowAfterHref()).toBeVisible();
+		await expect(page.getByText(/現在の絞り込み条件に当てはまりません/)).toHaveCount(0);
+
+		await clearColumnFilter(page, 'カテゴリ');
+		// Cleanup: leave the page in the same サーバー default later scenarios
+		// expect (mode is itself session-persisted, Issue #215).
+		await page.getByRole('button', { name: 'サーバー' }).click();
+		await expect(page.getByRole('button', { name: 'サーバー' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+	});
+
 	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {
 		await page.goto('/items');
 

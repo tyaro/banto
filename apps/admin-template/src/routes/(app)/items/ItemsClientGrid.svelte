@@ -18,15 +18,7 @@
 	import { gridMessages } from '$lib/banto/i18n';
 	import type { Item } from '$lib/banto/sampleData';
 	import LoadingState from '$lib/components/ui/LoadingState.svelte';
-
-	/**
-	 * M5 Phase B (spec §4.3) grouping demo: a client-only derived row shape
-	 * with a `category` field (the item name's first whitespace token, e.g.
-	 * "緑茶 500ml" -> "緑茶"), so the shared items header's group-by select has
-	 * a column worth grouping by. `Item` itself (and the server-mode grid)
-	 * stay untouched - this is purely a client-mode presentation concern.
-	 */
-	export type ItemRow = Item & { category: string };
+	import { toItemRow, type ItemRow } from './itemRow';
 
 	interface Props {
 		columns: GridColumn<ItemRow>[];
@@ -66,11 +58,6 @@
 		void list.load();
 		return () => list.dispose();
 	});
-
-	/** Derive the grouping demo's `category` field (spec §4.3): name's first whitespace token. */
-	function toItemRow(item: Item): ItemRow {
-		return { ...item, category: item.name.split(/\s+/)[0] ?? item.name };
-	}
 
 	const rows = $derived(list.rows.map(toItemRow));
 

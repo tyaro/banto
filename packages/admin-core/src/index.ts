@@ -28,7 +28,9 @@ export {
 	getAuthProvider,
 	getResource,
 	listResources,
-	notify
+	notify,
+	sessionGeneration,
+	endSession
 } from './registry.svelte';
 
 export { onInvalidate, invalidate } from './invalidate';

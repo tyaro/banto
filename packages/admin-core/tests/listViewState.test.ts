@@ -468,4 +468,96 @@ describe('withListViewStateClearing', () => {
 		expect(provider.setup).toBeUndefined();
 		expect(provider.enterPublicViewer).toBeUndefined();
 	});
+
+	it('accepts an explicit onTransition callback in place of the clearAllListViewState default', async () => {
+		const onTransition = vi.fn();
+		const provider = withListViewStateClearing(makeAuthProvider(), onTransition);
+		await provider.login({ username: 'a', password: 'x' });
+		await provider.logout();
+		expect(onTransition).toHaveBeenCalledTimes(2);
+	});
+
+	// #255 review (fix 1): `{ ...provider }` only copies OWN enumerable
+	// properties - a class instance's methods live on its PROTOTYPE, so they
+	// were silently dropped and calling them threw. A regression test with an
+	// actual class, not just an object literal.
+	describe('preserves a class-based AuthProvider (fix 1 of #255 review)', () => {
+		class ClassAuthProvider implements AuthProvider {
+			signedIn = false;
+			async login(): Promise<{ success: boolean }> {
+				this.signedIn = true;
+				return { success: true };
+			}
+			async logout(): Promise<void> {
+				this.signedIn = false;
+			}
+			async check(): Promise<boolean> {
+				return this.signedIn;
+			}
+			async getIdentity() {
+				return this.signedIn ? { id: 'a', name: 'a' } : null;
+			}
+		}
+
+		it('prototype methods (check/getIdentity) are callable at all (previously threw)', async () => {
+			const provider = withListViewStateClearing(new ClassAuthProvider());
+			await expect(provider.check()).resolves.toBe(false);
+			await expect(provider.getIdentity()).resolves.toBeNull();
+		});
+
+		it('this-based shared state survives a login -> check round trip through the wrapper', async () => {
+			const provider = withListViewStateClearing(new ClassAuthProvider());
+			await expect(provider.check()).resolves.toBe(false);
+			await provider.login({ username: 'a', password: 'x' });
+			// Before the fix: `login()` (wrapped, delegates to the real
+			// instance) sets `this.signedIn = true` on the REAL instance, but
+			// a naive `{ ...provider }` copy's `check` - invoked as
+			// `wrapper.check()` - runs with `this === wrapper`, which never
+			// got `signedIn` set, so this incorrectly resolved `false`.
+			await expect(provider.check()).resolves.toBe(true);
+			await expect(provider.getIdentity()).resolves.toEqual({ id: 'a', name: 'a' });
+			await provider.logout();
+			await expect(provider.check()).resolves.toBe(false);
+		});
+	});
+
+	// #255 review (fix 1): a plain OBJECT (not a class) whose methods share
+	// state via `this` has the identical failure mode - `login`/`check` here
+	// are two different functions on the same object, not a class's methods,
+	// but the wrapper must still resolve `this` to the real object for both.
+	it('preserves this-based shared state on a plain object AuthProvider (fix 1 of #255 review)', async () => {
+		const rawProvider = {
+			signedIn: false,
+			login: async function (this: { signedIn: boolean }) {
+				this.signedIn = true;
+				return { success: true };
+			},
+			logout: async function (this: { signedIn: boolean }) {
+				this.signedIn = false;
+			},
+			check: async function (this: { signedIn: boolean }) {
+				return this.signedIn;
+			},
+			getIdentity: async () => null
+		};
+		const provider = withListViewStateClearing(rawProvider as unknown as AuthProvider);
+		await expect(provider.check()).resolves.toBe(false);
+		await provider.login({});
+		await expect(provider.check()).resolves.toBe(true);
+	});
+
+	it('an unknown/custom method (not part of AuthProvider) still resolves this to the real provider', async () => {
+		const rawProvider = {
+			login: async () => ({ success: true }),
+			logout: async () => {},
+			check: async () => true,
+			getIdentity: async () => null,
+			label: 'real',
+			whoAmI(this: { label: string }) {
+				return this.label;
+			}
+		};
+		const provider = withListViewStateClearing(rawProvider as unknown as AuthProvider);
+		expect((provider as unknown as { whoAmI(): string }).whoAmI()).toBe('real');
+	});
 });

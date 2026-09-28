@@ -6,7 +6,7 @@ import {
 	createSessionEndConfirmation,
 	onSessionEnded
 } from '../src/sessionEnded';
-import { initBanto } from '../src/registry.svelte';
+import { initBanto, sessionGeneration } from '../src/registry.svelte';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
 import type { AuthProvider, DataProvider } from '../src/provider';
 
@@ -66,10 +66,12 @@ describe('confirmSessionEnded (Issue #241)', () => {
 			vi.unstubAllGlobals();
 		});
 
-		it('clears when check() confirms the session ended', async () => {
+		it('clears and bumps sessionGeneration when check() confirms the session ended (fix 2 of #255 review)', async () => {
 			stubCheck(async () => false);
+			const before = sessionGeneration();
 			await expect(confirmSessionEnded()).resolves.toBe('ended');
 			expect(loadListViewState('items:server', undefined, storage)).toBeNull();
+			expect(sessionGeneration()).toBe(before + 1);
 		});
 
 		it('does NOT clear when the session is still valid', async () => {

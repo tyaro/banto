@@ -44,8 +44,9 @@
 	import { getBantoMode } from '$lib/banto/setup';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
-	import ItemsClientGrid, { type ItemRow } from './ItemsClientGrid.svelte';
+	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
+	import { toItemRow, type ItemRow } from './itemRow';
 
 	const resource = getResource('items');
 
@@ -284,13 +285,18 @@
 	$effect(() => {
 		const record = takeLastEditedRecord(RESOURCE_NAME);
 		if (!record) return;
+		// #255 review: the CLIENT grid never filters the raw saved row - it
+		// filters `toItemRow(row)` (ItemsClientGrid.svelte, shared via
+		// `itemRow.ts`), which adds the synthetic `category` field a category
+		// filter/group-by actually matches against. Checking `record.values`
+		// (no `category` at all) here would report every category-filtered
+		// row as "excluded" even when it's still plainly visible on screen -
+		// the exclusion check must run through the exact same derivation the
+		// grid renders/filters with.
 		const activeColumns = mode === 'client' ? clientColumns : columns;
 		const activeFilters = mode === 'client' ? clientGridState.filters : serverGridState.filters;
-		const matches = filterRows(
-			[record.values as Item],
-			activeFilters,
-			activeColumns as GridColumn<Item>[]
-		);
+		const row = mode === 'client' ? toItemRow(record.values as Item) : (record.values as Item);
+		const matches = filterRows([row], activeFilters, activeColumns as GridColumn<Item>[]);
 		if (matches.length === 0) {
 			filterExclusionNotice = { id: record.id };
 		}

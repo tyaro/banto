@@ -3,6 +3,7 @@ import { isProviderError } from '../src/errors';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { createTauriAuthProvider } from '../src/providers/tauri';
+import { sessionGeneration } from '../src/registry.svelte';
 import { resolveProtectedSession } from '../src/sessionGate';
 
 /**
@@ -181,14 +182,16 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 // sort/filters/last-opened-row memory) is in this tab must not carry over to
 // whoever logs in next.
 describe('resolveProtectedSession clears saved list view state (#215/#255)', () => {
-	it("outcome 'login' (viewerPublic OFF): clears", async () => {
+	it("outcome 'login' (viewerPublic OFF): clears and bumps sessionGeneration (fix 2 of #255 review)", async () => {
 		const { fetchFn } = fakeServer({ viewerPublic: false });
 		const auth = createHttpAuthProvider({ fetchFn });
 		sessionStorage.setItem(KEY, 'revoked-token');
 		saveListViewState('items:server', { sort: [], filters: [] }, sessionStorage);
+		const before = sessionGeneration();
 
 		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
 		expect(loadListViewState('items:server', undefined, sessionStorage)).toBeNull();
+		expect(sessionGeneration()).toBe(before + 1);
 	});
 
 	it("outcome 'session' (still valid): does NOT clear", async () => {

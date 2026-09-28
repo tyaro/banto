@@ -4,7 +4,7 @@
  * here against real providers.
  */
 import type { AuthProvider } from './provider';
-import { clearAllListViewState } from './listViewState';
+import { endSession } from './registry.svelte';
 
 /**
  * How a protected route may proceed:
@@ -32,9 +32,10 @@ export type ProtectedSessionOutcome = 'session' | 'publicViewer' | 'login';
  * survives this guard - whatever `sessionStorage` state (Issue #215's list
  * filter/sort/last-opened-row memory, `listViewState.ts`) was left by
  * whoever was last signed in must not carry over to whoever logs in next in
- * this same tab, so it's cleared right here. `'publicViewer'` doesn't need
- * the same call: `auth.enterPublicViewer` already went through
- * `registry.svelte.ts`'s wrapping, which clears on a successful entry.
+ * this same tab, so `endSession()` (`registry.svelte.ts` - bumps
+ * `sessionGeneration()` and clears it) runs right here. `'publicViewer'`
+ * doesn't need the same call: `auth.enterPublicViewer` already went through
+ * `registry.svelte.ts`'s wrapping, which does the same on a successful entry.
  */
 export async function resolveProtectedSession(
 	auth: AuthProvider
@@ -43,6 +44,6 @@ export async function resolveProtectedSession(
 	const status = await auth.status?.();
 	const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : false;
 	if (entered) return 'publicViewer';
-	clearAllListViewState();
+	endSession();
 	return 'login';
 }
