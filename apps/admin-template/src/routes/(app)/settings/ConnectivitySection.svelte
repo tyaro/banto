@@ -21,7 +21,7 @@
 	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
-	import { connectivityScope } from './connectivityScope';
+	import { connectivityScope, pickPrimaryLanUrl } from './connectivityScope';
 
 	let serverStatus = $state<ServerStatus | null>(null);
 	let bindDraft = $state('127.0.0.1');
@@ -98,16 +98,22 @@
 		}
 	}
 
-	// The QR code shown is for the first LAN-reachable URL (i.e. not the
-	// 127.0.0.1-only one) - that's the one another machine on the LAN would
-	// actually need to scan; showing every URL's QR would just be noise.
-	// Issue #216: `serverStatus.urls` is now scoped to `bind` on the Rust
-	// side (`banto_server::lan_urls`), so a loopback bind's `urls` only ever
-	// contains the 127.0.0.1 entry and this naturally finds nothing - no
-	// extra bind check needed here for the QR itself.
-	const firstLanUrl = $derived(
-		serverStatus?.urls.find((url) => !url.includes('127.0.0.1')) ?? null
-	);
+	// The QR code shown is for the first LAN-reachable URL - that's the one
+	// another machine on the LAN would actually need to scan; showing every
+	// URL's QR would just be noise. `serverStatus.urls` is already scoped to
+	// `bind` on the Rust side (`banto_server::lan_urls_for_bind`), so a
+	// loopback-scoped bind's `urls` only ever contains a loopback entry and
+	// `pickPrimaryLanUrl` naturally returns `null` for it.
+	//
+	// Owner review on PR #254 (P2, 2nd round): this used to pick
+	// `urls.find((url) => !url.includes('127.0.0.1'))`, a substring check
+	// that disagreed with `scope` below (computed with a real loopback test)
+	// for any bind outside the literal string `"127.0.0.1"` - e.g. a
+	// `127.0.0.2` bind reads as `scope === 'local'` but that check still
+	// picked its URL as "the LAN one" for the QR. `pickPrimaryLanUrl` uses
+	// the same `isLoopbackHost` test `connectivityScope` does
+	// (`connectivityScope.ts`), so the two can no longer disagree.
+	const firstLanUrl = $derived(serverStatus ? pickPrimaryLanUrl(serverStatus.urls) : null);
 	const firstLanQrSvg = $derived(
 		firstLanUrl
 			? (serverStatus?.qrSvgs.find((entry) => entry.url === firstLanUrl)?.svg ?? null)

@@ -57,6 +57,21 @@ Vec<String>` の純関数）。**派生アプリで `lan_urls(port)` を使っ�
   - `banto-serve`（LANサーバ単体起動バイナリ）の起動時ログも同じ
     修正の対象（`BANTO_BIND` をloopbackに上書きした場合に誤ってLAN URLを
     印字していた）。
+  - オーナーレビュー対応（2026-09-28）: 状態表示とQR選択のloopback判定が
+    ずれていた問題を修正。`127.0.0.2`（`127.0.0.0/8` のうち代表アドレス
+    以外）は状態表示では`'lan'`扱いのまま、QRは`!url.includes('127.0.0.1')`
+    という部分文字列一致で選んでいたため、loopbackのURLをLAN用QRに選んで
+    しまっていた。`localhost`/`::1` は逆に状態は`'local'`なのにQRは表示
+    されていた。`connectivityScope.ts` に単一の loopback 判定
+    （`isLoopbackHost` — IPv4 `127.0.0.0/8` 全域・IPv6 loopback・
+    `localhost` を正しく判定）を用意し、状態表示（`connectivityScope`）と
+    QR選択（`pickPrimaryLanUrl`）の両方がそれを使うようにした（判断: バック
+    エンドに loopback フラグを追加する案も検討したが、入力はフロント側で
+    完結して判定できるため、状態のJSONは変更していない）。表テスト + 反証
+    (旧実装に戻すと落ちる) を追加。
+  - オーナーレビュー対応（2026-09-28）: `lan_urls(port)` の互換テストが
+    実機のNIC構成に依存していた問題を修正。インターフェース列挙とURL
+    組み立てを分離し、固定fixtureでテストするように変更（反証も追加）。
 
 ## [1.7.3] - 2026-09-28
 

@@ -144,17 +144,10 @@ pub fn lan_urls_for_bind(bind: &str, port: u16) -> Vec<String> {
         Ok(IpAddr::V4(v4)) if v4.is_loopback() => vec![format!("http://{v4}:{port}")],
         Ok(IpAddr::V6(v6)) if v6.is_loopback() => vec![format!("http://[{v6}]:{port}")],
         Ok(IpAddr::V4(v4)) if v4.is_unspecified() => {
-            let mut urls = vec![format!("http://127.0.0.1:{port}")];
-            urls.extend(non_loopback_urls(port, false));
-            urls
+            unspecified_v4_urls(&non_loopback_addrs(false), port)
         }
         Ok(IpAddr::V6(v6)) if v6.is_unspecified() => {
-            let mut urls = vec![
-                format!("http://127.0.0.1:{port}"),
-                format!("http://[::1]:{port}"),
-            ];
-            urls.extend(non_loopback_urls(port, true));
-            urls
+            unspecified_v6_urls(&non_loopback_addrs(true), port)
         }
         Ok(IpAddr::V4(v4)) => vec![format!("http://{v4}:{port}")],
         Ok(IpAddr::V6(v6)) => vec![format!("http://[{v6}]:{port}")],
@@ -162,25 +155,67 @@ pub fn lan_urls_for_bind(bind: &str, port: u16) -> Vec<String> {
     }
 }
 
-/// Non-loopback interface addresses as `http://` URLs: IPv4 always, IPv6
-/// (bracketed) only when `include_v6` (only the `::` bind case wants it -
-/// the `0.0.0.0` case stays IPv4-only, matching the original `lan_urls`).
-fn non_loopback_urls(port: u16, include_v6: bool) -> Vec<String> {
-    let mut urls = Vec::new();
+/// This machine's non-loopback interface addresses (IPv4 always, IPv6
+/// (bracketed) only when `include_v6` - the `0.0.0.0` case stays IPv4-only,
+/// matching the original `lan_urls`). The one place that talks to
+/// `if_addrs` - kept separate from URL *formatting* (`unspecified_v4_urls`/
+/// `unspecified_v6_urls` below) so tests can exercise the formatting logic
+/// against a fixed fixture instead of this machine's actual NICs (owner
+/// review on PR #254, P2 2nd round: a test that called this function
+/// directly was flaky on any machine/container with no non-loopback IPv4
+/// interface).
+fn non_loopback_addrs(include_v6: bool) -> Vec<std::net::IpAddr> {
+    use std::net::IpAddr;
+
+    let mut addrs = Vec::new();
     if let Ok(interfaces) = if_addrs::get_if_addrs() {
         for iface in interfaces {
             if iface.is_loopback() {
                 continue;
             }
             match iface.ip() {
-                std::net::IpAddr::V4(ipv4) => urls.push(format!("http://{ipv4}:{port}")),
-                std::net::IpAddr::V6(ipv6) if include_v6 => {
-                    urls.push(format!("http://[{ipv6}]:{port}"))
-                }
-                std::net::IpAddr::V6(_) => {}
+                IpAddr::V4(ipv4) => addrs.push(IpAddr::V4(ipv4)),
+                IpAddr::V6(ipv6) if include_v6 => addrs.push(IpAddr::V6(ipv6)),
+                IpAddr::V6(_) => {}
             }
         }
     }
+    addrs
+}
+
+/// Pure: `addrs` (IPv4 only - `non_loopback_addrs(false)` in production, a
+/// fixed fixture in tests) formatted as `http://` URLs.
+fn addrs_as_urls(addrs: &[std::net::IpAddr], port: u16) -> Vec<String> {
+    addrs
+        .iter()
+        .map(|addr| format!("http://{addr}:{port}"))
+        .collect()
+}
+
+/// Pure: the full `0.0.0.0`-bind URL list - loopback first, then `addrs`
+/// (IPv4-only, see [`addrs_as_urls`]) - given an already-enumerated
+/// non-loopback address list, so it can be tested against a fixed fixture
+/// instead of live interface enumeration.
+fn unspecified_v4_urls(addrs: &[std::net::IpAddr], port: u16) -> Vec<String> {
+    let mut urls = vec![format!("http://127.0.0.1:{port}")];
+    urls.extend(addrs_as_urls(addrs, port));
+    urls
+}
+
+/// Pure: the full `::`-bind URL list - both loopback addresses first, then
+/// `addrs` (IPv4 and/or IPv6 - unlike [`unspecified_v4_urls`]'s `addrs`,
+/// this one formats each entry per its own variant, bracketing IPv6, since
+/// `non_loopback_addrs(true)` in production returns a mix of both). Same
+/// fixture-testability rationale as [`unspecified_v4_urls`].
+fn unspecified_v6_urls(addrs: &[std::net::IpAddr], port: u16) -> Vec<String> {
+    let mut urls = vec![
+        format!("http://127.0.0.1:{port}"),
+        format!("http://[::1]:{port}"),
+    ];
+    urls.extend(addrs.iter().map(|addr| match addr {
+        std::net::IpAddr::V4(v4) => format!("http://{v4}:{port}"),
+        std::net::IpAddr::V6(v6) => format!("http://[{v6}]:{port}"),
+    }));
     urls
 }
 
@@ -275,6 +310,18 @@ mod tests {
         assert_eq!(old[0], "http://127.0.0.1:8721");
     }
 
+    // Owner review on PR #254 (P2, 2nd round): the original version of this
+    // test called `lan_urls(8721)` (live interface enumeration) and asserted
+    // it differs from a loopback-scoped result. On any machine/container
+    // with no non-loopback IPv4 interface - a real, common case, not just a
+    // theoretical one - `lan_urls(8721)` legitimately degenerates to the
+    // same single loopback URL, so `assert_ne!` failed there even though
+    // nothing was wrong. Fixed by testing `unspecified_v4_urls` (the pure
+    // formatter `lan_urls`/`lan_urls_for_bind("0.0.0.0", ..)` delegates to)
+    // against a fixed fixture instead of this machine's real NICs, and by
+    // testing the "no LAN interfaces" case explicitly as an expected normal
+    // outcome rather than leaving it to accidentally fail the counter-proof.
+
     #[test]
     fn lan_urls_kept_for_compat_counter_proof_it_is_not_bind_aware() {
         // Documents the known limitation this compat shim carries forward:
@@ -284,11 +331,62 @@ mod tests {
         // bound to loopback must migrate to `lan_urls_for_bind` to get the
         // fix - this test fails if `lan_urls` is ever "fixed" to somehow
         // guess a narrower scope on its own (it can't, and shouldn't try).
-        let old = lan_urls(8721);
+        let fixture = [std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+            192, 168, 1, 50,
+        ))];
+        let old_shaped = unspecified_v4_urls(&fixture, 8721);
         let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
         assert_ne!(
-            old, loopback_scoped,
+            old_shaped, loopback_scoped,
             "lan_urls(port) must keep behaving like a 0.0.0.0 bind, not a loopback one"
+        );
+    }
+
+    #[test]
+    fn lan_urls_kept_for_compat_matches_loopback_when_there_are_no_lan_interfaces() {
+        // Normal/expected case, NOT a failure: on a machine with zero
+        // non-loopback interfaces, the 0.0.0.0-shaped result legitimately
+        // degenerates to the same single loopback URL as a loopback bind.
+        // This is exactly the case the old, network-dependent counter-proof
+        // test was silently hitting in some CI/container environments.
+        let no_lan_interfaces: [std::net::IpAddr; 0] = [];
+        let old_shaped = unspecified_v4_urls(&no_lan_interfaces, 8721);
+        let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
+        assert_eq!(old_shaped, loopback_scoped);
+    }
+
+    #[test]
+    fn unspecified_v4_urls_fixture_loopback_first_then_given_addrs() {
+        // Pins the pure formatter's own shape against a fixed fixture,
+        // independent of this machine's real NICs.
+        let fixture = [
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 50)),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 2)),
+        ];
+        assert_eq!(
+            unspecified_v4_urls(&fixture, 8721),
+            vec![
+                "http://127.0.0.1:8721".to_string(),
+                "http://192.168.1.50:8721".to_string(),
+                "http://10.0.0.2:8721".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unspecified_v6_urls_fixture_both_loopbacks_first_then_given_addrs_bracketed() {
+        let fixture = [
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 50)),
+            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+        ];
+        assert_eq!(
+            unspecified_v6_urls(&fixture, 8721),
+            vec![
+                "http://127.0.0.1:8721".to_string(),
+                "http://[::1]:8721".to_string(),
+                "http://192.168.1.50:8721".to_string(),
+                "http://[2001:db8::1]:8721".to_string(),
+            ]
         );
     }
 
