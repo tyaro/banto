@@ -21,7 +21,7 @@
 	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
-	import { connectivityScope, pickPrimaryLanUrl } from './connectivityScope';
+	import { connectivityScope, isIpv4Bind, pickPrimaryLanUrl } from './connectivityScope';
 
 	let serverStatus = $state<ServerStatus | null>(null);
 	let bindDraft = $state('127.0.0.1');
@@ -126,7 +126,14 @@
 	// loaded/applied value), not `bindDraft` - an unsaved draft change must
 	// not change what the status line claims about the server that is
 	// actually running.
-	const scope = $derived(serverStatus ? connectivityScope(serverStatus.bind) : null);
+	//
+	// Owner decision, 2026-09-29 (PR #254 review, 4th round): IPv6 binds are
+	// out of scope for URL/QR guidance for now (see `connectivityScope.ts`'s
+	// module doc) - `isBindIpv4` gates the normal local/LAN status line and
+	// the URLs/QR block; an IPv6 bind shows a dedicated "not guided" message
+	// instead (`settings.ipv6NotGuidedRunning`/`settings.ipv6NotGuidedNote`).
+	const isBindIpv4 = $derived(serverStatus ? isIpv4Bind(serverStatus.bind) : true);
+	const scope = $derived(serverStatus && isBindIpv4 ? connectivityScope(serverStatus.bind) : null);
 
 	// --- System Info (M-review 2026-08 §2.4, Tauri + LAN browser, admin only)
 	// Read-only diagnostics: version, migration version, DB dialect+latency,
@@ -245,12 +252,16 @@
 				<!-- Issue #216: the status wording says how far the running
 				     server actually reaches (`scope`, derived from the applied
 				     `bind`), not just whether it is running - a loopback bind
-				     must read as "this PC only", never as LAN-reachable. -->
+				     must read as "this PC only", never as LAN-reachable.
+				     Owner decision, 2026-09-29: an IPv6 bind reads as its own
+				     "not guided" wording instead of local/LAN (`isBindIpv4`). -->
 				<p class="status">
 					{m['settings.statusLabel']()}
 					<strong>
 						{#if !serverStatus.running}
 							{m['settings.stopped']()}
+						{:else if !isBindIpv4}
+							{m['settings.ipv6NotGuidedRunning']()}
 						{:else if scope === 'local'}
 							{m['settings.scopeLocalRunning']()}
 						{:else}
@@ -258,7 +269,14 @@
 						{/if}
 					</strong>
 				</p>
-				{#if serverStatus.running}
+				{#if serverStatus.running && !isBindIpv4}
+					<!-- Owner decision, 2026-09-29: IPv6 binds are out of scope
+					     for URL/QR guidance for now (connectivityScope.ts's
+					     module doc has the reasoning) - `serverStatus.urls` is
+					     always empty for one, so show an explanatory note
+					     instead of an empty list. -->
+					<p class="note">{m['settings.ipv6NotGuidedNote']()}</p>
+				{:else if serverStatus.running}
 					<ul class="urls">
 						{#each serverStatus.urls as url (url)}
 							<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>

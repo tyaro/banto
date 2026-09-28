@@ -272,6 +272,8 @@
   "settings.scopeLocalRunning": "このPC内で稼働中",
   "settings.scopeLanRunning": "同じネットワークの端末から接続できる設定で稼働中",
   "settings.lanReachabilityNote": "ファイアウォールやルーターの設定によっては、同じネットワークの端末からでも接続できない場合があります。",
+  "settings.ipv6NotGuidedRunning": "稼働中（IPv6の待受は接続先の案内対象外）",
+  "settings.ipv6NotGuidedNote": "このバインドアドレスはIPv6のため、接続先URL・QRコードの案内には対応していません。",
   "settings.serverDesktopOnly": "サーバー設定はデスクトップアプリでのみ変更できます。",
   "settings.lanNote": "有効化すると、同一LAN内の他端末のブラウザからREST API + SSEで同じ画面を利用できます（仕様 §11）。信頼できるLANでのみ有効にしてください。",
   "settings.autologinHeading": "自動ログイン",
