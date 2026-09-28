@@ -280,6 +280,18 @@ without a runtime guard are **upheld by reviewing every call site**.
   grid's client sort keeps the order of the array it was given). One fixture,
   `crates/banto-storage/testdata/list-order-parity.json`, is read by all three
   test suites - change the fixture and all three together.
+  **Lists with a boundary (`asOfId`)** (Issue #248,
+  [ADR-0015](adr/0015-snapshot-list-resource.en.md)): a list whose rows come
+  and go without change events (the audit log) is read with
+  `@banto/admin-core`'s `SnapshotListResource`, and the server side keeps
+  these rules - pick the boundary, read the rows and count them in **one read
+  transaction** (PostgreSQL `REPEATABLE READ`; the default `READ COMMITTED`
+  reads each statement at its own point in time), count inside the boundary,
+  let `id` grow monotonically without reuse and never update rows, and **run
+  no deleting side effect (such as retention pruning) on a bounded read** (the
+  page treats a deletion inside the boundary as an expired snapshot, so
+  deleting on every read would expire every generation at its second block).
+  A read without `asOfId` returns the same result as before.
 - **Keep the two CSP definitions in sync.** Desktop uses `app.security.csp` in
   `tauri.conf.json`; LAN uses `CONTENT_SECURITY_POLICY` in `banto-server`'s
   `security_headers.rs`. **The only intended delta is connect-src** (Tauri

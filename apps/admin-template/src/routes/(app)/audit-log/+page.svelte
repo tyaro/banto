@@ -6,12 +6,17 @@
 	 * 一覧は BantoGrid の「サーバーモード」（items 一覧ページの
 	 * ItemsServerGrid.svelte と同じ発想）: ソート/フィルタ/ページングは
 	 * すべて `listAuditLog()`（Rust側 `ListParams` -> SQL）が行い、
-	 * ブロック単位（`BLOCK_SIZE`件）でスクロールに応じて遅延取得する。
-	 * ただし `@banto/admin-core` の `createWindowedListResource` は
-	 * `getDataProvider()` の汎用レジストリ経由の資源を前提にしており、
-	 * 監査ログは usersAdmin.ts と同じ理由（専用のワイヤ形状・Tauriコマンド名）
-	 * でその外にあるため、同じブロック読み込みロジックをこのページ内に
-	 * 直接複製している（`packages/admin-core/src/windowed.svelte.ts` 参照）。
+	 * ブロック単位でスクロールに応じて遅延取得する。
+	 *
+	 * ブロック読み込みは `@banto/admin-core` の `createSnapshotListResource`
+	 * （Issue #248、`packages/admin-core/src/snapshot.svelte.ts`）に任せる。
+	 * 監査ログは通知（`invalidate`）なしに行が増え、保持期間の削除で減るので、
+	 * 世代の最初の応答で境界（`asOfId`）を固定し、後続のブロックに渡す
+	 * （ブロックの合間の追加で重複・欠落しない）。境界の中で件数が変わったら
+	 * 失効として続きを読まず、「再読み込み」で新しい世代にする。以前は
+	 * `WindowedListResource` の縮小コピー（`AuditLogWindow`）をこのページ内に
+	 * 持っていて、失敗がトーストでしか見えず、`{0, 0}` から回復できず、
+	 * 応答しない要求に期限が無く、境界も無かった（#248）。
 	 *
 	 * デモモード（プレーンな vite dev/preview、バックエンドなし）では
 	 * 監査ログDBそのものが存在しないため、案内文のみ表示する
@@ -25,10 +30,9 @@
 		type GridColumn,
 		type SortState
 	} from '@banto/grid-svelte';
-	import { isProviderError } from '@banto/admin-core';
+	import { createSnapshotListResource } from '@banto/admin-core';
 	import { Info } from '@lucide/svelte';
 	import * as m from '$lib/paraglide/messages';
-	import { toastStore } from '$lib/toast.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
@@ -38,10 +42,6 @@
 		listAuditLog,
 		type AuditLogEntry
 	} from '$lib/banto/auditLogAdmin';
-
-	function errorMessage(err: unknown): string {
-		return isProviderError(err) ? err.message : String(err);
-	}
 
 	const available = isAuditLogAvailable();
 
@@ -141,127 +141,50 @@
 	// 既定ソート: 新しい記録が先頭に来るよう ts 降順（spec M14）。
 	gridState.sort = [{ field: 'ts', direction: 'desc' }];
 
-	const BLOCK_SIZE = 200;
-
 	/**
-	 * `@banto/admin-core`'s `WindowedListResource`（windowed.svelte.ts）の
-	 * 縮小コピー: `getDataProvider().getList(resource, params)` の代わりに
-	 * `listAuditLog(params)` を直接呼ぶ点のみが異なる。ブロック単位フェッチ・
-	 * 世代カウンタによる競合防止の設計はそちらのコメントを参照。
+	 * 監査ログのブロック読み込み（Issue #248）。取得 1 本は
+	 * `listAuditLog(params, asOfId, signal)`: 世代の最初は `asOfId: null`
+	 * （サーバーが境界を決めて返す）、後続は固定した境界。境界付きの取得では
+	 * サーバーは保持期間の削除を走らせない。期限（既定 30 秒）・失敗の持ち方・
+	 * 世代違いの応答の破棄はリソース側が行う。
 	 */
-	class AuditLogWindow {
-		rows: (AuditLogEntry | undefined)[] = $state([]);
-		totalCount = $state(0);
-		loading = $state(false);
-		params: { sort: SortState[]; filters: FilterState[] } = $state({
-			sort: [{ field: 'ts', direction: 'desc' }],
-			filters: []
-		});
-
-		#loadedBlocks = new Set<number>();
-		#inFlightBlocks = new Map<number, Promise<void>>();
-		#generation = 0;
-		#hasTotalCountForGeneration = false;
-
-		#blocksFor(start: number, end: number): number[] {
-			if (end <= start) return [];
-			const firstBlock = Math.floor(start / BLOCK_SIZE);
-			const lastBlock = Math.floor((end - 1) / BLOCK_SIZE);
-			const blocks: number[] = [];
-			for (let b = firstBlock; b <= lastBlock; b++) blocks.push(b);
-			return blocks;
-		}
-
-		async ensureRange(start: number, end: number): Promise<void> {
-			const generation = this.#generation;
-			const blocks = this.#blocksFor(start, end).filter(
-				(block) => !this.#loadedBlocks.has(block) && !this.#inFlightBlocks.has(block)
-			);
-			if (blocks.length === 0) return;
-
-			this.loading = true;
-			const fetches = blocks.map((block) => this.#fetchBlock(block, generation));
-			blocks.forEach((block, i) => this.#inFlightBlocks.set(block, fetches[i]));
-			try {
-				await Promise.all(fetches);
-			} finally {
-				if (generation === this.#generation) {
-					blocks.forEach((block) => this.#inFlightBlocks.delete(block));
-					this.loading = this.#inFlightBlocks.size > 0;
-				}
-			}
-		}
-
-		async #fetchBlock(block: number, generation: number): Promise<void> {
-			const offset = block * BLOCK_SIZE;
-			try {
-				const result = await listAuditLog({
-					pagination: { offset, limit: BLOCK_SIZE },
-					sort: this.params.sort,
-					filters: this.params.filters
-				});
-				if (generation !== this.#generation) return;
-
-				if (!this.#hasTotalCountForGeneration) {
-					this.#hasTotalCountForGeneration = true;
-					this.totalCount = result.totalCount;
-					this.rows.length = result.totalCount;
-				}
-				if (this.rows.length < offset + result.rows.length) {
-					this.rows.length = offset + result.rows.length;
-				}
-				for (let i = 0; i < result.rows.length; i++) {
-					this.rows[offset + i] = result.rows[i];
-				}
-				this.#loadedBlocks.add(block);
-			} catch (err) {
-				if (generation !== this.#generation) return;
-				toastStore.push('error', errorMessage(err));
-			}
-		}
-
-		#bumpGeneration(): void {
-			this.#generation++;
-			this.#loadedBlocks.clear();
-			this.#inFlightBlocks.clear();
-			this.#hasTotalCountForGeneration = false;
-		}
-
-		setParams(partial: Partial<{ sort: SortState[]; filters: FilterState[] }>): void {
-			this.params = { ...this.params, ...partial };
-			this.#bumpGeneration();
-			this.rows = new Array(this.totalCount);
-		}
-	}
-
-	const windowed = new AuditLogWindow();
-	windowed.params = { sort: gridState.sort, filters: [] };
+	const auditLog = createSnapshotListResource<AuditLogEntry>(
+		(request, signal) =>
+			listAuditLog(
+				{ pagination: request.pagination, sort: request.sort, filters: request.filters },
+				request.asOfId,
+				signal
+			),
+		{ params: { sort: gridState.sort, filters: [] } }
+	);
 
 	// `untrack` (spec M14, mirrors ItemsServerGrid.svelte's split-effects
-	// comment): `ensureRange()` synchronously reads `windowed.params` (inside
-	// `#fetchBlock`, before its own first `await`) while still inside this
-	// effect's reactive-tracking scope. Without `untrack`, this effect would
-	// end up depending on `windowed.params` and rerun on every
-	// `setParams()` call, redundantly re-fetching [0, 100) on top of
-	// `handleParamsChange`'s own `ensureRange()` call for the currently
-	// visible range. `untrack` keeps this effect a true "run once on mount"
-	// initial load, same intent as `onMount` but effect-based so it still
-	// only runs client-side.
+	// comment): the initial load runs once on mount. The resource reads only
+	// private copies of its params, but the effect must not start depending on
+	// the state `ensureRange()` publishes (`loading` etc.) either. The cleanup
+	// aborts whatever is still in flight when the page is left.
 	$effect(() => {
 		if (!available) return;
-		untrack(() => void windowed.ensureRange(0, 100));
+		untrack(() => auditLog.ensureRange(0, 100));
+		return () => auditLog.dispose();
 	});
 
-	let visibleRange = { start: 0, end: 100 };
-
+	// 並べ替え・絞り込みの変更 = 新しい問い合わせ（前の行・件数・失敗は
+	// 持ち越さない）。表示範囲が `{0, 0}`（0 件の後）でも先頭ブロックを取る。
 	function handleParamsChange(params: { sort: SortState[]; filters: FilterState[] }): void {
-		windowed.setParams(params);
-		void windowed.ensureRange(visibleRange.start, visibleRange.end);
+		auditLog.setParams(params);
 	}
 
 	function handleVisibleRangeChange(range: { start: number; end: number }): void {
-		visibleRange = range;
-		void windowed.ensureRange(range.start, range.end);
+		auditLog.ensureRange(range.start, range.end);
+	}
+
+	// 「再読み込み」= 新しい世代（同じ問い合わせのまま新しい記録も入る）。
+	// 失敗したブロックも取り直す。処理中でも押せる: 処理中の要求は中断され、
+	// 新しい世代の要求に置き換わる（応答しない要求のせいで回復の手段が
+	// 使えなくならない）。
+	function reload(): void {
+		auditLog.refresh();
 	}
 
 	// spec M14: result='denied'/'failed' の行を控えめな左ボーダーで視覚的に
@@ -333,16 +256,52 @@
 			<p class="note">{retentionNote}</p>
 		{/if}
 
-		<p class="note">
-			{m['audit.recordCountNote']({ count: windowed.totalCount.toLocaleString() })}
+		<!--
+			「まだ読めていない」「読めなかった」「0 件」を別々に出す（#248）。件数が
+			`null` のうちは件数を言わない（0 件と言い切らない）。
+		-->
+		<p class="note" data-testid="audit-count-note">
+			{#if auditLog.totalCount === null}
+				{auditLog.failedBlocks.length > 0 ? m['audit.notLoadedNote']() : m['audit.loadingNote']()}
+			{:else if auditLog.totalCount === 0}
+				{m['audit.emptyNote']()}
+			{:else}
+				{m['audit.recordCountNote']({ count: auditLog.totalCount.toLocaleString() })}
+			{/if}
 		</p>
+
+		{#if auditLog.error}
+			<div class="load-error" role="alert">
+				<p>
+					<strong>{m['audit.loadError']()}</strong>
+					<span>{m['audit.loadErrorDesc']()}</span>
+					<span class="load-error-detail">{auditLog.error.message}</span>
+				</p>
+			</div>
+		{/if}
+		{#if auditLog.expired}
+			<div class="load-error" role="alert">
+				<p>{m['audit.snapshotExpired']()}</p>
+			</div>
+		{/if}
+
+		<!--
+			「再読み込み」は常に出す（#248）: 失敗からの再試行だけでなく、境界を固定
+			しているので新しい記録を取り込む唯一の導線でもある。処理中でも押せる。
+		-->
+		<div class="actions">
+			<button type="button" class="banto-btn banto-btn--secondary" onclick={reload}>
+				{m['common.reload']()}
+			</button>
+			<span class="note">{m['audit.reloadNote']()}</span>
+		</div>
 
 		<section class="grid-wrap">
 			<BantoGrid
 				mode="server"
 				state={gridState}
-				rows={windowed.rows}
-				totalRows={windowed.totalCount}
+				rows={auditLog.rows}
+				totalRows={auditLog.totalCount ?? 0}
 				{columns}
 				getRowId={(row) => row.id}
 				rowClass={auditRowClass}
@@ -401,6 +360,35 @@
 		margin: 0;
 		color: var(--banto-text-muted);
 		font-size: 0.8rem;
+	}
+
+	.load-error {
+		flex: 0 0 auto;
+		padding: 0.5rem 0.75rem;
+		border-left: 3px solid var(--banto-danger-solid);
+		border-radius: var(--banto-radius-sm);
+		background: var(--banto-danger-tint);
+		color: var(--banto-danger-tint-text);
+		font-size: 0.85rem;
+	}
+
+	.load-error p {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem 0.5rem;
+	}
+
+	.load-error-detail {
+		opacity: 0.8;
+	}
+
+	.actions {
+		flex: 0 0 auto;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.75rem;
 	}
 
 	.grid-wrap {
