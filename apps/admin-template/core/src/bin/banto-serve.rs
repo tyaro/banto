@@ -306,14 +306,23 @@ async fn main() {
         api_router(services, auth, events, allow_setup).merge(static_router::<FrontendAssets>()),
     );
 
-    let server = start(ServerConfig { bind, port }, app)
-        .await
-        .expect("server should start");
+    let server = start(
+        ServerConfig {
+            bind: bind.clone(),
+            port,
+        },
+        app,
+    )
+    .await
+    .expect("server should start");
 
     // Issue #208: never print the connection credentials.
     println!("banto-serve: DB at {}", display_target(&db_path));
     println!("banto-serve: listening at:");
-    for url in lan_urls(server.local_addr().port()) {
+    // Issue #216: scope the printed URLs to `bind` (a loopback `BANTO_BIND`
+    // override must not print a LAN URL nobody outside this machine can
+    // reach), same fix as the Tauri settings screen's `build_status`.
+    for url in lan_urls(&bind, server.local_addr().port()) {
         println!("  {url}");
     }
     if allow_setup {

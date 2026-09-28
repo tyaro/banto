@@ -21,6 +21,7 @@
 	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
+	import { connectivityScope } from './connectivityScope';
 
 	let serverStatus = $state<ServerStatus | null>(null);
 	let bindDraft = $state('127.0.0.1');
@@ -100,6 +101,10 @@
 	// The QR code shown is for the first LAN-reachable URL (i.e. not the
 	// 127.0.0.1-only one) - that's the one another machine on the LAN would
 	// actually need to scan; showing every URL's QR would just be noise.
+	// Issue #216: `serverStatus.urls` is now scoped to `bind` on the Rust
+	// side (`banto_server::lan_urls`), so a loopback bind's `urls` only ever
+	// contains the 127.0.0.1 entry and this naturally finds nothing - no
+	// extra bind check needed here for the QR itself.
 	const firstLanUrl = $derived(
 		serverStatus?.urls.find((url) => !url.includes('127.0.0.1')) ?? null
 	);
@@ -108,6 +113,14 @@
 			? (serverStatus?.qrSvgs.find((entry) => entry.url === firstLanUrl)?.svg ?? null)
 			: null
 	);
+
+	// Issue #216: how far the *currently applied* bind reaches, driving the
+	// "running, this PC only" vs. "running, reachable from the LAN" status
+	// wording below. Deliberately reads `serverStatus.bind` (the last
+	// loaded/applied value), not `bindDraft` - an unsaved draft change must
+	// not change what the status line claims about the server that is
+	// actually running.
+	const scope = $derived(serverStatus ? connectivityScope(serverStatus.bind) : null);
 
 	// --- System Info (M-review 2026-08 §2.4, Tauri + LAN browser, admin only)
 	// Read-only diagnostics: version, migration version, DB dialect+latency,
@@ -223,10 +236,21 @@
 			{/if}
 
 			{#if serverStatus}
+				<!-- Issue #216: the status wording says how far the running
+				     server actually reaches (`scope`, derived from the applied
+				     `bind`), not just whether it is running - a loopback bind
+				     must read as "this PC only", never as LAN-reachable. -->
 				<p class="status">
 					{m['settings.statusLabel']()}
-					<strong>{serverStatus.running ? m['settings.running']() : m['settings.stopped']()}</strong
-					>
+					<strong>
+						{#if !serverStatus.running}
+							{m['settings.stopped']()}
+						{:else if scope === 'local'}
+							{m['settings.scopeLocalRunning']()}
+						{:else}
+							{m['settings.scopeLanRunning']()}
+						{/if}
+					</strong>
 				</p>
 				{#if serverStatus.running}
 					<ul class="urls">
@@ -234,6 +258,13 @@
 							<li><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
 						{/each}
 					</ul>
+					{#if scope === 'lan'}
+						<!-- LAN reachability is never guaranteed: firewalls, VPNs,
+						     or router client-isolation can still block it even
+						     though the server is listening on a non-loopback
+						     address (Issue #216 completion condition). -->
+						<p class="note">{m['settings.lanReachabilityNote']()}</p>
+					{/if}
 					{#if firstLanQrSvg}
 						<!-- Server-generated QR SVG (Rust `qrcode` crate), not user input. -->
 						<!-- eslint-disable-next-line svelte/no-at-html-tags -->

@@ -22,6 +22,33 @@
 
 ## [Unreleased]
 
+- fix(admin-template, banto-server): バインドアドレス（`config.bind`）に
+  合わないLAN URL・QRを表示する問題を修正（#216）。127.0.0.1（または
+  `::1`）にバインドしたまま「LANアクセスを有効にする」を保存・適用しても、
+  設定画面が非loopbackのLAN URLと最初のLAN用QRを案内していた——他端末は
+  そのURLへ接続できないため、利用者が原因を切り分けにくかった。
+  **派生アプリへの影響**: `server_status`/`server_apply`（Tauri コマンド）
+  と `banto-serve` の起動時ログが返す/出力する URL 一覧・QR は、これからは
+  `bind` に実際に合うものだけになる（形状は変わらず、値のみ補正 —
+  loopback bind なら loopback URL のみ、`0.0.0.0` なら従来どおり
+  loopback + 非loopback IPv4、特定 IP ならその IP のみ）。この一覧を
+  「常にLAN到達可能」という前提で読んでいた派生アプリは読み直しが必要。
+  - `banto_server::lan_urls` を `(bind: &str, port: u16) -> Vec<String>` の
+    純関数にして、bind の種類（loopback / `0.0.0.0` / `::` / 特定 IPv4 or
+    IPv6 / 未知の文字列）ごとに URL 集合を切り替える。回帰テストを
+    bind の表で追加（IPv6 も含む。カウンタープルーフで旧実装への揺り戻しが
+    落ちることも確認済み）。
+  - 設定画面（`ConnectivitySection.svelte`）は状態表示を「このPC内で稼働中」
+    「同じネットワークの端末から接続できる設定で稼働中」に分け、
+    ファイアウォール等による到達性は保証しない旨の注記を追加。バインド
+    選択肢の文言を「このPCのみ（127.0.0.1）」「同じネットワークの端末
+    （0.0.0.0）」に変更（初期値は変更なし）。判定はプレーンな純関数
+    `connectivityScope`（`connectivityScope.ts`）に切り出し、vitest で
+    表テスト + カウンタープルーフを追加。
+  - `banto-serve`（LANサーバ単体起動バイナリ）の起動時ログも同じ
+    修正の対象（`BANTO_BIND` をloopbackに上書きした場合に誤ってLAN URLを
+    印字していた）。
+
 ## [1.7.3] - 2026-09-28
 
 **v1.7.3 — 一覧のページングの重複・欠落を直す修正。派生アプリへの影響: 一覧の並びが変わりうる（API の破壊的変更は無い）。**
