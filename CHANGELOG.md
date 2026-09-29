@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+- chore(deps): 開発依存の vitest を 4.1 から 5.0 へ更新（10 パッケージ/アプリ、dependabot #203 を置き換え）。
+  Vitest 5 でモジュールレベルの `bench()` が廃止されたため、`packages/charts/tests/trend.bench.ts` と
+  `packages/grid-svelte/tests/virtual.bench.ts` を `bench` フィクスチャ（`test()` の中で使う）へ移行し、
+  `bench` スクリプトに `--reporter=verbose` を足して結果表を表示する。利用側の API・版は変わらない。
 - docs: 全体構成図とフロー図を追加（`docs/architecture-overview.md` /
   `docs/architecture-flows.md`）。デスクトップと LAN の二形態、レイヤ、
   機能マップ、パッケージ依存、認証・初回起動・開発3経路・add-resource の
