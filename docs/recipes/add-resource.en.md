@@ -68,6 +68,8 @@ API (reference: `routes/(app)/items/+page.svelte` and
   never saved or restored (no `establishSession`), or the previous session's
   screen survives a session change (no rebuild).
 
+Sharing the session management (sessionStore, guard, generation gate) as a common module is tracked in tyaro/banto#260.
+
 ## Verification
 
 ```bash
