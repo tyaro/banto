@@ -48,10 +48,13 @@ Constraints:
 
 1. **One writer.** Only `commit()` inside `SessionController` changes the front end's
    confirmed session state (`status`, `owner`, `generation`, `identity`, `kind`). The public
-   entry points are four: `resolve()` (applying a verification), `adopt()` (an app-policy
-   synthetic session), `end()`, and the suspension caused by a credential change. **Only the
-   controller moves the confirmed state to its ended state**; disposing of credentials and
-   revoking on the backend belong to the provider and the backend.
+   entry points are four: `resolve()` (applying a verification), `adopt(…, ticket)` (an
+   app-policy synthetic session), `end(…, ticket)` (a policy-driven end), and the suspension
+   caused by a credential change. **Only the controller moves the confirmed state to its ended
+   state**; disposing of credentials and revoking on the backend belong to the provider and the
+   backend. Logout does not go through `end()`: the provider clears the credential and notifies,
+   the controller suspends, and `resolve()` confirms `none` (so a session confirmed while the
+   logout was pending is not erased).
 2. **Two different `resolve()`s.** `AuthProvider.resolve()` answers `none` /
    `active + identity` in one round trip and **rejects** when it cannot obtain an answer. It is
    **required by the type** in the v2 contract. The HTTP provider calls the **existing
@@ -68,17 +71,28 @@ Constraints:
    it **actually confirmed** (otherwise the retry page).
 3. **Freshness enforced by structure.** A provider answer may be committed only if the
    (controller transition count, credential revision) captured when the probe started still
-   match at application time and no signal arrived after the probe started. The comparison and
-   the `commit` happen in one continuation. Verification is single-flight with a wait deadline.
-   A discarded probe is not re-issued only when there is neither a waiting request from a screen
-   nor an unprocessed background need (a signal or a credential change); the number of waiters
-   alone does not decide it.
+   match at application time and no signal arrived after the probe started. **Fulfilment,
+   rejection and timeout all pass the same check**; a stale failure is discarded without touching
+   the state or the verification status. The comparison and the `commit` happen in one
+   continuation. Verification is single-flight with a wait deadline. Whether a request is
+   satisfied is judged by the transition count captured when the probe started, so a request's
+   own commit never makes it `superseded` (`superseded` is decided at the moment of an external
+   transition). A `cause: 'signal'` request advances the signal stamp itself and never joins a
+   probe started before the request. A discarded probe is not re-issued only when there is
+   neither a waiting request from a screen nor an unprocessed background need (a signal or a
+   credential change); the number of waiters alone does not decide it.
 4. **Credential writes and clears are compare-and-set.** Both the HTTP provider's token
    storage (#259) and Tauri's `state.auth` (an `AuthSlot` with a `seq`) write only when the
-   revision / seq read at the start of the operation still matches. Authentication operations
-   (login / logout / setup / enterPublicViewer) are not queued behind the controller, their
-   return values are not committed directly, and the session is confirmed by the following
-   `resolve()`.
+   revision / seq read at the start of the operation still matches. Issuing the public-viewer
+   session is bound to the revision at which the caller confirmed `none` (`expectRevision`).
+   Rust's `seq` advances on **operations that intend to change the binding** (installing on
+   login/setup, clearing on logout even when None→None) and **not** on a refresh of the same
+   binding (`settle_session` updating role/name). Operations that change state return `seq` in
+   their response, and the provider fixes its revision and fires `onCredentialChanged` in the
+   continuation of that response (never depending on a follow-up identity check succeeding).
+   Authentication operations (login / logout / setup / enterPublicViewer) are not queued behind
+   the controller, their return values are not committed directly, and the session is confirmed
+   by the following `resolve()`.
 5. **A credential switch suspends.** As soon as a switch is known, the state becomes
    `unknown`, ownerless, `generation + 1`; a later failed verification does not fall back to
    the previous owner's active state. This is distinct from a transient failure with the same
@@ -104,8 +118,16 @@ Constraints:
    and Tauri record `login` at the moment "credentials were verified" (design body §1.7).
    Observing that Rust refused to install a session because of a sequence mismatch can be added
    later as a separate event if needed.
+9. **The ticket principle (principles 1 and 4 made concrete).** An asynchronous decision or
+   operation takes a ticket when it starts (controller: transition count, revision, signal;
+   provider: revision; app policy: `SessionTicket`; Rust: `seq`), carries it to the end, and
+   compares it **synchronously** right before applying the result. No `await` sits between the
+   comparison and the application. A result that fails the comparison is discarded. `adopt` /
+   `end` take the ticket as a required argument and a `confirmed` result returns one. The
+   "state-writing entry point × asynchronous boundary" table (design body §4.9) is used to hunt
+   for gaps in this principle during the implementation PR reviews too.
 
-The invariants (I-1 to I-15), the race scenario tables (S-1 to S-45), the API sketch, the
+The invariants (I-1 to I-20), the race scenario tables (S-1 to S-61), the API sketch, the
 migration and PR split, and the test design live in the design body. The implementation PRs
 reference those numbers from test names.
 
@@ -146,6 +168,15 @@ reference those numbers from test names.
   `superseded`.** An unverified result would pass the generation gate and the previous user's
   page data would ride on the new generation. Instead, join the latest verification and return
   only a confirmed generation, within a deadline.
+- **Option J (rejected): keep an `end()` after logout, with a comparison.** Another session can
+  be confirmed between the provider finishing `logout()` and the caller's continuation resuming.
+  The TS `logout` returns `Promise<void>`, and even a boolean cannot express "cleared, but a
+  different login was confirmed afterwards". Unifying on provider notification → suspension →
+  `resolve()` removes one entry point instead.
+- **Option K (rejected): advance Rust's `seq` on every write to `state.auth`.** `settle_session`
+  writes a refresh every time it reads a valid session, so `auth_resolve` itself would change the
+  revision and the controller would keep discarding correct answers. Advance it only on
+  operations that intend to change the binding.
 
 ## Consequences
 
@@ -156,8 +187,12 @@ reference those numbers from test names.
   generation -> state"; role is derived from the identity.
 - Any new verification path is demoted to `controller.signal()`. No new code outside the
   controller calls `check()` / `getIdentity()` and writes state (a review checkpoint).
-- On the Rust side, every write to `state.auth` goes through `cas_session`, including in new
-  commands.
+- On the Rust side, every write to `state.auth` goes through `cas_session` (binding-changing
+  operations) or `refresh_same_binding` (same-binding updates), including in new commands.
+  State-changing commands include `seq` in their response.
+- Reviews look for three shapes: "write unconditionally after an `await`", "decide from a
+  boolean return value alone", and "compare and apply in different continuations" (design body
+  §4.9 table).
 - What is not guaranteed is documented: which of two simultaneous tabs wins, and requests sent
   in the milliseconds before the credential-change event is delivered.
 - The compatibility behavior of collapsing failures into `null` is not kept as the standard of

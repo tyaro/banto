@@ -25,12 +25,15 @@
 - docs(admin-core): セッションの確定を 1 か所（SessionController）に寄せる設計
   （#260）。ADR-0016（Proposed）と設計の本文
   [docs/session-controller-design.md](docs/session-controller-design.md)
-  （不変条件 I-1〜I-17・競合のシナリオ S-1〜S-50・API の案・実装の分割・テストの
+  （不変条件 I-1〜I-20・競合のシナリオ S-1〜S-61・API の案・実装の分割・テストの
   設計）。Tauri の Rust 側で `.await` の後に `state.auth` を無条件で書いている
   箇所（`auth_login`・`auth_setup`・`auth_logout`）を特定した。判断点はオーナーの決定
   （2026-09-29）を反映済み（旧 API は削除、`AuthProvider.resolve` 必須、
   `GET /api/auth/session` は新設せず `GET /api/auth/identity` を 1 回、`superseded` の
-  `load` は確認できた世代だけを返す、#257 の既定の流れ）。コードの変更は無い。
+  `load` は確認できた世代だけを返す、#257 の既定の流れ）。同日のレビュー 10 件も
+  反映済み（ticket の原則 I-18、ログアウトは `resolve()` で確定、`seq` は結び付きを
+  変える操作でだけ進める、操作の応答で revision を確定して通知、失敗も同じ鮮度の
+  照合、Rust のテストはコマンド本体で順序を固定）。コードの変更は無い。
 - feat(admin-core, admin-template)（**挙動の互換性が変わる変更を含む** —
   下の「挙動の互換性が変わる変更」と「派生アプリの移行の手順」を参照）:
   一覧→詳細→保存/戻る→一覧の往復で
