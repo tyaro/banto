@@ -288,6 +288,13 @@ export function createHttpAuthProvider(
 			return checkToken(token);
 		},
 
+		/**
+		 * `null` only when there is no session: no token, or a `401`. A
+		 * backend failure (`500`) or an unreachable server REJECTS with a
+		 * `ProviderError` (Issue #215/#255 6th review - the `AuthProvider`
+		 * contract in `provider.ts`): the identity of a still-valid session
+		 * could not be fetched, which is not the same as "nobody".
+		 */
 		async getIdentity(): Promise<Identity | null> {
 			const token = getToken();
 			if (!token) return null;
@@ -295,12 +302,13 @@ export function createHttpAuthProvider(
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/identity`, {
 					method: 'GET',
-					headers: headers(false)
+					headers: headersFor(token, false)
 				});
 			} catch {
-				return null;
+				throw networkError();
 			}
-			if (!response.ok) return null;
+			if (response.status === 401) return null;
+			if (!response.ok) throw await errorFromResponse(response);
 			return (await response.json()) as Identity | null;
 		},
 

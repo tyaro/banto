@@ -70,6 +70,22 @@
       `resolveProtectedSession` が `SessionChangedError` で reject し、ガードの
       再試行画面になる）。`initBanto` は `AuthProvider` を**ラップしない**
       （`getAuthProvider()` は渡したオブジェクトそのものを返す）。
+    - **`AuthProvider.getIdentity()` の契約を明確化**: `null` は「セッションが
+      ない（トークンなし・`401`）か、identity の概念がない」ときだけ。
+      サーバーの失敗（`500`）や通信の失敗は **reject**（`check()` と同じ分け方）。
+      同梱の HTTP プロバイダーはこれまで通信の例外・非 2xx をすべて `null` に
+      していたが、`401` 以外は `ProviderError` で reject するようにした（Tauri
+      プロバイダーは元から reject）。admin-template では identity を取れない
+      ときもガードの再試行画面（「ログイン状態を確認できませんでした」）に
+      なり、セッションの所有者・世代・一覧状態は変わらない（従来は閲覧者
+      扱いの画面になっていた）。失敗時に `null` を返す独自プロバイダーも
+      動くが、その間は「所有者なし」として一覧状態の保存・復元が止まり、
+      画面も作り直される（前の所有者の保存分は消さない）。reject に直すことを
+      推奨。
+    - `establishSession(auth, apply?)` は、応答が今のセッションについてのもの
+      と確かめたのと同じ継続の中で `apply(identity)` を呼び、確立した
+      `scope` も返す（ガードはその世代をページに渡す）。`beginSession(null)`
+      は、他の所有者の保存分を消さなくなった。
     - 一覧状態を使う派生アプリは、ガードで `establishSession(getAuthProvider())`
       を呼んで identity を受け取り（`current: false` なら何も適用しない）、ログアウト成功後に `endSession()` を呼び、
       一覧・詳細ページは生成時に `currentSessionScope()` を取って各 API に
@@ -90,7 +106,10 @@
     **所有者で照合する**方式に切り替えた（#255）。5 回目では、scope を始める・
     終わらせる認証の非同期応答（identity の取得・`check()`）も、開始時の
     世代・対象と照合してから適用するようにした（旧セッションへの遅れた応答で
-    新しいセッションの所有者・保存状態・画面が失われていた）。
+    新しいセッションの所有者・保存状態・画面が失われていた）。6 回目では、
+    応答が今のセッションについてのものかの確認と、その適用（`endSession`・
+    identity の記録）を間に await を挟まない同じ継続で行うようにし、identity
+    を一時的に取れないことを「所有者なし」と区別した。
 - fix(admin-template, banto-server): バインドアドレス（`config.bind`）に
   合わないLAN URL・QRを表示する問題を修正（#216）。127.0.0.1（または
   `::1`）にバインドしたまま「LANアクセスを有効にする」を保存・適用しても、

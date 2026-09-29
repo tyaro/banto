@@ -65,23 +65,35 @@ class SessionStore {
 	 * session back. `establishSession` discards such an answer; when a newer
 	 * load has taken over (`current: false`), this one changes nothing here
 	 * either.
+	 *
+	 * Resolves the generation of the session this load established (`null`
+	 * when a newer load superseded it) - what the guard hands to
+	 * `(app)/+layout.svelte`'s generation gate.
 	 */
-	async load(): Promise<void> {
-		const { current, identity } = await establishSession(getAuthProvider());
-		if (!current) return;
-		this.identity = identity;
-		this.role = parseRole(this.identity);
-		this.publicViewer = this.identity?.publicViewer === true;
+	async load(): Promise<number | null> {
+		// Applied inside `establishSession`'s own continuation (6th review):
+		// no other session can be established between confirming this
+		// answer is current and recording it here. A rejection (the identity
+		// could not be fetched) propagates and changes nothing - the guard
+		// (`(app)/+layout.ts`) shows its retryable error page.
+		const { current, scope } = await establishSession(getAuthProvider(), (identity) => {
+			this.identity = identity;
+			this.role = parseRole(identity);
+			this.publicViewer = identity?.publicViewer === true;
+		});
+		if (!current || !scope) return null;
+		const generation = scope.generation;
 
 		if (!isTauri()) {
 			this.authDisabled = false;
-			return;
+			return generation;
 		}
 		try {
 			this.authDisabled = (await getAuthSettings()).disabled;
 		} catch {
 			this.authDisabled = false;
 		}
+		return generation;
 	}
 }
 

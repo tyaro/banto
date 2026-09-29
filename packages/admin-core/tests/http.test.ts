@@ -454,6 +454,28 @@ describe('createHttpAuthProvider', () => {
 		await expect(provider.getIdentity()).resolves.toEqual({ id: 'admin', name: '管理者' });
 	});
 
+	// Issue #215/#255 6th review: `null` means "no session", so only a 401 maps
+	// to it; a failure to FETCH the identity rejects (the AuthProvider
+	// contract, same split as check()).
+	it('getIdentity resolves null on a 401, and rejects on a 500 or a network failure', async () => {
+		sessionStorage.setItem('banto.auth.token', 'tok');
+		const unauthorized = createHttpAuthProvider({
+			fetchFn: vi.fn().mockResolvedValue(jsonResponse(401, null))
+		});
+		await expect(unauthorized.getIdentity()).resolves.toBeNull();
+
+		const failing = createHttpAuthProvider({
+			fetchFn: vi.fn().mockResolvedValue(jsonResponse(500, { kind: 'other', message: 'db down' }))
+		});
+		await expect(failing.getIdentity()).rejects.toSatisfy(isProviderError);
+
+		const offline = createHttpAuthProvider({
+			fetchFn: vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+		});
+		await expect(offline.getIdentity()).rejects.toSatisfy(isProviderError);
+		expect(sessionStorage.getItem('banto.auth.token')).toBe('tok');
+	});
+
 	it('getIdentity passes the role through unchanged (spec M10 RBAC)', async () => {
 		const fetchFn = vi
 			.fn()

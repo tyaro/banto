@@ -24,7 +24,7 @@
  * `page.once('dialog', ...)`). The exception is scenario 13b's "the event
  * stream sends nothing more" check, which can only be observed over a window.
  */
-import { expect, test, type Dialog, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
 import fs from 'node:fs';
 import { expectCheckOutageKeepsTheSession } from './session-check-outage';
 
@@ -1332,6 +1332,38 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		} finally {
 			await context.close();
 		}
+	});
+
+	// Issue #215/#255 6th review: the session is still valid (check() passes)
+	// but its identity cannot be fetched for a moment (a 500). That is not
+	// "nobody is signed in": the guard shows its retryable error page, and
+	// nothing about the session - owner, generation, saved list state - is
+	// changed, so the retry restores the list exactly as it was.
+	test('6b. items: an identity outage keeps the list state, and the retry restores it', async () => {
+		await page.goto('/items');
+		await applyColumnFilter(page, '商品名', '茶');
+		await expect(rowWithText(page, '茶').first()).toBeVisible();
+
+		const outage = (route: Route) =>
+			route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ kind: 'other', message: 'identity outage' })
+			});
+		await page.route('**/api/auth/identity', outage);
+		await page.reload();
+		await expect(page.getByText('ログイン状態を確認できませんでした')).toBeVisible();
+		await expect(page).toHaveURL(/\/items$/);
+
+		await page.unroute('**/api/auth/identity', outage);
+		await page.getByRole('button', { name: '再試行' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await expect(
+			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
+		).toHaveValue('茶');
+		await page.keyboard.press('Escape');
+		await clearColumnFilter(page, '商品名');
 	});
 
 	test('7. admin: audit log shows the login and items records', async () => {

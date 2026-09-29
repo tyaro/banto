@@ -40,37 +40,32 @@ export type ProtectedSessionOutcome = 'session' | 'publicViewer' | 'login';
  *
  * 5th review: a `false` that arrives after the session changed (this tab
  * logged out and in as someone else while the check was pending) is about
- * the PREVIOUS session and is not acted on - see `checkCurrentSession`
- * below. If the session keeps changing, this rejects with
+ * the PREVIOUS session and is not acted on: the current session is
+ * checked again instead. If the session keeps changing, this rejects with
  * `SessionChangedError`, which the caller treats like any other "could not
  * verify" rejection (the retryable error page).
  */
 export async function resolveProtectedSession(
 	auth: AuthProvider
 ): Promise<ProtectedSessionOutcome> {
-	if (await checkCurrentSession(auth)) return 'session';
-	endSession();
-	const status = await auth.status?.();
-	const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : false;
-	return entered ? 'publicViewer' : 'login';
-}
-
-/**
- * `auth.check()`, but a `false` is only trusted if the session scope did not
- * change while the check was pending (Issue #215/#255 5th review). The
- * answer is about the token the check was SENT with: if this tab logged out
- * and in as someone else meanwhile, a late `false` for the previous session
- * must not end the new one (the HTTP provider already keeps the new token -
- * `clearTokenIfCurrent`). Such an answer is discarded and the CURRENT
- * session is checked again, up to `MAX_STALE_RETRIES` times; a `true` needs
- * no such care (the caller then fetches the identity of whatever session is
- * current, `establishSession`).
- */
-async function checkCurrentSession(auth: AuthProvider): Promise<boolean> {
 	for (let attempt = 0; attempt < MAX_STALE_RETRIES; attempt++) {
 		const scope = currentSessionScope();
-		if (await auth.check()) return true;
-		if (isCurrentSessionScope(scope)) return false;
+		const valid = await auth.check();
+		// 6th review: from here to `endSession()` is ONE continuation - no
+		// `await` between confirming that this `false` is about the session
+		// still current and ending it. (Checking in an inner function and
+		// ending after the outer `await` resumed let another session be
+		// established in between - and then ended by this stale guard.)
+		if (valid) return 'session';
+		if (!isCurrentSessionScope(scope)) continue;
+		endSession();
+		const ended = currentSessionScope();
+		const status = await auth.status?.();
+		// A session began while `status()` was pending (another login in this
+		// tab): do not mint a public-viewer token over it - check it instead.
+		if (!isCurrentSessionScope(ended)) continue;
+		const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : false;
+		return entered ? 'publicViewer' : 'login';
 	}
 	throw new SessionChangedError();
 }

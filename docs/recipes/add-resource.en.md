@@ -59,7 +59,9 @@ API (reference: `routes/(app)/items/+page.svelte` and
   viewer) and only restored for the owner confirmed now. The template
   already has the wiring this relies on: `$lib/session.svelte.ts`'s
   `sessionStore.load()` calls `establishSession(getAuthProvider())` (a late
-  answer for a previous session is discarded); `endSession()` runs
+  answer for a previous session is discarded; a custom `AuthProvider`'s
+  `getIdentity()` should reject, not resolve `null`, when it cannot fetch
+  the identity - the contract in `provider.ts`); `endSession()` runs
   after a successful logout (`Header.svelte`, `commands.ts`);
   `(app)/+layout.ts` returns `sessionGeneration` and `(app)/+layout.svelte`
   rebuilds the page when the generation changes. Without it, list state is

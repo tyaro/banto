@@ -54,7 +54,8 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
   今の所有者にしか復元されない。前提の配線はテンプレートに入っている:
   `$lib/session.svelte.ts` の `sessionStore.load()` が
   `establishSession(getAuthProvider())` を呼ぶ（旧セッションへの遅れた応答は
-  捨てる）／ログアウト成功後に `endSession()`（`Header.svelte`・
+  捨てる。自前の `AuthProvider` の `getIdentity()` は、取得に失敗したとき
+  `null` ではなく reject する — `provider.ts` の契約）／ログアウト成功後に `endSession()`（`Header.svelte`・
   `commands.ts`）／
   `(app)/+layout.ts` が `sessionGeneration` を返し、`(app)/+layout.svelte` が
   世代の変化でページを作り直す。これを外すと、一覧状態は保存も復元もされない

@@ -29,14 +29,26 @@ import {
 	currentSessionScope,
 	isCurrentSessionScope,
 	sessionOwnerKey,
-	transitionSessionScope
+	transitionSessionScope,
+	type SessionScope
 } from './sessionScope.svelte';
 
-/** Confirm the live session belongs to `identity` (`null` = signed in, but the provider cannot say as whom: nothing is saved or restored). */
+/**
+ * Confirm the live session belongs to `identity`. `null` (or an identity
+ * without an `id`) = signed in, but the provider says there is no identity
+ * to own anything: nothing is saved or restored while it lasts.
+ *
+ * Saved list view state owned by anyone else is dropped only when a
+ * concrete new owner is confirmed (6th review): an ownerless session is not
+ * proof that the previous owner is gone - e.g. a provider that still maps a
+ * transient identity failure to `null` - and its entries stay unreadable
+ * anyway until the same owner is confirmed again (reads need a matching
+ * owner). `endSession()` is what drops everything.
+ */
 export function beginSession(identity: Identity | null): void {
 	const owner = sessionOwnerKey(identity);
 	transitionSessionScope(owner, true);
-	purgeListViewStateNotOwnedBy(owner);
+	if (owner !== null) purgeListViewStateNotOwnedBy(owner);
 }
 
 /** End the live session: no owner, a new generation, and every saved list view state is dropped. */
@@ -77,21 +89,38 @@ let establishSequence = 0;
  *   `beginSession`), the answer is discarded and the CURRENT session is
  *   asked again, up to `MAX_STALE_RETRIES` times (then `SessionChangedError`).
  *
- * `{ current: true }` means the identity was applied - the caller may show
- * it; `{ current: false }` means a newer call superseded this one - the
- * caller must not apply anything.
+ * `{ current: true }` means the identity was applied (`scope` is the
+ * session it established - a route guard hands `scope.generation` to its
+ * page, not a `sessionGeneration()` read after further awaits, when another
+ * session may already have begun); `{ current: false }`
+ * means a newer call superseded this one - the caller must not apply
+ * anything. `apply`, when given, runs in the SAME continuation as the
+ * checks and `beginSession` above (6th review: no `await` between checking
+ * that an answer is current and acting on it, or another session could be
+ * established in between) - put the caller's own bookkeeping of the
+ * identity there (admin-template: `sessionStore`'s identity/role).
+ *
+ * A rejected `getIdentity()` (the identity could not be fetched - see its
+ * contract in `provider.ts`) propagates unchanged and changes NOTHING: not
+ * the owner, not the generation (so `(app)/+layout.svelte` keeps the page),
+ * not the saved list view state. The caller shows its "could not verify"
+ * path (the route guard's retryable error page); a retry that confirms the
+ * same identity keeps the generation and restores the state as before.
  */
 export async function establishSession(
-	auth: AuthProvider
-): Promise<{ current: boolean; identity: Identity | null }> {
+	auth: AuthProvider,
+	apply?: (identity: Identity | null) => void
+): Promise<{ current: boolean; identity: Identity | null; scope: SessionScope | null }> {
 	const sequence = ++establishSequence;
 	for (let attempt = 0; attempt < MAX_STALE_RETRIES; attempt++) {
 		const scope = currentSessionScope();
 		const identity = await auth.getIdentity();
-		if (sequence !== establishSequence) return { current: false, identity: null };
+		// From here to `return`: one continuation, no `await`.
+		if (sequence !== establishSequence) return { current: false, identity: null, scope: null };
 		if (!isCurrentSessionScope(scope)) continue;
 		beginSession(identity);
-		return { current: true, identity };
+		apply?.(identity);
+		return { current: true, identity, scope: currentSessionScope() };
 	}
 	throw new SessionChangedError();
 }
