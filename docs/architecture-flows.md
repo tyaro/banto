@@ -156,7 +156,7 @@ flowchart TD
   SET["SettingsService 生成"]
   SEED["seed_first_boot_settings<br/>settings が空のときだけ"]
   AUTH["Users / Auth 状態を読む"]
-  LAN{"server.enabled?}
+  LAN{"server.enabled?"}
   EMB["組み込み HTTP 起動"]
   UI["Webview または静的 UI"]
 
