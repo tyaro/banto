@@ -104,8 +104,9 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    invoke が reject したとき、またはその操作の pending が期限（`opPendingTimeoutMs`）を過ぎて「結果が
    分からない」になったときだけ +1 する。`resolve()` の通信の障害の reject では進めない。公開型は
    すべて不透明な `CredentialRevision`（`credentialRevision()`・答えの `checked`/`current`・ticket の
-   `revision`・`expectRevision`）で、足し算は provider の内部だけ。**stale**（Rust の `stale`、入口より前に
-   始まった状態を変える操作が pending のまま届いた答え）は provider が `StaleAnswerError` で reject し、
+   `revision`・`expectRevision`）で、足し算は provider の内部だけ。**stale**（Rust の `stale`、または
+   答えが届いた時点で未完了の状態を変える操作が 1 つでもある答え。操作の開始が問い合わせの前か後かは
+   問わない）は provider が `StaleAnswerError` で reject し、
    controller は通信の障害と区別して確認の状況を変えずに新しい問い合わせで確認し直す。
    「操作の完了を待つ」規則は採らない（応答しない古い操作が後続の確認を塞ぐため）。認証の操作（login / logout / setup / enterPublicViewer）は controller の
    待ち行列に入れず、操作の戻り値を直接 `commit` せず、その後の `resolve()` で確定する。
@@ -135,8 +136,11 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    引き継ぐときも残りの期限を渡す。配線①（generation の照合による再 load）は実装-2 に前倒しし、
    none を経ない世代の変化（別タブのログイン、同じ owner の再ログイン）でも子画面が隠れたままに
    ならないようにする。未処理のユーザーの変更（`pendingOwnerChange`）は直前の owner とは別に controller が
-   保持し、同じ値の再確認では上書きせず、アプリの方針が処理して `acknowledgeOwnerChange()` で消す
-   （503 の画面をまたいでも通知が失われない）。
+   保持し、通知やログイン画面への遷移はレイアウトが実行する（オーナー決定）。**保持する**のは `unknown` の
+   ときと同じユーザーの再確認のとき。**終わる**のは `none` が確定したとき（未処理の変更も破棄し、セッションの
+   終了を越えて持ち越さない）と、レイアウトが処理して `acknowledgeOwnerChange()` を呼んだとき。保証する
+   **再試行**は controller を維持した画面内の再読込（503 画面の「再試行」は `invalidateAll()` に変える）
+   だけで、ページ全体の再読込では通知を保証しない。
 7. **版**: #255 とこの変更をまとめて **v2.0.0** にする（publishing.md：意味の変更はメジャー）。
    状態を更新する旧 API（`establishSession` / `beginSession` / `endSession` /
    `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError` など）は**削除**する。
@@ -153,7 +157,7 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    照合する（試運転はトークンで決まらない）。「状態を書き換える入口 × 非同期の境界」の表
    （設計の本文 §4.9）で、この原則の抜けを実装の PR のレビューでも洗う。
 
-不変条件の一覧（I-1〜I-23）、競合のシナリオの表（S-1〜S-81）、generation の数え方の表（§3.1）、
+不変条件の一覧（I-1〜I-24）、競合のシナリオの表（S-1〜S-83）、generation の数え方の表（§3.1）、
 API の案、移行と実装の分割、テストの設計は設計の本文に置く。実装の PR はその番号をテスト名から
 参照する。
 

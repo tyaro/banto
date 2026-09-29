@@ -123,8 +123,9 @@ Constraints:
    communication failure never advances it. Every public type is the opaque `CredentialRevision`
    (`credentialRevision()`, the answer's `checked`/`current`, the ticket's `revision`,
    `expectRevision`); arithmetic happens only inside the provider. A **stale** answer (Rust's
-   `stale`, or an answer that arrives while a state-changing operation started before the entry is
-   still pending) is rejected by the provider with `StaleAnswerError`; the controller tells it apart
+   `stale`, or an answer that arrives while at least one state-changing operation is still
+   pending, whether that operation started before or after the probe's entry) is rejected by the
+   provider with `StaleAnswerError`; the controller tells it apart
    from a communication failure and re-verifies with a new probe without touching the verification
    status. A "wait for in-flight operations" rule is not adopted (an unresponsive old operation
    would block every later verification).
@@ -163,9 +164,14 @@ Constraints:
    verification. Wire ① (re-load on a generation change) is pulled forward into implementation PR 2
    so that generation changes that never pass through none (a login in another tab, a re-login as
    the same owner) do not leave the child screen hidden. An unprocessed user change
-   (`pendingOwnerChange`) is kept by the controller separately from the previous owner, is not
-   overwritten by a same-value re-verification, and is cleared only by the app policy through
-   `acknowledgeOwnerChange()` (so the notification survives a 503 screen).
+   (`pendingOwnerChange`) is kept by the controller separately from the previous owner, while the
+   notification and the move to the login screen are executed by the layout (owner's decision).
+   It is **kept** while the state is `unknown` and across a re-verification of the same user. It
+   **ends** when `none` is confirmed (the unprocessed change is discarded too; nothing is carried
+   across the end of a session) or when the layout has handled it and called
+   `acknowledgeOwnerChange()`. The **retry** that is guaranteed is an in-page reload that keeps
+   the controller (the 503 screen's "retry" becomes `invalidateAll()`); after a full page reload
+   the notification is not guaranteed.
 7. **Version.** #255 and this change ship together as **v2.0.0** (publishing.md: a change of
    meaning is a major). The state-updating legacy API (`establishSession` / `beginSession` /
    `endSession` / `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError`, ...)
@@ -187,7 +193,7 @@ Constraints:
    boundary" table (design body §4.9) is used to hunt for gaps in this principle during the
    implementation PR reviews too.
 
-The invariants (I-1 to I-23), the race scenario tables (S-1 to S-81), the generation table
+The invariants (I-1 to I-24), the race scenario tables (S-1 to S-83), the generation table
 (§3.1), the API sketch, the migration and PR split, and the test design live in the design body.
 The implementation PRs reference those numbers from test names.
 

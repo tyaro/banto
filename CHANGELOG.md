@@ -25,7 +25,7 @@
 - docs(admin-core): セッションの確定を 1 か所（SessionController）に寄せる設計
   （#260）。ADR-0016（Proposed）と設計の本文
   [docs/session-controller-design.md](docs/session-controller-design.md)
-  （不変条件 I-1〜I-23・競合のシナリオ S-1〜S-81・generation の数え方の表・API の
+  （不変条件 I-1〜I-24・競合のシナリオ S-1〜S-83・generation の数え方の表・API の
   案・実装の分割・テストの設計）。Tauri の Rust 側で `.await` の後に `state.auth` を無条件で書いている
   箇所（`auth_login`・`auth_setup`・`auth_logout`）を特定した。判断点はオーナーの決定
   （2026-09-29）を反映済み（旧 API は削除、`AuthProvider.resolve` 必須、
@@ -48,7 +48,11 @@
   新しい probe で確認し直す（操作の pending には期限）、配線①（generation の照合）は
   実装-2 に前倒し、未処理の owner の変更は `pendingOwnerChange` として同値の再確認で
   上書きしない、policy runner の絶対期限を通常の確認にも引き継ぐ、revision の公開型は
-  すべて `CredentialRevision`。**実装時の挙動の変更の予告**: 旧
+  すべて `CredentialRevision`。6 回目のレビュー（3 件 ＋ オーナーの決定）も反映済み: stale の
+  判定は「答えが届いた時点で未完了の状態を変える操作があるか」（開始の前後を問わない）、
+  未処理のユーザーの変更は unknown・同じユーザーの再確認で保持し none の確定で破棄、
+  503 画面の「再試行」は controller を維持した `invalidateAll()` に変える（ページ全体の
+  再読込では通知を保証しない）。**実装時の挙動の変更の予告**: 旧
   `sessionEnded.ts` の「unheard の再確認」は再 probe をやめ、`onSessionEnded` が
   購読した時点で `none` なら非同期に 1 回通知する形に変わる（`sessionEndUnheard` の
   テストの期待は「購読時に none なら 1 回通知」に）。コードの変更は無い。
