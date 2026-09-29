@@ -22,6 +22,40 @@
 
 ## [Unreleased]
 
+- docs(admin-core): セッションの確定を 1 か所（SessionController）に寄せる設計
+  （#260）。ADR-0016（Proposed）と設計の本文
+  [docs/session-controller-design.md](docs/session-controller-design.md)
+  （不変条件 I-1〜I-24・競合のシナリオ S-1〜S-83・generation の数え方の表・API の
+  案・実装の分割・テストの設計）。Tauri の Rust 側で `.await` の後に `state.auth` を無条件で書いている
+  箇所（`auth_login`・`auth_setup`・`auth_logout`）を特定した。判断点はオーナーの決定
+  （2026-09-29）を反映済み（旧 API は削除、`AuthProvider.resolve` 必須、
+  `GET /api/auth/session` は新設せず `GET /api/auth/identity` を 1 回、`superseded` の
+  `load` は確認できた世代だけを返す、#257 の既定の流れ）。同日のレビュー 10 件も
+  反映済み（ticket の原則 I-18、ログアウトは `resolve()` で確定、`seq` は結び付きを
+  変える操作でだけ進める、操作の応答で revision を確定して通知、失敗も同じ鮮度の
+  照合、Rust のテストはコマンド本体で順序を固定）。統合修正 19 項目（3 回目の
+  オーナーレビュー 5 件 ＋ 独立レビュー ＋ 第三者の補足）も反映済み: provider の
+  `resolve()` は `{ status, checked, current, identity?, kind? }` を返し中の消去は
+  通知しない、provider は標準（3 つ必須）と互換 adapter の 2 階層、adopt 中の ticket は
+  epoch だけ、generation は (status, owner, kind) が変わったときだけ +1、画面の再確認は
+  レイアウトの `$effect` の generation 照合に統一。4 回目のレビュー（Astra 6 件 ＋
+  独立の再レビュー）も反映済み: 保留に移すのは active かつ adopt 中でないときだけ、
+  Tauri の revision は不透明な `(observedSeq, local)` の組で `settle_session` は
+  `seq_at_entry` と一致しなければ何も書かず stale、policy runner は期限・上限で
+  `unverified` かつ `guard`/`recheck` の 2 mode、abort の規則は「採用できないことが
+  確定した probe は必ず abort」の 1 つ。5 回目のレビュー（6 件）も反映済み: stale な
+  答え（Rust の stale、pending の操作をまたいだ答え）は待たずに `StaleAnswerError` で捨て
+  新しい probe で確認し直す（操作の pending には期限）、配線①（generation の照合）は
+  実装-2 に前倒し、未処理の owner の変更は `pendingOwnerChange` として同値の再確認で
+  上書きしない、policy runner の絶対期限を通常の確認にも引き継ぐ、revision の公開型は
+  すべて `CredentialRevision`。6 回目のレビュー（3 件 ＋ オーナーの決定）も反映済み: stale の
+  判定は「答えが届いた時点で未完了の状態を変える操作があるか」（開始の前後を問わない）、
+  未処理のユーザーの変更は unknown・同じユーザーの再確認で保持し none の確定で破棄、
+  503 画面の「再試行」は controller を維持した `invalidateAll()` に変える（ページ全体の
+  再読込では通知を保証しない）。**実装時の挙動の変更の予告**: 旧
+  `sessionEnded.ts` の「unheard の再確認」は再 probe をやめ、`onSessionEnded` が
+  購読した時点で `none` なら非同期に 1 回通知する形に変わる（`sessionEndUnheard` の
+  テストの期待は「購読時に none なら 1 回通知」に）。コードの変更は無い。
 - feat(admin-core, admin-template)（**挙動の互換性が変わる変更を含む** —
   下の「挙動の互換性が変わる変更」と「派生アプリの移行の手順」を参照）:
   一覧→詳細→保存/戻る→一覧の往復で
