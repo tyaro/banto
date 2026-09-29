@@ -52,11 +52,13 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
   `scope` を渡す。保存中にセッションが変わると書かれない）。
 - 状態は所有者（ログイン中のアカウント／公開閲覧者）付きで保存され、確定した
   今の所有者にしか復元されない。前提の配線はテンプレートに入っている:
-  `$lib/session.svelte.ts` の `sessionStore.load()` が `beginSession(identity)`
-  を呼ぶ／ログアウト成功後に `endSession()`（`Header.svelte`・`commands.ts`）／
+  `$lib/session.svelte.ts` の `sessionStore.load()` が
+  `establishSession(getAuthProvider())` を呼ぶ（旧セッションへの遅れた応答は
+  捨てる）／ログアウト成功後に `endSession()`（`Header.svelte`・
+  `commands.ts`）／
   `(app)/+layout.ts` が `sessionGeneration` を返し、`(app)/+layout.svelte` が
   世代の変化でページを作り直す。これを外すと、一覧状態は保存も復元もされない
-  か（`beginSession` なし）、セッションが変わっても前の画面が残る（作り直し
+  か（`establishSession` なし）、セッションが変わっても前の画面が残る（作り直し
   なし）。
 
 ## 検証

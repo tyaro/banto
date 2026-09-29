@@ -58,11 +58,12 @@ API (reference: `routes/(app)/items/+page.svelte` and
 - State is saved with its owner (the signed-in account, or the public
   viewer) and only restored for the owner confirmed now. The template
   already has the wiring this relies on: `$lib/session.svelte.ts`'s
-  `sessionStore.load()` calls `beginSession(identity)`; `endSession()` runs
+  `sessionStore.load()` calls `establishSession(getAuthProvider())` (a late
+  answer for a previous session is discarded); `endSession()` runs
   after a successful logout (`Header.svelte`, `commands.ts`);
   `(app)/+layout.ts` returns `sessionGeneration` and `(app)/+layout.svelte`
   rebuilds the page when the generation changes. Without it, list state is
-  never saved or restored (no `beginSession`), or the previous session's
+  never saved or restored (no `establishSession`), or the previous session's
   screen survives a session change (no rebuild).
 
 ## Verification

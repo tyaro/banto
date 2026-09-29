@@ -92,24 +92,151 @@ pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer
     })
 }
 
-/// URLs a LAN client could use to reach a server bound to `port` (spec
-/// §11.4's access-URL display): always `http://127.0.0.1:{port}`, plus one
-/// entry per non-loopback IPv4 interface. IPv6 is skipped for v1 (matches
-/// the LAN-HTTP-only scope in spec §11.2).
+/// URLs a client could use to reach a server bound to `port`, assuming it
+/// listens on every interface (`0.0.0.0`): always `http://127.0.0.1:{port}`,
+/// plus one entry per non-loopback IPv4 interface. This is `lan_urls`'s
+/// pre-#216 behavior, kept unchanged and under its original name.
+///
+/// **Exists only for source/binary compatibility with derived apps already
+/// built against this signature** (`banto-server` is consumed by derived
+/// apps via a git-tag/`path:` dependency - see `docs/publishing.md` - so
+/// changing a `pub fn`'s signature breaks every such app's next build, not
+/// just this repo's). New callers should use [`lan_urls_for_bind`] instead,
+/// which is what this function now delegates to (hardcoding `"0.0.0.0"`) -
+/// **this one reintroduces Issue #216's bug** for any server actually bound
+/// to something else, because it cannot know the caller's real `bind`.
+///
+/// Deliberately not `#[deprecated]`: derived apps commonly build with
+/// `-D warnings` (this repo's CI `rust` job does too), so marking this
+/// deprecated would turn a routine dependency bump into a broken build for
+/// every caller that has not yet migrated - that migration should be a
+/// deliberate change a maintainer chooses to make, not a side effect of
+/// picking up a patch release.
 pub fn lan_urls(port: u16) -> Vec<String> {
-    let mut urls = vec![format!("http://127.0.0.1:{port}")];
+    lan_urls_for_bind("0.0.0.0", port)
+}
 
+/// URLs a client could use to reach a server bound to `bind`:`port` (spec
+/// §11.4's access-URL display; Issue #216). The set returned is scoped to
+/// what `bind` actually listens on, so callers building "you can reach this
+/// server at..." UI never advertise an address nothing is listening on:
+///
+/// - **loopback IPv4** (`127.0.0.0/8`, any bracketed/whitespace/IPv4-mapped
+///   spelling - see [`parse_bind`]): only that loopback URL - a LAN URL
+///   would be misleading since no other machine can reach it.
+/// - **unspecified IPv4** (`0.0.0.0`): loopback plus one entry per
+///   non-loopback IPv4 interface (unchanged from the original `lan_urls`
+///   behavior - this is the "LAN公開" case).
+/// - **a specific IPv4 address**: only that address's URL - binding to one
+///   NIC means only that NIC's clients can connect, so nothing else is
+///   listed.
+/// - **anything IPv6** (loopback `::1`, unspecified `::`, or a specific
+///   address - any bracketed/whitespace spelling, not an IPv4-mapped one,
+///   which [`parse_bind`] already normalizes to plain IPv4 above): **no
+///   URLs at all**. Owner decision, 2026-09-29: IPv6 is out of scope for
+///   this settings screen's URL/QR guidance for now - `start` does not set
+///   `IPV6_V6ONLY=0` before binding (so a `::` bind is not reachable over
+///   IPv4 on Windows, where sockets default to IPv6-only), and a NIC's own
+///   IPv6 address is frequently link-local (`fe80::/10`, reachable only
+///   with a zone/scope id this server has no way to supply for the
+///   *client's* interface). Both are real, previously-reported bugs (PR
+///   #254 review rounds 3-4); rather than build and maintain IPv6-specific
+///   guidance for a path this app does not otherwise support end-to-end,
+///   the simpler and safer choice is to not guide toward IPv6 destinations
+///   at all until that support exists. Revisit if/when the listener grows
+///   deliberate dual-stack/IPv6 support.
+/// - **unparseable even after [`parse_bind`]'s normalization** (defensive;
+///   the settings UI only ever sends the addresses above): no URLs, for the
+///   same reason as IPv6 above - a string we could not classify is not one
+///   we can vouch for as a connectable destination (this used to return the
+///   raw, unnormalized `bind:port` string verbatim; that was itself
+///   sometimes not a connectable URL, e.g. a zone-qualified address).
+pub fn lan_urls_for_bind(bind: &str, port: u16) -> Vec<String> {
+    use std::net::IpAddr;
+
+    match parse_bind(bind) {
+        Some(IpAddr::V4(v4)) if v4.is_loopback() => vec![format!("http://{v4}:{port}")],
+        Some(IpAddr::V4(v4)) if v4.is_unspecified() => {
+            unspecified_v4_urls(&non_loopback_v4_addrs(), port)
+        }
+        Some(IpAddr::V4(v4)) => vec![format!("http://{v4}:{port}")],
+        Some(IpAddr::V6(_)) | None => Vec::new(),
+    }
+}
+
+/// Parses `bind` into the address it actually represents, tolerating forms
+/// a real `ServerConfig.bind`/`BANTO_BIND` value can take beyond the bare
+/// dotted/colon notation `IpAddr::from_str` accepts on its own (PR #254
+/// review, 3rd round):
+///
+/// - **Surrounding whitespace** (`" ::1 "`) is trimmed.
+/// - **A bracketed IPv6 literal** (`"[::]"`, `"[::1]"` - the form a
+///   `[host]:port` address carries, and a form `start`'s
+///   `TcpListener::bind` already accepts today) has its brackets stripped
+///   before parsing - without this, `"[::]".parse::<IpAddr>()` fails and
+///   the caller falls through to the raw-string fallback, which is how the
+///   unspecified-address bug this function fixes slipped in for the
+///   bracketed form specifically.
+/// - **An IPv4-mapped IPv6 address** (`"::ffff:127.0.0.1"`,
+///   `"[::ffff:0.0.0.0]"`) is normalized to its plain IPv4 form via
+///   [`Ipv6Addr::to_ipv4_mapped`], so the `is_loopback`/`is_unspecified`
+///   checks in [`lan_urls_for_bind`] see the address it actually is -
+///   `Ipv6Addr::is_loopback` itself does not recognize this form (it only
+///   matches the literal `::1`), so without this an IPv4-mapped loopback or
+///   unspecified address would fall through as "a specific address" and be
+///   advertised as directly connectable.
+///
+/// Deliberately does **not** support a zone id (`"fe80::1%eth0"`):
+/// `IpAddr::from_str` already rejects it outright, and a link-local,
+/// zone-qualified bind is not a realistic input for this desktop app's
+/// LAN-exposure setting. It falls through to the `None` case in
+/// [`lan_urls_for_bind`] (no URLs) like any other unparseable value - safe
+/// (no panic, no false LAN-reachability claim), just not specially
+/// classified.
+fn parse_bind(bind: &str) -> Option<std::net::IpAddr> {
+    use std::net::IpAddr;
+
+    let trimmed = bind.trim();
+    let unbracketed = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(trimmed);
+
+    let addr = unbracketed.parse::<IpAddr>().ok()?;
+    Some(match addr {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        v4 => v4,
+    })
+}
+
+/// This machine's non-loopback IPv4 interface addresses - the one place
+/// that talks to `if_addrs` for the `0.0.0.0` case. Kept separate from URL
+/// *formatting* ([`unspecified_v4_urls`] below) so tests can exercise the
+/// formatting logic against a fixed fixture instead of this machine's
+/// actual NICs (owner review on PR #254, P2 2nd round: a test that called
+/// this function directly was flaky on any machine/container with no
+/// non-loopback IPv4 interface).
+fn non_loopback_v4_addrs() -> Vec<std::net::Ipv4Addr> {
+    let mut addrs = Vec::new();
     if let Ok(interfaces) = if_addrs::get_if_addrs() {
         for iface in interfaces {
             if iface.is_loopback() {
                 continue;
             }
-            if let std::net::IpAddr::V4(ipv4) = iface.ip() {
-                urls.push(format!("http://{ipv4}:{port}"));
+            if let std::net::IpAddr::V4(v4) = iface.ip() {
+                addrs.push(v4);
             }
         }
     }
+    addrs
+}
 
+/// Pure: the full `0.0.0.0`-bind URL list - loopback first, then `addrs`
+/// (already-enumerated non-loopback IPv4 addresses, [`non_loopback_v4_addrs`]
+/// in production, a fixed fixture in tests).
+fn unspecified_v4_urls(addrs: &[std::net::Ipv4Addr], port: u16) -> Vec<String> {
+    let mut urls = vec![format!("http://127.0.0.1:{port}")];
+    urls.extend(addrs.iter().map(|v4| format!("http://{v4}:{port}")));
     urls
 }
 
@@ -118,9 +245,235 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lan_urls_contains_loopback() {
-        let urls = lan_urls(8721);
-        assert!(urls.contains(&"http://127.0.0.1:8721".to_string()));
+    fn lan_urls_for_bind_ipv4_loopback_bind_is_loopback_only() {
+        // Issue #216: a loopback bind must never advertise a LAN URL - the
+        // whole regression was this case falling through to the 0.0.0.0
+        // (enumerate every interface) behavior instead.
+        assert_eq!(
+            lan_urls_for_bind("127.0.0.1", 8721),
+            vec!["http://127.0.0.1:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_loopback_range_ipv4_bind_is_loopback_only() {
+        // 127.0.0.0/8, not just the canonical 127.0.0.1 (PR #254 review,
+        // 2nd round).
+        assert_eq!(
+            lan_urls_for_bind("127.0.0.2", 8721),
+            vec!["http://127.0.0.2:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_ipv4_unspecified_bind_includes_loopback_and_lan_ipv4() {
+        // 0.0.0.0: same shape as the original `lan_urls(port)` - loopback
+        // first, then whatever non-loopback IPv4 interfaces this machine
+        // has (0 or more; CI runners commonly have none besides loopback).
+        let urls = lan_urls_for_bind("0.0.0.0", 8721);
+        assert_eq!(urls[0], "http://127.0.0.1:8721");
+    }
+
+    #[test]
+    fn lan_urls_for_bind_specific_ipv4_bind_is_that_address_only() {
+        // Binding one NIC must not also list every other interface - only
+        // that NIC's clients can actually reach this listener.
+        assert_eq!(
+            lan_urls_for_bind("192.168.1.50", 8721),
+            vec!["http://192.168.1.50:8721".to_string()]
+        );
+    }
+
+    // --- PR #254 review, 3rd round: bracketed / whitespace / IPv4-mapped
+    // IPv4 spellings must classify the same as their bare form.
+
+    #[test]
+    fn lan_urls_for_bind_whitespace_padded_ipv4_bind_is_trimmed() {
+        assert_eq!(
+            lan_urls_for_bind("  127.0.0.1  ", 8721),
+            vec!["http://127.0.0.1:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_ipv4_mapped_ipv6_loopback_is_loopback_only() {
+        // "::ffff:127.0.0.1" is IPv6 syntax for the IPv4 address
+        // 127.0.0.1 - `parse_bind` normalizes it to plain IPv4 via
+        // `to_ipv4_mapped`, so it takes the IPv4 loopback path above, not
+        // the "anything IPv6" no-URLs path below.
+        assert_eq!(
+            lan_urls_for_bind("::ffff:127.0.0.1", 8721),
+            vec!["http://127.0.0.1:8721".to_string()]
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_bracketed_ipv4_mapped_ipv6_unspecified_is_unspecified() {
+        // "::ffff:0.0.0.0" normalizes to plain 0.0.0.0 the same way -
+        // exercises the IPv4 unspecified path, not "anything IPv6".
+        let urls = lan_urls_for_bind("[::ffff:0.0.0.0]", 8721);
+        assert_eq!(urls[0], "http://127.0.0.1:8721");
+    }
+
+    // --- Owner decision, 2026-09-29: IPv6 is out of scope for URL/QR
+    // guidance for now (PR #254 review, 4th round found two real bugs in an
+    // earlier version of this fix - IPv4 falsely advertised as reachable
+    // over a `::` bind on Windows, and link-local IPv6 advertised without a
+    // zone id - rather than keep patching IPv6-specific guidance for a path
+    // this app does not otherwise support end-to-end, IPv6 binds now
+    // produce no URLs at all).
+
+    #[test]
+    fn lan_urls_for_bind_ipv6_loopback_bind_yields_no_urls() {
+        assert_eq!(lan_urls_for_bind("::1", 8721), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lan_urls_for_bind_bracketed_ipv6_loopback_bind_yields_no_urls() {
+        assert_eq!(lan_urls_for_bind("[::1]", 8721), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lan_urls_for_bind_ipv6_wildcard_yields_no_urls() {
+        assert_eq!(lan_urls_for_bind("::", 8721), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lan_urls_for_bind_bracketed_ipv6_wildcard_yields_no_urls() {
+        // The bind value at the center of the review's 3rd-round report
+        // (`start`'s `TcpListener::bind` accepts this fine) - previously
+        // this fell through to a raw-string fallback that returned the
+        // unspecified address itself as a "destination" (RFC 4291 §2.5.2);
+        // now, like every other IPv6 bind, it returns no URLs.
+        assert_eq!(lan_urls_for_bind("[::]", 8721), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lan_urls_for_bind_unabbreviated_bracketed_ipv6_wildcard_yields_no_urls() {
+        assert_eq!(
+            lan_urls_for_bind("[0:0:0:0:0:0:0:0]", 8721),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_specific_ipv6_bind_yields_no_urls() {
+        // The bind the review's 4th-round report used as its non-loopback
+        // example. A specific IPv6 address is explicitly configured (not
+        // guessed), but IPv6 guidance is out of scope entirely for now, so
+        // this yields no URLs the same as every other IPv6 case above.
+        assert_eq!(lan_urls_for_bind("2001:db8::1", 8721), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lan_urls_for_bind_link_local_ipv6_bind_yields_no_urls() {
+        // The review's 4th-round link-local report (`fe80::/10`) - already
+        // covered by "IPv6 yields no URLs", but pinned explicitly since it
+        // was the concrete bug reported.
+        assert_eq!(lan_urls_for_bind("fe80::abcd", 8721), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lan_urls_for_bind_zone_id_yields_no_urls() {
+        // Documented decision (PR #254 review, 3rd round): a zone-qualified
+        // link-local address is not specially parsed - `IpAddr::from_str`
+        // already rejects it, so `parse_bind` returns `None` - but the
+        // outcome is the same "no URLs" as every unparseable/IPv6 bind,
+        // not a raw, possibly-unusable string.
+        assert_eq!(
+            lan_urls_for_bind("fe80::1%eth0", 8721),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn lan_urls_for_bind_unparseable_bind_yields_no_urls() {
+        // Defensive only - the settings UI never sends a non-IP bind - but
+        // must not panic, and must not advertise a URL we cannot vouch for
+        // (owner decision, 2026-09-29: this used to return the raw
+        // `bind:port` string verbatim, which is not always a usable URL
+        // either).
+        assert_eq!(lan_urls_for_bind("not-an-ip", 8721), Vec::<String>::new());
+    }
+
+    // --- Back-compat: `lan_urls(port)` (pre-#216 signature) --------------
+    //
+    // Owner review on PR #254: `lan_urls`'s signature must not change (it is
+    // `pub` in a crate derived apps depend on via a git-tag/`path:`
+    // dependency - a signature change breaks their build on the next
+    // dependency bump, not just this repo). These pin its old, bind-agnostic
+    // behavior so a future edit cannot silently fold it back into
+    // `lan_urls_for_bind`'s signature or change what it returns.
+
+    #[test]
+    fn lan_urls_kept_for_compat_matches_its_pre_216_shape() {
+        // Old callers get exactly the old shape: loopback first, then
+        // non-loopback IPv4 interfaces - same as `lan_urls_for_bind("0.0.0.0", ..)`.
+        let old = lan_urls(8721);
+        let new = lan_urls_for_bind("0.0.0.0", 8721);
+        assert_eq!(old, new);
+        assert_eq!(old[0], "http://127.0.0.1:8721");
+    }
+
+    // Owner review on PR #254 (P2, 2nd round): the original version of this
+    // test called `lan_urls(8721)` (live interface enumeration) and asserted
+    // it differs from a loopback-scoped result. On any machine/container
+    // with no non-loopback IPv4 interface - a real, common case, not just a
+    // theoretical one - `lan_urls(8721)` legitimately degenerates to the
+    // same single loopback URL, so `assert_ne!` failed there even though
+    // nothing was wrong. Fixed by testing `unspecified_v4_urls` (the pure
+    // formatter `lan_urls`/`lan_urls_for_bind("0.0.0.0", ..)` delegates to)
+    // against a fixed fixture instead of this machine's real NICs, and by
+    // testing the "no LAN interfaces" case explicitly as an expected normal
+    // outcome rather than leaving it to accidentally fail the counter-proof.
+
+    #[test]
+    fn lan_urls_kept_for_compat_counter_proof_it_is_not_bind_aware() {
+        // Documents the known limitation this compat shim carries forward:
+        // unlike `lan_urls_for_bind`, `lan_urls(port)` has no way to learn
+        // the caller's actual bind, so it cannot avoid Issue #216's bug for
+        // a caller that is not actually listening on 0.0.0.0. A caller
+        // bound to loopback must migrate to `lan_urls_for_bind` to get the
+        // fix - this test fails if `lan_urls` is ever "fixed" to somehow
+        // guess a narrower scope on its own (it can't, and shouldn't try).
+        let fixture = [std::net::Ipv4Addr::new(192, 168, 1, 50)];
+        let old_shaped = unspecified_v4_urls(&fixture, 8721);
+        let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
+        assert_ne!(
+            old_shaped, loopback_scoped,
+            "lan_urls(port) must keep behaving like a 0.0.0.0 bind, not a loopback one"
+        );
+    }
+
+    #[test]
+    fn lan_urls_kept_for_compat_matches_loopback_when_there_are_no_lan_interfaces() {
+        // Normal/expected case, NOT a failure: on a machine with zero
+        // non-loopback interfaces, the 0.0.0.0-shaped result legitimately
+        // degenerates to the same single loopback URL as a loopback bind.
+        // This is exactly the case the old, network-dependent counter-proof
+        // test was silently hitting in some CI/container environments.
+        let no_lan_interfaces: [std::net::Ipv4Addr; 0] = [];
+        let old_shaped = unspecified_v4_urls(&no_lan_interfaces, 8721);
+        let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
+        assert_eq!(old_shaped, loopback_scoped);
+    }
+
+    #[test]
+    fn unspecified_v4_urls_fixture_loopback_first_then_given_addrs() {
+        // Pins the pure formatter's own shape against a fixed fixture,
+        // independent of this machine's real NICs.
+        let fixture = [
+            std::net::Ipv4Addr::new(192, 168, 1, 50),
+            std::net::Ipv4Addr::new(10, 0, 0, 2),
+        ];
+        assert_eq!(
+            unspecified_v4_urls(&fixture, 8721),
+            vec![
+                "http://127.0.0.1:8721".to_string(),
+                "http://192.168.1.50:8721".to_string(),
+                "http://10.0.0.2:8721".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]
