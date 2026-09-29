@@ -22,6 +22,118 @@
 
 ## [Unreleased]
 
+- feat(admin-core, admin-template)（**挙動の互換性が変わる変更を含む** —
+  下の「挙動の互換性が変わる変更」と「派生アプリの移行の手順」を参照）:
+  一覧→詳細→保存/戻る→一覧の往復で
+  絞り込み・並び順・直前に開いた行を復元する（#215）。一覧を絞り込んで
+  複数行を順に確認・修正する操作で、1件保存するたびに一覧条件が
+  リセットされ作業対象を探し直す必要があった。
+  - 保存先は `sessionStorage`（同一タブ・同一セッションの作業文脈。列設定の
+    保存は対象外 — #168 の範囲）。各エントリは**所有者（ログイン中の
+    アカウント、または公開閲覧者）付き**で書き、**確定した今の所有者と
+    一致するときだけ**復元する。別タブで Remember me のユーザーが切り替わった
+    後の再読み込み・公開閲覧者への自動移行・同じタブでの別ユーザーの
+    ログインのいずれでも、前のユーザーの検索語・並び順・強調行は出ない。
+    所有者が確定しない（`getIdentity()` が `null`・id なし）ときは保存も
+    復元もしない（fail closed）。
+  - 画面や保存中の処理は、作られたときの**セッションの世代**を持ち、世代が
+    変わった後（セッション終了・所有者の変更。同じアカウントの再ログインも
+    新しい世代）は書き込めない。admin-template の `(app)/+layout.svelte` は
+    世代が変わるとページを作り直す（SvelteKit は load を再実行してもページを
+    作り直さないため、旧セッションの GridState・強調行・通知・未保存の入力が
+    次のセッションに残っていた）。
+  - 編集結果が絞り込み条件から外れた場合はフィルタを解除せず、「商品 #{id}
+    は現在の絞り込み条件に当てはまりません」と説明する通知を表示
+    （`items.filterExcludedNotice`）。クライアントモードの判定はグリッドと
+    同じ派生行（`itemRow.ts` の `toItemRow()`）で行う。直前に開いた行は
+    `rowClass`（`items-row-last-opened`）で強調表示。
+  - 副次的なバグ修正: `ItemsServerGrid`（サーバーモード）は `GridState` を
+    外部から事前設定しても `WindowedListResource.params` が既定値のまま最初の
+    取得を行っていたため、復元した条件が取得に効いていなかった。マウント時に
+    `windowed.setParams()` で同期する。
+  - **派生アプリへの影響（API の追加）**: `@banto/admin-core` に次を追加。
+    - 一覧状態: `saveListViewState`/`loadListViewState`/`clearListViewState`/
+      `clearAllListViewState`、`saveActiveListMode`/`loadActiveListMode`、
+      `saveLastOpenedId`/`loadLastOpenedId`、`noteLastEditedRecord`/
+      `takeLastEditedRecord`、型 `ListViewSnapshot`/`LastEditedRecord`。
+      `clear*` 以外は**第1引数に `SessionScope` を取る**。
+    - セッションの所有者と世代: `establishSession(auth, apply?)`（identity を
+      取得し、今のセッションについての応答だと確かめたのと同じ継続で
+      `beginSession` と `apply(identity)` を行い、確立した `scope` を返す。古い
+      応答は捨てる）/`beginSession(identity)`/`endSession()`、
+      `SessionChangedError`/`MAX_STALE_RETRIES`、`currentSessionScope()`/
+      `isCurrentSessionScope(scope)`/`sessionGeneration()`/
+      `isSessionEstablished()`/`sessionOwnerKey()`、型 `SessionScope`。
+    - `initBanto` は `AuthProvider` を**ラップしない**（`getAuthProvider()` は
+      渡したオブジェクトそのものを返す。main と同じ）。
+  - **挙動の互換性が変わる変更（要対応の可能性あり）**:
+    1. **`AuthProvider.getIdentity()` の約束の変更**: `null` を返すのは
+       「セッションがない（トークンなし・`401`）か、identity の概念がない」
+       ときだけ。サーバーの失敗（`500`）や通信の失敗など、**取得できない
+       ときは reject** する（`check()` と同じ分け方。`provider.ts` の doc）。
+    2. **HTTP provider（`createHttpAuthProvider`）の `getIdentity()`** は、
+       これまで通信の例外・非 2xx をすべて `null` にしていたが、**`401` 以外の
+       失敗で `ProviderError` を投げて reject する**ようになった（Tauri
+       provider は元から reject）。
+    3. **`resolveProtectedSession`** は、`check()` 中にセッションが変わり続けた
+       とき（`MAX_STALE_RETRIES` 回）に **`SessionChangedError` で reject
+       しうる**。また、セッション無効が確定したときに `endSession()` を呼び、
+       `check()` の `false` が確認中に変わった前のセッションについての答えなら
+       終了せずに今のセッションを確かめ直す。`confirmSessionEnded` も同じく
+       確定したときに `endSession()` を呼び、前のセッションへの `false` では
+       終了・通知しない（戻り値の種類は従来どおり）。
+    4. **`beginSession(null)`**（所有者を持たないセッション）は、世代を進めて
+       保存・復元を止めるが、**他の所有者の保存分は消さない**（消すのは具体的な
+       新しい所有者が確定したときと `endSession()` だけ）。
+    5. **admin-template**: identity の取得だけが失敗したとき、従来は閲覧者
+       扱いの画面になっていたが、**ガードの再試行画面**（「ログイン状態を
+       確認できませんでした」、`check()` の失敗と同じ #204 の扱い）になる。
+       セッションの所有者・世代・一覧状態は変わらず、再試行で同じ identity が
+       確かめられればそのまま復元される。
+  - **派生アプリの移行の手順**:
+    - `getAuthProvider().getIdentity()` を自前の sessionStore やガードで直接
+      呼んでいるアプリは、**reject を受け止める**（ガードの再試行画面に
+      つなぐ。admin-template の `(app)/+layout.ts` が `sessionStore.load()` を
+      `try` で囲んで `error(503, …)` にしている形を写す）か、
+      **`establishSession(getAuthProvider(), apply)` に移す**。reject を
+      受け止めないと、identity のエンドポイントが一時的に失敗しただけで
+      未処理の例外になる。
+    - `resolveProtectedSession` を呼ぶガードは、既存の reject と同じく
+      `SessionChangedError` も「確認できない」として扱う（admin-template の
+      ガードは変更不要）。
+    - 独自の `AuthProvider` は、取得できないときに `null` ではなく reject
+      するよう直すことを推奨（`null` のままでも動くが、その間は所有者なしの
+      扱いになり、一覧状態の保存・復元が止まり、画面も作り直される）。
+    - 一覧状態を使う場合は、ガードで `establishSession`、ログアウト成功後に
+      `endSession()`、一覧・詳細ページは生成時に `currentSessionScope()` を
+      取って各 API に渡し、画面の作り直しは `(app)/+layout.ts`/
+      `+layout.svelte` の配線を写す。手順は
+      [docs/recipes/add-resource.md](docs/recipes/add-resource.md)「一覧の
+      絞り込み・並び順の保持」。`establishSession`（または `beginSession`）を
+      呼ばないアプリでは、一覧状態は保存も復元もされない（安全側に倒れる）。
+    - **依存の版だけを先に上げない**こと。上の対応を含む追従の PR として
+      上げる。
+    - 版の上げ方（メジャーにするか段階的に移行するか）は**リリースのときに
+      判断する**（この変更では版を変えていない）。
+    - セッション管理（sessionStore・ガード・レイアウトの世代ゲート）の
+      共通化は tyaro/banto#260 で扱う。
+  - テスト: `packages/admin-core/tests/listViewState.test.ts`（所有者の照合・
+    古い世代からの書き込み拒否・形の検証ほか）、`registry.test.ts`（凍結した・
+    クラスの・`this` を共有する `AuthProvider` をそのまま保持）、
+    `sessionGate.test.ts`/`sessionEnded.test.ts`。E2E はシナリオ 3c〜3e・6・
+    6a（同じブラウザの2タブで Remember me のユーザーを切り替え、元のタブを
+    再読み込み）と公開閲覧シナリオ 7（失効 → 公開閲覧者 → 並べ替え → 往復）。
+  - 経緯: レビュー 2〜3 回目の対応では認証の各経路（`AuthProvider` の
+    `Proxy` ラップ・ガード・失効確定）で**消す**方式だったが、経路の見落とし
+    （別タブでの切り替え・作り直されない画面からの再保存）と凍結した
+    `AuthProvider` での `TypeError` が続いたため、4 回目で上記の
+    **所有者で照合する**方式に切り替えた（#255）。5 回目では、scope を始める・
+    終わらせる認証の非同期応答（identity の取得・`check()`）も、開始時の
+    世代・対象と照合してから適用するようにした（旧セッションへの遅れた応答で
+    新しいセッションの所有者・保存状態・画面が失われていた）。6 回目では、
+    応答が今のセッションについてのものかの確認と、その適用（`endSession`・
+    identity の記録）を間に await を挟まない同じ継続で行うようにし、identity
+    を一時的に取れないことを「所有者なし」と区別した。
 - fix(admin-template, banto-server): バインドアドレス（`config.bind`）に
   合わないLAN URL・QRを表示する問題を修正（#216）。127.0.0.1（または
   `::1`）にバインドしたまま「LANアクセスを有効にする」を保存・適用しても、

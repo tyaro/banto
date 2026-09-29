@@ -47,6 +47,81 @@ describe('registry', () => {
 		expect(listResources()).toHaveLength(1);
 	});
 
+	// Issue #215/#255 (4th review): initBanto stores the AuthProvider exactly
+	// as given - no wrapper. Earlier rounds of #255 wrapped it (a shallow
+	// copy, then a Proxy) to hook login/logout, which broke class-based
+	// providers, `this`-sharing providers and - via the Proxy invariants -
+	// frozen ones. These pin every shape so a wrapper cannot come back
+	// unnoticed.
+	describe('keeps the AuthProvider as given (#215/#255)', () => {
+		const { dataProvider } = makeProviders();
+
+		it('a frozen object provider', async () => {
+			const authProvider: AuthProvider = Object.freeze({
+				login: async () => ({ success: true }),
+				logout: async () => {},
+				check: async () => true,
+				getIdentity: async () => null
+			});
+			initBanto({ dataProvider, authProvider, resources: [] });
+			expect(getAuthProvider()).toBe(authProvider);
+			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await expect(getAuthProvider().logout()).resolves.toBeUndefined();
+		});
+
+		it('a class-based provider (prototype methods, state on `this`)', async () => {
+			class MyAuth implements AuthProvider {
+				private signedIn = false;
+				async login() {
+					this.signedIn = true;
+					return { success: true };
+				}
+				async logout() {
+					this.signedIn = false;
+				}
+				async check() {
+					return this.signedIn;
+				}
+				async getIdentity() {
+					return this.signedIn ? { id: 'alice', name: 'Alice' } : null;
+				}
+			}
+			const authProvider = new MyAuth();
+			initBanto({ dataProvider, authProvider, resources: [] });
+			expect(getAuthProvider()).toBe(authProvider);
+			await getAuthProvider().login({});
+			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await expect(getAuthProvider().getIdentity()).resolves.toEqual({
+				id: 'alice',
+				name: 'Alice'
+			});
+		});
+
+		it('a plain object sharing state through `this`', async () => {
+			const authProvider = {
+				signedIn: false,
+				async login() {
+					this.signedIn = true;
+					return { success: true };
+				},
+				async logout() {
+					this.signedIn = false;
+				},
+				async check() {
+					return this.signedIn;
+				},
+				async getIdentity() {
+					return null;
+				}
+			};
+			initBanto({ dataProvider, authProvider, resources: [] });
+			await getAuthProvider().login({});
+			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await getAuthProvider().logout();
+			await expect(getAuthProvider().check()).resolves.toBe(false);
+		});
+	});
+
 	it('getResource throws for an unknown resource', () => {
 		const { dataProvider, authProvider } = makeProviders();
 		initBanto({ dataProvider, authProvider, resources: [] });

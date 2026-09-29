@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { invalidateAll, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { onInvalidate, onSessionEnded } from '@banto/admin-core';
+	import { onInvalidate, onSessionEnded, sessionGeneration } from '@banto/admin-core';
 	import { hasUnsavedChanges } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
@@ -13,7 +13,23 @@
 	import { navItems } from '$lib/navigation';
 	import { navBadges, pathOwns } from '$lib/navBadges.svelte';
 
-	let { children } = $props();
+	let { children, data } = $props();
+
+	// Issue #215/#255 (4th review): a page belongs to the session it was
+	// built for. When the session ends or its owner changes while a page is
+	// open (a revocation followed by the automatic move to the public viewer,
+	// another identity confirmed on a guard re-run), SvelteKit re-runs the
+	// loads but keeps the SAME page component - its in-memory state (a
+	// list's search terms and sort, the highlighted row, a detail form's
+	// unsaved input) would survive into the next session and could even be
+	// saved back on its behalf. So the page is shown only while the session
+	// generation its loads confirmed (`data.sessionGeneration`, from
+	// `+layout.ts`) is still the live one, and is rebuilt from scratch
+	// (`{#key}`) once the next session's loads complete. Between the end of
+	// one session and those loads (a moment, until the guard redirects or
+	// confirms the next identity) nothing of the old page is on screen. A
+	// guard re-run that confirms the same session keeps the generation, so an
+	// ordinary `invalidateAll()` never rebuilds the page.
 
 	// Issue #214: while any page's unsaved-changes guard is pending, also
 	// ask before the desktop window closes. Watched only while something is
@@ -141,7 +157,11 @@
 	<div class="main">
 		<Header {overlayOpen} onToggleOverlay={toggleOverlay} />
 		<main>
-			{@render children()}
+			{#if data.sessionGeneration === sessionGeneration()}
+				{#key data.sessionGeneration}
+					{@render children()}
+				{/key}
+			{/if}
 		</main>
 	</div>
 </div>

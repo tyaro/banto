@@ -7,7 +7,7 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import * as m from '$lib/paraglide/messages';
-	import { getAuthProvider } from '@banto/admin-core';
+	import { endSession, getAuthProvider } from '@banto/admin-core';
 	import { pageTitle } from '$lib/navigation';
 	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
@@ -55,6 +55,10 @@
 
 	async function logout() {
 		await getAuthProvider().logout();
+		// Issue #215/#255: this tab's session is over - new session generation
+		// (a save still in flight can no longer write its marker) and the
+		// saved list view state goes with it. Same call in `commands.ts`.
+		endSession();
 		goto(`${base}/login`);
 	}
 

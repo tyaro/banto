@@ -3,6 +3,7 @@ import { base } from '$app/paths';
 import {
 	getAuthProvider,
 	resolveProtectedSession,
+	sessionGeneration,
 	type ProtectedSessionOutcome
 } from '@banto/admin-core';
 import * as m from '$lib/paraglide/messages';
@@ -52,7 +53,20 @@ export async function load({ url }) {
 	if (outcome === 'login') {
 		redirect(307, `${base}/login`);
 	}
-	await sessionStore.load();
+	// Issue #215/#255 6th review: the identity of a confirmed session could
+	// not be fetched (the server failed or could not be reached - the
+	// `AuthProvider.getIdentity` contract), or the session kept changing
+	// under the request: same retryable error page as a failed check, and
+	// nothing about the session (owner, generation, saved list state) was
+	// changed.
+	let generation: number | null;
+	try {
+		generation = await sessionStore.load();
+	} catch {
+		error(503, {
+			message: `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`
+		});
+	}
 
 	// viewer-public-plan §3.1-6: a public-viewer session may only browse the
 	// nav allowlist (`navigation.ts`'s `NavItem.publicViewer`) - RBAC's
@@ -78,4 +92,15 @@ export async function load({ url }) {
 	// rides the same path with its own key.
 	void settings.syncFromProvider();
 	void syncLocaleFromProvider();
+
+	// Issue #215/#255: the session generation this load confirmed (after
+	// `sessionStore.load()`'s `establishSession`). `+layout.svelte` renders the
+	// page only while it is still the live generation and rebuilds the page
+	// when it changes - see the comment there.
+	// 6th review: the generation `sessionStore.load()` established, not a
+	// `sessionGeneration()` read now - after the awaits above another session
+	// may already have begun, and this load's data belongs to the earlier
+	// one (the gate then hides it until that session's own load completes).
+	// `null` = a newer load superseded this one (its navigation is discarded).
+	return { sessionGeneration: generation ?? sessionGeneration() };
 }

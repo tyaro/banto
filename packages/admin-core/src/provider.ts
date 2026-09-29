@@ -60,6 +60,17 @@ export interface AuthProvider {
 	 * (see `resolveProtectedSession`).
 	 */
 	check(): Promise<boolean>;
+	/**
+	 * Who the current session belongs to. Resolves `null` ONLY when that is
+	 * established: there is no session (no token, or the backend answered
+	 * `401`), or the provider has no notion of identity at all. Rejects
+	 * (with a `ProviderError`) when the identity could not be fetched - the
+	 * backend failed (`500`) or could not be reached - the same split as
+	 * `check()` (Issue #215/#255 6th review). Callers must not treat a
+	 * rejection as "nobody": `establishSession` leaves the session scope and
+	 * the saved list view state untouched and the route guard shows its
+	 * retryable error page.
+	 */
 	getIdentity(): Promise<Identity | null>;
 
 	/**

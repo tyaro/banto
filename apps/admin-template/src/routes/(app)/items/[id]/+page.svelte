@@ -1,10 +1,18 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
-	import { createFormResource, getResource, isProviderError } from '@banto/admin-core';
+	import {
+		createFormResource,
+		currentSessionScope,
+		getResource,
+		isProviderError,
+		noteLastEditedRecord,
+		saveLastOpenedId
+	} from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
 	import * as m from '$lib/paraglide/messages';
 	import { formValidationMessages } from '$lib/banto/i18n';
@@ -44,6 +52,26 @@
 	const parsedId = Number(rawId);
 	const idValid = rawId !== '' && Number.isInteger(parsedId);
 
+	// Issue #215: mark this as the row the items list should highlight once
+	// the user goes back. Done HERE, not from the list's row-click handler,
+	// because the list's "開く" cell is a plain link and navigates via its
+	// own `href` without ever running the grid's `onRowClick` callback once
+	// it has editable columns (`admin-core`'s `saveLastOpenedId` doc comment
+	// has the full reasoning) - this detail page is the one place every way
+	// of getting here (a grid link click, a double-click on a read-only
+	// cell, a pasted URL, the browser back button) actually passes through.
+	// Set unconditionally for any syntactically valid id, even before
+	// `formResource.load()` confirms the record still exists - a stale
+	// marker pointing at a since-deleted row is harmless (no row to
+	// highlight).
+	//
+	// Issue #215/#255 (4th review): `scope` is the session this page was
+	// built for - the marker is saved for its owner only, and the save
+	// handler below passes the SAME scope, so a response that arrives after
+	// the session ended (or ended and began again) writes nothing.
+	const scope = currentSessionScope();
+	if (idValid) saveLastOpenedId(scope, resource.name, parsedId);
+
 	const formResource = idValid ? createFormResource(resource.name, parsedId) : null;
 	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
 	let store = $state(createFormStore(schema, undefined, formValidationMessages()));
@@ -55,6 +83,20 @@
 	const guard = guardUnsavedChanges({
 		isDirty: () => storeReady && store.isDirty,
 		isSaving: () => formResource?.saving ?? false
+	});
+
+	// Issue #215/#255 review (fix 2): a save's response can arrive after this
+	// page is no longer relevant - the user logged out and someone else
+	// logged in before the request settled, or simply navigated elsewhere
+	// while it was in flight. `guard.canAutoNavigate` only decides whether
+	// `goto()` below runs; it does nothing to stop `noteLastEditedRecord`
+	// from writing a marker that outlives this page either way. `destroyed`
+	// covers "the user moved on" in general; `scope` (above) covers the case
+	// where the session this page was built for has ended - even if the same
+	// account has signed in again since (a new session generation).
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
 	});
 
 	// Shared by the initial mount effect and the "reload" action below (Fix:
@@ -91,6 +133,20 @@
 		if (!formResource || !canWrite) return;
 		const result = await formResource.submit(values);
 		if (result.ok) {
+			// Issue #215/#255 review: only write the marker if this page
+			// hasn't been torn down since AND its session is still the live
+			// one (`noteLastEditedRecord` refuses a stale `scope` itself).
+			// Otherwise user A's save held in flight across a logout and the
+			// next login (B, or A again) would leave A's row as the marker
+			// of the new session. `result.row` is the server-confirmed row;
+			// `parsedId` is included too since some DataProviders'
+			// create/update responses don't echo `id` back.
+			if (!destroyed) {
+				noteLastEditedRecord(scope, resource.name, {
+					id: parsedId,
+					values: { id: parsedId, ...(result.row as Record<string, unknown>) }
+				});
+			}
 			// Saved: nothing is unsaved any more, so the move back to the list
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).

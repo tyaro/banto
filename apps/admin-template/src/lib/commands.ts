@@ -16,7 +16,7 @@
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
 import * as m from '$lib/paraglide/messages';
-import { getAuthProvider, type PaletteCommand } from '@banto/admin-core';
+import { endSession, getAuthProvider, type PaletteCommand } from '@banto/admin-core';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
@@ -90,6 +90,8 @@ function sessionCommands(): PaletteCommand[] {
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
 				await getAuthProvider().logout();
+				// Issue #215/#255: same as Header.svelte's logout.
+				endSession();
 				await goto(`${base}/login`);
 			}
 		}

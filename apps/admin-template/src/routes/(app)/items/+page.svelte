@@ -5,6 +5,7 @@
 		convertCsvRow,
 		csvFilename,
 		csvForExcel,
+		filterRows,
 		mapCsvHeader,
 		parseCsv,
 		toCsv,
@@ -13,11 +14,18 @@
 		type GridColumn
 	} from '@banto/grid-svelte';
 	import {
+		currentSessionScope,
 		getDataProvider,
 		getResource,
 		invalidate,
 		isProviderError,
-		notify
+		loadActiveListMode,
+		loadLastOpenedId,
+		loadListViewState,
+		notify,
+		saveActiveListMode,
+		saveListViewState,
+		takeLastEditedRecord
 	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
@@ -37,8 +45,9 @@
 	import { getBantoMode } from '$lib/banto/setup';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
-	import ItemsClientGrid, { type ItemRow } from './ItemsClientGrid.svelte';
+	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
+	import { toItemRow, type ItemRow } from './itemRow';
 
 	const resource = getResource('items');
 
@@ -47,11 +56,40 @@
 	// before M10.
 	const canWrite = $derived(canWriteResources(sessionStore.role));
 
+	// Issue #215: a list -> detail -> save/cancel -> list round trip must
+	// restore the filter/sort the user had, not reset to the page's own
+	// defaults. Persistence is `@banto/admin-core`'s `saveListViewState`/
+	// `loadListViewState` (sessionStorage-backed, spec docs/... see that
+	// module's doc comment) keyed per grid mode - クライアント and サーバー
+	// keep independent GridStates/column sets (spec §4.1/§4.3), so their
+	// saved sort/filters/groupBy must not bleed into each other.
+	const RESOURCE_NAME = 'items';
+	const CLIENT_VIEW_KEY = `${RESOURCE_NAME}:client`;
+	const SERVER_VIEW_KEY = `${RESOURCE_NAME}:server`;
+
+	// Issue #215/#255 (4th review): the session this page instance was built
+	// for. Every list-state read/write below passes it: reads only return
+	// state saved by this scope's owner (another account's - or the public
+	// viewer's - search terms are never restored, however the identity
+	// changed), and writes stop the moment the session ends or changes
+	// owner, so this instance cannot save its (old session's) GridState back
+	// on behalf of the next session. `(app)/+layout.svelte` rebuilds the page
+	// for the new session, which captures a fresh scope.
+	const scope = currentSessionScope();
+
 	// M5 Phase A (spec §4.1, §10): the items page demonstrates both grid data
-	// modes side by side via a toggle. Plain $state, not persisted - the
-	// default is サーバー so a fresh visit shows the real client->
-	// DataProvider->(Rust+SQLite in Tauri) path this milestone adds.
-	let mode: 'client' | 'server' = $state('server');
+	// modes side by side via a toggle. Restored from the last mode the user
+	// had (#215) - without this, `lastOpenedId`/the restored filters of
+	// whichever mode was actually active on save would silently go unused,
+	// since the page would always come back up in サーバー (the intrinsic
+	// default below) regardless. Falls back to サーバー the same as before
+	// #215 when nothing was saved yet (first visit this session).
+	let mode: 'client' | 'server' = $state(
+		loadActiveListMode(scope, RESOURCE_NAME) === 'client' ? 'client' : 'server'
+	);
+	$effect(() => {
+		saveActiveListMode(scope, RESOURCE_NAME, mode);
+	});
 
 	const baseColumns: GridColumn<Item>[] = [
 		{
@@ -155,6 +193,77 @@
 	// svelte-ignore state_referenced_locally
 	const serverGridState = new GridState<Item>(columns);
 
+	// Issue #215: restore whatever sort/filters/groupBy this session last
+	// left each mode with, BEFORE either grid's first render (plain
+	// synchronous assignment, not inside an $effect - `state.svelte.ts`'s
+	// setters below are perfectly ordinary property writes, no different
+	// from the constructor's own seeding a few lines up). Deliberately NOT
+	// `GridState.hydrate()`: that also restores column order/widths/hidden,
+	// which is issue #168's scope, not this one's - mixing the two would
+	// silently start persisting column layout as a side effect of this fix.
+	// `knownFields` (#255 review): drop any restored sort/filter whose field
+	// isn't one of THIS session's actual columns - a schema/column change
+	// between sessions must not resurrect a filter/sort the current screen
+	// has no column for (`loadListViewState`'s own doc comment has the full
+	// reasoning). `groupBy` gets the same treatment inline below, since it's
+	// a single field id outside the array `loadListViewState` already checks.
+	// svelte-ignore state_referenced_locally
+	const clientFieldIds = clientColumns.map((column) => column.id);
+	const clientSnapshot = loadListViewState(scope, CLIENT_VIEW_KEY, clientFieldIds);
+	if (clientSnapshot) {
+		clientGridState.sort = clientSnapshot.sort;
+		clientGridState.filters = clientSnapshot.filters;
+		if (clientSnapshot.groupBy && clientFieldIds.includes(clientSnapshot.groupBy)) {
+			clientGridState.setGroupBy(clientSnapshot.groupBy);
+		}
+	}
+	// svelte-ignore state_referenced_locally
+	const serverSnapshot = loadListViewState(
+		scope,
+		SERVER_VIEW_KEY,
+		columns.map((column) => column.id)
+	);
+	if (serverSnapshot) {
+		serverGridState.sort = serverSnapshot.sort;
+		serverGridState.filters = serverSnapshot.filters;
+	}
+
+	// Persist on every sort/filter/groupBy change - cheap (a small JSON blob
+	// into sessionStorage) and keeps the saved snapshot live even if the user
+	// never leaves this page instance before closing the tab mid-session.
+	$effect(() => {
+		saveListViewState(scope, CLIENT_VIEW_KEY, {
+			sort: clientGridState.sort,
+			filters: clientGridState.filters,
+			groupBy: clientGridState.groupBy
+		});
+	});
+	$effect(() => {
+		saveListViewState(scope, SERVER_VIEW_KEY, {
+			sort: serverGridState.sort,
+			filters: serverGridState.filters
+		});
+	});
+
+	// The row most recently opened for this RESOURCE (#215's "直前の作業位置
+	// を見つけられるようにする" - via `rowClass` highlighting below, rather
+	// than scroll restoration). Deliberately ONE value shared by both grid
+	// modes (admin-core's `saveLastOpenedId` doc comment explains why), and
+	// deliberately NOT set from `handleRowClick` below: the items page's
+	// "開く" cell is a plain link (`cell: (row) => ({ text, href })`), so
+	// clicking it navigates via its own `href` and never runs `onRowClick` at
+	// all once the grid has editable columns
+	// (`packages/grid-svelte/src/BantoGrid.svelte`'s `handleCellClick` doc
+	// comment) - `handleRowClick` only fires from a double-click on a
+	// read-only cell (spec §4.5's "dedicated affordance" alternative). The
+	// one place every way of reaching the detail page actually passes
+	// through is that page itself, so it calls `saveLastOpenedId` on mount
+	// instead. Reading it once here (a plain `const`, not `$state`) is
+	// enough - the list page never mutates it itself, and a NEW value only
+	// ever matters on a fresh mount of this page (returning from the
+	// detail page always remounts it).
+	const lastOpenedId = loadLastOpenedId(scope, RESOURCE_NAME);
+
 	type GroupByOption = '' | 'category' | 'updatedAt';
 
 	function handleGroupByChange(event: Event) {
@@ -165,6 +274,45 @@
 	function handleRowClick(item: Item) {
 		goto(`${base}/items/${item.id}`);
 	}
+
+	/** Issue #215: highlight whichever row was last opened (any mode, any navigation path - see `lastOpenedId` above) - same `rowClass` mechanism audit-log's `+page.svelte` already uses for its selected-row accent. */
+	function clientRowClass(row: ItemRow): string | undefined {
+		return lastOpenedId !== null && row.id === lastOpenedId ? 'items-row-last-opened' : undefined;
+	}
+	function serverRowClass(row: Item): string | undefined {
+		return lastOpenedId !== null && row.id === lastOpenedId ? 'items-row-last-opened' : undefined;
+	}
+
+	// Issue #215: "編集結果が絞り込みの条件から外れた場合も、フィルタを勝手に
+	// 解除しない" - a detail page that just saved leaves a one-shot marker
+	// (admin-core's `noteLastEditedRecord`/`takeLastEditedRecord`) with the
+	// row's values AT SAVE TIME. Reusing `filterRows` (the exact function
+	// BantoGrid's own client mode filters with) against the CURRENT mode's
+	// restored filters answers "does this row still match?" without a round
+	// trip - if not, explain it instead of silently clearing the filter.
+	// Naturally one-shot and idempotent: `takeLastEditedRecord` clears the
+	// marker on read, so a later re-run of this effect (e.g. `mode` toggled)
+	// finds nothing and leaves `filterExclusionNotice` alone.
+	let filterExclusionNotice: { id: string | number } | null = $state(null);
+	$effect(() => {
+		const record = takeLastEditedRecord(scope, RESOURCE_NAME);
+		if (!record) return;
+		// #255 review: the CLIENT grid never filters the raw saved row - it
+		// filters `toItemRow(row)` (ItemsClientGrid.svelte, shared via
+		// `itemRow.ts`), which adds the synthetic `category` field a category
+		// filter/group-by actually matches against. Checking `record.values`
+		// (no `category` at all) here would report every category-filtered
+		// row as "excluded" even when it's still plainly visible on screen -
+		// the exclusion check must run through the exact same derivation the
+		// grid renders/filters with.
+		const activeColumns = mode === 'client' ? clientColumns : columns;
+		const activeFilters = mode === 'client' ? clientGridState.filters : serverGridState.filters;
+		const row = mode === 'client' ? toItemRow(record.values as Item) : (record.values as Item);
+		const matches = filterRows([row], activeFilters, activeColumns as GridColumn<Item>[]);
+		if (matches.length === 0) {
+			filterExclusionNotice = { id: record.id };
+		}
+	});
 
 	/** Merge one edited field onto the row's other current values (DataProvider.update expects the full editable value set). */
 	function mergedValues(row: Item, field: string, value: unknown): Record<string, unknown> {
@@ -624,6 +772,23 @@
 
 	<p class="note">{m['items.note']()}</p>
 
+	<!-- Issue #215: the row just saved may no longer match the filter the
+	     user still has active (restored from this session, above). Never
+	     clear that filter for them - explain the mismatch instead, and let
+	     them dismiss the notice once they've seen it. -->
+	{#if filterExclusionNotice}
+		<div class="filter-exclusion-notice" role="status">
+			<span>{m['items.filterExcludedNotice']({ id: filterExclusionNotice.id })}</span>
+			<button
+				type="button"
+				class="banto-btn banto-btn--ghost"
+				onclick={() => (filterExclusionNotice = null)}
+			>
+				{m['common.close']()}
+			</button>
+		</div>
+	{/if}
+
 	{#if importPreview}
 		<section class="import-panel import-panel--{importStatusVariant}">
 			<header class="import-panel-header">
@@ -719,6 +884,7 @@
 			onRowClick={handleRowClick}
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
+			rowClass={clientRowClass}
 		/>
 	{:else}
 		<ItemsServerGrid
@@ -727,6 +893,7 @@
 			onRowClick={handleRowClick}
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
+			rowClass={serverRowClass}
 		/>
 	{/if}
 </div>
@@ -794,6 +961,33 @@
 		margin: 0 0 0.75rem;
 		color: var(--banto-text-muted);
 		font-size: 0.8rem;
+	}
+
+	/* Issue #215: same info-tint idiom as the import panel's success/warning/
+	   danger variants below, but neutral - this isn't an error, just context
+	   the user should know about before it's dismissed. */
+	.filter-exclusion-notice {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin: 0 0 0.75rem;
+		padding: 0.5rem 0.75rem;
+		border-left: 3px solid var(--banto-primary);
+		border-radius: var(--banto-radius-sm);
+		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
+		font-size: 0.85rem;
+	}
+
+	/* Issue #215: highlights whichever row this mode's grid was last
+	   opened/saved from (`rowClass` -> BantoGrid's `.row` element,
+	   packages/grid-svelte/src/BantoGrid.svelte) - same left-accent idiom and
+	   `:global()` requirement as audit-log's `.audit-row-selected`
+	   (apps/admin-template/src/routes/(app)/audit-log/+page.svelte). */
+	:global(.row.items-row-last-opened) {
+		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
+		border-left: 3px solid var(--banto-primary);
 	}
 
 	/* Visually hidden but still focusable/clickable via the CSVインポート

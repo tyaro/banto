@@ -41,6 +41,35 @@ If you also want it in the standalone browser demo (InMemory), add generated
 data to `src/lib/banto/sampleData.ts` (optional; a feature not shown in the demo
 follows the "demo explicitly refuses" of conventions §10).
 
+## Keeping a list's filters and sort (optional, Issue #215)
+
+To keep a list's filters, sort and the row opened last across a list →
+detail → save → list round trip, use `@banto/admin-core`'s list view state
+API (reference: `routes/(app)/items/+page.svelte` and
+`items/[id]/+page.svelte`).
+
+- The list page takes `const scope = currentSessionScope()` when it is
+  created and passes it to every call (`loadListViewState`,
+  `saveListViewState`, `loadLastOpenedId`, ...). The detail page calls
+  `saveLastOpenedId(scope, resource, id)` on mount and
+  `noteLastEditedRecord(scope, ...)` after a successful save (with the
+  `scope` taken before the save started - nothing is written if the session
+  changed meanwhile).
+- State is saved with its owner (the signed-in account, or the public
+  viewer) and only restored for the owner confirmed now. The template
+  already has the wiring this relies on: `$lib/session.svelte.ts`'s
+  `sessionStore.load()` calls `establishSession(getAuthProvider())` (a late
+  answer for a previous session is discarded; a custom `AuthProvider`'s
+  `getIdentity()` should reject, not resolve `null`, when it cannot fetch
+  the identity - the contract in `provider.ts`); `endSession()` runs
+  after a successful logout (`Header.svelte`, `commands.ts`);
+  `(app)/+layout.ts` returns `sessionGeneration` and `(app)/+layout.svelte`
+  rebuilds the page when the generation changes. Without it, list state is
+  never saved or restored (no `establishSession`), or the previous session's
+  screen survives a session change (no rebuild).
+
+Sharing the session management (sessionStore, guard, generation gate) as a common module is tracked in tyaro/banto#260.
+
 ## Verification
 
 ```bash

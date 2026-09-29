@@ -39,6 +39,31 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
 `src/lib/banto/sampleData.ts` に生成データを足す（任意。デモに出さない
 機能は conventions §10 の「demo は明示拒否」に従う）。
 
+## 一覧の絞り込み・並び順の保持（任意、Issue #215）
+
+一覧 → 詳細 → 保存 → 一覧と往復しても絞り込み・並び順・直前に開いた行を
+残したい場合は、`@banto/admin-core` の一覧状態 API を使う（手本は
+`routes/(app)/items/+page.svelte` と `items/[id]/+page.svelte`）。
+
+- 一覧ページは生成時に `const scope = currentSessionScope()` を取り、
+  `loadListViewState`/`saveListViewState`/`loadLastOpenedId` などすべてに
+  渡す。詳細ページは mount 時に `saveLastOpenedId(scope, resource, id)`、
+  保存成功時に `noteLastEditedRecord(scope, …)` を呼ぶ（保存開始前に取った
+  `scope` を渡す。保存中にセッションが変わると書かれない）。
+- 状態は所有者（ログイン中のアカウント／公開閲覧者）付きで保存され、確定した
+  今の所有者にしか復元されない。前提の配線はテンプレートに入っている:
+  `$lib/session.svelte.ts` の `sessionStore.load()` が
+  `establishSession(getAuthProvider())` を呼ぶ（旧セッションへの遅れた応答は
+  捨てる。自前の `AuthProvider` の `getIdentity()` は、取得に失敗したとき
+  `null` ではなく reject する — `provider.ts` の契約）／ログアウト成功後に `endSession()`（`Header.svelte`・
+  `commands.ts`）／
+  `(app)/+layout.ts` が `sessionGeneration` を返し、`(app)/+layout.svelte` が
+  世代の変化でページを作り直す。これを外すと、一覧状態は保存も復元もされない
+  か（`establishSession` なし）、セッションが変わっても前の画面が残る（作り直し
+  なし）。
+
+セッション管理（sessionStore・ガード・世代ゲート）の共通化は tyaro/banto#260 で扱う。
+
 ## 検証
 
 ```bash

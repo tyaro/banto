@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isProviderError } from '../src/errors';
+import { loadListViewState, saveListViewState } from '../src/listViewState';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { createTauriAuthProvider } from '../src/providers/tauri';
+import { beginSession } from '../src/sessionLifecycle';
+import { currentSessionScope, isCurrentSessionScope } from '../src/sessionScope.svelte';
 import { resolveProtectedSession } from '../src/sessionGate';
 
 /**
@@ -14,7 +17,7 @@ import { resolveProtectedSession } from '../src/sessionGate';
 
 const KEY = 'banto.auth.token';
 
-/** In-memory Storage stand-in: Node has no global sessionStorage. */
+/** In-memory Storage stand-in: Node has no global sessionStorage. `key()` is real (not a stub) - `clearAllListViewState` enumerates keys. */
 function makeMemoryStorage(): Storage {
 	const map = new Map<string, string>();
 	return {
@@ -22,7 +25,7 @@ function makeMemoryStorage(): Storage {
 		setItem: (key, value) => void map.set(key, value),
 		removeItem: (key) => void map.delete(key),
 		clear: () => map.clear(),
-		key: () => null,
+		key: (index) => Array.from(map.keys())[index] ?? null,
 		get length() {
 			return map.size;
 		}
@@ -172,5 +175,55 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 		await expect(resolveProtectedSession(createTauriAuthProvider({ invoke }))).resolves.toBe(
 			'login'
 		);
+	});
+});
+
+// Issue #215/#255 (4th review): once check() CONFIRMED the session is not
+// valid, the previous identity is gone whichever way the guard continues -
+// endSession() runs (new generation, saved list view state dropped) before
+// either the public-viewer entry or the login redirect. A still-valid
+// session is left alone.
+describe('resolveProtectedSession ends the confirmed-invalid session (#215/#255)', () => {
+	function establishedScope() {
+		beginSession({ id: 'alice', name: 'Alice' });
+		const scope = currentSessionScope();
+		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, sessionStorage);
+		return scope;
+	}
+
+	it("outcome 'login' (viewerPublic OFF): ends the session", async () => {
+		const { fetchFn } = fakeServer({ viewerPublic: false });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'revoked-token');
+		const scope = establishedScope();
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
+		expect(isCurrentSessionScope(scope)).toBe(false);
+		expect(currentSessionScope().owner).toBeNull();
+		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
+	});
+
+	it("outcome 'publicViewer': ends the previous session before entering the synthetic one", async () => {
+		const { fetchFn } = fakeServer({ viewerPublic: true });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'revoked-token');
+		const scope = establishedScope();
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
+		expect(isCurrentSessionScope(scope)).toBe(false);
+		expect(currentSessionScope().owner).toBeNull();
+		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
+	});
+
+	it("outcome 'session' (still valid): leaves the session and its state alone", async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: false });
+		const auth = createHttpAuthProvider({ fetchFn });
+		sessionStorage.setItem(KEY, 'user-token');
+		state.validTokens.add('user-token');
+		const scope = establishedScope();
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+		expect(isCurrentSessionScope(scope)).toBe(true);
+		expect(loadListViewState(scope, 'items:server', undefined, sessionStorage)).not.toBeNull();
 	});
 });

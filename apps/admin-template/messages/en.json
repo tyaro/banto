@@ -120,6 +120,7 @@
   "items.loadErrorDesc": "Check your connection and reload.",
   "items.deleteConfirm": "Delete this record?",
   "items.reportBack": "← Back to products",
+  "items.filterExcludedNotice": "Item #{id} does not match the current filter",
   "dashboard.summary": "Aggregated from {count} product records",
   "dashboard.statCount": "Products",
   "dashboard.statStockTotal": "Total stock",

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	CONFIRM_RETRY_INITIAL_MS,
 	CONFIRM_TIMEOUT_MS,
@@ -7,7 +7,29 @@ import {
 	onSessionEnded
 } from '../src/sessionEnded';
 import { initBanto } from '../src/registry.svelte';
+import { loadListViewState, saveListViewState } from '../src/listViewState';
+import { beginSession } from '../src/sessionLifecycle';
+import {
+	currentSessionScope,
+	isCurrentSessionScope,
+	type SessionScope
+} from '../src/sessionScope.svelte';
 import type { AuthProvider, DataProvider } from '../src/provider';
+
+/** In-memory Storage stand-in: Node has no global sessionStorage. */
+function makeMemoryStorage(): Storage {
+	const map = new Map<string, string>();
+	return {
+		getItem: (key) => map.get(key) ?? null,
+		setItem: (key, value) => void map.set(key, value),
+		removeItem: (key) => void map.delete(key),
+		clear: () => map.clear(),
+		key: (index) => Array.from(map.keys())[index] ?? null,
+		get length() {
+			return map.size;
+		}
+	} as Storage;
+}
 
 function stubCheck(check: AuthProvider['check']): void {
 	initBanto({
@@ -31,6 +53,51 @@ describe('confirmSessionEnded (Issue #241)', () => {
 		await expect(confirmSessionEnded()).resolves.toBe('ended');
 		expect(ended).toHaveBeenCalledTimes(1);
 		off();
+	});
+
+	// Issue #215/#255 review: a background revocation confirmed while a
+	// screen is open ends the session (new generation - the open screen and
+	// any in-flight save can no longer write - and the saved list view state
+	// goes), before the listeners re-run the guard. A valid or unverifiable
+	// session (Issue #204: not a logout) is left alone.
+	describe('ends the session on a confirmed ending (#215/#255)', () => {
+		let storage: Storage;
+		let scope: SessionScope;
+
+		beforeEach(() => {
+			storage = makeMemoryStorage();
+			vi.stubGlobal('sessionStorage', storage);
+			beginSession({ id: 'alice', name: 'Alice' });
+			scope = currentSessionScope();
+			saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
+		});
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('ends it when check() confirms the session ended', async () => {
+			stubCheck(async () => false);
+			await expect(confirmSessionEnded()).resolves.toBe('ended');
+			expect(isCurrentSessionScope(scope)).toBe(false);
+			expect(storage.getItem('banto.listView.items:server')).toBeNull();
+		});
+
+		it('does NOT end it when the session is still valid', async () => {
+			stubCheck(async () => true);
+			await expect(confirmSessionEnded()).resolves.toBe('valid');
+			expect(isCurrentSessionScope(scope)).toBe(true);
+			expect(loadListViewState(scope, 'items:server', undefined, storage)).not.toBeNull();
+		});
+
+		it('does NOT end it when the check could not be verified (Issue #204: not a logout)', async () => {
+			stubCheck(async () => {
+				throw new Error('500');
+			});
+			await expect(confirmSessionEnded()).resolves.toBe('unknown');
+			expect(isCurrentSessionScope(scope)).toBe(true);
+			expect(loadListViewState(scope, 'items:server', undefined, storage)).not.toBeNull();
+		});
 	});
 
 	it('resolves valid / unknown without notifying when the session is valid or could not be verified', async () => {

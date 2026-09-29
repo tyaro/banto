@@ -62,6 +62,8 @@
  * the notification follows the cleared token within one retry delay.
  */
 import { getAuthProvider } from './registry.svelte';
+import { endSession, MAX_STALE_RETRIES } from './sessionLifecycle';
+import { currentSessionScope, isCurrentSessionScope } from './sessionScope.svelte';
 
 type Listener = () => void;
 
@@ -113,8 +115,13 @@ export type SessionEndOutcome =
 	| 'unknown';
 
 /** One check, stamped with when it started. */
-async function runConfirmation(): Promise<{ outcome: SessionEndOutcome; startedAt: number }> {
+async function runConfirmation(
+	attempt = 1
+): Promise<{ outcome: SessionEndOutcome; startedAt: number }> {
 	const startedAt = tick();
+	// Issue #215/#255 5th review: the session this check is about. See the
+	// stale-answer branch below.
+	const scope = currentSessionScope();
 	let valid: boolean;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
@@ -139,15 +146,41 @@ async function runConfirmation(): Promise<{ outcome: SessionEndOutcome; startedA
 		if (unheardAt !== 0 && startedAt > unheardAt) unheardAt = 0;
 		return { outcome: 'valid', startedAt };
 	}
-	if (lastNotifiedAt < startedAt) {
-		lastNotifiedAt = tick();
-		unheardAt = listeners.size === 0 ? lastNotifiedAt : 0;
-		for (const listener of [...listeners]) {
-			try {
-				listener();
-			} catch {
-				// One broken listener must not stop the others.
-			}
+	// Already notified for an ending confirmed after this check started (an
+	// overlapping confirmation of the same revocation - "Duplicates"): that
+	// notification covers this answer too.
+	if (lastNotifiedAt >= startedAt) return { outcome: 'ended', startedAt };
+	if (!isCurrentSessionScope(scope)) {
+		// Issue #215/#255 5th review: the session changed while this check
+		// was pending - this tab logged out, and possibly in as someone else,
+		// before the `false` came back. The answer is about the PREVIOUS
+		// session's token (the HTTP provider keeps a newer token -
+		// `clearTokenIfCurrent`), so ending the session now would end the NEW
+		// one: its owner, saved list state and screen. Check the current
+		// session instead; if it keeps changing, report 'unknown' so the
+		// retry loop asks again later.
+		if (attempt < MAX_STALE_RETRIES) return runConfirmation(attempt + 1);
+		return { outcome: 'unknown', startedAt };
+	}
+
+	lastNotifiedAt = tick();
+	unheardAt = listeners.size === 0 ? lastNotifiedAt : 0;
+	// Issue #215/#255 review: this point is reached once per actual ending
+	// (the "Duplicates" de-dup above), so this call is not
+	// repeated for overlapping confirmations of the same revocation.
+	// Whoever was signed in when this session ended must not leave their
+	// list filter/sort/last-opened-row (`listViewState.ts`) behind for
+	// whoever the app's own guard sends this tab to next (login or a
+	// public-viewer session) once the listeners below re-run it -
+	// `endSession()` (`sessionLifecycle.ts`) also starts a new session
+	// generation, so a screen or an in-flight save started before this
+	// ending can no longer write on the ended session's behalf.
+	endSession();
+	for (const listener of [...listeners]) {
+		try {
+			listener();
+		} catch {
+			// One broken listener must not stop the others.
 		}
 	}
 	return { outcome: 'ended', startedAt };
