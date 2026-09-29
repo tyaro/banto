@@ -50,21 +50,35 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    controller だけ**で、資格情報の破棄とバックエンドの失効の処理は provider とバックエンドが担う。
    ログアウトは `end()` ではなく、provider が資格情報を消した通知 → 保留 → `resolve()` で
    `none` を確定する経路で終わる（ログアウト待ちの間に確定した別のセッションを消さないため）。
+   `epoch`（鮮度の照合用、非公開）は `commit` ごとに +1、`generation`（画面の作り直し用、公開）は
+   **(status, owner, kind) の組が変わったときだけ** +1（none→none・unknown→unknown・同じ試運転の
+   再 adopt は据え置き）。
 2. **2 種類の `resolve()` を書き分ける**: `AuthProvider.resolve()` は 1 往復で
-   `none` / `active + identity` を答え、取得できないときは **reject する**。v2 の標準契約で
-   **型で必須**にする。HTTP は**既存の `GET /api/auth/identity` を 1 回**呼ぶ（`require_auth` と
+   `{ status: 'none' | 'active', checked, current, identity?, kind? }` を答え、取得できないときは
+   **reject する**。`checked` は検証した資格情報の revision、`current` はこの呼び出し自身の消去を
+   反映した後の revision で、**`resolve()` の中の消去は通知せず答えで運ぶ**。provider は **2 階層**
+   だけ: 標準（`resolve`・`credentialRevision`・`onCredentialChanged` の 3 つを型で必須）と、
+   互換 adapter（旧 provider は 3 つとも持たず、adapter が形だけ埋める）。「revision だけある」
+   階層は作らない。HTTP は**既存の `GET /api/auth/identity` を 1 回**呼ぶ（`require_auth` と
    同じ再検証を通る。`200` で identity → active、`200 null` / `401` → none、それ以外 → reject。
    トークンを送って none なら compare-and-set でそのトークンを消す）。`GET /api/auth/session` は
    新設しない。旧 provider（`check()`/`getIdentity()`）への対応は明示的な互換 adapter に分離し、
-   保証する範囲・しない範囲を明記して、旧実装を黙って完全対応扱いしない。
+   保証する範囲・しない範囲を明記して、旧実装を黙って完全対応扱いしない。admin-template の
+   demo provider も標準に書き換える。
    `SessionController.resolve()` は **reject せず**、呼び出し元が「今回の要求について」
    `confirmed` / `unverified` / `superseded` を区別できる結果を返す。共有スナップショットの
    `lastError` で判断させない。`superseded` を受けた `load` は今の generation を返さず、期限内に
    最新の確認に合流して**実際に確認できた** generation だけを返す（確認できなければ再試行画面）。
-3. **鮮度の照合を構造で守る**: provider の答えは、問い合わせを始めた時点の（controller の
-   遷移回数、資格情報の revision）が適用時点と同じで、かつ始めた後に signal が来ていないときだけ
-   `commit` できる。**成功・失敗・期限切れのすべて**が同じ照合を通り、古い失敗は状態も確認の
-   状況も変えずに捨てる。照合と `commit` は同じ継続で行う。確認は single-flight とし、待機の
+   公開閲覧の fallback などの方針も `ResolveResult` を返し、呼び出し元が `unverified` を先に
+   処理してから `status`/`generation` を使う。
+3. **鮮度の照合を構造で守る**: provider の答えは、打ち切っていない・問い合わせを始めた時点の
+   遷移回数と同じ・始めた後に signal が来ていない・答えの `checked` が開始時の revision・今の
+   revision が答えの `current`、のすべてを満たすときだけ `commit` できる。**成功・失敗・期限切れの
+   すべて**が同じ照合を通り、古い失敗は状態も確認の状況も変えずに捨てる。捨てた答えが消去を
+   伴っていれば背景の確認（`pendingBackground`）で none を確定する。controller が最後に反映した
+   revision と今の revision の差は、通知が無くても保留に移す根拠にする（防御）。`AbortController`
+   は問い合わせごとに 1 つで、abort は「捨てることが確定した」か「必要とする者がいなくなった」
+   ときだけ（資源の解放であって、正しさの手段ではない）。照合と `commit` は同じ継続で行う。確認は single-flight とし、待機の
    期限を設ける。要求が満たされるかは問い合わせの開始時の遷移回数で判定し、自分の確定で自分を
    追い越したことにしない（`superseded` は外からの遷移の時点で決まる）。`cause: 'signal'` の
    要求は自分で signal の stamp を進め、要求より前に始めた問い合わせには合流しない。
@@ -75,9 +89,10 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    一致するときだけ書く。公開閲覧の発行は、呼び出し元が `none` を確認した時点の revision
    （`expectRevision`）に結び付ける。Rust の `seq` は**結び付きを変える意図の操作**（login/setup の
    設置、logout の消去は None→None でも）で進め、**同じ結び付きの refresh**（`settle_session` の
-   role・name の更新）では進めない。状態を変えた操作の応答は `seq` を返し、provider はその応答の
-   継続で revision を確定して `onCredentialChanged` を出す（追加の identity の確認の成功に
-   依存しない）。認証の操作（login / logout / setup / enterPublicViewer）は controller の
+   display_name の更新）では進めない（role の変更は `auth_epoch` を進めるので失効であり、`seq` は
+   進む）。状態を変えた操作（login / setup / logout / change_password）の応答は `seq` を返し、
+   provider はその応答の継続で revision を確定し、**前と違うときだけ** `onCredentialChanged` を出す
+   （追加の identity の確認の成功に依存しない。auth-disabled の logout の no-op では出ない）。認証の操作（login / logout / setup / enterPublicViewer）は controller の
    待ち行列に入れず、操作の戻り値を直接 `commit` せず、その後の `resolve()` で確定する。
 5. **資格情報の切り替えは保留に移す**: 切り替えを知った時点で `unknown`・owner なし・
    generation + 1 にし、その後の確認に失敗しても旧 owner の active には戻さない。
@@ -90,7 +105,12 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    公開閲覧への fallback・試運転の `adopt()` はアプリ層の方針として注入する。`adopt()` は派生アプリ
    固有の合成セッション（試運転）に限り、公開閲覧の fallback と Tauri のログイン不要モードは
    provider の `resolve()` が答える（Rust の `auth_identity` はそのたびにモードと権限を読み直す）。
-   core の `sessionGate.ts` から `enterPublicViewer` の呼び出しを外す。
+   core の `sessionGate.ts` から `enterPublicViewer` の呼び出しを外す。画面の再確認は、レイアウトの
+   `$effect` が `snapshot.generation !== data.sessionGeneration` を照合して再 load する 1 本で行い
+   （同じ generation に二重に出さない）、旧 `sessionEnded.ts` の「unheard の再確認」は廃止する。
+   owner の差分の通知はそれとは別に配線する。派生アプリの試運転は、ticket → 状態の取得（方針自身の
+   AbortSignal）→ `adopt`/`end` → `resolveSettled` の policy runner で行い、ticket が失効したら
+   新しい ticket で期限付きにやり直す。
 7. **版**: #255 とこの変更をまとめて **v2.0.0** にする（publishing.md：意味の変更はメジャー）。
    状態を更新する旧 API（`establishSession` / `beginSession` / `endSession` /
    `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError` など）は**削除**する。
@@ -103,11 +123,13 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    （controller: 遷移回数・revision・signal、provider: revision、アプリの方針: `SessionTicket`、
    Rust: `seq`）を取り、最後まで持ち回り、適用する直前に**同期で**照合する。照合と適用の間に
    `await` を置かない。照合に失敗した結果は捨てる。`adopt`/`end` は ticket を必須の引数にし、
-   `confirmed` の結果は ticket を返す。「状態を書き換える入口 × 非同期の境界」の表
+   `confirmed` の結果は ticket を返す。adopt 中に取った ticket は revision を持たず epoch だけで
+   照合する（試運転はトークンで決まらない）。「状態を書き換える入口 × 非同期の境界」の表
    （設計の本文 §4.9）で、この原則の抜けを実装の PR のレビューでも洗う。
 
-不変条件の一覧（I-1〜I-20）、競合のシナリオの表（S-1〜S-61）、API の案、移行と実装の分割、
-テストの設計は設計の本文に置く。実装の PR はその番号をテスト名から参照する。
+不変条件の一覧（I-1〜I-22）、競合のシナリオの表（S-1〜S-68）、generation の数え方の表（§3.1）、
+API の案、移行と実装の分割、テストの設計は設計の本文に置く。実装の PR はその番号をテスト名から
+参照する。
 
 ## 検討した代替案
 
@@ -149,6 +171,12 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
 - **案K（不採用）: Rust の `seq` を `state.auth` への書き込みごとに進める。** `settle_session` は
   有効なセッションを読むたびに refresh で書くので、`auth_resolve` 自身が revision を変え、正常な
   応答を controller が捨て続ける。「結び付きを変える意図の操作」でだけ進める。
+- **案L（不採用）: provider に「revision はあるが通知は無い」中間の階層を認める。** その階層では
+  「古い答えを revision 不一致で捨てる → 出し直した答えが reject」の順序で、変更を検知済みなのに
+  旧 owner が active に残る。標準は 3 つとも必須、互換 adapter は 3 つとも無し、の 2 階層にする。
+- **案M（不採用）: 問い合わせの `AbortSignal` を正しさの手段にする（abort したら答えは来ない前提で
+  照合を省く）。** Tauri の `invoke` は中断できず、`fetch` も応答が届いてから abort されうる。
+  答えを捨てる判定は abort と独立に残し、abort は資源の解放に限る。
 
 ## 帰結
 
@@ -170,3 +198,7 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
   検知なし）を承知のうえで使い、移行 PR にその旨を書く。自前の provider は v2 で型エラーになる。
 - 別タブの切り替えの処理は、どのアプリでも共有のトークンを消さない。ログアウトは利用者の操作か
   バックエンドの失効だけで起こる。
+- unheard の再確認の廃止で `sessionEndUnheard` のテストの期待が変わる（mount 時の generation の
+  照合で再 load する）。CHANGELOG の「挙動の互換性が変わる変更」に載せる。
+- generation の増分は §3.1 の表（規則から機械的に導く）を正とし、シナリオの期待とテストはそこから
+  引く。規則を変えるときは表とシナリオを同じ PR で直す。

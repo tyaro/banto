@@ -54,10 +54,18 @@ Constraints:
    state**; disposing of credentials and revoking on the backend belong to the provider and the
    backend. Logout does not go through `end()`: the provider clears the credential and notifies,
    the controller suspends, and `resolve()` confirms `none` (so a session confirmed while the
-   logout was pending is not erased).
-2. **Two different `resolve()`s.** `AuthProvider.resolve()` answers `none` /
-   `active + identity` in one round trip and **rejects** when it cannot obtain an answer. It is
-   **required by the type** in the v2 contract. The HTTP provider calls the **existing
+   logout was pending is not erased). `epoch` (private, for freshness checks) advances on every
+   `commit`; `generation` (public, for rebuilding screens) advances **only when the
+   (status, owner, kind) triple changes** (none→none, unknown→unknown and re-adopting the same
+   commissioning session leave it unchanged).
+2. **Two different `resolve()`s.** `AuthProvider.resolve()` answers
+   `{ status: 'none' | 'active', checked, current, identity?, kind? }` in one round trip and
+   **rejects** when it cannot obtain an answer. `checked` is the revision of the credential it
+   verified; `current` is the revision after this call's own clearing, and **a clearing inside
+   `resolve()` is carried in the answer, never notified**. Providers come in exactly **two
+   tiers**: standard (`resolve`, `credentialRevision`, `onCredentialChanged`, all three required
+   by the type) and the compatibility adapter (a legacy provider has none of the three; the
+   adapter fills in the shape). There is no "revision only" tier. The HTTP provider calls the **existing
    `GET /api/auth/identity` once** (it goes through the same re-validation as `require_auth`:
    `200` with an identity → active, `200 null` / `401` → none, anything else → reject; when a
    token was sent and the answer is none, that token is cleared by compare-and-set). No
@@ -68,12 +76,20 @@ Constraints:
    `confirmed` / `unverified` / `superseded`. Callers do not infer the outcome from the shared
    snapshot's `lastError`. A `load` that receives `superseded` does not return the current
    generation; within a deadline it joins the latest verification and returns only a generation
-   it **actually confirmed** (otherwise the retry page).
-3. **Freshness enforced by structure.** A provider answer may be committed only if the
-   (controller transition count, credential revision) captured when the probe started still
-   match at application time and no signal arrived after the probe started. **Fulfilment,
-   rejection and timeout all pass the same check**; a stale failure is discarded without touching
-   the state or the verification status. The comparison and the `commit` happen in one
+   it **actually confirmed** (otherwise the retry page). Policies such as the public-viewer
+   fallback also return a `ResolveResult`, and the caller handles `unverified` before using
+   `status`/`generation`. admin-template's demo provider is rewritten to the standard tier.
+3. **Freshness enforced by structure.** A provider answer may be committed only if all of
+   these hold: the probe was not abandoned, the controller transition count equals the one
+   captured when the probe started, no signal arrived after the probe started, the answer's
+   `checked` equals the revision at probe start, and the current revision equals the answer's
+   `current`. **Fulfilment, rejection and timeout all pass the same check**; a stale failure is
+   discarded without touching the state or the verification status. A discarded answer that
+   carried a clearing sets the background need (`pendingBackground`) so that `none` is confirmed
+   by a fresh probe. A difference between the revision the controller last applied and the
+   current one is, even without a notification, grounds for suspension (a defence). One
+   `AbortController` per probe; abort only when discarding is decided or when nobody needs the
+   answer any more (it frees resources; it is not a correctness mechanism). The comparison and the `commit` happen in one
    continuation. Verification is single-flight with a wait deadline. Whether a request is
    satisfied is judged by the transition count captured when the probe started, so a request's
    own commit never makes it `superseded` (`superseded` is decided at the moment of an external
@@ -87,9 +103,12 @@ Constraints:
    session is bound to the revision at which the caller confirmed `none` (`expectRevision`).
    Rust's `seq` advances on **operations that intend to change the binding** (installing on
    login/setup, clearing on logout even when None→None) and **not** on a refresh of the same
-   binding (`settle_session` updating role/name). Operations that change state return `seq` in
-   their response, and the provider fixes its revision and fires `onCredentialChanged` in the
-   continuation of that response (never depending on a follow-up identity check succeeding).
+   binding (`settle_session` updating the display name; a role change advances `auth_epoch`,
+   so it is a revocation and `seq` does advance). Operations that change state (login / setup /
+   logout / change_password) return `seq` in their response, and the provider fixes its revision
+   and fires `onCredentialChanged` in the continuation of that response **only when the revision
+   changed** (never depending on a follow-up identity check succeeding; not on the auth-disabled
+   logout no-op).
    Authentication operations (login / logout / setup / enterPublicViewer) are not queued behind
    the controller, their return values are not committed directly, and the session is confirmed
    by the following `resolve()`.
@@ -107,7 +126,13 @@ Constraints:
    policies. `adopt()` is limited to derived-app-specific synthetic sessions (commissioning); the
    public-viewer fallback and Tauri's login-not-required mode are answered by the provider's
    `resolve()` (Rust's `auth_identity` re-reads the mode and role on every call). The
-   `enterPublicViewer` call leaves core's `sessionGate.ts`.
+   `enterPublicViewer` call leaves core's `sessionGate.ts`. Re-loading the screen is one wire:
+   the layout's `$effect` compares `snapshot.generation !== data.sessionGeneration` and calls
+   `invalidateAll()` (never twice for the same generation); the old "unheard" re-confirmation in
+   `sessionEnded.ts` is removed. Notifying an owner change is wired separately. A derived app's
+   commissioning runs as a policy runner (ticket → fetch the status with the policy's own
+   AbortSignal → `adopt`/`end` → `resolveSettled`) that retries with a fresh ticket, under a
+   deadline, when the ticket has expired.
 7. **Version.** #255 and this change ship together as **v2.0.0** (publishing.md: a change of
    meaning is a major). The state-updating legacy API (`establishSession` / `beginSession` /
    `endSession` / `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError`, ...)
@@ -123,13 +148,15 @@ Constraints:
    provider: revision; app policy: `SessionTicket`; Rust: `seq`), carries it to the end, and
    compares it **synchronously** right before applying the result. No `await` sits between the
    comparison and the application. A result that fails the comparison is discarded. `adopt` /
-   `end` take the ticket as a required argument and a `confirmed` result returns one. The
-   "state-writing entry point × asynchronous boundary" table (design body §4.9) is used to hunt
-   for gaps in this principle during the implementation PR reviews too.
+   `end` take the ticket as a required argument and a `confirmed` result returns one. A ticket
+   taken while a session is adopted carries no revision and is compared by epoch only
+   (commissioning is not decided by the token). The "state-writing entry point × asynchronous
+   boundary" table (design body §4.9) is used to hunt for gaps in this principle during the
+   implementation PR reviews too.
 
-The invariants (I-1 to I-20), the race scenario tables (S-1 to S-61), the API sketch, the
-migration and PR split, and the test design live in the design body. The implementation PRs
-reference those numbers from test names.
+The invariants (I-1 to I-22), the race scenario tables (S-1 to S-68), the generation table
+(§3.1), the API sketch, the migration and PR split, and the test design live in the design body.
+The implementation PRs reference those numbers from test names.
 
 ## Alternatives considered
 
@@ -177,6 +204,14 @@ reference those numbers from test names.
   writes a refresh every time it reads a valid session, so `auth_resolve` itself would change the
   revision and the controller would keep discarding correct answers. Advance it only on
   operations that intend to change the binding.
+- **Option L (rejected): allow a middle tier of providers with a revision but no
+  notification.** In that tier, "discard the stale answer on revision mismatch → the re-issued
+  probe rejects" leaves the previous owner active although the change was detected. Two tiers
+  only: standard with all three, compatibility adapter with none.
+- **Option M (rejected): use the probe's `AbortSignal` as a correctness mechanism (skip the
+  comparison on the assumption that an aborted probe never answers).** Tauri's `invoke` cannot
+  be interrupted, and a `fetch` can be aborted after its response has arrived. The discard
+  decision stays independent of abort; abort only frees resources.
 
 ## Consequences
 
@@ -202,3 +237,9 @@ reference those numbers from test names.
   migration PR. A hand-written provider fails to type-check under v2.
 - Handling a user switch in another tab never clears the shared token, in any app. A logout
   happens only through the user's own action or a backend revocation.
+- Removing the "unheard" re-confirmation changes the expectations of the `sessionEndUnheard`
+  tests (the mount-time generation comparison re-loads instead). It goes into the CHANGELOG's
+  behaviour-compatibility section.
+- The generation increments come from the §3.1 table (derived mechanically from the rule);
+  scenario expectations and tests are read off it. Changing the rule means changing the table and
+  the scenarios in the same PR.

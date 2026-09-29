@@ -25,15 +25,22 @@
 - docs(admin-core): セッションの確定を 1 か所（SessionController）に寄せる設計
   （#260）。ADR-0016（Proposed）と設計の本文
   [docs/session-controller-design.md](docs/session-controller-design.md)
-  （不変条件 I-1〜I-20・競合のシナリオ S-1〜S-61・API の案・実装の分割・テストの
-  設計）。Tauri の Rust 側で `.await` の後に `state.auth` を無条件で書いている
+  （不変条件 I-1〜I-22・競合のシナリオ S-1〜S-68・generation の数え方の表・API の
+  案・実装の分割・テストの設計）。Tauri の Rust 側で `.await` の後に `state.auth` を無条件で書いている
   箇所（`auth_login`・`auth_setup`・`auth_logout`）を特定した。判断点はオーナーの決定
   （2026-09-29）を反映済み（旧 API は削除、`AuthProvider.resolve` 必須、
   `GET /api/auth/session` は新設せず `GET /api/auth/identity` を 1 回、`superseded` の
   `load` は確認できた世代だけを返す、#257 の既定の流れ）。同日のレビュー 10 件も
   反映済み（ticket の原則 I-18、ログアウトは `resolve()` で確定、`seq` は結び付きを
   変える操作でだけ進める、操作の応答で revision を確定して通知、失敗も同じ鮮度の
-  照合、Rust のテストはコマンド本体で順序を固定）。コードの変更は無い。
+  照合、Rust のテストはコマンド本体で順序を固定）。統合修正 19 項目（3 回目の
+  オーナーレビュー 5 件 ＋ 独立レビュー ＋ 第三者の補足）も反映済み: provider の
+  `resolve()` は `{ status, checked, current, identity?, kind? }` を返し中の消去は
+  通知しない、provider は標準（3 つ必須）と互換 adapter の 2 階層、adopt 中の ticket は
+  epoch だけ、generation は (status, owner, kind) が変わったときだけ +1、画面の再確認は
+  レイアウトの `$effect` の generation 照合に統一。**実装時の挙動の変更の予告**:
+  旧 `sessionEnded.ts` の「unheard の再確認」は廃止し、`sessionEndUnheard` のテストの
+  期待は「mount 時の generation の照合で再 load する」に変わる。コードの変更は無い。
 - feat(admin-core, admin-template)（**挙動の互換性が変わる変更を含む** —
   下の「挙動の互換性が変わる変更」と「派生アプリの移行の手順」を参照）:
   一覧→詳細→保存/戻る→一覧の往復で
