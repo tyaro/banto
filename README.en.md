@@ -15,6 +15,10 @@ server — can serve the same UI to browsers on the local network. The name
 comes from _banto_, the senior clerk who ran an Edo-period merchant house on
 the owner's behalf.
 
+Architecture overview (Japanese, Mermaid diagrams):
+[docs/architecture-overview.md](docs/architecture-overview.md) /
+[docs/architecture-flows.md](docs/architecture-flows.md).
+
 ## Features
 
 - **Data grid** (`@banto/grid-svelte`): virtual scrolling, multi-column sort,

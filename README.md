@@ -9,6 +9,8 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 
 - English summary: [README.en.md](README.en.md)
 - 仕様書: [docs/ui-framework-spec.md](docs/ui-framework-spec.md)
+- 全体構成図: [docs/architecture-overview.md](docs/architecture-overview.md)
+  （フロー詳細: [docs/architecture-flows.md](docs/architecture-flows.md)）
 - 機能拡張ロードマップ（M10〜）: [docs/roadmap.md](docs/roadmap.md)
 - 保守者向け規約: [docs/conventions.md](docs/conventions.md)
 - 公開手順: [docs/publishing.md](docs/publishing.md)
@@ -183,6 +185,11 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 [CHANGELOG.md](CHANGELOG.md) を参照。
 
 ## 構成
+
+パッケージ一覧の前に全体像が欲しい場合は
+[docs/architecture-overview.md](docs/architecture-overview.md) を参照
+（認証・初回起動・開発経路は
+[docs/architecture-flows.md](docs/architecture-flows.md)）。
 
 npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスは
 リポジトリ全体と同じ **MIT**（2026-07-12 公開化に伴い統一）。

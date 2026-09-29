@@ -16,6 +16,7 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
   不変条件・スコープ判定・実装計画・配布規約。
   - [docs/conventions.md](docs/conventions.md) — 変えてはいけない不変条件（**最重要**）
   - [docs/ui-framework-spec.md](docs/ui-framework-spec.md) — 仕様書（`spec §` の参照先）
+  - [docs/architecture-overview.md](docs/architecture-overview.md) — 全体構成図（二形態・レイヤ・機能マップ）
   - [docs/roadmap.md](docs/roadmap.md) — マイルストーン計画と §7 実施プロセス
   - [docs/template-scope.md](docs/template-scope.md) — 何を入れる/入れない、削除可能性の判定
   - [docs/publishing.md](docs/publishing.md) — 配布（git tag / `path:` 依存）
@@ -62,6 +63,10 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
   （特にセキュリティ不変条件・逆依存禁止・両経路対称）。
 - **「使い方」を説明する/導入手順を直す** → トラックB（README）。
 - **仕様の意図を知りたい** → `docs/ui-framework-spec.md`（doc コメントの `spec §N` が指す先）。
+- **全体構成・配信形態・レイヤを一望したい** →
+  [docs/architecture-overview.md](docs/architecture-overview.md)。
+  認証・初回起動・開発3経路・add-resource の層対応は
+  [docs/architecture-flows.md](docs/architecture-flows.md)。
 - **設計判断の「なぜ・代替案」を知りたい/残したい** → [docs/adr/](docs/adr/README.md)。
   「なぜ」の置き場は3分類（コードコメント / conventions.md / ADR）。代替案を
   比較して倒した判断は ADR に書く（規約本文は conventions.md、局所理由はコード内）。
