@@ -302,4 +302,56 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'ascending');
 		await expectNoOldSession();
 	});
+
+	// Issue #215/#255 5th review: the guard's identity request for the
+	// PREVIOUS session (here the synthetic viewer, re-checked on a client-side
+	// navigation) answers only after this tab has logged in as the admin and
+	// shown the admin's dashboard. That late answer must not move the session
+	// back to the viewer: no "ログイン" button, no lost dashboard (a changed
+	// session generation would hide the page), the admin's menu stays.
+	test('8. a late identity answer for the previous session does not replace the next login', async () => {
+		test.setTimeout(60_000);
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		await page.goto('/dashboard');
+		await expect(loginButton(page)).toBeVisible();
+
+		let held = 0;
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		await page.route('**/api/auth/identity', async (route) => {
+			if (held > 0) return route.continue();
+			held += 1;
+			// Sent now, with the viewer's token; delivered after the login.
+			const response = await route.fetch();
+			await gate;
+			await route.fulfill({ response });
+		});
+		try {
+			// A public viewer's guard re-runs on every navigation; its identity
+			// answer is held, so the tab stays on the dashboard.
+			await mainNav.getByRole('link', { name: '商品' }).click();
+			await expect.poll(() => held).toBe(1);
+			await loginButton(page).click();
+			await expect(page).toHaveURL(/\/login$/);
+			await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+			await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await page.getByRole('button', { name: 'ログイン', exact: true }).click();
+			await expect(page).toHaveURL(/\/dashboard$/);
+			const userMenu = page.getByRole('button', { name: 'ユーザーメニューを開く' });
+			await expect(userMenu).toBeVisible();
+
+			release();
+			// Same bounded exception as smoke scenario 3d: nothing visible
+			// signals "the late answer was processed", and a poll would pass on
+			// its first read before a wrong write could happen.
+			await page.waitForTimeout(500);
+			await expect(page).toHaveURL(/\/dashboard$/);
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(userMenu).toBeVisible();
+			await expect(loginButton(page)).toHaveCount(0);
+		} finally {
+			release();
+			await page.unrouteAll({ behavior: 'wait' });
+		}
+	});
 });

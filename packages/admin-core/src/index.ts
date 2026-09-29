@@ -127,4 +127,10 @@ export {
 	sessionGeneration,
 	sessionOwnerKey
 } from './sessionScope.svelte';
-export { beginSession, endSession } from './sessionLifecycle';
+export {
+	beginSession,
+	endSession,
+	establishSession,
+	MAX_STALE_RETRIES,
+	SessionChangedError
+} from './sessionLifecycle';
