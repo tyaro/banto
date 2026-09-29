@@ -22,6 +22,8 @@ track your task belongs to.**
     not break (**most important**)
   - [docs/ui-framework-spec.md](docs/ui-framework-spec.md) — the specification
     (the target of `spec §` references)
+  - [docs/architecture-overview.md](docs/architecture-overview.md) — architecture
+    overview diagrams (dual delivery, layers, feature map; Japanese)
   - [docs/roadmap.md](docs/roadmap.md) — the milestone plan and the §7
     execution process
   - [docs/template-scope.md](docs/template-scope.md) — what to include / not
@@ -83,6 +85,11 @@ minimal|standard|full|display` (`--interactive` / `--dry-run` available; the man
 - **Explain "how to use it" / fix the setup steps** → Track B (README).
 - **Understand the intent of the spec** → `docs/ui-framework-spec.md` (the
   target of the `spec §N` in doc comments).
+- **See the overall architecture (dual delivery, layers, packages)** →
+  [docs/architecture-overview.md](docs/architecture-overview.md). Auth,
+  first-boot, the three dev paths, and the add-resource layer map live in
+  [docs/architecture-flows.md](docs/architecture-flows.md) (Japanese; the
+  diagrams are language-light).
 - **Understand / record the "why and alternatives" of a design decision** →
   [docs/adr/](docs/adr/README.en.md). The "why" lives in one of three places
   (code comments / conventions.md / ADR). A decision made by comparing and

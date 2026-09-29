@@ -1156,6 +1156,8 @@ reject は I-4 で状態を変えない。方針の経路で「取得の失敗 �
 
 実装-1 と実装-2 は並列に進められる（実装-2 は interface だけに依存）。実装-3 は両方の後。
 
+実装-3 では、`docs/architecture-flows.md` の §2（`(app)` ガード）と §3（ログイン）の図と説明も、新しい流れ（`controller.resolve`／`resolveSettled`・`publicViewerFallback`・3 本の配線）で描き直す（v1.7.x 時点の流れである旨の注記を外す）。
+
 ### 7.2 候補版で派生アプリ 2 本を検証する手順
 
 publishing.md は git タグ参照なので、候補版は**タグではなくコミット参照**で試す

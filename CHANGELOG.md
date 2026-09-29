@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+- docs: 全体構成図とフロー図を追加（`docs/architecture-overview.md` /
+  `docs/architecture-flows.md`）。デスクトップと LAN の二形態、レイヤ、
+  機能マップ、パッケージ依存、認証・初回起動・開発3経路・add-resource の
+  層対応を Mermaid で俯瞰。README / AGENTS からリンク。
 - docs(admin-core): セッションの確定を 1 か所（SessionController）に寄せる設計
   （#260）。ADR-0016（Proposed）と設計の本文
   [docs/session-controller-design.md](docs/session-controller-design.md)
