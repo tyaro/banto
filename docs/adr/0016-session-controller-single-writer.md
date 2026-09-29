@@ -2,7 +2,7 @@
 
 > English: [0016-session-controller-single-writer.en.md](0016-session-controller-single-writer.en.md)
 
-- 状態: Proposed（設計の PR。実装の PR で Accepted にする）
+- 状態: Proposed（設計の PR。判断点はオーナーの決定済み 2026-09-29。実装の PR で Accepted にする）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#259・#241・#204 / spec §3.3・§8.1 / conventions §10 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
@@ -49,26 +49,45 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    `end()`（終了）・資格情報の変化による保留の 4 つ。**終了の状態へ移すのは controller だけ**で、
    資格情報の破棄とバックエンドの失効の処理は provider とバックエンドが担う。
 2. **2 種類の `resolve()` を書き分ける**: `AuthProvider.resolve()` は 1 往復で
-   `none` / `active + identity` を答え、取得できないときは **reject する**。
+   `none` / `active + identity` を答え、取得できないときは **reject する**。v2 の標準契約で
+   **型で必須**にする。HTTP は**既存の `GET /api/auth/identity` を 1 回**呼ぶ（`require_auth` と
+   同じ再検証を通る。`200` で identity → active、`200 null` / `401` → none、それ以外 → reject。
+   トークンを送って none なら compare-and-set でそのトークンを消す）。`GET /api/auth/session` は
+   新設しない。旧 provider（`check()`/`getIdentity()`）への対応は明示的な互換 adapter に分離し、
+   保証する範囲・しない範囲を明記して、旧実装を黙って完全対応扱いしない。
    `SessionController.resolve()` は **reject せず**、呼び出し元が「今回の要求について」
    `confirmed` / `unverified` / `superseded` を区別できる結果を返す。共有スナップショットの
-   `lastError` で判断させない。
+   `lastError` で判断させない。`superseded` を受けた `load` は今の generation を返さず、期限内に
+   最新の確認に合流して**実際に確認できた** generation だけを返す（確認できなければ再試行画面）。
 3. **鮮度の照合を構造で守る**: provider の答えは、問い合わせを始めた時点の（controller の
    遷移回数、資格情報の revision）が適用時点と同じで、かつ始めた後に signal が来ていないときだけ
    `commit` できる。照合と `commit` は同じ継続で行う。確認は single-flight とし、待機の期限を設ける。
+   破棄した確認を出し直さないのは、画面からの待機要求も未処理の背景の確認の必要も無いときだけ
+   （待機者の数だけで判断しない）。
 4. **資格情報の書き込み・消去は compare-and-set**: HTTP provider のトークン保存（#259）も、
    Tauri の Rust 側 `state.auth`（seq 付きの `AuthSlot`）も、操作を始めたときの revision / seq と
    一致するときだけ書く。認証の操作（login / logout / setup / enterPublicViewer）は controller の
    待ち行列に入れず、操作の戻り値を直接 `commit` せず、その後の `resolve()` で確定する。
 5. **資格情報の切り替えは保留に移す**: 切り替えを知った時点で `unknown`・owner なし・
    generation + 1 にし、その後の確認に失敗しても旧 owner の active には戻さない。
-   同じ資格情報での一時的な失敗（確定状態を保つ）とは区別する。
+   同じ資格情報での一時的な失敗（確定状態を保つ）とは区別する。別タブでの切り替え（#257）の
+   既定は「旧画面の操作を止める → 確認する → 別ユーザーへの変更が確認できたら通知して新しい権限で
+   作り直す（未保存の入力は引き継がない）→ 確認できなければ再試行の状態に留める」で、この処理で
+   共有のトークンを消さず、他のタブをログアウトさせない。再認証が要るアプリは「通知してログインへ
+   移す」方針を注入できる。
 6. **SvelteKit との境界**: `load` の副作用は `controller.resolve()` だけ。`{#key generation}` と
-   公開閲覧への fallback・試運転の `adopt()` はアプリ層の方針として注入する。core の
-   `sessionGate.ts` から `enterPublicViewer` の呼び出しを外す。
+   公開閲覧への fallback・試運転の `adopt()` はアプリ層の方針として注入する。`adopt()` は派生アプリ
+   固有の合成セッション（試運転）に限り、公開閲覧の fallback と Tauri のログイン不要モードは
+   provider の `resolve()` が答える（Rust の `auth_identity` はそのたびにモードと権限を読み直す）。
+   core の `sessionGate.ts` から `enterPublicViewer` の呼び出しを外す。
 7. **版**: #255 とこの変更をまとめて **v2.0.0** にする（publishing.md：意味の変更はメジャー）。
-   既存の `establishSession` / `beginSession` / `endSession` / `resolveProtectedSession` /
-   `confirmSessionEnded` は削除の方向（委譲で残すかはオーナー判断、設計の本文 §5.4・§9）。
+   状態を更新する旧 API（`establishSession` / `beginSession` / `endSession` /
+   `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError` など）は**削除**する。
+   参照・購読の API（`sessionGeneration` / `onSessionEnded` など）は残すが、独自の状態や確認処理は
+   持たせず controller への委譲に統一する（設計の本文 §5.4）。
+8. **監査**: `login_superseded` の記録は今回の必須要件から外す。今の `login` の監査は REST・Tauri
+   とも「資格情報の検証に成功した」時点で記録している（設計の本文 §1.7）。Rust が世代の不一致で
+   確定を拒否したことの観測は、必要になったら別のイベントとして後で足す。
 
 不変条件の一覧（I-1〜I-15）、競合のシナリオの表（S-1〜S-45）、API の案、移行と実装の分割、
 テストの設計は設計の本文に置く。実装の PR はその番号をテスト名から参照する。
@@ -96,6 +115,16 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
   コマンドは並行に走り、ロックを await にまたがせると `current_session` の再検証（DB 読み）
   まで直列になる。PR #182 で採った「1 つのロックの中で照合して書く」形（compare-and-set）で
   十分で、既存の 3 か所と揃う。
+- **案G（不採用）: REST に `GET /api/auth/session`（check + identity を 1 応答に）を新設する。**
+  既存の `GET /api/auth/identity` が `authenticated_session` → `AuthState::authenticate` で
+  `require_auth` と同じ再検証を通し、失効を `200 null` で返すので、1 往復の要件をすでに満たす。
+  既存ルートで満たせない具体的な要件が出たときに新設を判断する。
+- **案H（不採用）: Tauri のログイン不要モードの合成 identity をアプリ側で `adopt()` する。**
+  Rust が合成し、`auth_identity` がそのたびにモードと権限を読み直している。フロントで合成すると
+  権限の変更を追えず、書き手が増える。
+- **案I（不採用）: `superseded` を受けた `load` に今の generation を返す。** 確認していない結果が
+  世代ゲートを通り、旧ユーザーのページデータが新しい世代に載る。最新の確認に合流して確認できた
+  generation だけを返す（期限付き）。
 
 ## 帰結
 
@@ -109,3 +138,7 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
 - 保証しないことを文書に残す: タブ間の同時操作でどちらが勝つか、切り替えのイベントが届くまでの
   ミリ秒の間に送られる要求。
 - 互換のために「障害を `null` に潰す」挙動を、新しい共通処理の標準として残さない。
+- 互換 adapter を使う派生アプリは、保証しない範囲（1 往復でない・`check()` の副作用・別タブの
+  検知なし）を承知のうえで使い、移行 PR にその旨を書く。自前の provider は v2 で型エラーになる。
+- 別タブの切り替えの処理は、どのアプリでも共有のトークンを消さない。ログアウトは利用者の操作か
+  バックエンドの失効だけで起こる。

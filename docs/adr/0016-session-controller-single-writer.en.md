@@ -2,7 +2,7 @@
 
 > 日本語: [0016-session-controller-single-writer.md](0016-session-controller-single-writer.md) is the source of truth; this English version follows it. If they diverge, the Japanese wins.
 
-- Status: Proposed (design PR; the implementation PRs move it to Accepted)
+- Status: Proposed (design PR; the open points were decided by the owner on 2026-09-29; the implementation PRs move it to Accepted)
 - Date: 2026-09-29
 - Related: Issue #260, #255, #257, #259, #241, #204 / spec §3.3, §8.1 / conventions §10 /
   ADR-0014 (account-bound revocation) / ADR-0012 (synthetic viewer session) /
@@ -53,14 +53,26 @@ Constraints:
    controller moves the confirmed state to its ended state**; disposing of credentials and
    revoking on the backend belong to the provider and the backend.
 2. **Two different `resolve()`s.** `AuthProvider.resolve()` answers `none` /
-   `active + identity` in one round trip and **rejects** when it cannot obtain an answer.
+   `active + identity` in one round trip and **rejects** when it cannot obtain an answer. It is
+   **required by the type** in the v2 contract. The HTTP provider calls the **existing
+   `GET /api/auth/identity` once** (it goes through the same re-validation as `require_auth`:
+   `200` with an identity → active, `200 null` / `401` → none, anything else → reject; when a
+   token was sent and the answer is none, that token is cleared by compare-and-set). No
+   `GET /api/auth/session` is added. Support for legacy providers (`check()`/`getIdentity()`) is
+   split into an explicit compatibility adapter whose guarantees and non-guarantees are written
+   down; a legacy implementation is never silently treated as fully supported.
    `SessionController.resolve()` **never rejects**; it returns, for this request,
    `confirmed` / `unverified` / `superseded`. Callers do not infer the outcome from the shared
-   snapshot's `lastError`.
+   snapshot's `lastError`. A `load` that receives `superseded` does not return the current
+   generation; within a deadline it joins the latest verification and returns only a generation
+   it **actually confirmed** (otherwise the retry page).
 3. **Freshness enforced by structure.** A provider answer may be committed only if the
    (controller transition count, credential revision) captured when the probe started still
    match at application time and no signal arrived after the probe started. The comparison and
    the `commit` happen in one continuation. Verification is single-flight with a wait deadline.
+   A discarded probe is not re-issued only when there is neither a waiting request from a screen
+   nor an unprocessed background need (a signal or a credential change); the number of waiters
+   alone does not decide it.
 4. **Credential writes and clears are compare-and-set.** Both the HTTP provider's token
    storage (#259) and Tauri's `state.auth` (an `AuthSlot` with a `seq`) write only when the
    revision / seq read at the start of the operation still matches. Authentication operations
@@ -70,14 +82,28 @@ Constraints:
 5. **A credential switch suspends.** As soon as a switch is known, the state becomes
    `unknown`, ownerless, `generation + 1`; a later failed verification does not fall back to
    the previous owner's active state. This is distinct from a transient failure with the same
-   credential (which keeps the confirmed state).
+   credential (which keeps the confirmed state). The default for a user switch in another tab
+   (#257) is: stop the old screen's actions → verify → once a change to a different user is
+   confirmed, notify and rebuild the screen with the new permissions (unsaved input is not carried
+   over) → if verification fails, stay in the retry state. This never clears the shared token and
+   never logs other tabs out. An app that needs re-authentication can inject a "notify and go to
+   login" policy instead.
 6. **SvelteKit boundary.** The only side effect in `load` is `controller.resolve()`.
    `{#key generation}`, the public-viewer fallback and commissioning's `adopt()` are app-layer
-   policies. The `enterPublicViewer` call leaves core's `sessionGate.ts`.
+   policies. `adopt()` is limited to derived-app-specific synthetic sessions (commissioning); the
+   public-viewer fallback and Tauri's login-not-required mode are answered by the provider's
+   `resolve()` (Rust's `auth_identity` re-reads the mode and role on every call). The
+   `enterPublicViewer` call leaves core's `sessionGate.ts`.
 7. **Version.** #255 and this change ship together as **v2.0.0** (publishing.md: a change of
-   meaning is a major). `establishSession` / `beginSession` / `endSession` /
-   `resolveProtectedSession` / `confirmSessionEnded` are slated for removal (whether to keep
-   delegating wrappers is the owner's call; design body §5.4, §9).
+   meaning is a major). The state-updating legacy API (`establishSession` / `beginSession` /
+   `endSession` / `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError`, ...)
+   is **removed**. The read/subscribe API (`sessionGeneration` / `onSessionEnded`, ...) stays but
+   holds no state or verification logic of its own; it delegates to the controller (design body
+   §5.4).
+8. **Audit.** Recording `login_superseded` is out of this round's required scope. Today both REST
+   and Tauri record `login` at the moment "credentials were verified" (design body §1.7).
+   Observing that Rust refused to install a session because of a sequence mismatch can be added
+   later as a separate event if needed.
 
 The invariants (I-1 to I-15), the race scenario tables (S-1 to S-45), the API sketch, the
 migration and PR split, and the test design live in the design body. The implementation PRs
@@ -108,6 +134,18 @@ reference those numbers from test names.
   run concurrently; holding the lock across awaits would also serialize `current_session`'s DB
   re-validation. The "compare and write under one lock" shape from PR #182 suffices and matches
   the three existing sites.
+- **Option G (rejected): add `GET /api/auth/session` (check + identity in one response) to
+  REST.** The existing `GET /api/auth/identity` already goes through `authenticated_session` →
+  `AuthState::authenticate`, the same re-validation as `require_auth`, and reports revocation as
+  `200 null`, so it already satisfies the one-round-trip requirement. A new route is decided only
+  when a concrete requirement the existing one cannot meet appears.
+- **Option H (rejected): have the app `adopt()` the synthetic identity of Tauri's
+  login-not-required mode.** Rust synthesizes it and `auth_identity` re-reads the mode and role
+  on every call; synthesizing it in the front end would miss role changes and add a writer.
+- **Option I (rejected): return the current generation from a `load` that received
+  `superseded`.** An unverified result would pass the generation gate and the previous user's
+  page data would ride on the new generation. Instead, join the latest verification and return
+  only a confirmed generation, within a deadline.
 
 ## Consequences
 
@@ -124,3 +162,8 @@ reference those numbers from test names.
   in the milliseconds before the credential-change event is delivered.
 - The compatibility behavior of collapsing failures into `null` is not kept as the standard of
   the new shared code.
+- A derived app that uses the compatibility adapter does so knowing what it does not guarantee
+  (not one round trip, `check()` side effects, no cross-tab detection) and says so in its
+  migration PR. A hand-written provider fails to type-check under v2.
+- Handling a user switch in another tab never clears the shared token, in any app. A logout
+  happens only through the user's own action or a backend revocation.
