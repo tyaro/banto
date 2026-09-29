@@ -25,7 +25,7 @@
 - docs(admin-core): セッションの確定を 1 か所（SessionController）に寄せる設計
   （#260）。ADR-0016（Proposed）と設計の本文
   [docs/session-controller-design.md](docs/session-controller-design.md)
-  （不変条件 I-1〜I-22・競合のシナリオ S-1〜S-68・generation の数え方の表・API の
+  （不変条件 I-1〜I-23・競合のシナリオ S-1〜S-77・generation の数え方の表・API の
   案・実装の分割・テストの設計）。Tauri の Rust 側で `.await` の後に `state.auth` を無条件で書いている
   箇所（`auth_login`・`auth_setup`・`auth_logout`）を特定した。判断点はオーナーの決定
   （2026-09-29）を反映済み（旧 API は削除、`AuthProvider.resolve` 必須、
@@ -38,9 +38,15 @@
   `resolve()` は `{ status, checked, current, identity?, kind? }` を返し中の消去は
   通知しない、provider は標準（3 つ必須）と互換 adapter の 2 階層、adopt 中の ticket は
   epoch だけ、generation は (status, owner, kind) が変わったときだけ +1、画面の再確認は
-  レイアウトの `$effect` の generation 照合に統一。**実装時の挙動の変更の予告**:
-  旧 `sessionEnded.ts` の「unheard の再確認」は廃止し、`sessionEndUnheard` のテストの
-  期待は「mount 時の generation の照合で再 load する」に変わる。コードの変更は無い。
+  レイアウトの `$effect` の generation 照合に統一。4 回目のレビュー（Astra 6 件 ＋
+  独立の再レビュー）も反映済み: 保留に移すのは active かつ adopt 中でないときだけ、
+  Tauri の revision は不透明な `(observedSeq, local)` の組で `settle_session` は
+  `seq_at_entry` と一致しなければ何も書かず stale、policy runner は期限・上限で
+  `unverified` かつ `guard`/`recheck` の 2 mode、abort の規則は「採用できないことが
+  確定した probe は必ず abort」の 1 つ。**実装時の挙動の変更の予告**: 旧
+  `sessionEnded.ts` の「unheard の再確認」は再 probe をやめ、`onSessionEnded` が
+  購読した時点で `none` なら非同期に 1 回通知する形に変わる（`sessionEndUnheard` の
+  テストの期待は「購読時に none なら 1 回通知」に）。コードの変更は無い。
 - feat(admin-core, admin-template)（**挙動の互換性が変わる変更を含む** —
   下の「挙動の互換性が変わる変更」と「派生アプリの移行の手順」を参照）:
   一覧→詳細→保存/戻る→一覧の往復で

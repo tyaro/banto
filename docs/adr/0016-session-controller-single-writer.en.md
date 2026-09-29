@@ -87,9 +87,12 @@ Constraints:
    discarded without touching the state or the verification status. A discarded answer that
    carried a clearing sets the background need (`pendingBackground`) so that `none` is confirmed
    by a fresh probe. A difference between the revision the controller last applied and the
-   current one is, even without a notification, grounds for suspension (a defence). One
-   `AbortController` per probe; abort only when discarding is decided or when nobody needs the
-   answer any more (it frees resources; it is not a correctness mechanism). The comparison and the `commit` happen in one
+   current one is, even without a notification, grounds for suspension (a defence). Suspension
+   itself applies **only to an active session that is not adopted**; for none / unknown /
+   adopted sessions only the background need is recorded. One `AbortController` per probe, with
+   one rule: **a probe that can no longer be adopted is always aborted** (when it is discarded,
+   when its deadline abandons it). It frees resources; it is not a correctness mechanism, and a
+   single waiter's deadline does not abort it. The comparison and the `commit` happen in one
    continuation. Verification is single-flight with a wait deadline. Whether a request is
    satisfied is judged by the transition count captured when the probe started, so a request's
    own commit never makes it `superseded` (`superseded` is decided at the moment of an external
@@ -108,13 +111,19 @@ Constraints:
    logout / change_password) return `seq` in their response, and the provider fixes its revision
    and fires `onCredentialChanged` in the continuation of that response **only when the revision
    changed** (never depending on a follow-up identity check succeeding; not on the auth-disabled
-   logout no-op).
+   logout no-op). `auth_resolve` reads `seq_at_entry` before its first `.await`, and
+   `settle_session` returns **stale without writing anything** when the seq has moved (the
+   provider rejects). The provider's revision is an opaque `(observedSeq, local)` pair that the
+   controller compares only for equality: `observedSeq` is the max of the seqs observed from
+   Rust and never decreases (a late, old response cannot roll it back); `local` advances only when
+   a state-changing operation's invoke rejects. A rejected `resolve()` never advances it.
    Authentication operations (login / logout / setup / enterPublicViewer) are not queued behind
    the controller, their return values are not committed directly, and the session is confirmed
    by the following `resolve()`.
-5. **A credential switch suspends.** As soon as a switch is known, the state becomes
-   `unknown`, ownerless, `generation + 1`; a later failed verification does not fall back to
-   the previous owner's active state. This is distinct from a transient failure with the same
+5. **A credential switch suspends.** As soon as a switch is known, **an active session that
+   is not adopted** becomes `unknown`, ownerless, `generation + 1`; a later failed verification
+   does not fall back to the previous owner's active state (for none / unknown / adopted sessions
+   only the background need is recorded). This is distinct from a transient failure with the same
    credential (which keeps the confirmed state). The default for a user switch in another tab
    (#257) is: stop the old screen's actions → verify → once a change to a different user is
    confirmed, notify and rebuild the screen with the new permissions (unsaved input is not carried
@@ -128,11 +137,17 @@ Constraints:
    `resolve()` (Rust's `auth_identity` re-reads the mode and role on every call). The
    `enterPublicViewer` call leaves core's `sessionGate.ts`. Re-loading the screen is one wire:
    the layout's `$effect` compares `snapshot.generation !== data.sessionGeneration` and calls
-   `invalidateAll()` (never twice for the same generation); the old "unheard" re-confirmation in
-   `sessionEnded.ts` is removed. Notifying an owner change is wired separately. A derived app's
-   commissioning runs as a policy runner (ticket → fetch the status with the policy's own
-   AbortSignal → `adopt`/`end` → `resolveSettled`) that retries with a fresh ticket, under a
-   deadline, when the ticket has expired.
+   `invalidateAll()` (never twice for the same generation). The old "unheard" re-confirmation in
+   `sessionEnded.ts` stops re-probing: `onSessionEnded` notifies once, asynchronously, when the
+   snapshot is already `none` at subscription time (kept in v2; the removal of the re-probe and
+   its replacement land in the same PR). Notifying an owner change is wired separately, and the
+   last active owner is reset to null on a transition to none. A derived app's commissioning runs
+   as a policy runner (ticket → fetch the status with the policy's own AbortSignal →
+   `adopt`/`end` → `resolveSettled`) that retries with a fresh ticket, under a deadline, when the
+   ticket has expired. The runner has two modes, `guard` (the initial route guard; a failed fetch
+   falls to "no bypass", as in v1.7.3) and `recheck` (the stream re-check; a failed fetch is
+   `unverified` and neither ends nor adopts), and on its deadline or round limit it returns
+   `unverified` with the existing snapshot instead of falling through to `resolveSettled`.
 7. **Version.** #255 and this change ship together as **v2.0.0** (publishing.md: a change of
    meaning is a major). The state-updating legacy API (`establishSession` / `beginSession` /
    `endSession` / `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError`, ...)
@@ -154,7 +169,7 @@ Constraints:
    boundary" table (design body §4.9) is used to hunt for gaps in this principle during the
    implementation PR reviews too.
 
-The invariants (I-1 to I-22), the race scenario tables (S-1 to S-68), the generation table
+The invariants (I-1 to I-23), the race scenario tables (S-1 to S-77), the generation table
 (§3.1), the API sketch, the migration and PR split, and the test design live in the design body.
 The implementation PRs reference those numbers from test names.
 
@@ -237,9 +252,9 @@ The implementation PRs reference those numbers from test names.
   migration PR. A hand-written provider fails to type-check under v2.
 - Handling a user switch in another tab never clears the shared token, in any app. A logout
   happens only through the user's own action or a backend revocation.
-- Removing the "unheard" re-confirmation changes the expectations of the `sessionEndUnheard`
-  tests (the mount-time generation comparison re-loads instead). It goes into the CHANGELOG's
-  behaviour-compatibility section.
+- Stopping the "unheard" re-probe changes the expectations of the `sessionEndUnheard` tests
+  (`onSessionEnded` notifies once, asynchronously, when the snapshot is already `none` at
+  subscription time). It goes into the CHANGELOG's behaviour-compatibility section.
 - The generation increments come from the §3.1 table (derived mechanically from the rule);
   scenario expectations and tests are read off it. Changing the rule means changing the table and
   the scenarios in the same PR.
