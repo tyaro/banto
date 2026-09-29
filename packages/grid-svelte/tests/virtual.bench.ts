@@ -35,7 +35,23 @@
  * a concrete reason server mode (spec §4.1) exists for genuinely large
  * client-side datasets.
  */
-import { bench, describe } from 'vitest';
+import { describe, test } from 'vitest';
+
+/**
+ * Vitest 5 removed the module-level `bench()`; a benchmark is now the `bench`
+ * test-context fixture used inside a regular `test()`. This shim keeps the
+ * call sites below in their original `bench(name, fn)` shape (one benchmark
+ * per test, run immediately). The generous timeout covers the 100k-row cases.
+ */
+function bench(name: string, fn: () => void): void {
+	test(
+		name,
+		async ({ bench: registerBench }) => {
+			await registerBench(name, fn).run();
+		},
+		60_000
+	);
+}
 import { computeWindow } from '../src/core/virtual';
 import { sortRows } from '../src/core/sort';
 import { filterRows } from '../src/core/filter';

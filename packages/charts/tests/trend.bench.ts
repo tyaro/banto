@@ -110,7 +110,23 @@
  *   derivation (append-only update instead of `data.map`-from-scratch every
  *   time) would pay off before a renderer swap does.
  */
-import { bench, describe } from 'vitest';
+import { describe, test } from 'vitest';
+
+/**
+ * Vitest 5 removed the module-level `bench()`; a benchmark is now the `bench`
+ * test-context fixture used inside a regular `test()`. This shim keeps the
+ * call sites below in their original `bench(name, fn)` shape (one benchmark
+ * per test, run immediately). The generous timeout covers the 100k-row cases.
+ */
+function bench(name: string, fn: () => void): void {
+	test(
+		name,
+		async ({ bench: registerBench }) => {
+			await registerBench(name, fn).run();
+		},
+		60_000
+	);
+}
 import { rollingAppend } from '../src/core/rolling';
 import { decimatedIndices } from '../src/core/decimate';
 import { linearScale } from '../src/core/scale';
