@@ -80,7 +80,9 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    移すのは `status === 'active'` かつ adopt 中でないときだけ**で、none／unknown／adopt 中は
    背景の確認の必要を記録するだけ。`AbortController` は問い合わせごとに 1 つで、規則は 1 つ:
    **採用できないことが確定した問い合わせは必ず abort する**（捨てたとき、期限で打ち切ったとき。
-   資源の解放であって、正しさの手段ではない。待機者 1 人の期限では止めない）。照合と `commit` は同じ継続で行う。確認は single-flight とし、待機の
+   資源の解放であって、正しさの手段ではない。待機者 1 人の期限では止めない）。stale な答え
+   （provider の `StaleAnswerError`）は通信の障害と区別し、確認の状況を変えずに新しい問い合わせで
+   確認し直す。照合と `commit` は同じ継続で行う。確認は single-flight とし、待機の
    期限を設ける。要求が満たされるかは問い合わせの開始時の遷移回数で判定し、自分の確定で自分を
    追い越したことにしない（`superseded` は外からの遷移の時点で決まる）。`cause: 'signal'` の
    要求は自分で signal の stamp を進め、要求より前に始めた問い合わせには合流しない。
@@ -99,7 +101,13 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    確認の成功に依存しない。auth-disabled の logout の no-op では出ない）。provider の revision は
    不透明な `(observedSeq, local)` の組で、controller は等値比較だけで扱う。`observedSeq` は観測した
    `seq` の max で決して減らさず（遅れて届いた古い応答で巻き戻さない）、`local` は状態を変える操作の
-   invoke が reject したときだけ +1 する。`resolve()` の reject では進めない。認証の操作（login / logout / setup / enterPublicViewer）は controller の
+   invoke が reject したとき、またはその操作の pending が期限（`opPendingTimeoutMs`）を過ぎて「結果が
+   分からない」になったときだけ +1 する。`resolve()` の通信の障害の reject では進めない。公開型は
+   すべて不透明な `CredentialRevision`（`credentialRevision()`・答えの `checked`/`current`・ticket の
+   `revision`・`expectRevision`）で、足し算は provider の内部だけ。**stale**（Rust の `stale`、入口より前に
+   始まった状態を変える操作が pending のまま届いた答え）は provider が `StaleAnswerError` で reject し、
+   controller は通信の障害と区別して確認の状況を変えずに新しい問い合わせで確認し直す。
+   「操作の完了を待つ」規則は採らない（応答しない古い操作が後続の確認を塞ぐため）。認証の操作（login / logout / setup / enterPublicViewer）は controller の
    待ち行列に入れず、操作の戻り値を直接 `commit` せず、その後の `resolve()` で確定する。
 5. **資格情報の切り替えは保留に移す**: 切り替えを知った時点で、**active のセッション（adopt 中を
    除く）だけ**を `unknown`・owner なし・generation + 1 にし、その後の確認に失敗しても旧 owner の
@@ -123,7 +131,12 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    失効したら新しい ticket で期限付きにやり直す。runner は `guard`（初回のルートガード。取得の失敗は
    迂回しない側に倒す＝v1.7.3 と同じ）と `recheck`（ストリームの再確認。取得の失敗は `end`/`adopt`
    せず `unverified`）の 2 mode を持ち、期限・回数の上限では既存の snapshot を保ったまま
-   `unverified` を返す（`resolveSettled` に落とさない）。
+   `unverified` を返す（`resolveSettled` に落とさない）。期限は開始時に絶対時刻で固定し、通常の確認へ
+   引き継ぐときも残りの期限を渡す。配線①（generation の照合による再 load）は実装-2 に前倒しし、
+   none を経ない世代の変化（別タブのログイン、同じ owner の再ログイン）でも子画面が隠れたままに
+   ならないようにする。未処理のユーザーの変更（`pendingOwnerChange`）は直前の owner とは別に controller が
+   保持し、同じ値の再確認では上書きせず、アプリの方針が処理して `acknowledgeOwnerChange()` で消す
+   （503 の画面をまたいでも通知が失われない）。
 7. **版**: #255 とこの変更をまとめて **v2.0.0** にする（publishing.md：意味の変更はメジャー）。
    状態を更新する旧 API（`establishSession` / `beginSession` / `endSession` /
    `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError` など）は**削除**する。
@@ -140,7 +153,7 @@ PR #255（#215：一覧の状態の保持）は、非同期の競合をめぐっ
    照合する（試運転はトークンで決まらない）。「状態を書き換える入口 × 非同期の境界」の表
    （設計の本文 §4.9）で、この原則の抜けを実装の PR のレビューでも洗う。
 
-不変条件の一覧（I-1〜I-23）、競合のシナリオの表（S-1〜S-77）、generation の数え方の表（§3.1）、
+不変条件の一覧（I-1〜I-23）、競合のシナリオの表（S-1〜S-81）、generation の数え方の表（§3.1）、
 API の案、移行と実装の分割、テストの設計は設計の本文に置く。実装の PR はその番号をテスト名から
 参照する。
 

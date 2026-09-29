@@ -92,7 +92,9 @@ Constraints:
    adopted sessions only the background need is recorded. One `AbortController` per probe, with
    one rule: **a probe that can no longer be adopted is always aborted** (when it is discarded,
    when its deadline abandons it). It frees resources; it is not a correctness mechanism, and a
-   single waiter's deadline does not abort it. The comparison and the `commit` happen in one
+   single waiter's deadline does not abort it. A stale answer (the provider's `StaleAnswerError`)
+   is told apart from a communication failure: the verification status is left alone and a new
+   probe re-verifies. The comparison and the `commit` happen in one
    continuation. Verification is single-flight with a wait deadline. Whether a request is
    satisfied is judged by the transition count captured when the probe started, so a request's
    own commit never makes it `superseded` (`superseded` is decided at the moment of an external
@@ -116,7 +118,16 @@ Constraints:
    provider rejects). The provider's revision is an opaque `(observedSeq, local)` pair that the
    controller compares only for equality: `observedSeq` is the max of the seqs observed from
    Rust and never decreases (a late, old response cannot roll it back); `local` advances only when
-   a state-changing operation's invoke rejects. A rejected `resolve()` never advances it.
+   a state-changing operation's invoke rejects, or when that operation's pending entry passes its
+   deadline (`opPendingTimeoutMs`) and becomes "outcome unknown". A `resolve()` rejected by a
+   communication failure never advances it. Every public type is the opaque `CredentialRevision`
+   (`credentialRevision()`, the answer's `checked`/`current`, the ticket's `revision`,
+   `expectRevision`); arithmetic happens only inside the provider. A **stale** answer (Rust's
+   `stale`, or an answer that arrives while a state-changing operation started before the entry is
+   still pending) is rejected by the provider with `StaleAnswerError`; the controller tells it apart
+   from a communication failure and re-verifies with a new probe without touching the verification
+   status. A "wait for in-flight operations" rule is not adopted (an unresponsive old operation
+   would block every later verification).
    Authentication operations (login / logout / setup / enterPublicViewer) are not queued behind
    the controller, their return values are not committed directly, and the session is confirmed
    by the following `resolve()`.
@@ -147,7 +158,14 @@ Constraints:
    ticket has expired. The runner has two modes, `guard` (the initial route guard; a failed fetch
    falls to "no bypass", as in v1.7.3) and `recheck` (the stream re-check; a failed fetch is
    `unverified` and neither ends nor adopts), and on its deadline or round limit it returns
-   `unverified` with the existing snapshot instead of falling through to `resolveSettled`.
+   `unverified` with the existing snapshot instead of falling through to `resolveSettled`. The
+   deadline is fixed as an absolute time at the start and the remainder is handed to the ordinary
+   verification. Wire ① (re-load on a generation change) is pulled forward into implementation PR 2
+   so that generation changes that never pass through none (a login in another tab, a re-login as
+   the same owner) do not leave the child screen hidden. An unprocessed user change
+   (`pendingOwnerChange`) is kept by the controller separately from the previous owner, is not
+   overwritten by a same-value re-verification, and is cleared only by the app policy through
+   `acknowledgeOwnerChange()` (so the notification survives a 503 screen).
 7. **Version.** #255 and this change ship together as **v2.0.0** (publishing.md: a change of
    meaning is a major). The state-updating legacy API (`establishSession` / `beginSession` /
    `endSession` / `resolveProtectedSession` / `confirmSessionEnded` / `SessionChangedError`, ...)
@@ -169,7 +187,7 @@ Constraints:
    boundary" table (design body §4.9) is used to hunt for gaps in this principle during the
    implementation PR reviews too.
 
-The invariants (I-1 to I-23), the race scenario tables (S-1 to S-77), the generation table
+The invariants (I-1 to I-23), the race scenario tables (S-1 to S-81), the generation table
 (§3.1), the API sketch, the migration and PR split, and the test design live in the design body.
 The implementation PRs reference those numbers from test names.
 
