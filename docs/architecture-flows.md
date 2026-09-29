@@ -4,6 +4,8 @@
 
 対象: ログイン／LAN／閲覧公開、初回起動、開発の3経路、CRUD 追加がどの層に載るかを知りたい人。
 
+> **時点の注意（2026-09-30）**: §2（`(app)` ガード）と §3（ログイン）は **v1.7.x 時点**の流れ（`resolveProtectedSession`・`establishSession`・`AuthProvider.check()`／`getIdentity()`）を描いている。v2.0.0 ではセッションの確定が SessionController に集約され、これらの旧 API は削除される予定（#260、[ADR-0016](./adr/0016-session-controller-single-writer.md)、設計は [session-controller-design.md](./session-controller-design.md)）。§2・§3 は、その実装-3 で新しい流れに描き直す。
+
 ## 目次
 
 1. [起動時の3環境と provider 選択](#1-起動時の3環境と-provider-選択)
@@ -254,11 +256,11 @@ flowchart LR
 
 ### 使い分け
 
-| 経路 | コマンド（要約） | mode | 向いていること |
-|---|---|---|---|
-| A | `pnpm dev` | `demo` | UI だけの高速イテレーション。Rust / Tauri 不要 |
-| B | `pnpm build` → `cargo run -p admin-template-core --bin banto-serve --features embed-ui` | `server` | LAN / REST を Tauri なしで確認。CI・コンテナ向き |
-| C | `pnpm --filter admin-template tauri dev` | `tauri` | 本番に近いデスクトップ。`invoke`・キーリング・LAN トグル |
+| 経路 | コマンド（要約）                                                                        | mode     | 向いていること                                           |
+| ---- | --------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------- |
+| A    | `pnpm dev`                                                                              | `demo`   | UI だけの高速イテレーション。Rust / Tauri 不要           |
+| B    | `pnpm build` → `cargo run -p admin-template-core --bin banto-serve --features embed-ui` | `server` | LAN / REST を Tauri なしで確認。CI・コンテナ向き         |
+| C    | `pnpm --filter admin-template tauri dev`                                                | `tauri`  | 本番に近いデスクトップ。`invoke`・キーリング・LAN トグル |
 
 ### 読み方
 
@@ -273,17 +275,17 @@ flowchart LR
 
 正式手順はリポジトリの `docs/recipes/add-resource.md`。ここでは [architecture-overview.md §3](./architecture-overview.md) の層に、チェックリストの各ステップがどこを触るかを対応づける索引。
 
-| # | レシピのステップ | 主に触る層 | 置き場の目安 |
-|---|---|---|---|
-| 1 | マイグレーション | 永続化（DB） | `core/migrations-sqlite/` + `migrations-postgres/` |
-| 2 | サービス層 | サービス | `core/src/<resource>.rs` |
-| 3 | REST ルート | wiring（REST） | `core/src/rest/<resource>.rs` + `rest/mod.rs` |
-| 4 | Tauri コマンド | wiring（Tauri） | `src-tauri/src/lib.rs` |
-| 5 | 両経路の認可対称テスト | wiring（両経路） | `rest/tests` / サービス・コマンドのテスト |
-| 6 | 監査イベント確認 | wiring | 同上（mutating のみ） |
-| 7 | リソース定義・スキーマ | UI + admin-core 契約 | `src/lib/banto/resources/` |
-| 8 | ページ・ナビ | UI | `routes/(app)/…`・`navigation.ts` |
-| 9 | ダッシュボード / CSV / e2e（任意） | UI + 検証 | `dashboard.ts`・e2e 等 |
+| #   | レシピのステップ                   | 主に触る層           | 置き場の目安                                       |
+| --- | ---------------------------------- | -------------------- | -------------------------------------------------- |
+| 1   | マイグレーション                   | 永続化（DB）         | `core/migrations-sqlite/` + `migrations-postgres/` |
+| 2   | サービス層                         | サービス             | `core/src/<resource>.rs`                           |
+| 3   | REST ルート                        | wiring（REST）       | `core/src/rest/<resource>.rs` + `rest/mod.rs`      |
+| 4   | Tauri コマンド                     | wiring（Tauri）      | `src-tauri/src/lib.rs`                             |
+| 5   | 両経路の認可対称テスト             | wiring（両経路）     | `rest/tests` / サービス・コマンドのテスト          |
+| 6   | 監査イベント確認                   | wiring               | 同上（mutating のみ）                              |
+| 7   | リソース定義・スキーマ             | UI + admin-core 契約 | `src/lib/banto/resources/`                         |
+| 8   | ページ・ナビ                       | UI                   | `routes/(app)/…`・`navigation.ts`                  |
+| 9   | ダッシュボード / CSV / e2e（任意） | UI + 検証            | `dashboard.ts`・e2e 等                             |
 
 ```mermaid
 flowchart LR
@@ -310,17 +312,17 @@ flowchart LR
 
 ## 関連ドキュメント（リポジトリ）
 
-| 用途 | パス |
-|---|---|
-| provider 契約 | `packages/admin-core/src/provider.ts` |
-| HTTP 認証実装 | `packages/admin-core/src/providers/http.ts` |
-| 組成・3環境 | `apps/admin-template/src/lib/banto/setup.ts` |
-| 埋め込みサーバ判定 | `apps/admin-template/src/lib/banto/environment.ts` |
-| ルートガード | `apps/admin-template/src/routes/(app)/+layout.ts` |
-| 初回シード | `apps/admin-template/core/src/first_boot.rs` |
-| ログイン／セットアップ UI | `apps/admin-template/src/routes/login/+page.svelte` |
-| ログイン無しレシピ | `docs/recipes/no-login-app.md` |
-| display 既定 | `docs/display-preset-plan.md` |
-| 開発コマンド | `README.md`「開発」「`banto-serve`」 |
-| CRUD 追加手順 | `docs/recipes/add-resource.md`（本ファイル §7 は層の索引） |
-| 閲覧公開計画 | `docs/viewer-public-plan.md` / `docs/adr/0012-lan-public-viewer-synthetic-session.md` |
+| 用途                      | パス                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------- |
+| provider 契約             | `packages/admin-core/src/provider.ts`                                                 |
+| HTTP 認証実装             | `packages/admin-core/src/providers/http.ts`                                           |
+| 組成・3環境               | `apps/admin-template/src/lib/banto/setup.ts`                                          |
+| 埋め込みサーバ判定        | `apps/admin-template/src/lib/banto/environment.ts`                                    |
+| ルートガード              | `apps/admin-template/src/routes/(app)/+layout.ts`                                     |
+| 初回シード                | `apps/admin-template/core/src/first_boot.rs`                                          |
+| ログイン／セットアップ UI | `apps/admin-template/src/routes/login/+page.svelte`                                   |
+| ログイン無しレシピ        | `docs/recipes/no-login-app.md`                                                        |
+| display 既定              | `docs/display-preset-plan.md`                                                         |
+| 開発コマンド              | `README.md`「開発」「`banto-serve`」                                                  |
+| CRUD 追加手順             | `docs/recipes/add-resource.md`（本ファイル §7 は層の索引）                            |
+| 閲覧公開計画              | `docs/viewer-public-plan.md` / `docs/adr/0012-lan-public-viewer-synthetic-session.md` |
