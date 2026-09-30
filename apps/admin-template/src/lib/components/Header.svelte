@@ -7,7 +7,7 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import * as m from '$lib/paraglide/messages';
-	import { logoutAndEndSession } from '$lib/banto/logout';
+	import { logoutAndLeave } from '$lib/banto/logout.svelte';
 	import { pageTitle } from '$lib/navigation';
 	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
@@ -54,21 +54,10 @@
 	} as const;
 
 	async function logout() {
-		// Issue #260 実装-2: leave the protected layout FIRST. Its generation
-		// check (`(app)/+layout.svelte`, wiring ①) re-runs the loads as soon
-		// as the logout changes the session, and SvelteKit lets such an
-		// invalidation win over a `goto` started right after it - with public
-		// viewing on, that re-run would mint a public-viewer session and keep
-		// this tab on the protected screen instead of /login. Navigating to
-		// /login is a forced navigation (`$lib/unsavedChanges.ts`), so it
-		// always happens.
-		await goto(`${base}/login`);
-		// Issue #215/#255: this tab's session is over - new session generation
-		// (a save still in flight can no longer write its marker) and the
-		// saved list view state goes with it - but only if no other session
-		// was confirmed while the logout was in flight (I-18/I-10, see
-		// `$lib/banto/logout.ts`). Same order in `commands.ts`.
-		await logoutAndEndSession();
+		// Issue #215/#255, #260 (I-18/I-10): log out, end this tab's session
+		// unless another one was confirmed meanwhile, then go to /login - see
+		// `$lib/banto/logout.svelte.ts` for the order. Same in `commands.ts`.
+		await logoutAndLeave(() => goto(`${base}/login`));
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two

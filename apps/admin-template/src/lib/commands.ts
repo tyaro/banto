@@ -17,7 +17,7 @@ import { goto } from '$app/navigation';
 import { base } from '$app/paths';
 import * as m from '$lib/paraglide/messages';
 import type { PaletteCommand } from '@banto/admin-core';
-import { logoutAndEndSession } from './banto/logout';
+import { logoutAndLeave } from './banto/logout.svelte';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
@@ -90,11 +90,8 @@ function sessionCommands(): PaletteCommand[] {
 			// login-not-required mode (spec M11 - there's no session to end).
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
-				// Issue #260 実装-2: /login first, then the logout - same order
-				// and reason as Header.svelte's logout.
-				await goto(`${base}/login`);
-				// Issue #215/#255, I-18/I-10: same as Header.svelte's logout.
-				await logoutAndEndSession();
+				// Issue #215/#255, #260: same as Header.svelte's logout.
+				await logoutAndLeave(() => goto(`${base}/login`));
 			}
 		}
 	];

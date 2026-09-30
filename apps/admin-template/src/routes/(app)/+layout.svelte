@@ -6,6 +6,7 @@
 	import { hasUnsavedChanges } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
+	import { isLoggingOut } from '$lib/banto/logout.svelte';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -55,10 +56,16 @@
 	// generation (a load that confirms the same generation again, or a slow
 	// one, does not stack them). The login target is a forced navigation for
 	// the unsaved-changes guard (`$lib/unsavedChanges.ts`).
+	// While this tab is logging out, no re-load: the logout goes to /login
+	// itself, and an invalidation started here would win over that
+	// navigation (`$lib/banto/logout.svelte.ts`). `isLoggingOut()` is
+	// reactive, so a generation change skipped meanwhile is handled once it
+	// ends if the layout is still mounted (a failed logout).
 	const sessionController = getSessionController();
 	let requestedFor = -1;
 	$effect(() => {
 		const generation = sessionController.snapshot.generation;
+		if (isLoggingOut()) return;
 		if (generation !== data.sessionGeneration && requestedFor !== generation) {
 			requestedFor = generation;
 			void invalidateAll();

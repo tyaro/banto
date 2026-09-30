@@ -1,7 +1,9 @@
 /**
- * Issue #260 実装-2 (independent audit P2-1): the logout goes to /login
- * first, so another login can be confirmed while the logout request is in
- * flight. The logout must then leave that session alone (S-17/S-51, I-18).
+ * Issue #260 実装-2: the logout (`logoutAndLeave`). Another session can be
+ * confirmed while the logout request is in flight (another tab's login);
+ * the logout must then leave it alone (S-17/S-51, I-18). And the login
+ * screen must not appear before the logout finished (CI of #265: a login
+ * submitted there lost the compare-and-set to the pending logout).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -17,7 +19,10 @@ import {
 	type Identity,
 	type ResolvedAuth
 } from '@banto/admin-core';
-import { logoutAndEndSession } from './logout';
+import { isLoggingOut, logoutAndLeave } from './logout.svelte';
+
+const goToLogin = vi.fn(async () => {});
+const logoutAndEndSession = () => logoutAndLeave(goToLogin);
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -132,6 +137,29 @@ describe('logoutAndEndSession (I-10, I-18)', () => {
 			generation
 		});
 		expect(loadListViewState(scope, 'items:server')).not.toBeNull();
+	});
+
+	it('the login screen is opened only after the logout finished; isLoggingOut() covers the whole sequence', async () => {
+		const p = standardProvider();
+		initBanto({ dataProvider: {} as DataProvider, authProvider: p.provider, resources: [] });
+		const first = resolveSettled(getSessionController());
+		p.active(ALICE);
+		await first;
+		goToLogin.mockClear();
+		const seen: boolean[] = [];
+		goToLogin.mockImplementationOnce(async () => {
+			seen.push(isLoggingOut());
+		});
+
+		const logout = logoutAndEndSession();
+		expect(isLoggingOut()).toBe(true);
+		await flush();
+		expect(goToLogin).not.toHaveBeenCalled(); // the logout request is still in flight
+		p.logoutGate.resolve();
+		await logout;
+		expect(goToLogin).toHaveBeenCalledTimes(1);
+		expect(seen).toEqual([true]);
+		expect(isLoggingOut()).toBe(false);
 	});
 
 	it('S-17: a provider that cannot report the logout (compatibility adapter) still ends the session', async () => {
