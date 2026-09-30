@@ -24,7 +24,6 @@
 	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
 	import { applyAuthSettings, type AuthDisabledRole } from '$lib/banto/authAdmin';
 	import { toastStore } from '$lib/toast.svelte';
-	import { sessionStore } from '$lib/session.svelte';
 	import { guardUnsavedChanges } from '$lib/unsavedChanges';
 	import { errorMessage } from './shared';
 	import { authSettingsStore, reloadAuthSettings } from './authSettingsStore.svelte';
@@ -93,7 +92,6 @@
 		applyingAuth = true;
 		try {
 			authSettingsStore.value = await applyAuthSettings(disabledDraft, disabledRoleDraft);
-			sessionStore.authDisabled = authSettingsStore.value?.disabled ?? false;
 			toastStore.push('success', m['settings.authSettingsUpdated']());
 			// Issue #214: the save is done - clear the unsaved state NOW, not
 			// after `invalidateAll()` below. Its `guardCategory` redirect (when
@@ -105,20 +103,20 @@
 
 			// Copilot review on PR #198: `settings/+layout.ts`'s visible-category
 			// snapshot (`categories`) is computed once from `sessionStore.authDisabled`
-			// at load time and does NOT rerun on its own when that flips here - left
-			// stale, a non-admin whose auth was just re-enabled would keep seeing the
-			// セキュリティ category in the nav (or the opposite: re-disabling it
-			// wouldn't restore it) until some unrelated navigation happened to
-			// reload the layout. `invalidateAll()` reruns every load() in the
-			// hierarchy - `(app)/+layout.ts` (session reload) -> `settings/+layout.ts`
-			// (categories, from the freshly-reloaded `sessionStore.authDisabled`) ->
-			// this route's own `+page.ts` (`guardCategory`, redirecting away if
-			// セキュリティ is no longer visible) - the same chain a fresh navigation
-			// to this URL would trigger. This is additive to, not a replacement for,
-			// the M11 escape-hatch flow: `sessionStore.authDisabled` above already
-			// flips synchronously so "disable auth, then the rest of the app (e.g.
-			// the dashboard) works without a restart" keeps working even before
-			// `invalidateAll()`'s own loads resolve.
+			// at load time and does NOT rerun on its own - left stale, a non-admin
+			// whose auth was just re-enabled would keep seeing the セキュリティ
+			// category in the nav (or the opposite: re-disabling it wouldn't restore
+			// it) until some unrelated navigation happened to reload the layout.
+			// `invalidateAll()` reruns every load() in the hierarchy -
+			// `(app)/+layout.ts` (the SessionController confirms the session again:
+			// the Rust side now answers `kind: 'local'` or `'account'`) ->
+			// `settings/+layout.ts` (categories, from `sessionStore.authDisabled`,
+			// which is derived from that confirmation) -> this route's own
+			// `+page.ts` (`guardCategory`, redirecting away if セキュリティ is no
+			// longer visible) - the same chain a fresh navigation to this URL would
+			// trigger. Issue #260 (S-61): `authDisabled` is no longer assigned here
+			// from the save's answer; it follows the confirmed session only, so a
+			// stale answer can never set it.
 			await invalidateAll();
 		} catch (err) {
 			// 排他違反（LANアクセス有効中の有効化など）はサーバ側の日本語メッセージ

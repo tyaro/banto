@@ -18,7 +18,7 @@
 	 *    verifiable here, verify on a machine with webkit2gtk.
 	 */
 	import { page } from '$app/state';
-	import { getAuthProvider } from '@banto/admin-core';
+	import { getSessionController, resolveSettled } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { bantoReady } from '$lib/banto/setup';
 	import { findPanelDef } from '$lib/banto/panels';
@@ -30,16 +30,17 @@
 	// 'unverified' (Issue #204): the server could not check the session (a
 	// 500 / unreachable). Not the same as logged out - say so, and keep the
 	// stored token for the next attempt (reopening the panel retries).
+	// Issue #260 (v2.0.0): confirmed through this window's SessionController
+	// (`resolveSettled` never rejects) - the provider has no `check()` any
+	// more.
 	let authState: 'checking' | 'ok' | 'unauthenticated' | 'unverified' = $state('checking');
 
 	$effect(() => {
 		void (async () => {
 			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
-			try {
-				authState = (await getAuthProvider().check()) ? 'ok' : 'unauthenticated';
-			} catch {
-				authState = 'unverified';
-			}
+			const result = await resolveSettled(getSessionController());
+			if (result.outcome === 'unverified') authState = 'unverified';
+			else authState = result.snapshot.status === 'active' ? 'ok' : 'unauthenticated';
 		})();
 	});
 

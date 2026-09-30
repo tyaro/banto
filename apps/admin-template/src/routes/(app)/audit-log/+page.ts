@@ -10,8 +10,8 @@ import { sessionStore } from '$lib/session.svelte';
  *
  * `await parent()` is required here for the same reason as the users page:
  * SvelteKit does not wait for an ancestor layout's `load()` to finish before
- * running this one unless asked to, and `(app)/+layout.ts` is what actually
- * populates `sessionStore`.
+ * running this one unless asked to, and `(app)/+layout.ts` is what confirms
+ * the session `sessionStore` is derived from (Issue #260).
  */
 export async function load({ parent }) {
 	await parent();

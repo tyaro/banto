@@ -54,9 +54,10 @@
 	} as const;
 
 	async function logout() {
-		// Issue #215/#255, #260 (I-18/I-10): log out, end this tab's session
-		// unless another one was confirmed meanwhile, then go to /login - see
-		// `$lib/banto/logout.svelte.ts` for the order. Same in `commands.ts`.
+		// Issue #215/#255, #260 (I-10): log out, confirm the session, and go
+		// to /login only when it is confirmed ended (another tab's login
+		// confirmed meanwhile stays) - see `$lib/banto/logout.svelte.ts` for
+		// the order. Same in `commands.ts`.
 		await logoutAndLeave(() => goto(`${base}/login`));
 	}
 

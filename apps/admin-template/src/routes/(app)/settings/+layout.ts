@@ -8,7 +8,7 @@ import { SETTINGS_CATEGORIES, type SettingsCategoryId } from './categories';
 /**
  * Visible-category subset for the whole `settings/` route group
  * (settings-routes step 2, choiapp-feedback-2026-09 §3.2). `await parent()`
- * guarantees `(app)/+layout.ts` has already populated `sessionStore` before
+ * guarantees `(app)/+layout.ts` has already confirmed the session `sessionStore` is derived from before
  * these visibility checks run - same ordering requirement as
  * `users/+page.ts` (see `session.svelte.ts`'s doc comment).
  *

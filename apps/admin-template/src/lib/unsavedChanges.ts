@@ -7,9 +7,10 @@
  *
  * Forced = the target is the login screen. Every path there means the
  * session is ending or already gone - logout (`Header.svelte` /
- * `commands.ts` log out first, then `goto('/login')`), or a session the
- * `(app)` guard could not confirm being redirected by `resolveProtectedSession`
- * (#204) after an `invalidateAll()`. Holding the user on a page whose
+ * `commands.ts` log out and confirm `none` first, then `goto('/login')`),
+ * `ownerChangePolicy: 'relogin'` (`$lib/banto/ownerChange.ts`), or the
+ * `(app)` guard redirecting a session it confirmed `none` (Issue #260) after
+ * an `invalidateAll()`. Holding the user on a page whose
  * session is gone would only strand them, so those never prompt. (A
  * redirect that happens INSIDE a navigation never reaches `beforeNavigate`
  * at all - SvelteKit skips it while navigating.)

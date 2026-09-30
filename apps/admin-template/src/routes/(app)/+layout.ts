@@ -2,71 +2,50 @@ import { error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import {
 	getAuthProvider,
-	resolveProtectedSession,
-	sessionGeneration,
-	type ProtectedSessionOutcome
+	getSessionController,
+	publicViewerFallback,
+	resolveSettled
 } from '@banto/admin-core';
 import * as m from '$lib/paraglide/messages';
 import { bantoReady } from '$lib/banto/setup';
 import { syncLocaleFromProvider } from '$lib/banto/locale';
-import { sessionStore } from '$lib/session.svelte';
 import { settings } from '$lib/settings.svelte';
 import { publicNavItems } from '$lib/navigation';
 
-// Auth guard for the whole (app) group (spec §8.1), backed by
-// AuthProvider.check() (spec §3.3). Must wait for provider
-// selection/detection (spec §11.1's three-way environment probe) to finish
-// before getAuthProvider() is safe to call.
+// Auth guard for the whole (app) group (spec §8.1), Issue #260 (design
+// §6.1, v2.0.0): the session is confirmed by the SessionController - the
+// only writer of "who is signed in" (ADR-0016). This load's only side
+// effects are the controller's confirmation and, for a confirmed `none`,
+// the public-viewer policy's mint; it writes no store (`sessionStore` is
+// derived from `controller.snapshot`). Must wait for provider
+// selection/detection (spec §11.1's three-way environment probe) first.
 //
-// M10 RBAC: also populates `sessionStore` (identity + role) here, right
-// after the session is confirmed valid, so every page/component under (app)
-// can read `sessionStore.role` synchronously - see session.svelte.ts's doc
-// comment for the ordering guarantee this relies on.
-//
-// viewer-public-plan §3.1-6 (ADR-0012): when there is no valid session at
-// all, a LAN client is not immediately bounced to /login anymore - if
-// `server.viewerPublic` is ON, `enterPublicViewer()` mints the synthetic
-// `{id:'public',role:'viewer'}` session over the SAME bearer-token path
-// every other session uses (no new auth route, no provider-layer branching -
-// conventions §10). Only the HTTP provider implements `status()`'s
-// `viewerPublic` field and `enterPublicViewer()`; Tauri/demo leave both
-// undefined, so `status?.()`/`enterPublicViewer?.()` fall through to
-// `undefined`/`false` there and the guard behaves exactly as before.
-//
-// Issue #204: `resolveProtectedSession` only falls through to the
-// public-viewer entry / login screen when the session is CONFIRMED invalid.
-// When it could not be verified (the server's account check failed with a
-// 500, or the server is unreachable) the guard stops with an error page that
-// offers a retry (`routes/+error.svelte`) - the stored token (Remember me
-// included) is kept, and the session resumes once the server answers.
+// - `resolveSettled()` asks again after `superseded` and returns only
+//   `confirmed` or `unverified` (I-16). `unverified` - the server could not
+//   verify the session (Issue #204: a 500 / unreachable), or it kept
+//   changing, or the 10 s deadline passed - is the retryable error page
+//   (`routes/+error.svelte`): nothing is cleared, the stored token (Remember
+//   me included) is kept, and "再試行" re-runs this load (S-36/S-60: after a
+//   switch of user it is NOT left automatically).
+// - viewer-public-plan §3.1-6 (ADR-0012): a CONFIRMED `none` goes through
+//   `publicViewerFallback` - when `server.viewerPublic` is ON it mints the
+//   synthetic `{id:'public',role:'viewer'}` session bound to this
+//   confirmation's ticket (S-42/S-52) and confirms it. Its result is handled
+//   the same way: `unverified` is the error page, not /login (S-66); only a
+//   confirmed `none` goes to /login. Only the HTTP provider implements
+//   `status()`'s `viewerPublic` and `enterPublicViewer()`; Tauri/demo go
+//   straight to /login.
 export async function load({ url }) {
 	await bantoReady;
-	const authProvider = getAuthProvider();
-	let outcome: ProtectedSessionOutcome;
-	try {
-		outcome = await resolveProtectedSession(authProvider);
-	} catch {
-		error(503, {
-			message: `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`
-		});
+	const controller = getSessionController();
+	let result = await resolveSettled(controller, { cause: 'navigation' });
+	if (result.outcome === 'unverified') sessionCheckFailed();
+	if (result.snapshot.status === 'none') {
+		result = await publicViewerFallback(controller, getAuthProvider(), result.ticket);
+		if (result.outcome === 'unverified') sessionCheckFailed();
+		if (result.snapshot.status !== 'active') redirect(307, `${base}/login`);
 	}
-	if (outcome === 'login') {
-		redirect(307, `${base}/login`);
-	}
-	// Issue #215/#255 6th review: the identity of a confirmed session could
-	// not be fetched (the server failed or could not be reached - the
-	// `AuthProvider.getIdentity` contract), or the session kept changing
-	// under the request: same retryable error page as a failed check, and
-	// nothing about the session (owner, generation, saved list state) was
-	// changed.
-	let generation: number | null;
-	try {
-		generation = await sessionStore.load();
-	} catch {
-		error(503, {
-			message: `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`
-		});
-	}
+	const snapshot = result.snapshot;
 
 	// viewer-public-plan §3.1-6: a public-viewer session may only browse the
 	// nav allowlist (`navigation.ts`'s `NavItem.publicViewer`) - RBAC's
@@ -74,7 +53,7 @@ export async function load({ url }) {
 	// this only keeps the SCREEN a bookmarked/typed URL lands on inside the
 	// allowed area, same intent as `users/+page.ts`'s own role redirect but
 	// applied to every path under (app) at once.
-	if (sessionStore.publicViewer) {
+	if (snapshot.kind === 'publicViewer') {
 		const pathname = url.pathname.startsWith(base) ? url.pathname.slice(base.length) : url.pathname;
 		const allowed = publicNavItems().some(
 			(item) => pathname === item.path || pathname.startsWith(item.path + '/')
@@ -93,14 +72,18 @@ export async function load({ url }) {
 	void settings.syncFromProvider();
 	void syncLocaleFromProvider();
 
-	// Issue #215/#255: the session generation this load confirmed (after
-	// `sessionStore.load()`'s `establishSession`). `+layout.svelte` renders the
-	// page only while it is still the live generation and rebuilds the page
-	// when it changes - see the comment there.
-	// 6th review: the generation `sessionStore.load()` established, not a
-	// `sessionGeneration()` read now - after the awaits above another session
-	// may already have begun, and this load's data belongs to the earlier
-	// one (the gate then hides it until that session's own load completes).
-	// `null` = a newer load superseded this one (its navigation is discarded).
-	return { sessionGeneration: generation ?? sessionGeneration() };
+	// The generation THIS load confirmed (I-16) - never a `snapshot.generation`
+	// read now: after the awaits above another session may already have been
+	// confirmed, and this load's data belongs to the earlier one.
+	// `+layout.svelte` renders the page only while it is still the live
+	// generation (the generation gate) and re-runs the loads when it is not
+	// (wiring ①).
+	return { sessionGeneration: snapshot.generation };
+}
+
+/** The retryable error page (Issue #204): the session could not be verified. */
+function sessionCheckFailed(): never {
+	error(503, {
+		message: `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`
+	});
 }
