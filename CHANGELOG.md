@@ -47,7 +47,11 @@
   （`snapshot.generation !== data.sessionGeneration` なら `invalidateAll()`、同じ generation に二重に出さない）に
   置き換えた（配線①。none を経ない切り替え S-79・同じユーザーの再ログイン S-80 でも画面を作り直す）。ログアウト
   （`Header.svelte`・コマンドパレット）は先に `/login` へ移ってからログアウトする（配線①の再 load が公開閲覧を
-  発行して遷移を上書きしないように）。
+  発行して遷移を上書きしないように）。`endSession()` はログアウトの前に取った ticket が current のときだけ呼ぶ
+  （その間にログイン画面で確定した別のセッションを終わらせない）。
+  **派生アプリへの申し送り**: 保護レイアウトに配線①（`getSessionController().snapshot.generation` と `load` が
+  返した generation の照合 → `invalidateAll()`）を入れること。`onSessionEnded` だけでは、別タブのログインなど
+  unknown → active（none を経ない）の切り替えで世代ゲートが画面を隠したままになる。
 - feat(admin-core, admin-template): SessionController 実装-1（#260、provider とバックエンド。
   [docs/session-controller-design.md](docs/session-controller-design.md) §7.1）。
   **追加 API**（すべて追加。v1.x では任意）: `AuthProvider.resolve({ signal })`（1 往復で

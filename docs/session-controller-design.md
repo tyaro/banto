@@ -1,6 +1,6 @@
 # SessionController 設計（Issue #260）
 
-- 状態: 設計確定・実装中（実装-1 完了（#264）、実装-2 = controller と配線①を実装中（この PR）、実装-3 は未着手。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映。§10 の宿題 2 件は実装-2 で決定、2026-09-30）
+- 状態: 設計確定・実装中（実装-1 完了（#264）、実装-2 = controller と配線①を実装中（この PR）、実装-3 は未着手。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映。§10 の宿題 2 件は実装-2 で決定、2026-09-30。ADR-0016 は Proposed のまま、実装-3（v2.0.0）の PR で Accepted にする）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#258・#259・#241・#204 / ADR-0016 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
@@ -951,7 +951,7 @@ function bumpLocal(): void {
 | `ProtectedSessionOutcome`                                                                            | **削除**                                                                                                                                                                                                                                           | `resolveProtectedSession` と一緒                                                    |
 | `AuthProvider.check` / `getIdentity`                                                                 | **契約から削除**（`LegacyAuthProvider` と互換 adapter にだけ残る）                                                                                                                                                                                 | controller が呼ばない（§5.2）                                                       |
 | `AuthProvider.enterPublicViewer`                                                                     | **形を変える**（`(options?) => Promise<{ success, superseded? }>`）                                                                                                                                                                                | ticket に結び付けた発行（S-52）                                                     |
-| `onSessionEnded`                                                                                     | **残す**: `subscribe` の上の薄い関数（active/unknown → none の遷移を通知。**購読した時点で `snapshot.status === 'none'` なら非同期に 1 回通知**。再 probe はしない）。独自のカウンタは持たず controller に委譲。実装-2 で入れ、v2 でもそのまま残す | アプリの `invalidateAll()` 配線がそのまま使える。mount 前の終了も拾う（S-34・S-74） |
+| `onSessionEnded`                                                                                     | **残す**: `subscribe` の上の薄い関数（active/unknown → none の遷移を通知。**購読した時点で `snapshot.status === 'none'` なら非同期に 1 回通知**。再 probe はしない）。独自のカウンタは持たず controller に委譲。実装-2 で入れ、v2 でもそのまま残す。**これだけでは none を経ない切り替え（別タブのログインの unknown → active、S-79・S-80）を拾えない**ので、保護レイアウトには配線①（generation の照合 → `invalidateAll()`）が要る | アプリの `invalidateAll()` 配線がそのまま使える。mount 前の終了も拾う（S-34・S-74） |
 | `sessionGeneration`・`currentSessionScope`・`isCurrentSessionScope`・`isSessionEstablished`          | **残す**: 既定の controller の `snapshot`/`scope()`/`isCurrent()` への委譲。読み取りだけ                                                                                                                                                           | `listViewState` と画面の書き込み条件が使う。意味は変わらない                        |
 | `sessionOwnerKey`                                                                                    | **残す**。`kind` ごとの名前空間を足す（`publicViewer` は `public-viewer` のまま、`local` は `local`、adopt は `${kind}:${id}`）。`kind` を返さない provider の答えは `identity.publicViewer` から導く（実装-2、§10 (b)・S-87）                                                                                                                    | 保存状態の互換。`account:0` との衝突を避ける（統合修正 13）                         |
 
@@ -1013,6 +1013,11 @@ function bumpLocal(): void {
   	ticket = result.ticket;
   }
   ```
+
+  実装-2 の実装では、発行の**純粋な失敗**（403・通信の失敗。`success: false` かつ `superseded` でない）のとき、
+  ticket がまだ current なら最後の `resolveSettled` を省いて確定済みの `none` をそのまま返す。安全である理由:
+  ticket が current ⇒ epoch も revision も動いていない（provider はトークンを書いていない）。発行の最中にトークンが
+  現れていれば provider が `superseded` を返すので、この近道には入らない。
 
   この再試行は、今の `resolveProtectedSession` の `continue`（上限 `MAX_STALE_RETRIES`）と同じ役割
   （#264 再レビュー）。これが無いと、ticket の作成後に現れた失効トークンを `resolveSettled` が消して
@@ -1098,6 +1103,7 @@ function bumpLocal(): void {
 | unknown への保留                                      | —                                                       | 保持                                    | —                                                | S-81（500 の間）      |
 | 同じユーザー（B）の再確認                             | —                                                       | 保持（上書きしない）                    | —                                                | S-81                  |
 | 別のユーザー（C）の確定（B を処理する前）             | `{ from: A, to: C }` に置き換える（最初の from を保つ） | —                                       | —                                                | —                     |
+| 元のユーザー（A）の確定（A → B を処理する前、A → B → A） | 未処理の変更を**消す**（`from === to` は「ユーザーは変わっていない」。`{ A → A }` を通知しない、実装-2） | —                                       | null に戻る                                      | —                     |
 | **none の確定**                                       | —                                                       | —                                       | **破棄**（セッションの終了を越えて持ち越さない） | S-83                  |
 | レイアウトの mount                                    | —                                                       | —                                       | 処理して `acknowledgeOwnerChange()`              | S-81                  |
 | レイアウトの unmount（503 画面へ）                    | —                                                       | 保持（controller にあるので）           | —                                                | S-81                  |
@@ -1117,7 +1123,7 @@ A′ 案のとおり、**候補版で検証したうえで、正式版への参�
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/*/src/lib/session.svelte.ts` の `load()`                                | 削除。`identity`/`role`/`authDisabled` は `getSessionController().snapshot` からの `$derived`                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `apps/*/src/lib/banto/sessionGuard.ts`                                        | `resolveProtectedSession` → `resolveSettled(controller)`。`'unverified'` は `outcome === 'unverified'`、`'login'` は `confirmed && status === 'none'`                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/*/src/routes/(app)/+layout.ts`                                          | §6.1 の形（公開閲覧の fallback は両アプリとも無い）。返す generation はこの `load` で確認できたものだけ                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `apps/*/src/routes/(app)/+layout.ts`                                          | §6.1 の形（公開閲覧の fallback は両アプリとも無い）。返す generation はこの `load` で確認できたものだけ。**保護レイアウト（`+layout.svelte`）には配線①（generation の照合 → `invalidateAll()`）を必ず入れる**: `onSessionEnded` だけでは、別タブのログインなど none を経ない切り替えで世代ゲートが画面を隠したままになる（実装-2 の CHANGELOG と同じ申し送り）                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | banto-hub `sessionStore.enterCommissioningMode()`                             | **試運転の policy runner**（下）に置き換える。`adopt()` を使うのはこれだけ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | banto-hub `sessionRecheck.ts`                                                 | `recheckSessionAfterStreamClose` → `controller.signal('app:stream-closed')` + `invalidateAll()`。`probeSessionAfterReconnectFailures` → **`kind === 'commissioning'` なら試運転の policy runner を先に走らせ**（統合修正 7）、そうでなければ `resolveSettled(controller, { cause: 'signal' })`（要求自体が signal の stamp を進める、S-58）。結果を `SessionProbeResult` に写す（`confirmed/none → 'login'`、`confirmed/active → 'session'`、`unverified → 'unverified'`）。独自の token 照合・single-flight・期限・`/api/auth/check` の直接 `fetch` は削除 |
 | banto-hub `(app)/+layout.svelte`・`monitor/+page.svelte`                      | §6.1 の 3 本の配線（世代の照合 → 再 load、owner → 通知、unverified → 再試行）                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -1601,6 +1607,9 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   場合に、次の probe が失敗しても A が active に残らない、S-85）。provider がデータ系コマンドの失効系エラーで
   `observe`/`bumpLocal` する案は、全コマンドの呼び出し口に手を入れるうえ、エラーの本体に `seq` が無いので
   `bumpLocal`（通知 → 保留）しかできず、controller 側の対処と重複するので採らない（必要なら別 issue）。
+  数え方の統一（独立監査 P3-1）: **捨てた答え**からの出し直し（`reissue`）だけが `+1`。新しい出来事（signal・資格情報の
+  変化・`end()`・合流できない要求）による在中 probe の置き換えは、`staleCount` と `catchUpUsed` を**そのまま引き継ぐ**
+  （数えず、追いつきの無償の枠も増やさない。`kickBackground` と `resolve()` の手順 2 で同じ規則）。
 - **（実装-2 で決定、2026-09-30）** HTTP と互換 adapter の `resolve()` は `kind` を返さない（実装-1）。publicViewer の `kind` の決め方
   （`identity.publicViewer` から導くか、provider が返すか）は実装-2 で詰める。
   **決定**: controller が答えから導く（provider は変えない）。`identity.publicViewer === true` なら `publicViewer`
@@ -1615,8 +1624,17 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   ログアウトしたタブがログイン画面ではなく公開閲覧の画面に残った（E2E `public-viewer` 5a で検出）。実装-2 では
   `Header.svelte`・`commands.ts` のログアウトを「**先に `goto('/login')`（強制ナビゲーション）→ `logout()` →
   `endSession()`**」の順にして、配線①が見えない状態（保護レイアウトが unmount 済み）で session を変えるようにした。
+  先に遷移するとログイン画面で別のログイン（B）が確定しうるので、`endSession()` は logout の**前に取った ticket**が
+  current のときだけ呼ぶ（`$lib/banto/logout.ts`、`try/finally` で logout の reject も同じ扱い。標準 provider では
+  自分の消去の通知で保留に入り ticket は失効する＝controller が自分で none を確定し、`endSession()` が走るのは
+  互換 adapter のときだけ。I-18・I-10、独立監査 P2-1）。
   §6.1 の v2 の形（`await provider.logout(); await resolveSettled(); goto(login)`）も同じ競合を持つので、
-  実装-3 で同じ順序にするか、配線①に「ログアウト中は出さない」手段を足すかを決める。
+  実装-3 で同じ順序にするか、配線①に「ログアウト中は出さない」手段を足すかを決める。独立監査の代案: 配線①が
+  ログアウト中（`sessionStore.loggingOut` などのフラグ）は `invalidateAll()` を出さないことで、§6.1 の
+  logout → `resolveSettled` → `goto` の順序を保つ。
+- **（実装-3 以降の改善候補、独立監査 P3-4）** `StaleAnswerError`（pending の操作をまたいだ答え）で即座に出し直すと、
+  操作が pending の間は出し直しのたびに同じ理由で捨てられ、`maxStaleRetries` を往復で消費しうる。操作の完了
+  （`onCredentialChanged`）を待ってから出し直す、などを検討する。
 - **（実装-2 の実装上の判断）** `SessionSnapshot.verification.state` の `'verifying'` は publish しない
   （probe の開始で立てると、捨てた probe が `verification` を触らないという S-56 の約束と両立しない）。
   `resolve()` の options に `signal`（待機者の離脱）を足した（§5.1。`resolveSettled` の `deadlineMs` が使う）。
