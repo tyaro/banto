@@ -18,7 +18,14 @@
  * particular fetch global - both are injectable so this module (and its
  * tests) run with a mocked `fetchFn` and no real network.
  */
-import type { AuthProvider, DataProvider, Identity } from '../provider';
+import type {
+	AuthOperationResult,
+	CredentialRevision,
+	DataProvider,
+	Identity,
+	ResolvedAuth,
+	StandardAuthProvider
+} from '../provider';
 import type { ListParams, ListResult } from '../types';
 import { ProviderError, type ErrorBody } from '../errors';
 
@@ -153,6 +160,16 @@ export interface HttpAuthProviderOptions {
 
 const DEFAULT_STORAGE_KEY = 'banto.auth.token';
 
+/** `LoginResult.error` when a login/setup was superseded (Issue #260). */
+const SUPERSEDED_MESSAGE = '別のセッションが先に確定したため、このログインは適用されませんでした';
+
+/** Does `value` look like a wire `Identity` (`GET /api/auth/identity`'s 200 body)? */
+function isIdentity(value: unknown): value is Identity {
+	if (typeof value !== 'object' || value === null) return false;
+	const { id, name } = value as { id?: unknown; name?: unknown };
+	return typeof id === 'string' && typeof name === 'string';
+}
+
 /**
  * `AuthProvider` backed by `fetch()` against `/api/auth/*` (spec §11.1/
  * §11.2/M11). The bearer token returned by a successful login is normally
@@ -167,13 +184,53 @@ const DEFAULT_STORAGE_KEY = 'banto.auth.token';
  * The returned object exposes `getToken()` beyond the plain `AuthProvider`
  * interface so `createHttpDataProvider`/`createSseEventProvider` can share
  * the same token without a second source of truth.
+ *
+ * Issue #260 (docs/session-controller-design.md §5.2): the provider keeps a
+ * `credentialRevision()` - an in-memory counter that advances on every
+ * change it makes to the stored token and on every cross-tab `storage`
+ * event for `storageKey` - and:
+ * - `resolve()` answers the session with ONE `GET /api/auth/identity`;
+ * - every token write is compare-and-set against the revision the
+ *   operation started from (`login`/`setup`/`logout`, and
+ *   `enterPublicViewer`'s `expectRevision`, #259) AND the stored token read
+ *   when it started (PR #264 review P2: another tab's write is visible in
+ *   `localStorage` before its `storage` event advances the revision here) -
+ *   an operation overtaken by another login/logout (here or in another tab)
+ *   writes nothing;
+ * - `onCredentialChanged` listeners hear every revision change except
+ *   `resolve()`'s own clearing, which its answer carries instead.
  */
 export function createHttpAuthProvider(
 	options: HttpAuthProviderOptions = {}
-): AuthProvider & { getToken(): string | null } {
+): StandardAuthProvider & { getToken(): string | null } {
 	const baseUrl = options.baseUrl ?? '';
 	const fetchFn = options.fetchFn ?? fetch;
 	const storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
+
+	/** The revision counter (I-23): `${counter}.0` is the opaque value handed out. */
+	let counter = 0;
+	const listeners = new Set<() => void>();
+
+	function revisionOf(value: number): CredentialRevision {
+		return `${value}.0` as CredentialRevision;
+	}
+
+	function emitCredentialChanged(): void {
+		for (const listener of [...listeners]) listener();
+	}
+
+	// Another tab changed the shared (Remember me) token (#257): only events
+	// for this provider's key count - `key === null` is `localStorage.clear()`,
+	// which removes it too. Not reported for this tab's own writes (browsers
+	// fire `storage` only in OTHER documents).
+	if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+		window.addEventListener('storage', (event) => {
+			const key = (event as { key?: string | null }).key;
+			if (key !== storageKey && key !== null) return;
+			counter += 1;
+			emitCredentialChanged();
+		});
+	}
 
 	function getToken(): string | null {
 		return localStorage.getItem(storageKey) ?? sessionStorage.getItem(storageKey);
@@ -195,6 +252,57 @@ export function createHttpAuthProvider(
 		}
 	}
 
+	/**
+	 * `setToken` and advance the revision if the stored token actually
+	 * changed. Returns whether it did. Callers decide whether to notify.
+	 */
+	function writeToken(token: string | null, remember = false): boolean {
+		const before = getToken();
+		setToken(token, remember);
+		if (getToken() === before) return false;
+		counter += 1;
+		return true;
+	}
+
+	/** What a token-writing operation compares against when it writes. */
+	interface OperationStart {
+		revision: CredentialRevision;
+		/** `getToken()` when the operation started. */
+		token: string | null;
+	}
+
+	/**
+	 * Record an operation's start: the revision (or the caller's
+	 * `expectRevision`) and the stored token, both read NOW.
+	 */
+	function startOperation(expectRevision?: CredentialRevision): OperationStart {
+		return { revision: expectRevision ?? revisionOf(counter), token: getToken() };
+	}
+
+	/**
+	 * Compare-and-set write (Issue #260, I-7): store `token` only while the
+	 * revision is still the start's AND the stored token is still the one
+	 * read at the start, and notify when the stored token changed. Returns
+	 * whether both matched.
+	 *
+	 * The token condition (PR #264 review P2) closes the window in which
+	 * another tab already rewrote the shared `localStorage` token but its
+	 * `storage` event (which is what advances the revision here) has not
+	 * been delivered yet: the revision alone would still match and this
+	 * stale operation would overwrite - or, for a logout, delete - the other
+	 * tab's token.
+	 */
+	function writeTokenIfUnchanged(
+		start: OperationStart,
+		token: string | null,
+		remember = false
+	): boolean {
+		if (revisionOf(counter) !== start.revision) return false;
+		if (getToken() !== start.token) return false;
+		if (writeToken(token, remember)) emitCredentialChanged();
+		return true;
+	}
+
 	function headers(hasBody: boolean): Record<string, string> {
 		return headersFor(getToken(), hasBody);
 	}
@@ -202,10 +310,12 @@ export function createHttpAuthProvider(
 	/**
 	 * Clear the stored token only if it is still `token` (compare-and-clear).
 	 * A confirmation that arrives after the user logged in again must not wipe
-	 * the NEW token - the answer is about the token that was checked.
+	 * the NEW token - the answer is about the token that was checked. Returns
+	 * whether it cleared (the revision then advanced).
 	 */
-	function clearTokenIfCurrent(token: string): void {
-		if (getToken() === token) setToken(null);
+	function clearTokenIfCurrent(token: string): boolean {
+		if (getToken() !== token) return false;
+		return writeToken(null);
 	}
 
 	/** One `/api/auth/check` for `token`; see `check()` below. */
@@ -220,7 +330,9 @@ export function createHttpAuthProvider(
 			throw networkError();
 		}
 		if (response.status === 401) {
-			clearTokenIfCurrent(token);
+			// Issue #260: the legacy check's clear is a change nobody's answer
+			// carries - report it (only when it actually cleared).
+			if (clearTokenIfCurrent(token)) emitCredentialChanged();
 			return false;
 		}
 		if (!response.ok) throw await errorFromResponse(response);
@@ -232,12 +344,13 @@ export function createHttpAuthProvider(
 				message: `${response.status} ${response.statusText}`
 			});
 		}
-		if (!valid) clearTokenIfCurrent(token);
+		if (!valid && clearTokenIfCurrent(token)) emitCredentialChanged();
 		return valid;
 	}
 
 	return {
-		async login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+		async login(params: Record<string, unknown>): Promise<AuthOperationResult> {
+			const start = startOperation();
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/login`, {
@@ -253,18 +366,35 @@ export function createHttpAuthProvider(
 				return { success: false, error: err.message };
 			}
 			const body = (await response.json()) as { success: boolean; error?: string; token?: string };
-			if (body.success && body.token) setToken(body.token, params.remember === true);
+			if (body.success && body.token) {
+				// Issue #260 (S-40): a login/logout that finished while this one
+				// was in flight (here or in another tab) wins - do not overwrite.
+				if (!writeTokenIfUnchanged(start, body.token, params.remember === true)) {
+					return { success: false, error: SUPERSEDED_MESSAGE, superseded: true };
+				}
+			}
 			return { success: body.success, error: body.error };
 		},
 
+		/**
+		 * `POST /api/auth/logout` with the token held when the logout started
+		 * (Issue #260), then clear the stored token - even when the request
+		 * failed, since the goal is "this client no longer considers itself
+		 * logged in" - but only if no other login/logout changed it meanwhile
+		 * (S-21: a login that finished during the logout keeps its token -
+		 * including another tab's whose `storage` event has not arrived yet).
+		 */
 		async logout(): Promise<void> {
+			const start = startOperation();
 			try {
-				await fetchFn(`${baseUrl}/api/auth/logout`, { method: 'POST', headers: headers(false) });
+				await fetchFn(`${baseUrl}/api/auth/logout`, {
+					method: 'POST',
+					headers: headersFor(start.token, false)
+				});
 			} catch {
-				// Network failure on logout still clears the local token below -
-				// the goal is "this client no longer considers itself logged in".
+				// Network failure on logout still clears the local token below.
 			}
-			setToken(null);
+			writeTokenIfUnchanged(start, null);
 		},
 
 		/**
@@ -312,6 +442,63 @@ export function createHttpAuthProvider(
 			return (await response.json()) as Identity | null;
 		},
 
+		/**
+		 * Issue #260 (design §2.1, decision 3): ONE `GET /api/auth/identity`
+		 * for the token held on entry. `200` with an identity -> `active`;
+		 * `200 null` (no token, or a revoked one - a role change included) or
+		 * `401` -> `none`, clearing THAT token if it is still stored
+		 * (compare-and-set; carried in `current`, not notified); anything else
+		 * (a `500`, unreachable, a malformed body) rejects with a
+		 * `ProviderError` and changes nothing.
+		 */
+		async resolve(resolveOptions?: { signal?: AbortSignal }): Promise<ResolvedAuth> {
+			const checked = revisionOf(counter);
+			const token = getToken();
+			if (!token) return { status: 'none', checked, current: checked };
+			let response: Response;
+			try {
+				response = await fetchFn(`${baseUrl}/api/auth/identity`, {
+					method: 'GET',
+					headers: headersFor(token, false),
+					signal: resolveOptions?.signal
+				});
+			} catch {
+				throw networkError();
+			}
+			const none = (): ResolvedAuth => ({
+				status: 'none',
+				checked,
+				current: clearTokenIfCurrent(token) ? revisionOf(counter) : checked
+			});
+			if (response.status === 401) return none();
+			if (!response.ok) throw await errorFromResponse(response);
+			let body: unknown;
+			try {
+				body = await response.json();
+			} catch {
+				body = undefined;
+			}
+			if (body === null) return none();
+			if (!isIdentity(body)) {
+				throw new ProviderError({
+					kind: 'other',
+					message: `${response.status} ${response.statusText}`
+				});
+			}
+			return { status: 'active', checked, current: checked, identity: body };
+		},
+
+		credentialRevision(): CredentialRevision {
+			return revisionOf(counter);
+		},
+
+		onCredentialChanged(listener: () => void): () => void {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+
 		async status(): Promise<{ initialized: boolean; viewerPublic?: boolean }> {
 			let response: Response;
 			try {
@@ -336,7 +523,8 @@ export function createHttpAuthProvider(
 			return { initialized: body.initialized, viewerPublic: body.viewerPublic ?? false };
 		},
 
-		async setup(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
+			const start = startOperation();
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/setup`, {
@@ -352,7 +540,11 @@ export function createHttpAuthProvider(
 				return { success: false, error: firstValidationMessage(err) };
 			}
 			const body = (await response.json()) as { success: boolean; error?: string; token?: string };
-			if (body.success && body.token) setToken(body.token);
+			if (body.success && body.token) {
+				if (!writeTokenIfUnchanged(start, body.token)) {
+					return { success: false, error: SUPERSEDED_MESSAGE, superseded: true };
+				}
+			}
 			return { success: body.success, error: body.error };
 		},
 
@@ -386,23 +578,44 @@ export function createHttpAuthProvider(
 		 * normal login's is (`setToken`, `remember: false` - sessionStorage
 		 * only, viewer-public-plan §3.1-6 "Remember me は適用しない"). Never
 		 * throws: a 403 (viewerPublic OFF) or a network failure both resolve
-		 * `false` so the route guard can fall back to `/login`.
+		 * `{ success: false }` so the route guard can fall back to `/login`.
+		 *
+		 * Issue #260 (#259, S-20/S-52): stored only while the revision is still
+		 * `expectRevision` (default: the revision when this call started) AND
+		 * no token is stored - checked both when this call starts and right
+		 * before the write, with or without `expectRevision` (PR #264 review
+		 * P2 / re-review P1). A public-viewer session is only ever minted for
+		 * "no credential at all": a token already present at the start - e.g.
+		 * another tab's, written after the caller's `resolve()`/ticket but
+		 * before its `storage` event advanced the revision here - means
+		 * `{ success: false, superseded: true }` without a request, and so does
+		 * one that appears while the request is in flight. The caller then
+		 * checks that token (`resolveProtectedSession` re-runs `check()`,
+		 * which clears a revoked one, within its bounded retry loop).
 		 */
-		async enterPublicViewer(): Promise<boolean> {
+		async enterPublicViewer(pvOptions?: {
+			expectRevision?: CredentialRevision;
+		}): Promise<{ success: boolean; superseded?: boolean }> {
+			const start = startOperation(pvOptions?.expectRevision);
+			if (start.token !== null) return { success: false, superseded: true };
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/public-viewer`, {
 					method: 'POST',
-					headers: headers(false)
+					headers: headersFor(null, false)
 				});
 			} catch {
-				return false;
+				return { success: false };
 			}
-			if (!response.ok) return false;
+			if (!response.ok) return { success: false };
 			const body = (await response.json()) as { success: boolean; token?: string };
-			if (!body.success || !body.token) return false;
-			setToken(body.token, false);
-			return true;
+			if (!body.success || !body.token) return { success: false };
+			// `start.token` is null here: the write needs the revision to match
+			// AND `getToken() === null`.
+			if (!writeTokenIfUnchanged(start, body.token, false)) {
+				return { success: false, superseded: true };
+			}
+			return { success: true };
 		},
 
 		getToken

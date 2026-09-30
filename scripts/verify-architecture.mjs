@@ -343,6 +343,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		'auth_check',
 		'auth_config_get',
 		'auth_identity',
+		'auth_resolve',
 		'auth_status',
 		'backups_list',
 		'backups_pending',

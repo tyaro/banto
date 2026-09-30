@@ -1,6 +1,6 @@
 # SessionController 設計（Issue #260）
 
-- 状態: 設計案（実装前。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映）
+- 状態: 設計確定・実装中（実装-1 = provider と Rust の変更を実装中の PR。実装-2/3 は未着手。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#258・#259・#241・#204 / ADR-0016 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
@@ -257,11 +257,11 @@ Tauri のコマンドにも持ち込む。
 | I-16 | **確認していない generation を画面に渡さない**: `superseded` を受けた呼び出し元は、その要求で**実際に確認できた**結果の generation しか返せない。今の generation を代わりに返さない。旧 owner のページデータを新しい世代へ引き継がない                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 決定 5                                      |
 | I-17 | **別タブの切り替えの処理は、共有のトークンを消さず、他のタブをログアウトさせない**: 資格情報の変化を検知したタブがすることは、旧画面の操作を止める → 新しいセッションを確認する → 変更が確認できたら通知して作り直す（または、注入された方針でログインへ移す）まで。トークンの消去は provider の `resolve()` が `none` を確定したときの compare-and-set だけ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 決定 8                                      |
 | I-18 | **ticket の原則**: 非同期の判定・操作は開始時に ticket（controller: epoch/revision/signal、provider: revision、方針: `SessionTicket`、Rust: `seq`）を取り、最後まで持ち回り、適用の直前に同期で照合する。照合と適用の間に `await` を置かない。照合に失敗した結果は捨てる                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | §2.3、レビュー 1〜5                         |
-| I-19 | **資格情報の変化の通知は、追加の確認の成功に依存せず、revision が変わったときだけ出す**: provider は、状態を変えた操作（login/logout/setup/enterPublicViewer/changePassword）の**応答**から revision（Tauri は `seq`）を確定し、**前の revision と違うときだけ**その継続で `onCredentialChanged` を出す（auth-disabled の logout の no-op や CAS 不成立では出ない）。**状態を変える操作**の応答が得られないとき（Tauri の `invoke` の reject）だけ `local` を進めて出す（安全側）。**`resolve()` の reject では進めない**（DB の一時的な障害で保留に入り I-4/S-26 を破るため。HTTP は応答が無いときも進めなくてよい）。`resolve()` の中の消去は通知せず答えで運ぶ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | レビュー 5、統合修正 2・11、4 回目 P2-8     |
+| I-19 | **資格情報の変化の通知は、追加の確認の成功に依存せず、revision が変わったときだけ出す**: provider は、状態を変えた操作（login/logout/setup/enterPublicViewer/changePassword）の**応答**から revision（Tauri は `seq`）を確定し、**前の revision と違うときだけ**その継続で `onCredentialChanged` を出す（auth-disabled の logout の no-op や CAS 不成立では出ない）。**状態を変える操作**の応答が得られないとき（Tauri の `invoke` の reject で、エラーの本体が識別できない形）、または応答がスロットを消した可能性のある失効系のエラー（`unauthorized`。`change_own_password` は失効したセッションを消してから `Unauthorized` を返す）のときだけ `local` を進めて出す（安全側）。それ以外の構造化されたエラー（`validation`＝現在のパスワード違いなど・`forbidden`・`storage`・`other`）は、Rust がスロットに書く前に返すので進めない（実装-1）。**`resolve()` の reject では進めない**（DB の一時的な障害で保留に入り I-4/S-26 を破るため。HTTP は応答が無いときも進めなくてよい）。`resolve()` の中の消去は通知せず答えで運ぶ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | レビュー 5、統合修正 2・11、4 回目 P2-8     |
 | I-20 | **自分の確定で自分を追い越さない**: 要求が満たされるかは、probe の `epochAtStart`（= 要求時の epoch）で判定し、確定後の snapshot を `confirmed` として返す。`superseded` は、要求が待つ間に**外からの遷移**が起きた時点で決まる                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | レビュー 8                                  |
 | I-21 | **adopt 中の ticket は epoch だけ**: adopt 中に取った `SessionTicket` は `revision` を持たず、`isCurrent` は epoch だけで照合する（試運転はトークンで決まらない。S-46 と整合）。通常の確認と公開閲覧の発行の ticket は revision を持つ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 統合修正 1                                  |
 | I-22 | **abort は資源の解放であって、正しさの手段ではない。規則は 1 つ: 採用できないことが確定した probe は必ず abort する**（採用条件を満たさず捨てたとき、`timeoutMs` で `abandoned` にしたとき）。新しい確認が要るなら**新しい** probe を出す。`AbortController` は probe ごとに 1 つ、`settled` フラグで abort に伴う reject を二重に処理しない。1 人の waiter の期限（`resolveSettled` の `deadlineMs`）では abort しない（waiter が離れるだけ）。中断できない処理があるので、答えを捨てる判定（I-3）は abort と独立に残す。方針の通信は方針自身の signal を使い、controller の probe に渡さない                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 統合修正 7・8、4 回目 4・P3-9               |
-| I-23 | **provider の revision は不透明な `(observedSeq, local)` の組で、controller は等値比較だけで扱う**: `credentialRevision()` の型は不透明（`CredentialRevision`、文字列 `${observedSeq}.${local}` でよい）。Tauri provider の `observedSeq` は Rust から観測した `seq`（操作の応答も `auth_resolve` の `current` も）の **max** で更新し、決して減らさない。`local` は**状態を変える操作**の `invoke` が reject したときだけ +1。`resolve()` は入口で `(s0, l)` を読み、答えの `checked`/`current` には入口の `l` を貼る。Rust の `auth_resolve` は最初の `.await` の前に `seq_at_entry` を読み、`settle_session` が 1 つのロックの中で seq が動いていれば何も書かず `stale` を返す。よって「`current !== checked` ⇔ この呼び出しが消した」が成り立つ（足し算は provider 内部の数値カウンタだけで行い、その後に不透明な値へ変換する）。HTTP は `observedSeq` をメモリ上のカウンタとして持つ（`local` は使わない）。**公開型はすべて `CredentialRevision`**（`credentialRevision()`、`ResolvedAuth.checked/current`、`SessionTicket.revision`、`enterPublicViewer` の `expectRevision`、controller の `appliedRevision`/`revisionAtStart`）。**stale**（Rust の `stale: true`、および**答えが届いた時点で未完了の状態を変える操作が 1 つでもある**答え。操作の開始が `resolve()` の入口の前か後かを問わない。§5.3 の表）は provider が `StaleAnswerError` で reject し、controller は通信の障害と区別して `verification` を変えずに新しい probe で確認し直す（上限あり）。状態を変える操作の pending には期限（`opPendingTimeoutMs`）があり、期限を過ぎたら「結果が分からない」として `local` を進めて通知し、確認を塞ぐ対象から外す。元の invoke が後から結果を返したら `observe(seq)`／通知で扱う（CAS は Rust 側で済んでいる） | 4 回目 5、Fable P1-1、5 回目 1・5、6 回目 1 |
+| I-23 | **provider の revision は不透明な `(observedSeq, local)` の組で、controller は等値比較だけで扱う**: `credentialRevision()` の型は不透明（`CredentialRevision`、文字列 `${observedSeq}.${local}` でよい）。Tauri provider の `observedSeq` は Rust から観測した `seq`（操作の応答も `auth_resolve` の `current` も）の **max** で更新し、決して減らさない。`local` は**状態を変える操作**の `invoke` の reject のうち、応答が得られないもの（識別できない形）と失効系（`unauthorized`）のときだけ +1（I-19）。`resolve()` は入口で `(s0, l)` を読み、答えの `checked`/`current` には入口の `l` を貼る。Rust の `auth_resolve` は最初の `.await` の前に `seq_at_entry` を読み、`settle_session` が 1 つのロックの中で seq が動いていれば何も書かず `stale` を返す。よって「`current !== checked` ⇔ この呼び出しが消した」が成り立つ（足し算は provider 内部の数値カウンタだけで行い、その後に不透明な値へ変換する）。HTTP は `observedSeq` をメモリ上のカウンタとして持つ（`local` は使わない）。**公開型はすべて `CredentialRevision`**（`credentialRevision()`、`ResolvedAuth.checked/current`、`SessionTicket.revision`、`enterPublicViewer` の `expectRevision`、controller の `appliedRevision`/`revisionAtStart`）。**stale**（Rust の `stale: true`、および**答えが届いた時点で未完了の状態を変える操作が 1 つでもある**答え。操作の開始が `resolve()` の入口の前か後かを問わない。§5.3 の表）は provider が `StaleAnswerError` で reject し、controller は通信の障害と区別して `verification` を変えずに新しい probe で確認し直す（上限あり）。状態を変える操作の pending には期限（`opPendingTimeoutMs`）があり、期限を過ぎたら「結果が分からない」として `local` を進めて通知し、確認を塞ぐ対象から外す。元の invoke が後から結果を返したら `observe(seq)`／通知で扱う（CAS は Rust 側で済んでいる） | 4 回目 5、Fable P1-1、5 回目 1・5、6 回目 1 |
 | I-24 | **未処理のユーザーの変更（`pendingOwnerChange`）の寿命**: active(B) の `commit` で `previousActiveOwner` が null でも B でもなければ `{ from, to }` を立てる。**保持する**のは `unknown` のとき、同じユーザー（同じ owner）の再確認のとき、レイアウトの unmount 中。**終わる**のは `none` が確定したとき（未処理の変更も破棄。セッションの終了を越えて持ち越さない）と、レイアウトが処理して `acknowledgeOwnerChange()` を呼んだとき。ページ全体の再読込では controller ごと消えるので**保証しない**（保証するのは controller を維持した画面内の再読込だけ）。§6.1 の寿命の表                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 6 回目 オーナー決定・2・3                   |
 
 ### 3.1 generation の数え方（I-2 から機械的に導いた表）
@@ -475,10 +475,10 @@ provider のテストで、それぞれ**フロントの順序に依らず**成�
 | provider revision の更新（操作の応答）                 | 操作の応答（login / logout / setup / changePassword / enterPublicViewer） | 応答の `seq` / 自分の書き込み。変わったときだけ通知。応答が無いときは進めて通知                                                                        | S-55・S-67・S-68           |
 | 方針の通信（`status()`・試運転状態の取得）             | 方針自身の `AbortSignal`                                                  | 方針の中断は資源の解放。適用の可否は ticket で決める                                                                                                   | S-53・S-62                 |
 | Rust `install`（login / setup）                        | `verify` / `setup_first_user` / `record_ok`                               | 入口の `seq`                                                                                                                                           | S-16・S-18                 |
-| Rust `clear`（logout）                                 | `auth_config`                                                             | 入口の `seq`（None→None でも進める。auth-disabled の no-op は進めない）                                                                                | S-17・S-19・S-67           |
+| Rust `clear`（logout）                                 | `auth_config`                                                             | 入口の `seq`（None→None でも進める。auth-disabled の no-op は進めない）。消せたらモードを読み直し、disabled なら消去後の `seq` のまま None のときだけ local を設置                                                                                | S-17・S-19・S-67           |
 | Rust `refresh`（settle_session、同じ結び付き）         | `users.get_by_username` / `auth_config`                                   | `unchanged` の照合（既存）。**`seq` は進めない**。同じロックで `(session, seq_before, seq_after)`                                                      | S-54                       |
 | Rust `clear`（settle_session、失効。role 変更を含む）  | 同上                                                                      | `unchanged` の照合（既存）。`seq` は進める                                                                                                             | S-64                       |
-| Rust `install`（auth_config_apply_body）               | `set_auth_config`                                                         | `is_none()` を 1 ロック内で（既存）→ `seq` に乗せ替え                                                                                                  | —                          |
+| Rust `install`（auth_config_apply_body）               | `set_auth_config`                                                         | 最後のロックで `is_none()` のときだけ設置して `seq` を進める（入口の `seq` の一致は条件にしない。PR #264 P1）                                                                                                  | —                          |
 | Rust `rebind`（change_own_password）                   | `change_password`                                                         | id + auth_epoch（既存）→ `seq` を進め、応答で返す                                                                                                      | S-68                       |
 | アプリ `sessionStore.authDisabled`                     | `auth_config_get`                                                         | **入口を無くす**（snapshot の `kind` から導く）                                                                                                        | S-61                       |
 | アプリ `load` が返す `sessionGeneration`               | `resolveSettled` / 方針の `ResolveResult`                                 | 確認できた結果の generation だけ。`unverified` を先に処理                                                                                              | S-48〜S-50・S-66           |
@@ -745,7 +745,7 @@ export interface AuthProvider {
 	 * 【必須】資格情報の revision（不透明、等値比較だけ。I-23）。
 	 * HTTP: メモリ上のカウンタ。自分が書く・消すたびに +1、storage イベントは storageKey のものだけで +1。
 	 * Tauri: (observedSeq, local)。observedSeq は観測した seq の max、local は状態を変える操作の
-	 *        invoke が reject したときだけ +1。
+	 *        invoke の reject のうち、識別できない形と失効系（unauthorized）のときだけ +1（I-19）。
 	 * 秘密（トークン本体）は返さない。
 	 */
 	credentialRevision(): CredentialRevision;
@@ -775,19 +775,29 @@ export interface AuthProvider {
 - `login`/`setup`: 呼び出しの開始時に `revision` を読み、応答を書くときに一致するときだけ
   `setToken`。一致しなければ書かず、戻り値は `{ success: false, superseded: true }`（`error` も付ける）。
 - `enterPublicViewer`: `expectRevision`（無ければ開始時の revision）と一致するときだけ `setToken`。
+  加えて**開始時と書き込み直前の両方でトークンが null** であることを条件にする（公開閲覧は資格情報が無いときだけ
+  発行する。開始時にトークンがあれば通信せずに `superseded`。ticket の作成後に別タブが書いた窓を塞ぐ、PR #264 再レビュー P1）。
 - `logout`: 開始時の revision と一致するときだけ `setToken(null)`。一致しなければ消さない
   （別のログインが済んでいる）。`POST /api/auth/logout` は開始時のトークンで送る（今の
   `headers(false)` は送信時の `getToken()` を読むので、**開始時に固定する**）。戻り値は
   `Promise<void>` のまま（アプリは戻り値で判断せず `resolve()` で確定する、I-10）。
+- 上の 4 つとも、**トークンの一致も条件にする**: 開始時の `getToken()` を記録し、書く直前の
+  `getToken()` がそれと同じときだけ書く（`expectRevision` を渡された `enterPublicViewer` も開始時の値で
+  比べる）。別タブの書き込みは `storage` イベントより先に見えるので、revision だけでは古い操作が書ける
+  （storage イベントの遅延対策、PR #264 P2）。
 - `resolve()` の `none` でのトークン消去は `clearTokenIfCurrent(token)`（今の `check()` と同じ）。
   消したら内部の数値カウンタを +1 し、その値を不透明な `current` に変換して運ぶ（`current !== checked`）。
   **通知しない**。足し算は provider の内部だけ、外へ出るのは `CredentialRevision`（I-23）。
 - **revision の更新と通知**（I-19・I-23）: HTTP は自分が `setToken` した継続でカウンタを +1 し
   `onCredentialChanged` を呼ぶ。`storage` イベントは **`storageKey` のものだけ**で +1（4 回目 P3-11）。
+  `key === null`（別タブの `localStorage.clear()`。このトークンも消える）も同じく +1 して通知する（実装-1）。
+  旧 `check()`（v1.x で残す）が `401`/`200 false` でトークンを消したときも +1 して通知する（答えで運べない
+  変化のため。`resolve()` の中の消去とは扱いが違う。実装-1）。
   Tauri は操作の応答の `seq` で `observedSeq` を max 更新し、**組が変わったときだけ**呼ぶ
   （auth-disabled の logout の no-op、CAS 不成立、逆順に届いた古い応答では呼ばない、S-67・S-73）。
-  **状態を変える操作**の `invoke` が reject したときだけ `local` を +1 して呼ぶ（安全側。controller は
-  active なら保留 → `resolve()` で確定する）。`resolve()` の reject では進めない（I-4/S-26 を破るため。
+  **状態を変える操作**の応答が得られないとき（Tauri の `invoke` の reject で、エラーの本体が識別できない形）、または応答がスロットを消した可能性のある失効系のエラー（`unauthorized`。`change_own_password` は失効したセッションを消してから `Unauthorized` を返す）のときだけ `local` を +1 して呼ぶ（安全側。controller は
+  active なら保留 → `resolve()` で確定する）。それ以外の構造化されたエラーはスロットに書く前に返るので
+  進めない（Rust の各 `*_body` と `change_own_password` の doc に「消去の後に返りうるエラー」を明記）。`resolve()` の reject では進めない（I-4/S-26 を破るため。
   HTTP は応答が無いときも進めなくてよい、4 回目 P2-8）。
 
 **互換 adapter**（`adaptLegacyAuthProvider(legacy: LegacyAuthProvider): AuthProvider`、別の
@@ -829,6 +839,10 @@ fn cas_session(state: &AppState, expected_seq: u64, next: Option<DesktopSession>
 /// よって「seq_after == seq_at_entry + 1 ⇔ この呼び出しが消した」が成り立つ（I-23、S-77）。
 enum Settled { Stale, Settled { session: Option<DesktopSession>, seq_after: u64 } }
 fn settle_session(state: &AppState, cached: &DesktopSession, fresh: Option<DesktopSession>, seq_at_entry: u64) -> Settled;
+// Stale のときの扱い（実装-1）: 通常のコマンドの current_session は、今のセッションの結び付きが fresh と
+// 一致すれば従来どおり有効として返す（何も書かない。自分の change_own_password の rebind と同時の確認を
+// 失効扱いにしないため、#230 のレビュー対応を保つ）。stale を返すのは auth_resolve だけ。
+// 実装では Stale { valid_now } として今の結び付きでの判定結果を持たせた。
 
 /// フロントの provider.resolve() の相手。
 #[tauri::command]
@@ -850,7 +864,15 @@ async fn auth_resolve(state) -> Result<AuthResolveResult, BantoError>;
 // auth_setup  : 同上（アカウントの作成は行い、セッションだけ入れない）。
 // auth_logout : seq を読む → auth_config().await → disabled なら LogoutResult { seq }（no-op、進めない）→
 //               cas_session(seq, None) → 書けなければ LogoutResult { seq: now }（何もしない。監査も残さない）。
-// auth_config_apply_body: is_none() の照合を cas_session に乗せ替え（seq は進む）。
+// auth_config_apply_body: 最後のロックで is_none() なら local を設置して seq を進める。入口の seq の一致は
+//               条件にしない（並行の logout が seq を進めると disabled なのに None が残るため、PR #264 P1）。
+// auth_logout の補完: CAS で消せたら認証モードを読み直し、disabled なら「消去後の seq のまま、かつ None」の
+//               ときだけ local を設置する（古いモードを読んだ logout が消した後の穴を塞ぐ。どちらの経路も
+//               1 ロック内で is_none() を見るので二重に設置しない。読み直しの失敗は設置せず logout は成功）。
+// auth_config_lock（tokio::sync::Mutex<()>、PR #264 再レビュー P2）: config-apply は最初の設定読み取りから保存・local の
+//               設置まで、logout は消去後の読み直し〜設置を、autologin の切替は設定の読み書きを、このロックの中で行う
+//               （設置の根拠にした設定値と設置の間に別の apply が割り込まない）。順序は auth_config_lock → state.auth で固定。
+//               apply(false) は既存の local を自分では消さず、次の current_session / auth_resolve の settle が消す。
 // change_own_password: id + auth_epoch の照合はそのまま、rebind で seq を進め、応答で返す。
 ```
 
@@ -867,7 +889,7 @@ async fn auth_resolve(state) -> Result<AuthResolveResult, BantoError>;
 
 ```ts
 let observedSeq = 0; // Rust から観測した seq の max。決して減らさない
-let local = 0; // 状態を変える操作の invoke が reject したとき、または pending が期限切れになったときだけ +1
+let local = 0; // 状態を変える操作の invoke の reject が識別できない形か失効系（unauthorized）のとき、または pending が期限切れになったときだけ +1
 const revision = (s = observedSeq, l = local) => `${s}.${l}` as CredentialRevision; // 不透明、等値比較だけ
 // 在中の状態を変える操作（login/logout/setup/changePassword）。操作ごとに開始時刻と期限を持つ
 const pendingOps = new Set<{ startedAt: number; deadline: number }>();
@@ -884,11 +906,13 @@ function bumpLocal(): void {
 
 - `login`/`logout`/`setup`/`changePassword`: `op = { startedAt: now, deadline: now + opPendingTimeoutMs }`
   を `pendingOps` に入れて invoke。**応答の `seq`** を `observe()` に通す（進んだときだけ通知。S-55・
-  S-67・S-68。逆順に届いても戻らない）。`invoke` が reject したら `bumpLocal()`（応答が無い＝状態が
-  変わったかもしれない）。どちらでも `pendingOps` から外す。**期限（`opPendingTimeoutMs`、既定 10 秒）を
+  S-67・S-68。逆順に届いても戻らない）。`invoke` が reject したら、エラーの本体が識別できない形（応答が無い）
+  か失効系（`unauthorized`。スロットを消した後に返りうる）なら `bumpLocal()`（状態が変わったかもしれない）。
+  それ以外の構造化されたエラーは進めない（スロットに書く前に返る）。どちらでも `pendingOps` から外す。**期限（`opPendingTimeoutMs`、既定 10 秒）を
   過ぎたら取り消しではなく「結果が分からない」**: `bumpLocal()` して `pendingOps` から外す（確認を塞ぐ
   対象から外れる、S-78）。その後に元の invoke が結果を返したら、`observe(seq)` と通知で扱う（CAS の
-  結果は Rust 側で決まっている。フロントは戻り値の `superseded` を読むだけ）。
+  結果は Rust 側で決まっている。フロントは戻り値の `superseded` を読むだけ）。後から届いた reject では
+  `local` を再び進めない（期限切れで進め済み。PR #264 P3）。
 - `resolve()`: 入口で `(s0, l)` と `entryAt` を読む → `auth_resolve` を invoke → 答えが届いた時点で
   **`pendingOps` が空でなければ `StaleAnswerError` で reject**（操作の開始が入口の前か後かを問わない。
   待たない。S-75・S-82。controller は新しい probe で確認し直す。操作の期限があるので永久には続かない）→ Rust が `stale: true` でも `StaleAnswerError`（S-77）→
@@ -951,17 +975,49 @@ function bumpLocal(): void {
   代入は `load` から消える（`authDisabled` の別読みも消える、S-61）。`superseded` のまま
   `sessionGeneration()` を返す今の 105 行の形は**無くす**（S-48〜S-50）。
 
-- `publicViewerFallback(controller, provider, ticket): Promise<ResolveResult>`（admin-core の
-  **任意の**ヘルパー。controller の外。**ticket を最後まで持ち回り、`ResolveResult` を返す**、
-  S-42・S-52・S-66）:
+- `publicViewerFallback(controller, provider, ticket, options?: { maxRetries?: number }): Promise<ResolveResult>`
+  （admin-core の**任意の**ヘルパー。controller の外。**ticket を最後まで持ち回り、`ResolveResult` を返す**、
+  S-42・S-52・S-66）。再試行の上限 `maxRetries` は**このヘルパーが所有する**（既定 3。定数
+  `DEFAULT_PUBLIC_VIEWER_RETRIES` として admin-core から export）。controller の `deps.maxStaleRetries` とは
+  共有しない: あちらは 1 回の `resolve()` の中で stale な答えを捨て直す回数、こちらは方針（status → 発行 →
+  確定）をやり直す回数で、数えるものが違う。1 回のやり直しの中の `resolveSettled` は、それぞれ controller の
+  上限の下で動く（最悪の往復は両者の積で抑えられる）:
 
   ```ts
-  const status = await provider.status?.();
-  if (!controller.isCurrent(ticket)) return resolveSettled(controller); // 同期の照合、この後 await まで無し
-  if (!status?.viewerPublic) return { outcome: 'confirmed', snapshot: controller.snapshot, ticket }; // none のまま
-  await provider.enterPublicViewer?.({ expectRevision: ticket.revision }); // 発行の中の CAS も ticket の revision
-  return resolveSettled(controller); // issued の成否に依らず、今の資格情報で確定。unverified はそのまま返す
+  for (let retries = 0; ; retries++) {
+  	const status = await provider.status?.();
+  	let result: ResolveResult;
+  	if (!controller.isCurrent(ticket)) {
+  		// 同期の照合、この後 await まで無し。ticket の後で資格情報が変わった（storage イベント到着済み）
+  		result = await resolveSettled(controller);
+  	} else if (!status?.viewerPublic) {
+  		return { outcome: 'confirmed', snapshot: controller.snapshot, ticket }; // none のまま
+  	} else {
+  		const entered = await provider.enterPublicViewer?.({ expectRevision: ticket.revision }); // 発行の中の CAS も ticket の revision
+  		result = await resolveSettled(controller); // issued の成否に依らず、今の資格情報で確定。unverified はそのまま返す
+  		if (!entered?.superseded) return result; // 発行の失敗（403・通信）は再試行しない
+  		// superseded: ticket の後で資格情報が変わった（storage イベント未着）
+  	}
+  	// ここに来るのは「ticket の後で資格情報が変わった」ときだけ（イベントの到着の前後を問わない）。
+  	// 現れたトークンが失効していれば resolveSettled が消して confirmed none になる。そのときだけ
+  	// 新しい ticket で方針をやり直す（上限あり）。active・unverified・superseded はそのまま返す
+  	if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') return result;
+  	// 初回 + 再試行 maxRetries 回（既定 3 なら方針は最大 4 回走る。maxRetries = 0 で再試行なし）
+  	if (retries >= (options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES)) return result;
+  	ticket = result.ticket;
+  }
   ```
+
+  この再試行は、今の `resolveProtectedSession` の `continue`（上限 `MAX_STALE_RETRIES`）と同じ役割
+  （#264 再レビュー）。これが無いと、ticket の作成後に現れた失効トークンを `resolveSettled` が消して
+  `confirmed none` を返し、呼び出し側が `/login` へ移るので、実装-1 の `sessionGate` では通る S-20 系の
+  順序で公開閲覧への fallback を失う。**storage イベントが `isCurrent` の前に届いた場合（ticket が失効）と、
+  届く前に発行した場合（`enterPublicViewer` が `superseded`）を同じ規則で扱う**。発行そのものの失敗
+  （403・通信の失敗）は資格情報の変化ではないので再試行しない。上限を使い切ったら最後の結果（`none`
+  なら `/login`）を返す。実装-3 のテストに S-20 系の 3 本を入れる: 「イベント未着で発行の前に現れた
+  失効トークン → 消えて公開閲覧に入る」「イベント到着済み（`isCurrent` が false）の失効トークン → 同じく
+  公開閲覧に入る」「毎回現れる → 上限で抜ける」。最後のテストは呼び出し回数まで固定する（`maxRetries` = 3
+  で `status()`/`resolveSettled` が 4 回、`maxRetries` = 0 で 1 回。off-by-one を防ぐ）。
 
   `adopt()` は使わない。
 
@@ -1254,8 +1310,10 @@ controller に届き、none を一度も経ずに世代が変わる（A/g1 → u
   書き込みが起きないこと（S-20・S-21・S-40）を `storage` の中身で確かめる。`enterPublicViewer`
   は `expectRevision` が今の revision と違えば書かないこと（S-52）。
 - revision と通知（I-19）: `login` の応答の継続で `credentialRevision()` が進み listener が 1 回
-  呼ばれること。`fetch` が送信後に失敗しても進んで呼ばれること。CAS 不成立の `logout` では
-  呼ばれないこと。
+  呼ばれること。**`logout` の要求が失敗（送信後の失敗を含む）しても、ローカルのトークンを消したなら**
+  進んで呼ばれること。CAS 不成立の `logout` では呼ばれないこと。`login`/`setup` の `fetch` が
+  失敗したとき（応答が無い）は進めず呼ばない（I-19「HTTP は応答が無いときも進めなくてよい」。
+  トークンを書いていないので revision も変わらない）。
 - 互換 adapter: `check() true` + `getIdentity() null` が reject になること、`credentialRevision()` と
   答えの `checked`/`current` が常に `ADAPTER_REVISION`（`CredentialRevision` 型の定数）で等しいこと、
   `onCredentialChanged` の listener が呼ばれないこと（保証しない範囲を「テストで固定」する）。
@@ -1290,6 +1348,9 @@ controller に届き、none を一度も経ずに世代が変わる（A/g1 → u
 type CredentialVerifier = Arc<dyn Fn(String, String) -> BoxFuture<'static, Result<Option<UserIdentity>, BantoError>> + Send + Sync>;
 /// logout が await する設定の読み。production は SettingsService::auth_config。
 type AuthModeSource = Arc<dyn Fn() -> BoxFuture<'static, Result<AuthSettings, BantoError>> + Send + Sync>;
+/// setup が await する初回アカウントの作成（実装-1 で追加）。setup は verify ではなく setup_first_user を
+/// 待つので、S-18/S-19 の順序の固定にはこの注入点が要る。production は UsersService::setup_first_user。
+type FirstUserSetup = Arc<dyn Fn(String, String, String) -> BoxFuture<'static, Result<UserIdentity, BantoError>> + Send + Sync>;
 // AppState { verifier: CredentialVerifier, auth_mode: AuthModeSource, .. }
 
 // コマンドは薄い adapter、本体はテストから呼べる関数:
@@ -1519,3 +1580,11 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   bootstrap と既存の 23 本のテストの `AppState` 構築が変わる。実装-1 で規模を見る。
 - `AuthProvider.resolve({ signal })` の `signal` を HTTP の `fetch` に渡すのは容易だが、Tauri の
   `invoke` は中断できない（I-22 の「中断できない処理」）。Rust 側のコマンドは走り切る。
+- **provider が観測していない `seq` の前進**: Tauri の webview の再読み込みで provider の `observedSeq` は 0 に
+  戻るが Rust の `seq` は進んだまま、また通常のデータ系コマンド（`require_role` → `current_session`）が失効した
+  セッションを消して `seq` を進めても provider は観測しない。どちらも次の `resolve()` は `checked` が
+  `revisionAtStart` と一致せず捨てられる（`observedSeq` は max で追いつくので次の probe で一致する）。
+  実装-2 の controller がこの前進を上限回数（`maxStaleRetries`）を消費せずに救えるか、あるいは provider が
+  データ系コマンドの失効系エラーを見て `observe`/`bumpLocal` すべきかを実装-2 で決める。
+- HTTP と互換 adapter の `resolve()` は `kind` を返さない（実装-1）。publicViewer の `kind` の決め方
+  （`identity.publicViewer` から導くか、provider が返すか）は実装-2 で詰める。

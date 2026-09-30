@@ -64,8 +64,13 @@ export async function resolveProtectedSession(
 		// A session began while `status()` was pending (another login in this
 		// tab): do not mint a public-viewer token over it - check it instead.
 		if (!isCurrentSessionScope(ended)) continue;
-		const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : false;
-		return entered ? 'publicViewer' : 'login';
+		const entered = status?.viewerPublic ? await auth.enterPublicViewer?.() : undefined;
+		// Issue #260 (#259): the provider refused to store the public-viewer
+		// token because another session was established while it was being
+		// minted (compare-and-set) - check that session instead of sending
+		// the tab to /login.
+		if (entered?.superseded) continue;
+		return entered?.success ? 'publicViewer' : 'login';
 	}
 	throw new SessionChangedError();
 }

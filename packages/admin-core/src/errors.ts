@@ -81,3 +81,24 @@ export function notFound(resource: string, id: string | number): ProviderError {
 export function validation(fieldErrors: FieldError[]): ProviderError {
 	return new ProviderError({ kind: 'validation', field_errors: fieldErrors });
 }
+
+/**
+ * `AuthProvider.resolve()` rejected because its answer is about a credential
+ * that changed while it was in flight (Issue #260, design §5.2/§5.3, I-23):
+ * a state-changing operation (login/logout/setup/changePassword) was still
+ * pending when the answer arrived, or the backend reported the session slot
+ * re-bound during the check. Distinct from a `ProviderError` (the backend
+ * could not answer): the caller should ask again, not report a failure.
+ */
+export class StaleAnswerError extends Error {
+	constructor(
+		message = 'the session answer is stale: the credential changed while it was in flight'
+	) {
+		super(message);
+		this.name = 'StaleAnswerError';
+	}
+}
+
+export function isStaleAnswerError(error: unknown): error is StaleAnswerError {
+	return error instanceof StaleAnswerError;
+}

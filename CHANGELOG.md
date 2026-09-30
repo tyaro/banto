@@ -22,6 +22,28 @@
 
 ## [Unreleased]
 
+- feat(admin-core, admin-template): SessionController 実装-1（#260、provider とバックエンド。
+  [docs/session-controller-design.md](docs/session-controller-design.md) §7.1）。
+  **追加 API**（すべて追加。v1.x では任意）: `AuthProvider.resolve({ signal })`（1 往復で
+  `{ status, checked, current, identity?, kind? }` を返す）・`credentialRevision()`・
+  `onCredentialChanged(listener)`、型 `CredentialRevision`・`ResolvedAuth`・`SessionKind`・
+  `AuthOperationResult`・`LegacyAuthProvider`・`StandardAuthProvider`・`TauriAuthProviderOptions`
+  （`opPendingTimeoutMs`）、`StaleAnswerError`/`isStaleAnswerError`、互換 adapter
+  `adaptLegacyAuthProvider`/`ADAPTER_REVISION`。`login`/`setup` の戻り値に `superseded?` を追加。
+  **変更**: `AuthProvider.enterPublicViewer` は `(options?: { expectRevision? }) =>
+Promise<{ success, superseded? }>` になった（旧 `Promise<boolean>`。`resolveProtectedSession` は
+  `.success` で判定し、`superseded` なら確認し直す）。HTTP provider は `resolve()` で
+  `GET /api/auth/identity` を 1 回だけ呼び（`200 null`/`401` はそのトークンを compare-and-set で
+  消す）、`login`/`setup`/`logout`/`enterPublicViewer` のトークンの書き込みを開始時の revision との
+  compare-and-set にした（#259。追い越された書き込みは何もしない。`logout` の要求は開始時の
+  トークンで送る）。別タブの `storage` イベント（`storageKey` のもの）で revision を進めて通知する。
+  **Tauri コマンドの戻り値の変更**（`createTauriAuthProvider` が吸収）: `auth_login`/`auth_setup` の
+  `LoginResult` に `superseded`・`seq`、`auth_logout` は `()` から `LogoutResult { seq }`、
+  `auth_change_password` は `()` から `ChangePasswordResult { seq }`。`auth_resolve` を追加
+  （`{ identity, kind, checked, current, stale }`）。Rust の `state.auth` は `AuthSlot { session, seq }`
+  になり、`auth_login`/`auth_setup`/`auth_logout` は入口で読んだ `seq` との compare-and-set で書く
+  （遅いログインが完了済みのログアウトを取り消す・遅いログアウトが後のログインを消す、を防ぐ。
+  S-16〜S-19）。REST のルートは変えていない。
 - chore(deps): 開発依存の vitest を 4.1 から 5.0 へ更新（10 パッケージ/アプリ、dependabot #203 を置き換え）。
   Vitest 5 でモジュールレベルの `bench()` が廃止されたため、`packages/charts/tests/trend.bench.ts` と
   `packages/grid-svelte/tests/virtual.bench.ts` を `bench` フィクスチャ（`test()` の中で使う）へ移行し、
