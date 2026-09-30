@@ -54,12 +54,20 @@
 	} as const;
 
 	async function logout() {
+		// Issue #260 実装-2: leave the protected layout FIRST. Its generation
+		// check (`(app)/+layout.svelte`, wiring ①) re-runs the loads as soon
+		// as the logout changes the session, and SvelteKit lets such an
+		// invalidation win over a `goto` started right after it - with public
+		// viewing on, that re-run would mint a public-viewer session and keep
+		// this tab on the protected screen instead of /login. Navigating to
+		// /login is a forced navigation (`$lib/unsavedChanges.ts`), so it
+		// always happens.
+		await goto(`${base}/login`);
 		await getAuthProvider().logout();
 		// Issue #215/#255: this tab's session is over - new session generation
 		// (a save still in flight can no longer write its marker) and the
-		// saved list view state goes with it. Same call in `commands.ts`.
+		// saved list view state goes with it. Same order in `commands.ts`.
 		endSession();
-		goto(`${base}/login`);
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two

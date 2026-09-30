@@ -7,7 +7,7 @@
  *
  * Forced = the target is the login screen. Every path there means the
  * session is ending or already gone - logout (`Header.svelte` /
- * `commands.ts` log out first, then `goto('/login')`), or a session the
+ * `commands.ts` `goto('/login')` and then log out), or a session the
  * `(app)` guard could not confirm being redirected by `resolveProtectedSession`
  * (#204) after an `invalidateAll()`. Holding the user on a page whose
  * session is gone would only strand them, so those never prompt. (A

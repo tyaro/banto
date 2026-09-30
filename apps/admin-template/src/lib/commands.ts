@@ -89,10 +89,12 @@ function sessionCommands(): PaletteCommand[] {
 			// login-not-required mode (spec M11 - there's no session to end).
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
+				// Issue #260 実装-2: /login first, then the logout - same order
+				// and reason as Header.svelte's logout.
+				await goto(`${base}/login`);
 				await getAuthProvider().logout();
 				// Issue #215/#255: same as Header.svelte's logout.
 				endSession();
-				await goto(`${base}/login`);
 			}
 		}
 	];
