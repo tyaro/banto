@@ -1631,17 +1631,16 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   `$effect` はログアウトの保留（generation の変化）を見て `invalidateAll()` を出す。SvelteKit は、その直後に
   始めた `goto('/login')` よりも先に出た invalidation を**勝たせる**（`_invalidate` が 1 マイクロタスク後に
   ナビゲーションの token を取り直す）。公開閲覧が有効なサーバでは、再 load が `none` → 公開閲覧の発行に進み、
-  ログアウトしたタブがログイン画面ではなく公開閲覧の画面に残った（E2E `public-viewer` 5a で検出）。実装-2 では
-  `Header.svelte`・`commands.ts` のログアウトを「**先に `goto('/login')`（強制ナビゲーション）→ `logout()` →
-  `endSession()`**」の順にして、配線①が見えない状態（保護レイアウトが unmount 済み）で session を変えるようにした。
-  先に遷移するとログイン画面で別のログイン（B）が確定しうるので、`endSession()` は logout の**前に取った ticket**が
-  current のときだけ呼ぶ（`$lib/banto/logout.ts`、`try/finally` で logout の reject も同じ扱い。標準 provider では
-  自分の消去の通知で保留に入り ticket は失効する＝controller が自分で none を確定し、`endSession()` が走るのは
-  互換 adapter のときだけ。I-18・I-10、独立監査 P2-1）。
-  §6.1 の v2 の形（`await provider.logout(); await resolveSettled(); goto(login)`）も同じ競合を持つので、
-  実装-3 で同じ順序にするか、配線①に「ログアウト中は出さない」手段を足すかを決める。独立監査の代案: 配線①が
-  ログアウト中（`sessionStore.loggingOut` などのフラグ）は `invalidateAll()` を出さないことで、§6.1 の
-  logout → `resolveSettled` → `goto` の順序を保つ。
+  ログアウトしたタブがログイン画面ではなく公開閲覧の画面に残った（E2E `public-viewer` 5a で検出）。
+  最初は「先に `goto('/login')` → `logout()`」にしたが、ログイン画面が logout の応答より先に出るので、そこで送った
+  ログインが pending の logout に provider の compare-and-set で負けた（「別のセッションが先に確定した」。#265 の CI の
+  smoke 7。describe.serial の retry で 1 も巻き添えで落ちた）。**実装-2 の最終形は独立監査の代案**: `logout()` →
+  `endSession()`（logout の**前に取った ticket**が current のときだけ。別タブのログインなど、その間に確定した
+  セッションを終わらせない。`try/finally` で reject も同じ扱い。標準 provider では自分の消去の通知で保留に入り
+  ticket は失効する＝controller が自分で none を確定し、`endSession()` が走るのは互換 adapter のときだけ。I-18・I-10）
+  → `goto('/login')` の順で、その間は `isLoggingOut()`（`$lib/banto/logout.svelte.ts`、`$state`）が真。配線①は
+  ログアウト中は `invalidateAll()` を出さない（反応的に読むので、失敗して画面に残る場合は終了後に照合し直す）。
+  §6.1 の v2 の形（`await provider.logout(); await resolveSettled(); goto(login)`）も同じ抑止で順序を保てる（実装-3）。
 - **（実装-3 以降の改善候補、独立監査 P3-4）** `StaleAnswerError`（pending の操作をまたいだ答え）で即座に出し直すと、
   操作が pending の間は出し直しのたびに同じ理由で捨てられ、`maxStaleRetries` を往復で消費しうる。操作の完了
   （`onCredentialChanged`）を待ってから出し直す、などを検討する。

@@ -46,9 +46,9 @@
   **admin-template**: `(app)/+layout.svelte` の `onSessionEnded(() => invalidateAll())` を、generation の照合
   （`snapshot.generation !== data.sessionGeneration` なら `invalidateAll()`、同じ generation に二重に出さない）に
   置き換えた（配線①。none を経ない切り替え S-79・同じユーザーの再ログイン S-80 でも画面を作り直す）。ログアウト
-  （`Header.svelte`・コマンドパレット）は先に `/login` へ移ってからログアウトする（配線①の再 load が公開閲覧を
-  発行して遷移を上書きしないように）。`endSession()` はログアウトの前に取った ticket が current のときだけ呼ぶ
-  （その間にログイン画面で確定した別のセッションを終わらせない）。`initBanto` を**別の** `authProvider` で
+  （`Header.svelte`・コマンドパレット）は `logout()` → `endSession()` → `/login` の順で、その間は配線①が再 load しない
+  （再 load が公開閲覧を発行して遷移を上書きしないように）。`endSession()` はログアウトの前に取った ticket が
+  current のときだけ呼ぶ（その間に別タブのログインなどで確定したセッションを終わらせない）。`initBanto` を**別の** `authProvider` で
   呼び直すと、それまでのセッションは保留（unknown）になり新しい provider で確認し直す（同じ provider なら何もしない）。
   **派生アプリへの申し送り**: 保護レイアウトに配線①（`getSessionController().snapshot.generation` と `load` が
   返した generation の照合 → `invalidateAll()`）を入れること。`onSessionEnded` だけでは、別タブのログインなど
