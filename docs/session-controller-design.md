@@ -980,12 +980,26 @@ function bumpLocal(): void {
   S-42・S-52・S-66）:
 
   ```ts
-  const status = await provider.status?.();
-  if (!controller.isCurrent(ticket)) return resolveSettled(controller); // 同期の照合、この後 await まで無し
-  if (!status?.viewerPublic) return { outcome: 'confirmed', snapshot: controller.snapshot, ticket }; // none のまま
-  await provider.enterPublicViewer?.({ expectRevision: ticket.revision }); // 発行の中の CAS も ticket の revision
-  return resolveSettled(controller); // issued の成否に依らず、今の資格情報で確定。unverified はそのまま返す
+  for (let attempt = 0; ; attempt++) {
+  	const status = await provider.status?.();
+  	if (!controller.isCurrent(ticket)) return resolveSettled(controller); // 同期の照合、この後 await まで無し
+  	if (!status?.viewerPublic) return { outcome: 'confirmed', snapshot: controller.snapshot, ticket }; // none のまま
+  	const entered = await provider.enterPublicViewer?.({ expectRevision: ticket.revision }); // 発行の中の CAS も ticket の revision
+  	const result = await resolveSettled(controller); // issued の成否に依らず、今の資格情報で確定。unverified はそのまま返す
+  	// superseded（ticket の後にトークンが現れた、#264 再レビュー）: そのトークンが失効していれば
+  	// resolveSettled が消して confirmed none になる。そのときだけ新しい ticket で発行をやり直す（上限あり）
+  	if (!entered?.superseded || attempt + 1 >= MAX_PUBLIC_VIEWER_RETRIES) return result;
+  	if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') return result;
+  	ticket = result.ticket;
+  }
   ```
+
+  `superseded` の再試行は、今の `resolveProtectedSession` の `continue`（上限 `MAX_STALE_RETRIES`）と
+  同じ役割。これが無いと、ticket の作成後に現れた失効トークンを `resolveSettled` が消して
+  `confirmed none` を返し、呼び出し側が `/login` へ移るので、実装-1 の `sessionGate` では通る S-20 系の
+  順序で公開閲覧への fallback を失う。上限を使い切ったら最後の結果（`none` なら `/login`）を返す。
+  実装-3 のテストに「発行の前に現れた失効トークン → 消えて公開閲覧に入る」と「毎回現れる → 上限で
+  抜ける」の 2 本（S-20 系）を入れる。
 
   `adopt()` は使わない。
 
@@ -1278,8 +1292,10 @@ controller に届き、none を一度も経ずに世代が変わる（A/g1 → u
   書き込みが起きないこと（S-20・S-21・S-40）を `storage` の中身で確かめる。`enterPublicViewer`
   は `expectRevision` が今の revision と違えば書かないこと（S-52）。
 - revision と通知（I-19）: `login` の応答の継続で `credentialRevision()` が進み listener が 1 回
-  呼ばれること。`fetch` が送信後に失敗しても進んで呼ばれること。CAS 不成立の `logout` では
-  呼ばれないこと。
+  呼ばれること。**`logout` の要求が失敗（送信後の失敗を含む）しても、ローカルのトークンを消したなら**
+  進んで呼ばれること。CAS 不成立の `logout` では呼ばれないこと。`login`/`setup` の `fetch` が
+  失敗したとき（応答が無い）は進めず呼ばない（I-19「HTTP は応答が無いときも進めなくてよい」。
+  トークンを書いていないので revision も変わらない）。
 - 互換 adapter: `check() true` + `getIdentity() null` が reject になること、`credentialRevision()` と
   答えの `checked`/`current` が常に `ADAPTER_REVISION`（`CredentialRevision` 型の定数）で等しいこと、
   `onCredentialChanged` の listener が呼ばれないこと（保証しない範囲を「テストで固定」する）。
