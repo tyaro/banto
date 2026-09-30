@@ -52,6 +52,21 @@ export {
 
 export { onInvalidate, invalidate } from './invalidate';
 
+export {
+	createSessionController,
+	getSessionController,
+	resolveSettled,
+	publicViewerFallback,
+	DEFAULT_PUBLIC_VIEWER_RETRIES,
+	SessionTimeoutError,
+	SessionProviderMissingError,
+	type SessionController,
+	type SessionControllerDeps,
+	type SessionResolveOptions,
+	type SessionSnapshot,
+	type SessionTicket,
+	type ResolveResult
+} from './sessionController.svelte';
 export { resolveProtectedSession, type ProtectedSessionOutcome } from './sessionGate';
 export {
 	onSessionEnded,

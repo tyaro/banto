@@ -1,17 +1,24 @@
 /**
- * Third review of #242: an ending confirmed before the protected layout
- * subscribes (the first guard's `check()` answered late) must still reach
- * that layout once it mounts - and must not log out a NEW login.
+ * S-34 (design §4.5; Issue #260 実装-2 - replaces the third review of #242's
+ * "unheard ending" re-probe): an ending confirmed before the protected
+ * layout subscribes must still reach that layout once it mounts - and must
+ * not log out a NEW login.
+ *
+ * New expectation: there is no re-probe. `onSessionEnded` decides from the
+ * state at subscription time - a subscription made while the controller's
+ * session is `none` is notified ONCE, asynchronously (never inside the
+ * subscribing call). The listener re-runs the route guard (what
+ * `invalidateAll()` does), and it is that guard - not the notification -
+ * that decides between /login and a new login's session.
  *
  * Wires the real SSE provider, `connectEvents`, the real HTTP
  * `AuthProvider` and the real route-guard decision (`resolveProtectedSession`).
- * Its own file: `sessionEnded.ts` keeps module state (the unheard ending),
- * and vitest isolates modules per file.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectEvents, createSseEventProvider } from '../src/events';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { initBanto } from '../src/registry.svelte';
+import { resetDefaultSessionController } from '../src/sessionController.svelte';
 import { onSessionEnded } from '../src/sessionEnded';
 import { resolveProtectedSession } from '../src/sessionGate';
 import type { DataProvider } from '../src/provider';
@@ -40,6 +47,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 beforeEach(() => {
+	resetDefaultSessionController();
 	vi.useFakeTimers();
 	vi.stubGlobal('sessionStorage', makeMemoryStorage());
 	vi.stubGlobal('localStorage', makeMemoryStorage());
@@ -50,59 +58,51 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe('an ending confirmed before the protected layout subscribes (third review of #242)', () => {
-	it('reaches the layout once it mounts, and a new login is not logged out by it', async () => {
+function wire(revoked: Set<string>) {
+	const identitiesFor: string[] = [];
+	const bearer = (init?: RequestInit) =>
+		((init?.headers as Record<string, string>).Authorization ?? '').replace('Bearer ', '');
+	const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+		const path = String(input);
+		const token = bearer(init);
+		if (path.endsWith('/api/events')) {
+			if (revoked.has(token)) return new Response(null, { status: 401 });
+			return new Response(new ReadableStream({ start: (c) => c.close() }));
+		}
+		if (path.endsWith('/api/auth/identity')) {
+			identitiesFor.push(token);
+			return jsonResponse(200, revoked.has(token) ? null : { id: token, name: token });
+		}
+		if (path.endsWith('/api/auth/status')) return jsonResponse(200, { initialized: true });
+		throw new Error(`unexpected ${path}`);
+	}) as unknown as typeof fetch;
+	const auth = createHttpAuthProvider({ fetchFn });
+	initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
+	const disconnect = connectEvents(
+		createSseEventProvider({
+			getToken: auth.getToken,
+			fetchFn,
+			reconnectDelayMs: 100,
+			tokenWaitDelayMs: 50
+		})
+	);
+	return { auth, identitiesFor, disconnect };
+}
+
+describe('S-34: an ending confirmed before the protected layout subscribes (I-14)', () => {
+	it('S-34: reaches the layout once it mounts (once, asynchronously, without a re-probe)', async () => {
 		localStorage.setItem(TOKEN_KEY, 'A');
 		const revoked = new Set<string>();
-		let releaseGuard!: () => void;
-		const guardHeld = new Promise<void>((resolve) => (releaseGuard = resolve));
-		const checksFor: string[] = [];
-		const bearer = (init?: RequestInit) =>
-			((init?.headers as Record<string, string>).Authorization ?? '').replace('Bearer ', '');
-		const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-			const path = String(input);
-			const token = bearer(init);
-			if (path.endsWith('/api/events')) {
-				if (revoked.has(token)) return new Response(null, { status: 401 });
-				return new Response(new ReadableStream({ start: (c) => c.close() }));
-			}
-			if (path.endsWith('/api/auth/check')) {
-				checksFor.push(token);
-				// The first guard's check: judged valid now, delivered later.
-				if (checksFor.length === 1) {
-					await guardHeld;
-					return jsonResponse(200, true);
-				}
-				return jsonResponse(200, !revoked.has(token));
-			}
-			if (path.endsWith('/api/auth/status')) return jsonResponse(200, { initialized: true });
-			throw new Error(`unexpected ${path}`);
-		}) as unknown as typeof fetch;
+		const { auth, identitiesFor, disconnect } = wire(revoked);
 
-		const auth = createHttpAuthProvider({ fetchFn });
-		initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
-		const disconnect = connectEvents(
-			createSseEventProvider({
-				getToken: auth.getToken,
-				fetchFn,
-				reconnectDelayMs: 100,
-				tokenWaitDelayMs: 50
-			})
-		);
-
-		// The first protected load starts; its check is held.
-		const firstGuard = resolveProtectedSession(auth);
-		await vi.advanceTimersByTimeAsync(20);
+		// The first protected load confirms A.
+		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
 		// A is revoked: the stream's reconnect gets a 401, the confirmation
-		// answers false and clears A - no listener exists yet.
+		// confirms `none` and clears A - no listener exists yet.
 		revoked.add('A');
 		await vi.advanceTimersByTimeAsync(500);
 		expect(auth.getToken()).toBeNull();
-		expect(checksFor).toEqual(['A', 'A']);
-
-		// The held true arrives: the guard lets the protected route through.
-		releaseGuard();
-		await expect(firstGuard).resolves.toBe('session');
+		const requests = identitiesFor.length;
 
 		// The protected layout mounts and subscribes; its listener re-runs the
 		// guard (what `invalidateAll()` does).
@@ -115,67 +115,60 @@ describe('an ending confirmed before the protected layout subscribes (third revi
 		await vi.advanceTimersByTimeAsync(10);
 		expect(layout).toHaveBeenCalledTimes(1);
 		expect(outcomes).toEqual(['login']);
+		// The subscription itself asked nothing (no re-probe); only the guard
+		// the listener re-ran did, and with no token that needs no request.
+		expect(identitiesFor.length).toBe(requests);
 		off();
 
-		// Heard: a later subscription does not replay it.
+		// Still `none`: another subscription is told once too (decided from
+		// the state at subscription time, not from a remembered ending).
 		const later = vi.fn();
 		const offLater = onSessionEnded(later);
 		await vi.advanceTimersByTimeAsync(1_000);
-		expect(later).not.toHaveBeenCalled();
+		expect(later).toHaveBeenCalledTimes(1);
 		offLater();
 		disconnect();
 	});
 
-	it('a new login before the layout mounts is not logged out by the older ending', async () => {
+	it('S-34: a new login before the layout mounts is not logged out - the re-run guard confirms it', async () => {
 		localStorage.setItem(TOKEN_KEY, 'A');
 		const revoked = new Set<string>(['A']);
-		const bearer = (init?: RequestInit) =>
-			((init?.headers as Record<string, string>).Authorization ?? '').replace('Bearer ', '');
-		const checksFor: string[] = [];
-		const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-			const path = String(input);
-			const token = bearer(init);
-			if (path.endsWith('/api/events')) {
-				if (revoked.has(token)) return new Response(null, { status: 401 });
-				return new Response(new ReadableStream({ start: (c) => c.close() }));
-			}
-			if (path.endsWith('/api/auth/check')) {
-				checksFor.push(token);
-				return jsonResponse(200, !revoked.has(token));
-			}
-			throw new Error(`unexpected ${path}`);
-		}) as unknown as typeof fetch;
-
-		const auth = createHttpAuthProvider({ fetchFn });
-		initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
-		const disconnect = connectEvents(
-			createSseEventProvider({
-				getToken: auth.getToken,
-				fetchFn,
-				reconnectDelayMs: 100,
-				tokenWaitDelayMs: 50
-			})
-		);
+		const { auth, identitiesFor, disconnect } = wire(revoked);
 		// A is rejected and confirmed ended while nothing listens.
 		await vi.advanceTimersByTimeAsync(50);
 		expect(auth.getToken()).toBeNull();
 
 		// A new login (B), then the protected layout mounts.
 		localStorage.setItem(TOKEN_KEY, 'B');
-		const layout = vi.fn();
+		const outcomes: string[] = [];
+		const layout = vi.fn(() => {
+			void resolveProtectedSession(auth).then((outcome) => outcomes.push(outcome));
+		});
 		const off = onSessionEnded(layout);
 		await vi.advanceTimersByTimeAsync(1_000);
-		expect(layout).not.toHaveBeenCalled();
+		expect(layout).toHaveBeenCalledTimes(1);
+		expect(outcomes).toEqual(['session']);
 		expect(auth.getToken()).toBe('B');
-		expect(checksFor.at(-1)).toBe('B');
+		expect(identitiesFor.at(-1)).toBe('B');
 
-		// Forgotten: another mount does not check again.
-		const checks = checksFor.length;
+		// B is active now: a later subscription is not told anything.
 		off();
-		const offAgain = onSessionEnded(vi.fn());
+		const again = vi.fn();
+		const offAgain = onSessionEnded(again);
 		await vi.advanceTimersByTimeAsync(1_000);
-		expect(checksFor.length).toBe(checks);
+		expect(again).not.toHaveBeenCalled();
 		offAgain();
+		disconnect();
+	});
+
+	it('S-34: unsubscribing before the asynchronous notification cancels it', async () => {
+		const { auth, disconnect } = wire(new Set());
+		await expect(resolveProtectedSession(auth)).resolves.toBe('login'); // no token: `none`
+		const listener = vi.fn();
+		const off = onSessionEnded(listener);
+		off();
+		await vi.advanceTimersByTimeAsync(10);
+		expect(listener).not.toHaveBeenCalled();
 		disconnect();
 	});
 });

@@ -16,6 +16,7 @@ import {
 	onSessionEnded
 } from '../src/sessionEnded';
 import type { DataProvider } from '../src/provider';
+import { resetDefaultSessionController } from '../src/sessionController.svelte';
 
 const TOKEN_KEY = 'banto.auth.token';
 
@@ -53,7 +54,20 @@ function endedStream(): Response {
 
 type Handler = (init: RequestInit | undefined) => Promise<Response>;
 
-/** One fake server: `/api/events` and `/api/auth/check` answered by the given handlers. */
+/**
+ * Issue #260 実装-2: the confirmation asks the SessionController, whose HTTP
+ * provider calls `GET /api/auth/identity` (one round trip) instead of
+ * `/api/auth/check`. The `check` handlers below keep answering `true`/
+ * `false`; this maps them to the identity route's `200 identity` /
+ * `200 null` (errors pass through unchanged).
+ */
+async function asIdentityAnswer(response: Response): Promise<Response> {
+	if (!response.ok) return response;
+	const valid = (await response.json()) as boolean;
+	return jsonResponse(200, valid ? { id: 'user', name: 'User' } : null);
+}
+
+/** One fake server: `/api/events` and the session check answered by the given handlers. */
 function fakeServer(routes: { events: Handler; check: Handler }) {
 	const calls = { events: 0, check: 0 };
 	const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -62,9 +76,9 @@ function fakeServer(routes: { events: Handler; check: Handler }) {
 			calls.events += 1;
 			return routes.events(init);
 		}
-		if (path.endsWith('/api/auth/check')) {
+		if (path.endsWith('/api/auth/identity')) {
 			calls.check += 1;
-			return routes.check(init);
+			return routes.check(init).then(asIdentityAnswer);
 		}
 		return Promise.reject(new Error(`unexpected ${path}`));
 	}) as unknown as typeof fetch;
@@ -96,6 +110,7 @@ function wireTab(fetchFn: typeof fetch) {
 }
 
 beforeEach(() => {
+	resetDefaultSessionController();
 	vi.useFakeTimers();
 	vi.stubGlobal('sessionStorage', makeMemoryStorage());
 	vi.stubGlobal('localStorage', makeMemoryStorage());

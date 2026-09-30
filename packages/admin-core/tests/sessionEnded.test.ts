@@ -15,6 +15,13 @@ import {
 	type SessionScope
 } from '../src/sessionScope.svelte';
 import type { AuthProvider, DataProvider } from '../src/provider';
+import { resetDefaultSessionController } from '../src/sessionController.svelte';
+
+// Issue #260 実装-2: these functions delegate to the default SessionController
+// (module state) - every test starts from a fresh one.
+beforeEach(() => {
+	resetDefaultSessionController();
+});
 
 /** In-memory Storage stand-in: Node has no global sessionStorage. */
 function makeMemoryStorage(): Storage {
@@ -31,6 +38,11 @@ function makeMemoryStorage(): Storage {
 	} as Storage;
 }
 
+/**
+ * A pre-#260 provider (no `resolve`): the controller wraps it in the
+ * compatibility adapter, whose `resolve()` is `check()` then - for `true` -
+ * `getIdentity()` (Alice here; `check() true` + `null` would reject).
+ */
 function stubCheck(check: AuthProvider['check']): void {
 	initBanto({
 		dataProvider: {} as DataProvider,
@@ -38,7 +50,7 @@ function stubCheck(check: AuthProvider['check']): void {
 			login: async () => ({ success: true }),
 			logout: async () => {},
 			check,
-			getIdentity: async () => null
+			getIdentity: async () => ({ id: 'alice', name: 'Alice' })
 		},
 		resources: []
 	});
@@ -115,6 +127,11 @@ describe('confirmSessionEnded (Issue #241)', () => {
 		off();
 	});
 
+	// Issue #260 実装-2: each call is a signal-caused request, so the second
+	// does not join the first probe - it replaces it (the first is aborted,
+	// I-22) and both requests are answered by the newer probe. Listeners are
+	// told about the TRANSITION to `none` only ("notify only on change"), so a
+	// later confirmation of the same ended session does not notify again.
 	it('overlapping confirmations each check, but notify once (re-review of #242)', async () => {
 		const answers: ((valid: boolean) => void)[] = [];
 		const check = vi.fn(() => new Promise<boolean>((resolve) => answers.push(resolve)));
@@ -132,15 +149,18 @@ describe('confirmSessionEnded (Issue #241)', () => {
 		await expect(Promise.all([first, second])).resolves.toEqual(['ended', 'ended']);
 		expect(ended).toHaveBeenCalledTimes(1);
 
-		// A confirmation that starts after that notification notifies again.
+		// A confirmation that starts after that notification confirms again,
+		// but the session was already `none`: no second notification.
 		const third = confirmSessionEnded();
 		await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(3));
 		answers[2](false);
 		await expect(third).resolves.toBe('ended');
-		expect(ended).toHaveBeenCalledTimes(2);
+		expect(ended).toHaveBeenCalledTimes(1);
 		off();
 	});
 
+	// Issue #260 実装-2: the first request moved to the second (newer) probe
+	// when the second call aborted its own, so both see the later `false`.
 	it('an earlier check answering valid does not hide a later one answering false', async () => {
 		const answers: ((valid: boolean) => void)[] = [];
 		stubCheck(() => new Promise<boolean>((resolve) => answers.push(resolve)));
@@ -152,7 +172,7 @@ describe('confirmSessionEnded (Issue #241)', () => {
 		await vi.waitFor(() => expect(answers).toHaveLength(2));
 		answers[1](false);
 		answers[0](true);
-		await expect(Promise.all([first, second])).resolves.toEqual(['valid', 'ended']);
+		await expect(Promise.all([first, second])).resolves.toEqual(['ended', 'ended']);
 		expect(ended).toHaveBeenCalledTimes(1);
 		off();
 	});

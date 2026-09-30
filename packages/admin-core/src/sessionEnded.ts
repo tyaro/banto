@@ -1,201 +1,105 @@
 /**
- * "The session ended while a screen was open" (Issue #241).
+ * "The session ended while a screen was open" (Issue #241), as a view of the
+ * default `SessionController` (Issue #260 実装-2, design §5.4).
  *
- * The protected-route guard (`resolveProtectedSession`) only runs when the
- * app navigates. A session revoked in the background (Issue #204: the
- * account was deleted/demoted, or its password changed/reset) is noticed
- * first by the event stream (`/api/events` answers `401`, or the token it
- * was using was cleared by another tab), not by a navigation.
- * `confirmSessionEnded` turns that signal into the guard's own path:
- *
- * 1. it asks `AuthProvider.check()` - the ONE place that decides validity
- *    and clears the stored token (`createHttpAuthProvider` clears it on a
- *    `401` or a `200 false`, and keeps it when the server could not verify);
- * 2. only when `check()` CONFIRMS the session is invalid (`false`) does it
- *    tell `onSessionEnded` listeners. The app re-runs its route guard there
- *    (e.g. SvelteKit `invalidateAll()`), which sends the screen to the login
- *    page (or a public-viewer session) exactly like a navigation would.
- *    A rejected `check()` (500 / unreachable) tells no one yet: the token
- *    stays, and the confirmation is retried (see "Retries" below).
- *
- * Ordering (re-review of #242). Every signal, every check start and every
- * notification is stamped from one counter, so "which happened first" is
- * always known. An answer never settles a signal that arrived AFTER its
- * check started - that check may have been judged by the server before the
- * event the signal reports (e.g. a re-login's token was still valid when
- * checked, then revoked while the `200 true` was on its way). Consequences:
- * - `confirmSessionEnded` does not join a check already in flight (that
- *   check started before the caller's reason to ask); each call sends its
- *   own check. Signals are rare - one per rejected or cleared token.
- * - `createSessionEndConfirmation` checks again when a signal arrived while
- *   its check was in flight, whatever that check answered.
- *
- * Duplicates: the event stream reports each rejected / cleared token once.
- * A confirmation does not notify listeners again if they were already
- * notified after its check started - that notification already re-ran the
- * route guard on newer knowledge - so overlapping confirmations of the same
- * revocation notify once. A navigation that notices the revocation itself
- * does not come through here - its route guard already goes to the login
- * screen - and `check()` clears only the token it checked, so the two paths
- * cannot undo each other.
- *
- * Unheard endings (third review of #242). The stream is connected before the
- * first protected route has loaded, and a listener (the protected layout)
- * only subscribes once that route has mounted - and none is subscribed while
- * the app is on the login page. An ending confirmed with no listener is
- * remembered (`unheardAt`); the next `onSessionEnded` subscription confirms
- * it again (asynchronously, through the same retrying confirmation) and
- * notifies if the session is still ended. Confirming again - instead of
- * replaying the old notification - is what keeps a stale ending from logging
- * out a NEW login: a check that started after the ending and answers `true`
- * forgets it. A notification heard by a listener forgets it too.
- *
- * A confirmation whose `check()` never answers gives up after
- * `CONFIRM_TIMEOUT_MS` (treated as "could not verify": no notification).
- *
- * Retries (review of #242): the event stream reports once, so a confirmation
- * that could not verify must not be the last word. `connectEvents` drives
- * `createSessionEndConfirmation`, which retries with backoff until the
- * outcome is known. A late `false` for an abandoned check still clears the
- * token (the HTTP provider's side effect); the next retry then sees no token,
- * `check()` resolves `false` without a request, and listeners are notified -
- * the notification follows the cleared token within one retry delay.
+ * - `onSessionEnded(listener)` - notified when the controller commits `none`
+ *   after `active`/`unknown` (a background revocation confirmed, a hold that
+ *   was confirmed `none`, a logout). It is a thin wrapper over
+ *   `controller.subscribe` with no state or confirmation of its own (I-1).
+ *   S-34 (design §4.5): the pre-#260 "unheard ending" re-probe is gone;
+ *   instead, a subscription made while the session is ALREADY `none` is
+ *   notified once, asynchronously (never inside the subscribing call, which
+ *   is typically a component's `$effect`), if it is still subscribed and the
+ *   session is still `none` by then. Kept in v2.0.0.
+ * - `confirmSessionEnded()` / `createSessionEndConfirmation()` - the
+ *   pre-#260 background confirmation (removed in v2.0.0; `connectEvents`
+ *   uses `controller.signal()` from 実装-3). Each attempt is a signal-caused
+ *   request to the controller (only a probe started after the request can
+ *   answer it, I-9); `createSessionEndConfirmation` keeps its own backoff
+ *   and `stop()`, exactly as before.
  */
-import { getAuthProvider } from './registry.svelte';
-import { endSession, MAX_STALE_RETRIES } from './sessionLifecycle';
-import { currentSessionScope, isCurrentSessionScope } from './sessionScope.svelte';
+import {
+	defaultSessionInternals,
+	getSessionController,
+	type ResolveResult
+} from './sessionController.svelte';
+import { MAX_STALE_RETRIES } from './sessionLifecycle';
 
 type Listener = () => void;
 
-/** How long a confirmation waits for `check()` before giving up. */
+/** How long a confirmation waits for the provider before giving up (the controller's default probe deadline). */
 export const CONFIRM_TIMEOUT_MS = 10_000;
 
-const listeners = new Set<Listener>();
-
-// One counter orders signals, check starts and notifications ("Ordering").
-let clock = 0;
-function tick(): number {
-	clock += 1;
-	return clock;
+function call(listener: Listener): void {
+	try {
+		listener();
+	} catch {
+		// One broken listener must not stop the others.
+	}
 }
-let lastNotifiedAt = 0;
-// When an ending was confirmed while NO listener was subscribed (the
-// protected layout not mounted yet, or already gone): the stamp of that
-// notification, else 0. See "Unheard endings".
-let unheardAt = 0;
-let unheardConfirmation: SessionEndConfirmation | null = null;
 
 /**
- * Subscribe to "the current session was confirmed ended in the background".
- * Returns an unsubscribe function. Typical app wiring (inside the protected
- * layout, so it is only active while a protected screen is shown):
- * `onSessionEnded(() => void invalidateAll())`.
+ * Subscribe to "the current session was confirmed ended". Returns an
+ * unsubscribe function. See the module doc for the S-34 "already ended when
+ * subscribing" notification.
  */
 export function onSessionEnded(listener: Listener): () => void {
-	listeners.add(listener);
-	if (unheardAt !== 0) {
-		// Confirm again rather than replaying: a new login may have happened
-		// since. Asynchronous - the listener never runs inside this call (it
-		// is typically made from a component's `$effect`).
-		unheardConfirmation ??= createSessionEndConfirmation();
-		unheardConfirmation.start();
+	const controller = getSessionController();
+	let subscribed = true;
+	const off = controller.subscribe((snapshot, previous) => {
+		if (snapshot.status === 'none' && previous.status !== 'none') call(listener);
+	});
+	if (controller.snapshot.status === 'none') {
+		const generation = controller.snapshot.generation;
+		queueMicrotask(() => {
+			// Still subscribed, and still the same ended session (a transition
+			// meanwhile was delivered by the subscription itself).
+			if (
+				subscribed &&
+				controller.snapshot.status === 'none' &&
+				controller.snapshot.generation === generation
+			) {
+				call(listener);
+			}
+		});
 	}
 	return () => {
-		listeners.delete(listener);
+		subscribed = false;
+		off();
 	};
 }
 
 /** Result of one confirmation. */
 export type SessionEndOutcome =
-	/** `check()` resolved `false`: the session ended, listeners were notified. */
+	/** The controller confirmed `none` (listeners were notified if the session was not already `none`). */
 	| 'ended'
-	/** `check()` resolved `true`: the (current) session is valid. */
+	/** The controller confirmed an active session. */
 	| 'valid'
-	/** `check()` rejected or did not answer in time: nothing is known yet. */
+	/** The provider could not answer (rejected or timed out): nothing is known yet. */
 	| 'unknown';
 
-/** One check, stamped with when it started. */
-async function runConfirmation(
-	attempt = 1
-): Promise<{ outcome: SessionEndOutcome; startedAt: number }> {
-	const startedAt = tick();
-	// Issue #215/#255 5th review: the session this check is about. See the
-	// stale-answer branch below.
-	const scope = currentSessionScope();
-	let valid: boolean;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	try {
-		valid = await Promise.race([
-			getAuthProvider().check(),
-			new Promise<never>((_, reject) => {
-				timer = setTimeout(() => reject(new Error('timed out')), CONFIRM_TIMEOUT_MS);
-			})
-		]);
-	} catch {
-		// Could not verify (or no provider registered, or no answer in time):
-		// not an ending. A late answer to an abandoned check still has its
-		// effect - a late `false` clears the token - and the next attempt then
-		// finds no token and confirms without a request.
-		return { outcome: 'unknown', startedAt };
-	} finally {
-		clearTimeout(timer);
-	}
-	if (valid) {
-		// The session is valid as of a check that started after the unheard
-		// ending: that ending is no longer this session's (a new login).
-		if (unheardAt !== 0 && startedAt > unheardAt) unheardAt = 0;
-		return { outcome: 'valid', startedAt };
-	}
-	// Already notified for an ending confirmed after this check started (an
-	// overlapping confirmation of the same revocation - "Duplicates"): that
-	// notification covers this answer too.
-	if (lastNotifiedAt >= startedAt) return { outcome: 'ended', startedAt };
-	if (!isCurrentSessionScope(scope)) {
-		// Issue #215/#255 5th review: the session changed while this check
-		// was pending - this tab logged out, and possibly in as someone else,
-		// before the `false` came back. The answer is about the PREVIOUS
-		// session's token (the HTTP provider keeps a newer token -
-		// `clearTokenIfCurrent`), so ending the session now would end the NEW
-		// one: its owner, saved list state and screen. Check the current
-		// session instead; if it keeps changing, report 'unknown' so the
-		// retry loop asks again later.
-		if (attempt < MAX_STALE_RETRIES) return runConfirmation(attempt + 1);
-		return { outcome: 'unknown', startedAt };
-	}
+function outcomeOf(result: Exclude<ResolveResult, { outcome: 'superseded' }>): SessionEndOutcome {
+	if (result.outcome === 'unverified') return 'unknown';
+	return result.snapshot.status === 'none' ? 'ended' : 'valid';
+}
 
-	lastNotifiedAt = tick();
-	unheardAt = listeners.size === 0 ? lastNotifiedAt : 0;
-	// Issue #215/#255 review: this point is reached once per actual ending
-	// (the "Duplicates" de-dup above), so this call is not
-	// repeated for overlapping confirmations of the same revocation.
-	// Whoever was signed in when this session ended must not leave their
-	// list filter/sort/last-opened-row (`listViewState.ts`) behind for
-	// whoever the app's own guard sends this tab to next (login or a
-	// public-viewer session) once the listeners below re-run it -
-	// `endSession()` (`sessionLifecycle.ts`) also starts a new session
-	// generation, so a screen or an in-flight save started before this
-	// ending can no longer write on the ended session's behalf.
-	endSession();
-	for (const listener of [...listeners]) {
-		try {
-			listener();
-		} catch {
-			// One broken listener must not stop the others.
-		}
+async function confirmOnce(): Promise<SessionEndOutcome> {
+	const internals = defaultSessionInternals();
+	for (let attempt = 0; attempt < MAX_STALE_RETRIES; attempt++) {
+		const result = await internals.legacyResolveSignal();
+		if (result.outcome !== 'superseded') return outcomeOf(result);
 	}
-	return { outcome: 'ended', startedAt };
+	return 'unknown';
 }
 
 /**
- * Confirm through `AuthProvider.check()` that the session ended and, only if
- * it did, notify `onSessionEnded` listeners (once for overlapping
- * confirmations - see "Duplicates" above). Never rejects. Always sends its
- * own check: the answer to a check that started earlier could predate the
- * caller's reason to ask. A single attempt: `createSessionEndConfirmation`
- * retries an `'unknown'` outcome.
+ * Confirm through the controller that the session ended. Never rejects.
+ * Each call is a signal-caused request: it is answered only by a probe that
+ * started after it (an older in-flight probe is aborted and replaced, I-9).
+ * A single attempt: `createSessionEndConfirmation` retries `'unknown'`.
  */
-export async function confirmSessionEnded(): Promise<SessionEndOutcome> {
-	return (await runConfirmation()).outcome;
+export function confirmSessionEnded(): Promise<SessionEndOutcome> {
+	return confirmOnce();
 }
 
 /** First delay before retrying an `'unknown'` confirmation. */
@@ -204,26 +108,19 @@ export const CONFIRM_RETRY_INITIAL_MS = 1_000;
 export const CONFIRM_RETRY_MAX_MS = 30_000;
 
 export interface SessionEndConfirmation {
-	/**
-	 * A new signal that the session may have ended: confirm it. Starts a
-	 * confirmation, or - when one is already running - makes sure it checks
-	 * again after this signal (a retry waiting on its backoff runs now).
-	 */
+	/** A new signal that the session may have ended: confirm it (now, if waiting on a backoff). */
 	start(): void;
 	/** Stop retrying (e.g. the event subscription ended). */
 	stop(): void;
 }
 
+let legacyClock = 0;
+
 /**
- * A confirmation that keeps going until it knows (review of #242): runs a
- * check and, while the outcome is `'unknown'` (the server could not verify,
- * was unreachable, or did not answer in time), retries after
- * `CONFIRM_RETRY_INITIAL_MS`, doubling up to `CONFIRM_RETRY_MAX_MS` - the
- * server is asked again once it recovers, without asking it too often while
- * it cannot answer. Stops at `'ended'` (listeners notified) or `'valid'`,
- * but only when no signal arrived after that check started (re-review of
- * #242: a `'valid'` judged before a newer revocation must not end it). One
- * check at a time per confirmation.
+ * A confirmation that keeps going until it knows (review of #242): retries
+ * an `'unknown'` outcome after `CONFIRM_RETRY_INITIAL_MS`, doubling up to
+ * `CONFIRM_RETRY_MAX_MS`; confirms again when a signal arrived while its
+ * attempt was in flight. One attempt at a time per confirmation.
  */
 export function createSessionEndConfirmation(): SessionEndConfirmation {
 	let running = false;
@@ -233,11 +130,10 @@ export function createSessionEndConfirmation(): SessionEndConfirmation {
 
 	async function attempt(delayMs: number): Promise<void> {
 		timer = null;
-		const { outcome, startedAt } = await runConfirmation();
+		const startedAt = ++legacyClock;
+		const outcome = await confirmOnce();
 		if (stopped) return;
 		if (latestSignalAt > startedAt) {
-			// A signal came in while this check was in flight: its answer may
-			// predate that signal. Check again now.
 			void attempt(CONFIRM_RETRY_INITIAL_MS);
 			return;
 		}
@@ -251,16 +147,14 @@ export function createSessionEndConfirmation(): SessionEndConfirmation {
 	return {
 		start() {
 			if (stopped) return;
-			latestSignalAt = tick();
+			latestSignalAt = ++legacyClock;
 			if (!running) {
 				running = true;
 				void attempt(CONFIRM_RETRY_INITIAL_MS);
 			} else if (timer !== null) {
-				// Waiting on a backoff: the new signal is checked now.
 				clearTimeout(timer);
 				void attempt(CONFIRM_RETRY_INITIAL_MS);
 			}
-			// Otherwise a check is in flight; `attempt` sees `latestSignalAt`.
 		},
 		stop() {
 			stopped = true;

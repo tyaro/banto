@@ -5,6 +5,7 @@
  * `initBanto` may be called again (e.g. between tests) to fully replace it.
  */
 import type { AuthProvider, DataProvider, NotificationKind, Notifier } from './provider';
+import { bindDefaultSessionProvider } from './sessionController.svelte';
 
 export interface ResourceDefinition {
 	name: string;
@@ -35,12 +36,23 @@ let resources: ResourceDefinition[] = $state([]);
 const NOT_INITIALIZED_MESSAGE =
 	'initBanto() has not been called yet — call it once at app startup before using admin-core composables.';
 
-/** Register providers/resources for the app. Safe to call again (e.g. in tests) to fully replace state. */
+/**
+ * Register providers/resources for the app. Safe to call again (e.g. in
+ * tests) to replace them.
+ *
+ * Issue #260 (実装-2, 統合修正 15): also binds the default
+ * `SessionController` (`getSessionController()`) to `authProvider`. A
+ * provider without `resolve`/`credentialRevision`/`onCredentialChanged` is
+ * wrapped in `adaptLegacyAuthProvider` for the controller - see that
+ * adapter's doc for what it cannot guarantee (no cross-tab switch detection,
+ * no compare-and-set).
+ */
 export function initBanto(config: InitBantoConfig): void {
 	dataProvider = config.dataProvider;
 	authProvider = config.authProvider;
 	notifier = config.notifier ?? null;
 	resources = config.resources;
+	bindDefaultSessionProvider(config.authProvider);
 }
 
 export function getDataProvider(): DataProvider {
