@@ -1214,6 +1214,34 @@ describe('an ownerless active in between (owner review of #265 P2; S-10, I-24)',
 	});
 });
 
+describe('the public viewer is not a user (S-93, I-24; independent audit of 実装-3 P2-1)', () => {
+	it('S-93: none -> P (S-42) -> own login in the same tab (hold) -> A raises no pendingOwnerChange', async () => {
+		const { p, controller, settleTo } = setup();
+		await settleTo(null);
+		await settleTo(PUBLIC);
+		expect(controller.snapshot.owner).toBe('public-viewer');
+		p.change(); // the login stored A's token (reported): hold
+		expect(controller.snapshot.status).toBe('unknown');
+		await settleTo(ALICE);
+		expect(controller.snapshot).toMatchObject({ owner: 'account:alice', pendingOwnerChange: null });
+		// A later real change of user is still reported from A, not from P.
+		p.change();
+		await settleTo(BOB);
+		expect(controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:alice',
+			to: 'account:bob'
+		});
+	});
+
+	it('S-93: A -> none -> P raises nothing either (the reverse passes through none)', async () => {
+		const { controller, settleTo } = setup();
+		await settleTo(ALICE);
+		await settleTo(null);
+		await settleTo(PUBLIC);
+		expect(controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+});
+
 describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () => {
 	it('S-76: A -> none -> B raises no pendingOwnerChange; A -> unknown -> B does', async () => {
 		const { p, controller, settleTo } = setup();

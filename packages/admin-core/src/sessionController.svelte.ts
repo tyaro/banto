@@ -358,6 +358,12 @@ function createCore(
 	 * identity without an id) is not a change of user and does not move it,
 	 * so `A -> ownerless -> B` raises `{ A -> B }` and `A -> ownerless -> A`
 	 * raises nothing (owner review of #265 P2; design §6.1 lifetime table).
+	 * The public viewer (`kind: 'publicViewer'`) is not a user either (S-93,
+	 * independent audit of 実装-3 P2-1): signing in from a public-viewer
+	 * screen - `P -> unknown -> A` in the same tab, or another tab's login
+	 * reaching a public-viewer tab - is not "another user signed in". The
+	 * reverse (`A -> P`) always passes through `none` (a public viewer is
+	 * minted only for a confirmed `none`), which clears this anyway.
 	 */
 	let lastConcreteOwner: string | null = null;
 	let inflight: Probe | null = null;
@@ -472,7 +478,7 @@ function createCore(
 			// of provider (owners of different authentication sources).
 			pendingOwnerChange = null;
 			lastConcreteOwner = null;
-		} else if (next.status === 'active' && next.owner !== null) {
+		} else if (next.status === 'active' && next.owner !== null && next.kind !== 'publicViewer') {
 			if (lastConcreteOwner !== null && lastConcreteOwner !== next.owner) {
 				// Keep the first `from` while unhandled (design §6.1 lifetime table).
 				// A -> B -> A before it is handled nets out to "no change of user":
@@ -482,7 +488,8 @@ function createCore(
 			}
 			lastConcreteOwner = next.owner;
 		}
-		// `unknown` and an ownerless active keep both (S-10, S-81).
+		// `unknown`, an ownerless active and the public viewer keep both
+		// (S-10, S-81, S-93).
 		const waiters = options.external && inflight ? retire(inflight) : [];
 		publish({
 			status: next.status,
