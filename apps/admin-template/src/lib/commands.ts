@@ -16,7 +16,8 @@
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
 import * as m from '$lib/paraglide/messages';
-import { endSession, getAuthProvider, type PaletteCommand } from '@banto/admin-core';
+import type { PaletteCommand } from '@banto/admin-core';
+import { logoutAndEndSession } from './banto/logout';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
@@ -92,9 +93,8 @@ function sessionCommands(): PaletteCommand[] {
 				// Issue #260 実装-2: /login first, then the logout - same order
 				// and reason as Header.svelte's logout.
 				await goto(`${base}/login`);
-				await getAuthProvider().logout();
-				// Issue #215/#255: same as Header.svelte's logout.
-				endSession();
+				// Issue #215/#255, I-18/I-10: same as Header.svelte's logout.
+				await logoutAndEndSession();
 			}
 		}
 	];

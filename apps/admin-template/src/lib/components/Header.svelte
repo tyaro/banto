@@ -7,7 +7,7 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import * as m from '$lib/paraglide/messages';
-	import { endSession, getAuthProvider } from '@banto/admin-core';
+	import { logoutAndEndSession } from '$lib/banto/logout';
 	import { pageTitle } from '$lib/navigation';
 	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
@@ -63,11 +63,12 @@
 		// /login is a forced navigation (`$lib/unsavedChanges.ts`), so it
 		// always happens.
 		await goto(`${base}/login`);
-		await getAuthProvider().logout();
 		// Issue #215/#255: this tab's session is over - new session generation
 		// (a save still in flight can no longer write its marker) and the
-		// saved list view state goes with it. Same order in `commands.ts`.
-		endSession();
+		// saved list view state goes with it - but only if no other session
+		// was confirmed while the logout was in flight (I-18/I-10, see
+		// `$lib/banto/logout.ts`). Same order in `commands.ts`.
+		await logoutAndEndSession();
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two

@@ -461,6 +461,8 @@ function createCore(
 			previousActiveOwner !== next.owner
 		) {
 			// Keep the first `from` while unhandled (design §6.1 lifetime table).
+			// A -> B -> A before it is handled nets out to "no change of user":
+			// the pending change is dropped (null), not reported as A -> A.
 			const from = prev.pendingOwnerChange?.from ?? previousActiveOwner;
 			pendingOwnerChange = from === next.owner ? null : Object.freeze({ from, to: next.owner });
 		}
@@ -610,11 +612,28 @@ function createCore(
 	function kickBackground(): void {
 		if (adopted || !provider || !pendingBackground) return;
 		if (inflight && isJoinable(inflight)) return;
+		replaceInflight([]);
+	}
+
+	/**
+	 * Replace an in-flight probe that became unusable because of a NEW event
+	 * (a signal, a credential change, `end()`, a request that cannot join)
+	 * with a fresh probe, moving its waiters over. One counting rule for every
+	 * such path (`kickBackground` and `resolve()` step 2 alike): the chain's
+	 * `staleCount` and `catchUpUsed` are carried over unchanged - a new event
+	 * is not a discarded answer, so it does not count against
+	 * `maxStaleRetries`, and it does not grant another free catch-up (§10 (a)).
+	 * Only a discarded ANSWER (`onProbeSettled`/`onProbeTimeout` -> `reissue`)
+	 * adds 1.
+	 */
+	function replaceInflight(waiters: Waiter[]): void {
 		if (backgroundTimer !== null) {
 			scheduler.clearTimeout(backgroundTimer);
 			backgroundTimer = null;
 		}
-		reissue([], inflight ? inflight.staleCount : 0, false);
+		const old = inflight;
+		const moved = old ? retire(old) : [];
+		startProbe([...moved, ...waiters], old?.staleCount ?? 0, old?.catchUpUsed ?? false);
 	}
 
 	function scheduleBackground(): void {
@@ -859,13 +878,7 @@ function createCore(
 			}
 			// A signal (or a revision/epoch change) made the in-flight probe
 			// unusable: abort it and move its waiters to the new probe.
-			const staleCount = 0;
-			const moved = inflight ? retire(inflight) : [];
-			if (backgroundTimer !== null) {
-				scheduler.clearTimeout(backgroundTimer);
-				backgroundTimer = null;
-			}
-			startProbe([...moved, waiter], staleCount, false);
+			replaceInflight([waiter]);
 		});
 	}
 

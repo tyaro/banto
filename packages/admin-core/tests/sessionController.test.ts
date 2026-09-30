@@ -929,6 +929,40 @@ describe('§10 (a) catch-up after an unobserved seq advance (I-3, I-5, I-23)', (
 	});
 });
 
+describe('§10 (a) one counting rule for replaced probes (P3-1)', () => {
+	it('S-86: a signal replacing the probe does not count against maxStaleRetries', async () => {
+		for (const replace of ['signal', 'credential change'] as const) {
+			const { p, controller, settleTo } = setup({ deps: { maxStaleRetries: 0 } });
+			await settleTo(null);
+			const request = controller.resolve();
+			const last = p.probes.length - 1;
+			if (replace === 'signal') controller.signal('unauthorized');
+			else p.change();
+			expect(p.probes[last].signal?.aborted).toBe(true);
+			p.active(p.probes.length - 1, ALICE);
+			const result = await request;
+			// A change while unknown/none is not a hold: the request is answered.
+			expect(result.outcome).toBe('confirmed');
+		}
+	});
+
+	it('S-86: the replacing probe inherits catchUpUsed - no second free catch-up after a signal', async () => {
+		const { p, controller } = setup({ revision: 0, deps: { maxStaleRetries: 0 } });
+		const request = controller.resolve();
+		p.setRevision(5);
+		p.active(0, ALICE, { checked: p.rev(5), current: p.rev(5) }); // the free catch-up
+		await flush();
+		expect(p.probes).toHaveLength(2);
+		controller.signal('unauthorized'); // replaces probe #1, keeps catchUpUsed
+		expect(p.probes).toHaveLength(3);
+		p.setRevision(6);
+		p.active(2, ALICE, { checked: p.rev(6), current: p.rev(6) }); // counted now
+		const result = await request;
+		expect(result.outcome).toBe('unverified');
+		expect((result as { error: unknown }).error).toBeInstanceOf(SessionChangedError);
+	});
+});
+
 // §10 decision (b) of 実装-2: providers that send no `kind`.
 describe('§10 (b) the kind of an answer without `kind` (I-2, 統合修正 13)', () => {
 	it('S-87: no kind -> account; the issuer’s publicViewer marker -> publicViewer; a provider kind is kept', async () => {

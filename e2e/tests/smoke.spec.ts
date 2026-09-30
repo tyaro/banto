@@ -1982,6 +1982,19 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			let held = 0;
 			let released!: () => void;
 			const guardReleased = new Promise<void>((resolve) => (released = resolve));
+			// Issue #260 実装-2: deterministic within the guard's 10 s deadline.
+			// The new document's first stream request is held until the account
+			// is revoked, then sent on - so the server answers its own 401 right
+			// away instead of at its next revalidation (up to 15 s later).
+			let revokedNow!: () => void;
+			const revoked = new Promise<void>((resolve) => (revokedNow = resolve));
+			let streamHeld = false;
+			await tab.route('**/api/events', async (route) => {
+				if (streamHeld || !route.request().headers()['authorization']) return route.continue();
+				streamHeld = true;
+				await revoked;
+				await route.continue();
+			});
 			// Issue #260 実装-2: the guard's session check is `/api/auth/identity`.
 			await tab.route('**/api/auth/identity', async (route) => {
 				// The confirmation's own check passes through; only the guard's
@@ -2015,6 +2028,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 					},
 					{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
 				);
+				revokedNow();
 				await rejected;
 				await expect
 					.poll(() => tab.evaluate(() => localStorage.getItem('banto.auth.token')), {
@@ -2031,21 +2045,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// A fresh load of a protected screen: the guard waits on the held check.
 			await tab.goto('/items', { waitUntil: 'commit' });
 			await guardReleased;
-			// Issue #260 実装-2: the guard waits at most 10 s (`resolveSettled`'s
-			// deadline, I-8/S-49). When the stream's 401 came in time, the
-			// confirmation's probe answered the guard too and it went straight
-			// to /login; when it came later (it waits for the server's 15 s
-			// revalidation), the guard showed the retry page - and the retry
-			// then finds the ending (the token is gone) and goes to /login.
-			// Either way the tab does not stay on the protected screen.
-			const retry = tab.getByRole('button', { name: '再試行' });
-			await expect
-				.poll(async () => new URL(tab.url()).pathname === '/login' || (await retry.isVisible()), {
-					timeout: 20_000
-				})
-				.toBe(true);
-			if (new URL(tab.url()).pathname !== '/login') await retry.click();
-			await expect(tab).toHaveURL(/\/login$/, { timeout: 20_000 });
+			// Issue #260 実装-2: the held (stale) `valid` answer is never applied.
+			// The confirmation's signal-caused probe replaced the guard's probe
+			// (I-9/I-22) and answered the guard too, so it goes straight to
+			// /login - not through the retry page (all within its deadline).
+			await expect(tab).toHaveURL(/\/login$/, { timeout: 10_000 });
+			await expect(tab.getByRole('button', { name: '再試行' })).toHaveCount(0);
 			expect(
 				await tab.evaluate(() => ({
 					local: localStorage.getItem('banto.auth.token'),
