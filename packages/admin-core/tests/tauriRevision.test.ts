@@ -355,6 +355,32 @@ describe('Tauri resolve(): auth_resolve once (§5.3)', () => {
 		expect(calls.filter((c) => c.cmd === 'auth_login')).toHaveLength(2);
 	});
 
+	it.each([
+		['an IPC error', new Error('ipc channel closed')],
+		['unauthorized', { kind: 'unauthorized' }]
+	])(
+		'S-78: a timed-out op whose late answer is a rejection (%s) advances local only once and notifies once',
+		async (_label, rejection) => {
+			vi.useFakeTimers();
+			const { auth, changed, last } = setup(1_000);
+			const before = auth.credentialRevision();
+			const logout = auth.logout();
+			const logoutCall = last('auth_logout');
+
+			vi.advanceTimersByTime(1_000);
+			expect(auth.credentialRevision()).toBe('0.1');
+			expect(auth.credentialRevision()).not.toBe(before);
+			expect(changed).toHaveBeenCalledTimes(1);
+
+			// The late rejection is the same unknown outcome the timeout
+			// already accounted for: no second bump.
+			logoutCall.reply.reject(rejection);
+			await expect(logout).rejects.toSatisfy(isProviderError);
+			expect(auth.credentialRevision()).toBe('0.1');
+			expect(changed).toHaveBeenCalledTimes(1);
+		}
+	);
+
 	it('S-26: a failed auth_resolve (IPC / backend error) never advances the revision', async () => {
 		const { auth, changed, last } = setup();
 		const resolving = auth.resolve();

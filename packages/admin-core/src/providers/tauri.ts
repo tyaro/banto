@@ -212,6 +212,9 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Stan
 	 * answers or `opPendingTimeoutMs` passes. A rejection that may have
 	 * changed the session slot (`rejectionMayHaveChangedSlot`) advances
 	 * `local` (the outcome is unknown); the error is rethrown either way.
+	 * An op that already timed out has advanced `local` for that same
+	 * unknown outcome, so its late rejection does not advance it again
+	 * (PR #264 review P3); a late success is still `observe`d by the caller.
 	 */
 	async function runOp<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 		const op = {};
@@ -222,8 +225,8 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Stan
 		try {
 			return (await options.invoke(cmd, args)) as T;
 		} catch (raw) {
-			pendingOps.delete(op);
-			if (rejectionMayHaveChangedSlot(raw)) bumpLocal();
+			const wasPending = pendingOps.delete(op);
+			if (wasPending && rejectionMayHaveChangedSlot(raw)) bumpLocal();
 			throw toProviderError(raw);
 		} finally {
 			clearTimeout(timer);
