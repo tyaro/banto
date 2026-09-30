@@ -137,6 +137,10 @@ REST のサーバ側には無い。REST 経路で「1 スロット」に当た�
 どちらも admin-core の `createHttpAuthProvider`/`createTauriAuthProvider` を使っていて、
 自前の `AuthProvider` 実装は持たない（`session.svelte.ts`・`sessionGuard.ts` が
 `getAuthProvider()` の戻り値をそのまま使っていることからの推測。`setup.ts` の全文は未読）。
+**（実装-3 の独立監査で訂正、2026-09-30）** 推測は誤り: chronogazer の `src/lib/banto/setup.ts`（132〜160 行）に
+`check()`/`getIdentity()` だけの自前の `demoAuthProvider` がある（v2 では型エラー、かつブラウザの demo 起動時に
+`initBanto` が `TypeError` を投げて白画面になる）。また banto-hub と chronogazer の `session.svelte.ts`（41 行）は
+`getAuthProvider().getIdentity()` を**直接**呼んでいる（v2 の `AuthProvider` には無い）。§6.2 の表を参照。
 
 ### 1.7 ログインの監査は、REST と Tauri のどちらも「資格情報の検証に成功した」時点で記録している
 
@@ -459,6 +463,7 @@ provider のテストで、それぞれ**フロントの順序に依らず**成�
 | S-90 | S-89 で B が Bob を返す | Bob を確定（+2）。`previousActiveOwner`・`pendingOwnerChange` は持ち越さない（別の認証源の owner は比べない）ので通知の対象にならない。A の `onCredentialChanged` はもう届かない | I-24・I-12 | #265 オーナーレビュー P1 |
 | S-91 | 同じ provider で再 bind（`initBanto` の再呼び出し） | 何もしない（snapshot・epoch・probe は据え置き）。最初の bind（まだ provider が無い）も遷移にしない | I-2 | #265 オーナーレビュー P1 |
 | S-92 | `active(A) → active(owner なし) → active(B)`、および `A → owner なし → A` | owner の無い active（S-10）は owner の変化の判定の対象外（最後の具体的な owner を保つ）。前者は `{ A → B }`、後者は立てない（`A → B → owner なし → A` なら未処理の変更は消える） | I-24・I-12 | #265 オーナーレビュー P2 |
+| S-93 | 公開閲覧（P、S-42）の画面からヘッダーの「ログイン」で A として自分でログイン（同じタブ。ログインの通知で保留 → `active(A)`）。または公開閲覧のタブに別タブの A のログインが届く | `pendingOwnerChange` を**立てない**（公開閲覧はユーザーではない。owner の変化の判定の対象外で、最後の具体的な owner を更新しない）。通知も `'relogin'` も出ない。逆向き（A → P）は必ず none を経るので影響なし | I-24 | 実装-3 の独立監査 P2-1 |
 
 **「状態を書き換える入口 × 非同期の境界」の表**（今回の指摘と同じ型が残っていないかを洗った。
 実装の PR のレビューでも同じ表を使う）:
@@ -955,7 +960,7 @@ function bumpLocal(): void {
 | `resolveProtectedSession`                                                                            | **削除**（`resolveSettled()` + アプリの方針に分かれる）                                                                                                                                                                                            | `enterPublicViewer` の呼び出しを core から外す。意味が変わる                        |
 | `establishSession`・`beginSession`・`endSession`                                                     | **削除**（`resolve()`・`adopt(…, ticket)`・`end(…, ticket)`。ログアウト後の `endSession()` は `resolveSettled()` に）                                                                                                                              | 呼び出し側に状態更新の組み立てを求める入口。単一の書き手（I-1）                     |
 | `confirmSessionEnded`・`createSessionEndConfirmation`・`SessionEndOutcome`・`SessionEndConfirmation` | **削除**（`controller.signal()` に格下げ。`connectEvents` は内部で `signal` を呼ぶ）                                                                                                                                                               | 本文「signal の入口に格下げ」                                                       |
-| `SessionChangedError`・`MAX_STALE_RETRIES`                                                           | **削除**（`unverified` の `error` に同名のエラーを入れる。上限は deps）                                                                                                                                                                            | reject しない契約（I-8）                                                            |
+| `SessionChangedError`・`MAX_STALE_RETRIES`                                                           | **削除**（`unverified` の `error` に同名のエラーを入れる。上限は deps）。`SessionChangedError` の export は残す（`unverified.error` を `instanceof` で見分けるため、実装-3）                                                                        | reject しない契約（I-8）                                                            |
 | `ProtectedSessionOutcome`                                                                            | **削除**                                                                                                                                                                                                                                           | `resolveProtectedSession` と一緒                                                    |
 | `AuthProvider.check` / `getIdentity`                                                                 | **契約から削除**（`LegacyAuthProvider` と互換 adapter にだけ残る）                                                                                                                                                                                 | controller が呼ばない（§5.2）                                                       |
 | `AuthProvider.enterPublicViewer`                                                                     | **形を変える**（`(options?) => Promise<{ success, superseded? }>`）                                                                                                                                                                                | ticket に結び付けた発行（S-52）                                                     |
@@ -1047,7 +1052,7 @@ function bumpLocal(): void {
 
   ```ts
   await provider.logout(); // 消せたなら provider が revision を進めて通知 → controller は保留
-  const result = await resolveSettled(controller); // none なら commit(none) = 保存状態の全消去
+  const result = await resolveSettled(controller, { cause: 'signal' }); // ログアウトの後に始めた probe だけが答える（I-9）。none なら commit(none) = 保存状態の全消去
   if (result.outcome === 'confirmed' && result.snapshot.status === 'none') goto(`${base}/login`);
   // active のまま（別のログインが確定していた）なら何もしない。unverified なら再試行の表示
   ```
@@ -1113,6 +1118,7 @@ function bumpLocal(): void {
 | 別のユーザー（C）の確定（B を処理する前）             | `{ from: A, to: C }` に置き換える（最初の from を保つ） | —                                       | —                                                | —                     |
 | 元のユーザー（A）の確定（A → B を処理する前、A → B → A） | 未処理の変更を**消す**（`from === to` は「ユーザーは変わっていない」。`{ A → A }` を通知しない、実装-2） | —                                       | null に戻る                                      | —                     |
 | owner の無い active（S-10、id の無い identity）             | —（owner の変化の判定の対象外。比べる相手は最後の具体的な owner のまま） | 保持                                    | —                                                | S-92                  |
+| active(P) → active(A)（公開閲覧から自分でログイン、同じタブでも別タブのログインでも） | 立てない（公開閲覧はユーザーではない。owner の変化の判定の対象外、実装-3 の独立監査 P2-1） | —                                       | —                                                | S-93                  |
 | 別の provider への再 bind（`initBanto` の差し替え）         | —                                                       | —                                       | **破棄**（別の認証源の owner は比べない）        | S-90                  |
 | **none の確定**                                       | —                                                       | —                                       | **破棄**（セッションの終了を越えて持ち越さない） | S-83                  |
 | レイアウトの mount                                    | —                                                       | —                                       | 処理して `acknowledgeOwnerChange()`              | S-81                  |
@@ -1138,7 +1144,7 @@ A′ 案のとおり、**候補版で検証したうえで、正式版への参�
 | banto-hub `sessionRecheck.ts`                                                 | `recheckSessionAfterStreamClose` → `controller.signal('app:stream-closed')` + `invalidateAll()`。`probeSessionAfterReconnectFailures` → **`kind === 'commissioning'` なら試運転の policy runner を先に走らせ**（統合修正 7）、そうでなければ `resolveSettled(controller, { cause: 'signal' })`（要求自体が signal の stamp を進める、S-58）。結果を `SessionProbeResult` に写す（`confirmed/none → 'login'`、`confirmed/active → 'session'`、`unverified → 'unverified'`）。独自の token 照合・single-flight・期限・`/api/auth/check` の直接 `fetch` は削除 |
 | banto-hub `(app)/+layout.svelte`・`monitor/+page.svelte`                      | §6.1 の 3 本の配線（世代の照合 → 再 load、owner → 通知、unverified → 再試行）                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 各アプリの `Header`/ログアウト                                                | `await provider.logout(); await resolveSettled(controller)`（`end()` は呼ばない、S-51）                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **自前の `AuthProvider` を持つ場合**                                          | v2 の `AuthProvider` は `resolve`・`credentialRevision`・`onCredentialChanged` が必須なので**型エラーになる**。対応は 2 つ: (a) 3 つを実装する（推奨。HTTP なら `GET /api/auth/identity` 1 回、§2.1）、(b) 一時的に `adaptLegacyAuthProvider(...)` で包む（保証しない範囲を §5.2 の表で確認し、移行 PR の本文に「adapter 使用中」と明記する）。banto-industrial の 2 アプリは admin-core の provider を使っているので該当しない見込み（§1.6、推測）                                                                                                         |
+| **自前の `AuthProvider` を持つ場合**                                          | v2 の `AuthProvider` は `resolve`・`credentialRevision`・`onCredentialChanged` が必須なので**型エラーになる**。対応は 2 つ: (a) 3 つを実装する（推奨。HTTP なら `GET /api/auth/identity` 1 回、§2.1）、(b) 一時的に `adaptLegacyAuthProvider(...)` で包む（保証しない範囲を §5.2 の表で確認し、移行 PR の本文に「adapter 使用中」と明記する）。**banto-industrial では chronogazer の `demoAuthProvider`（`setup.ts` 132〜160 行、`check`/`getIdentity` だけ）が該当する**（admin-template の `demo.ts` を手本に 3 つを実装する。§1.6 の訂正）。また両アプリの `session.svelte.ts` の `getAuthProvider().getIdentity()` の直接呼び出しは、`controller.snapshot`（`$derived`）／`resolveSettled` に置き換える                                                                                                         |
 | 各アプリの 503 画面（`src/routes/+error.svelte` 14 行の `location.reload()`） | **controller を維持したクライアント側の再読込**（`invalidateAll()`）に変える（admin-template と同じ、§6.1。6 回目 3）。ページ全体の再読込のままなら S-81 の通知は保証されない                                                                                                                                                                                                                                                                                                                                                                               |
 | `#216` の `lan_urls` 3 か所・`#248` の監査ログ                                | 同じ移行 PR に含める（Issue #260「進め方」3）。セッションとは独立                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
@@ -1588,7 +1594,13 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   移行 PR で確認する。
 - banto-industrial の 2 アプリが自前の `AuthProvider` を持たないことは、`session.svelte.ts` と
   `sessionGuard.ts` が admin-core の provider を使っていることから推測した。`setup.ts` の全文は
-  読んでいない。
+  読んでいない。**（実装-3 の独立監査で確認、2026-09-30）推測は誤り**: chronogazer の
+  `src/lib/banto/setup.ts` 132〜160 行に `check()`/`getIdentity()` だけの `demoAuthProvider` がある（移行で
+  admin-template の `demo.ts` を手本に標準の 3 つを実装する）。banto-hub・chronogazer の `session.svelte.ts` 41 行は
+  `getAuthProvider().getIdentity()` を直接呼ぶ（`controller.snapshot`／`resolveSettled` に置き換える）。§1.6・§6.2。
+- **（実装-3 の独立監査 P2-2 (c)、別 issue の候補）** HTTP の `logout()` は `POST /api/auth/logout` が失敗しても
+  ローカルのトークンを消すので、サーバ側のセッション（トークンの記録）が残ったまま /login へ移りうる。v1 から同じ挙動で、
+  この PR では直さない（失効はトークンの期限か、アカウントの `auth_epoch` を進める操作で行われる）。
 - `storage` イベントの発火は同じ origin の**別の**ドキュメントに限られる（同じタブでは飛ばない）。
   同じタブの別ログインは provider 自身の `setToken` で revision を上げるので問題ないはずだが、
   Tauri の webview（WebView2）での `storage` イベントの挙動は未確認（Tauri は `sessionStorage`
@@ -1654,7 +1666,9 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   ログイン画面へ移るのが `logout()` と確認の**両方の後**であることで防ぐ（E2E の smoke・public-viewer 5a・6 が緑）。
   確定が `active`（その間に別タブで B がログインした、S-51）なら `/login` へ行かず、抑止が解けた後に配線①が B で
   作り直す。`unverified` ならその場に残り、配線①の再 load が 503 の再試行画面を出す。`logout()` が reject した
-  ときも同じく確認し、`none` なら `/login` へ移って投げ直さない（その場に残るときだけ投げ直す）。
+  ときも同じく確認する。**（独立監査 P2-2 で変更）** `logoutAndLeave` は投げ直さず `'left' | 'stayed' | 'unverified'`
+  を返し、`'stayed'`（ログインしたまま）と `'unverified'`（確認できない）はエラーのトーストで知らせる（以前は投げ直した
+  エラーを誰も受けず、画面は無言だった）。
 - **（実装-3 以降の改善候補、独立監査 P3-4）** `StaleAnswerError`（pending の操作をまたいだ答え）で即座に出し直すと、
   操作が pending の間は出し直しのたびに同じ理由で捨てられ、`maxStaleRetries` を往復で消費しうる。操作の完了
   （`onCredentialChanged`）を待ってから出し直す、などを検討する。

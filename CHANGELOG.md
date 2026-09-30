@@ -55,8 +55,8 @@
       `superseded` を含まない `ResolveResult` に狭めた。
     - **ログアウト**: `logout()` の後に `endSession()` を呼ばず、`resolveSettled()` の確定が `none` のときだけ /login へ
       移る。その間に別タブのログインが確定していれば（S-51）画面は新しいユーザーで作り直され、/login へは行かない。
-    - `connectEvents` の失効の確認（`401`・他タブでのトークン消去）は controller の背景の確認になり、**`connectEvents`
-      の購読解除では止まらない**（確定すれば止まる。退避は 1 秒から倍々で 30 秒まで、probe の期限 10 秒）。
+    - `connectEvents` の失効の確認（`401`・他タブでのトークン消去）は**既定の controller（`getSessionController()`）宛てに
+      `signal()` する**背景の確認になり、**`connectEvents` の購読解除では止まらない**（確定すれば止まる。退避は 1 秒から倍々で 30 秒まで、probe の期限 10 秒）。
     - **`sessionEndUnheard` の期待の変化**（実装-2 からの継続、v2.0.0 で確定）: 保護レイアウトの mount 前に確定した
       終了は、再確認（再 probe）ではなく「`onSessionEnded` を購読した時点で `none` なら非同期に 1 回通知」で届く（S-34）。
       `onSessionEnded` は `none` への**遷移**だけを通知し、none を経ない切り替え（別タブのログイン A → unknown → B）は
@@ -73,6 +73,11 @@
       再読込では保証しない）。確認できない間は、別タブで切り替わった後も 503 のまま自動では戻らない（S-36・S-60）。
     - admin-template: ログイン・初回セットアップが `superseded`（別のログイン・ログアウトが先に確定）なら、エラーではなく
       「別のセッションが先に確定しました」を通知して /dashboard へ移る（ガードが今の資格情報で確定する）。
+    - admin-template: ログアウトが /login に届かなかったとき（`logoutAndLeave` の戻り値 `'stayed'`＝ログインしたまま、
+      `'unverified'`＝確認できない）はエラーのトーストで知らせる。`logoutAndLeave` は投げ直さず、戻り値
+      `'left' | 'stayed' | 'unverified'` を返す（引数は `(goToLogin, { notify?, provider?, controller? })`）。
+    - 公開閲覧から自分でログインした（同じタブ・別タブ）ときは「ユーザーの変更」として扱わない（通知も
+      `'relogin'` も出ない、S-93）。
     - admin-template: demo provider（`demo.ts`）は標準の provider（メモリ上の revision、`login`/`logout` で revision を
       進めて通知）。パネルの別ウィンドウ（`routes/panel/[id]`）は `check()` の代わりに `resolveSettled()` で確認する。
   - **派生アプリの移行の手順**（§6.2。banto-industrial の 2 アプリは候補版のコミット参照で検証してから v2.0.0 へ）:
@@ -87,6 +92,8 @@
        `r` が `confirmed` かつ `none` のときだけ /login。ログアウトと /login への遷移の間は配線①の `invalidateAll()` を
        止める（`invalidateAll()` が遷移に勝つ競合）。`end()` は呼ばない。
     5. 503 画面の「再試行」を `invalidateAll()` にする。
+       任意: ログイン・初回セットアップが `superseded` を返したら、エラーではなく通知して /dashboard へ移す
+       （admin-template の `routes/login/+page.svelte` を参照）。
     6. 独自の再確認（banto-hub の `sessionRecheck.ts`）は `controller.signal(...)` と `resolveSettled(...)` に置き換え、
        試運転は `adopt`/`end` の policy runner にする（§6.2）。
     7. **自前の `AuthProvider` を持つ場合**: v2 の `AuthProvider` は `resolve`・`credentialRevision`・
@@ -94,6 +101,11 @@
        を 1 回、`none` で送ったトークンを compare-and-set で消し、答えの `current` で運ぶ。自分の書き込みと別タブの
        `storage` イベントで revision を進めて通知する）、または (b) 一時的に `adaptLegacyAuthProvider(...)` で包む
        （別タブの切り替えの検知・compare-and-set・1 往復は保証されない。§5.2 の表。移行 PR に「adapter 使用中」と明記）。
+       メモリ上の demo 用 provider なら admin-template の `src/lib/banto/providers/demo.ts`（標準の 3 つ、revision と通知）を
+       手本にできる（banto-industrial では chronogazer の `setup.ts` の `demoAuthProvider` が該当し、放置すると型エラーのうえ
+       demo 起動時に `initBanto` の `TypeError` で白画面になる）。
+       `getAuthProvider().getIdentity()`／`check()` を直接呼んでいる箇所（banto-hub・chronogazer の `session.svelte.ts`）は、
+       `getSessionController().snapshot`（`$derived`）か `resolveSettled(controller)` に置き換える。
        adapter で包んだ provider の `logout()` は、旧 `check()` が `false` を返す状態にすること（ログアウトの確定は
        その後の `resolve()` が行う）。
 - feat(admin-core, admin-template): SessionController 実装-2（#260、controller。

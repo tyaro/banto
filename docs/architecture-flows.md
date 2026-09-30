@@ -124,9 +124,10 @@ sequenceDiagram
   LP->>AP: login(...)
   AP->>REST: POST /api/auth/login<br/>+ X-Banto-Client
   REST-->>AP: token
-  AP->>AP: 開始時の revision・トークンのままなら保存（compare-and-set）<br/>revision +1
-  AP-->>SC: onCredentialChanged()
+  AP->>AP: 開始時の revision・トークンのままなら保存（compare-and-set）
   alt 保存できた
+    AP->>AP: revision +1
+    AP-->>SC: onCredentialChanged()
     AP-->>LP: success
   else 別のログイン・ログアウトが先に確定（superseded）
     AP-->>LP: success: false, superseded: true（何も保存しない）
@@ -162,7 +163,7 @@ sequenceDiagram
   AP-->>SC: none
   SC-->>LO: confirmed / none
   LO->>LO: goto(/login)
-  Note over LO,SC: active（その間に別タブで B がログイン）なら /login へ行かず、<br/>終了後に配線①が B で作り直す。unverified なら配線①の再 load が 503
+  Note over LO,SC: active（ログアウトが拒まれた、またはその間に別タブで B がログイン）なら /login へ行かず<br/>「ログアウトできませんでした」を通知し、終了後に配線①が作り直す。<br/>unverified なら「確認できませんでした」を通知し、配線①の再 load が 503
 ```
 
 ### 読み方
