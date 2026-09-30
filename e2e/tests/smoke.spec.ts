@@ -1986,17 +1986,23 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			let released!: () => void;
 			const guardReleased = new Promise<void>((resolve) => (released = resolve));
 			// Issue #260 実装-2: deterministic within the guard's 10 s deadline.
-			// The new document's first stream request is held until the account
-			// is revoked, then sent on - so the server answers its own 401 right
-			// away instead of at its next revalidation (up to 15 s later).
+			// Every authorized stream request is held until the account is
+			// revoked, then sent on - so the NEW document's stream gets its own
+			// 401 right away instead of at the server's next revalidation (up to
+			// 15 s later, past the guard's deadline: the retry page instead of
+			// /login). Holding only the FIRST such request (the 実装-2 form)
+			// assumed the dashboard document had already opened its stream when
+			// this route was registered; when it had not (CI of #266 after
+			// 73919f1, reproduced locally by registering the route before the
+			// login), its request took the one hold and was dropped by the
+			// navigation, and the new document's stream went through unheld.
 			let revokedNow!: () => void;
 			const revoked = new Promise<void>((resolve) => (revokedNow = resolve));
-			let streamHeld = false;
 			await tab.route('**/api/events', async (route) => {
-				if (streamHeld || !route.request().headers()['authorization']) return route.continue();
-				streamHeld = true;
+				if (!route.request().headers()['authorization']) return route.continue();
 				await revoked;
-				await route.continue();
+				// The dashboard document's request may be gone with its navigation.
+				await route.continue().catch(() => {});
 			});
 			// Issue #260 実装-2: the guard's session check is `/api/auth/identity`.
 			await tab.route('**/api/auth/identity', async (route) => {
