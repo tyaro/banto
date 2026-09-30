@@ -984,7 +984,7 @@ function bumpLocal(): void {
   上限の下で動く（最悪の往復は両者の積で抑えられる）:
 
   ```ts
-  for (let attempt = 1; ; attempt++) {
+  for (let retries = 0; ; retries++) {
   	const status = await provider.status?.();
   	let result: ResolveResult;
   	if (!controller.isCurrent(ticket)) {
@@ -1002,7 +1002,8 @@ function bumpLocal(): void {
   	// 現れたトークンが失効していれば resolveSettled が消して confirmed none になる。そのときだけ
   	// 新しい ticket で方針をやり直す（上限あり）。active・unverified・superseded はそのまま返す
   	if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') return result;
-  	if (attempt >= (options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES)) return result;
+  	// 初回 + 再試行 maxRetries 回（既定 3 なら方針は最大 4 回走る。maxRetries = 0 で再試行なし）
+  	if (retries >= (options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES)) return result;
   	ticket = result.ticket;
   }
   ```
@@ -1015,7 +1016,8 @@ function bumpLocal(): void {
   （403・通信の失敗）は資格情報の変化ではないので再試行しない。上限を使い切ったら最後の結果（`none`
   なら `/login`）を返す。実装-3 のテストに S-20 系の 3 本を入れる: 「イベント未着で発行の前に現れた
   失効トークン → 消えて公開閲覧に入る」「イベント到着済み（`isCurrent` が false）の失効トークン → 同じく
-  公開閲覧に入る」「毎回現れる → 上限で抜ける」。
+  公開閲覧に入る」「毎回現れる → 上限で抜ける」。最後のテストは呼び出し回数まで固定する（`maxRetries` = 3
+  で `status()`/`resolveSettled` が 4 回、`maxRetries` = 0 で 1 回。off-by-one を防ぐ）。
 
   `adopt()` は使わない。
 
