@@ -51,18 +51,19 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
   保存成功時に `noteLastEditedRecord(scope, …)` を呼ぶ（保存開始前に取った
   `scope` を渡す。保存中にセッションが変わると書かれない）。
 - 状態は所有者（ログイン中のアカウント／公開閲覧者）付きで保存され、確定した
-  今の所有者にしか復元されない。前提の配線はテンプレートに入っている:
-  `$lib/session.svelte.ts` の `sessionStore.load()` が
-  `establishSession(getAuthProvider())` を呼ぶ（旧セッションへの遅れた応答は
-  捨てる。自前の `AuthProvider` の `getIdentity()` は、取得に失敗したとき
-  `null` ではなく reject する — `provider.ts` の契約）／ログアウト成功後に `endSession()`（`Header.svelte`・
-  `commands.ts`）／
-  `(app)/+layout.ts` が `sessionGeneration` を返し、`(app)/+layout.svelte` が
-  世代の変化でページを作り直す。これを外すと、一覧状態は保存も復元もされない
-  か（`establishSession` なし）、セッションが変わっても前の画面が残る（作り直し
-  なし）。
+  今の所有者にしか復元されない。セッションの確定は SessionController（v2.0.0、
+  tyaro/banto#260・ADR-0016）が 1 か所で行い、前提の配線はテンプレートに入っている:
+  `(app)/+layout.ts` の `load` が `resolveSettled(getSessionController())` で確認し
+  （`none` なら `publicViewerFallback`）、確認できた generation を返す／
+  `(app)/+layout.svelte` が世代の変化で再 load してページを作り直す（配線①）／
+  `$lib/session.svelte.ts` の `sessionStore` は `controller.snapshot` からの `$derived`／
+  ログアウトは `logout()` の後に `resolveSettled()` で確定する（`$lib/banto/logout.svelte.ts`）。
+  自前の `AuthProvider` は `resolve()`・`credentialRevision()`・`onCredentialChanged()` を
+  実装する（`resolve()` は取得できないときに reject する — `provider.ts` の契約）。
+  これを外すと、一覧状態は保存も復元もされないか（所有者が確定しない）、
+  セッションが変わっても前の画面が残る（作り直しなし）。
 
-セッション管理（sessionStore・ガード・世代ゲート）の共通化は tyaro/banto#260 で扱う。
+セッション管理の設計は [session-controller-design.md](../session-controller-design.md) §6.1。
 
 ## 検証
 

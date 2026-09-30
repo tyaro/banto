@@ -2,7 +2,7 @@
 
 > 日本語: [0016-session-controller-single-writer.md](0016-session-controller-single-writer.md) is the source of truth; this English version follows it. If they diverge, the Japanese wins.
 
-- Status: Proposed (design PR; the open points were decided by the owner on 2026-09-29; the implementation PRs move it to Accepted)
+- Status: Accepted (2026-09-30, with the implementation-3 PR; the open points were decided by the owner on 2026-09-29; implemented by #264, #265 and implementation-3; details settled during implementation are in §10 of the design body)
 - Date: 2026-09-29
 - Related: Issue #260, #255, #257, #259, #241, #204 / spec §3.3, §8.1 / conventions §10 /
   ADR-0014 (account-bound revocation) / ADR-0012 (synthetic viewer session) /

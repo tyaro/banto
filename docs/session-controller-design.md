@@ -1,6 +1,6 @@
 # SessionController 設計（Issue #260）
 
-- 状態: 設計確定・実装中（実装-1 完了（#264）、実装-2 = controller と配線①を実装中（この PR）、実装-3 は未着手。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映。§10 の宿題 2 件は実装-2 で決定、2026-09-30。ADR-0016 は Proposed のまま、実装-3（v2.0.0）の PR で Accepted にする）
+- 状態: 実装済み（実装-1（#264）・実装-2（#265）完了、実装-3 = admin-template の v2 配線と v2.0.0 の破壊的変更はこの PR。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映。§10 の宿題 2 件は実装-2 で決定、2026-09-30。実装-3 の扱いは §10 に追記、2026-09-30。ADR-0016 はこの PR で Accepted。v2.0.0 のタグ・版の番号上げと派生アプリの移行（§6.2・§7.2）は別の PR）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#258・#259・#241・#204 / ADR-0016 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
@@ -1641,12 +1641,61 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   → `goto('/login')` の順で、その間は `isLoggingOut()`（`$lib/banto/logout.svelte.ts`、`$state`）が真。配線①は
   ログアウト中は `invalidateAll()` を出さない（反応的に読むので、失敗して画面に残る場合は終了後に照合し直す）。
   §6.1 の v2 の形（`await provider.logout(); await resolveSettled(); goto(login)`）も同じ抑止で順序を保てる（実装-3）。
+  **（実装-3 で決定、2026-09-30）** v2 の形にした: `logout()` → `resolveSettled(controller, { cause: 'signal' })` →
+  確定が `none` のときだけ `goto('/login')`（`$lib/banto/logout.svelte.ts` の `logoutAndLeave`）。`endSession()` は v2 で
+  削除したので、互換 adapter のための「ticket で守った `endSession()`」も無くなった（adapter でも `resolve()` が
+  旧 `check()` に聞き直すので、`logout()` が旧 `check()` を `false` にする provider なら `none` が確定する。S-17 の
+  テスト）。確認は `cause: 'signal'`（ログアウトの**後**に始めた probe でしか満たされない、I-9）なので、ログアウトの
+  前から在中の古い probe の `active` を採らない。抑止は `isLoggingOut()` を `isLeavingForLogin()` に改名して
+  ログアウトの全体（`logout()`・確認・`goto`）にかけ、`ownerChangePolicy: 'relogin'` の `goto('/login')` にも
+  同じ抑止（`leaveForLogin`）をかけた（同じ「遷移の直前の `invalidateAll()`」の競合を持つため）。2 つの競合は
+  どちらも再発しない: 5a（配線①の `invalidateAll()` が `/login` への遷移に勝つ）は、ログアウトの間は配線①が
+  `invalidateAll()` を出さないことで、CI の smoke 7（ログアウトの完了前にログイン画面が出て CAS に負ける）は、
+  ログイン画面へ移るのが `logout()` と確認の**両方の後**であることで防ぐ（E2E の smoke・public-viewer 5a・6 が緑）。
+  確定が `active`（その間に別タブで B がログインした、S-51）なら `/login` へ行かず、抑止が解けた後に配線①が B で
+  作り直す。`unverified` ならその場に残り、配線①の再 load が 503 の再試行画面を出す。`logout()` が reject した
+  ときも同じく確認し、`none` なら `/login` へ移って投げ直さない（その場に残るときだけ投げ直す）。
 - **（実装-3 以降の改善候補、独立監査 P3-4）** `StaleAnswerError`（pending の操作をまたいだ答え）で即座に出し直すと、
   操作が pending の間は出し直しのたびに同じ理由で捨てられ、`maxStaleRetries` を往復で消費しうる。操作の完了
   （`onCredentialChanged`）を待ってから出し直す、などを検討する。
+  **（実装-3 で判断、2026-09-30）v2.0.0 には入れず、ここに残す**。理由: (1) 起きるのは Tauri で、状態を変える操作
+  （login/setup/logout/changePassword）の応答待ちと画面の確認が重なったときだけで、admin-template の流れでは
+  ログインとログアウトは操作の完了の後に確認するので重ならない（残るのは設定画面のパスワード変更中の画面遷移
+  くらい）。(2) 上限に達した結果は `unverified`（`SessionChangedError`）＝ 503 の再試行画面か背景の確認の退避で、
+  誤った状態を確定する側ではなく安全側に倒れる（I-4）。(3) 直すには「操作の完了」を知らせる合図が要るが、
+  revision が変わらない完了（CAS 不成立・auth-disabled の logout の no-op）では `onCredentialChanged` が来ないので、
+  待ち方の設計（provider に「pending が空になった」通知を足すか、短い退避で出し直すか）がもう一段要る。
+  (4) 公開 API を壊さずに後から足せる（v2.x の minor で入れられる）。
 - **（実装-2 の実装上の判断）** `SessionSnapshot.verification.state` の `'verifying'` は publish しない
   （probe の開始で立てると、捨てた probe が `verification` を触らないという S-56 の約束と両立しない）。
   `resolve()` の options に `signal`（待機者の離脱）を足した（§5.1。`resolveSettled` の `deadlineMs` が使う）。
   互換のために残した旧 API（`beginSession`/`endSession`）は controller の内部の入口（`legacyBegin`/`legacyEnd`、
   外からの遷移として `commit` を通る）に委譲した。単一の書き手（`commit`）は保つが、公開の入口は v2 で消えるまで
-  4 つより多い。
+  4 つより多い。**（実装-3 で解消）** 旧 API と `legacyBegin`/`legacyEnd`/`legacyResolveSignal` を削除し、公開の
+  入口は I-1 の 4 つ（`resolve` の適用・`adopt`・`end`・資格情報の変化による保留）と、別の provider への再 bind
+  （`initBanto` の差し替え、実装-2 の #265 P1）になった。
+- **（実装-3 の実装上の判断、2026-09-30）**
+  - **3 つの必須化と互換 adapter**: `AuthProvider` の `resolve`・`credentialRevision`・`onCredentialChanged` を型で
+    必須にし、`check`・`getIdentity` を契約から外した（`LegacyAuthProvider` と `adaptLegacyAuthProvider` にだけ残る。
+    HTTP・Tauri の provider からも削除）。実装-2 の「`initBanto` が `resolve` の無い provider を黙って互換 adapter で
+    包む」（統合修正 15、実装-2 の時点の足場）はやめ、3 つが無い provider は `initBanto`／`createSessionController` が
+    `TypeError` にする（何も置き換えない）。adapter で包むかはアプリが明示的に決める（決定 2）。
+    `StandardAuthProvider` は `AuthProvider` と同じ型の別名として残した（v1.8 の型名で書いたコードを壊さない）。
+  - **`SessionChangedError`**: §5.4 の表のとおり投げる API は無くなった（`establishSession` などの削除）。
+    `unverified` の `error` に入る同名のエラーとして、`SessionTimeoutError` と並べて export は残した（`instanceof` で
+    見分けられるように）。`MAX_STALE_RETRIES` は削除（上限は `deps.maxStaleRetries`、既定 3）。
+  - **`publicViewerFallback` の戻り値**: 型を `Exclude<ResolveResult, { outcome: 'superseded' }>` に狭めた（中で
+    `resolveSettled` を使うので `superseded` は返らない。`ResolveResult` の部分型なので §6.1 の形と両立する）。
+  - **`connectEvents`**: `onUnauthorized` → `signal('unauthorized')`、`onTokenCleared` → `signal('credentialCleared')`。
+    確認の退避は controller のもので、`connectEvents` の購読解除では止まらない（「失効したかもしれない」を答えのないまま
+    にしない。確定すれば止まる）。v1 の `createSessionEndConfirmation` は購読解除で止まっていた（CHANGELOG に記載）。
+  - **ログイン画面の `superseded`**: §6.1 のとおり「別のセッションが先に確定しました」を通知して `goto(dashboard)`
+    （`load` が今の資格情報で確定する）。setup の `superseded` も同じ。
+  - **`ownerChangePolicy`**: admin-template の `$lib/banto/ownerChange.ts` の定数 `OWNER_CHANGE_POLICY`（既定
+    `'rebuild'`）。`initBanto` の設定にはしなかった（通知と遷移はアプリの UI の仕事で、admin-core は記録
+    `pendingOwnerChange` だけを持つ。§9.5 のオーナーの決定と同じ分担）。処理済みにする
+    `acknowledgeOwnerChange()` は通知の**前**に呼ぶ（通知の処理が投げても同じ変更を二重に出さない）。
+  - **503 の「再試行」**: `invalidateAll()`。押している間もボタンを無効にしない（固まった再試行が出口ごと塞がない。
+    ブラウザの再読込も残る）。
+  - **パネルの別ウィンドウ（`routes/panel/[id]`）**: `check()` の代わりに、そのウィンドウの controller の
+    `resolveSettled()` で確認する（`unverified` は「確認できない」の表示のまま）。

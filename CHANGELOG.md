@@ -22,6 +22,80 @@
 
 ## [Unreleased]
 
+- feat(admin-core, admin-template)!: SessionController 実装-3（#260、**v2.0.0 の破壊的変更**。
+  [docs/session-controller-design.md](docs/session-controller-design.md) §5.4・§6.1・§6.2、
+  [ADR-0016](docs/adr/0016-session-controller-single-writer.md) は Accepted）。セッションの状態（誰がログインして
+  いるか）を書くのは SessionController だけになり、状態を書く旧 API を削除した。admin-template は §6.1 の形に
+  配線し直した。**下の「削除した公開 API と移行先」「挙動の互換性が変わる変更」「派生アプリの移行の手順」を参照。**
+  - **削除した公開 API と移行先**（§5.4）:
+
+    | 削除した名前                                                                                         | 移行先                                                                                                                                                                                                                     |
+    | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `resolveProtectedSession`・`ProtectedSessionOutcome`                                                 | `resolveSettled(getSessionController())` → `unverified` は 503、`confirmed` の `none` だけ（公開閲覧があるなら）`publicViewerFallback(controller, provider, result.ticket)` → その `unverified` も 503、`none` なら /login |
+    | `establishSession`                                                                                   | `resolveSettled(controller)`。identity・role は `controller.snapshot` から読む（`load` でストアに書かない）                                                                                                                |
+    | `beginSession`・`endSession`                                                                         | 画面からは呼ばない。ログイン・ログアウトの後は `resolveSettled()` で確定する（I-10）。アプリ独自の合成セッション（試運転など）だけ `adopt(identity, kind, ticket)`・`end(reason, ticket)`                                  |
+    | `confirmSessionEnded`・`createSessionEndConfirmation`・`SessionEndOutcome`・`SessionEndConfirmation` | `getSessionController().signal(reason)`（同期。確認と退避は controller の中）。`connectEvents` は内部でこれを呼ぶ                                                                                                          |
+    | `MAX_STALE_RETRIES`                                                                                  | `createSessionController(provider, { maxStaleRetries })`（既定 3）                                                                                                                                                         |
+    | `SessionChangedError`（投げる側）                                                                    | もう投げない。`unverified` の `error` に同名のエラーとして入る（`SessionChangedError` の export は残した）                                                                                                                 |
+    | `AuthProvider.check`・`AuthProvider.getIdentity`                                                     | 契約から削除（`LegacyAuthProvider` と `adaptLegacyAuthProvider` にだけ残る）。HTTP・Tauri の provider からも削除。答えは `resolve()` の 1 往復                                                                             |
+
+    残した名前: `onSessionEnded`（`subscribe` の上の薄い関数）、`sessionGeneration`・`currentSessionScope`・
+    `isCurrentSessionScope`・`isSessionEstablished`（既定の controller の読み取り）、`sessionOwnerKey`。
+    `StandardAuthProvider` は `AuthProvider` と同じ型の別名として残した。
+
+  - **挙動の互換性が変わる変更（要対応の可能性あり）**:
+    - `AuthProvider` の `resolve`・`credentialRevision`・`onCredentialChanged` は**型で必須**。v1.8 の `initBanto` は
+      3 つの無い provider を黙って互換 adapter で包んでいたが、v2.0.0 では `initBanto`・`createSessionController` が
+      **`TypeError`** にする（何も置き換えない）。包むならアプリが `adaptLegacyAuthProvider(...)` を明示する。
+    - 「確認できない」は reject ではなく `unverified`（`resolveSettled`・`publicViewerFallback` は reject しない）。
+      `resolveProtectedSession` の reject（→ 503）に頼っていたガードは `outcome === 'unverified'` を先に処理する。
+    - 公開閲覧の方針（`publicViewerFallback`）は、ticket の後に現れたトークンが確認で `none` に戻るたびに方針を
+      やり直す（既定 3 回＝最大 4 回）。上限に達したら最後の確定した `none` を返す（/login へ）。旧
+      `resolveProtectedSession` は同じ状況で `SessionChangedError` を投げていた（503 だった）。戻り値の型は
+      `superseded` を含まない `ResolveResult` に狭めた。
+    - **ログアウト**: `logout()` の後に `endSession()` を呼ばず、`resolveSettled()` の確定が `none` のときだけ /login へ
+      移る。その間に別タブのログインが確定していれば（S-51）画面は新しいユーザーで作り直され、/login へは行かない。
+    - `connectEvents` の失効の確認（`401`・他タブでのトークン消去）は controller の背景の確認になり、**`connectEvents`
+      の購読解除では止まらない**（確定すれば止まる。退避は 1 秒から倍々で 30 秒まで、probe の期限 10 秒）。
+    - **`sessionEndUnheard` の期待の変化**（実装-2 からの継続、v2.0.0 で確定）: 保護レイアウトの mount 前に確定した
+      終了は、再確認（再 probe）ではなく「`onSessionEnded` を購読した時点で `none` なら非同期に 1 回通知」で届く（S-34）。
+      `onSessionEnded` は `none` への**遷移**だけを通知し、none を経ない切り替え（別タブのログイン A → unknown → B）は
+      通知しない。保護レイアウトの再 load は generation の照合（配線①）で行う。
+    - admin-template: `(app)/+layout.ts` はストアに書かない（`sessionStore.load()` は削除。`sessionStore` の
+      identity・role・publicViewer・authDisabled は `controller.snapshot` からの `$derived`、`authDisabled` は
+      `snapshot.kind === 'local'`＝ Tauri の `auth_resolve` の答え。`auth_config_get` の別読みはしない、S-61）。
+      保護レイアウトは 3 本の配線（① generation の照合 → `invalidateAll()`、② 未処理のユーザーの変更
+      `pendingOwnerChange` → 通知して `acknowledgeOwnerChange()`、③ 再 load の `unverified` → 503）。②の方針は
+      `$lib/banto/ownerChange.ts` の `OWNER_CHANGE_POLICY`（既定 `'rebuild'`＝通知だけ、`'relogin'`＝通知して /login）。
+      どちらも共有のトークンは消さない（I-17）。
+    - admin-template: 503 画面の「再試行」は `location.reload()` ではなく `invalidateAll()`（controller を維持した画面内の
+      再読込。503 の間に確定したユーザーの変更は、再試行で保護レイアウトが mount したときに通知される、S-81。ページ全体の
+      再読込では保証しない）。確認できない間は、別タブで切り替わった後も 503 のまま自動では戻らない（S-36・S-60）。
+    - admin-template: ログイン・初回セットアップが `superseded`（別のログイン・ログアウトが先に確定）なら、エラーではなく
+      「別のセッションが先に確定しました」を通知して /dashboard へ移る（ガードが今の資格情報で確定する）。
+    - admin-template: demo provider（`demo.ts`）は標準の provider（メモリ上の revision、`login`/`logout` で revision を
+      進めて通知）。パネルの別ウィンドウ（`routes/panel/[id]`）は `check()` の代わりに `resolveSettled()` で確認する。
+  - **派生アプリの移行の手順**（§6.2。banto-industrial の 2 アプリは候補版のコミット参照で検証してから v2.0.0 へ）:
+    1. `session.svelte.ts` の `load()` を削除し、identity・role・authDisabled を `getSessionController().snapshot` からの
+       `$derived` にする。
+    2. `(app)/+layout.ts` を §6.1 の形にする（`resolveSettled` → `unverified` は 503 → `none` は（公開閲覧があれば
+       `publicViewerFallback`）/login）。返す generation は、その `load` で確認できたものだけ。
+    3. 保護レイアウトに配線①（`controller.snapshot.generation` と `data.sessionGeneration` の照合 → `invalidateAll()`）と
+       配線②（`pendingOwnerChange` の通知と `acknowledgeOwnerChange()`）を入れる。`onSessionEnded` だけでは none を経ない
+       切り替えを拾えない。
+    4. ログアウトは `await provider.logout(); const r = await resolveSettled(controller, { cause: 'signal' });` →
+       `r` が `confirmed` かつ `none` のときだけ /login。ログアウトと /login への遷移の間は配線①の `invalidateAll()` を
+       止める（`invalidateAll()` が遷移に勝つ競合）。`end()` は呼ばない。
+    5. 503 画面の「再試行」を `invalidateAll()` にする。
+    6. 独自の再確認（banto-hub の `sessionRecheck.ts`）は `controller.signal(...)` と `resolveSettled(...)` に置き換え、
+       試運転は `adopt`/`end` の policy runner にする（§6.2）。
+    7. **自前の `AuthProvider` を持つ場合**: v2 の `AuthProvider` は `resolve`・`credentialRevision`・
+       `onCredentialChanged` が必須なので型エラーになる。(a) 3 つを実装する（推奨。HTTP なら `GET /api/auth/identity`
+       を 1 回、`none` で送ったトークンを compare-and-set で消し、答えの `current` で運ぶ。自分の書き込みと別タブの
+       `storage` イベントで revision を進めて通知する）、または (b) 一時的に `adaptLegacyAuthProvider(...)` で包む
+       （別タブの切り替えの検知・compare-and-set・1 往復は保証されない。§5.2 の表。移行 PR に「adapter 使用中」と明記）。
+       adapter で包んだ provider の `logout()` は、旧 `check()` が `false` を返す状態にすること（ログアウトの確定は
+       その後の `resolve()` が行う）。
 - feat(admin-core, admin-template): SessionController 実装-2（#260、controller。
   [docs/session-controller-design.md](docs/session-controller-design.md) §5.1・§7.1）。
   **追加 API**: `createSessionController(provider, deps?)`・`getSessionController()`（`initBanto` が

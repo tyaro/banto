@@ -56,19 +56,23 @@ API (reference: `routes/(app)/items/+page.svelte` and
   `scope` taken before the save started - nothing is written if the session
   changed meanwhile).
 - State is saved with its owner (the signed-in account, or the public
-  viewer) and only restored for the owner confirmed now. The template
-  already has the wiring this relies on: `$lib/session.svelte.ts`'s
-  `sessionStore.load()` calls `establishSession(getAuthProvider())` (a late
-  answer for a previous session is discarded; a custom `AuthProvider`'s
-  `getIdentity()` should reject, not resolve `null`, when it cannot fetch
-  the identity - the contract in `provider.ts`); `endSession()` runs
-  after a successful logout (`Header.svelte`, `commands.ts`);
-  `(app)/+layout.ts` returns `sessionGeneration` and `(app)/+layout.svelte`
-  rebuilds the page when the generation changes. Without it, list state is
-  never saved or restored (no `establishSession`), or the previous session's
-  screen survives a session change (no rebuild).
+  viewer) and only restored for the owner confirmed now. Since v2.0.0 the
+  session is confirmed in one place, the SessionController (tyaro/banto#260,
+  ADR-0016), and the template already has the wiring this relies on:
+  `(app)/+layout.ts`'s `load` confirms with
+  `resolveSettled(getSessionController())` (`publicViewerFallback` for a
+  `none`) and returns the generation it confirmed; `(app)/+layout.svelte`
+  re-runs the loads and rebuilds the page when the generation changes
+  (wiring ①); `$lib/session.svelte.ts`'s `sessionStore` is `$derived` from
+  `controller.snapshot`; the logout confirms with `resolveSettled()` after
+  `logout()` (`$lib/banto/logout.svelte.ts`). A custom `AuthProvider`
+  implements `resolve()`, `credentialRevision()` and `onCredentialChanged()`
+  (`resolve()` rejects when it cannot answer - the contract in
+  `provider.ts`). Without it, list state is never saved or restored (no
+  confirmed owner), or the previous session's screen survives a session
+  change (no rebuild).
 
-Sharing the session management (sessionStore, guard, generation gate) as a common module is tracked in tyaro/banto#260.
+The session design is [session-controller-design.md](../session-controller-design.md) §6.1 (Japanese).
 
 ## Verification
 

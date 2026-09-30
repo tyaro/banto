@@ -4,13 +4,13 @@
 
 対象: ログイン／LAN／閲覧公開、初回起動、開発の3経路、CRUD 追加がどの層に載るかを知りたい人。
 
-> **時点の注意（2026-09-30）**: §2（`(app)` ガード）と §3（ログイン）は **v1.7.x 時点**の流れ（`resolveProtectedSession`・`establishSession`・`AuthProvider.check()`／`getIdentity()`）を描いている。v2.0.0 ではセッションの確定が SessionController に集約され、これらの旧 API は削除される予定（#260、[ADR-0016](./adr/0016-session-controller-single-writer.md)、設計は [session-controller-design.md](./session-controller-design.md)）。§2・§3 は、その実装-3 で新しい流れに描き直す。
+> **更新（2026-09-30）**: §2（`(app)` ガード）と §3（ログイン・ログアウト）は v2.0.0 の流れ（SessionController・`resolveSettled`・`publicViewerFallback`・保護レイアウトの 3 本の配線、#260・[ADR-0016](./adr/0016-session-controller-single-writer.md)）で描いている。
 
 ## 目次
 
 1. [起動時の3環境と provider 選択](#1-起動時の3環境と-provider-選択)
 2. [保護ルートへの入り方（`(app)` ガード）](#2-保護ルートへの入り方app-ガード)
-3. [ログイン（資格情報 → トークン）](#3-ログイン資格情報--トークン)
+3. [ログイン（資格情報 → トークン）とログアウト](#3-ログイン資格情報--トークンとログアウト)
 4. [閲覧公開（合成 viewer）の位置づけ](#4-閲覧公開合成-viewer-の位置づけ)
 5. [初回起動・セットアップ](#5-初回起動セットアップ)
 6. [開発ループの3経路](#6-開発ループの3経路)
@@ -50,45 +50,66 @@ flowchart TD
 
 ## 2. 保護ルートへの入り方（`(app)` ガード）
 
-`(app)/+layout.ts` は `bantoReady` 後に `resolveProtectedSession` → `sessionStore.load()` を実行する。
+セッションの状態（誰がログインしているか）を書くのは **SessionController だけ**（v2.0.0、[ADR-0016](./adr/0016-session-controller-single-writer.md)。設計は [session-controller-design.md](./session-controller-design.md) §6.1）。`(app)/+layout.ts` の `load` は `bantoReady` の後に controller で確認し、確認できた generation を返すだけで、ストアには書かない。
 
 ```mermaid
 flowchart TD
   GUARD["(app)/+layout.ts load"]
-  CHECK["resolveProtectedSession<br/>AuthProvider.check()"]
-  OK{"セッション有効?"}
-  PV{"LAN かつ<br/>viewerPublic ON?"}
-  ENTER["enterPublicViewer()<br/>POST /api/auth/public-viewer"]
+  RESOLVE["resolveSettled(controller)<br/>AuthProvider.resolve() を 1 往復<br/>superseded なら要求し直す（期限 10 秒）"]
+  R1{"結果"}
+  E503["error 503<br/>再試行画面（routes/+error.svelte）"]
+  PVF["publicViewerFallback(controller, provider, ticket)<br/>status() → isCurrent(ticket) → enterPublicViewer({ expectRevision })"]
+  R2{"結果"}
   LOGIN["redirect /login"]
-  LOAD["sessionStore.load()<br/>establishSession + role 確定"]
-  ALLOW{"publicViewer セッション?"}
+  ALLOW{"kind が publicViewer?"}
   NAV["publicNavItems 許可パスのみ<br/>それ以外は許可ルートへ redirect"]
+  RET["return { sessionGeneration }<br/>（この load で確認できた generation）"]
 
-  GUARD --> CHECK
-  CHECK --> OK
-  OK -->|Yes| LOAD
-  OK -->|No| PV
-  PV -->|Yes| ENTER
-  ENTER --> LOAD
-  PV -->|No| LOGIN
-  LOAD --> ALLOW
+  GUARD --> RESOLVE
+  RESOLVE --> R1
+  R1 -->|"unverified（500・到達不能・期限切れ）"| E503
+  R1 -->|"confirmed / active"| ALLOW
+  R1 -->|"confirmed / none"| PVF
+  PVF --> R2
+  R2 -->|unverified| E503
+  R2 -->|"confirmed / none"| LOGIN
+  R2 -->|"confirmed / active（公開閲覧）"| ALLOW
   ALLOW -->|Yes| NAV
-  ALLOW -->|No| PAGE["子ルートを表示"]
-  NAV --> PAGE
+  ALLOW -->|No| RET
+  NAV --> RET
+```
+
+保護レイアウト（`(app)/+layout.svelte`）は controller のスナップショットを見て 3 本の配線を持つ:
+
+```mermaid
+flowchart LR
+  SNAP["controller.snapshot<br/>（status・owner・generation・kind・pendingOwnerChange）"]
+  W1["配線①: generation ≠ data.sessionGeneration<br/>→ invalidateAll()（同じ generation に 1 回だけ。<br/>ログアウト中・ログインへの遷移中は出さない）"]
+  W2["配線②: pendingOwnerChange かつ active<br/>→ 通知（'rebuild'）／通知して /login（'relogin'）<br/>→ acknowledgeOwnerChange()"]
+  W3["配線③: 再 load が unverified<br/>→ 503 の再試行画面（自動では戻らない）"]
+  GATE["世代ゲート<br/>data.sessionGeneration === snapshot.generation のときだけ<br/>key ブロックで子ルートを表示"]
+
+  SNAP --> W1
+  SNAP --> W2
+  W1 --> W3
+  SNAP --> GATE
 ```
 
 ### 読み方
 
-- **有効トークン**があればそのまま `establishSession` で identity / role を確定（Remember me は HTTP 側の localStorage）。
-- **無効・未ログイン**かつ **閲覧公開 ON** の LAN だけ、合成 `viewer` トークンを発行（ADR-0012）。Tauri ウィンドウと demo にはこの入口はない。
-- サーバ到達不能・check 失敗時は **503 リトライ画面**（トークンは消さない — Issue #204）。
+- **`load` の副作用は controller の確認（と、`none` のときの公開閲覧の発行）だけ**。`sessionStore`（identity・role・publicViewer・authDisabled）は `controller.snapshot` からの `$derived` で、`load` の中で代入しない（`authDisabled` は `kind === 'local'`）。
+- **有効トークン**があれば `resolve()` の答えで active を確定する（Remember me は HTTP 側の localStorage）。**無効・未ログイン**が確定し、かつ **閲覧公開 ON** の LAN だけ、確定した `none` の ticket に結び付けて合成 `viewer` トークンを発行する（ADR-0012）。Tauri ウィンドウと demo にはこの入口はない。
+- 確認できない（サーバ到達不能・500・期限切れ）は **503 の再試行画面**（トークンは消さない — Issue #204）。発行の後の確認の失敗も 503 で、ログイン画面へは行かない。
+- **「再試行」は `invalidateAll()`**（controller を維持した画面内の再読込）。503 の間に確定したユーザーの変更（`pendingOwnerChange`）は、保護レイアウトが再び mount したときに通知される（S-81）。ページ全体の再読込では controller ごと作り直されるので、この通知は保証しない。
+- 別タブのログイン・ログアウト（共有の Remember me トークンの `storage` イベント）で、このタブの active なセッションは **保留（unknown）** になり、generation が変わる → 配線①が再 load → 新しいユーザーで作り直す（none を経ない切り替えも拾う）。`onSessionEnded` は none への遷移だけを通知するので、保護レイアウトの再 load は配線①で行う。
+- SSE の失効（`401`）や他タブでのトークン消去は `connectEvents` が `controller.signal()` に変える。確認と退避（1 秒から倍々で 30 秒まで）は controller の中。
 - `publicViewer` は **画面ナビの allowlist** 用。データアクセスの境界は RBAC の `viewer` ロール側。
 
 ---
 
-## 3. ログイン（資格情報 → トークン）
+## 3. ログイン（資格情報 → トークン）とログアウト
 
-LAN / 組み込みサーバ経路の例。Tauri は同じ契約を `invoke(auth_login)` に載せ替える。
+LAN / 組み込みサーバ経路の例。Tauri は同じ契約を `invoke(auth_login)`・`auth_resolve` に載せ替える（トークンではなく Rust 側のセッションのスロットと `seq`）。
 
 ```mermaid
 sequenceDiagram
@@ -96,23 +117,61 @@ sequenceDiagram
   participant LP as /login
   participant AP as HttpAuthProvider
   participant REST as REST auth ルート
+  participant SC as SessionController
   participant GU as (app) ガード
 
   U->>LP: ユーザー名・パスワード
   LP->>AP: login(...)
   AP->>REST: POST /api/auth/login<br/>+ X-Banto-Client
   REST-->>AP: token
-  AP->>AP: sessionStorage / localStorage に保存
-  LP->>GU: 遷移
-  GU->>AP: check() / getIdentity()
-  GU->>GU: sessionStore.role 確定
+  AP->>AP: 開始時の revision・トークンのままなら保存（compare-and-set）<br/>revision +1
+  AP-->>SC: onCredentialChanged()
+  alt 保存できた
+    AP-->>LP: success
+  else 別のログイン・ログアウトが先に確定（superseded）
+    AP-->>LP: success: false, superseded: true（何も保存しない）
+    LP->>U: 「別のセッションが先に確定しました」
+  end
+  LP->>GU: goto(/dashboard)
+  GU->>SC: resolveSettled()
+  SC->>AP: resolve()
+  AP->>REST: GET /api/auth/identity（1 往復）
+  REST-->>AP: identity / null
+  AP-->>SC: { status, checked, current, identity }
+  SC->>SC: 採用条件を満たせば commit（唯一の書き手）
+  SC-->>GU: confirmed（generation）
+```
+
+ログアウト（`Header.svelte`・コマンドパレット → `$lib/banto/logout.svelte.ts`）:
+
+```mermaid
+sequenceDiagram
+  participant U as 利用者
+  participant LO as logoutAndLeave
+  participant AP as HttpAuthProvider
+  participant SC as SessionController
+  participant L as (app) レイアウト（配線①）
+
+  U->>LO: ログアウト
+  Note over LO,L: この間は isLeavingForLogin() が真 → 配線①は invalidateAll() を出さない
+  LO->>AP: logout()
+  AP->>AP: 開始時のトークンのままなら消去（compare-and-set）
+  AP-->>SC: onCredentialChanged() → 保留（unknown）
+  LO->>SC: resolveSettled({ cause: 'signal' })
+  SC->>AP: resolve()（ログアウトの後に始めた probe だけが答えられる）
+  AP-->>SC: none
+  SC-->>LO: confirmed / none
+  LO->>LO: goto(/login)
+  Note over LO,SC: active（その間に別タブで B がログイン）なら /login へ行かず、<br/>終了後に配線①が B で作り直す。unverified なら配線①の再 load が 503
 ```
 
 ### 読み方
 
 - 初回未初期化 DB では **setup** 画面（管理者作成）が先。initialized は `GET /api/auth/status` 等。
 - HTTP リクエストは **CSRF 用カスタムヘッダ** + **Bearer トークン**（ログイン後）。
-- デスクトップの **認証無効モード（M11）** は Tauri 専用。LAN との併用ルールは設定画面と `viewer-public` 計画書が一次情報。
+- **ログインの結果は画面が直接書かない**。provider は資格情報を compare-and-set で保存して通知するだけで、誰がログインしているかは次の `load` の `resolveSettled()` で controller が確定する（I-10）。
+- **ログアウトも `end()` を呼ばない**。`logout()` の後の `resolveSettled()` が `none` を確定したときだけ `/login` へ移る。ログイン画面はログアウトの確定の後にしか出ない（そこで送ったログインが、まだ終わっていないログアウトの compare-and-set に負けないように）。
+- デスクトップの **認証無効モード（M11）** は Tauri 専用。provider の `resolve()` が `kind: 'local'` を返し、`sessionStore.authDisabled` はそこから導く。LAN との併用ルールは設定画面と `viewer-public` 計画書が一次情報。
 
 ---
 
