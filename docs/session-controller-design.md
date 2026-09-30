@@ -475,10 +475,10 @@ provider のテストで、それぞれ**フロントの順序に依らず**成�
 | provider revision の更新（操作の応答）                 | 操作の応答（login / logout / setup / changePassword / enterPublicViewer） | 応答の `seq` / 自分の書き込み。変わったときだけ通知。応答が無いときは進めて通知                                                                        | S-55・S-67・S-68           |
 | 方針の通信（`status()`・試運転状態の取得）             | 方針自身の `AbortSignal`                                                  | 方針の中断は資源の解放。適用の可否は ticket で決める                                                                                                   | S-53・S-62                 |
 | Rust `install`（login / setup）                        | `verify` / `setup_first_user` / `record_ok`                               | 入口の `seq`                                                                                                                                           | S-16・S-18                 |
-| Rust `clear`（logout）                                 | `auth_config`                                                             | 入口の `seq`（None→None でも進める。auth-disabled の no-op は進めない）                                                                                | S-17・S-19・S-67           |
+| Rust `clear`（logout）                                 | `auth_config`                                                             | 入口の `seq`（None→None でも進める。auth-disabled の no-op は進めない）。消せたらモードを読み直し、disabled なら消去後の `seq` のまま None のときだけ local を設置                                                                                | S-17・S-19・S-67           |
 | Rust `refresh`（settle_session、同じ結び付き）         | `users.get_by_username` / `auth_config`                                   | `unchanged` の照合（既存）。**`seq` は進めない**。同じロックで `(session, seq_before, seq_after)`                                                      | S-54                       |
 | Rust `clear`（settle_session、失効。role 変更を含む）  | 同上                                                                      | `unchanged` の照合（既存）。`seq` は進める                                                                                                             | S-64                       |
-| Rust `install`（auth_config_apply_body）               | `set_auth_config`                                                         | `is_none()` を 1 ロック内で（既存）→ `seq` に乗せ替え                                                                                                  | —                          |
+| Rust `install`（auth_config_apply_body）               | `set_auth_config`                                                         | 最後のロックで `is_none()` のときだけ設置して `seq` を進める（入口の `seq` の一致は条件にしない。PR #264 P1）                                                                                                  | —                          |
 | Rust `rebind`（change_own_password）                   | `change_password`                                                         | id + auth_epoch（既存）→ `seq` を進め、応答で返す                                                                                                      | S-68                       |
 | アプリ `sessionStore.authDisabled`                     | `auth_config_get`                                                         | **入口を無くす**（snapshot の `kind` から導く）                                                                                                        | S-61                       |
 | アプリ `load` が返す `sessionGeneration`               | `resolveSettled` / 方針の `ResolveResult`                                 | 確認できた結果の generation だけ。`unverified` を先に処理                                                                                              | S-48〜S-50・S-66           |
@@ -779,6 +779,10 @@ export interface AuthProvider {
   （別のログインが済んでいる）。`POST /api/auth/logout` は開始時のトークンで送る（今の
   `headers(false)` は送信時の `getToken()` を読むので、**開始時に固定する**）。戻り値は
   `Promise<void>` のまま（アプリは戻り値で判断せず `resolve()` で確定する、I-10）。
+- 上の 4 つとも、**トークンの一致も条件にする**: 開始時の `getToken()` を記録し、書く直前の
+  `getToken()` がそれと同じときだけ書く（`expectRevision` を渡された `enterPublicViewer` も開始時の値で
+  比べる）。別タブの書き込みは `storage` イベントより先に見えるので、revision だけでは古い操作が書ける
+  （storage イベントの遅延対策、PR #264 P2）。
 - `resolve()` の `none` でのトークン消去は `clearTokenIfCurrent(token)`（今の `check()` と同じ）。
   消したら内部の数値カウンタを +1 し、その値を不透明な `current` に変換して運ぶ（`current !== checked`）。
   **通知しない**。足し算は provider の内部だけ、外へ出るのは `CredentialRevision`（I-23）。
@@ -858,7 +862,11 @@ async fn auth_resolve(state) -> Result<AuthResolveResult, BantoError>;
 // auth_setup  : 同上（アカウントの作成は行い、セッションだけ入れない）。
 // auth_logout : seq を読む → auth_config().await → disabled なら LogoutResult { seq }（no-op、進めない）→
 //               cas_session(seq, None) → 書けなければ LogoutResult { seq: now }（何もしない。監査も残さない）。
-// auth_config_apply_body: is_none() の照合を cas_session に乗せ替え（seq は進む）。
+// auth_config_apply_body: 最後のロックで is_none() なら local を設置して seq を進める。入口の seq の一致は
+//               条件にしない（並行の logout が seq を進めると disabled なのに None が残るため、PR #264 P1）。
+// auth_logout の補完: CAS で消せたら認証モードを読み直し、disabled なら「消去後の seq のまま、かつ None」の
+//               ときだけ local を設置する（古いモードを読んだ logout が消した後の穴を塞ぐ。どちらの経路も
+//               1 ロック内で is_none() を見るので二重に設置しない。読み直しの失敗は設置せず logout は成功）。
 // change_own_password: id + auth_epoch の照合はそのまま、rebind で seq を進め、応答で返す。
 ```
 
@@ -897,7 +905,8 @@ function bumpLocal(): void {
   それ以外の構造化されたエラーは進めない（スロットに書く前に返る）。どちらでも `pendingOps` から外す。**期限（`opPendingTimeoutMs`、既定 10 秒）を
   過ぎたら取り消しではなく「結果が分からない」**: `bumpLocal()` して `pendingOps` から外す（確認を塞ぐ
   対象から外れる、S-78）。その後に元の invoke が結果を返したら、`observe(seq)` と通知で扱う（CAS の
-  結果は Rust 側で決まっている。フロントは戻り値の `superseded` を読むだけ）。
+  結果は Rust 側で決まっている。フロントは戻り値の `superseded` を読むだけ）。後から届いた reject では
+  `local` を再び進めない（期限切れで進め済み。PR #264 P3）。
 - `resolve()`: 入口で `(s0, l)` と `entryAt` を読む → `auth_resolve` を invoke → 答えが届いた時点で
   **`pendingOps` が空でなければ `StaleAnswerError` で reject**（操作の開始が入口の前か後かを問わない。
   待たない。S-75・S-82。controller は新しい probe で確認し直す。操作の期限があるので永久には続かない）→ Rust が `stale: true` でも `StaleAnswerError`（S-77）→
