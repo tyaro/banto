@@ -980,26 +980,38 @@ function bumpLocal(): void {
   S-42・S-52・S-66）:
 
   ```ts
-  for (let attempt = 0; ; attempt++) {
+  for (let attempt = 1; ; attempt++) {
   	const status = await provider.status?.();
-  	if (!controller.isCurrent(ticket)) return resolveSettled(controller); // 同期の照合、この後 await まで無し
-  	if (!status?.viewerPublic) return { outcome: 'confirmed', snapshot: controller.snapshot, ticket }; // none のまま
-  	const entered = await provider.enterPublicViewer?.({ expectRevision: ticket.revision }); // 発行の中の CAS も ticket の revision
-  	const result = await resolveSettled(controller); // issued の成否に依らず、今の資格情報で確定。unverified はそのまま返す
-  	// superseded（ticket の後にトークンが現れた、#264 再レビュー）: そのトークンが失効していれば
-  	// resolveSettled が消して confirmed none になる。そのときだけ新しい ticket で発行をやり直す（上限あり）
-  	if (!entered?.superseded || attempt + 1 >= MAX_PUBLIC_VIEWER_RETRIES) return result;
+  	let result: ResolveResult;
+  	if (!controller.isCurrent(ticket)) {
+  		// 同期の照合、この後 await まで無し。ticket の後で資格情報が変わった（storage イベント到着済み）
+  		result = await resolveSettled(controller);
+  	} else if (!status?.viewerPublic) {
+  		return { outcome: 'confirmed', snapshot: controller.snapshot, ticket }; // none のまま
+  	} else {
+  		const entered = await provider.enterPublicViewer?.({ expectRevision: ticket.revision }); // 発行の中の CAS も ticket の revision
+  		result = await resolveSettled(controller); // issued の成否に依らず、今の資格情報で確定。unverified はそのまま返す
+  		if (!entered?.superseded) return result; // 発行の失敗（403・通信）は再試行しない
+  		// superseded: ticket の後で資格情報が変わった（storage イベント未着）
+  	}
+  	// ここに来るのは「ticket の後で資格情報が変わった」ときだけ（イベントの到着の前後を問わない）。
+  	// 現れたトークンが失効していれば resolveSettled が消して confirmed none になる。そのときだけ
+  	// 新しい ticket で方針をやり直す（上限あり）。active・unverified・superseded はそのまま返す
   	if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') return result;
+  	if (attempt >= MAX_PUBLIC_VIEWER_RETRIES) return result;
   	ticket = result.ticket;
   }
   ```
 
-  `superseded` の再試行は、今の `resolveProtectedSession` の `continue`（上限 `MAX_STALE_RETRIES`）と
-  同じ役割。これが無いと、ticket の作成後に現れた失効トークンを `resolveSettled` が消して
+  この再試行は、今の `resolveProtectedSession` の `continue`（上限 `MAX_STALE_RETRIES`）と同じ役割
+  （#264 再レビュー）。これが無いと、ticket の作成後に現れた失効トークンを `resolveSettled` が消して
   `confirmed none` を返し、呼び出し側が `/login` へ移るので、実装-1 の `sessionGate` では通る S-20 系の
-  順序で公開閲覧への fallback を失う。上限を使い切ったら最後の結果（`none` なら `/login`）を返す。
-  実装-3 のテストに「発行の前に現れた失効トークン → 消えて公開閲覧に入る」と「毎回現れる → 上限で
-  抜ける」の 2 本（S-20 系）を入れる。
+  順序で公開閲覧への fallback を失う。**storage イベントが `isCurrent` の前に届いた場合（ticket が失効）と、
+  届く前に発行した場合（`enterPublicViewer` が `superseded`）を同じ規則で扱う**。発行そのものの失敗
+  （403・通信の失敗）は資格情報の変化ではないので再試行しない。上限を使い切ったら最後の結果（`none`
+  なら `/login`）を返す。実装-3 のテストに S-20 系の 3 本を入れる: 「イベント未着で発行の前に現れた
+  失効トークン → 消えて公開閲覧に入る」「イベント到着済み（`isCurrent` が false）の失効トークン → 同じく
+  公開閲覧に入る」「毎回現れる → 上限で抜ける」。
 
   `adopt()` は使わない。
 
