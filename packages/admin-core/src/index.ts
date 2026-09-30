@@ -15,11 +15,30 @@ export type {
 	ListResult
 } from './types';
 
-export type { DataProvider, AuthProvider, Identity, NotificationKind, Notifier } from './provider';
+export type {
+	DataProvider,
+	AuthProvider,
+	AuthOperationResult,
+	CredentialRevision,
+	Identity,
+	LegacyAuthProvider,
+	NotificationKind,
+	Notifier,
+	ResolvedAuth,
+	SessionKind,
+	StandardAuthProvider
+} from './provider';
 export { PUBLIC_VIEWER_ID } from './provider';
 
 export type { FieldError, ErrorBody } from './errors';
-export { ProviderError, isProviderError, notFound, validation } from './errors';
+export {
+	ProviderError,
+	isProviderError,
+	notFound,
+	validation,
+	StaleAnswerError,
+	isStaleAnswerError
+} from './errors';
 
 export type { ResourceDefinition, InitBantoConfig } from './registry.svelte';
 export {
@@ -70,8 +89,11 @@ export {
 export {
 	createTauriDataProvider,
 	createTauriAuthProvider,
-	type TauriInvokeOptions
+	type TauriInvokeOptions,
+	type TauriAuthProviderOptions
 } from './providers/tauri';
+
+export { adaptLegacyAuthProvider, ADAPTER_REVISION } from './providers/legacyAdapter';
 
 export {
 	createHttpDataProvider,

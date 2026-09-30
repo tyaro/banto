@@ -3,7 +3,7 @@
  * `DataProvider`/`AuthProvider` calls onto Tauri `invoke()` using the
  * command naming convention `${resource}_list` / `_get` / `_create` /
  * `_update` / `_delete`, and `auth_login` / `auth_logout` / `auth_check` /
- * `auth_identity` for auth.
+ * `auth_identity` / `auth_resolve` for auth.
  *
  * No dependency on `@tauri-apps/api` here — the app injects its own
  * `invoke` function, so this module (and its tests) work without a Tauri
@@ -14,9 +14,17 @@
  * `ProviderError` so callers only ever deal with one error shape,
  * regardless of which `DataProvider` implementation is active.
  */
-import type { AuthProvider, DataProvider, Identity } from '../provider';
+import type {
+	AuthOperationResult,
+	CredentialRevision,
+	DataProvider,
+	Identity,
+	ResolvedAuth,
+	SessionKind,
+	StandardAuthProvider
+} from '../provider';
 import type { ListParams, ListResult } from '../types';
-import { ProviderError, type ErrorBody } from '../errors';
+import { ProviderError, StaleAnswerError, type ErrorBody } from '../errors';
 
 export interface TauriInvokeOptions {
 	/** Injected so this module has no `@tauri-apps/api` dependency of its own. */
@@ -107,21 +115,131 @@ export function createTauriDataProvider(options: TauriInvokeOptions): DataProvid
 	};
 }
 
+/** Options of `createTauriAuthProvider`. */
+export interface TauriAuthProviderOptions extends TauriInvokeOptions {
+	/**
+	 * Issue #260 (design §5.3, S-78): how long a state-changing auth command
+	 * (login/logout/setup/changePassword) may stay unanswered before the
+	 * provider stops waiting for it - it then treats the outcome as unknown
+	 * (advances the revision and notifies) and no longer reports `resolve()`
+	 * answers as stale because of it. Default 10 000 ms.
+	 */
+	opPendingTimeoutMs?: number;
+}
+
+const DEFAULT_OP_PENDING_TIMEOUT_MS = 10_000;
+
+/** Wire shape of `auth_login`/`auth_setup` (`LoginResult` in the Rust crate). */
+interface LoginResultWire {
+	success: boolean;
+	error?: string | null;
+	superseded?: boolean;
+	seq?: number;
+}
+
+/** Wire shape of `auth_resolve` (`AuthResolveResult` in the Rust crate). */
+interface AuthResolveWire {
+	identity: Identity | null;
+	kind: SessionKind | null;
+	checked: number;
+	current: number;
+	stale: boolean;
+}
+
+/** `{ seq }` of `auth_logout`/`auth_change_password`; `null`/absent from an older backend. */
+function seqOf(value: unknown): number | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const seq = (value as { seq?: unknown }).seq;
+	return typeof seq === 'number' ? seq : undefined;
+}
+
 /**
  * Standard `AuthProvider` for the Tauri webview (spec §3.3), backed by the
  * `auth_login` / `auth_logout` / `auth_check` / `auth_identity` /
- * `auth_status` / `auth_setup` / `auth_change_password` commands (spec §8.2).
+ * `auth_resolve` / `auth_status` / `auth_setup` / `auth_change_password`
+ * commands (spec §8.2).
+ *
+ * Issue #260 (docs/session-controller-design.md §5.3, I-19/I-23): the
+ * revision is the pair `(observedSeq, local)`, handed out as the opaque
+ * `${observedSeq}.${local}`:
+ * - `observedSeq` is the max Rust session-slot `seq` observed - from a
+ *   state-changing command's response and from `auth_resolve`'s `current`.
+ *   It never goes back, so a response that arrives out of order cannot
+ *   rewind it;
+ * - `local` advances only when a state-changing command's `invoke` rejected
+ *   (no response: the slot may have changed) or stayed unanswered past
+ *   `opPendingTimeoutMs`.
+ * Listeners hear a change only when the pair changed (not for a logout
+ * no-op or a superseded login that left `seq` where it was), and never from
+ * `resolve()`. A `resolve()` answer that arrives while any state-changing
+ * command is still pending - whether it started before or after the
+ * `resolve()` - is rejected with `StaleAnswerError`, as is one the backend
+ * reports stale.
  */
-export function createTauriAuthProvider(options: TauriInvokeOptions): AuthProvider {
+export function createTauriAuthProvider(options: TauriAuthProviderOptions): StandardAuthProvider {
 	const call = makeCaller(options.invoke);
+	const opPendingTimeoutMs = options.opPendingTimeoutMs ?? DEFAULT_OP_PENDING_TIMEOUT_MS;
+
+	let observedSeq = 0;
+	let local = 0;
+	const listeners = new Set<() => void>();
+	/** State-changing commands still awaiting their response (and not yet timed out). */
+	const pendingOps = new Set<object>();
+
+	function revision(seq = observedSeq, l = local): CredentialRevision {
+		return `${seq}.${l}` as CredentialRevision;
+	}
+
+	function emitCredentialChanged(): void {
+		for (const listener of [...listeners]) listener();
+	}
+
+	/** Record a `seq` from an operation's response; notify only if the pair changed. */
+	function observe(seq: number | undefined): void {
+		if (seq === undefined) return;
+		const before = revision();
+		observedSeq = Math.max(observedSeq, seq);
+		if (revision() !== before) emitCredentialChanged();
+	}
+
+	function bumpLocal(): void {
+		local += 1;
+		emitCredentialChanged();
+	}
+
+	/**
+	 * Invoke a state-changing command, tracking it as pending until it
+	 * answers or `opPendingTimeoutMs` passes. A rejected invoke advances
+	 * `local` (the outcome is unknown) and rethrows.
+	 */
+	async function runOp<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+		const op = {};
+		pendingOps.add(op);
+		const timer = setTimeout(() => {
+			if (pendingOps.delete(op)) bumpLocal();
+		}, opPendingTimeoutMs);
+		try {
+			return await call<T>(cmd, args);
+		} catch (err) {
+			pendingOps.delete(op);
+			bumpLocal();
+			throw err;
+		} finally {
+			clearTimeout(timer);
+			pendingOps.delete(op);
+		}
+	}
 
 	return {
-		async login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-			return call<{ success: boolean; error?: string }>('auth_login', params);
+		async login(params: Record<string, unknown>): Promise<AuthOperationResult> {
+			const result = await runOp<LoginResultWire>('auth_login', params);
+			observe(result.seq);
+			return loginOutcome(result);
 		},
 
 		async logout(): Promise<void> {
-			await call<void>('auth_logout');
+			const result = await runOp<unknown>('auth_logout');
+			observe(seqOf(result));
 		},
 
 		async check(): Promise<boolean> {
@@ -133,16 +251,56 @@ export function createTauriAuthProvider(options: TauriInvokeOptions): AuthProvid
 			return identity ?? null;
 		},
 
+		/**
+		 * Issue #260: `auth_resolve` once. Rejects with the `ProviderError` of a
+		 * failed invoke (revision unchanged, I-19), or with `StaleAnswerError`
+		 * when a state-changing command is pending as the answer arrives
+		 * (S-75/S-82) or the backend reports the slot re-bound (S-77). The
+		 * `invoke` cannot be aborted; `signal` is ignored.
+		 */
+		async resolve(): Promise<ResolvedAuth> {
+			const l = local;
+			const answer = await call<AuthResolveWire>('auth_resolve');
+			if (pendingOps.size > 0 || answer.stale) throw new StaleAnswerError();
+			// The advance (if this call cleared a revoked session) is carried
+			// by `current`, not notified (S-65).
+			observedSeq = Math.max(observedSeq, answer.current);
+			const checked = revision(answer.checked, l);
+			const current = revision(answer.current, l);
+			if (!answer.identity) return { status: 'none', checked, current };
+			return {
+				status: 'active',
+				checked,
+				current,
+				identity: answer.identity,
+				...(answer.kind ? { kind: answer.kind } : {})
+			};
+		},
+
+		credentialRevision(): CredentialRevision {
+			return revision();
+		},
+
+		onCredentialChanged(listener: () => void): () => void {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+
 		async status(): Promise<{ initialized: boolean }> {
 			return call<{ initialized: boolean }>('auth_status');
 		},
 
-		async setup(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
+		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
+			let result: LoginResultWire;
 			try {
-				return await call<{ success: boolean; error?: string }>('auth_setup', params);
+				result = await runOp<LoginResultWire>('auth_setup', params);
 			} catch (err) {
 				return { success: false, error: firstValidationMessage(toProviderError(err)) };
 			}
+			observe(result.seq);
+			return loginOutcome(result);
 		},
 
 		async changePassword(
@@ -150,11 +308,22 @@ export function createTauriAuthProvider(options: TauriInvokeOptions): AuthProvid
 			next: string
 		): Promise<{ success: boolean; error?: string }> {
 			try {
-				await call<void>('auth_change_password', { currentPassword: current, newPassword: next });
+				const result = await runOp<unknown>('auth_change_password', {
+					currentPassword: current,
+					newPassword: next
+				});
+				observe(seqOf(result));
 				return { success: true };
 			} catch (err) {
 				return { success: false, error: firstValidationMessage(toProviderError(err)) };
 			}
 		}
 	};
+}
+
+function loginOutcome(result: LoginResultWire): AuthOperationResult {
+	const outcome: AuthOperationResult = { success: result.success };
+	if (result.error != null) outcome.error = result.error;
+	if (result.superseded) outcome.superseded = true;
+	return outcome;
 }

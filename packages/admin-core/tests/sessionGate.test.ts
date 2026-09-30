@@ -227,3 +227,56 @@ describe('resolveProtectedSession ends the confirmed-invalid session (#215/#255)
 		expect(loadListViewState(scope, 'items:server', undefined, sessionStorage)).not.toBeNull();
 	});
 });
+
+// Issue #260 実装-1 (design §7.1 acceptance, #259): `enterPublicViewer()`
+// now resolves `{ success, superseded? }`. The gate enters the public viewer
+// only on `success`, and a `superseded` entry (another login stored its
+// token while the public-viewer token was being minted - the provider's
+// compare-and-set refused to overwrite it) is checked again, not sent to
+// /login.
+describe('resolveProtectedSession and the enterPublicViewer result (#260)', () => {
+	it("S-20: a public-viewer entry superseded by a login re-checks and resolves 'session'", async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: true });
+		let releasePublicViewer!: () => void;
+		const publicViewerHeld = new Promise<void>((resolve) => (releasePublicViewer = resolve));
+		let publicViewerStarted!: () => void;
+		const publicViewerRequested = new Promise<void>((resolve) => (publicViewerStarted = resolve));
+		const routed = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+			if (url.endsWith('/api/auth/login')) {
+				state.validTokens.add('login-token');
+				return json(200, { success: true, token: 'login-token' });
+			}
+			if (url.endsWith('/api/auth/public-viewer')) {
+				publicViewerStarted();
+				await publicViewerHeld;
+			}
+			return fetchFn(url, init as RequestInit);
+		});
+		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
+		sessionStorage.setItem(KEY, 'revoked-token');
+
+		const outcome = resolveProtectedSession(auth);
+		await publicViewerRequested;
+		await expect(auth.login({ username: 'b', password: 'pw' })).resolves.toMatchObject({
+			success: true
+		});
+		releasePublicViewer();
+
+		await expect(outcome).resolves.toBe('session');
+		expect(auth.getToken()).toBe('login-token');
+	});
+
+	it("a failed entry ({ success: false }) still falls back to 'login'", async () => {
+		const auth = {
+			login: vi.fn(),
+			logout: vi.fn(),
+			check: vi.fn(async () => false),
+			getIdentity: vi.fn(async () => null),
+			status: vi.fn(async () => ({ initialized: true, viewerPublic: true })),
+			enterPublicViewer: vi.fn(async () => ({ success: false }))
+		};
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
+		expect(auth.check).toHaveBeenCalledTimes(1);
+	});
+});

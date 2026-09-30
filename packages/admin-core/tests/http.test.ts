@@ -696,7 +696,7 @@ describe('createHttpAuthProvider', () => {
 				.mockResolvedValue(jsonResponse(200, { success: true, token: 'viewer-tok' }));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toBe(true);
+			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: true });
 
 			expect(fetchFn).toHaveBeenCalledWith('/api/auth/public-viewer', {
 				method: 'POST',
@@ -708,27 +708,27 @@ describe('createHttpAuthProvider', () => {
 			expect(provider.getToken()).toBe('viewer-tok');
 		});
 
-		it('resolves false on a 403 (server.viewerPublic OFF) without storing a token', async () => {
+		it('resolves { success: false } on a 403 (server.viewerPublic OFF) without storing a token', async () => {
 			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(403, { kind: 'forbidden' }));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toBe(false);
+			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: false });
 			expect(provider.getToken()).toBeNull();
 		});
 
-		it('resolves false on a network failure without throwing', async () => {
+		it('resolves { success: false } on a network failure without throwing', async () => {
 			const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toBe(false);
+			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: false });
 			expect(provider.getToken()).toBeNull();
 		});
 
-		it('resolves false when the response body has success:false', async () => {
+		it('resolves { success: false } when the response body has success:false', async () => {
 			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: false }));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toBe(false);
+			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: false });
 			expect(provider.getToken()).toBeNull();
 		});
 	});
