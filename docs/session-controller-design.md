@@ -775,6 +775,8 @@ export interface AuthProvider {
 - `login`/`setup`: 呼び出しの開始時に `revision` を読み、応答を書くときに一致するときだけ
   `setToken`。一致しなければ書かず、戻り値は `{ success: false, superseded: true }`（`error` も付ける）。
 - `enterPublicViewer`: `expectRevision`（無ければ開始時の revision）と一致するときだけ `setToken`。
+  加えて**開始時と書き込み直前の両方でトークンが null** であることを条件にする（公開閲覧は資格情報が無いときだけ
+  発行する。開始時にトークンがあれば通信せずに `superseded`。ticket の作成後に別タブが書いた窓を塞ぐ、PR #264 再レビュー P1）。
 - `logout`: 開始時の revision と一致するときだけ `setToken(null)`。一致しなければ消さない
   （別のログインが済んでいる）。`POST /api/auth/logout` は開始時のトークンで送る（今の
   `headers(false)` は送信時の `getToken()` を読むので、**開始時に固定する**）。戻り値は
@@ -867,6 +869,10 @@ async fn auth_resolve(state) -> Result<AuthResolveResult, BantoError>;
 // auth_logout の補完: CAS で消せたら認証モードを読み直し、disabled なら「消去後の seq のまま、かつ None」の
 //               ときだけ local を設置する（古いモードを読んだ logout が消した後の穴を塞ぐ。どちらの経路も
 //               1 ロック内で is_none() を見るので二重に設置しない。読み直しの失敗は設置せず logout は成功）。
+// auth_config_lock（tokio::sync::Mutex<()>、PR #264 再レビュー P2）: config-apply は最初の設定読み取りから保存・local の
+//               設置まで、logout は消去後の読み直し〜設置を、autologin の切替は設定の読み書きを、このロックの中で行う
+//               （設置の根拠にした設定値と設置の間に別の apply が割り込まない）。順序は auth_config_lock → state.auth で固定。
+//               apply(false) は既存の local を自分では消さず、次の current_session / auth_resolve の settle が消す。
 // change_own_password: id + auth_epoch の照合はそのまま、rebind で seq を進め、応答で返す。
 ```
 
