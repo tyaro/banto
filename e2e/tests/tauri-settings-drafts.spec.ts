@@ -37,7 +37,15 @@ async function installTauriStub(page: Page): Promise<void> {
 			listens: [] as { event: string; handler: number; eventId: number }[],
 			unlistens: [] as number[],
 			destroyed: 0,
-			callbacks
+			callbacks,
+			/**
+			 * The Rust session slot (Issue #260): `auth_resolve` answers from it,
+			 * and `auth_config_apply(true)` re-binds it to the synthetic local
+			 * session, advancing `seq` (owner review of #266 P1). The provider
+			 * does not observe that advance until its next `auth_resolve`.
+			 */
+			slot: { seq: 1, local: false, role: 'admin' as string },
+			resolves: [] as { checked: number; kind: string }[]
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
 			mock.releaseServerStatus = resolve;
@@ -69,14 +77,40 @@ async function installTauriStub(page: Page): Promise<void> {
 				// Issue #260 実装-2: the route guard asks through the
 				// SessionController, i.e. the provider's one-round-trip
 				// `auth_resolve`.
-				case 'auth_resolve':
-					return {
-						identity: { id: 'admin', name: 'E2E管理者', role: 'admin' },
-						kind: 'account',
-						checked: 1,
-						current: 1,
-						stale: false
-					};
+				case 'auth_resolve': {
+					const { seq, local, role } = mock.slot;
+					const answer = local
+						? {
+								identity: { id: '0', name: 'ローカルユーザー', role },
+								kind: 'local',
+								checked: seq,
+								current: seq,
+								stale: false
+							}
+						: {
+								identity: { id: 'admin', name: 'E2E管理者', role: 'admin' },
+								kind: 'account',
+								checked: seq,
+								current: seq,
+								stale: false
+							};
+					mock.resolves.push({ checked: seq, kind: answer.kind });
+					return answer;
+				}
+				case 'auth_config_apply': {
+					const disabled = args.disabled === true;
+					authSettings.disabled = disabled;
+					authSettings.disabledRole = String(args.disabledRole);
+					if (disabled) {
+						const rebinding = !mock.slot.local;
+						mock.slot = {
+							seq: mock.slot.seq + (rebinding ? 1 : 0),
+							local: true,
+							role: authSettings.disabledRole
+						};
+					}
+					return { ...authSettings };
+				}
 				case 'auth_status':
 					return { initialized: true };
 				case 'auth_config_get':
@@ -252,6 +286,39 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await expect(port).toHaveValue('8721');
 		await expect(unsaved).toHaveCount(0);
 		await expect.poll(() => closeListenerActive(page)).toBe(false);
+	});
+
+	// Owner review of #266 P1 (Issue #260, S-94): turning login-not-required
+	// mode on from the settings screen re-binds the Rust session to the
+	// synthetic local one (`seq` + 1, not reported to the provider). The save's
+	// `invalidateAll()` re-runs the guard; its first `auth_resolve` answer is
+	// about a `seq` the provider had not observed and is discarded, the
+	// provider catches up (S-84), the next answer confirms `kind: 'local'`, and
+	// `sessionStore.authDisabled` follows it: the user menu (logout) goes.
+	test('セキュリティ: enabling login-not-required mode switches the session to the local one (S-94)', async ({
+		page
+	}) => {
+		await installTauriStub(page);
+		await page.goto('/settings/security');
+		const toggle = page.getByRole('switch', { name: 'ログイン不要モードを有効にする' });
+		const save = page.getByRole('button', { name: '保存して適用' });
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+		await expect(toggle).toBeEnabled();
+
+		await toggle.check();
+		page.once('dialog', (dialog) => void dialog.accept()); // authDisableConfirm
+		await save.click();
+
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toHaveCount(0);
+		const resolves = await page.evaluate(
+			() =>
+				(window as unknown as { __bantoMock: { resolves: { checked: number; kind: string }[] } })
+					.__bantoMock.resolves
+		);
+		// The answers after the apply are about seq 2; the last one confirmed `local`.
+		const after = resolves.filter((answer) => answer.checked === 2);
+		expect(after.length).toBeGreaterThanOrEqual(2); // one discarded, one applied (S-84)
+		expect(after.at(-1)?.kind).toBe('local');
 	});
 
 	test('セキュリティ: not editable while the saved auth settings failed to load', async ({

@@ -981,14 +981,17 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
         return Ok(LogoutResult { seq });
     }
     // PR #264 review P1: the mode read above may be stale - auth-disabled
-    // mode can have been switched on (and its `auth_config_apply` final lock
-    // passed while the old session was still here, so it installed nothing)
-    // before this clear. Re-read the mode and, if it is now disabled, install
+    // mode can have been switched on before this clear. (Since the owner
+    // review of #266 P1 an apply re-binds the session right after its save,
+    // which moves `seq` so this clear would not have been written; the
+    // re-read is kept as the defense for any path that saves the mode
+    // without re-binding.) Re-read the mode and, if it is now disabled, install
     // the synthetic session - but only while the slot is still exactly what
     // this clear left (`seq` unchanged and empty), so a later login or a
     // config-apply that already installed it is never overwritten and the
-    // synthetic session is never installed twice ([`install_local_session`],
-    // the same `is_none()`-under-one-lock check the config-apply path uses).
+    // synthetic session is never installed twice ([`rebind_local_session`]
+    // with this clear's `seq`: an unchanged `seq` means the slot is still
+    // the empty one this clear left).
     //
     // A failed re-read is NOT an error of this logout: the clear has
     // happened (and an `Err` after a slot write would break the TS
@@ -1004,19 +1007,19 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
     // nothing on its own, and a stale "enabled" answer there is exactly what
     // this re-read corrects; a stale "disabled" answer only makes this
     // logout a no-op that the frontend re-resolves.
-    let installed = {
+    let rebind = {
         let _auth_config = state.auth_config_lock.lock().await;
         match (state.auth_io.auth_mode)().await {
             Ok(config) if config.disabled => {
-                let (installed, seq_now) =
-                    install_local_session(state, config.disabled_role, Some(seq));
+                let (rebind, seq_now) =
+                    rebind_local_session(state, config.disabled_role, Some(seq));
                 seq = seq_now;
-                installed
+                rebind
             }
-            Ok(_) => None,
+            Ok(_) => LocalRebind::Skipped,
             Err(err) => {
                 eprintln!("banto: ログアウト後の認証モードの再読み込みに失敗しました: {err}");
-                None
+                LocalRebind::Skipped
             }
         }
     };
@@ -1031,9 +1034,9 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
         )
         .await;
     }
-    if let Some(local_identity) = installed {
-        record_local_login(&state.audit, &local_identity).await;
-    }
+    // Only `Installed` can happen here: with `seq` unchanged since the clear,
+    // the slot is empty.
+    record_local_rebind(&state.audit, &rebind).await;
     Ok(LogoutResult { seq })
 }
 
@@ -1201,8 +1204,9 @@ async fn auth_change_password(
 // --- M11: auth-disabled mode + desktop autologin ---------------------------
 
 /// The synthetic identity of auth-disabled mode (spec M11). The ONE
-/// definition shared by `run()`'s bootstrap, [`auth_config_apply_body`] and
-/// [`logout_body`], so the three can never drift apart. `id: 0` is not a
+/// definition shared by `run()`'s bootstrap and [`rebind_local_session`]
+/// (used by [`auth_config_apply_body`] and [`logout_body`]), so they can
+/// never drift apart. `id: 0` is not a
 /// real `users` row - nothing ever looks a synthetic session up by id (no
 /// change-password/self-deletion flows apply to it), so there is no real
 /// row to alias.
@@ -1231,26 +1235,93 @@ async fn record_local_login(audit: &AuditLogService, identity: &UserIdentity) {
     .await;
 }
 
-/// Install the auth-disabled synthetic session (Issue #260, design §5.3):
-/// under ONE lock, only if the slot is empty (an existing `Some(..)` is
-/// never overwritten) and - when `expected_seq` is given - `seq` is still
-/// that value; advances `seq` when it writes. Returns the installed identity
-/// (the caller records [`record_local_login`] for it, after the lock) and
-/// the `seq` after the call. The guard never lives across an `.await`
-/// (Copilot review on PR #182).
-fn install_local_session(
+/// What [`rebind_local_session`] did to the slot.
+#[derive(Debug, Clone, PartialEq)]
+enum LocalRebind {
+    /// Nothing written: `expected_seq` was given and the slot had moved.
+    Skipped,
+    /// The slot was empty; the synthetic session was installed (`seq` + 1).
+    Installed(UserIdentity),
+    /// An account session was replaced by the synthetic one (`seq` + 1). The
+    /// caller records the account's end and the synthetic `login`.
+    Replaced {
+        previous: UserIdentity,
+        local: UserIdentity,
+    },
+    /// The synthetic session was already there: the same binding, so `seq`
+    /// does NOT move (I-11: a refresh). Its role was updated to `role` if it
+    /// differed (like [`settle_session`]'s refresh).
+    Refreshed,
+}
+
+/// The auth-mode change's session rebind (Issue #260 実装-3, owner review of
+/// #266 P1, design §5.3): make the slot hold the auth-disabled synthetic
+/// session for `role`, under ONE lock, so that
+/// `auth.disabled == true <=> DesktopSession::AuthDisabledLocal <=>
+/// auth_resolve kind == "local"` holds as soon as the mode is saved:
+///
+/// - `None -> Local` and `Account(A) -> Local`: written, `seq` + 1 (a
+///   binding change: a login that read the old `seq` can no longer install
+///   over it, S-94);
+/// - `Local -> Local`: the same binding - `seq` does not move; only the role
+///   is refreshed.
+///
+/// With `expected_seq` (the logout's re-read), nothing is written unless
+/// `seq` is still that value (the slot is then exactly what the logout's
+/// clear left: empty). The guard never lives across an `.await` (Copilot
+/// review on PR #182). Returns the outcome and the `seq` after the call.
+fn rebind_local_session(
     state: &AppState,
     role: Role,
     expected_seq: Option<u64>,
-) -> (Option<UserIdentity>, u64) {
+) -> (LocalRebind, u64) {
     let mut slot = state.auth.lock().expect("auth mutex poisoned");
-    if slot.session.is_some() || expected_seq.is_some_and(|seq| seq != slot.seq) {
-        return (None, slot.seq);
+    if expected_seq.is_some_and(|seq| seq != slot.seq) {
+        return (LocalRebind::Skipped, slot.seq);
     }
-    let identity = local_identity(role);
-    slot.session = Some(DesktopSession::AuthDisabledLocal(identity.clone()));
+    let outcome = match slot.session.take() {
+        Some(DesktopSession::AuthDisabledLocal(mut local)) => {
+            local.role = role;
+            slot.session = Some(DesktopSession::AuthDisabledLocal(local));
+            return (LocalRebind::Refreshed, slot.seq);
+        }
+        Some(DesktopSession::Account(previous)) => LocalRebind::Replaced {
+            previous,
+            local: local_identity(role),
+        },
+        None => LocalRebind::Installed(local_identity(role)),
+    };
+    let local = match &outcome {
+        LocalRebind::Installed(local) | LocalRebind::Replaced { local, .. } => local.clone(),
+        LocalRebind::Skipped | LocalRebind::Refreshed => unreachable!(),
+    };
+    slot.session = Some(DesktopSession::AuthDisabledLocal(local));
     slot.seq += 1;
-    (Some(identity), slot.seq)
+    (outcome, slot.seq)
+}
+
+/// Audit what [`rebind_local_session`] did (spec M14): the synthetic
+/// `login` for an install; for a replaced account, that account's session
+/// end as `logout` with `detail: { "reason": "auth_disabled" }` (not a
+/// logout the user asked for - the detail tells the two apart) and then the
+/// synthetic `login`. A refresh records nothing (the binding did not change).
+async fn record_local_rebind(audit: &AuditLogService, outcome: &LocalRebind) {
+    match outcome {
+        LocalRebind::Installed(local) => record_local_login(audit, local).await,
+        LocalRebind::Replaced { previous, local } => {
+            record_ok(
+                audit,
+                previous,
+                "logout",
+                "auth",
+                None,
+                Some(serde_json::json!({ "reason": "auth_disabled" })),
+            )
+            .await;
+            record_local_login(audit, local).await;
+        }
+        LocalRebind::Skipped | LocalRebind::Refreshed => {}
+    }
 }
 
 /// Current auth-mode settings (spec M11): any authenticated role may read
@@ -1287,10 +1358,12 @@ async fn auth_config_get(state: State<'_, AppState>) -> Result<AuthSettings, Ban
 /// the device can create the first admin unauthenticated anyway, so letting
 /// that same person pick no-login mode instead is the same trust decision,
 /// not a wider one. The window closes the moment the first account exists.
-/// Enabling the mode with no current session also synthesizes the same
-/// local identity `run()`'s bootstrap would create on the next launch (and
+/// Enabling the mode re-binds the session to the same synthetic local
+/// identity `run()`'s bootstrap would create on the next launch (and
 /// records the same synthetic `login` entry), so the webview enters the app
-/// without a restart.
+/// without a restart - also when an account session was signed in: that
+/// session is replaced (owner review of #266 P1, [`rebind_local_session`]),
+/// so `auth.disabled == true` always goes with the synthetic session.
 /// Body of [`auth_config_apply`] (spec M14 pattern) so its escape-hatch /
 /// bootstrap-window authz (the actor may be `None`) + audit behavior is
 /// testable with a plain `&AppState`.
@@ -1336,6 +1409,30 @@ async fn auth_config_apply_body(
     config.disabled = disabled;
     config.disabled_role = role;
     (state.auth_io.save_auth_config)(config.clone()).await?;
+    // Owner review of #266 P1 (design §5.3, S-94): turning the mode on
+    // re-binds the session to the synthetic one RIGHT after the save, with
+    // no `.await` in between (still under `auth_config_lock`), so
+    // `auth.disabled == true` is never observable together with an account
+    // session. None -> Local and Account -> Local advance `seq` (a login
+    // that started before can no longer install over it); Local -> Local
+    // only refreshes the role.
+    //
+    // Issue #260 (PR #264 review P1, kept): no "`seq` still the one read at
+    // entry" condition - a logout that cleared the slot after this command
+    // started would otherwise leave the mode with no session at all.
+    // [`logout_body`] re-reads the mode after its clear for the other order;
+    // both run under `auth_config_lock`, and the rebind is idempotent for
+    // `Local`, so the synthetic session is never installed twice.
+    //
+    // `disabled = false` does not clear an existing local session here: as
+    // before, the next `current_session`/`auth_resolve` settles it away
+    // (`read_session_source` re-reads the mode), so it can never authorize
+    // anything under `disabled = false`.
+    let rebind = if config.disabled {
+        rebind_local_session(state, config.disabled_role, None).0
+    } else {
+        LocalRebind::Skipped
+    };
     state
         .audit
         .record(AuditEntry {
@@ -1350,35 +1447,12 @@ async fn auth_config_apply_body(
         })
         .await;
 
-    // Setup-skip flow (choiapp-feedback-2026-09 §5): enabling the mode from
-    // the first-run screen happens with no session at all - synthesize the
-    // same identity `run()`'s bootstrap would create on the next launch so
-    // the webview can enter the app without a restart. The settings-screen
-    // paths (admin / escape hatch) always run with a session, so this is
-    // normally a no-op there.
-    //
-    // Issue #260 (PR #264 review P1): the condition is ONLY "the slot is
-    // empty at the final lock" - deliberately NOT "and `seq` is still the one
-    // read at entry". A logout that cleared the slot after this command
-    // started (having read the OLD `disabled = false`) advances `seq`; a seq
-    // condition here would then skip the install and leave auth-disabled
-    // mode with no session at all. An existing `Some(..)` is never
-    // overwritten. [`logout_body`] re-reads the mode after its clear and
-    // fills the other gap (a logout that cleared AFTER this final lock); the
-    // two paths never both install, because each checks `is_none()` under
-    // the one lock ([`install_local_session`]) - and, since re-review P2,
-    // both also run under `auth_config_lock`.
-    //
-    // `disabled = false` does not clear an existing local session here: as
-    // before, the next `current_session`/`auth_resolve` settles it away
-    // (`read_session_source` re-reads the mode), so it can never authorize
-    // anything under `disabled = false`.
-    if config.disabled {
-        let (installed, _) = install_local_session(state, config.disabled_role, None);
-        if let Some(local_identity) = installed {
-            record_local_login(&state.audit, &local_identity).await;
-        }
-    }
+    // The session change is recorded after the settings change it follows
+    // from. Setup-skip flow (choiapp-feedback-2026-09 §5): from the
+    // first-run screen there is no session, so this is the synthetic
+    // `login` only; from the settings screen, the admin's session end
+    // (`logout`, reason `auth_disabled`) and the synthetic `login`.
+    record_local_rebind(&state.audit, &rebind).await;
     Ok(config)
 }
 
@@ -5111,14 +5185,15 @@ mod tests {
         assert_eq!(audit_action_count(&state, "login").await, 1);
     }
 
-    /// S-67 / PR #264 review P1 (ii): a logout reads the OLD
-    /// `disabled = false` and is held; `auth_config_apply` then switches the
-    /// mode on while A's session is still there (so it installs nothing);
-    /// the logout resumes and clears A. The logout re-reads the mode after
-    /// its clear and installs the synthetic session itself - disabled mode
-    /// never ends with no session.
+    /// S-67 / PR #264 review P1 (ii), updated by the owner review of #266
+    /// P1: a logout reads the OLD `disabled = false` and is held;
+    /// `auth_config_apply` then switches the mode on while A's session is
+    /// still there - and re-binds it to the synthetic session right away
+    /// (`seq` + 1). The logout resumes: its compare-and-set no longer holds,
+    /// so it changes nothing. Disabled mode never ends with no session, nor
+    /// with A's.
     #[tokio::test]
-    async fn s67_a_logout_that_read_the_old_mode_installs_local_after_clearing() {
+    async fn s67_a_logout_that_read_the_old_mode_is_overtaken_by_the_apply_rebind() {
         let mut state = app_state().await;
         state
             .users
@@ -5141,27 +5216,205 @@ mod tests {
             .expect("apply");
         assert!(config.disabled);
         assert!(
-            is_account(&read_slot(&state).0, "a"),
-            "the apply never overwrites an existing session"
+            is_local(&read_slot(&state).0),
+            "the apply re-bound A's session"
         );
         hold.release.send(()).unwrap();
         let result = logout.await.expect("logout");
 
         let (session, seq) = read_slot(&state);
-        assert!(is_local(&session), "{session:?}");
         let Some(DesktopSession::AuthDisabledLocal(local)) = session else {
-            unreachable!()
+            panic!("expected the synthetic session: {session:?}")
         };
-        assert_eq!(local.role, Role::Editor, "the role of the re-read settings");
+        assert_eq!(local.role, Role::Editor);
         assert_eq!(local.id, LOCAL_SESSION_ID);
-        assert_eq!(seq, login.seq + 2, "clear + install");
+        assert_eq!(
+            seq,
+            login.seq + 1,
+            "the rebind only; the logout wrote nothing"
+        );
         assert_eq!(result.seq, seq, "the logout reports the final seq");
-        assert_eq!(audit_action_count(&state, "logout").await, 1);
+        assert_eq!(
+            audit_action_count(&state, "logout").await,
+            1,
+            "A's session end by the rebind (reason auth_disabled), none by the logout"
+        );
         assert_eq!(
             audit_action_count(&state, "login").await,
             2,
             "A's login + one synthetic login"
         );
+    }
+
+    /// The audit rows for `action` (any order), as `(actor, detail)`.
+    async fn audit_rows(state: &AppState, action: &str) -> Vec<(Option<String>, Option<String>)> {
+        state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .into_iter()
+            .filter(|row| row.action == action)
+            .map(|row| (row.actor_username, row.detail))
+            .collect()
+    }
+
+    /// S-94 (owner review of #266 P1, design §5.3): an admin signed in with an
+    /// account turns auth-disabled mode on from the settings screen. The
+    /// apply re-binds the slot to the synthetic session with the new role in
+    /// the same step as the save (`seq` + 1), and records the account's
+    /// session end (`logout`, reason `auth_disabled`) and the synthetic
+    /// `login`. `auth_resolve` then answers `kind: "local"` with that role -
+    /// `auth.disabled == true` never goes with an account session.
+    #[tokio::test]
+    async fn s94_config_apply_true_rebinds_an_account_session_to_local() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        let login = login_body(&state, "admin".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        assert!(login.success);
+        assert!(is_account(&read_slot(&state).0, "admin"));
+
+        let config = auth_config_apply_body(&state, true, "viewer")
+            .await
+            .expect("apply");
+        assert!(config.disabled);
+
+        let (session, seq) = read_slot(&state);
+        let Some(DesktopSession::AuthDisabledLocal(local)) = session else {
+            panic!("expected the synthetic session: {session:?}")
+        };
+        assert_eq!(local.role, Role::Viewer);
+        assert_eq!(seq, login.seq + 1, "Account -> Local advances seq once");
+
+        let logouts = audit_rows(&state, "logout").await;
+        assert_eq!(logouts.len(), 1);
+        assert_eq!(logouts[0].0.as_deref(), Some("admin"));
+        let detail: serde_json::Value =
+            serde_json::from_str(logouts[0].1.as_deref().expect("detail")).unwrap();
+        assert_eq!(detail, serde_json::json!({ "reason": "auth_disabled" }));
+        let logins = audit_rows(&state, "login").await;
+        assert_eq!(logins.len(), 2, "the admin's login + the synthetic login");
+        assert!(
+            logins
+                .iter()
+                .any(|(actor, detail)| actor.as_deref() == Some("local")
+                    && detail
+                        .as_deref()
+                        .is_some_and(|d| d.contains("auth_disabled"))),
+            "{logins:?}"
+        );
+        assert_eq!(audit_action_count(&state, "settings_change").await, 1);
+
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert_eq!(answer.kind, Some("local"));
+        assert_eq!(answer.identity.expect("active").role, "viewer");
+        assert_eq!((answer.checked, answer.current), (seq, seq));
+    }
+
+    /// S-94: applying `disabled = true` again while the synthetic session is
+    /// already there is the same binding - `seq` does not move and nothing is
+    /// recorded for the session; a different role only refreshes the role.
+    #[tokio::test]
+    async fn s94_config_apply_true_again_keeps_the_local_binding_and_seq() {
+        let state = app_state().await;
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("first apply (bootstrap window)");
+        let (session, seq) = read_slot(&state);
+        assert!(is_local(&session));
+        let logins = audit_action_count(&state, "login").await;
+
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("same apply");
+        assert_eq!(
+            read_slot(&state).1,
+            seq,
+            "Local -> Local (same role): no seq"
+        );
+
+        auth_config_apply_body(&state, true, "editor")
+            .await
+            .expect("role change");
+        let (session, seq_after) = read_slot(&state);
+        assert_eq!(seq_after, seq, "Local -> Local (new role): no seq");
+        let Some(DesktopSession::AuthDisabledLocal(local)) = session else {
+            panic!("{session:?}")
+        };
+        assert_eq!(local.role, Role::Editor);
+        assert_eq!(audit_action_count(&state, "login").await, logins);
+        assert_eq!(audit_action_count(&state, "logout").await, 0);
+    }
+
+    /// `auth_config_apply(false)` keeps its behavior: the synthetic session
+    /// is not cleared by the apply itself; the next `auth_resolve` settles
+    /// it away (`none`, `seq` + 1).
+    #[tokio::test]
+    async fn config_apply_false_leaves_local_to_the_next_resolve() {
+        let state = app_state().await;
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("enable");
+        let (_, seq) = read_slot(&state);
+        auth_config_apply_body(&state, false, "admin")
+            .await
+            .expect("disable");
+        let (session, seq_after) = read_slot(&state);
+        assert!(is_local(&session), "the apply itself does not clear");
+        assert_eq!(seq_after, seq);
+
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert!(answer.identity.is_none());
+        assert_eq!((answer.checked, answer.current), (seq, seq + 1));
+        assert_eq!(read_slot(&state), (None, seq + 1));
+    }
+
+    /// S-94 (compare-and-set): a login starts (reads `seq = N`) and is held
+    /// in its password check; the mode is switched on meanwhile (the admin's
+    /// account session re-bound to Local, `seq = N + 1`); the login then
+    /// completes - its compare-and-set fails (`superseded`) and the
+    /// synthetic session stays.
+    #[tokio::test]
+    async fn s94_a_login_overtaken_by_the_apply_rebind_is_superseded() {
+        let mut state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(
+            state.users.get_by_username("admin").await.unwrap().unwrap(),
+        )));
+        let (_, seq_before) = read_slot(&state);
+        let mut hold = hold_verify(&mut state);
+
+        let login = login_body(&state, "admin".to_string(), SLOT_PASSWORD.to_string());
+        tokio::pin!(login);
+        run_until_held!(login, hold);
+
+        auth_config_apply_body(&state, true, "viewer")
+            .await
+            .expect("apply");
+        assert_eq!(read_slot(&state).1, seq_before + 1);
+        hold.release.send(()).unwrap();
+        let result = login.await.expect("login");
+
+        assert!(!result.success);
+        assert!(result.superseded, "the login read seq before the rebind");
+        let (session, seq) = read_slot(&state);
+        assert!(
+            is_local(&session),
+            "Local is not turned back into the account: {session:?}"
+        );
+        assert_eq!(seq, seq_before + 1);
+        assert_eq!(result.seq, seq);
     }
 
     /// PR #264 review P1 / re-review P2: a logout whose first read saw
