@@ -7,7 +7,7 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import * as m from '$lib/paraglide/messages';
-	import { endSession, getAuthProvider } from '@banto/admin-core';
+	import { logoutAndLeave } from '$lib/banto/logout.svelte';
 	import { pageTitle } from '$lib/navigation';
 	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
@@ -54,12 +54,10 @@
 	} as const;
 
 	async function logout() {
-		await getAuthProvider().logout();
-		// Issue #215/#255: this tab's session is over - new session generation
-		// (a save still in flight can no longer write its marker) and the
-		// saved list view state goes with it. Same call in `commands.ts`.
-		endSession();
-		goto(`${base}/login`);
+		// Issue #215/#255, #260 (I-18/I-10): log out, end this tab's session
+		// unless another one was confirmed meanwhile, then go to /login - see
+		// `$lib/banto/logout.svelte.ts` for the order. Same in `commands.ts`.
+		await logoutAndLeave(() => goto(`${base}/login`));
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two

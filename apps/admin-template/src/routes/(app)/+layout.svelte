@@ -2,10 +2,11 @@
 	import { untrack } from 'svelte';
 	import { invalidateAll, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { onInvalidate, onSessionEnded, sessionGeneration } from '@banto/admin-core';
+	import { getSessionController, onInvalidate, sessionGeneration } from '@banto/admin-core';
 	import { hasUnsavedChanges } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
+	import { isLoggingOut } from '$lib/banto/logout.svelte';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -42,17 +43,34 @@
 		return guardWindowClose(hasUnsavedChanges, () => m['unsaved.confirmClose']());
 	});
 
-	// Issue #241: a session revoked while this screen is open (the event
-	// stream got a `401`, or another tab already cleared the shared Remember
-	// me token, and `check()` confirmed it, clearing the stored token) re-runs the route guard (`+layout.ts`'s `resolveProtectedSession`),
-	// which sends the screen to /login - or into a public-viewer session -
-	// exactly like a navigation would. The login target is a forced
-	// navigation for the unsaved-changes guard (`$lib/unsavedChanges.ts`).
-	// admin-core notifies at most once per confirmation, so this never
-	// stacks invalidations. An ending confirmed before this subscribed (e.g.
-	// during this very load) is confirmed again and delivered after it
-	// subscribes - never synchronously inside the `$effect`.
-	$effect(() => onSessionEnded(() => void invalidateAll()));
+	// Issue #260 (実装-2, design §6.1 wiring ①): whenever the session
+	// controller's generation differs from the one this page's load confirmed,
+	// re-run the loads (`invalidateAll()`), which confirm the session again
+	// and send the screen to /login, a public-viewer session, the retryable
+	// error page, or the rebuilt page of the (new) user. This covers every
+	// way the generation moves - a background revocation confirmed `none`
+	// (Issue #241, formerly `onSessionEnded`), an ending confirmed before this
+	// layout mounted (S-34/S-74: checked on mount), and another tab's login
+	// that goes unknown -> active without ever passing `none` (S-79, and the
+	// same user again, S-80). `requestedFor` keeps one invalidation per
+	// generation (a load that confirms the same generation again, or a slow
+	// one, does not stack them). The login target is a forced navigation for
+	// the unsaved-changes guard (`$lib/unsavedChanges.ts`).
+	// While this tab is logging out, no re-load: the logout goes to /login
+	// itself, and an invalidation started here would win over that
+	// navigation (`$lib/banto/logout.svelte.ts`). `isLoggingOut()` is
+	// reactive, so a generation change skipped meanwhile is handled once it
+	// ends if the layout is still mounted (a failed logout).
+	const sessionController = getSessionController();
+	let requestedFor = -1;
+	$effect(() => {
+		const generation = sessionController.snapshot.generation;
+		if (isLoggingOut()) return;
+		if (generation !== data.sessionGeneration && requestedFor !== generation) {
+			requestedFor = generation;
+			void invalidateAll();
+		}
+	});
 
 	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the

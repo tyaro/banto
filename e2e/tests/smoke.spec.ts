@@ -1253,10 +1253,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// "Remember me" token (localStorage) but not their sessionStorage. The
 	// first tab saves the admin's list state; the second tab logs the admin
 	// out and logs in as the viewer with Remember me - an identity change the
-	// first tab's own login/logout never saw. Reloading the first tab then
-	// passes the guard with the VIEWER's valid token, and must not restore
-	// the admin's search term, sort or highlighted row: saved state carries
-	// its owner and is only restored for the identity the guard confirmed.
+	// first tab's own login/logout never saw. Opening the list in the first
+	// tab again then passes the guard with the VIEWER's valid token, and must
+	// not restore the admin's search term, sort or highlighted row: saved
+	// state carries its owner and is only restored for the identity the
+	// guard confirmed. (Issue #260 実装-2: the first tab now also follows the
+	// other tab's logout to /login on its own - see below.)
 	test('6a. items: after another tab switches the Remember me user, reloading this tab does not restore the previous user list state', async ({
 		browser
 	}) => {
@@ -1268,8 +1270,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// Hold the first tab's event stream open without ever answering:
 			// otherwise a reconnect that happens to fall between the second
 			// tab's logout and login would find the token gone, end the first
-			// tab's session and clear its state by itself - this test is about
-			// the case where nothing told the first tab.
+			// tab's session and clear its state by itself - the stream is not
+			// the path under test (the shared token's `storage` event is).
 			await first.route('**/api/events', () => {});
 
 			await first.goto('/login');
@@ -1308,15 +1310,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(second.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 			await logout(second);
 			await expect(second).toHaveURL(/\/login$/);
+			// Issue #260 実装-2 (S-39, I-5): the first tab is no longer left
+			// unaware - the shared token's `storage` event holds its session,
+			// the confirmation finds no token, and its layout re-runs the guard
+			// (generation check), which sends it to /login too.
+			await expect(first).toHaveURL(/\/login$/);
 			await second.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
 			await second.getByLabel('パスワード').fill(VIEWER_PASSWORD);
 			await second.getByLabel('ログイン状態を保持する（30日間）').check();
 			await second.getByRole('button', { name: 'ログイン' }).click();
 			await expect(second).toHaveURL(/\/dashboard$/);
 
-			// The first tab still holds the admin's state in its own
-			// sessionStorage; reloading passes the guard as the viewer.
-			await first.reload();
+			// Opening the list again in the first tab passes the guard as the
+			// viewer (the shared Remember me token).
+			await first.goto('/items');
 			await expect(first).toHaveURL(/\/items$/);
 			await expect(firstGrid).toBeVisible();
 			await expect(first.getByRole('button', { name: '新規作成' })).toHaveCount(0);
@@ -1750,8 +1757,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(badge).toHaveCount(0);
 	});
 
-	// Issue #204 review: a session the server could not verify (500 from
-	// /api/auth/check) stays - regular and "Remember me" tokens alike - and
+	// Issue #204 review: a session the server could not verify (500 from the
+	// session check - `/api/auth/identity` since Issue #260 実装-2) stays - regular and "Remember me" tokens alike - and
 	// resumes after "再試行". Public viewing is OFF on this server, so the old
 	// behavior would have bounced to /login.
 	test('13a. an auth-check outage keeps the session instead of logging out', async () => {
@@ -1773,7 +1780,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// admin page then resets that account's password (Issue #204: this ends
 	// every session of the account). The viewer's event stream is closed by
 	// the server's periodic revalidation (15 s), its reconnect gets a `401`,
-	// `check()` confirms `200 false` and clears the stored token, and the route
+	// the session check confirms it (`/api/auth/identity` answers `200 null`
+	// since Issue #260 実装-2) and clears the stored token, and the route
 	// guard sends the open screen to /login. The stream must then stop
 	// retrying (it used to retry every 3 s forever).
 	test('13b. a session revoked from another session leaves its open screen for the login page', async ({
@@ -1788,7 +1796,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			other.on('response', async (response) => {
 				const path = new URL(response.url()).pathname;
 				if (path === '/api/events') events.push({ at: Date.now(), status: response.status() });
-				if (path === '/api/auth/check') {
+				if (path === '/api/auth/identity') {
 					checks.push({ status: response.status(), body: await response.text() });
 				}
 			});
@@ -1842,9 +1850,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				})),
 				'the revoked token is cleared'
 			).toEqual({ local: null, session: null });
-			expect(checks, 'check() confirmed the revocation').toContainEqual({
+			expect(checks, 'the session check confirmed the revocation').toContainEqual({
 				status: 200,
-				body: 'false'
+				body: 'null'
 			});
 
 			// The stream stops: after its one 401 there is no further request.
@@ -1974,15 +1982,29 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			let held = 0;
 			let released!: () => void;
 			const guardReleased = new Promise<void>((resolve) => (released = resolve));
-			await tab.route('**/api/auth/check', async (route) => {
-				// The environment probe (no bearer token) and the confirmation's
-				// own check pass through; only the guard's first check is held.
+			// Issue #260 実装-2: deterministic within the guard's 10 s deadline.
+			// The new document's first stream request is held until the account
+			// is revoked, then sent on - so the server answers its own 401 right
+			// away instead of at its next revalidation (up to 15 s later).
+			let revokedNow!: () => void;
+			const revoked = new Promise<void>((resolve) => (revokedNow = resolve));
+			let streamHeld = false;
+			await tab.route('**/api/events', async (route) => {
+				if (streamHeld || !route.request().headers()['authorization']) return route.continue();
+				streamHeld = true;
+				await revoked;
+				await route.continue();
+			});
+			// Issue #260 実装-2: the guard's session check is `/api/auth/identity`.
+			await tab.route('**/api/auth/identity', async (route) => {
+				// The confirmation's own check passes through; only the guard's
+				// first check is held.
 				if (held > 0 || !route.request().headers()['authorization']) return route.continue();
 				held += 1;
 				// The first guard's check of the next load: the server judges the
 				// session valid now...
 				const response = await route.fetch();
-				expect(await response.json()).toBe(true);
+				expect(await response.json()).not.toBeNull();
 				// ...then it is revoked, the stream gets its 401 and the
 				// confirmation clears the token - all before this answer arrives.
 				await page.evaluate(
@@ -2006,26 +2028,179 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 					},
 					{ username: VIEWER_USERNAME, password: VIEWER_PASSWORD }
 				);
+				revokedNow();
 				await rejected;
 				await expect
 					.poll(() => tab.evaluate(() => localStorage.getItem('banto.auth.token')), {
 						timeout: 10_000
 					})
 					.toBeNull();
-				await route.fulfill({ response });
+				// The confirmation's signal-caused check replaced the guard's
+				// probe, and the SessionController aborted it (I-22), so this
+				// request may be gone already - fulfilling it is best effort.
+				await route.fulfill({ response }).catch(() => {});
 				released();
 			});
 
 			// A fresh load of a protected screen: the guard waits on the held check.
 			await tab.goto('/items', { waitUntil: 'commit' });
 			await guardReleased;
-			await expect(tab).toHaveURL(/\/login$/, { timeout: 20_000 });
+			// Issue #260 実装-2: the held (stale) `valid` answer is never applied.
+			// The confirmation's signal-caused probe replaced the guard's probe
+			// (I-9/I-22) and answered the guard too, so it goes straight to
+			// /login - not through the retry page (all within its deadline).
+			await expect(tab).toHaveURL(/\/login$/, { timeout: 10_000 });
+			await expect(tab.getByRole('button', { name: '再試行' })).toHaveCount(0);
 			expect(
 				await tab.evaluate(() => ({
 					local: localStorage.getItem('banto.auth.token'),
 					session: sessionStorage.getItem('banto.auth.token')
 				}))
 			).toEqual({ local: null, session: null });
+		} finally {
+			await context.close();
+		}
+	});
+
+	// Issue #260 実装-2 (design §7.1/§7.3, §8.4): with the SessionController
+	// merged but the admin-template wiring of 実装-3 not yet, the protected
+	// layout re-runs its load whenever `snapshot.generation` differs from the
+	// generation that load confirmed (wiring ①). These three orders change
+	// the generation without the old `onSessionEnded` path ever firing.
+	async function loginRemembered(tab: Page, username: string, password: string): Promise<void> {
+		await tab.goto('/login');
+		await tab.getByLabel('ユーザー名').fill(username);
+		await tab.getByLabel('パスワード').fill(password);
+		await tab.getByLabel('ログイン状態を保持する（30日間）').check();
+		await tab.getByRole('button', { name: 'ログイン' }).click();
+		await expect(tab).toHaveURL(/\/dashboard$/);
+	}
+
+	// S-79: another tab logs in as a different user (the shared Remember me
+	// token is replaced). This tab holds its session (unknown, g+1) on the
+	// `storage` event, re-runs its load and confirms the new user (g+2) -
+	// never passing through `none`. The page is rebuilt for the new user
+	// instead of staying hidden behind the generation gate.
+	test('13e. S-79: another tab’s login as a different user rebuilds this tab for that user', async ({
+		browser
+	}) => {
+		test.setTimeout(60_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const other = await context.newPage();
+		try {
+			await loginRemembered(tab, VIEWER_USERNAME, VIEWER_PASSWORD);
+			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(tab.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
+
+			await loginRemembered(other, ADMIN_USERNAME, ADMIN_PASSWORD);
+
+			await expect(tab.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
+			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
+				ADMIN_DISPLAY_NAME
+			);
+			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			// This tab did not clear the shared token (I-17).
+			expect(await tab.evaluate(() => localStorage.getItem('banto.auth.token'))).toBe(
+				await other.evaluate(() => localStorage.getItem('banto.auth.token'))
+			);
+		} finally {
+			await context.close();
+		}
+	});
+
+	// S-80: another tab logs in again as the SAME user. The owner does not
+	// change, but the hold and the re-confirmation move the generation by 2,
+	// so the page is rebuilt (its in-memory state does not survive) - and is
+	// shown again, not hidden.
+	test('13f. S-80: another tab’s re-login as the same user rebuilds this tab’s page', async ({
+		browser
+	}) => {
+		test.setTimeout(60_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const other = await context.newPage();
+		try {
+			await loginRemembered(tab, VIEWER_USERNAME, VIEWER_PASSWORD);
+			const heading = tab.getByRole('heading', { name: 'ダッシュボード' });
+			await expect(heading).toBeVisible();
+			await heading.evaluate((element) => element.setAttribute('data-s80', 'before'));
+			expect(await tab.locator('[data-s80]').count()).toBe(1);
+
+			await loginRemembered(other, VIEWER_USERNAME, VIEWER_PASSWORD);
+
+			await expect(tab.locator('[data-s80]')).toHaveCount(0);
+			await expect(heading).toBeVisible();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
+				VIEWER_DISPLAY_NAME
+			);
+		} finally {
+			await context.close();
+		}
+	});
+
+	/** The built client chunk (`_app/immutable/nodes/N.hash.js`) of one route file. */
+	function nodeChunkOf(routeFile: string): string {
+		const kit = new URL('../../apps/admin-template/.svelte-kit/', import.meta.url);
+		const nodes = new URL('generated/client-optimized/nodes/', kit);
+		const manifest = JSON.parse(
+			fs.readFileSync(new URL('output/client/.vite/manifest.json', kit), 'utf8')
+		) as Record<string, { file: string }>;
+		for (const name of fs.readdirSync(nodes)) {
+			if (!fs.readFileSync(new URL(name, nodes), 'utf8').includes(routeFile)) continue;
+			const entry = manifest[`.svelte-kit/generated/client-optimized/nodes/${name}`];
+			if (entry) return entry.file;
+		}
+		throw new Error(`no client chunk for ${routeFile} - run the admin-template build first`);
+	}
+
+	// S-74: the protected load confirmed the session (generation g), but the
+	// page cannot mount yet (its client chunk is held). Meanwhile another tab
+	// logs out - the shared token disappears - and this tab confirms `none`
+	// (g+2) with nothing subscribed. When the layout finally mounts, wiring ①
+	// sees g ≠ g+2 and re-runs the load, which sends the tab to /login: the
+	// generation gate does not keep the screen hidden.
+	test('13g. S-74: an ending confirmed before the protected layout mounts still sends it to /login', async ({
+		browser
+	}) => {
+		test.setTimeout(60_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const other = await context.newPage();
+		try {
+			await loginRemembered(tab, VIEWER_USERNAME, VIEWER_PASSWORD);
+			await other.goto('/login');
+
+			const chunk = nodeChunkOf('routes/(app)/dashboard/+page.svelte');
+			let release!: () => void;
+			const released = new Promise<void>((resolve) => (release = resolve));
+			let requested!: () => void;
+			const chunkRequested = new Promise<void>((resolve) => (requested = resolve));
+			await tab.route(`**/${chunk}`, async (route) => {
+				requested();
+				await released;
+				await route.continue();
+			});
+			const sessionChecks: number[] = [];
+			tab.on('response', (response) => {
+				if (new URL(response.url()).pathname === '/api/auth/identity') {
+					sessionChecks.push(response.status());
+				}
+			});
+
+			await tab.goto('/dashboard', { waitUntil: 'commit' });
+			await chunkRequested;
+			// The guard and `sessionStore.load()` confirmed the viewer.
+			await expect.poll(() => sessionChecks.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+			expect(sessionChecks.every((status) => status === 200)).toBe(true);
+
+			// Another tab logs out: the shared Remember me token disappears.
+			await other.evaluate(() => localStorage.removeItem('banto.auth.token'));
+			release();
+
+			await expect(tab).toHaveURL(/\/login$/, { timeout: 20_000 });
 		} finally {
 			await context.close();
 		}

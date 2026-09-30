@@ -5,13 +5,29 @@
  * end or change B's session scope - its owner, its generation (what
  * `(app)/+layout.svelte` compares against the generation its load
  * confirmed), or its saved list view state.
+ *
+ * Issue #260 実装-2: the pre-#260 API (`establishSession`,
+ * `resolveProtectedSession`, `confirmSessionEnded`) now delegates to the
+ * SessionController, which asks ONE question (`AuthProvider.resolve()`)
+ * instead of `check()` + `getIdentity()` and shares one in-flight probe
+ * among concurrent requests (single-flight, I-9). The scenarios are kept;
+ * the fake provider answers through `resolve()` (`probes[n]`: an identity
+ * answers `active`, `null` answers `none`), and the two "same turn" cases
+ * describe the single-flight behavior.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isProviderError } from '../src/errors';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
 import { createHttpAuthProvider } from '../src/providers/http';
-import type { AuthProvider, DataProvider, Identity } from '../src/provider';
+import type {
+	AuthProvider,
+	CredentialRevision,
+	DataProvider,
+	Identity,
+	ResolvedAuth
+} from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
+import { resetDefaultSessionController } from '../src/sessionController.svelte';
 import { confirmSessionEnded, onSessionEnded } from '../src/sessionEnded';
 import { resolveProtectedSession } from '../src/sessionGate';
 import { beginSession, endSession, establishSession } from '../src/sessionLifecycle';
@@ -39,6 +55,10 @@ function makeMemoryStorage(): Storage {
 	} as Storage;
 }
 
+function flush(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** A value whose promise the test settles later. */
 function deferred<T>(): {
 	promise: Promise<T>;
@@ -54,36 +74,39 @@ function deferred<T>(): {
 	return { promise, resolve, reject };
 }
 
-/** An AuthProvider whose `check`/`getIdentity` answers come from queues the test controls. */
+/** An AuthProvider whose `resolve()` answers come from a queue the test controls (`null` = `none`). */
 function makeAuth() {
-	const checks: ReturnType<typeof deferred<boolean>>[] = [];
-	const identities: ReturnType<typeof deferred<Identity | null>>[] = [];
+	const probes: ReturnType<typeof deferred<Identity | null>>[] = [];
+	const revision = '1.0' as CredentialRevision;
 	const auth: AuthProvider = {
 		login: async () => ({ success: true }),
 		logout: async () => {},
-		check: vi.fn(() => {
-			const answer = deferred<boolean>();
-			checks.push(answer);
-			return answer.promise;
-		}),
-		getIdentity: vi.fn(() => {
+		check: vi.fn(async () => true),
+		getIdentity: vi.fn(async () => null),
+		resolve: vi.fn(async (): Promise<ResolvedAuth> => {
 			const answer = deferred<Identity | null>();
-			identities.push(answer);
-			return answer.promise;
-		})
+			probes.push(answer);
+			const identity = await answer.promise;
+			return identity
+				? { status: 'active', checked: revision, current: revision, identity }
+				: { status: 'none', checked: revision, current: revision };
+		}),
+		credentialRevision: () => revision,
+		onCredentialChanged: () => () => {}
 	};
-	return { auth, checks, identities };
+	return { auth, probes };
 }
 
 /** Log out of A and establish B's session (its load finished and rendered): returns B's scope. */
 async function switchToBob(
 	auth: AuthProvider,
-	identities: ReturnType<typeof deferred<Identity | null>>[]
+	probes: ReturnType<typeof deferred<Identity | null>>[]
 ): Promise<SessionScope> {
 	endSession(); // the logout
+	const before = probes.length;
 	const bobLoad = establishSession(auth);
-	await vi.waitFor(() => expect(identities.length).toBeGreaterThan(0));
-	identities[identities.length - 1].resolve(BOB);
+	await vi.waitFor(() => expect(probes.length).toBeGreaterThan(before));
+	probes[probes.length - 1].resolve(BOB);
 	await expect(bobLoad).resolves.toMatchObject({ current: true, identity: BOB });
 	const bob = currentSessionScope();
 	saveListViewState(bob, 'items:server', {
@@ -106,6 +129,7 @@ let storage: Storage;
 beforeEach(() => {
 	storage = makeMemoryStorage();
 	vi.stubGlobal('sessionStorage', storage);
+	resetDefaultSessionController();
 	endSession();
 	beginSession(ALICE);
 });
@@ -115,60 +139,63 @@ afterEach(() => {
 
 describe("a late answer for A's session leaves B's session alone (#255 5th review)", () => {
 	it('establishSession: A’s pending identity resolved after B’s load is not applied', async () => {
-		const { auth, identities } = makeAuth();
+		const { auth, probes } = makeAuth();
 		const aliceLoad = establishSession(auth);
-		await vi.waitFor(() => expect(identities).toHaveLength(1));
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
 
-		const bob = await switchToBob(auth, identities);
-		identities[0].resolve(ALICE);
+		const bob = await switchToBob(auth, probes);
+		probes[0].resolve(ALICE);
+		await flush();
 
 		await expect(aliceLoad).resolves.toMatchObject({ current: false, identity: null });
 		expectBobUntouched(bob);
 	});
 
 	it('establishSession: an answer made stale by a session change (no newer load) asks the current session again', async () => {
-		const { auth, identities } = makeAuth();
+		const { auth, probes } = makeAuth();
 		const load = establishSession(auth);
-		await vi.waitFor(() => expect(identities).toHaveLength(1));
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
 		endSession();
 		beginSession(BOB); // e.g. established by some other path meanwhile
 		const generation = sessionGeneration();
 
-		identities[0].resolve(ALICE);
-		await vi.waitFor(() => expect(identities).toHaveLength(2));
-		identities[1].resolve(BOB);
+		probes[0].resolve(ALICE);
+		await vi.waitFor(() => expect(probes).toHaveLength(2));
+		probes[1].resolve(BOB);
 
 		await expect(load).resolves.toMatchObject({ current: true, identity: BOB });
 		expect(currentSessionScope().owner).toBe('account:bob');
 		expect(sessionGeneration()).toBe(generation);
 	});
 
-	it('resolveProtectedSession: A’s late `false` does not end B’s session; B is checked instead', async () => {
-		const { auth, checks, identities } = makeAuth();
+	it('resolveProtectedSession: A’s late `none` does not end B’s session; B is checked instead', async () => {
+		const { auth, probes } = makeAuth();
 		const guard = resolveProtectedSession(auth);
-		await vi.waitFor(() => expect(checks).toHaveLength(1));
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
 
-		const bob = await switchToBob(auth, identities);
-		checks[0].resolve(false);
-		await vi.waitFor(() => expect(checks).toHaveLength(2));
-		checks[1].resolve(true);
+		// The logout supersedes the guard's request; it asks again and joins
+		// B's load (single-flight) - B's answer settles both.
+		const bob = await switchToBob(auth, probes);
+		probes[0].resolve(null);
+		await flush();
 
 		await expect(guard).resolves.toBe('session');
+		expect(probes).toHaveLength(2);
 		expectBobUntouched(bob);
 	});
 
-	it('confirmSessionEnded: A’s late `false` does not end B’s session nor notify', async () => {
-		const { auth, checks, identities } = makeAuth();
+	it('confirmSessionEnded: A’s late `none` does not end B’s session nor notify', async () => {
+		const { auth, probes } = makeAuth();
 		initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
+		const confirmation = confirmSessionEnded();
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
+
+		const bob = await switchToBob(auth, probes);
+		// B's layout subscribes after the logout's `none`.
 		const ended = vi.fn();
 		const off = onSessionEnded(ended);
-		const confirmation = confirmSessionEnded();
-		await vi.waitFor(() => expect(checks).toHaveLength(1));
-
-		const bob = await switchToBob(auth, identities);
-		checks[0].resolve(false);
-		await vi.waitFor(() => expect(checks).toHaveLength(2));
-		checks[1].resolve(true);
+		probes[0].resolve(null);
+		await flush();
 
 		await expect(confirmation).resolves.toBe('valid');
 		expect(ended).not.toHaveBeenCalled();
@@ -176,63 +203,55 @@ describe("a late answer for A's session leaves B's session alone (#255 5th revie
 		off();
 	});
 
-	it('confirmSessionEnded: a `false` for the session still current ends it (unchanged behavior)', async () => {
-		const { auth, checks } = makeAuth();
+	it('confirmSessionEnded: a `none` for the session still current ends it (unchanged behavior)', async () => {
+		const { auth, probes } = makeAuth();
 		initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
 		const alice = currentSessionScope();
 		const confirmation = confirmSessionEnded();
-		await vi.waitFor(() => expect(checks).toHaveLength(1));
-		checks[0].resolve(false);
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
+		probes[0].resolve(null);
 		await expect(confirmation).resolves.toBe('ended');
 		expect(isCurrentSessionScope(alice)).toBe(false);
 		expect(currentSessionScope().owner).toBeNull();
 	});
 });
 
-// 6th review (P2 1): the scope check and `endSession()` must be ONE
-// continuation. An old guard's `false` and B's identity settled in the SAME
-// turn used to interleave as: guard sees A still current -> B's
-// establishSession begins B -> the guard's outer continuation ends B.
+// 6th review (P2 1): the check and the write must be ONE continuation. With
+// the controller, the guard and a load in flight together share ONE probe,
+// so "the guard's `none` and B's identity in the same turn" is one answer
+// that both see; the state is that answer and the next load confirms B.
 describe('an old guard settled in the same turn as the next identity (#255 6th review)', () => {
-	it("the guard's `false` and B's identity resolved together leave B established", async () => {
-		const { auth, checks, identities } = makeAuth();
+	it('the guard and B’s load share one answer; the next load confirms B', async () => {
+		const { auth, probes } = makeAuth();
 		const guard = resolveProtectedSession(auth);
 		const bobLoad = establishSession(auth);
-		await vi.waitFor(() => expect(checks).toHaveLength(1));
-		await vi.waitFor(() => expect(identities).toHaveLength(1));
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
 
-		checks[0].resolve(false);
-		identities[0].resolve(BOB);
-
+		probes[0].resolve(null);
 		await expect(guard).resolves.toBe('login');
-		// The guard ended A first, so B's first answer (requested under A's
-		// scope) was stale and asked again - B is established by that answer.
-		await vi.waitFor(() => expect(identities).toHaveLength(2));
-		identities[1].resolve(BOB);
-		await expect(bobLoad).resolves.toMatchObject({ current: true, identity: BOB });
+		await expect(bobLoad).resolves.toMatchObject({ current: true, identity: null });
+
+		const nextLoad = establishSession(auth);
+		await vi.waitFor(() => expect(probes).toHaveLength(2));
+		probes[1].resolve(BOB);
+		await expect(nextLoad).resolves.toMatchObject({ current: true, identity: BOB });
 		expect(currentSessionScope().owner).toBe('account:bob');
 	});
-	it("confirmSessionEnded's `false` and B's identity resolved together leave B established", async () => {
-		const { auth, checks, identities } = makeAuth();
+
+	it('confirmSessionEnded and B’s load share the confirmation’s probe (it started after the signal)', async () => {
+		const { auth, probes } = makeAuth();
 		initBanto({ dataProvider: {} as DataProvider, authProvider: auth, resources: [] });
 		const confirmation = confirmSessionEnded();
 		const bobLoad = establishSession(auth);
-		await vi.waitFor(() => expect(checks).toHaveLength(1));
-		await vi.waitFor(() => expect(identities).toHaveLength(1));
+		await vi.waitFor(() => expect(probes).toHaveLength(1));
+		probes[0].resolve(BOB);
 
-		checks[0].resolve(false);
-		identities[0].resolve(BOB);
-
-		// The confirmation awaits `check()` through a timeout race (one more
-		// hop), so here B's identity is applied first; the confirmation then
-		// finds its `false` stale and checks B's session instead.
 		await expect(bobLoad).resolves.toMatchObject({ current: true, identity: BOB });
 		const bob = currentSessionScope();
-		await vi.waitFor(() => expect(checks).toHaveLength(2));
-		checks[1].resolve(true);
 		await expect(confirmation).resolves.toBe('valid');
 		expect(isCurrentSessionScope(bob)).toBe(true);
 		expect(bob.owner).toBe('account:bob');
+		expect(probes).toHaveLength(1);
 	});
 });
 

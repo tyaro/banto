@@ -22,6 +22,37 @@
 
 ## [Unreleased]
 
+- feat(admin-core, admin-template): SessionController 実装-2（#260、controller。
+  [docs/session-controller-design.md](docs/session-controller-design.md) §5.1・§7.1）。
+  **追加 API**: `createSessionController(provider, deps?)`・`getSessionController()`（`initBanto` が
+  `authProvider` に結び付ける既定の controller。`resolve`/`credentialRevision`/`onCredentialChanged` を
+  持たない provider は `adaptLegacyAuthProvider` で包む）・`resolveSettled(controller, { cause?, deadlineMs? })`・
+  `publicViewerFallback(controller, provider, ticket, { maxRetries? })`・`DEFAULT_PUBLIC_VIEWER_RETRIES`・
+  `SessionTimeoutError`・`SessionProviderMissingError`、型 `SessionController`・`SessionControllerDeps`・
+  `SessionResolveOptions`・`SessionSnapshot`・`SessionTicket`・`ResolveResult`。controller は状態を書く唯一の
+  場所で（`commit`）、`resolve()` は reject せず `confirmed`/`unverified`/`superseded` を返し、同時の確認は
+  1 本にまとめ（single-flight）、答えは失敗も含めて同じ鮮度の条件で採否を決める。
+  **委譲化**: `establishSession`・`beginSession`・`endSession`・`resolveProtectedSession`・
+  `confirmSessionEnded`・`createSessionEndConfirmation`・`onSessionEnded`・`sessionGeneration`・
+  `currentSessionScope`・`isCurrentSessionScope`・`isSessionEstablished`・`sessionOwnerKey` は既定の controller
+  への委譲になった（公開名・呼び方は同じ。v2.0.0 で状態を書く旧 API は削除予定）。**挙動の変化**:
+  セッションの確認は `check()` + `getIdentity()` の 2 往復ではなく `AuthProvider.resolve()` の 1 往復
+  （HTTP は `GET /api/auth/identity`、Tauri は `auth_resolve`）。`resolveProtectedSession` は発行した公開閲覧の
+  セッションも controller で確定する。確認には期限（10 秒）があり、超えたら「確認できない」（再試行画面）。
+  別タブのログイン・ログアウト（共有の Remember me トークンの `storage` イベント）で、このタブの active な
+  セッションは保留（unknown）になり、確認し直す。**`sessionEndUnheard` の期待の変更**: 保護レイアウトの
+  mount 前に確定した終了は、再確認（再 probe）ではなく「購読した時点で `none` なら非同期に 1 回通知」で
+  届く（S-34）。`onSessionEnded` は `none` への**遷移**だけを通知する（すでに `none` のときの再確認では通知しない）。
+  **admin-template**: `(app)/+layout.svelte` の `onSessionEnded(() => invalidateAll())` を、generation の照合
+  （`snapshot.generation !== data.sessionGeneration` なら `invalidateAll()`、同じ generation に二重に出さない）に
+  置き換えた（配線①。none を経ない切り替え S-79・同じユーザーの再ログイン S-80 でも画面を作り直す）。ログアウト
+  （`Header.svelte`・コマンドパレット）は `logout()` → `endSession()` → `/login` の順で、その間は配線①が再 load しない
+  （再 load が公開閲覧を発行して遷移を上書きしないように）。`endSession()` はログアウトの前に取った ticket が
+  current のときだけ呼ぶ（その間に別タブのログインなどで確定したセッションを終わらせない）。`initBanto` を**別の** `authProvider` で
+  呼び直すと、それまでのセッションは保留（unknown）になり新しい provider で確認し直す（同じ provider なら何もしない）。
+  **派生アプリへの申し送り**: 保護レイアウトに配線①（`getSessionController().snapshot.generation` と `load` が
+  返した generation の照合 → `invalidateAll()`）を入れること。`onSessionEnded` だけでは、別タブのログインなど
+  unknown → active（none を経ない）の切り替えで世代ゲートが画面を隠したままになる。
 - feat(admin-core, admin-template): SessionController 実装-1（#260、provider とバックエンド。
   [docs/session-controller-design.md](docs/session-controller-design.md) §7.1）。
   **追加 API**（すべて追加。v1.x では任意）: `AuthProvider.resolve({ signal })`（1 往復で

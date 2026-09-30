@@ -6,10 +6,11 @@ import { createTauriAuthProvider } from '../src/providers/tauri';
 import { beginSession, MAX_STALE_RETRIES, SessionChangedError } from '../src/sessionLifecycle';
 import { currentSessionScope, isCurrentSessionScope } from '../src/sessionScope.svelte';
 import { resolveProtectedSession } from '../src/sessionGate';
+import { resetDefaultSessionController } from '../src/sessionController.svelte';
 
 /**
  * Issue #204 review: a session the backend could not VERIFY (a `500` from
- * `/api/auth/check` on a DB error, or an unreachable server) must not be
+ * the session check on a DB error, or an unreachable server) must not be
  * treated as logged out - no redirect to /login, no switch to a public viewer
  * session, no token cleared or replaced - and must resume once the backend
  * answers again. Only a confirmed-invalid session falls through.
@@ -39,7 +40,12 @@ function json(status: number, body: unknown): Response {
 	});
 }
 
-/** A fake LAN server for the four `/api/auth/*` routes the gate touches. */
+/**
+ * A fake LAN server for the `/api/auth/*` routes the gate touches. Issue #260
+ * 実装-2: the gate delegates to the SessionController, whose HTTP provider
+ * asks `GET /api/auth/identity` (one round trip, design §2.1) instead of
+ * `/api/auth/check` - both answer from the same token state here.
+ */
 function fakeServer(options: { viewerPublic: boolean }) {
 	const state = {
 		viewerPublic: options.viewerPublic,
@@ -59,6 +65,12 @@ function fakeServer(options: { viewerPublic: boolean }) {
 					return json(500, { kind: 'storage', message: 'database is locked' });
 				}
 				return json(200, token !== null && state.validTokens.has(token));
+			case '/api/auth/identity':
+				if (state.checkFails) {
+					return json(500, { kind: 'storage', message: 'database is locked' });
+				}
+				if (token === 'public-token' && state.viewerPublic) return json(200, PUBLIC_VIEWER);
+				return json(200, token !== null && state.validTokens.has(token) ? ALICE : null);
 			case '/api/auth/status':
 				return json(200, { initialized: true, viewerPublic: state.viewerPublic });
 			case '/api/auth/public-viewer':
@@ -72,6 +84,9 @@ function fakeServer(options: { viewerPublic: boolean }) {
 	return { state, fetchFn: fetchFn as unknown as typeof fetch };
 }
 
+const ALICE = { id: 'alice', name: 'Alice' };
+const PUBLIC_VIEWER = { id: 'public', name: 'public', role: 'viewer', publicViewer: true };
+
 function storedTokens() {
 	return { local: localStorage.getItem(KEY), session: sessionStorage.getItem(KEY) };
 }
@@ -79,6 +94,7 @@ function storedTokens() {
 beforeEach(() => {
 	vi.stubGlobal('sessionStorage', makeMemoryStorage());
 	vi.stubGlobal('localStorage', makeMemoryStorage());
+	resetDefaultSessionController();
 });
 
 describe('resolveProtectedSession (HTTP provider)', () => {
@@ -99,7 +115,7 @@ describe('resolveProtectedSession (HTTP provider)', () => {
 				expect((failure as { body: { kind: string } }).body.kind).toBe('storage');
 				expect(storedTokens(), 'no token cleared or replaced').toEqual(before);
 				expect(state.calls, 'no status / public viewer entry after a failed check').toEqual([
-					'/api/auth/check'
+					'/api/auth/identity'
 				]);
 
 				state.checkFails = false;
@@ -149,12 +165,22 @@ describe('resolveProtectedSession (HTTP provider)', () => {
 });
 
 describe('resolveProtectedSession (Tauri provider)', () => {
-	it('a failed auth_check rejects without consulting status or logging out', async () => {
+	// Issue #260 実装-2: the delegated gate asks `auth_resolve` (one round
+	// trip) instead of `auth_check`.
+	const resolved = (identity: { id: string; name: string } | null) => ({
+		identity,
+		kind: identity ? 'account' : null,
+		checked: 1,
+		current: 1,
+		stale: false
+	});
+
+	it('a failed auth_resolve rejects without consulting status or logging out', async () => {
 		let checkFails = true;
 		const invoke = vi.fn(async (command: string) => {
-			if (command === 'auth_check') {
+			if (command === 'auth_resolve') {
 				if (checkFails) throw { kind: 'storage', message: 'database is locked' };
-				return true;
+				return resolved(ALICE);
 			}
 			if (command === 'auth_status') return { initialized: true };
 			throw new Error(`unexpected command ${command}`);
@@ -162,7 +188,7 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 		const auth = createTauriAuthProvider({ invoke });
 
 		await expect(resolveProtectedSession(auth)).rejects.toSatisfy(isProviderError);
-		expect(invoke.mock.calls.map(([command]) => command)).toEqual(['auth_check']);
+		expect(invoke.mock.calls.map(([command]) => command)).toEqual(['auth_resolve']);
 
 		checkFails = false;
 		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
@@ -170,7 +196,7 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 
 	it('a confirmed-invalid desktop session goes to login', async () => {
 		const invoke = vi.fn(async (command: string) =>
-			command === 'auth_check' ? false : { initialized: true }
+			command === 'auth_resolve' ? resolved(null) : { initialized: true }
 		);
 		await expect(resolveProtectedSession(createTauriAuthProvider({ invoke }))).resolves.toBe(
 			'login'
@@ -211,7 +237,10 @@ describe('resolveProtectedSession ends the confirmed-invalid session (#215/#255)
 
 		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
 		expect(isCurrentSessionScope(scope)).toBe(false);
-		expect(currentSessionScope().owner).toBeNull();
+		// Issue #260 実装-2: the delegated gate confirms the minted public-viewer
+		// session through the controller (it used to leave that to the app's
+		// `establishSession`), so the owner is the public viewer, not `null`.
+		expect(currentSessionScope().owner).toBe('public-viewer');
 		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
 	});
 
@@ -285,7 +314,10 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 		sessionStorage.setItem(KEY, 'revoked-token');
 
 		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
-		expect(state.calls.filter((path) => path === '/api/auth/check')).toHaveLength(2);
+		// Two `none` confirmations (the first token, then the one that
+		// appeared), then the controller's confirmation of the minted
+		// public-viewer session (Issue #260 実装-2: part of the gate now).
+		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(3);
 		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(1);
 		expect(storedTokens()).toEqual({ local: null, session: 'public-token' });
 	});
@@ -300,7 +332,7 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 		sessionStorage.setItem(KEY, 'revoked-token');
 
 		await expect(resolveProtectedSession(auth)).rejects.toBeInstanceOf(SessionChangedError);
-		expect(state.calls.filter((path) => path === '/api/auth/check')).toHaveLength(
+		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(
 			MAX_STALE_RETRIES
 		);
 		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(0);

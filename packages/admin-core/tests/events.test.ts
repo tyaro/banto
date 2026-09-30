@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	connectEvents,
 	createSseEventProvider,
@@ -11,6 +11,7 @@ import { onSessionEnded } from '../src/sessionEnded';
 import { onInvalidate } from '../src/invalidate';
 import { initBanto } from '../src/registry.svelte';
 import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
+import { resetDefaultSessionController } from '../src/sessionController.svelte';
 
 function stubProviders(notifier?: Notifier): void {
 	const dataProvider: DataProvider = {
@@ -306,6 +307,14 @@ describe('connectEvents', () => {
 
 	// Issue #241: a stream the server rejected runs the confirmation.
 	describe('a rejected stream (Issue #241)', () => {
+		// Issue #260 実装-2: the confirmation delegates to the default
+		// SessionController (module state) - a fresh one per test. The legacy
+		// provider is wrapped in the compatibility adapter, whose `check()`
+		// `true` needs an identity (a `null` one rejects).
+		beforeEach(() => {
+			resetDefaultSessionController();
+		});
+
 		function stubCheck(check: AuthProvider['check']): void {
 			initBanto({
 				dataProvider: {} as DataProvider,
@@ -313,7 +322,7 @@ describe('connectEvents', () => {
 					login: async () => ({ success: true }),
 					logout: async () => {},
 					check,
-					getIdentity: async () => null
+					getIdentity: async () => ({ id: 'alice', name: 'Alice' })
 				},
 				resources: []
 			});

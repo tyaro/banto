@@ -66,6 +66,17 @@ async function installTauriStub(page: Page): Promise<void> {
 					return true;
 				case 'auth_identity':
 					return { id: 'admin', name: 'E2E管理者', role: 'admin' };
+				// Issue #260 実装-2: the route guard asks through the
+				// SessionController, i.e. the provider's one-round-trip
+				// `auth_resolve`.
+				case 'auth_resolve':
+					return {
+						identity: { id: 'admin', name: 'E2E管理者', role: 'admin' },
+						kind: 'account',
+						checked: 1,
+						current: 1,
+						stale: false
+					};
 				case 'auth_status':
 					return { initialized: true };
 				case 'auth_config_get':

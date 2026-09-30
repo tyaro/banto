@@ -16,7 +16,8 @@
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
 import * as m from '$lib/paraglide/messages';
-import { endSession, getAuthProvider, type PaletteCommand } from '@banto/admin-core';
+import type { PaletteCommand } from '@banto/admin-core';
+import { logoutAndLeave } from './banto/logout.svelte';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
@@ -89,10 +90,8 @@ function sessionCommands(): PaletteCommand[] {
 			// login-not-required mode (spec M11 - there's no session to end).
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
-				await getAuthProvider().logout();
-				// Issue #215/#255: same as Header.svelte's logout.
-				endSession();
-				await goto(`${base}/login`);
+				// Issue #215/#255, #260: same as Header.svelte's logout.
+				await logoutAndLeave(() => goto(`${base}/login`));
 			}
 		}
 	];
