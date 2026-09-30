@@ -47,7 +47,7 @@ use qrcode::QrCode;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
@@ -64,7 +64,19 @@ struct AppState {
     /// second round trip. Issue #204: a [`DesktopSession`], so every place
     /// that establishes a session states which kind it is, and every read
     /// goes through [`current_session`].
-    auth: Mutex<Option<DesktopSession>>,
+    ///
+    /// Issue #260 (docs/session-controller-design.md §5.3, I-11): wrapped in
+    /// an [`AuthSlot`] with a write sequence, so a command that `.await`s
+    /// between reading the slot and writing it (login's argon2 verify,
+    /// logout's settings read) only writes when nothing re-bound the slot
+    /// meanwhile ([`cas_session`]).
+    auth: Mutex<AuthSlot>,
+    /// The two slow `.await`s the session-changing commands make before
+    /// they write [`AppState::auth`] (credential verification / first-user
+    /// setup, and the auth-mode read), injected so tests can hold a command
+    /// at that point and fix the completion order (design §8.3). Production
+    /// wraps `users`/`settings` below ([`AuthIo::production`]).
+    auth_io: AuthIo,
     /// The local credential store (spec §8.2): argon2id-hashed accounts in
     /// the same SQLite settings DB as `settings` below. Shared with
     /// `rest_auth`'s verifier closure so the webview session and the
@@ -150,10 +162,141 @@ struct AppState {
     started_at: std::time::Instant,
 }
 
+/// Result of `auth_login`/`auth_setup`. `superseded`/`seq` (Issue #260,
+/// design §5.3/I-19): `superseded` is `true` when the credentials were
+/// valid but another command re-bound the session slot while this one was
+/// verifying, so the session was NOT installed ([`cas_session`]); `seq` is
+/// the slot's write sequence after this command, so the frontend provider
+/// can tell whether the session changed without a second round trip.
 #[derive(Debug, Clone, Serialize)]
 struct LoginResult {
     success: bool,
     error: Option<String>,
+    superseded: bool,
+    seq: u64,
+}
+
+/// Result of `auth_logout` (Issue #260): the slot's write sequence after the
+/// command - unchanged when it did nothing (auth-disabled mode, or another
+/// command re-bound the slot while the logout was reading settings).
+#[derive(Debug, Clone, Serialize)]
+struct LogoutResult {
+    seq: u64,
+}
+
+/// Result of `auth_change_password` (Issue #260): the slot's write sequence
+/// after the command - advanced when the session was re-bound to the new
+/// `auth_epoch`.
+#[derive(Debug, Clone, Serialize)]
+struct ChangePasswordResult {
+    seq: u64,
+}
+
+/// Result of `auth_resolve` (Issue #260, design §5.3): the whole session in
+/// one round trip, tagged with which slot write it is about.
+///
+/// - `checked`: the slot's `seq` read before the first `.await` (the session
+///   this answer validated);
+/// - `current`: the `seq` after this call's own settle - `checked + 1` iff
+///   this call cleared a revoked session, otherwise `checked`;
+/// - `stale`: another command re-bound the slot while this call was reading
+///   the store, so nothing was written and the answer is about nothing
+///   current (the frontend provider rejects it and asks again).
+#[derive(Debug, Clone, Serialize)]
+struct AuthResolveResult {
+    identity: Option<Identity>,
+    /// `"account"` or `"local"` (auth-disabled mode's synthetic session);
+    /// `None` when there is no session.
+    kind: Option<&'static str>,
+    checked: u64,
+    current: u64,
+    stale: bool,
+}
+
+/// The webview session slot (Issue #260, design §5.3, I-11).
+///
+/// `seq` advances on every write that is MEANT to change the binding -
+/// login/setup/config-apply installing a session, logout/settle clearing
+/// one, `change_own_password` re-binding one - even when the value does not
+/// change (a logout of `None` still advances it, so a login that started
+/// before it can no longer install). It does NOT advance on a refresh of the
+/// same binding (`settle_session` updating role/display name), nor on the
+/// auth-disabled-mode logout no-op.
+#[derive(Debug, Default)]
+struct AuthSlot {
+    session: Option<DesktopSession>,
+    seq: u64,
+}
+
+impl AuthSlot {
+    fn new(session: Option<DesktopSession>) -> Self {
+        Self { session, seq: 0 }
+    }
+}
+
+type AuthFuture<T> = futures_util::future::BoxFuture<'static, Result<T, BantoError>>;
+/// `auth_login`'s credential check (design §8.3 `CredentialVerifier`).
+type CredentialVerifier =
+    Arc<dyn Fn(String, String) -> AuthFuture<Option<UserIdentity>> + Send + Sync>;
+/// `auth_setup`'s first-account creation. Not in design §8.3's sketch (which
+/// names only the verifier and the auth-mode read): `auth_setup` awaits
+/// `setup_first_user`, not `verify`, so S-18/S-19 need their own hold point.
+type FirstUserSetup = Arc<dyn Fn(String, String, String) -> AuthFuture<UserIdentity> + Send + Sync>;
+/// `auth_logout`'s auth-mode read (design §8.3 `AuthModeSource`).
+type AuthModeSource = Arc<dyn Fn() -> AuthFuture<AuthSettings> + Send + Sync>;
+
+/// See [`AppState::auth_io`].
+struct AuthIo {
+    verify: CredentialVerifier,
+    setup_first_user: FirstUserSetup,
+    auth_mode: AuthModeSource,
+}
+
+impl AuthIo {
+    fn production(users: &UsersService, settings: &SettingsService) -> Self {
+        let verify_users = users.clone();
+        let setup_users = users.clone();
+        let settings = settings.clone();
+        Self {
+            verify: Arc::new(move |username, password| {
+                let users = verify_users.clone();
+                Box::pin(async move { users.verify(&username, &password).await })
+            }),
+            setup_first_user: Arc::new(move |username, password, display_name| {
+                let users = setup_users.clone();
+                Box::pin(async move {
+                    users
+                        .setup_first_user(&username, &password, &display_name)
+                        .await
+                })
+            }),
+            auth_mode: Arc::new(move || {
+                let settings = settings.clone();
+                Box::pin(async move { settings.auth_config().await })
+            }),
+        }
+    }
+}
+
+/// Read the slot's `seq` (and session) under one lock. Session-changing
+/// commands call this BEFORE their first `.await` (I-11).
+fn read_slot(state: &AppState) -> (Option<DesktopSession>, u64) {
+    let slot = state.auth.lock().expect("auth mutex poisoned");
+    (slot.session.clone(), slot.seq)
+}
+
+/// Compare-and-set the session slot (design §5.3, I-7/I-11): under one lock,
+/// write `next` and advance `seq` only when `seq` is still `expected_seq`.
+/// Advances even when `next` equals the current value. Returns whether it
+/// wrote, and the `seq` after the call.
+fn cas_session(state: &AppState, expected_seq: u64, next: Option<DesktopSession>) -> (bool, u64) {
+    let mut slot = state.auth.lock().expect("auth mutex poisoned");
+    if slot.seq != expected_seq {
+        return (false, slot.seq);
+    }
+    slot.session = next;
+    slot.seq += 1;
+    (true, slot.seq)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -245,12 +388,22 @@ impl DesktopSession {
 /// not log the user out), failing the command instead. The decision after
 /// the read is [`settle_session`] (the session may have changed while the
 /// read was in flight). The lock is never held across an `.await`.
+///
+/// Issue #260: when the slot was re-bound while the read was in flight
+/// ([`Settled::Stale`]), nothing is written and this command decides on the
+/// CURRENT session's binding (valid iff `fresh` reports exactly it) - the
+/// same answer the pre-#260 `settle_session` gave in that case, so ordinary
+/// commands keep their behavior; only `auth_resolve` reports the staleness.
 async fn current_session(state: &AppState) -> Result<Option<DesktopSession>, BantoError> {
-    let Some(cached) = state.auth.lock().expect("auth mutex poisoned").clone() else {
+    let (cached, seq_at_entry) = read_slot(state);
+    let Some(cached) = cached else {
         return Ok(None);
     };
     let fresh = read_session_source(state, &cached).await?;
-    Ok(settle_session(state, &cached, fresh))
+    Ok(match settle_session(state, &cached, fresh, seq_at_entry) {
+        Settled::Settled { session, .. } => session,
+        Settled::Stale { valid_now } => valid_now,
+    })
 }
 
 /// What the store says NOW about the session `cached` stands for: the
@@ -291,18 +444,38 @@ fn same_binding(a: &DesktopSession, b: &DesktopSession) -> bool {
     }
 }
 
+/// Outcome of [`settle_session`] (Issue #260, design §5.3).
+#[derive(Debug)]
+enum Settled {
+    /// The slot's `seq` moved since `seq_at_entry` (another command
+    /// installed, cleared or re-bound the session while the store was being
+    /// read). Nothing was written. `valid_now` is the CURRENT session if its
+    /// own binding is exactly what `fresh` reports (e.g. a re-bind by
+    /// `change_own_password` that `fresh` already reflects), for the
+    /// ordinary commands' [`current_session`]; `auth_resolve` reports
+    /// `stale` instead of using it.
+    Stale { valid_now: Option<DesktopSession> },
+    /// The slot was not re-bound meanwhile, and was settled from `fresh`.
+    /// `seq_after == seq_before + 1` iff this call cleared the session.
+    Settled {
+        session: Option<DesktopSession>,
+        seq_before: u64,
+        seq_after: u64,
+    },
+}
+
 /// Decide on `fresh` (read with no lock held) against the session as it is
 /// NOW, under one lock:
 ///
-/// - valid iff the CURRENT session's own binding is exactly what `fresh`
-///   reports. Normally the current session is still `cached`; if it was
-///   re-bound meanwhile (`change_own_password` moving it to the epoch its
-///   change wrote), its new binding is what counts. A valid session is
-///   refreshed to `fresh` (current role and name);
-/// - otherwise: if the session is still the one `cached` snapshotted, it is
-///   stale and cleared; if it changed to something else meanwhile (a new
-///   login, ...), it is left for the next command to validate and only this
-///   command fails closed.
+/// - if the slot's `seq` is no longer `seq_at_entry` (read together with
+///   `cached`, before the store read), the session was re-bound meanwhile:
+///   write nothing and return [`Settled::Stale`] (Issue #260, I-11/I-23);
+/// - otherwise the slot still holds `cached`'s binding (only same-binding
+///   refreshes, which do not move `seq`, can have happened). Valid iff that
+///   binding is exactly what `fresh` reports: refreshed to `fresh` (current
+///   role and name) WITHOUT advancing `seq`. Not valid (account gone,
+///   re-keyed, `auth_epoch` advanced - role change included - or
+///   auth-disabled mode turned off): cleared, advancing `seq`.
 ///
 /// This never moves a session to the store's newest epoch on its behalf: a
 /// session that was not itself re-bound still ends.
@@ -310,19 +483,32 @@ fn settle_session(
     state: &AppState,
     cached: &DesktopSession,
     fresh: Option<DesktopSession>,
-) -> Option<DesktopSession> {
-    let mut auth = state.auth.lock().expect("auth mutex poisoned");
-    let unchanged = auth.as_ref() == Some(cached);
-    let valid = match auth.as_ref() {
+    seq_at_entry: u64,
+) -> Settled {
+    let mut slot = state.auth.lock().expect("auth mutex poisoned");
+    let valid = match slot.session.as_ref() {
         Some(now) => fresh.filter(|fresh| same_binding(now, fresh)),
         None => None,
     };
-    if valid.is_some() {
-        *auth = valid.clone();
-    } else if unchanged {
-        *auth = None;
+    if slot.seq != seq_at_entry {
+        return Settled::Stale { valid_now: valid };
     }
-    valid
+    debug_assert!(slot
+        .session
+        .as_ref()
+        .is_some_and(|now| same_binding(now, cached)));
+    let seq_before = slot.seq;
+    if valid.is_some() {
+        slot.session = valid.clone();
+    } else {
+        slot.session = None;
+        slot.seq += 1;
+    }
+    Settled::Settled {
+        session: valid,
+        seq_before,
+        seq_after: slot.seq,
+    }
 }
 
 /// Require an active webview session with at least role `min` (spec M10
@@ -605,6 +791,11 @@ async fn auth_status(state: State<'_, AppState>) -> Result<AuthStatusResult, Ban
 /// "already initialized" (or any other non-validation failure) surfaces as
 /// `Ok(LoginResult { success: false, .. })` instead, since that is an
 /// expected/retryable outcome, not a form error.
+///
+/// Issue #260 (design §5.3, S-18/S-19): the session is installed only if no
+/// other command re-bound the slot while the account was being created
+/// ([`cas_session`] against the `seq` read before the first `.await`);
+/// otherwise the account still exists but the result is `superseded`.
 #[tauri::command]
 async fn auth_setup(
     state: State<'_, AppState>,
@@ -612,43 +803,91 @@ async fn auth_setup(
     password: String,
     display_name: String,
 ) -> Result<LoginResult, BantoError> {
-    match state
-        .users
-        .setup_first_user(&username, &password, &display_name)
-        .await
-    {
+    setup_body(&state, username, password, display_name).await
+}
+
+/// Message for a `LoginResult { superseded: true }` (the credentials were
+/// valid, but another session was established first).
+const SUPERSEDED_LOGIN_MESSAGE: &str =
+    "別のセッションが先に確定したため、このログインは適用されませんでした";
+
+/// Body of [`auth_setup`] (testable with a plain `&AppState`, design §8.3).
+async fn setup_body(
+    state: &AppState,
+    username: String,
+    password: String,
+    display_name: String,
+) -> Result<LoginResult, BantoError> {
+    let (_, seq_at_entry) = read_slot(state);
+    match (state.auth_io.setup_first_user)(username, password, display_name).await {
         Ok(identity) => {
             record_ok(&state.audit, &identity, "setup", "auth", None, None).await;
-            *state.auth.lock().expect("auth mutex poisoned") =
-                Some(DesktopSession::Account(identity));
-            Ok(LoginResult {
-                success: true,
-                error: None,
-            })
+            Ok(install_login(
+                state,
+                seq_at_entry,
+                DesktopSession::Account(identity),
+            ))
         }
         Err(err @ BantoError::Validation { .. }) => Err(err),
         Err(other) => Ok(LoginResult {
             success: false,
             error: Some(other.to_string()),
+            superseded: false,
+            seq: read_slot(state).1,
         }),
     }
 }
 
+/// Install a verified login/setup session with [`cas_session`] and build the
+/// command result: `superseded` when the slot was re-bound after
+/// `seq_at_entry`.
+fn install_login(state: &AppState, seq_at_entry: u64, session: DesktopSession) -> LoginResult {
+    let (written, seq) = cas_session(state, seq_at_entry, Some(session));
+    if written {
+        LoginResult {
+            success: true,
+            error: None,
+            superseded: false,
+            seq,
+        }
+    } else {
+        LoginResult {
+            success: false,
+            error: Some(SUPERSEDED_LOGIN_MESSAGE.to_string()),
+            superseded: true,
+            seq,
+        }
+    }
+}
+
+/// Issue #260 (design §5.3, S-16): the session is installed only if no other
+/// command (a logout, another login) re-bound the slot while the password
+/// was being verified. The `login` audit entry is still recorded at
+/// verification success, before the install (design §1.7, decision 7).
 #[tauri::command]
 async fn auth_login(
     state: State<'_, AppState>,
     username: String,
     password: String,
 ) -> Result<LoginResult, BantoError> {
-    match state.users.verify(&username, &password).await? {
+    login_body(&state, username, password).await
+}
+
+/// Body of [`auth_login`] (testable with a plain `&AppState`, design §8.3).
+async fn login_body(
+    state: &AppState,
+    username: String,
+    password: String,
+) -> Result<LoginResult, BantoError> {
+    let (_, seq_at_entry) = read_slot(state);
+    match (state.auth_io.verify)(username.clone(), password).await? {
         Some(identity) => {
             record_ok(&state.audit, &identity, "login", "auth", None, None).await;
-            *state.auth.lock().expect("auth mutex poisoned") =
-                Some(DesktopSession::Account(identity));
-            Ok(LoginResult {
-                success: true,
-                error: None,
-            })
+            Ok(install_login(
+                state,
+                seq_at_entry,
+                DesktopSession::Account(identity),
+            ))
         }
         None => {
             state
@@ -667,6 +906,8 @@ async fn auth_login(
             Ok(LoginResult {
                 success: false,
                 error: Some("ユーザー名またはパスワードが違います".to_string()),
+                superseded: false,
+                seq: read_slot(state).1,
             })
         }
     }
@@ -682,25 +923,42 @@ async fn auth_login(
 /// framing as "this whole device is trusted, there is no session to log out
 /// of". Spec M14: that no-op path deliberately records no `logout` entry
 /// either - nothing actually changed.
+///
+/// Issue #260 (design §5.3, S-17/S-67): the slot is cleared only if no other
+/// command re-bound it while the auth mode was being read ([`cas_session`]
+/// against the `seq` read before the first `.await`, advancing `seq` even
+/// when there was no session). A logout overtaken by a login leaves that
+/// login's session in place and records no `logout`. The auth-disabled
+/// no-op does not advance `seq`. Either way the result carries the `seq`
+/// after the command.
 #[tauri::command]
-async fn auth_logout(state: State<'_, AppState>) -> Result<(), BantoError> {
-    if state.settings.auth_config().await?.disabled {
-        return Ok(());
+async fn auth_logout(state: State<'_, AppState>) -> Result<LogoutResult, BantoError> {
+    logout_body(&state).await
+}
+
+/// Body of [`auth_logout`] (testable with a plain `&AppState`, design §8.3).
+async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
+    let (previous, seq_at_entry) = read_slot(state);
+    if (state.auth_io.auth_mode)().await?.disabled {
+        return Ok(LogoutResult {
+            seq: read_slot(state).1,
+        });
     }
-    let previous = state.auth.lock().expect("auth mutex poisoned").clone();
-    *state.auth.lock().expect("auth mutex poisoned") = None;
-    if let Some(session) = previous {
-        record_ok(
-            &state.audit,
-            session.identity(),
-            "logout",
-            "auth",
-            None,
-            None,
-        )
-        .await;
+    let (written, seq) = cas_session(state, seq_at_entry, None);
+    if written {
+        if let Some(session) = previous {
+            record_ok(
+                &state.audit,
+                session.identity(),
+                "logout",
+                "auth",
+                None,
+                None,
+            )
+            .await;
+        }
     }
-    Ok(())
+    Ok(LogoutResult { seq })
 }
 
 /// Issue #204: validated like every other command ([`current_session`]), so
@@ -720,6 +978,62 @@ async fn auth_identity(state: State<'_, AppState>) -> Result<Option<Identity>, B
         .map(|session| identity_from(session.identity())))
 }
 
+/// Issue #260 (design §5.3): the frontend provider's `resolve()` - the
+/// session, its kind, and which slot write the answer is about, in one round
+/// trip. Validated like [`auth_identity`] (the account row / auth-disabled
+/// mode is re-read, so role and display name are current), but the `seq` is
+/// read BEFORE the store read and the settle happens under one lock:
+/// `current == checked + 1` iff this call cleared a revoked session, and a
+/// slot re-bound meanwhile is reported as `stale` with nothing written.
+#[tauri::command]
+async fn auth_resolve(state: State<'_, AppState>) -> Result<AuthResolveResult, BantoError> {
+    resolve_body(&state).await
+}
+
+fn session_kind(session: &DesktopSession) -> &'static str {
+    match session {
+        DesktopSession::Account(_) => "account",
+        DesktopSession::AuthDisabledLocal(_) => "local",
+    }
+}
+
+/// Body of [`auth_resolve`] (testable with a plain `&AppState`, design §8.3).
+async fn resolve_body(state: &AppState) -> Result<AuthResolveResult, BantoError> {
+    let (cached, seq_at_entry) = read_slot(state);
+    let Some(cached) = cached else {
+        return Ok(AuthResolveResult {
+            identity: None,
+            kind: None,
+            checked: seq_at_entry,
+            current: seq_at_entry,
+            stale: false,
+        });
+    };
+    let fresh = read_session_source(state, &cached).await?;
+    Ok(match settle_session(state, &cached, fresh, seq_at_entry) {
+        Settled::Stale { .. } => AuthResolveResult {
+            identity: None,
+            kind: None,
+            checked: seq_at_entry,
+            current: read_slot(state).1,
+            stale: true,
+        },
+        Settled::Settled {
+            session,
+            seq_before,
+            seq_after,
+        } => AuthResolveResult {
+            identity: session
+                .as_ref()
+                .map(|session| identity_from(session.identity())),
+            kind: session.as_ref().map(session_kind),
+            checked: seq_before,
+            current: seq_after,
+            stale: false,
+        },
+    })
+}
+
 /// Body of [`auth_change_password`], split out so the audit-recording
 /// behavior (spec M14) is testable with a plain `&AppState` in this crate's
 /// own `cargo test` - `tauri::State` cannot be constructed outside a running
@@ -732,11 +1046,15 @@ async fn auth_identity(state: State<'_, AppState>) -> Result<Option<Identity>, B
 /// re-bound to the new epoch - it just proved the current password - unless
 /// something else changed the account in between (then it ends too). Same
 /// policy as REST's `/api/auth/change-password`.
+///
+/// Issue #260 (design §5.3, I-11, S-68): the re-bind is a write that changes
+/// the binding, so it advances the slot's `seq`; the result carries the
+/// `seq` after the command (unchanged when the re-bind did not happen).
 async fn change_own_password(
     state: &AppState,
     current_password: &str,
     new_password: &str,
-) -> Result<(), BantoError> {
+) -> Result<ChangePasswordResult, BantoError> {
     let identity = match current_session(state).await? {
         Some(DesktopSession::Account(identity)) => identity,
         // The synthetic auth-disabled session owns no credentials: never let
@@ -748,14 +1066,22 @@ async fn change_own_password(
         .users
         .change_password(&identity.username, current_password, new_password)
         .await?;
-    if new_epoch == identity.auth_epoch + 1 {
-        let mut auth = state.auth.lock().expect("auth mutex poisoned");
-        if let Some(DesktopSession::Account(session)) = auth.as_mut() {
-            if session.id == identity.id && session.auth_epoch == identity.auth_epoch {
-                session.auth_epoch = new_epoch;
+    let seq = {
+        let mut slot = state.auth.lock().expect("auth mutex poisoned");
+        if new_epoch == identity.auth_epoch + 1 {
+            let mut rebound = false;
+            if let Some(DesktopSession::Account(session)) = slot.session.as_mut() {
+                if session.id == identity.id && session.auth_epoch == identity.auth_epoch {
+                    session.auth_epoch = new_epoch;
+                    rebound = true;
+                }
+            }
+            if rebound {
+                slot.seq += 1;
             }
         }
-    }
+        slot.seq
+    };
     // Spec M14: a self-service password change is a security event (it is
     // also what naturally invalidates an M11 autologin credential), so it IS
     // audited - actor and entity are both the caller. `detail` stays `None`:
@@ -770,7 +1096,7 @@ async fn change_own_password(
         None,
     )
     .await;
-    Ok(())
+    Ok(ChangePasswordResult { seq })
 }
 
 /// Requires an active webview session (spec §8.2): looks up the logged-in
@@ -782,7 +1108,7 @@ async fn auth_change_password(
     state: State<'_, AppState>,
     current_password: String,
     new_password: String,
-) -> Result<(), BantoError> {
+) -> Result<ChangePasswordResult, BantoError> {
     change_own_password(&state, &current_password, &new_password).await
 }
 
@@ -834,6 +1160,10 @@ async fn auth_config_apply_body(
     disabled: bool,
     disabled_role: &str,
 ) -> Result<AuthSettings, BantoError> {
+    // Issue #260 (I-11): the slot's `seq` before the first `.await` - the
+    // synthetic session below is installed only if nothing re-bound the slot
+    // since (`cas_session`).
+    let (_, seq_at_entry) = read_slot(state);
     let currently_disabled = state.settings.auth_config().await?.disabled;
     // Spec M14: the escape hatch and the bootstrap window (see this
     // command's doc comment) mean `require_role` may not run at all -
@@ -846,6 +1176,7 @@ async fn auth_config_apply_body(
             .auth
             .lock()
             .expect("auth mutex poisoned")
+            .session
             .as_ref()
             .map(|session| session.identity().clone())
     } else {
@@ -885,7 +1216,9 @@ async fn auth_config_apply_body(
     // scope (Copilot review on PR #182: a check/await/write split could
     // overwrite a real session another in-flight command established), and
     // the synthetic `login` entry is recorded after installing - the guard
-    // itself must never live across an await.
+    // itself must never live across an await. Issue #260: the lock scope is
+    // now `cas_session`-style - installed only while `seq` is still the one
+    // read at entry (and the slot empty), advancing `seq`.
     if config.disabled {
         // Mirrors run()'s bootstrap exactly: `id: 0` is not a real `users`
         // row (nothing looks a synthetic session up by id), and the same
@@ -899,9 +1232,10 @@ async fn auth_config_apply_body(
             auth_epoch: 0,
         };
         let installed = {
-            let mut auth = state.auth.lock().expect("auth mutex poisoned");
-            if auth.is_none() {
-                *auth = Some(DesktopSession::AuthDisabledLocal(local_identity.clone()));
+            let mut slot = state.auth.lock().expect("auth mutex poisoned");
+            if slot.seq == seq_at_entry && slot.session.is_none() {
+                slot.session = Some(DesktopSession::AuthDisabledLocal(local_identity.clone()));
+                slot.seq += 1;
                 true
             } else {
                 false
@@ -2558,7 +2892,8 @@ pub fn run() {
                 // [scaffold:items] begin
                 items,
                 // [scaffold:items] end
-                auth: Mutex::new(initial_auth),
+                auth: Mutex::new(AuthSlot::new(initial_auth)),
+                auth_io: AuthIo::production(&users, &settings),
                 users,
                 settings,
                 events,
@@ -2593,6 +2928,7 @@ pub fn run() {
             auth_logout,
             auth_check,
             auth_identity,
+            auth_resolve,
             auth_change_password,
             auth_config_get,
             auth_config_apply,
@@ -2638,6 +2974,16 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    impl AppState {
+        /// Install `session` as if a session-changing command had written it
+        /// (advancing `seq`, Issue #260 I-11).
+        fn set_session_for_test(&self, session: Option<DesktopSession>) {
+            let mut slot = self.auth.lock().expect("auth mutex poisoned");
+            slot.session = session;
+            slot.seq += 1;
+        }
+    }
+
     /// A minimal [`AppState`] over an in-memory DB, no running server, and a
     /// dummy REST verifier - just enough state to exercise command bodies
     /// (like [`change_own_password`]) that only touch the service handles.
@@ -2650,7 +2996,11 @@ mod tests {
             // [scaffold:items] begin
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
-            auth: Mutex::new(None),
+            auth: Mutex::new(AuthSlot::default()),
+            auth_io: AuthIo::production(
+                &UsersService::new(pool.clone()),
+                &SettingsService::new(pool.clone()),
+            ),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
             events,
@@ -2707,7 +3057,11 @@ mod tests {
             // [scaffold:items] begin
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
-            auth: Mutex::new(None),
+            auth: Mutex::new(AuthSlot::default()),
+            auth_io: AuthIo::production(
+                &UsersService::new(pool.clone()),
+                &SettingsService::new(pool.clone()),
+            ),
             users: UsersService::new(pool.clone()),
             settings: SettingsService::new(pool.clone()),
             events,
@@ -2741,7 +3095,7 @@ mod tests {
             .await
             .expect("setup_first_user");
         let owner_id = owner.id;
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(owner));
+        state.set_session_for_test(Some(DesktopSession::Account(owner)));
 
         change_own_password(&state, "password123", "newpassword1")
             .await
@@ -2779,7 +3133,7 @@ mod tests {
             .setup_first_user("owner", "password123", "オーナー")
             .await
             .expect("setup_first_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(owner));
+        state.set_session_for_test(Some(DesktopSession::Account(owner)));
 
         change_own_password(&state, "not-the-password", "newpassword1")
             .await
@@ -2815,7 +3169,7 @@ mod tests {
             .create_user("editor", "password123", "編集者", Role::Editor)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(editor));
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
 
         let existing = state
             .items
@@ -2885,7 +3239,7 @@ mod tests {
             .create_user("editor", "password123", "編集者", Role::Editor)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(editor));
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
 
         // `app_state()` is backed by `init_db_memory` (spec §12), which
         // seeds 1,000 demo rows - capture that baseline rather than
@@ -2954,7 +3308,7 @@ mod tests {
             .create_user("viewer", "password123", "閲覧者", Role::Viewer)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(viewer));
+        state.set_session_for_test(Some(DesktopSession::Account(viewer)));
         let before = state
             .items
             .list(ListParams::default())
@@ -2995,7 +3349,7 @@ mod tests {
             .create_user("admin", "password123", "管理者", Role::Admin)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(admin));
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
         let info = backups_create_body(&state)
             .await
@@ -3034,7 +3388,7 @@ mod tests {
             .create_user("viewer", "password123", "閲覧者", Role::Viewer)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(viewer));
+        state.set_session_for_test(Some(DesktopSession::Account(viewer)));
 
         let err = backups_create_body(&state).await.unwrap_err();
         assert!(matches!(err, BantoError::Forbidden));
@@ -3053,7 +3407,7 @@ mod tests {
             .create_user("admin", "password123", "管理者", Role::Admin)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(admin));
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
         let info = backups_create_body(&state).await.expect("create");
         assert!(state.backup.pending_restore().await.is_none());
@@ -3112,7 +3466,7 @@ mod tests {
             .create_user("editor", "password123", "編集者", Role::Editor)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(editor));
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
         let item = state
             .items
             .create(ItemInput {
@@ -3160,7 +3514,7 @@ mod tests {
             .setup_first_user("admin", "password123", "管理者")
             .await
             .expect("setup_first_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(admin));
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
         auth_config_apply_body(&state, true, "viewer")
             .await
@@ -3205,6 +3559,7 @@ mod tests {
             .auth
             .lock()
             .expect("auth mutex poisoned")
+            .session
             .clone()
             .expect("a synthetic session should exist without a restart");
         let DesktopSession::AuthDisabledLocal(session) = session else {
@@ -3268,7 +3623,7 @@ mod tests {
             .setup_first_user("admin", "password123", "管理者")
             .await
             .expect("setup_first_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(admin));
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
         autologin_enable_body(&state, "admin", "password123")
             .await
@@ -3308,7 +3663,7 @@ mod tests {
             .setup_first_user("admin", "password123", "管理者")
             .await
             .expect("setup_first_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(admin));
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
 
         autologin_disable_body(&state)
             .await
@@ -3351,7 +3706,7 @@ mod tests {
             .create_user("editor", "password123", "編集者", Role::Editor)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(editor));
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
 
         let meta = attachments_upload_body(
             &state,
@@ -3406,7 +3761,7 @@ mod tests {
             .create_user("editor", "password123", "編集者", Role::Editor)
             .await
             .expect("create_user");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(editor));
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
         let meta = attachments_upload_body(
             &state,
             "items".to_string(),
@@ -3508,7 +3863,7 @@ mod tests {
             .await
             .unwrap()
             .expect("valid credentials");
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(user));
+        state.set_session_for_test(Some(DesktopSession::Account(user)));
     }
 
     /// A LAN session on `state`'s embedded-server auth state.
@@ -3622,7 +3977,12 @@ mod tests {
             &format!("{change:?}: any role from the old desktop session"),
         );
         assert!(
-            state.auth.lock().expect("auth mutex poisoned").is_none(),
+            state
+                .auth
+                .lock()
+                .expect("auth mutex poisoned")
+                .session
+                .is_none(),
             "{change:?}: the ended desktop session must be cleared"
         );
         assert!(state
@@ -3840,25 +4200,26 @@ mod tests {
         desktop_login(&changer, "target").await;
         desktop_login(&other, "target").await;
         let snapshot = |state: &AppState| {
-            state
-                .auth
-                .lock()
-                .expect("auth mutex poisoned")
-                .clone()
-                .expect("a session")
+            let (session, seq) = read_slot(state);
+            (session.expect("a session"), seq)
         };
-        let changer_before = snapshot(&changer);
-        let other_before = snapshot(&other);
+        let (changer_before, changer_seq) = snapshot(&changer);
+        let (other_before, other_seq) = snapshot(&other);
 
         change_own_password(&changer, REVOCATION_PASSWORD, "newpassword1")
             .await
             .expect("password change");
 
+        // Issue #260: the re-bind advanced the slot's `seq`, so the settle
+        // writes nothing and reports `Stale`; the ordinary commands'
+        // `current_session` still takes the re-bound session as valid.
         let fresh = read_session_source(&changer, &changer_before)
             .await
             .unwrap();
-        match settle_session(&changer, &changer_before, fresh) {
-            Some(DesktopSession::Account(user)) => assert_eq!(user.auth_epoch, 1),
+        match settle_session(&changer, &changer_before, fresh, changer_seq) {
+            Settled::Stale {
+                valid_now: Some(DesktopSession::Account(user)),
+            } => assert_eq!(user.auth_epoch, 1),
             other => panic!("the re-bound session must stay valid, got {other:?}"),
         }
         assert!(require_role(&changer, Role::Admin, "users").await.is_ok());
@@ -3866,8 +4227,16 @@ mod tests {
         // The same interleaving for a session that was NOT re-bound: the
         // store's new epoch is not adopted on its behalf.
         let fresh = read_session_source(&other, &other_before).await.unwrap();
-        assert!(settle_session(&other, &other_before, fresh).is_none());
-        assert!(other.auth.lock().expect("auth mutex poisoned").is_none());
+        assert!(matches!(
+            settle_session(&other, &other_before, fresh, other_seq),
+            Settled::Settled { session: None, .. }
+        ));
+        assert!(other
+            .auth
+            .lock()
+            .expect("auth mutex poisoned")
+            .session
+            .is_none());
     }
 
     /// Re-creating a deleted account under the same username (a new row id,
@@ -3916,14 +4285,13 @@ mod tests {
             }
         };
         enable(true).await;
-        *state.auth.lock().expect("auth mutex poisoned") =
-            Some(DesktopSession::AuthDisabledLocal(UserIdentity {
-                id: LOCAL_SESSION_ID,
-                username: "local".to_string(),
-                display_name: "ローカルユーザー".to_string(),
-                role: Role::Admin,
-                auth_epoch: 0,
-            }));
+        state.set_session_for_test(Some(DesktopSession::AuthDisabledLocal(UserIdentity {
+            id: LOCAL_SESSION_ID,
+            username: "local".to_string(),
+            display_name: "ローカルユーザー".to_string(),
+            role: Role::Admin,
+            auth_epoch: 0,
+        })));
         assert!(require_role(&state, Role::Admin, "settings").await.is_ok());
 
         // ...but only while auth-disabled mode is on: turning it off ends
@@ -3933,7 +4301,12 @@ mod tests {
             require_role(&state, Role::Viewer, "settings").await,
             "the local session after auth-disabled mode was turned off",
         );
-        assert!(state.auth.lock().expect("auth mutex poisoned").is_none());
+        assert!(state
+            .auth
+            .lock()
+            .expect("auth mutex poisoned")
+            .session
+            .is_none());
     }
 
     /// A `users` row that happens to have the synthetic session's display id
@@ -3949,10 +4322,562 @@ mod tests {
             .unwrap()
             .unwrap();
         user.id = LOCAL_SESSION_ID;
-        *state.auth.lock().expect("auth mutex poisoned") = Some(DesktopSession::Account(user));
+        state.set_session_for_test(Some(DesktopSession::Account(user)));
         assert_unauthorized(
             require_role(&state, Role::Viewer, "items").await,
             "an account session whose id does not match its row",
         );
+    }
+
+    // --- Issue #260: the session slot's seq and compare-and-set ------------
+    //
+    // docs/session-controller-design.md §4.3/§8.3: the command BODIES are
+    // driven with their slow `.await` (verify / first-user setup / auth-mode
+    // read) held at an injected gate, so the completion order is fixed by
+    // the test, not by the scheduler.
+
+    use tokio::sync::oneshot;
+
+    const SLOT_PASSWORD: &str = "password123";
+
+    /// The test's end of a one-shot gate: `entered` resolves once the held
+    /// command reached the injected `.await`; sending on `release` lets it
+    /// continue.
+    struct Hold {
+        entered: oneshot::Receiver<()>,
+        release: oneshot::Sender<()>,
+    }
+
+    type GateSlot = Arc<Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>>;
+
+    fn gate() -> (GateSlot, Hold) {
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        (
+            Arc::new(Mutex::new(Some((entered_tx, release_rx)))),
+            Hold {
+                entered: entered_rx,
+                release: release_tx,
+            },
+        )
+    }
+
+    /// The FIRST caller through `gate` stops here until released; later
+    /// callers pass straight through.
+    async fn pass_gate(gate: &GateSlot) {
+        let taken = gate.lock().expect("gate mutex").take();
+        if let Some((entered, release)) = taken {
+            let _ = entered.send(());
+            let _ = release.await;
+        }
+    }
+
+    /// Hold the first `auth_login` verification of `state`.
+    fn hold_verify(state: &mut AppState) -> Hold {
+        let (slot, hold) = gate();
+        let users = state.users.clone();
+        state.auth_io.verify = Arc::new(move |username, password| {
+            let slot = slot.clone();
+            let users = users.clone();
+            Box::pin(async move {
+                pass_gate(&slot).await;
+                users.verify(&username, &password).await
+            })
+        });
+        hold
+    }
+
+    /// Hold the first `auth_setup` account creation of `state`.
+    fn hold_setup(state: &mut AppState) -> Hold {
+        let (slot, hold) = gate();
+        let users = state.users.clone();
+        state.auth_io.setup_first_user = Arc::new(move |username, password, display_name| {
+            let slot = slot.clone();
+            let users = users.clone();
+            Box::pin(async move {
+                pass_gate(&slot).await;
+                users
+                    .setup_first_user(&username, &password, &display_name)
+                    .await
+            })
+        });
+        hold
+    }
+
+    /// Hold the first `auth_logout` auth-mode read of `state`.
+    fn hold_auth_mode(state: &mut AppState) -> Hold {
+        let (slot, hold) = gate();
+        let settings = state.settings.clone();
+        state.auth_io.auth_mode = Arc::new(move || {
+            let slot = slot.clone();
+            let settings = settings.clone();
+            Box::pin(async move {
+                pass_gate(&slot).await;
+                settings.auth_config().await
+            })
+        });
+        hold
+    }
+
+    async fn audit_action_count(state: &AppState, action: &str) -> usize {
+        state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .iter()
+            .filter(|row| row.action == action)
+            .count()
+    }
+
+    /// Poll `$fut` until the command reaches its gate (it must not finish
+    /// first).
+    macro_rules! run_until_held {
+        ($fut:expr, $hold:expr) => {{
+            tokio::select! {
+                biased;
+                out = &mut $fut => panic!("finished before reaching the gate: {out:?}"),
+                _ = &mut $hold.entered => {}
+            }
+        }};
+    }
+
+    fn is_account(session: &Option<DesktopSession>, username: &str) -> bool {
+        matches!(session, Some(DesktopSession::Account(user)) if user.username == username)
+    }
+
+    /// S-16: a login whose verification is overtaken by a completed logout
+    /// must not revive a session (design §1.3 order 1).
+    #[tokio::test]
+    async fn s16_a_slow_login_does_not_undo_a_completed_logout() {
+        let mut state = app_state().await;
+        state
+            .users
+            .setup_first_user("b", SLOT_PASSWORD, "B")
+            .await
+            .unwrap();
+        let mut hold = hold_verify(&mut state);
+
+        let login = login_body(&state, "b".to_string(), SLOT_PASSWORD.to_string());
+        tokio::pin!(login);
+        run_until_held!(login, hold);
+
+        let logout = logout_body(&state).await.expect("logout");
+        assert_eq!(logout.seq, 1, "a logout of no session still advances seq");
+        hold.release.send(()).unwrap();
+        let result = login.await.expect("login");
+
+        assert!(!result.success);
+        assert!(result.superseded);
+        assert_eq!(result.seq, 1);
+        assert_eq!(read_slot(&state), (None, 1));
+        assert_eq!(audit_action_count(&state, "login").await, 1, "verified");
+        assert_eq!(audit_action_count(&state, "logout").await, 0);
+    }
+
+    /// S-16 (wiring): the login must compare against the seq read BEFORE its
+    /// first `.await` - any seq advance while it is held makes it superseded.
+    #[tokio::test]
+    async fn s16_login_reads_seq_before_its_first_await() {
+        let mut state = app_state().await;
+        state
+            .users
+            .setup_first_user("b", SLOT_PASSWORD, "B")
+            .await
+            .unwrap();
+        let mut hold = hold_verify(&mut state);
+
+        let login = login_body(&state, "b".to_string(), SLOT_PASSWORD.to_string());
+        tokio::pin!(login);
+        run_until_held!(login, hold);
+
+        let (_, seq) = read_slot(&state);
+        assert_eq!(cas_session(&state, seq, None), (true, seq + 1));
+        hold.release.send(()).unwrap();
+        let result = login.await.expect("login");
+
+        assert!(result.superseded);
+        assert_eq!(read_slot(&state), (None, seq + 1));
+    }
+
+    /// S-16 (control): the same login with nothing in between installs the
+    /// session and advances seq; a failed login leaves the slot alone.
+    #[tokio::test]
+    async fn s16_an_uncontested_login_installs_and_advances_seq() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("b", SLOT_PASSWORD, "B")
+            .await
+            .unwrap();
+
+        let result = login_body(&state, "b".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+
+        assert!(result.success);
+        assert!(!result.superseded);
+        assert_eq!(result.seq, 1);
+        let (session, seq) = read_slot(&state);
+        assert_eq!(seq, 1);
+        assert!(is_account(&session, "b"));
+
+        let failed = login_body(&state, "b".to_string(), "wrong-password".to_string())
+            .await
+            .expect("login");
+        assert!(!failed.success);
+        assert!(!failed.superseded);
+        assert_eq!(failed.seq, 1, "a failed login does not touch the slot");
+    }
+
+    /// S-17: a logout whose settings read is overtaken by a completed login
+    /// must not clear that login's session, and records no `logout`.
+    #[tokio::test]
+    async fn s17_a_slow_logout_does_not_clear_a_later_login() {
+        let mut state = app_state().await;
+        state
+            .users
+            .setup_first_user("b", SLOT_PASSWORD, "B")
+            .await
+            .unwrap();
+        let mut hold = hold_auth_mode(&mut state);
+
+        let logout = logout_body(&state);
+        tokio::pin!(logout);
+        run_until_held!(logout, hold);
+
+        let login = login_body(&state, "b".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        assert!(login.success);
+        hold.release.send(()).unwrap();
+        let result = logout.await.expect("logout");
+
+        assert_eq!(
+            result.seq, login.seq,
+            "the overtaken logout changes nothing"
+        );
+        let (session, seq) = read_slot(&state);
+        assert_eq!(seq, login.seq);
+        assert!(is_account(&session, "b"));
+        assert_eq!(audit_action_count(&state, "logout").await, 0);
+    }
+
+    /// S-17 (wiring): the logout compares against the seq read before its
+    /// first `.await` - a re-bind while it is held (even to the same
+    /// account) keeps the session.
+    #[tokio::test]
+    async fn s17_logout_reads_seq_before_its_first_await() {
+        let mut state = app_state().await;
+        let a = state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(a.clone())));
+        let mut hold = hold_auth_mode(&mut state);
+
+        let logout = logout_body(&state);
+        tokio::pin!(logout);
+        run_until_held!(logout, hold);
+
+        let (_, seq) = read_slot(&state);
+        let rebound = Some(DesktopSession::Account(a));
+        assert_eq!(cas_session(&state, seq, rebound.clone()), (true, seq + 1));
+        hold.release.send(()).unwrap();
+        let result = logout.await.expect("logout");
+
+        assert_eq!(result.seq, seq + 1);
+        assert_eq!(read_slot(&state), (rebound, seq + 1));
+    }
+
+    /// S-17 (control): an uncontested logout clears, advances seq, and is
+    /// audited.
+    #[tokio::test]
+    async fn s17_an_uncontested_logout_clears_and_advances_seq() {
+        let state = app_state().await;
+        let a = state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(a)));
+
+        let result = logout_body(&state).await.expect("logout");
+
+        assert_eq!(result.seq, 2);
+        assert_eq!(read_slot(&state), (None, 2));
+        assert_eq!(audit_action_count(&state, "logout").await, 1);
+    }
+
+    /// S-18: `auth_setup` overtaken by a completed logout: the account is
+    /// created, the session is not installed.
+    #[tokio::test]
+    async fn s18_a_slow_setup_does_not_undo_a_completed_logout() {
+        let mut state = app_state().await;
+        let mut hold = hold_setup(&mut state);
+
+        let setup = setup_body(
+            &state,
+            "b".to_string(),
+            SLOT_PASSWORD.to_string(),
+            "B".to_string(),
+        );
+        tokio::pin!(setup);
+        run_until_held!(setup, hold);
+
+        logout_body(&state).await.expect("logout");
+        hold.release.send(()).unwrap();
+        let result = setup.await.expect("setup");
+
+        assert!(!result.success);
+        assert!(result.superseded);
+        assert_eq!(read_slot(&state), (None, 1));
+        assert!(state.users.is_initialized().await.unwrap());
+        assert!(state.users.get_by_username("b").await.unwrap().is_some());
+    }
+
+    /// S-19: a logout overtaken by a completed `auth_setup` keeps the setup's
+    /// session.
+    #[tokio::test]
+    async fn s19_a_slow_logout_does_not_clear_a_later_setup() {
+        let mut state = app_state().await;
+        let mut hold = hold_auth_mode(&mut state);
+
+        let logout = logout_body(&state);
+        tokio::pin!(logout);
+        run_until_held!(logout, hold);
+
+        let setup = setup_body(
+            &state,
+            "b".to_string(),
+            SLOT_PASSWORD.to_string(),
+            "B".to_string(),
+        )
+        .await
+        .expect("setup");
+        assert!(setup.success);
+        hold.release.send(()).unwrap();
+        let result = logout.await.expect("logout");
+
+        assert_eq!(result.seq, setup.seq);
+        assert!(is_account(&read_slot(&state).0, "b"));
+    }
+
+    /// S-54: re-resolving the same session - including after a display-name
+    /// edit (a refresh of the same binding) - never advances seq.
+    #[tokio::test]
+    async fn s54_resolving_the_same_session_does_not_advance_seq() {
+        let state = app_state().await;
+        let a = state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+
+        for _ in 0..3 {
+            let answer = resolve_body(&state).await.expect("resolve");
+            assert!(!answer.stale);
+            assert_eq!((answer.checked, answer.current), (login.seq, login.seq));
+            assert_eq!(answer.kind, Some("account"));
+            assert_eq!(answer.identity.expect("active").name, "A");
+        }
+
+        state
+            .users
+            .update_user(a.id, "A（改名）", Role::Admin)
+            .await
+            .unwrap();
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert!(!answer.stale);
+        assert_eq!((answer.checked, answer.current), (login.seq, login.seq));
+        assert_eq!(answer.identity.expect("still active").name, "A（改名）");
+        assert_eq!(read_slot(&state).1, login.seq);
+    }
+
+    /// S-64: a role change advances `auth_epoch` (ADR-0014), so the next
+    /// resolve reports no session and advances seq (the clear) - unlike the
+    /// display-name refresh of S-54.
+    #[tokio::test]
+    async fn s64_a_role_change_resolves_to_none_and_advances_seq() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("owner", SLOT_PASSWORD, "オーナー")
+            .await
+            .unwrap();
+        let a = state
+            .users
+            .create_user("a", SLOT_PASSWORD, "A", Role::Editor)
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        assert!(resolve_body(&state).await.unwrap().identity.is_some());
+
+        state
+            .users
+            .update_user(a.id, "A", Role::Viewer)
+            .await
+            .unwrap();
+        let answer = resolve_body(&state).await.expect("resolve");
+
+        assert!(!answer.stale);
+        assert!(answer.identity.is_none(), "not the new role's session");
+        assert_eq!(answer.kind, None);
+        assert_eq!(answer.checked, login.seq);
+        assert_eq!(answer.current, login.seq + 1, "this call cleared it");
+        assert_eq!(read_slot(&state), (None, login.seq + 1));
+    }
+
+    /// S-77 (Rust half): a settle whose slot was re-bound after its entry
+    /// read writes nothing and reports `Stale`; `auth_resolve` of no session
+    /// answers `checked == current`.
+    #[tokio::test]
+    async fn s77_a_settle_overtaken_by_a_rebind_writes_nothing() {
+        let state = app_state().await;
+        let empty = resolve_body(&state).await.expect("resolve");
+        assert!(empty.identity.is_none() && !empty.stale);
+        assert_eq!((empty.checked, empty.current), (0, 0));
+
+        let a = state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(a)));
+        let (cached, seq_at_entry) = read_slot(&state);
+        let cached = cached.unwrap();
+        let fresh = read_session_source(&state, &cached).await.unwrap();
+        // Another command re-binds the slot while the read was "in flight".
+        assert!(cas_session(&state, seq_at_entry, None).0);
+
+        assert!(matches!(
+            settle_session(&state, &cached, fresh, seq_at_entry),
+            Settled::Stale { valid_now: None }
+        ));
+        assert_eq!(read_slot(&state), (None, seq_at_entry + 1));
+    }
+
+    /// S-47 / S-67: auth-disabled mode's synthetic session resolves as
+    /// `kind: "local"` with the mode's CURRENT role, and its logout is a
+    /// no-op that does not advance seq.
+    #[tokio::test]
+    async fn s47_s67_the_auth_disabled_session_resolves_local_and_logout_keeps_seq() {
+        let state = app_state().await;
+        let set_mode = |role: Role| {
+            let settings = state.settings.clone();
+            async move {
+                let config = settings.auth_config().await.unwrap();
+                settings
+                    .set_auth_config(&AuthSettings {
+                        disabled: true,
+                        disabled_role: role,
+                        ..config
+                    })
+                    .await
+                    .unwrap();
+            }
+        };
+        set_mode(Role::Viewer).await;
+        state.set_session_for_test(Some(DesktopSession::AuthDisabledLocal(UserIdentity {
+            id: LOCAL_SESSION_ID,
+            username: "local".to_string(),
+            display_name: "ローカルユーザー".to_string(),
+            role: Role::Viewer,
+            auth_epoch: 0,
+        })));
+        let (_, seq) = read_slot(&state);
+
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert_eq!(answer.kind, Some("local"));
+        assert_eq!(answer.identity.expect("active").role, "viewer");
+        set_mode(Role::Editor).await;
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert_eq!(answer.kind, Some("local"));
+        assert_eq!(answer.identity.expect("active").role, "editor");
+        assert_eq!((answer.checked, answer.current), (seq, seq));
+
+        let logout = logout_body(&state).await.expect("logout");
+        assert_eq!(logout.seq, seq, "S-67: the no-op does not advance seq");
+        assert!(read_slot(&state).0.is_some());
+    }
+
+    /// S-68: a self-service password change re-binds the session and
+    /// advances seq; the result carries the new seq.
+    #[tokio::test]
+    async fn s68_change_password_rebinds_and_advances_seq() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+
+        let result = change_own_password(&state, SLOT_PASSWORD, "newpassword1")
+            .await
+            .expect("change password");
+
+        assert_eq!(result.seq, login.seq + 1);
+        let (session, seq) = read_slot(&state);
+        assert_eq!(seq, result.seq);
+        assert!(matches!(session, Some(DesktopSession::Account(ref u)) if u.auth_epoch == 1));
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert_eq!((answer.checked, answer.current), (result.seq, result.seq));
+        assert!(answer.identity.is_some());
+    }
+
+    /// Supplementary (design §8.3, not order-fixing): login and logout
+    /// started together, both having read seq before either proceeds past
+    /// its injected `.await`, end in exactly one of the two consistent
+    /// states.
+    #[tokio::test]
+    async fn concurrent_login_and_logout_end_in_one_of_two_consistent_states() {
+        for _ in 0..3 {
+            let mut state = app_state().await;
+            state
+                .users
+                .setup_first_user("b", SLOT_PASSWORD, "B")
+                .await
+                .unwrap();
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let (verify_barrier, users) = (barrier.clone(), state.users.clone());
+            state.auth_io.verify = Arc::new(move |username, password| {
+                let (barrier, users) = (verify_barrier.clone(), users.clone());
+                Box::pin(async move {
+                    barrier.wait().await;
+                    users.verify(&username, &password).await
+                })
+            });
+            let (mode_barrier, settings) = (barrier.clone(), state.settings.clone());
+            state.auth_io.auth_mode = Arc::new(move || {
+                let (barrier, settings) = (mode_barrier.clone(), settings.clone());
+                Box::pin(async move {
+                    barrier.wait().await;
+                    settings.auth_config().await
+                })
+            });
+
+            let (login, logout) = tokio::join!(
+                login_body(&state, "b".to_string(), SLOT_PASSWORD.to_string()),
+                logout_body(&state)
+            );
+            let (login, logout) = (login.unwrap(), logout.unwrap());
+            match read_slot(&state).0 {
+                None => assert!(login.superseded, "logged out, so the login was superseded"),
+                Some(_) => {
+                    assert!(login.success);
+                    assert_eq!(logout.seq, login.seq, "the logout was a no-op");
+                }
+            }
+        }
     }
 }
