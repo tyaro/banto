@@ -975,9 +975,13 @@ function bumpLocal(): void {
   代入は `load` から消える（`authDisabled` の別読みも消える、S-61）。`superseded` のまま
   `sessionGeneration()` を返す今の 105 行の形は**無くす**（S-48〜S-50）。
 
-- `publicViewerFallback(controller, provider, ticket): Promise<ResolveResult>`（admin-core の
-  **任意の**ヘルパー。controller の外。**ticket を最後まで持ち回り、`ResolveResult` を返す**、
-  S-42・S-52・S-66）:
+- `publicViewerFallback(controller, provider, ticket, options?: { maxRetries?: number }): Promise<ResolveResult>`
+  （admin-core の**任意の**ヘルパー。controller の外。**ticket を最後まで持ち回り、`ResolveResult` を返す**、
+  S-42・S-52・S-66）。再試行の上限 `maxRetries` は**このヘルパーが所有する**（既定 3。定数
+  `DEFAULT_PUBLIC_VIEWER_RETRIES` として admin-core から export）。controller の `deps.maxStaleRetries` とは
+  共有しない: あちらは 1 回の `resolve()` の中で stale な答えを捨て直す回数、こちらは方針（status → 発行 →
+  確定）をやり直す回数で、数えるものが違う。1 回のやり直しの中の `resolveSettled` は、それぞれ controller の
+  上限の下で動く（最悪の往復は両者の積で抑えられる）:
 
   ```ts
   for (let attempt = 1; ; attempt++) {
@@ -998,7 +1002,7 @@ function bumpLocal(): void {
   	// 現れたトークンが失効していれば resolveSettled が消して confirmed none になる。そのときだけ
   	// 新しい ticket で方針をやり直す（上限あり）。active・unverified・superseded はそのまま返す
   	if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') return result;
-  	if (attempt >= MAX_PUBLIC_VIEWER_RETRIES) return result;
+  	if (attempt >= (options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES)) return result;
   	ticket = result.ticket;
   }
   ```
