@@ -3,7 +3,7 @@ import { isProviderError } from '../src/errors';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { createTauriAuthProvider } from '../src/providers/tauri';
-import { beginSession } from '../src/sessionLifecycle';
+import { beginSession, MAX_STALE_RETRIES, SessionChangedError } from '../src/sessionLifecycle';
 import { currentSessionScope, isCurrentSessionScope } from '../src/sessionScope.svelte';
 import { resolveProtectedSession } from '../src/sessionGate';
 
@@ -264,6 +264,46 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 
 		await expect(outcome).resolves.toBe('session');
 		expect(auth.getToken()).toBe('login-token');
+	});
+
+	// PR #264 re-review P1: enterPublicViewer refuses (superseded, no request)
+	// while ANY token is stored. A stale token that shows up between the
+	// check and the entry is checked on the next round (and cleared when
+	// revoked), so the gate still gets to the public viewer.
+	it("S-20: a revoked token appearing before the entry is re-checked, cleared, and the gate resolves 'publicViewer'", async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: true });
+		let rewrites = 0;
+		const routed = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+			if (url.endsWith('/api/auth/status') && rewrites === 0) {
+				rewrites += 1;
+				// Another tab's (already revoked) Remember me token, event not delivered.
+				localStorage.setItem(KEY, 'revoked-from-tab-2');
+			}
+			return fetchFn(url, init as RequestInit);
+		});
+		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
+		sessionStorage.setItem(KEY, 'revoked-token');
+
+		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
+		expect(state.calls.filter((path) => path === '/api/auth/check')).toHaveLength(2);
+		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(1);
+		expect(storedTokens()).toEqual({ local: null, session: 'public-token' });
+	});
+
+	it('S-20: a token that keeps reappearing before the entry does not loop forever (bounded retries)', async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: true });
+		const routed = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+			if (url.endsWith('/api/auth/status')) localStorage.setItem(KEY, 'revoked-again');
+			return fetchFn(url, init as RequestInit);
+		});
+		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
+		sessionStorage.setItem(KEY, 'revoked-token');
+
+		await expect(resolveProtectedSession(auth)).rejects.toBeInstanceOf(SessionChangedError);
+		expect(state.calls.filter((path) => path === '/api/auth/check')).toHaveLength(
+			MAX_STALE_RETRIES
+		);
+		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(0);
 	});
 
 	it("a failed entry ({ success: false }) still falls back to 'login'", async () => {

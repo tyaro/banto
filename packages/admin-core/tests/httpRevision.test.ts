@@ -242,9 +242,10 @@ describe('HTTP compare-and-set token writes (#259, I-7)', () => {
 		await login;
 
 		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
-		requests[1].reply.resolve(json(200, { success: true, token: 'public-token' }));
 
 		await expect(entering).resolves.toEqual({ success: false, superseded: true });
+		// A token is stored, so nothing is even requested (PR #264 re-review P1).
+		expect(requests).toHaveLength(1);
 		expect(auth.getToken()).toBe('tok-b');
 	});
 
@@ -394,6 +395,36 @@ describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #26
 		requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
 
 		await expect(entering).resolves.toEqual({ success: false, superseded: true });
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(sessionStorage.getItem(KEY)).toBeNull();
+	});
+
+	it('S-20: enterPublicViewer({ expectRevision }) called AFTER another tab wrote a token (event not yet delivered) does not overwrite it', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth, changed } = provider(fetchFn);
+		// The ticket: resolve() confirmed none at this revision.
+		const ticketRevision = auth.credentialRevision();
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+
+		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
+
+		await expect(entering).resolves.toEqual({ success: false, superseded: true });
+		expect(requests).toHaveLength(0);
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(sessionStorage.getItem(KEY)).toBeNull();
+		expect(auth.credentialRevision()).toBe(ticketRevision);
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('S-20: the default enterPublicViewer() called after another tab wrote a token does not overwrite it', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth } = provider(fetchFn);
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+
+		const entering = auth.enterPublicViewer?.();
+
+		await expect(entering).resolves.toEqual({ success: false, superseded: true });
+		expect(requests).toHaveLength(0);
 		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
 		expect(sessionStorage.getItem(KEY)).toBeNull();
 	});

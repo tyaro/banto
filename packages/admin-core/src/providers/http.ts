@@ -582,19 +582,27 @@ export function createHttpAuthProvider(
 		 *
 		 * Issue #260 (#259, S-20/S-52): stored only while the revision is still
 		 * `expectRevision` (default: the revision when this call started) AND
-		 * the stored token is still the one read when THIS call started (even
-		 * with a caller-supplied `expectRevision`, PR #264 review P2);
-		 * otherwise `{ success: false, superseded: true }` and nothing stored.
+		 * no token is stored - checked both when this call starts and right
+		 * before the write, with or without `expectRevision` (PR #264 review
+		 * P2 / re-review P1). A public-viewer session is only ever minted for
+		 * "no credential at all": a token already present at the start - e.g.
+		 * another tab's, written after the caller's `resolve()`/ticket but
+		 * before its `storage` event advanced the revision here - means
+		 * `{ success: false, superseded: true }` without a request, and so does
+		 * one that appears while the request is in flight. The caller then
+		 * checks that token (`resolveProtectedSession` re-runs `check()`,
+		 * which clears a revoked one, within its bounded retry loop).
 		 */
 		async enterPublicViewer(pvOptions?: {
 			expectRevision?: CredentialRevision;
 		}): Promise<{ success: boolean; superseded?: boolean }> {
 			const start = startOperation(pvOptions?.expectRevision);
+			if (start.token !== null) return { success: false, superseded: true };
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/public-viewer`, {
 					method: 'POST',
-					headers: headers(false)
+					headers: headersFor(null, false)
 				});
 			} catch {
 				return { success: false };
@@ -602,6 +610,8 @@ export function createHttpAuthProvider(
 			if (!response.ok) return { success: false };
 			const body = (await response.json()) as { success: boolean; token?: string };
 			if (!body.success || !body.token) return { success: false };
+			// `start.token` is null here: the write needs the revision to match
+			// AND `getToken() === null`.
 			if (!writeTokenIfUnchanged(start, body.token, false)) {
 				return { success: false, superseded: true };
 			}
