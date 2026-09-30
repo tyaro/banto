@@ -26,9 +26,14 @@
  *   finished. A login submitted there while the logout request was still in
  *   flight would lose the provider's compare-and-set to it ("another session
  *   was confirmed first", CI smoke scenario 7 of #265).
- * - A rejected `logout()` (e.g. a Tauri invoke that got no answer) is
- *   decided the same way - the confirmation still runs. The error is
- *   rethrown only when the tab stays (the session was not confirmed ended).
+ * - The outcome is returned, never thrown (independent audit of 実装-3
+ *   P2-2): `'left'` (confirmed `none`, now on /login), `'stayed'` (still
+ *   signed in - the logout was refused, e.g. a structured Tauri error, or
+ *   another login was confirmed meanwhile) or `'unverified'` (the session
+ *   could not be confirmed). A rejected `logout()` is decided the same way -
+ *   the confirmation still runs. `options.notify` hears `'stayed'` and
+ *   `'unverified'` so the UI can tell the user (`$lib/banto/logoutNotice.ts`);
+ *   before, a rejection was rethrown into a click handler nobody caught.
  */
 import {
 	getAuthProvider,
@@ -58,26 +63,38 @@ export async function leaveForLogin(goToLogin: () => Promise<void>): Promise<voi
 	}
 }
 
-/** Log out, confirm the session, and go to the login screen only when it is confirmed `none`. */
+/** What a logout ended in (see the module doc). */
+export type LogoutOutcome = 'left' | 'stayed' | 'unverified';
+
+export interface LogoutOptions {
+	/** Tell the user about an outcome other than `'left'`. */
+	notify?: (outcome: Exclude<LogoutOutcome, 'left'>) => void;
+	provider?: AuthProvider;
+	controller?: SessionController;
+}
+
+/** Log out, confirm the session, and go to the login screen only when it is confirmed `none`. Never rejects on the logout's own failure. */
 export async function logoutAndLeave(
 	goToLogin: () => Promise<void>,
-	provider: AuthProvider = getAuthProvider(),
-	controller: SessionController = getSessionController()
-): Promise<void> {
+	options: LogoutOptions = {}
+): Promise<LogoutOutcome> {
+	const provider = options.provider ?? getAuthProvider();
+	const controller = options.controller ?? getSessionController();
 	leaving += 1;
 	try {
-		let failure: { error: unknown } | null = null;
 		try {
 			await provider.logout();
-		} catch (error) {
-			failure = { error };
+		} catch {
+			// Decided by the confirmation below, like a completed logout.
 		}
 		const result = await resolveSettled(controller, { cause: 'signal' });
 		if (result.outcome === 'confirmed' && result.snapshot.status === 'none') {
 			await goToLogin();
-			return;
+			return 'left';
 		}
-		if (failure) throw failure.error;
+		const outcome = result.outcome === 'unverified' ? 'unverified' : 'stayed';
+		options.notify?.(outcome);
+		return outcome;
 	} finally {
 		leaving -= 1;
 	}

@@ -17,6 +17,8 @@
   "session.ownerChanged": "別のユーザーでログインされました。画面をそのユーザーで開き直しました。",
   "session.ownerChangedRelogin": "別のユーザーでログインされました。もう一度ログインしてください。",
   "auth.loginSuperseded": "別のセッションが先に確定しました。現在のセッションで開きます。",
+  "auth.logoutStayed": "ログアウトできませんでした。ログインしたままです。",
+  "auth.logoutUnverified": "ログイン状態を確認できませんでした。しばらくしてから再試行してください。",
   "app.error.title": "エラーが発生しました",
   "app.error.retry": "再試行",
   "app.error.home": "トップへ戻る",

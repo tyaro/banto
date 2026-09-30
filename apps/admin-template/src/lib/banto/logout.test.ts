@@ -25,7 +25,8 @@ import {
 import { isLeavingForLogin, leaveForLogin, logoutAndLeave } from './logout.svelte';
 
 const goToLogin = vi.fn(async () => {});
-const logout = () => logoutAndLeave(goToLogin);
+const notify = vi.fn();
+const logout = () => logoutAndLeave(goToLogin, { notify });
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -72,7 +73,7 @@ function standardProvider() {
 		answer: ReturnType<typeof deferred<ResolvedAuth>>;
 	}[] = [];
 	const logoutGate = deferred<void>();
-	const state = { keepOnLogout: false, rejectLogout: false };
+	const state = { keepOnLogout: false, rejectLogout: false, refuseLogout: false };
 	const rev = () => `${revision}.0` as CredentialRevision;
 	const change = () => {
 		revision += 1;
@@ -87,6 +88,7 @@ function standardProvider() {
 				change();
 				throw new Error('no answer');
 			}
+			if (state.refuseLogout) throw { kind: 'forbidden', message: 'refused' };
 			if (!state.keepOnLogout) change();
 		}),
 		resolve: () => {
@@ -143,6 +145,7 @@ async function signedInAsAlice() {
 beforeEach(() => {
 	vi.stubGlobal('sessionStorage', memoryStorage());
 	goToLogin.mockReset();
+	notify.mockReset();
 	goToLogin.mockImplementation(async () => {});
 });
 afterEach(() => {
@@ -166,9 +169,10 @@ describe('logoutAndLeave (I-10, I-18)', () => {
 		expect(goToLogin).not.toHaveBeenCalled(); // the confirmation is still in flight
 		expect(getSessionController().snapshot.status).toBe('unknown'); // the hold (I-5)
 		p.none();
-		await done;
+		await expect(done).resolves.toBe('left');
 		expect(getSessionController().snapshot.status).toBe('none');
 		expect(goToLogin).toHaveBeenCalledTimes(1);
+		expect(notify).not.toHaveBeenCalled();
 		expect(seen).toEqual([true]);
 		expect(isLeavingForLogin()).toBe(false);
 	});
@@ -192,7 +196,8 @@ describe('logoutAndLeave (I-10, I-18)', () => {
 		p.logoutGate.resolve();
 		await flush();
 		p.active(BOB); // the logout's own confirmation (a new probe, I-9)
-		await done;
+		await expect(done).resolves.toBe('stayed');
+		expect(notify).toHaveBeenCalledWith('stayed');
 
 		expect(controller.snapshot).toMatchObject({
 			status: 'active',
@@ -216,44 +221,62 @@ describe('logoutAndLeave (I-10, I-18)', () => {
 		await flush();
 		expect(p.probes.length).toBe(before + 1);
 		p.none();
-		await done;
+		await expect(done).resolves.toBe('left');
 		await load;
 		expect(goToLogin).toHaveBeenCalledTimes(1);
 	});
 
-	it('the confirmation fails (unverified): stays, no /login, no rethrow; A is not active again', async () => {
+	it('the confirmation fails (unverified): stays, no /login, the user is told; A is not active again', async () => {
 		const p = await signedInAsAlice();
 		const done = logout();
 		p.logoutGate.resolve();
 		await flush();
 		p.fail();
-		await expect(done).resolves.toBeUndefined();
+		await expect(done).resolves.toBe('unverified');
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith('unverified');
 		expect(goToLogin).not.toHaveBeenCalled();
 		expect(getSessionController().snapshot).toMatchObject({ status: 'unknown', owner: null });
 		expect(isLeavingForLogin()).toBe(false);
 	});
 
-	it('a rejected logout that still ended the session goes to /login without rethrowing', async () => {
+	it('a rejected logout that still ended the session goes to /login, nothing thrown or told', async () => {
 		const p = await signedInAsAlice();
 		p.state.rejectLogout = true;
 		const done = logout();
 		p.logoutGate.resolve();
 		await flush();
 		p.none();
-		await expect(done).resolves.toBeUndefined();
+		await expect(done).resolves.toBe('left');
 		expect(goToLogin).toHaveBeenCalledTimes(1);
+		expect(notify).not.toHaveBeenCalled();
 	});
 
-	it('a rejected logout after which the session is still active stays and rethrows', async () => {
+	it('a rejected logout (no answer) after which the session is still active: stayed, told, not thrown', async () => {
 		const p = await signedInAsAlice();
 		p.state.rejectLogout = true;
 		const done = logout();
 		p.logoutGate.resolve();
 		await flush();
 		p.active(ALICE);
-		await expect(done).rejects.toThrow('no answer');
+		await expect(done).resolves.toBe('stayed');
+		expect(notify).toHaveBeenCalledWith('stayed');
 		expect(goToLogin).not.toHaveBeenCalled();
 		expect(isLeavingForLogin()).toBe(false);
+	});
+
+	it('a logout refused with a structured error (nothing changed): stayed, told, not thrown (audit P2-2)', async () => {
+		const p = await signedInAsAlice();
+		p.state.refuseLogout = true;
+		const done = logout();
+		p.logoutGate.resolve();
+		await flush();
+		p.active(ALICE); // the signal's probe: still Alice
+		await expect(done).resolves.toBe('stayed');
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith('stayed');
+		expect(getSessionController().snapshot.owner).toBe('account:alice');
+		expect(goToLogin).not.toHaveBeenCalled();
 	});
 
 	it('S-17: a provider that cannot report the logout (compatibility adapter) still reaches /login', async () => {
@@ -271,7 +294,7 @@ describe('logoutAndLeave (I-10, I-18)', () => {
 		await resolveSettled(controller);
 		expect(controller.snapshot.status).toBe('active');
 
-		await logout();
+		await expect(logout()).resolves.toBe('left');
 		expect(controller.snapshot.status).toBe('none');
 		expect(goToLogin).toHaveBeenCalledTimes(1);
 	});

@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 	import * as m from '$lib/paraglide/messages';
 	import { logoutAndLeave } from '$lib/banto/logout.svelte';
+	import { notifyLogoutOutcome } from '$lib/banto/logoutNotice';
 	import { pageTitle } from '$lib/navigation';
 	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
@@ -58,7 +59,7 @@
 		// to /login only when it is confirmed ended (another tab's login
 		// confirmed meanwhile stays) - see `$lib/banto/logout.svelte.ts` for
 		// the order. Same in `commands.ts`.
-		await logoutAndLeave(() => goto(`${base}/login`));
+		await logoutAndLeave(() => goto(`${base}/login`), { notify: notifyLogoutOutcome });
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two
