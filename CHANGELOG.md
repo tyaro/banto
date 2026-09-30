@@ -78,6 +78,13 @@
       `'left' | 'stayed' | 'unverified'` を返す（引数は `(goToLogin, { notify?, provider?, controller? })`）。
     - 公開閲覧から自分でログインした（同じタブ・別タブ）ときは「ユーザーの変更」として扱わない（通知も
       `'relogin'` も出ない、S-93）。
+    - **Tauri: 設定画面でログイン不要モードを有効にすると、管理者のアカウントのセッションはその場でローカルユーザー
+      （合成セッション）に置き換わる**（#266 オーナーレビュー P1、S-94）。以前はスロットが空のときだけ合成セッションを
+      入れていたので、設定は「ログイン不要」なのにアカウントのセッションが残り、`sessionStore.authDisabled` が偽のままだった
+      （ログアウトのメニューやパスワード変更欄が残る）。`auth.disabled == true` ⇔ 合成セッション ⇔ `auth_resolve` の
+      `kind == "local"` ⇔ `sessionStore.authDisabled` が常に成り立つ。監査ログには `settings_change` に続けて、置き換えた
+      アカウントの `logout`（`detail: { "reason": "auth_disabled" }`＝利用者の操作ではない終了）と合成の `login` が残る。
+      その間に始まっていたログインは `superseded` になり、合成セッションを戻さない。
     - admin-template: demo provider（`demo.ts`）は標準の provider（メモリ上の revision、`login`/`logout` で revision を
       進めて通知）。パネルの別ウィンドウ（`routes/panel/[id]`）は `check()` の代わりに `resolveSettled()` で確認する。
   - **派生アプリの移行の手順**（§6.2。banto-industrial の 2 アプリは候補版のコミット参照で検証してから v2.0.0 へ）:
