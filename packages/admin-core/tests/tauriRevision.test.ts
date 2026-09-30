@@ -177,7 +177,7 @@ describe('Tauri revision from operation responses (I-19, I-23)', () => {
 		expect(changed).toHaveBeenCalledTimes(1);
 	});
 
-	it('a rejected state-changing invoke advances local and notifies; a later lower seq does not move it', async () => {
+	it('S-55: an unrecognizable (IPC) rejection of a state-changing invoke advances local and notifies; a later lower seq does not move it', async () => {
 		const { auth, changed, last } = setup();
 		const login = auth.login({ username: 'b', password: 'pw' });
 		last('auth_login').reply.resolve({ success: true, error: null, superseded: false, seq: 2 });
@@ -185,7 +185,7 @@ describe('Tauri revision from operation responses (I-19, I-23)', () => {
 		changed.mockClear();
 
 		const logout = auth.logout();
-		last('auth_logout').reply.reject({ kind: 'other', message: 'ipc failed' });
+		last('auth_logout').reply.reject('ipc failed');
 		await expect(logout).rejects.toSatisfy(isProviderError);
 		expect(auth.credentialRevision()).toBe('2.1');
 		expect(changed).toHaveBeenCalledTimes(1);
@@ -365,7 +365,7 @@ describe('Tauri resolve(): auth_resolve once (§5.3)', () => {
 		expect(changed).not.toHaveBeenCalled();
 	});
 
-	it('setup: a validation rejection still resolves { success: false, error } (and, having no response seq, advances local)', async () => {
+	it('setup: a validation rejection resolves { success: false, error } and, returned before any slot write, changes nothing', async () => {
 		const { auth, changed, last } = setup();
 		const result = auth.setup?.({ username: 'owner', password: 'short', displayName: 'O' });
 		last('auth_setup').reply.reject({
@@ -377,6 +377,47 @@ describe('Tauri resolve(): auth_resolve once (§5.3)', () => {
 			success: false,
 			error: 'パスワードは8文字以上で入力してください'
 		});
+		expect(auth.credentialRevision()).toBe('0.0');
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('S-55: a wrong current password (a validation error, returned before any slot write) keeps the revision and does not notify', async () => {
+		const { auth, changed, last } = setup();
+		const change = auth.changePassword?.('wrong', 'new-password1');
+		last('auth_change_password').reply.reject({
+			kind: 'validation',
+			field_errors: [{ field: 'currentPassword', message: '現在のパスワードが違います' }]
+		});
+
+		await expect(change).resolves.toEqual({ success: false, error: '現在のパスワードが違います' });
+		expect(auth.credentialRevision()).toBe('0.0');
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('S-55: an unauthorized rejection (the session check may have cleared a revoked session first) advances local and notifies', async () => {
+		const { auth, changed, last } = setup();
+		const change = auth.changePassword?.('pw', 'new-password1');
+		last('auth_change_password').reply.reject({ kind: 'unauthorized' });
+
+		await expect(change).resolves.toMatchObject({ success: false });
+		expect(auth.credentialRevision()).toBe('0.1');
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('S-55: other structured errors (storage, forbidden) of login/logout keep the revision; an Error object advances it', async () => {
+		const { auth, changed, last } = setup();
+		const login = auth.login({ username: 'a', password: 'pw' });
+		last('auth_login').reply.reject({ kind: 'storage', message: 'database is locked' });
+		await expect(login).rejects.toSatisfy(isProviderError);
+		const logout = auth.logout();
+		last('auth_logout').reply.reject({ kind: 'forbidden' });
+		await expect(logout).rejects.toSatisfy(isProviderError);
+		expect(auth.credentialRevision()).toBe('0.0');
+		expect(changed).not.toHaveBeenCalled();
+
+		const dropped = auth.logout();
+		last('auth_logout').reply.reject(new Error('ipc channel closed'));
+		await expect(dropped).rejects.toSatisfy(isProviderError);
 		expect(auth.credentialRevision()).toBe('0.1');
 		expect(changed).toHaveBeenCalledTimes(1);
 	});

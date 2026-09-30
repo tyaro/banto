@@ -812,6 +812,8 @@ const SUPERSEDED_LOGIN_MESSAGE: &str =
     "別のセッションが先に確定したため、このログインは適用されませんでした";
 
 /// Body of [`auth_setup`] (testable with a plain `&AppState`, design §8.3).
+/// Slot-clearing errors: none - every `Err` is returned before the slot is
+/// written (the TS provider's revision relies on this, design I-19).
 async fn setup_body(
     state: &AppState,
     username: String,
@@ -874,6 +876,8 @@ async fn auth_login(
 }
 
 /// Body of [`auth_login`] (testable with a plain `&AppState`, design §8.3).
+/// Slot-clearing errors: none - every `Err` is returned before the slot is
+/// written (the TS provider's revision relies on this, design I-19).
 async fn login_body(
     state: &AppState,
     username: String,
@@ -937,6 +941,8 @@ async fn auth_logout(state: State<'_, AppState>) -> Result<LogoutResult, BantoEr
 }
 
 /// Body of [`auth_logout`] (testable with a plain `&AppState`, design §8.3).
+/// Slot-clearing errors: none - every `Err` is returned before the slot is
+/// written (the TS provider's revision relies on this, design I-19).
 async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
     let (previous, seq_at_entry) = read_slot(state);
     if (state.auth_io.auth_mode)().await?.disabled {
@@ -998,6 +1004,8 @@ fn session_kind(session: &DesktopSession) -> &'static str {
 }
 
 /// Body of [`auth_resolve`] (testable with a plain `&AppState`, design §8.3).
+/// Its `Ok` answer carries any clear it made (`current`); an `Err` is
+/// returned before the slot is written.
 async fn resolve_body(state: &AppState) -> Result<AuthResolveResult, BantoError> {
     let (cached, seq_at_entry) = read_slot(state);
     let Some(cached) = cached else {
@@ -1050,6 +1058,14 @@ async fn resolve_body(state: &AppState) -> Result<AuthResolveResult, BantoError>
 /// Issue #260 (design §5.3, I-11, S-68): the re-bind is a write that changes
 /// the binding, so it advances the slot's `seq`; the result carries the
 /// `seq` after the command (unchanged when the re-bind did not happen).
+///
+/// Slot-clearing errors: ONLY `BantoError::Unauthorized` can be returned
+/// after the slot was written - the session check at the start
+/// ([`current_session`]) clears a revoked session (advancing `seq`) and this
+/// then fails with `Unauthorized`. Every other `Err` (`Forbidden`, the
+/// `Validation` of a wrong current password, storage errors) is returned
+/// with the slot unwritten by this command. The TS provider's revision
+/// relies on this split (design I-19).
 async fn change_own_password(
     state: &AppState,
     current_password: &str,
@@ -4879,5 +4895,64 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// S-55 (Rust half): a password change from a session that was revoked
+    /// meanwhile clears the slot (advancing `seq`) and THEN fails with
+    /// `Unauthorized` - the one error kind returned after a slot write, which
+    /// the TS provider therefore treats as "the revision may have changed".
+    #[tokio::test]
+    async fn s55_change_password_on_a_revoked_session_advances_seq_then_fails_unauthorized() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("owner", SLOT_PASSWORD, "オーナー")
+            .await
+            .unwrap();
+        let a = state
+            .users
+            .create_user("a", SLOT_PASSWORD, "A", Role::Editor)
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        state
+            .users
+            .update_user(a.id, "A", Role::Viewer)
+            .await
+            .unwrap();
+
+        let result = change_own_password(&state, SLOT_PASSWORD, "newpassword1").await;
+
+        assert!(
+            matches!(result, Err(BantoError::Unauthorized)),
+            "{result:?}"
+        );
+        assert_eq!(read_slot(&state), (None, login.seq + 1));
+    }
+
+    /// S-55 (Rust half): a wrong current password is a `Validation` error
+    /// returned without touching the slot.
+    #[tokio::test]
+    async fn s55_change_password_with_a_wrong_current_password_leaves_seq() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+
+        let result = change_own_password(&state, "wrong-password", "newpassword1").await;
+
+        assert!(
+            matches!(result, Err(BantoError::Validation { .. })),
+            "{result:?}"
+        );
+        assert_eq!(read_slot(&state).1, login.seq);
+        assert!(read_slot(&state).0.is_some());
     }
 }

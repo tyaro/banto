@@ -209,8 +209,9 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Stan
 
 	/**
 	 * Invoke a state-changing command, tracking it as pending until it
-	 * answers or `opPendingTimeoutMs` passes. A rejected invoke advances
-	 * `local` (the outcome is unknown) and rethrows.
+	 * answers or `opPendingTimeoutMs` passes. A rejection that may have
+	 * changed the session slot (`rejectionMayHaveChangedSlot`) advances
+	 * `local` (the outcome is unknown); the error is rethrown either way.
 	 */
 	async function runOp<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 		const op = {};
@@ -219,11 +220,11 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Stan
 			if (pendingOps.delete(op)) bumpLocal();
 		}, opPendingTimeoutMs);
 		try {
-			return await call<T>(cmd, args);
-		} catch (err) {
+			return (await options.invoke(cmd, args)) as T;
+		} catch (raw) {
 			pendingOps.delete(op);
-			bumpLocal();
-			throw err;
+			if (rejectionMayHaveChangedSlot(raw)) bumpLocal();
+			throw toProviderError(raw);
 		} finally {
 			clearTimeout(timer);
 			pendingOps.delete(op);
@@ -319,6 +320,25 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Stan
 			}
 		}
 	};
+}
+
+/**
+ * Issue #260 (design I-19): may this rejection of a state-changing auth
+ * command (login/logout/setup/change_password) have changed the Rust session
+ * slot? Decided on the RAW rejection, before `toProviderError`:
+ * - not a wire `ErrorBody` (an IPC failure, a string, an `Error`, anything
+ *   unrecognizable): no response from the command - unknown, so yes;
+ * - `{ kind: 'unauthorized' }`: yes. It is the one error kind the Rust side
+ *   can return AFTER writing the slot - `change_own_password`'s session check
+ *   clears a revoked session (advancing `seq`) and then fails `Unauthorized`
+ *   (see the "Slot-clearing errors" line on each `*_body` /
+ *   `change_own_password` in `apps/admin-template/src-tauri/src/lib.rs`);
+ * - any other `ErrorBody` (`validation` - e.g. a wrong current password -,
+ *   `forbidden`, `storage`, `other`, ...): the command answered and returned
+ *   before writing the slot, so no.
+ */
+function rejectionMayHaveChangedSlot(raw: unknown): boolean {
+	return !isErrorBody(raw) || raw.kind === 'unauthorized';
 }
 
 function loginOutcome(result: LoginResultWire): AuthOperationResult {
