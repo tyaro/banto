@@ -192,8 +192,11 @@ function isIdentity(value: unknown): value is Identity {
  * - `resolve()` answers the session with ONE `GET /api/auth/identity`;
  * - every token write is compare-and-set against the revision the
  *   operation started from (`login`/`setup`/`logout`, and
- *   `enterPublicViewer`'s `expectRevision`, #259) - an operation overtaken
- *   by another login/logout (here or in another tab) writes nothing;
+ *   `enterPublicViewer`'s `expectRevision`, #259) AND the stored token read
+ *   when it started (PR #264 review P2: another tab's write is visible in
+ *   `localStorage` before its `storage` event advances the revision here) -
+ *   an operation overtaken by another login/logout (here or in another tab)
+ *   writes nothing;
  * - `onCredentialChanged` listeners hear every revision change except
  *   `resolve()`'s own clearing, which its answer carries instead.
  */
@@ -261,17 +264,41 @@ export function createHttpAuthProvider(
 		return true;
 	}
 
+	/** What a token-writing operation compares against when it writes. */
+	interface OperationStart {
+		revision: CredentialRevision;
+		/** `getToken()` when the operation started. */
+		token: string | null;
+	}
+
+	/**
+	 * Record an operation's start: the revision (or the caller's
+	 * `expectRevision`) and the stored token, both read NOW.
+	 */
+	function startOperation(expectRevision?: CredentialRevision): OperationStart {
+		return { revision: expectRevision ?? revisionOf(counter), token: getToken() };
+	}
+
 	/**
 	 * Compare-and-set write (Issue #260, I-7): store `token` only while the
-	 * revision is still `expected`, and notify when the stored token changed.
-	 * Returns whether the revision matched.
+	 * revision is still the start's AND the stored token is still the one
+	 * read at the start, and notify when the stored token changed. Returns
+	 * whether both matched.
+	 *
+	 * The token condition (PR #264 review P2) closes the window in which
+	 * another tab already rewrote the shared `localStorage` token but its
+	 * `storage` event (which is what advances the revision here) has not
+	 * been delivered yet: the revision alone would still match and this
+	 * stale operation would overwrite - or, for a logout, delete - the other
+	 * tab's token.
 	 */
-	function writeTokenIfRevision(
-		expected: CredentialRevision,
+	function writeTokenIfUnchanged(
+		start: OperationStart,
 		token: string | null,
 		remember = false
 	): boolean {
-		if (revisionOf(counter) !== expected) return false;
+		if (revisionOf(counter) !== start.revision) return false;
+		if (getToken() !== start.token) return false;
 		if (writeToken(token, remember)) emitCredentialChanged();
 		return true;
 	}
@@ -323,7 +350,7 @@ export function createHttpAuthProvider(
 
 	return {
 		async login(params: Record<string, unknown>): Promise<AuthOperationResult> {
-			const startedAt = revisionOf(counter);
+			const start = startOperation();
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/login`, {
@@ -342,7 +369,7 @@ export function createHttpAuthProvider(
 			if (body.success && body.token) {
 				// Issue #260 (S-40): a login/logout that finished while this one
 				// was in flight (here or in another tab) wins - do not overwrite.
-				if (!writeTokenIfRevision(startedAt, body.token, params.remember === true)) {
+				if (!writeTokenIfUnchanged(start, body.token, params.remember === true)) {
 					return { success: false, error: SUPERSEDED_MESSAGE, superseded: true };
 				}
 			}
@@ -354,20 +381,20 @@ export function createHttpAuthProvider(
 		 * (Issue #260), then clear the stored token - even when the request
 		 * failed, since the goal is "this client no longer considers itself
 		 * logged in" - but only if no other login/logout changed it meanwhile
-		 * (S-21: a login that finished during the logout keeps its token).
+		 * (S-21: a login that finished during the logout keeps its token -
+		 * including another tab's whose `storage` event has not arrived yet).
 		 */
 		async logout(): Promise<void> {
-			const startedAt = revisionOf(counter);
-			const token = getToken();
+			const start = startOperation();
 			try {
 				await fetchFn(`${baseUrl}/api/auth/logout`, {
 					method: 'POST',
-					headers: headersFor(token, false)
+					headers: headersFor(start.token, false)
 				});
 			} catch {
 				// Network failure on logout still clears the local token below.
 			}
-			writeTokenIfRevision(startedAt, null);
+			writeTokenIfUnchanged(start, null);
 		},
 
 		/**
@@ -497,7 +524,7 @@ export function createHttpAuthProvider(
 		},
 
 		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
-			const startedAt = revisionOf(counter);
+			const start = startOperation();
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/setup`, {
@@ -514,7 +541,7 @@ export function createHttpAuthProvider(
 			}
 			const body = (await response.json()) as { success: boolean; error?: string; token?: string };
 			if (body.success && body.token) {
-				if (!writeTokenIfRevision(startedAt, body.token)) {
+				if (!writeTokenIfUnchanged(start, body.token)) {
 					return { success: false, error: SUPERSEDED_MESSAGE, superseded: true };
 				}
 			}
@@ -554,13 +581,15 @@ export function createHttpAuthProvider(
 		 * `{ success: false }` so the route guard can fall back to `/login`.
 		 *
 		 * Issue #260 (#259, S-20/S-52): stored only while the revision is still
-		 * `expectRevision` (default: the revision when this call started);
+		 * `expectRevision` (default: the revision when this call started) AND
+		 * the stored token is still the one read when THIS call started (even
+		 * with a caller-supplied `expectRevision`, PR #264 review P2);
 		 * otherwise `{ success: false, superseded: true }` and nothing stored.
 		 */
 		async enterPublicViewer(pvOptions?: {
 			expectRevision?: CredentialRevision;
 		}): Promise<{ success: boolean; superseded?: boolean }> {
-			const expected = pvOptions?.expectRevision ?? revisionOf(counter);
+			const start = startOperation(pvOptions?.expectRevision);
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/public-viewer`, {
@@ -573,7 +602,7 @@ export function createHttpAuthProvider(
 			if (!response.ok) return { success: false };
 			const body = (await response.json()) as { success: boolean; token?: string };
 			if (!body.success || !body.token) return { success: false };
-			if (!writeTokenIfRevision(expected, body.token, false)) {
+			if (!writeTokenIfUnchanged(start, body.token, false)) {
 				return { success: false, superseded: true };
 			}
 			return { success: true };

@@ -320,6 +320,101 @@ describe('HTTP compare-and-set token writes (#259, I-7)', () => {
 	});
 });
 
+describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #264 review P2)', () => {
+	// Another tab's write is already visible in localStorage, but its
+	// `storage` event (which advances this provider's revision) has not been
+	// dispatched: the revision alone still matches, the token does not.
+
+	it('S-40: a login does not overwrite a Remember me token another tab wrote before its event arrived', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth, changed } = provider(fetchFn);
+		const before = auth.credentialRevision();
+
+		const login = auth.login({ username: 'a', password: 'pw', remember: true });
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+		requests[0].reply.resolve(json(200, { success: true, token: 'tok-a' }));
+
+		await expect(login).resolves.toMatchObject({ success: false, superseded: true });
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(sessionStorage.getItem(KEY)).toBeNull();
+		expect(auth.credentialRevision()).toBe(before);
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('S-40: a setup does not overwrite a token another tab wrote before its event arrived', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth } = provider(fetchFn);
+
+		const setup = auth.setup?.({ username: 'owner', password: 'pw', displayName: 'O' });
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+		requests[0].reply.resolve(json(200, { success: true, token: 'tok-owner' }));
+
+		await expect(setup).resolves.toMatchObject({ success: false, superseded: true });
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(sessionStorage.getItem(KEY)).toBeNull();
+	});
+
+	it('S-21: a logout does not delete a Remember me token another tab wrote before its event arrived', async () => {
+		localStorage.setItem(KEY, 'tok-a');
+		const { requests, fetchFn } = scriptedServer();
+		const { auth, changed } = provider(fetchFn);
+		const before = auth.credentialRevision();
+
+		const logout = auth.logout();
+		expect(requests[0]).toMatchObject({ path: '/api/auth/logout', token: 'tok-a' });
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+		requests[0].reply.resolve(new Response(null, { status: 204 }));
+		await logout;
+
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(auth.credentialRevision()).toBe(before);
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('S-20: enterPublicViewer does not store over a token another tab wrote before its event arrived', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth } = provider(fetchFn);
+
+		const entering = auth.enterPublicViewer?.();
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+		requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
+
+		await expect(entering).resolves.toEqual({ success: false, superseded: true });
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(sessionStorage.getItem(KEY)).toBeNull();
+	});
+
+	it('S-20: with a caller expectRevision, the token is still compared against the value at the call start', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth } = provider(fetchFn);
+		const ticketRevision = auth.credentialRevision();
+
+		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
+		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
+		requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
+
+		await expect(entering).resolves.toEqual({ success: false, superseded: true });
+		expect(localStorage.getItem(KEY)).toBe('tok-b-from-tab-2');
+		expect(sessionStorage.getItem(KEY)).toBeNull();
+	});
+
+	it('the event arriving afterwards advances the revision and notifies once', async () => {
+		const { requests, fetchFn } = scriptedServer();
+		const { auth, changed } = provider(fetchFn);
+		const before = auth.credentialRevision();
+
+		const login = auth.login({ username: 'a', password: 'pw' });
+		localStorage.setItem(KEY, 'tok-b-from-tab-2');
+		requests[0].reply.resolve(json(200, { success: true, token: 'tok-a' }));
+		await login;
+		windowTarget.dispatchEvent(storageEvent(KEY));
+
+		expect(auth.credentialRevision()).not.toBe(before);
+		expect(changed).toHaveBeenCalledTimes(1);
+		expect(auth.getToken()).toBe('tok-b-from-tab-2');
+	});
+});
+
 describe('HTTP revision and notifications (I-19, I-23)', () => {
 	it('a successful login advances the revision and notifies once, in the response continuation', async () => {
 		const { requests, fetchFn } = scriptedServer();
