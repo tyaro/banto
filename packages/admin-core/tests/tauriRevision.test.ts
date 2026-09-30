@@ -116,6 +116,37 @@ describe('Tauri revision from operation responses (I-19, I-23)', () => {
 		expect(changed).toHaveBeenCalledTimes(1);
 	});
 
+	it('S-95 (provider half): a login refused in auth-disabled mode keeps the revision, reports nothing, and carries the error', async () => {
+		const { auth, changed, last } = setup();
+		const resolve = auth.resolve();
+		last('auth_resolve').reply.resolve({
+			identity: { id: '0', name: 'ローカルユーザー', role: 'admin' },
+			kind: 'local',
+			checked: 3,
+			current: 3,
+			stale: false
+		});
+		await resolve;
+		const before = auth.credentialRevision();
+
+		const login = auth.login({ username: 'admin', password: 'pw' });
+		last('auth_login').reply.resolve({
+			success: false,
+			error:
+				'ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください',
+			superseded: false,
+			seq: 3
+		});
+
+		await expect(login).resolves.toEqual({
+			success: false,
+			error:
+				'ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください'
+		});
+		expect(auth.credentialRevision()).toBe(before);
+		expect(changed).not.toHaveBeenCalled();
+	});
+
 	it('S-17 (provider half): an overtaken logout returns the seq the login already reported - no notification', async () => {
 		const { auth, changed, last } = setup();
 		const logout = auth.logout();

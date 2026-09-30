@@ -845,14 +845,17 @@ async fn setup_body(
     display_name: String,
 ) -> Result<LoginResult, BantoError> {
     let (_, seq_at_entry) = read_slot(state);
+    // Owner decision on #266 (S-95): in auth-disabled mode no account session
+    // is ever installed. Checked on entry so no account is created for a
+    // setup that could not sign in; checked again at the install below
+    // (the mode can be switched on while the account is being created).
+    if state.settings.auth_config().await?.disabled {
+        return Ok(auth_disabled_login_result(state));
+    }
     match (state.auth_io.setup_first_user)(username, password, display_name).await {
         Ok(identity) => {
             record_ok(&state.audit, &identity, "setup", "auth", None, None).await;
-            Ok(install_login(
-                state,
-                seq_at_entry,
-                DesktopSession::Account(identity),
-            ))
+            install_account_unless_auth_disabled(state, seq_at_entry, identity).await
         }
         Err(err @ BantoError::Validation { .. }) => Err(err),
         Err(other) => Ok(LoginResult {
@@ -862,6 +865,52 @@ async fn setup_body(
             seq: read_slot(state).1,
         }),
     }
+}
+
+/// `LoginResult.error` of a login/setup refused because auth-disabled mode is
+/// on (S-95).
+const AUTH_DISABLED_LOGIN_MESSAGE: &str =
+    "ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください";
+
+/// The refusal of a login/setup in auth-disabled mode (owner decision on
+/// #266, S-95): `success: false`, not `superseded` (no other session won a
+/// race - the mode forbids it), nothing written, the current `seq`. An `Ok`
+/// result rather than an `Err`, so the TS provider observes the unchanged
+/// `seq` and reports nothing (I-19), and the login screen shows `error`.
+fn auth_disabled_login_result(state: &AppState) -> LoginResult {
+    LoginResult {
+        success: false,
+        error: Some(AUTH_DISABLED_LOGIN_MESSAGE.to_string()),
+        superseded: false,
+        seq: read_slot(state).1,
+    }
+}
+
+/// Install a verified account session only while auth-disabled mode is off
+/// (owner decision on #266, S-95): so that
+/// `auth.disabled == true <=> DesktopSession::AuthDisabledLocal` holds
+/// always. Under `auth_config_lock` (taken AFTER the password check, never
+/// held across it), the mode is read and, if it is off, the session is
+/// installed with the `seq` compare-and-set ([`install_login`]); if it is on,
+/// nothing is written. `auth_config_apply(true)` re-binds under the same lock
+/// right after its save, so the two cannot interleave: an apply first leaves
+/// Local (this refuses), a login first leaves Account (the apply then
+/// replaces it). A failed mode read is an `Err` returned before any slot
+/// write (I-19). Lock order: `auth_config_lock` -> `state.auth`.
+async fn install_account_unless_auth_disabled(
+    state: &AppState,
+    seq_at_entry: u64,
+    identity: UserIdentity,
+) -> Result<LoginResult, BantoError> {
+    let _auth_config = state.auth_config_lock.lock().await;
+    if state.settings.auth_config().await?.disabled {
+        return Ok(auth_disabled_login_result(state));
+    }
+    Ok(install_login(
+        state,
+        seq_at_entry,
+        DesktopSession::Account(identity),
+    ))
 }
 
 /// Install a verified login/setup session with [`cas_session`] and build the
@@ -908,14 +957,19 @@ async fn login_body(
     password: String,
 ) -> Result<LoginResult, BantoError> {
     let (_, seq_at_entry) = read_slot(state);
+    // Owner decision on #266 (S-95): refused in auth-disabled mode - before
+    // the (slow) password check, which then records nothing; and again at
+    // the install, after the check (see
+    // [`install_account_unless_auth_disabled`]).
+    if state.settings.auth_config().await?.disabled {
+        return Ok(auth_disabled_login_result(state));
+    }
     match (state.auth_io.verify)(username.clone(), password).await? {
         Some(identity) => {
+            // Recorded at verification success, before the install decides
+            // (design §1.7, decision 7) - as for a superseded login.
             record_ok(&state.audit, &identity, "login", "auth", None, None).await;
-            Ok(install_login(
-                state,
-                seq_at_entry,
-                DesktopSession::Account(identity),
-            ))
+            install_account_unless_auth_disabled(state, seq_at_entry, identity).await
         }
         None => {
             state
@@ -5376,13 +5430,14 @@ mod tests {
         assert_eq!(read_slot(&state), (None, seq + 1));
     }
 
-    /// S-94 (compare-and-set): a login starts (reads `seq = N`) and is held
-    /// in its password check; the mode is switched on meanwhile (the admin's
-    /// account session re-bound to Local, `seq = N + 1`); the login then
-    /// completes - its compare-and-set fails (`superseded`) and the
-    /// synthetic session stays.
+    /// S-94/S-95: a login starts (reads `seq = N`) and is held in its
+    /// password check; the mode is switched on meanwhile (the admin's account
+    /// session re-bound to Local, `seq = N + 1`); the login then completes.
+    /// Its install checks the mode under `auth_config_lock` and refuses - no
+    /// account session in auth-disabled mode (and its compare-and-set would
+    /// not hold either). The synthetic session stays; `seq` does not move.
     #[tokio::test]
-    async fn s94_a_login_overtaken_by_the_apply_rebind_is_superseded() {
+    async fn s95_a_login_whose_check_was_overtaken_by_apply_true_is_refused() {
         let mut state = app_state().await;
         state
             .users
@@ -5407,7 +5462,8 @@ mod tests {
         let result = login.await.expect("login");
 
         assert!(!result.success);
-        assert!(result.superseded, "the login read seq before the rebind");
+        assert!(!result.superseded, "refused by the mode, not a lost race");
+        assert_eq!(result.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
         let (session, seq) = read_slot(&state);
         assert!(
             is_local(&session),
@@ -5415,6 +5471,105 @@ mod tests {
         );
         assert_eq!(seq, seq_before + 1);
         assert_eq!(result.seq, seq);
+    }
+
+    /// S-95: `auth_login` while auth-disabled mode is on is refused before the
+    /// password check: the slot stays Local, `seq` does not move, and nothing
+    /// is recorded (no credential was checked).
+    #[tokio::test]
+    async fn s95_login_in_auth_disabled_mode_is_refused_before_the_check() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(
+            state.users.get_by_username("admin").await.unwrap().unwrap(),
+        )));
+        auth_config_apply_body(&state, true, "editor")
+            .await
+            .expect("apply");
+        let before = read_slot(&state);
+        let logins = audit_action_count(&state, "login").await;
+
+        let result = login_body(&state, "admin".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+
+        assert!(!result.success);
+        assert!(!result.superseded);
+        assert_eq!(result.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
+        assert_eq!(result.seq, before.1);
+        assert_eq!(read_slot(&state), before);
+        assert!(is_local(&before.0));
+        assert_eq!(audit_action_count(&state, "login").await, logins);
+        assert_eq!(audit_action_count(&state, "login_failed").await, 0);
+    }
+
+    /// S-95: `auth_setup` while auth-disabled mode is on (the first-run
+    /// 「ログインなしで使い始める」 already chosen) is refused on entry and
+    /// creates no account.
+    #[tokio::test]
+    async fn s95_setup_in_auth_disabled_mode_creates_no_account() {
+        let state = app_state().await;
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("bootstrap-window apply");
+        let before = read_slot(&state);
+        assert!(is_local(&before.0));
+
+        let result = setup_body(
+            &state,
+            "b".to_string(),
+            SLOT_PASSWORD.to_string(),
+            "B".to_string(),
+        )
+        .await
+        .expect("setup");
+
+        assert!(!result.success);
+        assert!(!result.superseded);
+        assert_eq!(result.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
+        assert_eq!(read_slot(&state), before);
+        assert!(
+            !state.users.is_initialized().await.unwrap(),
+            "no account created"
+        );
+        assert_eq!(audit_action_count(&state, "setup").await, 0);
+    }
+
+    /// S-95: the mode is switched on (bootstrap window: no account yet, no
+    /// session) while `auth_setup` is creating the first account. The account
+    /// exists afterwards (created before the switch), but its session is not
+    /// installed: the synthetic session stays, as with a superseded setup.
+    #[tokio::test]
+    async fn s95_a_setup_overtaken_by_apply_true_keeps_the_account_but_installs_nothing() {
+        let mut state = app_state().await;
+        let mut hold = hold_setup(&mut state);
+
+        let setup = setup_body(
+            &state,
+            "b".to_string(),
+            SLOT_PASSWORD.to_string(),
+            "B".to_string(),
+        );
+        tokio::pin!(setup);
+        run_until_held!(setup, hold);
+
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("bootstrap-window apply");
+        let after_apply = read_slot(&state);
+        assert!(is_local(&after_apply.0));
+        hold.release.send(()).unwrap();
+        let result = setup.await.expect("setup");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some(AUTH_DISABLED_LOGIN_MESSAGE));
+        assert_eq!(read_slot(&state), after_apply);
+        assert!(state.users.get_by_username("b").await.unwrap().is_some());
+        assert_eq!(audit_action_count(&state, "setup").await, 1);
     }
 
     /// PR #264 review P1 / re-review P2: a logout whose first read saw
