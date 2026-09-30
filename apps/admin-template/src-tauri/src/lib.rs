@@ -77,6 +77,21 @@ struct AppState {
     /// at that point and fix the completion order (design §8.3). Production
     /// wraps `users`/`settings` below ([`AuthIo::production`]).
     auth_io: AuthIo,
+    /// Serializes "read the auth-mode settings, decide, act on the decision"
+    /// (PR #264 re-review P2): [`auth_config_apply_body`] holds it from its
+    /// first settings read through the save and the synthetic-session
+    /// install, [`logout_body`] holds it around its post-clear re-read and
+    /// install, and the autologin toggles hold it around their
+    /// read-modify-write of the same settings row. So the settings value an
+    /// install was based on cannot be changed by another apply between the
+    /// read and the install (an `apply(false)` completing while an
+    /// `apply(true)` was still awaiting would otherwise let the latter
+    /// install a local session under `disabled = false`).
+    ///
+    /// LOCK ORDER: `auth_config_lock` -> [`AppState::auth`]. `auth` is a
+    /// std `Mutex` that is never held across an `.await`, so nothing can
+    /// hold it while waiting for this lock - the reverse order cannot occur.
+    auth_config_lock: AsyncMutex<()>,
     /// The local credential store (spec §8.2): argon2id-hashed accounts in
     /// the same SQLite settings DB as `settings` below. Shared with
     /// `rest_auth`'s verifier closure so the webview session and the
@@ -244,18 +259,23 @@ type CredentialVerifier =
 type FirstUserSetup = Arc<dyn Fn(String, String, String) -> AuthFuture<UserIdentity> + Send + Sync>;
 /// `auth_logout`'s auth-mode read (design §8.3 `AuthModeSource`).
 type AuthModeSource = Arc<dyn Fn() -> AuthFuture<AuthSettings> + Send + Sync>;
+/// `auth_config_apply`'s settings save. Not in design §8.3's sketch: injected
+/// so a test can hold an apply right AFTER it saved (PR #264 re-review P2).
+type AuthConfigSave = Arc<dyn Fn(AuthSettings) -> AuthFuture<()> + Send + Sync>;
 
 /// See [`AppState::auth_io`].
 struct AuthIo {
     verify: CredentialVerifier,
     setup_first_user: FirstUserSetup,
     auth_mode: AuthModeSource,
+    save_auth_config: AuthConfigSave,
 }
 
 impl AuthIo {
     fn production(users: &UsersService, settings: &SettingsService) -> Self {
         let verify_users = users.clone();
         let setup_users = users.clone();
+        let save_settings = settings.clone();
         let settings = settings.clone();
         Self {
             verify: Arc::new(move |username, password| {
@@ -273,6 +293,10 @@ impl AuthIo {
             auth_mode: Arc::new(move || {
                 let settings = settings.clone();
                 Box::pin(async move { settings.auth_config().await })
+            }),
+            save_auth_config: Arc::new(move |config| {
+                let settings = save_settings.clone();
+                Box::pin(async move { settings.set_auth_config(&config).await })
             }),
         }
     }
@@ -972,17 +996,28 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
     // design I-19), so the logout reports success and installs nothing. The
     // gap is then filled by the next `auth_config_apply`, or by `run()`'s
     // bootstrap on the next launch.
-    let installed = match (state.auth_io.auth_mode)().await {
-        Ok(config) if config.disabled => {
-            let (installed, seq_now) =
-                install_local_session(state, config.disabled_role, Some(seq));
-            seq = seq_now;
-            installed
-        }
-        Ok(_) => None,
-        Err(err) => {
-            eprintln!("banto: ログアウト後の認証モードの再読み込みに失敗しました: {err}");
-            None
+    //
+    // PR #264 re-review P2: the re-read and the install run under
+    // `auth_config_lock`, so an `apply(false)` cannot complete between the
+    // value read here and the install based on it. The FIRST read (the
+    // auth-disabled no-op decision above) stays outside the lock: it writes
+    // nothing on its own, and a stale "enabled" answer there is exactly what
+    // this re-read corrects; a stale "disabled" answer only makes this
+    // logout a no-op that the frontend re-resolves.
+    let installed = {
+        let _auth_config = state.auth_config_lock.lock().await;
+        match (state.auth_io.auth_mode)().await {
+            Ok(config) if config.disabled => {
+                let (installed, seq_now) =
+                    install_local_session(state, config.disabled_role, Some(seq));
+                seq = seq_now;
+                installed
+            }
+            Ok(_) => None,
+            Err(err) => {
+                eprintln!("banto: ログアウト後の認証モードの再読み込みに失敗しました: {err}");
+                None
+            }
         }
     };
     if let Some(session) = previous {
@@ -1264,6 +1299,11 @@ async fn auth_config_apply_body(
     disabled: bool,
     disabled_role: &str,
 ) -> Result<AuthSettings, BantoError> {
+    // PR #264 re-review P2: held from the first settings read through the
+    // save and the synthetic-session install below (see
+    // `AppState::auth_config_lock`), so no other apply (or a logout's
+    // re-read + install) can interleave with this decision.
+    let _auth_config = state.auth_config_lock.lock().await;
     // Read through the injectable `auth_mode` (production: the same
     // `SettingsService::auth_config`) so tests can fix this command's order
     // against a concurrent logout (design §8.3).
@@ -1295,7 +1335,7 @@ async fn auth_config_apply_body(
     let mut config = state.settings.auth_config().await?;
     config.disabled = disabled;
     config.disabled_role = role;
-    state.settings.set_auth_config(&config).await?;
+    (state.auth_io.save_auth_config)(config.clone()).await?;
     state
         .audit
         .record(AuditEntry {
@@ -1326,7 +1366,13 @@ async fn auth_config_apply_body(
     // overwritten. [`logout_body`] re-reads the mode after its clear and
     // fills the other gap (a logout that cleared AFTER this final lock); the
     // two paths never both install, because each checks `is_none()` under
-    // the one lock ([`install_local_session`]).
+    // the one lock ([`install_local_session`]) - and, since re-review P2,
+    // both also run under `auth_config_lock`.
+    //
+    // `disabled = false` does not clear an existing local session here: as
+    // before, the next `current_session`/`auth_resolve` settles it away
+    // (`read_session_source` re-reads the mode), so it can never authorize
+    // anything under `disabled = false`.
     if config.disabled {
         let (installed, _) = install_local_session(state, config.disabled_role, None);
         if let Some(local_identity) = installed {
@@ -1373,10 +1419,14 @@ async fn autologin_enable_body(
 
     keyring_store::set_password(username, password)?;
 
+    // The same settings row as `auth_config_apply`: its read-modify-write
+    // must not interleave with an apply's (a lost update of `disabled`).
+    let auth_config_guard = state.auth_config_lock.lock().await;
     let mut config = state.settings.auth_config().await?;
     config.autologin_enabled = true;
     config.autologin_username = Some(username.to_string());
     state.settings.set_auth_config(&config).await?;
+    drop(auth_config_guard);
     // Spec M14: the target `username` (never the password) is fine to
     // record - it identifies WHICH account autologin now applies to, no
     // different from `users_update`'s `role` detail.
@@ -1412,6 +1462,8 @@ async fn autologin_enable(
 async fn autologin_disable_body(state: &AppState) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Admin, "settings").await?;
 
+    // See `autologin_enable_body`: same row as `auth_config_apply`.
+    let auth_config_guard = state.auth_config_lock.lock().await;
     let mut config = state.settings.auth_config().await?;
     if let Some(username) = config.autologin_username.take() {
         if let Err(err) = keyring_store::delete_password(&username) {
@@ -1420,6 +1472,7 @@ async fn autologin_disable_body(state: &AppState) -> Result<(), BantoError> {
     }
     config.autologin_enabled = false;
     state.settings.set_auth_config(&config).await?;
+    drop(auth_config_guard);
     record_ok(
         &state.audit,
         &actor,
@@ -2957,6 +3010,7 @@ pub fn run() {
                 // [scaffold:items] end
                 auth: Mutex::new(AuthSlot::new(initial_auth)),
                 auth_io: AuthIo::production(&users, &settings),
+                auth_config_lock: AsyncMutex::new(()),
                 users,
                 settings,
                 events,
@@ -3060,6 +3114,7 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
             auth: Mutex::new(AuthSlot::default()),
+            auth_config_lock: AsyncMutex::new(()),
             auth_io: AuthIo::production(
                 &UsersService::new(pool.clone()),
                 &SettingsService::new(pool.clone()),
@@ -3121,6 +3176,7 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
             auth: Mutex::new(AuthSlot::default()),
+            auth_config_lock: AsyncMutex::new(()),
             auth_io: AuthIo::production(
                 &UsersService::new(pool.clone()),
                 &SettingsService::new(pool.clone()),
@@ -4930,34 +4986,128 @@ mod tests {
         assert!(answer.identity.is_some());
     }
 
+    /// Poll `$fut` (which must not finish) until `$cond` holds. The session
+    /// DB runs on its own worker thread, so between polls this sleeps the
+    /// test thread briefly to let that I/O complete.
+    macro_rules! drive_until {
+        ($fut:expr, $cond:expr) => {{
+            let mut reached = false;
+            for _ in 0..5_000 {
+                if $cond {
+                    reached = true;
+                    break;
+                }
+                tokio::select! {
+                    biased;
+                    out = &mut $fut => panic!("finished early: {out:?}"),
+                    _ = tokio::task::yield_now() => {}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert!(reached, "the condition never held");
+        }};
+    }
+
+    /// Poll `$fut` for a while and assert it is still pending (waiting on
+    /// `auth_config_lock`).
+    macro_rules! assert_stays_pending {
+        ($fut:expr) => {{
+            for _ in 0..30 {
+                tokio::select! {
+                    biased;
+                    out = &mut $fut => panic!("expected to wait, but finished: {out:?}"),
+                    _ = tokio::task::yield_now() => {}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }};
+    }
+
+    /// Hold the first `auth_config_apply` of `state` right AFTER its settings
+    /// save (the apply still holds `auth_config_lock`).
+    fn hold_after_save(state: &mut AppState) -> Hold {
+        let (slot, hold) = gate();
+        let settings = state.settings.clone();
+        state.auth_io.save_auth_config = Arc::new(move |config| {
+            let (slot, settings) = (slot.clone(), settings.clone());
+            Box::pin(async move {
+                settings.set_auth_config(&config).await?;
+                pass_gate(&slot).await;
+                Ok(())
+            })
+        });
+        hold
+    }
+
+    /// Auth-mode reads for a logout that races an `apply(true)`: the FIRST
+    /// read returns what is stored (`disabled = false`) and then stores
+    /// `disabled = true` - an apply(true) that completed right after it -
+    /// and the SECOND read (the logout's post-clear re-read, under
+    /// `auth_config_lock`) is held before reading. Later reads pass.
+    fn mode_turned_on_after_first_read_and_reread_held(state: &mut AppState) -> Hold {
+        let (slot, hold) = gate();
+        let settings = state.settings.clone();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        state.auth_io.auth_mode = Arc::new(move || {
+            let (slot, settings, calls) = (slot.clone(), settings.clone(), calls.clone());
+            Box::pin(async move {
+                match calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+                    0 => {
+                        let config = settings.auth_config().await?;
+                        settings
+                            .set_auth_config(&AuthSettings {
+                                disabled: true,
+                                ..config.clone()
+                            })
+                            .await?;
+                        Ok(config)
+                    }
+                    1 => {
+                        pass_gate(&slot).await;
+                        settings.auth_config().await
+                    }
+                    _ => settings.auth_config().await,
+                }
+            })
+        });
+        hold
+    }
+
     /// S-67 / PR #264 review P1 (i): `auth_config_apply` starts (the slot
     /// empty - the first-run 「ログインなしで使い始める」), a logout clears the
-    /// empty slot meanwhile (advancing `seq`, with `disabled` still false in
-    /// both of its reads), and only then does the apply save and reach its
-    /// final lock. The install is conditioned on the slot being empty, NOT on
-    /// `seq` being unchanged since the apply's entry - so auth-disabled mode
-    /// ends with its synthetic session, not with none.
+    /// empty slot meanwhile (advancing `seq`, `disabled` still false), and
+    /// only then does the apply save and reach its final lock. The install
+    /// is conditioned on the slot being empty, NOT on `seq` being unchanged
+    /// since the apply's entry - so the APPLY installs the synthetic session
+    /// (asserted before the logout, waiting on `auth_config_lock` for its
+    /// re-read, is polled again; its re-read then installs nothing).
     #[tokio::test]
     async fn s67_config_apply_installs_local_after_a_logout_advanced_seq() {
         let mut state = app_state().await;
-        // Call 1 = the apply's `currently_disabled` read (held before it).
+        // Call 1 = the apply's `currently_disabled` read (held before it,
+        // with `auth_config_lock` held).
         let mut hold = hold_auth_mode_call(&mut state, 1, false);
 
         let apply = auth_config_apply_body(&state, true, "admin");
         tokio::pin!(apply);
         run_until_held!(apply, hold);
 
-        let logout = logout_body(&state).await.expect("logout");
-        assert_eq!(logout.seq, 1, "the logout cleared (None -> None)");
-        assert_eq!(read_slot(&state), (None, 1));
+        let logout = logout_body(&state);
+        tokio::pin!(logout);
+        drive_until!(logout, read_slot(&state) == (None, 1));
+        assert_stays_pending!(logout);
         hold.release.send(()).unwrap();
         let config = apply.await.expect("apply");
 
         assert!(config.disabled);
         assert!(state.settings.auth_config().await.unwrap().disabled);
         let (session, seq) = read_slot(&state);
-        assert!(is_local(&session), "{session:?}");
+        assert!(is_local(&session), "the apply installed: {session:?}");
         assert_eq!(seq, 2, "the install advanced seq once");
+
+        let result = logout.await.expect("logout");
+        assert_eq!(result.seq, 2, "the logout's re-read did not install again");
+        assert_eq!(read_slot(&state).1, 2);
         assert_eq!(audit_action_count(&state, "login").await, 1);
     }
 
@@ -5014,40 +5164,135 @@ mod tests {
         );
     }
 
-    /// PR #264 review P1: `auth_config_apply` and a logout both able to
-    /// install - the logout has cleared and is held before its re-read, the
-    /// apply installs at its final lock (the slot is empty), then the
-    /// logout's re-read sees `disabled` but the slot has moved on. The
-    /// synthetic session is installed exactly once (one `seq` step, one
-    /// synthetic `login`).
+    /// PR #264 review P1 / re-review P2: a logout whose first read saw
+    /// `disabled = false` (and after which the mode was switched on) clears
+    /// A and re-reads the mode under `auth_config_lock`; an
+    /// `auth_config_apply(true)` started meanwhile waits for that lock. The
+    /// logout installs the synthetic session, and the apply - seeing it -
+    /// does not install again: one `seq` step, one synthetic `login`.
     #[tokio::test]
     async fn s67_config_apply_and_logout_install_local_only_once() {
         let mut state = app_state().await;
-        // Call 1 = the logout's first read (passes), call 2 = its re-read
-        // after the clear (held before reading).
-        let mut hold = hold_auth_mode_call(&mut state, 2, false);
+        state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        let mut hold = mode_turned_on_after_first_read_and_reread_held(&mut state);
 
         let logout = logout_body(&state);
         tokio::pin!(logout);
         run_until_held!(logout, hold);
-        assert_eq!(read_slot(&state), (None, 1), "the logout has cleared");
+        assert_eq!(read_slot(&state), (None, login.seq + 1), "A is cleared");
 
-        auth_config_apply_body(&state, true, "admin")
-            .await
-            .expect("apply");
-        assert!(is_local(&read_slot(&state).0));
-        assert_eq!(read_slot(&state).1, 2);
+        let apply = auth_config_apply_body(&state, true, "admin");
+        tokio::pin!(apply);
+        assert_stays_pending!(apply);
         hold.release.send(()).unwrap();
         let result = logout.await.expect("logout");
+        assert!(is_local(&read_slot(&state).0), "the logout installed");
+        assert_eq!(result.seq, login.seq + 2);
+        apply.await.expect("apply");
 
         let (session, seq) = read_slot(&state);
         assert!(is_local(&session), "{session:?}");
+        assert_eq!(seq, login.seq + 2, "installed once");
         assert_eq!(
-            seq, 2,
-            "installed once: the logout's re-read did not install"
+            audit_action_count(&state, "login").await,
+            2,
+            "A's login + one synthetic login"
         );
-        assert_eq!(result.seq, 2);
-        assert_eq!(audit_action_count(&state, "login").await, 1);
+    }
+
+    /// PR #264 re-review P2 (a): `apply(true)` has saved and is still inside
+    /// its decision (held after the save, `auth_config_lock` held) when an
+    /// `apply(false)` starts. The second apply waits for the first to finish
+    /// - it cannot save `false` between the first one's save and its install
+    /// - so the install is based on the value still stored, and the final
+    /// `disabled = false` is saved after it. The leftover local session is
+    /// settled away by the next check (existing behavior: `apply(false)`
+    /// never clears the slot itself).
+    #[tokio::test]
+    async fn config_apply_true_then_false_are_serialized_by_the_auth_config_lock() {
+        let mut state = app_state().await;
+        let mut hold = hold_after_save(&mut state);
+
+        let apply_on = auth_config_apply_body(&state, true, "admin");
+        tokio::pin!(apply_on);
+        run_until_held!(apply_on, hold);
+
+        let apply_off = auth_config_apply_body(&state, false, "admin");
+        tokio::pin!(apply_off);
+        assert_stays_pending!(apply_off);
+        assert!(
+            state.settings.auth_config().await.unwrap().disabled,
+            "apply(false) is waiting: it has not saved"
+        );
+        assert_eq!(read_slot(&state), (None, 0));
+
+        hold.release.send(()).unwrap();
+        apply_on.await.expect("apply(true)");
+        assert!(
+            is_local(&read_slot(&state).0),
+            "installed under disabled = true"
+        );
+        let config = apply_off.await.expect("apply(false)");
+
+        assert!(!config.disabled);
+        assert!(!state.settings.auth_config().await.unwrap().disabled);
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert!(answer.identity.is_none());
+        assert_eq!(answer.current, answer.checked + 1, "the resolve cleared it");
+        assert_eq!(read_slot(&state), (None, 2));
+        assert!(current_session(&state).await.unwrap().is_none());
+    }
+
+    /// PR #264 re-review P2 (b): a logout's post-clear re-read sees
+    /// `disabled = true` and is held (under `auth_config_lock`); an
+    /// `apply(false)` started then waits for the logout's install to finish
+    /// before it saves. Final: `disabled = false`, and the local session the
+    /// logout installed under `true` is settled away by the next check.
+    #[tokio::test]
+    async fn s67_a_logout_reread_and_a_later_apply_false_are_serialized() {
+        let mut state = app_state().await;
+        state
+            .users
+            .setup_first_user("a", SLOT_PASSWORD, "A")
+            .await
+            .unwrap();
+        let login = login_body(&state, "a".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        let mut hold = mode_turned_on_after_first_read_and_reread_held(&mut state);
+
+        let logout = logout_body(&state);
+        tokio::pin!(logout);
+        run_until_held!(logout, hold);
+
+        let apply_off = auth_config_apply_body(&state, false, "admin");
+        tokio::pin!(apply_off);
+        assert_stays_pending!(apply_off);
+        assert!(
+            state.settings.auth_config().await.unwrap().disabled,
+            "apply(false) is waiting: it has not saved"
+        );
+        hold.release.send(()).unwrap();
+        let result = logout.await.expect("logout");
+        assert!(
+            is_local(&read_slot(&state).0),
+            "installed under disabled = true"
+        );
+        assert_eq!(result.seq, login.seq + 2);
+        apply_off.await.expect("apply(false)");
+
+        assert!(!state.settings.auth_config().await.unwrap().disabled);
+        let answer = resolve_body(&state).await.expect("resolve");
+        assert!(answer.identity.is_none());
+        assert_eq!(answer.current, answer.checked + 1, "the resolve cleared it");
+        assert_eq!(read_slot(&state), (None, login.seq + 3));
     }
 
     /// PR #264 review P1: a logout whose re-read of the mode fails still
