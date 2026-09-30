@@ -11,6 +11,7 @@ import { createHttpAuthProvider } from '../src/providers/http';
 import { StaleAnswerError } from '../src/errors';
 import type { AuthProvider } from '../src/provider';
 import {
+	controllerInternals,
 	createSessionController,
 	publicViewerFallback,
 	resolveSettled,
@@ -984,6 +985,98 @@ describe('§10 (b) the kind of an answer without `kind` (I-2, 統合修正 13)',
 	it('S-87: an account and the public viewer with the same id never share an owner', () => {
 		expect(sessionOwnerKey({ id: 'public', name: 'public' }, 'account')).toBe('account:public');
 		expect(sessionOwnerKey(PUBLIC, 'publicViewer')).toBe('public-viewer');
+	});
+});
+
+describe('switching the provider (owner review of #265 P1; I-1, I-18, I-20)', () => {
+	async function aliceThenSwitch() {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		const oldTicket = ctx.controller.ticket();
+		const oldRequest = ctx.controller.resolve(); // pending on provider A
+		const generation = ctx.controller.snapshot.generation;
+		const b = makeProbeProvider({ revision: 1 }); // same revision string by chance
+		controllerInternals(ctx.controller)!.bind(b.provider);
+		return { ...ctx, b, oldTicket, oldRequest, generation };
+	}
+
+	it('S-89: provider A (Alice) -> provider B (none): unknown right away, old ticket stale, A’s late answer discarded, B decides', async () => {
+		const { p, b, controller, oldTicket, oldRequest, generation } = await aliceThenSwitch();
+		expect(controller.snapshot).toMatchObject({
+			status: 'unknown',
+			owner: null,
+			generation: generation + 1,
+			pendingOwnerChange: null,
+			previousActiveOwner: null
+		});
+		expect(controller.isCurrent(oldTicket)).toBe(false);
+		await expect(oldRequest).resolves.toMatchObject({ outcome: 'superseded' });
+		expect(p.probes[1].signal?.aborted).toBe(true);
+		expect(b.probes).toHaveLength(1); // the new provider is asked
+		p.active(1, ALICE); // late answer from provider A
+		await flush();
+		expect(controller.snapshot.status).toBe('unknown');
+		b.none(0);
+		await flush();
+		expect(controller.snapshot).toMatchObject({ status: 'none', generation: generation + 2 });
+	});
+
+	it('S-90: provider A (Alice) -> provider B (Bob): Bob is confirmed with no owner-change notice carried over', async () => {
+		const { p, b, controller, generation } = await aliceThenSwitch();
+		p.none(1, { clear: true }); // a late clearing answer from A changes nothing either
+		await flush();
+		expect(b.probes).toHaveLength(1);
+		b.active(0, BOB);
+		await flush();
+		expect(controller.snapshot).toMatchObject({
+			status: 'active',
+			owner: 'account:bob',
+			generation: generation + 2,
+			pendingOwnerChange: null
+		});
+		p.change(); // provider A's notifications are no longer heard
+		expect(controller.snapshot.owner).toBe('account:bob');
+	});
+
+	it('S-91: binding the same provider again is a no-op', async () => {
+		const { p, controller, settleTo } = setup();
+		await settleTo(ALICE);
+		const snapshot = controller.snapshot;
+		const ticket = controller.ticket();
+		controllerInternals(controller)!.bind(p.provider);
+		expect(controller.snapshot).toBe(snapshot);
+		expect(controller.isCurrent(ticket)).toBe(true);
+		expect(p.probes).toHaveLength(1);
+	});
+});
+
+describe('an ownerless active in between (owner review of #265 P2; S-10, I-24)', () => {
+	it('S-92: A -> ownerless -> B raises { A -> B }', async () => {
+		const { controller, settleTo } = setup();
+		await settleTo(ALICE);
+		await settleTo({ id: '', name: 'nobody' });
+		expect(controller.snapshot.pendingOwnerChange).toBeNull();
+		await settleTo(BOB);
+		expect(controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:alice',
+			to: 'account:bob'
+		});
+	});
+
+	it('S-92: A -> ownerless -> A raises nothing; A -> B -> ownerless -> A drops the pending change', async () => {
+		const { controller, settleTo } = setup();
+		await settleTo(ALICE);
+		await settleTo({ id: '', name: 'nobody' });
+		await settleTo(ALICE);
+		expect(controller.snapshot.pendingOwnerChange).toBeNull();
+		await settleTo(BOB);
+		await settleTo({ id: '', name: 'nobody' });
+		expect(controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:alice',
+			to: 'account:bob'
+		});
+		await settleTo(ALICE);
+		expect(controller.snapshot.pendingOwnerChange).toBeNull();
 	});
 });
 

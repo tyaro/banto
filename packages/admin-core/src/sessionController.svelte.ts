@@ -351,6 +351,14 @@ function createCore(
 	let appliedRevision: CredentialRevision | undefined;
 	/** The live session was confirmed by `adopt()` (I-13). */
 	let adopted = false;
+	/**
+	 * The owner of the last committed active session WITH an owner (cleared by
+	 * `none` and by a switch of provider). An ownerless active (S-10: an
+	 * identity without an id) is not a change of user and does not move it,
+	 * so `A -> ownerless -> B` raises `{ A -> B }` and `A -> ownerless -> A`
+	 * raises nothing (owner review of #265 P2; design §6.1 lifetime table).
+	 */
+	let lastConcreteOwner: string | null = null;
 	let inflight: Probe | null = null;
 	let latestSignalAt = 0;
 	/** A background confirmation is needed (I-9, decision 6). */
@@ -440,32 +448,40 @@ function createCore(
 			identity: Identity | null;
 			kind: SessionKind | null;
 		},
-		options: { external: boolean; verification?: SessionSnapshot['verification'] }
+		options: {
+			external: boolean;
+			verification?: SessionSnapshot['verification'];
+			/** A switch of provider: owners of another authentication source are not compared (no history carried over). */
+			forgetOwners?: boolean;
+		}
 	): void {
 		epoch += 1;
 		const prev = snap;
 		const changed =
 			prev.status !== next.status || prev.owner !== next.owner || prev.kind !== next.kind;
 		const previousActiveOwner =
-			next.status === 'none'
+			next.status === 'none' || options.forgetOwners
 				? null
 				: prev.status === 'active'
 					? prev.owner
 					: prev.previousActiveOwner;
 		let pendingOwnerChange = prev.pendingOwnerChange;
-		if (next.status === 'none') {
-			pendingOwnerChange = null; // S-83: not carried across the end of a session
-		} else if (
-			next.status === 'active' &&
-			previousActiveOwner !== null &&
-			previousActiveOwner !== next.owner
-		) {
-			// Keep the first `from` while unhandled (design §6.1 lifetime table).
-			// A -> B -> A before it is handled nets out to "no change of user":
-			// the pending change is dropped (null), not reported as A -> A.
-			const from = prev.pendingOwnerChange?.from ?? previousActiveOwner;
-			pendingOwnerChange = from === next.owner ? null : Object.freeze({ from, to: next.owner });
+		if (next.status === 'none' || options.forgetOwners) {
+			// S-83: not carried across the end of a session, nor across a switch
+			// of provider (owners of different authentication sources).
+			pendingOwnerChange = null;
+			lastConcreteOwner = null;
+		} else if (next.status === 'active' && next.owner !== null) {
+			if (lastConcreteOwner !== null && lastConcreteOwner !== next.owner) {
+				// Keep the first `from` while unhandled (design §6.1 lifetime table).
+				// A -> B -> A before it is handled nets out to "no change of user":
+				// the pending change is dropped (null), not reported as A -> A.
+				const from = prev.pendingOwnerChange?.from ?? lastConcreteOwner;
+				pendingOwnerChange = from === next.owner ? null : Object.freeze({ from, to: next.owner });
+			}
+			lastConcreteOwner = next.owner;
 		}
+		// `unknown` and an ownerless active keep both (S-10, S-81).
 		const waiters = options.external && inflight ? retire(inflight) : [];
 		publish({
 			status: next.status,
@@ -941,18 +957,45 @@ function createCore(
 		}
 	};
 
+	/**
+	 * Bind the provider the session is confirmed against.
+	 * - The same provider again: no-op.
+	 * - The first provider (none bound yet): not a transition - nothing was
+	 *   confirmed against any provider (a legacy `beginSession` before
+	 *   `initBanto` stays).
+	 * - A DIFFERENT provider (owner review of #265 P1): an external transition.
+	 *   The session confirmed against the old provider says nothing about the
+	 *   new one: the in-flight probe is retired (its waiters get `superseded`,
+	 *   I-20; a late answer from the old provider is never applied - it fails
+	 *   the provider check), the old subscription is dropped, `commit(unknown)`
+	 *   advances the epoch (old tickets go stale) and - from `active`/`none` -
+	 *   the generation, and the new provider is asked (`pendingBackground`).
+	 *   Owner history (`previousActiveOwner`/`pendingOwnerChange`) is not
+	 *   carried over: owners of different authentication sources are not
+	 *   compared.
+	 */
 	function bind(next: AuthProvider): void {
 		if (next === rawProvider) return;
+		const switching = rawProvider !== null;
 		rawProvider = next;
 		unsubscribeProvider?.();
 		provider = toStandardAuthProvider(next);
 		unsubscribeProvider = provider.onCredentialChanged(onCredentialChanged);
-		// Binding is not a credential change of the session already confirmed.
 		appliedRevision = provider.credentialRevision();
-		if (inflight) {
-			const moved = retire(inflight);
-			if (moved.length > 0) startProbe(moved, 0, false);
+		if (!switching) {
+			if (inflight) {
+				const moved = retire(inflight);
+				if (moved.length > 0) startProbe(moved, 0, false);
+			}
+			return;
 		}
+		adopted = false;
+		commit(
+			{ status: 'unknown', owner: null, identity: null, kind: null },
+			{ external: true, forgetOwners: true }
+		);
+		pendingBackground = true;
+		kickBackground();
 	}
 
 	if (initialProvider) bind(initialProvider);
