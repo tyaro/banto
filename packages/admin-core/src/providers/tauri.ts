@@ -251,13 +251,30 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 		 * Issue #260: `auth_resolve` once. Rejects with the `ProviderError` of a
 		 * failed invoke (revision unchanged, I-19), or with `StaleAnswerError`
 		 * when a state-changing command is pending as the answer arrives
-		 * (S-75/S-82) or the backend reports the slot re-bound (S-77). The
+		 * (S-75/S-82) or the backend reports the slot re-bound (S-77) - in the
+		 * latter case after observing the answer's `current` (S-97, I-23). The
 		 * `invoke` cannot be aborted; `signal` is ignored.
 		 */
 		async resolve(): Promise<ResolvedAuth> {
 			const l = local;
 			const answer = await call<AuthResolveWire>('auth_resolve');
-			if (pendingOps.size > 0 || answer.stale) throw new StaleAnswerError();
+			if (pendingOps.size > 0) {
+				// A state-changing command of this provider is still awaiting its
+				// response: its `current` is NOT observed here. That response
+				// observes its own `seq` and notifies if the pair changed (I-19);
+				// observing it first here would swallow that notification.
+				throw new StaleAnswerError();
+			}
+			if (answer.stale) {
+				// The slot was re-bound by a command this provider does not track
+				// (re-review of #266 P1, S-97: `auth_config_apply` re-binding the
+				// synthetic session). Observe its `current` first (I-23: the max of
+				// every `seq` seen, `auth_resolve`'s included) - without notifying,
+				// as for any `auth_resolve` - so the controller's drift check sees
+				// the revision move and holds the old session (I-5).
+				observedSeq = Math.max(observedSeq, answer.current);
+				throw new StaleAnswerError();
+			}
 			// The advance (if this call cleared a revoked session) is carried
 			// by `current`, not notified (S-65).
 			observedSeq = Math.max(observedSeq, answer.current);

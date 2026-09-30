@@ -285,14 +285,28 @@ describe('Tauri resolve(): auth_resolve once (§5.3)', () => {
 		await expect(resolving).resolves.toMatchObject({ status: 'active', kind: 'local' });
 	});
 
-	it('S-77: an answer the backend reports stale rejects with StaleAnswerError and changes nothing', async () => {
+	it('S-77/S-97: an answer the backend reports stale rejects with StaleAnswerError, but its `current` is observed (I-23), without a notification', async () => {
 		const { auth, changed, last } = setup();
 		const resolving = auth.resolve();
 		last('auth_resolve').reply.resolve({ ...resolveAnswer(null, 1, 2), stale: true });
 
 		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
-		expect(auth.credentialRevision()).toBe('0.0');
+		expect(auth.credentialRevision()).toBe('2.0');
 		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('S-75/S-97: a stale answer while this provider has a pending command does not observe `current` - the command’s response notifies', async () => {
+		const { auth, changed, last } = setup();
+		const login = auth.login({ username: 'b', password: 'pw' });
+		const resolving = auth.resolve();
+		last('auth_resolve').reply.resolve({ ...resolveAnswer(B, 1, 2), stale: true });
+		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
+		expect(auth.credentialRevision()).toBe('0.0');
+
+		last('auth_login').reply.resolve({ success: true, error: null, superseded: false, seq: 2 });
+		await login;
+		expect(auth.credentialRevision()).toBe('2.0');
+		expect(changed).toHaveBeenCalledTimes(1);
 	});
 
 	it('S-73: an old auth_resolve answer arriving after a newer login response is tagged with its own (older) checked', async () => {
