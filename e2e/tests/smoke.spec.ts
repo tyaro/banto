@@ -114,6 +114,9 @@ async function logout(page: Page): Promise<void> {
 	await page.getByRole('menuitem', { name: 'ログアウト' }).click();
 }
 
+/** Issue #260 実装-3 (wiring ②): the change-of-user notice (messages/ja.json `session.ownerChanged`). */
+const OWNER_CHANGED_NOTICE = '別のユーザーでログインされました';
+
 /** Issue #214: the unsaved-changes guard's prompt (messages/ja.json `unsaved.confirmLeave`). */
 const LEAVE_PROMPT = '保存していない変更があります。変更を破棄してこの画面から移動しますか？';
 
@@ -1543,7 +1546,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/items');
 		// The Ctrl+K listener lives on (app)/+layout.svelte's `<svelte:window>`,
 		// which only mounts after the route guard's async work (bantoReady,
-		// sessionStore.load()) resolves - later than page.goto()'s "load"
+		// the session confirmation) resolves - later than page.goto()'s "load"
 		// event. Wait for a page-specific element first so the keypress below
 		// isn't racing that mount.
 		await expect(page.getByRole('button', { name: 'CSVエクスポート' })).toBeVisible();
@@ -2062,11 +2065,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	// Issue #260 実装-2 (design §7.1/§7.3, §8.4): with the SessionController
-	// merged but the admin-template wiring of 実装-3 not yet, the protected
-	// layout re-runs its load whenever `snapshot.generation` differs from the
-	// generation that load confirmed (wiring ①). These three orders change
-	// the generation without the old `onSessionEnded` path ever firing.
+	// Issue #260 (design §6.1, §8.4): the protected layout re-runs its load
+	// whenever `snapshot.generation` differs from the generation that load
+	// confirmed (wiring ①, since 実装-2), and reports a change of user the
+	// controller recorded (wiring ②, 実装-3). These orders change the
+	// generation without ever passing through `none`.
 	async function loginRemembered(tab: Page, username: string, password: string): Promise<void> {
 		await tab.goto('/login');
 		await tab.getByLabel('ユーザー名').fill(username);
@@ -2101,6 +2104,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			);
 			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 			await expect(tab).toHaveURL(/\/dashboard$/);
+			// S-35 (wiring ②, 実装-3): the change of user is told once.
+			await expect(tab.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(1);
 			// This tab did not clear the shared token (I-17).
 			expect(await tab.evaluate(() => localStorage.getItem('banto.auth.token'))).toBe(
 				await other.evaluate(() => localStorage.getItem('banto.auth.token'))
@@ -2136,6 +2141,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
 				VIEWER_DISPLAY_NAME
 			);
+			// S-59: the same user - no change-of-user notice.
+			await expect(tab.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(0);
 		} finally {
 			await context.close();
 		}
@@ -2192,8 +2199,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 			await tab.goto('/dashboard', { waitUntil: 'commit' });
 			await chunkRequested;
-			// The guard and `sessionStore.load()` confirmed the viewer.
-			await expect.poll(() => sessionChecks.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+			// The guard confirmed the viewer (Issue #260 実装-3: one confirmation
+			// per load - there is no separate `sessionStore.load()` any more).
+			await expect.poll(() => sessionChecks.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
 			expect(sessionChecks.every((status) => status === 200)).toBe(true);
 
 			// Another tab logs out: the shared Remember me token disappears.
@@ -2201,6 +2209,117 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			release();
 
 			await expect(tab).toHaveURL(/\/login$/, { timeout: 20_000 });
+		} finally {
+			await context.close();
+		}
+	});
+
+	/** Make this page's session checks fail (a 500) until `unroute`d. */
+	async function failSessionChecks(tab: Page): Promise<() => Promise<void>> {
+		const outage = async (route: Route) => {
+			await route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ kind: 'storage', message: 'database is locked' })
+			});
+		};
+		await tab.route('**/api/auth/identity', outage);
+		return () => tab.unroute('**/api/auth/identity', outage);
+	}
+
+	// S-36 / S-81 (Issue #260 実装-3, design §6.1 wiring ②③, I-24): another
+	// tab logs in as a different user while this tab cannot confirm it (the
+	// session check answers 500). This tab never shows the old user's screen:
+	// its load ends on the retry page (503). The background confirmation later
+	// confirms the new user - the retry page is NOT replaced on its own - and
+	// the real "再試行" button (an in-document `invalidateAll()` that keeps the
+	// SessionController) rebuilds the screen for the new user and tells them
+	// once: the change was recorded while no protected layout was mounted.
+	test('13h. S-36/S-81: a switch that cannot be confirmed waits on the retry page; 再試行 opens the new user and tells them once', async ({
+		browser
+	}) => {
+		test.setTimeout(90_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const other = await context.newPage();
+		try {
+			await loginRemembered(tab, VIEWER_USERNAME, VIEWER_PASSWORD);
+			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+
+			const restore = await failSessionChecks(tab);
+			await loginRemembered(other, ADMIN_USERNAME, ADMIN_PASSWORD);
+
+			// S-36: the retry page, on the same URL - not the viewer's screen, not /login.
+			await expect(tab.getByText('ログイン状態を確認できませんでした')).toBeVisible();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toHaveCount(0);
+
+			// The server recovers; the background confirmation (backoff) confirms
+			// the admin. The retry page stays until the user retries.
+			const confirmed = tab.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/auth/identity' && response.status() === 200,
+				{ timeout: 60_000 }
+			);
+			await restore();
+			await confirmed;
+			await expect(tab.getByText('ログイン状態を確認できませんでした')).toBeVisible();
+			await expect(tab.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(0);
+
+			// S-81: the real retry button.
+			await tab.getByRole('button', { name: '再試行' }).click();
+			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
+				ADMIN_DISPLAY_NAME
+			);
+			await expect(tab.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			await expect(tab.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(1);
+		} finally {
+			await context.close();
+		}
+	});
+
+	// S-83 (I-24): an unhandled change of user (A -> B, recorded while this tab
+	// was on the retry page) is discarded when `none` is confirmed - here the
+	// other tab logs out. The user goes home from the retry page, lands on
+	// /login and signs in explicitly: no change-of-user notice for the old
+	// A -> B, and the fresh login is not sent anywhere else.
+	test('13i. S-83: a change of user left unhandled does not outlive a confirmed logout', async ({
+		browser
+	}) => {
+		test.setTimeout(90_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const other = await context.newPage();
+		try {
+			await loginRemembered(tab, VIEWER_USERNAME, VIEWER_PASSWORD);
+			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+
+			const restore = await failSessionChecks(tab);
+			await loginRemembered(other, ADMIN_USERNAME, ADMIN_PASSWORD);
+			await expect(tab.getByText('ログイン状態を確認できませんでした')).toBeVisible();
+			const confirmed = tab.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/auth/identity' && response.status() === 200,
+				{ timeout: 60_000 }
+			);
+			await restore();
+			await confirmed; // A -> B recorded, not handled (no protected layout)
+
+			// The other tab logs out: the shared token disappears, this tab confirms `none`.
+			await logout(other);
+			await expect(other).toHaveURL(/\/login$/);
+
+			await tab.getByRole('link', { name: 'トップへ戻る' }).click();
+			await expect(tab).toHaveURL(/\/login$/);
+			await tab.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+			await tab.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await tab.getByRole('button', { name: 'ログイン' }).click();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
+				ADMIN_DISPLAY_NAME
+			);
+			await expect(tab.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(0);
 		} finally {
 			await context.close();
 		}
