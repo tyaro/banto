@@ -84,7 +84,13 @@
       （ログアウトのメニューやパスワード変更欄が残る）。`auth.disabled == true` ⇔ 合成セッション ⇔ `auth_resolve` の
       `kind == "local"` ⇔ `sessionStore.authDisabled` が常に成り立つ。監査ログには `settings_change` に続けて、置き換えた
       アカウントの `logout`（`detail: { "reason": "auth_disabled" }`＝利用者の操作ではない終了）と合成の `login` が残る。
-      その間に始まっていたログインは `superseded` になり、合成セッションを戻さない。
+      その間に始まっていたログインは合成セッションを戻さない。
+    - **Tauri: ログイン不要モード中の `auth_login`／`auth_setup` は拒否する**（#266 オーナー決定、S-95）。
+      `LoginResult { success: false, superseded: false, error: "ログイン不要モード中はアカウントでログインできません…" }`
+      を返し、スロットも `seq` も変えない（provider は revision を進めず通知しない。ログイン画面はエラーを出す）。入口で
+      モードが有効なら検証・アカウントの作成の前に拒否し（監査なし、setup はアカウントを作らない）、検証・作成の後にも
+      `auth_config_lock` の中で読み直して、有効になっていれば設置しない（監査は従来どおり検証成功の `login`／作成の `setup`
+      が残る）。これで `auth.disabled == true` ⇔ 合成セッション ⇔ `sessionStore.authDisabled` が例外なく成り立つ。
     - admin-template: demo provider（`demo.ts`）は標準の provider（メモリ上の revision、`login`/`logout` で revision を
       進めて通知）。パネルの別ウィンドウ（`routes/panel/[id]`）は `check()` の代わりに `resolveSettled()` で確認する。
   - **派生アプリの移行の手順**（§6.2。banto-industrial の 2 アプリは候補版のコミット参照で検証してから v2.0.0 へ）:
