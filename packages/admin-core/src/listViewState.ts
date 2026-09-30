@@ -33,13 +33,14 @@
  *   its session (a new generation, even for the same account) cannot write
  *   the old session's state back;
  * - a scope with no confirmed owner (`owner === null`: before the route
- *   guard's `getIdentity()`, after the session ended, or an `AuthProvider`
- *   that cannot say who is signed in) neither reads nor writes - the
+ *   guard confirmed a session, after the session ended, or an identity
+ *   without an id) neither reads nor writes - the
  *   feature is simply off rather than guessing.
  *
- * `sessionLifecycle.ts`'s `beginSession` additionally deletes entries owned
- * by anyone else, and `endSession` deletes everything - hygiene, not the
- * safety boundary: the owner check above holds even if those never ran.
+ * The `SessionController` additionally deletes entries owned by anyone else
+ * when it confirms an owner, and everything when it confirms `none` (its
+ * `onActive`/`onNone`) - hygiene, not the safety boundary: the owner check
+ * above holds even if those never ran.
  *
  * Every read/write is best-effort: a full, disabled, or private-mode
  * `sessionStorage` silently no-ops rather than breaking the page (same
@@ -287,7 +288,7 @@ export function clearListViewState(key: string, storage?: Storage | null): void 
  * Drop EVERY key this module has ever written - every snapshot (any
  * resource/mode), every active-mode marker, every last-opened-id marker,
  * and any pending last-edited-record marker, whoever owns it.
- * `sessionLifecycle.ts`'s `endSession` calls this.
+ * The `SessionController` calls this on every commit to `none` (I-6).
  */
 export function clearAllListViewState(storage?: Storage | null): void {
 	const store = resolveStorage(storage);
@@ -298,8 +299,7 @@ export function clearAllListViewState(storage?: Storage | null): void {
 /**
  * Drop every entry NOT owned by `owner` (malformed/legacy entries without
  * an owner included); `owner === null` drops everything.
- * `sessionLifecycle.ts`'s `beginSession` calls this once the new identity is
- * confirmed, so another identity's search terms do not linger in this tab
+ * The `SessionController` calls this once an owner is confirmed, so another identity's search terms do not linger in this tab
  * even though reads would never return them.
  */
 export function purgeListViewStateNotOwnedBy(owner: string | null, storage?: Storage | null): void {

@@ -5,12 +5,12 @@ import { createListResource } from '../src/list.svelte';
 import { createInMemoryDataProvider } from '../src/providers/inMemory';
 import type { AuthProvider, DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
+import { STUB_SESSION } from './stubAuth';
 
 const authProvider: AuthProvider = {
 	login: async () => ({ success: true }),
 	logout: async () => {},
-	check: async () => true,
-	getIdentity: async () => null
+	...STUB_SESSION
 };
 
 function tick(): Promise<void> {

@@ -12,7 +12,8 @@
  * that decides between /login and a new login's session.
  *
  * Wires the real SSE provider, `connectEvents`, the real HTTP
- * `AuthProvider` and the real route-guard decision (`resolveProtectedSession`).
+ * `AuthProvider` and the route-guard decision as the app composes it on
+ * v2.0.0 (`resolveSettled` + `publicViewerFallback`, `./guard.ts`).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectEvents, createSseEventProvider } from '../src/events';
@@ -20,7 +21,7 @@ import { createHttpAuthProvider } from '../src/providers/http';
 import { initBanto } from '../src/registry.svelte';
 import { resetDefaultSessionController } from '../src/sessionController.svelte';
 import { onSessionEnded } from '../src/sessionEnded';
-import { resolveProtectedSession } from '../src/sessionGate';
+import { guardRoute } from './guard';
 import type { DataProvider } from '../src/provider';
 
 const TOKEN_KEY = 'banto.auth.token';
@@ -96,7 +97,7 @@ describe('S-34: an ending confirmed before the protected layout subscribes (I-14
 		const { auth, identitiesFor, disconnect } = wire(revoked);
 
 		// The first protected load confirms A.
-		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+		await expect(guardRoute(auth)).resolves.toBe('session');
 		// A is revoked: the stream's reconnect gets a 401, the confirmation
 		// confirms `none` and clears A - no listener exists yet.
 		revoked.add('A');
@@ -108,7 +109,7 @@ describe('S-34: an ending confirmed before the protected layout subscribes (I-14
 		// guard (what `invalidateAll()` does).
 		const outcomes: string[] = [];
 		const layout = vi.fn(() => {
-			void resolveProtectedSession(auth).then((outcome) => outcomes.push(outcome));
+			void guardRoute(auth).then((outcome) => outcomes.push(outcome));
 		});
 		const off = onSessionEnded(layout);
 		expect(layout).not.toHaveBeenCalled(); // never synchronously in the subscription
@@ -142,7 +143,7 @@ describe('S-34: an ending confirmed before the protected layout subscribes (I-14
 		localStorage.setItem(TOKEN_KEY, 'B');
 		const outcomes: string[] = [];
 		const layout = vi.fn(() => {
-			void resolveProtectedSession(auth).then((outcome) => outcomes.push(outcome));
+			void guardRoute(auth).then((outcome) => outcomes.push(outcome));
 		});
 		const off = onSessionEnded(layout);
 		await vi.advanceTimersByTimeAsync(1_000);
@@ -163,7 +164,7 @@ describe('S-34: an ending confirmed before the protected layout subscribes (I-14
 
 	it('S-34: unsubscribing before the asynchronous notification cancels it', async () => {
 		const { auth, disconnect } = wire(new Set());
-		await expect(resolveProtectedSession(auth)).resolves.toBe('login'); // no token: `none`
+		await expect(guardRoute(auth)).resolves.toBe('login'); // no token: `none`
 		const listener = vi.fn();
 		const off = onSessionEnded(listener);
 		off();

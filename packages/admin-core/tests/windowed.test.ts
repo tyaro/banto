@@ -3,6 +3,7 @@ import { invalidate } from '../src/invalidate';
 import type { DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
 import { createWindowedListResource } from '../src/windowed.svelte';
+import { STUB_SESSION } from './stubAuth';
 
 interface Row {
 	id: number;
@@ -12,8 +13,7 @@ interface Row {
 const authProvider = {
 	login: async () => ({ success: true }),
 	logout: async () => {},
-	check: async () => true,
-	getIdentity: async () => null
+	...STUB_SESSION
 };
 
 function tick(): Promise<void> {

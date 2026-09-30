@@ -1,27 +1,27 @@
+/**
+ * "The session ended while a screen was open" (Issue #241) on v2.0.0: the
+ * signal (`controller.signal()`, what `connectEvents` calls for a rejected
+ * stream) and `onSessionEnded` (kept, design §5.4). The pre-v2
+ * `confirmSessionEnded`/`createSessionEndConfirmation` are gone; the cases
+ * they covered are pinned here through the controller (the backoff itself:
+ * S-33 in sessionController.test.ts).
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	CONFIRM_RETRY_INITIAL_MS,
-	CONFIRM_TIMEOUT_MS,
-	confirmSessionEnded,
-	createSessionEndConfirmation,
-	onSessionEnded
-} from '../src/sessionEnded';
+import { onSessionEnded } from '../src/sessionEnded';
 import { initBanto } from '../src/registry.svelte';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
-import { beginSession } from '../src/sessionLifecycle';
 import {
 	currentSessionScope,
 	isCurrentSessionScope,
 	type SessionScope
 } from '../src/sessionScope.svelte';
-import type { AuthProvider, DataProvider } from '../src/provider';
-import { resetDefaultSessionController } from '../src/sessionController.svelte';
-
-// Issue #260 実装-2: these functions delegate to the default SessionController
-// (module state) - every test starts from a fresh one.
-beforeEach(() => {
-	resetDefaultSessionController();
-});
+import type { DataProvider } from '../src/provider';
+import {
+	getSessionController,
+	resetDefaultSessionController,
+	resolveSettled
+} from '../src/sessionController.svelte';
+import { ALICE, flush, makeProbeProvider } from './sessionHarness';
 
 /** In-memory Storage stand-in: Node has no global sessionStorage. */
 function makeMemoryStorage(): Storage {
@@ -38,147 +38,111 @@ function makeMemoryStorage(): Storage {
 	} as Storage;
 }
 
-/**
- * A pre-#260 provider (no `resolve`): the controller wraps it in the
- * compatibility adapter, whose `resolve()` is `check()` then - for `true` -
- * `getIdentity()` (Alice here; `check() true` + `null` would reject).
- */
-function stubCheck(check: AuthProvider['check']): void {
-	initBanto({
-		dataProvider: {} as DataProvider,
-		authProvider: {
-			login: async () => ({ success: true }),
-			logout: async () => {},
-			check,
-			getIdentity: async () => ({ id: 'alice', name: 'Alice' })
-		},
-		resources: []
-	});
+let storage: Storage;
+
+beforeEach(() => {
+	resetDefaultSessionController();
+	storage = makeMemoryStorage();
+	vi.stubGlobal('sessionStorage', storage);
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
+
+/** Alice signed in on the default controller; her list state saved. */
+async function signedIn(): Promise<{
+	p: ReturnType<typeof makeProbeProvider>;
+	scope: SessionScope;
+}> {
+	const p = makeProbeProvider();
+	initBanto({ dataProvider: {} as DataProvider, authProvider: p.provider, resources: [] });
+	const first = resolveSettled(getSessionController());
+	p.active(0, ALICE);
+	await first;
+	const scope = currentSessionScope();
+	saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
+	return { p, scope };
 }
 
-describe('confirmSessionEnded (Issue #241)', () => {
-	it('resolves ended and notifies listeners only when check() resolves false', async () => {
-		stubCheck(async () => false);
+describe('signal() and onSessionEnded (Issue #241, v2.0.0)', () => {
+	it('a signal confirmed `none` ends the session (new generation, saved state dropped) and notifies once', async () => {
+		const { p, scope } = await signedIn();
 		const ended = vi.fn();
 		const off = onSessionEnded(ended);
 
-		await expect(confirmSessionEnded()).resolves.toBe('ended');
+		getSessionController().signal('unauthorized');
+		p.none(p.probes.length - 1, { clear: true });
+		await flush();
+
 		expect(ended).toHaveBeenCalledTimes(1);
+		expect(isCurrentSessionScope(scope)).toBe(false);
+		expect(storage.getItem('banto.listView.items:server')).toBeNull();
 		off();
 	});
 
-	// Issue #215/#255 review: a background revocation confirmed while a
-	// screen is open ends the session (new generation - the open screen and
-	// any in-flight save can no longer write - and the saved list view state
-	// goes), before the listeners re-run the guard. A valid or unverifiable
-	// session (Issue #204: not a logout) is left alone.
-	describe('ends the session on a confirmed ending (#215/#255)', () => {
-		let storage: Storage;
-		let scope: SessionScope;
-
-		beforeEach(() => {
-			storage = makeMemoryStorage();
-			vi.stubGlobal('sessionStorage', storage);
-			beginSession({ id: 'alice', name: 'Alice' });
-			scope = currentSessionScope();
-			saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
-		});
-
-		afterEach(() => {
-			vi.unstubAllGlobals();
-		});
-
-		it('ends it when check() confirms the session ended', async () => {
-			stubCheck(async () => false);
-			await expect(confirmSessionEnded()).resolves.toBe('ended');
-			expect(isCurrentSessionScope(scope)).toBe(false);
-			expect(storage.getItem('banto.listView.items:server')).toBeNull();
-		});
-
-		it('does NOT end it when the session is still valid', async () => {
-			stubCheck(async () => true);
-			await expect(confirmSessionEnded()).resolves.toBe('valid');
-			expect(isCurrentSessionScope(scope)).toBe(true);
-			expect(loadListViewState(scope, 'items:server', undefined, storage)).not.toBeNull();
-		});
-
-		it('does NOT end it when the check could not be verified (Issue #204: not a logout)', async () => {
-			stubCheck(async () => {
-				throw new Error('500');
-			});
-			await expect(confirmSessionEnded()).resolves.toBe('unknown');
-			expect(isCurrentSessionScope(scope)).toBe(true);
-			expect(loadListViewState(scope, 'items:server', undefined, storage)).not.toBeNull();
-		});
-	});
-
-	it('resolves valid / unknown without notifying when the session is valid or could not be verified', async () => {
+	it('a still-valid session is left alone (no notification, state kept)', async () => {
+		const { p, scope } = await signedIn();
 		const ended = vi.fn();
 		const off = onSessionEnded(ended);
 
-		stubCheck(async () => true);
-		await expect(confirmSessionEnded()).resolves.toBe('valid');
-		stubCheck(async () => {
-			throw new Error('500');
-		});
-		await expect(confirmSessionEnded()).resolves.toBe('unknown');
+		getSessionController().signal('unauthorized');
+		p.active(p.probes.length - 1, ALICE);
+		await flush();
 
 		expect(ended).not.toHaveBeenCalled();
+		expect(isCurrentSessionScope(scope)).toBe(true);
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).not.toBeNull();
 		off();
 	});
 
-	// Issue #260 実装-2: each call is a signal-caused request, so the second
-	// does not join the first probe - it replaces it (the first is aborted,
-	// I-22) and both requests are answered by the newer probe. Listeners are
-	// told about the TRANSITION to `none` only ("notify only on change"), so a
-	// later confirmation of the same ended session does not notify again.
-	it('overlapping confirmations each check, but notify once (re-review of #242)', async () => {
-		const answers: ((valid: boolean) => void)[] = [];
-		const check = vi.fn(() => new Promise<boolean>((resolve) => answers.push(resolve)));
-		stubCheck(check);
+	it('Issue #204: a confirmation that failed (500) is not a logout', async () => {
+		const { p, scope } = await signedIn();
 		const ended = vi.fn();
 		const off = onSessionEnded(ended);
 
-		// The second call does not join the first check: that check started
-		// before the second caller's reason to ask.
-		const first = confirmSessionEnded();
-		const second = confirmSessionEnded();
-		await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2));
-		answers[0](false);
-		answers[1](false);
-		await expect(Promise.all([first, second])).resolves.toEqual(['ended', 'ended']);
-		expect(ended).toHaveBeenCalledTimes(1);
+		getSessionController().signal('unauthorized');
+		p.fail(p.probes.length - 1);
+		await flush();
 
-		// A confirmation that starts after that notification confirms again,
-		// but the session was already `none`: no second notification.
-		const third = confirmSessionEnded();
-		await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(3));
-		answers[2](false);
-		await expect(third).resolves.toBe('ended');
-		expect(ended).toHaveBeenCalledTimes(1);
+		expect(ended).not.toHaveBeenCalled();
+		expect(isCurrentSessionScope(scope)).toBe(true);
+		expect(loadListViewState(scope, 'items:server', undefined, storage)).not.toBeNull();
+		expect(getSessionController().snapshot.verification.state).toBe('failed');
 		off();
 	});
 
-	// Issue #260 実装-2: the first request moved to the second (newer) probe
-	// when the second call aborted its own, so both see the later `false`.
-	it('an earlier check answering valid does not hide a later one answering false', async () => {
-		const answers: ((valid: boolean) => void)[] = [];
-		stubCheck(() => new Promise<boolean>((resolve) => answers.push(resolve)));
+	// Re-review of #242: overlapping signals. The second does not join the
+	// first probe (it started before the second reason to ask, I-9): the first
+	// is aborted and replaced, and an earlier `valid` cannot hide a later `none`.
+	it('overlapping signals: only the newest probe decides; the earlier one is aborted; one notification', async () => {
+		const { p } = await signedIn();
 		const ended = vi.fn();
 		const off = onSessionEnded(ended);
+		const controller = getSessionController();
 
-		const first = confirmSessionEnded();
-		const second = confirmSessionEnded();
-		await vi.waitFor(() => expect(answers).toHaveLength(2));
-		answers[1](false);
-		answers[0](true);
-		await expect(Promise.all([first, second])).resolves.toEqual(['ended', 'ended']);
+		controller.signal('unauthorized');
+		controller.signal('credentialCleared');
+		const [older, newer] = p.probes.slice(-2);
+		expect(older.signal?.aborted).toBe(true);
+		expect(newer.signal?.aborted).toBe(false);
+		p.none(p.probes.length - 1, { clear: true });
+		p.active(p.probes.length - 2, ALICE); // the aborted probe's late `valid` is discarded
+		await flush();
+
+		expect(ended).toHaveBeenCalledTimes(1);
+		expect(controller.snapshot.status).toBe('none');
+
+		// Another signal while already `none`: confirmed again, no second notification.
+		controller.signal('unauthorized');
+		p.none(p.probes.length - 1);
+		await flush();
 		expect(ended).toHaveBeenCalledTimes(1);
 		off();
 	});
 
 	it('an unsubscribed listener is not called, and one throwing listener does not stop the others', async () => {
-		stubCheck(async () => false);
+		const { p } = await signedIn();
 		const removed = vi.fn();
 		const offRemoved = onSessionEnded(removed);
 		offRemoved();
@@ -188,133 +152,13 @@ describe('confirmSessionEnded (Issue #241)', () => {
 		const ended = vi.fn();
 		const off = onSessionEnded(ended);
 
-		await expect(confirmSessionEnded()).resolves.toBe('ended');
+		getSessionController().signal('unauthorized');
+		p.none(p.probes.length - 1, { clear: true });
+		await flush();
+
 		expect(removed).not.toHaveBeenCalled();
 		expect(ended).toHaveBeenCalledTimes(1);
 		offThrowing();
 		off();
-	});
-
-	it('gives up on a check() that never answers, so a later confirmation runs afresh', async () => {
-		vi.useFakeTimers();
-		try {
-			const check = vi
-				.fn<AuthProvider['check']>()
-				.mockImplementationOnce(
-					() =>
-						new Promise<boolean>(() => {
-							// hangs
-						})
-				)
-				.mockResolvedValueOnce(false);
-			stubCheck(check);
-			const ended = vi.fn();
-			const off = onSessionEnded(ended);
-
-			const hung = confirmSessionEnded();
-			await vi.advanceTimersByTimeAsync(CONFIRM_TIMEOUT_MS);
-			await expect(hung).resolves.toBe('unknown');
-			expect(ended).not.toHaveBeenCalled();
-
-			await expect(confirmSessionEnded()).resolves.toBe('ended');
-			expect(check).toHaveBeenCalledTimes(2);
-			expect(ended).toHaveBeenCalledTimes(1);
-			off();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-});
-
-describe('createSessionEndConfirmation (review of #242)', () => {
-	it('retries an unknown outcome and stops at valid', async () => {
-		vi.useFakeTimers();
-		try {
-			const check = vi
-				.fn<AuthProvider['check']>()
-				.mockRejectedValueOnce(new Error('500'))
-				.mockResolvedValueOnce(true);
-			stubCheck(check);
-			const confirmation = createSessionEndConfirmation();
-			confirmation.start();
-			await vi.advanceTimersByTimeAsync(0);
-			expect(check).toHaveBeenCalledTimes(1);
-
-			await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_INITIAL_MS);
-			expect(check).toHaveBeenCalledTimes(2);
-			await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_INITIAL_MS * 10);
-			expect(check).toHaveBeenCalledTimes(2);
-
-			// Settled: a later start() confirms afresh.
-			check.mockResolvedValueOnce(true);
-			confirmation.start();
-			await vi.advanceTimersByTimeAsync(0);
-			expect(check).toHaveBeenCalledTimes(3);
-			confirmation.stop();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('stop() cancels a pending retry', async () => {
-		vi.useFakeTimers();
-		try {
-			const check = vi.fn<AuthProvider['check']>().mockRejectedValue(new Error('500'));
-			stubCheck(check);
-			const confirmation = createSessionEndConfirmation();
-			confirmation.start();
-			await vi.advanceTimersByTimeAsync(0);
-			confirmation.stop();
-			await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_INITIAL_MS * 100);
-			expect(check).toHaveBeenCalledTimes(1);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('a signal while a check is in flight checks again, whatever that check answers (re-review of #242)', async () => {
-		const answers: ((valid: boolean) => void)[] = [];
-		const check = vi.fn(() => new Promise<boolean>((resolve) => answers.push(resolve)));
-		stubCheck(check);
-		const ended = vi.fn();
-		const off = onSessionEnded(ended);
-		const confirmation = createSessionEndConfirmation();
-
-		confirmation.start();
-		await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(1));
-		confirmation.start(); // a newer revocation, while the first check is in flight
-		expect(check).toHaveBeenCalledTimes(1); // never two checks at once
-		answers[0](true); // judged before that revocation
-		await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2));
-		answers[1](false);
-		await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
-		confirmation.stop();
-		off();
-	});
-
-	it('a signal during a backoff wait checks now instead of after the delay', async () => {
-		vi.useFakeTimers();
-		try {
-			const check = vi
-				.fn<AuthProvider['check']>()
-				.mockRejectedValueOnce(new Error('500'))
-				.mockResolvedValueOnce(false);
-			stubCheck(check);
-			const ended = vi.fn();
-			const off = onSessionEnded(ended);
-			const confirmation = createSessionEndConfirmation();
-			confirmation.start();
-			await vi.advanceTimersByTimeAsync(0);
-			expect(check).toHaveBeenCalledTimes(1);
-
-			confirmation.start();
-			await vi.advanceTimersByTimeAsync(0);
-			expect(check).toHaveBeenCalledTimes(2);
-			expect(ended).toHaveBeenCalledTimes(1);
-			confirmation.stop();
-			off();
-		} finally {
-			vi.useRealTimers();
-		}
 	});
 });

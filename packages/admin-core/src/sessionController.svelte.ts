@@ -2,11 +2,12 @@
  * SessionController - the single writer of this tab's session state
  * (Issue #260, docs/session-controller-design.md, ADR-0016).
  *
- * Before #260 four places decided "who is signed in" (`sessionGate`,
- * `sessionLifecycle`, `sessionEnded`, the app's logout), each capturing a
- * scope before an `await` and re-checking it afterwards - and every review
- * round of #255 found one of them checking in one continuation and writing
- * in another. This module replaces them with ONE state machine:
+ * Before #260 four places decided "who is signed in" (the pre-v2
+ * `sessionGate`, `sessionLifecycle`, `sessionEnded` and the app's logout),
+ * each capturing a scope before an `await` and re-checking it afterwards -
+ * and every review round of #255 found one of them checking in one
+ * continuation and writing in another. v2.0.0 removed them (design §5.4);
+ * this module is the ONE state machine that replaced them:
  *
  * - `commit()` is the only function that writes `status`/`owner`/
  *   `generation`/`identity`/`kind` (I-1). `epoch` advances on every commit
@@ -50,12 +51,9 @@ import type {
 	AuthProvider,
 	CredentialRevision,
 	Identity,
-	LegacyAuthProvider,
 	ResolvedAuth,
-	SessionKind,
-	StandardAuthProvider
+	SessionKind
 } from './provider';
-import { adaptLegacyAuthProvider } from './providers/legacyAdapter';
 
 export type { SessionKind } from './provider';
 
@@ -163,7 +161,12 @@ export interface SessionControllerDeps {
 	onActive?: (owner: string) => void;
 }
 
-/** Thrown into `unverified` when the session kept changing under pending answers `maxStaleRetries` times. */
+/**
+ * The `error` of an `unverified` result when the session kept changing under
+ * pending answers `maxStaleRetries` times. Never thrown since v2.0.0 (the
+ * removed `establishSession`/`resolveProtectedSession` threw it, design
+ * §5.4); it only appears in `unverified`.
+ */
 export class SessionChangedError extends Error {
 	constructor() {
 		super('The session changed repeatedly while its answer was pending.');
@@ -241,18 +244,25 @@ function sameIdentity(a: Identity | null, b: Identity | null): boolean {
 	return true;
 }
 
-function isStandard(provider: AuthProvider): provider is StandardAuthProvider {
-	return (
-		typeof provider.resolve === 'function' &&
-		typeof provider.credentialRevision === 'function' &&
-		typeof provider.onCredentialChanged === 'function'
-	);
-}
-
-/** A provider with the three #260 methods as is; any other is wrapped in the compatibility adapter (統合修正 15). */
-export function toStandardAuthProvider(provider: AuthProvider): StandardAuthProvider {
-	if (isStandard(provider)) return provider;
-	return adaptLegacyAuthProvider(provider as LegacyAuthProvider);
+/**
+ * v2.0.0 (design §5.2, owner decision 2): `resolve`/`credentialRevision`/
+ * `onCredentialChanged` are required. The types already say so; this is the
+ * runtime check for a provider that got past them (plain JavaScript, a
+ * cast). v1.8's silent fallback - wrapping such a provider in the
+ * compatibility adapter (統合修正 15) - is gone: adapting a pre-v2 provider
+ * is an explicit decision of the app (`adaptLegacyAuthProvider`).
+ */
+function assertStandardAuthProvider(provider: AuthProvider): void {
+	const p = provider as Partial<AuthProvider>;
+	if (
+		typeof p.resolve !== 'function' ||
+		typeof p.credentialRevision !== 'function' ||
+		typeof p.onCredentialChanged !== 'function'
+	) {
+		throw new TypeError(
+			'This AuthProvider lacks resolve()/credentialRevision()/onCredentialChanged(), which @banto/admin-core v2.0.0 requires. Implement them, or wrap a pre-v2 provider in adaptLegacyAuthProvider() (see what it does not guarantee).'
+		);
+	}
 }
 
 const EMPTY_VERIFICATION = Object.freeze({ state: 'idle' as const, lastError: null });
@@ -277,7 +287,7 @@ interface Waiter {
 }
 
 interface Probe {
-	provider: StandardAuthProvider;
+	provider: AuthProvider;
 	startedAt: number;
 	epochAtStart: number;
 	revisionAtStart: CredentialRevision;
@@ -296,19 +306,11 @@ interface Probe {
 
 type ProbeOutcome = { ok: true; answer: ResolvedAuth } | { ok: false; error: unknown };
 
-/** Internal operations the pre-#260 API delegates to (removed with it in v2.0.0). Not exported from the package. */
+/** Internal operations of a controller (`initBanto`'s binding, `resolveSettled`'s defaults). Not exported from the package. */
 export interface SessionControllerInternals {
 	readonly controller: SessionController;
-	/** The raw provider currently bound (before adaptation), or `null`. */
-	boundProvider(): AuthProvider | null;
-	/** Bind `provider` (no-op for the same one). Treated as "not a credential change". */
+	/** Bind `provider` (no-op for the same one; a switch of provider is an external transition). */
 	bind(provider: AuthProvider): void;
-	/** `beginSession(identity)`: an external commit of `active`. */
-	legacyBegin(identity: Identity | null): void;
-	/** `endSession()`: an external commit of `none`. */
-	legacyEnd(): void;
-	/** `confirmSessionEnded`'s request: a signal-caused resolve that does not start the controller's own backoff loop (the legacy confirmation has its own). */
-	legacyResolveSignal(): Promise<ResolveResult>;
 	scheduler: Required<SessionControllerDeps>['scheduler'];
 	defaultTimeoutMs: number;
 }
@@ -341,8 +343,7 @@ function createCore(
 	const onNone = deps.onNone ?? (() => clearAllListViewState());
 	const onActive = deps.onActive ?? ((owner: string) => purgeListViewStateNotOwnedBy(owner));
 
-	let rawProvider: AuthProvider | null = null;
-	let provider: StandardAuthProvider | null = null;
+	let provider: AuthProvider | null = null;
 	let unsubscribeProvider: (() => void) | null = null;
 
 	let snap: SessionSnapshot = $state.raw(INITIAL_SNAPSHOT);
@@ -437,8 +438,8 @@ function createCore(
 
 	/**
 	 * THE writer (I-1). Synchronous. `external` = a transition the pending
-	 * requests did not ask for (a hold, `adopt`, `end`, the legacy
-	 * begin/end): their waiters get `superseded` right here (I-20, S-14) and
+	 * requests did not ask for (a hold, `adopt`, `end`, a switch of
+	 * provider): their waiters get `superseded` right here (I-20, S-14) and
 	 * the in-flight probe is aborted (it can no longer be applied, I-22).
 	 */
 	function commit(
@@ -848,10 +849,7 @@ function createCore(
 		if (probe && !probe.done && probe.waiters.size === 0 && !pendingBackground) retire(probe);
 	}
 
-	function resolveInternal(
-		options: SessionResolveOptions | undefined,
-		background: boolean
-	): Promise<ResolveResult> {
+	function resolveInternal(options: SessionResolveOptions | undefined): Promise<ResolveResult> {
 		return new Promise<ResolveResult>((resolveFn) => {
 			// Step 0.
 			detectDrift();
@@ -859,7 +857,7 @@ function createCore(
 			const requestedAt = stamp();
 			if (options?.cause === 'signal') {
 				latestSignalAt = requestedAt;
-				if (background) pendingBackground = true;
+				pendingBackground = true;
 			}
 			if (adopted) {
 				resolveFn(confirmed());
@@ -922,7 +920,7 @@ function createCore(
 			};
 		},
 		resolve(options) {
-			return resolveInternal(options, true);
+			return resolveInternal(options);
 		},
 		signal() {
 			latestSignalAt = stamp();
@@ -961,8 +959,9 @@ function createCore(
 	 * Bind the provider the session is confirmed against.
 	 * - The same provider again: no-op.
 	 * - The first provider (none bound yet): not a transition - nothing was
-	 *   confirmed against any provider (a legacy `beginSession` before
-	 *   `initBanto` stays).
+	 *   confirmed against any provider.
+	 * - A provider without `resolve`/`credentialRevision`/
+	 *   `onCredentialChanged` throws a `TypeError` (v2.0.0) and binds nothing.
 	 * - A DIFFERENT provider (owner review of #265 P1): an external transition.
 	 *   The session confirmed against the old provider says nothing about the
 	 *   new one: the in-flight probe is retired (its waiters get `superseded`,
@@ -975,11 +974,11 @@ function createCore(
 	 *   compared.
 	 */
 	function bind(next: AuthProvider): void {
-		if (next === rawProvider) return;
-		const switching = rawProvider !== null;
-		rawProvider = next;
+		if (next === provider) return;
+		assertStandardAuthProvider(next);
+		const switching = provider !== null;
 		unsubscribeProvider?.();
-		provider = toStandardAuthProvider(next);
+		provider = next;
 		unsubscribeProvider = provider.onCredentialChanged(onCredentialChanged);
 		appliedRevision = provider.credentialRevision();
 		if (!switching) {
@@ -1002,30 +1001,7 @@ function createCore(
 
 	const internals: SessionControllerInternals = {
 		controller,
-		boundProvider: () => rawProvider,
 		bind,
-		legacyBegin(identity) {
-			adopted = false;
-			const kind: SessionKind = identity?.publicViewer === true ? 'publicViewer' : 'account';
-			commit(
-				{
-					status: 'active',
-					owner: sessionOwnerKey(identity, kind),
-					identity,
-					kind: identity ? kind : null
-				},
-				{ external: true }
-			);
-			appliedRevision = currentRevision();
-		},
-		legacyEnd() {
-			adopted = false;
-			commit({ status: 'none', owner: null, identity: null, kind: null }, { external: true });
-			kickBackground();
-		},
-		legacyResolveSignal() {
-			return resolveInternal({ cause: 'signal' }, false);
-		},
 		scheduler,
 		defaultTimeoutMs: timeoutMs
 	};
@@ -1033,7 +1009,7 @@ function createCore(
 	return internals;
 }
 
-/** A controller over `provider` (a provider without `resolve`/`credentialRevision`/`onCredentialChanged` is wrapped in `adaptLegacyAuthProvider`). */
+/** A controller over `provider`, which must implement `resolve`/`credentialRevision`/`onCredentialChanged` (wrap a pre-v2 provider in `adaptLegacyAuthProvider` first; otherwise a `TypeError`). */
 export function createSessionController(
 	provider: AuthProvider,
 	deps?: SessionControllerDeps
@@ -1053,16 +1029,11 @@ export function getSessionController(): SessionController {
 	return ensureDefaultCore().controller;
 }
 
-/** Internal: bind the default controller to `provider` (`initBanto`, and the pre-#260 API that takes a provider). */
+/** Internal: bind the default controller to `provider` (`initBanto`). */
 export function bindDefaultSessionProvider(provider: AuthProvider): SessionControllerInternals {
 	const core = ensureDefaultCore();
 	core.bind(provider);
 	return core;
-}
-
-/** Internal: the default controller's internals (the pre-#260 API delegates here). */
-export function defaultSessionInternals(): SessionControllerInternals {
-	return ensureDefaultCore();
 }
 
 /** Test support (not exported from the package): start the next test with a fresh default controller. */
@@ -1136,14 +1107,33 @@ function normalizeEntered(value: unknown): EnterResult {
 	return { success: false };
 }
 
-/** Internal: `publicViewerFallback` that also reports whether it gave up on its retry limit (the pre-#260 gate throws then). */
-export async function runPublicViewerFallback(
+/**
+ * The public-viewer entry as an app policy outside the controller (design
+ * §6.1, S-42/S-52/S-66): given the `ticket` of a confirmed `none`, mint a
+ * public-viewer session when `status().viewerPublic` is on - bound to that
+ * ticket (`expectRevision`) - and confirm the result. Returns a
+ * `ResolveResult` that is `confirmed` or `unverified` (never `superseded`):
+ * callers handle `unverified` first (503), and only a confirmed `none` goes
+ * to /login.
+ *
+ * When the credential changed after the ticket - noticed either as a stale
+ * ticket before minting (the `storage` event already arrived) or as a
+ * `superseded` mint (it had not) - the result is confirmed again, and ONLY
+ * when that confirmation is `none` again (e.g. a revoked token appeared and
+ * `resolve()` cleared it) is the policy re-run with the new ticket: up to
+ * `maxRetries` times (default `DEFAULT_PUBLIC_VIEWER_RETRIES`), so the
+ * policy runs at most `maxRetries + 1` times; past that, the last confirmed
+ * `none` is returned (the caller goes to /login). A failed mint (403, a
+ * network error) is not a credential change and is not retried.
+ */
+export async function publicViewerFallback(
 	controller: SessionController,
 	provider: Pick<AuthProvider, 'status' | 'enterPublicViewer'>,
-	initialTicket: SessionTicket,
-	maxRetries: number
-): Promise<{ result: ResolveResult; exhausted: boolean }> {
-	let ticket = initialTicket;
+	ticket: SessionTicket,
+	options?: { maxRetries?: number }
+): Promise<Exclude<ResolveResult, { outcome: 'superseded' }>> {
+	const maxRetries = options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES;
+	let current = ticket;
 	for (let retries = 0; ; retries++) {
 		let status: { initialized: boolean; viewerPublic?: boolean } | undefined;
 		try {
@@ -1151,62 +1141,29 @@ export async function runPublicViewerFallback(
 		} catch {
 			status = undefined; // A failed read only means "do not mint" (S-52/S-66).
 		}
-		let result: ResolveResult;
-		if (!controller.isCurrent(ticket)) {
+		let result: Exclude<ResolveResult, { outcome: 'superseded' }>;
+		if (!controller.isCurrent(current)) {
 			// Synchronous check, no `await` until the confirmation below.
 			result = await resolveSettled(controller);
 		} else if (!status?.viewerPublic || !provider.enterPublicViewer) {
-			return {
-				result: { outcome: 'confirmed', snapshot: controller.snapshot, ticket },
-				exhausted: false
-			};
+			return { outcome: 'confirmed', snapshot: controller.snapshot, ticket: current };
 		} else {
 			const entered = normalizeEntered(
-				await provider.enterPublicViewer({ expectRevision: ticket.revision })
+				await provider.enterPublicViewer({ expectRevision: current.revision })
 			);
-			if (!entered.success && !entered.superseded && controller.isCurrent(ticket)) {
+			if (!entered.success && !entered.superseded && controller.isCurrent(current)) {
 				// Minting failed (403 / network) and nothing changed since the
 				// `none` was confirmed: that `none` still stands (no retry).
-				return {
-					result: { outcome: 'confirmed', snapshot: controller.snapshot, ticket },
-					exhausted: false
-				};
+				return { outcome: 'confirmed', snapshot: controller.snapshot, ticket: current };
 			}
 			result = await resolveSettled(controller);
-			if (!entered.superseded) return { result, exhausted: false };
+			if (!entered.superseded) return result;
 		}
-		// The credential changed after `ticket`. Re-run the policy only when
+		// The credential changed after `current`. Re-run the policy only when
 		// that change was confirmed to be `none` again (a revoked token that
 		// appeared and was cleared); anything else is the answer.
-		if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') {
-			return { result, exhausted: false };
-		}
-		if (retries >= maxRetries) return { result, exhausted: true };
-		ticket = result.ticket;
+		if (result.outcome !== 'confirmed' || result.snapshot.status !== 'none') return result;
+		if (retries >= maxRetries) return result;
+		current = result.ticket;
 	}
-}
-
-/**
- * The public-viewer entry as an app policy outside the controller (design
- * §6.1, S-42/S-52/S-66): given the `ticket` of a confirmed `none`, mint a
- * public-viewer session when `status().viewerPublic` is on - bound to that
- * ticket (`expectRevision`) - and confirm the result. Returns a
- * `ResolveResult`: callers handle `unverified` first (503), and only a
- * confirmed `none` goes to /login. Re-runs itself (up to `maxRetries`,
- * default `DEFAULT_PUBLIC_VIEWER_RETRIES`) when the credential changed after
- * the ticket and was confirmed `none` again.
- */
-export async function publicViewerFallback(
-	controller: SessionController,
-	provider: Pick<AuthProvider, 'status' | 'enterPublicViewer'>,
-	ticket: SessionTicket,
-	options?: { maxRetries?: number }
-): Promise<ResolveResult> {
-	const { result } = await runPublicViewerFallback(
-		controller,
-		provider,
-		ticket,
-		options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES
-	);
-	return result;
 }

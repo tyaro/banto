@@ -1,5 +1,5 @@
 /**
- * SessionController (Issue #260 実装-2, docs/session-controller-design.md).
+ * SessionController (Issue #260 実装-2/実装-3, docs/session-controller-design.md).
  * Test names start with the scenario number (`S-n:`) of design §4; each
  * `describe` names the invariants (I-n) it pins down. §3.1's generation
  * table has one test per row. The order of answers/timers is decided by the
@@ -695,6 +695,140 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 	});
 });
 
+describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-52)', () => {
+	/** A confirmed `none` and its ticket - where the guard hands over to the policy. */
+	async function confirmedNone(ctx: ReturnType<typeof setup>) {
+		const first = ctx.controller.resolve();
+		ctx.p.none(0);
+		const confirmed = await first;
+		if (confirmed.outcome !== 'confirmed') throw new Error('expected confirmed');
+		return confirmed.ticket;
+	}
+
+	it('S-52: B is confirmed while status() is pending: the stale ticket stops the mint, B is the answer', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+
+		p.change(); // B logged in (none is not held; a background probe starts)
+		p.active(ctx.last(), BOB);
+		await flush();
+		expect(controller.snapshot.owner).toBe('account:bob');
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		p.active(ctx.last(), BOB); // the policy confirms what is stored now
+
+		const result = await fallback;
+		expect(p.entries).toHaveLength(0); // enterPublicViewer never called
+		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'account:bob' } });
+	});
+
+	it('S-20: a revoked token appeared before the mint, its event not yet delivered: the mint is superseded, the token confirmed `none` (cleared), and the re-run mints', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		expect(p.entries[0].expectRevision).toBe(ticket.revision);
+		p.entries[0].answer.resolve({ success: false, superseded: true }); // a token is stored
+		await flush();
+		p.none(ctx.last(), { clear: true }); // it was revoked: resolve() cleared it
+		await flush();
+
+		// The re-run, with the ticket of that confirmation.
+		p.statuses[1].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		expect(p.entries[1].expectRevision).toBe(p.revision);
+		p.change(); // the public-viewer token was stored and reported
+		p.entries[1].answer.resolve({ success: true });
+		await flush();
+		p.active(ctx.last(), PUBLIC);
+
+		await expect(fallback).resolves.toMatchObject({
+			outcome: 'confirmed',
+			snapshot: { kind: 'publicViewer', owner: 'public-viewer' }
+		});
+		expect(p.statuses).toHaveLength(2);
+	});
+
+	it('S-20: the same token, its event already delivered (the ticket is stale at the check): confirmed `none` without a mint, then the re-run mints', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+
+		p.change(); // the storage event arrived: a background probe starts
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		expect(p.entries).toHaveLength(0); // no mint on a stale ticket
+		p.none(ctx.last(), { clear: true });
+		await flush();
+
+		p.statuses[1].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		p.change();
+		p.entries[0].answer.resolve({ success: true });
+		await flush();
+		p.active(ctx.last(), PUBLIC);
+
+		await expect(fallback).resolves.toMatchObject({
+			outcome: 'confirmed',
+			snapshot: { kind: 'publicViewer' }
+		});
+	});
+
+	for (const [maxRetries, rounds] of [
+		[3, 4],
+		[0, 1]
+	] as const) {
+		it(`S-20: a token that keeps reappearing: maxRetries = ${maxRetries} runs the policy ${rounds} time(s) (status() and resolveSettled ${rounds} each), then the last confirmed \`none\``, async () => {
+			const ctx = setup();
+			const { p, controller } = ctx;
+			const ticket = await confirmedNone(ctx);
+			const probesBefore = p.probes.length;
+			const fallback = publicViewerFallback(controller, p.provider, ticket, { maxRetries });
+
+			for (let round = 0; round < rounds; round++) {
+				await flush();
+				p.statuses[round].resolve({ initialized: true, viewerPublic: true });
+				await flush();
+				p.entries[round].answer.resolve({ success: false, superseded: true });
+				await flush();
+				p.none(ctx.last(), { clear: true });
+			}
+
+			await expect(fallback).resolves.toMatchObject({
+				outcome: 'confirmed',
+				snapshot: { status: 'none' }
+			});
+			expect(p.statuses).toHaveLength(rounds);
+			expect(p.entries).toHaveLength(rounds);
+			expect(p.probes.length - probesBefore).toBe(rounds);
+		});
+	}
+
+	it('a failed mint (403 / network, not superseded) is not retried: the confirmed `none` stands', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const probes = p.probes.length;
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		p.entries[0].answer.resolve({ success: false });
+
+		await expect(fallback).resolves.toMatchObject({
+			outcome: 'confirmed',
+			snapshot: { status: 'none' }
+		});
+		expect(p.statuses).toHaveLength(1);
+		expect(p.probes).toHaveLength(probes);
+	});
+});
+
 describe('§4.8 `superseded` under a load (I-8, I-16)', () => {
 	it('S-48: resolveSettled asks again after `superseded` and returns B’s generation', async () => {
 		const { p, controller, settleTo } = setup();
@@ -1209,17 +1343,31 @@ describe('§3.1 generation table (I-2)', () => {
 });
 
 describe('provider binding', () => {
-	it('a provider without resolve is wrapped in the compatibility adapter (統合修正 15)', async () => {
-		const legacy: AuthProvider = {
+	it('v2.0.0: a provider without resolve/credentialRevision/onCredentialChanged is rejected (no silent adapter)', () => {
+		const legacy = {
 			login: async () => ({ success: true }),
 			logout: async () => {},
 			check: vi.fn(async () => false),
 			getIdentity: vi.fn(async () => null)
 		};
-		const controller = createSessionController(legacy, { onNone: vi.fn(), onActive: vi.fn() });
+		expect(() => createSessionController(legacy as unknown as AuthProvider)).toThrow(TypeError);
+		expect(legacy.check).not.toHaveBeenCalled();
+	});
+
+	it('an explicitly adapted pre-v2 provider works (the adapter is the migration scaffold)', async () => {
+		const check = vi.fn(async () => false);
+		const controller = createSessionController(
+			adaptLegacyAuthProvider({
+				login: async () => ({ success: true }),
+				logout: async () => {},
+				check,
+				getIdentity: async () => null
+			}),
+			{ onNone: vi.fn(), onActive: vi.fn() }
+		);
 		await expect(controller.resolve()).resolves.toMatchObject({ outcome: 'confirmed' });
 		expect(controller.snapshot.status).toBe('none');
-		expect(legacy.check).toHaveBeenCalledTimes(1);
+		expect(check).toHaveBeenCalledTimes(1);
 	});
 
 	it('a listener that throws does not stop the others', async () => {

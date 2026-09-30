@@ -2,8 +2,8 @@
  * `TauriDataProvider`/`TauriAuthProvider` (spec §3.2, §3.3, §10): map
  * `DataProvider`/`AuthProvider` calls onto Tauri `invoke()` using the
  * command naming convention `${resource}_list` / `_get` / `_create` /
- * `_update` / `_delete`, and `auth_login` / `auth_logout` / `auth_check` /
- * `auth_identity` / `auth_resolve` for auth.
+ * `_update` / `_delete`, and `auth_login` / `auth_logout` / `auth_resolve`
+ * for auth.
  *
  * No dependency on `@tauri-apps/api` here — the app injects its own
  * `invoke` function, so this module (and its tests) work without a Tauri
@@ -16,12 +16,12 @@
  */
 import type {
 	AuthOperationResult,
+	AuthProvider,
 	CredentialRevision,
 	DataProvider,
 	Identity,
 	ResolvedAuth,
-	SessionKind,
-	StandardAuthProvider
+	SessionKind
 } from '../provider';
 import type { ListParams, ListResult } from '../types';
 import { ProviderError, StaleAnswerError, type ErrorBody } from '../errors';
@@ -155,9 +155,10 @@ function seqOf(value: unknown): number | undefined {
 
 /**
  * Standard `AuthProvider` for the Tauri webview (spec §3.3), backed by the
- * `auth_login` / `auth_logout` / `auth_check` / `auth_identity` /
- * `auth_resolve` / `auth_status` / `auth_setup` / `auth_change_password`
- * commands (spec §8.2).
+ * `auth_login` / `auth_logout` / `auth_resolve` / `auth_status` /
+ * `auth_setup` / `auth_change_password` commands (spec §8.2). (The Rust
+ * `auth_check` / `auth_identity` commands remain for other callers; the v2
+ * `AuthProvider` has no `check()`/`getIdentity()`, design §5.4.)
  *
  * Issue #260 (docs/session-controller-design.md §5.3, I-19/I-23): the
  * revision is the pair `(observedSeq, local)`, handed out as the opaque
@@ -176,7 +177,7 @@ function seqOf(value: unknown): number | undefined {
  * `resolve()` - is rejected with `StaleAnswerError`, as is one the backend
  * reports stale.
  */
-export function createTauriAuthProvider(options: TauriAuthProviderOptions): StandardAuthProvider {
+export function createTauriAuthProvider(options: TauriAuthProviderOptions): AuthProvider {
 	const call = makeCaller(options.invoke);
 	const opPendingTimeoutMs = options.opPendingTimeoutMs ?? DEFAULT_OP_PENDING_TIMEOUT_MS;
 
@@ -244,15 +245,6 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Stan
 		async logout(): Promise<void> {
 			const result = await runOp<unknown>('auth_logout');
 			observe(seqOf(result));
-		},
-
-		async check(): Promise<boolean> {
-			return call<boolean>('auth_check');
-		},
-
-		async getIdentity(): Promise<Identity | null> {
-			const identity = await call<Identity | null>('auth_identity');
-			return identity ?? null;
 		},
 
 		/**

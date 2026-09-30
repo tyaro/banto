@@ -17,7 +17,9 @@
  *   `ADAPTER_REVISION`, and `onCredentialChanged` accepts listeners but
  *   never calls them;
  * - `login`/`logout`/`setup`/`changePassword`/`status` pass through;
- *   `enterPublicViewer`'s boolean becomes `{ success }`.
+ *   `enterPublicViewer`'s boolean becomes `{ success }`. The legacy
+ *   `check()`/`getIdentity()` are only used by `resolve()` (they are not
+ *   part of the v2 `AuthProvider`).
  *
  * NOT guaranteed:
  * - one round trip: the credential can change between `check()` and
@@ -30,13 +32,15 @@
  *
  * Migrate by implementing the three methods on the provider itself (for
  * HTTP: one `GET /api/auth/identity`), or by switching to the admin-core
- * providers.
+ * providers. The logout flow also relies on the provider: after
+ * `logout()` the app asks `resolveSettled()` (never `end()`, I-10), so an
+ * adapted `logout()` must leave the legacy `check()` answering `false`.
  */
 import type {
+	AuthProvider,
 	CredentialRevision,
 	LegacyAuthProvider,
-	ResolvedAuth,
-	StandardAuthProvider
+	ResolvedAuth
 } from '../provider';
 import { ProviderError } from '../errors';
 
@@ -44,12 +48,10 @@ import { ProviderError } from '../errors';
 export const ADAPTER_REVISION = '0.0' as CredentialRevision;
 
 /** Wrap a pre-#260 `AuthProvider` so it satisfies the v2 contract's shape. */
-export function adaptLegacyAuthProvider(legacy: LegacyAuthProvider): StandardAuthProvider {
-	const adapted: StandardAuthProvider = {
+export function adaptLegacyAuthProvider(legacy: LegacyAuthProvider): AuthProvider {
+	const adapted: AuthProvider = {
 		login: (params) => legacy.login(params),
 		logout: () => legacy.logout(),
-		check: () => legacy.check(),
-		getIdentity: () => legacy.getIdentity(),
 
 		async resolve(): Promise<ResolvedAuth> {
 			const valid = await legacy.check();

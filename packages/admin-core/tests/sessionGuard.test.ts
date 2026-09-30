@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isProviderError } from '../src/errors';
 import { loadListViewState, saveListViewState } from '../src/listViewState';
+import type { AuthProvider, CredentialRevision } from '../src/provider';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { createTauriAuthProvider } from '../src/providers/tauri';
-import { beginSession, MAX_STALE_RETRIES, SessionChangedError } from '../src/sessionLifecycle';
 import { currentSessionScope, isCurrentSessionScope } from '../src/sessionScope.svelte';
-import { resolveProtectedSession } from '../src/sessionGate';
-import { resetDefaultSessionController } from '../src/sessionController.svelte';
+import {
+	bindDefaultSessionProvider,
+	DEFAULT_PUBLIC_VIEWER_RETRIES,
+	getSessionController,
+	publicViewerFallback,
+	resetDefaultSessionController,
+	resolveSettled
+} from '../src/sessionController.svelte';
+import { protectedGuard as guardOutcome } from './guard';
 
 /**
  * Issue #204 review: a session the backend could not VERIFY (a `500` from
@@ -14,7 +21,23 @@ import { resetDefaultSessionController } from '../src/sessionController.svelte';
  * treated as logged out - no redirect to /login, no switch to a public viewer
  * session, no token cleared or replaced - and must resume once the backend
  * answers again. Only a confirmed-invalid session falls through.
+ *
+ * Issue #260 実装-3 (v2.0.0): the decision is the app's composition of
+ * `resolveSettled()` and `publicViewerFallback()` (design §6.1,
+ * `./guard.ts`) over the default controller bound to the real HTTP / Tauri
+ * provider. "Could not verify" is `unverified` (the 503 page), never a
+ * rejection. These were the `resolveProtectedSession` tests.
  */
+
+/** Bind `auth` to the default controller (what `initBanto` does) and run the guard. */
+async function guard(auth: AuthProvider) {
+	bindDefaultSessionProvider(auth);
+	return guardOutcome(auth);
+}
+
+async function route(auth: AuthProvider) {
+	return (await guard(auth)).route;
+}
 
 const KEY = 'banto.auth.token';
 
@@ -97,7 +120,7 @@ beforeEach(() => {
 	resetDefaultSessionController();
 });
 
-describe('resolveProtectedSession (HTTP provider)', () => {
+describe('the guard over the HTTP provider (#204)', () => {
 	for (const viewerPublic of [false, true]) {
 		for (const remember of [false, true]) {
 			const label = `viewerPublic ${viewerPublic ? 'ON' : 'OFF'}, ${remember ? 'Remember me' : 'regular'} token`;
@@ -110,21 +133,23 @@ describe('resolveProtectedSession (HTTP provider)', () => {
 				const before = storedTokens();
 
 				state.checkFails = true;
-				const failure = await resolveProtectedSession(auth).catch((err: unknown) => err);
-				expect(isProviderError(failure)).toBe(true);
-				expect((failure as { body: { kind: string } }).body.kind).toBe('storage');
+				const failure = await guard(auth);
+				expect(failure.route).toBe('unverified');
+				const error = (failure as { error: unknown }).error;
+				expect(isProviderError(error)).toBe(true);
+				expect((error as { body: { kind: string } }).body.kind).toBe('storage');
 				expect(storedTokens(), 'no token cleared or replaced').toEqual(before);
 				expect(state.calls, 'no status / public viewer entry after a failed check').toEqual([
 					'/api/auth/identity'
 				]);
 
 				state.checkFails = false;
-				await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+				await expect(route(auth)).resolves.toBe('session');
 				expect(storedTokens()).toEqual(before);
 				expect(auth.getToken()).toBe('user-token');
 			});
 
-			it(`${label}: an unreachable server is an error too, not a logout`, async () => {
+			it(`${label}: an unreachable server is unverified too, not a logout`, async () => {
 				const { state, fetchFn } = fakeServer({ viewerPublic });
 				const auth = createHttpAuthProvider({ fetchFn });
 				(remember ? localStorage : sessionStorage).setItem(KEY, 'user-token');
@@ -132,11 +157,13 @@ describe('resolveProtectedSession (HTTP provider)', () => {
 				const before = storedTokens();
 
 				state.unreachable = true;
-				await expect(resolveProtectedSession(auth)).rejects.toSatisfy(isProviderError);
+				const failure = await guard(auth);
+				expect(failure.route).toBe('unverified');
+				expect(isProviderError((failure as { error: unknown }).error)).toBe(true);
 				expect(storedTokens()).toEqual(before);
 
 				state.unreachable = false;
-				await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+				await expect(route(auth)).resolves.toBe('session');
 			});
 		}
 
@@ -145,7 +172,7 @@ describe('resolveProtectedSession (HTTP provider)', () => {
 			const auth = createHttpAuthProvider({ fetchFn });
 			sessionStorage.setItem(KEY, 'revoked-token');
 
-			const outcome = await resolveProtectedSession(auth);
+			const outcome = await route(auth);
 			if (viewerPublic) {
 				expect(outcome).toBe('publicViewer');
 				expect(auth.getToken()).toBe('public-token');
@@ -155,18 +182,16 @@ describe('resolveProtectedSession (HTTP provider)', () => {
 		});
 	}
 
-	it('a 401 from check is a confirmed logout: the token is cleared', async () => {
+	it('a 401 from the identity route is a confirmed `none`: the token is cleared', async () => {
 		const fetchFn = vi.fn(async () => new Response(null, { status: 401 }));
 		const auth = createHttpAuthProvider({ fetchFn: fetchFn as unknown as typeof fetch });
 		localStorage.setItem(KEY, 'expired-token');
-		await expect(auth.check()).resolves.toBe(false);
+		await expect(route(auth)).resolves.toBe('login');
 		expect(storedTokens()).toEqual({ local: null, session: null });
 	});
 });
 
-describe('resolveProtectedSession (Tauri provider)', () => {
-	// Issue #260 実装-2: the delegated gate asks `auth_resolve` (one round
-	// trip) instead of `auth_check`.
+describe('the guard over the Tauri provider', () => {
 	const resolved = (identity: { id: string; name: string } | null) => ({
 		identity,
 		kind: identity ? 'account' : null,
@@ -175,7 +200,7 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 		stale: false
 	});
 
-	it('a failed auth_resolve rejects without consulting status or logging out', async () => {
+	it('a failed auth_resolve is unverified, without consulting status or logging out', async () => {
 		let checkFails = true;
 		const invoke = vi.fn(async (command: string) => {
 			if (command === 'auth_resolve') {
@@ -187,84 +212,82 @@ describe('resolveProtectedSession (Tauri provider)', () => {
 		});
 		const auth = createTauriAuthProvider({ invoke });
 
-		await expect(resolveProtectedSession(auth)).rejects.toSatisfy(isProviderError);
+		const failure = await guard(auth);
+		expect(failure.route).toBe('unverified');
+		expect(isProviderError((failure as { error: unknown }).error)).toBe(true);
 		expect(invoke.mock.calls.map(([command]) => command)).toEqual(['auth_resolve']);
 
 		checkFails = false;
-		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+		await expect(route(auth)).resolves.toBe('session');
 	});
 
 	it('a confirmed-invalid desktop session goes to login', async () => {
 		const invoke = vi.fn(async (command: string) =>
 			command === 'auth_resolve' ? resolved(null) : { initialized: true }
 		);
-		await expect(resolveProtectedSession(createTauriAuthProvider({ invoke }))).resolves.toBe(
-			'login'
-		);
+		await expect(route(createTauriAuthProvider({ invoke }))).resolves.toBe('login');
 	});
 });
 
-// Issue #215/#255 (4th review): once check() CONFIRMED the session is not
-// valid, the previous identity is gone whichever way the guard continues -
-// endSession() runs (new generation, saved list view state dropped) before
-// either the public-viewer entry or the login redirect. A still-valid
+// Issue #215/#255 (4th review): once the session is CONFIRMED not valid, the
+// previous identity is gone whichever way the guard continues - the
+// controller commits `none` (new generation, saved list view state dropped)
+// before either the public-viewer entry or the login redirect. A still-valid
 // session is left alone.
-describe('resolveProtectedSession ends the confirmed-invalid session (#215/#255)', () => {
-	function establishedScope() {
-		beginSession({ id: 'alice', name: 'Alice' });
+describe('the guard ends the confirmed-invalid session (#215/#255, I-6)', () => {
+	async function establishedScope(auth: AuthProvider, state: { validTokens: Set<string> }) {
+		sessionStorage.setItem(KEY, 'user-token');
+		state.validTokens.add('user-token');
+		await expect(route(auth)).resolves.toBe('session');
 		const scope = currentSessionScope();
+		expect(scope.owner).toBe('account:alice');
 		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, sessionStorage);
 		return scope;
 	}
 
-	it("outcome 'login' (viewerPublic OFF): ends the session", async () => {
-		const { fetchFn } = fakeServer({ viewerPublic: false });
+	it("'login' (viewerPublic OFF): ends the session", async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: false });
 		const auth = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem(KEY, 'revoked-token');
-		const scope = establishedScope();
+		const scope = await establishedScope(auth, state);
+		state.validTokens.delete('user-token'); // revoked from another session
 
-		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
+		await expect(route(auth)).resolves.toBe('login');
 		expect(isCurrentSessionScope(scope)).toBe(false);
 		expect(currentSessionScope().owner).toBeNull();
 		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
 	});
 
-	it("outcome 'publicViewer': ends the previous session before entering the synthetic one", async () => {
-		const { fetchFn } = fakeServer({ viewerPublic: true });
+	it("'publicViewer': ends the previous session before entering the synthetic one", async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: true });
 		const auth = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem(KEY, 'revoked-token');
-		const scope = establishedScope();
+		const scope = await establishedScope(auth, state);
+		state.validTokens.delete('user-token');
 
-		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
+		await expect(route(auth)).resolves.toBe('publicViewer');
 		expect(isCurrentSessionScope(scope)).toBe(false);
-		// Issue #260 実装-2: the delegated gate confirms the minted public-viewer
-		// session through the controller (it used to leave that to the app's
-		// `establishSession`), so the owner is the public viewer, not `null`.
 		expect(currentSessionScope().owner).toBe('public-viewer');
 		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
 	});
 
-	it("outcome 'session' (still valid): leaves the session and its state alone", async () => {
+	it("'session' (still valid): leaves the session and its state alone", async () => {
 		const { state, fetchFn } = fakeServer({ viewerPublic: false });
 		const auth = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem(KEY, 'user-token');
-		state.validTokens.add('user-token');
-		const scope = establishedScope();
+		const scope = await establishedScope(auth, state);
 
-		await expect(resolveProtectedSession(auth)).resolves.toBe('session');
+		await expect(route(auth)).resolves.toBe('session');
 		expect(isCurrentSessionScope(scope)).toBe(true);
 		expect(loadListViewState(scope, 'items:server', undefined, sessionStorage)).not.toBeNull();
 	});
 });
 
-// Issue #260 実装-1 (design §7.1 acceptance, #259): `enterPublicViewer()`
-// now resolves `{ success, superseded? }`. The gate enters the public viewer
-// only on `success`, and a `superseded` entry (another login stored its
-// token while the public-viewer token was being minted - the provider's
-// compare-and-set refused to overwrite it) is checked again, not sent to
-// /login.
-describe('resolveProtectedSession and the enterPublicViewer result (#260)', () => {
-	it("S-20: a public-viewer entry superseded by a login re-checks and resolves 'session'", async () => {
+// Issue #260 (design §6.1, #259): the public-viewer policy with the real
+// HTTP provider. A `superseded` entry (another login stored its token while
+// the public-viewer token was being minted - the provider's compare-and-set
+// refused to overwrite it) is confirmed again, not sent to /login; a token
+// that appeared after the ticket is confirmed (and cleared when revoked)
+// and the policy re-runs, a bounded number of times.
+describe('the public-viewer policy with the HTTP provider (S-20)', () => {
+	it("S-20: a public-viewer entry superseded by a login is confirmed again and resolves 'session'", async () => {
 		const { state, fetchFn } = fakeServer({ viewerPublic: true });
 		let releasePublicViewer!: () => void;
 		const publicViewerHeld = new Promise<void>((resolve) => (releasePublicViewer = resolve));
@@ -284,7 +307,7 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
 		sessionStorage.setItem(KEY, 'revoked-token');
 
-		const outcome = resolveProtectedSession(auth);
+		const outcome = route(auth);
 		await publicViewerRequested;
 		await expect(auth.login({ username: 'b', password: 'pw' })).resolves.toMatchObject({
 			success: true
@@ -297,9 +320,9 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 
 	// PR #264 re-review P1: enterPublicViewer refuses (superseded, no request)
 	// while ANY token is stored. A stale token that shows up between the
-	// check and the entry is checked on the next round (and cleared when
-	// revoked), so the gate still gets to the public viewer.
-	it("S-20: a revoked token appearing before the entry is re-checked, cleared, and the gate resolves 'publicViewer'", async () => {
+	// confirmation and the entry is confirmed on the next round (and cleared
+	// when revoked), so the guard still gets to the public viewer.
+	it("S-20: a revoked token appearing before the entry (event not delivered) is confirmed, cleared, and the guard resolves 'publicViewer'", async () => {
 		const { state, fetchFn } = fakeServer({ viewerPublic: true });
 		let rewrites = 0;
 		const routed = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
@@ -313,16 +336,15 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
 		sessionStorage.setItem(KEY, 'revoked-token');
 
-		await expect(resolveProtectedSession(auth)).resolves.toBe('publicViewer');
+		await expect(route(auth)).resolves.toBe('publicViewer');
 		// Two `none` confirmations (the first token, then the one that
-		// appeared), then the controller's confirmation of the minted
-		// public-viewer session (Issue #260 実装-2: part of the gate now).
+		// appeared), then the confirmation of the minted public-viewer session.
 		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(3);
 		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(1);
 		expect(storedTokens()).toEqual({ local: null, session: 'public-token' });
 	});
 
-	it('S-20: a token that keeps reappearing before the entry does not loop forever (bounded retries)', async () => {
+	it('S-20: a token that keeps reappearing ends in the last confirmed `none` (/login) after maxRetries + 1 rounds', async () => {
 		const { state, fetchFn } = fakeServer({ viewerPublic: true });
 		const routed = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
 			if (url.endsWith('/api/auth/status')) localStorage.setItem(KEY, 'revoked-again');
@@ -331,24 +353,51 @@ describe('resolveProtectedSession and the enterPublicViewer result (#260)', () =
 		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
 		sessionStorage.setItem(KEY, 'revoked-token');
 
-		await expect(resolveProtectedSession(auth)).rejects.toBeInstanceOf(SessionChangedError);
-		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(
-			MAX_STALE_RETRIES
-		);
+		await expect(route(auth)).resolves.toBe('login');
+		const rounds = DEFAULT_PUBLIC_VIEWER_RETRIES + 1;
+		expect(state.calls.filter((path) => path === '/api/auth/status')).toHaveLength(rounds);
+		// The guard's own confirmation, then one per round.
+		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(1 + rounds);
 		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(0);
 	});
 
-	it("a failed entry ({ success: false }) still falls back to 'login'", async () => {
-		const auth = {
+	it('S-20: maxRetries = 0 runs the policy once', async () => {
+		const { state, fetchFn } = fakeServer({ viewerPublic: true });
+		const routed = vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+			if (url.endsWith('/api/auth/status')) localStorage.setItem(KEY, 'revoked-again');
+			return fetchFn(url, init as RequestInit);
+		});
+		const auth = createHttpAuthProvider({ fetchFn: routed as unknown as typeof fetch });
+		sessionStorage.setItem(KEY, 'revoked-token');
+		bindDefaultSessionProvider(auth);
+		const controller = getSessionController();
+		const first = await resolveSettled(controller);
+		if (first.outcome !== 'confirmed') throw new Error('expected confirmed');
+
+		const result = await publicViewerFallback(controller, auth, first.ticket, { maxRetries: 0 });
+		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { status: 'none' } });
+		expect(state.calls.filter((path) => path === '/api/auth/status')).toHaveLength(1);
+		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(2);
+	});
+
+	it("a failed entry ({ success: false }) still falls back to 'login', without a retry", async () => {
+		const revision = '1.0' as CredentialRevision;
+		const auth: AuthProvider = {
 			login: vi.fn(),
 			logout: vi.fn(),
-			check: vi.fn(async () => false),
-			getIdentity: vi.fn(async () => null),
+			resolve: vi.fn(async () => ({
+				status: 'none' as const,
+				checked: revision,
+				current: revision
+			})),
+			credentialRevision: () => revision,
+			onCredentialChanged: () => () => {},
 			status: vi.fn(async () => ({ initialized: true, viewerPublic: true })),
 			enterPublicViewer: vi.fn(async () => ({ success: false }))
 		};
 
-		await expect(resolveProtectedSession(auth)).resolves.toBe('login');
-		expect(auth.check).toHaveBeenCalledTimes(1);
+		await expect(route(auth)).resolves.toBe('login');
+		expect(auth.resolve).toHaveBeenCalledTimes(1);
+		expect(auth.enterPublicViewer).toHaveBeenCalledTimes(1);
 	});
 });

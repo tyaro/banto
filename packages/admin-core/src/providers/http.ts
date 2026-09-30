@@ -20,11 +20,11 @@
  */
 import type {
 	AuthOperationResult,
+	AuthProvider,
 	CredentialRevision,
 	DataProvider,
 	Identity,
-	ResolvedAuth,
-	StandardAuthProvider
+	ResolvedAuth
 } from '../provider';
 import type { ListParams, ListResult } from '../types';
 import { ProviderError, type ErrorBody } from '../errors';
@@ -173,8 +173,8 @@ function isIdentity(value: unknown): value is Identity {
 /**
  * `AuthProvider` backed by `fetch()` against `/api/auth/*` (spec §11.1/
  * §11.2/M11). The bearer token returned by a successful login is normally
- * kept in `sessionStorage` (cleared on logout, and when `check()` confirms
- * the session invalid - a `401` or a `200 false`, Issue #241 - so a
+ * kept in `sessionStorage` (cleared on logout, and when `resolve()` confirms
+ * the session invalid - a `401` or a `200 null`, Issue #241 - so a
  * stale/revoked token does not linger in storage). When
  * `login()`'s `params.remember` is `true` (spec M11 "LAN Remember me"), the
  * token is kept in `localStorage` instead, so it survives a browser/tab
@@ -202,7 +202,7 @@ function isIdentity(value: unknown): value is Identity {
  */
 export function createHttpAuthProvider(
 	options: HttpAuthProviderOptions = {}
-): StandardAuthProvider & { getToken(): string | null } {
+): AuthProvider & { getToken(): string | null } {
 	const baseUrl = options.baseUrl ?? '';
 	const fetchFn = options.fetchFn ?? fetch;
 	const storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
@@ -318,36 +318,6 @@ export function createHttpAuthProvider(
 		return writeToken(null);
 	}
 
-	/** One `/api/auth/check` for `token`; see `check()` below. */
-	async function checkToken(token: string): Promise<boolean> {
-		let response: Response;
-		try {
-			response = await fetchFn(`${baseUrl}/api/auth/check`, {
-				method: 'GET',
-				headers: headersFor(token, false)
-			});
-		} catch {
-			throw networkError();
-		}
-		if (response.status === 401) {
-			// Issue #260: the legacy check's clear is a change nobody's answer
-			// carries - report it (only when it actually cleared).
-			if (clearTokenIfCurrent(token)) emitCredentialChanged();
-			return false;
-		}
-		if (!response.ok) throw await errorFromResponse(response);
-		const valid: unknown = await response.json();
-		if (typeof valid !== 'boolean') {
-			// Not an answer to "is it valid?": could not verify, keep the token.
-			throw new ProviderError({
-				kind: 'other',
-				message: `${response.status} ${response.statusText}`
-			});
-		}
-		if (!valid && clearTokenIfCurrent(token)) emitCredentialChanged();
-		return valid;
-	}
-
 	return {
 		async login(params: Record<string, unknown>): Promise<AuthOperationResult> {
 			const start = startOperation();
@@ -395,51 +365,6 @@ export function createHttpAuthProvider(
 				// Network failure on logout still clears the local token below.
 			}
 			writeTokenIfUnchanged(start, null);
-		},
-
-		/**
-		 * `false` only when the session is known to be invalid: no token, a
-		 * `401`, or a `200 false` (the server revoked it - Issue #204). Both
-		 * confirmed answers clear the stored token - regular or "Remember me"
-		 * (Issue #241) - but only if it is still the token that was checked. A
-		 * server that could not check the account (`500` on a DB error) or
-		 * could not be reached REJECTS instead, and the stored token is left
-		 * untouched, so a transient failure never logs the client out or lets
-		 * a caller replace the token.
-		 *
-		 * Each call sends its own request (no sharing): a request that never
-		 * answers must not hold up a later check - e.g. the next navigation's
-		 * route guard. Concurrent checks cannot conflict: each clears only the
-		 * token it checked (`clearTokenIfCurrent`).
-		 */
-		check(): Promise<boolean> {
-			const token = getToken();
-			if (!token) return Promise.resolve(false);
-			return checkToken(token);
-		},
-
-		/**
-		 * `null` only when there is no session: no token, or a `401`. A
-		 * backend failure (`500`) or an unreachable server REJECTS with a
-		 * `ProviderError` (Issue #215/#255 6th review - the `AuthProvider`
-		 * contract in `provider.ts`): the identity of a still-valid session
-		 * could not be fetched, which is not the same as "nobody".
-		 */
-		async getIdentity(): Promise<Identity | null> {
-			const token = getToken();
-			if (!token) return null;
-			let response: Response;
-			try {
-				response = await fetchFn(`${baseUrl}/api/auth/identity`, {
-					method: 'GET',
-					headers: headersFor(token, false)
-				});
-			} catch {
-				throw networkError();
-			}
-			if (response.status === 401) return null;
-			if (!response.ok) throw await errorFromResponse(response);
-			return (await response.json()) as Identity | null;
 		},
 
 		/**
@@ -590,8 +515,9 @@ export function createHttpAuthProvider(
 		 * before its `storage` event advanced the revision here - means
 		 * `{ success: false, superseded: true }` without a request, and so does
 		 * one that appears while the request is in flight. The caller then
-		 * checks that token (`resolveProtectedSession` re-runs `check()`,
-		 * which clears a revoked one, within its bounded retry loop).
+		 * confirms that token (`publicViewerFallback` runs `resolveSettled()`,
+		 * whose `resolve()` clears a revoked one, within its bounded retry
+		 * loop).
 		 */
 		async enterPublicViewer(pvOptions?: {
 			expectRevision?: CredentialRevision;

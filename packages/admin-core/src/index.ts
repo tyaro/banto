@@ -60,6 +60,7 @@ export {
 	DEFAULT_PUBLIC_VIEWER_RETRIES,
 	SessionTimeoutError,
 	SessionProviderMissingError,
+	SessionChangedError,
 	type SessionController,
 	type SessionControllerDeps,
 	type SessionResolveOptions,
@@ -67,14 +68,7 @@ export {
 	type SessionTicket,
 	type ResolveResult
 } from './sessionController.svelte';
-export { resolveProtectedSession, type ProtectedSessionOutcome } from './sessionGate';
-export {
-	onSessionEnded,
-	confirmSessionEnded,
-	createSessionEndConfirmation,
-	type SessionEndOutcome,
-	type SessionEndConfirmation
-} from './sessionEnded';
+export { onSessionEnded } from './sessionEnded';
 
 export { ListResource, createListResource, type CreateListResourceOptions } from './list.svelte';
 export {
@@ -164,10 +158,3 @@ export {
 	sessionGeneration,
 	sessionOwnerKey
 } from './sessionScope.svelte';
-export {
-	beginSession,
-	endSession,
-	establishSession,
-	MAX_STALE_RETRIES,
-	SessionChangedError
-} from './sessionLifecycle';

@@ -15,6 +15,7 @@ import {
 	type SnapshotListRequest,
 	type SnapshotListResult
 } from '../src/snapshot.svelte';
+import { STUB_SESSION } from './stubAuth';
 
 interface Row {
 	id: number;
@@ -125,8 +126,7 @@ beforeEach(() => {
 		authProvider: {
 			login: async () => ({ success: true }),
 			logout: async () => {},
-			check: async () => true,
-			getIdentity: async () => null
+			...STUB_SESSION
 		},
 		notifier: { notify: (_kind, message) => notified.push(message) },
 		resources: []
@@ -563,8 +563,7 @@ describe('SnapshotListResource: misbehaving fetchers', () => {
 			authProvider: {
 				login: async () => ({ success: true }),
 				logout: async () => {},
-				check: async () => true,
-				getIdentity: async () => null
+				...STUB_SESSION
 			},
 			notifier: {
 				notify: () => {

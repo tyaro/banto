@@ -4,19 +4,27 @@
  * server - must reach `onSessionEnded` on its own (no manual calls), also when
  * the confirmation fails first, answers late, or another tab cleared the
  * shared "Remember me" token first.
+ *
+ * Issue #260 実装-3: `connectEvents` signals the default SessionController
+ * (`signal('unauthorized')` / `signal('credentialCleared')`); the
+ * confirmation and its backoff (1 s doubling to 30 s, a 10 s probe deadline)
+ * are the controller's.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectEvents, createSseEventProvider } from '../src/events';
 import { createHttpAuthProvider } from '../src/providers/http';
 import { initBanto } from '../src/registry.svelte';
-import {
-	CONFIRM_RETRY_INITIAL_MS,
-	CONFIRM_RETRY_MAX_MS,
-	CONFIRM_TIMEOUT_MS,
-	onSessionEnded
-} from '../src/sessionEnded';
+import { onSessionEnded } from '../src/sessionEnded';
 import type { DataProvider } from '../src/provider';
-import { resetDefaultSessionController } from '../src/sessionController.svelte';
+import {
+	DEFAULT_SESSION_RETRY,
+	DEFAULT_SESSION_TIMEOUT_MS,
+	resetDefaultSessionController
+} from '../src/sessionController.svelte';
+
+const CONFIRM_RETRY_INITIAL_MS = DEFAULT_SESSION_RETRY.initialMs;
+const CONFIRM_RETRY_MAX_MS = DEFAULT_SESSION_RETRY.maxMs;
+const CONFIRM_TIMEOUT_MS = DEFAULT_SESSION_TIMEOUT_MS;
 
 const TOKEN_KEY = 'banto.auth.token';
 
@@ -242,19 +250,33 @@ describe('background session end, end to end (review of #242)', () => {
 		tab.dispose();
 	});
 
-	it('stops retrying once the event subscription ends', async () => {
+	// v2.0.0 (design §6.1): the background confirmation belongs to the
+	// controller, not to the event subscription - ending the subscription does
+	// not leave "the session may have ended" unanswered. It goes on (with
+	// backoff) until the session is known, then stops.
+	it('the confirmation outlives the event subscription and stops once the session is known', async () => {
 		localStorage.setItem(TOKEN_KEY, 'revoked');
+		let failing = true;
 		const server = fakeServer({
 			events: async () => new Response(null, { status: 401 }),
-			check: async () => jsonResponse(500, { kind: 'storage', message: 'locked' })
+			check: async () =>
+				failing
+					? jsonResponse(500, { kind: 'storage', message: 'locked' })
+					: jsonResponse(200, false)
 		});
 		const tab = wireTab(server.fetchFn);
 		await vi.advanceTimersByTimeAsync(100);
 		expect(server.calls.check).toBe(1);
 
 		tab.dispose();
+		await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_INITIAL_MS * 3 + 500);
+		expect(server.calls.check).toBe(3); // retried at 1 s and 3 s
+		failing = false;
+		await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_INITIAL_MS * 4 + 500);
+		expect(server.calls.check).toBe(4); // at 7 s: `none`, the token cleared
+		expect(tab.auth.getToken()).toBeNull();
 		await vi.advanceTimersByTimeAsync(CONFIRM_RETRY_MAX_MS * 4);
-		expect(server.calls.check).toBe(1);
+		expect(server.calls.check).toBe(4);
 	});
 });
 
