@@ -85,6 +85,8 @@
       `kind == "local"` ⇔ `sessionStore.authDisabled` が常に成り立つ。監査ログには `settings_change` に続けて、置き換えた
       アカウントの `logout`（`detail: { "reason": "auth_disabled" }`＝利用者の操作ではない終了）と合成の `login` が残る。
       その間に始まっていたログインは合成セッションを戻さない。
+      ログイン不要モードのまま役割（`disabled_role`）だけを変えたときも、合成セッションの役割を書き換えて `seq` を進める
+      （古い `auth_resolve` が前の役割を書き戻さない、S-96）。同じ役割の再適用は何も変えない。
     - **Tauri: ログイン不要モード中の `auth_login`／`auth_setup` は拒否する**（#266 オーナー決定、S-95）。
       `LoginResult { success: false, superseded: false, error: "ログイン不要モード中はアカウントでログインできません…" }`
       を返し、スロットも `seq` も変えない（provider は revision を進めず通知しない。ログイン画面はエラーを出す）。入口で
