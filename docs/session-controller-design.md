@@ -1,6 +1,6 @@
 # SessionController 設計（Issue #260）
 
-- 状態: 設計案（実装前。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映）
+- 状態: 設計確定・実装中（実装-1 = provider と Rust の変更を実装中の PR。実装-2/3 は未着手。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#258・#259・#241・#204 / ADR-0016 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
@@ -784,6 +784,9 @@ export interface AuthProvider {
   **通知しない**。足し算は provider の内部だけ、外へ出るのは `CredentialRevision`（I-23）。
 - **revision の更新と通知**（I-19・I-23）: HTTP は自分が `setToken` した継続でカウンタを +1 し
   `onCredentialChanged` を呼ぶ。`storage` イベントは **`storageKey` のものだけ**で +1（4 回目 P3-11）。
+  `key === null`（別タブの `localStorage.clear()`。このトークンも消える）も同じく +1 して通知する（実装-1）。
+  旧 `check()`（v1.x で残す）が `401`/`200 false` でトークンを消したときも +1 して通知する（答えで運べない
+  変化のため。`resolve()` の中の消去とは扱いが違う。実装-1）。
   Tauri は操作の応答の `seq` で `observedSeq` を max 更新し、**組が変わったときだけ**呼ぶ
   （auth-disabled の logout の no-op、CAS 不成立、逆順に届いた古い応答では呼ばない、S-67・S-73）。
   **状態を変える操作**の `invoke` が reject したときだけ `local` を +1 して呼ぶ（安全側。controller は
@@ -829,6 +832,10 @@ fn cas_session(state: &AppState, expected_seq: u64, next: Option<DesktopSession>
 /// よって「seq_after == seq_at_entry + 1 ⇔ この呼び出しが消した」が成り立つ（I-23、S-77）。
 enum Settled { Stale, Settled { session: Option<DesktopSession>, seq_after: u64 } }
 fn settle_session(state: &AppState, cached: &DesktopSession, fresh: Option<DesktopSession>, seq_at_entry: u64) -> Settled;
+// Stale のときの扱い（実装-1）: 通常のコマンドの current_session は、今のセッションの結び付きが fresh と
+// 一致すれば従来どおり有効として返す（何も書かない。自分の change_own_password の rebind と同時の確認を
+// 失効扱いにしないため、#230 のレビュー対応を保つ）。stale を返すのは auth_resolve だけ。
+// 実装では Stale { valid_now } として今の結び付きでの判定結果を持たせた。
 
 /// フロントの provider.resolve() の相手。
 #[tauri::command]
@@ -1290,6 +1297,9 @@ controller に届き、none を一度も経ずに世代が変わる（A/g1 → u
 type CredentialVerifier = Arc<dyn Fn(String, String) -> BoxFuture<'static, Result<Option<UserIdentity>, BantoError>> + Send + Sync>;
 /// logout が await する設定の読み。production は SettingsService::auth_config。
 type AuthModeSource = Arc<dyn Fn() -> BoxFuture<'static, Result<AuthSettings, BantoError>> + Send + Sync>;
+/// setup が await する初回アカウントの作成（実装-1 で追加）。setup は verify ではなく setup_first_user を
+/// 待つので、S-18/S-19 の順序の固定にはこの注入点が要る。production は UsersService::setup_first_user。
+type FirstUserSetup = Arc<dyn Fn(String, String, String) -> BoxFuture<'static, Result<UserIdentity, BantoError>> + Send + Sync>;
 // AppState { verifier: CredentialVerifier, auth_mode: AuthModeSource, .. }
 
 // コマンドは薄い adapter、本体はテストから呼べる関数:
@@ -1519,3 +1529,9 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   bootstrap と既存の 23 本のテストの `AppState` 構築が変わる。実装-1 で規模を見る。
 - `AuthProvider.resolve({ signal })` の `signal` を HTTP の `fetch` に渡すのは容易だが、Tauri の
   `invoke` は中断できない（I-22 の「中断できない処理」）。Rust 側のコマンドは走り切る。
+- Tauri の webview の再読み込みで provider の `observedSeq` は 0 に戻るが、Rust の `seq` は進んだまま。
+  最初の `resolve()` は `checked` が `revisionAtStart` と一致せず捨てられる（`observedSeq` は max で追いつくので
+  2 回目で一致する）。実装-2 の controller で「捨てた後に確認し直す」経路がこの初回を必ず救うこと（上限の
+  回数を消費しないか）を確かめる。
+- HTTP と互換 adapter の `resolve()` は `kind` を返さない（実装-1）。publicViewer の `kind` の決め方
+  （`identity.publicViewer` から導くか、provider が返すか）は実装-2 で詰める。
