@@ -455,6 +455,10 @@ provider のテストで、それぞれ**フロントの順序に依らず**成�
 | S-86 | S-84 の追いつきの後も revision が動き続ける | 追いつきの無償の出し直しは 1 回だけ。以降は通常どおり数え、上限で `unverified`（`SessionChangedError`）。無限に出し直さない | I-3・I-9 | 実装-2（§10 (a)） |
 | S-87 | `kind` を返さない provider（HTTP・互換 adapter）の `active` | `identity.publicViewer === true` なら `publicViewer`（owner `public-viewer`。provider の `kind` より優先）、それ以外は provider の `kind`、無ければ `account`。Tauri の `local` はそのまま（owner `local`） | I-2・I-12 | 実装-2（§10 (b)） |
 | S-88 | none を確認（ticket t）→ 方針が `status()` を待つ間に、別の `load` が同じ none を再確認 | 純粋な再確認は commit しない（epoch 据え置き）ので t は current のまま。2 つの方針が互いの ticket を無効にし合って上限を使い切る（livelock）ことが無い。E2E のログアウト（ログアウトの遷移と配線①の再 load の同時実行）で見つかった | I-18・I-2 | 実装-2 |
+| S-89 | provider A で Alice が active → `initBanto({ authProvider: B })`（別の provider への再 bind）→ B は none | 再 bind は**外からの遷移**: 在中の probe は abort・待機者は `superseded`、旧 provider の購読を解除、`commit(unknown)`（epoch が進み旧 ticket は失効、active からなので generation +1）、`appliedRevision` は B のもの、`pendingBackground` で B に確認。A からの遅れた答えは provider の照合で採用しない。B の答えで none（+1） | I-1・I-18・I-20 | #265 オーナーレビュー P1 |
+| S-90 | S-89 で B が Bob を返す | Bob を確定（+2）。`previousActiveOwner`・`pendingOwnerChange` は持ち越さない（別の認証源の owner は比べない）ので通知の対象にならない。A の `onCredentialChanged` はもう届かない | I-24・I-12 | #265 オーナーレビュー P1 |
+| S-91 | 同じ provider で再 bind（`initBanto` の再呼び出し） | 何もしない（snapshot・epoch・probe は据え置き）。最初の bind（まだ provider が無い）も遷移にしない | I-2 | #265 オーナーレビュー P1 |
+| S-92 | `active(A) → active(owner なし) → active(B)`、および `A → owner なし → A` | owner の無い active（S-10）は owner の変化の判定の対象外（最後の具体的な owner を保つ）。前者は `{ A → B }`、後者は立てない（`A → B → owner なし → A` なら未処理の変更は消える） | I-24・I-12 | #265 オーナーレビュー P2 |
 
 **「状態を書き換える入口 × 非同期の境界」の表**（今回の指摘と同じ型が残っていないかを洗った。
 実装の PR のレビューでも同じ表を使う）:
@@ -515,7 +519,8 @@ export interface SessionSnapshot {
 	readonly previousActiveOwner: string | null;
 	/**
 	 * まだ処理していないユーザーの変更（#257 の通知／ownerChangePolicy の対象）。active(B) を commit した
-	 * ときに previousActiveOwner が null でも B でもなければ { from, to } を立てる。同じ値の再確認では
+	 * ときに**最後の具体的な owner**（owner の無い active は飛ばす。実装-2、#265 P2、S-92）が null でも B でも
+	 * なければ { from, to } を立てる。別の provider への再 bind でも消える（S-90）。同じ値の再確認では
 	 * 上書きしない。unknown・同じユーザーの再確認・レイアウトの unmount 中は保持する。消えるのは
 	 * none の確定（セッションの終了を越えて持ち越さない。S-83）と acknowledgeOwnerChange() だけ
 	 * （レイアウトの寿命に依存しない。S-81。ページ全体の再読込では controller ごと消える = 保証しない）。I-24
@@ -606,6 +611,9 @@ export function createSessionController(
 
 /** initBanto({ authProvider }) が作る既定の controller。アプリは通常これを使う。`resolve` を持たない provider は initBanto が互換 adapter で包む（実装-2 の時点の足場） */
 export function getSessionController(): SessionController;
+// initBanto の再呼び出し（実装-2、#265 P1）: 同じ provider なら何もしない。最初の bind は遷移にしない。
+// 別の provider への bind は外からの遷移（probe を abort・待機者は superseded・commit(unknown)・新しい provider で確認・
+// owner の履歴は持ち越さない。S-89〜S-91）
 ```
 
 内部の骨格（実装の指針。公開しない）:
@@ -1104,6 +1112,8 @@ function bumpLocal(): void {
 | 同じユーザー（B）の再確認                             | —                                                       | 保持（上書きしない）                    | —                                                | S-81                  |
 | 別のユーザー（C）の確定（B を処理する前）             | `{ from: A, to: C }` に置き換える（最初の from を保つ） | —                                       | —                                                | —                     |
 | 元のユーザー（A）の確定（A → B を処理する前、A → B → A） | 未処理の変更を**消す**（`from === to` は「ユーザーは変わっていない」。`{ A → A }` を通知しない、実装-2） | —                                       | null に戻る                                      | —                     |
+| owner の無い active（S-10、id の無い identity）             | —（owner の変化の判定の対象外。比べる相手は最後の具体的な owner のまま） | 保持                                    | —                                                | S-92                  |
+| 別の provider への再 bind（`initBanto` の差し替え）         | —                                                       | —                                       | **破棄**（別の認証源の owner は比べない）        | S-90                  |
 | **none の確定**                                       | —                                                       | —                                       | **破棄**（セッションの終了を越えて持ち越さない） | S-83                  |
 | レイアウトの mount                                    | —                                                       | —                                       | 処理して `acknowledgeOwnerChange()`              | S-81                  |
 | レイアウトの unmount（503 画面へ）                    | —                                                       | 保持（controller にあるので）           | —                                                | S-81                  |
