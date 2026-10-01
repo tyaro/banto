@@ -203,7 +203,14 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   per-(IP+username) と per-IP の2次元スロットルを argon2 verifier の**前**に通す
   （username ローテーション flood での DoS 対策）。回帰テスト
   `per_ip_dimension_bounds_a_username_rotation_flood` が「ロックアウト中は argon2 を
-  呼ばない」ことを検証。
+  呼ばない」ことを検証。このチェックは**verifier を await する前に検証の枠を
+  原子的に予約**する（Issue #279）: 処理中の試行は失敗件数と同様に
+  per-(IP+username)・per-IP のしきい値判定に数え、`MAX_IN_FLIGHT_PER_IP`（4）・
+  `MAX_CONCURRENT_VERIFICATIONS`（8）で同時実行数も直接制限する。上限超過は待たせず
+  通常の `RateLimited` で即時拒否。枠は RAII ガードで、成功・失敗・エラー・
+  future のキャンセルのいずれでも解放される。verifier のハッシュ計算は tokio の
+  blocking プールで行う。適用範囲は REST のネットワーク境界（`POST /api/auth/login`）
+  で、Tauri の `auth_login` はローカル入力のためスロットル対象外（§1 の非対称）。
 - **`DefaultBodyLimit` は service 層チェックの上に置く。** transport 上限は
   service 層の実チェック（`MAX_ATTACHMENT_BYTES` 等）より「快適に上」であればよい
   という順序（`rest/mod.rs` の doc とルータ各所）。

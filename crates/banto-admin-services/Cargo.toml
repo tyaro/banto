@@ -47,7 +47,7 @@ password-hash = { workspace = true }
 # async runtime itself is supplied by the caller (`admin-template-core`'s
 # server / `src-tauri`). Already a workspace dependency (ADR-0002: no new
 # external crate).
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "rt"] }
 # `system_metrics::SystemMetricsSampler` (ADR-0013, Issue #185), optional
 # behind the `system-metrics` feature above - see the workspace `Cargo.toml`'s
 # comment on this dependency for the ADR-0002 exception reasoning.

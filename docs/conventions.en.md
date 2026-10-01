@@ -238,7 +238,15 @@ without a runtime guard are **upheld by reviewing every call site**.
   per-IP, **before** the argon2 verifier (a DoS countermeasure against a
   username-rotation flood). The regression test
   `per_ip_dimension_bounds_a_username_rotation_flood` verifies that "argon2 is
-  not called during a lockout."
+  not called during a lockout." The check also **reserves a verification slot
+  atomically before the verifier is awaited** (Issue #279): attempts in flight
+  count like recorded failures against the per-account and per-IP thresholds,
+  and `MAX_IN_FLIGHT_PER_IP` (4) / `MAX_CONCURRENT_VERIFICATIONS` (8) cap
+  concurrency outright. Over a cap the answer is the usual `RateLimited` (no
+  queue). The slot is an RAII guard released on success, failure, error and
+  future cancellation. The verifier hashes on tokio's blocking pool. Scope:
+  this is the REST network boundary (`POST /api/auth/login`); the Tauri
+  `auth_login` command is local input and stays unthrottled (see §1).
 - **`DefaultBodyLimit` sits above the service-layer check.** The ordering is
   that the transport limit only needs to be "comfortably above" the service
   layer's actual check (`MAX_ATTACHMENT_BYTES`, etc.) (the doc of `rest/mod.rs`

@@ -72,6 +72,19 @@ fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+/// [`verify_password`] on tokio's blocking pool (Issue #279). An argon2id
+/// verification is tens of milliseconds of pure CPU; running it inline in an
+/// `async fn` pins an async worker thread for that long, so a handful of
+/// concurrent logins would stall every other request. A panicked/cancelled
+/// blocking task is reported as "no match".
+async fn verify_password_blocking(password: &str, hash: &str) -> bool {
+    let password = password.to_owned();
+    let hash = hash.to_owned();
+    tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .unwrap_or(false)
+}
+
 /// A valid argon2id PHC hash of an arbitrary fixed password, computed once
 /// per process. Used only as the comparison target for the dummy verify in
 /// `UsersService::verify` below, so an unknown username still "pays" the
@@ -364,7 +377,7 @@ impl UsersService {
 
         match row {
             Some((id, hash, display_name, role, auth_epoch)) => {
-                if verify_password(password, &hash) {
+                if verify_password_blocking(password, &hash).await {
                     Ok(Some(UserIdentity {
                         id,
                         username: username.to_string(),
@@ -377,7 +390,7 @@ impl UsersService {
                 }
             }
             None => {
-                let _ = verify_password(password, dummy_hash());
+                let _ = verify_password_blocking(password, dummy_hash()).await;
                 Ok(None)
             }
         }

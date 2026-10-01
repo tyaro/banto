@@ -26,7 +26,10 @@
 //!   dummy-hash timing defense), an unthrottled login endpoint is also a
 //!   CPU-exhaustion DoS, not just a brute-force one; the per-IP dimension is
 //!   what stops that from being evaded by rotating the `username` field (see
-//!   [`RateLimitPolicy`]).
+//!   [`RateLimitPolicy`]). Attempts still in flight are counted against the
+//!   same thresholds and capped per IP / globally ([`MAX_IN_FLIGHT_PER_IP`],
+//!   [`MAX_CONCURRENT_VERIFICATIONS`]; Issue #279), so a burst arriving before
+//!   any failure is recorded cannot all reach the verifier.
 //!
 //! Expired tokens and stale failure records are reaped lazily (on lookup) and
 //! opportunistically (a cheap sweep on each write); there is deliberately no
@@ -96,7 +99,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
@@ -339,6 +342,27 @@ impl Default for RateLimitPolicy {
     }
 }
 
+/// Most credential verifications (argon2id, ~tens of ms of CPU and a
+/// double-digit-MiB memory arena each) allowed to run at once across ALL
+/// clients (Issue #279). Beyond this a login is turned away immediately with
+/// the ordinary [`LoginOutcome::RateLimited`] answer rather than queued - an
+/// unbounded queue of hashes is exactly the resource exhaustion the throttle
+/// exists to prevent. 8 keeps the worst-case arena footprint to a few hundred
+/// MiB and matches the core count of a typical LAN host, while a small
+/// office's genuine login rate (a handful per minute) never gets near it.
+pub const MAX_CONCURRENT_VERIFICATIONS: usize = 8;
+
+/// Most verifications one client IP may have in flight at once (Issue #279).
+/// Half the global cap, so a single address (an attacker, or a script gone
+/// wrong) can never take every slot and starve the other clients, yet a
+/// shared NAT still has room for a few simultaneous genuine logins.
+pub const MAX_IN_FLIGHT_PER_IP: usize = 4;
+
+/// `Retry-After` reported when a login is turned away only because the
+/// verification slots are busy (no lockout is in force): the work is over in
+/// well under a second, so ask the client to retry shortly.
+const SATURATED_RETRY_AFTER: Duration = Duration::from_secs(1);
+
 /// Result of a rate-limited login attempt ([`AuthState::login_rate_limited`]).
 /// The three variants map onto the three login-handler responses: a bearer
 /// token, a plain "wrong credentials" 200, or a 429 lockout.
@@ -441,6 +465,54 @@ impl FailureRecord {
     }
 }
 
+/// Verifications currently running (Issue #279). Reserved BEFORE the verifier
+/// is awaited and counted together with recorded failures in the throttle's
+/// threshold checks, so a burst that arrives before any failure is recorded
+/// cannot all pass the same check.
+#[derive(Default)]
+struct InFlight {
+    /// All reservations, any client.
+    total: usize,
+    /// Reservations per throttle key ([`rate_limit_key`] and
+    /// [`ip_rate_limit_key`] values; the two namespaces cannot collide).
+    per_key: HashMap<String, usize>,
+}
+
+impl InFlight {
+    fn count(&self, key: &str) -> usize {
+        self.per_key.get(key).copied().unwrap_or(0)
+    }
+}
+
+/// RAII reservation of one verification slot. Dropping it - on success,
+/// failure, error, or because the request future was cancelled (client
+/// disconnect, timeout) - always releases the slot, so nothing can leak it
+/// and lock other users out.
+struct InFlightGuard {
+    inner: Arc<Inner>,
+    keys: Vec<String>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        // Release even if another thread panicked while holding the lock.
+        let mut in_flight = self
+            .inner
+            .in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        in_flight.total = in_flight.total.saturating_sub(1);
+        for key in self.keys.drain(..) {
+            if let Some(n) = in_flight.per_key.get_mut(&key) {
+                *n -= 1;
+                if *n == 0 {
+                    in_flight.per_key.remove(&key);
+                }
+            }
+        }
+    }
+}
+
 /// Monotonic clock injected into [`AuthState`] so tests can advance time
 /// deterministically instead of sleeping. Production always uses
 /// [`Clock::real`], which reports elapsed time since construction; the
@@ -504,6 +576,9 @@ struct Inner {
     /// bounded by the cap whether or not stale entries are present.
     public_tokens: RwLock<VecDeque<String>>,
     failures: RwLock<HashMap<String, FailureRecord>>,
+    /// Verification slots reserved right now (Issue #279). Lock order: this
+    /// before `failures`; never the reverse.
+    in_flight: Mutex<InFlight>,
     verify_credentials: CredentialVerifier,
     /// Issue #204: `Some` for [`SessionValidation::Lookup`], `None` for
     /// [`SessionValidation::DisabledNoRevocation`]. Fixed at construction,
@@ -626,6 +701,7 @@ impl AuthState {
                 tokens: RwLock::new(HashMap::new()),
                 public_tokens: RwLock::new(VecDeque::new()),
                 failures: RwLock::new(HashMap::new()),
+                in_flight: Mutex::new(InFlight::default()),
                 verify_credentials,
                 session_lookup,
                 token_policy,
@@ -715,13 +791,17 @@ impl AuthState {
         // BOTH dimensions are checked before the expensive verifier runs, so
         // a lockout on either one short-circuits argon2 (this is the property
         // that makes the endpoint DoS-resistant, not just brute-force-proof).
-        let mut retry_after = self.locked_out(&account_key);
-        if let Some(ip_key) = &ip_key {
-            retry_after = max_option(retry_after, self.locked_out(ip_key));
-        }
-        if let Some(retry_after) = retry_after {
-            return LoginOutcome::RateLimited { retry_after };
-        }
+        //
+        // The check also RESERVES a verification slot atomically (Issue
+        // #279): attempts still in flight count like recorded failures, so a
+        // burst that lands before the first failure is recorded cannot all
+        // slip past the same check. The guard is held across the verifier
+        // await and releases the slot however this future ends, cancellation
+        // included.
+        let _slot = match self.reserve_attempt(&account_key, ip_key.as_deref()) {
+            Ok(slot) => slot,
+            Err(retry_after) => return LoginOutcome::RateLimited { retry_after },
+        };
 
         match self.verify_and_stamp(username, password).await {
             StampedLogin::Accepted(identity, stamp) => {
@@ -1198,6 +1278,81 @@ impl AuthState {
                 stamp: record.stamp,
             })
         }
+    }
+
+    /// Atomically decide whether a login attempt may start the (expensive)
+    /// verifier and, if so, reserve its slot (Issue #279). `Err` carries the
+    /// `Retry-After` for an immediate [`LoginOutcome::RateLimited`].
+    ///
+    /// Refused when any of these holds:
+    /// - either key is locked out (the pre-existing lockout);
+    /// - recorded failures + attempts in flight reach the key's threshold
+    ///   (`max_failures` per account key, `max_ip_failures` per IP key) - so
+    ///   concurrency can never buy more attempts than the sequential policy;
+    /// - [`MAX_IN_FLIGHT_PER_IP`] or [`MAX_CONCURRENT_VERIFICATIONS`] is
+    ///   reached (a pure resource cap; no lockout starts, the answer is the
+    ///   same `RateLimited` with a short retry).
+    ///
+    /// Holds the `in_flight` mutex for the whole check-and-reserve, taking
+    /// the `failures` read lock inside it (the documented lock order).
+    fn reserve_attempt(
+        &self,
+        account_key: &str,
+        ip_key: Option<&str>,
+    ) -> Result<InFlightGuard, Duration> {
+        let policy = self.inner.rate_limit;
+        let mut in_flight = self
+            .inner
+            .in_flight
+            .lock()
+            .expect("auth in-flight lock poisoned");
+
+        let mut retry_after = self.locked_out(account_key);
+        if let Some(ip_key) = ip_key {
+            retry_after = max_option(retry_after, self.locked_out(ip_key));
+        }
+        if let Some(retry_after) = retry_after {
+            return Err(retry_after);
+        }
+
+        let account_busy = self.live_failure_count(account_key) + in_flight.count(account_key)
+            >= policy.max_failures as usize;
+        let ip_busy = ip_key.is_some_and(|ip_key| {
+            let held = in_flight.count(ip_key);
+            held >= MAX_IN_FLIGHT_PER_IP
+                || self.live_failure_count(ip_key) + held >= policy.max_ip_failures as usize
+        });
+        if account_busy || ip_busy || in_flight.total >= MAX_CONCURRENT_VERIFICATIONS {
+            return Err(SATURATED_RETRY_AFTER);
+        }
+
+        let mut keys = vec![account_key.to_string()];
+        keys.extend(ip_key.map(str::to_string));
+        in_flight.total += 1;
+        for key in &keys {
+            *in_flight.per_key.entry(key.clone()).or_insert(0) += 1;
+        }
+        Ok(InFlightGuard {
+            inner: Arc::clone(&self.inner),
+            keys,
+        })
+    }
+
+    /// Failures currently counting toward `key`'s streak: 0 when the record
+    /// is absent or its streak has aged out (same staleness rule as
+    /// [`AuthState::record_failure`]).
+    fn live_failure_count(&self, key: &str) -> usize {
+        let now = self.inner.clock.now();
+        let lockout = self.inner.rate_limit.lockout;
+        let failures = self
+            .inner
+            .failures
+            .read()
+            .expect("auth failure lock poisoned");
+        failures
+            .get(key)
+            .filter(|record| now.saturating_sub(record.last_failure) < lockout)
+            .map_or(0, |record| record.count as usize)
     }
 
     /// If `key` is currently locked out, how long until it may retry;
@@ -1788,6 +1943,267 @@ mod tests {
             rate_limit,
         );
         (auth, calls)
+    }
+
+    /// A state whose verifier parks on `gate` (a semaphore the test releases)
+    /// after counting its entry, always rejecting. Returns the state, the
+    /// number of verifier entries, and the peak number inside at once.
+    fn gated_auth(
+        rate_limit: RateLimitPolicy,
+    ) -> (
+        AuthState,
+        Arc<tokio::sync::Semaphore>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+    ) {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let entered = Arc::new(AtomicUsize::new(0));
+        let inside = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let (g, e, i, p) = (gate.clone(), entered.clone(), inside.clone(), peak.clone());
+        let auth = AuthState::with_frozen_clock(
+            move |_u: String, _p: String| {
+                let (g, e, i, p) = (g.clone(), e.clone(), i.clone(), p.clone());
+                Box::pin(async move {
+                    e.fetch_add(1, Ordering::SeqCst);
+                    let now_inside = i.fetch_add(1, Ordering::SeqCst) + 1;
+                    p.fetch_max(now_inside, Ordering::SeqCst);
+                    let _permit = g.acquire().await.expect("gate closed");
+                    i.fetch_sub(1, Ordering::SeqCst);
+                    None
+                })
+            },
+            SessionValidation::DisabledNoRevocation,
+            TokenPolicy::default(),
+            TokenPolicy::remembered_default(),
+            rate_limit,
+        );
+        (auth, gate, entered, peak)
+    }
+
+    /// Let every spawned task run until it parks (in the verifier) or ends.
+    /// Single-threaded runtime, so yielding is deterministic: no sleeps.
+    /// `entered` is the verifier-entry counter and `expected_entered` how many
+    /// attempts must have reached it; `parked` of those stay parked, every
+    /// other task must have finished.
+    async fn settle(
+        handles: &[tokio::task::JoinHandle<LoginOutcome>],
+        entered: &AtomicUsize,
+        expected_entered: usize,
+        parked: usize,
+    ) {
+        for _ in 0..1000 {
+            let finished = handles.iter().filter(|h| h.is_finished()).count();
+            if entered.load(Ordering::SeqCst) == expected_entered
+                && finished + parked == handles.len()
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("tasks did not settle");
+    }
+
+    async fn drain(handles: Vec<tokio::task::JoinHandle<LoginOutcome>>) -> (usize, usize) {
+        let (mut invalid, mut limited) = (0, 0);
+        for h in handles {
+            match h.await.expect("login task panicked") {
+                LoginOutcome::InvalidCredentials => invalid += 1,
+                LoginOutcome::RateLimited { .. } => limited += 1,
+                other => panic!("unexpected outcome {other:?}"),
+            }
+        }
+        (invalid, limited)
+    }
+
+    fn in_flight_total(auth: &AuthState) -> usize {
+        auth.inner.in_flight.lock().unwrap().total
+    }
+
+    #[tokio::test]
+    async fn concurrent_same_ip_and_username_logins_are_capped_before_the_verifier() {
+        // Issue #279: 64 simultaneous attempts, none failed yet. Without
+        // in-flight accounting all 64 would enter the verifier.
+        let (auth, gate, entered, peak) = gated_auth(RateLimitPolicy::default());
+        let ip = Some(IpAddr::from([203, 0, 113, 7]));
+        let handles: Vec<_> = (0..64)
+            .map(|_| {
+                let auth = auth.clone();
+                tokio::spawn(async move { auth.login_rate_limited(ip, "alice", "x", false).await })
+            })
+            .collect();
+        settle(
+            &handles,
+            &entered,
+            MAX_IN_FLIGHT_PER_IP,
+            MAX_IN_FLIGHT_PER_IP,
+        )
+        .await;
+        assert_eq!(entered.load(Ordering::SeqCst), MAX_IN_FLIGHT_PER_IP);
+        assert_eq!(in_flight_total(&auth), MAX_IN_FLIGHT_PER_IP);
+
+        gate.add_permits(64);
+        let (invalid, limited) = drain(handles).await;
+        assert_eq!(invalid, MAX_IN_FLIGHT_PER_IP);
+        assert_eq!(limited, 64 - MAX_IN_FLIGHT_PER_IP);
+        assert!(peak.load(Ordering::SeqCst) <= MAX_IN_FLIGHT_PER_IP);
+        assert_eq!(in_flight_total(&auth), 0, "every slot released");
+    }
+
+    #[tokio::test]
+    async fn concurrent_username_rotation_from_one_ip_is_capped() {
+        let (auth, gate, entered, _peak) = gated_auth(RateLimitPolicy::default());
+        let ip = Some(IpAddr::from([203, 0, 113, 7]));
+        let handles: Vec<_> = (0..64)
+            .map(|i| {
+                let auth = auth.clone();
+                tokio::spawn(async move {
+                    auth.login_rate_limited(ip, &format!("user{i}"), "x", false)
+                        .await
+                })
+            })
+            .collect();
+        settle(
+            &handles,
+            &entered,
+            MAX_IN_FLIGHT_PER_IP,
+            MAX_IN_FLIGHT_PER_IP,
+        )
+        .await;
+        assert_eq!(entered.load(Ordering::SeqCst), MAX_IN_FLIGHT_PER_IP);
+        gate.add_permits(64);
+        drain(handles).await;
+        assert_eq!(in_flight_total(&auth), 0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_logins_from_many_ips_hit_the_global_cap() {
+        let (auth, gate, entered, peak) = gated_auth(RateLimitPolicy::default());
+        let handles: Vec<_> = (0..64u8)
+            .map(|i| {
+                let auth = auth.clone();
+                let ip = Some(IpAddr::from([198, 51, 100, i]));
+                tokio::spawn(async move { auth.login_rate_limited(ip, "alice", "x", false).await })
+            })
+            .collect();
+        settle(
+            &handles,
+            &entered,
+            MAX_CONCURRENT_VERIFICATIONS,
+            MAX_CONCURRENT_VERIFICATIONS,
+        )
+        .await;
+        assert_eq!(entered.load(Ordering::SeqCst), MAX_CONCURRENT_VERIFICATIONS);
+        gate.add_permits(64);
+        let (invalid, limited) = drain(handles).await;
+        assert_eq!(invalid, MAX_CONCURRENT_VERIFICATIONS);
+        assert_eq!(limited, 64 - MAX_CONCURRENT_VERIFICATIONS);
+        assert!(peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_VERIFICATIONS);
+        assert_eq!(in_flight_total(&auth), 0);
+    }
+
+    #[tokio::test]
+    async fn in_flight_attempts_count_toward_the_failure_threshold() {
+        // Two failures recorded + max_failures 3: only ONE more attempt may
+        // be in flight, even though the per-IP cap would allow four.
+        let policy = RateLimitPolicy {
+            max_failures: 3,
+            max_ip_failures: 100,
+            lockout: Duration::from_secs(60),
+        };
+        let (auth, gate, entered, _peak) = gated_auth(policy);
+        gate.add_permits(2);
+        let ip = Some(IpAddr::from([203, 0, 113, 7]));
+        for _ in 0..2 {
+            assert!(matches!(
+                auth.login_rate_limited(ip, "alice", "x", false).await,
+                LoginOutcome::InvalidCredentials
+            ));
+        }
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let auth = auth.clone();
+                tokio::spawn(async move { auth.login_rate_limited(ip, "alice", "x", false).await })
+            })
+            .collect();
+        settle(&handles, &entered, 3, 0).await;
+        assert_eq!(entered.load(Ordering::SeqCst), 3);
+        gate.add_permits(8);
+        let (invalid, limited) = drain(handles).await;
+        assert_eq!((invalid, limited), (1, 7));
+    }
+
+    #[tokio::test]
+    async fn cancelled_attempts_release_their_slots() {
+        let (auth, gate, entered, _peak) = gated_auth(RateLimitPolicy::default());
+        let ip = Some(IpAddr::from([203, 0, 113, 7]));
+        let handles: Vec<_> = (0..MAX_IN_FLIGHT_PER_IP)
+            .map(|_| {
+                let auth = auth.clone();
+                tokio::spawn(async move { auth.login_rate_limited(ip, "alice", "x", false).await })
+            })
+            .collect();
+        settle(
+            &handles,
+            &entered,
+            MAX_IN_FLIGHT_PER_IP,
+            MAX_IN_FLIGHT_PER_IP,
+        )
+        .await;
+        assert_eq!(in_flight_total(&auth), MAX_IN_FLIGHT_PER_IP);
+
+        // Client disconnects: the futures are dropped mid-verifier.
+        for h in &handles {
+            h.abort();
+        }
+        for h in handles {
+            assert!(h.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(
+            in_flight_total(&auth),
+            0,
+            "cancellation must not leak slots"
+        );
+        assert!(auth.inner.in_flight.lock().unwrap().per_key.is_empty());
+
+        // And a fresh attempt is admitted (cancelled ones recorded no failure).
+        gate.add_permits(1);
+        assert!(matches!(
+            auth.login_rate_limited(ip, "alice", "x", false).await,
+            LoginOutcome::InvalidCredentials
+        ));
+        assert_eq!(entered.load(Ordering::SeqCst), MAX_IN_FLIGHT_PER_IP + 1);
+    }
+
+    #[tokio::test]
+    async fn success_and_failure_release_slots_and_keep_sequential_policy() {
+        let (auth, calls) = counting_auth(RateLimitPolicy {
+            max_failures: 3,
+            max_ip_failures: 100,
+            lockout: Duration::from_secs(60),
+        });
+        let ip = Some(IpAddr::from([203, 0, 113, 7]));
+        for _ in 0..2 {
+            auth.login_rate_limited(ip, "admin", "bad", false).await;
+        }
+        assert!(matches!(
+            auth.login_rate_limited(ip, "admin", "admin", false).await,
+            LoginOutcome::Success(_)
+        ));
+        assert_eq!(in_flight_total(&auth), 0);
+        // success reset the streak: two more failures do not lock out...
+        for _ in 0..2 {
+            auth.login_rate_limited(ip, "admin", "bad", false).await;
+        }
+        // ...the third does, after which the verifier is not consulted.
+        auth.login_rate_limited(ip, "admin", "bad", false).await;
+        let before = calls.load(Ordering::SeqCst);
+        assert!(matches!(
+            auth.login_rate_limited(ip, "admin", "admin", false).await,
+            LoginOutcome::RateLimited { .. }
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), before);
+        assert_eq!(in_flight_total(&auth), 0);
     }
 
     #[tokio::test]
