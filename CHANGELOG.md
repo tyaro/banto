@@ -30,15 +30,19 @@
 詳細は下の「SessionController 実装-3」の節（削除した公開 API と移行先・挙動の互換性が変わる変更・派生アプリの移行の手順）と、
 [upgrading.md 例 2](docs/upgrading.md#例-2-v17x--v200sessioncontroller-a-と-b-がセット破壊的変更)。
 
-| 経路                             | 影響 | 内容                                                                                                                                                                                                                                      |
-| -------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A. 依存（`@banto/*`・`banto-*`） | あり | `v1.7.3` → `v2.0.0`（npm と Rust を同じタグに）。`@banto/admin-core` の旧セッション API を削除し、`AuthProvider` の `resolve`・`credentialRevision`・`onCredentialChanged` が必須。他のパッケージ・クレートは版数のみ                     |
-| B. コピーしたテンプレート        | あり | `session.svelte.ts`、`(app)/+layout.ts`・`+layout.svelte`、ログイン・ログアウト、503 画面、`providers/demo.ts`、`src-tauri` の認証コマンド（#260・#264〜#266）。items の CSV 取込プレビュー（#218）、パレット・ヘッダー検索（#258・#217） |
-| C. DB・設定・配布資産            | なし | マイグレーション無し（セッションはメモリのみ）。Tauri のログイン不要モードの挙動が変わる（`settings_set` の `auth.` キー拒否を含む）                                                                                                      |
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v1.7.3` → `v2.0.0`（npm と Rust を同じタグに）。`@banto/admin-core` は破壊的変更（旧セッション API の削除、`AuthProvider` の `resolve`・`credentialRevision`・`onCredentialChanged` が必須）と一覧状態の保持 API の追加（#215）。`banto-server`・`banto-admin-services` は後方互換の追加・修正（#216 `lan_urls_for_bind`、#248 監査ログのスナップショット取得 `list_as_of`）。他は版数のみ |
+| B. コピーしたテンプレート        | あり | `session.svelte.ts`、`(app)/+layout.ts`・`+layout.svelte`、ログイン・ログアウト、503 画面、`providers/demo.ts`、`src-tauri` の認証コマンド（#260・#264〜#266）。一覧の状態の保持（#215・#255）、LAN 接続先 URL の bind に応じた案内（#216）、監査ログ画面のスナップショット取得（#248）、items の CSV 取込プレビュー（#218）、パレット・ヘッダー検索（#258・#217）                          |
+| C. DB・設定・配布資産            | なし | マイグレーション無し（セッションはメモリのみ）。Tauri のログイン不要モードの挙動が変わる（`settings_set` の `auth.` キー拒否を含む）                                                                                                                                                                                                                                                        |
 
 ### A. 共通パッケージ・クレート
 
-- 対象: `@banto/admin-core`（破壊的変更）。他の `@banto/*`・`banto-*` は版数のみ。
+- 対象:
+  - `@banto/admin-core`: 破壊的変更（SessionController、#260）。一覧の状態を保持する API の追加（#215・#255）。
+  - `banto-server`: 後方互換の追加。`lan_urls_for_bind(bind, port)`（#216。bind に合う LAN の接続先 URL を返す。旧 `lan_urls(port)` は残るが、bind に合わない URL を案内しうるので `lan_urls_for_bind` へ移ることを推奨）。監査ログの一覧に `?asOfId=`（#248）。
+  - `banto-admin-services`: 後方互換の追加。`AuditLogService::list_as_of`・`AuditLogList`・削除の epoch（設定キー `audit.deletion_epoch`。スキーマの変更は無い）（#248）。`SettingsService::is_auth_key`。
+  - 他の `@banto/*`（attachments・charts・dock-svelte・forms・grid-svelte・report・scan-wedge・theme・tree-svelte）と `banto-core`・`banto-storage`・`banto-attachments` は版数のみ（charts・grid-svelte はテストの変更だけ）。
 - 更新: `v1.7.3` → `v2.0.0`（npm と Rust を同じタグに）。
 - 追従: 旧 API（`resolveProtectedSession`・`establishSession`・`beginSession`・`endSession`・`confirmSessionEnded` など）の
   呼び出しが型エラーになる。移行先は下の「削除した公開 API と移行先」の表。`AuthProvider` は `resolve`・`credentialRevision`・
@@ -50,8 +54,8 @@
 
 - 対象ファイル・ルート: `apps/admin-template/src/lib/session.svelte.ts`・`src/routes/(app)/+layout.ts`・`+layout.svelte`・
   ログイン・ログアウト（`Header.svelte`・コマンドパレット）・503 画面・`providers/demo.ts`、`src-tauri`（認証コマンド）、
-  items の CSV 取込、コマンドパレット、ヘッダーの検索表示。
-- 関連 PR: #260（#264・#265・#266）、#218、#258・#217。
+  items の CSV 取込、コマンドパレット、ヘッダーの検索表示。一覧画面の状態の保持（#215・#255）、設定の接続先 URL の表示と `src-tauri` の `server_status`（#216）、監査ログ画面（#248）。
+- 関連 PR: #260（#264・#265・#266）、#215（#255）、#216（#254）、#248（#256）、#218、#258・#217。
 - 手で取り込む変更: 下の「派生アプリの移行の手順」1〜7。
 - 派生側の独自変更と衝突しやすい箇所: 自前の `AuthProvider`（手順 7）、独自のセッション再確認（banto-hub の `sessionRecheck.ts` など）、
   独自の認証コマンドを持つ `src-tauri`（`settings_set` が `auth.` キーを拒否する）。
