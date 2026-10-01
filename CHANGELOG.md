@@ -90,6 +90,10 @@
       逆に**認証を再び有効にすると（ログイン不要モードを解除）、ローカルユーザーのセッションはその場で終了する**（S-99。以前は
       次の確認まで残っていた）。監査ログには合成ユーザーの `logout`（`detail: { "reason": "auth_enabled" }`）が残り、画面は
       ログイン画面へ移る。
+    - **Tauri: 汎用の `settings_set` は `auth.` で始まるキーを拒否する**（BadRequest。認証モードは `auth_config_apply`、自動ログインは
+      `autologin_enable`／`autologin_disable` で変える。S-103）。`set_auth_config` は 4 つのキーを 1 トランザクションで書く（S-104）。
+    - HTTP provider: `changePassword` が `401` を受けたら、送ったトークンを消して資格情報の変化を通知する（S-106）。`resolve()` は
+      答えが届いた時点で保存されているトークンが送ったものと違えば、古いトークンについての答えとして捨てる（S-105）。
     - **Tauri: ログイン不要モード中の `auth_login`／`auth_setup` は拒否する**（#266 オーナー決定、S-95）。
       `LoginResult { success: false, superseded: false, error: "ログイン不要モード中はアカウントでログインできません…" }`
       を返し、スロットも `seq` も変えない（provider は revision を進めず通知しない。ログイン画面はエラーを出す）。入口で
