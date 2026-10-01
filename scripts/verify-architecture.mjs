@@ -820,7 +820,11 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	const missingFiles = [FIX_PKG, FIX_PAGE, FIX_VITE, FIX_CARGO].filter(
 		(f) => !fs.existsSync(path.join(repoRoot, f))
 	);
-	if (missingFiles.length > 0) {
+	if (!fs.existsSync(path.join(repoRoot, FIX))) {
+		// scaffold した派生アプリでは fixture ごと除去される（banto 本体のリリース
+		// 検証専用。scripts/scaffold.mjs の removeBantoReleaseOnly）。
+		pass(rule, `対象外（${FIX} が無い — banto 本体専用の fixture。scaffold で除去済み）`);
+	} else if (missingFiles.length > 0) {
 		for (const f of missingFiles)
 			fail(rule, f, 'fixture のファイルが無い（検査の前提が変わった — 本検査を更新）');
 	} else {

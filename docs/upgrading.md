@@ -223,6 +223,9 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
   commit を出す（下の表は範囲。実際の版は run の summary が正）。
 - **対象外**: SSR ありの構成（adapter-node 等）は検証しない。派生アプリは adapter-static の SPA 構成を前提に
   している。
+- **banto 本体専用**: fixture・ワークフロー・`scripts/external-fixture-set-ref.mjs` は scaffold した派生アプリには
+  含まれない（`scripts/scaffold.mjs` が全プリセット共通で除去する）。コピー・rename しただけのリポジトリでは、
+  ワークフローは `tyaro/banto` 以外では走らない。
 
 ### 8.3 候補 commit・リリースタグの検証手順
 

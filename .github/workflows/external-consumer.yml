@@ -76,9 +76,15 @@ env:
 jobs:
   # 検証する commit の SHA を 1 か所で決める。fork からの PR はここでスキップし、
   # 後続のジョブは needs が skipped になるので一緒にスキップされる。
+  # tyaro/banto 以外（テンプレートをコピー・rename したリポジトリ）でも走らせない:
+  # fixture は github:tyaro/banto#<sha> を取りに行くので、コピー先の SHA は解決
+  # できない（scaffold は fixture ごとこのワークフローを除去する）。
   resolve:
     name: Resolve the commit to verify
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.repository == 'tyaro/banto' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
