@@ -998,7 +998,11 @@ async fn login_body(
             state
                 .audit
                 .record(AuditEntry {
-                    actor_username: Some(&username),
+                    // Bounded like the REST path (Issue #278): the name is
+                    // caller-supplied and need not be a real account.
+                    actor_username: Some(&admin_template_core::users::bound_username_for_audit(
+                        &username,
+                    )),
                     actor_role: None,
                     action: "login_failed",
                     resource: "auth",

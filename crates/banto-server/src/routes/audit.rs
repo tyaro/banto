@@ -1,6 +1,7 @@
 use super::*;
 use axum::extract::rejection::QueryRejection;
 use banto_admin_services::audit::AuditLogList;
+use banto_admin_services::users::bound_username_for_audit;
 
 // --- M14: audit log ---------------------------------------------------------
 
@@ -44,9 +45,12 @@ pub fn audited_credential_verifier(
                     })
                 }
                 _ => {
+                    // Issue #278: the username is attacker-supplied and need
+                    // not be a real account, so never store it unbounded.
+                    let bounded = bound_username_for_audit(&username);
                     audit
                         .record(AuditEntry {
-                            actor_username: Some(&username),
+                            actor_username: Some(&bounded),
                             actor_role: None,
                             action: "login_failed",
                             resource: "auth",
@@ -155,7 +159,12 @@ pub async fn audit_logout_middleware(
 
     let response = next.run(req).await;
 
-    if is_logout {
+    // Issue #278: only a logout that ended a real session is audited. With no
+    // token, an unknown/expired/already-revoked one, `identity` is `None` and
+    // the request - which needs no credentials - leaves no row, so it cannot
+    // be used to grow the audit table. (Tauri's `auth_logout` already records
+    // only when it cleared a session; conventions §1/§6.)
+    if is_logout && identity.is_some() {
         state
             .audit
             .record(AuditEntry {

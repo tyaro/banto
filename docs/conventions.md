@@ -88,6 +88,17 @@ maintenance-review-2026-08 §5.3 で実測・是正済み）:
   記録しない**（`login_failed` は verifier 到達時のみ）。監査ログ自己 DoS を
   避けるための意図的な非対称で、Tauri 経路（ローカル入力・スロットル無し）は
   全失敗を記録する。ロックアウト自体はレート制限器の状態として別途観測できる。
+- **資格情報なしで叩ける認証系は監査を増幅させない**（Issue #278）。REST の
+  `POST /api/auth/logout` は**実際にセッションを終えたとき（有効トークンで actor が
+  解決できたとき）だけ**記録する（トークン無し・無効・失効済みは記録しない。Tauri の
+  `auth_logout` も元から「クリアしたときだけ」記録で同じ）。`login_failed` の
+  `actor_username` は呼び出し側指定で実在アカウントとは限らないため、
+  `users::bound_username_for_audit` で作成時上限（`MAX_USERNAME_LEN`＝32 文字）まで
+  char 境界で切り詰め、末尾 `…` で切り詰めを明示する（REST・Tauri 共通）。
+  上限超の username は `UsersService::verify` で DB を引かず、ダミー hash の検証だけ
+  行って `None` を返す（存在しないユーザーと同じ応答・同程度の時間）。スロットルの
+  キーも username 64 文字で打ち切る。保持処理（起動時・一覧取得時）は書き込みごとの
+  上限保証ではないので、書き込み側でこの 2 経路を絞ることが容量の守りになる。
 
 ## 2. サービス層は tauri / axum / RBAC / HTTP を知らない [機械検査済み: tauri/axum 非依存のみ]
 
@@ -203,7 +214,14 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   per-(IP+username) と per-IP の2次元スロットルを argon2 verifier の**前**に通す
   （username ローテーション flood での DoS 対策）。回帰テスト
   `per_ip_dimension_bounds_a_username_rotation_flood` が「ロックアウト中は argon2 を
-  呼ばない」ことを検証。
+  呼ばない」ことを検証。このチェックは**verifier を await する前に検証の枠を
+  原子的に予約**する（Issue #279）: 処理中の試行は失敗件数と同様に
+  per-(IP+username)・per-IP のしきい値判定に数え、`MAX_IN_FLIGHT_PER_IP`（4）・
+  `MAX_CONCURRENT_VERIFICATIONS`（8）で同時実行数も直接制限する。上限超過は待たせず
+  通常の `RateLimited` で即時拒否。枠は RAII ガードで、成功・失敗・エラー・
+  future のキャンセルのいずれでも解放される。verifier のハッシュ計算は tokio の
+  blocking プールで行う。適用範囲は REST のネットワーク境界（`POST /api/auth/login`）
+  で、Tauri の `auth_login` はローカル入力のためスロットル対象外（§1 の非対称）。
 - **`DefaultBodyLimit` は service 層チェックの上に置く。** transport 上限は
   service 層の実チェック（`MAX_ATTACHMENT_BYTES` 等）より「快適に上」であればよい
   という順序（`rest/mod.rs` の doc とルータ各所）。
