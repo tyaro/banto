@@ -7,11 +7,8 @@
  * (M12 settings API) and session (logout) commands. RBAC gating for nav
  * entries mirrors Sidebar.svelte's `visibleItems` condition exactly.
  *
- * Recency (spec M16: "最近使ったコマンドの並び上げ（localStorage）") is a
- * flat localStorage list of ids, same style as `banto.theme`/`banto.preset`
- * in app.html - deliberately NOT going through `UiSettingsProvider`
- * (non-scope: "履歴の設定DB保存"), so it stays a per-device convenience with
- * zero server round-trip.
+ * Recency (spec M16: "最近使ったコマンドの並び上げ"; per signed-in user,
+ * Issue #258) lives in `./recentCommands.ts`.
  */
 import { goto } from '$app/navigation';
 import { base } from '$app/paths';
@@ -101,38 +98,4 @@ function sessionCommands(): PaletteCommand[] {
 /** All palette commands, in a fixed order (navigation, then theme, then session) - `searchCommands` re-sorts/filters this for display. */
 export function buildCommands(): PaletteCommand[] {
 	return [...navigationCommands(), ...themeCommands(), ...sessionCommands()];
-}
-
-// --- Recency (localStorage) -------------------------------------------------
-
-const RECENT_KEY = 'banto.commandPaletteRecent';
-const MAX_RECENT = 10;
-
-/** Ordered most-recent-first; empty/corrupt storage yields `[]` rather than throwing. */
-export function loadRecentCommandIds(): string[] {
-	if (typeof localStorage === 'undefined') return [];
-	try {
-		const raw = localStorage.getItem(RECENT_KEY);
-		if (!raw) return [];
-		const parsed: unknown = JSON.parse(raw);
-		return Array.isArray(parsed)
-			? parsed.filter((entry): entry is string => typeof entry === 'string')
-			: [];
-	} catch {
-		return [];
-	}
-}
-
-/** Move `id` to the front (or insert it), capped at `MAX_RECENT`. Best-effort - a full/disabled localStorage is silently ignored. */
-export function recordRecentCommand(id: string): void {
-	if (typeof localStorage === 'undefined') return;
-	const next = [id, ...loadRecentCommandIds().filter((existing) => existing !== id)].slice(
-		0,
-		MAX_RECENT
-	);
-	try {
-		localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-	} catch {
-		// Best-effort convenience feature - never block command execution on it.
-	}
 }
