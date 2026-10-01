@@ -1075,7 +1075,7 @@ async fn logout_body(state: &AppState) -> Result<LogoutResult, BantoError> {
         match (state.auth_io.auth_mode)().await {
             Ok(config) if config.disabled => {
                 let (rebind, seq_now) =
-                    rebind_local_session(state, config.disabled_role, Some(seq));
+                    rebind_local_session(state, config.disabled_role, Some(seq), false);
                 seq = seq_now;
                 rebind
             }
@@ -1335,7 +1335,18 @@ enum LocalRebind {
 ///   an in-flight [`settle_session`] that the slot was written after it read
 ///   the store; without the advance, an `auth_resolve` that had read the old
 ///   role would write it back over the new one;
-/// - `Local(r) -> Local(r)`: nothing written, `seq` unchanged.
+/// - `Local(r) -> Local(r)`: nothing written, `seq` unchanged - UNLESS
+///   `role_changed` (S-98): the caller's own change of the mode's role,
+///   decided from the settings BEFORE its save, not from the slot. Between
+///   the save and this call, an `auth_resolve`/`current_session` that does
+///   not take `auth_config_lock` can read the new role from the store and
+///   refresh the slot to it ([`settle_session`] writes the role but never
+///   advances `seq` - advancing there would break "`current != checked` iff
+///   this call cleared", I-23). The slot then already holds the new role,
+///   yet an even older settle that read the OLD role still sees the same
+///   `seq`; so the role change is advanced here regardless of the slot. A
+///   settle's refresh writes the role without advancing `seq`; telling
+///   in-flight settles about a role change is this forced advance's job.
 ///
 /// With `expected_seq` (the logout's re-read), nothing is written unless
 /// `seq` is still that value (the slot is then exactly what the logout's
@@ -1345,13 +1356,14 @@ fn rebind_local_session(
     state: &AppState,
     role: Role,
     expected_seq: Option<u64>,
+    role_changed: bool,
 ) -> (LocalRebind, u64) {
     let mut slot = state.auth.lock().expect("auth mutex poisoned");
     if expected_seq.is_some_and(|seq| seq != slot.seq) {
         return (LocalRebind::Skipped, slot.seq);
     }
     let (outcome, next) = match slot.session.as_ref() {
-        Some(DesktopSession::AuthDisabledLocal(local)) if local.role == role => {
+        Some(DesktopSession::AuthDisabledLocal(local)) if local.role == role && !role_changed => {
             return (LocalRebind::Unchanged, slot.seq);
         }
         Some(DesktopSession::AuthDisabledLocal(local)) => (
@@ -1488,6 +1500,10 @@ async fn auth_config_apply_body(
     let role = Role::from_str(disabled_role).unwrap_or(Role::Admin);
 
     let mut config = state.settings.auth_config().await?;
+    // The settings before this apply (read under `auth_config_lock`, so no
+    // other apply changes them meanwhile): a change of the mode's role while
+    // the mode stays on always advances `seq` at the rebind below (S-98).
+    let previous = config.clone();
     config.disabled = disabled;
     config.disabled_role = role;
     (state.auth_io.save_auth_config)(config.clone()).await?;
@@ -1511,7 +1527,8 @@ async fn auth_config_apply_body(
     // (`read_session_source` re-reads the mode), so it can never authorize
     // anything under `disabled = false`.
     let rebind = if config.disabled {
-        rebind_local_session(state, config.disabled_role, None).0
+        let role_changed = previous.disabled && previous.disabled_role != config.disabled_role;
+        rebind_local_session(state, config.disabled_role, None, role_changed).0
     } else {
         LocalRebind::Skipped
     };
@@ -5478,6 +5495,67 @@ mod tests {
         assert!(!answer.stale);
         assert_eq!(answer.kind, Some("local"));
         assert_eq!(answer.identity.expect("active").role, "viewer");
+    }
+
+    /// S-98 (re-review of #266 P1): between `auth_config_apply`'s save and
+    /// its rebind, another `auth_resolve` (B) reads the new role from the
+    /// store and refreshes the slot to it - without advancing `seq` (a
+    /// settle's refresh never does, I-23). The rebind then finds the new role
+    /// already there, but the role DID change in this apply (decided from
+    /// the settings before the save), so it still advances `seq`. An even
+    /// older resolve (A) that had read the old role therefore settles
+    /// `Stale` and does not write admin back.
+    #[tokio::test]
+    async fn s98_a_role_change_advances_seq_even_if_a_settle_refreshed_the_slot_first() {
+        let mut state = app_state().await;
+        // Local(admin): the mode on with role admin, and its synthetic session.
+        let config = state.settings.auth_config().await.unwrap();
+        state
+            .settings
+            .set_auth_config(&AuthSettings {
+                disabled: true,
+                disabled_role: Role::Admin,
+                ..config
+            })
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::AuthDisabledLocal(local_identity(
+            Role::Admin,
+        ))));
+        let mut hold = hold_after_save(&mut state);
+
+        // Resolve A: slot and store read (admin), then held.
+        let (cached_a, seq_n) = read_slot(&state);
+        let cached_a = cached_a.expect("Local(admin)");
+        let fresh_a = read_session_source(&state, &cached_a).await.unwrap();
+
+        // apply(true, viewer): held after its save, before its rebind.
+        let apply = auth_config_apply_body(&state, true, "viewer");
+        tokio::pin!(apply);
+        run_until_held!(apply, hold);
+
+        // Resolve B runs whole: it reads viewer from the store and refreshes.
+        let b = resolve_body(&state).await.expect("resolve B");
+        assert_eq!(b.identity.expect("active").role, "viewer");
+        assert_eq!((b.checked, b.current), (seq_n, seq_n), "a refresh: no seq");
+        assert_eq!(read_slot(&state).1, seq_n);
+
+        hold.release.send(()).unwrap();
+        apply.await.expect("apply");
+        assert_eq!(
+            read_slot(&state).1,
+            seq_n + 1,
+            "the role change advanced seq anyway"
+        );
+
+        assert!(matches!(
+            settle_session(&state, &cached_a, fresh_a, seq_n),
+            Settled::Stale { .. }
+        ));
+        let Some(DesktopSession::AuthDisabledLocal(local)) = read_slot(&state).0 else {
+            panic!("expected Local")
+        };
+        assert_eq!(local.role, Role::Viewer, "admin was not written back");
     }
 
     /// `auth_config_apply(false)` keeps its behavior: the synthetic session
