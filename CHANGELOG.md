@@ -22,6 +22,75 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-01
+
+**v2.0.0 — セッション確定の単一書き手化（SessionController）。版の種類: major（破壊的）。
+派生アプリへの影響: 依存タグの更新だけでは済まない。旧セッション API の削除と `AuthProvider` の契約変更（A）に加え、
+コピー済みのログインガード・ログアウト・503 画面などの取り込み（B）が必要。DB の移行は無い。**
+詳細は下の「SessionController 実装-3」の節（削除した公開 API と移行先・挙動の互換性が変わる変更・派生アプリの移行の手順）と、
+[upgrading.md 例 2](docs/upgrading.md#例-2-v17x--v200sessioncontroller-a-と-b-がセット破壊的変更)。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                      |
+| -------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v1.7.3` → `v2.0.0`（npm と Rust を同じタグに）。`@banto/admin-core` の旧セッション API を削除し、`AuthProvider` の `resolve`・`credentialRevision`・`onCredentialChanged` が必須。他のパッケージ・クレートは版数のみ                     |
+| B. コピーしたテンプレート        | あり | `session.svelte.ts`、`(app)/+layout.ts`・`+layout.svelte`、ログイン・ログアウト、503 画面、`providers/demo.ts`、`src-tauri` の認証コマンド（#260・#264〜#266）。items の CSV 取込プレビュー（#218）、パレット・ヘッダー検索（#258・#217） |
+| C. DB・設定・配布資産            | なし | マイグレーション無し（セッションはメモリのみ）。Tauri のログイン不要モードの挙動が変わる（`settings_set` の `auth.` キー拒否を含む）                                                                                                      |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/admin-core`（破壊的変更）。他の `@banto/*`・`banto-*` は版数のみ。
+- 更新: `v1.7.3` → `v2.0.0`（npm と Rust を同じタグに）。
+- 追従: 旧 API（`resolveProtectedSession`・`establishSession`・`beginSession`・`endSession`・`confirmSessionEnded` など）の
+  呼び出しが型エラーになる。移行先は下の「削除した公開 API と移行先」の表。`AuthProvider` は `resolve`・`credentialRevision`・
+  `onCredentialChanged` が必須（`initBanto`・`createSessionController` は欠けていると `TypeError`）。
+  一時的に `adaptLegacyAuthProvider(...)` で包める（移行 PR に「adapter 使用中」と明記）。
+- 依存を上げずに留まれるか: できる（`v1.7.3` に固定したままなら従来どおり動く。ただし #255 の一覧状態の所有者照合などの恩恵は受けられない）。
+
+### B. コピーしたテンプレート
+
+- 対象ファイル・ルート: `apps/admin-template/src/lib/session.svelte.ts`・`src/routes/(app)/+layout.ts`・`+layout.svelte`・
+  ログイン・ログアウト（`Header.svelte`・コマンドパレット）・503 画面・`providers/demo.ts`、`src-tauri`（認証コマンド）、
+  items の CSV 取込、コマンドパレット、ヘッダーの検索表示。
+- 関連 PR: #260（#264・#265・#266）、#218、#258・#217。
+- 手で取り込む変更: 下の「派生アプリの移行の手順」1〜7。
+- 派生側の独自変更と衝突しやすい箇所: 自前の `AuthProvider`（手順 7）、独自のセッション再確認（banto-hub の `sessionRecheck.ts` など）、
+  独自の認証コマンドを持つ `src-tauri`（`settings_set` が `auth.` キーを拒否する）。
+- 取り込まなくても動くか: 動かない（A を上げると旧 API を使うコピー済みコードが型エラーになる）。
+- 手本: admin-template の同名ファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 不要。
+- 戻せる条件: DB に変更が無いので、依存タグとコピー部分を戻せば戻せる。
+- 設定キー・配布物: Tauri の設定画面でログイン不要モードを有効にすると、管理者のアカウントのセッションがその場でローカルユーザーに
+  置き換わり、解除するとローカルユーザーのセッションが終わる（監査ログに `logout` が残る）。ログイン不要モード中の `auth_login`・`auth_setup`
+  は拒否する。汎用の `settings_set` は `auth.` で始まるキーを拒否する（認証モードは `auth_config_apply`、自動ログインは
+  `autologin_enable`／`autologin_disable`）。`set_auth_config` は 4 つのキーを 1 トランザクションで書く。
+- 順序: A・B を先に完成 → 検証用 DB で起動 → 本番。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（demo 用の `AuthProvider` を持つアプリは白画面にならないこと）。
+2. ログイン・ログアウト（ログアウト後に /login へ移る）、別タブでのログイン・ログアウト、503 画面の「再試行」。
+3. Tauri: 設定画面のログイン不要モードの有効化・解除、役割の変更。
+4. Rust: `cargo check` / `cargo test`。
+
+### セキュリティ
+
+- なし。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認する（run の URL と成否・Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版はタグ後にここへ追記する）。
+  [upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+
+### その他の変更
+
+- chore(deps): tauri 2.11.5 → 2.12.0・tauri-build・thiserror 2.0.21・window-vibrancy 0.8.1（Cargo の minor-patch グループ、#267）。
+- 外部利用 fixture の CI（#271）、items の CSV 取込プレビュー（#218）、コマンドパレットの最近使った項目のユーザー別化（#258）・
+  ヘッダー検索の文言（#217）。詳細は以降の項目。
+
 - ci(release): 外部利用 fixture を CI 化した（#271）。`fixtures/external-consumer/`（最小の SvelteKit と最小の crate）に
   `@banto/*` を `github:tyaro/banto#<sha>&path:packages/<x>`、`banto-*` を `git` + `rev` で導入し、
   `.github/workflows/external-consumer.yml` が `vite dev` をブラウザ（Playwright）で開いて描画を確かめたうえで
@@ -1800,7 +1869,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v1.7.3...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/tyaro/banto/compare/v1.7.3...v2.0.0
 [1.7.3]: https://github.com/tyaro/banto/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/tyaro/banto/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/tyaro/banto/compare/v1.7.0...v1.7.1
