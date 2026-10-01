@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
+
 ## [2.0.0] - 2026-10-01
 
 **v2.0.0 — セッション確定の単一書き手化（SessionController）。版の種類: major（破壊的）。
