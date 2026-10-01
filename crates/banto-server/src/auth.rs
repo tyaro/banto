@@ -927,6 +927,31 @@ impl AuthState {
         token
     }
 
+    /// Revoke every outstanding public viewer token (閲覧公開 turned OFF,
+    /// Issue #294 review). Only synthetic public sessions are touched; real
+    /// login sessions are never revoked here. The `AuthState` outlives server
+    /// restarts (the app shares one across `server_apply`), so without this a
+    /// token minted while 閲覧公開 was ON would keep working after it is
+    /// switched OFF. Returns how many tokens were removed.
+    pub fn revoke_public_viewer_tokens(&self) -> usize {
+        let queued: Vec<String> = {
+            let mut q = self
+                .inner
+                .public_tokens
+                .write()
+                .expect("public viewer token lock poisoned");
+            q.drain(..).collect()
+        };
+        let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
+        let before = tokens.len();
+        for t in queued {
+            tokens.remove(&t);
+        }
+        // Defensive: also drop any public-flagged record the FIFO lost track of.
+        tokens.retain(|_, record| !record.public_viewer);
+        before - tokens.len()
+    }
+
     /// Shared implementation of [`AuthState::issue_token`]/
     /// [`AuthState::issue_token_remembered`]/[`AuthState::login_rate_limited`].
     ///
@@ -2564,6 +2589,25 @@ mod tests {
             assert!(body_json(response).await.is_null());
         }
         assert!(!auth.session_for(&remembered).unwrap().public_viewer);
+    }
+
+    #[tokio::test]
+    async fn revoke_public_viewer_tokens_removes_only_public_sessions() {
+        let auth = demo_auth();
+        let p1 = auth.issue_public_viewer_token();
+        let p2 = auth.issue_public_viewer_token();
+        let regular = auth.issue_token(Identity {
+            id: "1".into(),
+            name: "admin".into(),
+            role: "admin".into(),
+        });
+        assert_eq!(auth.revoke_public_viewer_tokens(), 2);
+        assert!(!auth.verify(&p1));
+        assert!(!auth.verify(&p2));
+        assert!(auth.verify(&regular));
+        assert_eq!(auth.revoke_public_viewer_tokens(), 0);
+        // Issuing afterwards works as usual.
+        assert!(auth.verify(&auth.issue_public_viewer_token()));
     }
 
     #[tokio::test]

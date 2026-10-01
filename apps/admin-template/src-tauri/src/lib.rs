@@ -41,8 +41,8 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
-    lan_urls_for_bind, start, static_router, with_security_headers, AuthState, RunningServer,
-    ServerConfig, ServerEvent,
+    bind as bind_listener, lan_urls_for_bind, static_router, with_security_headers, AuthState,
+    BoundServer, RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -1821,7 +1821,9 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 }
 
 /// Build the full `/api/*` + static-asset router (spec §11.1) and start
-/// listening. Shared by `setup()` (auto-start on launch if LAN access was
+/// serving on an already-[`bind`]-ed listener (infallible: the bind - the only
+/// step that can fail - happened before, so callers can do work such as saving
+/// settings between bind and serve; Issue #294 review). Shared by `setup()` (auto-start on launch if LAN access was
 /// left enabled) and the `server_apply` command (spec §11.4's
 /// 「保存して適用」button).
 ///
@@ -1830,7 +1832,7 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 /// crate purely to support this one function: Rust only requires a crate to
 /// be listed in `[dependencies]` to *spell out* one of its types in source,
 /// and the router value here only ever flows through an inferred `let`
-/// binding on its way into `banto_server::start`.
+/// binding on its way into `BoundServer::serve`.
 // Keeps positional service params rather than taking a `Services` like the
 // `api_router` it wraps (M-review 2026-08 M-13): its two call sites
 // (`setup`/`server_apply`) construct these handles inline, so it assembles
@@ -1850,8 +1852,8 @@ async fn start_embedded_server(
     metrics: Option<MetricsProbe>,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
-    config: ServerConfig,
-) -> Result<RunningServer, BantoError> {
+    bound: BoundServer,
+) -> RunningServer {
     // `allow_setup: false` - the Tauri app's first-run setup goes through
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
@@ -1874,7 +1876,7 @@ async fn start_embedded_server(
     let router = with_security_headers(
         api_router(services, auth, events, false).merge(static_router::<FrontendAssets>()),
     );
-    start(config, router).await
+    bound.serve(router)
 }
 
 /// `GET`-ish command: current persisted settings + live running state (spec
@@ -1942,14 +1944,26 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// combination is refused (`validate_server_config`) before anything is
 /// stopped or started.
 ///
-/// Failure contract (Issue #287): the settings are saved only AFTER the new
-/// listener is up (one transaction, `set_many`). If starting it (or the save)
-/// fails, nothing is saved, the previously running server is restarted from
+/// Order and failure contract (Issues #287, #294 review): validate -> stop the
+/// old server -> `bind` the new listener (a port in use surfaces here, nothing
+/// saved yet) -> save the settings (one transaction, `set_many`) -> serve. The
+/// new listener answers no request until the save is done, so nothing can
+/// observe the new listener together with the old stored settings (e.g. mint a
+/// public viewer token under a stale `viewer_public`). Serving a bound listener
+/// cannot fail, so there is no state in which the settings are saved but the
+/// server did not start. If the bind or the save fails, the listener is
+/// dropped, nothing is saved, the previously running server is restarted from
 /// the unchanged saved settings, and the command returns the error - so the
-/// saved values and the live server never silently diverge. The attempt is
-/// audited as `settings_change` / `result: "failed"` (`detail.saved: false`);
-/// a success records the usual `ok` entry. Callers should re-read
-/// `server_status` after an error (the frontend does).
+/// saved values and the live server never silently diverge. `enabled = false`
+/// has no new listener (stop -> save). The attempt is audited as
+/// `settings_change` / `result: "failed"` (`detail.saved: false`); a success
+/// records the usual `ok` entry. Callers should re-read `server_status` after
+/// an error (the frontend does).
+///
+/// When the saved `viewer_public` is OFF after a successful apply, every
+/// outstanding public viewer token is revoked (`rest_auth` is shared across
+/// restarts, so they would otherwise outlive the setting); real login
+/// sessions are untouched.
 #[tauri::command]
 async fn server_apply(
     state: State<'_, AppState>,
@@ -1982,7 +1996,10 @@ async fn server_apply(
         running.stop().await;
     }
 
-    let launch = |runtime_config: ServerConfig| {
+    // Serving on an already-bound listener cannot fail (the bind is the only
+    // fallible step), so everything fallible happens BEFORE the listener is
+    // reachable by a request.
+    let launch = |bound: BoundServer| {
         let state = &state;
         async move {
             start_embedded_server(
@@ -1998,21 +2015,24 @@ async fn server_apply(
                 state.metrics.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
-                runtime_config,
+                bound,
             )
             .await
         }
     };
 
-    // Issue #287: the new settings are saved only AFTER the new listener is
-    // up, so "saved" and "running" can only disagree through a failure that
-    // the rollback below then repairs. (Saving first - the old order - left
-    // the new values stored while the old server was already gone whenever
-    // the new bind failed, e.g. a port in use.)
+    // Issue #287 / #294 review: bind -> save -> serve. The new settings are
+    // saved only AFTER the new listener is bound (so a port in use fails
+    // here, before anything is stored), and the listener only starts
+    // answering requests AFTER the save. Without the last part, a request
+    // (e.g. `POST /api/auth/public-viewer`, which reads the SAVED
+    // `viewer_public`) could hit the new listener while the old values were
+    // still stored. (Saving first - the oldest order - left the new values
+    // stored while the old server was already gone whenever the bind failed.)
     let outcome: Result<Option<RunningServer>, BantoError> = async {
-        let started = if config.enabled {
+        let bound = if config.enabled {
             Some(
-                launch(ServerConfig {
+                bind_listener(ServerConfig {
                     bind: config.bind.clone(),
                     port: config.port,
                 })
@@ -2021,15 +2041,17 @@ async fn server_apply(
         } else {
             None
         };
-        if let Err(err) = state.settings.set_server_config(&config).await {
-            // Stored values did not change (one transaction), so stop what
-            // was just started and fall back to the previous state.
-            if let Some(started) = started {
-                started.stop().await;
-            }
-            return Err(err);
+        // On error `bound` is dropped here, releasing the port.
+        state.settings.set_server_config(&config).await?;
+        if !config.viewer_public {
+            // 閲覧公開 OFF: public viewer tokens minted earlier (rest_auth
+            // outlives server restarts) must not keep working.
+            state.rest_auth.revoke_public_viewer_tokens();
         }
-        Ok(started)
+        Ok(match bound {
+            Some(bound) => Some(launch(bound).await),
+            None => None,
+        })
     }
     .await;
 
@@ -2058,14 +2080,14 @@ async fn server_apply(
             // the live state matches the (unchanged) saved settings again.
             let mut restored = !had_running;
             if had_running {
-                match launch(ServerConfig {
+                match bind_listener(ServerConfig {
                     bind: previous.bind.clone(),
                     port: previous.port,
                 })
                 .await
                 {
-                    Ok(old) => {
-                        *slot = Some(old);
+                    Ok(bound) => {
+                        *slot = Some(launch(bound).await);
                         restored = true;
                     }
                     Err(restore_err) => eprintln!(
@@ -3334,7 +3356,8 @@ pub fn run() {
                     bind: server_config.bind.clone(),
                     port: server_config.port,
                 };
-                match tauri::async_runtime::block_on(start_embedded_server(
+                match tauri::async_runtime::block_on(bind_listener(runtime_config)) {
+                    Ok(bound) => Some(tauri::async_runtime::block_on(start_embedded_server(
                     // [scaffold:items] begin
                     items.clone(),
                     // [scaffold:items] end
@@ -3347,9 +3370,8 @@ pub fn run() {
                     metrics.clone(),
                     rest_auth.clone(),
                     events.clone(),
-                    runtime_config,
-                )) {
-                    Ok(server) => Some(server),
+                    bound,
+                    ))),
                     Err(err) => {
                         // Non-fatal: the desktop app itself works fine with
                         // no LAN access; surface the failure (e.g. the
@@ -4327,7 +4349,7 @@ mod tests {
     // crate needs no HTTP client dependency).
 
     use banto_server::routes::{extra_auth_router, users_router};
-    use banto_server::{auth_routes, LoginOutcome};
+    use banto_server::{auth_routes, start, LoginOutcome};
 
     const REVOCATION_PASSWORD: &str = "password123";
 

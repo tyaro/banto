@@ -89,51 +89,88 @@ impl RunningServer {
     }
 }
 
-/// Bind `config` and start serving `router` in a background task, with
-/// graceful shutdown wired up. Binding failures (e.g. the port already
-/// being in use) surface as `BantoError::Other` with a Japanese, readable
-/// message (this crosses into user-facing settings-screen territory per
-/// spec §11.4, so keep it friendly rather than a raw OS error).
-pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer, BantoError> {
+/// A listener that is bound (the port is reserved, the OS may queue incoming
+/// connections) but NOT yet serving: no request is read or answered until
+/// [`BoundServer::serve`]. Lets a caller learn that the bind succeeded, do
+/// other work that must finish before the listener can be reached (e.g.
+/// persisting the settings it was started from, Issue #294 review), and only
+/// then open it up. Dropping it releases the port without serving anything.
+pub struct BoundServer {
+    listener: TcpListener,
+    local_addr: SocketAddr,
+}
+
+impl BoundServer {
+    /// The actual bound address (useful when `port: 0` asked the OS to pick
+    /// a free port).
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Start serving `router` in a background task, with graceful shutdown
+    /// wired up. Infallible: every failure mode of starting a server (the
+    /// bind) was already resolved by [`bind`].
+    pub fn serve(self, router: Router) -> RunningServer {
+        let BoundServer {
+            listener,
+            local_addr,
+        } = self;
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let router = router.layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())));
+        let join_handle = tokio::spawn(async move {
+            // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
+            // the plain `into_make_service()`) makes each connection's peer
+            // address available to handlers via `ConnectInfo<SocketAddr>` - the
+            // login rate limiter (`auth::login_handler`, spec §11.2) keys its
+            // lockout on client IP + username. Handlers extract it as
+            // `Option<ConnectInfo<..>>`, so this is purely additive: routers
+            // served some other way still work, just with a username-only key.
+            let server = axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            );
+            let graceful = server.with_graceful_shutdown(async move {
+                // Signalled, or the handle dropped (`Err`): either way, stop.
+                let _ = shutdown_rx.wait_for(|stopped| *stopped).await;
+            });
+            if let Err(err) = graceful.await {
+                eprintln!("banto-server: サーバエラー: {err}");
+            }
+        });
+
+        RunningServer {
+            local_addr,
+            shutdown_tx,
+            join_handle,
+        }
+    }
+}
+
+/// Bind `config` without serving yet (first half of [`start`]). Binding
+/// failures (e.g. the port already being in use) surface as
+/// `BantoError::Other` with a Japanese, readable message (this crosses into
+/// user-facing settings-screen territory per spec §11.4, so keep it friendly
+/// rather than a raw OS error).
+pub async fn bind(config: ServerConfig) -> Result<BoundServer, BantoError> {
     let addr = format!("{}:{}", config.bind, config.port);
     let listener = TcpListener::bind(&addr).await.map_err(|err| {
         BantoError::Other(format!(
-            "サーバの起動に失敗しました（{addr}）: {err}。ポート番号を変更するか、\
-             他のプロセスがそのポートを使用していないか確認してください。"
+            "サーバの起動に失敗しました（{addr}）: {err}。ポート番号を変更するか、             他のプロセスがそのポートを使用していないか確認してください。"
         ))
     })?;
     let local_addr = listener
         .local_addr()
         .map_err(|err| BantoError::Other(err.to_string()))?;
-
-    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-    let router = router.layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())));
-    let join_handle = tokio::spawn(async move {
-        // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
-        // the plain `into_make_service()`) makes each connection's peer
-        // address available to handlers via `ConnectInfo<SocketAddr>` - the
-        // login rate limiter (`auth::login_handler`, spec §11.2) keys its
-        // lockout on client IP + username. Handlers extract it as
-        // `Option<ConnectInfo<..>>`, so this is purely additive: routers
-        // served some other way still work, just with a username-only key.
-        let server = axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        );
-        let graceful = server.with_graceful_shutdown(async move {
-            // Signalled, or the handle dropped (`Err`): either way, stop.
-            let _ = shutdown_rx.wait_for(|stopped| *stopped).await;
-        });
-        if let Err(err) = graceful.await {
-            eprintln!("banto-server: サーバエラー: {err}");
-        }
-    });
-
-    Ok(RunningServer {
+    Ok(BoundServer {
+        listener,
         local_addr,
-        shutdown_tx,
-        join_handle,
     })
+}
+
+/// [`bind`] then [`BoundServer::serve`] in one step: bind `config` and start
+/// serving `router` in a background task.
+pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer, BantoError> {
+    Ok(bind(config).await?.serve(router))
 }
 
 /// URLs a client could use to reach a server bound to `port`, assuming it
@@ -538,6 +575,66 @@ mod tests {
         assert_eq!(response, "ok");
 
         server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn bound_server_does_not_answer_until_serve() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let router = Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        let bound = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .expect("bind should succeed");
+        let addr = bound.local_addr();
+
+        // The port is reserved (the connect is queued by the OS) but nothing
+        // reads or answers the request before `serve`.
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET / HTTP/1.1
+Host: localhost
+Connection: close
+
+",
+            )
+            .await
+            .unwrap();
+        let mut buf = [0u8; 64];
+        let early = tokio::time::timeout(Duration::from_millis(300), stream.read(&mut buf)).await;
+        assert!(early.is_err(), "no response may be produced before serve()");
+
+        let server = bound.serve(router);
+        assert_eq!(server.local_addr(), addr);
+        // The request queued before serve() is answered once serving starts.
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+            .await
+            .expect("answer after serve")
+            .unwrap();
+        assert!(String::from_utf8_lossy(&rest).ends_with("ok"));
+        assert_eq!(reqwest_get(addr).await, "ok");
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn bind_reports_a_port_in_use_and_drop_releases_the_port() {
+        let bound = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .unwrap();
+        let port = bound.local_addr().port();
+        let config = ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port,
+        };
+        assert!(bind(config.clone()).await.is_err());
+        drop(bound);
+        bind(config).await.expect("port is free after drop");
     }
 
     /// Tiny hand-rolled GET so this test does not need an HTTP client

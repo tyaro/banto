@@ -37,5 +37,7 @@ pub use events::{sse_route, ServerEvent};
 pub use response::ApiError;
 pub use routes::AuthStatusExtras;
 pub use security_headers::with_security_headers;
-pub use server::{lan_urls, lan_urls_for_bind, start, RunningServer, ServerConfig};
+pub use server::{
+    bind, lan_urls, lan_urls_for_bind, start, BoundServer, RunningServer, ServerConfig,
+};
 pub use static_files::{guess_mime, static_router, UiAssets};
