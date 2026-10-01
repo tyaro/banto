@@ -168,7 +168,10 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   解決を確かめ、`check-versions.mjs --tag` でタグ名と version の一致も検査する。
   失敗すれば tracking issue（ラベル `external-consumer-failure`）が起票される。
   タグの経路の確認は、`workflow_dispatch` の入力に既存のタグ名（例 `v1.7.3`）を
-  渡しても行える（ブランチ名・SHA を渡したときは SHA の経路）
+  渡しても行える（ブランチ名・SHA を渡したときは SHA の経路）。タグの経路では
+  fixture とスクリプトは workflow を起動した commit（dispatch なら通常 main）の
+  ものを使い、依存だけをタグ名にするので、fixture の無い古いタグも検証できる。
+  ただし今の fixture が import する export がそのタグに無ければ失敗しうる
 - **タグを打ったら外部利用 fixture の ref を新しいタグに上げる**:
   `node scripts/external-fixture-set-ref.mjs vX.Y.Z` → `fixtures/external-consumer/`
   で `pnpm install --no-frozen-lockfile` → `package.json`・`rust/Cargo.toml`・
