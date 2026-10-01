@@ -165,6 +165,13 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   での描画・check・build・`cargo check`。[upgrading.md §8.2](upgrading.md)）。
   タグの push でも同じワークフローが走り、失敗すれば tracking issue
   （ラベル `external-consumer-failure`）が起票される
+- **タグを打ったら外部利用 fixture の ref を新しいタグに上げる**:
+  `node scripts/external-fixture-set-ref.mjs vX.Y.Z` → `fixtures/external-consumer/`
+  で `pnpm install --no-frozen-lockfile` → `package.json`・`rust/Cargo.toml`・
+  `pnpm-lock.yaml` を commit（PR 経由）。fixture が commit している ref は現行
+  リリースタグなので、新しい `.svelte.ts` 同梱パッケージを main に足すと
+  （`verify:architecture` が fixture への import を求める一方で）既定状態の fixture は
+  ローカルで install できなくなる。CI は検証する SHA に書き換えるので影響しない
 - タグは軽量タグ（`git tag v1.7.3`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）

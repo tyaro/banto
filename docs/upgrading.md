@@ -249,6 +249,10 @@ fixture は自分の `pnpm-workspace.yaml`（`packages: []`）でルートの wo
 `--ignore-workspace` は要らない（これが無いと fixture で `pnpm install` してもルートのインストールに化ける）。
 確認が済んだら `node scripts/external-fixture-set-ref.mjs <現行リリースタグ>` で戻し、fixture の
 `pnpm-lock.yaml` の差分は commit しない（commit する値は現行リリースタグ）。
+fixture が commit している ref は現行リリースタグなので、**main にしか無いパッケージ（新しく足した `.svelte.ts`
+同梱パッケージなど）を試すときは、ref を main の SHA に書き換えてから** install する（既定の状態ではそのパッケージ
+の `path:` がタグに無く、install が失敗する）。リリース時に fixture の ref を新しいタグへ上げる手順は
+[publishing.md](publishing.md)「タグ運用規約」。
 
 **確認する組み合わせ**（Banto の現行の基準。ルート `package.json`・`apps/admin-template/package.json`・CI）:
 
