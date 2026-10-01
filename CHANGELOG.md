@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+- feat(admin-template): items の CSV 取込の確認パネルに、実行前に先頭10行（`IMPORT_PREVIEW_ROW_LIMIT`）の
+  プレビュー表（新規/更新・ID・商品名・価格・在庫）と「全N行中 先頭M行を表示」「K件は既存レコードの更新」の
+  表示を追加（#218）。表と送信は同じ検証済み行から作る（`importPreview.ts`）。新規/更新は文字ラベルで区別。
+  変更前後の比較は、既存値を追加通信なしに得られないため見送り。
 - feat(admin-core, admin-template)!: SessionController 実装-3（#260、**v2.0.0 の破壊的変更**。
   [docs/session-controller-design.md](docs/session-controller-design.md) §5.4・§6.1・§6.2、
   [ADR-0016](docs/adr/0016-session-controller-single-writer.md) は Accepted）。セッションの状態（誰がログインして
