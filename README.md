@@ -14,6 +14,8 @@ Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
 - 機能拡張ロードマップ（M10〜）: [docs/roadmap.md](docs/roadmap.md)
 - 保守者向け規約: [docs/conventions.md](docs/conventions.md)
 - 公開手順: [docs/publishing.md](docs/publishing.md)
+- 派生アプリの更新手順（新版の取り込み・同期記録・互換性確認）: [docs/upgrading.md](docs/upgrading.md)
+  （リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）
 - ライセンス: [MIT](LICENSE)
 - npmスコープ: `@banto/*` / Rustクレート: `banto-*`
 
@@ -575,6 +577,10 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
   ページ本体に同名の見出しを足した画面で Header 側の `<h1>` と二重マッチして
   strict mode violation になる — `{ level: 2, name: '...' }` のようにレベルを
   指定して本体側に絞ること。
+
+**新しい版への更新**（依存タグの上げ方、コピーしたテンプレート部分の取り込み、DB 移行、
+基準版の記録）は [docs/upgrading.md](docs/upgrading.md)。依存タグを上げるだけではコピー済みの
+テンプレートは更新されない。
 
 ## 開発
 
