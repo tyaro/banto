@@ -44,7 +44,7 @@ async function installTauriStub(page: Page): Promise<void> {
 			 * session, advancing `seq` (owner review of #266 P1). The provider
 			 * does not observe that advance until its next `auth_resolve`.
 			 */
-			slot: { seq: 1, local: false, role: 'admin' as string },
+			slot: { seq: 1, local: false, none: false, role: 'admin' as string },
 			resolves: [] as { checked: number; kind: string }[]
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
@@ -78,23 +78,25 @@ async function installTauriStub(page: Page): Promise<void> {
 				// SessionController, i.e. the provider's one-round-trip
 				// `auth_resolve`.
 				case 'auth_resolve': {
-					const { seq, local, role } = mock.slot;
-					const answer = local
-						? {
-								identity: { id: '0', name: 'ローカルユーザー', role },
-								kind: 'local',
-								checked: seq,
-								current: seq,
-								stale: false
-							}
-						: {
-								identity: { id: 'admin', name: 'E2E管理者', role: 'admin' },
-								kind: 'account',
-								checked: seq,
-								current: seq,
-								stale: false
-							};
-					mock.resolves.push({ checked: seq, kind: answer.kind });
+					const { seq, local, none, role } = mock.slot;
+					const answer = none
+						? { identity: null, kind: null, checked: seq, current: seq, stale: false }
+						: local
+							? {
+									identity: { id: '0', name: 'ローカルユーザー', role },
+									kind: 'local',
+									checked: seq,
+									current: seq,
+									stale: false
+								}
+							: {
+									identity: { id: 'admin', name: 'E2E管理者', role: 'admin' },
+									kind: 'account',
+									checked: seq,
+									current: seq,
+									stale: false
+								};
+					mock.resolves.push({ checked: seq, kind: answer.kind ?? 'none' });
 					return answer;
 				}
 				case 'auth_config_apply': {
@@ -102,12 +104,16 @@ async function installTauriStub(page: Page): Promise<void> {
 					authSettings.disabled = disabled;
 					authSettings.disabledRole = String(args.disabledRole);
 					if (disabled) {
-						const rebinding = !mock.slot.local;
+						const rebinding = !mock.slot.local || mock.slot.role !== authSettings.disabledRole;
 						mock.slot = {
 							seq: mock.slot.seq + (rebinding ? 1 : 0),
 							local: true,
+							none: false,
 							role: authSettings.disabledRole
 						};
+					} else if (mock.slot.local) {
+						// S-99: turning the mode off ends the synthetic session at once.
+						mock.slot = { seq: mock.slot.seq + 1, local: false, none: true, role: 'admin' };
 					}
 					return { ...authSettings };
 				}
@@ -319,6 +325,19 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		const after = resolves.filter((answer) => answer.checked === 2);
 		expect(after.length).toBeGreaterThanOrEqual(2); // one discarded, one applied (S-84)
 		expect(after.at(-1)?.kind).toBe('local');
+
+		// S-99: turning the mode off again ends the local session at once (seq 3);
+		// the save's re-run of the guard catches up and confirms `none` -> /login.
+		await expect(toggle).toBeChecked();
+		await toggle.uncheck();
+		await save.click();
+		await expect(page).toHaveURL(/\/login$/);
+		const last = await page.evaluate(() =>
+			(
+				window as unknown as { __bantoMock: { resolves: { checked: number; kind: string }[] } }
+			).__bantoMock.resolves.at(-1)
+		);
+		expect(last).toEqual({ checked: 3, kind: 'none' });
 	});
 
 	test('セキュリティ: not editable while the saved auth settings failed to load', async ({

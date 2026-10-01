@@ -1393,6 +1393,24 @@ fn rebind_local_session(
     (outcome, slot.seq)
 }
 
+/// End the auth-disabled synthetic session because the mode was turned off
+/// (re-review of #266 P1, S-99): under ONE lock, `Local -> None`, advancing
+/// `seq`, returning the ended identity (the caller records its end). Anything
+/// else is left alone: `None` has nothing to end, and an `Account` is not
+/// the mode's session (with `auth.disabled == true <=> AuthDisabledLocal`
+/// holding, the slot cannot hold one while the mode was on; were it there,
+/// the account's own re-validation decides its fate).
+fn end_local_session(state: &AppState) -> Option<UserIdentity> {
+    let mut slot = state.auth.lock().expect("auth mutex poisoned");
+    let Some(DesktopSession::AuthDisabledLocal(local)) = slot.session.as_ref() else {
+        return None;
+    };
+    let local = local.clone();
+    slot.session = None;
+    slot.seq += 1;
+    Some(local)
+}
+
 /// Audit what [`rebind_local_session`] did (spec M14): the synthetic
 /// `login` for an install; for a replaced account, that account's session
 /// end as `logout` with `detail: { "reason": "auth_disabled" }` (not a
@@ -1522,15 +1540,25 @@ async fn auth_config_apply_body(
     // both run under `auth_config_lock`, and the rebind is idempotent for
     // `Local`, so the synthetic session is never installed twice.
     //
-    // `disabled = false` does not clear an existing local session here: as
-    // before, the next `current_session`/`auth_resolve` settles it away
-    // (`read_session_source` re-reads the mode), so it can never authorize
-    // anything under `disabled = false`.
-    let rebind = if config.disabled {
+    // Turning the mode OFF (re-review of #266 P1, S-99) ends the synthetic
+    // session in the same step as the save (`Local -> None`, `seq` + 1), so
+    // `auth.disabled == false` is never observable together with it - an
+    // `auth_resolve` that had read `disabled = true` before the save then
+    // settles `Stale` instead of confirming `local`. (This used to be left to
+    // the next `auth_resolve`, on the grounds that the apply's answer carries
+    // no `seq`; the frontend provider absorbs an unobserved `seq` advance
+    // anyway - the catch-up of S-84.) Only on a `true -> false` change: a
+    // re-save of `false` touches nothing.
+    let (rebind, ended_local) = if config.disabled {
         let role_changed = previous.disabled && previous.disabled_role != config.disabled_role;
-        rebind_local_session(state, config.disabled_role, None, role_changed).0
+        (
+            rebind_local_session(state, config.disabled_role, None, role_changed).0,
+            None,
+        )
+    } else if previous.disabled {
+        (LocalRebind::Skipped, end_local_session(state))
     } else {
-        LocalRebind::Skipped
+        (LocalRebind::Skipped, None)
     };
     state
         .audit
@@ -1552,6 +1580,19 @@ async fn auth_config_apply_body(
     // `login` only; from the settings screen, the admin's session end
     // (`logout`, reason `auth_disabled`) and the synthetic `login`.
     record_local_rebind(&state.audit, &rebind).await;
+    if let Some(local) = ended_local {
+        // The synthetic session's end, told apart from a user's logout (whose
+        // `detail` is empty) like the account's end in `record_local_rebind`.
+        record_ok(
+            &state.audit,
+            &local,
+            "logout",
+            "auth",
+            None,
+            Some(serde_json::json!({ "reason": "auth_enabled" })),
+        )
+        .await;
+    }
     Ok(config)
 }
 
@@ -5558,27 +5599,67 @@ mod tests {
         assert_eq!(local.role, Role::Viewer, "admin was not written back");
     }
 
-    /// `auth_config_apply(false)` keeps its behavior: the synthetic session
-    /// is not cleared by the apply itself; the next `auth_resolve` settles
-    /// it away (`none`, `seq` + 1).
+    /// S-99 (re-review of #266 P1): an `auth_resolve` that read Local(admin)
+    /// and `disabled = true` is held; `auth_config_apply(false)` then ends the
+    /// synthetic session in the same step as its save (`None`, `seq` + 1) and
+    /// records its end (`logout`, reason `auth_enabled`). The held resolve
+    /// settles `Stale` (it does not confirm `local` under `disabled = false`),
+    /// and the next resolve answers `none`.
     #[tokio::test]
-    async fn config_apply_false_leaves_local_to_the_next_resolve() {
+    async fn s99_config_apply_false_ends_local_at_once_and_an_old_resolve_is_stale() {
         let state = app_state().await;
         auth_config_apply_body(&state, true, "admin")
             .await
-            .expect("enable");
-        let (_, seq) = read_slot(&state);
+            .expect("enable (bootstrap window)");
+        let (cached, seq_n) = read_slot(&state);
+        let cached = cached.expect("Local(admin)");
+        let fresh = read_session_source(&state, &cached).await.unwrap();
+        assert!(fresh.is_some(), "read while the mode was on");
+
         auth_config_apply_body(&state, false, "admin")
             .await
             .expect("disable");
-        let (session, seq_after) = read_slot(&state);
-        assert!(is_local(&session), "the apply itself does not clear");
-        assert_eq!(seq_after, seq);
+        assert_eq!(read_slot(&state), (None, seq_n + 1));
+        let logouts = audit_rows(&state, "logout").await;
+        assert_eq!(logouts.len(), 1);
+        assert_eq!(logouts[0].0.as_deref(), Some("local"));
+        let detail: serde_json::Value =
+            serde_json::from_str(logouts[0].1.as_deref().expect("detail")).unwrap();
+        assert_eq!(detail, serde_json::json!({ "reason": "auth_enabled" }));
 
+        assert!(matches!(
+            settle_session(&state, &cached, fresh, seq_n),
+            Settled::Stale { .. }
+        ));
+        assert_eq!(read_slot(&state), (None, seq_n + 1));
         let answer = resolve_body(&state).await.expect("resolve");
         assert!(answer.identity.is_none());
-        assert_eq!((answer.checked, answer.current), (seq, seq + 1));
-        assert_eq!(read_slot(&state), (None, seq + 1));
+        assert!(!answer.stale);
+        assert_eq!((answer.checked, answer.current), (seq_n + 1, seq_n + 1));
+    }
+
+    /// S-99: re-saving `disabled = false` (the mode already off) touches
+    /// nothing: `seq` unchanged, no session audit.
+    #[tokio::test]
+    async fn s99_config_apply_false_again_is_a_no_op_for_the_session() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        let login = login_body(&state, "admin".to_string(), SLOT_PASSWORD.to_string())
+            .await
+            .expect("login");
+        assert!(login.success);
+        let before = read_slot(&state);
+
+        auth_config_apply_body(&state, false, "admin")
+            .await
+            .expect("re-save false");
+        assert_eq!(read_slot(&state), before);
+        assert!(is_account(&before.0, "admin"));
+        assert_eq!(audit_action_count(&state, "logout").await, 0);
     }
 
     /// S-94/S-95: a login starts (reads `seq = N`) and is held in its
@@ -5771,9 +5852,8 @@ mod tests {
     /// `apply(false)` starts. The second apply waits for the first to finish
     /// - it cannot save `false` between the first one's save and its install
     /// - so the install is based on the value still stored, and the final
-    /// `disabled = false` is saved after it. The leftover local session is
-    /// settled away by the next check (existing behavior: `apply(false)`
-    /// never clears the slot itself).
+    /// `disabled = false` is saved after it. Since S-99 that `apply(false)`
+    /// ends the local session itself, in the same step as its save.
     #[tokio::test]
     async fn config_apply_true_then_false_are_serialized_by_the_auth_config_lock() {
         let mut state = app_state().await;
@@ -5802,10 +5882,10 @@ mod tests {
 
         assert!(!config.disabled);
         assert!(!state.settings.auth_config().await.unwrap().disabled);
+        assert_eq!(read_slot(&state), (None, 2), "apply(false) ended it (S-99)");
         let answer = resolve_body(&state).await.expect("resolve");
         assert!(answer.identity.is_none());
-        assert_eq!(answer.current, answer.checked + 1, "the resolve cleared it");
-        assert_eq!(read_slot(&state), (None, 2));
+        assert_eq!((answer.checked, answer.current), (2, 2));
         assert!(current_session(&state).await.unwrap().is_none());
     }
 
@@ -5813,7 +5893,7 @@ mod tests {
     /// `disabled = true` and is held (under `auth_config_lock`); an
     /// `apply(false)` started then waits for the logout's install to finish
     /// before it saves. Final: `disabled = false`, and the local session the
-    /// logout installed under `true` is settled away by the next check.
+    /// logout installed under `true` is ended by that `apply(false)` (S-99).
     #[tokio::test]
     async fn s67_a_logout_reread_and_a_later_apply_false_are_serialized() {
         let mut state = app_state().await;
@@ -5848,10 +5928,14 @@ mod tests {
         apply_off.await.expect("apply(false)");
 
         assert!(!state.settings.auth_config().await.unwrap().disabled);
+        assert_eq!(
+            read_slot(&state),
+            (None, login.seq + 3),
+            "apply(false) ended it (S-99)"
+        );
         let answer = resolve_body(&state).await.expect("resolve");
         assert!(answer.identity.is_none());
-        assert_eq!(answer.current, answer.checked + 1, "the resolve cleared it");
-        assert_eq!(read_slot(&state), (None, login.seq + 3));
+        assert_eq!(answer.current, answer.checked);
     }
 
     /// PR #264 review P1: a logout whose re-read of the mode fails still
