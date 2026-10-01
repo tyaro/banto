@@ -60,8 +60,8 @@
 
 ### 検証した組み合わせ
 
-- Node.js / pnpm / Svelte / SvelteKit / Vite / Rust のバージョン（[upgrading.md 8.3](upgrading.md#83-候補-commitリリースタグの検証手順手動)）。
-- 外部利用（Git 依存 + dev 起動）の検証結果: 実施した ref と成否。
+- Node.js / pnpm / Svelte / SvelteKit / Vite / Rust のバージョン（[upgrading.md 8.3](upgrading.md#83-候補-commitリリースタグの検証手順)）。external-consumer.yml の run の summary に実際の版が出る。
+- 外部利用（Git 依存 + dev 起動）の検証結果: external-consumer.yml の run（タグの run と、タグ前の `workflow_dispatch` の run）の URL と成否。
 ```
 
 ## 判断の目安（書く前に確認する）

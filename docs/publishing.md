@@ -159,12 +159,33 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   対象になる
 - 破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約（上記
   「バージョニング規約」）を踏襲する
+- **タグを打つ前に**、main の SHA で `External consumer`
+  （[external-consumer.yml](../.github/workflows/external-consumer.yml)）を
+  `workflow_dispatch` し、緑を確認する（Git 依存での導入・dev 起動とブラウザ
+  での描画・check・build・`cargo check`。[upgrading.md §8.2](upgrading.md)）。
+  タグの push でも同じワークフローが走る。タグ後の実行は fixture の依存に
+  **タグ名**を書いて（npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`）タグ名での
+  解決を確かめ、`check-versions.mjs --tag` でタグ名と version の一致も検査する。
+  失敗すれば tracking issue（ラベル `external-consumer-failure`）が起票される。
+  タグの経路の確認は、`workflow_dispatch` の入力に既存のタグ名（例 `v1.7.3`）を
+  渡しても行える（ブランチ名・SHA を渡したときは SHA の経路）
+- **タグを打ったら外部利用 fixture の ref を新しいタグに上げる**:
+  `node scripts/external-fixture-set-ref.mjs vX.Y.Z` → `fixtures/external-consumer/`
+  で `pnpm install --no-frozen-lockfile` → `package.json`・`rust/Cargo.toml`・
+  `pnpm-lock.yaml` を commit（PR 経由）。fixture が commit している ref は現行
+  リリースタグなので、新しい `.svelte.ts` 同梱パッケージを main に足すと
+  （`verify:architecture` が fixture への import を求める一方で）既定状態の fixture は
+  ローカルで install できなくなる。CI は検証する SHA に書き換えるので影響しない
 - タグは軽量タグ（`git tag v1.7.3`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）
 
 `admin_template_core`/`src-tauri` はアプリ固有のためタグ参照の対象外
 （`admin-template` は banto リポジトリそのものをクローンして使う前提）。
+**公開対象はパスで決める: `crates/*` = 公開 crate、`apps/*` = 対象外**
+（`publish = false` では区別していない。外部利用 fixture と
+`verify:architecture` の rule `external-consumer-fixture` はこの規約で公開
+crate を洗い出す。2026-10-01、#271）。
 
 ## 公開しない選択
 

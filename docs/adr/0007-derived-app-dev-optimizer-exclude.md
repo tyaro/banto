@@ -78,6 +78,16 @@ HTTP 500 になる。`pnpm build` / `pnpm check` は成功する。
 "github:tyaro/banto#<tag>&path:packages/*"` の git タグ依存を実 dev 起動する
   end-to-end）は private タグ認証と実起動を要し未実施。恒久的な担保は
   `verify:architecture` のリスト一致検査が担う。
+  - **2026-10-01 更新（#271）**: end-to-end を CI で担保するようにした。
+    [external-consumer.yml](../../.github/workflows/external-consumer.yml) が
+    `fixtures/external-consumer/` に `@banto/*` を Git 依存（PR の head SHA・
+    リリースタグ等）で導入し、`vite dev` をブラウザで開いて描画を確かめる
+    （exclude あり = 合格条件）。exclude を外した診断ジョブ（成功条件にしない）が
+    #150 の再現の有無を毎回記録する。実測では v1.7.3 で 11 件、main（212c3a0）で
+    14 件の js_parse_error が exclude 無しで再現し、exclude ありでは 0 件。
+    **診断ジョブが「再現しなかった」と報告したら、上流で直った可能性があるので
+    本 ADR を見直す。** fixture の exclude 一覧も `verify:architecture`（rule
+    `external-consumer-fixture`）が同じ集合との一致を検査する。
 - **配布方針との結合**: publishing.md に「ソース配布された `.svelte.ts` は消費側
   dev の設定（`optimizeDeps.exclude`）とセットで初めて機能する」を明記した。
   pack のみを検証していた従来の配布検証には dev optimizer 経路が含まれていな

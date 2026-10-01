@@ -107,6 +107,9 @@ CI は `.github/workflows/ci.yml` の各ジョブ（frontend / i18n-offline / ru
 storage-postgres / app-postgres / e2e / audit）に加えて、週次+トリガ型の
 `template-acceptance.yml`（copy→rename→check + scaffold 4プリセットの受け入れ）、
 `visual-baselines.yml`（Linux visual ベースライン再生成、dispatch）、
+`external-consumer.yml`（外部利用 fixture: `@banto/*`・`banto-*` を Git 依存で導入して
+dev 起動・描画・check・build・cargo check。packages/crates を触る PR・タグ・dispatch、
+docs/upgrading.md §8。必須チェックではないが、赤なら PR をマージしない）、
 `deploy-demo.yml`（GitHub Pages ライブデモ配信）が回る。ジョブの増減は
 ci.yml を一次情報とする。
 

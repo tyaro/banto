@@ -1,0 +1,32 @@
+# 外部利用 fixture（#271）の Rust 側。公開対象の 5 crate（`crates/*`）を、派生アプリと
+# 同じ Git 依存で導入して `cargo check` する。commit してある値は派生アプリと同じ
+# `tag = "<現行リリースタグ>"`。CI は `node scripts/external-fixture-set-ref.mjs <ref>` で
+# 書き換える（PR・dispatch は `rev = "<sha>"`、タグの push はそのタグ名の `tag`）。
+#
+# `[workspace]` を空で置き、この crate を独立したワークスペースの根にする（置かないと
+# 上の階層の banto ルート Cargo.toml を親ワークスペースとみなしてエラーになる）。
+# Cargo.lock は commit しない（新しい派生アプリと同じく、その時点の crates.io で
+# 推移依存を解決する。モノレポの Cargo.lock での検証は ci.yml が担う）。
+[package]
+name = "banto-external-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+# feature の経路も外部から通るかを確かめる（CI は `--all-features` でも check する）。
+postgres = [
+  "banto-storage/postgres",
+  "banto-admin-services/postgres",
+  "banto-attachments/postgres",
+]
+system-metrics = ["banto-admin-services/system-metrics"]
+
+[dependencies]
+banto-admin-services = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
+banto-attachments = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3", features = ["sqlite"] }

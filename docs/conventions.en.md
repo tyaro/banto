@@ -534,7 +534,12 @@ new additions). Packages with only `.svelte` components
 (charts/attachments/report) go through the preprocessing path and are exempt.
 `verify:architecture` (rule `optimizedeps-svelte-source`) machine-checks that
 the exclude list matches "the `@banto/*` deps of admin-template that carry a
-`.svelte.ts`".
+`.svelte.ts`". The external-consumer fixture (`fixtures/external-consumer/`,
+#271) carries the same set in its dependencies, its `+page.svelte` imports and
+its exclude (rule `external-consumer-fixture`, which also checks that every
+crate under `crates/*` is a Git dependency of the fixture's Rust side). When
+adding a new `.svelte.ts`-shipping package or a public crate, add it to the
+fixture too.
 
 ---
 

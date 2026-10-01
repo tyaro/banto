@@ -32,6 +32,12 @@
  *  12. §6 CSP 2定義のディレクティブ単位一致 … security_headers.rs の const と
  *      tauri.conf.json の app.security.csp が connect-src の IPC 差分を除き一致。
  *      ADR-0008
+ *  13. 外部利用 fixture（fixtures/external-consumer/、#271）の対象の漏れ …
+ *      packages/ のうち .svelte.ts を持つもの ⊆ fixture の dependencies ∩
+ *      +page.svelte の import、fixture の optimizeDeps.exclude = その集合、
+ *      crates/ の全 crate = fixture の rust/Cargo.toml の banto の Git 依存、
+ *      npm と Cargo の ref が 1 つに揃っていること、fixture の Vite／Svelte 系の
+ *      範囲指定が apps/admin-template/package.json と文字列で一致すること
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -788,6 +794,169 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 			pass(
 				rule,
 				`CSP 2定義（security_headers.rs / tauri.conf.json）が ${names.size} ディレクティブで一致（connect-src の IPC 差分のみ許容、§6）`
+			);
+	}
+}
+
+// --- rule 13: 外部利用 fixture の対象の漏れ（#271、docs/upgrading.md §8） ------
+// .github/workflows/external-consumer.yml は fixtures/external-consumer/ を Git 依存で
+// 導入して dev 起動・check・build・cargo check する。検証の対象（`.svelte.ts` を
+// ソース配布するパッケージ・公開 crate）を手書きの一覧にすると、新しいパッケージ／
+// crate を足したときに fixture が追随せず、#150 型の壊れを素通しする。ここで
+// workspace から機械的に洗い出した集合と fixture を突き合わせる。公開 crate は
+// `crates/*`（`apps/*` はアプリ固有で対象外。docs/publishing.md のタグ運用規約）。
+{
+	const rule = 'external-consumer-fixture';
+	const FIX = 'fixtures/external-consumer';
+	const FIX_PKG = `${FIX}/package.json`;
+	const FIX_PAGE = `${FIX}/src/routes/+page.svelte`;
+	const FIX_VITE = `${FIX}/vite.config.ts`;
+	const FIX_CARGO = `${FIX}/rust/Cargo.toml`;
+	const listDirs = (dir) =>
+		fs
+			.readdirSync(path.join(repoRoot, dir), { withFileTypes: true })
+			.filter((e) => e.isDirectory())
+			.map((e) => e.name)
+			.sort();
+	const missingFiles = [FIX_PKG, FIX_PAGE, FIX_VITE, FIX_CARGO].filter(
+		(f) => !fs.existsSync(path.join(repoRoot, f))
+	);
+	if (!fs.existsSync(path.join(repoRoot, FIX))) {
+		// scaffold した派生アプリでは fixture ごと除去される（banto 本体のリリース
+		// 検証専用。scripts/scaffold.mjs の removeBantoReleaseOnly）。
+		pass(rule, `対象外（${FIX} が無い — banto 本体専用の fixture。scaffold で除去済み）`);
+	} else if (missingFiles.length > 0) {
+		for (const f of missingFiles)
+			fail(rule, f, 'fixture のファイルが無い（検査の前提が変わった — 本検査を更新）');
+	} else {
+		let problems = 0;
+		const bad = (file, detail) => {
+			problems++;
+			fail(rule, file, detail);
+		};
+
+		// --- npm: packages/* のうち src/ に .svelte.ts を持つもの ---
+		const svelteTs = listDirs('packages')
+			.filter((d) => fs.existsSync(path.join(repoRoot, 'packages', d, 'package.json')))
+			.filter((d) => [...walk(`packages/${d}/src`, ['.svelte.ts'])].length > 0)
+			.map((d) => JSON.parse(read(`packages/${d}/package.json`)).name)
+			.sort();
+		const fixDeps = JSON.parse(read(FIX_PKG)).dependencies ?? {};
+		const bantoDeps = Object.keys(fixDeps).filter((d) => d.startsWith('@banto/'));
+		const imports = new Set(
+			[...read(FIX_PAGE).matchAll(/from\s+'(@banto\/[^'/]+)'/g)].map((m) => m[1])
+		);
+		const excludeBlock = read(FIX_VITE).match(/exclude:\s*\[([^\]]*)\]/s)?.[1] ?? '';
+		const excluded = [...excludeBlock.matchAll(/'(@banto\/[^']+)'/g)].map((m) => m[1]).sort();
+		for (const name of svelteTs) {
+			if (!bantoDeps.includes(name))
+				bad(FIX_PKG, `${name} は .svelte.ts をソース配布するのに fixture の dependencies に無い`);
+			if (!imports.has(name))
+				bad(
+					FIX_PAGE,
+					`${name} は .svelte.ts をソース配布するのに +page.svelte が import していない（ブラウザがモジュールグラフを読まない）`
+				);
+			if (!excluded.includes(name))
+				bad(FIX_VITE, `${name} が fixture の optimizeDeps.exclude に無い（#150 / ADR-0007）`);
+		}
+		for (const name of excluded.filter((d) => !svelteTs.includes(d)))
+			bad(FIX_VITE, `${name} は .svelte.ts を持たないのに fixture の optimizeDeps.exclude にある`);
+
+		// --- npm の ref: すべて github:tyaro/banto#<ref>&path:packages/<実在> ---
+		const npmRefs = new Set();
+		const pkgNames = new Map(
+			listDirs('packages')
+				.filter((d) => fs.existsSync(path.join(repoRoot, 'packages', d, 'package.json')))
+				.map((d) => [JSON.parse(read(`packages/${d}/package.json`)).name, d])
+		);
+		for (const dep of bantoDeps) {
+			const m = String(fixDeps[dep]).match(/^github:tyaro\/banto#([^&]+)&path:packages\/(.+)$/);
+			if (!m) {
+				bad(FIX_PKG, `${dep} が github:tyaro/banto#<ref>&path:packages/<x> の形でない`);
+				continue;
+			}
+			npmRefs.add(m[1]);
+			if (pkgNames.get(dep) !== m[2])
+				bad(FIX_PKG, `${dep} の path:packages/${m[2]} が packages/ の実体と一致しない`);
+		}
+
+		// --- Rust: crates/* の全 crate = fixture の banto の Git 依存 ---
+		const crates = listDirs('crates')
+			.filter((d) => fs.existsSync(path.join(repoRoot, 'crates', d, 'Cargo.toml')))
+			.map(
+				(d) =>
+					read(`crates/${d}/Cargo.toml`).match(/^\[package\][^[]*?^name\s*=\s*"([^"]+)"/ms)?.[1]
+			)
+			.filter(Boolean)
+			.sort();
+		const cargoDeps = new Map(
+			[
+				...read(FIX_CARGO).matchAll(
+					/^([\w-]+)\s*=\s*\{[^}\n]*git\s*=\s*"https:\/\/github\.com\/tyaro\/banto\.git"[^}\n]*\}/gm
+				)
+			].map((m) => [m[1], m[0].match(/\b(?:rev|tag)\s*=\s*"([^"]*)"/)?.[1]])
+		);
+		for (const c of crates.filter((c) => !cargoDeps.has(c)))
+			bad(FIX_CARGO, `公開 crate ${c}（crates/）が fixture の Git 依存に無い`);
+		for (const c of [...cargoDeps.keys()].filter((c) => !crates.includes(c)))
+			bad(FIX_CARGO, `${c} は crates/ に無い（公開対象外か名前の誤り）`);
+		const cargoRefs = new Set(cargoDeps.values());
+		if (cargoRefs.has(undefined))
+			bad(
+				FIX_CARGO,
+				'banto の Git 依存に rev / tag = "..." が無いものがある（set-ref が書き換えられない）'
+			);
+
+		// --- ref が npm・Cargo で 1 つに揃っている ---
+		const refs = new Set([...npmRefs, ...cargoRefs].filter(Boolean));
+		if (refs.size > 1)
+			bad(
+				FIX,
+				`npm と Cargo の ref が揃っていない（${[...refs].join(', ')}）— node scripts/external-fixture-set-ref.mjs <ref> で揃える`
+			);
+
+		// --- Vite／Svelte 系の版が admin-template と揃っている ---
+		// fixture は「admin-template と同じ組み合わせ」で外部利用を確かめるもの
+		// （docs/upgrading.md §8.3 の表）。片方だけ上げると、検証した組み合わせと
+		// 派生アプリの基準がずれる。範囲指定は**文字列のまま一致**を求める（`^` の
+		// 有無・下限の違いも不一致）。`^8.3.0` と `8.3.0` は解決される版が違いうる
+		// ので、正規化して同一視すると「同じ範囲」の保証が崩れる。
+		const SYNCED_TOOLCHAIN = [
+			'svelte',
+			'@sveltejs/kit',
+			'vite',
+			'@sveltejs/vite-plugin-svelte',
+			'@sveltejs/adapter-static',
+			'svelte-check',
+			'typescript'
+		];
+		const TEMPLATE_PKG = 'apps/admin-template/package.json';
+		const rangesOf = (rel) => {
+			const pkg = JSON.parse(read(rel));
+			return { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+		};
+		const appRanges = rangesOf(TEMPLATE_PKG);
+		const fixRanges = rangesOf(FIX_PKG);
+		for (const name of SYNCED_TOOLCHAIN) {
+			const a = appRanges[name];
+			const f = fixRanges[name];
+			if (a === undefined && f === undefined) continue;
+			if (a === undefined || f === undefined)
+				bad(
+					f === undefined ? FIX_PKG : TEMPLATE_PKG,
+					`${name} が片方にしか無い（admin-template=${a ?? 'なし'}、fixture=${f ?? 'なし'}）`
+				);
+			else if (a !== f)
+				bad(
+					FIX_PKG,
+					`${name} の範囲指定が admin-template と違う（admin-template=${a}、fixture=${f}）— 同じ文字列に揃える`
+				);
+		}
+
+		if (problems === 0)
+			pass(
+				rule,
+				`fixture が .svelte.ts ソース配布 ${svelteTs.length} パッケージ（import・exclude とも）と公開 crate ${crates.length} 個を網羅、Vite／Svelte 系 ${SYNCED_TOOLCHAIN.length} 件の範囲が admin-template と一致（ref ${[...refs].join(', ')}）`
 			);
 	}
 }

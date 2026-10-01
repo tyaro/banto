@@ -451,6 +451,10 @@ preprocess せず `svelte.compileModule` に渡して `import type` 等で 500 �
 のみのパッケージ（charts/attachments/report）は preprocess 経路を通るため対象外。
 `verify:architecture`（rule `optimizedeps-svelte-source`）が「admin-template が依存し
 `.svelte.ts` を持つ `@banto/*`」と exclude リストの一致を機械検査する。
+外部利用 fixture（`fixtures/external-consumer/`、#271）も同じ集合を dependencies・
+`+page.svelte` の import・exclude に持つ（rule `external-consumer-fixture`。`crates/*` の
+全 crate が fixture の Rust 側の Git 依存にあることも同じ rule が検査する）。新しい
+`.svelte.ts` 同梱パッケージ・公開 crate を足したら fixture にも足す。
 
 ---
 

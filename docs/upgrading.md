@@ -179,52 +179,86 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 
 派生アプリの更新が成り立つことを、Banto 側でどこまで機械的に保証し、何を手順で補うか。
 
-### 8.1 既存の CI が保証しているもの
+### 8.1 CI が保証しているもの
 
-| 経路                                                                    | 何を保証するか                                                                                     | 外部利用（Git 依存 + サブディレクトリ）を通るか |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| [ci.yml](../.github/workflows/ci.yml)                                   | モノレポ内（`workspace:*`・`path` 依存）の lint・型検査・test・build・Rust・PostgreSQL・e2e・audit | いいえ（ソース直接参照）                        |
-| [template-acceptance.yml](../.github/workflows/template-acceptance.yml) | コピー → rename → 型検査・cargo check、各プリセットの scaffold → build・cargo test                 | いいえ（コピー後も `workspace:*` のまま）       |
-| [tauri-check.yml](../.github/workflows/tauri-check.yml)                 | `src-tauri` のビルド                                                                               | いいえ                                          |
+| 経路                                                                    | 何を保証するか                                                                                                       | 外部利用（Git 依存 + サブディレクトリ）を通るか |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [ci.yml](../.github/workflows/ci.yml)                                   | モノレポ内（`workspace:*`・`path` 依存）の lint・型検査・test・build・Rust・PostgreSQL・e2e・audit                   | いいえ（ソース直接参照）                        |
+| [template-acceptance.yml](../.github/workflows/template-acceptance.yml) | コピー → rename → 型検査・cargo check、各プリセットの scaffold → build・cargo test                                   | いいえ（コピー後も `workspace:*` のまま）       |
+| [tauri-check.yml](../.github/workflows/tauri-check.yml)                 | `src-tauri` のビルド                                                                                                 | いいえ                                          |
+| [external-consumer.yml](../.github/workflows/external-consumer.yml)     | 外部利用 fixture に Git 依存で導入 → `vite dev` を起動してブラウザで描画 → `pnpm check`・`pnpm build`・`cargo check` | **はい**（8.2）                                 |
 
-つまり**「Git 依存 + `path:` で `@banto/*` を導入し、`pnpm dev` を起動する」経路は CI にない**。この経路は、
-`files: ["src"]` による配布物の絞り込み、サブディレクトリの解決、node_modules 実体になったときの Vite の dev
-事前バンドル（#150、ADR-0007）を含む。`pnpm build`・`pnpm check` では見つからない。
+「Git 依存 + `path:` で `@banto/*` を導入し、`pnpm dev` を起動する」経路は、`files: ["src"]` による配布物の
+絞り込み、サブディレクトリの解決、node_modules 実体になったときの Vite の dev 事前バンドル（#150、ADR-0007）を
+含む。`pnpm build`・`pnpm check` だけでは見つからないので、external-consumer.yml がブラウザで確かめる。
 
-### 8.2 外部利用 fixture を CI に入れない判断（2026-10-01 時点）
+### 8.2 外部利用 fixture の CI（external-consumer.yml、#271）
 
-次の理由で、**この時点では CI に fixture を足さない**。手順（8.3）で補い、CI 化は #271 で追跡する。
+[fixtures/external-consumer/](../fixtures/external-consumer/) に最小の派生アプリを置き、CI で外部利用の経路を
+通す（2026-10-01 に CI 化。それまでは手順だけだった）。
 
-- Git 依存は**公開済みの ref**（タグ、または push 済みの commit）を取りに行く。PR の候補 commit は push 後にしか
-  解決できず、リリースタグはリリース後にしか存在しない。「リリース前に壊れを止める」用途に素直に使えない
-  （`git+file://` で代替する手もあるが、pnpm の `path:` との組み合わせは未検証）。
-- dev 起動の検証には、fixture アプリ（`@banto/*` 5 種を import する最小の SvelteKit）・dev サーバ起動・
-  ブラウザでの描画確認（Playwright）が要り、既存 CI に無理なく足せる規模を超える。
-- github.com への clone というネットワーク依存が増え、他のジョブより flaky になりやすい。
+- **fixture**: SvelteKit（adapter-static・SSR なし）。`.svelte.ts` をソース配布する 5 パッケージ（admin-core・
+  dock-svelte・forms・grid-svelte・tree-svelte）と theme を `github:tyaro/banto#<ref>&path:packages/<x>` で入れ、
+  `+page.svelte` で import して `data-testid="banto-loaded"` に描画する。Rust 側（`rust/`）は公開対象の 5 crate
+  （`crates/*`）を `git = ..., rev = "<ref>"` で入れる。対象の一覧は `verify:architecture`（rule
+  `external-consumer-fixture`）が workspace から洗い出して突き合わせ、漏れがあれば落とす。
+- **検証する commit**: PR は head SHA（同じリポジトリのブランチからの PR だけ。fork からの PR はスキップ）、
+  `workflow_dispatch` は入力の ref。fixture の依存には SHA（Cargo は `rev`）を書く。リリースタグの push では
+  checkout はタグの commit だが、依存には**タグ名**を書き（npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`。派生アプリ
+  と同じ形）、タグ名での解決を確かめる。あわせてタグ名と各マニフェストの version の一致を
+  `check-versions.mjs --tag` で検査する。PR は `packages/**`・`crates/**`・Vite／svelte／pnpm／Cargo の設定・
+  fixture・ワークフロー自身を変えたときだけ走る。
+- **合格条件**（job `npm`）: `vite dev` で開いたページにマーカーが描画される、`console.error`・`pageerror` が
+  ゼロ、dev ログに依存オプティマイザのエラー（`error while updating dependencies`・`js_parse_error`）が無い、
+  続けて `pnpm check`・`pnpm build` が通る。#150 が再現しても dev の `/` は 200 のまま（動的 import が 504 →
+  クライアント側の 500 画面）なので、HTTP の応答では判定しない。job `rust` は `cargo check` と
+  `cargo check --all-features`（postgres・system-metrics の feature の経路）。
+- **診断**（job `npm-no-exclude`、成功条件にしない）: `optimizeDeps.exclude` を外して dev + Playwright だけを流し、
+  #150 が再現したかを step summary に残す。再現しなくなったら exclude が不要になった可能性があり、ADR-0007 を
+  見直す合図。
+- **ネットワーク**: github.com（codeload）からの取得は 3 回まで再試行、cargo は `CARGO_NET_RETRY=5`。fixture の
+  lockfile は commit してあり、ref を書き換えた後は `--no-frozen-lockfile` で入れる（再解決されるのは `@banto/*`
+  だけで、推移依存は lockfile のまま）。Rust の `Cargo.lock` は commit しない（新しい派生アプリと同じく、その
+  時点の crates.io で解決する）。
+- **失敗時**: PR は赤になる（必須チェックにはしていない。赤ならマージしない）。タグで失敗したときは tracking
+  issue（ラベル `external-consumer-failure`）を起票する。dev ログと Playwright のレポートは artifact に残す。
+- **検証した組み合わせ**: step summary に Node.js・pnpm・Svelte・SvelteKit・Vite・Rust の実際の版と検証した
+  commit を出す（下の表は範囲。実際の版は run の summary が正）。
+- **対象外**: SSR ありの構成（adapter-node 等）は検証しない。派生アプリは adapter-static の SPA 構成を前提に
+  している。
+- **banto 本体専用**: fixture・ワークフロー・`scripts/external-fixture-set-ref.mjs` は scaffold した派生アプリには
+  含まれない（`scripts/scaffold.mjs` が全プリセット共通で除去する）。コピー・rename しただけのリポジトリでは、
+  ワークフローは `tyaro/banto` 以外では走らない。
 
-### 8.3 候補 commit・リリースタグの検証手順（手動）
+### 8.3 候補 commit・リリースタグの検証手順
 
-リリース前の候補 commit と、リリース後のタグを、同じ手順で確認する。
+通常は CI（8.2）に任せる。**リリースタグを打つ前**に main の SHA で `external-consumer` を `workflow_dispatch`
+し、緑を確認する（[publishing.md](publishing.md)「タグ運用規約」）。ローカルで同じことを確かめるときは、Banto
+リポジトリの中で次を流す（`<ref>` は GitHub に push 済みの commit SHA かタグ）。
 
-1. **最小 fixture を作る**（Banto リポジトリの外）。`pnpm create svelte` 等で SvelteKit + TypeScript の
-   アプリを作り、`@banto/*` を Git 依存で入れる。`<ref>` は push 済みの候補 commit の SHA、またはリリースタグ。
+```sh
+# ルート: Playwright を使うためにルートの依存を入れておく
+pnpm install
+node scripts/external-fixture-set-ref.mjs <ref>
 
-   ```sh
-   pnpm add "github:tyaro/banto#<ref>&path:packages/admin-core" \
-            "github:tyaro/banto#<ref>&path:packages/dock-svelte" \
-            "github:tyaro/banto#<ref>&path:packages/forms" \
-            "github:tyaro/banto#<ref>&path:packages/grid-svelte" \
-            "github:tyaro/banto#<ref>&path:packages/tree-svelte" \
-            "github:tyaro/banto#<ref>&path:packages/theme"
-   ```
+cd fixtures/external-consumer
+pnpm install --no-frozen-lockfile
+pnpm dev            # 手で開く場合（http://127.0.0.1:4319/）
+pnpm check && pnpm build
+cd rust && cargo check && cargo check --all-features
 
-2. 各パッケージを import した画面を作り、`vite.config.ts` に `optimizeDeps.exclude` を**入れた状態と入れない状態の
-   両方**で `pnpm dev` を起動して開く（入れない状態が `js_parse_error` で落ちれば #150 の再現が生きている。
-   入れた状態で描画されることが合格条件）。
-3. `pnpm check`（型検査）・`pnpm build`。
-4. Rust は fixture に `banto-core` / `banto-storage` / `banto-server` を `git = ..., tag = ...`（候補 commit は
-   `rev = "<sha>"`）で入れ、`cargo check`。
-5. 結果（ref・組み合わせ・成否）を PR または Issue に残す。
+# ブラウザでの判定（ルートから。exclude 無しの診断は BANTO_FIXTURE_NO_EXCLUDE=1 を付ける）
+pnpm exec playwright test --config=fixtures/external-consumer/playwright.config.ts
+```
+
+fixture は自分の `pnpm-workspace.yaml`（`packages: []`）でルートの workspace から独立している。
+`--ignore-workspace` は要らない（これが無いと fixture で `pnpm install` してもルートのインストールに化ける）。
+確認が済んだら `node scripts/external-fixture-set-ref.mjs <現行リリースタグ>` で戻し、fixture の
+`pnpm-lock.yaml` の差分は commit しない（commit する値は現行リリースタグ）。
+fixture が commit している ref は現行リリースタグなので、**main にしか無いパッケージ（新しく足した `.svelte.ts`
+同梱パッケージなど）を試すときは、ref を main の SHA に書き換えてから** install する（既定の状態ではそのパッケージ
+の `path:` がタグに無く、install が失敗する）。リリース時に fixture の ref を新しいタグへ上げる手順は
+[publishing.md](publishing.md)「タグ運用規約」。
 
 **確認する組み合わせ**（Banto の現行の基準。ルート `package.json`・`apps/admin-template/package.json`・CI）:
 
@@ -237,16 +271,18 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 | Vite      | `^8.3`                                                  |
 | Rust      | stable（`dtolnay/rust-toolchain@stable`、edition 2021） |
 
-組み合わせを変える版（Vite のメジャーなど）は、リリースノートにその旨を書き、fixture でも検証する。
+組み合わせを変える版（Vite のメジャーなど）は、リリースノートにその旨を書き、fixture の依存の版も揃える
+（fixture の Vite／Svelte 系の devDependencies は `apps/admin-template/package.json` と同じ範囲指定に揃え、
+`verify:architecture` の rule `external-consumer-fixture` が文字列の一致を検査する）。
 
-### 8.4 役割分担と残る項目
+### 8.4 役割分担
 
-- **Banto の CI**: 共通契約（モノレポ内のビルド・テスト・scaffold・セキュリティ監査）。
-- **派生アプリの CI**: 各アプリ固有のテスト・画面・実機。Banto の CI へは集約しない。
-- **手順で補う（8.3）**: 外部利用経路（Git 依存・dev 起動）。
-- **未了（#271）**: 外部利用 fixture の CI 化。最小の fixture をリポジトリ内（例:
-  `fixtures/external-consumer/`）に置き、リリースタグ作成後（`on: push: tags`）に Git 依存で導入 → dev 起動 →
-  描画確認を行うジョブ。
+| 担い手                               | 範囲                                                                                                                                                 |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Banto の CI（ci.yml ほか）           | 共通契約（モノレポ内のビルド・テスト・scaffold・セキュリティ監査）                                                                                   |
+| Banto の CI（external-consumer.yml） | 外部利用の経路（Git 依存での導入・dev 起動とブラウザでの描画・check・build・`cargo check`）。タグ後の実行はタグ名での解決と version の一致を確かめる |
+| 派生アプリの CI                      | 各アプリ固有のテスト・画面・実機。Banto の CI へは集約しない                                                                                         |
+| 手順（8.3）                          | リリース前の `workflow_dispatch` と、ローカルでの切り分け                                                                                            |
 
 ## 9. 共通 UI のパッケージ化（#220）への適用
 
@@ -309,8 +345,8 @@ v2.0.0 は admin-core の旧セッション API を削除し、`AuthProvider` �
 
 進め方:
 
-1. 先に**候補版のコミット参照で検証**する（`github:tyaro/banto#<sha>&path:...`、Cargo は `rev`）。8.3 の手順で
-   最小 fixture でも確認しておくと切り分けやすい。その後に v2.0.0 のタグへ移す。
+1. 先に**候補版のコミット参照で検証**する（`github:tyaro/banto#<sha>&path:...`、Cargo は `rev`）。Banto 側の
+   fixture（8.2・8.3）で同じ SHA が緑かを見ておくと切り分けやすい。その後に v2.0.0 のタグへ移す。
 2. A を上げて型エラーを一覧にする。次に B を 1 つずつ（`session.svelte.ts` → `(app)/+layout.ts` → 保護レイアウト →
    ログアウト → 503 画面）取り込む。
 3. 複数アプリ（banto-hub・chronogazer）がある場合は、**1 アプリずつ**移行する（同期記録もアプリごとに持つ）。

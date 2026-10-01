@@ -31,6 +31,14 @@
  * `applyDisplayDefaults()` に閉じ、他の remover と同じ編集エンジンを通るので
  * `--dry-run` の計画表示も `--strict` の扱いも removers と同一になる。
  *
+ * **全プリセット共通（full を含む）で、banto 本体のリリース検証専用のもの
+ * （外部利用 fixture 一式、#271）を除去する**（`removeBantoReleaseOnly()`）。
+ * fixture は `github:tyaro/banto#<sha>` を取りに行く banto 本体の検証で、派生
+ * アプリには意味が無い（派生側の SHA は tyaro/banto に無い）うえ、crates/ を
+ * 減らすプリセットでは verify:architecture の fixture 検査と食い違う。資産の
+ * 選択（`toRemove`）とは独立した工程なので、計画表示では `# bantoReleaseOnly`
+ * として常に出る。
+ *
  * 使い方:
  *   node scripts/scaffold.mjs --preset minimal|standard|full|display [--dry-run]
  *   node scripts/scaffold.mjs --interactive|-i [--dry-run]
@@ -79,7 +87,8 @@ function usage(code) {
 			'       node scripts/scaffold.mjs --interactive|-i [--dry-run]\n' +
 			'  minimal     … コアのみ（全オプション資産を削除）\n' +
 			'  standard    … dock/charts/コマンドパレット/Glass を残し、添付・帳票・ツリーを削除\n' +
-			'  full        … 何も削除しない（検証のみ）\n' +
+			'  full        … オプション資産を何も削除しない（banto 本体専用の検証\n' +
+			'                fixture の除去だけ。全プリセット共通）\n' +
 			'  display     … 表示専用アプリ: minimal の削除 + items デモ一式 + users/audit-log 画面\n' +
 			'                + /dashboard を削除し、/monitor・初回起動シード・キオスク既定・\n' +
 			'                i18n raw を入れる（docs/display-preset-plan.md）\n' +
@@ -1656,6 +1665,28 @@ function applyDisplayDefaults() {
 
 // --- 実行 -------------------------------------------------------------------
 
+// --- banto 本体専用のもの（全プリセット共通で除去、#271） --------------------
+//
+// 外部利用 fixture（fixtures/external-consumer/）と、それを流すワークフロー・
+// ref 書き換えスクリプト。banto 本体のリリース検証（docs/upgrading.md §8.2）に
+// しか使わない。verify-architecture の rule `external-consumer-fixture` は
+// fixture が無ければ対象外としてスキップする。
+function removeBantoReleaseOnly() {
+	removeDir('fixtures/external-consumer', '外部利用 fixture 削除（banto 本体専用）');
+	removeFile(
+		'.github/workflows/external-consumer.yml',
+		'external-consumer ワークフロー削除（banto 本体専用）'
+	);
+	removeFile(
+		'scripts/external-fixture-set-ref.mjs',
+		'fixture の ref 書き換えスクリプト削除（banto 本体専用）'
+	);
+	removeFile(
+		'scripts/external-fixture-set-ref.test.mjs',
+		'fixture の ref 書き換えスクリプトのテスト削除（banto 本体専用）'
+	);
+}
+
 const REMOVERS = {
 	charts: removeCharts,
 	dock: removeDock,
@@ -1863,6 +1894,10 @@ async function main() {
 				.map((line) => `  ${line}`)
 				.join('\n')}\n`
 	);
+
+	// 資産の選択とは独立に、全プリセット共通で最初に走らせる。
+	console.log('# bantoReleaseOnly');
+	removeBantoReleaseOnly();
 
 	for (const asset of ORDER) {
 		if (!toRemove.has(asset)) continue;
