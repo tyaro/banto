@@ -203,10 +203,12 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
   （`crates/*`）を `git = ..., rev = "<ref>"` で入れる。対象の一覧は `verify:architecture`（rule
   `external-consumer-fixture`）が workspace から洗い出して突き合わせ、漏れがあれば落とす。
 - **検証する commit**: PR は head SHA（同じリポジトリのブランチからの PR だけ。fork からの PR はスキップ）、
-  `workflow_dispatch` は入力の ref。fixture の依存には SHA（Cargo は `rev`）を書く。リリースタグの push では
-  checkout はタグの commit だが、依存には**タグ名**を書き（npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`。派生アプリ
-  と同じ形）、タグ名での解決を確かめる。あわせてタグ名と各マニフェストの version の一致を
-  `check-versions.mjs --tag` で検査する。PR は `packages/**`・`crates/**`・Vite／svelte／pnpm／Cargo の設定・
+  `workflow_dispatch` は入力の ref。fixture の依存には SHA（Cargo は `rev`）を書く。リリースタグの push（と
+  dispatch に既存のタグ名を渡したとき）は、依存に**タグ名**を書き（npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`。
+  派生アプリと同じ形）、タグ名での解決を確かめる。このとき fixture とスクリプトは workflow を起動した commit
+  （tag push ならタグの commit、dispatch なら通常 main）のものを使う。fixture の無い古いタグも検証できるが、今の
+  fixture が import する export がそのタグに無ければ失敗しうる。あわせてタグ名と**タグの commit** の各
+  マニフェストの version の一致を `check-versions.mjs --tag` で検査する。PR は `packages/**`・`crates/**`・Vite／svelte／pnpm／Cargo の設定・
   fixture・ワークフロー自身を変えたときだけ走る。
 - **合格条件**（job `npm`）: `vite dev` で開いたページにマーカーが描画される、`console.error`・`pageerror` が
   ゼロ、dev ログに依存オプティマイザのエラー（`error while updating dependencies`・`js_parse_error`）が無い、
