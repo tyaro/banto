@@ -22,6 +22,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- LAN サーバーのライフサイクル修正（#283 / #288 / #287）:
+  - `banto-server`: SSE 接続が開いたままでも `RunningServer::stop()` が完了する（サーバ停止シグナルを SSE ストリームへ伝え、安全網として5秒で待ちを打ち切りタスクを中断）。公開 API の変更なし。
+  - `banto-admin-services`: 認証無効/LAN 有効/閲覧公開の許可判定を `auth_server_combination_allowed` に一本化し、保存時（`set_server_config`/`set_auth_config`）と起動時で共有（閲覧公開ありの構成が再起動後も LAN 起動する）。`set_server_config` の4キー保存を1トランザクション化し、保存せず検証だけ行う `validate_server_config` を追加。
+  - デスクトップ `server_apply`: 新設定の保存を新サーバー起動の成功後に行い、失敗時は未保存のまま旧サーバーを復帰して失敗を監査（`settings_change` / `failed`）。設定画面は失敗後に実際の状態を再取得する。
+
 ## [2.0.0] - 2026-10-01
 
 **v2.0.0 — セッション確定の単一書き手化（SessionController）。版の種類: major（破壊的）。

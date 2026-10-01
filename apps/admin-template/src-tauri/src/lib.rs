@@ -1935,7 +1935,17 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// to treat it as part of the listener's configuration. The
 /// auth-disabled/LAN exclusivity it relaxes is validated in the service layer
 /// (`SettingsService::set_server_config`, conventions §2), so an illegal
-/// combination fails the `?` below before anything is stopped or started.
+/// combination is refused (`validate_server_config`) before anything is
+/// stopped or started.
+///
+/// Failure contract (Issue #287): the settings are saved only AFTER the new
+/// listener is up (one transaction, `set_many`). If starting it (or the save)
+/// fails, nothing is saved, the previously running server is restarted from
+/// the unchanged saved settings, and the command returns the error - so the
+/// saved values and the live server never silently diverge. The attempt is
+/// audited as `settings_change` / `result: "failed"` (`detail.saved: false`);
+/// a success records the usual `ok` entry. Callers should re-read
+/// `server_status` after an error (the frontend does).
 #[tauri::command]
 async fn server_apply(
     state: State<'_, AppState>,
@@ -1951,14 +1961,26 @@ async fn server_apply(
         port,
         viewer_public,
     };
-    state.settings.set_server_config(&config).await?;
 
-    if let Some(running) = state.server.lock().await.take() {
+    // Held for the WHOLE apply: concurrent applies are serialized, and
+    // `server_status` cannot observe the stopped-but-not-yet-restarted gap.
+    let mut slot = state.server.lock().await;
+
+    // The saved config is the one the rollback below restores, and what the
+    // running listener (if any) was started from.
+    let previous = state.settings.server_config().await?;
+    // Refuse an illegal auth/LAN combination BEFORE anything is stopped.
+    state.settings.validate_server_config(&config).await?;
+
+    let was_running = slot.take();
+    let had_running = was_running.is_some();
+    if let Some(running) = was_running {
         running.stop().await;
     }
 
-    let started = if config.enabled {
-        Some(
+    let launch = |runtime_config: ServerConfig| {
+        let state = &state;
+        async move {
             start_embedded_server(
                 // [scaffold:items] begin
                 state.items.clone(),
@@ -1972,34 +1994,109 @@ async fn server_apply(
                 state.metrics.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
-                ServerConfig {
-                    bind: config.bind.clone(),
-                    port: config.port,
-                },
+                runtime_config,
             )
-            .await?,
-        )
-    } else {
-        None
+            .await
+        }
     };
 
-    let running = started.is_some();
-    *state.server.lock().await = started;
-    record_ok(
-        &state.audit,
-        &actor,
-        "settings_change",
-        "settings",
-        None,
-        Some(serde_json::json!({
-            "serverEnabled": config.enabled,
-            "bind": config.bind,
-            "port": config.port,
-            "viewerPublic": config.viewer_public,
-        })),
-    )
+    // Issue #287: the new settings are saved only AFTER the new listener is
+    // up, so "saved" and "running" can only disagree through a failure that
+    // the rollback below then repairs. (Saving first - the old order - left
+    // the new values stored while the old server was already gone whenever
+    // the new bind failed, e.g. a port in use.)
+    let outcome: Result<Option<RunningServer>, BantoError> = async {
+        let started = if config.enabled {
+            Some(
+                launch(ServerConfig {
+                    bind: config.bind.clone(),
+                    port: config.port,
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+        if let Err(err) = state.settings.set_server_config(&config).await {
+            // Stored values did not change (one transaction), so stop what
+            // was just started and fall back to the previous state.
+            if let Some(started) = started {
+                started.stop().await;
+            }
+            return Err(err);
+        }
+        Ok(started)
+    }
     .await;
-    Ok(build_status(&config, running))
+
+    match outcome {
+        Ok(started) => {
+            let running = started.is_some();
+            *slot = started;
+            record_ok(
+                &state.audit,
+                &actor,
+                "settings_change",
+                "settings",
+                None,
+                Some(serde_json::json!({
+                    "serverEnabled": config.enabled,
+                    "bind": config.bind,
+                    "port": config.port,
+                    "viewerPublic": config.viewer_public,
+                })),
+            )
+            .await;
+            Ok(build_status(&config, running))
+        }
+        Err(err) => {
+            // Nothing was saved. Bring back the server that was running so
+            // the live state matches the (unchanged) saved settings again.
+            let mut restored = !had_running;
+            if had_running {
+                match launch(ServerConfig {
+                    bind: previous.bind.clone(),
+                    port: previous.port,
+                })
+                .await
+                {
+                    Ok(old) => {
+                        *slot = Some(old);
+                        restored = true;
+                    }
+                    Err(restore_err) => eprintln!(
+                        "banto: LAN設定の適用に失敗し、旧設定でのサーバー再起動にも失敗しました: {restore_err}"
+                    ),
+                }
+            }
+            // The failed attempt is audited too (conventions §1: an applied
+            // change and a refused/failed one both leave a record), with the
+            // same `resource`/`action` as the success entry.
+            let detail = serde_json::json!({
+                "serverEnabled": config.enabled,
+                "bind": config.bind,
+                "port": config.port,
+                "viewerPublic": config.viewer_public,
+                "saved": false,
+                "restoredPrevious": restored,
+                "error": err.to_string(),
+            });
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&actor.username),
+                    actor_role: Some(actor.role.as_str()),
+                    action: "settings_change",
+                    resource: "settings",
+                    entity_id: None,
+                    detail: Some(detail),
+                    origin: "tauri",
+                    result: "failed",
+                })
+                .await;
+            Err(err)
+        }
+    }
 }
 
 /// `admin`-only, symmetric with `settings_set` below: the generic key/value

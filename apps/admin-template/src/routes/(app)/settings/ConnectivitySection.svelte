@@ -93,6 +93,17 @@
 			);
 		} catch (err) {
 			serverError = err instanceof Error ? err.message : String(err);
+			// Issue #287: a failed apply may have stopped/restarted the server
+			// (the backend rolls back to the previous saved settings), so the
+			// status shown is stale. Re-read the real one. Only `serverStatus`
+			// is replaced - the drafts keep what the user typed, so they can
+			// fix the value (e.g. a port in use) and retry; "変更を破棄" then
+			// resets them to this actual status.
+			try {
+				serverStatus = await getServerStatus();
+			} catch {
+				// Keep the previous status; the error above is already shown.
+			}
 		} finally {
 			applying = false;
 		}
