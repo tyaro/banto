@@ -193,7 +193,7 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 
 ### 8.2 外部利用 fixture を CI に入れない判断（2026-10-01 時点）
 
-次の理由で、**この時点では CI に fixture を足さない**。手順（8.3）で補い、CI 化は別 Issue の候補とする。
+次の理由で、**この時点では CI に fixture を足さない**。手順（8.3）で補い、CI 化は #271 で追跡する。
 
 - Git 依存は**公開済みの ref**（タグ、または push 済みの commit）を取りに行く。PR の候補 commit は push 後にしか
   解決できず、リリースタグはリリース後にしか存在しない。「リリース前に壊れを止める」用途に素直に使えない
@@ -244,7 +244,7 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 - **Banto の CI**: 共通契約（モノレポ内のビルド・テスト・scaffold・セキュリティ監査）。
 - **派生アプリの CI**: 各アプリ固有のテスト・画面・実機。Banto の CI へは集約しない。
 - **手順で補う（8.3）**: 外部利用経路（Git 依存・dev 起動）。
-- **未了（別 Issue の候補）**: 外部利用 fixture の CI 化。最小の fixture をリポジトリ内（例:
+- **未了（#271）**: 外部利用 fixture の CI 化。最小の fixture をリポジトリ内（例:
   `fixtures/external-consumer/`）に置き、リリースタグ作成後（`on: push: tags`）に Git 依存で導入 → dev 起動 →
   描画確認を行うジョブ。
 
