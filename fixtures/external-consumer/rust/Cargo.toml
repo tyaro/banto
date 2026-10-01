@@ -25,8 +25,8 @@ postgres = [
 system-metrics = ["banto-admin-services/system-metrics"]
 
 [dependencies]
-banto-admin-services = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
-banto-attachments = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
-banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
-banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3" }
-banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v1.7.3", features = ["sqlite"] }
+banto-admin-services = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0" }
+banto-attachments = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0" }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0", features = ["sqlite"] }
