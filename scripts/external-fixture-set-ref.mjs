@@ -10,10 +10,12 @@
  *   - fixtures/external-consumer/package.json の
  *     `github:tyaro/banto#<ref>&path:packages/<x>`（`@banto/*` すべて）
  *   - fixtures/external-consumer/rust/Cargo.toml の banto の Git 依存の
- *     `rev = "<ref>"`（すべて）
+ *     `rev = "<sha>"`（ref が 40 桁の hex のとき）か `tag = "<name>"`（それ以外。
+ *     派生アプリが実際に書く形）。既存の行が `rev`・`tag` のどちらでも置換する
  *
- * CI（.github/workflows/external-consumer.yml）は検証する commit の SHA で呼ぶ。
- * commit してある値は現行リリースタグ。書き換えた後の `pnpm install` は
+ * CI（.github/workflows/external-consumer.yml）は、PR・dispatch では検証する
+ * commit の SHA で、タグの push ではタグ名で呼ぶ（消費側と同じタグ名での解決を
+ * 確かめるため）。commit してある値は現行リリースタグ（`tag = "..."`）。書き換えた後の `pnpm install` は
  * `--no-frozen-lockfile` にする（ref が変わると lockfile は必ず古くなる。
  * 再解決されるのは `@banto/*` だけで、推移依存は lockfile のまま）。
  *
@@ -36,8 +38,15 @@ const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 /** `github:tyaro/banto#<ref>&path:` の `<ref>` 部分。 */
 const NPM_REF = /(github:tyaro\/banto#)[^&"]+(&path:)/g;
-/** banto の Git 依存の `rev = "<ref>"`（同じ行に banto の git URL があるものだけ）。 */
-const CARGO_REV = /^(.*git = "https:\/\/github\.com\/tyaro\/banto\.git".*rev = ")[^"]*(")/gm;
+/**
+ * banto の Git 依存の `rev = "<ref>"` / `tag = "<ref>"`（同じ行に banto の git URL が
+ * あるものだけ）。キー（rev / tag）ごと置き換える。
+ */
+const CARGO_REF =
+	/^(.*git = "https:\/\/github\.com\/tyaro\/banto\.git".*?)\b(?:rev|tag) = "[^"]*"/gm;
+
+/** 40 桁の hex（commit SHA）なら Cargo は `rev`、それ以外（タグ名）は `tag`。 */
+export const isCommitSha = (ref) => /^[0-9a-f]{40}$/.test(ref);
 
 /**
  * 文字列中の ref を置換する。戻り値は置換後の文字列と件数。
@@ -72,8 +81,14 @@ export function setFixtureRef(ref, { root = repoRoot } = {}) {
 	// 書き換え後も JSON として読めることを確かめてから書く。
 	JSON.parse(npm.out);
 
-	const cargo = replaceRef(fs.readFileSync(cargoPath, 'utf8'), CARGO_REV, ref);
-	if (cargo.count === 0) throw new Error(`${cargoPath} に banto の rev = "..." が無い`);
+	const cargoKey = isCommitSha(ref) ? 'rev' : 'tag';
+	let cargoCount = 0;
+	const cargoOut = fs.readFileSync(cargoPath, 'utf8').replace(CARGO_REF, (_m, head) => {
+		cargoCount++;
+		return `${head}${cargoKey} = "${ref}"`;
+	});
+	const cargo = { out: cargoOut, count: cargoCount };
+	if (cargo.count === 0) throw new Error(`${cargoPath} に banto の rev / tag = "..." が無い`);
 
 	fs.writeFileSync(pkgPath, npm.out);
 	fs.writeFileSync(cargoPath, cargo.out);

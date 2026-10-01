@@ -203,8 +203,11 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
   （`crates/*`）を `git = ..., rev = "<ref>"` で入れる。対象の一覧は `verify:architecture`（rule
   `external-consumer-fixture`）が workspace から洗い出して突き合わせ、漏れがあれば落とす。
 - **検証する commit**: PR は head SHA（同じリポジトリのブランチからの PR だけ。fork からの PR はスキップ）、
-  `workflow_dispatch` は入力の ref、リリースタグの push はタグの commit。PR は `packages/**`・`crates/**`・
-  Vite／svelte／pnpm／Cargo の設定・fixture・ワークフロー自身を変えたときだけ走る。
+  `workflow_dispatch` は入力の ref。fixture の依存には SHA（Cargo は `rev`）を書く。リリースタグの push では
+  checkout はタグの commit だが、依存には**タグ名**を書き（npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`。派生アプリ
+  と同じ形）、タグ名での解決を確かめる。あわせてタグ名と各マニフェストの version の一致を
+  `check-versions.mjs --tag` で検査する。PR は `packages/**`・`crates/**`・Vite／svelte／pnpm／Cargo の設定・
+  fixture・ワークフロー自身を変えたときだけ走る。
 - **合格条件**（job `npm`）: `vite dev` で開いたページにマーカーが描画される、`console.error`・`pageerror` が
   ゼロ、dev ログに依存オプティマイザのエラー（`error while updating dependencies`・`js_parse_error`）が無い、
   続けて `pnpm check`・`pnpm build` が通る。#150 が再現しても dev の `/` は 200 のまま（動的 import が 504 →
@@ -273,12 +276,12 @@ fixture が commit している ref は現行リリースタグなので、**mai
 
 ### 8.4 役割分担
 
-| 担い手                               | 範囲                                                                                        |
-| ------------------------------------ | ------------------------------------------------------------------------------------------- |
-| Banto の CI（ci.yml ほか）           | 共通契約（モノレポ内のビルド・テスト・scaffold・セキュリティ監査）                          |
-| Banto の CI（external-consumer.yml） | 外部利用の経路（Git 依存での導入・dev 起動とブラウザでの描画・check・build・`cargo check`） |
-| 派生アプリの CI                      | 各アプリ固有のテスト・画面・実機。Banto の CI へは集約しない                                |
-| 手順（8.3）                          | リリース前の `workflow_dispatch` と、ローカルでの切り分け                                   |
+| 担い手                               | 範囲                                                                                                                                                 |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Banto の CI（ci.yml ほか）           | 共通契約（モノレポ内のビルド・テスト・scaffold・セキュリティ監査）                                                                                   |
+| Banto の CI（external-consumer.yml） | 外部利用の経路（Git 依存での導入・dev 起動とブラウザでの描画・check・build・`cargo check`）。タグ後の実行はタグ名での解決と version の一致を確かめる |
+| 派生アプリの CI                      | 各アプリ固有のテスト・画面・実機。Banto の CI へは集約しない                                                                                         |
+| 手順（8.3）                          | リリース前の `workflow_dispatch` と、ローカルでの切り分け                                                                                            |
 
 ## 9. 共通 UI のパッケージ化（#220）への適用
 

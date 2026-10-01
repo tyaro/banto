@@ -1,8 +1,9 @@
 # External consumer (#271): 外部の派生アプリと同じ経路で Banto を導入して確かめる。
 #
 # fixtures/external-consumer/ は最小の SvelteKit アプリ（npm）と最小の crate（Rust）。
-# `@banto/*` を `github:tyaro/banto#<sha>&path:packages/<x>`、`banto-*` を
-# `git = ..., rev = "<sha>"` で導入し、次を確かめる:
+# `@banto/*` を `github:tyaro/banto#<ref>&path:packages/<x>`、`banto-*` を
+# `git = ..., rev = "<sha>"`（タグの push では `tag = "<タグ名>"`）で導入し、
+# 次を確かめる:
 #
 # - npm: Git 依存の導入 → `vite dev` を起動してブラウザで開き、`.svelte.ts` を
 #   ソース配布する 5 パッケージ（+ theme）のモジュールグラフが読み込めること
@@ -24,8 +25,15 @@
 #   （fork の head SHA を pnpm / cargo の Git 依存で解決できるかは未確認）。
 # - workflow_dispatch: 入力の ref（ブランチ・タグ・SHA）を SHA にしたもの。
 #   リリースタグを打つ前に main の SHA で流す（docs/publishing.md のタグ運用規約）。
-# - push(tags): タグの commit。失敗したら tracking issue を起票する（タグは既に
-#   公開済みで、赤くする PR が無いため。tauri-check.yml と同じ流儀）。
+# - push(tags): checkout はタグの commit だが、fixture の依存には**タグ名**を書く
+#   （npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`。派生アプリが実際に書く形）。
+#   タグ前の main SHA での dispatch と違い、タグ名での解決を確かめる。あわせて
+#   `check-versions.mjs --tag` でタグ名と各マニフェストの version の一致を検査
+#   する。失敗したら tracking issue を起票する（タグは既に公開済みで、赤くする
+#   PR が無いため。tauri-check.yml と同じ流儀）。
+#
+# resolve の出力は 2 つ: `sha`（checkout する commit）と `ref`（fixture の依存に
+# 書く値。PR・dispatch では sha と同じ、タグではタグ名）。
 #
 # fixture の lockfile は commit してあり（現行リリースタグで解決したもの）、ref を
 # 書き換えた後は `--no-frozen-lockfile` で入れる。ref が変わると frozen は必ず失敗
@@ -89,13 +97,21 @@ jobs:
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
+      ref: ${{ steps.sha.outputs.ref }}
     steps:
-      - name: Checkout the requested ref (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch'
+      # dispatch は入力の ref を SHA にするため、タグは version の検査のために checkout する。
+      - name: Checkout the requested ref (workflow_dispatch / tag)
+        if: github.event_name != 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
           persist-credentials: false
+
+      # タグ名と各マニフェストの version の一致（CR-7 のタグ CI。`pnpm check:versions --tag`
+      # と同じ。resolve では pnpm を入れないので node で直接呼ぶ）。
+      - name: Tag matches manifest versions (tag push)
+        if: github.event_name == 'push'
+        run: node scripts/check-versions.mjs --tag "$GITHUB_REF_NAME"
 
       - name: Decide the SHA
         id: sha
@@ -104,16 +120,17 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           case "$EVENT" in
-            pull_request) sha="$PR_HEAD_SHA" ;;
-            workflow_dispatch) sha="$(git rev-parse HEAD)" ;;
-            *) sha="$GITHUB_SHA" ;;
+            pull_request) sha="$PR_HEAD_SHA"; ref="$sha" ;;
+            workflow_dispatch) sha="$(git rev-parse HEAD)"; ref="$sha" ;;
+            *) sha="$GITHUB_SHA"; ref="$GITHUB_REF_NAME" ;;
           esac
           if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::検証する SHA を決められなかった: '$sha'"
             exit 1
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "検証する commit: $sha（$EVENT）"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "検証する commit: $sha、依存に書く ref: $ref（$EVENT）"
 
   npm:
     name: npm (Git deps → dev + Playwright → check → build)
@@ -122,6 +139,7 @@ jobs:
     timeout-minutes: 30
     env:
       SHA: ${{ needs.resolve.outputs.sha }}
+      FIXTURE_REF: ${{ needs.resolve.outputs.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,7 +169,7 @@ jobs:
         run: node --test scripts/external-fixture-set-ref.test.mjs
 
       - name: Point the fixture at the commit under test
-        run: node scripts/external-fixture-set-ref.mjs "$SHA"
+        run: node scripts/external-fixture-set-ref.mjs "$FIXTURE_REF"
 
       # github.com（codeload）からの取得が一時的に失敗することがあるので 3 回まで
       # 試す。`--no-frozen-lockfile` の理由は冒頭のコメント。
@@ -204,7 +222,7 @@ jobs:
           {
             echo "### External consumer (npm)"
             echo
-            echo "検証した commit: \`$SHA\`（${{ github.event_name }}）"
+            echo "検証した commit: \`$SHA\`、依存の ref: \`$FIXTURE_REF\`（${{ github.event_name }}）"
             echo
             echo "| 項目 | 版 |"
             echo "| --- | --- |"
@@ -237,6 +255,7 @@ jobs:
     continue-on-error: true
     env:
       SHA: ${{ needs.resolve.outputs.sha }}
+      FIXTURE_REF: ${{ needs.resolve.outputs.ref }}
       BANTO_FIXTURE_NO_EXCLUDE: '1'
     steps:
       - name: Checkout
@@ -261,7 +280,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Point the fixture at the commit under test
-        run: node scripts/external-fixture-set-ref.mjs "$SHA"
+        run: node scripts/external-fixture-set-ref.mjs "$FIXTURE_REF"
 
       - name: Install the fixture (Git dependencies)
         working-directory: ${{ env.FIXTURE_DIR }}
@@ -304,7 +323,7 @@ jobs:
           {
             echo "### #150 diagnostic (optimizeDeps.exclude 無し)"
             echo
-            echo "検証した commit: \`$SHA\`"
+            echo "検証した commit: \`$SHA\`、依存の ref: \`$FIXTURE_REF\`"
             echo
             echo "- 結果: **${verdict}**"
             echo "- Playwright: ${OUTCOME:-未実行}"
@@ -331,6 +350,7 @@ jobs:
     timeout-minutes: 30
     env:
       SHA: ${{ needs.resolve.outputs.sha }}
+      FIXTURE_REF: ${{ needs.resolve.outputs.ref }}
       # github.com / crates.io からの取得の一時的な失敗に備える（既定は 3）。
       CARGO_NET_RETRY: '5'
     steps:
@@ -350,7 +370,7 @@ jobs:
           workspaces: fixtures/external-consumer/rust
 
       - name: Point the fixture at the commit under test
-        run: node scripts/external-fixture-set-ref.mjs "$SHA"
+        run: node scripts/external-fixture-set-ref.mjs "$FIXTURE_REF"
 
       - name: Cargo check (default features)
         working-directory: ${{ env.FIXTURE_DIR }}/rust
@@ -368,7 +388,7 @@ jobs:
           {
             echo "### External consumer (Rust)"
             echo
-            echo "検証した commit: \`$SHA\`"
+            echo "検証した commit: \`$SHA\`、依存の ref: \`$FIXTURE_REF\`"
             echo
             echo "- $(rustc --version)"
             echo "- $(cargo --version)"

@@ -893,7 +893,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 				...read(FIX_CARGO).matchAll(
 					/^([\w-]+)\s*=\s*\{[^}\n]*git\s*=\s*"https:\/\/github\.com\/tyaro\/banto\.git"[^}\n]*\}/gm
 				)
-			].map((m) => [m[1], m[0].match(/rev\s*=\s*"([^"]*)"/)?.[1]])
+			].map((m) => [m[1], m[0].match(/\b(?:rev|tag)\s*=\s*"([^"]*)"/)?.[1]])
 		);
 		for (const c of crates.filter((c) => !cargoDeps.has(c)))
 			bad(FIX_CARGO, `公開 crate ${c}（crates/）が fixture の Git 依存に無い`);
@@ -903,7 +903,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		if (cargoRefs.has(undefined))
 			bad(
 				FIX_CARGO,
-				'banto の Git 依存に rev = "..." が無いものがある（set-ref が書き換えられない）'
+				'banto の Git 依存に rev / tag = "..." が無いものがある（set-ref が書き換えられない）'
 			);
 
 		// --- ref が npm・Cargo で 1 つに揃っている ---

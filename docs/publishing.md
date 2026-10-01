@@ -163,8 +163,10 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   （[external-consumer.yml](../.github/workflows/external-consumer.yml)）を
   `workflow_dispatch` し、緑を確認する（Git 依存での導入・dev 起動とブラウザ
   での描画・check・build・`cargo check`。[upgrading.md §8.2](upgrading.md)）。
-  タグの push でも同じワークフローが走り、失敗すれば tracking issue
-  （ラベル `external-consumer-failure`）が起票される
+  タグの push でも同じワークフローが走る。タグ後の実行は fixture の依存に
+  **タグ名**を書いて（npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`）タグ名での
+  解決を確かめ、`check-versions.mjs --tag` でタグ名と version の一致も検査する。
+  失敗すれば tracking issue（ラベル `external-consumer-failure`）が起票される
 - **タグを打ったら外部利用 fixture の ref を新しいタグに上げる**:
   `node scripts/external-fixture-set-ref.mjs vX.Y.Z` → `fixtures/external-consumer/`
   で `pnpm install --no-frozen-lockfile` → `package.json`・`rust/Cargo.toml`・
