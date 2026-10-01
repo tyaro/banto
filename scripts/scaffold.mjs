@@ -472,6 +472,24 @@ function removeCommandPalette() {
 		`\t\tif (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {\n\t\t\tevent.preventDefault();\n\t\t\tcommandPaletteStore.toggle();\n\t\t\treturn;\n\t\t}\n\t\tif (event.key === 'Escape' && overlayOpen && !commandPaletteStore.open) {\n\t\t\tcloseOverlay();\n\t\t}`,
 		`\t\tif (event.key === 'Escape' && overlayOpen) {\n\t\t\tcloseOverlay();\n\t\t}`
 	);
+	// 最近使った項目の所有者掃除（#258）: パレットと一緒に recentCommands.ts を消すため配線も外す。
+	drop(
+		LAYOUT,
+		'recentCommands import 除去',
+		`	import { watchRecentCommandOwner } from '$lib/recentCommands';
+`
+	);
+	drop(
+		LAYOUT,
+		'パレット履歴の所有者掃除 $effect 除去',
+		`	// Command palette history is per user (#258): dropped on a confirmed
+	// \`none\`, and another owner's entry dropped once an owner is confirmed
+	// (the same hygiene the controller does for the list view state). The
+	// owner check on read is the safety boundary; this only avoids lingering.
+	$effect(() => untrack(() => watchRecentCommandOwner(sessionController)));
+
+`
+	);
 	drop(
 		LAYOUT,
 		'CommandPalette 描画除去',
@@ -497,7 +515,12 @@ function removeCommandPalette() {
 		HEADER,
 		'検索ピル/コマンドパレット起動ボタン除去',
 		`{#if !settings.kiosk}
-		<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>
+		<button
+			type="button"
+			class="search-pill"
+			title={m['shell.openCommandPalette']()}
+			onclick={() => commandPaletteStore.show()}
+		>
 			<Search size={16} aria-hidden="true" />
 			<span>{m['shell.searchPlaceholder']()}</span>
 			<kbd>Ctrl K</kbd>
@@ -518,6 +541,8 @@ function removeCommandPalette() {
 	removeFile(`${APP}/src/lib/components/CommandPalette.svelte`, 'CommandPalette.svelte 削除');
 	removeFile(`${APP}/src/lib/commandPalette.svelte.ts`, 'commandPalette.svelte.ts 削除');
 	removeFile(`${APP}/src/lib/commands.ts`, 'commands.ts 削除');
+	removeFile(`${APP}/src/lib/recentCommands.ts`, 'recentCommands.ts 削除');
+	removeFile(`${APP}/src/lib/recentCommands.test.ts`, 'recentCommands.test.ts 削除');
 }
 
 /**
