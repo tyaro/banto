@@ -103,6 +103,18 @@ deviations were measured and fixed in maintenance-review-2026-08 §5.3):
   deliberate asymmetry to avoid audit-log self-DoS; the Tauri path (local
   input, no throttle) records every failure. The lockout itself is separately
   observable as rate-limiter state.
+- **Credential-less auth endpoints must not amplify the audit log** (Issue
+  #278). REST `POST /api/auth/logout` records only when it actually ended a
+  session (actor resolved from a live token; no/invalid/revoked token records
+  nothing; Tauri's `auth_logout` already records only when it cleared a
+  session). The `login_failed` `actor_username` is caller-supplied and need not
+  be a real account, so `users::bound_username_for_audit` cuts it to the
+  creation limit (`MAX_USERNAME_LEN` = 32 chars) on a char boundary with a
+  trailing `…` (REST and Tauri). A longer username skips the DB lookup in
+  `UsersService::verify` and only pays the dummy hash (same answer and similar
+  timing as an unknown user); throttle keys cap the username at 64 chars.
+  Retention runs at startup / on list, so it is not a per-write cap; bounding
+  these two write paths is what protects capacity.
 
 ## 2. The service layer knows nothing of tauri / axum / RBAC / HTTP [machine-checked: tauri/axum non-dependence only]
 
@@ -238,7 +250,15 @@ without a runtime guard are **upheld by reviewing every call site**.
   per-IP, **before** the argon2 verifier (a DoS countermeasure against a
   username-rotation flood). The regression test
   `per_ip_dimension_bounds_a_username_rotation_flood` verifies that "argon2 is
-  not called during a lockout."
+  not called during a lockout." The check also **reserves a verification slot
+  atomically before the verifier is awaited** (Issue #279): attempts in flight
+  count like recorded failures against the per-account and per-IP thresholds,
+  and `MAX_IN_FLIGHT_PER_IP` (4) / `MAX_CONCURRENT_VERIFICATIONS` (8) cap
+  concurrency outright. Over a cap the answer is the usual `RateLimited` (no
+  queue). The slot is an RAII guard released on success, failure, error and
+  future cancellation. The verifier hashes on tokio's blocking pool. Scope:
+  this is the REST network boundary (`POST /api/auth/login`); the Tauri
+  `auth_login` command is local input and stays unthrottled (see §1).
 - **`DefaultBodyLimit` sits above the service-layer check.** The ordering is
   that the transport limit only needs to be "comfortably above" the service
   layer's actual check (`MAX_ATTACHMENT_BYTES`, etc.) (the doc of `rest/mod.rs`
