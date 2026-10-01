@@ -13,6 +13,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
+	import { watchRecentCommandOwner } from '$lib/recentCommands';
 	import { navItems } from '$lib/navigation';
 	import { navBadges, pathOwns } from '$lib/navBadges.svelte';
 
@@ -101,6 +102,12 @@
 			})
 		)
 	);
+
+	// Command palette history is per user (#258): dropped on a confirmed
+	// `none`, and another owner's entry dropped once an owner is confirmed
+	// (the same hygiene the controller does for the list view state). The
+	// owner check on read is the safety boundary; this only avoids lingering.
+	$effect(() => untrack(() => watchRecentCommandOwner(sessionController)));
 
 	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the

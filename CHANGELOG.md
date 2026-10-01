@@ -22,6 +22,13 @@
 
 ## [Unreleased]
 
+- fix(admin-template): コマンドパレットの「最近使った項目」をユーザーごとに分けた（#258）。保存時に所有者
+  （`sessionOwnerKey`）を記録し、今のユーザーと一致するときだけ読み出す（一覧の状態 `listViewState` と同じ規則。
+  owner が null のときは読み書きしない）。旧形式（所有者なし）の履歴は読み出し時に破棄する。ログアウト確定で消し、
+  別ユーザー確定で他人の履歴を消す。
+- fix(admin-template): ヘッダーの「検索…」を「画面・操作を検索」（英語 "Search pages & actions"）に改め、
+  パレットの placeholder・アイコンボタンのラベル・title も用語を揃えた（#217）。Ctrl K の表示は維持。
+  visual のスクリーンショット基準（Linux）はヘッダー文言が変わるため更新が必要。
 - feat(admin-core, admin-template)!: SessionController 実装-3（#260、**v2.0.0 の破壊的変更**。
   [docs/session-controller-design.md](docs/session-controller-design.md) §5.4・§6.1・§6.2、
   [ADR-0016](docs/adr/0016-session-controller-single-writer.md) は Accepted）。セッションの状態（誰がログインして

@@ -1552,7 +1552,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByRole('button', { name: 'CSVエクスポート' })).toBeVisible();
 
 		await page.keyboard.press('Control+K');
-		const search = page.getByPlaceholder('コマンドを検索…');
+		const search = page.getByPlaceholder('画面・操作を検索…');
 		await expect(search).toBeVisible();
 		await search.fill('監査');
 		await search.press('Enter');

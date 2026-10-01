@@ -13,14 +13,21 @@
 	 */
 	import { onMount } from 'svelte';
 	import * as m from '$lib/paraglide/messages';
-	import { isProviderError, notify, searchCommands, type PaletteCommand } from '@banto/admin-core';
-	import { buildCommands, loadRecentCommandIds, recordRecentCommand } from '$lib/commands';
+	import {
+		currentSessionScope,
+		isProviderError,
+		notify,
+		searchCommands,
+		type PaletteCommand
+	} from '@banto/admin-core';
+	import { buildCommands } from '$lib/commands';
+	import { loadRecentCommandIds, recordRecentCommand } from '$lib/recentCommands';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
 
 	// Built/read once per mount (i.e. once per open) - navItems is static and
 	// recency only needs to reflect what was true when the palette opened.
 	const commands = buildCommands();
-	const recentIds = loadRecentCommandIds();
+	const recentIds = loadRecentCommandIds(currentSessionScope());
 
 	let query = $state('');
 	let selectedIndex = $state(0);
@@ -89,6 +96,9 @@
 
 	async function executeCommand(command: PaletteCommand): Promise<void> {
 		executing = true;
+		// Captured BEFORE running: a command that ends the session (logout)
+		// must not record into the next one (#258).
+		const scope = currentSessionScope();
 		try {
 			await command.run();
 		} catch (err) {
@@ -96,7 +106,7 @@
 		} finally {
 			executing = false;
 		}
-		recordRecentCommand(command.id);
+		recordRecentCommand(scope, command.id);
 		commandPaletteStore.hide();
 	}
 

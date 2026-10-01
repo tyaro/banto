@@ -160,7 +160,12 @@
 	     palette icon is hidden entirely rather than just shrunk - a
 	     permanently-mounted dashboard has no keyboard operator to invoke it. -->
 	{#if !settings.kiosk}
-		<button type="button" class="search-pill" onclick={() => commandPaletteStore.show()}>
+		<button
+			type="button"
+			class="search-pill"
+			title={m['shell.openCommandPalette']()}
+			onclick={() => commandPaletteStore.show()}
+		>
 			<Search size={16} aria-hidden="true" />
 			<span>{m['shell.searchPlaceholder']()}</span>
 			<kbd>Ctrl K</kbd>
