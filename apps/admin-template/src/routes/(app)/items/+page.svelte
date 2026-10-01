@@ -36,17 +36,18 @@
 	import { itemsSchema } from '$lib/banto/resources/items';
 	import { sessionStore } from '$lib/session.svelte';
 	import { canWriteResources } from '$lib/permissions';
-	import {
-		exportCsvToFolder,
-		importItems,
-		isItemsImportAvailable,
-		type ItemImportRow
-	} from '$lib/banto/itemsAdmin';
+	import { exportCsvToFolder, importItems, isItemsImportAvailable } from '$lib/banto/itemsAdmin';
 	import { getBantoMode } from '$lib/banto/setup';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
 	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
+	import {
+		importRowKind,
+		previewRows,
+		toImportPayload,
+		type ImportRowPreview
+	} from './importPreview';
 	import { toItemRow, type ItemRow } from './itemRow';
 
 	const resource = getResource('items');
@@ -471,16 +472,6 @@
 		}
 	}
 
-	interface ImportRowPreview {
-		/** 1-based CSV line number, header counted as line 1 (so the first data row is line 2). */
-		csvLine: number;
-		id?: number;
-		name?: string;
-		price?: number;
-		stock?: number;
-		errors: { columnId: string; message: string }[];
-	}
-
 	interface ImportPreviewState {
 		fileName: string;
 		/** Header cells that matched no known column - shown as "無視される列". */
@@ -642,12 +633,8 @@
 		if (importPreview.missingRequired.length > 0) return;
 		if (importPreview.rows.some((row) => row.errors.length > 0)) return;
 
-		const payload: ItemImportRow[] = importPreview.rows.map((row) => ({
-			id: row.id,
-			name: row.name ?? '',
-			price: row.price ?? 0,
-			stock: row.stock ?? 0
-		}));
+		// Same validated rows the preview table above renders (issue #218).
+		const payload = toImportPayload(importPreview.rows);
 
 		importSubmitting = true;
 		try {
@@ -817,6 +804,51 @@
 					<p class="panel-text muted">
 						{m['items.importIgnored']({ columns: importPreview.ignoredHeaders.join('、') })}
 					</p>
+				{/if}
+				{#if importPreview.rows.length > 0}
+					{@const shown = previewRows(importPreview.rows)}
+					<p class="panel-text muted">
+						{m['items.importPreviewShown']({
+							shown: shown.length,
+							total: importPreview.rows.length
+						})}
+					</p>
+					<div class="preview-table-wrap">
+						<table class="preview-table">
+							<caption class="sr-only">{m['items.importPreviewCaption']()}</caption>
+							<thead>
+								<tr>
+									<th scope="col">{m['items.importPreviewLine']()}</th>
+									<th scope="col">{m['items.importPreviewKind']()}</th>
+									<th scope="col">ID</th>
+									<th scope="col">{columnLabel('name')}</th>
+									<th scope="col" class="num">{columnLabel('price')}</th>
+									<th scope="col" class="num">{columnLabel('stock')}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each shown as row (row.csvLine)}
+									<tr class:has-error={row.errors.length > 0}>
+										<td>{row.csvLine}</td>
+										<td>
+											<span class="kind kind--{importRowKind(row)}">
+												{importRowKind(row) === 'update'
+													? m['items.importKindUpdate']()
+													: m['items.importKindCreate']()}
+											</span>
+										</td>
+										<td>{row.id ?? '—'}</td>
+										<td>{row.name ?? '—'}</td>
+										<td class="num">{row.price ?? '—'}</td>
+										<td class="num">{row.stock ?? '—'}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+					{#if updateCount > 0}
+						<p class="panel-text muted">{m['items.importUpdateNote']({ count: updateCount })}</p>
+					{/if}
 				{/if}
 				{#if errorRows.length > 0}
 					<ul class="error-list">
@@ -1081,6 +1113,59 @@
 
 	.error-list li {
 		margin-bottom: 0.25rem;
+	}
+
+	.preview-table-wrap {
+		margin: 0 0 0.5rem;
+		overflow-x: auto;
+	}
+
+	.preview-table {
+		border-collapse: collapse;
+		font-size: 0.8rem;
+		color: var(--banto-text);
+		background: var(--banto-surface);
+	}
+
+	.preview-table th,
+	.preview-table td {
+		padding: 0.25rem 0.6rem;
+		border-bottom: 1px solid var(--banto-border);
+		text-align: left;
+		white-space: nowrap;
+	}
+
+	.preview-table .num {
+		text-align: right;
+	}
+
+	.preview-table tr.has-error td {
+		background: var(--banto-danger-tint);
+	}
+
+	/* 新規/更新は文字ラベル + 枠線の形（更新は破線）で区別し、色だけに依存しない。 */
+	.kind {
+		display: inline-block;
+		padding: 0 0.4rem;
+		border: 1px solid var(--banto-border);
+		border-radius: var(--banto-radius-lg);
+		font-weight: 600;
+	}
+
+	.kind--update {
+		border-style: dashed;
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		padding: 0;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.import-panel .actions {

@@ -44,8 +44,9 @@ pnpm add "github:tyaro/banto#main&path:packages/theme"
 依存（`&path:` 指定）・Rust git タグ依存とも `pnpm install`/`cargo check`/
 `cargo test --workspace` が通ることを確認した。この配布形態は動作する。
 
-**消費側で必要になる作業の一覧は README の
-[「4. 別リポジトリから git 依存として消費する場合」](../README.md#4-別リポジトリから-git-依存として消費する場合)**
+**新しい版への更新手順（依存とコピー部分の違い・DB 移行・基準版の記録・外部利用の検証）は
+[upgrading.md](upgrading.md)。** 初回導入で必要になる作業の一覧は README の
+[「4. 別リポジトリから git 依存として消費する場合」](../README.md#4-別リポジトリから-git-依存として消費する場合)
 にまとめてある（npm/Rust の依存書き換え、`[workspace.package].repository`、
 lint 設定の持ち込み、e2e スイートの移植など）。消費者はアプリ作者なので、
 手順そのものはトラックB（README）側が正となる。
