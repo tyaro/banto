@@ -12,6 +12,7 @@
 	 * この値が要るため）- エラー表示は下の `systemInfoStore.error` を直接読む。
 	 */
 	import { untrack } from 'svelte';
+	import { isProviderError } from '@banto/admin-core';
 	import { Server, Wifi } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
@@ -56,7 +57,7 @@
 		try {
 			applyStatusToDrafts(await getServerStatus());
 		} catch (err) {
-			loadError = err instanceof Error ? err.message : String(err);
+			loadError = isProviderError(err) ? err.message : String(err);
 		} finally {
 			loadingStatus = false;
 		}
@@ -92,7 +93,7 @@
 				await applyServerSettings(enabledDraft, bindDraft, portDraft, viewerPublicDraft)
 			);
 		} catch (err) {
-			serverError = err instanceof Error ? err.message : String(err);
+			serverError = isProviderError(err) ? err.message : String(err);
 			// Issue #287: a failed apply may have stopped/restarted the server
 			// (the backend rolls back to the previous saved settings), so the
 			// status shown is stale. Re-read the real one. Only `serverStatus`
