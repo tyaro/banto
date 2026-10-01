@@ -1,6 +1,6 @@
 {
   "name": "@banto/charts",
-  "version": "1.7.3",
+  "version": "2.0.0",
   "description": "Banto charts: dependency-free SVG charts (Svelte 5 Runes UI + pure TS core), spec §6",
   "license": "MIT",
   "repository": {
