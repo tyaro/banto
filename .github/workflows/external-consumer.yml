@@ -23,7 +23,9 @@
 # - pull_request: PR の head SHA（`GITHUB_SHA` はマージコミットで、GitHub に
 #   push されていないので Git 依存で取りに行けない）。fork からの PR はスキップ
 #   （fork の head SHA を pnpm / cargo の Git 依存で解決できるかは未確認）。
-# - workflow_dispatch: 入力の ref（ブランチ・タグ・SHA）を SHA にしたもの。
+# - workflow_dispatch: 入力の ref（ブランチ・タグ・SHA）を SHA にしたもの。入力が
+#   既存のタグ名なら、下のタグの push と同じ「タグの経路」で走る（タグを打つ前に
+#   既存タグでタグの経路そのものを確かめられる）。
 #   リリースタグを打つ前に main の SHA で流す（docs/publishing.md のタグ運用規約）。
 # - push(tags): checkout はタグの commit だが、fixture の依存には**タグ名**を書く
 #   （npm `#vX.Y.Z&path:`、Cargo `tag = "vX.Y.Z"`。派生アプリが実際に書く形）。
@@ -98,8 +100,10 @@ jobs:
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
       ref: ${{ steps.sha.outputs.ref }}
+      mode: ${{ steps.sha.outputs.mode }}
     steps:
-      # dispatch は入力の ref を SHA にするため、タグは version の検査のために checkout する。
+      # dispatch は入力の ref を SHA にする・タグかを調べるため、タグの push は version の
+      # 検査のために checkout する。
       - name: Checkout the requested ref (workflow_dispatch / tag)
         if: github.event_name != 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,30 +111,64 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
           persist-credentials: false
 
-      # タグ名と各マニフェストの version の一致（CR-7 のタグ CI。`pnpm check:versions --tag`
-      # と同じ。resolve では pnpm を入れないので node で直接呼ぶ）。
-      - name: Tag matches manifest versions (tag push)
-        if: github.event_name == 'push'
-        run: node scripts/check-versions.mjs --tag "$GITHUB_REF_NAME"
-
-      - name: Decide the SHA
+      # 検証する commit（sha）と fixture の依存に書く値（ref）を決める。経路は 2 つ:
+      # - タグの経路: タグの push と、dispatch の入力が既存のタグ名のとき。checkout は
+      #   タグの commit、依存にはタグ名（npm `#vX.Y.Z&path:`、Cargo `tag = "..."`）。
+      #   タグ名と各マニフェストの version の一致も検査する（CR-7 のタグ CI。
+      #   `pnpm check:versions --tag` と同じ。resolve では pnpm を入れないので node で
+      #   直接呼ぶ）。dispatch で既存タグを渡せば、タグを打つ前でもこの経路を確かめられる。
+      # - SHA の経路: PR と、dispatch の入力がブランチ名・SHA のとき。依存にも SHA。
+      - name: Decide the commit and the dependency ref
         id: sha
         env:
           EVENT: ${{ github.event_name }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_REF: ${{ inputs.ref }}
         run: |
+          mode=sha
           case "$EVENT" in
             pull_request) sha="$PR_HEAD_SHA"; ref="$sha" ;;
-            workflow_dispatch) sha="$(git rev-parse HEAD)"; ref="$sha" ;;
-            *) sha="$GITHUB_SHA"; ref="$GITHUB_REF_NAME" ;;
+            workflow_dispatch)
+              # 既存のタグ名か（ブランチと同名でもタグを優先）。注釈付きタグは ^{} の
+              # 行（指す commit）を使う。
+              tag_lines="$(git ls-remote --tags origin "refs/tags/$INPUT_REF" "refs/tags/$INPUT_REF^{}" || true)"
+              if [ -n "$tag_lines" ]; then
+                mode=tag
+                ref="$INPUT_REF"
+                sha="$(printf '%s\n' "$tag_lines" | grep -F '^{}' | cut -f1 | head -n 1)"
+                [ -n "$sha" ] || sha="$(printf '%s\n' "$tag_lines" | cut -f1 | head -n 1)"
+                if [ "$(git rev-parse HEAD)" != "$sha" ]; then
+                  git fetch --depth 1 origin "$sha"
+                  git checkout --detach "$sha"
+                fi
+              else
+                sha="$(git rev-parse HEAD)"
+                ref="$sha"
+              fi
+              ;;
+            *) mode=tag; sha="$GITHUB_SHA"; ref="$GITHUB_REF_NAME" ;;
           esac
           if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::検証する SHA を決められなかった: '$sha'"
             exit 1
           fi
+          if [ "$mode" = tag ]; then
+            node scripts/check-versions.mjs --tag "$ref"
+            label='タグの経路（依存にタグ名、version の一致も検査）'
+          else
+            label='SHA の経路（依存に commit SHA）'
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "検証する commit: $sha、依存に書く ref: $ref（$EVENT）"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          {
+            echo "### External consumer: 検証の対象"
+            echo
+            echo "- 経路: **${label}**"
+            echo "- checkout する commit: \`$sha\`"
+            echo "- fixture の依存に書く ref: \`$ref\`（$EVENT）"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "${label}: commit $sha、依存の ref $ref（$EVENT）"
 
   npm:
     name: npm (Git deps → dev + Playwright → check → build)
