@@ -21,6 +21,9 @@ export default tseslint.config(
 			// Paraglide JS compiled output (ADR-0005): generated, ships with
 			// `/* eslint-disable */` headers already; never lint it.
 			'apps/admin-template/src/lib/paraglide/**',
+			// External-consumer fixture's Playwright output (#271).
+			'fixtures/external-consumer/test-results/**',
+			'fixtures/external-consumer/playwright-report/**',
 			'pnpm-lock.yaml'
 		]
 	},

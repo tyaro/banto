@@ -1,0 +1,414 @@
+# External consumer (#271): 外部の派生アプリと同じ経路で Banto を導入して確かめる。
+#
+# fixtures/external-consumer/ は最小の SvelteKit アプリ（npm）と最小の crate（Rust）。
+# `@banto/*` を `github:tyaro/banto#<sha>&path:packages/<x>`、`banto-*` を
+# `git = ..., rev = "<sha>"` で導入し、次を確かめる:
+#
+# - npm: Git 依存の導入 → `vite dev` を起動してブラウザで開き、`.svelte.ts` を
+#   ソース配布する 5 パッケージ（+ theme）のモジュールグラフが読み込めること
+#   （Playwright。マーカー要素の描画・console.error / pageerror ゼロ・dev ログに
+#   依存オプティマイザのエラーが無い）→ `pnpm check` → `pnpm build`。
+#   #150 の型の壊れは dev の依存オプティマイザでだけ出て、`/` は 200 のまま
+#   （動的 import が 504 → クライアント側 500 画面）なので、HTTP の応答では判定
+#   できない。ci.yml・template-acceptance.yml はどれも `workspace:*` かコピー
+#   経由で、この経路を通らない（docs/upgrading.md §8）。
+# - npm-no-exclude（診断。成功条件にしない）: `optimizeDeps.exclude` を外して
+#   dev + Playwright だけを流し、#150 がまだ再現するかを step summary に残す。
+#   再現しなくなったら exclude が不要になった可能性 → ADR-0007 を見直す合図。
+# - rust: 公開対象の 5 crate（`crates/*`）を Git 依存で `cargo check`。feature の
+#   経路（postgres・system-metrics）も `--all-features` で 1 回。
+#
+# 検証する commit:
+# - pull_request: PR の head SHA（`GITHUB_SHA` はマージコミットで、GitHub に
+#   push されていないので Git 依存で取りに行けない）。fork からの PR はスキップ
+#   （fork の head SHA を pnpm / cargo の Git 依存で解決できるかは未確認）。
+# - workflow_dispatch: 入力の ref（ブランチ・タグ・SHA）を SHA にしたもの。
+#   リリースタグを打つ前に main の SHA で流す（docs/publishing.md のタグ運用規約）。
+# - push(tags): タグの commit。失敗したら tracking issue を起票する（タグは既に
+#   公開済みで、赤くする PR が無いため。tauri-check.yml と同じ流儀）。
+#
+# fixture の lockfile は commit してあり（現行リリースタグで解決したもの）、ref を
+# 書き換えた後は `--no-frozen-lockfile` で入れる。ref が変わると frozen は必ず失敗
+# する。再解決されるのは `@banto/*` だけで、推移依存は lockfile のまま（実測）。
+#
+# 必須チェック（required）にはしていない。赤なら PR をマージしない運用
+# （docs/upgrading.md §8.4）。
+#
+# サードパーティ Action は ci.yml のポリシーどおりコミット SHA 固定
+# （dtolnay/rust-toolchain@stable だけはタグ参照。理由は ci.yml 冒頭）。
+name: External consumer
+
+on:
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - 'apps/admin-template/vite.config.ts'
+      - 'apps/admin-template/svelte.config.js'
+      - 'fixtures/external-consumer/**'
+      - 'scripts/external-fixture-set-ref.mjs'
+      - 'scripts/external-fixture-set-ref.test.mjs'
+      - '.github/workflows/external-consumer.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '検証するブランチ・タグ・commit SHA（GitHub に push 済みのもの）'
+        required: true
+        default: main
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: external-consumer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FIXTURE_DIR: fixtures/external-consumer
+
+jobs:
+  # 検証する commit の SHA を 1 か所で決める。fork からの PR はここでスキップし、
+  # 後続のジョブは needs が skipped になるので一緒にスキップされる。
+  resolve:
+    name: Resolve the commit to verify
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - name: Checkout the requested ref (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Decide the SHA
+        id: sha
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) sha="$PR_HEAD_SHA" ;;
+            workflow_dispatch) sha="$(git rev-parse HEAD)" ;;
+            *) sha="$GITHUB_SHA" ;;
+          esac
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::検証する SHA を決められなかった: '$sha'"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "検証する commit: $sha（$EVENT）"
+
+  npm:
+    name: npm (Git deps → dev + Playwright → check → build)
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      # Version is resolved from the root package.json "packageManager" field.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            fixtures/external-consumer/pnpm-lock.yaml
+
+      # ルートの依存は Playwright（@playwright/test）を流用するためだけに入れる。
+      # fixture は自分の pnpm-workspace.yaml で独立しているので、ここでは入らない。
+      - name: Install root dependencies (Playwright)
+        run: pnpm install --frozen-lockfile
+
+      - name: Test the ref rewriter
+        run: node --test scripts/external-fixture-set-ref.test.mjs
+
+      - name: Point the fixture at the commit under test
+        run: node scripts/external-fixture-set-ref.mjs "$SHA"
+
+      # github.com（codeload）からの取得が一時的に失敗することがあるので 3 回まで
+      # 試す。`--no-frozen-lockfile` の理由は冒頭のコメント。
+      - name: Install the fixture (Git dependencies)
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --no-frozen-lockfile; then exit 0; fi
+            echo "::warning::pnpm install が失敗した（${attempt} 回目）。再試行する"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Dev server + browser (Playwright)
+        run: pnpm exec playwright test --config="$FIXTURE_DIR/playwright.config.ts"
+
+      # Playwright が失敗したときも走らせ、依存オプティマイザのエラーをログに出す。
+      - name: Dev log has no optimizer errors
+        if: ${{ !cancelled() }}
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: |
+          if [ ! -f dev.log ]; then
+            echo "::error::dev.log が無い（dev サーバが起動していない）"
+            exit 1
+          fi
+          if grep -nE 'error while updating dependencies|js_parse_error' dev.log; then
+            echo "::error::dev の依存オプティマイザがエラーを出した（#150 と同じ型。ADR-0007）"
+            exit 1
+          fi
+          echo "dev ログに依存オプティマイザのエラーは無い"
+
+      - name: Type check (svelte-check)
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: pnpm check
+
+      - name: Build
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: pnpm build
+
+      - name: Summary (verified versions)
+        if: ${{ !cancelled() }}
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: |
+          ver() {
+            node -e "try{console.log(JSON.parse(require('fs').readFileSync('node_modules/$1/package.json','utf8')).version)}catch{console.log('(未導入)')}"
+          }
+          {
+            echo "### External consumer (npm)"
+            echo
+            echo "検証した commit: \`$SHA\`（${{ github.event_name }}）"
+            echo
+            echo "| 項目 | 版 |"
+            echo "| --- | --- |"
+            echo "| Node.js | $(node --version) |"
+            echo "| pnpm | $(pnpm --version) |"
+            echo "| Svelte | $(ver svelte) |"
+            echo "| SvelteKit | $(ver @sveltejs/kit) |"
+            echo "| Vite | $(ver vite) |"
+            echo "| vite-plugin-svelte | $(ver @sveltejs/vite-plugin-svelte) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dev log and Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: external-consumer-npm
+          path: |
+            fixtures/external-consumer/dev.log
+            fixtures/external-consumer/playwright-report/
+            fixtures/external-consumer/test-results/
+          retention-days: 7
+
+  # 診断ジョブ。成功条件にしない（#271 のオーナー判断: 将来 Vite / vite-plugin-svelte
+  # 側で直って exclude 無しでも動くようになるのは改善で、CI を赤くすべきではない）。
+  npm-no-exclude:
+    name: npm diagnostic (no optimizeDeps.exclude, #150)
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      BANTO_FIXTURE_NO_EXCLUDE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            fixtures/external-consumer/pnpm-lock.yaml
+
+      - name: Install root dependencies (Playwright)
+        run: pnpm install --frozen-lockfile
+
+      - name: Point the fixture at the commit under test
+        run: node scripts/external-fixture-set-ref.mjs "$SHA"
+
+      - name: Install the fixture (Git dependencies)
+        working-directory: ${{ env.FIXTURE_DIR }}
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --no-frozen-lockfile; then exit 0; fi
+            echo "::warning::pnpm install が失敗した（${attempt} 回目）。再試行する"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Dev server + browser without exclude (Playwright)
+        id: playwright
+        continue-on-error: true
+        run: pnpm exec playwright test --config="$FIXTURE_DIR/playwright.config.ts"
+
+      - name: Summary (#150 reproduced or not)
+        if: ${{ !cancelled() }}
+        working-directory: ${{ env.FIXTURE_DIR }}
+        env:
+          OUTCOME: ${{ steps.playwright.outcome }}
+        run: |
+          log=dev-no-exclude.log
+          parse_errors=0
+          build_errors=''
+          if [ -f "$log" ]; then
+            parse_errors=$(grep -c 'js_parse_error' "$log" || true)
+            build_errors=$(grep -oE 'Build failed with [0-9]+ errors?' "$log" | grep -oE '[0-9]+' | head -n 1 || true)
+          fi
+          if [ "$OUTCOME" = 'failure' ] && [ "$parse_errors" -gt 0 ]; then
+            verdict='再現した（exclude 無しでは dev で js_parse_error → 描画されない。exclude は今も必要）'
+          elif [ "$OUTCOME" = 'success' ]; then
+            verdict='再現しなかった（exclude 無しでも描画された。exclude が不要になった可能性 → ADR-0007 を見直す）'
+          else
+            verdict="判定できない（Playwright: ${OUTCOME:-未実行}、js_parse_error ${parse_errors} 件。ログを確認）"
+          fi
+          {
+            echo "### #150 diagnostic (optimizeDeps.exclude 無し)"
+            echo
+            echo "検証した commit: \`$SHA\`"
+            echo
+            echo "- 結果: **${verdict}**"
+            echo "- Playwright: ${OUTCOME:-未実行}"
+            echo "- 依存オプティマイザのエラー件数（Build failed with N errors）: ${build_errors:-なし}"
+            echo "- dev ログ中の js_parse_error 行（先頭の数件だけが出力される）: ${parse_errors}"
+            echo
+            echo "このジョブは成功条件にしない（#271）。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$verdict"
+
+      - name: Upload dev log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: external-consumer-no-exclude-dev-log
+          path: fixtures/external-consumer/dev-no-exclude.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  rust:
+    name: Rust (Git deps → cargo check)
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      # github.com / crates.io からの取得の一時的な失敗に備える（既定は 3）。
+      CARGO_NET_RETRY: '5'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      # ci.yml と同じ扱い（Rust stable を追う）。
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: fixtures/external-consumer/rust
+
+      - name: Point the fixture at the commit under test
+        run: node scripts/external-fixture-set-ref.mjs "$SHA"
+
+      - name: Cargo check (default features)
+        working-directory: ${{ env.FIXTURE_DIR }}/rust
+        run: cargo check
+
+      # banto-storage / banto-admin-services / banto-attachments の postgres と
+      # banto-admin-services の system-metrics を外部から有効にして通るか。
+      - name: Cargo check (all features)
+        working-directory: ${{ env.FIXTURE_DIR }}/rust
+        run: cargo check --all-features
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### External consumer (Rust)"
+            echo
+            echo "検証した commit: \`$SHA\`"
+            echo
+            echo "- $(rustc --version)"
+            echo "- $(cargo --version)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # タグは既に公開済みで、赤くする PR も無い。見落とさないよう tracking issue に
+  # する（ラベルで重複を防ぎ、開いている issue があればコメントを足す。
+  # tauri-check.yml と同じ流儀）。
+  report-tag-failure:
+    name: File tracking issue on tag failure
+    needs: [npm, rust]
+    if: failure() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Create or refresh tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const label = 'external-consumer-failure';
+            const tag = context.ref.replace(/^refs\/tags\//, '');
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: 'open',
+              labels: label
+            });
+            const body =
+              `リリースタグ \`${tag}\` の外部利用 fixture の検証（Git 依存で導入 → dev 起動・描画 → check・build、` +
+              `\`cargo check\`）が失敗しました。\n\n` +
+              `- 失敗した run: ${runUrl}\n` +
+              `- ワークフロー: \`.github/workflows/external-consumer.yml\`（#271、docs/upgrading.md §8）\n\n` +
+              `派生アプリがこのタグで導入・dev 起動できない可能性がある。原因を確かめ、必要ならパッチ版を出す。`;
+            if (open.length > 0) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: open[0].number,
+                body: `再発（\`${tag}\`）: ${runUrl}`
+              });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: `外部利用 fixture の検証がタグ ${tag} で失敗しています`,
+                labels: [label],
+                body
+              });
+            }

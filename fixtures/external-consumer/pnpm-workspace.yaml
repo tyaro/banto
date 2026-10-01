@@ -1,0 +1,9 @@
+# この fixture を独立した pnpm ワークスペースの根にする（#271）。
+#
+# これが無いと、fixture ディレクトリで `pnpm install` しても pnpm は上の階層の
+# banto ルートの pnpm-workspace.yaml を見つけ、ルート workspace のインストールを
+# 黙って実行する（fixture の依存は入らない。実測）。fixture 直下の .npmrc では
+# 止められない。`--ignore-workspace` に頼らず、外部の派生アプリと同じ「自分が根」
+# の状態をファイルで固定する。ルートの pnpm-workspace.yaml（packages/*・apps/*）
+# は fixture を含まないので、ルート側からもこの fixture は見えない。
+packages: []

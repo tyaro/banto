@@ -22,6 +22,17 @@
 
 ## [Unreleased]
 
+- ci(release): 外部利用 fixture を CI 化した（#271）。`fixtures/external-consumer/`（最小の SvelteKit と最小の crate）に
+  `@banto/*` を `github:tyaro/banto#<sha>&path:packages/<x>`、`banto-*` を `git` + `rev` で導入し、
+  `.github/workflows/external-consumer.yml` が `vite dev` をブラウザ（Playwright）で開いて描画を確かめたうえで
+  `pnpm check`・`pnpm build`・`cargo check`（`--all-features` も）を流す。PR は head SHA（同じリポジトリのブランチ
+  だけ、`packages/**`・`crates/**` 等を変えたとき）、`workflow_dispatch`、リリースタグの push で走る。
+  `optimizeDeps.exclude` を外した診断ジョブ（成功条件にしない）が #150 の再現の有無を step summary に残す。
+  対象の一覧（`.svelte.ts` を持つパッケージ・`crates/*`）は `verify:architecture` の rule
+  `external-consumer-fixture` が workspace から洗い出して fixture と突き合わせる。ref の書き換えは
+  `scripts/external-fixture-set-ref.mjs`。`docs/upgrading.md` §8、`docs/publishing.md`（タグを打つ前に main の SHA
+  で workflow_dispatch する。`crates/*` = 公開、`apps/*` = 対象外）、ADR-0007 の検証限界を更新。SSR ありの構成は
+  検証対象外。
 - fix(admin-template): コマンドパレットの「最近使った項目」をユーザーごとに分けた（#258）。保存時に所有者
   （`sessionOwnerKey`）を記録し、今のユーザーと一致するときだけ読み出す（一覧の状態 `listViewState` と同じ規則。
   owner が null のときは読み書きしない）。旧形式（所有者なし）の履歴は読み出し時に破棄する。ログアウト確定で消し、

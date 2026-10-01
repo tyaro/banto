@@ -159,12 +159,22 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   対象になる
 - 破壊的変更判定・バージョン番号の上げ方は npm 側と同じ規約（上記
   「バージョニング規約」）を踏襲する
+- **タグを打つ前に**、main の SHA で `External consumer`
+  （[external-consumer.yml](../.github/workflows/external-consumer.yml)）を
+  `workflow_dispatch` し、緑を確認する（Git 依存での導入・dev 起動とブラウザ
+  での描画・check・build・`cargo check`。[upgrading.md §8.2](upgrading.md)）。
+  タグの push でも同じワークフローが走り、失敗すれば tracking issue
+  （ラベル `external-consumer-failure`）が起票される
 - タグは軽量タグ（`git tag v1.7.3`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）
 
 `admin_template_core`/`src-tauri` はアプリ固有のためタグ参照の対象外
 （`admin-template` は banto リポジトリそのものをクローンして使う前提）。
+**公開対象はパスで決める: `crates/*` = 公開 crate、`apps/*` = 対象外**
+（`publish = false` では区別していない。外部利用 fixture と
+`verify:architecture` の rule `external-consumer-fixture` はこの規約で公開
+crate を洗い出す。2026-10-01、#271）。
 
 ## 公開しない選択
 

@@ -138,7 +138,11 @@ the jobs in `.github/workflows/ci.yml` (frontend / i18n-offline / rust /
 storage-postgres / app-postgres / e2e / audit), plus the weekly/triggered
 workflows `template-acceptance.yml` (copy→rename→check + the four scaffold
 presets), `visual-baselines.yml` (Linux visual-baseline regeneration,
-dispatch), and `deploy-demo.yml` (GitHub Pages live demo). ci.yml is the
+dispatch), `external-consumer.yml` (external-consumer fixture: installs
+`@banto/*` / `banto-*` as Git dependencies, then dev server + browser, check,
+build and cargo check; on PRs touching packages/crates, tags and dispatch -
+docs/upgrading.md §8; not a required check, but do not merge a PR while it is
+red), and `deploy-demo.yml` (GitHub Pages live demo). ci.yml is the
 source of truth for the job list.
 
 ## Definition of Done (completion-report format for delegated tasks)

@@ -85,6 +85,17 @@ source-distribution policy is kept.
 "github:tyaro/banto#<tag>&path:packages/*"` git-tag deps run in a real dev
   server) needs private-tag auth and a live run and was not exercised. The
   durable guard is the `verify:architecture` list-match check.
+  - **Update 2026-10-01 (#271)**: the end-to-end path is now covered in CI.
+    [external-consumer.yml](../../.github/workflows/external-consumer.yml)
+    installs `@banto/*` into `fixtures/external-consumer/` as Git dependencies
+    (PR head SHA, release tags, etc.), opens `vite dev` in a browser and checks
+    that the page renders (with the exclude = the pass condition). A diagnostic
+    job without the exclude (not a pass condition) records whether #150 still
+    reproduces. Measured: 11 js_parse_errors at v1.7.3 and 14 at main
+    (212c3a0) without the exclude, 0 with it. **If the diagnostic job reports
+    "not reproduced", upstream may have fixed it - revisit this ADR.** The
+    fixture's exclude list is also checked by `verify:architecture` (rule
+    `external-consumer-fixture`).
 - **Coupling to distribution policy**: publishing.md now states that
   source-shipped `.svelte.ts` only works together with the consumer's dev config
   (`optimizeDeps.exclude`). The previous pack-only distribution checks did not

@@ -167,5 +167,15 @@ e2e/playwright-report/
 e2e/.cache/
 /test-results/
 
+# External-consumer fixture (#271, .github/workflows/external-consumer.yml).
+# node_modules / .svelte-kit / target / *.log are already covered by the
+# global entries above; these are the fixture's own build and Playwright
+# output. rust/Cargo.lock is deliberately not committed (the fixture resolves
+# transitive crates fresh, like a new derived app - see its Cargo.toml).
+fixtures/external-consumer/build/
+fixtures/external-consumer/test-results/
+fixtures/external-consumer/playwright-report/
+fixtures/external-consumer/rust/Cargo.lock
+
 # Editor settings (personal)
 .vscode/
