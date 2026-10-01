@@ -27,7 +27,7 @@ import type {
 	ResolvedAuth
 } from '../provider';
 import type { ListParams, ListResult } from '../types';
-import { ProviderError, type ErrorBody } from '../errors';
+import { ProviderError, StaleAnswerError, type ErrorBody } from '../errors';
 
 const CLIENT_HEADER_NAME = 'X-Banto-Client';
 const CLIENT_HEADER_VALUE = 'banto';
@@ -390,6 +390,13 @@ export function createHttpAuthProvider(
 			} catch {
 				throw networkError();
 			}
+			// Freshness audit of #266 (P3-3, S-105): another tab may have
+			// replaced the shared token while this request was in flight, its
+			// `storage` event not delivered yet (so the revision has not moved).
+			// The answer is about the OLD token: not an answer about what is
+			// stored now - reject it as stale (the Tauri `stale` twin; the
+			// controller asks again without touching `verification`).
+			if (getToken() !== token) throw new StaleAnswerError();
 			const none = (): ResolvedAuth => ({
 				status: 'none',
 				checked,
@@ -477,15 +484,23 @@ export function createHttpAuthProvider(
 			current: string,
 			next: string
 		): Promise<{ success: boolean; error?: string }> {
+			const token = getToken();
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/change-password`, {
 					method: 'POST',
-					headers: headers(true),
+					headers: headersFor(token, true),
 					body: JSON.stringify({ currentPassword: current, newPassword: next })
 				});
 			} catch {
 				return { success: false, error: NETWORK_ERROR_MESSAGE };
+			}
+			// Freshness audit of #266 (P3-4, S-106): a `401` means the session
+			// this change was sent with is no longer valid - clear THAT token
+			// (compare-and-set) and report it, as the Tauri provider does for an
+			// `unauthorized` `change_own_password`.
+			if (response.status === 401 && token !== null && clearTokenIfCurrent(token)) {
+				emitCredentialChanged();
 			}
 			if (!response.ok) {
 				const err = await errorFromResponse(response);

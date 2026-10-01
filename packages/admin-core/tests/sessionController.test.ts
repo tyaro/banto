@@ -474,6 +474,30 @@ describe('§4.5 freshness and deadlines (I-3, I-8, I-9, I-15, I-22)', () => {
 		await expect(next).resolves.toMatchObject({ outcome: 'confirmed' });
 	});
 
+	it('S-101: a late answer after the deadline that came with an unreported revision advance holds A and starts a confirmation (I-5)', async () => {
+		const { p, controller, settleTo, scheduler } = setup();
+		await settleTo(ALICE);
+		const generation = controller.snapshot.generation;
+		const request = controller.resolve();
+		await scheduler.advance(10_000);
+		await expect(request).resolves.toMatchObject({ outcome: 'unverified' });
+		expect(controller.snapshot.status).toBe('active');
+
+		// The provider observed a `seq` advance from this very answer (the Tauri
+		// provider observes `current`), without a report.
+		p.bump();
+		p.active(1, ALICE);
+		await flush();
+
+		expect(controller.snapshot).toMatchObject({
+			status: 'unknown',
+			owner: null,
+			generation: generation + 1
+		});
+		expect(p.probes).toHaveLength(3); // the background confirmation
+		expect(p.live()).toBe(1);
+	});
+
 	it('S-33: a signal that cannot be verified retries with backoff until confirmed (also for resolve({cause: "signal"}))', async () => {
 		for (const start of ['signal', 'resolve'] as const) {
 			const { p, controller, settleTo, scheduler } = setup();

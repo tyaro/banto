@@ -130,4 +130,51 @@ describe('S-97: a stale auth_resolve after a Local role change (I-5, I-23)', () 
 		expect(controller.snapshot.status).toBe('unknown');
 		expect(controller.snapshot.identity).toBeNull();
 	});
+
+	async function activeLocalAdminAt5() {
+		const script = scriptedInvoke();
+		const provider = createTauriAuthProvider({ invoke: script.invoke });
+		const scheduler = makeScheduler();
+		const controller = createSessionController(provider, {
+			scheduler,
+			onNone: () => {},
+			onActive: () => {}
+		});
+		const first = controller.resolve();
+		script.resolves()[0].reply.resolve(localAdmin(5));
+		await flush();
+		script.resolves()[1].reply.resolve(localAdmin(5));
+		await expect(first).resolves.toMatchObject({ outcome: 'confirmed' });
+		return { script, provider, scheduler, controller };
+	}
+
+	// S-101 (freshness audit of #266): the same as S-97, but the answer arrives
+	// after the probe's deadline - its probe is already abandoned. The provider
+	// still observes `current`; the controller still holds the old session.
+	for (const [label, late] of [
+		[
+			'a late stale answer (current 6)',
+			{ ...localAdmin(5), identity: null, current: 6, stale: true }
+		],
+		[
+			'a late non-stale answer about an unobserved advance (checked = current = 6)',
+			{ identity: null, kind: null, checked: 6, current: 6, stale: false }
+		]
+	] as const) {
+		it(`S-101: ${label} after the probe deadline holds Local(admin) and starts a confirmation`, async () => {
+			const { script, provider, scheduler, controller } = await activeLocalAdminAt5();
+			const request = controller.resolve();
+			await scheduler.advance(10_000);
+			await expect(request).resolves.toMatchObject({ outcome: 'unverified' });
+			expect(controller.snapshot.status).toBe('active');
+			const probes = script.resolves().length;
+
+			script.resolves().at(-1)!.reply.resolve(late);
+			await flush();
+
+			expect(provider.credentialRevision()).toBe('6.0');
+			expect(controller.snapshot).toMatchObject({ status: 'unknown', owner: null });
+			expect(script.resolves().length).toBe(probes + 1);
+		});
+	}
 });

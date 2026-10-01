@@ -733,14 +733,19 @@ function createCore(
 	function onProbeSettled(probe: Probe, outcome: ProbeOutcome): void {
 		if (probe.done) {
 			// Already abandoned / retired. Its answer is never applied, but a
-			// `none` that cleared the credential must still be confirmed (S-31).
-			if (
-				outcome.ok &&
-				outcome.answer.current !== outcome.answer.checked &&
-				probe.provider === provider
-			) {
-				pendingBackground = true;
-				kickBackground();
+			// `none` that cleared the credential must still be confirmed (S-31),
+			// and - S-101 (freshness audit of #266) - the provider may have
+			// observed a `seq` advance from this late answer (the Tauri
+			// provider observes `current`, stale or not): the same drift check
+			// as step 0 then holds an active session (I-5) or, if there is none
+			// to hold, starts the confirmation.
+			if (probe.provider === provider) {
+				const cleared = outcome.ok && outcome.answer.current !== outcome.answer.checked;
+				if (cleared) pendingBackground = true;
+				const drifted = provider.credentialRevision() !== appliedRevision;
+				// Only this answer's own news kicks a probe now; an older
+				// `pendingBackground` keeps its backoff (S-33/S-72).
+				if (!detectDrift() && (cleared || drifted)) kickBackground();
 			}
 			return;
 		}

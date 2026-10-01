@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { isProviderError } from '../src/errors';
+import { isProviderError, isStaleAnswerError } from '../src/errors';
 import type { CredentialRevision } from '../src/provider';
 import { createHttpAuthProvider } from '../src/providers/http';
 
@@ -166,7 +166,7 @@ describe('HTTP resolve(): one GET /api/auth/identity (§2.1, decision 3)', () =>
 		expect(auth.getToken()).toBeNull();
 	});
 
-	it('S-9: a none answer for a token replaced while in flight keeps the new token (current === checked)', async () => {
+	it('S-9/S-105: a none answer for a token replaced while in flight is stale and keeps the new token', async () => {
 		sessionStorage.setItem(KEY, 'tok-a');
 		const { requests, fetchFn } = scriptedServer();
 		const { auth } = provider(fetchFn);
@@ -177,11 +177,43 @@ describe('HTTP resolve(): one GET /api/auth/identity (§2.1, decision 3)', () =>
 		requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
 		await login;
 		requests[0].reply.resolve(json(200, null));
-		const answer = await pending;
 
-		expect(answer).toMatchObject({ status: 'none', checked: before, current: before });
+		await expect(pending).rejects.toSatisfy(isStaleAnswerError);
 		expect(auth.credentialRevision()).not.toBe(before);
 		expect(auth.getToken()).toBe('tok-b');
+	});
+
+	it('S-105: another tab replaced the token while the request was in flight (storage event not yet delivered): the answer about the old token is stale', async () => {
+		localStorage.setItem(KEY, 'tok-a');
+		const { requests, fetchFn } = scriptedServer();
+		const { auth, changed } = provider(fetchFn);
+		const before = auth.credentialRevision();
+
+		const pending = auth.resolve();
+		expect(requests[0].token).toBe('tok-a');
+		localStorage.setItem(KEY, 'tok-b'); // the other tab's login; no event yet
+		requests[0].reply.resolve(json(200, { id: 'a', name: 'A' }));
+
+		await expect(pending).rejects.toSatisfy(isStaleAnswerError);
+		expect(auth.credentialRevision()).toBe(before);
+		expect(changed).not.toHaveBeenCalled();
+		expect(auth.getToken()).toBe('tok-b');
+	});
+
+	it('S-106: a changePassword answered 401 clears the token it was sent with and reports it', async () => {
+		sessionStorage.setItem(KEY, 'tok-a');
+		const { requests, fetchFn } = scriptedServer();
+		const { auth, changed } = provider(fetchFn);
+		const before = auth.credentialRevision();
+
+		const changing = auth.changePassword!('old', 'newpassword');
+		expect(requests[0].token).toBe('tok-a');
+		requests[0].reply.resolve(json(401, { kind: 'unauthorized', message: 'unauthorized' }));
+
+		await expect(changing).resolves.toMatchObject({ success: false });
+		expect(auth.getToken()).toBeNull();
+		expect(auth.credentialRevision()).not.toBe(before);
+		expect(changed).toHaveBeenCalledTimes(1);
 	});
 
 	it('S-9: a 500, an unreachable server, or a malformed body rejects and changes nothing', async () => {
