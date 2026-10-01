@@ -155,7 +155,8 @@ pub async fn bind(config: ServerConfig) -> Result<BoundServer, BantoError> {
     let addr = format!("{}:{}", config.bind, config.port);
     let listener = TcpListener::bind(&addr).await.map_err(|err| {
         BantoError::Other(format!(
-            "サーバの起動に失敗しました（{addr}）: {err}。ポート番号を変更するか、             他のプロセスがそのポートを使用していないか確認してください。"
+            "サーバの起動に失敗しました（{addr}）: {err}。ポート番号を変更するか、\
+             他のプロセスがそのポートを使用していないか確認してください。"
         ))
     })?;
     let local_addr = listener
