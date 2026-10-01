@@ -58,6 +58,7 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
+      - 'apps/admin-template/package.json'
       - 'apps/admin-template/vite.config.ts'
       - 'apps/admin-template/svelte.config.js'
       - 'fixtures/external-consumer/**'

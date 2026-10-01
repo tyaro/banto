@@ -36,7 +36,8 @@
  *      packages/ のうち .svelte.ts を持つもの ⊆ fixture の dependencies ∩
  *      +page.svelte の import、fixture の optimizeDeps.exclude = その集合、
  *      crates/ の全 crate = fixture の rust/Cargo.toml の banto の Git 依存、
- *      npm と Cargo の ref が 1 つに揃っていること
+ *      npm と Cargo の ref が 1 つに揃っていること、fixture の Vite／Svelte 系の
+ *      範囲指定が apps/admin-template/package.json と文字列で一致すること
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -914,10 +915,48 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 				`npm と Cargo の ref が揃っていない（${[...refs].join(', ')}）— node scripts/external-fixture-set-ref.mjs <ref> で揃える`
 			);
 
+		// --- Vite／Svelte 系の版が admin-template と揃っている ---
+		// fixture は「admin-template と同じ組み合わせ」で外部利用を確かめるもの
+		// （docs/upgrading.md §8.3 の表）。片方だけ上げると、検証した組み合わせと
+		// 派生アプリの基準がずれる。範囲指定は**文字列のまま一致**を求める（`^` の
+		// 有無・下限の違いも不一致）。`^8.3.0` と `8.3.0` は解決される版が違いうる
+		// ので、正規化して同一視すると「同じ範囲」の保証が崩れる。
+		const SYNCED_TOOLCHAIN = [
+			'svelte',
+			'@sveltejs/kit',
+			'vite',
+			'@sveltejs/vite-plugin-svelte',
+			'@sveltejs/adapter-static',
+			'svelte-check',
+			'typescript'
+		];
+		const TEMPLATE_PKG = 'apps/admin-template/package.json';
+		const rangesOf = (rel) => {
+			const pkg = JSON.parse(read(rel));
+			return { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+		};
+		const appRanges = rangesOf(TEMPLATE_PKG);
+		const fixRanges = rangesOf(FIX_PKG);
+		for (const name of SYNCED_TOOLCHAIN) {
+			const a = appRanges[name];
+			const f = fixRanges[name];
+			if (a === undefined && f === undefined) continue;
+			if (a === undefined || f === undefined)
+				bad(
+					f === undefined ? FIX_PKG : TEMPLATE_PKG,
+					`${name} が片方にしか無い（admin-template=${a ?? 'なし'}、fixture=${f ?? 'なし'}）`
+				);
+			else if (a !== f)
+				bad(
+					FIX_PKG,
+					`${name} の範囲指定が admin-template と違う（admin-template=${a}、fixture=${f}）— 同じ文字列に揃える`
+				);
+		}
+
 		if (problems === 0)
 			pass(
 				rule,
-				`fixture が .svelte.ts ソース配布 ${svelteTs.length} パッケージ（import・exclude とも）と公開 crate ${crates.length} 個を網羅（ref ${[...refs].join(', ')}）`
+				`fixture が .svelte.ts ソース配布 ${svelteTs.length} パッケージ（import・exclude とも）と公開 crate ${crates.length} 個を網羅、Vite／Svelte 系 ${SYNCED_TOOLCHAIN.length} 件の範囲が admin-template と一致（ref ${[...refs].join(', ')}）`
 			);
 	}
 }

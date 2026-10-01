@@ -272,7 +272,8 @@ fixture が commit している ref は現行リリースタグなので、**mai
 | Rust      | stable（`dtolnay/rust-toolchain@stable`、edition 2021） |
 
 組み合わせを変える版（Vite のメジャーなど）は、リリースノートにその旨を書き、fixture の依存の版も揃える
-（fixture の devDependencies は `apps/admin-template/package.json` と同じ範囲にしてある）。
+（fixture の Vite／Svelte 系の devDependencies は `apps/admin-template/package.json` と同じ範囲指定に揃え、
+`verify:architecture` の rule `external-consumer-fixture` が文字列の一致を検査する）。
 
 ### 8.4 役割分担
 
