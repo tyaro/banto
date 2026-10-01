@@ -34,7 +34,9 @@ use banto_storage::Db;
 use serde::Serialize;
 
 const MIN_USERNAME_LEN: usize = 1;
-const MAX_USERNAME_LEN: usize = 32;
+/// Longest username (in chars) an account can be created with. Public so the
+/// login path can bound what it echoes into the audit log (Issue #278).
+pub const MAX_USERNAME_LEN: usize = 32;
 const MIN_PASSWORD_LEN: usize = 8;
 
 /// Account role (spec M10 RBAC): re-exported from [`crate::rbac`], where the
@@ -83,6 +85,21 @@ async fn verify_password_blocking(password: &str, hash: &str) -> bool {
     tokio::task::spawn_blocking(move || verify_password(&password, &hash))
         .await
         .unwrap_or(false)
+}
+
+/// Bound an externally supplied username before it is written to the audit
+/// log (Issue #278). Accounts cannot be created with more than
+/// [`MAX_USERNAME_LEN`] chars, so anything longer is by definition not a real
+/// account and only exists to bloat the log. Longer values are cut on a char
+/// (UTF-8) boundary to `MAX_USERNAME_LEN` chars in total, the last being `…`
+/// so the truncation is visible; shorter values are returned unchanged.
+pub fn bound_username_for_audit(username: &str) -> std::borrow::Cow<'_, str> {
+    if username.chars().count() <= MAX_USERNAME_LEN {
+        return std::borrow::Cow::Borrowed(username);
+    }
+    let mut out: String = username.chars().take(MAX_USERNAME_LEN - 1).collect();
+    out.push('…');
+    std::borrow::Cow::Owned(out)
 }
 
 /// A valid argon2id PHC hash of an arbitrary fixed password, computed once
@@ -353,6 +370,14 @@ impl UsersService {
         username: &str,
         password: &str,
     ) -> Result<Option<UserIdentity>, BantoError> {
+        // Issue #278: no account can have a username longer than
+        // MAX_USERNAME_LEN, so skip the lookup (and never bind an attacker-
+        // sized string) but still pay the dummy argon2 cost, keeping this
+        // indistinguishable from an unknown username.
+        if username.chars().count() > MAX_USERNAME_LEN {
+            let _ = verify_password_blocking(password, dummy_hash()).await;
+            return Ok(None);
+        }
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
             "SELECT id, password_hash, display_name, role, auth_epoch FROM users WHERE username = {}",
@@ -905,6 +930,26 @@ mod tests {
     async fn verify_unknown_user_is_none() {
         let svc = service().await;
         assert!(svc.verify("nobody", "whatever1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn verify_oversized_username_is_none_like_an_unknown_user() {
+        let svc = service().await;
+        let huge = "a".repeat(64 * 1024);
+        assert!(svc.verify(&huge, "whatever1").await.unwrap().is_none());
+    }
+
+    #[test]
+    fn bound_username_for_audit_keeps_short_names_and_cuts_long_ones_on_a_char_boundary() {
+        let exact = "a".repeat(MAX_USERNAME_LEN);
+        assert_eq!(bound_username_for_audit(&exact), exact);
+        assert_eq!(bound_username_for_audit("山田"), "山田");
+
+        let long = "あ".repeat(1000);
+        let bounded = bound_username_for_audit(&long);
+        assert_eq!(bounded.chars().count(), MAX_USERNAME_LEN);
+        assert!(bounded.ends_with('…'));
+        assert!(bounded.starts_with("ああ"));
     }
 
     #[tokio::test]

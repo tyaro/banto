@@ -1445,6 +1445,10 @@ impl AuthState {
     }
 }
 
+/// How many chars of the username go into a [`rate_limit_key`] (twice the
+/// longest creatable username, so no real account is ever affected).
+const RATE_LIMIT_KEY_USERNAME_CHARS: usize = 64;
+
 /// Lockout key for a login attempt (spec §11.2): client IP + username when
 /// the peer address is known, falling back to username-only when it is not
 /// (e.g. a caller that did not wire up `ConnectInfo`). Keying on the pair
@@ -1452,6 +1456,13 @@ impl AuthState {
 /// every account behind it, while still binding the streak to a network
 /// origin when available.
 pub fn rate_limit_key(ip: Option<IpAddr>, username: &str) -> String {
+    // Bound the key's size (Issue #278): the username is attacker-controlled
+    // and this key lives in the failure map. No real account name is this
+    // long, so the cut only ever merges overlong junk names together.
+    let username: String = username
+        .chars()
+        .take(RATE_LIMIT_KEY_USERNAME_CHARS)
+        .collect();
     match ip {
         Some(ip) => format!("{ip}|{username}"),
         None => format!("-|{username}"),

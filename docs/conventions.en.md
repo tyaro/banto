@@ -103,6 +103,18 @@ deviations were measured and fixed in maintenance-review-2026-08 §5.3):
   deliberate asymmetry to avoid audit-log self-DoS; the Tauri path (local
   input, no throttle) records every failure. The lockout itself is separately
   observable as rate-limiter state.
+- **Credential-less auth endpoints must not amplify the audit log** (Issue
+  #278). REST `POST /api/auth/logout` records only when it actually ended a
+  session (actor resolved from a live token; no/invalid/revoked token records
+  nothing; Tauri's `auth_logout` already records only when it cleared a
+  session). The `login_failed` `actor_username` is caller-supplied and need not
+  be a real account, so `users::bound_username_for_audit` cuts it to the
+  creation limit (`MAX_USERNAME_LEN` = 32 chars) on a char boundary with a
+  trailing `…` (REST and Tauri). A longer username skips the DB lookup in
+  `UsersService::verify` and only pays the dummy hash (same answer and similar
+  timing as an unknown user); throttle keys cap the username at 64 chars.
+  Retention runs at startup / on list, so it is not a per-write cap; bounding
+  these two write paths is what protects capacity.
 
 ## 2. The service layer knows nothing of tauri / axum / RBAC / HTTP [machine-checked: tauri/axum non-dependence only]
 

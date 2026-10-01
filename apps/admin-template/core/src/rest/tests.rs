@@ -2163,6 +2163,110 @@ async fn logout_is_recorded() {
     );
 }
 
+/// Issue #278: logout needs no credentials, so a request without a live
+/// session must leave no audit row (otherwise it grows the table for free).
+/// A real logout still records exactly one entry, with the right actor.
+#[tokio::test]
+async fn logout_without_a_live_session_is_not_audited() {
+    let (router, audit) = router_with_real_login(true).await;
+    let token = setup_and_get_token(&router).await;
+
+    let logout = |auth: Option<String>| {
+        let mut req =
+            HttpRequest::post("/api/auth/logout").header(CLIENT_HEADER.0, CLIENT_HEADER.1);
+        if let Some(value) = auth {
+            req = req.header("Authorization", value);
+        }
+        req.body(Body::empty()).unwrap()
+    };
+    let logout_rows = || async {
+        audit
+            .list(ListParams::default())
+            .await
+            .unwrap()
+            .rows
+            .into_iter()
+            .filter(|r| r.action == "logout")
+            .collect::<Vec<_>>()
+    };
+
+    // No header, a malformed one, and an unknown token - repeatedly.
+    for _ in 0..8 {
+        router.clone().oneshot(logout(None)).await.unwrap();
+        router
+            .clone()
+            .oneshot(logout(Some("Bearer not-a-real-token".to_string())))
+            .await
+            .unwrap();
+        router
+            .clone()
+            .oneshot(logout(Some("garbage".to_string())))
+            .await
+            .unwrap();
+    }
+    assert!(
+        logout_rows().await.is_empty(),
+        "unauthenticated logout audited"
+    );
+
+    // A valid logout records one entry for the right actor...
+    router
+        .clone()
+        .oneshot(logout(Some(format!("Bearer {token}"))))
+        .await
+        .unwrap();
+    let rows = logout_rows().await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].actor_username.as_deref(), Some("owner"));
+
+    // ...and replaying the now-revoked token adds nothing.
+    for _ in 0..8 {
+        router
+            .clone()
+            .oneshot(logout(Some(format!("Bearer {token}"))))
+            .await
+            .unwrap();
+    }
+    assert_eq!(logout_rows().await.len(), 1, "revoked-token logout audited");
+}
+
+/// Issue #278: the username of a failed login is caller-supplied (no account
+/// need exist), so what lands in the audit row is bounded and visibly cut.
+#[tokio::test]
+async fn failed_login_with_oversized_username_is_bounded_in_the_audit_log() {
+    let (router, audit) = router_with_real_login(true).await;
+    setup_and_get_token(&router).await;
+
+    let huge = "あ".repeat(64 * 1024 / 3);
+    let response = router
+        .oneshot(post_json(
+            "/api/auth/login",
+            json!({ "username": huge, "password": "wrong-password" }),
+        ))
+        .await
+        .unwrap();
+    // Same answer as for any unknown user (no enumeration signal).
+    assert_eq!(body_json(response).await["success"], false);
+
+    let result = audit.list(ListParams::default()).await.unwrap();
+    let entry = result
+        .rows
+        .iter()
+        .find(|r| r.action == "login_failed")
+        .expect("login_failed entry");
+    let stored = entry.actor_username.as_deref().expect("actor_username");
+    assert!(
+        stored.chars().count() <= 32,
+        "stored {} chars",
+        stored.chars().count()
+    );
+    assert!(stored.len() <= 32 * 4);
+    assert!(
+        stored.ends_with('…'),
+        "truncation must be visible: {stored}"
+    );
+}
+
 #[tokio::test]
 async fn setup_is_recorded() {
     let (router, audit) = router_with_real_login(true).await;
