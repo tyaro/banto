@@ -473,9 +473,10 @@ fn same_binding(a: &DesktopSession, b: &DesktopSession) -> bool {
 enum Settled {
     /// The slot's `seq` moved since `seq_at_entry` (another command
     /// installed, cleared or re-bound the session while the store was being
-    /// read). Nothing was written. `valid_now` is the CURRENT session if its
-    /// own binding is exactly what `fresh` reports (e.g. a re-bind by
-    /// `change_own_password` that `fresh` already reflects), for the
+    /// read). Nothing was written. `valid_now` is the CURRENT session (the
+    /// slot's value, newer than `fresh`) if its own binding is exactly what
+    /// `fresh` reports (e.g. a re-bind by `change_own_password` that `fresh`
+    /// already reflects), for the
     /// ordinary commands' [`current_session`]; `auth_resolve` reports
     /// `stale` instead of using it.
     Stale { valid_now: Option<DesktopSession> },
@@ -511,7 +512,13 @@ enum Settled {
 /// unchanged `seq` means nothing was written since `cached`/`fresh` were
 /// read, and `fresh` is at least as new as the slot. (An account's role
 /// change advances its `auth_epoch`, so `fresh` is not the same binding and
-/// the session is cleared instead.)
+/// the session is cleared instead.) The one thing a refresh can still put
+/// back is an account's `display_name` (freshness audit of #266, P3-1): two
+/// concurrent refreshes of the same binding do not move `seq`, so the one
+/// that read the store first may write last. That is accepted: the name is
+/// display only (authorization reads role/epoch, which a refresh cannot
+/// rewind), and the next check refreshes it again; there is no version on
+/// the name to compare.
 fn settle_session(
     state: &AppState,
     cached: &DesktopSession,
@@ -524,7 +531,12 @@ fn settle_session(
         None => None,
     };
     if slot.seq != seq_at_entry {
-        return Settled::Stale { valid_now: valid };
+        // The slot was written after `fresh` was read, so the slot's own
+        // value is the newer one: report IT (not `fresh`) when the binding
+        // matches - e.g. a Local role changed by an apply after this read
+        // (freshness audit of #266, P3-2, S-102).
+        let valid_now = valid.and(slot.session.clone());
+        return Settled::Stale { valid_now };
     }
     debug_assert!(slot
         .session
@@ -1393,6 +1405,57 @@ fn rebind_local_session(
     (outcome, slot.seq)
 }
 
+/// Make the session follow a saved auth mode (`saved`), compared with the
+/// mode before the save (`previous`) - synchronous, under `state.auth`'s
+/// lock only (the caller holds `auth_config_lock`):
+/// - mode on: [`rebind_local_session`], with `seq` forced to advance when
+///   `(disabled, disabled_role)` changed in this save (S-98; freshness audit
+///   of #266 P2-2: `false -> true` included, even if the slot already holds
+///   Local);
+/// - mode turned off (`true -> false`): [`end_local_session`] (S-99);
+/// - mode off before and after: nothing.
+fn apply_mode_to_session(
+    state: &AppState,
+    previous: &AuthSettings,
+    saved: &AuthSettings,
+) -> (LocalRebind, Option<UserIdentity>) {
+    if saved.disabled {
+        let changed =
+            (previous.disabled, previous.disabled_role) != (saved.disabled, saved.disabled_role);
+        (
+            rebind_local_session(state, saved.disabled_role, None, changed).0,
+            None,
+        )
+    } else if previous.disabled {
+        (LocalRebind::Skipped, end_local_session(state))
+    } else {
+        (LocalRebind::Skipped, None)
+    }
+}
+
+/// Audit [`apply_mode_to_session`]'s outcome (spec M14): the rebind's
+/// entries ([`record_local_rebind`]) and an ended synthetic session's
+/// `logout` with `detail: { "reason": "auth_enabled" }` (told apart from a
+/// user's logout, whose `detail` is empty).
+async fn record_mode_session_change(
+    audit: &AuditLogService,
+    rebind: &LocalRebind,
+    ended_local: Option<UserIdentity>,
+) {
+    record_local_rebind(audit, rebind).await;
+    if let Some(local) = ended_local {
+        record_ok(
+            audit,
+            &local,
+            "logout",
+            "auth",
+            None,
+            Some(serde_json::json!({ "reason": "auth_enabled" })),
+        )
+        .await;
+    }
+}
+
 /// End the auth-disabled synthetic session because the mode was turned off
 /// (re-review of #266 P1, S-99): under ONE lock, `Local -> None`, advancing
 /// `seq`, returning the ended identity (the caller records its end). Anything
@@ -1524,7 +1587,17 @@ async fn auth_config_apply_body(
     let previous = config.clone();
     config.disabled = disabled;
     config.disabled_role = role;
-    (state.auth_io.save_auth_config)(config.clone()).await?;
+    if let Err(err) = (state.auth_io.save_auth_config)(config.clone()).await {
+        // Freshness audit of #266 (P2-3, S-104): the save is one transaction
+        // (`SettingsService::set_auth_config`), but should any save fail
+        // part-way, the session must still follow what IS stored: re-read
+        // it and re-bind/end from that, then report the error.
+        if let Ok(stored) = state.settings.auth_config().await {
+            let (rebind, ended_local) = apply_mode_to_session(state, &previous, &stored);
+            record_mode_session_change(&state.audit, &rebind, ended_local).await;
+        }
+        return Err(err);
+    }
     // Owner review of #266 P1 (design §5.3, S-94): turning the mode on
     // re-binds the session to the synthetic one RIGHT after the save, with
     // no `.await` in between (still under `auth_config_lock`), so
@@ -1549,17 +1622,7 @@ async fn auth_config_apply_body(
     // no `seq`; the frontend provider absorbs an unobserved `seq` advance
     // anyway - the catch-up of S-84.) Only on a `true -> false` change: a
     // re-save of `false` touches nothing.
-    let (rebind, ended_local) = if config.disabled {
-        let role_changed = previous.disabled && previous.disabled_role != config.disabled_role;
-        (
-            rebind_local_session(state, config.disabled_role, None, role_changed).0,
-            None,
-        )
-    } else if previous.disabled {
-        (LocalRebind::Skipped, end_local_session(state))
-    } else {
-        (LocalRebind::Skipped, None)
-    };
+    let (rebind, ended_local) = apply_mode_to_session(state, &previous, &config);
     state
         .audit
         .record(AuditEntry {
@@ -1579,20 +1642,7 @@ async fn auth_config_apply_body(
     // first-run screen there is no session, so this is the synthetic
     // `login` only; from the settings screen, the admin's session end
     // (`logout`, reason `auth_disabled`) and the synthetic `login`.
-    record_local_rebind(&state.audit, &rebind).await;
-    if let Some(local) = ended_local {
-        // The synthetic session's end, told apart from a user's logout (whose
-        // `detail` is empty) like the account's end in `record_local_rebind`.
-        record_ok(
-            &state.audit,
-            &local,
-            "logout",
-            "auth",
-            None,
-            Some(serde_json::json!({ "reason": "auth_enabled" })),
-        )
-        .await;
-    }
+    record_mode_session_change(&state.audit, &rebind, ended_local).await;
     Ok(config)
 }
 
@@ -1978,13 +2028,32 @@ async fn settings_set(
     value: String,
 ) -> Result<(), BantoError> {
     let actor = require_role(&state, Role::Admin, "settings").await?;
+    settings_set_body(&state, &actor, key, value).await
+}
+
+/// Body of [`settings_set`]. Freshness audit of #266 (P2-2, S-103): keys in
+/// the `auth.` namespace are refused - they are written only by
+/// [`auth_config_apply`] (which re-binds the session under
+/// `auth_config_lock`, keeping `auth.disabled == true <=> AuthDisabledLocal`)
+/// and the `autologin_*` commands. A raw write would bypass both.
+async fn settings_set_body(
+    state: &AppState,
+    actor: &UserIdentity,
+    key: String,
+    value: String,
+) -> Result<(), BantoError> {
+    if SettingsService::is_auth_key(&key) {
+        return Err(BantoError::BadRequest(format!(
+            "設定 {key} はこのコマンドでは変更できません。認証モードは auth_config_apply（自動ログインは autologin_enable/autologin_disable）で変更してください"
+        )));
+    }
     state.settings.set(&key, &value).await?;
     // Spec M14: only the KEY is recorded, never the value - this is a
     // generic key/value store and the value could be anything, including
     // something sensitive a future setting might store here.
     record_ok(
         &state.audit,
-        &actor,
+        actor,
         "settings_change",
         "settings",
         None,
@@ -5536,6 +5605,138 @@ mod tests {
         assert!(!answer.stale);
         assert_eq!(answer.kind, Some("local"));
         assert_eq!(answer.identity.expect("active").role, "viewer");
+    }
+
+    /// S-103 (freshness audit of #266, P2-2): the generic `settings_set`
+    /// refuses the `auth.` keys (only `auth_config_apply` / `autologin_*`
+    /// write them, with the session re-bind); other keys still work.
+    #[tokio::test]
+    async fn s103_settings_set_refuses_auth_keys() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        let admin = state.users.get_by_username("admin").await.unwrap().unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(admin.clone())));
+        let before = read_slot(&state);
+        for key in [
+            "auth.disabled",
+            "auth.disabled_role",
+            "auth.autologin.enabled",
+        ] {
+            let result =
+                settings_set_body(&state, &admin, key.to_string(), "true".to_string()).await;
+            assert!(
+                matches!(result, Err(BantoError::BadRequest(_))),
+                "{key}: {result:?}"
+            );
+        }
+        assert!(!state.settings.auth_config().await.unwrap().disabled);
+        assert_eq!(read_slot(&state), before);
+        settings_set_body(
+            &state,
+            &admin,
+            "audit.retention_days".to_string(),
+            "30".to_string(),
+        )
+        .await
+        .expect("a non-auth key");
+    }
+
+    /// Replace `auth_config_apply`'s save with one that stores only
+    /// `auth.disabled` and then fails (a save interrupted part-way).
+    fn save_fails_after_the_mode(state: &mut AppState) {
+        let settings = state.settings.clone();
+        state.auth_io.save_auth_config = Arc::new(move |config| {
+            let settings = settings.clone();
+            Box::pin(async move {
+                settings
+                    .set(
+                        "auth.disabled",
+                        if config.disabled { "true" } else { "false" },
+                    )
+                    .await?;
+                Err(BantoError::Storage("disk full (test)".to_string()))
+            })
+        });
+    }
+
+    /// S-104 (freshness audit of #266, P2-3): a save that stored the mode and
+    /// then failed still leaves the session following what is stored -
+    /// apply(true) over an account session re-binds it to Local; apply(false)
+    /// over Local ends it - and the error is reported.
+    #[tokio::test]
+    async fn s104_a_save_failing_part_way_still_rebinds_the_session_to_what_is_stored() {
+        let mut state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(
+            state.users.get_by_username("admin").await.unwrap().unwrap(),
+        )));
+        save_fails_after_the_mode(&mut state);
+        let (_, seq) = read_slot(&state);
+
+        let result = auth_config_apply_body(&state, true, "admin").await;
+        assert!(matches!(result, Err(BantoError::Storage(_))), "{result:?}");
+        assert!(state.settings.auth_config().await.unwrap().disabled);
+        let (session, seq_on) = read_slot(&state);
+        assert!(is_local(&session), "follows disabled = true: {session:?}");
+        assert_eq!(seq_on, seq + 1);
+
+        let result = auth_config_apply_body(&state, false, "admin").await;
+        assert!(result.is_err());
+        assert!(!state.settings.auth_config().await.unwrap().disabled);
+        assert_eq!(
+            read_slot(&state),
+            (None, seq_on + 1),
+            "follows disabled = false"
+        );
+    }
+
+    /// S-102 (freshness audit of #266, P3-2): a check that read Local(admin)
+    /// and is overtaken by apply(true, viewer) reports, for the ordinary
+    /// commands, the slot's CURRENT session (viewer) - not its older read.
+    #[tokio::test]
+    async fn s102_a_stale_settle_reports_the_slot_value_not_the_older_read() {
+        let state = app_state().await;
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("enable (bootstrap window)");
+        let (cached, seq_at_entry) = read_slot(&state);
+        let cached = cached.expect("Local(admin)");
+        let fresh = read_session_source(&state, &cached).await.unwrap();
+
+        auth_config_apply_body(&state, true, "viewer")
+            .await
+            .expect("role change");
+
+        let Settled::Stale {
+            valid_now: Some(DesktopSession::AuthDisabledLocal(local)),
+        } = settle_session(&state, &cached, fresh, seq_at_entry)
+        else {
+            panic!("expected Stale with the current Local session")
+        };
+        assert_eq!(local.role, Role::Viewer);
+    }
+
+    /// Hardening (freshness audit of #266, P2-2): `false -> true` advances
+    /// `seq` even if the slot somehow already holds Local with that role.
+    #[tokio::test]
+    async fn s98_turning_the_mode_on_always_advances_seq() {
+        let state = app_state().await;
+        state.set_session_for_test(Some(DesktopSession::AuthDisabledLocal(local_identity(
+            Role::Admin,
+        ))));
+        let (_, seq) = read_slot(&state);
+        auth_config_apply_body(&state, true, "admin")
+            .await
+            .expect("enable");
+        assert_eq!(read_slot(&state).1, seq + 1);
     }
 
     /// S-98 (re-review of #266 P1): between `auth_config_apply`'s save and

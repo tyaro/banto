@@ -275,6 +275,50 @@ impl SettingsService {
         Ok(())
     }
 
+    /// Upsert several keys in ONE transaction: either every pair is stored or
+    /// none is (freshness audit of #266, P2-3 - `set_auth_config` must not
+    /// leave `auth.disabled` saved and `auth.disabled_role` not, since the
+    /// desktop app re-binds its session from what it saved).
+    pub async fn set_many(&self, pairs: &[(&str, &str)]) -> Result<(), BantoError> {
+        let dialect = self.db.dialect();
+        // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
+        // (internal enum, never caller input); keys/values are bound below.
+        let sql = format!(
+            "INSERT INTO settings (key, value) VALUES ({}, {}) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            dialect.placeholder(1),
+            dialect.placeholder(2),
+        );
+        match &self.db {
+            Db::Sqlite(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                for (key, value) in pairs {
+                    sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                        .bind(*key)
+                        .bind(*value)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                }
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+            }
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                for (key, value) in pairs {
+                    sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                        .bind(*key)
+                        .bind(*value)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?;
+                }
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Is the `settings` table completely empty (no rows at all, not even
     /// one key)? Used by the app-level first-boot seed
     /// (`admin_template_core::first_boot::seed_first_boot_settings`,
@@ -459,28 +503,37 @@ impl SettingsService {
             ));
         }
 
-        self.set(
-            KEY_AUTH_DISABLED,
-            if config.disabled { "true" } else { "false" },
-        )
-        .await?;
-        self.set(KEY_AUTH_DISABLED_ROLE, config.disabled_role.as_str())
-            .await?;
-        self.set(
-            KEY_AUTOLOGIN_ENABLED,
-            if config.autologin_enabled {
-                "true"
-            } else {
-                "false"
-            },
-        )
-        .await?;
-        self.set(
-            KEY_AUTOLOGIN_USERNAME,
-            config.autologin_username.as_deref().unwrap_or(""),
-        )
-        .await?;
-        Ok(())
+        // One transaction (freshness audit of #266, P2-3): all four keys or
+        // none, so a failure part-way never leaves a mode saved that the
+        // desktop app's session re-bind did not follow.
+        self.set_many(&[
+            (
+                KEY_AUTH_DISABLED,
+                if config.disabled { "true" } else { "false" },
+            ),
+            (KEY_AUTH_DISABLED_ROLE, config.disabled_role.as_str()),
+            (
+                KEY_AUTOLOGIN_ENABLED,
+                if config.autologin_enabled {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
+            (
+                KEY_AUTOLOGIN_USERNAME,
+                config.autologin_username.as_deref().unwrap_or(""),
+            ),
+        ])
+        .await
+    }
+
+    /// Is `key` one of the auth-mode keys only [`Self::set_auth_config`] may
+    /// write (the `auth.` namespace)? The desktop app's generic
+    /// `settings_set` refuses them (freshness audit of #266, P2-2): a raw
+    /// write would bypass its session re-bind and lock.
+    pub fn is_auth_key(key: &str) -> bool {
+        key.starts_with("auth.")
     }
 
     /// Read the audit-log retention settings (spec M14), falling back to
@@ -659,6 +712,21 @@ mod tests {
         svc.set(KEY_AUTH_DISABLED_ROLE, "not-a-role").await.unwrap();
         let config = svc.auth_config().await.unwrap();
         assert_eq!(config.disabled_role, Role::Admin);
+    }
+
+    /// Freshness audit of #266 (P2-3): `set_many` stores every pair (one
+    /// transaction), and `is_auth_key` marks the `auth.` namespace.
+    #[tokio::test]
+    async fn set_many_stores_every_pair_and_auth_keys_are_marked() {
+        let svc = service().await;
+        svc.set_many(&[("a.one", "1"), ("a.two", "2")])
+            .await
+            .unwrap();
+        assert_eq!(svc.get("a.one").await.unwrap().as_deref(), Some("1"));
+        assert_eq!(svc.get("a.two").await.unwrap().as_deref(), Some("2"));
+        assert!(SettingsService::is_auth_key("auth.disabled"));
+        assert!(SettingsService::is_auth_key("auth.autologin.username"));
+        assert!(!SettingsService::is_auth_key("audit.retention_days"));
     }
 
     #[tokio::test]
