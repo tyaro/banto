@@ -21,7 +21,7 @@ function scriptedInvoke() {
 		return reply.promise;
 	});
 	const resolves = () => calls.filter((call) => call.cmd === 'auth_resolve');
-	return { invoke, resolves };
+	return { invoke, resolves, calls };
 }
 
 const localAdmin = (seq: number) => ({
@@ -77,5 +77,57 @@ describe('S-97: a stale auth_resolve after a Local role change (I-5, I-23)', () 
 		expect(controller.snapshot.status).toBe('unknown');
 		expect(controller.snapshot.identity).toBeNull();
 		expect(controller.snapshot.verification.state).toBe('failed');
+	});
+
+	it('S-100: a stale `current` seen while changePassword was pending is collected when it fails without a seq - Account(admin) is held, not left active', async () => {
+		const script = scriptedInvoke();
+		const provider = createTauriAuthProvider({ invoke: script.invoke });
+		const controller = createSessionController(provider, {
+			scheduler: makeScheduler(),
+			onNone: () => {},
+			onActive: () => {}
+		});
+		const accountAdmin = (seq: number) => ({
+			identity: { id: 'admin', name: 'Admin', role: 'admin' },
+			kind: 'account',
+			checked: seq,
+			current: seq,
+			stale: false
+		});
+
+		const first = controller.resolve();
+		script.resolves()[0].reply.resolve(accountAdmin(0));
+		await expect(first).resolves.toMatchObject({ outcome: 'confirmed' });
+		expect(controller.snapshot).toMatchObject({ status: 'active', owner: 'account:admin' });
+
+		// changePassword is pending; meanwhile the mode is switched on in Rust
+		// (Account -> Local, seq 0 -> 1) and an auth_resolve comes back stale.
+		const changing = provider.changePassword!('old', 'newpassword');
+		const pending = controller.resolve();
+		script
+			.resolves()
+			.at(-1)!
+			.reply.resolve({
+				...accountAdmin(0),
+				identity: null,
+				current: 1,
+				stale: true
+			});
+		await flush();
+		expect(provider.credentialRevision()).toBe('0.0'); // kept while the command is pending
+
+		// changePassword is refused without a seq: the kept seq is collected and reported.
+		script.calls.find((c) => c.cmd === 'auth_change_password')!.reply.reject({ kind: 'forbidden' });
+		await changing;
+		await flush();
+		expect(provider.credentialRevision()).toBe('1.0');
+		expect(controller.snapshot).toMatchObject({ status: 'unknown', owner: null });
+		await expect(pending).resolves.toMatchObject({ outcome: 'superseded' });
+
+		// The confirmation the hold started fails: admin does not come back.
+		script.resolves().at(-1)!.reply.reject({ kind: 'storage', message: 'database is locked' });
+		await flush();
+		expect(controller.snapshot.status).toBe('unknown');
+		expect(controller.snapshot.identity).toBeNull();
 	});
 });

@@ -175,7 +175,12 @@ function seqOf(value: unknown): number | undefined {
  * `resolve()`. A `resolve()` answer that arrives while any state-changing
  * command is still pending - whether it started before or after the
  * `resolve()` - is rejected with `StaleAnswerError`, as is one the backend
- * reports stale.
+ * reports stale. The `current` of such an answer is never lost: with no
+ * command pending it is observed before the rejection (S-97); with one
+ * pending it is kept and collected when the last pending command ends, in
+ * the same continuation as that command's own outcome (S-100), so a change
+ * reported that way is notified once - from the command's end, not from
+ * `resolve()`.
  */
 export function createTauriAuthProvider(options: TauriAuthProviderOptions): AuthProvider {
 	const call = makeCaller(options.invoke);
@@ -186,6 +191,16 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 	const listeners = new Set<() => void>();
 	/** State-changing commands still awaiting their response (and not yet timed out). */
 	const pendingOps = new Set<object>();
+	/**
+	 * The highest `auth_resolve` `current` seen while a state-changing command
+	 * was pending (re-review of #266 P1, S-100). Not observed at once - the
+	 * pending command's own response would then find nothing to report - but
+	 * not dropped either: not every command answers with a `seq` (a
+	 * `changePassword` refused with `forbidden`/`validation`/`storage` does
+	 * not), so the advance would be lost and the controller could never see
+	 * the slot move. Collected when the LAST pending command ends.
+	 */
+	let deferredSeq = 0;
 
 	function revision(seq = observedSeq, l = local): CredentialRevision {
 		return `${seq}.${l}` as CredentialRevision;
@@ -195,56 +210,75 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 		for (const listener of [...listeners]) listener();
 	}
 
-	/** Record a `seq` from an operation's response; notify only if the pair changed. */
-	function observe(seq: number | undefined): void {
-		if (seq === undefined) return;
+	/**
+	 * The end of a state-changing command (its response, its rejection or its
+	 * `opPendingTimeoutMs`), in ONE continuation: apply the command's own
+	 * effect on the pair (`effect`: observe its `seq`, or advance `local`),
+	 * drop it from the pending set, and - when it was the last pending one -
+	 * collect `deferredSeq`; then notify ONCE if the pair changed (I-19). The
+	 * command's own `seq` is observed BEFORE the deferred one is collected,
+	 * so a response that already covers it (`seq >= deferredSeq`) is the
+	 * single notification, never followed by a second one (S-100).
+	 */
+	function endOp(op: object, effect: () => void): void {
 		const before = revision();
-		observedSeq = Math.max(observedSeq, seq);
+		effect();
+		pendingOps.delete(op);
+		if (pendingOps.size === 0) {
+			observedSeq = Math.max(observedSeq, deferredSeq);
+			deferredSeq = 0;
+		}
 		if (revision() !== before) emitCredentialChanged();
-	}
-
-	function bumpLocal(): void {
-		local += 1;
-		emitCredentialChanged();
 	}
 
 	/**
 	 * Invoke a state-changing command, tracking it as pending until it
-	 * answers or `opPendingTimeoutMs` passes. A rejection that may have
-	 * changed the session slot (`rejectionMayHaveChangedSlot`) advances
-	 * `local` (the outcome is unknown); the error is rethrown either way.
-	 * An op that already timed out has advanced `local` for that same
-	 * unknown outcome, so its late rejection does not advance it again
-	 * (PR #264 review P3); a late success is still `observe`d by the caller.
+	 * answers or `opPendingTimeoutMs` passes, and observe the `seq` its
+	 * response carries (`seqFrom`) in the same continuation as its end
+	 * (`endOp`). A rejection that may have changed the session slot
+	 * (`rejectionMayHaveChangedSlot`) advances `local` (the outcome is
+	 * unknown); the error is rethrown either way. An op that already timed
+	 * out has advanced `local` for that same unknown outcome, so its late
+	 * rejection does not advance it again (PR #264 review P3); a late success
+	 * still observes its `seq`.
 	 */
-	async function runOp<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+	async function runOp<T>(
+		cmd: string,
+		args: Record<string, unknown> | undefined,
+		seqFrom: (result: T) => number | undefined
+	): Promise<T> {
 		const op = {};
 		pendingOps.add(op);
 		const timer = setTimeout(() => {
-			if (pendingOps.delete(op)) bumpLocal();
+			if (pendingOps.has(op)) endOp(op, () => (local += 1));
 		}, opPendingTimeoutMs);
+		let result: T;
 		try {
-			return (await options.invoke(cmd, args)) as T;
+			result = (await options.invoke(cmd, args)) as T;
 		} catch (raw) {
-			const wasPending = pendingOps.delete(op);
-			if (wasPending && rejectionMayHaveChangedSlot(raw)) bumpLocal();
-			throw toProviderError(raw);
-		} finally {
 			clearTimeout(timer);
-			pendingOps.delete(op);
+			const wasPending = pendingOps.has(op);
+			endOp(op, () => {
+				if (wasPending && rejectionMayHaveChangedSlot(raw)) local += 1;
+			});
+			throw toProviderError(raw);
 		}
+		clearTimeout(timer);
+		endOp(op, () => {
+			const seq = seqFrom(result);
+			if (seq !== undefined) observedSeq = Math.max(observedSeq, seq);
+		});
+		return result;
 	}
 
 	return {
 		async login(params: Record<string, unknown>): Promise<AuthOperationResult> {
-			const result = await runOp<LoginResultWire>('auth_login', params);
-			observe(result.seq);
+			const result = await runOp<LoginResultWire>('auth_login', params, (r) => r.seq);
 			return loginOutcome(result);
 		},
 
 		async logout(): Promise<void> {
-			const result = await runOp<unknown>('auth_logout');
-			observe(seqOf(result));
+			await runOp<unknown>('auth_logout', undefined, seqOf);
 		},
 
 		/**
@@ -260,9 +294,12 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 			const answer = await call<AuthResolveWire>('auth_resolve');
 			if (pendingOps.size > 0) {
 				// A state-changing command of this provider is still awaiting its
-				// response: its `current` is NOT observed here. That response
-				// observes its own `seq` and notifies if the pair changed (I-19);
-				// observing it first here would swallow that notification.
+				// response: `current` is not observed NOW (that response observes
+				// its own `seq` and notifies if the pair changed, I-19 - observing
+				// first would swallow the notification) but kept, and collected
+				// when the last pending command ends - with or without a `seq`
+				// (S-100, `deferredSeq`).
+				deferredSeq = Math.max(deferredSeq, answer.current);
 				throw new StaleAnswerError();
 			}
 			if (answer.stale) {
@@ -308,11 +345,10 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
 			let result: LoginResultWire;
 			try {
-				result = await runOp<LoginResultWire>('auth_setup', params);
+				result = await runOp<LoginResultWire>('auth_setup', params, (r) => r.seq);
 			} catch (err) {
 				return { success: false, error: firstValidationMessage(toProviderError(err)) };
 			}
-			observe(result.seq);
 			return loginOutcome(result);
 		},
 
@@ -321,11 +357,11 @@ export function createTauriAuthProvider(options: TauriAuthProviderOptions): Auth
 			next: string
 		): Promise<{ success: boolean; error?: string }> {
 			try {
-				const result = await runOp<unknown>('auth_change_password', {
-					currentPassword: current,
-					newPassword: next
-				});
-				observe(seqOf(result));
+				await runOp<unknown>(
+					'auth_change_password',
+					{ currentPassword: current, newPassword: next },
+					seqOf
+				);
 				return { success: true };
 			} catch (err) {
 				return { success: false, error: firstValidationMessage(toProviderError(err)) };
