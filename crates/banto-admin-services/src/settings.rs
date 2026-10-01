@@ -207,6 +207,21 @@ pub struct SettingsService {
     db: Db,
 }
 
+/// Is this auth-mode / LAN-server combination legal? The single source of
+/// truth shared by [`SettingsService::set_server_config`],
+/// [`SettingsService::set_auth_config`] and the desktop app's startup check
+/// (Issue #288 - the startup guard had drifted from the save-time rule).
+///
+/// "認証無効 + LAN 有効" is only allowed with 閲覧公開 (`viewer_public`) on
+/// (spec M11 + Issue #189 / ADR-0012). Every other combination is legal.
+pub fn auth_server_combination_allowed(
+    auth_disabled: bool,
+    server_enabled: bool,
+    viewer_public: bool,
+) -> bool {
+    !(auth_disabled && server_enabled && !viewer_public)
+}
+
 impl SettingsService {
     pub fn new(db: Db) -> Self {
         Self { db }
@@ -405,6 +420,26 @@ impl SettingsService {
         })
     }
 
+    /// The auth-disabled / LAN exclusivity check of
+    /// [`Self::set_server_config`], without saving anything. Lets a caller
+    /// that must act on the config BEFORE persisting it (the desktop app's
+    /// `server_apply` saves only after the new listener is up, Issue #287)
+    /// refuse an illegal combination up front - before it stops a running
+    /// server.
+    pub async fn validate_server_config(&self, config: &ServerSettings) -> Result<(), BantoError> {
+        if !auth_server_combination_allowed(
+            self.auth_config().await?.disabled,
+            config.enabled,
+            config.viewer_public,
+        ) {
+            return Err(BantoError::Other(
+                "認証無効モード中は、閲覧公開を有効にした場合のみLANアクセスを有効化できます"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Persist the embedded-server settings as individual keys
     /// (`server.enabled`/`server.bind`/`server.port`/`server.viewer_public`).
     ///
@@ -419,30 +454,28 @@ impl SettingsService {
     /// `viewer_public` OFF the exclusivity is unchanged. See
     /// [`SettingsService::set_auth_config`] for the mirror-image guard.
     pub async fn set_server_config(&self, config: &ServerSettings) -> Result<(), BantoError> {
-        if config.enabled && self.auth_config().await?.disabled && !config.viewer_public {
-            return Err(BantoError::Other(
-                "認証無効モード中は、閲覧公開を有効にした場合のみLANアクセスを有効化できます"
-                    .to_string(),
-            ));
-        }
+        self.validate_server_config(config).await?;
 
-        self.set(
-            KEY_SERVER_ENABLED,
-            if config.enabled { "true" } else { "false" },
-        )
-        .await?;
-        self.set(KEY_SERVER_BIND, &config.bind).await?;
-        self.set(KEY_SERVER_PORT, &config.port.to_string()).await?;
-        self.set(
-            KEY_SERVER_VIEWER_PUBLIC,
-            if config.viewer_public {
-                "true"
-            } else {
-                "false"
-            },
-        )
-        .await?;
-        Ok(())
+        // One transaction (#287): all four keys or none, so a DB failure
+        // part-way never leaves e.g. `server.enabled` saved with the old port.
+        let port = config.port.to_string();
+        self.set_many(&[
+            (
+                KEY_SERVER_ENABLED,
+                if config.enabled { "true" } else { "false" },
+            ),
+            (KEY_SERVER_BIND, config.bind.as_str()),
+            (KEY_SERVER_PORT, port.as_str()),
+            (
+                KEY_SERVER_VIEWER_PUBLIC,
+                if config.viewer_public {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
+        ])
+        .await
     }
 
     /// Read the auth-mode settings (spec M11), falling back to
@@ -496,7 +529,7 @@ impl SettingsService {
     /// whether a given combination is legal.
     pub async fn set_auth_config(&self, config: &AuthSettings) -> Result<(), BantoError> {
         let server = self.server_config().await?;
-        if config.disabled && server.enabled && !server.viewer_public {
+        if !auth_server_combination_allowed(config.disabled, server.enabled, server.viewer_public) {
             return Err(BantoError::Other(
                 "LANアクセスが有効な間は、閲覧公開が有効な場合のみ認証無効モードを有効化できます"
                     .to_string(),
@@ -580,6 +613,76 @@ impl SettingsService {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn auth_server_combination_truth_table() {
+        // (auth_disabled, server_enabled, viewer_public) -> allowed
+        for (auth_disabled, server_enabled, viewer_public, allowed) in [
+            (false, false, false, true),
+            (false, false, true, true),
+            (false, true, false, true),
+            (false, true, true, true),
+            (true, false, false, true),
+            (true, false, true, true),
+            // The one refused combination: unauthenticated LAN write surface.
+            (true, true, false, false),
+            // Issue #288: allowed with 閲覧公開.
+            (true, true, true, true),
+        ] {
+            assert_eq!(
+                auth_server_combination_allowed(auth_disabled, server_enabled, viewer_public),
+                allowed,
+                "auth_disabled={auth_disabled} server_enabled={server_enabled} viewer_public={viewer_public}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn save_time_guards_agree_with_the_shared_rule() {
+        let server = |enabled, viewer_public| ServerSettings {
+            enabled,
+            viewer_public,
+            ..ServerSettings::default()
+        };
+        let auth = |disabled| AuthSettings {
+            disabled,
+            ..AuthSettings::default()
+        };
+        // viewer_public off: auth-disabled + LAN is refused from both sides.
+        let svc = service().await;
+        svc.set_auth_config(&auth(true)).await.unwrap();
+        assert!(svc.set_server_config(&server(true, false)).await.is_err());
+        let svc = service().await;
+        svc.set_server_config(&server(true, false)).await.unwrap();
+        assert!(svc.set_auth_config(&auth(true)).await.is_err());
+        // viewer_public on: allowed from both sides, and re-readable (what
+        // the startup check sees after a restart).
+        let svc = service().await;
+        svc.set_auth_config(&auth(true)).await.unwrap();
+        svc.set_server_config(&server(true, true)).await.unwrap();
+        let (a, s) = (
+            svc.auth_config().await.unwrap(),
+            svc.server_config().await.unwrap(),
+        );
+        assert!(auth_server_combination_allowed(
+            a.disabled,
+            s.enabled,
+            s.viewer_public
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_server_config_round_trips_all_four_keys() {
+        let svc = service().await;
+        let cfg = ServerSettings {
+            enabled: true,
+            bind: "0.0.0.0".to_string(),
+            port: 9123,
+            viewer_public: true,
+        };
+        svc.set_server_config(&cfg).await.unwrap();
+        assert_eq!(svc.server_config().await.unwrap(), cfg);
+    }
+
     use super::*;
 
     /// An in-memory SQLite handle with the `settings` table created inline.

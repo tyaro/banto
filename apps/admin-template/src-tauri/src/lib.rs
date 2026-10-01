@@ -30,7 +30,9 @@ use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 // [scaffold:items] end
 use admin_template_core::rest::{api_router, user_auth_state, Services};
-use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
+use admin_template_core::settings::{
+    auth_server_combination_allowed, AuditSettings, AuthSettings, ServerSettings, SettingsService,
+};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
@@ -3204,7 +3206,9 @@ pub fn run() {
             // Spec M11 exclusivity is enforced at write-time
             // (`SettingsService::set_server_config`/`set_auth_config`), but a
             // hand-edited settings DB could still leave both
-            // `auth.disabled` and `server.enabled` set to `true` at once - if
+            // `auth.disabled` and `server.enabled` set to `true` at once
+            // without `server.viewer_public` (the one combination the guards
+            // refuse, `auth_server_combination_allowed`, Issue #288) - if
             // so, refuse to auto-start the (would-be unauthenticated) LAN
             // server rather than trust a state the app itself would never
             // have written, and leave the inconsistency for the user to
@@ -3212,7 +3216,13 @@ pub fn run() {
             // setting).
             let server_config = tauri::async_runtime::block_on(settings.server_config())
                 .expect("server_config should succeed");
-            let inconsistent_auth_and_server = auth_config.disabled && server_config.enabled;
+            // Same predicate the save-time guards use (Issue #288): 認証無効 + LAN
+            // 有効 is only inconsistent WITHOUT 閲覧公開.
+            let inconsistent_auth_and_server = !auth_server_combination_allowed(
+                auth_config.disabled,
+                server_config.enabled,
+                server_config.viewer_public,
+            );
             if inconsistent_auth_and_server {
                 eprintln!(
                     "banto: 認証無効モードとLANアクセスが同時に有効な不整合な設定を検出したため、LANサーバーの自動起動をスキップしました。設定画面でどちらかを無効にしてください。"
