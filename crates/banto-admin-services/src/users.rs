@@ -315,36 +315,67 @@ impl UsersService {
         // value - username, password hash, display name, role, id - is
         // always passed via `.bind(...)`, never interpolated into the SQL
         // text.
+        // Issue #277: "is the table empty?" and the INSERT must be one atomic
+        // step, otherwise two concurrent setups both see an empty table and
+        // create two admins (distinct usernames do not collide on UNIQUE).
+        // The insert is a single conditional statement
+        // (`INSERT ... SELECT ... WHERE NOT EXISTS (SELECT 1 FROM users)`);
+        // zero rows returned means someone else initialised first.
+        // CAST: PostgreSQL cannot infer the type of a bare `$n` in a SELECT
+        // list; SQLite accepts the same syntax.
         let sql = format!(
-            "INSERT INTO users (username, password_hash, display_name, role) VALUES ({}, {}, {}, {}) \
+            "INSERT INTO users (username, password_hash, display_name, role) \
+             SELECT CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT), CAST({} AS TEXT) \
+             WHERE NOT EXISTS (SELECT 1 FROM users) \
              RETURNING id, auth_epoch",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
             dialect.placeholder(4),
         );
-        let (id, auth_epoch): (i64, i64) = match &self.db {
+        let inserted: Option<(i64, i64)> = match &self.db {
+            // SQLite: one statement takes the database write lock before it
+            // evaluates the NOT EXISTS subquery, so across tasks *and*
+            // processes sharing the file the check+insert is atomic.
             Db::Sqlite(pool) => {
                 sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(&username)
                     .bind(&hash)
                     .bind(display_name)
                     .bind(Role::Admin.as_str())
-                    .fetch_one(pool)
+                    .fetch_optional(pool)
                     .await
             }
+            // PostgreSQL (READ COMMITTED): the statement alone is not enough
+            // - two sessions can both see an empty table in their snapshots.
+            // SHARE ROW EXCLUSIVE conflicts with itself (and with writers),
+            // so concurrent setups serialise on the lock; the statement
+            // after the lock takes a fresh snapshot and sees the winner's
+            // committed row. The lock is released at commit/rollback.
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as(sqlx::AssertSqlSafe(sql))
-                    .bind(&username)
-                    .bind(&hash)
-                    .bind(display_name)
-                    .bind(Role::Admin.as_str())
-                    .fetch_one(pool)
-                    .await
+                async {
+                    let mut tx = pool.begin().await?;
+                    sqlx::query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
+                        .execute(&mut *tx)
+                        .await?;
+                    let row = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                        .bind(&username)
+                        .bind(&hash)
+                        .bind(display_name)
+                        .bind(Role::Admin.as_str())
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                    tx.commit().await?;
+                    Ok::<_, sqlx::Error>(row)
+                }
+                .await
             }
         }
         .map_err(banto_storage::storage_error)?;
+        let Some((id, auth_epoch)) = inserted else {
+            return Err(BantoError::Other("既に初期化されています".to_string()));
+        };
 
         Ok(UserIdentity {
             id,
@@ -930,6 +961,138 @@ mod tests {
     async fn verify_unknown_user_is_none() {
         let svc = service().await;
         assert!(svc.verify("nobody", "whatever1").await.unwrap().is_none());
+    }
+
+    const USERS_DDL: &str = "CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
+                auth_epoch INTEGER NOT NULL DEFAULT 0
+            )";
+
+    /// Issue #277: concurrent first-run setups with different usernames must
+    /// create exactly one admin. Tasks are released by a barrier, each with
+    /// its own `UsersService` over the same file-backed SQLite database
+    /// (separate pools = separate connections, like separate processes).
+    #[tokio::test]
+    async fn concurrent_setup_first_user_creates_exactly_one_admin() {
+        let dir = std::env::temp_dir().join(format!("banto-277-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("race.db");
+        let _ = std::fs::remove_file(&path);
+        let db = Db::connect_sqlite(&path).await.unwrap();
+        sqlx::query(USERS_DDL)
+            .execute(db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+
+        let n = 6;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(n));
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let svc = UsersService::new(Db::connect_sqlite(&path).await.unwrap());
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                svc.setup_first_user(&format!("admin{i}"), "password123", "x")
+                    .await
+            }));
+        }
+        let mut ok = 0;
+        for h in handles {
+            match h.await.unwrap() {
+                Ok(_) => ok += 1,
+                Err(BantoError::Other(m)) => assert_eq!(m, "既に初期化されています"),
+                Err(other) => panic!("unexpected error: {other:?}"),
+            }
+        }
+        assert_eq!(ok, 1, "exactly one setup may succeed");
+        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            .fetch_one(db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(admins, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue #277 on PostgreSQL. Skipped (not failed) unless
+    /// `BANTO_TEST_PG_URL` is set (CI's `app-postgres` job sets it). Uses its
+    /// own schema (selected through the connection's `search_path`) so it
+    /// never touches a `users` table in `public`.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn pg_concurrent_setup_first_user_creates_exactly_one_admin() {
+        let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+            return;
+        };
+        let schema = format!("banto_277_{}", std::process::id());
+        let admin = Db::connect_postgres(&url).await.unwrap();
+        let pool = admin.as_postgres().unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+            .execute(pool)
+            .await
+            .unwrap();
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let scoped = format!("{url}{sep}options=-c%20search_path%3D{schema}");
+        let db = Db::connect_postgres(&scoped).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE users (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT now()::text,
+                updated_at TEXT NOT NULL DEFAULT now()::text,
+                role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
+                auth_epoch BIGINT NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(db.as_postgres().unwrap())
+        .await
+        .unwrap();
+
+        let n = 6;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(n));
+        let mut handles = Vec::new();
+        for i in 0..n {
+            let svc = UsersService::new(Db::connect_postgres(&scoped).await.unwrap());
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                svc.setup_first_user(&format!("admin{i}"), "password123", "x")
+                    .await
+            }));
+        }
+        let mut ok = 0;
+        for h in handles {
+            match h.await.unwrap() {
+                Ok(_) => ok += 1,
+                Err(BantoError::Other(m)) => assert_eq!(m, "既に初期化されています"),
+                Err(other) => panic!("unexpected error: {other:?}"),
+            }
+        }
+        assert_eq!(ok, 1, "exactly one setup may succeed");
+        let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            .fetch_one(db.as_postgres().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(admins, 1);
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

@@ -24,6 +24,10 @@
 
 - chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
 
+### Fixed
+
+- 初回セットアップ（`UsersService::setup_first_user`）の並行実行で複数の admin が作られる問題を修正（#277）。空確認と INSERT を DB 側で原子的にした（SQLite は条件付き単一 INSERT、PostgreSQL は `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE` + 条件付き INSERT）。負けた側は従来どおり「既に初期化されています」を返し、REST/Tauri とも成功監査・セッション発行は起きない。DB マイグレーション不要。
+
 - fix(audit): 未認証リクエストによる監査ログの増幅を防止（#278）。有効なセッションを終えない `POST /api/auth/logout` は監査に記録しない。失敗ログインの `actor_username` は作成時の長さ上限（32 文字）まで切り詰め（末尾 `…`、REST・Tauri 共通）、上限超の username は DB を引かずダミー検証のみ行う。`banto_admin_services::users::bound_username_for_audit` を追加。
 
 - fix(auth): 並行ログインが失敗確定前のスロットルを通過する問題を修正（#279）。verifier を await する前に試行枠を原子的に予約し、処理中の試行も失敗件数と同様にしきい値判定へ数える。IP 単位（4）・全体（8）の同時検証数上限を追加（超過は即時 `RateLimited`）。argon2 の検証は blocking プールで実行。
