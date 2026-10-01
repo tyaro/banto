@@ -1,4 +1,4 @@
-import { initBanto, type DataProvider } from '@banto/admin-core';
+import { initBanto, type CredentialRevision, type DataProvider } from '@banto/admin-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -39,8 +39,13 @@ describe('listAuditLog (Issue #248)', () => {
 			authProvider: {
 				login: async () => ({ success: true }),
 				logout: async () => {},
-				check: async () => true,
-				getIdentity: async () => null
+				resolve: async () => ({
+					status: 'none',
+					checked: '0.0' as CredentialRevision,
+					current: '0.0' as CredentialRevision
+				}),
+				credentialRevision: () => '0.0' as CredentialRevision,
+				onCredentialChanged: () => () => {}
 			},
 			resources: []
 		});

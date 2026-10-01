@@ -3,12 +3,12 @@ import { validation } from '../src/errors';
 import { createFormResource } from '../src/form.svelte';
 import type { AuthProvider, DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
+import { STUB_SESSION } from './stubAuth';
 
 const authProvider: AuthProvider = {
 	login: async () => ({ success: true }),
 	logout: async () => {},
-	check: async () => true,
-	getIdentity: async () => null
+	...STUB_SESSION
 };
 
 function unusedProvider(overrides: Partial<DataProvider> = {}): DataProvider {

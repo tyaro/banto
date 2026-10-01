@@ -20,7 +20,7 @@ import { invalidate } from './invalidate';
 import { notify } from './registry.svelte';
 import type { NotificationKind } from './provider';
 import { createSseParser } from './sse-parser';
-import { createSessionEndConfirmation } from './sessionEnded';
+import { getSessionController } from './sessionController.svelte';
 
 export type AppEvent =
 	| { kind: 'resource_changed'; resource: string }
@@ -36,7 +36,7 @@ export interface EventSubscriptionHooks {
 	 * `401`): the session is no longer valid. Called once per rejected token;
 	 * the provider stops reconnecting with that token and resumes only when a
 	 * different token appears (a new login). `connectEvents` wires this to
-	 * `confirmSessionEnded` (sessionEnded.ts).
+	 * `getSessionController().signal('unauthorized')`.
 	 */
 	onUnauthorized?: () => void;
 	/**
@@ -46,7 +46,7 @@ export interface EventSubscriptionHooks {
 	 * (review of #242). Called once per disappearance, and only for a token
 	 * this stream had actually used: the first wait before any login and a
 	 * new login replacing the token are not disappearances. `connectEvents`
-	 * wires this to the same confirmation as `onUnauthorized`.
+	 * wires this to `getSessionController().signal('credentialCleared')`.
 	 */
 	onTokenCleared?: () => void;
 }
@@ -262,15 +262,17 @@ function toNotificationKind(level: string): NotificationKind {
  * `WindowedListResource` subscribers refetch); `notice` -> `notify(...)`
  * (falls back to `'info'` for an unrecognized `level`). A stream the server
  * rejected (`onUnauthorized`, Issue #241) or whose token another tab cleared
- * (`onTokenCleared`) -> a confirmation loop (`createSessionEndConfirmation`):
- * `AuthProvider.check()` (clearing the stored token), then `onSessionEnded`
- * listeners so the app can run its route guard. While the server cannot
- * verify, the confirmation is retried with backoff (the stream itself stays
- * stopped for a rejected token). Returns an unsubscribe function that also
- * stops the confirmation.
+ * (`onTokenCleared`) is a signal to the default `SessionController`
+ * (Issue #260 実装-3, design §6.1): `signal('unauthorized')` /
+ * `signal('credentialCleared')`. The controller confirms the session with a
+ * probe started after the signal (`AuthProvider.resolve()`, which clears a
+ * revoked token) and, while the server cannot verify, retries with backoff
+ * until it knows; a confirmed `none` moves the generation, which the app's
+ * protected layout turns into a re-run of its route guard (wiring ①). The
+ * stream itself stays stopped for a rejected token. Returns an unsubscribe
+ * function (the controller's background confirmation is not tied to it).
  */
 export function connectEvents(provider: EventProvider): () => void {
-	const confirmation = createSessionEndConfirmation();
 	const unsubscribe = provider.subscribe(
 		(event) => {
 			if (event.kind === 'resource_changed') {
@@ -279,10 +281,10 @@ export function connectEvents(provider: EventProvider): () => void {
 				notify(toNotificationKind(event.level), event.message);
 			}
 		},
-		{ onUnauthorized: confirmation.start, onTokenCleared: confirmation.start }
+		{
+			onUnauthorized: () => getSessionController().signal('unauthorized'),
+			onTokenCleared: () => getSessionController().signal('credentialCleared')
+		}
 	);
-	return () => {
-		confirmation.stop();
-		unsubscribe();
-	};
+	return unsubscribe;
 }

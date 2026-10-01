@@ -57,7 +57,7 @@ corresponding ADR exists, be traced from there.
 | [0013](0013-sysinfo-system-metrics-feature.en.md)      | Provide CPU/memory usage as a shared API by adopting `sysinfo` behind a feature (an exception to ADR-0002)                                             | Accepted |
 | [0014](0014-account-bound-session-revocation.en.md)    | Bind sessions to account row id + authentication epoch and revoke them by checking the database per request                                            | Accepted |
 | [0015](0015-snapshot-list-resource.en.md)              | Read lists that change without events through a separate bounded (`asOfId`) class, `SnapshotListResource`, with an injected fetcher                    | Accepted |
-| [0016](0016-session-controller-single-writer.en.md)    | Give the front end's session one writer (SessionController), make the provider answer in one round trip, and write credentials only by compare-and-set | Proposed |
+| [0016](0016-session-controller-single-writer.en.md)    | Give the front end's session one writer (SessionController), make the provider answer in one round trip, and write credentials only by compare-and-set | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 

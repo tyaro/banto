@@ -103,29 +103,15 @@ export interface AuthProvider {
 	 * and resolves `{ success: false, superseded: true }`.
 	 */
 	login(params: Record<string, unknown>): Promise<AuthOperationResult>;
+	/**
+	 * Log out. Issue #260 (I-7, I-10): clears only the credential this call
+	 * started from (compare-and-set) and reports the change through
+	 * `onCredentialChanged`. Callers do not act on its completion: they
+	 * confirm the session afterwards (`resolveSettled`), which decides
+	 * whether this tab has no session now - another login may have finished
+	 * meanwhile (S-51).
+	 */
 	logout(): Promise<void>;
-	/**
-	 * Is the current session valid? Resolves `false` ONLY when that is
-	 * established (no session, or the backend answered "not valid" / `401`).
-	 * Rejects (with a `ProviderError`) when validity could not be determined -
-	 * the backend failed to check the account (Issue #204: a DB error is a
-	 * `500`, not a revocation) or could not be reached. Callers must not treat
-	 * a rejection as "logged out": the session and its stored token are kept
-	 * (see `resolveProtectedSession`).
-	 */
-	check(): Promise<boolean>;
-	/**
-	 * Who the current session belongs to. Resolves `null` ONLY when that is
-	 * established: there is no session (no token, or the backend answered
-	 * `401`), or the provider has no notion of identity at all. Rejects
-	 * (with a `ProviderError`) when the identity could not be fetched - the
-	 * backend failed (`500`) or could not be reached - the same split as
-	 * `check()` (Issue #215/#255 6th review). Callers must not treat a
-	 * rejection as "nobody": `establishSession` leaves the session scope and
-	 * the saved list view state untouched and the route guard shows its
-	 * retryable error page.
-	 */
-	getIdentity(): Promise<Identity | null>;
 
 	/**
 	 * Has an account been created yet (spec §3.3/§8.2)? Optional so
@@ -199,18 +185,20 @@ export interface AuthProvider {
 	 * caller's per-request abort (a provider that cannot abort may ignore
 	 * it).
 	 *
-	 * Optional in v1.x (Issue #260 実装-1); required together with
-	 * `credentialRevision`/`onCredentialChanged` from v2.0.0. Wrap an
-	 * implementation without them in `adaptLegacyAuthProvider`.
+	 * Required since v2.0.0 (with `credentialRevision`/`onCredentialChanged`,
+	 * design §5.2 - the SessionController only ever asks this). A pre-#260
+	 * provider with only `check()`/`getIdentity()` can be wrapped in
+	 * `adaptLegacyAuthProvider` as a migration scaffold (see what it does NOT
+	 * guarantee there).
 	 */
-	resolve?(options?: { signal?: AbortSignal }): Promise<ResolvedAuth>;
+	resolve(options?: { signal?: AbortSignal }): Promise<ResolvedAuth>;
 
 	/**
 	 * Issue #260 (I-23): the revision of the credential this provider holds
 	 * now. Opaque - compare with `===` only. Never exposes the credential
 	 * (token) itself.
 	 */
-	credentialRevision?(): CredentialRevision;
+	credentialRevision(): CredentialRevision;
 
 	/**
 	 * Issue #260 (I-19): subscribe to credential changes. Called - only when
@@ -221,13 +209,17 @@ export interface AuthProvider {
 	 * NOT called for `resolve()`'s own clearing or for a `resolve()`
 	 * rejection. Returns the unsubscribe function.
 	 */
-	onCredentialChanged?(listener: () => void): () => void;
+	onCredentialChanged(listener: () => void): () => void;
 }
 
 /**
  * The pre-#260 `AuthProvider` shape (no `resolve`/`credentialRevision`/
  * `onCredentialChanged`, `enterPublicViewer` resolving a boolean) - what
- * `adaptLegacyAuthProvider` accepts.
+ * `adaptLegacyAuthProvider` accepts. `check()`/`getIdentity()` exist only
+ * here since v2.0.0 (design §5.4): `check()` resolves `false` only when the
+ * session is established invalid and rejects when it could not be checked;
+ * `getIdentity()` resolves `null` only when there is no session and rejects
+ * when the identity could not be fetched.
  */
 export interface LegacyAuthProvider {
 	login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
@@ -240,9 +232,12 @@ export interface LegacyAuthProvider {
 	enterPublicViewer?(): Promise<boolean>;
 }
 
-/** An `AuthProvider` with the three Issue #260 methods present. */
-export type StandardAuthProvider = AuthProvider &
-	Required<Pick<AuthProvider, 'resolve' | 'credentialRevision' | 'onCredentialChanged'>>;
+/**
+ * An `AuthProvider` with the three Issue #260 methods. Since v2.0.0 they are
+ * required by `AuthProvider` itself, so this is the same type (kept as an
+ * alias for code written against v1.8).
+ */
+export type StandardAuthProvider = AuthProvider;
 
 export type NotificationKind = 'success' | 'error' | 'info' | 'warning';
 

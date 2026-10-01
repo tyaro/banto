@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 	import * as m from '$lib/paraglide/messages';
 	import { logoutAndLeave } from '$lib/banto/logout.svelte';
+	import { notifyLogoutOutcome } from '$lib/banto/logoutNotice';
 	import { pageTitle } from '$lib/navigation';
 	import { getBantoMode, isTauri } from '$lib/banto/setup';
 	import { sessionStore } from '$lib/session.svelte';
@@ -54,10 +55,11 @@
 	} as const;
 
 	async function logout() {
-		// Issue #215/#255, #260 (I-18/I-10): log out, end this tab's session
-		// unless another one was confirmed meanwhile, then go to /login - see
-		// `$lib/banto/logout.svelte.ts` for the order. Same in `commands.ts`.
-		await logoutAndLeave(() => goto(`${base}/login`));
+		// Issue #215/#255, #260 (I-10): log out, confirm the session, and go
+		// to /login only when it is confirmed ended (another tab's login
+		// confirmed meanwhile stays) - see `$lib/banto/logout.svelte.ts` for
+		// the order. Same in `commands.ts`.
+		await logoutAndLeave(() => goto(`${base}/login`), { notify: notifyLogoutOutcome });
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two

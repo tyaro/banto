@@ -36,6 +36,9 @@ const ADMIN_DISPLAY_NAME = 'E2E閲覧公開管理者';
 
 const CLIENT_HEADER = { 'X-Banto-Client': 'banto' };
 
+/** Issue #260 実装-3 (wiring ②): the change-of-user notice (messages/ja.json `session.ownerChanged`). */
+const OWNER_CHANGED_NOTICE = '別のユーザーでログインされました';
+
 /** The header's "ログイン" button that replaces the user menu for the synthetic viewer (Header.svelte, plan §3.1-6). */
 function loginButton(page: Page) {
 	return page.getByRole('banner').getByRole('button', { name: 'ログイン' });
@@ -120,6 +123,9 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 		await expect(loginButton(page)).toHaveCount(0);
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
+		// S-93: leaving the public viewer by signing in is not "another user
+		// signed in" - no change-of-user notice (audit of #260 実装-3 P2-1).
+		await expect(page.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(0);
 
 		// Restoring an ordinary "public" account must keep its normal UI
 		// while anonymous public viewing is enabled on the same server.
@@ -339,6 +345,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 			await expect(page).toHaveURL(/\/dashboard$/);
 			const userMenu = page.getByRole('button', { name: 'ユーザーメニューを開く' });
 			await expect(userMenu).toBeVisible();
+			await expect(page.getByText(OWNER_CHANGED_NOTICE)).toHaveCount(0); // S-93
 
 			release();
 			// Same bounded exception as smoke scenario 3d: nothing visible

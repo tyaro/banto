@@ -2,7 +2,7 @@
 
 > English: [0016-session-controller-single-writer.en.md](0016-session-controller-single-writer.en.md)
 
-- 状態: Proposed（設計の PR。判断点はオーナーの決定済み 2026-09-29。実装の PR で Accepted にする）
+- 状態: Accepted（2026-09-30、実装-3 の PR。判断点はオーナーの決定 2026-09-29。実装は実装-1 #264・実装-2 #265・実装-3。実装で決めた細部は設計の本文 §10）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#259・#241・#204 / spec §3.3・§8.1 / conventions §10 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/

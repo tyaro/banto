@@ -1,5 +1,5 @@
 /**
- * SessionController (Issue #260 実装-2, docs/session-controller-design.md).
+ * SessionController (Issue #260 実装-2/実装-3, docs/session-controller-design.md).
  * Test names start with the scenario number (`S-n:`) of design §4; each
  * `describe` names the invariants (I-n) it pins down. §3.1's generation
  * table has one test per row. The order of answers/timers is decided by the
@@ -474,6 +474,30 @@ describe('§4.5 freshness and deadlines (I-3, I-8, I-9, I-15, I-22)', () => {
 		await expect(next).resolves.toMatchObject({ outcome: 'confirmed' });
 	});
 
+	it('S-101: a late answer after the deadline that came with an unreported revision advance holds A and starts a confirmation (I-5)', async () => {
+		const { p, controller, settleTo, scheduler } = setup();
+		await settleTo(ALICE);
+		const generation = controller.snapshot.generation;
+		const request = controller.resolve();
+		await scheduler.advance(10_000);
+		await expect(request).resolves.toMatchObject({ outcome: 'unverified' });
+		expect(controller.snapshot.status).toBe('active');
+
+		// The provider observed a `seq` advance from this very answer (the Tauri
+		// provider observes `current`), without a report.
+		p.bump();
+		p.active(1, ALICE);
+		await flush();
+
+		expect(controller.snapshot).toMatchObject({
+			status: 'unknown',
+			owner: null,
+			generation: generation + 1
+		});
+		expect(p.probes).toHaveLength(3); // the background confirmation
+		expect(p.live()).toBe(1);
+	});
+
 	it('S-33: a signal that cannot be verified retries with backoff until confirmed (also for resolve({cause: "signal"}))', async () => {
 		for (const start of ['signal', 'resolve'] as const) {
 			const { p, controller, settleTo, scheduler } = setup();
@@ -692,6 +716,140 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		expect(controller.snapshot).toBe(snapshot);
 		controller.end('commissioning-locked', controller.ticket());
 		expect(p.probes).toHaveLength(1);
+	});
+});
+
+describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-52)', () => {
+	/** A confirmed `none` and its ticket - where the guard hands over to the policy. */
+	async function confirmedNone(ctx: ReturnType<typeof setup>) {
+		const first = ctx.controller.resolve();
+		ctx.p.none(0);
+		const confirmed = await first;
+		if (confirmed.outcome !== 'confirmed') throw new Error('expected confirmed');
+		return confirmed.ticket;
+	}
+
+	it('S-52: B is confirmed while status() is pending: the stale ticket stops the mint, B is the answer', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+
+		p.change(); // B logged in (none is not held; a background probe starts)
+		p.active(ctx.last(), BOB);
+		await flush();
+		expect(controller.snapshot.owner).toBe('account:bob');
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		p.active(ctx.last(), BOB); // the policy confirms what is stored now
+
+		const result = await fallback;
+		expect(p.entries).toHaveLength(0); // enterPublicViewer never called
+		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'account:bob' } });
+	});
+
+	it('S-20: a revoked token appeared before the mint, its event not yet delivered: the mint is superseded, the token confirmed `none` (cleared), and the re-run mints', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		expect(p.entries[0].expectRevision).toBe(ticket.revision);
+		p.entries[0].answer.resolve({ success: false, superseded: true }); // a token is stored
+		await flush();
+		p.none(ctx.last(), { clear: true }); // it was revoked: resolve() cleared it
+		await flush();
+
+		// The re-run, with the ticket of that confirmation.
+		p.statuses[1].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		expect(p.entries[1].expectRevision).toBe(p.revision);
+		p.change(); // the public-viewer token was stored and reported
+		p.entries[1].answer.resolve({ success: true });
+		await flush();
+		p.active(ctx.last(), PUBLIC);
+
+		await expect(fallback).resolves.toMatchObject({
+			outcome: 'confirmed',
+			snapshot: { kind: 'publicViewer', owner: 'public-viewer' }
+		});
+		expect(p.statuses).toHaveLength(2);
+	});
+
+	it('S-20: the same token, its event already delivered (the ticket is stale at the check): confirmed `none` without a mint, then the re-run mints', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+
+		p.change(); // the storage event arrived: a background probe starts
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		expect(p.entries).toHaveLength(0); // no mint on a stale ticket
+		p.none(ctx.last(), { clear: true });
+		await flush();
+
+		p.statuses[1].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		p.change();
+		p.entries[0].answer.resolve({ success: true });
+		await flush();
+		p.active(ctx.last(), PUBLIC);
+
+		await expect(fallback).resolves.toMatchObject({
+			outcome: 'confirmed',
+			snapshot: { kind: 'publicViewer' }
+		});
+	});
+
+	for (const [maxRetries, rounds] of [
+		[3, 4],
+		[0, 1]
+	] as const) {
+		it(`S-20: a token that keeps reappearing: maxRetries = ${maxRetries} runs the policy ${rounds} time(s) (status() and resolveSettled ${rounds} each), then the last confirmed \`none\``, async () => {
+			const ctx = setup();
+			const { p, controller } = ctx;
+			const ticket = await confirmedNone(ctx);
+			const probesBefore = p.probes.length;
+			const fallback = publicViewerFallback(controller, p.provider, ticket, { maxRetries });
+
+			for (let round = 0; round < rounds; round++) {
+				await flush();
+				p.statuses[round].resolve({ initialized: true, viewerPublic: true });
+				await flush();
+				p.entries[round].answer.resolve({ success: false, superseded: true });
+				await flush();
+				p.none(ctx.last(), { clear: true });
+			}
+
+			await expect(fallback).resolves.toMatchObject({
+				outcome: 'confirmed',
+				snapshot: { status: 'none' }
+			});
+			expect(p.statuses).toHaveLength(rounds);
+			expect(p.entries).toHaveLength(rounds);
+			expect(p.probes.length - probesBefore).toBe(rounds);
+		});
+	}
+
+	it('a failed mint (403 / network, not superseded) is not retried: the confirmed `none` stands', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNone(ctx);
+		const probes = p.probes.length;
+		const fallback = publicViewerFallback(controller, p.provider, ticket);
+		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		await flush();
+		p.entries[0].answer.resolve({ success: false });
+
+		await expect(fallback).resolves.toMatchObject({
+			outcome: 'confirmed',
+			snapshot: { status: 'none' }
+		});
+		expect(p.statuses).toHaveLength(1);
+		expect(p.probes).toHaveLength(probes);
 	});
 });
 
@@ -1080,6 +1238,34 @@ describe('an ownerless active in between (owner review of #265 P2; S-10, I-24)',
 	});
 });
 
+describe('the public viewer is not a user (S-93, I-24; independent audit of 実装-3 P2-1)', () => {
+	it('S-93: none -> P (S-42) -> own login in the same tab (hold) -> A raises no pendingOwnerChange', async () => {
+		const { p, controller, settleTo } = setup();
+		await settleTo(null);
+		await settleTo(PUBLIC);
+		expect(controller.snapshot.owner).toBe('public-viewer');
+		p.change(); // the login stored A's token (reported): hold
+		expect(controller.snapshot.status).toBe('unknown');
+		await settleTo(ALICE);
+		expect(controller.snapshot).toMatchObject({ owner: 'account:alice', pendingOwnerChange: null });
+		// A later real change of user is still reported from A, not from P.
+		p.change();
+		await settleTo(BOB);
+		expect(controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:alice',
+			to: 'account:bob'
+		});
+	});
+
+	it('S-93: A -> none -> P raises nothing either (the reverse passes through none)', async () => {
+		const { controller, settleTo } = setup();
+		await settleTo(ALICE);
+		await settleTo(null);
+		await settleTo(PUBLIC);
+		expect(controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+});
+
 describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () => {
 	it('S-76: A -> none -> B raises no pendingOwnerChange; A -> unknown -> B does', async () => {
 		const { p, controller, settleTo } = setup();
@@ -1209,17 +1395,31 @@ describe('§3.1 generation table (I-2)', () => {
 });
 
 describe('provider binding', () => {
-	it('a provider without resolve is wrapped in the compatibility adapter (統合修正 15)', async () => {
-		const legacy: AuthProvider = {
+	it('v2.0.0: a provider without resolve/credentialRevision/onCredentialChanged is rejected (no silent adapter)', () => {
+		const legacy = {
 			login: async () => ({ success: true }),
 			logout: async () => {},
 			check: vi.fn(async () => false),
 			getIdentity: vi.fn(async () => null)
 		};
-		const controller = createSessionController(legacy, { onNone: vi.fn(), onActive: vi.fn() });
+		expect(() => createSessionController(legacy as unknown as AuthProvider)).toThrow(TypeError);
+		expect(legacy.check).not.toHaveBeenCalled();
+	});
+
+	it('an explicitly adapted pre-v2 provider works (the adapter is the migration scaffold)', async () => {
+		const check = vi.fn(async () => false);
+		const controller = createSessionController(
+			adaptLegacyAuthProvider({
+				login: async () => ({ success: true }),
+				logout: async () => {},
+				check,
+				getIdentity: async () => null
+			}),
+			{ onNone: vi.fn(), onActive: vi.fn() }
+		);
 		await expect(controller.resolve()).resolves.toMatchObject({ outcome: 'confirmed' });
 		expect(controller.snapshot.status).toBe('none');
-		expect(legacy.check).toHaveBeenCalledTimes(1);
+		expect(check).toHaveBeenCalledTimes(1);
 	});
 
 	it('a listener that throws does not stop the others', async () => {

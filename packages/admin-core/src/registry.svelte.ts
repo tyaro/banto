@@ -40,19 +40,21 @@ const NOT_INITIALIZED_MESSAGE =
  * Register providers/resources for the app. Safe to call again (e.g. in
  * tests) to replace them.
  *
- * Issue #260 (実装-2, 統合修正 15): also binds the default
- * `SessionController` (`getSessionController()`) to `authProvider`. A
- * provider without `resolve`/`credentialRevision`/`onCredentialChanged` is
- * wrapped in `adaptLegacyAuthProvider` for the controller - see that
- * adapter's doc for what it cannot guarantee (no cross-tab switch detection,
- * no compare-and-set).
+ * Issue #260: also binds the default `SessionController`
+ * (`getSessionController()`) to `authProvider`. Since v2.0.0 the provider
+ * must implement `resolve`/`credentialRevision`/`onCredentialChanged`
+ * (a `TypeError` otherwise, before anything is replaced). A pre-v2 provider
+ * can be passed through `adaptLegacyAuthProvider` - see that adapter's doc
+ * for what it cannot guarantee (no cross-tab switch detection, no
+ * compare-and-set). Calling this again with a DIFFERENT `authProvider`
+ * puts the session on hold (unknown) and confirms it with the new one.
  */
 export function initBanto(config: InitBantoConfig): void {
+	bindDefaultSessionProvider(config.authProvider);
 	dataProvider = config.dataProvider;
 	authProvider = config.authProvider;
 	notifier = config.notifier ?? null;
 	resources = config.resources;
-	bindDefaultSessionProvider(config.authProvider);
 }
 
 export function getDataProvider(): DataProvider {

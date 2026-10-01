@@ -107,7 +107,7 @@
   （`settle_session`）で同じ判断。
 - 「照合できなかった」は「無効」と区別してフロントまで運ぶ。`/api/auth/check` の
   500 や接続不能で `AuthProvider.check()` は reject し、保護ルート
-  （`resolveProtectedSession`）はログイン画面へも閲覧者へも切り替えず、トークンを
+  （`resolveProtectedSession`。v2.0.0 で SessionController の `resolveSettled` に置き換え、ADR-0016）はログイン画面へも閲覧者へも切り替えず、トークンを
   残したままエラー画面と再試行にする。
 - SSE（`/api/events`）は接続時に照合し、開いている間も keepalive と同じ間隔
   （15 秒、`REVALIDATE_INTERVAL`）ごとに照合し直して、失効していればストリームを
@@ -135,7 +135,7 @@
   コードが見える: 再接続が `401`（`require_auth` が照合して無効と答えた。照合
   できなければ `500` になる）なら、そのトークンでの再接続をやめ、別のトークン
   （再ログイン）が現れるまで要求しない。`connectEvents` がそれを
-  `confirmSessionEnded` に渡し、`check()` が `false` を返したときだけ
+  `confirmSessionEnded`（v2.0.0 で `controller.signal()` に置き換え、ADR-0016）に渡し、`check()` が `false` を返したときだけ
   `onSessionEnded` の購読者に知らせる（重なった確認でも通知は 1 回。確認の途中で
   届いた新しい知らせは、その確認の結果では打ち消さずにもう一度確認する）。
   購読者がいないとき（最初の保護ルートの読み込み中・ログイン画面）に確定した失効は

@@ -12,11 +12,11 @@
  */
 import { vi } from 'vitest';
 import type {
+	AuthProvider,
 	CredentialRevision,
 	Identity,
 	ResolvedAuth,
-	SessionKind,
-	StandardAuthProvider
+	SessionKind
 } from '../src/provider';
 import { ProviderError } from '../src/errors';
 
@@ -109,11 +109,9 @@ export function makeProbeProvider(options: { revision?: number } = {}) {
 	}[] = [];
 	const rev = (n = revision) => `${n}.0` as CredentialRevision;
 
-	const provider: StandardAuthProvider = {
+	const provider: AuthProvider = {
 		login: vi.fn(async () => ({ success: true })),
 		logout: vi.fn(async () => {}),
-		check: vi.fn(async () => true),
-		getIdentity: vi.fn(async () => null),
 		status: vi.fn(() => {
 			const answer = deferred<{ initialized: boolean; viewerPublic?: boolean }>();
 			statuses.push(answer);

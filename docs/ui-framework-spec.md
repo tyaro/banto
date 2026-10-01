@@ -1,5 +1,7 @@
 # Banto（番頭） — Tauriフルスタック管理画面フレームワーク 仕様 (v0.8)
 
+<!-- 2026-09-30: §3.3 の AuthProvider を v2.0.0 の形（resolve / credentialRevision /
+     onCredentialChanged、Issue #260・ADR-0016）に更新。§8.1 のガードも同じ。 -->
 <!-- 2026-09-29: §4.1 に SnapshotListResource（境界 asOfId 付きのブロック読み込み、
      Issue #248）を追記。 -->
 <!-- v0.8（2026-08-14）: §6.4 デザインルール収載、§14 の解決済み未決事項
@@ -158,15 +160,19 @@ refineの`authProvider`に相当。
 interface AuthProvider {
   login(params): Promise<AuthResult>
   logout(): Promise<void>
-  check(): Promise<boolean>            // ルートガードが使用
-  getIdentity(): Promise<Identity | null>
-  onError(error): Promise<{ logout?: boolean }>
+  resolve(options?): Promise<ResolvedAuth>   // 1 往復でセッションを答える（v2.0.0。旧 check/getIdentity）
+  credentialRevision(): CredentialRevision   // 資格情報の revision（不透明、等値比較だけ）
+  onCredentialChanged(listener): () => void  // 資格情報の変化の通知
 }
 ```
 
-- テンプレートアプリの認証ガード（9.1節）は`check()`を呼ぶだけにし、
-  認証方式（ローカル認証/外部API/OS資格情報ストア）はプロバイダ実装の
-  差し替えで対応する。
+- テンプレートアプリの認証ガード（9.1節）は SessionController
+  （`resolveSettled()`）でセッションを確定するだけにし、認証方式（ローカル
+  認証/外部API/OS資格情報ストア）はプロバイダ実装の差し替えで対応する。
+  2026-09-30（v2.0.0、Issue #260）: `check()`/`getIdentity()` は契約から外れ、
+  `resolve()` の 1 往復に置き換わった（`onError` は未実装のまま）。詳細は
+  [session-controller-design.md](session-controller-design.md) §5.2 と
+  [ADR-0016](adr/0016-session-controller-single-writer.md)。
 
 ### 3.4 コンポーザブル（Runesベース）
 
@@ -511,8 +517,9 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
   - `/(app)/items` — CRUD一覧（グリッド）
   - `/(app)/items/[id]` — CRUD詳細/編集（スキーマ駆動フォーム）
   - `/(app)/settings` — 設定+テーマ切替
-- `(app)`レイアウトグループに認証ガード（`AuthProvider.check()`を使用、
-  未ログインなら`/login`へリダイレクト）を実装。
+- `(app)`レイアウトグループに認証ガード（SessionController の
+  `resolveSettled()` を使用、未ログインなら`/login`へリダイレクト。v2.0.0 までは
+  `AuthProvider.check()`）を実装。
 - リソース定義（3.1節）からナビゲーションとCRUDルートを導出する。
   SvelteKitのファイルベースルーティングとの整合方法（動的ルート
   `/(app)/[resource]` で汎用ページを受けるか、リソースごとに薄いルート

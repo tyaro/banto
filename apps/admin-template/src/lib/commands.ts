@@ -18,6 +18,7 @@ import { base } from '$app/paths';
 import * as m from '$lib/paraglide/messages';
 import type { PaletteCommand } from '@banto/admin-core';
 import { logoutAndLeave } from './banto/logout.svelte';
+import { notifyLogoutOutcome } from './banto/logoutNotice';
 import { navItems } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
@@ -91,7 +92,7 @@ function sessionCommands(): PaletteCommand[] {
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
 				// Issue #215/#255, #260: same as Header.svelte's logout.
-				await logoutAndLeave(() => goto(`${base}/login`));
+				await logoutAndLeave(() => goto(`${base}/login`), { notify: notifyLogoutOutcome });
 			}
 		}
 	];

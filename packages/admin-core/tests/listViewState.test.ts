@@ -12,7 +12,8 @@ import {
 	saveListViewState,
 	takeLastEditedRecord
 } from '../src/listViewState';
-import { beginSession, endSession } from '../src/sessionLifecycle';
+import type { Identity } from '../src/provider';
+import { getSessionController } from '../src/sessionController.svelte';
 import {
 	currentSessionScope,
 	isCurrentSessionScope,
@@ -25,10 +26,30 @@ const ALICE = { id: 'alice', name: 'Alice' };
 const BOB = { id: 'bob', name: 'Bob' };
 
 /**
+ * Issue #260 実装-3: the pre-v2 `beginSession`/`endSession` are gone. These
+ * tests only need the default controller to commit a session synchronously,
+ * so they use its two synchronous entrances with a current ticket: `adopt()`
+ * (an app-confirmed session; the owner key is the same `account:${id}` /
+ * `public-viewer` a provider answer gets) and `end()` - both run the
+ * controller's own hygiene (`onActive` purges other owners' entries,
+ * `onNone` clears everything, I-6).
+ */
+function beginSession(identity: Identity): void {
+	const controller = getSessionController();
+	const kind = identity.publicViewer === true ? 'publicViewer' : 'account';
+	controller.adopt(identity, kind, controller.ticket());
+}
+
+function endSession(): void {
+	const controller = getSessionController();
+	controller.end('test', controller.ticket());
+}
+
+/**
  * Every test starts inside a confirmed session for ALICE (`scope`). Node has
- * no global `sessionStorage`, so `beginSession`/`endSession`'s own
- * purge/clear of the GLOBAL storage no-op here; each test passes its own
- * in-memory storage explicitly.
+ * no global `sessionStorage`, so the controller's own purge/clear of the
+ * GLOBAL storage no-ops here; each test passes its own in-memory storage
+ * explicitly.
  */
 let scope: SessionScope;
 beforeEach(() => {
@@ -385,7 +406,7 @@ describe('clearAllListViewState', () => {
 // its back (another tab's "Remember me" login, a reload) - state saved for
 // one owner must never be handed to another, whatever path changed it.
 describe('owner matching (#255 4th review)', () => {
-	it('A saves -> B (confirmed by beginSession) restores nothing, from any function', () => {
+	it('A saves -> B (confirmed) restores nothing, from any function', () => {
 		const storage = makeMemoryStorage();
 		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
 		saveActiveListMode(scope, 'items', 'client', storage);
@@ -446,8 +467,7 @@ describe('owner matching (#255 4th review)', () => {
 
 	describe('no confirmed owner: nothing is saved or restored (fail closed)', () => {
 		it.each([
-			['before any beginSession / after endSession', () => endSession()],
-			['identity null (provider cannot say who)', () => beginSession(null)],
+			['after the session ended', () => endSession()],
 			['identity without an id', () => beginSession({ id: '', name: 'nobody' })]
 		])('%s', (_label, enter) => {
 			const storage = makeMemoryStorage();
@@ -522,13 +542,14 @@ describe('writes from a stale scope are refused (#255 4th review)', () => {
 });
 
 // Hygiene on top of the owner check: the GLOBAL sessionStorage is tidied by
-// beginSession (another owner's entries) and endSession (everything).
-describe('beginSession / endSession tidy the global sessionStorage', () => {
+// the controller when an owner is confirmed (another owner's entries) and
+// when `none` is (everything).
+describe('the controller tidies the global sessionStorage', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
 
-	it("beginSession(B) removes A's entries; beginSession(A) again keeps them", () => {
+	it("confirming B removes A's entries; confirming A again keeps them", () => {
 		const storage = makeMemoryStorage();
 		vi.stubGlobal('sessionStorage', storage);
 		saveLastOpenedId(scope, 'items', 42);
@@ -540,7 +561,7 @@ describe('beginSession / endSession tidy the global sessionStorage', () => {
 		expect(storage.getItem('banto.listView.lastOpened.items')).toBeNull();
 	});
 
-	it('endSession removes every entry', () => {
+	it('confirming `none` removes every entry', () => {
 		const storage = makeMemoryStorage();
 		vi.stubGlobal('sessionStorage', storage);
 		saveLastOpenedId(scope, 'items', 42);

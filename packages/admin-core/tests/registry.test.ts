@@ -7,7 +7,15 @@ import {
 	listResources,
 	notify
 } from '../src/registry.svelte';
-import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
+import type {
+	AuthProvider,
+	CredentialRevision,
+	DataProvider,
+	Notifier,
+	ResolvedAuth
+} from '../src/provider';
+import { adaptLegacyAuthProvider } from '../src/providers/legacyAdapter';
+import { STUB_SESSION } from './stubAuth';
 
 function makeProviders(): { dataProvider: DataProvider; authProvider: AuthProvider } {
 	const dataProvider: DataProvider = {
@@ -20,8 +28,7 @@ function makeProviders(): { dataProvider: DataProvider; authProvider: AuthProvid
 	const authProvider: AuthProvider = {
 		login: async () => ({ success: true }),
 		logout: async () => {},
-		check: async () => true,
-		getIdentity: async () => null
+		...STUB_SESSION
 	};
 	return { dataProvider, authProvider };
 }
@@ -60,16 +67,16 @@ describe('registry', () => {
 			const authProvider: AuthProvider = Object.freeze({
 				login: async () => ({ success: true }),
 				logout: async () => {},
-				check: async () => true,
-				getIdentity: async () => null
+				...STUB_SESSION
 			});
 			initBanto({ dataProvider, authProvider, resources: [] });
 			expect(getAuthProvider()).toBe(authProvider);
-			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await expect(getAuthProvider().resolve()).resolves.toMatchObject({ status: 'none' });
 			await expect(getAuthProvider().logout()).resolves.toBeUndefined();
 		});
 
 		it('a class-based provider (prototype methods, state on `this`)', async () => {
+			const revision = '1.0' as CredentialRevision;
 			class MyAuth implements AuthProvider {
 				private signedIn = false;
 				async login() {
@@ -79,25 +86,35 @@ describe('registry', () => {
 				async logout() {
 					this.signedIn = false;
 				}
-				async check() {
-					return this.signedIn;
+				async resolve(): Promise<ResolvedAuth> {
+					return this.signedIn
+						? {
+								status: 'active',
+								checked: revision,
+								current: revision,
+								identity: { id: 'alice', name: 'Alice' }
+							}
+						: { status: 'none', checked: revision, current: revision };
 				}
-				async getIdentity() {
-					return this.signedIn ? { id: 'alice', name: 'Alice' } : null;
+				credentialRevision() {
+					return revision;
+				}
+				onCredentialChanged() {
+					return () => {};
 				}
 			}
 			const authProvider = new MyAuth();
 			initBanto({ dataProvider, authProvider, resources: [] });
 			expect(getAuthProvider()).toBe(authProvider);
 			await getAuthProvider().login({});
-			await expect(getAuthProvider().check()).resolves.toBe(true);
-			await expect(getAuthProvider().getIdentity()).resolves.toEqual({
-				id: 'alice',
-				name: 'Alice'
+			await expect(getAuthProvider().resolve()).resolves.toMatchObject({
+				status: 'active',
+				identity: { id: 'alice', name: 'Alice' }
 			});
 		});
 
 		it('a plain object sharing state through `this`', async () => {
+			const revision = '1.0' as CredentialRevision;
 			const authProvider = {
 				signedIn: false,
 				async login() {
@@ -107,19 +124,58 @@ describe('registry', () => {
 				async logout() {
 					this.signedIn = false;
 				},
-				async check() {
-					return this.signedIn;
+				async resolve(): Promise<ResolvedAuth> {
+					return this.signedIn
+						? {
+								status: 'active',
+								checked: revision,
+								current: revision,
+								identity: { id: 'alice', name: 'Alice' }
+							}
+						: { status: 'none', checked: revision, current: revision };
 				},
-				async getIdentity() {
-					return null;
-				}
+				credentialRevision: () => revision,
+				onCredentialChanged: () => () => {}
 			};
 			initBanto({ dataProvider, authProvider, resources: [] });
 			await getAuthProvider().login({});
-			await expect(getAuthProvider().check()).resolves.toBe(true);
+			await expect(getAuthProvider().resolve()).resolves.toMatchObject({ status: 'active' });
 			await getAuthProvider().logout();
-			await expect(getAuthProvider().check()).resolves.toBe(false);
+			await expect(getAuthProvider().resolve()).resolves.toMatchObject({ status: 'none' });
 		});
+	});
+
+	// Issue #260 実装-3 (design §5.2, owner decision 2): the three methods are
+	// required. A pre-v2 provider is not silently adapted any more.
+	it('rejects a provider without resolve/credentialRevision/onCredentialChanged, replacing nothing', () => {
+		const { dataProvider, authProvider } = makeProviders();
+		initBanto({ dataProvider, authProvider, resources: [] });
+		const legacy = {
+			login: async () => ({ success: true }),
+			logout: async () => {},
+			check: async () => true,
+			getIdentity: async () => null
+		};
+		expect(() =>
+			initBanto({
+				dataProvider,
+				authProvider: legacy as unknown as AuthProvider,
+				resources: []
+			})
+		).toThrow(TypeError);
+		expect(getAuthProvider()).toBe(authProvider);
+	});
+
+	it('accepts a pre-v2 provider wrapped in adaptLegacyAuthProvider', async () => {
+		const { dataProvider } = makeProviders();
+		const authProvider = adaptLegacyAuthProvider({
+			login: async () => ({ success: true }),
+			logout: async () => {},
+			check: async () => false,
+			getIdentity: async () => null
+		});
+		initBanto({ dataProvider, authProvider, resources: [] });
+		await expect(getAuthProvider().resolve()).resolves.toMatchObject({ status: 'none' });
 	});
 
 	it('getResource throws for an unknown resource', () => {

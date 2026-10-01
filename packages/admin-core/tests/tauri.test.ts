@@ -158,40 +158,35 @@ describe('createTauriAuthProvider', () => {
 		expect(invoke).toHaveBeenCalledWith('auth_logout', undefined);
 	});
 
-	it('check calls auth_check and returns its boolean result', async () => {
-		const invoke = vi.fn().mockResolvedValue(true);
+	// v2.0.0 (design §5.4): no check()/getIdentity() - resolve() asks
+	// `auth_resolve` once (tauriRevision.test.ts has the revision cases).
+	it('has no check()/getIdentity(); resolve() passes the identity and role through (spec M10 RBAC)', async () => {
+		const invoke = vi.fn().mockResolvedValue({
+			identity: { id: 'owner', name: 'オーナー', role: 'admin' },
+			kind: 'account',
+			checked: 1,
+			current: 1,
+			stale: false
+		});
 		const provider = createTauriAuthProvider({ invoke });
 
-		await expect(provider.check()).resolves.toBe(true);
-		expect(invoke).toHaveBeenCalledWith('auth_check', undefined);
+		expect('check' in provider).toBe(false);
+		expect('getIdentity' in provider).toBe(false);
+		await expect(provider.resolve()).resolves.toMatchObject({
+			status: 'active',
+			kind: 'account',
+			identity: { id: 'owner', name: 'オーナー', role: 'admin' }
+		});
+		expect(invoke).toHaveBeenCalledWith('auth_resolve', undefined);
 	});
 
-	it('getIdentity calls auth_identity and returns the identity', async () => {
-		const invoke = vi.fn().mockResolvedValue({ id: 'admin', name: '管理者' });
+	it('resolve() maps a null identity (logged out) to none', async () => {
+		const invoke = vi
+			.fn()
+			.mockResolvedValue({ identity: null, kind: null, checked: 2, current: 2, stale: false });
 		const provider = createTauriAuthProvider({ invoke });
 
-		const identity = await provider.getIdentity();
-
-		expect(invoke).toHaveBeenCalledWith('auth_identity', undefined);
-		expect(identity).toEqual({ id: 'admin', name: '管理者' });
-	});
-
-	it('getIdentity maps a null identity (logged out) to null', async () => {
-		const invoke = vi.fn().mockResolvedValue(null);
-		const provider = createTauriAuthProvider({ invoke });
-
-		const identity = await provider.getIdentity();
-
-		expect(identity).toBeNull();
-	});
-
-	it('getIdentity passes the role through unchanged (spec M10 RBAC)', async () => {
-		const invoke = vi.fn().mockResolvedValue({ id: 'owner', name: 'オーナー', role: 'admin' });
-		const provider = createTauriAuthProvider({ invoke });
-
-		const identity = await provider.getIdentity();
-
-		expect(identity).toEqual({ id: 'owner', name: 'オーナー', role: 'admin' });
+		await expect(provider.resolve()).resolves.toMatchObject({ status: 'none' });
 	});
 
 	it('a rejected invoke() carrying a forbidden ErrorBody (spec M10 RBAC) rethrows faithfully', async () => {

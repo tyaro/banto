@@ -56,7 +56,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0013](0013-sysinfo-system-metrics-feature.md)      | CPU/メモリ使用率は `sysinfo` を feature 限定で採用して共通 API にする（ADR-0002 の例外）                                                    | Accepted |
 | [0014](0014-account-bound-session-revocation.md)    | セッションは行 id + 認証の世代に結び付け、要求ごとに DB で確かめて失効させる                                                                | Accepted |
 | [0015](0015-snapshot-list-resource.md)              | 通知なしに増減する一覧は境界（`asOfId`）付きの別クラス `SnapshotListResource` で読み、取得関数を注入する                                    | Accepted |
-| [0016](0016-session-controller-single-writer.md)    | フロントのセッションの確定は 1 つの書き手（SessionController）に寄せ、provider は 1 往復で答え、資格情報の書き込みは compare-and-set にする | Proposed |
+| [0016](0016-session-controller-single-writer.md)    | フロントのセッションの確定は 1 つの書き手（SessionController）に寄せ、provider は 1 往復で答え、資格情報の書き込みは compare-and-set にする | Accepted |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

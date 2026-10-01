@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
-	import { getAuthProvider, isProviderError } from '@banto/admin-core';
+	import { getAuthProvider, isProviderError, notify } from '@banto/admin-core';
 	import * as m from '$lib/paraglide/messages';
 	import { bantoReady, getBantoMode } from '$lib/banto/setup';
 	import { applyAuthSettings } from '$lib/banto/authAdmin';
@@ -86,6 +86,12 @@
 			const result = await getAuthProvider().login(params);
 			if (result.success) {
 				goto(`${base}/dashboard`);
+			} else if (result.superseded) {
+				// Issue #260 (design §6.1): another login/logout finished first
+				// (here or in another tab) and this one stored nothing. The
+				// protected guard confirms whatever session is stored now.
+				notify('info', m['auth.loginSuperseded']());
+				goto(`${base}/dashboard`);
 			} else {
 				error = result.error ?? m['auth.loginFailed']();
 			}
@@ -116,6 +122,9 @@
 			}
 			const result = await setup({ username, password, displayName });
 			if (result.success) {
+				goto(`${base}/dashboard`);
+			} else if (result.superseded) {
+				notify('info', m['auth.loginSuperseded']());
 				goto(`${base}/dashboard`);
 			} else {
 				error = result.error ?? m['auth.setupFailed']();

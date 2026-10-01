@@ -255,164 +255,6 @@ describe('createHttpAuthProvider', () => {
 		});
 	});
 
-	it('check returns false without calling fetch when there is no stored token', async () => {
-		const fetchFn = vi.fn();
-		const provider = createHttpAuthProvider({ fetchFn });
-
-		await expect(provider.check()).resolves.toBe(false);
-		expect(fetchFn).not.toHaveBeenCalled();
-	});
-
-	it('check calls GET /api/auth/check with the bearer token and returns its boolean body', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, true));
-		const provider = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem('banto.auth.token', 'tok');
-
-		await expect(provider.check()).resolves.toBe(true);
-		expect(fetchFn).toHaveBeenCalledWith('/api/auth/check', {
-			method: 'GET',
-			headers: { 'X-Banto-Client': 'banto', Authorization: 'Bearer tok' },
-			body: undefined
-		});
-	});
-
-	it('check clears the stored token and returns false on a 401', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
-		const provider = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem('banto.auth.token', 'stale-token');
-
-		await expect(provider.check()).resolves.toBe(false);
-		expect(provider.getToken()).toBeNull();
-	});
-
-	// Issue #241: what check() does with the stored token, for a regular
-	// (sessionStorage) and a "Remember me" (localStorage) login alike.
-	describe('check() and the stored token (Issue #241)', () => {
-		const cases: {
-			label: string;
-			reply: () => Promise<Response>;
-			outcome: 'true' | 'false' | 'rejects';
-			cleared: boolean;
-		}[] = [
-			{
-				label: '200 true',
-				reply: async () => jsonResponse(200, true),
-				outcome: 'true',
-				cleared: false
-			},
-			{
-				label: '200 false',
-				reply: async () => jsonResponse(200, false),
-				outcome: 'false',
-				cleared: true
-			},
-			{
-				label: '401',
-				reply: async () => new Response(null, { status: 401 }),
-				outcome: 'false',
-				cleared: true
-			},
-			{
-				label: '500',
-				reply: async () => jsonResponse(500, { kind: 'storage', message: 'database is locked' }),
-				outcome: 'rejects',
-				cleared: false
-			},
-			{
-				label: 'unreachable',
-				reply: async () => {
-					throw new TypeError('Failed to fetch');
-				},
-				outcome: 'rejects',
-				cleared: false
-			},
-			{
-				label: '200 with a non-boolean body',
-				reply: async () => jsonResponse(200, { unexpected: true }),
-				outcome: 'rejects',
-				cleared: false
-			}
-		];
-
-		for (const remember of [false, true]) {
-			const storage = remember ? 'localStorage (Remember me)' : 'sessionStorage';
-			for (const { label, reply, outcome, cleared } of cases) {
-				it(`${label}: ${outcome}, ${cleared ? 'clears' : 'keeps'} the token in ${storage}`, async () => {
-					const provider = createHttpAuthProvider({ fetchFn: vi.fn(reply) });
-					(remember ? localStorage : sessionStorage).setItem('banto.auth.token', 'tok');
-
-					const result = provider.check();
-					if (outcome === 'rejects') await expect(result).rejects.toSatisfy(isProviderError);
-					else await expect(result).resolves.toBe(outcome === 'true');
-
-					expect(provider.getToken()).toBe(cleared ? null : 'tok');
-					expect(localStorage.getItem('banto.auth.token')).toBe(
-						!cleared && remember ? 'tok' : null
-					);
-					expect(sessionStorage.getItem('banto.auth.token')).toBe(
-						!cleared && !remember ? 'tok' : null
-					);
-				});
-			}
-		}
-
-		for (const [label, reply] of [
-			['200 false', () => jsonResponse(200, false)],
-			['401', () => new Response(null, { status: 401 })]
-		] as const) {
-			it(`${label} for a token replaced by a new login while in flight keeps the new token`, async () => {
-				let answer!: (response: Response) => void;
-				const fetchFn = vi.fn(() => new Promise<Response>((resolve) => (answer = resolve)));
-				const provider = createHttpAuthProvider({ fetchFn });
-				sessionStorage.setItem('banto.auth.token', 'old');
-
-				const result = provider.check();
-				localStorage.setItem('banto.auth.token', 'new');
-				answer(reply());
-
-				await expect(result).resolves.toBe(false);
-				expect(provider.getToken()).toBe('new');
-			});
-		}
-
-		it('a check that never answers does not hold up a later one', async () => {
-			const fetchFn = vi
-				.fn()
-				.mockImplementationOnce(
-					() =>
-						new Promise<Response>(() => {
-							// hangs
-						})
-				)
-				.mockResolvedValueOnce(jsonResponse(200, false));
-			const provider = createHttpAuthProvider({ fetchFn });
-			sessionStorage.setItem('banto.auth.token', 'tok');
-
-			void provider.check();
-			await expect(provider.check()).resolves.toBe(false);
-			expect(fetchFn).toHaveBeenCalledTimes(2);
-			expect(provider.getToken()).toBeNull();
-		});
-
-		it('overlapping checks of an old and a new token each keep to their own token', async () => {
-			const answers: ((response: Response) => void)[] = [];
-			const fetchFn = vi.fn(() => new Promise<Response>((resolve) => answers.push(resolve)));
-			const provider = createHttpAuthProvider({ fetchFn });
-			sessionStorage.setItem('banto.auth.token', 'old');
-
-			const first = provider.check();
-			sessionStorage.setItem('banto.auth.token', 'new');
-			const second = provider.check();
-			expect(fetchFn).toHaveBeenCalledTimes(2);
-			answers[0](jsonResponse(200, false));
-			answers[1](jsonResponse(200, true));
-
-			await expect(first).resolves.toBe(false);
-			await expect(second).resolves.toBe(true);
-			expect(provider.getToken()).toBe('new');
-		});
-	});
-
 	it('logout POSTs to /api/auth/logout and clears the stored token', async () => {
 		const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
 		const provider = createHttpAuthProvider({ fetchFn });
@@ -438,55 +280,21 @@ describe('createHttpAuthProvider', () => {
 		expect(provider.getToken()).toBeNull();
 	});
 
-	it('getIdentity returns null without calling fetch when there is no stored token', async () => {
-		const fetchFn = vi.fn();
-		const provider = createHttpAuthProvider({ fetchFn });
-
-		await expect(provider.getIdentity()).resolves.toBeNull();
-		expect(fetchFn).not.toHaveBeenCalled();
-	});
-
-	it('getIdentity calls GET /api/auth/identity and returns the parsed identity', async () => {
-		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { id: 'admin', name: '管理者' }));
-		const provider = createHttpAuthProvider({ fetchFn });
-		sessionStorage.setItem('banto.auth.token', 'tok');
-
-		await expect(provider.getIdentity()).resolves.toEqual({ id: 'admin', name: '管理者' });
-	});
-
-	// Issue #215/#255 6th review: `null` means "no session", so only a 401 maps
-	// to it; a failure to FETCH the identity rejects (the AuthProvider
-	// contract, same split as check()).
-	it('getIdentity resolves null on a 401, and rejects on a 500 or a network failure', async () => {
-		sessionStorage.setItem('banto.auth.token', 'tok');
-		const unauthorized = createHttpAuthProvider({
-			fetchFn: vi.fn().mockResolvedValue(jsonResponse(401, null))
-		});
-		await expect(unauthorized.getIdentity()).resolves.toBeNull();
-
-		const failing = createHttpAuthProvider({
-			fetchFn: vi.fn().mockResolvedValue(jsonResponse(500, { kind: 'other', message: 'db down' }))
-		});
-		await expect(failing.getIdentity()).rejects.toSatisfy(isProviderError);
-
-		const offline = createHttpAuthProvider({
-			fetchFn: vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
-		});
-		await expect(offline.getIdentity()).rejects.toSatisfy(isProviderError);
-		expect(sessionStorage.getItem('banto.auth.token')).toBe('tok');
-	});
-
-	it('getIdentity passes the role through unchanged (spec M10 RBAC)', async () => {
+	// v2.0.0 (design §5.4): no check()/getIdentity() any more - resolve() is
+	// the one question (its cases are in httpRevision.test.ts). The identity
+	// it answers with is the server's, role included.
+	it('has no check()/getIdentity(); resolve() passes the role through unchanged (spec M10 RBAC)', async () => {
 		const fetchFn = vi
 			.fn()
 			.mockResolvedValue(jsonResponse(200, { id: 'owner', name: 'オーナー', role: 'admin' }));
 		const provider = createHttpAuthProvider({ fetchFn });
 		sessionStorage.setItem('banto.auth.token', 'tok');
 
-		await expect(provider.getIdentity()).resolves.toEqual({
-			id: 'owner',
-			name: 'オーナー',
-			role: 'admin'
+		expect('check' in provider).toBe(false);
+		expect('getIdentity' in provider).toBe(false);
+		await expect(provider.resolve()).resolves.toMatchObject({
+			status: 'active',
+			identity: { id: 'owner', name: 'オーナー', role: 'admin' }
 		});
 	});
 

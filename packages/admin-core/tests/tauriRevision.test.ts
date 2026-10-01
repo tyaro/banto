@@ -116,6 +116,37 @@ describe('Tauri revision from operation responses (I-19, I-23)', () => {
 		expect(changed).toHaveBeenCalledTimes(1);
 	});
 
+	it('S-95 (provider half): a login refused in auth-disabled mode keeps the revision, reports nothing, and carries the error', async () => {
+		const { auth, changed, last } = setup();
+		const resolve = auth.resolve();
+		last('auth_resolve').reply.resolve({
+			identity: { id: '0', name: 'ローカルユーザー', role: 'admin' },
+			kind: 'local',
+			checked: 3,
+			current: 3,
+			stale: false
+		});
+		await resolve;
+		const before = auth.credentialRevision();
+
+		const login = auth.login({ username: 'admin', password: 'pw' });
+		last('auth_login').reply.resolve({
+			success: false,
+			error:
+				'ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください',
+			superseded: false,
+			seq: 3
+		});
+
+		await expect(login).resolves.toEqual({
+			success: false,
+			error:
+				'ログイン不要モード中はアカウントでログインできません。設定で通常のログインに戻してください'
+		});
+		expect(auth.credentialRevision()).toBe(before);
+		expect(changed).not.toHaveBeenCalled();
+	});
+
 	it('S-17 (provider half): an overtaken logout returns the seq the login already reported - no notification', async () => {
 		const { auth, changed, last } = setup();
 		const logout = auth.logout();
@@ -254,14 +285,106 @@ describe('Tauri resolve(): auth_resolve once (§5.3)', () => {
 		await expect(resolving).resolves.toMatchObject({ status: 'active', kind: 'local' });
 	});
 
-	it('S-77: an answer the backend reports stale rejects with StaleAnswerError and changes nothing', async () => {
+	it('S-77/S-97: an answer the backend reports stale rejects with StaleAnswerError, but its `current` is observed (I-23), without a notification', async () => {
 		const { auth, changed, last } = setup();
 		const resolving = auth.resolve();
 		last('auth_resolve').reply.resolve({ ...resolveAnswer(null, 1, 2), stale: true });
 
 		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
-		expect(auth.credentialRevision()).toBe('0.0');
+		expect(auth.credentialRevision()).toBe('2.0');
 		expect(changed).not.toHaveBeenCalled();
+	});
+
+	// S-100 (re-review of #266 P1): an `auth_resolve` `current` seen while a
+	// state-changing command is pending is kept and collected when the last
+	// pending command ends - in the same continuation as that command's own
+	// `seq`, so there is exactly one notification.
+	it('S-100: a stale `current` seen during a pending command is collected when the command fails without a seq (one notification)', async () => {
+		const { auth, changed, last } = setup();
+		const changing = auth.changePassword!('old', 'newpassword');
+		const resolving = auth.resolve();
+		last('auth_resolve').reply.resolve({ ...resolveAnswer(null, 1, 2), stale: true });
+		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
+		expect(auth.credentialRevision()).toBe('0.0'); // kept, not observed yet
+
+		last('auth_change_password').reply.reject({ kind: 'forbidden' });
+		await expect(changing).resolves.toMatchObject({ success: false });
+		expect(auth.credentialRevision()).toBe('2.0');
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('S-100: the command answers with a newer seq - one notification, its seq', async () => {
+		const { auth, changed, last } = setup();
+		const login = auth.login({ username: 'b', password: 'pw' });
+		const resolving = auth.resolve();
+		last('auth_resolve').reply.resolve({ ...resolveAnswer(B, 1, 2), stale: true });
+		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
+
+		last('auth_login').reply.resolve({ success: true, error: null, superseded: false, seq: 3 });
+		await login;
+		expect(auth.credentialRevision()).toBe('3.0');
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('S-75/S-100: the command answers with the same seq as the kept one - one notification', async () => {
+		const { auth, changed, last } = setup();
+		const login = auth.login({ username: 'b', password: 'pw' });
+		const resolving = auth.resolve();
+		last('auth_resolve').reply.resolve({ ...resolveAnswer(B, 1, 2), stale: true });
+		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
+		expect(auth.credentialRevision()).toBe('0.0');
+
+		last('auth_login').reply.resolve({ success: true, error: null, superseded: false, seq: 2 });
+		await login;
+		expect(auth.credentialRevision()).toBe('2.0');
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('S-100: with two pending commands the kept seq waits for the last one', async () => {
+		const { auth, changed, calls } = setup();
+		const login = auth.login({ username: 'b', password: 'pw' });
+		const changing = auth.changePassword!('old', 'newpassword');
+		const resolving = auth.resolve();
+		calls
+			.filter((c) => c.cmd === 'auth_resolve')
+			.at(-1)!
+			.reply.resolve({
+				...resolveAnswer(null, 1, 4),
+				stale: true
+			});
+		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
+
+		calls
+			.find((c) => c.cmd === 'auth_change_password')!
+			.reply.reject({ kind: 'storage', message: 'database is locked' });
+		await changing;
+		expect(auth.credentialRevision()).toBe('0.0'); // the login is still pending
+		expect(changed).not.toHaveBeenCalled();
+
+		calls
+			.find((c) => c.cmd === 'auth_login')!
+			.reply.resolve({
+				success: false,
+				error: 'bad credentials',
+				superseded: false,
+				seq: 1
+			});
+		await login;
+		expect(auth.credentialRevision()).toBe('4.0');
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('S-78/S-100: a command that times out collects the kept seq with its local advance - one notification', async () => {
+		vi.useFakeTimers();
+		const { auth, changed, last } = setup(1_000);
+		void auth.login({ username: 'a', password: 'pw' });
+		const resolving = auth.resolve();
+		last('auth_resolve').reply.resolve({ ...resolveAnswer(null, 1, 3), stale: true });
+		await expect(resolving).rejects.toSatisfy(isStaleAnswerError);
+
+		vi.advanceTimersByTime(1_000);
+		expect(auth.credentialRevision()).toBe('3.1');
+		expect(changed).toHaveBeenCalledTimes(1);
 	});
 
 	it('S-73: an old auth_resolve answer arriving after a newer login response is tagged with its own (older) checked', async () => {

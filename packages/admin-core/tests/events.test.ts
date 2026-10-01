@@ -11,7 +11,13 @@ import { onSessionEnded } from '../src/sessionEnded';
 import { onInvalidate } from '../src/invalidate';
 import { initBanto } from '../src/registry.svelte';
 import type { AuthProvider, DataProvider, Notifier } from '../src/provider';
-import { resetDefaultSessionController } from '../src/sessionController.svelte';
+import {
+	getSessionController,
+	resetDefaultSessionController,
+	resolveSettled
+} from '../src/sessionController.svelte';
+import { ALICE, flush, makeProbeProvider } from './sessionHarness';
+import { STUB_SESSION } from './stubAuth';
 
 function stubProviders(notifier?: Notifier): void {
 	const dataProvider: DataProvider = {
@@ -24,8 +30,7 @@ function stubProviders(notifier?: Notifier): void {
 	const authProvider: AuthProvider = {
 		login: async () => ({ success: true }),
 		logout: async () => {},
-		check: async () => true,
-		getIdentity: async () => null
+		...STUB_SESSION
 	};
 	initBanto({ dataProvider, authProvider, resources: [], notifier });
 }
@@ -305,27 +310,22 @@ describe('connectEvents', () => {
 		]);
 	});
 
-	// Issue #241: a stream the server rejected runs the confirmation.
-	describe('a rejected stream (Issue #241)', () => {
-		// Issue #260 実装-2: the confirmation delegates to the default
-		// SessionController (module state) - a fresh one per test. The legacy
-		// provider is wrapped in the compatibility adapter, whose `check()`
-		// `true` needs an identity (a `null` one rejects).
+	// Issue #241: a stream the server rejected (or whose token another tab
+	// cleared) is a signal to the default SessionController (Issue #260
+	// 実装-3, design §6.1): it confirms the session with a probe started after
+	// the signal, retrying with backoff inside the controller.
+	describe('a rejected stream (Issue #241) signals the controller', () => {
 		beforeEach(() => {
 			resetDefaultSessionController();
 		});
 
-		function stubCheck(check: AuthProvider['check']): void {
-			initBanto({
-				dataProvider: {} as DataProvider,
-				authProvider: {
-					login: async () => ({ success: true }),
-					logout: async () => {},
-					check,
-					getIdentity: async () => ({ id: 'alice', name: 'Alice' })
-				},
-				resources: []
-			});
+		async function signedIn() {
+			const p = makeProbeProvider();
+			initBanto({ dataProvider: {} as DataProvider, authProvider: p.provider, resources: [] });
+			const first = resolveSettled(getSessionController());
+			p.active(0, ALICE);
+			await first;
+			return p;
 		}
 
 		function capturedHooks(): { hooks: () => EventSubscriptionHooks; provider: EventProvider } {
@@ -341,37 +341,66 @@ describe('connectEvents', () => {
 			};
 		}
 
-		it('notifies onSessionEnded once when check() confirms the session ended', async () => {
-			const check = vi.fn(async () => false);
-			stubCheck(check);
-			const ended = vi.fn();
-			const off = onSessionEnded(ended);
+		for (const hook of ['onUnauthorized', 'onTokenCleared'] as const) {
+			it(`${hook}: a probe confirms \`none\` and onSessionEnded hears it once`, async () => {
+				const p = await signedIn();
+				const ended = vi.fn();
+				const off = onSessionEnded(ended);
+				const { hooks, provider } = capturedHooks();
+				connectEvents(provider);
+
+				hooks()[hook]!();
+				expect(p.probes).toHaveLength(2);
+				p.none(1, { clear: true });
+				await flush();
+				expect(ended).toHaveBeenCalledTimes(1);
+				expect(getSessionController().snapshot.status).toBe('none');
+				off();
+			});
+		}
+
+		it('a signal while an older probe is in flight is answered only by a newer probe (I-9)', async () => {
+			const p = await signedIn();
+			const pending = resolveSettled(getSessionController(), { cause: 'navigation' });
+			expect(p.probes).toHaveLength(2);
 			const { hooks, provider } = capturedHooks();
 			connectEvents(provider);
 
 			hooks().onUnauthorized!();
-			await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
-			expect(check).toHaveBeenCalledTimes(1);
-			off();
+			expect(p.probes[1].signal?.aborted).toBe(true);
+			expect(p.probes).toHaveLength(3);
+			p.none(2, { clear: true });
+			await expect(pending).resolves.toMatchObject({
+				outcome: 'confirmed',
+				snapshot: { status: 'none' }
+			});
 		});
 
-		for (const [label, check] of [
-			['the session is still valid', async () => true],
-			['check() could not verify (500 / unreachable)', async () => Promise.reject(new Error('500'))]
+		for (const [label, settle] of [
+			[
+				'the session is still valid',
+				(p: ReturnType<typeof makeProbeProvider>) => p.active(1, ALICE)
+			],
+			[
+				'the provider could not verify (500 / unreachable)',
+				(p: ReturnType<typeof makeProbeProvider>) => p.fail(1)
+			]
 		] as const) {
-			it(`does not notify onSessionEnded when ${label}`, async () => {
-				const checkFn = vi.fn(check);
-				stubCheck(checkFn);
+			it(`does not end the session when ${label}`, async () => {
+				const p = await signedIn();
 				const ended = vi.fn();
 				const off = onSessionEnded(ended);
 				const { hooks, provider } = capturedHooks();
 				connectEvents(provider);
 
 				hooks().onUnauthorized!();
-				await vi.waitFor(() => expect(checkFn).toHaveBeenCalledTimes(1));
-				await Promise.resolve();
-				await Promise.resolve();
+				settle(p);
+				await flush();
 				expect(ended).not.toHaveBeenCalled();
+				expect(getSessionController().snapshot).toMatchObject({
+					status: 'active',
+					owner: 'account:alice'
+				});
 				off();
 			});
 		}

@@ -298,6 +298,18 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("settings set");
     let got = settings.get("smoke.key").await.expect("settings get");
     assert_eq!(got.as_deref(), Some("smoke.value"));
+    // `set_auth_config` writes its four keys in ONE transaction (`set_many`,
+    // freshness audit of #266 P2-3): the round trip on PostgreSQL.
+    let mut auth = settings.auth_config().await.expect("auth config");
+    auth.disabled = true;
+    auth.disabled_role = Role::Viewer;
+    settings
+        .set_auth_config(&auth)
+        .await
+        .expect("set_auth_config");
+    let auth = settings.auth_config().await.expect("auth config again");
+    assert!(auth.disabled);
+    assert_eq!(auth.disabled_role, Role::Viewer);
 
     // --- audit: record, list, prune (both branches) --------------------------
     let audit = AuditLogService::new(db.clone());

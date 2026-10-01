@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { invalidateAll, onNavigate } from '$app/navigation';
+	import { goto, invalidateAll, onNavigate } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { page } from '$app/state';
-	import { getSessionController, onInvalidate, sessionGeneration } from '@banto/admin-core';
+	import { getSessionController, notify, onInvalidate } from '@banto/admin-core';
 	import { hasUnsavedChanges } from '@banto/forms';
 	import * as m from '$lib/paraglide/messages';
 	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
-	import { isLoggingOut } from '$lib/banto/logout.svelte';
+	import { isLeavingForLogin, leaveForLogin } from '$lib/banto/logout.svelte';
+	import { OWNER_CHANGE_POLICY, watchOwnerChanges } from '$lib/banto/ownerChange';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -43,7 +45,7 @@
 		return guardWindowClose(hasUnsavedChanges, () => m['unsaved.confirmClose']());
 	});
 
-	// Issue #260 (実装-2, design §6.1 wiring ①): whenever the session
+	// Issue #260 (design §6.1 wiring ①, since 実装-2): whenever the session
 	// controller's generation differs from the one this page's load confirmed,
 	// re-run the loads (`invalidateAll()`), which confirm the session again
 	// and send the screen to /login, a public-viewer session, the retryable
@@ -56,21 +58,49 @@
 	// generation (a load that confirms the same generation again, or a slow
 	// one, does not stack them). The login target is a forced navigation for
 	// the unsaved-changes guard (`$lib/unsavedChanges.ts`).
-	// While this tab is logging out, no re-load: the logout goes to /login
-	// itself, and an invalidation started here would win over that
-	// navigation (`$lib/banto/logout.svelte.ts`). `isLoggingOut()` is
-	// reactive, so a generation change skipped meanwhile is handled once it
-	// ends if the layout is still mounted (a failed logout).
+	// While this tab is logging out (or leaving for /login under the
+	// 'relogin' policy below), no re-load: that sequence goes to /login
+	// itself, and an invalidation started here would win over the navigation
+	// (`$lib/banto/logout.svelte.ts`). `isLeavingForLogin()` is reactive, so a
+	// generation change skipped meanwhile is handled once it ends if the
+	// layout is still mounted (another session was confirmed instead, or the
+	// logout could not be confirmed).
 	const sessionController = getSessionController();
 	let requestedFor = -1;
 	$effect(() => {
 		const generation = sessionController.snapshot.generation;
-		if (isLoggingOut()) return;
+		if (isLeavingForLogin()) return;
 		if (generation !== data.sessionGeneration && requestedFor !== generation) {
 			requestedFor = generation;
 			void invalidateAll();
 		}
 	});
+
+	// Issue #260 (実装-3, design §6.1 wiring ②, #257): another tab logged in
+	// as a different user. The controller keeps the change until it is
+	// handled (`snapshot.pendingOwnerChange`), so a change confirmed while
+	// this layout was not mounted (the 503 page in between, S-81) is
+	// reported on mount; a confirmed `none` discards it (S-83). Wiring ①
+	// already rebuilds the screen for the new user; this only tells them (or,
+	// with `'relogin'`, sends them to /login). The shared token is never
+	// cleared here (I-17). Wiring ③ - a confirmation that fails after the
+	// switch - is the load's 503 (`+layout.ts`): not left automatically
+	// (S-36/S-60).
+	// `untrack`: runs once per mount (the subscription does the rest), not
+	// again on every snapshot this reads.
+	$effect(() =>
+		untrack(() =>
+			watchOwnerChanges(sessionController, {
+				policy: OWNER_CHANGE_POLICY,
+				notify: (policy) =>
+					notify(
+						'info',
+						policy === 'relogin' ? m['session.ownerChangedRelogin']() : m['session.ownerChanged']()
+					),
+				goToLogin: () => leaveForLogin(() => goto(`${base}/login`))
+			})
+		)
+	);
 
 	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the
@@ -175,7 +205,7 @@
 	<div class="main">
 		<Header {overlayOpen} onToggleOverlay={toggleOverlay} />
 		<main>
-			{#if data.sessionGeneration === sessionGeneration()}
+			{#if data.sessionGeneration === sessionController.snapshot.generation}
 				{#key data.sessionGeneration}
 					{@render children()}
 				{/key}
