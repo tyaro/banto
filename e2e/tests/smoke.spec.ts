@@ -910,6 +910,37 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(Buffer.from(firstBytes)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
 	});
 
+	test('4b. CSV import: the preview shows the first 10 rows, new/update labels, and cancel imports nothing', async () => {
+		await page.goto('/items');
+
+		// 12 data rows: 11 new (no id) + 1 update (id 1) -> over the 10-row
+		// preview limit (issue #218). Cancelled below, never executed, so no
+		// later scenario's data changes.
+		const lines = ['id,name,price,stock', '1,プレビュー更新,150,7'];
+		for (let i = 1; i <= 11; i++) lines.push(`,プレビュー新規${i},${100 + i},${i}`);
+		await page.locator('input[type="file"][accept=".csv,.txt"]').setInputFiles({
+			name: 'preview.csv',
+			mimeType: 'text/csv',
+			buffer: Buffer.from(lines.join('\n'), 'utf-8')
+		});
+
+		const panel = page.locator('section.import-panel');
+		await expect(panel).toBeVisible();
+		await expect(panel.getByText('新規 11件 / 更新 1件 / エラー 0件（全12行）')).toBeVisible();
+		await expect(panel.getByText('全12行中 先頭10行を表示')).toBeVisible();
+		const table = panel.getByRole('table', { name: '取込内容のプレビュー（先頭の行）' });
+		// header row + 10 shown rows (the 12-row file is cut at the limit)
+		await expect(table.getByRole('row')).toHaveCount(11);
+		await expect(table.getByRole('row', { name: /更新.*プレビュー更新/ })).toBeVisible();
+		await expect(table.getByRole('cell', { name: '新規', exact: true }).first()).toBeVisible();
+		await expect(table.getByText('プレビュー新規9')).toBeVisible();
+		await expect(table.getByText('プレビュー新規10')).toHaveCount(0);
+		await expect(panel.getByText('1件は既存レコードの更新です', { exact: false })).toBeVisible();
+
+		await panel.getByRole('button', { name: 'キャンセル' }).click();
+		await expect(panel).toHaveCount(0);
+	});
+
 	test('5. user management: create a viewer account and preserve selection across replies', async () => {
 		test.setTimeout(60_000);
 		await page.goto('/users');
