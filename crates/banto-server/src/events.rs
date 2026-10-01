@@ -55,6 +55,7 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 
 use crate::auth::{bearer_token, require_auth, unauthorized_response, AuthState};
+use crate::server::ShutdownSignal;
 
 /// Interval of the SSE keepalive comment.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
@@ -124,6 +125,8 @@ enum Step {
     /// A re-check is due (`false`: the schedule ended).
     Recheck(bool),
     Deliver(Result<ServerEvent, broadcast::error::RecvError>),
+    /// The server was asked to stop (Issue #283).
+    Shutdown,
 }
 
 /// The two event kinds delivered to browser clients (spec §3.5). Serializes
@@ -179,6 +182,7 @@ fn event_stream(
     mut rx: broadcast::Receiver<ServerEvent>,
     mut schedule: Schedule,
     timeout: Duration,
+    mut shutdown: Option<ShutdownSignal>,
 ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
         loop {
@@ -188,10 +192,20 @@ fn event_stream(
             // `rearm` then puts the next one a whole interval away.
             let step = tokio::select! {
                 biased;
+                // Server stop (Issue #283): a separate lifecycle from the
+                // session re-check - without it graceful shutdown waits for
+                // this stream forever.
+                () = async {
+                    match shutdown.as_mut() {
+                        Some(signal) => signal.triggered().await,
+                        None => std::future::pending().await,
+                    }
+                } => Step::Shutdown,
                 due = schedule.due() => Step::Recheck(due),
                 received = rx.recv() => Step::Deliver(received),
             };
             match step {
+                Step::Shutdown => break,
                 Step::Recheck(true) => {
                     let verdict = tokio::time::timeout(timeout, auth.revalidate(&token)).await;
                     schedule.rearm();
@@ -223,6 +237,7 @@ fn event_stream(
 async fn sse_handler(
     Extension(tx): Extension<broadcast::Sender<ServerEvent>>,
     Extension(revalidation): Extension<Revalidation>,
+    shutdown: Option<Extension<ShutdownSignal>>,
     req: Request,
 ) -> Response {
     // Always present behind `require_auth`, which just validated it.
@@ -235,6 +250,7 @@ async fn sse_handler(
         tx.subscribe(),
         (revalidation.schedule)(),
         revalidation.timeout,
+        shutdown.map(|Extension(signal)| signal),
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL))
