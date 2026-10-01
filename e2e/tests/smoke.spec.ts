@@ -2102,12 +2102,18 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 			await expect(tab.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
 
+			// #258: a command palette left open by the previous user must not
+			// outlive the switch (its query/selection/history are that user's).
+			await tab.keyboard.press('Control+K');
+			await expect(tab.getByRole('dialog', { name: 'コマンドパレット' })).toBeVisible();
+
 			await loginRemembered(other, ADMIN_USERNAME, ADMIN_PASSWORD);
 
 			await expect(tab.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
 			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
 				ADMIN_DISPLAY_NAME
 			);
+			await expect(tab.getByRole('dialog', { name: 'コマンドパレット' })).toHaveCount(0);
 			await expect(tab.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 			await expect(tab).toHaveURL(/\/dashboard$/);
 			// S-35 (wiring ②, 実装-3): the change of user is told once.

@@ -15,6 +15,7 @@
 	import * as m from '$lib/paraglide/messages';
 	import {
 		currentSessionScope,
+		isCurrentSessionScope,
 		isProviderError,
 		notify,
 		searchCommands,
@@ -24,10 +25,29 @@
 	import { loadRecentCommandIds, recordRecentCommand } from '$lib/recentCommands';
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
 
-	// Built/read once per mount (i.e. once per open) - navItems is static and
-	// recency only needs to reflect what was true when the palette opened.
+	// Built once per mount (navItems is static).
 	const commands = buildCommands();
-	const recentIds = loadRecentCommandIds(currentSessionScope());
+
+	// The session this palette was opened for. The palette sits OUTSIDE
+	// (app)/+layout.svelte's `{#key}` on the session generation, so it is not
+	// rebuilt when another tab switches this tab to a different user (#258).
+	// Rather than remounting it (which would also drop focus and fight the
+	// Ctrl+K toggle, which lives in the layout), it closes itself as soon as
+	// the session it was opened for is no longer the live one: what the
+	// previous user typed/selected must not be shown to the new user, and a
+	// command picked there would run as the new user. Re-opening mounts a
+	// fresh instance for the new scope.
+	const openedScope = currentSessionScope();
+	$effect(() => {
+		// `isCurrentSessionScope` reads the controller snapshot, so this
+		// re-runs on every generation/owner change.
+		if (!isCurrentSessionScope(openedScope)) commandPaletteStore.hide();
+	});
+
+	// Derived from the live scope (not read once): the ordering never shows a
+	// history that belongs to a previous owner, even for the frame before the
+	// effect above has closed the palette.
+	const recentIds = $derived(loadRecentCommandIds(currentSessionScope()));
 
 	let query = $state('');
 	let selectedIndex = $state(0);
