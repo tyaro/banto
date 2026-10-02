@@ -1320,6 +1320,92 @@ describe('the auth-disabled local session is not a user (S-107, I-24; Issue #291
 	});
 });
 
+describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
+	it('S-108: A -> commissioning (adopt without none) raises nothing; A -> commissioning -> A raises nothing', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		expect(ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket())).toBe(
+			true
+		);
+		expect(ctx.controller.snapshot).toMatchObject({
+			kind: 'commissioning',
+			owner: 'commissioning:commissioning',
+			pendingOwnerChange: null
+		});
+		// The adopted session ends and the confirmation answers A again
+		// (the token stayed valid): the same user, so nothing.
+		expect(ctx.controller.end('commissioning-locked', ctx.controller.ticket())).toBe(true);
+		await ctx.settleTo(ALICE);
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+
+	it('S-108: commissioning -> A after end() with none in between raises nothing; no history is carried', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
+		ctx.controller.end('commissioning-locked', ctx.controller.ticket());
+		await ctx.settleTo(null);
+		await ctx.settleTo(BOB);
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+
+	it('S-108: commissioning -> B without a prior account raises nothing; commissioning -> commissioning raises nothing', async () => {
+		const ctx = setup();
+		ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
+		ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+		ctx.controller.end('commissioning-locked', ctx.controller.ticket());
+		await ctx.settleTo(BOB);
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+
+	it('S-108: a real account switch A -> B is still reported, and B -> commissioning -> A (no none) is {B -> A}', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		ctx.p.change();
+		const direct = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, BOB);
+		await direct;
+		expect(ctx.controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:alice',
+			to: 'account:bob'
+		});
+		ctx.controller.acknowledgeOwnerChange();
+		// `end()` commits none (history cleared), so commissioning followed by
+		// a user without a none is only reachable from provider answers of that
+		// kind; the last real owner (B) is then compared with A, not commissioning with A.
+		ctx.p.change();
+		const toCommissioning = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, COMMISSIONING, { kind: 'commissioning' });
+		await toCommissioning;
+		expect(ctx.controller.snapshot).toMatchObject({
+			kind: 'commissioning',
+			pendingOwnerChange: null
+		});
+		ctx.p.change();
+		const toAlice = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, ALICE);
+		await toAlice;
+		expect(ctx.controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:bob',
+			to: 'account:alice'
+		});
+	});
+
+	it('S-108: a provider answer without a kind is an account and is still compared', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		ctx.p.change();
+		const request = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, BOB); // no `kind` in the answer
+		await request;
+		expect(ctx.controller.snapshot).toMatchObject({
+			kind: 'account',
+			pendingOwnerChange: { from: 'account:alice', to: 'account:bob' }
+		});
+	});
+});
+
 describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () => {
 	it('S-76: A -> none -> B raises no pendingOwnerChange; A -> unknown -> B does', async () => {
 		const { p, controller, settleTo } = setup();
