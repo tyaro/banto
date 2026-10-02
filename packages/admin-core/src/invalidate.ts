@@ -24,3 +24,14 @@ export function onInvalidate(resource: string, cb: Callback): () => void {
 export function invalidate(resource: string): void {
 	subscribers.get(resource)?.forEach((cb) => cb());
 }
+
+/**
+ * Notify every resource that currently has subscribers, once each (Issue
+ * #289: re-sync after the change stream reconnected). Same path as
+ * `invalidate(resource)` - each subscriber callback runs once per call.
+ * `SnapshotListResource` has no subscriber on this bus (an append-only log
+ * has no invalidation, ADR-0015), so its snapshot boundary is untouched.
+ */
+export function invalidateAll(): void {
+	for (const resource of [...subscribers.keys()]) invalidate(resource);
+}

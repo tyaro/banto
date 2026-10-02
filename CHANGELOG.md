@@ -26,6 +26,8 @@
 
 ### Fixed
 
+- fix(admin-core): 変更通知 SSE が切れて再接続した後、切断中に他端末が更新したデータが次の変更通知まで古いまま残る問題を修正（#289）。`createSseEventProvider` の購読フックに `onReconnected`（切断後の再接続成功ごとに1回。初回接続・401/トークン消失/再ログイン後の最初の接続・接続中にトークンが変わった場合は呼ばない）を追加し、`connectEvents` がこれを受けて購読中の全リソースを `resource_changed` と同じ経路で1回ずつ再取得（`invalidateAll()` を新設・export）。セッション終了（`none`）後は再取得しない。サーバー側の履歴再送はしない。`SnapshotListResource` は invalidate 購読を持たないため境界は変わらない。
+
 - 初回セットアップ（`UsersService::setup_first_user`）の並行実行で複数の admin が作られる問題を修正（#277）。空確認と INSERT を DB 側で原子的にした（SQLite は条件付き単一 INSERT、PostgreSQL は `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE` + 条件付き INSERT）。負けた側は従来どおり「既に初期化されています」を返し、REST/Tauri とも成功監査・セッション発行は起きない。DB マイグレーション不要。
 
 - fix(audit): 未認証リクエストによる監査ログの増幅を防止（#278）。有効なセッションを終えない `POST /api/auth/logout` は監査に記録しない。失敗ログインの `actor_username` は作成時の長さ上限（32 文字）まで切り詰め（末尾 `…`、REST・Tauri 共通）、上限超の username は DB を引かずダミー検証のみ行う。`banto_admin_services::users::bound_username_for_audit` を追加。

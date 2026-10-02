@@ -50,7 +50,7 @@ export {
 	notify
 } from './registry.svelte';
 
-export { onInvalidate, invalidate } from './invalidate';
+export { onInvalidate, invalidate, invalidateAll } from './invalidate';
 
 export {
 	createSessionController,
