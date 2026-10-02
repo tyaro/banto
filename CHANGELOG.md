@@ -27,7 +27,7 @@
 **v2.1.0 — レビュー起票分（#277〜#291）の修正とセキュリティ強化。版の種類: minor（後方互換の公開 API 追加 + 消費側に影響する挙動変更）。
 派生アプリへの影響: 依存タグの更新だけでも取り込める修正が大半。ただし（1）バックアップの保存先が変わる（#280）、（2）静的ホスティングでデモを公開するアプリはビルド時の設定を推奨（#286）、（3）Excel 向け CSV は opt-in の指定を推奨（#281）。DB の移行は無い。**
 公開 API の追加（`toCsv` の `formulaSafe`、`@banto/admin-core` の `invalidateAll`・`InvalidateReason`、`banto_server::bind`・`BoundServer`・`AuthState::revoke_public_viewer_tokens`、`banto_admin_services::settings::auth_server_combination_allowed`・`validate_server_config`・`users::bound_username_for_audit`）はすべて後方互換。
-publishing.md の「1.x 系の運用上の例外」と同様に、消費側の追従作業（下の「消費側への注意」）を明記した上で `minor` とする。
+バックアップの保存先の変更（#280）は API の削除・改名を伴わない運用上の挙動変更なので、[publishing.md のバージョニング規約](docs/publishing.md#バージョニング規約)に今回明文化した「2.x 以降の運用上の変更」に従い、消費側の移行手順（下の「消費側への注意」）を明記した上で `minor` とする（旧ファイルは削除せず残るため、手動で移せば失われない）。
 
 | 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -143,6 +143,7 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
 - chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部（#295）。
 - chore(security)（依存監査・Rust 側）: lockfile のみ更新（依存追加なし）— `event-listener` 5.4.1→5.4.2（RUSTSEC-2026-0221 解消、`concurrent-queue` を除去）、`spin` 0.9.8→0.9.9（yanked 解消）。`.cargo/audit.toml` から、依存グラフに存在しなくなった RUSTSEC-2023-0071（rsa）の除外を削除。残存除外は quick-xml 0.39.4（RUSTSEC-2026-0194/0195、plist 1.9.0 が `^0.39.2` で固定、開発者管理の plist のみ処理）。除外なしの警告は glib 0.18.5（unsound）・proc-macro-error 1.0.4（unmaintained）の2件で、いずれも Linux の tauri→gtk 0.18 経由の上流制約（`cargo audit` は警告では失敗しない）。JS 側は `pnpm audit --prod` 0件、開発依存は cookie 0.6.0（low、@sveltejs/kit の上流待ち）のみ（#282、#305）。
 - test(admin-template): `systemInfoStore` のテストを import-once にして、負荷時のタイムアウトを解消（#304）。
+- docs(publishing): バージョニング規約に「2.x 以降の運用上の変更」を追記した。API の削除・改名を伴わない運用上の挙動変更は、移行手順を「消費側への注意」に明記した上でオーナー判断で `minor` としてよい（v2.1.0 の #280 に適用。#306）。
 
 ## [2.0.0] - 2026-10-01
 
