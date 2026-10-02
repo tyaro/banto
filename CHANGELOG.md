@@ -46,7 +46,7 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
    未設定でも静的ホストの明確な 404 応答で従来どおり demo になる。一方、Tauri・LAN 配信のビルドでは、接続失敗を demo とみなさなくなった（「サーバーに接続できません」画面で再試行する）。
    本リポジトリの `deploy-demo.yml` は設定済み。
 3. **Excel 向けの CSV を出力する派生アプリは `toCsv(..., { formulaSafe: true })` を推奨**（#281、経路 A。items のエクスポートは admin-template で有効化済み。経路 B）。
-   既定の出力は不変。再インポート（`parseCsv`）では先頭の `'` が値に残る。実 Excel での確認は未実施。
+   既定の出力は不変。再インポート（`parseCsv`）では先頭の `'` が値に残る。Windows 11 + Microsoft 365 の Excel で、数式が評価されず文字列として開かれることを確認済み（#303）。Excel で開くと先頭の `'` はセルに表示されたまま残る。
 4. **invalidate の購読コールバックに `(resource, reason)` が渡るようになった**（#289・#297、経路 A）。既存の引数なしコールバックは互換（そのまま動く）。
    ナビの未読バッジ・通知を `onInvalidate` で自作している場合は、`reason === 'resync'`（SSE 再接続後の再取得）を無視すること
    （実変更なしの再接続でバッジが増えるのを防ぐ）。admin-template の `navBadges.noteInvalidation` が手本。
@@ -126,7 +126,7 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
 - fix(audit): 未認証リクエストによる監査ログの増幅を防止（#278）。有効なセッションを終えない `POST /api/auth/logout` は監査に記録しない。失敗ログインの `actor_username` は作成時の長さ上限（32 文字）まで切り詰め（末尾 `…`、REST・Tauri 共通）、上限超の username は DB を引かずダミー検証のみ行う。`banto_admin_services::users::bound_username_for_audit` を追加。
 - fix(auth): 並行ログインが失敗確定前のスロットルを通過する問題を修正（#279）。verifier を await する前に試行枠を原子的に予約し、処理中の試行も失敗件数と同様にしきい値判定へ数える。IP 単位（4）・全体（8）の同時検証数上限を追加（超過は即時 `RateLimited`）。argon2 の検証は blocking プールで実行。
 - fix(backup)（保存先の変更・消費側への注意）: 同一フォルダに複数の SQLite DB を置くと `backups/` と `restore-pending.sqlite3` が共有され、一方のバックアップが他方から一覧・取得でき、一方のリストア予約が他方の次回起動で適用され得た不具合を修正した（#280）。バックアップ・適用前の安全バックアップ・リストア予約を DB ファイルごとの `<親>/backups/<DBファイル名>/`（予約は `<親>/backups/<DBファイル名>/restore-pending.sqlite3`）へ分離し、作成・一覧・取得・予約・状態取得・取消・起動時適用の全てが `scope_dir` の1関数でディレクトリを解決する（REST / Tauri 共通。認可・denied・監査は不変）。**既存配置からの移行**: 旧共有領域（`backups/` 直下の `*.sqlite3`・親フォルダ直下の `restore-pending.sqlite3`）は所属 DB を判断できないため、一覧に出さず・取得させず・自動適用せず（削除もしない）、起動時に stderr へ警告する。必要なバックアップは新ディレクトリへ手動で移動すること（詳細は README「SQLite バックアップの保存先」）。暫定回避策は DB ごとに親フォルダを分けること。PostgreSQL は従来どおりバックアップ非対応。
-- fix(security): items の Excel 向け CSV エクスポートで、利用者入力の文字列が数式として評価され得た問題（CSV インジェクション）に対処した（#281）。`@banto/grid-svelte` の `toCsv` に opt-in の `formulaSafe: true` を追加し、**文字列値**の先頭が `=` `+` `-` `@`・TAB・CR・LF・全角 `＝` `＋` `－` `＠` のとき先頭に `'` を付ける（数値・真偽値・null・ヘッダーは対象外）。既定の `toCsv` の出力は不変。items のエクスポート（REST / Tauri / demo 共通の `handleExport`。LAN ダウンロードと Tauri のフォルダ保存は同じ `csv` 文字列を使う）で有効化。注意: 再インポート（`parseCsv`）では先頭 `'` が値に残る。全ての CSV 利用方法に安全な方式ではなく Excel 系ソフト向けの緩和策。実 Excel での確認は未実施。
+- fix(security): items の Excel 向け CSV エクスポートで、利用者入力の文字列が数式として評価され得た問題（CSV インジェクション）に対処した（#281）。`@banto/grid-svelte` の `toCsv` に opt-in の `formulaSafe: true` を追加し、**文字列値**の先頭が `=` `+` `-` `@`・TAB・CR・LF・全角 `＝` `＋` `－` `＠` のとき先頭に `'` を付ける（数値・真偽値・null・ヘッダーは対象外）。既定の `toCsv` の出力は不変。items のエクスポート（REST / Tauri / demo 共通の `handleExport`。LAN ダウンロードと Tauri のフォルダ保存は同じ `csv` 文字列を使う）で有効化。注意: 再インポート（`parseCsv`）では先頭 `'` が値に残る。全ての CSV 利用方法に安全な方式ではなく Excel 系ソフト向けの緩和策。Windows 11 + Microsoft 365 の Excel で確認済み（既定出力は `HasFormula=True`、`formulaSafe` では `HasFormula=False`。#303 のコメント）。
 - LAN サーバーのライフサイクル修正（#283 / #288 / #287）:
   - `banto-server`: SSE 接続が開いたままでも `RunningServer::stop()` が完了する（サーバ停止シグナルを SSE ストリームへ伝え、安全網として5秒で待ちを打ち切りタスクを中断）。公開 API の変更なし。
   - `banto-admin-services`: 認証無効/LAN 有効/閲覧公開の許可判定を `auth_server_combination_allowed` に一本化し、保存時（`set_server_config`/`set_auth_config`）と起動時で共有（閲覧公開ありの構成が再起動後も LAN 起動する）。`set_server_config` の4キー保存を1トランザクション化し、保存せず検証だけ行う `validate_server_config` を追加。
