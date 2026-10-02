@@ -76,6 +76,9 @@ tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
 # comment for why `:memory:` does not work), so these tests cannot reuse
 # `app_state()`'s in-memory `init_db_memory()` - see `app_state_with_tempdir`.
 tempfile = { workspace = true }
+# Issue #285 attachments test: injects a `has_thumbnail` UPDATE failure with a
+# SQLite trigger. Already in the graph via `admin-template-core`.
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
 
 # Real window translucency for the glass theme (spec M12): Windows Acrylic
 # via `window_vibrancy::apply_acrylic`/`clear_acrylic`. Windows-only by

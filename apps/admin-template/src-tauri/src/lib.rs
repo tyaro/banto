@@ -4324,6 +4324,74 @@ mod tests {
         );
     }
 
+    /// Issue #285: a failed `has_thumbnail` flag update (injected with a SQLite
+    /// trigger) must not fail the upload - the body is stored, so the command
+    /// still records the success audit entry and broadcasts the change event.
+    #[tokio::test]
+    async fn attachments_upload_survives_a_thumbnail_flag_update_failure() {
+        let (state, dir) = app_state_with_tempdir().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
+        // A second connection to the same DB file; the trigger lives in the file.
+        let injector = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(dir.path().join("admin-template.sqlite3")),
+        )
+        .await
+        .expect("connect injector");
+        sqlx::query(
+            "CREATE TRIGGER fail_thumb BEFORE UPDATE OF has_thumbnail ON attachments              BEGIN SELECT RAISE(ABORT, 'injected'); END",
+        )
+        .execute(&injector)
+        .await
+        .expect("create trigger");
+        let mut rx = state.events.subscribe();
+
+        // 1x1 PNG: decodable, so a thumbnail is generated before the flag
+        // update is attempted.
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x64, 0x60, 0xF8, 0xCF, 0x50, 0x0F, 0x00, 0x02, 0x87, 0x01, 0x80, 0xEB,
+            0x47, 0xBA, 0x92, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+            0x82,
+        ];
+        let meta = attachments_upload_body(
+            &state,
+            "items".to_string(),
+            "1".to_string(),
+            "p.png".to_string(),
+            png,
+        )
+        .await
+        .expect("upload must succeed despite the flag update failing");
+        assert_eq!(meta.mime, "image/png");
+        assert!(!meta.has_thumbnail);
+
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        assert!(
+            audit
+                .rows
+                .iter()
+                .any(|r| r.action == "create" && r.resource == "attachments" && r.result == "ok"),
+            "expected a successful create entry, got {:?}",
+            audit.rows
+        );
+        let event = rx.try_recv().expect("upload should emit an event");
+        assert!(
+            matches!(event, ServerEvent::ResourceChanged { resource } if resource == "attachments")
+        );
+    }
+
     /// [`attachments_delete_body`] records a `delete`/`attachments` entry with
     /// the deleted meta's detail (M-review 2026-08 M-5). Seeds one attachment
     /// via [`attachments_upload_body`] (transitively exercising its happy

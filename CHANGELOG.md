@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- fix(attachments): 画像添付の本体・メタデータ保存後にサムネイルの `has_thumbnail` DB 更新だけが失敗すると upload 全体がエラーになり、保存済みの添付が残ったまま REST / Tauri の成功監査・変更通知が抜ける問題を修正（#285）。この更新失敗はサムネイルのファイル書込失敗と同じく補助処理の失敗として扱い、警告ログ + 生成済みサムネイルの best-effort 削除のうえ `has_thumbnail = false` で成功を返す（SQLite / PostgreSQL 共通）。本体保存失敗時の行削除クリーンアップは従来どおり。DB マイグレーション不要。
+
 - items 画面で同じ行へ続けて貼り付け/inline 編集すると、後続の保存が古い行スナップショットから全列を送り、先行保存の列を巻き戻す問題を修正（#284）。保存を行 id ごとの直列キュー（`rowSaveQueue.ts`）に集約し、実際の送信直前に直前の確定値へ今回の変更列だけを合成する。失敗した保存は自分の呼び出し元にのみ伝わり、後続は確定値を基に続行する。client / server グリッド共通（ページ側ハンドラ）。
 
 - fix(startup): 起動時の一時的な API 接続失敗で実データ用画面が demo モードになる問題を修正（#286）。配信形態と通信状態を分離した: Tauri は従来どおり、意図したデモは `VITE_BANTO_DEMO=1` ビルド（GitHub Pages ワークフローで設定）または静的ホストの明確な 404 応答、実サーバー配信は Banto の応答で判定する。ネットワーク例外・timeout（`PROBE_TIMEOUT_MS`=5s）・Banto 形式でない 5xx（プロキシの HTML 503 等）は demo にせず、上限付き自動再試行（2 回）の後「サーバーに接続できません」画面（再接続ボタン）で待機し、復旧後は実データ provider で初期化する。`environment.ts` に `probeBackend` / `isDemoBuild`、`startup.ts`（純粋な解決ロジック）、`StartupSplash.svelte`、i18n キー `app.startup.*` を追加。派生アプリで Pages 等へ静的デモを公開する場合はビルド時に `VITE_BANTO_DEMO=1` を設定すること。

@@ -2838,6 +2838,98 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     );
 }
 
+/// Issue #285: when only the `has_thumbnail` flag update fails (injected via a
+/// SQLite trigger), the body and metadata are already stored, so the upload
+/// still answers 200 with `hasThumbnail: false` AND reaches the success audit
+/// entry and the change notification (the Tauri command has the mirror test).
+#[tokio::test]
+async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_and_event() {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let (tx, mut rx) = broadcast::channel(16);
+    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool.clone());
+    let backup = unused_backup_service(pool.clone());
+    let dir = tempdir().expect("tempdir");
+    let attachments = AttachmentsService::new(pool.clone(), dir.path().join("attachments"));
+    let system_info = SystemInfoService::new(pool.clone());
+    let audit = AuditLogService::new(pool.clone());
+    let auth = demo_auth();
+    let token = auth.login("admin", "admin").await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_thumb BEFORE UPDATE OF has_thumbnail ON attachments          BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    )
+    .execute(pool.as_sqlite().expect("sqlite"))
+    .await
+    .expect("create trigger");
+    let services = Services {
+        items,
+        users,
+        settings,
+        audit,
+        backup,
+        attachments,
+        system_info,
+        metrics: None,
+    };
+    let router = api_router(services, auth, tx, false);
+
+    // 1x1 PNG: decodable, so a thumbnail IS generated before the flag update
+    // is attempted.
+    let png: Vec<u8> = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x64,
+        0x60, 0xF8, 0xCF, 0x50, 0x0F, 0x00, 0x02, 0x87, 0x01, 0x80, 0xEB, 0x47, 0xBA, 0x92, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let response = router
+        .clone()
+        .oneshot(post_bytes_auth(
+            "/api/attachments?resource=items&resourceId=1&fileName=p.png",
+            &token,
+            png.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let created = body_json(response).await;
+    assert_eq!(created["mime"], "image/png");
+    assert_eq!(created["hasThumbnail"], false);
+    let id = created["id"].as_i64().unwrap();
+
+    let event = rx.try_recv().expect("upload should emit an event");
+    assert!(
+        matches!(event, ServerEvent::ResourceChanged { resource } if resource == "attachments")
+    );
+
+    let download = router
+        .clone()
+        .oneshot(get_auth(&format!("/api/attachments/{id}/download"), &token))
+        .await
+        .unwrap();
+    assert_eq!(body_bytes(download).await, png);
+
+    let audit_response = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &token,
+            json!(ListParams::default()),
+        ))
+        .await
+        .unwrap();
+    let rows = body_json(audit_response).await["rows"].clone();
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["action"] == "create"
+                && r["resource"] == "attachments"
+                && r["result"] == "ok"),
+        "expected a successful create audit entry, got {rows:?}"
+    );
+}
+
 // --- end M20 attachments -----------------------------------------------------
 //
 // `scripts/scaffold.mjs`'s attachments remover cuts the block above BETWEEN
