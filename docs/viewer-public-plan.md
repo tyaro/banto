@@ -1,9 +1,13 @@
 # 閲覧公開モード（viewer-public）計画書 — Issue #189
 
 作成日: 2026-09-14
-状態: **実装中**（本書の単位 U1〜U4 を 1 本の PR で実施）
+状態: **実装済み（v1.7 系）。2026-10-02 オーナー決定で §2.2 の発行の仕組みは
+「資格情報なしの grant 発行」に一般化する（[ADR-0017](adr/0017-credential-less-grant.md)、
+v2.2.0 で実装）。閲覧公開は grant の 1 種類目 `publicViewer` になり、本書の規約・ワイヤ・
+API 名はエイリアス／ラッパとしてそのまま残る**
 トラック: 保守者向け（トラックA）
 関連: [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)（方式の選定理由）、
+[ADR-0017](adr/0017-credential-less-grant.md)（grant への一般化。閲覧公開はその 1 種類目）、
 roadmap M10 / M11、conventions §1 / §6 / §10、
 [docs/recipes/no-login-app.md](recipes/no-login-app.md)、Issue #189（本書）、
 Issue #190（`--preset display`。本書が前提）
@@ -44,6 +48,19 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
   role）で説明できる。
 
 ### 2.2 合成 viewer セッションの規約（conventions §6 に追記）
+
+> **grant への一般化（2026-10-02、[ADR-0017](adr/0017-credential-less-grant.md)）**:
+> 以下の規約は v2.2.0 から「grant」の規約の `publicViewer` 種別への適用になる。
+> 対応は — 発行口 `POST /api/auth/public-viewer` = `POST /api/auth/grant/publicViewer` の
+> エイリアス、`issue_public_viewer_token()` = `issue_grant_token(&GrantSpec::public_viewer(…))`、
+> `revoke_public_viewer_tokens()` = `revoke_grant_tokens("publicViewer")`、
+> `MAX_PUBLIC_VIEWER_SESSIONS` = その `GrantSpec.max_sessions`（種別ごとの FIFO）、
+> 「viewerPublic OFF で 403」= `GrantSpec.enabled`（要求ごとに評価）、
+> 「発行は監査しない」「寿命は既定 8h / idle 1h」「logout は自分だけ」「change-password は拒否」は
+> grant 全種別に共通。閲覧公開は `require_loopback_peer: false`（LAN に出す前提）。
+> 画面側は `publicViewerFallback` = `grantFallback(…, { kind: 'publicViewer' })`、
+> `/api/auth/status` の `viewerPublic` = `grants.publicViewer`、identity に `kind` が付く。
+> 規約本文（conventions §6）の書き換えは実装 PR で行う。
 
 - **role は常に `viewer`。** `AuthState::issue_public_viewer_token()` は
   `Identity` を引数に取らず、`{ id: "public", name: "public", role: "viewer" }`
@@ -152,6 +169,10 @@ LANアクセスを有効化できます」（逆方向も同旨）。
   失効し、ゲートが透過的に再発行する。Remember me は適用しない）。
 - Tauri ウィンドウ内での公開閲覧（M11 で既にカバー）。
 - `--preset display`（Issue #190、別 PR）。
+- 「viewer 以外の role を資格情報なしで配る」こと。v1 では非スコープだったが、
+  2026-10-02 に **grant の一般化**として採ることにした（[ADR-0017](adr/0017-credential-less-grant.md)。
+  派生アプリの試運転 = admin 相当の grant。固定 identity・要求ごとの条件・
+  `require_loopback_peer`・種別ごとの失効を伴う。本書の閲覧公開は変えない）。
 
 ## 4. 実装単位
 
