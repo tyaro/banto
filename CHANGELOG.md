@@ -32,12 +32,12 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
 | 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A. 依存（`@banto/*`・`banto-*`） | あり | `v2.0.0` → `v2.1.0`（npm と Rust を同じタグに）。`@banto/admin-core`（`invalidateAll`・`InvalidateReason`・購読コールバックの `reason`、`kind: 'local'` を owner の変化の判定から除外）、`@banto/grid-svelte`（`toCsv` の `formulaSafe`）、`banto-server`（SSE 中の `stop()`、`bind`・`BoundServer`、`AuthState::revoke_public_viewer_tokens`）、`banto-admin-services`（初回セットアップ・ログインのスロットル・監査・バックアップ・設定の検証）、`banto-attachments`（サムネイル更新失敗）は後方互換の追加・修正。他は版数のみ |
-| B. コピーしたテンプレート        | あり | 起動時の判定（`environment.ts`・`startup.ts`・`StartupSplash.svelte`・`+layout.svelte`、#286）、items 画面（CSV 出力・行単位の保存の直列化・詳細間の遷移、#281・#284・#290）、ナビのバッジ（`navBadges`、#289）、設定の LAN 適用（`serverAdmin.ts`・`ConnectivitySection.svelte`・`src-tauri` の `server_apply`、#283・#287・#288）、`src-tauri` のバックアップ・認証関連（#277〜#280・#285）。いずれも取り込まなくても動くが、取り込むと修正が入る（セキュリティ関連は推奨）                                                    |
-| C. DB・設定・配布資産            | あり | DB のマイグレーションは無い（SQLite・PostgreSQL とも）。設定キーの追加は無い。**SQLite のバックアップ・リストア予約の保存先が変わる（#280。旧配置のファイルは自動では引き継がれない）**。デモ配信のビルドは `VITE_BANTO_DEMO=1` を推奨（#286）。`src-tauri/Cargo.toml` にテスト用の dev-dependency（`sqlx`）が増えた（既にグラフ内）                                                                                                                                                                                             |
+| B. コピーしたテンプレート        | あり | 起動時の判定（`environment.ts`・`startup.ts`・`StartupSplash.svelte`・`+layout.svelte`、#286）、items 画面（CSV 出力・行単位の保存の直列化・詳細間の遷移、#281・#284・#290）、ナビのバッジ（`navBadges`、#289）、設定の LAN 適用（`serverAdmin.ts`・`ConnectivitySection.svelte`・`src-tauri` の `server_apply`、#287・#288・#294）、`src-tauri` のログイン失敗の監査（`login_body`、#278）。いずれも取り込まなくても動くが、取り込むと修正が入る（セキュリティ関連は推奨）                                                      |
+| C. DB・設定・配布資産            | あり | DB のマイグレーションは無い（SQLite・PostgreSQL とも）。設定キーの追加は無い。**SQLite のバックアップ・リストア予約の保存先が変わる（#280。依存タグの更新で入り、旧配置のファイルは自動では引き継がれないので手動で移す）**。デモ配信のビルドは `VITE_BANTO_DEMO=1` を推奨（#286）。`src-tauri/Cargo.toml` にテスト用の dev-dependency（`sqlx`）が増えた（既にグラフ内）                                                                                                                                                         |
 
 ### 消費側への注意（必ず確認）
 
-1. **バックアップの保存先が変わった（#280、経路 A・B・C）。** SQLite のバックアップ・適用前の安全バックアップ・リストア予約は、DB ファイルごとの
+1. **バックアップの保存先が変わった（#280、経路 A・C。本体は `banto-admin-services` の `backup.rs` のみで、コピー側の本番コードの変更は無い）。** SQLite のバックアップ・適用前の安全バックアップ・リストア予約は、DB ファイルごとの
    `<DBの親フォルダ>/backups/<DBファイル名>/`（予約は同ディレクトリの `restore-pending.sqlite3`）へ分離した。**旧共有領域**（`backups/` 直下の `*.sqlite3`・
    親フォルダ直下の `restore-pending.sqlite3`）の既存バックアップ・予約は、所属 DB を判断できないため**一覧に出ず、取得できず、自動適用もされない**
    （削除もしない。起動時に stderr へ警告）。引き続き使うバックアップは新ディレクトリへ**手動で移す**こと。
@@ -45,15 +45,15 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
 2. **静的ホスティング（GitHub Pages 等）でデモを公開する派生アプリは、ビルド時に `VITE_BANTO_DEMO=1` を設定することを推奨**（#286、経路 B）。
    未設定でも静的ホストの明確な 404 応答で従来どおり demo になる。一方、Tauri・LAN 配信のビルドでは、接続失敗を demo とみなさなくなった（「サーバーに接続できません」画面で再試行する）。
    本リポジトリの `deploy-demo.yml` は設定済み。
-3. **Excel 向けの CSV を出力する派生アプリは `toCsv(..., { formulaSafe: true })` を推奨**（#281、経路 A。items のエクスポートは admin-template で有効化済み。経路 B）。
+3. **Excel 向けの CSV を出力する派生アプリは `toCsv(..., { formulaSafe: true })` を推奨**（#281、経路 A・B。`formulaSafe` は A。items のエクスポートでの有効化は B で、admin-template では有効化済み）。
    既定の出力は不変。再インポート（`parseCsv`）では先頭の `'` が値に残る。Windows 11 + Microsoft 365 の Excel で、数式が評価されず文字列として開かれることを確認済み（#303）。Excel で開くと先頭の `'` はセルに表示されたまま残る。
 4. **invalidate の購読コールバックに `(resource, reason)` が渡るようになった**（#289・#297、経路 A）。既存の引数なしコールバックは互換（そのまま動く）。
    ナビの未読バッジ・通知を `onInvalidate` で自作している場合は、`reason === 'resync'`（SSE 再接続後の再取得）を無視すること
    （実変更なしの再接続でバッジが増えるのを防ぐ）。admin-template の `navBadges.noteInvalidation` が手本。
 5. **#291（ログイン不要モードの有効化・役割変更で「別のユーザーでログインされました」が出る）は `@banto/admin-core` を上げるだけで取り込める**（経路 A のみ。`ownerChange.ts` などコピー側の変更は不要、経路 B・C の変更は無い）。
-6. **セキュリティ修正（#277・#278・#279・#280・#281・#283）は下の「セキュリティ」を参照。** Rust 側（#277・#278・#279・#283）は経路 A（`banto-*` を同じタグに）で入る。
-   REST と Tauri の両方を持つアプリは、`src-tauri` の認証コマンド・バックアップのコピー側も確認すること。
-7. **LAN 設定の適用**（#287・#288・#294、経路 A・B）: `banto_server::start` は互換のまま、`bind` / `BoundServer::serve` を足した。デスクトップの `server_apply` を自前で持つ派生アプリは、
+6. **セキュリティ修正（#277・#278・#279・#280・#281・#283）は下の「セキュリティ」を参照。** #277・#279・#280・#283 は経路 A（`banto-*` を同じタグに。#280 は加えて C の手動移行）で入る。#278 は A に加え、`src-tauri` の `login_body`（失敗ログインの `actor_username` の切り詰め）が B。
+   REST と Tauri の両方を持つアプリは、`src-tauri` の `login_body` のコピー側も確認すること。
+7. **LAN 設定の適用**（#287・#288・#294、経路 A・B。#283 の SSE 中の停止は A のみ）: `banto_server::start` は互換のまま、`bind` / `BoundServer::serve` を足した。デスクトップの `server_apply` を自前で持つ派生アプリは、
    「新 listener の bind 成功 → 設定保存 → serve 開始」の順に取り込むこと（失敗時に保存値・実稼働・表示が食い違わない）。認証無効 + LAN 有効 + 閲覧公開の許可判定は
    `auth_server_combination_allowed` に一本化したので、独自に同じ判定を書いている場合はこれへ寄せる。
 8. 経路 A の更新で依存の lockfile も更新するとよい（`devalue`・`brace-expansion` の修正版、`event-listener`・`spin`。#282・#295）。
@@ -69,7 +69,7 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
   - `banto-attachments`: サムネイルの `has_thumbnail` 更新失敗を補助処理の失敗として扱う（#285）。
   - 他の `@banto/*`（attachments・charts・dock-svelte・forms・report・scan-wedge・theme・tree-svelte）と `banto-core`・`banto-storage` は版数のみ。
 - 更新: `v2.0.0` → `v2.1.0`（npm と Rust を同じタグに）。
-- 追従: 型エラーになる変更は無い。追従が要るのは上の「消費側への注意」1・4・7。
+- 追従: 型エラーになる変更は無い。追従が要るのは上の「消費側への注意」1（C の手動移行）・4・7。
 - 依存を上げずに留まれるか: できる（`v2.0.0` に固定したままなら従来どおり動く。ただしセキュリティ修正は入らない）。
 
 ### B. コピーしたテンプレート
@@ -78,11 +78,11 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
   - 起動: `apps/admin-template/src/lib/banto/environment.ts`（`probeBackend`・`isDemoBuild`）・`startup.ts`・`startupState.svelte.ts`・`setup.ts`、`src/lib/components/StartupSplash.svelte`、`src/routes/+layout.svelte`、`messages/{ja,en}.json`（`app.startup.*`）（#286）。
   - items: `src/routes/(app)/items/+page.svelte`・`ItemsClientGrid.svelte`・`ItemsServerGrid.svelte`・`rowSaveQueue.ts`・`[id]/+page.svelte`、`src/routes/(app)/+layout.svelte`（`{#key}` に params、#290）。
   - ナビのバッジ: `src/lib/navBadges.svelte.ts`（#289）。
-  - 設定の LAN 適用: `src/lib/banto/serverAdmin.ts`・`src/routes/(app)/settings/ConnectivitySection.svelte`（#287）、`src-tauri/src/lib.rs`（`server_apply`・バックアップ・認証・添付、#277〜#280・#283・#285・#287・#288）。
-- 関連 PR: #299（#286）、#298（#284）、#303（#281）、#300（#290）、#297（#289）、#296（#291。テンプレートの変更なし）、#294（#283・#287・#288）、#292（#277）、#293（#278・#279）、#302（#280）、#301（#285）。
-- 手で取り込む変更: 上の「消費側への注意」1・2・3・4・7。
-- 派生側の独自変更と衝突しやすい箇所: 独自のバックアップ画面・`src-tauri` のバックアップコマンド（保存先の解決）、起動時の demo 判定（`isEmbeddedServer` の独自利用）、`onInvalidate` で作ったバッジ、独自の `server_apply`。
-- 取り込まなくても動くか: 動く（A だけ上げても動く。ただし B 側のセキュリティ関連（#280 の `src-tauri`・#281 の items の CSV）の修正は入らない）。
+  - 設定の LAN 適用: `src/lib/banto/serverAdmin.ts`・`src/routes/(app)/settings/ConnectivitySection.svelte`（#287）、`src-tauri/src/lib.rs`（`server_apply`・`start_embedded_server`・`login_body`、#278・#287・#288・#294。#277・#279・#280・#283・#285 の `src-tauri` 側はテストのみで本番コードの変更は無い）。
+- 関連 PR: #299（#286）、#298（#284）、#303（#281）、#300（#290）、#297（#289）、#296（#291。テンプレートの変更なし）、#294（#287・#288。#283 は A のみ）、#292（#277）、#293（#278・#279）、#302（#280）、#301（#285）。
+- 手で取り込む変更: 上の「消費側への注意」2・3・4・6（`login_body`）・7。
+- 派生側の独自変更と衝突しやすい箇所: `src-tauri` の `login_body`・`server_apply`、起動時の demo 判定（`isEmbeddedServer` の独自利用）、`onInvalidate` で作ったバッジ。
+- 取り込まなくても動くか: 動く（A だけ上げても動く。ただし B 側のセキュリティ関連（#278 の `src-tauri` の `login_body`・#281 の items の CSV）の修正は入らない）。
 - 手本: admin-template の同名ファイル。
 
 ### C. DB・設定・配布資産
@@ -103,16 +103,16 @@ publishing.md の「1.x 系の運用上の例外」と同様に、消費側の�
 
 ### セキュリティ
 
-公表済みの脆弱性（CVE 等）の修正は無いが、レビューで見つかった次の問題を修正した。LAN 公開・複数ユーザー・同じフォルダに複数 DB を置く運用のアプリは更新を推奨する。
+アプリ固有のコードには、既知の CVE を直接修正する変更はない。一方、依存関係では公開 advisory への更新を含む（`devalue` の GHSA-j22f-vq7h-c4qm / GHSA-mcm9-63f2-9j32 / GHSA-x5rw-q4pp-hg5g、`brace-expansion`、`event-listener` の RUSTSEC-2026-0221 等。#295・#282/#305。下の「依存の脆弱性」）。アプリ固有のコードでは、レビューで見つかった次の問題を修正した。LAN 公開・複数ユーザー・同じフォルダに複数 DB を置く運用のアプリは更新を推奨する。
 
 - 初回セットアップの並行実行で複数の admin が作られる問題（#277。経路 A。`UsersService::setup_first_user` の空確認と INSERT を DB 側で原子化）。
-- 未認証リクエストによる監査ログの増幅（#278。経路 A。有効なセッションを終えない `POST /api/auth/logout` は記録しない、失敗ログインの `actor_username` は 32 文字で切り詰める）。
+- 未認証リクエストによる監査ログの増幅（#278。経路 A・B（`src-tauri` の `login_body`）。有効なセッションを終えない `POST /api/auth/logout` は記録しない、失敗ログインの `actor_username` は 32 文字で切り詰める）。
 - 並行ログインが失敗確定前のスロットルを通過する問題（#279。経路 A。試行枠の事前予約と、IP 単位 4・全体 8 の同時検証数の上限）。
-- 同じフォルダの複数 SQLite DB でバックアップ・リストア予約が共有され、他 DB のバックアップの閲覧や他 DB の次回起動での適用が起き得た問題（#280。経路 A・B。保存先を DB ごとに分離。**消費側への注意 1**）。
-- Excel 向け CSV エクスポートの数式（CSV）インジェクション（#281。経路 A・B。`formulaSafe`。**消費側への注意 3**）。
+- 同じフォルダの複数 SQLite DB でバックアップ・リストア予約が共有され、他 DB のバックアップの閲覧や他 DB の次回起動での適用が起き得た問題（#280。経路 A・C。保存先を DB ごとに分離。**消費側への注意 1**）。
+- Excel 向け CSV エクスポートの数式（CSV）インジェクション（#281。経路 A・B。`formulaSafe` は A、items のエクスポートでの有効化は B。**消費側への注意 3**）。
 - SSE 接続が開いたままだと LAN サーバーの停止が終わらない問題（#283。可用性。経路 A）。
 - 依存の脆弱性: `devalue` の high 3 件ほか・`brace-expansion`（#282・#295）、`event-listener`（RUSTSEC-2026-0221）・`spin`（yanked）（#282）。派生アプリは自分の lockfile でも更新するとよい。
-- 推奨: A と B の両方を取り込む。A だけ上げても、コピー済みのテンプレートの部分（B）の修正は入らない。
+- 推奨: A を上げ、B のうち #278（`login_body`）・#281（items の CSV）を取り込み、#280 は C の手動移行を行う。A だけ上げても、コピー済みのテンプレートの部分（B）の修正は入らない。
 
 ### 検証した組み合わせ
 
