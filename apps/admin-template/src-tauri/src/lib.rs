@@ -93,6 +93,14 @@ struct AppState {
     /// LOCK ORDER: `auth_config_lock` -> [`AppState::auth`]. `auth` is a
     /// std `Mutex` that is never held across an `.await`, so nothing can
     /// hold it while waiting for this lock - the reverse order cannot occur.
+    ///
+    /// LOCK ORDER (server side, #294 review): [`AppState::server`] ->
+    /// `auth_config_lock`. `server_apply` saves the `server.*` settings (and
+    /// revokes public viewer tokens) under this lock so it is serialized with
+    /// the `auth.*` writers (the forbidden auth-disabled / LAN / not
+    /// viewer-public combination cannot arise from a race). Auth-side code
+    /// must never take `state.server`; if it ever has to, it must take it
+    /// BEFORE this lock.
     auth_config_lock: AsyncMutex<()>,
     /// The local credential store (spec §8.2): argon2id-hashed accounts in
     /// the same SQLite settings DB as `settings` below. Shared with
@@ -1960,6 +1968,12 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// records the usual `ok` entry. Callers should re-read `server_status` after
 /// an error (the frontend does).
 ///
+/// Lock order (#294 review): `state.server` -> `auth_config_lock` (see
+/// `AppState::auth_config_lock`). The final validation + save + token
+/// revocation run under `auth_config_lock` ([`save_server_config_locked`]),
+/// so they are serialized with `auth_config_apply` and the other `auth.*`
+/// writers; the lock is NOT held while the old server stops or while binding.
+///
 /// When the saved `viewer_public` is OFF after a successful apply, every
 /// outstanding public viewer token is revoked (`rest_auth` is shared across
 /// restarts, so they would otherwise outlive the setting); real login
@@ -2042,12 +2056,7 @@ async fn server_apply(
             None
         };
         // On error `bound` is dropped here, releasing the port.
-        state.settings.set_server_config(&config).await?;
-        if !config.viewer_public {
-            // 閲覧公開 OFF: public viewer tokens minted earlier (rest_auth
-            // outlives server restarts) must not keep working.
-            state.rest_auth.revoke_public_viewer_tokens();
-        }
+        save_server_config_locked(&state, &config).await?;
         Ok(match bound {
             Some(bound) => Some(launch(bound).await),
             None => None,
@@ -2123,6 +2132,25 @@ async fn server_apply(
             Err(err)
         }
     }
+}
+
+/// Re-validate (inside `set_server_config`, which re-reads `auth.disabled`),
+/// save the `server.*` settings and revoke public viewer tokens, all under
+/// `auth_config_lock` so no `auth.*` write can interleave between the check
+/// and the save (#294 review). Caller holds `state.server` (order: server ->
+/// auth_config_lock).
+async fn save_server_config_locked(
+    state: &AppState,
+    config: &ServerSettings,
+) -> Result<(), BantoError> {
+    let _auth_config = state.auth_config_lock.lock().await;
+    state.settings.set_server_config(config).await?;
+    if !config.viewer_public {
+        // 閲覧公開 OFF: public viewer tokens minted earlier (rest_auth
+        // outlives server restarts) must not keep working.
+        state.rest_auth.revoke_public_viewer_tokens();
+    }
+    Ok(())
 }
 
 /// `admin`-only, symmetric with `settings_set` below: the generic key/value
@@ -6221,6 +6249,43 @@ mod tests {
         assert!(answer.identity.is_none());
         assert_eq!((answer.checked, answer.current), (2, 2));
         assert!(current_session(&state).await.unwrap().is_none());
+    }
+
+    /// #294 review: `server_apply`'s save waits for `auth_config_lock`, and
+    /// re-validates against the auth settings stored by then, so an
+    /// auth-disabled save that won the lock makes a LAN-on / viewer_public-off
+    /// save fail instead of producing the forbidden combination.
+    #[tokio::test]
+    async fn server_config_save_is_serialized_with_auth_config_and_revalidated() {
+        let state = app_state().await;
+        let config = ServerSettings {
+            enabled: true,
+            bind: "127.0.0.1".to_string(),
+            port: 9123,
+            viewer_public: false,
+        };
+        let before = state.settings.server_config().await.unwrap();
+
+        let guard = state.auth_config_lock.lock().await;
+        let save = save_server_config_locked(&state, &config);
+        tokio::pin!(save);
+        assert_stays_pending!(save);
+        assert_eq!(
+            state.settings.server_config().await.unwrap(),
+            before,
+            "the save waits for auth_config_lock"
+        );
+        state
+            .settings
+            .set_auth_config(&AuthSettings {
+                disabled: true,
+                ..AuthSettings::default()
+            })
+            .await
+            .unwrap();
+        drop(guard);
+        assert!(save.await.is_err(), "re-validated after the lock");
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
     }
 
     /// PR #264 re-review P2 (b): a logout's post-clear re-read sees
