@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 修正
+
+- fix(admin-core): 試運転（`kind: 'commissioning'`、アプリが `adopt()` で確定する合成セッション）への切り替えで「別のユーザーでログインされました」が出ないようにした（#308、S-108。#291 の続き）。`SessionController` は owner の変化を比べる対象を `kind === 'account'` の active だけにした（v2.1.0 までは `publicViewer` と `local` だけを列挙して除外していた）。`account` 以外の active（`publicViewer`・`local`・`commissioning`・今後増える kind）は `pendingOwnerChange` を立てず、最後の具体的な owner も更新しない。`kind` を持たない provider の答えは従来どおり `account` として比べる。本物の別ユーザーへの切り替え（account A → account B）は従来どおり通知する。派生アプリ（banto-industrial の banto-hub など）への取り込み: 経路 A のみ（`@banto/admin-core` を新しいタグへ。`ownerChange.ts` などコピー側の変更は不要）。経路 B の変更は無い。DB・設定の移行なし。
+
 ## [2.1.0] - 2026-10-02
 
 **v2.1.0 — レビュー起票分（#277〜#291）の修正とセキュリティ強化。版の種類: minor（後方互換の公開 API 追加 + 消費側に影響する挙動変更）。
