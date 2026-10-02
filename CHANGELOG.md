@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- fix(items): 商品詳細から別の商品詳細へクライアント遷移（`/items/2` → `/items/1` など同一ルート内の移動）すると、URL だけが切り替わり、フォーム・添付・保存先 ID が直前の商品のまま残り、誤った商品へ保存され得た不具合を修正した。SvelteKit は同一ルートの別パラメータ間でページコンポーネントを再利用する（`params` が更新されるだけ）ため、`(app)/+layout.svelte` の `{#key}` にルート params を含めて ID ごとにページを作り直す（旧 ID の load 応答は破棄され、未保存変更ガードも従来どおり働く）。回帰 e2e smoke 3f を追加。#290。
 - chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
 
 ### Fixed
