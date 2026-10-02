@@ -1,14 +1,16 @@
-# ADR-0017: 資格情報なしのセッション発行は「grant」に一般化し、閲覧公開をその 1 種類目、派生アプリの試運転を 2 種類目にする（認証を迂回する口は banto に作らない）
+# ADR-0017: 資格情報なしのセッション発行は「grant」に一本化し、閲覧公開をその 1 種類目、派生アプリの試運転を 2 種類目にする（v3.0.0。認証を迂回する口は banto に作らない）
 
 > English: [0017-credential-less-grant.en.md](0017-credential-less-grant.en.md)
 
-- 状態: Accepted（オーナー決定 2026-10-02。実装は v2.2.0 の PR。細目の未決は本文「未決」節に列挙し、実装 PR で決める）
-- 日付: 2026-10-02
-- 関連: [ADR-0012](0012-lan-public-viewer-synthetic-session.md)（閲覧公開 = viewer 固定の合成セッション。本 ADR はこれを一般化する。supersede はしない）/
+- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。実装は v3.0.0 の PR）
+- 日付: 2026-10-02（改訂 2026-10-03）
+- 関連: [ADR-0012](0012-lan-public-viewer-synthetic-session.md)（閲覧公開 = viewer 固定の合成セッション。本 ADR はこれを一般化する。方式の判断は生きているので supersede はしない）/
+  [ADR-0003](0003-tls-via-reverse-proxy.md)（同一ホストのリバースプロキシ。決定 §6 の前提）/
   [ADR-0014](0014-account-bound-session-revocation.md)（アカウント照合。grant セッションは対象外）/
-  [ADR-0016](0016-session-controller-single-writer.md)・[docs/session-controller-design.md](../session-controller-design.md) §4.7・§6.2・I-13・I-21（`adopt()`/`end()` を deprecated にする）/
+  [ADR-0016](0016-session-controller-single-writer.md)・[docs/session-controller-design.md](../session-controller-design.md) §4.7・§6.2・I-13・I-21（`adopt()`/`end()` を削除する）/
   [docs/viewer-public-plan.md](../viewer-public-plan.md) §2.2 / conventions §1・§6・§10 /
-  派生アプリ: tyaro/banto-industrial の banto-hub「試運転モード」
+  [docs/upgrading.md](../upgrading.md)（移行手順の置き場）/
+  派生アプリ: tyaro/banto-industrial の banto-hub「試運転モード」・chronogazer
 - 対象コード: banto v2.1.1（`25f2291`）。本文の `ファイル:行` はこの版のもの
 
 ## コンテキスト
@@ -53,23 +55,26 @@ banto は何を提供するか**」。制約:
 
 - 迂回の口（「この条件のとき認証を飛ばす」フック）を banto に作らない。認可の入口は
   bearer 1 本のままにする（ADR-0012 の決定を弱めない）。
-- 閲覧公開の既存の利用者（`--preset display`、派生アプリ 2 本）を壊さない。v2.1.1 → **minor**。
 - 発行の条件・上限・失効・寿命は閲覧公開と同じ型で表せる（違うのは identity と条件だけ）。
+- 版の扱い: 既知の利用者は admin-template と banto-industrial の 2 アプリ（banto-hub・
+  chronogazer）だけ。後方互換の接続コード（旧型・ラッパ・旧 URL のエイリアス）を増やすより、
+  **一括で書き換える方が単純**（2026-10-03 オーナー判断）。SemVer どおり互換を壊すので
+  **major = v3.0.0**。
 
 ## 決定
 
 **閲覧公開の「条件つき・資格情報なしのトークン発行」を `grant` として一般化し、閲覧公開を
 その 1 種類目（`publicViewer`）、派生アプリの試運転を 2 種類目（アプリ定義、例 `commissioning`）
-にする。** grant は「発行」だけを一般化し、発行後は従来どおり通常の bearer セッションとして
+にする。閲覧公開専用の API・URL・フィールドは削除し、grant の API に一本化する（v3.0.0）。**
+grant は「発行」だけを一般化し、発行後は従来どおり通常の bearer セッションとして
 `require_auth` + `RoleGuard` + 監査 + SSE 再検証に乗る。迂回の口は作らない。
-画面側は `adopt()`/`end()` を使わず、閲覧公開と同じ fallback（grant を取りに行き、provider が
+画面側は `adopt()`/`end()` を削除し、閲覧公開と同じ fallback（grant を取りに行き、provider が
 答える）で試運転セッションを確定する。
 
-### 1. 版と互換（minor、v2.2.0）
+### 1. 版（v3.0.0、major）
 
-追加のみで、既存の名前はすべて薄いラッパ／エイリアスとして残す（一覧は「互換性」節）。
-派生アプリは `@banto/admin-core`・`banto-server` を v2.2.0 に上げるだけで従来どおり動き、
-grant を使う側だけが新 API に移る。
+後方互換は持たない。旧 API・旧 URL・旧フィールドは**削除**し、互換用の関数・旧型・エイリアスは
+残さない（削除一覧は「削除するもの」節、派生アプリの書き換えは「v3.0.0 への移行手順」節）。
 
 ### 2. サーバー（`crates/banto-server`）
 
@@ -88,28 +93,53 @@ pub struct GrantSpec {
     pub identity: Identity,
     /// 発行の条件。要求ごとに評価する（閲覧公開は `server_config().viewer_public`）。
     pub enabled: GrantCondition,
-    /// 種別ごとの FIFO 上限。既定 256（`MAX_PUBLIC_VIEWER_SESSIONS` と同値）。超えたら最古を失効。
+    /// 種別ごとの FIFO 上限。既定 256。超えたら最古を失効。
     pub max_sessions: usize,
     /// `None` = `AuthState` の既定 `token_policy`（8h / idle 1h）。remembered は常に false。
     pub policy: Option<TokenPolicy>,
-    /// true なら発行口は peer が loopback でないとき 403。
+    /// true なら発行口は peer が loopback でないとき（peer 不明を含む）403。
     pub require_loopback_peer: bool,
+}
+impl GrantSpec {
+    /// 閲覧公開: identity `public`/`viewer`、条件 `server_config().viewer_public`、上限 256、loopback 不要。
+    pub fn public_viewer(settings: SettingsService) -> GrantSpec;
+}
+
+/// `require_auth` が extensions に入れる検証結果（旧 `public_viewer: bool` を `grant` に改名）。
+pub struct AuthenticatedSession {
+    pub identity: Identity,
+    pub grant: Option<GrantKind>,
+    pub stamp: Option<SessionStamp>,
 }
 
 impl AuthState {
     pub fn issue_grant_token(&self, spec: &GrantSpec) -> String;
     pub fn revoke_grant_tokens(&self, kind: &GrantKind) -> usize;
 }
+
+/// grant の登録と「この peer がいま発行を受けられるか」の評価（公開部品 (2)）。
+pub struct GrantRegistry;
+impl GrantRegistry {
+    /// 名前の衝突・予約語（`account`・`local`、登録済みの kind、識別子の文法違反）は Err。
+    pub fn register(&mut self, spec: GrantSpec) -> Result<(), BantoError>;
+    /// status と発行で共有する判定。peer 不明は `require_loopback_peer` の kind を false。
+    pub async fn availability(&self, peer: Option<SocketAddr>) -> BTreeMap<GrantKind, bool>;
+}
+/// 発行ルーター（公開部品 (1)）: `POST /api/auth/grant/{kind}` だけ。
+pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
 ```
 
-- `TokenRecord.public_viewer: bool` → `grant: Option<GrantKind>`（`auth.rs:424-425`）。
-  `Inner::public_tokens: VecDeque<String>`（`auth.rs:577`）→ `HashMap<GrantKind, VecDeque<String>>`
+- **改名**: `TokenRecord.public_viewer: bool` → `grant: Option<GrantKind>`（`auth.rs:424-425`）、
+  `AuthenticatedSession.public_viewer: bool` → `grant: Option<GrantKind>`（`auth.rs:255-262`。
+  全フィールド `pub` の struct なので、直接構築している利用者は書き換える — 移行手順）。
+  `Inner::public_tokens`（`auth.rs:577`）→ `HashMap<GrantKind, VecDeque<String>>`
   （種別ごとの FIFO。閲覧公開の上限・最古追い出し・「実ログインは巻き込まない」
-  `auth.rs:2641-2690` のテストはそのまま種別ごとに成り立つ）。
-- `AuthenticatedSession`（`auth.rs:255-262`）は `grant: Option<GrantKind>` を持ち、
-  `GET /api/auth/identity` の JSON は `Identity & { publicViewer: bool, kind: string }`
-  （`publicViewer = grant == PUBLIC_VIEWER`、`kind = grant の文字列 | "account"`）。
-  Rust の struct リテラルの互換は「未決 1」。
+  `auth.rs:2641-2690` のテストは種別ごとに成り立つ）。
+- **削除**: `issue_public_viewer_token`・`revoke_public_viewer_tokens`（`auth.rs:890,936`）・
+  `MAX_PUBLIC_VIEWER_SESSIONS`（`GrantSpec.max_sessions` の既定 256 に吸収）。
+  `PUBLIC_VIEWER_ID`（`"public"`）は `GrantSpec::public_viewer` の identity の id として残す。
+- `GET /api/auth/identity` の JSON は `Identity & { kind: string }`（`kind` = grant の文字列 |
+  `"account"`。`publicViewer` フィールドは**削除**）。
 - アカウント照合の分岐（`auth.rs:1131-1135` の `if session.public_viewer`）は
   `if session.grant.is_some()` に。grant セッションは stamp を持たず、`SessionLookup` を
   引かない（ADR-0014 の対象外。固定 identity なので再読の対象が無い）。
@@ -118,95 +148,107 @@ impl AuthState {
   grant に一般化）。
 - `change-password` の拒否（`routes/auth.rs:227`）は `grant.is_some()` に。
   grant セッションは資格情報の持ち主ではない（同名のアカウントがあっても対象にしない）。
-- **発行口** `POST /api/auth/grant/{kind}`（新設。`X-Banto-Client` 必須は `crate::csrf` で従来どおり）。
-  順に: 登録されていない `kind` → 404 `not_found`；`require_loopback_peer` かつ peer が
-  loopback でない**または peer が分からない** → 403 `forbidden`（fail closed）；
-  `enabled()` が `Ok(false)` → 403、`Err` → その `BantoError`（`ApiError`）；
-  通れば `issue_grant_token` → `{ success: true, token }`（閲覧公開と同じ応答形）。
+- **発行口は `POST /api/auth/grant/{kind}` の 1 本**（`grant_router`。`X-Banto-Client` 必須は
+  `crate::csrf` で従来どおり）。**`POST /api/auth/public-viewer` は削除**（閲覧公開は
+  `/api/auth/grant/publicViewer`）。順に: 登録されていない `kind` → 404 `not_found`；
+  `GrantRegistry::availability` と同じ判定を**発行時にも必ず再評価**し、
+  `require_loopback_peer` かつ peer が loopback でない**または peer が分からない** → 403
+  `forbidden`（fail closed）；`enabled()` が `Ok(false)` → 403、`Err` → その `BantoError`
+  （`ApiError`）；通れば `issue_grant_token` → `{ success: true, token }`（閲覧公開と同じ応答形）。
   **発行は監査しない**（既存方針、`routes/auth.rs:88-94`）。
-  `POST /api/auth/public-viewer` は `/api/auth/grant/publicViewer` のエイリアスとして残す。
-- **peer の検査**: `ConnectInfo<SocketAddr>` は `BoundServer::serve` が
-  `into_make_service_with_connect_info::<SocketAddr>()` で常に供給する
-  （`crates/banto-server/src/server.rs:128-131`）。到達経路は 3 つで全部これを通る —
+- **kind の識別子は camelCase のまま URL にも使う**（`/api/auth/grant/publicViewer`）。
+  固定のルート名ではなく kind 識別子なので、`identity.kind`・`status.grants`・URL・
+  client の `SessionKind` で**同じ表記**にする（変換表を持たない。別表記のエイリアスは
+  作らない）。**名前の衝突は登録時に拒否**する: 既存のセッション種別 `account`・`local`、
+  登録済みの kind（`publicViewer` を 2 回登録するのも拒否）、識別子の文法違反は
+  `GrantRegistry::register` が `Err`。
+- **peer の検査**: `ConnectInfo<SocketAddr>` は **banto の標準の起動経路**（`BoundServer::bind`/
+  `serve`、`crates/banto-server/src/server.rs:128-131` の
+  `into_make_service_with_connect_info::<SocketAddr>()`）**では常に供給される** —
   banto-serve の `server::start`（`server.rs:174`）、Tauri 組み込みサーバ
-  （`apps/admin-template/src-tauri/src/lib.rs:1887` の `bound.serve(router)`）、
-  テストの `BoundServer`。**供給されないのは `tower::oneshot` で直接 router を叩くテストだけ**
-  （`auth.rs:1515-1536` の `MaybePeerAddr` が `None` を返す経路）。だから設計上は
-  「peer 不明 = 403」で閉じてよく、`rest/tests.rs` 側は `req.extensions_mut().insert(ConnectInfo(addr))`
-  で明示する。loopback 判定は IPv4 射影 IPv6（`::ffff:127.0.0.1`）も loopback に数える
+  （`apps/admin-template/src-tauri/src/lib.rs:1887` の `bound.serve(router)`）とも。
+  公開の `Router` を独自に起動する利用者（`axum::serve` を直接呼ぶ、`tower::oneshot` の
+  テスト — `auth.rs:1515-1536` の `MaybePeerAddr` が `None` になる経路）までは保証しない。
+  だから **peer 不明は「拒否」**（status では `false`、発行では 403）。
+  `rest/tests.rs` は `req.extensions_mut().insert(ConnectInfo(addr))` で明示する。
+  loopback 判定は IPv4 射影 IPv6（`::ffff:127.0.0.1`）も loopback に数える
   （`server.rs:264` 付近の正規化と同じ扱い。IPv6 自体は対象外）。
-- `/api/auth/status`（`routes/auth.rs:37-66`）に `grants: { <kind>: bool }` を追加。各 kind の
-  値は「**この要求がいま発行を受けられるか**」= `enabled()` かつ（`require_loopback_peer` なら）
-  peer が loopback。`viewerPublic` は `grants.publicViewer` と同値のまま残す（エイリアス）。
-  `enabled()` の `Err` はその kind を `false` にする（status は失敗させない。閲覧公開の
-  「読めなければ発行しない」と同じ fail closed）。
-- `extra_auth_router`（`routes/auth.rs:296-320`）に `grants: Vec<GrantSpec>` を渡す新しい版を
-  足す（Rust に多重定義は無いので別名。例 `extra_auth_router_with_grants`。名前は実装 PR で）。
-  旧シグネチャは `vec![GrantSpec::public_viewer(settings.clone())]` を補うラッパ。
-  `GrantSpec::public_viewer(settings: SettingsService) -> GrantSpec` は閲覧公開の仕様
-  （identity `public`/`viewer`、条件 `server_config().viewer_public`、上限 256、
-  `require_loopback_peer: false`）をそのまま持つ。派生アプリは `extra_auth_router` を
-  **コピーして持っている**（banto-hub `core/src/rest.rs`、chronogazer `core/src/rest.rs`）ので、
-  発行口と status の `grants` を組み立てる部品（grant の registry と router）は
-  `pub` にし、コピー側が merge できる形にする。
-- `issue_public_viewer_token()` / `revoke_public_viewer_tokens()`（`auth.rs:890,936`）は
-  `issue_grant_token(&GrantSpec::public_viewer_fixed())` / `revoke_grant_tokens(&PUBLIC_VIEWER)`
-  の薄いラッパ。`PUBLIC_VIEWER_ID`・`MAX_PUBLIC_VIEWER_SESSIONS` は残す。
+- `/api/auth/status`（`routes/auth.rs:37-66`）は `{ initialized, grants: { <kind>: bool }, …extras }`。
+  **`viewerPublic` は削除**（`grants.publicViewer`）。値は `GrantRegistry::availability(peer)`
+  （**status と発行処理で同じ判定を共有**）= `enabled()` かつ（`require_loopback_peer` なら）
+  peer が loopback。status は**その時点の情報**なので、発行時にも必ず再判定する（上記）。
+  **grant ごとの判定の `Err` はその kind を `false` にする**（閲覧公開の「読めなければ
+  発行しない」と同じ fail closed）が、**status 全体の失敗の仕方は変えない**
+  （`is_initialized` などの DB 障害は従来どおりエラー応答。「status は絶対に失敗しない」とは
+  広げない）。
+- **公開する部品は 2 つだけ**: (1) 発行ルーター `grant_router`、(2) 登録と発行可否の評価
+  `GrantRegistry`。status ルート本体は含めず、既存の status（テンプレートの
+  `auth_status_handler`、派生アプリがコピーした status）が `availability(peer)` の結果を
+  `grants` として載せる。汎用のプラグイン機構は作らない。
+  `extra_auth_router`（`routes/auth.rs:296-320`）は `registry: Arc<GrantRegistry>` を受ける
+  **新しいシグネチャに変える**（旧シグネチャは削除）。テンプレートは
+  `GrantSpec::public_viewer(settings.clone())` だけを登録する。派生アプリは
+  `extra_auth_router` を**コピーして持っている**（banto-hub `core/src/rest.rs:983`、
+  chronogazer `core/src/rest.rs:770`）ので、コピー側は `grant_router` を merge し、自分の
+  status に `availability` を載せる。
 - **失効と監査**: 条件を閉じる操作（閲覧公開 OFF、試運転のロックダウン）が
   `revoke_grant_tokens(kind)` を呼び、戻り値 `usize` を自分の監査 `detail` に
   `revokedGrants: n` として足せるようにする（発行は監査しない代わりに、閉じた側に件数を残す）。
   テンプレートの `save_server_config_locked`（`src-tauri/src/lib.rs:2160-2165`）は
-  `revoke_grant_tokens(&PUBLIC_VIEWER)` に置き換える。
+  `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)` に書き換える。
 
 ### 3. ユーザー削除の自己削除ガード
 
 `routes/users.rs:69-84` の `acting_user` は token → `identity_for` → `users.get_by_username`
 で呼び手の行を解決するが、grant セッションの固定 identity はアカウントを持たないので
-`Unauthorized` になり、admin 相当の grant（試運転）がユーザーを削除できない。
-**grant セッションは「acting id を持たない」扱いで自己削除ガードを通す**分岐を banto に入れる:
-`require_auth` が extensions に入れた `AuthenticatedSession`（`auth.rs:1562-1573`）を読み、
-`grant.is_some()` なら acting id を `None` に、そうでなければ従来どおり行 id を引く。
-`UsersService::delete_user(id, acting_user_id: i64)`（`crates/banto-admin-services/src/users.rs:843`）
-は `Option<i64>` を取る版を足し、既存のシグネチャはラッパで残す。「最後の admin は消せない」
-ガード（`ensure_admin_removal_allowed`）は grant でも効く。
+`Unauthorized` になり、admin 相当の grant（試運転）がユーザーを削除できない。決定:
+
+- `UsersService::delete_user`（`crates/banto-admin-services/src/users.rs:843`）は acting id を
+  `Option<i64>` で受ける形にする（関数名はこの PR の範囲で実装 PR が決める。互換のための
+  旧関数は残さない）。
+- **actor 無し（acting id 無し）を許すのは、検証済みの grant セッションの場合に限る。**
+  判定は `require_auth` が extensions に入れた `AuthenticatedSession` の `grant.is_some()`
+  で行い、token から username を引けなかっただけの場合は従来どおり `Unauthorized`。
+- **admin の認可（`require_role_at_least(Admin)`）と「最後の admin は消せない」
+  （`ensure_admin_removal_allowed`）は維持する。** grant で緩むのは自己削除ガードの
+  「自分の行 id」の照合だけ（grant には行が無い）。
+- 派生アプリは `UsersService` もコピーしている（banto-hub `core/src/users.rs:634`）ので、
+  この変更はテンプレート取り込み（経路 B）で届く。
 
 ### 4. クライアント（`@banto/admin-core`）
 
-- `AuthProvider.status()` → `{ initialized, viewerPublic?, grants?: Record<string, boolean> }`。
-  HTTP provider（`providers/http.ts:434-456`）は `grants` が無い古いサーバーでは
-  `grants: {}`（`viewerPublic` と同じ fail closed）。
-- `AuthProvider.enterGrant?(kind, { expectRevision })` を追加。HTTP provider は
-  `POST /api/auth/grant/{kind}` を叩き、`enterPublicViewer`（`http.ts:537-562`）と**同じ
-  compare-and-set**（開始時に token が無いこと・revision が `expectRevision` のまま）で
-  保存する。`enterPublicViewer` は `enterGrant('publicViewer', …)` のラッパ。
-  Tauri provider・demo provider は従来どおり未実装（閲覧公開と同じ理由、`provider.ts:154-164`）。
-- `publicViewerFallback(controller, provider, ticket, { maxRetries })`
-  （`sessionController.svelte.ts:1150-1218`）を
-  `grantFallback(controller, provider, ticket, { kind, available?, maxRetries? })` に一般化。
-  `available(status)` は既定 `status.grants?.[kind] === true`。ループの形（`status()` →
-  `isCurrent(ticket)` → `enterGrant({ expectRevision })` → `resolveSettled()`、失敗は再試行しない、
-  `superseded` のときだけ上限つきでやり直す）は変えない。`publicViewerFallback` は
-  `kind: 'publicViewer'`、`available: s => s.viewerPublic === true || s.grants?.publicViewer === true`
-  のラッパ。
-- `Identity.kind?: string` を追加（発行元が返す。`identity.publicViewer` と同じく発行元の印）。
+- `AuthProvider.status()` → `{ initialized, grants: Record<string, boolean> }`（`viewerPublic` は
+  **削除**）。HTTP provider（`providers/http.ts:434-456`）は応答に `grants` が無ければ `{}`
+  （fail closed）。
+- `AuthProvider.enterGrant?(kind, { expectRevision })`（`enterPublicViewer` は**削除**）。
+  HTTP provider は `POST /api/auth/grant/{kind}` を叩き、今の `enterPublicViewer`
+  （`http.ts:537-562`）と**同じ compare-and-set**（開始時に token が無いこと・revision が
+  `expectRevision` のまま）で保存する。Tauri provider・demo provider は未実装のまま
+  （閲覧公開と同じ理由、`provider.ts:154-164`）。
+- `grantFallback(controller, provider, ticket, { kind, available?, maxRetries? })`
+  （`publicViewerFallback`・`DEFAULT_PUBLIC_VIEWER_RETRIES` は**削除**。
+  `DEFAULT_GRANT_RETRIES` に改名）。`available(status)` は既定
+  `status.grants[kind] === true`。ループの形（`status()` → `isCurrent(ticket)` →
+  `enterGrant({ expectRevision })` → `resolveSettled()`、失敗は再試行しない、`superseded` の
+  ときだけ上限つきでやり直す）は `sessionController.svelte.ts:1150-1218` のまま。
+  `provider.enterGrant` が無ければ `none` のまま返す（例外にしない）。
+- `Identity.publicViewer` は**削除**し、`Identity.kind?: string`（発行元が返す印）にする。
   `kindOfResolvedAuth`（`sessionController.svelte.ts:225-229`）は **サーバーの `identity.kind`
-  を最優先**、無ければ従来の順（`identity.publicViewer === true` → `'publicViewer'`、
-  provider の `kind`、`'account'`）。Tauri の `'local'` は identity に `kind` が無いので従来どおり。
-- `sessionOwnerKey`（`sessionController.svelte.ts:200-213`）: grant の kind（`identity.kind` が
-  `publicViewer`・`account` 以外）は **kind 単独のキー**（例 `commissioning`。固定 identity なので
-  id を足しても情報が増えない）。`publicViewer` → `public-viewer`、`local` → `local`、
-  `account:${id}` は不変。`adopt()` で確定した kind（`identity.kind` が無い）は v3 まで
-  従来の `${kind}:${id}`。banto-hub が adopt → grant に移ると保存状態の owner が
-  `commissioning:commissioning` → `commissioning` に 1 回だけ変わる（一覧の保持状態が
-  1 回読めなくなるだけで、消えはしない）。
+  を最優先**、無ければ provider の `kind`（Tauri の `'account'`/`'local'`）、無ければ `'account'`。
+  `PUBLIC_VIEWER_ID`（TS、`provider.ts:48`）は削除（識別は `kind` で行う。id で推測しない
+  conventions §10 のとおり）。
+- `sessionOwnerKey`（`sessionController.svelte.ts:200-213`）: grant の kind は **kind 単独の
+  キー**（`publicViewer`・`commissioning` など。固定 identity なので id を足しても情報が
+  増えない）。`local` → `local`、`account:${id}` は不変。旧 `public-viewer` キーと adopt の
+  `${kind}:${id}` は消える（保存状態の owner が 1 回変わるだけで、消えはしない）。
 - owner 変化の比較は `kind === 'account'` の active だけ（S-108、v2.1.1 #308）なので変更なし。
   grant セッションは「端末／アプリの状態」であり「別のユーザー」ではない。
-- **`adopt()`/`end()` は v2.2 で `@deprecated`**（利用者は banto-hub の
-  `commissioningPolicy.ts` だけ）、**v3 で削除**。I-13・I-21 と §4.7 S-44〜S-46・§6.2 の
-  policy runner は「grant に置き換え、adopt は deprecated」の注記を付ける
-  （[session-controller-design.md](../session-controller-design.md)）。grant 化した試運転は
-  S-42 と同じ経路（provider が答える、ticket は revision を持つ、SSE 401 で確認に行ける）に
-  なり、controller の adopt 専用分岐（§5.1 手順 0〜7 の「adopt 中」列）は v3 で消える。
+- **`SessionController.adopt()`/`end()` は v3.0.0 で削除**（利用者は banto-hub の
+  `commissioningPolicy.ts` だけ）。`SessionTicket` の「adopt 中は epoch だけ」（I-21）、
+  手順 0〜7 の「adopt 中」分岐（I-13、S-44〜S-46・S-53・S-62・S-69〜S-71）、
+  `SessionController` の `adopt`/`end` も削除する。grant 化した試運転は S-42 と同じ経路
+  （provider が答える、ticket は revision を持つ、SSE 401 で確認に行ける）になる
+  （[session-controller-design.md](../session-controller-design.md) に注記）。
 
 ### 5. 派生アプリ側の取り決め（参考。banto の規約ではない）
 
@@ -219,6 +261,29 @@ banto-hub がこの ADR で決めた形（banto には規約として置かな�
 - elev（昇格）で試運転に戻しても、既存トークンは失効させない。
 - bootstrap の自己発行（Rust 側）は試運転の admin grant を `issue_grant_token` で行う。
 - `max_sessions` は閲覧公開の 256 より小さくしてよい（admin 相当のトークンの数は少ないほどよい）。
+- リバースプロキシ配下の運用条件（§6）を運用ガイドに書く。
+
+### 6. 同一ホストのリバースプロキシ配下（注意書きで対応。技術的には防げない）
+
+loopback 判定で分かるのは**直近の接続元**だけで、外部のクライアントは識別できない。banto は
+同一ホストのリバースプロキシ（ADR-0003。TLS 終端）を既に対応構成として想定しているので、
+その配下では全要求が loopback に見え、`require_loopback_peer` は保護にならない。
+`X-Forwarded-For` は偽装できるので見ない。決定:
+
+- **注意書きで対応し、`trusted_proxies` などの仕組みは今は追加しない**（将来の選択肢として
+  記録: `GrantSpec` に信頼するプロキシのアドレスを持たせ、そのときだけ `X-Forwarded-For` を
+  読む。依存は増えないが面が増えるので、実需が出るまで足さない）。
+- **これは誤設定の防止を運用側に委ねる判断であり、警告を書いても技術的に防げるわけではない。**
+  ADR として正直にそう書く。
+- 対応構成・導入手順に、最低限次の 2 点を明記する:
+  1. **外部公開（プロキシから外へ出す）の前にロックダウンする。**
+  2. **再試運転の間も、管理者相当の grant の発行口（`/api/auth/grant/{kind}`）をプロキシから
+     外部へ公開しない**（プロキシ側でそのパスを遮断するか、試運転中はプロキシを止める）。
+- 書く場所: **banto 側**は README の LAN 配信／リバースプロキシの節（ADR-0003 の対応構成）と
+  conventions §6 の grant 項（実装 PR で書く）。**派生アプリ側の義務**（banto の PR では
+  触れない）: banto-hub の運用ガイド §19 と tag-server-design §5.6 に同じ 2 点を書く。
+- banto-hub は設定未登録なら試運転 ON（＝初回起動時は admin 相当の grant が発行できる）。
+  これを既定 OFF に変えるかは**別の設計判断**で、本 ADR の範囲外。
 
 ## セキュリティ
 
@@ -245,44 +310,125 @@ banto-hub がこの ADR で決めた形（banto には規約として置かな�
   試運転 grant を `require_loopback_peer: false` で LAN bind のサーバーに載せると、LAN の
   誰でも admin 相当のトークンを得る。banto は条件を強制しない（アプリの `GrantSpec` が決める）
   ので、ADR の帰結として派生アプリの移行 PR のレビュー項目に置く。
-- **注意点 3: リバースプロキシ（ADR-0003）の背後では peer はプロキシ。** 同一ホストの
-  プロキシ経由だと全要求が loopback に見え、`require_loopback_peer` は保護にならない。
-  `X-Forwarded-For` は偽装できるので見ない。→「未決 3」。
+- **注意点 3: リバースプロキシ配下では peer はプロキシ。** 決定 §6 のとおり注意書きで対応し、
+  技術的には防げないことを明記する。
 - 監査: 発行は監査しない（既存方針）。grant セッションの操作は固定 identity の id が actor
   として残る（閲覧公開の `public` と同じ）。ui-settings は `ui.<identity.id>.*` を同じ kind の
   端末で共有する（`routes/ui_settings.rs:31-36`。閲覧公開の `ui.public.*` と同じ性質）。
 
-## 互換性
+## 削除するもの（v3.0.0）
 
-**判定: minor（v2.2.0）。** 追加・一般化のみで、ワイヤ・TS・Rust の既存の名前はすべて残す。
+| 削除                                                                                                                | 置き換え                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `POST /api/auth/public-viewer`                                                                                      | `POST /api/auth/grant/publicViewer`                                                       |
+| `GET /api/auth/status` の `viewerPublic`                                                                            | `grants.publicViewer`                                                                     |
+| `GET /api/auth/identity` の `publicViewer`                                                                          | `kind`（`"publicViewer"` / `"commissioning"` / `"account"`）                              |
+| `AuthenticatedSession.public_viewer: bool`                                                                          | `AuthenticatedSession.grant: Option<GrantKind>`                                           |
+| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`                                              | `issue_grant_token(&GrantSpec)` / `revoke_grant_tokens(&GrantKind)`                       |
+| `MAX_PUBLIC_VIEWER_SESSIONS`                                                                                        | `GrantSpec.max_sessions`（既定 256）                                                      |
+| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`                                              | `registry: Arc<GrantRegistry>` を受けるシグネチャ（+ `grant_router`）                     |
+| `UsersService::delete_user(id, i64)`                                                                                | acting id を `Option<i64>` で受ける形（名前は実装 PR）                                    |
+| `publicViewerFallback` / `DEFAULT_PUBLIC_VIEWER_RETRIES`                                                            | `grantFallback(…, { kind })` / `DEFAULT_GRANT_RETRIES`                                    |
+| `AuthProvider.enterPublicViewer` / `status().viewerPublic`                                                          | `enterGrant(kind, …)` / `status().grants`                                                 |
+| `Identity.publicViewer` / TS `PUBLIC_VIEWER_ID`                                                                     | `Identity.kind`                                                                           |
+| `sessionOwnerKey` の `public-viewer` キーと adopt の `${kind}:${id}`                                                | grant kind 単独のキー                                                                     |
+| `SessionController.adopt()` / `end()`、epoch だけの `SessionTicket`、「adopt 中」の分岐                             | `grantFallback` + provider の答え（S-42 の経路）                                          |
+| `verify-architecture` rule 8 `REST_ONLY` の `POST /api/auth/public-viewer`（`scripts/verify-architecture.mjs:326`） | `POST /api/auth/grant/{kind}`（Tauri 窓に「grant に入る」操作は無い。閲覧公開と同じ理由） |
 
-| 既存の名前                                                                           | v2.2 での扱い                                                                                    | v3                                         |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| `POST /api/auth/public-viewer`                                                       | `/api/auth/grant/publicViewer` のエイリアス                                                      | 残す（閲覧公開の名前として）               |
-| `GET /api/auth/status` の `viewerPublic`                                             | `grants.publicViewer` と同値で残す                                                               | 残す                                       |
-| `GET /api/auth/identity` の `publicViewer`                                           | `kind === "publicViewer"` と同値で残す。`kind` を追加                                            | 残す                                       |
-| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`               | `issue_grant_token` / `revoke_grant_tokens` の薄いラッパ                                         | 削除候補                                   |
-| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`               | 新版（`grants: Vec<GrantSpec>` 付き）を呼ぶラッパ。`GrantSpec::public_viewer(settings)` を補う   | 削除候補                                   |
-| `AuthenticatedSession.public_viewer`                                                 | 「未決 1」                                                                                       | `grant` のみ                               |
-| `UsersService::delete_user(id, i64)`                                                 | `Option<i64>` 版へのラッパ                                                                       | 削除候補                                   |
-| `publicViewerFallback` / `DEFAULT_PUBLIC_VIEWER_RETRIES`                             | `grantFallback` のラッパ                                                                         | 削除候補                                   |
-| `AuthProvider.enterPublicViewer` / `status().viewerPublic`                           | `enterGrant('publicViewer')` / `grants.publicViewer` のラッパ・エイリアス                        | 残す（provider 契約の一部）                |
-| `Identity.publicViewer`                                                              | 残す（`kind` を追加。`kindOfResolvedAuth` は `kind` 優先）                                       | 残す                                       |
-| `SessionController.adopt()` / `end()`                                                | **`@deprecated`**（利用者は banto-hub の `commissioningPolicy.ts` だけ）                         | **削除**（I-13・I-21 と adopt 中の分岐も） |
-| `verify-architecture` rule 8 の `REST_ONLY`（`scripts/verify-architecture.mjs:326`） | `POST /api/auth/grant/{kind}` を足す（Tauri 窓に「grant に入る」操作は無い。閲覧公開と同じ理由） | —                                          |
-
+`server.viewer_public` の設定キー・`SettingsService` の両方向ガード（viewer-public-plan §2.3）・
+`NavItem` の公開画面の許可リストは**残す**（閲覧公開の仕様であって API ではない。許可リストの
+フィールド名を `kind` ベースにするかは admin-template の実装 PR で決める）。
 `conventions §6` の「合成 viewer セッション」項と `viewer-public-plan §2.2` の規約本文は、
 実装 PR で「grant（閲覧公開はその 1 種類）」に書き換える（本 ADR は判断、規約本文は conventions）。
 
+## v3.0.0 への移行手順（派生アプリが書き換えるもの）
+
+正式な手順書は実装 PR で [docs/upgrading.md](../upgrading.md) の「具体例」に足す（例 2 の
+v2.0.0 と同じ型: 経路 A（`@banto/*`・`banto-*` の版）と経路 B（コピーしたテンプレート）が
+セット・破壊的変更）。ここには**何を書き換えるか**を利用者ごとに挙げる。
+
+共通（Rust）:
+
+1. `AuthenticatedSession { public_viewer, .. }` の直接構築・参照 → `grant: Option<GrantKind>`。
+2. `issue_public_viewer_token()` → `issue_grant_token(&GrantSpec::public_viewer(settings))`、
+   `revoke_public_viewer_tokens()` → `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)`。
+3. `extra_auth_router(...)` → `GrantRegistry` を組み立てて新シグネチャに渡す。コピーして
+   持っている場合は `grant_router(auth, registry)` を merge し、自分の status 応答に
+   `availability(peer)` を `grants` として載せ、`viewerPublic` を消す。
+4. `users_delete` の acting id の解決を `AuthenticatedSession.grant` で分岐
+   （grant なら `None`）。`UsersService::delete_user` の新しい形に合わせる。
+
+共通（TS）:
+
+5. `publicViewerFallback(controller, provider, ticket)` →
+   `grantFallback(controller, provider, ticket, { kind: 'publicViewer' })`。
+6. `provider.enterPublicViewer(...)` → `provider.enterGrant('publicViewer', ...)`、
+   `status().viewerPublic` → `status().grants.publicViewer`。自前の `AuthProvider` を持つなら
+   `enterGrant`・`status().grants` を実装する。
+7. `identity.publicViewer` の参照（ログアウト導線・ヘッダ・ナビの出し分け）→
+   `snapshot.kind`（`'publicViewer'`）。TS の `PUBLIC_VIEWER_ID` の参照を消す。
+8. `sessionOwnerKey` の `public-viewer` を前提にした保存状態のキーがあれば `publicViewer` に。
+
+admin-template（banto 本体。実装 PR で同時に書き換える）: `apps/admin-template/core/src/rest/mod.rs:335`
+（`extra_auth_router` の呼び出し）、`core/src/rest/tests.rs:2958-3160,3280`（`public_viewer_*` /
+`auth_status_reports_viewer_public_*` のテスト）、`core/src/bin/banto-serve.rs`・
+`core/src/first_boot.rs`（display プリセットの初回起動シード。設定キーは残る）、
+`src-tauri/src/lib.rs:2160-2165,4531,6765`（`save_server_config_locked`・`extra_auth_router`・
+テスト）、`src/routes/(app)/+layout.ts:6,44`（`publicViewerFallback`）、`src/lib/session.svelte.ts`・
+`src/lib/banto/logout.svelte.ts`・`src/lib/components/{Header,Sidebar}.svelte`・
+`src/lib/navigation.ts`・`src/lib/recentCommands.ts`・`src/routes/(app)/+layout.svelte`・
+`src/routes/login/+page.svelte`・`src/routes/(app)/settings/{Account,Connectivity}Section.svelte`
+（`identity.publicViewer`／`viewerPublic` の参照）、`packages/admin-core`（`provider.ts`・
+`providers/http.ts`・`providers/legacyAdapter.ts`・`sessionController.svelte.ts`・
+`sessionScope.svelte.ts`・`index.ts`・`tests/*`）、`scripts/verify-architecture.mjs:326`、
+`scripts/lib/templates/display/{monitor/+page.svelte,smoke.spec.ts}`・`scripts/scaffold.mjs`、
+`e2e/tests-public-viewer/public-viewer.spec.ts`・`e2e/tests/{smoke,tauri-settings-drafts}.spec.ts`・
+`e2e/playwright.config.ts`。
+
+banto-hub（tyaro/banto-industrial）:
+
+- Rust: `core/src/stream.rs:1670-1676`（`AuthenticatedSession { public_viewer: false, .. }` →
+  `grant: None`）、`core/src/rest.rs:983`（コピーした `extra_auth_router` に `grant_router` を
+  merge し、status に `grants`。試運転の `GrantSpec`（kind `commissioning`、admin 固定 identity、
+  条件 = 未ロックダウン、`require_loopback_peer: true`、小さい `max_sessions`）を登録）、
+  `core/src/rest.rs:773`・`core/src/users.rs:634`（`delete_user` の acting id）、
+  **34 か所の独自の認可の迂回を削除**（全要求を `require_auth` + `RoleGuard` に戻す）、
+  ロックダウンの保存関数に `revoke_grant_tokens("commissioning")`、bootstrap の自己発行。
+- TS: `src/lib/banto/commissioningPolicy.ts`・`commissioningLockDown.ts`（+ `.test.ts`）・
+  `sessionRecheck.abort.test.ts`（policy runner と `adopt()`/`end()` の廃止 →
+  `grantFallback(…, { kind: 'commissioning' })` を `src/routes/(app)/+layout.ts` の `none` の後に。
+  ロックダウンは `revoke` → 次の要求 401 → `resolve()` が `none`）、`src/lib/session.svelte.ts`・
+  `src/lib/banto/logout.svelte.ts`・`hubLogout.test.ts`（`identity.publicViewer` →
+  `snapshot.kind`。ログアウトはトークンを捨てるだけ）。
+- 運用文書: 運用ガイド §19・tag-server-design §5.6 に決定 §6 の 2 点。
+
+chronogazer（tyaro/banto-industrial）:
+
+- Rust: `core/src/rest.rs:538`（`delete_user` の acting id）、`core/src/rest.rs:770`
+  （コピーした `extra_auth_router` → `grant_router` + status の `grants`。grant は
+  `publicViewer` だけ）。
+- TS: `src/routes/(app)/+layout.ts`・`src/lib/session.svelte.ts`（+ `session.test.ts`）・
+  `src/lib/banto/logout.svelte.ts`・`src/lib/banto/{hubAdmin,sessionGuard}.test.ts`
+  （`identity.publicViewer`／`viewerPublic`／`publicViewerFallback` の参照）。
+
 ## 検討した代替案
 
-- **案 A（採用）: 閲覧公開の発行を grant に一般化し、試運転を 2 種類目にする。**
+- **案 A（採用）: 閲覧公開の発行を grant に一般化し、試運転を 2 種類目にして、閲覧公開専用の
+  API は削除して一本化する（v3.0.0）。**
   利点: 認証なしの入口が発行の 1 ルートに縮む。条件・上限・失効・寿命・再検証が閲覧公開と
   同じコードで効き、テスト（`auth.rs:2550-2700`、`rest/tests.rs:3023-3160`、
   `events.rs:702`）が kind をパラメータにした一般化で済む。画面側は `adopt()` の例外経路が
-  消えて S-42 の 1 本になる。欠点: admin 相当の bearer がブラウザに置かれる（注意点 1）。
-  `GrantSpec` に書かれた条件が弱ければそのまま弱い（注意点 2・3）— ただしそれは「迂回が
-  34 か所にある」今より検査しやすい。
+  消えて S-42 の 1 本になる。閲覧公開と試運転が同じコードを通るので、片方だけ直す退行が
+  起きない。欠点: 利用者全員が一度書き換える（移行手順）。admin 相当の bearer がブラウザに
+  置かれる（注意点 1）。`GrantSpec` に書かれた条件が弱ければそのまま弱い（注意点 2・3）—
+  ただしそれは「迂回が 34 か所にある」今より検査しやすい。
+- **案 A′（不採用、2026-10-03 オーナー判断）: 後方互換の minor（v2.2.0）で入れる。** 旧 API・
+  旧 URL・旧フィールドをラッパ／エイリアスで残し、`AuthenticatedSession` を変えずに grant 情報を
+  持つ新しい検証結果型を足し、閲覧公開は旧経路のまま新 kind だけ新 API を使う。
+  退けた理由: 利用者は admin-template と banto-industrial の 2 アプリに限られ、互換の接続
+  コード（旧型と新型の並存、2 本の fallback、2 本の URL、新旧の組み合わせ表）を増やすより、
+  一括で書き換える方が単純。互換を保つなら全フィールド公開の `AuthenticatedSession` には
+  手を付けられず（改名も追加も直接構築を壊す）、閲覧公開と試運転が別のコードを通り続ける。
 - **案 B（不採用）: `require_auth` に「条件が真なら認証を飛ばして合成 identity を入れる」
   フックを足す**（banto-hub の今の形を banto に移す）。
   ADR-0012 の案 C と同じ理由で退ける: ミドルウェアに「暗黙の identity」分岐が入り、
@@ -298,6 +444,9 @@ banto-hub がこの ADR で決めた形（banto には規約として置かな�
 - **案 D（不採用）: 試運転専用の 2 本目の発行口（`/api/auth/commissioning`）を banto に足す。**
   閲覧公開と条件・identity 以外が同じコードの複製になり、3 種類目が来たらまた複製する。
   banto が派生アプリのドメイン語（試運転）を持つことにもなる。一般化（案 A）の方が小さい。
+- **案 E（不採用、将来の選択肢）: `trusted_proxies` を `GrantSpec` に足して `X-Forwarded-For`
+  を信頼する。** リバースプロキシ配下の loopback 判定を技術的に補えるが、面が増える。
+  実需が出るまで足さず、注意書きで対応する（決定 §6）。
 
 ## 帰結
 
@@ -306,47 +455,31 @@ banto-hub がこの ADR で決めた形（banto には規約として置かな�
 - **条件を閉じる操作は必ず `revoke_grant_tokens(kind)` を同じ関数内で呼ぶ。** 発行の条件
   （`enabled`）と失効の呼び出しは対になる（テンプレートは閲覧公開 OFF、派生アプリは
   ロックダウン）。監査の detail に `revokedGrants: n` を足せる。
-- **admin 相当の grant は `require_loopback_peer: true` と小さい `max_sessions` を既定にする**
+- **admin 相当の grant は `require_loopback_peer: true` と小さい `max_sessions` を既定にし、
+  リバースプロキシ配下の運用条件（決定 §6 の 2 点）を導入手順に書く**
   （派生アプリの移行 PR のレビュー項目）。
-- 画面側の試運転は `grantFallback` + provider の答えで確定する。`adopt()`/`end()` は
-  deprecated。v3 で削除するまで controller の adopt 分岐はそのまま保つ（v2.2 では挙動を
-  変えない）。
-- 新しい kind を足すのは `GrantSpec` を 1 つ足すだけで、banto のルート・verify-architecture の
-  分類は増えない（`/api/auth/grant/{kind}` が 1 本）。
+- **閲覧公開と試運転は同じコードを通る。** 閲覧公開の変更は grant 全体の変更として扱い、
+  kind をパラメータにしたテストで両方を同時に確かめる。
+- 画面側の試運転は `grantFallback` + provider の答えで確定する。`adopt()`/`end()` と
+  「adopt 中」の分岐は削除する（controller は「provider が 1 往復で答える」1 本に戻る）。
+- 新しい kind を足すのは `GrantSpec` を 1 つ `GrantRegistry` に登録するだけで、banto の
+  ルート・verify-architecture の分類は増えない（`/api/auth/grant/{kind}` が 1 本）。
+  名前の衝突・予約語は登録時に `Err`。
+- v3.0.0 は経路 A（版）と経路 B（コピーしたテンプレート）がセットの破壊的変更。
+  [docs/upgrading.md](../upgrading.md) に具体例を足し、CHANGELOG に削除一覧と移行手順を載せる。
 - テスト（S 番号の方針）: session-controller-design.md の S 番号は **S-109 以降**を
   grant に充てる（S-42 の kind 一般化、S-44〜S-46 の grant 版、「失効 → 401 → fallback が
-  黙って取り直す」、「条件 false → 403 → `none` のまま」）。Rust は `auth.rs` の
-  `public_viewer_*` テストを kind パラメータ化、`rest/tests.rs` に `grant/{kind}` の
-  404／loopback 403／条件 403／発行 → identity の `kind`、`users_delete` を grant セッションで、
-  `events.rs` に revoke 後の再検証でストリームが閉じること。E2E
-  `e2e/tests-public-viewer/public-viewer.spec.ts` は従来どおり通る（エイリアス）。
+  黙って取り直す」、「条件 false → 403 → `none` のまま」、「`enterGrant` の無い provider →
+  `none`」）。Rust は `auth.rs` の `public_viewer_*` テストを kind パラメータ化し、
+  `rest/tests.rs` に `grant/{kind}` の 404／loopback 403／peer 不明 403／条件 403／発行 →
+  identity の `kind`／予約語の登録拒否／status の `grants` と発行の判定が一致すること／
+  `users_delete` を grant セッションで（最後の admin は拒否）、`events.rs` に revoke 後の
+  再検証でストリームが閉じること。E2E `e2e/tests-public-viewer/public-viewer.spec.ts` は
+  新 URL・`grants` に書き換えて通す。
 
-## 未決（実装 PR で決める。勝手に決めない）
+## 未決
 
-1. **`AuthenticatedSession.public_viewer` フィールドの扱い。** オーナー決定は
-   `public_viewer: bool → grant: Option<GrantKind>` だが、`AuthenticatedSession` は全フィールド
-   `pub` の struct で、**派生アプリが struct リテラルで構築している箇所がある**
-   （banto-hub `core/src/stream.rs:1670-1676` のテスト）。フィールドの改名・追加はどちらも
-   外部のリテラル構築を壊すので、Rust 側は厳密には minor でない。候補: (a) 改名して
-   `pub fn public_viewer(&self) -> bool` を足し、リテラル構築の破壊は CHANGELOG に明記して
-   受け入れる（banto-hub の 1 か所だけ。移行 PR で直す）；(b) `public_viewer` を残し
-   `grant` を**追加**する（追加でもリテラルは壊れる。整合性の負担が増える）；
-   (c) `#[non_exhaustive]` + コンストラクタ（これも 1 回は壊れる）。推奨は (a)。
-2. **`extra_auth_router` の新版の名前と、コピー側が merge する部品の形**
-   （`GrantRegistry` + `grant_router(auth, registry)` か、`extra_auth_router_with_grants` 一本か）。
-   banto-hub・chronogazer は `extra_auth_router` をコピーして持つので、部品が `pub` でないと
-   handler を再複製することになる。
-3. **同一ホストのリバースプロキシ配下の `require_loopback_peer`。** 全 peer が loopback に
-   見えて保護にならない。候補: 文書化のみ（「admin 相当の grant をプロキシ配下で有効にしない」）／
-   `trusted_proxies` を `GrantSpec` に足して `X-Forwarded-For` を信頼する（依存は増えないが
-   面が増える）。推奨は文書化のみ（IPv6 と同じく実需が出るまで）。
-4. **grant kind の識別子**を URL・status・`identity.kind`・client の `SessionKind` で
-   同じ文字列（`publicViewer` のような camelCase）にすること。URL に camelCase が入るのが
-   既存ルートの流儀（kebab-case）と違う。エイリアス `/api/auth/public-viewer` を残すので
-   実害は無いが、`/api/auth/grant/public-viewer` のような kebab を別に受けるかは実装 PR で。
-5. **`status().grants` を `require_loopback_peer` 込みで評価すること**（本文では「この要求が
-   発行を受けられるか」と決めた）。条件だけを返す方が単純だが、LAN の端末が 403 を取りに
-   行く無駄が出る。本文の形を推奨。
-6. `UsersService::delete_user` の `Option<i64>` 版の名前（`delete_user_by`／既存を変えて
-   ラッパ）。派生アプリは `UsersService` もコピーしている（banto-hub `core/src/users.rs:634`）
-   ので、banto 側の変更はテンプレート取り込み（経路 B）で届く。
+なし（2026-10-03 決定。レビュー tyaro/banto#313 の 6 件の行き先: ① → 決定 §1・§2・案 A′、
+② → 決定 §2「公開する部品は 2 つだけ」、③ → 決定 §6・案 E、④ → 決定 §2「kind の識別子」、
+⑤ → 決定 §2「`/api/auth/status`」、⑥ → 決定 §3）。関数の命名（`delete_user` の新しい形、
+`extra_auth_router` の新シグネチャ）は実装 PR で決める（設計の未決ではない）。

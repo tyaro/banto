@@ -58,7 +58,7 @@ corresponding ADR exists, be traced from there.
 | [0014](0014-account-bound-session-revocation.en.md)    | Bind sessions to account row id + authentication epoch and revoke them by checking the database per request                                                                                              | Accepted |
 | [0015](0015-snapshot-list-resource.en.md)              | Read lists that change without events through a separate bounded (`asOfId`) class, `SnapshotListResource`, with an injected fetcher                                                                      | Accepted |
 | [0016](0016-session-controller-single-writer.en.md)    | Give the front end's session one writer (SessionController), make the provider answer in one round trip, and write credentials only by compare-and-set                                                   | Accepted |
-| [0017](0017-credential-less-grant.en.md)               | Generalize credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (no auth-bypass hook; `adopt()`/`end()` deprecated) | Accepted |
+| [0017](0017-credential-less-grant.en.md)               | Unify credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (v3.0.0; no auth-bypass hook; `adopt()`/`end()` removed) | Accepted |
 
 ## ADR candidates (unstarted; do not backfill)
 

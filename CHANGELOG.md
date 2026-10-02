@@ -22,7 +22,7 @@
 
 ## [Unreleased]
 
-- docs(adr): ADR-0017「資格情報なしのセッション発行は grant に一般化し、閲覧公開を 1 種類目・派生アプリの試運転を 2 種類目にする」を追加（2026-10-02 オーナー決定。実装は v2.2.0 の PR、本 PR は文書のみ）。`SessionController.adopt()`/`end()` は v2.2 で `@deprecated`・v3 で削除の予定を session-controller-design.md §4.7・§6.2・I-13・I-21 に注記、viewer-public-plan.md に grant への対応を追記。
+- docs(adr): ADR-0017「資格情報なしのセッション発行は grant に一本化し、閲覧公開を 1 種類目・派生アプリの試運転を 2 種類目にする」を追加（2026-10-02 オーナー決定、2026-10-03 のレビュー #313 で細目を決定し、後方互換を捨てて **v3.0.0（major）** で一本化する形に改訂。実装は v3.0.0 の PR、本 PR は文書のみ）。閲覧公開専用の API・URL・フィールド（`/api/auth/public-viewer`、`viewerPublic`、`identity.publicViewer`、`issue_public_viewer_token` など）と `SessionController.adopt()`/`end()` を v3.0.0 で削除する予定と移行手順を ADR に記載、session-controller-design.md §4.7・§6.2・I-13・I-21 と viewer-public-plan.md に注記。
 
 ## [2.1.1] - 2026-10-02
 

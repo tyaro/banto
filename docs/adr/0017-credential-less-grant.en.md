@@ -1,14 +1,16 @@
-# ADR-0017: Generalize credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (no auth-bypass hook in banto)
+# ADR-0017: Unify credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (v3.0.0; no auth-bypass hook in banto)
 
 > 日本語: [0017-credential-less-grant.md](0017-credential-less-grant.md)
 
-- Status: Accepted (owner decision 2026-10-02; implementation in the v2.2.0 PR; the open details are listed under "Open points" and are settled in the implementation PR)
-- Date: 2026-10-02
-- Related: [ADR-0012](0012-lan-public-viewer-synthetic-session.en.md) (viewer-public = a viewer-only synthetic session; this ADR generalizes it and does not supersede it) /
+- Status: Accepted (owner decision 2026-10-02; the owner's review of 2026-10-03 (tyaro/banto#313, in favour of the generalization) settled six details, and a further decision the same day **dropped backward compatibility in favour of a single API in v3.0.0 (major)**; implementation in the v3.0.0 PR)
+- Date: 2026-10-02 (revised 2026-10-03)
+- Related: [ADR-0012](0012-lan-public-viewer-synthetic-session.en.md) (viewer-public = a viewer-only synthetic session; this ADR generalizes it; the mechanism decision stands, so it is not superseded) /
+  [ADR-0003](0003-tls-via-reverse-proxy.en.md) (same-host reverse proxy; the premise of decision §6) /
   [ADR-0014](0014-account-bound-session-revocation.en.md) (account-bound revocation; grant sessions are outside it) /
-  [ADR-0016](0016-session-controller-single-writer.en.md) and [docs/session-controller-design.md](../session-controller-design.md) §4.7, §6.2, I-13, I-21 (`adopt()`/`end()` become deprecated) /
+  [ADR-0016](0016-session-controller-single-writer.en.md) and [docs/session-controller-design.md](../session-controller-design.md) §4.7, §6.2, I-13, I-21 (`adopt()`/`end()` are removed) /
   [docs/viewer-public-plan.md](../viewer-public-plan.md) §2.2 / conventions §1, §6, §10 /
-  derived app: banto-hub's "commissioning mode" in tyaro/banto-industrial
+  [docs/upgrading.md](../upgrading.md) (where the migration guide goes) /
+  derived apps: banto-hub's "commissioning mode" and chronogazer in tyaro/banto-industrial
 - Code under discussion: banto v2.1.1 (`25f2291`). `file:line` references below are to that version
 
 ## Context
@@ -57,25 +59,29 @@ session without credentials"**. Constraints:
 
 - No bypass hook ("skip authentication when this condition holds") in banto. The authorization
   entry stays a single bearer path (do not weaken ADR-0012).
-- Existing viewer-public users (`--preset display`, the two derived apps) keep working.
-  v2.1.1 → **minor**.
 - Condition, cap, revocation and lifetime can be expressed in the same shape as viewer-public
   (only the identity and the condition differ).
+- Versioning: the known consumers are admin-template and the two banto-industrial apps
+  (banto-hub, chronogazer). Rewriting them once is **simpler than adding compatibility glue**
+  (old types, wrappers, URL aliases) - owner decision of 2026-10-03. Per SemVer this breaks
+  compatibility, so **major = v3.0.0**.
 
 ## Decision
 
 **Generalize viewer-public's "conditional, credential-less token issuance" into a `grant`;
 viewer-public becomes the first kind (`publicViewer`) and a derived app's commissioning mode the
-second (app-defined, e.g. `commissioning`).** Only issuance is generalized; afterwards the token
-is an ordinary bearer session through `require_auth` + `RoleGuard` + audit + SSE re-validation.
-No bypass hook. The front end stops using `adopt()`/`end()` and confirms the commissioning
-session with the same fallback as viewer-public (fetch a grant, let the provider answer).
+second (app-defined, e.g. `commissioning`). The viewer-public-specific API, URL and fields are
+removed and everything goes through the grant API (v3.0.0).** Only issuance is generalized;
+afterwards the token is an ordinary bearer session through `require_auth` + `RoleGuard` + audit +
+SSE re-validation. No bypass hook. The front end drops `adopt()`/`end()` and confirms the
+commissioning session with the same fallback as viewer-public (fetch a grant, let the provider
+answer).
 
-### 1. Version and compatibility (minor, v2.2.0)
+### 1. Version (v3.0.0, major)
 
-Additions only; every existing name stays as a thin wrapper or alias (table under
-"Compatibility"). Derived apps keep working by bumping `@banto/admin-core` and `banto-server`
-to v2.2.0; only the code that uses grants moves to the new API.
+No backward compatibility. The old API, URL and fields are **removed**; no compatibility
+functions, old types or aliases are kept (list under "Removed", consumer rewrites under
+"Migration to v3.0.0").
 
 ### 2. Server (`crates/banto-server`)
 
@@ -94,28 +100,53 @@ pub struct GrantSpec {
     pub identity: Identity,
     /// Issuance condition, evaluated per request (viewer-public: `server_config().viewer_public`).
     pub enabled: GrantCondition,
-    /// Per-kind FIFO cap, default 256 (= `MAX_PUBLIC_VIEWER_SESSIONS`). Past it the oldest is revoked.
+    /// Per-kind FIFO cap, default 256. Past it the oldest is revoked.
     pub max_sessions: usize,
     /// `None` = `AuthState`'s default `token_policy` (8h / idle 1h). Never remembered.
     pub policy: Option<TokenPolicy>,
-    /// If true the issuing route answers 403 unless the peer is loopback.
+    /// If true the issuing route answers 403 unless the peer is loopback (unknown peer included).
     pub require_loopback_peer: bool,
+}
+impl GrantSpec {
+    /// Viewer-public: identity `public`/`viewer`, condition `server_config().viewer_public`, cap 256, no loopback requirement.
+    pub fn public_viewer(settings: SettingsService) -> GrantSpec;
+}
+
+/// What `require_auth` puts in the extensions (the old `public_viewer: bool` renamed to `grant`).
+pub struct AuthenticatedSession {
+    pub identity: Identity,
+    pub grant: Option<GrantKind>,
+    pub stamp: Option<SessionStamp>,
 }
 
 impl AuthState {
     pub fn issue_grant_token(&self, spec: &GrantSpec) -> String;
     pub fn revoke_grant_tokens(&self, kind: &GrantKind) -> usize;
 }
+
+/// Registration of grants and "can this peer obtain one right now" (public part (2)).
+pub struct GrantRegistry;
+impl GrantRegistry {
+    /// Name clashes and reserved words (`account`, `local`, an already registered kind, a malformed identifier) are Err.
+    pub fn register(&mut self, spec: GrantSpec) -> Result<(), BantoError>;
+    /// The check shared by status and issuance. An unknown peer makes every `require_loopback_peer` kind false.
+    pub async fn availability(&self, peer: Option<SocketAddr>) -> BTreeMap<GrantKind, bool>;
+}
+/// The issuing router (public part (1)): `POST /api/auth/grant/{kind}` only.
+pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
 ```
 
-- `TokenRecord.public_viewer: bool` → `grant: Option<GrantKind>` (`auth.rs:424-425`).
-  `Inner::public_tokens: VecDeque<String>` (`auth.rs:577`) → `HashMap<GrantKind, VecDeque<String>>`
-  (one FIFO per kind; the cap, oldest-first eviction and "never touches a real login" tests at
-  `auth.rs:2641-2690` hold per kind unchanged).
-- `AuthenticatedSession` (`auth.rs:255-262`) carries `grant: Option<GrantKind>`; the JSON of
-  `GET /api/auth/identity` becomes `Identity & { publicViewer: bool, kind: string }`
-  (`publicViewer = grant == PUBLIC_VIEWER`, `kind = the grant string | "account"`). The Rust
-  struct-literal compatibility is "Open point 1".
+- **Renames**: `TokenRecord.public_viewer: bool` → `grant: Option<GrantKind>` (`auth.rs:424-425`),
+  `AuthenticatedSession.public_viewer: bool` → `grant: Option<GrantKind>` (`auth.rs:255-262`; an
+  all-`pub` struct, so consumers that construct it rewrite - see the migration).
+  `Inner::public_tokens` (`auth.rs:577`) → `HashMap<GrantKind, VecDeque<String>>` (one FIFO per
+  kind; the cap, oldest-first eviction and "never touches a real login" tests at
+  `auth.rs:2641-2690` hold per kind).
+- **Removed**: `issue_public_viewer_token`, `revoke_public_viewer_tokens` (`auth.rs:890,936`),
+  `MAX_PUBLIC_VIEWER_SESSIONS` (absorbed by `GrantSpec.max_sessions`, default 256).
+  `PUBLIC_VIEWER_ID` (`"public"`) stays as the id of `GrantSpec::public_viewer`'s identity.
+- The JSON of `GET /api/auth/identity` becomes `Identity & { kind: string }` (`kind` = the
+  grant string | `"account"`; the `publicViewer` field is **removed**).
 - The account-check branch (`if session.public_viewer` at `auth.rs:1131-1135`) becomes
   `if session.grant.is_some()`. Grant sessions carry no stamp and are not looked up
   (outside ADR-0014: the identity is fixed, there is nothing to re-read). SSE re-validation
@@ -124,100 +155,108 @@ impl AuthState {
   `events.rs:702-713`).
 - The `change-password` refusal (`routes/auth.rs:227`) becomes `grant.is_some()`: a grant
   session owns no credential (even if an account shares the display name).
-- **Issuing route** `POST /api/auth/grant/{kind}` (new; `X-Banto-Client` stays required via
-  `crate::csrf`). In order: unregistered `kind` → 404 `not_found`; `require_loopback_peer`
-  and the peer is not loopback **or is unknown** → 403 `forbidden` (fail closed);
-  `enabled()` → `Ok(false)` → 403, `Err` → that `BantoError` (`ApiError`); otherwise
-  `issue_grant_token` → `{ success: true, token }` (same body as viewer-public).
+- **One issuing route, `POST /api/auth/grant/{kind}`** (`grant_router`; `X-Banto-Client` stays
+  required via `crate::csrf`). **`POST /api/auth/public-viewer` is removed** (viewer-public is
+  `/api/auth/grant/publicViewer`). In order: unregistered `kind` → 404 `not_found`; the same
+  check as `GrantRegistry::availability` is **re-evaluated at issuance**, and
+  `require_loopback_peer` with a peer that is not loopback **or is unknown** → 403 `forbidden`
+  (fail closed); `enabled()` → `Ok(false)` → 403, `Err` → that `BantoError` (`ApiError`);
+  otherwise `issue_grant_token` → `{ success: true, token }` (same body as viewer-public).
   **Issuance is not audited** (existing policy, `routes/auth.rs:88-94`).
-  `POST /api/auth/public-viewer` stays as an alias of `/api/auth/grant/publicViewer`.
-- **Peer check**: `ConnectInfo<SocketAddr>` is always supplied by `BoundServer::serve` through
-  `into_make_service_with_connect_info::<SocketAddr>()` (`crates/banto-server/src/server.rs:128-131`).
-  All three ways of reaching a server go through it - banto-serve's `server::start`
-  (`server.rs:174`), the Tauri embedded server (`apps/admin-template/src-tauri/src/lib.rs:1887`,
-  `bound.serve(router)`) and tests that use `BoundServer`. **The only path without it is a test
-  driving the router directly with `tower::oneshot`** (where `MaybePeerAddr` at
-  `auth.rs:1515-1536` yields `None`). So the design may close on "unknown peer = 403", and
-  `rest/tests.rs` sets `req.extensions_mut().insert(ConnectInfo(addr))` explicitly. The loopback
-  test counts IPv4-mapped IPv6 (`::ffff:127.0.0.1`) as loopback (same normalization as around
+- **The kind identifier stays camelCase, also in the URL** (`/api/auth/grant/publicViewer`). It
+  is a kind identifier, not a fixed route name, so `identity.kind`, `status.grants`, the URL and
+  the client's `SessionKind` use **the same spelling** (no translation table, no alternative
+  spellings). **Name clashes are refused at registration**: the existing session kinds
+  `account` and `local`, an already registered kind (registering `publicViewer` twice included)
+  and a malformed identifier make `GrantRegistry::register` return `Err`.
+- **Peer check**: `ConnectInfo<SocketAddr>` is **always supplied on banto's standard start-up
+  paths** (`BoundServer::bind`/`serve` with `into_make_service_with_connect_info::<SocketAddr>()`
+  at `crates/banto-server/src/server.rs:128-131`) - banto-serve's `server::start`
+  (`server.rs:174`) and the Tauri embedded server (`apps/admin-template/src-tauri/src/lib.rs:1887`,
+  `bound.serve(router)`) alike. It is **not guaranteed** for a consumer that starts the public
+  `Router` on its own (calling `axum::serve` directly, or a `tower::oneshot` test - the path where
+  `MaybePeerAddr` at `auth.rs:1515-1536` yields `None`). Hence **an unknown peer is refused**
+  (`false` in status, 403 at issuance). `rest/tests.rs` sets
+  `req.extensions_mut().insert(ConnectInfo(addr))` explicitly. The loopback test counts
+  IPv4-mapped IPv6 (`::ffff:127.0.0.1`) as loopback (same normalization as around
   `server.rs:264`; IPv6 itself stays out of scope).
-- `/api/auth/status` (`routes/auth.rs:37-66`) gains `grants: { <kind>: bool }`. Each value is
-  "**can this request obtain the grant right now**" = `enabled()` and (when
-  `require_loopback_peer`) the peer is loopback. `viewerPublic` stays, equal to
-  `grants.publicViewer` (alias). An `Err` from `enabled()` makes that kind `false` (status never
-  fails; same fail-closed as viewer-public's "cannot read → do not mint").
-- `extra_auth_router` (`routes/auth.rs:296-320`) gets a new version taking
-  `grants: Vec<GrantSpec>` (Rust has no overloading, so a new name, e.g.
-  `extra_auth_router_with_grants`; the name is for the implementation PR). The old signature
-  becomes a wrapper that supplies `vec![GrantSpec::public_viewer(settings.clone())]`.
-  `GrantSpec::public_viewer(settings: SettingsService) -> GrantSpec` carries the viewer-public
-  specification as-is (identity `public`/`viewer`, condition `server_config().viewer_public`,
-  cap 256, `require_loopback_peer: false`). Derived apps **copy** `extra_auth_router`
-  (banto-hub `core/src/rest.rs`, chronogazer `core/src/rest.rs`), so the building blocks for the
-  issuing route and the status `grants` map (a grant registry and router) are `pub` and
-  mergeable by the copies.
-- `issue_public_viewer_token()` / `revoke_public_viewer_tokens()` (`auth.rs:890,936`) become thin
-  wrappers over `issue_grant_token(&GrantSpec::public_viewer_fixed())` /
-  `revoke_grant_tokens(&PUBLIC_VIEWER)`. `PUBLIC_VIEWER_ID` and `MAX_PUBLIC_VIEWER_SESSIONS` stay.
+- `/api/auth/status` (`routes/auth.rs:37-66`) becomes `{ initialized, grants: { <kind>: bool }, …extras }`.
+  **`viewerPublic` is removed** (`grants.publicViewer`). The values come from
+  `GrantRegistry::availability(peer)` (**the same check shared by status and issuance**) =
+  `enabled()` and (when `require_loopback_peer`) the peer is loopback. Status is **point-in-time
+  information**, so issuance always re-checks (above). **An `Err` from one grant's check makes
+  that kind `false`** (same fail-closed as viewer-public's "cannot read → do not mint"), but
+  **the failure behaviour of status as a whole does not change** (a DB failure in
+  `is_initialized` and the like is still an error response; "status never fails" is not
+  extended).
+- **Only two parts are public**: (1) the issuing router `grant_router`, (2) registration plus the
+  availability check, `GrantRegistry`. The status route itself is not included; the existing
+  status (the template's `auth_status_handler`, the status a derived app copied) adds the result
+  of `availability(peer)` as `grants`. No general plugin mechanism.
+  `extra_auth_router` (`routes/auth.rs:296-320`) **changes its signature** to take
+  `registry: Arc<GrantRegistry>` (the old signature is removed). The template registers only
+  `GrantSpec::public_viewer(settings.clone())`. Derived apps **copy** `extra_auth_router`
+  (banto-hub `core/src/rest.rs:983`, chronogazer `core/src/rest.rs:770`), so the copies merge
+  `grant_router` and add `availability` to their own status.
 - **Revocation and audit**: the operation that closes the condition (viewer-public OFF,
   commissioning lock-down) calls `revoke_grant_tokens(kind)` and may put the returned `usize`
   into its own audit `detail` as `revokedGrants: n` (issuance is not audited; the closing side
   keeps the count instead). The template's `save_server_config_locked`
-  (`src-tauri/src/lib.rs:2160-2165`) switches to `revoke_grant_tokens(&PUBLIC_VIEWER)`.
+  (`src-tauri/src/lib.rs:2160-2165`) is rewritten to `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)`.
 
 ### 3. The self-deletion guard on user deletion
 
 `acting_user` at `routes/users.rs:69-84` resolves the caller's row through token →
 `identity_for` → `users.get_by_username`. A grant session's fixed identity has no account, so
 this yields `Unauthorized` and an admin-equivalent grant (commissioning) cannot delete users.
-**banto adds a branch that lets grant sessions through the self-deletion guard as "no acting
-id"**: read the `AuthenticatedSession` that `require_auth` put in the extensions
-(`auth.rs:1562-1573`); if `grant.is_some()` the acting id is `None`, otherwise resolve the row id
-as today. `UsersService::delete_user(id, acting_user_id: i64)`
-(`crates/banto-admin-services/src/users.rs:843`) gets an `Option<i64>` version; the existing
-signature stays as a wrapper. The "last admin cannot be deleted" guard
-(`ensure_admin_removal_allowed`) still applies to grants.
+Decision:
+
+- `UsersService::delete_user` (`crates/banto-admin-services/src/users.rs:843`) takes the acting
+  id as `Option<i64>` (the function name is decided in the implementation PR; no compatibility
+  function is kept).
+- **"No actor" (no acting id) is accepted only for a verified grant session.** The test is
+  `grant.is_some()` on the `AuthenticatedSession` that `require_auth` put in the extensions;
+  merely failing to resolve a username from the token stays `Unauthorized`.
+- **Admin authorization (`require_role_at_least(Admin)`) and "the last admin cannot be deleted"
+  (`ensure_admin_removal_allowed`) are kept.** A grant relaxes only the "own row id" comparison
+  of the self-deletion guard (a grant has no row).
+- Derived apps copy `UsersService` too (banto-hub `core/src/users.rs:634`), so this change
+  reaches them through template intake (path B).
 
 ### 4. Client (`@banto/admin-core`)
 
-- `AuthProvider.status()` → `{ initialized, viewerPublic?, grants?: Record<string, boolean> }`.
-  The HTTP provider (`providers/http.ts:434-456`) answers `grants: {}` for an older server
-  (same fail-closed as `viewerPublic`).
-- New `AuthProvider.enterGrant?(kind, { expectRevision })`. The HTTP provider POSTs
-  `/api/auth/grant/{kind}` and stores the token with the **same compare-and-set** as
-  `enterPublicViewer` (`http.ts:537-562`: no token at the start, revision still
-  `expectRevision`). `enterPublicViewer` becomes a wrapper over `enterGrant('publicViewer', …)`.
-  The Tauri and demo providers stay unimplemented (same reasons as viewer-public,
-  `provider.ts:154-164`).
-- `publicViewerFallback(controller, provider, ticket, { maxRetries })`
-  (`sessionController.svelte.ts:1150-1218`) generalizes to
-  `grantFallback(controller, provider, ticket, { kind, available?, maxRetries? })`.
-  `available(status)` defaults to `status.grants?.[kind] === true`. The loop (`status()` →
-  `isCurrent(ticket)` → `enterGrant({ expectRevision })` → `resolveSettled()`; a failure is not
-  retried; only `superseded` is retried with a bound) is unchanged. `publicViewerFallback` is the
-  wrapper with `kind: 'publicViewer'` and
-  `available: s => s.viewerPublic === true || s.grants?.publicViewer === true`.
-- `Identity.kind?: string` is added (issuer-provided, like `identity.publicViewer`).
-  `kindOfResolvedAuth` (`sessionController.svelte.ts:225-229`) **prefers the server's
-  `identity.kind`**, then the existing order (`identity.publicViewer === true` →
-  `'publicViewer'`, the provider's `kind`, `'account'`). Tauri's `'local'` has no `kind` on
-  the identity and works as before.
-- `sessionOwnerKey` (`sessionController.svelte.ts:200-213`): a grant kind (an `identity.kind`
-  other than `publicViewer`/`account`) is keyed by **the kind alone** (e.g. `commissioning`;
-  the identity is fixed, so the id adds nothing). `publicViewer` → `public-viewer`,
-  `local` → `local` and `account:${id}` are unchanged. A kind confirmed through `adopt()`
-  (no `identity.kind`) keeps `${kind}:${id}` until v3. When banto-hub moves from adopt to grant
-  its saved-state owner changes once, `commissioning:commissioning` → `commissioning`
-  (saved list state is unreadable once; nothing is deleted).
+- `AuthProvider.status()` → `{ initialized, grants: Record<string, boolean> }` (`viewerPublic`
+  **removed**). The HTTP provider (`providers/http.ts:434-456`) answers `{}` when the response
+  has no `grants` (fail closed).
+- `AuthProvider.enterGrant?(kind, { expectRevision })` (`enterPublicViewer` **removed**). The
+  HTTP provider POSTs `/api/auth/grant/{kind}` and stores the token with the **same
+  compare-and-set** as today's `enterPublicViewer` (`http.ts:537-562`: no token at the start,
+  revision still `expectRevision`). The Tauri and demo providers stay unimplemented (same
+  reasons as viewer-public, `provider.ts:154-164`).
+- `grantFallback(controller, provider, ticket, { kind, available?, maxRetries? })`
+  (`publicViewerFallback` and `DEFAULT_PUBLIC_VIEWER_RETRIES` **removed**; the latter becomes
+  `DEFAULT_GRANT_RETRIES`). `available(status)` defaults to `status.grants[kind] === true`. The
+  loop (`status()` → `isCurrent(ticket)` → `enterGrant({ expectRevision })` → `resolveSettled()`;
+  a failure is not retried; only `superseded` is retried with a bound) stays as at
+  `sessionController.svelte.ts:1150-1218`. Without `provider.enterGrant` it returns `none`
+  (no exception).
+- `Identity.publicViewer` is **removed** in favour of `Identity.kind?: string` (the issuer's
+  marker). `kindOfResolvedAuth` (`sessionController.svelte.ts:225-229`) **prefers the server's
+  `identity.kind`**, then the provider's `kind` (Tauri's `'account'`/`'local'`), then
+  `'account'`. The TS `PUBLIC_VIEWER_ID` (`provider.ts:48`) is removed (sessions are told apart
+  by `kind`, never by id - conventions §10).
+- `sessionOwnerKey` (`sessionController.svelte.ts:200-213`): a grant kind is keyed by **the kind
+  alone** (`publicViewer`, `commissioning`, ...; the identity is fixed, so the id adds nothing).
+  `local` → `local` and `account:${id}` are unchanged. The old `public-viewer` key and adopt's
+  `${kind}:${id}` disappear (saved-state owners change once; nothing is deleted).
 - Owner-change comparison is limited to `kind === 'account'` actives (S-108, v2.1.1 #308) and
   does not change: a grant session is a state of the terminal or the app, not "another user".
-- **`adopt()`/`end()` are `@deprecated` in v2.2** (the only user is banto-hub's
-  `commissioningPolicy.ts`) and **removed in v3**. I-13, I-21, §4.7 S-44 to S-46 and the policy
-  runner in §6.2 get a "replaced by grants; adopt is deprecated" note
-  ([session-controller-design.md](../session-controller-design.md)). A grant-based commissioning
-  session follows the S-42 path (the provider answers, the ticket has a revision, an SSE 401 can
-  trigger a confirmation), and the controller's adopt-only branches (the "while adopted" column
-  of §5.1 steps 0-7) disappear in v3.
+- **`SessionController.adopt()`/`end()` are removed in v3.0.0** (the only user is banto-hub's
+  `commissioningPolicy.ts`), together with the epoch-only `SessionTicket` (I-21), the "while
+  adopted" branches of steps 0-7 (I-13, S-44 to S-46, S-53, S-62, S-69 to S-71) and the
+  `adopt`/`end` members of `SessionController`. A grant-based commissioning session follows the
+  S-42 path (the provider answers, the ticket has a revision, an SSE 401 can trigger a
+  confirmation) - noted in [session-controller-design.md](../session-controller-design.md).
 
 ### 5. Derived-app agreements (for reference; not banto rules)
 
@@ -234,6 +273,32 @@ migration PR):
   `issue_grant_token`.
 - `max_sessions` may be smaller than viewer-public's 256 (the fewer admin-equivalent tokens the
   better).
+- The reverse-proxy operating conditions (§6) go into the operations guide.
+
+### 6. Behind a same-host reverse proxy (handled by a notice; not technically preventable)
+
+The loopback test only tells the **immediate** connection source and cannot identify the
+external client. banto already lists a same-host reverse proxy (ADR-0003, TLS termination) as a
+supported configuration; behind it every request looks loopback and `require_loopback_peer`
+protects nothing. `X-Forwarded-For` is spoofable and is not consulted. Decision:
+
+- **Handle it with a notice; do not add `trusted_proxies` or similar now** (recorded as a future
+  option: a list of trusted proxy addresses on `GrantSpec`, with `X-Forwarded-For` read only
+  then; no new dependency, but more surface - not added until a real need appears).
+- **This delegates the prevention of misconfiguration to operations; a warning does not prevent
+  it technically.** The ADR says so plainly.
+- The supported configurations and the set-up guide state at least:
+  1. **Lock down before exposing externally** (before the proxy forwards to the outside).
+  2. **During re-commissioning as well, never expose the issuing route of an admin-equivalent
+     grant (`/api/auth/grant/{kind}`) through the proxy** (block that path at the proxy, or stop
+     the proxy while commissioning).
+- Where it is written: **banto side** - the README section on LAN serving / reverse proxy
+  (ADR-0003's supported configuration) and the grant item of conventions §6 (implementation PR).
+  **Derived-app obligations** (not touched by banto's PR): the same two points in banto-hub's
+  operations guide §19 and tag-server-design §5.6.
+- banto-hub is in commissioning mode when the setting is absent (so an admin-equivalent grant is
+  issuable at first start). Changing that default to OFF is **a separate design decision**,
+  outside this ADR.
 
 ## Security
 
@@ -263,49 +328,133 @@ migration PR):
   start-up.** A commissioning grant with `require_loopback_peer: false` on a LAN-bound server
   hands an admin-equivalent token to anyone on the LAN. banto does not enforce the condition
   (the app's `GrantSpec` decides), so it is a review item of the derived app's migration PR.
-- **Caveat 3: behind a reverse proxy (ADR-0003) the peer is the proxy.** Through a same-host
-  proxy every request looks loopback and `require_loopback_peer` protects nothing.
-  `X-Forwarded-For` is spoofable and is not consulted. → "Open point 3".
+- **Caveat 3: behind a reverse proxy the peer is the proxy.** Handled by a notice as in decision
+  §6, stating plainly that it is not technically preventable.
 - Audit: issuance is not audited (existing policy). Operations of a grant session are recorded
   with the fixed identity's id as actor (as `public` for viewer-public). ui-settings under
   `ui.<identity.id>.*` are shared by terminals of the same kind (`routes/ui_settings.rs:31-36`;
   same nature as viewer-public's `ui.public.*`).
 
-## Compatibility
+## Removed (v3.0.0)
 
-**Verdict: minor (v2.2.0).** Additions and generalizations only; every existing wire, TS and Rust
-name stays.
+| Removed                                                                                                            | Replacement                                                                       |
+| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `POST /api/auth/public-viewer`                                                                                     | `POST /api/auth/grant/publicViewer`                                               |
+| `viewerPublic` in `GET /api/auth/status`                                                                           | `grants.publicViewer`                                                             |
+| `publicViewer` in `GET /api/auth/identity`                                                                         | `kind` (`"publicViewer"` / `"commissioning"` / `"account"`)                       |
+| `AuthenticatedSession.public_viewer: bool`                                                                         | `AuthenticatedSession.grant: Option<GrantKind>`                                   |
+| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`                                             | `issue_grant_token(&GrantSpec)` / `revoke_grant_tokens(&GrantKind)`               |
+| `MAX_PUBLIC_VIEWER_SESSIONS`                                                                                       | `GrantSpec.max_sessions` (default 256)                                            |
+| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`                                             | the signature taking `registry: Arc<GrantRegistry>` (+ `grant_router`)            |
+| `UsersService::delete_user(id, i64)`                                                                               | the form taking the acting id as `Option<i64>` (name: implementation PR)          |
+| `publicViewerFallback` / `DEFAULT_PUBLIC_VIEWER_RETRIES`                                                           | `grantFallback(…, { kind })` / `DEFAULT_GRANT_RETRIES`                            |
+| `AuthProvider.enterPublicViewer` / `status().viewerPublic`                                                         | `enterGrant(kind, …)` / `status().grants`                                         |
+| `Identity.publicViewer` / TS `PUBLIC_VIEWER_ID`                                                                    | `Identity.kind`                                                                   |
+| the `public-viewer` owner key of `sessionOwnerKey` and adopt's `${kind}:${id}`                                     | the grant kind alone                                                              |
+| `SessionController.adopt()` / `end()`, the epoch-only `SessionTicket`, the "while adopted" branches                | `grantFallback` + the provider's answer (the S-42 path)                           |
+| `POST /api/auth/public-viewer` in `verify-architecture` rule 8 `REST_ONLY` (`scripts/verify-architecture.mjs:326`) | `POST /api/auth/grant/{kind}` (the Tauri window has no "enter a grant" operation) |
 
-| Existing name                                                                    | In v2.2                                                                                                             | v3                                                     |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `POST /api/auth/public-viewer`                                                   | alias of `/api/auth/grant/publicViewer`                                                                             | kept (as viewer-public's name)                         |
-| `viewerPublic` in `GET /api/auth/status`                                         | kept, equal to `grants.publicViewer`                                                                                | kept                                                   |
-| `publicViewer` in `GET /api/auth/identity`                                       | kept, equal to `kind === "publicViewer"`; `kind` added                                                              | kept                                                   |
-| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`           | thin wrappers over `issue_grant_token` / `revoke_grant_tokens`                                                      | removal candidates                                     |
-| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`           | wrapper over the new version (with `grants: Vec<GrantSpec>`), supplying `GrantSpec::public_viewer(settings)`        | removal candidate                                      |
-| `AuthenticatedSession.public_viewer`                                             | "Open point 1"                                                                                                      | `grant` only                                           |
-| `UsersService::delete_user(id, i64)`                                             | wrapper over the `Option<i64>` version                                                                              | removal candidate                                      |
-| `publicViewerFallback` / `DEFAULT_PUBLIC_VIEWER_RETRIES`                         | wrappers over `grantFallback`                                                                                       | removal candidates                                     |
-| `AuthProvider.enterPublicViewer` / `status().viewerPublic`                       | wrapper over `enterGrant('publicViewer')` / alias of `grants.publicViewer`                                          | kept (part of the provider contract)                   |
-| `Identity.publicViewer`                                                          | kept (`kind` added; `kindOfResolvedAuth` prefers `kind`)                                                            | kept                                                   |
-| `SessionController.adopt()` / `end()`                                            | **`@deprecated`** (only banto-hub's `commissioningPolicy.ts` uses them)                                             | **removed** (with I-13, I-21 and the adopted branches) |
-| `verify-architecture` rule 8 `REST_ONLY` (`scripts/verify-architecture.mjs:326`) | add `POST /api/auth/grant/{kind}` (the Tauri window has no "enter a grant" operation; same reason as viewer-public) | —                                                      |
+The `server.viewer_public` setting key, the two-way guard in `SettingsService`
+(viewer-public-plan §2.3) and the `NavItem` public-screen allowlist **stay** (they are the
+viewer-public specification, not its API; whether the allowlist field becomes kind-based is for
+admin-template's implementation PR). The "synthetic viewer session" item of `conventions §6` and
+the rules in `viewer-public-plan §2.2` are rewritten in the implementation PR as "grants
+(viewer-public is one kind)" - this ADR is the decision, the normative text lives in conventions.
 
-The "synthetic viewer session" item of `conventions §6` and the rules in `viewer-public-plan §2.2`
-are rewritten in the implementation PR as "grants (viewer-public is one kind)" - this ADR is the
-decision, the normative text lives in conventions.
+## Migration to v3.0.0 (what derived apps rewrite)
+
+The formal guide is added to the "examples" of [docs/upgrading.md](../upgrading.md) in the
+implementation PR (same shape as example 2, v2.0.0: path A (`@banto/*`, `banto-*` versions) and
+path B (the copied template) together; breaking). Here is **what** each consumer rewrites.
+
+Common (Rust):
+
+1. Construction and reads of `AuthenticatedSession { public_viewer, .. }` → `grant: Option<GrantKind>`.
+2. `issue_public_viewer_token()` → `issue_grant_token(&GrantSpec::public_viewer(settings))`,
+   `revoke_public_viewer_tokens()` → `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)`.
+3. `extra_auth_router(...)` → build a `GrantRegistry` and pass it to the new signature. A copied
+   router merges `grant_router(auth, registry)`, adds `availability(peer)` as `grants` to its
+   own status response and drops `viewerPublic`.
+4. `users_delete` resolves the acting id by `AuthenticatedSession.grant` (`None` for a grant)
+   and follows the new shape of `UsersService::delete_user`.
+
+Common (TS):
+
+5. `publicViewerFallback(controller, provider, ticket)` →
+   `grantFallback(controller, provider, ticket, { kind: 'publicViewer' })`.
+6. `provider.enterPublicViewer(...)` → `provider.enterGrant('publicViewer', ...)`,
+   `status().viewerPublic` → `status().grants.publicViewer`. A custom `AuthProvider` implements
+   `enterGrant` and `status().grants`.
+7. Reads of `identity.publicViewer` (logout flow, header, navigation) → `snapshot.kind`
+   (`'publicViewer'`). Drop references to the TS `PUBLIC_VIEWER_ID`.
+8. Saved-state keys that assumed `sessionOwnerKey`'s `public-viewer` → `publicViewer`.
+
+admin-template (banto itself; rewritten in the same implementation PR):
+`apps/admin-template/core/src/rest/mod.rs:335` (the `extra_auth_router` call),
+`core/src/rest/tests.rs:2958-3160,3280` (the `public_viewer_*` /
+`auth_status_reports_viewer_public_*` tests), `core/src/bin/banto-serve.rs` and
+`core/src/first_boot.rs` (the display preset's first-boot seed; the setting key stays),
+`src-tauri/src/lib.rs:2160-2165,4531,6765` (`save_server_config_locked`, `extra_auth_router`,
+tests), `src/routes/(app)/+layout.ts:6,44` (`publicViewerFallback`), `src/lib/session.svelte.ts`,
+`src/lib/banto/logout.svelte.ts`, `src/lib/components/{Header,Sidebar}.svelte`,
+`src/lib/navigation.ts`, `src/lib/recentCommands.ts`, `src/routes/(app)/+layout.svelte`,
+`src/routes/login/+page.svelte`, `src/routes/(app)/settings/{Account,Connectivity}Section.svelte`
+(reads of `identity.publicViewer` / `viewerPublic`), `packages/admin-core` (`provider.ts`,
+`providers/http.ts`, `providers/legacyAdapter.ts`, `sessionController.svelte.ts`,
+`sessionScope.svelte.ts`, `index.ts`, `tests/*`), `scripts/verify-architecture.mjs:326`,
+`scripts/lib/templates/display/{monitor/+page.svelte,smoke.spec.ts}`, `scripts/scaffold.mjs`,
+`e2e/tests-public-viewer/public-viewer.spec.ts`, `e2e/tests/{smoke,tauri-settings-drafts}.spec.ts`,
+`e2e/playwright.config.ts`.
+
+banto-hub (tyaro/banto-industrial):
+
+- Rust: `core/src/stream.rs:1670-1676` (`AuthenticatedSession { public_viewer: false, .. }` →
+  `grant: None`), `core/src/rest.rs:983` (the copied `extra_auth_router`: merge `grant_router`,
+  add `grants` to status, register the commissioning `GrantSpec` - kind `commissioning`, fixed
+  admin identity, condition = not locked down, `require_loopback_peer: true`, a small
+  `max_sessions`), `core/src/rest.rs:773` and `core/src/users.rs:634` (the acting id of
+  `delete_user`), **removal of the 34 bypasses in its own authorization** (every request back
+  through `require_auth` + `RoleGuard`), `revoke_grant_tokens("commissioning")` in the lock-down
+  save function, bootstrap's self-issuance.
+- TS: `src/lib/banto/commissioningPolicy.ts`, `commissioningLockDown.ts` (+ `.test.ts`),
+  `sessionRecheck.abort.test.ts` (retire the policy runner and `adopt()`/`end()` →
+  `grantFallback(…, { kind: 'commissioning' })` after the `none` in `src/routes/(app)/+layout.ts`;
+  lock-down = `revoke` → the next request is 401 → `resolve()` confirms `none`),
+  `src/lib/session.svelte.ts`, `src/lib/banto/logout.svelte.ts`, `hubLogout.test.ts`
+  (`identity.publicViewer` → `snapshot.kind`; logout only drops the token).
+- Operations docs: the two points of decision §6 in the operations guide §19 and
+  tag-server-design §5.6.
+
+chronogazer (tyaro/banto-industrial):
+
+- Rust: `core/src/rest.rs:538` (the acting id of `delete_user`), `core/src/rest.rs:770` (the
+  copied `extra_auth_router` → `grant_router` + `grants` in status; the only grant is
+  `publicViewer`).
+- TS: `src/routes/(app)/+layout.ts`, `src/lib/session.svelte.ts` (+ `session.test.ts`),
+  `src/lib/banto/logout.svelte.ts`, `src/lib/banto/{hubAdmin,sessionGuard}.test.ts` (reads of
+  `identity.publicViewer` / `viewerPublic` / `publicViewerFallback`).
 
 ## Alternatives considered
 
-- **Option A (adopted): generalize viewer-public issuance into grants; commissioning is the
-  second kind.**
+- **Option A (adopted): generalize viewer-public issuance into grants, make commissioning the
+  second kind, and remove the viewer-public-specific API so there is one API (v3.0.0).**
   Pros: the unauthenticated entry shrinks to one issuing route. Condition, cap, revocation,
   lifetime and re-validation work with the same code as viewer-public, and the tests
   (`auth.rs:2550-2700`, `rest/tests.rs:3023-3160`, `events.rs:702`) generalize over a kind
   parameter. The front end loses the `adopt()` exception path and becomes the single S-42 path.
-  Cons: an admin-equivalent bearer sits in the browser (caveat 1). A weak condition in
-  `GrantSpec` stays weak (caveats 2, 3) - but it is far easier to inspect than today's 34
-  scattered bypasses.
+  Viewer-public and commissioning run through the same code, so a fix to one cannot miss the
+  other. Cons: every consumer rewrites once (migration). An admin-equivalent bearer sits in the
+  browser (caveat 1). A weak condition in `GrantSpec` stays weak (caveats 2, 3) - but it is far
+  easier to inspect than today's 34 scattered bypasses.
+- **Option A′ (rejected, owner decision of 2026-10-03): ship it as a backward-compatible minor
+  (v2.2.0).** Keep the old API, URL and fields as wrappers/aliases, leave `AuthenticatedSession`
+  untouched and add a new validation-result type carrying the grant, keep viewer-public on the
+  old path and use the new API only for new kinds. Rejected because the consumers are limited to
+  admin-template and the two banto-industrial apps, and rewriting them once is simpler than
+  adding compatibility glue (old and new types side by side, two fallbacks, two URLs, a
+  compatibility matrix). Keeping compatibility also means the all-`pub` `AuthenticatedSession`
+  cannot be touched (renaming or adding a field breaks literal construction) and viewer-public
+  and commissioning keep running through different code.
 - **Option B (rejected): add a hook to `require_auth` that "skips authentication and inserts a
   synthetic identity while a condition holds"** (moving banto-hub's current shape into banto).
   Rejected for the same reasons as ADR-0012's option C: an "implicit identity" branch in the
@@ -323,6 +472,9 @@ decision, the normative text lives in conventions.
   A copy of viewer-public's code differing only in condition and identity, to be copied again for
   a third kind; banto would also carry a derived app's domain word (commissioning). The
   generalization (A) is smaller.
+- **Option E (rejected, future option): a `trusted_proxies` field on `GrantSpec` that trusts
+  `X-Forwarded-For`.** It would technically complement the loopback test behind a reverse
+  proxy, but adds surface. Not added until a real need appears; handled by a notice (decision §6).
 
 ## Consequences
 
@@ -332,48 +484,34 @@ decision, the normative text lives in conventions.
   issuance condition (`enabled`) and the revocation call come in pairs (the template:
   viewer-public OFF; the derived app: lock-down). `revokedGrants: n` may go into the audit detail.
 - **Admin-equivalent grants default to `require_loopback_peer: true` and a small
-  `max_sessions`** (a review item of the derived app's migration PR).
+  `max_sessions`, and the reverse-proxy operating conditions (the two points of decision §6) go
+  into the set-up guide** (a review item of the derived app's migration PR).
+- **Viewer-public and commissioning run through the same code.** A change to viewer-public is a
+  change to grants as a whole and is verified for both by tests parametrized over the kind.
 - The front end confirms commissioning through `grantFallback` and the provider's answer.
-  `adopt()`/`end()` are deprecated; the controller's adopt branches stay unchanged until removal
-  in v3 (no behavior change in v2.2).
-- Adding a kind is adding one `GrantSpec`; banto's routes and the verify-architecture
-  classification do not grow (`/api/auth/grant/{kind}` is one route).
+  `adopt()`/`end()` and the "while adopted" branches are removed (the controller is back to the
+  single "the provider answers in one round trip").
+- Adding a kind is registering one `GrantSpec` in the `GrantRegistry`; banto's routes and the
+  verify-architecture classification do not grow (`/api/auth/grant/{kind}` is one route). Name
+  clashes and reserved words are `Err` at registration.
+- v3.0.0 is a breaking change where path A (versions) and path B (the copied template) go
+  together. An example is added to [docs/upgrading.md](../upgrading.md); the CHANGELOG carries
+  the removal list and the migration steps.
 - Tests (S-number policy): session-controller-design.md allots **S-109 onwards** to grants
   (S-42 generalized over the kind, the grant versions of S-44 to S-46, "revoked → 401 → the
-  fallback silently re-issues", "condition false → 403 → stays `none`"). Rust: parametrize the
-  `public_viewer_*` tests in `auth.rs` over the kind; in `rest/tests.rs` add `grant/{kind}` 404 /
-  loopback 403 / condition 403 / issuance → `kind` on identity, and `users_delete` from a grant
-  session; in `events.rs` the stream closes at the re-check after revocation. The E2E
-  `e2e/tests-public-viewer/public-viewer.spec.ts` keeps passing (alias).
+  fallback silently re-issues", "condition false → 403 → stays `none`", "a provider without
+  `enterGrant` → `none`"). Rust: parametrize the `public_viewer_*` tests in `auth.rs` over the
+  kind; in `rest/tests.rs` add `grant/{kind}` 404 / loopback 403 / unknown-peer 403 /
+  condition 403 / issuance → `kind` on identity / refusal of reserved names at registration /
+  agreement between status `grants` and the issuance check / `users_delete` from a grant
+  session (the last admin is refused); in `events.rs` the stream closes at the re-check after
+  revocation. The E2E `e2e/tests-public-viewer/public-viewer.spec.ts` is rewritten to the new
+  URL and `grants`.
 
-## Open points (settled in the implementation PR; not decided unilaterally here)
+## Open points
 
-1. **The `AuthenticatedSession.public_viewer` field.** The owner decision is
-   `public_viewer: bool → grant: Option<GrantKind>`, but `AuthenticatedSession` is an all-`pub`
-   struct and **a derived app constructs it with a struct literal** (banto-hub
-   `core/src/stream.rs:1670-1676`, a test). Renaming or adding a field both break external
-   literal construction, so the Rust side is strictly not minor. Candidates: (a) rename, add
-   `pub fn public_viewer(&self) -> bool`, and accept the literal breakage with a CHANGELOG note
-   (one place in banto-hub, fixed in its migration PR); (b) keep `public_viewer` and **add**
-   `grant` (a literal still breaks; two fields to keep consistent); (c) `#[non_exhaustive]` plus
-   a constructor (breaks once as well). (a) is recommended.
-2. **The name of the new `extra_auth_router` version and the shape of the parts a copied router
-   merges** (a `GrantRegistry` + `grant_router(auth, registry)`, or a single
-   `extra_auth_router_with_grants`). banto-hub and chronogazer copy `extra_auth_router`; unless the
-   parts are `pub` they would re-copy the handler.
-3. **`require_loopback_peer` behind a same-host reverse proxy.** Every peer looks loopback and
-   nothing is protected. Candidates: documentation only ("do not enable an admin-equivalent grant
-   behind a proxy") / a `trusted_proxies` field on `GrantSpec` that trusts `X-Forwarded-For`
-   (no new dependency, but more surface). Documentation only is recommended (as with IPv6,
-   until a real need appears).
-4. **The grant kind identifier** being the same string in the URL, status, `identity.kind` and
-   the client's `SessionKind` (camelCase such as `publicViewer`). A camelCase path segment
-   differs from the kebab-case style of existing routes. The alias `/api/auth/public-viewer`
-   stays, so there is no practical harm; whether to also accept
-   `/api/auth/grant/public-viewer` is for the implementation PR.
-5. **Evaluating `status().grants` including `require_loopback_peer`** (the body decides "can this
-   request obtain the grant"). Returning the condition alone is simpler but makes LAN terminals
-   fetch a 403 for nothing. The body's shape is recommended.
-6. The name of the `Option<i64>` version of `UsersService::delete_user` (`delete_user_by`, or
-   change the existing one and wrap). Derived apps copy `UsersService` too (banto-hub
-   `core/src/users.rs:634`), so banto's change reaches them through template intake (path B).
+None (decided 2026-10-03; the six items of review tyaro/banto#313 landed as: (1) → decision §1,
+§2 and option A′, (2) → decision §2 "only two parts are public", (3) → decision §6 and option E,
+(4) → decision §2 "the kind identifier", (5) → decision §2 "`/api/auth/status`", (6) → decision
+§3). Function naming (the new shape of `delete_user`, the new signature of `extra_auth_router`)
+is settled in the implementation PR (not a design open point).
