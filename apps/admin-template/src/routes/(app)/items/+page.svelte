@@ -455,7 +455,7 @@
 				sort,
 				filters
 			});
-			const csv = csvForExcel(toCsv(csvColumns, result.rows));
+			const csv = csvForExcel(toCsv(csvColumns, result.rows, { formulaSafe: true }));
 			const filename = csvFilename('items');
 			if (getBantoMode() === 'tauri') {
 				// Desktop (finding⑤ Option A): WebView2 has no visible save

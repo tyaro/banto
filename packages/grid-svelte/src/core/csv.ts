@@ -25,19 +25,45 @@ function escapeCsvField(raw: string): string {
 }
 
 /**
+ * Characters that make a spreadsheet treat a text cell as a formula (OWASP
+ * "CSV Injection"): `=` `+` `-` `@`, TAB, CR, LF, and the full-width
+ * `＝` `＋` `－` `＠` (U+FF1D / FF0B / FF0D / FF20, which Japanese-locale
+ * Excel can also treat as a formula start).
+ */
+const FORMULA_START = /^[=+\-@\t\r\n＝＋－＠]/;
+
+/** Prefix a leading `'` when `text` could be read as a formula. */
+function neutralizeFormula(text: string): string {
+	return FORMULA_START.test(text) ? `'${text}` : text;
+}
+
+/**
  * Serialize `rows` to RFC 4180 CSV using each column's RAW value (via
  * `getColumnValue`), never `column.format` — same rationale as
  * `rangeToTsv`: formatted display strings (e.g. "¥1,200") are lossy to
  * re-parse and would break re-import round-trip fidelity. Rows are
  * separated by CRLF (Excel-compatible); `headers` (default `true`) emits
  * `column.id` values as the first line.
+ *
+ * `formulaSafe` (default `false`) is the opt-in spreadsheet-safe mode for
+ * files meant to be opened in Excel. Only values that are JavaScript
+ * *strings* and begin with `=` `+` `-` `@`, TAB, CR, LF, or the full-width
+ * `＝` `＋` `－` `＠` get a leading `'` (applied before RFC 4180 quoting).
+ * Numbers (including negatives such as -5), booleans, null and undefined are
+ * never changed. Headers (developer-defined `column.id`) are not changed.
+ * Caveats: the output is NOT the raw value any more, so `parseCsv` re-import
+ * keeps the leading `'` (strip it on import if wanted); and it is a
+ * mitigation for Excel-style apps only, not a guarantee for every CSV
+ * consumer. The default (`false`) output is unchanged and re-imports
+ * losslessly.
  */
 export function toCsv<TRow>(
 	columns: GridColumn<TRow>[],
 	rows: TRow[],
-	opts?: { headers?: boolean }
+	opts?: { headers?: boolean; formulaSafe?: boolean }
 ): string {
 	const headers = opts?.headers ?? true;
+	const formulaSafe = opts?.formulaSafe ?? false;
 	const lines: string[] = [];
 	if (headers) {
 		lines.push(columns.map((column) => escapeCsvField(column.id)).join(','));
@@ -45,7 +71,11 @@ export function toCsv<TRow>(
 	for (const row of rows) {
 		const cells = columns.map((column) => {
 			const raw = getColumnValue(row, column);
-			return escapeCsvField(raw === null || raw === undefined ? '' : String(raw));
+			if (raw === null || raw === undefined) return '';
+			const text = String(raw);
+			return escapeCsvField(
+				formulaSafe && typeof raw === 'string' ? neutralizeFormula(text) : text
+			);
 		});
 		lines.push(cells.join(','));
 	}
