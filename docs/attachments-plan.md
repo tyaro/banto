@@ -111,6 +111,13 @@ CREATE INDEX idx_attachments_record ON attachments(resource, resource_id);
 - 生成: 長辺 256px に縮小、JPEG（品質 80）で `{id}.thumb.jpg` に保存。
   アルファは白地に合成。生成失敗（破損画像等）はアップロード自体を
   失敗させず `has_thumbnail = 0` で続行
+- サムネイルのファイル書込失敗に加え、**`has_thumbnail` を 1 にする DB 更新の失敗**
+  （SQLite / PostgreSQL 共通）も補助処理の失敗として扱う（#285）: 本体・
+  メタデータは確定済みなのでアップロードは成功（`has_thumbnail = 0`）とし、
+  警告ログを出して生成済みの `{id}.thumb.jpg` を best-effort で削除する
+  （参照されない孤児を残さない。削除失敗も警告のみ）。これにより呼び出し側
+  （REST / Tauri）は成功監査と変更通知まで到達し、利用者の再試行による
+  重複登録も起きない。本体保存自体の失敗時は従来どおり行を削除してエラー
 - **新規依存**: `image` クレート（features を jpeg/png/webp/gif に限定)。
   ワークスペースの「依存を足さない」方針の明示的な例外とする — 画像
   サムネイルは M20 の中核価値で自前実装は非現実的。依存は
