@@ -603,7 +603,10 @@ impl AttachmentsService {
     /// 5. If the detected MIME is one of the four supported image formats,
     ///    best-effort generate a thumbnail (spec: decode failure on a
     ///    corrupt image does not fail the upload, `has_thumbnail` just stays
-    ///    `0`) and flip `has_thumbnail` to `1` on success.
+    ///    `0`) and flip `has_thumbnail` to `1` on success. If that flag update fails
+    ///    after the body is stored, it is only a warning: the orphan thumbnail
+    ///    file is removed best-effort and the upload still succeeds with
+    ///    `has_thumbnail = false` (the body is the source of truth).
     pub async fn upload(&self, input: NewAttachment) -> Result<AttachmentMeta, BantoError> {
         validate_file_name(&input.file_name)?;
         validate_bytes(&input.bytes)?;
@@ -707,24 +710,42 @@ impl AttachmentsService {
                         bool_literal(dialect, true),
                         dialect.placeholder(1)
                     );
-                    match &self.db {
-                        Db::Sqlite(pool) => {
-                            sqlx::query(sqlx::AssertSqlSafe(update_sql))
-                                .bind(meta.id)
-                                .execute(pool)
-                                .await
-                                .map_err(storage_error)?;
-                        }
+                    let updated = match &self.db {
+                        Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(update_sql))
+                            .bind(meta.id)
+                            .execute(pool)
+                            .await
+                            .map(|_| ()),
                         #[cfg(feature = "postgres")]
-                        Db::Postgres(pool) => {
-                            sqlx::query(sqlx::AssertSqlSafe(update_sql))
-                                .bind(meta.id)
-                                .execute(pool)
-                                .await
-                                .map_err(storage_error)?;
+                        Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(update_sql))
+                            .bind(meta.id)
+                            .execute(pool)
+                            .await
+                            .map(|_| ()),
+                    };
+                    match updated {
+                        Ok(()) => meta.has_thumbnail = true,
+                        Err(err) => {
+                            // The body and metadata are already committed, so
+                            // this auxiliary failure must not fail the upload
+                            // (a retry would duplicate it, and the caller
+                            // would skip audit/notification). Warn, drop the
+                            // now-unreferenced thumbnail file best-effort, and
+                            // return the attachment with `has_thumbnail = false`.
+                            eprintln!(
+                                "banto-attachments: failed to record thumbnail for id {}: {err}",
+                                meta.id
+                            );
+                            if let Err(rm_err) =
+                                tokio::fs::remove_file(self.thumbnail_path(meta.id)).await
+                            {
+                                eprintln!(
+                                    "banto-attachments: failed to delete orphan thumbnail for id {}: {rm_err}",
+                                    meta.id
+                                );
+                            }
                         }
                     }
-                    meta.has_thumbnail = true;
                 }
                 // A thumbnail write failure is swallowed the same way a
                 // decode failure is (spec §3.4): the attachment itself was
@@ -1295,6 +1316,36 @@ mod tests {
         let decoded = image::load_from_memory(&thumb).expect("thumbnail must decode");
         let (w, h) = decoded.dimensions();
         assert!(w.max(h) <= THUMBNAIL_MAX_EDGE);
+    }
+
+    #[tokio::test]
+    async fn thumbnail_flag_update_failure_does_not_fail_the_upload() {
+        let (svc, dir) = service().await;
+        sqlx::query(
+            "CREATE TRIGGER fail_thumb BEFORE UPDATE OF has_thumbnail ON attachments              BEGIN SELECT RAISE(ABORT, 'injected'); END",
+        )
+        .execute(svc.db.as_sqlite().expect("sqlite"))
+        .await
+        .unwrap();
+        let png = png_bytes(64, 64);
+        let created = svc
+            .upload(new_attachment("items", "1", "photo.png", png.clone()))
+            .await
+            .expect("upload must succeed despite the flag update failing");
+        assert!(!created.has_thumbnail);
+        let listed = svc.list_for_record("items", "1").await.unwrap();
+        assert_eq!(listed, vec![created.clone()]);
+        let (_, body) = svc.read_body(created.id).await.unwrap();
+        assert_eq!(body, png);
+        assert!(!dir
+            .path()
+            .join("attachments")
+            .join(format!("{}.thumb.jpg", created.id))
+            .exists());
+        assert!(matches!(
+            svc.read_thumbnail(created.id).await.unwrap_err(),
+            BantoError::NotFound { .. }
+        ));
     }
 
     #[tokio::test]

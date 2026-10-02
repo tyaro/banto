@@ -21,6 +21,7 @@ dependencies = [
  "qrcode",
  "serde",
  "serde_json",
+ "sqlx",
  "tauri",
  "tauri-build",
  "tempfile",
