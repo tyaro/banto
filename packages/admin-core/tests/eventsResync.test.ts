@@ -175,6 +175,17 @@ describe('connectEvents: re-sync after reconnect (Issue #289)', () => {
 		off.forEach((f) => f());
 	});
 
+	it('notifies subscribers with reason resync on reconnect', () => {
+		initWith(countingDataProvider().dp);
+		const cb = vi.fn();
+		const off = onInvalidate('rs-reason', cb);
+		const { fire, provider } = capture();
+		connectEvents(provider);
+		fire();
+		expect(cb).toHaveBeenCalledWith('rs-reason', 'resync');
+		off();
+	});
+
 	it('refetches a list and a windowed list once each', async () => {
 		const { dp, calls } = countingDataProvider();
 		initWith(dp);

@@ -26,7 +26,7 @@
 
 ### Fixed
 
-- fix(admin-core): 変更通知 SSE が切れて再接続した後、切断中に他端末が更新したデータが次の変更通知まで古いまま残る問題を修正（#289）。`createSseEventProvider` の購読フックに `onReconnected`（切断後の再接続成功ごとに1回。初回接続・401/トークン消失/再ログイン後の最初の接続・接続中にトークンが変わった場合は呼ばない）を追加し、`connectEvents` がこれを受けて購読中の全リソースを `resource_changed` と同じ経路で1回ずつ再取得（`invalidateAll()` を新設・export）。セッション終了（`none`）後は再取得しない。サーバー側の履歴再送はしない。`SnapshotListResource` は invalidate 購読を持たないため境界は変わらない。
+- fix(admin-core): 変更通知 SSE が切れて再接続した後、切断中に他端末が更新したデータが次の変更通知まで古いまま残る問題を修正（#289）。`createSseEventProvider` の購読フックに `onReconnected`（切断後の再接続成功ごとに1回。初回接続・401/トークン消失/再ログイン後の最初の接続・接続中にトークンが変わった場合は呼ばない）を追加し、`connectEvents` がこれを受けて購読中の全リソースを `resource_changed` と同じ経路で1回ずつ再取得（`invalidateAll()` を新設・export）。セッション終了（`none`）後は再取得しない。サーバー側の履歴再送はしない。`SnapshotListResource` は invalidate 購読を持たないため境界は変わらない。再同期は `invalidate(resource, 'resync')`（新型 `InvalidateReason`、既定 `'change'`、購読コールバックは `(resource, reason)` を受ける）で流し、アプリ層のナビ未読バッジ（`navBadges.noteInvalidation`）は `'resync'` を数えない（実変更なしの再接続でバッジが増えない）。派生アプリで `onInvalidate` を使いバッジ・通知を自作している場合は `reason === 'resync'` を無視すること。
 
 - 初回セットアップ（`UsersService::setup_first_user`）の並行実行で複数の admin が作られる問題を修正（#277）。空確認と INSERT を DB 側で原子的にした（SQLite は条件付き単一 INSERT、PostgreSQL は `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE` + 条件付き INSERT）。負けた側は従来どおり「既に初期化されています」を返し、REST/Tauri とも成功監査・セッション発行は起きない。DB マイグレーション不要。
 

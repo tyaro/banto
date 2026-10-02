@@ -51,6 +51,7 @@ export {
 } from './registry.svelte';
 
 export { onInvalidate, invalidate, invalidateAll } from './invalidate';
+export type { InvalidateReason } from './invalidate';
 
 export {
 	createSessionController,
