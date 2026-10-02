@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- **fix(backup)（保存先の変更・消費側への注意）**: 同一フォルダに複数の SQLite DB を置くと `backups/` と `restore-pending.sqlite3` が共有され、一方のバックアップが他方から一覧・取得でき、一方のリストア予約が他方の次回起動で適用され得た不具合を修正した（#280）。バックアップ・適用前の安全バックアップ・リストア予約を DB ファイルごとの `<親>/backups/<DBファイル名>/`（予約は `<親>/backups/<DBファイル名>/restore-pending.sqlite3`）へ分離し、作成・一覧・取得・予約・状態取得・取消・起動時適用の全てが `scope_dir` の1関数でディレクトリを解決する（REST / Tauri 共通。認可・denied・監査は不変）。**既存配置からの移行**: 旧共有領域（`backups/` 直下の `*.sqlite3`・親フォルダ直下の `restore-pending.sqlite3`）は所属 DB を判断できないため、一覧に出さず・取得させず・自動適用せず（削除もしない）、起動時に stderr へ警告する。必要なバックアップは新ディレクトリへ手動で移動すること（詳細は README「SQLite バックアップの保存先」）。暫定回避策は DB ごとに親フォルダを分けること。PostgreSQL は従来どおりバックアップ非対応。
 - fix(items): 商品詳細から別の商品詳細へクライアント遷移（`/items/2` → `/items/1` など同一ルート内の移動）すると、URL だけが切り替わり、フォーム・添付・保存先 ID が直前の商品のまま残り、誤った商品へ保存され得た不具合を修正した。SvelteKit は同一ルートの別パラメータ間でページコンポーネントを再利用する（`params` が更新されるだけ）ため、`(app)/+layout.svelte` の `{#key}` にルート params を含めて ID ごとにページを作り直す（旧 ID の load 応答は破棄され、未保存変更ガードも従来どおり働く）。回帰 e2e smoke 3f を追加。#290。
 - chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
 

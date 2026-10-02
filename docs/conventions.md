@@ -209,7 +209,10 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 - **ファイルパスにユーザー入力を使わない。** 添付本体は行 id で命名し、`file_name`
   は表示専用。バックアップは `safe_backup_path` がセパレータ・`..`・
   `[A-Za-z0-9._-]` 外を全拒否（Content-Disposition 注入・Windows 予約名も同時に
-  封じる）。添付は `validate_file_name` が同種の検査。
+  封じる）。保存先ディレクトリは DB ファイル名ごと（`backups/<DBファイル名>/`、
+  設定された DB パス由来でリクエスト入力ではない）で、`scope_dir` の1関数に集約し
+  `scope_name` が不正名を明示エラーにする（同一フォルダの複数 DB の混線防止、#280）。
+  添付は `validate_file_name` が同種の検査。
 - **重い検証（argon2）の前にスロットルする。** `auth.rs` `login_rate_limited` は
   per-(IP+username) と per-IP の2次元スロットルを argon2 verifier の**前**に通す
   （username ローテーション flood での DoS 対策）。回帰テスト
