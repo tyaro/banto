@@ -364,6 +364,11 @@ function createCore(
 	 * reaching a public-viewer tab - is not "another user signed in". The
 	 * reverse (`A -> P`) always passes through `none` (a public viewer is
 	 * minted only for a confirmed `none`), which clears this anyway.
+	 * The auth-disabled synthetic session (`kind: 'local'`) is not a user
+	 * either (S-107, Issue #291): it is the state of the terminal, so
+	 * `A -> local` (enabling "no login" in settings), `local -> local` (a
+	 * role change) and `local -> B` raise nothing and leave this at A. The
+	 * judgment is by `kind`, not by the value of the owner (conventions §6).
 	 */
 	let lastConcreteOwner: string | null = null;
 	let inflight: Probe | null = null;
@@ -478,7 +483,12 @@ function createCore(
 			// of provider (owners of different authentication sources).
 			pendingOwnerChange = null;
 			lastConcreteOwner = null;
-		} else if (next.status === 'active' && next.owner !== null && next.kind !== 'publicViewer') {
+		} else if (
+			next.status === 'active' &&
+			next.owner !== null &&
+			next.kind !== 'publicViewer' &&
+			next.kind !== 'local'
+		) {
 			if (lastConcreteOwner !== null && lastConcreteOwner !== next.owner) {
 				// Keep the first `from` while unhandled (design §6.1 lifetime table).
 				// A -> B -> A before it is handled nets out to "no change of user":
@@ -488,8 +498,8 @@ function createCore(
 			}
 			lastConcreteOwner = next.owner;
 		}
-		// `unknown`, an ownerless active and the public viewer keep both
-		// (S-10, S-81, S-93).
+		// `unknown`, an ownerless active, the public viewer and the local
+		// synthetic session keep both (S-10, S-81, S-93, S-107).
 		const waiters = options.external && inflight ? retire(inflight) : [];
 		publish({
 			status: next.status,
