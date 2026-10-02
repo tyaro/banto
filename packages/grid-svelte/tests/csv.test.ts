@@ -92,6 +92,51 @@ describe('toCsv', () => {
 	});
 });
 
+describe('toCsv formulaSafe', () => {
+	const col: GridColumn<{ v: unknown }>[] = [{ id: 'v', header: 'V', accessor: 'v' }];
+	const out = (v: unknown, formulaSafe = true) =>
+		toCsv(col, [{ v }], { headers: false, formulaSafe });
+
+	it.each(['=1+1', '+1', '-1', '@SUM(A1)', '\tx', '\rx', '\nx', '＝1', '＋1', '－1', '＠a'])(
+		'prefixes a quote for formula-start string %j',
+		(v) => {
+			expect(parseCsv(out(v))[0][0]).toBe(`'${v}`);
+		}
+	);
+
+	it('neutralizes the issue example', () => {
+		expect(out('=HYPERLINK("https://example.org","Open")')).toBe(
+			'"\'=HYPERLINK(""https://example.org"",""Open"")"'
+		);
+	});
+
+	it('leaves ordinary strings, Japanese, quotes, commas and newlines alone', () => {
+		expect(out('abc')).toBe('abc');
+		expect(out('緑茶')).toBe('緑茶');
+		expect(out('a=b')).toBe('a=b');
+		expect(out(' =1')).toBe(' =1');
+		expect(out('say "hi", bob\nx')).toBe('"say ""hi"", bob\nx"');
+		expect(out('')).toBe('');
+	});
+
+	it('does not touch numbers (incl. negative), booleans, null, undefined', () => {
+		expect(out(-5)).toBe('-5');
+		expect(out(140)).toBe('140');
+		expect(out(true)).toBe('true');
+		expect(out(null)).toBe('');
+		expect(out(undefined)).toBe('');
+	});
+
+	it('default toCsv output is unchanged (no quote prefix)', () => {
+		expect(out('=1+1', false)).toBe('=1+1');
+		expect(toCsv(col, [{ v: '=1' }], { headers: false })).toBe('=1');
+	});
+
+	it('does not alter headers', () => {
+		expect(toCsv([{ id: '=h', header: 'H', accessor: 'v' }], [], { formulaSafe: true })).toBe('=h');
+	});
+});
+
 describe('toCsv -> parseCsv round trip', () => {
 	it('round-trips quoted commas, quoted quotes, and embedded newlines/tabs', () => {
 		const csv = toCsv(columns.slice(0, 3), rows);

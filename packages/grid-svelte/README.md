@@ -39,3 +39,19 @@ npm レジストリには公開していない。モノレポ内では `workspac
 
 - 本体リポジトリ: https://github.com/tyaro/banto
 - 仕様: [docs/ui-framework-spec.md §4](../../docs/ui-framework-spec.md)（データグリッド仕様）
+
+## CSV export: spreadsheet formula safety (`formulaSafe`)
+
+`toCsv(columns, rows, { formulaSafe: true })` is an opt-in mode for CSV files
+that people open in Excel-style spreadsheets (use together with `csvForExcel`,
+which only adds the UTF-8 BOM).
+
+- Only values that are JavaScript **strings** are affected. If one starts with
+  `=` `+` `-` `@`, TAB, CR, LF, or the full-width `＝` `＋` `－` `＠`, a leading
+  `'` is added before RFC 4180 quoting. Numbers (including negative ones),
+  booleans, null/undefined and header cells are never changed.
+- The default (`formulaSafe` omitted/`false`) output is unchanged and re-imports
+  losslessly. The safe output is **not** the raw value: `parseCsv` keeps the
+  leading `'`, so strip it on import if you need the original text.
+- This is a mitigation for Excel-style software, not a guarantee for every way
+  of consuming CSV. Leading-space forms such as `" =1"` are not changed.
