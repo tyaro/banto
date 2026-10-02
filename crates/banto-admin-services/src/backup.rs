@@ -21,19 +21,32 @@
 //!
 //! ## Directory layout
 //!
-//! Given the DB file at `{dir}/admin-template.sqlite3`:
-//! - `{dir}/backups/banto-YYYYMMDD-HHMMSS(-N)?.sqlite3` - backups made by
-//!   [`BackupService::create`] (`N` only appended on a same-second name
+//! Backups and the staged restore are kept **per DB file** (issue #280): two
+//! SQLite DBs placed in the same folder must never see each other's backups or
+//! restore reservations. Given the DB file at `{dir}/{name}` (e.g.
+//! `{dir}/admin-template.sqlite3`), everything lives under
+//! `{dir}/backups/{name}/` (see [`BackupService::scope_dir`], the ONE function
+//! every operation resolves the directory through):
+//! - `{dir}/backups/{name}/banto-YYYYMMDD-HHMMSS(-N)?.sqlite3` - backups made
+//!   by [`BackupService::create`] (`N` only appended on a same-second name
 //!   collision).
-//! - `{dir}/backups/pre-restore-YYYYMMDD-HHMMSS(-N)?.sqlite3` - the
+//! - `{dir}/backups/{name}/pre-restore-YYYYMMDD-HHMMSS(-N)?.sqlite3` - the
 //!   automatic safety backup [`BackupService::apply_pending_restore_at_startup`]
 //!   takes of the CURRENT db immediately before overwriting it.
-//! - `{dir}/restore-pending.sqlite3` - the staged file, written by
-//!   [`BackupService::stage_restore_from_file`]/
+//! - `{dir}/backups/{name}/restore-pending.sqlite3` - the staged file, written
+//!   by [`BackupService::stage_restore_from_file`]/
 //!   [`BackupService::stage_restore_from_bytes`], consumed (renamed away) by
-//!   [`BackupService::apply_pending_restore_at_startup`]. Deliberately NOT
-//!   inside `backups/` - [`BackupService::list`] only ever lists `backups/`,
-//!   and a half-staged restore is not itself a "backup".
+//!   [`BackupService::apply_pending_restore_at_startup`]. It sits next to the
+//!   backups but is never listed/readable as one (see `PENDING_RESTORE_FILE_NAME`).
+//!
+//! `{name}` is the DB's own file name (taken from the configured path, never
+//! from request input), validated by `scope_name`.
+//!
+//! **Legacy shared area**: before #280 backups lived directly in `{dir}/backups/`
+//! and the reservation at `{dir}/restore-pending.sqlite3`. Their owner cannot
+//! be determined, so they are NOT listed, NOT readable and NEVER auto-applied;
+//! startup only prints a warning (see `warn_legacy_shared_area`). They are left
+//! untouched for the operator to move by hand.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -45,7 +58,88 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, SqliteConnection, SqlitePool};
 
 const BACKUPS_DIR_NAME: &str = "backups";
+/// Reserved file name of the staged restore inside a DB's scope directory
+/// (and, in the pre-#280 layout, directly in the DB's parent folder).
 const PENDING_RESTORE_FILE_NAME: &str = "restore-pending.sqlite3";
+
+/// Validate a DB file name for use as a directory name under `backups/`
+/// (issue #280). The name comes from the configured DB path, not from a
+/// request, but it is still checked like [`BackupService::safe_backup_path`]
+/// does for file names: no path separators/`..`/control or
+/// Windows-reserved characters, no trailing dot/space. Anything else is an
+/// explicit error rather than a silent fallback to a shared directory.
+fn scope_name(db_path: &Path) -> Result<String, BantoError> {
+    let name = db_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let ok = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.ends_with('.')
+        && !name.ends_with(' ')
+        && !name.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        });
+    if !ok {
+        return Err(validation_err(
+            "DBファイル名がバックアップの保存先名として使えません".to_string(),
+        ));
+    }
+    Ok(name.to_string())
+}
+
+/// Parent folder of the DB file (`backups/`'s parent). Falls back to `.` for a
+/// bare relative file name - mirrors how the file itself is opened.
+fn base_dir_of(db_path: &Path) -> &Path {
+    db_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Per-DB scope directory `{parent}/backups/{db file name}/` - the single
+/// resolution point shared by every backup/restore operation (issue #280).
+fn scope_dir_of(db_path: &Path) -> Result<PathBuf, BantoError> {
+    Ok(base_dir_of(db_path)
+        .join(BACKUPS_DIR_NAME)
+        .join(scope_name(db_path)?))
+}
+
+/// Startup warning for files left in the pre-#280 shared area (see the module
+/// doc). Never deletes or applies anything.
+fn warn_legacy_shared_area(db_path: &Path) {
+    let base = base_dir_of(db_path);
+    let shared = base.join(BACKUPS_DIR_NAME);
+    let legacy_pending = base.join(PENDING_RESTORE_FILE_NAME);
+    let has_legacy_backups = std::fs::read_dir(&shared)
+        .map(|rd| {
+            rd.flatten().any(|e| {
+                e.path().extension().and_then(|x| x.to_str()) == Some("sqlite3")
+                    && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+    let has_legacy_pending = legacy_pending.is_file();
+    if !has_legacy_backups && !has_legacy_pending {
+        return;
+    }
+    let target = scope_dir_of(db_path)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| shared.display().to_string());
+    let mut found = Vec::new();
+    if has_legacy_backups {
+        found.push(format!("{} 直下の *.sqlite3", shared.display()));
+    }
+    if has_legacy_pending {
+        found.push(legacy_pending.display().to_string());
+    }
+    eprintln!(
+        "banto: 警告: 旧形式（DB共有）のバックアップ領域にファイルが残っています: {}。所属DBを判断できないため、一覧・取得・自動適用の対象にしません（削除もしません）。このDBのバックアップとして使う場合は、該当ファイルを {} へ手動で移動してください。不要なら手動で削除してください。",
+        found.join(", "),
+        target
+    );
+}
 
 /// Banto-owned tables a file must have to be accepted as a restorable Banto
 /// database (spec M17 "スキーマ妥当性"). Domain tables such as the template's
@@ -303,35 +397,32 @@ impl BackupService {
             .ok_or_else(backup_unsupported_on_postgres)
     }
 
-    /// Directory the DB file lives in (`backups/`'s parent, and where
-    /// `restore-pending.sqlite3` is placed). Falls back to `.` if `db_path`
-    /// has no parent component (e.g. a bare relative filename like
-    /// `"db.sqlite3"`, as `bin/banto-serve.rs`'s `BANTO_DB` default can be) -
-    /// this mirrors how that file is opened in the first place (a relative
-    /// path resolves against the process's current directory either way).
-    fn base_dir(&self) -> &Path {
-        self.db_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
+    /// Per-DB directory holding this DB's backups and staged restore - the
+    /// ONE place every operation resolves it (issue #280, conventions §6).
+    /// Errors (explicitly) when the DB file name is unusable as a directory
+    /// name.
+    fn scope_dir(&self) -> Result<PathBuf, BantoError> {
+        scope_dir_of(&self.db_path)
     }
 
-    fn backups_dir(&self) -> PathBuf {
-        self.base_dir().join(BACKUPS_DIR_NAME)
-    }
-
-    /// The `backups/` directory as a displayable string (spec M17: the
+    /// This DB's backup directory as a displayable string (spec M17: the
     /// desktop "フォルダを開く" command needs a path to hand to the OS file
     /// explorer, and to show as a fallback on platforms that command does
     /// not support). Does not check whether the directory actually exists
-    /// yet - `create()` makes it lazily on first use, same as everywhere
-    /// else in this module.
+    /// yet - `create()` makes it lazily on first use. Falls back to the
+    /// shared `backups/` folder if the DB name is unusable.
     pub fn backups_dir_display(&self) -> String {
-        self.backups_dir().display().to_string()
+        match self.scope_dir() {
+            Ok(dir) => dir.display().to_string(),
+            Err(_) => base_dir_of(&self.db_path)
+                .join(BACKUPS_DIR_NAME)
+                .display()
+                .to_string(),
+        }
     }
 
-    fn pending_restore_path(&self) -> PathBuf {
-        self.base_dir().join(PENDING_RESTORE_FILE_NAME)
+    fn pending_restore_path(&self) -> Result<PathBuf, BantoError> {
+        Ok(self.scope_dir()?.join(PENDING_RESTORE_FILE_NAME))
     }
 
     /// Reject anything that is not a plain `backups/`-relative file name:
@@ -344,6 +435,7 @@ impl BackupService {
     /// device names (`CON`, `NUL`, ...) incidentally never match either.
     fn safe_backup_path(&self, file_name: &str) -> Result<PathBuf, BantoError> {
         let ok = !file_name.is_empty()
+            && file_name != PENDING_RESTORE_FILE_NAME
             && file_name.ends_with(".sqlite3")
             && file_name
                 .chars()
@@ -351,7 +443,7 @@ impl BackupService {
         if !ok {
             return Err(validation_err("不正なファイル名です".to_string()));
         }
-        Ok(self.backups_dir().join(file_name))
+        Ok(self.scope_dir()?.join(file_name))
     }
 
     /// Create a new backup via `VACUUM INTO` (spec M17: "WAL稼働中でも安全な
@@ -383,7 +475,7 @@ impl BackupService {
     /// backups in the same second" an actual fact of the test rather than
     /// something the test hopes for.
     async fn create_at(&self, now_iso: &str) -> Result<BackupInfo, BantoError> {
-        let dir = self.backups_dir();
+        let dir = self.scope_dir()?;
         tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|err| io_err("バックアップ用ディレクトリの作成に失敗しました", err))?;
@@ -397,7 +489,7 @@ impl BackupService {
             .to_string_lossy()
             .to_string();
 
-        // AssertSqlSafe: `path` is built above from `self.backups_dir()`
+        // AssertSqlSafe: `path` is built above from `self.scope_dir()`
         // (server-configured backup directory) and `stamp` (derived from the
         // DB's own `datetime('now')`/a caller-supplied test timestamp via
         // `compact_stamp`) - never from external/caller-controlled text -
@@ -432,7 +524,7 @@ impl BackupService {
     /// yet) is not an error - it is simply an empty list.
     pub async fn list(&self) -> Result<Vec<BackupInfo>, BantoError> {
         self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
-        let dir = self.backups_dir();
+        let dir = self.scope_dir()?;
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -448,7 +540,9 @@ impl BackupService {
             .map_err(|err| io_err("バックアップ一覧の読み取りに失敗しました", err))?
         {
             let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("sqlite3") {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("sqlite3")
+                || path.file_name().and_then(|n| n.to_str()) == Some(PENDING_RESTORE_FILE_NAME)
+            {
                 continue;
             }
             let metadata = match entry.metadata().await {
@@ -510,11 +604,11 @@ impl BackupService {
 
         validate_sqlite_file(&source_path).await?;
 
-        let dir = self.base_dir();
-        tokio::fs::create_dir_all(dir)
+        let dir = self.scope_dir()?;
+        tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|err| io_err("リストア予約先ディレクトリの作成に失敗しました", err))?;
-        tokio::fs::copy(&source_path, self.pending_restore_path())
+        tokio::fs::copy(&source_path, self.pending_restore_path()?)
             .await
             .map_err(|err| io_err("リストア予約ファイルの配置に失敗しました", err))?;
         Ok(())
@@ -527,8 +621,8 @@ impl BackupService {
     /// pending restore untouched.
     pub async fn stage_restore_from_bytes(&self, bytes: &[u8]) -> Result<(), BantoError> {
         self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
-        let dir = self.base_dir();
-        tokio::fs::create_dir_all(dir)
+        let dir = self.scope_dir()?;
+        tokio::fs::create_dir_all(&dir)
             .await
             .map_err(|err| io_err("リストア予約先ディレクトリの作成に失敗しました", err))?;
 
@@ -554,7 +648,7 @@ impl BackupService {
             return Err(err);
         }
 
-        if let Err(err) = tokio::fs::rename(&temp_path, self.pending_restore_path()).await {
+        if let Err(err) = tokio::fs::rename(&temp_path, self.pending_restore_path()?).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
             return Err(io_err("リストア予約ファイルの配置に失敗しました", err));
         }
@@ -572,7 +666,7 @@ impl BackupService {
         // to report (and its `db_path` may be a connection URL, not a real
         // directory) - treat it the same as "nothing pending".
         self.db.as_sqlite()?;
-        let metadata = tokio::fs::metadata(self.pending_restore_path())
+        let metadata = tokio::fs::metadata(self.pending_restore_path().ok()?)
             .await
             .ok()?;
         if !metadata.is_file() {
@@ -592,7 +686,7 @@ impl BackupService {
     /// `autologin_disable` tolerating an already-missing keyring entry).
     pub async fn cancel_pending_restore(&self) -> Result<(), BantoError> {
         self.sqlite_pool()?; // SQLite-only feature; Postgres handle -> explicit error.
-        match tokio::fs::remove_file(self.pending_restore_path()).await {
+        match tokio::fs::remove_file(self.pending_restore_path()?).await {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(io_err("リストア予約の取消に失敗しました", err)),
@@ -614,7 +708,7 @@ impl BackupService {
     /// real DB path, so it calls this unconditionally.
     ///
     /// Steps, in order (each one only proceeds if the previous succeeded):
-    /// 1. If `restore-pending.sqlite3` does not exist, return `Ok(None)`
+    /// 1. If this DB's `backups/{name}/restore-pending.sqlite3` does not exist, return `Ok(None)`
     ///    immediately - the overwhelmingly common case (no restore was ever
     ///    staged).
     /// 2. Re-validate the pending file (same checks as staging time) - it
@@ -658,11 +752,18 @@ impl BackupService {
     pub async fn apply_pending_restore_at_startup(
         db_path: &Path,
     ) -> Result<Option<AppliedRestoreInfo>, BantoError> {
-        let base_dir = db_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let pending_path = base_dir.join(PENDING_RESTORE_FILE_NAME);
+        warn_legacy_shared_area(db_path);
+        // Same resolution as every service method (issue #280). An unusable
+        // DB file name can never have a staged restore (staging refuses it),
+        // so this must not block startup - report and carry on.
+        let scope_dir = match scope_dir_of(db_path) {
+            Ok(dir) => dir,
+            Err(err) => {
+                eprintln!("banto: リストア予約の確認をスキップします: {err}");
+                return Ok(None);
+            }
+        };
+        let pending_path = scope_dir.join(PENDING_RESTORE_FILE_NAME);
 
         if !tokio::fs::try_exists(&pending_path).await.unwrap_or(false) {
             return Ok(None);
@@ -695,7 +796,7 @@ impl BackupService {
         let mut pre_restore_backup_file_name: Option<String> = None;
         let applied_at_iso = iso_datetime_from_system_time(SystemTime::now());
         if tokio::fs::try_exists(db_path).await.unwrap_or(false) {
-            let backups_dir = base_dir.join(BACKUPS_DIR_NAME);
+            let backups_dir = scope_dir.clone();
             tokio::fs::create_dir_all(&backups_dir)
                 .await
                 .map_err(|err| io_err("バックアップ用ディレクトリの作成に失敗しました", err))?;
@@ -866,7 +967,7 @@ mod tests {
     #[tokio::test]
     async fn list_is_sorted_newest_first() {
         let (svc, dir) = service().await;
-        let backups_dir = dir.path().join("backups");
+        let backups_dir = scope_of(dir.path(), "admin-template.sqlite3");
         tokio::fs::create_dir_all(&backups_dir).await.unwrap();
         tokio::fs::write(backups_dir.join("banto-20260101-000000.sqlite3"), b"a")
             .await
@@ -1085,7 +1186,9 @@ mod tests {
         assert!(!applied.applied_at.is_empty());
 
         // The pending file must be gone (consumed by the swap).
-        assert!(!dir.path().join(PENDING_RESTORE_FILE_NAME).exists());
+        assert!(!scope_of(dir.path(), "admin-template.sqlite3")
+            .join(PENDING_RESTORE_FILE_NAME)
+            .exists());
 
         // The live db_path now contains the RESTORED content.
         let after_pool = banto_storage::connect_sqlite(&db_path).await.unwrap();
@@ -1098,9 +1201,7 @@ mod tests {
         after_pool.close().await;
 
         // The pre-restore safety backup preserves the OLD content.
-        let backup_path = dir
-            .path()
-            .join("backups")
+        let backup_path = scope_of(dir.path(), "admin-template.sqlite3")
             .join(&applied.pre_restore_backup_file_name);
         assert!(backup_path.exists());
         let backup_pool = banto_storage::connect_sqlite(&backup_path).await.unwrap();
@@ -1145,20 +1246,161 @@ mod tests {
     async fn apply_pending_restore_deletes_and_skips_a_corrupt_pending_file() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("admin-template.sqlite3");
-        tokio::fs::write(
-            dir.path().join(PENDING_RESTORE_FILE_NAME),
-            b"garbage, not sqlite",
-        )
-        .await
-        .unwrap();
+        let pending =
+            scope_of(dir.path(), "admin-template.sqlite3").join(PENDING_RESTORE_FILE_NAME);
+        tokio::fs::create_dir_all(pending.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&pending, b"garbage, not sqlite")
+            .await
+            .unwrap();
 
         let applied = BackupService::apply_pending_restore_at_startup(&db_path)
             .await
             .expect("a corrupt pending file must not fail startup");
         assert!(applied.is_none());
         assert!(
-            !dir.path().join(PENDING_RESTORE_FILE_NAME).exists(),
+            !pending.exists(),
             "the corrupt pending file should have been deleted so it does not retry forever"
         );
+    }
+
+    // ---- issue #280: per-DB isolation of backups and restore reservations ----
+
+    /// `{dir}/backups/{db_name}/` - the per-DB scope directory the layout
+    /// documents (tests spell it out rather than call `scope_dir_of`, so a
+    /// silent change of the layout fails here).
+    fn scope_of(dir: &Path, db_name: &str) -> PathBuf {
+        dir.join("backups").join(db_name)
+    }
+
+    /// Two services over `a.sqlite3` / `b.sqlite3` in the SAME folder.
+    async fn two_services() -> (BackupService, BackupService, tempfile::TempDir) {
+        let dir = tempdir().expect("tempdir");
+        let a_path = dir.path().join("a.sqlite3");
+        let b_path = dir.path().join("b.sqlite3");
+        let a = BackupService::new(a_path.clone(), Db::Sqlite(migrated_file_db(&a_path).await));
+        let b = BackupService::new(b_path.clone(), Db::Sqlite(migrated_file_db(&b_path).await));
+        (a, b, dir)
+    }
+
+    #[tokio::test]
+    async fn backups_of_one_db_are_invisible_to_another_in_the_same_folder() {
+        let (a, b, dir) = two_services().await;
+        let made = a.create().await.unwrap();
+        assert!(scope_of(dir.path(), "a.sqlite3")
+            .join(&made.file_name)
+            .exists());
+
+        assert_eq!(a.list().await.unwrap().len(), 1);
+        assert!(b.list().await.unwrap().is_empty());
+        assert!(matches!(
+            b.read(&made.file_name).await,
+            Err(BantoError::NotFound { .. })
+        ));
+        assert!(matches!(
+            b.stage_restore_from_file(&made.file_name).await,
+            Err(BantoError::NotFound { .. })
+        ));
+        // A itself keeps working.
+        assert!(!a.read(&made.file_name).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn restore_reservation_of_one_db_is_not_seen_or_applied_by_another() {
+        let (a, b, dir) = two_services().await;
+        let made = a.create().await.unwrap();
+        a.stage_restore_from_file(&made.file_name).await.unwrap();
+
+        assert!(a.pending_restore().await.is_some());
+        assert!(b.pending_restore().await.is_none());
+
+        // B's cancel must not remove A's reservation.
+        b.cancel_pending_restore().await.unwrap();
+        assert!(a.pending_restore().await.is_some());
+
+        // B's startup apply must not touch B's DB nor consume A's reservation.
+        let b_path = dir.path().join("b.sqlite3");
+        let before = tokio::fs::read(&b_path).await.unwrap();
+        let applied = BackupService::apply_pending_restore_at_startup(&b_path)
+            .await
+            .unwrap();
+        assert!(applied.is_none());
+        assert_eq!(tokio::fs::read(&b_path).await.unwrap(), before);
+        assert!(a.pending_restore().await.is_some());
+        assert!(!scope_of(dir.path(), "b.sqlite3").exists());
+
+        // A's own flow: apply (with its safety backup) and cancel.
+        let a_path = dir.path().join("a.sqlite3");
+        // Startup apply runs before any pool exists; release A's file (Windows
+        // refuses to replace an open file).
+        a.sqlite_pool().unwrap().close().await;
+        let applied = BackupService::apply_pending_restore_at_startup(&a_path)
+            .await
+            .unwrap()
+            .expect("A's reservation applies to A");
+        assert!(scope_of(dir.path(), "a.sqlite3")
+            .join(&applied.pre_restore_backup_file_name)
+            .exists());
+        assert!(a.pending_restore().await.is_none());
+
+        a.stage_restore_from_bytes(&tokio::fs::read(&a_path).await.unwrap())
+            .await
+            .unwrap();
+        assert!(a.pending_restore().await.is_some());
+        a.cancel_pending_restore().await.unwrap();
+        assert!(a.pending_restore().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn legacy_shared_area_files_are_neither_listed_read_nor_applied() {
+        let (a, _b, dir) = two_services().await;
+        let shared = dir.path().join("backups");
+        tokio::fs::create_dir_all(&shared).await.unwrap();
+        let legacy_backup = shared.join("banto-20260101-000000.sqlite3");
+        tokio::fs::write(&legacy_backup, b"legacy").await.unwrap();
+
+        // A valid-looking legacy reservation sitting in the parent folder.
+        let a_path = dir.path().join("a.sqlite3");
+        let bytes = tokio::fs::read(&a_path).await.unwrap();
+        let legacy_pending = dir.path().join(PENDING_RESTORE_FILE_NAME);
+        tokio::fs::write(&legacy_pending, &bytes).await.unwrap();
+
+        assert!(a.list().await.unwrap().is_empty());
+        assert!(matches!(
+            a.read("banto-20260101-000000.sqlite3").await,
+            Err(BantoError::NotFound { .. })
+        ));
+        assert!(a.pending_restore().await.is_none());
+
+        let applied = BackupService::apply_pending_restore_at_startup(&a_path)
+            .await
+            .unwrap();
+        assert!(applied.is_none());
+        // Left in place for the operator to migrate by hand.
+        assert!(legacy_pending.exists());
+        assert!(legacy_backup.exists());
+    }
+
+    #[tokio::test]
+    async fn pending_file_is_not_listed_or_readable_as_a_backup() {
+        let (a, _b, _dir) = two_services().await;
+        let made = a.create().await.unwrap();
+        a.stage_restore_from_file(&made.file_name).await.unwrap();
+        let listed = a.list().await.unwrap();
+        assert!(listed
+            .iter()
+            .all(|i| i.file_name != PENDING_RESTORE_FILE_NAME));
+        assert!(a.read(PENDING_RESTORE_FILE_NAME).await.is_err());
+    }
+
+    #[test]
+    fn scope_name_rejects_unusable_db_file_names() {
+        assert!(scope_name(Path::new("data/a.sqlite3")).is_ok());
+        assert!(scope_name(Path::new("data/社内 管理.sqlite3")).is_ok());
+        assert!(scope_name(Path::new("data/..")).is_err());
+        assert!(scope_name(Path::new("")).is_err());
+        assert!(scope_name(Path::new("data/a:b.sqlite3")).is_err());
+        assert!(scope_name(Path::new("data/a.")).is_err());
     }
 }

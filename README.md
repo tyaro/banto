@@ -167,6 +167,21 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
   添付ファイルの保存先 `BANTO_ATTACHMENTS_DIR` の指定が必須（DB ごとに
   サブディレクトリを分ける。未指定なら起動しない。#208）。バックアップ/リストアは
   SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1 参照。
+- **SQLite バックアップの保存先（#280 で変更）**: バックアップ・適用前の安全
+  バックアップ・リストア予約は **DB ファイルごと** に
+  `<DBの親フォルダ>/backups/<DBファイル名>/`（例: `data/a.sqlite3` なら
+  `data/backups/a.sqlite3/`。予約は同ディレクトリの `restore-pending.sqlite3`）へ
+  置く。同じフォルダに複数の SQLite DB を置いても、互いのバックアップは一覧・取得・
+  リストアの対象にならず、予約も他 DB の起動時に適用されない。DB ファイル名は
+  設定されたパスから決まり（リクエスト入力は使わない）、パス区切り・制御文字・
+  `:*?"<>|` などを含む名前は明示エラーになる。**旧配置（`backups/` 直下のバックアップ・
+  親フォルダ直下の `restore-pending.sqlite3`）からの移行**: 旧ファイルは所属 DB を
+  判断できないため一覧・取得・自動適用の対象にならず（削除もされない）、起動時に
+  stderr へ警告が出る。引き続き使うバックアップは新ディレクトリへ手動で移動する
+  （例: `mv data/backups/*.sqlite3 data/backups/a.sqlite3/`）。旧
+  `restore-pending.sqlite3` は自動適用されないので、適用したいなら新ディレクトリへ
+  移すか、設定画面から改めて予約し直す。暫定回避策として DB ごとに親フォルダを
+  分ける運用も有効（新構成でも安全）。PostgreSQL はこれまでどおりバックアップ非対応。
 - **PostgreSQL 利用時のバックアップ運用**: 内蔵バックアップ/リストア（設定
   画面のバックアップ節）は SQLite 専用で、PostgreSQL では明示エラーになる。
   PostgreSQL のバックアップは `pg_dump`（例: `pg_dump -Fc banto > banto.dump`）、
