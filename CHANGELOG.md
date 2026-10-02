@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-02
+
+**v2.1.1 — 試運転セッションへの切り替えで誤通知が出る問題（#308）の修正。版の種類: patch（後方互換の修正のみ。公開 API の追加・削除・改名は無い）。
+派生アプリへの影響: `@banto/admin-core` を取り込めば解消する。コピーしたテンプレートや DB・設定の変更は無い。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                   |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v2.1.0` → `v2.1.1`（npm と Rust を同じタグに）。`@banto/admin-core` のみ後方互換の修正（#308、`SessionController` の owner 変化の判定）。他は版数のみ |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                               |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                |
+
+### 消費側への注意
+
+- banto-hub など `adopt` で commissioning（試運転）を使う派生アプリは、経路 A（`@banto/admin-core` を v2.1.1 に）だけで取り込める。`ownerChange.ts` などコピー側の変更は不要。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認する（run の URL と成否・Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版はタグ後にここへ追記する）。
+  [upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+
 ### 修正
 
 - fix(admin-core): 試運転（`kind: 'commissioning'`、アプリが `adopt()` で確定する合成セッション）への切り替えで「別のユーザーでログインされました」が出ないようにした（#308、S-108。#291 の続き）。`SessionController` は owner の変化を比べる対象を `kind === 'account'` の active だけにした（v2.1.0 までは `publicViewer` と `local` だけを列挙して除外していた）。`account` 以外の active（`publicViewer`・`local`・`commissioning`・今後増える kind）は `pendingOwnerChange` を立てず、最後の具体的な owner も更新しない。`kind` を持たない provider の答えは従来どおり `account` として比べる。本物の別ユーザーへの切り替え（account A → account B）は従来どおり通知する。派生アプリ（banto-industrial の banto-hub など）への取り込み: 経路 A のみ（`@banto/admin-core` を新しいタグへ。`ownerChange.ts` などコピー側の変更は不要）。経路 B の変更は無い。DB・設定の移行なし。
@@ -2039,7 +2060,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v2.1.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/tyaro/banto/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/tyaro/banto/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/tyaro/banto/compare/v1.7.3...v2.0.0
 [1.7.3]: https://github.com/tyaro/banto/compare/v1.7.2...v1.7.3
