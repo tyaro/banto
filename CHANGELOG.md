@@ -32,6 +32,11 @@
 
 - fix(auth): 並行ログインが失敗確定前のスロットルを通過する問題を修正（#279）。verifier を await する前に試行枠を原子的に予約し、処理中の試行も失敗件数と同様にしきい値判定へ数える。IP 単位（4）・全体（8）の同時検証数上限を追加（超過は即時 `RateLimited`）。argon2 の検証は blocking プールで実行。
 
+- LAN サーバーのライフサイクル修正（#283 / #288 / #287）:
+  - `banto-server`: SSE 接続が開いたままでも `RunningServer::stop()` が完了する（サーバ停止シグナルを SSE ストリームへ伝え、安全網として5秒で待ちを打ち切りタスクを中断）。公開 API の変更なし。
+  - `banto-admin-services`: 認証無効/LAN 有効/閲覧公開の許可判定を `auth_server_combination_allowed` に一本化し、保存時（`set_server_config`/`set_auth_config`）と起動時で共有（閲覧公開ありの構成が再起動後も LAN 起動する）。`set_server_config` の4キー保存を1トランザクション化し、保存せず検証だけ行う `validate_server_config` を追加。
+  - デスクトップ `server_apply`: 新サーバーの bind 成功を確認 → 設定保存 → serve 開始の順で適用し（保存完了までは新 listener がリクエストを受け付けない。`banto-server` に `bind` / `BoundServer::serve` を追加、`start` は互換）、失敗時は未保存のまま旧サーバーを復帰して失敗を監査（`settings_change` / `failed`）。閲覧公開を OFF にする適用の成功時は発行済みの公開閲覧トークンを失効（`AuthState::revoke_public_viewer_tokens`）。最終検証・保存・トークン失効は `auth_config_lock` の下で行い（ロック順は `state.server` → `auth_config_lock`）、認証設定の変更との並行実行で禁止組合せが成立しないようにした。設定画面は失敗後に実際の状態を再取得する。
+
 ## [2.0.0] - 2026-10-01
 
 **v2.0.0 — セッション確定の単一書き手化（SessionController）。版の種類: major（破壊的）。

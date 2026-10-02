@@ -30,7 +30,9 @@ use admin_template_core::first_boot::seed_first_boot_settings;
 use admin_template_core::items::{ImportResult, Item, ItemImportRow, ItemInput, ItemsService};
 // [scaffold:items] end
 use admin_template_core::rest::{api_router, user_auth_state, Services};
-use admin_template_core::settings::{AuditSettings, AuthSettings, ServerSettings, SettingsService};
+use admin_template_core::settings::{
+    auth_server_combination_allowed, AuditSettings, AuthSettings, ServerSettings, SettingsService,
+};
 use admin_template_core::system_info::SystemInfoService;
 #[cfg(feature = "system-metrics")]
 use admin_template_core::system_metrics::SystemMetricsSampler;
@@ -39,8 +41,8 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
-    lan_urls_for_bind, start, static_router, with_security_headers, AuthState, RunningServer,
-    ServerConfig, ServerEvent,
+    bind as bind_listener, lan_urls_for_bind, static_router, with_security_headers, AuthState,
+    BoundServer, RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -91,6 +93,14 @@ struct AppState {
     /// LOCK ORDER: `auth_config_lock` -> [`AppState::auth`]. `auth` is a
     /// std `Mutex` that is never held across an `.await`, so nothing can
     /// hold it while waiting for this lock - the reverse order cannot occur.
+    ///
+    /// LOCK ORDER (server side, #294 review): [`AppState::server`] ->
+    /// `auth_config_lock`. `server_apply` saves the `server.*` settings (and
+    /// revokes public viewer tokens) under this lock so it is serialized with
+    /// the `auth.*` writers (the forbidden auth-disabled / LAN / not
+    /// viewer-public combination cannot arise from a race). Auth-side code
+    /// must never take `state.server`; if it ever has to, it must take it
+    /// BEFORE this lock.
     auth_config_lock: AsyncMutex<()>,
     /// The local credential store (spec §8.2): argon2id-hashed accounts in
     /// the same SQLite settings DB as `settings` below. Shared with
@@ -1819,7 +1829,9 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 }
 
 /// Build the full `/api/*` + static-asset router (spec §11.1) and start
-/// listening. Shared by `setup()` (auto-start on launch if LAN access was
+/// serving on an already-[`bind`]-ed listener (infallible: the bind - the only
+/// step that can fail - happened before, so callers can do work such as saving
+/// settings between bind and serve; Issue #294 review). Shared by `setup()` (auto-start on launch if LAN access was
 /// left enabled) and the `server_apply` command (spec §11.4's
 /// 「保存して適用」button).
 ///
@@ -1828,7 +1840,7 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
 /// crate purely to support this one function: Rust only requires a crate to
 /// be listed in `[dependencies]` to *spell out* one of its types in source,
 /// and the router value here only ever flows through an inferred `let`
-/// binding on its way into `banto_server::start`.
+/// binding on its way into `BoundServer::serve`.
 // Keeps positional service params rather than taking a `Services` like the
 // `api_router` it wraps (M-review 2026-08 M-13): its two call sites
 // (`setup`/`server_apply`) construct these handles inline, so it assembles
@@ -1848,8 +1860,8 @@ async fn start_embedded_server(
     metrics: Option<MetricsProbe>,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
-    config: ServerConfig,
-) -> Result<RunningServer, BantoError> {
+    bound: BoundServer,
+) -> RunningServer {
     // `allow_setup: false` - the Tauri app's first-run setup goes through
     // the `auth_setup` command above (`invoke()`, no network involved), not
     // this REST endpoint. Only `banto-serve` (this repo's Tauri-free dev
@@ -1872,7 +1884,7 @@ async fn start_embedded_server(
     let router = with_security_headers(
         api_router(services, auth, events, false).merge(static_router::<FrontendAssets>()),
     );
-    start(config, router).await
+    bound.serve(router)
 }
 
 /// `GET`-ish command: current persisted settings + live running state (spec
@@ -1937,7 +1949,35 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// to treat it as part of the listener's configuration. The
 /// auth-disabled/LAN exclusivity it relaxes is validated in the service layer
 /// (`SettingsService::set_server_config`, conventions §2), so an illegal
-/// combination fails the `?` below before anything is stopped or started.
+/// combination is refused (`validate_server_config`) before anything is
+/// stopped or started.
+///
+/// Order and failure contract (Issues #287, #294 review): validate -> stop the
+/// old server -> `bind` the new listener (a port in use surfaces here, nothing
+/// saved yet) -> save the settings (one transaction, `set_many`) -> serve. The
+/// new listener answers no request until the save is done, so nothing can
+/// observe the new listener together with the old stored settings (e.g. mint a
+/// public viewer token under a stale `viewer_public`). Serving a bound listener
+/// cannot fail, so there is no state in which the settings are saved but the
+/// server did not start. If the bind or the save fails, the listener is
+/// dropped, nothing is saved, the previously running server is restarted from
+/// the unchanged saved settings, and the command returns the error - so the
+/// saved values and the live server never silently diverge. `enabled = false`
+/// has no new listener (stop -> save). The attempt is audited as
+/// `settings_change` / `result: "failed"` (`detail.saved: false`); a success
+/// records the usual `ok` entry. Callers should re-read `server_status` after
+/// an error (the frontend does).
+///
+/// Lock order (#294 review): `state.server` -> `auth_config_lock` (see
+/// `AppState::auth_config_lock`). The final validation + save + token
+/// revocation run under `auth_config_lock` ([`save_server_config_locked`]),
+/// so they are serialized with `auth_config_apply` and the other `auth.*`
+/// writers; the lock is NOT held while the old server stops or while binding.
+///
+/// When the saved `viewer_public` is OFF after a successful apply, every
+/// outstanding public viewer token is revoked (`rest_auth` is shared across
+/// restarts, so they would otherwise outlive the setting); real login
+/// sessions are untouched.
 #[tauri::command]
 async fn server_apply(
     state: State<'_, AppState>,
@@ -1946,21 +1986,48 @@ async fn server_apply(
     port: u16,
     viewer_public: bool,
 ) -> Result<ServerStatusResult, BantoError> {
-    let actor = require_role(&state, Role::Admin, "settings").await?;
+    server_apply_body(&state, enabled, bind, port, viewer_public).await
+}
+
+/// Body of [`server_apply`] over a plain `&AppState` (spec M14 pattern), so
+/// the whole apply - authorization, the bind -> save -> serve order, the
+/// rollback and the audit - is testable without a Tauri `State`.
+async fn server_apply_body(
+    state: &AppState,
+    enabled: bool,
+    bind: String,
+    port: u16,
+    viewer_public: bool,
+) -> Result<ServerStatusResult, BantoError> {
+    let actor = require_role(state, Role::Admin, "settings").await?;
     let config = ServerSettings {
         enabled,
         bind,
         port,
         viewer_public,
     };
-    state.settings.set_server_config(&config).await?;
 
-    if let Some(running) = state.server.lock().await.take() {
+    // Held for the WHOLE apply: concurrent applies are serialized, and
+    // `server_status` cannot observe the stopped-but-not-yet-restarted gap.
+    let mut slot = state.server.lock().await;
+
+    // The saved config is the one the rollback below restores, and what the
+    // running listener (if any) was started from.
+    let previous = state.settings.server_config().await?;
+    // Refuse an illegal auth/LAN combination BEFORE anything is stopped.
+    state.settings.validate_server_config(&config).await?;
+
+    let was_running = slot.take();
+    let had_running = was_running.is_some();
+    if let Some(running) = was_running {
         running.stop().await;
     }
 
-    let started = if config.enabled {
-        Some(
+    // Serving on an already-bound listener cannot fail (the bind is the only
+    // fallible step), so everything fallible happens BEFORE the listener is
+    // reachable by a request.
+    let launch = |bound: BoundServer| {
+        async move {
             start_embedded_server(
                 // [scaffold:items] begin
                 state.items.clone(),
@@ -1974,34 +2041,128 @@ async fn server_apply(
                 state.metrics.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
-                ServerConfig {
-                    bind: config.bind.clone(),
-                    port: config.port,
-                },
+                bound,
             )
-            .await?,
-        )
-    } else {
-        None
+            .await
+        }
     };
 
-    let running = started.is_some();
-    *state.server.lock().await = started;
-    record_ok(
-        &state.audit,
-        &actor,
-        "settings_change",
-        "settings",
-        None,
-        Some(serde_json::json!({
-            "serverEnabled": config.enabled,
-            "bind": config.bind,
-            "port": config.port,
-            "viewerPublic": config.viewer_public,
-        })),
-    )
+    // Issue #287 / #294 review: bind -> save -> serve. The new settings are
+    // saved only AFTER the new listener is bound (so a port in use fails
+    // here, before anything is stored), and the listener only starts
+    // answering requests AFTER the save. Without the last part, a request
+    // (e.g. `POST /api/auth/public-viewer`, which reads the SAVED
+    // `viewer_public`) could hit the new listener while the old values were
+    // still stored. (Saving first - the oldest order - left the new values
+    // stored while the old server was already gone whenever the bind failed.)
+    let outcome: Result<Option<RunningServer>, BantoError> = async {
+        let bound = if config.enabled {
+            Some(
+                bind_listener(ServerConfig {
+                    bind: config.bind.clone(),
+                    port: config.port,
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+        // On error `bound` is dropped here, releasing the port.
+        save_server_config_locked(state, &config).await?;
+        Ok(match bound {
+            Some(bound) => Some(launch(bound).await),
+            None => None,
+        })
+    }
     .await;
-    Ok(build_status(&config, running))
+
+    match outcome {
+        Ok(started) => {
+            let running = started.is_some();
+            *slot = started;
+            record_ok(
+                &state.audit,
+                &actor,
+                "settings_change",
+                "settings",
+                None,
+                Some(serde_json::json!({
+                    "serverEnabled": config.enabled,
+                    "bind": config.bind,
+                    "port": config.port,
+                    "viewerPublic": config.viewer_public,
+                })),
+            )
+            .await;
+            Ok(build_status(&config, running))
+        }
+        Err(err) => {
+            // Nothing was saved. Bring back the server that was running so
+            // the live state matches the (unchanged) saved settings again.
+            let mut restored = !had_running;
+            if had_running {
+                match bind_listener(ServerConfig {
+                    bind: previous.bind.clone(),
+                    port: previous.port,
+                })
+                .await
+                {
+                    Ok(bound) => {
+                        *slot = Some(launch(bound).await);
+                        restored = true;
+                    }
+                    Err(restore_err) => eprintln!(
+                        "banto: LAN設定の適用に失敗し、旧設定でのサーバー再起動にも失敗しました: {restore_err}"
+                    ),
+                }
+            }
+            // The failed attempt is audited too (conventions §1: an applied
+            // change and a refused/failed one both leave a record), with the
+            // same `resource`/`action` as the success entry.
+            let detail = serde_json::json!({
+                "serverEnabled": config.enabled,
+                "bind": config.bind,
+                "port": config.port,
+                "viewerPublic": config.viewer_public,
+                "saved": false,
+                "restoredPrevious": restored,
+                "error": err.to_string(),
+            });
+            state
+                .audit
+                .record(AuditEntry {
+                    actor_username: Some(&actor.username),
+                    actor_role: Some(actor.role.as_str()),
+                    action: "settings_change",
+                    resource: "settings",
+                    entity_id: None,
+                    detail: Some(detail),
+                    origin: "tauri",
+                    result: "failed",
+                })
+                .await;
+            Err(err)
+        }
+    }
+}
+
+/// Re-validate (inside `set_server_config`, which re-reads `auth.disabled`),
+/// save the `server.*` settings and revoke public viewer tokens, all under
+/// `auth_config_lock` so no `auth.*` write can interleave between the check
+/// and the save (#294 review). Caller holds `state.server` (order: server ->
+/// auth_config_lock).
+async fn save_server_config_locked(
+    state: &AppState,
+    config: &ServerSettings,
+) -> Result<(), BantoError> {
+    let _auth_config = state.auth_config_lock.lock().await;
+    state.settings.set_server_config(config).await?;
+    if !config.viewer_public {
+        // 閲覧公開 OFF: public viewer tokens minted earlier (rest_auth
+        // outlives server restarts) must not keep working.
+        state.rest_auth.revoke_public_viewer_tokens();
+    }
+    Ok(())
 }
 
 /// `admin`-only, symmetric with `settings_set` below: the generic key/value
@@ -3208,7 +3369,9 @@ pub fn run() {
             // Spec M11 exclusivity is enforced at write-time
             // (`SettingsService::set_server_config`/`set_auth_config`), but a
             // hand-edited settings DB could still leave both
-            // `auth.disabled` and `server.enabled` set to `true` at once - if
+            // `auth.disabled` and `server.enabled` set to `true` at once
+            // without `server.viewer_public` (the one combination the guards
+            // refuse, `auth_server_combination_allowed`, Issue #288) - if
             // so, refuse to auto-start the (would-be unauthenticated) LAN
             // server rather than trust a state the app itself would never
             // have written, and leave the inconsistency for the user to
@@ -3216,7 +3379,13 @@ pub fn run() {
             // setting).
             let server_config = tauri::async_runtime::block_on(settings.server_config())
                 .expect("server_config should succeed");
-            let inconsistent_auth_and_server = auth_config.disabled && server_config.enabled;
+            // Same predicate the save-time guards use (Issue #288): 認証無効 + LAN
+            // 有効 is only inconsistent WITHOUT 閲覧公開.
+            let inconsistent_auth_and_server = !auth_server_combination_allowed(
+                auth_config.disabled,
+                server_config.enabled,
+                server_config.viewer_public,
+            );
             if inconsistent_auth_and_server {
                 eprintln!(
                     "banto: 認証無効モードとLANアクセスが同時に有効な不整合な設定を検出したため、LANサーバーの自動起動をスキップしました。設定画面でどちらかを無効にしてください。"
@@ -3227,7 +3396,8 @@ pub fn run() {
                     bind: server_config.bind.clone(),
                     port: server_config.port,
                 };
-                match tauri::async_runtime::block_on(start_embedded_server(
+                match tauri::async_runtime::block_on(bind_listener(runtime_config)) {
+                    Ok(bound) => Some(tauri::async_runtime::block_on(start_embedded_server(
                     // [scaffold:items] begin
                     items.clone(),
                     // [scaffold:items] end
@@ -3240,9 +3410,8 @@ pub fn run() {
                     metrics.clone(),
                     rest_auth.clone(),
                     events.clone(),
-                    runtime_config,
-                )) {
-                    Ok(server) => Some(server),
+                    bound,
+                    ))),
                     Err(err) => {
                         // Non-fatal: the desktop app itself works fine with
                         // no LAN access; surface the failure (e.g. the
@@ -4220,7 +4389,7 @@ mod tests {
     // crate needs no HTTP client dependency).
 
     use banto_server::routes::{extra_auth_router, users_router};
-    use banto_server::{auth_routes, LoginOutcome};
+    use banto_server::{auth_routes, start, LoginOutcome};
 
     const REVOCATION_PASSWORD: &str = "password123";
 
@@ -6094,6 +6263,43 @@ mod tests {
         assert!(current_session(&state).await.unwrap().is_none());
     }
 
+    /// #294 review: `server_apply`'s save waits for `auth_config_lock`, and
+    /// re-validates against the auth settings stored by then, so an
+    /// auth-disabled save that won the lock makes a LAN-on / viewer_public-off
+    /// save fail instead of producing the forbidden combination.
+    #[tokio::test]
+    async fn server_config_save_is_serialized_with_auth_config_and_revalidated() {
+        let state = app_state().await;
+        let config = ServerSettings {
+            enabled: true,
+            bind: "127.0.0.1".to_string(),
+            port: 9123,
+            viewer_public: false,
+        };
+        let before = state.settings.server_config().await.unwrap();
+
+        let guard = state.auth_config_lock.lock().await;
+        let save = save_server_config_locked(&state, &config);
+        tokio::pin!(save);
+        assert_stays_pending!(save);
+        assert_eq!(
+            state.settings.server_config().await.unwrap(),
+            before,
+            "the save waits for auth_config_lock"
+        );
+        state
+            .settings
+            .set_auth_config(&AuthSettings {
+                disabled: true,
+                ..AuthSettings::default()
+            })
+            .await
+            .unwrap();
+        drop(guard);
+        assert!(save.await.is_err(), "re-validated after the lock");
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+    }
+
     /// PR #264 re-review P2 (b): a logout's post-clear re-read sees
     /// `disabled = true` and is held (under `auth_config_lock`); an
     /// `apply(false)` started then waits for the logout's install to finish
@@ -6284,5 +6490,257 @@ mod tests {
         );
         assert_eq!(read_slot(&state).1, login.seq);
         assert!(read_slot(&state).0.is_some());
+    }
+
+    // ----- `server_apply_body` (#287 / #288 / #294 review) -----
+    //
+    // Everything runs on loopback with ports picked by the OS and released
+    // before use; ordering is made deterministic by port occupation and by
+    // holding `auth_config_lock`, never by sleeping.
+
+    /// A currently free loopback port (picked by the OS, released again).
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind free port")
+            .local_addr()
+            .expect("local_addr")
+            .port()
+    }
+
+    /// Whether something answers HTTP on `127.0.0.1:port` (any status).
+    async fn answers_http(port: u16) -> bool {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+            return false;
+        };
+        let request = format!(
+            "GET /api/auth/check HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+             Connection: close\r\nX-Banto-Client: banto\r\n\r\n"
+        );
+        if stream.write_all(request.as_bytes()).await.is_err() {
+            return false;
+        }
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response).await;
+        String::from_utf8_lossy(&response).starts_with("HTTP/1.1 ")
+    }
+
+    /// Whether `port` can be bound again, i.e. no listener holds it.
+    fn port_is_free(port: u16) -> bool {
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    }
+
+    /// A state whose desktop session is the first (admin) account.
+    async fn admin_app_state() -> AppState {
+        let state = app_state().await;
+        let admin = state
+            .users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
+        state
+    }
+
+    /// Stop the server `server_apply_body` left running (if any).
+    async fn stop_running_server(state: &AppState) {
+        if let Some(running) = state.server.lock().await.take() {
+            running.stop().await;
+        }
+    }
+
+    async fn apply(
+        state: &AppState,
+        enabled: bool,
+        port: u16,
+        viewer_public: bool,
+    ) -> Result<ServerStatusResult, BantoError> {
+        server_apply_body(state, enabled, "127.0.0.1".to_string(), port, viewer_public).await
+    }
+
+    async fn settings_change_entries(state: &AppState) -> Vec<(String, serde_json::Value)> {
+        state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .into_iter()
+            .filter(|r| r.action == "settings_change" && r.resource == "settings")
+            .map(|r| {
+                let detail = r
+                    .detail
+                    .map(|d| serde_json::from_str(&d).expect("detail json"))
+                    .unwrap_or(serde_json::Value::Null);
+                (r.result, detail)
+            })
+            .collect()
+    }
+
+    /// Normal apply: the server runs on the new port, the settings are
+    /// saved and the success is audited.
+    #[tokio::test]
+    async fn server_apply_starts_saves_and_audits() {
+        let state = admin_app_state().await;
+        let port = free_port();
+
+        let status = apply(&state, true, port, false).await.expect("apply");
+
+        assert!(status.running);
+        assert_eq!(status.port, port);
+        let saved = state.settings.server_config().await.unwrap();
+        assert_eq!(
+            (saved.enabled, saved.bind.as_str(), saved.port),
+            (true, "127.0.0.1", port)
+        );
+        assert!(state.server.lock().await.is_some());
+        assert!(answers_http(port).await);
+        let entries = settings_change_entries(&state).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "ok");
+        assert_eq!(entries[0].1["port"], port);
+
+        stop_running_server(&state).await;
+    }
+
+    /// #287: the new port is taken by someone else. The apply fails, the
+    /// saved settings stay on the old port, the old server is back and still
+    /// answers, and the failure is audited as `saved: false` /
+    /// `restoredPrevious: true`.
+    #[tokio::test]
+    async fn server_apply_port_in_use_restores_the_previous_server() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        apply(&state, true, port_a, false).await.expect("apply A");
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("occupy");
+        let port_b = occupied.local_addr().unwrap().port();
+
+        let result = apply(&state, true, port_b, false).await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(state.settings.server_config().await.unwrap().port, port_a);
+        assert!(state.server.lock().await.is_some());
+        assert!(answers_http(port_a).await, "old server must be restored");
+        let entries = settings_change_entries(&state).await;
+        let failed: Vec<_> = entries.iter().filter(|(r, _)| r == "failed").collect();
+        assert_eq!(failed.len(), 1, "{entries:?}");
+        assert_eq!(failed[0].1["saved"], false);
+        assert_eq!(failed[0].1["restoredPrevious"], true);
+        assert_eq!(failed[0].1["port"], port_b);
+
+        drop(occupied);
+        stop_running_server(&state).await;
+    }
+
+    /// #288: with `auth.disabled` stored, enabling the LAN server without
+    /// 閲覧公開 is refused BEFORE anything is stopped; with 閲覧公開 it works.
+    #[tokio::test]
+    async fn server_apply_refuses_lan_without_viewer_public_when_auth_disabled() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        // Running with 閲覧公開 ON makes disabling auth legal.
+        apply(&state, true, port_a, true).await.expect("apply A");
+        let mut auth = state.settings.auth_config().await.unwrap();
+        auth.disabled = true;
+        state.settings.set_auth_config(&auth).await.expect("auth");
+        let before = state.settings.server_config().await.unwrap();
+
+        let result = apply(&state, true, free_port(), false).await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(state.server.lock().await.is_some(), "nothing was stopped");
+        assert!(answers_http(port_a).await);
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+
+        let status = apply(&state, true, port_a, true).await.expect("viewer ON");
+        assert!(status.running);
+        assert!(answers_http(port_a).await);
+
+        stop_running_server(&state).await;
+    }
+
+    /// #294 review: an `auth.disabled = true` save that lands while the apply
+    /// is waiting for `auth_config_lock` (after its bind) is seen by the
+    /// apply's final validation. The apply fails, the stored `server.*` is
+    /// unchanged and the new port is released again.
+    #[tokio::test]
+    async fn server_apply_is_serialized_with_auth_config_writes() {
+        let state = admin_app_state().await;
+        let before = state.settings.server_config().await.unwrap();
+        let port = free_port();
+        let guard = state.auth_config_lock.lock().await;
+
+        let applying = apply(&state, true, port, false);
+        tokio::pin!(applying);
+        // The listener is bound => the apply is at its save, which needs the
+        // lock we hold.
+        drive_until!(applying, !port_is_free(port));
+        assert_stays_pending!(applying);
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+
+        let mut auth = state.settings.auth_config().await.unwrap();
+        auth.disabled = true;
+        state.settings.set_auth_config(&auth).await.expect("auth");
+        drop(guard);
+        let result = applying.await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+        assert!(state.server.lock().await.is_none());
+        assert!(port_is_free(port), "the new listener must be released");
+    }
+
+    /// 閲覧公開 OFF on apply revokes the public viewer tokens issued before.
+    #[tokio::test]
+    async fn server_apply_with_viewer_public_off_revokes_public_viewer_tokens() {
+        let state = admin_app_state().await;
+        let token = state.rest_auth.issue_public_viewer_token();
+        assert!(state.rest_auth.verify(&token));
+
+        apply(&state, true, free_port(), false)
+            .await
+            .expect("apply");
+
+        assert!(!state.rest_auth.verify(&token));
+        stop_running_server(&state).await;
+    }
+
+    /// `enabled = false` stops the running server (its port is released) and
+    /// saves `enabled = false`.
+    #[tokio::test]
+    async fn server_apply_disabled_stops_the_running_server() {
+        let state = admin_app_state().await;
+        let port = free_port();
+        apply(&state, true, port, false).await.expect("start");
+        assert!(answers_http(port).await);
+
+        let status = apply(&state, false, port, false).await.expect("stop");
+
+        assert!(!status.running);
+        assert!(state.server.lock().await.is_none());
+        assert!(!state.settings.server_config().await.unwrap().enabled);
+        assert!(port_is_free(port));
+    }
+
+    /// A non-admin is refused and nothing changes.
+    #[tokio::test]
+    async fn server_apply_is_admin_only() {
+        let state = app_state().await;
+        let viewer = state
+            .users
+            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(viewer)));
+        let before = state.settings.server_config().await.unwrap();
+        let port = free_port();
+
+        let err = apply(&state, true, port, false).await.unwrap_err();
+
+        assert!(matches!(err, BantoError::Forbidden), "{err:?}");
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+        assert!(state.server.lock().await.is_none());
+        assert!(port_is_free(port));
+        assert!(settings_change_entries(&state).await.is_empty());
     }
 }

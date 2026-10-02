@@ -7,6 +7,7 @@
  * out).
  */
 import { invoke } from '@tauri-apps/api/core';
+import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 
 /** One LAN access URL and its QR code (as an inline SVG string), for the settings screen (spec §11.4). */
 export interface QrSvg {
@@ -31,9 +32,42 @@ export interface ServerStatus {
 	qrSvgs: QrSvg[];
 }
 
+const ERROR_KINDS = new Set([
+	'not_found',
+	'validation',
+	'bad_request',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
+
+/** Same type guard as systemAdmin.ts / providers/tauri.ts (spec §10/§11.1). */
+function isErrorBody(value: unknown): value is ErrorBody {
+	if (typeof value !== 'object' || value === null) return false;
+	const kind = (value as { kind?: unknown }).kind;
+	return typeof kind === 'string' && ERROR_KINDS.has(kind);
+}
+
+/** Tauri rejects with a `{ kind, message }` object, not an `Error` (Issue #287). */
+export function toProviderError(err: unknown): ProviderError {
+	if (isProviderError(err)) return err;
+	if (isErrorBody(err)) return new ProviderError(err);
+	const message = err instanceof Error ? err.message : String(err);
+	return new ProviderError({ kind: 'other', message });
+}
+
+async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+	try {
+		return (await invoke(cmd, args)) as T;
+	} catch (err) {
+		throw toProviderError(err);
+	}
+}
+
 /** Current persisted settings + live running state (spec §11.4). */
 export function getServerStatus(): Promise<ServerStatus> {
-	return invoke('server_status');
+	return invokeCommand('server_status');
 }
 
 /** Persist new settings, stop/restart the server to match, and return the resulting status. */
@@ -43,5 +77,5 @@ export function applyServerSettings(
 	port: number,
 	viewerPublic: boolean
 ): Promise<ServerStatus> {
-	return invoke('server_apply', { enabled, bind, port, viewerPublic });
+	return invokeCommand('server_apply', { enabled, bind, port, viewerPublic });
 }

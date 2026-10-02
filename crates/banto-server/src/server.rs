@@ -3,8 +3,9 @@
 use axum::Router;
 use banto_core::BantoError;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Bind address + port for the embedded server (spec §11.2: bind address
@@ -24,10 +25,35 @@ impl Default for ServerConfig {
     }
 }
 
+/// How long [`RunningServer::stop`] waits for graceful shutdown before it
+/// aborts the server task (Issue #283). Graceful shutdown waits for every open
+/// connection to finish; long-lived ones (SSE, slow downloads) must not be
+/// able to hold a settings change or app exit hostage.
+const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Server-wide stop signal, injected into every request as an `Extension` by
+/// [`start`]. Long-lived handlers (the SSE stream, [`crate::events`]) watch it
+/// and end on their own when the server is asked to stop - hyper's graceful
+/// shutdown otherwise waits for them forever (Issue #283). Absent when a
+/// router is served some other way (e.g. `oneshot` in tests); handlers treat
+/// that as "never signalled".
+#[derive(Clone)]
+pub(crate) struct ShutdownSignal(watch::Receiver<bool>);
+
+impl ShutdownSignal {
+    /// Resolves once the server has been asked to stop (or its handle was
+    /// dropped, which also stops it). Cancel-safe.
+    pub(crate) async fn triggered(&mut self) {
+        // `wait_for` checks the current value first, so a signal sent before
+        // this call is not missed. `Err` = sender dropped = shutting down.
+        let _ = self.0.wait_for(|stopped| *stopped).await;
+    }
+}
+
 /// A handle to a running server: its bound address, and a way to stop it.
 pub struct RunningServer {
     local_addr: SocketAddr,
-    shutdown_tx: Option<oneshot::Sender<()>>,
+    shutdown_tx: watch::Sender<bool>,
     join_handle: JoinHandle<()>,
 }
 
@@ -39,20 +65,93 @@ impl RunningServer {
     }
 
     /// Signal graceful shutdown and wait for the server task to finish.
-    pub async fn stop(mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
+    ///
+    /// Open SSE streams are told to end ([`ShutdownSignal`]). As a safety net
+    /// for any other connection that does not finish, the wait is capped at
+    /// [`STOP_TIMEOUT`], after which the server task is aborted (Issue #283).
+    pub async fn stop(self) {
+        self.stop_within(STOP_TIMEOUT).await;
+    }
+
+    async fn stop_within(mut self, limit: Duration) {
+        let _ = self.shutdown_tx.send(true);
+        if tokio::time::timeout(limit, &mut self.join_handle)
+            .await
+            .is_err()
+        {
+            eprintln!(
+                "banto-server: 停止が{}秒以内に完了しなかったためサーバタスクを中断します",
+                limit.as_secs()
+            );
+            self.join_handle.abort();
+            let _ = self.join_handle.await;
         }
-        let _ = self.join_handle.await;
     }
 }
 
-/// Bind `config` and start serving `router` in a background task, with
-/// graceful shutdown wired up. Binding failures (e.g. the port already
-/// being in use) surface as `BantoError::Other` with a Japanese, readable
-/// message (this crosses into user-facing settings-screen territory per
-/// spec §11.4, so keep it friendly rather than a raw OS error).
-pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer, BantoError> {
+/// A listener that is bound (the port is reserved, the OS may queue incoming
+/// connections) but NOT yet serving: no request is read or answered until
+/// [`BoundServer::serve`]. Lets a caller learn that the bind succeeded, do
+/// other work that must finish before the listener can be reached (e.g.
+/// persisting the settings it was started from, Issue #294 review), and only
+/// then open it up. Dropping it releases the port without serving anything.
+pub struct BoundServer {
+    listener: TcpListener,
+    local_addr: SocketAddr,
+}
+
+impl BoundServer {
+    /// The actual bound address (useful when `port: 0` asked the OS to pick
+    /// a free port).
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Start serving `router` in a background task, with graceful shutdown
+    /// wired up. Infallible: every failure mode of starting a server (the
+    /// bind) was already resolved by [`bind`].
+    pub fn serve(self, router: Router) -> RunningServer {
+        let BoundServer {
+            listener,
+            local_addr,
+        } = self;
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let router = router.layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())));
+        let join_handle = tokio::spawn(async move {
+            // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
+            // the plain `into_make_service()`) makes each connection's peer
+            // address available to handlers via `ConnectInfo<SocketAddr>` - the
+            // login rate limiter (`auth::login_handler`, spec §11.2) keys its
+            // lockout on client IP + username. Handlers extract it as
+            // `Option<ConnectInfo<..>>`, so this is purely additive: routers
+            // served some other way still work, just with a username-only key.
+            let server = axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            );
+            let graceful = server.with_graceful_shutdown(async move {
+                // Signalled, or the handle dropped (`Err`): either way, stop.
+                let _ = shutdown_rx.wait_for(|stopped| *stopped).await;
+            });
+            if let Err(err) = graceful.await {
+                eprintln!("banto-server: サーバエラー: {err}");
+            }
+        });
+
+        RunningServer {
+            local_addr,
+            shutdown_tx,
+            join_handle,
+        }
+    }
+}
+
+/// Bind `config` without serving yet (first half of [`start`]). Binding
+/// failures (e.g. the port already being in use) surface as
+/// `BantoError::Other` with a Japanese, readable message (this crosses into
+/// user-facing settings-screen territory per spec §11.4, so keep it friendly
+/// rather than a raw OS error).
+pub async fn bind(config: ServerConfig) -> Result<BoundServer, BantoError> {
     let addr = format!("{}:{}", config.bind, config.port);
     let listener = TcpListener::bind(&addr).await.map_err(|err| {
         BantoError::Other(format!(
@@ -63,33 +162,16 @@ pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer
     let local_addr = listener
         .local_addr()
         .map_err(|err| BantoError::Other(err.to_string()))?;
-
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let join_handle = tokio::spawn(async move {
-        // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
-        // the plain `into_make_service()`) makes each connection's peer
-        // address available to handlers via `ConnectInfo<SocketAddr>` - the
-        // login rate limiter (`auth::login_handler`, spec §11.2) keys its
-        // lockout on client IP + username. Handlers extract it as
-        // `Option<ConnectInfo<..>>`, so this is purely additive: routers
-        // served some other way still work, just with a username-only key.
-        let server = axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        );
-        let graceful = server.with_graceful_shutdown(async {
-            let _ = shutdown_rx.await;
-        });
-        if let Err(err) = graceful.await {
-            eprintln!("banto-server: サーバエラー: {err}");
-        }
-    });
-
-    Ok(RunningServer {
+    Ok(BoundServer {
+        listener,
         local_addr,
-        shutdown_tx: Some(shutdown_tx),
-        join_handle,
     })
+}
+
+/// [`bind`] then [`BoundServer::serve`] in one step: bind `config` and start
+/// serving `router` in a background task.
+pub async fn start(config: ServerConfig, router: Router) -> Result<RunningServer, BantoError> {
+    Ok(bind(config).await?.serve(router))
 }
 
 /// URLs a client could use to reach a server bound to `port`, assuming it
@@ -496,6 +578,66 @@ mod tests {
         server.stop().await;
     }
 
+    #[tokio::test]
+    async fn bound_server_does_not_answer_until_serve() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let router = Router::new().route("/", axum::routing::get(|| async { "ok" }));
+        let bound = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .expect("bind should succeed");
+        let addr = bound.local_addr();
+
+        // The port is reserved (the connect is queued by the OS) but nothing
+        // reads or answers the request before `serve`.
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                b"GET / HTTP/1.1
+Host: localhost
+Connection: close
+
+",
+            )
+            .await
+            .unwrap();
+        let mut buf = [0u8; 64];
+        let early = tokio::time::timeout(Duration::from_millis(300), stream.read(&mut buf)).await;
+        assert!(early.is_err(), "no response may be produced before serve()");
+
+        let server = bound.serve(router);
+        assert_eq!(server.local_addr(), addr);
+        // The request queued before serve() is answered once serving starts.
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut rest))
+            .await
+            .expect("answer after serve")
+            .unwrap();
+        assert!(String::from_utf8_lossy(&rest).ends_with("ok"));
+        assert_eq!(reqwest_get(addr).await, "ok");
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn bind_reports_a_port_in_use_and_drop_releases_the_port() {
+        let bound = bind(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port: 0,
+        })
+        .await
+        .unwrap();
+        let port = bound.local_addr().port();
+        let config = ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port,
+        };
+        assert!(bind(config.clone()).await.is_err());
+        drop(bound);
+        bind(config).await.expect("port is free after drop");
+    }
+
     /// Tiny hand-rolled GET so this test does not need an HTTP client
     /// dependency: connects with a plain TCP stream and reads the response.
     async fn reqwest_get(addr: SocketAddr) -> String {
@@ -514,5 +656,139 @@ mod tests {
             .expect("read should succeed");
         let text = String::from_utf8_lossy(&buf);
         text.rsplit("\r\n\r\n").next().unwrap_or("").to_string()
+    }
+
+    // ---- Issue #283: stop() with open long-lived connections --------------
+
+    fn sse_auth() -> crate::auth::AuthState {
+        crate::auth::AuthState::new(
+            |u: String, p: String| {
+                Box::pin(async move {
+                    (u == "admin" && p == "admin").then(|| crate::auth::Identity {
+                        id: "admin".to_string(),
+                        name: "管理者".to_string(),
+                        role: "admin".to_string(),
+                    })
+                })
+            },
+            crate::auth::SessionValidation::DisabledNoRevocation,
+        )
+    }
+
+    /// Opens an authenticated SSE stream and returns the live socket after
+    /// the response head arrived (so the stream is really open).
+    async fn open_sse(addr: SocketAddr, token: &str) -> tokio::net::TcpStream {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let req = format!(
+            "GET /api/events HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n"
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut head = Vec::new();
+        let mut buf = [0u8; 512];
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut buf).await.unwrap();
+            assert!(n > 0, "closed before the response head");
+            head.extend_from_slice(&buf[..n]);
+        }
+        let head = String::from_utf8_lossy(&head);
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert!(head.to_ascii_lowercase().contains("text/event-stream"));
+        stream
+    }
+
+    #[tokio::test]
+    async fn stop_completes_while_authenticated_sse_connections_stay_open() {
+        let auth = sse_auth();
+        let token = auth.login("admin", "admin").await.unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        // `tx` stays alive for the whole test, like AppState/ItemsService in
+        // production - the channel does not close on its own.
+        let router = crate::events::sse_route(auth, tx.clone());
+        let server = start(
+            ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            },
+            router,
+        )
+        .await
+        .unwrap();
+
+        // Several simultaneous streams, all held open by the client.
+        let mut streams = Vec::new();
+        for _ in 0..3 {
+            streams.push(open_sse(server.local_addr(), &token).await);
+        }
+
+        tokio::time::timeout(Duration::from_secs(3), server.stop())
+            .await
+            .expect("stop() must finish while SSE streams are open");
+
+        // The streams were ended by the server (EOF), not left dangling.
+        for mut stream in streams {
+            use tokio::io::AsyncReadExt;
+            let mut sink = Vec::new();
+            tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut sink))
+                .await
+                .expect("client side sees the end of the stream")
+                .ok();
+        }
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn stop_aborts_a_connection_that_never_finishes_after_the_limit() {
+        use axum::routing::get;
+        // A handler the shutdown signal does not reach: the safety net must
+        // cut the wait short instead of hanging.
+        let router = Router::new().route(
+            "/hang",
+            get(|| async {
+                std::future::pending::<()>().await;
+                "never"
+            }),
+        );
+        let server = start(
+            ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            },
+            router,
+        )
+        .await
+        .unwrap();
+        let addr = server.local_addr();
+        let mut conn = tokio::net::TcpStream::connect(addr).await.unwrap();
+        {
+            use tokio::io::AsyncWriteExt;
+            conn.write_all(b"GET /hang HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            server.stop_within(Duration::from_millis(300)),
+        )
+        .await
+        .expect("the safety net bounds stop()");
+    }
+
+    #[tokio::test]
+    async fn stop_on_an_idle_server_is_immediate() {
+        let server = start(
+            ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            },
+            Router::new(),
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), server.stop())
+            .await
+            .expect("idle stop is immediate");
     }
 }
