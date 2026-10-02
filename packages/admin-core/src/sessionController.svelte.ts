@@ -366,9 +366,11 @@ function createCore(
 	 * minted only for a confirmed `none`), which clears this anyway.
 	 * The auth-disabled synthetic session (`kind: 'local'`) is not a user
 	 * either (S-107, Issue #291): it is the state of the terminal, so
-	 * `A -> local` (enabling "no login" in settings), `local -> local` (a
-	 * role change) and `local -> B` raise nothing and leave this at A. The
-	 * judgment is by `kind`, not by the value of the owner (conventions §6).
+	 * `A -> local` (enabling "no login" in settings) and `local -> local` (a
+	 * role change) raise nothing and keep this at A. If a real account B then
+	 * becomes active without a `none` in between, A is compared with B and
+	 * `{ A -> B }` is raised as usual (a real user switch). The judgment is
+	 * by `kind`, not by the value of the owner (conventions §6).
 	 */
 	let lastConcreteOwner: string | null = null;
 	let inflight: Probe | null = null;
