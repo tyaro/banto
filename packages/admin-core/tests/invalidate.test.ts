@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { invalidate, onInvalidate } from '../src/invalidate';
+import { invalidate, invalidateAll, onInvalidate } from '../src/invalidate';
 
 describe('invalidate bus', () => {
 	it('calls subscribers for the matching resource only', () => {
@@ -34,5 +34,15 @@ describe('invalidate bus', () => {
 		invalidate('items-c');
 		expect(a).toHaveBeenCalledTimes(1);
 		expect(b).toHaveBeenCalledTimes(1);
+	});
+
+	it('passes the reason: default change, resync from invalidateAll', () => {
+		const cb = vi.fn();
+		const off = onInvalidate('items-d', cb);
+		invalidate('items-d');
+		expect(cb).toHaveBeenLastCalledWith('items-d', 'change');
+		invalidateAll();
+		expect(cb).toHaveBeenLastCalledWith('items-d', 'resync');
+		off();
 	});
 });

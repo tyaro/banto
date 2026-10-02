@@ -23,6 +23,8 @@
  * looked in this session" hint, not durable unread state.
  */
 
+import type { InvalidateReason } from '@banto/admin-core';
+
 /** Matches Sidebar.svelte's `isActive`: `/items` owns `/items` and `/items/...`. */
 function pathOwns(navPath: string, pathname: string): boolean {
 	return pathname === navPath || pathname.startsWith(navPath + '/');
@@ -38,6 +40,17 @@ class NavBadgeStore {
 
 	increment(path: string): void {
 		this.#counts[path] = (this.#counts[path] ?? 0) + 1;
+	}
+
+	/**
+	 * Handle an invalidate-bus event for the nav entry `path`: count it as an
+	 * unseen change unless the entry's page is on screen (its own list
+	 * refetches live) or the event is a reconnect 'resync' (#289 - no known
+	 * change, so no badge).
+	 */
+	noteInvalidation(path: string, pathname: string, reason: InvalidateReason): void {
+		if (reason === 'resync' || pathOwns(path, pathname)) return;
+		this.increment(path);
 	}
 
 	/** Clear the badge of the nav entry that owns `pathname` (if any). */

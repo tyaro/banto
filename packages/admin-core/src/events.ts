@@ -16,7 +16,7 @@
  * into the rest of admin-core: resource-changed -> `invalidate`, notice ->
  * `notify`.
  */
-import { invalidate } from './invalidate';
+import { invalidate, invalidateAll } from './invalidate';
 import { notify } from './registry.svelte';
 import type { NotificationKind } from './provider';
 import { createSseParser } from './sse-parser';
@@ -49,6 +49,16 @@ export interface EventSubscriptionHooks {
 	 * wires this to `getSessionController().signal('credentialCleared')`.
 	 */
 	onTokenCleared?: () => void;
+	/**
+	 * The stream was re-established after an earlier connection of the same
+	 * session had been lost (Issue #289). Broadcast events are not replayed,
+	 * so changes made while disconnected were never delivered: the consumer
+	 * must re-read what it shows. Called once per successful reconnect, never
+	 * for the first connection, nor for the first connection after a `401` /
+	 * cleared token / new login (a new session loads its data itself).
+	 * `connectEvents` wires this to `invalidateAll()`.
+	 */
+	onReconnected?: () => void;
 }
 
 /** Backend-agnostic subscription to `AppEvent`s. Returns an unsubscribe function. */
@@ -173,6 +183,10 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 			// one to watch for disappearing (`onTokenCleared`). Reset on a `401`,
 			// whose own path (`onUnauthorized`) already covers that token.
 			let usedToken: string | null = null;
+			// A stream of the current session has been established before, so the
+			// next successful connect is a reconnect (Issue #289). Reset whenever
+			// the session ends or changes (401, cleared token, different token).
+			let hasConnected = false;
 
 			function dispatch(payload: string): void {
 				try {
@@ -193,12 +207,14 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 				const token = options.getToken();
 				if (token === null && usedToken !== null) {
 					usedToken = null;
+					hasConnected = false;
 					if (!stopped) hooks?.onTokenCleared?.();
 				}
 				if (token === null || token === rejectedToken) {
 					scheduleReconnect(tokenWaitDelayMs);
 					return;
 				}
+				if (usedToken !== null && usedToken !== token) hasConnected = false; // a new login
 				usedToken = token;
 
 				controller = new AbortController();
@@ -211,6 +227,7 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 						void response.body?.cancel().catch(() => {});
 						rejectedToken = token;
 						usedToken = null;
+						hasConnected = false;
 						if (!stopped) hooks?.onUnauthorized?.();
 						scheduleReconnect(tokenWaitDelayMs);
 						return;
@@ -218,6 +235,16 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 					if (!response.ok || !response.body) {
 						scheduleReconnect();
 						return;
+					}
+
+					// Reconnected: re-sync once, only while this token is still the live
+					// one (a logout/user switch during the fetch must not refresh the old
+					// session's view). Failed attempts never reach here, so repeated
+					// failures cause no requests; one successful connect = one re-sync.
+					const wasReconnect = hasConnected;
+					hasConnected = true;
+					if (wasReconnect && !stopped && options.getToken() === token) {
+						hooks?.onReconnected?.();
 					}
 
 					const parser = createSseParser();
@@ -283,7 +310,13 @@ export function connectEvents(provider: EventProvider): () => void {
 		},
 		{
 			onUnauthorized: () => getSessionController().signal('unauthorized'),
-			onTokenCleared: () => getSessionController().signal('credentialCleared')
+			onTokenCleared: () => getSessionController().signal('credentialCleared'),
+			// Issue #289: a reconnect cannot recover what was broadcast while
+			// the stream was down, so re-read every subscribed resource once
+			// (same path as `resource_changed`). Not for an ended session.
+			onReconnected: () => {
+				if (getSessionController().snapshot.status !== 'none') invalidateAll();
+			}
 		}
 	);
 	return unsubscribe;
