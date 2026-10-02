@@ -15,7 +15,7 @@
 	import { commandPaletteStore } from '$lib/commandPalette.svelte';
 	import { watchRecentCommandOwner } from '$lib/recentCommands';
 	import { navItems } from '$lib/navigation';
-	import { navBadges, pathOwns } from '$lib/navBadges.svelte';
+	import { navBadges } from '$lib/navBadges.svelte';
 
 	let { children, data } = $props();
 
@@ -123,14 +123,15 @@
 	// handler reads `page.url.pathname` non-reactively at event time - an
 	// invalidation for the resource of the page currently on screen is not
 	// an "unseen" change (the page's own list resource refetches it live),
-	// so it never increments.
+	// so it never increments. A reconnect 'resync' (#289) is no known change
+	// either and never increments.
 	$effect(() => {
 		const unsubscribes = navItems
 			.filter((item) => item.badgeResource !== undefined)
 			.map((item) =>
-				onInvalidate(item.badgeResource as string, () => {
-					if (!pathOwns(item.path, page.url.pathname)) navBadges.increment(item.path);
-				})
+				onInvalidate(item.badgeResource as string, (_resource, reason) =>
+					navBadges.noteInvalidation(item.path, page.url.pathname, reason)
+				)
 			);
 		return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
 	});
