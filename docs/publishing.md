@@ -22,7 +22,7 @@ CI は checkout 用 PAT）:
 
 ```sh
 # ブランチ/タグ + モノレポ内サブディレクトリを指定（機構は 2026-07-12 に動作検証済み）
-pnpm add "github:tyaro/banto#v2.0.0&path:packages/admin-core"
+pnpm add "github:tyaro/banto#v2.1.0&path:packages/admin-core"
 pnpm add "github:tyaro/banto#main&path:packages/theme"
 ```
 
@@ -110,7 +110,7 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 ## バージョニング規約
 
-- 現行バージョンは **v2.0.0**（全 `@banto/*` パッケージ・`banto-*` クレート・
+- 現行バージョンは **v2.1.0**（全 `@banto/*` パッケージ・`banto-*` クレート・
   `tauri.conf.json`・git タグで統一）。バージョンとタグの整合は
   `pnpm check:versions`（CR-7、`scripts/check-versions.mjs`）が機械検査する
 - 相互依存は無い（`admin-template` からの依存のみ、パッケージ間の依存関係は
@@ -122,7 +122,14 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
   **1.x 系の運用上の例外**（v1.4.0 / v1.5.0 で適用）: 公開 API の削除・改名を
   伴わない「フィールド追加・引数追加」によるソース互換の破壊は、消費側の追従
   作業を CHANGELOG のリード文（「消費側への注意」）に明記した上で `minor` と
-  してよい（オーナー判断）。`major` は API の削除・改名・意味変更に使う。v1.0.0 は v1
+  してよい（オーナー判断）。`major` は API の削除・改名・意味変更に使う。
+  **2.x 以降の運用上の変更**（v2.1.0 で適用、#306）: 公開 API の削除・改名を
+  伴わない**運用上の挙動変更**（例: バックアップの保存先の変更で既存ファイルの
+  手動移行が要る #280）は、消費側の移行手順を CHANGELOG の「消費側への注意」に
+  明記した上で `minor` としてよい（オーナー判断）。上の 1.x 系の例外（フィールド
+  追加・引数追加によるソース互換の破壊）も 2.x 以降で引き続き同じ扱いとする。
+  データを失う・自動で戻せない変更や、移行手順なしでは動かなくなる変更は `major`
+  とする。v1.0.0 は v1
   スコープ（仕様 M0〜M9 + roadmap M10〜M24）完了に伴う**安定版宣言**として
   発行した（0.1.2 からの破壊的変更はなし。2026-07-28）
 
@@ -135,9 +142,9 @@ MIT を自動同梱する。UNLICENSED 期に置いていた経緯は history �
 
 ```toml
 [dependencies]
-banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0" }
-banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0", features = ["sqlite"] }
-banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v2.0.0" }
+banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v2.1.0" }
+banto-storage = { git = "https://github.com/tyaro/banto.git", tag = "v2.1.0", features = ["sqlite"] }
+banto-server = { git = "https://github.com/tyaro/banto.git", tag = "v2.1.0" }
 ```
 
 private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
@@ -146,7 +153,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
 ### タグ運用規約
 
 - タグ形式は `vX.Y.Z`（`workspace.package.version`、ルート `Cargo.toml`
-  と揃える。現行 `v2.0.0`）。タグとマニフェストの整合は
+  と揃える。現行 `v2.1.0`）。タグとマニフェストの整合は
   `pnpm check:versions --tag` が機械検査する（CR-7）
 - **タグはリリース単位で打つ**（CHANGELOG の `[Unreleased]` を版節に
   切り出すとき。v1.1.0 以降の実運用）。**マイルストーンマージ毎には打たない**。
@@ -179,7 +186,7 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   リリースタグなので、新しい `.svelte.ts` 同梱パッケージを main に足すと
   （`verify:architecture` が fixture への import を求める一方で）既定状態の fixture は
   ローカルで install できなくなる。CI は検証する SHA に書き換えるので影響しない
-- タグは軽量タグ（`git tag v2.0.0`）で可。変更履歴は
+- タグは軽量タグ（`git tag v2.1.0`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）
 

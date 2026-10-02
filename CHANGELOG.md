@@ -22,35 +22,128 @@
 
 ## [Unreleased]
 
-- **chore(security)（依存監査・Rust 側）**: lockfile のみ更新（依存追加なし）— `event-listener` 5.4.1→5.4.2（RUSTSEC-2026-0221 解消、`concurrent-queue` を除去）、`spin` 0.9.8→0.9.9（yanked 解消）。`.cargo/audit.toml` から、依存グラフに存在しなくなった RUSTSEC-2023-0071（rsa）の除外を削除。残存除外は quick-xml 0.39.4（RUSTSEC-2026-0194/0195、plist 1.9.0 が `^0.39.2` で固定、開発者管理の plist のみ処理）。除外なしの警告は glib 0.18.5（unsound）・proc-macro-error 1.0.4（unmaintained）の2件で、いずれも Linux の tauri→gtk 0.18 経由の上流制約（`cargo audit` は警告では失敗しない）。JS 側は `pnpm audit --prod` 0件、開発依存は cookie 0.6.0（low、@sveltejs/kit の上流待ち）のみ（#282）。
-- **fix(backup)（保存先の変更・消費側への注意）**: 同一フォルダに複数の SQLite DB を置くと `backups/` と `restore-pending.sqlite3` が共有され、一方のバックアップが他方から一覧・取得でき、一方のリストア予約が他方の次回起動で適用され得た不具合を修正した（#280）。バックアップ・適用前の安全バックアップ・リストア予約を DB ファイルごとの `<親>/backups/<DBファイル名>/`（予約は `<親>/backups/<DBファイル名>/restore-pending.sqlite3`）へ分離し、作成・一覧・取得・予約・状態取得・取消・起動時適用の全てが `scope_dir` の1関数でディレクトリを解決する（REST / Tauri 共通。認可・denied・監査は不変）。**既存配置からの移行**: 旧共有領域（`backups/` 直下の `*.sqlite3`・親フォルダ直下の `restore-pending.sqlite3`）は所属 DB を判断できないため、一覧に出さず・取得させず・自動適用せず（削除もしない）、起動時に stderr へ警告する。必要なバックアップは新ディレクトリへ手動で移動すること（詳細は README「SQLite バックアップの保存先」）。暫定回避策は DB ごとに親フォルダを分けること。PostgreSQL は従来どおりバックアップ非対応。
+## [2.1.0] - 2026-10-02
 
-- fix(security): items の Excel 向け CSV エクスポートで、利用者入力の文字列が数式として評価され得た問題（CSV インジェクション）に対処した。`@banto/grid-svelte` の `toCsv` に opt-in の `formulaSafe: true` を追加し、**文字列値**の先頭が `=` `+` `-` `@`・TAB・CR・LF・全角 `＝` `＋` `－` `＠` のとき先頭に `'` を付ける（数値・真偽値・null・ヘッダーは対象外）。既定の `toCsv` の出力は不変。items のエクスポート（REST / Tauri / demo 共通の `handleExport`。LAN ダウンロードと Tauri のフォルダ保存は同じ `csv` 文字列を使う）で有効化。注意: 再インポート（`parseCsv`）では先頭 `'` が値に残る。全ての CSV 利用方法に安全な方式ではなく Excel 系ソフト向けの緩和策。実 Excel での確認は未実施。#281。
-- fix(items): 商品詳細から別の商品詳細へクライアント遷移（`/items/2` → `/items/1` など同一ルート内の移動）すると、URL だけが切り替わり、フォーム・添付・保存先 ID が直前の商品のまま残り、誤った商品へ保存され得た不具合を修正した。SvelteKit は同一ルートの別パラメータ間でページコンポーネントを再利用する（`params` が更新されるだけ）ため、`(app)/+layout.svelte` の `{#key}` にルート params を含めて ID ごとにページを作り直す（旧 ID の load 応答は破棄され、未保存変更ガードも従来どおり働く）。回帰 e2e smoke 3f を追加。#290。
-- chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
+**v2.1.0 — レビュー起票分（#277〜#291）の修正とセキュリティ強化。版の種類: minor（後方互換の公開 API 追加 + 消費側に影響する挙動変更）。
+派生アプリへの影響: 依存タグの更新だけでも取り込める修正が大半。ただし（1）バックアップの保存先が変わる（#280）、（2）静的ホスティングでデモを公開するアプリはビルド時の設定を推奨（#286）、（3）Excel 向け CSV は opt-in の指定を推奨（#281）。DB の移行は無い。**
+公開 API の追加（`toCsv` の `formulaSafe`、`@banto/admin-core` の `invalidateAll`・`InvalidateReason`、`banto_server::bind`・`BoundServer`・`AuthState::revoke_public_viewer_tokens`、`banto_admin_services::settings::auth_server_combination_allowed`・`validate_server_config`・`users::bound_username_for_audit`）はすべて後方互換。
+バックアップの保存先の変更（#280）は API の削除・改名を伴わない運用上の挙動変更なので、[publishing.md のバージョニング規約](docs/publishing.md#バージョニング規約)に今回明文化した「2.x 以降の運用上の変更」に従い、消費側の移行手順（下の「消費側への注意」）を明記した上で `minor` とする（旧ファイルは削除せず残るため、手動で移せば失われない）。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v2.0.0` → `v2.1.0`（npm と Rust を同じタグに）。`@banto/admin-core`（`invalidateAll`・`InvalidateReason`・購読コールバックの `reason`、`kind: 'local'` を owner の変化の判定から除外）、`@banto/grid-svelte`（`toCsv` の `formulaSafe`）、`banto-server`（SSE 中の `stop()`、`bind`・`BoundServer`、`AuthState::revoke_public_viewer_tokens`）、`banto-admin-services`（初回セットアップ・ログインのスロットル・監査・バックアップ・設定の検証）、`banto-attachments`（サムネイル更新失敗）は後方互換の追加・修正。他は版数のみ |
+| B. コピーしたテンプレート        | あり | 起動時の判定（`environment.ts`・`startup.ts`・`StartupSplash.svelte`・`+layout.svelte`、#286）、items 画面（CSV 出力・行単位の保存の直列化・詳細間の遷移、#281・#284・#290）、ナビのバッジ（`navBadges`、#289）、設定の LAN 適用（`serverAdmin.ts`・`ConnectivitySection.svelte`・`src-tauri` の `server_apply`、#287・#288・#294）、`src-tauri` のログイン失敗の監査（`login_body`、#278）。いずれも取り込まなくても動くが、取り込むと修正が入る（セキュリティ関連は推奨）                                                      |
+| C. DB・設定・配布資産            | あり | DB のマイグレーションは無い（SQLite・PostgreSQL とも）。設定キーの追加は無い。**SQLite のバックアップ・リストア予約の保存先が変わる（#280。依存タグの更新で入り、旧配置のファイルは自動では引き継がれないので手動で移す）**。デモ配信のビルドは `VITE_BANTO_DEMO=1` を推奨（#286）。`src-tauri/Cargo.toml` にテスト用の dev-dependency（`sqlx`）が増えた（既にグラフ内）                                                                                                                                                         |
+
+### 消費側への注意（必ず確認）
+
+1. **バックアップの保存先が変わった（#280、経路 A・C。本体は `banto-admin-services` の `backup.rs` のみで、コピー側の本番コードの変更は無い）。** SQLite のバックアップ・適用前の安全バックアップ・リストア予約は、DB ファイルごとの
+   `<DBの親フォルダ>/backups/<DBファイル名>/`（予約は同ディレクトリの `restore-pending.sqlite3`）へ分離した。**旧共有領域**（`backups/` 直下の `*.sqlite3`・
+   親フォルダ直下の `restore-pending.sqlite3`）の既存バックアップ・予約は、所属 DB を判断できないため**一覧に出ず、取得できず、自動適用もされない**
+   （削除もしない。起動時に stderr へ警告）。引き続き使うバックアップは新ディレクトリへ**手動で移す**こと。
+   手順は [README「SQLite バックアップの保存先」](README.md)。暫定回避策として DB ごとに親フォルダを分ける運用も有効。PostgreSQL は従来どおりバックアップ非対応。
+2. **静的ホスティング（GitHub Pages 等）でデモを公開する派生アプリは、ビルド時に `VITE_BANTO_DEMO=1` を設定することを推奨**（#286、経路 B）。
+   未設定でも静的ホストの明確な 404 応答で従来どおり demo になる。一方、Tauri・LAN 配信のビルドでは、接続失敗を demo とみなさなくなった（「サーバーに接続できません」画面で再試行する）。
+   本リポジトリの `deploy-demo.yml` は設定済み。
+3. **Excel 向けの CSV を出力する派生アプリは `toCsv(..., { formulaSafe: true })` を推奨**（#281、経路 A・B。`formulaSafe` は A。items のエクスポートでの有効化は B で、admin-template では有効化済み）。
+   既定の出力は不変。再インポート（`parseCsv`）では先頭の `'` が値に残る。Windows 11 + Microsoft 365 の Excel で、数式が評価されず文字列として開かれることを確認済み（#303）。Excel で開くと先頭の `'` はセルに表示されたまま残る。
+4. **invalidate の購読コールバックに `(resource, reason)` が渡るようになった**（#289・#297、経路 A）。既存の引数なしコールバックは互換（そのまま動く）。
+   ナビの未読バッジ・通知を `onInvalidate` で自作している場合は、`reason === 'resync'`（SSE 再接続後の再取得）を無視すること
+   （実変更なしの再接続でバッジが増えるのを防ぐ）。admin-template の `navBadges.noteInvalidation` が手本。
+5. **#291（ログイン不要モードの有効化・役割変更で「別のユーザーでログインされました」が出る）は `@banto/admin-core` を上げるだけで取り込める**（経路 A のみ。`ownerChange.ts` などコピー側の変更は不要、経路 B・C の変更は無い）。
+6. **セキュリティ修正（#277・#278・#279・#280・#281・#283）は下の「セキュリティ」を参照。** #277・#279・#280・#283 は経路 A（`banto-*` を同じタグに。#280 は加えて C の手動移行）で入る。#278 は A に加え、`src-tauri` の `login_body`（失敗ログインの `actor_username` の切り詰め）が B。
+   REST と Tauri の両方を持つアプリは、`src-tauri` の `login_body` のコピー側も確認すること。
+7. **LAN 設定の適用**（#287・#288・#294、経路 A・B。#283 の SSE 中の停止は A のみ）: `banto_server::start` は互換のまま、`bind` / `BoundServer::serve` を足した。デスクトップの `server_apply` を自前で持つ派生アプリは、
+   「新 listener の bind 成功 → 設定保存 → serve 開始」の順に取り込むこと（失敗時に保存値・実稼働・表示が食い違わない）。認証無効 + LAN 有効 + 閲覧公開の許可判定は
+   `auth_server_combination_allowed` に一本化したので、独自に同じ判定を書いている場合はこれへ寄せる。
+8. 経路 A の更新で依存の lockfile も更新するとよい（`devalue`・`brace-expansion` の修正版、`event-listener`・`spin`。#282・#295）。
+
+### A. 共通パッケージ・クレート
+
+- 対象:
+  - `@banto/admin-core`: `invalidateAll()` と型 `InvalidateReason` を追加・export（#289）。購読コールバックが `(resource, reason)` を受ける（既存の引数なしは互換、#297）。
+    `createSseEventProvider` の購読フックに `onReconnected` を追加（#289）。`SessionController` は `kind === 'local'` を owner の変化の判定から外す（#291）。
+  - `@banto/grid-svelte`: `toCsv` に opt-in の `formulaSafe`（#281）。
+  - `banto-server`: `bind` / `BoundServer` の追加（`start` は互換、#294）、`AuthState::revoke_public_viewer_tokens`、SSE 接続中でも完了する `RunningServer::stop()`（#283）、未認証ログアウトの監査抑止（#278）、ログインの同時検証の上限（#279）。
+  - `banto-admin-services`: `settings::auth_server_combination_allowed`・`validate_server_config`（#288・#294）、`users::bound_username_for_audit`（#278）、初回セットアップの原子化（#277）、バックアップの保存先の分離（#280、挙動の変更）。
+  - `banto-attachments`: サムネイルの `has_thumbnail` 更新失敗を補助処理の失敗として扱う（#285）。
+  - 他の `@banto/*`（attachments・charts・dock-svelte・forms・report・scan-wedge・theme・tree-svelte）と `banto-core`・`banto-storage` は版数のみ。
+- 更新: `v2.0.0` → `v2.1.0`（npm と Rust を同じタグに）。
+- 追従: 型エラーになる変更は無い。追従が要るのは上の「消費側への注意」1（C の手動移行）・4・7。
+- 依存を上げずに留まれるか: できる（`v2.0.0` に固定したままなら従来どおり動く。ただしセキュリティ修正は入らない）。
+
+### B. コピーしたテンプレート
+
+- 対象ファイル・ルート:
+  - 起動: `apps/admin-template/src/lib/banto/environment.ts`（`probeBackend`・`isDemoBuild`）・`startup.ts`・`startupState.svelte.ts`・`setup.ts`、`src/lib/components/StartupSplash.svelte`、`src/routes/+layout.svelte`、`messages/{ja,en}.json`（`app.startup.*`）（#286）。
+  - items: `src/routes/(app)/items/+page.svelte`・`ItemsClientGrid.svelte`・`ItemsServerGrid.svelte`・`rowSaveQueue.ts`・`[id]/+page.svelte`、`src/routes/(app)/+layout.svelte`（`{#key}` に params、#290）。
+  - ナビのバッジ: `src/lib/navBadges.svelte.ts`（#289）。
+  - 設定の LAN 適用: `src/lib/banto/serverAdmin.ts`・`src/routes/(app)/settings/ConnectivitySection.svelte`（#287）、`src-tauri/src/lib.rs`（`server_apply`・`start_embedded_server`・`login_body`、#278・#287・#288・#294。#277・#279・#280・#283・#285 の `src-tauri` 側はテストのみで本番コードの変更は無い）。
+- 関連 PR: #299（#286）、#298（#284）、#303（#281）、#300（#290）、#297（#289）、#296（#291。テンプレートの変更なし）、#294（#287・#288。#283 は A のみ）、#292（#277）、#293（#278・#279）、#302（#280）、#301（#285）。
+- 手で取り込む変更: 上の「消費側への注意」2・3・4・6（`login_body`）・7。
+- 派生側の独自変更と衝突しやすい箇所: `src-tauri` の `login_body`・`server_apply`、起動時の demo 判定（`isEmbeddedServer` の独自利用）、`onInvalidate` で作ったバッジ。
+- 取り込まなくても動くか: 動く（A だけ上げても動く。ただし B 側のセキュリティ関連（#278 の `src-tauri` の `login_body`・#281 の items の CSV）の修正は入らない）。
+- 手本: admin-template の同名ファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 不要（スキーマの変更は無い。SQLite・PostgreSQL とも）。
+- 追加された設定キー: なし。
+- 戻せる条件: DB に変更が無いので、依存タグとコピー部分を戻せば戻せる。ただし #280 の新構成で作成したバックアップは新ディレクトリにあるため、旧構成へ戻すと見えない。
+- 設定キー・配布物: SQLite のバックアップ・リストア予約の保存先が変わる（#280）。デモ配信のビルドに `VITE_BANTO_DEMO=1` を設定（#286）。配布する `tauri.conf.json` の変更は版数のみ。
+- 順序: A・B を先に完成 → 検証用 DB で起動（旧バックアップがある場合は stderr の警告を確認して手動で移す）→ 本番。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画されること。静的デモを公開するアプリは `VITE_BANTO_DEMO=1` を付けたビルドで demo が出ること）。
+2. バックアップ: 作成・一覧・取得・リストア予約が新ディレクトリで動くこと。旧配置のファイルが残っていれば移すこと。
+3. Excel 向け CSV: 先頭が `=` `+` `-` `@` の文字列を含むデータで、出力の先頭に `'` が付くこと。
+4. LAN 設定: 設定画面で LAN を有効・無効にし、失敗時に表示が実際の状態と一致すること。
+5. Rust: `cargo check` / `cargo test`。
+
+### セキュリティ
+
+アプリ固有のコードには、既知の CVE を直接修正する変更はない。一方、依存関係では公開 advisory への更新を含む（`devalue` の GHSA-j22f-vq7h-c4qm / GHSA-mcm9-63f2-9j32 / GHSA-x5rw-q4pp-hg5g、`brace-expansion`、`event-listener` の RUSTSEC-2026-0221 等。#295・#282/#305。下の「依存の脆弱性」）。アプリ固有のコードでは、レビューで見つかった次の問題を修正した。LAN 公開・複数ユーザー・同じフォルダに複数 DB を置く運用のアプリは更新を推奨する。
+
+- 初回セットアップの並行実行で複数の admin が作られる問題（#277。経路 A。`UsersService::setup_first_user` の空確認と INSERT を DB 側で原子化）。
+- 未認証リクエストによる監査ログの増幅（#278。経路 A・B（`src-tauri` の `login_body`）。有効なセッションを終えない `POST /api/auth/logout` は記録しない、失敗ログインの `actor_username` は 32 文字で切り詰める）。
+- 並行ログインが失敗確定前のスロットルを通過する問題（#279。経路 A。試行枠の事前予約と、IP 単位 4・全体 8 の同時検証数の上限）。
+- 同じフォルダの複数 SQLite DB でバックアップ・リストア予約が共有され、他 DB のバックアップの閲覧や他 DB の次回起動での適用が起き得た問題（#280。経路 A・C。保存先を DB ごとに分離。**消費側への注意 1**）。
+- Excel 向け CSV エクスポートの数式（CSV）インジェクション（#281。経路 A・B。`formulaSafe` は A、items のエクスポートでの有効化は B。**消費側への注意 3**）。
+- SSE 接続が開いたままだと LAN サーバーの停止が終わらない問題（#283。可用性。経路 A）。
+- 依存の脆弱性: `devalue` の high 3 件ほか・`brace-expansion`（#282・#295）、`event-listener`（RUSTSEC-2026-0221）・`spin`（yanked）（#282）。派生アプリは自分の lockfile でも更新するとよい。
+- 推奨: A を上げ、B のうち #278（`login_body`）・#281（items の CSV）を取り込み、#280 は C の手動移行を行う。A だけ上げても、コピー済みのテンプレートの部分（B）の修正は入らない。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認する（run の URL と成否・Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版はタグ後にここへ追記する）。
+  [upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
 
 ### Fixed
 
-- fix(attachments): 画像添付の本体・メタデータ保存後にサムネイルの `has_thumbnail` DB 更新だけが失敗すると upload 全体がエラーになり、保存済みの添付が残ったまま REST / Tauri の成功監査・変更通知が抜ける問題を修正（#285）。この更新失敗はサムネイルのファイル書込失敗と同じく補助処理の失敗として扱い、警告ログ + 生成済みサムネイルの best-effort 削除のうえ `has_thumbnail = false` で成功を返す（SQLite / PostgreSQL 共通）。本体保存失敗時の行削除クリーンアップは従来どおり。DB マイグレーション不要。
-
-- items 画面で同じ行へ続けて貼り付け/inline 編集すると、後続の保存が古い行スナップショットから全列を送り、先行保存の列を巻き戻す問題を修正（#284）。保存を行 id ごとの直列キュー（`rowSaveQueue.ts`）に集約し、実際の送信直前に直前の確定値へ今回の変更列だけを合成する。失敗した保存は自分の呼び出し元にのみ伝わり、後続は確定値を基に続行する。client / server グリッド共通（ページ側ハンドラ）。
-
-- fix(startup): 起動時の一時的な API 接続失敗で実データ用画面が demo モードになる問題を修正（#286）。配信形態と通信状態を分離した: Tauri は従来どおり、意図したデモは `VITE_BANTO_DEMO=1` ビルド（GitHub Pages ワークフローで設定）または静的ホストの明確な 404 応答、実サーバー配信は Banto の応答で判定する。ネットワーク例外・timeout（`PROBE_TIMEOUT_MS`=5s）・Banto 形式でない 5xx（プロキシの HTML 503 等）は demo にせず、上限付き自動再試行（2 回）の後「サーバーに接続できません」画面（再接続ボタン）で待機し、復旧後は実データ provider で初期化する。`environment.ts` に `probeBackend` / `isDemoBuild`、`startup.ts`（純粋な解決ロジック）、`StartupSplash.svelte`、i18n キー `app.startup.*` を追加。派生アプリで Pages 等へ静的デモを公開する場合はビルド時に `VITE_BANTO_DEMO=1` を設定すること。
-
-- fix(admin-core): 変更通知 SSE が切れて再接続した後、切断中に他端末が更新したデータが次の変更通知まで古いまま残る問題を修正（#289）。`createSseEventProvider` の購読フックに `onReconnected`（切断後の再接続成功ごとに1回。初回接続・401/トークン消失/再ログイン後の最初の接続・接続中にトークンが変わった場合は呼ばない）を追加し、`connectEvents` がこれを受けて購読中の全リソースを `resource_changed` と同じ経路で1回ずつ再取得（`invalidateAll()` を新設・export）。セッション終了（`none`）後は再取得しない。サーバー側の履歴再送はしない。`SnapshotListResource` は invalidate 購読を持たないため境界は変わらない。再同期は `invalidate(resource, 'resync')`（新型 `InvalidateReason`、既定 `'change'`、購読コールバックは `(resource, reason)` を受ける）で流し、アプリ層のナビ未読バッジ（`navBadges.noteInvalidation`）は `'resync'` を数えない（実変更なしの再接続でバッジが増えない）。派生アプリで `onInvalidate` を使いバッジ・通知を自作している場合は `reason === 'resync'` を無視すること。
-
-- fix(admin-core): ログイン不要モード（`kind: 'local'` の合成セッション）の有効化・役割の変更で「別のユーザーでログインされました」が出ないようにした（#291、S-107）。`SessionController` は `kind === 'local'` の active を、公開閲覧（S-93）と同じく owner の変化の判定の対象外にし、最後の具体的な owner も更新しない。本物の別ユーザーへの切り替えは従来どおり通知する。派生アプリへの取り込み: 経路 A（`@banto/admin-core` を新しいタグへ。`ownerChange.ts` などコピー側の変更は不要）。経路 B の変更は無い。DB・設定の移行なし。
-
-- 初回セットアップ（`UsersService::setup_first_user`）の並行実行で複数の admin が作られる問題を修正（#277）。空確認と INSERT を DB 側で原子的にした（SQLite は条件付き単一 INSERT、PostgreSQL は `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE` + 条件付き INSERT）。負けた側は従来どおり「既に初期化されています」を返し、REST/Tauri とも成功監査・セッション発行は起きない。DB マイグレーション不要。
-
+- fix(auth): 初回セットアップ（`UsersService::setup_first_user`）の並行実行で複数の admin が作られる問題を修正（#277）。空確認と INSERT を DB 側で原子的にした（SQLite は条件付き単一 INSERT、PostgreSQL は `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE` + 条件付き INSERT）。負けた側は従来どおり「既に初期化されています」を返し、REST/Tauri とも成功監査・セッション発行は起きない。DB マイグレーション不要。
 - fix(audit): 未認証リクエストによる監査ログの増幅を防止（#278）。有効なセッションを終えない `POST /api/auth/logout` は監査に記録しない。失敗ログインの `actor_username` は作成時の長さ上限（32 文字）まで切り詰め（末尾 `…`、REST・Tauri 共通）、上限超の username は DB を引かずダミー検証のみ行う。`banto_admin_services::users::bound_username_for_audit` を追加。
-
 - fix(auth): 並行ログインが失敗確定前のスロットルを通過する問題を修正（#279）。verifier を await する前に試行枠を原子的に予約し、処理中の試行も失敗件数と同様にしきい値判定へ数える。IP 単位（4）・全体（8）の同時検証数上限を追加（超過は即時 `RateLimited`）。argon2 の検証は blocking プールで実行。
-
+- fix(backup)（保存先の変更・消費側への注意）: 同一フォルダに複数の SQLite DB を置くと `backups/` と `restore-pending.sqlite3` が共有され、一方のバックアップが他方から一覧・取得でき、一方のリストア予約が他方の次回起動で適用され得た不具合を修正した（#280）。バックアップ・適用前の安全バックアップ・リストア予約を DB ファイルごとの `<親>/backups/<DBファイル名>/`（予約は `<親>/backups/<DBファイル名>/restore-pending.sqlite3`）へ分離し、作成・一覧・取得・予約・状態取得・取消・起動時適用の全てが `scope_dir` の1関数でディレクトリを解決する（REST / Tauri 共通。認可・denied・監査は不変）。**既存配置からの移行**: 旧共有領域（`backups/` 直下の `*.sqlite3`・親フォルダ直下の `restore-pending.sqlite3`）は所属 DB を判断できないため、一覧に出さず・取得させず・自動適用せず（削除もしない）、起動時に stderr へ警告する。必要なバックアップは新ディレクトリへ手動で移動すること（詳細は README「SQLite バックアップの保存先」）。暫定回避策は DB ごとに親フォルダを分けること。PostgreSQL は従来どおりバックアップ非対応。
+- fix(security): items の Excel 向け CSV エクスポートで、利用者入力の文字列が数式として評価され得た問題（CSV インジェクション）に対処した（#281）。`@banto/grid-svelte` の `toCsv` に opt-in の `formulaSafe: true` を追加し、**文字列値**の先頭が `=` `+` `-` `@`・TAB・CR・LF・全角 `＝` `＋` `－` `＠` のとき先頭に `'` を付ける（数値・真偽値・null・ヘッダーは対象外）。既定の `toCsv` の出力は不変。items のエクスポート（REST / Tauri / demo 共通の `handleExport`。LAN ダウンロードと Tauri のフォルダ保存は同じ `csv` 文字列を使う）で有効化。注意: 再インポート（`parseCsv`）では先頭 `'` が値に残る。全ての CSV 利用方法に安全な方式ではなく Excel 系ソフト向けの緩和策。Windows 11 + Microsoft 365 の Excel で確認済み（既定出力は `HasFormula=True`、`formulaSafe` では `HasFormula=False`。#303 のコメント）。
 - LAN サーバーのライフサイクル修正（#283 / #288 / #287）:
   - `banto-server`: SSE 接続が開いたままでも `RunningServer::stop()` が完了する（サーバ停止シグナルを SSE ストリームへ伝え、安全網として5秒で待ちを打ち切りタスクを中断）。公開 API の変更なし。
   - `banto-admin-services`: 認証無効/LAN 有効/閲覧公開の許可判定を `auth_server_combination_allowed` に一本化し、保存時（`set_server_config`/`set_auth_config`）と起動時で共有（閲覧公開ありの構成が再起動後も LAN 起動する）。`set_server_config` の4キー保存を1トランザクション化し、保存せず検証だけ行う `validate_server_config` を追加。
-  - デスクトップ `server_apply`: 新サーバーの bind 成功を確認 → 設定保存 → serve 開始の順で適用し（保存完了までは新 listener がリクエストを受け付けない。`banto-server` に `bind` / `BoundServer::serve` を追加、`start` は互換）、失敗時は未保存のまま旧サーバーを復帰して失敗を監査（`settings_change` / `failed`）。閲覧公開を OFF にする適用の成功時は発行済みの公開閲覧トークンを失効（`AuthState::revoke_public_viewer_tokens`）。最終検証・保存・トークン失効は `auth_config_lock` の下で行い（ロック順は `state.server` → `auth_config_lock`）、認証設定の変更との並行実行で禁止組合せが成立しないようにした。設定画面は失敗後に実際の状態を再取得する。
+  - デスクトップ `server_apply`: 新サーバーの bind 成功を確認 → 設定保存 → serve 開始の順で適用し（保存完了までは新 listener がリクエストを受け付けない。`banto-server` に `bind` / `BoundServer::serve` を追加、`start` は互換）、失敗時は未保存のまま旧サーバーを復帰して失敗を監査（`settings_change` / `failed`）。閲覧公開を OFF にする適用の成功時は発行済みの公開閲覧トークンを失効（`AuthState::revoke_public_viewer_tokens`）。最終検証・保存・トークン失効は `auth_config_lock` の下で行い（ロック順は `state.server` → `auth_config_lock`）、認証設定の変更との並行実行で禁止組合せが成立しないようにした。設定画面は失敗後に実際の状態を再取得する（失敗が `[object Object]` と表示される問題の修正を含む、#287）。
+- fix(startup): 起動時の一時的な API 接続失敗で実データ用画面が demo モードになる問題を修正（#286）。配信形態と通信状態を分離した: Tauri は従来どおり、意図したデモは `VITE_BANTO_DEMO=1` ビルド（GitHub Pages ワークフローで設定）または静的ホストの明確な 404 応答、実サーバー配信は Banto の応答で判定する。ネットワーク例外・timeout（`PROBE_TIMEOUT_MS`=5s）・Banto 形式でない 5xx（プロキシの HTML 503 等）は demo にせず、上限付き自動再試行（2 回）の後「サーバーに接続できません」画面（再接続ボタン）で待機し、復旧後は実データ provider で初期化する。`environment.ts` に `probeBackend` / `isDemoBuild`、`startup.ts`（純粋な解決ロジック）、`StartupSplash.svelte`、i18n キー `app.startup.*` を追加。派生アプリで Pages 等へ静的デモを公開する場合はビルド時に `VITE_BANTO_DEMO=1` を設定すること。
+- fix(admin-core): 変更通知 SSE が切れて再接続した後、切断中に他端末が更新したデータが次の変更通知まで古いまま残る問題を修正（#289）。`createSseEventProvider` の購読フックに `onReconnected`（切断後の再接続成功ごとに1回。初回接続・401/トークン消失/再ログイン後の最初の接続・接続中にトークンが変わった場合は呼ばない）を追加し、`connectEvents` がこれを受けて購読中の全リソースを `resource_changed` と同じ経路で1回ずつ再取得（`invalidateAll()` を新設・export）。セッション終了（`none`）後は再取得しない。サーバー側の履歴再送はしない。`SnapshotListResource` は invalidate 購読を持たないため境界は変わらない。再同期は `invalidate(resource, 'resync')`（新型 `InvalidateReason`、既定 `'change'`、購読コールバックは `(resource, reason)` を受ける）で流し、アプリ層のナビ未読バッジ（`navBadges.noteInvalidation`）は `'resync'` を数えない（実変更なしの再接続でバッジが増えない）。派生アプリで `onInvalidate` を使いバッジ・通知を自作している場合は `reason === 'resync'` を無視すること。
+- fix(admin-core): ログイン不要モード（`kind: 'local'` の合成セッション）の有効化・役割の変更で「別のユーザーでログインされました」が出ないようにした（#291、S-107）。`SessionController` は `kind === 'local'` の active を、公開閲覧（S-93）と同じく owner の変化の判定の対象外にし、最後の具体的な owner も更新しない。本物の別ユーザーへの切り替えは従来どおり通知する。派生アプリへの取り込み: 経路 A（`@banto/admin-core` を新しいタグへ。`ownerChange.ts` などコピー側の変更は不要）。経路 B の変更は無い。DB・設定の移行なし。
+- fix(items): 商品詳細から別の商品詳細へクライアント遷移（`/items/2` → `/items/1` など同一ルート内の移動）すると、URL だけが切り替わり、フォーム・添付・保存先 ID が直前の商品のまま残り、誤った商品へ保存され得た不具合を修正した（#290）。SvelteKit は同一ルートの別パラメータ間でページコンポーネントを再利用する（`params` が更新されるだけ）ため、`(app)/+layout.svelte` の `{#key}` にルート params を含めて ID ごとにページを作り直す（旧 ID の load 応答は破棄され、未保存変更ガードも従来どおり働く）。回帰 e2e smoke 3f を追加。
+- fix(items): 同じ行へ続けて貼り付け/inline 編集すると、後続の保存が古い行スナップショットから全列を送り、先行保存の列を巻き戻す問題を修正（#284）。保存を行 id ごとの直列キュー（`rowSaveQueue.ts`）に集約し、実際の送信直前に直前の確定値へ今回の変更列だけを合成する。失敗した保存は自分の呼び出し元にのみ伝わり、後続は確定値を基に続行する。client / server グリッド共通（ページ側ハンドラ）。
+- fix(attachments): 画像添付の本体・メタデータ保存後にサムネイルの `has_thumbnail` DB 更新だけが失敗すると upload 全体がエラーになり、保存済みの添付が残ったまま REST / Tauri の成功監査・変更通知が抜ける問題を修正（#285）。この更新失敗はサムネイルのファイル書込失敗と同じく補助処理の失敗として扱い、警告ログ + 生成済みサムネイルの best-effort 削除のうえ `has_thumbnail = false` で成功を返す（SQLite / PostgreSQL 共通）。本体保存失敗時の行削除クリーンアップは従来どおり。DB マイグレーション不要。
+
+### その他の変更
+
+- chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部（#295）。
+- chore(security)（依存監査・Rust 側）: lockfile のみ更新（依存追加なし）— `event-listener` 5.4.1→5.4.2（RUSTSEC-2026-0221 解消、`concurrent-queue` を除去）、`spin` 0.9.8→0.9.9（yanked 解消）。`.cargo/audit.toml` から、依存グラフに存在しなくなった RUSTSEC-2023-0071（rsa）の除外を削除。残存除外は quick-xml 0.39.4（RUSTSEC-2026-0194/0195、plist 1.9.0 が `^0.39.2` で固定、開発者管理の plist のみ処理）。除外なしの警告は glib 0.18.5（unsound）・proc-macro-error 1.0.4（unmaintained）の2件で、いずれも Linux の tauri→gtk 0.18 経由の上流制約（`cargo audit` は警告では失敗しない）。JS 側は `pnpm audit --prod` 0件、開発依存は cookie 0.6.0（low、@sveltejs/kit の上流待ち）のみ（#282、#305）。
+- test(admin-template): `systemInfoStore` のテストを import-once にして、負荷時のタイムアウトを解消（#304）。
+- docs(publishing): バージョニング規約に「2.x 以降の運用上の変更」を追記した。API の削除・改名を伴わない運用上の挙動変更は、移行手順を「消費側への注意」に明記した上でオーナー判断で `minor` としてよい（v2.1.0 の #280 に適用。#306）。
 
 ## [2.0.0] - 2026-10-01
 
@@ -1927,7 +2020,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v2.0.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/tyaro/banto/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/tyaro/banto/compare/v1.7.3...v2.0.0
 [1.7.3]: https://github.com/tyaro/banto/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/tyaro/banto/compare/v1.7.1...v1.7.2
