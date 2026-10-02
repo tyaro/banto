@@ -22,9 +22,14 @@
 
 ## [Unreleased]
 
+- fix(items): 商品詳細から別の商品詳細へクライアント遷移（`/items/2` → `/items/1` など同一ルート内の移動）すると、URL だけが切り替わり、フォーム・添付・保存先 ID が直前の商品のまま残り、誤った商品へ保存され得た不具合を修正した。SvelteKit は同一ルートの別パラメータ間でページコンポーネントを再利用する（`params` が更新されるだけ）ため、`(app)/+layout.svelte` の `{#key}` にルート params を含めて ID ごとにページを作り直す（旧 ID の load 応答は破棄され、未保存変更ガードも従来どおり働く）。回帰 e2e smoke 3f を追加。#290。
 - chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
 
 ### Fixed
+
+- items 画面で同じ行へ続けて貼り付け/inline 編集すると、後続の保存が古い行スナップショットから全列を送り、先行保存の列を巻き戻す問題を修正（#284）。保存を行 id ごとの直列キュー（`rowSaveQueue.ts`）に集約し、実際の送信直前に直前の確定値へ今回の変更列だけを合成する。失敗した保存は自分の呼び出し元にのみ伝わり、後続は確定値を基に続行する。client / server グリッド共通（ページ側ハンドラ）。
+
+- fix(startup): 起動時の一時的な API 接続失敗で実データ用画面が demo モードになる問題を修正（#286）。配信形態と通信状態を分離した: Tauri は従来どおり、意図したデモは `VITE_BANTO_DEMO=1` ビルド（GitHub Pages ワークフローで設定）または静的ホストの明確な 404 応答、実サーバー配信は Banto の応答で判定する。ネットワーク例外・timeout（`PROBE_TIMEOUT_MS`=5s）・Banto 形式でない 5xx（プロキシの HTML 503 等）は demo にせず、上限付き自動再試行（2 回）の後「サーバーに接続できません」画面（再接続ボタン）で待機し、復旧後は実データ provider で初期化する。`environment.ts` に `probeBackend` / `isDemoBuild`、`startup.ts`（純粋な解決ロジック）、`StartupSplash.svelte`、i18n キー `app.startup.*` を追加。派生アプリで Pages 等へ静的デモを公開する場合はビルド時に `VITE_BANTO_DEMO=1` を設定すること。
 
 - fix(admin-core): 変更通知 SSE が切れて再接続した後、切断中に他端末が更新したデータが次の変更通知まで古いまま残る問題を修正（#289）。`createSseEventProvider` の購読フックに `onReconnected`（切断後の再接続成功ごとに1回。初回接続・401/トークン消失/再ログイン後の最初の接続・接続中にトークンが変わった場合は呼ばない）を追加し、`connectEvents` がこれを受けて購読中の全リソースを `resource_changed` と同じ経路で1回ずつ再取得（`invalidateAll()` を新設・export）。セッション終了（`none`）後は再取得しない。サーバー側の履歴再送はしない。`SnapshotListResource` は invalidate 購読を持たないため境界は変わらない。再同期は `invalidate(resource, 'resync')`（新型 `InvalidateReason`、既定 `'change'`、購読コールバックは `(resource, reason)` を受ける）で流し、アプリ層のナビ未読バッジ（`navBadges.noteInvalidation`）は `'resync'` を数えない（実変更なしの再接続でバッジが増えない）。派生アプリで `onInvalidate` を使いバッジ・通知を自作している場合は `reason === 'resync'` を無視すること。
 

@@ -43,6 +43,14 @@
 		 * `columns`/`state` above, no grid-mode-specific logic here.
 		 */
 		rowClass?: (row: Item) => string | undefined;
+		/**
+		 * Issue #284: lets the page's save queue read the row as currently
+		 * displayed (publishSaved-updated) at SEND time. Called with a lookup on
+		 * mount and `undefined` on teardown.
+		 */
+		registerCurrentRow?: (
+			lookup: ((rowId: string | number) => Item | undefined) | undefined
+		) => void;
 	}
 
 	let {
@@ -51,7 +59,8 @@
 		onRowClick,
 		onCellEdit,
 		onRangePaste,
-		rowClass
+		rowClass,
+		registerCurrentRow
 	}: Props = $props();
 
 	const windowed = createWindowedListResource<Item>('items');
@@ -140,6 +149,18 @@
 		}
 		invalidate('items');
 	}
+
+	$effect(() => {
+		registerCurrentRow?.((rowId) => {
+			// Only enumerate loaded slots; rows.length can span millions of holes.
+			for (const key of Object.keys(windowed.rows)) {
+				const row = windowed.rows[Number(key)];
+				if (row && row.id === rowId) return row;
+			}
+			return undefined;
+		});
+		return () => registerCurrentRow?.(undefined);
+	});
 
 	async function handleCellEdit(edit: CellEdit<Item>): Promise<void> {
 		publishSaved([await onCellEdit(edit)]);

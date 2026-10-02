@@ -37,8 +37,12 @@
 	// read-only", which is a fine RBAC outcome, not just an incidental side
 	// effect: a viewer can't usefully edit fields it can never save anyway.
 	const canWrite = $derived(canWriteResources(sessionStore.role));
-	// SvelteKit creates a fresh component instance per [id] value, so reading
-	// the param once at setup time is enough (no need for $derived here).
+	// SvelteKit itself REUSES this component between two [id] values (a move
+	// from items/1 to items/2 only updates `page.params`; Issue #290), so the
+	// guarantee that reading the param once at setup time is enough comes from
+	// the (app) layout, which keys the page on its route params and so builds
+	// a fresh instance per [id] value. Do not move this page out from under
+	// that layout without re-checking it (e2e smoke scenario 3f).
 	//
 	// Rust's items_get/items_update/items_delete commands declare `id: i64`
 	// (apps/admin-template/src-tauri/src/lib.rs); Tauri's serde deserializer
