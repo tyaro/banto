@@ -34,6 +34,15 @@
 	// confirms the next identity) nothing of the old page is on screen. A
 	// guard re-run that confirms the same session keeps the generation, so an
 	// ordinary `invalidateAll()` never rebuilds the page.
+	//
+	// Issue #290: the key also carries the route params. SvelteKit reuses the
+	// page component for a move between two URLs of the SAME route (items/1 ->
+	// items/2: only its `params` update), so a page that reads its id once at
+	// setup (the items detail page) would keep the previous record's form,
+	// attachments and save target under the new URL. A new param value is a
+	// new page. The params of different routes never coincide, and a move to
+	// another route already rebuilds the page, so this only adds the
+	// same-route/other-id case.
 
 	// Issue #214: while any page's unsaved-changes guard is pending, also
 	// ask before the desktop window closes. Watched only while something is
@@ -213,7 +222,7 @@
 		<Header {overlayOpen} onToggleOverlay={toggleOverlay} />
 		<main>
 			{#if data.sessionGeneration === sessionController.snapshot.generation}
-				{#key data.sessionGeneration}
+				{#key `${data.sessionGeneration}:${JSON.stringify(page.params)}`}
 					{@render children()}
 				{/key}
 			{/if}

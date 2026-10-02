@@ -27,7 +27,7 @@
 flowchart TD
   START["アプリ起動<br/>routes/+layout.svelte が bantoReady を待つ"]
   T{"isTauri()?"}
-  E{"isEmbeddedServer()?<br/>GET /api/auth/check プローブ"}
+  E{"probeBackend()<br/>GET /api/auth/check プローブ<br/>(VITE_BANTO_DEMO ビルドは即 demo)"}
   TAURI["mode: tauri<br/>TauriDataProvider / TauriAuthProvider<br/>TauriEventProvider"]
   SERVER["mode: server<br/>HttpDataProvider / HttpAuthProvider<br/>SseEventProvider"]
   DEMO["mode: demo<br/>InMemoryDataProvider<br/>demo AuthProvider"]
@@ -35,15 +35,16 @@ flowchart TD
   START --> T
   T -->|Yes| TAURI
   T -->|No| E
-  E -->|Yes| SERVER
-  E -->|No| DEMO
+  E -->|server| SERVER
+  E -->|"none（静的ホストの 404）"| DEMO
+  E -->|"unreachable（例外・timeout・5xx）"| RETRY["接続できない画面<br/>自動再試行 → 再接続ボタン<br/>demo にはしない"] --> E
 ```
 
 ### 読み方
 
 - **Tauri Webview** — `invoke()` のみ。LAN 向け HTTP は別プロセス内の組み込みサーバ（設定で ON のとき）。
 - **embedded server** — 同一オリジンの REST + SSE。`banto-serve` や LAN ブラウザもここ。
-- **demo** — `pnpm dev` / `vite preview` でバックエンドがいないとき。InMemory + デモ認証。
+- **demo** — `VITE_BANTO_DEMO=1` ビルド（Pages 等）、または `vite preview` 等で静的ホストが「API なし」と明確に答えたとき。通信失敗は demo にせず再試行画面（#286）。InMemory + デモ認証。
 - 画面コンポーネントは **mode を分岐しない**（`getDataProvider()` / `getAuthProvider()` 経由のみ）。
 
 ---

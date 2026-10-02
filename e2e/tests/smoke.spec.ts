@@ -892,6 +892,135 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		);
 	});
 
+	// Issue #290: SvelteKit reuses the page component between two URLs of the
+	// same route (items/1 -> items/2 only updates `page.params`). The detail
+	// page reads its id once at setup, so without the (app) layout keying the
+	// page on its params the URL moved on while the form, attachments and
+	// save target stayed on the previous record (a save then PUT the WRONG id).
+	// Every hop here is a client-side navigation (anchor click handled by
+	// SvelteKit / history), never a full page load.
+	test('3f. items: moving between two detail URLs (SPA) keeps URL, form and save target on the same record', async () => {
+		const dialogs = trackDialogs(page);
+		/** Click a plain anchor to `href`: SvelteKit turns it into a client-side navigation. */
+		const spa = (href: string) =>
+			page.evaluate((href) => {
+				const a = document.createElement('a');
+				a.href = href;
+				document.body.appendChild(a);
+				a.click();
+				a.remove();
+			}, href);
+		const readItem = (id: number) =>
+			page.evaluate(async (id) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const res = await fetch(`/api/items/${id}`, {
+					headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+				});
+				return (await res.json()) as { name: string };
+			}, id);
+		const name = page.getByLabel('商品名');
+		try {
+			await page.goto('/dashboard');
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			const a = await readItem(1);
+			const b = await readItem(2);
+			expect(a.name).not.toBe(b.name);
+
+			// Saves are answered by the test (echoing the body), so the seed data
+			// is untouched and the request path says which record was targeted.
+			const puts: string[] = [];
+			await page.route('**/api/items/*', async (route) => {
+				const request = route.request();
+				if (request.method() !== 'PUT') return route.fallback();
+				puts.push(new URL(request.url()).pathname);
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: request.postData() ?? '{}'
+				});
+			});
+
+			// B -> A directly (the case that reuses the component).
+			await spa('/items/2');
+			await expect(page).toHaveURL(/\/items\/2$/);
+			await expect(name).toHaveValue(b.name);
+			await spa('/items/1');
+			await expect(page).toHaveURL(/\/items\/1$/);
+			await expect(name).toHaveValue(a.name);
+
+			// The user-visible form is A's, so the save must target A.
+			await name.fill(`${a.name}-3f`);
+			await page.getByRole('button', { name: '保存' }).click();
+			await expect(page).toHaveURL(/\/items$/);
+			expect(puts).toEqual(['/api/items/1']);
+
+			// History: A -> list -> B, then back to the list and back to A.
+			await spa('/items/1');
+			await expect(page).toHaveURL(/\/items\/1$/);
+			await expect(name).toHaveValue(a.name);
+			await spa('/items');
+			await expect(page).toHaveURL(/\/items$/);
+			await spa('/items/2');
+			await expect(page).toHaveURL(/\/items\/2$/);
+			await expect(name).toHaveValue(b.name);
+			await page.goBack();
+			await expect(page).toHaveURL(/\/items$/);
+			await page.goBack();
+			await expect(page).toHaveURL(/\/items\/1$/);
+			await expect(name).toHaveValue(a.name);
+
+			// An unsaved edit is still guarded when the move is to ANOTHER detail
+			// URL: staying keeps the edit and the URL.
+			await name.fill('E2E未保存-3f');
+			dialogs.answer(false);
+			await spa('/items/2');
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect(page).toHaveURL(/\/items\/1$/);
+			await expect(name).toHaveValue('E2E未保存-3f');
+			// Leaving discards it and shows B.
+			dialogs.answer(true);
+			await spa('/items/2');
+			await expect(page).toHaveURL(/\/items\/2$/);
+			await expect(name).toHaveValue(b.name);
+			expect(dialogs.messages).toHaveLength(2);
+
+			// A slow answer for the page we already left must not land on the
+			// page we are on now: hold B's GET, move on to A, then release it.
+			let release: () => void = () => {};
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			await page.route('**/api/items/2', async (route) => {
+				if (route.request().method() !== 'GET') return route.fallback();
+				await gate;
+				await route.fallback();
+			});
+			await spa('/items');
+			await expect(page).toHaveURL(/\/items$/);
+			await spa('/items/2');
+			await expect(page).toHaveURL(/\/items\/2$/);
+			await spa('/items/1');
+			await expect(page).toHaveURL(/\/items\/1$/);
+			await expect(name).toHaveValue(a.name);
+			release();
+			await page.waitForTimeout(300);
+			await expect(page).toHaveURL(/\/items\/1$/);
+			await expect(name).toHaveValue(a.name);
+
+			// An id that cannot be a record, between two valid ones: not found,
+			// and the next valid id loads normally (no stale "valid" state).
+			await spa('/items/abc');
+			await expect(page.getByText('が見つかりません').first()).toBeVisible();
+			await expect(name).toHaveCount(0);
+			await spa('/items/2');
+			await expect(page).toHaveURL(/\/items\/2$/);
+			await expect(name).toHaveValue(b.name);
+		} finally {
+			dialogs.stop();
+			await page.unroute('**/api/items/*');
+			await page.unroute('**/api/items/2');
+		}
+	});
+
 	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {
 		await page.goto('/items');
 
