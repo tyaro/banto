@@ -1266,6 +1266,60 @@ describe('the public viewer is not a user (S-93, I-24; independent audit of å®Ÿè
 	});
 });
 
+describe('the auth-disabled local session is not a user (S-107, I-24; Issue #291)', () => {
+	const LOCAL = { id: 'op', name: 'op', role: 'admin' } as const;
+	async function settleLocal(
+		ctx: ReturnType<typeof setup>,
+		identity: { id: string; name: string; role: string } = LOCAL
+	) {
+		const request = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, identity, { kind: 'local' });
+		await request;
+	}
+
+	it('S-107: A -> local (enabling no-login) and local -> local (role change) raise nothing', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		await settleLocal(ctx);
+		expect(ctx.controller.snapshot).toMatchObject({
+			kind: 'local',
+			owner: 'local',
+			pendingOwnerChange: null
+		});
+		await settleLocal(ctx, { id: 'op', name: 'op', role: 'viewer' });
+		expect(ctx.controller.snapshot).toMatchObject({ owner: 'local', pendingOwnerChange: null });
+	});
+
+	it('S-107: a real change of user after local is still reported from the last real owner (A -> local -> B)', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		await settleLocal(ctx);
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+		// Not reachable in Tauri (enabling/disabling passes through none),
+		// but if it happens A is compared with B, not local with B.
+		ctx.p.change();
+		const request = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, BOB);
+		await request;
+		expect(ctx.controller.snapshot.pendingOwnerChange).toEqual({
+			from: 'account:alice',
+			to: 'account:bob'
+		});
+	});
+
+	it('S-107: A -> local -> A raises nothing; none after local clears the history', async () => {
+		const ctx = setup();
+		await ctx.settleTo(ALICE);
+		await settleLocal(ctx);
+		await ctx.settleTo(ALICE);
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+		await settleLocal(ctx);
+		await ctx.settleTo(null);
+		await ctx.settleTo(BOB);
+		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
+	});
+});
+
 describe('owner changes (I-12, I-24) - controller side of S-76/S-81/S-83', () => {
 	it('S-76: A -> none -> B raises no pendingOwnerChange; A -> unknown -> B does', async () => {
 		const { p, controller, settleTo } = setup();
