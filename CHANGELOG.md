@@ -27,6 +27,9 @@
 ### Fixed
 
 - items 画面で同じ行へ続けて貼り付け/inline 編集すると、後続の保存が古い行スナップショットから全列を送り、先行保存の列を巻き戻す問題を修正（#284）。保存を行 id ごとの直列キュー（`rowSaveQueue.ts`）に集約し、実際の送信直前に直前の確定値へ今回の変更列だけを合成する。失敗した保存は自分の呼び出し元にのみ伝わり、後続は確定値を基に続行する。client / server グリッド共通（ページ側ハンドラ）。
+
+- fix(startup): 起動時の一時的な API 接続失敗で実データ用画面が demo モードになる問題を修正（#286）。配信形態と通信状態を分離した: Tauri は従来どおり、意図したデモは `VITE_BANTO_DEMO=1` ビルド（GitHub Pages ワークフローで設定）または静的ホストの明確な 404 応答、実サーバー配信は Banto の応答で判定する。ネットワーク例外・timeout（`PROBE_TIMEOUT_MS`=5s）・Banto 形式でない 5xx（プロキシの HTML 503 等）は demo にせず、上限付き自動再試行（2 回）の後「サーバーに接続できません」画面（再接続ボタン）で待機し、復旧後は実データ provider で初期化する。`environment.ts` に `probeBackend` / `isDemoBuild`、`startup.ts`（純粋な解決ロジック）、`StartupSplash.svelte`、i18n キー `app.startup.*` を追加。派生アプリで Pages 等へ静的デモを公開する場合はビルド時に `VITE_BANTO_DEMO=1` を設定すること。
+
 - 初回セットアップ（`UsersService::setup_first_user`）の並行実行で複数の admin が作られる問題を修正（#277）。空確認と INSERT を DB 側で原子的にした（SQLite は条件付き単一 INSERT、PostgreSQL は `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE` + 条件付き INSERT）。負けた側は従来どおり「既に初期化されています」を返し、REST/Tauri とも成功監査・セッション発行は起きない。DB マイグレーション不要。
 
 - fix(audit): 未認証リクエストによる監査ログの増幅を防止（#278）。有効なセッションを終えない `POST /api/auth/logout` は監査に記録しない。失敗ログインの `actor_username` は作成時の長さ上限（32 文字）まで切り詰め（末尾 `…`、REST・Tauri 共通）、上限超の username は DB を引かずダミー検証のみ行う。`banto_admin_services::users::bound_username_for_audit` を追加。

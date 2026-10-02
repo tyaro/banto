@@ -7,8 +7,9 @@
  * 1. **Tauri webview** (`isTauri()`) — `TauriDataProvider`/
  *    `TauriAuthProvider` over `invoke()`, `TauriEventProvider` over the
  *    `banto://event` Tauri event (no network either way).
- * 2. **LAN browser served by the embedded server** (`isEmbeddedServer()`,
- *    async probe) — `HttpDataProvider`/`HttpAuthProvider` over `fetch()`
+ * 2. **LAN browser served by the embedded server** (`probeBackend()`,
+ *    async probe; a failed probe is retried/surfaced, never read as demo —
+ *    Issue #286, `startup.ts`) —`HttpDataProvider`/`HttpAuthProvider` over `fetch()`
  *    against the same REST API `admin-template-core::rest` exposes, and
  *    `SseEventProvider` over `GET /api/events`. This is what a second
  *    machine on the LAN gets, and it's also what `banto-serve` (this repo's
@@ -52,10 +53,12 @@ import type { Notifier, UiSettingsProvider } from '@banto/admin-core';
 // when isTauri() is true.
 import { invoke } from '@tauri-apps/api/core';
 import { toastStore } from '$lib/toast.svelte';
-import { CSRF_HEADER, isEmbeddedServer, isTauri } from './environment';
+import { CSRF_HEADER, isDemoBuild, isTauri, probeBackend } from './environment';
 import { demoAuthProvider } from './providers/demo';
 import { resources } from './resources';
 import { sampleItems } from './sampleData';
+import { resolveStartupTarget } from './startup';
+import { setStartupStatus, waitForStartupRetry } from './startupState.svelte';
 
 // Re-exported so the rest of the app keeps importing from './setup' (one
 // public entry point; the split into environment.ts is an internal detail).
@@ -105,7 +108,20 @@ const notifier: Notifier = { notify: (kind, message) => toastStore.push(kind, me
  * already safe.
  */
 export const bantoReady: Promise<void> = (async () => {
-	if (isTauri()) {
+	// Deployment kind is decided explicitly (Tauri / `VITE_BANTO_DEMO` build /
+	// a definitive "no Banto API here" answer); a transient probe failure is
+	// NOT "demo" - it stays on the splash screen with a retry button until the
+	// server answers (Issue #286, startup.ts).
+	const target = await resolveStartupTarget({
+		isTauri,
+		isDemoBuild,
+		probe: () => probeBackend(),
+		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+		setStatus: setStartupStatus,
+		waitForRetry: waitForStartupRetry
+	});
+
+	if (target === 'tauri') {
 		bantoMode = 'tauri';
 		const dataProvider = createTauriDataProvider({ invoke });
 		const authProvider = createTauriAuthProvider({ invoke });
@@ -120,7 +136,7 @@ export const bantoReady: Promise<void> = (async () => {
 		return;
 	}
 
-	if (await isEmbeddedServer()) {
+	if (target === 'server') {
 		bantoMode = 'server';
 		const authProvider = createHttpAuthProvider();
 		const dataProvider = createHttpDataProvider({ getToken: authProvider.getToken });
@@ -130,7 +146,8 @@ export const bantoReady: Promise<void> = (async () => {
 		return;
 	}
 
-	// Plain `vite dev`/`vite preview`: no Banto backend at all, no EventProvider.
+	// Intended demo (static hosting / `vite dev`/`vite preview`, or a
+	// `VITE_BANTO_DEMO=1` build): no Banto backend at all, no EventProvider.
 	bantoMode = 'demo';
 	initBanto({
 		dataProvider: createInMemoryDataProvider({ items: { rows: sampleItems } }),
