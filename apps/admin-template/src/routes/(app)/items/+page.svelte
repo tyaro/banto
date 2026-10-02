@@ -49,6 +49,7 @@
 		type ImportRowPreview
 	} from './importPreview';
 	import { toItemRow, type ItemRow } from './itemRow';
+	import { createRowSaveQueue } from './rowSaveQueue';
 
 	const resource = getResource('items');
 
@@ -315,10 +316,25 @@
 		}
 	});
 
-	/** Merge one edited field onto the row's other current values (DataProvider.update expects the full editable value set). */
-	function mergedValues(row: Item, field: string, value: unknown): Record<string, unknown> {
-		return { name: row.name, price: row.price, stock: row.stock, [field]: value };
+	/** Merge changed columns onto the base row's other values (DataProvider.update expects the full editable value set). */
+	function mergedValues(row: Item, changes: Record<string, unknown>): Record<string, unknown> {
+		return { name: row.name, price: row.price, stock: row.stock, ...changes };
 	}
+
+	// Issue #284: inline edits and range pastes share ONE per-row save queue.
+	// Saves for the same row run in order, and each request body is composed at
+	// send time from the previous save's confirmed row + only that save's
+	// changed columns - never from the stale `edit.row` snapshot, which used to
+	// make an overlapping save revert the earlier one's column.
+	let currentRowLookup: ((rowId: string | number) => Item | undefined) | undefined;
+	const registerCurrentRow = (lookup: typeof currentRowLookup): void => {
+		currentRowLookup = lookup;
+	};
+	const saveQueue = createRowSaveQueue<Item>({
+		save: (rowId, values) => getDataProvider().update<Item>('items', rowId, values),
+		compose: mergedValues,
+		currentRow: (rowId) => currentRowLookup?.(rowId)
+	});
 
 	// M3 (spec §4.5): commit a single inline cell edit. A validation error
 	// from the provider is re-thrown as a plain Error so BantoGrid re-enters
@@ -341,11 +357,7 @@
 	// values even while the follow-up list request is still in flight (spec §4.5).
 	async function handleCellEdit(edit: CellEdit<Item>): Promise<Item> {
 		try {
-			return await getDataProvider().update<Item>(
-				'items',
-				edit.rowId,
-				mergedValues(edit.row, edit.field, edit.value)
-			);
+			return await saveQueue.enqueue(edit.rowId, edit.row, { [edit.field]: edit.value });
 		} catch (err) {
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				const fieldError =
@@ -359,26 +371,29 @@
 
 	// M3 (spec §4.5): a pasted TSV range can touch several rows/columns at
 	// once. Group by row so multi-column pastes on one row become a single
-	// `update()` call with all of that row's edited fields merged.
+	// queued save with all of that row's edited fields merged.
 	async function handleRangePaste(
 		edits: CellEdit<Item>[],
 		info: { skipped: number }
 	): Promise<Item[]> {
-		const byRow = new Map<string | number, { row: Item; values: Record<string, unknown> }>();
+		const byRow = new Map<string | number, { row: Item; changes: Record<string, unknown> }>();
 		for (const edit of edits) {
-			const entry = byRow.get(edit.rowId) ?? {
-				row: edit.row,
-				values: { name: edit.row.name, price: edit.row.price, stock: edit.row.stock }
-			};
-			entry.values[edit.field] = edit.value;
+			const entry = byRow.get(edit.rowId) ?? { row: edit.row, changes: {} };
+			entry.changes[edit.field] = edit.value;
 			byRow.set(edit.rowId, entry);
 		}
 
+		// Enqueue every row first (rows are independent lanes), then settle in
+		// row order. A failed row only toasts; it never poisons later saves.
+		const results = await Promise.allSettled(
+			[...byRow].map(([rowId, entry]) => saveQueue.enqueue(rowId, entry.row, entry.changes))
+		);
 		const saved: Item[] = [];
-		for (const [rowId, entry] of byRow) {
-			try {
-				saved.push(await getDataProvider().update<Item>('items', rowId, entry.values));
-			} catch (err) {
+		for (const result of results) {
+			if (result.status === 'fulfilled') {
+				saved.push(result.value);
+			} else {
+				const err = result.reason;
 				notify('error', isProviderError(err) ? err.message : String(err));
 			}
 		}
@@ -917,6 +932,7 @@
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
 			rowClass={clientRowClass}
+			{registerCurrentRow}
 		/>
 	{:else}
 		<ItemsServerGrid
@@ -926,6 +942,7 @@
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
 			rowClass={serverRowClass}
+			{registerCurrentRow}
 		/>
 	{/if}
 </div>

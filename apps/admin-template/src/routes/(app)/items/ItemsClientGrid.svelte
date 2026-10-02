@@ -39,6 +39,14 @@
 		 * `columns`/`state` above, no grid-mode-specific logic here.
 		 */
 		rowClass?: (row: ItemRow) => string | undefined;
+		/**
+		 * Issue #284: lets the page's save queue read the row as currently
+		 * displayed (publishSaved-updated) at SEND time. Called with a lookup on
+		 * mount and `undefined` on teardown.
+		 */
+		registerCurrentRow?: (
+			lookup: ((rowId: string | number) => Item | undefined) | undefined
+		) => void;
 	}
 
 	let {
@@ -47,7 +55,8 @@
 		onRowClick,
 		onCellEdit,
 		onRangePaste,
-		rowClass
+		rowClass,
+		registerCurrentRow
 	}: Props = $props();
 
 	const list = createListResource<Item>('items', {
@@ -70,6 +79,11 @@
 		list.rows = list.rows.map((item) => byId.get(item.id) ?? item);
 		invalidate('items');
 	}
+
+	$effect(() => {
+		registerCurrentRow?.((rowId) => list.rows.find((item) => item.id === rowId));
+		return () => registerCurrentRow?.(undefined);
+	});
 
 	async function handleCellEdit(edit: CellEdit<Item>): Promise<void> {
 		publishSaved([await onCellEdit(edit)]);
