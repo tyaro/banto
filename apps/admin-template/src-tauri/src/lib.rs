@@ -1986,7 +1986,20 @@ async fn server_apply(
     port: u16,
     viewer_public: bool,
 ) -> Result<ServerStatusResult, BantoError> {
-    let actor = require_role(&state, Role::Admin, "settings").await?;
+    server_apply_body(&state, enabled, bind, port, viewer_public).await
+}
+
+/// Body of [`server_apply`] over a plain `&AppState` (spec M14 pattern), so
+/// the whole apply - authorization, the bind -> save -> serve order, the
+/// rollback and the audit - is testable without a Tauri `State`.
+async fn server_apply_body(
+    state: &AppState,
+    enabled: bool,
+    bind: String,
+    port: u16,
+    viewer_public: bool,
+) -> Result<ServerStatusResult, BantoError> {
+    let actor = require_role(state, Role::Admin, "settings").await?;
     let config = ServerSettings {
         enabled,
         bind,
@@ -2014,7 +2027,6 @@ async fn server_apply(
     // fallible step), so everything fallible happens BEFORE the listener is
     // reachable by a request.
     let launch = |bound: BoundServer| {
-        let state = &state;
         async move {
             start_embedded_server(
                 // [scaffold:items] begin
@@ -2056,7 +2068,7 @@ async fn server_apply(
             None
         };
         // On error `bound` is dropped here, releasing the port.
-        save_server_config_locked(&state, &config).await?;
+        save_server_config_locked(state, &config).await?;
         Ok(match bound {
             Some(bound) => Some(launch(bound).await),
             None => None,
@@ -6478,5 +6490,257 @@ mod tests {
         );
         assert_eq!(read_slot(&state).1, login.seq);
         assert!(read_slot(&state).0.is_some());
+    }
+
+    // ----- `server_apply_body` (#287 / #288 / #294 review) -----
+    //
+    // Everything runs on loopback with ports picked by the OS and released
+    // before use; ordering is made deterministic by port occupation and by
+    // holding `auth_config_lock`, never by sleeping.
+
+    /// A currently free loopback port (picked by the OS, released again).
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind free port")
+            .local_addr()
+            .expect("local_addr")
+            .port()
+    }
+
+    /// Whether something answers HTTP on `127.0.0.1:port` (any status).
+    async fn answers_http(port: u16) -> bool {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Ok(mut stream) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+            return false;
+        };
+        let request = format!(
+            "GET /api/auth/check HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+             Connection: close\r\nX-Banto-Client: banto\r\n\r\n"
+        );
+        if stream.write_all(request.as_bytes()).await.is_err() {
+            return false;
+        }
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response).await;
+        String::from_utf8_lossy(&response).starts_with("HTTP/1.1 ")
+    }
+
+    /// Whether `port` can be bound again, i.e. no listener holds it.
+    fn port_is_free(port: u16) -> bool {
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    }
+
+    /// A state whose desktop session is the first (admin) account.
+    async fn admin_app_state() -> AppState {
+        let state = app_state().await;
+        let admin = state
+            .users
+            .setup_first_user("admin", "password123", "管理者")
+            .await
+            .expect("setup_first_user");
+        state.set_session_for_test(Some(DesktopSession::Account(admin)));
+        state
+    }
+
+    /// Stop the server `server_apply_body` left running (if any).
+    async fn stop_running_server(state: &AppState) {
+        if let Some(running) = state.server.lock().await.take() {
+            running.stop().await;
+        }
+    }
+
+    async fn apply(
+        state: &AppState,
+        enabled: bool,
+        port: u16,
+        viewer_public: bool,
+    ) -> Result<ServerStatusResult, BantoError> {
+        server_apply_body(state, enabled, "127.0.0.1".to_string(), port, viewer_public).await
+    }
+
+    async fn settings_change_entries(state: &AppState) -> Vec<(String, serde_json::Value)> {
+        state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .into_iter()
+            .filter(|r| r.action == "settings_change" && r.resource == "settings")
+            .map(|r| {
+                let detail = r
+                    .detail
+                    .map(|d| serde_json::from_str(&d).expect("detail json"))
+                    .unwrap_or(serde_json::Value::Null);
+                (r.result, detail)
+            })
+            .collect()
+    }
+
+    /// Normal apply: the server runs on the new port, the settings are
+    /// saved and the success is audited.
+    #[tokio::test]
+    async fn server_apply_starts_saves_and_audits() {
+        let state = admin_app_state().await;
+        let port = free_port();
+
+        let status = apply(&state, true, port, false).await.expect("apply");
+
+        assert!(status.running);
+        assert_eq!(status.port, port);
+        let saved = state.settings.server_config().await.unwrap();
+        assert_eq!(
+            (saved.enabled, saved.bind.as_str(), saved.port),
+            (true, "127.0.0.1", port)
+        );
+        assert!(state.server.lock().await.is_some());
+        assert!(answers_http(port).await);
+        let entries = settings_change_entries(&state).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "ok");
+        assert_eq!(entries[0].1["port"], port);
+
+        stop_running_server(&state).await;
+    }
+
+    /// #287: the new port is taken by someone else. The apply fails, the
+    /// saved settings stay on the old port, the old server is back and still
+    /// answers, and the failure is audited as `saved: false` /
+    /// `restoredPrevious: true`.
+    #[tokio::test]
+    async fn server_apply_port_in_use_restores_the_previous_server() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        apply(&state, true, port_a, false).await.expect("apply A");
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("occupy");
+        let port_b = occupied.local_addr().unwrap().port();
+
+        let result = apply(&state, true, port_b, false).await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(state.settings.server_config().await.unwrap().port, port_a);
+        assert!(state.server.lock().await.is_some());
+        assert!(answers_http(port_a).await, "old server must be restored");
+        let entries = settings_change_entries(&state).await;
+        let failed: Vec<_> = entries.iter().filter(|(r, _)| r == "failed").collect();
+        assert_eq!(failed.len(), 1, "{entries:?}");
+        assert_eq!(failed[0].1["saved"], false);
+        assert_eq!(failed[0].1["restoredPrevious"], true);
+        assert_eq!(failed[0].1["port"], port_b);
+
+        drop(occupied);
+        stop_running_server(&state).await;
+    }
+
+    /// #288: with `auth.disabled` stored, enabling the LAN server without
+    /// 閲覧公開 is refused BEFORE anything is stopped; with 閲覧公開 it works.
+    #[tokio::test]
+    async fn server_apply_refuses_lan_without_viewer_public_when_auth_disabled() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        // Running with 閲覧公開 ON makes disabling auth legal.
+        apply(&state, true, port_a, true).await.expect("apply A");
+        let mut auth = state.settings.auth_config().await.unwrap();
+        auth.disabled = true;
+        state.settings.set_auth_config(&auth).await.expect("auth");
+        let before = state.settings.server_config().await.unwrap();
+
+        let result = apply(&state, true, free_port(), false).await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(state.server.lock().await.is_some(), "nothing was stopped");
+        assert!(answers_http(port_a).await);
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+
+        let status = apply(&state, true, port_a, true).await.expect("viewer ON");
+        assert!(status.running);
+        assert!(answers_http(port_a).await);
+
+        stop_running_server(&state).await;
+    }
+
+    /// #294 review: an `auth.disabled = true` save that lands while the apply
+    /// is waiting for `auth_config_lock` (after its bind) is seen by the
+    /// apply's final validation. The apply fails, the stored `server.*` is
+    /// unchanged and the new port is released again.
+    #[tokio::test]
+    async fn server_apply_is_serialized_with_auth_config_writes() {
+        let state = admin_app_state().await;
+        let before = state.settings.server_config().await.unwrap();
+        let port = free_port();
+        let guard = state.auth_config_lock.lock().await;
+
+        let applying = apply(&state, true, port, false);
+        tokio::pin!(applying);
+        // The listener is bound => the apply is at its save, which needs the
+        // lock we hold.
+        drive_until!(applying, !port_is_free(port));
+        assert_stays_pending!(applying);
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+
+        let mut auth = state.settings.auth_config().await.unwrap();
+        auth.disabled = true;
+        state.settings.set_auth_config(&auth).await.expect("auth");
+        drop(guard);
+        let result = applying.await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+        assert!(state.server.lock().await.is_none());
+        assert!(port_is_free(port), "the new listener must be released");
+    }
+
+    /// 閲覧公開 OFF on apply revokes the public viewer tokens issued before.
+    #[tokio::test]
+    async fn server_apply_with_viewer_public_off_revokes_public_viewer_tokens() {
+        let state = admin_app_state().await;
+        let token = state.rest_auth.issue_public_viewer_token();
+        assert!(state.rest_auth.verify(&token));
+
+        apply(&state, true, free_port(), false)
+            .await
+            .expect("apply");
+
+        assert!(!state.rest_auth.verify(&token));
+        stop_running_server(&state).await;
+    }
+
+    /// `enabled = false` stops the running server (its port is released) and
+    /// saves `enabled = false`.
+    #[tokio::test]
+    async fn server_apply_disabled_stops_the_running_server() {
+        let state = admin_app_state().await;
+        let port = free_port();
+        apply(&state, true, port, false).await.expect("start");
+        assert!(answers_http(port).await);
+
+        let status = apply(&state, false, port, false).await.expect("stop");
+
+        assert!(!status.running);
+        assert!(state.server.lock().await.is_none());
+        assert!(!state.settings.server_config().await.unwrap().enabled);
+        assert!(port_is_free(port));
+    }
+
+    /// A non-admin is refused and nothing changes.
+    #[tokio::test]
+    async fn server_apply_is_admin_only() {
+        let state = app_state().await;
+        let viewer = state
+            .users
+            .create_user("viewer", "password123", "閲覧者", Role::Viewer)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(viewer)));
+        let before = state.settings.server_config().await.unwrap();
+        let port = free_port();
+
+        let err = apply(&state, true, port, false).await.unwrap_err();
+
+        assert!(matches!(err, BantoError::Forbidden), "{err:?}");
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+        assert!(state.server.lock().await.is_none());
+        assert!(port_is_free(port));
+        assert!(settings_change_entries(&state).await.is_empty());
     }
 }
