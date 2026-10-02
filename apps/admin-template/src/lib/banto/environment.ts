@@ -18,36 +18,84 @@ export function isTauri(): boolean {
 export const CSRF_HEADER = { 'X-Banto-Client': 'banto' } as const;
 
 /**
- * Is this plain-browser tab being served by the embedded Banto server
- * (`banto-server`/`admin-template-core::rest`, spec §11.1), as opposed to a
- * bare `vite dev`/`vite preview` tab with no Banto backend at all? Probed by
- * calling the one `/api` route that needs no auth token
- * (`GET /api/auth/check`): any HTTP response at all (`200` with a boolean
- * body when unauthenticated/authenticated, or an unexpected `401`/`403`)
- * means an `/api/*` route answered on the other end. A network error (no
- * server listening) or anything that isn't a plain HTTP response (e.g.
- * `vite dev`'s dev server 404ing with an HTML page for an unknown path)
- * means this is not our server. Never true inside Tauri - `isTauri()` is
- * checked first there and takes priority.
+ * What the same-origin `GET /api/auth/check` probe found out (Issue #286).
+ * Deployment kind ("which environment is this build served from") and
+ * communication state ("did the probe get through right now") are different
+ * questions; this three-way result keeps them apart:
  *
- * Issue #204: `/api/auth/check` answers a `500` with Banto's JSON error body
- * (`{ "kind": ... }`) when the server could not check an account. That is
- * still our server - falling back to the in-memory demo providers there would
- * silently swap a real (if momentarily broken) backend for fake data - so any
- * response carrying that error body counts too.
+ * - `server`      - Banto's embedded server answered (LAN browser, `banto-serve`).
+ * - `none`        - the origin answered, but it is definitively not Banto: a
+ *                   static host / `vite preview` returning its own 404 for an
+ *                   unknown `/api` path. That is the intended demo hosting.
+ * - `unreachable` - no usable answer: network error, timeout, or a response
+ *                   that is neither Banto's nor a plain "no such route" (a
+ *                   reverse proxy's HTML 502/503 while the backend is down,
+ *                   a bare 5xx...). Transient by nature - it MUST NOT be read
+ *                   as "this is the demo" (that silently swaps a real backend
+ *                   for in-memory sample data and never switches back).
  */
-export async function isEmbeddedServer(): Promise<boolean> {
-	if (isTauri()) return false;
+export type BackendProbe = 'server' | 'none' | 'unreachable';
+
+/** Upper bound for one probe request; a hung connection must not pin the splash screen forever. */
+export const PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * Probes `GET /api/auth/check` (the one `/api` route that needs no token).
+ *
+ * - `200`/`401`, or any response carrying Banto's JSON error body
+ *   (`{ "kind": ... }`, Issue #204: e.g. a `500` when the server could not
+ *   check an account) -> `server`.
+ * - `404`/`405`/`410` without that body -> `none` (a static host answering
+ *   for itself).
+ * - Everything else, including fetch exceptions and the timeout -> `unreachable`.
+ *
+ * Callers check `isTauri()` first (Tauri never probes). `fetchImpl` is
+ * injectable for tests.
+ */
+export async function probeBackend(
+	fetchImpl: typeof fetch = fetch,
+	timeoutMs: number = PROBE_TIMEOUT_MS
+): Promise<BackendProbe> {
 	try {
-		const response = await fetch(`${location.origin}/api/auth/check`, { headers: CSRF_HEADER });
-		if (response.status === 200 || response.status === 401) return true;
+		const response = await fetchImpl(`${location.origin}/api/auth/check`, {
+			headers: CSRF_HEADER,
+			signal: AbortSignal.timeout(timeoutMs)
+		});
+		if (response.status === 200 || response.status === 401) return 'server';
 		const body: unknown = await response.json().catch(() => null);
-		return (
+		if (
 			typeof body === 'object' &&
 			body !== null &&
 			typeof (body as { kind?: unknown }).kind === 'string'
-		);
+		) {
+			return 'server';
+		}
+		return response.status === 404 || response.status === 405 || response.status === 410
+			? 'none'
+			: 'unreachable';
 	} catch {
-		return false;
+		return 'unreachable';
 	}
+}
+
+/**
+ * Explicit "this build is the static demo" marker (Issue #286): set
+ * `VITE_BANTO_DEMO=1` at build time (the GitHub Pages workflow does) and the
+ * app goes straight to the in-memory demo providers without probing at all.
+ * Builds without it (Tauri, the LAN-served `build/` embedded by banto-server)
+ * never fall back to demo because of a failed request.
+ */
+export function isDemoBuild(): boolean {
+	return import.meta.env.VITE_BANTO_DEMO === '1';
+}
+
+/**
+ * Convenience wrapper: is this tab being served by Banto's embedded server?
+ * `unreachable` counts as "no" here - startup (startup.ts) uses
+ * {@link probeBackend} directly so it can tell "no server" from "not
+ * reachable right now". Never true inside Tauri.
+ */
+export async function isEmbeddedServer(): Promise<boolean> {
+	if (isTauri()) return false;
+	return (await probeBackend()) === 'server';
 }

@@ -54,6 +54,9 @@ jobs:
         run: pnpm --filter admin-template build
         env:
           BASE_PATH: /banto
+          # 意図したデモ配信の明示マーカー（Issue #286）。これが無いビルド
+          # （Tauri / LAN 配信）は接続失敗を demo とみなさない。
+          VITE_BANTO_DEMO: '1'
 
       # SPA deep-link fallback: Pages は未知パスを 404.html に振るので、
       # index.html をコピーして同じ SPA を読み込ませる
