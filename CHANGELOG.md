@@ -22,11 +22,15 @@
 
 ## [Unreleased]
 
+- **fix(backup)（保存先の変更・消費側への注意）**: 同一フォルダに複数の SQLite DB を置くと `backups/` と `restore-pending.sqlite3` が共有され、一方のバックアップが他方から一覧・取得でき、一方のリストア予約が他方の次回起動で適用され得た不具合を修正した（#280）。バックアップ・適用前の安全バックアップ・リストア予約を DB ファイルごとの `<親>/backups/<DBファイル名>/`（予約は `<親>/backups/<DBファイル名>/restore-pending.sqlite3`）へ分離し、作成・一覧・取得・予約・状態取得・取消・起動時適用の全てが `scope_dir` の1関数でディレクトリを解決する（REST / Tauri 共通。認可・denied・監査は不変）。**既存配置からの移行**: 旧共有領域（`backups/` 直下の `*.sqlite3`・親フォルダ直下の `restore-pending.sqlite3`）は所属 DB を判断できないため、一覧に出さず・取得させず・自動適用せず（削除もしない）、起動時に stderr へ警告する。必要なバックアップは新ディレクトリへ手動で移動すること（詳細は README「SQLite バックアップの保存先」）。暫定回避策は DB ごとに親フォルダを分けること。PostgreSQL は従来どおりバックアップ非対応。
+
 - fix(security): items の Excel 向け CSV エクスポートで、利用者入力の文字列が数式として評価され得た問題（CSV インジェクション）に対処した。`@banto/grid-svelte` の `toCsv` に opt-in の `formulaSafe: true` を追加し、**文字列値**の先頭が `=` `+` `-` `@`・TAB・CR・LF・全角 `＝` `＋` `－` `＠` のとき先頭に `'` を付ける（数値・真偽値・null・ヘッダーは対象外）。既定の `toCsv` の出力は不変。items のエクスポート（REST / Tauri / demo 共通の `handleExport`。LAN ダウンロードと Tauri のフォルダ保存は同じ `csv` 文字列を使う）で有効化。注意: 再インポート（`parseCsv`）では先頭 `'` が値に残る。全ての CSV 利用方法に安全な方式ではなく Excel 系ソフト向けの緩和策。実 Excel での確認は未実施。#281。
 - fix(items): 商品詳細から別の商品詳細へクライアント遷移（`/items/2` → `/items/1` など同一ルート内の移動）すると、URL だけが切り替わり、フォーム・添付・保存先 ID が直前の商品のまま残り、誤った商品へ保存され得た不具合を修正した。SvelteKit は同一ルートの別パラメータ間でページコンポーネントを再利用する（`params` が更新されるだけ）ため、`(app)/+layout.svelte` の `{#key}` にルート params を含めて ID ごとにページを作り直す（旧 ID の load 応答は破棄され、未保存変更ガードも従来どおり働く）。回帰 e2e smoke 3f を追加。#290。
 - chore(deps): `pnpm audit --prod --audit-level high` が新規公開の advisory（devalue の high 3件・moderate 2・low 1）で落ちていたため、ルート `pnpm-lock.yaml` の推移的依存 devalue を 5.9.4（修正版 5.9.3 以降）、brace-expansion を修正版へ更新した（lockfile のみ。`package.json` の変更・overrides の追加は無し。上流 svelte / @sveltejs/kit の範囲内で解決）。派生アプリへの影響なし。#282 の一部。
 
 ### Fixed
+
+- fix(attachments): 画像添付の本体・メタデータ保存後にサムネイルの `has_thumbnail` DB 更新だけが失敗すると upload 全体がエラーになり、保存済みの添付が残ったまま REST / Tauri の成功監査・変更通知が抜ける問題を修正（#285）。この更新失敗はサムネイルのファイル書込失敗と同じく補助処理の失敗として扱い、警告ログ + 生成済みサムネイルの best-effort 削除のうえ `has_thumbnail = false` で成功を返す（SQLite / PostgreSQL 共通）。本体保存失敗時の行削除クリーンアップは従来どおり。DB マイグレーション不要。
 
 - items 画面で同じ行へ続けて貼り付け/inline 編集すると、後続の保存が古い行スナップショットから全列を送り、先行保存の列を巻き戻す問題を修正（#284）。保存を行 id ごとの直列キュー（`rowSaveQueue.ts`）に集約し、実際の送信直前に直前の確定値へ今回の変更列だけを合成する。失敗した保存は自分の呼び出し元にのみ伝わり、後続は確定値を基に続行する。client / server グリッド共通（ページ側ハンドラ）。
 
