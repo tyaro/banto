@@ -326,9 +326,14 @@
 	// send time from the previous save's confirmed row + only that save's
 	// changed columns - never from the stale `edit.row` snapshot, which used to
 	// make an overlapping save revert the earlier one's column.
+	let currentRowLookup: ((rowId: string | number) => Item | undefined) | undefined;
+	const registerCurrentRow = (lookup: typeof currentRowLookup): void => {
+		currentRowLookup = lookup;
+	};
 	const saveQueue = createRowSaveQueue<Item>({
 		save: (rowId, values) => getDataProvider().update<Item>('items', rowId, values),
-		compose: mergedValues
+		compose: mergedValues,
+		currentRow: (rowId) => currentRowLookup?.(rowId)
 	});
 
 	// M3 (spec §4.5): commit a single inline cell edit. A validation error
@@ -927,6 +932,7 @@
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
 			rowClass={clientRowClass}
+			{registerCurrentRow}
 		/>
 	{:else}
 		<ItemsServerGrid
@@ -936,6 +942,7 @@
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
 			rowClass={serverRowClass}
+			{registerCurrentRow}
 		/>
 	{/if}
 </div>

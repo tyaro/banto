@@ -124,4 +124,40 @@ describe('createRowSaveQueue', () => {
 		await tick();
 		expect(sent[1]).toEqual({ name: 'external', price: 1, stock: 3 });
 	});
+
+	it('bases an edit started before a save drained on the currently displayed row (#284 review)', async () => {
+		let display: Row = { ...original };
+		const sent: Record<string, unknown>[] = [];
+		const queue = createRowSaveQueue<Row>({
+			compose,
+			currentRow: () => display,
+			save: async (_id, values) => {
+				sent.push(values);
+				return { ...display, ...values } as Row;
+			}
+		});
+		// 1. paste A into name; meanwhile the user opens a stock edit, whose
+		//    edit.row snapshot still has the OLD name.
+		const staleSnapshot = { ...original };
+		// 2. A completes, the grid publishes it to the display, the lane drains.
+		display = await queue.enqueue(1, original, { name: 'pasted-name' });
+		await tick();
+		// 3. the stock edit is confirmed with the pre-A snapshot.
+		await queue.enqueue(1, staleSnapshot, { stock: 99 });
+		expect(sent[1]).toEqual({ name: 'pasted-name', price: 100, stock: 99 });
+	});
+
+	it('falls back to the enqueue-time row when currentRow has no such row', async () => {
+		const sent: Record<string, unknown>[] = [];
+		const queue = createRowSaveQueue<Row>({
+			compose,
+			currentRow: () => undefined,
+			save: async (_id, values) => {
+				sent.push(values);
+				return { ...original, ...values } as Row;
+			}
+		});
+		await queue.enqueue(1, original, { stock: 1 });
+		expect(sent[0]).toEqual({ name: 'original', price: 100, stock: 1 });
+	});
 });

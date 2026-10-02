@@ -18,14 +18,20 @@
  * send order (the chain guarantees it).
  *
  * The confirmed row for an id is dropped once its queue drains, so a later
- * edit falls back to the caller's current display row (which may have been
- * reloaded or edited elsewhere in the meantime).
+ * edit is based on `currentRow` (the row as displayed at send time, already
+ * updated with the saved result), falling back to the enqueue-time snapshot.
  */
 export interface RowSaveQueueOptions<TRow> {
 	/** Send one update. `values` is the full editable value set. */
 	save: (rowId: string | number, values: Record<string, unknown>) => Promise<TRow>;
 	/** Build the full value set from a base row + this save's changed columns. */
 	compose: (base: TRow, changes: Record<string, unknown>) => Record<string, unknown>;
+	/**
+	 * Latest row as currently displayed, called at SEND time. Base priority:
+	 * in-burst confirmed result -> currentRow(rowId) -> the enqueue-time
+	 * fallbackRow (which may predate an earlier save that already drained).
+	 */
+	currentRow?: (rowId: string | number) => TRow | undefined;
 }
 
 export interface RowSaveQueue<TRow> {
@@ -61,7 +67,7 @@ export function createRowSaveQueue<TRow>(options: RowSaveQueueOptions<TRow>): Ro
 
 			const run = async (): Promise<TRow> => {
 				// Composed here, at send time - not when the edit was enqueued.
-				const base = lane.confirmed ?? fallbackRow;
+				const base = lane.confirmed ?? options.currentRow?.(rowId) ?? fallbackRow;
 				const saved = await options.save(rowId, options.compose(base, changes));
 				lane.confirmed = saved;
 				return saved;
