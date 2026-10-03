@@ -2,7 +2,7 @@
 
 > 日本語: [0017-credential-less-grant.md](0017-credential-less-grant.md)
 
-- Status: Accepted (owner decision 2026-10-02; the owner's review of 2026-10-03 (tyaro/banto#313, in favour of the generalization) settled six details, and a further decision the same day **dropped backward compatibility in favour of a single API in v3.0.0 (major)**; implementation in the v3.0.0 PR)
+- Status: Accepted (owner decision 2026-10-02; the owner's review of 2026-10-03 (tyaro/banto#313, in favour of the generalization) settled six details, and a further decision the same day **dropped backward compatibility in favour of a single API in v3.0.0 (major)**; the second review of the same PR (against `0df014d`, three items) added the issuance/revocation serialization contract, the retention of #431's stop exception and the admin WebSocket wiring; implementation in the v3.0.0 PR)
 - Date: 2026-10-02 (revised 2026-10-03)
 - Related: [ADR-0012](0012-lan-public-viewer-synthetic-session.en.md) (viewer-public = a viewer-only synthetic session; this ADR generalizes it; the mechanism decision stands, so it is not superseded) /
   [ADR-0003](0003-tls-via-reverse-proxy.en.md) (same-host reverse proxy; the premise of decision §6) /
@@ -119,8 +119,16 @@ pub struct AuthenticatedSession {
     pub stamp: Option<SessionStamp>,
 }
 
+/// Per-kind revocation generation (decision §2 "serializing issuance and revocation").
+pub struct GrantGeneration(u64);
+
 impl AuthState {
-    pub fn issue_grant_token(&self, spec: &GrantSpec) -> String;
+    /// Read before the issuance check starts.
+    pub fn grant_generation(&self, kind: &GrantKind) -> GrantGeneration;
+    /// Inserts only if, under the internal lock, `observed` still equals the current generation.
+    /// Otherwise inserts nothing and returns `None` (the route answers 403, or re-checks).
+    pub fn issue_grant_token(&self, spec: &GrantSpec, observed: GrantGeneration) -> Option<String>;
+    /// Under the same internal lock: advance the generation and remove every token of that kind.
     pub fn revoke_grant_tokens(&self, kind: &GrantKind) -> usize;
 }
 
@@ -157,11 +165,14 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
   session owns no credential (even if an account shares the display name).
 - **One issuing route, `POST /api/auth/grant/{kind}`** (`grant_router`; `X-Banto-Client` stays
   required via `crate::csrf`). **`POST /api/auth/public-viewer` is removed** (viewer-public is
-  `/api/auth/grant/publicViewer`). In order: unregistered `kind` → 404 `not_found`; the same
-  check as `GrantRegistry::availability` is **re-evaluated at issuance**, and
-  `require_loopback_peer` with a peer that is not loopback **or is unknown** → 403 `forbidden`
-  (fail closed); `enabled()` → `Ok(false)` → 403, `Err` → that `BantoError` (`ApiError`);
-  otherwise `issue_grant_token` → `{ success: true, token }` (same body as viewer-public).
+  `/api/auth/grant/publicViewer`). In order: unregistered `kind` → 404 `not_found`;
+  **read `grant_generation(kind)` before the check**; the same check as
+  `GrantRegistry::availability` is **re-evaluated at issuance**, and `require_loopback_peer`
+  with a peer that is not loopback **or is unknown** → 403 `forbidden` (fail closed);
+  `enabled()` → `Ok(false)` → 403, `Err` → that `BantoError` (`ApiError`); otherwise
+  `issue_grant_token(spec, observed)` → `{ success: true, token }` if the generation has not
+  moved (same body as viewer-public), `None` → 403 if it has (the condition was closed during
+  the check; next item but one).
   **Issuance is not audited** (existing policy, `routes/auth.rs:88-94`).
 - **The kind identifier stays camelCase, also in the URL** (`/api/auth/grant/publicViewer`). It
   is a kind identifier, not a fixed route name, so `identity.kind`, `status.grants`, the URL and
@@ -203,6 +214,42 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
   into its own audit `detail` as `revokedGrants: n` (issuance is not audited; the closing side
   keeps the count instead). The template's `save_server_config_locked`
   (`src-tauri/src/lib.rs:2160-2165`) is rewritten to `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)`.
+- **Serializing issuance and revocation (contract; second review of #313, P1).** Re-checking at
+  issuance alone does not close this race: issuance A reads `enabled() == true` → lock-down B
+  saves the flag and completes `revoke_grant_tokens` → A calls `issue_grant_token`. A's token did
+  not exist when the revocation ran, so it survives, and since a grant is neither account-checked
+  nor re-checked against `enabled` after issuance it keeps working after lock-down. Today's
+  viewer-public (`routes/auth.rs:95-105`) also separates the check from the issuance, and the
+  issuing side never takes `save_server_config_locked`'s `auth_config_lock`. The contract:
+  - **`AuthState` keeps a per-kind generation (`GrantGeneration`).** Issuance is "read the
+    generation before the check → check (`availability`; may wait on the DB) → **under
+    `AuthState`'s internal lock**, insert only if the generation is unchanged, otherwise insert
+    nothing and return `None`". Revocation `revoke_grant_tokens(kind)` is "**under the same
+    internal lock**, advance the generation and remove every token of that kind". An issuance
+    that read `true`, paused, and resumes after the lock-down completed is not inserted because
+    the generation moved. The route turns `None` into 403 (it could re-check, but there is no
+    reason to re-mint right after the condition closed).
+  - **The side that closes the condition (the app) keeps the order "save the condition →
+    `revoke_grant_tokens`".** The reverse (revoke first, save later) leaves a window in which
+    `enabled()` still returns `true`; such an issuance is inserted under the post-revocation
+    generation and survives. With the save first, a check after the save is `false`, and an
+    issuance that read `true` before the save is rejected by the generation advance - neither
+    survives. "Right after saving the flag, in the same function" is the implementation of this
+    order; the serialization itself is the generation.
+  - Alternative compared: **one shared async lock around the whole check-to-issuance, also
+    taken by the side that closes the condition.** Correct, but the issuance holds the lock while
+    `enabled()` waits on the DB, so lock-down is dragged behind issuance DB waits - a poor fit
+    for viewer-public's "issuance is cheap and frequent (every reload)". Ownership of the lock
+    would also span the app and `AuthState` (every app would keep the duty of taking its
+    `auth_config_lock` equivalent correctly). The generation stays inside `AuthState` and the
+    app's duty is only the "save → revoke" order. Not adopted.
+  - **The race test is mandatory** (a merge condition of the implementation PR and the
+    migration PR): a banto unit test (`auth.rs`: pause an issuance that already read `true`
+    right before `issue_grant_token` → `revoke_grant_tokens` on another task → resume → `None`
+    is returned and no valid token exists; for viewer-public and for an arbitrary kind) and a
+    derived-app (banto-hub) integration test (hold an issuing request after `enabled()` returned
+    `true` → complete lock-down (save + revoke) → resume the request → 403, the next
+    `GET /api/auth/identity` is 401, and open streams close).
 
 ### 3. The self-deletion guard on user deletion
 
@@ -263,9 +310,17 @@ Decision:
 The shape banto-hub agreed to in this decision (not a banto rule; the starting point of its
 migration PR):
 
-- Lock-down calls `revoke_grant_tokens("commissioning")` **right after saving the flag, in the
-  same function** (the same shape as viewer-public OFF in `save_server_config_locked`; no request
-  can slip between the save and the revocation).
+- Lock-down is "save the flag → **right after, in the same function**,
+  `revoke_grant_tokens("commissioning")`" in that order (the same shape as viewer-public OFF in
+  `save_server_config_locked`). The race with concurrent issuance is closed by `AuthState`'s
+  generation (decision §2 "serializing issuance and revocation"). Never reverse the order
+  (revoking first leaves tokens issued before the save).
+- **The failure-time policy for "operations that stop writes" (#431) stays banto-hub's
+  responsibility after the migration** (banto-hub item of the migration). It is not moved into
+  banto.
+- The admin WebSocket's (`/api/tag-stream`) token intake (`Sec-WebSocket-Protocol`) and the
+  in-connection re-validation through `SessionStreamCredential` stay, and the grant token is
+  connected to the shared `AuthState` validation (banto-hub item of the migration).
 - Logout only drops the token. While commissioning, the next navigation silently re-issues one
   through `grantFallback` (commissioning does not end by "logout"; only lock-down ends it).
 - Returning to commissioning through elevation does not revoke existing tokens.
@@ -319,7 +374,19 @@ protects nothing. `X-Forwarded-For` is spoofable and is not consulted. Decision:
   handed out.
 - **Stream re-validation is one path.** `revalidate` → `authenticate_with` → `session_for_with`,
   so a grant's stream closes at the next re-check after revocation. The adopt design had no
-  such hook.
+  such hook. A derived app's WebSocket (bearer carried in `Sec-WebSocket-Protocol`) rides the
+  same path as long as the extracted token is connected to the same `AuthState` validation
+  (migration).
+- **Issuance and revocation are serialized by a generation.** Re-checking at issuance alone
+  leaves the race "an issuance that already read `true` is inserted after lock-down completed".
+  Under `AuthState`'s internal lock, issuance inserts only if the generation matches and
+  revocation advances it while removing (decision §2). The side that closes the condition keeps
+  the order "save → revoke". The race test is mandatory in banto and in the derived app.
+- **The exception that lets only "operations that stop writes" through during a DB failure
+  (banto-industrial #431) is not brought into banto.** Grant sessions skip the account check, so
+  even during a DB failure a stop from the commissioning grant passes ordinary validation. The
+  exception for account sessions (distinguishing unverifiable from confirmed-revoked, the check
+  timeout, stop-only) remains banto-hub's responsibility (migration).
 - **Caveat 1: an admin-equivalent bearer is stored in the browser.** A commissioning grant token
   sits in `sessionStorage` like viewer-public's. It must be unusable after lock-down, so
   **the derived app pins "lock-down → the next request is 401 → the SSE closes" in tests**
@@ -337,22 +404,22 @@ protects nothing. `X-Forwarded-For` is spoofable and is not consulted. Decision:
 
 ## Removed (v3.0.0)
 
-| Removed                                                                                                            | Replacement                                                                       |
-| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `POST /api/auth/public-viewer`                                                                                     | `POST /api/auth/grant/publicViewer`                                               |
-| `viewerPublic` in `GET /api/auth/status`                                                                           | `grants.publicViewer`                                                             |
-| `publicViewer` in `GET /api/auth/identity`                                                                         | `kind` (`"publicViewer"` / `"commissioning"` / `"account"`)                       |
-| `AuthenticatedSession.public_viewer: bool`                                                                         | `AuthenticatedSession.grant: Option<GrantKind>`                                   |
-| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`                                             | `issue_grant_token(&GrantSpec)` / `revoke_grant_tokens(&GrantKind)`               |
-| `MAX_PUBLIC_VIEWER_SESSIONS`                                                                                       | `GrantSpec.max_sessions` (default 256)                                            |
-| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`                                             | the signature taking `registry: Arc<GrantRegistry>` (+ `grant_router`)            |
-| `UsersService::delete_user(id, i64)`                                                                               | the form taking the acting id as `Option<i64>` (name: implementation PR)          |
-| `publicViewerFallback` / `DEFAULT_PUBLIC_VIEWER_RETRIES`                                                           | `grantFallback(…, { kind })` / `DEFAULT_GRANT_RETRIES`                            |
-| `AuthProvider.enterPublicViewer` / `status().viewerPublic`                                                         | `enterGrant(kind, …)` / `status().grants`                                         |
-| `Identity.publicViewer` / TS `PUBLIC_VIEWER_ID`                                                                    | `Identity.kind`                                                                   |
-| the `public-viewer` owner key of `sessionOwnerKey` and adopt's `${kind}:${id}`                                     | the grant kind alone                                                              |
-| `SessionController.adopt()` / `end()`, the epoch-only `SessionTicket`, the "while adopted" branches                | `grantFallback` + the provider's answer (the S-42 path)                           |
-| `POST /api/auth/public-viewer` in `verify-architecture` rule 8 `REST_ONLY` (`scripts/verify-architecture.mjs:326`) | `POST /api/auth/grant/{kind}` (the Tauri window has no "enter a grant" operation) |
+| Removed                                                                                                            | Replacement                                                                          |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `POST /api/auth/public-viewer`                                                                                     | `POST /api/auth/grant/publicViewer`                                                  |
+| `viewerPublic` in `GET /api/auth/status`                                                                           | `grants.publicViewer`                                                                |
+| `publicViewer` in `GET /api/auth/identity`                                                                         | `kind` (`"publicViewer"` / `"commissioning"` / `"account"`)                          |
+| `AuthenticatedSession.public_viewer: bool`                                                                         | `AuthenticatedSession.grant: Option<GrantKind>`                                      |
+| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`                                             | `issue_grant_token(&GrantSpec, GrantGeneration)` / `revoke_grant_tokens(&GrantKind)` |
+| `MAX_PUBLIC_VIEWER_SESSIONS`                                                                                       | `GrantSpec.max_sessions` (default 256)                                               |
+| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`                                             | the signature taking `registry: Arc<GrantRegistry>` (+ `grant_router`)               |
+| `UsersService::delete_user(id, i64)`                                                                               | the form taking the acting id as `Option<i64>` (name: implementation PR)             |
+| `publicViewerFallback` / `DEFAULT_PUBLIC_VIEWER_RETRIES`                                                           | `grantFallback(…, { kind })` / `DEFAULT_GRANT_RETRIES`                               |
+| `AuthProvider.enterPublicViewer` / `status().viewerPublic`                                                         | `enterGrant(kind, …)` / `status().grants`                                            |
+| `Identity.publicViewer` / TS `PUBLIC_VIEWER_ID`                                                                    | `Identity.kind`                                                                      |
+| the `public-viewer` owner key of `sessionOwnerKey` and adopt's `${kind}:${id}`                                     | the grant kind alone                                                                 |
+| `SessionController.adopt()` / `end()`, the epoch-only `SessionTicket`, the "while adopted" branches                | `grantFallback` + the provider's answer (the S-42 path)                              |
+| `POST /api/auth/public-viewer` in `verify-architecture` rule 8 `REST_ONLY` (`scripts/verify-architecture.mjs:326`) | `POST /api/auth/grant/{kind}` (the Tauri window has no "enter a grant" operation)    |
 
 The `server.viewer_public` setting key, the two-way guard in `SettingsService`
 (viewer-public-plan §2.3) and the `NavItem` public-screen allowlist **stay** (they are the
@@ -413,9 +480,37 @@ banto-hub (tyaro/banto-industrial):
   add `grants` to status, register the commissioning `GrantSpec` - kind `commissioning`, fixed
   admin identity, condition = not locked down, `require_loopback_peer: true`, a small
   `max_sessions`), `core/src/rest.rs:773` and `core/src/users.rs:634` (the acting id of
-  `delete_user`), **removal of the 34 bypasses in its own authorization** (every request back
-  through `require_auth` + `RoleGuard`), `revoke_grant_tokens("commissioning")` in the lock-down
-  save function, bootstrap's self-issuance.
+  `delete_user`), revocation in the lock-down save function in the order "save →
+  `revoke_grant_tokens("commissioning")`", bootstrap's self-issuance.
+- Rust (`require_auth_or_commissioning`, `core/src/rest.rs:171-344`): **only the
+  "credential-less commissioning branch" is removed** (the early return on `!is_locked_down()`,
+  `CommissioningStreamCredential`, the per-request synthesized identity - the substance of the
+  34 bypasses). **What stays (banto-industrial #431; not moved into banto)**:
+  `OperationKind::StopWrites`, the distinction in `SessionCheck` between unverifiable
+  (`Unverified`) and confirmed-revoked (`Revoked`), the `session_gate_decision` table,
+  `STOP_SESSION_CHECK_TIMEOUT` (5 s), the `UnverifiedStopException` audit marker, and the
+  application to `POST /api/write-control/disable` only (`rest.rs:1765-1824`,
+  `WRITE_CONTROL_DISABLE_OPERATION`). banto's `require_auth` (`auth.rs:1562-1572`) returns
+  `authenticate`'s error as-is and has no check timeout, so replacing the gate wholesale would
+  reintroduce #431 (a DB failure in normal operation rejects, or hangs, the write stop). After
+  lock-down the gate keeps calling `AuthState::authenticate` (grant sessions skip the account
+  check, so even during a DB failure a stop from the commissioning grant is `Valid`). The
+  existing tests - a confirmed-revoked session is refused, the exception is not widened to
+  resume (`/api/write-control/enable`) and the like, the 5 s cut-off - are kept.
+- Rust (admin WebSocket `/api/tag-stream`): a browser WebSocket cannot set `Authorization`, so
+  the bearer extraction through `extract_ws_protocol_token` (`Sec-WebSocket-Protocol: bearer,
+<token>`, exact-match path allowlist, `rest.rs:259-269,297-299`) **stays**, and so does
+  attaching `SessionStreamCredential` to the passing request (`rest.rs:327-335`) - `ws_upgrade`
+  (`stream.rs:529-552`) builds its `Revalidator` from that extension and does not re-validate
+  without it; fixing only the intake and dropping this connection would leave streams open
+  after lock-down. The extracted grant token is connected to the shared `AuthState` validation
+  (`authenticate` / `revalidate`). `CommissioningStreamCredential` (#440, token-less streams)
+  becomes unnecessary (commissioning streams open with the grant token and re-validate through
+  `SessionStreamCredential`). Tests: a browser-style connection (`Sec-WebSocket-Protocol`) with a
+  grant token succeeds, and the re-validation after lock-down (save → revoke) closes it.
+- Rust (race test, mandatory): hold an issuing request after `enabled()` returned `true` →
+  complete lock-down → resume → 403, the next `GET /api/auth/identity` is 401, and the open
+  SSE / WebSocket closes at re-validation (decision §2 "serializing issuance and revocation").
 - TS: `src/lib/banto/commissioningPolicy.ts`, `commissioningLockDown.ts` (+ `.test.ts`),
   `sessionRecheck.abort.test.ts` (retire the policy runner and `adopt()`/`end()` →
   `grantFallback(…, { kind: 'commissioning' })` after the `none` in `src/routes/(app)/+layout.ts`;
@@ -480,9 +575,16 @@ chronogazer (tyaro/banto-industrial):
 
 - **The issuing route accepts neither identity nor role from the client.** `GrantSpec.identity`
   is fixed and the route takes only `kind`. Review starts there (as in ADR-0012).
-- **Whatever closes the condition calls `revoke_grant_tokens(kind)` in the same function.** The
-  issuance condition (`enabled`) and the revocation call come in pairs (the template:
-  viewer-public OFF; the derived app: lock-down). `revokedGrants: n` may go into the audit detail.
+- **Whatever closes the condition calls `revoke_grant_tokens(kind)` in the same function, in the
+  order "save the condition → revoke".** The issuance condition (`enabled`) and the revocation
+  call come in pairs (the template: viewer-public OFF; the derived app: lock-down). The race
+  with concurrent issuance is closed by `AuthState`'s generation. **The race test (an issuance
+  that already read `true`, paused, resumed after the revocation completed, leaves no valid
+  token) is mandatory both as a banto unit test and as a derived-app integration test.**
+  `revokedGrants: n` may go into the audit detail.
+- **The DB-failure exception for "operations that stop writes" (#431) and the admin WebSocket's
+  token intake and in-connection re-validation remain banto-industrial's responsibility.** The
+  migration removes only the credential-less commissioning branch.
 - **Admin-equivalent grants default to `require_loopback_peer: true` and a small
   `max_sessions`, and the reverse-proxy operating conditions (the two points of decision §6) go
   into the set-up guide** (a review item of the derived app's migration PR).

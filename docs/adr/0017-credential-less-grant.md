@@ -2,7 +2,7 @@
 
 > English: [0017-credential-less-grant.en.md](0017-credential-less-grant.en.md)
 
-- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。実装は v3.0.0 の PR）
+- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。同 PR の 2 回目のレビュー（`0df014d` 対象、3 件）で発行と失効の直列化の契約・#431 の停止例外の保持・管理 WebSocket の接続を追記。実装は v3.0.0 の PR）
 - 日付: 2026-10-02（改訂 2026-10-03）
 - 関連: [ADR-0012](0012-lan-public-viewer-synthetic-session.md)（閲覧公開 = viewer 固定の合成セッション。本 ADR はこれを一般化する。方式の判断は生きているので supersede はしない）/
   [ADR-0003](0003-tls-via-reverse-proxy.md)（同一ホストのリバースプロキシ。決定 §6 の前提）/
@@ -112,8 +112,16 @@ pub struct AuthenticatedSession {
     pub stamp: Option<SessionStamp>,
 }
 
+/// grant 種別ごとの失効の世代（決定 §2「発行と失効の直列化」）。
+pub struct GrantGeneration(u64);
+
 impl AuthState {
-    pub fn issue_grant_token(&self, spec: &GrantSpec) -> String;
+    /// 発行の判定を始める前に読む世代。
+    pub fn grant_generation(&self, kind: &GrantKind) -> GrantGeneration;
+    /// 内部ロックの中で `observed` が今の世代と一致するときだけ挿入する。
+    /// 一致しなければ挿入せず `None`（発行口は 403、または判定からやり直す）。
+    pub fn issue_grant_token(&self, spec: &GrantSpec, observed: GrantGeneration) -> Option<String>;
+    /// 同じ内部ロックの中で世代を進め、その種別のトークンを全部消す。
     pub fn revoke_grant_tokens(&self, kind: &GrantKind) -> usize;
 }
 
@@ -151,10 +159,12 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
 - **発行口は `POST /api/auth/grant/{kind}` の 1 本**（`grant_router`。`X-Banto-Client` 必須は
   `crate::csrf` で従来どおり）。**`POST /api/auth/public-viewer` は削除**（閲覧公開は
   `/api/auth/grant/publicViewer`）。順に: 登録されていない `kind` → 404 `not_found`；
-  `GrantRegistry::availability` と同じ判定を**発行時にも必ず再評価**し、
-  `require_loopback_peer` かつ peer が loopback でない**または peer が分からない** → 403
-  `forbidden`（fail closed）；`enabled()` が `Ok(false)` → 403、`Err` → その `BantoError`
-  （`ApiError`）；通れば `issue_grant_token` → `{ success: true, token }`（閲覧公開と同じ応答形）。
+  **判定の前に `grant_generation(kind)` を読む**；`GrantRegistry::availability` と同じ判定を
+  **発行時にも必ず再評価**し、`require_loopback_peer` かつ peer が loopback でない**または
+  peer が分からない** → 403 `forbidden`（fail closed）；`enabled()` が `Ok(false)` → 403、
+  `Err` → その `BantoError`（`ApiError`）；通れば `issue_grant_token(spec, observed)` →
+  世代が進んでいなければ `{ success: true, token }`（閲覧公開と同じ応答形）、進んでいれば
+  `None` → 403（判定の間に条件が閉じられた。次の節）。
   **発行は監査しない**（既存方針、`routes/auth.rs:88-94`）。
 - **kind の識別子は camelCase のまま URL にも使う**（`/api/auth/grant/publicViewer`）。
   固定のルート名ではなく kind 識別子なので、`identity.kind`・`status.grants`・URL・
@@ -196,6 +206,37 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
   `revokedGrants: n` として足せるようにする（発行は監査しない代わりに、閉じた側に件数を残す）。
   テンプレートの `save_server_config_locked`（`src-tauri/src/lib.rs:2160-2165`）は
   `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)` に書き換える。
+- **発行と失効の直列化（契約。#313 の 2 回目のレビュー P1）**。発行時の再判定だけでは次の
+  競合が閉じない: 発行 A が `enabled() == true` を取得 → ロックダウン B がフラグ保存と
+  `revoke_grant_tokens` を完了 → A が `issue_grant_token`。A のトークンは失効の時点で存在
+  しなかったので残り、grant は発行後にアカウント照合も `enabled` の再確認もしないので
+  ロックダウン後も使える。現行の閲覧公開（`routes/auth.rs:95-105`）も判定と発行が分かれて
+  いて、`save_server_config_locked` の `auth_config_lock` を発行側は取っていない。契約:
+  - **`AuthState` が grant 種別ごとの世代（`GrantGeneration`）を持つ。** 発行は
+    「判定の前に世代を読む → 判定（`availability`、DB を待ってよい）→ `AuthState` の
+    **内部ロックの中で**世代が変わっていなければ挿入、変わっていれば挿入せず `None`」。
+    失効 `revoke_grant_tokens(kind)` は「**同じ内部ロックの中で**世代を進めて、その種別の
+    トークンを全部消す」。true を取得済みの発行が一時停止し、その間にロックダウンが完了して
+    から再開しても、世代が変わっているので挿入されない。発行口は `None` を 403 にする
+    （判定からやり直してもよいが、閉じた直後に取り直す理由は無い）。
+  - **条件を閉じる側（アプリ）は「条件の保存 → `revoke_grant_tokens`」の順を守る。**
+    逆（先に revoke、後で保存）だと、revoke から保存までの間に `enabled()` がまだ true を
+    返し、その発行は revoke 後の世代で挿入されて残る。保存が先なら、保存後の判定は false、
+    保存前に true を取った発行は revoke の世代の前進で弾かれ、どちらも残らない。
+    「フラグ保存の直後、同じ関数内で revoke」はこの順序の実装であって、直列化そのものは
+    世代が担う。
+  - 比較した代替: **共有の非同期ロックで判定〜発行の全体を包む**（条件を閉じる側も同じ
+    ロックを取る）。正しいが、発行が `enabled()` の DB 読みを待つ間ロックを握るので、
+    ロックダウンが発行の DB 待ちに引きずられ、閲覧公開の「発行は安価で頻繁（再読み込みごと）」
+    と相性が悪い。ロックの所有者がアプリと `AuthState` にまたがる（banto-hub の
+    `auth_config_lock` 相当をアプリごとに正しく取る義務が残る）。世代方式は `AuthState` に
+    閉じ、アプリの義務は「保存 → revoke の順」だけで済む。採らない。
+  - **競合テストを必須にする**（実装 PR と移行 PR のマージ条件）: banto 側の単体テスト
+    （`auth.rs`。true を取得済みの発行を `issue_grant_token` の直前で一時停止 → 別タスクで
+    `revoke_grant_tokens` → 発行を再開 → `None` が返り、有効なトークンが 1 つも無い。
+    閲覧公開・任意 kind の両方）と、派生アプリ（banto-hub）側の統合テスト（`enabled()` が
+    true を返した発行要求を保留 → ロックダウン（保存＋revoke）完了 → 発行要求を再開 →
+    403 で、直後の `GET /api/auth/identity` が 401、開いていたストリームが閉じる）。
 
 ### 3. ユーザー削除の自己削除ガード
 
@@ -254,8 +295,15 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
 
 banto-hub がこの ADR で決めた形（banto には規約として置かない。移行 PR の設計の出発点）:
 
-- ロックダウンは「フラグ保存の直後、**同じ関数内**で `revoke_grant_tokens("commissioning")`」
-  （閲覧公開 OFF の `save_server_config_locked` と同じ型。保存と失効の間に要求を挟ませない）。
+- ロックダウンは「フラグ保存 → **同じ関数内で直後に** `revoke_grant_tokens("commissioning")`」
+  の順（閲覧公開 OFF の `save_server_config_locked` と同じ型）。並行する発行との競合は
+  `AuthState` の世代が閉じる（決定 §2「発行と失効の直列化」）。順序を逆にしない
+  （先に revoke すると、保存までの間に発行されたトークンが残る）。
+- **#431 の「書き込みを止める操作」の障害時方針は移行後も banto-hub の責務として残す**
+  （移行手順の banto-hub の項）。banto に移さない。
+- 管理 WebSocket（`/api/tag-stream`）のトークン受け取り（`Sec-WebSocket-Protocol`）と
+  `SessionStreamCredential` による接続中の再検証は残し、grant トークンを共通の `AuthState`
+  の検証に接続する（移行手順の banto-hub の項）。
 - ログアウトはトークンを捨てるだけ。試運転中は次の遷移で `grantFallback` が無言で再発行する
   （試運転は「ログアウト」で終わらない。終わるのはロックダウンだけ）。
 - elev（昇格）で試運転に戻しても、既存トークンは失効させない。
@@ -302,6 +350,16 @@ loopback 判定で分かるのは**直近の接続元**だけで、外部のク�
   （閲覧公開と同じ。`auth.rs:2629` のテストの一般化）。長生きトークンを配らない。
 - **ストリームの再検証は 1 経路。** `revalidate` → `authenticate_with` → `session_for_with`
   なので、失効後の次の再検証で grant のストリームも閉じる。adopt 方式ではここが効かなかった。
+  派生アプリの WebSocket（`Sec-WebSocket-Protocol` で bearer を運ぶ）も、取り出したトークンを
+  同じ `AuthState` の検証に接続する限り同じ経路に乗る（移行手順）。
+- **発行と失効は世代で直列化する。** 発行時の再判定だけでは「true を取得済みの発行が
+  ロックダウン完了後に挿入される」競合が残る。`AuthState` の内部ロックの中で、発行は世代の
+  一致を確かめて挿入し、失効は世代を進めて消す（決定 §2）。条件を閉じる側は
+  「保存 → revoke」の順。競合テストは banto・派生アプリの両方で必須。
+- **DB 障害時に「書き込みを止める操作」だけ通す例外（banto-industrial #431）は banto に
+  持ち込まない。** grant セッションはアカウント照合を飛ばすので、DB 障害時でも試運転の
+  grant からの停止は通常の検証で通る。アカウントのセッションに対する例外（照合不能と
+  失効確認済みの区別・照合の期限・停止専用）は banto-hub の責務のまま（移行手順）。
 - **注意点 1: ブラウザに admin 相当の bearer が保存される。** 試運転 grant のトークンは
   閲覧公開と同じく `sessionStorage` に入る。ロックダウン後にそれが使えてはならないので、
   **派生アプリは「ロックダウン → 直後の要求が 401 → SSE が閉じる」をテストで固定する**
@@ -324,7 +382,7 @@ loopback 判定で分かるのは**直近の接続元**だけで、外部のク�
 | `GET /api/auth/status` の `viewerPublic`                                                                            | `grants.publicViewer`                                                                     |
 | `GET /api/auth/identity` の `publicViewer`                                                                          | `kind`（`"publicViewer"` / `"commissioning"` / `"account"`）                              |
 | `AuthenticatedSession.public_viewer: bool`                                                                          | `AuthenticatedSession.grant: Option<GrantKind>`                                           |
-| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`                                              | `issue_grant_token(&GrantSpec)` / `revoke_grant_tokens(&GrantKind)`                       |
+| `AuthState::issue_public_viewer_token` / `revoke_public_viewer_tokens`                                              | `issue_grant_token(&GrantSpec, GrantGeneration)` / `revoke_grant_tokens(&GrantKind)`      |
 | `MAX_PUBLIC_VIEWER_SESSIONS`                                                                                        | `GrantSpec.max_sessions`（既定 256）                                                      |
 | `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`                                              | `registry: Arc<GrantRegistry>` を受けるシグネチャ（+ `grant_router`）                     |
 | `UsersService::delete_user(id, i64)`                                                                                | acting id を `Option<i64>` で受ける形（名前は実装 PR）                                    |
@@ -392,8 +450,36 @@ banto-hub（tyaro/banto-industrial）:
   merge し、status に `grants`。試運転の `GrantSpec`（kind `commissioning`、admin 固定 identity、
   条件 = 未ロックダウン、`require_loopback_peer: true`、小さい `max_sessions`）を登録）、
   `core/src/rest.rs:773`・`core/src/users.rs:634`（`delete_user` の acting id）、
-  **34 か所の独自の認可の迂回を削除**（全要求を `require_auth` + `RoleGuard` に戻す）、
-  ロックダウンの保存関数に `revoke_grant_tokens("commissioning")`、bootstrap の自己発行。
+  ロックダウンの保存関数に「保存 → `revoke_grant_tokens("commissioning")`」の順で失効、
+  bootstrap の自己発行。
+- Rust（`require_auth_or_commissioning`、`core/src/rest.rs:171-344`）: **削除するのは
+  「資格情報なしで通す commissioning 分岐」だけ**（`!is_locked_down()` の早期 return と
+  `CommissioningStreamCredential`、合成 identity の要求ごとの返却 — 34 か所の迂回の実体）。
+  **残すもの（banto-industrial #431。banto に移さない）**: `OperationKind::StopWrites`、
+  `SessionCheck` の「照合不能（`Unverified`）」と「失効確認済み（`Revoked`）」の区別、
+  `session_gate_decision` の表、`STOP_SESSION_CHECK_TIMEOUT`（5 秒）、
+  `UnverifiedStopException` の監査の印、`POST /api/write-control/disable` だけへの適用
+  （`rest.rs:1765-1824`、`WRITE_CONTROL_DISABLE_OPERATION`）。banto の `require_auth`
+  （`auth.rs:1562-1572`）は `authenticate` のエラーをそのまま返し照合の期限も無いので、
+  一律に置き換えると通常運用中の DB 障害で書き込み停止が拒否される／待ち続ける #431 の
+  問題を再導入する。ロックダウン後の判定はこのゲートが `AuthState::authenticate` を呼ぶ形の
+  まま（grant セッションは照合を飛ばすので、DB 障害時でも試運転の grant からの停止は
+  `Valid` で通る）。既存テスト — 失効が確認できたセッションは拒否、例外を再開
+  （`/api/write-control/enable`）などへ広げない、5 秒で打ち切る — は維持する。
+- Rust（管理 WebSocket `/api/tag-stream`）: ブラウザの WebSocket は `Authorization` を
+  付けられないので、`extract_ws_protocol_token`（`Sec-WebSocket-Protocol: bearer, <token>`、
+  パスの厳密一致の許可リスト、`rest.rs:259-269,297-299`）による bearer の取り出しを**残し**、
+  通過した要求に `SessionStreamCredential`（`rest.rs:327-335`）を載せる処理も**残す**
+  （`ws_upgrade`（`stream.rs:529-552`）はこの拡張から `Revalidator` を作り、無ければ接続中の
+  再検証をしない。取り出しだけ直してこの接続を落とすと、ロックダウン後も開いたストリームが
+  残る）。取り出した grant トークンは共通の `AuthState` の検証（`authenticate`／`revalidate`）に
+  接続する。`CommissioningStreamCredential`（#440、トークン無しのストリーム）は不要になる
+  （試運転のストリームも grant トークンで開き、`SessionStreamCredential` で再検証する）。
+  テスト: ブラウザ相当（`Sec-WebSocket-Protocol`）で grant トークンの接続が成功すること、
+  ロックダウン（保存 → revoke）後の再検証で切断されること。
+- Rust（競合テスト、必須）: `enabled()` が true を返した発行要求を保留 → ロックダウン完了 →
+  発行要求を再開 → 403、直後の `GET /api/auth/identity` が 401、開いていた SSE／WebSocket が
+  再検証で閉じる（決定 §2「発行と失効の直列化」）。
 - TS: `src/lib/banto/commissioningPolicy.ts`・`commissioningLockDown.ts`（+ `.test.ts`）・
   `sessionRecheck.abort.test.ts`（policy runner と `adopt()`/`end()` の廃止 →
   `grantFallback(…, { kind: 'commissioning' })` を `src/routes/(app)/+layout.ts` の `none` の後に。
@@ -452,9 +538,15 @@ chronogazer（tyaro/banto-industrial）:
 
 - **grant の発行口はクライアントから identity も role も受け取らない。** `GrantSpec.identity`
   は固定で、発行口は `kind` しか受けない。レビューはまずここを見る（ADR-0012 と同じ）。
-- **条件を閉じる操作は必ず `revoke_grant_tokens(kind)` を同じ関数内で呼ぶ。** 発行の条件
-  （`enabled`）と失効の呼び出しは対になる（テンプレートは閲覧公開 OFF、派生アプリは
-  ロックダウン）。監査の detail に `revokedGrants: n` を足せる。
+- **条件を閉じる操作は必ず「条件の保存 → `revoke_grant_tokens(kind)`」の順で、同じ関数内で
+  呼ぶ。** 発行の条件（`enabled`）と失効の呼び出しは対になる（テンプレートは閲覧公開 OFF、
+  派生アプリはロックダウン）。並行する発行との競合は `AuthState` の世代が閉じる。
+  **競合テスト（true を取得済みの発行を一時停止 → 失効完了 → 再開しても有効なトークンが
+  残らない）は banto の単体テストと派生アプリの統合テストの両方で必須。**
+  監査の detail に `revokedGrants: n` を足せる。
+- **DB 障害時の「書き込みを止める操作」の例外（#431）と、管理 WebSocket のトークン受け取り・
+  接続中の再検証は banto-industrial の責務のまま。** 移行で消すのは資格情報なしの
+  commissioning 分岐だけ。
 - **admin 相当の grant は `require_loopback_peer: true` と小さい `max_sessions` を既定にし、
   リバースプロキシ配下の運用条件（決定 §6 の 2 点）を導入手順に書く**
   （派生アプリの移行 PR のレビュー項目）。
