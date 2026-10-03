@@ -284,6 +284,23 @@ impl UsersService {
         Ok(count > 0)
     }
 
+    /// Does at least one `admin` account exist? A derived app that lets an
+    /// admin-equivalent grant (ADR-0017, e.g. banto-hub's commissioning mode)
+    /// administer the install uses this as the guard before closing that
+    /// grant ("lock-down"): without a real admin, closing it would leave the
+    /// install with no administrator at all. [`UsersService::is_initialized`]
+    /// is not enough for that (an install may hold only editors/viewers).
+    pub async fn has_admin(&self) -> Result<bool, BantoError> {
+        const SQL: &str = "SELECT COUNT(*) FROM users WHERE role = 'admin'";
+        let count: i64 = match &self.db {
+            Db::Sqlite(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+            #[cfg(feature = "postgres")]
+            Db::Postgres(pool) => sqlx::query_scalar(SQL).fetch_one(pool).await,
+        }
+        .map_err(banto_storage::storage_error)?;
+        Ok(count > 0)
+    }
+
     /// Create the very first account. Only succeeds while the `users` table
     /// is empty - once any account exists, this always fails with
     /// `BantoError::Other`, regardless of the requested username (spec:
@@ -840,8 +857,20 @@ impl UsersService {
     /// resolved by the REST/Tauri layer before calling this - see
     /// [`UsersService::get_by_username`] for the REST side, which only has
     /// the caller's username from the session token).
-    pub async fn delete_user(&self, id: i64, acting_user_id: i64) -> Result<(), BantoError> {
-        if id == acting_user_id {
+    ///
+    /// `acting_user_id` is `None` ONLY for a caller that has no row of its
+    /// own by construction - a validated grant session (ADR-0017 §3, e.g. a
+    /// derived app's admin-equivalent commissioning grant). The caller
+    /// decides that from the authenticated session's provenance, never
+    /// from a failed row lookup (an account session whose row cannot be
+    /// found is `Unauthorized`, not `None`). Only the self-deletion check is
+    /// skipped then; the last-admin guard applies unchanged.
+    pub async fn delete_user(
+        &self,
+        id: i64,
+        acting_user_id: Option<i64>,
+    ) -> Result<(), BantoError> {
+        if acting_user_id == Some(id) {
             return Err(BantoError::Other(
                 "自分自身を削除することはできません".to_string(),
             ));
@@ -922,6 +951,57 @@ mod tests {
     async fn is_initialized_is_false_on_a_fresh_db() {
         let svc = service().await;
         assert!(!svc.is_initialized().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn has_admin_counts_only_admin_accounts() {
+        // ADR-0017 §3 / B3: the lock-down guard of an admin-equivalent grant.
+        let svc = service().await;
+        assert!(!svc.has_admin().await.unwrap());
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        assert!(svc.has_admin().await.unwrap());
+        // Demoting the only admin is refused, so has_admin stays true...
+        assert!(svc
+            .update_user(owner.id, "オーナー", Role::Editor)
+            .await
+            .is_err());
+        assert!(svc.has_admin().await.unwrap());
+        // ...and an install of editors/viewers only is initialized but has no admin.
+        let second = svc
+            .create_user("owner2", "password123", "オーナー2", Role::Admin)
+            .await
+            .unwrap();
+        svc.update_user(owner.id, "オーナー", Role::Editor)
+            .await
+            .unwrap();
+        assert!(svc.has_admin().await.unwrap());
+        svc.delete_user(second.id, Some(owner.id))
+            .await
+            .unwrap_err(); // last admin
+        assert!(svc.has_admin().await.unwrap());
+        assert!(svc.is_initialized().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_user_without_an_acting_id_skips_only_the_self_check() {
+        // A grant session (ADR-0017 §3): no row of its own, so no self
+        // check - but the last-admin guard is unchanged.
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        let err = svc.delete_user(owner.id, None).await.unwrap_err();
+        assert!(matches!(err, BantoError::Other(_)), "{err:?}");
+        svc.delete_user(editor.id, None).await.unwrap();
+        assert_eq!(svc.list_users().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1311,7 +1391,7 @@ mod tests {
             .unwrap()
             .is_some());
 
-        svc.delete_user(created.id, owner.id)
+        svc.delete_user(created.id, Some(owner.id))
             .await
             .expect("delete_user should succeed");
         assert_eq!(svc.list_users().await.unwrap().len(), 1);
@@ -1391,7 +1471,10 @@ mod tests {
             .unwrap();
 
         // `editor1` deletes `owner` (the only admin) - must be rejected.
-        let err = svc.delete_user(owner.id, editor.id).await.unwrap_err();
+        let err = svc
+            .delete_user(owner.id, Some(editor.id))
+            .await
+            .unwrap_err();
         assert!(matches!(err, BantoError::Other(_)));
         assert_eq!(svc.list_users().await.unwrap().len(), 2);
     }
@@ -1408,7 +1491,7 @@ mod tests {
             .unwrap();
 
         // Even though a second admin exists, `owner` may not delete itself.
-        let err = svc.delete_user(owner.id, owner.id).await.unwrap_err();
+        let err = svc.delete_user(owner.id, Some(owner.id)).await.unwrap_err();
         assert!(matches!(err, BantoError::Other(_)));
         assert_eq!(svc.list_users().await.unwrap().len(), 2);
     }
@@ -1420,7 +1503,7 @@ mod tests {
             .setup_first_user("owner", "password123", "オーナー")
             .await
             .unwrap();
-        let err = svc.delete_user(999, owner.id).await.unwrap_err();
+        let err = svc.delete_user(999, Some(owner.id)).await.unwrap_err();
         assert!(
             matches!(err, BantoError::NotFound { resource, id } if resource == "users" && id == "999")
         );
@@ -1619,7 +1702,7 @@ mod tests {
             ) -> Result<(), BantoError> {
                 barrier.wait().await;
                 if delete {
-                    svc.delete_user(id, 3 - id).await
+                    svc.delete_user(id, Some(3 - id)).await
                 } else {
                     svc.update_user(id, "Changed", Role::Viewer)
                         .await

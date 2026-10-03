@@ -36,24 +36,31 @@
 //! background reaper task, to keep this a plain library type with no owned
 //! runtime.
 //!
-//! ## Synthetic viewer sessions (LAN 閲覧公開, Issue #189)
+//! ## Grant sessions (credential-less issuance, ADR-0017)
 //!
-//! [`AuthState::issue_public_viewer_token`] mints a bearer token bound to the
-//! fixed identity `{ id: "public", name: "public", role: "viewer" }`
-//! ([`PUBLIC_VIEWER_ID`]) with no credentials at all - it is what
-//! `POST /api/auth/public-viewer` hands a LAN client when
-//! `server.viewer_public` is ON (ADR-0012, conventions §6). Three properties
-//! matter and are asserted by this module's tests:
+//! [`AuthState::issue_grant_token`] mints a bearer token for a
+//! [`GrantSpec`]'s FIXED identity with no credentials at all - viewer-public
+//! (LAN 閲覧公開, ADR-0012, kind `publicViewer`) and a derived app's
+//! commissioning mode are such kinds. The spec, the registry and the issuing
+//! route live in [`crate::grant`]; this module holds the token side, and
+//! these properties are asserted by its tests:
 //!
-//! - It takes NO identity/role argument, so there is no escalation path: a
-//!   public viewer token can only ever be `viewer`.
-//! - Issuance is uncredentialed and therefore free to repeat, so the public
-//!   tokens are additionally held in a bounded FIFO capped at
-//!   [`MAX_PUBLIC_VIEWER_SESSIONS`] - minting past the cap evicts the OLDEST
-//!   public token (issuance itself never fails, so a tablet reloading its
-//!   page never gets stuck). Only public tokens are evicted this way; real
-//!   login sessions are untouched.
-//! - `logout` of a public token revokes only that token, exactly like any
+//! - The identity comes from the spec, never from the caller of the route,
+//!   so there is no escalation path.
+//! - Issuance is uncredentialed and therefore free to repeat, so each kind's
+//!   tokens are additionally held in a bounded FIFO (`GrantSpec::max_sessions`,
+//!   default 256) - minting past the cap evicts the OLDEST token of that kind
+//!   (issuance never fails for that reason, so a tablet reloading its page
+//!   never gets stuck). Only that kind's tokens are evicted this way; real
+//!   login sessions and other kinds are untouched.
+//! - Issuance and revocation are serialized by a per-kind
+//!   [`GrantGeneration`]: [`AuthState::grant_generation`] is read before the
+//!   condition is judged, `issue_grant_token` inserts only while that
+//!   generation is still current, and [`AuthState::revoke_grant_tokens`]
+//!   advances it under the same lock while removing the kind's tokens. So an
+//!   issuance parked after a `true` judgment cannot outlive a revocation that
+//!   completed meanwhile (ADR-0017 §2).
+//! - `logout` of a grant token revokes only that token, exactly like any
 //!   other session, so one wall display signing out never blanks the others.
 //!
 //! ## Account-bound sessions (Issue #204)
@@ -87,8 +94,8 @@
 //! installed (fail closed); callers that create an account and log it in
 //! directly use [`AuthState::issue_account_token`]. There is deliberately no
 //! cache in front of the lookup: it is one indexed read per request, and a
-//! cache would re-open exactly the window this closes. Synthetic public
-//! viewer sessions have no account and are not looked up.
+//! cache would re-open exactly the window this closes. Grant sessions have
+//! no account and are not looked up.
 //!
 //! Every constructor takes the [`SessionValidation`] explicitly, so an
 //! application cannot end up without revocation by omission (upgrading from
@@ -111,8 +118,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use banto_core::{BantoError, ErrorBody};
 use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
+
+use crate::grant::{GrantGeneration, GrantKind, GrantSpec};
 
 /// Identity returned by `GET /api/auth/identity` (spec §3.3). Mirrors
 /// `packages/admin-core/src/provider.ts::Identity`.
@@ -136,22 +145,6 @@ pub struct Identity {
     pub name: String,
     pub role: String,
 }
-
-/// `Identity.id` (and `name`) of every synthetic LAN 閲覧公開 viewer session
-/// (Issue #189, ADR-0012, conventions §6). Real accounts may share this
-/// username, so this is a display/audit label, never a session discriminator.
-/// `GET /api/auth/identity` exposes issuance metadata as `publicViewer` (#209).
-pub const PUBLIC_VIEWER_ID: &str = "public";
-
-/// Upper bound on simultaneously-live synthetic viewer sessions
-/// (`docs/viewer-public-plan.md` §2.2). Minting one needs no credentials, so
-/// without a cap a LAN client could grow the token map without bound; a cap
-/// (rather than a rate limit) is the right shape because issuance is cheap and
-/// legitimate - a wall display reloading its page must never be refused, so
-/// reaching the cap evicts the OLDEST public token instead of failing.
-/// 256 is far above any plausible number of kiosk screens on one LAN while
-/// keeping the map's memory trivially bounded.
-pub const MAX_PUBLIC_VIEWER_SESSIONS: usize = 256;
 
 /// Verifies a `username`/`password` pair against whatever credential store
 /// the app crate wires in (spec §8.2), asynchronously (a real store is a
@@ -221,8 +214,7 @@ pub enum SessionValidation {
     /// "Remember me"): deleting, demoting or re-keying the account does NOT
     /// end them. This is the pre-#204 behavior, kept only for states with no
     /// account store behind them - tests with a fixed verifier, or a server
-    /// that only ever issues synthetic public viewer sessions. Never use it
-    /// for real accounts.
+    /// that only ever issues grant sessions. Never use it for real accounts.
     DisabledNoRevocation,
 }
 
@@ -241,23 +233,33 @@ impl SessionValidation {
 
 /// A session that passed [`AuthState::authenticate`] (Issue #204): the
 /// identity to authorize with - re-read from the account store when a
-/// [`SessionLookup`] is installed - whether it is a synthetic public viewer
-/// session (#209), and the stamp it is bound to (`None` for public viewer
-/// sessions and when no lookup is installed).
+/// [`SessionLookup`] is installed - which grant kind issued it, if any
+/// (ADR-0017; `None` = an account session), and the stamp it is bound to
+/// (`None` for grant sessions and when no lookup is installed).
 ///
 /// [`require_auth`] inserts this into the request's extensions, so guards and
-/// handlers behind it can read the validated identity without a second
-/// lookup. Serializes as the `GET /api/auth/identity` body
-/// (`Identity & { publicViewer }`); the stamp is internal and never
-/// serialized.
+/// handlers behind it can read the validated identity (and, e.g. for
+/// `users_delete`, whether it is a grant) without a second lookup.
+/// Serializes as the `GET /api/auth/identity` body - `Identity & { kind }`,
+/// where `kind` is the grant kind's string or `"account"`; the stamp is
+/// internal and never serialized.
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AuthenticatedSession {
     #[serde(flatten)]
     pub identity: Identity,
-    pub public_viewer: bool,
+    #[serde(rename = "kind", serialize_with = "serialize_session_kind")]
+    pub grant: Option<GrantKind>,
     #[serde(skip)]
     pub stamp: Option<SessionStamp>,
+}
+
+/// `identity.kind` on the wire: the grant kind, or `account`. The same
+/// strings the client's `SessionKind` uses (no translation table).
+fn serialize_session_kind<S: Serializer>(
+    grant: &Option<GrantKind>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(grant.as_ref().map_or("account", GrantKind::as_str))
 }
 
 /// Session-token lifetime policy (spec §11.2). Both bounds are enforced on
@@ -422,12 +424,17 @@ struct TokenRecord {
     /// have both a short-lived desktop session and a long-lived "remembered"
     /// LAN browser session live at the same time.
     remembered: bool,
-    /// Issuance provenance, independent of account name/role (#209, conventions §6).
-    public_viewer: bool,
+    /// Issuance provenance, independent of account name/role (ADR-0017,
+    /// conventions §6): the grant kind that minted this token, `None` for an
+    /// account session.
+    grant: Option<GrantKind>,
+    /// A per-token lifetime (`GrantSpec::policy`) that overrides the state's
+    /// `token_policy`/`remembered_policy`. `None` for every other token.
+    policy: Option<TokenPolicy>,
     /// The account binding (Issue #204) checked by [`AuthState::authenticate`]
-    /// while a [`SessionLookup`] is installed. `None` for public viewer
-    /// sessions and for tokens minted without one ([`AuthState::issue_token`]),
-    /// which a lookup-enabled state rejects.
+    /// while a [`SessionLookup`] is installed. `None` for grant sessions and
+    /// for tokens minted without one ([`AuthState::issue_token`]), which a
+    /// lookup-enabled state rejects.
     stamp: Option<SessionStamp>,
 }
 
@@ -437,6 +444,18 @@ impl TokenRecord {
         now.saturating_sub(self.issued_at) >= policy.absolute_ttl
             || now.saturating_sub(self.last_used) >= policy.idle_ttl
     }
+}
+
+/// The tokens of one grant kind, in issue order, and the kind's revocation
+/// generation (ADR-0017 §2). Entries may name a token that has since been
+/// logged out or expired out of `tokens`; eviction simply removes whatever
+/// it finds (a `HashMap::remove` of an absent key is a no-op), and the
+/// queue itself is capped at the spec's `max_sessions`, so live sessions of
+/// the kind are bounded whether or not stale entries are present.
+#[derive(Default)]
+struct GrantQueue {
+    generation: u64,
+    tokens: VecDeque<String>,
 }
 
 /// Per-key failed-login bookkeeping for [`RateLimitPolicy`].
@@ -565,16 +584,11 @@ impl Clock {
 
 struct Inner {
     tokens: RwLock<HashMap<String, TokenRecord>>,
-    /// Issue order of the synthetic 閲覧公開 viewer tokens currently held in
-    /// `tokens` (Issue #189). Kept as a separate FIFO rather than scanning
-    /// `tokens` for `identity.id == PUBLIC_VIEWER_ID` because the cap needs
-    /// the *oldest* one and `HashMap` has no order. Entries may name a token
-    /// that has since been logged out or expired out of `tokens`; eviction
-    /// simply removes whatever it finds (a `HashMap::remove` of an absent key
-    /// is a no-op). The queue itself is capped at
-    /// [`MAX_PUBLIC_VIEWER_SESSIONS`] entries, so live public sessions are
-    /// bounded by the cap whether or not stale entries are present.
-    public_tokens: RwLock<VecDeque<String>>,
+    /// Per grant kind: the FIFO of its tokens (the cap needs the *oldest*
+    /// one and `HashMap` has no order) and its revocation generation
+    /// (ADR-0017 §2). This is THE internal lock issuance and revocation
+    /// serialize on. Lock order: `grants` before `tokens`; never the reverse.
+    grants: Mutex<HashMap<GrantKind, GrantQueue>>,
     failures: RwLock<HashMap<String, FailureRecord>>,
     /// Verification slots reserved right now (Issue #279). Lock order: this
     /// before `failures`; never the reverse.
@@ -590,6 +604,24 @@ struct Inner {
     remembered_policy: TokenPolicy,
     rate_limit: RateLimitPolicy,
     clock: Clock,
+}
+
+impl Inner {
+    /// Which [`TokenPolicy`] `record` is evaluated against: its own grant
+    /// policy when it has one, else the "remembered" or the regular policy by
+    /// its `remembered` flag (spec M11).
+    fn policy_for(&self, record: &TokenRecord) -> TokenPolicy {
+        record.policy.unwrap_or(if record.remembered {
+            self.remembered_policy
+        } else {
+            self.token_policy
+        })
+    }
+
+    /// Drop every expired record (the opportunistic sweep on each write).
+    fn sweep_expired(&self, tokens: &mut HashMap<String, TokenRecord>, now: Duration) {
+        tokens.retain(|_, record| !record.is_expired(now, &self.policy_for(record)));
+    }
 }
 
 /// Shared, cloneable auth state: an in-memory map of valid bearer tokens to
@@ -699,7 +731,7 @@ impl AuthState {
         Self {
             inner: Arc::new(Inner {
                 tokens: RwLock::new(HashMap::new()),
-                public_tokens: RwLock::new(VecDeque::new()),
+                grants: Mutex::new(HashMap::new()),
                 failures: RwLock::new(HashMap::new()),
                 in_flight: Mutex::new(InFlight::default()),
                 verify_credentials,
@@ -755,7 +787,7 @@ impl AuthState {
     pub async fn login(&self, username: &str, password: &str) -> Option<String> {
         match self.verify_and_stamp(username, password).await {
             StampedLogin::Accepted(identity, stamp) => {
-                Some(self.issue_token_with(identity, false, false, stamp))
+                Some(self.issue_token_with(identity, false, stamp))
             }
             StampedLogin::Rejected | StampedLogin::Unavailable => None,
         }
@@ -809,7 +841,7 @@ impl AuthState {
                 if let Some(ip_key) = &ip_key {
                     self.reset_failures(ip_key);
                 }
-                LoginOutcome::Success(self.issue_token_with(identity, remember, false, stamp))
+                LoginOutcome::Success(self.issue_token_with(identity, remember, stamp))
             }
             // The password was right; only the account binding could not be
             // established. Clear the streak like a success, issue nothing.
@@ -838,7 +870,7 @@ impl AuthState {
     /// the first account in). `remember` selects the "Remember me" policy
     /// (spec M11).
     pub fn issue_account_token(&self, account: SessionAccount, remember: bool) -> String {
-        self.issue_token_with(account.identity, remember, false, Some(account.stamp))
+        self.issue_token_with(account.identity, remember, Some(account.stamp))
     }
 
     /// Mint and store a new bearer token for an already-verified `identity`,
@@ -853,7 +885,7 @@ impl AuthState {
     /// [`SessionLookup`] is installed it is rejected on first use - use
     /// [`AuthState::issue_account_token`] there instead.
     pub fn issue_token(&self, identity: Identity) -> String {
-        self.issue_token_with(identity, false, false, None)
+        self.issue_token_with(identity, false, None)
     }
 
     /// Like [`AuthState::issue_token`], but the token is issued as
@@ -861,125 +893,117 @@ impl AuthState {
     /// `remembered_policy` instead of `token_policy` for the rest of its
     /// life. Unstamped, like [`AuthState::issue_token`].
     pub fn issue_token_remembered(&self, identity: Identity) -> String {
-        self.issue_token_with(identity, true, false, None)
+        self.issue_token_with(identity, true, None)
     }
 
-    /// Mint a synthetic LAN 閲覧公開 viewer session (Issue #189, ADR-0012,
-    /// conventions §6): a regular (non-remembered) bearer token bound to the
-    /// FIXED identity `{ id: PUBLIC_VIEWER_ID, name: PUBLIC_VIEWER_ID,
-    /// role: "viewer" }`.
-    ///
-    /// It deliberately takes NO [`Identity`]/role argument. That is the whole
-    /// security property: the caller (`POST /api/auth/public-viewer`, which
-    /// requires no credentials at all) has no way to ask for anything but
-    /// `viewer`, so there is no escalation path to review. Everything
-    /// downstream is unchanged - the token goes through the same
-    /// [`require_auth`] + `RoleGuard` + audit path as a logged-in session, so
-    /// a mutating request made with it is rejected `403` and recorded as a
-    /// `denied` entry with actor `public`.
-    ///
-    /// Not "remembered" (spec M11): a public viewing session expires on the
-    /// regular [`TokenPolicy`] and the frontend's route gate transparently
-    /// mints a fresh one, so there is no reason to hand an anonymous LAN
-    /// client a 30-day token.
-    ///
-    /// Issuance never fails: once [`MAX_PUBLIC_VIEWER_SESSIONS`] public
-    /// tokens are outstanding, the OLDEST is revoked to make room (see
-    /// `Inner::public_tokens`). Only public tokens are eligible for that
-    /// eviction - real login sessions are never touched by it.
-    pub fn issue_public_viewer_token(&self) -> String {
-        let token = self.issue_token_with(
-            Identity {
-                id: PUBLIC_VIEWER_ID.to_string(),
-                name: PUBLIC_VIEWER_ID.to_string(),
-                role: "viewer".to_string(),
-            },
-            false,
-            true,
-            None,
-        );
+    /// The revocation generation of `kind` RIGHT NOW (ADR-0017 §2). An issuer
+    /// reads this BEFORE judging the kind's condition and hands it to
+    /// [`AuthState::issue_grant_token`]; a [`AuthState::revoke_grant_tokens`]
+    /// in between makes that issuance a no-op. A kind nothing has touched yet
+    /// is at generation 0 (the same value its first issuance will see).
+    pub fn grant_generation(&self, kind: &GrantKind) -> GrantGeneration {
+        let grants = self.inner.grants.lock().expect("auth grant lock poisoned");
+        GrantGeneration(grants.get(kind).map_or(0, |queue| queue.generation))
+    }
 
-        // Locks are taken one at a time (never nested) and `issue_token_with`
-        // has already released the token map's write lock by now, so this
-        // cannot deadlock against it.
-        let evicted = {
-            let mut public_tokens = self
-                .inner
-                .public_tokens
-                .write()
-                .expect("public viewer token lock poisoned");
-            public_tokens.push_back(token.clone());
-            let mut evicted = Vec::new();
-            while public_tokens.len() > MAX_PUBLIC_VIEWER_SESSIONS {
-                if let Some(oldest) = public_tokens.pop_front() {
-                    evicted.push(oldest);
-                }
-            }
-            evicted
-        };
-        if !evicted.is_empty() {
-            let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-            for oldest in evicted {
+    /// Mint a grant session (ADR-0017; viewer-public is one kind): a regular
+    /// (non-remembered) bearer token bound to `spec.identity` - the identity
+    /// is the spec's, never the caller's, so there is no escalation path to
+    /// review. Everything downstream is unchanged: the token goes through the
+    /// same [`require_auth`] + `RoleGuard` + audit path as a logged-in
+    /// session, and only the account re-check (Issue #204) is skipped.
+    ///
+    /// Inserts ONLY while `observed` (read with [`AuthState::grant_generation`]
+    /// before the condition was judged) is still the kind's generation,
+    /// checked under the same internal lock [`AuthState::revoke_grant_tokens`]
+    /// advances it with; otherwise nothing is inserted and `None` is
+    /// returned (the issuing route answers `403` - the condition was closed
+    /// while this issuance was judging, and re-judging right after a close
+    /// has no point). This is what makes "persist the closed condition, then
+    /// revoke" sufficient for the application.
+    ///
+    /// Past `spec.max_sessions` outstanding tokens of the kind, the OLDEST is
+    /// revoked to make room - only tokens of this kind; real login sessions
+    /// and other kinds are never touched. Lifetime: `spec.policy`, or the
+    /// state's regular [`TokenPolicy`] (never the "remembered" one): an
+    /// expired grant is simply re-issued by the client's fallback, so an
+    /// anonymous LAN client never holds a 30-day token.
+    pub fn issue_grant_token(&self, spec: &GrantSpec, observed: GrantGeneration) -> Option<String> {
+        let token = Uuid::new_v4().to_string();
+        let now = self.inner.clock.now();
+        // Lock order: `grants` -> `tokens` (same as `revoke_grant_tokens`).
+        let mut grants = self.inner.grants.lock().expect("auth grant lock poisoned");
+        let queue = grants.entry(spec.kind.clone()).or_default();
+        if queue.generation != observed.0 {
+            return None;
+        }
+        let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
+        self.inner.sweep_expired(&mut tokens, now);
+        tokens.insert(
+            token.clone(),
+            TokenRecord {
+                identity: spec.identity.clone(),
+                issued_at: now,
+                last_used: now,
+                remembered: false,
+                grant: Some(spec.kind.clone()),
+                policy: spec.policy,
+                stamp: None,
+            },
+        );
+        queue.tokens.push_back(token.clone());
+        while queue.tokens.len() > spec.max_sessions.max(1) {
+            if let Some(oldest) = queue.tokens.pop_front() {
                 tokens.remove(&oldest);
             }
         }
-
-        token
+        Some(token)
     }
 
-    /// Revoke every outstanding public viewer token (閲覧公開 turned OFF,
-    /// Issue #294 review). Only synthetic public sessions are touched; real
-    /// login sessions are never revoked here. The `AuthState` outlives server
-    /// restarts (the app shares one across `server_apply`), so without this a
-    /// token minted while 閲覧公開 was ON would keep working after it is
-    /// switched OFF. Returns how many tokens were removed.
-    pub fn revoke_public_viewer_tokens(&self) -> usize {
-        let queued: Vec<String> = {
-            let mut q = self
-                .inner
-                .public_tokens
-                .write()
-                .expect("public viewer token lock poisoned");
-            q.drain(..).collect()
-        };
+    /// Revoke every outstanding token of `kind` and advance its generation
+    /// (ADR-0017 §2), under the one internal lock
+    /// [`AuthState::issue_grant_token`] checks that generation with. Only
+    /// that kind's tokens are touched; real login sessions and other kinds
+    /// are never revoked here. The `AuthState` outlives server restarts (the
+    /// app shares one across `server_apply`), so the side that closes a
+    /// kind's condition (viewer-public turned OFF, a commissioning lock-down)
+    /// must call this right after persisting the closed condition - in that
+    /// order. Returns how many tokens were removed (the caller may record it
+    /// as `revokedGrants` in its audit detail).
+    pub fn revoke_grant_tokens(&self, kind: &GrantKind) -> usize {
+        let mut grants = self.inner.grants.lock().expect("auth grant lock poisoned");
+        let queue = grants.entry(kind.clone()).or_default();
+        queue.generation += 1;
+        let queued: Vec<String> = queue.tokens.drain(..).collect();
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
         let before = tokens.len();
         for t in queued {
             tokens.remove(&t);
         }
-        // Defensive: also drop any public-flagged record the FIFO lost track of.
-        tokens.retain(|_, record| !record.public_viewer);
+        // Defensive: also drop any record of the kind the FIFO lost track of.
+        tokens.retain(|_, record| record.grant.as_ref() != Some(kind));
         before - tokens.len()
     }
 
     /// Shared implementation of [`AuthState::issue_token`]/
-    /// [`AuthState::issue_token_remembered`]/[`AuthState::login_rate_limited`].
+    /// [`AuthState::issue_token_remembered`]/[`AuthState::login_rate_limited`]
+    /// (account sessions; grants go through [`AuthState::issue_grant_token`]).
     ///
     /// Opportunistically sweeps already-expired tokens under the same write
     /// lock, so the map stays bounded without a background reaper. Each
     /// existing record is checked against whichever policy applies to IT
-    /// (its own `remembered` flag), not the policy of the token being
-    /// inserted.
+    /// (its own `remembered` flag / grant policy), not the policy of the
+    /// token being inserted.
     fn issue_token_with(
         &self,
         identity: Identity,
         remembered: bool,
-        public_viewer: bool,
         stamp: Option<SessionStamp>,
     ) -> String {
         let token = Uuid::new_v4().to_string();
         let now = self.inner.clock.now();
-        let token_policy = self.inner.token_policy;
-        let remembered_policy = self.inner.remembered_policy;
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
-        tokens.retain(|_, record| {
-            let policy = if record.remembered {
-                &remembered_policy
-            } else {
-                &token_policy
-            };
-            !record.is_expired(now, policy)
-        });
+        self.inner.sweep_expired(&mut tokens, now);
         tokens.insert(
             token.clone(),
             TokenRecord {
@@ -987,7 +1011,8 @@ impl AuthState {
                 issued_at: now,
                 last_used: now,
                 remembered,
-                public_viewer,
+                grant: None,
+                policy: None,
                 stamp,
             },
         );
@@ -1129,9 +1154,11 @@ impl AuthState {
         let Some(lookup) = self.session_lookup() else {
             return Ok(Some(session));
         };
-        if session.public_viewer {
-            // No account behind it; its fixed `viewer` identity cannot
-            // change (ADR-0012), so there is nothing to re-check.
+        if session.grant.is_some() {
+            // A grant session (ADR-0017): no account behind it, and its
+            // fixed identity cannot change, so there is nothing to re-check.
+            // It ends only through its token (expiry, `logout`,
+            // `revoke_grant_tokens`).
             return Ok(Some(session));
         }
         let Some(stamp) = session.stamp else {
@@ -1143,7 +1170,7 @@ impl AuthState {
                 self.refresh_identity(token, stamp, &account.identity);
                 Ok(Some(AuthenticatedSession {
                     identity: account.identity,
-                    public_viewer: false,
+                    grant: None,
                     stamp: Some(stamp),
                 }))
             }
@@ -1156,7 +1183,7 @@ impl AuthState {
                 Ok(match (rebound, account) {
                     (Some(rebound), Some(account)) => Some(AuthenticatedSession {
                         identity: account.identity,
-                        public_viewer: false,
+                        grant: None,
                         stamp: Some(rebound),
                     }),
                     _ => None,
@@ -1273,18 +1300,11 @@ impl AuthState {
     /// [`IdleWindow::Slide`] (expiry is enforced either way).
     fn session_for_with(&self, token: &str, idle: IdleWindow) -> Option<AuthenticatedSession> {
         let now = self.inner.clock.now();
-        let token_policy = self.inner.token_policy;
-        let remembered_policy = self.inner.remembered_policy;
         let mut tokens = self.inner.tokens.write().expect("auth token lock poisoned");
 
         let expired = {
             let record = tokens.get(token)?;
-            let policy = if record.remembered {
-                &remembered_policy
-            } else {
-                &token_policy
-            };
-            record.is_expired(now, policy)
+            record.is_expired(now, &self.inner.policy_for(record))
         };
 
         if expired {
@@ -1299,7 +1319,7 @@ impl AuthState {
             }
             Some(AuthenticatedSession {
                 identity: record.identity.clone(),
-                public_viewer: record.public_viewer,
+                grant: record.grant.clone(),
                 stamp: record.stamp,
             })
         }
@@ -1519,8 +1539,10 @@ fn max_option(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
 /// tests, which serves a router with no connect-info layer. axum 0.8's
 /// [`ConnectInfo`] is only a required extractor (there is no
 /// `Option<ConnectInfo<..>>`), so the login handler wraps it here rather than
-/// failing the whole request when the peer address is unavailable.
-struct MaybePeerAddr(Option<SocketAddr>);
+/// failing the whole request when the peer address is unavailable. Shared
+/// with the grant route and the status route ([`crate::grant`],
+/// [`crate::routes`]), which judge `require_loopback_peer` with it.
+pub(crate) struct MaybePeerAddr(pub(crate) Option<SocketAddr>);
 
 impl<S: Send + Sync> FromRequestParts<S> for MaybePeerAddr {
     type Rejection = std::convert::Infallible;
@@ -1690,7 +1712,7 @@ async fn check_handler(
 }
 
 /// `GET /api/auth/identity`: the [`AuthenticatedSession`] (serialized as
-/// `Identity & { publicViewer }`, #209 conventions §6) or `null`.
+/// `Identity & { kind }` - the grant kind or `"account"`, ADR-0017) or `null`.
 async fn identity_handler(
     State(auth): State<AuthState>,
     req: Request,
@@ -1713,7 +1735,8 @@ async fn identity_handler(
 ///   instead of its regular `token_policy` (see [`TokenPolicy::remembered_default`]).
 /// - `POST /api/auth/logout` — invalidates the bearer token on the request.
 /// - `GET /api/auth/check` — `bool`, whether the bearer token is valid.
-/// - `GET /api/auth/identity` — `(Identity & { publicViewer: bool }) | null`.
+/// - `GET /api/auth/identity` — `(Identity & { kind: string }) | null`
+///   (`kind` = the grant kind or `"account"`, ADR-0017).
 ///
 /// First-run account setup (`GET /api/auth/status`, `POST /api/auth/setup`)
 /// and `POST /api/auth/change-password` are NOT here: those need the app
@@ -2544,163 +2567,324 @@ mod tests {
         assert!(json["message"].as_str().unwrap().contains("ロック"));
     }
 
-    // --- Synthetic viewer sessions (LAN 閲覧公開, Issue #189) ---------------
+    // --- Grant sessions (credential-less issuance, ADR-0017) -----------------
+    //
+    // Every scenario runs for BOTH the viewer-public kind (the first grant,
+    // ADR-0012) and an app-defined kind, so a change to one path cannot
+    // regress the other (ADR-0017 帰結 "閲覧公開と試運転は同じコードを通る").
 
-    #[tokio::test]
-    async fn public_viewer_metadata_follows_token_lifetime_and_not_identity() {
-        let auth = frozen_auth(short_token_policy(), RateLimitPolicy::default());
-        let public = auth.issue_public_viewer_token();
-        let identity = auth.identity_for(&public).unwrap();
-        let regular = auth.issue_token(identity.clone());
-        let remembered = auth.issue_token_remembered(identity);
-        let router = auth_routes(auth.clone());
+    fn always_true() -> crate::grant::GrantCondition {
+        Arc::new(|| Box::pin(async { Ok(true) }))
+    }
 
-        // Fresh identity requests (including reload) must recover provenance,
-        // even when every Identity field matches a synthetic viewer exactly.
-        for _ in 0..2 {
-            for (token, expected) in [(&public, true), (&regular, false), (&remembered, false)] {
-                let response = router
-                    .clone()
-                    .oneshot(
-                        HttpRequest::get("/api/auth/identity")
-                            .header("Authorization", format!("Bearer {token}"))
-                            .body(Body::empty())
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(body_json(response).await["publicViewer"], expected);
-            }
-        }
-        auth.advance(Duration::from_secs(31));
-        let fresh = auth.issue_public_viewer_token();
-        auth.logout(&fresh);
-        for token in [&public, &regular, &fresh] {
-            let response = router
-                .clone()
-                .oneshot(
-                    HttpRequest::get("/api/auth/identity")
-                        .header("Authorization", format!("Bearer {token}"))
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert!(body_json(response).await.is_null());
-        }
-        assert!(!auth.session_for(&remembered).unwrap().public_viewer);
+    /// The viewer-public spec without a `SettingsService` (the condition is
+    /// not under test here; the token side is).
+    fn public_viewer_spec() -> GrantSpec {
+        GrantSpec::new(
+            GrantKind::public_viewer(),
+            Identity {
+                id: crate::grant::PUBLIC_VIEWER_ID.to_string(),
+                name: crate::grant::PUBLIC_VIEWER_ID.to_string(),
+                role: "viewer".to_string(),
+            },
+            always_true(),
+        )
+    }
+
+    /// An app-defined admin-equivalent kind (banto-hub's commissioning mode).
+    fn commissioning_spec() -> GrantSpec {
+        GrantSpec::new(
+            GrantKind::new("commissioning").unwrap(),
+            Identity {
+                id: "commissioning".to_string(),
+                name: "試運転".to_string(),
+                role: "admin".to_string(),
+            },
+            always_true(),
+        )
+    }
+
+    fn both_kinds() -> [GrantSpec; 2] {
+        [public_viewer_spec(), commissioning_spec()]
+    }
+
+    /// Issue without a race: read the generation, then insert.
+    fn issue(auth: &AuthState, spec: &GrantSpec) -> String {
+        auth.issue_grant_token(spec, auth.grant_generation(&spec.kind))
+            .expect("no revocation in between")
+    }
+
+    async fn identity_kind(router: &Router, token: &str) -> serde_json::Value {
+        let response = router
+            .clone()
+            .oneshot(
+                HttpRequest::get("/api/auth/identity")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        body_json(response).await
     }
 
     #[tokio::test]
-    async fn revoke_public_viewer_tokens_removes_only_public_sessions() {
+    async fn grant_kind_follows_token_lifetime_and_not_identity() {
+        for spec in both_kinds() {
+            let auth = frozen_auth(short_token_policy(), RateLimitPolicy::default());
+            let granted = issue(&auth, &spec);
+            let identity = auth.identity_for(&granted).unwrap();
+            // Account sessions with the very same identity fields.
+            let regular = auth.issue_token(identity.clone());
+            let remembered = auth.issue_token_remembered(identity);
+            let router = auth_routes(auth.clone());
+
+            // Fresh identity requests (including reload) must recover
+            // provenance from the token, never from the identity fields.
+            for _ in 0..2 {
+                for (token, expected) in [
+                    (&granted, spec.kind.as_str()),
+                    (&regular, "account"),
+                    (&remembered, "account"),
+                ] {
+                    let json = identity_kind(&router, token).await;
+                    assert_eq!(json["kind"], expected, "{}", spec.kind);
+                    assert!(json.get("publicViewer").is_none(), "v3.0.0 removed it");
+                }
+            }
+            auth.advance(Duration::from_secs(31));
+            let fresh = issue(&auth, &spec);
+            auth.logout(&fresh);
+            for token in [&granted, &regular, &fresh] {
+                assert!(identity_kind(&router, token).await.is_null());
+            }
+            assert_eq!(auth.session_for(&remembered).unwrap().grant, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_grant_tokens_removes_only_that_kind() {
         let auth = demo_auth();
-        let p1 = auth.issue_public_viewer_token();
-        let p2 = auth.issue_public_viewer_token();
+        let [pv, cm] = both_kinds();
+        let p1 = issue(&auth, &pv);
+        let p2 = issue(&auth, &pv);
+        let c1 = issue(&auth, &cm);
         let regular = auth.issue_token(Identity {
             id: "1".into(),
             name: "admin".into(),
             role: "admin".into(),
         });
-        assert_eq!(auth.revoke_public_viewer_tokens(), 2);
+
+        assert_eq!(auth.revoke_grant_tokens(&pv.kind), 2);
         assert!(!auth.verify(&p1));
         assert!(!auth.verify(&p2));
+        assert!(auth.verify(&c1), "another kind is untouched");
+        assert!(auth.verify(&regular), "a login session is untouched");
+        assert_eq!(auth.revoke_grant_tokens(&pv.kind), 0);
+        // Issuing afterwards works as usual (with the new generation).
+        assert!(auth.verify(&issue(&auth, &pv)));
+
+        assert_eq!(auth.revoke_grant_tokens(&cm.kind), 1);
+        assert!(!auth.verify(&c1));
         assert!(auth.verify(&regular));
-        assert_eq!(auth.revoke_public_viewer_tokens(), 0);
-        // Issuing afterwards works as usual.
-        assert!(auth.verify(&auth.issue_public_viewer_token()));
     }
 
     #[tokio::test]
-    async fn public_viewer_token_is_always_the_fixed_viewer_identity() {
-        let auth = demo_auth();
-        let token = auth.issue_public_viewer_token();
-
-        assert!(auth.verify(&token));
-        let identity = auth.identity_for(&token).expect("identity should exist");
-        assert_eq!(identity.id, PUBLIC_VIEWER_ID);
-        assert_eq!(identity.name, PUBLIC_VIEWER_ID);
-        assert_eq!(
-            identity.role, "viewer",
-            "there is no escalation path: the role is fixed (ADR-0012)"
-        );
-    }
-
-    #[tokio::test]
-    async fn public_viewer_tokens_are_not_remembered() {
-        // A public viewing session rides the regular TokenPolicy - the
-        // frontend gate re-issues transparently, so an anonymous LAN client
-        // never holds a 30-day token.
-        let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
-        let token = auth.issue_public_viewer_token();
-
-        auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
-        assert!(!auth.verify(&token));
-    }
-
-    #[tokio::test]
-    async fn public_viewer_issuance_past_the_cap_evicts_the_oldest() {
-        let auth = demo_auth();
-        let mut tokens = Vec::new();
-        for _ in 0..MAX_PUBLIC_VIEWER_SESSIONS {
-            tokens.push(auth.issue_public_viewer_token());
+    async fn grant_token_is_always_the_spec_identity() {
+        for spec in both_kinds() {
+            let auth = demo_auth();
+            let token = issue(&auth, &spec);
+            assert!(auth.verify(&token));
+            let session = auth.authenticate(&token).await.unwrap().unwrap();
+            assert_eq!(session.identity.id, spec.identity.id);
+            assert_eq!(session.identity.name, spec.identity.name);
+            assert_eq!(
+                session.identity.role, spec.identity.role,
+                "the role is the spec's, never the caller's (no escalation path)"
+            );
+            assert_eq!(session.grant, Some(spec.kind.clone()));
+            assert_eq!(session.stamp, None);
         }
-        assert!(
-            tokens.iter().all(|token| auth.verify(token)),
-            "every token up to the cap stays valid"
-        );
-
-        // One past the cap: issuance still succeeds (a reloading wall display
-        // must never be refused), and the FIRST token is the one revoked.
-        let overflow = auth.issue_public_viewer_token();
-        assert!(auth.verify(&overflow));
-        assert!(
-            !auth.verify(&tokens[0]),
-            "the oldest public token should have been evicted"
-        );
-        assert!(
-            auth.verify(&tokens[1]),
-            "only the oldest is evicted, not the whole pool"
-        );
     }
 
     #[tokio::test]
-    async fn public_viewer_eviction_never_touches_a_real_login_session() {
-        let auth = demo_auth();
-        let admin_token = auth.login("admin", "admin").await.expect("admin login");
-        let same_identity_token = auth.issue_token(Identity {
-            id: PUBLIC_VIEWER_ID.to_string(),
-            name: PUBLIC_VIEWER_ID.to_string(),
-            role: "viewer".to_string(),
-        });
+    async fn grant_tokens_are_not_remembered_and_may_carry_their_own_policy() {
+        for mut spec in both_kinds() {
+            // Default: the regular TokenPolicy (the client's fallback re-issues
+            // transparently, so an anonymous LAN client never holds a 30-day token).
+            let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+            let token = issue(&auth, &spec);
+            auth.advance(TokenPolicy::default().absolute_ttl + Duration::from_secs(60));
+            assert!(!auth.verify(&token), "{}", spec.kind);
 
-        for _ in 0..(MAX_PUBLIC_VIEWER_SESSIONS + 10) {
-            auth.issue_public_viewer_token();
+            // A spec policy overrides it (shorter here; the record decides,
+            // not the state-wide policy).
+            spec.policy = Some(TokenPolicy {
+                absolute_ttl: Duration::from_secs(100),
+                idle_ttl: Duration::from_secs(10),
+            });
+            let auth = frozen_auth(TokenPolicy::default(), RateLimitPolicy::default());
+            let token = issue(&auth, &spec);
+            auth.advance(Duration::from_secs(9));
+            assert!(auth.verify(&token));
+            auth.advance(Duration::from_secs(11));
+            assert!(!auth.verify(&token), "{}: idle 10s lapsed", spec.kind);
         }
-
-        assert!(
-            auth.verify(&admin_token),
-            "the cap must only ever evict public viewer tokens"
-        );
-        assert!(
-            !auth
-                .session_for(&same_identity_token)
-                .unwrap()
-                .public_viewer
-        );
     }
 
     #[tokio::test]
-    async fn logout_of_a_public_viewer_token_revokes_only_that_token() {
+    async fn grant_issuance_past_the_cap_evicts_the_oldest_of_that_kind() {
+        for mut spec in both_kinds() {
+            spec.max_sessions = 5;
+            let auth = demo_auth();
+            let other = commissioning_spec();
+            let other = if other.kind == spec.kind {
+                public_viewer_spec()
+            } else {
+                other
+            };
+            let bystander = issue(&auth, &other);
+            let tokens: Vec<_> = (0..5).map(|_| issue(&auth, &spec)).collect();
+            assert!(tokens.iter().all(|token| auth.verify(token)));
+
+            // One past the cap: issuance still succeeds (a reloading wall
+            // display must never be refused), and the FIRST token goes.
+            let overflow = issue(&auth, &spec);
+            assert!(auth.verify(&overflow));
+            assert!(
+                !auth.verify(&tokens[0]),
+                "{}: the oldest is evicted",
+                spec.kind
+            );
+            assert!(auth.verify(&tokens[1]), "only the oldest, not the pool");
+            assert!(auth.verify(&bystander), "another kind's token stays");
+        }
+    }
+
+    #[tokio::test]
+    async fn grant_eviction_never_touches_a_real_login_session() {
+        for mut spec in both_kinds() {
+            spec.max_sessions = 3;
+            let auth = demo_auth();
+            let admin_token = auth.login("admin", "admin").await.expect("admin login");
+            let same_identity_token = auth.issue_token(spec.identity.clone());
+            for _ in 0..10 {
+                issue(&auth, &spec);
+            }
+            assert!(auth.verify(&admin_token), "the cap only evicts grants");
+            assert!(auth.verify(&same_identity_token));
+            assert_eq!(auth.session_for(&same_identity_token).unwrap().grant, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn logout_of_a_grant_token_revokes_only_that_token() {
         // One wall display signing out must not blank the others (conventions
-        // §6) - `logout` is the plain per-token revoke, nothing public-specific.
+        // §6) - `logout` is the plain per-token revoke, nothing grant-specific.
+        for spec in both_kinds() {
+            let auth = demo_auth();
+            let first = issue(&auth, &spec);
+            let second = issue(&auth, &spec);
+            auth.logout(&first);
+            assert!(!auth.verify(&first));
+            assert!(auth.verify(&second));
+        }
+    }
+
+    #[tokio::test]
+    async fn grant_generation_is_per_kind_and_a_stale_one_is_refused() {
         let auth = demo_auth();
-        let first = auth.issue_public_viewer_token();
-        let second = auth.issue_public_viewer_token();
+        let [pv, cm] = both_kinds();
+        let g0 = auth.grant_generation(&pv.kind);
+        assert_eq!(
+            auth.grant_generation(&pv.kind),
+            g0,
+            "reading does not advance it"
+        );
+        assert!(auth.issue_grant_token(&pv, g0).is_some());
+        auth.revoke_grant_tokens(&pv.kind);
+        let g1 = auth.grant_generation(&pv.kind);
+        assert_ne!(g0, g1);
+        assert!(auth.issue_grant_token(&pv, g0).is_none(), "stale");
+        assert!(auth.issue_grant_token(&pv, g1).is_some());
+        // Another kind's generation is independent.
+        assert!(auth
+            .issue_grant_token(&cm, auth.grant_generation(&cm.kind))
+            .is_some());
+        auth.revoke_grant_tokens(&cm.kind);
+        assert_eq!(auth.grant_generation(&pv.kind), g1);
+    }
 
-        auth.logout(&first);
+    /// ADR-0017 §2, the mandatory race: an issuance that already judged
+    /// `enabled() == true` is parked right before `issue_grant_token`; a
+    /// revocation (the condition being closed) completes meanwhile; the
+    /// issuance resumes and must NOT insert - no valid token of the kind
+    /// may exist afterwards. The pause is a real suspension point: the
+    /// issuing task awaits a oneshot between its judgment (the generation
+    /// read + the condition) and the insert, and the test runs the
+    /// revocation to completion in another task while it waits.
+    #[tokio::test]
+    async fn an_issuance_parked_before_the_insert_loses_to_a_revocation_that_completed_meanwhile() {
+        for spec in both_kinds() {
+            let auth = demo_auth();
+            let kind = spec.kind.clone();
+            let (judged_tx, judged_rx) = tokio::sync::oneshot::channel::<()>();
+            let (resume_tx, resume_rx) = tokio::sync::oneshot::channel::<()>();
 
-        assert!(!auth.verify(&first));
-        assert!(auth.verify(&second));
+            let issuing = tokio::spawn({
+                let auth = auth.clone();
+                let spec = spec.clone();
+                async move {
+                    // 1. the judgment: generation first, then the condition.
+                    let observed = auth.grant_generation(&spec.kind);
+                    let allowed = (spec.enabled)().await.unwrap();
+                    assert!(allowed);
+                    // 2. parked right before the insert.
+                    judged_tx.send(()).unwrap();
+                    resume_rx.await.unwrap();
+                    // 3. resumed after the revocation.
+                    auth.issue_grant_token(&spec, observed)
+                }
+            });
+            judged_rx.await.unwrap();
+
+            // The lock-down, in another task, runs to completion while the
+            // issuance is parked (the app persisted its flag first).
+            let revoked = tokio::spawn({
+                let auth = auth.clone();
+                let kind = kind.clone();
+                async move { auth.revoke_grant_tokens(&kind) }
+            })
+            .await
+            .unwrap();
+            assert_eq!(revoked, 0, "{kind}: nothing was issued yet");
+
+            resume_tx.send(()).unwrap();
+            assert!(
+                issuing.await.unwrap().is_none(),
+                "{kind}: the parked issuance must be refused"
+            );
+            assert_eq!(auth.session_count(), 0, "{kind}: no valid token exists");
+            assert!(
+                !auth
+                    .inner
+                    .tokens
+                    .read()
+                    .unwrap()
+                    .values()
+                    .any(|record| record.grant.is_some()),
+                "{kind}: no grant record at all"
+            );
+
+            // The same race with a token already outstanding: that one is
+            // revoked, the parked one is refused, and nothing survives.
+            let earlier = issue(&auth, &spec);
+            let observed = auth.grant_generation(&kind);
+            assert_eq!(auth.revoke_grant_tokens(&kind), 1);
+            assert!(auth.issue_grant_token(&spec, observed).is_none());
+            assert!(!auth.verify(&earlier));
+            assert_eq!(auth.session_count(), 0);
+        }
     }
 
     #[test]
@@ -3116,13 +3300,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_viewer_sessions_are_not_looked_up() {
-        let store = FakeStore::default();
-        let auth = store.auth();
-        let token = auth.issue_public_viewer_token();
-        let session = auth.authenticate(&token).await.unwrap().unwrap();
-        assert!(session.public_viewer);
-        assert_eq!(store.lookups.load(Ordering::SeqCst), 0);
+    async fn grant_sessions_are_not_looked_up() {
+        for spec in both_kinds() {
+            let store = FakeStore::default();
+            let auth = store.auth();
+            let token = issue(&auth, &spec);
+            let session = auth.authenticate(&token).await.unwrap().unwrap();
+            assert_eq!(session.grant, Some(spec.kind.clone()));
+            assert_eq!(store.lookups.load(Ordering::SeqCst), 0);
+            // ...and the token side still ends it: a revocation is a 401 on
+            // the next request, with no lookup either.
+            auth.revoke_grant_tokens(&spec.kind);
+            assert!(auth.authenticate(&token).await.unwrap().is_none());
+            assert_eq!(store.lookups.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[tokio::test]
@@ -3206,7 +3397,7 @@ mod tests {
         )
         .await;
         assert_eq!(identity["id"], "alice");
-        assert_eq!(identity["publicViewer"], false);
+        assert_eq!(identity["kind"], "account");
         assert!(
             identity.get("stamp").is_none(),
             "the account binding is internal: {identity}"

@@ -159,13 +159,28 @@ async fn users_reset_password(
     Ok(Json(ResetPasswordResponse { success: true }))
 }
 
+/// `DELETE /api/users/{id}`. The self-deletion guard needs the caller's own
+/// row id ([`UsersService::delete_user`]); a grant session (ADR-0017 §3,
+/// e.g. a derived app's admin-equivalent commissioning grant) has a fixed
+/// identity and no row, so for it - and ONLY for it, judged by the
+/// [`AuthenticatedSession`] `require_auth` validated for this request, never
+/// by the identity's name - no acting id is passed. An account session whose
+/// row cannot be resolved stays `Unauthorized` as before. The `admin` floor
+/// (`require_role_at_least`) and "the last admin cannot be deleted" apply to
+/// a grant session unchanged.
 async fn users_delete(
     State(state): State<UsersAdminState>,
+    session: Option<axum::Extension<AuthenticatedSession>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let acting = acting_user(&headers, &state.auth, &state.users).await?;
-    state.users.delete_user(id, acting.id).await?;
+    let is_grant = session.is_some_and(|axum::Extension(session)| session.grant.is_some());
+    let acting_id = if is_grant {
+        None
+    } else {
+        Some(acting_user(&headers, &state.auth, &state.users).await?.id)
+    };
+    state.users.delete_user(id, acting_id).await?;
     record_write(
         &state.audit,
         &state.auth,
