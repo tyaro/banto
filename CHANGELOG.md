@@ -22,6 +22,43 @@
 
 ## [Unreleased]
 
+**v3.0.0（予定）— 資格情報なしのセッション発行を grant に一本化（ADR-0017）。版の種類: major（破壊的変更。閲覧公開専用の API・URL・フィールドと `SessionController.adopt()`/`end()` を削除し、互換用のラッパ・エイリアスは残さない）。
+派生アプリへの影響: 経路 A（`@banto/admin-core`・`banto-server`・`banto-admin-services`）の追従と、それを呼ぶ経路 B（コピーした `rest.rs`・保護レイアウト・ログイン画面・e2e）の書き換えがセット。A だけ上げると型エラーになる。DB の移行は無い。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v2.1.1` → `v3.0.0`（npm と Rust を同じタグに）。`banto-server`（grant の型・ルーター・`AuthState`/`AuthenticatedSession` の変更）、`banto-admin-services`（`delete_user` の引数・`has_admin`）、`@banto/admin-core`（`grantFallback`・`enterGrant`・`Identity.kind`、`adopt()`/`end()` の削除）。他は版数のみ                                    |
+| B. コピーしたテンプレート        | あり | `apps/admin-template/core/src/rest/mod.rs`（`GrantRegistry` の組み立てと `extra_auth_router` の新シグネチャ）、`src-tauri/src/lib.rs`（`revoke_grant_tokens`・`delete_user`）、`src/routes/(app)/+layout.ts`・`src/routes/login/+page.svelte`・`src/lib/session.svelte.ts`、`e2e/`、`scripts/verify-architecture.mjs`。手本は本 PR の同名ファイル |
+| C. DB・設定・配布資産            | なし | マイグレーション・設定キーの追加は無い（`server.viewer_public` は従来どおり閲覧公開の条件として使う）                                                                                                                                                                                                                                             |
+
+### A. 共通パッケージ・クレート — 削除した公開 API と移行先（ADR-0017「削除するもの」）
+
+| 削除                                                                                    | 置き換え                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/auth/public-viewer`                                                          | `POST /api/auth/grant/publicViewer`（`grant_router`。未登録の kind は 404、条件 false・peer 不可・世代不一致は 403）                                                                            |
+| `GET /api/auth/status` の `viewerPublic`                                                | `grants: { publicViewer: bool, … }`（`GrantRegistry::availability(peer)`。status と発行で同じ判定）                                                                                             |
+| `GET /api/auth/identity` の `publicViewer`                                              | `kind`（`"publicViewer"` / アプリの kind / `"account"`）                                                                                                                                        |
+| `AuthenticatedSession.public_viewer: bool`                                              | `AuthenticatedSession.grant: Option<GrantKind>`                                                                                                                                                 |
+| `AuthState::issue_public_viewer_token()` / `revoke_public_viewer_tokens()`              | `grant_generation(&kind)` → 判定 → `issue_grant_token(&GrantSpec, GrantGeneration) -> Option<String>` / `revoke_grant_tokens(&GrantKind) -> usize`（世代で直列化。「条件の保存 → revoke」の順） |
+| `MAX_PUBLIC_VIEWER_SESSIONS`                                                            | `GrantSpec.max_sessions`（既定 `DEFAULT_GRANT_MAX_SESSIONS` = 256、kind ごとの FIFO）                                                                                                           |
+| `extra_auth_router(users, auth, audit, allow_setup, settings, extras)`                  | `extra_auth_router(users, auth, audit, allow_setup, Arc<GrantRegistry>, extras)`（`grant_router` を内包。テンプレートは `GrantSpec::public_viewer(settings)` を登録）                           |
+| `UsersService::delete_user(id, acting_user_id: i64)`                                    | `delete_user(id, acting_user_id: Option<i64>)`（`None` は検証済み grant セッションだけ。最後の admin 禁止は維持）。追加: `UsersService::has_admin()`                                            |
+| `publicViewerFallback(controller, provider, ticket)` / `DEFAULT_PUBLIC_VIEWER_RETRIES`  | `grantFallback(controller, provider, ticket, { kind: 'publicViewer', available?, maxRetries? })` / `DEFAULT_GRANT_RETRIES`                                                                      |
+| `AuthProvider.enterPublicViewer(options?)` / `status().viewerPublic`                    | `enterGrant(kind, options?)` / `status().grants`（HTTP provider は無ければ `{}`）                                                                                                               |
+| `Identity.publicViewer` / TS `PUBLIC_VIEWER_ID`                                         | `Identity.kind`（発行元の印。`kindOfResolvedAuth` は `identity.kind` を最優先）                                                                                                                 |
+| `sessionOwnerKey` の `public-viewer` と adopt の `${kind}:${id}`                        | grant kind 単独のキー（`publicViewer`・`commissioning`。保存状態の owner が 1 回変わる）                                                                                                        |
+| `SessionController.adopt()` / `end()`、epoch だけの `SessionTicket`、「adopt 中」の分岐 | `grantFallback` + provider の答え（S-42 の経路）。`ticket()` は常に `{ epoch, revision }`                                                                                                       |
+| `verify-architecture` rule 8 `REST_ONLY` の `POST /api/auth/public-viewer`              | `POST /api/auth/grant/{kind}`                                                                                                                                                                   |
+
+- 追加（Rust、`banto-server`）: `grant` モジュール — `GrantKind`（`[A-Za-z][A-Za-z0-9_-]{0,31}`、`account`/`local` は予約語）・`GrantSpec`（固定 identity・要求ごとの条件・`max_sessions`・`policy`・`require_loopback_peer`）・`GrantRegistry`（登録時に予約語・重複・`max_sessions == 0` を拒否、`availability(peer)`）・`grant_router`・`GrantGeneration`・`is_loopback_peer`。grant セッションはアカウント照合（ADR-0014）を飛ばし、`change-password` を拒否し、SSE の再検証は `revoke_grant_tokens` の後の次の再検証でストリームを閉じる。peer 不明は拒否（status では `false`、発行では 403）。IPv4 射影 IPv6 の loopback も loopback に数える。
+- 追加（TS、`@banto/admin-core`）: `grantFallback`・`DEFAULT_GRANT_RETRIES`・`GrantFallbackOptions`・`GrantStatus`、`AuthProvider.enterGrant`。
+- 競合テスト（ADR の必須項目）: `auth.rs` の `an_issuance_parked_before_the_insert_loses_to_a_revocation_that_completed_meanwhile`（閲覧公開・任意 kind）、`grant.rs` の `an_issuance_parked_between_the_judgment_and_the_insert_loses_to_a_revocation`（実ルート）。
+- 派生アプリの移行手順: [docs/upgrading.md 例 3](docs/upgrading.md#例-3-v21x--v300grant-への一本化a-と-b-がセット破壊的変更)（経路 A/B/C の組み立て）、[ADR-0017「v3.0.0 への移行手順」](docs/adr/0017-credential-less-grant.md)（banto-hub・chronogazer の書き換え箇所）。試運転を grant にする派生アプリは `require_loopback_peer: true`・小さい `max_sessions` を既定にし、同一ホストのリバースプロキシ配下の運用条件（ADR-0017 §6 の 2 点）を導入手順に書く。
+
+### セキュリティ（v3.0.0）
+
+- あり。認証なしで通る要求が `POST /api/auth/grant/{kind}` の 1 本に縮み、派生アプリの独自の認証迂回を無くせる（ADR-0017）。影響する利用形態: LAN 公開・閲覧公開・派生アプリの試運転。修正は A（`banto-server`）と B（コピーした `rest.rs`）の両方。admin 相当の grant を `require_loopback_peer: false` で LAN bind に載せない（注意点 2）。リバースプロキシ配下では peer が常にプロキシなので、外部公開の前にロックダウンし、`/api/auth/grant/{kind}` をプロキシから外へ出さない（README「リバースプロキシでのTLS終端」）。
+
 - docs(adr): ADR-0017「資格情報なしのセッション発行は grant に一本化し、閲覧公開を 1 種類目・派生アプリの試運転を 2 種類目にする」を追加（2026-10-02 オーナー決定、2026-10-03 のレビュー #313 で細目を決定し、後方互換を捨てて **v3.0.0（major）** で一本化する形に改訂。実装は v3.0.0 の PR、本 PR は文書のみ）。閲覧公開専用の API・URL・フィールド（`/api/auth/public-viewer`、`viewerPublic`、`identity.publicViewer`、`issue_public_viewer_token` など）と `SessionController.adopt()`/`end()` を v3.0.0 で削除する予定と移行手順を ADR に記載、session-controller-design.md §4.7・§6.2・I-13・I-21 と viewer-public-plan.md に注記。
 
 ## [2.1.1] - 2026-10-02

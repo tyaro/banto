@@ -2,7 +2,7 @@
 
 > English: [0017-credential-less-grant.en.md](0017-credential-less-grant.en.md)
 
-- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。同 PR の 2 回目のレビュー（`0df014d` 対象、3 件）で発行と失効の直列化の契約・#431 の停止例外の保持・管理 WebSocket の接続を追記。実装は v3.0.0 の PR）
+- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。同 PR の 2 回目のレビュー（`0df014d` 対象、3 件）で発行と失効の直列化の契約・#431 の停止例外の保持・管理 WebSocket の接続を追記。**実装: v3.0.0 の実装 PR（本 PR。banto 側の決定 §1〜§4 と移行手順の admin-template の項を実装、派生アプリの移行は tyaro/banto-industrial 側の PR）**）
 - 日付: 2026-10-02（改訂 2026-10-03）
 - 関連: [ADR-0012](0012-lan-public-viewer-synthetic-session.md)（閲覧公開 = viewer 固定の合成セッション。本 ADR はこれを一般化する。方式の判断は生きているので supersede はしない）/
   [ADR-0003](0003-tls-via-reverse-proxy.md)（同一ホストのリバースプロキシ。決定 §6 の前提）/

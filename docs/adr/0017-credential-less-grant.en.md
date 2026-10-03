@@ -2,7 +2,7 @@
 
 > 日本語: [0017-credential-less-grant.md](0017-credential-less-grant.md)
 
-- Status: Accepted (owner decision 2026-10-02; the owner's review of 2026-10-03 (tyaro/banto#313, in favour of the generalization) settled six details, and a further decision the same day **dropped backward compatibility in favour of a single API in v3.0.0 (major)**; the second review of the same PR (against `0df014d`, three items) added the issuance/revocation serialization contract, the retention of #431's stop exception and the admin WebSocket wiring; implementation in the v3.0.0 PR)
+- Status: Accepted, implemented in the v3.0.0 PR (banto side: decisions §1-§4 and the admin-template items of the migration guide; the derived apps migrate in tyaro/banto-industrial) (owner decision 2026-10-02; the owner's review of 2026-10-03 (tyaro/banto#313, in favour of the generalization) settled six details, and a further decision the same day **dropped backward compatibility in favour of a single API in v3.0.0 (major)**; the second review of the same PR (against `0df014d`, three items) added the issuance/revocation serialization contract, the retention of #431's stop exception and the admin WebSocket wiring; implementation in the v3.0.0 PR)
 - Date: 2026-10-02 (revised 2026-10-03)
 - Related: [ADR-0012](0012-lan-public-viewer-synthetic-session.en.md) (viewer-public = a viewer-only synthetic session; this ADR generalizes it; the mechanism decision stands, so it is not superseded) /
   [ADR-0003](0003-tls-via-reverse-proxy.en.md) (same-host reverse proxy; the premise of decision §6) /

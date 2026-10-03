@@ -54,7 +54,7 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
   今の所有者にしか復元されない。セッションの確定は SessionController（v2.0.0、
   tyaro/banto#260・ADR-0016）が 1 か所で行い、前提の配線はテンプレートに入っている:
   `(app)/+layout.ts` の `load` が `resolveSettled(getSessionController())` で確認し
-  （`none` なら `publicViewerFallback`）、確認できた generation を返す／
+  （`none` なら `grantFallback`）、確認できた generation を返す／
   `(app)/+layout.svelte` が世代の変化で再 load してページを作り直す（配線①）／
   `$lib/session.svelte.ts` の `sessionStore` は `controller.snapshot` からの `$derived`／
   ログアウトは `logout()` の後に `resolveSettled()` で確定する（`$lib/banto/logout.svelte.ts`）。

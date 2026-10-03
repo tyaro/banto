@@ -118,7 +118,7 @@ LANブラウザ側の認証無効化。
 閲覧公開軸の 2 軸に分けた（[docs/viewer-public-plan.md](viewer-public-plan.md)、
 [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)）。
 `server.viewerPublic` を ON にすると LAN クライアントは
-`POST /api/auth/public-viewer` で **`viewer` 固定の合成セッション**を得て
+`POST /api/auth/grant/publicViewer`（v3.0.0 で grant に一本化、[ADR-0017](adr/0017-credential-less-grant.md)）で **`viewer` 固定の合成セッション**を得て
 ログイン無しで閲覧でき、上記の「認証無効 + LAN 有効」の排他は閲覧公開 ON の
 ときだけ緩む。LAN からの無認証**書き込み**は引き続き不可（2026-07-08 決定の
 意図を維持）。
