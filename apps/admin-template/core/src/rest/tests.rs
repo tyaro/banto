@@ -2937,19 +2937,21 @@ async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_a
 // section appended after it - the 閲覧公開 suite below was the first casualty).
 // Keep any new section strictly outside the pair.
 
-// --- Synthetic viewer sessions (LAN 閲覧公開, Issue #189) ------------------
+// --- Grant sessions (credential-less issuance, ADR-0017) -------------------
 //
-// `docs/viewer-public-plan.md` §5 / ADR-0012. The security property under
-// test is that `POST /api/auth/public-viewer` is the ONLY thing the new
-// setting unlocks: the token it hands out is an ordinary `viewer` session, so
-// every existing guard (`require_auth`, `RoleGuard`, the audit trail) applies
-// to it unchanged, and there is no path from it to a write.
+// Viewer-public (`docs/viewer-public-plan.md` §5 / ADR-0012) is the first
+// grant kind; a derived app's commissioning mode is the second. The security
+// property under test is that `POST /api/auth/grant/{kind}` is the ONLY thing
+// a kind's condition unlocks: the token it hands out is an ordinary session
+// of the spec's fixed identity, so every existing guard (`require_auth`,
+// `RoleGuard`, the audit trail) applies to it unchanged, and there is no path
+// from a viewer grant to a write.
 
 /// Router + the service handles the 閲覧公開 tests need to set up and assert:
-/// `SettingsService` to flip `server.viewer_public` (the routes re-read it
-/// live, so this works after the router is already built), `AuditLogService`
-/// to assert on `denied` entries without needing an admin token, and
-/// `UsersService` to prove no `public` account row is ever created.
+/// `SettingsService` to flip `server.viewer_public` (the grant condition
+/// re-reads it live, so this works after the router is already built),
+/// `AuditLogService` to assert on `denied` entries without needing an admin
+/// token, and `UsersService` to prove no `public` account row is ever created.
 ///
 /// `server.enabled` stays `false` - this router is driven through
 /// `tower::oneshot`, never an actual socket, and `set_server_config`'s
@@ -3005,12 +3007,35 @@ fn post_empty(path: &str) -> HttpRequest<Body> {
         .unwrap()
 }
 
-/// Mint a public viewing session through the real route, asserting the wire
+/// `post_empty` with a known peer (`ConnectInfo`, as `BoundServer::serve`
+/// supplies it; `tower::oneshot` alone has none).
+fn post_empty_from(path: &str, peer: std::net::SocketAddr) -> HttpRequest<Body> {
+    let mut req = post_empty(path);
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
+}
+
+fn get_from(path: &str, peer: std::net::SocketAddr) -> HttpRequest<Body> {
+    let mut req = get(path);
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    req
+}
+
+const LOOPBACK_PEER: std::net::SocketAddr =
+    std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 51000);
+const LAN_PEER: std::net::SocketAddr = std::net::SocketAddr::new(
+    std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 10, 20)),
+    51000,
+);
+
+/// Mint a viewer-public grant through the real route, asserting the wire
 /// shape on the way (`{success:true, token}`).
 async fn public_viewer_token(router: &Router) -> String {
     let response = router
         .clone()
-        .oneshot(post_empty("/api/auth/public-viewer"))
+        .oneshot(post_empty("/api/auth/grant/publicViewer"))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -3020,11 +3045,11 @@ async fn public_viewer_token(router: &Router) -> String {
 }
 
 #[tokio::test]
-async fn public_viewer_is_forbidden_while_viewer_public_is_off() {
+async fn public_viewer_grant_is_forbidden_while_viewer_public_is_off() {
     let (router, _settings, _audit, _users) = router_with_viewer_public(false).await;
 
     let response = router
-        .oneshot(post_empty("/api/auth/public-viewer"))
+        .oneshot(post_empty("/api/auth/grant/publicViewer"))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -3032,22 +3057,61 @@ async fn public_viewer_is_forbidden_while_viewer_public_is_off() {
 }
 
 #[tokio::test]
-async fn public_viewer_issues_a_token_when_viewer_public_is_on() {
+async fn public_viewer_grant_issues_a_token_when_viewer_public_is_on() {
     let (router, _settings, _audit, _users) = router_with_viewer_public(true).await;
     let token = public_viewer_token(&router).await;
     assert!(!token.is_empty());
 }
 
 #[tokio::test]
+async fn grant_route_requires_the_client_header_and_knows_only_registered_kinds() {
+    let (router, _settings, _audit, _users) = router_with_viewer_public(true).await;
+
+    // CSRF header (`banto_server::csrf`), like every `/api/*` route.
+    let bare = router
+        .clone()
+        .oneshot(
+            HttpRequest::post("/api/auth/grant/publicViewer")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bare.status(), StatusCode::FORBIDDEN);
+
+    // Only the registered kind exists: an app kind the template does not
+    // register, a reserved session kind and a malformed identifier are 404.
+    for kind in ["commissioning", "account", "local", "public-viewer"] {
+        let response = router
+            .clone()
+            .oneshot(post_empty(&format!("/api/auth/grant/{kind}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{kind}");
+        assert_eq!(body_json(response).await["kind"], "not_found", "{kind}");
+    }
+    // The old viewer-public route is gone (v3.0.0): nothing is issued there.
+    let old = router
+        .oneshot(post_empty("/api/auth/public-viewer"))
+        .await
+        .unwrap();
+    assert!(
+        !old.status().is_success(),
+        "the pre-v3 route must not issue anything: {}",
+        old.status()
+    );
+}
+
+#[tokio::test]
 async fn public_viewer_gate_follows_the_setting_without_a_restart() {
-    // The flag is read from `SettingsService` per request (not captured at
-    // router-build time), so flipping it in the settings screen takes effect
-    // immediately on an already-running server.
+    // The flag is read from `SettingsService` per request (the grant's
+    // condition, not captured at router-build time), so flipping it in the
+    // settings screen takes effect immediately on an already-running server.
     let (router, settings, _audit, _users) = router_with_viewer_public(false).await;
     assert_eq!(
         router
             .clone()
-            .oneshot(post_empty("/api/auth/public-viewer"))
+            .oneshot(post_empty("/api/auth/grant/publicViewer"))
             .await
             .unwrap()
             .status(),
@@ -3066,7 +3130,7 @@ async fn public_viewer_gate_follows_the_setting_without_a_restart() {
 }
 
 #[tokio::test]
-async fn public_viewer_token_identifies_as_public_viewer_and_passes_check() {
+async fn public_viewer_token_identifies_as_the_public_viewer_kind_and_passes_check() {
     let (router, _settings, _audit, _users) = router_with_viewer_public(true).await;
     let token = public_viewer_token(&router).await;
 
@@ -3079,6 +3143,8 @@ async fn public_viewer_token_identifies_as_public_viewer_and_passes_check() {
     let identity = body_json(identity_response).await;
     assert_eq!(identity["id"], "public");
     assert_eq!(identity["role"], "viewer");
+    assert_eq!(identity["kind"], "publicViewer");
+    assert!(identity.get("publicViewer").is_none(), "removed in v3.0.0");
 
     let check_response = router
         .oneshot(get_auth("/api/auth/check", &token))
@@ -3120,7 +3186,7 @@ async fn public_viewer_token_can_read_items_but_not_write_them() {
     assert_eq!(body_json(create_response).await["kind"], "forbidden");
 
     // ...and the denial is audited with actor `public` (spec M14 / ADR-0012:
-    // issuance is not audited, but what a public session TRIES to do is).
+    // issuance is not audited, but what a grant session TRIES to do is).
     let rows = audit.list(ListParams::default()).await.unwrap().rows;
     let denial = rows
         .iter()
@@ -3134,7 +3200,7 @@ async fn public_viewer_token_can_read_items_but_not_write_them() {
     // Issuance itself left no `login` entry behind.
     assert!(
         !rows.iter().any(|row| row.action == "login"),
-        "minting a public viewing session must not be audited, got {rows:?}"
+        "minting a grant session must not be audited, got {rows:?}"
     );
 }
 // [scaffold:items] end
@@ -3158,7 +3224,7 @@ async fn public_viewer_token_cannot_change_a_password_or_create_an_account() {
     assert!(users.get_by_username("public").await.unwrap().is_none());
     assert!(
         !users.is_initialized().await.unwrap(),
-        "a public viewing session must never count as a provisioned install"
+        "a grant session must never count as a provisioned install"
     );
 }
 
@@ -3189,7 +3255,8 @@ async fn real_public_accounts_keep_identity_and_password_ownership() {
         let synthetic = public_viewer_token(&router).await;
 
         for _ in 0..2 {
-            for (token, expected_public) in [(real, false), (synthetic.as_str(), true)] {
+            for (token, expected_kind) in [(real, "account"), (synthetic.as_str(), "publicViewer")]
+            {
                 let response = router
                     .clone()
                     .oneshot(get_auth("/api/auth/identity", token))
@@ -3199,13 +3266,17 @@ async fn real_public_accounts_keep_identity_and_password_ownership() {
                 let identity = body_json(response).await;
                 assert_eq!(identity["id"], "public");
                 assert_eq!(identity["name"], "public");
-                assert_eq!(identity["publicViewer"], expected_public);
-                let expected_role = if expected_public { Role::Viewer } else { role };
+                assert_eq!(identity["kind"], expected_kind);
+                let expected_role = if expected_kind == "publicViewer" {
+                    Role::Viewer
+                } else {
+                    role
+                };
                 assert_eq!(identity["role"], expected_role.as_str());
             }
         }
 
-        // Even knowing the real account password cannot make a synthetic
+        // Even knowing the real account password cannot make a grant
         // session its owner. Denied audit must carry no secrets or row id.
         let denied = router
             .clone()
@@ -3273,20 +3344,48 @@ async fn setup_public_account_returns_a_regular_session_identity() {
     let identity = body_json(identity).await;
     assert_eq!(identity["id"], "public");
     assert_eq!(identity["role"], "admin");
-    assert_eq!(identity["publicViewer"], false);
+    assert_eq!(identity["kind"], "account");
 }
 
 #[tokio::test]
-async fn auth_status_reports_viewer_public_both_ways() {
+async fn auth_status_reports_grants_both_ways_and_agrees_with_issuance() {
     let (off_router, _s, _a, _u) = router_with_viewer_public(false).await;
-    let off = off_router.oneshot(get("/api/auth/status")).await.unwrap();
-    assert_eq!(body_json(off).await["viewerPublic"], false);
+    let off = body_json(
+        off_router
+            .clone()
+            .oneshot(get("/api/auth/status"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(off["grants"]["publicViewer"], false);
+    assert!(off.get("viewerPublic").is_none(), "removed in v3.0.0");
+    assert_eq!(
+        off_router
+            .oneshot(post_empty("/api/auth/grant/publicViewer"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
 
     let (on_router, _s, _a, _u) = router_with_viewer_public(true).await;
-    let on = on_router.oneshot(get("/api/auth/status")).await.unwrap();
-    let json = body_json(on).await;
-    assert_eq!(json["viewerPublic"], true);
-    assert_eq!(json["initialized"], false);
+    let on = body_json(
+        on_router
+            .clone()
+            .oneshot(get("/api/auth/status"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(on["grants"]["publicViewer"], true);
+    assert_eq!(
+        on["grants"].as_object().unwrap().len(),
+        1,
+        "only the registered kind"
+    );
+    assert_eq!(on["initialized"], false);
+    public_viewer_token(&on_router).await;
 }
 
 #[tokio::test]
@@ -3306,7 +3405,9 @@ async fn auth_status_flattens_app_supplied_extras() {
         map.insert("tenant".to_string(), json!("factory-a"));
         map
     });
-    let router = extra_auth_router(users, auth, audit, false, settings, Some(extras))
+    let mut grants = GrantRegistry::new();
+    grants.register(GrantSpec::public_viewer(settings)).unwrap();
+    let router = extra_auth_router(users, auth, audit, false, Arc::new(grants), Some(extras))
         .layer(middleware::from_fn(require_banto_client_header));
 
     let response = router.oneshot(get("/api/auth/status")).await.unwrap();
@@ -3316,7 +3417,259 @@ async fn auth_status_flattens_app_supplied_extras() {
     // wrapper key.
     assert_eq!(json["tenant"], "factory-a");
     assert_eq!(json["initialized"], false);
-    assert_eq!(json["viewerPublic"], false);
+    assert_eq!(json["grants"]["publicViewer"], false);
+}
+
+// --- An app-defined grant (the shape banto-hub's commissioning mode takes) --
+
+/// Flips the app kind's condition (a lock-down flag the app persists).
+type GrantSwitch = std::sync::Arc<std::sync::atomic::AtomicBool>;
+
+/// The template's auth routes plus `/api/users/*`, with the viewer-public
+/// kind AND an admin-equivalent app kind `commissioning`
+/// (`require_loopback_peer: true`, a small cap) registered - the composition
+/// a derived app builds. Real `UsersService` accounts behind a lookup-enabled
+/// `AuthState`, so grant sessions and account sessions coexist.
+async fn router_with_app_grant() -> (
+    Router,
+    GrantSwitch,
+    UsersService,
+    AuditLogService,
+    AuthState,
+) {
+    let pool = migrate_memory().await.expect("migrate_memory");
+    let users = UsersService::new(pool.clone());
+    let settings = SettingsService::new(pool.clone());
+    let audit = AuditLogService::new(pool);
+    let auth = AuthState::new(
+        audited_credential_verifier(users.clone(), audit.clone()),
+        SessionValidation::lookup(banto_server::routes::user_session_lookup(users.clone())),
+    );
+    let open = GrantSwitch::new(std::sync::atomic::AtomicBool::new(true));
+    let condition = open.clone();
+    let mut commissioning = GrantSpec::new(
+        banto_server::GrantKind::new("commissioning").unwrap(),
+        Identity {
+            id: "commissioning".to_string(),
+            name: "試運転".to_string(),
+            role: "admin".to_string(),
+        },
+        std::sync::Arc::new(move || {
+            let condition = condition.clone();
+            Box::pin(async move { Ok(condition.load(std::sync::atomic::Ordering::SeqCst)) })
+        }),
+    );
+    commissioning.require_loopback_peer = true;
+    commissioning.max_sessions = 4;
+    let mut grants = GrantRegistry::new();
+    grants.register(GrantSpec::public_viewer(settings)).unwrap();
+    grants.register(commissioning).unwrap();
+
+    let router = extra_auth_router(
+        users.clone(),
+        auth.clone(),
+        audit.clone(),
+        false,
+        Arc::new(grants),
+        None,
+    )
+    .merge(banto_server::routes::users_router(
+        users.clone(),
+        audit.clone(),
+        auth.clone(),
+    ))
+    .merge(banto_server::auth_routes(auth.clone()))
+    .layer(middleware::from_fn(require_banto_client_header));
+    (router, open, users, audit, auth)
+}
+
+#[tokio::test]
+async fn app_grant_requires_a_loopback_peer_and_its_condition_and_status_agrees() {
+    let (router, open, _users, _audit, _auth) = router_with_app_grant().await;
+    let status = |peer: Option<std::net::SocketAddr>| {
+        let router = router.clone();
+        async move {
+            let req = match peer {
+                Some(peer) => get_from("/api/auth/status", peer),
+                None => get("/api/auth/status"),
+            };
+            body_json(router.oneshot(req).await.unwrap()).await["grants"].clone()
+        }
+    };
+    let issue = |peer: Option<std::net::SocketAddr>| {
+        let router = router.clone();
+        async move {
+            let req = match peer {
+                Some(peer) => post_empty_from("/api/auth/grant/commissioning", peer),
+                None => post_empty("/api/auth/grant/commissioning"),
+            };
+            router.oneshot(req).await.unwrap()
+        }
+    };
+
+    // Peer unknown (a router served without ConnectInfo): refused, fail closed.
+    assert_eq!(status(None).await["commissioning"], false);
+    assert_eq!(
+        status(None).await["publicViewer"],
+        false,
+        "viewer_public is OFF"
+    );
+    assert_eq!(issue(None).await.status(), StatusCode::FORBIDDEN);
+    // A LAN peer: refused.
+    assert_eq!(status(Some(LAN_PEER)).await["commissioning"], false);
+    assert_eq!(issue(Some(LAN_PEER)).await.status(), StatusCode::FORBIDDEN);
+    // Loopback: issued, and the session is the spec's admin identity.
+    assert_eq!(status(Some(LOOPBACK_PEER)).await["commissioning"], true);
+    let issued = issue(Some(LOOPBACK_PEER)).await;
+    assert_eq!(issued.status(), StatusCode::OK);
+    let token = body_json(issued).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let identity = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/auth/identity", &token))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(identity["kind"], "commissioning");
+    assert_eq!(identity["id"], "commissioning");
+    assert_eq!(identity["role"], "admin");
+    // Condition closed (the app persisted its lock-down flag): refused, and
+    // status says so from the same judgment.
+    open.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(status(Some(LOOPBACK_PEER)).await["commissioning"], false);
+    assert_eq!(
+        issue(Some(LOOPBACK_PEER)).await.status(),
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn a_grant_session_can_delete_users_but_never_the_last_admin() {
+    // ADR-0017 §3: the self-deletion guard needs no row for a grant; the
+    // admin floor and the last-admin guard are unchanged.
+    let (router, _open, users, audit, _auth) = router_with_app_grant().await;
+    let owner = users
+        .setup_first_user("owner", "password123", "Owner")
+        .await
+        .unwrap();
+    let editor = users
+        .create_user("editor1", "password123", "Editor", Role::Editor)
+        .await
+        .unwrap();
+    let issued = router
+        .clone()
+        .oneshot(post_empty_from(
+            "/api/auth/grant/commissioning",
+            LOOPBACK_PEER,
+        ))
+        .await
+        .unwrap();
+    let grant = body_json(issued).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The last admin stays (the guard is a service error, not a 2xx).
+    let refused = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/users/{}", owner.id), &grant))
+        .await
+        .unwrap();
+    assert_ne!(refused.status(), StatusCode::NO_CONTENT);
+    assert!(users.get_by_username("owner").await.unwrap().is_some());
+
+    // An ordinary account is deleted, and the audit actor is the grant's identity.
+    let deleted = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/users/{}", editor.id), &grant))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert!(users.get_by_username("editor1").await.unwrap().is_none());
+    let rows = audit.list(ListParams::default()).await.unwrap().rows;
+    let entry = rows
+        .iter()
+        .find(|row| row.action == "delete" && row.resource == "users")
+        .expect("delete audit");
+    assert_eq!(entry.actor_username.as_deref(), Some("commissioning"));
+    assert_eq!(entry.actor_role.as_deref(), Some("admin"));
+
+    // A viewer grant is not an admin: the role floor still applies.
+    let (viewer_router, _s, _a, _u) = router_with_viewer_public(true).await;
+    let viewer = public_viewer_token(&viewer_router).await;
+    let forbidden = viewer_router
+        .oneshot(delete_auth("/api/users/1", &viewer))
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn revoking_an_app_grant_ends_its_sessions_and_refuses_an_issuance_judged_before() {
+    // The lock-down sequence of ADR-0017 §2/§5: persist the closed condition,
+    // then `revoke_grant_tokens`. Open sessions are 401 on the next request;
+    // an issuance that read the generation before the revocation is refused.
+    let (router, open, _users, _audit, auth) = router_with_app_grant().await;
+    let kind = banto_server::GrantKind::new("commissioning").unwrap();
+    let issued = router
+        .clone()
+        .oneshot(post_empty_from(
+            "/api/auth/grant/commissioning",
+            LOOPBACK_PEER,
+        ))
+        .await
+        .unwrap();
+    let token = body_json(issued).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let observed = auth.grant_generation(&kind);
+
+    open.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(auth.revoke_grant_tokens(&kind), 1);
+
+    let identity = router
+        .clone()
+        .oneshot(get_auth("/api/auth/identity", &token))
+        .await
+        .unwrap();
+    assert!(body_json(identity).await.is_null(), "revoked: no session");
+    let spec_like = GrantSpec::new(
+        kind.clone(),
+        Identity {
+            id: "commissioning".to_string(),
+            name: "試運転".to_string(),
+            role: "admin".to_string(),
+        },
+        std::sync::Arc::new(|| Box::pin(async { Ok(true) })),
+    );
+    assert!(auth.issue_grant_token(&spec_like, observed).is_none());
+    assert_eq!(auth.session_count(), 0);
+}
+
+#[test]
+fn grant_registry_rejects_reserved_and_duplicate_kinds() {
+    let pool_free = |kind: &str| {
+        GrantSpec::new(
+            banto_server::GrantKind::new(kind).unwrap(),
+            Identity {
+                id: kind.to_string(),
+                name: kind.to_string(),
+                role: "viewer".to_string(),
+            },
+            std::sync::Arc::new(|| Box::pin(async { Ok(true) })),
+        )
+    };
+    let mut grants = GrantRegistry::new();
+    assert!(grants.register(pool_free("account")).is_err());
+    assert!(grants.register(pool_free("local")).is_err());
+    grants.register(pool_free("publicViewer")).unwrap();
+    assert!(grants.register(pool_free("publicViewer")).is_err());
+    assert!(banto_server::GrantKind::new("public viewer").is_err());
 }
 
 // --- Session revocation (Issue #204) -----------------------------------------

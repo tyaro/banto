@@ -35,13 +35,14 @@
 //! §8.2 - the Tauri app never sets this, since desktop first-run goes
 //! through the `auth_setup` command instead), `BANTO_VIEWER_PUBLIC` (`1` to
 //! seed `server.viewer_public = true` at startup so LAN clients may mint a
-//! synthetic `viewer` session through `POST /api/auth/public-viewer` without
-//! logging in - Issue #189, `docs/viewer-public-plan.md` §3.1-5, ADR-0012).
+//! viewer-public grant session through `POST /api/auth/grant/publicViewer`
+//! without logging in - Issue #189, `docs/viewer-public-plan.md` §3.1-5,
+//! ADR-0012; grants in general: ADR-0017).
 //!
 //! `BANTO_VIEWER_PUBLIC` is a dev/e2e entry point in the same spirit as
 //! `BANTO_ALLOW_SETUP`: it WRITES the persisted setting (rather than
 //! overriding it per-process) because the flag is read live from
-//! `SettingsService` by `/api/auth/status` and `/api/auth/public-viewer`, so
+//! `SettingsService` by `/api/auth/status` and `/api/auth/grant/publicViewer`, so
 //! there is nowhere else for a process-local override to live. Unsetting the
 //! variable therefore does NOT turn 閲覧公開 back off - use the settings
 //! screen, or a fresh DB. It only ever sets the one flag; `server.enabled`
@@ -333,7 +334,7 @@ async fn main() {
         );
     }
     if seed_viewer_public {
-        println!("banto-serve: public viewing is ENABLED (BANTO_VIEWER_PUBLIC=1) - POST /api/auth/public-viewer will hand out anonymous viewer sessions");
+        println!("banto-serve: public viewing is ENABLED (BANTO_VIEWER_PUBLIC=1) - POST /api/auth/grant/publicViewer will hand out anonymous viewer sessions");
     }
     println!("banto-serve: press Ctrl-C to stop");
 

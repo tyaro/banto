@@ -3,7 +3,7 @@ import { base } from '$app/paths';
 import {
 	getAuthProvider,
 	getSessionController,
-	publicViewerFallback,
+	grantFallback,
 	resolveSettled
 } from '@banto/admin-core';
 import * as m from '$lib/paraglide/messages';
@@ -16,7 +16,7 @@ import { publicNavItems } from '$lib/navigation';
 // §6.1, v2.0.0): the session is confirmed by the SessionController - the
 // only writer of "who is signed in" (ADR-0016). This load's only side
 // effects are the controller's confirmation and, for a confirmed `none`,
-// the public-viewer policy's mint; it writes no store (`sessionStore` is
+// the grant policy's issuance (ADR-0017); it writes no store (`sessionStore` is
 // derived from `controller.snapshot`). Must wait for provider
 // selection/detection (spec §11.1's three-way environment probe) first.
 //
@@ -28,12 +28,14 @@ import { publicNavItems } from '$lib/navigation';
 //   me included) is kept, and "再試行" re-runs this load (S-36/S-60: after a
 //   switch of user it is NOT left automatically).
 // - viewer-public-plan §3.1-6 (ADR-0012): a CONFIRMED `none` goes through
-//   `publicViewerFallback` - when `server.viewerPublic` is ON it mints the
-//   synthetic `{id:'public',role:'viewer'}` session bound to this
+//   `grantFallback(..., { kind: 'publicViewer' })` - when `server.viewerPublic`
+//   is ON (`status()`'s `grants.publicViewer`) it enters the `publicViewer`
+//   grant (`enterGrant('publicViewer')`): the fixed-identity
+//   `{id:'public',role:'viewer'}` session bound to this
 //   confirmation's ticket (S-42/S-52) and confirms it. Its result is handled
 //   the same way: `unverified` is the error page, not /login (S-66); only a
 //   confirmed `none` goes to /login. Only the HTTP provider implements
-//   `status()`'s `viewerPublic` and `enterPublicViewer()`; Tauri/demo go
+//   `status()`'s `grants` and `enterGrant()`; Tauri/demo go
 //   straight to /login.
 export async function load({ url }) {
 	await bantoReady;
@@ -41,7 +43,9 @@ export async function load({ url }) {
 	let result = await resolveSettled(controller, { cause: 'navigation' });
 	if (result.outcome === 'unverified') sessionCheckFailed();
 	if (result.snapshot.status === 'none') {
-		result = await publicViewerFallback(controller, getAuthProvider(), result.ticket);
+		result = await grantFallback(controller, getAuthProvider(), result.ticket, {
+			kind: 'publicViewer'
+		});
 		if (result.outcome === 'unverified') sessionCheckFailed();
 		if (result.snapshot.status !== 'active') redirect(307, `${base}/login`);
 	}

@@ -86,7 +86,7 @@ describe('sessionStore (derived from the controller snapshot)', () => {
 				status: 'active',
 				checked: r,
 				current: r,
-				identity: { id: 'public', name: 'public', role: 'viewer', publicViewer: true }
+				identity: { id: 'public', name: 'public', role: 'viewer', kind: 'publicViewer' }
 			})
 		]);
 		initBanto({ dataProvider: {} as DataProvider, authProvider: p.auth, resources: [] });

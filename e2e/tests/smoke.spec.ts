@@ -192,7 +192,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		expect(await identity.json()).toMatchObject({
 			id: 'public',
 			role: 'admin',
-			publicViewer: false
+			kind: 'account'
 		});
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 	});

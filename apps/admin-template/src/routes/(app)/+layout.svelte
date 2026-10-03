@@ -58,7 +58,7 @@
 	// Issue #260 (design §6.1 wiring ①, since 実装-2): whenever the session
 	// controller's generation differs from the one this page's load confirmed,
 	// re-run the loads (`invalidateAll()`), which confirm the session again
-	// and send the screen to /login, a public-viewer session, the retryable
+	// and send the screen to /login, a publicViewer grant session, the retryable
 	// error page, or the rebuilt page of the (new) user. This covers every
 	// way the generation moves - a background revocation confirmed `none`
 	// (Issue #241, formerly `onSessionEnded`), an ending confirmed before this

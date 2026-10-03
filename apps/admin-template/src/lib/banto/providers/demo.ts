@@ -91,7 +91,7 @@ export function createDemoAuthProvider(): AuthProvider {
 		// exists, so the login page never shows the first-run setup form here
 		// (spec §8.2's setup flow only applies to Tauri/embedded-server modes).
 		async status() {
-			return { initialized: true };
+			return { initialized: true, grants: {} };
 		},
 		// No account store to change a password on in pure-browser demo mode;
 		// the settings page hides the password-change section when this

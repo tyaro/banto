@@ -86,8 +86,8 @@ describe('recent command history (per owner)', () => {
 	it('public-viewer and local are owners like any other key', () => {
 		const storage = new FakeStorage();
 		const opts = { storage, isCurrent: live };
-		recordRecentCommand(scopeOf('public-viewer'), 'nav./items', opts);
-		expect(loadRecentCommandIds(scopeOf('public-viewer'), opts)).toEqual(['nav./items']);
+		recordRecentCommand(scopeOf('publicViewer'), 'nav./items', opts);
+		expect(loadRecentCommandIds(scopeOf('publicViewer'), opts)).toEqual(['nav./items']);
 		expect(loadRecentCommandIds(scopeOf('local'), opts)).toEqual([]);
 	});
 

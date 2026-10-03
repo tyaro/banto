@@ -42,7 +42,7 @@ use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
     bind as bind_listener, lan_urls_for_bind, static_router, with_security_headers, AuthState,
-    BoundServer, RunningServer, ServerConfig, ServerEvent,
+    BoundServer, GrantKind, RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -1944,7 +1944,7 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// `viewer_public` (Issue #189, `docs/viewer-public-plan.md` §3.1-4) is
 /// persisted like the other three fields and otherwise ignored here: whether
 /// LAN clients may mint a synthetic `viewer` session is decided per request
-/// by `POST /api/auth/public-viewer`, which re-reads the setting, so a
+/// by `POST /api/auth/grant/publicViewer`, whose condition re-reads the setting, so a
 /// restart is not needed for it to take effect and this command does not have
 /// to treat it as part of the listener's configuration. The
 /// auth-disabled/LAN exclusivity it relaxes is validated in the service layer
@@ -2051,7 +2051,7 @@ async fn server_apply_body(
     // saved only AFTER the new listener is bound (so a port in use fails
     // here, before anything is stored), and the listener only starts
     // answering requests AFTER the save. Without the last part, a request
-    // (e.g. `POST /api/auth/public-viewer`, which reads the SAVED
+    // (e.g. `POST /api/auth/grant/publicViewer`, which reads the SAVED
     // `viewer_public`) could hit the new listener while the old values were
     // still stored. (Saving first - the oldest order - left the new values
     // stored while the old server was already gone whenever the bind failed.)
@@ -2158,9 +2158,14 @@ async fn save_server_config_locked(
     let _auth_config = state.auth_config_lock.lock().await;
     state.settings.set_server_config(config).await?;
     if !config.viewer_public {
-        // 閲覧公開 OFF: public viewer tokens minted earlier (rest_auth
-        // outlives server restarts) must not keep working.
-        state.rest_auth.revoke_public_viewer_tokens();
+        // 閲覧公開 OFF: viewer-public grant tokens minted earlier (rest_auth
+        // outlives server restarts) must not keep working. Order matters
+        // (ADR-0017 §2): the closed condition is persisted above FIRST, then
+        // the kind is revoked - an issuance that judged `true` before the
+        // save is refused by the generation this advances.
+        state
+            .rest_auth
+            .revoke_grant_tokens(&GrantKind::public_viewer());
     }
     Ok(())
 }
@@ -2518,7 +2523,7 @@ async fn users_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
 /// Body of [`users_delete`] (spec M14 pattern, see [`users_create_body`]).
 async fn users_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
     let acting = require_role(state, Role::Admin, "users").await?;
-    state.users.delete_user(id, acting.id).await?;
+    state.users.delete_user(id, Some(acting.id)).await?;
     record_ok(
         &state.audit,
         &acting,
@@ -4457,7 +4462,7 @@ mod tests {
     // crate needs no HTTP client dependency).
 
     use banto_server::routes::{extra_auth_router, users_router};
-    use banto_server::{auth_routes, start, LoginOutcome};
+    use banto_server::{auth_routes, start, GrantRegistry, GrantSpec, LoginOutcome};
 
     const REVOCATION_PASSWORD: &str = "password123";
 
@@ -4533,7 +4538,13 @@ mod tests {
             state.rest_auth.clone(),
             state.audit.clone(),
             false,
-            state.settings.clone(),
+            {
+                let mut grants = GrantRegistry::new();
+                grants
+                    .register(GrantSpec::public_viewer(state.settings.clone()))
+                    .unwrap();
+                std::sync::Arc::new(grants)
+            },
             None,
         ))
         .merge(auth_routes(state.rest_auth.clone()));
@@ -6758,11 +6769,16 @@ mod tests {
         assert!(port_is_free(port), "the new listener must be released");
     }
 
-    /// 閲覧公開 OFF on apply revokes the public viewer tokens issued before.
+    /// 閲覧公開 OFF on apply revokes the viewer-public grant tokens issued
+    /// before (ADR-0017: `revoke_grant_tokens` after the save).
     #[tokio::test]
     async fn server_apply_with_viewer_public_off_revokes_public_viewer_tokens() {
         let state = admin_app_state().await;
-        let token = state.rest_auth.issue_public_viewer_token();
+        let spec = GrantSpec::public_viewer(state.settings.clone());
+        let token = state
+            .rest_auth
+            .issue_grant_token(&spec, state.rest_auth.grant_generation(&spec.kind))
+            .expect("issued");
         assert!(state.rest_auth.verify(&token));
 
         apply(&state, true, free_port(), false)

@@ -17,7 +17,7 @@
  *   that logs out (or an in-flight run that outlived its session) cannot
  *   write the old session's history;
  * - a scope with no confirmed owner (`owner === null`) neither reads nor
- *   writes: the feature is off rather than guessing. `public-viewer` and
+ *   writes: the feature is off rather than guessing. `publicViewer` and
  *   `local` (login-not-required) are owners like any other key.
  *
  * `watchRecentCommandOwner` is the hygiene half (listViewState's
