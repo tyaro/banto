@@ -1,9 +1,15 @@
 # 閲覧公開モード（viewer-public）計画書 — Issue #189
 
 作成日: 2026-09-14
-状態: **実装中**（本書の単位 U1〜U4 を 1 本の PR で実施）
+状態: **実装済み（v1.7 系）。2026-10-02 オーナー決定（2026-10-03 改訂）で §2.2 の発行の仕組みは
+「資格情報なしの grant 発行」に一本化する（[ADR-0017](adr/0017-credential-less-grant.md)、
+v3.0.0 で実装・破壊的変更）。閲覧公開は grant の 1 種類目 `publicViewer` になり、本書の
+閲覧公開専用の API 名・URL・フィールド（`/api/auth/public-viewer`、`viewerPublic`、
+`identity.publicViewer`、`issue_public_viewer_token` など）は v3.0.0 で削除される。
+設定キー `server.viewerPublic`・§2.3 の両方向ガード・画面の許可リストは残る**
 トラック: 保守者向け（トラックA）
 関連: [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)（方式の選定理由）、
+[ADR-0017](adr/0017-credential-less-grant.md)（grant への一般化。閲覧公開はその 1 種類目）、
 roadmap M10 / M11、conventions §1 / §6 / §10、
 [docs/recipes/no-login-app.md](recipes/no-login-app.md)、Issue #189（本書）、
 Issue #190（`--preset display`。本書が前提）
@@ -22,9 +28,9 @@ M11 ログイン不要モードは v1 で Tauri ウィンドウ限定であり�
 
 ## 2. 設計の要点 — 「認証を外す」を 2 軸に分ける
 
-| 軸 | 内容 | 既存との関係 |
-| --- | --- | --- |
-| **書き込み権限** | 従来どおり。無認証で書けるのはデスクトップ（M11 の synthetic session）のみ。LAN からの mutating は常にログイン必須 | M11 の護りをそのまま維持 |
+| 軸                   | 内容                                                                                                                    | 既存との関係                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| **書き込み権限**     | 従来どおり。無認証で書けるのはデスクトップ（M11 の synthetic session）のみ。LAN からの mutating は常にログイン必須      | M11 の護りをそのまま維持                            |
 | **閲覧公開**（新設） | `server.viewerPublic`（既定 OFF）。ON のとき LAN クライアントは**ログイン無しで `viewer` ロールの合成セッション**を得る | M11 の排他を「閲覧公開 ON なら LAN 併用可」に緩める |
 
 ### 2.1 方式: 合成 viewer セッションの自動発行（ADR-0012）
@@ -44,6 +50,20 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
   role）で説明できる。
 
 ### 2.2 合成 viewer セッションの規約（conventions §6 に追記）
+
+> **grant への一本化（2026-10-02、2026-10-03 改訂、[ADR-0017](adr/0017-credential-less-grant.md)）**:
+> 以下の規約は v3.0.0 から「grant」の規約の `publicViewer` 種別への適用になり、閲覧公開専用の
+> 名前は削除される。対応は — 発行口 `POST /api/auth/public-viewer` → `POST /api/auth/grant/publicViewer`、
+> `issue_public_viewer_token()` → `issue_grant_token(&spec, observed)`（判定の前に世代を読み、`None` は拒否。手順は ADR-0017 決定 §2「発行と失効の直列化」）、
+> `revoke_public_viewer_tokens()` → `revoke_grant_tokens("publicViewer")`、
+> `MAX_PUBLIC_VIEWER_SESSIONS` → その `GrantSpec.max_sessions`（種別ごとの FIFO、既定 256）、
+> 「viewerPublic OFF で 403」→ `GrantSpec.enabled`（要求ごとに評価）、
+> 「発行は監査しない」「寿命は既定 8h / idle 1h」「logout は自分だけ」「change-password は拒否」は
+> grant 全種別に共通。閲覧公開は `require_loopback_peer: false`（LAN に出す前提）。
+> 画面側は `publicViewerFallback` → `grantFallback(…, { kind: 'publicViewer' })`、
+> `enterPublicViewer` → `enterGrant('publicViewer')`、`/api/auth/status` の `viewerPublic` →
+> `grants.publicViewer`、`identity.publicViewer` → `identity.kind === 'publicViewer'`。
+> 規約本文（conventions §6）の書き換えは実装 PR で行う。
 
 - **role は常に `viewer`。** `AuthState::issue_public_viewer_token()` は
   `Identity` を引数に取らず、`{ id: "public", name: "public", role: "viewer" }`
@@ -69,11 +89,11 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
 
 ### 2.3 設定バリデーションの変更（`SettingsService`）
 
-| 組合せ | 従来 | 変更後 |
-| --- | --- | --- |
-| `auth.disabled` + `server.enabled` + `viewerPublic=OFF` | 拒否 | **拒否（変更なし）** |
-| `auth.disabled` + `server.enabled` + `viewerPublic=ON` | 拒否 | **許可**（表示専用アプリの標準形） |
-| `!auth.disabled` + `server.enabled` + `viewerPublic=ON` | — | 許可（ログイン運用 + 匿名閲覧） |
+| 組合せ                                                  | 従来 | 変更後                             |
+| ------------------------------------------------------- | ---- | ---------------------------------- |
+| `auth.disabled` + `server.enabled` + `viewerPublic=OFF` | 拒否 | **拒否（変更なし）**               |
+| `auth.disabled` + `server.enabled` + `viewerPublic=ON`  | 拒否 | **許可**（表示専用アプリの標準形） |
+| `!auth.disabled` + `server.enabled` + `viewerPublic=ON` | —    | 許可（ログイン運用 + 匿名閲覧）    |
 
 `set_server_config` / `set_auth_config` の両方向で判定する（片方だけ通る状態を
 作らない）。エラーメッセージは「認証無効モード中は、閲覧公開を有効にした場合のみ
@@ -152,15 +172,20 @@ LANアクセスを有効化できます」（逆方向も同旨）。
   失効し、ゲートが透過的に再発行する。Remember me は適用しない）。
 - Tauri ウィンドウ内での公開閲覧（M11 で既にカバー）。
 - `--preset display`（Issue #190、別 PR）。
+- 「viewer 以外の role を資格情報なしで配る」こと。v1 では非スコープだったが、
+  2026-10-02 に **grant への一本化**として採ることにした（[ADR-0017](adr/0017-credential-less-grant.md)、v3.0.0。
+  派生アプリの試運転 = admin 相当の grant。固定 identity・要求ごとの条件・
+  `require_loopback_peer`・種別ごとの失効を伴う。本書の閲覧公開の仕様は変えず、API 名だけが
+  grant のものに置き換わる）。
 
 ## 4. 実装単位
 
-| 単位 | 内容 | 主な触れどころ | 委譲先 |
-| --- | --- | --- | --- |
-| U1 | Rust: 設定 + バリデーション、`AuthState` 発行/上限、REST 2 ルート + extras hook、banto-serve seed、rest/tests、verify-architecture | `crates/banto-admin-services/src/settings.rs`、`crates/banto-server/src/{auth.rs,routes/auth.rs}`、`apps/admin-template/core/src/rest/{mod.rs,tests.rs}`、`core/src/bin/banto-serve.rs`、`scripts/verify-architecture.mjs` | opus（セキュリティ境界） |
-| U2 | Tauri: `server_apply` / `server_status` / `auth_status` | `src-tauri/src/lib.rs`、`src/lib/banto/serverAdmin.ts` | U1 と同一エージェント |
-| U3 | フロント: provider / ゲート / session / nav / Header / login / settings / i18n | `packages/admin-core/src/{provider.ts,providers/http.ts,index.ts}`、`apps/admin-template/src/{routes/(app)/+layout.ts,lib/session.svelte.ts,lib/navigation.ts,lib/components/{Header,Sidebar}.svelte,routes/login/+page.svelte,routes/(app)/settings/+page.svelte}`、`messages/{ja,en}.json` | sonnet |
-| U4 | e2e + ドキュメント + CHANGELOG | `e2e/`、README、docs | 司令塔 + sonnet |
+| 単位 | 内容                                                                                                                               | 主な触れどころ                                                                                                                                                                                                                                                                               | 委譲先                   |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| U1   | Rust: 設定 + バリデーション、`AuthState` 発行/上限、REST 2 ルート + extras hook、banto-serve seed、rest/tests、verify-architecture | `crates/banto-admin-services/src/settings.rs`、`crates/banto-server/src/{auth.rs,routes/auth.rs}`、`apps/admin-template/core/src/rest/{mod.rs,tests.rs}`、`core/src/bin/banto-serve.rs`、`scripts/verify-architecture.mjs`                                                                   | opus（セキュリティ境界） |
+| U2   | Tauri: `server_apply` / `server_status` / `auth_status`                                                                            | `src-tauri/src/lib.rs`、`src/lib/banto/serverAdmin.ts`                                                                                                                                                                                                                                       | U1 と同一エージェント    |
+| U3   | フロント: provider / ゲート / session / nav / Header / login / settings / i18n                                                     | `packages/admin-core/src/{provider.ts,providers/http.ts,index.ts}`、`apps/admin-template/src/{routes/(app)/+layout.ts,lib/session.svelte.ts,lib/navigation.ts,lib/components/{Header,Sidebar}.svelte,routes/login/+page.svelte,routes/(app)/settings/+page.svelte}`、`messages/{ja,en}.json` | sonnet                   |
+| U4   | e2e + ドキュメント + CHANGELOG                                                                                                     | `e2e/`、README、docs                                                                                                                                                                                                                                                                         | 司令塔 + sonnet          |
 
 U1 と U3 はワイヤ契約（§3.1 の 2・6）を本書で固定した上で並行に進める。
 
