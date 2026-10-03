@@ -62,12 +62,12 @@
 			// behave as if an account already exists, i.e. the normal login
 			// form.
 			mode = status && !status.initialized ? 'setup' : 'login';
-			showContinueAsViewer = getBantoMode() === 'server' && status?.viewerPublic === true;
+			showContinueAsViewer = getBantoMode() === 'server' && status?.grants?.publicViewer === true;
 		})();
 	});
 
 	// The (app) route guard mints the synthetic viewer session itself
-	// (`+layout.ts`'s `enterPublicViewer()` call) - this just needs to land
+	// (`+layout.ts`'s `grantFallback` -> `enterGrant('publicViewer')`) - this just needs to land
 	// on a gated route so that guard runs.
 	function continueAsViewer(): void {
 		goto(`${base}/dashboard`);

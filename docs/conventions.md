@@ -280,34 +280,41 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
   CI で捕捉する**（[ADR-0008](adr/0008-machine-check-stop-gate.md)。cross-check
   テストが無く src-tauri も非コンパイルのため、静かに片方だけ緩む退行を防ぐ）—
   どちらかを変えるときは両方を更新する。
-- **合成 viewer セッション（LAN 閲覧公開、#189）。** `server.viewer_public` が
-  ON のとき `POST /api/auth/public-viewer` が**ログイン無しで**閲覧用の bearer
-  トークンを発行する（[ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)、
+- **grant（資格情報なしのセッション発行、ADR-0017。閲覧公開はその 1 種類目
+  `publicViewer`）。** 資格情報を持たないクライアントに、登録済みの種類の
+  **固定 identity** のセッションを発行する
+  （[ADR-0017](adr/0017-credential-less-grant.md)。閲覧公開は
+  [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)、
   [viewer-public-plan §2.2](viewer-public-plan.md)）。認証をバイパスする公開
-  ルータは作らない — 発行後は既存の `require_auth` + `RoleGuard` + 監査に
-  そのまま乗る。以下はレビューで担保する規約:
-  - **role は常に `viewer`。** `AuthState::issue_public_viewer_token()` は
-    `Identity`/role を引数に取らず `{ id: "public", name: "public",
-    role: "viewer" }` を固定発行する。**昇格経路を作らない**（レビューは
-    まずここを見る）。
-  - **`viewer_public` OFF のとき発行は 403 `forbidden`。** 判定は毎回
-    `SettingsService::server_config()` を読む（再起動不要。banto-serve と
-    Tauri 組み込みサーバで同一挙動）。
-  - **同時セッション数の上限 `MAX_PUBLIC_VIEWER_SESSIONS = 256`。** 資格情報
-    無しで発行できるので、レート制限ではなく上限で無限増殖を防ぐ。上限到達
-    でも発行は失敗せず**最古の公開トークンを失効**させる（壁のモニターの
-    再読み込みが閲覧を止めない）。失効対象は公開トークンのみで、実ログイン
-    セッションは巻き込まない。
-  - **閲覧公開を OFF にする適用の成功時は既存の公開トークンを全て失効させる**
-    （`AuthState::revoke_public_viewer_tokens`。`AuthState` はサーバー再起動をまたいで
-    共有されるため。実ログインセッションは対象外）。
+  ルータは作らない — 発行後のトークンは既存の `require_auth` + `RoleGuard` +
+  監査 + SSE の再検証にそのまま乗る。以下はレビューで担保する規約:
+  - **発行口は `POST /api/auth/grant/{kind}` だけで、登録済みの `GrantSpec`
+    （`GrantSpec::public_viewer` など）から固定の identity を発行する。** ルートは
+    クライアントから identity・role を一切受け取らない（**昇格経路を作らない**。
+    レビューはまずここを見る）。未登録の種類は 404、条件が偽なら 403 `forbidden`。
+  - **条件は要求ごとに評価する**（閲覧公開なら `server.viewer_public`。再起動不要。
+    banto-serve と Tauri 組み込みサーバで同一挙動）。状態 `grants.<kind>` と発行は
+    同じ `GrantRegistry::availability` を使う。
+  - **種類ごとの同時セッション数の上限 `max_sessions`（既定 256）は FIFO。**
+    資格情報無しで発行できるので、レート制限ではなく上限で無限増殖を防ぐ。上限到達でも
+    発行は失敗せず**その種類の最古のトークンを失効**させる（壁のモニターの再読み込みが
+    閲覧を止めない）。他の種類・実ログインセッションは巻き込まない。
+  - **寿命は既定 8 時間／アイドル 1 時間で、remember しない。**
+  - **管理者相当の種類は `require_loopback_peer` を付ける。** 接続元が不明なら拒否する。
+  - **条件を閉じるときは「条件を永続化してから `revoke_grant_tokens(kind)`」を同じ関数の
+    中で行う**（世代が、止まっている発行との競合を直列化する。`revokedGrants: n` は監査の
+    detail に載せてよい）。実ログインセッションは対象外。
   - **発行は監査しない**（資格情報の検証ではなく、再読み込みのたびに `login`
-    を積むと監査ログが埋まる）。公開セッションが mutating を叩いた際の
-    `denied` は既存の `RoleGuard` が actor `public` で記録する。
-  - **`POST /api/auth/logout` は自分のトークンだけ失効する**（他の公開閲覧端末に
-    影響しない）。
-  - **`change-password` は合成セッションを明示的に拒否する。** 同名の通常
-    アカウントが存在しても対象にしない。公開閲覧セッションでアカウント系 UI を出さない。
+    を積むと監査ログが埋まる）。grant セッションが mutating を叩いた際の
+    `denied` は既存の `RoleGuard` が actor `public` などで記録する。
+  - **`POST /api/auth/logout` は自分のトークンだけ失効する**（他の端末に影響しない）。
+  - **`change-password` は grant セッションを明示的に拒否する。** 同名の通常
+    アカウントが存在しても対象にしない。grant セッションでアカウント系 UI を出さない。
+  - **種類名 `account`・`local` は予約**（identity の `kind` に使われる）。
+  - **リバースプロキシの注意（ADR-0017 §6）。** 同一ホストのプロキシの後ろでは接続元が
+    すべてループバックに見え、`require_loopback_peer` は何も守らない。外部公開の前に
+    管理者相当の grant はロックダウンし、再試運転の間も `/api/auth/grant/{kind}` を
+    プロキシから外へ公開しない。これは運用ルールで、banto が技術的に強制できるものではない。
   - 「認証無効 + LAN 有効」は**閲覧公開 ON のときだけ**許可する
     （`SettingsService` の両方向ガード、viewer-public-plan §2.3）。OFF のときの
     排他は 2026-07-08 決定のまま。
@@ -379,8 +386,8 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 
 LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではない**。これは
 `server` モードの中で「ログイン済みか、合成 viewer セッションか」を区別する
-**session 層の状態**（発行元が返す `identity.publicViewer === true`）であり、provider の
-選択には影響しない — 公開閲覧端末も通常の http provider が bearer トークンで
+**session 層の状態**（発行元が返す `identity.kind === 'publicViewer'`）であり、provider の
+選択には影響しない（grant の種類は provider のモードではない） — 公開閲覧端末も通常の http provider が bearer トークンで
 既存 API を叩く（[ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)
 案B の不採用理由）。
 通常アカウントも `public` という username を持てるため、identity の id・name・role

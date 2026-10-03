@@ -27,24 +27,17 @@ export interface Identity {
 	 */
 	role?: string;
 	/**
-	 * Synthetic LAN viewer session marker (viewer-public-plan §3.1-6).
-	 * Supplied by the session issuer, never inferred from an account id or
-	 * role: a real account can also have the username `public`. Missing is
-	 * false for providers that do not implement public-viewer sessions.
+	 * The session's kind as the ISSUER reports it (ADR-0017; the REST
+	 * `GET /api/auth/identity` body): a grant kind (`'publicViewer'`, an
+	 * app's `'commissioning'`, ...) or `'account'`. Never inferred from an
+	 * account id or role - a real account can also have the username
+	 * `public`. Missing means the issuer does not report it (the Tauri
+	 * provider sends the kind on `ResolvedAuth.kind` instead); the
+	 * controller then falls back to the provider's kind, then `'account'`
+	 * (`kindOfResolvedAuth`).
 	 */
-	publicViewer?: boolean;
+	kind?: string;
 }
-
-/**
- * Fixed `id` of the synthetic viewer identity issued by
- * `AuthProvider.enterPublicViewer()` (viewer-public-plan §2.2/§3.1-6,
- * ADR-0012): `POST /api/auth/public-viewer` mints a token bound to
- * `{ id: "public", name: "public", role: "viewer" }`.
- * This is a display/audit identifier, not a session discriminator: real
- * account identities use usernames and can have the same id. Use the
- * issuer-provided `Identity.publicViewer` marker to distinguish sessions.
- */
-export const PUBLIC_VIEWER_ID = 'public';
 
 /**
  * Which credential an `AuthProvider` answer is about (Issue #260,
@@ -57,8 +50,12 @@ export const PUBLIC_VIEWER_ID = 'public';
 export type CredentialRevision = string & { readonly __brand: 'CredentialRevision' };
 
 /**
- * The kind of a session (design §5.1). `'local'` is the Tauri
- * auth-disabled mode's synthetic session; apps may add their own kinds.
+ * The kind of a session (design §5.1, ADR-0017): `'account'` (a login),
+ * `'local'` (the Tauri auth-disabled mode's synthetic session), or a grant
+ * kind - `'publicViewer'` (LAN viewer-public) and whatever kinds an app
+ * registers on its server (e.g. `'commissioning'`). A grant kind is the SAME
+ * string on the wire (`/api/auth/grant/{kind}`, `status().grants`,
+ * `identity.kind`) and here; there is no translation table.
  */
 export type SessionKind = 'account' | 'publicViewer' | 'local' | (string & {});
 
@@ -119,14 +116,14 @@ export interface AuthProvider {
 	 * only calls this via `authProvider.status?.()` and falls back to the
 	 * normal login form when it is absent (or resolves `{ initialized: true }`).
 	 *
-	 * `viewerPublic` (viewer-public-plan §3.1-2/-6, ADR-0012) reports whether
-	 * `server.viewerPublic` is ON - i.e. whether `enterPublicViewer()` below
-	 * can currently succeed. Optional/possibly-absent for the same backward-
-	 * compatibility reason as `initialized`: an older backend's
-	 * `/api/auth/status` response has no such field, and a caller must treat
-	 * a missing value as `false` (fail closed - no public viewer entry).
+	 * `grants` (ADR-0017) reports, per grant kind, whether this server would
+	 * issue it to this client right now - i.e. whether `enterGrant(kind)`
+	 * below can currently succeed (`grants.publicViewer` for LAN
+	 * viewer-public, viewer-public-plan §3.1-2/-6). A missing map or a
+	 * missing kind reads as `false` (fail closed - no entry); the HTTP
+	 * provider fills `{}` when the response has none.
 	 */
-	status?(): Promise<{ initialized: boolean; viewerPublic?: boolean }>;
+	status?(): Promise<{ initialized: boolean; grants?: Record<string, boolean> }>;
 
 	/**
 	 * Create the first account and log in as it (spec §8.2's first-run
@@ -139,33 +136,38 @@ export interface AuthProvider {
 	changePassword?(current: string, next: string): Promise<{ success: boolean; error?: string }>;
 
 	/**
-	 * Mint the synthetic `{ id: PUBLIC_VIEWER_ID, role: 'viewer' }` session
-	 * used by LAN "viewer-public" access (viewer-public-plan §2.1-2.2,
-	 * ADR-0012): no credentials, no bearer token required on the request.
-	 * Resolves `{ success: true }` and leaves the provider logged in as that
-	 * identity on success; resolves `{ success: false }` on any failure (403
-	 * when `server.viewerPublic` is OFF, or a network error) without
-	 * throwing - callers (the `(app)` route guard) fall back to the normal
-	 * `/login` redirect in that case.
+	 * Obtain a credential-less grant session of `kind` (ADR-0017; the
+	 * generalization of LAN viewer-public, viewer-public-plan §2.1-2.2 /
+	 * ADR-0012, whose kind is `'publicViewer'`): no credentials, no bearer
+	 * token on the request, and the identity/role is whatever the SERVER
+	 * registered for that kind - never chosen here. Resolves
+	 * `{ success: true }` and leaves the provider holding that session's
+	 * token on success; resolves `{ success: false }` on any failure (404
+	 * for a kind the server does not register, 403 when the kind's condition
+	 * does not hold for this client, a network error) without throwing -
+	 * callers (`grantFallback` in the `(app)` route guard) then leave the
+	 * confirmed `none` as it is.
 	 *
 	 * Issue #260 (#259, design §5.2, S-20/S-52): the minted token is stored
 	 * only while the credential revision is still `options.expectRevision`
-	 * (default: the revision when this call started). Otherwise nothing is
-	 * stored and it resolves `{ success: false, superseded: true }` - another
-	 * session was established meanwhile; the caller must re-check it rather
-	 * than fall back to `/login`.
+	 * (default: the revision when this call started) AND no token is stored.
+	 * Otherwise nothing is stored and it resolves
+	 * `{ success: false, superseded: true }` - another session was
+	 * established meanwhile; the caller must re-check it rather than fall
+	 * back to `/login`.
 	 *
 	 * Optional and implemented ONLY by the HTTP provider
 	 * (`createHttpAuthProvider`): the Tauri window has no LAN-facing surface
 	 * for this (M11's desktop synthetic session already covers "no login in
 	 * this window"), and the plain-browser demo provider has no backend to
-	 * call. Both leave this undefined = unsupported, same convention as
-	 * `setup`/`changePassword` being absent on a provider that doesn't need
-	 * them.
+	 * call. Both leave this undefined = unsupported (`grantFallback` then
+	 * returns the `none` unchanged), same convention as `setup`/
+	 * `changePassword` being absent on a provider that doesn't need them.
 	 */
-	enterPublicViewer?(options?: {
-		expectRevision?: CredentialRevision;
-	}): Promise<{ success: boolean; superseded?: boolean }>;
+	enterGrant?(
+		kind: SessionKind,
+		options?: { expectRevision?: CredentialRevision }
+	): Promise<{ success: boolean; superseded?: boolean }>;
 
 	/**
 	 * Issue #260 (design §2.1/§5.2): the current session in ONE round trip,
@@ -204,7 +206,7 @@ export interface AuthProvider {
 	 * Issue #260 (I-19): subscribe to credential changes. Called - only when
 	 * the revision actually changed - from the continuation that received a
 	 * state-changing operation's response (login/logout/setup/
-	 * changePassword/enterPublicViewer), on a cross-tab `storage` change of
+	 * changePassword/enterGrant), on a cross-tab `storage` change of
 	 * the credential, and when a state-changing operation got no response.
 	 * NOT called for `resolve()`'s own clearing or for a `resolve()`
 	 * rejection. Returns the unsubscribe function.
@@ -214,22 +216,22 @@ export interface AuthProvider {
 
 /**
  * The pre-#260 `AuthProvider` shape (no `resolve`/`credentialRevision`/
- * `onCredentialChanged`, `enterPublicViewer` resolving a boolean) - what
- * `adaptLegacyAuthProvider` accepts. `check()`/`getIdentity()` exist only
- * here since v2.0.0 (design §5.4): `check()` resolves `false` only when the
- * session is established invalid and rejects when it could not be checked;
- * `getIdentity()` resolves `null` only when there is no session and rejects
- * when the identity could not be fetched.
+ * `onCredentialChanged`) - what `adaptLegacyAuthProvider` accepts.
+ * `check()`/`getIdentity()` exist only here since v2.0.0 (design §5.4):
+ * `check()` resolves `false` only when the session is established invalid
+ * and rejects when it could not be checked; `getIdentity()` resolves `null`
+ * only when there is no session and rejects when the identity could not be
+ * fetched. Grants (ADR-0017, v3.0.0) have no legacy form: an adapted
+ * provider has no `enterGrant`, so `grantFallback` leaves a `none` as it is.
  */
 export interface LegacyAuthProvider {
 	login(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
 	logout(): Promise<void>;
 	check(): Promise<boolean>;
 	getIdentity(): Promise<Identity | null>;
-	status?(): Promise<{ initialized: boolean; viewerPublic?: boolean }>;
+	status?(): Promise<{ initialized: boolean }>;
 	setup?(params: Record<string, unknown>): Promise<{ success: boolean; error?: string }>;
 	changePassword?(current: string, next: string): Promise<{ success: boolean; error?: string }>;
-	enterPublicViewer?(): Promise<boolean>;
 }
 
 /**

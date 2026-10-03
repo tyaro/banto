@@ -36,7 +36,7 @@
 	//
 	// viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session
 	// sees ONLY the `publicViewer` allowlist and never the admin section,
-	// regardless of role (a public-viewer identity's role is always
+	// regardless of role (a publicViewer grant identity's role is always
 	// `viewer`, so `adminItems` would already be empty, but the explicit
 	// check keeps this correct even if that ever changed).
 	const mainItems = $derived(

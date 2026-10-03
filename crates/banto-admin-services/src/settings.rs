@@ -112,7 +112,7 @@ fn validate_ui_value(value: &str) -> Result<(), BantoError> {
 /// `viewer_public` (Issue #189, `docs/viewer-public-plan.md` §2.3, ADR-0012)
 /// is the "閲覧公開" opt-in: when ON, a LAN client may mint a
 /// `viewer`-role synthetic session without logging in
-/// (`POST /api/auth/public-viewer`). It defaults to `false`, so an existing
+/// (`POST /api/auth/grant/publicViewer`, ADR-0017). It defaults to `false`, so an existing
 /// install behaves exactly as before. It is deliberately part of the SERVER
 /// settings rather than the auth settings: it describes what the LAN
 /// surface exposes, and it is what relaxes the auth-disabled/LAN
@@ -1039,7 +1039,7 @@ mod tests {
         // The guard only looks at `enabled`, so `viewer_public` may be turned
         // on ahead of (or without) LAN access - the shape
         // `admin-template-core`'s REST tests use to exercise
-        // `POST /api/auth/public-viewer` over `tower::oneshot` without
+        // `POST /api/auth/grant/publicViewer` over `tower::oneshot` without
         // binding a socket.
         let svc = service().await;
         svc.set_server_config(&ServerSettings {

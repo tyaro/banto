@@ -2,7 +2,7 @@
 
 > English: [0017-credential-less-grant.en.md](0017-credential-less-grant.en.md)
 
-- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。同 PR の 2 回目のレビュー（`0df014d` 対象、3 件）で発行と失効の直列化の契約・#431 の停止例外の保持・管理 WebSocket の接続を追記。実装は v3.0.0 の PR）
+- 状態: Accepted（オーナー決定 2026-10-02。2026-10-03 のオーナーのレビュー（tyaro/banto#313。grant への一般化に賛成）で細目 6 件を決定し、同日の追加決定で**後方互換を捨てて v3.0.0（major）で一本化**する形に改めた。同 PR の 2 回目のレビュー（`0df014d` 対象、3 件）で発行と失効の直列化の契約・#431 の停止例外の保持・管理 WebSocket の接続を追記。**実装: v3.0.0 の実装 PR（本 PR。banto 側の決定 §1〜§4 と移行手順の admin-template の項を実装、派生アプリの移行は tyaro/banto-industrial 側の PR）**）
 - 日付: 2026-10-02（改訂 2026-10-03）
 - 関連: [ADR-0012](0012-lan-public-viewer-synthetic-session.md)（閲覧公開 = viewer 固定の合成セッション。本 ADR はこれを一般化する。方式の判断は生きているので supersede はしない）/
   [ADR-0003](0003-tls-via-reverse-proxy.md)（同一ホストのリバースプロキシ。決定 §6 の前提）/
@@ -236,7 +236,7 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
     `revoke_grant_tokens` → 発行を再開 → `None` が返り、有効なトークンが 1 つも無い。
     閲覧公開・任意 kind の両方）と、派生アプリ（banto-hub）側の統合テスト（`enabled()` が
     true を返した発行要求を保留 → ロックダウン（保存＋revoke）完了 → 発行要求を再開 →
-    403 で、直後の `GET /api/auth/identity` が 401、開いていたストリームが閉じる）。
+    403 で、直後の `GET /api/auth/identity` が `200 null`（認証が必要なリソースへの要求は 401）、開いていたストリームが閉じる）。
 
 ### 3. ユーザー削除の自己削除ガード
 
@@ -478,7 +478,7 @@ banto-hub（tyaro/banto-industrial）:
   テスト: ブラウザ相当（`Sec-WebSocket-Protocol`）で grant トークンの接続が成功すること、
   ロックダウン（保存 → revoke）後の再検証で切断されること。
 - Rust（競合テスト、必須）: `enabled()` が true を返した発行要求を保留 → ロックダウン完了 →
-  発行要求を再開 → 403、直後の `GET /api/auth/identity` が 401、開いていた SSE／WebSocket が
+  発行要求を再開 → 403、直後の `GET /api/auth/identity` が `200 null`（認証が必要なリソースへの要求は 401）、開いていた SSE／WebSocket が
   再検証で閉じる（決定 §2「発行と失効の直列化」）。
 - TS: `src/lib/banto/commissioningPolicy.ts`・`commissioningLockDown.ts`（+ `.test.ts`）・
   `sessionRecheck.abort.test.ts`（policy runner と `adopt()`/`end()` の廃止 →

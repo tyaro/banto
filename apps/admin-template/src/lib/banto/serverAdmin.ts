@@ -23,7 +23,7 @@ export interface ServerStatus {
 	port: number;
 	/**
 	 * 閲覧公開 (Issue #189): whether LAN clients may obtain a synthetic
-	 * `viewer` session without logging in (`POST /api/auth/public-viewer`).
+	 * `viewer` session without logging in (`POST /api/auth/grant/publicViewer`).
 	 * Persisted with the other server settings; it has no effect inside this
 	 * window, only on the LAN surface.
 	 */

@@ -28,7 +28,6 @@ export type {
 	SessionKind,
 	StandardAuthProvider
 } from './provider';
-export { PUBLIC_VIEWER_ID } from './provider';
 
 export type { FieldError, ErrorBody } from './errors';
 export {
@@ -57,11 +56,13 @@ export {
 	createSessionController,
 	getSessionController,
 	resolveSettled,
-	publicViewerFallback,
-	DEFAULT_PUBLIC_VIEWER_RETRIES,
+	grantFallback,
+	DEFAULT_GRANT_RETRIES,
 	SessionTimeoutError,
 	SessionProviderMissingError,
 	SessionChangedError,
+	type GrantFallbackOptions,
+	type GrantStatus,
 	type SessionController,
 	type SessionControllerDeps,
 	type SessionResolveOptions,

@@ -52,8 +52,8 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
 ### 2.2 合成 viewer セッションの規約（conventions §6 に追記）
 
 > **grant への一本化（2026-10-02、2026-10-03 改訂、[ADR-0017](adr/0017-credential-less-grant.md)）**:
-> 以下の規約は v3.0.0 から「grant」の規約の `publicViewer` 種別への適用になり、閲覧公開専用の
-> 名前は削除される。対応は — 発行口 `POST /api/auth/public-viewer` → `POST /api/auth/grant/publicViewer`、
+> v3.0.0 で grant に一本化済み（実装 PR）。以下の規約は「grant」の規約の `publicViewer` 種別への適用で、
+> 閲覧公開専用の名前は削除された。旧名と新名の対応は — 発行口 `POST /api/auth/public-viewer` → `POST /api/auth/grant/publicViewer`、
 > `issue_public_viewer_token()` → `issue_grant_token(&spec, observed)`（判定の前に世代を読み、`None` は拒否。手順は ADR-0017 決定 §2「発行と失効の直列化」）、
 > `revoke_public_viewer_tokens()` → `revoke_grant_tokens("publicViewer")`、
 > `MAX_PUBLIC_VIEWER_SESSIONS` → その `GrantSpec.max_sessions`（種別ごとの FIFO、既定 256）、
@@ -63,15 +63,15 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
 > 画面側は `publicViewerFallback` → `grantFallback(…, { kind: 'publicViewer' })`、
 > `enterPublicViewer` → `enterGrant('publicViewer')`、`/api/auth/status` の `viewerPublic` →
 > `grants.publicViewer`、`identity.publicViewer` → `identity.kind === 'publicViewer'`。
-> 規約本文（conventions §6）の書き換えは実装 PR で行う。
+> 規約本文は conventions §6 に反映済み。
 
-- **role は常に `viewer`。** `AuthState::issue_public_viewer_token()` は
-  `Identity` を引数に取らず、`{ id: "public", name: "public", role: "viewer" }`
+- **role は常に `viewer`。** `GrantSpec::public_viewer`（発行は `POST /api/auth/grant/publicViewer`）は
+  クライアントから identity を受け取らず、`{ id: "public", name: "public", role: "viewer" }`
   を固定で発行する。昇格経路は存在しない。
-- **`viewerPublic` OFF のとき発行は 403 `forbidden`。** 判定は毎回
+- **条件（`server.viewerPublic`。状態は `grants.publicViewer`）が偽のとき発行は 403 `forbidden`。** 判定は毎回
   `SettingsService::server_config()` を読む（サーバ再起動不要。banto-serve と
   Tauri 組み込みサーバで同じ挙動）。
-- **同時セッション数を上限 `MAX_PUBLIC_VIEWER_SESSIONS = 256` で抑える**
+- **同時セッション数を上限 `max_sessions`（既定 256）で抑える**
   （古いものから失効）。発行は資格情報を伴わず安価なので、レート制限ではなく
   上限で無限増殖（メモリ）を防ぐ。上限に達しても発行自体は失敗しない
   （最古を追い出す）ので、タブレットの再読み込みで閲覧が止まることはない。

@@ -1,6 +1,7 @@
 /**
  * Viewer-public mode E2E (docs/viewer-public-plan.md §3.1-8, Issue #189,
- * ADR-0012).
+ * ADR-0012). The synthetic viewer session is the `publicViewer` grant
+ * (`POST /api/auth/grant/publicViewer`, ADR-0017).
  *
  * Runs against the SECOND `banto-serve` playwright.config.ts starts with
  * `BANTO_VIEWER_PUBLIC=1` (own port, own fresh SQLite DB - see the config's
@@ -85,7 +86,9 @@ test.describe.serial('Banto viewer-public mode', () => {
 	});
 
 	test('4. the public token cannot write: POST /api/items is 403', async () => {
-		const mint = await page.request.post('/api/auth/public-viewer', { headers: CLIENT_HEADER });
+		const mint = await page.request.post('/api/auth/grant/publicViewer', {
+			headers: CLIENT_HEADER
+		});
 		expect(mint.ok()).toBe(true);
 		const { token } = (await mint.json()) as { success: boolean; token: string };
 		expect(token).toBeTruthy();
@@ -97,7 +100,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		expect(await identity.json()).toMatchObject({
 			id: 'public',
 			role: 'viewer',
-			publicViewer: true
+			kind: 'publicViewer'
 		});
 
 		const write = await page.request.post('/api/items', {
@@ -138,7 +141,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		expect(await identity.json()).toMatchObject({
 			id: 'public',
 			role: 'admin',
-			publicViewer: false
+			kind: 'account'
 		});
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
 		await expect(loginButton(page)).toHaveCount(0);
@@ -152,7 +155,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 	});
 
 	// Issue #204 review: with public viewing ON, an auth-check outage (500) used
-	// to fall through to enterPublicViewer(), replacing the login token with a
+	// to fall through to enterGrant('publicViewer'), replacing the login token with a
 	// viewer one (and wiping a "Remember me" token). It must keep the session.
 	test('5a. an auth-check outage keeps the login session instead of switching to the viewer', async () => {
 		await expectCheckOutageKeepsTheSession(page, false);
@@ -188,7 +191,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		expect(await identity.json()).toMatchObject({
 			id: 'public',
 			role: 'viewer',
-			publicViewer: true
+			kind: 'publicViewer'
 		});
 		await expect(loginButton(page)).toBeVisible();
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toHaveCount(0);

@@ -7,9 +7,9 @@ import { createTauriAuthProvider } from '../src/providers/tauri';
 import { currentSessionScope, isCurrentSessionScope } from '../src/sessionScope.svelte';
 import {
 	bindDefaultSessionProvider,
-	DEFAULT_PUBLIC_VIEWER_RETRIES,
+	DEFAULT_GRANT_RETRIES,
 	getSessionController,
-	publicViewerFallback,
+	grantFallback,
 	resetDefaultSessionController,
 	resolveSettled
 } from '../src/sessionController.svelte';
@@ -23,7 +23,7 @@ import { protectedGuard as guardOutcome } from './guard';
  * answers again. Only a confirmed-invalid session falls through.
  *
  * Issue #260 実装-3 (v2.0.0): the decision is the app's composition of
- * `resolveSettled()` and `publicViewerFallback()` (design §6.1,
+ * `resolveSettled()` and `grantFallback()` (design §6.1,
  * `./guard.ts`) over the default controller bound to the real HTTP / Tauri
  * provider. "Could not verify" is `unverified` (the 503 page), never a
  * rejection. These were the `resolveProtectedSession` tests.
@@ -95,8 +95,8 @@ function fakeServer(options: { viewerPublic: boolean }) {
 				if (token === 'public-token' && state.viewerPublic) return json(200, PUBLIC_VIEWER);
 				return json(200, token !== null && state.validTokens.has(token) ? ALICE : null);
 			case '/api/auth/status':
-				return json(200, { initialized: true, viewerPublic: state.viewerPublic });
-			case '/api/auth/public-viewer':
+				return json(200, { initialized: true, grants: { publicViewer: state.viewerPublic } });
+			case '/api/auth/grant/publicViewer':
 				return state.viewerPublic
 					? json(200, { success: true, token: 'public-token' })
 					: json(403, { kind: 'forbidden' });
@@ -108,7 +108,7 @@ function fakeServer(options: { viewerPublic: boolean }) {
 }
 
 const ALICE = { id: 'alice', name: 'Alice' };
-const PUBLIC_VIEWER = { id: 'public', name: 'public', role: 'viewer', publicViewer: true };
+const PUBLIC_VIEWER = { id: 'public', name: 'public', role: 'viewer', kind: 'publicViewer' };
 
 function storedTokens() {
 	return { local: localStorage.getItem(KEY), session: sessionStorage.getItem(KEY) };
@@ -265,7 +265,7 @@ describe('the guard ends the confirmed-invalid session (#215/#255, I-6)', () => 
 
 		await expect(route(auth)).resolves.toBe('publicViewer');
 		expect(isCurrentSessionScope(scope)).toBe(false);
-		expect(currentSessionScope().owner).toBe('public-viewer');
+		expect(currentSessionScope().owner).toBe('publicViewer');
 		expect(sessionStorage.getItem('banto.listView.items:server')).toBeNull();
 	});
 
@@ -298,7 +298,7 @@ describe('the public-viewer policy with the HTTP provider (S-20)', () => {
 				state.validTokens.add('login-token');
 				return json(200, { success: true, token: 'login-token' });
 			}
-			if (url.endsWith('/api/auth/public-viewer')) {
+			if (url.endsWith('/api/auth/grant/publicViewer')) {
 				publicViewerStarted();
 				await publicViewerHeld;
 			}
@@ -340,7 +340,7 @@ describe('the public-viewer policy with the HTTP provider (S-20)', () => {
 		// Two `none` confirmations (the first token, then the one that
 		// appeared), then the confirmation of the minted public-viewer session.
 		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(3);
-		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(1);
+		expect(state.calls.filter((path) => path === '/api/auth/grant/publicViewer')).toHaveLength(1);
 		expect(storedTokens()).toEqual({ local: null, session: 'public-token' });
 	});
 
@@ -354,11 +354,11 @@ describe('the public-viewer policy with the HTTP provider (S-20)', () => {
 		sessionStorage.setItem(KEY, 'revoked-token');
 
 		await expect(route(auth)).resolves.toBe('login');
-		const rounds = DEFAULT_PUBLIC_VIEWER_RETRIES + 1;
+		const rounds = DEFAULT_GRANT_RETRIES + 1;
 		expect(state.calls.filter((path) => path === '/api/auth/status')).toHaveLength(rounds);
 		// The guard's own confirmation, then one per round.
 		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(1 + rounds);
-		expect(state.calls.filter((path) => path === '/api/auth/public-viewer')).toHaveLength(0);
+		expect(state.calls.filter((path) => path === '/api/auth/grant/publicViewer')).toHaveLength(0);
 	});
 
 	it('S-20: maxRetries = 0 runs the policy once', async () => {
@@ -374,7 +374,10 @@ describe('the public-viewer policy with the HTTP provider (S-20)', () => {
 		const first = await resolveSettled(controller);
 		if (first.outcome !== 'confirmed') throw new Error('expected confirmed');
 
-		const result = await publicViewerFallback(controller, auth, first.ticket, { maxRetries: 0 });
+		const result = await grantFallback(controller, auth, first.ticket, {
+			kind: 'publicViewer',
+			maxRetries: 0
+		});
 		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { status: 'none' } });
 		expect(state.calls.filter((path) => path === '/api/auth/status')).toHaveLength(1);
 		expect(state.calls.filter((path) => path === '/api/auth/identity')).toHaveLength(2);
@@ -392,12 +395,12 @@ describe('the public-viewer policy with the HTTP provider (S-20)', () => {
 			})),
 			credentialRevision: () => revision,
 			onCredentialChanged: () => () => {},
-			status: vi.fn(async () => ({ initialized: true, viewerPublic: true })),
-			enterPublicViewer: vi.fn(async () => ({ success: false }))
+			status: vi.fn(async () => ({ initialized: true, grants: { publicViewer: true } })),
+			enterGrant: vi.fn(async () => ({ success: false }))
 		};
 
 		await expect(route(auth)).resolves.toBe('login');
 		expect(auth.resolve).toHaveBeenCalledTimes(1);
-		expect(auth.enterPublicViewer).toHaveBeenCalledTimes(1);
+		expect(auth.enterGrant).toHaveBeenCalledTimes(1);
 	});
 });

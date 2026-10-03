@@ -1271,8 +1271,8 @@ function removeItemsFromRestModImports() {
 	swapText(
 		REST_MOD,
 		'rest: banto_server の require_auth/ApiError 除去',
-		`use banto_server::{\n    auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,\n    ServerEvent,\n};`,
-		`use banto_server::{\n    auth_routes, require_banto_client_header, sse_route, AuthState, ServerEvent,\n};`
+		`use banto_server::{\n    auth_routes, require_auth, require_banto_client_header, sse_route, ApiError, AuthState,\n    GrantRegistry, GrantSpec, ServerEvent,\n};`,
+		`use banto_server::{\n    auth_routes, require_banto_client_header, sse_route, AuthState, GrantRegistry, GrantSpec,\n    ServerEvent,\n};`
 	);
 	drop(REST_MOD, 'rest: serde::Deserialize import 除去', `use serde::Deserialize;\n`);
 	drop(REST_MOD, 'rest: serde_json::json import 除去', `use serde_json::json;\n`);

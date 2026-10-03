@@ -45,7 +45,7 @@ class SessionStore {
 	/**
 	 * Is this the synthetic LAN "viewer-public" session (viewer-public-plan
 	 * §2.2/§3.1-6, ADR-0012)? The issuer explicitly marks synthetic sessions
-	 * with `identity.publicViewer` (the controller keys them `publicViewer`);
+	 * with `identity.kind === 'publicViewer'` (ADR-0017; the controller keys them `publicViewer`);
 	 * usernames (including `public`) and roles cannot distinguish them from
 	 * ordinary accounts (Issue #209). Consumed by the nav allowlist
 	 * (`navigation.ts`), `Header.svelte`'s login button, and

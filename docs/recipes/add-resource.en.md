@@ -60,7 +60,7 @@ API (reference: `routes/(app)/items/+page.svelte` and
   session is confirmed in one place, the SessionController (tyaro/banto#260,
   ADR-0016), and the template already has the wiring this relies on:
   `(app)/+layout.ts`'s `load` confirms with
-  `resolveSettled(getSessionController())` (`publicViewerFallback` for a
+  `resolveSettled(getSessionController())` (`grantFallback` for a
   `none`) and returns the generation it confirmed; `(app)/+layout.svelte`
   re-runs the loads and rebuilds the page when the generation changes
   (wiring ①); `$lib/session.svelte.ts`'s `sessionStore` is `$derived` from

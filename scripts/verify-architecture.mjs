@@ -317,13 +317,13 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	];
 
 	// REST-only（Tauri 側に対を持たないのが正しい mutating ルート）。
-	// `POST /api/auth/public-viewer` は LAN の未ログイン端末に `viewer` 固定の
-	// 合成セッションを発行する口（Issue #189 / ADR-0012）。Tauri ウィンドウでの
-	// 等価物は M11 ログイン不要モードの synthetic session であり、これは
-	// `auth_config_apply` の設定で入る別機構なので、同名の Tauri コマンドを
-	// 足すのは誤り（窓の中に「公開閲覧に入る」という操作は存在しない）。
+	// `POST /api/auth/grant/{kind}` は、登録済みの種類（grant）の固定 identity の
+	// セッションを、資格情報を持たないクライアントに発行する口（ADR-0017。
+	// 閲覧公開はその 1 種類）。Tauri ウィンドウに「grant に入る」という操作は
+	// 存在せず（M11 ログイン不要モードは `auth_config_apply` の設定で入る別機構）、
+	// 同名の Tauri コマンドを足すのは誤りなので REST のみとする。
 	// desktop-only の鏡像として、ここに分類することで rule 8 (c) を通す。
-	const REST_ONLY = new Set(['POST /api/auth/public-viewer']);
+	const REST_ONLY = new Set(['POST /api/auth/grant/{kind}']);
 
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
 	const DESKTOP_ONLY = new Set([

@@ -20,7 +20,7 @@
  *   `(app)/+layout.svelte`) does not call `invalidateAll()`. The logout's
  *   own hold moves the generation, and SvelteKit lets such an invalidation
  *   win over the `goto('/login')` started right after it - with public
- *   viewing on, the re-run minted a public-viewer session and the tab stayed
+ *   viewing on, the re-run entered a publicViewer grant session and the tab stayed
  *   on the protected screen (E2E public-viewer 5a, found in 実装-2).
  * - The login screen appears only AFTER the logout and its confirmation
  *   finished. A login submitted there while the logout request was still in

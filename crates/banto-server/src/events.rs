@@ -698,20 +698,66 @@ mod tests {
         recheck_closes(&mut body, &ticks, &tx).await;
     }
 
-    #[tokio::test]
-    async fn public_viewer_and_no_revocation_streams_are_not_ended_by_account_changes() {
-        let store = Store::default();
-        store.put("alice", "admin", 1, 0);
-        let (tx, _rx) = broadcast::channel(16);
+    /// A grant spec for the stream tests (ADR-0017): the viewer-public kind
+    /// and an app-defined one, so both go through the same re-validation.
+    fn grant_specs() -> [crate::grant::GrantSpec; 2] {
+        use crate::grant::{GrantCondition, GrantKind, GrantSpec};
+        let on: GrantCondition = Arc::new(|| Box::pin(async { Ok(true) }));
+        [
+            GrantSpec::new(
+                GrantKind::public_viewer(),
+                Identity {
+                    id: "public".into(),
+                    name: "public".into(),
+                    role: "viewer".into(),
+                },
+                on.clone(),
+            ),
+            GrantSpec::new(
+                GrantKind::new("commissioning").unwrap(),
+                Identity {
+                    id: "commissioning".into(),
+                    name: "試運転".into(),
+                    role: "admin".into(),
+                },
+                on,
+            ),
+        ]
+    }
 
-        // A public viewer session has no account: nothing is looked up.
-        let auth = store.auth();
-        let viewer = auth.issue_public_viewer_token();
-        let (mut body, ticks) = open(&auth, &tx, &viewer).await;
-        store.remove("alice");
-        recheck_keeps_open(&mut body, &ticks, &tx, "viewer-1").await;
-        recheck_keeps_open(&mut body, &ticks, &tx, "viewer-2").await;
-        assert_eq!(store.lookups(), 0);
+    #[tokio::test]
+    async fn grant_streams_ignore_account_changes_but_end_at_the_recheck_after_a_revocation() {
+        for spec in grant_specs() {
+            let store = Store::default();
+            store.put("alice", "admin", 1, 0);
+            let (tx, _rx) = broadcast::channel(16);
+
+            // A grant session has no account: nothing is looked up.
+            let auth = store.auth();
+            let token = auth
+                .issue_grant_token(&spec, auth.grant_generation(&spec.kind))
+                .unwrap();
+            let (mut body, ticks) = open(&auth, &tx, &token).await;
+            store.remove("alice");
+            recheck_keeps_open(&mut body, &ticks, &tx, "grant-1").await;
+            recheck_keeps_open(&mut body, &ticks, &tx, "grant-2").await;
+            assert_eq!(store.lookups(), 0);
+
+            // Closing the kind's condition (`revoke_grant_tokens`) ends the
+            // stream at the next re-check - the same one path as a revoked
+            // account session (ADR-0017 セキュリティ "ストリームの再検証は 1 経路").
+            assert_eq!(auth.revoke_grant_tokens(&spec.kind), 1);
+            tx.send(changed("in-window")).unwrap();
+            assert!(next_frame(&mut body).await.unwrap().contains("in-window"));
+            recheck_closes(&mut body, &ticks, &tx).await;
+            assert_eq!(store.lookups(), 0, "{}: still no lookup", spec.kind);
+        }
+    }
+
+    #[tokio::test]
+    async fn no_revocation_streams_are_not_ended_by_account_changes() {
+        let store = Store::default();
+        let (tx, _rx) = broadcast::channel(16);
 
         // `DisabledNoRevocation`: account changes do not end the stream.
         store.put("alice", "admin", 1, 0);

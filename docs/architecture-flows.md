@@ -4,7 +4,7 @@
 
 対象: ログイン／LAN／閲覧公開、初回起動、開発の3経路、CRUD 追加がどの層に載るかを知りたい人。
 
-> **更新（2026-09-30）**: §2（`(app)` ガード）と §3（ログイン・ログアウト）は v2.0.0 の流れ（SessionController・`resolveSettled`・`publicViewerFallback`・保護レイアウトの 3 本の配線、#260・[ADR-0016](./adr/0016-session-controller-single-writer.md)）で描いている。
+> **更新（2026-09-30）**: §2（`(app)` ガード）と §3（ログイン・ログアウト）は v2.0.0 の流れ（SessionController・`resolveSettled`・`grantFallback`・保護レイアウトの 3 本の配線、#260・[ADR-0016](./adr/0016-session-controller-single-writer.md)）で描いている。
 
 ## 目次
 
@@ -59,7 +59,7 @@ flowchart TD
   RESOLVE["resolveSettled(controller)<br/>AuthProvider.resolve() を 1 往復<br/>superseded なら要求し直す（期限 10 秒）"]
   R1{"結果"}
   E503["error 503<br/>再試行画面（routes/+error.svelte）"]
-  PVF["publicViewerFallback(controller, provider, ticket)<br/>status() → isCurrent(ticket) → enterPublicViewer({ expectRevision })"]
+  PVF["grantFallback(controller, provider, ticket, { kind: 'publicViewer' })<br/>status() → isCurrent(ticket) → enterGrant('publicViewer', { expectRevision })"]
   R2{"結果"}
   LOGIN["redirect /login"]
   ALLOW{"kind が publicViewer?"}
@@ -183,8 +183,8 @@ sequenceDiagram
 flowchart LR
   subgraph lan["LAN ブラウザ（server mode）"]
     A["ログイン無しでアクセス"]
-    B["POST /api/auth/public-viewer"]
-    C["Bearer トークン<br/>identity.publicViewer"]
+    B["POST /api/auth/grant/publicViewer"]
+    C["Bearer トークン<br/>identity.kind === 'publicViewer'"]
     D["viewer ロールで REST 読取"]
   end
 
@@ -198,7 +198,7 @@ flowchart LR
 
 ### 読み方
 
-- 設定トグルは **デスクトップ設定**から。OFF なら public-viewer 発行は 403。
+- 設定トグルは **デスクトップ設定**から。OFF なら publicViewer の grant 発行は 403（[ADR-0017](./adr/0017-credential-less-grant.md)）。
 - 合成セッションは **mutating を RBAC で拒否**（監査の扱いは conventions / viewer-public-plan 参照）。
 - display プリセットは初回起動シード等で閲覧公開を既定 ON にする想定（[architecture-overview.md §4](./architecture-overview.md)）。
 

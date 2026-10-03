@@ -327,36 +327,52 @@ without a runtime guard are **upheld by reviewing every call site**.
   ([ADR-0008](adr/0008-machine-check-stop-gate.md); there is no cross-check test
   and src-tauri does not compile, so it guards against one side silently
   loosening) — whenever you change one, update both.
-- **Synthetic viewer sessions (LAN public viewing, #189).** When
-  `server.viewer_public` is ON, `POST /api/auth/public-viewer` issues a
-  read-only bearer token **without any login**
-  ([ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md),
+- **Grants (credential-less session issuance, ADR-0017; public viewing is the
+  first kind, `publicViewer`).** A client without credentials is issued a
+  session with a **fixed identity** of a registered kind
+  ([ADR-0017](adr/0017-credential-less-grant.en.md); public viewing:
+  [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md),
   [viewer-public-plan §2.2](viewer-public-plan.md)). No auth-bypassing public
-  router is created — once issued, the token rides the existing
-  `require_auth` + `RoleGuard` + audit path unchanged. The rules below are
+  router is created — the issued token rides the existing `require_auth` +
+  `RoleGuard` + audit + SSE revalidation unchanged. The rules below are
   guaranteed by review:
-  - **The role is always `viewer`.** `AuthState::issue_public_viewer_token()`
-    takes no `Identity`/role argument and always issues
-    `{ id: "public", name: "public", role: "viewer" }`. **There is no
-    escalation path** (look here first in review).
-  - **Issuance is `403 forbidden` while `viewer_public` is OFF.** The flag is
-    read from `SettingsService::server_config()` on every call (no restart
-    needed; banto-serve and the Tauri embedded server behave identically).
-  - **Concurrent sessions are capped at `MAX_PUBLIC_VIEWER_SESSIONS = 256`.**
-    Issuance needs no credentials, so a cap (not a rate limit) is what bounds
+  - **The only issuing route is `POST /api/auth/grant/{kind}`, which issues a
+    fixed identity from a registered `GrantSpec` (e.g.
+    `GrantSpec::public_viewer`).** The route takes no identity or role from the
+    client (**there is no escalation path** — look here first in review). An
+    unregistered kind is 404; a false condition is 403 `forbidden`.
+  - **The condition is evaluated on every request** (for public viewing,
+    `server.viewer_public`; no restart needed; banto-serve and the Tauri
+    embedded server behave identically). Status `grants.<kind>` and issuance
+    share `GrantRegistry::availability`.
+  - **Concurrent sessions are capped per kind by `max_sessions` (default 256),
+    FIFO.** Issuance needs no credentials, so a cap (not a rate limit) bounds
     unlimited growth. Reaching the cap never fails issuance — it **revokes the
-    oldest public token** instead, so a wall display reloading its page never
-    loses its view. Only public tokens are eligible; real login sessions are
-    never evicted this way.
+    oldest token of that kind**, so a wall display reloading its page never
+    loses its view. Other kinds and real login sessions are never evicted.
+  - **Lifetime defaults to 8h absolute / 1h idle, and is never remembered.**
+  - **Admin-equivalent kinds set `require_loopback_peer`;** an unknown peer is
+    refused.
+  - **Closing a condition is "persist the condition, THEN
+    `revoke_grant_tokens(kind)`" in the same function** (the generation
+    serialises it against a parked issuance; `revokedGrants: n` may go into the
+    audit detail). Real login sessions are unaffected.
   - **Issuance is not audited** (it is not a credential check, and a tablet
     re-issuing on every reload would bury the log in `login` entries). A
-    `denied` entry is still recorded by the existing `RoleGuard` with actor
-    `public` when a public session attempts a mutation.
-  - **`POST /api/auth/logout` revokes only its own token** (other public
-    viewing devices are unaffected).
-  - **`change-password` explicitly rejects synthetic sessions**, even if a
-    normal account has the same username. The
-    frontend shows no account UI in a public viewing session.
+    `denied` entry is still recorded by the existing `RoleGuard` (actor
+    `public`, etc.) when a grant session attempts a mutation.
+  - **`POST /api/auth/logout` revokes only its own token** (other devices are
+    unaffected).
+  - **`change-password` explicitly rejects grant sessions**, even if a normal
+    account has the same username. The frontend shows no account UI in a grant
+    session.
+  - **The kind names `account` and `local` are reserved** (they appear as the
+    identity `kind`).
+  - **Reverse-proxy caveat (ADR-0017 §6).** Behind a same-host proxy every peer
+    looks like loopback, so `require_loopback_peer` protects nothing. Lock
+    down admin-equivalent grants before exposing the app externally, and do not
+    expose `/api/auth/grant/{kind}` from the proxy even during a re-commissioning.
+    This is an operating rule; banto cannot enforce it technically.
   - "auth disabled + LAN enabled" is allowed **only when public viewing is
     ON** (guarded from both directions in `SettingsService`, viewer-public-plan
     §2.3). With it OFF the exclusivity is unchanged from the 2026-07-08
@@ -438,9 +454,9 @@ some operations (download/upload are server-only, folder is tauri-only, etc.)
 are also expressed in the provider layer.
 
 LAN public viewing (#189) adds no fourth mode. `publicViewer` is **session-layer
-state** (the issuer-provided `identity.publicViewer === true`) that distinguishes "logged in" from
+state** (the issuer-provided `identity.kind === 'publicViewer'`) that distinguishes "logged in" from
 "synthetic viewer session" *within* `server` mode; it does not affect which
-provider is selected — a public viewing device uses the ordinary http provider
+provider is selected (grant kinds are not provider modes) — a public viewing device uses the ordinary http provider
 and its bearer token against the existing APIs
 ([ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md), the reason
 alternative B was rejected).
