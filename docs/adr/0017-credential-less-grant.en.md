@@ -437,7 +437,7 @@ path B (the copied template) together; breaking). Here is **what** each consumer
 Common (Rust):
 
 1. Construction and reads of `AuthenticatedSession { public_viewer, .. }` → `grant: Option<GrantKind>`.
-2. `issue_public_viewer_token()` → `issue_grant_token(&GrantSpec::public_viewer(settings))`,
+2. `issue_public_viewer_token()` → the procedure in decision §2 "Serializing issuance and revocation" (read the generation with `grant_generation(kind)` before the check → evaluate the condition → `issue_grant_token(&spec, observed)` → treat `None` as a refusal). The issuing endpoint lives in `grant_router`, so only a copied router calls it directly;
    `revoke_public_viewer_tokens()` → `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)`.
 3. `extra_auth_router(...)` → build a `GrantRegistry` and pass it to the new signature. A copied
    router merges `grant_router(auth, registry)`, adds `availability(peer)` as `grants` to its

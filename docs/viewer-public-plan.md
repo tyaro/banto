@@ -28,9 +28,9 @@ M11 ログイン不要モードは v1 で Tauri ウィンドウ限定であり�
 
 ## 2. 設計の要点 — 「認証を外す」を 2 軸に分ける
 
-| 軸 | 内容 | 既存との関係 |
-| --- | --- | --- |
-| **書き込み権限** | 従来どおり。無認証で書けるのはデスクトップ（M11 の synthetic session）のみ。LAN からの mutating は常にログイン必須 | M11 の護りをそのまま維持 |
+| 軸                   | 内容                                                                                                                    | 既存との関係                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| **書き込み権限**     | 従来どおり。無認証で書けるのはデスクトップ（M11 の synthetic session）のみ。LAN からの mutating は常にログイン必須      | M11 の護りをそのまま維持                            |
 | **閲覧公開**（新設） | `server.viewerPublic`（既定 OFF）。ON のとき LAN クライアントは**ログイン無しで `viewer` ロールの合成セッション**を得る | M11 の排他を「閲覧公開 ON なら LAN 併用可」に緩める |
 
 ### 2.1 方式: 合成 viewer セッションの自動発行（ADR-0012）
@@ -54,7 +54,7 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
 > **grant への一本化（2026-10-02、2026-10-03 改訂、[ADR-0017](adr/0017-credential-less-grant.md)）**:
 > 以下の規約は v3.0.0 から「grant」の規約の `publicViewer` 種別への適用になり、閲覧公開専用の
 > 名前は削除される。対応は — 発行口 `POST /api/auth/public-viewer` → `POST /api/auth/grant/publicViewer`、
-> `issue_public_viewer_token()` → `issue_grant_token(&GrantSpec::public_viewer(…))`、
+> `issue_public_viewer_token()` → `issue_grant_token(&spec, observed)`（判定の前に世代を読み、`None` は拒否。手順は ADR-0017 決定 §2「発行と失効の直列化」）、
 > `revoke_public_viewer_tokens()` → `revoke_grant_tokens("publicViewer")`、
 > `MAX_PUBLIC_VIEWER_SESSIONS` → その `GrantSpec.max_sessions`（種別ごとの FIFO、既定 256）、
 > 「viewerPublic OFF で 403」→ `GrantSpec.enabled`（要求ごとに評価）、
@@ -89,11 +89,11 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
 
 ### 2.3 設定バリデーションの変更（`SettingsService`）
 
-| 組合せ | 従来 | 変更後 |
-| --- | --- | --- |
-| `auth.disabled` + `server.enabled` + `viewerPublic=OFF` | 拒否 | **拒否（変更なし）** |
-| `auth.disabled` + `server.enabled` + `viewerPublic=ON` | 拒否 | **許可**（表示専用アプリの標準形） |
-| `!auth.disabled` + `server.enabled` + `viewerPublic=ON` | — | 許可（ログイン運用 + 匿名閲覧） |
+| 組合せ                                                  | 従来 | 変更後                             |
+| ------------------------------------------------------- | ---- | ---------------------------------- |
+| `auth.disabled` + `server.enabled` + `viewerPublic=OFF` | 拒否 | **拒否（変更なし）**               |
+| `auth.disabled` + `server.enabled` + `viewerPublic=ON`  | 拒否 | **許可**（表示専用アプリの標準形） |
+| `!auth.disabled` + `server.enabled` + `viewerPublic=ON` | —    | 許可（ログイン運用 + 匿名閲覧）    |
 
 `set_server_config` / `set_auth_config` の両方向で判定する（片方だけ通る状態を
 作らない）。エラーメッセージは「認証無効モード中は、閲覧公開を有効にした場合のみ
@@ -180,12 +180,12 @@ LANアクセスを有効化できます」（逆方向も同旨）。
 
 ## 4. 実装単位
 
-| 単位 | 内容 | 主な触れどころ | 委譲先 |
-| --- | --- | --- | --- |
-| U1 | Rust: 設定 + バリデーション、`AuthState` 発行/上限、REST 2 ルート + extras hook、banto-serve seed、rest/tests、verify-architecture | `crates/banto-admin-services/src/settings.rs`、`crates/banto-server/src/{auth.rs,routes/auth.rs}`、`apps/admin-template/core/src/rest/{mod.rs,tests.rs}`、`core/src/bin/banto-serve.rs`、`scripts/verify-architecture.mjs` | opus（セキュリティ境界） |
-| U2 | Tauri: `server_apply` / `server_status` / `auth_status` | `src-tauri/src/lib.rs`、`src/lib/banto/serverAdmin.ts` | U1 と同一エージェント |
-| U3 | フロント: provider / ゲート / session / nav / Header / login / settings / i18n | `packages/admin-core/src/{provider.ts,providers/http.ts,index.ts}`、`apps/admin-template/src/{routes/(app)/+layout.ts,lib/session.svelte.ts,lib/navigation.ts,lib/components/{Header,Sidebar}.svelte,routes/login/+page.svelte,routes/(app)/settings/+page.svelte}`、`messages/{ja,en}.json` | sonnet |
-| U4 | e2e + ドキュメント + CHANGELOG | `e2e/`、README、docs | 司令塔 + sonnet |
+| 単位 | 内容                                                                                                                               | 主な触れどころ                                                                                                                                                                                                                                                                               | 委譲先                   |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| U1   | Rust: 設定 + バリデーション、`AuthState` 発行/上限、REST 2 ルート + extras hook、banto-serve seed、rest/tests、verify-architecture | `crates/banto-admin-services/src/settings.rs`、`crates/banto-server/src/{auth.rs,routes/auth.rs}`、`apps/admin-template/core/src/rest/{mod.rs,tests.rs}`、`core/src/bin/banto-serve.rs`、`scripts/verify-architecture.mjs`                                                                   | opus（セキュリティ境界） |
+| U2   | Tauri: `server_apply` / `server_status` / `auth_status`                                                                            | `src-tauri/src/lib.rs`、`src/lib/banto/serverAdmin.ts`                                                                                                                                                                                                                                       | U1 と同一エージェント    |
+| U3   | フロント: provider / ゲート / session / nav / Header / login / settings / i18n                                                     | `packages/admin-core/src/{provider.ts,providers/http.ts,index.ts}`、`apps/admin-template/src/{routes/(app)/+layout.ts,lib/session.svelte.ts,lib/navigation.ts,lib/components/{Header,Sidebar}.svelte,routes/login/+page.svelte,routes/(app)/settings/+page.svelte}`、`messages/{ja,en}.json` | sonnet                   |
+| U4   | e2e + ドキュメント + CHANGELOG                                                                                                     | `e2e/`、README、docs                                                                                                                                                                                                                                                                         | 司令塔 + sonnet          |
 
 U1 と U3 はワイヤ契約（§3.1 の 2・6）を本書で固定した上で並行に進める。
 

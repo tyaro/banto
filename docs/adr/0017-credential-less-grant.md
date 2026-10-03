@@ -408,7 +408,7 @@ v2.0.0 と同じ型: 経路 A（`@banto/*`・`banto-*` の版）と経路 B（�
 共通（Rust）:
 
 1. `AuthenticatedSession { public_viewer, .. }` の直接構築・参照 → `grant: Option<GrantKind>`。
-2. `issue_public_viewer_token()` → `issue_grant_token(&GrantSpec::public_viewer(settings))`、
+2. `issue_public_viewer_token()` → 決定 §2「発行と失効の直列化」の手順（判定の前に `grant_generation(kind)` で世代を読む → 条件を判定 → `issue_grant_token(&spec, observed)` → `None` は拒否として扱う）。発行口は `grant_router` が持つので、自前で呼ぶのはコピーしたルーターの場合だけ。
    `revoke_public_viewer_tokens()` → `revoke_grant_tokens(&GrantKind::PUBLIC_VIEWER)`。
 3. `extra_auth_router(...)` → `GrantRegistry` を組み立てて新シグネチャに渡す。コピーして
    持っている場合は `grant_router(auth, registry)` を merge し、自分の status 応答に
