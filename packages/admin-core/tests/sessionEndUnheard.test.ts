@@ -13,7 +13,7 @@
  *
  * Wires the real SSE provider, `connectEvents`, the real HTTP
  * `AuthProvider` and the route-guard decision as the app composes it on
- * v2.0.0 (`resolveSettled` + `publicViewerFallback`, `./guard.ts`).
+ * v2.0.0 (`resolveSettled` + `grantFallback`, `./guard.ts`).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectEvents, createSseEventProvider } from '../src/events';

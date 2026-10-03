@@ -13,7 +13,7 @@ import type { AuthProvider } from '../src/provider';
 import {
 	controllerInternals,
 	createSessionController,
-	publicViewerFallback,
+	grantFallback,
 	resolveSettled,
 	SessionChangedError,
 	sessionOwnerKey,
@@ -25,7 +25,7 @@ import {
 import {
 	ALICE,
 	BOB,
-	COMMISSIONING,
+	COMMISSIONING_GRANT,
 	deferred,
 	flush,
 	makeProbeProvider,
@@ -60,16 +60,17 @@ function setup(options: { revision?: number; deps?: Partial<SessionControllerDep
 }
 
 describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
-	it('S-1: end() while A’s probe waits supersedes it; B’s later confirmation is not undone by A’s late answer', async () => {
+	it('S-1: a hold while A’s probe waits supersedes it; B’s later confirmation is not undone by A’s late answer', async () => {
 		const { p, controller, settleTo } = setup();
 		await settleTo(ALICE);
 		const aRequest = controller.resolve();
 		expect(p.probes).toHaveLength(2);
-		expect(controller.end('policy', controller.ticket())).toBe(true);
+		p.change(); // the credential changed while ALICE was active (hold)
 		await expect(aRequest).resolves.toMatchObject({ outcome: 'superseded' });
 		expect(p.probes[1].signal?.aborted).toBe(true);
+		expect(p.probes).toHaveLength(3); // the hold started the background confirmation
 
-		const bRequest = controller.resolve();
+		const bRequest = controller.resolve(); // joins the background probe
 		p.active(2, BOB);
 		await expect(bRequest).resolves.toMatchObject({ outcome: 'confirmed' });
 		const bob = controller.snapshot;
@@ -263,11 +264,11 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		expect(controller.snapshot.owner).toBe('account:alice');
 	});
 
-	it('S-12: an old probe (before end) and a new one (after) settling in the same turn: only the new one counts', async () => {
+	it('S-12: an old probe (before the hold) and a new one (after) settling in the same turn: only the new one counts', async () => {
 		const { p, controller, settleTo } = setup();
 		await settleTo(ALICE);
 		const old = controller.resolve();
-		controller.end('policy', controller.ticket());
+		p.change();
 		const fresh = controller.resolve();
 		p.none(1);
 		p.active(2, BOB);
@@ -288,45 +289,26 @@ describe('§4.1 the #255 scenarios (I-1, I-3, I-4, I-6, I-9, I-20)', () => {
 		expect(a.snapshot).toBe(b.snapshot);
 	});
 
-	it('S-14: end() supersedes both waiters and aborts the probe; no new probe without pendingBackground', async () => {
+	it('S-14: a hold supersedes both waiters and aborts the probe; the background confirmation replaces it (with its own signal)', async () => {
 		const { p, controller, settleTo } = setup();
 		await settleTo(ALICE);
 		const first = controller.resolve();
 		const second = controller.resolve();
-		controller.end('policy', controller.ticket());
+		p.change();
 		await expect(first).resolves.toMatchObject({ outcome: 'superseded' });
 		await expect(second).resolves.toMatchObject({ outcome: 'superseded' });
 		expect(p.probes[1].signal?.aborted).toBe(true);
-		expect(p.probes).toHaveLength(2);
-		p.active(1, ALICE);
-		await flush();
-		expect(controller.snapshot.status).toBe('none');
-		// resolveSettled asks again with a new probe (its own signal).
-		const settled = resolveSettled(controller);
 		expect(p.probes).toHaveLength(3);
 		expect(p.probes[2].signal?.aborted).toBe(false);
+		p.active(1, ALICE); // the retired probe's late answer is never applied
+		await flush();
+		expect(controller.snapshot.status).toBe('unknown');
+		// resolveSettled joins the background probe.
+		const settled = resolveSettled(controller);
+		expect(p.probes).toHaveLength(3);
 		p.none(2);
 		await expect(settled).resolves.toMatchObject({ outcome: 'confirmed' });
-	});
-
-	it('S-14: with pendingBackground the aborted probe is replaced by a new one (with its own signal)', async () => {
-		const { p, controller } = setup();
-		controller.adopt(COMMISSIONING, 'commissioning', controller.ticket());
-		p.change(); // pendingBackground only (adopted, S-46)
-		expect(p.probes).toHaveLength(0);
-		controller.end('commissioning-locked', controller.ticket());
-		expect(p.probes).toHaveLength(1);
-		expect(p.probes[0].signal?.aborted).toBe(false);
-	});
-
-	it('S-15: adopt(C) while a probe is in flight: C stays when that probe answers `none`', async () => {
-		const { p, controller } = setup();
-		const request = controller.resolve();
-		expect(controller.adopt(COMMISSIONING, 'commissioning', controller.ticket())).toBe(true);
-		await expect(request).resolves.toMatchObject({ outcome: 'superseded' });
-		p.none(0);
-		await flush();
-		expect(controller.snapshot).toMatchObject({ status: 'active', kind: 'commissioning' });
+		expect(controller.snapshot.status).toBe('none');
 	});
 });
 
@@ -555,8 +537,8 @@ describe('§4.5 freshness and deadlines (I-3, I-8, I-9, I-15, I-22)', () => {
 	});
 });
 
-describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
-	it('S-42: none -> status -> isCurrent -> enterPublicViewer(expectRevision: r0) -> confirmed publicViewer (+1)', async () => {
+describe('§4.7 credential-less grants (I-10, I-13, I-18, I-21; ADR-0017)', () => {
+	it('S-42: none -> status -> isCurrent -> enterGrant(publicViewer, expectRevision r0) -> confirmed publicViewer (+1)', async () => {
 		const { p, controller } = setup();
 		const first = controller.resolve();
 		p.none(0);
@@ -564,8 +546,10 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		if (confirmed.outcome !== 'confirmed') throw new Error('expected confirmed');
 		const generation = controller.snapshot.generation;
 		const r0 = p.revision;
-		const fallback = publicViewerFallback(controller, p.provider, confirmed.ticket);
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
+			kind: 'publicViewer'
+		});
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries[0].expectRevision).toBe(r0);
 		p.change(); // the provider stored the public token and reports it
@@ -578,7 +562,7 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		expect(controller.snapshot).toMatchObject({
 			status: 'active',
 			kind: 'publicViewer',
-			owner: 'public-viewer',
+			owner: 'publicViewer',
 			generation: generation + 1
 		});
 	});
@@ -589,8 +573,10 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		p.none(0);
 		const confirmed = await first;
 		if (confirmed.outcome !== 'confirmed') throw new Error('expected confirmed');
-		const fallback = publicViewerFallback(controller, p.provider, confirmed.ticket);
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
+			kind: 'publicViewer'
+		});
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		p.change(); // B logged in
 		p.entries[0].answer.resolve({ success: false, superseded: true });
@@ -601,57 +587,7 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		expect(p.entries).toHaveLength(1);
 	});
 
-	it('S-44: adopt(C) with a current ticket: active, kind/owner from the app, +1; resolve() does not ask the provider; re-adopt keeps the generation', async () => {
-		const { p, controller } = setup();
-		const generation = controller.snapshot.generation;
-		expect(controller.adopt(COMMISSIONING, 'commissioning', controller.ticket())).toBe(true);
-		expect(controller.snapshot).toMatchObject({
-			status: 'active',
-			kind: 'commissioning',
-			owner: 'commissioning:commissioning',
-			generation: generation + 1
-		});
-		await expect(controller.resolve()).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(p.provider.resolve).not.toHaveBeenCalled();
-		expect(controller.adopt(COMMISSIONING, 'commissioning', controller.ticket())).toBe(true);
-		expect(controller.snapshot.generation).toBe(generation + 1);
-	});
-
-	it('S-45: while adopted a signal does not ask the provider; the policy ends it with its ticket, then resolveSettled confirms', async () => {
-		const { p, controller } = setup();
-		controller.adopt(COMMISSIONING, 'commissioning', controller.ticket());
-		controller.signal('unauthorized');
-		expect(p.probes).toHaveLength(0);
-		await expect(controller.resolve()).resolves.toMatchObject({ outcome: 'confirmed' });
-		const t = controller.ticket();
-		expect(controller.end('commissioning-locked', t)).toBe(true);
-		const settled = resolveSettled(controller);
-		p.none(p.probes.length - 1);
-		await expect(settled).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot.status).toBe('none');
-	});
-
-	it('S-46: a login in another tab while adopted only sets pendingBackground; the epoch-only ticket stays current', async () => {
-		const { p, controller } = setup();
-		controller.adopt(COMMISSIONING, 'commissioning', controller.ticket());
-		const t = controller.ticket();
-		expect(t.revision).toBeUndefined();
-		const snapshot = controller.snapshot;
-		p.change();
-		expect(controller.snapshot).toBe(snapshot);
-		expect(controller.isCurrent(t)).toBe(true);
-		await expect(controller.resolve()).resolves.toMatchObject({
-			outcome: 'confirmed',
-			snapshot
-		});
-		expect(controller.end('commissioning-locked', t)).toBe(true);
-		expect(p.probes).toHaveLength(1); // the background confirmation after end
-		p.active(0, ALICE);
-		await flush();
-		expect(controller.snapshot.owner).toBe('account:alice');
-	});
-
-	it('S-47: a `local` answer (Tauri auth-disabled) is keyed `local`, not `account:0`; no adopt', async () => {
+	it('S-47: a `local` answer (Tauri auth-disabled) is keyed `local`, not `account:0`', async () => {
 		const { p, controller } = setup();
 		const request = controller.resolve();
 		p.active(0, { id: 0 as unknown as string, name: 'local', role: 'admin' }, { kind: 'local' });
@@ -660,43 +596,16 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		expect(sessionOwnerKey({ id: '0', name: 'x' })).toBe('account:0');
 	});
 
-	it('S-53: adopt with a ticket taken before another policy’s end() does nothing', async () => {
-		const { controller } = setup();
-		controller.adopt(COMMISSIONING, 'commissioning', controller.ticket());
-		const t0 = controller.ticket();
-		expect(controller.end('commissioning-locked', controller.ticket())).toBe(true);
-		const snapshot = controller.snapshot;
-		expect(controller.adopt(COMMISSIONING, 'commissioning', t0)).toBe(false);
-		expect(controller.end('again', t0)).toBe(false);
-		expect(controller.snapshot).toBe(snapshot);
-	});
-
-	it('S-62: an epoch-only ticket survives a credential change; end() -> none (+1) -> A (+1)', async () => {
-		const { p, controller } = setup();
-		controller.adopt(COMMISSIONING, 'commissioning', controller.ticket());
-		const generation = controller.snapshot.generation;
-		const t = controller.ticket();
-		p.change(); // another tab's login: pendingBackground only
-		expect(controller.end('commissioning-locked', t)).toBe(true);
-		expect(controller.snapshot).toMatchObject({ status: 'none', generation: generation + 1 });
-		const settled = resolveSettled(controller);
-		p.active(p.probes.length - 1, ALICE);
-		await expect(settled).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot).toMatchObject({
-			status: 'active',
-			owner: 'account:alice',
-			generation: generation + 2
-		});
-	});
-
 	it('S-66: the entry succeeds but the final confirmation fails: `unverified` with the `none` snapshot (503, not /login)', async () => {
 		const { p, controller } = setup();
 		const first = controller.resolve();
 		p.none(0);
 		const confirmed = await first;
 		if (confirmed.outcome !== 'confirmed') throw new Error('expected confirmed');
-		const fallback = publicViewerFallback(controller, p.provider, confirmed.ticket);
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
+			kind: 'publicViewer'
+		});
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		p.change();
 		p.entries[0].answer.resolve({ success: true });
@@ -707,19 +616,162 @@ describe('§4.7 public viewer and adopt (I-10, I-13, I-18, I-21)', () => {
 		expect(result.snapshot.status).toBe('none');
 	});
 
-	it('S-69: while adopted, a revision change without a report is not held at resolve() either', async () => {
+	/** A confirmed `none` and its ticket. */
+	async function confirmedNoneTicket(ctx: ReturnType<typeof setup>) {
+		const first = ctx.controller.resolve();
+		ctx.p.none(ctx.p.probes.length - 1);
+		const confirmed = await first;
+		if (confirmed.outcome !== 'confirmed') throw new Error('expected confirmed');
+		return confirmed.ticket;
+	}
+
+	it('S-109: S-42 for an arbitrary kind: grantFallback({ kind: commissioning }) enters it and confirms active commissioning (+1)', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNoneTicket(ctx);
+		const generation = controller.snapshot.generation;
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
+		p.statuses[0].resolve({ initialized: true, grants: { commissioning: true } });
+		await flush();
+		expect(p.entries).toHaveLength(1);
+		expect(p.entries[0].kind).toBe('commissioning');
+		expect(p.entries[0].expectRevision).toBe(ticket.revision);
+		p.change(); // the provider stored the grant token and reports it
+		p.entries[0].answer.resolve({ success: true });
+		await flush();
+		p.active(p.probes.length - 1, COMMISSIONING_GRANT);
+		await expect(fallback).resolves.toMatchObject({ outcome: 'confirmed' });
+		expect(controller.snapshot).toMatchObject({
+			status: 'active',
+			kind: 'commissioning',
+			owner: 'commissioning',
+			generation: generation + 1
+		});
+	});
+
+	it.each([
+		['the kind is reported false', { commissioning: false }],
+		['the kind is missing from grants', { publicViewer: true }],
+		['grants is missing', undefined]
+	])(
+		'S-110: %s: enterGrant is never called and the confirmed `none` stands',
+		async (_label, grants) => {
+			const ctx = setup();
+			const { p, controller } = ctx;
+			const ticket = await confirmedNoneTicket(ctx);
+			const generation = controller.snapshot.generation;
+			const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
+			p.statuses[0].resolve({ initialized: true, ...(grants ? { grants } : {}) });
+			const result = await fallback;
+			expect(p.provider.enterGrant).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ outcome: 'confirmed', ticket });
+			expect(result.snapshot.status).toBe('none');
+			expect(controller.snapshot.generation).toBe(generation);
+		}
+	);
+
+	it('S-111: a provider without enterGrant: the `none` stands and no entry is attempted', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNoneTicket(ctx);
+		const generation = controller.snapshot.generation;
+		const fallback = grantFallback(controller, { status: p.provider.status }, ticket, {
+			kind: 'publicViewer'
+		});
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
+		const result = await fallback;
+		expect(p.provider.enterGrant).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ outcome: 'confirmed', ticket });
+		expect(result.snapshot.status).toBe('none');
+		expect(controller.snapshot.generation).toBe(generation);
+	});
+
+	it('S-112: a custom `available` predicate decides instead of grants[kind]', async () => {
+		const ctx = setup();
+		const { p, controller } = ctx;
+		const ticket = await confirmedNoneTicket(ctx);
+		const available = vi.fn(
+			(status: { grants?: Record<string, boolean> }) => status.grants?.anything === true
+		);
+		const fallback = grantFallback(controller, p.provider, ticket, {
+			kind: 'commissioning',
+			available
+		});
+		// grants.commissioning is true but the predicate reads `anything`: no entry.
+		p.statuses[0].resolve({ initialized: true, grants: { commissioning: true } });
+		const refused = await fallback;
+		expect(available).toHaveBeenCalledTimes(1);
+		expect(p.provider.enterGrant).not.toHaveBeenCalled();
+		expect(refused.snapshot.status).toBe('none');
+
+		const again = grantFallback(controller, p.provider, ticket, {
+			kind: 'commissioning',
+			available
+		});
+		p.statuses[1].resolve({ initialized: true, grants: { anything: true } });
+		await flush();
+		expect(p.entries).toHaveLength(1);
+		expect(p.entries[0].kind).toBe('commissioning');
+		p.entries[0].answer.resolve({ success: false }); // 403: the none stands
+		await expect(again).resolves.toMatchObject({ outcome: 'confirmed' });
+	});
+
+	it('S-113: revoked -> 401 -> the provider clears the token -> grantFallback silently re-enters the grant', async () => {
 		const { p, controller } = setup();
-		controller.adopt(COMMISSIONING, 'commissioning', controller.ticket());
-		const snapshot = controller.snapshot;
-		p.bump();
-		await expect(controller.resolve()).resolves.toMatchObject({ outcome: 'confirmed' });
-		expect(controller.snapshot).toBe(snapshot);
-		controller.end('commissioning-locked', controller.ticket());
-		expect(p.probes).toHaveLength(1);
+		const entered = controller.resolve();
+		p.active(0, COMMISSIONING_GRANT);
+		await entered;
+		expect(controller.snapshot).toMatchObject({ status: 'active', kind: 'commissioning' });
+
+		controller.signal('unauthorized');
+		p.none(p.probes.length - 1, { clear: true }); // the provider cleared the revoked token
+		await flush();
+		expect(controller.snapshot.status).toBe('none');
+		const ticket = controller.ticket();
+		expect(ticket.revision).toBeDefined(); // never an epoch-only ticket
+		expect(ticket.revision).toBe(p.revision);
+		const generation = controller.snapshot.generation;
+
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
+		p.statuses[0].resolve({ initialized: true, grants: { commissioning: true } });
+		await flush();
+		expect(p.entries).toHaveLength(1);
+		expect(p.entries[0].expectRevision).toBe(ticket.revision);
+		p.change();
+		p.entries[0].answer.resolve({ success: true });
+		await flush();
+		p.active(p.probes.length - 1, COMMISSIONING_GRANT);
+		await expect(fallback).resolves.toMatchObject({ outcome: 'confirmed' });
+		expect(controller.snapshot).toMatchObject({
+			status: 'active',
+			kind: 'commissioning',
+			owner: 'commissioning',
+			generation: generation + 1
+		});
+	});
+
+	it('S-114: after the lock-down the kind is unavailable: the `none` stands (the guard goes to /login)', async () => {
+		const { p, controller } = setup();
+		const entered = controller.resolve();
+		p.active(0, COMMISSIONING_GRANT);
+		await entered;
+		controller.signal('unauthorized');
+		p.none(p.probes.length - 1, { clear: true });
+		await flush();
+		const ticket = controller.ticket();
+		const generation = controller.snapshot.generation;
+
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'commissioning' });
+		p.statuses[0].resolve({ initialized: true, grants: { commissioning: false } });
+		const result = await fallback;
+		expect(p.provider.enterGrant).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ outcome: 'confirmed', ticket });
+		expect(result.snapshot.status).toBe('none');
+		expect(controller.snapshot.generation).toBe(generation);
 	});
 });
 
-describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-52)', () => {
+describe('§6.1 grantFallback: tickets and bounded re-runs (I-7, I-18; S-20, S-52)', () => {
 	/** A confirmed `none` and its ticket - where the guard hands over to the policy. */
 	async function confirmedNone(ctx: ReturnType<typeof setup>) {
 		const first = ctx.controller.resolve();
@@ -733,18 +785,18 @@ describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-
 		const ctx = setup();
 		const { p, controller } = ctx;
 		const ticket = await confirmedNone(ctx);
-		const fallback = publicViewerFallback(controller, p.provider, ticket);
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
 
 		p.change(); // B logged in (none is not held; a background probe starts)
 		p.active(ctx.last(), BOB);
 		await flush();
 		expect(controller.snapshot.owner).toBe('account:bob');
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		p.active(ctx.last(), BOB); // the policy confirms what is stored now
 
 		const result = await fallback;
-		expect(p.entries).toHaveLength(0); // enterPublicViewer never called
+		expect(p.entries).toHaveLength(0); // enterGrant never called
 		expect(result).toMatchObject({ outcome: 'confirmed', snapshot: { owner: 'account:bob' } });
 	});
 
@@ -752,9 +804,9 @@ describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-
 		const ctx = setup();
 		const { p, controller } = ctx;
 		const ticket = await confirmedNone(ctx);
-		const fallback = publicViewerFallback(controller, p.provider, ticket);
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
 
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries[0].expectRevision).toBe(ticket.revision);
 		p.entries[0].answer.resolve({ success: false, superseded: true }); // a token is stored
@@ -763,17 +815,17 @@ describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-
 		await flush();
 
 		// The re-run, with the ticket of that confirmation.
-		p.statuses[1].resolve({ initialized: true, viewerPublic: true });
+		p.statuses[1].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries[1].expectRevision).toBe(p.revision);
-		p.change(); // the public-viewer token was stored and reported
+		p.change(); // the publicViewer grant token was stored and reported
 		p.entries[1].answer.resolve({ success: true });
 		await flush();
 		p.active(ctx.last(), PUBLIC);
 
 		await expect(fallback).resolves.toMatchObject({
 			outcome: 'confirmed',
-			snapshot: { kind: 'publicViewer', owner: 'public-viewer' }
+			snapshot: { kind: 'publicViewer', owner: 'publicViewer' }
 		});
 		expect(p.statuses).toHaveLength(2);
 	});
@@ -782,16 +834,16 @@ describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-
 		const ctx = setup();
 		const { p, controller } = ctx;
 		const ticket = await confirmedNone(ctx);
-		const fallback = publicViewerFallback(controller, p.provider, ticket);
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
 
 		p.change(); // the storage event arrived: a background probe starts
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		expect(p.entries).toHaveLength(0); // no mint on a stale ticket
 		p.none(ctx.last(), { clear: true });
 		await flush();
 
-		p.statuses[1].resolve({ initialized: true, viewerPublic: true });
+		p.statuses[1].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		p.change();
 		p.entries[0].answer.resolve({ success: true });
@@ -813,11 +865,14 @@ describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-
 			const { p, controller } = ctx;
 			const ticket = await confirmedNone(ctx);
 			const probesBefore = p.probes.length;
-			const fallback = publicViewerFallback(controller, p.provider, ticket, { maxRetries });
+			const fallback = grantFallback(controller, p.provider, ticket, {
+				kind: 'publicViewer',
+				maxRetries
+			});
 
 			for (let round = 0; round < rounds; round++) {
 				await flush();
-				p.statuses[round].resolve({ initialized: true, viewerPublic: true });
+				p.statuses[round].resolve({ initialized: true, grants: { publicViewer: true } });
 				await flush();
 				p.entries[round].answer.resolve({ success: false, superseded: true });
 				await flush();
@@ -839,8 +894,8 @@ describe('§6.1 publicViewerFallback: tickets and bounded re-runs (I-7, I-18; S-
 		const { p, controller } = ctx;
 		const ticket = await confirmedNone(ctx);
 		const probes = p.probes.length;
-		const fallback = publicViewerFallback(controller, p.provider, ticket);
-		p.statuses[0].resolve({ initialized: true, viewerPublic: true });
+		const fallback = grantFallback(controller, p.provider, ticket, { kind: 'publicViewer' });
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: true } });
 		await flush();
 		p.entries[0].answer.resolve({ success: false });
 
@@ -1011,13 +1066,14 @@ describe('re-confirmations and tickets (I-18)', () => {
 		expect(controller.isCurrent(ticket)).toBe(true);
 		expect(controller.snapshot).toBe(snapshot);
 		// So the policy goes on with its ticket instead of starting over.
-		const fallback = publicViewerFallback(controller, p.provider, confirmed.ticket, {
+		const fallback = grantFallback(controller, p.provider, confirmed.ticket, {
+			kind: 'publicViewer',
 			maxRetries: 0
 		});
 		const other = controller.resolve();
 		p.none(2);
 		await other;
-		p.statuses[0].resolve({ initialized: true, viewerPublic: false });
+		p.statuses[0].resolve({ initialized: true, grants: { publicViewer: false } });
 		await expect(fallback).resolves.toMatchObject({ outcome: 'confirmed' });
 		expect(p.probes).toHaveLength(3);
 	});
@@ -1127,8 +1183,8 @@ describe('§10 (b) the kind of an answer without `kind` (I-2, 統合修正 13)',
 	it('S-87: no kind -> account; the issuer’s publicViewer marker -> publicViewer; a provider kind is kept', async () => {
 		const cases: [Parameters<ReturnType<typeof makeProbeProvider>['active']>, string, string][] = [
 			[[0, ALICE], 'account', 'account:alice'],
-			[[0, PUBLIC], 'publicViewer', 'public-viewer'],
-			[[0, PUBLIC, { kind: 'account' }], 'publicViewer', 'public-viewer'],
+			[[0, PUBLIC], 'publicViewer', 'publicViewer'],
+			[[0, PUBLIC, { kind: 'account' }], 'publicViewer', 'publicViewer'],
 			[[0, { id: 'op', name: 'op' }, { kind: 'local' }], 'local', 'local']
 		];
 		for (const [args, kind, owner] of cases) {
@@ -1142,7 +1198,8 @@ describe('§10 (b) the kind of an answer without `kind` (I-2, 統合修正 13)',
 
 	it('S-87: an account and the public viewer with the same id never share an owner', () => {
 		expect(sessionOwnerKey({ id: 'public', name: 'public' }, 'account')).toBe('account:public');
-		expect(sessionOwnerKey(PUBLIC, 'publicViewer')).toBe('public-viewer');
+		expect(sessionOwnerKey({ id: 'public', name: 'public' })).toBe('account:public');
+		expect(sessionOwnerKey(PUBLIC, 'publicViewer')).toBe('publicViewer');
 	});
 });
 
@@ -1243,7 +1300,7 @@ describe('the public viewer is not a user (S-93, I-24; independent audit of 実�
 		const { p, controller, settleTo } = setup();
 		await settleTo(null);
 		await settleTo(PUBLIC);
-		expect(controller.snapshot.owner).toBe('public-viewer');
+		expect(controller.snapshot.owner).toBe('publicViewer');
 		p.change(); // the login stored A's token (reported): hold
 		expect(controller.snapshot.status).toBe('unknown');
 		await settleTo(ALICE);
@@ -1321,29 +1378,34 @@ describe('the auth-disabled local session is not a user (S-107, I-24; Issue #291
 });
 
 describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
-	it('S-108: A -> commissioning (adopt without none) raises nothing; A -> commissioning -> A raises nothing', async () => {
+	/** The credential changed and the provider now answers `identity` (a grant's `identity.kind` drives the kind). */
+	async function answerAfterChange(ctx: ReturnType<typeof setup>, identity: typeof ALICE) {
+		ctx.p.change();
+		const request = ctx.controller.resolve();
+		ctx.p.active(ctx.p.probes.length - 1, identity);
+		await request;
+	}
+
+	it('S-108: A -> commissioning (a provider answer, no none) raises nothing; A -> commissioning -> A raises nothing', async () => {
 		const ctx = setup();
 		await ctx.settleTo(ALICE);
-		expect(ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket())).toBe(
-			true
-		);
+		await answerAfterChange(ctx, COMMISSIONING_GRANT);
 		expect(ctx.controller.snapshot).toMatchObject({
 			kind: 'commissioning',
-			owner: 'commissioning:commissioning',
+			owner: 'commissioning',
 			pendingOwnerChange: null
 		});
-		// The adopted session ends and the confirmation answers A again
-		// (the token stayed valid): the same user, so nothing.
-		expect(ctx.controller.end('commissioning-locked', ctx.controller.ticket())).toBe(true);
-		await ctx.settleTo(ALICE);
+		// The grant ends (a lock-down changed the credential) and the
+		// confirmation answers A again: the same user, so nothing.
+		await answerAfterChange(ctx, ALICE);
 		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
 	});
 
-	it('S-108: commissioning -> A after end() with none in between raises nothing; no history is carried', async () => {
+	it('S-108: commissioning -> A after a none in between raises nothing; no history is carried', async () => {
 		const ctx = setup();
 		await ctx.settleTo(ALICE);
-		ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
-		ctx.controller.end('commissioning-locked', ctx.controller.ticket());
+		await answerAfterChange(ctx, COMMISSIONING_GRANT);
+		ctx.p.change();
 		await ctx.settleTo(null);
 		await ctx.settleTo(BOB);
 		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
@@ -1351,11 +1413,10 @@ describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
 
 	it('S-108: commissioning -> B without a prior account raises nothing; commissioning -> commissioning raises nothing', async () => {
 		const ctx = setup();
-		ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
-		ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
+		await answerAfterChange(ctx, COMMISSIONING_GRANT);
+		await answerAfterChange(ctx, COMMISSIONING_GRANT);
 		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
-		ctx.controller.end('commissioning-locked', ctx.controller.ticket());
-		await ctx.settleTo(BOB);
+		await answerAfterChange(ctx, BOB);
 		expect(ctx.controller.snapshot.pendingOwnerChange).toBeNull();
 	});
 
@@ -1371,12 +1432,11 @@ describe('a non-account active is not a user (S-108, I-24; Issue #308)', () => {
 			to: 'account:bob'
 		});
 		ctx.controller.acknowledgeOwnerChange();
-		// `end()` commits none (history cleared), so commissioning followed by
-		// a user without a none is only reachable from provider answers of that
-		// kind; the last real owner (B) is then compared with A, not commissioning with A.
+		// Commissioning followed by a user without a none: the last real
+		// owner (B) is compared with A, not commissioning with A.
 		ctx.p.change();
 		const toCommissioning = ctx.controller.resolve();
-		ctx.p.active(ctx.p.probes.length - 1, COMMISSIONING, { kind: 'commissioning' });
+		ctx.p.active(ctx.p.probes.length - 1, COMMISSIONING_GRANT);
 		await toCommissioning;
 		expect(ctx.controller.snapshot).toMatchObject({
 			kind: 'commissioning',
@@ -1478,8 +1538,6 @@ describe('§3.1 generation table (I-2)', () => {
 	}
 	const none = async (ctx: ReturnType<typeof setup>) => void (await ctx.settleTo(null));
 	const alice = async (ctx: ReturnType<typeof setup>) => void (await ctx.settleTo(ALICE));
-	const adoptC = async (ctx: ReturnType<typeof setup>) =>
-		void ctx.controller.adopt(COMMISSIONING, 'commissioning', ctx.controller.ticket());
 
 	it('unknown -> active(A): +1', () => row(async () => {}, alice, 1));
 	// A pure re-confirmation is not a commit: the epoch stays too (S-88).
@@ -1508,20 +1566,15 @@ describe('§3.1 generation table (I-2)', () => {
 			0,
 			false
 		));
-	it('none / adopted learning of a credential change: no commit', async () => {
+	it('none learning of a credential change: no commit', async () => {
 		await row(none, async (ctx) => ctx.p.change(), 0, false);
-		await row(adoptC, async (ctx) => ctx.p.change(), 0, false);
 	});
 	it('active(A) -> none: +1', () => row(alice, none, 1));
 	it('none -> none: 0', () => row(none, none, 0, false));
 	it('active(A) -> active(A) with a new display name: 0 (a commit)', () =>
 		row(alice, async (ctx) => void (await ctx.settleTo({ ...ALICE, name: 'Alice 2' })), 0));
 	it('none -> active(P): +1', () => row(none, async (ctx) => void (await ctx.settleTo(PUBLIC)), 1));
-	it('none -> active(A) (after end): +1', () => row(none, alice, 1));
-	it('none -> active(C) (adopt): +1', () => row(none, adoptC, 1));
-	it('active(C) -> active(C) (re-adopt): 0', () => row(adoptC, adoptC, 0));
-	it('active(C) -> none (end): +1', () =>
-		row(adoptC, async (ctx) => void ctx.controller.end('x', ctx.controller.ticket()), 1));
+	it('none -> active(A) (after a none): +1', () => row(none, alice, 1));
 	it('active(A, account) -> active(local): +1', () =>
 		row(
 			alice,

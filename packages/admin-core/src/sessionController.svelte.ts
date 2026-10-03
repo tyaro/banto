@@ -26,17 +26,20 @@
  *   or found by comparing the provider's revision with the one last applied
  *   (step 0, a defense against a provider that did not report it), moves an
  *   `active` session to `unknown` (the "hold", I-5) so the old owner is not
- *   used while the new one is being confirmed. `none`/`unknown`/adopted
- *   sessions only record that a background confirmation is needed
+ *   used while the new one is being confirmed. `none`/`unknown` sessions
+ *   only record that a background confirmation is needed
  *   (`pendingBackground`).
  * - An answer that can no longer be applied is aborted right away (I-22) and,
  *   if anyone still needs an answer (a waiting caller or `pendingBackground`,
  *   I-9), a NEW probe is started - bounded by `maxStaleRetries`, except for
  *   the one free "catch-up" retry described at `onProbeSettled` (design §10,
  *   decision (a) of 実装-2).
- * - `adopt()`/`end()` let an app's own policy (banto-hub's commissioning mode)
- *   confirm a synthetic session the provider cannot answer for, and end it -
- *   both only with a current `SessionTicket` (I-13, I-18, I-21).
+ * - Every session is one the provider answers for (ADR-0017, v3.0.0): a
+ *   credential-less session (LAN viewer-public, an app's commissioning mode)
+ *   is a grant the provider obtains (`grantFallback` -> `enterGrant`) and
+ *   then confirms like any login. The v2 `adopt()`/`end()` entrances for
+ *   app-synthesized sessions are gone, and so is the "adopted" branch of
+ *   every step below.
  *
  * The controller knows nothing about SvelteKit (I-14): a `load` awaits
  * `resolveSettled()` and returns the generation it confirmed; the layout
@@ -99,8 +102,10 @@ export type SessionScope = { readonly generation: number; readonly owner: string
 
 /**
  * What an asynchronous policy carries across its `await`s (I-18): the
- * controller's `epoch` and - unless an adopted session is live - the
- * provider's credential revision. Opaque; compare with `isCurrent()`.
+ * controller's `epoch` and the provider's credential revision (`undefined`
+ * only while no provider is bound). Opaque; compare with `isCurrent()`.
+ * Since v3.0.0 every ticket carries the revision (ADR-0017: a grant session
+ * is decided by its token like any other, so there is no epoch-only ticket).
  */
 export type SessionTicket = { readonly epoch: number; readonly revision?: CredentialRevision };
 
@@ -127,13 +132,9 @@ export interface SessionController {
 	resolve(options?: SessionResolveOptions): Promise<ResolveResult>;
 	/** "The session may have ended" (an SSE `401`, a cleared token, ...): confirm it in the background with backoff (S-33). Synchronous. */
 	signal(reason: string): void;
-	/** The ticket for an asynchronous policy (I-18). Adopted sessions: epoch only (I-21). */
+	/** The ticket for an asynchronous policy (I-18): the epoch and the provider's revision. */
 	ticket(): SessionTicket;
 	isCurrent(ticket: SessionTicket | SessionScope): boolean;
-	/** Confirm an app-synthesized session (commissioning). No-op `false` unless `ticket` is current (I-13, I-18). */
-	adopt(identity: Identity, kind: SessionKind, ticket: SessionTicket): boolean;
-	/** End an app-confirmed session (policy only - never after a logout, I-10). No-op `false` unless `ticket` is current. */
-	end(reason: string, ticket: SessionTicket): boolean;
 	/** Mark `snapshot.pendingOwnerChange` as handled. */
 	acknowledgeOwnerChange(): void;
 	/** `{ generation, owner }` for the saved-state API. */
@@ -195,36 +196,39 @@ export const DEFAULT_MAX_STALE_RETRIES = 3;
 export const DEFAULT_SESSION_RETRY = { initialMs: 1_000, maxMs: 30_000 } as const;
 
 /**
- * Stable owner key for `identity` under `kind` (design §5.4, 統合修正 13):
- * the public viewer is `public-viewer`, the Tauri auth-disabled session is
- * `local` (never `account:0`), an adopted kind is `${kind}:${id}`, an
- * account is `account:${id}`. `null` when there is no identity or it has no
- * usable id (fail closed - unknown owners never match anything).
+ * Stable owner key for `identity` under `kind` (design §5.4, 統合修正 13,
+ * ADR-0017): the Tauri auth-disabled session is `local` (never
+ * `account:0`), a grant kind is the kind on its own (`publicViewer`,
+ * `commissioning`, ... - its identity is fixed per kind, so the id adds no
+ * information), an account is `account:${id}`. `null` when there is no
+ * identity or (for an account) it has no usable id (fail closed - unknown
+ * owners never match anything).
  */
 export function sessionOwnerKey(
 	identity: Identity | null | undefined,
 	kind?: SessionKind | null
 ): string | null {
 	if (!identity) return null;
-	if (identity.publicViewer === true || kind === 'publicViewer') return 'public-viewer';
 	if (kind === 'local') return 'local';
+	if (kind && kind !== 'account') return kind;
 	const id: unknown = identity.id;
 	if ((typeof id !== 'string' && typeof id !== 'number') || id === '') return null;
-	if (kind && kind !== 'account') return `${kind}:${String(id)}`;
 	return `account:${String(id)}`;
 }
 
 /**
- * The kind of a provider answer (design §10, decision (b) of 実装-2): the
- * issuer's `identity.publicViewer` marker wins (ADR-0012 - it is the only
- * reliable discriminator, and the HTTP provider does not send `kind`);
- * otherwise the provider's `kind` (Tauri: `'account' | 'local'`), and
- * `'account'` when the provider sent none (HTTP, the compatibility adapter).
+ * The kind of a provider answer (design §10, decision (b) of 実装-2,
+ * ADR-0017): the ISSUER's `identity.kind` wins (the REST identity carries
+ * the grant kind or `'account'`; it is the only reliable discriminator - a
+ * real account may share a grant identity's id); otherwise the provider's
+ * `kind` (Tauri: `'account' | 'local'`), and `'account'` when neither is
+ * sent (the compatibility adapter).
  */
 export function kindOfResolvedAuth(
 	answer: Extract<ResolvedAuth, { status: 'active' }>
 ): SessionKind {
-	if (answer.identity.publicViewer === true) return 'publicViewer';
+	const issued = answer.identity.kind;
+	if (typeof issued === 'string' && issued !== '') return issued;
 	return answer.kind ?? 'account';
 }
 
@@ -350,8 +354,6 @@ function createCore(
 	let epoch = 0;
 	/** The provider revision the confirmed state was last applied from (step 0, I-5). */
 	let appliedRevision: CredentialRevision | undefined;
-	/** The live session was confirmed by `adopt()` (I-13). */
-	let adopted = false;
 	/**
 	 * The owner of the last committed active session WITH an owner (cleared by
 	 * `none` and by a switch of provider). An ownerless active (S-10: an
@@ -364,9 +366,9 @@ function createCore(
 	 * moves this: the public viewer (`publicViewer`, S-93: signing in from a
 	 * public-viewer screen is not "another user signed in"; the reverse
 	 * `A -> P` always passes through `none`), the auth-disabled synthetic
-	 * session (`local`, S-107, Issue #291), the commissioning session an app
-	 * confirms with `adopt()` (`commissioning`, S-108) and any kind added
-	 * later. So `A -> X` raises nothing and keeps this at A; if a real
+	 * session (`local`, S-107, Issue #291), an app's commissioning grant
+	 * (`commissioning`, S-108; a grant since v3.0.0, ADR-0017) and any kind
+	 * added later. So `A -> X` raises nothing and keeps this at A; if a real
 	 * account B then becomes active without a `none` in between, A is
 	 * compared with B and `{ A -> B }` is raised as usual (a real user
 	 * switch). A provider answer without a `kind` is an `account`
@@ -453,9 +455,9 @@ function createCore(
 
 	/**
 	 * THE writer (I-1). Synchronous. `external` = a transition the pending
-	 * requests did not ask for (a hold, `adopt`, `end`, a switch of
-	 * provider): their waiters get `superseded` right here (I-20, S-14) and
-	 * the in-flight probe is aborted (it can no longer be applied, I-22).
+	 * requests did not ask for (a hold, a switch of provider): their waiters
+	 * get `superseded` right here (I-20, S-14) and the in-flight probe is
+	 * aborted (it can no longer be applied, I-22).
 	 */
 	function commit(
 		next: {
@@ -545,10 +547,6 @@ function createCore(
 			for (const waiter of waiters) waiter.settle(unverified(new SessionProviderMissingError()));
 			return;
 		}
-		if (adopted) {
-			for (const waiter of waiters) waiter.settle(confirmed());
-			return;
-		}
 		const probe: Probe = {
 			provider,
 			startedAt: stamp(),
@@ -617,14 +615,13 @@ function createCore(
 
 	/**
 	 * Step 0 (and the same check after a discarded answer): the provider's
-	 * revision moved away from the one last applied without a report. Active
-	 * and not adopted: hold (returns `true`). Otherwise only
-	 * `pendingBackground` (I-5, I-13, S-63, S-69).
+	 * revision moved away from the one last applied without a report. Active:
+	 * hold (returns `true`). Otherwise only `pendingBackground` (I-5, S-63).
 	 */
 	function detectDrift(): boolean {
 		if (!provider) return false;
 		if (provider.credentialRevision() === appliedRevision) return false;
-		if (snap.status === 'active' && !adopted) {
+		if (snap.status === 'active') {
 			hold();
 			return true;
 		}
@@ -633,7 +630,7 @@ function createCore(
 	}
 
 	function onCredentialChanged(): void {
-		if (snap.status === 'active' && !adopted) {
+		if (snap.status === 'active') {
 			hold();
 			return;
 		}
@@ -641,9 +638,9 @@ function createCore(
 		kickBackground();
 	}
 
-	/** Start the background confirmation now unless a joinable probe will serve it (or the session is adopted). */
+	/** Start the background confirmation now unless a joinable probe will serve it. */
 	function kickBackground(): void {
-		if (adopted || !provider || !pendingBackground) return;
+		if (!provider || !pendingBackground) return;
 		if (inflight && isJoinable(inflight)) return;
 		replaceInflight([]);
 	}
@@ -670,7 +667,7 @@ function createCore(
 	}
 
 	function scheduleBackground(): void {
-		if (adopted || !pendingBackground || backgroundTimer !== null) return;
+		if (!pendingBackground || backgroundTimer !== null) return;
 		const delay = backgroundDelay;
 		backgroundDelay = Math.min(backgroundDelay * 2, retry.maxMs);
 		backgroundTimer = scheduler.setTimeout(() => {
@@ -880,10 +877,6 @@ function createCore(
 				latestSignalAt = requestedAt;
 				pendingBackground = true;
 			}
-			if (adopted) {
-				resolveFn(confirmed());
-				return;
-			}
 			if (!provider) {
 				resolveFn(unverified(new SessionProviderMissingError()));
 				return;
@@ -918,14 +911,12 @@ function createCore(
 	}
 
 	function ticket(): SessionTicket {
-		if (adopted || !provider) return Object.freeze({ epoch });
-		return Object.freeze({ epoch, revision: provider.credentialRevision() });
+		return Object.freeze({ epoch, revision: currentRevision() });
 	}
 
 	function isCurrent(value: SessionTicket | SessionScope): boolean {
 		if ('epoch' in value) {
-			if (value.epoch !== epoch) return false;
-			return value.revision === undefined || value.revision === currentRevision();
+			return value.epoch === epoch && value.revision === currentRevision();
 		}
 		return value.generation === snap.generation && value.owner === snap.owner;
 	}
@@ -946,27 +937,10 @@ function createCore(
 		signal() {
 			latestSignalAt = stamp();
 			pendingBackground = true;
-			if (adopted) return; // P3-10: stamp only; `end()` starts the probe.
 			kickBackground();
 		},
 		ticket,
 		isCurrent,
-		adopt(identity, kind, t) {
-			if (!isCurrent(t)) return false;
-			adopted = true;
-			commit(
-				{ status: 'active', owner: sessionOwnerKey(identity, kind), identity, kind },
-				{ external: true }
-			);
-			return true;
-		},
-		end(_reason, t) {
-			if (!isCurrent(t)) return false;
-			adopted = false;
-			commit({ status: 'none', owner: null, identity: null, kind: null }, { external: true });
-			kickBackground();
-			return true;
-		},
 		acknowledgeOwnerChange() {
 			if (snap.pendingOwnerChange === null) return;
 			publish({ ...snap, pendingOwnerChange: null });
@@ -1009,7 +983,6 @@ function createCore(
 			}
 			return;
 		}
-		adopted = false;
 		commit(
 			{ status: 'unknown', owner: null, identity: null, kind: null },
 			{ external: true, forgetOwners: true }
@@ -1114,8 +1087,8 @@ export async function resolveSettled(
 	}
 }
 
-/** How many times `publicViewerFallback` re-runs its policy after a credential change (design §6.1). */
-export const DEFAULT_PUBLIC_VIEWER_RETRIES = 3;
+/** How many times `grantFallback` re-runs its policy after a credential change (design §6.1). */
+export const DEFAULT_GRANT_RETRIES = 3;
 
 type EnterResult = { success: boolean; superseded?: boolean };
 
@@ -1128,49 +1101,77 @@ function normalizeEntered(value: unknown): EnterResult {
 	return { success: false };
 }
 
+/** What `grantFallback` reads from `AuthProvider.status()`. */
+export type GrantStatus = { initialized: boolean; grants?: Record<string, boolean> };
+
+export interface GrantFallbackOptions {
+	/** The grant kind to obtain - the server's registered identifier (`'publicViewer'`, an app's `'commissioning'`, ...). */
+	kind: SessionKind;
+	/**
+	 * Whether `status` says the kind is available right now. Default:
+	 * `status.grants?.[kind] === true` (a missing map or kind is "not
+	 * available", fail closed). An app may read its own status field instead.
+	 */
+	available?: (status: GrantStatus) => boolean;
+	/** Re-runs after a credential change (default `DEFAULT_GRANT_RETRIES`). */
+	maxRetries?: number;
+}
+
 /**
- * The public-viewer entry as an app policy outside the controller (design
- * §6.1, S-42/S-52/S-66): given the `ticket` of a confirmed `none`, mint a
- * public-viewer session when `status().viewerPublic` is on - bound to that
- * ticket (`expectRevision`) - and confirm the result. Returns a
- * `ResolveResult` that is `confirmed` or `unverified` (never `superseded`):
- * callers handle `unverified` first (503), and only a confirmed `none` goes
- * to /login.
+ * The credential-less entry as an app policy outside the controller
+ * (ADR-0017; design §6.1, S-42/S-52/S-66, S-109 and following): given the
+ * `ticket` of a confirmed `none`, obtain a grant of `options.kind` when
+ * `status()` says it is available - bound to that ticket (`expectRevision`)
+ * - and confirm the result. LAN viewer-public is `{ kind: 'publicViewer' }`;
+ * an app's commissioning mode is its own kind. Returns a `ResolveResult`
+ * that is `confirmed` or `unverified` (never `superseded`): callers handle
+ * `unverified` first (503), and only a confirmed `none` goes to /login.
+ *
+ * The `none` stays as it is - no request, no retry - when `status()` fails
+ * or reports the kind unavailable, when the provider has no `enterGrant`
+ * (Tauri, demo, an adapted pre-v2 provider), or when the entry itself fails
+ * (404/403, a network error): none of these is a credential change.
  *
  * When the credential changed after the ticket - noticed either as a stale
- * ticket before minting (the `storage` event already arrived) or as a
- * `superseded` mint (it had not) - the result is confirmed again, and ONLY
+ * ticket before the entry (the `storage` event already arrived) or as a
+ * `superseded` entry (it had not) - the result is confirmed again, and ONLY
  * when that confirmation is `none` again (e.g. a revoked token appeared and
  * `resolve()` cleared it) is the policy re-run with the new ticket: up to
- * `maxRetries` times (default `DEFAULT_PUBLIC_VIEWER_RETRIES`), so the
- * policy runs at most `maxRetries + 1` times; past that, the last confirmed
- * `none` is returned (the caller goes to /login). A failed mint (403, a
- * network error) is not a credential change and is not retried.
+ * `maxRetries` times (default `DEFAULT_GRANT_RETRIES`), so the policy runs
+ * at most `maxRetries + 1` times; past that, the last confirmed `none` is
+ * returned (the caller goes to /login).
+ *
+ * A grant session ends like any other - through its token. When the server
+ * revokes the kind (viewer-public turned OFF, a commissioning lock-down),
+ * the next request is a 401, the controller confirms `none`, and the guard
+ * runs this again: the kind is now unavailable, so the `none` stands.
  */
-export async function publicViewerFallback(
+export async function grantFallback(
 	controller: SessionController,
-	provider: Pick<AuthProvider, 'status' | 'enterPublicViewer'>,
+	provider: Pick<AuthProvider, 'status' | 'enterGrant'>,
 	ticket: SessionTicket,
-	options?: { maxRetries?: number }
+	options: GrantFallbackOptions
 ): Promise<Exclude<ResolveResult, { outcome: 'superseded' }>> {
-	const maxRetries = options?.maxRetries ?? DEFAULT_PUBLIC_VIEWER_RETRIES;
+	const { kind } = options;
+	const maxRetries = options.maxRetries ?? DEFAULT_GRANT_RETRIES;
+	const available = options.available ?? ((status: GrantStatus) => status.grants?.[kind] === true);
 	let current = ticket;
 	for (let retries = 0; ; retries++) {
-		let status: { initialized: boolean; viewerPublic?: boolean } | undefined;
+		let status: GrantStatus | undefined;
 		try {
 			status = await provider.status?.();
 		} catch {
-			status = undefined; // A failed read only means "do not mint" (S-52/S-66).
+			status = undefined; // A failed read only means "do not enter" (S-52/S-66).
 		}
 		let result: Exclude<ResolveResult, { outcome: 'superseded' }>;
 		if (!controller.isCurrent(current)) {
 			// Synchronous check, no `await` until the confirmation below.
 			result = await resolveSettled(controller);
-		} else if (!status?.viewerPublic || !provider.enterPublicViewer) {
+		} else if (!status || !available(status) || !provider.enterGrant) {
 			return { outcome: 'confirmed', snapshot: controller.snapshot, ticket: current };
 		} else {
 			const entered = normalizeEntered(
-				await provider.enterPublicViewer({ expectRevision: current.revision })
+				await provider.enterGrant(kind, { expectRevision: current.revision })
 			);
 			if (!entered.success && !entered.superseded && controller.isCurrent(current)) {
 				// Minting failed (403 / network) and nothing changed since the

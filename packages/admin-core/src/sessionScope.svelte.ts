@@ -31,11 +31,12 @@ import {
 export type SessionScope = ControllerSessionScope;
 
 /**
- * Stable owner key for `identity` (design §5.4): `public-viewer` for the
- * synthetic LAN viewer session (ADR-0012 - a real account may share its
- * `id`, Issue #209), `account:${id}` for an account, `null` when there is no
- * identity or it has no usable `id` (fail closed). With `kind`, the Tauri
- * auth-disabled session is `local` and an adopted kind is `${kind}:${id}`.
+ * Stable owner key for `identity` (design §5.4, ADR-0017): a grant kind on
+ * its own (`publicViewer` for the LAN viewer-public session - a real account
+ * may share its `id`, Issue #209 - or an app's kind such as `commissioning`;
+ * the identity is fixed per kind, so the id adds nothing), `local` for the
+ * Tauri auth-disabled session, `account:${id}` for an account, `null` when
+ * there is no identity or it has no usable `id` (fail closed).
  */
 export function sessionOwnerKey(
 	identity: Identity | null | undefined,

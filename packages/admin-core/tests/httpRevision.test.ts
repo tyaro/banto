@@ -251,11 +251,11 @@ describe('HTTP resolve(): one GET /api/auth/identity (§2.1, decision 3)', () =>
 });
 
 describe('HTTP compare-and-set token writes (#259, I-7)', () => {
-	it('S-20: a public-viewer token minted while a login finished is not stored; the login token stays', async () => {
+	it('S-20: a publicViewer grant token minted while a login finished is not stored; the login token stays', async () => {
 		const { requests, fetchFn } = scriptedServer();
 		const { auth } = provider(fetchFn);
 
-		const entering = auth.enterPublicViewer?.();
+		const entering = auth.enterGrant?.('publicViewer');
 		const login = auth.login({ username: 'b', password: 'pw' });
 		requests[1].reply.resolve(json(200, { success: true, token: 'tok-b' }));
 		await expect(login).resolves.toEqual({ success: true, error: undefined });
@@ -265,7 +265,7 @@ describe('HTTP compare-and-set token writes (#259, I-7)', () => {
 		expect(auth.getToken()).toBe('tok-b');
 	});
 
-	it('S-52 (provider half): enterPublicViewer with a stale expectRevision stores nothing', async () => {
+	it('S-52 (provider half): enterGrant with a stale expectRevision stores nothing', async () => {
 		const { requests, fetchFn } = scriptedServer();
 		const { auth } = provider(fetchFn);
 		const ticketRevision = auth.credentialRevision();
@@ -273,7 +273,7 @@ describe('HTTP compare-and-set token writes (#259, I-7)', () => {
 		requests[0].reply.resolve(json(200, { success: true, token: 'tok-b' }));
 		await login;
 
-		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
+		const entering = auth.enterGrant?.('publicViewer', { expectRevision: ticketRevision });
 
 		await expect(entering).resolves.toEqual({ success: false, superseded: true });
 		// A token is stored, so nothing is even requested (PR #264 re-review P1).
@@ -281,12 +281,12 @@ describe('HTTP compare-and-set token writes (#259, I-7)', () => {
 		expect(auth.getToken()).toBe('tok-b');
 	});
 
-	it('S-42 (provider half): enterPublicViewer with the current expectRevision stores the token and notifies once', async () => {
+	it('S-42 (provider half): enterGrant with the current expectRevision stores the token and notifies once', async () => {
 		const { requests, fetchFn } = scriptedServer();
 		const { auth, changed } = provider(fetchFn);
 		const ticketRevision = auth.credentialRevision();
 
-		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
+		const entering = auth.enterGrant?.('publicViewer', { expectRevision: ticketRevision });
 		requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
 
 		await expect(entering).resolves.toEqual({ success: true });
@@ -404,11 +404,11 @@ describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #26
 		expect(changed).not.toHaveBeenCalled();
 	});
 
-	it('S-20: enterPublicViewer does not store over a token another tab wrote before its event arrived', async () => {
+	it('S-20: enterGrant does not store over a token another tab wrote before its event arrived', async () => {
 		const { requests, fetchFn } = scriptedServer();
 		const { auth } = provider(fetchFn);
 
-		const entering = auth.enterPublicViewer?.();
+		const entering = auth.enterGrant?.('publicViewer');
 		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
 		requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
 
@@ -422,7 +422,7 @@ describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #26
 		const { auth } = provider(fetchFn);
 		const ticketRevision = auth.credentialRevision();
 
-		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
+		const entering = auth.enterGrant?.('publicViewer', { expectRevision: ticketRevision });
 		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
 		requests[0].reply.resolve(json(200, { success: true, token: 'public-token' }));
 
@@ -431,14 +431,14 @@ describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #26
 		expect(sessionStorage.getItem(KEY)).toBeNull();
 	});
 
-	it('S-20: enterPublicViewer({ expectRevision }) called AFTER another tab wrote a token (event not yet delivered) does not overwrite it', async () => {
+	it('S-20: enterGrant("publicViewer", { expectRevision }) called AFTER another tab wrote a token (event not yet delivered) does not overwrite it', async () => {
 		const { requests, fetchFn } = scriptedServer();
 		const { auth, changed } = provider(fetchFn);
 		// The ticket: resolve() confirmed none at this revision.
 		const ticketRevision = auth.credentialRevision();
 		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
 
-		const entering = auth.enterPublicViewer?.({ expectRevision: ticketRevision });
+		const entering = auth.enterGrant?.('publicViewer', { expectRevision: ticketRevision });
 
 		await expect(entering).resolves.toEqual({ success: false, superseded: true });
 		expect(requests).toHaveLength(0);
@@ -448,12 +448,12 @@ describe('HTTP compare-and-set: storage changed, event not yet delivered (PR #26
 		expect(changed).not.toHaveBeenCalled();
 	});
 
-	it('S-20: the default enterPublicViewer() called after another tab wrote a token does not overwrite it', async () => {
+	it('S-20: the default enterGrant("publicViewer") called after another tab wrote a token does not overwrite it', async () => {
 		const { requests, fetchFn } = scriptedServer();
 		const { auth } = provider(fetchFn);
 		localStorage.setItem(KEY, 'tok-b-from-tab-2'); // no storage event yet
 
-		const entering = auth.enterPublicViewer?.();
+		const entering = auth.enterGrant?.('publicViewer');
 
 		await expect(entering).resolves.toEqual({ success: false, superseded: true });
 		expect(requests).toHaveLength(0);

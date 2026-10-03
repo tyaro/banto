@@ -64,12 +64,11 @@ describe('adaptLegacyAuthProvider: guaranteed', () => {
 		).rejects.toBe(failure);
 	});
 
-	it('login/logout/setup/changePassword/status pass through; enterPublicViewer maps its boolean to { success }', async () => {
+	it('login/logout/setup/changePassword/status pass through', async () => {
 		const old = legacy({
-			status: vi.fn(async () => ({ initialized: true, viewerPublic: true })),
+			status: vi.fn(async () => ({ initialized: true })),
 			setup: vi.fn(async () => ({ success: false, error: 'x' })),
-			changePassword: vi.fn(async () => ({ success: true })),
-			enterPublicViewer: vi.fn(async () => true)
+			changePassword: vi.fn(async () => ({ success: true }))
 		});
 		const auth = adaptLegacyAuthProvider(old);
 
@@ -77,8 +76,8 @@ describe('adaptLegacyAuthProvider: guaranteed', () => {
 		await auth.logout();
 		await expect(auth.setup?.({ username: 'o' })).resolves.toEqual({ success: false, error: 'x' });
 		await expect(auth.changePassword?.('a', 'b')).resolves.toEqual({ success: true });
-		await expect(auth.status?.()).resolves.toEqual({ initialized: true, viewerPublic: true });
-		await expect(auth.enterPublicViewer?.()).resolves.toEqual({ success: true });
+		await expect(auth.status?.()).resolves.toEqual({ initialized: true });
+		expect(auth.enterGrant).toBeUndefined();
 		expect(old.login).toHaveBeenCalledWith({ username: 'a' });
 		expect(old.logout).toHaveBeenCalledTimes(1);
 		expect(old.changePassword).toHaveBeenCalledWith('a', 'b');
@@ -90,7 +89,7 @@ describe('adaptLegacyAuthProvider: guaranteed', () => {
 		expect(auth.status).toBeUndefined();
 		expect(auth.setup).toBeUndefined();
 		expect(auth.changePassword).toBeUndefined();
-		expect(auth.enterPublicViewer).toBeUndefined();
+		expect(auth.enterGrant).toBeUndefined();
 	});
 });
 
@@ -119,15 +118,6 @@ describe('adaptLegacyAuthProvider: NOT guaranteed (pinned down)', () => {
 		unsubscribe();
 
 		expect(listener).not.toHaveBeenCalled();
-	});
-
-	it('enterPublicViewer ignores expectRevision (no compare-and-set)', async () => {
-		const old = legacy({ enterPublicViewer: vi.fn(async () => true) });
-		const auth = adaptLegacyAuthProvider(old);
-
-		await expect(
-			auth.enterPublicViewer?.({ expectRevision: 'not-current' as typeof ADAPTER_REVISION })
-		).resolves.toEqual({ success: true });
 	});
 
 	it('resolve() is two round trips: check() and getIdentity() are separate calls', async () => {

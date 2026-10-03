@@ -12,8 +12,13 @@ import {
 	saveListViewState,
 	takeLastEditedRecord
 } from '../src/listViewState';
-import type { Identity } from '../src/provider';
-import { getSessionController } from '../src/sessionController.svelte';
+import type { AuthProvider, CredentialRevision, Identity, ResolvedAuth } from '../src/provider';
+import {
+	bindDefaultSessionProvider,
+	getSessionController,
+	resetDefaultSessionController,
+	resolveSettled
+} from '../src/sessionController.svelte';
 import {
 	currentSessionScope,
 	isCurrentSessionScope,
@@ -26,23 +31,54 @@ const ALICE = { id: 'alice', name: 'Alice' };
 const BOB = { id: 'bob', name: 'Bob' };
 
 /**
- * Issue #260 実装-3: the pre-v2 `beginSession`/`endSession` are gone. These
- * tests only need the default controller to commit a session synchronously,
- * so they use its two synchronous entrances with a current ticket: `adopt()`
- * (an app-confirmed session; the owner key is the same `account:${id}` /
- * `public-viewer` a provider answer gets) and `end()` - both run the
- * controller's own hygiene (`onActive` purges other owners' entries,
- * `onNone` clears everything, I-6).
+ * The default controller commits sessions only through provider answers
+ * (v3.0.0 removed `adopt()`/`end()`), so these tests bind it to a scripted
+ * provider: `beginSession`/`endSession` change the script, report the
+ * credential change and wait for the confirmation - the controller's own
+ * hygiene runs as in the app (`onActive` purges other owners' entries,
+ * `onNone` clears everything, I-6). The owner key is the one a provider
+ * answer gets (`account:${id}`, or the grant kind alone).
  */
-function beginSession(identity: Identity): void {
-	const controller = getSessionController();
-	const kind = identity.publicViewer === true ? 'publicViewer' : 'account';
-	controller.adopt(identity, kind, controller.ticket());
+let scripted: ResolvedAuth;
+let revisionCounter = 0;
+const changeListeners = new Set<() => void>();
+
+const rev = () => `${revisionCounter}.0` as CredentialRevision;
+
+function scriptedProvider(): AuthProvider {
+	return {
+		login: async () => ({ success: true }),
+		logout: async () => {},
+		resolve: async () => scripted,
+		credentialRevision: () => rev(),
+		onCredentialChanged(listener: () => void) {
+			changeListeners.add(listener);
+			return () => {
+				changeListeners.delete(listener);
+			};
+		}
+	};
 }
 
-function endSession(): void {
-	const controller = getSessionController();
-	controller.end('test', controller.ticket());
+function script(answer: (r: CredentialRevision) => ResolvedAuth): void {
+	revisionCounter += 1;
+	scripted = answer(rev());
+	for (const listener of [...changeListeners]) listener();
+}
+
+async function beginSession(identity: Identity, kind = 'account'): Promise<void> {
+	script((r) => ({
+		status: 'active',
+		checked: r,
+		current: r,
+		identity: kind === 'account' ? identity : { ...identity, kind }
+	}));
+	await resolveSettled(getSessionController());
+}
+
+async function endSession(): Promise<void> {
+	script((r) => ({ status: 'none', checked: r, current: r }));
+	await resolveSettled(getSessionController());
 }
 
 /**
@@ -52,9 +88,13 @@ function endSession(): void {
  * explicitly.
  */
 let scope: SessionScope;
-beforeEach(() => {
-	endSession();
-	beginSession(ALICE);
+beforeEach(async () => {
+	resetDefaultSessionController();
+	changeListeners.clear();
+	scripted = { status: 'none', checked: rev(), current: rev() };
+	bindDefaultSessionProvider(scriptedProvider());
+	await endSession();
+	await beginSession(ALICE);
 	scope = currentSessionScope();
 });
 
@@ -406,14 +446,14 @@ describe('clearAllListViewState', () => {
 // its back (another tab's "Remember me" login, a reload) - state saved for
 // one owner must never be handed to another, whatever path changed it.
 describe('owner matching (#255 4th review)', () => {
-	it('A saves -> B (confirmed) restores nothing, from any function', () => {
+	it('A saves -> B (confirmed) restores nothing, from any function', async () => {
 		const storage = makeMemoryStorage();
 		saveListViewState(scope, 'items:server', { sort: [], filters: [] }, storage);
 		saveActiveListMode(scope, 'items', 'client', storage);
 		saveLastOpenedId(scope, 'items', 42, storage);
 		noteLastEditedRecord(scope, 'items', { id: 42, values: {} }, storage);
 
-		beginSession(BOB);
+		await beginSession(BOB);
 		const bob = currentSessionScope();
 		expect(loadListViewState(bob, 'items:server', undefined, storage)).toBeNull();
 		expect(loadActiveListMode(bob, 'items', storage)).toBeNull();
@@ -421,7 +461,7 @@ describe('owner matching (#255 4th review)', () => {
 		expect(takeLastEditedRecord(bob, 'items', storage)).toBeNull();
 	});
 
-	it('the SAME owner restores its own state, even across a new session generation (reload / re-login)', () => {
+	it('the SAME owner restores its own state, even across a new session generation (reload / re-login)', async () => {
 		const storage = makeMemoryStorage();
 		saveListViewState(
 			scope,
@@ -432,8 +472,8 @@ describe('owner matching (#255 4th review)', () => {
 		saveLastOpenedId(scope, 'items', 7, storage);
 
 		// Like a page reload: no owner until the guard confirms ALICE again.
-		endSession();
-		beginSession({ ...ALICE });
+		await endSession();
+		await beginSession({ ...ALICE });
 		const again = currentSessionScope();
 		expect(again.generation).not.toBe(scope.generation);
 		expect(loadListViewState(again, 'items:server', undefined, storage)?.sort).toEqual([
@@ -442,16 +482,16 @@ describe('owner matching (#255 4th review)', () => {
 		expect(loadLastOpenedId(again, 'items', storage)).toBe(7);
 	});
 
-	it('a real account whose id is "public" and the synthetic public viewer never share state (#209)', () => {
+	it('a real account whose id is "public" and the synthetic public viewer never share state (#209)', async () => {
 		expect(sessionOwnerKey({ id: 'public', name: 'x' })).not.toBe(
-			sessionOwnerKey({ id: 'public', name: 'x', publicViewer: true })
+			sessionOwnerKey({ id: 'public', name: 'x' }, 'publicViewer')
 		);
 		const storage = makeMemoryStorage();
-		beginSession({ id: 'public', name: 'admin named public' });
+		await beginSession({ id: 'public', name: 'admin named public' });
 		const account = currentSessionScope();
 		saveLastOpenedId(account, 'items', 1, storage);
 
-		beginSession({ id: 'public', name: 'viewer', publicViewer: true });
+		await beginSession({ id: 'public', name: 'viewer', role: 'viewer' }, 'publicViewer');
 		const viewer = currentSessionScope();
 		expect(viewer.generation).not.toBe(account.generation);
 		expect(loadLastOpenedId(viewer, 'items', storage)).toBeNull();
@@ -467,12 +507,12 @@ describe('owner matching (#255 4th review)', () => {
 
 	describe('no confirmed owner: nothing is saved or restored (fail closed)', () => {
 		it.each([
-			['after the session ended', () => endSession()],
-			['identity without an id', () => beginSession({ id: '', name: 'nobody' })]
-		])('%s', (_label, enter) => {
+			['after the session ended', async () => endSession()],
+			['identity without an id', async () => beginSession({ id: '', name: 'nobody' })]
+		])('%s', async (_label, enter) => {
 			const storage = makeMemoryStorage();
 			saveLastOpenedId(scope, 'items', 42, storage);
-			enter();
+			await enter();
 			const ownerless = currentSessionScope();
 			expect(ownerless.owner).toBeNull();
 			expect(loadLastOpenedId(ownerless, 'items', storage)).toBeNull();
@@ -490,19 +530,19 @@ describe('owner matching (#255 4th review)', () => {
 // must not write its in-memory state back once the session moved on.
 describe('writes from a stale scope are refused (#255 4th review)', () => {
 	it.each([
-		['the session ended', () => endSession()],
-		['the owner changed', () => beginSession(BOB)],
+		['the session ended', async () => endSession()],
+		['the owner changed', async () => beginSession(BOB)],
 		[
 			'ended and began again as the SAME owner (new generation)',
-			() => {
-				endSession();
-				beginSession(ALICE);
+			async () => {
+				await endSession();
+				await beginSession(ALICE);
 			}
 		]
-	])('%s', (_label, move) => {
+	])('%s', async (_label, move) => {
 		const storage = makeMemoryStorage();
 		const stale = scope;
-		move();
+		await move();
 		expect(isCurrentSessionScope(stale)).toBe(false);
 
 		saveListViewState(
@@ -517,11 +557,11 @@ describe('writes from a stale scope are refused (#255 4th review)', () => {
 		expect(storage.length).toBe(0);
 	});
 
-	it("a stale scope neither reads nor consumes the live session's last-edited marker", () => {
+	it("a stale scope neither reads nor consumes the live session's last-edited marker", async () => {
 		const storage = makeMemoryStorage();
 		const stale = scope;
-		endSession();
-		beginSession(ALICE);
+		await endSession();
+		await beginSession(ALICE);
 		const live = currentSessionScope();
 		noteLastEditedRecord(live, 'items', { id: 3, values: {} }, storage);
 
@@ -529,9 +569,11 @@ describe('writes from a stale scope are refused (#255 4th review)', () => {
 		expect(takeLastEditedRecord(live, 'items', storage)?.id).toBe(3);
 	});
 
-	it('a guard re-run confirming the SAME owner keeps the generation (screens stay writable)', () => {
+	it('a guard re-run confirming the SAME owner keeps the generation (screens stay writable)', async () => {
 		const before = sessionGeneration();
-		beginSession({ ...ALICE });
+		// A re-confirmation without a credential change (what a navigation does).
+		scripted = { ...scripted };
+		await resolveSettled(getSessionController(), { cause: 'navigation' });
 		expect(sessionGeneration()).toBe(before);
 		expect(isCurrentSessionScope(scope)).toBe(true);
 	});
@@ -549,23 +591,23 @@ describe('the controller tidies the global sessionStorage', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("confirming B removes A's entries; confirming A again keeps them", () => {
+	it("confirming B removes A's entries; confirming A again keeps them", async () => {
 		const storage = makeMemoryStorage();
 		vi.stubGlobal('sessionStorage', storage);
 		saveLastOpenedId(scope, 'items', 42);
 
-		beginSession({ ...ALICE });
+		await beginSession({ ...ALICE });
 		expect(storage.getItem('banto.listView.lastOpened.items')).not.toBeNull();
 
-		beginSession(BOB);
+		await beginSession(BOB);
 		expect(storage.getItem('banto.listView.lastOpened.items')).toBeNull();
 	});
 
-	it('confirming `none` removes every entry', () => {
+	it('confirming `none` removes every entry', async () => {
 		const storage = makeMemoryStorage();
 		vi.stubGlobal('sessionStorage', storage);
 		saveLastOpenedId(scope, 'items', 42);
-		endSession();
+		await endSession();
 		expect(storage.length).toBe(0);
 	});
 });

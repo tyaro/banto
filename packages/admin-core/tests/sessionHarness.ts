@@ -8,7 +8,7 @@
  * - `makeProbeProvider()` - a standard `AuthProvider` whose `resolve()`
  *   answers come from `probes[n]` (settled by the test), with a revision the
  *   test moves (`change()` notifies, `bump()` does not - step 0's defense).
- *   `status()`/`enterPublicViewer()` are deferred too.
+ *   `status()`/`enterGrant()` are deferred too.
  */
 import { vi } from 'vitest';
 import type {
@@ -82,9 +82,16 @@ export const PUBLIC: Identity = {
 	id: 'public',
 	name: 'public',
 	role: 'viewer',
-	publicViewer: true
+	kind: 'publicViewer'
 };
 export const COMMISSIONING: Identity = { id: 'commissioning', name: 'Commissioning' };
+/** What a server issues for the `commissioning` grant (ADR-0017: `identity.kind` drives the kind). */
+export const COMMISSIONING_GRANT: Identity = {
+	id: 'commissioning',
+	name: 'Commissioning',
+	role: 'admin',
+	kind: 'commissioning'
+};
 
 export function serverError(): ProviderError {
 	return new ProviderError({ kind: 'storage', message: 'database is locked' });
@@ -101,9 +108,11 @@ export function makeProbeProvider(options: { revision?: number } = {}) {
 	let revision = options.revision ?? 1;
 	const listeners = new Set<() => void>();
 	const probes: ProbeRecord[] = [];
-	const statuses: ReturnType<typeof deferred<{ initialized: boolean; viewerPublic?: boolean }>>[] =
-		[];
+	const statuses: ReturnType<
+		typeof deferred<{ initialized: boolean; grants?: Record<string, boolean> }>
+	>[] = [];
 	const entries: {
+		kind: SessionKind;
 		expectRevision: CredentialRevision | undefined;
 		answer: ReturnType<typeof deferred<{ success: boolean; superseded?: boolean }>>;
 	}[] = [];
@@ -113,13 +122,13 @@ export function makeProbeProvider(options: { revision?: number } = {}) {
 		login: vi.fn(async () => ({ success: true })),
 		logout: vi.fn(async () => {}),
 		status: vi.fn(() => {
-			const answer = deferred<{ initialized: boolean; viewerPublic?: boolean }>();
+			const answer = deferred<{ initialized: boolean; grants?: Record<string, boolean> }>();
 			statuses.push(answer);
 			return answer.promise;
 		}),
-		enterPublicViewer: vi.fn((opts?: { expectRevision?: CredentialRevision }) => {
+		enterGrant: vi.fn((kind: SessionKind, opts?: { expectRevision?: CredentialRevision }) => {
 			const answer = deferred<{ success: boolean; superseded?: boolean }>();
-			entries.push({ expectRevision: opts?.expectRevision, answer });
+			entries.push({ kind, expectRevision: opts?.expectRevision, answer });
 			return answer.promise;
 		}),
 		resolve: vi.fn((opts?: { signal?: AbortSignal }) => {

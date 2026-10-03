@@ -192,7 +192,7 @@ function isIdentity(value: unknown): value is Identity {
  * - `resolve()` answers the session with ONE `GET /api/auth/identity`;
  * - every token write is compare-and-set against the revision the
  *   operation started from (`login`/`setup`/`logout`, and
- *   `enterPublicViewer`'s `expectRevision`, #259) AND the stored token read
+ *   `enterGrant`'s `expectRevision`, #259) AND the stored token read
  *   when it started (PR #264 review P2: another tab's write is visible in
  *   `localStorage` before its `storage` event advances the revision here) -
  *   an operation overtaken by another login/logout (here or in another tab)
@@ -431,7 +431,7 @@ export function createHttpAuthProvider(
 			};
 		},
 
-		async status(): Promise<{ initialized: boolean; viewerPublic?: boolean }> {
+		async status(): Promise<{ initialized: boolean; grants: Record<string, boolean> }> {
 			let response: Response;
 			try {
 				response = await fetchFn(`${baseUrl}/api/auth/status`, {
@@ -442,17 +442,18 @@ export function createHttpAuthProvider(
 				// No server reachable: treat as "already initialized" so the
 				// caller falls back to the normal login form (which will then
 				// fail with a clear network error) rather than the setup form.
-				// viewerPublic omitted (defaults to false downstream) - an
-				// unreachable server cannot mint a public-viewer session either.
-				return { initialized: true };
+				// No grants - an unreachable server cannot issue one either.
+				return { initialized: true, grants: {} };
 			}
-			if (!response.ok) return { initialized: true };
-			const body = (await response.json()) as { initialized: boolean; viewerPublic?: boolean };
-			// An older backend's response has no `viewerPublic` field at all
-			// (viewer-public-plan §3.1-2): default to `false` here so every
-			// caller can read `status().viewerPublic` as a plain boolean without
-			// re-deriving the "absent means off" rule itself.
-			return { initialized: body.initialized, viewerPublic: body.viewerPublic ?? false };
+			if (!response.ok) return { initialized: true, grants: {} };
+			const body = (await response.json()) as {
+				initialized: boolean;
+				grants?: Record<string, boolean>;
+			};
+			// A response without `grants` (ADR-0017) means no kind is available:
+			// `{}` here so every caller reads `status().grants[kind] === true`
+			// without re-deriving the "absent means off" rule itself.
+			return { initialized: body.initialized, grants: body.grants ?? {} };
 		},
 
 		async setup(params: Record<string, unknown>): Promise<AuthOperationResult> {
@@ -510,38 +511,40 @@ export function createHttpAuthProvider(
 		},
 
 		/**
-		 * `POST /api/auth/public-viewer` (viewer-public-plan §2.1/§3.1-2,
-		 * ADR-0012): no request body, no bearer token required - `headers(false)`
-		 * still adds the CSRF `X-Banto-Client` header (every request needs it)
-		 * but never `Authorization`, since `getToken()` is null before this call
+		 * `POST /api/auth/grant/{kind}` (ADR-0017; viewer-public is
+		 * `kind: 'publicViewer'`, viewer-public-plan §2.1/§3.1-2, ADR-0012): no
+		 * request body, no bearer token required - the CSRF `X-Banto-Client`
+		 * header is still added (every request needs it) but never
+		 * `Authorization`, since `getToken()` is null before this call
 		 * succeeds. On success the returned token is stored the same way a
 		 * normal login's is (`setToken`, `remember: false` - sessionStorage
 		 * only, viewer-public-plan §3.1-6 "Remember me は適用しない"). Never
-		 * throws: a 403 (viewerPublic OFF) or a network failure both resolve
-		 * `{ success: false }` so the route guard can fall back to `/login`.
+		 * throws: a 404 (unregistered kind), a 403 (the kind's condition does
+		 * not hold) or a network failure all resolve `{ success: false }` so
+		 * the route guard keeps its confirmed `none`.
 		 *
 		 * Issue #260 (#259, S-20/S-52): stored only while the revision is still
 		 * `expectRevision` (default: the revision when this call started) AND
 		 * no token is stored - checked both when this call starts and right
 		 * before the write, with or without `expectRevision` (PR #264 review
-		 * P2 / re-review P1). A public-viewer session is only ever minted for
-		 * "no credential at all": a token already present at the start - e.g.
+		 * P2 / re-review P1). A grant is only ever requested for "no
+		 * credential at all": a token already present at the start - e.g.
 		 * another tab's, written after the caller's `resolve()`/ticket but
 		 * before its `storage` event advanced the revision here - means
 		 * `{ success: false, superseded: true }` without a request, and so does
 		 * one that appears while the request is in flight. The caller then
-		 * confirms that token (`publicViewerFallback` runs `resolveSettled()`,
-		 * whose `resolve()` clears a revoked one, within its bounded retry
-		 * loop).
+		 * confirms that token (`grantFallback` runs `resolveSettled()`, whose
+		 * `resolve()` clears a revoked one, within its bounded retry loop).
 		 */
-		async enterPublicViewer(pvOptions?: {
-			expectRevision?: CredentialRevision;
-		}): Promise<{ success: boolean; superseded?: boolean }> {
-			const start = startOperation(pvOptions?.expectRevision);
+		async enterGrant(
+			kind: string,
+			grantOptions?: { expectRevision?: CredentialRevision }
+		): Promise<{ success: boolean; superseded?: boolean }> {
+			const start = startOperation(grantOptions?.expectRevision);
 			if (start.token !== null) return { success: false, superseded: true };
 			let response: Response;
 			try {
-				response = await fetchFn(`${baseUrl}/api/auth/public-viewer`, {
+				response = await fetchFn(`${baseUrl}/api/auth/grant/${encodeURIComponent(kind)}`, {
 					method: 'POST',
 					headers: headersFor(null, false)
 				});

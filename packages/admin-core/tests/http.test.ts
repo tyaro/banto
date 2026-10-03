@@ -374,7 +374,7 @@ describe('createHttpAuthProvider', () => {
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { initialized: false }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		await expect(provider.status?.()).resolves.toEqual({ initialized: false, viewerPublic: false });
+		await expect(provider.status?.()).resolves.toEqual({ initialized: false, grants: {} });
 		expect(fetchFn).toHaveBeenCalledWith('/api/auth/status', {
 			method: 'GET',
 			headers: { 'X-Banto-Client': 'banto' },
@@ -386,23 +386,26 @@ describe('createHttpAuthProvider', () => {
 		const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		await expect(provider.status?.()).resolves.toEqual({ initialized: true });
+		await expect(provider.status?.()).resolves.toEqual({ initialized: true, grants: {} });
 	});
 
-	it('status passes viewerPublic:true through unchanged (viewer-public-plan §3.1-2)', async () => {
+	it('status passes grants through unchanged (ADR-0017)', async () => {
 		const fetchFn = vi
 			.fn()
-			.mockResolvedValue(jsonResponse(200, { initialized: true, viewerPublic: true }));
+			.mockResolvedValue(jsonResponse(200, { initialized: true, grants: { publicViewer: true } }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		await expect(provider.status?.()).resolves.toEqual({ initialized: true, viewerPublic: true });
+		await expect(provider.status?.()).resolves.toEqual({
+			initialized: true,
+			grants: { publicViewer: true }
+		});
 	});
 
-	it('status defaults viewerPublic to false when an older backend omits the field', async () => {
+	it('status fills grants: {} when the backend omits the field', async () => {
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { initialized: true }));
 		const provider = createHttpAuthProvider({ fetchFn });
 
-		await expect(provider.status?.()).resolves.toEqual({ initialized: true, viewerPublic: false });
+		await expect(provider.status?.()).resolves.toEqual({ initialized: true, grants: {} });
 	});
 
 	it('setup POSTs to /api/auth/setup and stores the token on success', async () => {
@@ -497,16 +500,16 @@ describe('createHttpAuthProvider', () => {
 		expect(result).toEqual({ success: false, error: '現在のパスワードが違います' });
 	});
 
-	describe('enterPublicViewer (viewer-public-plan §2.1/§3.1-2, ADR-0012)', () => {
-		it('POSTs /api/auth/public-viewer with the CSRF header and no Authorization, and stores the token in sessionStorage on success', async () => {
+	describe('enterGrant (ADR-0017; viewer-public-plan §2.1, ADR-0012)', () => {
+		it('POSTs /api/auth/grant/publicViewer with the CSRF header and no Authorization, and stores the token in sessionStorage on success', async () => {
 			const fetchFn = vi
 				.fn()
 				.mockResolvedValue(jsonResponse(200, { success: true, token: 'viewer-tok' }));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: true });
+			await expect(provider.enterGrant?.('publicViewer')).resolves.toEqual({ success: true });
 
-			expect(fetchFn).toHaveBeenCalledWith('/api/auth/public-viewer', {
+			expect(fetchFn).toHaveBeenCalledWith('/api/auth/grant/publicViewer', {
 				method: 'POST',
 				headers: { 'X-Banto-Client': 'banto' },
 				body: undefined
@@ -516,11 +519,35 @@ describe('createHttpAuthProvider', () => {
 			expect(provider.getToken()).toBe('viewer-tok');
 		});
 
-		it('resolves { success: false } on a 403 (server.viewerPublic OFF) without storing a token', async () => {
+		it('POSTs /api/auth/grant/{kind} for another kind', async () => {
+			const fetchFn = vi
+				.fn()
+				.mockResolvedValue(jsonResponse(200, { success: true, token: 'commissioning-tok' }));
+			const provider = createHttpAuthProvider({ fetchFn });
+
+			await expect(provider.enterGrant?.('commissioning')).resolves.toEqual({ success: true });
+
+			expect(fetchFn).toHaveBeenCalledWith('/api/auth/grant/commissioning', {
+				method: 'POST',
+				headers: { 'X-Banto-Client': 'banto' },
+				body: undefined
+			});
+			expect(provider.getToken()).toBe('commissioning-tok');
+		});
+
+		it('resolves { success: false } on a 404 (a kind the server does not register)', async () => {
+			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(404, { kind: 'not_found' }));
+			const provider = createHttpAuthProvider({ fetchFn });
+
+			await expect(provider.enterGrant?.('nope')).resolves.toEqual({ success: false });
+			expect(provider.getToken()).toBeNull();
+		});
+
+		it('resolves { success: false } on a 403 (the condition does not hold) without storing a token', async () => {
 			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(403, { kind: 'forbidden' }));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: false });
+			await expect(provider.enterGrant?.('publicViewer')).resolves.toEqual({ success: false });
 			expect(provider.getToken()).toBeNull();
 		});
 
@@ -528,7 +555,7 @@ describe('createHttpAuthProvider', () => {
 			const fetchFn = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: false });
+			await expect(provider.enterGrant?.('publicViewer')).resolves.toEqual({ success: false });
 			expect(provider.getToken()).toBeNull();
 		});
 
@@ -536,7 +563,7 @@ describe('createHttpAuthProvider', () => {
 			const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { success: false }));
 			const provider = createHttpAuthProvider({ fetchFn });
 
-			await expect(provider.enterPublicViewer?.()).resolves.toEqual({ success: false });
+			await expect(provider.enterGrant?.('publicViewer')).resolves.toEqual({ success: false });
 			expect(provider.getToken()).toBeNull();
 		});
 	});
