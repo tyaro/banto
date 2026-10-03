@@ -236,7 +236,7 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
     `revoke_grant_tokens` → 発行を再開 → `None` が返り、有効なトークンが 1 つも無い。
     閲覧公開・任意 kind の両方）と、派生アプリ（banto-hub）側の統合テスト（`enabled()` が
     true を返した発行要求を保留 → ロックダウン（保存＋revoke）完了 → 発行要求を再開 →
-    403 で、直後の `GET /api/auth/identity` が 401、開いていたストリームが閉じる）。
+    403 で、直後の `GET /api/auth/identity` が `200 null`（認証が必要なリソースへの要求は 401）、開いていたストリームが閉じる）。
 
 ### 3. ユーザー削除の自己削除ガード
 
@@ -478,7 +478,7 @@ banto-hub（tyaro/banto-industrial）:
   テスト: ブラウザ相当（`Sec-WebSocket-Protocol`）で grant トークンの接続が成功すること、
   ロックダウン（保存 → revoke）後の再検証で切断されること。
 - Rust（競合テスト、必須）: `enabled()` が true を返した発行要求を保留 → ロックダウン完了 →
-  発行要求を再開 → 403、直後の `GET /api/auth/identity` が 401、開いていた SSE／WebSocket が
+  発行要求を再開 → 403、直後の `GET /api/auth/identity` が `200 null`（認証が必要なリソースへの要求は 401）、開いていた SSE／WebSocket が
   再検証で閉じる（決定 §2「発行と失効の直列化」）。
 - TS: `src/lib/banto/commissioningPolicy.ts`・`commissioningLockDown.ts`（+ `.test.ts`）・
   `sessionRecheck.abort.test.ts`（policy runner と `adopt()`/`end()` の廃止 →

@@ -248,8 +248,7 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
     right before `issue_grant_token` → `revoke_grant_tokens` on another task → resume → `None`
     is returned and no valid token exists; for viewer-public and for an arbitrary kind) and a
     derived-app (banto-hub) integration test (hold an issuing request after `enabled()` returned
-    `true` → complete lock-down (save + revoke) → resume the request → 403, the next
-    `GET /api/auth/identity` is 401, and open streams close).
+    `true` → complete lock-down (save + revoke) → resume the request → 403, the next `GET /api/auth/identity` answers `200 null` (requests to auth-required resources get 401), and open streams close).
 
 ### 3. The self-deletion guard on user deletion
 
@@ -509,7 +508,7 @@ banto-hub (tyaro/banto-industrial):
   `SessionStreamCredential`). Tests: a browser-style connection (`Sec-WebSocket-Protocol`) with a
   grant token succeeds, and the re-validation after lock-down (save → revoke) closes it.
 - Rust (race test, mandatory): hold an issuing request after `enabled()` returned `true` →
-  complete lock-down → resume → 403, the next `GET /api/auth/identity` is 401, and the open
+  complete lock-down → resume → 403, the next `GET /api/auth/identity` answers `200 null` (requests to auth-required resources get 401), and the open
   SSE / WebSocket closes at re-validation (decision §2 "serializing issuance and revocation").
 - TS: `src/lib/banto/commissioningPolicy.ts`, `commissioningLockDown.ts` (+ `.test.ts`),
   `sessionRecheck.abort.test.ts` (retire the policy runner and `adopt()`/`end()` →
