@@ -22,7 +22,9 @@
 
 ## [Unreleased]
 
-**v3.0.0（予定）— 資格情報なしのセッション発行を grant に一本化（ADR-0017）。版の種類: major（破壊的変更。閲覧公開専用の API・URL・フィールドと `SessionController.adopt()`/`end()` を削除し、互換用のラッパ・エイリアスは残さない）。
+## [3.0.0] - 2026-10-04
+
+**v3.0.0 — 資格情報なしのセッション発行を grant に一本化（ADR-0017）。版の種類: major（破壊的変更。閲覧公開専用の API・URL・フィールドと `SessionController.adopt()`/`end()` を削除し、互換用のラッパ・エイリアスは残さない）。
 派生アプリへの影響: 経路 A（`@banto/admin-core`・`banto-server`・`banto-admin-services`）の追従と、それを呼ぶ経路 B（コピーした `rest.rs`・保護レイアウト・ログイン画面・e2e）の書き換えがセット。A だけ上げると型エラーになる。DB の移行は無い。**
 
 | 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                              |
@@ -55,11 +57,25 @@
 - 競合テスト（ADR の必須項目）: `auth.rs` の `an_issuance_parked_before_the_insert_loses_to_a_revocation_that_completed_meanwhile`（閲覧公開・任意 kind）、`grant.rs` の `an_issuance_parked_between_the_judgment_and_the_insert_loses_to_a_revocation`（実ルート）。
 - 派生アプリの移行手順: [docs/upgrading.md 例 3](docs/upgrading.md#例-3-v21x--v300grant-への一本化a-と-b-がセット破壊的変更)（経路 A/B/C の組み立て）、[ADR-0017「v3.0.0 への移行手順」](docs/adr/0017-credential-less-grant.md)（banto-hub・chronogazer の書き換え箇所）。試運転を grant にする派生アプリは `require_loopback_peer: true`・小さい `max_sessions` を既定にし、同一ホストのリバースプロキシ配下の運用条件（ADR-0017 §6 の 2 点）を導入手順に書く。
 
+### 消費側への注意
+
+- A だけ上げると型エラーになる（削除した API を B のコピーが呼ぶ）。A と B を同じ作業で終え、`docs/upgrading.md` の例 3 の順（A → B → 検証用 DB で起動 → 本番）で進める。DB の移行は無いので、戻すときは依存タグと B のコピーを戻せばよい。
+- 閲覧公開（`publicViewer`）を使わない派生アプリも、`SessionController.adopt()`/`end()` を呼んでいれば追従が要る（`grantFallback` + provider の答えへ）。
+- 保存状態の `owner` が 1 回変わる（`sessionOwnerKey` の形が変わるため）。初回起動で「別のユーザーでログインされました」が出ないかを確認する。
+
 ### セキュリティ（v3.0.0）
 
 - あり。認証なしで通る要求が `POST /api/auth/grant/{kind}` の 1 本に縮み、派生アプリの独自の認証迂回を無くせる（ADR-0017）。影響する利用形態: LAN 公開・閲覧公開・派生アプリの試運転。修正は A（`banto-server`）と B（コピーした `rest.rs`）の両方。admin 相当の grant を `require_loopback_peer: false` で LAN bind に載せない（注意点 2）。リバースプロキシ配下では peer が常にプロキシなので、外部公開の前にロックダウンし、`/api/auth/grant/{kind}` をプロキシから外へ出さない（README「リバースプロキシでのTLS終端」）。
 
-- docs(adr): ADR-0017「資格情報なしのセッション発行は grant に一本化し、閲覧公開を 1 種類目・派生アプリの試運転を 2 種類目にする」を追加（2026-10-02 オーナー決定、2026-10-03 のレビュー #313 で細目を決定し、後方互換を捨てて **v3.0.0（major）** で一本化する形に改訂。実装は v3.0.0 の PR、本 PR は文書のみ）。閲覧公開専用の API・URL・フィールド（`/api/auth/public-viewer`、`viewerPublic`、`identity.publicViewer`、`issue_public_viewer_token` など）と `SessionController.adopt()`/`end()` を v3.0.0 で削除する予定と移行手順を ADR に記載、session-controller-design.md §4.7・§6.2・I-13・I-21 と viewer-public-plan.md に注記。
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認する（run の URL と成否・Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版はタグ後にここへ追記する）。
+  [upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+
+### ドキュメント
+
+- docs(adr): ADR-0017「資格情報なしのセッション発行は grant に一本化し、閲覧公開を 1 種類目・派生アプリの試運転を 2 種類目にする」を追加（2026-10-02 オーナー決定、2026-10-03 のレビュー #313 で細目を決定し、後方互換を捨てて **v3.0.0（major）** で一本化する形に改訂。実装は v3.0.0 の PR）。閲覧公開専用の API・URL・フィールド（`/api/auth/public-viewer`、`viewerPublic`、`identity.publicViewer`、`issue_public_viewer_token` など）と `SessionController.adopt()`/`end()` を v3.0.0 で削除し、移行手順を ADR に記載、session-controller-design.md §4.7・§6.2・I-13・I-21 と viewer-public-plan.md に注記。
 
 ## [2.1.1] - 2026-10-02
 
@@ -2114,7 +2130,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v2.1.1...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/tyaro/banto/compare/v2.1.1...v3.0.0
 [2.1.1]: https://github.com/tyaro/banto/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/tyaro/banto/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/tyaro/banto/compare/v1.7.3...v2.0.0
