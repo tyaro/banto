@@ -617,7 +617,7 @@ async fn concurrent_admin_removals_on_postgres(url: &str) {
         let launch = |svc: UsersService, id, actor_id, delete| {
             tokio::spawn(async move {
                 if delete {
-                    svc.delete_user(id, actor_id).await
+                    svc.delete_user(id, Some(actor_id)).await
                 } else {
                     svc.update_user(id, "Changed", Role::Viewer)
                         .await
