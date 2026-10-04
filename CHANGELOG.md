@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- **chore(security)（依存監査・JavaScript 側）**: lockfile の変更なし（依存追加・overrides なし）。2026-10-04 時点の `pnpm audit` は low 1 件（cookie 0.6.0、GHSA-pxg6-pf52-xh8x）のみ、`pnpm audit --prod` は 0 件、informational は 0 件。issue 時点の high 2 / moderate 1（brace-expansion 5.0.9）は main で既に 5.0.12 に更新済み（9cb0f5d）。残る cookie は開発依存（@sveltejs/kit 2.70.3 の `cookie ^0.6.0`。adapter-static の配布物に含まれる経路は確認していない）で、0.7.0 以降へは @sveltejs/kit 3.0.0（`cookie ^2.0.1`、typescript ^6 を peer に要求）への移行が必要なため据え置き。根拠と再検討条件は `.github/workflows/ci.yml` の audit ジョブのコメントに記録。dependabot #320（npm-minor-patch 8 件）は @sveltejs/kit・cookie を含まないため、この件とは重複せず、解消にも寄与しない（#282）。
 - docs: 文書整理の第 1 弾（#312 PR-A）。`.cargo/audit.toml`・`.gitattributes`・`.githooks/pre-commit` と
   `docs/history/improvements.md` に残っていた旧パス・壊れた相対リンクを修正し、industrial-plan・maintenance-review
   の状態行を実態に合わせ、AGENTS（ja/en）に文書の寿命ルール、roadmap §7 に状態行更新の 1 行を追加。
