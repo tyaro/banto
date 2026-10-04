@@ -7,7 +7,8 @@ import {
 	resolveSettled
 } from '@banto/admin-core';
 import * as m from '$lib/paraglide/messages';
-import { bantoReady } from '$lib/banto/setup';
+import { isBantoReady } from '$lib/banto/setup';
+import { deferUntilStarted } from '$lib/banto/startupGate';
 import { syncLocaleFromProvider } from '$lib/banto/locale';
 import { settings } from '$lib/settings.svelte';
 import { publicNavItems } from '$lib/navigation';
@@ -17,8 +18,16 @@ import { publicNavItems } from '$lib/navigation';
 // only writer of "who is signed in" (ADR-0016). This load's only side
 // effects are the controller's confirmation and, for a confirmed `none`,
 // the grant policy's issuance (ADR-0017); it writes no store (`sessionStore` is
-// derived from `controller.snapshot`). Must wait for provider
-// selection/detection (spec §11.1's three-way environment probe) first.
+// derived from `controller.snapshot`). Runs only after provider
+// selection/detection (spec §11.1's three-way environment probe) has
+// finished - but never WAITS for it (Issue #321): while startup is still
+// running the guard throws the startup deferral (`startupGate.ts`) before
+// touching any provider or the session, so the root layout can show the
+// startup splash ("starting…" -> "cannot connect" + reconnect, #286) and
+// re-run this load once startup has finished. Awaiting `bantoReady` here
+// kept the first load - and with it the whole screen - blank while the
+// server was unreachable. The child loads all `await parent()`, so none of
+// them (and no protected component) runs before this guard has passed.
 //
 // - `resolveSettled()` asks again after `superseded` and returns only
 //   `confirmed` or `unverified` (I-16). `unverified` - the server could not
@@ -38,7 +47,7 @@ import { publicNavItems } from '$lib/navigation';
 //   `status()`'s `grants` and `enterGrant()`; Tauri/demo go
 //   straight to /login.
 export async function load({ url }) {
-	await bantoReady;
+	deferUntilStarted(isBantoReady(), () => m['app.starting']());
 	const controller = getSessionController();
 	let result = await resolveSettled(controller, { cause: 'navigation' });
 	if (result.outcome === 'unverified') sessionCheckFailed();

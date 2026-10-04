@@ -1938,6 +1938,35 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expectCheckOutageKeepsTheSession(page, true);
 	});
 
+	// Issue #321 (follow-up to #286): a protected screen opened directly while
+	// the server is unreachable. The route guard used to wait for startup, and
+	// on a first load SvelteKit draws nothing until the loads finish - so the
+	// screen stayed blank with no way to reconnect. Now the splash shows
+	// "起動中…" then "サーバーに接続できません" + 再接続 on the protected URL
+	// itself (never demo, #286), and once the server is back the reconnect
+	// opens that same screen with the session kept (Remember me from 13a).
+	test('13a2. a protected screen opened while the server is unreachable offers reconnect and then opens', async () => {
+		const serverDown = (route: Route) => route.abort('connectionrefused');
+		await page.route('**/api/**', serverDown);
+		try {
+			await page.goto('/dashboard');
+			await expect(page.getByRole('status')).toHaveText('起動中…');
+			const unreachable = page.getByRole('alert');
+			// 3 probes 1.5 s apart (STARTUP_AUTO_RETRIES) before the screen appears.
+			await expect(unreachable).toContainText('サーバーに接続できません', { timeout: 15_000 });
+			await expect(page).toHaveURL(/\/dashboard$/);
+			await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toHaveCount(0);
+		} finally {
+			await page.unroute('**/api/**', serverDown);
+		}
+
+		await page.getByRole('alert').getByRole('button', { name: '再接続' }).click();
+		await expect(page).toHaveURL(/\/dashboard$/);
+		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		await expect(page.getByText('サーバーに接続できません')).toHaveCount(0);
+	});
+
 	// Issue #241: a session revoked while its screen is open. A second
 	// browser (its own storage) logs in as the viewer with "Remember me"; the
 	// admin page then resets that account's password (Issue #204: this ends
