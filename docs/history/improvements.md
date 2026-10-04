@@ -255,7 +255,7 @@ i18nは[template-scope.md](../template-scope.md) §4.3で
 
 - **i18n**: パッケージ側は日本語ハードコードなし（仕様 §13 遵守）を確認。
   ただし **Rust 側にユーザー向け日本語文言が埋まっている**
-  （例: [auth.rs:190](../crates/banto-server/src/auth.rs) の
+  （例: [auth.rs:190](../../crates/banto-server/src/auth.rs) の
   「ユーザー名またはパスワードが違います」）。ライブラリクレートとして
   公開するなら、エラーは kind コードで返しフロントで翻訳する形に寄せる。
   テンプレートアプリ自体は日本語のみだが、これは用途上許容範囲。
