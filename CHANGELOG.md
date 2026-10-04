@@ -1085,17 +1085,16 @@ v1.6.0（2026-09-14）以降の PR #222〜#234（12 件、#204/#205/#206/#207/#2
   **派生アプリでの使い方**（タグを上げたあと、保存型の画面ごとに）:
 
   ```ts
-  import { beforeNavigate, goto } from "$app/navigation";
-  import { base } from "$app/paths";
-  import { guardUnsavedChanges } from "@banto/forms";
+  import { beforeNavigate, goto } from '$app/navigation';
+  import { base } from '$app/paths';
+  import { guardUnsavedChanges } from '@banto/forms';
 
   const guard = guardUnsavedChanges({
-    isDirty: () => store.isDirty, // 自前の下書きなら「下書き !== 保存済みの値」
-    isSaving: () => saving, // 保存中も離脱を確認する
-    beforeNavigate,
-    message: () =>
-      "保存していない変更があります。変更を破棄してこの画面から移動しますか？",
-    isForced: (nav) => nav.to?.url.pathname === `${base}/login`, // ログアウト等は確認しない
+  	isDirty: () => store.isDirty, // 自前の下書きなら「下書き !== 保存済みの値」
+  	isSaving: () => saving, // 保存中も離脱を確認する
+  	beforeNavigate,
+  	message: () => '保存していない変更があります。変更を破棄してこの画面から移動しますか？',
+  	isForced: (nav) => nav.to?.url.pathname === `${base}/login` // ログアウト等は確認しない
   });
 
   // 保存に成功したら、移動の前に「未保存でない」状態にする（保存中フラグも先に下ろす。
