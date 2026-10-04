@@ -713,4 +713,5 @@ M18 に昇格済み。
 2. 調査は Explore(haiku)、実装・テストは general-purpose(sonnet)、
    難所（並行処理・性能チューニング等）は general-purpose(opus) に委譲
 3. 成果物を司令塔がレビューし、`pnpm check` / `cargo test` / CI で検証
-4. マイルストーンごとに PR を作成しマージ（CI ゲート必須）
+4. マイルストーンごとに PR を作成しマージ（CI ゲート必須）。同じ PR で、対応する plan / design
+   文書の冒頭の `状態:` 行（あれば `最終検証日:` も）を更新する（状態ヘッダの陳腐化を防ぐ）

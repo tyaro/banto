@@ -1,4 +1,4 @@
-# cargo-audit configuration (docs/improvements.md §2.5).
+# cargo-audit configuration (docs/history/improvements.md §2.5).
 #
 # Every ignore below is a KNOWN advisory that cannot currently be fixed by a
 # lockfile update - each entry documents why it is acceptable and when to

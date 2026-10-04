@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+- docs: 文書整理の第 1 弾（#312 PR-A）。`.cargo/audit.toml`・`.gitattributes`・`.githooks/pre-commit` と
+  `docs/history/improvements.md` に残っていた旧パス・壊れた相対リンクを修正し、industrial-plan・maintenance-review
+  の状態行を実態に合わせ、AGENTS（ja/en）に文書の寿命ルール、roadmap §7 に状態行更新の 1 行を追加。
+
 ## [3.0.0] - 2026-10-04
 
 **v3.0.0 — 資格情報なしのセッション発行を grant に一本化（ADR-0017）。版の種類: major（破壊的変更。閲覧公開専用の API・URL・フィールドと `SessionController.adopt()`/`end()` を削除し、互換用のラッパ・エイリアスは残さない）。

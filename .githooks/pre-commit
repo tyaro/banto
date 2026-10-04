@@ -5,7 +5,7 @@
 # `pnpm lint` on every PR, so this hook is a convenience for catching the
 # same failures locally before you push, not a hard requirement.
 #
-# No husky / lint-staged here on purpose (docs/improvements.md §5.3):
+# No husky / lint-staged here on purpose (docs/history/improvements.md §5.3):
 # this repo avoids adding dependencies for tooling that a plain POSIX sh
 # script already covers.
 #

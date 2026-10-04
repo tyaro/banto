@@ -46,7 +46,11 @@ track your task belongs to.**
     settings categories / nav badges code).
     **Documents that are fully resolved and frozen move to
     [docs/history/](docs/history/)** (count inbound code references with `rg`
-    before moving — see the grammar table in conventions §12)
+    before moving — see the grammar table in conventions §12).
+    **Lifetime rule**: survey / review records and plans that are done and no longer a current basis are
+    not to be used as the basis for new design (existing historical references and `§` references in code
+    may stay). A PR that changes implementation status also updates the leading `状態:` line of the
+    affected plan / design document (and `最終検証日:` if present)
 - **Track B (for app authors) = [README](README.en.md)**: for people building
   their own app from this template. Renaming, replacing the demo, removing
   options, the scanner-input recipe, Windows setup.
