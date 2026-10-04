@@ -351,6 +351,16 @@ jobs:
       # do about a package that never reaches production. Scoping to
       # `--prod` keeps this job meaningful: it only fails for advisories in
       # code that actually ships in the built frontend.
+      #
+      # 開発依存の残存（2026-10-04 確認、#282）: `pnpm audit`（全依存）は
+      # cookie 0.6.0（low、GHSA-pxg6-pf52-xh8x）の1件のみ。経路は
+      # @sveltejs/kit 2.70.3（2 系の最新）の依存 `cookie ^0.6.0`。修正版
+      # 0.7.0 以降へは @sveltejs/kit 3.0.0（cookie ^2.0.1）へ上げる必要が
+      # あり、3.0.0 は typescript ^6 を peer に要求する（本リポジトリは
+      # admin-template が ^5.8）ため、互換を維持した更新ではなく別の移行
+      # 作業になる。除外・overrides は使わず据え置く。再検討: typescript 6
+      # 系への移行時、または 2 系に cookie 0.7 以降が入ったとき。
+      # `--prod` は 0 件のため、このジョブは緑のまま。
       - name: pnpm audit (prod dependencies only)
         run: pnpm audit --prod --audit-level high
 
