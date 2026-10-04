@@ -22,10 +22,35 @@
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-05
+
+**v3.0.1 — 保護画面を直接開いたときのスプラッシュと再接続の修正（#321）と依存の更新。版の種類: patch（後方互換の修正のみ。公開 API の追加・削除・改名は無い）。
+派生アプリへの影響: 経路 A はタグの更新だけで済む。保護ルートのガードで `await bantoReady` している派生アプリは、コピーしたテンプレートの 5 ファイルの取り込みが要る（経路 B）。DB・設定の変更は無い。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                           |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v3.0.0` → `v3.0.1`（npm と Rust を同じタグに）。版数のみ（API 変更なし）。tauri 2.12.1（#318）など依存の更新は workspace 内で完結する                                                         |
+| B. コピーしたテンプレート        | あり | #321: `src/lib/banto/startupGate.ts`（新規）・`setup.ts`・`app.d.ts`・`routes/+layout.svelte`・`routes/(app)/+layout.ts`。保護ルートの子の load は `await parent()` してから provider に触れる |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                        |
+
+### 消費側への注意
+
+- 経路 A はタグを上げるだけでよい。経路 B は、保護ルートのガードで `await bantoReady` している派生アプリだけが対象（詳細は「修正」の #321 の項）。取り込まなくても動くが、サーバーに届かない間に保護画面を直接開くと真っ白のままになる従来の挙動が残る。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認する（run の URL と成否・Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版はタグ後にここへ追記する）。
+  [upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+
+### その他
+
 - **chore(security)（依存監査・JavaScript 側）**: lockfile の変更なし（依存追加・overrides なし）。2026-10-04 時点の `pnpm audit` は low 1 件（cookie 0.6.0、GHSA-pxg6-pf52-xh8x）のみ、`pnpm audit --prod` は 0 件、informational は 0 件。issue 時点の high 2 / moderate 1（brace-expansion 5.0.9）は main で既に 5.0.12 に更新済み（9cb0f5d）。残る cookie は開発依存（@sveltejs/kit 2.70.3 の `cookie ^0.6.0`。adapter-static の配布物に含まれる経路は確認していない）で、0.7.0 以降へは @sveltejs/kit 3.0.0（`cookie ^2.0.1`、typescript ^6 を peer に要求）への移行が必要なため据え置き。根拠と再検討条件は `.github/workflows/ci.yml` の audit ジョブのコメントに記録。dependabot #320（npm-minor-patch 8 件）は @sveltejs/kit・cookie を含まないため、この件とは重複せず、解消にも寄与しない（#282）。
 - docs: 文書整理の第 1 弾（#312 PR-A）。`.cargo/audit.toml`・`.gitattributes`・`.githooks/pre-commit` と
   `docs/history/improvements.md` に残っていた旧パス・壊れた相対リンクを修正し、industrial-plan・maintenance-review
   の状態行を実態に合わせ、AGENTS（ja/en）に文書の寿命ルール、roadmap §7 に状態行更新の 1 行を追加。
+
+- chore(deps): 依存の更新。tauri 2.12.1（#318、cargo minor-patch）、taiki-e/install-action（#319）、npm の minor-patch 8 件（#320）。
 
 ### 修正
 
@@ -1060,16 +1085,17 @@ v1.6.0（2026-09-14）以降の PR #222〜#234（12 件、#204/#205/#206/#207/#2
   **派生アプリでの使い方**（タグを上げたあと、保存型の画面ごとに）:
 
   ```ts
-  import { beforeNavigate, goto } from '$app/navigation';
-  import { base } from '$app/paths';
-  import { guardUnsavedChanges } from '@banto/forms';
+  import { beforeNavigate, goto } from "$app/navigation";
+  import { base } from "$app/paths";
+  import { guardUnsavedChanges } from "@banto/forms";
 
   const guard = guardUnsavedChanges({
-  	isDirty: () => store.isDirty, // 自前の下書きなら「下書き !== 保存済みの値」
-  	isSaving: () => saving, // 保存中も離脱を確認する
-  	beforeNavigate,
-  	message: () => '保存していない変更があります。変更を破棄してこの画面から移動しますか？',
-  	isForced: (nav) => nav.to?.url.pathname === `${base}/login` // ログアウト等は確認しない
+    isDirty: () => store.isDirty, // 自前の下書きなら「下書き !== 保存済みの値」
+    isSaving: () => saving, // 保存中も離脱を確認する
+    beforeNavigate,
+    message: () =>
+      "保存していない変更があります。変更を破棄してこの画面から移動しますか？",
+    isForced: (nav) => nav.to?.url.pathname === `${base}/login`, // ログアウト等は確認しない
   });
 
   // 保存に成功したら、移動の前に「未保存でない」状態にする（保存中フラグも先に下ろす。
@@ -2155,7 +2181,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v3.0.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/tyaro/banto/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/tyaro/banto/compare/v2.1.1...v3.0.0
 [2.1.1]: https://github.com/tyaro/banto/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/tyaro/banto/compare/v2.0.0...v2.1.0
