@@ -16,6 +16,8 @@
  *      menu, role chip says 閲覧者);
  *   2. the screen allowlist (`NavItem.publicViewer`) holds - `/items` is
  *      visible but read-only, `/users` bounces back to the dashboard;
+ *   2a. a public screen opened while the server is unreachable shows the
+ *      startup splash with 再接続, then enters as the viewer (Issue #321);
  *   3. the write surface stays closed - `POST /api/items` with the public
  *      token is 403;
  *   4. "ログイン" leads to the normal login/setup screen and a real account
@@ -27,7 +29,7 @@
  *
  * No `waitForTimeout`/`sleep`: every wait is a locator auto-retry.
  */
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 import { expectCheckOutageKeepsTheSession } from '../tests/session-check-outage';
 
 // #209: a normal account may share the synthetic identity's string ID.
@@ -76,6 +78,37 @@ test.describe.serial('Banto viewer-public mode', () => {
 		// Allowlist: no admin nav, and settings is not public either.
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
 		await expect(page.getByRole('link', { name: '設定' })).toHaveCount(0);
+	});
+
+	// Issue #321: a wall monitor opening its screen while the server is
+	// unreachable (power-on order, a restart). The splash offers 再接続 on that
+	// URL - never the demo (#286), never a blank page - and once the server is
+	// back the reconnect enters the synthetic viewer on the same screen. Own
+	// page: no stored token, like the monitor's first visit.
+	test('2a. a public screen opened while the server is unreachable offers reconnect, then enters as the viewer', async ({
+		browser
+	}) => {
+		const monitor = await browser.newPage({ reducedMotion: 'reduce' });
+		try {
+			const serverDown = (route: Route) => route.abort('connectionrefused');
+			await monitor.route('**/api/**', serverDown);
+			await monitor.goto('/items');
+			await expect(monitor.getByRole('status')).toHaveText('起動中…');
+			// 3 probes 1.5 s apart (STARTUP_AUTO_RETRIES) before the screen appears.
+			await expect(monitor.getByRole('alert')).toContainText('サーバーに接続できません', {
+				timeout: 15_000
+			});
+			await expect(monitor).toHaveURL(/\/items$/);
+			await monitor.unroute('**/api/**', serverDown);
+
+			await monitor.getByRole('alert').getByRole('button', { name: '再接続' }).click();
+			await expect(monitor).toHaveURL(/\/items$/);
+			await expect(monitor.getByRole('grid')).toBeVisible();
+			await expect(monitor.getByRole('banner').getByText('閲覧者')).toBeVisible();
+			await expect(loginButton(monitor)).toBeVisible();
+		} finally {
+			await monitor.close();
+		}
 	});
 
 	test('3. a non-public screen bounces back to the first public one', async () => {

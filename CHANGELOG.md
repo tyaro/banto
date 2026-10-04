@@ -22,6 +22,11 @@
 
 ## [Unreleased]
 
+### 修正
+
+- fix(admin-template): ログインが必要な画面（`(app)` の配下）を直接開いたとき、サーバーに届かない間は真っ白のままで再接続もできなかった問題を修正（#321、#286 の続き）。ガードの `load` が `await bantoReady` で起動判定を待ち、初回の load が終わらないため SvelteKit がルートのレイアウト（スプラッシュ）も描かなかった。ガードは起動判定を待たず、終わっていなければ provider にもセッションにも触れる前に起動待ちの印付きの 503（`startupGate.ts` の `deferUntilStarted`、`App.Error.startupPending`）を投げる。子の load はすべて `await parent()` なので、保護画面の load とコンポーネントは起動判定とセッションの確定より前に動かない。ルートのレイアウトはこの印のあいだエラー画面ではなくスプラッシュ（「起動中…」→「サーバーに接続できません」＋再接続）を出し、起動判定が終わり、その印を出したナビゲーションが終わってから `invalidateAll()` でガードをやり直す（同じ URL が開く。ナビゲーションの途中でやり直すと SvelteKit 2.70 の `beforeNavigate` が以後呼ばれなくなり、未保存の変更の確認が効かなくなるため）。demo への誤判定（#286）・Tauri・demo ビルド・閲覧公開の grant・セッション確認の 503 の再試行は従来どおり。E2E: smoke `13a2`・public-viewer `2a`（`/api` を止めて保護画面を直接開く → 再接続 → その画面に入る）。
+  - 派生アプリへの影響: **経路 B のみ**（A の `@banto/*`・`banto-*` と C の DB・設定は変更なし。`resolveStartupTarget`/`startupState` の API も変えていない）。保護ルートのガードで `await bantoReady` している派生アプリは、この修正の入った版（v3.0.0 の次）の admin-template から次を写す: `src/lib/banto/startupGate.ts`（新規）、`src/lib/banto/setup.ts`（`isBantoReady()`）、`src/app.d.ts`（`App.Error.startupPending`）、`src/routes/+layout.svelte`（スプラッシュの継続とやり直し）、`src/routes/(app)/+layout.ts`（`await bantoReady` を `deferUntilStarted(isBantoReady(), …)` に）。保護ルートの子の load は `await parent()` してから provider・セッションに触れること（テンプレートはすべてそうなっている）。単体テストは `src/lib/banto/startupGate.test.ts`・`src/routes/(app)/guard.test.ts`。
+
 ## [3.0.0] - 2026-10-04
 
 **v3.0.0 — 資格情報なしのセッション発行を grant に一本化（ADR-0017）。版の種類: major（破壊的変更。閲覧公開専用の API・URL・フィールドと `SessionController.adopt()`/`end()` を削除し、互換用のラッパ・エイリアスは残さない）。

@@ -98,14 +98,22 @@ export function getUiSettings(): UiSettingsProvider {
 
 const notifier: Notifier = { notify: (kind, message) => toastStore.push(kind, message) };
 
+/** Set once {@link bantoReady} resolves - see {@link isBantoReady}. */
+let ready = false;
+
 /**
  * Resolves once `initBanto()` has run AND the matching `EventProvider` (if
  * any) is connected. Every place that calls `getDataProvider()`/
  * `getAuthProvider()` before the root layout has definitely mounted (the
- * `(app)` route guard's `load()`, the login page's submit handler) must
- * `await` this first; `routes/+layout.svelte` awaits it with `{#await}`
- * before rendering `children()` at all, so everything downstream of that is
- * already safe.
+ * login page's submit handler, a pop-out panel) must `await` this first;
+ * `routes/+layout.svelte` awaits it with `{#await}` before rendering
+ * `children()` at all, so everything downstream of that is already safe.
+ *
+ * Issue #321: a route guard must NOT simply `await` this while it is pending - on a
+ * first load SvelteKit renders nothing (not even the root layout's splash)
+ * until every load has finished, and while the server is unreachable this
+ * waits for the user's "reconnect" on that very splash. The `(app)` guard
+ * checks {@link isBantoReady} instead and defers (`startupGate.ts`).
  */
 export const bantoReady: Promise<void> = (async () => {
 	// Deployment kind is decided explicitly (Tauri / `VITE_BANTO_DEMO` build /
@@ -155,4 +163,17 @@ export const bantoReady: Promise<void> = (async () => {
 		notifier,
 		resources
 	});
-})();
+})().then(() => {
+	ready = true;
+});
+
+/**
+ * Whether {@link bantoReady} has resolved (Issue #321): a synchronous read for
+ * the `(app)` route guard, which must decide WITHOUT waiting whether it can run
+ * now or has to defer to the startup splash (`startupGate.ts`). Set in the
+ * promise's own continuation, so it is already true for anything chained on
+ * `bantoReady` (the root layout's re-run).
+ */
+export function isBantoReady(): boolean {
+	return ready;
+}

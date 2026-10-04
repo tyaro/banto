@@ -6,6 +6,8 @@
 
 > **更新（2026-09-30）**: §2（`(app)` ガード）と §3（ログイン・ログアウト）は v2.0.0 の流れ（SessionController・`resolveSettled`・`grantFallback`・保護レイアウトの 3 本の配線、#260・[ADR-0016](./adr/0016-session-controller-single-writer.md)）で描いている。
 
+> **更新（2026-10-04）**: §2 に起動判定が終わる前のガード（起動待ちの 503 とスプラッシュ、#321）を足した。
+
 ## 目次
 
 1. [起動時の3環境と provider 選択](#1-起動時の3環境と-provider-選択)
@@ -53,9 +55,13 @@ flowchart TD
 
 セッションの状態（誰がログインしているか）を書くのは **SessionController だけ**（v2.0.0、[ADR-0016](./adr/0016-session-controller-single-writer.md)。設計は [session-controller-design.md](./session-controller-design.md) §6.1）。`(app)/+layout.ts` の `load` は `bantoReady` の後に controller で確認し、確認できた generation を返すだけで、ストアには書かない。
 
+起動判定（§1）が終わる前に保護ルートを直接開いたとき、ガードは `bantoReady` を**待たない**（#321）。待つと初回の load が終わらず、SvelteKit はルートのレイアウト（スプラッシュ）も描かないため、サーバーに届かない間は真っ白で再接続もできなかった。代わりに、provider にもセッションにも触れる前に起動待ちの印付きの 503（`startupGate.ts` の `deferUntilStarted`、`App.Error.startupPending`）を投げる。子の load はすべて `await parent()` なので、保護画面の load とコンポーネントは動かない。ルートのレイアウトはこの印のあいだエラー画面ではなくスプラッシュ（「起動中…」→「サーバーに接続できません」＋再接続）を出し、`bantoReady` が解決し、その印を出したナビゲーションが終わってから `invalidateAll()` でガードをやり直す（同じ URL が開く）。
+
 ```mermaid
 flowchart TD
   GUARD["(app)/+layout.ts load"]
+  READY{"起動判定は終わった?<br/>isBantoReady()"}
+  DEFER["error 503（startupPending）<br/>ルートのレイアウトがスプラッシュ<br/>起動後に invalidateAll() でやり直す（#321）"]
   RESOLVE["resolveSettled(controller)<br/>AuthProvider.resolve() を 1 往復<br/>superseded なら要求し直す（期限 10 秒）"]
   R1{"結果"}
   E503["error 503<br/>再試行画面（routes/+error.svelte）"]
@@ -66,7 +72,10 @@ flowchart TD
   NAV["publicNavItems 許可パスのみ<br/>それ以外は許可ルートへ redirect"]
   RET["return { sessionGeneration }<br/>（この load で確認できた generation）"]
 
-  GUARD --> RESOLVE
+  GUARD --> READY
+  READY -->|No| DEFER
+  DEFER -.->|"bantoReady 解決後"| GUARD
+  READY -->|Yes| RESOLVE
   RESOLVE --> R1
   R1 -->|"unverified（500・到達不能・期限切れ）"| E503
   R1 -->|"confirmed / active"| ALLOW
