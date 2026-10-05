@@ -122,7 +122,7 @@ judgment and the comparison of alternatives.
 Addendum (2026-08-13): `docs/i18n-plan.md`, referenced by the body and the
 "related" list, does not exist in the repository (lost before the history
 truncation; see
-[maintenance-review-2026-08.md §2.2](../maintenance-review-2026-08.md)).
+[maintenance-review-2026-08.md §2.2](../reviews/maintenance-review-2026-08.md)).
 The current primary sources are
 [conventions.md §13](../conventions.en.md#i18n-messages) (layer-① injection /
 message-key rule) and this ADR (the layer decision). The old references in code

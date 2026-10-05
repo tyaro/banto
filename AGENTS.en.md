@@ -36,14 +36,17 @@ track your task belongs to.**
     session-controller-design, etc. — living spec anchors that code keeps
     referencing by `§` even after implementation; files are named
     `<name>-plan.md` / `-design.md`)
-  - **Survey / review records**:
-    [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md)
+  - [docs/reviews/](docs/reviews/) — **survey / review records** (inventories,
+    feature reviews, maintainability reviews and feedback-handling records; the
+    definitions behind `M-review` / `CR-N` / `AD-N`; files are named
+    `<name>-review-YYYY-MM.md` etc.):
+    [docs/reviews/maintenance-review-2026-08.md](docs/reviews/maintenance-review-2026-08.md)
     (latest inventory + consolidation plan),
-    [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md) (a.k.a.
+    [docs/reviews/feature-review-2026-08.md](docs/reviews/feature-review-2026-08.md) (a.k.a.
     M-review 2026-08),
-    [docs/maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md)
+    [docs/reviews/maintainability-review-2026-07.md](docs/reviews/maintainability-review-2026-07.md)
     (defines the CR numbering),
-    [docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)
+    [docs/reviews/choiapp-feedback-2026-09.md](docs/reviews/choiapp-feedback-2026-09.md)
     (the "choi-app" feedback record — the target of
     `choiapp-feedback-2026-09 §N` references from the pinned shell /
     settings categories / nav badges code).

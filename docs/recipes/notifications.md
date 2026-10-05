@@ -34,4 +34,4 @@ let _ = events.send(ServerEvent::Notice {
 
 トーストの永続化・既読管理・ベル型の履歴 UI（通知センター）は本テンプレートの
 スコープ外（実需が出た時点でオプションパッケージとして検討。判断は
-[../feature-review-2026-08.md](../feature-review-2026-08.md) §2.5）。
+[../reviews/feature-review-2026-08.md](../reviews/feature-review-2026-08.md) §2.5）。

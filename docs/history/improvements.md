@@ -7,7 +7,7 @@
 各項目には優先度（高/中/低）を付す。
 
 > **凍結（2026-08-13）**: 2026-07 改善サイクルは完了し、本書は調査記録として
-> 凍結した（経緯は [maintenance-review-2026-08.md](../maintenance-review-2026-08.md) §2）。
+> 凍結した（経緯は [maintenance-review-2026-08.md](../reviews/maintenance-review-2026-08.md) §2）。
 > 現役のバックログは [roadmap.md §3](../roadmap.md#3-v2--将来構想バックログ) に
 > 一本化する。
 

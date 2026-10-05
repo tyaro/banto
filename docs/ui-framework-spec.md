@@ -435,7 +435,7 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
 
 チャート実装が「spec §6 rule N」形式で引く番号付き規約。M13 実装時に運用されて
 いた一覧の正準版（2026-08-13 に実装コメントから逆復元して本節に収載。経緯は
-[maintenance-review-2026-08.md §2.2](maintenance-review-2026-08.md)）。
+[maintenance-review-2026-08.md §2.2](reviews/maintenance-review-2026-08.md)）。
 新規コード・コメントは本節の番号を引くこと。
 
 1. **色スロット固定**: 系列は series index 順に `--banto-chart-1..8` を固定使用。

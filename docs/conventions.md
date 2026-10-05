@@ -441,10 +441,10 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
 | --- | --- |
 | `spec §N` | `ui-framework-spec.md` の §N（**この表記は ui-framework-spec 限定**） |
 | `roadmap MN` / `spec MN` | `roadmap.md` の MN 節（M10 以降の実体は roadmap。spec §15 は初期案 M0〜M9 のみ。新規は `roadmap MN` 表記を推奨） |
-| `<文書名> §N` / `<文書名> <節ラベル>` | `docs/design/<文書名>.md` の該当節（例 `attachments-plan §3.7`・`session-controller-design §5.2`・`display-preset-plan D1-c`）。文書名はファイル名の拡張子抜きで、配置ディレクトリが変わっても表記は変わらない |
+| `<文書名> §N` / `<文書名> <節ラベル>` | `docs/design/<文書名>.md` または `docs/reviews/<文書名>.md` の該当節（例 `attachments-plan §3.7`・`session-controller-design §5.2`・`display-preset-plan D1-c`・`choiapp-feedback-2026-09 §3.2`）。文書名はファイル名の拡張子抜きで、配置ディレクトリが変わっても表記は変わらない |
 | `conventions §N` | 本書の §N（節番号は不変に保つ） |
-| `M-review YYYY-MM §N` | `feature-review-YYYY-MM.md` の §N |
-| `CR-N` / `AD-N` | `maintainability-review-2026-07.md`（§4 と §7 追補） |
+| `M-review YYYY-MM §N` | `docs/reviews/feature-review-YYYY-MM.md` の §N |
+| `CR-N` / `AD-N` | `docs/reviews/maintainability-review-2026-07.md`（§4 と §7 追補） |
 | `ADR-000N` | `adr/000N-*.md` |
 | `Discussion #N` | GitHub Discussion（**出典メモ限定** — ADR の「関連」欄・レビュー文書の経緯注のみ可。コード・docs 本文の正規参照には使わない。本文は Discussion を読まずに自立していること。[ADR-0010](adr/0010-discussions-predecision-layer.md)） |
 

@@ -24,14 +24,16 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
     report-plan / visual-refresh-plan・design / display-preset-plan /
     session-controller-design 等。実装完了後もコードが `§` 参照する現役仕様アンカー。
     ファイル名は `<名前>-plan.md` / `-design.md`）
-  - **調査・レビュー記録**:
-    [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md)
+  - [docs/reviews/](docs/reviews/) — **調査・レビュー記録**（棚卸し・機能レビュー・
+    保守性レビュー・フィードバック対応の記録。`M-review` / `CR-N` / `AD-N` の定義元。
+    ファイル名は `<名前>-review-YYYY-MM.md` 等）:
+    [docs/reviews/maintenance-review-2026-08.md](docs/reviews/maintenance-review-2026-08.md)
     （最新の棚卸し + 整理統合プラン）、
-    [docs/feature-review-2026-08.md](docs/feature-review-2026-08.md)（通称
+    [docs/reviews/feature-review-2026-08.md](docs/reviews/feature-review-2026-08.md)（通称
     M-review 2026-08）、
-    [docs/maintainability-review-2026-07.md](docs/maintainability-review-2026-07.md)
+    [docs/reviews/maintainability-review-2026-07.md](docs/reviews/maintainability-review-2026-07.md)
     （CR 番号体系の定義元）、
-    [docs/choiapp-feedback-2026-09.md](docs/choiapp-feedback-2026-09.md)
+    [docs/reviews/choiapp-feedback-2026-09.md](docs/reviews/choiapp-feedback-2026-09.md)
     （チョイアプリ・フィードバック対応の記録。シェル固定/設定カテゴリ/
     ナビバッジの `choiapp-feedback-2026-09 §N` 参照の実体）。
     **対応が完了して凍結した文書は [docs/history/](docs/history/) へ移す**

@@ -96,7 +96,7 @@ i18n は③（複数形・言語タグ・将来の ICU）に該当し始める�
 
 追記（2026-08-13）: 本文・関連欄が参照する `docs/i18n-plan.md` はリポジトリに
 存在しない（履歴切り詰め以前に消失。経緯は
-[maintenance-review-2026-08.md §2.2](../maintenance-review-2026-08.md)）。
+[maintenance-review-2026-08.md §2.2](../reviews/maintenance-review-2026-08.md)）。
 現行の一次情報は [conventions.md §13](../conventions.md#i18n-messages)
 （レイヤ①注入・文言キー経由の規約）と本 ADR（層構成の決定）。コード内の旧参照は
 同日に conventions §13 / ADR-0005 へ書き換え済み。本文は ADR の不変原則に従い
