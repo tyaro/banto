@@ -31,10 +31,9 @@
 	<SurfaceCard title={m['app.error.title']()} description={`${page.status}`}>
 		<p class="message">{page.error?.message ?? ''}</p>
 		<div class="actions">
-			<button type="button" class="banto-btn banto-btn--primary" onclick={retry}
-				>{m['app.error.retry']()}</button
-			>
-
+			<button type="button" class="banto-btn banto-btn--primary" onclick={retry}>
+				{m['app.error.retry']()}
+			</button>
 			<a class="banto-btn banto-btn--ghost" href={resolve(`/`.slice(1))}>{m['app.error.home']()}</a>
 		</div>
 	</SurfaceCard>

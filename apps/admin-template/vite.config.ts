@@ -27,7 +27,6 @@ export default defineConfig({
 			strategy: ['custom-banto', 'baseLocale'],
 			emitTsDeclarations: true
 		}),
-
 		sveltekit({
 			preprocess: vitePreprocess(),
 			paths: { base },

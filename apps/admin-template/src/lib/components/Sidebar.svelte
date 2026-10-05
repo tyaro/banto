@@ -42,7 +42,6 @@
 	const mainItems = $derived(
 		sessionStore.publicViewer ? publicNavItems() : navItems.filter((item) => !item.adminOnly)
 	);
-
 	const adminItems = $derived(
 		!sessionStore.publicViewer && isAdmin(sessionStore.role)
 			? navItems.filter((item) => item.adminOnly)
@@ -63,9 +62,9 @@
 	<div class="brand">
 		<span class="brand-mark" aria-hidden="true">
 			<svg viewBox="0 0 24 24" width="14" height="14">
-				<rect x="10" y="3" width="4" height="2" rx="1"></rect>
-				<circle cx="12" cy="12" r="6"></circle>
-				<rect x="10" y="19" width="4" height="2" rx="1"></rect>
+				<rect x="10" y="3" width="4" height="2" rx="1" />
+				<circle cx="12" cy="12" r="6" />
+				<rect x="10" y="19" width="4" height="2" rx="1" />
 			</svg>
 		</span>
 		<!-- "Banto" is the product brand (owner-fixed): kept as a component

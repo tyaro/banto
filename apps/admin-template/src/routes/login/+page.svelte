@@ -166,9 +166,9 @@
 		<aside class="brand-pane" aria-hidden="true">
 			<span class="brand-mark">
 				<svg viewBox="0 0 24 24" width="22" height="22">
-					<rect x="10" y="3" width="4" height="2" rx="1"></rect>
-					<circle cx="12" cy="12" r="6"></circle>
-					<rect x="10" y="19" width="4" height="2" rx="1"></rect>
+					<rect x="10" y="3" width="4" height="2" rx="1" />
+					<circle cx="12" cy="12" r="6" />
+					<rect x="10" y="19" width="4" height="2" rx="1" />
 				</svg>
 			</span>
 			<p class="brand-name">Banto</p>

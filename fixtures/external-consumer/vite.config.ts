@@ -20,7 +20,6 @@ export default defineConfig({
 			adapter: adapter({ pages: 'build', assets: 'build', fallback: 'index.html' })
 		})
 	],
-
 	optimizeDeps: noExclude
 		? {}
 		: {

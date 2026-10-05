@@ -9,7 +9,6 @@
  * - each category's own `+page.ts` (`guardCategory` below).
  */
 import { redirect } from '@sveltejs/kit';
-
 import { resolve } from '$app/paths';
 
 export type SettingsCategoryId = 'appearance' | 'account' | 'connectivity' | 'data' | 'security';

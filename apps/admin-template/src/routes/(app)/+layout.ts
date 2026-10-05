@@ -73,7 +73,6 @@ export async function load({ url }) {
 		const allowed = publicNavItems().some(
 			(item) => pathname === item.path || pathname.startsWith(item.path + '/')
 		);
-
 		if (!allowed) {
 			const firstPublicNavItem = publicNavItems()[0];
 			if (firstPublicNavItem) redirect(307, resolve(`${firstPublicNavItem.path}`.slice(1)));

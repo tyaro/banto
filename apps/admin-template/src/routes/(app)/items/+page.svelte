@@ -309,9 +309,7 @@
 		// grid renders/filters with.
 		const activeColumns = mode === 'client' ? clientColumns : columns;
 		const activeFilters = mode === 'client' ? clientGridState.filters : serverGridState.filters;
-
 		const row = mode === 'client' ? toItemRow(record.values as Item) : (record.values as Item);
-
 		const matches = filterRows([row], activeFilters, activeColumns as GridColumn<Item>[]);
 		if (matches.length === 0) {
 			filterExclusionNotice = { id: record.id };
@@ -686,16 +684,19 @@
 					class="banto-btn banto-btn--ghost"
 					class:active={mode === 'client'}
 					aria-pressed={mode === 'client'}
-					onclick={() => (mode = 'client')}>{m['items.modeClient']()}</button
+					onclick={() => (mode = 'client')}
 				>
-
+					{m['items.modeClient']()}
+				</button>
 				<button
 					type="button"
 					class="banto-btn banto-btn--ghost"
 					class:active={mode === 'server'}
 					aria-pressed={mode === 'server'}
-					onclick={() => (mode = 'server')}>{m['items.modeServer']()}</button
+					onclick={() => (mode = 'server')}
 				>
+					{m['items.modeServer']()}
+				</button>
 			</div>
 			<label class="group-by">
 				{m['items.groupByLabel']()}
@@ -783,8 +784,10 @@
 			<button
 				type="button"
 				class="banto-btn banto-btn--ghost"
-				onclick={() => (filterExclusionNotice = null)}>{m['common.close']()}</button
+				onclick={() => (filterExclusionNotice = null)}
 			>
+				{m['common.close']()}
+			</button>
 		</div>
 	{/if}
 

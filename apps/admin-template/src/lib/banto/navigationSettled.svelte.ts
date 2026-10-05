@@ -39,7 +39,6 @@ let firstNavigationDone = $state(false);
 export function trackFirstNavigation(): void {
 	afterNavigate(({ shallow }) => {
 		if (shallow) return;
-
 		firstNavigationDone = true;
 	});
 }

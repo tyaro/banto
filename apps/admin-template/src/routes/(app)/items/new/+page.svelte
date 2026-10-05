@@ -58,7 +58,6 @@
 			>
 				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 				<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
-
 				<a class="banto-btn banto-btn--ghost" href={resolve(`items`)}>{m['common.backToList']()}</a>
 			</BantoForm>
 		{/if}

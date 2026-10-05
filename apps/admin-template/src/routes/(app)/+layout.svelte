@@ -232,7 +232,6 @@
 	{/if}
 	<div class="main">
 		<Header {overlayOpen} onToggleOverlay={toggleOverlay} />
-
 		<main>
 			{#if data.sessionGeneration === sessionController.snapshot.generation}
 				{#key `${data.sessionGeneration}:${JSON.stringify(page.params)}`}

@@ -196,9 +196,10 @@
 						<button
 							type="button"
 							class="banto-btn banto-btn--secondary"
-							onclick={() => void loadForm()}>{m['common.reload']()}</button
+							onclick={() => void loadForm()}
 						>
-
+							{m['common.reload']()}
+						</button>
 						<a class="banto-btn banto-btn--ghost" href={resolve(`items`)}
 							>{m['common.backToList']()}</a
 						>
@@ -220,7 +221,6 @@
 					</button>
 				{/if}
 				<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
-
 				<a class="banto-btn banto-btn--ghost" href={resolve(`items`)}>{m['common.backToList']()}</a>
 			</BantoForm>
 		{/if}
