@@ -297,7 +297,7 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 	// Owner review of #266 P1 (Issue #260, S-94): turning login-not-required
 	// mode on from the settings screen re-binds the Rust session to the
 	// synthetic local one (`seq` + 1, not reported to the provider). The save's
-	// `invalidateAll()` re-runs the guard; its first `auth_resolve` answer is
+	// `refreshAll()` re-runs the guard; its first `auth_resolve` answer is
 	// about a `seq` the provider had not observed and is discarded, the
 	// provider catches up (S-84), the next answer confirms `kind: 'local'`, and
 	// `sessionStore.authDisabled` follows it: the user menu (logout) goes.

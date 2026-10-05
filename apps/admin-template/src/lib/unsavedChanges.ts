@@ -10,7 +10,7 @@
  * `commands.ts` log out and confirm `none` first, then `goto('/login')`),
  * `ownerChangePolicy: 'relogin'` (`#lib/banto/ownerChange.ts`), or the
  * `(app)` guard redirecting a session it confirmed `none` (Issue #260) after
- * an `invalidateAll()`. Holding the user on a page whose
+ * a `refreshAll()`. Holding the user on a page whose
  * session is gone would only strand them, so those never prompt. (A
  * redirect that happens INSIDE a navigation never reaches `beforeNavigate`
  * at all - SvelteKit skips it while navigating.)

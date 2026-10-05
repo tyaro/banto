@@ -1,5 +1,5 @@
 /**
- * Issue #326 (#321): the layouts start `invalidateAll()` only when no
+ * Issue #326 (#321): the layouts start `refreshAll()` only when no
  * SvelteKit navigation is in progress - including the first one, which
  * SvelteKit does not publish in `navigating`.
  */

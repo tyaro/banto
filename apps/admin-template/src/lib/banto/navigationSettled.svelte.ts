@@ -1,8 +1,13 @@
 /**
- * "No navigation in progress" for the layouts' `invalidateAll()` (Issue
+ * "No navigation in progress" for the layouts' `refreshAll()` (Issue
  * #326, first met in #321).
  *
- * An `invalidateAll()` that starts while SvelteKit is still running a
+ * (`refreshAll()` replaced the deprecated `invalidateAll()` with SvelteKit 3,
+ * #325. Both run the same `_invalidate()` in kit 3.0's `client.js` - the only
+ * difference is that `refreshAll()` keeps `page.state`, which this app never
+ * sets (no shallow routing) - so the abort below applies to it unchanged.)
+ *
+ * A `refreshAll()` that starts while SvelteKit is still running a
  * navigation makes that navigation abort without clearing its internal
  * "navigating" flag (@sveltejs/kit 2.70 `client.js`: `navigate()` returns on
  * `token !== nav_token` with `is_navigating` still true). Two things follow:
@@ -23,8 +28,8 @@
  * navigation (`type === 'enter'`) in `navigating`, so until that one has
  * finished it reads `null` while the flag is set. The end of the first
  * navigation is recorded app-wide by the root layout
- * ({@link trackFirstNavigation}) - not per component: a layout mounted by an
- * `invalidateAll()` (no navigation) never gets an `afterNavigate` call of
+ * ({@link trackFirstNavigation}) - not per component: a layout mounted by a
+ * `refreshAll()` (no navigation) never gets an `afterNavigate` call of
  * its own.
  */
 import { afterNavigate } from '$app/navigation';

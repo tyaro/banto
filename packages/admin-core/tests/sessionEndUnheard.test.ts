@@ -8,7 +8,7 @@
  * state at subscription time - a subscription made while the controller's
  * session is `none` is notified ONCE, asynchronously (never inside the
  * subscribing call). The listener re-runs the route guard (what
- * `invalidateAll()` does), and it is that guard - not the notification -
+ * `refreshAll()` does), and it is that guard - not the notification -
  * that decides between /login and a new login's session.
  *
  * Wires the real SSE provider, `connectEvents`, the real HTTP
@@ -106,7 +106,7 @@ describe('S-34: an ending confirmed before the protected layout subscribes (I-14
 		const requests = identitiesFor.length;
 
 		// The protected layout mounts and subscribes; its listener re-runs the
-		// guard (what `invalidateAll()` does).
+		// guard (what `refreshAll()` does).
 		const outcomes: string[] = [];
 		const layout = vi.fn(() => {
 			void guardRoute(auth).then((outcome) => outcomes.push(outcome));

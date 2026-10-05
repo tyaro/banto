@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { goto, invalidateAll, onNavigate } from '$app/navigation';
+	import { goto, refreshAll, onNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { getSessionController, notify, onInvalidate } from '@banto/admin-core';
@@ -34,7 +34,7 @@
 	// one session and those loads (a moment, until the guard redirects or
 	// confirms the next identity) nothing of the old page is on screen. A
 	// guard re-run that confirms the same session keeps the generation, so an
-	// ordinary `invalidateAll()` never rebuilds the page.
+	// ordinary `refreshAll()` never rebuilds the page.
 	//
 	// Issue #290: the key also carries the route params. SvelteKit reuses the
 	// page component for a move between two URLs of the SAME route (items/1 ->
@@ -58,7 +58,7 @@
 
 	// Issue #260 (design §6.1 wiring ①, since 実装-2): whenever the session
 	// controller's generation differs from the one this page's load confirmed,
-	// re-run the loads (`invalidateAll()`), which confirm the session again
+	// re-run the loads (`refreshAll()`), which confirm the session again
 	// and send the screen to /login, a publicViewer grant session, the retryable
 	// error page, or the rebuilt page of the (new) user. This covers every
 	// way the generation moves - a background revocation confirmed `none`
@@ -78,7 +78,7 @@
 	// logout could not be confirmed).
 	// Issue #326: nor while a navigation is in flight (another tab's login or
 	// a background revocation can land in the middle of one, and this layout
-	// is mounted at the end of one). An `invalidateAll()` started then makes
+	// is mounted at the end of one). A `refreshAll()` started then makes
 	// SvelteKit abort the navigation - the user's move is lost - and skip
 	// `beforeNavigate`, the unsaved-changes guard, afterwards
 	// (`#lib/banto/navigationSettled.svelte.ts`). `isNavigationSettled()` is
@@ -92,7 +92,7 @@
 		if (!isNavigationSettled()) return;
 		if (generation !== data.sessionGeneration && requestedFor !== generation) {
 			requestedFor = generation;
-			void invalidateAll();
+			void refreshAll();
 		}
 	});
 

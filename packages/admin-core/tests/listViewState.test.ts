@@ -526,7 +526,7 @@ describe('owner matching (#255 4th review)', () => {
 });
 
 // Issue #215/#255 4th review (P2 2): a screen built for one session
-// generation (e.g. a list page SvelteKit kept alive across invalidateAll())
+// generation (e.g. a list page SvelteKit kept alive across refreshAll())
 // must not write its in-memory state back once the session moved on.
 describe('writes from a stale scope are refused (#255 4th review)', () => {
 	it.each([

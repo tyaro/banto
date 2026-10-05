@@ -6,14 +6,14 @@
 	 * resumes as soon as the server can answer again.
 	 *
 	 * Issue #260 実装-3 (design §6.1, S-81, I-24): "retry" re-runs the loads
-	 * IN this document (`invalidateAll()`), keeping the SessionController - and
+	 * IN this document (`refreshAll()`), keeping the SessionController - and
 	 * with it a change of user confirmed while this page was shown
 	 * (`pendingOwnerChange`), which the protected layout reports when it
 	 * mounts again. A full reload (`location.reload()`, as before) would
 	 * recreate the controller and lose that record; it is still what the
 	 * browser's own reload does, and that case is not guaranteed.
 	 */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
@@ -23,7 +23,7 @@
 	// way out with it (pressing again starts a new one; the browser reload
 	// stays available too).
 	function retry(): void {
-		void invalidateAll();
+		void refreshAll();
 	}
 </script>
 
