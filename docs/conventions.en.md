@@ -219,13 +219,18 @@ on **the obligation to document its removal procedure (the list of files to
 pull out)**. Keep a structure where deleting it does not break the rest (§6
 checklist ②③).
 
-## 5. Packages hold no app-specific imports [machine-checked: `$lib` import only]
+## 5. Packages hold no app-specific imports [machine-checked: `#lib` (formerly `$lib`) import only]
 
 Components in `packages/@banto/*` **do not import app-specific symbols** such as
 `sessionStore` or the `ProviderError` of `@banto/admin-core`. The transport is
 injected, as in `client: XxxClient` (e.g., `AttachmentsPanel` receives an
 `AttachmentsClient` and never imports `attachmentsAdmin.ts` (the app-side layer
 you copy and rewrite) from the package).
+
+Machine check: `verify:architecture`'s rule `no-app-import` greps `packages/` for
+imports of the app alias (SvelteKit 3's subpath import `#lib`; SvelteKit 2's `$lib`
+is still detected too) (#325). Only imports of that alias are machine-checked; the
+shape of the transport injection is upheld by review.
 
 State ownership: loading/empty/error states are owned inside the component and
 do not leak branching to the host page (the same rule as grid-svelte).
@@ -519,11 +524,12 @@ only one form has produced real misjudgements (maintenance-review-2026-08 §2.1)
 The **text version** of §9 (raw color/dimension values consolidated in the
 theme). Text shown in the UI is placed under keys in `messages/{en,ja}.json`,
 and components reference it **through Paraglide** (`import * as m from
-'$lib/paraglide/messages'` → `m['key']()`). Do not hardcode raw text (Japanese
+'#lib/paraglide/messages.js'` → `m['key']()`; `#lib` is a subpath import from
+`package.json`'s `imports`, so the extension is required). Do not hardcode raw text (Japanese
 literals, etc.) into components ([ADR-0005](adr/0005-i18n-paraglide.en.md)).
 
 - **The scope is the app layer only** (`apps/admin-template/src`). `@banto/*`
-  packages hold neither dictionaries nor i18n dependencies nor `$lib` imports
+  packages hold neither dictionaries nor i18n dependencies nor `#lib` imports
   (§5); they receive text as resolved strings injected **via the layer-①
   `messages` props** (the layer-① injection method,
   [ADR-0005](adr/0005-i18n-paraglide.en.md)). Do not place `messages/*.json`

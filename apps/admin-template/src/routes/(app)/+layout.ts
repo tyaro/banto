@@ -101,7 +101,5 @@ export async function load({ url }) {
 
 /** The retryable error page (Issue #204): the session could not be verified. */
 function sessionCheckFailed(): never {
-	error(503, {
-		message: `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`
-	});
+	error(503, `${m['app.sessionCheckFailed.title']()}: ${m['app.sessionCheckFailed.body']()}`);
 }

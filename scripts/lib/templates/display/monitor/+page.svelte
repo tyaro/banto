@@ -20,8 +20,8 @@
 	 * ここから呼ぶのは **読み取りだけ**にすること（書き込みは RBAC の
 	 * `viewer` 床で 403 になる）。
 	 */
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 
 	/** ポーリング間隔（ミリ秒）。常設表示なので短くしすぎない。 */
 	const POLL_INTERVAL_MS = 5000;

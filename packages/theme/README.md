@@ -26,6 +26,14 @@ const stop = watchSystemTheme((resolved) => {
 @import '@banto/theme/css';
 ```
 
+TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css';`）で読み込んでもよい。
+`./css` の export には空のモジュールの型（`src/css/banto.css.d.ts`、`export {};` だけ）を
+`types` 条件で付けてあるので、TypeScript 6 の副作用 import の検査
+（`noUncheckedSideEffectImports`）に対して、利用する側が `declare module` を足す必要はない
+（v4.0.0 から。#325）。値は何も export しない（実行時の挙動は CSS の読み込みだけ）。
+型の解決は exports の条件を読む `moduleResolution: "bundler"`（SvelteKit 3 の
+`$app/tsconfig` の既定）を前提にしている。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

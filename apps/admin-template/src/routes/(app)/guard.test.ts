@@ -96,7 +96,9 @@ describe('(app) guard before startup has finished (Issue #321)', () => {
 			(e: unknown) => e
 		);
 		expect(isHttpError(err, 503)).toBe(true);
-		expect((err as { body: App.Error }).body.startupPending).toBeUndefined();
+		// The whole body, so the `error(status, message)` form (#325 PR3) is
+		// pinned to what the `error(status, { message })` form produced.
+		expect((err as { body: App.Error }).body).toEqual({ status: 503, message: 'title: body' });
 	});
 });
 

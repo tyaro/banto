@@ -135,19 +135,23 @@ if (args.preset && !Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
 // --- 編集エンジン -----------------------------------------------------------
 
 const editor = createEditor({ repoRoot, dryRun: args.dryRun, strict: args.strict });
-const { addFile, editFile, removeFile, removeDir } = editor;
+const { addFile, beginStep, editFile, editRemoval, removeFile, removeDir } = editor;
+
+// 削除系（cutRegion / drop / cutEnd / removeMessageKeys）は editRemoval を通す。
+// 見つからないときは、工程の印（STEP_MARKERS）がまだ在る＝初回適用なら失敗、
+// 印が既に無い＝再実行なら適用済み（template-edit.mjs の editRemoval）。
 
 /** 連続領域を start..end（両端含む）で削除。短い一意アンカーで巨大ブロックを消す。 */
 function cutRegion(rel, label, start, end) {
-	editFile(rel, label, (s) => cut(s, start, end));
+	editRemoval(rel, label, (s) => cut(s, start, end));
 }
-/** 1 ブロック（行や連続領域）を丸ごと削除（冪等・見つからなければ適用済み扱い）。 */
+/** 1 ブロック（行や連続領域）を丸ごと削除（冪等・初回適用で見つからなければ失敗）。 */
 function drop(rel, label, block) {
-	editFile(rel, label, (s) => dropBlock(s, block));
+	editRemoval(rel, label, (s) => dropBlock(s, block));
 }
 /** marker から EOF までを削除（末尾は単一改行に整える・冪等）。章末の付録ブロック向け。 */
 function cutEnd(rel, label, marker) {
-	editFile(rel, label, (s) => cutToEnd(s, marker));
+	editRemoval(rel, label, (s) => cutToEnd(s, marker));
 }
 /** from → to へ冪等に置換（どちらも無ければ失敗）。 */
 function swapText(rel, label, from, to) {
@@ -180,13 +184,13 @@ function cutMarked(rel, label, tag, indent = '') {
  * JSON としてパース→フィルタ→`JSON.stringify(…, null, 2)` で往復しても
  * バイト等価になる（本リポジトリで検証済み）。行単位の正規表現より安全で、
  * 末尾要素のカンマ問題も起きない。
- * 1件も消えなければ `null`（適用済み＝再実行安全 / `--strict` では失敗）。
+ * 1件も消えなければ `null`（再実行なら適用済み / 初回適用・`--strict` では失敗）。
  */
 function removeMessageKeys(rel, label, prefixes, keep = []) {
 	const keepSet = new Set(keep);
 	const matches = (key) =>
 		!keepSet.has(key) && prefixes.some((p) => key === p || key.startsWith(`${p}.`));
-	editFile(rel, label, (s) => {
+	editRemoval(rel, label, (s) => {
 		const before = JSON.parse(s);
 		const after = Object.fromEntries(Object.entries(before).filter(([key]) => !matches(key)));
 		if (Object.keys(after).length === Object.keys(before).length) return null;
@@ -304,7 +308,7 @@ function removeCharts() {
 	drop(
 		DASH,
 		'DashboardPanel import 除去',
-		`\timport DashboardPanel from '$lib/components/DashboardPanel.svelte';\n`
+		`\timport DashboardPanel from '#lib/components/DashboardPanel.svelte';\n`
 	);
 	// #74 M24: 積立エリア/ガントは dashboard.ts の集計に依存する。charts 除去後に
 	// dashboard.ts から `@banto/charts`（GanttTask 型）参照が残らないよう、対応する
@@ -361,16 +365,16 @@ function removeCharts() {
 function removeDock() {
 	cutRegion(DASH, 'dock import 除去', `\timport {\n\t\tDockHost,`, `} from '@banto/dock-svelte';`);
 	swapText(DASH, 'lucide から LayoutGrid 除去', `LayoutGrid, JapaneseYen`, `JapaneseYen`);
-	drop(DASH, 'panels import 除去', `\timport { PANEL_DEFS } from '$lib/banto/panels';\n`);
+	drop(DASH, 'panels import 除去', `\timport { PANEL_DEFS } from '#lib/banto/panels.js';\n`);
 	drop(
 		DASH,
 		'setup(getUiSettings/isTauri) import 除去',
-		`\timport { getUiSettings, isTauri } from '$lib/banto/setup';\n`
+		`\timport { getUiSettings, isTauri } from '#lib/banto/setup.js';\n`
 	);
 	drop(
 		DASH,
 		'popout import 除去',
-		`\timport { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';\n`
+		`\timport { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';\n`
 	);
 	cutRegion(
 		DASH,
@@ -439,7 +443,7 @@ function removeGlass() {
 	drop(
 		SETTINGS_APPEARANCE,
 		'vibrancy import 除去',
-		`\timport { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '$lib/banto/vibrancy';\n`
+		`\timport { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';\n`
 	);
 	drop(SETTINGS_APPEARANCE, 'Sparkles アイコン import 除去', `\t\tSparkles,\n`);
 	cutRegion(
@@ -468,12 +472,12 @@ function removeCommandPalette() {
 	drop(
 		LAYOUT,
 		'CommandPalette import 除去',
-		`\timport CommandPalette from '$lib/components/CommandPalette.svelte';\n`
+		`\timport CommandPalette from '#lib/components/CommandPalette.svelte';\n`
 	);
 	drop(
 		LAYOUT,
 		'commandPaletteStore import 除去',
-		`\timport { commandPaletteStore } from '$lib/commandPalette.svelte';\n`
+		`\timport { commandPaletteStore } from '#lib/commandPalette.svelte.js';\n`
 	);
 	swapText(
 		LAYOUT,
@@ -485,7 +489,7 @@ function removeCommandPalette() {
 	drop(
 		LAYOUT,
 		'recentCommands import 除去',
-		`	import { watchRecentCommandOwner } from '$lib/recentCommands';
+		`	import { watchRecentCommandOwner } from '#lib/recentCommands.js';
 `
 	);
 	drop(
@@ -509,7 +513,7 @@ function removeCommandPalette() {
 	drop(
 		HEADER,
 		'commandPaletteStore import 除去',
-		`\timport { commandPaletteStore } from '$lib/commandPalette.svelte';\n`
+		`\timport { commandPaletteStore } from '#lib/commandPalette.svelte.js';\n`
 	);
 	drop(
 		HEADER,
@@ -570,12 +574,12 @@ function removeAttachments() {
 	drop(
 		ITEM_EDIT,
 		'isAttachmentsAvailable import 除去',
-		`\timport { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';\n`
+		`\timport { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';\n`
 	);
 	drop(
 		ITEM_EDIT,
 		'attachmentsClient import 除去',
-		`\timport { attachmentsClient } from '$lib/banto/attachmentsClient';\n`
+		`\timport { attachmentsClient } from '#lib/banto/attachmentsClient.js';\n`
 	);
 	cutRegion(
 		ITEM_EDIT,
@@ -1542,15 +1546,18 @@ function removeDashboard() {
 	swapText(
 		ROOT_PAGE_TS,
 		'routes/+page.ts: ルートのリダイレクト先を /monitor に',
-		`// The root path only dispatches: guests to /login, users to /dashboard\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, \`\${base}/dashboard\`);\n}`,
-		`// The root path only dispatches: guests to /login, users to /monitor\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, \`\${base}/monitor\`);\n}`
+		`// The root path only dispatches: guests to /login, users to /dashboard\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, resolve(\`dashboard\`));\n}`,
+		`// The root path only dispatches: guests to /login, users to /monitor\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, resolve(\`monitor\`));\n}`
 	);
-	// login ページの goto は4箇所とも同じ式（swap は全出現を置換する）。
+	// login ページの goto は全箇所とも同じ式（swap は全出現を置換する）。
+	// kit 3 の `resolve()` はルート ID で型付けされるので、`monitor` は
+	// `applyDisplayDefaults()` が置く `(app)/monitor` が在って初めて型が通る
+	// （check は display の全工程を適用した後に走る）。
 	swapText(
 		LOGIN,
 		'login: ログイン後の遷移先を /monitor に',
-		`goto(\`\${base}/dashboard\`)`,
-		`goto(\`\${base}/monitor\`)`
+		`goto(resolve(\`dashboard\`))`,
+		`goto(resolve(\`monitor\`))`
 	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
@@ -1728,6 +1735,34 @@ const ORDER = [
 	'displayDefaults'
 ];
 
+/**
+ * 各工程の「適用済みか」を判定する印（template-edit.mjs の `beginStep`）。
+ * **その工程自身が消すファイル/ディレクトリ**を選ぶ（消さないものを選ぶと
+ * 2 回目の適用も初回適用と判定されて落ちる。scaffold.test.mjs の再実行テスト）。
+ * 印がまだ在れば初回適用で、削除パターン（drop / cutRegion / cutEnd /
+ * removeMessageKeys）が見つからなければ失敗にする。印が既に無ければ再実行で、
+ * 見つからない＝適用済み。印は工程の開始時に 1 度だけ見るので、工程の途中で
+ * 消してもその工程の判定は変わらない。
+ *
+ * displayDefaults は「足す」工程で削除系の編集を持たない（swap / addFile /
+ * addMessageKey だけで書く）ので印は `null`。印が `null` の工程で削除系を呼ぶと
+ * editRemoval が投げる（共通工程の bantoReleaseOnly も同じ）。足す工程に
+ * 削除系が要るようになったら、その工程が消す印をここに足すこと。
+ */
+const STEP_MARKERS = {
+	charts: `${APP}/src/lib/components/DashboardPanel.svelte`,
+	dock: `${APP}/src/lib/banto/panels.ts`,
+	glass: 'packages/theme/src/css/banto-glass.css',
+	commandPalette: `${APP}/src/lib/components/CommandPalette.svelte`,
+	attachments: 'crates/banto-attachments',
+	report: `${APP}/src/lib/banto/reports`,
+	tree: `${APP}/src/lib/banto/treeSample.ts`,
+	items: `${APP}/core/src/items.rs`,
+	adminPages: `${APP}/src/lib/banto/usersAdmin.ts`,
+	dashboard: `${APP}/src/routes/(app)/dashboard`,
+	displayDefaults: null
+};
+
 /** `--interactive` の custom モードで個別トグルできる資産（オプション資産だけ）。 */
 const CUSTOM_TOGGLEABLE = OPTIONAL_ASSETS;
 
@@ -1897,11 +1932,13 @@ async function main() {
 
 	// 資産の選択とは独立に、全プリセット共通で最初に走らせる。
 	console.log('# bantoReleaseOnly');
+	beginStep(null);
 	removeBantoReleaseOnly();
 
 	for (const asset of ORDER) {
 		if (!toRemove.has(asset)) continue;
 		console.log(`# ${asset}`);
+		beginStep(STEP_MARKERS[asset]);
 		REMOVERS[asset]();
 	}
 

@@ -94,7 +94,7 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 - 派生側で**独自に変えたファイルと同じファイルが変わっている**ときは、機械適用せず手で突き合わせる。
   rename 済みのパスでは `git apply` が当たらないことが多く、手で移すほうが速い場合も多い。
 - 見る場所: `src/routes/`、`src/lib/`、`core/src/`、`src-tauri/`、`messages/*.json`、`e2e/`、
-  `vite.config.ts` / `svelte.config.js`、`package.json` の依存範囲。`scripts/scaffold.mjs` のアンカーが変わる版は、
+  `vite.config.ts`（v3.x までは `svelte.config.js` も。v4.0.0 で廃止）、`package.json` の依存範囲と `imports`。`scripts/scaffold.mjs` のアンカーが変わる版は、
   派生側で scaffold を再実行しない限り影響しない。
 - 取り込み可否と関連 PR を同期記録に残す（5 節）。
 
@@ -264,14 +264,15 @@ fixture が commit している ref は現行リリースタグなので、**mai
 
 **確認する組み合わせ**（Banto の現行の基準。ルート `package.json`・`apps/admin-template/package.json`・CI）:
 
-| 項目      | 範囲                                                    |
-| --------- | ------------------------------------------------------- |
-| Node.js   | `>=24`（CI は 24）                                      |
-| pnpm      | 10.x（`packageManager: pnpm@10.33.0`）                  |
-| Svelte    | `^5.57`（runes 前提）                                   |
-| SvelteKit | `^2.70`                                                 |
-| Vite      | `^8.3`                                                  |
-| Rust      | stable（`dtolnay/rust-toolchain@stable`、edition 2021） |
+| 項目       | 範囲                                                    |
+| ---------- | ------------------------------------------------------- |
+| Node.js    | `>=24`（CI は 24）                                      |
+| pnpm       | 10.x（`packageManager: pnpm@10.33.0`）                  |
+| Svelte     | `^5.57`（runes 前提）                                   |
+| SvelteKit  | `^3.0`（v4.0.0 から。v3.x までは `^2.70`）              |
+| TypeScript | `^6.0`（kit 3 の peer。7 は対象外）                     |
+| Vite       | `^8.3`                                                  |
+| Rust       | stable（`dtolnay/rust-toolchain@stable`、edition 2021） |
 
 組み合わせを変える版（Vite のメジャーなど）は、リリースノートにその旨を書き、fixture の依存の版も揃える
 （fixture の Vite／Svelte 系の devDependencies は `apps/admin-template/package.json` と同じ範囲指定に揃え、
@@ -402,3 +403,60 @@ v3.0.0 は「資格情報なしのセッション発行」を **grant** に一�
 5. リバースプロキシ配下で運用するアプリは、外部公開の前にロックダウンし、`/api/auth/grant/{kind}` をプロキシの外へ出さない
    （ADR-0017 §6。技術的には防げないので運用手順に書く）。
 6. 同期記録に「v3.0.0 grant 取込済（PR 番号）」を書く。
+
+### 例 4: v3.0.x → v4.0.0（SvelteKit 3 / TypeScript 6。B が中心・破壊的変更）
+
+v4.0.0 はテンプレートを SvelteKit 3（`@sveltejs/kit` 3.0・`@sveltejs/adapter-static` 4.0）と TypeScript 6（`^6.0.0`。
+7 は kit 3 の対象外）に上げる**破壊的変更**（#325）。変わるのはほぼ B（コピーしたテンプレート）で、A の `@banto/*`・
+`banto-*` は API の変更が無い。項目の一覧は CHANGELOG の v4.0.0 節が正。ここには**取り込みの組み立て**だけを書く。
+
+| 経路 | 項目                                                | 取り込み                                                                                                                                                                                                                                                                       |
+| ---- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A    | `@banto/*`・`banto-*` を v4.0.0 へ                  | タグを上げるだけ（API の変更は無い）。`@banto/theme/css` に型が付いたので、TS から `import '@banto/theme/css'` するために自前で置いた `declare module '@banto/theme/css'` は外してよい（残っていても害は無い）。型の解決は `moduleResolution: "bundler"`（kit 3 の既定）が前提 |
+| B    | 依存（`package.json`）                              | `@sveltejs/kit` `^3.0.0`・`@sveltejs/adapter-static` `^4.0.0`・`typescript` `^6.0.0`。Svelte・Vite・vite-plugin-svelte はこの版の `apps/admin-template/package.json` に揃える                                                                                                  |
+| B    | 設定（`svelte.config.js` → `vite.config.ts`）       | `svelte.config.js` を廃止し、`kit` の設定（adapter・`paths.base`・preprocess）を `vite.config.ts` の `sveltekit({...})` に移す。手本: この版の `apps/admin-template/vite.config.ts`                                                                                            |
+| B    | `tsconfig.json`・`package.json` の `imports`        | `tsconfig.json` は `"extends": "$app/tsconfig"`。`package.json` に `"imports": { "#lib": "./src/lib/index.js", "#lib/*": "./src/lib/*" }`。`process` や `node:*` を使う設定ファイルがあれば `types` に `node` を足すか、そのファイルの中だけで宣言する                         |
+| B    | `$lib` → `#lib`（全ファイル）                       | `#lib` は Node の subpath import なので**拡張子が必須**（`#lib/banto/setup.js`、`#lib/paraglide/messages.js`。`.svelte` はそのまま）                                                                                                                                           |
+| B    | `base` → `resolve()`、`navigation.ts` の `AppPath`  | ナビ・設定カテゴリの表の `path` は `AppPath`（`` `/${Path}` ``）、URL にするときは `resolveAppPath()`（`src/lib/navigation.ts`）。手本: この版の `navigation.ts`・`settings/categories.ts`                                                                                     |
+| B    | ガード（`(app)/+layout.ts` の閲覧公開の許可リスト） | `url.pathname` と、各項目を `resolveAppPath()` で解決したパスとを比べる形を写す（下の「必ず見直すもの」）                                                                                                                                                                      |
+| B    | 非推奨の API                                        | `invalidateAll()` → `refreshAll()`（`page.state` を消さない点だけが違う）、`error(status, { message, … })` → `error(status, message, { … })`                                                                                                                                   |
+| B    | `scripts/`（scaffold を再実行する派生のみ）         | この版の `scripts/scaffold.mjs` と `scripts/lib/`（パターンが `#lib` の書き方になった）                                                                                                                                                                                        |
+| C    | DB・設定・配布資産                                  | 変更なし（マイグレーション不要）                                                                                                                                                                                                                                               |
+
+進め方:
+
+1. 先に**候補版のコミット参照で検証**する（例 2 と同じ）。A を上げるだけなら型エラーは出ない。
+2. B は公式の自動移行を流してから、この版のテンプレートと突き合わせる:
+
+   ```sh
+   # 派生リポジトリのテンプレート部分（vite.config.ts のあるディレクトリ）で
+   npx sv migrate sveltekit-3 --tasks all --confirm
+   ```
+
+   自動移行は `svelte.config.js` の統合・`$lib` → `#lib`・`base` → `resolve()` の大半を書き換え、手で直す箇所を
+   TODO として出す。そのうえで、この版の `vite.config.ts`・`tsconfig.json`・`package.json` の `imports`・
+   `navigation.ts` の `AppPath` / `resolveAppPath`・`(app)/+layout.ts` のガードを写す。
+
+3. **自動移行の出力で必ず見直すもの**（Banto の移行で実際に踏んだ）:
+   - **`resolve('')`**: `url.pathname.startsWith(base) ? … slice(base.length)` のような「base を外す」処理は
+     `resolve('')` に書き換えられる。kit 3 の `resolve('')` は `base + '/'` を返すので、先頭の `/` まで削られる。
+     Banto ではこれで閲覧公開のガードがどの画面にも一致せず、最初の項目へ戻されてループした（500）。
+     `url.pathname` と `resolveAppPath()` の結果を比べる形に直す。
+   - **``resolve(`${path}`.slice(1))``**: 表の `path` を URL にする箇所に入る。`resolveAppPath()` に置き換え、
+     `path` を `AppPath` で型付けする（存在しないルートが型エラーになる）。
+   - **`resolve('login/')` など末尾の `/`**: 比較は `resolve('login')` と `` `${login}/` `` にする。
+   - 残りの `resolve(...)` は、元の `${base}/...` と同じ URL になるかを 1 件ずつ確かめる（`BASE_PATH` を付けた
+     ビルドで開くと確かめやすい）。
+   - `#lib` の import に拡張子が付いているか（paraglide の生成物への import も `.js` が要る）。
+4. #326 の `navigationSettled.svelte.ts`（ナビゲーションの途中では再 load を始めない）と #321 の起動待ちのやり直しは
+   kit 3 でも残す。`refreshAll()` に変えても同じ条件で待つ。
+5. 複数アプリ（banto-hub・chronogazer）は **1 アプリずつ**。
+
+確認項目:
+
+1. `pnpm check`（TS 6）・`pnpm build`・`pnpm dev`、`cargo check`・`cargo test`。
+2. `BASE_PATH` を使うアプリは、その値でビルドしてリンクがすべて base 付きになること。
+3. 閲覧公開を使うアプリは、閲覧公開で許可した画面が開き、許可していない画面が先頭の項目へ戻ること（ループしない）。
+4. 起動前に保護画面を直接開く（スプラッシュ → 起動後に同じ URL が開く）、別タブでのログイン中の移動（移動が完了し、
+   未保存の確認が出る）。
+5. 同期記録に「v4.0.0 SvelteKit 3 取込済（PR 番号）」を書く。

@@ -394,7 +394,7 @@ MDテンプレート + データバインド → 印刷CSS HTML（→ 将来PDF�
 実装: `@banto/report`（`parse`/`bind`/`html` のヘッドレスコア +
 `renderReport` + `ReportView.svelte` + 印刷用 `print.css`）+ items
 データから日報1枚を出す削除可能なデモ配線（`items/report/+page.svelte`、
-`$lib/banto/reports/daily.md?raw` テンプレート、items 一覧の「日報」ghost
+`#lib/banto/reports/daily.md?raw` テンプレート、items 一覧の「日報」ghost
 ボタン）。印刷時は `ReportView` がマウント中だけ `<body>` に付与する
 `banto-report-active` クラスを介して、アプリ側 `app.css` の
 `@media print` がシェル（サイドバー/ヘッダー）を非表示にする（帳票面

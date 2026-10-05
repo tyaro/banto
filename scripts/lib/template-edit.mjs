@@ -12,6 +12,11 @@
  *   - `undefined` … 期待したパターンが見つからない。明示的な失敗として報告。
  *   - 文字列      … 書き換え後の新しい内容。
  *
+ * 削除系（`dropBlock` / `cut` / `cutToEnd`）の `null` は「適用済み」と
+ * 「アンカーのずれ」を区別できないので、呼び出し側は `editRemoval()` を通し、
+ * `beginStep()` で渡した工程の印（その工程が消すファイル）で振り分ける
+ * （印がまだ在る＝初回適用なら `null` も失敗）。
+ *
  * `createEditor()` は変更ログ（`changes`）と失敗数（`failures`）を閉じ込めた
  * エディタを返す。呼び出し側は `report()` で結果を出力し、`failures > 0` なら
  * 非0終了する（テンプレートの構造が変わったことの検出）。
@@ -34,7 +39,9 @@ export function replaceAll(s, from, to) {
  * `block` が既に無ければ `null`（適用済み＝再実行安全）を返す。削除は
  * `removeFile`/`removeDir` と同じく「既に消えていれば静かにスキップ」する冪等
  * 操作なので、見つからない＝適用済みとして扱う（`replaceAll` の「見つからない
- * ＝失敗」とは意図的に区別する）。
+ * ＝失敗」とは意図的に区別する）。ただし `null` は「アンカーのずれ」とも
+ * 区別できないので、エディタからは `editRemoval()` を通して使う（初回適用では
+ * 失敗に読み替わる。`cut` / `cutToEnd` の `null` も同じ）。
  */
 export function dropBlock(s, block) {
 	if (!s.includes(block)) return null;
@@ -152,6 +159,59 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 		if (!dryRun) fs.writeFileSync(abs, result);
 	}
 
+	/**
+	 * 現在の工程（scaffold の remover 1 つ）。`beginStep()` が工程の開始時に
+	 * 「初回適用か」を 1 度だけ判定して固定する（工程の途中で印のファイルを
+	 * 消しても、その工程の残りの削除は初回適用として扱う）。
+	 * @type {{ marker: string | null, firstApply: boolean } | null}
+	 */
+	let step = null;
+
+	/**
+	 * 工程を始める。`markerRel` は**その工程が消すファイル/ディレクトリ**で、
+	 * 「適用済みか」を判定する別の印になる。在れば初回適用、無ければ適用済み
+	 * （再実行）とみなす。`editRemoval()` はこの判定で、削除系の「見つからない
+	 * （null）」を失敗と適用済みに振り分ける。削除系の編集を持たない工程
+	 * （足すだけの工程など）は `null` を渡す — その工程で `editRemoval()` を
+	 * 呼ぶと投げる。
+	 * @param {string | null} markerRel
+	 */
+	function beginStep(markerRel) {
+		step = {
+			marker: markerRel,
+			firstApply: markerRel !== null && fs.existsSync(path.join(repoRoot, markerRel))
+		};
+	}
+
+	/**
+	 * 削除系エディット（`dropBlock` / `cut` / `cutToEnd` など、見つからないと
+	 * `null` を返す純関数）用の `editFile`。
+	 *
+	 * 削除では「消したい塊が無い」が、再実行（適用済み）とアンカーのずれ
+	 * （テンプレート側が変わって塊が別の書き方になった）のどちらでも起きる。
+	 * `null` をそのまま `editFile` に渡すと後者も「適用済み」として黙って先へ
+	 * 進み、消したファイルへの import が残るツリーでも `--dry-run` が緑になる
+	 * （#325 PR2 で塞いだ穴）。そこで `beginStep()` の印で振り分ける:
+	 *   - 初回適用（印がまだ在る）… `null` を `undefined` に読み替え、
+	 *     `swap` のどちらも無いときと同じ「期待したパターンが見つかりません」の
+	 *     明示的な失敗にする（`--strict` の有無に関係なく）。
+	 *   - 再実行（印が既に無い）… `null` のまま＝適用済み（再実行安全）。
+	 *     `--strict` では従来どおり失敗に昇格する。
+	 * 工程が始まっていない、または印の無い工程では判定できないので、プログラムの
+	 * 誤りとして投げる。
+	 */
+	function editRemoval(relPath, label, edit) {
+		if (step === null || step.marker === null)
+			throw new Error(
+				`editRemoval(${relPath}): 削除系の編集は、印を渡した beginStep() の後でだけ呼べます`
+			);
+		const { firstApply } = step;
+		editFile(relPath, label, (s) => {
+			const result = edit(s);
+			return result === null && firstApply ? undefined : result;
+		});
+	}
+
 	/** JSON ファイルの文字列フィールドを、整形を保ったまま書き換える。 */
 	function jsonField(relPath, field, to) {
 		editFile(relPath, `${field} → "${to}"`, (s) => {
@@ -249,7 +309,9 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	return {
 		changes,
 		addFile,
+		beginStep,
 		editFile,
+		editRemoval,
 		jsonField,
 		removeFile,
 		removeDir,
