@@ -1,6 +1,6 @@
 # SessionController 設計（Issue #260）
 
-- 状態: v2.0.0 でリリース（2026-10-01。実装-1（#264）・実装-2（#265）・実装-3（#266、admin-template の v2 配線と破壊的変更）を含む。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映。§10 の宿題 2 件は実装-2 で決定、2026-09-30。実装-3 の扱いは §10 に追記、2026-09-30。ADR-0016 は実装-3 で Accepted。派生アプリの移行（§6.2・§7.2）は別リポジトリの PR。**2026-10-02 オーナー決定・2026-10-03 改訂（[ADR-0017](adr/0017-credential-less-grant.md)）: 試運転は `adopt()`/`end()` ではなく「資格情報なしの grant」（閲覧公開の一般化、provider が答える S-42 の経路）で確定する。`adopt()`/`end()` と「adopt 中」の分岐は v3.0.0 で削除（grant に置き換え）。§4.7・§6.2・I-13・I-21 に注記。grant のシナリオは S-109 以降に足す。**v3.0.0 の実装 PR で実施済み**: `adopt()`/`end()`・epoch だけの ticket・「adopt 中」の分岐を削除、`publicViewerFallback` → `grantFallback(…, { kind })`、`enterPublicViewer` → `enterGrant(kind)`、`identity.publicViewer` → `identity.kind`、owner key は grant kind 単独。S-44〜S-46・S-53・S-62・S-69〜S-71 のテストは削除し、S-109〜S-114 を `sessionController.test.ts` に追加（§4.7）**）
+- 状態: v2.0.0 でリリース（2026-10-01。実装-1（#264）・実装-2（#265）・実装-3（#266、admin-template の v2 配線と破壊的変更）を含む。§9 の判断点はオーナーの決定済み 2026-09-29、同日のレビュー 10 件と統合修正 19 項目を反映。§10 の宿題 2 件は実装-2 で決定、2026-09-30。実装-3 の扱いは §10 に追記、2026-09-30。ADR-0016 は実装-3 で Accepted。派生アプリの移行（§6.2・§7.2）は別リポジトリの PR。**2026-10-02 オーナー決定・2026-10-03 改訂（[ADR-0017](../adr/0017-credential-less-grant.md)）: 試運転は `adopt()`/`end()` ではなく「資格情報なしの grant」（閲覧公開の一般化、provider が答える S-42 の経路）で確定する。`adopt()`/`end()` と「adopt 中」の分岐は v3.0.0 で削除（grant に置き換え）。§4.7・§6.2・I-13・I-21 に注記。grant のシナリオは S-109 以降に足す。**v3.0.0 の実装 PR で実施済み**: `adopt()`/`end()`・epoch だけの ticket・「adopt 中」の分岐を削除、`publicViewerFallback` → `grantFallback(…, { kind })`、`enterPublicViewer` → `enterGrant(kind)`、`identity.publicViewer` → `identity.kind`、owner key は grant kind 単独。S-44〜S-46・S-53・S-62・S-69〜S-71 のテストは削除し、S-109〜S-114 を `sessionController.test.ts` に追加（§4.7）**）
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#258・#259・#241・#204 / ADR-0016 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
@@ -8,7 +8,7 @@
 - 対象コード: banto `019f6e9`（#255 マージ後の main）
 
 このドキュメントは、admin-core のセッションの確定を 1 か所（SessionController）に
-寄せるための**設計**を書く。決定の記録は [ADR-0016](adr/0016-session-controller-single-writer.md)、
+寄せるための**設計**を書く。決定の記録は [ADR-0016](../adr/0016-session-controller-single-writer.md)、
 ここには不変条件・競合のシナリオ・API の案・移行と実装の分割・テストの設計を置く。
 実装の PR は、このドキュメントのシナリオ番号（S-n）と不変条件番号（I-n）をテスト名から
 参照する。
@@ -400,7 +400,7 @@ provider のテストで、それぞれ**フロントの順序に依らず**成�
 
 ### 4.7 公開閲覧への fallback と試運転（grant。v2.x の `adopt()` は削除済み）
 
-> **2026-10-02 オーナー決定・2026-10-03 改訂（[ADR-0017](adr/0017-credential-less-grant.md)）、v3.0.0 で実装**: 試運転は
+> **2026-10-02 オーナー決定・2026-10-03 改訂（[ADR-0017](../adr/0017-credential-less-grant.md)）、v3.0.0 で実装**: 試運転は
 > `adopt()` ではなく **grant**（資格情報なしの発行。閲覧公開の一般化）で確定する。
 > `adopt()`/`end()` は **v3.0.0 で削除**し、S-44〜S-46・S-53・S-62・S-69〜S-71 の「adopt 中」の
 > シナリオも削除した（下の表の該当行は v2.x の記録として残す。テストは無い）。grant 化した試運転は
@@ -1198,7 +1198,7 @@ A′ 案のとおり、**候補版で検証したうえで、正式版への参�
 | 各アプリの 503 画面（`src/routes/+error.svelte` 14 行の `location.reload()`） | **controller を維持したクライアント側の再読込**（`invalidateAll()`）に変える（admin-template と同じ、§6.1。6 回目 3）。ページ全体の再読込のままなら S-81 の通知は保証されない                                                                                                                                                                                                                                                                                                                                                                               |
 | `#216` の `lan_urls` 3 か所・`#248` の監査ログ                                | 同じ移行 PR に含める（Issue #260「進め方」3）。セッションとは独立                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
-> **2026-10-02、2026-10-03 改訂（[ADR-0017](adr/0017-credential-less-grant.md)）、v3.0.0 で実施**: 下の policy runner は
+> **2026-10-02、2026-10-03 改訂（[ADR-0017](../adr/0017-credential-less-grant.md)）、v3.0.0 で実施**: 下の policy runner は
 > `adopt()`/`end()` を使う v2.x の形で、`adopt()`/`end()` は **v3.0.0 で削除済み**（grant に置き換え。v2.x の記録として残す）。
 > 移行後の banto-hub は `grantFallback(controller, provider, ticket, { kind: 'commissioning' })`
 > を `+layout.ts` の `none` の後に置く（admin-template の `publicViewerFallback` と同じ位置、

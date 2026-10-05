@@ -9,7 +9,7 @@
 トラック: 保守者向け（トラックA）
 関連: [scaffold-presets-plan.md](scaffold-presets-plan.md)（P4-9、minimal/standard/full の
 設計）、[viewer-public-plan.md](viewer-public-plan.md)、ADR-0012、
-[recipes/no-login-app.md](recipes/no-login-app.md)、template-scope §3 / §7、
+[recipes/no-login-app.md](../recipes/no-login-app.md)、template-scope §3 / §7、
 conventions §13
 
 ## 1. 目的
