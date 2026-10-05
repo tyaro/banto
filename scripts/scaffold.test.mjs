@@ -6,12 +6,17 @@
  * ここでは「入力を作る」部分だけを、pipe された stdin で実プロセスを起動して
  * 軽く確認する。`--dry-run` を必ず併用するため実リポジトリには一切書き込まない
  * （removers はファイルを読むだけなので実 repoRoot に対して実行して安全）。
+ * 実際に適用するテスト（再実行安全・パターンのずれ）は、一時ディレクトリへの
+ * コピーで走らせる（rename.test.mjs と同じ方式）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createEditor, dropBlock } from './lib/template-edit.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scaffold = path.join(repoRoot, 'scripts/scaffold.mjs');
@@ -112,8 +117,7 @@ test('--strict と --interactive の併用はエラー', () => {
 // (b) コア扱いにする、(c) 「scaffold は触れない」除外として本テストに理由付きで
 // 追記する、のいずれかを明示的に選ばない限り CI が落ちる。
 // tree（#143-144 追加時）が scaffold から漏れて minimal でもデモが残った実例への対策。
-test('packages/ の全パッケージが scaffold の判断（remover / コア / 除外）に登録されている', async () => {
-	const fs = await import('node:fs');
+test('packages/ の全パッケージが scaffold の判断（remover / コア / 除外）に登録されている', () => {
 	// コア（常在。scaffold は触れない前提のパッケージ）
 	const CORE = new Set(['admin-core', 'forms', 'theme', 'grid-svelte']);
 	// 資産 → 対応パッケージ（アプリ内資産のみの glass/commandPalette はパッケージ無し）
@@ -176,5 +180,155 @@ test('各プリセットの全工程が ORDER に載っていて、計画出力�
 				`preset ${preset} の計画に工程 '${step}' が出ていません（ORDER への登録漏れ？）`
 			);
 		if (steps.length === 0) assert.match(res.stdout, /削除する資産: なし/);
+	}
+});
+
+// --- 削除系の「見つからない」の扱い（#325 PR2） -------------------------------
+//
+// 削除系（drop / cutRegion / cutEnd / removeMessageKeys）は、見つからないと
+// `null`（適用済み）を返す。これだけだと、テンプレート側の書き方が変わって
+// パターンがずれたときも「適用済み」として黙って先へ進み、消したファイルへの
+// import が残るツリーでも `--dry-run` が緑になる（SvelteKit 3 の `$lib` → `#lib`
+// で実際に起きた）。工程の印（その工程が消すファイル）がまだ在る＝初回適用なら
+// 失敗にし、印が既に無い＝再実行なら適用済みのまま、を確かめる。
+
+function tmpTree(files) {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'banto-template-edit-'));
+	for (const [rel, content] of Object.entries(files)) {
+		fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+		fs.writeFileSync(path.join(dir, rel), content);
+	}
+	return dir;
+}
+
+/** console.error を黙らせて `fn` を走らせる（失敗の報告は failures で見る）。 */
+function quiet(fn) {
+	const original = console.error;
+	console.error = () => {};
+	try {
+		return fn();
+	} finally {
+		console.error = original;
+	}
+}
+
+test('editRemoval: 印が在る（初回適用）のに削除パターンが無ければ失敗にする', () => {
+	const dir = tmpTree({ 'a.ts': 'keep\n', 'marker.ts': '' });
+	try {
+		const editor = createEditor({ repoRoot: dir, dryRun: true });
+		editor.beginStep('marker.ts');
+		quiet(() => editor.editRemoval('a.ts', 'drop', (s) => dropBlock(s, 'gone\n')));
+		assert.equal(editor.failures, 1);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('editRemoval: 印が既に無い（再実行）なら見つからない＝適用済み（--strict では失敗）', () => {
+	const dir = tmpTree({ 'a.ts': 'keep\n' });
+	try {
+		const editor = createEditor({ repoRoot: dir, dryRun: true });
+		editor.beginStep('marker.ts');
+		editor.editRemoval('a.ts', 'drop', (s) => dropBlock(s, 'gone\n'));
+		assert.equal(editor.failures, 0);
+		assert.match(editor.changes.join('\n'), /適用済み/);
+
+		const strict = createEditor({ repoRoot: dir, dryRun: true, strict: true });
+		strict.beginStep('marker.ts');
+		quiet(() => strict.editRemoval('a.ts', 'drop', (s) => dropBlock(s, 'gone\n')));
+		assert.equal(strict.failures, 1);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('editRemoval: 初回適用の判定は工程の開始時に固定し、途中で印を消しても変わらない', () => {
+	const dir = tmpTree({ 'a.ts': 'drop me\nkeep\n', 'marker.ts': '' });
+	try {
+		const editor = createEditor({ repoRoot: dir });
+		editor.beginStep('marker.ts');
+		editor.editRemoval('a.ts', 'drop 1', (s) => dropBlock(s, 'drop me\n'));
+		editor.removeFile('marker.ts', '印を削除');
+		// 同じ工程の続き: 印は消えたが初回適用のまま＝見つからなければ失敗。
+		quiet(() => editor.editRemoval('a.ts', 'drop 2', (s) => dropBlock(s, 'gone\n')));
+		assert.equal(editor.failures, 1);
+		assert.equal(fs.readFileSync(path.join(dir, 'a.ts'), 'utf8'), 'keep\n');
+
+		// 2 回目の適用（印が無い）は全部適用済みで通る。
+		const again = createEditor({ repoRoot: dir });
+		again.beginStep('marker.ts');
+		again.editRemoval('a.ts', 'drop 1', (s) => dropBlock(s, 'drop me\n'));
+		assert.equal(again.failures, 0);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('editRemoval: 工程が始まっていない／印が null の工程では投げる', () => {
+	const dir = tmpTree({ 'a.ts': 'keep\n' });
+	try {
+		const editor = createEditor({ repoRoot: dir, dryRun: true });
+		assert.throws(() => editor.editRemoval('a.ts', 'drop', (s) => dropBlock(s, 'x')), /beginStep/);
+		editor.beginStep(null);
+		assert.throws(() => editor.editRemoval('a.ts', 'drop', (s) => dropBlock(s, 'x')), /beginStep/);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+// 実リポジトリのコピーで、scaffold.mjs 全体としての振る舞いを確かめる
+// （rename.test.mjs と同じコピー方式。実リポジトリは書き換えない）。
+const SKIP = ['node_modules', '.git', 'target', '.svelte-kit', 'build', 'dist'];
+const skip = (src) =>
+	SKIP.some((s) => src === path.join(repoRoot, s) || src.includes(`${path.sep}${s}${path.sep}`)) ||
+	src.includes('-snapshots');
+
+function copyRepo() {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'banto-scaffold-'));
+	fs.cpSync(repoRoot, tmp, { recursive: true, filter: (src) => !skip(src) });
+	return tmp;
+}
+
+function runIn(dir, args) {
+	return spawnSync(process.execPath, [path.join(dir, 'scripts/scaffold.mjs'), ...args], {
+		cwd: dir,
+		encoding: 'utf8'
+	});
+}
+
+test('削除パターンがずれていると、--strict なしの --dry-run でも失敗する', () => {
+	const dir = copyRepo();
+	try {
+		// DashboardPanel の import を、scaffold が知らない書き方に変える
+		// （SvelteKit 3 の移行で `$lib` → `#lib` になったのと同じ種類のずれ）。
+		const dash = path.join(dir, 'apps/admin-template/src/routes/(app)/dashboard/+page.svelte');
+		const before = fs.readFileSync(dash, 'utf8');
+		const from = `\timport DashboardPanel from '#lib/components/DashboardPanel.svelte';\n`;
+		assert.ok(before.includes(from), 'テストの前提（DashboardPanel の import）が見つからない');
+		fs.writeFileSync(
+			dash,
+			before.replace(from, `\timport DashboardPanel from '../DashboardPanel.svelte';\n`)
+		);
+
+		const res = runIn(dir, ['--preset', 'minimal', '--dry-run']);
+		assert.notEqual(res.status, 0, `ずれを見逃して成功した:\n${res.stdout}\n${res.stderr}`);
+		assert.match(res.stderr, /DashboardPanel import 除去 — 期待したパターンが見つかりません/);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('minimal と display は 2 回適用しても成功する（再実行安全）', () => {
+	for (const preset of ['minimal', 'display']) {
+		const dir = copyRepo();
+		try {
+			const first = runIn(dir, ['--preset', preset]);
+			assert.equal(first.status, 0, `${preset} 1 回目が失敗:\n${first.stdout}\n${first.stderr}`);
+			const second = runIn(dir, ['--preset', preset]);
+			assert.equal(second.status, 0, `${preset} 2 回目が失敗:\n${second.stdout}\n${second.stderr}`);
+			assert.doesNotMatch(second.stdout, /^ {2}✔/m, `${preset} 2 回目に変更が出た`);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	}
 });
