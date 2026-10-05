@@ -5,12 +5,18 @@
  * (`refreshAll()` replaced the deprecated `invalidateAll()` with SvelteKit 3,
  * #325. Both run the same `_invalidate()` in kit 3.0's `client.js` - the only
  * difference is that `refreshAll()` keeps `page.state`, which this app never
- * sets (no shallow routing) - so the abort below applies to it unchanged.)
+ * sets (no shallow routing).)
  *
- * A `refreshAll()` that starts while SvelteKit is still running a
- * navigation makes that navigation abort without clearing its internal
+ * The problem this guards against was observed on SvelteKit 2.70: an
+ * `invalidateAll()` that started while SvelteKit was still running a
+ * navigation made that navigation abort without clearing its internal
  * "navigating" flag (@sveltejs/kit 2.70 `client.js`: `navigate()` returns on
- * `token !== nav_token` with `is_navigating` still true). Two things follow:
+ * `token !== nav_token` with `is_navigating` still true). SvelteKit 3.0
+ * separates the navigation and invalidation tokens, so an ordinary
+ * invalidation no longer aborts the navigation in flight; the guard is kept
+ * on 3.0 conservatively (an invalidation started mid-navigation can still be
+ * dropped, and waiting for the navigation to settle avoids losing the
+ * re-run). On 2.70 two things followed from the abort:
  * the move the user asked for is lost (the re-run reloads the URL the
  * navigation started from), and `beforeNavigate` - the unsaved-changes
  * guard (`#lib/unsavedChanges.ts`) - is skipped for the next navigation, so
