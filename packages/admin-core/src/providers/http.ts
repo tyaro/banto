@@ -185,7 +185,7 @@ function isIdentity(value: unknown): value is Identity {
  * interface so `createHttpDataProvider`/`createSseEventProvider` can share
  * the same token without a second source of truth.
  *
- * Issue #260 (docs/session-controller-design.md §5.2): the provider keeps a
+ * Issue #260 (docs/design/session-controller-design.md §5.2): the provider keeps a
  * `credentialRevision()` - an in-memory counter that advances on every
  * change it makes to the stored token and on every cross-tab `storage`
  * event for `storageKey` - and:

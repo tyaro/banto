@@ -115,7 +115,7 @@ LANブラウザ側の認証無効化。
 安全に degrade する。
 
 **2026-09-14 追記（閲覧公開、Issue #189）**: 「認証を外す」を書き込み軸と
-閲覧公開軸の 2 軸に分けた（[docs/viewer-public-plan.md](viewer-public-plan.md)、
+閲覧公開軸の 2 軸に分けた（[docs/design/viewer-public-plan.md](design/viewer-public-plan.md)、
 [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)）。
 `server.viewerPublic` を ON にすると LAN クライアントは
 `POST /api/auth/grant/publicViewer`（v3.0.0 で grant に一本化、[ADR-0017](adr/0017-credential-less-grant.md)）で **`viewer` 固定の合成セッション**を得て
@@ -389,7 +389,7 @@ M21 は使う業種が限られるヘッドレス小粒機能のため同梱な�
 MDテンプレート + データバインド → 印刷CSS HTML（→ 将来PDF）。
 日報・写真帳・時系列帳票を同一エンジンの帳票定義違いとして扱う。
 記録計 R3（industrial-plan.md）が消費予定。詳細計画は
-[report-plan.md](report-plan.md)。
+[report-plan.md](design/report-plan.md)。
 
 実装: `@banto/report`（`parse`/`bind`/`html` のヘッドレスコア +
 `renderReport` + `ReportView.svelte` + 印刷用 `print.css`）+ items
@@ -409,7 +409,7 @@ MDテンプレート + データバインド → 印刷CSS HTML（→ 将来PDF�
 唯一のフルスタック拡張（DBマイグレーション・Rustストレージサービス・
 REST・Tauriコマンド・UI）のため、クレート + パッケージのペアで実装し、
 三経路配線の見本としてテンプレートに削除可能なデモを同梱する（上記提供
-形態の表を参照）。詳細計画は [attachments-plan.md](attachments-plan.md)。
+形態の表を参照）。詳細計画は [attachments-plan.md](design/attachments-plan.md)。
 
 実装: `crates/banto-attachments`（サービス・ストレージ・サムネイル）+
 `@banto/attachments`（AttachmentsClient 注入方式の AttachmentsPanel）+
@@ -459,8 +459,8 @@ template-scope.md §3）。単位D のE2Eシナリオ追加が `AttachmentsPanel
 
 ### M22: ビジュアルリフレッシュ（完了）
 
-計画: [visual-refresh-plan.md](visual-refresh-plan.md) /
-設計: [visual-refresh-design.md](visual-refresh-design.md)。
+計画: [visual-refresh-plan.md](design/visual-refresh-plan.md) /
+設計: [visual-refresh-design.md](design/visual-refresh-design.md)。
 機能・API・DB を変えずにフロントエンド表示層のみを刷新する
 「Modern Operations Console」化。テーマトークン拡張（面階層・状態色
 3系統・影・モーション）、密度軸 `data-banto-density`、Tailwind `@theme`

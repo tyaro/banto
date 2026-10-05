@@ -336,7 +336,7 @@ CHANGELOG の [1.6.0](../CHANGELOG.md) 冒頭のとおり、`@banto/*`・`banto-
 v2.0.0 は admin-core の旧セッション API を削除し、`AuthProvider` の `resolve`・`credentialRevision`・
 `onCredentialChanged` を必須にする**破壊的変更**。詳細な移行表と手順は CHANGELOG の
 [2.0.0「SessionController 実装-3」](../CHANGELOG.md#200---2026-10-01)が正で、
-ここには**取り込みの組み立て**だけを書く。設計は [session-controller-design.md](session-controller-design.md)、判断は
+ここには**取り込みの組み立て**だけを書く。設計は [session-controller-design.md](design/session-controller-design.md)、判断は
 [ADR-0016](adr/0016-session-controller-single-writer.md)。
 
 | 経路 | 項目                                                                                                                   | 取り込み                                                                                                                |

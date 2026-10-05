@@ -1,7 +1,7 @@
 # Visual regression + axe-core (`visual` Playwright project)
 
-Phase 0 of `docs/visual-refresh-plan.md` / §12 of
-`docs/visual-refresh-design.md`. Separate from the `chromium` (M18 smoke)
+Phase 0 of `docs/design/visual-refresh-plan.md` / §12 of
+`docs/design/visual-refresh-design.md`. Separate from the `chromium` (M18 smoke)
 project in `e2e/playwright.config.ts` - different `testDir`, different
 `webServer` (plain `vite preview` in browser demo mode, not `banto-serve`),
 never runs together with smoke.

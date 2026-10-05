@@ -1,5 +1,5 @@
 /**
- * Template string -> AST (docs/report-plan.md §3.1, §3.3). Pure, DOM-free,
+ * Template string -> AST (docs/design/report-plan.md §3.1, §3.3). Pure, DOM-free,
  * line-based recursive-descent parser for the report Markdown subset: no
  * external Markdown library, no `Date.now()`/randomness, no throwing - any
  * structural problem (unclosed `{{#each}}`, a stray `{{/if}}`, ...) is

@@ -7,8 +7,8 @@
 - 関連: [ADR-0012](0012-lan-public-viewer-synthetic-session.md)（閲覧公開 = viewer 固定の合成セッション。本 ADR はこれを一般化する。方式の判断は生きているので supersede はしない）/
   [ADR-0003](0003-tls-via-reverse-proxy.md)（同一ホストのリバースプロキシ。決定 §6 の前提）/
   [ADR-0014](0014-account-bound-session-revocation.md)（アカウント照合。grant セッションは対象外）/
-  [ADR-0016](0016-session-controller-single-writer.md)・[docs/session-controller-design.md](../session-controller-design.md) §4.7・§6.2・I-13・I-21（`adopt()`/`end()` を削除する）/
-  [docs/viewer-public-plan.md](../viewer-public-plan.md) §2.2 / conventions §1・§6・§10 /
+  [ADR-0016](0016-session-controller-single-writer.md)・[docs/design/session-controller-design.md](../design/session-controller-design.md) §4.7・§6.2・I-13・I-21（`adopt()`/`end()` を削除する）/
+  [docs/design/viewer-public-plan.md](../design/viewer-public-plan.md) §2.2 / conventions §1・§6・§10 /
   [docs/upgrading.md](../upgrading.md)（移行手順の置き場）/
   派生アプリ: tyaro/banto-industrial の banto-hub「試運転モード」・chronogazer
 - 対象コード: banto v2.1.1（`25f2291`）。本文の `ファイル:行` はこの版のもの
@@ -289,7 +289,7 @@ pub fn grant_router(auth: AuthState, registry: Arc<GrantRegistry>) -> Router;
   手順 0〜7 の「adopt 中」分岐（I-13、S-44〜S-46・S-53・S-62・S-69〜S-71）、
   `SessionController` の `adopt`/`end` も削除する。grant 化した試運転は S-42 と同じ経路
   （provider が答える、ticket は revision を持つ、SSE 401 で確認に行ける）になる
-  （[session-controller-design.md](../session-controller-design.md) に注記）。
+  （[session-controller-design.md](../design/session-controller-design.md) に注記）。
 
 ### 5. 派生アプリ側の取り決め（参考。banto の規約ではない）
 

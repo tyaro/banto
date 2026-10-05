@@ -22,8 +22,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # fetch-depth: 0 = 履歴とタグも取る。verify:migrations が「HEAD から辿れる
+      # 最新の v* タグ」と比べるため（既定の浅い clone ではタグが見えず、
+      # スクリプトは素通りさせずに失敗する）。
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # Version is intentionally omitted: pnpm/action-setup resolves it from
       # the "packageManager" field in the root package.json (pnpm@10.33.0).
@@ -47,6 +52,15 @@ jobs:
       # 許可リスト等）を強制する（improvement-plan P3-5）。
       - name: Verify architecture invariants
         run: pnpm verify:architecture
+
+      # リリース済み migration は追記のみ（#312 の P1 の再発防止）。SQLx は本文を
+      # コメント込みで checksum して DB に記録するため、最新の v* タグに含まれる
+      # migrations*/ のファイルが 1 バイトでも変わると、その版以前に作った DB が
+      # VersionMismatch で起動しなくなる。スクリプト自身のテストも同じ場所で回す。
+      - name: Verify released migrations are unchanged
+        run: |
+          node --test scripts/verify-migrations-frozen.test.mjs
+          pnpm verify:migrations
 
       # マニフェスト間の version 一致を強制する（CR-7 通常CI。タグ名一致は
       # リリース/タグワークフローで `node scripts/check-versions.mjs --tag <name>`

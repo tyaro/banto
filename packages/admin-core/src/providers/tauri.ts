@@ -160,7 +160,7 @@ function seqOf(value: unknown): number | undefined {
  * `auth_check` / `auth_identity` commands remain for other callers; the v2
  * `AuthProvider` has no `check()`/`getIdentity()`, design §5.4.)
  *
- * Issue #260 (docs/session-controller-design.md §5.3, I-19/I-23): the
+ * Issue #260 (docs/design/session-controller-design.md §5.3, I-19/I-23): the
  * revision is the pair `(observedSeq, local)`, handed out as the opaque
  * `${observedSeq}.${local}`:
  * - `observedSeq` is the max Rust session-slot `seq` observed - from a

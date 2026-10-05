@@ -115,7 +115,7 @@ body {
 	cursor: not-allowed;
 }
 
-/* M19 report demo (docs/report-plan.md §3.4, deletable per
+/* M19 report demo (docs/design/report-plan.md §3.4, deletable per
    docs/template-scope.md §3): hides the app shell (sidebar/header) while
    printing a report page, so the printed/PDF output is just the report
    paper, not the whole app chrome around it.

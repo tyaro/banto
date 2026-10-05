@@ -109,7 +109,7 @@ fn validate_ui_value(value: &str) -> Result<(), BantoError> {
 /// enabled, and the bind address/port. Defaults to disabled,
 /// localhost-only - "attack surface zero" until the user opts in.
 ///
-/// `viewer_public` (Issue #189, `docs/viewer-public-plan.md` §2.3, ADR-0012)
+/// `viewer_public` (Issue #189, `docs/design/viewer-public-plan.md` §2.3, ADR-0012)
 /// is the "閲覧公開" opt-in: when ON, a LAN client may mint a
 /// `viewer`-role synthetic session without logging in
 /// (`POST /api/auth/grant/publicViewer`, ADR-0017). It defaults to `false`, so an existing
@@ -445,7 +445,7 @@ impl SettingsService {
     ///
     /// Refuses to enable LAN access while auth-disabled mode is on UNLESS
     /// 閲覧公開 (`viewer_public`) is also on (spec M11 + Issue #189,
-    /// `docs/viewer-public-plan.md` §2.3). The original M11 rule
+    /// `docs/design/viewer-public-plan.md` §2.3). The original M11 rule
     /// (2026-07-08「LAN 側を無認証公開しない」) existed to keep the WRITE
     /// surface off an unauthenticated LAN; `viewer_public` opens only the
     /// READ surface, through a `viewer`-role synthetic session that still
@@ -523,7 +523,7 @@ impl SettingsService {
     /// Refuses to turn auth-disabled mode ON while LAN access is currently
     /// enabled, UNLESS 閲覧公開 (`ServerSettings::viewer_public`) is also on
     /// (mirror image of [`SettingsService::set_server_config`]'s guard,
-    /// Issue #189 / `docs/viewer-public-plan.md` §2.3) - both directions are
+    /// Issue #189 / `docs/design/viewer-public-plan.md` §2.3) - both directions are
     /// checked so whichever settings screen the user acts on second is the
     /// one that catches the conflict, and so the two can never disagree on
     /// whether a given combination is legal.
@@ -899,7 +899,7 @@ mod tests {
 
     // --- 閲覧公開 (viewer_public) exclusivity matrix ------------------------
     //
-    // Issue #189 / `docs/viewer-public-plan.md` §2.3: the three
+    // Issue #189 / `docs/design/viewer-public-plan.md` §2.3: the three
     // `auth.disabled` × `server.enabled` × `viewer_public` combinations, each
     // asserted from BOTH directions (`set_server_config` and
     // `set_auth_config`) so no state is reachable through only one of the two

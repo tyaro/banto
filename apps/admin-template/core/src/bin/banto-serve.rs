@@ -36,7 +36,7 @@
 //! through the `auth_setup` command instead), `BANTO_VIEWER_PUBLIC` (`1` to
 //! seed `server.viewer_public = true` at startup so LAN clients may mint a
 //! viewer-public grant session through `POST /api/auth/grant/publicViewer`
-//! without logging in - Issue #189, `docs/viewer-public-plan.md` §3.1-5,
+//! without logging in - Issue #189, `docs/design/viewer-public-plan.md` §3.1-5,
 //! ADR-0012; grants in general: ADR-0017).
 //!
 //! `BANTO_VIEWER_PUBLIC` is a dev/e2e entry point in the same spirit as
@@ -141,7 +141,7 @@ async fn main() {
         Err(err) => eprintln!("banto-serve: 初回起動の既定設定の書き込みに失敗しました: {err}"),
     }
     let backup = BackupService::new(db_path_buf.clone(), db.clone());
-    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the
+    // M20 attachments (spec docs/design/attachments-plan.md §3.3): base_dir is the
     // directory `banto_attachments::base_dir_for_target` picks (Issue #208):
     // - SQLite: the DB file's own parent directory + `attachments` (same
     //   sibling-directory convention as `backups/`), exactly as before.

@@ -337,7 +337,7 @@ without a runtime guard are **upheld by reviewing every call site**.
   session with a **fixed identity** of a registered kind
   ([ADR-0017](adr/0017-credential-less-grant.en.md); public viewing:
   [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.en.md),
-  [viewer-public-plan §2.2](viewer-public-plan.md)). No auth-bypassing public
+  [viewer-public-plan §2.2](design/viewer-public-plan.md)). No auth-bypassing public
   router is created — the issued token rides the existing `require_auth` +
   `RoleGuard` + audit + SSE revalidation unchanged. The rules below are
   guaranteed by review:
@@ -485,6 +485,16 @@ ordinary sessions.
   independently, so adding to one dialect only would go silently missing; type
   differences within a same-named pair stay review-guaranteed per the intended
   divergence above).
+- **Released migrations are append-only** (not a single byte changes, comments
+  included; no deletes or renames). SQLx records a checksum of each applied
+  migration's full text, comments included, in the DB and verifies it at
+  startup, so editing one makes any DB created with that release or earlier
+  fail to start with `VersionMismatch(<version>)`. Make changes as a new
+  numbered migration. **That the files under `migrations*/` in the latest `v*`
+  tag reachable from HEAD are unchanged in the working tree is caught in CI by
+  `pnpm verify:migrations`** (`scripts/verify-migrations-frozen.mjs`; guards
+  against the near-miss in #312, where moving docs rewrote a path inside a
+  migration comment).
 - **The app owns the table definitions.** `banto-attachments` has no migrations
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").
@@ -512,7 +522,7 @@ only one form has produced real misjudgements (maintenance-review-2026-08 §2.1)
 | --- | --- |
 | `spec §N` | §N of `ui-framework-spec.md` (**this notation is reserved for ui-framework-spec**) |
 | `roadmap MN` / `spec MN` | the MN section of `roadmap.md` (M10+ live in roadmap; spec §15 only holds the initial draft M0–M9; prefer `roadmap MN` for new code) |
-| `<plan> §N` | §N of `docs/<plan>.md` (e.g. `attachments-plan §3.7`) |
+| `<doc> §N` / `<doc> <section label>` | The matching section of `docs/design/<doc>.md` (e.g. `attachments-plan §3.7`, `session-controller-design §5.2`, `display-preset-plan D1-c`). `<doc>` is the file name without the extension, so the notation does not change when the directory does |
 | `conventions §N` | §N of this document (section numbers are immutable) |
 | `M-review YYYY-MM §N` | §N of `feature-review-YYYY-MM.md` |
 | `CR-N` / `AD-N` | `maintainability-review-2026-07.md` (§4 and the §7 addendum) |

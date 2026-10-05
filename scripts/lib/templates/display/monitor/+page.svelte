@@ -2,7 +2,7 @@
 	/**
 	 * 表示専用アプリのホーム画面（`scripts/scaffold.mjs --preset display` が
 	 * `src/routes/(app)/monitor/+page.svelte` として複製する雛形。
-	 * docs/display-preset-plan.md §3.2）。
+	 * docs/design/display-preset-plan.md §3.2）。
 	 *
 	 * このファイルは **書き換えられる前提の出発点**。`load()` を自分の読み取り
 	 * （`getDataProvider().getList(...)` / `fetch()` など）に差し替えて、下の

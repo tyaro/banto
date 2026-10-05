@@ -1,6 +1,6 @@
 /**
  * SessionController - the single writer of this tab's session state
- * (Issue #260, docs/session-controller-design.md, ADR-0016).
+ * (Issue #260, docs/design/session-controller-design.md, ADR-0016).
  *
  * Before #260 four places decided "who is signed in" (the pre-v2
  * `sessionGate`, `sessionLifecycle`, `sessionEnded` and the app's logout),

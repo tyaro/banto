@@ -721,7 +721,7 @@
 				state={mode === 'client' ? clientGridState : serverGridState}
 				messages={gridMessages()}
 			/>
-			<!-- M19 report demo (docs/report-plan.md §3.5, deletable per
+			<!-- M19 report demo (docs/design/report-plan.md §3.5, deletable per
 			     docs/template-scope.md §3): ghost so it reads as a secondary,
 			     non-mutating action alongside CSVエクスポート below - `canWrite`
 			     is deliberately NOT checked, a `viewer` can read a report same

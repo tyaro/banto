@@ -63,7 +63,7 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
   これを外すと、一覧状態は保存も復元もされないか（所有者が確定しない）、
   セッションが変わっても前の画面が残る（作り直しなし）。
 
-セッション管理の設計は [session-controller-design.md](../session-controller-design.md) §6.1。
+セッション管理の設計は [session-controller-design.md](../design/session-controller-design.md) §6.1。
 
 ## 検証
 

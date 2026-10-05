@@ -24,6 +24,18 @@
 
 - fix(admin-template): `BASE_PATH`（Pages のデモ）を付けたビルドでも、サイドバーの選択表示・ページ見出し・ナビのバッジが合うようにする（#332）。base を含まない表のパス（`/dashboard`）と base 込みの `page.url.pathname`（`/banto/dashboard`）を直接比べていたため、デモでは一致しなかった。比較を `isPathActive(path, pathname)`（新設 `src/lib/appPath.ts`、`navigation.ts` が再エクスポート）に一本化し、表のパスを `resolveAppPath()` で base 込みにしてから比べる（公開ビューアのガード・設定カテゴリの選択も同じ関数に寄せた）。base が空なら従来と同じ挙動。派生アプリへの影響: 経路 A は不要。経路 B は `navigation.ts` / `Sidebar.svelte` / `navBadges.svelte.ts` をコピーしているなら、新設の `appPath.ts` も一緒にコピーする（`base` を使わない派生アプリでは挙動は変わらない）。
 - docs(fixture): 外部利用 fixture の `pnpm check` は、ルートで `pnpm install` 済みでないと `playwright.config.ts` の `@playwright/test` を解決できず失敗する（CI は先にルートを入れるので通る）。前提を docs/upgrading.md 8.3 と fixture の tsconfig.json に明記した。fixture に `@playwright/test` は足さない（2 つ入ると Playwright が二重読み込みで落ちるため）。
+- docs(layout): 設計文書 8 本を `docs/` 直下から `docs/design/` へ移動した（#312 の design/ への移動。ファイル名は不変なので `attachments-plan §3.7` のようなラベル参照はそのまま有効）。コード・scripts・CI・docs 内の参照は同じ PR で新パスに更新済み。ただしリリース済みの migration（`apps/admin-template/core/migrations-sqlite/0006_attachments.sql` と `migrations-postgres/0006_attachments.sql`）のコメントは旧パス `docs/attachments-plan.md` のまま残す。SQLx は migration 本文をコメント込みで checksum して DB に記録するため、コメント 1 行の書き換えでも v4.0.0 以前に作った DB が `VersionMismatch(6)` で起動しなくなる。旧パスの残存検索ではこの 2 ファイルを既知の例外として扱う（リリース済み migration の書き換えは新設の `pnpm verify:migrations` が CI で検出する）。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/design/*.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
+
+  | 旧パス                              | 新パス                                     |
+  | ----------------------------------- | ------------------------------------------ |
+  | `docs/attachments-plan.md`          | `docs/design/attachments-plan.md`          |
+  | `docs/display-preset-plan.md`       | `docs/design/display-preset-plan.md`       |
+  | `docs/report-plan.md`               | `docs/design/report-plan.md`               |
+  | `docs/scaffold-presets-plan.md`     | `docs/design/scaffold-presets-plan.md`     |
+  | `docs/session-controller-design.md` | `docs/design/session-controller-design.md` |
+  | `docs/viewer-public-plan.md`        | `docs/design/viewer-public-plan.md`        |
+  | `docs/visual-refresh-design.md`     | `docs/design/visual-refresh-design.md`     |
+  | `docs/visual-refresh-plan.md`       | `docs/design/visual-refresh-plan.md`       |
 
 ## [4.0.0] - 2026-10-05
 

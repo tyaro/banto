@@ -2518,7 +2518,7 @@ async fn stage_restore_from_existing_backup_then_cancel_is_recorded_in_the_audit
 // --- M20: attachments -------------------------------------------------------
 
 /// Full upload -> list -> download -> thumbnail(404, non-image) -> delete
-/// round trip (spec `docs/attachments-plan.md` §3.5/§5): `editor` writes,
+/// round trip (spec `docs/design/attachments-plan.md` §3.5/§5): `editor` writes,
 /// `viewer` reads. Also checks the `Content-Disposition` header carries
 /// both the ASCII `filename=` and RFC 5987 `filename*=` forms.
 #[tokio::test]
@@ -2939,7 +2939,7 @@ async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_a
 
 // --- Grant sessions (credential-less issuance, ADR-0017) -------------------
 //
-// Viewer-public (`docs/viewer-public-plan.md` §5 / ADR-0012) is the first
+// Viewer-public (`docs/design/viewer-public-plan.md` §5 / ADR-0012) is the first
 // grant kind; a derived app's commissioning mode is the second. The security
 // property under test is that `POST /api/auth/grant/{kind}` is the ONLY thing
 // a kind's condition unlocks: the token it hands out is an ordinary session

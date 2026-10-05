@@ -1,5 +1,5 @@
 /**
- * AST + data -> resolved AST (docs/report-plan.md §3.2, §3.3). Expands
+ * AST + data -> resolved AST (docs/design/report-plan.md §3.2, §3.3). Expands
  * `{{#each}}`/`{{#if}}` (block-level and table-row-group forms), resolves
  * `{{ path }}` placeholders against the data, and applies formatters. Pure
  * and DOM-free; values are formatted but not HTML-escaped here - html.ts
@@ -88,7 +88,7 @@ function isTruthy(value: unknown): boolean {
 /**
  * Resolves a dot-path against `scope`. Inside an `{{#each}}`, `scope` is the
  * current element (v1 has no `../` - paths never escape to an outer scope,
- * see docs/report-plan.md §3.2/§3.3). `.` refers to `scope` itself, which is
+ * see docs/design/report-plan.md §3.2/§3.3). `.` refers to `scope` itself, which is
  * how a primitive-array `{{#each}}` (`{{ . }}`) works.
  */
 function resolvePath(scope: unknown, path: string): { found: boolean; value: unknown } {

@@ -6,7 +6,7 @@
 - Date: 2026-09-29
 - Related: Issue #260, #255, #257, #259, #241, #204 / spec §3.3, §8.1 / conventions §10 /
   ADR-0014 (account-bound revocation) / ADR-0012 (synthetic viewer session) /
-  design body: [docs/session-controller-design.md](../session-controller-design.md) (Japanese only)
+  design body: [docs/design/session-controller-design.md](../design/session-controller-design.md) (Japanese only)
 
 ## Context
 

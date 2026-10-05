@@ -30,9 +30,12 @@ track your task belongs to.**
     include, and how deletability is judged
   - [docs/publishing.md](docs/publishing.md) — distribution (git tag / `path:`
     dependency)
-  - `docs/*-plan.md` — implementation plans for individual features
-    (attachments/report/visual-refresh, etc. — living spec anchors that code
-    keeps referencing by `§` even after implementation)
+  - [docs/design/](docs/design/) — implementation plans and design documents
+    for individual features (attachments-plan / report-plan /
+    visual-refresh-plan and -design / display-preset-plan /
+    session-controller-design, etc. — living spec anchors that code keeps
+    referencing by `§` even after implementation; files are named
+    `<name>-plan.md` / `-design.md`)
   - **Survey / review records**:
     [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md)
     (latest inventory + consolidation plan),
@@ -78,13 +81,13 @@ minimal|standard|full|display` (`--interactive` / `--dry-run` available; the man
   removes it drops the `items` demo resource, the users / audit-log **screens**
   and `/dashboard`, then adds `/monitor` plus the first-boot seed (LAN public
   viewing), kiosk defaults and `banto.i18n = "raw"`. It is the only preset that
-  adds anything. Design: [docs/display-preset-plan.md](docs/display-preset-plan.md)
+  adds anything. Design: [docs/design/display-preset-plan.md](docs/design/display-preset-plan.md)
   (Japanese); user-facing notes live under "オプション資産の削除" in the
   Japanese README.
 - **Add / change a feature** → first read the invariants in
   [docs/conventions.en.md](docs/conventions.en.md), then decide whether to do
   it with the [template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題)
-  checklist. Follow `docs/*-plan.md` for the implementation plan.
+  checklist. Follow `docs/design/*-plan.md` for the implementation plan.
 - **Bug fix / refactor** → check the relevant section of
   [docs/conventions.en.md](docs/conventions.en.md) (especially the security
   invariants, the ban on reverse dependencies, and two-path symmetry).
@@ -128,8 +131,9 @@ minimal|standard|full|display` (`--interactive` / `--dry-run` available; the man
 ```bash
 pnpm check          # frontend type checks (svelte-check / tsc per package).
                     # lint is pnpm lint, build is pnpm build separately (the CI
-                    # frontend job runs lint→verify:architecture→check:versions→
-                    # format→check→test→build in order)
+                    # frontend job runs lint→verify:architecture→
+                    # verify:migrations→check:versions→format→check→test→build
+                    # in order)
 cargo test          # all tests in the Rust workspace
 pnpm e2e            # Playwright smoke (e2e/playwright.config.ts, starts banto-serve)
 cargo audit         # dependency audit (with ignores from .cargo/audit.toml)

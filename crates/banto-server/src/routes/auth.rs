@@ -5,7 +5,7 @@ use crate::auth::MaybePeerAddr;
 use crate::grant::{grant_router, GrantKind, GrantRegistry};
 
 /// Extension point for app-specific `GET /api/auth/status` fields
-/// (`docs/viewer-public-plan.md` §3.1-2). The returned map is flattened into
+/// (`docs/design/viewer-public-plan.md` §3.1-2). The returned map is flattened into
 /// the status response alongside `initialized`/`grants`, so an adopter
 /// that needs to tell its login screen something extra (a tenant name, a
 /// branding flag, ...) can do it without wrapping this router in a

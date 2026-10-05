@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Attachment panel for one resource record (spec `docs/attachments-plan.md`
+	 * Attachment panel for one resource record (spec `docs/design/attachments-plan.md`
 	 * §3.7): thumbnail grid for images, a file-row list for everything else,
 	 * upload (`canWrite` only), and delete (`canWrite` only, confirmed).
 	 * Loading/empty/error states are owned entirely inside this component

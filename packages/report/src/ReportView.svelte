@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Report preview + print (docs/report-plan.md §3.3/§3.4/§3.5, unit B):
+	 * Report preview + print (docs/design/report-plan.md §3.3/§3.4/§3.5, unit B):
 	 * runs `template`/`data` through the headless core (unit A's
 	 * `renderReport`) and shows the result inside an A4-shaped paper preview,
 	 * with a print button and a warnings disclosure above it.
@@ -55,7 +55,7 @@
 		};
 	});
 
-	// Design decision (docs/report-plan.md §3.4 "印刷時は帳票以外（シェル・
+	// Design decision (docs/design/report-plan.md §3.4 "印刷時は帳票以外（シェル・
 	// ボタン）を @media print で非表示"): this component's own toolbar is
 	// hidden via a plain `@media print` rule in its scoped style block
 	// below, but the app SHELL (sidebar/header, apps/admin-template's

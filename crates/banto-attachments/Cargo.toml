@@ -1,6 +1,6 @@
 [package]
 name = "banto-attachments"
-description = "Banto attachments: resource-agnostic file/image attachment metadata, storage, and thumbnail generation (spec docs/attachments-plan.md §3)"
+description = "Banto attachments: resource-agnostic file/image attachment metadata, storage, and thumbnail generation (spec docs/design/attachments-plan.md §3)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * プリセット・スキャフォールド（improvement-plan-2026-07.md P4-9 /
- * docs/scaffold-presets-plan.md）。
+ * docs/design/scaffold-presets-plan.md）。
  *
  * Banto をコピーした直後に、選んだプリセットで**不要なオプション資産を削除**
  * する。テンプレート本体は「全部入り（full）」で出荷され、スキャフォールドは
@@ -15,7 +15,7 @@
  *   - display  … 表示専用アプリ（カンバン/常設ダッシュボード/展示デモ）。
  *                minimal が外すもの全部 + items デモリソース一式 + users /
  *                audit-log **画面** + /dashboard を外し、`/monitor` を足して
- *                既定値を反転する（docs/display-preset-plan.md §3.2、Issue #190）。
+ *                既定値を反転する（docs/design/display-preset-plan.md §3.2、Issue #190）。
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
  *
  * 各資産の削除は README「3. オプション資産の削除」の手順を 1 対 1 で自動化した
@@ -91,7 +91,7 @@ function usage(code) {
 			'                fixture の除去だけ。全プリセット共通）\n' +
 			'  display     … 表示専用アプリ: minimal の削除 + items デモ一式 + users/audit-log 画面\n' +
 			'                + /dashboard を削除し、/monitor・初回起動シード・キオスク既定・\n' +
-			'                i18n raw を入れる（docs/display-preset-plan.md）\n' +
+			'                i18n raw を入れる（docs/design/display-preset-plan.md）\n' +
 			'  --interactive/-i … プリセット（または資産ごとの残す/削除）を対話で選ぶ。\n' +
 			'                      --preset とは併用不可\n' +
 			'  --strict    … pristine コピー専用: 「適用済み扱い」をアンカードリフトとして失敗にする\n' +
@@ -669,7 +669,7 @@ function removeAttachments() {
 	cutRegion(
 		BANTO_SERVE,
 		'banto-serve: AttachmentsService 構築除去',
-		`    // M20 attachments (spec docs/attachments-plan.md §3.3): base_dir is the`,
+		`    // M20 attachments (spec docs/design/attachments-plan.md §3.3): base_dir is the`,
 		`    let attachments = AttachmentsService::new(db.clone(), attachments_base_dir);`
 	);
 	swapText(
@@ -694,7 +694,7 @@ function removeAttachments() {
 	cutRegion(
 		CORE_CARGO,
 		'core: banto-attachments 依存除去',
-		'# M20 attachments (spec docs/attachments-plan.md §3.1, unit B): `rest.rs`',
+		'# M20 attachments (spec docs/design/attachments-plan.md §3.1, unit B): `rest.rs`',
 		'banto-attachments = { workspace = true }'
 	);
 	// postgres feature（V2 PR2）は banto-attachments/postgres を含む。依存を外した
@@ -708,7 +708,7 @@ function removeAttachments() {
 	cutRegion(
 		TAURI_CARGO,
 		'src-tauri: banto-attachments 依存除去',
-		'# M20 attachments (spec docs/attachments-plan.md §3.1, unit B): `AppState`',
+		'# M20 attachments (spec docs/design/attachments-plan.md §3.1, unit B): `AppState`',
 		'banto-attachments = { workspace = true }'
 	);
 	removeDir('crates/banto-attachments', 'crates/banto-attachments 削除');
@@ -893,13 +893,13 @@ function removeAttachmentsFromLibRs() {
 	cutRegion(
 		LIB_RS,
 		'lib.rs: AppState の attachments/attachments_dir フィールド除去',
-		`    /// File/image attachments (spec \`docs/attachments-plan.md\` §3, M20 unit`,
+		`    /// File/image attachments (spec \`docs/design/attachments-plan.md\` §3, M20 unit`,
 		`    attachments_dir: PathBuf,`
 	);
 	cutRegion(
 		LIB_RS,
 		'lib.rs: items_delete の delete_for_record 除去',
-		`    // M20 unit C demo wiring (spec docs/attachments-plan.md §3.8): sweep up`,
+		`    // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up`,
 		`        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));`
 	);
 	// items_delete は監査記録を `record_ok(…, Some(&id.to_string()), detail)` で書く
@@ -940,7 +940,7 @@ function removeAttachmentsFromLibRs() {
 	cutRegion(
 		LIB_RS,
 		'lib.rs: AppState 構築の attachments 除去',
-		`            // M20 attachments (spec docs/attachments-plan.md §3.3): same`,
+		`            // M20 attachments (spec docs/design/attachments-plan.md §3.3): same`,
 		`            let attachments = AttachmentsService::new(db.clone(), attachments_dir.clone());`
 	);
 	drop(
@@ -1080,7 +1080,7 @@ function removeTree() {
 
 // --- items（デモリソース一式、display プリセット専用）------------------------
 //
-// docs/display-preset-plan.md §3.2 / template-scope §3。items は長らく「コア」
+// docs/design/display-preset-plan.md §3.2 / template-scope §3。items は長らく「コア」
 // 扱いだったが、実体は**差し替え前提のデモリソース**なので display で
 // 丸ごと外せるように再分類した（README「デモコンテンツ（items）を自リソースに
 // 差し替える」の層別ファイル一覧と1対1）。
@@ -1957,7 +1957,7 @@ async function main() {
 		toRemove.has('displayDefaults')
 			? `
 
-display の既定（docs/display-preset-plan.md §3.2）:
+display の既定（docs/design/display-preset-plan.md §3.2）:
   - 初回起動シード: auth.disabled / auth.disabled_role=admin / server.viewer_public /
     server.enabled / server.bind=0.0.0.0 を、settings テーブルが空のときだけ書き込む
     （apps/admin-template/core/src/first_boot.rs で調整できます）

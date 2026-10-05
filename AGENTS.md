@@ -20,8 +20,10 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
   - [docs/roadmap.md](docs/roadmap.md) — マイルストーン計画と §7 実施プロセス
   - [docs/template-scope.md](docs/template-scope.md) — 何を入れる/入れない、削除可能性の判定
   - [docs/publishing.md](docs/publishing.md) — 配布（git tag / `path:` 依存）
-  - `docs/*-plan.md` — 個別機能の実装計画（attachments/report/visual-refresh 等。
-    実装完了後もコードが `§` 参照する現役仕様アンカー）
+  - [docs/design/](docs/design/) — 個別機能の実装計画・設計書（attachments-plan /
+    report-plan / visual-refresh-plan・design / display-preset-plan /
+    session-controller-design 等。実装完了後もコードが `§` 参照する現役仕様アンカー。
+    ファイル名は `<名前>-plan.md` / `-design.md`）
   - **調査・レビュー記録**:
     [docs/maintenance-review-2026-08.md](docs/maintenance-review-2026-08.md)
     （最新の棚卸し + 整理統合プラン）、
@@ -58,11 +60,11 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
   `pnpm scaffold --preset display`。minimal の削除に加えて items デモ一式・
   users/audit-log **画面**・`/dashboard` を外し、`/monitor` と初回起動シード
   （閲覧公開）・キオスク既定・i18n `raw` を入れる唯一の「足す」プリセット。
-  設計は [docs/display-preset-plan.md](docs/display-preset-plan.md)、利用者向け説明は
+  設計は [docs/design/display-preset-plan.md](docs/design/display-preset-plan.md)、利用者向け説明は
   README「オプション資産の削除 → `--preset display`」。
 - **機能を追加/変更する** → まず [docs/conventions.md](docs/conventions.md) の不変条件を
   読み、[template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題) の
-  チェックリストで是非を判断。実装計画は `docs/*-plan.md` に倣う。
+  チェックリストで是非を判断。実装計画は `docs/design/*-plan.md` に倣う。
 - **バグ修正/リファクタ** → [docs/conventions.md](docs/conventions.md) の該当節を確認
   （特にセキュリティ不変条件・逆依存禁止・両経路対称）。
 - **「使い方」を説明する/導入手順を直す** → トラックB（README）。
@@ -95,8 +97,8 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
 ```bash
 pnpm check          # フロントの型検査（各パッケージ svelte-check / tsc）。
                     # lint は pnpm lint、build は pnpm build が別（CI frontend
-                    # ジョブは lint→verify:architecture→check:versions→format→
-                    # check→test→build を順に回す）
+                    # ジョブは lint→verify:architecture→verify:migrations→
+                    # check:versions→format→check→test→build を順に回す）
 cargo test          # Rust ワークスペース全テスト
 pnpm e2e            # Playwright スモーク（e2e/playwright.config.ts、banto-serve 起動）
 cargo audit         # 依存監査（.cargo/audit.toml の ignore 付き）

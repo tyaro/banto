@@ -93,7 +93,7 @@
 //! `GrantSpec`'s condition: the template registers only the viewer-public
 //! kind, whose condition is the `server.viewer_public` setting, so
 //! `grant/publicViewer` returns `403 { "kind": "forbidden" }` unless 閲覧公開
-//! is explicitly on (Issue #189, ADR-0012, `docs/viewer-public-plan.md`
+//! is explicitly on (Issue #189, ADR-0012, `docs/design/viewer-public-plan.md`
 //! §2.2; `banto-serve` seeds the setting via `BANTO_VIEWER_PUBLIC=1`), and
 //! any other kind is `404`. The token a grant returns is an ordinary bearer
 //! token for the spec's fixed identity (`{ id: "public", role: "viewer" }`
@@ -173,7 +173,7 @@
 //! under the service's own fixed `restore-pending.sqlite3` name - see
 //! `crate::backup::BackupService::stage_restore_from_bytes`).
 //!
-//! `/api/attachments/*` (spec `docs/attachments-plan.md` §3.5, M20 unit B):
+//! `/api/attachments/*` (spec `docs/design/attachments-plan.md` §3.5, M20 unit B):
 //! same read/write RBAC split as `items` (`viewer`+ read, `editor`+ write),
 //! backed by `banto_attachments::AttachmentsService`. Upload is raw `Bytes`
 //! with metadata on the query string, same "no multipart dependency" design
@@ -248,7 +248,7 @@ use items::items_router;
 
 /// Slack added on top of `banto_attachments::MAX_ATTACHMENT_BYTES` for
 /// [`attachments_write_router`]'s `DefaultBodyLimit` (spec
-/// `docs/attachments-plan.md` §3.5): the limit that actually matters is the
+/// `docs/design/attachments-plan.md` §3.5): the limit that actually matters is the
 /// service-layer check in `AttachmentsService::upload` (which returns a
 /// `Validation` error, `422`), not this one - this only needs to be
 /// comfortably above `MAX_ATTACHMENT_BYTES` so a request AT the real limit
@@ -295,7 +295,7 @@ pub struct Services {
 /// (RBAC-split read/write, spec M10), the `admin`-only `users` management
 /// routes (spec M10), the `admin`-only `audit-log` viewer (spec M14), the
 /// `admin`-only `backups` routes (spec M17), the `attachments` CRUD routes
-/// (RBAC-split read/write, spec `docs/attachments-plan.md` §3.5 M20 unit
+/// (RBAC-split read/write, spec `docs/design/attachments-plan.md` §3.5 M20 unit
 /// B), and the per-user `ui-settings` routes (spec M12), all behind the
 /// CSRF header check. Mount the result *before*
 /// `banto_server::static_files::static_router` so `/api/*` takes priority

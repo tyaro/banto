@@ -1,5 +1,5 @@
 /**
- * Public types for `@banto/attachments` (spec `docs/attachments-plan.md`
+ * Public types for `@banto/attachments` (spec `docs/design/attachments-plan.md`
  * §3.7). Deliberately duplicated from - not imported from -
  * `apps/admin-template/src/lib/banto/attachmentsAdmin.ts`: the package must
  * stay transport-agnostic and free of app-specific imports (spec: "アプリ固有

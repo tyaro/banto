@@ -290,7 +290,7 @@ import だけで、transport の注入の形はレビューで担保する。
   **固定 identity** のセッションを発行する
   （[ADR-0017](adr/0017-credential-less-grant.md)。閲覧公開は
   [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)、
-  [viewer-public-plan §2.2](viewer-public-plan.md)）。認証をバイパスする公開
+  [viewer-public-plan §2.2](design/viewer-public-plan.md)）。認証をバイパスする公開
   ルータは作らない — 発行後のトークンは既存の `require_auth` + `RoleGuard` +
   監査 + SSE の再検証にそのまま乗る。以下はレビューで担保する規約:
   - **発行口は `POST /api/auth/grant/{kind}` だけで、登録済みの `GrantSpec`
@@ -410,6 +410,14 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
   捕捉する**（[ADR-0008](adr/0008-machine-check-stop-gate.md)。PG CI は smoke のみで
   各 `sqlx::migrate!` はディレクトリ独立のため、片系統だけ足すと静かに欠落する。
   同名ペア内の型差は上記の意図的分岐でレビュー担保）。
+- **リリース済みの migration は追記のみ**（本文・コメントとも 1 バイトも変えない。
+  削除・改名もしない）。SQLx は適用した migration の本文をコメント込みで checksum
+  して DB に記録し、起動時に照合するため、書き換えるとその版以前に作った DB が
+  `VersionMismatch(<version>)` で起動しなくなる。変更は新しい連番で足す。
+  **HEAD から辿れる最新の `v*` タグに含まれる `migrations*/` 配下のファイルが
+  作業ツリーで不変なことは `pnpm verify:migrations`
+  （`scripts/verify-migrations-frozen.mjs`）が CI で捕捉する**（#312 で docs の
+  移動に伴いコメント内のパスを書き換えて起きかけた事故の再発防止）。
 - **テーブル定義はアプリが所有**。`banto-attachments` は自前マイグレーションを
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。
@@ -433,7 +441,7 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
 | --- | --- |
 | `spec §N` | `ui-framework-spec.md` の §N（**この表記は ui-framework-spec 限定**） |
 | `roadmap MN` / `spec MN` | `roadmap.md` の MN 節（M10 以降の実体は roadmap。spec §15 は初期案 M0〜M9 のみ。新規は `roadmap MN` 表記を推奨） |
-| `<plan名> §N` | `docs/<plan名>.md` の §N（例 `attachments-plan §3.7`） |
+| `<文書名> §N` / `<文書名> <節ラベル>` | `docs/design/<文書名>.md` の該当節（例 `attachments-plan §3.7`・`session-controller-design §5.2`・`display-preset-plan D1-c`）。文書名はファイル名の拡張子抜きで、配置ディレクトリが変わっても表記は変わらない |
 | `conventions §N` | 本書の §N（節番号は不変に保つ） |
 | `M-review YYYY-MM §N` | `feature-review-YYYY-MM.md` の §N |
 | `CR-N` / `AD-N` | `maintainability-review-2026-07.md`（§4 と §7 追補） |

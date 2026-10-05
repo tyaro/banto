@@ -2,16 +2,16 @@
 
 作成日: 2026-09-14
 状態: **実装済み（v1.7 系）。2026-10-02 オーナー決定（2026-10-03 改訂）で §2.2 の発行の仕組みは
-「資格情報なしの grant 発行」に一本化する（[ADR-0017](adr/0017-credential-less-grant.md)、
+「資格情報なしの grant 発行」に一本化する（[ADR-0017](../adr/0017-credential-less-grant.md)、
 v3.0.0 で実装・破壊的変更）。閲覧公開は grant の 1 種類目 `publicViewer` になり、本書の
 閲覧公開専用の API 名・URL・フィールド（`/api/auth/public-viewer`、`viewerPublic`、
 `identity.publicViewer`、`issue_public_viewer_token` など）は v3.0.0 で削除される。
 設定キー `server.viewerPublic`・§2.3 の両方向ガード・画面の許可リストは残る**
 トラック: 保守者向け（トラックA）
-関連: [ADR-0012](adr/0012-lan-public-viewer-synthetic-session.md)（方式の選定理由）、
-[ADR-0017](adr/0017-credential-less-grant.md)（grant への一般化。閲覧公開はその 1 種類目）、
+関連: [ADR-0012](../adr/0012-lan-public-viewer-synthetic-session.md)（方式の選定理由）、
+[ADR-0017](../adr/0017-credential-less-grant.md)（grant への一般化。閲覧公開はその 1 種類目）、
 roadmap M10 / M11、conventions §1 / §6 / §10、
-[docs/recipes/no-login-app.md](recipes/no-login-app.md)、Issue #189（本書）、
+[docs/recipes/no-login-app.md](../recipes/no-login-app.md)、Issue #189（本書）、
 Issue #190（`--preset display`。本書が前提）
 
 ## 1. 目的
@@ -51,7 +51,7 @@ bearer トークンを発行する**方式を採る。理由の要約（詳細�
 
 ### 2.2 合成 viewer セッションの規約（conventions §6 に追記）
 
-> **grant への一本化（2026-10-02、2026-10-03 改訂、[ADR-0017](adr/0017-credential-less-grant.md)）**:
+> **grant への一本化（2026-10-02、2026-10-03 改訂、[ADR-0017](../adr/0017-credential-less-grant.md)）**:
 > v3.0.0 で grant に一本化済み（実装 PR）。以下の規約は「grant」の規約の `publicViewer` 種別への適用で、
 > 閲覧公開専用の名前は削除された。旧名と新名の対応は — 発行口 `POST /api/auth/public-viewer` → `POST /api/auth/grant/publicViewer`、
 > `issue_public_viewer_token()` → `issue_grant_token(&spec, observed)`（判定の前に世代を読み、`None` は拒否。手順は ADR-0017 決定 §2「発行と失効の直列化」）、
@@ -173,7 +173,7 @@ LANアクセスを有効化できます」（逆方向も同旨）。
 - Tauri ウィンドウ内での公開閲覧（M11 で既にカバー）。
 - `--preset display`（Issue #190、別 PR）。
 - 「viewer 以外の role を資格情報なしで配る」こと。v1 では非スコープだったが、
-  2026-10-02 に **grant への一本化**として採ることにした（[ADR-0017](adr/0017-credential-less-grant.md)、v3.0.0。
+  2026-10-02 に **grant への一本化**として採ることにした（[ADR-0017](../adr/0017-credential-less-grant.md)、v3.0.0。
   派生アプリの試運転 = admin 相当の grant。固定 identity・要求ごとの条件・
   `require_loopback_peer`・種別ごとの失効を伴う。本書の閲覧公開の仕様は変えず、API 名だけが
   grant のものに置き換わる）。

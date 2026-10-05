@@ -1,7 +1,7 @@
 /**
  * Adapts `attachmentsAdmin.ts`'s free functions into the `AttachmentsClient`
  * shape `@banto/attachments`'s `AttachmentsPanel` expects (spec
- * `docs/attachments-plan.md` §3.7-§3.8, M20 unit C). This is the one place
+ * `docs/design/attachments-plan.md` §3.7-§3.8, M20 unit C). This is the one place
  * app code and the transport-agnostic UI package meet - the package itself
  * never imports `attachmentsAdmin.ts` (spec: "アプリ固有 import なし"), and
  * this file is intentionally thin: it just renames/regroups the exports

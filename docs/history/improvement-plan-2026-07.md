@@ -98,7 +98,7 @@ improvements.md 側にも対応履歴として反映し、本書の状態列を�
 | P4-6 | improvements.md の履歴分離（未解決課題のみ残し、対応済みは `docs/history/` へ）                                              | 低     | S       | G           | **完了（2026-07-27）**。残っていた解決済みインライン項目（P3-3/P4-1/P4-2/P4-3）を archive へ移設しスタブ化。全解決済み項目がスタブ様式に統一。※受け入れ条件「100行程度」は 2026-07-19 確定の「スタブは残す」設計（本文冒頭の3ファイル役割分担）が優先され、スタブ保持のまま 295 行で運用 |
 | P4-7 | ADR（Architecture Decision Record）導入 + コメントの3分類整理（コード内/conventions/ADR）                                    | 低     | M       | G           | **完了（2026-07-19、`docs/adr/` + テンプレート + ADR 2件）**                                                                                                                                                                                                                             |
 | P4-8 | 実務寄りサンプルアプリの追加（例: 設備保全管理）— **template-scope 4条件との整合判定が先**                                   | 低     | L       | G           | 要スコープ判定                                                                                                                                                                                                                                                                           |
-| P4-9 | プリセット構成（minimal / standard / full）の生成 — P2-1 の発展形                                                            | 低     | L       | G           | **完了（`scripts/scaffold.mjs` + `--interactive`。CHANGELOG v1.0.0 feat(P4-9)。設計は [scaffold-presets-plan.md](../scaffold-presets-plan.md)）**                                                                                                                                        |
+| P4-9 | プリセット構成（minimal / standard / full）の生成 — P2-1 の発展形                                                            | 低     | L       | G           | **完了（`scripts/scaffold.mjs` + `--interactive`。CHANGELOG v1.0.0 feat(P4-9)。設計は [scaffold-presets-plan.md](../design/scaffold-presets-plan.md)）**                                                                                                                                 |
 
 ※ P4-5 は P1-1 で期待値を明記すれば緊急性が下がる、という関係。実需
 （外部 PostgreSQL を使う個別アプリ）が出た時点で優先度を再評価する。
@@ -465,7 +465,7 @@ vitest bench で計測**する方針にした（既存 vitest のみ・依存追
 
 - P4-3〜P4-5: improvements.md の該当節（§9, §2.5, §6.1）を
   そのまま実施内容とする。
-- P4-9（プリセット構成）: **設計完了**（[docs/scaffold-presets-plan.md](../scaffold-presets-plan.md)）。
+- P4-9（プリセット構成）: **設計完了**（[docs/design/scaffold-presets-plan.md](../design/scaffold-presets-plan.md)）。
   プリセットは §3 オプション資産の削除手順の自動実行であり、コアや runtime
   機構には手を入れない。命名は当初案の "industrial"（別リポジトリ
   `banto-industrial` と混同）を避け `minimal`/`standard`/`full` に是正。

@@ -33,7 +33,7 @@ async fn items_get(
 /// succeeded (read handlers - `items_list`/`items_get` above - stay on the
 /// plain `State<ItemsService>` they always had; spec M14: "読み取り系は記録
 /// しない"). `attachments` is M20 unit C's demo wiring (spec
-/// `docs/attachments-plan.md` §3.8): `items_delete` uses it to clean up any
+/// `docs/design/attachments-plan.md` §3.8): `items_delete` uses it to clean up any
 /// attachments left pointing at the now-gone record.
 #[derive(Clone)]
 struct ItemsWriteState {

@@ -4,7 +4,7 @@ import type { Identity, LegacyAuthProvider } from '../src/provider';
 import { ADAPTER_REVISION, adaptLegacyAuthProvider } from '../src/providers/legacyAdapter';
 
 /**
- * Issue #260 実装-1 (docs/session-controller-design.md §5.2 adapter table,
+ * Issue #260 実装-1 (docs/design/session-controller-design.md §5.2 adapter table,
  * §8.2): `adaptLegacyAuthProvider` guarantees the SHAPE of the v2 contract
  * only. These tests pin down both what it guarantees and what it
  * deliberately does not (fixed revision, no notifications).

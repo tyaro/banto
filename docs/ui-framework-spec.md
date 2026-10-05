@@ -171,7 +171,7 @@ interface AuthProvider {
   認証/外部API/OS資格情報ストア）はプロバイダ実装の差し替えで対応する。
   2026-09-30（v2.0.0、Issue #260）: `check()`/`getIdentity()` は契約から外れ、
   `resolve()` の 1 往復に置き換わった（`onError` は未実装のまま）。詳細は
-  [session-controller-design.md](session-controller-design.md) §5.2 と
+  [session-controller-design.md](design/session-controller-design.md) §5.2 と
   [ADR-0016](adr/0016-session-controller-single-writer.md)。
 
 ### 3.4 コンポーザブル（Runesベース）
