@@ -84,7 +84,7 @@
 					const url = await client.thumbnailUrl(item);
 					return [item.id, url] as const;
 				} catch {
-					// One bad thumbnail (e.g. a stale backup restore, spec §8's
+					// One bad thumbnail (e.g. a stale backup restore, attachments-plan §8's
 					// known limitation) shouldn't break the rest of the grid - it
 					// just falls back to the type-badge tile below.
 					return null;

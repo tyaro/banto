@@ -7,7 +7,7 @@
  * contract the app-side client adapter has to match, not a re-export of it.
  */
 
-/** Mirrors `banto_attachments::AttachmentMeta` (camelCase on the wire, spec §3.2). */
+/** Mirrors `banto_attachments::AttachmentMeta` (camelCase on the wire, attachments-plan §3.2). */
 export interface AttachmentMeta {
 	id: number;
 	resource: string;
@@ -22,7 +22,7 @@ export interface AttachmentMeta {
 }
 
 /**
- * Transport-agnostic adapter `AttachmentsPanel` receives via props (spec
+ * Transport-agnostic adapter `AttachmentsPanel` receives via props (attachments-plan
  * §3.7). The app wires this up from `attachmentsAdmin.ts` (or an equivalent
  * REST/Tauri client); the package itself never imports that file.
  *

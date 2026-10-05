@@ -24,7 +24,7 @@ describe('formatFileSize', () => {
 		expect(formatFileSize(1.5 * 1024 * 1024)).toBe('1.5 MB');
 	});
 
-	it('caps at the 25MB attachment limit (spec §7) without overflow oddities', () => {
+	it('caps at the 25MB attachment limit (attachments-plan §7) without overflow oddities', () => {
 		expect(formatFileSize(25 * 1024 * 1024)).toBe('25 MB');
 	});
 

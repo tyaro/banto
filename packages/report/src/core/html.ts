@@ -2,7 +2,7 @@
  * Resolved AST -> HTML string (docs/report-plan.md §3.3). Every text value
  * and attribute is escaped without exception - data-value text and
  * template-authored text go through the exact same path, so there is no
- * "trusted" string anywhere in this module (spec §3.1/§3.2 XSS closure).
+ * "trusted" string anywhere in this module (report-plan §3.1/§3.2 XSS closure).
  */
 
 import type { Align } from './parse';

@@ -29,7 +29,7 @@ export interface BindResult {
 export type Formatter = (value: unknown) => string;
 export type FormatterMap = Record<string, Formatter>;
 
-/** Default formatters (spec §3.2): `yen`, `number`, `date`. */
+/** Default formatters (report-plan §3.2): `yen`, `number`, `date`. */
 export const DEFAULT_FORMATTERS: FormatterMap = {
 	yen: formatYen,
 	number: formatNumber,

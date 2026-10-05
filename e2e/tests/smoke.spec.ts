@@ -1402,7 +1402,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		);
 		await expect(page.locator('.items-row-last-opened')).toHaveCount(0);
 
-		// M20 attachments (spec §3.1: "閲覧 = viewer 以上、追加/削除 = editor
+		// M20 attachments (attachments-plan §2.1: "閲覧 = viewer 以上、追加/削除 = editor
 		// 以上"): open any seeded demo item (the grid always has 1,000 rows,
 		// so this doesn't depend on scenario 3's item, which is deleted by
 		// now) and confirm the panel renders read-only - no upload affordance.
@@ -1845,7 +1845,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 	// M19 report demo (docs/report-plan.md §3.6, docs/template-scope.md §3):
 	// items -> 日報 -> the report renders. Deliberately does NOT trigger
-	// window.print() (spec §3.6) - only confirms the template rendered real
+	// window.print() (report-plan §3.6) - only confirms the template rendered real
 	// data, not the print dialog itself. Placed last: by this point
 	// scenarios 3 and 8 have each created then deleted exactly one item
 	// (net zero), so the grid is back to its 1,000-row seed baseline and

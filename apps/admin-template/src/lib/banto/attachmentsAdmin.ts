@@ -6,17 +6,17 @@
  * LAN browser client served by the embedded server calls `fetch()` against
  * `/api/attachments/*` (`apps/admin-template/core/src/rest.rs`), and plain
  * `vite dev`/`vite preview` demo mode rejects every export with a
- * `ProviderError` carrying `DEMO_MODE_MESSAGE` (spec §2.2: "ブラウザデモ
+ * `ProviderError` carrying `DEMO_MODE_MESSAGE` (attachments-plan §2.2: "ブラウザデモ
  * モードでの動作...InMemory実装は作らない").
  *
- * This is the "アプリ側（コピーして書き換える対象）" layer (spec §3.1
+ * This is the "アプリ側（コピーして書き換える対象）" layer (attachments-plan §3.1
  * table): `@banto/attachments`'s `AttachmentsPanel` (unit C) receives an
  * `AttachmentsClient` built from the exports below via props - the package
  * itself never imports this file (attachments-plan §3.7: "アプリ固有 import なし").
  *
  * ## Binary transfer
  *
- * Upload sends the file's raw bytes, not a JSON/base64 encoding (spec §3.5,
+ * Upload sends the file's raw bytes, not a JSON/base64 encoding (attachments-plan §3.5,
  * §7: 25MB/file cap, enforced server-side either way):
  * - REST mode: `POST /api/attachments?resource=&resourceId=&fileName=`,
  *   raw bytes body - same shape as `backupsAdmin.ts`'s
@@ -31,7 +31,7 @@
  * Every `/api/*` route requires a bearer token (spec: no cookie fallback -
  * see `rest.rs`'s module doc comment), so a bare `<img src="/api/
  * attachments/{id}/thumbnail">` cannot authenticate itself, and the Tauri
- * webview has no HTTP route to point at in the first place (spec §3.6).
+ * webview has no HTTP route to point at in the first place (attachments-plan §3.6).
  * Both modes therefore fetch the bytes themselves (`fetch` + `Authorization`
  * header, or `invoke` + `Vec<u8>`) and hand back a `Blob` object URL -
  * `getThumbnailUrl`/`getDownloadUrl` below are `async` for this reason,
@@ -42,7 +42,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getAuthProvider, isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
 
-/** Mirrors `banto_attachments::AttachmentMeta` (camelCase on the wire, spec §3.2). */
+/** Mirrors `banto_attachments::AttachmentMeta` (camelCase on the wire, attachments-plan §3.2). */
 export interface AttachmentMeta {
 	id: number;
 	resource: string;
@@ -68,7 +68,7 @@ function demoModeError(): ProviderError {
 	return new ProviderError({ kind: 'other', message: DEMO_MODE_MESSAGE });
 }
 
-/** Is this environment backed by a real attachments service (Tauri or the embedded server)? False in plain-browser demo mode (spec §2.2). */
+/** Is this environment backed by a real attachments service (Tauri or the embedded server)? False in plain-browser demo mode (attachments-plan §2.2). */
 export function isAttachmentsAvailable(): boolean {
 	return getBantoMode() !== 'demo';
 }
@@ -161,7 +161,7 @@ async function httpJson<T>(path: string, init: HttpJsonInit): Promise<T> {
 	return (await response.json()) as T;
 }
 
-/** `viewer`+: every attachment for one record, newest first (spec §3.5). */
+/** `viewer`+: every attachment for one record, newest first (attachments-plan §3.5). */
 export async function listAttachments(
 	resource: string,
 	resourceId: string
@@ -177,7 +177,7 @@ export async function listAttachments(
 }
 
 /**
- * `editor`+: upload a new attachment (spec §3.5). Metadata
+ * `editor`+: upload a new attachment (attachments-plan §3.5). Metadata
  * (`resource`/`resourceId`/`fileName`) always rides alongside the raw
  * bytes, never inside them - see this module's doc comment for why each
  * mode carries it differently (query string vs. percent-encoded headers).
@@ -192,7 +192,7 @@ export async function uploadAttachment(
 
 	if (getBantoMode() === 'tauri') {
 		try {
-			// Raw invoke body (spec §3.5's Tauri "第一候補") - see
+			// Raw invoke body (attachments-plan §3.5's Tauri "第一候補") - see
 			// src-tauri/src/lib.rs's `attachments_upload` doc comment for why
 			// the metadata rides headers, `encodeURIComponent`d since HTTP
 			// header values cannot carry arbitrary Unicode.
@@ -223,7 +223,7 @@ export async function uploadAttachment(
 	return (await response.json()) as AttachmentMeta;
 }
 
-/** `editor`+: delete one attachment (spec §3.5). */
+/** `editor`+: delete one attachment (attachments-plan §3.5). */
 export async function deleteAttachment(id: number): Promise<void> {
 	if (!isAttachmentsAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
@@ -269,7 +269,7 @@ async function fetchAttachmentBlob(meta: AttachmentMeta): Promise<{ blob: Blob; 
 }
 
 /**
- * `viewer`+: an object URL for `meta`'s thumbnail (spec §3.5/§3.6 - see
+ * `viewer`+: an object URL for `meta`'s thumbnail (attachments-plan §3.5/§3.6 - see
  * this module's doc comment for why this is `async` rather than a plain
  * URL string). Rejects with `kind: "not_found"` if `meta.hasThumbnail` is
  * false, without a round trip to the server. The caller must
@@ -285,7 +285,7 @@ export async function getThumbnailUrl(meta: AttachmentMeta): Promise<string> {
 }
 
 /**
- * `viewer`+: an object URL for `meta`'s full body (spec §3.5/§3.6) - for
+ * `viewer`+: an object URL for `meta`'s full body (attachments-plan §3.5/§3.6) - for
  * in-panel image display or wiring up an `<a download>`. Same object-URL
  * lifetime contract as `getThumbnailUrl`.
  */
@@ -296,7 +296,7 @@ export async function getDownloadUrl(meta: AttachmentMeta): Promise<string> {
 	return URL.createObjectURL(typed);
 }
 
-/** `editor`+, Tauri only: open the `attachments/` directory in the OS file explorer (spec §3.6). */
+/** `editor`+, Tauri only: open the `attachments/` directory in the OS file explorer (attachments-plan §3.6). */
 export async function openAttachmentsFolder(): Promise<OpenFolderResult> {
 	if (!isAttachmentsAvailable()) throw demoModeError();
 	if (getBantoMode() !== 'tauri') {

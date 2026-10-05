@@ -22,6 +22,9 @@
 
 ## [Unreleased]
 
+- docs: コード内のコメントにある誤った `spec §3.x` 参照（実体は `attachments-plan` / `report-plan` の節）を
+  `attachments-plan §N` / `report-plan §N` に修正した（Rust・TS・Svelte・CSS・e2e のコメントのみ、動作変更なし、#312 PR-B）
+
 ### 修正
 
 - fix(admin-template): ナビゲーションの途中でセッションの世代が変わると（別のタブでのログイン・Remember me の切り替え、バックグラウンドで確定した失効など）、移動が失われ、その後の未保存の変更の確認が効かなくなる問題を修正（#326、#321 の続き）。`(app)/+layout.svelte` の配線①（世代が変わったら `invalidateAll()` で確定し直す）がナビゲーションの途中に当たると、SvelteKit 2.70 はそのナビゲーションを途中で終わらせ（URL は元の画面のまま）、内部の「ナビゲーション中」の印を残すため、次のナビゲーションで `beforeNavigate` が呼ばれなかった。配線①は、ナビゲーションが終わるまで（最初のナビゲーションの `afterNavigate` の後、かつ `navigating.to === null`）やり直しを待つ。この判定は新しい `src/lib/banto/navigationSettled.svelte.ts` にまとめ、#321 のルートのレイアウトのやり直しと共有する。世代が変わったら確定し直す本来の動き・ログアウト中（`isLeavingForLogin()`）の抑止は従来どおり。SvelteKit 側の同じ現象は [sveltejs/kit#17114](https://github.com/sveltejs/kit/issues/17114)（3 系の開発版で修正。2.70 には入っていない）。E2E: smoke `13j`（項目の画面から一覧への移動を止めている間に別のタブでログインし直す → 移動が完了し、未保存の確認が出る）。単体: `src/lib/banto/navigationSettled.test.ts`。

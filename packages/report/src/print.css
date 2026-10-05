@@ -7,7 +7,7 @@
  * tokens only" rule: a printed report must render the same regardless of
  * the active theme (light/dark/glass) - a dark-mode invoice is not what
  * anyone wants out of a printer or a "Save as PDF" dialog. `.report-body`
- * therefore fixes white background / black text unconditionally (spec
+ * therefore fixes white background / black text unconditionally (report-plan
  * §3.4/§7 "帳票面の配色... テーマ非依存"). Every color value below is a
  * plain literal for that reason - this is the one file in the app where
  * that is correct, not an oversight.
@@ -141,7 +141,7 @@
 }
 
 @media print {
-	/* `---` = "start a new page here" (spec §3.4: MD's `---` reads as the
+	/* `---` = "start a new page here" (report-plan §3.4: MD's `---` reads as the
 	   paper-and-pencil "ここで改ページ" convention). The on-screen divider
 	   label above has no meaning once actually paginating, so it's removed
 	   here rather than also printed. */
@@ -155,7 +155,7 @@
 		content: none;
 	}
 
-	/* A table row must never split across a page boundary (spec §3.4: "行の
+	/* A table row must never split across a page boundary (report-plan §3.4: "行の
 	   途中改ページ禁止"). `thead` repeating on every printed page is left to
 	   the browser's standard table-in-print behavior - no CSS needed for
 	   that part. */
