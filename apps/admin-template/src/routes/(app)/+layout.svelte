@@ -9,6 +9,7 @@
 	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
 	import { isLeavingForLogin, leaveForLogin } from '$lib/banto/logout.svelte';
 	import { OWNER_CHANGE_POLICY, watchOwnerChanges } from '$lib/banto/ownerChange';
+	import { isNavigationSettled } from '$lib/banto/navigationSettled.svelte';
 	import Header from '$lib/components/Header.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -75,11 +76,20 @@
 	// generation change skipped meanwhile is handled once it ends if the
 	// layout is still mounted (another session was confirmed instead, or the
 	// logout could not be confirmed).
+	// Issue #326: nor while a navigation is in flight (another tab's login or
+	// a background revocation can land in the middle of one, and this layout
+	// is mounted at the end of one). An `invalidateAll()` started then makes
+	// SvelteKit abort the navigation - the user's move is lost - and skip
+	// `beforeNavigate`, the unsaved-changes guard, afterwards
+	// (`$lib/banto/navigationSettled.svelte.ts`). `isNavigationSettled()` is
+	// reactive too: once the navigation completes, this compares the
+	// generation ITS load confirmed and re-runs only if that one is stale.
 	const sessionController = getSessionController();
 	let requestedFor = -1;
 	$effect(() => {
 		const generation = sessionController.snapshot.generation;
 		if (isLeavingForLogin()) return;
+		if (!isNavigationSettled()) return;
 		if (generation !== data.sessionGeneration && requestedFor !== generation) {
 			requestedFor = generation;
 			void invalidateAll();

@@ -1,13 +1,14 @@
 <script lang="ts">
 	import '../app.css';
-	import { afterNavigate, invalidateAll } from '$app/navigation';
-	import { navigating, page } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import { bantoReady } from '$lib/banto/setup'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
 	import { initLocale } from '$lib/banto/locale'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
 	import { settings } from '$lib/settings.svelte';
 	import ToastHost from '$lib/components/ToastHost.svelte';
 	import StartupSplash from '$lib/components/StartupSplash.svelte';
 	import { isStartupDeferral } from '$lib/banto/startupGate';
+	import { isNavigationSettled, trackFirstNavigation } from '$lib/banto/navigationSettled.svelte';
 
 	let { children } = $props();
 
@@ -27,23 +28,22 @@
 	// `bantoReady` resolved, so the re-run (which starts after it) clears it.
 	//
 	// The re-run waits until the navigation that produced the deferral has
-	// COMPLETED (`afterNavigate`, and no other navigation in flight): an
+	// COMPLETED and no other one is in flight (`isNavigationSettled()`): an
 	// `invalidateAll()` that starts while SvelteKit is still finishing a
-	// navigation makes that navigation abort without clearing its internal
-	// "navigating" flag (@sveltejs/kit 2.70 `client.js`), after which
-	// `beforeNavigate` - the unsaved-changes guard - never runs again. A fast
+	// navigation aborts it and leaves `beforeNavigate` - the unsaved-changes
+	// guard - skipped (see `$lib/banto/navigationSettled.svelte.ts`). A fast
 	// startup (Tauri, a local server) resolves `bantoReady` exactly then.
+	// This layout is mounted by the first navigation, so it is also the one
+	// that records its end for the whole app (`trackFirstNavigation`, which
+	// wiring ① of `(app)/+layout.svelte` relies on too, #326).
+	trackFirstNavigation();
 	const startupDeferred = $derived(isStartupDeferral(page.error));
 	let started = $state(false);
-	let navigationDone = $state(false);
 	void bantoReady.then(() => {
 		started = true;
 	});
-	afterNavigate(() => {
-		navigationDone = true;
-	});
 	$effect(() => {
-		if (startupDeferred && started && navigationDone && navigating.to === null) {
+		if (startupDeferred && started && isNavigationSettled()) {
 			void invalidateAll();
 		}
 	});
