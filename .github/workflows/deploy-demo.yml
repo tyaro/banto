@@ -1,6 +1,6 @@
 # ライブデモ（AD-2）: GitHub Pages プロジェクトサイト
 # https://tyaro.github.io/banto/ に admin-template を InMemory プロバイダ
-# （バックエンド不要）で公開する。svelte.config.js の `BASE_PATH` env で
+# （バックエンド不要）で公開する。vite.config.ts の `BASE_PATH` env で
 # ベースパスを切り替える仕組み（Tauri/LAN は既定の base=''、この
 # ワークフローだけ `/banto` を指定）を使う。
 #
@@ -48,7 +48,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # GitHub Pages のプロジェクトサイトは `/<repo>/` 配下に置かれるため、
-      # svelte.config.js の `base` をここでだけ `/banto` にする（Tauri/LAN
+      # vite.config.ts の `paths.base` をここでだけ `/banto` にする（Tauri/LAN
       # ビルドは BASE_PATH 未設定 = base='' のまま、byte-identical）。
       - name: Build (project-site base path)
         run: pnpm --filter admin-template build
@@ -60,7 +60,7 @@ jobs:
 
       # SPA deep-link fallback: Pages は未知パスを 404.html に振るので、
       # index.html をコピーして同じ SPA を読み込ませる
-      # (svelte.config.js の adapter fallback と同じ発想)。
+      # (vite.config.ts の adapter fallback と同じ発想)。
       - name: SPA fallback (404.html)
         run: cp apps/admin-template/build/index.html apps/admin-template/build/404.html
 

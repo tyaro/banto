@@ -34,6 +34,7 @@
   - 派生アプリへの影響: **経路 A**（theme をタグで上げるだけ。自前の `declare module '@banto/theme/css'` は残っていても害はなく、外してよい）。
 - refactor(admin-template): kit 3 で非推奨になった API を置き換えた（#325 PR3）。`$app/navigation` の `invalidateAll()` → `refreshAll()`（`routes/+layout.svelte` の起動待ちのやり直し、`routes/+error.svelte` の「再試行」、`(app)/+layout.svelte` の配線①、`settings/SecuritySection.svelte` の認証設定の保存後）、`error(status, { message, …})` → `error(status, message, { … })`（`#lib/banto/startupGate.ts`・`(app)/+layout.ts`）。kit 3.0 の `refreshAll()` は `invalidateAll()` と同じ `_invalidate()` を通り、違いは `page.state` を消さないことだけ（テンプレートは shallow routing を使わない）。`error()` が投げる本体（`{ status, message, startupPending? }`）も同じ。#326 の `isNavigationSettled()` と #321 の起動待ちのやり直しの条件はそのまま。`@banto/admin-core` の同名の `invalidateAll()`（一覧の再取得の通知）は SvelteKit の API ではないので変えていない。
   - 派生アプリへの影響: **経路 B のみ**。コピーしたテンプレートで同じ置き換えをする（`invalidateAll` は import と呼び出しの名前を変えるだけ。shallow routing の `page.state` を使っている派生アプリは、`refreshAll()` では消えなくなる点だけ確かめる）。
+- ci: SvelteKit 3 への移行に合わせた（#325 PR3）。`external-consumer.yml` の PR の paths から廃止した `apps/admin-template/svelte.config.js` を外し（`vite.config.ts` は既に対象）、`deploy-demo.yml` のコメントの `svelte.config.js` を `vite.config.ts` に。`ci.yml` の audit ジョブにあった cookie 0.6.0（GHSA-pxg6-pf52-xh8x、#282）の据え置きの記録を外した: kit 3 で cookie 2.0.1 になり、`pnpm audit`（全依存）は 0 件（2026-10-05 確認）
 
 ### 修正
 
