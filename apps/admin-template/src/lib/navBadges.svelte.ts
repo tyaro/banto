@@ -24,21 +24,20 @@
  */
 
 import type { InvalidateReason } from '@banto/admin-core';
+import { isPathActive, type AppPath } from '#lib/appPath.js';
 
-/** Matches Sidebar.svelte's `isActive`: `/items` owns `/items` and `/items/...`. */
-function pathOwns(navPath: string, pathname: string): boolean {
-	return pathname === navPath || pathname.startsWith(navPath + '/');
-}
+/** `/items` owns `/items` and `/items/...`; base-aware (#332), see `isPathActive`. */
+const pathOwns = isPathActive;
 
 class NavBadgeStore {
 	/** Keyed by `NavItem.path`. Missing key = 0 = no badge rendered. */
 	#counts = $state<Record<string, number>>({});
 
-	count(path: string): number {
+	count(path: AppPath): number {
 		return this.#counts[path] ?? 0;
 	}
 
-	increment(path: string): void {
+	increment(path: AppPath): void {
 		this.#counts[path] = (this.#counts[path] ?? 0) + 1;
 	}
 
@@ -48,7 +47,7 @@ class NavBadgeStore {
 	 * refetches live) or the event is a reconnect 'resync' (#289 - no known
 	 * change, so no badge).
 	 */
-	noteInvalidation(path: string, pathname: string, reason: InvalidateReason): void {
+	noteInvalidation(path: AppPath, pathname: string, reason: InvalidateReason): void {
 		if (reason === 'resync' || pathOwns(path, pathname)) return;
 		this.increment(path);
 	}
@@ -56,7 +55,7 @@ class NavBadgeStore {
 	/** Clear the badge of the nav entry that owns `pathname` (if any). */
 	clearFor(pathname: string): void {
 		for (const key of Object.keys(this.#counts)) {
-			if (pathOwns(key, pathname)) delete this.#counts[key];
+			if (pathOwns(key as AppPath, pathname)) delete this.#counts[key];
 		}
 	}
 }

@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- fix(admin-template): `BASE_PATH`（Pages のデモ）を付けたビルドでも、サイドバーの選択表示・ページ見出し・ナビのバッジが合うようにする（#332）。base を含まない表のパス（`/dashboard`）と base 込みの `page.url.pathname`（`/banto/dashboard`）を直接比べていたため、デモでは一致しなかった。比較を `isPathActive(path, pathname)`（新設 `src/lib/appPath.ts`、`navigation.ts` が再エクスポート）に一本化し、表のパスを `resolveAppPath()` で base 込みにしてから比べる（公開ビューアのガード・設定カテゴリの選択も同じ関数に寄せた）。base が空なら従来と同じ挙動。派生アプリへの影響: 経路 A は不要。経路 B は `navigation.ts` / `Sidebar.svelte` / `navBadges.svelte.ts` をコピーしているなら、新設の `appPath.ts` も一緒にコピーする（`base` を使わない派生アプリでは挙動は変わらない）。
 - docs(fixture): 外部利用 fixture の `pnpm check` は、ルートで `pnpm install` 済みでないと `playwright.config.ts` の `@playwright/test` を解決できず失敗する（CI は先にルートを入れるので通る）。前提を docs/upgrading.md 8.3 と fixture の tsconfig.json に明記した。fixture に `@playwright/test` は足さない（2 つ入ると Playwright が二重読み込みで落ちるため）。
 
 ## [4.0.0] - 2026-10-05

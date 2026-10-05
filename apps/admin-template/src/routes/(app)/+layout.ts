@@ -11,7 +11,7 @@ import { isBantoReady } from '#lib/banto/setup.js';
 import { deferUntilStarted } from '#lib/banto/startupGate.js';
 import { syncLocaleFromProvider } from '#lib/banto/locale.js';
 import { settings } from '#lib/settings.svelte.js';
-import { publicNavItems, resolveAppPath } from '#lib/navigation.js';
+import { isPathActive, publicNavItems, resolveAppPath } from '#lib/navigation.js';
 
 // Auth guard for the whole (app) group (spec §8.1), Issue #260 (design
 // §6.1, v2.0.0): the session is confirmed by the SessionController - the
@@ -72,10 +72,7 @@ export async function load({ url }) {
 	// remainder, nothing matched and every screen bounced to the first entry -
 	// a redirect loop on that entry itself, #325.)
 	if (snapshot.kind === 'publicViewer') {
-		const allowed = publicNavItems().some((item) => {
-			const itemPath = resolveAppPath(item.path);
-			return url.pathname === itemPath || url.pathname.startsWith(itemPath + '/');
-		});
+		const allowed = publicNavItems().some((item) => isPathActive(item.path, url.pathname));
 		if (!allowed) {
 			const firstPublicNavItem = publicNavItems()[0];
 			if (firstPublicNavItem) redirect(307, resolveAppPath(firstPublicNavItem.path));

@@ -41,7 +41,7 @@
 	import PageHeader from '#lib/components/ui/PageHeader.svelte';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
-	import { resolveAppPath } from '#lib/navigation.js';
+	import { isPathActive, resolveAppPath } from '#lib/navigation.js';
 	import { errorMessage, tauri } from './shared';
 	import { reloadAuthSettings } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
@@ -61,8 +61,7 @@
 	 * active there.
 	 */
 	function isActive(category: SettingsCategory): boolean {
-		const fullPath = resolveAppPath(category.path);
-		return page.url.pathname === fullPath || page.url.pathname.startsWith(fullPath + '/');
+		return isPathActive(category.path, page.url.pathname);
 	}
 
 	// authSettingsStore's initial load (M11 login-not-required mode) - Tauri
