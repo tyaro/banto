@@ -345,7 +345,8 @@ without a runtime guard are **upheld by reviewing every call site**.
   same. Do not select on request headers, the query or `Host` (the other
   party controls them). **Behind a same-host reverse proxy that connects over
   loopback, every request is a loopback peer, so LAN viewers get the widened
-  policy too** (their own machine's port 80 becomes reachable); in that
+  policy too** (their own machine's port 80 (http) and port 443 (https; in
+  CSP an `http:` source also matches `https:`) become reachable); in that
   deployment leave the widening off, or have the proxy connect from a
   non-loopback address. The impact analysis lives in the doc comment at the
   top of `security_headers.rs`.

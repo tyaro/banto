@@ -32,12 +32,18 @@
 //! - `ipc:` is a Tauri custom scheme. Browsers have no handler for it, so a
 //!   `fetch("ipc://...")` fails before any network I/O: inert.
 //! - `http://ipc.localhost` resolves (WHATWG URL / RFC 6761 `.localhost`) to
-//!   the *viewer's own* loopback, port 80. The only new reach is "an injected
-//!   script could `fetch`/`EventSource` to whatever listens on port 80 of the
-//!   viewer's machine". It is not an off-host exfiltration channel, and CSP
-//!   is defence in depth against an XSS that would already have to exist.
-//!   Still non-zero (a local service on :80 could receive data), so the
-//!   strict policy stays the default and the widening should be narrowed.
+//!   the *viewer's own* loopback. The scope is port 80 (http) **and** port 443
+//!   (https): in CSP3 an `http:` source expression also matches `https:` URLs
+//!   (scheme matching upgrade), and an omitted port matches the default port
+//!   of the *request URL's* scheme, so `http://ipc.localhost` also allows
+//!   `https://ipc.localhost` (:443). The only new reach is "an injected
+//!   script could `fetch`/`EventSource` to whatever listens on port 80 or 443
+//!   of the viewer's machine" (an actual connection still needs the local
+//!   service to speak HTTP / TLS). It is not an off-host exfiltration
+//!   channel, and CSP is defence in depth against an XSS that would already
+//!   have to exist. Still non-zero (a local service on :80 or :443 could
+//!   receive data), so the strict policy stays the default and the widening
+//!   should be narrowed.
 //!
 //! Choosing *which* requests get it (the selector):
 //!
@@ -49,7 +55,7 @@
 //!   from the TCP connection, not from anything a remote page or link can
 //!   set, so LAN browsers connecting *directly* keep the strict policy.
 //!   Residual: a browser on the *same host* (also loopback) gets the
-//!   widened policy - the `:80` reach above is then that host's own
+//!   widened policy - the `:80` / `:443` reach above is then that host's own
 //!   loopback, i.e. the machine already running this server. **This is the
 //!   recommended selector for a desktop shell, as long as no same-host
 //!   reverse proxy is in front (next point).**
@@ -58,7 +64,7 @@
 //!   terminator per ADR-0003 that connects to `127.0.0.1:<port>`), *every*
 //!   request arrives from a loopback peer, so [`request_from_loopback_peer`]
 //!   widens `connect-src` for LAN browsers too: an injected script in a LAN
-//!   viewer's page could then reach whatever listens on port 80 of *that
+//!   viewer's page could then reach whatever listens on port 80 or 443 of *that
 //!   viewer's own machine* (`http://ipc.localhost`; `ipc:` stays inert).
 //!   The peer check cannot tell the proxy from the desktop shell, and
 //!   forwarded headers (`X-Forwarded-For`, `Forwarded`) are client-settable
@@ -316,8 +322,8 @@ impl SecurityHeaders {
 /// "Loopback peer" means "the TCP connection came from this host", not "the
 /// viewer is on this host": behind a reverse proxy on the same host every
 /// request is a loopback peer, so LAN viewers get the widened policy too
-/// (their own machine's `:80` becomes reachable from an injected script via
-/// `http://ipc.localhost`). Don't rely on it in that deployment - leave the
+/// (their own machine's `:80` / `:443` becomes reachable from an injected
+/// script via `http://ipc.localhost`). Don't rely on it in that deployment - leave the
 /// widening off, or have the proxy connect from a non-loopback address (see
 /// the module docs).
 pub fn request_from_loopback_peer(req: &Request) -> bool {
