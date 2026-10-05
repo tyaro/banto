@@ -16,7 +16,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 
 	// Never disabled while a retry runs: a retry that hangs must not take the
@@ -34,7 +34,7 @@
 			<button type="button" class="banto-btn banto-btn--primary" onclick={retry}>
 				{m['app.error.retry']()}
 			</button>
-			<a class="banto-btn banto-btn--ghost" href={resolve(`/`.slice(1))}>{m['app.error.home']()}</a>
+			<a class="banto-btn banto-btn--ghost" href={resolve('/')}>{m['app.error.home']()}</a>
 		</div>
 	</SurfaceCard>
 </div>

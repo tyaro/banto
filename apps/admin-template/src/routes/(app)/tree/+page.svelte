@@ -15,7 +15,7 @@
 	 * adding it only drifts the shared sidebar baselines, not a new page shot.
 	 */
 	import { BantoTree, TreeSelect, findNode, type TreeColumn } from '@banto/tree-svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import PageHeader from '#lib/components/ui/PageHeader.svelte';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 	import { treeMessages } from '#lib/banto/i18n.js';

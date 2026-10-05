@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import { getSessionController, notify, onInvalidate } from '@banto/admin-core';
 	import { hasUnsavedChanges } from '@banto/forms';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { guardWindowClose } from '#lib/banto/windowCloseGuard.js';
 	import { isLeavingForLogin, leaveForLogin } from '#lib/banto/logout.svelte.js';
 	import { OWNER_CHANGE_POLICY, watchOwnerChanges } from '#lib/banto/ownerChange.js';

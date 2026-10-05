@@ -14,7 +14,7 @@
 		saveLastOpenedId
 	} from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { formValidationMessages } from '#lib/banto/i18n.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { canWriteResources } from '#lib/permissions.js';

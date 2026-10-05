@@ -25,12 +25,13 @@ import {
 	type LeaveNavigation,
 	type UnsavedChangesGuard
 } from '@banto/forms';
-import * as m from '#lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 
 /** True for navigations that must never be held back (see module doc comment). */
 export function isForcedNavigation(navigation: LeaveNavigation): boolean {
 	const pathname = navigation.to?.url.pathname;
-	return pathname === resolve(`login`) || pathname === resolve(`login/`);
+	const login = resolve('login');
+	return pathname === login || pathname === `${login}/`;
 }
 
 export interface AppUnsavedChangesOptions {

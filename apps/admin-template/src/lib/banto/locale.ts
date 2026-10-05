@@ -30,7 +30,7 @@
  * fails server-side and is swallowed), and `syncLocaleFromProvider()` pulls the
  * saved value once per login.
  */
-import { defineCustomClientStrategy, isLocale, type Locale } from '#lib/paraglide/runtime';
+import { defineCustomClientStrategy, isLocale, type Locale } from '#lib/paraglide/runtime.js';
 import { getUiSettings } from './setup';
 
 /**

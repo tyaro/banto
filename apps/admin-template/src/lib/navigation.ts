@@ -4,7 +4,29 @@
  * From M2, entries for CRUD pages are derived from resource definitions
  * (spec §3.1); manual entries like the ones below remain possible.
  */
-import * as m from '#lib/paraglide/messages';
+import { resolve } from '$app/paths';
+import type { Path, ResolvedPathname } from '$app/types';
+import * as m from '#lib/paraglide/messages.js';
+
+/**
+ * An app route's pathname as written in the nav/category tables: a leading
+ * `/` and no base path (e.g. `/items`, `/settings/appearance`). Typed from
+ * SvelteKit 3's generated `Path` union, so a table entry pointing at a route
+ * that does not exist is a type error. The tables keep the leading `/` because
+ * it is also what they compare against (`pageTitle`, `navBadges`, the
+ * public-viewer guard in `routes/(app)/+layout.ts`).
+ */
+export type AppPath = `/${Path}`;
+
+/**
+ * `AppPath` -> the href / `goto()` target with the base path prefixed
+ * (SvelteKit 3 `resolve()`, which takes the pathname without its leading
+ * `/`). Use this, not string concatenation, wherever an `AppPath` leaves the
+ * app as a URL.
+ */
+export function resolveAppPath(path: AppPath): ResolvedPathname {
+	return resolve(path.slice(1) as Path);
+}
 
 /** Icon resolution key (visual-refresh-design.md §5.1). Resolved to an actual
  *  icon component only in the display layer ($lib/components/navIcons.ts) -
@@ -18,7 +40,7 @@ export type NavLabelKey =
 	'nav.dashboard' | 'nav.items' | 'nav.tree' | 'nav.users' | 'nav.auditLog' | 'nav.settings';
 
 export interface NavItem {
-	path: string;
+	path: AppPath;
 	labelKey: NavLabelKey;
 	icon: NavIconKey;
 	/** Spec M10 RBAC: only shown to the `admin` role. Undefined/false = visible to every role. */

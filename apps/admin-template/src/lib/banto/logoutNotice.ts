@@ -5,7 +5,7 @@
  * (and its tests) needs no Paraglide messages.
  */
 import { notify } from '@banto/admin-core';
-import * as m from '#lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 import type { LogoutOutcome } from './logout.svelte';
 
 export function notifyLogoutOutcome(outcome: Exclude<LogoutOutcome, 'left'>): void {

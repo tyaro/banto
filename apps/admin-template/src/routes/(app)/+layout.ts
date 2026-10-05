@@ -6,12 +6,12 @@ import {
 	grantFallback,
 	resolveSettled
 } from '@banto/admin-core';
-import * as m from '#lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 import { isBantoReady } from '#lib/banto/setup.js';
 import { deferUntilStarted } from '#lib/banto/startupGate.js';
 import { syncLocaleFromProvider } from '#lib/banto/locale.js';
 import { settings } from '#lib/settings.svelte.js';
-import { publicNavItems } from '#lib/navigation.js';
+import { publicNavItems, resolveAppPath } from '#lib/navigation.js';
 
 // Auth guard for the whole (app) group (spec §8.1), Issue #260 (design
 // §6.1, v2.0.0): the session is confirmed by the SessionController - the
@@ -66,16 +66,19 @@ export async function load({ url }) {
 	// this only keeps the SCREEN a bookmarked/typed URL lands on inside the
 	// allowed area, same intent as `users/+page.ts`'s own role redirect but
 	// applied to every path under (app) at once.
+	// `url.pathname` carries the base path, so compare it with each entry
+	// resolved the same way. (SvelteKit 3's `resolve('')` is `base + '/'`,
+	// not `base`: stripping that prefix also stripped the leading `/` of the
+	// remainder, nothing matched and every screen bounced to the first entry -
+	// a redirect loop on that entry itself, #325.)
 	if (snapshot.kind === 'publicViewer') {
-		const pathname = url.pathname.startsWith(resolve(''))
-			? url.pathname.slice(resolve('').length)
-			: url.pathname;
-		const allowed = publicNavItems().some(
-			(item) => pathname === item.path || pathname.startsWith(item.path + '/')
-		);
+		const allowed = publicNavItems().some((item) => {
+			const itemPath = resolveAppPath(item.path);
+			return url.pathname === itemPath || url.pathname.startsWith(itemPath + '/');
+		});
 		if (!allowed) {
 			const firstPublicNavItem = publicNavItems()[0];
-			if (firstPublicNavItem) redirect(307, resolve(`${firstPublicNavItem.path}`.slice(1)));
+			if (firstPublicNavItem) redirect(307, resolveAppPath(firstPublicNavItem.path));
 		}
 	}
 

@@ -19,7 +19,7 @@
 	 */
 	import { page } from '$app/state';
 	import { getSessionController, resolveSettled } from '@banto/admin-core';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { bantoReady } from '#lib/banto/setup.js';
 	import { findPanelDef } from '#lib/banto/panels.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';

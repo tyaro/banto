@@ -14,7 +14,7 @@
 	 */
 	import { BantoGrid, GridState, type CellEdit, type GridColumn } from '@banto/grid-svelte';
 	import { createListResource, invalidate } from '@banto/admin-core';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import LoadingState from '#lib/components/ui/LoadingState.svelte';

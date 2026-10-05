@@ -2,7 +2,10 @@
   "extends": "$app/tsconfig",
   "compilerOptions": {
     "sourceMap": true,
-    "strict": true
+    "strict": true,
+    // TypeScript 6 / `$app/tsconfig` load only `$app/types`; the configs use
+    // `process` and `node:*` (`@types/node` is a devDependency here).
+    "types": ["$app/types", "node"]
   },
   "include": ["src", "vite.config.ts", "playwright.config.ts"]
 }

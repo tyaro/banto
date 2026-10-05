@@ -19,7 +19,7 @@
 	import { resolve } from '$app/paths';
 	import { createListResource } from '@banto/admin-core';
 	import { ReportView } from '@banto/report';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import { byCategory, categoryCounts, computeStatTiles } from '#lib/banto/dashboard.js';
 	import LoadingState from '#lib/components/ui/LoadingState.svelte';

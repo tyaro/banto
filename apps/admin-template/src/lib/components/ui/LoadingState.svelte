@@ -9,7 +9,7 @@
 	 * `prefers-reduced-motion`, since an infinitely-looping keyframe
 	 * animation should be removed, not merely made instantaneous.
 	 */
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 
 	interface Props {
 		label?: string;

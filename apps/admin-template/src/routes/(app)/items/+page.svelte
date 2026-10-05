@@ -30,7 +30,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { columnValidationMessages, gridMessages } from '#lib/banto/i18n.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import { itemsSchema } from '#lib/banto/resources/items.js';

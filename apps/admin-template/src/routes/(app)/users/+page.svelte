@@ -27,7 +27,7 @@
 		UserRoundPlus,
 		Users
 	} from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import PageHeader from '#lib/components/ui/PageHeader.svelte';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';

@@ -13,7 +13,7 @@
 import type { GridMessages, ColumnValidationMessages } from '@banto/grid-svelte';
 import type { ValidationMessages } from '@banto/forms';
 import type { TreeMessages } from '@banto/tree-svelte';
-import * as m from '#lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 
 /** @banto/grid-svelte `messages` prop: FilterPopover / HeaderCell / BantoGrid / ColumnsMenu strings. */
 export function gridMessages(): Partial<GridMessages> {

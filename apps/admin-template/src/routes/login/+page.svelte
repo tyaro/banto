@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { getAuthProvider, isProviderError, notify } from '@banto/admin-core';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
 	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';

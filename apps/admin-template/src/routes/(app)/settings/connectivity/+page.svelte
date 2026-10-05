@@ -4,7 +4,7 @@
 	 * markup/state/CSS は ConnectivitySection.svelte（段階 1 のまま
 	 * co-located、移動なし）。
 	 */
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import ConnectivitySection from '../ConnectivitySection.svelte';
 </script>
 

@@ -37,11 +37,11 @@
 	 * `error` fields these effects write to.
 	 */
 	import { page } from '$app/state';
-	import { resolve } from '$app/paths';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import PageHeader from '#lib/components/ui/PageHeader.svelte';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
+	import { resolveAppPath } from '#lib/navigation.js';
 	import { errorMessage, tauri } from './shared';
 	import { reloadAuthSettings } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
@@ -61,7 +61,7 @@
 	 * active there.
 	 */
 	function isActive(category: SettingsCategory): boolean {
-		const fullPath = resolve(`${category.path}`.slice(1));
+		const fullPath = resolveAppPath(category.path);
 		return page.url.pathname === fullPath || page.url.pathname.startsWith(fullPath + '/');
 	}
 
@@ -94,7 +94,7 @@
 		<nav class="section-nav" aria-label={m['settings.sectionNavAria']()}>
 			{#each data.categories as category (category.id)}
 				<a
-					href={resolve(`${category.path}`.slice(1))}
+					href={resolveAppPath(category.path)}
 					class:active={isActive(category)}
 					aria-current={isActive(category) ? 'page' : undefined}
 				>

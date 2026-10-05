@@ -12,11 +12,11 @@
  */
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import * as m from '#lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 import type { PaletteCommand } from '@banto/admin-core';
 import { logoutAndLeave } from './banto/logout.svelte';
 import { notifyLogoutOutcome } from './banto/logoutNotice';
-import { navItems } from './navigation';
+import { navItems, resolveAppPath } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
 import { isAdmin } from './permissions';
@@ -31,7 +31,7 @@ function navigationCommands(): PaletteCommand[] {
 		// (adminOnly entries hidden from non-admin roles).
 		visible: item.adminOnly ? () => isAdmin(sessionStore.role) : undefined,
 		run: () => {
-			void goto(resolve(`${item.path}`.slice(1)));
+			void goto(resolveAppPath(item.path));
 		}
 	}));
 }

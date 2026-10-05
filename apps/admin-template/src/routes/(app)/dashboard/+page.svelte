@@ -29,7 +29,7 @@
 		type PanelContent
 	} from '@banto/dock-svelte';
 	import { LayoutGrid, JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import {
 		byCategory,

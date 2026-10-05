@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { logoutAndLeave } from '#lib/banto/logout.svelte.js';
 	import { notifyLogoutOutcome } from '#lib/banto/logoutNotice.js';
 	import { pageTitle } from '#lib/navigation.js';

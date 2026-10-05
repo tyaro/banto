@@ -29,7 +29,7 @@
 	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import { onDestroy, onMount } from 'svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import {
 		categoryCounts,

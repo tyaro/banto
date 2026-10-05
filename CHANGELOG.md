@@ -25,6 +25,11 @@
 - docs: コード内のコメントにある誤った `spec §3.x` 参照（実体は `attachments-plan` / `report-plan` の節）を
   `attachments-plan §N` / `report-plan §N` に修正した（Rust・TS・Svelte・CSS・e2e のコメントのみ、動作変更なし、#312 PR-B）
 
+### 変更
+
+- feat(admin-template)!: **破壊的変更** テンプレートを SvelteKit 3（`@sveltejs/kit` 3.0・`@sveltejs/adapter-static` 4.0）と TypeScript 6（`^6.0.0` に固定。7 は kit 3 の対象外）に上げた（#325 PR1）。`svelte.config.js` を廃止して設定を `vite.config.ts` の `sveltekit({...})` に移し、`$lib` を `#lib`（package.json の `imports`。拡張子が必須）に、`base` を `resolve()` に置き換えた。ナビ・設定カテゴリの表の `path` は `AppPath`（`` `/${Path}` ``）で型付けし、URL にするときは `resolveAppPath()`（`src/lib/navigation.ts`）を通す。自動移行（`sv migrate sveltekit-3`）が閲覧公開のガード（`(app)/+layout.ts`）を `resolve('')`（kit 3 では `base + '/'`）で書き換え、全画面が最初の項目へ戻される（その項目自身でリダイレクトのループ）不具合は直し、単体（`guard.test.ts`）と E2E（public-viewer）で押さえた。`invalidateAll` → `refreshAll`・`error(status, { message })` → `error(status, message)` は kit 3 でも非推奨のまま動くので後続の PR に回す。
+  - 派生アプリへの影響: **経路 A** の `@banto/*`・`banto-*` は中身の変更なし（packages の devDependency の `typescript` だけ）。**経路 B** はコピーしたテンプレートを kit 3 の形に移す: `npx sv migrate sveltekit-3 --tasks all` を流したうえで、この版の `vite.config.ts`・`tsconfig.json`・`package.json` の `imports`・`navigation.ts` の `AppPath` / `resolveAppPath`・`(app)/+layout.ts` の閲覧公開のガードを写す。自動移行が入れる `resolve('')` や ``resolve(`${path}`.slice(1))`` は必ず見直す。TS 6 は副作用 import を検査するので、TS から `import '@banto/theme/css'` している場合は宣言が要る（例: `fixtures/external-consumer/src/ambient.d.ts`）。経路 C（DB・設定）は変更なし。
+
 ### 修正
 
 - fix(admin-template): ナビゲーションの途中でセッションの世代が変わると（別のタブでのログイン・Remember me の切り替え、バックグラウンドで確定した失効など）、移動が失われ、その後の未保存の変更の確認が効かなくなる問題を修正（#326、#321 の続き）。`(app)/+layout.svelte` の配線①（世代が変わったら `invalidateAll()` で確定し直す）がナビゲーションの途中に当たると、SvelteKit 2.70 はそのナビゲーションを途中で終わらせ（URL は元の画面のまま）、内部の「ナビゲーション中」の印を残すため、次のナビゲーションで `beforeNavigate` が呼ばれなかった。配線①は、ナビゲーションが終わるまで（最初のナビゲーションの `afterNavigate` の後、かつ `navigating.to === null`）やり直しを待つ。この判定は新しい `src/lib/banto/navigationSettled.svelte.ts` にまとめ、#321 のルートのレイアウトのやり直しと共有する。世代が変わったら確定し直す本来の動き・ログアウト中（`isLeavingForLogin()`）の抑止は従来どおり。SvelteKit 側の同じ現象は [sveltejs/kit#17114](https://github.com/sveltejs/kit/issues/17114)（3 系の開発版で修正。2.70 には入っていない）。E2E: smoke `13j`（項目の画面から一覧への移動を止めている間に別のタブでログインし直す → 移動が完了し、未保存の確認が出る）。単体: `src/lib/banto/navigationSettled.test.ts`。

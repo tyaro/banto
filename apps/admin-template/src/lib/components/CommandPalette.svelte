@@ -12,7 +12,7 @@
 	 * this palette while its own input has focus.
 	 */
 	import { onMount } from 'svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import {
 		currentSessionScope,
 		isCurrentSessionScope,

@@ -13,7 +13,7 @@
 	import { KeyRound } from '@lucide/svelte';
 	import { getAuthProvider } from '@banto/admin-core';
 	import { UnsavedChangesNotice } from '@banto/forms';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';

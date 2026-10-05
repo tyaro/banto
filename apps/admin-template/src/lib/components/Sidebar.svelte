@@ -7,9 +7,8 @@
 	 * renders as a fixed slide-in drawer instead of the flex column.
 	 */
 	import { page } from '$app/state';
-	import { resolve } from '$app/paths';
-	import * as m from '#lib/paraglide/messages';
-	import { navItems, publicNavItems } from '#lib/navigation.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import { navItems, publicNavItems, resolveAppPath } from '#lib/navigation.js';
 	import { NAV_ICONS } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
@@ -77,7 +76,7 @@
 			{@const Icon = NAV_ICONS[item.icon]}
 			{@const badgeCount = navBadges.count(item.path)}
 			<a
-				href={resolve(`${item.path}`.slice(1))}
+				href={resolveAppPath(item.path)}
 				class="nav-item"
 				class:active={isActive(item.path)}
 				aria-current={isActive(item.path) ? 'page' : undefined}
@@ -102,7 +101,7 @@
 				{@const Icon = NAV_ICONS[item.icon]}
 				{@const badgeCount = navBadges.count(item.path)}
 				<a
-					href={resolve(`${item.path}`.slice(1))}
+					href={resolveAppPath(item.path)}
 					class="nav-item"
 					class:active={isActive(item.path)}
 					aria-current={isActive(item.path) ? 'page' : undefined}

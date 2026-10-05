@@ -5,11 +5,18 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
+// The app has no `@types/node` (conventions §3), and SvelteKit 3's
+// `$app/tsconfig` (TypeScript 6) loads only `$app/types`. This file reads one
+// environment variable, so declare just that. Module-scoped: it does not leak
+// a `process` global into `src/`.
+declare const process: { env: Record<string, string | undefined> };
+
 // Base path for the static build. Empty for the Tauri desktop app and the
 // LAN embedded-server (both serve at the site root). Set `BASE_PATH` (e.g.
 // `/banto`) only for the GitHub Pages **project site** demo build, which is
 // served under `https://<user>.github.io/<repo>/`.
-const base = process.env.BASE_PATH ?? '';
+// (SvelteKit itself rejects a value that does not start with `/`.)
+const base = (process.env.BASE_PATH ?? '') as '' | `/${string}`;
 
 export default defineConfig({
 	plugins: [

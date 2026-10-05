@@ -2349,16 +2349,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	/** The built client chunk (`_app/immutable/nodes/N.hash.js`) of one route file. */
+	/**
+	 * The built client chunk (`_app/immutable/nodes/N.hash.js`) of one route file.
+	 * Reads SvelteKit's build internals (layout as of SvelteKit 3: the node
+	 * entries stay in `generated/build/client/nodes/`, the Vite manifest keys
+	 * them as `generated/build/client-optimized/nodes/`); revisit on a kit
+	 * upgrade if this throws.
+	 */
 	function nodeChunkOf(routeFile: string): string {
 		const kit = new URL('../../apps/admin-template/.svelte-kit/', import.meta.url);
-		const nodes = new URL('generated/client-optimized/nodes/', kit);
+		const nodes = new URL('generated/build/client/nodes/', kit);
 		const manifest = JSON.parse(
 			fs.readFileSync(new URL('output/client/.vite/manifest.json', kit), 'utf8')
 		) as Record<string, { file: string }>;
 		for (const name of fs.readdirSync(nodes)) {
 			if (!fs.readFileSync(new URL(name, nodes), 'utf8').includes(routeFile)) continue;
-			const entry = manifest[`.svelte-kit/generated/client-optimized/nodes/${name}`];
+			const entry = manifest[`.svelte-kit/generated/build/client-optimized/nodes/${name}`];
 			if (entry) return entry.file;
 		}
 		throw new Error(`no client chunk for ${routeFile} - run the admin-template build first`);

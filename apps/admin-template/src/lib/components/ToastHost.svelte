@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Fixed bottom-right toast stack (spec §3.4 notification sink), mounted once in the root layout. */
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 </script>
 

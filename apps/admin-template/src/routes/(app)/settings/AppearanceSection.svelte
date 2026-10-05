@@ -19,8 +19,8 @@
 		Sparkles,
 		Sun
 	} from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages';
-	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime';
+	import * as m from '#lib/paraglide/messages.js';
+	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 	import { settings } from '#lib/settings.svelte.js';
 	import { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';

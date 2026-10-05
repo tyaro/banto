@@ -4,7 +4,6 @@ import tseslint from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
 import prettierConfig from 'eslint-config-prettier';
 import globals from 'globals';
-import svelteConfig from './apps/admin-template/svelte.config.js';
 
 export default tseslint.config(
 	{
@@ -52,8 +51,7 @@ export default tseslint.config(
 		files: ['**/*.svelte', '**/*.svelte.js', '**/*.svelte.ts'],
 		languageOptions: {
 			parserOptions: {
-				parser: tseslint.parser,
-				svelteConfig
+				parser: tseslint.parser
 			}
 		}
 	},
@@ -76,11 +74,13 @@ export default tseslint.config(
 			// conventions already in the codebase - not worth enforcing one
 			// over the other.
 			'@typescript-eslint/consistent-type-definitions': 'off',
-			// SvelteKit's typed-routing `resolve()` helper (the thing this rule
-			// pushes every goto()/href toward) isn't adopted anywhere in this
-			// app (no `resolve` alias configured in svelte.config.js) - the
-			// rule would flag every existing navigation call site for an API
-			// the codebase doesn't use.
+			// Since SvelteKit 3 (#325) the app builds every goto()/href with
+			// `resolve()` from `$app/paths` (nav/category tables go through
+			// `resolveAppPath` in `#lib/navigation.ts`), which is what this rule
+			// pushes toward. It stays off because eslint-plugin-svelte (3.23)
+			// only runs it for SvelteKit 1/2 - it is a no-op under kit 3 either
+			// way. Revisit when the plugin supports kit 3 (it may then need to
+			// be taught that `resolveAppPath` returns a resolved path).
 			'svelte/no-navigation-without-resolve': 'off',
 			// Flags every `new Map()`/`new Set()` regardless of whether it
 			// escapes into reactive state - in this codebase every hit so far

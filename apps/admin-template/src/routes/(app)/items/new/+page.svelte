@@ -4,7 +4,7 @@
 	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import { formValidationMessages } from '#lib/banto/i18n.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import PageHeader from '#lib/components/ui/PageHeader.svelte';

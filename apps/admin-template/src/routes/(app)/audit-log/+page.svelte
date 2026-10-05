@@ -32,7 +32,7 @@
 	} from '@banto/grid-svelte';
 	import { createSnapshotListResource } from '@banto/admin-core';
 	import { Info } from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import PageHeader from '#lib/components/ui/PageHeader.svelte';
 	import EmptyState from '#lib/components/ui/EmptyState.svelte';
 	import StatusBadge from '#lib/components/ui/StatusBadge.svelte';

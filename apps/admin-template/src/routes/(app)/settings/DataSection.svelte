@@ -12,7 +12,7 @@
 	 * System Info カードも存在し、ロードが既に走っている。
 	 */
 	import { DatabaseBackup, ScrollText } from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 	import {
 		getAuditConfig,
