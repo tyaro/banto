@@ -304,7 +304,7 @@ function removeCharts() {
 	drop(
 		DASH,
 		'DashboardPanel import 除去',
-		`\timport DashboardPanel from '$lib/components/DashboardPanel.svelte';\n`
+		`\timport DashboardPanel from '#lib/components/DashboardPanel.svelte';\n`
 	);
 	// #74 M24: 積立エリア/ガントは dashboard.ts の集計に依存する。charts 除去後に
 	// dashboard.ts から `@banto/charts`（GanttTask 型）参照が残らないよう、対応する
@@ -361,16 +361,16 @@ function removeCharts() {
 function removeDock() {
 	cutRegion(DASH, 'dock import 除去', `\timport {\n\t\tDockHost,`, `} from '@banto/dock-svelte';`);
 	swapText(DASH, 'lucide から LayoutGrid 除去', `LayoutGrid, JapaneseYen`, `JapaneseYen`);
-	drop(DASH, 'panels import 除去', `\timport { PANEL_DEFS } from '$lib/banto/panels';\n`);
+	drop(DASH, 'panels import 除去', `\timport { PANEL_DEFS } from '#lib/banto/panels.js';\n`);
 	drop(
 		DASH,
 		'setup(getUiSettings/isTauri) import 除去',
-		`\timport { getUiSettings, isTauri } from '$lib/banto/setup';\n`
+		`\timport { getUiSettings, isTauri } from '#lib/banto/setup.js';\n`
 	);
 	drop(
 		DASH,
 		'popout import 除去',
-		`\timport { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';\n`
+		`\timport { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';\n`
 	);
 	cutRegion(
 		DASH,
@@ -439,7 +439,7 @@ function removeGlass() {
 	drop(
 		SETTINGS_APPEARANCE,
 		'vibrancy import 除去',
-		`\timport { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '$lib/banto/vibrancy';\n`
+		`\timport { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';\n`
 	);
 	drop(SETTINGS_APPEARANCE, 'Sparkles アイコン import 除去', `\t\tSparkles,\n`);
 	cutRegion(
@@ -468,12 +468,12 @@ function removeCommandPalette() {
 	drop(
 		LAYOUT,
 		'CommandPalette import 除去',
-		`\timport CommandPalette from '$lib/components/CommandPalette.svelte';\n`
+		`\timport CommandPalette from '#lib/components/CommandPalette.svelte';\n`
 	);
 	drop(
 		LAYOUT,
 		'commandPaletteStore import 除去',
-		`\timport { commandPaletteStore } from '$lib/commandPalette.svelte';\n`
+		`\timport { commandPaletteStore } from '#lib/commandPalette.svelte.js';\n`
 	);
 	swapText(
 		LAYOUT,
@@ -485,7 +485,7 @@ function removeCommandPalette() {
 	drop(
 		LAYOUT,
 		'recentCommands import 除去',
-		`	import { watchRecentCommandOwner } from '$lib/recentCommands';
+		`	import { watchRecentCommandOwner } from '#lib/recentCommands.js';
 `
 	);
 	drop(
@@ -509,7 +509,7 @@ function removeCommandPalette() {
 	drop(
 		HEADER,
 		'commandPaletteStore import 除去',
-		`\timport { commandPaletteStore } from '$lib/commandPalette.svelte';\n`
+		`\timport { commandPaletteStore } from '#lib/commandPalette.svelte.js';\n`
 	);
 	drop(
 		HEADER,
@@ -570,12 +570,12 @@ function removeAttachments() {
 	drop(
 		ITEM_EDIT,
 		'isAttachmentsAvailable import 除去',
-		`\timport { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';\n`
+		`\timport { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';\n`
 	);
 	drop(
 		ITEM_EDIT,
 		'attachmentsClient import 除去',
-		`\timport { attachmentsClient } from '$lib/banto/attachmentsClient';\n`
+		`\timport { attachmentsClient } from '#lib/banto/attachmentsClient.js';\n`
 	);
 	cutRegion(
 		ITEM_EDIT,
@@ -1542,15 +1542,18 @@ function removeDashboard() {
 	swapText(
 		ROOT_PAGE_TS,
 		'routes/+page.ts: ルートのリダイレクト先を /monitor に',
-		`// The root path only dispatches: guests to /login, users to /dashboard\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, \`\${base}/dashboard\`);\n}`,
-		`// The root path only dispatches: guests to /login, users to /monitor\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, \`\${base}/monitor\`);\n}`
+		`// The root path only dispatches: guests to /login, users to /dashboard\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, resolve(\`dashboard\`));\n}`,
+		`// The root path only dispatches: guests to /login, users to /monitor\n// (the (app) layout guard handles the auth check).\nexport function load(): never {\n\tredirect(307, resolve(\`monitor\`));\n}`
 	);
-	// login ページの goto は4箇所とも同じ式（swap は全出現を置換する）。
+	// login ページの goto は全箇所とも同じ式（swap は全出現を置換する）。
+	// kit 3 の `resolve()` はルート ID で型付けされるので、`monitor` は
+	// `applyDisplayDefaults()` が置く `(app)/monitor` が在って初めて型が通る
+	// （check は display の全工程を適用した後に走る）。
 	swapText(
 		LOGIN,
 		'login: ログイン後の遷移先を /monitor に',
-		`goto(\`\${base}/dashboard\`)`,
-		`goto(\`\${base}/monitor\`)`
+		`goto(resolve(\`dashboard\`))`,
+		`goto(resolve(\`monitor\`))`
 	);
 	for (const [file, label] of [
 		[MSG_JA, 'messages/ja'],
