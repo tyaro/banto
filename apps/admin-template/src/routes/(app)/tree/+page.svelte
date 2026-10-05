@@ -9,23 +9,23 @@
 	 * The trees here are UNCONTROLLED: no `onMove`/`onRename` is passed, so the
 	 * component owns an internal immutable copy and edits persist visually
 	 * without the page wiring a store — the smallest possible demo. Sample data
-	 * lives in `$lib/banto/treeSample.ts` (replaceable, like the items seed);
+	 * lives in `#lib/banto/treeSample.ts` (replaceable, like the items seed);
 	 * all page chrome is Paraglide (`raw-jp-in-app` — no raw Japanese in
 	 * `.svelte`). Not screenshotted (absent from e2e/visual DIAGONAL_PAGES), so
 	 * adding it only drifts the shared sidebar baselines, not a new page shot.
 	 */
 	import { BantoTree, TreeSelect, findNode, type TreeColumn } from '@banto/tree-svelte';
-	import * as m from '$lib/paraglide/messages';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
-	import { treeMessages } from '$lib/banto/i18n';
+	import * as m from '#lib/paraglide/messages';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { treeMessages } from '#lib/banto/i18n.js';
 	import {
 		explorerTree,
 		categoryTree,
 		lazyRoots,
 		loadLazyChildren,
 		type FileData
-	} from '$lib/banto/treeSample';
+	} from '#lib/banto/treeSample.js';
 
 	const treeMsg = treeMessages();
 

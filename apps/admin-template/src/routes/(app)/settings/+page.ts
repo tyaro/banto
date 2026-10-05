@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
 
 /**
  * `/settings` itself renders nothing - it always redirects to the first
@@ -11,5 +11,5 @@ import { base } from '$app/paths';
 export async function load({ parent }) {
 	const { categories } = await parent();
 	const first = categories[0];
-	if (first) redirect(307, `${base}${first.path}`);
+	if (first) redirect(307, resolve(`${first.path}`.slice(1)));
 }

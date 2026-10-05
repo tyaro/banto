@@ -15,10 +15,14 @@
 	import { isProviderError } from '@banto/admin-core';
 	import { Server, Wifi } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
-	import * as m from '$lib/paraglide/messages';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
-	import { applyServerSettings, getServerStatus, type ServerStatus } from '$lib/banto/serverAdmin';
-	import { guardUnsavedChanges } from '$lib/unsavedChanges';
+	import * as m from '#lib/paraglide/messages';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import {
+		applyServerSettings,
+		getServerStatus,
+		type ServerStatus
+	} from '#lib/banto/serverAdmin.js';
+	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { formatBytes, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';

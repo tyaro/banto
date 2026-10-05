@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 	grantFallback: vi.fn()
 }));
 
-vi.mock('$lib/banto/setup', () => ({
+vi.mock('#lib/banto/setup.js', () => ({
 	isBantoReady: () => mocks.ready,
 	// A guard that awaited this would never settle while startup waits for the
 	// user's reconnect - the bug this file pins down.
@@ -27,14 +27,16 @@ vi.mock('@banto/admin-core', () => ({
 	resolveSettled: mocks.resolveSettled,
 	grantFallback: mocks.grantFallback
 }));
-vi.mock('$lib/paraglide/messages', () => ({
+vi.mock('#lib/paraglide/messages', () => ({
 	'app.starting': () => '起動中…',
 	'app.sessionCheckFailed.title': () => 'title',
 	'app.sessionCheckFailed.body': () => 'body'
 }));
-vi.mock('$lib/banto/locale', () => ({ syncLocaleFromProvider: vi.fn(async () => {}) }));
-vi.mock('$lib/settings.svelte', () => ({ settings: { syncFromProvider: vi.fn(async () => {}) } }));
-vi.mock('$lib/navigation', () => ({ publicNavItems: () => [] }));
+vi.mock('#lib/banto/locale.js', () => ({ syncLocaleFromProvider: vi.fn(async () => {}) }));
+vi.mock('#lib/settings.svelte.js', () => ({
+	settings: { syncFromProvider: vi.fn(async () => {}) }
+}));
+vi.mock('#lib/navigation.js', () => ({ publicNavItems: () => [] }));
 
 import { load } from './+layout';
 

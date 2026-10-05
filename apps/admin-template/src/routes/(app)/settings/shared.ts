@@ -11,7 +11,7 @@
  * `.svelte.ts` module (conventions §8).
  */
 import { isProviderError } from '@banto/admin-core';
-import { isTauri } from '$lib/banto/setup';
+import { isTauri } from '#lib/banto/setup.js';
 
 /**
  * `validation` `ProviderError`s (e.g. a corrupt/foreign backup file

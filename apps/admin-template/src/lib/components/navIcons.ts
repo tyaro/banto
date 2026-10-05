@@ -6,7 +6,7 @@
  */
 import type { Component } from 'svelte';
 import { LayoutDashboard, Package, ListTree, Users, ScrollText, Settings } from '@lucide/svelte';
-import type { NavIconKey } from '$lib/navigation';
+import type { NavIconKey } from '#lib/navigation.js';
 
 export const NAV_ICONS: Record<NavIconKey, Component> = {
 	dashboard: LayoutDashboard,

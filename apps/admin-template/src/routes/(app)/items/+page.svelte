@@ -28,18 +28,18 @@
 		takeLastEditedRecord
 	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
-	import * as m from '$lib/paraglide/messages';
-	import { columnValidationMessages, gridMessages } from '$lib/banto/i18n';
-	import type { Item } from '$lib/banto/sampleData';
-	import { itemsSchema } from '$lib/banto/resources/items';
-	import { sessionStore } from '$lib/session.svelte';
-	import { canWriteResources } from '$lib/permissions';
-	import { exportCsvToFolder, importItems, isItemsImportAvailable } from '$lib/banto/itemsAdmin';
-	import { getBantoMode } from '$lib/banto/setup';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
+	import * as m from '#lib/paraglide/messages';
+	import { columnValidationMessages, gridMessages } from '#lib/banto/i18n.js';
+	import type { Item } from '#lib/banto/sampleData.js';
+	import { itemsSchema } from '#lib/banto/resources/items.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { canWriteResources } from '#lib/permissions.js';
+	import { exportCsvToFolder, importItems, isItemsImportAvailable } from '#lib/banto/itemsAdmin.js';
+	import { getBantoMode } from '#lib/banto/setup.js';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import StatusBadge, { type StatusBadgeVariant } from '#lib/components/ui/StatusBadge.svelte';
 	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
 	import {
@@ -105,7 +105,7 @@
 			width: 70,
 			resizable: false,
 			sortable: false,
-			cell: (row) => ({ text: m['items.open'](), href: `${base}/items/${row.id}` })
+			cell: (row) => ({ text: m['items.open'](), href: resolve(`items/${row.id}`) })
 		},
 		{
 			id: 'id',
@@ -274,7 +274,7 @@
 	}
 
 	function handleRowClick(item: Item) {
-		goto(`${base}/items/${item.id}`);
+		goto(resolve(`items/${item.id}`));
 	}
 
 	/** Issue #215: highlight whichever row was last opened (any mode, any navigation path - see `lastOpenedId` above) - same `rowClass` mechanism audit-log's `+page.svelte` already uses for its selected-row accent. */
@@ -309,7 +309,9 @@
 		// grid renders/filters with.
 		const activeColumns = mode === 'client' ? clientColumns : columns;
 		const activeFilters = mode === 'client' ? clientGridState.filters : serverGridState.filters;
+
 		const row = mode === 'client' ? toItemRow(record.values as Item) : (record.values as Item);
+
 		const matches = filterRows([row], activeFilters, activeColumns as GridColumn<Item>[]);
 		if (matches.length === 0) {
 			filterExclusionNotice = { id: record.id };
@@ -684,19 +686,16 @@
 					class="banto-btn banto-btn--ghost"
 					class:active={mode === 'client'}
 					aria-pressed={mode === 'client'}
-					onclick={() => (mode = 'client')}
+					onclick={() => (mode = 'client')}>{m['items.modeClient']()}</button
 				>
-					{m['items.modeClient']()}
-				</button>
+
 				<button
 					type="button"
 					class="banto-btn banto-btn--ghost"
 					class:active={mode === 'server'}
 					aria-pressed={mode === 'server'}
-					onclick={() => (mode = 'server')}
+					onclick={() => (mode = 'server')}>{m['items.modeServer']()}</button
 				>
-					{m['items.modeServer']()}
-				</button>
 			</div>
 			<label class="group-by">
 				{m['items.groupByLabel']()}
@@ -729,7 +728,7 @@
 			<button
 				type="button"
 				class="banto-btn banto-btn--ghost"
-				onclick={() => goto(`${base}/items/report`)}
+				onclick={() => goto(resolve(`items/report`))}
 			>
 				<FileText size={16} aria-hidden="true" />
 				{m['items.report']()}
@@ -763,7 +762,7 @@
 				<button
 					type="button"
 					class="banto-btn banto-btn--primary new-item-btn"
-					onclick={() => goto(`${base}/items/new`)}
+					onclick={() => goto(resolve(`items/new`))}
 				>
 					<Plus size={16} aria-hidden="true" />
 					{m['items.create']()}
@@ -784,10 +783,8 @@
 			<button
 				type="button"
 				class="banto-btn banto-btn--ghost"
-				onclick={() => (filterExclusionNotice = null)}
+				onclick={() => (filterExclusionNotice = null)}>{m['common.close']()}</button
 			>
-				{m['common.close']()}
-			</button>
 		</div>
 	{/if}
 

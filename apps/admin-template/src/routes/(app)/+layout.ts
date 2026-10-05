@@ -1,17 +1,17 @@
 import { error, redirect } from '@sveltejs/kit';
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
 import {
 	getAuthProvider,
 	getSessionController,
 	grantFallback,
 	resolveSettled
 } from '@banto/admin-core';
-import * as m from '$lib/paraglide/messages';
-import { isBantoReady } from '$lib/banto/setup';
-import { deferUntilStarted } from '$lib/banto/startupGate';
-import { syncLocaleFromProvider } from '$lib/banto/locale';
-import { settings } from '$lib/settings.svelte';
-import { publicNavItems } from '$lib/navigation';
+import * as m from '#lib/paraglide/messages';
+import { isBantoReady } from '#lib/banto/setup.js';
+import { deferUntilStarted } from '#lib/banto/startupGate.js';
+import { syncLocaleFromProvider } from '#lib/banto/locale.js';
+import { settings } from '#lib/settings.svelte.js';
+import { publicNavItems } from '#lib/navigation.js';
 
 // Auth guard for the whole (app) group (spec §8.1), Issue #260 (design
 // §6.1, v2.0.0): the session is confirmed by the SessionController - the
@@ -56,7 +56,7 @@ export async function load({ url }) {
 			kind: 'publicViewer'
 		});
 		if (result.outcome === 'unverified') sessionCheckFailed();
-		if (result.snapshot.status !== 'active') redirect(307, `${base}/login`);
+		if (result.snapshot.status !== 'active') redirect(307, resolve(`login`));
 	}
 	const snapshot = result.snapshot;
 
@@ -67,13 +67,16 @@ export async function load({ url }) {
 	// allowed area, same intent as `users/+page.ts`'s own role redirect but
 	// applied to every path under (app) at once.
 	if (snapshot.kind === 'publicViewer') {
-		const pathname = url.pathname.startsWith(base) ? url.pathname.slice(base.length) : url.pathname;
+		const pathname = url.pathname.startsWith(resolve(''))
+			? url.pathname.slice(resolve('').length)
+			: url.pathname;
 		const allowed = publicNavItems().some(
 			(item) => pathname === item.path || pathname.startsWith(item.path + '/')
 		);
+
 		if (!allowed) {
 			const firstPublicNavItem = publicNavItems()[0];
-			if (firstPublicNavItem) redirect(307, `${base}${firstPublicNavItem.path}`);
+			if (firstPublicNavItem) redirect(307, resolve(`${firstPublicNavItem.path}`.slice(1)));
 		}
 	}
 

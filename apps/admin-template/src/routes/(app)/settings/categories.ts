@@ -9,7 +9,8 @@
  * - each category's own `+page.ts` (`guardCategory` below).
  */
 import { redirect } from '@sveltejs/kit';
-import { base } from '$app/paths';
+
+import { resolve } from '$app/paths';
 
 export type SettingsCategoryId = 'appearance' | 'account' | 'connectivity' | 'data' | 'security';
 
@@ -45,5 +46,5 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 export function guardCategory(categories: SettingsCategory[], id: SettingsCategoryId): void {
 	if (categories.some((category) => category.id === id)) return;
 	const first = categories[0];
-	if (first) redirect(307, `${base}${first.path}`);
+	if (first) redirect(307, resolve(`${first.path}`.slice(1)));
 }

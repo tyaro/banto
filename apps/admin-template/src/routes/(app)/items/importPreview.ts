@@ -6,7 +6,7 @@
  * しない: 表に出す行は `previewRows`、送信ペイロードは `toImportPayload` が、
  * どちらも `rows` をそのまま入力にする。
  */
-import type { ItemImportRow } from '$lib/banto/itemsAdmin';
+import type { ItemImportRow } from '#lib/banto/itemsAdmin.js';
 
 /** 確認パネルに描画する先頭行数。大量データでも確認画面を重くしないための上限。 */
 export const IMPORT_PREVIEW_ROW_LIMIT = 10;

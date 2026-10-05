@@ -12,14 +12,14 @@
 	 * System Info カードも存在し、ロードが既に走っている。
 	 */
 	import { DatabaseBackup, ScrollText } from '@lucide/svelte';
-	import * as m from '$lib/paraglide/messages';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
+	import * as m from '#lib/paraglide/messages';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 	import {
 		getAuditConfig,
 		isAuditLogAvailable,
 		setAuditConfig,
 		type AuditSettings
-	} from '$lib/banto/auditLogAdmin';
+	} from '#lib/banto/auditLogAdmin.js';
 	import {
 		cancelPendingRestore,
 		createBackup,
@@ -32,10 +32,10 @@
 		uploadAndStageRestore,
 		type BackupInfo,
 		type PendingRestoreInfo
-	} from '$lib/banto/backupsAdmin';
-	import { toastStore } from '$lib/toast.svelte';
-	import { sessionStore } from '$lib/session.svelte';
-	import { isAdmin } from '$lib/permissions';
+	} from '#lib/banto/backupsAdmin.js';
+	import { toastStore } from '#lib/toast.svelte.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
 	import { errorMessage, formatBytes, tauri } from './shared';
 	import { systemInfoStore } from './systemInfoStore.svelte';
 

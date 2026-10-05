@@ -1,3 +1,5 @@
+import adapter from '@sveltejs/adapter-static';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
@@ -12,7 +14,13 @@ import { defineConfig } from 'vite';
 const noExclude = process.env.BANTO_FIXTURE_NO_EXCLUDE === '1';
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [
+		sveltekit({
+			preprocess: vitePreprocess(),
+			adapter: adapter({ pages: 'build', assets: 'build', fallback: 'index.html' })
+		})
+	],
+
 	optimizeDeps: noExclude
 		? {}
 		: {

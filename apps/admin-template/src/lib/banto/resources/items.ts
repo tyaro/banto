@@ -7,7 +7,7 @@
  */
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FormSchema } from '@banto/forms';
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages';
 
 // Rust's ItemInput.price/.stock (apps/admin-template/core/src/items.rs) are
 // `i64`, so a fractional value must be rejected client-side too (not just

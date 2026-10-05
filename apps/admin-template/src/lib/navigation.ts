@@ -4,7 +4,7 @@
  * From M2, entries for CRUD pages are derived from resource definitions
  * (spec §3.1); manual entries like the ones below remain possible.
  */
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages';
 
 /** Icon resolution key (visual-refresh-design.md §5.1). Resolved to an actual
  *  icon component only in the display layer ($lib/components/navIcons.ts) -

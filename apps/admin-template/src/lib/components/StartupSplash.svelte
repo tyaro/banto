@@ -1,6 +1,6 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
-	import { startupState, retryStartup } from '$lib/banto/startupState.svelte';
+	import * as m from '#lib/paraglide/messages';
+	import { startupState, retryStartup } from '#lib/banto/startupState.svelte.js';
 </script>
 
 {#if startupState.status === 'unreachable'}

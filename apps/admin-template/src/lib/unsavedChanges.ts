@@ -8,7 +8,7 @@
  * Forced = the target is the login screen. Every path there means the
  * session is ending or already gone - logout (`Header.svelte` /
  * `commands.ts` log out and confirm `none` first, then `goto('/login')`),
- * `ownerChangePolicy: 'relogin'` (`$lib/banto/ownerChange.ts`), or the
+ * `ownerChangePolicy: 'relogin'` (`#lib/banto/ownerChange.ts`), or the
  * `(app)` guard redirecting a session it confirmed `none` (Issue #260) after
  * an `invalidateAll()`. Holding the user on a page whose
  * session is gone would only strand them, so those never prompt. (A
@@ -16,21 +16,21 @@
  * at all - SvelteKit skips it while navigating.)
  *
  * The desktop window close is not a router navigation; `(app)/+layout.svelte`
- * covers it with `guardWindowClose` (`$lib/banto/windowCloseGuard.ts`).
+ * covers it with `guardWindowClose` (`#lib/banto/windowCloseGuard.ts`).
  */
 import { beforeNavigate } from '$app/navigation';
-import { base } from '$app/paths';
+import { resolve } from '$app/paths';
 import {
 	guardUnsavedChanges as guardWith,
 	type LeaveNavigation,
 	type UnsavedChangesGuard
 } from '@banto/forms';
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages';
 
 /** True for navigations that must never be held back (see module doc comment). */
 export function isForcedNavigation(navigation: LeaveNavigation): boolean {
 	const pathname = navigation.to?.url.pathname;
-	return pathname === `${base}/login` || pathname === `${base}/login/`;
+	return pathname === resolve(`login`) || pathname === resolve(`login/`);
 }
 
 export interface AppUnsavedChangesOptions {

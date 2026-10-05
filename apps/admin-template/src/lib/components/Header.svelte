@@ -4,16 +4,16 @@
 	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
 	 */
 	import { goto } from '$app/navigation';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import * as m from '$lib/paraglide/messages';
-	import { logoutAndLeave } from '$lib/banto/logout.svelte';
-	import { notifyLogoutOutcome } from '$lib/banto/logoutNotice';
-	import { pageTitle } from '$lib/navigation';
-	import { getBantoMode, isTauri } from '$lib/banto/setup';
-	import { sessionStore } from '$lib/session.svelte';
-	import { settings } from '$lib/settings.svelte';
-	import { commandPaletteStore } from '$lib/commandPalette.svelte';
+	import * as m from '#lib/paraglide/messages';
+	import { logoutAndLeave } from '#lib/banto/logout.svelte.js';
+	import { notifyLogoutOutcome } from '#lib/banto/logoutNotice.js';
+	import { pageTitle } from '#lib/navigation.js';
+	import { getBantoMode, isTauri } from '#lib/banto/setup.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { settings } from '#lib/settings.svelte.js';
+	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import IconButton from './ui/IconButton.svelte';
 	import Menu from './menu/Menu.svelte';
 	import MenuGroup from './menu/MenuGroup.svelte';
@@ -57,9 +57,9 @@
 	async function logout() {
 		// Issue #215/#255, #260 (I-10): log out, confirm the session, and go
 		// to /login only when it is confirmed ended (another tab's login
-		// confirmed meanwhile stays) - see `$lib/banto/logout.svelte.ts` for
+		// confirmed meanwhile stays) - see `#lib/banto/logout.svelte.ts` for
 		// the order. Same in `commands.ts`.
-		await logoutAndLeave(() => goto(`${base}/login`), { notify: notifyLogoutOutcome });
+		await logoutAndLeave(() => goto(resolve(`login`)), { notify: notifyLogoutOutcome });
 	}
 
 	// Kiosk shell fullscreen button (display-preset-plan.md D1-b). Two
@@ -193,7 +193,7 @@
 		<button
 			type="button"
 			class="banto-btn banto-btn--secondary login-button"
-			onclick={() => goto(`${base}/login`)}
+			onclick={() => goto(resolve(`login`))}
 		>
 			<LogIn size={16} aria-hidden="true" />
 			{m['shell.login']()}
@@ -215,7 +215,7 @@
 				<MenuItem
 					icon={Settings}
 					label={m['nav.settings']()}
-					onSelect={() => goto(`${base}/settings`)}
+					onSelect={() => goto(resolve(`settings`))}
 				/>
 			</MenuGroup>
 			<MenuSeparator />

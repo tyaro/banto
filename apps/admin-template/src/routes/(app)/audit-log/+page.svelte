@@ -32,16 +32,16 @@
 	} from '@banto/grid-svelte';
 	import { createSnapshotListResource } from '@banto/admin-core';
 	import { Info } from '@lucide/svelte';
-	import * as m from '$lib/paraglide/messages';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import StatusBadge from '$lib/components/ui/StatusBadge.svelte';
+	import * as m from '#lib/paraglide/messages';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import StatusBadge from '#lib/components/ui/StatusBadge.svelte';
 	import {
 		getAuditConfig,
 		isAuditLogAvailable,
 		listAuditLog,
 		type AuditLogEntry
-	} from '$lib/banto/auditLogAdmin';
+	} from '#lib/banto/auditLogAdmin.js';
 
 	const available = isAuditLogAvailable();
 

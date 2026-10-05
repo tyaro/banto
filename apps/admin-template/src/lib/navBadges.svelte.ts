@@ -1,8 +1,8 @@
 /**
  * Unseen-change badge counts for sidebar navigation entries
  * (choiapp-feedback-2026-09 §4.1; Svelte 5 runes). Same "module singleton
- * populated by the app shell" pattern as `$lib/settings.svelte.ts` /
- * `$lib/toast.svelte.ts`.
+ * populated by the app shell" pattern as `#lib/settings.svelte.ts` /
+ * `#lib/toast.svelte.ts`.
  *
  * Ownership split:
  * - `routes/(app)/+layout.svelte` WIRES the store: it subscribes to

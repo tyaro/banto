@@ -20,11 +20,11 @@
 	import { invalidateAll } from '$app/navigation';
 	import { ShieldAlert } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
-	import * as m from '$lib/paraglide/messages';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
-	import { applyAuthSettings, type AuthDisabledRole } from '$lib/banto/authAdmin';
-	import { toastStore } from '$lib/toast.svelte';
-	import { guardUnsavedChanges } from '$lib/unsavedChanges';
+	import * as m from '#lib/paraglide/messages';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { applyAuthSettings, type AuthDisabledRole } from '#lib/banto/authAdmin.js';
+	import { toastStore } from '#lib/toast.svelte.js';
+	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { errorMessage } from './shared';
 	import { authSettingsStore, reloadAuthSettings } from './authSettingsStore.svelte';
 

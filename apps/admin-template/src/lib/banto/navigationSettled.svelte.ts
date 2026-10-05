@@ -8,7 +8,7 @@
  * `token !== nav_token` with `is_navigating` still true). Two things follow:
  * the move the user asked for is lost (the re-run reloads the URL the
  * navigation started from), and `beforeNavigate` - the unsaved-changes
- * guard (`$lib/unsavedChanges.ts`) - is skipped for the next navigation, so
+ * guard (`#lib/unsavedChanges.ts`) - is skipped for the next navigation, so
  * leaving a form with unsaved input no longer asks.
  *
  * So the layouts start their re-runs only when {@link isNavigationSettled}:
@@ -37,7 +37,9 @@ let firstNavigationDone = $state(false);
  * layout's initialisation (it is mounted by that navigation).
  */
 export function trackFirstNavigation(): void {
-	afterNavigate(() => {
+	afterNavigate(({ shallow }) => {
+		if (shallow) return;
+
 		firstNavigationDone = true;
 	});
 }

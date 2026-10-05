@@ -10,7 +10,7 @@ import { systemInfoStore } from './systemInfoStore.svelte';
  * reading (`available === false`) forever, hiding the System Info card and
  * skipping its `settings/+layout.svelte` load effect (E2E 11a flake).
  *
- * This mocks `$lib/banto/setup` (a mutable `mode` the test controls) so it
+ * This mocks `#lib/banto/setup` (a mutable `mode` the test controls) so it
  * can reproduce that exact ordering: the store is imported ONCE, statically,
  * while the mode is still `'demo'` (module loaded ahead of `bantoReady`),
  * THEN the tests flip the mode to `'server'` (bantoReady resolves) without
@@ -19,7 +19,7 @@ import { systemInfoStore } from './systemInfoStore.svelte';
  *
  * Why a static import rather than `vi.resetModules()` + `await import()` in
  * the test body: the first evaluation of the module graph (Svelte rune compile
- * of `systemInfoStore.svelte.ts` plus `$lib/banto/systemAdmin`'s imports) took
+ * of `systemInfoStore.svelte.ts` plus `#lib/banto/systemAdmin`'s imports) took
  * ~1s unloaded, and under CPU load (parallel cargo builds) blew vitest's 5s
  * per-test timeout. A static import pays that cost in vitest's collect phase,
  * outside the per-test timeout, and import-once is faithful to #244: the
@@ -29,7 +29,7 @@ import { systemInfoStore } from './systemInfoStore.svelte';
 // vi.hoisted/vi.mock run, so the store module is first evaluated while the mode
 // is 'demo' (the #244 ordering: module loaded before bantoReady resolves).
 const setupMock = vi.hoisted(() => ({ mode: 'demo' as 'demo' | 'server' | 'tauri' }));
-vi.mock('$lib/banto/setup', () => ({
+vi.mock('#lib/banto/setup.js', () => ({
 	CSRF_HEADER: { 'X-Banto-Client': 'banto' },
 	getBantoMode: () => setupMock.mode
 }));

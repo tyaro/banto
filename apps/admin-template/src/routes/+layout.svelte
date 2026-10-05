@@ -2,13 +2,16 @@
 	import '../app.css';
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import { bantoReady } from '$lib/banto/setup'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
-	import { initLocale } from '$lib/banto/locale'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
-	import { settings } from '$lib/settings.svelte';
-	import ToastHost from '$lib/components/ToastHost.svelte';
-	import StartupSplash from '$lib/components/StartupSplash.svelte';
-	import { isStartupDeferral } from '$lib/banto/startupGate';
-	import { isNavigationSettled, trackFirstNavigation } from '$lib/banto/navigationSettled.svelte';
+	import { bantoReady } from '#lib/banto/setup.js'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
+	import { initLocale } from '#lib/banto/locale.js'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
+	import { settings } from '#lib/settings.svelte.js';
+	import ToastHost from '#lib/components/ToastHost.svelte';
+	import StartupSplash from '#lib/components/StartupSplash.svelte';
+	import { isStartupDeferral } from '#lib/banto/startupGate.js';
+	import {
+		isNavigationSettled,
+		trackFirstNavigation
+	} from '#lib/banto/navigationSettled.svelte.js';
 
 	let { children } = $props();
 
@@ -21,7 +24,7 @@
 	});
 
 	// Issue #321: a protected route opened before startup finished was
-	// deferred by its guard (`$lib/banto/startupGate.ts`) - nothing of it has
+	// deferred by its guard (`#lib/banto/startupGate.ts`) - nothing of it has
 	// run. Keep the splash up instead of the error page, and re-run the loads
 	// once startup has finished, so the same URL opens (or goes where the
 	// guard sends it). A deferral can only come from a load started before
@@ -31,7 +34,7 @@
 	// COMPLETED and no other one is in flight (`isNavigationSettled()`): an
 	// `invalidateAll()` that starts while SvelteKit is still finishing a
 	// navigation aborts it and leaves `beforeNavigate` - the unsaved-changes
-	// guard - skipped (see `$lib/banto/navigationSettled.svelte.ts`). A fast
+	// guard - skipped (see `#lib/banto/navigationSettled.svelte.ts`). A fast
 	// startup (Tauri, a local server) resolves `bantoReady` exactly then.
 	// This layout is mounted by the first navigation, so it is also the one
 	// that records its end for the whole app (`trackFirstNavigation`, which
