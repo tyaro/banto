@@ -11,7 +11,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./css": "./src/css/banto.css"
+    "./css": {
+      "types": "./src/css/banto.css.d.ts",
+      "default": "./src/css/banto.css"
+    }
   },
   "files": [
     "src"
