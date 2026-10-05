@@ -23,18 +23,18 @@
 ## [Unreleased]
 
 - docs(fixture): 外部利用 fixture の `pnpm check` は、ルートで `pnpm install` 済みでないと `playwright.config.ts` の `@playwright/test` を解決できず失敗する（CI は先にルートを入れるので通る）。前提を docs/upgrading.md 8.3 と fixture の tsconfig.json に明記した。fixture に `@playwright/test` は足さない（2 つ入ると Playwright が二重読み込みで落ちるため）。
-- docs(layout): 設計文書 8 本を `docs/` 直下から `docs/design/` へ移動した（#312 PR-B。ファイル名は不変なので `attachments-plan §3.7` のようなラベル参照はそのまま有効）。コード・scripts・CI・docs 内の参照は同じ PR で新パスに更新済み。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/design/*.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
+- docs(layout): 設計文書 8 本を `docs/` 直下から `docs/design/` へ移動した（#312 の design/ への移動。ファイル名は不変なので `attachments-plan §3.7` のようなラベル参照はそのまま有効）。コード・scripts・CI・docs 内の参照は同じ PR で新パスに更新済み。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/design/*.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
 
-  | 旧パス | 新パス |
-  | --- | --- |
-  | `docs/attachments-plan.md` | `docs/design/attachments-plan.md` |
-  | `docs/display-preset-plan.md` | `docs/design/display-preset-plan.md` |
-  | `docs/report-plan.md` | `docs/design/report-plan.md` |
-  | `docs/scaffold-presets-plan.md` | `docs/design/scaffold-presets-plan.md` |
+  | 旧パス                              | 新パス                                     |
+  | ----------------------------------- | ------------------------------------------ |
+  | `docs/attachments-plan.md`          | `docs/design/attachments-plan.md`          |
+  | `docs/display-preset-plan.md`       | `docs/design/display-preset-plan.md`       |
+  | `docs/report-plan.md`               | `docs/design/report-plan.md`               |
+  | `docs/scaffold-presets-plan.md`     | `docs/design/scaffold-presets-plan.md`     |
   | `docs/session-controller-design.md` | `docs/design/session-controller-design.md` |
-  | `docs/viewer-public-plan.md` | `docs/design/viewer-public-plan.md` |
-  | `docs/visual-refresh-design.md` | `docs/design/visual-refresh-design.md` |
-  | `docs/visual-refresh-plan.md` | `docs/design/visual-refresh-plan.md` |
+  | `docs/viewer-public-plan.md`        | `docs/design/viewer-public-plan.md`        |
+  | `docs/visual-refresh-design.md`     | `docs/design/visual-refresh-design.md`     |
+  | `docs/visual-refresh-plan.md`       | `docs/design/visual-refresh-plan.md`       |
 
 ## [4.0.0] - 2026-10-05
 
