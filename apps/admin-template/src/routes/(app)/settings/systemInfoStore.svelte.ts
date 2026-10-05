@@ -1,7 +1,7 @@
 /**
  * Shared `SystemInfo` (M-review 2026-08 §2.4) load state. Module singleton
  * (same "module singleton populated once, read from anywhere" pattern as
- * `#lib/session.svelte.ts`/`$lib/settings.svelte.ts`), needed here because
+ * `#lib/session.svelte.ts`/`#lib/settings.svelte.ts`), needed here because
  * the settings-split refactor (choiapp-feedback-2026-09 §3) put its two
  * readers in different components:
  * - `ConnectivitySection.svelte`'s System Info card.

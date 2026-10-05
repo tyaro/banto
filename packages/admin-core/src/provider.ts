@@ -22,7 +22,7 @@ export interface Identity {
 	 * Tauri `Identity`/REST `/api/auth/identity` wire shape). Optional here
 	 * so this generic contract stays usable by an `AuthProvider` that has no
 	 * concept of roles at all — callers that care (this app's
-	 * `$lib/permissions.ts`) must treat a missing/unrecognized value as the
+	 * `#lib/permissions.ts`) must treat a missing/unrecognized value as the
 	 * least-privileged role (fail closed), not assume it is always present.
 	 */
 	role?: string;

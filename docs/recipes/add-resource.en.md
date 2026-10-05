@@ -63,9 +63,9 @@ API (reference: `routes/(app)/items/+page.svelte` and
   `resolveSettled(getSessionController())` (`grantFallback` for a
   `none`) and returns the generation it confirmed; `(app)/+layout.svelte`
   re-runs the loads and rebuilds the page when the generation changes
-  (wiring ①); `$lib/session.svelte.ts`'s `sessionStore` is `$derived` from
+  (wiring ①); `#lib/session.svelte.ts`'s `sessionStore` is `$derived` from
   `controller.snapshot`; the logout confirms with `resolveSettled()` after
-  `logout()` (`$lib/banto/logout.svelte.ts`). A custom `AuthProvider`
+  `logout()` (`#lib/banto/logout.svelte.ts`). A custom `AuthProvider`
   implements `resolve()`, `credentialRevision()` and `onCredentialChanged()`
   (`resolve()` rejects when it cannot answer - the contract in
   `provider.ts`). Without it, list state is never saved or restored (no

@@ -9,7 +9,7 @@
  *   admin-core's `onInvalidate` bus (spec §3.4 - fired both by this
  *   client's own mutations and by `resource_changed` server events, spec
  *   §3.5) for every `NavItem` that declares a `badgeResource`
- *   ($lib/navigation.ts), increments while the user is elsewhere, and
+ *   (#lib/navigation.ts), increments while the user is elsewhere, and
  *   clears a path's count when navigation lands on it.
  * - `Sidebar.svelte` only READS `count(path)` to render the badge.
  *

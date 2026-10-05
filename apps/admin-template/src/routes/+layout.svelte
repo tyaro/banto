@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.css';
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { bantoReady } from '#lib/banto/setup.js'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
 	import { initLocale } from '#lib/banto/locale.js'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
@@ -31,8 +31,8 @@
 	// `bantoReady` resolved, so the re-run (which starts after it) clears it.
 	//
 	// The re-run waits until the navigation that produced the deferral has
-	// COMPLETED and no other one is in flight (`isNavigationSettled()`): an
-	// `invalidateAll()` that starts while SvelteKit is still finishing a
+	// COMPLETED and no other one is in flight (`isNavigationSettled()`): a
+	// `refreshAll()` that starts while SvelteKit is still finishing a
 	// navigation aborts it and leaves `beforeNavigate` - the unsaved-changes
 	// guard - skipped (see `#lib/banto/navigationSettled.svelte.ts`). A fast
 	// startup (Tauri, a local server) resolves `bantoReady` exactly then.
@@ -47,7 +47,7 @@
 	});
 	$effect(() => {
 		if (startupDeferred && started && isNavigationSettled()) {
-			void invalidateAll();
+			void refreshAll();
 		}
 	});
 </script>

@@ -69,7 +69,6 @@ on:
       - 'package.json'
       - 'apps/admin-template/package.json'
       - 'apps/admin-template/vite.config.ts'
-      - 'apps/admin-template/svelte.config.js'
       - 'fixtures/external-consumer/**'
       - 'scripts/external-fixture-set-ref.mjs'
       - 'scripts/external-fixture-set-ref.test.mjs'

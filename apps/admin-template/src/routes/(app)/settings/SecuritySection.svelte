@@ -17,7 +17,7 @@
 	 * `applyAuthSettingsToDrafts()` が両方を同時に更新していたのと同じ結合を
 	 * 保つため。
 	 */
-	import { invalidateAll } from '$app/navigation';
+	import { refreshAll } from '$app/navigation';
 	import { ShieldAlert } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
@@ -94,7 +94,7 @@
 			authSettingsStore.value = await applyAuthSettings(disabledDraft, disabledRoleDraft);
 			toastStore.push('success', m['settings.authSettingsUpdated']());
 			// Issue #214: the save is done - clear the unsaved state NOW, not
-			// after `invalidateAll()` below. Its `guardCategory` redirect (when
+			// after `refreshAll()` below. Its `guardCategory` redirect (when
 			// セキュリティ is no longer visible) goes through `beforeNavigate`,
 			// and a still-pending guard would prompt on it. Drafts are synced
 			// here directly instead of waiting for the re-sync effect above.
@@ -107,7 +107,7 @@
 			// whose auth was just re-enabled would keep seeing the セキュリティ
 			// category in the nav (or the opposite: re-disabling it wouldn't restore
 			// it) until some unrelated navigation happened to reload the layout.
-			// `invalidateAll()` reruns every load() in the hierarchy -
+			// `refreshAll()` reruns every load() in the hierarchy -
 			// `(app)/+layout.ts` (the SessionController confirms the session again:
 			// the Rust side now answers `kind: 'local'` or `'account'`) ->
 			// `settings/+layout.ts` (categories, from `sessionStore.authDisabled`,
@@ -117,7 +117,7 @@
 			// trigger. Issue #260 (S-61): `authDisabled` is no longer assigned here
 			// from the save's answer; it follows the confirmed session only, so a
 			// stale answer can never set it.
-			await invalidateAll();
+			await refreshAll();
 		} catch (err) {
 			// 排他違反（LANアクセス有効中の有効化など）はサーバ側の日本語メッセージ
 			// (kind: 'other') をそのままトーストに出す（spec M11）。
