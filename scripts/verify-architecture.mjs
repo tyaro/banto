@@ -9,7 +9,8 @@
  *      … core/src（rest/ と bin/ を除く）と banto-{core,storage,attachments}
  *        に `use axum` / `use tauri` がないこと
  *   2. §4 パッケージ間 import ゼロ … packages/星/src に `from '@banto/...'` がない
- *   3. §5 パッケージはアプリ固有 import を持たない … 同上に `from '$lib...'` がない
+ *   3. §5 パッケージはアプリ固有 import を持たない … 同上に `$lib` / `#lib`
+ *      （SvelteKit 3 の subpath imports）からの import がない
  *   4. §7 {@html} は許可リストの2箇所のみ
  *   5. §9 コンポーネント CSS に生の色値を書かない
  *      … packages（theme を除く）の .svelte <style> ブロックに hex/rgb()/hsl()
@@ -146,13 +147,15 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		const src = read(file);
 		if (/from\s+['"]@banto\//.test(src))
 			fail('no-cross-package', file, 'パッケージ間 import は禁止（§4）');
-		if (/from\s+['"]\$lib/.test(src))
+		// `$lib` は SvelteKit 2 まで、`#lib` は SvelteKit 3 の subpath imports（#325）。
+		// `import x from` / `import '...'` / `import('...')` のどれでも捕まえる。
+		if (/\b(?:from|import)\s*\(?\s*['"](?:\$lib|#lib)['"/]/.test(src))
 			fail('no-app-import', file, 'アプリ固有 import は禁止（§5）— client 注入にする');
 	}
 	if (!results.some((r) => r.includes('[no-cross-package]')))
 		pass('no-cross-package', `packages ${checked} ファイルに @banto/* import なし`);
 	if (!results.some((r) => r.includes('[no-app-import]')))
-		pass('no-app-import', `packages に $lib import なし`);
+		pass('no-app-import', `packages に $lib / #lib import なし`);
 }
 
 // --- 4. {@html} 許可リスト（conventions §7） ---------------------------------
