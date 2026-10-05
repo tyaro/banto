@@ -41,7 +41,13 @@
  * context in a plain module, same rule as ListResource); components wire
  * `$effect`/cleanup around `ensureRange()`/`dispose()`.
  */
-import { hasTimeLimit, isWritableList, timeoutError, toProviderError } from './blockFetch';
+import {
+	DEFAULT_MALFORMED_MESSAGE,
+	hasTimeLimit,
+	isWritableList,
+	timeoutError,
+	toProviderError
+} from './blockFetch';
 import { ProviderError } from './errors';
 import { onInvalidate } from './invalidate';
 import { getDataProvider, notify } from './registry.svelte';
@@ -256,7 +262,7 @@ export class WindowedListResource<T> {
 		if (outcome.ok && !isWritableList(outcome.result, offset)) {
 			outcome = {
 				ok: false,
-				error: new ProviderError({ kind: 'other', message: 'malformed list result' })
+				error: new ProviderError({ kind: 'other', message: DEFAULT_MALFORMED_MESSAGE })
 			};
 		}
 

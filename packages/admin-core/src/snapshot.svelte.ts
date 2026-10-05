@@ -58,10 +58,9 @@
  *
  * ### Failures and recovery
  *
- * - **A failure belongs to its block** and stays (`failedBlocks`; `error`
- *   is the most recent non-expiry one) until that block loads or
- *   `setParams()` starts a new query. Another block's success does not
- *   clear it.
+ * - **A failure belongs to its block** and stays in `failures` (one entry
+ *   per block, ascending) until that block loads or `setParams()` starts a
+ *   new query. Another block's success does not clear it.
  * - **No silent retry**: a block that failed in the current generation is
  *   not requested again in that generation, even when a range covers it,
  *   and a failed first read does not move on to the next block (that would
@@ -84,11 +83,33 @@
  *   not a safe integer) records a failure for that block instead of
  *   throwing out of the resource.
  *
+ * ### What a failure says (Issue #342)
+ *
+ * Every `'error'` failure carries a **code** (`SnapshotListFailureCode`), so
+ * an app tells the kinds apart without comparing messages:
+ *
+ * - `'request'`: the fetcher threw or rejected. A thrown `ProviderError`
+ *   (including an app's own subclass carrying more data) is kept **as the
+ *   same object**; anything else is wrapped in a `SnapshotListError` whose
+ *   message is `String(thrown)` and whose `cause` is the thrown value.
+ * - `'timeout'`, `'boundaryMismatch'`, `'malformed'`: detected by the
+ *   resource itself and recorded as a `SnapshotListError` with that code.
+ *   Their messages come from the `messages` option (i18n layer 1: the
+ *   app's resolved strings, docs/conventions.md §13), the English defaults
+ *   otherwise. A message function that throws falls back to the default.
+ *
+ * A `SnapshotListError` thrown by the fetcher keeps its own code, so
+ * `failure.code === failure.error.code` whenever `error` is one.
+ *
+ * Each `'error'` failure is also reported through the registered notifier
+ * (a toast) unless the `notify` option turns that off or its predicate
+ * declines the failure; an expiry is never notified (the page shows it).
+ *
  * ### States the page can tell apart
  *
  * `totalCount` is `null` until the current query has been read once, so a
  * page can show "not read yet" (`null`, no failure), "could not read"
- * (`null`, `failedBlocks` non-empty) and "read, 0 rows" (`0`) separately.
+ * (`null`, `failures` non-empty) and "read, 0 rows" (`0`) separately.
  *
  * Runes constraint: like `WindowedListResource`, this class never creates an
  * `$effect`; the owning component calls `ensureRange()` / `dispose()`.
@@ -96,8 +117,13 @@
  * calling `ensureRange()` inside an effect does not make that effect depend
  * on them.
  */
-import { hasTimeLimit, isWritableList, timeoutError, toProviderError } from './blockFetch';
-import { ProviderError } from './errors';
+import {
+	DEFAULT_MALFORMED_MESSAGE,
+	defaultTimeoutMessage,
+	hasTimeLimit,
+	isWritableList
+} from './blockFetch';
+import { isProviderError, ProviderError } from './errors';
 import { notify } from './registry.svelte';
 import type { FilterState, ListResult, Pagination, SortState } from './types';
 import { DEFAULT_WINDOWED_REQUEST_TIMEOUT_MS, type WindowedParams } from './windowed.svelte';
@@ -136,6 +162,81 @@ export type SnapshotListFetcher<T> = (
 	signal: AbortSignal
 ) => Promise<SnapshotListResult<T>>;
 
+/**
+ * Why a block request failed (see the module doc comment):
+ *
+ * - `'request'`: the fetcher threw or rejected,
+ * - `'timeout'`: no answer within `requestTimeoutMs`,
+ * - `'boundaryMismatch'`: the answer's `asOfId` is not the one sent,
+ * - `'malformed'`: the answer cannot be written (not a list, a count that
+ *   is not a valid array length, an `asOfId` that is not a safe integer).
+ */
+export type SnapshotListFailureCode = 'request' | 'timeout' | 'boundaryMismatch' | 'malformed';
+
+/**
+ * A failure `SnapshotListResource` creates itself: one it detected
+ * (`'timeout'`, `'boundaryMismatch'`, `'malformed'`) or a fetcher throw
+ * that was not a `ProviderError` (`'request'`, the thrown value in
+ * `cause`). A `ProviderError` the fetcher throws is recorded as is.
+ */
+export class SnapshotListError extends ProviderError {
+	readonly code: SnapshotListFailureCode;
+
+	constructor(code: SnapshotListFailureCode, message: string, options: { cause?: unknown } = {}) {
+		super({ kind: 'other', message });
+		this.name = 'SnapshotListError';
+		this.code = code;
+		if ('cause' in options) this.cause = options.cause;
+	}
+}
+
+export function isSnapshotListError(error: unknown): error is SnapshotListError {
+	return error instanceof SnapshotListError;
+}
+
+/** A block whose request failed; `code` says why (see {@link SnapshotListFailureCode}). */
+export interface SnapshotListErrorFailure {
+	readonly block: number;
+	readonly kind: 'error';
+	readonly code: SnapshotListFailureCode;
+	/**
+	 * The fetcher's own `ProviderError` (the same object) for `'request'`,
+	 * a {@link SnapshotListError} otherwise.
+	 */
+	readonly error: ProviderError;
+}
+
+/** A block whose answer showed that the set inside the boundary changed. */
+export interface SnapshotListExpiredFailure {
+	readonly block: number;
+	readonly kind: 'expired';
+}
+
+/** Why a block holds no rows. */
+export type SnapshotListFailure = SnapshotListErrorFailure | SnapshotListExpiredFailure;
+
+/**
+ * Texts of the failures the resource detects itself (i18n layer 1: the app
+ * passes resolved strings, e.g. Paraglide message functions). Each is a
+ * function, called when the failure is recorded, like the other `messages`
+ * bundles of `@banto/*`.
+ */
+export interface SnapshotListMessages {
+	/** A request that did not answer within `ms` milliseconds. */
+	timeout?: (ms: number) => string;
+	/** An answer read from another boundary than the one sent. */
+	boundaryMismatch?: () => string;
+	/** An answer that cannot be written. */
+	malformed?: () => string;
+}
+
+/** The English defaults of {@link SnapshotListMessages}. */
+export const defaultSnapshotListMessages: Required<SnapshotListMessages> = {
+	timeout: defaultTimeoutMessage,
+	boundaryMismatch: () => 'list snapshot boundary mismatch',
+	malformed: () => DEFAULT_MALFORMED_MESSAGE
+};
+
 export interface CreateSnapshotListResourceOptions {
 	/** Rows fetched per block. Default 200. */
 	blockSize?: number;
@@ -147,17 +248,20 @@ export interface CreateSnapshotListResourceOptions {
 	requestTimeoutMs?: number;
 	/** The initial sort/filters (no request is made until `ensureRange()`). */
 	params?: Partial<WindowedParams>;
+	/** Replaces the texts of the failures the resource detects itself. */
+	messages?: SnapshotListMessages;
+	/**
+	 * Whether an `'error'` failure is also reported through the registered
+	 * notifier (a toast). `false` never; a function decides per failure (one
+	 * that throws counts as `false`). Default `true`.
+	 */
+	notify?: boolean | ((failure: SnapshotListErrorFailure) => boolean);
 }
 
-/** Why a block holds no rows. */
-type BlockFailure = { kind: 'error'; error: ProviderError } | { kind: 'expired' };
-
 interface FailureRecord {
-	failure: BlockFailure;
+	failure: SnapshotListFailure;
 	/** The generation the failure was recorded in. */
 	generation: number;
-	/** Recording order, so `error` can show the most recent failure. */
-	seq: number;
 }
 
 interface InFlightRequest {
@@ -165,10 +269,19 @@ interface InFlightRequest {
 	timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-type Outcome<T> = { ok: true; result: SnapshotListResult<T> } | { ok: false; error: ProviderError };
+type ErrorOutcome = { code: SnapshotListFailureCode; error: ProviderError };
 
-/** Message of the error recorded when an answer's `asOfId` is not the one sent. */
-export const SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE = 'list snapshot boundary mismatch';
+type Outcome<T> = { ok: true; result: SnapshotListResult<T> } | ({ ok: false } & ErrorOutcome);
+
+/** A fetcher's throw as a failure (see the module doc comment). */
+function requestFailure(thrown: unknown): ErrorOutcome {
+	if (isSnapshotListError(thrown)) return { code: thrown.code, error: thrown };
+	if (isProviderError(thrown)) return { code: 'request', error: thrown };
+	return {
+		code: 'request',
+		error: new SnapshotListError('request', String(thrown), { cause: thrown })
+	};
+}
 
 function isWritableSnapshot(result: unknown, offset: number): boolean {
 	if (!isWritableList(result, offset)) return false;
@@ -177,10 +290,6 @@ function isWritableSnapshot(result: unknown, offset: number): boolean {
 		Number.isSafeInteger(asOfId) &&
 		(deletionEpoch === undefined || Number.isSafeInteger(deletionEpoch))
 	);
-}
-
-function errorFailure(error: ProviderError): BlockFailure {
-	return { kind: 'error', error };
 }
 
 export class SnapshotListResource<T> {
@@ -194,10 +303,12 @@ export class SnapshotListResource<T> {
 	totalCount: number | null = $state(null);
 	/** True while any block request is in flight. */
 	loading = $state(false);
-	/** The most recent outstanding request failure (not an expiry), `null` when there is none. */
-	error: ProviderError | null = $state(null);
-	/** Blocks whose latest request failed or expired and that have not loaded since, ascending. */
-	failedBlocks: number[] = $state([]);
+	/**
+	 * One entry per block whose latest request failed or expired and that
+	 * has not loaded since, ascending by block. Includes failures recorded
+	 * in an earlier generation of the same query until their block loads.
+	 */
+	failures: readonly SnapshotListFailure[] = $state([]);
 	/**
 	 * True when rows were deleted inside the current generation's boundary
 	 * while it was being read: the generation fetches nothing more until
@@ -211,6 +322,8 @@ export class SnapshotListResource<T> {
 	readonly #fetcher: SnapshotListFetcher<T>;
 	readonly #blockSize: number;
 	readonly #requestTimeoutMs: number;
+	readonly #messages: SnapshotListMessages;
+	readonly #notify: boolean | ((failure: SnapshotListErrorFailure) => boolean);
 
 	// Private copy of `params`: read when building requests, so an
 	// `ensureRange()` inside a caller's `$effect` does not track `params`.
@@ -221,7 +334,6 @@ export class SnapshotListResource<T> {
 	#loaded = new Set<number>();
 	#inFlight = new Map<number, InFlightRequest>();
 	#failures = new Map<number, FailureRecord>();
-	#failureSeq = 0;
 	#range = { start: 0, end: 0 };
 	// No request is made before the first ensureRange() (same as
 	// WindowedListResource): setParams()/refresh() before it only reset state.
@@ -232,6 +344,8 @@ export class SnapshotListResource<T> {
 		this.#fetcher = fetcher;
 		this.#blockSize = options.blockSize ?? 200;
 		this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_WINDOWED_REQUEST_TIMEOUT_MS;
+		this.#messages = { ...options.messages };
+		this.#notify = options.notify ?? true;
 		this.#params = {
 			sort: options.params?.sort ?? [],
 			filters: options.params?.filters ?? []
@@ -393,7 +507,7 @@ export class SnapshotListResource<T> {
 			if (hasTimeLimit(ms)) {
 				entry.timer = setTimeout(() => {
 					entry.controller.abort();
-					resolve({ ok: false, error: timeoutError(ms) });
+					resolve({ ok: false, ...this.#error('timeout', ms) });
 				}, ms);
 			}
 			// The fetcher is called synchronously (the request is issued
@@ -417,7 +531,7 @@ export class SnapshotListResource<T> {
 			}
 			request.then(
 				(result) => resolve({ ok: true, result }),
-				(err: unknown) => resolve({ ok: false, error: toProviderError(err) })
+				(err: unknown) => resolve({ ok: false, ...requestFailure(err) })
 			);
 		});
 		void outcome.then((settled) => {
@@ -433,15 +547,14 @@ export class SnapshotListResource<T> {
 		this.#inFlight.delete(block);
 
 		const failure = this.#apply(block, outcome);
-		if (failure) {
-			this.#failures.set(block, { failure, generation, seq: ++this.#failureSeq });
-		}
+		if (failure) this.#failures.set(block, { failure, generation });
 		this.#publish();
-		// The notifier is app code and may throw; that must not stop the
-		// pump below (the rest of the range after the boundary is fixed).
+		// The predicate and the notifier are app code and may throw; that
+		// must not stop the pump below (the rest of the range after the
+		// boundary is fixed).
 		if (failure?.kind === 'error') {
 			try {
-				notify('error', failure.error.message);
+				if (this.#shouldNotify(failure)) notify('error', failure.error.message);
 			} catch {
 				// Ignored on purpose (see above).
 			}
@@ -449,33 +562,60 @@ export class SnapshotListResource<T> {
 		this.#pump();
 	}
 
+	#shouldNotify(failure: SnapshotListErrorFailure): boolean {
+		const option = this.#notify;
+		return typeof option === 'function' ? option(failure) === true : option;
+	}
+
+	/**
+	 * A failure the resource detected itself, with the app's text when it
+	 * gave one. Never throws: a message function that throws or returns a
+	 * non-string (app code) falls back to the default text, so a timeout
+	 * still settles.
+	 */
+	#error(code: 'timeout' | 'boundaryMismatch' | 'malformed', ms = 0): ErrorOutcome {
+		const text = (messages: SnapshotListMessages): unknown =>
+			code === 'timeout' ? messages.timeout?.(ms) : messages[code]?.();
+		let message: unknown;
+		try {
+			message = text(this.#messages);
+		} catch {
+			message = undefined;
+		}
+		if (typeof message !== 'string') message = text(defaultSnapshotListMessages);
+		return { code, error: new SnapshotListError(code, message as string) };
+	}
+
 	/** Write one answer, or say why it cannot be written. Never throws. */
-	#apply(block: number, outcome: Outcome<T>): BlockFailure | null {
-		if (!outcome.ok) return errorFailure(outcome.error);
+	#apply(block: number, outcome: Outcome<T>): SnapshotListFailure | null {
+		if (!outcome.ok) return { block, kind: 'error', code: outcome.code, error: outcome.error };
 		const offset = block * this.#blockSize;
 		const result = outcome.result;
 		if (!isWritableSnapshot(result, offset)) {
-			return errorFailure(new ProviderError({ kind: 'other', message: 'malformed list result' }));
+			return { block, kind: 'error', ...this.#error('malformed') };
 		}
 		const snapshot = this.#snapshot;
 		if (snapshot !== null) {
 			if (result.asOfId !== snapshot.asOfId) {
-				return errorFailure(
-					new ProviderError({ kind: 'other', message: SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE })
-				);
+				return { block, kind: 'error', ...this.#error('boundaryMismatch') };
 			}
 			// Either one differing means the set inside the boundary changed.
 			if (
 				result.totalCount !== snapshot.totalCount ||
 				result.deletionEpoch !== snapshot.deletionEpoch
 			) {
-				return { kind: 'expired' };
+				return { block, kind: 'expired' };
 			}
 		}
 		try {
 			this.#write(block, offset, result);
 		} catch (err) {
-			return errorFailure(toProviderError(err));
+			// Unreachable after the check above; kept as the structural
+			// guarantee that a block always settles. An answer that could
+			// not be written is a malformed one.
+			const { code, error } = this.#error('malformed');
+			error.cause = err;
+			return { block, kind: 'error', code, error };
 		}
 		return null;
 	}
@@ -516,12 +656,9 @@ export class SnapshotListResource<T> {
 	/** Publish the derived state. Decides from private fields only (never reads `$state` back). */
 	#publish(): void {
 		this.loading = this.#inFlight.size > 0;
-		let latest: FailureRecord | null = null;
-		for (const record of this.#failures.values()) {
-			if (record.failure.kind === 'error' && (!latest || record.seq > latest.seq)) latest = record;
-		}
-		this.error = latest?.failure.kind === 'error' ? latest.failure.error : null;
-		this.failedBlocks = [...this.#failures.keys()].sort((a, b) => a - b);
+		this.failures = [...this.#failures.values()]
+			.map((record) => record.failure)
+			.sort((a, b) => a.block - b.block);
 		this.expired = this.#isHalted();
 		this.asOfId = this.#snapshot?.asOfId ?? null;
 	}

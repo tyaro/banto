@@ -83,8 +83,15 @@ export {
 export {
 	SnapshotListResource,
 	createSnapshotListResource,
-	SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE,
+	SnapshotListError,
+	isSnapshotListError,
+	defaultSnapshotListMessages,
 	type CreateSnapshotListResourceOptions,
+	type SnapshotListFailure,
+	type SnapshotListErrorFailure,
+	type SnapshotListExpiredFailure,
+	type SnapshotListFailureCode,
+	type SnapshotListMessages,
 	type SnapshotListFetcher,
 	type SnapshotListRequest,
 	type SnapshotListResult
