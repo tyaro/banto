@@ -160,7 +160,7 @@ info 変種の文字色コントラスト不足（4.1:1 < 4.5:1）が axe スイ
 ## 5. ログイン無しで始める — セットアップスキップ（フィードバック 1）
 
 オーナー承認（2026-09-01）により実装。トラックB の手順は
-[docs/recipes/no-login-app.md](recipes/no-login-app.md)。
+[docs/recipes/no-login-app.md](../recipes/no-login-app.md)。
 
 **入口（新規）**: 初回セットアップ画面（Tauri のみ）にアカウント作成フォーム
 と並べて「ログインなしで使い始める」ボタンを置いた

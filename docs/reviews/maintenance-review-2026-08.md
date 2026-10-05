@@ -14,7 +14,7 @@
 関連: [maintainability-review-2026-07.md](maintainability-review-2026-07.md)（前回・Rust中心。
 本書 §1 の AI 保守性の前提はそちら §1 を引き継ぐ）、
 [feature-review-2026-08.md](feature-review-2026-08.md)（機能スコープの直近棚卸し）、
-[ADR-0006](adr/0006-docs-in-repo-projects-status-only.md)（知識の in-repo 一本化）。
+[ADR-0006](../adr/0006-docs-in-repo-projects-status-only.md)（知識の in-repo 一本化）。
 
 ---
 
