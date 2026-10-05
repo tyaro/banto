@@ -51,7 +51,7 @@ window-vibrancy = "0.8"
 # other or leave litter behind - `std::env::temp_dir()` alone is not enough
 # since tests run concurrently and would otherwise share one directory.
 tempfile = "3"
-# M20 attachments (spec docs/attachments-plan.md §3.4): sha256 of uploaded
+# M20 attachments (spec docs/design/attachments-plan.md §3.4): sha256 of uploaded
 # bytes for integrity checking / future dedup. Was already present
 # transitively (via sqlx et al.); promoted to a direct dependency because
 # `banto-attachments` calls it explicitly rather than relying on whatever

@@ -4,7 +4,7 @@
 
 - Status: Accepted
 - Date: 2026-09-14
-- Related: Issue #189 / [docs/viewer-public-plan.md](../viewer-public-plan.md) /
+- Related: Issue #189 / [docs/design/viewer-public-plan.md](../design/viewer-public-plan.md) /
   conventions §1, §6, §10 / roadmap M10, M11 / ADR-0001 (two-path symmetry)
 
 ## Context

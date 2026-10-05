@@ -343,7 +343,7 @@ sequenceDiagram
 | 仕様の基準線 | `docs/ui-framework-spec.md` |
 | CRUD リソース追加の正式手順 | `docs/recipes/add-resource.md` |
 | 二経路対称の設計判断 | `docs/adr/0001-rest-tauri-two-path-symmetry.md` |
-| scaffold プリセット | `docs/scaffold-presets-plan.md` / README「オプション資産の削除」 |
+| scaffold プリセット | `docs/design/scaffold-presets-plan.md` / README「オプション資産の削除」 |
 | 認証・起動・開発・add-resource 索引 | [architecture-flows.md](./architecture-flows.md) |
 
 ### コードの置き場

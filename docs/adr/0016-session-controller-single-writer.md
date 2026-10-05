@@ -6,7 +6,7 @@
 - 日付: 2026-09-29
 - 関連: Issue #260・#255・#257・#259・#241・#204 / spec §3.3・§8.1 / conventions §10 /
   ADR-0014（アカウントに結び付けた失効）/ ADR-0012（合成 viewer セッション）/
-  設計の本文: [docs/session-controller-design.md](../session-controller-design.md)
+  設計の本文: [docs/design/session-controller-design.md](../design/session-controller-design.md)
 
 ## コンテキスト
 

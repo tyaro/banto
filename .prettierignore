@@ -5,6 +5,7 @@ dist
 pnpm-lock.yaml
 target
 docs/*.md
+docs/design/*.md
 
 # Generated/vendored, not hand-authored
 apps/admin-template/src-tauri/gen
@@ -22,7 +23,7 @@ apps/admin-template/src/lib/paraglide
 apps/admin-template/project.inlang/*
 !apps/admin-template/project.inlang/settings.json
 
-# M19 report demo (docs/report-plan.md §3.1): *.md here is the @banto/report
+# M19 report demo (docs/design/report-plan.md §3.1): *.md here is the @banto/report
 # template DSL (Markdown subset + {{ }} data-bind syntax), not prose.
 # Prettier's Markdown table formatter rewrites `{{#each}}`/`{{/each}}`
 # control lines into table cells (wraps them in `| ... |`), which the

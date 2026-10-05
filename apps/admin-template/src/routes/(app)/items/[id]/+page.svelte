@@ -227,7 +227,7 @@
 	</div>
 
 	<!--
-		M20 demo wiring (spec docs/attachments-plan.md §3.8, deletable per
+		M20 demo wiring (spec docs/design/attachments-plan.md §3.8, deletable per
 		docs/template-scope.md §3): only mount once the record itself has
 		loaded successfully (`storeReady`, which already implies `idValid` -
 		see `loadForm` above - kept explicit here for readability) so the

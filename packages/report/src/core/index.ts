@@ -1,6 +1,6 @@
 /**
  * `renderReport` - the headless report core's public entry point
- * (docs/report-plan.md §3.3). Wires parse -> bind -> html together and
+ * (docs/design/report-plan.md §3.3). Wires parse -> bind -> html together and
  * merges warnings from all three stages (deduped, insertion order).
  */
 

@@ -4,7 +4,7 @@
 
 - 状態: Accepted
 - 日付: 2026-09-14
-- 関連: Issue #189 / [docs/viewer-public-plan.md](../viewer-public-plan.md) /
+- 関連: Issue #189 / [docs/design/viewer-public-plan.md](../design/viewer-public-plan.md) /
   conventions §1・§6・§10 / roadmap M10・M11 / ADR-0001（両経路対称）
 
 ## コンテキスト

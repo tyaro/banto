@@ -41,7 +41,7 @@ export interface Identity {
 
 /**
  * Which credential an `AuthProvider` answer is about (Issue #260,
- * docs/session-controller-design.md §5.2, I-23). OPAQUE: compare two values
+ * docs/design/session-controller-design.md §5.2, I-23). OPAQUE: compare two values
  * with `===` only - never parse, order or do arithmetic on them. A provider
  * builds it from its own internal counters (HTTP: a counter of its own token
  * writes and cross-tab `storage` events; Tauri: the max `seq` observed from

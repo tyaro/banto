@@ -74,7 +74,7 @@ test('--interactive は確認で n を選ぶと変更せずに正常終了する
 	assert.doesNotMatch(res.stdout, /適用しました/);
 });
 
-// display プリセット（docs/display-preset-plan.md §3.2、Issue #190）の計画テスト。
+// display プリセット（docs/design/display-preset-plan.md §3.2、Issue #190）の計画テスト。
 // `--dry-run --strict` は「pristine な出荷ツリーで全アンカーが一致すること」の
 // 機械検査そのものなので、アンカーがドリフトすればここで落ちる（
 // template-acceptance.yml の presets ジョブが実際に適用する前の軽量ガード）。

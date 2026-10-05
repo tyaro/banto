@@ -51,7 +51,7 @@ const ITEM_STOCK = 10;
 // deletes at its end.
 const ROUNDTRIP_ITEM_NAME = `E2E往復テスト商品-${Date.now()}`;
 
-// M20 attachments scenario (docs/attachments-plan.md §4 unit D): a
+// M20 attachments scenario (docs/design/attachments-plan.md §4 unit D): a
 // dedicated item so uploads/deletes never touch the item scenario 3 already
 // created and deleted.
 const ATTACHMENT_ITEM_NAME = `E2E添付テスト商品-${Date.now()}`;
@@ -1843,7 +1843,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByText('sqlite', { exact: false })).toBeVisible();
 	});
 
-	// M19 report demo (docs/report-plan.md §3.6, docs/template-scope.md §3):
+	// M19 report demo (docs/design/report-plan.md §3.6, docs/template-scope.md §3):
 	// items -> 日報 -> the report renders. Deliberately does NOT trigger
 	// window.print() (report-plan §3.6) - only confirms the template rendered real
 	// data, not the print dialog itself. Placed last: by this point

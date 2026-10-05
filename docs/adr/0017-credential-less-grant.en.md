@@ -7,8 +7,8 @@
 - Related: [ADR-0012](0012-lan-public-viewer-synthetic-session.en.md) (viewer-public = a viewer-only synthetic session; this ADR generalizes it; the mechanism decision stands, so it is not superseded) /
   [ADR-0003](0003-tls-via-reverse-proxy.en.md) (same-host reverse proxy; the premise of decision §6) /
   [ADR-0014](0014-account-bound-session-revocation.en.md) (account-bound revocation; grant sessions are outside it) /
-  [ADR-0016](0016-session-controller-single-writer.en.md) and [docs/session-controller-design.md](../session-controller-design.md) §4.7, §6.2, I-13, I-21 (`adopt()`/`end()` are removed) /
-  [docs/viewer-public-plan.md](../viewer-public-plan.md) §2.2 / conventions §1, §6, §10 /
+  [ADR-0016](0016-session-controller-single-writer.en.md) and [docs/design/session-controller-design.md](../design/session-controller-design.md) §4.7, §6.2, I-13, I-21 (`adopt()`/`end()` are removed) /
+  [docs/design/viewer-public-plan.md](../design/viewer-public-plan.md) §2.2 / conventions §1, §6, §10 /
   [docs/upgrading.md](../upgrading.md) (where the migration guide goes) /
   derived apps: banto-hub's "commissioning mode" and chronogazer in tyaro/banto-industrial
 - Code under discussion: banto v2.1.1 (`25f2291`). `file:line` references below are to that version
@@ -302,7 +302,7 @@ Decision:
   adopted" branches of steps 0-7 (I-13, S-44 to S-46, S-53, S-62, S-69 to S-71) and the
   `adopt`/`end` members of `SessionController`. A grant-based commissioning session follows the
   S-42 path (the provider answers, the ticket has a revision, an SSE 401 can trigger a
-  confirmation) - noted in [session-controller-design.md](../session-controller-design.md).
+  confirmation) - noted in [session-controller-design.md](../design/session-controller-design.md).
 
 ### 5. Derived-app agreements (for reference; not banto rules)
 

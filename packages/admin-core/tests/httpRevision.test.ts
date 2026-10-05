@@ -4,7 +4,7 @@ import type { CredentialRevision } from '../src/provider';
 import { createHttpAuthProvider } from '../src/providers/http';
 
 /**
- * Issue #260 実装-1 (docs/session-controller-design.md §5.2, §8.2): the HTTP
+ * Issue #260 実装-1 (docs/design/session-controller-design.md §5.2, §8.2): the HTTP
  * provider's `resolve()`, credential revision, compare-and-set token writes
  * (#259) and change notifications. Test names start with the scenario
  * number (S-n) of design §4.

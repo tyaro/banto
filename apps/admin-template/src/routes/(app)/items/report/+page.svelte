@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * M19 report demo (docs/report-plan.md §3.5, deletable per
+	 * M19 report demo (docs/design/report-plan.md §3.5, deletable per
 	 * docs/template-scope.md §3): a daily report ("日報") built from the
 	 * `items` list, showing `@banto/report` end to end (Markdown template +
 	 * data bind + print CSS) against real app data. Same "load once, whole

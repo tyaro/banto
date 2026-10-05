@@ -1,5 +1,5 @@
 /**
- * SessionController (Issue #260 実装-2/実装-3, docs/session-controller-design.md).
+ * SessionController (Issue #260 実装-2/実装-3, docs/design/session-controller-design.md).
  * Test names start with the scenario number (`S-n:`) of design §4; each
  * `describe` names the invariants (I-n) it pins down. §3.1's generation
  * table has one test per row. The order of answers/timers is decided by the

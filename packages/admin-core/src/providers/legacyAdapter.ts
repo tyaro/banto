@@ -1,6 +1,6 @@
 /**
  * Compatibility adapter for a pre-#260 `AuthProvider` (Issue #260,
- * docs/session-controller-design.md §5.2, owner decision 2).
+ * docs/design/session-controller-design.md §5.2, owner decision 2).
  *
  * A scaffold for moving a hand-written provider onto the v2 contract, NOT a
  * full implementation of it. It fills in `resolve`/`credentialRevision`/

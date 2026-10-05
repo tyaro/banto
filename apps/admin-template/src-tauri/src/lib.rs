@@ -67,7 +67,7 @@ struct AppState {
     /// that establishes a session states which kind it is, and every read
     /// goes through [`current_session`].
     ///
-    /// Issue #260 (docs/session-controller-design.md §5.3, I-11): wrapped in
+    /// Issue #260 (docs/design/session-controller-design.md §5.3, I-11): wrapped in
     /// an [`AuthSlot`] with a write sequence, so a command that `.await`s
     /// between reading the slot and writing it (login's argon2 verify,
     /// logout's settings read) only writes when nothing re-bound the slot
@@ -148,7 +148,7 @@ struct AppState {
     /// `restore-pending.sqlite3`'s location, see `crate::backup`'s doc
     /// comment).
     backup: BackupService,
-    /// File/image attachments (spec `docs/attachments-plan.md` §3, M20 unit
+    /// File/image attachments (spec `docs/design/attachments-plan.md` §3, M20 unit
     /// B): `banto_attachments::AttachmentsService` has no `tauri`/
     /// `ServerEvent` awareness by design (see that crate's module doc
     /// comment), so - unlike `items`, which broadcasts its own
@@ -350,7 +350,7 @@ struct Identity {
 struct AuthStatusResult {
     initialized: bool,
     /// Always `false` in the Tauri window (Issue #189,
-    /// `docs/viewer-public-plan.md` §3.1-4, ADR-0012). 閲覧公開 is a property
+    /// `docs/design/viewer-public-plan.md` §3.1-4, ADR-0012). 閲覧公開 is a property
     /// of the LAN surface: it lets a BROWSER on the network obtain a
     /// synthetic `viewer` session over REST. Inside the desktop webview there
     /// is no such thing to enter - a login-free desktop is M11's
@@ -733,7 +733,7 @@ async fn items_update(
 async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Editor, "items").await?;
     state.items.delete(id).await?;
-    // M20 unit C demo wiring (spec docs/attachments-plan.md §3.8): sweep up
+    // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up
     // any attachments left pointing at the now-deleted record. Best-effort,
     // same reasoning as the REST handler (admin-template-core's
     // `rest.rs::items_delete`) - a storage hiccup here must not turn an
@@ -1941,7 +1941,7 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// an acceptable trade for a settings-screen action a user triggers
 /// explicitly and infrequently.
 ///
-/// `viewer_public` (Issue #189, `docs/viewer-public-plan.md` §3.1-4) is
+/// `viewer_public` (Issue #189, `docs/design/viewer-public-plan.md` §3.1-4) is
 /// persisted like the other three fields and otherwise ignored here: whether
 /// LAN clients may mint a synthetic `viewer` session is decided per request
 /// by `POST /api/auth/grant/publicViewer`, whose condition re-reads the setting, so a
@@ -3189,7 +3189,7 @@ pub fn run() {
                 Err(err) => eprintln!("banto: 初回起動の既定設定の書き込みに失敗しました: {err}"),
             }
             let backup = BackupService::new(db_path.clone(), db.clone());
-            // M20 attachments (spec docs/attachments-plan.md §3.3): same
+            // M20 attachments (spec docs/design/attachments-plan.md §3.3): same
             // sibling-directory convention as `backups/` above, next to the
             // DB file inside the app's own data directory.
             let attachments_dir = data_dir.join("attachments");
@@ -4985,7 +4985,7 @@ mod tests {
 
     // --- Issue #260: the session slot's seq and compare-and-set ------------
     //
-    // docs/session-controller-design.md §4.3/§8.3: the command BODIES are
+    // docs/design/session-controller-design.md §4.3/§8.3: the command BODIES are
     // driven with their slow `.await` (verify / first-user setup / auth-mode
     // read) held at an injected gate, so the completion order is fixed by
     // the test, not by the scheduler.

@@ -152,7 +152,7 @@ jobs:
         working-directory: ${{ env.DEST }}
         run: cargo check -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
 
-  # プリセット受け入れ（P4-9 / docs/scaffold-presets-plan.md §6）: 各プリセットで
+  # プリセット受け入れ（P4-9 / docs/design/scaffold-presets-plan.md §6）: 各プリセットで
   # `scaffold.mjs` を適用したクリーンコピーが「ビルド緑」であることを機械で保証する。
   # これは scaffold のハード要件 — 削除でツリーが壊れるプリセットを出荷しないための
   # 唯一の防波堤。上の rename と同じコピー/セットアップ様式を踏襲する。
@@ -161,7 +161,7 @@ jobs:
   # クレート集合（admin-template-core は banto-attachments を推移的に含むので full でも
   # 検査される）を明示指定する。src-tauri は非対象（tauri-check.yml の担当）。
   #
-  # `display`（docs/display-preset-plan.md、Issue #190）も同じ工程で検査する。
+  # `display`（docs/design/display-preset-plan.md、Issue #190）も同じ工程で検査する。
   # display は items デモ・users/audit-log 画面・ダッシュボードを外したうえで
   # `/monitor` と初回起動シードを**足す**唯一のプリセットなので、
   # 「引いた後もビルド緑」に加えて「足した後も型検査/テスト緑」がここで担保される。

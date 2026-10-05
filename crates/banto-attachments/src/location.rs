@@ -4,7 +4,7 @@
 //! Before #208 every caller derived the directory as
 //! `Path::new(db_target).parent().join("attachments")` regardless of the
 //! backend. That is right for a SQLite file (the directory sits next to the
-//! DB file, spec `docs/attachments-plan.md` §3.3), but a PostgreSQL
+//! DB file, spec `docs/design/attachments-plan.md` §3.3), but a PostgreSQL
 //! connection URL is not a path: the "parent" of
 //! `postgres://user:pass@host:5432/banto_a` is `postgres://user:pass@host:5432`,
 //! so

@@ -1,5 +1,5 @@
 /**
- * Viewer-public mode E2E (docs/viewer-public-plan.md §3.1-8, Issue #189,
+ * Viewer-public mode E2E (docs/design/viewer-public-plan.md §3.1-8, Issue #189,
  * ADR-0012). The synthetic viewer session is the `publicViewer` grant
  * (`POST /api/auth/grant/publicViewer`, ADR-0017).
  *

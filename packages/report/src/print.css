@@ -1,5 +1,5 @@
 /**
- * Report / print stylesheet (docs/report-plan.md §3.4), scoped entirely by
+ * Report / print stylesheet (docs/design/report-plan.md §3.4), scoped entirely by
  * the `.report-body` wrapper class `core/html.ts` always emits. Imported
  * once by the app via `import '@banto/report/print.css'`.
  *

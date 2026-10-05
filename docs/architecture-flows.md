@@ -55,7 +55,7 @@ flowchart TD
 
 ## 2. 保護ルートへの入り方（`(app)` ガード）
 
-セッションの状態（誰がログインしているか）を書くのは **SessionController だけ**（v2.0.0、[ADR-0016](./adr/0016-session-controller-single-writer.md)。設計は [session-controller-design.md](./session-controller-design.md) §6.1）。`(app)/+layout.ts` の `load` は `bantoReady` の後に controller で確認し、確認できた generation を返すだけで、ストアには書かない。
+セッションの状態（誰がログインしているか）を書くのは **SessionController だけ**（v2.0.0、[ADR-0016](./adr/0016-session-controller-single-writer.md)。設計は [session-controller-design.md](design/session-controller-design.md) §6.1）。`(app)/+layout.ts` の `load` は `bantoReady` の後に controller で確認し、確認できた generation を返すだけで、ストアには書かない。
 
 起動判定（§1）が終わる前に保護ルートを直接開いたとき、ガードは `bantoReady` を**待たない**（#321）。待つと初回の load が終わらず、SvelteKit はルートのレイアウト（スプラッシュ）も描かないため、サーバーに届かない間は真っ白で再接続もできなかった。代わりに、provider にもセッションにも触れる前に起動待ちの印付きの 503（`startupGate.ts` の `deferUntilStarted`、`App.Error.startupPending`）を投げる。子の load はすべて `await parent()` なので、保護画面の load とコンポーネントは動かない。ルートのレイアウトはこの印のあいだエラー画面ではなくスプラッシュ（「起動中…」→「サーバーに接続できません」＋再接続）を出し、`bantoReady` が解決し、その印を出したナビゲーションが終わってから `refreshAll()` でガードをやり直す（同じ URL が開く）。
 
@@ -395,7 +395,7 @@ flowchart LR
 | 初回シード                | `apps/admin-template/core/src/first_boot.rs`                                          |
 | ログイン／セットアップ UI | `apps/admin-template/src/routes/login/+page.svelte`                                   |
 | ログイン無しレシピ        | `docs/recipes/no-login-app.md`                                                        |
-| display 既定              | `docs/display-preset-plan.md`                                                         |
+| display 既定              | `docs/design/display-preset-plan.md`                                                         |
 | 開発コマンド              | `README.md`「開発」「`banto-serve`」                                                  |
 | CRUD 追加手順             | `docs/recipes/add-resource.md`（本ファイル §7 は層の索引）                            |
-| 閲覧公開計画              | `docs/viewer-public-plan.md` / `docs/adr/0012-lan-public-viewer-synthetic-session.md` |
+| 閲覧公開計画              | `docs/design/viewer-public-plan.md` / `docs/adr/0012-lan-public-viewer-synthetic-session.md` |

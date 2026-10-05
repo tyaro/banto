@@ -1,4 +1,4 @@
-//! Banto attachments (spec `docs/attachments-plan.md` §3): a resource-agnostic
+//! Banto attachments (spec `docs/design/attachments-plan.md` §3): a resource-agnostic
 //! file/image attachment service - metadata CRUD, on-disk storage, and image
 //! thumbnail generation. Same testable, tauri/axum-free service-layer
 //! pattern as `admin-template-core`'s `items.rs` and the `banto-admin-services`

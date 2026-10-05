@@ -1,5 +1,5 @@
 /**
- * Public entry point for @banto/attachments (spec `docs/attachments-plan.md`
+ * Public entry point for @banto/attachments (spec `docs/design/attachments-plan.md`
  * §3.7).
  */
 export type { AttachmentMeta, AttachmentsClient } from './types';

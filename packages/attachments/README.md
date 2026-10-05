@@ -2,7 +2,7 @@
 
 Banto の添付ファイル/画像管理 UI パッケージ（M20、オプション扱い）。
 `AttachmentsPanel.svelte` が一覧・アップロード・削除・サムネイル/
-ダウンロード表示を提供する（docs/attachments-plan.md §3.7）。トランスポート
+ダウンロード表示を提供する（docs/design/attachments-plan.md §3.7）。トランスポート
 非依存で、呼び出し側が `AttachmentsClient` を注入する
 （アプリ固有 import は持たない、docs/conventions.md §5）。
 
@@ -33,4 +33,4 @@ npm レジストリには公開していない。モノレポ内では `workspac
 ## 関連ドキュメント
 
 - 本体リポジトリ: https://github.com/tyaro/banto
-- 仕様: [docs/attachments-plan.md §3.7](../../docs/attachments-plan.md)（M20: 添付ファイル/画像管理 計画書、`@banto/attachments`）
+- 仕様: [docs/design/attachments-plan.md §3.7](../../docs/design/attachments-plan.md)（M20: 添付ファイル/画像管理 計画書、`@banto/attachments`）

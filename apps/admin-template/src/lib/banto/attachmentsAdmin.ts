@@ -1,6 +1,6 @@
 /**
  * Client for the generic file/image attachment API (spec
- * `docs/attachments-plan.md` §3.5-§3.6, M20 unit B). Same Tauri/REST split
+ * `docs/design/attachments-plan.md` §3.5-§3.6, M20 unit B). Same Tauri/REST split
  * as `backupsAdmin.ts`: the Tauri webview calls `invoke()` directly (the
  * `attachments_*` commands, `apps/admin-template/src-tauri/src/lib.rs`), a
  * LAN browser client served by the embedded server calls `fetch()` against

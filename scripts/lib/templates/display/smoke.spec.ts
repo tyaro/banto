@@ -1,7 +1,7 @@
 /**
  * display プリセットの e2e スモーク（`scripts/scaffold.mjs --preset display` が
  * `e2e/tests/smoke.spec.ts` を丸ごとこれに差し替える。
- * docs/display-preset-plan.md §3.2）。
+ * docs/design/display-preset-plan.md §3.2）。
  *
  * テンプレート同梱のスモーク（items の CRUD / CSV / 添付 / ユーザー管理…）は
  * display では画面ごと存在しないので、残るのは **表示専用アプリの成立条件**

@@ -3,7 +3,7 @@
 Banto の帳票/印刷パッケージ（M19、オプション扱い）。Markdown サブセットの
 自前テンプレートパーサ/データバインド/レンダラ（unit A、`renderReport`）と、
 プレビュー/印刷用の `ReportView.svelte`（unit B）、印刷用 CSS
-（`@banto/report/print.css`）で構成する（docs/report-plan.md）。
+（`@banto/report/print.css`）で構成する（docs/design/report-plan.md）。
 
 ## 使用例
 
@@ -42,4 +42,4 @@ npm レジストリには公開していない。モノレポ内では `workspac
 ## 関連ドキュメント
 
 - 本体リポジトリ: https://github.com/tyaro/banto
-- 仕様: [docs/report-plan.md](../../docs/report-plan.md)（M19: 帳票/印刷 計画書、§3.3 renderReport）
+- 仕様: [docs/design/report-plan.md](../../docs/design/report-plan.md)（M19: 帳票/印刷 計画書、§3.3 renderReport）

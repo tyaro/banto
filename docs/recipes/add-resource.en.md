@@ -72,7 +72,7 @@ API (reference: `routes/(app)/items/+page.svelte` and
   confirmed owner), or the previous session's screen survives a session
   change (no rebuild).
 
-The session design is [session-controller-design.md](../session-controller-design.md) §6.1 (Japanese).
+The session design is [session-controller-design.md](../design/session-controller-design.md) §6.1 (Japanese).
 
 ## Verification
 

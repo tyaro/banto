@@ -9,7 +9,7 @@
 --   created_at stays TEXT (an ISO-8601 UTC string written by the crate, e.g.
 --     "2026-07-15T12:34:56Z"); no native timestamp type is used.
 --
--- M20: generic file/image attachments (spec docs/attachments-plan.md §3.2).
+-- M20: generic file/image attachments (spec docs/design/attachments-plan.md §3.2).
 -- Deliberately NOT added to backup.rs's REQUIRED_TABLES so an older backup
 -- taken before this migration existed stays restorable.
 CREATE TABLE attachments (

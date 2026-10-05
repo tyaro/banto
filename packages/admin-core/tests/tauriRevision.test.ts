@@ -3,7 +3,7 @@ import { isProviderError, isStaleAnswerError } from '../src/errors';
 import { createTauriAuthProvider } from '../src/providers/tauri';
 
 /**
- * Issue #260 実装-1 (docs/session-controller-design.md §5.3, §8.2): the
+ * Issue #260 実装-1 (docs/design/session-controller-design.md §5.3, §8.2): the
  * Tauri provider's `(observedSeq, local)` revision, `auth_resolve`, the
  * stale rule for answers that cross a pending state-changing command, and
  * change notifications. The Rust commands are replaced by a scripted
