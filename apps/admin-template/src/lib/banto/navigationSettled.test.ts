@@ -1,17 +1,18 @@
 /**
- * Issue #326 (#321): the layouts start `invalidateAll()` only when no
+ * Issue #326 (#321): the layouts start `refreshAll()` only when no
  * SvelteKit navigation is in progress - including the first one, which
  * SvelteKit does not publish in `navigating`.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-	afterNavigate: [] as Array<() => void>,
+	afterNavigate: [] as Array<(navigation: { shallow: boolean }) => void>,
 	navigating: { to: null as object | null }
 }));
 
 vi.mock('$app/navigation', () => ({
-	afterNavigate: (callback: () => void) => state.afterNavigate.push(callback)
+	afterNavigate: (callback: (navigation: { shallow: boolean }) => void) =>
+		state.afterNavigate.push(callback)
 }));
 vi.mock('$app/state', () => ({ navigating: state.navigating }));
 
@@ -28,7 +29,12 @@ describe('isNavigationSettled', () => {
 		trackFirstNavigation();
 		expect(isNavigationSettled()).toBe(false);
 
-		state.afterNavigate.forEach((callback) => callback());
+		// SvelteKit 3 runs the navigation callbacks for shallow routing too
+		// (`goto(url, { shallow: true })`); that is not the first navigation.
+		state.afterNavigate.forEach((callback) => callback({ shallow: true }));
+		expect(isNavigationSettled()).toBe(false);
+
+		state.afterNavigate.forEach((callback) => callback({ shallow: false }));
 		expect(isNavigationSettled()).toBe(true);
 	});
 
@@ -36,7 +42,7 @@ describe('isNavigationSettled', () => {
 		const { isNavigationSettled, trackFirstNavigation } =
 			await import('./navigationSettled.svelte');
 		trackFirstNavigation();
-		state.afterNavigate.forEach((callback) => callback());
+		state.afterNavigate.forEach((callback) => callback({ shallow: false }));
 
 		state.navigating.to = { url: new URL('http://localhost/items') };
 		expect(isNavigationSettled()).toBe(false);

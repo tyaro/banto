@@ -22,7 +22,8 @@ describe('deferUntilStarted', () => {
 		}
 		expect(isHttpError(thrown, 503)).toBe(true);
 		const body = (thrown as { body: App.Error }).body;
-		expect(body).toEqual({ message: 'starting', startupPending: true });
+		// SvelteKit 3 puts the status into the error body too (`App.Error.status`).
+		expect(body).toEqual({ status: 503, message: 'starting', startupPending: true });
 		expect(isStartupDeferral(body)).toBe(true);
 	});
 });
@@ -31,7 +32,9 @@ describe('isStartupDeferral', () => {
 	it('is false for no error and for every other error (e.g. the session-check 503)', () => {
 		expect(isStartupDeferral(null)).toBe(false);
 		expect(isStartupDeferral(undefined)).toBe(false);
-		expect(isStartupDeferral({ message: 'ログイン状態を確認できませんでした' })).toBe(false);
-		expect(isStartupDeferral({ message: 'x', startupPending: false })).toBe(false);
+		expect(isStartupDeferral({ status: 503, message: 'ログイン状態を確認できませんでした' })).toBe(
+			false
+		);
+		expect(isStartupDeferral({ status: 503, message: 'x', startupPending: false })).toBe(false);
 	});
 });

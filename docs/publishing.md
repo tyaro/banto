@@ -185,7 +185,11 @@ private リポジトリの場合、消費側の Cargo/Git 認証（SSH鍵 or
   `pnpm-lock.yaml` を commit（PR 経由）。fixture が commit している ref は現行
   リリースタグなので、新しい `.svelte.ts` 同梱パッケージを main に足すと
   （`verify:architecture` が fixture への import を求める一方で）既定状態の fixture は
-  ローカルで install できなくなる。CI は検証する SHA に書き換えるので影響しない
+  ローカルで install できなくなる。CI は検証する SHA に書き換えるので影響しない。
+  同じ理由で、**fixture 側の手当てを外す変更**を入れると、次のタグで ref を上げるまで既定状態の fixture は
+  ローカルで通らない期間ができる（例: v4.0.0 の #325 PR3 で `@banto/theme/css` の型を theme が持つように
+  なり fixture の `src/ambient.d.ts` を外したので、v4.0.0 のタグ後に ref を上げるまで、v3.0.1 を参照する
+  fixture の `pnpm check` はローカルで失敗する。PR の SHA に差し替える CI では通る）
 - タグは軽量タグ（`git tag v3.0.1`）で可。変更履歴は
   [CHANGELOG.md](../CHANGELOG.md) で手動管理する（PR ごとに `[Unreleased]` へ
   追記 → リリース時に版節へ切り出し）

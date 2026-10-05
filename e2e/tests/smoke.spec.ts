@@ -1868,7 +1868,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// Nav badge (choiapp-feedback-2026-09 §4.1): a `resource_changed` server
 	// event for a resource whose page is NOT on screen shows an
 	// unseen-updates badge on that resource's sidebar entry
-	// ($lib/navBadges.svelte.ts), and visiting the page clears it. The
+	// (#lib/navBadges.svelte.ts), and visiting the page clears it. The
 	// "another client" is simulated by calling the REST API directly from
 	// the page context with the session's own bearer token - the server
 	// broadcasts the same SSE event either way. Creates then deletes one
@@ -2349,16 +2349,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
-	/** The built client chunk (`_app/immutable/nodes/N.hash.js`) of one route file. */
+	/**
+	 * The built client chunk (`_app/immutable/nodes/N.hash.js`) of one route file.
+	 * Reads SvelteKit's build internals (layout as of SvelteKit 3: the node
+	 * entries stay in `generated/build/client/nodes/`, the Vite manifest keys
+	 * them as `generated/build/client-optimized/nodes/`); revisit on a kit
+	 * upgrade if this throws.
+	 */
 	function nodeChunkOf(routeFile: string): string {
 		const kit = new URL('../../apps/admin-template/.svelte-kit/', import.meta.url);
-		const nodes = new URL('generated/client-optimized/nodes/', kit);
+		const nodes = new URL('generated/build/client/nodes/', kit);
 		const manifest = JSON.parse(
 			fs.readFileSync(new URL('output/client/.vite/manifest.json', kit), 'utf8')
 		) as Record<string, { file: string }>;
 		for (const name of fs.readdirSync(nodes)) {
 			if (!fs.readFileSync(new URL(name, nodes), 'utf8').includes(routeFile)) continue;
-			const entry = manifest[`.svelte-kit/generated/client-optimized/nodes/${name}`];
+			const entry = manifest[`.svelte-kit/generated/build/client-optimized/nodes/${name}`];
 			if (entry) return entry.file;
 		}
 		throw new Error(`no client chunk for ${routeFile} - run the admin-template build first`);
@@ -2433,7 +2439,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// session check answers 500). This tab never shows the old user's screen:
 	// its load ends on the retry page (503). The background confirmation later
 	// confirms the new user - the retry page is NOT replaced on its own - and
-	// the real "再試行" button (an in-document `invalidateAll()` that keeps the
+	// the real "再試行" button (an in-document `refreshAll()` that keeps the
 	// SessionController) rebuilds the screen for the new user and tells them
 	// once: the change was recorded while no protected layout was mounted.
 	test('13h. S-36/S-81: a switch that cannot be confirmed waits on the retry page; 再試行 opens the new user and tells them once', async ({
@@ -2530,7 +2536,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// another tab logs in again (the shared Remember me token is replaced)
 	// while this tab's move from the item form to the list is still loading
 	// (the list's client chunk is held). Wiring ① must not start
-	// `invalidateAll()` in the middle of that navigation: SvelteKit 2.70
+	// `refreshAll()` in the middle of that navigation: SvelteKit 2.70
 	// would abort it and leave its internal "navigating" flag set, after
 	// which `beforeNavigate` - the unsaved-changes guard - is skipped. The
 	// move completes, the re-run happens after it, and leaving a form with

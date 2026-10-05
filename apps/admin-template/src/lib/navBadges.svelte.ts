@@ -1,15 +1,15 @@
 /**
  * Unseen-change badge counts for sidebar navigation entries
  * (choiapp-feedback-2026-09 §4.1; Svelte 5 runes). Same "module singleton
- * populated by the app shell" pattern as `$lib/settings.svelte.ts` /
- * `$lib/toast.svelte.ts`.
+ * populated by the app shell" pattern as `#lib/settings.svelte.ts` /
+ * `#lib/toast.svelte.ts`.
  *
  * Ownership split:
  * - `routes/(app)/+layout.svelte` WIRES the store: it subscribes to
  *   admin-core's `onInvalidate` bus (spec §3.4 - fired both by this
  *   client's own mutations and by `resource_changed` server events, spec
  *   §3.5) for every `NavItem` that declares a `badgeResource`
- *   ($lib/navigation.ts), increments while the user is elsewhere, and
+ *   (#lib/navigation.ts), increments while the user is elsewhere, and
  *   clears a path's count when navigation lands on it.
  * - `Sidebar.svelte` only READS `count(path)` to render the badge.
  *

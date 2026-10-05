@@ -1,6 +1,6 @@
 /**
  * Shared `AuthSettings` (M11 login-not-required mode) load state. Module
- * singleton (same pattern as `$lib/session.svelte.ts`), needed here because
+ * singleton (same pattern as `#lib/session.svelte.ts`), needed here because
  * the settings-split refactor (choiapp-feedback-2026-09 §3) has THREE
  * readers of the same loaded value in different components:
  * - `AccountSection.svelte`'s autologin card (read-only; also refreshes it
@@ -22,7 +22,7 @@
  * SecuritySection-local `authError`, so the section can keep showing the
  * same error text without owning the fetch.
  */
-import { getAuthSettings, type AuthSettings } from '$lib/banto/authAdmin';
+import { getAuthSettings, type AuthSettings } from '#lib/banto/authAdmin.js';
 import { errorMessage } from './shared';
 
 class AuthSettingsStore {

@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
-import { base } from '$app/paths';
-import { isAdmin } from '$lib/permissions';
-import { sessionStore } from '$lib/session.svelte';
+import { resolve } from '$app/paths';
+import { isAdmin } from '#lib/permissions.js';
+import { sessionStore } from '#lib/session.svelte.js';
 
 /**
  * `admin`-only page (spec M14): non-admins are sent to the dashboard rather
@@ -16,6 +16,6 @@ import { sessionStore } from '$lib/session.svelte';
 export async function load({ parent }) {
 	await parent();
 	if (!isAdmin(sessionStore.role)) {
-		redirect(307, `${base}/dashboard`);
+		redirect(307, resolve(`dashboard`));
 	}
 }

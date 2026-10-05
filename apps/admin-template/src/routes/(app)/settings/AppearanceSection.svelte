@@ -19,14 +19,14 @@
 		Sparkles,
 		Sun
 	} from '@lucide/svelte';
-	import * as m from '$lib/paraglide/messages';
-	import { getLocale, locales, setLocale, type Locale } from '$lib/paraglide/runtime';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
-	import { settings } from '$lib/settings.svelte';
-	import { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '$lib/banto/vibrancy';
-	import { toastStore } from '$lib/toast.svelte';
-	import { sessionStore } from '$lib/session.svelte';
-	import { isAdmin } from '$lib/permissions';
+	import * as m from '#lib/paraglide/messages.js';
+	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { settings } from '#lib/settings.svelte.js';
+	import { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';
+	import { toastStore } from '#lib/toast.svelte.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
 	import { errorMessage, tauri } from './shared';
 
 	const modes: { value: ThemeMode; label: string }[] = [

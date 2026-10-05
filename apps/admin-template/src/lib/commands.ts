@@ -11,12 +11,12 @@
  * Issue #258) lives in `./recentCommands.ts`.
  */
 import { goto } from '$app/navigation';
-import { base } from '$app/paths';
-import * as m from '$lib/paraglide/messages';
+import { resolve } from '$app/paths';
+import * as m from '#lib/paraglide/messages.js';
 import type { PaletteCommand } from '@banto/admin-core';
 import { logoutAndLeave } from './banto/logout.svelte';
 import { notifyLogoutOutcome } from './banto/logoutNotice';
-import { navItems } from './navigation';
+import { navItems, resolveAppPath } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
 import { isAdmin } from './permissions';
@@ -31,7 +31,7 @@ function navigationCommands(): PaletteCommand[] {
 		// (adminOnly entries hidden from non-admin roles).
 		visible: item.adminOnly ? () => isAdmin(sessionStore.role) : undefined,
 		run: () => {
-			void goto(`${base}${item.path}`);
+			void goto(resolveAppPath(item.path));
 		}
 	}));
 }
@@ -89,7 +89,7 @@ function sessionCommands(): PaletteCommand[] {
 			visible: () => !sessionStore.authDisabled,
 			run: async () => {
 				// Issue #215/#255, #260: same as Header.svelte's logout.
-				await logoutAndLeave(() => goto(`${base}/login`), { notify: notifyLogoutOutcome });
+				await logoutAndLeave(() => goto(resolve(`login`)), { notify: notifyLogoutOutcome });
 			}
 		}
 	];

@@ -53,7 +53,7 @@ verify-architecture）で一切検証されない。したがって:
 | 区分 | 内容 |
 | --- | --- |
 | 外す（minimal と同じ） | charts / dock / glass / commandPalette / attachments / report / tree |
-| 外す（新 remover `items`） | `core/src/items.rs`、`rest/items.rs`、`rest/tests/items.rs`、`migrations-{sqlite,postgres}/0001_items.sql`、`src-tauri` の `items_*` コマンド + `AppState.items`、`$lib/banto/{itemsAdmin,resources/items,sampleData}.ts`、`routes/(app)/items/**`、`dashboard.ts` の items 集計、nav の items、`verify-architecture` の DUAL_PATH / TAURI_READ / REST_READ / DESKTOP_ONLY の items 行、`db.rs` のデモ seed、e2e smoke の items シナリオ（display は e2e 対象外にするため削除ではなく「scaffold 出力では e2e を走らせない」） |
+| 外す（新 remover `items`） | `core/src/items.rs`、`rest/items.rs`、`rest/tests/items.rs`、`migrations-{sqlite,postgres}/0001_items.sql`、`src-tauri` の `items_*` コマンド + `AppState.items`、`#lib/banto/{itemsAdmin,resources/items,sampleData}.ts`、`routes/(app)/items/**`、`dashboard.ts` の items 集計、nav の items、`verify-architecture` の DUAL_PATH / TAURI_READ / REST_READ / DESKTOP_ONLY の items 行、`db.rs` のデモ seed、e2e smoke の items シナリオ（display は e2e 対象外にするため削除ではなく「scaffold 出力では e2e を走らせない」） |
 | 外す（新 remover `adminPages`） | `routes/(app)/{users,audit-log}/**` と nav 行・コマンドパレット項目（サービス層・REST・Tauri コマンドは残す = 設定画面から戻せる escape hatch を維持） |
 | 足す | `routes/(app)/monitor/+page.svelte`（`$effect` + 世代トークンでポーリングする最小例、`publicViewer: true` の nav 項目、ホームを `/monitor` に）。`scripts/lib/templates/monitor.svelte` から複製 |
 | 既定値を反転 | `FIRST_BOOT_SETTINGS` = `auth.disabled=true` / `auth.disabled_role=admin` / `server.viewer_public=true` / `server.enabled=true` / `server.bind=0.0.0.0`、`shell.kiosk` 既定 ON、`banto.i18n = "raw"` |

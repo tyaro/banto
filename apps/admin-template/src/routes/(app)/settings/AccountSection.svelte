@@ -13,13 +13,13 @@
 	import { KeyRound } from '@lucide/svelte';
 	import { getAuthProvider } from '@banto/admin-core';
 	import { UnsavedChangesNotice } from '@banto/forms';
-	import * as m from '$lib/paraglide/messages';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
-	import { toastStore } from '$lib/toast.svelte';
-	import { sessionStore } from '$lib/session.svelte';
-	import { isAdmin } from '$lib/permissions';
-	import { enableAutologin, disableAutologin } from '$lib/banto/authAdmin';
-	import { guardUnsavedChanges } from '$lib/unsavedChanges';
+	import * as m from '#lib/paraglide/messages.js';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { toastStore } from '#lib/toast.svelte.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
+	import { enableAutologin, disableAutologin } from '#lib/banto/authAdmin.js';
+	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { errorMessage, tauri } from './shared';
 	import { authSettingsStore } from './authSettingsStore.svelte';
 

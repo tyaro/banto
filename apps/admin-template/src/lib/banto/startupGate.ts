@@ -17,7 +17,7 @@
  * - keeps the splash up ("starting…" -> "cannot connect" + reconnect, #286),
  *   never the error page, while the deferral is the current error
  *   ({@link isStartupDeferral}), and
- * - re-runs the loads (`invalidateAll()`) once `bantoReady` resolves - the
+ * - re-runs the loads (`refreshAll()`) once `bantoReady` resolves - the
  *   guard then confirms the session as usual and the SAME URL opens (or goes
  *   to /login, the public viewer, or the session-check retry page).
  *
@@ -33,7 +33,7 @@ import { error } from '@sveltejs/kit';
  */
 export function deferUntilStarted(ready: boolean, message: () => string): void {
 	if (ready) return;
-	error(503, { message: message(), startupPending: true });
+	error(503, message(), { startupPending: true });
 }
 
 /** Whether the current page error is the startup deferral (and not a real error). */

@@ -29,8 +29,8 @@
 		type PanelContent
 	} from '@banto/dock-svelte';
 	import { LayoutGrid, JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
-	import * as m from '$lib/paraglide/messages';
-	import type { Item } from '$lib/banto/sampleData';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { Item } from '#lib/banto/sampleData.js';
 	import {
 		byCategory,
 		categoryCountsTop,
@@ -44,13 +44,13 @@
 		type MonthCategoryCount,
 		updatesByMonth,
 		weekdayMonthHeat
-	} from '$lib/banto/dashboard';
-	import { PANEL_DEFS } from '$lib/banto/panels';
-	import { getUiSettings, isTauri } from '$lib/banto/setup';
-	import { listenPanelClosed, openPanelWindow } from '$lib/banto/popout';
-	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	} from '#lib/banto/dashboard.js';
+	import { PANEL_DEFS } from '#lib/banto/panels.js';
+	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
+	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
+	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import LoadingState from '#lib/components/ui/LoadingState.svelte';
 
 	const STOCK_TARGET = 3_000_000;
 
@@ -101,7 +101,7 @@
 	 */
 	const DOCK_STORAGE_KEY = 'banto.dock.dashboard';
 
-	// Panel id/title/icon defs moved to $lib/banto/panels.ts (spec §5.3 v2):
+	// Panel id/title/icon defs moved to #lib/banto/panels.ts (spec §5.3 v2):
 	// shared with the standalone routes/panel/[id] route a popped-out panel
 	// renders as, which has no access to this page's own locals.
 	const PANEL_META: Record<string, { title: string; icon: string }> = Object.fromEntries(

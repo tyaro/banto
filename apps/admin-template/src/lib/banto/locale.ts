@@ -3,7 +3,7 @@
  * ONLY** — the `@banto/*` packages never import
  * this (conventions §5); they receive already-resolved strings via `messages`
  * props (i18n layer ①). This module bridges Paraglide's compiled runtime
- * (`$lib/paraglide`) to Banto's existing provider/settings plumbing so locale
+ * (`#lib/paraglide`) to Banto's existing provider/settings plumbing so locale
  * resolution + persistence stay in the provider/setup layer (conventions §10),
  * exactly like theme/vibrancy in settings.svelte.ts.
  *
@@ -30,7 +30,7 @@
  * fails server-side and is swallowed), and `syncLocaleFromProvider()` pulls the
  * saved value once per login.
  */
-import { defineCustomClientStrategy, isLocale, type Locale } from '$lib/paraglide/runtime';
+import { defineCustomClientStrategy, isLocale, type Locale } from '#lib/paraglide/runtime.js';
 import { getUiSettings } from './setup';
 
 /**

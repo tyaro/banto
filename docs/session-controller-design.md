@@ -1093,7 +1093,7 @@ function bumpLocal(): void {
 
   `adopt()` は使わない。
 
-- `sessionStore`（`$lib/session.svelte.ts`）: `identity`・`role`・`publicViewer`・`authDisabled` は
+- `sessionStore`（`#lib/session.svelte.ts`）: `identity`・`role`・`publicViewer`・`authDisabled` は
   `controller.snapshot` からの `$derived`（`authDisabled = snapshot.kind === 'local'`）。
   派生アプリの `sessionStore` も同じ形（`load()` は無くなる）。
 - `Header.svelte`・`commands.ts` のログアウト（I-10、S-17・S-51）:
@@ -1710,11 +1710,11 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
   `endSession()`（logout の**前に取った ticket**が current のときだけ。別タブのログインなど、その間に確定した
   セッションを終わらせない。`try/finally` で reject も同じ扱い。標準 provider では自分の消去の通知で保留に入り
   ticket は失効する＝controller が自分で none を確定し、`endSession()` が走るのは互換 adapter のときだけ。I-18・I-10）
-  → `goto('/login')` の順で、その間は `isLoggingOut()`（`$lib/banto/logout.svelte.ts`、`$state`）が真。配線①は
+  → `goto('/login')` の順で、その間は `isLoggingOut()`（`#lib/banto/logout.svelte.ts`、`$state`）が真。配線①は
   ログアウト中は `invalidateAll()` を出さない（反応的に読むので、失敗して画面に残る場合は終了後に照合し直す）。
   §6.1 の v2 の形（`await provider.logout(); await resolveSettled(); goto(login)`）も同じ抑止で順序を保てる（実装-3）。
   **（実装-3 で決定、2026-09-30）** v2 の形にした: `logout()` → `resolveSettled(controller, { cause: 'signal' })` →
-  確定が `none` のときだけ `goto('/login')`（`$lib/banto/logout.svelte.ts` の `logoutAndLeave`）。`endSession()` は v2 で
+  確定が `none` のときだけ `goto('/login')`（`#lib/banto/logout.svelte.ts` の `logoutAndLeave`）。`endSession()` は v2 で
   削除したので、互換 adapter のための「ticket で守った `endSession()`」も無くなった（adapter でも `resolve()` が
   旧 `check()` に聞き直すので、`logout()` が旧 `check()` を `false` にする provider なら `none` が確定する。S-17 の
   テスト）。確認は `cause: 'signal'`（ログアウトの**後**に始めた probe でしか満たされない、I-9）なので、ログアウトの
@@ -1765,7 +1765,7 @@ ADR 決定 6 を同じ規則にそろえた。stale の判定を「操作の開�
     にしない。確定すれば止まる）。v1 の `createSessionEndConfirmation` は購読解除で止まっていた（CHANGELOG に記載）。
   - **ログイン画面の `superseded`**: §6.1 のとおり「別のセッションが先に確定しました」を通知して `goto(dashboard)`
     （`load` が今の資格情報で確定する）。setup の `superseded` も同じ。
-  - **`ownerChangePolicy`**: admin-template の `$lib/banto/ownerChange.ts` の定数 `OWNER_CHANGE_POLICY`（既定
+  - **`ownerChangePolicy`**: admin-template の `#lib/banto/ownerChange.ts` の定数 `OWNER_CHANGE_POLICY`（既定
     `'rebuild'`）。`initBanto` の設定にはしなかった（通知と遷移はアプリの UI の仕事で、admin-core は記録
     `pendingOwnerChange` だけを持つ。§9.5 のオーナーの決定と同じ分担）。処理済みにする
     `acknowledgeOwnerChange()` は通知の**前**に呼ぶ（通知の処理が投げても同じ変更を二重に出さない）。

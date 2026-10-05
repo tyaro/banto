@@ -185,13 +185,18 @@ System Info カードの CPU/メモリ取得に `sysinfo` を feature 限定で�
 **削除手順（外すファイル一覧）を明文化する義務**を負う。削除して他が壊れない
 構造を保つ（§6 チェックリスト②③）。
 
-## 5. パッケージはアプリ固有 import を持たない [機械検査済み: `$lib` import のみ]
+## 5. パッケージはアプリ固有 import を持たない [機械検査済み: `#lib`（旧 `$lib`）import のみ]
 
 `packages/@banto/*` のコンポーネントは `sessionStore` や
 `@banto/admin-core` の `ProviderError` 等の**アプリ固有シンボルを import しない**。
 transport は `client: XxxClient` のように注入する（例: `AttachmentsPanel` は
 `AttachmentsClient` を受け取り、`attachmentsAdmin.ts`（アプリ側＝コピーして
 書き換える層）を package からは決して import しない）。
+
+機械検査: `verify:architecture` の rule `no-app-import` が、`packages/` の import に
+アプリのエイリアス（SvelteKit 3 の subpath imports `#lib`。SvelteKit 2 までの `$lib`
+も引き続き検出する）が無いことを grep で確かめる（#325）。機械検査はこのエイリアスの
+import だけで、transport の注入の形はレビューで担保する。
 
 状態所有権: ロード/空/エラー状態はコンポーネント内部が所有し、ホストページに
 分岐を漏らさない（grid-svelte と同じ規則）。
@@ -439,12 +444,13 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
 
 §9（色・寸法の生値は theme に集約）の**文言版**。UI に出すテキストは
 `messages/{en,ja}.json` のキーに置き、コンポーネントは **Paraglide 経由**
-（`import * as m from '$lib/paraglide/messages'` → `m['key']()`）で参照する。
+（`import * as m from '#lib/paraglide/messages.js'` → `m['key']()`。`#lib` は
+package.json の `imports` による subpath import で、拡張子が必須）で参照する。
 生の文言（日本語リテラル等）をコンポーネントに直書きしない
 （[ADR-0005](adr/0005-i18n-paraglide.md)）。
 
 - **対象は app 層のみ**（`apps/admin-template/src`）。`@banto/*` パッケージは
-  辞書も i18n 依存も `$lib` import も持たず（§5）、文言は**レイヤ①の
+  辞書も i18n 依存も `#lib` import も持たず（§5）、文言は**レイヤ①の
   `messages` props 経由**で注入された解決済み文字列として受け取る
   （レイヤ①注入方式、[ADR-0005](adr/0005-i18n-paraglide.md)）。パッケージに
   `messages/*.json` を置かない。

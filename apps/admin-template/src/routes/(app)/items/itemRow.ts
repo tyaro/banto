@@ -15,7 +15,7 @@
  * all). Previously duplicated inside `ItemsClientGrid.svelte` alone; pulled
  * out here once a second caller needed the exact same derivation.
  */
-import type { Item } from '$lib/banto/sampleData';
+import type { Item } from '#lib/banto/sampleData.js';
 
 export type ItemRow = Item & { category: string };
 

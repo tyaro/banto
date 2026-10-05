@@ -1,22 +1,22 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { goto, invalidateAll, onNavigate } from '$app/navigation';
-	import { base } from '$app/paths';
+	import { goto, refreshAll, onNavigate } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { getSessionController, notify, onInvalidate } from '@banto/admin-core';
 	import { hasUnsavedChanges } from '@banto/forms';
-	import * as m from '$lib/paraglide/messages';
-	import { guardWindowClose } from '$lib/banto/windowCloseGuard';
-	import { isLeavingForLogin, leaveForLogin } from '$lib/banto/logout.svelte';
-	import { OWNER_CHANGE_POLICY, watchOwnerChanges } from '$lib/banto/ownerChange';
-	import { isNavigationSettled } from '$lib/banto/navigationSettled.svelte';
-	import Header from '$lib/components/Header.svelte';
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import CommandPalette from '$lib/components/CommandPalette.svelte';
-	import { commandPaletteStore } from '$lib/commandPalette.svelte';
-	import { watchRecentCommandOwner } from '$lib/recentCommands';
-	import { navItems } from '$lib/navigation';
-	import { navBadges } from '$lib/navBadges.svelte';
+	import * as m from '#lib/paraglide/messages.js';
+	import { guardWindowClose } from '#lib/banto/windowCloseGuard.js';
+	import { isLeavingForLogin, leaveForLogin } from '#lib/banto/logout.svelte.js';
+	import { OWNER_CHANGE_POLICY, watchOwnerChanges } from '#lib/banto/ownerChange.js';
+	import { isNavigationSettled } from '#lib/banto/navigationSettled.svelte.js';
+	import Header from '#lib/components/Header.svelte';
+	import Sidebar from '#lib/components/Sidebar.svelte';
+	import CommandPalette from '#lib/components/CommandPalette.svelte';
+	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
+	import { watchRecentCommandOwner } from '#lib/recentCommands.js';
+	import { navItems } from '#lib/navigation.js';
+	import { navBadges } from '#lib/navBadges.svelte.js';
 
 	let { children, data } = $props();
 
@@ -34,7 +34,7 @@
 	// one session and those loads (a moment, until the guard redirects or
 	// confirms the next identity) nothing of the old page is on screen. A
 	// guard re-run that confirms the same session keeps the generation, so an
-	// ordinary `invalidateAll()` never rebuilds the page.
+	// ordinary `refreshAll()` never rebuilds the page.
 	//
 	// Issue #290: the key also carries the route params. SvelteKit reuses the
 	// page component for a move between two URLs of the SAME route (items/1 ->
@@ -58,7 +58,7 @@
 
 	// Issue #260 (design §6.1 wiring ①, since 実装-2): whenever the session
 	// controller's generation differs from the one this page's load confirmed,
-	// re-run the loads (`invalidateAll()`), which confirm the session again
+	// re-run the loads (`refreshAll()`), which confirm the session again
 	// and send the screen to /login, a publicViewer grant session, the retryable
 	// error page, or the rebuilt page of the (new) user. This covers every
 	// way the generation moves - a background revocation confirmed `none`
@@ -68,20 +68,20 @@
 	// same user again, S-80). `requestedFor` keeps one invalidation per
 	// generation (a load that confirms the same generation again, or a slow
 	// one, does not stack them). The login target is a forced navigation for
-	// the unsaved-changes guard (`$lib/unsavedChanges.ts`).
+	// the unsaved-changes guard (`#lib/unsavedChanges.ts`).
 	// While this tab is logging out (or leaving for /login under the
 	// 'relogin' policy below), no re-load: that sequence goes to /login
 	// itself, and an invalidation started here would win over the navigation
-	// (`$lib/banto/logout.svelte.ts`). `isLeavingForLogin()` is reactive, so a
+	// (`#lib/banto/logout.svelte.ts`). `isLeavingForLogin()` is reactive, so a
 	// generation change skipped meanwhile is handled once it ends if the
 	// layout is still mounted (another session was confirmed instead, or the
 	// logout could not be confirmed).
 	// Issue #326: nor while a navigation is in flight (another tab's login or
 	// a background revocation can land in the middle of one, and this layout
-	// is mounted at the end of one). An `invalidateAll()` started then makes
+	// is mounted at the end of one). A `refreshAll()` started then makes
 	// SvelteKit abort the navigation - the user's move is lost - and skip
 	// `beforeNavigate`, the unsaved-changes guard, afterwards
-	// (`$lib/banto/navigationSettled.svelte.ts`). `isNavigationSettled()` is
+	// (`#lib/banto/navigationSettled.svelte.ts`). `isNavigationSettled()` is
 	// reactive too: once the navigation completes, this compares the
 	// generation ITS load confirmed and re-runs only if that one is stale.
 	const sessionController = getSessionController();
@@ -92,7 +92,7 @@
 		if (!isNavigationSettled()) return;
 		if (generation !== data.sessionGeneration && requestedFor !== generation) {
 			requestedFor = generation;
-			void invalidateAll();
+			void refreshAll();
 		}
 	});
 
@@ -117,7 +117,7 @@
 						'info',
 						policy === 'relogin' ? m['session.ownerChangedRelogin']() : m['session.ownerChanged']()
 					),
-				goToLogin: () => leaveForLogin(() => goto(`${base}/login`))
+				goToLogin: () => leaveForLogin(() => goto(resolve(`login`)))
 			})
 		)
 	);
@@ -128,7 +128,7 @@
 	// owner check on read is the safety boundary; this only avoids lingering.
 	$effect(() => untrack(() => watchRecentCommandOwner(sessionController)));
 
-	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
+	// Nav badge wiring (see #lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the
 	// handler reads `page.url.pathname` non-reactively at event time - an
 	// invalidation for the resource of the page currently on screen is not
@@ -163,6 +163,7 @@
 	// (belt and suspenders: this skips starting a transition at all, rather
 	// than starting one that resolves to a 0ms crossfade).
 	onNavigate((navigation) => {
+		if (navigation.shallow) return;
 		if (!document.startViewTransition) return;
 		if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 		return new Promise((resolve) => {

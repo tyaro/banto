@@ -16,14 +16,14 @@
 	 * page exists to show off - only a small text-link back to the list
 	 * takes PageHeader's place.
 	 */
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { createListResource } from '@banto/admin-core';
 	import { ReportView } from '@banto/report';
-	import * as m from '$lib/paraglide/messages';
-	import type { Item } from '$lib/banto/sampleData';
-	import { byCategory, categoryCounts, computeStatTiles } from '$lib/banto/dashboard';
-	import LoadingState from '$lib/components/ui/LoadingState.svelte';
-	import dailyTemplate from '$lib/banto/reports/daily.md?raw';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { Item } from '#lib/banto/sampleData.js';
+	import { byCategory, categoryCounts, computeStatTiles } from '#lib/banto/dashboard.js';
+	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import dailyTemplate from '#lib/banto/reports/daily.md?raw';
 
 	const list = createListResource<Item>('items', {
 		initialParams: { pagination: { offset: 0, limit: 20_000 } }
@@ -96,7 +96,7 @@
 </script>
 
 <div class="page">
-	<a class="back-link" href={`${base}/items`}>{m['items.reportBack']()}</a>
+	<a class="back-link" href={resolve(`items`)}>{m['items.reportBack']()}</a>
 
 	{#if list.loading && list.rows.length === 0}
 		<LoadingState label={m['items.loadingData']()} />

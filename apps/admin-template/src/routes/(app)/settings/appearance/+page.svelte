@@ -4,7 +4,7 @@
 	 * state/CSS は AppearanceSection.svelte（段階 1 のまま co-located、
 	 * 移動なし）。
 	 */
-	import * as m from '$lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import AppearanceSection from '../AppearanceSection.svelte';
 </script>
 

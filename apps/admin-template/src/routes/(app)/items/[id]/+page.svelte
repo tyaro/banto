@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import {
@@ -14,17 +14,17 @@
 		saveLastOpenedId
 	} from '@banto/admin-core';
 	import { AttachmentsPanel } from '@banto/attachments';
-	import * as m from '$lib/paraglide/messages';
-	import { formValidationMessages } from '$lib/banto/i18n';
-	import { sessionStore } from '$lib/session.svelte';
-	import { canWriteResources } from '$lib/permissions';
-	import { guardUnsavedChanges } from '$lib/unsavedChanges';
-	import { isAttachmentsAvailable } from '$lib/banto/attachmentsAdmin';
-	import { attachmentsClient } from '$lib/banto/attachmentsClient';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import ErrorState from '$lib/components/ui/ErrorState.svelte';
-	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formValidationMessages } from '#lib/banto/i18n.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { canWriteResources } from '#lib/permissions.js';
+	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
+	import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
+	import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import ErrorState from '#lib/components/ui/ErrorState.svelte';
+	import LoadingState from '#lib/components/ui/LoadingState.svelte';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;
@@ -155,7 +155,7 @@
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).
 			store.markClean();
-			if (guard.canAutoNavigate) goto(`${base}/items`);
+			if (guard.canAutoNavigate) goto(resolve(`items`));
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -168,7 +168,7 @@
 		if (!removed) return;
 		// The record is gone: unsaved edits to it are moot, don't prompt.
 		store.markClean();
-		if (guard.canAutoNavigate) goto(`${base}/items`);
+		if (guard.canAutoNavigate) goto(resolve(`items`));
 	}
 </script>
 
@@ -182,7 +182,7 @@
 				description={m['items.notFoundDesc']()}
 			>
 				{#snippet action()}
-					<a class="banto-btn banto-btn--secondary" href={`${base}/items`}
+					<a class="banto-btn banto-btn--secondary" href={resolve(`items`)}
 						>{m['common.backToList']()}</a
 					>
 				{/snippet}
@@ -200,7 +200,7 @@
 						>
 							{m['common.reload']()}
 						</button>
-						<a class="banto-btn banto-btn--ghost" href={`${base}/items`}
+						<a class="banto-btn banto-btn--ghost" href={resolve(`items`)}
 							>{m['common.backToList']()}</a
 						>
 					</div>
@@ -221,7 +221,7 @@
 					</button>
 				{/if}
 				<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
-				<a class="banto-btn banto-btn--ghost" href={`${base}/items`}>{m['common.backToList']()}</a>
+				<a class="banto-btn banto-btn--ghost" href={resolve(`items`)}>{m['common.backToList']()}</a>
 			</BantoForm>
 		{/if}
 	</div>

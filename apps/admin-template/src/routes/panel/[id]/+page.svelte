@@ -19,10 +19,10 @@
 	 */
 	import { page } from '$app/state';
 	import { getSessionController, resolveSettled } from '@banto/admin-core';
-	import * as m from '$lib/paraglide/messages';
-	import { bantoReady } from '$lib/banto/setup';
-	import { findPanelDef } from '$lib/banto/panels';
-	import DashboardPanel from '$lib/components/DashboardPanel.svelte';
+	import * as m from '#lib/paraglide/messages.js';
+	import { bantoReady } from '#lib/banto/setup.js';
+	import { findPanelDef } from '#lib/banto/panels.js';
+	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 
 	const id = $derived(page.params.id ?? '');
 	const def = $derived(findPanelDef(id));

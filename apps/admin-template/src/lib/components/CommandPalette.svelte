@@ -12,7 +12,7 @@
 	 * this palette while its own input has focus.
 	 */
 	import { onMount } from 'svelte';
-	import * as m from '$lib/paraglide/messages';
+	import * as m from '#lib/paraglide/messages.js';
 	import {
 		currentSessionScope,
 		isCurrentSessionScope,
@@ -21,9 +21,9 @@
 		searchCommands,
 		type PaletteCommand
 	} from '@banto/admin-core';
-	import { buildCommands } from '$lib/commands';
-	import { loadRecentCommandIds, recordRecentCommand } from '$lib/recentCommands';
-	import { commandPaletteStore } from '$lib/commandPalette.svelte';
+	import { buildCommands } from '#lib/commands.js';
+	import { loadRecentCommandIds, recordRecentCommand } from '#lib/recentCommands.js';
+	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 
 	// Built once per mount (navItems is static).
 	const commands = buildCommands();

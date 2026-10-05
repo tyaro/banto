@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const setupMock = vi.hoisted(() => ({ mode: 'server' as 'demo' | 'server' | 'tauri' }));
 const invokeMock = vi.hoisted(() => vi.fn());
 
-vi.mock('$lib/banto/setup', () => ({
+vi.mock('#lib/banto/setup.js', () => ({
 	CSRF_HEADER: { 'X-Banto-Client': 'banto' },
 	getBantoMode: () => setupMock.mode
 }));

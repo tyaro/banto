@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { getAuthProvider, isProviderError, notify } from '@banto/admin-core';
-	import * as m from '$lib/paraglide/messages';
-	import { bantoReady, getBantoMode } from '$lib/banto/setup';
-	import { applyAuthSettings } from '$lib/banto/authAdmin';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
+	import * as m from '#lib/paraglide/messages.js';
+	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
+	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
 
 	// Undecided until `status()` resolves (or is absent, treated as
 	// "already initialized" - see below): render nothing rather than
@@ -70,7 +70,7 @@
 	// (`+layout.ts`'s `grantFallback` -> `enterGrant('publicViewer')`) - this just needs to land
 	// on a gated route so that guard runs.
 	function continueAsViewer(): void {
-		goto(`${base}/dashboard`);
+		goto(resolve(`dashboard`));
 	}
 
 	async function submitLogin(event: SubmitEvent) {
@@ -85,13 +85,13 @@
 			if (showRemember && remember) params.remember = true;
 			const result = await getAuthProvider().login(params);
 			if (result.success) {
-				goto(`${base}/dashboard`);
+				goto(resolve(`dashboard`));
 			} else if (result.superseded) {
 				// Issue #260 (design §6.1): another login/logout finished first
 				// (here or in another tab) and this one stored nothing. The
 				// protected guard confirms whatever session is stored now.
 				notify('info', m['auth.loginSuperseded']());
-				goto(`${base}/dashboard`);
+				goto(resolve(`dashboard`));
 			} else {
 				error = result.error ?? m['auth.loginFailed']();
 			}
@@ -122,10 +122,10 @@
 			}
 			const result = await setup({ username, password, displayName });
 			if (result.success) {
-				goto(`${base}/dashboard`);
+				goto(resolve(`dashboard`));
 			} else if (result.superseded) {
 				notify('info', m['auth.loginSuperseded']());
-				goto(`${base}/dashboard`);
+				goto(resolve(`dashboard`));
 			} else {
 				error = result.error ?? m['auth.setupFailed']();
 			}
@@ -147,7 +147,7 @@
 		skippingLogin = true;
 		try {
 			await applyAuthSettings(true, 'admin');
-			goto(`${base}/dashboard`);
+			goto(resolve(`dashboard`));
 		} catch (err) {
 			error = isProviderError(err) ? err.message : m['auth.skipLoginFailed']();
 		} finally {

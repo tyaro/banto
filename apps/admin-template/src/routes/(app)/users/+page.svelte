@@ -27,13 +27,13 @@
 		UserRoundPlus,
 		Users
 	} from '@lucide/svelte';
-	import * as m from '$lib/paraglide/messages';
-	import { toastStore } from '$lib/toast.svelte';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import SurfaceCard from '$lib/components/ui/SurfaceCard.svelte';
-	import StatusBadge, { type StatusBadgeVariant } from '$lib/components/ui/StatusBadge.svelte';
-	import EmptyState from '$lib/components/ui/EmptyState.svelte';
-	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	import * as m from '#lib/paraglide/messages.js';
+	import { toastStore } from '#lib/toast.svelte.js';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import StatusBadge, { type StatusBadgeVariant } from '#lib/components/ui/StatusBadge.svelte';
+	import EmptyState from '#lib/components/ui/EmptyState.svelte';
+	import LoadingState from '#lib/components/ui/LoadingState.svelte';
 	import {
 		createUser,
 		deleteUser,
@@ -43,7 +43,7 @@
 		updateUser,
 		type Role as UserRole,
 		type UserSummary
-	} from '$lib/banto/usersAdmin';
+	} from '#lib/banto/usersAdmin.js';
 
 	const roleOptions: { value: UserRole; label: string }[] = [
 		{ value: 'admin', label: m['role.admin']() },

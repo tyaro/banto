@@ -19,9 +19,9 @@
 		type SortState
 	} from '@banto/grid-svelte';
 	import { createWindowedListResource, invalidate } from '@banto/admin-core';
-	import * as m from '$lib/paraglide/messages';
-	import { gridMessages } from '$lib/banto/i18n';
-	import type { Item } from '$lib/banto/sampleData';
+	import * as m from '#lib/paraglide/messages.js';
+	import { gridMessages } from '#lib/banto/i18n.js';
+	import type { Item } from '#lib/banto/sampleData.js';
 
 	interface Props {
 		columns: GridColumn<Item>[];

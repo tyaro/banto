@@ -29,8 +29,8 @@
 	} from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import { onDestroy, onMount } from 'svelte';
-	import * as m from '$lib/paraglide/messages';
-	import type { Item } from '$lib/banto/sampleData';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { Item } from '#lib/banto/sampleData.js';
 	import {
 		categoryCounts,
 		nextTrendPoint,
@@ -40,7 +40,7 @@
 		seedTrendPoints,
 		updatesByMonth,
 		type TrendPoint
-	} from '$lib/banto/dashboard';
+	} from '#lib/banto/dashboard.js';
 
 	interface Props {
 		id: string;
@@ -62,7 +62,7 @@
 	const monthCounts = $derived(updatesByMonth(list.rows));
 	const buckets = $derived(priceBuckets(list.rows));
 
-	// M13 SPC panel demo data (roadmap.md M13, `$lib/banto/dashboard.ts`):
+	// M13 SPC panel demo data (roadmap.md M13, `#lib/banto/dashboard.ts`):
 	// price distribution (histogram + normal curve), category Pareto, price
 	// spread per top category (box plot).
 	const prices = $derived(priceValues(list.rows));

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import { createFormResource, getResource } from '@banto/admin-core';
-	import * as m from '$lib/paraglide/messages';
-	import { formValidationMessages } from '$lib/banto/i18n';
-	import { guardUnsavedChanges } from '$lib/unsavedChanges';
-	import PageHeader from '$lib/components/ui/PageHeader.svelte';
-	import LoadingState from '$lib/components/ui/LoadingState.svelte';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formValidationMessages } from '#lib/banto/i18n.js';
+	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
+	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import LoadingState from '#lib/components/ui/LoadingState.svelte';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;
@@ -35,7 +35,7 @@
 			// another screen while the save was in flight - even if that screen
 			// is still loading (don't override their choice).
 			store.markClean();
-			if (guard.canAutoNavigate) goto(`${base}/items`);
+			if (guard.canAutoNavigate) goto(resolve(`items`));
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -58,7 +58,7 @@
 			>
 				<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
 				<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
-				<a class="banto-btn banto-btn--ghost" href={`${base}/items`}>{m['common.backToList']()}</a>
+				<a class="banto-btn banto-btn--ghost" href={resolve(`items`)}>{m['common.backToList']()}</a>
 			</BantoForm>
 		{/if}
 	</div>

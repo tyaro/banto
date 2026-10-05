@@ -1,7 +1,7 @@
 /**
  * Desktop window close vs. unsaved changes (issue #214). Closing the Tauri
  * window is an OS window event, not a router navigation, so the
- * unsaved-changes guard (`$lib/unsavedChanges.ts`, built on SvelteKit's
+ * unsaved-changes guard (`#lib/unsavedChanges.ts`, built on SvelteKit's
  * `beforeNavigate`) is not relied on for it. This listens to Tauri's
  * close-requested event and asks with the same `window.confirm` the rest of
  * the app uses.

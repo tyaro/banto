@@ -15,7 +15,7 @@
  * route needs.
  */
 import type { FloatingWindowDef } from '@banto/dock-svelte';
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 
 // i18n (ADR-0005, PR-B2/B2b): panel titles use a lazy `get title()` getter
 // (typed `string`, so @banto/dock-svelte's `FloatingWindowDef` contract is
