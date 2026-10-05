@@ -29,7 +29,7 @@ export function resolveAppPath(path: AppPath): ResolvedPathname {
 }
 
 /** Icon resolution key (visual-refresh-design.md §5.1). Resolved to an actual
- *  icon component only in the display layer ($lib/components/navIcons.ts) -
+ *  icon component only in the display layer (#lib/components/navIcons.ts) -
  *  this module stays UI-agnostic. */
 export type NavIconKey = 'dashboard' | 'items' | 'tree' | 'users' | 'audit-log' | 'settings';
 
@@ -48,7 +48,7 @@ export interface NavItem {
 	/**
 	 * admin-core resource name whose `invalidate()` bus (spec §3.4 - own
 	 * mutations AND `resource_changed` server events) feeds this entry's
-	 * unseen-change badge ($lib/navBadges.svelte.ts, wired by
+	 * unseen-change badge (#lib/navBadges.svelte.ts, wired by
 	 * routes/(app)/+layout.svelte). Undefined = no badge for this entry.
 	 */
 	badgeResource?: string;

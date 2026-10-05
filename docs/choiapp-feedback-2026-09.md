@@ -123,9 +123,9 @@ visual/a11y は `settings`（`/settings` → 外観・言語）に加えて
 
 ### 4.1 サイドバーの未確認更新バッジ
 
-- 機構: `$lib/navBadges.svelte.ts`（カウント保持）+
+- 機構: `#lib/navBadges.svelte.ts`（カウント保持）+
   `routes/(app)/+layout.svelte`（配線）+ `Sidebar.svelte`（描画）。
-  `NavItem.badgeResource`（`$lib/navigation.ts`）を宣言したエントリだけが対象。
+  `NavItem.badgeResource`（`#lib/navigation.ts`）を宣言したエントリだけが対象。
 - 供給源は admin-core の `invalidate()` バス（spec §3.4）。**自クライアントの
   ミューテーションも `resource_changed` サーバイベント（spec §3.5、SSE/Tauri
   両輸送）も同じバスに合流する**ため、輸送別の配線が要らず、デモモードでも

@@ -24,6 +24,7 @@
 
 - docs: コード内のコメントにある誤った `spec §3.x` 参照（実体は `attachments-plan` / `report-plan` の節）を
   `attachments-plan §N` / `report-plan §N` に修正した（Rust・TS・Svelte・CSS・e2e のコメントのみ、動作変更なし、#312 PR-B）
+- docs: SvelteKit 3 の形に合わせた（#325 PR3）。conventions §5 の機械検査の対象を `#lib`（旧 `$lib`）に、§13 の例を `#lib/paraglide/messages.js` にし、現役の docs・README・コード内のコメントの `$lib` を `#lib` にした（`docs/history/` と ADR・設計記録の当時の記述は凍結のまま）。`docs/architecture-flows.md` の再 load を `refreshAll()` に。`docs/upgrading.md` に v3 → v4 の移行手順（例 4。経路 A/B/C、`sv migrate sveltekit-3` の後に写すもの、自動移行の `resolve('')`・`.slice(1)` の見直し）と、確認する組み合わせに SvelteKit `^3.0`・TypeScript `^6.0` を足した
 
 ### 変更
 
@@ -36,6 +37,7 @@
 
 ### 修正
 
+- fix(scripts): scaffold の削除パターン・display の置き換えを SvelteKit 3 の書き方（`#lib`、`.ts` の import は `.js` 付き、`resolve()`）に合わせ、削除パターンが見つからないときに黙って「適用済み」にせず失敗するようにした（初回の適用のみ。工程の印が既に消えている再実行は従来どおり冪等。#325 PR2）。経路 B（scaffold を再実行する派生のみ）。
 - fix(admin-template): ナビゲーションの途中でセッションの世代が変わると（別のタブでのログイン・Remember me の切り替え、バックグラウンドで確定した失効など）、移動が失われ、その後の未保存の変更の確認が効かなくなる問題を修正（#326、#321 の続き）。`(app)/+layout.svelte` の配線①（世代が変わったら `invalidateAll()` で確定し直す）がナビゲーションの途中に当たると、SvelteKit 2.70 はそのナビゲーションを途中で終わらせ（URL は元の画面のまま）、内部の「ナビゲーション中」の印を残すため、次のナビゲーションで `beforeNavigate` が呼ばれなかった。配線①は、ナビゲーションが終わるまで（最初のナビゲーションの `afterNavigate` の後、かつ `navigating.to === null`）やり直しを待つ。この判定は新しい `src/lib/banto/navigationSettled.svelte.ts` にまとめ、#321 のルートのレイアウトのやり直しと共有する。世代が変わったら確定し直す本来の動き・ログアウト中（`isLeavingForLogin()`）の抑止は従来どおり。SvelteKit 側の同じ現象は [sveltejs/kit#17114](https://github.com/sveltejs/kit/issues/17114)（3 系の開発版で修正。2.70 には入っていない）。E2E: smoke `13j`（項目の画面から一覧への移動を止めている間に別のタブでログインし直す → 移動が完了し、未保存の確認が出る）。単体: `src/lib/banto/navigationSettled.test.ts`。
   - 派生アプリへの影響: **経路 B のみ**（A の `@banto/*`・`banto-*` と C の DB・設定は変更なし）。配線①をコピーしている派生アプリ（banto-industrial など）は、この修正の入った版の admin-template から次を写す: `src/lib/banto/navigationSettled.svelte.ts`（新規）、`src/routes/+layout.svelte`（`trackFirstNavigation()` の呼び出しと、起動待ちのやり直しの条件を `isNavigationSettled()` に）、`src/routes/(app)/+layout.svelte`（配線①の `$effect` に `if (!isNavigationSettled()) return;`）。#321 を取り込んでいない派生アプリも、ルートのレイアウトで `trackFirstNavigation()` を 1 回呼ぶ（配線①の判定に最初のナビゲーションの終わりが要るため）。
 

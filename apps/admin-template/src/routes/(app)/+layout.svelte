@@ -128,7 +128,7 @@
 	// owner check on read is the safety boundary; this only avoids lingering.
 	$effect(() => untrack(() => watchRecentCommandOwner(sessionController)));
 
-	// Nav badge wiring (see $lib/navBadges.svelte.ts's doc comment for the
+	// Nav badge wiring (see #lib/navBadges.svelte.ts's doc comment for the
 	// ownership split). Subscribed once for the app shell's lifetime; the
 	// handler reads `page.url.pathname` non-reactively at event time - an
 	// invalidation for the resource of the page currently on screen is not

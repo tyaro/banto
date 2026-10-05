@@ -113,9 +113,9 @@ HTML として描画・印刷する帳票エンジンを提供する。日報・
 - items 一覧の PageHeader actions に ghost ボタン「日報」を追加 →
   `(app)/items/report/+page.svelte`（新規1ルート）
 - ページ内容: items 全件から集計した日報（日付・総件数・在庫合計・
-  カテゴリ別集計表・在庫僅少一覧）を `$lib/banto/reports/daily.md?raw`
+  カテゴリ別集計表・在庫僅少一覧）を `#lib/banto/reports/daily.md?raw`
   テンプレート + `renderReport` で描画し `ReportView` で表示
-- 集計はダッシュボードの既存ヘルパ（`$lib/banto/dashboard`）を再利用し、
+- 集計はダッシュボードの既存ヘルパ（`#lib/banto/dashboard`）を再利用し、
   新しい集計ロジックは書かない
 - 削除手順（ボタン1行 + ルート1ディレクトリ + テンプレート + package.json
   依存）を README「オプション資産の削除」へ、template-scope §3 に行追加

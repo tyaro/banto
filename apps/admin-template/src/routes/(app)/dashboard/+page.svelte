@@ -101,7 +101,7 @@
 	 */
 	const DOCK_STORAGE_KEY = 'banto.dock.dashboard';
 
-	// Panel id/title/icon defs moved to $lib/banto/panels.ts (spec §5.3 v2):
+	// Panel id/title/icon defs moved to #lib/banto/panels.ts (spec §5.3 v2):
 	// shared with the standalone routes/panel/[id] route a popped-out panel
 	// renders as, which has no access to this page's own locals.
 	const PANEL_META: Record<string, { title: string; icon: string }> = Object.fromEntries(

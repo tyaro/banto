@@ -1868,7 +1868,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// Nav badge (choiapp-feedback-2026-09 §4.1): a `resource_changed` server
 	// event for a resource whose page is NOT on screen shows an
 	// unseen-updates badge on that resource's sidebar entry
-	// ($lib/navBadges.svelte.ts), and visiting the page clears it. The
+	// (#lib/navBadges.svelte.ts), and visiting the page clears it. The
 	// "another client" is simulated by calling the REST API directly from
 	// the page context with the session's own bearer token - the server
 	// broadcasts the same SSE event either way. Creates then deletes one
