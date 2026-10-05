@@ -7,5 +7,10 @@
     // `process` and `node:*` (`@types/node` is a devDependency here).
     "types": ["$app/types", "node"]
   },
+  // `playwright.config.ts` は `@playwright/test`（banto ルートの devDependency。
+  // fixture には入れない: 2 つ入ると「Requiring @playwright/test second time」で
+  // 落ちる）を import するので、この `pnpm check` はルートで `pnpm install` 済み
+  // であることが前提（Node の解決が親の node_modules に届く）。無いと
+  // 「Cannot find module '@playwright/test'」になる。docs/upgrading.md 8.3。
   "include": ["src", "vite.config.ts", "playwright.config.ts"]
 }

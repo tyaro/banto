@@ -239,7 +239,8 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 リポジトリの中で次を流す（`<ref>` は GitHub に push 済みの commit SHA かタグ）。
 
 ```sh
-# ルート: Playwright を使うためにルートの依存を入れておく
+# ルート: Playwright を使うためにルートの依存を入れておく（fixture の `pnpm check` も
+# playwright.config.ts の型解決にこれを使う。無いと Cannot find module '@playwright/test'）
 pnpm install
 node scripts/external-fixture-set-ref.mjs <ref>
 
