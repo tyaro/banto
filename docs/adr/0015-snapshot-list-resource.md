@@ -119,3 +119,66 @@ admin-template の監査ログ画面は、`WindowedListResource` を使わずに
 - PostgreSQL では、小さい `id` を採番した書き込みが後からコミットすると、同じ
   境界の件数が増える。これも失効として扱われる（読み直せば正しい）。削除と重なって
   件数が相殺されても、削除の世代で失効になる。
+
+---
+
+## 追記（2026-10-06、Issue #342）: 失敗の種類・文言・通知
+
+本文の決定（別クラス・注入・境界・失効）は変えない。変えるのは、失敗を画面に
+渡す形である。オーナー決定（2026-10-06）により後方互換は保たず、v5.0.0
+（major）で出す。互換用の別名は残さない。
+
+### コンテキスト
+
+- 派生アプリ（banto-industrial の監査ログ）は、文言を日本語にするために
+  取得関数の側で 15 秒の期限を先に掛けていた（banto の期限 30 秒の文言が英語の
+  固定文で、差し替えられないため）。境界の食い違いは `message` を
+  `SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE` と文字列比較して置き換えていた。
+- ChronoGazer の `/events` は、種類の違う失敗（サーバーが答えた「読み取れ
+  なかった」と、往復の失敗・期限切れ）を同時に出す（種類ごとに最も前の
+  ブロック）。失敗のトーストは出さない。「読み取れなかった」はアプリが取得関数
+  から投げる `ProviderError` の派生（`readout` を持つ）で表す。
+- `error`（最新の 1 件）だけでは、種類の違う失敗を同時に出せない。文言の比較
+  でしか種類を見分けられない。
+
+### 決定
+
+- 状態は `failures`（ブロック順、ブロックごとに 1 件）で出す。
+  `{ block, kind: 'error', code, error }` か `{ block, kind: 'expired' }`。
+  そのブロックの取得が成功すると消え、`setParams()` で空になる（本文の約束の
+  まま）。`error`・`failedBlocks` は削除した（`failures` から導ける）。
+  `expired` は「今の世代が止まっている」を表し、前の世代の失効の記録とは
+  区別が要るので残す。
+- 失敗の種類はコード `SnapshotListFailureCode`（`'request'`・`'timeout'`・
+  `'boundaryMismatch'`・`'malformed'`）で持つ。リソースが自分で作る失敗は
+  `SnapshotListError`（`ProviderError` の派生、`code` を持つ）。取得関数が
+  投げた `ProviderError` は**同じオブジェクトのまま**（`'request'`）入れる。
+  アプリの派生クラスが持つ情報（`readout` など）が残る。`ProviderError` で
+  ないものは `SnapshotListError('request')` に包み、投げた値を `cause` に置く。
+- リソースが作る失敗の文言は、`messages` オプション（`timeout(ms)`・
+  `boundaryMismatch()`・`malformed()`）で差し替える。レイヤ①の注入
+  （[ADR-0005](0005-i18n-paraglide.md)、conventions §13）と同じで、パッケージは
+  辞書を持たず、関数で受け取る（Paraglide の文言関数をそのまま渡せる）。
+  既定は英語（`defaultSnapshotListMessages`）。`SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE`
+  は削除した。文言の関数が投げたら既定の文言にする（期限切れが確定しなくなる
+  のを防ぐ）。
+- `notify` オプション（既定 `true`、`false`、または失敗ごとの述語）で、
+  失敗ごとのトーストを止められる。失効は従来どおり通知しない。
+
+### 検討した代替案
+
+- **文言の差し替えだけ（不採用）**: 種類の見分けは文言の比較に残る。
+- **コードだけ（不採用）**: トーストの文言はリソースが出すので、通知を止めない
+  画面では英語のままトーストに出る。コードと文言の両方を持つ。
+- **パッケージに辞書を持つ（不採用）**: conventions §5・§13 に反する。
+- **`error`（最新の 1 件）を残す（不採用）**: `failures` から導ける別名を
+  増やすだけで、種類の違う失敗を同時に出す画面には足りない。
+
+### 帰結
+
+- `WindowedListResource` は今回変えない（既定の英語の文言は `blockFetch.ts` で
+  共有する）。本文の帰結「失敗の持ち方をそろえる」に対する一時的な差であり、
+  同じ形（コード・`messages`・`notify`・`failures`）にそろえるのは別の Issue
+  で行う。`WindowedListResource` は `refresh()` の表示保持（#212）の状態遷移が
+  別で、今の利用者（CRUD 画面のサーバーモード）に失敗の種類を見分ける需要が
+  まだ無いため、破壊的変更の範囲を広げなかった。

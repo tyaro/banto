@@ -13,9 +13,21 @@ export function toProviderError(err: unknown): ProviderError {
 	return isProviderError(err) ? err : new ProviderError({ kind: 'other', message: String(err) });
 }
 
+/**
+ * Default text of the failure a block request records when it has not
+ * answered within `ms`. `SnapshotListResource` lets the app replace it
+ * (`messages.timeout`); `WindowedListResource` uses it as is.
+ */
+export function defaultTimeoutMessage(ms: number): string {
+	return `list request timed out after ${ms} ms`;
+}
+
+/** Default text of the failure recorded for an answer that cannot be written. */
+export const DEFAULT_MALFORMED_MESSAGE = 'malformed list result';
+
 /** The failure a block request records when it has not answered within `ms`. */
 export function timeoutError(ms: number): ProviderError {
-	return new ProviderError({ kind: 'other', message: `list request timed out after ${ms} ms` });
+	return new ProviderError({ kind: 'other', message: defaultTimeoutMessage(ms) });
 }
 
 /** Whether `ms` enables a request time limit (`0`, a negative number, `NaN` or `Infinity` disable it). */

@@ -11,7 +11,10 @@ import type { DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
 import {
 	createSnapshotListResource,
-	SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE,
+	defaultSnapshotListMessages,
+	SnapshotListError,
+	type SnapshotListErrorFailure,
+	type SnapshotListFailure,
 	type SnapshotListRequest,
 	type SnapshotListResult
 } from '../src/snapshot.svelte';
@@ -117,6 +120,26 @@ function descending(from: number, count: number): number[] {
 	return Array.from({ length: count }, (_, i) => from - i);
 }
 
+/** The blocks `failures` lists, in its order. */
+function blocksOf(list: { failures: readonly SnapshotListFailure[] }): number[] {
+	return list.failures.map((failure) => failure.block);
+}
+
+/** The lowest block's `'error'` failure, `null` when there is none. */
+function errorFailureOf(list: {
+	failures: readonly SnapshotListFailure[];
+}): SnapshotListErrorFailure | null {
+	return (
+		list.failures.find(
+			(failure): failure is SnapshotListErrorFailure => failure.kind === 'error'
+		) ?? null
+	);
+}
+
+function errorOf(list: { failures: readonly SnapshotListFailure[] }): ProviderError | null {
+	return errorFailureOf(list)?.error ?? null;
+}
+
 const notified: string[] = [];
 
 beforeEach(() => {
@@ -176,7 +199,7 @@ describe('SnapshotListResource: the boundary', () => {
 
 		expect(list.totalCount).toBe(25);
 		expect(loadedIds(list.rows)).toEqual(descending(25, 25));
-		expect(list.failedBlocks).toEqual([]);
+		expect(blocksOf(list)).toEqual([]);
 		expect(list.expired).toBe(false);
 
 		// The next generation takes the new rows in.
@@ -203,8 +226,7 @@ describe('SnapshotListResource: the boundary', () => {
 		await tick();
 
 		expect(list.expired).toBe(true);
-		expect(list.error).toBeNull();
-		expect(list.failedBlocks).toEqual([1]);
+		expect(list.failures).toEqual([{ block: 1, kind: 'expired' }]);
 		expect(loadedIds(list.rows).slice(10, 20)).toEqual(Array(10).fill(null));
 		expect(notified).toEqual([]);
 
@@ -224,7 +246,7 @@ describe('SnapshotListResource: the boundary', () => {
 		expect(server.calls.slice(3).map((c) => c.request.pagination.offset)).toEqual([10]);
 		server.answer(3);
 		await tick();
-		expect(list.failedBlocks).toEqual([]);
+		expect(blocksOf(list)).toEqual([]);
 		expect(loadedIds(list.rows).slice(10, 20)).toEqual(descending(15, 10));
 	});
 
@@ -294,8 +316,9 @@ describe('SnapshotListResource: the boundary', () => {
 		await tick();
 		server.answer(1, { asOfId: 99 });
 		await tick();
-		expect(list.error?.message).toBe(SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE);
-		expect(list.failedBlocks).toEqual([1]);
+		expect(errorOf(list)?.message).toBe(defaultSnapshotListMessages.boundaryMismatch());
+		expect(errorFailureOf(list)?.code).toBe('boundaryMismatch');
+		expect(blocksOf(list)).toEqual([1]);
 		expect(list.expired).toBe(false);
 		expect(list.rows[10]).toBeUndefined();
 	});
@@ -319,8 +342,8 @@ describe('SnapshotListResource: recovery', () => {
 		await tick();
 
 		expect(list.totalCount).toBeNull();
-		expect(list.failedBlocks).toEqual([0]);
-		expect(list.error?.message).toBe('server down');
+		expect(blocksOf(list)).toEqual([0]);
+		expect(errorOf(list)?.message).toBe('server down');
 		expect(list.loading).toBe(false);
 		expect(notified).toEqual(['server down']);
 
@@ -335,8 +358,8 @@ describe('SnapshotListResource: recovery', () => {
 		server.answer(1);
 		await tick();
 		expect(list.totalCount).toBe(5);
-		expect(list.error).toBeNull();
-		expect(list.failedBlocks).toEqual([]);
+		expect(errorOf(list)).toBeNull();
+		expect(blocksOf(list)).toEqual([]);
 	});
 
 	it('reaches the server from a 0-row result when the filter is cleared', async () => {
@@ -351,7 +374,7 @@ describe('SnapshotListResource: recovery', () => {
 		server.answer(1);
 		await tick();
 		expect(list.totalCount).toBe(0);
-		expect(list.failedBlocks).toEqual([]);
+		expect(blocksOf(list)).toEqual([]);
 		// A 0-row grid reports an empty window.
 		list.ensureRange(0, 0);
 		expect(server.calls).toHaveLength(2);
@@ -374,8 +397,8 @@ describe('SnapshotListResource: recovery', () => {
 		server.fail(1, 'block 1 failed');
 		server.answer(2);
 		await tick();
-		expect(list.failedBlocks).toEqual([1]);
-		expect(list.error?.message).toBe('block 1 failed');
+		expect(blocksOf(list)).toEqual([1]);
+		expect(errorOf(list)?.message).toBe('block 1 failed');
 
 		// Out of the range now, but refresh() still retries it.
 		list.ensureRange(0, 10);
@@ -383,11 +406,11 @@ describe('SnapshotListResource: recovery', () => {
 		server.answer(3);
 		await tick();
 		expect(server.calls.slice(4).map((c) => c.request.pagination.offset)).toEqual([10]);
-		expect(list.error?.message).toBe('block 1 failed');
+		expect(errorOf(list)?.message).toBe('block 1 failed');
 		server.answer(4);
 		await tick();
-		expect(list.error).toBeNull();
-		expect(list.failedBlocks).toEqual([]);
+		expect(errorOf(list)).toBeNull();
+		expect(blocksOf(list)).toEqual([]);
 	});
 
 	it('drops a failure past the new count after the list shrank', async () => {
@@ -399,15 +422,15 @@ describe('SnapshotListResource: recovery', () => {
 		server.answer(1);
 		server.fail(2);
 		await tick();
-		expect(list.failedBlocks).toEqual([2]);
+		expect(blocksOf(list)).toEqual([2]);
 
 		server.pruneOldest(15);
 		list.refresh();
 		server.answer(3);
 		await tick();
 		expect(list.totalCount).toBe(15);
-		expect(list.failedBlocks).toEqual([]);
-		expect(list.error).toBeNull();
+		expect(blocksOf(list)).toEqual([]);
+		expect(errorOf(list)).toBeNull();
 	});
 });
 
@@ -435,8 +458,8 @@ describe('SnapshotListResource: stale answers', () => {
 		expect(list.totalCount).toBe(30);
 		expect(list.rows[0]?.id).toBe(30);
 		expect(list.loading).toBe(false);
-		expect(list.error).toBeNull();
-		expect(list.failedBlocks).toEqual([]);
+		expect(errorOf(list)).toBeNull();
+		expect(blocksOf(list)).toEqual([]);
 	});
 
 	it('does not take a boundary from an answer of the previous generation', async () => {
@@ -457,7 +480,7 @@ describe('SnapshotListResource: stale answers', () => {
 		await tick();
 		expect(list.asOfId).toBe(30);
 		expect(list.totalCount).toBe(30);
-		expect(list.failedBlocks).toEqual([]);
+		expect(blocksOf(list)).toEqual([]);
 	});
 
 	it('ignores answers after dispose()', async () => {
@@ -490,8 +513,10 @@ describe('SnapshotListResource: requests that never answer', () => {
 		await vi.advanceTimersByTimeAsync(1);
 		await flush();
 		expect(list.loading).toBe(false);
-		expect(list.error?.message).toBe('list request timed out after 1000 ms');
-		expect(list.failedBlocks).toEqual([0]);
+		expect(errorOf(list)?.message).toBe('list request timed out after 1000 ms');
+		expect(errorFailureOf(list)?.code).toBe('timeout');
+		expect(errorOf(list)).toBeInstanceOf(SnapshotListError);
+		expect(blocksOf(list)).toEqual([0]);
 		expect(server.calls[0].signal.aborted).toBe(true);
 
 		server.answer(0);
@@ -502,7 +527,7 @@ describe('SnapshotListResource: requests that never answer', () => {
 		server.answer(1);
 		await flush();
 		expect(list.totalCount).toBe(5);
-		expect(list.error).toBeNull();
+		expect(errorOf(list)).toBeNull();
 	});
 
 	it('lets refresh() replace a hung request before the time limit', async () => {
@@ -533,8 +558,14 @@ describe('SnapshotListResource: misbehaving fetchers', () => {
 		expect(list.loading).toBe(true);
 		await tick();
 		expect(list.loading).toBe(false);
-		expect(list.error?.message).toBe('Error: sync boom');
-		expect(list.failedBlocks).toEqual([0]);
+		expect(errorOf(list)?.message).toBe('Error: sync boom');
+		expect(errorFailureOf(list)?.code).toBe('request');
+		// Not a ProviderError: wrapped, with the thrown value kept as `cause`.
+		const error = errorOf(list);
+		expect(error).toBeInstanceOf(SnapshotListError);
+		expect((error as SnapshotListError).code).toBe('request');
+		expect((error?.cause as Error).message).toBe('sync boom');
+		expect(blocksOf(list)).toEqual([0]);
 		expect(fetcher).toHaveBeenCalledTimes(1);
 	});
 
@@ -552,7 +583,8 @@ describe('SnapshotListResource: misbehaving fetchers', () => {
 		list.ensureRange(0, 10);
 		server.answer(0, override);
 		await tick();
-		expect(list.error?.message).toBe('malformed list result');
+		expect(errorOf(list)?.message).toBe('malformed list result');
+		expect(errorFailureOf(list)?.code).toBe('malformed');
 		expect(list.totalCount).toBeNull();
 		expect(list.loading).toBe(false);
 	});
@@ -583,7 +615,7 @@ describe('SnapshotListResource: misbehaving fetchers', () => {
 		server.answer(2);
 		await tick();
 		expect(list.loading).toBe(false);
-		expect(list.failedBlocks).toEqual([1]);
+		expect(blocksOf(list)).toEqual([1]);
 	});
 });
 
@@ -599,5 +631,206 @@ describe('SnapshotListResource: before the first ensureRange()', () => {
 		expect(server.calls).toHaveLength(0);
 		list.ensureRange(0, 10);
 		expect(server.calls[0].request.sort).toEqual([{ field: 'ts', direction: 'desc' }]);
+	});
+});
+
+describe('SnapshotListResource: failure codes, messages and notifications (#342)', () => {
+	/** A fetcher's own error type carrying more than a message (ChronoGazer's `Readout`). */
+	class ReadoutError extends ProviderError {
+		constructor(readonly readout: 'unavailable' | 'notRunning') {
+			super({ kind: 'other', message: `readout ${readout}` });
+		}
+	}
+
+	it('keeps a ProviderError the fetcher throws as the same object, code request', async () => {
+		const server = createServer(30);
+		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: BLOCK });
+		list.ensureRange(0, 30);
+		server.answer(0);
+		await tick();
+		const thrown = new ReadoutError('unavailable');
+		server.calls[1].reject(thrown);
+		server.answer(2);
+		await tick();
+		const failure = errorFailureOf(list);
+		expect(failure?.block).toBe(1);
+		expect(failure?.code).toBe('request');
+		expect(failure?.error).toBe(thrown);
+		expect((failure?.error as ReadoutError).readout).toBe('unavailable');
+		expect(notified).toEqual(['readout unavailable']);
+	});
+
+	it('keeps the code of a SnapshotListError the fetcher throws', async () => {
+		const server = createServer(5);
+		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: BLOCK });
+		list.ensureRange(0, 10);
+		const thrown = new SnapshotListError('timeout', 'gave up');
+		server.calls[0].reject(thrown);
+		await tick();
+		expect(errorFailureOf(list)?.code).toBe('timeout');
+		expect(errorOf(list)).toBe(thrown);
+	});
+
+	it('uses the messages option for the failures it detects itself', async () => {
+		vi.useFakeTimers();
+		const timeoutCalls: number[] = [];
+		const server = createServer(30);
+		const list = createSnapshotListResource<Row>(server.fetcher, {
+			blockSize: BLOCK,
+			requestTimeoutMs: 500,
+			messages: {
+				timeout: (ms) => {
+					timeoutCalls.push(ms);
+					return `timeout ${ms}`;
+				},
+				boundaryMismatch: () => 'mismatch!',
+				malformed: () => 'broken!'
+			}
+		});
+		list.ensureRange(0, 30);
+		server.answer(0);
+		await flush();
+		server.answer(1, { asOfId: 99 });
+		server.answer(2, { rows: 'nope' as unknown as Row[] });
+		await flush();
+		expect(
+			list.failures.map((f) => (f.kind === 'error' ? [f.code, f.error.message] : f.kind))
+		).toEqual([
+			['boundaryMismatch', 'mismatch!'],
+			['malformed', 'broken!']
+		]);
+
+		list.setParams({ sort: [] });
+		await vi.advanceTimersByTimeAsync(500);
+		await flush();
+		expect(errorFailureOf(list)?.code).toBe('timeout');
+		expect(errorOf(list)?.message).toBe('timeout 500');
+		expect(timeoutCalls).toEqual([500]);
+		expect(notified).toEqual(['mismatch!', 'broken!', 'timeout 500']);
+	});
+
+	it('falls back to the default text when a message function throws, and still settles', async () => {
+		vi.useFakeTimers();
+		const server = createServer(5);
+		const list = createSnapshotListResource<Row>(server.fetcher, {
+			blockSize: BLOCK,
+			requestTimeoutMs: 100,
+			messages: {
+				timeout: () => {
+					throw new Error('i18n broke');
+				}
+			}
+		});
+		list.ensureRange(0, 10);
+		await vi.advanceTimersByTimeAsync(100);
+		await flush();
+		expect(list.loading).toBe(false);
+		expect(errorFailureOf(list)?.code).toBe('timeout');
+		expect(errorOf(list)?.message).toBe(defaultSnapshotListMessages.timeout(100));
+	});
+
+	it('lists every failed block sorted by block, mixed kinds, each cleared when its block loads', async () => {
+		const server = createServer(50);
+		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: BLOCK });
+		list.ensureRange(0, 50);
+		server.answer(0);
+		await tick();
+		// Settle out of block order: 4, 2, 1 (3 loads).
+		server.calls[4].reject(new ReadoutError('unavailable'));
+		await tick();
+		server.fail(2, 'network down');
+		await tick();
+		server.calls[1].reject(new ReadoutError('notRunning'));
+		server.answer(3);
+		await tick();
+		expect(
+			list.failures.map((f) => [f.block, f.kind === 'error' ? f.error.message : f.kind])
+		).toEqual([
+			[1, 'readout notRunning'],
+			[2, 'network down'],
+			[4, 'readout unavailable']
+		]);
+		// The lowest block of each kind, as /events shows them side by side.
+		const readout = list.failures.find(
+			(f) => f.kind === 'error' && f.error instanceof ReadoutError
+		);
+		const transport = list.failures.find(
+			(f) => f.kind === 'error' && !(f.error instanceof ReadoutError)
+		);
+		expect([readout?.block, transport?.block]).toEqual([1, 2]);
+
+		list.refresh();
+		server.answer(5); // block 0, new generation
+		await tick();
+		// The new generation reads the range again; 2 (and 3) load first.
+		expect(server.calls.slice(6).map((c) => c.request.pagination.offset)).toEqual([10, 20, 30, 40]);
+		server.answer(7);
+		server.answer(8);
+		await tick();
+		expect(blocksOf(list)).toEqual([1, 4]);
+		server.answer(6);
+		server.answer(9);
+		await tick();
+		expect(list.failures).toEqual([]);
+	});
+
+	it('includes an expiry next to request failures', async () => {
+		const server = createServer(30);
+		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: BLOCK });
+		list.ensureRange(0, 30);
+		server.answer(0);
+		await tick();
+		server.fail(1, 'block 1 failed');
+		await tick();
+		server.pruneOldest(1);
+		server.answer(2);
+		await tick();
+		expect(list.failures).toEqual([
+			{ block: 1, kind: 'error', code: 'request', error: expect.any(ProviderError) },
+			{ block: 2, kind: 'expired' }
+		]);
+		expect(list.expired).toBe(true);
+		expect(notified).toEqual(['block 1 failed']);
+	});
+
+	it('does not notify with notify: false, but still records the failure', async () => {
+		const server = createServer(5);
+		const list = createSnapshotListResource<Row>(server.fetcher, {
+			blockSize: BLOCK,
+			notify: false
+		});
+		list.ensureRange(0, 10);
+		server.fail(0, 'quiet');
+		await tick();
+		expect(notified).toEqual([]);
+		expect(errorOf(list)?.message).toBe('quiet');
+	});
+
+	it('asks a notify predicate per failure; one that throws counts as no', async () => {
+		const seen: SnapshotListErrorFailure[] = [];
+		const server = createServer(40);
+		const list = createSnapshotListResource<Row>(server.fetcher, {
+			blockSize: BLOCK,
+			notify: (failure) => {
+				seen.push(failure);
+				if (failure.block === 3) throw new Error('predicate broke');
+				return failure.code !== 'boundaryMismatch';
+			}
+		});
+		list.ensureRange(0, 40);
+		server.answer(0);
+		await tick();
+		server.fail(1, 'shown');
+		server.answer(2, { asOfId: 99 });
+		server.fail(3, 'predicate threw');
+		await tick();
+		expect(seen.map((f) => [f.block, f.code])).toEqual([
+			[1, 'request'],
+			[2, 'boundaryMismatch'],
+			[3, 'request']
+		]);
+		expect(notified).toEqual(['shown']);
+		expect(blocksOf(list)).toEqual([1, 2, 3]);
+		expect(list.loading).toBe(false);
 	});
 });

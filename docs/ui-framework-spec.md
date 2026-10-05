@@ -1,5 +1,7 @@
 # Banto（番頭） — Tauriフルスタック管理画面フレームワーク 仕様 (v0.8)
 
+<!-- 2026-10-06: §4.1 の SnapshotListResource の失敗を `failures`（ブロック順・コード付き）・
+     `messages`・`notify` の形に更新（Issue #342、v5.0.0 の破壊的変更、ADR-0015 追記）。 -->
 <!-- 2026-09-30: §3.3 の AuthProvider を v2.0.0 の形（resolve / credentialRevision /
      onCredentialChanged、Issue #260・ADR-0016）に更新。§8.1 のガードも同じ。 -->
 <!-- 2026-09-29: §4.1 に SnapshotListResource（境界 asOfId 付きのブロック読み込み、
@@ -274,6 +276,16 @@ interface EventProvider {
     「取得失敗」「正常な 0 件」を画面が区別できる。失敗をブロック単位で持つ・
     `{0, 0}` から回復する・`requestTimeoutMs` の期限・世代の違う応答を捨てる、は
     `WindowedListResource` と同じ。サーバー側の決まりは conventions §6。
+    失敗は `failures`（ブロック順、ブロックごとに 1 件。`{ block, kind: 'error',
+    code, error }` か `{ block, kind: 'expired' }`）で出し、種類はコード
+    （`'request'`・`'timeout'`・`'boundaryMismatch'`・`'malformed'`）で見分ける
+    （文言を比べない）。取得関数が投げた `ProviderError` は同じオブジェクトのまま
+    入り（`'request'`）、リソースが自分で作る失敗は `SnapshotListError`（`code`
+    付き）。その文言は `messages`（`timeout(ms)`・`boundaryMismatch()`・
+    `malformed()`、レイヤ①の注入。既定は英語）で差し替え、失敗ごとのトーストは
+    `notify`（既定 `true`・`false`・述語）で止められる（Issue #342、ADR-0015 の
+    追記）。`WindowedListResource` の失敗は今のところ `failedBlocks`・`error` の
+    まま（同じ形にそろえるのは別 Issue）。
   - データ規模が「まだ未定/ケースによる」とのことなので、**両モードを同一API
     表面で切り替え可能**にすることを必須要件とする。閾値判断（例: 1万行を
     超えたらサーバーモード推奨、など）はドキュメントでガイドラインを示す。

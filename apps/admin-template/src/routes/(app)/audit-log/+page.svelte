@@ -146,7 +146,9 @@
 	 * `listAuditLog(params, asOfId, signal)`: 世代の最初は `asOfId: null`
 	 * （サーバーが境界を決めて返す）、後続は固定した境界。境界付きの取得では
 	 * サーバーは保持期間の削除を走らせない。期限（既定 30 秒）・失敗の持ち方・
-	 * 世代違いの応答の破棄はリソース側が行う。
+	 * 世代違いの応答の破棄はリソース側が行う。リソース自身が作る失敗の文言
+	 * （期限切れ・境界の食い違い・応答の形の不正）は `messages` で Paraglide の
+	 * 文言に差し替える（banto #342）。
 	 */
 	const auditLog = createSnapshotListResource<AuditLogEntry>(
 		(request, signal) =>
@@ -155,8 +157,19 @@
 				request.asOfId,
 				signal
 			),
-		{ params: { sort: gridState.sort, filters: [] } }
+		{
+			params: { sort: gridState.sort, filters: [] },
+			messages: {
+				timeout: (ms) => m['audit.loadTimeout']({ seconds: Math.round(ms / 1000) }),
+				boundaryMismatch: () => m['audit.boundaryMismatch'](),
+				malformed: () => m['audit.malformedResult']()
+			}
+		}
 	);
+
+	// 画面に出す読み込み失敗: 失敗したままのブロックのうち、いちばん前のもの
+	// （`failures` はブロック順）。失効（`expired`）は別の案内で出す。
+	const loadFailure = $derived(auditLog.failures.find((failure) => failure.kind === 'error'));
 
 	// `untrack` (spec M14, mirrors ItemsServerGrid.svelte's split-effects
 	// comment): the initial load runs once on mount. The resource reads only
@@ -262,7 +275,7 @@
 		-->
 		<p class="note" data-testid="audit-count-note">
 			{#if auditLog.totalCount === null}
-				{auditLog.failedBlocks.length > 0 ? m['audit.notLoadedNote']() : m['audit.loadingNote']()}
+				{auditLog.failures.length > 0 ? m['audit.notLoadedNote']() : m['audit.loadingNote']()}
 			{:else if auditLog.totalCount === 0}
 				{m['audit.emptyNote']()}
 			{:else}
@@ -270,12 +283,12 @@
 			{/if}
 		</p>
 
-		{#if auditLog.error}
+		{#if loadFailure?.kind === 'error'}
 			<div class="load-error" role="alert">
 				<p>
 					<strong>{m['audit.loadError']()}</strong>
 					<span>{m['audit.loadErrorDesc']()}</span>
-					<span class="load-error-detail">{auditLog.error.message}</span>
+					<span class="load-error-detail">{loadFailure.error.message}</span>
 				</p>
 			</div>
 		{/if}
