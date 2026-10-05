@@ -47,11 +47,26 @@
 //!   `ConnectInfo<SocketAddr>` that [`crate::start`] /
 //!   [`crate::BoundServer::serve`] always install): the peer address comes
 //!   from the TCP connection, not from anything a remote page or link can
-//!   set, so LAN browsers keep the strict policy unconditionally. Residual:
-//!   a browser on the *same host* (also loopback) gets the widened policy -
-//!   the `:80` reach above is then that host's own loopback, i.e. the
-//!   machine already running this server. **This is the recommended
-//!   selector for a desktop shell.**
+//!   set, so LAN browsers connecting *directly* keep the strict policy.
+//!   Residual: a browser on the *same host* (also loopback) gets the
+//!   widened policy - the `:80` reach above is then that host's own
+//!   loopback, i.e. the machine already running this server. **This is the
+//!   recommended selector for a desktop shell, as long as no same-host
+//!   reverse proxy is in front (next point).**
+//! - **Caveat - same-host reverse proxy**: if a reverse proxy on the same
+//!   host forwards LAN traffic to this server over loopback (e.g. a TLS
+//!   terminator per ADR-0003 that connects to `127.0.0.1:<port>`), *every*
+//!   request arrives from a loopback peer, so [`request_from_loopback_peer`]
+//!   widens `connect-src` for LAN browsers too: an injected script in a LAN
+//!   viewer's page could then reach whatever listens on port 80 of *that
+//!   viewer's own machine* (`http://ipc.localhost`; `ipc:` stays inert).
+//!   The peer check cannot tell the proxy from the desktop shell, and
+//!   forwarded headers (`X-Forwarded-For`, `Forwarded`) are client-settable
+//!   unless the proxy overwrites them, so don't select on those either. In
+//!   such a deployment either don't enable the widening at all (the shell
+//!   still works via Tauri's `postMessage` fallback, only the CSP violation
+//!   reports remain), or have the proxy connect to this server from a
+//!   non-loopback address so that only the shell is a loopback peer.
 //! - **Request headers / query / `Host`**: attacker-influenceable (a crafted
 //!   link sets the query; `Host` follows the URL the victim opens), so a
 //!   selector built on them lets a remote party pick the weaker policy for a
@@ -297,6 +312,14 @@ impl SecurityHeaders {
 /// [`crate::BoundServer::serve`] install. Without that extension (a router
 /// served some other way) it returns `false`, i.e. the strict policy - fail
 /// closed.
+///
+/// "Loopback peer" means "the TCP connection came from this host", not "the
+/// viewer is on this host": behind a reverse proxy on the same host every
+/// request is a loopback peer, so LAN viewers get the widened policy too
+/// (their own machine's `:80` becomes reachable from an injected script via
+/// `http://ipc.localhost`). Don't rely on it in that deployment - leave the
+/// widening off, or have the proxy connect from a non-loopback address (see
+/// the module docs).
 pub fn request_from_loopback_peer(req: &Request) -> bool {
     req.extensions()
         .get::<ConnectInfo<SocketAddr>>()
