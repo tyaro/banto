@@ -1,4 +1,4 @@
--- M20: generic file/image attachments (spec docs/design/attachments-plan.md §3.2).
+-- M20: generic file/image attachments (spec docs/attachments-plan.md §3.2).
 -- Owned by the app (like every other migration in this directory), while the
 -- CRUD/storage/thumbnail logic itself lives in the resource-agnostic
 -- `banto-attachments` crate - the crate documents this schema as the
