@@ -12,11 +12,14 @@ vi.mock('$app/paths', () => ({
 	resolve: (path: string) => `${state.base}/${path}`
 }));
 
-import { isPathActive, pageTitle, type AppPath } from './navigation';
+import { isPathActive, navItems, pageTitle, type AppPath } from './navigation';
 import { navBadges } from './navBadges.svelte';
 import * as m from '#lib/paraglide/messages.js';
 
-const items = '/items' as AppPath;
+// Scaffold presets remove nav entries (items, dashboard, ...), so the cases below
+// derive their paths and titles from whatever `navItems` the copy still has.
+const first = navItems[0];
+const other = navItems[1];
 
 describe.each(['', '/banto'])('base=%j', (base) => {
 	afterEach(() => {
@@ -28,22 +31,22 @@ describe.each(['', '/banto'])('base=%j', (base) => {
 	};
 
 	it('isPathActive owns the path and its sub-paths only', () => {
-		expect(isPathActive(items, at('/items'))).toBe(true);
-		expect(isPathActive(items, at('/items/3'))).toBe(true);
-		expect(isPathActive(items, at('/items-other'))).toBe(false);
-		expect(isPathActive(items, at('/dashboard'))).toBe(false);
+		expect(isPathActive(first.path, at(first.path))).toBe(true);
+		expect(isPathActive(first.path, at(`${first.path}/3`))).toBe(true);
+		expect(isPathActive(first.path, at(`${first.path}-other`))).toBe(false);
+		expect(isPathActive(other.path, at(first.path))).toBe(false);
 	});
 
 	it('pageTitle resolves the entry title from a base-carrying pathname', () => {
-		expect(pageTitle(at('/dashboard'))).toBe(m['nav.dashboard']());
-		expect(pageTitle(at('/items/3'))).toBe(m['nav.items']());
+		expect(pageTitle(at(first.path))).toBe(m[first.labelKey]());
+		expect(pageTitle(at(`${first.path}/3`))).toBe(m[first.labelKey]());
 		expect(pageTitle(at('/nowhere'))).toBe('Banto');
 	});
 
 	it('navBadges counts elsewhere, not on the owning page, and clears on arrival', () => {
 		const key = '/nbt-items' as AppPath;
 		const off = onInvalidate('nbt-items', (_r, reason) =>
-			navBadges.noteInvalidation(key, at('/dashboard'), reason)
+			navBadges.noteInvalidation(key, at(first.path), reason)
 		);
 		invalidate('nbt-items');
 		expect(navBadges.count(key)).toBe(1);
