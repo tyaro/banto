@@ -8,6 +8,8 @@
 
 > **更新（2026-10-04）**: §2 に起動判定が終わる前のガード（起動待ちの 503 とスプラッシュ、#321）を足した。
 
+> **更新（2026-10-05）**: §2 の配線①に「ナビゲーションの途中では出さず、終わってから」を足した（#326）。
+
 ## 目次
 
 1. [起動時の3環境と provider 選択](#1-起動時の3環境と-provider-選択)
@@ -94,7 +96,7 @@ flowchart TD
 ```mermaid
 flowchart LR
   SNAP["controller.snapshot<br/>（status・owner・generation・kind・pendingOwnerChange）"]
-  W1["配線①: generation ≠ data.sessionGeneration<br/>→ invalidateAll()（同じ generation に 1 回だけ。<br/>ログアウト中・ログインへの遷移中は出さない）"]
+  W1["配線①: generation ≠ data.sessionGeneration<br/>→ invalidateAll()（同じ generation に 1 回だけ。<br/>ログアウト中・ログインへの遷移中は出さない。<br/>ナビゲーションの途中は終わるまで待つ）"]
   W2["配線②: pendingOwnerChange かつ active<br/>→ 通知（'rebuild'）／通知して /login（'relogin'）<br/>→ acknowledgeOwnerChange()"]
   W3["配線③: 再 load が unverified<br/>→ 503 の再試行画面（自動では戻らない）"]
   GATE["世代ゲート<br/>data.sessionGeneration === snapshot.generation のときだけ<br/>key ブロックで子ルートを表示"]
@@ -112,6 +114,7 @@ flowchart LR
 - 確認できない（サーバ到達不能・500・期限切れ）は **503 の再試行画面**（トークンは消さない — Issue #204）。発行の後の確認の失敗も 503 で、ログイン画面へは行かない。
 - **「再試行」は `invalidateAll()`**（controller を維持した画面内の再読込）。503 の間に確定したユーザーの変更（`pendingOwnerChange`）は、保護レイアウトが再び mount したときに通知される（S-81）。ページ全体の再読込では controller ごと作り直されるので、この通知は保証しない。
 - 別タブのログイン・ログアウト（共有の Remember me トークンの `storage` イベント）で、このタブの active なセッションは **保留（unknown）** になり、generation が変わる → 配線①が再 load → 新しいユーザーで作り直す（none を経ない切り替えも拾う）。`onSessionEnded` は none への遷移だけを通知するので、保護レイアウトの再 load は配線①で行う。
+- 配線①の再 load は**ナビゲーションの途中では始めない**（#326）。途中で `invalidateAll()` を始めると、SvelteKit 2.70 はそのナビゲーションを途中で終わらせ（移動が失われる）、以後の `beforeNavigate`（未保存の変更の確認）を飛ばす。最初のナビゲーションが終わり（`afterNavigate`）、`navigating.to === null` になってから、そのナビゲーションの load が確定した世代と比べて古ければやり直す（`$lib/banto/navigationSettled.svelte.ts`。#321 の起動待ちのやり直しと共有）。
 - SSE の失効（`401`）や他タブでのトークン消去は `connectEvents` が `controller.signal()` に変える。確認と退避（1 秒から倍々で 30 秒まで）は controller の中。
 - `publicViewer` は **画面ナビの allowlist** 用。データアクセスの境界は RBAC の `viewer` ロール側。
 

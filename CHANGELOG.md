@@ -22,6 +22,11 @@
 
 ## [Unreleased]
 
+### 修正
+
+- fix(admin-template): ナビゲーションの途中でセッションの世代が変わると（別のタブでのログイン・Remember me の切り替え、バックグラウンドで確定した失効など）、移動が失われ、その後の未保存の変更の確認が効かなくなる問題を修正（#326、#321 の続き）。`(app)/+layout.svelte` の配線①（世代が変わったら `invalidateAll()` で確定し直す）がナビゲーションの途中に当たると、SvelteKit 2.70 はそのナビゲーションを途中で終わらせ（URL は元の画面のまま）、内部の「ナビゲーション中」の印を残すため、次のナビゲーションで `beforeNavigate` が呼ばれなかった。配線①は、ナビゲーションが終わるまで（最初のナビゲーションの `afterNavigate` の後、かつ `navigating.to === null`）やり直しを待つ。この判定は新しい `src/lib/banto/navigationSettled.svelte.ts` にまとめ、#321 のルートのレイアウトのやり直しと共有する。世代が変わったら確定し直す本来の動き・ログアウト中（`isLeavingForLogin()`）の抑止は従来どおり。SvelteKit 側の同じ現象は [sveltejs/kit#17114](https://github.com/sveltejs/kit/issues/17114)（3 系の開発版で修正。2.70 には入っていない）。E2E: smoke `13j`（項目の画面から一覧への移動を止めている間に別のタブでログインし直す → 移動が完了し、未保存の確認が出る）。単体: `src/lib/banto/navigationSettled.test.ts`。
+  - 派生アプリへの影響: **経路 B のみ**（A の `@banto/*`・`banto-*` と C の DB・設定は変更なし）。配線①をコピーしている派生アプリ（banto-industrial など）は、この修正の入った版の admin-template から次を写す: `src/lib/banto/navigationSettled.svelte.ts`（新規）、`src/routes/+layout.svelte`（`trackFirstNavigation()` の呼び出しと、起動待ちのやり直しの条件を `isNavigationSettled()` に）、`src/routes/(app)/+layout.svelte`（配線①の `$effect` に `if (!isNavigationSettled()) return;`）。#321 を取り込んでいない派生アプリも、ルートのレイアウトで `trackFirstNavigation()` を 1 回呼ぶ（配線①の判定に最初のナビゲーションの終わりが要るため）。
+
 ## [3.0.1] - 2026-10-05
 
 **v3.0.1 — 保護画面を直接開いたときのスプラッシュと再接続の修正（#321）と依存の更新。版の種類: patch（後方互換の修正のみ。公開 API の追加・削除・改名は無い）。

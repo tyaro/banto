@@ -2526,6 +2526,83 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// Issue #326: the generation moves WHILE a navigation is in flight - here
+	// another tab logs in again (the shared Remember me token is replaced)
+	// while this tab's move from the item form to the list is still loading
+	// (the list's client chunk is held). Wiring ① must not start
+	// `invalidateAll()` in the middle of that navigation: SvelteKit 2.70
+	// would abort it and leave its internal "navigating" flag set, after
+	// which `beforeNavigate` - the unsaved-changes guard - is skipped. The
+	// move completes, the re-run happens after it, and leaving a form with
+	// unsaved input still asks.
+	test('13j. #326: a generation change during a navigation keeps the move and the unsaved-changes guard', async ({
+		browser
+	}) => {
+		test.setTimeout(60_000);
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const other = await context.newPage();
+		const dialogs = trackDialogs(tab);
+		try {
+			await loginRemembered(tab, ADMIN_USERNAME, ADMIN_PASSWORD);
+			await tab.goto('/items/new');
+			await expect(tab.getByLabel('商品名')).toBeVisible();
+
+			const chunk = nodeChunkOf('routes/(app)/items/+page.svelte');
+			let release!: () => void;
+			const released = new Promise<void>((resolve) => (release = resolve));
+			let requested!: () => void;
+			const chunkRequested = new Promise<void>((resolve) => (requested = resolve));
+			await tab.route(`**/${chunk}`, async (route) => {
+				requested();
+				await released;
+				await route.continue();
+			});
+
+			// The form is clean: the move to the list starts without a prompt
+			// and waits on the held chunk.
+			await tab.getByRole('link', { name: '一覧へ戻る' }).click();
+			await chunkRequested;
+
+			// Another tab logs in again: this tab holds its session (the
+			// generation moves) and confirms it again with the server.
+			const reconfirmed = tab.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/auth/identity' && response.status() === 200
+			);
+			await loginRemembered(other, ADMIN_USERNAME, ADMIN_PASSWORD);
+			await reconfirmed;
+			release();
+
+			// The move completed (the re-run did not send the tab back to the
+			// form) and the list is shown for the re-confirmed session.
+			await expect(tab).toHaveURL(/\/items$/);
+			await expect(tab.getByRole('button', { name: '新規作成' })).toBeVisible();
+			await expect(tab.getByRole('button', { name: 'ユーザーメニューを開く' })).toContainText(
+				ADMIN_DISPLAY_NAME
+			);
+
+			// The unsaved-changes guard still runs: "stay" keeps the input.
+			await tab.getByRole('button', { name: '新規作成' }).click();
+			await expect(tab).toHaveURL(/\/items\/new$/);
+			const name = tab.getByLabel('商品名');
+			await expect(name).toBeVisible();
+			await name.fill('E2E未保存-326');
+			await expect(tab.getByText('未保存の変更があります')).toBeVisible();
+			dialogs.answer(false);
+			await tab
+				.getByRole('navigation', { name: '主要ナビゲーション' })
+				.getByRole('link', { name: 'ダッシュボード' })
+				.click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect(tab).toHaveURL(/\/items\/new$/);
+			await expect(name).toHaveValue('E2E未保存-326');
+		} finally {
+			dialogs.stop();
+			await context.close();
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's
