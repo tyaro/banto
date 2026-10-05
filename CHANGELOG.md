@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- docs(fixture): 外部利用 fixture の `pnpm check` は、ルートで `pnpm install` 済みでないと `playwright.config.ts` の `@playwright/test` を解決できず失敗する（CI は先にルートを入れるので通る）。前提を docs/upgrading.md 8.3 と fixture の tsconfig.json に明記した。fixture に `@playwright/test` は足さない（2 つ入ると Playwright が二重読み込みで落ちるため）。
+
 ## [4.0.0] - 2026-10-05
 
 **v4.0.0 — SvelteKit 3（`@sveltejs/kit` 3・`@sveltejs/adapter-static` 4）と TypeScript 6（`^6.0.0`）への移行（#325）、配線①のナビゲーション待ちの修正（#326）、docs の誤った spec 参照の修正（#312 PR-B）。版の種類: major（破壊的変更。`@banto/*` の中身は変わらないが、peer の前提が SvelteKit 3・TypeScript 6 に変わる）。
