@@ -8,7 +8,13 @@
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import { navItems, publicNavItems, resolveAppPath } from '#lib/navigation.js';
+	import {
+		isPathActive,
+		navItems,
+		publicNavItems,
+		resolveAppPath,
+		type AppPath
+	} from '#lib/navigation.js';
 	import { NAV_ICONS } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
@@ -24,8 +30,8 @@
 
 	let { overlayOpen = false }: Props = $props();
 
-	function isActive(path: string): boolean {
-		return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
+	function isActive(path: AppPath): boolean {
+		return isPathActive(path, page.url.pathname);
 	}
 
 	// Spec M10 RBAC: hide admin-only entries (「ユーザー管理」) rather than
