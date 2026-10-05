@@ -2,7 +2,7 @@ use super::*;
 
 // --- M20: attachments -------------------------------------------------------
 
-/// `POST /api/attachments/list` request body (spec §3.5): `{resource,
+/// `POST /api/attachments/list` request body (attachments-plan §3.5): `{resource,
 /// resourceId}` - deliberately its own tiny struct rather than two loose
 /// `Query`/`Path` extractors, mirroring why `items_list` takes a JSON body
 /// too (a record's `(resource, resourceId)` pair is conceptually one
@@ -52,7 +52,7 @@ fn rfc5987_encode(value: &str) -> String {
 /// Build a `Content-Disposition: attachment` header value carrying BOTH an
 /// ASCII-safe `filename=` (for clients that only understand the legacy
 /// form) and an RFC 5987 `filename*=UTF-8''...` (for everything else,
-/// including any non-ASCII original name - spec §3.3: `file_name` is
+/// including any non-ASCII original name - attachments-plan §3.3: `file_name` is
 /// user-supplied display text, never a filesystem path, but it still needs
 /// to survive round-tripping through an HTTP header safely). The ASCII
 /// fallback replaces anything non-ASCII, a quote, a backslash, or a control
@@ -81,9 +81,9 @@ fn content_disposition_header_value(file_name: &str) -> String {
     )
 }
 
-/// `GET /api/attachments/{id}/download` (spec §3.5): full attachment body.
+/// `GET /api/attachments/{id}/download` (attachments-plan §3.5): full attachment body.
 /// `mime` is always the server-detected value from `AttachmentsService::upload`
-/// (spec §3.4), never client-supplied. Not audited - "read routes are never
+/// (attachments-plan §3.4), never client-supplied. Not audited - "read routes are never
 /// audited" (see this module's doc comment).
 async fn attachments_download(
     State(attachments): State<AttachmentsService>,
@@ -102,7 +102,7 @@ async fn attachments_download(
     Ok(response)
 }
 
-/// `GET /api/attachments/{id}/thumbnail` (spec §3.5): JPEG thumbnail bytes,
+/// `GET /api/attachments/{id}/thumbnail` (attachments-plan §3.5): JPEG thumbnail bytes,
 /// or a `NotFound` (-> `404`) when the attachment has none -
 /// `AttachmentsService::read_thumbnail`'s doc comment covers why "no such
 /// attachment" and "attachment exists but has no thumbnail" are not
@@ -120,7 +120,7 @@ async fn attachments_thumbnail(
     Ok(response)
 }
 
-/// Read-only `attachments` routes (spec §3.5: `viewer` and up, same RBAC
+/// Read-only `attachments` routes (attachments-plan §3.5: `viewer` and up, same RBAC
 /// floor as `items_read_router`).
 fn attachments_read_router(attachments: AttachmentsService, auth: AuthState) -> Router {
     Router::new()
@@ -134,7 +134,7 @@ fn attachments_read_router(attachments: AttachmentsService, auth: AuthState) -> 
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
 
-/// State for the `attachments` WRITE handlers (spec §3.5): `AttachmentsService`
+/// State for the `attachments` WRITE handlers (attachments-plan §3.5): `AttachmentsService`
 /// for the mutation itself, `AuditLogService`/`AuthState` for the same
 /// once-the-mutation-succeeded audit-record pattern every other write
 /// handler in this module uses, and `events` (spec: `banto_attachments` has
@@ -169,7 +169,7 @@ fn attachment_audit_detail(meta: &AttachmentMeta) -> serde_json::Value {
 }
 
 /// `POST /api/attachments?resource=&resourceId=&fileName=` query parameters
-/// (spec §3.5). Metadata rides the query string, not the body, since the
+/// (attachments-plan §3.5). Metadata rides the query string, not the body, since the
 /// body is the raw file bytes (same "no multipart dependency" shape as
 /// `POST /api/backups/restore`'s `?fileName=`, see this module's doc
 /// comment) - unlike that route, `fileName` here is load-bearing (it
@@ -233,7 +233,7 @@ async fn attachments_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Mutating `attachments` routes (spec §3.5: `editor` and up, same RBAC
+/// Mutating `attachments` routes (attachments-plan §3.5: `editor` and up, same RBAC
 /// floor as `items_write_router`). `DefaultBodyLimit::max` caps the upload
 /// route at `MAX_ATTACHMENT_BYTES` (+ [`ATTACHMENT_BODY_LIMIT_SLACK_BYTES`]);
 /// the other route here (`DELETE`) has no meaningful request body, so this
@@ -272,7 +272,7 @@ fn attachments_write_router(
         .layer(middleware::from_fn_with_state(auth, require_auth))
 }
 
-/// `/api/attachments/*` (spec §3.5): merges the read (any role) and write
+/// `/api/attachments/*` (attachments-plan §3.5): merges the read (any role) and write
 /// (`editor`+) sub-routers, mirroring [`items_router`].
 pub(super) fn attachments_router(
     attachments: AttachmentsService,

@@ -5,7 +5,7 @@ import { errorMessage } from './errors';
  * Result of one `AttachmentsClient.list()` call, as a discriminated union
  * rather than a thrown exception - lets `AttachmentsPanel` (and this
  * module's own tests, see `tests/list.test.ts`) branch on
- * loading/一覧/空/エラー without needing a component render harness (spec
+ * loading/一覧/空/エラー without needing a component render harness (attachments-plan
  * §3.7 test guidance: extract logic into plain functions since the
  * workspace has no `@testing-library/svelte`).
  */

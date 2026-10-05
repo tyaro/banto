@@ -2582,7 +2582,7 @@ async fn editor_can_upload_list_download_and_delete_an_attachment() {
     let downloaded = body_bytes(download_response).await;
     assert_eq!(downloaded, bytes);
 
-    // Non-image upload: no thumbnail generated, so this 404s (spec §3.5).
+    // Non-image upload: no thumbnail generated, so this 404s (attachments-plan §3.5).
     let thumbnail_response = router
         .clone()
         .oneshot(get_auth(
@@ -2612,7 +2612,7 @@ async fn editor_can_upload_list_download_and_delete_an_attachment() {
     assert_eq!(listed_after.as_array().unwrap().len(), 0);
 }
 
-/// `viewer` cannot upload or delete attachments (spec §3.5: `editor`+
+/// `viewer` cannot upload or delete attachments (attachments-plan §3.5: `editor`+
 /// write floor) - both are rejected `403` with `{"kind":"forbidden"}`,
 /// same shape as every other RBAC-guarded write route in this module.
 #[tokio::test]
@@ -2640,7 +2640,7 @@ async fn viewer_cannot_upload_or_delete_attachments_forbidden_with_forbidden_kin
 }
 
 /// `POST /api/attachments/list` needs a bearer token, same as every
-/// other `require_auth`-guarded route (spec §3.5: `viewer`+, but
+/// other `require_auth`-guarded route (attachments-plan §3.5: `viewer`+, but
 /// AUTHENTICATED viewer+, not anonymous).
 #[tokio::test]
 async fn attachments_list_route_requires_a_token() {
@@ -2656,7 +2656,7 @@ async fn attachments_list_route_requires_a_token() {
 }
 
 /// Downloading/thumbnailing an id that does not exist is a plain `404`
-/// (spec §3.5), same `NotFound` -> `404` mapping every other resource
+/// (attachments-plan §3.5), same `NotFound` -> `404` mapping every other resource
 /// uses (`banto_server::response::status_for`).
 #[tokio::test]
 async fn nonexistent_attachment_download_and_thumbnail_are_404() {
@@ -2700,7 +2700,7 @@ async fn oversized_attachment_upload_is_rejected_as_validation() {
     assert_eq!(json["kind"], "validation");
 }
 
-/// A body beyond even the router's `DefaultBodyLimit` (spec §3.5: cap +
+/// A body beyond even the router's `DefaultBodyLimit` (attachments-plan §3.5: cap +
 /// [`ATTACHMENT_BODY_LIMIT_SLACK_BYTES`] slack) never reaches the
 /// handler at all - axum itself rejects it with `413 Payload Too Large`,
 /// the transport-layer counterpart to the service-layer `422` above.
@@ -2720,7 +2720,7 @@ async fn attachment_upload_beyond_the_body_limit_is_rejected_with_413() {
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
-/// Upload/delete each record exactly one audit entry (spec §3.5:
+/// Upload/delete each record exactly one audit entry (attachments-plan §3.5:
 /// `action: "create"`/`"delete"`, `resource: "attachments"`, detail
 /// `{fileName,sizeBytes,parentResource,parentId}`) - same "once the
 /// service call has already succeeded" convention as `items`/`backups`.

@@ -5,21 +5,21 @@
 //! services (plain `cargo test`, no HTTP/IPC awareness), but lives in its own
 //! crate rather than
 //! `admin-template-core` because it is meant to be reused unmodified by
-//! other apps in this workspace (spec §3.1: "banto-industrial 側の消費も
+//! other apps in this workspace (attachments-plan §3.1: "banto-industrial 側の消費も
 //! 見込まれる").
 //!
 //! This crate deliberately depends on nothing beyond `banto-core` + `sqlx` +
-//! `tokio` + `image` + `sha2` (spec §3.1) - in particular, **no `tauri`, no
+//! `tokio` + `image` + `sha2` (attachments-plan §3.1) - in particular, **no `tauri`, no
 //! `axum`, no `banto-server`**. `ServerEvent` (the change-notification type
 //! `items.rs` broadcasts on write) is defined in `banto-server`, which would
 //! pull that whole dependency in just to emit an event this crate has no
 //! other use for; wiring `resource_changed` notifications for attachment
-//! uploads/deletes is left to the REST/Tauri wiring layer (spec §4 unit B),
+//! uploads/deletes is left to the REST/Tauri wiring layer (attachments-plan §4 unit B),
 //! which already depends on `banto-server` and owns the `AttachmentsService`
 //! instance.
 //!
 //! The table this service reads/writes (`attachments`) is owned by the
-//! consuming app's own migrations (spec §3.1 "テーブル定義はアプリが所有") -
+//! consuming app's own migrations (attachments-plan §3.1 "テーブル定義はアプリが所有") -
 //! see `apps/admin-template/core/migrations-sqlite/0006_attachments.sql` (and
 //! its strict-typed `migrations-postgres/0006_attachments.sql` counterpart) for
 //! the schema this crate requires. A caller wiring this crate into a new app
@@ -27,7 +27,7 @@
 //!
 //! ## Storage layout
 //!
-//! Given a `base_dir` (spec §3.3; the caller computes it with
+//! Given a `base_dir` (attachments-plan §3.3; the caller computes it with
 //! [`base_dir_for_target`] - for SQLite `db_path.parent().join("attachments")`,
 //! mirroring `backup.rs`'s `backups/` sibling-directory convention, and for
 //! PostgreSQL an explicitly configured root plus a per-database subdirectory,
@@ -70,16 +70,16 @@ use image::{GenericImageView, ImageEncoder, ImageFormat};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-/// Upper bound on a single uploaded attachment (spec §3.5, §7): 25MB,
+/// Upper bound on a single uploaded attachment (attachments-plan §3.5, §7): 25MB,
 /// conservative for LAN photo-upload use. A single named constant - the
 /// plan's regulated-values table (§7) calls out that changing this limit
 /// must only ever require touching this one line.
 pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 
 const MAX_FILE_NAME_LEN: usize = 256;
-/// Long-edge size (px) thumbnails are scaled to fit within (spec §3.4).
+/// Long-edge size (px) thumbnails are scaled to fit within (attachments-plan §3.4).
 const THUMBNAIL_MAX_EDGE: u32 = 256;
-/// JPEG quality thumbnails are re-encoded at (spec §3.4).
+/// JPEG quality thumbnails are re-encoded at (attachments-plan §3.4).
 const THUMBNAIL_JPEG_QUALITY: u8 = 80;
 /// Decompression-bomb guard for thumbnail decoding: a crafted sub-25MB file
 /// (e.g. a highly compressible PNG declaring enormous dimensions) must not
@@ -90,7 +90,7 @@ const THUMBNAIL_JPEG_QUALITY: u8 = 80;
 const THUMBNAIL_MAX_SOURCE_EDGE: u32 = 10_000;
 const THUMBNAIL_MAX_DECODE_ALLOC: u64 = 512 * 1024 * 1024;
 /// MIME assigned to anything `image::guess_format` does not recognize as one
-/// of the four supported image formats (spec §3.4: "非画像はクライアント
+/// of the four supported image formats (attachments-plan §3.4: "非画像はクライアント
 /// 申告に依存せず application/octet-stream とする").
 const DEFAULT_MIME: &str = "application/octet-stream";
 
@@ -116,7 +116,7 @@ fn not_found(err: sqlx::Error, id: i64) -> BantoError {
     }
 }
 
-/// One row of the `attachments` table (spec §3.2), wire-shaped camelCase for
+/// One row of the `attachments` table (attachments-plan §3.2), wire-shaped camelCase for
 /// the frontend. Field names on the Rust side deliberately match the DB
 /// column names 1:1 (unlike `items.rs`'s `Item`, which needs an explicit
 /// `#[sqlx(rename = ...)]` in one spot) so `sqlx::FromRow`'s default
@@ -231,7 +231,7 @@ pub struct NewAttachment {
 }
 
 /// Reject a `file_name` that is empty, too long, contains control
-/// characters, or could be (mis)used as a path component (spec §3.3/§5:
+/// characters, or could be (mis)used as a path component (attachments-plan §3.3/§5:
 /// "パストラバーサル対策"). Collects every violation rather than
 /// short-circuiting on the first, mirroring `admin-template-core::items`'s
 /// `validate_item_input` convention.
@@ -276,7 +276,7 @@ fn validate_file_name(file_name: &str) -> Result<(), BantoError> {
     }
 }
 
-/// Reject empty or over-limit bytes (spec §3.5/§5/§7: 25MB/file).
+/// Reject empty or over-limit bytes (attachments-plan §3.5/§5/§7: 25MB/file).
 fn validate_bytes(bytes: &[u8]) -> Result<(), BantoError> {
     if bytes.is_empty() {
         return Err(BantoError::Validation {
@@ -300,7 +300,7 @@ fn validate_bytes(bytes: &[u8]) -> Result<(), BantoError> {
     Ok(())
 }
 
-/// Detect the true MIME type from magic bytes (spec §3.4: "クライアント申告
+/// Detect the true MIME type from magic bytes (attachments-plan §3.4: "クライアント申告
 /// MIME は信用しない"). Anything `image::guess_format` does not resolve to
 /// one of the four supported image formats becomes [`DEFAULT_MIME`] -
 /// including formats `image` itself can detect (e.g. BMP) but this service
@@ -332,11 +332,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Decode `bytes`, scale to fit within `THUMBNAIL_MAX_EDGE` on the long edge
-/// (never upscales - spec §3.4: "長辺256pxに縮小"), composite any alpha
+/// (never upscales - attachments-plan §3.4: "長辺256pxに縮小"), composite any alpha
 /// channel onto a white background, and re-encode as JPEG at
 /// `THUMBNAIL_JPEG_QUALITY`. Returns `None` on ANY failure (corrupt/
 /// truncated image data, zero-dimension image, encode failure) rather than
-/// propagating an error - by design (spec §3.4): a bad thumbnail must never
+/// propagating an error - by design (attachments-plan §3.4): a bad thumbnail must never
 /// fail the attachment upload itself, only leave `has_thumbnail = 0`.
 fn make_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
     // Explicit decode limits instead of `image::load_from_memory` (which
@@ -367,7 +367,7 @@ fn make_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
         decoded
     };
 
-    // Composite onto white (spec §3.4: "アルファは白地に合成") - JPEG has no
+    // Composite onto white (attachments-plan §3.4: "アルファは白地に合成") - JPEG has no
     // alpha channel, so this happens before encoding rather than relying on
     // the encoder to do something reasonable with it.
     let rgba = scaled.to_rgba8();
@@ -419,7 +419,7 @@ fn civil_date_from_days_since_epoch(days: i64) -> (i64, u32, u32) {
 /// `SystemTime` -> `"YYYY-MM-DDTHH:MM:SSZ"` (UTC, ISO 8601). Used for
 /// `attachments.created_at` - same no-`chrono` convention as
 /// `backup.rs::iso_datetime_from_system_time`, just with a `T`/`Z` ISO 8601
-/// separator/suffix instead of that module's `"YYYY-MM-DD HH:MM:SS"` (spec
+/// separator/suffix instead of that module's `"YYYY-MM-DD HH:MM:SS"` (attachments-plan
 /// §3.2 explicitly calls for ISO 8601 here).
 fn iso_datetime_from_system_time(time: SystemTime) -> String {
     let secs = time
@@ -485,7 +485,7 @@ async fn write_import_temp(target: &Path, bytes: &[u8]) -> std::io::Result<PathB
     Ok(tmp)
 }
 
-/// Service layer for the generic `attachments` table (spec §3.1-§3.4).
+/// Service layer for the generic `attachments` table (attachments-plan §3.1-§3.4).
 /// `Clone` is cheap: `Db` is an `Arc`-backed connection handle and `PathBuf`
 /// is only ever read from, matching `ItemsService`/`BackupService`'s `Clone`
 /// convention.
@@ -503,7 +503,7 @@ pub struct AttachmentsService {
 impl AttachmentsService {
     /// `base_dir` is NOT created here (see this module's doc comment) - the
     /// caller is expected to pass the directory [`base_dir_for_target`]
-    /// returns for its DB target (spec §3.3, Issue #208). This service takes
+    /// returns for its DB target (attachments-plan §3.3, Issue #208). This service takes
     /// the already-derived directory directly since it has no other use for
     /// the DB target itself. `base_dir` must belong to this database alone.
     pub fn new(db: Db, base_dir: PathBuf) -> Self {
@@ -518,7 +518,7 @@ impl AttachmentsService {
         self.base_dir.join(format!("{id}.thumb.jpg"))
     }
 
-    /// All attachments for one record, newest first (spec §3.5: `POST
+    /// All attachments for one record, newest first (attachments-plan §3.5: `POST
     /// /api/attachments/list` uses this).
     pub async fn list_for_record(
         &self,
@@ -587,7 +587,7 @@ impl AttachmentsService {
         .map_err(|err| not_found(err, id))
     }
 
-    /// Store a new attachment (spec §3.2-§3.4):
+    /// Store a new attachment (attachments-plan §3.2-§3.4):
     /// 1. Validate `file_name`/`bytes` (empty, over `MAX_ATTACHMENT_BYTES`,
     ///    unsafe file name).
     /// 2. Hash the bytes (`sha256`) and detect the true MIME from magic
@@ -598,7 +598,7 @@ impl AttachmentsService {
     ///    server-assigned id.
     /// 4. Write the body to `{base_dir}/{id}`. On failure, the just-inserted
     ///    row is deleted before returning the error - an attachment row must
-    ///    never outlive its body file (spec §5: this is exercised as
+    ///    never outlive its body file (attachments-plan §5: this is exercised as
     ///    "delete がファイルも消すこと"'s mirror image at write time).
     /// 5. If the detected MIME is one of the four supported image formats,
     ///    best-effort generate a thumbnail (spec: decode failure on a
@@ -748,7 +748,7 @@ impl AttachmentsService {
                     }
                 }
                 // A thumbnail write failure is swallowed the same way a
-                // decode failure is (spec §3.4): the attachment itself was
+                // decode failure is (attachments-plan §3.4): the attachment itself was
                 // already stored successfully above, so this is not a
                 // reason to fail the whole upload.
             }
@@ -808,7 +808,7 @@ impl AttachmentsService {
             .map_err(|err| io_err("サムネイルの書き込みに失敗しました", err))
     }
 
-    /// Metadata + body bytes for one attachment (spec §3.5: REST download).
+    /// Metadata + body bytes for one attachment (attachments-plan §3.5: REST download).
     pub async fn read_body(&self, id: i64) -> Result<(AttachmentMeta, Vec<u8>), BantoError> {
         let meta = self.get(id).await?;
         let bytes = tokio::fs::read(self.body_path(id)).await.map_err(|err| {
@@ -824,8 +824,8 @@ impl AttachmentsService {
         Ok((meta, bytes))
     }
 
-    /// Thumbnail bytes for one attachment (spec §3.5). `NotFound` both when
-    /// the row itself does not exist and when `has_thumbnail = 0` (spec §3.4:
+    /// Thumbnail bytes for one attachment (attachments-plan §3.5). `NotFound` both when
+    /// the row itself does not exist and when `has_thumbnail = 0` (attachments-plan §3.4:
     /// "無ければ404") - callers cannot distinguish "no such attachment" from
     /// "attachment exists but has no thumbnail" from this error alone, which
     /// is intentional: both render the same "no thumbnail to show" UI state.
@@ -852,7 +852,7 @@ impl AttachmentsService {
     }
 
     /// Delete one attachment: the metadata row first, then its file(s)
-    /// (spec §3.3: "削除はメタデータ行 -> ファイルの順"). A file-delete
+    /// (attachments-plan §3.3: "削除はメタデータ行 -> ファイルの順"). A file-delete
     /// failure is logged and swallowed, never returned as an error - an
     /// orphaned file is not fatal (spec: "孤児ファイルは致命でない"), unlike
     /// an orphaned METADATA row (which is what the ordering here avoids).

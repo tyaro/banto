@@ -44,7 +44,7 @@ use sha2::{Digest, Sha256};
 #[cfg(feature = "postgres")]
 const MAX_READABLE_KEY_LEN: usize = 80;
 
-/// `{db file's parent}/attachments` - the SQLite layout (spec §3.3), falling
+/// `{db file's parent}/attachments` - the SQLite layout (attachments-plan §3.3), falling
 /// back to a relative `attachments` when the path has no parent. Identical to
 /// the pre-#208 expression.
 pub fn sqlite_base_dir(db_path: &Path) -> PathBuf {

@@ -9,7 +9,7 @@
  *
  * Raw HTML is never recognized as syntax - `<`/`>` are always plain text
  * (escaped later in html.ts), which is how the template language closes off
- * the "template-authored HTML" XSS surface (spec §3.1).
+ * the "template-authored HTML" XSS surface (report-plan §3.1).
  */
 
 export type Align = 'left' | 'center' | 'right';
@@ -24,7 +24,7 @@ export type InlineNode =
 
 /**
  * One row (or repeated row group) inside a table body. `each`/`if` here are
- * the "control line wraps a run of table rows" form (spec §3.2 example) -
+ * the "control line wraps a run of table rows" form (report-plan §3.2 example) -
  * distinct from the block-level `each`/`if` below, which wrap whole blocks.
  */
 export type TableRowGroup =
