@@ -29,6 +29,37 @@ await items.load();
 console.log(items.rows, items.totalCount);
 ```
 
+## 通知なしに増減する一覧の失敗（`SnapshotListResource`）
+
+`createSnapshotListResource(fetcher, options)`（spec §4.1、
+[ADR-0015](../../docs/adr/0015-snapshot-list-resource.md)）は、失敗をブロック順の
+`failures` で出す。種類は `code`（`'request'`・`'timeout'`・`'boundaryMismatch'`・
+`'malformed'`）で見分け、文言は比べない。取得関数が投げた `ProviderError` は
+同じオブジェクトのまま `error` に入る（`code: 'request'`）。リソースが自分で作る
+失敗の文言は `messages` で差し替え（既定は英語）、失敗ごとのトーストは `notify` で
+止められる。
+
+```ts
+import { createSnapshotListResource } from '@banto/admin-core';
+import * as m from '#lib/paraglide/messages.js';
+
+const list = createSnapshotListResource(fetchBlock, {
+	messages: {
+		timeout: (ms) => m['list.timeout']({ seconds: Math.round(ms / 1000) }),
+		boundaryMismatch: () => m['list.boundaryMismatch'](),
+		malformed: () => m['list.malformed']()
+	},
+	// 画面に出すのでトーストは出さない（述語で失敗ごとに決めてもよい）。
+	notify: false
+});
+
+// 種類ごとに最も前のブロックの失敗を出す。
+const timedOut = $derived(list.failures.find((f) => f.kind === 'error' && f.code === 'timeout'));
+```
+
+`expired` は今の世代が失効して続きを読まないことを示す（`failures` の
+`kind: 'expired'` は、そのブロックの取得が成功するまで前の世代の分も残る）。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

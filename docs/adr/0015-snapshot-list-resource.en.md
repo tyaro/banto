@@ -136,3 +136,76 @@ owner's decision).
   the count under the same boundary. That is treated as an expiry too
   (re-reading is correct). When a deletion offsets the count, the deletion
   epoch still expires the generation.
+
+---
+
+## Addendum (2026-10-06, Issue #342): failure kinds, texts and notifications
+
+The body's decision (a separate class, an injected fetcher, the boundary,
+expiry) is unchanged. What changes is how failures reach the page. By owner
+decision (2026-10-06) backward compatibility is not kept; this ships in
+v5.0.0 (major) without compatibility aliases.
+
+### Context
+
+- A derived app (banto-industrial's audit log) applied its own 15 s limit in
+  the fetcher before banto's 30 s one, only to get a Japanese message (the
+  timeout text was a fixed English string the app could not replace). It
+  replaced the boundary-mismatch text by comparing `message` with
+  `SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE`.
+- ChronoGazer's `/events` shows failures of different kinds at once (a
+  server answer "could not read" and a failed round trip or timeout; the
+  lowest block of each kind) and shows no toast for them. "Could not read"
+  is a `ProviderError` subclass (carrying `readout`) the app throws from its
+  fetcher.
+- `error` (only the most recent failure) cannot show failures of different
+  kinds at once, and kinds could only be told apart by comparing messages.
+
+### Decision
+
+- The state is `failures` (ascending by block, one entry per block):
+  `{ block, kind: 'error', code, error }` or `{ block, kind: 'expired' }`.
+  An entry goes away when its block loads and `setParams()` empties the
+  list (the body's promises, unchanged). `error` and `failedBlocks` were
+  removed (derivable from `failures`). `expired` stays: it says "the current
+  generation has stopped", which differs from an expiry recorded in an
+  earlier generation.
+- A failure's kind is a code, `SnapshotListFailureCode` (`'request'`,
+  `'timeout'`, `'boundaryMismatch'`, `'malformed'`). Failures the resource
+  creates itself are a `SnapshotListError` (a `ProviderError` subclass with
+  `code`). A `ProviderError` the fetcher throws is recorded **as the same
+  object** (`'request'`), so the data an app's subclass carries (such as
+  `readout`) survives. Anything else is wrapped in
+  `SnapshotListError('request')` with the thrown value as `cause`.
+- The texts of the failures the resource creates are replaced through the
+  `messages` option (`timeout(ms)`, `boundaryMismatch()`, `malformed()`).
+  Same as layer-1 injection ([ADR-0005](0005-i18n-paraglide.en.md),
+  conventions §13): the package holds no dictionary and takes functions
+  (Paraglide message functions can be passed as they are). The defaults are
+  English (`defaultSnapshotListMessages`).
+  `SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE` was removed. A message function that
+  throws falls back to the default text (so a timeout still settles).
+- The `notify` option (default `true`, `false`, or a per-failure predicate)
+  turns off the per-failure toast. An expiry is still never notified.
+
+### Alternatives considered
+
+- **Replaceable texts only (rejected)**: kinds would still be told apart by
+  comparing texts.
+- **Codes only (rejected)**: the resource writes the toast text, so a page
+  that keeps the toast would still show English. Both codes and texts are
+  provided.
+- **A dictionary in the package (rejected)**: against conventions §5 and §13.
+- **Keeping `error` (the most recent failure) (rejected)**: an alias of what
+  `failures` already gives, and not enough for a page that shows failures of
+  different kinds at once.
+
+### Consequences
+
+- `WindowedListResource` is not changed here (the default English texts are
+  shared in `blockFetch.ts`). This is a temporary gap against the body's
+  consequence "keep them aligned on failures"; aligning it to the same shape
+  (codes, `messages`, `notify`, `failures`) is left to a separate issue.
+  Its `refresh()` keeps the shown rows (#212) through a different state
+  machine, and its current users (server-mode CRUD grids) do not yet need
+  to tell failure kinds apart, so the breaking change was not widened.
