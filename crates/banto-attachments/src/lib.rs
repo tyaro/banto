@@ -825,7 +825,7 @@ impl AttachmentsService {
     }
 
     /// Thumbnail bytes for one attachment (attachments-plan §3.5). `NotFound` both when
-    /// the row itself does not exist and when `has_thumbnail = 0` (attachments-plan §3.4:
+    /// the row itself does not exist and when `has_thumbnail = 0` (attachments-plan §3.5:
     /// "無ければ404") - callers cannot distinguish "no such attachment" from
     /// "attachment exists but has no thumbnail" from this error alone, which
     /// is intentional: both render the same "no thumbnail to show" UI state.
