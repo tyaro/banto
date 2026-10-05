@@ -5,8 +5,8 @@
 - 状態: Accepted
 - 日付: 2026-08-15
 - 関連: [conventions.md §6](../conventions.md)（セキュリティ）・[§11](../conventions.md)（マイグレーション方言）、
-  [maintainability-review-2026-07.md §4.1](../maintainability-review-2026-07.md)（打ち止めの判断・CR-3〜5）、
-  [maintenance-review-2026-08.md](../maintenance-review-2026-08.md) Phase 4（9案）、
+  [maintainability-review-2026-07.md §4.1](../reviews/maintainability-review-2026-07.md)（打ち止めの判断・CR-3〜5）、
+  [maintenance-review-2026-08.md](../reviews/maintenance-review-2026-08.md) Phase 4（9案）、
   `scripts/verify-architecture.mjs`（機械検査の実体）、[ADR-0002](0002-minimal-dependencies.md)（総保守コスト最小化）
 
 ## コンテキスト

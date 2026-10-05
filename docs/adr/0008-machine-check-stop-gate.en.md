@@ -5,8 +5,8 @@
 - Status: Accepted
 - Date: 2026-08-15
 - Related: [conventions.md §6](../conventions.md) (security) / [§11](../conventions.md) (migration dialects),
-  [maintainability-review-2026-07.md §4.1](../maintainability-review-2026-07.md) (the stop decision, CR-3–5),
-  [maintenance-review-2026-08.md](../maintenance-review-2026-08.md) Phase 4 (the 9 candidates),
+  [maintainability-review-2026-07.md §4.1](../reviews/maintainability-review-2026-07.md) (the stop decision, CR-3–5),
+  [maintenance-review-2026-08.md](../reviews/maintenance-review-2026-08.md) Phase 4 (the 9 candidates),
   `scripts/verify-architecture.mjs` (where checks live), [ADR-0002](0002-minimal-dependencies.md) (minimize total maintenance cost)
 
 ## Context

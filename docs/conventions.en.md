@@ -522,10 +522,10 @@ only one form has produced real misjudgements (maintenance-review-2026-08 §2.1)
 | --- | --- |
 | `spec §N` | §N of `ui-framework-spec.md` (**this notation is reserved for ui-framework-spec**) |
 | `roadmap MN` / `spec MN` | the MN section of `roadmap.md` (M10+ live in roadmap; spec §15 only holds the initial draft M0–M9; prefer `roadmap MN` for new code) |
-| `<doc> §N` / `<doc> <section label>` | The matching section of `docs/design/<doc>.md` (e.g. `attachments-plan §3.7`, `session-controller-design §5.2`, `display-preset-plan D1-c`). `<doc>` is the file name without the extension, so the notation does not change when the directory does |
+| `<doc> §N` / `<doc> <section label>` | The matching section of `docs/design/<doc>.md` or `docs/reviews/<doc>.md` (e.g. `attachments-plan §3.7`, `session-controller-design §5.2`, `display-preset-plan D1-c`, `choiapp-feedback-2026-09 §3.2`). `<doc>` is the file name without the extension, so the notation does not change when the directory does |
 | `conventions §N` | §N of this document (section numbers are immutable) |
-| `M-review YYYY-MM §N` | §N of `feature-review-YYYY-MM.md` |
-| `CR-N` / `AD-N` | `maintainability-review-2026-07.md` (§4 and the §7 addendum) |
+| `M-review YYYY-MM §N` | §N of `docs/reviews/feature-review-YYYY-MM.md` |
+| `CR-N` / `AD-N` | `docs/reviews/maintainability-review-2026-07.md` (§4 and the §7 addendum) |
 | `ADR-000N` | `adr/000N-*.md` |
 | `Discussion #N` | GitHub Discussion (**provenance notes only** — allowed in an ADR's "Related" line and review-document context notes; never as a normative reference in code or docs body. Body text must stand alone without reading the Discussion. [ADR-0010](adr/0010-discussions-predecision-layer.en.md)) |
 

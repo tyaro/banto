@@ -11,7 +11,7 @@ improvements.md 側にも対応履歴として反映し、本書の状態列を�
 トラック: 本書は**保守者向け（トラックA）**。
 
 > **凍結（2026-08-13）**: 2026-07 改善サイクルは完了し、本書は凍結した
-> （経緯は [maintenance-review-2026-08.md](../maintenance-review-2026-08.md) §2）。
+> （経緯は [maintenance-review-2026-08.md](../reviews/maintenance-review-2026-08.md) §2）。
 > 現役のバックログは [roadmap.md §3](../roadmap.md#3-v2--将来構想バックログ) に
 > 一本化する。未消化のまま引き継いだのは P4-8（実務サンプル、要スコープ判定）と
 > P1-4残（設定画面 LAN 警告の warning 化。ブロッカーだったベースライン再生成環境は
@@ -550,5 +550,5 @@ Claude レビューと一致し、本計画のフェーズ構成（§4）に反�
 本計画（外部AIレビュー統合版）の項目が概ね完了した後、Rustサービス+サーバ層を
 対象に**AI中心保守を前提とした保守性コードレビュー**を実施した。所見と、そこから
 導いた不変条件の機械検査化ロードマップ（CR-1〜CR-5）は
-[maintainability-review-2026-07.md](../maintainability-review-2026-07.md) に分離して
+[maintainability-review-2026-07.md](../reviews/maintainability-review-2026-07.md) に分離して
 記録する。最優先は CR-1（REST/Tauri 両経路対称の機械検査）。

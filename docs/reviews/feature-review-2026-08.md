@@ -7,13 +7,13 @@
 上での実測（`file:line` 参照）に基づく。
 
 トラック: 本書は**保守者向け（トラックA）**。スコープ判定は
-[template-scope.md](template-scope.md)、マイルストーン計画は
-[roadmap.md](roadmap.md)、不変条件は [conventions.md](conventions.md) が一次情報。
+[template-scope.md](../template-scope.md)、マイルストーン計画は
+[roadmap.md](../roadmap.md)、不変条件は [conventions.md](../conventions.md) が一次情報。
 本書はそれらへの入力（バックログ候補・宿題）を生成する棚卸しであり、確定した
 判断は各一次ドキュメントへ反映する（§5 参照）。
 
-関連: [review-2026-07-29.md](history/review-2026-07-29.md)（利用者視点の実用性レビュー）、
-[improvement-plan-2026-07.md](history/improvement-plan-2026-07.md)（外部AIレビュー統合の
+関連: [review-2026-07-29.md](../history/review-2026-07-29.md)（利用者視点の実用性レビュー）、
+[improvement-plan-2026-07.md](../history/improvement-plan-2026-07.md)（外部AIレビュー統合の
 アクションプラン）。本書は同じ「外部レビューを実測で裏取りして取捨する」系譜。
 
 実施状況（2026-08-12）: §4「今すぐ」分類は **3件すべて実装済み** —
@@ -177,7 +177,7 @@ net-new は version / migration version / DB レイテンシ / uptime / セッ�
 
 **2026-09-14 追記**: 上の「disk free だけは落とす」判断は維持しつつ、CPU/メモリ
 （ホスト total/used・スワップ・プロセス RSS・CPU%）は `sysinfo`（feature 限定、
-`system` のみ）を採用して追加した（[ADR-0013](adr/0013-sysinfo-system-metrics-feature.md)、
+`system` のみ）を採用して追加した（[ADR-0013](../adr/0013-sysinfo-system-metrics-feature.md)、
 Issue #185）。複数の下流アプリが個別に `sysinfo` を抱え始めていたという新事実が
 根拠で、当時の「disk free だけのために§3ゲートを通す価値がない」という判断
 そのものは変えていない - disk free は引き続き非スコープ（要るときは本ADRを

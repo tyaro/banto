@@ -37,6 +37,15 @@
   | `docs/visual-refresh-design.md`     | `docs/design/visual-refresh-design.md`     |
   | `docs/visual-refresh-plan.md`       | `docs/design/visual-refresh-plan.md`       |
 
+- docs(layout): レビュー・調査記録 4 本を `docs/` 直下から `docs/reviews/` へ移動した（#312 の reviews/ への移動。ファイル名は不変なので `M-review 2026-08 §2.1`・`CR-N`・`AD-N`・`choiapp-feedback-2026-09 §3.2` のようなラベル参照はそのまま有効）。コード・scripts・CI・docs 内の参照は同じ PR で新パスに更新済み。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/reviews/*.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
+
+  | 旧パス                                   | 新パス                                           |
+  | ---------------------------------------- | ------------------------------------------------ |
+  | `docs/choiapp-feedback-2026-09.md`       | `docs/reviews/choiapp-feedback-2026-09.md`       |
+  | `docs/feature-review-2026-08.md`         | `docs/reviews/feature-review-2026-08.md`         |
+  | `docs/maintainability-review-2026-07.md` | `docs/reviews/maintainability-review-2026-07.md` |
+  | `docs/maintenance-review-2026-08.md`     | `docs/reviews/maintenance-review-2026-08.md`     |
+
 ## [4.0.0] - 2026-10-05
 
 **v4.0.0 — SvelteKit 3（`@sveltejs/kit` 3・`@sveltejs/adapter-static` 4）と TypeScript 6（`^6.0.0`）への移行（#325）、配線①のナビゲーション待ちの修正（#326）、docs の誤った spec 参照の修正（#312 PR-B）。版の種類: major（破壊的変更。`@banto/*` の中身は変わらないが、peer の前提が SvelteKit 3・TypeScript 6 に変わる）。
