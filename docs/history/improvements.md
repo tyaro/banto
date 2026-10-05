@@ -92,6 +92,12 @@ visual regression の fullPage スナップショット対象のため、ベー�
 ルートに一枚岩で付与済み。詳細は
 [history/improvements-archive.md §2.4](improvements-archive.md#24-セキュリティヘッダ対応済み2026-07-16)。
 
+追補（2026-10-06）: アプリ自身のデスクトップシェルが Tauri の WebView で
+この HTTP の画面へ移る場合のために、`with_security_headers_using` と
+`SecurityHeaders` で connect-src だけを要求ごとに広げられるようにした
+（推奨はループバックの接続元に限る `request_from_loopback_peer`。
+banto-industrial#505）。既定の `with_security_headers` は変わらない。
+
 ### 2.5 依存監査の自動化 — 対応済み（2026-07-16。ignore登録 2026-07-17）
 
 CI に `audit` ジョブ（`pnpm audit --prod --audit-level high` +

@@ -723,9 +723,10 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 // Content-Security-Policy は LAN サーバ（security_headers.rs の const）と Tauri
 // webview（tauri.conf.json の app.security.csp）の2箇所に別形式で定義される。
 // 唯一の意図的差分は connect-src（Tauri は IPC 用に ipc: http://ipc.localhost を
-// 追加）。他は全ディレクティブ一致必須。cross-check テストは無く src-tauri は
-// 非コンパイルなので、片方だけ緩める編集は静かに XSS/exfil 面を広げる（= 背骨 +
-// 静かに壊れる + AI が踏みやすい）。
+// 追加。banto-server の TAURI_IPC_CONNECT_SRC）。他は全ディレクティブ一致必須。
+// src-tauri は非コンパイルなので、片方だけ緩める編集は静かに XSS/exfil 面を広げる
+// （= 背骨 + 静かに壊れる + AI が踏みやすい）。文字列としての完全一致は
+// apps/admin-template/core/tests/tauri_window_csp.rs（cargo test）が別に確かめる。
 {
 	const rule = 'csp-two-definitions';
 	const SERVER = 'crates/banto-server/src/security_headers.rs';

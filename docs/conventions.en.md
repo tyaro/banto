@@ -329,9 +329,22 @@ without a runtime guard are **upheld by reviewing every call site**.
   why `unsafe-inline` is required, live in the doc comment at the top of
   `security_headers.rs`). Editing is manual, but **drift in any directive other
   than connect-src is caught in CI by `verify-architecture.mjs` rule 12**
-  ([ADR-0008](adr/0008-machine-check-stop-gate.md); there is no cross-check test
-  and src-tauri does not compile, so it guards against one side silently
-  loosening) — whenever you change one, update both.
+  ([ADR-0008](adr/0008-machine-check-stop-gate.md); src-tauri does not compile,
+  so it guards against one side silently loosening). In addition,
+  `apps/admin-template/core/tests/tauri_window_csp.rs` compares the window CSP
+  as a string against `SecurityHeaders::new().extra_connect_src(TAURI_IPC_CONNECT_SRC)`'s
+  `content_security_policy()` — whenever you change one, update both.
+- **Only `with_security_headers_using` widens connect-src on LAN responses.**
+  When an app's own desktop shell navigates its Tauri webview to its own HTTP
+  UI (e.g. banto-industrial's banto-hub shell), that page runs under the
+  response CSP, not the window CSP, so Tauri IPC is blocked by
+  `connect-src 'self'`. In that case add `TAURI_IPC_CONNECT_SRC` via
+  `SecurityHeaders` and **restrict it to loopback peers** with
+  `request_from_loopback_peer` (LAN browsers keep the strict policy). Only
+  connect-src can be widened; every other directive and header stays the
+  same. Do not select on request headers, the query or `Host` (the other
+  party controls them). The impact analysis lives in the doc comment at the
+  top of `security_headers.rs`.
 - **Grants (credential-less session issuance, ADR-0017; public viewing is the
   first kind, `publicViewer`).** A client without credentials is issued a
   session with a **fixed identity** of a registered kind
