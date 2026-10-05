@@ -485,6 +485,16 @@ ordinary sessions.
   independently, so adding to one dialect only would go silently missing; type
   differences within a same-named pair stay review-guaranteed per the intended
   divergence above).
+- **Released migrations are append-only** (not a single byte changes, comments
+  included; no deletes or renames). SQLx records a checksum of each applied
+  migration's full text, comments included, in the DB and verifies it at
+  startup, so editing one makes any DB created with that release or earlier
+  fail to start with `VersionMismatch(<version>)`. Make changes as a new
+  numbered migration. **That the files under `migrations*/` in the latest `v*`
+  tag reachable from HEAD are unchanged in the working tree is caught in CI by
+  `pnpm verify:migrations`** (`scripts/verify-migrations-frozen.mjs`; guards
+  against the near-miss in #312, where moving docs rewrote a path inside a
+  migration comment).
 - **The app owns the table definitions.** `banto-attachments` has no migrations
   of its own and keeps its in-test `CREATE TABLE` in sync with
   `0006_attachments.sql` ("MUST be kept in sync").

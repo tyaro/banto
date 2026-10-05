@@ -410,6 +410,14 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
   捕捉する**（[ADR-0008](adr/0008-machine-check-stop-gate.md)。PG CI は smoke のみで
   各 `sqlx::migrate!` はディレクトリ独立のため、片系統だけ足すと静かに欠落する。
   同名ペア内の型差は上記の意図的分岐でレビュー担保）。
+- **リリース済みの migration は追記のみ**（本文・コメントとも 1 バイトも変えない。
+  削除・改名もしない）。SQLx は適用した migration の本文をコメント込みで checksum
+  して DB に記録し、起動時に照合するため、書き換えるとその版以前に作った DB が
+  `VersionMismatch(<version>)` で起動しなくなる。変更は新しい連番で足す。
+  **HEAD から辿れる最新の `v*` タグに含まれる `migrations*/` 配下のファイルが
+  作業ツリーで不変なことは `pnpm verify:migrations`
+  （`scripts/verify-migrations-frozen.mjs`）が CI で捕捉する**（#312 で docs の
+  移動に伴いコメント内のパスを書き換えて起きかけた事故の再発防止）。
 - **テーブル定義はアプリが所有**。`banto-attachments` は自前マイグレーションを
   持たず、テスト内の `CREATE TABLE` を `0006_attachments.sql` と同期させる
   （「MUST be kept in sync」）。

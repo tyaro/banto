@@ -97,8 +97,8 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
 ```bash
 pnpm check          # フロントの型検査（各パッケージ svelte-check / tsc）。
                     # lint は pnpm lint、build は pnpm build が別（CI frontend
-                    # ジョブは lint→verify:architecture→check:versions→format→
-                    # check→test→build を順に回す）
+                    # ジョブは lint→verify:architecture→verify:migrations→
+                    # check:versions→format→check→test→build を順に回す）
 cargo test          # Rust ワークスペース全テスト
 pnpm e2e            # Playwright スモーク（e2e/playwright.config.ts、banto-serve 起動）
 cargo audit         # 依存監査（.cargo/audit.toml の ignore 付き）

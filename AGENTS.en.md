@@ -131,8 +131,9 @@ minimal|standard|full|display` (`--interactive` / `--dry-run` available; the man
 ```bash
 pnpm check          # frontend type checks (svelte-check / tsc per package).
                     # lint is pnpm lint, build is pnpm build separately (the CI
-                    # frontend job runs lint→verify:architecture→check:versions→
-                    # format→check→test→build in order)
+                    # frontend job runs lint→verify:architecture→
+                    # verify:migrations→check:versions→format→check→test→build
+                    # in order)
 cargo test          # all tests in the Rust workspace
 pnpm e2e            # Playwright smoke (e2e/playwright.config.ts, starts banto-serve)
 cargo audit         # dependency audit (with ignores from .cargo/audit.toml)
