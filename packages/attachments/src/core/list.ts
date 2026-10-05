@@ -5,9 +5,10 @@ import { errorMessage } from './errors';
  * Result of one `AttachmentsClient.list()` call, as a discriminated union
  * rather than a thrown exception - lets `AttachmentsPanel` (and this
  * module's own tests, see `tests/list.test.ts`) branch on
- * loading/一覧/空/エラー without needing a component render harness (spec
- * §3.7 test guidance: extract logic into plain functions since the
- * workspace has no `@testing-library/svelte`).
+ * loading/一覧/空/エラー without needing a component render harness (the
+ * states themselves follow attachments-plan §3.7; the logic is extracted
+ * into plain functions because the workspace has no
+ * `@testing-library/svelte`).
  */
 export type ListOutcome =
 	{ status: 'ok'; items: AttachmentMeta[] } | { status: 'error'; message: string };

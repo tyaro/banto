@@ -211,7 +211,7 @@
 	}
 
 	/* Preview chrome only - outer area follows the active theme, the paper
-	   itself stays white/shadowed regardless (spec §3.4: "外側だけがテーマに
+	   itself stays white/shadowed regardless (report-plan §3.4: "外側だけがテーマに
 	   従う"). The actual report content's own white background/black text
 	   comes from `.report-body` in print.css; `.paper` just adds the
 	   shadow + A4-shaped frame around it. */

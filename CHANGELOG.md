@@ -22,6 +22,9 @@
 
 ## [Unreleased]
 
+- docs: コード内のコメントにある誤った `spec §3.x` 参照（実体は `attachments-plan` / `report-plan` の節）を
+  `attachments-plan §N` / `report-plan §N` に修正した（Rust・TS・Svelte・CSS・e2e のコメントのみ、動作変更なし、#312 PR-B）
+
 ## [3.0.1] - 2026-10-05
 
 **v3.0.1 — 保護画面を直接開いたときのスプラッシュと再接続の修正（#321）と依存の更新。版の種類: patch（後方互換の修正のみ。公開 API の追加・削除・改名は無い）。

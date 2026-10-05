@@ -29,12 +29,12 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros"] }
 # bodies are never written over an existing file).
 tokio = { workspace = true, features = ["fs", "io-util"] }
 serde = { workspace = true }
-# Thumbnail generation (spec §3.4): an explicit, documented exception to the
+# Thumbnail generation (attachments-plan §3.4): an explicit, documented exception to the
 # workspace's "do not add dependencies lightly" default - image thumbnails
 # are M20's core value and a self-rolled decoder/encoder is not realistic.
 # `default-features = false` + this exact feature list keeps the dependency
 # tree limited to the four formats attachments actually supports (JPEG/PNG/
-# WebP/GIF magic-byte detection, spec §3.4) - notably no AVIF/HEIF/TIFF/etc.
+# WebP/GIF magic-byte detection, attachments-plan §3.4) - notably no AVIF/HEIF/TIFF/etc.
 image = { version = "0.25", default-features = false, features = [
   "jpeg",
   "png",

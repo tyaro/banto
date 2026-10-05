@@ -157,7 +157,7 @@ struct AppState {
     /// mirroring `admin_template_core::rest`'s attachments handlers.
     attachments: AttachmentsService,
     /// `attachments/` directory the above service was constructed with
-    /// (spec §3.3: `db_path.parent().join("attachments")`) - kept alongside
+    /// (attachments-plan §3.3: `db_path.parent().join("attachments")`) - kept alongside
     /// it purely for [`attachments_open_folder`], since
     /// `AttachmentsService` (unlike `BackupService::backups_dir_display`)
     /// exposes no accessor for its own `base_dir`.
@@ -2757,7 +2757,7 @@ async fn backups_cancel_restore(state: State<'_, AppState>) -> Result<(), BantoE
 
 // --- M20: attachments --------------------------------------------------------
 
-/// `viewer`+ (spec §3.5): every attachment for one record, newest first.
+/// `viewer`+ (attachments-plan §3.5): every attachment for one record, newest first.
 #[tauri::command]
 async fn attachments_list(
     state: State<'_, AppState>,
@@ -2771,10 +2771,10 @@ async fn attachments_list(
         .await
 }
 
-/// `viewer`+ (spec §3.5): raw thumbnail JPEG bytes, for the panel to wrap in
+/// `viewer`+ (attachments-plan §3.5): raw thumbnail JPEG bytes, for the panel to wrap in
 /// a `Blob`/object URL (the webview has no `<img src="tauri://...">` file
 /// route to point at directly, same constraint `backups` documents for
-/// downloads - spec §3.6). `NotFound` (-> the same error the frontend
+/// downloads - attachments-plan §3.6). `NotFound` (-> the same error the frontend
 /// already handles for a missing/never-generated thumbnail) covers both "no
 /// such attachment" and "attachment has no thumbnail" - see
 /// `AttachmentsService::read_thumbnail`'s doc comment.
@@ -2791,10 +2791,10 @@ async fn attachments_read_thumbnail(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// `viewer`+ (spec §3.5): full attachment body, for in-panel image display
+/// `viewer`+ (attachments-plan §3.5): full attachment body, for in-panel image display
 /// (object URL) - the Tauri-side counterpart to REST's `GET
 /// /api/attachments/{id}/download`, which a browser can point an `<a
-/// download>`/`<img>` at directly but the webview cannot (spec §3.6).
+/// download>`/`<img>` at directly but the webview cannot (attachments-plan §3.6).
 ///
 /// Returns [`tauri::ipc::Response`] (raw bytes on the wire) rather than a
 /// serialized `Vec<u8>`: a JSON number-array would balloon a 25MB body to
@@ -2811,7 +2811,7 @@ async fn attachments_read_body(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// Decode a `%XX`-percent-encoded header value back to UTF-8 (spec §3.5:
+/// Decode a `%XX`-percent-encoded header value back to UTF-8 (attachments-plan §3.5:
 /// [`attachments_upload`]'s metadata rides `http::HeaderValue`s, which -
 /// unlike a JSON string - can only hold visible ASCII; the frontend
 /// `encodeURIComponent`s `fileName`/etc. before setting them as headers, so
@@ -2853,7 +2853,7 @@ fn percent_decode(value: &str) -> Result<String, BantoError> {
 }
 
 /// Read one required, percent-encoded header off an upload [`Request`]
-/// (spec §3.5) - see [`percent_decode`]'s doc comment for why the decode
+/// (attachments-plan §3.5) - see [`percent_decode`]'s doc comment for why the decode
 /// step exists at all.
 fn required_header_field(
     request: &tauri::ipc::Request<'_>,
@@ -2874,9 +2874,9 @@ fn required_header_field(
     percent_decode(raw)
 }
 
-/// `editor`+ (spec §3.5): upload a new attachment.
+/// `editor`+ (attachments-plan §3.5): upload a new attachment.
 ///
-/// Binary transfer: this command takes [`tauri::ipc::Request`] (spec §3.5's
+/// Binary transfer: this command takes [`tauri::ipc::Request`] (attachments-plan §3.5's
 /// "第一候補") rather than a typed `contents: Vec<u8>` argument - the
 /// frontend calls `invoke('attachments_upload', uint8ArrayBody, { headers
 /// })`, which Tauri delivers here as `InvokeBody::Raw` (see
@@ -2980,13 +2980,13 @@ async fn attachments_delete_body(state: &AppState, id: i64) -> Result<(), BantoE
     Ok(())
 }
 
-/// `editor`+ (spec §3.5): delete one attachment.
+/// `editor`+ (attachments-plan §3.5): delete one attachment.
 #[tauri::command]
 async fn attachments_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
     attachments_delete_body(&state, id).await
 }
 
-/// `editor`+ (spec §3.6): open the `attachments/` directory in the OS file
+/// `editor`+ (attachments-plan §3.6): open the `attachments/` directory in the OS file
 /// explorer - the same "no native save dialog in v1" fallback
 /// `backups_open_folder` uses, gated at the attachments WRITE floor (rather
 /// than `backups_open_folder`'s `admin`-only) since browsing the raw
