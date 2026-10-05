@@ -22,6 +22,28 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-05
+
+**v4.0.0 — SvelteKit 3（`@sveltejs/kit` 3・`@sveltejs/adapter-static` 4）と TypeScript 6（`^6.0.0`）への移行（#325）、配線①のナビゲーション待ちの修正（#326）、docs の誤った spec 参照の修正（#312 PR-B）。版の種類: major（破壊的変更。`@banto/*` の中身は変わらないが、peer の前提が SvelteKit 3・TypeScript 6 に変わる）。
+派生アプリへの影響: 経路 A は依存の範囲（`@sveltejs/kit` ^3・`@sveltejs/adapter-static` ^4・`typescript` ^6.0.0）を合わせる。経路 B はコピーしたテンプレートを SvelteKit 3 の形に移す作業が要る（`npx sv migrate sveltekit-3 --tasks all --confirm` の後に写すもの、見直すものがある。下の「消費側への注意」と docs/upgrading.md の例 4）。経路 C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v3.0.1` → `v4.0.0`（npm と Rust を同じタグに）。`@banto/*` の中身は変わらない（theme の `./css` の型の追加を除く）が、peer の前提が変わる: `@sveltejs/kit` ^3・`@sveltejs/adapter-static` ^4・`typescript` ^6.0.0（7 は kit 3 の対象外）。Rust（`banto-*`）は版数のみ                                                                                                        |
+| B. コピーしたテンプレート        | あり | `vite.config.ts`（`svelte.config.js` を廃止して設定を移す）・`tsconfig.json`・`package.json` の `imports`（`#lib`。拡張子必須）・`navigation.ts` の `AppPath` / `resolveAppPath`・`(app)/+layout.ts` の閲覧公開のガード。自動移行の `resolve('')`・`.slice(1)` を見直す。#326 の `navigationSettled.svelte.ts` と配線①。`@banto/theme/css` の `declare module` はもう要らない |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                                                                                                                                                       |
+
+### 消費側への注意
+
+- 経路 A・B とも SvelteKit 3 への移行が前提になる。手順は [docs/upgrading.md](docs/upgrading.md) の「例 4（v3.0.x → v4.0.0）」（経路 A/B/C、`sv migrate sveltekit-3` の後に写すもの、自動移行の `resolve('')`・`.slice(1)` の見直し）に従う。
+- SvelteKit 2 に留まる派生アプリは v3.0.x のままにする（v4.0.0 の `@banto/*` は kit 3 を前提にする）。#326 の修正だけが欲しい場合は、経路 B の `navigationSettled.svelte.ts` と配線①の写しを v3.0.1 のまま取り込める（詳細は「修正」の #326 の項）。
+
+### 検証した組み合わせ
+
+- タグの後に追記する（external-consumer.yml の run の URL と、そこに出る Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)）。
+
+### その他
+
 - docs: コード内のコメントにある誤った `spec §3.x` 参照（実体は `attachments-plan` / `report-plan` の節）を
   `attachments-plan §N` / `report-plan §N` に修正した（Rust・TS・Svelte・CSS・e2e のコメントのみ、動作変更なし、#312 PR-B）
 - docs: SvelteKit 3 の形に合わせた（#325 PR3）。conventions §5 の機械検査の対象を `#lib`（旧 `$lib`）に、§13 の例を `#lib/paraglide/messages.js` にし、現役の docs・README・コード内のコメントの `$lib` を `#lib` にした（`docs/history/` と ADR・設計記録の当時の記述は凍結のまま）。`docs/architecture-flows.md` の再 load を `refreshAll()` に。`docs/upgrading.md` に v3 → v4 の移行手順（例 4。経路 A/B/C、`sv migrate sveltekit-3` の後に写すもの、自動移行の `resolve('')`・`.slice(1)` の見直し）と、確認する組み合わせに SvelteKit `^3.0`・TypeScript `^6.0` を足した
@@ -2215,7 +2237,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v3.0.1...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/tyaro/banto/compare/v3.0.1...v4.0.0
 [3.0.1]: https://github.com/tyaro/banto/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/tyaro/banto/compare/v2.1.1...v3.0.0
 [2.1.1]: https://github.com/tyaro/banto/compare/v2.1.0...v2.1.1
