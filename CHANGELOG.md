@@ -22,7 +22,7 @@
 
 ## [Unreleased]
 
-## [5.1.0] - 2026-10-06
+## [5.1.0] - 2026-10-07
 
 **v5.1.0 — banto-server の CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（#349、banto-industrial#505 の続き）。同じホストのリバースプロキシ配下でも、アプリ自身のデスクトップシェルの要求だけを広げられる。版の種類: minor（追加のみ。後方互換）。
 派生アプリへの影響: 経路 A は任意（自分のデスクトップシェルが自分の HTTP の画面を開くアプリは、`extra_connect_src_when` の選び方を `request_is_loopback_local` に替えることを推奨）。経路 B・C は変更なし。**
