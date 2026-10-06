@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-10-06
+
+**v5.0.0 — `SnapshotListResource` の失敗を、種類（コード）で見分けられ、文言を差し替えられ、トーストを止められ、全ブロック分を見られる形に変えた（#342。破壊的変更）。あわせて、banto-server の CSP の `connect-src` の拡張（#345）、`BASE_PATH` 付きビルドのナビの修正（#332）、docs の `design/`・`reviews/` への移動（#312）、外部利用 fixture の前提の記載（#337）、CI の `verify:migrations`（#339 P1）。版の種類: major（`SnapshotListResource` の `error`・`failedBlocks`・`SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE` の削除）。
+派生アプリへの影響: 経路 A は `SnapshotListResource` を使っている箇所を `failures`・`code`・`messages` に置き換える。経路 B は監査ログ画面などコピー済みの利用箇所の取り込みが要る。経路 C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                             |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v4.0.0` → `v5.0.0`（npm と Rust を同じタグに）。`SnapshotListResource` の `error`・`failedBlocks`・`SNAPSHOT_BOUNDARY_MISMATCH_MESSAGE` を削除（`failures`・`messages`・`notify` に置き換え）。`banto-server` に `with_security_headers_using` など（追加のみ） |
+| B. コピーしたテンプレート        | あり | 監査ログ画面（`SnapshotListResource` の利用箇所。`messages` と新しい Paraglide キー）、`BASE_PATH` のナビの修正（#332）、CSP の照合テスト `core/tests/tauri_window_csp.rs`（#345）。詳細は下の「その他」の各項                                                   |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                                          |
+
+### 消費側への注意
+
+- 移行の手順書（docs/upgrading.md の例）は v5.0.0 では用意しない（オーナー決定 2026-10-06）。下の「変更」の `SnapshotListResource` の項（削除・追加・置き換え先）に従う。
+
+### 検証した組み合わせ
+
+- タグの後に追記する（external-consumer.yml の run の URL と、そこに出る Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)）。
+
+### その他
+
 - feat(banto-server): セキュリティヘッダーの CSP の `connect-src` を、要求ごとに広げられるようにした（banto-industrial#505、2026-10-06 オーナー決定）。アプリ自身のデスクトップシェルが Tauri の WebView でこのサーバーの HTTP の画面へ移ると、その画面には窓の CSP ではなく応答の CSP（`connect-src 'self'`）が掛かり、Tauri IPC（`http://ipc.localhost`）の fetch が止められる（banto-industrial の banto-hub シェルの `/status` で、読み込みのたびに違反が 2 件出ていた。Tauri が postMessage に切り替えるので動作はしていた）。既定の `with_security_headers` は変えていない。
   - 追加: `with_security_headers_using(router, SecurityHeaders)`。`SecurityHeaders::new()` が既定の厳格な CSP で、`extra_connect_src(sources)` で connect-src に足す（`Result<_, InvalidCspSource>`。空・`;`・`,`・空白・制御文字・ASCII 以外は組み立ての時点で拒む）。`extra_connect_src_when(selector)` を付けると、選ばれた要求の応答にだけ足す（付けなければすべての応答）。広げられるのは connect-src だけで、ほかのディレクティブと 3 つのヘッダーは変わらない。
   - 追加: `request_from_loopback_peer`（TCP の接続元がループバックかを `ConnectInfo<SocketAddr>` から見る選び方。無ければ厳格なまま）、`TAURI_IPC_CONNECT_SRC`（`ipc:`・`http://ipc.localhost`）、`CONTENT_SECURITY_POLICY` を公開し、`SecurityHeaders::content_security_policy()` で広げた後の値をそのまま取れるようにした（窓の CSP と比べるテストで、文字列の置き換えが要らない）。
@@ -2295,7 +2316,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v4.0.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/tyaro/banto/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/tyaro/banto/compare/v3.0.1...v4.0.0
 [3.0.1]: https://github.com/tyaro/banto/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/tyaro/banto/compare/v2.1.1...v3.0.0
