@@ -353,7 +353,13 @@ without a runtime guard are **upheld by reviewing every call site**.
   is defeated too if the proxy rewrites `Host` to the upstream address (Caddy
   `header_up Host {upstream_hostport}`, nginx's default
   `proxy_set_header Host $proxy_host`), so keep `Host` preserved there or
-  leave the widening off. The impact analysis lives in the doc comment at the
+  leave the widening off. Also, "a forged `Host` only affects the forger's own
+  response" holds only if no shared cache reuses responses across `Host`s
+  (e.g. nginx `proxy_cache` + `proxy_cache_valid`, whose default
+  `proxy_cache_key` omits the incoming Host): do not put a shared cache in
+  front, or key it per incoming Host (include `$host` in `proxy_cache_key`);
+  reject unexpected Hosts on the public side, or override the CSP to the strict
+  value at the proxy. The impact analysis lives in the doc comment at the
   top of `security_headers.rs`.
 - **Grants (credential-less session issuance, ADR-0017; public viewing is the
   first kind, `publicViewer`).** A client without credentials is issued a

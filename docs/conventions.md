@@ -303,7 +303,12 @@ import だけで、transport の注入の形はレビューで担保する。
   ので使わない。`request_is_loopback_local` でも、プロキシが `Host` を上流の
   アドレスに書き換える設定（Caddy の `header_up Host {upstream_hostport}`、nginx の
   既定の `proxy_set_header Host $proxy_host`）では効かないので、`Host` を保たせる
-  か、広げる設定を入れない。影響の分析は `security_headers.rs` 冒頭の doc が一次情報。
+  か、広げる設定を入れない。また「`Host` を偽る相手は自分の応答を変えるだけ」は、
+  共有キャッシュが `Host` をまたいで応答を使い回さない前提（例: nginx の
+  `proxy_cache`＋`proxy_cache_valid`。既定の `proxy_cache_key` は受け取った `Host` を
+  含まない）なので、共有キャッシュを前段に置かないか、受け取った `Host` ごとに分ける
+  （`proxy_cache_key` に `$host` を含める）。公開側では想定外の `Host` を拒否するか、
+  プロキシで CSP を厳格な値に上書きする。影響の分析は `security_headers.rs` 冒頭の doc が一次情報。
 - **grant（資格情報なしのセッション発行、ADR-0017。閲覧公開はその 1 種類目
   `publicViewer`）。** 資格情報を持たないクライアントに、登録済みの種類の
   **固定 identity** のセッションを発行する

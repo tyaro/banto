@@ -86,6 +86,19 @@
 //!     name is not a loopback literal / `localhost`.
 //!   - A client that forges `Host` (curl etc.) only changes the CSP of the
 //!     response *it* receives - it cannot choose the policy for anyone else.
+//!     **This holds only if no shared cache reuses responses across
+//!     different `Host`s.** E.g. nginx with one location accepting both the
+//!     public Host and a loopback Host, `proxy_set_header Host $host`, and
+//!     `proxy_cache` + `proxy_cache_valid` enabled: the default
+//!     `proxy_cache_key` (`$scheme$proxy_host$request_uri`) omits the
+//!     incoming Host, so a widened response stored for `Host: 127.0.0.1`
+//!     could be served to public-Host viewers of the same path (banto's
+//!     static HTML carries no `Cache-Control` / `Vary`). Operating
+//!     condition: do not put a shared cache in front, or key it per incoming
+//!     Host (e.g. include `$host` in `proxy_cache_key`); reject unexpected
+//!     Hosts on the public side, or override the CSP to the strict value at
+//!     the proxy. (nginx caching is off by default; Caddy's standard setup
+//!     is unaffected.)
 //!   - Residual 1, the same as the loopback-peer selector: a browser on the
 //!     same host opening `http://127.0.0.1:<port>` directly gets the widened
 //!     policy (its `:80` / `:443` is this host's loopback).
@@ -388,6 +401,13 @@ pub fn request_from_loopback_peer(req: &Request) -> bool {
 ///
 /// Missing `ConnectInfo`, a missing or unparsable authority, or anything
 /// else not listed -> `false` (the strict policy; fail closed).
+///
+/// Operating condition: the "a forged `Host` only affects the forger's own
+/// response" reasoning assumes no shared cache reuses responses across
+/// different `Host`s. Do not put a shared cache in front, or key it per
+/// incoming Host (e.g. include `$host` in nginx's `proxy_cache_key`); reject
+/// unexpected Hosts on the public side, or override the CSP to the strict
+/// value at the proxy. See the module doc.
 pub fn request_is_loopback_local(req: &Request) -> bool {
     request_from_loopback_peer(req) && request_authority_is_loopback(req)
 }

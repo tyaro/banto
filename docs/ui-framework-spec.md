@@ -655,7 +655,14 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
   アドレスになるので厳格なままにできる。プロキシが `Host` を上流のアドレスに
   書き換える構成（Caddy の `header_up Host {upstream_hostport}`、nginx の既定の
   `proxy_set_header Host $proxy_host`）では効かないので、`Host` を保たせるか、
-  広げないか、プロキシで CSP を上書きする。`X-Forwarded-Host` などの転送ヘッダーは
+  広げないか、プロキシで CSP を上書きする。また「`Host` を偽る相手は自分の応答の CSP を
+  変えるだけ」は、共有キャッシュが `Host` をまたいで応答を使い回さない前提で成り立つ
+  （例: nginx の `proxy_cache`＋`proxy_cache_valid` を明示的に有効にし、既定の
+  `proxy_cache_key` が受け取った `Host` を含まない場合、`Host: 127.0.0.1` 向けに
+  広がった応答が公開名の閲覧者へ返りうる。banto の静的 HTML は `Cache-Control`・`Vary`
+  を付けない）。共有キャッシュを前段に置かないか、受け取った `Host` ごとに分ける
+  （`proxy_cache_key` に `$host` を含める）。公開側では想定外の `Host` を拒否するか、
+  プロキシで CSP を厳格な値に上書きする。`X-Forwarded-Host` などの転送ヘッダーは
   見ない。
 
 ### 11.3 マルチクライアント考慮
