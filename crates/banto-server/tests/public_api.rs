@@ -21,3 +21,22 @@ async fn revalidate_is_public(
 ) -> Result<Option<AuthenticatedSession>, BantoError> {
     auth.revalidate(token).await
 }
+
+/// banto-industrial#505: a derived app's desktop shell that navigates its
+/// Tauri webview to this server's HTTP UI widens `connect-src` with Tauri IPC
+/// for loopback peers only, and its tests compare the window CSP against
+/// `content_security_policy()`. Narrowing any of these must fail compilation.
+fn security_headers_connect_src_api_is_public(router: axum::Router) -> axum::Router {
+    use banto_server::{
+        request_from_loopback_peer, with_security_headers_using, InvalidCspSource, SecurityHeaders,
+        CONTENT_SECURITY_POLICY, TAURI_IPC_CONNECT_SRC,
+    };
+    let _: &str = CONTENT_SECURITY_POLICY;
+    let config: Result<SecurityHeaders, InvalidCspSource> =
+        SecurityHeaders::new().extra_connect_src(TAURI_IPC_CONNECT_SRC);
+    let config = config
+        .expect("static sources are valid")
+        .extra_connect_src_when(request_from_loopback_peer);
+    let _: String = config.content_security_policy();
+    with_security_headers_using(router, config)
+}

@@ -12,7 +12,9 @@
 //! location lives in the app crate (`apps/admin-template/core`), which
 //! composes these pieces via [`auth::auth_routes`], [`events::sse_route`],
 //! [`routes`], [`static_files::static_router`], [`response::ApiError`] and
-//! [`security_headers::with_security_headers`].
+//! [`security_headers::with_security_headers`] (or
+//! [`security_headers::with_security_headers_using`] when the app's own
+//! desktop shell needs Tauri IPC in `connect-src`).
 //!
 //! Every router built here stays `Router<()>` (no shared `axum::State`):
 //! handlers close over their state (`AuthState`, `broadcast::Sender`, ...)
@@ -42,7 +44,10 @@ pub use grant::{
 };
 pub use response::ApiError;
 pub use routes::AuthStatusExtras;
-pub use security_headers::with_security_headers;
+pub use security_headers::{
+    request_from_loopback_peer, with_security_headers, with_security_headers_using,
+    InvalidCspSource, SecurityHeaders, CONTENT_SECURITY_POLICY, TAURI_IPC_CONNECT_SRC,
+};
 pub use server::{
     bind, lan_urls, lan_urls_for_bind, start, BoundServer, RunningServer, ServerConfig,
 };

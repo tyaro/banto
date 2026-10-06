@@ -1,5 +1,7 @@
 # Banto（番頭） — Tauriフルスタック管理画面フレームワーク 仕様 (v0.8)
 
+<!-- 2026-10-06: §11.2 にセキュリティヘッダーの CSP（既定は厳格、connect-src だけを
+     要求ごとに広げられる `with_security_headers_using`、banto-industrial#505）を追記。 -->
 <!-- 2026-10-06: §4.1 の SnapshotListResource の失敗を `failures`（ブロック順・コード付き）・
      `messages`・`notify` の形に更新（Issue #342、v5.0.0 の破壊的変更、ADR-0015 追記）。 -->
 <!-- 2026-09-30: §3.3 の AuthProvider を v2.0.0 の形（resolve / credentialRevision /
@@ -630,6 +632,24 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
   TLS（自己署名証明書の生成・配布）はv2以降の検討事項。
 - バインドアドレス（`127.0.0.1`のみ / LAN公開）とポート番号は設定で
   変更可能にする。デフォルトはlocalhostのみ。
+- すべての応答にセキュリティヘッダー（CSP・`nosniff`・frame-deny・
+  `Referrer-Policy`）を最外層で付ける（`banto-server` の
+  `with_security_headers`、improvements §2.4）。CSP の既定は
+  `connect-src 'self'` の厳格なもので、Tauri の窓の CSP とは connect-src の
+  Tauri IPC だけが違う（conventions §6、`verify-architecture.mjs` rule 12）。
+- アプリ自身のデスクトップシェルが Tauri の WebView でこのサーバーの画面へ
+  移る場合だけ、`with_security_headers_using` と `SecurityHeaders` で
+  connect-src に `TAURI_IPC_CONNECT_SRC` を足してよい（2026-10-06 オーナー決定、
+  banto-industrial#505）。広げる相手は `request_from_loopback_peer`
+  （TCP の接続元がループバック）で選ぶのを推奨とし、LAN のブラウザへの応答は
+  厳格なままにする。広げられるのは connect-src だけ。普通のブラウザに対して
+  足したものが与える範囲（`ipc:` は無効、`http://ipc.localhost` は閲覧者自身の
+  ループバックの 80 番（http）と 443 番（https。CSP では http の source が
+  https にも一致し、省略した port は接続先 scheme の既定 port に一致する））は
+  `security_headers.rs` 冒頭の doc に記す。
+  同じホストのリバースプロキシ（ADR-0003）がループバック経由でつなぐ構成では
+  すべての要求がループバックからになり LAN の閲覧者にも広がるので、その構成では
+  広げないか、プロキシをループバック以外のアドレスからつながせる。
 
 ### 11.3 マルチクライアント考慮
 

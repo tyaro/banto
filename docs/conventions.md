@@ -282,9 +282,25 @@ import だけで、transport の注入の形はレビューで担保する。
   それ以外はディレクティブ単位で一字一句一致させる（根拠と `unsafe-inline` が
   必要な理由は `security_headers.rs` 冒頭の doc が一次情報）。編集自体は手動だが、
   **connect-src 以外のディレクティブのドリフトは `verify-architecture.mjs` rule 12 が
-  CI で捕捉する**（[ADR-0008](adr/0008-machine-check-stop-gate.md)。cross-check
-  テストが無く src-tauri も非コンパイルのため、静かに片方だけ緩む退行を防ぐ）—
-  どちらかを変えるときは両方を更新する。
+  CI で捕捉する**（[ADR-0008](adr/0008-machine-check-stop-gate.md)。src-tauri は
+  非コンパイルのため、静かに片方だけ緩む退行を防ぐ）。加えて
+  `apps/admin-template/core/tests/tauri_window_csp.rs` が、窓の CSP を
+  `SecurityHeaders::new().extra_connect_src(TAURI_IPC_CONNECT_SRC)` の
+  `content_security_policy()` と文字列で照合する — どちらかを変えるときは両方を更新する。
+- **LAN 応答の connect-src を広げるのは `with_security_headers_using` だけ。**
+  アプリ自身のデスクトップシェルが Tauri の WebView で自分の HTTP の画面へ移る場合
+  （例: banto-industrial の banto-hub シェル）、その画面には窓の CSP ではなく応答の
+  CSP が掛かるので、Tauri IPC が `connect-src 'self'` に止められる。このときは
+  `SecurityHeaders` で `TAURI_IPC_CONNECT_SRC` を足し、`request_from_loopback_peer`
+  で**ループバックの接続元に限る**（LAN のブラウザは厳格なまま）。広げられるのは
+  connect-src だけで、ほかのディレクティブとヘッダーは変わらない。リクエストの
+  ヘッダー・クエリ・`Host` で選ばない（相手が決められるため）。**同じホストの
+  リバースプロキシがループバック経由でつなぐ構成では、すべての要求の接続元が
+  ループバックになり LAN の閲覧者にも広がる**（閲覧者自身の端末の 80 番（http）と
+  443 番（https。CSP では http の source が https にも一致する）に届く
+  ようになる）ので、その構成では広げる設定を入れないか、プロキシをループバック
+  以外のアドレスからつながせる。影響の分析は `security_headers.rs` 冒頭の doc が
+  一次情報。
 - **grant（資格情報なしのセッション発行、ADR-0017。閲覧公開はその 1 種類目
   `publicViewer`）。** 資格情報を持たないクライアントに、登録済みの種類の
   **固定 identity** のセッションを発行する
