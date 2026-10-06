@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-10-07
+
+**v5.1.0 — banto-server の CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（#349、banto-industrial#505 の続き）。同じホストのリバースプロキシ配下でも、アプリ自身のデスクトップシェルの要求だけを広げられる。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A は任意（自分のデスクトップシェルが自分の HTTP の画面を開くアプリは、`extra_connect_src_when` の選び方を `request_is_loopback_local` に替えることを推奨）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | 任意 | `v5.0.0` → `v5.1.0`（npm と Rust を同じタグに）。`banto-server` に `request_is_loopback_local` を追加（追加のみ）。banto-hub などは `extra_connect_src_when(request_from_loopback_peer)` を `extra_connect_src_when(request_is_loopback_local)` に替える（同じホストのプロキシ配下でも LAN の閲覧者は厳格なままになる） |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                                                                                                                                                                                                |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                                                                                                 |
+
+### 消費側への注意
+
+- `request_is_loopback_local` は、プロキシが `Host` を上流のアドレスに書き換える設定では効かない（Caddy の `header_up Host {upstream_hostport}` など）。詳細は下の「その他」の安全性の項。
+
+### 検証した組み合わせ
+
+- タグの後に追記する（external-consumer.yml の run の URL と、そこに出る Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)）。
+
+### その他
+
 - feat(banto-server): セキュリティヘッダーの CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（banto-industrial#505 の続き、2026-10-06 オーナー決定）。版の種類: minor（追加のみ。後方互換。v5.1.0 で出す）。v5.0.0 の `request_from_loopback_peer` だけでは、banto-hub の運用手引きが勧める同じホストの Caddy（`reverse_proxy 127.0.0.1:8722`）の配下ですべての要求の接続元がループバックになり、LAN の閲覧者への応答も広がっていた。
   - 追加: `request_is_loopback_local(&Request) -> bool`。`request_from_loopback_peer` が真で、かつ宛先が `127.0.0.0/8`・`[::1]`・IPv4 射影のループバック（`[::ffff:127.0.0.1]`）の IP リテラルか `localhost`（大文字小文字は区別しない）のときだけ真。宛先は `Host` ヘッダーと URI の authority（HTTP/2 の `:authority`、HTTP/1.1 の絶対形式）から読み、片方だけならそれ、両方あれば一致（大文字小文字は区別しない）が条件で、食い違い・どちらも無い・`Host` が複数・解釈できない（ポートが空や数字以外、閉じていない `[`、userinfo など）は偽（厳格なまま）。`localhost.`（末尾のドット）と `*.localhost` は受け付けない（シェルは自分が bind したアドレスへ移るので要らず、受け付ける名前が増えるほどプロキシ経由の要求がローカルに見える道が増えるため）。`X-Forwarded-Host`・`Forwarded` は見ない。`request_from_loopback_peer` はそのまま残す。
   - 安全性: `Host` は相手が決められるので、それだけで広げる理由にはしない。接続元のループバックとの AND なら狭める方向にしか働かない。ブラウザは移った URL から `Host` を付けるので、`Host` を保つ同じホストのプロキシ（Caddy の既定）経由の LAN の閲覧者は公開名や LAN のアドレスを出して厳格なまま、デスクトップシェルは `http://127.0.0.1:<port>` へ移るので広がる。`Host` を偽る相手は、自分が受け取る応答の CSP を変えるだけ（ただし共有キャッシュが `Host` をまたいで応答を使い回さない前提。下の「共有キャッシュ」を参照）。残る注意: プロキシが `Host` を上流のアドレスに書き換える設定（Caddy の `header_up Host {upstream_hostport}`、nginx の既定の `proxy_set_header Host $proxy_host` で `proxy_pass` が `127.0.0.1`・`localhost` を指す場合）では効かないので、`Host` を保つ（nginx は `proxy_set_header Host $host`）か、広げる設定を入れないか、プロキシで CSP を上書きする。共有キャッシュ: nginx の `proxy_cache`＋`proxy_cache_valid` を明示的に有効にし、公開名とループバックの `Host` を同じ location で受けると、既定の `proxy_cache_key`（`$scheme$proxy_host$request_uri`）は受け取った `Host` を含まないので、`Host: 127.0.0.1` 向けに広がった応答が公開名の閲覧者へ返りうる（banto の静的 HTML は `Cache-Control`・`Vary` を付けない）。共有キャッシュを前段に置かないか、受け取った `Host` ごとに分ける（`proxy_cache_key` に `$host` を含める）。公開側では想定外の `Host` を拒否するか、プロキシで CSP を厳格な値に上書きする（nginx のキャッシュは既定で無効、Caddy の標準構成は影響なし）。詳しくは `security_headers.rs` 冒頭の doc と spec §11.2。
@@ -2339,7 +2360,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v5.0.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v5.1.0...HEAD
+[5.1.0]: https://github.com/tyaro/banto/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/tyaro/banto/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/tyaro/banto/compare/v3.0.1...v4.0.0
 [3.0.1]: https://github.com/tyaro/banto/compare/v3.0.0...v3.0.1
