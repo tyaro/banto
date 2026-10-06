@@ -56,34 +56,61 @@
 //!   set, so LAN browsers connecting *directly* keep the strict policy.
 //!   Residual: a browser on the *same host* (also loopback) gets the
 //!   widened policy - the `:80` / `:443` reach above is then that host's own
-//!   loopback, i.e. the machine already running this server. **This is the
-//!   recommended selector for a desktop shell, as long as no same-host
-//!   reverse proxy is in front (next point).**
+//!   loopback, i.e. the machine already running this server. But it cannot
+//!   tell a same-host reverse proxy from the desktop shell (next point), so
+//!   on its own it is only safe when no such proxy can be in front.
 //! - **Caveat - same-host reverse proxy**: if a reverse proxy on the same
 //!   host forwards LAN traffic to this server over loopback (e.g. a TLS
-//!   terminator per ADR-0003 that connects to `127.0.0.1:<port>`), *every*
-//!   request arrives from a loopback peer, so [`request_from_loopback_peer`]
-//!   widens `connect-src` for LAN browsers too: an injected script in a LAN
-//!   viewer's page could then reach whatever listens on port 80 or 443 of *that
-//!   viewer's own machine* (`http://ipc.localhost`; `ipc:` stays inert).
-//!   The peer check cannot tell the proxy from the desktop shell, and
-//!   forwarded headers (`X-Forwarded-For`, `Forwarded`) are client-settable
-//!   unless the proxy overwrites them, so don't select on those either. In
-//!   such a deployment either don't enable the widening at all (the shell
-//!   still works via Tauri's `postMessage` fallback, only the CSP violation
-//!   reports remain), or have the proxy connect to this server from a
-//!   non-loopback address so that only the shell is a loopback peer.
-//! - **Request headers / query / `Host`**: attacker-influenceable (a crafted
-//!   link sets the query; `Host` follows the URL the victim opens), so a
-//!   selector built on them lets a remote party pick the weaker policy for a
-//!   victim. Don't.
+//!   terminator per ADR-0003 such as Caddy's `reverse_proxy 127.0.0.1:<port>`),
+//!   *every* request arrives from a loopback peer, so
+//!   [`request_from_loopback_peer`] widens `connect-src` for LAN browsers
+//!   too: an injected script in a LAN viewer's page could then reach whatever
+//!   listens on port 80 or 443 of *that viewer's own machine*
+//!   (`http://ipc.localhost`; `ipc:` stays inert). Forwarded headers
+//!   (`X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`) are client-settable
+//!   unless the proxy overwrites them, so they are not used.
+//! - **Loopback peer *and* loopback authority** ([`request_is_loopback_local`],
+//!   2026-10-06): additionally requires the request's authority (`Host`, or
+//!   the URI authority = HTTP/2 `:authority`) to be a loopback IP literal or
+//!   `localhost`. **This is the recommended selector for a desktop shell
+//!   that navigates to its own HTTP UI.** The `Host` header is chosen by the
+//!   client, so it must never be the *only* reason to widen; but ANDed with
+//!   the loopback peer it can only *narrow* the peer check:
+//!   - A browser sets `Host` from the URL it navigated to. A LAN viewer going
+//!     through a same-host proxy that preserves `Host` (Caddy's default)
+//!     presents the public name or LAN address (`hub.example.lan`,
+//!     `192.168.1.10`) and gets the strict policy; the desktop shell
+//!     navigates to `http://127.0.0.1:<port>` and gets the widened one.
+//!   - A remote page cannot make a victim's browser reach this server from a
+//!     loopback peer (the peer check still applies), and a DNS-rebinding
+//!     name is not a loopback literal / `localhost`.
+//!   - A client that forges `Host` (curl etc.) only changes the CSP of the
+//!     response *it* receives - it cannot choose the policy for anyone else.
+//!   - Residual 1, the same as the loopback-peer selector: a browser on the
+//!     same host opening `http://127.0.0.1:<port>` directly gets the widened
+//!     policy (its `:80` / `:443` is this host's loopback).
+//!   - Residual 2, **operators must not rewrite `Host` to the upstream
+//!     address at the proxy**: a proxy that sends `Host: 127.0.0.1:<port>`
+//!     upstream (Caddy `header_up Host {upstream_hostport}`; also **nginx's
+//!     default** `proxy_set_header Host $proxy_host` when `proxy_pass` names
+//!     `127.0.0.1` / `localhost` - set `proxy_set_header Host $host`) makes
+//!     every proxied request look local again. In such a deployment keep
+//!     `Host` preserved, leave the widening off, or have the proxy set its
+//!     own `Content-Security-Policy`.
+//!   - `X-Forwarded-Host` / `Forwarded: host=` are deliberately ignored: a
+//!     proxy that does not overwrite them passes the client's value through,
+//!     so trusting them could only *widen*.
+//! - **Request headers / query / `Host` alone**: attacker-influenceable (a
+//!   crafted link sets the query; `Host` follows the URL the victim opens), so
+//!   a selector built on them *without* the loopback-peer check lets a remote
+//!   party pick the weaker policy for a victim. Don't.
 //!
 //! The selector only ever chooses between the strict policy and the widened
 //! one: it can never make a response weaker than "strict + the configured
 //! extra `connect-src` sources", nor touch the other directives or headers.
 
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, Request};
@@ -213,12 +240,12 @@ type ConnectSrcSelector = Arc<dyn Fn(&Request) -> bool + Send + Sync>;
 ///
 /// ```
 /// use banto_server::security_headers::{
-///     request_from_loopback_peer, SecurityHeaders, TAURI_IPC_CONNECT_SRC,
+///     request_is_loopback_local, SecurityHeaders, TAURI_IPC_CONNECT_SRC,
 /// };
 /// let headers = SecurityHeaders::new()
 ///     .extra_connect_src(TAURI_IPC_CONNECT_SRC)
 ///     .expect("static sources are valid")
-///     .extra_connect_src_when(request_from_loopback_peer);
+///     .extra_connect_src_when(request_is_loopback_local);
 /// assert!(headers
 ///     .content_security_policy()
 ///     .contains("connect-src 'self' ipc: http://ipc.localhost;"));
@@ -283,7 +310,7 @@ impl SecurityHeaders {
     /// everything else gets the strict [`CONTENT_SECURITY_POLICY`]. Replaces
     /// a previously set selector. Has no effect without
     /// [`Self::extra_connect_src`]. See the module docs for which request
-    /// properties are safe to select on ([`request_from_loopback_peer`] is
+    /// properties are safe to select on ([`request_is_loopback_local`] is
     /// the recommended one).
     pub fn extra_connect_src_when<F>(mut self, selector: F) -> Self
     where
@@ -323,13 +350,100 @@ impl SecurityHeaders {
 /// viewer is on this host": behind a reverse proxy on the same host every
 /// request is a loopback peer, so LAN viewers get the widened policy too
 /// (their own machine's `:80` / `:443` becomes reachable from an injected
-/// script via `http://ipc.localhost`). Don't rely on it in that deployment - leave the
-/// widening off, or have the proxy connect from a non-loopback address (see
-/// the module docs).
+/// script via `http://ipc.localhost`). Prefer [`request_is_loopback_local`],
+/// which also checks the request authority and so keeps LAN viewers behind
+/// a `Host`-preserving same-host proxy strict (see the module docs).
 pub fn request_from_loopback_peer(req: &Request) -> bool {
     req.extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .is_some_and(|ConnectInfo(addr)| is_loopback_peer(*addr))
+}
+
+/// Selector for [`SecurityHeaders::extra_connect_src_when`] (recommended for
+/// a desktop shell that navigates to its own HTTP UI): `true` iff **both**
+/// [`request_from_loopback_peer`] holds **and** the request authority names
+/// this host's loopback. The authority check can only narrow the peer check;
+/// the module docs explain why this is safe and the proxy setting
+/// (rewriting `Host` to the upstream address) that defeats it.
+///
+/// The authority:
+///
+/// - is read from the `Host` header and from the request URI's authority
+///   (HTTP/2 `:authority`, or an HTTP/1.1 absolute-form target). If exactly
+///   one is present it is used; if both are present they must be equal
+///   (ASCII case-insensitive), otherwise `false`. Neither, more than one
+///   `Host` header, or a non-visible-ASCII `Host` -> `false`.
+///   `X-Forwarded-Host` / `Forwarded` are ignored.
+/// - must be `host` or `host:port`, with `port` all ASCII digits fitting in
+///   `u16` (an empty port, `+80` etc. -> `false`); userinfo (`user@host`) is
+///   not accepted.
+/// - is local iff `host` is an IPv4 literal in `127.0.0.0/8`, a bracketed
+///   IPv6 literal that is `::1` or IPv4-mapped loopback (`[::1]`,
+///   `[::ffff:127.0.0.1]`; the same judgment as [`crate::is_loopback_peer`]),
+///   or `localhost` (ASCII case-insensitive, as host names are).
+///   `localhost.` (trailing dot) and `*.localhost` are **not** accepted: the
+///   shell never produces them (it navigates to the address it bound), and
+///   every extra name accepted is one more way for a proxied request to look
+///   local, so the set is kept to exactly what is needed.
+///
+/// Missing `ConnectInfo`, a missing or unparsable authority, or anything
+/// else not listed -> `false` (the strict policy; fail closed).
+pub fn request_is_loopback_local(req: &Request) -> bool {
+    request_from_loopback_peer(req) && request_authority_is_loopback(req)
+}
+
+/// The authority half of [`request_is_loopback_local`].
+fn request_authority_is_loopback(req: &Request) -> bool {
+    let mut hosts = req.headers().get_all(header::HOST).iter();
+    let host = match (hosts.next(), hosts.next()) {
+        (None, _) => None,
+        (Some(value), None) => match value.to_str() {
+            Ok(value) => Some(value),
+            Err(_) => return false,
+        },
+        // Several `Host` headers: ambiguous, never local.
+        (Some(_), Some(_)) => return false,
+    };
+    let uri_authority = req.uri().authority().map(|a| a.as_str());
+    let authority = match (host, uri_authority) {
+        (Some(host), Some(uri)) if host.eq_ignore_ascii_case(uri) => host,
+        (Some(_), Some(_)) => return false,
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => return false,
+    };
+    authority_is_loopback(authority)
+}
+
+/// `host[:port]` (bracketed IPv6 allowed) naming this host's loopback; see
+/// [`request_is_loopback_local`] for exactly what is accepted.
+fn authority_is_loopback(authority: &str) -> bool {
+    // `None` = the name `localhost`.
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let Some((inner, after)) = rest.split_once(']') else {
+            return false;
+        };
+        let Ok(ip) = inner.parse::<Ipv6Addr>() else {
+            return false;
+        };
+        (Some(IpAddr::V6(ip)), after)
+    } else {
+        let (name, after) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+        if name.eq_ignore_ascii_case("localhost") {
+            (None, after)
+        } else {
+            let Ok(ip) = name.parse::<Ipv4Addr>() else {
+                return false;
+            };
+            (Some(IpAddr::V4(ip)), after)
+        }
+    };
+    let port_ok = port.is_empty()
+        || port.strip_prefix(':').is_some_and(|digits| {
+            !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && digits.parse::<u16>().is_ok()
+        });
+    port_ok && host.is_none_or(|ip| is_loopback_peer(SocketAddr::new(ip, 0)))
 }
 
 /// Precomputed, immutable header values the middleware chooses between.
@@ -675,6 +789,239 @@ mod tests {
                 widened.to_ascii_lowercase()
             )),
             "{raw}"
+        );
+        server.stop().await;
+    }
+
+    /// A request for `uri` from `peer` (if any) with the given `Host`
+    /// headers (each one a separate header line), for the authority tests.
+    fn local_request(peer: Option<&str>, uri: &str, hosts: &[&[u8]]) -> Request {
+        let mut builder = HttpRequest::get(uri);
+        for host in hosts {
+            builder = builder.header(header::HOST, HeaderValue::from_bytes(host).unwrap());
+        }
+        let mut req = builder.body(Body::empty()).unwrap();
+        if let Some(peer) = peer {
+            let addr: SocketAddr = peer.parse().unwrap();
+            req.extensions_mut().insert(ConnectInfo(addr));
+        }
+        req
+    }
+
+    /// `request_is_loopback_local` for a loopback peer, origin-form `/` and
+    /// one `Host` header.
+    fn local_with_host(host: &str) -> bool {
+        request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "/",
+            &[host.as_bytes()],
+        ))
+    }
+
+    /// Loopback peer + loopback authority (IPv4 /8, bracketed IPv6,
+    /// IPv4-mapped, `localhost` in any case, with or without a port).
+    #[test]
+    fn loopback_local_accepts_loopback_authorities() {
+        for host in [
+            "127.0.0.1",
+            "127.0.0.1:8790",
+            "127.8.9.10:1",
+            "[::1]",
+            "[::1]:8790",
+            "[::ffff:127.0.0.1]:8790",
+            "localhost",
+            "localhost:8790",
+            "LOCALHOST",
+            "LocalHost:65535",
+        ] {
+            assert!(local_with_host(host), "host {host}");
+        }
+        // IPv6 peer, and a URI authority without `Host` (HTTP/2 `:authority`).
+        assert!(request_is_loopback_local(&local_request(
+            Some("[::1]:50000"),
+            "/",
+            &[b"[::1]:8790"],
+        )));
+        assert!(request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "http://127.0.0.1:8790/",
+            &[],
+        )));
+        // Both present and equal (case-insensitively).
+        assert!(request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "http://localhost:8790/",
+            &[b"LOCALHOST:8790"],
+        )));
+    }
+
+    /// The same-host-proxy case: the peer is loopback, but the browser's
+    /// `Host` is the public name / LAN address -> strict.
+    #[test]
+    fn loopback_local_rejects_non_loopback_authorities() {
+        for host in [
+            "hub.example.lan",
+            "hub.example.lan:443",
+            "192.168.1.10",
+            "192.168.1.10:8790",
+            "[::ffff:192.168.1.10]:8790",
+            "[fe80::1]:8790",
+            "0.0.0.0:8790",
+            "localhost.",
+            "LOCALHOST.:8790",
+            "app.localhost",
+            "ipc.localhost",
+            "localhost.example.lan",
+            "127.0.0.1.nip.io",
+        ] {
+            assert!(!local_with_host(host), "host {host}");
+        }
+    }
+
+    /// Unparsable authorities fail closed.
+    #[test]
+    fn loopback_local_rejects_malformed_authorities() {
+        for host in [
+            "",
+            ":8790",
+            "127.0.0.1:",
+            "127.0.0.1:abc",
+            "127.0.0.1:+80",
+            "127.0.0.1:65536",
+            "127.0.0.1:80:80",
+            "127.1",
+            "0x7f.0.0.1",
+            "[::1",
+            "[::1]x",
+            "[::1]:",
+            "[::1]:abc",
+            "::1",
+            "[127.0.0.1]",
+            "[::1%25lo]",
+            "user@127.0.0.1",
+            "127.0.0.1/",
+            "localhost:8790/x",
+            " 127.0.0.1",
+        ] {
+            assert!(!local_with_host(host), "host {host:?}");
+        }
+        // Not visible ASCII.
+        assert!(!request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "/",
+            &[b"127.0.0.1\xff"],
+        )));
+    }
+
+    /// The peer check still applies, and missing / ambiguous authorities and
+    /// forwarded headers never make a request local.
+    #[test]
+    fn loopback_local_needs_peer_and_one_unambiguous_authority() {
+        // LAN peer with a loopback `Host` (a forged or rebinding request).
+        for peer in [
+            Some("192.168.1.20:50000"),
+            Some("[::ffff:192.168.1.20]:1"),
+            None,
+        ] {
+            assert!(!request_is_loopback_local(&local_request(
+                peer,
+                "/",
+                &[b"127.0.0.1:8790"],
+            )));
+        }
+        // Neither `Host` nor a URI authority.
+        assert!(!request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "/",
+            &[],
+        )));
+        // `Host` and URI authority disagree (either way round).
+        assert!(!request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "http://127.0.0.1:8790/",
+            &[b"hub.example.lan"],
+        )));
+        assert!(!request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "http://hub.example.lan/",
+            &[b"127.0.0.1:8790"],
+        )));
+        assert!(!request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "http://127.0.0.1:8790/",
+            &[b"127.0.0.1:8791"],
+        )));
+        // Several `Host` headers.
+        assert!(!request_is_loopback_local(&local_request(
+            Some("127.0.0.1:50000"),
+            "/",
+            &[b"127.0.0.1:8790", b"127.0.0.1:8790"],
+        )));
+        // `X-Forwarded-Host` / `Forwarded` are ignored in both directions.
+        let mut req = local_request(Some("127.0.0.1:50000"), "/", &[b"hub.example.lan"]);
+        req.headers_mut()
+            .insert("x-forwarded-host", HeaderValue::from_static("127.0.0.1"));
+        req.headers_mut()
+            .insert("forwarded", HeaderValue::from_static("host=127.0.0.1"));
+        assert!(!request_is_loopback_local(&req));
+        let mut req = local_request(Some("127.0.0.1:50000"), "/", &[b"127.0.0.1:8790"]);
+        req.headers_mut().insert(
+            "x-forwarded-host",
+            HeaderValue::from_static("hub.example.lan"),
+        );
+        assert!(request_is_loopback_local(&req));
+    }
+
+    /// Through a real `start()`ed server (the shape of a same-host reverse
+    /// proxy: every connection is from loopback): `Host: hub.example.lan`
+    /// gets the strict policy, `Host: 127.0.0.1:<port>` the widened one.
+    #[tokio::test]
+    async fn loopback_local_selector_works_through_a_started_server() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let config = ipc_headers().extra_connect_src_when(request_is_loopback_local);
+        let widened = config.content_security_policy();
+        let server = crate::start(
+            crate::ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            },
+            page_router(config),
+        )
+        .await
+        .unwrap();
+        let addr = server.local_addr();
+        let csp_for_host = |host: String| async move {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            stream
+                .write_all(
+                    format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut raw = Vec::new();
+            stream.read_to_end(&mut raw).await.unwrap();
+            let raw = String::from_utf8_lossy(&raw).into_owned();
+            raw.lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-security-policy")
+                        .then(|| value.trim().to_owned())
+                })
+                .unwrap_or_else(|| panic!("no CSP in {raw}"))
+        };
+        assert_eq!(
+            csp_for_host("hub.example.lan".to_owned()).await,
+            CONTENT_SECURITY_POLICY
+        );
+        assert_eq!(
+            csp_for_host("192.168.1.10:8790".to_owned()).await,
+            CONTENT_SECURITY_POLICY
+        );
+        assert_eq!(csp_for_host(addr.to_string()).await, widened);
+        assert_eq!(
+            csp_for_host(format!("localhost:{}", addr.port())).await,
+            widened
         );
         server.stop().await;
     }

@@ -97,6 +97,9 @@ visual regression の fullPage スナップショット対象のため、ベー�
 `SecurityHeaders` で connect-src だけを要求ごとに広げられるようにした
 （推奨はループバックの接続元に限る `request_from_loopback_peer`。
 banto-industrial#505）。既定の `with_security_headers` は変わらない。
+同日、同じホストのリバースプロキシ配下でも LAN の閲覧者を厳格なままにするため、
+接続元と宛先（`Host`／`:authority`）の両方がループバックの要求だけを選ぶ
+`request_is_loopback_local` を足し、推奨をこちらに替えた。
 
 ### 2.5 依存監査の自動化 — 対応済み（2026-07-16。ignore登録 2026-07-17）
 
