@@ -291,16 +291,24 @@ import だけで、transport の注入の形はレビューで担保する。
   アプリ自身のデスクトップシェルが Tauri の WebView で自分の HTTP の画面へ移る場合
   （例: banto-industrial の banto-hub シェル）、その画面には窓の CSP ではなく応答の
   CSP が掛かるので、Tauri IPC が `connect-src 'self'` に止められる。このときは
-  `SecurityHeaders` で `TAURI_IPC_CONNECT_SRC` を足し、`request_from_loopback_peer`
-  で**ループバックの接続元に限る**（LAN のブラウザは厳格なまま）。広げられるのは
-  connect-src だけで、ほかのディレクティブとヘッダーは変わらない。リクエストの
-  ヘッダー・クエリ・`Host` で選ばない（相手が決められるため）。**同じホストの
-  リバースプロキシがループバック経由でつなぐ構成では、すべての要求の接続元が
+  `SecurityHeaders` で `TAURI_IPC_CONNECT_SRC` を足し、`request_is_loopback_local`
+  で**接続元と宛先（`Host`／`:authority`）の両方がループバックの要求に限る**
+  （2026-10-06。LAN のブラウザは厳格なまま）。広げられるのは connect-src だけで、
+  ほかのディレクティブとヘッダーは変わらない。リクエストのヘッダー・クエリ・`Host`
+  **だけ**で選ばない（相手が決められるため。接続元のループバックとの AND なら狭める
+  方向にしか働かない）。接続元だけを見る `request_from_loopback_peer` は、**同じ
+  ホストのリバースプロキシがループバック経由でつなぐ構成では、すべての要求の接続元が
   ループバックになり LAN の閲覧者にも広がる**（閲覧者自身の端末の 80 番（http）と
-  443 番（https。CSP では http の source が https にも一致する）に届く
-  ようになる）ので、その構成では広げる設定を入れないか、プロキシをループバック
-  以外のアドレスからつながせる。影響の分析は `security_headers.rs` 冒頭の doc が
-  一次情報。
+  443 番（https。CSP では http の source が https にも一致する）に届くようになる）
+  ので使わない。`request_is_loopback_local` でも、プロキシが `Host` を上流の
+  アドレスに書き換える設定（Caddy の `header_up Host {upstream_hostport}`、nginx の
+  既定の `proxy_set_header Host $proxy_host`）では効かないので、`Host` を保たせる
+  か、広げる設定を入れない。また「`Host` を偽る相手は自分の応答を変えるだけ」は、
+  共有キャッシュが `Host` をまたいで応答を使い回さない前提（例: nginx の
+  `proxy_cache`＋`proxy_cache_valid`。既定の `proxy_cache_key` は受け取った `Host` を
+  含まない）なので、共有キャッシュを前段に置かないか、受け取った `Host` ごとに分ける
+  （`proxy_cache_key` に `$host` を含める）。公開側では想定外の `Host` を拒否するか、
+  プロキシで CSP を厳格な値に上書きする。影響の分析は `security_headers.rs` 冒頭の doc が一次情報。
 - **grant（資格情報なしのセッション発行、ADR-0017。閲覧公開はその 1 種類目
   `publicViewer`）。** 資格情報を持たないクライアントに、登録済みの種類の
   **固定 identity** のセッションを発行する

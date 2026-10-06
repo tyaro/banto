@@ -40,3 +40,19 @@ fn security_headers_connect_src_api_is_public(router: axum::Router) -> axum::Rou
     let _: String = config.content_security_policy();
     with_security_headers_using(router, config)
 }
+
+/// banto-industrial#505 follow-up (2026-10-06): the recommended selector also
+/// requires a loopback request authority, so LAN viewers behind a
+/// `Host`-preserving same-host reverse proxy keep the strict policy.
+fn security_headers_loopback_local_selector_is_public(router: axum::Router) -> axum::Router {
+    use banto_server::{
+        request_is_loopback_local, with_security_headers_using, SecurityHeaders,
+        TAURI_IPC_CONNECT_SRC,
+    };
+    let _: fn(&axum::extract::Request) -> bool = request_is_loopback_local;
+    let config = SecurityHeaders::new()
+        .extra_connect_src(TAURI_IPC_CONNECT_SRC)
+        .expect("static sources are valid")
+        .extra_connect_src_when(request_is_loopback_local);
+    with_security_headers_using(router, config)
+}

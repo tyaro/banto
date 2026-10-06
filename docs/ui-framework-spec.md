@@ -640,16 +640,30 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
 - アプリ自身のデスクトップシェルが Tauri の WebView でこのサーバーの画面へ
   移る場合だけ、`with_security_headers_using` と `SecurityHeaders` で
   connect-src に `TAURI_IPC_CONNECT_SRC` を足してよい（2026-10-06 オーナー決定、
-  banto-industrial#505）。広げる相手は `request_from_loopback_peer`
-  （TCP の接続元がループバック）で選ぶのを推奨とし、LAN のブラウザへの応答は
-  厳格なままにする。広げられるのは connect-src だけ。普通のブラウザに対して
+  banto-industrial#505）。広げる相手は `request_is_loopback_local`
+  （TCP の接続元がループバックで、かつ宛先の `Host`／`:authority` がループバックの
+  IP リテラルか `localhost`。2026-10-06 オーナー決定で `request_from_loopback_peer`
+  から推奨を替えた）で選び、LAN のブラウザへの応答は厳格なままにする。広げられるのは connect-src だけ。普通のブラウザに対して
   足したものが与える範囲（`ipc:` は無効、`http://ipc.localhost` は閲覧者自身の
   ループバックの 80 番（http）と 443 番（https。CSP では http の source が
   https にも一致し、省略した port は接続先 scheme の既定 port に一致する））は
   `security_headers.rs` 冒頭の doc に記す。
   同じホストのリバースプロキシ（ADR-0003）がループバック経由でつなぐ構成では
-  すべての要求がループバックからになり LAN の閲覧者にも広がるので、その構成では
-  広げないか、プロキシをループバック以外のアドレスからつながせる。
+  すべての要求がループバックからになるので、接続元だけを見る
+  `request_from_loopback_peer` は LAN の閲覧者にも広げる。`request_is_loopback_local`
+  は、プロキシが `Host` を保てば（Caddy の既定）LAN の閲覧者の宛先が公開名・LAN の
+  アドレスになるので厳格なままにできる。プロキシが `Host` を上流のアドレスに
+  書き換える構成（Caddy の `header_up Host {upstream_hostport}`、nginx の既定の
+  `proxy_set_header Host $proxy_host`）では効かないので、`Host` を保たせるか、
+  広げないか、プロキシで CSP を上書きする。また「`Host` を偽る相手は自分の応答の CSP を
+  変えるだけ」は、共有キャッシュが `Host` をまたいで応答を使い回さない前提で成り立つ
+  （例: nginx の `proxy_cache`＋`proxy_cache_valid` を明示的に有効にし、既定の
+  `proxy_cache_key` が受け取った `Host` を含まない場合、`Host: 127.0.0.1` 向けに
+  広がった応答が公開名の閲覧者へ返りうる。banto の静的 HTML は `Cache-Control`・`Vary`
+  を付けない）。共有キャッシュを前段に置かないか、受け取った `Host` ごとに分ける
+  （`proxy_cache_key` に `$host` を含める）。公開側では想定外の `Host` を拒否するか、
+  プロキシで CSP を厳格な値に上書きする。`X-Forwarded-Host` などの転送ヘッダーは
+  見ない。
 
 ### 11.3 マルチクライアント考慮
 

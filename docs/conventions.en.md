@@ -339,16 +339,27 @@ without a runtime guard are **upheld by reviewing every call site**.
   UI (e.g. banto-industrial's banto-hub shell), that page runs under the
   response CSP, not the window CSP, so Tauri IPC is blocked by
   `connect-src 'self'`. In that case add `TAURI_IPC_CONNECT_SRC` via
-  `SecurityHeaders` and **restrict it to loopback peers** with
-  `request_from_loopback_peer` (LAN browsers keep the strict policy). Only
-  connect-src can be widened; every other directive and header stays the
-  same. Do not select on request headers, the query or `Host` (the other
-  party controls them). **Behind a same-host reverse proxy that connects over
-  loopback, every request is a loopback peer, so LAN viewers get the widened
-  policy too** (their own machine's port 80 (http) and port 443 (https; in
-  CSP an `http:` source also matches `https:`) become reachable); in that
-  deployment leave the widening off, or have the proxy connect from a
-  non-loopback address. The impact analysis lives in the doc comment at the
+  `SecurityHeaders` and **restrict it to requests whose peer and authority
+  (`Host` / `:authority`) are both loopback** with
+  `request_is_loopback_local` (2026-10-06; LAN browsers keep the strict
+  policy). Only connect-src can be widened; every other directive and header
+  stays the same. Do not select on request headers, the query or `Host`
+  **alone** (the other party controls them; ANDed with a loopback peer they
+  can only narrow). Do not use the peer-only `request_from_loopback_peer`:
+  **behind a same-host reverse proxy that connects over loopback, every
+  request is a loopback peer, so LAN viewers get the widened policy too**
+  (their own machine's port 80 (http) and port 443 (https; in CSP an `http:`
+  source also matches `https:`) become reachable). `request_is_loopback_local`
+  is defeated too if the proxy rewrites `Host` to the upstream address (Caddy
+  `header_up Host {upstream_hostport}`, nginx's default
+  `proxy_set_header Host $proxy_host`), so keep `Host` preserved there or
+  leave the widening off. Also, "a forged `Host` only affects the forger's own
+  response" holds only if no shared cache reuses responses across `Host`s
+  (e.g. nginx `proxy_cache` + `proxy_cache_valid`, whose default
+  `proxy_cache_key` omits the incoming Host): do not put a shared cache in
+  front, or key it per incoming Host (include `$host` in `proxy_cache_key`);
+  reject unexpected Hosts on the public side, or override the CSP to the strict
+  value at the proxy. The impact analysis lives in the doc comment at the
   top of `security_headers.rs`.
 - **Grants (credential-less session issuance, ADR-0017; public viewing is the
   first kind, `publicViewer`).** A client without credentials is issued a

@@ -45,8 +45,9 @@ pub use grant::{
 pub use response::ApiError;
 pub use routes::AuthStatusExtras;
 pub use security_headers::{
-    request_from_loopback_peer, with_security_headers, with_security_headers_using,
-    InvalidCspSource, SecurityHeaders, CONTENT_SECURITY_POLICY, TAURI_IPC_CONNECT_SRC,
+    request_from_loopback_peer, request_is_loopback_local, with_security_headers,
+    with_security_headers_using, InvalidCspSource, SecurityHeaders, CONTENT_SECURITY_POLICY,
+    TAURI_IPC_CONNECT_SRC,
 };
 pub use server::{
     bind, lan_urls, lan_urls_for_bind, start, BoundServer, RunningServer, ServerConfig,
