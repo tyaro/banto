@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-10-08
+
+**v6.2.0 — `@banto/ui` の段階 2（#220）: メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`、#361）、フォーカストラップ・フォーカス復帰・window の Esc を備えた `CommandPalette`（#363）、トーストのストア `createToastStore()` と、アクション付きボタンを持つ `ToastHost`（#364）、テーマのトークン `--banto-scrim` と z-index の層（#361）を足した。[ADR-0018](docs/adr/0018-shared-ui-package.md) の段階 1・2 の決定を Accepted にした。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A は `@banto/ui` を使っているなら **Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す必要がある**（`@banto/ui` が初めて `.svelte.ts` を持つ。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)・#478）。経路 B は admin-template から写したメニュー・CommandPalette・トーストを `@banto/ui` からの import に替えられる。経路 C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                           |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.1.0` → `v6.2.0`（npm と Rust を同じタグに）。**`@banto/ui` を使う派生アプリは Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す**（必須。足さないと `pnpm dev` が 500 になる）。既存の `@banto/*` の公開 API は変わらない（追加のみ） |
+| B. コピーしたテンプレート        | 任意 | admin-template のメニュー・CommandPalette・トーストの写しは `@banto/ui` から import できる。直書きのオーバーレイの値はトークンに置き換えられる。トーストの id は文字列で、アクションの prop は `onAction`                                      |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                        |
+
+### 消費側への注意
+
+- 既存の `@banto/*` の公開 API は変わらない（追加のみ）。
+- **`@banto/ui` を使う派生アプリは、Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す**（`toast.svelte.ts` のため。トーストを使わなくても同じ。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)、[docs/upgrading.md](docs/upgrading.md) 3.1）。`pnpm build` と `pnpm check` ではこの漏れは分からない。`pnpm dev` で画面を開いて確かめる。
+- 経路 B の写しは、取り込むなら `@banto/ui` から import し、トークン（`--banto-scrim`・`--banto-z-*`）で直書きを置き換える。トーストの id は数値から文字列、アクションの prop は `onClick` から `onAction`。詳細は下の「追加」の各項と [docs/upgrading.md](docs/upgrading.md) 3.2。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加（minor、追加のみ）
 
 - feat(ui): メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`）を admin-template の `components/menu/` から `@banto/ui` へ移した（#220 段階 2a、[ADR-0018](docs/adr/0018-shared-ui-package.md)）。DOM・CSS・props は変えていない（`MenuItem` の `icon` の型だけ `UiIconComponent` にした。lucide の部品はそのまま渡せる）。admin-template の `Header` は `@banto/ui` から import し、`components/menu/` は削除した。jsdom テストを足し、`/ui-demo` に Menu の見本を足した（開いていない状態のトリガーだけが画面に出る）。
@@ -2499,7 +2520,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.1.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.2.0...HEAD
+[6.2.0]: https://github.com/tyaro/banto/compare/v6.1.0...v6.2.0
 [6.1.0]: https://github.com/tyaro/banto/compare/v6.0.0...v6.1.0
 [6.0.0]: https://github.com/tyaro/banto/compare/v5.1.0...v6.0.0
 [5.1.0]: https://github.com/tyaro/banto/compare/v5.0.0...v5.1.0
