@@ -51,11 +51,11 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | `crates/banto-admin-services` | 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 テーマC で `admin-template-core` から移設 | 汎用ロジックのコピー面積を削減（§7） |
 | `admin-template-core` | items（デモリソース）固有のサービス層 + REST + 汎用ルーターの `.merge()` 組み立て（Tauri と二経路で同一判定） | 「フロント→サービス→DB貫通」がテンプレートの価値そのもの。**クレート自体はコア**（`.merge()` 組み立て・`first_boot`・`db`・`assets` が常在）だが、その中の `items` 一式は §3 のデモリソース（`display` で削除可） |
 
-> **提案中（2026-10-07、Issue #220・[ADR-0018](adr/0018-shared-ui-package.md)、状態 Proposed）**:
+> **採択済み・実装前（2026-10-07、Issue #220・[ADR-0018](adr/0018-shared-ui-package.md)、段階 1 の判断は Accepted）**:
 > `apps/admin-template/src/lib/components/ui/` の汎用部品（PageHeader・SurfaceCard など 7 つ）を
 > 新パッケージ `@banto/ui`（`packages/ui`）へ切り出し、コアとして本表に行を足す計画。段階 2 で
 > メニュー部品・CommandPalette・ToastHost を banto-industrial の写しと突き合わせて移す。
-> 採択と段階 1 の実施までは、表は現状のまま。
+> 段階 1 の実装（`@banto/ui` の新設）が入るまでは、表は現状のまま。
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 

@@ -24,7 +24,7 @@
 
 ### その他
 
-- docs(adr): 共通 UI 部品を新パッケージ `@banto/ui`（`packages/ui`）に切り出す設計を [ADR-0018](docs/adr/0018-shared-ui-package.md)（状態 Proposed）として記録した（#220 段階 0）。admin-template の `components/ui/` の 7 部品と、段階 2 の候補（メニュー部品・CommandPalette・ToastHost、banto-industrial の写しとの違い）の棚卸し、公開 API・アイコンの同梱・文言の注入・検査と配布の更新・オーナー判断事項を含む。コードは動かしていない。ADR が名指しする `@banto/ui` を、段階 1 まで `verify-architecture.mjs` の `DOCS_PACKAGE_REF_ALLOWLIST` に入れた。`docs/template-scope.md` §2.1 に提案中の注記を足した。
+- docs(adr): 共通 UI 部品を新パッケージ `@banto/ui`（`packages/ui`）に切り出す設計を [ADR-0018](docs/adr/0018-shared-ui-package.md)（段階 1 の判断は 2026-10-07 にオーナー決定で Accepted。段階 2 は未決）として記録した（#220 段階 0）。admin-template の `components/ui/` の 7 部品と、段階 2 の候補（メニュー部品・CommandPalette・ToastHost、banto-industrial の写しとの違い）の棚卸し、公開 API・アイコンの同梱・文言の注入・検査と配布の更新・オーナー判断事項を含む。コードは動かしていない。ADR が名指しする `@banto/ui` を、段階 1 まで `verify-architecture.mjs` の `DOCS_PACKAGE_REF_ALLOWLIST` に入れた。`docs/template-scope.md` §2.1 に提案中の注記を足した。
 
 ## [6.0.0] - 2026-10-07
 
