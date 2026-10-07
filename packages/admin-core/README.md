@@ -29,15 +29,38 @@ await items.load();
 console.log(items.rows, items.totalCount);
 ```
 
-## 通知なしに増減する一覧の失敗（`SnapshotListResource`）
+## ブロック読み込みの一覧の失敗（`WindowedListResource`・`SnapshotListResource`）
 
+`createWindowedListResource(resource, options)` と
 `createSnapshotListResource(fetcher, options)`（spec §4.1、
-[ADR-0015](../../docs/adr/0015-snapshot-list-resource.md)）は、失敗をブロック順の
-`failures` で出す。種類は `code`（`'request'`・`'timeout'`・`'boundaryMismatch'`・
-`'malformed'`）で見分け、文言は比べない。取得関数が投げた `ProviderError` は
-同じオブジェクトのまま `error` に入る（`code: 'request'`）。リソースが自分で作る
-失敗の文言は `messages` で差し替え（既定は英語）、失敗ごとのトーストは `notify` で
+[ADR-0015](../../docs/adr/0015-snapshot-list-resource.md)）は、失敗を同じ形で
+出す。`failures` はブロック順・ブロックごとに 1 件の `ListBlockErrorFailure`
+（`{ block, kind: 'error', code, error }`。`SnapshotListResource` はこれに
+`{ block, kind: 'expired' }` が加わる）。種類は `code`（`ListBlockFailureCode`:
+`'request'`・`'timeout'`・`'malformed'`、`SnapshotListResource` だけ
+`'boundaryMismatch'` も）で見分け、文言は比べない。データソース（`getList` や
+取得関数）が投げた `ProviderError` は同じオブジェクトのまま `error` に入る
+（`code: 'request'`）。それ以外の値と、リソースが自分で作る失敗は
+`ListBlockError`（`isListBlockError()` で判定）。リソースが自分で作る失敗の
+文言は `messages` で差し替え（既定は英語）、失敗ごとのトーストは `notify` で
 止められる。
+
+```ts
+import { createWindowedListResource } from '@banto/admin-core';
+import * as m from '#lib/paraglide/messages.js';
+
+const items = createWindowedListResource('items', {
+	messages: {
+		timeout: (ms) => m['items.loadTimeout']({ seconds: Math.round(ms / 1000) }),
+		malformed: () => m['items.malformedResult']()
+	}
+});
+
+// `refresh()` の間も表示中の行は保たれ、`failures` は取り直しが済んだブロックから更新される。
+const loadFailed = $derived(items.failures.length > 0);
+```
+
+`SnapshotListResource` は `messages` に `boundaryMismatch` も渡せる。
 
 ```ts
 import { createSnapshotListResource } from '@banto/admin-core';

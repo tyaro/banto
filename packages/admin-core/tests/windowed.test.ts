@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	defaultListBlockMessages,
+	ListBlockError,
+	type ListBlockErrorFailure
+} from '../src/blockFetch';
+import { ProviderError } from '../src/errors';
 import { invalidate } from '../src/invalidate';
 import type { DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
@@ -20,6 +26,16 @@ function tick(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** The blocks `failures` lists, in its order. */
+function blocksOf(list: { failures: readonly ListBlockErrorFailure[] }): number[] {
+	return list.failures.map((failure) => failure.block);
+}
+
+/** The error of the lowest failed block, `null` when there is none. */
+function errorOf(list: { failures: readonly ListBlockErrorFailure[] }): ProviderError | null {
+	return list.failures[0]?.error ?? null;
+}
+
 function makeDataset(count: number): Row[] {
 	return Array.from({ length: count }, (_, i) => ({ id: i, name: `row-${i}` }));
 }
@@ -33,7 +49,7 @@ function createControllableProvider(datasetSize = 50) {
 	const dataset = makeDataset(datasetSize);
 	const calls: { offset: number; limit: number }[] = [];
 	const resolvers: ((value: { rows: Row[]; totalCount: number }) => void)[] = [];
-	const rejectors: ((reason: Error) => void)[] = [];
+	const rejectors: ((reason: unknown) => void)[] = [];
 
 	const provider: DataProvider = {
 		getList: (_resource: string, params) =>
@@ -68,6 +84,8 @@ function createControllableProvider(datasetSize = 50) {
 		calls,
 		resolveCall,
 		rejectCall: (index: number) => rejectors[index](new Error('Refresh failed')),
+		/** Reject the call at `index` with exactly `reason`. */
+		rejectCallWith: (index: number, reason: unknown) => rejectors[index](reason),
 		dataset
 	};
 }
@@ -328,13 +346,13 @@ describe('atomic window refresh (#212)', () => {
 		await refresh;
 		expect(windowed.rows[0]?.id).toBe(10);
 		expect(windowed.rows[2]).toBeUndefined();
-		expect(windowed.error?.message).toContain('Refresh failed');
+		expect(errorOf(windowed)?.message).toContain('Refresh failed');
 		expect(windowed.loading).toBe(false);
 		const retry = windowed.ensureRange(2, 4);
 		resolveCall(4, [{ id: 12, name: 'retried' }]);
 		await retry;
 		expect(windowed.rows[2]?.id).toBe(12);
-		expect(windowed.error).toBeNull();
+		expect(windowed.failures).toEqual([]);
 		windowed.dispose();
 	});
 
@@ -394,7 +412,7 @@ describe('failure state and recovery (#243)', () => {
 		const first = windowed.ensureRange(0, 10);
 		rejectCall(0);
 		await first;
-		expect(windowed.error).not.toBeNull();
+		expect(windowed.failures).not.toEqual([]);
 		expect(windowed.loading).toBe(false);
 		expect(windowed.totalCount).toBe(0);
 		// totalCount 0 -> BantoGrid's virtual window is empty.
@@ -408,7 +426,7 @@ describe('failure state and recovery (#243)', () => {
 		await reload;
 		expect(windowed.totalCount).toBe(30);
 		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
-		expect(windowed.error).toBeNull();
+		expect(windowed.failures).toEqual([]);
 		expect(windowed.loading).toBe(false);
 		windowed.dispose();
 	});
@@ -483,8 +501,8 @@ describe('failure state and recovery (#243)', () => {
 		await tick();
 		resolveCall(1);
 		await load;
-		expect(windowed.error).not.toBeNull();
-		expect(windowed.failedBlocks).toEqual([0]);
+		expect(windowed.failures).not.toEqual([]);
+		expect(blocksOf(windowed)).toEqual([0]);
 		expect(windowed.rows[10]).toEqual({ id: 10, name: 'row-10' });
 		expect(windowed.loading).toBe(false);
 		windowed.dispose();
@@ -496,17 +514,17 @@ describe('failure state and recovery (#243)', () => {
 		resolveCall(0);
 		rejectCall(1);
 		await load;
-		expect(windowed.failedBlocks).toEqual([1]);
+		expect(blocksOf(windowed)).toEqual([1]);
 
 		const reload = windowed.refresh();
-		expect(windowed.error).not.toBeNull(); // kept while the retry is in flight
+		expect(windowed.failures).not.toEqual([]); // kept while the retry is in flight
 		const offsets = calls.slice(2).map((c) => c.offset);
 		expect(offsets.sort((a, b) => a - b)).toEqual([0, 10]);
 		resolveCall(2);
 		resolveCall(3);
 		await reload;
-		expect(windowed.error).toBeNull();
-		expect(windowed.failedBlocks).toEqual([]);
+		expect(windowed.failures).toEqual([]);
+		expect(blocksOf(windowed)).toEqual([]);
 		windowed.dispose();
 	});
 
@@ -520,7 +538,7 @@ describe('failure state and recovery (#243)', () => {
 		const near = windowed.ensureRange(0, 10); // block 0
 		resolveCall(1);
 		await near;
-		expect(windowed.failedBlocks).toEqual([2]);
+		expect(blocksOf(windowed)).toEqual([2]);
 
 		const reload = windowed.refresh();
 		const offsets = calls.slice(2).map((c) => c.offset);
@@ -528,7 +546,7 @@ describe('failure state and recovery (#243)', () => {
 		resolveCall(2);
 		resolveCall(3);
 		await reload;
-		expect(windowed.failedBlocks).toEqual([]);
+		expect(blocksOf(windowed)).toEqual([]);
 		expect(windowed.rows[20]).toEqual({ id: 20, name: 'row-20' });
 		windowed.dispose();
 	});
@@ -538,10 +556,10 @@ describe('failure state and recovery (#243)', () => {
 		const load = windowed.ensureRange(0, 10);
 		rejectCall(0);
 		await load;
-		expect(windowed.error).not.toBeNull();
+		expect(windowed.failures).not.toEqual([]);
 		windowed.setParams({ sort: [{ field: 'name', direction: 'desc' }] });
-		expect(windowed.error).toBeNull();
-		expect(windowed.failedBlocks).toEqual([]);
+		expect(windowed.failures).toEqual([]);
+		expect(blocksOf(windowed)).toEqual([]);
 		windowed.dispose();
 	});
 
@@ -568,11 +586,11 @@ describe('failure state and recovery (#243)', () => {
 		resolveCall(1, [{ id: 99, name: 'stale' }], 1);
 		await reloadA;
 		expect(windowed.rows[0]).toBeUndefined();
-		expect(windowed.error).not.toBeNull();
+		expect(windowed.failures).not.toEqual([]);
 		resolveCall(2);
 		await reloadB;
 		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
-		expect(windowed.error).toBeNull();
+		expect(windowed.failures).toEqual([]);
 		windowed.dispose();
 	});
 });
@@ -608,14 +626,15 @@ describe('synchronous provider failures (#243 review)', () => {
 		await windowed.ensureRange(0, 20);
 		expect(calls).toBe(2);
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([0, 1]);
-		expect(windowed.error?.message).toContain('sync boom');
+		expect(blocksOf(windowed)).toEqual([0, 1]);
+		expect(errorOf(windowed)?.message).toContain('sync boom');
+		expect(windowed.failures.map((f) => f.code)).toEqual(['request', 'request']);
 
 		// Recovery still works: the blocks are neither loaded nor in flight.
 		await windowed.refresh();
 		expect(calls).toBe(4);
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([0, 1]);
+		expect(blocksOf(windowed)).toEqual([0, 1]);
 		windowed.dispose();
 	});
 
@@ -643,7 +662,7 @@ describe('synchronous provider failures (#243 review)', () => {
 		resolveCall(2);
 		await reload;
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([0]);
+		expect(blocksOf(windowed)).toEqual([0]);
 		expect(windowed.rows[10]).toEqual({ id: 10, name: 'row-10' });
 		windowed.dispose();
 	});
@@ -667,7 +686,7 @@ describe('settlement cannot be skipped (#243 review)', () => {
 		controlled.rejectCall(0);
 		await expect(load).resolves.toBeUndefined();
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([0]);
+		expect(blocksOf(windowed)).toEqual([0]);
 		windowed.dispose();
 	});
 
@@ -677,14 +696,15 @@ describe('settlement cannot be skipped (#243 review)', () => {
 		resolveCall(0, undefined, -1);
 		await load;
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([0]);
+		expect(blocksOf(windowed)).toEqual([0]);
+		expect(windowed.failures[0]?.code).toBe('malformed');
 		expect(windowed.totalCount).toBe(0);
 		// The generation still has no total count, so recovery reaches block 0.
 		const reload = windowed.refresh();
 		resolveCall(calls.length - 1);
 		await reload;
 		expect(windowed.totalCount).toBe(30);
-		expect(windowed.failedBlocks).toEqual([]);
+		expect(blocksOf(windowed)).toEqual([]);
 		windowed.dispose();
 	});
 
@@ -699,7 +719,7 @@ describe('settlement cannot be skipped (#243 review)', () => {
 		resolveCall(0, [], total);
 		await expect(load).resolves.toBeUndefined();
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([0]);
+		expect(blocksOf(windowed)).toEqual([0]);
 		expect(windowed.totalCount).toBe(0);
 		// The published count stayed valid, so recovery (which sizes arrays
 		// from it) works.
@@ -707,7 +727,7 @@ describe('settlement cannot be skipped (#243 review)', () => {
 		resolveCall(calls.length - 1);
 		await reload;
 		expect(windowed.totalCount).toBe(30);
-		expect(windowed.failedBlocks).toEqual([]);
+		expect(blocksOf(windowed)).toEqual([]);
 		windowed.setParams({ filters: [] });
 		expect(windowed.rows).toHaveLength(30);
 		windowed.dispose();
@@ -721,7 +741,7 @@ describe('settlement cannot be skipped (#243 review)', () => {
 		resolveCall(0, makeDataset(10), 5);
 		await expect(load).resolves.toBeUndefined();
 		expect(windowed.loading).toBe(false);
-		expect(windowed.failedBlocks).toEqual([429_496_729]);
+		expect(blocksOf(windowed)).toEqual([429_496_729]);
 		expect(windowed.totalCount).toBe(0);
 		const near = windowed.ensureRange(0, 10);
 		resolveCall(calls.length - 1);
@@ -748,8 +768,9 @@ describe('request timeout (#243)', () => {
 		await vi.advanceTimersByTimeAsync(1);
 		await load;
 		expect(windowed.loading).toBe(false);
-		expect(windowed.error?.message).toContain('timed out');
-		expect(windowed.failedBlocks).toEqual([0]);
+		expect(errorOf(windowed)?.message).toContain('timed out');
+		expect(windowed.failures[0]?.code).toBe('timeout');
+		expect(blocksOf(windowed)).toEqual([0]);
 
 		// The late answer of the timed-out request is not adopted...
 		resolveCall(0, [{ id: 99, name: 'late' }], 1);
@@ -763,7 +784,7 @@ describe('request timeout (#243)', () => {
 		resolveCall(1);
 		await reload;
 		expect(windowed.rows[0]).toEqual({ id: 0, name: 'row-0' });
-		expect(windowed.error).toBeNull();
+		expect(windowed.failures).toEqual([]);
 		windowed.dispose();
 	});
 
@@ -776,7 +797,7 @@ describe('request timeout (#243)', () => {
 		await vi.advanceTimersByTimeAsync(1);
 		await load;
 		expect(windowed.loading).toBe(false);
-		expect(windowed.error).not.toBeNull();
+		expect(windowed.failures).not.toEqual([]);
 		windowed.dispose();
 	});
 
@@ -793,7 +814,300 @@ describe('request timeout (#243)', () => {
 		expect(windowed.loading).toBe(false);
 		await vi.advanceTimersByTimeAsync(1000); // call 0 times out: stale, ignored
 		expect(windowed.loading).toBe(false);
-		expect(windowed.error).toBeNull();
+		expect(windowed.failures).toEqual([]);
+		windowed.dispose();
+	});
+});
+
+/**
+ * Issue #344: the failures say the same things as `SnapshotListResource`'s
+ * after #342 - a code per kind, the provider's own `ProviderError` kept as
+ * is, replaceable texts and a `notify` option - while `refresh()` keeps its
+ * #212 behaviour (published rows stay until the generation settles).
+ */
+describe('failure codes, messages and notifications (#344)', () => {
+	/** An app's own error type carrying more than a message. */
+	class ReadoutError extends ProviderError {
+		constructor(readonly readout: 'unavailable' | 'notRunning') {
+			super({ kind: 'other', message: `readout ${readout}` });
+		}
+	}
+
+	function setup(
+		name: string,
+		options: Parameters<typeof createWindowedListResource>[1] = {},
+		size = 50
+	) {
+		const notified: string[] = [];
+		const controlled = createControllableProvider(size);
+		initBanto({
+			dataProvider: controlled.provider,
+			authProvider,
+			notifier: { notify: (_kind, message) => notified.push(message) },
+			resources: [{ name, label: 'W' }]
+		});
+		const windowed = createWindowedListResource<Row>(name, { blockSize: 10, ...options });
+		return { ...controlled, notified, windowed };
+	}
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('keeps a ProviderError the provider throws as the same object, code request', async () => {
+		const { windowed, resolveCall, rejectCallWith, notified } = setup('w344-identity');
+		const load = windowed.ensureRange(0, 20);
+		resolveCall(0);
+		const thrown = new ReadoutError('unavailable');
+		rejectCallWith(1, thrown);
+		await load;
+		expect(windowed.failures).toHaveLength(1);
+		const failure = windowed.failures[0];
+		expect(failure.block).toBe(1);
+		expect(failure.kind).toBe('error');
+		expect(failure.code).toBe('request');
+		expect(failure.error).toBe(thrown);
+		expect((failure.error as ReadoutError).readout).toBe('unavailable');
+		expect(notified).toEqual(['readout unavailable']);
+		windowed.dispose();
+	});
+
+	it('wraps anything else in ListBlockError(request) with the thrown value as cause', async () => {
+		const { windowed, rejectCallWith } = setup('w344-wrap');
+		const load = windowed.ensureRange(0, 10);
+		const thrown = new TypeError('socket closed');
+		rejectCallWith(0, thrown);
+		await load;
+		const error = errorOf(windowed);
+		expect(error).toBeInstanceOf(ListBlockError);
+		expect((error as ListBlockError).code).toBe('request');
+		expect(error?.message).toBe('TypeError: socket closed');
+		expect(error?.cause).toBe(thrown);
+		expect(windowed.failures[0]?.code).toBe('request');
+		windowed.dispose();
+	});
+
+	it('records a missing data provider (a synchronous throw) as request with cause', async () => {
+		initBanto({
+			dataProvider: undefined as unknown as DataProvider,
+			authProvider,
+			resources: [{ name: 'w344-no-provider', label: 'W' }]
+		});
+		const windowed = createWindowedListResource<Row>('w344-no-provider', { blockSize: 10 });
+		await windowed.ensureRange(0, 10);
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failures[0]?.code).toBe('request');
+		expect(errorOf(windowed)?.cause).toBeInstanceOf(Error);
+		windowed.dispose();
+	});
+
+	it('keeps the code of a ListBlockError the provider throws', async () => {
+		const { windowed, rejectCallWith } = setup('w344-keep-code');
+		const load = windowed.ensureRange(0, 10);
+		const thrown = new ListBlockError('timeout', 'gave up');
+		rejectCallWith(0, thrown);
+		await load;
+		expect(windowed.failures[0]?.code).toBe('timeout');
+		expect(errorOf(windowed)).toBe(thrown);
+		windowed.dispose();
+	});
+
+	it('records a timeout as ListBlockError(timeout) with the default text', async () => {
+		vi.useFakeTimers();
+		const { windowed, notified } = setup('w344-timeout-default', { requestTimeoutMs: 1000 });
+		const load = windowed.ensureRange(0, 10);
+		await vi.advanceTimersByTimeAsync(1000);
+		await load;
+		const error = errorOf(windowed);
+		expect(windowed.failures[0]?.code).toBe('timeout');
+		expect(error).toBeInstanceOf(ListBlockError);
+		expect((error as ListBlockError).code).toBe('timeout');
+		expect(error?.message).toBe(defaultListBlockMessages.timeout(1000));
+		expect(error?.message).toBe('list request timed out after 1000 ms');
+		expect(notified).toEqual(['list request timed out after 1000 ms']);
+		windowed.dispose();
+	});
+
+	it('records a malformed answer as ListBlockError(malformed) with the default text', async () => {
+		const { windowed, resolveCall } = setup('w344-malformed-default');
+		const load = windowed.ensureRange(0, 10);
+		resolveCall(0, 'nope' as unknown as Row[]);
+		await load;
+		const error = errorOf(windowed);
+		expect(windowed.failures[0]?.code).toBe('malformed');
+		expect(error).toBeInstanceOf(ListBlockError);
+		expect(error?.message).toBe(defaultListBlockMessages.malformed());
+		expect(error?.message).toBe('malformed list result');
+		windowed.dispose();
+	});
+
+	it('uses the messages option for the failures it detects itself (timeout gets the ms)', async () => {
+		vi.useFakeTimers();
+		const timeoutCalls: number[] = [];
+		const { windowed, resolveCall, notified } = setup('w344-messages', {
+			requestTimeoutMs: 500,
+			messages: {
+				timeout: (ms) => {
+					timeoutCalls.push(ms);
+					return `timeout ${ms}`;
+				},
+				malformed: () => 'broken!'
+			}
+		});
+		const load = windowed.ensureRange(0, 20);
+		resolveCall(0, undefined, -1); // block 0: malformed
+		await vi.advanceTimersByTimeAsync(500); // block 1: times out
+		await load;
+		expect(windowed.failures.map((f) => [f.block, f.code, f.error.message])).toEqual([
+			[0, 'malformed', 'broken!'],
+			[1, 'timeout', 'timeout 500']
+		]);
+		expect(timeoutCalls).toEqual([500]);
+		expect(notified).toEqual(['broken!', 'timeout 500']);
+		windowed.dispose();
+	});
+
+	it('falls back to the default text when a message function throws or returns a non-string', async () => {
+		vi.useFakeTimers();
+		const { windowed, resolveCall } = setup('w344-messages-broken', {
+			requestTimeoutMs: 100,
+			messages: {
+				timeout: () => {
+					throw new Error('i18n broke');
+				},
+				malformed: () => undefined as unknown as string
+			}
+		});
+		const load = windowed.ensureRange(0, 20);
+		resolveCall(0, undefined, -1);
+		await vi.advanceTimersByTimeAsync(100);
+		await load;
+		expect(windowed.loading).toBe(false);
+		expect(windowed.failures.map((f) => [f.code, f.error.message])).toEqual([
+			['malformed', defaultListBlockMessages.malformed()],
+			['timeout', defaultListBlockMessages.timeout(100)]
+		]);
+		windowed.dispose();
+	});
+
+	it('lists every failed block sorted by block, one entry each, cleared per block', async () => {
+		const { windowed, calls, resolveCall, rejectCallWith } = setup('w344-sorted');
+		const load = windowed.ensureRange(0, 50); // blocks 0..4 = calls 0..4
+		resolveCall(0);
+		await tick();
+		// Settle out of block order: 4, 2, 1 (3 loads).
+		rejectCallWith(4, new ReadoutError('unavailable'));
+		await tick();
+		rejectCallWith(2, new ProviderError({ kind: 'other', message: 'network down' }));
+		await tick();
+		rejectCallWith(1, new ReadoutError('notRunning'));
+		resolveCall(3);
+		await load;
+		expect(windowed.failures.map((f) => [f.block, f.error.message])).toEqual([
+			[1, 'readout notRunning'],
+			[2, 'network down'],
+			[4, 'readout unavailable']
+		]);
+
+		// A block that fails again keeps one entry, with the new error.
+		const again = windowed.ensureRange(10, 20); // retries block 1 = call 5
+		expect(calls).toHaveLength(6);
+		const second = new ReadoutError('unavailable');
+		rejectCallWith(5, second);
+		await again;
+		expect(blocksOf(windowed)).toEqual([1, 2, 4]);
+		expect(windowed.failures[0]?.error).toBe(second);
+
+		// Each block's success clears only its own failure.
+		const retry2 = windowed.ensureRange(20, 30); // call 6
+		resolveCall(6);
+		await retry2;
+		expect(blocksOf(windowed)).toEqual([1, 4]);
+		const retry1 = windowed.ensureRange(10, 20); // call 7
+		resolveCall(7);
+		await retry1;
+		expect(blocksOf(windowed)).toEqual([4]);
+		windowed.dispose();
+	});
+
+	it('does not notify with notify: false, but still records the failure', async () => {
+		const { windowed, rejectCallWith, notified } = setup('w344-notify-false', { notify: false });
+		const load = windowed.ensureRange(0, 10);
+		rejectCallWith(0, new ProviderError({ kind: 'other', message: 'quiet' }));
+		await load;
+		expect(notified).toEqual([]);
+		expect(errorOf(windowed)?.message).toBe('quiet');
+		windowed.dispose();
+	});
+
+	it('asks a notify predicate per failure; one that throws counts as no', async () => {
+		const seen: ListBlockErrorFailure[] = [];
+		const { windowed, resolveCall, rejectCallWith, notified } = setup('w344-notify-predicate', {
+			notify: (failure) => {
+				seen.push(failure);
+				if (failure.block === 3) throw new Error('predicate broke');
+				return failure.code !== 'malformed';
+			}
+		});
+		const load = windowed.ensureRange(0, 40);
+		resolveCall(0);
+		rejectCallWith(1, new ProviderError({ kind: 'other', message: 'shown' }));
+		await tick();
+		resolveCall(2, 'nope' as unknown as Row[]);
+		await tick();
+		rejectCallWith(3, new ProviderError({ kind: 'other', message: 'predicate threw' }));
+		await load;
+		expect(seen.map((f) => [f.block, f.code])).toEqual([
+			[1, 'request'],
+			[2, 'malformed'],
+			[3, 'request']
+		]);
+		expect(notified).toEqual(['shown']);
+		expect(blocksOf(windowed)).toEqual([1, 2, 3]);
+		expect(windowed.loading).toBe(false);
+		windowed.dispose();
+	});
+
+	it('refresh() keeps the published rows while its failures update at once (#212)', async () => {
+		const { windowed, resolveCall, rejectCallWith } = setup('w344-refresh-rows');
+		const load = windowed.ensureRange(0, 30); // blocks 0..2 = calls 0..2
+		resolveCall(0);
+		resolveCall(1);
+		const first = new ProviderError({ kind: 'other', message: 'first' });
+		rejectCallWith(2, first);
+		await load;
+		const previous = windowed.rows;
+		expect(blocksOf(windowed)).toEqual([2]);
+
+		const reload = windowed.refresh(); // calls 3, 4, 5 for blocks 0, 1, 2
+		// The old failure stays shown while its retry is in flight.
+		expect(windowed.failures[0]?.error).toBe(first);
+		const second = new ProviderError({ kind: 'other', message: 'second' });
+		rejectCallWith(4, second); // block 1 fails in the new generation
+		await tick();
+		// Failures are published as they settle, rows are not.
+		expect(windowed.rows).toBe(previous);
+		expect(windowed.rows[10]).toEqual({ id: 10, name: 'row-10' });
+		expect(windowed.loading).toBe(true);
+		expect(windowed.failures.map((f) => [f.block, f.error.message])).toEqual([
+			[1, 'second'],
+			[2, 'first']
+		]);
+		resolveCall(5); // block 2 retried successfully
+		await tick();
+		expect(windowed.rows).toBe(previous);
+		expect(blocksOf(windowed)).toEqual([1]);
+		resolveCall(3, [{ id: 100, name: 'refreshed' }]);
+		await reload;
+		// The generation settled: its rows replace the old ones atomically,
+		// the failed block is a hole.
+		expect(windowed.rows).not.toBe(previous);
+		expect(windowed.rows[0]).toEqual({ id: 100, name: 'refreshed' });
+		expect(windowed.rows[10]).toBeUndefined();
+		expect(windowed.rows[20]).toEqual({ id: 20, name: 'row-20' });
+		expect(windowed.failures).toEqual([
+			{ block: 1, kind: 'error', code: 'request', error: second }
+		]);
 		windowed.dispose();
 	});
 });

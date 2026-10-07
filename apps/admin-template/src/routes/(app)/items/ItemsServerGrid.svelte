@@ -63,7 +63,14 @@
 		registerCurrentRow
 	}: Props = $props();
 
-	const windowed = createWindowedListResource<Item>('items');
+	// リソース自身が作る失敗（期限切れ・応答の形の不正）の文言を Paraglide の
+	// 文言に差し替える（banto #344。トーストにもこの文言が出る）。
+	const windowed = createWindowedListResource<Item>('items', {
+		messages: {
+			timeout: (ms) => m['items.loadTimeout']({ seconds: Math.round(ms / 1000) }),
+			malformed: () => m['items.malformedResult']()
+		}
+	});
 
 	// Issue #215: `windowed.params` starts at `{ sort: [], filters: [] }`
 	// (windowed.svelte.ts) regardless of what `gridState` was constructed
@@ -176,7 +183,7 @@
 
 <p class="note">{m['items.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
 
-{#if windowed.error}
+{#if windowed.failures.length > 0}
 	<div class="load-error" role="alert">
 		<p>
 			<strong>{m['items.loadError']()}</strong>

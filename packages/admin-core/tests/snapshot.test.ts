@@ -9,11 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderError } from '../src/errors';
 import type { DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
+import { ListBlockError, type ListBlockErrorFailure } from '../src/blockFetch';
 import {
 	createSnapshotListResource,
 	defaultSnapshotListMessages,
-	SnapshotListError,
-	type SnapshotListErrorFailure,
 	type SnapshotListFailure,
 	type SnapshotListRequest,
 	type SnapshotListResult
@@ -128,11 +127,10 @@ function blocksOf(list: { failures: readonly SnapshotListFailure[] }): number[] 
 /** The lowest block's `'error'` failure, `null` when there is none. */
 function errorFailureOf(list: {
 	failures: readonly SnapshotListFailure[];
-}): SnapshotListErrorFailure | null {
+}): ListBlockErrorFailure | null {
 	return (
-		list.failures.find(
-			(failure): failure is SnapshotListErrorFailure => failure.kind === 'error'
-		) ?? null
+		list.failures.find((failure): failure is ListBlockErrorFailure => failure.kind === 'error') ??
+		null
 	);
 }
 
@@ -515,7 +513,7 @@ describe('SnapshotListResource: requests that never answer', () => {
 		expect(list.loading).toBe(false);
 		expect(errorOf(list)?.message).toBe('list request timed out after 1000 ms');
 		expect(errorFailureOf(list)?.code).toBe('timeout');
-		expect(errorOf(list)).toBeInstanceOf(SnapshotListError);
+		expect(errorOf(list)).toBeInstanceOf(ListBlockError);
 		expect(blocksOf(list)).toEqual([0]);
 		expect(server.calls[0].signal.aborted).toBe(true);
 
@@ -562,8 +560,8 @@ describe('SnapshotListResource: misbehaving fetchers', () => {
 		expect(errorFailureOf(list)?.code).toBe('request');
 		// Not a ProviderError: wrapped, with the thrown value kept as `cause`.
 		const error = errorOf(list);
-		expect(error).toBeInstanceOf(SnapshotListError);
-		expect((error as SnapshotListError).code).toBe('request');
+		expect(error).toBeInstanceOf(ListBlockError);
+		expect((error as ListBlockError).code).toBe('request');
 		expect((error?.cause as Error).message).toBe('sync boom');
 		expect(blocksOf(list)).toEqual([0]);
 		expect(fetcher).toHaveBeenCalledTimes(1);
@@ -660,11 +658,11 @@ describe('SnapshotListResource: failure codes, messages and notifications (#342)
 		expect(notified).toEqual(['readout unavailable']);
 	});
 
-	it('keeps the code of a SnapshotListError the fetcher throws', async () => {
+	it('keeps the code of a ListBlockError the fetcher throws', async () => {
 		const server = createServer(5);
 		const list = createSnapshotListResource<Row>(server.fetcher, { blockSize: BLOCK });
 		list.ensureRange(0, 10);
-		const thrown = new SnapshotListError('timeout', 'gave up');
+		const thrown = new ListBlockError('timeout', 'gave up');
 		server.calls[0].reject(thrown);
 		await tick();
 		expect(errorFailureOf(list)?.code).toBe('timeout');
@@ -807,7 +805,7 @@ describe('SnapshotListResource: failure codes, messages and notifications (#342)
 	});
 
 	it('asks a notify predicate per failure; one that throws counts as no', async () => {
-		const seen: SnapshotListErrorFailure[] = [];
+		const seen: ListBlockErrorFailure[] = [];
 		const server = createServer(40);
 		const list = createSnapshotListResource<Row>(server.fetcher, {
 			blockSize: BLOCK,
