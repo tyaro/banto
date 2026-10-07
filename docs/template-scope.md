@@ -45,17 +45,16 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | `@banto/grid-svelte` | データグリッド（仮想化・編集・クリップボード・CSVコア） | 一覧は管理画面の中核 |
 | `@banto/forms` | スキーマ駆動フォーム | CRUD の入力側の中核 |
 | `@banto/theme` | 明暗テーマ・CSS変数 | 全UIの土台 |
+| `@banto/ui` | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState）。文言・アイコン・状態・操作は注入で受け取り、依存は空（ADR-0018） | シェル（Header・Sidebar）と全ページが使う。他の `@banto/*` を import しないのでコア→オプションの逆依存は起きない |
 | `crates/banto-core` | サービス/リポジトリ trait・ListParams・エラー型 | Rust側の共通語彙 |
 | `crates/banto-storage` | sqlx リポジトリ・list_query（SQLite/PostgreSQL、`Db`/`Dialect` で方言吸収） | 永続化の標準経路 |
 | `crates/banto-server` | axum 組み込みサーバ（REST・認証・静的配信）+ 汎用 REST ルーター（`routes/`、V2 テーマC で移設） | LAN形態の成立条件 |
 | `crates/banto-admin-services` | 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 テーマC で `admin-template-core` から移設 | 汎用ロジックのコピー面積を削減（§7） |
 | `admin-template-core` | items（デモリソース）固有のサービス層 + REST + 汎用ルーターの `.merge()` 組み立て（Tauri と二経路で同一判定） | 「フロント→サービス→DB貫通」がテンプレートの価値そのもの。**クレート自体はコア**（`.merge()` 組み立て・`first_boot`・`db`・`assets` が常在）だが、その中の `items` 一式は §3 のデモリソース（`display` で削除可） |
 
-> **提案中（2026-10-07、Issue #220・[ADR-0018](adr/0018-shared-ui-package.md)、状態 Proposed）**:
-> `apps/admin-template/src/lib/components/ui/` の汎用部品（PageHeader・SurfaceCard など 7 つ）を
-> 新パッケージ `@banto/ui`（`packages/ui`）へ切り出し、コアとして本表に行を足す計画。段階 2 で
-> メニュー部品・CommandPalette・ToastHost を banto-industrial の写しと突き合わせて移す。
-> 採択と段階 1 の実施までは、表は現状のまま。
+> `@banto/ui`（Issue #220・[ADR-0018](adr/0018-shared-ui-package.md)）は段階 1 で
+> `apps/admin-template/src/lib/components/ui/` の 7 部品を切り出した。段階 2（メニュー部品・
+> CommandPalette・ToastHost を banto-industrial の写しと突き合わせて移す）は未着手。
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 

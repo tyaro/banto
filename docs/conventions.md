@@ -167,7 +167,7 @@ System Info カードの CPU/メモリ取得に `sysinfo` を feature 限定で�
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 
-コア（`admin-core` / `grid-svelte` / `forms` / `theme`）はオプションを import
+コア（`admin-core` / `grid-svelte` / `forms` / `theme` / `ui`）はオプションを import
 しない。依存方向は「シェル→オプション 可、オプション→コア 可、
 **コア→オプション 不可**」。**コア/オプションの正準リストは
 [template-scope.md §3](template-scope.md) の表**（ここに列挙を複製しない —
@@ -195,8 +195,11 @@ transport は `client: XxxClient` のように注入する（例: `AttachmentsPa
 
 機械検査: `verify:architecture` の rule `no-app-import` が、`packages/` の import に
 アプリのエイリアス（SvelteKit 3 の subpath imports `#lib`。SvelteKit 2 までの `$lib`
-も引き続き検出する）が無いことを grep で確かめる（#325）。機械検査はこのエイリアスの
-import だけで、transport の注入の形はレビューで担保する。
+も引き続き検出する）が無いことを grep で確かめる（#325）。あわせて rule
+`package-bare-imports` が、`packages/*/src` の素の import 指定子を `svelte`・`svelte/*`
+（と相対パス）だけに限る（コメントは除いて検査。`$app/`・`@tauri-apps/`・`@lucide/svelte` などで落ちる。
+依存を宣言できない§4 のもとで、モノレポでは巻き上げで通り、依存を持たない派生アプリでだけ壊れるのを防ぐ。
+ADR-0018 §5）。transport の注入の形はレビューで担保する。
 
 状態所有権: ロード/空/エラー状態はコンポーネント内部が所有し、ホストページに
 分岐を漏らさない（grid-svelte と同じ規則）。
@@ -517,7 +520,7 @@ preprocess せず `svelte.compileModule` に渡して `import type` 等で 500 �
 不変条件: **`.svelte.ts` を `src/` にソース配布する `@banto/*` パッケージのうち
 `apps/admin-template` が依存するものは、`apps/admin-template/vite.config.ts` の
 `optimizeDeps.exclude` に必ず列挙する**（新規追加時も同期）。`.svelte` コンポーネント
-のみのパッケージ（charts/attachments/report）は preprocess 経路を通るため対象外。
+のみのパッケージ（charts/attachments/report/ui）は preprocess 経路を通るため対象外。
 `verify:architecture`（rule `optimizedeps-svelte-source`）が「admin-template が依存し
 `.svelte.ts` を持つ `@banto/*`」と exclude リストの一致を機械検査する。
 外部利用 fixture（`fixtures/external-consumer/`、#271）も同じ集合を dependencies・

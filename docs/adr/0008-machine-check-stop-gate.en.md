@@ -86,6 +86,7 @@ candidates. **Only two are adopted.**
 | 7   | raw-jp extended to .ts                          | ❌ Reject          | Most Japanese in app `.ts` is legitimate demo data. A large file-level allowlist would be needed, which itself hides real regressions inside those files (formality via false positives)                                                                                                 |
 | 8   | raw-colors extended to the app layer            | ❌ Reject          | §9 scopes rule 5 to `packages/` **by explicit design**. All 19 app-layer raw colors are §9's named legitimate cases (login brand surface, static theme-preview swatches). Needs a brittle per-value allowlist                                                                            |
 | 9   | ja/en heading parity                            | ❌ Reject          | English is a secondary translation = tidiness, not a backbone. Heading-count parity is a **shallow proxy** (green while content drifts) → false confidence, and false-positives on legitimate translation restructuring                                                                  |
+| 10  | **Bare imports: `svelte` only**                 | ✅ Adopt (rule 2b) | Meets all 3 conditions (ADR-0018 §5, #220). Packages cannot declare deps (`empty-deps`), so hoisting hides violations in the monorepo and they break only derived apps = **truly silent**. Zero violations, no allowlist. Comments stripped; self-checks a sample violation on every run |
 
 ## Consequences
 

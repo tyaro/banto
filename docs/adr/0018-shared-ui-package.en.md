@@ -207,10 +207,14 @@ core → option dependency cannot arise.
   examples and package list, and the list of "packages with `.svelte.ts`" in conventions §14
   (stating that phase 1 is out of scope).
 - External-consumer fixture: not required by the rule (no `.svelte.ts`), but add `@banto/ui` to
-  its dependencies and to the `+page.svelte` imports (not to the exclude) to confirm that the Git
-  dependency with `path:packages/ui` installs and passes `svelte-check` and `vite build`. The
-  fixture's ref points at the current tag, so this goes into the ref-bump PR after a tag that
-  contains `@banto/ui` (the "bump the fixture ref after tagging" step in publishing.md).
+  its dependencies and to the `+page.svelte` imports and rendering (not to the exclude) to
+  confirm that the Git dependency with `path:packages/ui` installs and passes `svelte-check` and
+  `vite build`. **This lands in the phase-1 PR** (the owner's 2026-10-07 review withdrew the idea
+  of deferring it to the ref bump after tagging). The committed ref stays at the current tag;
+  external-consumer.yml rewrites every ref to the PR head SHA with
+  `scripts/external-fixture-set-ref.mjs` before installing (`--no-frozen-lockfile`), so the new
+  package's install, check and build are verified before the tag. The fixture's lockfile is
+  resolved by the next ref bump, to a commit that contains `@banto/ui`.
 - Because this ADR names `@banto/ui`, it goes into `DOCS_PACKAGE_REF_ALLOWLIST` in
   `verify-architecture.mjs` with a reason until phase 1. Remove it once the package exists.
 

@@ -73,8 +73,18 @@ cargo check --workspace
   （admin-core・dock-svelte・forms・grid-svelte・tree-svelte）を**新しく使い始めるとき**に増やす。更新だけなら
   据え置きでよいが、版の注意に書かれていれば従う（[ADR-0007](adr/0007-derived-app-dev-optimizer-exclude.md)）。
   `pnpm check` と `pnpm build` はこの経路を通らないので、**`pnpm dev` で必ず画面を開く**（6 節）。
+- `@banto/ui`（v6.1.0 で追加）は任意の追加依存。使い始めるなら `@banto/ui` を Git 依存（`#<tag>&path:packages/ui`）で足し、
+  `@banto/theme/css` を読み込んでいること（トークンが解決される）を確かめる。`.svelte.ts` を持たないので
+  `optimizeDeps.exclude` は増やさない。使わなければ何も要らない（既存の `@banto/*` の API は変わらない）。
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
+
+**v6.1.0 以降の admin-template は `components/ui/` の 7 部品（EmptyState・ErrorState・IconButton・LoadingState・PageHeader・
+StatusBadge・SurfaceCard）を持たず、`@banto/ui` から import する**（#220）。派生側が写した `components/ui/` はそのまま
+残しても動く（移行は任意）。取り込むなら、`@banto/ui` を依存に足して import 文を `#lib/components/ui/X.svelte` から
+`@banto/ui` へ差し替え、写した 7 ファイルを消す。`LoadingState` の `label` の既定は `@banto/ui` では
+`defaultUiMessages.loading()`（日本語）になるので、多言語化している派生側は全呼び出しで `label` を明示する
+（admin-template は `m['common.loading']()` を渡している）。
 
 テンプレート側の変更は、同期元の版と新しい版の**差分**を見て、派生側へ適用する。
 
@@ -198,7 +208,8 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 通す（2026-10-01 に CI 化。それまでは手順だけだった）。
 
 - **fixture**: SvelteKit（adapter-static・SSR なし）。`.svelte.ts` をソース配布する 5 パッケージ（admin-core・
-  dock-svelte・forms・grid-svelte・tree-svelte）と theme を `github:tyaro/banto#<ref>&path:packages/<x>` で入れ、
+  dock-svelte・forms・grid-svelte・tree-svelte）と theme と ui（`.svelte` と `.ts` だけで `.svelte.ts` を持たないので exclude の対象外。
+Git 依存の導入と svelte-check・vite build を確かめるために、部品を 1 つ描画する）を `github:tyaro/banto#<ref>&path:packages/<x>` で入れ、
   `+page.svelte` で import して `data-testid="banto-loaded"` に描画する。Rust 側（`rust/`）は公開対象の 5 crate
   （`crates/*`）を `git = ..., rev = "<ref>"` で入れる。対象の一覧は `verify:architecture`（rule
   `external-consumer-fixture`）が workspace から洗い出して突き合わせ、漏れがあれば落とす。

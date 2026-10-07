@@ -197,9 +197,12 @@ CommandPalette しかない。
   対象外であることを明記）を更新する。
 - 外部利用 fixture: rule 上は必須ではない（`.svelte.ts` を持たない）が、Git 依存の
   `path:packages/ui` で入り、`svelte-check` と `vite build` を通ることを確かめるため、
-  dependencies と `+page.svelte` の import に `@banto/ui` を足す（exclude には足さない）。
-  fixture の ref が今のタグを指すので、足すのは `@banto/ui` を含むタグを打った後の ref 更新の
-  PR にする（publishing.md の「タグを打ったら fixture の ref を上げる」の手順に乗る）。
+  dependencies と `+page.svelte` の import（と描画）に `@banto/ui` を足す（exclude には足さない）。
+  **段階 1 の PR で足す**（2026-10-07 のオーナーレビューで、タグ後の ref 更新まで先送りする案を
+  取り下げた）。コミットしてある ref は今のタグのままで、external-consumer.yml が `scripts/external-fixture-set-ref.mjs`
+  で全 ref を PR の head SHA に書き換えてから入れる（`--no-frozen-lockfile`）ので、タグを打つ前に
+  新しいパッケージの導入・check・build が確かめられる。fixture の lockfile は、ref を `@banto/ui`
+  を含む commit に上げる次の ref 更新で解決される。
 - 本 ADR が `@banto/ui` を名指しするため、段階 1 までのあいだ `verify-architecture.mjs` の
   `DOCS_PACKAGE_REF_ALLOWLIST` に理由付きで入れる。段階 1 でパッケージが実在したら外す。
 
