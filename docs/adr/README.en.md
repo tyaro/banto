@@ -59,6 +59,7 @@ corresponding ADR exists, be traced from there.
 | [0015](0015-snapshot-list-resource.en.md)              | Read lists that change without events through a separate bounded (`asOfId`) class, `SnapshotListResource`, with an injected fetcher                                                                      | Accepted |
 | [0016](0016-session-controller-single-writer.en.md)    | Give the front end's session one writer (SessionController), make the provider answer in one round trip, and write credentials only by compare-and-set                                                   | Accepted |
 | [0017](0017-credential-less-grant.en.md)               | Unify credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (v3.0.0; no auth-bypass hook; `adopt()`/`end()` removed) | Accepted |
+| [0018](0018-shared-ui-package.en.md)                   | Move general-purpose UI components into a new `@banto/ui` package in stages, and have callers inject text, icons, state and actions                                                                      | Proposed |
 
 ## ADR candidates (unstarted; do not backfill)
 
