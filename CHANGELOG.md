@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### その他
+
+- docs(adr): 共通 UI 部品を新パッケージ `@banto/ui`（`packages/ui`）に切り出す設計を [ADR-0018](docs/adr/0018-shared-ui-package.md)（状態 Proposed）として記録した（#220 段階 0）。admin-template の `components/ui/` の 7 部品と、段階 2 の候補（メニュー部品・CommandPalette・ToastHost、banto-industrial の写しとの違い）の棚卸し、公開 API・アイコンの同梱・文言の注入・検査と配布の更新・オーナー判断事項を含む。コードは動かしていない。ADR が名指しする `@banto/ui` を、段階 1 まで `verify-architecture.mjs` の `DOCS_PACKAGE_REF_ALLOWLIST` に入れた。`docs/template-scope.md` §2.1 に提案中の注記を足した。
+
 ## [6.0.0] - 2026-10-07
 
 **v6.0.0 — `WindowedListResource` の失敗を、`SnapshotListResource` と同じ形（`failures`・`messages`・`notify`）に変え、2 つのリソースのエラーの型を共通の `ListBlockError` にした（#344。破壊的変更）。あわせて、`tauri-check` への clippy の追加（#346）、`apps/admin-template/core/build.rs` の `rerun-if-changed`（#340）、`industrial-plan` の history 化（#312）。版の種類: major（`WindowedListResource` の `error`・`failedBlocks` の削除と、`SnapshotListError` などの改名）。
@@ -42,8 +46,6 @@
 - タグの後に追記する（external-consumer.yml の run の URL と、そこに出る Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)）。
 
 ### その他
-
-- docs(adr): 共通 UI 部品を新パッケージ `@banto/ui`（`packages/ui`）に切り出す設計を [ADR-0018](docs/adr/0018-shared-ui-package.md)（状態 Proposed）として記録した（#220 段階 0）。admin-template の `components/ui/` の 7 部品と、段階 2 の候補（メニュー部品・CommandPalette・ToastHost、banto-industrial の写しとの違い）の棚卸し、公開 API・アイコンの同梱・文言の注入・検査と配布の更新・オーナー判断事項を含む。コードは動かしていない。ADR が名指しする `@banto/ui` を、段階 1 まで `verify-architecture.mjs` の `DOCS_PACKAGE_REF_ALLOWLIST` に入れた。`docs/template-scope.md` §2.1 に提案中の注記を足した。
 
 - docs(layout): `docs/industrial-plan.md` を `docs/history/industrial-plan.md` へ移動した（#312 の industrial-plan の history 化）。2026-07-12 時点の初期構想で、banto-industrial の現行の計画は別リポジトリ側（`docs/plan.md`）が持つため、状態行を「履歴」に確定した。banto 側の現行の境界は `docs/template-scope.md` §5 末尾、配布方針は `docs/publishing.md` を参照する。ファイル名は不変なので `industrial-plan.md §2` のようなラベル参照はそのまま有効。参照は同じ PR で新パスに更新済み。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/history/industrial-plan.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
 
