@@ -37,7 +37,7 @@ export interface ToastPushOptions {
 	action?: ToastAction;
 	/** Milliseconds until the toast dismisses itself. Default: the store's `autoDismissMs` (4000). `0`, a negative number or `Infinity`: stays until dismissed. */
 	durationMs?: number;
-	/** Identifies the toast. Pushing an id that is already shown replaces that toast in place (and restarts its timer). Default: a generated unique id. */
+	/** Identifies the toast. Pushing an id that is already shown replaces that toast in place (and restarts its timer). Explicit ids are for intentional replacement. Default: a generated id (`toast-N`), unique among the toasts currently shown (it never collides with a caller's id). */
 	id?: string;
 }
 
@@ -71,7 +71,7 @@ class ToastStoreImpl implements ToastStore {
 	}
 
 	push(kind: ToastKind, message: string, options?: ToastPushOptions): string {
-		const id = options?.id ?? `toast-${this.#nextId++}`;
+		const id = options?.id ?? this.#generateId();
 		const source = options?.action;
 		const action: ToastAction | undefined = source
 			? {
@@ -112,6 +112,15 @@ class ToastStoreImpl implements ToastStore {
 	dismiss(id: string): void {
 		this.#clearTimer(id);
 		this.toasts = this.toasts.filter((toast) => toast.id !== id);
+	}
+
+	/** `toast-N`, skipping any id a caller already put on screen so a generated id never replaces a toast. */
+	#generateId(): string {
+		let id: string;
+		do {
+			id = `toast-${this.#nextId++}`;
+		} while (this.toasts.some((toast) => toast.id === id));
+		return id;
 	}
 
 	#clearTimer(id: string): void {

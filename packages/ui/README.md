@@ -87,7 +87,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
   （admin-core の `NotificationKind` と構造的に同じ）。`options`: `action?: { label, onAction }`・
   `durationMs?`・`id?`。
 - **自動で消す**: 既定 4000ms（`autoDismissMs` か `durationMs` で変える。`0`・負・`Infinity` は消さない）。
-  `dismiss` すると時間の数えも止まる。既に出ている `id` を渡すと、その場で置き換えて時間を数え直す。
+  `dismiss` すると時間の数えも止まる。既に出ている `id` を渡すと、その場で置き換えて時間を数え直す
+  （明示の `id` は意図した置き換え用。`id` を省くと `toast-N` を自動で振り、いま出ているどの `id` とも重ならない）。
   `maxToasts` を超えると古いものから消す（既定は無制限）。
 - **アクション**: 押すと `onAction` を呼び、例外でもそのあとで閉じる。閉じた後（時間切れ・二度押し）は呼ばない。
   ボタンは `data-testid="toast-action-<id>"`。

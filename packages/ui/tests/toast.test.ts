@@ -101,6 +101,18 @@ describe('createToastStore: auto-dismiss', () => {
 		expect(messagesOf(store)).toEqual(['second']);
 	});
 
+	it('counter: a generated id never collides with a caller-supplied id', () => {
+		const store = createToastStore();
+		store.push('info', 'first', { id: 'toast-1' });
+		const generated = store.push('info', 'second');
+		expect(generated).not.toBe('toast-1');
+		expect(messagesOf(store)).toEqual(['first', 'second']);
+		vi.advanceTimersByTime(3999); // the first toast's own timer is intact
+		expect(messagesOf(store)).toEqual(['first', 'second']);
+		vi.advanceTimersByTime(1);
+		expect(store.toasts).toHaveLength(0);
+	});
+
 	it('pushing an existing id replaces the toast in place and restarts its timer', () => {
 		const store = createToastStore();
 		store.push('info', 'a');
