@@ -5,7 +5,7 @@
 	 * name used app-wide (§11.1) so the heading cross-fades between pages.
 	 *
 	 * No app-specific store imports (session/settings/etc.) - kept
-	 * promotable to a shared package per plan Phase 1.
+	 * portable (lives in @banto/ui, ADR-0018).
 	 */
 	import type { Snippet } from 'svelte';
 

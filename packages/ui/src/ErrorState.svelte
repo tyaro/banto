@@ -1,25 +1,27 @@
 <script lang="ts">
 	/**
-	 * Page-level "no data" placeholder (visual-refresh-design.md §6.5).
+	 * Page-level error placeholder (visual-refresh-design.md §6.5). Shares
+	 * the EmptyState/LoadingState DOM shape (icon, heading, caption,
+	 * optional action) so the three read as one family across pages.
 	 *
-	 * Ownership boundary (plan Phase 1): this is for page-level empty states
-	 * only. Grid-internal empty states belong to @banto/grid-svelte, which
-	 * owns its own markup and references only the shared `--banto-*` tokens.
+	 * Ownership boundary (plan Phase 1): page-level only - grid cell errors
+	 * stay owned by @banto/grid-svelte.
 	 */
-	import type { Component, Snippet } from 'svelte';
-	import { Inbox } from '@lucide/svelte';
+	import type { Snippet } from 'svelte';
+	import OctagonAlert from './icons/OctagonAlert.svelte';
+	import type { UiIconComponent } from './types';
 
 	interface Props {
-		icon?: Component;
+		icon?: UiIconComponent;
 		title: string;
 		description?: string;
 		action?: Snippet;
 	}
 
-	let { icon: Icon = Inbox, title, description, action }: Props = $props();
+	let { icon: Icon = OctagonAlert, title, description, action }: Props = $props();
 </script>
 
-<div class="state">
+<div class="state" role="alert">
 	<Icon size={32} aria-hidden="true" />
 	<h2>{title}</h2>
 	{#if description}
@@ -41,7 +43,7 @@
 		gap: 0.5rem;
 		padding: 3rem 1.5rem;
 		text-align: center;
-		color: var(--banto-text-muted);
+		color: var(--banto-danger);
 	}
 
 	h2 {
@@ -54,6 +56,7 @@
 	p {
 		margin: 0;
 		max-width: 32rem;
+		color: var(--banto-text-muted);
 		font-size: 0.85rem;
 		text-wrap: pretty;
 	}

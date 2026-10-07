@@ -12,20 +12,22 @@
 	 * design.md §2.1) over a computed tint, `neutral` uses the new
 	 * `--banto-surface-subtle` / existing `--banto-text-muted` pair.
 	 */
-	import type { Component } from 'svelte';
-	import { CircleCheck, TriangleAlert, CircleAlert, Info, Circle } from '@lucide/svelte';
-
-	export type StatusBadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
+	import Circle from './icons/Circle.svelte';
+	import CircleAlert from './icons/CircleAlert.svelte';
+	import CircleCheck from './icons/CircleCheck.svelte';
+	import Info from './icons/Info.svelte';
+	import TriangleAlert from './icons/TriangleAlert.svelte';
+	import type { StatusBadgeVariant, UiIconComponent } from './types';
 
 	interface Props {
 		variant: StatusBadgeVariant;
 		label: string;
-		icon?: Component;
+		icon?: UiIconComponent;
 	}
 
 	let { variant, label, icon }: Props = $props();
 
-	const DEFAULT_ICONS: Record<StatusBadgeVariant, Component> = {
+	const DEFAULT_ICONS: Record<StatusBadgeVariant, UiIconComponent> = {
 		neutral: Circle,
 		success: CircleCheck,
 		warning: TriangleAlert,

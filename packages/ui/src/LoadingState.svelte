@@ -9,7 +9,7 @@
 	 * `prefers-reduced-motion`, since an infinitely-looping keyframe
 	 * animation should be removed, not merely made instantaneous.
 	 */
-	import * as m from '#lib/paraglide/messages.js';
+	import { defaultUiMessages } from './messages';
 
 	interface Props {
 		label?: string;
@@ -17,9 +17,9 @@
 	}
 
 	let { label, lines = 3 }: Props = $props();
-	// Default the a11y label to the shared "loading" message when the caller
-	// passes none (i18n layer ②, ADR-0005); resolved lazily so it tracks locale.
-	const resolvedLabel = $derived(label ?? m['common.loading']());
+	// Default the a11y label to the package's "loading" message when the caller
+	// passes none (i18n layer ①, ADR-0018 §2). Apps that localise pass `label`.
+	const resolvedLabel = $derived(label ?? defaultUiMessages.loading());
 	const lineIndexes = $derived(Array.from({ length: lines }, (_, index) => index));
 </script>
 
