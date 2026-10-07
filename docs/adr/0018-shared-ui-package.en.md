@@ -2,7 +2,7 @@
 
 > 日本語: [0018-shared-ui-package.md](0018-shared-ui-package.md)
 
-- Status: Proposed
+- Status: Accepted (phase-1 decision points; phase-2 decision points are still open)
 - Date: 2026-10-07
 - Related: Issue #220 / [conventions.md](../conventions.en.md) §4, §5, §9, §13, §14 /
   [ADR-0002](0002-minimal-dependencies.en.md), [ADR-0005](0005-i18n-paraglide.en.md),
@@ -141,8 +141,10 @@ CommandPalette.
 **Create one new package, `packages/ui` (`@banto/ui`), and move components into it in phases 1
 to 3. Components receive text, icons, state and actions through props, snippets and callbacks,
 and import no app code, stores, `$app/*`, Tauri, other `@banto/*` packages or third-party
-packages.** Each phase is below (written with the recommended options from
-[Owner decision points](#owner-decision-points); they are settled on acceptance).
+packages.** Each phase is below (the phase-1 decision points are settled in
+[Owner decisions (2026-10-07)](#owner-decisions-2026-10-07); the phase-2 contents depend on
+decision points 8 to 12 in [Owner decision points](#owner-decision-points), which are still open,
+so they are written with the recommended options).
 
 ### 1. Package shape (phase 1)
 
@@ -221,16 +223,18 @@ core → option dependency cannot arise.
   expected to stay the same. Svelte's scoping class hashes change, but the pixels do not. The
   phase-1 PR confirms that visual regression passes; if a difference shows up, fix the cause
   instead of updating baselines.
-- No new showcase page (adding nav moves every baseline, template-scope §3.1). admin-template's
-  existing pages already use all seven components; the package README documents the props with
-  minimal examples.
+- **One lightweight demo page** (owner decision 7): admin-template gets a page that lays out the
+  main states of the seven components, shown in the nav only in demo mode (the normal nav does
+  not change, so existing baselines do not move). No UI-catalogue infrastructure. The page is added
+  to the visual regression suite (new baselines). Reasons: #220 completion criterion 3, existing
+  pages exercise only some states, and it is also used to check phase 2's interactive components.
+  The package README also documents the props with minimal examples.
 
 ### 7. Versioning and compatibility
 
 Phase 1 is **additive only** (a new package and changed import lines in admin-template) and does
-not change any existing `@banto/*` public API: a SemVer minor. `[Unreleased]` already holds
-v6.0.0's breaking change (#344), so merging before the v6.0.0 tag ships it in v6.0.0; after the
-tag, in v6.1.0. Version and tag are shared with the other packages (publishing.md). Copies of
+not change any existing `@banto/*` public API: a SemVer minor. v6.0.0 was published on
+2026-10-07, so phase 1 ships in **v6.1.0** (owner decision 5). Version and tag are shared with the other packages (publishing.md). Copies of
 `components/ui/` that derived apps took from admin-template keep working (migration is optional;
 upgrading.md gets the steps).
 
@@ -261,8 +265,8 @@ upgrading.md gets the steps).
 
 ### 9. Phase 3
 
-banto-industrial upgrades to a tag that contains `@banto/ui` (v6.0.0 also needs the #344
-migration) and replaces CommandPalette and ToastHost (both apps) and, if phase 2 included them,
+banto-industrial upgrades to a tag that contains `@banto/ui` (v6.0.0's #344 migration is
+also needed) and replaces CommandPalette and ToastHost (both apps) and, if phase 2 included them,
 Modal, Drawer and the layering helpers (banto-hub). Whether banto-hub's `TreeContextMenu` moves to
 `Menu` is decided separately in phase 3. The replacements are confirmed by banto-industrial's E2E
 (accidental drawer close, Esc layering, and so on).
@@ -305,7 +309,26 @@ Modal, Drawer and the layering helpers (banto-hub). Whether banto-hub's `TreeCon
 - The phase-1 PR deletes admin-template's `components/ui/`. Copies in derived apps keep working,
   so migration is optional; upgrading.md gets the steps.
 
+## Owner decisions (2026-10-07)
+
+The phase-1 decision points (1 to 7 below) are settled as follows. The phase-2 decision points
+(8 to 12) remain open.
+
+1. **Name and standing**: `packages/ui` / `@banto/ui` as core (scaffold leaves it alone): adopted.
+2. **Default icons**: (a) vendor the seven lucide icons with their ISC notice.
+3. **`LoadingState`'s default text**: (a) package default, and admin-template passes it
+   explicitly everywhere.
+4. **Public API**: freeze at the current props.
+5. **Version**: v6.1.0 (v6.0.0 was published on 2026-10-07, so phase 1 ships in v6.1.0).
+6. **Machine check**: add the rule restricting bare imports (comments excluded from the check).
+7. **Showcase**: one lightweight demo page (admin-template lays out the main states of the seven
+   components; shown in the nav only in demo mode; no UI-catalogue infrastructure; added to
+   visual regression. Reasons: #220 completion criterion 3, existing pages show only some states,
+   and it is also used to check phase 2's interactive components).
+
 ## Owner decision points
+
+Points 1 to 7 are settled in the owner decisions above (kept for history).
 
 Before phase 1:
 
@@ -318,11 +341,13 @@ Before phase 1:
 4. **Freeze the public API at the current props?** (`disabled` on `IconButton` and the like in a
    later minor.)
 5. **Version**: land phase 1 before the v6.0.0 tag to ship it in v6.0.0, or make it v6.1.0?
+   -> Decided: v6.1.0.
 6. **New machine check**: add the rule limiting packages' bare imports to `svelte` and `svelte/*`
    (+ `$app/`, `@tauri-apps/`)? (Recorded in ADR-0008's ledger.)
 7. **Showcase**: no new demo page; are the existing pages plus the package README enough?
+   -> Decided: one lightweight demo page.
 
-Before phase 2:
+Before phase 2 (open):
 
 8. **CommandPalette**: keep only presentation and interaction in the package, leaving session
    scoping, recent-command recording, `Ctrl+K` and notifications in the app? Make banto-hub's
