@@ -1073,9 +1073,9 @@ function removeTree() {
 	// (4) 依存
 	removeAppDep('@banto/tree-svelte');
 	// tree-svelte も .svelte.ts を持つので optimizeDeps.exclude（issue #150 / ADR-0007）
-	// に載っている。exclude の末尾要素なので、直前（grid-svelte 行）のカンマごと外して
-	// trailingComma:none を保つ（prettier 準拠のまま grid-svelte が末尾要素になる）。
-	drop(VITE, 'vite: optimizeDeps.exclude から tree-svelte 除去', `,\n\t\t\t'@banto/tree-svelte'`);
+	// に載っている。exclude の末尾は @banto/ui（常に残る）なので tree-svelte は末尾要素では
+	// なく、行ごと外せる（trailingComma:none のまま prettier 準拠が保たれる）。
+	drop(VITE, 'vite: optimizeDeps.exclude から tree-svelte 除去', `\t\t\t'@banto/tree-svelte',\n`);
 }
 
 // --- items（デモリソース一式、display プリセット専用）------------------------

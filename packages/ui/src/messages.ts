@@ -6,7 +6,7 @@
  * verbatim, so passing nothing reproduces the stock output.
  *
  * Components with their own text take `messages?: UiMessages` and merge it
- * over the defaults (CommandPalette). Apps that localise (admin-template
+ * over the defaults (CommandPalette, ToastHost). Apps that localise (admin-template
  * does, via Paraglide) pass their own text explicitly - see `LoadingState`'s
  * `label` and admin-template's CommandPalette wrapper.
  */
@@ -24,6 +24,8 @@ export interface UiMessages {
 	commandPaletteEmpty?: () => string;
 	/** CommandPalette: heading of the recent section (`recentIds`). */
 	commandPaletteRecent?: () => string;
+	/** ToastHost: the close button's accessible name. */
+	toastClose?: () => string;
 }
 
 export const defaultUiMessages: Required<UiMessages> = {
@@ -32,5 +34,6 @@ export const defaultUiMessages: Required<UiMessages> = {
 	commandPalettePlaceholder: () => 'コマンドを検索…',
 	commandPaletteListLabel: () => 'コマンド一覧',
 	commandPaletteEmpty: () => '一致するコマンドがありません',
-	commandPaletteRecent: () => '最近使ったもの'
+	commandPaletteRecent: () => '最近使ったもの',
+	toastClose: () => '閉じる'
 };

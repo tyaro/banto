@@ -69,7 +69,8 @@ export default defineConfig({
 			'@banto/dock-svelte',
 			'@banto/forms',
 			'@banto/grid-svelte',
-			'@banto/tree-svelte'
+			'@banto/tree-svelte',
+			'@banto/ui'
 		]
 	},
 	// Fixed port so tauri.conf.json's devUrl always matches.

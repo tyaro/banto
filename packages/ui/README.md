@@ -8,7 +8,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `package-bare-imports` が `svelte`・`svelte/*`・相対パス以外を落とす）。
 
 段階 1 の部品は次の 7 つ。段階 2a でメニュー部品（4 つ、下の表の後）、段階 2b で
-`CommandPalette`（その後）を足した。今後の段階で ToastHost を足す（ADR-0018 §8）。
+`CommandPalette`（その後）、段階 2c でトースト（`createToastStore()` + `ToastHost`、末尾の節）を足した
+（段階 2 は完了。ADR-0018 §8）。
 
 | 部品           | 役割                                                      | props / snippet                                   |
 | -------------- | --------------------------------------------------------- | ------------------------------------------------- |
@@ -71,7 +72,44 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 
 `StatusBadgeVariant`（`'neutral' | 'success' | 'warning' | 'danger' | 'info'`）と
 `UiIconComponent`（`icon` に渡せる部品の型）、`UiMessages` / `defaultUiMessages`、
-`CommandPaletteItem`・`CommandPaletteCloseReason`・`defaultCommandPaletteSearch` も export する。
+`CommandPaletteItem`・`CommandPaletteCloseReason`・`defaultCommandPaletteSearch`、トーストの
+`createToastStore`・`DEFAULT_TOAST_DURATION_MS` と型 `Toast`・`ToastAction`・`ToastKind`・`ToastPushOptions`・`ToastStore`・
+`ToastStoreOptions` も export する。
+
+トースト（段階 2c。**パッケージ唯一の `.svelte.ts`** を含む）:
+
+| 部品 / 関数          | 役割                                                      | 引数                                |
+| -------------------- | --------------------------------------------------------- | ----------------------------------- |
+| `createToastStore()` | トーストのストア（runes）。`toasts`・`push`・`dismiss`    | `{ autoDismissMs?, maxToasts? }`    |
+| `ToastHost`          | ストアを固定表示する部品（ルートのレイアウトに 1 つ置く） | `store` `messages?`（`toastClose`） |
+
+- **`push(kind, message, options?)`** は id（文字列）を返す。`kind` は `'success' | 'error' | 'info' | 'warning'`
+  （admin-core の `NotificationKind` と構造的に同じ）。`options`: `action?: { label, onAction }`・
+  `durationMs?`・`id?`。
+- **自動で消す**: 既定 4000ms（`autoDismissMs` か `durationMs` で変える。`0`・負・`Infinity` は消さない）。
+  `dismiss` すると時間の数えも止まる。既に出ている `id` を渡すと、その場で置き換えて時間を数え直す。
+  `maxToasts` を超えると古いものから消す（既定は無制限）。
+- **アクション**: 押すと `onAction` を呼び、例外でもそのあとで閉じる。閉じた後（時間切れ・二度押し）は呼ばない。
+  ボタンは `data-testid="toast-action-<id>"`。
+- **読み上げ**: 常設の 2 つの領域に分ける。`error`・`warning` は `role="alert"`（`aria-live="assertive"`）、
+  `success`・`info` は `role="status"`（`aria-live="polite"`）。閉じるボタンは `messages.toastClose()` の名前。
+  アクション・閉じるはどちらも普通の `<button>`（Tab で届く）。
+- **置き場所**: 右下の固定。CSS 変数 `--banto-toast-right`・`--banto-toast-bottom`（既定 `1rem`）で動かす。
+  重なりは `--banto-z-toast`。
+- **ストアが `.svelte.ts`**: `@banto/ui` を使う派生アプリは Vite の **`optimizeDeps.exclude` に `'@banto/ui'` を足す**
+  （[ADR-0007](../../docs/adr/0007-derived-app-dev-optimizer-exclude.md)）。足さないと `pnpm dev` が 500 になる。
+
+```ts
+// アプリ側: ストアを 1 つ作り、admin-core の Notifier につなぐ
+import { createToastStore } from '@banto/ui';
+export const toastStore = createToastStore();
+// setup.ts: const notifier = { notify: (kind, message) => toastStore.push(kind, message) };
+toastStore.push('info', '削除しました', { action: { label: '取り消し', onAction: undo } });
+```
+
+```svelte
+<ToastHost store={toastStore} messages={{ toastClose: () => '閉じる' }} />
+```
 
 ## 使用例
 
