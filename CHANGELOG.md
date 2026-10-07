@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- admin-template の src-tauri の doc コメントが Rust 1.98 の clippy（`doc_lazy_continuation`）に掛かるのを直し、`tauri-check` に `cargo clippy -p admin-template` を足した（#346）。
+
 ## [5.1.0] - 2026-10-07
 
 **v5.1.0 — banto-server の CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（#349、banto-industrial#505 の続き）。同じホストのリバースプロキシ配下でも、アプリ自身のデスクトップシェルの要求だけを広げられる。版の種類: minor（追加のみ。後方互換）。
