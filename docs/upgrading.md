@@ -93,6 +93,17 @@ admin-template の `components/menu/` は無くなった。派生側が写した
 重なり順に生の `rgba()` や z-index を直書きしているなら、`@banto/theme` の新しいトークン `--banto-scrim`・`--banto-z-*` に
 置き換えられる（任意）。
 
+**コマンドパレットの表示と操作も次の版から `@banto/ui` の `CommandPalette` にある**（#220 段階 2b）。admin-template の
+`components/CommandPalette.svelte` は、コマンドの一覧（`#lib/commands`）・admin-core の `searchCommands`・セッションの
+スコープで閉じる処理（#258）・最近使った記録・失敗の通知・Paraglide の文言だけを持つ薄い包みになり、`@banto/ui` の
+`CommandPalette` を `open`・`items`・`search`・`onExecute`・`onClose`・`messages` で呼ぶ。`commandPalette.svelte.ts`
+（開閉のストア）と `(app)/+layout.svelte` の `Ctrl+K` の配線は変わらない。派生側が写した `CommandPalette.svelte` は
+そのまま残しても動く。取り込むなら admin-template の新しい `CommandPalette.svelte` を差分として当て、写しの検索欄・
+一覧・キー操作・CSS を消す。取り込むと、開いている間のフォーカストラップ・閉じたときに開いた元へのフォーカスの戻し・
+フォーカスの位置に関係なく効く Esc が標準で付く（見た目は同じ）。banto-industrial の 2 アプリ（banto-hub・chronogazer）の
+写しは段階 3 で `@banto/ui` に置き換える（banto-hub の層の印 `role="dialog"`・`data-esc-layer`・`data-layer-inactive` は
+そのまま読む）。
+
 テンプレート側の変更は、同期元の版と新しい版の**差分**を見て、派生側へ適用する。
 
 ```sh

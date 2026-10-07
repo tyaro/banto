@@ -45,7 +45,7 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | `@banto/grid-svelte` | データグリッド（仮想化・編集・クリップボード・CSVコア） | 一覧は管理画面の中核 |
 | `@banto/forms` | スキーマ駆動フォーム | CRUD の入力側の中核 |
 | `@banto/theme` | 明暗テーマ・CSS変数 | 全UIの土台 |
-| `@banto/ui` | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState、メニュー部品 `Menu`/`MenuGroup`/`MenuItem`/`MenuSeparator`）。文言・アイコン・状態・操作は注入で受け取り、依存は空（ADR-0018） | シェル（Header・Sidebar）と全ページが使う。他の `@banto/*` を import しないのでコア→オプションの逆依存は起きない |
+| `@banto/ui` | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState、メニュー部品 `Menu`/`MenuGroup`/`MenuItem`/`MenuSeparator`、`CommandPalette`）。文言・アイコン・状態・操作は注入で受け取り、依存は空（ADR-0018） | シェル（Header・Sidebar）と全ページが使う。他の `@banto/*` を import しないのでコア→オプションの逆依存は起きない |
 | `crates/banto-core` | サービス/リポジトリ trait・ListParams・エラー型 | Rust側の共通語彙 |
 | `crates/banto-storage` | sqlx リポジトリ・list_query（SQLite/PostgreSQL、`Db`/`Dialect` で方言吸収） | 永続化の標準経路 |
 | `crates/banto-server` | axum 組み込みサーバ（REST・認証・静的配信）+ 汎用 REST ルーター（`routes/`、V2 テーマC で移設） | LAN形態の成立条件 |
@@ -54,8 +54,11 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 
 > `@banto/ui`（Issue #220・[ADR-0018](adr/0018-shared-ui-package.md)）は段階 1 で
 > `apps/admin-template/src/lib/components/ui/` の 7 部品を切り出した。段階 2 は 2a（テーマの
-> トークン + `components/menu/` のメニュー部品）が済み、CommandPalette（2b）・ToastHost（2c）は
-> 未着手（Modal / Drawer と層の補助は段階 2 に入れない）。
+> トークン + `components/menu/` のメニュー部品）と 2b（CommandPalette の表示と操作）が済み、
+> ToastHost（2c）は未着手（Modal / Drawer と層の補助は段階 2 に入れない）。admin-template の
+> `CommandPalette.svelte` はアプリ側の薄い包み（コマンドの一覧・検索・セッションのスコープ・
+> 最近使った記録・通知・文言）で、表示と操作は `@banto/ui` にある。scaffold の
+> `commandPalette` オプションが消すファイルは変わらない。
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 

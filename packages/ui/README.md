@@ -7,8 +7,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 サードパーティのパッケージは import しない（`verify:architecture` の rule
 `package-bare-imports` が `svelte`・`svelte/*`・相対パス以外を落とす）。
 
-段階 1 の部品は次の 7 つ。段階 2a でメニュー部品（4 つ、下の表の後）を足した。今後の段階で
-CommandPalette・ToastHost などを足す（ADR-0018 §8）。
+段階 1 の部品は次の 7 つ。段階 2a でメニュー部品（4 つ、下の表の後）、段階 2b で
+`CommandPalette`（その後）を足した。今後の段階で ToastHost を足す（ADR-0018 §8）。
 
 | 部品           | 役割                                                      | props / snippet                                   |
 | -------------- | --------------------------------------------------------- | ------------------------------------------------- |
@@ -32,8 +32,46 @@ CommandPalette・ToastHost などを足す（ADR-0018 §8）。
 `trigger` snippet は `aria-haspopup`・`aria-expanded`・`onclick`・`onkeydown` を props で受け取る
 ので、ボタンに `{...props}` で展開する。項目を選ぶとメニューは閉じ、フォーカスはトリガーへ戻る。
 
+コマンドパレット（段階 2b）:
+
+| 部品             | 役割                                                                              | props                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `CommandPalette` | 検索欄 + グループ見出し付きの一覧のモーダル（`role="dialog"` + combobox/listbox） | `open`(bindable) `items` `search?` `recentIds?` `onExecute` `onClose?` `focusFallback?` `messages?` |
+
+パッケージが持つのは**表示と操作だけ**。どのコマンドがあるか・実行のしかた・`Ctrl+K` の配線・
+セッションごとの扱い・最近使った項目の記録・失敗の通知はアプリが持ち、props とコールバックで渡す。
+
+- **項目**（`CommandPaletteItem`）: `id`・`title`・`group?`（見出し）・`keywords?`（検索だけに使う語）・
+  `icon?`・`disabled?`（表示するが選べない。↑↓ で飛ばす）・`shortcut?`（右端の表示だけ）。
+  `@banto/admin-core` の `PaletteCommand` と構造的に合うので、その配列をそのまま渡せる
+  （`onExecute` には渡した同じオブジェクトが返る）。表示してよい項目だけを渡す（権限の判定はアプリ）。
+- **検索**: 既定は `defaultCommandPaletteSearch`（`title`・`keywords` の大文字小文字を区別しない
+  部分一致、並びは渡した順）。`search(query, items)` で差し替えられる（admin-template は admin-core の
+  `searchCommands` で点数順・最近使ったものを優先）。結果はグループごとに、最初に出た順でまとめる。
+- **最近使ったもの**: `recentIds` を渡すと、検索が空のときにその順で先頭へ「最近使ったもの」の
+  見出しで出す（同じ項目は元のグループに重ねて出さない）。記録はアプリのストアで持つ。
+- **実行**: Enter かクリックで `onExecute(item)`。Promise を返せば終わるまで行を無効にし、その後に
+  閉じる。失敗の扱い（通知など）は `onExecute` の中で行う（reject はパッケージで捕まえない）。
+  実行の完了前に Esc で閉じて開き直した場合、古い実行の完了は新しいパレットを閉じない。
+- **閉じる**: Esc・パレットの外の pointerdown・実行の後に `open` を `false` にし、`onClose(reason)`
+  （`'escape' | 'outside' | 'execute'`）を呼ぶ。開くたびに中身を作り直す（検索語・選択は残らない）。
+- **キーボード**: ↑↓ で選択（端で折り返す。`disabled` は飛ばす。選べる項目が無いときは何も選ばず Enter も何もしない）、Enter で実行。マウスを乗せた行が
+  選択になる（キーボードの選択と同じ見た目、`--banto-surface-hover`）。Home/End は検索欄の
+  カーソル移動のまま（奪わない）。
+- **フォーカス（標準の振る舞い）**: 開いている間は**フォーカスを閉じ込める**（Tab は中で折り返し、
+  外へ出たフォーカスは検索欄へ引き戻す）。閉じたら**開いた時にフォーカスがあった要素へ戻す**
+  （消えている・`inert` の中・見えないなら `focusFallback()` の要素へ。無ければ動かさない）。
+  **Esc は window で受ける**のでフォーカスの位置に関係なく閉じる。閉じるときは
+  `preventDefault()` する（下の層は `event.defaultPrevented` を見て譲れる）。すでに消費された Esc と、
+  手前に見えている層（`role="dialog"`・`role="menu"`・`data-esc-layer` で z-index が大きいもの、
+  開いている popover、z-index が同じなら文書順で後ろのもの）があるときは譲る。
+- **置き場所**: オーバーレイは `position: fixed`。`transform`・`filter`・`backdrop-filter` を持つ
+  要素（glass のカードなど）の中に置くと、その要素が基準になって画面全体を覆わなくなるので、
+  レイアウトの直下など外側に置く。
+
 `StatusBadgeVariant`（`'neutral' | 'success' | 'warning' | 'danger' | 'info'`）と
-`UiIconComponent`（`icon` に渡せる部品の型）、`UiMessages` / `defaultUiMessages` も export する。
+`UiIconComponent`（`icon` に渡せる部品の型）、`UiMessages` / `defaultUiMessages`、
+`CommandPaletteItem`・`CommandPaletteCloseReason`・`defaultCommandPaletteSearch` も export する。
 
 ## 使用例
 
@@ -73,9 +111,33 @@ CommandPalette・ToastHost などを足す（ADR-0018 §8）。
 </Menu>
 ```
 
+```svelte
+<script lang="ts">
+	import { CommandPalette, type CommandPaletteItem } from '@banto/ui';
+
+	let open = $state(false);
+	const items: CommandPaletteItem[] = [
+		{ id: 'nav.items', title: '商品', group: 'ナビゲーション', keywords: ['items'] },
+		{ id: 'theme.dark', title: 'ダークテーマにする', group: 'テーマ', shortcut: 'Ctrl+D' }
+	];
+</script>
+
+<button type="button" onclick={() => (open = true)}>コマンド</button>
+<CommandPalette
+	bind:open
+	{items}
+	onExecute={async (item) => {
+		await runCommand(item.id);
+	}}
+/>
+```
+
 `LoadingState` の `label`（読み上げ文言）を省くとパッケージ既定の `defaultUiMessages.loading()`
 （`'読み込み中…'`）になる。多言語化するアプリ（admin-template は Paraglide）は、
-**既定に頼らず `label` を明示する**（英語表示で日本語が出ないように）。
+**既定に頼らず `label` を明示する**（英語表示で日本語が出ないように）。`CommandPalette` の
+文言（`commandPaletteLabel`・`commandPalettePlaceholder`・`commandPaletteListLabel`・
+`commandPaletteEmpty`・`commandPaletteRecent`）も同じで、既定は日本語。多言語化するアプリは
+`messages` で渡す。
 
 ## アイコン
 
@@ -111,8 +173,8 @@ npm レジストリには公開していない。モノレポ内では `workspac
 
 ## 見本
 
-admin-template の `/ui-demo`（デモモードのときだけナビに出る）に 7 部品の主要な状態を
-並べてある。
+admin-template の `/ui-demo`（デモモードのときだけナビに出る）に各部品の主要な状態を
+並べてある（メニューとコマンドパレットはボタンから開く）。
 
 ## 関連ドキュメント
 
