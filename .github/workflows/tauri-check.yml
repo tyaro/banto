@@ -1,6 +1,6 @@
 # Tauri compile check (improvement-plan-2026-07.md P3-2).
 #
-# Scope: `cargo check -p admin-template` + `cargo test -p admin-template`
+# Scope: `cargo check` + `cargo clippy` + `cargo test` (`-p admin-template`)
 # (apps/admin-template/src-tauri) on ubuntu + windows. The main CI (ci.yml)
 # deliberately excludes this crate to keep every-PR pipelines fast and
 # system-dependency-free, which left Tauri command signatures / feature wiring
@@ -88,6 +88,11 @@ jobs:
 
       - name: Cargo check
         run: cargo check -p admin-template --all-targets
+
+      # ci.yml's clippy step excludes this crate (native deps), so lint it
+      # here where the system deps are already installed (#346).
+      - name: Clippy
+        run: cargo clippy -p admin-template --all-targets -- -D warnings
 
       # `--all-targets` above already compiles the test binaries; running them
       # is what actually exercises every Tauri command handler's authz/audit
