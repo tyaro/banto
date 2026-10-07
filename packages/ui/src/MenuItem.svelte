@@ -9,12 +9,12 @@
 	 * attribute (§7.5) so the item stays reachable for `aria-disabled`
 	 * inspection during traversal while visually/interactively inert.
 	 */
-	import type { Component } from 'svelte';
 	import { getMenuContext } from './menuContext';
+	import type { UiIconComponent } from './types';
 
 	interface Props {
 		label: string;
-		icon?: Component;
+		icon?: UiIconComponent;
 		danger?: boolean;
 		disabled?: boolean;
 		onSelect: () => void;

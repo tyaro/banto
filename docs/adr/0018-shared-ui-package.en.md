@@ -2,7 +2,7 @@
 
 > 日本語: [0018-shared-ui-package.md](0018-shared-ui-package.md)
 
-- Status: Accepted (phase-1 decision points; phase-2 decision points are still open)
+- Status: Accepted (phase-1 and phase-2 decision points)
 - Date: 2026-10-07
 - Related: Issue #220 / [conventions.md](../conventions.en.md) §4, §5, §9, §13, §14 /
   [ADR-0002](0002-minimal-dependencies.en.md), [ADR-0005](0005-i18n-paraglide.en.md),
@@ -142,9 +142,8 @@ CommandPalette.
 to 3. Components receive text, icons, state and actions through props, snippets and callbacks,
 and import no app code, stores, `$app/*`, Tauri, other `@banto/*` packages or third-party
 packages.** Each phase is below (the phase-1 decision points are settled in
-[Owner decisions (2026-10-07)](#owner-decisions-2026-10-07); the phase-2 contents depend on
-decision points 8 to 12 in [Owner decision points](#owner-decision-points), which are still open,
-so they are written with the recommended options).
+[Owner decisions (2026-10-07)](#owner-decisions-2026-10-07), as are the phase-2 ones; Modal /
+Drawer and the layering helpers are not part of phase 2).
 
 ### 1. Package shape (phase 1)
 
@@ -242,30 +241,52 @@ not change any existing `@banto/*` public API: a SemVer minor. v6.0.0 was publis
 `components/ui/` that derived apps took from admin-template keep working (migration is optional;
 upgrading.md gets the steps).
 
-### 8. Phase-2 reconciliation (proposal)
+### 8. Phase-2 reconciliation (settled by the owner on 2026-10-07)
 
-- **Menu components**: move as is. Callers already pass `label`.
+- **Menu components**: move as is. Callers already pass `label`. Keep relying on the `popover`
+  API (decision 12). Moving banto-hub's `TreeContextMenu` onto `Menu` is phase 3.
 - **CommandPalette**: the package holds only the **presentation and interaction** component. It
   receives the command list, a search function, execution, a close request and text (`items`,
   `search(query) => items`, `onExecute(item)`, `onClose()`, `messages`) and does not import
   admin-core (its types match `PaletteCommand` structurally). Session scoping (#258), recording
   recent commands, the `Ctrl+K` wiring and failure notifications stay in the app. banto-hub's
   **focus trap, focus return and window-level Esc** become standard behaviour. The look follows
-  admin-template's current one (tokens, motion, `--banto-surface-hover` selected row).
-- **ToastHost**: the package holds a presentation component taking `toasts`, `ondismiss` and
-  `messages`, with banto-hub's **action button** (`action?: { label, onClick }`) as standard. The
-  look follows admin-template's current one. Whether the store (`push`, `dismiss`, auto-dismiss
-  time) stays in the app (it is small) or ships as `createToastStore()` is a decision point
-  (shipping it makes it `.svelte.ts`, which brings the exclude and fixture obligations).
+  admin-template's current one (tokens, motion, `--banto-surface-hover` selected row) (decision 8).
+- **ToastHost**: the package holds `ToastHost` (a presentation component taking `toasts`,
+  `ondismiss` and `messages`) together with **`createToastStore()`** (runes `.svelte.ts`: `toasts`,
+  `push`, `dismiss`, auto-dismiss time). banto-hub's **action button**
+  (`action?: { label, onClick }`) is standard and the look follows admin-template's current one.
+  The app keeps only the wiring from admin-core's `notify` (Notifier) to the store (for example
+  admin-template's `setup.ts`: `notify: (kind, message) => toastStore.push(kind, message)`)
+  (decision 9). Reason: the three stores (admin-template 31 lines, ChronoGazer 31, banto-hub 66) are
+  near-identical and differ only by the action button; keeping three copies is exactly the
+  duplication #220 removes, and the cost is one `optimizeDeps.exclude` entry per consumer, which
+  the existing machine checks already enforce.
+  **Consequence**: because `@banto/ui` then contains a `.svelte.ts`, the PR that adds the store
+  must, in that same PR, add `@banto/ui` to `optimizeDeps.exclude` (admin-template's vite config,
+  scaffold, rule `optimizedeps-svelte-source`, conventions §14's list) and to the external-consumer
+  fixture's usage (ADR-0007, #478).
 - **Modal / Drawer and the layering helpers** (focusTrap, focusRestore, escLayering,
-  drawerCloseGuard): admin-template has no page that uses them, so whether they go into phase 2
-  or wait for phase 3 (driven by banto-industrial's need) is a decision point, together with
-  template-scope's "cross-cutting" criterion. If they go in, banto-hub's contracts
+  drawerCloseGuard): **not part of phase 2**. They wait for phase 3 or until banto-industrial
+  needs them. Owner note: "後ほど banto 側に入れるかもしれないが、その時はその時で" (may be brought
+  into banto later; decide then) (decision 10). If they go in, banto-hub's contracts
   (`onRequestClose`, `dirty`/`onBlockedClose`, `focusFallback`, no double close, the layering
-  contract) come over in full, with z-index and the overlay background as tokens.
+  contract) come over in full, with z-index and the overlay background taken from tokens.
 - **Theme**: the overlay background (`rgba(0, 0, 0, 0.35)` in all three variants) trips rule
-  `raw-colors`, so add a token to `@banto/theme` (for example `--banto-scrim`). Shadows move to
-  the existing `--banto-shadow-lg`.
+  `raw-colors`, so add the token `--banto-scrim` to `@banto/theme` (the current value,
+  `rgb(0 0 0 / 0.35)`, shared by light, dark and glass). z-index becomes layer tokens:
+  `--banto-z-header` (100), `--banto-z-sidebar-scrim` (850), `--banto-z-sidebar` (900),
+  `--banto-z-modal` (900, reserved for phase 3's Modal / Drawer), `--banto-z-overlay` (1000,
+  CommandPalette) and `--banto-z-toast` (1000). Values equal today's literals, so neither the look
+  nor the stacking order changes (decision 11). Shadows move to the existing `--banto-shadow-lg`.
+
+Phase-2 progress:
+
+| Step | Content                                                                                       | Status              |
+| ---- | --------------------------------------------------------------------------------------------- | ------------------- |
+| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | This PR (Refs #220) |
+| 2b   | CommandPalette (presentation and interaction)                                                 | Not started         |
+| 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | Not started         |
 
 ### 9. Phase 3
 
@@ -308,15 +329,16 @@ Modal, Drawer and the layering helpers (banto-hub). Whether banto-hub's `TreeCon
   CHANGELOG's "notes for consumers" (publishing.md).
 - Vendored lucide icons keep their source version and ISC notice in the files. They do not track
   lucide's visual updates (replace them if needed).
-- Adding `.svelte.ts` in phase 2 brings the package under `optimizeDeps.exclude` and the
-  external-consumer fixture (existing rules catch omissions).
+- Adding the toast store (`.svelte.ts`) in phase 2c brings `@banto/ui` under
+  `optimizeDeps.exclude` and the external-consumer fixture (existing rules catch omissions; added
+  in the same PR).
 - The phase-1 PR deletes admin-template's `components/ui/`. Copies in derived apps keep working,
   so migration is optional; upgrading.md gets the steps.
 
 ## Owner decisions (2026-10-07)
 
 The phase-1 decision points (1 to 7 below) are settled as follows. The phase-2 decision points
-(8 to 12) remain open.
+(8 to 12) were settled the same day.
 
 1. **Name and standing**: `packages/ui` / `@banto/ui` as core (scaffold leaves it alone): adopted.
 2. **Default icons**: (a) vendor the seven lucide icons with their ISC notice.
@@ -330,9 +352,27 @@ The phase-1 decision points (1 to 7 below) are settled as follows. The phase-2 d
    visual regression. Reasons: #220 completion criterion 3, existing pages show only some states,
    and it is also used to check phase 2's interactive components).
 
+Phase-2 decision points (added 2026-10-07):
+
+8. **CommandPalette**: the package holds presentation and interaction only. Session scoping,
+   recent items, the `Ctrl+K` wiring and notifications stay in the app. banto-hub's focus trap,
+   focus return and window-level Esc become standard behaviour. The selected-row look follows
+   admin-template.
+9. **ToastHost**: banto-hub's action button (for example "undo") becomes standard. **The store is
+   shared too**: `@banto/ui` bundles `createToastStore()` (runes `.svelte.ts`) with `ToastHost`
+   (changed from the initial "store stays in the app" on the same day). The app keeps only the
+   wiring from `notify` to the store. Because a `.svelte.ts` comes in, the same PR adds the package
+   to `optimizeDeps.exclude` and the external-consumer fixture.
+10. **Modal / Drawer and the layering helpers**: not part of phase 2; deferred to phase 3 or to
+    when banto-industrial needs them (owner note: "後ほど banto 側に入れるかもしれないが、その時は
+    その時で").
+11. **Theme tokens**: the overlay scrim and the z-index layers become theme tokens.
+12. **Menu**: keep the `popover` API assumption. Aligning banto-hub's `TreeContextMenu` with
+    `Menu` happens in phase 3.
+
 ## Owner decision points
 
-Points 1 to 7 are settled in the owner decisions above (kept for history).
+Points 1 to 7 and 8 to 12 are settled in the owner decisions above (kept for history).
 
 Before phase 1:
 
@@ -351,18 +391,23 @@ Before phase 1:
 7. **Showcase**: no new demo page; are the existing pages plus the package README enough?
    -> Decided: one lightweight demo page.
 
-Before phase 2 (open):
+Before phase 2 (settled; see decisions 8 to 12 in the owner decisions):
 
 8. **CommandPalette**: keep only presentation and interaction in the package, leaving session
    scoping, recent-command recording, `Ctrl+K` and notifications in the app? Make banto-hub's
    focus trap, focus return and window-level Esc standard? Follow admin-template's selected-row
    look and drop banto-hub's primary tint and glass gradient (or make them an option)?
+   -> Decided: as recommended (drop them).
 9. **ToastHost**: make banto-hub's action button standard? Ship the store (`.svelte.ts` → exclude
    and fixture obligations) or keep it in the app?
+   -> Decided: action button standard; the store is bundled in `@banto/ui` too (exclude and fixture in the same PR).
 10. **Modal / Drawer and the layering helpers**: include them in phase 2 (admin-template has no
     page that uses them), or leave them to phase 3 as banto-industrial's need? If included, bring
     all of banto-hub's contracts as options, or drop some?
+    -> Decided: not in phase 2 (phase 3 or when needed).
 11. **Theme tokens**: make the overlay background (`--banto-scrim` or similar) and the z-index
     layers (1000 / 900 and so on) tokens?
+    -> Decided: make them tokens.
 12. **Menu**: keep relying on the `popover` API (including Tauri's WebView2 / WebKitGTK)? Move
     banto-hub's `TreeContextMenu` to `Menu` in phase 3?
+    -> Decided: keep `popover`; the `TreeContextMenu` alignment is phase 3.

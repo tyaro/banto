@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * `@banto/ui` catalog page (Issue #220, ADR-0018 §6): the main states of
-	 * the seven shared components on one screen, for review and as the visual
+	 * the shared components on one screen, for review and as the visual
 	 * regression target of the package (e2e/visual DIAGONAL_PAGES). Deliberately
 	 * light - not a catalog framework.
 	 *
@@ -12,6 +12,10 @@
 	 * screenshot never depends on timing; the skeleton pulse is stopped by
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
+	 * The Menu card (phase 2a) is closed on load, so the screenshot shows only
+	 * its trigger; opening/keyboard behaviour is covered by the package's jsdom
+	 * tests, not by the visual suite.
+	 *
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
 	 * prop in phase 1, so no disabled sample.
 	 */
@@ -20,12 +24,27 @@
 		ErrorState,
 		IconButton,
 		LoadingState,
+		Menu,
+		MenuGroup,
+		MenuItem,
+		MenuSeparator,
 		PageHeader,
 		StatusBadge,
 		SurfaceCard,
 		type StatusBadgeVariant
 	} from '@banto/ui';
-	import { Plus, RefreshCw, SearchX, ServerCrash, Star, X } from '@lucide/svelte';
+	import {
+		ChevronDown,
+		Copy,
+		Pencil,
+		Plus,
+		RefreshCw,
+		SearchX,
+		ServerCrash,
+		Star,
+		Trash2,
+		X
+	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
@@ -46,6 +65,7 @@
 	}
 
 	let clicks = $state(0);
+	let selected = $state<string | undefined>(undefined);
 </script>
 
 <div class="page">
@@ -147,6 +167,42 @@
 			<IconButton label={m['uiDemo.iconButton.add']()} icon={Plus} onclick={() => (clicks += 1)} />
 			<span class="caption" data-testid="ui-demo-clicks">
 				{m['uiDemo.iconButton.clicks']()}: {clicks}
+			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="Menu" description={m['uiDemo.menu.desc']()}>
+		<div class="row">
+			<Menu label={m['uiDemo.menu.label']()} placement="bottom-start">
+				{#snippet trigger(props)}
+					<button {...props} type="button" class="banto-btn banto-btn--secondary">
+						{m['uiDemo.menu.trigger']()}
+						<ChevronDown size={14} aria-hidden="true" />
+					</button>
+				{/snippet}
+				<MenuGroup label={m['uiDemo.menu.group']()}>
+					<MenuItem
+						icon={Pencil}
+						label={m['uiDemo.menu.edit']()}
+						onSelect={() => (selected = m['uiDemo.menu.edit']())}
+					/>
+					<MenuItem
+						icon={Copy}
+						label={m['uiDemo.menu.duplicate']()}
+						onSelect={() => (selected = m['uiDemo.menu.duplicate']())}
+					/>
+					<MenuItem label={m['uiDemo.menu.unavailable']()} disabled onSelect={() => {}} />
+				</MenuGroup>
+				<MenuSeparator />
+				<MenuItem
+					icon={Trash2}
+					label={m['uiDemo.menu.delete']()}
+					danger
+					onSelect={() => (selected = m['uiDemo.menu.delete']())}
+				/>
+			</Menu>
+			<span class="caption" data-testid="ui-demo-menu-selected">
+				{m['uiDemo.menu.selected']()}: {selected ?? m['uiDemo.menu.none']()}
 			</span>
 		</div>
 	</SurfaceCard>

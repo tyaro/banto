@@ -34,6 +34,31 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 型の解決は exports の条件を読む `moduleResolution: "bundler"`（SvelteKit 3 の
 `$app/tsconfig` の既定）を前提にしている。
 
+## オーバーレイのトークン（v6.1.0 から）
+
+モーダル的な重ね表示が使う背景と重なり順のトークン（ADR-0018 §8）。値は light・dark・glass
+で共通で、プリセットごとの上書きは無い。z-index は今までアプリが直書きしていた値と同じで、
+重なり順は変わらない。
+
+| トークン                  | 値                  | 用途                                                     |
+| ------------------------- | ------------------- | -------------------------------------------------------- |
+| `--banto-scrim`           | `rgb(0 0 0 / 0.35)` | オーバーレイ（CommandPalette など）の背後を暗くする背景  |
+| `--banto-z-header`        | `100`               | 固定ヘッダ（ページ内の浮動要素より上、サイドバーより下） |
+| `--banto-z-sidebar-scrim` | `850`               | 狭幅でサイドバーを開いたときの背後の覆い                 |
+| `--banto-z-sidebar`       | `900`               | 狭幅のサイドバー（ドロワー）                             |
+| `--banto-z-modal`         | `900`               | Modal / Drawer 用（ADR-0018 段階 3 で使う予約値）        |
+| `--banto-z-overlay`       | `1000`              | 全画面のオーバーレイ（CommandPalette）                   |
+| `--banto-z-toast`         | `1000`              | トースト                                                 |
+
+```css
+.my-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: var(--banto-z-overlay);
+	background: var(--banto-scrim); /* 生の rgba() は rule `raw-colors` に掛かる */
+}
+```
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

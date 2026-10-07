@@ -14,11 +14,7 @@
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
-	import { IconButton, StatusBadge } from '@banto/ui';
-	import Menu from './menu/Menu.svelte';
-	import MenuGroup from './menu/MenuGroup.svelte';
-	import MenuItem from './menu/MenuItem.svelte';
-	import MenuSeparator from './menu/MenuSeparator.svelte';
+	import { IconButton, Menu, MenuGroup, MenuItem, MenuSeparator, StatusBadge } from '@banto/ui';
 	import {
 		Menu as MenuIcon,
 		Search,
@@ -232,7 +228,7 @@
 		   and the global CommandPalette/ToastHost layers (1000). */
 		position: sticky;
 		top: 0;
-		z-index: 100;
+		z-index: var(--banto-z-header);
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;

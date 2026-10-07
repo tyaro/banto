@@ -28,7 +28,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-		z-index: 1000;
+		z-index: var(--banto-z-toast);
 		max-width: 320px;
 	}
 

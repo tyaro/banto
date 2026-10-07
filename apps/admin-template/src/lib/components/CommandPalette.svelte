@@ -220,12 +220,12 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		z-index: 1000;
+		z-index: var(--banto-z-overlay);
 		display: flex;
 		justify-content: center;
 		align-items: flex-start;
 		padding-top: 12vh;
-		background: rgba(0, 0, 0, 0.35);
+		background: var(--banto-scrim);
 	}
 
 	.palette {

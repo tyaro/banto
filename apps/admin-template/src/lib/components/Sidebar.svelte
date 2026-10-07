@@ -343,7 +343,7 @@
 		aside {
 			position: fixed;
 			inset: 0 auto 0 0;
-			z-index: 900;
+			z-index: var(--banto-z-sidebar);
 			/* Overlay mode has no fold concept (design.md §8.3): always full
 			   width regardless of the persisted collapsed setting. */
 			width: var(--banto-shell-sidebar-width);

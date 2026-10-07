@@ -14,8 +14,8 @@
 	 *   native `<button>` behavior (handled in MenuItem); everything else
 	 *   funnels through the handlers below.
 	 *
-	 * No app-specific store imports - kept promotable to a shared package
-	 * per plan Phase 1.
+	 * No app-specific store imports: lives in @banto/ui (ADR-0018 phase 2a),
+	 * which imports nothing but `svelte`.
 	 */
 	import type { Snippet } from 'svelte';
 	import { setMenuContext } from './menuContext';

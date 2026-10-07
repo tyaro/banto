@@ -86,6 +86,13 @@ StatusBadge・SurfaceCard）を持たず、`@banto/ui` から import する**（
 `defaultUiMessages.loading()`（日本語）になるので、多言語化している派生側は全呼び出しで `label` を明示する
 （admin-template は `m['common.loading']()` を渡している）。
 
+**メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`）も同じ版から `@banto/ui` にある**（#220 段階 2a）。
+admin-template の `components/menu/` は無くなった。派生側が写した `components/menu/` はそのまま残しても動く。取り込むなら
+`import Menu from './menu/Menu.svelte'` などを `import { Menu, MenuGroup, MenuItem, MenuSeparator } from '@banto/ui'` へ
+差し替え、写した 5 ファイル（`menuContext.ts` を含む）を消す。props と DOM・CSS は同じ。あわせて、オーバーレイの背景・
+重なり順に生の `rgba()` や z-index を直書きしているなら、`@banto/theme` の新しいトークン `--banto-scrim`・`--banto-z-*` に
+置き換えられる（任意）。
+
 テンプレート側の変更は、同期元の版と新しい版の**差分**を見て、派生側へ適用する。
 
 ```sh

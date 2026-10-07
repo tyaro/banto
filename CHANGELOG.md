@@ -22,6 +22,12 @@
 
 ## [Unreleased]
 
+### 追加（minor、追加のみ）
+
+- feat(ui): メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`）を admin-template の `components/menu/` から `@banto/ui` へ移した（#220 段階 2a、[ADR-0018](docs/adr/0018-shared-ui-package.md)）。DOM・CSS・props は変えていない（`MenuItem` の `icon` の型だけ `UiIconComponent` にした。lucide の部品はそのまま渡せる）。admin-template の `Header` は `@banto/ui` から import し、`components/menu/` は削除した。jsdom テストを足し、`/ui-demo` に Menu の見本を足した（開いていない状態のトリガーだけが画面に出る）。
+- feat(theme): オーバーレイのスクリムと z-index の層のトークンを足した（#220 段階 2a）。`--banto-scrim`（`rgb(0 0 0 / 0.35)`。light・dark・glass で共通）と `--banto-z-header`（100）・`--banto-z-sidebar-scrim`（850）・`--banto-z-sidebar`（900）・`--banto-z-modal`（900。Modal / Drawer 用の予約）・`--banto-z-overlay`（1000）・`--banto-z-toast`（1000）。admin-template の直書き（`rgba(0, 0, 0, 0.35)` と z-index）をトークンに置き換えた。値は同じで、見た目も重なり順も変わらない。
+  - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない（追加のみ）。**経路 A**: `@banto/ui` を使っていれば、更新だけでメニュー部品が使える。トークンは `@banto/theme/css` を読み込んでいれば自動で入る。**経路 B**: admin-template から写した `components/menu/`（5 ファイル）はそのまま残しても動く。取り込むなら `@banto/ui` から import して写しを消す（[docs/upgrading.md](docs/upgrading.md) 3.2）。生の `rgba()` や z-index の直書きがあれば、新しいトークンへ置き換えられる（任意）。
+
 ## [6.1.0] - 2026-10-07
 
 **v6.1.0 — 新パッケージ `@banto/ui`（`packages/ui`）を追加し、admin-template の汎用 UI 部品 7 つをそこへ移した（#220 段階 1。`/ui-demo` 見本ページと、`verify:architecture` の rule `package-bare-imports` を含む）。[ADR-0018](docs/adr/0018-shared-ui-package.md) の段階 1 を Accepted にした。版の種類: minor（追加のみ。後方互換）。

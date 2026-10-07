@@ -2,7 +2,7 @@
 
 > English: [0018-shared-ui-package.en.md](0018-shared-ui-package.en.md)
 
-- 状態: Accepted（段階 1 の判断事項。段階 2 の判断事項は未決）
+- 状態: Accepted（段階 1〜2 の判断事項）
 - 日付: 2026-10-07
 - 関連: Issue #220 / [conventions.md](../conventions.md) §4・§5・§9・§13・§14 /
   [ADR-0002](0002-minimal-dependencies.md)・[ADR-0005](0005-i18n-paraglide.md)・
@@ -134,8 +134,8 @@ CommandPalette しかない。
 **`packages/ui`（`@banto/ui`）を 1 つ新設し、段階 1〜3 の順に部品を移す。部品は文言・アイコン・
 状態・操作を props / snippet / コールバックで受け取り、アプリのコード・ストア・`$app/*`・Tauri・
 他の `@banto/*`・サードパーティのパッケージを import しない。** 段階ごとの中身は次のとおり
-（段階 1 の判断事項は[オーナー決定（2026-10-07）](#オーナー決定2026-10-07)で確定済み。
-段階 2 の中身は[オーナー判断事項](#オーナー判断事項)の 8〜12 が未決で、推奨案のまま書いている）。
+（段階 1・2 の判断事項は[オーナー決定（2026-10-07）](#オーナー決定2026-10-07)で確定済み。
+Modal / Drawer と層の補助は段階 2 に入れない）。
 
 ### 1. パッケージの形（段階 1）
 
@@ -229,29 +229,49 @@ CommandPalette しかない。
 なので、段階 1 は **v6.1.0** に乗る（オーナー決定 5）。版とタグは他のパッケージと同じ（publishing.md）。派生アプリが admin-template から
 写した `components/ui/` は、そのまま残しても動く（移行は任意。手順を upgrading.md に書く）。
 
-### 8. 段階 2 の突き合わせ（提案）
+### 8. 段階 2 の突き合わせ（2026-10-07 オーナー決定済み）
 
-- **メニュー部品**: そのまま移す。`label` は今も呼び出し側が渡している。
+- **メニュー部品**: そのまま移す。`label` は今も呼び出し側が渡している。`popover` API を前提に
+  したままにする（決定 12）。banto-hub の `TreeContextMenu` を `Menu` に寄せるのは段階 3。
 - **CommandPalette**: パッケージには**表示と操作の部品**だけを置く。コマンドの一覧・検索関数・
   実行・閉じる要求・文言を受け取り（`items`、`search(query) => items`、`onExecute(item)`、
   `onClose()`、`messages`）、admin-core を import しない（型は構造的に `PaletteCommand` と
   合わせる）。セッションのスコープ（#258）・最近使ったコマンドの記録・`Ctrl+K` の配線・失敗の
   通知はアプリ側に残す。banto-hub の**フォーカストラップ・閉じたらフォーカスを戻す・window の
   Esc** は標準の振る舞いとして取り込む。見た目は admin-template の現行（トークン・動き・
-  `--banto-surface-hover` の選択行）に揃える。
-- **ToastHost**: パッケージには `toasts`・`ondismiss`・`messages` を受ける表示部品を置き、
-  banto-hub の**アクションボタン**（`action?: { label, onClick }`）を標準で持つ。見た目は
-  admin-template の現行。ストア（`push`・`dismiss`・自動で消す時間）は小さいのでアプリ側に
-  残すか、`createToastStore()` として同梱するかを判断事項にする（同梱すると `.svelte.ts` に
-  なり exclude と fixture の対象になる）。
+  `--banto-surface-hover` の選択行）に揃える（決定 8）。
+- **ToastHost**: パッケージには `ToastHost`（`toasts`・`ondismiss`・`messages` を受ける表示部品）と
+  **`createToastStore()`**（runes の `.svelte.ts`。`toasts`・`push`・`dismiss`・自動で消す時間）を
+  一緒に置く。banto-hub の**アクションボタン**（`action?: { label, onClick }`）を標準で持ち、
+  見た目は admin-template の現行。アプリに残るのは、admin-core の `notify`（Notifier）をストアへ
+  つなぐ配線だけ（例: admin-template の `setup.ts` の
+  `notify: (kind, message) => toastStore.push(kind, message)`）（決定 9）。理由: 3 つのストア（admin-template 31 行・
+  ChronoGazer 31 行・banto-hub 66 行）はほぼ同じで、違いはアクションボタンだけ。3 つの写しを
+  残すのは #220 が無くそうとしている重複そのもので、代償は消費側ごとの `optimizeDeps.exclude` 1 行
+  だけであり、既存の機械検査が漏れを落とす。
+  **帰結**: `@banto/ui` が `.svelte.ts` を持つので、ストアを足す PR は同じ PR で `@banto/ui` を
+  `optimizeDeps.exclude`（admin-template の vite 設定・scaffold・rule `optimizedeps-svelte-source`・
+  conventions §14 の列挙）と外部利用 fixture の使用（ADR-0007、#478）に載せる。
 - **Modal / Drawer と層の補助**（focusTrap・focusRestore・escLayering・drawerCloseGuard）:
-  admin-template に使う画面が無いので、template-scope の「横断性」の判定と合わせて、段階 2 に
-  入れるか段階 3（banto-industrial の需要で入れる）に回すかを判断事項にする。入れる場合は
+  **段階 2 には入れない**。段階 3、または banto-industrial が必要としたときに扱う。オーナー注記:
+  「後ほど banto 側に入れるかもしれないが、その時はその時で」（決定 10）。入れるときは
   banto-hub の契約（`onRequestClose`・`dirty`/`onBlockedClose`・`focusFallback`・二重に閉じない・
-  層の約束）を全部そのまま持ち込み、z-index とオーバーレイの背景はトークンにする。
+  層の約束）を全部持ち込み、z-index とオーバーレイの背景はトークンを使う。
 - **テーマ**: オーバーレイの背景（3 系統とも `rgba(0, 0, 0, 0.35)`）は rule `raw-colors` に
-  掛かるので、`@banto/theme` にトークン（例 `--banto-scrim`）を足す。影は既存の
+  掛かるので、`@banto/theme` にトークン `--banto-scrim`（値は現行と同じ `rgb(0 0 0 / 0.35)`。
+  light・dark・glass で共通）を足す。z-index は層のトークンにする: `--banto-z-header`（100）・
+  `--banto-z-sidebar-scrim`（850）・`--banto-z-sidebar`（900）・`--banto-z-modal`（900。段階 3 の
+  Modal / Drawer 用に予約）・`--banto-z-overlay`（1000。CommandPalette）・`--banto-z-toast`
+  （1000）。値は今の直書きと同じで、見た目も重なり順も変えない（決定 11）。影は既存の
   `--banto-shadow-lg` に寄せる。
+
+段階 2 の進み具合:
+
+| 小段階 | 中身                                                                                 | 状態               |
+| ------ | ------------------------------------------------------------------------------------ | ------------------ |
+| 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 本 PR（Refs #220） |
+| 2b     | CommandPalette（表示と操作）                                                         | 未着手             |
+| 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 未着手             |
 
 ### 9. 段階 3
 
@@ -291,14 +311,14 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
   「消費側への注意」に従う（publishing.md）。
 - 同梱した lucide のアイコンは、元の版と ISC の表記をファイルに残す。lucide 側の見た目の
   更新には追随しない（必要なら差し替える）。
-- 段階 2 で `.svelte.ts` を足すと、`optimizeDeps.exclude` と外部利用 fixture の対象になる
-  （既存の rule が漏れを落とす）。
+- 段階 2c でトーストのストア（`.svelte.ts`）を足すと、`@banto/ui` は `optimizeDeps.exclude` と
+  外部利用 fixture の対象になる（既存の rule が漏れを落とす。同じ PR で載せる）。
 - 段階 1 の PR では admin-template の `components/ui/` を消す。派生アプリの写しは残しても
   動くので、移行は任意にし、upgrading.md に手順を書く。
 
 ## オーナー決定（2026-10-07）
 
-段階 1 の判断事項（下の 1〜7）は次のとおり確定した。段階 2 の判断事項（8〜12）は未決。
+段階 1 の判断事項（下の 1〜7）は次のとおり確定した。段階 2 の判断事項（8〜12）も同日に確定した。
 
 1. **名前・位置付け**: `packages/ui` / `@banto/ui`、コア扱い（scaffold は触れない）を採用。
 2. **既定のアイコン**: (a) lucide の 7 アイコンを ISC 表記付きで同梱。
@@ -310,9 +330,25 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
    デモモードのときだけナビに出す。UI カタログ基盤は入れない。ビジュアル回帰の対象に加える。
    理由: #220 完了条件 3、既存画面では一部の状態しか出ない、段階 2 の操作部品の確認にも使う）。
 
+段階 2 の判断事項（2026-10-07 追加）:
+
+8. **CommandPalette**: パッケージは表示と操作だけを持つ。セッションのスコープ・最近使った項目・
+   `Ctrl+K` の配線・通知はアプリに残す。banto-hub のフォーカストラップ・フォーカスの戻し・window の
+   Esc を標準の振る舞いにする。選択行の見た目は admin-template に揃える。
+9. **ToastHost**: banto-hub のアクションボタン（取り消しなど）を標準にする。**ストアも共通にし**、
+   `@banto/ui` が `createToastStore()`（runes の `.svelte.ts`）を `ToastHost` と一緒に持つ
+   （当初の「ストアはアプリ側」から同日に改めた）。アプリに残るのは `notify` からストアへの配線だけ。
+   `.svelte.ts` が入るので、同じ PR で `optimizeDeps.exclude` と外部利用 fixture に載せる。
+10. **Modal / Drawer と層の補助**: 段階 2 には入れない。段階 3、または banto-industrial が必要と
+    したときに扱う（オーナー注記: 「後ほど banto 側に入れるかもしれないが、その時はその時で」）。
+11. **テーマのトークン**: オーバーレイの背景（`--banto-scrim` など）と z-index の層をテーマの
+    トークンにする。
+12. **メニュー**: `popover` API を前提にしたままにする。banto-hub の `TreeContextMenu` を `Menu`
+    に寄せるのは段階 3。
+
 ## オーナー判断事項
 
-段階 1 の 1〜7 は上の「オーナー決定」で確定済み（経緯として残す）。
+段階 1 の 1〜7、段階 2 の 8〜12 は上の「オーナー決定」で確定済み（経緯として残す）。
 
 段階 1 に入る前に決めたこと:
 
@@ -329,18 +365,23 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
 7. **見本**: 新しいデモページを作らず、既存の画面 + パッケージの README で足りるとするか。
    → 決定: 軽量なデモページを 1 枚作る。
 
-段階 2 に入る前に決めること（未決）:
+段階 2 に入る前に決めること（決定済み。内容は「オーナー決定」の 8〜12）:
 
 8. **CommandPalette**: 表示と操作だけをパッケージに置き、セッションのスコープ・最近使った
    記録・`Ctrl+K`・通知はアプリ側に残すか。banto-hub のフォーカストラップ・フォーカスの
    戻し・window の Esc を標準にするか。選択行の見た目は admin-template に揃え、banto-hub の
    primary の淡色・glass のグラデーションは捨てるか（または option にするか）。
+   → 決定: 推奨どおり（捨てる）。
 9. **ToastHost**: banto-hub のアクションボタンを標準にするか。ストアを同梱するか
    （`.svelte.ts` → exclude・fixture の対象）、アプリ側に残すか。
+   → 決定: アクションボタンは標準、ストアも `@banto/ui` に同梱する（exclude・fixture は同じ PR）。
 10. **Modal / Drawer と層の補助**: 段階 2 に入れるか（admin-template に使う画面が無い）、
     banto-industrial の需要として段階 3 に回すか。入れる場合、banto-hub の契約を全部 option
     として持ち込むか、どれかを落とすか。
+    → 決定: 段階 2 には入れない（段階 3 または需要のあるとき）。
 11. **テーマのトークン**: オーバーレイの背景（`--banto-scrim` など）と z-index の層
     （1000 / 900 など）をトークンにするか。
+    → 決定: トークンにする。
 12. **メニュー**: `popover` API（Tauri の WebView2 / WebKitGTK を含む）を前提にしたままでよいか。
     banto-hub の `TreeContextMenu` を段階 3 で `Menu` に寄せるか。
+    → 決定: `popover` 前提のまま。`TreeContextMenu` の整理は段階 3。
