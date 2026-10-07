@@ -45,7 +45,25 @@
 
 ### 検証した組み合わせ
 
-- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグ前（main の `f8418fa`、`workflow_dispatch`）: [run 37619255296](https://github.com/tyaro/banto/actions/runs/37619255296)（success）。
+  - タグの push（`v6.1.0`）: [run 37622287549](https://github.com/tyaro/banto/actions/runs/37622287549)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）:
+
+    | 項目               | 版                             |
+    | ------------------ | ------------------------------ |
+    | Node.js            | 24.21.0                        |
+    | pnpm               | 10.33.0                        |
+    | Svelte             | 5.57.1                         |
+    | SvelteKit          | 3.0.0                          |
+    | Vite               | 8.3.1                          |
+    | vite-plugin-svelte | 7.3.1                          |
+    | TypeScript         | 6.0.3                          |
+    | Rust               | 1.99.0（b940084d7 2026-09-28） |
+
+  - 出所: Node.js は `node: v24.21.0`、pnpm は `Successfully updated pnpm to v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.1` など）、
+    Rust は `Setup Rust toolchain` の `rustc 1.99.0`（どちらの run も runner に入っていた 1.98.1 から更新された後の版）。step summary の表はログに出ないため、同じ値を持つこれらの行を読んだ。
 
 ### 追加（minor、追加のみ）
 
