@@ -278,12 +278,9 @@
 			padding: 0;
 			border: none;
 			cursor: default;
-			/* No --banto-* scrim token exists (out of this unit's scope to add
-			   one to packages/theme) - matches CommandPalette.svelte's existing
-			   overlay backdrop value exactly, a dimming film that intentionally
-			   stays black in both themes rather than tracking --banto-text
-			   (which is near-white in dark mode). */
-			background: rgb(0 0 0 / 0.35);
+			/* Theme scrim token (#220 phase 2a): the same dimming film as the
+			   CommandPalette overlay, intentionally black in every theme. */
+			background: var(--banto-scrim);
 		}
 	}
 </style>
