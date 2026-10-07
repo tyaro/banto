@@ -7,6 +7,7 @@ target
 docs/*.md
 docs/design/*.md
 docs/reviews/*.md
+docs/history/industrial-plan.md
 
 # Generated/vendored, not hand-authored
 apps/admin-template/src-tauri/gen

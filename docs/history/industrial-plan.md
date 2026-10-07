@@ -1,12 +1,16 @@
 # banto-industrial + 記録計アプリ 計画
 
 作成日: 2026-07-12（過去アプリ棚卸しと記録計構想の議論に基づく）
-状態: **2026-07-12 時点の構想（初期計画）。前提の banto 側 M18（配布整備）は完了済み（2026-07-16）。
-banto-industrial の現行の計画・実装状況は別リポジトリ側が持つ。本書は経緯として読み、新規の設計根拠にしない**
+状態: **履歴（2026-10-07 に docs/ 直下から history/ へ移動。#312）。2026-07-12 時点の構想（初期計画）。
+前提の banto 側 M18（配布整備）は完了済み（2026-07-16）。banto-industrial の現行の計画・実装状況は
+別リポジトリ banto-industrial の `docs/plan.md`（文書地図は `docs/README.md`）が持つ。
+banto 側の現行の境界は [template-scope.md](../template-scope.md) §5 末尾、配布方針は
+[publishing.md](../publishing.md)。本書は経緯として読み、新規の設計根拠にしない（本文は凍結。
+更新するのは状態行と、リンク先へ届かせるためのパス修正のみ）**
 
 本計画は banto テンプレートの外側 — **別リポジトリ banto-industrial** —
 の計画である（2026-07-12 決定）。テンプレートのスコープ方針
-（[template-scope.md](template-scope.md) §1 の4条件）によりドメイン寄りの
+（[template-scope.md](../template-scope.md) §1 の4条件）によりドメイン寄りの
 資産はテンプレートに入れないが、複数アプリが共有する（Rule of Three 充足済み）
 ため案件内に書き捨てず、自社資産として独立リポジトリに蓄積する。
 banto の `@banto/*` パッケージ（GitHub Packages）とクレート（git タグ参照）を
@@ -91,7 +95,7 @@ PLC への書き込み / 汎用画面エディタ（表示は固定グループ�
   **シリアライズ可能な DB データとして持つ**。
   再ビルドなしに AI アシスタント（各ユーザーの claude CLI を
   サイドカー起動し、banto REST を MCP 経由・role-bound トークンで
-  操作 — [ADR-0009](adr/0009-schema-ui-rest-renderer-boundary.md) の
+  操作 — [ADR-0009](../adr/0009-schema-ui-rest-renderer-boundary.md) の
   REST クライアント境界）が対話で作成できる範囲は、この宣言データの
   範囲と一致する（ADR-0009 の宣言境界と同じ線）。
   生成された定義は必ずバリデーション → プレビュー → 承認 → 保存
