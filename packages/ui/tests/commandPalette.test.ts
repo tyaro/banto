@@ -235,6 +235,69 @@ describe('CommandPalette: keyboard and execution', () => {
 		expect(onClose).toHaveBeenCalledWith('execute');
 	});
 
+	it('a stale pending onExecute settling after Esc + reopen does not close the new palette', async () => {
+		let finish!: () => void;
+		const pending = new Promise<void>((resolve) => (finish = resolve));
+		const { opener, input, onClose } = await openPalette({ onExecute: () => pending });
+		await fireEvent.click(option('Users'));
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		await flush();
+		expect(screen.queryByRole('dialog')).toBeNull();
+		await fireEvent.click(opener);
+		await flush();
+		const fresh = screen.getByRole('combobox') as HTMLInputElement;
+		expect(fresh).not.toBe(input);
+		await fireEvent.input(fresh, { target: { value: 'log' } });
+		onClose.mockClear();
+		finish();
+		await flush();
+		expect(screen.queryByRole('dialog')).not.toBeNull();
+		expect(state()).toBe('open');
+		expect((screen.getByRole('combobox') as HTMLInputElement).value).toBe('log');
+		expect(titles()).toEqual(['Log out']);
+		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it('selects nothing when every item is disabled (no aria-selected, Enter does nothing)', async () => {
+		const items: CommandPaletteItem[] = [
+			{ id: 'a', title: 'Alpha', disabled: true },
+			{ id: 'b', title: 'Beta', disabled: true }
+		];
+		const onExecute = vi.fn();
+		const onClose = vi.fn();
+		render(CommandPaletteHarness, { items, onExecute, onClose });
+		await fireEvent.click(screen.getByTestId('opener'));
+		await flush();
+		const input = screen.getByRole('combobox');
+		expect(selectedTitle()).toBeUndefined();
+		expect(input.hasAttribute('aria-activedescendant')).toBe(false);
+		await fireEvent.keyDown(input, { key: 'ArrowDown' });
+		await fireEvent.keyDown(input, { key: 'ArrowUp' });
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		await flush();
+		expect(selectedTitle()).toBeUndefined();
+		expect(onExecute).not.toHaveBeenCalled();
+		expect(state()).toBe('open');
+	});
+
+	it('selects nothing when the search leaves only disabled items, and recovers when selectable ones return', async () => {
+		const { input, onExecute } = await openPalette();
+		await fireEvent.input(input, { target: { value: 'locked' } });
+		await flush();
+		expect(titles()).toEqual(['Locked page']);
+		expect(selectedTitle()).toBeUndefined();
+		expect(input.hasAttribute('aria-activedescendant')).toBe(false);
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		await flush();
+		expect(onExecute).not.toHaveBeenCalled();
+		await fireEvent.input(input, { target: { value: 'u' } });
+		await flush();
+		expect(selectedTitle()).toBeDefined();
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		await flush();
+		expect(onExecute).toHaveBeenCalledTimes(1);
+	});
+
 	it('uses overridden messages', async () => {
 		const messages = {
 			commandPaletteLabel: () => 'Command palette',

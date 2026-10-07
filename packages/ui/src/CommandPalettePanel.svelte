@@ -67,20 +67,24 @@
 
 	const groups = $derived(groupCommandPaletteItems(results, recentItems, t.commandPaletteRecent()));
 	const ordered = $derived(groups.flatMap((group) => group.rows.map((row) => row.item)));
-	const selectedItem = $derived(ordered[selectedIndex]);
+	const selectedItem = $derived(selectedIndex >= 0 ? ordered[selectedIndex] : undefined);
 
 	function isSelectable(item: T | undefined): boolean {
 		return item !== undefined && !item.disabled;
 	}
 
 	/** Next selectable index from `from` stepping by `step` (wrapping); `from` itself if none. */
-	function step(from: number, by: 1 | -1): number {
+	function step(origin: number, by: 1 | -1): number {
+		let from = origin;
 		const count = ordered.length;
+		if (count === 0) return -1;
+		// -1 = nothing selected: ArrowDown starts at the first row, ArrowUp at the last.
+		if (from < 0) from = by === 1 ? -1 : 0;
 		for (let i = 1; i <= count; i++) {
 			const next = (((from + by * i) % count) + count) % count;
 			if (isSelectable(ordered[next])) return next;
 		}
-		return from;
+		return origin;
 	}
 
 	// A fresh query means a fresh result set - pin the selection to the first
@@ -88,18 +92,24 @@
 	$effect(() => {
 		const list = ordered;
 		const first = list.findIndex((item) => !item.disabled);
-		selectedIndex = first === -1 ? 0 : first;
+		// -1 (no selectable row) means nothing is selected - never a disabled row.
+		selectedIndex = first;
 	});
 
 	// The element focused when the palette opened (promise 5, overlayFocus.ts).
 	// Not $state - never rendered.
 	let opener: HTMLElement | null = null;
+	// Set when this panel is torn down (Esc / outside / parent set open=false).
+	// A pending onExecute that settles afterwards must not close, refocus or
+	// otherwise touch whatever palette is open by then. Not $state.
+	let destroyed = false;
 
 	onMount(() => {
 		const active = document.activeElement;
 		opener = active instanceof HTMLElement ? active : null;
 		inputEl?.focus();
 		return () => {
+			destroyed = true;
 			const previous = opener;
 			opener = null;
 			// Decide after tick(): a command that navigates can make the opener
@@ -121,8 +131,10 @@
 		try {
 			await onExecute(item);
 		} finally {
-			executing = false;
-			onRequestClose('execute');
+			if (!destroyed) {
+				executing = false;
+				onRequestClose('execute');
+			}
 		}
 	}
 
@@ -201,9 +213,9 @@
 						type="button"
 						class="result"
 						class:rich={Icon !== undefined || row.item.shortcut !== undefined}
-						class:selected={row.index === selectedIndex}
+						class:selected={selectedIndex >= 0 && row.index === selectedIndex}
 						role="option"
-						aria-selected={row.index === selectedIndex}
+						aria-selected={selectedIndex >= 0 && row.index === selectedIndex}
 						aria-disabled={row.item.disabled ? 'true' : undefined}
 						disabled={executing || row.item.disabled}
 						onmouseenter={() => {
