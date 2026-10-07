@@ -28,7 +28,8 @@ export default defineConfig({
 					'@banto/dock-svelte',
 					'@banto/forms',
 					'@banto/grid-svelte',
-					'@banto/tree-svelte'
+					'@banto/tree-svelte',
+					'@banto/ui'
 				]
 			},
 	server: {

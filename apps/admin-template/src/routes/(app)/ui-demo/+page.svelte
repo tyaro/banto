@@ -12,10 +12,11 @@
 	 * screenshot never depends on timing; the skeleton pulse is stopped by
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
-	 * The Menu card (phase 2a) and the CommandPalette card (phase 2b) are
-	 * closed on load, so the screenshot shows only their triggers; opening,
-	 * keyboard and focus behaviour are covered by the package's jsdom tests,
-	 * not by the visual suite.
+	 * The Menu card (phase 2a), the CommandPalette card (phase 2b) and the
+	 * Toast card (phase 2c) are closed / empty on load, so the screenshot shows
+	 * only their triggers; opening, keyboard and focus behaviour are covered by
+	 * the package's jsdom tests, not by the visual suite. The Toast card pushes
+	 * into the app's own store (shown by the root layout's ToastHost).
 	 *
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
 	 * prop in phase 1, so no disabled sample.
@@ -51,6 +52,7 @@
 		X
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
+	import { toastStore } from '#lib/toast.svelte.js';
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
 
@@ -70,6 +72,7 @@
 	}
 
 	let clicks = $state(0);
+	let undone = $state(0);
 	let selected = $state<string | undefined>(undefined);
 
 	// Static sample commands: two groups, an icon, a shortcut hint and a
@@ -256,6 +259,53 @@
 			</button>
 			<span class="caption" data-testid="ui-demo-palette-executed">
 				{m['uiDemo.palette.executed']()}: {executed ?? m['uiDemo.menu.none']()}
+			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="ToastHost" description={m['uiDemo.toast.desc']()}>
+		<div class="row">
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={() => toastStore.push('success', m['uiDemo.toast.messageSuccess']())}
+			>
+				{m['uiDemo.toast.success']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={() => toastStore.push('error', m['uiDemo.toast.messageError']())}
+			>
+				{m['uiDemo.toast.error']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={() => toastStore.push('info', m['uiDemo.toast.messageInfo']())}
+			>
+				{m['uiDemo.toast.info']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={() => toastStore.push('warning', m['uiDemo.toast.messageWarning']())}
+			>
+				{m['uiDemo.toast.warning']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={() =>
+					toastStore.push('info', m['uiDemo.toast.messageAction'](), {
+						action: { label: m['uiDemo.toast.undo'](), onAction: () => (undone += 1) },
+						durationMs: 8000
+					})}
+			>
+				{m['uiDemo.toast.withAction']()}
+			</button>
+			<span class="caption" data-testid="ui-demo-toast-undone">
+				{m['uiDemo.toast.undone']()}: {undone}
 			</span>
 		</div>
 	</SurfaceCard>

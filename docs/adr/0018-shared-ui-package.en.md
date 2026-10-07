@@ -252,10 +252,10 @@ upgrading.md gets the steps).
   recent commands, the `Ctrl+K` wiring and failure notifications stay in the app. banto-hub's
   **focus trap, focus return and window-level Esc** become standard behaviour. The look follows
   admin-template's current one (tokens, motion, `--banto-surface-hover` selected row) (decision 8).
-- **ToastHost**: the package holds `ToastHost` (a presentation component taking `toasts`,
-  `ondismiss` and `messages`) together with **`createToastStore()`** (runes `.svelte.ts`: `toasts`,
+- **ToastHost**: the package holds `ToastHost` (a presentation component taking `store` and
+  `messages`) together with **`createToastStore()`** (runes `.svelte.ts`: `toasts`,
   `push`, `dismiss`, auto-dismiss time). banto-hub's **action button**
-  (`action?: { label, onClick }`) is standard and the look follows admin-template's current one.
+  (`action?: { label, onAction }`, renamed from `onClick` in 2c) is standard and the look follows admin-template's current one.
   The app keeps only the wiring from admin-core's `notify` (Notifier) to the store (for example
   admin-template's `setup.ts`: `notify: (kind, message) => toastStore.push(kind, message)`)
   (decision 9). Reason: the three stores (admin-template 31 lines, ChronoGazer 31, banto-hub 66) are
@@ -285,8 +285,11 @@ Phase-2 progress:
 | Step | Content                                                                                       | Status              |
 | ---- | --------------------------------------------------------------------------------------------- | ------------------- |
 | 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | Done (#361)         |
-| 2b   | CommandPalette (presentation and interaction)                                                 | This PR (Refs #220) |
-| 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | Not started         |
+| 2b   | CommandPalette (presentation and interaction)                                                 | Done (#363)         |
+| 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | This PR (Refs #220) |
+
+With 2c, phase 2 is complete (Modal / Drawer and the layering helpers stay in phase 3 or later per
+decision 10).
 
 The 2b public API (decision 8 made concrete): `CommandPalette` takes `open` (bindable), `items`,
 `search?(query, items)` (default `defaultCommandPaletteSearch`: substring match on `title` and
@@ -301,6 +304,23 @@ in a package-internal helper (`overlayFocus.ts`, not exported) that reads banto-
 (`role="dialog"`, `role="menu"`, `data-esc-layer`, `data-layer-inactive`) as they are. Layers with
 equal z-index are ordered by document order (the CSS paint order). Exporting layer helpers for
 Modal / Drawer remains phase 3 (decision 10).
+
+The 2c public API (decision 9 made concrete): `createToastStore(options?)` (`autoDismissMs`,
+default 4000; `maxToasts`, default unlimited, dismissing the oldest when exceeded) returns a
+`ToastStore` with `toasts`, `push(kind, message, options?)` and `dismiss(id)`. `push` returns the
+id; `options` are `action?: { label, onAction }`, `durationMs?` (`0`, negative or `Infinity`
+never auto-dismiss) and `id?` (an id that is already shown replaces that toast in place and
+restarts its timer). `kind` is `'success' | 'error' | 'info' | 'warning'` (structurally admin-core's
+`NotificationKind`). An action dismisses the toast after the caller's handler (even when it
+throws) and never runs twice. `ToastHost` takes `store` and `messages?` (`toastClose`) and
+announces through two persistent live regions (`error` and `warning` in `role="alert"`, `success`
+and `info` in `role="status"`). Placement is the CSS custom properties `--banto-toast-right` and
+`--banto-toast-bottom` (default `1rem`). The three copies were reconciled as follows: look from
+admin-template (tint per kind, slide-in from the right, glass, `:focus-visible`, the
+`--banto-z-toast` token), the action from banto-hub (including `data-testid="toast-action-<id>"`;
+the button is outlined in the toast's own text colour so it reads on every tint), text through
+`UiMessages.toastClose`, and admin-template's 4000 ms auto-dismiss. When banto-hub and chronogazer
+migrate (phase 3), note `onClick` → `onAction` and ids changing from numbers to strings.
 
 ### 9. Phase 3
 

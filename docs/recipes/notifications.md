@@ -3,7 +3,7 @@
 作成日: 2026-08-14（README から切り出し。トラックB＝アプリ作者向け）
 
 画面右下にトーストを出す通知シンクが標準装備されている（`@banto/admin-core`
-の `Notifier`、`ToastHost` が描画）。種類は **`success` / `error` / `info` /
+の `Notifier`、`@banto/ui` の `ToastHost` が描画）。種類は **`success` / `error` / `info` /
 `warning`** の4種。
 
 **(a) 自タブにトーストを出す** — アプリのどこからでも `notify()` を呼ぶ:
