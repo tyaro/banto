@@ -1,5 +1,8 @@
 # Banto（番頭） — Tauriフルスタック管理画面フレームワーク 仕様 (v0.8)
 
+<!-- 2026-10-07: §4.1 の WindowedListResource の失敗を SnapshotListResource と同じ `failures`・
+     `messages`・`notify` の形に更新し、エラーの型を共通の `ListBlockError` に改名（Issue #344、
+     v6.0.0 の破壊的変更、ADR-0015 の 2026-10-07 の追記）。 -->
 <!-- 2026-10-06: §11.2 にセキュリティヘッダーの CSP（既定は厳格、connect-src だけを
      要求ごとに広げられる `with_security_headers_using`、banto-industrial#505）を追記。 -->
 <!-- 2026-10-06: §4.1 の SnapshotListResource の失敗を `failures`（ブロック順・コード付き）・
@@ -249,8 +252,10 @@ interface EventProvider {
     切り替える。途中の空配列で編集対象が消えたと誤判定されることを防ぐ。
     失敗したブロックは未取得として扱い、旧世代の行を混ぜない。
     ソート・フィルタ変更では従来どおり古い条件の行を直ちに破棄する。
-    失敗はブロック単位で持ち（`failedBlocks`、`error` はその最新）、別の
-    ブロックの成功では消さない。取得世代に総件数がまだ無い間は、表示範囲が
+    失敗はブロック単位で持ち（`failures`。`SnapshotListResource` と同じ形で、
+    後述）、別のブロックの成功では消さない。`refresh()` の間も失敗は残り、
+    取り直しが済んだブロックから更新される（行の保持とは別に、落ち着く前でも
+    更新する）。取得世代に総件数がまだ無い間は、表示範囲が
     空（`{0, 0}`）でも `setParams()`/`refresh()` が先頭ブロックを取りに行き、
     応答しない要求は `requestTimeoutMs`（既定 30 秒）で失敗にする（Issue #243）。
     サーバー側は `ORDER BY` の最後に一意キーを足して並びを一意にする
@@ -282,12 +287,16 @@ interface EventProvider {
     code, error }` か `{ block, kind: 'expired' }`）で出し、種類はコード
     （`'request'`・`'timeout'`・`'boundaryMismatch'`・`'malformed'`）で見分ける
     （文言を比べない）。取得関数が投げた `ProviderError` は同じオブジェクトのまま
-    入り（`'request'`）、リソースが自分で作る失敗は `SnapshotListError`（`code`
+    入り（`'request'`）、リソースが自分で作る失敗は `ListBlockError`（`code`
     付き）。その文言は `messages`（`timeout(ms)`・`boundaryMismatch()`・
     `malformed()`、レイヤ①の注入。既定は英語）で差し替え、失敗ごとのトーストは
     `notify`（既定 `true`・`false`・述語）で止められる（Issue #342、ADR-0015 の
-    追記）。`WindowedListResource` の失敗は今のところ `failedBlocks`・`error` の
-    まま（同じ形にそろえるのは別 Issue）。
+    追記）。`WindowedListResource` の失敗も同じ形（Issue #344、ADR-0015 の
+    2026-10-07 の追記）: `failures`（`{ block, kind: 'error', code, error }`、
+    失効は無い）、コードは共通の `ListBlockFailureCode`（`'boundaryMismatch'` は
+    作らない）、`getList` が投げた `ProviderError` は同じオブジェクトのまま、
+    `messages`（`timeout(ms)`・`malformed()`）と `notify`。エラーの型
+    `ListBlockError`・`isListBlockError` は両リソースで共通。
   - データ規模が「まだ未定/ケースによる」とのことなので、**両モードを同一API
     表面で切り替え可能**にすることを必須要件とする。閾値判断（例: 1万行を
     超えたらサーバーモード推奨、など）はドキュメントでガイドラインを示す。

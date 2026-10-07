@@ -22,6 +22,17 @@
 
 ## [Unreleased]
 
+- feat(admin-core, admin-template)!: **破壊的変更（v6.0.0 で出す）** `WindowedListResource` の失敗を、`SnapshotListResource`（#342）と同じ形にした。種類（コード）で見分けられ、文言を差し替えられ、トーストを止められ、全ブロック分を見られる（#344、[ADR-0015 の追記](docs/adr/0015-snapshot-list-resource.md)）。あわせて、2 つのリソースのエラーの型を共通の名前 `ListBlockError` にした。オーナー決定（2026-10-07）により後方互換は保たず、互換用の別名は残さない。移行の手順書は用意しない（下の置き換え先に従う）。
+  - 削除: `WindowedListResource` の `error`（最新の失敗 1 件）と `failedBlocks`。
+  - 名前の変更（`SnapshotListResource` の型。中身は同じ）: `SnapshotListError` → `ListBlockError`（`name` も `'ListBlockError'`）、`isSnapshotListError` → `isListBlockError`、`SnapshotListFailureCode` → `ListBlockFailureCode`、`SnapshotListErrorFailure` → `ListBlockErrorFailure`。`SnapshotListFailure`・`SnapshotListExpiredFailure`・`SnapshotListMessages`・`defaultSnapshotListMessages` は名前も中身も変えていない（`SnapshotListMessages` は `ListBlockMessages` を拡張する形にした）。
+  - 追加（`WindowedListResource` の状態）: `failures: readonly ListBlockErrorFailure[]`。ブロック順・ブロックごとに 1 件で、`{ block, kind: 'error', code, error }`。消える条件は従来の `failedBlocks` と同じ（そのブロックの取得の成功、`setParams()`）。`refresh()` の間も残り、取り直しが済むと成功なら消え、失敗なら新しい失敗に置き換わる。`refresh()` が表示中の行を世代が落ち着くまで保つ挙動（#212）は変えていない（`failures` は落ち着く前にも更新される）。
+  - 追加（`WindowedListResource` のオプション）: `messages`（`timeout(ms)`・`malformed()`。リソースが自分で作る失敗の文言。既定は今の英語の文言。関数が投げたら既定の文言）、`notify`（`true` が既定、`false`、または `ListBlockErrorFailure` を受ける述語。投げた述語は `false` 扱い）。
+  - 追加（型・値）: `ListBlockMessages`（`timeout`・`malformed`）と `defaultListBlockMessages`、`ListBlockNotify`（`notify` の型）。
+  - 挙動の変更（`WindowedListResource`）: `getList` が投げた `ProviderError` は同じオブジェクトのまま `failures` に入る（`code: 'request'`。これまでも同じオブジェクトだった）。`ProviderError` でない値（`getDataProvider()` が投げた場合も）は、これまでの `ProviderError` の代わりに `ListBlockError('request')` に包む（`message` は従来どおり `String(thrown)`、投げた値は `cause`）。期限切れ・応答の形の不正は `ListBlockError`（`code` が `'timeout'`・`'malformed'`）になる（既定の `message` は従来と同じ）。`getList` が投げた `ListBlockError` は自分の `code` のまま入る。`WindowedListResource` が自分で `'boundaryMismatch'` を作ることは無い。
+  - 共通の型にした理由: 2 つのリソースは同じ「ブロックの失敗」を出すので、アプリは `isListBlockError()` と `code` の 1 つの見分け方でどちらの失敗も扱える。`requestFailure`（投げた値の扱い）・文言の解決・`notify` の判定は `blockFetch.ts` の 1 か所に寄せた（`SnapshotListResource` にあった実装を共有にした）。`WindowedListError` を別に作ると、同じ形のクラス・型・判定関数が 2 組になり、`ProviderError` を投げ分けるデータソース（同じ取得関数を両方で使う場合など）で `code` の保ち方が食い違う。
+  - admin-template: 商品一覧のサーバーモード（`ItemsServerGrid.svelte`）は `messages` に Paraglide の文言（新しいキー `items.loadTimeout`・`items.malformedResult`、ja/en）を渡し、読み込み失敗の帯を `failures` が空でないときに出す（以前は `error`。トーストの文言が英語の固定文だった）。
+  - 派生アプリへの影響: 経路 A は `WindowedListResource` の `failedBlocks`・`error` と、名前を変えた 4 つ（`SnapshotListError`・`isSnapshotListError`・`SnapshotListFailureCode`・`SnapshotListErrorFailure`）を使っている箇所がコンパイルエラーになるので、`failures`・`ListBlockError`・`isListBlockError`・`ListBlockFailureCode`・`ListBlockErrorFailure` に置き換える（`error.name === 'SnapshotListError'` で見分けている箇所はコンパイルエラーにならないので検索して直す）。banto-industrial は `WindowedListResource` を使っておらず、名前の変更の影響は `isSnapshotListError` → `isListBlockError`（banto-hub と ChronoGazer のテスト 3 ファイル）だけ（`SnapshotListMessages`・`SnapshotListFailure` はそのまま）。経路 B は商品一覧（`src/routes/(app)/items/ItemsServerGrid.svelte`）と `messages/{ja,en}.json` の 2 キーを写す。経路 C は変更なし（DB・設定の変更は無い）。
+
 ## [5.1.0] - 2026-10-07
 
 **v5.1.0 — banto-server の CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（#349、banto-industrial#505 の続き）。同じホストのリバースプロキシ配下でも、アプリ自身のデスクトップシェルの要求だけを広げられる。版の種類: minor（追加のみ。後方互換）。

@@ -182,3 +182,73 @@ admin-template の監査ログ画面は、`WindowedListResource` を使わずに
   で行う。`WindowedListResource` は `refresh()` の表示保持（#212）の状態遷移が
   別で、今の利用者（CRUD 画面のサーバーモード）に失敗の種類を見分ける需要が
   まだ無いため、破壊的変更の範囲を広げなかった。
+
+---
+
+## 追記（2026-10-07、Issue #344）: `WindowedListResource` の失敗も同じ形にし、型の名前を共通にする
+
+2026-10-06 の追記の帰結に残した差を埋める。本文と 2026-10-06 の追記の決定は
+変えない。オーナー決定（2026-10-07）により後方互換は保たず、v6.0.0（major）で
+出す。互換用の別名は残さず、移行の手順書も用意しない。
+
+### コンテキスト
+
+- `WindowedListResource` は `error`（最新の 1 件）・`failedBlocks`・英語の
+  固定文のままで、`SnapshotListResource` と失敗の見分け方が違っていた。
+  CRUD 画面のトーストは英語の固定文で、差し替える手段が無かった。
+- 2026-10-06 の追記で決めた型の名前（`SnapshotListError` など）は
+  `SnapshotListResource` に結び付いており、そのまま `WindowedListResource` で
+  使うと名前が中身と合わない。
+
+### 決定
+
+- `WindowedListResource` の失敗を `failures`（ブロック順、ブロックごとに 1 件、
+  `{ block, kind: 'error', code, error }`）で出す。`error`・`failedBlocks` は
+  削除した。消える条件は従来と同じ（そのブロックの取得の成功、`setParams()`）。
+- `refresh()` の表示保持（#212）は変えない。行と件数は世代のブロックが
+  すべて落ち着くまで前のままで、`failures` は落ち着く前でも、取り直しが
+  済んだブロックから更新する（成功なら消え、失敗なら新しい失敗に置き換わる）。
+  行と失敗を一緒に保つと、取り直しの失敗が世代の終わりまで見えず、前の
+  失敗が残って見える。失敗の記録は行を書かないので、途中の行の欠けで
+  編集対象が消えたと誤判定させる #212 の問題は起きない。
+- 失敗の種類と扱いは 2026-10-06 の追記と同じ。`getList`（と
+  `getDataProvider()`）が投げた `ProviderError` は同じオブジェクトのまま
+  `'request'`、`ListBlockError` は自分の `code` のまま、それ以外の値は
+  `ListBlockError('request')` に包み `cause` に置く。期限切れ・応答の形の
+  不正は `'timeout'`・`'malformed'`。`messages`（`timeout(ms)`・`malformed()`）
+  と `notify`（既定 `true`・`false`・述語）を受ける。`'boundaryMismatch'` は
+  作らない（境界を持たないため）。
+- 型の名前を両リソースで共通にする: `SnapshotListError` → `ListBlockError`、
+  `isSnapshotListError` → `isListBlockError`、`SnapshotListFailureCode` →
+  `ListBlockFailureCode`、`SnapshotListErrorFailure` → `ListBlockErrorFailure`。
+  文言は共通の `ListBlockMessages`（`timeout`・`malformed`、既定
+  `defaultListBlockMessages`）を `SnapshotListMessages` が拡張して
+  `boundaryMismatch` を足す。`SnapshotListFailure`・`SnapshotListExpiredFailure`・
+  `SnapshotListMessages`・`defaultSnapshotListMessages` は失効と境界の食い違いが
+  `SnapshotListResource` だけのものなので名前を残す。投げた値の扱い・文言の
+  解決・`notify` の判定は `blockFetch.ts` の 1 か所で両リソースが共有する。
+
+### 検討した代替案
+
+- **`WindowedListError` を別に作る（不採用）**: 同じ形のクラス・コードの型・
+  判定関数が 2 組になる。アプリは失敗を見分けるのにリソースごとに別の
+  `instanceof` を書くことになり、同じデータソースを両方で使うと、片方の
+  リソースが作ったエラーをもう片方が `code` を保たずに `'request'` として
+  扱う。
+- **`SnapshotListError` の名前のまま `WindowedListResource` でも使う
+  （不採用）**: 破壊的変更は小さいが、境界を持たないリソースの失敗が
+  `SnapshotList` の名前になり、読み手を誤らせる。v6.0.0 は既に破壊的変更なので、
+  ここで名前を直す。
+- **コードの型をリソースごとに分ける（`'boundaryMismatch'` を除いた型を
+  `WindowedListResource` に使う）（不採用）**: データソースが投げた
+  `ListBlockError` は自分の `code` を保つので、`WindowedListResource` でも
+  `'boundaryMismatch'` は現れうる。型が実際に起きうる値より狭くなる。
+- **`refresh()` の間は失敗も前のまま保ち、世代の終わりにまとめて出す
+  （不採用）**: 上の決定の理由のとおり。
+
+### 帰結
+
+- 本文の帰結「失敗の持ち方をそろえる」がそろった。以後、失敗の形を変えるときは
+  両リソースを同時に変える。
+- banto-industrial は `WindowedListResource` を使っておらず、名前の変更の
+  影響は `isSnapshotListError` を使うテストだけである。
