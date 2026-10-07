@@ -36,7 +36,7 @@
 M14〜M17 はバックログから順次昇格。M18〜M21 は 2026-07-12 の
 テンプレートスコープ整理（[template-scope.md](template-scope.md)）と
 過去アプリ棚卸しに基づく計画。拡張リポジトリ（banto-industrial）と
-記録計アプリの計画は [industrial-plan.md](industrial-plan.md) に分離。
+記録計アプリの計画は別リポジトリ（境界は [template-scope.md](template-scope.md) §5）に分離。
 
 ---
 
@@ -388,7 +388,7 @@ M21 は使う業種が限られるヘッドレス小粒機能のため同梱な�
 
 MDテンプレート + データバインド → 印刷CSS HTML（→ 将来PDF）。
 日報・写真帳・時系列帳票を同一エンジンの帳票定義違いとして扱う。
-記録計 R3（industrial-plan.md）が消費予定。詳細計画は
+記録計 R3（banto-industrial 側の計画）が消費予定。詳細計画は
 [report-plan.md](design/report-plan.md)。
 
 実装: `@banto/report`（`parse`/`bind`/`html` のヘッドレスコア +
@@ -558,7 +558,7 @@ v1（M0〜M24）で汎用管理画面テンプレートとしての機能は出�
 **v2 の設計テーマ**。優先度は付けず、実需・採用が出た時点で本ドキュメントの
 マイルストーンに昇格させる実需ドリブン文化に従う。実需の供給源は3系統ある
 — (a) 外部採用者 (b) banto-industrial / 記録計アプリ
-（[industrial-plan.md](industrial-plan.md)） (c) メンテナ自身の実案件 —
+（[template-scope.md](template-scope.md) §5） (c) メンテナ自身の実案件 —
 であり、**当面の第一供給源は (b)**。あわせて以下の2つの運用則を置く:
 
 - トリガ未発火のままメンテナ判断で昇格・実施する場合は、当該項目に

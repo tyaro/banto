@@ -157,7 +157,13 @@ cron的定時実行基盤 / アラーム管理 — いずれも SCADA 等の**�
 
 ドメイン寄りの再利用資産（タグレジストリ・SLMP・MQTT・時系列収集/読み出し）
 は本テンプレートではなく**拡張リポジトリ banto-industrial** に置く
-（2026-07-12 決定、別リポジトリ）。計画は [industrial-plan.md](industrial-plan.md)。
+（2026-07-12 決定、別リポジトリ）。banto-industrial は banto の `@banto/*` /
+`banto-*` を git タグ参照で消費する側で（配布方針は [publishing.md](publishing.md)、
+[ADR-0011](adr/0011-git-tag-distribution.md)）、banto 本体は public + MIT。
+banto-industrial 側の現行の計画・実装状況は同リポジトリの `docs/plan.md`
+（文書地図は `docs/README.md`）が正とし、本書では複製しない。2026-07 時点の
+初期構想は経緯として [history/industrial-plan.md](history/industrial-plan.md)
+に残す（新規の設計根拠にしない）。
 
 ## 6. 今後の運用ルールと宿題
 
