@@ -32,6 +32,9 @@
 
 - admin-template の src-tauri の doc コメントが Rust 1.98 の clippy（`doc_lazy_continuation`）に掛かるのを直し、`tauri-check` に `cargo clippy -p admin-template` を足した（#346）。
 
+- fix(admin-template): `apps/admin-template/core` に `build.rs` を足し、`migrations-sqlite`・`migrations-postgres` に `cargo:rerun-if-changed` を出すようにした（#340）。安定版の `sqlx::migrate!` は既存の migration ファイルを `include_str!` で追跡するが、新しい migration ファイルの追加は検知しないため、migration を足しただけの増分ビルドがそれを含まないバイナリを作りうる状態だった。リリース済みの migration ファイルは変えていない（`verify:migrations` 通過）。`sqlx::migrate!` を使う crate は、このリポジトリではこの crate だけ。
+  - 派生アプリへの影響: 経路 B は、admin-template の `core` をコピーしたアプリ（banto-industrial など）は `apps/admin-template/core/build.rs` もコピーし、自分の migration のディレクトリ名に合わせる（banto-industrial は `Migrator::dangerous_set_table_name` で独自の migration のディレクトリを使うので、そのディレクトリを `rerun-if-changed` に書く）。scaffold の各プリセットは `core` を残すので `build.rs` も残る。経路 A・C は変更なし。
+
 ## [5.1.0] - 2026-10-07
 
 **v5.1.0 — banto-server の CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（#349、banto-industrial#505 の続き）。同じホストのリバースプロキシ配下でも、アプリ自身のデスクトップシェルの要求だけを広げられる。版の種類: minor（追加のみ。後方互換）。
