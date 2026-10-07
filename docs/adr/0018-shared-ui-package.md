@@ -240,9 +240,10 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
   通知はアプリ側に残す。banto-hub の**フォーカストラップ・閉じたらフォーカスを戻す・window の
   Esc** は標準の振る舞いとして取り込む。見た目は admin-template の現行（トークン・動き・
   `--banto-surface-hover` の選択行）に揃える（決定 8）。
-- **ToastHost**: パッケージには `ToastHost`（`toasts`・`ondismiss`・`messages` を受ける表示部品）と
+- **ToastHost**: パッケージには `ToastHost`（`store`・`messages` を受ける表示部品）と
   **`createToastStore()`**（runes の `.svelte.ts`。`toasts`・`push`・`dismiss`・自動で消す時間）を
-  一緒に置く。banto-hub の**アクションボタン**（`action?: { label, onClick }`）を標準で持ち、
+  一緒に置く。banto-hub の**アクションボタン**（`action?: { label, onAction }`。2c で `onClick` から
+  `onAction` に改名）を標準で持ち、
   見た目は admin-template の現行。アプリに残るのは、admin-core の `notify`（Notifier）をストアへ
   つなぐ配線だけ（例: admin-template の `setup.ts` の
   `notify: (kind, message) => toastStore.push(kind, message)`）（決定 9）。理由: 3 つのストア（admin-template 31 行・
@@ -270,8 +271,10 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
 | 小段階 | 中身                                                                                 | 状態               |
 | ------ | ------------------------------------------------------------------------------------ | ------------------ |
 | 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 済み（#361）       |
-| 2b     | CommandPalette（表示と操作）                                                         | 本 PR（Refs #220） |
-| 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 未着手             |
+| 2b     | CommandPalette（表示と操作）                                                         | 済み（#363）       |
+| 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 本 PR（Refs #220） |
+
+2c で段階 2 は完了（Modal / Drawer と層の補助は決定 10 のとおり段階 3 以降）。
 
 2b の公開 API（上の決定 8 を形にしたもの）: `CommandPalette` は `open`（bindable）・`items`・
 `search?(query, items)`（省略時は `defaultCommandPaletteSearch` = `title`・`keywords` の部分一致、
@@ -285,6 +288,22 @@ Esc（消費済みの Esc と手前の層には譲る）はパッケージ内部
 持ち、banto-hub の層の印（`role="dialog"`・`role="menu"`・`data-esc-layer`・
 `data-layer-inactive`）をそのまま読む。z-index が同じ層は文書順で後ろのものを手前とみなす
 （CSS の描画順）。Modal / Drawer 用の層の補助を公開するのは引き続き段階 3（決定 10）。
+
+2c の公開 API（決定 9 を形にしたもの）: `createToastStore(options?)`（`autoDismissMs`＝既定 4000、
+`maxToasts`＝既定は無制限で、超えたら古いものから消す）が返す `ToastStore` は `toasts`・
+`push(kind, message, options?)`・`dismiss(id)`。`push` は id を返し、`options` は
+`action?: { label, onAction }`・`durationMs?`（`0`・負・`Infinity` は自動で消さない）・
+`id?`（既に出ている id を渡すとその場で置き換えて時間を数え直す）。`kind` は
+`'success' | 'error' | 'info' | 'warning'`（admin-core の `NotificationKind` と構造的に同じ）。アクションは
+押すと呼び出し側の処理（例外でも）のあとで閉じ、閉じた後の再実行はしない。`ToastHost` は
+`store` と `messages?`（`toastClose`）を受け、読み上げは 2 つの常設の領域に分ける
+（`error`・`warning` は `role="alert"`、`success`・`info` は `role="status"`）。置き場所は CSS 変数
+`--banto-toast-right`・`--banto-toast-bottom`（既定 `1rem`）。3 つの写しの違いは次のとおり揃えた:
+見た目は admin-template（種類ごとの淡色・右からの出現・glass・`:focus-visible`・トークンの z-index
+`--banto-z-toast`）、アクションは banto-hub（`data-testid="toast-action-<id>"` も継承。ボタンの見た目は
+トーストの文字色の枠線で、淡色の背景のどれでも読める）、文言は `UiMessages.toastClose`、自動で消す時間は
+admin-template の 4000ms。banto-hub・chronogazer の移行（段階 3）では `onClick` → `onAction`、
+`id` が数値から文字列になる点に注意する。
 
 ### 9. 段階 3
 

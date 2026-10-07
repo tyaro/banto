@@ -70,12 +70,14 @@ cargo check --workspace
 - 該当版の CHANGELOG に「削除した公開 API と移行先」のような表があれば、型エラーをその表で解消する。
 - A の修正（不具合・セキュリティ）はタグを上げれば入る。B の修正は入らない（7 節）。
 - Vite の `optimizeDeps.exclude` は、ソース配布の `.svelte.ts` を持つ `@banto/*`
-  （admin-core・dock-svelte・forms・grid-svelte・tree-svelte）を**新しく使い始めるとき**に増やす。更新だけなら
+  （admin-core・dock-svelte・forms・grid-svelte・tree-svelte・ui）を**新しく使い始めるとき**に増やす。更新だけなら
   据え置きでよいが、版の注意に書かれていれば従う（[ADR-0007](adr/0007-derived-app-dev-optimizer-exclude.md)）。
   `pnpm check` と `pnpm build` はこの経路を通らないので、**`pnpm dev` で必ず画面を開く**（6 節）。
 - `@banto/ui`（v6.1.0 で追加）は任意の追加依存。使い始めるなら `@banto/ui` を Git 依存（`#<tag>&path:packages/ui`）で足し、
-  `@banto/theme/css` を読み込んでいること（トークンが解決される）を確かめる。`.svelte.ts` を持たないので
-  `optimizeDeps.exclude` は増やさない。使わなければ何も要らない（既存の `@banto/*` の API は変わらない）。
+  `@banto/theme/css` を読み込んでいること（トークンが解決される）を確かめる。**トースト（`createToastStore()`、#220 段階 2c）を
+  含む版からは `.svelte.ts` を持つので、`optimizeDeps.exclude` に `'@banto/ui'` を必ず足す**（足さないと `pnpm dev` が 500 になる。
+  ADR-0007）。ストアを使わなくても、`@banto/ui` を足すなら exclude に入れておく。使わなければ何も要らない
+  （既存の `@banto/*` の API は変わらない）。
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
@@ -103,6 +105,16 @@ admin-template の `components/menu/` は無くなった。派生側が写した
 フォーカスの位置に関係なく効く Esc が標準で付く（見た目は同じ）。banto-industrial の 2 アプリ（banto-hub・chronogazer）の
 写しは段階 3 で `@banto/ui` に置き換える（banto-hub の層の印 `role="dialog"`・`data-esc-layer`・`data-layer-inactive` は
 そのまま読む）。
+
+**トーストのストアと表示（`createToastStore()`・`ToastHost`）も次の版から `@banto/ui` にある**（#220 段階 2c）。admin-template の
+`lib/toast.svelte.ts` は `export const toastStore = createToastStore();` の 1 行になり、`components/ToastHost.svelte` は
+`@banto/ui` の `ToastHost` を `store`・`messages`（`toastClose` に Paraglide の「閉じる」）で呼ぶ薄い包みになった。
+`setup.ts` の `notify: (kind, message) => toastStore.push(kind, message)` の配線と、各画面の `toastStore.push(...)` は変わらない。
+アクション付き（取り消しなど）は `push(kind, message, { action: { label, onAction }, durationMs })`（banto-hub の `onClick` から
+`onAction` に改名。戻り値の id は数値から文字列になった）。派生側が写した `toast.svelte.ts`・`ToastHost.svelte` はそのまま残しても動く。
+取り込むなら写した 2 ファイルを admin-template の新しい薄い版に替える。**取り込む派生アプリは `@banto/ui` を
+`vite.config.ts` の `optimizeDeps.exclude` に足す**（`.svelte.ts` を持つ `@banto/*` の不変条件。[ADR-0007](adr/0007-derived-app-dev-optimizer-exclude.md)、
+`verify:architecture` の rule `optimizedeps-svelte-source` が落とす）。
 
 テンプレート側の変更は、同期元の版と新しい版の**差分**を見て、派生側へ適用する。
 

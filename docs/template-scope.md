@@ -54,11 +54,13 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 
 > `@banto/ui`（Issue #220・[ADR-0018](adr/0018-shared-ui-package.md)）は段階 1 で
 > `apps/admin-template/src/lib/components/ui/` の 7 部品を切り出した。段階 2 は 2a（テーマの
-> トークン + `components/menu/` のメニュー部品）と 2b（CommandPalette の表示と操作）が済み、
-> ToastHost（2c）は未着手（Modal / Drawer と層の補助は段階 2 に入れない）。admin-template の
-> `CommandPalette.svelte` はアプリ側の薄い包み（コマンドの一覧・検索・セッションのスコープ・
-> 最近使った記録・通知・文言）で、表示と操作は `@banto/ui` にある。scaffold の
-> `commandPalette` オプションが消すファイルは変わらない。
+> トークン + `components/menu/` のメニュー部品）・2b（CommandPalette の表示と操作）・2c（トーストの
+> `createToastStore()` と `ToastHost`）が済み、段階 2 は完了（Modal / Drawer と層の補助は段階 2 に入れない）。
+> admin-template の `CommandPalette.svelte` はアプリ側の薄い包み（コマンドの一覧・検索・セッションの
+> スコープ・最近使った記録・通知・文言）で、表示と操作は `@banto/ui` にある。`toast.svelte.ts` と
+> `ToastHost.svelte` も薄い包み（ストアの生成と文言だけ）。scaffold の `commandPalette` オプションが
+> 消すファイルは変わらない。`@banto/ui` は `.svelte.ts` を持つので `optimizeDeps.exclude` に載り、
+> scaffold はこの行を残す（常に使うため）。
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 

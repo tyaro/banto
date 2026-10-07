@@ -613,6 +613,8 @@ Invariant: **every `@banto/*` package that source-ships a `.svelte.ts` under
 `apps/admin-template/vite.config.ts`'s `optimizeDeps.exclude`** (kept in sync on
 new additions). Packages with only `.svelte` components
 (charts/attachments/report) go through the preprocessing path and are exempt.
+`@banto/ui` is **not** exempt: it ships `createToastStore()` (`toast.svelte.ts`, #220 phase 2c), so a
+derived app that adds `@banto/ui` must list it in `optimizeDeps.exclude` too.
 `verify:architecture` (rule `optimizedeps-svelte-source`) machine-checks that
 the exclude list matches "the `@banto/*` deps of admin-template that carry a
 `.svelte.ts`". The external-consumer fixture (`fixtures/external-consumer/`,

@@ -520,7 +520,9 @@ preprocess せず `svelte.compileModule` に渡して `import type` 等で 500 �
 不変条件: **`.svelte.ts` を `src/` にソース配布する `@banto/*` パッケージのうち
 `apps/admin-template` が依存するものは、`apps/admin-template/vite.config.ts` の
 `optimizeDeps.exclude` に必ず列挙する**（新規追加時も同期）。`.svelte` コンポーネント
-のみのパッケージ（charts/attachments/report/ui）は preprocess 経路を通るため対象外。
+のみのパッケージ（charts/attachments/report）は preprocess 経路を通るため対象外。`@banto/ui` は
+`createToastStore()`（`toast.svelte.ts`、#220 段階 2c）を持つので**対象**（トーストを使わない派生アプリでも、
+`@banto/ui` を足すなら exclude に加える）。
 `verify:architecture`（rule `optimizedeps-svelte-source`）が「admin-template が依存し
 `.svelte.ts` を持つ `@banto/*`」と exclude リストの一致を機械検査する。
 外部利用 fixture（`fixtures/external-consumer/`、#271）も同じ集合を dependencies・

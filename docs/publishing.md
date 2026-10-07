@@ -84,7 +84,7 @@ Banto の `@banto/*` パッケージは**モノレポ内でソース直接参照
 実体になり、Vite dev の依存オプティマイザが preprocess せず `svelte.compileModule`
 に渡すため `import type` 等で 500 になる。消費アプリの Vite 設定で当該 `@banto/*` を
 `optimizeDeps.exclude` する必要がある（テンプレートは `apps/admin-template/vite.config.ts`
-で設定済み。`.svelte.ts` を持つのは admin-core/dock-svelte/forms/grid-svelte/tree-svelte。`@banto/ui` は `.svelte` と `.ts` だけなので対象外）。
+で設定済み。`.svelte.ts` を持つのは admin-core/dock-svelte/forms/grid-svelte/tree-svelte/ui。`@banto/ui` は #220 段階 2c の `createToastStore()` で `.svelte.ts` を持つようになった）。
 `pnpm build`（`isBuild` で prebundle 無効）と `pnpm check`（Vite 非経由）はこの経路を
 通らないため無影響。従来この配布検証は `pnpm publish --dry-run`（pack 構成）までで、
 dev optimizer 経路は含まれていなかった。
