@@ -150,7 +150,7 @@ CommandPalette しかない。
   足すなら全パッケージで揃える別の変更にする。
 - 段階 1 の部品は `.svelte` と `.ts` だけで `.svelte.ts` を持たない。したがって
   `optimizeDeps.exclude` には**載せない**（rule `optimizedeps-svelte-source` が「余分」として落とす）。
-  段階 2 で `.svelte.ts`（トーストのストアなど）を足したら、その PR で exclude と fixture に載せる
+  段階 2 で `.svelte.ts`（トーストのストアなど）を足したら、その同じ PR で exclude と fixture の両方に載せる
   （rule が漏れを落とす）。
 
 ### 2. 段階 1 の公開 API
@@ -197,12 +197,13 @@ CommandPalette しかない。
   対象外であることを明記）を更新する。
 - 外部利用 fixture: rule 上は必須ではない（`.svelte.ts` を持たない）が、Git 依存の
   `path:packages/ui` で入り、`svelte-check` と `vite build` を通ることを確かめるため、
-  dependencies と `+page.svelte` の import（と描画）に `@banto/ui` を足す（exclude には足さない）。
-  **段階 1 の PR で足す**（2026-10-07 のオーナーレビューで、タグ後の ref 更新まで先送りする案を
-  取り下げた）。コミットしてある ref は今のタグのままで、external-consumer.yml が `scripts/external-fixture-set-ref.mjs`
-  で全 ref を PR の head SHA に書き換えてから入れる（`--no-frozen-lockfile`）ので、タグを打つ前に
-  新しいパッケージの導入・check・build が確かめられる。fixture の lockfile は、ref を `@banto/ui`
-  を含む commit に上げる次の ref 更新で解決される。
+  dependencies と `+page.svelte` の import に `@banto/ui` を足す（exclude には足さない）。
+  これは**段階 1 の PR で足す**。ワークフロー `.github/workflows/external-consumer.yml` が
+  install の前に fixture の ref を PR の head SHA に書き換えるので、タグを打つ前に Git の
+  サブディレクトリ依存・`svelte-check`・Vite build を確かめられる。タグを打った後の
+  ref 更新の PR（publishing.md の「タグを打ったら fixture の ref を上げる」）に残るのは、
+  コミット済みの ref を新しいタグへ上げる作業だけ。
+  fixture の lockfile は、ref を `@banto/ui` を含むタグに上げるその PR で解決される。
 - 本 ADR が `@banto/ui` を名指しするため、段階 1 までのあいだ `verify-architecture.mjs` の
   `DOCS_PACKAGE_REF_ALLOWLIST` に理由付きで入れる。段階 1 でパッケージが実在したら外す。
 
@@ -321,8 +322,8 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
 3. **`LoadingState` の既定文言**: (a) パッケージ既定 `'読み込み中…'` + admin-template は全箇所で
    明示（推奨）/ (b) `label` を必須にする。
 4. **公開 API を今の props で固めるか**（`IconButton` の `disabled` などは後の minor）。
-5. **版**: v6.0.0 のタグより前に段階 1 を入れて v6.0.0 に乗せるか、v6.1.0 にするか。
-   → 決定: v6.1.0。
+5. **版**: v6.1.0（v6.0.0 は 2026-10-07 に公開済みのため、段階 1 は v6.1.0 か
+   その次に出せる minor に乗る）。
 6. **新しい機械検査**: パッケージの素の import を `svelte`・`svelte/*` に限る rule
    （+ `$app/`・`@tauri-apps/`）を足すか（ADR-0008 の台帳に追記）。
 7. **見本**: 新しいデモページを作らず、既存の画面 + パッケージの README で足りるとするか。
