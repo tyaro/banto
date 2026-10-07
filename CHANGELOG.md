@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### その他
+
+- docs(layout): `docs/industrial-plan.md` を `docs/history/industrial-plan.md` へ移動した（#312 の industrial-plan の history 化）。2026-07-12 時点の初期構想で、banto-industrial の現行の計画は別リポジトリ側（`docs/plan.md`）が持つため、状態行を「履歴」に確定した。banto 側の現行の境界は `docs/template-scope.md` §5 末尾、配布方針は `docs/publishing.md` を参照する。ファイル名は不変なので `industrial-plan.md §2` のようなラベル参照はそのまま有効。参照は同じ PR で新パスに更新済み。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/history/industrial-plan.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
+
+  | 旧                        | 新                                |
+  | ------------------------- | --------------------------------- |
+  | `docs/industrial-plan.md` | `docs/history/industrial-plan.md` |
+
 ## [5.1.0] - 2026-10-07
 
 **v5.1.0 — banto-server の CSP の `connect-src` を広げる選び方に、接続元と要求の宛先（authority）の両方がループバックの要求だけを選ぶ `request_is_loopback_local` を足した（#349、banto-industrial#505 の続き）。同じホストのリバースプロキシ配下でも、アプリ自身のデスクトップシェルの要求だけを広げられる。版の種類: minor（追加のみ。後方互換）。
