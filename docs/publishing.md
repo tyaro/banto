@@ -3,7 +3,7 @@
 作成日: 2026-07-11。2026-07-12（M18 Phase C）に全面改訂: 配布方式を
 「公開 npm レジストリ + crates.io」から「npm も Rust も **git タグ参照**」へ
 変更した。banto-industrial（別リポジトリ、
-[industrial-plan.md](industrial-plan.md)）が本リポジトリの
+境界は [template-scope.md](template-scope.md) §5）が本リポジトリの
 `@banto/*` パッケージ/`banto-*` クレートを消費する前提条件。
 
 > 決着済みの経緯（UNLICENSED 化と取り消し・GitHub Packages 案の棚上げ・

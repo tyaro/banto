@@ -7,7 +7,7 @@
 - 関連: [publishing.md](../publishing.md)、[ADR-0002](0002-minimal-dependencies.md)、
   [ADR-0007](0007-derived-app-dev-optimizer-exclude.md)、
   [template-scope.md §3.1](../template-scope.md#31-今後の機能拡張の提供形態2026-07-15-決定)、
-  [industrial-plan.md §2](../industrial-plan.md)
+  [history/industrial-plan.md §2](../history/industrial-plan.md)
 
 ## コンテキスト
 
