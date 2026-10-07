@@ -230,8 +230,12 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		realPackages.add(JSON.parse(read(rel)).name);
 	}
 	// 「存在しないパッケージ」を意図的にスコープ付きで名指しする場合のみ許可（理由付き）。
-	// 現状なし（作らないと決めた grid-core/dock-core はスコープ無しで書くこと）。
-	const DOCS_PACKAGE_REF_ALLOWLIST = new Set([]);
+	// 作らないと決めた grid-core/dock-core はスコープ無しで書くこと。
+	const DOCS_PACKAGE_REF_ALLOWLIST = new Set([
+		// ADR-0018（Proposed、#220 段階 0）が新設を提案するパッケージ名。段階 1 で
+		// packages/ui が実在したら、この行を外す。
+		'@banto/ui'
+	]);
 	const docFiles = [
 		'README.md',
 		'README.en.md',
