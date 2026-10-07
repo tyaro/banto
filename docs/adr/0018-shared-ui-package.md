@@ -240,10 +240,18 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
   通知はアプリ側に残す。banto-hub の**フォーカストラップ・閉じたらフォーカスを戻す・window の
   Esc** は標準の振る舞いとして取り込む。見た目は admin-template の現行（トークン・動き・
   `--banto-surface-hover` の選択行）に揃える（決定 8）。
-- **ToastHost**: パッケージには `toasts`・`ondismiss`・`messages` を受ける表示部品を置き、
-  banto-hub の**アクションボタン**（`action?: { label, onClick }`）を標準で持つ。見た目は
-  admin-template の現行。**ストア（`push`・`dismiss`・自動で消す時間）はアプリ側に残し、同梱しない**
-  ので、`.svelte.ts` は増えず exclude・fixture の対象にならない（決定 9）。
+- **ToastHost**: パッケージには `ToastHost`（`toasts`・`ondismiss`・`messages` を受ける表示部品）と
+  **`createToastStore()`**（runes の `.svelte.ts`。`toasts`・`push`・`dismiss`・自動で消す時間）を
+  一緒に置く。banto-hub の**アクションボタン**（`action?: { label, onClick }`）を標準で持ち、
+  見た目は admin-template の現行。アプリに残るのは、admin-core の `notify`（Notifier）をストアへ
+  つなぐ配線だけ（例: admin-template の `setup.ts` の
+  `notify: (kind, message) => toastStore.push(kind, message)`）（決定 9）。理由: 3 つのストア（admin-template 31 行・
+  ChronoGazer 31 行・banto-hub 66 行）はほぼ同じで、違いはアクションボタンだけ。3 つの写しを
+  残すのは #220 が無くそうとしている重複そのもので、代償は消費側ごとの `optimizeDeps.exclude` 1 行
+  だけであり、既存の機械検査が漏れを落とす。
+  **帰結**: `@banto/ui` が `.svelte.ts` を持つので、ストアを足す PR は同じ PR で `@banto/ui` を
+  `optimizeDeps.exclude`（admin-template の vite 設定・scaffold・rule `optimizedeps-svelte-source`・
+  conventions §14 の列挙）と外部利用 fixture の使用（ADR-0007、#478）に載せる。
 - **Modal / Drawer と層の補助**（focusTrap・focusRestore・escLayering・drawerCloseGuard）:
   **段階 2 には入れない**。段階 3、または banto-industrial が必要としたときに扱う。オーナー注記:
   「後ほど banto 側に入れるかもしれないが、その時はその時で」（決定 10）。入れるときは
@@ -263,7 +271,7 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
 | ------ | ------------------------------------------------------------------------------------ | ------------------ |
 | 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 本 PR（Refs #220） |
 | 2b     | CommandPalette（表示と操作）                                                         | 未着手             |
-| 2c     | ToastHost（表示 + アクションボタン。ストアはアプリ側）                               | 未着手             |
+| 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 未着手             |
 
 ### 9. 段階 3
 
@@ -303,8 +311,8 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
   「消費側への注意」に従う（publishing.md）。
 - 同梱した lucide のアイコンは、元の版と ISC の表記をファイルに残す。lucide 側の見た目の
   更新には追随しない（必要なら差し替える）。
-- 段階 2 で `.svelte.ts` を足すと、`optimizeDeps.exclude` と外部利用 fixture の対象になる
-  （既存の rule が漏れを落とす）。
+- 段階 2c でトーストのストア（`.svelte.ts`）を足すと、`@banto/ui` は `optimizeDeps.exclude` と
+  外部利用 fixture の対象になる（既存の rule が漏れを落とす。同じ PR で載せる）。
 - 段階 1 の PR では admin-template の `components/ui/` を消す。派生アプリの写しは残しても
   動くので、移行は任意にし、upgrading.md に手順を書く。
 
@@ -327,8 +335,10 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
 8. **CommandPalette**: パッケージは表示と操作だけを持つ。セッションのスコープ・最近使った項目・
    `Ctrl+K` の配線・通知はアプリに残す。banto-hub のフォーカストラップ・フォーカスの戻し・window の
    Esc を標準の振る舞いにする。選択行の見た目は admin-template に揃える。
-9. **ToastHost**: banto-hub のアクションボタン（取り消しなど）を標準にする。ストアはアプリに
-   残し、同梱しない。
+9. **ToastHost**: banto-hub のアクションボタン（取り消しなど）を標準にする。**ストアも共通にし**、
+   `@banto/ui` が `createToastStore()`（runes の `.svelte.ts`）を `ToastHost` と一緒に持つ
+   （当初の「ストアはアプリ側」から同日に改めた）。アプリに残るのは `notify` からストアへの配線だけ。
+   `.svelte.ts` が入るので、同じ PR で `optimizeDeps.exclude` と外部利用 fixture に載せる。
 10. **Modal / Drawer と層の補助**: 段階 2 には入れない。段階 3、または banto-industrial が必要と
     したときに扱う（オーナー注記: 「後ほど banto 側に入れるかもしれないが、その時はその時で」）。
 11. **テーマのトークン**: オーバーレイの背景（`--banto-scrim` など）と z-index の層をテーマの
@@ -364,7 +374,7 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
    → 決定: 推奨どおり（捨てる）。
 9. **ToastHost**: banto-hub のアクションボタンを標準にするか。ストアを同梱するか
    （`.svelte.ts` → exclude・fixture の対象）、アプリ側に残すか。
-   → 決定: アクションボタンは標準、ストアはアプリ側に残す。
+   → 決定: アクションボタンは標準、ストアも `@banto/ui` に同梱する（exclude・fixture は同じ PR）。
 10. **Modal / Drawer と層の補助**: 段階 2 に入れるか（admin-template に使う画面が無い）、
     banto-industrial の需要として段階 3 に回すか。入れる場合、banto-hub の契約を全部 option
     として持ち込むか、どれかを落とすか。

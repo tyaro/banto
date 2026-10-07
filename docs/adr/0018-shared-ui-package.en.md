@@ -252,11 +252,20 @@ upgrading.md gets the steps).
   recent commands, the `Ctrl+K` wiring and failure notifications stay in the app. banto-hub's
   **focus trap, focus return and window-level Esc** become standard behaviour. The look follows
   admin-template's current one (tokens, motion, `--banto-surface-hover` selected row) (decision 8).
-- **ToastHost**: the package holds a presentation component taking `toasts`, `ondismiss` and
-  `messages`, with banto-hub's **action button** (`action?: { label, onClick }`) as standard. The
-  look follows admin-template's current one. **The store (`push`, `dismiss`, auto-dismiss time)
-  stays in the app and is not bundled**, so no `.svelte.ts` is added and the exclude and fixture
-  obligations do not apply (decision 9).
+- **ToastHost**: the package holds `ToastHost` (a presentation component taking `toasts`,
+  `ondismiss` and `messages`) together with **`createToastStore()`** (runes `.svelte.ts`: `toasts`,
+  `push`, `dismiss`, auto-dismiss time). banto-hub's **action button**
+  (`action?: { label, onClick }`) is standard and the look follows admin-template's current one.
+  The app keeps only the wiring from admin-core's `notify` (Notifier) to the store (for example
+  admin-template's `setup.ts`: `notify: (kind, message) => toastStore.push(kind, message)`)
+  (decision 9). Reason: the three stores (admin-template 31 lines, ChronoGazer 31, banto-hub 66) are
+  near-identical and differ only by the action button; keeping three copies is exactly the
+  duplication #220 removes, and the cost is one `optimizeDeps.exclude` entry per consumer, which
+  the existing machine checks already enforce.
+  **Consequence**: because `@banto/ui` then contains a `.svelte.ts`, the PR that adds the store
+  must, in that same PR, add `@banto/ui` to `optimizeDeps.exclude` (admin-template's vite config,
+  scaffold, rule `optimizedeps-svelte-source`, conventions §14's list) and to the external-consumer
+  fixture's usage (ADR-0007, #478).
 - **Modal / Drawer and the layering helpers** (focusTrap, focusRestore, escLayering,
   drawerCloseGuard): **not part of phase 2**. They wait for phase 3 or until banto-industrial
   needs them. Owner note: "後ほど banto 側に入れるかもしれないが、その時はその時で" (may be brought
@@ -273,11 +282,11 @@ upgrading.md gets the steps).
 
 Phase-2 progress:
 
-| Step | Content                                                                                | Status              |
-| ---- | -------------------------------------------------------------------------------------- | ------------------- |
-| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more) | This PR (Refs #220) |
-| 2b   | CommandPalette (presentation and interaction)                                          | Not started         |
-| 2c   | ToastHost (presentation + action button; the store stays in the app)                   | Not started         |
+| Step | Content                                                                                       | Status              |
+| ---- | --------------------------------------------------------------------------------------------- | ------------------- |
+| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | This PR (Refs #220) |
+| 2b   | CommandPalette (presentation and interaction)                                                 | Not started         |
+| 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | Not started         |
 
 ### 9. Phase 3
 
@@ -320,8 +329,9 @@ Modal, Drawer and the layering helpers (banto-hub). Whether banto-hub's `TreeCon
   CHANGELOG's "notes for consumers" (publishing.md).
 - Vendored lucide icons keep their source version and ISC notice in the files. They do not track
   lucide's visual updates (replace them if needed).
-- Adding `.svelte.ts` in phase 2 brings the package under `optimizeDeps.exclude` and the
-  external-consumer fixture (existing rules catch omissions).
+- Adding the toast store (`.svelte.ts`) in phase 2c brings `@banto/ui` under
+  `optimizeDeps.exclude` and the external-consumer fixture (existing rules catch omissions; added
+  in the same PR).
 - The phase-1 PR deletes admin-template's `components/ui/`. Copies in derived apps keep working,
   so migration is optional; upgrading.md gets the steps.
 
@@ -348,8 +358,11 @@ Phase-2 decision points (added 2026-10-07):
    recent items, the `Ctrl+K` wiring and notifications stay in the app. banto-hub's focus trap,
    focus return and window-level Esc become standard behaviour. The selected-row look follows
    admin-template.
-9. **ToastHost**: banto-hub's action button (for example "undo") becomes standard. The store stays
-   in the app and is not bundled.
+9. **ToastHost**: banto-hub's action button (for example "undo") becomes standard. **The store is
+   shared too**: `@banto/ui` bundles `createToastStore()` (runes `.svelte.ts`) with `ToastHost`
+   (changed from the initial "store stays in the app" on the same day). The app keeps only the
+   wiring from `notify` to the store. Because a `.svelte.ts` comes in, the same PR adds the package
+   to `optimizeDeps.exclude` and the external-consumer fixture.
 10. **Modal / Drawer and the layering helpers**: not part of phase 2; deferred to phase 3 or to
     when banto-industrial needs them (owner note: "後ほど banto 側に入れるかもしれないが、その時は
     その時で").
@@ -387,7 +400,7 @@ Before phase 2 (settled; see decisions 8 to 12 in the owner decisions):
    -> Decided: as recommended (drop them).
 9. **ToastHost**: make banto-hub's action button standard? Ship the store (`.svelte.ts` → exclude
    and fixture obligations) or keep it in the app?
-   -> Decided: action button standard; the store stays in the app.
+   -> Decided: action button standard; the store is bundled in `@banto/ui` too (exclude and fixture in the same PR).
 10. **Modal / Drawer and the layering helpers**: include them in phase 2 (admin-template has no
     page that uses them), or leave them to phase 3 as banto-industrial's need? If included, bring
     all of banto-hub's contracts as options, or drop some?
