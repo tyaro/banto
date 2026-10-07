@@ -7,8 +7,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 サードパーティのパッケージは import しない（`verify:architecture` の rule
 `package-bare-imports` が `svelte`・`svelte/*`・相対パス以外を落とす）。
 
-段階 1 の部品は次の 7 つ。今後の段階でメニュー・CommandPalette・ToastHost などを足す
-（ADR-0018 §8）。
+段階 1 の部品は次の 7 つ。段階 2a でメニュー部品（4 つ、下の表の後）を足した。今後の段階で
+CommandPalette・ToastHost などを足す（ADR-0018 §8）。
 
 | 部品           | 役割                                                      | props / snippet                                   |
 | -------------- | --------------------------------------------------------- | ------------------------------------------------- |
@@ -19,6 +19,18 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 | `EmptyState`   | ページ単位の「データなし」                                | `icon?` `title` `description?` `action?`(snippet) |
 | `ErrorState`   | ページ単位のエラー（`role="alert"`）                      | `icon?` `title` `description?` `action?`(snippet) |
 | `LoadingState` | ページ単位の読み込み中（スケルトン + `aria-live` の文言） | `label?` `lines?`                                 |
+
+メニュー部品（段階 2a。`popover` API を前提にする）:
+
+| 部品            | 役割                                                                                       | props / snippet                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `Menu`          | トリガーから開く 1 階層のドロップダウン（`popover="auto"` + `role="menu"`、↑↓・Home・End） | `label` `placement?`(`'bottom-start'`/`'bottom-end'`) `trigger`(snippet) `children` |
+| `MenuGroup`     | 見出し付きの項目グループ（`role="group"`）                                                 | `label` `children`                                                                  |
+| `MenuItem`      | メニュー項目（`role="menuitem"`、ローヴィングフォーカス。`disabled` は `aria-disabled`）   | `label` `icon?` `danger?` `disabled?` `onSelect`                                    |
+| `MenuSeparator` | 区切り線                                                                                   | なし                                                                                |
+
+`trigger` snippet は `aria-haspopup`・`aria-expanded`・`onclick`・`onkeydown` を props で受け取る
+ので、ボタンに `{...props}` で展開する。項目を選ぶとメニューは閉じ、フォーカスはトリガーへ戻る。
 
 `StatusBadgeVariant`（`'neutral' | 'success' | 'warning' | 'danger' | 'info'`）と
 `UiIconComponent`（`icon` に渡せる部品の型）、`UiMessages` / `defaultUiMessages` も export する。
@@ -44,6 +56,23 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 <EmptyState title="商品がありません" />
 ```
 
+```svelte
+<script lang="ts">
+	import { Menu, MenuGroup, MenuItem, MenuSeparator } from '@banto/ui';
+</script>
+
+<Menu label="ユーザーメニュー">
+	{#snippet trigger(props)}
+		<button {...props} type="button">メニュー</button>
+	{/snippet}
+	<MenuGroup label="アカウント">
+		<MenuItem label="設定" onSelect={openSettings} />
+	</MenuGroup>
+	<MenuSeparator />
+	<MenuItem label="ログアウト" danger onSelect={logout} />
+</Menu>
+```
+
 `LoadingState` の `label`（読み上げ文言）を省くとパッケージ既定の `defaultUiMessages.loading()`
 （`'読み込み中…'`）になる。多言語化するアプリ（admin-template は Paraglide）は、
 **既定に頼らず `label` を明示する**（英語表示で日本語が出ないように）。
@@ -61,7 +90,8 @@ CircleAlert・Info の 7 つ）は lucide の SVG を `src/icons/` に同梱し�
 
 スタイルは各部品のスコープ付き `<style>` に置き、`--banto-*` トークンだけを参照する。
 消費側が `@banto/theme/css` を読み込むこと（無いとトークンが解決されず、色や寸法が
-崩れる）。
+崩れる）。オーバーレイの背景と重なり順は `--banto-scrim`・`--banto-z-*` トークンを使う
+（[@banto/theme](../theme/README.md)）。
 
 ```css
 /* app.css 等 */

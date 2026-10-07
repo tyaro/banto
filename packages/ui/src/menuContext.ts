@@ -4,8 +4,8 @@
  * `MenuItem` on selection) and `registerItem()` (used by `MenuItem` on
  * mount to join the roving-focus traversal list, in DOM/mount order).
  *
- * No app-specific store imports - kept promotable to a shared package per
- * plan Phase 1 ("メニュー一式...アプリ固有の import を混ぜずに書く").
+ * No app-specific store imports: lives in @banto/ui (ADR-0018 phase 2a),
+ * which imports nothing but `svelte`.
  */
 import { getContext, setContext } from 'svelte';
 
