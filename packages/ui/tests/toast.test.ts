@@ -197,6 +197,59 @@ describe('createToastStore: action', () => {
 		expect(onAction).toHaveBeenCalledTimes(1);
 	});
 
+	it('counter: a stale action after dismiss + id reuse does not run the old handler or dismiss the new toast', () => {
+		const store = createToastStore();
+		const oldHandler = vi.fn();
+		const newHandler = vi.fn();
+		store.push('info', 'old', { id: 'k', action: { label: 'Undo', onAction: oldHandler } });
+		const stale = store.toasts[0].action!;
+		store.dismiss('k');
+		store.push('info', 'new', { id: 'k', action: { label: 'Undo', onAction: newHandler } });
+		stale.onAction();
+		expect(oldHandler).not.toHaveBeenCalled();
+		expect(newHandler).not.toHaveBeenCalled();
+		expect(messagesOf(store)).toEqual(['new']);
+	});
+
+	it('counter: a stale action after in-place replacement does not run and the new toast stays', () => {
+		const store = createToastStore();
+		const oldHandler = vi.fn();
+		store.push('info', 'old', { id: 'k', action: { label: 'Undo', onAction: oldHandler } });
+		const stale = store.toasts[0].action!;
+		store.push('info', 'new', { id: 'k' });
+		stale.onAction();
+		expect(oldHandler).not.toHaveBeenCalled();
+		expect(messagesOf(store)).toEqual(['new']);
+	});
+
+	it('counter: a handler that updates the same id keeps the updated toast (also when it throws)', () => {
+		for (const fail of [false, true]) {
+			const store = createToastStore();
+			store.push('info', 'working', {
+				id: 'k',
+				action: {
+					label: 'Go',
+					onAction: () => {
+						store.push('success', 'done', { id: 'k' });
+						if (fail) throw new Error('boom');
+					}
+				}
+			});
+			const action = store.toasts[0].action!;
+			if (fail) expect(() => action.onAction()).toThrow('boom');
+			else action.onAction();
+			expect(messagesOf(store)).toEqual(['done']);
+		}
+	});
+
+	it('counter: a timer of a replaced instance cannot dismiss the replacement', () => {
+		const store = createToastStore();
+		store.push('info', 'old', { id: 'k', durationMs: 1000 });
+		store.push('info', 'new', { id: 'k', durationMs: 0 });
+		vi.advanceTimersByTime(5000);
+		expect(messagesOf(store)).toEqual(['new']);
+	});
+
 	it('a toast without an action has none', () => {
 		const store = createToastStore();
 		store.push('info', 'x');

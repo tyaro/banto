@@ -62,6 +62,8 @@ class ToastStoreImpl implements ToastStore {
 	toasts: Toast[] = $state([]);
 	#nextId = 1;
 	#timers = new Map<string, ReturnType<typeof setTimeout>>();
+	/** id -> generation token of the instance currently shown (internal; a replacement or re-push of the same id gets a new token). */
+	#live = new Map<string, symbol>();
 	#autoDismissMs: number;
 	#maxToasts: number;
 
@@ -73,17 +75,21 @@ class ToastStoreImpl implements ToastStore {
 	push(kind: ToastKind, message: string, options?: ToastPushOptions): string {
 		const id = options?.id ?? this.#generateId();
 		const source = options?.action;
+		const token = Symbol(id);
 		const action: ToastAction | undefined = source
 			? {
 					label: source.label,
 					onAction: () => {
-						// Already dismissed (timer, or a fast second click before the
-						// button was removed): the handler must not run twice.
-						if (!this.toasts.some((toast) => toast.id === id)) return;
+						// Dismissed or replaced since this instance was pushed (timer, a
+						// fast second click, a stale reference after id reuse): the
+						// handler must not run, and must not touch the newer toast.
+						if (this.#live.get(id) !== token) return;
 						try {
 							source.onAction();
 						} finally {
-							this.dismiss(id);
+							// Only this instance: a handler that re-pushed the same id
+							// keeps its updated toast.
+							this.#dismissInstance(id, token);
 						}
 					}
 				}
@@ -91,6 +97,7 @@ class ToastStoreImpl implements ToastStore {
 		const toast: Toast = { id, kind, message, action };
 
 		this.#clearTimer(id);
+		this.#live.set(id, token);
 		const index = this.toasts.findIndex((t) => t.id === id);
 		if (index >= 0) {
 			this.toasts = this.toasts.map((t, i) => (i === index ? toast : t));
@@ -103,7 +110,7 @@ class ToastStoreImpl implements ToastStore {
 		if (duration > 0 && Number.isFinite(duration)) {
 			this.#timers.set(
 				id,
-				setTimeout(() => this.dismiss(id), duration)
+				setTimeout(() => this.#dismissInstance(id, token), duration)
 			);
 		}
 		return id;
@@ -111,7 +118,13 @@ class ToastStoreImpl implements ToastStore {
 
 	dismiss(id: string): void {
 		this.#clearTimer(id);
+		this.#live.delete(id);
 		this.toasts = this.toasts.filter((toast) => toast.id !== id);
+	}
+
+	/** Dismisses `id` only if the instance identified by `token` is still the one shown. */
+	#dismissInstance(id: string, token: symbol): void {
+		if (this.#live.get(id) === token) this.dismiss(id);
 	}
 
 	/** `toast-N`, skipping any id a caller already put on screen so a generated id never replaces a toast. */
