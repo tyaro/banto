@@ -22,6 +22,25 @@
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-10-07
+
+**v6.0.0 — `WindowedListResource` の失敗を、`SnapshotListResource` と同じ形（`failures`・`messages`・`notify`）に変え、2 つのリソースのエラーの型を共通の `ListBlockError` にした（#344。破壊的変更）。あわせて、`tauri-check` への clippy の追加（#346）、`apps/admin-template/core/build.rs` の `rerun-if-changed`（#340）、`industrial-plan` の history 化（#312）。版の種類: major（`WindowedListResource` の `error`・`failedBlocks` の削除と、`SnapshotListError` などの改名）。
+派生アプリへの影響: 経路 A は `WindowedListResource` の `error`・`failedBlocks` と、改名した 4 つの型・関数を使っている箇所を置き換える。経路 B は商品一覧のサーバーモードなどコピー済みの利用箇所と `core/build.rs` の取り込みが要る。経路 C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v5.1.0` → `v6.0.0`（npm と Rust を同じタグに）。`WindowedListResource` の `error`・`failedBlocks` を削除（`failures`・`messages`・`notify` に置き換え）。`SnapshotListError`・`isSnapshotListError`・`SnapshotListFailureCode`・`SnapshotListErrorFailure` を `ListBlockError`・`isListBlockError`・`ListBlockFailureCode`・`ListBlockErrorFailure` に改名（互換用の別名なし） |
+| B. コピーしたテンプレート        | あり | 商品一覧のサーバーモード（`ItemsServerGrid.svelte`。`messages` と新しい Paraglide キー `items.loadTimeout`・`items.malformedResult`）、`apps/admin-template/core/build.rs`（#340。migration の `rerun-if-changed`）。詳細は下の「その他」の各項                                                                                                                                 |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                                                                                                                                                         |
+
+### 消費側への注意
+
+- 移行の手順書（docs/upgrading.md の例）は v6.0.0 では用意しない。後方互換も保たない（オーナー決定 2026-10-07）。下の「その他」の `WindowedListResource` の項（削除・名前の変更・追加・置き換え先）に従う。banto-industrial は、テストの `isSnapshotListError` を `isListBlockError` に替えるだけで済む。
+
+### 検証した組み合わせ
+
+- タグの後に追記する（external-consumer.yml の run の URL と、そこに出る Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)）。
+
 ### その他
 
 - docs(adr): 共通 UI 部品を新パッケージ `@banto/ui`（`packages/ui`）に切り出す設計を [ADR-0018](docs/adr/0018-shared-ui-package.md)（状態 Proposed）として記録した（#220 段階 0）。admin-template の `components/ui/` の 7 部品と、段階 2 の候補（メニュー部品・CommandPalette・ToastHost、banto-industrial の写しとの違い）の棚卸し、公開 API・アイコンの同梱・文言の注入・検査と配布の更新・オーナー判断事項を含む。コードは動かしていない。ADR が名指しする `@banto/ui` を、段階 1 まで `verify-architecture.mjs` の `DOCS_PACKAGE_REF_ALLOWLIST` に入れた。`docs/template-scope.md` §2.1 に提案中の注記を足した。
@@ -2404,7 +2423,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v5.1.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/tyaro/banto/compare/v5.1.0...v6.0.0
 [5.1.0]: https://github.com/tyaro/banto/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/tyaro/banto/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/tyaro/banto/compare/v3.0.1...v4.0.0
