@@ -12,14 +12,16 @@
 	 * screenshot never depends on timing; the skeleton pulse is stopped by
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
-	 * The Menu card (phase 2a) is closed on load, so the screenshot shows only
-	 * its trigger; opening/keyboard behaviour is covered by the package's jsdom
-	 * tests, not by the visual suite.
+	 * The Menu card (phase 2a) and the CommandPalette card (phase 2b) are
+	 * closed on load, so the screenshot shows only their triggers; opening,
+	 * keyboard and focus behaviour are covered by the package's jsdom tests,
+	 * not by the visual suite.
 	 *
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
 	 * prop in phase 1, so no disabled sample.
 	 */
 	import {
+		CommandPalette,
 		EmptyState,
 		ErrorState,
 		IconButton,
@@ -31,14 +33,17 @@
 		PageHeader,
 		StatusBadge,
 		SurfaceCard,
+		type CommandPaletteItem,
 		type StatusBadgeVariant
 	} from '@banto/ui';
 	import {
 		ChevronDown,
 		Copy,
+		FilePlus,
 		Pencil,
 		Plus,
 		RefreshCw,
+		Save,
 		SearchX,
 		ServerCrash,
 		Star,
@@ -66,6 +71,39 @@
 
 	let clicks = $state(0);
 	let selected = $state<string | undefined>(undefined);
+
+	// Static sample commands: two groups, an icon, a shortcut hint and a
+	// disabled row. The palette's own text reuses the app's palette messages;
+	// only the dialog label differs from the global (Ctrl+K) palette.
+	let paletteOpen = $state(false);
+	let executed = $state<string | undefined>(undefined);
+	const paletteItems = $derived<CommandPaletteItem[]>([
+		{
+			id: 'create',
+			title: m['uiDemo.palette.create'](),
+			group: m['uiDemo.palette.groupFile'](),
+			icon: FilePlus
+		},
+		{
+			id: 'save',
+			title: m['uiDemo.palette.save'](),
+			group: m['uiDemo.palette.groupFile'](),
+			icon: Save,
+			shortcut: 'Ctrl+S'
+		},
+		{
+			id: 'unavailable',
+			title: m['uiDemo.palette.unavailable'](),
+			group: m['uiDemo.palette.groupFile'](),
+			disabled: true
+		},
+		{
+			id: 'refresh',
+			title: m['uiDemo.palette.refresh'](),
+			group: m['uiDemo.palette.groupView'](),
+			icon: RefreshCw
+		}
+	]);
 </script>
 
 <div class="page">
@@ -207,6 +245,21 @@
 		</div>
 	</SurfaceCard>
 
+	<SurfaceCard title="CommandPalette" description={m['uiDemo.palette.desc']()}>
+		<div class="row">
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				onclick={() => (paletteOpen = true)}
+			>
+				{m['uiDemo.palette.open']()}
+			</button>
+			<span class="caption" data-testid="ui-demo-palette-executed">
+				{m['uiDemo.palette.executed']()}: {executed ?? m['uiDemo.menu.none']()}
+			</span>
+		</div>
+	</SurfaceCard>
+
 	<SurfaceCard title="EmptyState" description={m['uiDemo.empty.desc']()}>
 		<div class="grid">
 			<div class="sample sample--frame">
@@ -281,6 +334,23 @@
 		</div>
 	</SurfaceCard>
 </div>
+
+<!-- Outside the cards: under the glass preset SurfaceCard has a
+     backdrop-filter, which would make it the containing block of the
+     palette's fixed overlay. -->
+<CommandPalette
+	bind:open={paletteOpen}
+	items={paletteItems}
+	onExecute={(item) => {
+		executed = item.title;
+	}}
+	messages={{
+		commandPaletteLabel: () => m['uiDemo.palette.label'](),
+		commandPalettePlaceholder: () => m['commandPalette.placeholder'](),
+		commandPaletteListLabel: () => m['commandPalette.listLabel'](),
+		commandPaletteEmpty: () => m['commandPalette.empty']()
+	}}
+/>
 
 <style>
 	.page {

@@ -1,18 +1,20 @@
 <script lang="ts">
 	/**
-	 * Command palette modal (spec M16). Mounted by (app)/+layout.svelte only
-	 * while `commandPaletteStore.open` is true (an `{#if}`, not a persistent
-	 * `display: none`) so every open gets a fresh instance - query, selection,
-	 * and the `recentIds` snapshot all reset for free, and `onMount` autofocus
-	 * fires on every open, not just the first.
+	 * Command palette (spec M16) - the app half. The dialog itself (search
+	 * input, grouped list, keyboard, focus trap/restore, window-level Escape,
+	 * outside click, look) is `@banto/ui`'s CommandPalette (ADR-0018 §8,
+	 * phase 2b). What stays here is what knows about this app: the command
+	 * list (`#lib/commands`), admin-core's scored search, the per-user recent
+	 * history (#258), failure notifications and the Paraglide text.
 	 *
-	 * Click-outside/Escape follow the same window-listener pattern as
-	 * grid-svelte's FilterPopover.svelte; the Ctrl+K/Cmd+K toggle itself lives
-	 * one level up ((app)/+layout.svelte), since it must also work to CLOSE
-	 * this palette while its own input has focus.
+	 * Mounted by (app)/+layout.svelte only while `commandPaletteStore.open`
+	 * is true (an `{#if}`), so every open gets a fresh instance - the scope
+	 * captured below and the recent-history ordering reset for free. The
+	 * Ctrl+K/Cmd+K toggle lives one level up ((app)/+layout.svelte), since it
+	 * must also work to CLOSE this palette while its own input has focus.
 	 */
-	import { onMount } from 'svelte';
 	import * as m from '#lib/paraglide/messages.js';
+	import { CommandPalette } from '@banto/ui';
 	import {
 		currentSessionScope,
 		isCurrentSessionScope,
@@ -49,73 +51,17 @@
 	// effect above has closed the palette.
 	const recentIds = $derived(loadRecentCommandIds(currentSessionScope()));
 
-	let query = $state('');
-	let selectedIndex = $state(0);
-	let executing = $state(false);
-	let inputEl: HTMLInputElement | undefined = $state();
-	let paletteEl: HTMLDivElement | undefined = $state();
-
-	const flatResults = $derived(searchCommands(commands, query, recentIds));
-
-	interface DisplayItem {
-		command: PaletteCommand;
-		index: number;
-	}
-	interface DisplayGroup {
-		group: string;
-		items: DisplayItem[];
+	// admin-core's scored search (prefix > word-start > substring; recent
+	// first as the tie-breaker and for the empty query). Recency is an
+	// ordering here, not a separate section, so the package's `recentIds`
+	// prop is not used.
+	function search(query: string, items: readonly PaletteCommand[]): PaletteCommand[] {
+		return searchCommands([...items], query, recentIds);
 	}
 
-	// Cluster the already-scored/sorted flat results by group, preserving
-	// each group's first-appearance position, so commands from the same
-	// group (「ナビゲーション」/「テーマ」/「セッション」) stay under one
-	// heading instead of interleaving by score (spec M16: グループ見出し表示).
-	// `index` here is the flattened, group-clustered position - the same
-	// numbering used for keyboard selection below.
-	const displayGroups = $derived.by((): DisplayGroup[] => {
-		const groupOrder: string[] = [];
-		const byGroup = new Map<string, PaletteCommand[]>();
-		for (const command of flatResults) {
-			if (!byGroup.has(command.group)) {
-				byGroup.set(command.group, []);
-				groupOrder.push(command.group);
-			}
-			byGroup.get(command.group)!.push(command);
-		}
-		let index = 0;
-		return groupOrder.map((group) => ({
-			group,
-			items: byGroup.get(group)!.map((command) => ({ command, index: index++ }))
-		}));
-	});
-
-	const orderedCommands = $derived(
-		displayGroups.flatMap((g) => g.items.map((item) => item.command))
-	);
-	const selectedCommand = $derived(orderedCommands[selectedIndex]);
-
-	// A fresh query means a fresh result set - keep selection pinned to the
-	// top rather than pointing at whatever now occupies the old index.
-	$effect(() => {
-		// Bare read registers `query` as this effect's reactive dependency;
-		// nothing else in the body reads it.
-		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
-		query;
-		selectedIndex = 0;
-	});
-
-	onMount(() => {
-		inputEl?.focus();
-	});
-
-	function clampIndex(next: number): number {
-		const count = orderedCommands.length;
-		if (count === 0) return 0;
-		return ((next % count) + count) % count;
-	}
-
-	async function executeCommand(command: PaletteCommand): Promise<void> {
-		executing = true;
+	// The package disables the rows while this runs and closes afterwards
+	// (onClose below), so errors are handled here, never rethrown.
+	async function execute(command: PaletteCommand): Promise<void> {
 		// Captured BEFORE running: a command that ends the session (logout)
 		// must not record into the next one (#258).
 		const scope = currentSessionScope();
@@ -123,213 +69,21 @@
 			await command.run();
 		} catch (err) {
 			notify('error', isProviderError(err) ? err.message : String(err));
-		} finally {
-			executing = false;
 		}
 		recordRecentCommand(scope, command.id);
-		commandPaletteStore.hide();
-	}
-
-	function handleKeydown(event: KeyboardEvent): void {
-		switch (event.key) {
-			case 'ArrowDown':
-				event.preventDefault();
-				selectedIndex = clampIndex(selectedIndex + 1);
-				break;
-			case 'ArrowUp':
-				event.preventDefault();
-				selectedIndex = clampIndex(selectedIndex - 1);
-				break;
-			case 'Enter':
-				event.preventDefault();
-				if (selectedCommand) void executeCommand(selectedCommand);
-				break;
-			case 'Escape':
-				event.preventDefault();
-				commandPaletteStore.hide();
-				break;
-		}
-	}
-
-	function handleWindowPointerDown(event: PointerEvent): void {
-		if (paletteEl && event.target instanceof Node && !paletteEl.contains(event.target)) {
-			commandPaletteStore.hide();
-		}
 	}
 </script>
 
-<svelte:window onpointerdown={handleWindowPointerDown} />
-
-<div class="overlay">
-	<div
-		class="palette"
-		role="dialog"
-		aria-modal="true"
-		aria-label={m['commandPalette.dialogLabel']()}
-		bind:this={paletteEl}
-	>
-		<input
-			type="text"
-			class="search"
-			placeholder={m['commandPalette.placeholder']()}
-			autocomplete="off"
-			spellcheck="false"
-			role="combobox"
-			aria-expanded="true"
-			aria-controls="command-palette-list"
-			aria-activedescendant={selectedCommand
-				? `command-palette-item-${selectedCommand.id}`
-				: undefined}
-			bind:value={query}
-			bind:this={inputEl}
-			onkeydown={handleKeydown}
-		/>
-
-		<div
-			class="results"
-			id="command-palette-list"
-			role="listbox"
-			aria-label={m['commandPalette.listLabel']()}
-		>
-			{#if orderedCommands.length === 0}
-				<p class="empty">{m['commandPalette.empty']()}</p>
-			{/if}
-			{#each displayGroups as group (group.group)}
-				<div class="group-heading">{group.group}</div>
-				{#each group.items as item (item.command.id)}
-					<button
-						id={`command-palette-item-${item.command.id}`}
-						type="button"
-						class="result"
-						class:selected={item.index === selectedIndex}
-						role="option"
-						aria-selected={item.index === selectedIndex}
-						disabled={executing}
-						onmouseenter={() => (selectedIndex = item.index)}
-						onclick={() => executeCommand(item.command)}
-					>
-						{item.command.title}
-					</button>
-				{/each}
-			{/each}
-		</div>
-	</div>
-</div>
-
-<style>
-	.overlay {
-		position: fixed;
-		inset: 0;
-		z-index: var(--banto-z-overlay);
-		display: flex;
-		justify-content: center;
-		align-items: flex-start;
-		padding-top: 12vh;
-		background: var(--banto-scrim);
-	}
-
-	.palette {
-		display: flex;
-		flex-direction: column;
-		width: min(560px, calc(100vw - 2rem));
-		max-height: min(60vh, 480px);
-		background: var(--banto-surface-overlay);
-		border: 1px solid var(--banto-border);
-		border-radius: var(--banto-radius-lg);
-		box-shadow: var(--banto-shadow-lg);
-		overflow: hidden;
-		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
-		backdrop-filter: var(--banto-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-backdrop, none);
-		/* Appearance motion (design.md §11.2): fade + scale(0.98→1). Same
-		   @starting-style technique as menu/Menu.svelte's popover, applied
-		   here to a plain mount/unmount ({#if commandPaletteStore.open} in
-		   (app)/+layout.svelte) rather than a popover toggle - @starting-style
-		   also fires on first paint of a freshly-inserted element, not only
-		   on display:none→block. Unsupporting browsers just skip the
-		   @starting-style block and the palette appears without motion. */
-		opacity: 1;
-		transform: scale(1);
-		transition:
-			opacity var(--banto-duration-slow) var(--banto-ease-spring),
-			transform var(--banto-duration-slow) var(--banto-ease-spring);
-	}
-
-	@starting-style {
-		.palette {
-			opacity: 0;
-			transform: scale(0.98);
-		}
-	}
-
-	.search {
-		flex: 0 0 auto;
-		width: 100%;
-		box-sizing: border-box;
-		padding: 0.9rem 1rem;
-		border: none;
-		border-bottom: 1px solid var(--banto-border);
-		background: transparent;
-		color: var(--banto-text);
-		font-size: 1rem;
-	}
-
-	.search:focus {
-		outline: none;
-	}
-
-	.results {
-		flex: 1;
-		min-height: 0;
-		overflow-y: auto;
-		padding: 0.4rem;
-	}
-
-	.empty {
-		margin: 0;
-		padding: 1rem;
-		text-align: center;
-		color: var(--banto-text-muted);
-		font-size: 0.85rem;
-	}
-
-	.group-heading {
-		padding: 0.5rem 0.6rem 0.25rem;
-		color: var(--banto-text-muted);
-		font-size: 0.7rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.result {
-		display: block;
-		width: 100%;
-		box-sizing: border-box;
-		padding: 0.55rem 0.7rem;
-		border: none;
-		border-radius: var(--banto-radius-md);
-		background: transparent;
-		color: var(--banto-text);
-		font-size: 0.875rem;
-		text-align: left;
-		cursor: pointer;
-		transition: background var(--banto-duration-fast) var(--banto-ease-out);
-	}
-
-	.result:disabled {
-		cursor: not-allowed;
-		opacity: 0.6;
-	}
-
-	/* Selection tracks the mouse-hovered/keyboard-active row as one state
-	   (onmouseenter sets selectedIndex - see script) - the same neutral
-	   --banto-surface-hover the rest of the app uses for transient
-	   hover/focus (menu/MenuItem.svelte, Sidebar.svelte's plain :hover),
-	   distinct from a persistent "current page" indicator like
-	   Sidebar's .nav-item.active. */
-	.result.selected {
-		background: var(--banto-surface-hover);
-		color: var(--banto-text);
-	}
-</style>
+<CommandPalette
+	open
+	items={commands}
+	{search}
+	onExecute={execute}
+	onClose={() => commandPaletteStore.hide()}
+	messages={{
+		commandPaletteLabel: () => m['commandPalette.dialogLabel'](),
+		commandPalettePlaceholder: () => m['commandPalette.placeholder'](),
+		commandPaletteListLabel: () => m['commandPalette.listLabel'](),
+		commandPaletteEmpty: () => m['commandPalette.empty']()
+	}}
+/>

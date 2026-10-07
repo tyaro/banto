@@ -4,12 +4,20 @@
  * Phase 1: the seven general-purpose components that used to live in
  * apps/admin-template/src/lib/components/ui/. Phase 2a: the dropdown menu
  * parts (Menu, MenuGroup, MenuItem, MenuSeparator) from components/menu/.
+ * Phase 2b: CommandPalette (display + interaction; the app keeps the command
+ * list, Ctrl+K, session scoping, recent items and notifications).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
  * load `@banto/theme/css` themselves - the styles reference only `--banto-*`
  * tokens.
  */
+export { default as CommandPalette } from './CommandPalette.svelte';
+export {
+	defaultCommandPaletteSearch,
+	type CommandPaletteCloseReason,
+	type CommandPaletteItem
+} from './commandPalette';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as ErrorState } from './ErrorState.svelte';
 export { default as IconButton } from './IconButton.svelte';
