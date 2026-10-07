@@ -68,6 +68,9 @@ importers:
       '@banto/tree-svelte':
         specifier: workspace:*
         version: link:../../packages/tree-svelte
+      '@banto/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@lucide/svelte':
         specifier: ^1.49.0
         version: 1.49.0(svelte@5.57.1(@typescript-eslint/types@8.71.0))
@@ -311,6 +314,33 @@ importers:
         version: 6.0.3
 
   packages/tree-svelte:
+    devDependencies:
+      '@sveltejs/vite-plugin-svelte':
+        specifier: ^7.3.1
+        version: 7.3.1(svelte@5.57.1(@typescript-eslint/types@8.71.0))(vite@8.3.1(jiti@2.7.0))
+      '@testing-library/svelte':
+        specifier: ^5.4.2
+        version: 5.4.2(svelte@5.57.1(@typescript-eslint/types@8.71.0))(vite@8.3.1(jiti@2.7.0))(vitest@5.0.3(jsdom@30.1.1)(vite@8.3.1(jiti@2.7.0)))
+      jsdom:
+        specifier: ^30.1.0
+        version: 30.1.1
+      svelte:
+        specifier: ^5.57.1
+        version: 5.57.1(@typescript-eslint/types@8.71.0)
+      svelte-check:
+        specifier: ^4.7.6
+        version: 4.7.6(picomatch@4.0.7)(svelte@5.57.1(@typescript-eslint/types@8.71.0))(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.0
+        version: 6.0.3
+      vite:
+        specifier: ^8.3.0
+        version: 8.3.1(jiti@2.7.0)
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(jsdom@30.1.1)(vite@8.3.1(jiti@2.7.0))
+
+  packages/ui:
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^7.3.1

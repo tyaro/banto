@@ -38,7 +38,7 @@
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
+	import { PageHeader } from '@banto/ui';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { isPathActive, resolveAppPath } from '#lib/navigation.js';

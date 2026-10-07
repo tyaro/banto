@@ -119,7 +119,7 @@ test('--strict と --interactive の併用はエラー', () => {
 // tree（#143-144 追加時）が scaffold から漏れて minimal でもデモが残った実例への対策。
 test('packages/ の全パッケージが scaffold の判断（remover / コア / 除外）に登録されている', () => {
 	// コア（常在。scaffold は触れない前提のパッケージ）
-	const CORE = new Set(['admin-core', 'forms', 'theme', 'grid-svelte']);
+	const CORE = new Set(['admin-core', 'forms', 'theme', 'grid-svelte', 'ui']);
 	// 資産 → 対応パッケージ（アプリ内資産のみの glass/commandPalette はパッケージ無し）
 	const ASSET_PACKAGES = new Set(['charts', 'dock-svelte', 'attachments', 'report', 'tree-svelte']);
 	// 意図的な除外（レシピのみ・未配線。scaffold.mjs 冒頭 doc と plan §3 の決定）

@@ -113,7 +113,11 @@ const DIAGONAL_PAGES: DiagonalPage[] = [
 	// admin-only, but visible in this demo-mode admin session too).
 	{ name: 'settings', path: '/settings', heading: '設定' },
 	{ name: 'settings-account', path: '/settings/account', heading: '設定' },
-	{ name: 'settings-connectivity', path: '/settings/connectivity', heading: '設定' }
+	{ name: 'settings-connectivity', path: '/settings/connectivity', heading: '設定' },
+	// @banto/ui catalog page (Issue #220 / ADR-0018 §6). Reached by URL: its
+	// sidebar entry is demo-build-only (`demoOnly`), and this suite builds
+	// without VITE_BANTO_DEMO, so the shared sidebar baselines stay unchanged.
+	{ name: 'ui-demo', path: '/ui-demo', heading: 'UI 部品の見本' }
 ];
 
 test.describe('diagonal pages', () => {

@@ -17,7 +17,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import type { Item } from '#lib/banto/sampleData.js';
-	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import { LoadingState } from '@banto/ui';
 	import { toItemRow, type ItemRow } from './itemRow';
 
 	interface Props {

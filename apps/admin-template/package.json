@@ -27,6 +27,7 @@
     "@banto/report": "workspace:*",
     "@banto/theme": "workspace:*",
     "@banto/tree-svelte": "workspace:*",
+    "@banto/ui": "workspace:*",
     "@lucide/svelte": "^1.49.0",
     "@tauri-apps/api": "^2.12.1"
   },

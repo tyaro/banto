@@ -38,8 +38,7 @@
 	import { canWriteResources } from '#lib/permissions.js';
 	import { exportCsvToFolder, importItems, isItemsImportAvailable } from '#lib/banto/itemsAdmin.js';
 	import { getBantoMode } from '#lib/banto/setup.js';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
-	import StatusBadge, { type StatusBadgeVariant } from '#lib/components/ui/StatusBadge.svelte';
+	import { PageHeader, StatusBadge, type StatusBadgeVariant } from '@banto/ui';
 	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
 	import {

@@ -29,11 +29,14 @@
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { toastStore } from '#lib/toast.svelte.js';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
-	import StatusBadge, { type StatusBadgeVariant } from '#lib/components/ui/StatusBadge.svelte';
-	import EmptyState from '#lib/components/ui/EmptyState.svelte';
-	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import {
+		PageHeader,
+		SurfaceCard,
+		StatusBadge,
+		type StatusBadgeVariant,
+		EmptyState,
+		LoadingState
+	} from '@banto/ui';
 	import {
 		createUser,
 		deleteUser,
@@ -320,7 +323,7 @@
 						</div>
 					</div>
 					{#if loading && users.length === 0}
-						<LoadingState />
+						<LoadingState label={m['common.loading']()} />
 					{:else}
 						<div class="grid-wrap">
 							<BantoGrid

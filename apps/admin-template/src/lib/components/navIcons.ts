@@ -6,13 +6,15 @@
  */
 import type { Component } from 'svelte';
 import { LayoutDashboard, Package, ListTree, Users, ScrollText, Settings } from '@lucide/svelte';
-import type { NavIconKey } from '#lib/navigation.js';
+import { Palette } from '@lucide/svelte';
+import type { DemoNavIconKey, NavIconKey } from '#lib/navigation.js';
 
-export const NAV_ICONS: Record<NavIconKey, Component> = {
+export const NAV_ICONS: Record<NavIconKey | DemoNavIconKey, Component> = {
 	dashboard: LayoutDashboard,
 	items: Package,
 	tree: ListTree,
 	users: Users,
 	'audit-log': ScrollText,
-	settings: Settings
+	settings: Settings,
+	'ui-demo': Palette
 };
