@@ -22,6 +22,25 @@
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-10-07
+
+**v6.1.0 — 新パッケージ `@banto/ui`（`packages/ui`）を追加し、admin-template の汎用 UI 部品 7 つをそこへ移した（#220 段階 1。`/ui-demo` 見本ページと、`verify:architecture` の rule `package-bare-imports` を含む）。[ADR-0018](docs/adr/0018-shared-ui-package.md) の段階 1 を Accepted にした。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A は `@banto/ui` を任意の追加依存として足せる。経路 B は admin-template から写した `components/ui/` を `@banto/ui` からの import に替えられる（見本ページの取り込みも任意）。経路 C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                  |
+| -------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | 任意 | `v6.0.0` → `v6.1.0`（npm と Rust を同じタグに）。新パッケージ `@banto/ui` を任意の追加依存として足せる（既存の `@banto/*` の公開 API は変わらない）   |
+| B. コピーしたテンプレート        | 任意 | admin-template のコピーは `components/ui/` を `@banto/ui` から import するように替えられる（`LoadingState` の `label` は明示する）。`/ui-demo` は任意 |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                               |
+
+### 消費側への注意
+
+- 既存の `@banto/*` の公開 API は変わらない。`@banto/ui` を使うときは Git 依存で足す（`.svelte.ts` を持たないので `optimizeDeps.exclude` は増やさない）。詳細は下の「追加」の項と [docs/upgrading.md](docs/upgrading.md) 3.2。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加（minor、追加のみ）
 
 - feat(ui): 新パッケージ `@banto/ui`（`packages/ui`）を追加し、admin-template の `components/ui/` にあった汎用 UI 部品 7 つ（EmptyState・ErrorState・IconButton・LoadingState・PageHeader・StatusBadge・SurfaceCard）を移した（#220 段階 1、[ADR-0018](docs/adr/0018-shared-ui-package.md)）。DOM・CSS・props は変えていない。依存は空で、既定のアイコン（lucide の 7 つ）は ISC 表記付きで同梱し、`icon` の型は `UiIconComponent`（lucide の部品もそのまま渡せる）。`LoadingState` の `label` の既定はパッケージの `defaultUiMessages.loading()`（日本語）。admin-template は `@banto/ui` から import し（`components/ui/` は削除）、`LoadingState` の `label` を全箇所で明示する。`/ui-demo` に 7 部品の主要な状態を並べた見本ページを足した（ナビには `VITE_BANTO_DEMO=1` のビルドのときだけ出る。ビジュアル回帰の対象）。`verify:architecture` に rule `package-bare-imports`（`packages/*/src` の素の import は `svelte`・`svelte/*` だけ）を足した。外部利用 fixture に `@banto/ui` を足した。
@@ -2448,7 +2467,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.0.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.1.0...HEAD
+[6.1.0]: https://github.com/tyaro/banto/compare/v6.0.0...v6.1.0
 [6.0.0]: https://github.com/tyaro/banto/compare/v5.1.0...v6.0.0
 [5.1.0]: https://github.com/tyaro/banto/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/tyaro/banto/compare/v4.0.0...v5.0.0
