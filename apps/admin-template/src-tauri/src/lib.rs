@@ -2890,8 +2890,8 @@ fn required_header_field(
 /// keying into its JSON payload.
 /// Body of [`attachments_upload`] (spec M14 pattern) so its authz + upload +
 /// audit + event behavior is testable with a plain `&AppState`. The command
-/// adapter extracts the raw request (binary body + the three metadata headers)
-/// - request-shaped parsing that cannot run outside a real invoke - and this
+/// adapter extracts the raw request (binary body + the three metadata headers;
+/// request-shaped parsing that cannot run outside a real invoke) and this
 /// body does everything else. Authz therefore runs AFTER the adapter reads the
 /// request shape; a denied caller is still recorded via [`require_role`], and
 /// the parse is a cheap read of an already-received local IPC message.

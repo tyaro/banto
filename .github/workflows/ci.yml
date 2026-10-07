@@ -157,6 +157,7 @@ jobs:
       # dependency-free; it can be added back later with the appropriate
       # `tauri-apps/tauri-action` / apt setup once native builds are needed
       # in CI.
+      # (clippy for it runs in tauri-check.yml, which has the system deps.)
       - name: Cargo check
         run: cargo check -p banto-core -p banto-storage -p banto-admin-services -p banto-server -p banto-attachments -p admin-template-core
 

@@ -7,7 +7,7 @@
 - Related: [publishing.md](../publishing.md), [ADR-0002](0002-minimal-dependencies.en.md),
   [ADR-0007](0007-derived-app-dev-optimizer-exclude.en.md),
   [template-scope.md §3.1](../template-scope.md),
-  [industrial-plan.md §2](../industrial-plan.md)
+  [history/industrial-plan.md §2](../history/industrial-plan.md)
 
 ## Context
 

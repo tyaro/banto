@@ -24,6 +24,14 @@
 
 ### その他
 
+- docs(layout): `docs/industrial-plan.md` を `docs/history/industrial-plan.md` へ移動した（#312 の industrial-plan の history 化）。2026-07-12 時点の初期構想で、banto-industrial の現行の計画は別リポジトリ側（`docs/plan.md`）が持つため、状態行を「履歴」に確定した。banto 側の現行の境界は `docs/template-scope.md` §5 末尾、配布方針は `docs/publishing.md` を参照する。ファイル名は不変なので `industrial-plan.md §2` のようなラベル参照はそのまま有効。参照は同じ PR で新パスに更新済み。過去の節に書かれた旧パスは書き換えない。GitHub 上の旧 blob リンクは追従しない（スタブは置かない）。`.prettierignore` に `docs/history/industrial-plan.md` を追加（移動前と同じく整形対象外）。旧 → 新の対応表:
+
+  | 旧                        | 新                                |
+  | ------------------------- | --------------------------------- |
+  | `docs/industrial-plan.md` | `docs/history/industrial-plan.md` |
+
+- admin-template の src-tauri の doc コメントが Rust 1.98 の clippy（`doc_lazy_continuation`）に掛かるのを直し、`tauri-check` に `cargo clippy -p admin-template` を足した（#346）。
+
 - fix(admin-template): `apps/admin-template/core` に `build.rs` を足し、`migrations-sqlite`・`migrations-postgres` に `cargo:rerun-if-changed` を出すようにした（#340）。安定版の `sqlx::migrate!` は既存の migration ファイルを `include_str!` で追跡するが、新しい migration ファイルの追加は検知しないため、migration を足しただけの増分ビルドがそれを含まないバイナリを作りうる状態だった。リリース済みの migration ファイルは変えていない（`verify:migrations` 通過）。`sqlx::migrate!` を使う crate は、このリポジトリではこの crate だけ。
   - 派生アプリへの影響: 経路 B は、admin-template の `core` をコピーしたアプリ（banto-industrial など）は `apps/admin-template/core/build.rs` もコピーし、自分の migration のディレクトリ名に合わせる（banto-industrial は `Migrator::dangerous_set_table_name` で独自の migration のディレクトリを使うので、そのディレクトリを `rerun-if-changed` に書く）。scaffold の各プリセットは `core` を残すので `build.rs` も残る。経路 A・C は変更なし。
 
