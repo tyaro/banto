@@ -13,7 +13,7 @@
 	 */
 	import { DatabaseBackup, ScrollText } from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { SurfaceCard } from '@banto/ui';
 	import {
 		getAuditConfig,
 		isAuditLogAvailable,

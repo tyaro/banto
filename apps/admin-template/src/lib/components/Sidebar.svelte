@@ -20,7 +20,7 @@
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
-	import IconButton from './ui/IconButton.svelte';
+	import { IconButton } from '@banto/ui';
 	import { PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
 	interface Props {

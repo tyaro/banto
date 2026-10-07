@@ -15,6 +15,10 @@
 	import { BantoGrid, GridState } from '@banto/grid-svelte';
 	import { BantoTree, TreeState } from '@banto/tree-svelte';
 	import { resolveTheme } from '@banto/theme';
+	// @banto/ui（#220）は `.svelte.ts` を持たない（.svelte と .ts だけ）ので exclude 対象外。
+	// Git 依存（path:）で入り、svelte-check と vite build を通ることを確かめるため、
+	// 部品を実際に描画する。
+	import { PageHeader, StatusBadge } from '@banto/ui';
 
 	const loaded = [
 		typeof createListResource,
@@ -30,3 +34,5 @@
 </script>
 
 <p data-testid="banto-loaded">{loaded}</p>
+<PageHeader title="external consumer" />
+<StatusBadge variant="success" label="ok" />

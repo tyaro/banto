@@ -5,7 +5,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
 	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { SurfaceCard } from '@banto/ui';
 
 	// Undecided until `status()` resolves (or is absent, treated as
 	// "already initialized" - see below): render nothing rather than

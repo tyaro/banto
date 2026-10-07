@@ -7,8 +7,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { formValidationMessages } from '#lib/banto/i18n.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
-	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import { PageHeader, LoadingState } from '@banto/ui';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;

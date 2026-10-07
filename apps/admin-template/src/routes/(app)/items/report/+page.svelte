@@ -22,7 +22,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import { byCategory, categoryCounts, computeStatTiles } from '#lib/banto/dashboard.js';
-	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import { LoadingState } from '@banto/ui';
 	import dailyTemplate from '#lib/banto/reports/daily.md?raw';
 
 	const list = createListResource<Item>('items', {

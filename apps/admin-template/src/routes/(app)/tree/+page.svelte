@@ -16,8 +16,7 @@
 	 */
 	import { BantoTree, TreeSelect, findNode, type TreeColumn } from '@banto/tree-svelte';
 	import * as m from '#lib/paraglide/messages.js';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { PageHeader, SurfaceCard } from '@banto/ui';
 	import { treeMessages } from '#lib/banto/i18n.js';
 	import {
 		explorerTree,

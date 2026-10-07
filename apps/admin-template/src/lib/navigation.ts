@@ -5,6 +5,7 @@
  * (spec §3.1); manual entries like the ones below remain possible.
  */
 import { isPathActive, type AppPath } from '#lib/appPath.js';
+import { isDemoBuild } from '#lib/banto/environment.js';
 import * as m from '#lib/paraglide/messages.js';
 
 /** Icon resolution key (visual-refresh-design.md §5.1). Resolved to an actual
@@ -18,10 +19,15 @@ export type NavIconKey = 'dashboard' | 'items' | 'tree' | 'users' | 'audit-log' 
 export type NavLabelKey =
 	'nav.dashboard' | 'nav.items' | 'nav.tree' | 'nav.users' | 'nav.auditLog' | 'nav.settings';
 
+/** Keys of the demo-only catalog entry (`NavItem.demoOnly`). Kept out of the unions above on purpose:
+ *  scaffold's removers edit those unions by exact text (scripts/scaffold.mjs). */
+export type DemoNavIconKey = 'ui-demo';
+export type DemoNavLabelKey = 'nav.uiDemo';
+
 export interface NavItem {
 	path: AppPath;
-	labelKey: NavLabelKey;
-	icon: NavIconKey;
+	labelKey: NavLabelKey | DemoNavLabelKey;
+	icon: NavIconKey | DemoNavIconKey;
 	/** Spec M10 RBAC: only shown to the `admin` role. Undefined/false = visible to every role. */
 	adminOnly?: boolean;
 	/**
@@ -43,11 +49,19 @@ export interface NavItem {
 	 * public-viewer session. Template default: `/dashboard` and `/items`.
 	 */
 	publicViewer?: boolean;
+
+	/**
+	 * Show this entry in the sidebar / command palette only in the static demo
+	 * build (`VITE_BANTO_DEMO=1`, see `isDemoBuild`). The route itself stays
+	 * reachable by URL in every build - this hides the nav entry, nothing more
+	 * (a catalog page like `/ui-demo`, not a feature).
+	 */
+	demoOnly?: boolean;
 }
 
 export { isPathActive, resolveAppPath, type AppPath } from '#lib/appPath.js';
 
-export const navItems: NavItem[] = [
+const allNavItems: NavItem[] = [
 	{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', publicViewer: true },
 	// [scaffold:items] begin
 	{
@@ -59,10 +73,14 @@ export const navItems: NavItem[] = [
 	},
 	// [scaffold:items] end
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
+	{ path: '/ui-demo', labelKey: 'nav.uiDemo', icon: 'ui-demo', demoOnly: true },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },
 	{ path: '/settings', labelKey: 'nav.settings', icon: 'settings' }
 ];
+
+/** The entries the shell shows: `demoOnly` ones only in the demo build (`isDemoBuild()` is a build-time constant). */
+export const navItems: NavItem[] = allNavItems.filter((item) => !item.demoOnly || isDemoBuild());
 
 /** `navItems` entries visible to a LAN "viewer-public" session (see `NavItem.publicViewer`'s doc comment). Order preserved - the first entry is the guard's redirect target. */
 export function publicNavItems(): NavItem[] {
@@ -74,6 +92,7 @@ export function publicNavItems(): NavItem[] {
 const BRAND = 'Banto';
 
 export function pageTitle(pathname: string): string {
-	const item = navItems.find((entry) => isPathActive(entry.path, pathname));
+	// Over every entry, not just the visible ones: a `demoOnly` page keeps its title when opened by URL.
+	const item = allNavItems.find((entry) => isPathActive(entry.path, pathname));
 	return item ? m[item.labelKey]() : BRAND;
 }

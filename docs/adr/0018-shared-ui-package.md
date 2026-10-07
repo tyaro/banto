@@ -203,6 +203,7 @@ CommandPalette しかない。
   サブディレクトリ依存・`svelte-check`・Vite build を確かめられる。タグを打った後の
   ref 更新の PR（publishing.md の「タグを打ったら fixture の ref を上げる」）に残るのは、
   コミット済みの ref を新しいタグへ上げる作業だけ。
+  fixture の lockfile は、ref を `@banto/ui` を含むタグに上げるその PR で解決される。
 - 本 ADR が `@banto/ui` を名指しするため、段階 1 までのあいだ `verify-architecture.mjs` の
   `DOCS_PACKAGE_REF_ALLOWLIST` に理由付きで入れる。段階 1 でパッケージが実在したら外す。
 

@@ -11,6 +11,11 @@
  *   2. §4 パッケージ間 import ゼロ … packages/星/src に `from '@banto/...'` がない
  *   3. §5 パッケージはアプリ固有 import を持たない … 同上に `$lib` / `#lib`
  *      （SvelteKit 3 の subpath imports）からの import がない
+ *      加えて素の import 指定子（相対パスでも `svelte`・`svelte/*` でもないもの）が
+ *      無いこと（rule `package-bare-imports`、ADR-0018 §5）。依存を宣言できない
+ *      （empty-deps）のに `@lucide/svelte` 等を import すると、モノレポでは
+ *      admin-template の依存が巻き上げで見えて通り、依存を持たない派生アプリでだけ
+ *      壊れる。`$app/`・`@tauri-apps/`・`#lib` もここで落ちる。コメントは除いて検査
  *   4. §7 {@html} は許可リストの2箇所のみ
  *   5. §9 コンポーネント CSS に生の色値を書かない
  *      … packages（theme を除く）の .svelte <style> ブロックに hex/rgb()/hsl()
@@ -158,6 +163,80 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 		pass('no-app-import', `packages に $lib / #lib import なし`);
 }
 
+// --- 2b. パッケージの素の import は svelte だけ（ADR-0018 §5） ---------------
+
+/**
+ * ソースから import 指定子を取り出す。コメント（ブロック・行・HTML）は
+ * 先に除く。`from '…'`（import/export）・副作用 `import '…'`・動的 `import('…')` を拾う。
+ * 行コメントは行頭か空白の直後の `//` だけを対象にし、`'https://…'` のような文字列は壊さない。
+ */
+function importSpecifiers(src) {
+	const code = src
+		.replace(/<!--[\s\S]*?-->/g, '')
+		.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/(^|\s)\/\/[^\n]*/g, '$1');
+	const specs = [];
+	for (const m of code.matchAll(
+		/(?:(?<![\w@$.'"])from\s*|(?<![\w@$.])import\s*\(?\s*)['"]([^'"\n]+)['"]/g
+	))
+		specs.push(m[1]);
+	return specs;
+}
+
+/** 許可: 相対パス、`svelte`、`svelte/*`。 */
+const isAllowedPackageImport = (spec) =>
+	spec.startsWith('./') ||
+	spec.startsWith('../') ||
+	spec === 'svelte' ||
+	spec.startsWith('svelte/');
+
+{
+	const rule = 'package-bare-imports';
+	// 対策の対策: 規則が実際に違反を捕まえる／コメントを無視することを毎回確かめる
+	// （正規表現が黙って空振りして「違反ゼロ」になるのを防ぐ）。
+	const bad = importSpecifiers(
+		[
+			"import { Inbox } from '@lucide/svelte';",
+			"import '$app/navigation';",
+			"const t = await import('@tauri-apps/api/core');",
+			"export { x } from '#lib/foo';"
+		].join('\n')
+	).filter((spec) => !isAllowedPackageImport(spec));
+	const ok = importSpecifiers(
+		[
+			"import type { Snippet } from 'svelte';",
+			"import { tick } from 'svelte/internal';",
+			"import x from './x.svelte';",
+			"// import { Inbox } from '@lucide/svelte';",
+			"/* import y from '$app/state'; */",
+			'<!-- import z from "@tauri-apps/api"; -->',
+			'const u = "https://example.com/a";'
+		].join('\n')
+	).filter((spec) => !isAllowedPackageImport(spec));
+	if (bad.length !== 4 || ok.length !== 0)
+		fail(
+			rule,
+			'scripts/verify-architecture.mjs',
+			`自己検査に失敗（違反サンプル ${bad.length}/4 件検出、無害サンプル ${ok.length}/0 件誤検出）— importSpecifiers を見直す`
+		);
+
+	let checked = 0;
+	for (const file of walk('packages', ['.ts', '.svelte'])) {
+		if (!file.includes('/src/')) continue;
+		checked++;
+		for (const spec of importSpecifiers(read(file))) {
+			if (isAllowedPackageImport(spec)) continue;
+			fail(
+				rule,
+				file,
+				`素の import \`${spec}\` — packages/*/src は \`svelte\`・\`svelte/*\`・相対パスしか import できない（依存は空、ADR-0018 §5）`
+			);
+		}
+	}
+	if (!results.some((r) => r.includes(`[${rule}]`)))
+		pass(rule, `packages ${checked} ファイルの素の import は svelte / svelte/* のみ`);
+}
+
 // --- 4. {@html} 許可リスト（conventions §7） ---------------------------------
 
 {
@@ -231,11 +310,7 @@ const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 	}
 	// 「存在しないパッケージ」を意図的にスコープ付きで名指しする場合のみ許可（理由付き）。
 	// 作らないと決めた grid-core/dock-core はスコープ無しで書くこと。
-	const DOCS_PACKAGE_REF_ALLOWLIST = new Set([
-		// ADR-0018（Proposed、#220 段階 0）が新設を提案するパッケージ名。段階 1 で
-		// packages/ui が実在したら、この行を外す。
-		'@banto/ui'
-	]);
+	const DOCS_PACKAGE_REF_ALLOWLIST = new Set([]);
 	const docFiles = [
 		'README.md',
 		'README.en.md',

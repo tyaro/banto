@@ -21,10 +21,7 @@
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
 	import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
-	import EmptyState from '#lib/components/ui/EmptyState.svelte';
-	import ErrorState from '#lib/components/ui/ErrorState.svelte';
-	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import { PageHeader, EmptyState, ErrorState, LoadingState } from '@banto/ui';
 
 	const resource = getResource('items');
 	const schema = resource.schema as FormSchema;

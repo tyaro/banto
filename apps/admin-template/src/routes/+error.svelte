@@ -17,7 +17,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { SurfaceCard } from '@banto/ui';
 
 	// Never disabled while a retry runs: a retry that hangs must not take the
 	// way out with it (pressing again starts a new one; the browser reload

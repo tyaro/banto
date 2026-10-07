@@ -4,11 +4,11 @@
 	 * so an accessible name can never be forgotten - it feeds both
 	 * `aria-label` and a `title` tooltip.
 	 */
-	import type { Component } from 'svelte';
+	import type { UiIconComponent } from './types';
 
 	interface Props {
 		label: string;
-		icon: Component;
+		icon: UiIconComponent;
 		size?: 'sm' | 'md';
 		onclick: (event: MouseEvent) => void;
 	}

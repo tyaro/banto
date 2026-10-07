@@ -200,7 +200,7 @@ scoped to `banto-admin-services`'s opt-in `system-metrics` feature; the
 
 ## 4. No reverse dependency from core → options [machine-checked]
 
-Core (`admin-core` / `grid-svelte` / `forms` / `theme`) does not import
+Core (`admin-core` / `grid-svelte` / `forms` / `theme` / `ui`) does not import
 options. The dependency direction is "shell → option allowed, option → core
 allowed, **core → option not allowed**". **The canonical core/option list is
 the table in [template-scope.md §3](template-scope.md)** (do not duplicate the

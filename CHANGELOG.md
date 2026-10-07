@@ -22,6 +22,11 @@
 
 ## [Unreleased]
 
+### 追加（minor、追加のみ）
+
+- feat(ui): 新パッケージ `@banto/ui`（`packages/ui`）を追加し、admin-template の `components/ui/` にあった汎用 UI 部品 7 つ（EmptyState・ErrorState・IconButton・LoadingState・PageHeader・StatusBadge・SurfaceCard）を移した（#220 段階 1、[ADR-0018](docs/adr/0018-shared-ui-package.md)）。DOM・CSS・props は変えていない。依存は空で、既定のアイコン（lucide の 7 つ）は ISC 表記付きで同梱し、`icon` の型は `UiIconComponent`（lucide の部品もそのまま渡せる）。`LoadingState` の `label` の既定はパッケージの `defaultUiMessages.loading()`（日本語）。admin-template は `@banto/ui` から import し（`components/ui/` は削除）、`LoadingState` の `label` を全箇所で明示する。`/ui-demo` に 7 部品の主要な状態を並べた見本ページを足した（ナビには `VITE_BANTO_DEMO=1` のビルドのときだけ出る。ビジュアル回帰の対象）。`verify:architecture` に rule `package-bare-imports`（`packages/*/src` の素の import は `svelte`・`svelte/*` だけ）を足した。外部利用 fixture に `@banto/ui` を足した。
+  - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない。**経路 A**: `@banto/ui` は任意の追加依存（使うなら Git 依存で足す。`.svelte.ts` を持たないので `optimizeDeps.exclude` は増やさない）。**経路 B**: admin-template から写した `components/ui/` はそのまま残しても動く。取り込むなら `@banto/ui` から import し、`LoadingState` の `label` を明示する（[docs/upgrading.md](docs/upgrading.md) 3.2）。
+
 ### その他
 
 - docs(adr): 共通 UI 部品を新パッケージ `@banto/ui`（`packages/ui`）に切り出す設計を [ADR-0018](docs/adr/0018-shared-ui-package.md)（段階 1 の判断は 2026-10-07 にオーナー決定で Accepted。段階 2 は未決）として記録した（#220 段階 0）。admin-template の `components/ui/` の 7 部品と、段階 2 の候補（メニュー部品・CommandPalette・ToastHost、banto-industrial の写しとの違い）の棚卸し、公開 API・アイコンの同梱・文言の注入・検査と配布の更新・オーナー判断事項を含む。コードは動かしていない。ADR が名指しする `@banto/ui` を、段階 1 まで `verify-architecture.mjs` の `DOCS_PACKAGE_REF_ALLOWLIST` に入れた。`docs/template-scope.md` §2.1 に提案中の注記を足した。

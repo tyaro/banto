@@ -21,7 +21,7 @@
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { SurfaceCard } from '@banto/ui';
 	import { settings } from '#lib/settings.svelte.js';
 	import { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';
 	import { toastStore } from '#lib/toast.svelte.js';

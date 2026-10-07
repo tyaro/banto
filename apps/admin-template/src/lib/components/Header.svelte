@@ -14,12 +14,11 @@
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
-	import IconButton from './ui/IconButton.svelte';
+	import { IconButton, StatusBadge } from '@banto/ui';
 	import Menu from './menu/Menu.svelte';
 	import MenuGroup from './menu/MenuGroup.svelte';
 	import MenuItem from './menu/MenuItem.svelte';
 	import MenuSeparator from './menu/MenuSeparator.svelte';
-	import StatusBadge from './ui/StatusBadge.svelte';
 	import {
 		Menu as MenuIcon,
 		Search,

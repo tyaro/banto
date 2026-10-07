@@ -16,7 +16,7 @@
 	import { Server, Wifi } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
-	import SurfaceCard from '#lib/components/ui/SurfaceCard.svelte';
+	import { SurfaceCard } from '@banto/ui';
 	import {
 		applyServerSettings,
 		getServerStatus,

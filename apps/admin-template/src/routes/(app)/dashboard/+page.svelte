@@ -49,8 +49,7 @@
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
-	import PageHeader from '#lib/components/ui/PageHeader.svelte';
-	import LoadingState from '#lib/components/ui/LoadingState.svelte';
+	import { PageHeader, LoadingState } from '@banto/ui';
 
 	const STOCK_TARGET = 3_000_000;
 

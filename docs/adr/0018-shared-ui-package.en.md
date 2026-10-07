@@ -214,6 +214,7 @@ core → option dependency cannot arise.
   `svelte-check` and the Vite build are verified before the tag is published. Only the committed
   ref update to the new tag remains for the post-tag PR (the "bump the fixture ref after
   tagging" step in publishing.md).
+  The fixture lockfile is resolved in that same ref bump, to a tag that contains `@banto/ui`.
 - Because this ADR names `@banto/ui`, it goes into `DOCS_PACKAGE_REF_ALLOWLIST` in
   `verify-architecture.mjs` with a reason until phase 1. Remove it once the package exists.
 
