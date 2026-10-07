@@ -269,9 +269,22 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
 
 | 小段階 | 中身                                                                                 | 状態               |
 | ------ | ------------------------------------------------------------------------------------ | ------------------ |
-| 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 本 PR（Refs #220） |
-| 2b     | CommandPalette（表示と操作）                                                         | 未着手             |
+| 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 済み（#361）       |
+| 2b     | CommandPalette（表示と操作）                                                         | 本 PR（Refs #220） |
 | 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 未着手             |
+
+2b の公開 API（上の決定 8 を形にしたもの）: `CommandPalette` は `open`（bindable）・`items`・
+`search?(query, items)`（省略時は `defaultCommandPaletteSearch` = `title`・`keywords` の部分一致、
+並びは渡した順）・`recentIds?`（空の検索のとき先頭に「最近使ったもの」の見出しで出す。記録はアプリ）・
+`onExecute(item)`（Promise を返せば終わるまで行を無効にし、その後に閉じる）・
+`onClose?(reason)`（`'escape' | 'outside' | 'execute'`）・`focusFallback?`・`messages?`
+（`UiMessages` の `commandPalette*`）を受ける。項目の型 `CommandPaletteItem`
+（`id`・`title`・`group?`・`keywords?`・`icon?`・`disabled?`・`shortcut?`）は `PaletteCommand` と
+構造的に合うので、admin-core の配列をそのまま渡せる。フォーカストラップ・フォーカスの戻し・window の
+Esc（消費済みの Esc と手前の層には譲る）はパッケージ内部の補助（`overlayFocus.ts`、公開しない）で
+持ち、banto-hub の層の印（`role="dialog"`・`role="menu"`・`data-esc-layer`・
+`data-layer-inactive`）をそのまま読む。z-index が同じ層は文書順で後ろのものを手前とみなす
+（CSS の描画順）。Modal / Drawer 用の層の補助を公開するのは引き続き段階 3（決定 10）。
 
 ### 9. 段階 3
 

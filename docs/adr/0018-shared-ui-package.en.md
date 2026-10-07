@@ -284,9 +284,23 @@ Phase-2 progress:
 
 | Step | Content                                                                                       | Status              |
 | ---- | --------------------------------------------------------------------------------------------- | ------------------- |
-| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | This PR (Refs #220) |
-| 2b   | CommandPalette (presentation and interaction)                                                 | Not started         |
+| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | Done (#361)         |
+| 2b   | CommandPalette (presentation and interaction)                                                 | This PR (Refs #220) |
 | 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | Not started         |
+
+The 2b public API (decision 8 made concrete): `CommandPalette` takes `open` (bindable), `items`,
+`search?(query, items)` (default `defaultCommandPaletteSearch`: substring match on `title` and
+`keywords`, order as given), `recentIds?` (shown first under a "recent" heading for an empty
+query; the app keeps the record), `onExecute(item)` (a returned promise disables the rows until
+it settles, then the palette closes), `onClose?(reason)` (`'escape' | 'outside' | 'execute'`),
+`focusFallback?` and `messages?` (the `commandPalette*` keys of `UiMessages`). The item type
+`CommandPaletteItem` (`id`, `title`, `group?`, `keywords?`, `icon?`, `disabled?`, `shortcut?`)
+matches `PaletteCommand` structurally, so admin-core's array can be passed as is. The focus trap,
+focus return and window-level Esc (yielding to an Esc already consumed and to a layer above) live
+in a package-internal helper (`overlayFocus.ts`, not exported) that reads banto-hub's layer markers
+(`role="dialog"`, `role="menu"`, `data-esc-layer`, `data-layer-inactive`) as they are. Layers with
+equal z-index are ordered by document order (the CSS paint order). Exporting layer helpers for
+Modal / Drawer remains phase 3 (decision 10).
 
 ### 9. Phase 3
 
