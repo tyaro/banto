@@ -9,10 +9,13 @@
  *
  * Failures and recovery (Issue #243):
  *
- * - **A failure belongs to its block.** It stays in `failedBlocks` (and
- *   `error` shows the most recent one) until that block is fetched
- *   successfully or `setParams()` starts a new query; another block's
- *   success does not clear it.
+ * - **A failure belongs to its block.** It stays in `failures` (one entry
+ *   per block, ascending) until that block is fetched successfully or
+ *   `setParams()` starts a new query; another block's success does not
+ *   clear it. `refresh()` keeps it until its retry settles (removed on
+ *   success, replaced on a new failure); `failures` is updated as each
+ *   block settles, while the published rows wait for the whole generation
+ *   (#212).
  * - **Recovery never depends on the visible range.** While the current
  *   generation has no `totalCount` yet (a failed first fetch, or a new
  *   query/refresh), a load with nothing else to fetch requests block 0, so
@@ -24,6 +27,25 @@
  * - **A request cannot hang forever.** Each block request fails after
  *   `requestTimeoutMs` (default {@link DEFAULT_WINDOWED_REQUEST_TIMEOUT_MS});
  *   its late answer is ignored, so `loading` always comes down.
+ * - A `getList` that throws synchronously, rejects with anything, or answers
+ *   with a malformed result records a failure for that block instead of
+ *   throwing out of the resource.
+ *
+ * What a failure says (Issue #344, the same as `SnapshotListResource` after
+ * #342; the shared types live in blockFetch.ts):
+ *
+ * - `'request'`: `getList` (or `getDataProvider()`) threw or rejected. A
+ *   thrown `ProviderError` (including an app's own subclass) is kept **as
+ *   the same object**; a `ListBlockError` keeps its own code; anything else
+ *   is wrapped in a `ListBlockError('request')` with the thrown value as
+ *   `cause`.
+ * - `'timeout'`, `'malformed'`: detected by the resource itself and recorded
+ *   as a `ListBlockError` with that code. Their texts come from the
+ *   `messages` option (i18n layer 1), the English defaults otherwise; a
+ *   message function that throws falls back to the default.
+ *
+ * Each failure is also reported through the registered notifier (a toast)
+ * unless the `notify` option turns that off or its predicate declines it.
  *
  * Not included on purpose: a per-generation snapshot boundary (an "as of"
  * id every block of a generation is read from). Rows added or removed
@@ -42,13 +64,16 @@
  * `$effect`/cleanup around `ensureRange()`/`dispose()`.
  */
 import {
-	DEFAULT_MALFORMED_MESSAGE,
+	detectedFailure,
 	hasTimeLimit,
 	isWritableList,
-	timeoutError,
-	toProviderError
+	requestFailure,
+	shouldNotify,
+	type ListBlockErrorFailure,
+	type ListBlockErrorOutcome,
+	type ListBlockMessages,
+	type ListBlockNotify
 } from './blockFetch';
-import { ProviderError } from './errors';
 import { onInvalidate } from './invalidate';
 import { getDataProvider, notify } from './registry.svelte';
 import type { FilterState, ListResult, SortState } from './types';
@@ -66,6 +91,14 @@ export interface CreateWindowedListResourceOptions {
 	 * `Infinity` disables the limit.
 	 */
 	requestTimeoutMs?: number;
+	/** Replaces the texts of the failures the resource detects itself (`timeout`, `malformed`). */
+	messages?: ListBlockMessages;
+	/**
+	 * Whether a failure is also reported through the registered notifier (a
+	 * toast). `false` never; a function decides per failure (one that throws
+	 * counts as `false`). Default `true`.
+	 */
+	notify?: ListBlockNotify;
 }
 
 export interface WindowedParams {
@@ -79,13 +112,13 @@ interface InFlightBlock {
 	attempt: number;
 }
 
-interface BlockFailure {
-	error: ProviderError;
+interface FailureRecord {
+	failure: ListBlockErrorFailure;
 	/** The generation the failure was recorded in (see `#implicitFirstBlock`). */
 	generation: number;
-	/** Recording order, so `error` can show the most recent failure. */
-	seq: number;
 }
+
+type Outcome<T> = { ok: true; result: ListResult<T> } | ({ ok: false } & ListBlockErrorOutcome);
 
 export class WindowedListResource<T> {
 	/** Sparse: index i holds row i once its covering block has loaded, `undefined` (a hole) otherwise. */
@@ -94,30 +127,27 @@ export class WindowedListResource<T> {
 	/** True while any block is in flight. */
 	loading = $state(false);
 	/**
-	 * The most recent failure still outstanding (see `failedBlocks`), `null`
-	 * when every block that was requested has loaded.
+	 * One entry per block whose latest request failed and that has not loaded
+	 * since, ascending by block. Emptied by `setParams()`; kept through
+	 * `refresh()` until the retried block settles (a success removes it, a
+	 * new failure replaces it).
 	 */
-	error: ProviderError | null = $state(null);
-	/**
-	 * Indexes of the blocks whose latest request failed and that have not
-	 * loaded since, ascending. Emptied by `setParams()`; kept through
-	 * `refresh()` until the retried block loads.
-	 */
-	failedBlocks: number[] = $state([]);
+	failures: readonly ListBlockErrorFailure[] = $state([]);
 	params: WindowedParams = $state({ sort: [], filters: [] });
 
 	#resource: string;
 	#blockSize: number;
 	#requestTimeoutMs: number;
+	#messages: ListBlockMessages;
+	#notify: ListBlockNotify;
 	#unsubscribe: () => void;
 
 	#loadedBlocks = new Set<number>();
 	#inFlightBlocks = new Map<number, InFlightBlock>();
-	#failures = new Map<number, BlockFailure>();
+	#failures = new Map<number, FailureRecord>();
 	#attempts = 0;
-	#failureSeq = 0;
 	// Bumped by setParams()/refresh(). A block response only writes state
-	// (rows/totalCount/error) if its generation still matches - the same
+	// (rows/totalCount/failures) if its generation still matches - the same
 	// stale-response guard as ListResource's request token (list.svelte.ts),
 	// applied per block instead of per whole-list load().
 	#generation = 0;
@@ -135,6 +165,8 @@ export class WindowedListResource<T> {
 		this.#resource = resource;
 		this.#blockSize = options.blockSize ?? 200;
 		this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_WINDOWED_REQUEST_TIMEOUT_MS;
+		this.#messages = { ...options.messages };
+		this.#notify = options.notify ?? true;
 		this.#unsubscribe = onInvalidate(resource, () => {
 			void this.refresh();
 		});
@@ -225,7 +257,7 @@ export class WindowedListResource<T> {
 
 	async #fetchBlock(block: number, generation: number, attempt: number): Promise<void> {
 		const offset = block * this.#blockSize;
-		let outcome: { ok: true; result: ListResult<T> } | { ok: false; error: ProviderError };
+		let outcome: Outcome<T>;
 		// The provider is still called synchronously (callers rely on the
 		// request being issued before ensureRange() returns), but a
 		// synchronous throw - from getDataProvider() or a custom getList() -
@@ -247,7 +279,9 @@ export class WindowedListResource<T> {
 			const result = await this.#withTimeout(request);
 			outcome = { ok: true, result };
 		} catch (err) {
-			outcome = { ok: false, error: toProviderError(err) };
+			// A timeout arrives here as the ListBlockError('timeout') that
+			// #withTimeout rejected with, and keeps its code.
+			outcome = { ok: false, ...requestFailure(err) };
 		}
 
 		// Superseded by setParams()/refresh() (which also dropped this block
@@ -260,10 +294,7 @@ export class WindowedListResource<T> {
 		// writing below - that would skip the settlement at the end and leave
 		// `loading` up - so it is recorded as this block's failure instead.
 		if (outcome.ok && !isWritableList(outcome.result, offset)) {
-			outcome = {
-				ok: false,
-				error: new ProviderError({ kind: 'other', message: DEFAULT_MALFORMED_MESSAGE })
-			};
+			outcome = { ok: false, ...detectedFailure('malformed', this.#messages) };
 		}
 
 		if (outcome.ok) {
@@ -273,20 +304,26 @@ export class WindowedListResource<T> {
 			try {
 				this.#writeBlock(block, offset, outcome.result);
 			} catch (err) {
-				outcome = { ok: false, error: toProviderError(err) };
+				// Unreachable after the check above; an answer that could not
+				// be written is a malformed one.
+				const { code, error } = detectedFailure('malformed', this.#messages);
+				error.cause = err;
+				outcome = { ok: false, code, error };
 			}
 		}
+		let failure: ListBlockErrorFailure | null = null;
 		if (!outcome.ok) {
-			this.#failures.set(block, { error: outcome.error, generation, seq: ++this.#failureSeq });
+			failure = { block, kind: 'error', code: outcome.code, error: outcome.error };
+			this.#failures.set(block, { failure, generation });
 		}
 		this.#publishFailures();
 		this.#settleLoading();
-		// Last, after the state is consistent: the notifier is app code and
-		// may throw; that must neither leave `loading` up nor reject the
-		// promise ensureRange()/refresh() callers await.
-		if (!outcome.ok) {
+		// Last, after the state is consistent: the predicate and the notifier
+		// are app code and may throw; that must neither leave `loading` up nor
+		// reject the promise ensureRange()/refresh() callers await.
+		if (failure) {
 			try {
-				notify('error', outcome.error.message);
+				if (shouldNotify(this.#notify, failure)) notify('error', failure.error.message);
 			} catch {
 				// Ignored on purpose (see above).
 			}
@@ -326,7 +363,7 @@ export class WindowedListResource<T> {
 		if (!hasTimeLimit(ms)) return request;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timeout = new Promise<never>((_, reject) => {
-			timer = setTimeout(() => reject(timeoutError(ms)), ms);
+			timer = setTimeout(() => reject(detectedFailure('timeout', this.#messages, ms).error), ms);
 		});
 		return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
 	}
@@ -345,13 +382,11 @@ export class WindowedListResource<T> {
 		}
 	}
 
+	/** Publish `failures`, ascending by block. Decides from the private map only. */
 	#publishFailures(): void {
-		let latest: BlockFailure | null = null;
-		for (const failure of this.#failures.values()) {
-			if (!latest || failure.seq > latest.seq) latest = failure;
-		}
-		this.error = latest?.error ?? null;
-		this.failedBlocks = [...this.#failures.keys()].sort((a, b) => a - b);
+		this.failures = [...this.#failures.values()]
+			.map((record) => record.failure)
+			.sort((a, b) => a.block - b.block);
 	}
 
 	/**

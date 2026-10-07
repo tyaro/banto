@@ -133,6 +133,8 @@
   "items.notFoundDesc": "It may have been deleted, or the URL may be incorrect.",
   "items.loadError": "Failed to load",
   "items.loadErrorDesc": "Check your connection and reload.",
+  "items.loadTimeout": "The server did not answer within {seconds} seconds.",
+  "items.malformedResult": "The server's answer was not in the expected form.",
   "items.deleteConfirm": "Delete this record?",
   "items.reportBack": "← Back to products",
   "items.filterExcludedNotice": "Item #{id} does not match the current filter",

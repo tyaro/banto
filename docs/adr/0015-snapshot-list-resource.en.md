@@ -209,3 +209,80 @@ v5.0.0 (major) without compatibility aliases.
   Its `refresh()` keeps the shown rows (#212) through a different state
   machine, and its current users (server-mode CRUD grids) do not yet need
   to tell failure kinds apart, so the breaking change was not widened.
+
+---
+
+## Addendum (2026-10-07, Issue #344): `WindowedListResource` failures take the same shape, and the type names become shared
+
+This closes the gap left in the consequences of the 2026-10-06 addendum. The
+decisions of the body and of that addendum are unchanged. By owner decision
+(2026-10-07) backward compatibility is not kept and this ships as v6.0.0
+(major). No compatibility aliases are kept and no migration guide is written.
+
+### Context
+
+- `WindowedListResource` still had `error` (the most recent failure),
+  `failedBlocks` and fixed English texts, so its failures were told apart
+  differently from `SnapshotListResource`'s. CRUD screens showed the fixed
+  English text in their toast with no way to replace it.
+- The type names chosen in the 2026-10-06 addendum (`SnapshotListError` and
+  so on) are tied to `SnapshotListResource`; using them for
+  `WindowedListResource` would name its failures after a class it is not.
+
+### Decision
+
+- `WindowedListResource` reports failures as `failures` (ascending by block,
+  one entry per block, `{ block, kind: 'error', code, error }`). `error` and
+  `failedBlocks` were removed. An entry goes away as before (its block loads,
+  or `setParams()`).
+- `refresh()` keeps the shown rows as before (#212): rows and count stay
+  until every block of the generation has settled, while `failures` is
+  updated as each retried block settles (removed on success, replaced on a
+  new failure). Holding failures back with the rows would hide a failed
+  retry until the generation ends and keep showing the old failure. Recording
+  a failure writes no rows, so it cannot cause the #212 problem (a transient
+  hole making the edited row look gone).
+- Kinds and handling follow the 2026-10-06 addendum. A `ProviderError` that
+  `getList` (or `getDataProvider()`) throws is kept as the same object
+  (`'request'`), a `ListBlockError` keeps its own `code`, anything else is
+  wrapped in `ListBlockError('request')` with the thrown value as `cause`.
+  Timeouts and malformed answers are `'timeout'` and `'malformed'`. The
+  resource takes `messages` (`timeout(ms)`, `malformed()`) and `notify`
+  (default `true`, `false`, or a predicate). It never creates
+  `'boundaryMismatch'` (it has no boundary).
+- The type names are shared by both resources: `SnapshotListError` ->
+  `ListBlockError`, `isSnapshotListError` -> `isListBlockError`,
+  `SnapshotListFailureCode` -> `ListBlockFailureCode`,
+  `SnapshotListErrorFailure` -> `ListBlockErrorFailure`. Texts use the shared
+  `ListBlockMessages` (`timeout`, `malformed`; defaults
+  `defaultListBlockMessages`), which `SnapshotListMessages` extends with
+  `boundaryMismatch`. `SnapshotListFailure`, `SnapshotListExpiredFailure`,
+  `SnapshotListMessages` and `defaultSnapshotListMessages` keep their names,
+  since expiry and boundary mismatch belong to `SnapshotListResource` only.
+  Handling a thrown value, resolving texts and deciding `notify` live in one
+  place, `blockFetch.ts`, shared by both resources.
+
+### Alternatives considered
+
+- **A separate `WindowedListError` (rejected)**: two sets of identically
+  shaped classes, code types and guards. Apps would need a different
+  `instanceof` per resource, and a data source used by both would see one
+  resource treat the other's error as `'request'` instead of keeping its
+  `code`.
+- **Keep the `SnapshotListError` name and use it in `WindowedListResource`
+  too (rejected)**: a smaller break, but failures of a resource without a
+  boundary would carry the `SnapshotList` name and mislead readers. v6.0.0
+  breaks anyway, so the name is fixed now.
+- **A narrower code type per resource (`WindowedListResource` without
+  `'boundaryMismatch'`) (rejected)**: a `ListBlockError` thrown by the data
+  source keeps its `code`, so `'boundaryMismatch'` can appear there too; the
+  type would be narrower than the values that can occur.
+- **Hold failures during `refresh()` and publish them with the rows at the
+  end of the generation (rejected)**: see the reasoning in the decision.
+
+### Consequences
+
+- The body's consequence "keep them aligned on failures" now holds. From now
+  on, a change to the failure shape changes both resources together.
+- banto-industrial does not use `WindowedListResource`; the renaming affects
+  only its tests that use `isSnapshotListError`.

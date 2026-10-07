@@ -81,16 +81,21 @@ export {
 	type WindowedParams
 } from './windowed.svelte';
 export {
+	ListBlockError,
+	isListBlockError,
+	defaultListBlockMessages,
+	type ListBlockErrorFailure,
+	type ListBlockFailureCode,
+	type ListBlockMessages,
+	type ListBlockNotify
+} from './blockFetch';
+export {
 	SnapshotListResource,
 	createSnapshotListResource,
-	SnapshotListError,
-	isSnapshotListError,
 	defaultSnapshotListMessages,
 	type CreateSnapshotListResourceOptions,
 	type SnapshotListFailure,
-	type SnapshotListErrorFailure,
 	type SnapshotListExpiredFailure,
-	type SnapshotListFailureCode,
 	type SnapshotListMessages,
 	type SnapshotListFetcher,
 	type SnapshotListRequest,

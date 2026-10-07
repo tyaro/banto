@@ -133,6 +133,8 @@
   "items.notFoundDesc": "削除されたか、URLが正しくない可能性があります。",
   "items.loadError": "読み込みに失敗しました",
   "items.loadErrorDesc": "通信状態を確認し、再読み込みしてください。",
+  "items.loadTimeout": "サーバーが{seconds}秒以内に応答しませんでした。",
+  "items.malformedResult": "サーバーの応答の形が正しくありませんでした。",
   "items.deleteConfirm": "削除しますか？",
   "items.reportBack": "← 商品一覧へ戻る",
   "items.filterExcludedNotice": "商品 #{id} は現在の絞り込み条件に当てはまりません",
