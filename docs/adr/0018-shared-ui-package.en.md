@@ -160,7 +160,7 @@ so they are written with the recommended options).
   that way. Adding a `types` condition should be a separate change across all packages.
 - The phase-1 components are `.svelte` and `.ts` only, with no `.svelte.ts`. So the package is
   **not** listed in `optimizeDeps.exclude` (rule `optimizedeps-svelte-source` would flag it as
-  extra). When phase 2 adds a `.svelte.ts` (for example a toast store), that PR lists it in the
+  extra). When phase 2 adds a `.svelte.ts` (for example a toast store), that same PR lists it in both the
   exclude and the fixture (the rules catch omissions).
 
 ### 2. Phase-1 public API
@@ -208,9 +208,12 @@ core → option dependency cannot arise.
   (stating that phase 1 is out of scope).
 - External-consumer fixture: not required by the rule (no `.svelte.ts`), but add `@banto/ui` to
   its dependencies and to the `+page.svelte` imports (not to the exclude) to confirm that the Git
-  dependency with `path:packages/ui` installs and passes `svelte-check` and `vite build`. The
-  fixture's ref points at the current tag, so this goes into the ref-bump PR after a tag that
-  contains `@banto/ui` (the "bump the fixture ref after tagging" step in publishing.md).
+  dependency with `path:packages/ui` installs and passes `svelte-check` and `vite build`. This
+  goes into the **phase-1 PR**: the workflow `.github/workflows/external-consumer.yml` rewrites
+  the fixture refs to the PR head SHA before install, so the Git-subdirectory package,
+  `svelte-check` and the Vite build are verified before the tag is published. Only the committed
+  ref update to the new tag remains for the post-tag PR (the "bump the fixture ref after
+  tagging" step in publishing.md).
 - Because this ADR names `@banto/ui`, it goes into `DOCS_PACKAGE_REF_ALLOWLIST` in
   `verify-architecture.mjs` with a reason until phase 1. Remove it once the package exists.
 
@@ -340,8 +343,8 @@ Before phase 1:
    it explicitly everywhere (recommended) / (b) make `label` required.
 4. **Freeze the public API at the current props?** (`disabled` on `IconButton` and the like in a
    later minor.)
-5. **Version**: land phase 1 before the v6.0.0 tag to ship it in v6.0.0, or make it v6.1.0?
-   -> Decided: v6.1.0.
+5. **Version**: v6.1.0 (v6.0.0 was published on 2026-10-07, so phase 1 ships in v6.1.0 or the
+   next available minor).
 6. **New machine check**: add the rule limiting packages' bare imports to `svelte` and `svelte/*`
    (+ `$app/`, `@tauri-apps/`)? (Recorded in ADR-0008's ledger.)
 7. **Showcase**: no new demo page; are the existing pages plus the package README enough?
