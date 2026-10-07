@@ -24,7 +24,7 @@
 
 ### その他
 
-- fix(admin-template): `apps/admin-template/core` に `build.rs` を足し、`migrations-sqlite`・`migrations-postgres` に `cargo:rerun-if-changed` を出すようにした（#340）。安定版の `sqlx::migrate!` は migration ファイルの変更をビルドの依存として追跡しないため、SQL だけを変えた増分ビルドが古い本文を埋め込んだバイナリを作りうる状態だった。リリース済みの migration ファイルは変えていない（`verify:migrations` 通過）。`sqlx::migrate!` を使う crate は、このリポジトリではこの crate だけ。
+- fix(admin-template): `apps/admin-template/core` に `build.rs` を足し、`migrations-sqlite`・`migrations-postgres` に `cargo:rerun-if-changed` を出すようにした（#340）。安定版の `sqlx::migrate!` は既存の migration ファイルを `include_str!` で追跡するが、新しい migration ファイルの追加は検知しないため、migration を足しただけの増分ビルドがそれを含まないバイナリを作りうる状態だった。リリース済みの migration ファイルは変えていない（`verify:migrations` 通過）。`sqlx::migrate!` を使う crate は、このリポジトリではこの crate だけ。
   - 派生アプリへの影響: 経路 B は、admin-template の `core` をコピーしたアプリ（banto-industrial など）は `apps/admin-template/core/build.rs` もコピーし、自分の migration のディレクトリ名に合わせる（banto-industrial は `Migrator::dangerous_set_table_name` で独自の migration のディレクトリを使うので、そのディレクトリを `rerun-if-changed` に書く）。scaffold の各プリセットは `core` を残すので `build.rs` も残る。経路 A・C は変更なし。
 
 ## [5.1.0] - 2026-10-07
