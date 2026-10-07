@@ -121,6 +121,19 @@
 	--banto-shadow-md: 0 2px 8px rgb(0 0 0 / 0.1);
 	--banto-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.18);
 
+	/* Overlay scrim and stacking layers (ADR-0018 §8, phase 2a). The scrim is
+     the dimming layer behind modal-like overlays (CommandPalette, later
+     Modal/Drawer); one value for light, dark and glass (no override below).
+     The z-index tokens name the layers apps used to hard-code - values are
+     unchanged, so stacking order is too. */
+	--banto-scrim: rgb(0 0 0 / 0.35);
+	--banto-z-header: 100;
+	--banto-z-sidebar-scrim: 850;
+	--banto-z-sidebar: 900;
+	--banto-z-modal: 900;
+	--banto-z-overlay: 1000;
+	--banto-z-toast: 1000;
+
 	/* Control dimensions (visual-refresh-plan.md 付録A.4; overridden by the
      density axis, see [data-banto-density='compact'] below). */
 	--banto-control-height: 36px;

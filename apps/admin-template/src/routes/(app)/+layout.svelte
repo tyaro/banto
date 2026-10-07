@@ -273,7 +273,7 @@
 			display: block;
 			position: fixed;
 			inset: 0;
-			z-index: 850;
+			z-index: var(--banto-z-sidebar-scrim);
 			margin: 0;
 			padding: 0;
 			border: none;

@@ -232,7 +232,7 @@
 		   and the global CommandPalette/ToastHost layers (1000). */
 		position: sticky;
 		top: 0;
-		z-index: 100;
+		z-index: var(--banto-z-header);
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
