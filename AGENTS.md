@@ -2,8 +2,8 @@
 
 > English: [AGENTS.en.md](AGENTS.en.md)
 
-Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動く汎用管理画面
-テンプレート**。Rust（axum + sqlx。SQLite 既定・PostgreSQL 対応）バックエンドと SvelteKit（Svelte 5 runes）
+Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共有できる業務アプリ開発
+テンプレート**（Tauri デスクトップ + LAN ブラウザ配信の二形態で同じ画面・業務処理が動く）。Rust（axum + sqlx。SQLite 既定・PostgreSQL 対応）バックエンドと SvelteKit（Svelte 5 runes）
 フロントのモノレポ。利用者はこれをコピーして個別アプリを作る。
 
 このファイルは「どのタスクで何を読むか」の索引。中身の規約は各ドキュメントにある。

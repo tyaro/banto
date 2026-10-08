@@ -43,11 +43,11 @@ DBはSQLiteを標準とし、PostgreSQLにも対応しています。
 Banto は業務アプリに絞ったテンプレートで、汎用の管理画面ジェネレータではない。
 最初の1画面で「自分向きか」を判断できるよう、正直に開示する。
 
-| 向いている人                                                                                                                                                                | 向いていない人                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **PC1台のローカルアプリから始めたい**人。ログイン無しの小さなアプリで始めて、育ったらログイン運用や LAN 内の共有へ進める（[no-login-app.md](docs/recipes/no-login-app.md)） | 公開インターネット向けの Web アプリが作りたい人（LAN 配信は信頼できる LAN 内が前提）              |
-| **デスクトップと LAN ブラウザの両方**で同じ画面を使いたい業務系（現場端末はデスクトップ、事務所はブラウザ）                                                                 | React / Electron の人材・エコシステムに乗りたい人                                                 |
-| 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人。Tauri v2 + SvelteKit + Rust の構成で AI 併走で量産したい人                             | 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL 単体には V2 で対応済み） |
+| 向いている人                                                                                                                                                                | 向いていない人                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **PC1台のローカルアプリから始めたい**人。ログイン無しの小さなアプリで始めて、育ったらログイン運用や LAN 内の共有へ進める（[no-login-app.md](docs/recipes/no-login-app.md)） | 公開インターネット向けを主目的にする人（標準は信頼できる LAN 内の HTTP 配信。外部公開は TLS 終端プロキシの前提と運用ルールが付く） |
+| **デスクトップと LAN ブラウザの両方**で同じ画面を使いたい業務系（現場端末はデスクトップ、事務所はブラウザ）                                                                 | React / Electron の人材・エコシステムに乗りたい人                                                                                  |
+| 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人。Tauri v2 + SvelteKit + Rust の構成で AI 併走で量産したい人                             | 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL 単体には V2 で対応済み）                                  |
 
 **運用上の前提**:
 
@@ -57,13 +57,7 @@ Banto は業務アプリに絞ったテンプレートで、汎用の管理画�
   （`BANTO_DB` を `postgres://` にすると切替。バックアップは SQLite 専用。
   [docs/recipes/database-backup.md](docs/recipes/database-backup.md)）。
 
-**言語**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で切り替えられる
-（Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の表示ロケールは
-日本語。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は注入された解決済み
-文字列で受け取る（i18n は app 層のみ、[conventions §13](docs/conventions.md#i18n-messages)）。
-単一言語の display 系アプリ（カンバン・常設ダッシュボード等）は
-`apps/admin-template/package.json` の `banto.i18n` を `"raw"` にすると、この対訳キー方式を
-opt-out して UI 文言を直書きできる（既定 `"keys"`、display-preset-plan.md D1-c）。
+**言語**: UI は英語と日本語に対応し、設定画面で切り替えられる（詳細は「主な機能」の i18n 項）。
 
 ## まず試す: ブラウザデモ（InMemory）
 
@@ -91,8 +85,103 @@ DB（SQLite）に保存される本来の形で動かすには、Rust を入れ�
 ただし**新しい CRUD リソースを1本通す**には、両経路（REST/Tauri）・認可対称テスト・
 ページ・ナビ等を含む**9ステップ**が必要（上の3ファイルはその入口）。正式な手順は
 [docs/recipes/add-resource.md](docs/recipes/add-resource.md) のチェックリストに従う
-（AI にそのまま指示として渡せる）。自分のアプリを作り始める順序は
+（AI にそのまま指示として渡せる）。自分のアプリを作り始める順序は次節
 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)。
+
+## テンプレートから自分のアプリを作る
+
+Banto は**コピーして使う**前提のテンプレート（[docs/template-scope.md §1](docs/template-scope.md)）。
+作り始める順序は **コピー → リネーム → プリセット選択（オプション資産の削除）→ 業務画面・処理の
+実装（`items` の差し替え）→ 配信設定**。各段の要点とコマンドだけをここに置き、全量は
+`docs/recipes/` の各レシピにある。
+
+### 1. コピーとリネーム
+
+リポジトリをコピー（GitHub の「Use this template」、または `git clone` 後に
+`rm -rf .git && git init`）し、リネームスクリプトで名称・識別子を一括書き換えする:
+
+```sh
+node scripts/rename.mjs \
+  --name my-app \
+  --title "My App" \
+  --identifier com.example.myapp \
+  --repo https://github.com/me/my-app   # 省略可
+# --dry-run を付けると書き換え内容の事前確認のみ
+pnpm install   # ワークスペース名変更の反映
+```
+
+書き換える箇所の全量（`package.json`・`tauri.conf.json`・表示文言・OS keyring のサービス名・
+Web マニフェスト等）、スクリプトが**やらない**こと（アイコン・LICENSE・visual スナップショット）、
+**リネームしてはいけない** `X-Banto-Client` CSRF ヘッダの注意は
+[docs/recipes/rename.md](docs/recipes/rename.md)。
+
+### 2. プリセットを選ぶ（オプション資産の削除）
+
+実装に入る前に、残す構成を決める。「同梱するが削除できる」ことが保証されたオプション資産
+（[docs/template-scope.md §3](docs/template-scope.md)）は、`pnpm scaffold` のプリセットで
+まとめて外す。`display` は `items` デモとダッシュボードも消すので、次の「実装」より先に
+選んでおく方が自然:
+
+```sh
+pnpm scaffold --preset <preset>   # minimal | standard | full | display
+pnpm install                      # 外れた依存の反映
+# --interactive で資産ごとに対話選択、--dry-run で変更内容の確認のみ
+```
+
+| プリセット | 残すもの                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `minimal`  | コアのみ（charts / dock / Glass / コマンドパレット / 添付 / 帳票 / ツリーを外す）                                                                                                          |
+| `standard` | ダッシュボード体験（charts / dock / Glass / コマンドパレット）を残し、添付 / 帳票 / ツリーを外す                                                                                           |
+| `full`     | 何も外さない（出荷状態）                                                                                                                                                                   |
+| `display`  | 表示専用アプリ向け。`minimal` に加えて `items` 一式・users/audit-log **画面**・`/dashboard` を外し、`/monitor` と閲覧公開・キオスク・`banto.i18n = "raw"` の既定を**足す**唯一のプリセット |
+
+資産ごとの手動手順（scaffold が触らない `src-tauri` 側のポップアウト配線・システムメトリクス
+`sysinfo` を含む）と `--preset display` の詳細（外れるもの・初回起動の既定・セキュリティ注意）は
+[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)。
+
+### 3. 業務画面・処理を実装する（`items` の差し替え）
+
+サンプルの `items`（商品）は一覧・詳細・新規作成・CSV インポート/エクスポート・ダッシュボード集計を
+貫通させたお手本。リソースのページは動的ルートによる自動生成ではなく、**`items` の
+ルート一式をコピーして書き換える**のがこのテンプレートの正式な方式（2026-07-18 決定）。
+**正式な手順・層別の関与ファイル全量・`sqlx::migrate!` を同一 DB で2クレート以上使えない
+注意は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)**（チェックリスト形式。
+AI に委譲するときはレシピをそのまま指示に使える）。
+`display` プリセットで `items` を外した場合の読み替えは
+[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)。
+
+### 4. 配信設定（LAN 内への共有）
+
+PC1台で使う間は何も設定しない（組み込み Web サーバは既定で無効）。他端末のブラウザから
+同じ画面を使いたくなったら、設定画面から LAN アクセスを有効化する。手順と注意は後述の
+[LANアクセス（組み込みWebサーバ）](#lanアクセス組み込みwebサーバ)、表示専用アプリ向けの
+ログイン無し閲覧公開は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
+
+> **注: §2 で `display` プリセットを選んだ場合**は、初回起動から LAN 待ち受け（`0.0.0.0`）と
+> ログイン無しの閲覧公開が有効になる（`FIRST_BOOT_SETTINGS` のシード。
+> [詳細](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)）。PC1台専用で
+> 使うなら、初回起動の前に `apps/admin-template/core/src/first_boot.rs` の
+> `FIRST_BOOT_SETTINGS` で **`server.enabled` を `"false"` にする**（または `server.*` の
+> 3 行を消す）。`server.viewer_public` だけを `"false"` にして `server.enabled` を残すと、
+> シードされる `auth.disabled=true` との組み合わせ（認証無効 + LAN 有効 + 閲覧公開 OFF）が
+> 設定画面では拒否される唯一の組み合わせになるので避ける。初回起動後なら、設定 →
+> 「サーバ・接続」→「LANアクセス（組み込みWebサーバ）」を OFF にして「保存して適用」すれば
+> 戻せる。
+
+### 5. 別リポジトリから git 依存として消費する場合
+
+§1〜4 は「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」手順。別リポジトリ
+（例: 社内の案件アプリ）がコピーせずに `@banto/*`/`banto-*` を git 依存として参照する構成も
+取れる。記法は [docs/publishing.md](docs/publishing.md)、追加で必要になる作業（`workspace:*`
+→ git 依存、`path` → git タグ依存、`[workspace.package].repository`、Vite `optimizeDeps.exclude`
+の移植、e2e の移植等）は
+[docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)。
+
+### 6. 新しい版への更新
+
+依存タグの上げ方、コピーしたテンプレート部分の取り込み、DB 移行、基準版の記録は
+[docs/upgrading.md](docs/upgrading.md)。**依存タグを上げるだけではコピー済みのテンプレートは
+更新されない。**
 
 ## 目的別の入口
 
@@ -100,7 +189,7 @@ DB（SQLite）に保存される本来の形で動かすには、Rust を入れ�
 
 | やりたいこと                                                                          | 読む文書                                                                                                                                                                   |
 | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| テンプレートをコピーして自分のアプリにする（リネーム → プリセット選択 → 実装 → 配信） | 本書 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                             |
+| テンプレートをコピーして自分のアプリにする（リネーム → プリセット選択 → 実装 → 配信） | 前節 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                             |
 | 名称・識別子をリネームする                                                            | [docs/recipes/rename.md](docs/recipes/rename.md)                                                                                                                           |
 | CRUD リソースを追加する / デモの `items` を差し替える                                 | [docs/recipes/add-resource.md](docs/recipes/add-resource.md)                                                                                                               |
 | 不要なオプション資産（dock/charts/添付/帳票/ツリー等）を外す                          | [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)（`pnpm scaffold --preset`）                                                               |
@@ -182,6 +271,14 @@ DB（SQLite）に保存される本来の形で動かすには、Rust を入れ�
   バックアップ/リストアは SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1、
   [docs/recipes/database-backup.md](docs/recipes/database-backup.md)。
 - **Glass テーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
+- **UI の i18n（英語 / 日本語）**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で
+  切り替えられる（Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の表示
+  ロケールは日本語。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は注入された解決済み
+  文字列で受け取る（i18n は app 層のみ、[conventions §13](docs/conventions.md#i18n-messages)）。
+  単一言語の display 系アプリ（カンバン・常設ダッシュボード等）は
+  `apps/admin-template/package.json` の `banto.i18n` を `"raw"` にすると、この対訳キー方式を
+  opt-out して UI 文言を直書きできる（既定 `"keys"`、
+  [display-preset-plan.md](docs/design/display-preset-plan.md) D1-c）。
 - **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、添付ファイル/画像管理
   （`@banto/attachments`、M20）、バーコード/QR スキャナ入力（`@banto/scan-wedge`、M21）、
   ツリービュー（`@banto/tree-svelte`）。帳票・添付・ツリービューは削除可能なデモ配線付き
@@ -233,94 +330,6 @@ Rust クレート（`crates/`、MIT）:
 アプリ（`apps/admin-template/`）: Tauri v2 + SvelteKit の管理画面テンプレート本体。
 `core/`（tauri 非依存のサービス層 `admin-template-core`）と `src-tauri/`（薄いコマンド
 アダプタ）に分かれる。
-
-## テンプレートから自分のアプリを作る
-
-Banto は**コピーして使う**前提のテンプレート（[docs/template-scope.md §1](docs/template-scope.md)）。
-作り始める順序は **コピー → リネーム → プリセット選択（オプション資産の削除）→ 業務画面・処理の
-実装（`items` の差し替え）→ 配信設定**。各段の要点とコマンドだけをここに置き、全量は
-`docs/recipes/` の各レシピにある。
-
-### 1. コピーとリネーム
-
-リポジトリをコピー（GitHub の「Use this template」、または `git clone` 後に
-`rm -rf .git && git init`）し、リネームスクリプトで名称・識別子を一括書き換えする:
-
-```sh
-node scripts/rename.mjs \
-  --name my-app \
-  --title "My App" \
-  --identifier com.example.myapp \
-  --repo https://github.com/me/my-app   # 省略可
-# --dry-run を付けると書き換え内容の事前確認のみ
-```
-
-書き換える箇所の全量（`package.json`・`tauri.conf.json`・表示文言・OS keyring のサービス名・
-Web マニフェスト等）、スクリプトが**やらない**こと（アイコン・LICENSE・visual スナップショット）、
-**リネームしてはいけない** `X-Banto-Client` CSRF ヘッダの注意は
-[docs/recipes/rename.md](docs/recipes/rename.md)。
-
-### 2. プリセットを選ぶ（オプション資産の削除）
-
-実装に入る前に、残す構成を決める。「同梱するが削除できる」ことが保証されたオプション資産
-（[docs/template-scope.md §3](docs/template-scope.md)）は、`pnpm scaffold` のプリセットで
-まとめて外す。`display` は `items` デモとダッシュボードも消すので、次の「実装」より先に
-選んでおく方が自然:
-
-```sh
-pnpm scaffold --preset <preset>   # minimal | standard | full | display
-pnpm install                      # 外れた依存の反映
-# --interactive で資産ごとに対話選択、--dry-run で変更内容の確認のみ
-```
-
-| プリセット | 残すもの                                                                                                                                                                                   |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `minimal`  | コアのみ（charts / dock / Glass / コマンドパレット / 添付 / 帳票 / ツリーを外す）                                                                                                          |
-| `standard` | ダッシュボード体験（charts / dock / Glass / コマンドパレット）を残し、添付 / 帳票 / ツリーを外す                                                                                           |
-| `full`     | 何も外さない（出荷状態）                                                                                                                                                                   |
-| `display`  | 表示専用アプリ向け。`minimal` に加えて `items` 一式・users/audit-log **画面**・`/dashboard` を外し、`/monitor` と閲覧公開・キオスク・`banto.i18n = "raw"` の既定を**足す**唯一のプリセット |
-
-資産ごとの手動手順（scaffold が触らない `src-tauri` 側のポップアウト配線・システムメトリクス
-`sysinfo` を含む）と `--preset display` の詳細（外れるもの・初回起動の既定・セキュリティ注意）は
-[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)。
-
-### 3. 業務画面・処理を実装する（`items` の差し替え）
-
-サンプルの `items`（商品）は一覧・詳細・新規作成・CSV インポート/エクスポート・ダッシュボード集計を
-貫通させたお手本。リソースのページは動的ルートによる自動生成ではなく、**`items` の
-ルート一式をコピーして書き換える**のがこのテンプレートの正式な方式（2026-07-18 決定）。
-**正式な手順・層別の関与ファイル全量・`sqlx::migrate!` を同一 DB で2クレート以上使えない
-注意は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)**（チェックリスト形式。
-AI に委譲するときはレシピをそのまま指示に使える）。
-`display` プリセットで `items` を外した場合の読み替えは
-[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)。
-
-### 4. 配信設定（LAN 内への共有）
-
-PC1台で使う間は何も設定しない（組み込み Web サーバは既定で無効）。
-**例外: §2 で `display` プリセットを選んだ場合は、初回起動から LAN 待ち受け（`0.0.0.0`）と
-ログイン無しの閲覧公開が有効になる**。PC1台専用で使うなら、初回起動の前に
-`apps/admin-template/core/src/first_boot.rs` の `FIRST_BOOT_SETTINGS` から
-`server.enabled` / `server.bind` / `server.viewer_public` の既定を変更する
-（[詳細](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)）。他端末のブラウザから
-同じ画面を使いたくなったら、設定画面から LAN アクセスを有効化する。手順と注意は下の
-[LANアクセス（組み込みWebサーバ）](#lanアクセス組み込みwebサーバ)、表示専用アプリ向けの
-ログイン無し閲覧公開は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
-
-### 5. 別リポジトリから git 依存として消費する場合
-
-§1〜4 は「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」手順。別リポジトリ
-（例: 社内の案件アプリ）がコピーせずに `@banto/*`/`banto-*` を git 依存として参照する構成も
-取れる。記法は [docs/publishing.md](docs/publishing.md)、追加で必要になる作業（`workspace:*`
-→ git 依存、`path` → git タグ依存、`[workspace.package].repository`、Vite `optimizeDeps.exclude`
-の移植、e2e の移植等）は
-[docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)。
-
-### 6. 新しい版への更新
-
-依存タグの上げ方、コピーしたテンプレート部分の取り込み、DB 移行、基準版の記録は
-[docs/upgrading.md](docs/upgrading.md)。**依存タグを上げるだけではコピー済みのテンプレートは
-更新されない。**
 
 ## 開発
 

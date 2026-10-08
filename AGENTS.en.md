@@ -2,8 +2,10 @@
 
 > The Japanese [`AGENTS.md`](AGENTS.md) is the source of truth; this English version follows it. If they diverge, the Japanese wins.
 
-Banto (番頭) is a **general-purpose admin-UI template that runs in two forms:
-a Tauri desktop app and a browser UI served over the LAN**. It is a monorepo
+Banto (番頭) is a **template for building line-of-business apps that start on
+a single PC and can later be shared to browsers on the LAN** (the same screens
+and logic run in two forms: a Tauri desktop app and a browser UI served over the
+LAN). It is a monorepo
 with a Rust backend (axum + sqlx; SQLite by default, PostgreSQL supported) and
 a SvelteKit (Svelte 5 runes) frontend. Users copy it to build their own apps.
 

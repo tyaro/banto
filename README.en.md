@@ -138,6 +138,7 @@ node scripts/rename.mjs \
   --identifier com.example.myapp \
   --repo https://github.com/me/my-app   # optional
 # add --dry-run to preview the changes first
+pnpm install   # pick up the workspace rename
 ```
 
 Next, drop the optional assets (dock layout, charts, glass theme, command
