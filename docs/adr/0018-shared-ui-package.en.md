@@ -2,7 +2,7 @@
 
 > 日本語: [0018-shared-ui-package.md](0018-shared-ui-package.md)
 
-- Status: Accepted (phase-1 and phase-2 decision points)
+- Status: Accepted (phases 1-3 done; Modal / Drawer and the layering helpers are deferred per decision 10)
 - Date: 2026-10-07
 - Related: Issue #220 / [conventions.md](../conventions.en.md) §4, §5, §9, §13, §14 /
   [ADR-0002](0002-minimal-dependencies.en.md), [ADR-0005](0005-i18n-paraglide.en.md),
@@ -244,7 +244,8 @@ upgrading.md gets the steps).
 ### 8. Phase-2 reconciliation (settled by the owner on 2026-10-07)
 
 - **Menu components**: move as is. Callers already pass `label`. Keep relying on the `popover`
-  API (decision 12). Moving banto-hub's `TreeContextMenu` onto `Menu` is phase 3.
+  API (decision 12). Whether banto-hub's `TreeContextMenu` moves onto `Menu` is decided in phase 3
+  (decided on 2026-10-08: it does not; see §9).
 - **CommandPalette**: the package holds only the **presentation and interaction** component. It
   receives the command list, a search function, execution, a close request and text (`items`,
   `search(query) => items`, `onExecute(item)`, `onClose()`, `messages`) and does not import
@@ -282,11 +283,11 @@ upgrading.md gets the steps).
 
 Phase-2 progress:
 
-| Step | Content                                                                                       | Status              |
-| ---- | --------------------------------------------------------------------------------------------- | ------------------- |
-| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | Done (#361)         |
-| 2b   | CommandPalette (presentation and interaction)                                                 | Done (#363)         |
-| 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | This PR (Refs #220) |
+| Step | Content                                                                                       | Status      |
+| ---- | --------------------------------------------------------------------------------------------- | ----------- |
+| 2a   | Theme tokens (`--banto-scrim`, `--banto-z-*`) + menu components (`Menu` and four more)        | Done (#361) |
+| 2b   | CommandPalette (presentation and interaction)                                                 | Done (#363) |
+| 2c   | ToastHost + `createToastStore()` (with the action button; exclude and fixture in the same PR) | Done (#364) |
 
 With 2c, phase 2 is complete (Modal / Drawer and the layering helpers stay in phase 3 or later per
 decision 10).
@@ -329,6 +330,20 @@ also needed) and replaces CommandPalette and ToastHost (both apps) and, if phase
 Modal, Drawer and the layering helpers (banto-hub). Whether banto-hub's `TreeContextMenu` moves to
 `Menu` is decided separately in phase 3. The replacements are confirmed by banto-industrial's E2E
 (accidental drawer close, Esc layering, and so on).
+
+Outcome (2026-10-08):
+
+- banto-industrial #522 upgraded to v6.2.0 and replaced CommandPalette, ToastHost and the toast
+  store in both apps with `@banto/ui`. The command list, search, recent history and the `Ctrl+K`
+  wiring stay in the apps. banto-hub's layering contract (#381) and the palette's `overlayFocus.ts`
+  share the layer markers and z-index, so they compose without workarounds (banto-hub's E2E covers
+  closing one layer per Esc, the focus trap and focus restore).
+- **`TreeContextMenu` does not move to `Menu`** (owner decision, 2026-10-08). `Menu` is a dropdown
+  attached to a trigger (`popover` API), while `TreeContextMenu` is a context menu placed at the
+  right-click coordinates (with `aria-disabled` items and hooks into banto-hub's Esc layering).
+  Moving it would mean adding coordinate placement to `Menu`, which is not worth it.
+- Modal / Drawer and the layering helpers stay deferred per decision 10. If something other than
+  banto-industrial needs them, open a new issue.
 
 ## Alternatives considered
 
@@ -401,8 +416,8 @@ Phase-2 decision points (added 2026-10-07):
     when banto-industrial needs them (owner note: "後ほど banto 側に入れるかもしれないが、その時は
     その時で").
 11. **Theme tokens**: the overlay scrim and the z-index layers become theme tokens.
-12. **Menu**: keep the `popover` API assumption. Aligning banto-hub's `TreeContextMenu` with
-    `Menu` happens in phase 3.
+12. **Menu**: keep the `popover` API assumption. Whether banto-hub's `TreeContextMenu` aligns
+    with `Menu` is decided in phase 3. -> Phase 3 (owner decision, 2026-10-08): it does **not** (§9).
 
 ## Owner decision points
 
@@ -445,3 +460,5 @@ Before phase 2 (settled; see decisions 8 to 12 in the owner decisions):
 12. **Menu**: keep relying on the `popover` API (including Tauri's WebView2 / WebKitGTK)? Move
     banto-hub's `TreeContextMenu` to `Menu` in phase 3?
     -> Decided: keep `popover`; the `TreeContextMenu` alignment is phase 3.
+    -> Phase 3 (owner decision, 2026-10-08): `TreeContextMenu` does not move to `Menu` (different
+    shape; §9).
