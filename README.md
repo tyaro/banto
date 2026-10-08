@@ -297,7 +297,12 @@ AI に委譲するときはレシピをそのまま指示に使える）。
 
 ### 4. 配信設定（LAN 内への共有）
 
-PC1台で使う間は何も設定しない（組み込み Web サーバは既定で無効）。他端末のブラウザから
+PC1台で使う間は何も設定しない（組み込み Web サーバは既定で無効）。
+**例外: §2 で `display` プリセットを選んだ場合は、初回起動から LAN 待ち受け（`0.0.0.0`）と
+ログイン無しの閲覧公開が有効になる**。PC1台専用で使うなら、初回起動の前に
+`apps/admin-template/core/src/first_boot.rs` の `FIRST_BOOT_SETTINGS` から
+`server.enabled` / `server.bind` / `server.viewer_public` の既定を変更する
+（[詳細](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)）。他端末のブラウザから
 同じ画面を使いたくなったら、設定画面から LAN アクセスを有効化する。手順と注意は下の
 [LANアクセス（組み込みWebサーバ）](#lanアクセス組み込みwebサーバ)、表示専用アプリ向けの
 ログイン無し閲覧公開は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
