@@ -2,7 +2,7 @@
 
 > English: [0018-shared-ui-package.en.md](0018-shared-ui-package.en.md)
 
-- 状態: Accepted（段階 1〜2 の判断事項）
+- 状態: Accepted（段階 1〜3 完了。Modal / Drawer と層の補助は決定 10 のとおり保留）
 - 日付: 2026-10-07
 - 関連: Issue #220 / [conventions.md](../conventions.md) §4・§5・§9・§13・§14 /
   [ADR-0002](0002-minimal-dependencies.md)・[ADR-0005](0005-i18n-paraglide.md)・
@@ -268,11 +268,11 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
 
 段階 2 の進み具合:
 
-| 小段階 | 中身                                                                                 | 状態               |
-| ------ | ------------------------------------------------------------------------------------ | ------------------ |
-| 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 済み（#361）       |
-| 2b     | CommandPalette（表示と操作）                                                         | 済み（#363）       |
-| 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 本 PR（Refs #220） |
+| 小段階 | 中身                                                                                 | 状態         |
+| ------ | ------------------------------------------------------------------------------------ | ------------ |
+| 2a     | テーマのトークン（`--banto-scrim`・`--banto-z-*`）+ メニュー部品（`Menu` ほか 4 つ） | 済み（#361） |
+| 2b     | CommandPalette（表示と操作）                                                         | 済み（#363） |
+| 2c     | ToastHost + `createToastStore()`（アクションボタン込み。exclude・fixture も同じ PR） | 済み（#364） |
 
 2c で段階 2 は完了（Modal / Drawer と層の補助は決定 10 のとおり段階 3 以降）。
 
@@ -312,6 +312,19 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
 （banto-hub）を置き換える。banto-hub の `TreeContextMenu` を `Menu` に寄せるかは段階 3 で
 個別に判断する。置き換えは banto-industrial 側の E2E（Drawer の誤爆クローズ・Esc の層など）で
 確かめる。
+
+結果（2026-10-08）:
+
+- banto-industrial #522 で v6.2.0 に上げ、2 アプリの CommandPalette・ToastHost とトーストのストアを
+  `@banto/ui` に置き換えた。コマンドの一覧・検索・最近使った記録・`Ctrl+K` の配線はアプリ側に残る。
+  banto-hub の層の約束（#381）とパレットの `overlayFocus.ts` は層の印と z が同じで、無理なく組み合わさった
+  （banto-hub の E2E で Esc を 1 層ずつ閉じる・フォーカストラップ・フォーカスの戻しを確認）。
+- **`TreeContextMenu` は `Menu` に寄せない**（2026-10-08 オーナー決定）。`Menu` はトリガーに付く
+  ドロップダウン（`popover` API）で、`TreeContextMenu` は右クリックした座標に出るコンテキストメニュー
+  （`aria-disabled` の項目、banto-hub の Esc の層への組み込み）と形が違う。寄せるには `Menu` に座標で
+  出す形を足す必要があり、得るものに見合わない。
+- Modal / Drawer と層の補助は決定 10 のとおり保留。banto-industrial 以外でも要るようになったら
+  新しい issue で扱う。
 
 ## 検討した代替案
 
