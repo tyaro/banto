@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-10-08
+
+**v6.2.0 — `@banto/ui` の段階 2（#220）: メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`、#361）、フォーカストラップ・フォーカス復帰・window の Esc を備えた `CommandPalette`（#363）、トーストのストア `createToastStore()` と、アクション付きボタンを持つ `ToastHost`（#364）、テーマのトークン `--banto-scrim` と z-index の層（#361）を足した。[ADR-0018](docs/adr/0018-shared-ui-package.md) の段階 1・2 の決定を Accepted にした。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A は `@banto/ui` を使っているなら **Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す必要がある**（`@banto/ui` が初めて `.svelte.ts` を持つ。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)・#478）。経路 B は admin-template から写したメニュー・CommandPalette・トーストを `@banto/ui` からの import に替えられる。経路 C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                           |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.1.0` → `v6.2.0`（npm と Rust を同じタグに）。**`@banto/ui` を使う派生アプリは Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す**（必須。足さないと `pnpm dev` が 500 になる）。既存の `@banto/*` の公開 API は変わらない（追加のみ） |
+| B. コピーしたテンプレート        | 任意 | admin-template のメニュー・CommandPalette・トーストの写しは `@banto/ui` から import できる。直書きのオーバーレイの値はトークンに置き換えられる。トーストの id は文字列で、アクションの prop は `onAction`                                      |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                        |
+
+### 消費側への注意
+
+- 既存の `@banto/*` の公開 API は変わらない（追加のみ）。
+- **`@banto/ui` を使う派生アプリは、Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す**（`toast.svelte.ts` のため。トーストを使わなくても同じ。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)、[docs/upgrading.md](docs/upgrading.md) 3.1）。`pnpm build` と `pnpm check` ではこの漏れは分からない。`pnpm dev` で画面を開いて確かめる。
+- 経路 B の写しは、取り込むなら `@banto/ui` から import し、トークン（`--banto-scrim`・`--banto-z-*`）で直書きを置き換える。トーストの id は数値から文字列、アクションの prop は `onClick` から `onAction`。詳細は下の「追加」の各項と [docs/upgrading.md](docs/upgrading.md) 3.2。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加（minor、追加のみ）
 
 - feat(ui): メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`）を admin-template の `components/menu/` から `@banto/ui` へ移した（#220 段階 2a、[ADR-0018](docs/adr/0018-shared-ui-package.md)）。DOM・CSS・props は変えていない（`MenuItem` の `icon` の型だけ `UiIconComponent` にした。lucide の部品はそのまま渡せる）。admin-template の `Header` は `@banto/ui` から import し、`components/menu/` は削除した。jsdom テストを足し、`/ui-demo` に Menu の見本を足した（開いていない状態のトリガーだけが画面に出る）。
@@ -29,12 +50,12 @@
   - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない（追加のみ）。**経路 A**: `@banto/ui` を使っていれば、更新だけでメニュー部品が使える。トークンは `@banto/theme/css` を読み込んでいれば自動で入る。**経路 B**: admin-template から写した `components/menu/`（5 ファイル）はそのまま残しても動く。取り込むなら `@banto/ui` から import して写しを消す（[docs/upgrading.md](docs/upgrading.md) 3.2）。生の `rgba()` や z-index の直書きがあれば、新しいトークンへ置き換えられる（任意）。
 - feat(ui): コマンドパレットの表示と操作を `@banto/ui` の `CommandPalette` にした（#220 段階 2b、[ADR-0018](docs/adr/0018-shared-ui-package.md) §8・決定 8）。props は `open`（bindable）・`items`・`search?`・`recentIds?`・`onExecute`・`onClose?`・`focusFallback?`・`messages?`。項目の型 `CommandPaletteItem` は admin-core の `PaletteCommand` と構造的に合う。既定の検索 `defaultCommandPaletteSearch` と、文言 `UiMessages` の `commandPalette*`（既定は日本語）を足した。banto-hub（banto-industrial #381）のフォーカストラップ・閉じたら開いた元へフォーカスを戻す・window で受ける Esc（消費済みの Esc と手前の層には譲る）を標準の振る舞いにした。見た目は admin-template の現行のまま。admin-template の `CommandPalette.svelte` は、コマンドの一覧・`searchCommands`・セッションのスコープ（#258）・最近使った記録・通知・Paraglide の文言だけを持つ包みになった。jsdom テストを足し、`/ui-demo` にコマンドパレットの見本（開くボタン）を足した。
   - 利用者に見える違い（admin-template）: 開いている間 Tab がパレットの外へ出ない。閉じると開く前にフォーカスがあった要素（ヘッダーの検索ボタンなど）へフォーカスが戻る（これまでは `<body>` に落ちていた）。フォーカスがパレットの外にあっても Esc で閉じる。それ以外の見た目・並び・操作は同じ。
-  - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない（追加のみ）。**経路 A**: `@banto/ui` を使っていれば、更新だけで `CommandPalette` が使える（`.svelte.ts` は無いので `optimizeDeps.exclude` は増やさない）。オーバーレイは `position: fixed` なので、`backdrop-filter` などを持つ要素の外に置く。**経路 B**: 写した `CommandPalette.svelte` はそのまま残しても動く。取り込むなら admin-template の新しい包みを差分として当てる（[docs/upgrading.md](docs/upgrading.md) 3.2）。banto-industrial の写しは段階 3 で置き換える。
+  - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない（追加のみ）。**経路 A**: `@banto/ui` を使っていれば、更新だけで `CommandPalette` が使える（CommandPalette 自体は `.svelte.ts` を持たないが、同じ v6.2.0 のトーストのストア（#364）で `optimizeDeps.exclude` への `@banto/ui` の追加が必要になった。上の「消費側への注意」を参照）。オーバーレイは `position: fixed` なので、`backdrop-filter` などを持つ要素の外に置く。**経路 B**: 写した `CommandPalette.svelte` はそのまま残しても動く。取り込むなら admin-template の新しい包みを差分として当てる（[docs/upgrading.md](docs/upgrading.md) 3.2）。banto-industrial の写しは段階 3 で置き換える。
 
 - feat(ui): トーストのストアと表示を `@banto/ui` に移した（#220 段階 2c、[ADR-0018](docs/adr/0018-shared-ui-package.md) §8・決定 9。**段階 2 が完了**）。`createToastStore({ autoDismissMs?, maxToasts? })`（runes の `.svelte.ts`）と `ToastHost`（`store`・`messages?`）。`push(kind, message, options?)` は id を返し、`options` は `action?: { label, onAction }`（banto-hub の取り消しボタンを標準にした。`onClick` から改名）・`durationMs?`（既定 4000。`0`・負・`Infinity` は消さない）・`id?`（既存の id は置き換え）。アクションは押すと処理のあとで（例外でも）閉じ、閉じた後は呼ばない。`kind` は `success`・`error`・`info`・`warning`（admin-core の `NotificationKind` と構造的に同じ）。文言は `UiMessages.toastClose`、置き場所は CSS 変数 `--banto-toast-right`・`--banto-toast-bottom`、重なりは `--banto-z-toast`。admin-template の `toast.svelte.ts` は `createToastStore()` の 1 行、`ToastHost.svelte` は `@banto/ui` の薄い包み（Paraglide の「閉じる」）になり、`setup.ts` の `notify` の配線と各画面の `toastStore.push(...)` は変わらない。jsdom テスト（自動で消す時間・置き換え・上限・アクション・読み上げの領域）を足し、`/ui-demo` にトーストの見本（種類ごとのボタンとアクション付き）を足した。
   - 利用者に見える違い（admin-template）: 読み上げが 2 つの常設の領域に分かれた（`error`・`warning` は `role="alert"`、`success`・`info` は `role="status"`。以前は常設の 1 つの `role="status"`）。時間切れ前に閉じたトーストのタイマーは止まる。見た目・出現位置・4000ms は同じ。
   - **消費側への注意（`optimizeDeps.exclude`）**: `@banto/ui` が初めて `.svelte.ts`（`toast.svelte.ts`）を持つ。**`@banto/ui` を使う派生アプリは、Vite の `optimizeDeps.exclude` に `'@banto/ui'` を足す**（足さないと `pnpm dev` の依存オプティマイザが `import type` で 500 になる。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)、[docs/upgrading.md](docs/upgrading.md) 3.1）。トーストを使わなくても同じ。admin-template の `vite.config.ts`・外部利用 fixture・scaffold（`@banto/ui` は常に残るので `tree-svelte` を外すときの消し方を行ごとにした）・`verify:architecture` の rule `optimizedeps-svelte-source` を同じ変更で更新した。`pnpm build` と `pnpm check` ではこの漏れは分からない。**`pnpm dev` で画面を開いて確かめる。**
-  - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない（追加のみ）。**経路 A**: `@banto/ui` を使っていれば、更新と exclude の 1 行でトーストが使える。**経路 B**: 写した `toast.svelte.ts`・`ToastHost.svelte` はそのまま残しても動く。取り込むなら admin-template の薄い版に替え、exclude を足す（[docs/upgrading.md](docs/upgrading.md) 3.2）。banto-industrial の写し（banto-hub・chronogazer）は段階 3 で置き換える（`onClick` → `onAction`、id が数値から文字列）。外部利用 fixture のタグの経路は、次のリリースタグが切られるまで `v6.1.0` に `createToastStore` が無いので落ちる（SHA の経路は通る）。
+  - 消費側への注意: 既存の `@banto/*` の公開 API は変わらない（追加のみ）。**経路 A**: `@banto/ui` を使っていれば、更新と exclude の 1 行でトーストが使える。**経路 B**: 写した `toast.svelte.ts`・`ToastHost.svelte` はそのまま残しても動く。取り込むなら admin-template の薄い版に替え、exclude を足す（[docs/upgrading.md](docs/upgrading.md) 3.2）。banto-industrial の写し（banto-hub・chronogazer）は段階 3 で置き換える（`onClick` → `onAction`、id が数値から文字列）。外部利用 fixture は、v6.2.0 のタグを打つまで（`v6.1.0` に `createToastStore` が無いため）タグの経路だけ落ちていた。v6.2.0 で解消する。
 
 ## [6.1.0] - 2026-10-07
 
@@ -2499,7 +2520,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.1.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.2.0...HEAD
+[6.2.0]: https://github.com/tyaro/banto/compare/v6.1.0...v6.2.0
 [6.1.0]: https://github.com/tyaro/banto/compare/v6.0.0...v6.1.0
 [6.0.0]: https://github.com/tyaro/banto/compare/v5.1.0...v6.0.0
 [5.1.0]: https://github.com/tyaro/banto/compare/v5.0.0...v5.1.0
