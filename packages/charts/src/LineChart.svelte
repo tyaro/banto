@@ -25,7 +25,8 @@
 	 * the (never-triggered) decimation reduce to the original index spacing.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { linePath, areaPath, linePathSegments, areaPathSegments } from './core/path';
+	import { linePathSegments, areaPathSegments } from './core/path';
+	import { seriesNumber, seriesSegments } from './core/series';
 	import { resolveBand } from './core/band';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
@@ -42,7 +43,6 @@
 	import { decimatedIndices } from './core/decimate';
 	import {
 		getValue,
-		toNumber,
 		type Accessor,
 		type ChartAxis,
 		type ChartMargin,
@@ -142,7 +142,9 @@
 	// change (e.g. a streaming append) - NOT on hover or zoom. The pixel mapping
 	// that depends on the viewport lives in `seriesPaths` below, so a rolling
 	// data feed re-derives arrays once and the crosshair never rebuilds paths.
-	const seriesValues = $derived(series.map((s) => data.map((row) => toNumber(getValue(row, s.y)))));
+	const seriesValues = $derived(
+		series.map((s) => data.map((row) => seriesNumber(getValue(row, s.y), gaps)))
+	);
 
 	// Value extents via an explicit loop rather than `Math.min(...arr)` so a
 	// 10k x 10-series dataset can't overflow the argument-spread stack limit.
@@ -269,48 +271,11 @@
 		series.map((s, i) => {
 			const scale = isRight(s) ? rightScale : leftScale;
 			const vals = seriesValues[i];
-			if (gaps === 'break') {
-				// Split at every non-finite point. Decimation may jump over a gap
-				// (stride > 1), so a hole between two kept indices also breaks.
-				const segs: { x: number; y: number }[][] = [];
-				let cur: { x: number; y: number }[] = [];
-				let prev = -1;
-				for (const idx of renderIndices) {
-					let hole = false;
-					for (let k = prev + 1; prev >= 0 && k < idx; k++) {
-						if (!Number.isFinite(vals[k])) {
-							hole = true;
-							break;
-						}
-					}
-					if (hole && cur.length > 0) {
-						segs.push(cur);
-						cur = [];
-					}
-					const v = vals[idx];
-					if (Number.isFinite(v)) cur.push({ x: xAt(idx), y: scale(v) });
-					else if (cur.length > 0) {
-						segs.push(cur);
-						cur = [];
-					}
-					prev = idx;
-				}
-				if (cur.length > 0) segs.push(cur);
-				return {
-					color: seriesColorVar(i),
-					line: linePathSegments(segs),
-					area: area ? areaPathSegments(segs, metrics.innerBottom) : ''
-				};
-			}
-			const pts: { x: number; y: number }[] = [];
-			for (const idx of renderIndices) {
-				const v = vals[idx];
-				if (Number.isFinite(v)) pts.push({ x: xAt(idx), y: scale(v) });
-			}
+			const segs = seriesSegments(vals, renderIndices, xAt, scale, gaps);
 			return {
 				color: seriesColorVar(i),
-				line: linePath(pts),
-				area: area ? areaPath(pts, metrics.innerBottom) : ''
+				line: linePathSegments(segs),
+				area: area ? areaPathSegments(segs, metrics.innerBottom) : ''
 			};
 		})
 	);

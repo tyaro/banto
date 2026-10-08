@@ -8,8 +8,9 @@
 
 /**
  * Resolve a band against the y-domain `[domainMin, domainMax]` (either order).
- * A non-finite `from` (null/undefined/NaN/-Infinity) is open toward the low
- * edge, a non-finite `to` (null/undefined/NaN/Infinity) toward the high edge;
+ * A non-finite `from` (null/undefined/NaN/±Infinity) is open toward the low
+ * edge, a non-finite `to` (likewise) toward the high edge - decided by POSITION
+ * before ordering, so `(Infinity, 40)` is 0..40, not 40..max;
  * `from`/`to` may be given in either order when both are finite. Returns the
  * clipped `{ low, high, lowEdge, highEdge }` (`*Edge` = that side is a real
  * finite boundary inside the domain, i.e. worth drawing an edge line on; false
@@ -23,8 +24,8 @@ export function resolveBand(
 ): { low: number; high: number; lowEdge: boolean; highEdge: boolean } | null {
 	const dMin = Math.min(domain[0], domain[1]);
 	const dMax = Math.max(domain[0], domain[1]);
-	const a = typeof from === 'number' && !Number.isNaN(from) ? from : -Infinity;
-	const b = typeof to === 'number' && !Number.isNaN(to) ? to : Infinity;
+	const a = typeof from === 'number' && Number.isFinite(from) ? from : -Infinity;
+	const b = typeof to === 'number' && Number.isFinite(to) ? to : Infinity;
 	const lo = Math.min(a, b);
 	const hi = Math.max(a, b);
 	if (hi < dMin || lo > dMax) return null;

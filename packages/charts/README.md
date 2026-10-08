@@ -103,8 +103,8 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 ```
 
 - `LineChart` の `gaps?: 'join' | 'break'`（既定 `'join'` = 従来どおり欠測を飛ばしてつなぐ）。
-  `'break'` は欠測で `M` から別の部分パスにする（エリア塗りも部分ごとに閉じる）。
-- `LineChart` の `bands`（`OpenThresholdBand`）の `from`/`to` は `number | null`。非有限は開放端（`from` は下端、`to` は上端）。
+  `'break'` は欠測（null / undefined / NaN。0 にはしない）で `M` から別の部分パスにする。`'join'` では `null` は従来どおり 0 として描く（エリア塗りも部分ごとに閉じる）。
+- `LineChart` の `bands`（`OpenThresholdBand`）の `from`/`to` は `number | null`。非有限（±Infinity を含む）は位置で開放端になる（`from` は下端、`to` は上端）。
   バンドはプロット領域にクリップされ、領域外だけのバンドは描かない。
 - `Gauge` の `value` は `number | null`。値なしの文字は `messages.gaugeNoValue`（既定 `'—'`）。
   `GaugeThresholds` に `warningLow` / `dangerLow`（`value <=` で warning / danger 色）を追加。

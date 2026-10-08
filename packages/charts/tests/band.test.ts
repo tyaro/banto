@@ -73,3 +73,27 @@ describe('resolveBand', () => {
 		expect(resolveBand(20, 60, [100, 0])).toEqual(resolveBand(20, 60, [0, 100]));
 	});
 });
+
+describe('resolveBand: ±Infinity is open by position (before ordering)', () => {
+	const domain: [number, number] = [0, 100];
+	const open = (low: number, high: number, lowEdge: boolean, highEdge: boolean) => ({
+		low,
+		high,
+		lowEdge,
+		highEdge
+	});
+
+	it('a non-finite from is the low edge even when +Infinity', () => {
+		expect(resolveBand(Infinity, 40, domain)).toEqual(open(0, 40, false, true));
+	});
+
+	it('a non-finite to is the high edge even when -Infinity', () => {
+		expect(resolveBand(70, -Infinity, domain)).toEqual(open(70, 100, true, false));
+	});
+
+	it('both open (any infinities) is the full band', () => {
+		expect(resolveBand(Infinity, Infinity, domain)).toEqual(open(0, 100, false, false));
+		expect(resolveBand(-Infinity, -Infinity, domain)).toEqual(open(0, 100, false, false));
+		expect(resolveBand(undefined, undefined, domain)).toEqual(open(0, 100, false, false));
+	});
+});
