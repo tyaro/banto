@@ -6,7 +6,8 @@
 - Date: 2026-07-19
 - Related: [conventions.md §3](../conventions.en.md), [ADR-0002](0002-minimal-dependencies.en.md),
   spec §11.2, improvements.md §2.3, improvement-plan-2026-07.md P1-4/B,
-  README "LAN access"
+  README "LAN access" (the procedure itself lives in
+  [docs/recipes/lan-access.md](../recipes/lan-access.md) since 2026-10-08)
 
 ## Context
 
@@ -50,7 +51,8 @@ conditions below are met.
 
 ## Consequences
 
-- The README "LAN access" carries reverse-proxy TLS via Caddy as a procedure.
+- The README "LAN access" (now [recipes/lan-access.md](../recipes/lan-access.md))
+  carries reverse-proxy TLS via Caddy as a procedure.
   It presupposes narrowing the bind to `127.0.0.1` (with `0.0.0.0`, plaintext
   HTTP that bypasses the proxy would also be reachable).
 - If built-in TLS is implemented, it should be a separate milestone, done in an

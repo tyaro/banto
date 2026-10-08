@@ -7,7 +7,7 @@
 ドラッグ並べ替え/親子変更・インライン名前変更に対応する。`columns` を渡すと
 階層データグリッド（tree-grid）、`TreeSelect` はポップオーバー型の選択入力になる。
 テンプレート本体では**サイドバーの「ツリービュー」= `/tree` デモページ**として
-配線済み（削除可能。外し方は [README](../../README.md) の「オプション資産の削除」節、
+配線済み（削除可能。外し方は [remove-optional-assets.md](remove-optional-assets.md) の「ツリーデモ」、
 または `pnpm scaffold --preset minimal|standard`）。ライブデモでも上記の全形態を
 触れる。自分のアプリへ組み込むには以下のレシピを使う。パッケージ単体の API 概要は
 [packages/tree-svelte/README.md](../../packages/tree-svelte/README.md) を参照。

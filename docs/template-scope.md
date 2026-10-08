@@ -9,8 +9,8 @@
 
 トラック: 本書は**保守者向け（トラックA）**。何を入れる/入れないの判定と、
 実装不変条件（[conventions.md](conventions.md)）とは役割が別 — こちらは「スコープ」、
-向こうは「作法」。アプリ作者向けの削除手順・導入手順は [README](../README.md)
-（トラックB）にあり、本書 §6 の宿題や §3 の各削除手順はその README 側成果物を
+向こうは「作法」。アプリ作者向けの削除手順・導入手順は [README](../README.md) と
+[recipes/](recipes/)（トラックB）にあり、本書 §6 の宿題や §3 の各削除手順はその README 側成果物を
 指す（＝2トラックが同一事項の表裏で交差する箇所）。トラック分けの全体像は
 [README「ドキュメントの2トラック」](../README.md#ドキュメントの2トラック)。
 
@@ -89,10 +89,10 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 | コマンドパレット（M16） | ナビ定義から自動導出のため保守コストほぼゼロ。コンポーネント1つ+シェルの数行 | 無くても操作は成立するが、削除する動機も薄い |
 | デモコンテンツ（items 1万件、ダッシュボード各パネル、SPC/トレンドデモ） | **利用開始時に置き換える前提**。テンプレートの「見本」として同梱 | 雛形の理解材料。README/導入手順で差し替え箇所を明示すべき（→ §6 宿題) |
 | **`items` デモリソース一式**（2026-09 再分類、Issue #190 / display-preset-plan §2 原則 2） | `pnpm scaffold --preset display` が丸ごと削除する。手作業なら: `core/src/items.rs`・`core/src/rest/items.rs`・`core/migrations-{sqlite,postgres}/0001_items.sql`・`core/src/{lib,db}.rs` と `core/src/rest/{mod,tests}.rs`・`src-tauri/src/lib.rs` の `// [scaffold:items]` マーカー区画・`src/routes/(app)/items/**`・`#lib/banto/{itemsAdmin,resources/items,sampleData,dashboard}.ts`・`src/lib/navigation.ts` / `navIcons.ts` の items 行・`messages/{ja,en}.json` の `items.*`/`nav.items`・`scripts/verify-architecture.mjs` の items マニフェスト行（DUAL_PATH 4 / TAURI_READ 2 / REST_READ 2 / DESKTOP_ONLY 1）を外す | 長く §2.2「コア」扱いだったが、実体は**差し替え前提のデモリソース**。削除経路を機械検査（template-acceptance の `display` matrix）で保証するため §3 に移した。**削除しても壊れない義務**は他のオプション資産と同じ。区画にマーカーコメントを置いてあるので、items 側を大きく動かす PR はマーカーの内外が正しいか確認すること |
-| `@banto/attachments` + items 添付デモ（M20） | 独立パッケージ + `crates/banto-attachments`。`items/[id]/+page.svelte` のパネル配線・`attachmentsClient.ts`・`package.json` 依存・REST/Tauri ルータ/コマンド・`core/migrations-sqlite/0006_attachments.sql`（+ `migrations-postgres/0006_attachments.sql`）を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式の初適用例。デモモード（ブラウザ単体）では非表示。バックアップ非対象（§8 既知の制限） |
-| `@banto/report` + 日報デモ（M19） | 独立パッケージ（DB/バックエンド依存なし）。items 一覧の「日報」ボタン1行・`items/report/+page.svelte`・`#lib/banto/reports/daily.md?raw`・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。M20と異なりバックエンド/DB配線を持たない最小デモ（roadmap.md M19〜M21の提供形態）。印刷CSSの `.report-body` はテーマ非依存の白地・黒文字固定（帳票の再現性優先、report-plan.md §3.4） |
-| `@banto/tree-svelte` + ツリーデモ（M-review 2026-08） | 独立パッケージ（DB/バックエンド依存なし）。ナビ1行（`navigation.ts` の union + navItems、`navIcons.ts` の対応アイコン）・`routes/(app)/tree/+page.svelte`・`#lib/banto/treeSample.ts`・`i18n.ts` の `treeMessages()`・`messages/{ja,en}.json` の `nav.tree`/`tree.*` キー・`package.json` 依存を外せば削除できる（README「オプション資産の削除」に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。report と同じくバックエンド/DB 非依存。ナビ追加でサイドバーが写る認証ページの視覚回帰ベースラインを再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。デモページ自体は e2e/visual の撮影対象外 |
-| システムメトリクス（`sysinfo`、ADR-0013・Issue #185） | `banto-admin-services` の opt-in feature `system-metrics`（`sysinfo` 依存の実体）。テンプレート側 `admin-template-core`/`src-tauri` の `Cargo.toml` は `default` でこれを有効化しており、`default` から外すだけで削除できる（README「オプション資産の削除」に手順） | System Info カードの CPU/メモリ行のみが対象。`SystemMetrics` 型自体は feature 無しでも常時コンパイルされるため、`banto_server::routes::SystemInfo.metrics` は削除後も `null` を返す形でワイヤ互換を保つ |
+| `@banto/attachments` + items 添付デモ（M20） | 独立パッケージ + `crates/banto-attachments`。`items/[id]/+page.svelte` のパネル配線・`attachmentsClient.ts`・`package.json` 依存・REST/Tauri ルータ/コマンド・`core/migrations-sqlite/0006_attachments.sql`（+ `migrations-postgres/0006_attachments.sql`）を外せば削除できる（[recipes/remove-optional-assets.md](recipes/remove-optional-assets.md) に手順） | §3.1 の「パッケージ + 削除可能デモ」方式の初適用例。デモモード（ブラウザ単体）では非表示。バックアップ非対象（§8 既知の制限） |
+| `@banto/report` + 日報デモ（M19） | 独立パッケージ（DB/バックエンド依存なし）。items 一覧の「日報」ボタン1行・`items/report/+page.svelte`・`#lib/banto/reports/daily.md?raw`・`package.json` 依存を外せば削除できる（[recipes/remove-optional-assets.md](recipes/remove-optional-assets.md) に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。M20と異なりバックエンド/DB配線を持たない最小デモ（roadmap.md M19〜M21の提供形態）。印刷CSSの `.report-body` はテーマ非依存の白地・黒文字固定（帳票の再現性優先、report-plan.md §3.4） |
+| `@banto/tree-svelte` + ツリーデモ（M-review 2026-08） | 独立パッケージ（DB/バックエンド依存なし）。ナビ1行（`navigation.ts` の union + navItems、`navIcons.ts` の対応アイコン）・`routes/(app)/tree/+page.svelte`・`#lib/banto/treeSample.ts`・`i18n.ts` の `treeMessages()`・`messages/{ja,en}.json` の `nav.tree`/`tree.*` キー・`package.json` 依存を外せば削除できる（[recipes/remove-optional-assets.md](recipes/remove-optional-assets.md) に手順） | §3.1 の「パッケージ + 削除可能デモ」方式。report と同じくバックエンド/DB 非依存。ナビ追加でサイドバーが写る認証ページの視覚回帰ベースラインを再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。デモページ自体は e2e/visual の撮影対象外 |
+| システムメトリクス（`sysinfo`、ADR-0013・Issue #185） | `banto-admin-services` の opt-in feature `system-metrics`（`sysinfo` 依存の実体）。テンプレート側 `admin-template-core`/`src-tauri` の `Cargo.toml` は `default` でこれを有効化しており、`default` から外すだけで削除できる（[recipes/remove-optional-assets.md](recipes/remove-optional-assets.md) に手順） | System Info カードの CPU/メモリ行のみが対象。`SystemMetrics` 型自体は feature 無しでも常時コンパイルされるため、`banto_server::routes::SystemInfo.metrics` は削除後も `null` を返す形でワイヤ互換を保つ |
 
 ### 3.1 今後の機能拡張の提供形態（2026-07-15 決定）
 
@@ -191,11 +191,13 @@ banto-industrial 側の現行の計画・実装状況は同リポジトリの `d
 - [x] README / 導入ドキュメントに「デモコンテンツの差し替え手順」を書く
       （items リソース一式を自リソースに置換する手順。§3 の前提の明文化）
       → **M18 で実施済み**（README §2「デモコンテンツ（`items`）を自リソースに
-      差し替える」に層別ファイル一覧と進め方を記載、2026-07-16 確認）
+      差し替える」に層別ファイル一覧と進め方を記載、2026-07-16 確認。
+      2026-10-08 に層別ファイル一覧は [recipes/add-resource.md](recipes/add-resource.md) へ移動）
 - [x] roadmap バックログから i18n を削除（2026-07-12 実施）
 - [x] オプション資産の削除手順（dock / charts / glass / パレット）を
       それぞれ数行で README か本ドキュメントに追記 → **M18 で実施済み**
-      （README §3「オプション資産の削除」に dock-svelte・charts・
+      （README §3「オプション資産の削除」（2026-10-08 以降は
+      [recipes/remove-optional-assets.md](recipes/remove-optional-assets.md)）に dock-svelte・charts・
       Glassテーマ+vibrancy・コマンドパレットの4節が揃っており、
       添付機能（M20）・帳票デモ（M19）の削除手順も同節に追加済み。
       2026-07-16 に全節の存在を確認 — 追記不要だった）

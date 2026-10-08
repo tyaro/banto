@@ -129,7 +129,7 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 ```
 
 - 派生側で**ファイル名・クレート名を変えている場合**（`rename.mjs` による変更など）は、差分のパスを読み替える。
-  何が置き換わるかは [README「1. コピーとリネーム」](../README.md#1-コピーとリネーム) を参照。
+  何が置き換わるかは [recipes/rename.md](recipes/rename.md)「スクリプトが書き換える箇所」を参照。
 - 派生側で**削除済みの機能**（プリセットで外した `items`・attachments・users など）の差分は読み飛ばす。
 - 派生側で**独自に変えたファイルと同じファイルが変わっている**ときは、機械適用せず手で突き合わせる。
   rename 済みのパスでは `git apply` が当たらないことが多く、手で移すほうが速い場合も多い。

@@ -2,8 +2,10 @@
 
 > The Japanese [`AGENTS.md`](AGENTS.md) is the source of truth; this English version follows it. If they diverge, the Japanese wins.
 
-Banto (番頭) is a **general-purpose admin-UI template that runs in two forms:
-a Tauri desktop app and a browser UI served over the LAN**. It is a monorepo
+Banto (番頭) is a **template for building line-of-business apps that start on
+a single PC and can later be shared to browsers on the LAN** (the same screens
+and logic run in two forms: a Tauri desktop app and a browser UI served over the
+LAN). It is a monorepo
 with a Rust backend (axum + sqlx; SQLite by default, PostgreSQL supported) and
 a SvelteKit (Svelte 5 runes) frontend. Users copy it to build their own apps.
 
@@ -59,9 +61,13 @@ track your task belongs to.**
     defining sources / ledgers formally referenced as `CR-N`, `AD-N`, `M-review` and the like) are not
     covered by this rule and may still be referenced. A PR that changes implementation status also updates the leading `状態:` line of the
     affected plan / design document (and `最終検証日:` if present)
-- **Track B (for app authors) = [README](README.en.md)**: for people building
-  their own app from this template. Renaming, replacing the demo, removing
-  options, the scanner-input recipe, Windows setup.
+- **Track B (for app authors) = [README](README.en.md) + [docs/recipes/](docs/recipes/)**:
+  for people building their own app from this template. The README is the
+  entry point and the backbone (copy → rename → pick a preset → implement → serve); the
+  full procedures live in `docs/recipes/` (rename / add-resource /
+  remove-optional-assets / consume-as-git-dependency / lan-access /
+  database-backup / windows-setup / no-login-app / scan-wedge / notifications /
+  tree-svelte / add-role; mostly Japanese).
 
 ## Entry points by task
 
@@ -76,8 +82,8 @@ track your task belongs to.**
 - **Drop the optional assets as a batch (dock/charts/glass/command
   palette/attachments/reporting/tree)** → `pnpm scaffold --preset
 minimal|standard|full|display` (`--interactive` / `--dry-run` available; the manual
-  steps live under "オプション資産の削除" in the Japanese README —
-  `pnpm scaffold --interactive` is the equivalent for English readers).
+  steps live in [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)
+  (Japanese) — `pnpm scaffold --interactive` is the equivalent for English readers).
   scan-wedge is recipe-only / unwired, so scaffold never touches it.
 - **Bootstrap a display-only app (andon board / always-on dashboard / kiosk
   demo)** → `pnpm scaffold --preset display`. On top of what `minimal`
@@ -85,8 +91,9 @@ minimal|standard|full|display` (`--interactive` / `--dry-run` available; the man
   and `/dashboard`, then adds `/monitor` plus the first-boot seed (LAN public
   viewing), kiosk defaults and `banto.i18n = "raw"`. It is the only preset that
   adds anything. Design: [docs/design/display-preset-plan.md](docs/design/display-preset-plan.md)
-  (Japanese); user-facing notes live under "オプション資産の削除" in the
-  Japanese README.
+  (Japanese); user-facing notes live in the "`--preset display`" section of
+  [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)
+  (Japanese).
 - **Add / change a feature** → first read the invariants in
   [docs/conventions.en.md](docs/conventions.en.md), then decide whether to do
   it with the [template-scope.md §6](docs/template-scope.md#6-今後の運用ルールと宿題)
@@ -94,7 +101,10 @@ minimal|standard|full|display` (`--interactive` / `--dry-run` available; the man
 - **Bug fix / refactor** → check the relevant section of
   [docs/conventions.en.md](docs/conventions.en.md) (especially the security
   invariants, the ban on reverse dependencies, and two-path symmetry).
-- **Explain "how to use it" / fix the setup steps** → Track B (README).
+- **Explain "how to use it" / fix the setup steps** → Track B (the README is
+  the entry point; the full procedures live in `docs/recipes/`, e.g.
+  [lan-access.md](docs/recipes/lan-access.md) for LAN / TLS / PWA and
+  [database-backup.md](docs/recipes/database-backup.md) for DB / backup).
 - **Understand the intent of the spec** → `docs/ui-framework-spec.md` (the
   target of the `spec §N` in doc comments).
 - **See the overall architecture (dual delivery, layers, packages)** →

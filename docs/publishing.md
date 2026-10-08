@@ -45,11 +45,11 @@ pnpm add "github:tyaro/banto#main&path:packages/theme"
 `cargo test --workspace` が通ることを確認した。この配布形態は動作する。
 
 **新しい版への更新手順（依存とコピー部分の違い・DB 移行・基準版の記録・外部利用の検証）は
-[upgrading.md](upgrading.md)。** 初回導入で必要になる作業の一覧は README の
-[「4. 別リポジトリから git 依存として消費する場合」](../README.md#4-別リポジトリから-git-依存として消費する場合)
-にまとめてある（npm/Rust の依存書き換え、`[workspace.package].repository`、
+[upgrading.md](upgrading.md)。** 初回導入で必要になる作業の一覧は
+[recipes/consume-as-git-dependency.md](recipes/consume-as-git-dependency.md)
+（README「4. 別リポジトリから git 依存として消費する場合」から 2026-10-08 に移動）にまとめてある（npm/Rust の依存書き換え、`[workspace.package].repository`、
 lint 設定の持ち込み、e2e スイートの移植など）。消費者はアプリ作者なので、
-手順そのものはトラックB（README）側が正となる。
+手順そのものはトラックB（README / recipes）側が正となる。
 
 このとき最初に踏んだ罠が2点あり、どちらも既に本体で手当て済み:
 
@@ -62,8 +62,9 @@ lint 設定の持ち込み、e2e スイートの移植など）。消費者は�
   ADR-0007 の調査どおり、それこそが `vite-plugin-svelte` に
   「Svelte ライブラリなので事前バンドルしてよい」と判断させる原因側だった。
 - **同一DBに対する `sqlx::migrate!` の二重使用**（`_sqlx_migrations` が
-  DB 全体で1つしか無いことによるバージョン衝突）→ README
-  「2. デモコンテンツ（`items`）を自リソースに差し替える」の注記を参照。
+  DB 全体で1つしか無いことによるバージョン衝突）→
+  [recipes/add-resource.md「`sqlx::migrate!` は同一DBに1クレートまで」](recipes/add-resource.md#sqlxmigrate-は同一dbに1クレートまで)
+  を参照。
 
 ## 前提: ソース配布のまま
 

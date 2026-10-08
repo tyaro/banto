@@ -6,8 +6,12 @@
 **Live demo**: <https://tyaro.github.io/banto/> (log in as `admin` / `admin` —
 a browser-only demo with in-memory data).
 
-Banto is a full-stack admin framework/template for **Tauri v2 + SvelteKit**
-(Svelte 5 runes). It pairs a refine-like headless core with a custom data
+**Banto is a template for building line-of-business apps that start on a
+single PC and can later be shared to browsers on the LAN.** It ships the
+common parts of such apps (data lists, input forms, auth, role-based access,
+audit log); you copy the template and adapt the bundled sample to your own
+business. Technically it is a full-stack admin framework/template for
+**Tauri v2 + SvelteKit** (Svelte 5 runes). It pairs a refine-like headless core with a custom data
 grid, schema-driven forms, charts, and a docking layout. The backend is Rust
 (axum + sqlx; SQLite by default, PostgreSQL supported). It runs as a desktop
 app, and — via an embedded web
@@ -96,10 +100,14 @@ Architecture overview (Japanese, Mermaid diagrams):
   into the demo app). Per-package integration recipes live under
   [docs/recipes/](docs/recipes/) (scan-wedge, notifications, tree-svelte).
 
-## Quick start
+## Try it first: browser demo (in-memory)
 
-Requirements: Node 24+ / pnpm 10+ (Rust too, only if running as a Tauri
-desktop app).
+Requirements: Node 24+ / pnpm 10+. This is the standalone browser **demo
+mode**: data lives in memory and `admin / admin` is a demo-only fixed account.
+To run the real thing with a SQLite database, install Rust and start the
+desktop app (`pnpm --filter admin-template tauri dev`; the first run creates
+the admin account — see [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md),
+Japanese).
 
 ```sh
 git clone https://github.com/tyaro/banto.git my-app
@@ -118,8 +126,10 @@ walkthrough):
    definition (PostgreSQL version in `migrations-postgres/0001_items.sql`)
 3. `apps/admin-template/core/src/items.rs` — service layer (CRUD)
 
-To turn this template into your own app (rename identifiers, replace the
-demo resource, drop unused packages), run the rename script:
+To turn this template into your own app, go in this order: copy → rename →
+pick a scaffold preset (drop unused optional assets) → implement your own
+screens and logic (replace the `items` demo) → configure LAN serving. First,
+the rename script:
 
 ```sh
 node scripts/rename.mjs \
@@ -128,11 +138,13 @@ node scripts/rename.mjs \
   --identifier com.example.myapp \
   --repo https://github.com/me/my-app   # optional
 # add --dry-run to preview the changes first
+pnpm install   # pick up the workspace rename
 ```
 
-To drop the optional assets (dock layout, charts, glass theme, command
-palette, attachments, reporting) as a batch, run the scaffold script and pick
-a preset:
+Next, drop the optional assets (dock layout, charts, glass theme, command
+palette, attachments, reporting) as a batch with the scaffold script. Pick the
+preset before implementing, because `display` also removes the `items` demo
+and the dashboard:
 
 ```sh
 pnpm scaffold --preset minimal   # minimal | standard | full | display
@@ -145,15 +157,18 @@ resource, the users / audit-log **screens** and `/dashboard`, then adds a
 `/monitor` page plus LAN-public-viewing first-boot defaults, kiosk shell
 defaults and `banto.i18n = "raw"`. See docs/design/display-preset-plan.md.
 
-For assets scaffold doesn't touch, or to remove things by hand, see the
-"オプション資産の削除" section in the Japanese README
-(`pnpm scaffold --interactive` covers most of it without reading Japanese).
+For assets scaffold doesn't touch, or to remove things by hand, see
+[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)
+(Japanese; `pnpm scaffold --interactive` covers most of it without reading
+Japanese). The other app-author guides (rename details, consuming `@banto/*`
+as a git dependency, LAN access, database/backup, Windows setup) live under
+[docs/recipes/](docs/recipes/) as well.
 
 ## Security note
 
 The LAN server is plain HTTP by default — enable it only on trusted
-networks. See the Japanese README for the TLS reverse-proxy recipe
-(Caddy example under "LANアクセス").
+networks. See [docs/recipes/lan-access.md](docs/recipes/lan-access.md)
+(Japanese) for the TLS reverse-proxy recipe (Caddy example).
 
 Session tokens are held in memory, so restarting the server (the desktop app
 / resident process) drops every session and forces a re-login. The 30-day /

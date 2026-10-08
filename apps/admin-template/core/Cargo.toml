@@ -15,7 +15,7 @@ default = ["system-metrics"]
 # the template ever enables would be dead code in the one place adopters
 # read to see how it is wired. To remove `sysinfo` from a derived app,
 # drop this feature from `default` here AND in
-# `apps/admin-template/src-tauri/Cargo.toml` (README「オプション資産の削除」
+# `apps/admin-template/src-tauri/Cargo.toml` (docs/recipes/remove-optional-assets.md
 # 「システムメトリクス（`sysinfo`）を外す」) - the System Info card's CPU/
 # memory rows disappear automatically since `metrics` becomes `null`.
 system-metrics = ["banto-admin-services/system-metrics"]

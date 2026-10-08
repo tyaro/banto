@@ -401,7 +401,7 @@ MDテンプレート + データバインド → 印刷CSS HTML（→ 将来PDF�
 自体はテーマ非依存の白地・黒文字固定）。スモークE2Eは12シナリオ
 （items → 日報 → 見出し・集計値・カテゴリ表の行を確認、`window.print()`
 は呼ばない）。提供形態は上記のとおりパッケージ + 削除可能な最小デモページ
-（削除手順は README「オプション資産の削除」/ template-scope.md §3）。
+（削除手順は [recipes/remove-optional-assets.md](recipes/remove-optional-assets.md) / template-scope.md §3）。
 
 ### M20: 添付ファイル/画像管理（完了）
 
@@ -622,7 +622,7 @@ HTTP制約・ロール紐付け設計）を参照。version 表示・System Info
   と `db::init_db_from_target` の `postgres://` 経路を実装。backup は SQLite 専用の
   まま（PostgreSQL は明示エラー）。（V2 判断 D3: VACUUM INTO と起動時ファイル
   差し替えに PostgreSQL の対応物が無く、論理バックアップは pg_dump が定石の
-  ため。運用案内は README の PostgreSQL 節）。既定は SQLite 維持。仕様 §12.1。
+  ため。運用案内は [recipes/database-backup.md](recipes/database-backup.md)）。既定は SQLite 維持。仕様 §12.1。
 - **[V2 テーマB 実施済み #110-113] i18n レイヤ②/③**: Paraglide JS を採用し
   （[ADR-0005](adr/0005-i18n-paraglide.md)）、app 層の可視文言を全キー化した
   （`messages/{en,ja}.json`・`locale.ts`・設定画面の言語切替 UI）。レイヤ①
