@@ -73,6 +73,32 @@ describe('gaugeColorVar', () => {
 		expect(gaugeColorVar(95, { warning: 50, danger: 90 })).toBe('var(--banto-danger)');
 	});
 
+	it('lower thresholds match on value <= threshold (warningLow / dangerLow)', () => {
+		const th = { warningLow: 20, dangerLow: 10 };
+		expect(gaugeColorVar(21, th)).toBe('var(--banto-primary)');
+		expect(gaugeColorVar(20, th)).toBe('var(--banto-warning)');
+		expect(gaugeColorVar(11, th)).toBe('var(--banto-warning)');
+		expect(gaugeColorVar(10, th)).toBe('var(--banto-danger)');
+		expect(gaugeColorVar(-5, th)).toBe('var(--banto-danger)');
+	});
+
+	it('combines lower and upper thresholds; the upper ones are unchanged', () => {
+		const th = { warning: 80, danger: 90, warningLow: 20, dangerLow: 10 };
+		expect(gaugeColorVar(50, th)).toBe('var(--banto-primary)');
+		expect(gaugeColorVar(85, th)).toBe('var(--banto-warning)');
+		expect(gaugeColorVar(95, th)).toBe('var(--banto-danger)');
+		expect(gaugeColorVar(15, th)).toBe('var(--banto-warning)');
+	});
+
+	it('a non-finite value (NaN, i.e. no reading) stays primary under any thresholds', () => {
+		const th = { warning: 80, danger: 90, warningLow: 20, dangerLow: 10 };
+		expect(gaugeColorVar(NaN, th)).toBe('var(--banto-primary)');
+	});
+
+	it('no value (null → NaN) yields angle at the range floor', () => {
+		expect(gaugeAngle(NaN, 0, 100)).toBe(GAUGE_START_DEG);
+	});
+
 	it('supports a warning-only threshold set (no danger)', () => {
 		expect(gaugeColorVar(1000, { warning: 50 })).toBe('var(--banto-warning)');
 	});

@@ -25,7 +25,9 @@
 	 * the (never-triggered) decimation reduce to the original index spacing.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { linePath, areaPath } from './core/path';
+	import { linePathSegments, areaPathSegments } from './core/path';
+	import { seriesNumber, seriesSegments } from './core/series';
+	import { resolveBand } from './core/band';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import { estimateLabelWidth } from './core/labels';
@@ -41,12 +43,11 @@
 	import { decimatedIndices } from './core/decimate';
 	import {
 		getValue,
-		toNumber,
 		type Accessor,
 		type ChartAxis,
 		type ChartMargin,
 		type EventMarker,
-		type ThresholdBand,
+		type OpenThresholdBand,
 		type TooltipRow
 	} from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -79,13 +80,20 @@
 		 */
 		zoomable?: boolean;
 		/** Shaded horizontal threshold/control-limit bands (M13 しきい値バンド). */
-		bands?: ThresholdBand[];
+		bands?: OpenThresholdBand[];
 		/** Vertical event markers at data indices (M13 注釈). */
 		markers?: EventMarker[];
 		/** Formatter for the RIGHT y-axis tick/tooltip values; defaults to `formatY`. */
 		formatYRight?: (n: number) => string;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
+		/**
+		 * How non-finite points (null/NaN/missing) are handled: `'join'` (default)
+		 * skips them and connects the neighbours across the gap (the original
+		 * behavior); `'break'` splits the line (and area) into separate subpaths
+		 * so the gap stays visible.
+		 */
+		gaps?: 'join' | 'break';
 	}
 
 	let {
@@ -102,7 +110,8 @@
 		bands = [],
 		markers = [],
 		formatYRight,
-		messages = {}
+		messages = {},
+		gaps = 'join'
 	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
@@ -133,7 +142,9 @@
 	// change (e.g. a streaming append) - NOT on hover or zoom. The pixel mapping
 	// that depends on the viewport lives in `seriesPaths` below, so a rolling
 	// data feed re-derives arrays once and the crosshair never rebuilds paths.
-	const seriesValues = $derived(series.map((s) => data.map((row) => toNumber(getValue(row, s.y)))));
+	const seriesValues = $derived(
+		series.map((s) => data.map((row) => seriesNumber(getValue(row, s.y), gaps)))
+	);
 
 	// Value extents via an explicit loop rather than `Math.min(...arr)` so a
 	// 10k x 10-series dataset can't overflow the argument-spread stack limit.
@@ -260,15 +271,11 @@
 		series.map((s, i) => {
 			const scale = isRight(s) ? rightScale : leftScale;
 			const vals = seriesValues[i];
-			const pts: { x: number; y: number }[] = [];
-			for (const idx of renderIndices) {
-				const v = vals[idx];
-				if (Number.isFinite(v)) pts.push({ x: xAt(idx), y: scale(v) });
-			}
+			const segs = seriesSegments(vals, renderIndices, xAt, scale, gaps);
 			return {
 				color: seriesColorVar(i),
-				line: linePath(pts),
-				area: area ? areaPath(pts, metrics.innerBottom) : ''
+				line: linePathSegments(segs),
+				area: area ? areaPathSegments(segs, metrics.innerBottom) : ''
 			};
 		})
 	);
@@ -388,37 +395,50 @@
 			<!-- Threshold bands (drawn first, under the data). -->
 			{#each bands as band, bi (bi)}
 				{@const scale = band.axis === 'right' ? rightScale : leftScale}
-				{@const yTop = scale(Math.max(band.from, band.to))}
-				{@const yBottom = scale(Math.min(band.from, band.to))}
-				{@const bandColor = band.colorVar ?? 'var(--banto-chart-axis)'}
-				<rect
-					x={m.innerLeft}
-					y={yTop}
-					width={m.innerWidth}
-					height={Math.max(0, yBottom - yTop)}
-					fill={bandColor}
-					fill-opacity="0.1"
-				/>
-				<line
-					x1={m.innerLeft}
-					x2={m.innerRight}
-					y1={yTop}
-					y2={yTop}
-					class="band-edge"
-					stroke={bandColor}
-				/>
-				<line
-					x1={m.innerLeft}
-					x2={m.innerRight}
-					y1={yBottom}
-					y2={yBottom}
-					class="band-edge"
-					stroke={bandColor}
-				/>
-				{#if band.label}
-					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
-						>{band.label}</text
-					>
+				{@const rb = resolveBand(
+					band.from,
+					band.to,
+					band.axis === 'right'
+						? [rightTicks[0], rightTicks[rightTicks.length - 1]]
+						: [leftTicks[0], leftTicks[leftTicks.length - 1]]
+				)}
+				{#if rb}
+					{@const yTop = scale(rb.high)}
+					{@const yBottom = scale(rb.low)}
+					{@const bandColor = band.colorVar ?? 'var(--banto-chart-axis)'}
+					<rect
+						x={m.innerLeft}
+						y={yTop}
+						width={m.innerWidth}
+						height={Math.max(0, yBottom - yTop)}
+						fill={bandColor}
+						fill-opacity="0.1"
+					/>
+					{#if rb.highEdge}
+						<line
+							x1={m.innerLeft}
+							x2={m.innerRight}
+							y1={yTop}
+							y2={yTop}
+							class="band-edge"
+							stroke={bandColor}
+						/>
+					{/if}
+					{#if rb.lowEdge}
+						<line
+							x1={m.innerLeft}
+							x2={m.innerRight}
+							y1={yBottom}
+							y2={yBottom}
+							class="band-edge"
+							stroke={bandColor}
+						/>
+					{/if}
+					{#if band.label}
+						<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
+							>{band.label}</text
+						>
+					{/if}
 				{/if}
 			{/each}
 

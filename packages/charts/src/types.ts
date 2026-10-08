@@ -65,6 +65,16 @@ export interface ThresholdBand {
 }
 
 /**
+ * `ThresholdBand` that may be open-ended (LineChart `bands`): a `null`/non-finite
+ * `from` extends to the lower plot edge, a `null`/non-finite `to` to the upper
+ * one. Every `ThresholdBand` is assignable to it.
+ */
+export interface OpenThresholdBand extends Omit<ThresholdBand, 'from' | 'to'> {
+	from: number | null;
+	to: number | null;
+}
+
+/**
  * A vertical event marker at a data index (roadmap.md M13, 注釈). `at` is a
  * DATA INDEX (0-based) rather than an x-value, because these charts treat x as
  * an index-spaced ordered category axis (see `core/ticks-time.ts`).

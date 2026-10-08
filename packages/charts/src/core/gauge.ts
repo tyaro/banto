@@ -34,18 +34,28 @@ export function gaugeAngle(value: number, min: number, max: number): number {
 export interface GaugeThresholds {
 	warning?: number;
 	danger?: number;
+	/** Lower warning threshold: `value <= warningLow` is warning-colored (e.g. low-level alarm). */
+	warningLow?: number;
+	/** Lower danger threshold: `value <= dangerLow` is danger-colored; wins over `warningLow`. */
+	dangerLow?: number;
 }
 
 /**
  * Value-arc color: a THEME status var (spec §6.4 rule 10 - never a
  * chart series slot), chosen by which threshold `value` has reached or
- * crossed ("crossed above", i.e. `value >= threshold`). Danger wins when
- * both thresholds are crossed (checked first); omitted thresholds never
- * match, so no `thresholds` prop at all means "always primary".
+ * crossed ("crossed above", i.e. `value >= threshold`; the lower thresholds
+ * `warningLow`/`dangerLow` match on `value <= threshold`). Danger wins over
+ * warning (checked first); omitted thresholds never match, so no `thresholds`
+ * prop at all means "always primary". A non-finite `value` never matches
+ * and stays primary.
  */
 export function gaugeColorVar(value: number, thresholds: GaugeThresholds = {}): string {
 	if (thresholds.danger !== undefined && value >= thresholds.danger) return 'var(--banto-danger)';
+	if (thresholds.dangerLow !== undefined && value <= thresholds.dangerLow)
+		return 'var(--banto-danger)';
 	if (thresholds.warning !== undefined && value >= thresholds.warning)
+		return 'var(--banto-warning)';
+	if (thresholds.warningLow !== undefined && value <= thresholds.warningLow)
 		return 'var(--banto-warning)';
 	return 'var(--banto-primary)';
 }

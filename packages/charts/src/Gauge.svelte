@@ -5,15 +5,18 @@
 	 * display, not something you hover to read individual points). Threshold
 	 * colors use the THEME status vars (spec §6.4 rule 10: never a chart series
 	 * slot) - crossing `warning` or `danger` recolors the value arc, with
-	 * danger taking precedence when both are crossed.
+	 * danger taking precedence when both are crossed. Optional lower thresholds
+	 * (`warningLow`/`dangerLow`) recolor when the value falls to or below them.
+	 * `value: null` (no reading) draws no value arc and shows a placeholder.
 	 */
 	import { arcPath, polarToCartesian } from './core/pie';
 	import { gaugeAngle, gaugeColorVar, GAUGE_START_DEG, type GaugeThresholds } from './core/gauge';
 	import ChartContainer from './internal/ChartContainer.svelte';
-	import type { ChartMessages } from './messages';
+	import { defaultChartMessages, type ChartMessages } from './messages';
 
 	interface Props {
-		value: number;
+		/** `null`/non-finite draws no value arc and shows the `gaugeNoValue` placeholder ("—") instead of a number. */
+		value: number | null;
 		min?: number;
 		max: number;
 		label: string;
@@ -45,6 +48,9 @@
 	// r*sin(45deg) below center (see core/gauge.ts's angle-convention note).
 	const ARC_VERTICAL_FACTOR = 1 + Math.sin(Math.PI / 4);
 
+	// svelte-ignore state_referenced_locally
+	const t = { ...defaultChartMessages, ...messages };
+
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 
 	function geometry(width: number, plotHeight: number) {
@@ -61,8 +67,9 @@
 		return { cx, cy, rOuter, rInner };
 	}
 
-	const endAngle = $derived(gaugeAngle(value, min, max));
-	const colorVar = $derived(gaugeColorVar(value, thresholds));
+	const hasValue = $derived(value !== null && Number.isFinite(value));
+	const endAngle = $derived(gaugeAngle(hasValue ? (value as number) : min, min, max));
+	const colorVar = $derived(gaugeColorVar(hasValue ? (value as number) : NaN, thresholds));
 </script>
 
 <div class="banto-gauge">
@@ -79,10 +86,12 @@
 			/>
 
 			<!-- Value arc, clamped into [min, max] for the geometry (raw value still shown in the hero number below). -->
-			<path
-				d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, GAUGE_START_DEG, endAngle)}
-				fill={colorVar}
-			/>
+			{#if hasValue}
+				<path
+					d={arcPath(g.cx, g.cy, g.rOuter, g.rInner, GAUGE_START_DEG, endAngle)}
+					fill={colorVar}
+				/>
+			{/if}
 
 			<text
 				x={minPoint.x}
@@ -104,7 +113,7 @@
 			</text>
 
 			<text x={g.cx} y={g.cy} class="hero-value" text-anchor="middle" dominant-baseline="middle">
-				{formatValueDisplay(value)}
+				{hasValue ? formatValueDisplay(value as number) : t.gaugeNoValue()}
 			</text>
 		{/snippet}
 	</ChartContainer>
