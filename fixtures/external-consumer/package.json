@@ -11,13 +11,13 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@banto/admin-core": "github:tyaro/banto#v6.2.0&path:packages/admin-core",
-    "@banto/dock-svelte": "github:tyaro/banto#v6.2.0&path:packages/dock-svelte",
-    "@banto/forms": "github:tyaro/banto#v6.2.0&path:packages/forms",
-    "@banto/grid-svelte": "github:tyaro/banto#v6.2.0&path:packages/grid-svelte",
-    "@banto/theme": "github:tyaro/banto#v6.2.0&path:packages/theme",
-    "@banto/tree-svelte": "github:tyaro/banto#v6.2.0&path:packages/tree-svelte",
-    "@banto/ui": "github:tyaro/banto#v6.2.0&path:packages/ui"
+    "@banto/admin-core": "github:tyaro/banto#v6.3.0&path:packages/admin-core",
+    "@banto/dock-svelte": "github:tyaro/banto#v6.3.0&path:packages/dock-svelte",
+    "@banto/forms": "github:tyaro/banto#v6.3.0&path:packages/forms",
+    "@banto/grid-svelte": "github:tyaro/banto#v6.3.0&path:packages/grid-svelte",
+    "@banto/theme": "github:tyaro/banto#v6.3.0&path:packages/theme",
+    "@banto/tree-svelte": "github:tyaro/banto#v6.3.0&path:packages/tree-svelte",
+    "@banto/ui": "github:tyaro/banto#v6.3.0&path:packages/ui"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^4.0.0",
