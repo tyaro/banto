@@ -339,7 +339,7 @@ flowchart LR
 
 - **A** はバックエンドなし。データはメモリ上のデモ。認証もデモ用。
 - **B** はフルスタック HTTP。既定ポート `8721`、`BANTO_DB` / `BANTO_VIEWER_PUBLIC` / `BANTO_ALLOW_SETUP` などで挙動調整。`embed-ui` 無しだとプレースホルダ UI。
-- **C** の Webview は常に開発中フロントを表示。LAN クライアントに実 UI を出す本番ビルドでは `embed-ui` が別途必要（README「embed-ui」）。
+- **C** の Webview は常に開発中フロントを表示。LAN クライアントに実 UI を出す本番ビルドでは `embed-ui` が別途必要（[docs/recipes/lan-access.md「`embed-ui` フィーチャー」](./recipes/lan-access.md)）。
 - 検証の常用は `pnpm check` / `cargo test` / `pnpm e2e`（e2e は多くの場合 `banto-serve`）。`src-tauri` コンパイルはこのサンドボックスでは不可なことがある。
 
 ---
@@ -396,6 +396,6 @@ flowchart LR
 | ログイン／セットアップ UI | `apps/admin-template/src/routes/login/+page.svelte`                                   |
 | ログイン無しレシピ        | `docs/recipes/no-login-app.md`                                                        |
 | display 既定              | `docs/design/display-preset-plan.md`                                                         |
-| 開発コマンド              | `README.md`「開発」「`banto-serve`」                                                  |
+| 開発コマンド              | `README.md`「開発」、`docs/recipes/lan-access.md`「`banto-serve`」                     |
 | CRUD 追加手順             | `docs/recipes/add-resource.md`（本ファイル §7 は層の索引）                            |
 | 閲覧公開計画              | `docs/design/viewer-public-plan.md` / `docs/adr/0012-lan-public-viewer-synthetic-session.md` |

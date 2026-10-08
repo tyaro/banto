@@ -39,6 +39,52 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
 `src/lib/banto/sampleData.ts` に生成データを足す（任意。デモに出さない
 機能は conventions §10 の「demo は明示拒否」に従う）。
 
+## items の関与ファイル全量（層別）
+
+`items`（商品）は「一覧・詳細・新規作成・CSVインポート/エクスポート・
+ダッシュボード集計」を貫通させたお手本として同梱している
+（[template-scope.md §3](../template-scope.md)）。上のチェックリストの「手本」列を
+層別に展開した全量は以下のとおり（差し替え・削除の対象もこの表）。
+
+| 層                       | ファイル                                                                                                                                | 内容                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Rust: マイグレーション   | `apps/admin-template/core/migrations-sqlite/0001_items.sql`（+ `migrations-postgres/0001_items.sql`）                                   | `items` テーブル定義                                                                                   |
+| Rust: シード             | `apps/admin-template/core/src/db.rs`（`SEED_ROW_COUNT`・`seed_if_empty`）                                                               | 初回起動時の1,000件デモ投入                                                                            |
+| Rust: サービス層         | `apps/admin-template/core/src/items.rs`                                                                                                 | `Item`/`ItemInput`/`ItemImportRow`・CRUD・CSVインポート                                                |
+| Rust: REST               | `apps/admin-template/core/src/rest/items.rs`                                                                                            | `items` のルーティング（LANブラウザ向け）                                                              |
+| Rust: Tauriコマンド      | `apps/admin-template/src-tauri/src/lib.rs`                                                                                              | `items_list`/`items_get`/`items_create`/`items_update`/`items_delete`/`items_import`、`AppState.items` |
+| フロント: リソース定義   | `apps/admin-template/src/lib/banto/resources/items.ts`・同 `resources/index.ts`                                                         | `itemsSchema`/`itemsResource` の定義と `resources` 配列への登録（`setup.ts` が `initBanto` へ渡す）    |
+| フロント: デモデータ     | `apps/admin-template/src/lib/banto/sampleData.ts`                                                                                       | ブラウザ単体デモモード（InMemory）用の生成データ                                                       |
+| フロント: ページ         | `apps/admin-template/src/routes/(app)/items/`                                                                                           | 一覧（`ItemsClientGrid.svelte`/`ItemsServerGrid.svelte`）・詳細・新規                                  |
+| フロント: CSVインポート  | `apps/admin-template/src/lib/banto/itemsAdmin.ts`                                                                                       | バルクインポートAPIクライアント（M15）                                                                 |
+| フロント: ナビ           | `apps/admin-template/src/lib/navigation.ts`                                                                                             | `/items` エントリ                                                                                      |
+| フロント: ダッシュボード | `apps/admin-template/src/lib/banto/dashboard.ts`・`src/lib/components/DashboardPanel.svelte`・`src/routes/(app)/dashboard/+page.svelte` | `items` から集計するスタットタイル/カテゴリ別在庫等のパネル定義                                        |
+
+`admin-template-core`/Tauri/REST の三経路で同一のサービス層を通す構造
+（[template-scope.md §2.1](../template-scope.md)）は維持すること。
+
+## `sqlx::migrate!` は同一DBに1クレートまで
+
+`apps/admin-template/core/src/db.rs` はアプリ自身のスキーマを
+`sqlx::migrate!("./migrations-sqlite")` /
+`sqlx::migrate!("./migrations-postgres")` で適用する。`sqlx` の
+マイグレーション管理テーブル（`_sqlx_migrations`）は**データベース全体で
+1つ**であり、クレートごとにテーブル名を分ける機能は無い。そのため
+`_sqlx_migrations` を内部で使う別クレート（自作の共通クレート等）を
+**同一プール**に対して併用すると、バージョン番号が衝突して
+`MigrateError::VersionMismatch`/`VersionMissing` で必ず失敗する
+（空DBへの初回実行から発生する）。回避策は次のどちらか:
+
+- 併用するクレート側を `sqlx::migrate!` ではなく冪等な DDL
+  （`CREATE TABLE IF NOT EXISTS`、列追加は存在確認してから
+  `ALTER TABLE`）にする
+- アプリ側の `db.rs` を冪等 DDL に寄せ、`sqlx::migrate!` を使うクレートを
+  1つに絞る
+
+いずれにせよ「同一プールに対して `sqlx::migrate!` を呼ぶクレートは常に
+1つまで」を保つこと（[publishing.md](../publishing.md)「消費実績と消費側の手順」で
+実際に踏んだ罠）。
+
 ## 一覧の絞り込み・並び順の保持（任意、Issue #215）
 
 一覧 → 詳細 → 保存 → 一覧と往復しても絞り込み・並び順・直前に開いた行を
@@ -90,4 +136,4 @@ pnpm e2e       # スモーク（banto-serve 起動、E2E を足した場合）
 
 自リソースへの差し替えが済んだら、上表の「手本」列のファイル一式が
 削除対象になる（逆向きに辿ればよい）。`attachments` の items デモ配線を
-使っている場合は README「オプション資産の削除」の手順が先。
+使っている場合は [remove-optional-assets.md](remove-optional-assets.md) の添付の手順が先。

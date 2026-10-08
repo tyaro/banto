@@ -96,9 +96,18 @@ the completion report (AGENTS.md "Definition of Done").
 - Put a password/token into audit detail (§6)
 - Write a raw color value in a component's CSS (§9)
 
+## Full list of files involved in `items`, and the `sqlx::migrate!` caveat
+
+The Japanese [add-resource.md](add-resource.md) also carries the per-layer
+table of every file that makes up the `items` demo (the deletion / replacement
+target) and the note that only one crate may call `sqlx::migrate!` against the
+same database pool (`_sqlx_migrations` is per-database, so two migrators collide
+with `VersionMismatch`/`VersionMissing`). Both moved there from the README on
+2026-10-08.
+
 ## When deleting items
 
 Once the replacement with your own resource is done, the full set of files in
 the "Model" column above becomes the deletion target (just trace it in reverse).
-If you use the attachments items-demo wiring, the README "Removing optional
-assets" procedure comes first.
+If you use the attachments items-demo wiring, the attachments steps in
+[remove-optional-assets.md](remove-optional-assets.md) (Japanese) come first.

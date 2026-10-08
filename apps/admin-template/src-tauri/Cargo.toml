@@ -17,7 +17,7 @@ default = ["system-metrics"]
 # for the same "template is the wiring sample" reason as that crate's
 # Cargo.toml comment. To remove `sysinfo` from a derived app, drop this
 # feature from `default` here AND in `apps/admin-template/core/Cargo.toml`
-# (README「オプション資産の削除」「システムメトリクス（`sysinfo`）を外す」).
+# (docs/recipes/remove-optional-assets.md「システムメトリクス（`sysinfo`）を外す」).
 system-metrics = ["admin-template-core/system-metrics"]
 # Passthrough to admin-template-core's own `embed-ui` feature (spec §11.1).
 # OFF by default so a fresh clone's `cargo build`/`tauri dev` never requires

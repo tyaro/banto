@@ -18,7 +18,8 @@
  *                既定値を反転する（docs/design/display-preset-plan.md §3.2、Issue #190）。
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
  *
- * 各資産の削除は README「3. オプション資産の削除」の手順を 1 対 1 で自動化した
+ * 各資産の削除は docs/recipes/remove-optional-assets.md（旧 README「3. オプション
+ * 資産の削除」）の手動手順を 1 対 1 で自動化した
  * 単一の remover 関数に閉じる。プリセットは「どの remover を呼ぶか」の集合。
  * 編集エンジン（現在値を読んで置換・再実行安全・`--dry-run`・見つからない
  * パターンは明示的失敗）は rename.mjs と共有する scripts/lib/template-edit.mjs。
@@ -288,10 +289,10 @@ const PLAYWRIGHT_CONFIG = 'e2e/playwright.config.ts';
 const E2E_SMOKE = 'e2e/tests/smoke.spec.ts';
 const CI_WORKFLOW = '.github/workflows/ci.yml';
 
-// --- removers（README「3. オプション資産の削除」の 1 対 1 自動化） ----------
+// --- removers（docs/recipes/remove-optional-assets.md の手動手順の 1 対 1 自動化） ---
 
 /**
- * `@banto/charts`（SVGチャート）。README ~270-275。
+ * `@banto/charts`（SVGチャート）。remove-optional-assets.md「`@banto/charts`」。
  * ダッシュボードのチャートデモ配線・DashboardPanel・@banto/charts 依存を外す。
  * `dashboard.ts` はスタットタイルが `computeStatTiles` を使うため残す（未使用の
  * 集計エクスポートはビルドを壊さない）。stat タイルの Sparkline のみ外す。
@@ -358,7 +359,7 @@ function removeCharts() {
 }
 
 /**
- * `@banto/dock-svelte`（ダッシュボードのドッキング）。README ~263-268。
+ * `@banto/dock-svelte`（ダッシュボードのドッキング）。remove-optional-assets.md「`@banto/dock-svelte`」。
  * ダッシュボードの Dock 配線一式・panels.ts・popout.ts・@banto/dock-svelte 依存に
  * 加え、pop-out 先の `routes/panel/[id]`（panels.ts / DashboardPanel に依存）も削除。
  */
@@ -405,7 +406,7 @@ function removeDock() {
 }
 
 /**
- * Glass テーマ + Windows vibrancy（M12）。README ~277-289。
+ * Glass テーマ + Windows vibrancy（M12）。remove-optional-assets.md「Glassテーマ + Windows vibrancy」。
  * banto-glass.css / ThemePreset の 'glass' / 設定画面のプリセット選択肢を外し、
  * 併せて本物のガラス感（Windows Acrylic）= vibrancy も外す。
  * src-tauri（lib.rs / Cargo）は本サンドボックスでは非コンパイル（コードレビュー担保）。
@@ -463,7 +464,7 @@ function removeGlass() {
 }
 
 /**
- * コマンドパレット（Ctrl+K、M16）。README ~290-297。
+ * コマンドパレット（Ctrl+K、M16）。remove-optional-assets.md「コマンドパレット」。
  * CommandPalette.svelte / commandPalette.svelte.ts / commands.ts を削除し、
  * (app)/+layout.svelte と Header.svelte からの参照を外す。
  */
@@ -559,8 +560,8 @@ function removeCommandPalette() {
 }
 
 /**
- * 添付ファイル（`@banto/attachments` + items 添付デモ、M20）。README ~298-321。
- * README の 6 ステップ順（依存の少ない順）で外す。src-tauri（lib.rs / Cargo）は
+ * 添付ファイル（`@banto/attachments` + items 添付デモ、M20）。remove-optional-assets.md「添付ファイル機能」。
+ * remove-optional-assets.md の 6 ステップ順（依存の少ない順）で外す。src-tauri（lib.rs / Cargo）は
  * 非コンパイル・コードレビュー担保。rest/tests.rs（`cargo test` 対象）も併せて
  * 更新し、全プリセットで `cargo test` が緑になるようにする。
  */
@@ -789,7 +790,7 @@ function removeAttachmentsFromRestTests() {
 }
 
 /**
- * 帳票デモ（`@banto/report` + 日報デモ、M19）。README ~320-353。
+ * 帳票デモ（`@banto/report` + 日報デモ、M19）。remove-optional-assets.md「帳票デモ」。
  * DB/バックエンド配線を持たない最小デモなので、items ページの日報ボタン・
  * ルート/ライブラリ・@banto/report 依存 + print CSS だけで外せる。
  */
@@ -1026,7 +1027,7 @@ function removeGlassSrcTauri() {
 
 // --- tree（ツリービュー・デモ、M-review 2026-08）----------------------------
 //
-// README「オプション資産の削除」の「ツリーデモ」手順 1〜4 の 1 対 1 自動化。
+// docs/recipes/remove-optional-assets.md「ツリーデモ」手順 1〜4 の 1 対 1 自動化。
 // DB/バックエンド配線を持たない最小デモなので、フロントのみで完結する。
 // packages/tree-svelte 本体は同梱のまま（他 remover と同方針: パッケージは
 // 残しても他に影響しない）。
@@ -1082,8 +1083,8 @@ function removeTree() {
 //
 // docs/design/display-preset-plan.md §3.2 / template-scope §3。items は長らく「コア」
 // 扱いだったが、実体は**差し替え前提のデモリソース**なので display で
-// 丸ごと外せるように再分類した（README「デモコンテンツ（items）を自リソースに
-// 差し替える」の層別ファイル一覧と1対1）。
+// 丸ごと外せるように再分類した（docs/recipes/add-resource.md「items の関与ファイル
+// 全量（層別）」の表と1対1）。
 //
 // 実装方針: 巨大な items 区画には PR-D1 が `// [scaffold:items] begin/end`
 // マーカーを入れてある（Rust 3ファイル + src-tauri + フロント 2ファイル）ので、
@@ -1712,7 +1713,7 @@ const REMOVERS = {
 	displayDefaults: applyDisplayDefaults
 };
 
-// 前半（オプション資産）は README の資産並び順。remover 間はテキスト領域が
+// 前半（オプション資産）は remove-optional-assets.md の資産並び順。remover 間はテキスト領域が
 // 独立なので順序非依存。
 //
 // 後半（display 専用）は**順序依存**なので、この並びを崩さないこと:

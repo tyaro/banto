@@ -29,7 +29,7 @@ Banto は **M11 ログイン不要モード**でこれに対応している: ロ
 - 監査ログは synthetic session（`local`）の actor で記録され続ける。
 
 さらに手早くしたい場合は `pnpm scaffold --preset minimal` でオプション資産
-（dock/charts/添付/帳票など）をまとめて外せる（README「オプション資産の削除」）。
+（dock/charts/添付/帳票など）をまとめて外せる（[remove-optional-assets.md](remove-optional-assets.md)）。
 
 ## 育ったらログイン機能を足す
 
@@ -43,7 +43,7 @@ Banto は **M11 ログイン不要モード**でこれに対応している: ロ
      する。
 3. ユーザー管理画面でメンバーのアカウントを追加する（ロールの増やし方は
    [add-role.md](add-role.md)）。必要なら **設定 → サーバ・接続 →
-   LANアクセス**を有効化して LAN 配信へ（README「LANアクセス」の注意書きを
+   LANアクセス**を有効化して LAN 配信へ（[lan-access.md](lan-access.md) のセキュリティ注意を
    必ず読むこと）。
 
 毎回のパスワード入力だけを省きたい（がアカウントは残したい）中間形態には

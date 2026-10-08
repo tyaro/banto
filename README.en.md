@@ -145,15 +145,18 @@ resource, the users / audit-log **screens** and `/dashboard`, then adds a
 `/monitor` page plus LAN-public-viewing first-boot defaults, kiosk shell
 defaults and `banto.i18n = "raw"`. See docs/design/display-preset-plan.md.
 
-For assets scaffold doesn't touch, or to remove things by hand, see the
-"オプション資産の削除" section in the Japanese README
-(`pnpm scaffold --interactive` covers most of it without reading Japanese).
+For assets scaffold doesn't touch, or to remove things by hand, see
+[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)
+(Japanese; `pnpm scaffold --interactive` covers most of it without reading
+Japanese). The other app-author guides (rename details, consuming `@banto/*`
+as a git dependency, LAN access, database/backup, Windows setup) live under
+[docs/recipes/](docs/recipes/) as well.
 
 ## Security note
 
 The LAN server is plain HTTP by default — enable it only on trusted
-networks. See the Japanese README for the TLS reverse-proxy recipe
-(Caddy example under "LANアクセス").
+networks. See [docs/recipes/lan-access.md](docs/recipes/lan-access.md)
+(Japanese) for the TLS reverse-proxy recipe (Caddy example).
 
 Session tokens are held in memory, so restarting the server (the desktop app
 / resident process) drops every session and forces a re-login. The 30-day /

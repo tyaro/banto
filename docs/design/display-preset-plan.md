@@ -3,7 +3,7 @@
 作成日: 2026-09-14
 状態: **PR-D1 / PR-D2 とも実装済み**（PR-D1 = 本体準備、PR-D2 =
 `scripts/scaffold.mjs --preset display`）。前提の Issue #189（閲覧公開、PR #191）は
-マージ済み。利用者向けの説明は README「オプション資産の削除 → `--preset display`」、
+マージ済み。利用者向けの説明は [recipes/remove-optional-assets.md「`--preset display`」](../recipes/remove-optional-assets.md)（2026-10-08 に README から移動）、
 受け入れ検査は `.github/workflows/template-acceptance.yml` の `presets` matrix
 （`[minimal, standard, full, display]`）。
 トラック: 保守者向け（トラックA）

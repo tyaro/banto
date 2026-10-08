@@ -6,7 +6,8 @@
 - 日付: 2026-07-19
 - 関連: [conventions.md §3](../conventions.md)、[ADR-0002](0002-minimal-dependencies.md)、
   spec §11.2、improvements.md §2.3、improvement-plan-2026-07.md P1-4/B、
-  README「LANアクセス」
+  README「LANアクセス」（手順の実体は 2026-10-08 以降
+  [docs/recipes/lan-access.md](../recipes/lan-access.md)）
 
 ## コンテキスト
 
@@ -46,8 +47,8 @@ TLS が要る。どう TLS を提供するかは、依存最小化（ADR-0002）
 
 ## 帰結
 
-- README「LANアクセス」は Caddy によるリバースプロキシ TLS を手順として
-  持つ。バインドは `127.0.0.1` に絞る前提（`0.0.0.0` だとプロキシを迂回した
+- README「LANアクセス」（現在は [recipes/lan-access.md](../recipes/lan-access.md)）は
+  Caddy によるリバースプロキシ TLS を手順として持つ。バインドは `127.0.0.1` に絞る前提（`0.0.0.0` だとプロキシを迂回した
   平文 HTTP でも届く）。
 - 組み込み TLS を実装するなら、それは独立したマイルストーンとして、
   Tauri をビルド・TLS ハンドシェイクを実地検証できる環境で行う（本テンプレの

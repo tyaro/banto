@@ -14,7 +14,7 @@
  *     [--description "説明文"] \
  *     [--dry-run]
  *
- * 書き換える箇所（README「コピーとリネーム」の手動手順に対応）:
+ * 書き換える箇所（docs/recipes/rename.md「スクリプトが書き換える箇所」の手動手順に対応）:
  *   - ルート package.json          … name（--name）/ description
  *   - apps/admin-template/package.json … name（"<name>-app"。ルートと同名に
  *     すると pnpm workspace 内で重複するため）

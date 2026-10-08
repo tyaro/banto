@@ -1,99 +1,51 @@
 # Banto（番頭）
 
 Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
-フレームワーク/テンプレート。refineライクなヘッドレスコアに、独自の
+フレームワーク/テンプレート。refine ライクなヘッドレスコアに、独自の
 データグリッド・スキーマ駆動フォーム・チャート・ドッキングレイアウトを
-組み合わせる。
+組み合わせ、Rust（axum + sqlx。SQLite 既定・PostgreSQL 対応）バックエンドと
+一緒に**デスクトップアプリ（Tauri）と LAN ブラウザ配信の二形態**で動く。
+**コピーして自分のアプリを作る**ための雛形で、同梱物はすべて削除できる。
 
 名称は、江戸時代の商家で主人に代わって店を切り盛りした「番頭」に由来。
 
+- **ライブデモ**: [tyaro.github.io/banto](https://tyaro.github.io/banto/) —
+  ブラウザ単体のデモモード（InMemory・バックエンド不要）。**admin / admin** でログイン。
 - English summary: [README.en.md](README.en.md)
-- 仕様書: [docs/ui-framework-spec.md](docs/ui-framework-spec.md)
-- 全体構成図: [docs/architecture-overview.md](docs/architecture-overview.md)
-  （フロー詳細: [docs/architecture-flows.md](docs/architecture-flows.md)）
-- 機能拡張ロードマップ（M10〜）: [docs/roadmap.md](docs/roadmap.md)
-- 保守者向け規約: [docs/conventions.md](docs/conventions.md)
-- 公開手順: [docs/publishing.md](docs/publishing.md)
-- 派生アプリの更新手順（新版の取り込み・同期記録・互換性確認）: [docs/upgrading.md](docs/upgrading.md)
-  （リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）
-- ライセンス: [MIT](LICENSE)
-- npmスコープ: `@banto/*` / Rustクレート: `banto-*`
-
-## スクリーンショット
-
-**ライブデモ: [tyaro.github.io/banto](https://tyaro.github.io/banto/)** — 単体ブラウザ（デモ）
-モード（InMemory・バックエンド不要）で動く。**admin / admin** でログイン可能。
-
-デスクトップ（Tauri）と LAN ブラウザ配信の両方で動く管理画面。1万件のデモデータで、
-仮想スクロールのデータグリッド・スキーマ駆動フォーム・各種チャート（折れ線 / 棒 / 円 /
-散布 / ヒートマップ / ゲージ / レーダー ほか）・ドッキングレイアウト・明暗テーマ
-（standard / glass プリセット）を同梱している。
-
-**ダッシュボード（ライト / standard）**
-
-![Banto ダッシュボード（ライトテーマ）](docs/assets/dashboard-light.png)
-
-**ダッシュボード（ダーク / glass プリセット）**
-
-![Banto ダッシュボード（ダークテーマ・glass）](docs/assets/dashboard-dark.png)
-
-**データグリッド（商品一覧・仮想スクロール / 絞り込み / インライン編集）**
-
-![Banto データグリッド](docs/assets/items-grid.png)
-
-## ドキュメントの2トラック
-
-読者によってドキュメントを2つのトラックに分けている。
-
-- **トラックB（このREADME）= アプリ作者向け**: このテンプレートを**コピーして
-  自分のアプリを作る人**向け。リネーム・デモ差し替え・オプション削除・スキャナ
-  入力レシピ・セットアップ手順はすべてこの下にある。
-- **トラックA（`docs/`）= 保守者向け**: テンプレート**自体を保守・機能拡張する人**
-  向け。不変条件（[docs/conventions.md](docs/conventions.md)）・仕様書・スコープ判定
-  ・実装計画・配布規約。AIエージェントの道案内は [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md)。
-
-アップストリームを追わずハードフォークするなら、トラックA（`docs/`・`AGENTS.md`・
-`CLAUDE.md`）は不要になれば削除してよい（テンプレートの「すべては削除可能」方針）。
+- ライセンス: [MIT](LICENSE)。npm スコープ `@banto/*` / Rust クレート `banto-*`
+- 変更履歴: [CHANGELOG.md](CHANGELOG.md)
 
 ## 対象読者 / 非対象
 
 Banto は特定のニッチに最適化したテンプレートで、汎用の管理画面ジェネレータではない。
-ニッチは隠すより宣言した方が合う人に速く届く。最初の1画面で「自分向きか」を判断できる
-よう、正直に開示する。
+最初の1画面で「自分向きか」を判断できるよう、正直に開示する。
 
-**向いている人**
-
-- **デスクトップアプリと LAN ブラウザ配信の両方**が要る業務系（現場端末はデスクトップ、
-  事務所は同じ画面をブラウザで）。
-- 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人。
-- Tauri v2 + SvelteKit（Svelte 5 Runes）+ Rust の構成で、AI 併走で量産したい人。
-
-**向いていない人**
-
-- Web のみ / デスクトップのみで足りる人（二形態の複雑さが不要）。
-- React / Electron の人材・エコシステムに乗りたい人。
-- 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL
-  単体には V2 で対応済み）。
-
-**言語**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で切り替えられる
-（V2 テーマB、Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の
-表示ロケールは日本語で見た目は不変。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は
-注入された解決済み文字列で受け取る（i18n は app 層のみ、conventions §13）。単一言語の
-display 系アプリ（カンバン・常設ダッシュボード等）は `apps/admin-template/package.json`
-の `banto.i18n` を `"raw"` にすると、この対訳キー方式を opt-out して UI 文言を直書き
-できる（既定 `"keys"` = 上記の挙動、display-preset-plan.md D1-c）。
+| 向いている人                                                                                            | 向いていない人                                                                                    |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **デスクトップアプリと LAN ブラウザ配信の両方**が要る業務系（現場端末はデスクトップ、事務所はブラウザ） | Web のみ / デスクトップのみで足りる人（二形態の複雑さが不要）                                     |
+| 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人                     | React / Electron の人材・エコシステムに乗りたい人                                                 |
+| Tauri v2 + SvelteKit（Svelte 5 Runes）+ Rust の構成で、AI 併走で量産したい人                            | 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL 単体には V2 で対応済み） |
 
 **v1 の割り切り（正直な開示）**:
 
 - LAN 配信は標準 HTTP。TLS はリバースプロキシ終端で対応する
-  （[docs/adr/0003-tls-via-reverse-proxy.md](docs/adr/0003-tls-via-reverse-proxy.md)）。
+  （[ADR-0003](docs/adr/0003-tls-via-reverse-proxy.md)、手順は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)）。
 - DB は既定でローカル SQLite。V2 で PostgreSQL にもアプリ全体で対応した
-  （`BANTO_DB` を `postgres://` にすると切替。バックアップは SQLite 専用）。
+  （`BANTO_DB` を `postgres://` にすると切替。バックアップは SQLite 専用。
+  [docs/recipes/database-backup.md](docs/recipes/database-backup.md)）。
+
+**言語**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で切り替えられる
+（Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の表示ロケールは
+日本語。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は注入された解決済み
+文字列で受け取る（i18n は app 層のみ、[conventions §13](docs/conventions.md#i18n-messages)）。
+単一言語の display 系アプリ（カンバン・常設ダッシュボード等）は
+`apps/admin-template/package.json` の `banto.i18n` を `"raw"` にすると、この対訳キー方式を
+opt-out して UI 文言を直書きできる（既定 `"keys"`、display-preset-plan.md D1-c）。
 
 ## 5分で動かす
 
 前提: Node 24+ / pnpm 10+（Tauri デスクトップとして動かす場合のみ Rust も。
-詳細は「開発」「Windowsでのローカルセットアップ」節）。
+[開発](#開発) / [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)）。
 
 ```sh
 git clone https://github.com/tyaro/banto.git my-app
@@ -114,104 +66,130 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 [docs/recipes/add-resource.md](docs/recipes/add-resource.md) のチェックリストに従う
 （AI にそのまま指示として渡せる）。
 
+## 目的別の入口
+
+やりたいことから、読む文書を引く表。手順の「正」は各リンク先にあり、README は要点だけを持つ。
+
+| やりたいこと                                                             | 読む文書                                                                                                                                                                   |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| テンプレートをコピーして自分のアプリにする（リネーム → 差し替え → 削除） | 本書 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                             |
+| 名称・識別子をリネームする                                               | [docs/recipes/rename.md](docs/recipes/rename.md)                                                                                                                           |
+| CRUD リソースを追加する / デモの `items` を差し替える                    | [docs/recipes/add-resource.md](docs/recipes/add-resource.md)                                                                                                               |
+| 不要なオプション資産（dock/charts/添付/帳票/ツリー等）を外す             | [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)（`pnpm scaffold --preset`）                                                               |
+| 表示専用アプリ（カンバン / 常設ダッシュボード / 展示デモ）を作る         | 同上の [`--preset display`](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)                                                                         |
+| ログイン無しの小さなアプリとして始める                                   | [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)                                                                                                               |
+| RBAC ロールを足す                                                        | [docs/recipes/add-role.md](docs/recipes/add-role.md)                                                                                                                       |
+| LAN の他端末に配信する / 閲覧公開 / TLS / PWA                            | [docs/recipes/lan-access.md](docs/recipes/lan-access.md)                                                                                                                   |
+| DB の切り替え（SQLite / PostgreSQL）・バックアップ                       | [docs/recipes/database-backup.md](docs/recipes/database-backup.md)                                                                                                         |
+| スキャナ入力 / 通知トースト / ツリービューを組み込む                     | [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md) / [notifications.md](docs/recipes/notifications.md) / [tree-svelte.md](docs/recipes/tree-svelte.md)               |
+| 別リポジトリから `@banto/*` / `banto-*` を git 依存で使う                | [docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)・[docs/publishing.md](docs/publishing.md)                                           |
+| Banto の新しい版を派生アプリに取り込む                                   | [docs/upgrading.md](docs/upgrading.md)（リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）                                             |
+| Windows で Tauri デスクトップとして動かす                                | [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)                                                                                                             |
+| 全体構成・レイヤ・フローを一望する                                       | [docs/architecture-overview.md](docs/architecture-overview.md) / [docs/architecture-flows.md](docs/architecture-flows.md)                                                  |
+| 仕様・ロードマップ・設計判断（テンプレート自体を保守する）               | [docs/ui-framework-spec.md](docs/ui-framework-spec.md) / [docs/roadmap.md](docs/roadmap.md) / [docs/adr/](docs/adr/README.md) / [docs/conventions.md](docs/conventions.md) |
+
+## ドキュメントの2トラック
+
+読者によってドキュメントを2つのトラックに分けている。
+
+- **トラックB（この README と `docs/recipes/`）= アプリ作者向け**: このテンプレートを
+  **コピーして自分のアプリを作る人**向け。リネーム・デモ差し替え・オプション削除・
+  LAN 配信・各パッケージの組み込みレシピ・セットアップ手順。README は背骨（コピー →
+  リネーム → 差し替え → 削除 → 配信）と入口に絞り、手順の全量は `docs/recipes/` に置く。
+- **トラックA（`docs/` のそれ以外）= 保守者向け**: テンプレート**自体を保守・機能拡張する人**
+  向け。不変条件（[docs/conventions.md](docs/conventions.md)）・仕様書・スコープ判定
+  ・実装計画・配布規約。AI エージェントの道案内は [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md)。
+
+アップストリームを追わずハードフォークするなら、トラックA（`docs/`・`AGENTS.md`・
+`CLAUDE.md`）は不要になれば削除してよい（テンプレートの「すべては削除可能」方針）。
+
+## スクリーンショット
+
+デスクトップ（Tauri）と LAN ブラウザ配信の両方で動く管理画面。1万件のデモデータで、
+仮想スクロールのデータグリッド・スキーマ駆動フォーム・各種チャート（折れ線 / 棒 / 円 /
+散布 / ヒートマップ / ゲージ / レーダー ほか）・ドッキングレイアウト・明暗テーマ
+（standard / glass プリセット）を同梱している。
+
+**ダッシュボード（ライト / standard）**
+
+![Banto ダッシュボード（ライトテーマ）](docs/assets/dashboard-light.png)
+
+**ダッシュボード（ダーク / glass プリセット）**
+
+![Banto ダッシュボード（ダークテーマ・glass）](docs/assets/dashboard-dark.png)
+
+**データグリッド（商品一覧・仮想スクロール / 絞り込み / インライン編集）**
+
+![Banto データグリッド](docs/assets/items-grid.png)
+
 ## 主な機能
 
-- **データグリッド**（`@banto/grid-svelte`）: 仮想スクロール、複数列ソート、
-  列フィルタ、列リサイズ/並び替え、**列の表示/非表示**（`ColumnsMenu` の
-  列マネージャー UI + `GridColumn.hidden` の既定非表示）、Excelライクな
-  セル編集・範囲選択・コピー&ペースト、クライアント/サーバー両モード、
-  グルーピング+集計。
-  フォームスキーマからの**列自動導出**（`columnsFromSchema`、M23 —
-  バリデーション込み。「スキーマを1つ書けば一覧とフォームが両方生える」。
-  一覧の列順はフォームの入力順と切り離して `order` で指定できる）。
-- **スキーマ駆動フォーム**（`@banto/forms`）: 定義オブジェクトから入力UI・
-  バリデーション・状態管理を自動生成。
-- **チャート**（`@banto/charts`）: 依存ライブラリなしのSVGフルスクラッチ。
-  折れ線/エリア・棒・円/ドーナツ・散布図・スパークラインに加え、複合
-  （棒+折れ線）・レーダー・ヒートマップ・ゲージ、SPC系（ヒストグラム・
-  パレート図・箱ひげ図）、積立エリア（`StackedAreaChart` — 積立棒は
-  `BarChart` の `stacked`）・ガントチャート（`GanttChart`）の全14種。
-- **ドッキングレイアウト**（`@banto/dock-svelte`）: フローティングウィンドウ +
-  分割・タブ化・ドラッグでの再配置・スナップ、レイアウトのJSON保存/復元。
-- **refineライクなコア**（`@banto/admin-core`）: リソース定義、
-  `DataProvider`/`AuthProvider`抽象、`createListResource`/`createFormResource`
-  コンポーザブル。バックエンドはTauri `invoke()`（ローカルRust）を既定に、
-  InMemory/HTTP を差し替え可能。
-- **組み込みWebサーバ**（`banto-server`）: 設定でオプトイン有効化すると、
-  同一LAN内の他端末のブラウザからREST + SSEで同じ画面を利用可能。
-- **認証・RBAC・ユーザー管理**（M10）: argon2id 資格情報 + 初回セットアップ、
-  admin/editor/viewer の3ロール、ユーザー管理画面。REST/Tauri 両経路で
-  同一の権限判定。
-- **監査ログ**（M14）+ **設定基盤**（M12、SettingsProvider）+ **自動ログイン/
-  ログイン不要モード**（M11）。デスクトップの初回セットアップ画面で
-  「ログインなしで使い始める」を選べば、アカウントを作らずログイン無しの
-  小さなアプリとして始められる（育ったらログイン運用へ切り替え可能）。手順は
-  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)。
-- **固定ヘッダ/サイドバー + 通知バッジ + ステータス表示**（2026-09）: 本文
-  スクロール中もヘッダと左ペインは画面に固定。サイドバーのナビ項目には
-  「他クライアントの変更」を知らせる未確認更新バッジ（`NavItem.badgeResource`
-  を宣言するだけで自リソースにも付く）、ヘッダにはデモモード/現在ロールの
-  ステータスチップが標準で付く。設定画面はカテゴリ
-  （外観・言語/アカウント/サーバ・接続/データ管理/セキュリティ）ごとの
-  ルート（`/settings/appearance` 等）に分割し、カテゴリナビ
-  （≥1024pxは左レール、それ未満はタブ）で切り替え。
-- **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・
-  **SQLite バックアップ/リストア**（M17）。
-- **システム情報カード**（v1.2.0、CPU/メモリは Issue #185 で追加）: 設定画面に
-  admin 専用でアプリバージョン・DB 種別・稼働形態・ホスト/プロセスの
-  CPU・メモリ使用率などを表示（`GET /api/system/info` / Tauri `system_info`）。
-- **対応DBは SQLite（既定）と PostgreSQL**。V2 でアプリ全体を PostgreSQL 上でも
-  動かせるようにした（`banto-storage` の `Db`/`Dialect` による方言吸収 + 方言別
-  マイグレーション）。`banto-serve` の環境変数 `BANTO_DB` を `postgres://` URL に
-  すると PostgreSQL 経路になる（既定はローカル SQLite）。PostgreSQL のときは
-  添付ファイルの保存先 `BANTO_ATTACHMENTS_DIR` の指定が必須（DB ごとに
-  サブディレクトリを分ける。未指定なら起動しない。#208）。バックアップ/リストアは
-  SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1 参照。
-- **SQLite バックアップの保存先（#280 で変更）**: バックアップ・適用前の安全
-  バックアップ・リストア予約は **DB ファイルごと** に
-  `<DBの親フォルダ>/backups/<DBファイル名>/`（例: `data/a.sqlite3` なら
-  `data/backups/a.sqlite3/`。予約は同ディレクトリの `restore-pending.sqlite3`）へ
-  置く。同じフォルダに複数の SQLite DB を置いても、互いのバックアップは一覧・取得・
-  リストアの対象にならず、予約も他 DB の起動時に適用されない。DB ファイル名は
-  設定されたパスから決まり（リクエスト入力は使わない）、パス区切り・制御文字・
-  `:*?"<>|` などを含む名前は明示エラーになる。**旧配置（`backups/` 直下のバックアップ・
-  親フォルダ直下の `restore-pending.sqlite3`）からの移行**: 旧ファイルは所属 DB を
-  判断できないため一覧・取得・自動適用の対象にならず（削除もされない）、起動時に
-  stderr へ警告が出る。引き続き使うバックアップは新ディレクトリへ手動で移動する
-  （例: `mv data/backups/*.sqlite3 data/backups/a.sqlite3/`）。旧
-  `restore-pending.sqlite3` は自動適用されないので、適用したいなら新ディレクトリへ
-  移すか、設定画面から改めて予約し直す。暫定回避策として DB ごとに親フォルダを
-  分ける運用も有効（新構成でも安全）。PostgreSQL はこれまでどおりバックアップ非対応。
-- **PostgreSQL 利用時のバックアップ運用**: 内蔵バックアップ/リストア（設定
-  画面のバックアップ節）は SQLite 専用で、PostgreSQL では明示エラーになる。
-  PostgreSQL のバックアップは `pg_dump`（例: `pg_dump -Fc banto > banto.dump`）、
-  復元は `pg_restore`（または平文形式なら `psql`）を使う。理由（VACUUM INTO /
-  起動時ファイル差し替えの PG 対応物が無い）は roadmap §3 の V2 テーマA 項
-  （D3）参照。
-- **Glassテーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
-- **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、
-  添付ファイル/画像管理（`@banto/attachments`、M20）、バーコード/QR
-  スキャナ入力（`@banto/scan-wedge`、M21）、ツリービュー（`@banto/tree-svelte`）。
-  帳票・添付・ツリービューは削除可能なデモ配線付き（ツリービューはサイドバーの
-  「ツリービュー」= `/tree` デモページ。ライブデモでも触れる）。scan-wedge は
-  バックエンド/DB 依存ゼロのため**本体には配線せず**、README のレシピで各アプリに
-  直接組み込む（後述「バーコード/QRスキャナ入力」節）。ツリービューの使い方
-  レシピも後述「ツリービュー」節に用意。
+各機能の実装パッケージは次節「構成」、実装済みマイルストーン（M10〜）の全体像は
+[docs/roadmap.md](docs/roadmap.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md)。
 
-実装済みマイルストーンの全体像は [docs/roadmap.md](docs/roadmap.md)、変更履歴は
-[CHANGELOG.md](CHANGELOG.md) を参照。
+- **データグリッド**（`@banto/grid-svelte`）: 仮想スクロール、複数列ソート、列フィルタ、
+  列リサイズ/並び替え、**列の表示/非表示**（`ColumnsMenu` の列マネージャー UI +
+  `GridColumn.hidden` の既定非表示）、Excel ライクなセル編集・範囲選択・コピー&ペースト、
+  クライアント/サーバー両モード、グルーピング+集計。フォームスキーマからの
+  **列自動導出**（`columnsFromSchema`、M23 — バリデーション込み。「スキーマを1つ書けば
+  一覧とフォームが両方生える」。一覧の列順はフォームの入力順と切り離して `order` で指定できる）。
+- **スキーマ駆動フォーム**（`@banto/forms`）: 定義オブジェクトから入力 UI・バリデーション・
+  状態管理を自動生成。
+- **チャート**（`@banto/charts`）: 依存ライブラリなしの SVG フルスクラッチ。折れ線/エリア・
+  棒・円/ドーナツ・散布図・スパークラインに加え、複合（棒+折れ線）・レーダー・ヒートマップ・
+  ゲージ、SPC 系（ヒストグラム・パレート図・箱ひげ図）、積立エリア（`StackedAreaChart` —
+  積立棒は `BarChart` の `stacked`）・ガントチャート（`GanttChart`）の全14種。
+- **ドッキングレイアウト**（`@banto/dock-svelte`）: フローティングウィンドウ + 分割・タブ化・
+  ドラッグでの再配置・スナップ、レイアウトの JSON 保存/復元。
+- **refine ライクなコア**（`@banto/admin-core`）: リソース定義、`DataProvider`/`AuthProvider`
+  抽象、`createListResource`/`createFormResource` コンポーザブル。バックエンドは Tauri
+  `invoke()`（ローカル Rust）を既定に、InMemory/HTTP を差し替え可能。
+- **組み込み Web サーバ**（`banto-server`）: 設定でオプトイン有効化すると、同一 LAN 内の
+  他端末のブラウザから REST + SSE で同じ画面を利用可能。ログイン無しの**閲覧公開**・
+  TLS 終端・PWA インストールは [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
+- **認証・RBAC・ユーザー管理**（M10）: argon2id 資格情報 + 初回セットアップ、
+  admin/editor/viewer の3ロール、ユーザー管理画面。REST/Tauri 両経路で同一の権限判定。
+- **監査ログ**（M14）+ **設定基盤**（M12、SettingsProvider）+ **自動ログイン/ログイン不要
+  モード**（M11）。デスクトップの初回セットアップ画面で「ログインなしで使い始める」を選べば、
+  アカウントを作らずログイン無しの小さなアプリとして始められる（育ったらログイン運用へ
+  切り替え可能）。手順は [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)。
+- **固定ヘッダ/サイドバー + 通知バッジ + ステータス表示**（2026-09）: 本文スクロール中も
+  ヘッダと左ペインは画面に固定。サイドバーのナビ項目には「他クライアントの変更」を知らせる
+  未確認更新バッジ（`NavItem.badgeResource` を宣言するだけで自リソースにも付く）、ヘッダには
+  デモモード/現在ロールのステータスチップが標準で付く。設定画面はカテゴリ（外観・言語/
+  アカウント/サーバ・接続/データ管理/セキュリティ）ごとのルート（`/settings/appearance` 等）に
+  分割し、カテゴリナビ（≥1024px は左レール、それ未満はタブ）で切り替え。
+- **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・**通知トースト**
+  （[docs/recipes/notifications.md](docs/recipes/notifications.md)）。
+- **SQLite バックアップ/リストア**（M17）: 設定画面から。保存先は DB ファイルごとの
+  `<DBの親フォルダ>/backups/<DBファイル名>/`（#280）。PostgreSQL では `pg_dump` を使う。
+  旧配置からの移行を含む運用は [docs/recipes/database-backup.md](docs/recipes/database-backup.md)。
+- **システム情報カード**（v1.2.0、CPU/メモリは Issue #185 で追加）: 設定画面に admin 専用で
+  アプリバージョン・DB 種別・稼働形態・ホスト/プロセスの CPU・メモリ使用率などを表示
+  （`GET /api/system/info` / Tauri `system_info`）。
+- **対応 DB は SQLite（既定）と PostgreSQL**（V2。`banto-storage` の `Db`/`Dialect` による
+  方言吸収 + 方言別マイグレーション）。`BANTO_DB` を `postgres://` URL にすると PostgreSQL
+  経路。PostgreSQL のときは添付ファイルの保存先 `BANTO_ATTACHMENTS_DIR` が必須（#208）。
+  バックアップ/リストアは SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1、
+  [docs/recipes/database-backup.md](docs/recipes/database-backup.md)。
+- **Glass テーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
+- **オプションの拡張パッケージ**: 帳票/印刷（`@banto/report`、M19）、添付ファイル/画像管理
+  （`@banto/attachments`、M20）、バーコード/QR スキャナ入力（`@banto/scan-wedge`、M21）、
+  ツリービュー（`@banto/tree-svelte`）。帳票・添付・ツリービューは削除可能なデモ配線付き
+  （ツリービューはサイドバーの「ツリービュー」= `/tree` デモページ。ライブデモでも触れる）。
+  scan-wedge はバックエンド/DB 依存ゼロのため**本体には配線せず**、レシピで各アプリに直接
+  組み込む（[docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md)。ツリービューは
+  [docs/recipes/tree-svelte.md](docs/recipes/tree-svelte.md)）。
 
 ## 構成
 
 パッケージ一覧の前に全体像が欲しい場合は
 [docs/architecture-overview.md](docs/architecture-overview.md) を参照
-（認証・初回起動・開発経路は
-[docs/architecture-flows.md](docs/architecture-flows.md)）。
+（認証・初回起動・開発経路は [docs/architecture-flows.md](docs/architecture-flows.md)）。
 
-npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスは
-リポジトリ全体と同じ **MIT**（2026-07-12 公開化に伴い統一）。
-モノレポ内ではソース直接参照、外部からは git 依存（サブディレクトリ
-指定）で消費する — 詳細は [docs/publishing.md](docs/publishing.md)）:
+npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスはリポジトリ全体と同じ **MIT**
+（2026-07-12 公開化に伴い統一）。モノレポ内ではソース直接参照、外部からは git 依存
+（サブディレクトリ指定）で消費する — 詳細は [docs/publishing.md](docs/publishing.md)）:
 
 | パッケージ           | 内容                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------------ |
@@ -237,370 +215,86 @@ Rust クレート（`crates/`、MIT）:
 | `banto-admin-services` | 汎用サービス層（設定/監査/RBAC・ユーザー/バックアップ）。V2 で `admin-template-core` から移設 |
 | `banto-attachments`    | 添付ファイルのメタCRUD・保存・サムネイル生成（M20、`@banto/attachments`の裏側）               |
 
-アプリ（`apps/admin-template/`）: Tauri v2 + SvelteKit の管理画面テンプレート
-本体。`core/`（tauri非依存のサービス層 `admin-template-core`）と
-`src-tauri/`（薄いコマンドアダプタ）に分かれる。
+アプリ（`apps/admin-template/`）: Tauri v2 + SvelteKit の管理画面テンプレート本体。
+`core/`（tauri 非依存のサービス層 `admin-template-core`）と `src-tauri/`（薄いコマンド
+アダプタ）に分かれる。
 
 ## テンプレートから自分のアプリを作る
 
-Banto は**コピーして使う**前提のテンプレート（[docs/template-scope.md](docs/template-scope.md)
-§1）。以下の手順でリネームし、デモコンテンツ（`items` リソース一式）を
-自分のリソースに差し替える。
+Banto は**コピーして使う**前提のテンプレート（[docs/template-scope.md §1](docs/template-scope.md)）。
+背骨は「コピー → リネーム → 差し替え → 削除 → 配信」の5段で、各段の要点とコマンドだけを
+ここに置き、全量は `docs/recipes/` の各レシピにある。
 
 ### 1. コピーとリネーム
 
-1. リポジトリをコピー（GitHubの「Use this template」、または
-   `git clone` 後に `rm -rf .git && git init` で履歴を切り離す）。
-2. **リネームスクリプトを実行**（P2-1。名称・識別子の一括書き換え）:
+リポジトリをコピー（GitHub の「Use this template」、または `git clone` 後に
+`rm -rf .git && git init`）し、リネームスクリプトで名称・識別子を一括書き換えする:
 
-   ```sh
-   node scripts/rename.mjs \
-     --name my-app \
-     --title "My App" \
-     --identifier com.example.myapp \
-     --repo https://github.com/me/my-app   # 省略可
-   # --dry-run を付けると書き換え内容の事前確認のみ
-   ```
+```sh
+node scripts/rename.mjs \
+  --name my-app \
+  --title "My App" \
+  --identifier com.example.myapp \
+  --repo https://github.com/me/my-app   # 省略可
+# --dry-run を付けると書き換え内容の事前確認のみ
+```
 
-   スクリプトが書き換える箇所（手動でやる場合のチェックリストでもある）:
-   - ルート `package.json` の `name`/`description`
-   - `apps/admin-template/package.json` の `name`（`<name>-app`）と、
-     ルート `package.json`・`e2e/playwright.config.ts` の
-     `--filter` 参照の追随
-   - `apps/admin-template/src-tauri/tauri.conf.json` の
-     `productName`/`identifier`（`dev.banto.admin` を自分の逆順ドメイン
-     識別子に）・`app.windows[0].title`
-   - アプリ内の表示文言（`src/app.html` の `<title>`、
-     `src/lib/components/Sidebar.svelte`・`src/routes/login/+page.svelte`
-     等の「Banto」表記）と、E2E のログイン見出しアサーション
-   - OS keyring のサービス名: `apps/admin-template/src-tauri/src/keyring_store.rs`
-     の `SERVICE_NAME`（既定 `"dev.banto.admin-template"` → `--identifier`
-     の値。手動でやる場合に見落とすと、新アプリの資格情報が旧テンプレートの
-     keyring 識別子のまま同居する）
-   - Rust ワークスペース `Cargo.toml` の `workspace.package.repository` と
-     各 `packages/*/package.json` の `repository.url`（`--repo` 指定時。
-     `@banto/*` パッケージを独自に配布する場合は
-     [docs/publishing.md](docs/publishing.md) の scope 問題も参照）
-
-   > **リネームしてはいけないもの**: `X-Banto-Client: banto` CSRFヘッダは
-   > 「Banto」の文字列に見えるが、LAN REST の固定プロトコル値であって
-   > ブランド名ではない。送信側（`packages/admin-core/src/providers/http.ts`
-   > 等の `CLIENT_HEADER_NAME`）と検証側（`crates/banto-server/src/csrf.rs`）
-   > の両方にハードコードされており、`banto` を機械的に一括置換すると
-   > LAN REST 認証が 403 で全滅する。リネームスクリプトは対象ファイルを
-   > 明示列挙するため安全だが、手動置換や `sed -i` での一括置換をする場合は
-   > このヘッダを除外すること。
-
-3. スクリプトが**やらない**こと（実行後に案内も表示される）:
-   - アイコン: `pnpm --filter <name>-app tauri icon <画像>`
-     （下記「Windowsでのローカルセットアップ」節を参照）
-   - ルート `README.md`/`LICENSE`（著作権者名）の文言
-   - visual regression スナップショットの再生成
-     （旧ブランドの見た目で撮られているため
-     `pnpm e2e:visual --update-snapshots`）
-4. `packages/*` は現状 `@banto/*` のままモノレポ内 `workspace:*` 参照で
-   使う分にはリネーム不要（配布する場合のみ検討）。
-
-> ここまでは「banto 自体をフォークして1リポジトリ内で使い続ける」場合の手順。
-> **別リポジトリが `@banto/*`/`banto-*` を git 依存として参照する**（コピー
-> せず消費する）場合は追加の作業が要る —
-> [4. 別リポジトリから git 依存として消費する場合](#4-別リポジトリから-git-依存として消費する場合)
-> を参照。
+書き換える箇所の全量（`package.json`・`tauri.conf.json`・表示文言・OS keyring のサービス名・
+Web マニフェスト等）、スクリプトが**やらない**こと（アイコン・LICENSE・visual スナップショット）、
+**リネームしてはいけない** `X-Banto-Client` CSRF ヘッダの注意は
+[docs/recipes/rename.md](docs/recipes/rename.md)。
 
 ### 2. デモコンテンツ（`items`）を自リソースに差し替える
 
-`items`（商品）は「一覧・詳細・新規作成・CSVインポート/エクスポート・
-ダッシュボード集計」を貫通させたお手本として同梱している
-（[docs/template-scope.md](docs/template-scope.md) §3）。
-
-**正式な手順は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)**
-（チェックリスト形式。AIに委譲するときはレシピをそのまま指示に使える）。
-リソースのページは動的ルートによる自動生成ではなく、**`items` のルート
-一式をコピーして書き換える**のがこのテンプレートの正式な方式（2026-07-18
-決定）。関与ファイルの全量は以下の通り:
-
-| 層                       | ファイル                                                                                                                                | 内容                                                                                                   |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Rust: マイグレーション   | `apps/admin-template/core/migrations-sqlite/0001_items.sql`（+ `migrations-postgres/0001_items.sql`）                                   | `items` テーブル定義                                                                                   |
-| Rust: シード             | `apps/admin-template/core/src/db.rs`（`SEED_ROW_COUNT`・`seed_if_empty`）                                                               | 初回起動時の1,000件デモ投入                                                                            |
-| Rust: サービス層         | `apps/admin-template/core/src/items.rs`                                                                                                 | `Item`/`ItemInput`/`ItemImportRow`・CRUD・CSVインポート                                                |
-| Rust: REST               | `apps/admin-template/core/src/rest/items.rs`                                                                                            | `items` のルーティング（LANブラウザ向け）                                                              |
-| Rust: Tauriコマンド      | `apps/admin-template/src-tauri/src/lib.rs`                                                                                              | `items_list`/`items_get`/`items_create`/`items_update`/`items_delete`/`items_import`、`AppState.items` |
-| フロント: リソース定義   | `apps/admin-template/src/lib/banto/resources/items.ts`・同 `resources/index.ts`                                                         | `itemsSchema`/`itemsResource` の定義と `resources` 配列への登録（`setup.ts` が `initBanto` へ渡す）    |
-| フロント: デモデータ     | `apps/admin-template/src/lib/banto/sampleData.ts`                                                                                       | ブラウザ単体デモモード（InMemory）用の生成データ                                                       |
-| フロント: ページ         | `apps/admin-template/src/routes/(app)/items/`                                                                                           | 一覧（`ItemsClientGrid.svelte`/`ItemsServerGrid.svelte`）・詳細・新規                                  |
-| フロント: CSVインポート  | `apps/admin-template/src/lib/banto/itemsAdmin.ts`                                                                                       | バルクインポートAPIクライアント（M15）                                                                 |
-| フロント: ナビ           | `apps/admin-template/src/lib/navigation.ts`                                                                                             | `/items` エントリ                                                                                      |
-| フロント: ダッシュボード | `apps/admin-template/src/lib/banto/dashboard.ts`・`src/lib/components/DashboardPanel.svelte`・`src/routes/(app)/dashboard/+page.svelte` | `items` から集計するスタットタイル/カテゴリ別在庫等のパネル定義                                        |
-
-進め方の順序・各ステップの注意点・検証コマンドは
-[docs/recipes/add-resource.md](docs/recipes/add-resource.md) のチェック
-リストに従う。`admin-template-core`/Tauri/REST の三経路で同一のサービス層を
-通す構造（[docs/template-scope.md](docs/template-scope.md) §2.1）は維持すること。
-
-> **注意（`sqlx::migrate!` は同一DBに1クレートまで）**:
-> `apps/admin-template/core/src/db.rs` はアプリ自身のスキーマを
-> `sqlx::migrate!("./migrations-sqlite")` /
-> `sqlx::migrate!("./migrations-postgres")` で適用する。`sqlx` の
-> マイグレーション管理テーブル（`_sqlx_migrations`）は**データベース全体で
-> 1つ**であり、クレートごとにテーブル名を分ける機能は無い。そのため
-> `_sqlx_migrations` を内部で使う別クレート（自作の共通クレート等）を
-> **同一プール**に対して併用すると、バージョン番号が衝突して
-> `MigrateError::VersionMismatch`/`VersionMissing` で必ず失敗する
-> （空DBへの初回実行から発生する）。回避策は次のどちらか:
->
-> - 併用するクレート側を `sqlx::migrate!` ではなく冪等な DDL
->   （`CREATE TABLE IF NOT EXISTS`、列追加は存在確認してから
->   `ALTER TABLE`）にする
-> - アプリ側の `db.rs` を冪等 DDL に寄せ、`sqlx::migrate!` を使うクレートを
->   1つに絞る
->
-> いずれにせよ「同一プールに対して `sqlx::migrate!` を呼ぶクレートは常に
-> 1つまで」を保つこと。
+`items`（商品）は一覧・詳細・新規作成・CSV インポート/エクスポート・ダッシュボード集計を
+貫通させたお手本。リソースのページは動的ルートによる自動生成ではなく、**`items` の
+ルート一式をコピーして書き換える**のがこのテンプレートの正式な方式（2026-07-18 決定）。
+**正式な手順・層別の関与ファイル全量・`sqlx::migrate!` を同一 DB で2クレート以上使えない
+注意は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)**（チェックリスト形式。
+AI に委譲するときはレシピをそのまま指示に使える）。
 
 ### 3. オプション資産の削除
 
-以下は「同梱するが削除できる」ことが保証されたオプション資産
-（[docs/template-scope.md](docs/template-scope.md) §3）。不要なら
-以下の箇所を外す。
+「同梱するが削除できる」ことが保証されたオプション資産
+（[docs/template-scope.md §3](docs/template-scope.md)）は、`pnpm scaffold` のプリセットで
+まとめて外す:
 
-まず `pnpm scaffold --preset <preset>`（`minimal` / `standard` / `full` /
-`display`）を試す。プリセットに応じてオプション資産をまとめて外す
-（`--interactive` で対話選択、`--dry-run` で変更内容の確認のみ）。以下の手動手順は、
-scaffold が触らない資産を外したい場合や、独自に削りたい場合に参照する。
-表示専用アプリを作るなら、まず下の「`--preset display`」を読む。
-
-#### `--preset display`（表示専用アプリ）
-
-```bash
-pnpm scaffold --preset display
-pnpm install          # 外れた依存の反映（lockfile も更新される）
+```sh
+pnpm scaffold --preset <preset>   # minimal | standard | full | display
+pnpm install                      # 外れた依存の反映
+# --interactive で資産ごとに対話選択、--dry-run で変更内容の確認のみ
 ```
 
-カンバン（アンドン）・常設ダッシュボード・展示デモのように、**画面を出しっぱなしに
-して眺めるだけ**のアプリ向けの初期状態にする。唯一「外す」だけでなく「足す」も
-行うプリセット（他は削除のみ）。
+| プリセット | 残すもの                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `minimal`  | コアのみ（charts / dock / Glass / コマンドパレット / 添付 / 帳票 / ツリーを外す）                                                                                                          |
+| `standard` | ダッシュボード体験（charts / dock / Glass / コマンドパレット）を残し、添付 / 帳票 / ツリーを外す                                                                                           |
+| `full`     | 何も外さない（出荷状態）                                                                                                                                                                   |
+| `display`  | 表示専用アプリ向け。`minimal` に加えて `items` 一式・users/audit-log **画面**・`/dashboard` を外し、`/monitor` と閲覧公開・キオスク・`banto.i18n = "raw"` の既定を**足す**唯一のプリセット |
 
-**外れるもの**
-
-| 区分               | 内容                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| オプション資産     | `minimal` と同じ（charts / dock / Glass / コマンドパレット / 添付 / 帳票 / ツリー）                                                                                                                                                                                                                                                                                        |
-| items デモリソース | `core/src/items.rs`・`core/src/rest/items.rs`・`migrations-{sqlite,postgres}/0001_items.sql`・`src-tauri` の `items_*` コマンド・`routes/(app)/items/**`・`#lib/banto/{itemsAdmin,resources/items,sampleData,dashboard}.ts`・ナビ項目・`messages` の `items.*`／`nav.items`・`verify-architecture` の items マニフェスト行                                                 |
-| 管理画面           | `routes/(app)/users/**` と `routes/(app)/audit-log/**`（**画面だけ**。サービス層・REST・Tauri コマンドは残るので、ルートを足し直せば戻せる）                                                                                                                                                                                                                               |
-| ダッシュボード     | `routes/(app)/dashboard/**`。ホーム（`/`）とログイン後の遷移先は `/monitor` になる                                                                                                                                                                                                                                                                                         |
-| e2e / ビジュアル   | 同梱スモークは items/users 画面前提なので、**シナリオ1本**のスモークに差し替わる（未ログインの `/` が `/monitor` に着く）。`e2e/tests-public-viewer/`・`e2e/visual/`（ベースライン画像を含む）・`playwright.config.ts` の該当 project／webServer・ルート `package.json` の `e2e:visual`／`e2e:public-viewer`・`ci.yml` の該当ステップ・`visual-baselines.yml` は削除される |
-
-**足されるもの / 既定値が変わるもの**
-
-- `src/routes/(app)/monitor/+page.svelte` — 時計と「最終更新」だけの最小ページ。
-  `$effect` + 世代トークンのポーリング雛形が入っているので、`load()` を自分の
-  **読み取り専用**の取得に差し替えて使う。ナビは `{ publicViewer: true }` で登録される。
-- **初回起動の既定**（`apps/admin-template/core/src/first_boot.rs` の
-  `FIRST_BOOT_SETTINGS`。`settings` テーブルが空のときだけ書き込まれる）:
-  `auth.disabled=true` / `auth.disabled_role=admin` / `server.viewer_public=true` /
-  `server.enabled=true` / `server.bind=0.0.0.0`。
-  つまり**コピーして起動した瞬間から、LAN の未ログイン端末が合成 `viewer`
-  セッションで `/monitor` を見られる**（[ADR-0012](docs/adr/0012-lan-public-viewer-synthetic-session.md)）。
-  書き込みは RBAC の `viewer` 床で 403 のまま。既定を変えたければこの const を編集する。
-- **キオスクシェル既定 ON**（`src/lib/settings.svelte.ts` の `KIOSK_DEFAULT`）:
-  サイドバー折り畳み・ヘッダのコンパクト化・全画面ボタン。設定画面「外観」で戻せる。
-- **`banto.i18n = "raw"`**（`apps/admin-template/package.json`）: 単一言語アプリとして
-  UI 文言を直書きしてよい opt-out。`verify:architecture` の `raw-jp-in-app` と
-  `check-i18n-nonempty` が自身をスキップする（[docs/conventions.md §13](docs/conventions.md#i18n-messages)）。
-  多言語に戻したいときは `"keys"` に戻し、`/monitor` の文言を `messages/{ja,en}.json` へ移す。
-
-**注意**
-
-- **セキュリティ**: 初回起動の既定は「LAN に閲覧公開する」設定。社外ネットワークに
-  出す用途では、`first_boot.rs` の `server.viewer_public` / `server.bind` を見直すこと。
-- [docs/recipes/add-resource.md](docs/recipes/add-resource.md) は **items がある前提**で
-  書かれている。display では items 一式が無いので、「items をコピーして書き換える」
-  ステップは「レシピ本文のコード片を新規ファイルとして起こす」と読み替える
-  （層別のファイル一覧と配線先はそのまま使える）。
-- `pnpm install --frozen-lockfile` は通らない（`apps/admin-template/package.json` から
-  workspace 依存が5つ消えるため）。scaffold 直後は `pnpm install` を使う。
-
-**`@banto/dock-svelte`（ダッシュボードのドッキングレイアウト）**:
-`apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-`DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
-`src/lib/banto/popout.ts`・`src/routes/panel/[id]/`（ポップアウト先の
-スタンドアロンウィンドウ用ルート）を削除し、ダッシュボードページを固定
-レイアウトのパネル羅列に置き換える。`apps/admin-template/package.json` の
-`@banto/dock-svelte` 依存と、`apps/admin-template/vite.config.ts` の
-`optimizeDeps.exclude` にある `'@banto/dock-svelte'` 行を外す（残すと
-`pnpm verify:architecture` の `optimizedeps-svelte-source` が「不要なのに
-登録」で落ちる。[ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)）。
-
-あわせて **`src-tauri` 側**の以下も外す。ポップアウト専用の配線であり、
-残すと呼び出し元のない孤立コード + 不要なウィンドウ権限になる
-（`pnpm scaffold` は `src-tauri` を書き換えないため、ここは常に手作業）:
-
-- `apps/admin-template/src-tauri/src/lib.rs` の `panel_open` コマンド
-  （関数本体と `invoke_handler` への登録の2箇所）
-- `apps/admin-template/src-tauri/capabilities/default.json` の `"windows"`
-  配列内 `"panel-*"` エントリ（ポップアウトウィンドウのケイパビリティ許可）
-
-**`@banto/charts`（SVGチャート）**:
-`apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-チャートデモ（トレンド/SPC系パネル）と `src/lib/components/DashboardPanel.svelte`・
-`src/lib/banto/dashboard.ts` の集計処理を削除。`items`
-自体は他機能（CSVエクスポート等）で使うため残してよい。
-`package.json` の `@banto/charts` 依存を外す。
-
-**Glassテーマ + Windows vibrancy（M12）**:
-`packages/theme/src/css/banto-glass.css` を削除し
-`packages/theme/src/css/banto.css` の `@import './banto-glass.css'`
-を外す。`packages/theme/src/index.ts` の `ThemePreset` から `'glass'` を
-除去。設定画面（`apps/admin-template/src/routes/(app)/settings/AppearanceSection.svelte`）
-のプリセット選択肢から「ガラス」を外す。デスクトップの本物のガラス感
-（Windows Acrylic）も併せて外す場合は `src/lib/banto/vibrancy.ts`、
-`src-tauri/src/lib.rs` の `vibrancy_apply`/`vibrancy_status`/
-`set_window_vibrancy` と `window-vibrancy` 依存
-（`src-tauri/Cargo.toml`）、設定画面のvibrancyトグルを削除する。
-プリセット未選択（`standard`のみ）ならCSSは不活性のため、見た目だけ
-気にしないなら削除自体は必須ではない。
-
-**コマンドパレット（Ctrl+K、M16）**:
-`apps/admin-template/src/lib/components/CommandPalette.svelte`・
-`src/lib/commandPalette.svelte.ts`・`src/lib/commands.ts` を削除し、
-`src/routes/(app)/+layout.svelte` と `src/lib/components/Header.svelte`
-からの参照（`commandPaletteStore`・Ctrl+Kのキーバインド・パレット起動
-ボタン）を外す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
-されるため、削除してもナビ自体には影響しない。
-
-**添付ファイル機能（`@banto/attachments` + items 添付デモ、M20）**:
-以下の順で外すとビルド・テストが引き続き通る（依存の少ない順）。
-
-1. `apps/admin-template/src/routes/(app)/items/[id]/+page.svelte` の
-   `AttachmentsPanel` 配線（`M20 demo wiring` コメントのブロック）と
-   関連 import（`@banto/attachments`・`isAttachmentsAvailable`・
-   `attachmentsClient`）を削除。
-2. `apps/admin-template/src/lib/banto/attachmentsClient.ts`・
-   `src/lib/banto/attachmentsAdmin.ts` を削除。
-3. `apps/admin-template/core/src/rest/attachments.rs`（`attachments_router`
-   一式（`attachments_list`/`attachments_upload`/`attachments_delete`等）と
-   `items_delete` からの `delete_for_record` 呼び出し・`ItemsWriteState`
-   の `attachments` フィールドを外す。`src-tauri/src/lib.rs` も同様に
-   `attachments_*` コマンドと `AppState` の `attachments`/`attachments_dir`
-   フィールド、`items_delete` の `delete_for_record` 呼び出しを外す。
-4. `apps/admin-template/core/src/rest/tests.rs` から attachments 参照を外す
-   （`api_router` から attachments 引数が消えるのに追随。外さないと
-   `cargo test` がコンパイルできない）: `unused_attachments_service` ヘルパと
-   その各呼び出し・`api_router(...)` 実引数の `attachments,`、末尾の
-   `// --- M20: attachments` テストブロック（EOF まで、独自の実サービスを含む）を削除。
-5. `apps/admin-template/package.json` の `@banto/attachments` 依存、
-   ワークスペースの `crates/banto-attachments`（`Cargo.toml` の
-   `members` と `admin-template-core`/`admin-template` の依存）を外す。
-6. `apps/admin-template/core/migrations-sqlite/0006_attachments.sql`（および
-   `migrations-postgres/0006_attachments.sql`）を削除（`attachments` テーブルは
-   他のテーブルから参照されないため、単独で安全に外せる）。
-
-**帳票デモ（`@banto/report` + 日報デモ、M19）**:
-DB/バックエンド配線を一切持たない最小デモのため、以下だけで外せる。
-
-1. `apps/admin-template/src/routes/(app)/items/+page.svelte` の「日報」
-   ボタン（`M19 report demo` コメントの1ブロック）と `FileText` の import
-   を削除。
-2. `apps/admin-template/src/routes/(app)/items/report/`（ルート丸ごと）と
-   `src/lib/banto/reports/`（`daily.md`・`raw.d.ts`）を削除。
-3. `apps/admin-template/package.json` の `@banto/report` 依存、
-   `src/app.css` の `@import '@banto/report/print.css'` と
-   `.banto-report-active` 用の `@media print` ブロックを外す。
-   `@banto/report` パッケージ自体（`packages/report`）はテンプレートに
-   同梱したままでも他に影響しないが、完全に外す場合は
-   `pnpm-workspace.yaml` の対象から漏れないことを確認する。
-
-**ツリーデモ（`@banto/tree-svelte` + `/tree` デモ、M-review 2026-08）**:
-DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の minimal / standard
-プリセット（または `--interactive`）で自動削除できる。手動で外す場合は以下。
-
-1. `apps/admin-template/src/routes/(app)/tree/`（ルート丸ごと）と
-   `src/lib/banto/treeSample.ts` を削除。
-2. `src/lib/navigation.ts` の `'tree'`/`'nav.tree'`（`NavIconKey`/`NavLabelKey`
-   の union と navItems の `/tree` 行）、`src/lib/components/navIcons.ts` の
-   `tree:` エントリと `ListTree` の import を削除（union とアイコンマップは
-   型で連結しているため対で外す）。
-3. `src/lib/banto/i18n.ts` の `treeMessages()` と `TreeMessages` import、
-   `messages/{ja,en}.json` の `nav.tree`・`tree.*` キーを削除。
-4. `apps/admin-template/package.json` の `@banto/tree-svelte` 依存を外す。
-   パッケージ本体（`packages/tree-svelte`）は同梱のままでも他に影響しないが、
-   ナビが1項目減るぶんサイドバーが写る認証ページのビジュアル回帰ベースライン
-   を再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。
-
-**システムメトリクス（`sysinfo`）を外す（ADR-0013、Issue #185）**:
-`apps/admin-template/core/Cargo.toml` と `apps/admin-template/src-tauri/Cargo.toml`
-の `default` から `system-metrics` を外す。System Info カードの CPU/メモリの
-行は `metrics` が `null` になり自動的に消える（他の行は従来どおり）。
-`banto-admin-services` 自体の `system-metrics` feature（`sysinfo` 依存の実体）
-はそのまま残しておいて構わない（無効化されたテンプレート側から到達しなく
-なるだけ）。
+資産ごとの手動手順（scaffold が触らない `src-tauri` 側のポップアウト配線・システムメトリクス
+`sysinfo` を含む）と `--preset display` の詳細（外れるもの・初回起動の既定・セキュリティ注意）は
+[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)。
 
 ### 4. 別リポジトリから git 依存として消費する場合
 
-§1〜3 はすべて「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」
-手順。これに対し、**別リポジトリ（例: 社内の案件アプリ）がコピーせずに
-`@banto/*`/`banto-*` を git 依存として参照する**構成も取れる。git 依存の
-記法そのものは [docs/publishing.md](docs/publishing.md) を参照。ここでは、
-§1〜3 の手順を流用する際に追加で必要になる作業を挙げる。
+§1〜3 は「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」手順。別リポジトリ
+（例: 社内の案件アプリ）がコピーせずに `@banto/*`/`banto-*` を git 依存として参照する構成も
+取れる。記法は [docs/publishing.md](docs/publishing.md)、追加で必要になる作業（`workspace:*`
+→ git 依存、`path` → git タグ依存、`[workspace.package].repository`、Vite `optimizeDeps.exclude`
+の移植、e2e の移植等）は
+[docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)。
 
-- **npm: `workspace:*` → git 依存への書き換え**: モノレポ内で
-  `"@banto/admin-core": "workspace:*"` と参照している箇所を、
-  `"@banto/admin-core": "github:tyaro/banto#v6.2.0&path:packages/admin-core"`
-  のような git 依存にパッケージ単位で書き換える。
-- **Rust: path 依存 → git タグ依存への書き換え**: 消費側 root `Cargo.toml`
-  の `[workspace.dependencies]` に
-  `banto-core = { git = "https://github.com/tyaro/banto.git", tag = "v6.2.0" }`
-  等を追加し、各クレートの依存を `{ workspace = true }` に揃える。特に
-  `apps/admin-template/src-tauri/Cargo.toml` の
-  `banto-core = { path = "../../../crates/banto-core" }` は**同一リポジトリ内
-  であることを前提にした相対パス参照**で、コピー先には `crates/banto-core`
-  が存在せず即ビルド不能になる。必ず `{ workspace = true }` に書き換える。
-- **`[workspace.package]` に `repository` が必要**: コピーしたクレートの
-  `Cargo.toml` は `repository.workspace = true` を持つ。消費側 root
-  `Cargo.toml` の `[workspace.package]` に `repository` が無いとビルドエラーに
-  なるので、`repository` を追加するか `repository.workspace = true` ごと削除
-  する。
-- **root `package.json` の devDependencies**: ルートの `eslint.config.js` は
-  `@eslint/js`・`typescript-eslint`・`eslint-plugin-svelte`・
-  `eslint-config-prettier`・`globals` を import する。lint 設定ごと持ち込む
-  なら、この5つを消費側 root の devDependency に入れる。加えて banto 自身は
-  `typescript` をパッケージ単位に置いている（root には無い）ため、pnpm の
-  非 hoist なワークスペース構成では `typescript-eslint` のパーサ解決のために
-  root にも `typescript` が要る場合がある。
-- **prettier を新規導入するなら `.prettierignore` を先に整える**: 既存の
-  別リポジトリに `.prettierrc.json` を初めて持ち込むと、既存ファイル全部
-  （特に `pnpm-lock.yaml`）が整形対象になり巨大な差分が出る。本リポジトリ
-  直下の `.prettierignore` を出発点にすること。
-- **Vite `optimizeDeps.exclude`**: `@banto/*` はソース配布（未コンパイルの
-  `.svelte`/`.svelte.ts`）のため、git 依存として実 node_modules パッケージに
-  なると Vite の依存事前バンドルが `.svelte.ts` を解析できず、`pnpm dev` が
-  `js_parse_error` で失敗する（`pnpm build`/`pnpm check` は通るため気づき
-  にくい）。テンプレートの `apps/admin-template/vite.config.ts` には対策済みの
-  `optimizeDeps.exclude` が同梱されているので、**vite 設定を自前で書く場合は
-  この exclude を移植する**こと。背景と判断は
-  [ADR-0007](docs/adr/0007-derived-app-dev-optimizer-exclude.md)。
-- **コピー・リネーム後は `cargo fmt --all` と clippy を通す**: クレート名の
-  リネームで `use` 文の並び順が変わったり、デモ（`items`）削除で未使用 import
-  が残ったりする。`cargo fmt --all` と
-  `cargo clippy --all-targets -- -D warnings` を一度通せば機械的に拾える。
-- **e2e スイート（`e2e/`）も移植できる**: `e2e/playwright.config.ts`・
-  `global-teardown.ts`・`tsconfig.json` は、ポート番号・クレート名
-  （`--filter` / `-p <core-crate>`）・一時DBのプレフィックス程度の差し替えで、
-  `PORT`/`BANTO_DB`/`BANTO_ALLOW_SETUP` の環境変数契約（`banto-serve` 由来）
-  のまま持っていける。spec 側の落とし穴として、
-  `getByRole('heading', { name: '...' })` を `level` 指定なしで使うと、
-  ページ本体に同名の見出しを足した画面で Header 側の `<h1>` と二重マッチして
-  strict mode violation になる — `{ level: 2, name: '...' }` のようにレベルを
-  指定して本体側に絞ること。
+### 5. 新しい版への更新
 
-**新しい版への更新**（依存タグの上げ方、コピーしたテンプレート部分の取り込み、DB 移行、
-基準版の記録）は [docs/upgrading.md](docs/upgrading.md)。依存タグを上げるだけではコピー済みの
-テンプレートは更新されない。
+依存タグの上げ方、コピーしたテンプレート部分の取り込み、DB 移行、基準版の記録は
+[docs/upgrading.md](docs/upgrading.md)。**依存タグを上げるだけではコピー済みのテンプレートは
+更新されない。**
 
 ## 開発
 
-前提: Node 24+ / pnpm 10+ / Rust（Tauriの[プラットフォーム別前提条件](https://tauri.app/start/prerequisites/)）
+前提: Node 24+ / pnpm 10+ / Rust（Tauri の[プラットフォーム別前提条件](https://tauri.app/start/prerequisites/)）。
+Windows の手順は [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)。
 
 ```sh
 pnpm install
@@ -617,246 +311,52 @@ pnpm build              # SvelteKit 静的ビルド（apps/admin-template/build�
 cargo check -p banto-core -p banto-storage -p banto-server
 ```
 
+開発ループは3経路（同じ SvelteKit アプリで provider と永続化が違う。
+[docs/architecture-flows.md §6](docs/architecture-flows.md)）:
+
+| 経路 | コマンド                                                                                                        | mode     | 向いていること                                                                |
+| ---- | --------------------------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------- |
+| A    | `pnpm dev`                                                                                                      | `demo`   | UI だけの高速イテレーション。Rust / Tauri 不要                                |
+| B    | `pnpm --filter admin-template build` → `cargo run -p admin-template-core --bin banto-serve --features embed-ui` | `server` | LAN / REST を Tauri なしで確認（[lan-access.md](docs/recipes/lan-access.md)） |
+| C    | `pnpm --filter admin-template tauri dev`                                                                        | `tauri`  | 本番に近いデスクトップ。`invoke`・キーリング・LAN トグル                      |
+
 ### pre-commit フック（任意）
 
-`pnpm format:check` / `pnpm lint` はCIで既にPRをゲートしているため必須では
-ないが、コミット前にローカルで同じチェックを走らせたい場合は以下で
-オプトインできる:
+`pnpm format:check` / `pnpm lint` は CI で既に PR をゲートしているため必須ではないが、
+コミット前にローカルで同じチェックを走らせたい場合は以下でオプトインできる:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-`.githooks/pre-commit` が `pnpm format:check && pnpm lint` を実行し、
-失敗時は `pnpm format` での自動修正を案内して非0終了する。1回だけ
-スキップしたい場合は `git commit --no-verify` を使う（CIのチェックは
-引き続き有効）。依存を増やさない方針のため `husky`/`lint-staged` は
-導入しておらず、フック自体はプレーンなPOSIX shスクリプト。
+`.githooks/pre-commit` が `pnpm format:check && pnpm lint` を実行し、失敗時は
+`pnpm format` での自動修正を案内して非0終了する。1回だけスキップしたい場合は
+`git commit --no-verify` を使う（CI のチェックは引き続き有効）。依存を増やさない方針のため
+`husky`/`lint-staged` は導入しておらず、フック自体はプレーンな POSIX sh スクリプト。
 
-## LANアクセス（組み込みWebサーバ、M6）
+## LANアクセス（組み込みWebサーバ）
 
-デフォルトは無効（`invoke()`専用、攻撃面ゼロ）。設定画面から有効化すると、
-同一LAN内の他端末のブラウザから同じ管理画面をREST API + SSEで利用できる
-（仕様 §11）。
+デフォルトは無効（`invoke()` 専用、攻撃面ゼロ）。デスクトップアプリの設定画面 →
+「LANアクセス（組み込みWebサーバ）」でトグルを ON、バインドアドレス・ポートを設定して
+「保存して適用」すると、表示された URL/QR コードから同一 LAN 内の他端末のブラウザで
+同じ画面を使える（REST + SSE、仕様 §11）。
 
-**有効化手順:**
+> ⚠️ **LAN サーバ機能は標準では HTTP（平文）。** ログイン情報・セッショントークン・
+> 業務データが暗号化されずにネットワークを流れる。信頼できる LAN 以外では有効化しない。
+> TLS が要る場合はリバースプロキシで終端する。
 
-1. デスクトップアプリの設定画面 →「LANアクセス（組み込みWebサーバ）」で
-   トグルをON、バインドアドレス（`0.0.0.0`でLAN公開）・ポート番号を設定し
-   「保存して適用」。
-2. 表示されたURL/QRコードから、同一LAN内の他端末のブラウザでアクセスし、
-   初回起動時（Tauriウィンドウまたはこのブラウザ自身）に作成した
-   管理者アカウントでログイン。まだアカウントがなければ初回セットアップ
-   画面が表示される。
-
-**閲覧公開（ログイン無しで LAN から閲覧を許可）:**
-
-表示専用アプリ（アンドン・常設ダッシュボード・展示デモ）向けに、LAN 上の
-端末が**ログイン無しで閲覧画面と読み取り API だけ**を使える「閲覧公開」を
-用意している（Issue #189、[docs/adr/0012](docs/adr/0012-lan-public-viewer-synthetic-session.md)）。
-設定画面「サーバ・接続」→「ログイン無しで LAN から閲覧を許可する（閲覧公開）」
-を ON にして「保存して適用」。
-
-- LAN のブラウザは `/dashboard` を開くだけで **`viewer` ロールの合成
-  セッション**（ユーザー名 `public`）に入る。このセッションは
-  `POST /api/auth/grant/publicViewer` で受け取る（資格情報なしのセッション発行
-  「grant」の 1 種類目、[ADR-0017](docs/adr/0017-credential-less-grant.md)）。ヘッダの「ログイン」から通常の
-  アカウントでログインすれば編集系 UI に切り替わる。
-- 書き込み（作成・更新・削除・インポート）は従来どおりログイン必須。合成
-  セッションからの書き込みは REST が 403 で拒否し `denied` として監査する。
-- 公開される画面は `src/lib/navigation.ts` の `publicViewer: true` を付けた
-  項目だけ（テンプレート既定は dashboard と items）。データ面の境界は RBAC
-  の `viewer` ロールそのもの（viewer に見せたくない読み取りは閲覧公開ではなく
-  ロール床で絞る）。
-- ログイン不要モード（M11）と LAN アクセスは閲覧公開 ON のときだけ併用できる
-  （書き込みはデスクトップだけ、閲覧は LAN 全体、が表示専用アプリの標準形）。
-- **LAN 上の誰でも閲覧できる**設定なので、上記「セキュリティ注意」の信頼できる
-  LAN 限定の前提はそのまま。
-
-**`banto-serve`（Tauri不要の開発用バイナリ）:**
-
-```sh
-pnpm --filter admin-template build   # apps/admin-template/build を生成
-cargo run -p admin-template-core --bin banto-serve --features embed-ui
-```
-
-Tauriを起動せずにREST + 静的配信のフルスタックを試せる（`--features
-embed-ui`を省略すると組み込みのプレースホルダページを返す）。環境変数
-`PORT`（既定8721）/ `BANTO_BIND`（既定`0.0.0.0`）/ `BANTO_DB`（既定
-`./banto-dev.sqlite3`）/ `BANTO_ATTACHMENTS_DIR`（`BANTO_DB` が PostgreSQL のとき
-必須。添付ファイルの保存先の親ディレクトリで、DB ごとに `pg_<ホスト>_<ポート>_<DB名>_<ハッシュ>`
-のサブディレクトリを作る。SQLite では使わず、添付は DB ファイルの隣の `attachments`）/
-`BANTO_VIEWER_PUBLIC=1`（起動時に閲覧公開を ON に
-seed する。e2e とローカル確認用）。
-
-**`embed-ui`フィーチャー:**
-
-- `admin-template-core`はデフォルトでフロントエンドを埋め込まない
-  （プレースホルダページのみ）。`pnpm --filter admin-template build`で
-  フロントをビルドしてから`--features embed-ui`を付けて再ビルドすると、
-  実際のSvelteKitビルドが埋め込まれる。
-- src-tauri（デスクトップアプリ本体）も同名のパススルーfeatureを持つ:
-  `tauri build --features embed-ui`（または`cargo build -p admin-template
---features embed-ui`）を指定しないと、LANアクセス経由のブラウザには
-  プレースホルダページしか返らない（Tauriウィンドウ自体の表示には影響
-  しない — Webview は常にバンドルされた実フロントを表示する）。
-
-**セキュリティ注意:**
-
-> ⚠️ **LANサーバ機能は標準ではHTTP（平文）です。** ログイン情報・セッション
-> トークン・業務データが暗号化されずにネットワークを流れます。公衆Wi-Fi・
-> ゲストネットワーク・信頼できない端末が混在するネットワークでは有効化
-> しないでください。拠点をまたぐ利用やVPN外での利用が必要な場合は、下記の
-> リバースプロキシでTLS終端してください。
-
-- v1は「信頼できるLAN内でのHTTP + トークン認証」という割り切り。TLSは
-  未実装（v2以降で検討）。**信頼できるLAN以外では有効化しないこと。**
-  HTTPのみのため、ログイン情報やセッショントークンは平文でLAN内を流れる。
-- 認証はargon2id資格情報ストア + 初回セットアップ実装済み
-  （`crates/banto-admin-services/src/users.rs`。固定パスワードのデモ実装
-  ではない）。セッショントークンは絶対8時間/アイドル1時間で自動失効し、
-  ログインは5回連続失敗で60秒ロックアウトされる（いずれも
-  `banto-server`の`TokenPolicy`/`RateLimitPolicy`で変更可能）。
-  Tauriウィンドウのセッションと LANブラウザ側（REST/SSE）のセッションは
-  独立したトークン空間。
-- セッショントークンはインメモリ保持のため、**サーバ（デスクトップアプリ/
-  常駐プロセス）を再起動すると全セッションが失われ、再ログインが必要**になる。
-  「ログイン状態を保持（Remember me）」の30日/7日は無停止運用時の上限であり、
-  端末を毎日再起動する運用ではその都度セッションが切れる（v1 の受容済み仕様。
-  [docs/roadmap.md](docs/roadmap.md) の未決事項一覧を参照）。
-
-**同時書き込みとSQLite（WAL）:**
-
-デスクトップアプリと組み込みサーバは**同一プロセス内で動き、単一の
-SQLite コネクションプールを共有する**（Tauriコマンドと REST ハンドラは
-同じ `ItemsService` 等 = 同じプールへの `Clone` ハンドルを使う）。したがって
-Tauriウィンドウからの書き込みと LANブラウザからの書き込みは**その1つの
-プールでシリアライズ**され、プロセスをまたぐ書き込み競合は起きない。DBは
-**WAL モード**（`crates/banto-storage/src/sqlite.rs`）で開くため、読み取りは
-書き込みをブロックせず、複数の LAN クライアントが同時に閲覧しても問題ない
-（SQLite の WAL は「同時に多数の読み取り + 1つの書き込み」を許す）。
-
-注意: 同じ SQLite ファイルに**別プロセスから同時アクセスしない**こと
-（例: 稼働中のアプリと並行して 2つ目の `banto-serve` や外部ツールを同じ
-DB に向ける）。WAL が保証するのは単一ライタまでで、別プロセスの2つ目の
-ライタは `SQLITE_BUSY` を招きうる。バックアップ/リストアはこのシリアライズ
-の一部として同一プロセス内で扱う（M17、`VACUUM INTO`）。
-
-**リバースプロキシでのTLS終端（Caddy 例）:**
-
-TLSが必要な環境では、Banto自体はHTTPのまま `127.0.0.1` バインドに絞り、
-前段のリバースプロキシでTLSを終端する。[Caddy](https://caddyserver.com/) なら
-自己署名/内部CA証明書の自動発行込みで以下の数行で済む:
-
-```
-# Caddyfile — https://<このマシンのホスト名>:8443 で待ち受けて Banto へ転送
-{
-	local_certs   # 内部CAで自動発行（社内CA/正規証明書があればこのブロックは不要）
-}
-
-:8443 {
-	reverse_proxy 127.0.0.1:8721
-}
-```
-
-設定画面のバインドアドレスは `127.0.0.1 のみ` にする（`0.0.0.0` のままだと
-プロキシを迂回した平文HTTPでも届いてしまう）。
-
-注意: プロキシ経由では、Bantoから見た接続元が全部プロキシのIP
-（127.0.0.1）になるため、ログインレート制限の per-IP 次元
-（`banto-server` の `RateLimitPolicy.max_ip_failures`、既定20回/60秒）が
-**全クライアント合算**で発火するようになる。クライアント台数が多い環境では
-しきい値を引き上げるか、per-account 次元（既定5回）だけに頼る設定を検討
-する（`X-Forwarded-For` の信頼はv1では未実装 — 偽装可能なヘッダを無条件に
-信じないための割り切り）。
-
-資格情報なしのセッション発行（grant、[ADR-0017](docs/adr/0017-credential-less-grant.md) §6）を
-プロキシ越しに使う場合の運用ルール（Banto が技術的に強制できるものではない。
-同一ホストのプロキシの後ろでは接続元がすべてループバックに見えるため、
-`require_loopback_peer` は何も守らない）:
-
-- 外部公開（プロキシから外へ出す）の前に、管理者相当の grant（派生アプリの
-  試運転など）はロックダウンしておく。
-- 再試運転の間も `/api/auth/grant/{kind}` をプロキシから外部へ公開しない
-  （プロキシ側でそのパスを遮断するか、試運転中はプロキシを止める）。
-
-**PWA（ホーム画面に追加 / インストール）:**
-
-LANブラウザ配信は Web マニフェスト（`static/manifest.webmanifest` + アイコン）
-を同梱しており、ブラウザから「ホーム画面に追加」/「インストール」でアプリの
-ように起動できる（工場のタブレット等での常用向け）。オフライン対応（Service
-Worker）は入れていない。**ただしブラウザはセキュアコンテキストでしかインストールを
-提供しない** — 標準の平文HTTP LAN 配信では機能せず、上記のTLSリバースプロキシ
-配下・`localhost`・GitHub Pages デモ（HTTPS）でのみインストール可能になる。
-アプリ名を変えるときは [`rename.mjs`](scripts/rename.mjs) が manifest の
-`name`/`short_name` も追随させる（アイコン画像は差し替えが必要 — rename が
-触らない資産）。
-
-## 利用パッケージ別レシピ（`docs/recipes/`）
-
-個別パッケージをアプリへ組み込む手順は `docs/recipes/` に分けている
-（README は「コピー → リネーム → 差し替え → 削除 → 配信」の背骨に集中）:
-
-- **バーコード/QRスキャナ入力**（`@banto/scan-wedge`）: キーボードウェッジ型
-  スキャナを人間のタイプと区別して「1スキャン = 1文字列」で通知するヘッドレス
-  パッケージ。テンプレート本体には未配線（デモなし）。→
-  [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md)
-- **通知（トースト）**: 画面右下のトースト（`success`/`error`/`info`/`warning`）。
-  自タブへの `notify()` と、全クライアント一斉の `ServerEvent::Notice`
-  ブロードキャスト。→ [docs/recipes/notifications.md](docs/recipes/notifications.md)
-- **ログイン無しの小さなアプリ（チョイアプリ）として始める**: 初回セット
-  アップ画面の「ログインなしで使い始める」（M11 ログイン不要モード）で
-  始めて、育ったらログイン運用・LAN 配信へ切り替える手順。→
-  [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)
-- **ツリービュー**（`@banto/tree-svelte`）: 展開/選択/三状態チェック/遅延読み込み/
-  tree-grid/tree-select/ドラッグ・リネーム。サイドバーの「ツリービュー」= `/tree`
-  デモとして配線済み（削除可能）。→
-  [docs/recipes/tree-svelte.md](docs/recipes/tree-svelte.md)
-
-CRUD リソースの追加・差し替えは [docs/recipes/add-resource.md](docs/recipes/add-resource.md)。
+有効化の詳細、ログイン無しの**閲覧公開**（表示専用アプリ向け）、Tauri 不要の開発用バイナリ
+`banto-serve` と環境変数、`embed-ui` フィーチャー、セッション/レート制限の仕様、
+SQLite（WAL）の同時アクセス、Caddy による TLS 終端とプロキシ越しの注意、PWA インストールは
+[docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
 
 ## Windowsでのローカルセットアップ
 
-前提ツール（未導入のもののみ）:
-
-1. **Node.js 24+**: https://nodejs.org/
-2. **pnpm 10+**: 管理者不要。`corepack enable pnpm` または `npm i -g pnpm`
-3. **Rust**: https://rustup.rs/ （MSVCツールチェーン。インストーラの指示に従い
-   Visual Studio Build Tools の「C++によるデスクトップ開発」を入れる）
-4. **WebView2 Runtime**: Windows 10/11 は通常プリインストール済み
-   （詳細: https://tauri.app/start/prerequisites/ ）
-
-セットアップ（PowerShell / コマンドプロンプト）:
-
-```powershell
-cd D:\develop
-git clone https://github.com/tyaro/banto.git banto
-cd banto
-pnpm install
-
-# デスクトップアプリとして起動（初回はRustのコンパイルで数分かかります）
-pnpm --filter admin-template tauri dev
-```
-
-初回起動時は管理者アカウント作成画面が表示されるので、ユーザー名・
-表示名・パスワード（8文字以上）を入力してアカウントを作成する。以降の
-起動ではそのアカウントでログインする。Tauriウィンドウ内ではRust+SQLite
-（初回起動時に1,000件シード）、ブラウザ実行（`pnpm dev`）ではInMemory
-（10,000件）が自動選択される。SQLiteファイルは
-`%APPDATA%\dev.banto.admin\admin-template.sqlite3` に作成される。
-
-補足:
-
-- Windowsでは`tauri dev`/`tauri build`に`icons/icon.ico`が必須（同梱済み）。
-  独自アイコンに差し替える場合は`pnpm --filter admin-template tauri icon
-<画像>`で全形式を再生成できる。
-- 認証はargon2id資格情報ストア + 初回セットアップ実装済み（`users`テーブル、
-  `crates/banto-admin-services/src/users.rs`）。`pnpm dev`のブラウザ単体
-  デモモード（Tauri/バックエンドなし、InMemoryデータ）のみ、Rustバック
-  エンドを持たないため`admin` / `admin`固定の簡易セッション認証のまま。
-- テーマ・ドックレイアウト等のUI設定は、Tauri/LANブラウザでは SQLite 設定DB
-  （`SettingsProvider`、M12で移行済み）へ永続化される。localStorage は初回描画の
-  ちらつき防止キャッシュ兼、ブラウザ単体デモモードのフォールバックとして併用する。
+Node.js 24+ / pnpm 10+ / Rust（MSVC ツールチェーン + Visual Studio Build Tools）/
+WebView2 Runtime を入れて `pnpm install` → `pnpm --filter admin-template tauri dev`。
+初回起動で管理者アカウントを作成する。前提ツールの入手先・SQLite ファイルの置き場
+（`%APPDATA%\dev.banto.admin\admin-template.sqlite3`）・アイコン差し替え等の補足は
+[docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)。
 
 ## ライセンス
 

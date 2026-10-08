@@ -26,8 +26,7 @@
 ```
 
 専用入力欄には `use:wedgeInput`、DOM 非依存のヘッドレスコアが必要なら
-`createWedgeDetector` を直接呼び出せる。詳細はルート README「バーコード/
-QRスキャナ入力」節と `src/core/detector.ts`/`src/listen.ts` の JSDoc を参照。
+`createWedgeDetector` を直接呼び出せる。詳細は [docs/recipes/scan-wedge.md](../../docs/recipes/scan-wedge.md) と `src/core/detector.ts`/`src/listen.ts` の JSDoc を参照。
 
 ## 依存
 

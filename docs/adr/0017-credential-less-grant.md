@@ -327,7 +327,8 @@ loopback 判定で分かるのは**直近の接続元**だけで、外部のク�
   1. **外部公開（プロキシから外へ出す）の前にロックダウンする。**
   2. **再試運転の間も、管理者相当の grant の発行口（`/api/auth/grant/{kind}`）をプロキシから
      外部へ公開しない**（プロキシ側でそのパスを遮断するか、試運転中はプロキシを止める）。
-- 書く場所: **banto 側**は README の LAN 配信／リバースプロキシの節（ADR-0003 の対応構成）と
+- 書く場所: **banto 側**は README の LAN 配信／リバースプロキシの節（ADR-0003 の対応構成。
+  2026-10-08 以降は [recipes/lan-access.md](../recipes/lan-access.md)）と
   conventions §6 の grant 項（実装 PR で書く）。**派生アプリ側の義務**（banto の PR では
   触れない）: banto-hub の運用ガイド §19 と tag-server-design §5.6 に同じ 2 点を書く。
 - banto-hub は設定未登録なら試運転 ON（＝初回起動時は admin 相当の grant が発行できる）。

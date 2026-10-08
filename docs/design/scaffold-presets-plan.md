@@ -106,7 +106,8 @@ report が配線済み・scan-wedge 未配線なので、**`standard` と `full`
 
 ## 4. 仕組みの設計 — 「削除手順の自動実行」であって新機構ではない
 
-**プリセット適用 = README「オプション資産の削除」に明文化済みの削除手順を、
+**プリセット適用 = README「オプション資産の削除」（2026-10-08 以降は
+[recipes/remove-optional-assets.md](../recipes/remove-optional-assets.md)）に明文化済みの削除手順を、
 選ばれなかった資産についてプログラムから実行するだけ。** runtime プラグイン
 機構は作らない（template-scope §3.1 の決定を維持）。スキャフォールドは
 **install-time（コピー直後の1回）**のツールであり、実行時の拡張点は

@@ -347,6 +347,7 @@ protects nothing. `X-Forwarded-For` is spoofable and is not consulted. Decision:
      grant (`/api/auth/grant/{kind}`) through the proxy** (block that path at the proxy, or stop
      the proxy while commissioning).
 - Where it is written: **banto side** - the README section on LAN serving / reverse proxy
+  (since 2026-10-08: [recipes/lan-access.md](../recipes/lan-access.md))
   (ADR-0003's supported configuration) and the grant item of conventions §6 (implementation PR).
   **Derived-app obligations** (not touched by banto's PR): the same two points in banto-hub's
   operations guide §19 and tag-server-design §5.6.
