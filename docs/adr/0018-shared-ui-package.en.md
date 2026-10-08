@@ -244,7 +244,8 @@ upgrading.md gets the steps).
 ### 8. Phase-2 reconciliation (settled by the owner on 2026-10-07)
 
 - **Menu components**: move as is. Callers already pass `label`. Keep relying on the `popover`
-  API (decision 12). Moving banto-hub's `TreeContextMenu` onto `Menu` is phase 3.
+  API (decision 12). Whether banto-hub's `TreeContextMenu` moves onto `Menu` is decided in phase 3
+  (decided on 2026-10-08: it does not; see §9).
 - **CommandPalette**: the package holds only the **presentation and interaction** component. It
   receives the command list, a search function, execution, a close request and text (`items`,
   `search(query) => items`, `onExecute(item)`, `onClose()`, `messages`) and does not import
@@ -415,8 +416,8 @@ Phase-2 decision points (added 2026-10-07):
     when banto-industrial needs them (owner note: "後ほど banto 側に入れるかもしれないが、その時は
     その時で").
 11. **Theme tokens**: the overlay scrim and the z-index layers become theme tokens.
-12. **Menu**: keep the `popover` API assumption. Aligning banto-hub's `TreeContextMenu` with
-    `Menu` happens in phase 3.
+12. **Menu**: keep the `popover` API assumption. Whether banto-hub's `TreeContextMenu` aligns
+    with `Menu` is decided in phase 3. -> Phase 3 (owner decision, 2026-10-08): it does **not** (§9).
 
 ## Owner decision points
 
@@ -459,3 +460,5 @@ Before phase 2 (settled; see decisions 8 to 12 in the owner decisions):
 12. **Menu**: keep relying on the `popover` API (including Tauri's WebView2 / WebKitGTK)? Move
     banto-hub's `TreeContextMenu` to `Menu` in phase 3?
     -> Decided: keep `popover`; the `TreeContextMenu` alignment is phase 3.
+    -> Phase 3 (owner decision, 2026-10-08): `TreeContextMenu` does not move to `Menu` (different
+    shape; §9).

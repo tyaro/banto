@@ -232,7 +232,8 @@ Modal / Drawer と層の補助は段階 2 に入れない）。
 ### 8. 段階 2 の突き合わせ（2026-10-07 オーナー決定済み）
 
 - **メニュー部品**: そのまま移す。`label` は今も呼び出し側が渡している。`popover` API を前提に
-  したままにする（決定 12）。banto-hub の `TreeContextMenu` を `Menu` に寄せるのは段階 3。
+  したままにする（決定 12）。banto-hub の `TreeContextMenu` を `Menu` に寄せるかは段階 3 で判断する
+  （2026-10-08 に「寄せない」と決めた。§9）。
 - **CommandPalette**: パッケージには**表示と操作の部品**だけを置く。コマンドの一覧・検索関数・
   実行・閉じる要求・文言を受け取り（`items`、`search(query) => items`、`onExecute(item)`、
   `onClose()`、`messages`）、admin-core を import しない（型は構造的に `PaletteCommand` と
@@ -389,7 +390,7 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
 11. **テーマのトークン**: オーバーレイの背景（`--banto-scrim` など）と z-index の層をテーマの
     トークンにする。
 12. **メニュー**: `popover` API を前提にしたままにする。banto-hub の `TreeContextMenu` を `Menu`
-    に寄せるのは段階 3。
+    に寄せるかは段階 3 で判断する。→ 段階 3（2026-10-08 オーナー決定）で**寄せない**と決めた（§9）。
 
 ## オーナー判断事項
 
@@ -430,3 +431,4 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
 12. **メニュー**: `popover` API（Tauri の WebView2 / WebKitGTK を含む）を前提にしたままでよいか。
     banto-hub の `TreeContextMenu` を段階 3 で `Menu` に寄せるか。
     → 決定: `popover` 前提のまま。`TreeContextMenu` の整理は段階 3。
+    → 段階 3（2026-10-08 オーナー決定）: `TreeContextMenu` は `Menu` に寄せない（形が違う。§9）。
