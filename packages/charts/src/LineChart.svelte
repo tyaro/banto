@@ -25,7 +25,8 @@
 	 * the (never-triggered) decimation reduce to the original index spacing.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { linePath, areaPath } from './core/path';
+	import { linePath, areaPath, linePathSegments, areaPathSegments } from './core/path';
+	import { resolveBand } from './core/band';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
 	import { estimateLabelWidth } from './core/labels';
@@ -46,7 +47,7 @@
 		type ChartAxis,
 		type ChartMargin,
 		type EventMarker,
-		type ThresholdBand,
+		type OpenThresholdBand,
 		type TooltipRow
 	} from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -79,13 +80,20 @@
 		 */
 		zoomable?: boolean;
 		/** Shaded horizontal threshold/control-limit bands (M13 しきい値バンド). */
-		bands?: ThresholdBand[];
+		bands?: OpenThresholdBand[];
 		/** Vertical event markers at data indices (M13 注釈). */
 		markers?: EventMarker[];
 		/** Formatter for the RIGHT y-axis tick/tooltip values; defaults to `formatY`. */
 		formatYRight?: (n: number) => string;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings (and `ChartContainer`'s empty-state text). Defaults reproduce today's Japanese output. */
 		messages?: Partial<ChartMessages>;
+		/**
+		 * How non-finite points (null/NaN/missing) are handled: `'join'` (default)
+		 * skips them and connects the neighbours across the gap (the original
+		 * behavior); `'break'` splits the line (and area) into separate subpaths
+		 * so the gap stays visible.
+		 */
+		gaps?: 'join' | 'break';
 	}
 
 	let {
@@ -102,7 +110,8 @@
 		bands = [],
 		markers = [],
 		formatYRight,
-		messages = {}
+		messages = {},
+		gaps = 'join'
 	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
@@ -260,6 +269,39 @@
 		series.map((s, i) => {
 			const scale = isRight(s) ? rightScale : leftScale;
 			const vals = seriesValues[i];
+			if (gaps === 'break') {
+				// Split at every non-finite point. Decimation may jump over a gap
+				// (stride > 1), so a hole between two kept indices also breaks.
+				const segs: { x: number; y: number }[][] = [];
+				let cur: { x: number; y: number }[] = [];
+				let prev = -1;
+				for (const idx of renderIndices) {
+					let hole = false;
+					for (let k = prev + 1; prev >= 0 && k < idx; k++) {
+						if (!Number.isFinite(vals[k])) {
+							hole = true;
+							break;
+						}
+					}
+					if (hole && cur.length > 0) {
+						segs.push(cur);
+						cur = [];
+					}
+					const v = vals[idx];
+					if (Number.isFinite(v)) cur.push({ x: xAt(idx), y: scale(v) });
+					else if (cur.length > 0) {
+						segs.push(cur);
+						cur = [];
+					}
+					prev = idx;
+				}
+				if (cur.length > 0) segs.push(cur);
+				return {
+					color: seriesColorVar(i),
+					line: linePathSegments(segs),
+					area: area ? areaPathSegments(segs, metrics.innerBottom) : ''
+				};
+			}
 			const pts: { x: number; y: number }[] = [];
 			for (const idx of renderIndices) {
 				const v = vals[idx];
@@ -388,37 +430,50 @@
 			<!-- Threshold bands (drawn first, under the data). -->
 			{#each bands as band, bi (bi)}
 				{@const scale = band.axis === 'right' ? rightScale : leftScale}
-				{@const yTop = scale(Math.max(band.from, band.to))}
-				{@const yBottom = scale(Math.min(band.from, band.to))}
-				{@const bandColor = band.colorVar ?? 'var(--banto-chart-axis)'}
-				<rect
-					x={m.innerLeft}
-					y={yTop}
-					width={m.innerWidth}
-					height={Math.max(0, yBottom - yTop)}
-					fill={bandColor}
-					fill-opacity="0.1"
-				/>
-				<line
-					x1={m.innerLeft}
-					x2={m.innerRight}
-					y1={yTop}
-					y2={yTop}
-					class="band-edge"
-					stroke={bandColor}
-				/>
-				<line
-					x1={m.innerLeft}
-					x2={m.innerRight}
-					y1={yBottom}
-					y2={yBottom}
-					class="band-edge"
-					stroke={bandColor}
-				/>
-				{#if band.label}
-					<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
-						>{band.label}</text
-					>
+				{@const rb = resolveBand(
+					band.from,
+					band.to,
+					band.axis === 'right'
+						? [rightTicks[0], rightTicks[rightTicks.length - 1]]
+						: [leftTicks[0], leftTicks[leftTicks.length - 1]]
+				)}
+				{#if rb}
+					{@const yTop = scale(rb.high)}
+					{@const yBottom = scale(rb.low)}
+					{@const bandColor = band.colorVar ?? 'var(--banto-chart-axis)'}
+					<rect
+						x={m.innerLeft}
+						y={yTop}
+						width={m.innerWidth}
+						height={Math.max(0, yBottom - yTop)}
+						fill={bandColor}
+						fill-opacity="0.1"
+					/>
+					{#if rb.highEdge}
+						<line
+							x1={m.innerLeft}
+							x2={m.innerRight}
+							y1={yTop}
+							y2={yTop}
+							class="band-edge"
+							stroke={bandColor}
+						/>
+					{/if}
+					{#if rb.lowEdge}
+						<line
+							x1={m.innerLeft}
+							x2={m.innerRight}
+							y1={yBottom}
+							y2={yBottom}
+							class="band-edge"
+							stroke={bandColor}
+						/>
+					{/if}
+					{#if band.label}
+						<text x={m.innerLeft + 6} y={yTop + 11} class="band-label" fill={bandColor}
+							>{band.label}</text
+						>
+					{/if}
 				{/if}
 			{/each}
 

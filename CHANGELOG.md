@@ -22,6 +22,12 @@
 
 ## [Unreleased]
 
+### 追加（minor、追加のみ）
+
+- feat(charts): `LineChart` に `gaps?: 'join' | 'break'`（既定 `'join'` = 従来どおり）を足した。`'break'` は欠測（null/NaN）で線とエリアを別の部分パスに分け、欠測をまたいでつながない。純関数 `linePathSegments` / `areaPathSegments` を公開
+- feat(charts): `LineChart` の `bands` を `OpenThresholdBand`（`from`/`to` が `number | null`）にし、null・非有限を開放端（プロット端まで）として扱い、バンドをプロット領域にクリップする。領域内に収まる有限のバンドの出力は変わらない（領域外だけのバンドは描かなくなる）。純関数 `resolveBand` を公開
+- feat(charts): `Gauge` の `value` を `number | null` にした。null・非有限は値の弧を描かず「—」を表示する（文字は `messages.gaugeNoValue`）。`GaugeThresholds` に下側のしきい値 `warningLow` / `dangerLow`（`value <=` で着色）を足した。上側の `warning` / `danger` は変わらない
+
 ## [6.2.0] - 2026-10-08
 
 **v6.2.0 — `@banto/ui` の段階 2（#220）: メニュー部品（`Menu`・`MenuGroup`・`MenuItem`・`MenuSeparator`、#361）、フォーカストラップ・フォーカス復帰・window の Esc を備えた `CommandPalette`（#363）、トーストのストア `createToastStore()` と、アクション付きボタンを持つ `ToastHost`（#364）、テーマのトークン `--banto-scrim` と z-index の層（#361）を足した。[ADR-0018](docs/adr/0018-shared-ui-package.md) の段階 1・2 の決定を Accepted にした。版の種類: minor（追加のみ。後方互換）。

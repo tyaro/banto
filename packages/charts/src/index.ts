@@ -33,6 +33,7 @@ export type {
 	TooltipRow,
 	ChartAxis,
 	ThresholdBand,
+	OpenThresholdBand,
 	EventMarker
 } from './types';
 export { getValue, toNumber } from './types';
@@ -40,7 +41,15 @@ export { getValue, toNumber } from './types';
 export { linearScale, niceTicks, bandScale, type LinearScale, type BandScale } from './core/scale';
 export { stackSeries, type StackSegment } from './core/stack';
 export { pieSlices, arcPath, polarToCartesian, type PieSlice } from './core/pie';
-export { linePath, areaPath, bandAreaPath, roundedTopBarPath, type Point } from './core/path';
+export {
+	linePath,
+	areaPath,
+	linePathSegments,
+	areaPathSegments,
+	bandAreaPath,
+	roundedTopBarPath,
+	type Point
+} from './core/path';
 export { toMs, ganttDomain, ganttLayout, type GanttTask, type GanttBar } from './core/gantt';
 export { everyNthIndex } from './core/ticks-time';
 export { seriesColorVar, MAX_CHART_SERIES, sequentialColor, SEQ_RAMP } from './core/color';
@@ -57,6 +66,7 @@ export {
 	spokeLabelAnchor,
 	type LabelAnchor
 } from './core/radar';
+export { resolveBand } from './core/band';
 export { heatmapGrid, heatmapCellKey, type HeatmapGrid } from './core/heatmap';
 export {
 	gaugeAngle,

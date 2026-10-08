@@ -87,6 +87,29 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 `rowHeight`、全体の高さはタスク数から自動算出する。時間軸・ツールチップの表示は
 `formatDate` で制御する（依存を足さないため日付ライブラリは同梱しない）。
 
+### 欠測の扱い・バンドの範囲・ゲージの値なし
+
+```svelte
+<!-- gaps="break": 欠測（null/NaN）で線を分け、つながない（既定は 'join'） -->
+<LineChart {data} x={...} series={...} label="温度" gaps="break" />
+
+<!-- bands: from/to が null・±Infinity なら上端/下端まで。プロット領域でクリップされる -->
+<LineChart {data} x={...} series={...} label="温度"
+	bands={[{ from: 80, to: null, label: '警報', colorVar: 'var(--banto-danger)' }]} />
+
+<!-- Gauge: value に null で値の弧を描かず「—」を表示。warningLow/dangerLow は value <= で着色 -->
+<Gauge value={null} min={0} max={100} label="水位"
+	thresholds={{ warning: 80, danger: 90, warningLow: 20, dangerLow: 10 }} />
+```
+
+- `LineChart` の `gaps?: 'join' | 'break'`（既定 `'join'` = 従来どおり欠測を飛ばしてつなぐ）。
+  `'break'` は欠測で `M` から別の部分パスにする（エリア塗りも部分ごとに閉じる）。
+- `LineChart` の `bands`（`OpenThresholdBand`）の `from`/`to` は `number | null`。非有限は開放端（`from` は下端、`to` は上端）。
+  バンドはプロット領域にクリップされ、領域外だけのバンドは描かない。
+- `Gauge` の `value` は `number | null`。値なしの文字は `messages.gaugeNoValue`（既定 `'—'`）。
+  `GaugeThresholds` に `warningLow` / `dangerLow`（`value <=` で warning / danger 色）を追加。
+  上側の `warning` / `danger` の挙動は変わらない。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

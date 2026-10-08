@@ -30,6 +30,26 @@ export function areaPath(points: Point[], y0: number): string {
 }
 
 /**
+ * Several disjoint polylines as one path string (`gaps="break"`): each
+ * non-empty segment restarts with its own `M`, so a gap between segments is
+ * not bridged. A single segment equals `linePath(segment)`.
+ */
+export function linePathSegments(segments: Point[][]): string {
+	return segments
+		.filter((s) => s.length > 0)
+		.map((s) => linePath(s))
+		.join(' ');
+}
+
+/** Filled area under each of several disjoint segments down to `y0` (one closed subpath per segment). A single segment equals `areaPath(segment, y0)`. */
+export function areaPathSegments(segments: Point[][], y0: number): string {
+	return segments
+		.filter((s) => s.length > 0)
+		.map((s) => areaPath(s, y0))
+		.join(' ');
+}
+
+/**
  * Filled band between two polylines `top` and `bottom` (spec §6, stacked-area
  * charts): the region enclosed by the top boundary drawn forward and the
  * bottom boundary drawn in reverse. Both arrays share the same x positions

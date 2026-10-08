@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { areaPath, bandAreaPath, linePath, roundedTopBarPath } from '../src/core/path';
+import {
+	areaPath,
+	areaPathSegments,
+	bandAreaPath,
+	linePath,
+	linePathSegments,
+	roundedTopBarPath
+} from '../src/core/path';
 
 describe('bandAreaPath', () => {
 	it('fills the band between the top polyline (forward) and bottom polyline (reversed)', () => {
@@ -96,5 +103,35 @@ describe('roundedTopBarPath', () => {
 	it('handles a zero-height bar (stacked zero segment) without throwing', () => {
 		const d = roundedTopBarPath(0, 50, 20, 0, 4);
 		expect(typeof d).toBe('string');
+	});
+});
+
+describe('linePathSegments / areaPathSegments', () => {
+	const a = [
+		{ x: 0, y: 1 },
+		{ x: 10, y: 2 }
+	];
+	const b = [
+		{ x: 30, y: 3 },
+		{ x: 40, y: 4 }
+	];
+
+	it('restarts each segment with its own M (gap not bridged)', () => {
+		expect(linePathSegments([a, b])).toBe('M 0 1 L 10 2 M 30 3 L 40 4');
+	});
+
+	it('a single segment equals linePath / areaPath (join-compatible)', () => {
+		expect(linePathSegments([a])).toBe(linePath(a));
+		expect(areaPathSegments([a], 50)).toBe(areaPath(a, 50));
+	});
+
+	it('skips empty segments and yields "" for none', () => {
+		expect(linePathSegments([[], a, []])).toBe(linePath(a));
+		expect(linePathSegments([])).toBe('');
+		expect(areaPathSegments([], 50)).toBe('');
+	});
+
+	it('closes one area subpath per segment', () => {
+		expect(areaPathSegments([a, b], 50)).toBe(`${areaPath(a, 50)} ${areaPath(b, 50)}`);
 	});
 });

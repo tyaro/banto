@@ -45,6 +45,9 @@ export interface ChartMessages {
 	/** StackedAreaChart tooltip's running-total row label. */
 	stackedAreaTotal?: () => string;
 
+	/** Gauge's hero-value placeholder when `value` is `null`/non-finite. */
+	gaugeNoValue?: () => string;
+
 	/** LineChart's zoom-reset button title (hover tooltip). */
 	lineResetZoomTitle?: () => string;
 	/** LineChart's zoom-reset button label. */
@@ -72,6 +75,8 @@ export const defaultChartMessages: Required<ChartMessages> = {
 	paretoCumulativePct: () => '累積%',
 
 	stackedAreaTotal: () => '合計',
+
+	gaugeNoValue: () => '—',
 
 	lineResetZoomTitle: () => 'ズームをリセット',
 	lineReset: () => 'リセット'
