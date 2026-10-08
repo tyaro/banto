@@ -44,7 +44,7 @@ Banto（番頭）は **Tauri デスクトップ + LAN ブラウザ配信の二�
     冒頭の `状態:` 行（あれば `最終検証日:`）を同時に更新する
 - **トラックB（アプリ作者向け）= [README](README.md) + [docs/recipes/](docs/recipes/)**:
   このテンプレートから自分のアプリを作る人向け。README は入口と背骨（コピー →
-  リネーム → 差し替え → 削除 → 配信）、手順の全量は `docs/recipes/` の各レシピ
+  リネーム → プリセット選択 → 実装 → 配信）、手順の全量は `docs/recipes/` の各レシピ
   （rename / add-resource / remove-optional-assets / consume-as-git-dependency /
   lan-access / database-backup / windows-setup / no-login-app / scan-wedge /
   notifications / tree-svelte / add-role）。

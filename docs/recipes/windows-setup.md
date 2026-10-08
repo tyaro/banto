@@ -4,7 +4,7 @@
 トラックB＝アプリ作者向け）
 
 Windows でデスクトップアプリ（Tauri）として開発・起動するまでの手順。
-ブラウザ単体（`pnpm dev`）だけなら Rust と WebView2 は不要（[README「5分で動かす」](../../README.md#5分で動かす)）。
+ブラウザ単体（`pnpm dev`）だけなら Rust と WebView2 は不要（[README「まず試す: ブラウザデモ」](../../README.md#まず試す-ブラウザデモinmemory)）。
 
 ## 前提ツール（未導入のもののみ）
 

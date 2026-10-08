@@ -61,7 +61,7 @@ track your task belongs to.**
     affected plan / design document (and `最終検証日:` if present)
 - **Track B (for app authors) = [README](README.en.md) + [docs/recipes/](docs/recipes/)**:
   for people building their own app from this template. The README is the
-  entry point and the backbone (copy → rename → replace → remove → serve); the
+  entry point and the backbone (copy → rename → pick a preset → implement → serve); the
   full procedures live in `docs/recipes/` (rename / add-resource /
   remove-optional-assets / consume-as-git-dependency / lan-access /
   database-backup / windows-setup / no-login-app / scan-wedge / notifications /

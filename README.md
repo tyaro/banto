@@ -1,32 +1,55 @@
 # Banto（番頭）
 
-Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面
-フレームワーク/テンプレート。refine ライクなヘッドレスコアに、独自の
-データグリッド・スキーマ駆動フォーム・チャート・ドッキングレイアウトを
-組み合わせ、Rust（axum + sqlx。SQLite 既定・PostgreSQL 対応）バックエンドと
-一緒に**デスクトップアプリ（Tauri）と LAN ブラウザ配信の二形態**で動く。
-**コピーして自分のアプリを作る**ための雛形で、同梱物はすべて削除できる。
+**Banto（番頭）は、PC1台から始めて、必要に応じてLAN内へ共有できる業務アプリ開発テンプレートです。**
 
-名称は、江戸時代の商家で主人に代わって店を切り盛りした「番頭」に由来。
+データ一覧・入力フォーム・認証・権限管理・監査ログなど、業務アプリの共通部分を用意しています。
+テンプレートをコピーし、同梱のサンプルを自分の業務に合わせて変更して使います。
+Tauri v2・SvelteKit・Rustで構成し、デスクトップとLANブラウザで同じ画面・業務処理を利用できます。
+DBはSQLiteを標準とし、PostgreSQLにも対応しています。
 
-- **ライブデモ**: [tyaro.github.io/banto](https://tyaro.github.io/banto/) —
-  ブラウザ単体のデモモード（InMemory・バックエンド不要）。**admin / admin** でログイン。
+名称は、江戸時代の商家で主人に代わって店を切り盛りした「番頭」に由来。技術構成の詳細は
+[構成](#構成)、機能の一覧は [主な機能](#主な機能)。
+
+![Banto データグリッド（商品一覧・仮想スクロール / 絞り込み / インライン編集）](docs/assets/items-grid.png)
+
+**ライブデモ: [tyaro.github.io/banto](https://tyaro.github.io/banto/)** — ブラウザ単体の
+デモモード（InMemory・バックエンド不要）。**admin / admin** でログインできる（デモ専用の固定
+アカウント）。
+
+<details>
+<summary>その他のスクリーンショット（ダッシュボード・テーマ）</summary>
+
+デスクトップ（Tauri）と LAN ブラウザ配信の両方で動く管理画面。1万件のデモデータで、
+仮想スクロールのデータグリッド・スキーマ駆動フォーム・各種チャート（折れ線 / 棒 / 円 /
+散布 / ヒートマップ / ゲージ / レーダー ほか）・ドッキングレイアウト・明暗テーマ
+（standard / glass プリセット）を同梱している。
+
+**ダッシュボード（ライト / standard）**
+
+![Banto ダッシュボード（ライトテーマ）](docs/assets/dashboard-light.png)
+
+**ダッシュボード（ダーク / glass プリセット）**
+
+![Banto ダッシュボード（ダークテーマ・glass）](docs/assets/dashboard-dark.png)
+
+</details>
+
 - English summary: [README.en.md](README.en.md)
 - ライセンス: [MIT](LICENSE)。npm スコープ `@banto/*` / Rust クレート `banto-*`
 - 変更履歴: [CHANGELOG.md](CHANGELOG.md)
 
 ## 対象読者 / 非対象
 
-Banto は特定のニッチに最適化したテンプレートで、汎用の管理画面ジェネレータではない。
+Banto は業務アプリに絞ったテンプレートで、汎用の管理画面ジェネレータではない。
 最初の1画面で「自分向きか」を判断できるよう、正直に開示する。
 
-| 向いている人                                                                                            | 向いていない人                                                                                    |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **デスクトップアプリと LAN ブラウザ配信の両方**が要る業務系（現場端末はデスクトップ、事務所はブラウザ） | Web のみ / デスクトップのみで足りる人（二形態の複雑さが不要）                                     |
-| 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人                     | React / Electron の人材・エコシステムに乗りたい人                                                 |
-| Tauri v2 + SvelteKit（Svelte 5 Runes）+ Rust の構成で、AI 併走で量産したい人                            | 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL 単体には V2 で対応済み） |
+| 向いている人                                                                                                                                                                | 向いていない人                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **PC1台のローカルアプリから始めたい**人。ログイン無しの小さなアプリで始めて、育ったらログイン運用や LAN 内の共有へ進める（[no-login-app.md](docs/recipes/no-login-app.md)） | 公開インターネット向けの Web アプリが作りたい人（LAN 配信は信頼できる LAN 内が前提）              |
+| **デスクトップと LAN ブラウザの両方**で同じ画面を使いたい業務系（現場端末はデスクトップ、事務所はブラウザ）                                                                 | React / Electron の人材・エコシステムに乗りたい人                                                 |
+| 認証・RBAC（admin / editor / viewer）・監査ログ付きの管理画面を**最初から**欲しい人。Tauri v2 + SvelteKit + Rust の構成で AI 併走で量産したい人                             | 大規模スケール（分散DB・シャーディング等）が最初から前提の人（PostgreSQL 単体には V2 で対応済み） |
 
-**v1 の割り切り（正直な開示）**:
+**運用上の前提**:
 
 - LAN 配信は標準 HTTP。TLS はリバースプロキシ終端で対応する
   （[ADR-0003](docs/adr/0003-tls-via-reverse-proxy.md)、手順は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)）。
@@ -42,10 +65,10 @@ Banto は特定のニッチに最適化したテンプレートで、汎用の�
 `apps/admin-template/package.json` の `banto.i18n` を `"raw"` にすると、この対訳キー方式を
 opt-out して UI 文言を直書きできる（既定 `"keys"`、display-preset-plan.md D1-c）。
 
-## 5分で動かす
+## まず試す: ブラウザデモ（InMemory）
 
-前提: Node 24+ / pnpm 10+（Tauri デスクトップとして動かす場合のみ Rust も。
-[開発](#開発) / [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)）。
+前提: Node 24+ / pnpm 10+。以下はブラウザ単体の**デモモード**で、データはメモリ上
+（再読み込みで消える）、`admin / admin` はデモ専用の固定アカウント。
 
 ```sh
 git clone https://github.com/tyaro/banto.git my-app
@@ -53,6 +76,10 @@ cd my-app
 pnpm install
 pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / admin でログイン）
 ```
+
+DB（SQLite）に保存される本来の形で動かすには、Rust を入れてデスクトップアプリとして起動する
+（`pnpm --filter admin-template tauri dev`。初回起動で管理者アカウントを作る。手順は
+[開発](#開発) / [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)）。
 
 動いたら、まず見るべき中心の3ファイルはこれ（スキーマ定義・テーブル・サービス層）:
 
@@ -64,29 +91,30 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 ただし**新しい CRUD リソースを1本通す**には、両経路（REST/Tauri）・認可対称テスト・
 ページ・ナビ等を含む**9ステップ**が必要（上の3ファイルはその入口）。正式な手順は
 [docs/recipes/add-resource.md](docs/recipes/add-resource.md) のチェックリストに従う
-（AI にそのまま指示として渡せる）。
+（AI にそのまま指示として渡せる）。自分のアプリを作り始める順序は
+[テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)。
 
 ## 目的別の入口
 
 やりたいことから、読む文書を引く表。手順の「正」は各リンク先にあり、README は要点だけを持つ。
 
-| やりたいこと                                                             | 読む文書                                                                                                                                                                   |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| テンプレートをコピーして自分のアプリにする（リネーム → 差し替え → 削除） | 本書 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                             |
-| 名称・識別子をリネームする                                               | [docs/recipes/rename.md](docs/recipes/rename.md)                                                                                                                           |
-| CRUD リソースを追加する / デモの `items` を差し替える                    | [docs/recipes/add-resource.md](docs/recipes/add-resource.md)                                                                                                               |
-| 不要なオプション資産（dock/charts/添付/帳票/ツリー等）を外す             | [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)（`pnpm scaffold --preset`）                                                               |
-| 表示専用アプリ（カンバン / 常設ダッシュボード / 展示デモ）を作る         | 同上の [`--preset display`](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)                                                                         |
-| ログイン無しの小さなアプリとして始める                                   | [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)                                                                                                               |
-| RBAC ロールを足す                                                        | [docs/recipes/add-role.md](docs/recipes/add-role.md)                                                                                                                       |
-| LAN の他端末に配信する / 閲覧公開 / TLS / PWA                            | [docs/recipes/lan-access.md](docs/recipes/lan-access.md)                                                                                                                   |
-| DB の切り替え（SQLite / PostgreSQL）・バックアップ                       | [docs/recipes/database-backup.md](docs/recipes/database-backup.md)                                                                                                         |
-| スキャナ入力 / 通知トースト / ツリービューを組み込む                     | [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md) / [notifications.md](docs/recipes/notifications.md) / [tree-svelte.md](docs/recipes/tree-svelte.md)               |
-| 別リポジトリから `@banto/*` / `banto-*` を git 依存で使う                | [docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)・[docs/publishing.md](docs/publishing.md)                                           |
-| Banto の新しい版を派生アプリに取り込む                                   | [docs/upgrading.md](docs/upgrading.md)（リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）                                             |
-| Windows で Tauri デスクトップとして動かす                                | [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)                                                                                                             |
-| 全体構成・レイヤ・フローを一望する                                       | [docs/architecture-overview.md](docs/architecture-overview.md) / [docs/architecture-flows.md](docs/architecture-flows.md)                                                  |
-| 仕様・ロードマップ・設計判断（テンプレート自体を保守する）               | [docs/ui-framework-spec.md](docs/ui-framework-spec.md) / [docs/roadmap.md](docs/roadmap.md) / [docs/adr/](docs/adr/README.md) / [docs/conventions.md](docs/conventions.md) |
+| やりたいこと                                                                          | 読む文書                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| テンプレートをコピーして自分のアプリにする（リネーム → プリセット選択 → 実装 → 配信） | 本書 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                             |
+| 名称・識別子をリネームする                                                            | [docs/recipes/rename.md](docs/recipes/rename.md)                                                                                                                           |
+| CRUD リソースを追加する / デモの `items` を差し替える                                 | [docs/recipes/add-resource.md](docs/recipes/add-resource.md)                                                                                                               |
+| 不要なオプション資産（dock/charts/添付/帳票/ツリー等）を外す                          | [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)（`pnpm scaffold --preset`）                                                               |
+| 表示専用アプリ（カンバン / 常設ダッシュボード / 展示デモ）を作る                      | 同上の [`--preset display`](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)                                                                         |
+| ログイン無しの小さなアプリとして始める                                                | [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)                                                                                                               |
+| RBAC ロールを足す                                                                     | [docs/recipes/add-role.md](docs/recipes/add-role.md)                                                                                                                       |
+| LAN の他端末に配信する / 閲覧公開 / TLS / PWA                                         | [docs/recipes/lan-access.md](docs/recipes/lan-access.md)                                                                                                                   |
+| DB の切り替え（SQLite / PostgreSQL）・バックアップ                                    | [docs/recipes/database-backup.md](docs/recipes/database-backup.md)                                                                                                         |
+| スキャナ入力 / 通知トースト / ツリービューを組み込む                                  | [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md) / [notifications.md](docs/recipes/notifications.md) / [tree-svelte.md](docs/recipes/tree-svelte.md)               |
+| 別リポジトリから `@banto/*` / `banto-*` を git 依存で使う                             | [docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)・[docs/publishing.md](docs/publishing.md)                                           |
+| Banto の新しい版を派生アプリに取り込む                                                | [docs/upgrading.md](docs/upgrading.md)（リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）                                             |
+| Windows で Tauri デスクトップとして動かす                                             | [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)                                                                                                             |
+| 全体構成・レイヤ・フローを一望する                                                    | [docs/architecture-overview.md](docs/architecture-overview.md) / [docs/architecture-flows.md](docs/architecture-flows.md)                                                  |
+| 仕様・ロードマップ・設計判断（テンプレート自体を保守する）                            | [docs/ui-framework-spec.md](docs/ui-framework-spec.md) / [docs/roadmap.md](docs/roadmap.md) / [docs/adr/](docs/adr/README.md) / [docs/conventions.md](docs/conventions.md) |
 
 ## ドキュメントの2トラック
 
@@ -95,32 +123,13 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 - **トラックB（この README と `docs/recipes/`）= アプリ作者向け**: このテンプレートを
   **コピーして自分のアプリを作る人**向け。リネーム・デモ差し替え・オプション削除・
   LAN 配信・各パッケージの組み込みレシピ・セットアップ手順。README は背骨（コピー →
-  リネーム → 差し替え → 削除 → 配信）と入口に絞り、手順の全量は `docs/recipes/` に置く。
+  リネーム → プリセット選択 → 実装 → 配信）と入口に絞り、手順の全量は `docs/recipes/` に置く。
 - **トラックA（`docs/` のそれ以外）= 保守者向け**: テンプレート**自体を保守・機能拡張する人**
   向け。不変条件（[docs/conventions.md](docs/conventions.md)）・仕様書・スコープ判定
   ・実装計画・配布規約。AI エージェントの道案内は [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md)。
 
 アップストリームを追わずハードフォークするなら、トラックA（`docs/`・`AGENTS.md`・
 `CLAUDE.md`）は不要になれば削除してよい（テンプレートの「すべては削除可能」方針）。
-
-## スクリーンショット
-
-デスクトップ（Tauri）と LAN ブラウザ配信の両方で動く管理画面。1万件のデモデータで、
-仮想スクロールのデータグリッド・スキーマ駆動フォーム・各種チャート（折れ線 / 棒 / 円 /
-散布 / ヒートマップ / ゲージ / レーダー ほか）・ドッキングレイアウト・明暗テーマ
-（standard / glass プリセット）を同梱している。
-
-**ダッシュボード（ライト / standard）**
-
-![Banto ダッシュボード（ライトテーマ）](docs/assets/dashboard-light.png)
-
-**ダッシュボード（ダーク / glass プリセット）**
-
-![Banto ダッシュボード（ダークテーマ・glass）](docs/assets/dashboard-dark.png)
-
-**データグリッド（商品一覧・仮想スクロール / 絞り込み / インライン編集）**
-
-![Banto データグリッド](docs/assets/items-grid.png)
 
 ## 主な機能
 
@@ -183,6 +192,12 @@ pnpm dev        # http://localhost:1420 （ブラウザ単体デモ、admin / ad
 
 ## 構成
 
+技術的には Tauri v2 + SvelteKit（Svelte 5 Runes）向けのフルスタック管理画面フレームワーク/
+テンプレート。refine ライクなヘッドレスコア（`@banto/admin-core`）に、独自のデータグリッド・
+スキーマ駆動フォーム・チャート・ドッキングレイアウトを組み合わせ、Rust（axum + sqlx。
+SQLite 既定・PostgreSQL 対応）バックエンドと一緒に**デスクトップアプリ（Tauri）と LAN
+ブラウザ配信の二形態**で動く。同梱物はすべて削除できる。
+
 パッケージ一覧の前に全体像が欲しい場合は
 [docs/architecture-overview.md](docs/architecture-overview.md) を参照
 （認証・初回起動・開発経路は [docs/architecture-flows.md](docs/architecture-flows.md)）。
@@ -222,8 +237,9 @@ Rust クレート（`crates/`、MIT）:
 ## テンプレートから自分のアプリを作る
 
 Banto は**コピーして使う**前提のテンプレート（[docs/template-scope.md §1](docs/template-scope.md)）。
-背骨は「コピー → リネーム → 差し替え → 削除 → 配信」の5段で、各段の要点とコマンドだけを
-ここに置き、全量は `docs/recipes/` の各レシピにある。
+作り始める順序は **コピー → リネーム → プリセット選択（オプション資産の削除）→ 業務画面・処理の
+実装（`items` の差し替え）→ 配信設定**。各段の要点とコマンドだけをここに置き、全量は
+`docs/recipes/` の各レシピにある。
 
 ### 1. コピーとリネーム
 
@@ -244,20 +260,12 @@ Web マニフェスト等）、スクリプトが**やらない**こと（アイ
 **リネームしてはいけない** `X-Banto-Client` CSRF ヘッダの注意は
 [docs/recipes/rename.md](docs/recipes/rename.md)。
 
-### 2. デモコンテンツ（`items`）を自リソースに差し替える
+### 2. プリセットを選ぶ（オプション資産の削除）
 
-`items`（商品）は一覧・詳細・新規作成・CSV インポート/エクスポート・ダッシュボード集計を
-貫通させたお手本。リソースのページは動的ルートによる自動生成ではなく、**`items` の
-ルート一式をコピーして書き換える**のがこのテンプレートの正式な方式（2026-07-18 決定）。
-**正式な手順・層別の関与ファイル全量・`sqlx::migrate!` を同一 DB で2クレート以上使えない
-注意は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)**（チェックリスト形式。
-AI に委譲するときはレシピをそのまま指示に使える）。
-
-### 3. オプション資産の削除
-
-「同梱するが削除できる」ことが保証されたオプション資産
+実装に入る前に、残す構成を決める。「同梱するが削除できる」ことが保証されたオプション資産
 （[docs/template-scope.md §3](docs/template-scope.md)）は、`pnpm scaffold` のプリセットで
-まとめて外す:
+まとめて外す。`display` は `items` デモとダッシュボードも消すので、次の「実装」より先に
+選んでおく方が自然:
 
 ```sh
 pnpm scaffold --preset <preset>   # minimal | standard | full | display
@@ -276,16 +284,34 @@ pnpm install                      # 外れた依存の反映
 `sysinfo` を含む）と `--preset display` の詳細（外れるもの・初回起動の既定・セキュリティ注意）は
 [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)。
 
-### 4. 別リポジトリから git 依存として消費する場合
+### 3. 業務画面・処理を実装する（`items` の差し替え）
 
-§1〜3 は「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」手順。別リポジトリ
+サンプルの `items`（商品）は一覧・詳細・新規作成・CSV インポート/エクスポート・ダッシュボード集計を
+貫通させたお手本。リソースのページは動的ルートによる自動生成ではなく、**`items` の
+ルート一式をコピーして書き換える**のがこのテンプレートの正式な方式（2026-07-18 決定）。
+**正式な手順・層別の関与ファイル全量・`sqlx::migrate!` を同一 DB で2クレート以上使えない
+注意は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)**（チェックリスト形式。
+AI に委譲するときはレシピをそのまま指示に使える）。
+`display` プリセットで `items` を外した場合の読み替えは
+[docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)。
+
+### 4. 配信設定（LAN 内への共有）
+
+PC1台で使う間は何も設定しない（組み込み Web サーバは既定で無効）。他端末のブラウザから
+同じ画面を使いたくなったら、設定画面から LAN アクセスを有効化する。手順と注意は下の
+[LANアクセス（組み込みWebサーバ）](#lanアクセス組み込みwebサーバ)、表示専用アプリ向けの
+ログイン無し閲覧公開は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)。
+
+### 5. 別リポジトリから git 依存として消費する場合
+
+§1〜4 は「banto 自体をコピー/フォークして1リポジトリ内で使い続ける」手順。別リポジトリ
 （例: 社内の案件アプリ）がコピーせずに `@banto/*`/`banto-*` を git 依存として参照する構成も
 取れる。記法は [docs/publishing.md](docs/publishing.md)、追加で必要になる作業（`workspace:*`
 → git 依存、`path` → git タグ依存、`[workspace.package].repository`、Vite `optimizeDeps.exclude`
 の移植、e2e の移植等）は
 [docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)。
 
-### 5. 新しい版への更新
+### 6. 新しい版への更新
 
 依存タグの上げ方、コピーしたテンプレート部分の取り込み、DB 移行、基準版の記録は
 [docs/upgrading.md](docs/upgrading.md)。**依存タグを上げるだけではコピー済みのテンプレートは
