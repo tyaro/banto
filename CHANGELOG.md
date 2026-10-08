@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [6.3.0] - 2026-10-08
+
+**v6.3.0 — `@banto/charts` の欠測・開放端しきい値・値なしの表示を足した（#369）: `LineChart` の `gaps`（欠測で線を分ける）、開放端を持てる `OpenThresholdBand`（`bands` のクリップ）、`Gauge` の `value: number | null` と下側しきい値 `warningLow` / `dangerLow`、文字 `messages.gaugeNoValue`。docs のみの変更として ADR-0018 の段階 3 の記録（#367）と README の再構成（#368）を含む。版の種類: minor（追加のみ。後方互換。ただし 1 点、既定の見た目が変わる: プロット領域の外だけのバンドは描かなくなる）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`.svelte.ts` の追加は無く、`optimizeDeps.exclude` の変更は不要）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                            |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.2.0` → `v6.3.0`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要（charts に `.svelte.ts` は無い）。**既定の見た目が 1 点変わる**: `LineChart` の `bands` のうち、y 軸の範囲の外だけにあるバンドは、描かれなくなる（領域内に収まる有限のバンドは変わらない） |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                                                                                                                                                        |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                                                                                         |
+
+### 消費側への注意
+
+- 既存の `@banto/*` の公開 API は変わらない（追加のみ）。`Gauge` の `value` の型が `number | null` に広がるが、`number` を渡す既存の呼び出しはそのまま動く。
+- **`LineChart` の `bands` は、プロット領域にクリップされる**。y 軸の範囲の外にあるバンドは描かれなくなる（範囲にまたがるバンドは範囲内だけが描かれ、はみ出さない）。バンドを軸の範囲の外に置いて見せていた画面は、軸の範囲を広げるか、開放端（`from` / `to` に `null`）で書き直す。
+- docs のみの変更: ADR-0018 の段階 3 の記録（#367）、README の再構成（#368）。コード・公開 API への影響は無い。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加（minor、追加のみ）
 
 - feat(charts): `LineChart` に `gaps?: 'join' | 'break'`（既定 `'join'` = 従来どおり）を足した。`'break'` は欠測（null / undefined / NaN。数値化の前に欠測として扱い、0 にはしない）で線とエリアを別の部分パスに分け、欠測をまたいでつながない。軸の範囲とツールチップも欠測を無視する。`'join'`（既定）の値の扱い（`null` は従来どおり 0）は変えていない。純関数 `linePathSegments` / `areaPathSegments` を公開
@@ -2544,7 +2565,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.2.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.3.0...HEAD
+[6.3.0]: https://github.com/tyaro/banto/compare/v6.2.0...v6.3.0
 [6.2.0]: https://github.com/tyaro/banto/compare/v6.1.0...v6.2.0
 [6.1.0]: https://github.com/tyaro/banto/compare/v6.0.0...v6.1.0
 [6.0.0]: https://github.com/tyaro/banto/compare/v5.1.0...v6.0.0
