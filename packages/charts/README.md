@@ -93,6 +93,9 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 <!-- gaps="break": 欠測（null/NaN）で線を分け、つながない（既定は 'join'） -->
 <LineChart {data} x={...} series={...} label="温度" gaps="break" />
 
+<!-- includeY: 左の縦軸の範囲に必ず含める値。ビット（0/1）のタグだけの推移で、目盛を 0 と 1 にそろえたいとき -->
+<LineChart {data} x={...} series={...} label="運転状態" includeY={[0, 1]} />
+
 <!-- bands: from/to が null・±Infinity なら上端/下端まで。プロット領域でクリップされる -->
 <LineChart {data} x={...} series={...} label="温度"
 	bands={[{ from: 80, to: null, label: '警報', colorVar: 'var(--banto-danger)' }]} />
@@ -104,6 +107,9 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 
 - `LineChart` の `gaps?: 'join' | 'break'`（既定 `'join'` = 従来どおり欠測を飛ばしてつなぐ）。
   `'break'` は欠測（null / undefined / NaN。0 にはしない）で `M` から別の部分パスにする。`'join'` では `null` は従来どおり 0 として描く（エリア塗りも部分ごとに閉じる）。
+- `LineChart` の `includeY?: readonly number[]`（既定なし = 従来どおりデータの範囲のみ）。
+  左の縦軸の範囲を「左の軸の系列のデータの範囲」と指定した値の和集合にする（データが無ければ指定値だけ）。非有限の値は無視する。
+  データ点・ツールチップ・凡例・系列は増えず、データが無いチャートは空表示のまま（`includeY` はデータとして数えない）。右の軸には効かない。
 - `LineChart` の `bands`（`OpenThresholdBand`）の `from`/`to` は `number | null`。非有限（±Infinity を含む）は位置で開放端になる（`from` は下端、`to` は上端）。
   バンドはプロット領域にクリップされ、領域外だけのバンドは描かない。
 - `Gauge` の `value` は `number | null`。値なしの文字は `messages.gaugeNoValue`（既定 `'—'`）。

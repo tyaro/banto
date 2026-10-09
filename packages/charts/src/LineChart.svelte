@@ -25,6 +25,7 @@
 	 * the (never-triggered) decimation reduce to the original index spacing.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
+	import { mergeExtent } from './core/extent';
 	import { linePathSegments, areaPathSegments } from './core/path';
 	import { seriesNumber, seriesSegments } from './core/series';
 	import { resolveBand } from './core/band';
@@ -94,6 +95,13 @@
 		 * so the gap stays visible.
 		 */
 		gaps?: 'join' | 'break';
+		/**
+		 * Values that the LEFT y-axis extent must always include (e.g. `[0, 1]`
+		 * for bit tags). Merged into the axis extent only: it adds no data
+		 * point, tooltip entry, legend item or series, and does not make an
+		 * otherwise empty chart non-empty. Non-finite entries are ignored.
+		 */
+		includeY?: readonly number[];
 	}
 
 	let {
@@ -111,7 +119,8 @@
 		markers = [],
 		formatYRight,
 		messages = {},
-		gaps = 'join'
+		gaps = 'join',
+		includeY
 	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
@@ -177,8 +186,11 @@
 	// Y domains are pinned to the FULL data extent (not the visible window), so
 	// panning/zooming x never makes the y-axis jump - matches the pre-M13 static
 	// scaling exactly when there is no second axis.
+	// `includeY` widens the tick extent only; `isEmpty` above still looks at the
+	// data extent, so forced values never turn an empty chart into a plot.
+	const leftTickExtent = $derived(mergeExtent(leftExtent, includeY));
 	const leftTicks = $derived(
-		Number.isFinite(leftExtent[0]) ? niceTicks(leftExtent[0], leftExtent[1], 5) : [0, 1]
+		Number.isFinite(leftTickExtent[0]) ? niceTicks(leftTickExtent[0], leftTickExtent[1], 5) : [0, 1]
 	);
 	const rightTicks = $derived(
 		hasRight && Number.isFinite(rightExtent[0])
