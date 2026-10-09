@@ -22,6 +22,26 @@
 
 ## [Unreleased]
 
+## [6.3.1] - 2026-10-09
+
+**v6.3.1 — `banto_server::static_files::static_router` が、どの API ルートにも一致しなかった `/api`・`/api/...` の要求を、SPA の HTML（200）ではなく JSON の 404 で返すようにした。版の種類: patch（修正のみ。公開 API の変更は無い。ただし 1 点、見える挙動が変わる: 存在しない `/api/...` の応答が 200 の HTML から 404 の JSON になる）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                           |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.3.0` → `v6.3.1`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要。**見える挙動が 1 点変わる**: 存在しない `/api/...` を呼ぶと、200 の HTML ではなく 404 の JSON が返る（配線の変更は不要） |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                                                                                       |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                        |
+
+### 消費側への注意
+
+- 公開 API は変わらない（修正のみ）。`static_router` を merge しているアプリは、配線の変更なしで反映される。
+- **存在しない API パスを呼んでいた画面・クライアントは、応答が変わる**: 従来は 200 の HTML（SPA の `index.html`）が返り、JSON として読もうとして別の場所で失敗していた。今後は 404 の JSON（`{"kind":"not_found","resource":"api","id":"<パス>"}`）が返る。404 を前提にしていなかった呼び出し側は、エラー処理を確認する。`/apiary` など `/api/` で始まらないパスと画面のルートは従来どおり `index.html`。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 修正
 
 - `banto_server::static_files::static_router` が、どの API ルートにも一致しなかった `/api`・`/api/...` の要求を SPA のフォールバック（`index.html` を 200 で返す）に落とさず、JSON の 404（`{"kind":"not_found","resource":"api","id":"<パス>"}`）で返すようにした。どのメソッドでも同じ。`/apiary` など `/api/` で始まらないパスと画面のルートは従来どおり `index.html`。派生アプリへの影響: 存在しない `/api/...` が 200 の HTML ではなく 404 になる（`static_router` を merge しているアプリは配線の変更なしで反映される）。banto-industrial#547
@@ -2587,7 +2607,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.3.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.3.1...HEAD
+[6.3.1]: https://github.com/tyaro/banto/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/tyaro/banto/compare/v6.2.0...v6.3.0
 [6.2.0]: https://github.com/tyaro/banto/compare/v6.1.0...v6.2.0
 [6.1.0]: https://github.com/tyaro/banto/compare/v6.0.0...v6.1.0
