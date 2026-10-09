@@ -1,6 +1,6 @@
 {
   "name": "@banto/attachments",
-  "version": "6.3.0",
+  "version": "6.3.1",
   "description": "Banto attachments: file/image attachment panel (Svelte 5 Runes UI), spec docs/design/attachments-plan.md §3.7",
   "license": "MIT",
   "repository": {
