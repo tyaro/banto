@@ -60,6 +60,10 @@ fn is_api_path(path: &str) -> bool {
     path == "/api" || path.starts_with("/api/")
 }
 
+/// HEAD needs no handling here: axum's router strips the body of a HEAD
+/// response itself (for any handler, `fallback` included) and sets
+/// `Content-Length` from the would-be body - pinned by
+/// `head_matches_get_headers_with_empty_body`.
 async fn serve_asset<A: UiAssets>(method: Method, uri: Uri) -> Response {
     // An `/api` request that no API route matched must not fall through to the
     // SPA fallback: that answered 200 with `index.html`, so a caller with a
@@ -151,6 +155,43 @@ mod tests {
             .await
             .unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("index"));
+    }
+
+    #[tokio::test]
+    async fn head_matches_get_headers_with_empty_body() {
+        let router = static_router::<FakeAssets>();
+        for uri in ["/app.js", "/settings/foo", "/api/x"] {
+            let get = router
+                .clone()
+                .oneshot(HttpRequest::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let head = router
+                .clone()
+                .oneshot(HttpRequest::head(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(head.status(), get.status(), "{uri}");
+            assert_eq!(
+                head.headers().get(header::CONTENT_TYPE),
+                get.headers().get(header::CONTENT_TYPE),
+                "{uri}"
+            );
+            let get_body = axum::body::to_bytes(get.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(
+                head.headers()
+                    .get(header::CONTENT_LENGTH)
+                    .and_then(|v| v.to_str().ok()),
+                Some(get_body.len().to_string().as_str()),
+                "{uri}"
+            );
+            let head_body = axum::body::to_bytes(head.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(head_body.is_empty(), "{uri}");
+        }
     }
 
     async fn status_and_type(
