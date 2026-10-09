@@ -51,6 +51,7 @@
 		type OpenThresholdBand,
 		type TooltipRow
 	} from './types';
+	import { formatTooltipValue, type FormatTooltip } from './core/tooltip';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Legend from './internal/Legend.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
@@ -102,6 +103,13 @@
 		 * otherwise empty chart non-empty. Non-finite entries are ignored.
 		 */
 		includeY?: readonly number[];
+		/**
+		 * Tooltip-only value formatter, called per series with the finite value,
+		 * the series info and the data index. Omitted → `formatY` (right-axis
+		 * series: `formatYRight`) as before. Never used for axis tick labels or
+		 * the auto margins; non-finite values stay `'-'` and skip it.
+		 */
+		formatTooltip?: FormatTooltip;
 	}
 
 	let {
@@ -120,7 +128,8 @@
 		formatYRight,
 		messages = {},
 		gaps = 'join',
-		includeY
+		includeY,
+		formatTooltip
 	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
@@ -395,10 +404,16 @@
 	function tooltipRows(index: number): TooltipRow[] {
 		return series.map((s, i) => {
 			const raw = seriesValues[i][index];
-			const fmt = isRight(s) ? formatYRightValue : formatYValue;
 			return {
 				label: s.label,
-				value: Number.isFinite(raw) ? fmt(raw) : '-',
+				value: formatTooltipValue(
+					raw,
+					{ id: s.id, label: s.label, axis: isRight(s) ? 'right' : 'left' },
+					index,
+					formatTooltip,
+					formatYValue,
+					formatYRightValue
+				),
 				colorVar: seriesColorVar(i)
 			};
 		});

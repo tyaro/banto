@@ -67,6 +67,7 @@ export {
 	type LabelAnchor
 } from './core/radar';
 export { resolveBand } from './core/band';
+export type { FormatTooltip, TooltipSeriesInfo } from './core/tooltip';
 export { heatmapGrid, heatmapCellKey, type HeatmapGrid } from './core/heatmap';
 export {
 	gaugeAngle,

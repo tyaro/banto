@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 追加
+
+- `@banto/charts`: `LineChart` に任意の `formatTooltip?: (value, series, index) => string` を追加した。ツールチップの値の書式だけを、系列の情報（`id` / `label` / `axis`）とデータの添字を受け取って系列ごとに変えられる。縦軸の目盛と余白の自動計算には使わず、有限の値にだけ呼ばれる（非有限は従来どおり `-`）。bit と数値のタグが混ざったグループでツールチップの bit だけを `True` / `False` にしたり、縦軸を `False` / `True` だけにしたままツールチップでは区間の中点も出したりするためのもの（tyaro/banto#376、tyaro/banto-industrial#551）。指定しなければ描画は従来と同じ（`formatY`、右の軸の系列は `formatYRight`）。
+
 ## [6.4.0] - 2026-10-09
 
 **v6.4.0 — `@banto/charts` の `LineChart` に、左の縦軸の範囲に必ず含める値を指定する `includeY` を足した（tyaro/banto-industrial#554）。版の種類: minor（追加のみ。後方互換。指定しなければ描画は変わらない）。

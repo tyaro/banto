@@ -96,6 +96,10 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 <!-- includeY: 左の縦軸の範囲に必ず含める値。ビット（0/1）のタグだけの推移で、目盛を 0 と 1 にそろえたいとき -->
 <LineChart {data} x={...} series={...} label="運転状態" includeY={[0, 1]} />
 
+<!-- formatTooltip: ツールチップの値だけの書式（系列ごと）。目盛は formatY のまま。bit のタグだけ True / False にしたいとき -->
+<LineChart {data} x={...} series={...} label="運転状態"
+	formatTooltip={(v, s) => (s.id === 'run' ? (v >= 0.5 ? 'True' : 'False') : v.toLocaleString())} />
+
 <!-- bands: from/to が null・±Infinity なら上端/下端まで。プロット領域でクリップされる -->
 <LineChart {data} x={...} series={...} label="温度"
 	bands={[{ from: 80, to: null, label: '警報', colorVar: 'var(--banto-danger)' }]} />
@@ -110,6 +114,8 @@ Banto のチャート。依存ライブラリなしの SVG フルスクラッチ
 - `LineChart` の `includeY?: readonly number[]`（既定なし = 従来どおりデータの範囲のみ）。
   左の縦軸の範囲を「左の軸の系列のデータの範囲」と指定した値の和集合にする（データが無ければ指定値だけ）。非有限の値は無視する。
   データ点・ツールチップ・凡例・系列は増えず、データが無いチャートは空表示のまま（`includeY` はデータとして数えない）。右の軸には効かない。
+- `LineChart` の `formatTooltip?: (value: number, series: { id: string; label: string; axis: 'left' | 'right' }, index: number) => string`（既定なし = 従来どおり `formatY`、右の軸の系列は `formatYRight`）。
+  ツールチップの値の書式だけを系列ごとに変える。縦軸の目盛と余白の自動計算には使わない。有限の値にだけ呼ばれ、非有限は従来どおり `-`。
 - `LineChart` の `bands`（`OpenThresholdBand`）の `from`/`to` は `number | null`。非有限（±Infinity を含む）は位置で開放端になる（`from` は下端、`to` は上端）。
   バンドはプロット領域にクリップされ、領域外だけのバンドは描かない。
 - `Gauge` の `value` は `number | null`。値なしの文字は `messages.gaugeNoValue`（既定 `'—'`）。
