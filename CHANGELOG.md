@@ -25,6 +25,7 @@
 ### 追加
 
 - `@banto/charts`: `LineChart` に任意の `formatTooltip?: (value, series, index) => string` を追加した。ツールチップの値の書式だけを、系列の情報（`id` / `label` / `axis`）とデータの添字を受け取って系列ごとに変えられる。縦軸の目盛と余白の自動計算には使わず、有限の値にだけ呼ばれる（非有限は従来どおり `-`）。bit と数値のタグが混ざったグループでツールチップの bit だけを `True` / `False` にしたり、縦軸を `False` / `True` だけにしたままツールチップでは区間の中点も出したりするためのもの（tyaro/banto#376、tyaro/banto-industrial#551）。指定しなければ描画は従来と同じ（`formatY`、右の軸の系列は `formatYRight`）。
+- `banto-admin-services`: DB に書けない監査を保留ファイルに退避し、復旧後に 1 回だけ `audit_log` へ流し込む保留（spool）を追加した（tyaro/banto-industrial#437、[ADR-0019](docs/adr/0019-audit-spool.md)）。`AuditLogService::new(db).with_spool(dir, SpoolConfig::default())?` で有効にすると、`record` は書く前に `pending_id`（UUIDv4）と `ts` を決め、INSERT が失敗するか 3 秒（`SpoolConfig::timeout`）で応答しなければ、その 1 件を `<dir>/<pending_id>.json` に書いて戻る（要求を待たせない。タイムアウトした INSERT は取り消さない）。流し込みは `flush_spool()`（起動時にアプリが呼ぶ）・保留があるときの `record` の成功・`spawn_spool_flusher()` の定期実行（既定 30 秒）で行い、`ON CONFLICT (pending_id) DO NOTHING` なので、遅れて完了した INSERT と流し込みが重なっても、複数のプロセスが流し込んでも 1 行になる。流し込んだ行は `detail.spooled = true`、`ts` は `record` を呼んだ時刻（保持期間の削除はこの `ts` で判定するので、古い行は流し込みの直後に消え得る）。保留は既定で 10,000 件まで（超えた分は捨てて `spool_backlog().dropped` に数える）、状態は `spool_backlog()` で見られる。`try_record` は保留しない。**DB のマイグレーション `0008_audit_log_pending_id.sql`（`audit_log.pending_id` と一意インデックス、SQLite・PostgreSQL の両方）を追加した（経路 C）。保留を使うアプリはこれを取り込む必要がある。** `with_spool` を呼ばなければ `record` は従来と同じで、マイグレーションを取り込まなくても動く。
 
 ## [6.4.0] - 2026-10-09
 
