@@ -19,6 +19,7 @@
 	 * the running total.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
+	import { leftMarginForTicks } from './core/labels';
 	import { stackSeries } from './core/stack';
 	import { bandAreaPath, linePath, type Point } from './core/path';
 	import { everyNthIndex } from './core/ticks-time';
@@ -104,7 +105,19 @@
 
 	let plotWidth: number = $state(0);
 
-	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
+	// Left margin auto-expands to fit the y tick labels (never below the
+	// caller's/default left margin, so labels that already fit are unchanged).
+	const MARGIN = $derived.by(() => {
+		const m = { ...DEFAULT_MARGIN, ...margins };
+		return {
+			...m,
+			left: leftMarginForTicks(
+				ticks.map((t) => formatYValue(t)),
+				m.left,
+				{ totalWidth: plotWidth }
+			)
+		};
+	});
 
 	const metrics = $derived.by(() => {
 		const innerLeft = MARGIN.left;

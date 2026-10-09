@@ -30,7 +30,7 @@
 	import { resolveBand } from './core/band';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { estimateLabelWidth } from './core/labels';
+	import { leftMarginForTicks, rightMarginForTicks } from './core/labels';
 	import {
 		fullViewport,
 		isFullViewport,
@@ -186,15 +186,21 @@
 			: [0, 1]
 	);
 
-	// Right margin auto-expands to fit right-axis tick labels; with no right
-	// series it stays exactly the caller's (or default) right margin, so the
-	// classic single-axis layout is unchanged.
+	// Both margins auto-expand to fit y tick labels. Left: never below the
+	// caller's (or default) left margin, so labels that already fit keep the
+	// exact previous layout. Right: with no right series it stays exactly the
+	// caller's (or default) right margin, so the classic single-axis layout is
+	// unchanged.
 	const MARGIN = $derived.by(() => {
 		const base = { ...DEFAULT_MARGIN, ...margins };
-		if (!hasRight) return base;
-		let widest = 0;
-		for (const t of rightTicks) widest = Math.max(widest, estimateLabelWidth(formatYRightValue(t)));
-		return { ...base, right: Math.max(base.right, Math.ceil(widest + 12)) };
+		const left = leftMarginForTicks(leftTicks.map(formatYValue), base.left, {
+			totalWidth: plotWidth
+		});
+		if (!hasRight) return { ...base, left };
+		const right = rightMarginForTicks(rightTicks.map(formatYRightValue), base.right, {
+			totalWidth: plotWidth
+		});
+		return { ...base, left, right };
 	});
 
 	// Measured plot width, bound from ChartContainer so all scale/path math can
