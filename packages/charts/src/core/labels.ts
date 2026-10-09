@@ -57,8 +57,25 @@ export function leftMarginFor(labels: string[], options: AxisMarginOptions = {})
 	return Math.round(Math.min(max, Math.max(min, widest + gap)));
 }
 
-/** Max share of the chart width the auto-grown y-axis margin may take. */
+/** Max share of the chart width each auto-grown y-axis margin may take. */
 const MAX_TICK_MARGIN_RATIO = 0.4;
+
+export interface TickMarginOptions extends AxisMarginOptions {
+	/** Measured container width (px). Unknown/0 -> only the absolute `max` applies. */
+	totalWidth?: number;
+}
+
+/** Grow `base` to fit the widest label (+ `gap`), capped by `max` and 40% of `totalWidth`; never below `base`. */
+function growMargin(labels: string[], base: number, gap: number, o: TickMarginOptions): number {
+	const { fontSize = 11, max = 140, totalWidth = 0 } = o;
+	let widest = 0;
+	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
+	const cap = Math.max(
+		base,
+		totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max
+	);
+	return Math.min(cap, Math.max(base, Math.ceil(widest + gap)));
+}
 
 /**
  * Left margin needed to fit the end-anchored y tick labels of a value axis
@@ -77,16 +94,18 @@ const MAX_TICK_MARGIN_RATIO = 0.4;
 export function leftMarginForTicks(
 	labels: string[],
 	baseLeft: number,
-	options: AxisMarginOptions & { totalWidth?: number } = {}
+	options: TickMarginOptions = {}
 ): number {
-	const { fontSize = 11, gap = 8, max = 140, totalWidth = 0 } = options;
-	let widest = 0;
-	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
-	const cap = Math.max(
-		baseLeft,
-		totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max
-	);
-	return Math.min(cap, Math.max(baseLeft, Math.ceil(widest + gap)));
+	return growMargin(labels, baseLeft, options.gap ?? 8, options);
+}
+
+/** Right-axis counterpart of `leftMarginForTicks` (start-anchored labels, 12px clearance), same cap policy. */
+export function rightMarginForTicks(
+	labels: string[],
+	baseRight: number,
+	options: TickMarginOptions = {}
+): number {
+	return growMargin(labels, baseRight, options.gap ?? 12, options);
 }
 
 /**

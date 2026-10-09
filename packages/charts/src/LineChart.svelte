@@ -30,7 +30,7 @@
 	import { resolveBand } from './core/band';
 	import { everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { estimateLabelWidth, leftMarginForTicks } from './core/labels';
+	import { leftMarginForTicks, rightMarginForTicks } from './core/labels';
 	import {
 		fullViewport,
 		isFullViewport,
@@ -197,9 +197,10 @@
 			totalWidth: plotWidth
 		});
 		if (!hasRight) return { ...base, left };
-		let widest = 0;
-		for (const t of rightTicks) widest = Math.max(widest, estimateLabelWidth(formatYRightValue(t)));
-		return { ...base, left, right: Math.max(base.right, Math.ceil(widest + 12)) };
+		const right = rightMarginForTicks(rightTicks.map(formatYRightValue), base.right, {
+			totalWidth: plotWidth
+		});
+		return { ...base, left, right };
 	});
 
 	// Measured plot width, bound from ChartContainer so all scale/path math can

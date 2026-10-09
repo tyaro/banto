@@ -3,8 +3,17 @@ import {
 	estimateLabelWidth,
 	leftMarginFor,
 	leftMarginForTicks,
+	rightMarginForTicks,
 	rightMarginForLastTick
 } from '../src/core/labels';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import LineChartSrc from '../src/LineChart.svelte?raw';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import StackedAreaChartSrc from '../src/StackedAreaChart.svelte?raw';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import ComboChartSrc from '../src/ComboChart.svelte?raw';
+// @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
+import ScatterChartSrc from '../src/ScatterChart.svelte?raw';
 
 describe('estimateLabelWidth', () => {
 	it('estimates CJK characters as ~13px each at the 11px tick font', () => {
@@ -131,5 +140,57 @@ describe('leftMarginForTicks', () => {
 		expect(leftMarginForTicks(labels, 48, { totalWidth: 380 })).toBe(
 			leftMarginForTicks(labels, 48)
 		);
+	});
+});
+
+const SOURCES: Record<string, string> = {
+	LineChart: LineChartSrc,
+	StackedAreaChart: StackedAreaChartSrc,
+	ComboChart: ComboChartSrc,
+	ScatterChart: ScatterChartSrc
+};
+
+describe('narrow containers (150px) keep a plot area', () => {
+	const long = ['1'.repeat(30)];
+	const right = 16;
+
+	it('left margin: 30-char labels at width 150 leave innerWidth > 0', () => {
+		const left = leftMarginForTicks(long, 48, { totalWidth: 150 });
+		expect(left).toBeLessThanOrEqual(Math.floor(150 * 0.4));
+		expect(150 - left - right).toBeGreaterThan(0);
+		// without the width the absolute cap alone (140px) would collapse the plot
+		expect(150 - leftMarginForTicks(long, 48) - right).toBeLessThanOrEqual(0);
+	});
+
+	it('right margin: capped by the same policy, never below the base', () => {
+		expect(rightMarginForTicks(['0', '100'], 40, { totalWidth: 380 })).toBe(40);
+		const r = rightMarginForTicks(long, 16, { totalWidth: 150 });
+		expect(r).toBeLessThanOrEqual(60);
+		expect(r).toBeGreaterThanOrEqual(16);
+		expect(rightMarginForTicks(['1'.repeat(130)], 16)).toBe(140);
+		expect(rightMarginForTicks(['1'.repeat(130)], 80, { totalWidth: 100 })).toBe(80);
+	});
+
+	it('right margin keeps the previous widest + 12 rule while it fits', () => {
+		const labels = ['0.00MPa', '1.20MPa'];
+		expect(rightMarginForTicks(labels, 16, { totalWidth: 600 })).toBe(
+			Math.max(16, Math.ceil(estimateLabelWidth('1.20MPa') + 12))
+		);
+	});
+
+	// No component-mount test infra in this package: guard the wiring by source
+	// so each chart keeps passing the measured width into the margin policy.
+	it.each(['LineChart', 'StackedAreaChart', 'ComboChart', 'ScatterChart'])(
+		'%s passes the measured width to the left margin',
+		(name) => {
+			const src: string = SOURCES[name];
+			expect(src).toMatch(/leftMarginForTicks\([\s\S]*?totalWidth: plotWidth/);
+			expect(src).toContain('bind:width={plotWidth}');
+		}
+	);
+
+	it('LineChart passes the measured width to the right margin', () => {
+		const src: string = LineChartSrc;
+		expect(src).toMatch(/rightMarginForTicks\([\s\S]*?totalWidth: plotWidth/);
 	});
 });

@@ -86,13 +86,17 @@
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 26, left: 48 };
 	// Left margin auto-expands to fit the y tick labels (never below the
 	// caller's/default left margin, so labels that already fit are unchanged).
+	// Measured container width (bound from ChartContainer) so the margin cap can
+	// be relative to it, same as LineChart/StackedAreaChart.
+	let plotWidth: number = $state(0);
 	const MARGIN = $derived.by(() => {
 		const m = { ...DEFAULT_MARGIN, ...margins };
 		return {
 			...m,
 			left: leftMarginForTicks(
 				valueTicks.map((t) => formatYValue(t)),
-				m.left
+				m.left,
+				{ totalWidth: plotWidth }
 			)
 		};
 	});
@@ -179,7 +183,7 @@
 
 <div class="banto-combochart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty} {messages}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const valueScale = linearScale(
