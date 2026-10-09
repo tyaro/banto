@@ -23,7 +23,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use banto_core::BantoError;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,9 @@ pub struct SpoolConfig {
     /// is dropped, counted in [`SpoolBacklog::dropped`] and logged.
     pub max_files: usize,
     /// The period of [`super::AuditLogService::spawn_spool_flusher`]
-    /// (default 30 s). It only flushes while the backlog is not empty.
+    /// (default 30 s): each tick reads the directory and flushes what it
+    /// finds, including entries another process spooled. Also the longest a
+    /// successful `record` goes without rescanning the directory.
     pub flush_interval: Duration,
 }
 
@@ -155,6 +157,9 @@ struct SpoolState {
     dropped: u64,
     failed: u64,
     last_error: Option<String>,
+    /// When this process last read the directory (a flush's scan, or a
+    /// claimed rescan, see [`Spool::claim_rescan`]). `None` = never.
+    last_scan: Option<Instant>,
 }
 
 /// The result of reading the spool directory.
@@ -201,6 +206,7 @@ impl Spool {
             flush_lock: tokio::sync::Mutex::new(()),
             state: Mutex::new(SpoolState {
                 index,
+                last_scan: Some(Instant::now()),
                 ..Default::default()
             }),
         })
@@ -214,6 +220,26 @@ impl Spool {
 
     pub fn count(&self) -> usize {
         self.state().index.len()
+    }
+
+    /// Whether a successful `record` should start a flush: entries this
+    /// process knows about are waiting, or the directory has not been read
+    /// for [`SpoolConfig::flush_interval`] (another process sharing it may
+    /// have spooled entries this index never saw). A `true` from the second
+    /// reason claims the rescan (it moves `last_scan` to now), so a burst of
+    /// successful writes starts at most one directory read per interval.
+    pub fn should_flush_after_success(&self) -> bool {
+        let mut state = self.state();
+        if !state.index.is_empty() {
+            return true;
+        }
+        let due = state
+            .last_scan
+            .is_none_or(|at| at.elapsed() >= self.config.flush_interval);
+        if due {
+            state.last_scan = Some(Instant::now());
+        }
+        due
     }
 
     pub fn backlog(&self) -> SpoolBacklog {
@@ -297,6 +323,7 @@ impl Spool {
                 ))
             })?;
         let mut state = self.state();
+        state.last_scan = Some(Instant::now());
         for (_, entry) in &scan.entries {
             state
                 .index

@@ -40,8 +40,11 @@
 //!    cancelled - it runs on in a spawned task and may still complete;
 //! 3. flushes the spool into `audit_log` later
 //!    ([`AuditLogService::flush_spool`]: at startup when the app calls it,
-//!    after a successful `record` while entries are waiting, and from
-//!    [`AuditLogService::spawn_spool_flusher`]'s periodic task). The flush
+//!    after a successful `record` when entries are waiting or the spool
+//!    directory has not been read for [`SpoolConfig::flush_interval`], and
+//!    from [`AuditLogService::spawn_spool_flusher`]'s periodic task, which
+//!    reads the directory every interval even when this process spooled
+//!    nothing - another process sharing the directory may have). The flush
 //!    INSERTs with the same `pending_id` and `ts`, so an entry whose original
 //!    INSERT completed late is not written twice, and several processes
 //!    flushing one directory are safe too. Rows written by a flush carry
@@ -408,7 +411,9 @@ impl AuditLogService {
         let insert = tokio::spawn(async move { insert_pending(&db, &attempt, false).await });
         let reason = match tokio::time::timeout(spool.config.timeout, insert).await {
             Ok(Ok(Ok(()))) => {
-                if spool.count() > 0 {
+                // Local backlog, or a directory not read for
+                // `flush_interval` (another process may have spooled to it).
+                if spool.should_flush_after_success() {
                     let svc = self.clone();
                     tokio::spawn(async move { svc.flush_spool_if_idle().await });
                 }
@@ -510,10 +515,13 @@ impl AuditLogService {
     }
 
     /// Start the periodic flush (ADR-0019): every
-    /// [`SpoolConfig::flush_interval`] it flushes while the backlog is not
-    /// empty. Returns `None` without a spool. The task holds a clone of this
-    /// service (and so of its pool) - abort the handle when shutting down.
-    /// Must be called inside a Tokio runtime.
+    /// [`SpoolConfig::flush_interval`] it reads the spool directory and
+    /// flushes what it finds - even when this process's own backlog is
+    /// empty, because another process sharing the directory may have spooled
+    /// entries this one never saw (a `read_dir` per interval; nothing is
+    /// logged when the directory is empty). Returns `None` without a spool.
+    /// The task holds a clone of this service (and so of its pool) - abort
+    /// the handle when shutting down. Must be called inside a Tokio runtime.
     pub fn spawn_spool_flusher(&self) -> Option<tokio::task::JoinHandle<()>> {
         let spool = self.spool.clone()?;
         let svc = self.clone();
@@ -523,9 +531,7 @@ impl AuditLogService {
             tick.tick().await; // the first tick is immediate
             loop {
                 tick.tick().await;
-                if spool.count() > 0 {
-                    svc.flush_spool_if_idle().await;
-                }
+                svc.flush_spool_if_idle().await;
             }
         }))
     }
@@ -1993,6 +1999,76 @@ mod tests {
         flusher.abort();
     }
 
+    /// Two services (processes) share one spool directory and are both built
+    /// while it is empty. During an outage only B records, so only B's index
+    /// knows the entry; B then goes away. A's periodic flusher alone must
+    /// find B's file on disk (A's own count is 0) and write it exactly once.
+    #[tokio::test]
+    async fn the_periodic_flusher_finds_entries_spooled_by_another_process() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let config = SpoolConfig {
+            flush_interval: Duration::from_millis(50),
+            ..spool_config(2_000)
+        };
+        let a = AuditLogService::new(db.clone())
+            .with_spool(&spool_dir, config)
+            .unwrap();
+        let b = AuditLogService::new(db)
+            .with_spool(&spool_dir, config)
+            .unwrap();
+
+        take_offline(&pool).await;
+        b.record(sample_entry("create", "items", "admin")).await;
+        assert_eq!(spool_files(&spool_dir).len(), 1);
+        assert_eq!(a.spool_backlog().count, 0, "A never saw it");
+        drop(b);
+        bring_back(&pool).await;
+
+        let flusher = a.spawn_spool_flusher().expect("a spool is configured");
+        assert!(
+            eventually(|| async { count_rows(&pool).await == 1 }).await,
+            "A's periodic flusher writes B's entry"
+        );
+        assert!(eventually(|| async { spool_files(&spool_dir).is_empty() }).await);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(count_rows(&pool).await, 1, "exactly once");
+        assert_eq!(a.spool_backlog().count, 0);
+        flusher.abort();
+    }
+
+    /// A successful `record` also looks at the directory once it has not
+    /// been scanned for `flush_interval`, so another process's entries are
+    /// picked up even without the periodic flusher.
+    #[tokio::test]
+    async fn a_successful_record_rescans_a_stale_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let config = SpoolConfig {
+            flush_interval: Duration::from_millis(50),
+            ..spool_config(2_000)
+        };
+        let a = AuditLogService::new(db.clone())
+            .with_spool(&spool_dir, config)
+            .unwrap();
+        let b = AuditLogService::new(db)
+            .with_spool(&spool_dir, config)
+            .unwrap();
+        take_offline(&pool).await;
+        b.record(sample_entry("create", "items", "admin")).await;
+        drop(b);
+        bring_back(&pool).await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        a.record(sample_entry("update", "items", "admin")).await;
+        assert!(eventually(|| async { count_rows(&pool).await == 2 }).await);
+        assert!(eventually(|| async { spool_files(&spool_dir).is_empty() }).await);
+    }
+
     #[test]
     fn spooled_detail_merges_into_objects_and_wraps_the_rest() {
         assert_eq!(spooled_detail(None), json!({ "spooled": true }));
@@ -2013,6 +2089,21 @@ mod tests {
         assert_eq!(
             pending_ts(Dialect::Postgres, t),
             "2026-10-10 00:00:00.123456+00"
+        );
+        // Fixed instants with trailing zeros: the bound text always has six
+        // digits (PostgreSQL parses it; the stored text is PostgreSQL's own
+        // output, see `pg_audit_spool_ts_matches_the_default_text_*`).
+        let t = std::time::UNIX_EPOCH + Duration::from_micros(1_791_590_400_070_250);
+        assert_eq!(pending_ts(Dialect::Sqlite, t), "2026-10-10 00:00:00");
+        assert_eq!(
+            pending_ts(Dialect::Postgres, t),
+            "2026-10-10 00:00:00.070250+00"
+        );
+        let t = std::time::UNIX_EPOCH + Duration::from_secs(1_791_590_399);
+        assert_eq!(pending_ts(Dialect::Sqlite, t), "2026-10-09 23:59:59");
+        assert_eq!(
+            pending_ts(Dialect::Postgres, t),
+            "2026-10-09 23:59:59.000000+00"
         );
     }
 
@@ -2125,15 +2216,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(row_ts, expected);
-        let default_shape: String = sqlx::query_scalar("SELECT now()::text")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            row_ts.len(),
-            default_shape.len(),
-            "{row_ts} vs {default_shape}"
-        );
         assert_eq!(
             pending_id,
             spooled["pendingId"].as_str().map(str::to_string)
@@ -2194,5 +2276,52 @@ mod tests {
             "the flush does not write a second row"
         );
         pg_drop_schema(&admin, &schema).await;
+    }
+
+    /// The `ts` text the pending INSERT stores is exactly what the column
+    /// DEFAULT (`now()::text`, a `timestamptz` cast to `text`) produces for
+    /// the same instant, in the session's time zone - including fractional
+    /// seconds with trailing zeros (`.070250` is written `.07025`) and none
+    /// (`.000000` has no fraction). The reference instant is built in SQL
+    /// from integer seconds + microseconds, so it is exact (no clock, no
+    /// float rounding).
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn pg_audit_spool_ts_matches_the_default_text_for_the_same_instant() {
+        let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+            return;
+        };
+        let db = Db::connect_postgres(&url).await.unwrap();
+        let mut conn = db.as_postgres().unwrap().acquire().await.unwrap();
+        let cases: [(u64, u32, &str); 3] = [
+            (1_791_590_400, 70_250, "2026-10-10 00:00:00.07025+00"),
+            (1_791_590_400, 0, "2026-10-10 00:00:00+00"),
+            (1_791_590_399, 123_456, "2026-10-09 23:59:59.123456+00"),
+        ];
+        for tz in ["UTC", "Asia/Tokyo"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("SET TIME ZONE '{tz}'")))
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            for (secs, micros, utc_text) in cases {
+                let t = std::time::UNIX_EPOCH
+                    + Duration::from_secs(secs)
+                    + Duration::from_micros(u64::from(micros));
+                let ours = pending_ts(Dialect::Postgres, t);
+                let (stored, default_text): (String, String) = sqlx::query_as(
+                    "SELECT CAST(CAST($1 AS timestamptz) AS text),                      CAST(to_timestamp($2::bigint) + $3::bigint * INTERVAL '1 microsecond' AS text)",
+                )
+                .bind(&ours)
+                .bind(secs as i64)
+                .bind(i64::from(micros))
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+                assert_eq!(stored, default_text, "{tz}: {ours}");
+                if tz == "UTC" {
+                    assert_eq!(stored, utc_text);
+                }
+            }
+        }
     }
 }

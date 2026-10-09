@@ -54,8 +54,13 @@ Add an **opt-in spool** to `banto-admin-services`' `AuditLogService` (owner deci
 9. **The flush** goes oldest first (`ts`, then `pending_id`) and removes each file once its row is in
    (a missing file is fine). One flush at a time per service; several processes flushing one
    directory still leave one row thanks to `ON CONFLICT`. Triggers: `flush_spool()` called by the app
-   at startup, a successful `record` while entries are waiting, and the periodic task of
-   `spawn_spool_flusher()` (30 s by default, flushing only while entries are waiting).
+   at startup, a successful `record` (when this process has entries waiting, or has not read the
+   spool directory for `flush_interval`), and the periodic task of `spawn_spool_flusher()` (30 s by
+   default). The periodic task **reads the directory every time, even when this process's own
+   backlog is empty**: entries spooled by another process sharing the directory, which then exited,
+   never show up in this process's in-memory count (added after the 2026-10-10 owner review; one
+   directory read per interval, and nothing is logged when it is empty). A successful `record`
+   rescans at most once per `flush_interval` so that writes do not each read the directory.
 10. **Flushed rows carry `detail.spooled = true`** (added to an object `detail`; any other `detail`
     is wrapped as `{"value": <original detail>, "spooled": true}`).
 11. **No HMAC or other tamper detection**: whoever can write the data directory can write the SQLite
