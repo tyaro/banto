@@ -263,6 +263,14 @@ jobs:
           BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_app_test
         run: cargo test -p banto-admin-services --features postgres pg_concurrent_setup
 
+      # ADR-0019（tyaro/banto-industrial#437）: DB に書けない監査の保留ファイル。
+      # 失敗（表の改名）と応答なし（別トランザクションの排他ロック）の両方で、
+      # 保留 → 流し込みが 1 行だけになること。専用スキーマを作るので public には触れない。
+      - name: Cargo test (banto-admin-services, postgres audit spool)
+        env:
+          BANTO_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/banto_app_test
+        run: cargo test -p banto-admin-services --features postgres pg_audit_spool
+
   e2e:
     name: E2E (Playwright smoke)
     runs-on: ubuntu-latest

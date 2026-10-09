@@ -47,7 +47,15 @@ password-hash = { workspace = true }
 # async runtime itself is supplied by the caller (`admin-template-core`'s
 # server / `src-tauri`). Already a workspace dependency (ADR-0002: no new
 # external crate).
-tokio = { workspace = true, features = ["fs", "rt"] }
+#
+# `time` (the audit write timeout) and `sync` (one spool flush at a time) are
+# for `audit`'s spool (ADR-0019, tyaro/banto-industrial#437); both are
+# features of the same workspace dependency, not a new crate.
+tokio = { workspace = true, features = ["fs", "rt", "time", "sync"] }
+# `audit`'s spool (ADR-0019) names every spooled entry by a UUIDv4
+# (`pending_id`, also the spool file name). Already a workspace dependency
+# (`banto-server`'s session tokens); adds no new external crate (ADR-0002).
+uuid = { workspace = true }
 # `system_metrics::SystemMetricsSampler` (ADR-0013, Issue #185), optional
 # behind the `system-metrics` feature above - see the workspace `Cargo.toml`'s
 # comment on this dependency for the ADR-0002 exception reasoning.

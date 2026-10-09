@@ -22,11 +22,62 @@
 //! bearer token into `detail`. There is no runtime guard against this (the
 //! type is a free-form `serde_json::Value`) - it is enforced by review at
 //! every call site instead.
+//!
+//! ## The spool: an audit write the database cannot take (ADR-0019)
+//!
+//! [`AuditLogService::record`] must not fail or block the operation it
+//! audits, and before ADR-0019 an entry it could not write was only logged
+//! (`eprintln`) and lost. An app can opt in to a **spool**
+//! ([`AuditLogService::with_spool`], tyaro/banto-industrial#437): `record`
+//! then
+//!
+//! 1. fixes a `pending_id` (UUIDv4) and the `ts` before writing, and INSERTs
+//!    them with the row (`ON CONFLICT (pending_id) DO NOTHING`, the unique
+//!    index of migration `0008_audit_log_pending_id.sql`);
+//! 2. waits for the INSERT at most [`SpoolConfig::timeout`] (3 s by
+//!    default). On an error, or no answer in time, it writes the entry to a
+//!    file in the spool directory and returns. A timed-out INSERT is **not**
+//!    cancelled - it runs on in a spawned task and may still complete;
+//! 3. flushes the spool into `audit_log` later
+//!    ([`AuditLogService::flush_spool`]: at startup when the app calls it,
+//!    after a successful `record` while entries are waiting, and from
+//!    [`AuditLogService::spawn_spool_flusher`]'s periodic task). The flush
+//!    INSERTs with the same `pending_id` and `ts`, so an entry whose original
+//!    INSERT completed late is not written twice, and several processes
+//!    flushing one directory are safe too. Rows written by a flush carry
+//!    `"spooled": true` in `detail` (merged into an object `detail`; any
+//!    other `detail` is wrapped as `{"value": <detail>, "spooled": true}`).
+//!
+//! `ts` is the time of the `record` call, in the text the column DEFAULT
+//! would have produced: SQLite `datetime('now')` (`YYYY-MM-DD HH:MM:SS`,
+//! UTC); PostgreSQL `now()::text` (the UTC microsecond time is cast through
+//! `timestamptz` to `text` by the INSERT, so it follows the session's
+//! `TimeZone`/`DateStyle` exactly like the DEFAULT). A flushed row therefore
+//! sorts and filters by when it happened, not when it was flushed - and a
+//! retention prune ([`AuditLogService::prune`]) may delete it right after the
+//! flush if it is already older than the retention period.
+//!
+//! **Without a spool nothing changes**: `record` awaits [`try_record`]
+//! inline (no timeout, no `pending_id`, `ts` from the DEFAULT), so an app
+//! that has not applied migration `0008` keeps working. [`try_record`]
+//! never spools - its callers want the operation to fail when the audit
+//! write does.
+//!
+//! [`try_record`]: AuditLogService::try_record
+
+mod spool;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use banto_core::{BantoError, ListParams, ListResult};
-use banto_storage::{ColumnMap, Db};
+use banto_storage::{ColumnMap, Db, Dialect};
 use serde::Serialize;
 use sqlx::{QueryBuilder, Sqlite};
+
+use spool::{PendingEntry, Spool};
+pub use spool::{SpoolBacklog, SpoolConfig, SpoolFlushReport};
 
 /// One row of the `audit_log` table, wire-shaped for the audit-log viewer
 /// (spec M14's admin-only grid). `detail` is the raw JSON-encoded summary
@@ -139,11 +190,127 @@ fn column_map() -> ColumnMap {
 #[derive(Clone)]
 pub struct AuditLogService {
     db: Db,
+    /// `None` = no spool (the behavior before ADR-0019).
+    spool: Option<Arc<Spool>>,
+}
+
+/// The `audit_log` INSERT of an entry that has a `pending_id` (the spool
+/// path, ADR-0019). Same statement for the first attempt and the flush.
+const SQLITE_INSERT_PENDING: &str = "INSERT INTO audit_log \
+     (pending_id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (pending_id) DO NOTHING";
+/// PostgreSQL: `ts` is bound as UTC text and cast through `timestamptz` so
+/// the stored text is what the column DEFAULT `now()::text` would write.
+#[cfg(feature = "postgres")]
+const PG_INSERT_PENDING: &str = "INSERT INTO audit_log \
+     (pending_id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result) \
+     VALUES ($1, CAST(CAST($2 AS timestamptz) AS text), $3, $4, $5, $6, $7, $8, $9, $10) \
+     ON CONFLICT (pending_id) DO NOTHING";
+
+/// `ts` of an entry recorded at `now`, as bound by the pending INSERT (see
+/// the module doc).
+fn pending_ts(dialect: Dialect, now: SystemTime) -> String {
+    let seconds = crate::backup::iso_datetime_from_system_time(now);
+    match dialect {
+        Dialect::Sqlite => seconds,
+        Dialect::Postgres => {
+            let micros = now
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.subsec_micros())
+                .unwrap_or(0);
+            format!("{seconds}.{micros:06}+00")
+        }
+    }
+}
+
+/// The `detail` a flushed row stores: the original with `"spooled": true`.
+fn spooled_detail(detail: Option<&serde_json::Value>) -> serde_json::Value {
+    match detail {
+        None => serde_json::json!({ "spooled": true }),
+        Some(serde_json::Value::Object(map)) => {
+            let mut map = map.clone();
+            map.insert("spooled".to_string(), serde_json::Value::Bool(true));
+            serde_json::Value::Object(map)
+        }
+        Some(other) => serde_json::json!({ "value": other, "spooled": true }),
+    }
+}
+
+/// INSERT a pending entry (`ON CONFLICT (pending_id) DO NOTHING`). `flushed`
+/// marks `detail` as spooled.
+async fn insert_pending(db: &Db, entry: &PendingEntry, flushed: bool) -> Result<(), BantoError> {
+    let detail = if flushed {
+        Some(spooled_detail(entry.detail.as_ref()))
+    } else {
+        entry.detail.clone()
+    };
+    let detail = detail
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|err| {
+            BantoError::Other(format!("監査ログのdetailシリアライズに失敗しました: {err}"))
+        })?;
+    match db {
+        Db::Sqlite(pool) => sqlx::query(SQLITE_INSERT_PENDING)
+            .bind(&entry.pending_id)
+            .bind(&entry.ts)
+            .bind(&entry.actor_username)
+            .bind(&entry.actor_role)
+            .bind(&entry.action)
+            .bind(&entry.resource)
+            .bind(&entry.entity_id)
+            .bind(detail)
+            .bind(&entry.origin)
+            .bind(&entry.result)
+            .execute(pool)
+            .await
+            .map(|_| ()),
+        #[cfg(feature = "postgres")]
+        Db::Postgres(pool) => sqlx::query(PG_INSERT_PENDING)
+            .bind(&entry.pending_id)
+            .bind(&entry.ts)
+            .bind(&entry.actor_username)
+            .bind(&entry.actor_role)
+            .bind(&entry.action)
+            .bind(&entry.resource)
+            .bind(&entry.entity_id)
+            .bind(detail)
+            .bind(&entry.origin)
+            .bind(&entry.result)
+            .execute(pool)
+            .await
+            .map(|_| ()),
+    }
+    .map_err(banto_storage::storage_error)
 }
 
 impl AuditLogService {
     pub fn new(db: Db) -> Self {
-        Self { db }
+        Self { db, spool: None }
+    }
+
+    /// Opt in to the spool (ADR-0019, see the module doc): `record` then
+    /// writes an entry the database cannot take within `config.timeout` to
+    /// `dir` instead of losing it. `dir` is created if missing and the
+    /// entries already waiting there (an earlier run) are loaded, so build
+    /// the service once at startup, then call [`AuditLogService::flush_spool`]
+    /// and [`AuditLogService::spawn_spool_flusher`].
+    ///
+    /// Requires migration `0008_audit_log_pending_id.sql` (the `pending_id`
+    /// column and its unique index): without it every spooled `record` fails
+    /// its INSERT and lands in the spool, and no flush succeeds.
+    ///
+    /// Use a directory of its own per database (e.g. next to the SQLite file
+    /// or in the app's data directory); several processes writing to the
+    /// same database may share it.
+    pub fn with_spool(
+        mut self,
+        dir: impl Into<PathBuf>,
+        config: SpoolConfig,
+    ) -> Result<Self, BantoError> {
+        self.spool = Some(Arc::new(Spool::open(dir.into(), config)?));
+        Ok(self)
     }
 
     /// Write one audit entry. `Result`-returning (unlike
@@ -209,7 +376,15 @@ impl AuditLogService {
     /// this workspace has no `tracing` dependency, see the root
     /// `Cargo.toml`). Every REST handler and Tauri command calls this, not
     /// `try_record`, directly.
+    ///
+    /// With a spool ([`AuditLogService::with_spool`], ADR-0019) a failed or
+    /// hanging write is spooled instead of lost, and `record` returns within
+    /// about [`SpoolConfig::timeout`] - see the module doc. Without one,
+    /// unchanged.
     pub async fn record(&self, entry: AuditEntry<'_>) {
+        if let Some(spool) = &self.spool {
+            return self.record_spooled(spool, entry).await;
+        }
         let action = entry.action.to_string();
         let resource = entry.resource.to_string();
         if let Err(err) = self.try_record(entry).await {
@@ -217,6 +392,142 @@ impl AuditLogService {
                 "banto: 監査ログの記録に失敗しました（action={action}, resource={resource}）: {err}"
             );
         }
+    }
+
+    async fn record_spooled(&self, spool: &Arc<Spool>, entry: AuditEntry<'_>) {
+        let pending = PendingEntry::new(
+            &entry,
+            uuid::Uuid::new_v4().to_string(),
+            pending_ts(self.db.dialect(), SystemTime::now()),
+        );
+        // The INSERT runs in its own task so a timeout does not cancel it:
+        // dropping the `JoinHandle` detaches the task, which may still
+        // complete later (the flush then finds the row by `pending_id`).
+        let db = self.db.clone();
+        let attempt = pending.clone();
+        let insert = tokio::spawn(async move { insert_pending(&db, &attempt, false).await });
+        let reason = match tokio::time::timeout(spool.config.timeout, insert).await {
+            Ok(Ok(Ok(()))) => {
+                if spool.count() > 0 {
+                    let svc = self.clone();
+                    tokio::spawn(async move { svc.flush_spool_if_idle().await });
+                }
+                return;
+            }
+            Ok(Ok(Err(err))) => format!("error: {err}"),
+            Ok(Err(join_err)) => format!("error: {join_err}"),
+            Err(_) => "timeout".to_string(),
+        };
+        spool.write(pending, reason).await;
+    }
+
+    /// The spool's backlog as seen by this process (ADR-0019). All zero /
+    /// `None` without a spool.
+    pub fn spool_backlog(&self) -> SpoolBacklog {
+        self.spool
+            .as_ref()
+            .map(|spool| spool.backlog())
+            .unwrap_or_default()
+    }
+
+    /// Write the spooled entries into `audit_log`, oldest first (`ts`, then
+    /// `pending_id`), and remove each file once its row is in (ADR-0019).
+    /// Call it once at startup (after the migrations); `record` and
+    /// [`AuditLogService::spawn_spool_flusher`] also trigger it. Waits for a
+    /// flush already running in this service. A database error or timeout
+    /// stops the flush (the rest stay spooled) and is reported in
+    /// [`SpoolFlushReport::error`]; `Err` only when the spool directory
+    /// cannot be read. Without a spool, does nothing.
+    pub async fn flush_spool(&self) -> Result<SpoolFlushReport, BantoError> {
+        let Some(spool) = &self.spool else {
+            return Ok(SpoolFlushReport::default());
+        };
+        let _guard = spool.flush_lock.lock().await;
+        self.flush_locked(spool).await
+    }
+
+    /// [`AuditLogService::flush_spool`] unless one is already running (the
+    /// background triggers do not queue up behind it).
+    async fn flush_spool_if_idle(&self) {
+        let Some(spool) = &self.spool else { return };
+        let Ok(_guard) = spool.flush_lock.try_lock() else {
+            return;
+        };
+        if let Err(err) = self.flush_locked(spool).await {
+            eprintln!("banto: 監査ログの保留分を流し込めませんでした: {err}");
+        }
+    }
+
+    async fn flush_locked(&self, spool: &Spool) -> Result<SpoolFlushReport, BantoError> {
+        let scan = spool.scan().await?;
+        let total = scan.entries.len() as u64;
+        let mut report = SpoolFlushReport {
+            quarantined: scan.quarantined,
+            ..Default::default()
+        };
+        for (path, entry) in scan.entries {
+            let inserted =
+                tokio::time::timeout(spool.config.timeout, insert_pending(&self.db, &entry, true))
+                    .await;
+            match inserted {
+                Ok(Ok(())) => {
+                    spool.remove(path, &entry.pending_id).await;
+                    report.flushed += 1;
+                }
+                Ok(Err(err)) => {
+                    report.error = Some(format!("error: {err}"));
+                    break;
+                }
+                Err(_) => {
+                    report.error = Some("timeout".to_string());
+                    break;
+                }
+            }
+        }
+        spool
+            .reconcile(
+                report
+                    .error
+                    .as_ref()
+                    .map(|err| format!("流し込みを中断: {err}")),
+            )
+            .await;
+        report.remaining = spool.count() as u64;
+        if total > 0 || report.quarantined > 0 {
+            eprintln!(
+                "banto: 監査ログの保留分を {} 件 DB へ流し込みました（残り {} 件、隔離 {} 件{}）",
+                report.flushed,
+                report.remaining,
+                report.quarantined,
+                report
+                    .error
+                    .as_ref()
+                    .map(|err| format!("、中断: {err}"))
+                    .unwrap_or_default()
+            );
+        }
+        Ok(report)
+    }
+
+    /// Start the periodic flush (ADR-0019): every
+    /// [`SpoolConfig::flush_interval`] it flushes while the backlog is not
+    /// empty. Returns `None` without a spool. The task holds a clone of this
+    /// service (and so of its pool) - abort the handle when shutting down.
+    /// Must be called inside a Tokio runtime.
+    pub fn spawn_spool_flusher(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let spool = self.spool.clone()?;
+        let svc = self.clone();
+        Some(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(spool.config.flush_interval);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tick.tick().await; // the first tick is immediate
+            loop {
+                tick.tick().await;
+                if spool.count() > 0 {
+                    svc.flush_spool_if_idle().await;
+                }
+            }
+        }))
     }
 
     /// Filtered/sorted/paginated read (spec M14's admin-only viewer) with no
@@ -605,7 +916,21 @@ mod tests {
             .execute(pool)
             .await
             .expect("create resource index");
+        add_pending_id(pool).await;
         AuditLogService::new(db)
+    }
+
+    /// The spool's column (ADR-0019); MUST match
+    /// `apps/admin-template/core/migrations-sqlite/0008_audit_log_pending_id.sql`.
+    async fn add_pending_id(pool: &sqlx::SqlitePool) {
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN pending_id TEXT")
+            .execute(pool)
+            .await
+            .expect("add pending_id");
+        sqlx::query("CREATE UNIQUE INDEX idx_audit_log_pending_id ON audit_log(pending_id)")
+            .execute(pool)
+            .await
+            .expect("create pending_id index");
     }
 
     fn sample_entry<'a>(action: &'a str, resource: &'a str, actor: &'a str) -> AuditEntry<'a> {
@@ -1147,5 +1472,727 @@ mod tests {
         assert_eq!(epoch(&svc).await, 0);
         assert_eq!(svc.prune(None, Some(1)).await.unwrap(), 1);
         assert_eq!(epoch(&svc).await, 1);
+    }
+
+    // --- spool (ADR-0019, tyaro/banto-industrial#437) -------------------------
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    /// The `audit_log` DDL of `0005_audit_log.sql`, plus `0008`'s
+    /// `pending_id` when `pending_id` is set.
+    async fn create_audit_log(pool: &sqlx::SqlitePool, pending_id: bool) {
+        sqlx::query(
+            "CREATE TABLE audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL DEFAULT (datetime('now')),
+                actor_username TEXT,
+                actor_role TEXT,
+                action TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                entity_id TEXT,
+                detail TEXT,
+                origin TEXT NOT NULL,
+                result TEXT NOT NULL DEFAULT 'ok'
+            )",
+        )
+        .execute(pool)
+        .await
+        .expect("create audit_log table");
+        if pending_id {
+            add_pending_id(pool).await;
+        }
+    }
+
+    /// A file-backed SQLite handle (the spool tests break and hold the
+    /// database from a second handle on the same pool) with at most
+    /// `max_connections` connections.
+    async fn file_db(dir: &Path, max_connections: u32, pending_id: bool) -> Db {
+        let options = SqliteConnectOptions::new()
+            .filename(dir.join("audit.sqlite3"))
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal);
+        // The DDL runs on a pool of its own that is closed before the test's
+        // pool opens: a pooled connection that loaded the schema before the
+        // unique index existed can fail to *prepare* the `ON CONFLICT
+        // (pending_id)` INSERT (SQLite checks the conflict target against the
+        // schema the connection has cached; it only reloads on execution).
+        let setup = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.clone())
+            .await
+            .expect("open file sqlite");
+        create_audit_log(&setup, pending_id).await;
+        setup.close().await;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(max_connections)
+            .connect_with(options)
+            .await
+            .expect("open file sqlite");
+        Db::Sqlite(pool)
+    }
+
+    fn spool_config(timeout_ms: u64) -> SpoolConfig {
+        SpoolConfig {
+            timeout: Duration::from_millis(timeout_ms),
+            ..Default::default()
+        }
+    }
+
+    /// The `*.json` file names in the spool directory (not `.tmp`, not the
+    /// quarantine directory).
+    fn spool_files(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.ends_with(".json"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn read_spool_file(dir: &Path, name: &str) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.join(name)).unwrap()).unwrap()
+    }
+
+    /// `(ts, pending_id, detail)` of every row, by id.
+    async fn audit_rows(pool: &sqlx::SqlitePool) -> Vec<(String, Option<String>, Option<String>)> {
+        sqlx::query_as("SELECT ts, pending_id, detail FROM audit_log ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn count_rows(pool: &sqlx::SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn take_offline(pool: &sqlx::SqlitePool) {
+        sqlx::query("ALTER TABLE audit_log RENAME TO audit_log_offline")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn bring_back(pool: &sqlx::SqlitePool) {
+        sqlx::query("ALTER TABLE audit_log_offline RENAME TO audit_log")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Polls `cond` for up to 5 s (background tasks in these tests).
+    async fn eventually<F, Fut>(mut cond: F) -> bool
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        for _ in 0..100 {
+            if cond().await {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    /// A failing write (the table is gone) is spooled at once; after the
+    /// table comes back one flush writes exactly one row with the original
+    /// `ts` and `detail.spooled = true`, and flushing again (or the same
+    /// file reappearing, as with a second process) adds nothing.
+    #[tokio::test]
+    async fn spool_round_trip_after_a_failing_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+
+        take_offline(&pool).await;
+        let started = Instant::now();
+        svc.record(sample_entry("create", "items", "admin")).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "an error is spooled without waiting for the timeout"
+        );
+
+        let files = spool_files(&spool_dir);
+        assert_eq!(files.len(), 1);
+        let spooled = read_spool_file(&spool_dir, &files[0]);
+        let pending_id = spooled["pendingId"].as_str().unwrap().to_string();
+        let ts = spooled["ts"].as_str().unwrap().to_string();
+        assert_eq!(files[0], format!("{pending_id}.json"));
+        assert_eq!(spooled["v"], 1);
+        assert_eq!(spooled["action"], "create");
+        assert_eq!(spooled["detail"], json!({ "name": "Widget" }));
+        assert!(spooled["spooledReason"]
+            .as_str()
+            .unwrap()
+            .starts_with("error: "));
+
+        let backlog = svc.spool_backlog();
+        assert_eq!(backlog.count, 1);
+        assert_eq!(backlog.oldest_ts.as_deref(), Some(ts.as_str()));
+        assert_eq!((backlog.dropped, backlog.failed), (0, 0));
+        assert!(backlog.last_error.unwrap().starts_with("error: "));
+
+        bring_back(&pool).await;
+        assert_eq!(
+            count_rows(&pool).await,
+            0,
+            "nothing was written while offline"
+        );
+
+        let report = svc.flush_spool().await.unwrap();
+        assert_eq!(
+            report,
+            SpoolFlushReport {
+                flushed: 1,
+                remaining: 0,
+                quarantined: 0,
+                error: None
+            }
+        );
+        let rows = audit_rows(&pool).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, ts, "the row keeps the time of the record call");
+        assert_eq!(rows[0].1.as_deref(), Some(pending_id.as_str()));
+        let detail: serde_json::Value =
+            serde_json::from_str(rows[0].2.as_deref().unwrap()).unwrap();
+        assert_eq!(detail, json!({ "name": "Widget", "spooled": true }));
+        // Same text as the column DEFAULT `datetime('now')`.
+        let normalized: String = sqlx::query_scalar("SELECT datetime(?)")
+            .bind(&ts)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(normalized, ts);
+        assert!(spool_files(&spool_dir).is_empty());
+        assert_eq!(svc.spool_backlog(), SpoolBacklog::default());
+
+        assert_eq!(
+            svc.flush_spool().await.unwrap(),
+            SpoolFlushReport::default()
+        );
+        // The same entry flushed again (another process had it too).
+        std::fs::write(
+            spool_dir.join(format!("{pending_id}.json")),
+            serde_json::to_vec(&spooled).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(svc.flush_spool().await.unwrap().flushed, 1);
+        assert_eq!(count_rows(&pool).await, 1, "still exactly one row");
+    }
+
+    /// A hanging write (every pool connection is held) is spooled after the
+    /// timeout and not cancelled: once the connection is released the
+    /// original INSERT completes, and the flush then finds its row by
+    /// `pending_id` instead of writing a second one.
+    #[tokio::test]
+    async fn spool_after_a_hang_does_not_duplicate_the_late_insert() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 1, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(200))
+            .unwrap();
+
+        let held = pool.acquire().await.unwrap();
+        let started = Instant::now();
+        svc.record(sample_entry("create", "items", "admin")).await;
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(200), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        assert_eq!(spool_files(&spool_dir).len(), 1);
+        assert_eq!(svc.spool_backlog().last_error.as_deref(), Some("timeout"));
+
+        drop(held);
+        assert!(
+            eventually(|| async { count_rows(&pool).await == 1 }).await,
+            "the timed-out INSERT completes on its own"
+        );
+
+        let report = svc.flush_spool().await.unwrap();
+        assert_eq!((report.flushed, report.remaining), (1, 0));
+        let rows = audit_rows(&pool).await;
+        assert_eq!(rows.len(), 1, "the flush does not write a second row");
+        let detail: serde_json::Value =
+            serde_json::from_str(rows[0].2.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            detail,
+            json!({ "name": "Widget" }),
+            "the late original won, not the flush"
+        );
+        assert!(spool_files(&spool_dir).is_empty());
+    }
+
+    /// Without a spool `record` is unchanged: it works on a database that
+    /// never got migration `0008` (no `pending_id` column), and the spool
+    /// API is inert.
+    #[tokio::test]
+    async fn without_a_spool_record_works_on_a_schema_without_pending_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, false).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let svc = AuditLogService::new(db);
+        svc.record(sample_entry("create", "items", "admin")).await;
+        svc.try_record(sample_entry("update", "items", "admin"))
+            .await
+            .unwrap();
+        assert_eq!(count_rows(&pool).await, 2);
+        assert_eq!(svc.spool_backlog(), SpoolBacklog::default());
+        assert_eq!(
+            svc.flush_spool().await.unwrap(),
+            SpoolFlushReport::default()
+        );
+        assert!(svc.spawn_spool_flusher().is_none());
+
+        // A failure is still only logged (nothing to spool to).
+        take_offline(&pool).await;
+        svc.record(sample_entry("delete", "items", "admin")).await;
+        bring_back(&pool).await;
+        assert_eq!(count_rows(&pool).await, 2);
+    }
+
+    /// `try_record` never spools: its caller sees the error.
+    #[tokio::test]
+    async fn try_record_does_not_spool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+        take_offline(&pool).await;
+        assert!(svc
+            .try_record(sample_entry("create", "items", "admin"))
+            .await
+            .is_err());
+        assert!(spool_files(&spool_dir).is_empty());
+    }
+
+    /// `.tmp` files are never read (a stale one is removed, a fresh one is
+    /// left for its writer), unreadable files are quarantined without
+    /// blocking the valid one, and entries flush oldest first.
+    #[tokio::test]
+    async fn flush_skips_tmp_files_and_quarantines_unreadable_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+
+        let entry = |id: &str, ts: &str, action: &str| {
+            json!({
+                "v": 1, "pendingId": id, "ts": ts, "actorUsername": "admin",
+                "actorRole": "admin", "action": action, "resource": "items",
+                "entityId": null, "detail": null, "origin": "rest", "result": "ok",
+                "spooledReason": "timeout"
+            })
+        };
+        let write = |name: String, value: &serde_json::Value| {
+            std::fs::write(spool_dir.join(name), serde_json::to_vec(value).unwrap()).unwrap();
+        };
+        let newer = uuid::Uuid::new_v4().to_string();
+        let older = uuid::Uuid::new_v4().to_string();
+        write(
+            format!("{newer}.json"),
+            &entry(&newer, "2026-10-10 10:00:02", "second"),
+        );
+        write(
+            format!("{older}.json"),
+            &entry(&older, "2026-10-10 10:00:01", "first"),
+        );
+        // Corrupt JSON, and a valid entry under another file name.
+        let corrupt = uuid::Uuid::new_v4().to_string();
+        std::fs::write(spool_dir.join(format!("{corrupt}.json")), b"{not json").unwrap();
+        let renamed = uuid::Uuid::new_v4().to_string();
+        write(
+            format!("{renamed}.json"),
+            &entry(
+                &uuid::Uuid::new_v4().to_string(),
+                "2026-10-10 10:00:00",
+                "x",
+            ),
+        );
+        // A write in progress, and one interrupted long ago.
+        let fresh = uuid::Uuid::new_v4().to_string();
+        write(
+            format!("{fresh}.json.tmp"),
+            &entry(&fresh, "2026-10-10 09:00:00", "tmp"),
+        );
+        let stale = uuid::Uuid::new_v4().to_string();
+        write(
+            format!("{stale}.json.tmp"),
+            &entry(&stale, "2026-10-10 09:00:00", "tmp"),
+        );
+        std::fs::File::options()
+            .write(true)
+            .open(spool_dir.join(format!("{stale}.json.tmp")))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+
+        let report = svc.flush_spool().await.unwrap();
+        assert_eq!(
+            report,
+            SpoolFlushReport {
+                flushed: 2,
+                remaining: 0,
+                quarantined: 2,
+                error: None
+            }
+        );
+        let actions: Vec<String> = sqlx::query_scalar("SELECT action FROM audit_log ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(actions, vec!["first", "second"], "oldest first");
+        let rows = audit_rows(&pool).await;
+        assert_eq!(rows[0].2.as_deref(), Some(r#"{"spooled":true}"#));
+
+        let mut quarantined: Vec<String> = std::fs::read_dir(spool_dir.join("quarantine"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        quarantined.sort();
+        let mut expected = vec![format!("{corrupt}.json"), format!("{renamed}.json")];
+        expected.sort();
+        assert_eq!(quarantined, expected);
+        assert!(spool_dir.join(format!("{fresh}.json.tmp")).exists());
+        assert!(!spool_dir.join(format!("{stale}.json.tmp")).exists());
+        assert!(spool_files(&spool_dir).is_empty());
+    }
+
+    /// Beyond `max_files` an entry is dropped and counted, not written.
+    #[tokio::test]
+    async fn a_full_spool_drops_and_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(
+                &spool_dir,
+                SpoolConfig {
+                    max_files: 2,
+                    ..spool_config(2_000)
+                },
+            )
+            .unwrap();
+
+        take_offline(&pool).await;
+        for action in ["a", "b", "c"] {
+            svc.record(sample_entry(action, "items", "admin")).await;
+        }
+        assert_eq!(spool_files(&spool_dir).len(), 2);
+        let backlog = svc.spool_backlog();
+        assert_eq!((backlog.count, backlog.dropped, backlog.failed), (2, 1, 0));
+
+        bring_back(&pool).await;
+        assert_eq!(svc.flush_spool().await.unwrap().flushed, 2);
+        assert_eq!(count_rows(&pool).await, 2);
+        let backlog = svc.spool_backlog();
+        assert_eq!(
+            (backlog.count, backlog.dropped),
+            (0, 1),
+            "dropped stays counted"
+        );
+        assert_eq!(backlog.last_error, None);
+    }
+
+    /// Entries left by an earlier run are loaded when the spool is opened;
+    /// a second service on the same directory (another process) flushes
+    /// them, and the first one's next flush forgets what is gone.
+    #[tokio::test]
+    async fn a_reopened_spool_sees_and_flushes_earlier_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let first = AuditLogService::new(db.clone())
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+        take_offline(&pool).await;
+        first.record(sample_entry("create", "items", "admin")).await;
+        bring_back(&pool).await;
+
+        let second = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+        let backlog = second.spool_backlog();
+        assert_eq!(backlog.count, 1);
+        assert_eq!(backlog.oldest_ts, first.spool_backlog().oldest_ts);
+        assert_eq!(second.flush_spool().await.unwrap().flushed, 1);
+
+        assert_eq!(first.spool_backlog().count, 1, "not seen yet");
+        assert_eq!(
+            first.flush_spool().await.unwrap(),
+            SpoolFlushReport::default()
+        );
+        assert_eq!(first.spool_backlog().count, 0);
+        assert_eq!(count_rows(&pool).await, 1);
+    }
+
+    /// A successful `record` while entries are waiting flushes them in the
+    /// background.
+    #[tokio::test]
+    async fn a_successful_record_flushes_the_backlog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+        take_offline(&pool).await;
+        svc.record(sample_entry("create", "items", "admin")).await;
+        bring_back(&pool).await;
+
+        svc.record(sample_entry("update", "items", "admin")).await;
+        assert!(eventually(|| async { svc.spool_backlog().count == 0 }).await);
+        assert_eq!(count_rows(&pool).await, 2);
+        assert!(spool_files(&spool_dir).is_empty());
+    }
+
+    /// The periodic flusher drains the backlog once the database is back.
+    #[tokio::test]
+    async fn the_periodic_flusher_drains_the_backlog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db)
+            .with_spool(
+                &spool_dir,
+                SpoolConfig {
+                    flush_interval: Duration::from_millis(50),
+                    ..spool_config(2_000)
+                },
+            )
+            .unwrap();
+        take_offline(&pool).await;
+        svc.record(sample_entry("create", "items", "admin")).await;
+        let flusher = svc.spawn_spool_flusher().expect("a spool is configured");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(svc.spool_backlog().count, 1, "still offline");
+
+        bring_back(&pool).await;
+        assert!(eventually(|| async { svc.spool_backlog().count == 0 }).await);
+        assert_eq!(count_rows(&pool).await, 1);
+        flusher.abort();
+    }
+
+    #[test]
+    fn spooled_detail_merges_into_objects_and_wraps_the_rest() {
+        assert_eq!(spooled_detail(None), json!({ "spooled": true }));
+        assert_eq!(
+            spooled_detail(Some(&json!({ "a": 1 }))),
+            json!({ "a": 1, "spooled": true })
+        );
+        assert_eq!(
+            spooled_detail(Some(&json!([1, 2]))),
+            json!({ "value": [1, 2], "spooled": true })
+        );
+    }
+
+    #[test]
+    fn pending_ts_matches_each_default_format() {
+        let t = std::time::UNIX_EPOCH + Duration::from_micros(1_791_590_400_123_456);
+        assert_eq!(pending_ts(Dialect::Sqlite, t), "2026-10-10 00:00:00");
+        assert_eq!(
+            pending_ts(Dialect::Postgres, t),
+            "2026-10-10 00:00:00.123456+00"
+        );
+    }
+
+    // --- spool on PostgreSQL (skipped unless BANTO_TEST_PG_URL is set) --------
+
+    /// A service on its own schema (selected through `search_path`, same
+    /// pattern as `users`' `pg_concurrent_setup_*`) with the PostgreSQL DDL
+    /// of `0005_audit_log.sql` + `0008_audit_log_pending_id.sql`. Returns the
+    /// admin handle (to drop the schema) and the scoped one.
+    #[cfg(feature = "postgres")]
+    async fn pg_scoped(url: &str, schema: &str) -> (Db, Db) {
+        let admin = Db::connect_postgres(url).await.unwrap();
+        let pool = admin.as_postgres().unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+            .execute(pool)
+            .await
+            .unwrap();
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let scoped =
+            Db::connect_postgres(&format!("{url}{sep}options=-c%20search_path%3D{schema}"))
+                .await
+                .unwrap();
+        let p = scoped.as_postgres().unwrap();
+        for ddl in [
+            "CREATE TABLE audit_log (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                ts TEXT NOT NULL DEFAULT (now()::text),
+                actor_username TEXT,
+                actor_role TEXT,
+                action TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                entity_id TEXT,
+                detail TEXT,
+                origin TEXT NOT NULL,
+                result TEXT NOT NULL DEFAULT 'ok'
+            )",
+            "ALTER TABLE audit_log ADD COLUMN pending_id TEXT",
+            "CREATE UNIQUE INDEX idx_audit_log_pending_id ON audit_log(pending_id)",
+        ] {
+            sqlx::query(ddl).execute(p).await.unwrap();
+        }
+        (admin, scoped)
+    }
+
+    #[cfg(feature = "postgres")]
+    async fn pg_drop_schema(admin: &Db, schema: &str) {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE"
+        )))
+        .execute(admin.as_postgres().unwrap())
+        .await
+        .unwrap();
+    }
+
+    #[cfg(feature = "postgres")]
+    async fn pg_count(db: &Db) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+            .fetch_one(db.as_postgres().unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// The failing-write round trip on PostgreSQL, including the `ts` text
+    /// (what `now()::text` would have written for that instant).
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn pg_audit_spool_round_trip_after_a_failing_write() {
+        let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+            return;
+        };
+        let schema = format!("banto_437a_{}", std::process::id());
+        let (admin, db) = pg_scoped(&url, &schema).await;
+        let pool = db.as_postgres().unwrap().clone();
+        let tmp = tempfile::tempdir().unwrap();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db.clone())
+            .with_spool(&spool_dir, spool_config(2_000))
+            .unwrap();
+
+        sqlx::query("ALTER TABLE audit_log RENAME TO audit_log_offline")
+            .execute(&pool)
+            .await
+            .unwrap();
+        svc.record(sample_entry("create", "items", "admin")).await;
+        let files = spool_files(&spool_dir);
+        assert_eq!(files.len(), 1);
+        let spooled = read_spool_file(&spool_dir, &files[0]);
+        let ts = spooled["ts"].as_str().unwrap().to_string();
+        sqlx::query("ALTER TABLE audit_log_offline RENAME TO audit_log")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pg_count(&db).await, 0);
+
+        assert_eq!(svc.flush_spool().await.unwrap().flushed, 1);
+        let (row_ts, pending_id, detail): (String, Option<String>, Option<String>) =
+            sqlx::query_as("SELECT ts, pending_id, detail FROM audit_log")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let expected: String = sqlx::query_scalar("SELECT CAST(CAST($1 AS timestamptz) AS text)")
+            .bind(&ts)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row_ts, expected);
+        let default_shape: String = sqlx::query_scalar("SELECT now()::text")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row_ts.len(),
+            default_shape.len(),
+            "{row_ts} vs {default_shape}"
+        );
+        assert_eq!(
+            pending_id,
+            spooled["pendingId"].as_str().map(str::to_string)
+        );
+        let detail: serde_json::Value = serde_json::from_str(detail.as_deref().unwrap()).unwrap();
+        assert_eq!(detail, json!({ "name": "Widget", "spooled": true }));
+
+        assert_eq!(
+            svc.flush_spool().await.unwrap(),
+            SpoolFlushReport::default()
+        );
+        std::fs::write(
+            spool_dir.join(&files[0]),
+            serde_json::to_vec(&spooled).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(svc.flush_spool().await.unwrap().flushed, 1);
+        assert_eq!(pg_count(&db).await, 1);
+        pg_drop_schema(&admin, &schema).await;
+    }
+
+    /// The hang on PostgreSQL: another transaction holds an exclusive lock
+    /// on `audit_log`, so the INSERT waits; `record` spools after the
+    /// timeout, the INSERT completes once the lock is released, and the
+    /// flush does not add a second row.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn pg_audit_spool_after_a_hang_does_not_duplicate_the_late_insert() {
+        let Ok(url) = std::env::var("BANTO_TEST_PG_URL") else {
+            return;
+        };
+        let schema = format!("banto_437b_{}", std::process::id());
+        let (admin, db) = pg_scoped(&url, &schema).await;
+        let pool = db.as_postgres().unwrap().clone();
+        let tmp = tempfile::tempdir().unwrap();
+        let spool_dir = tmp.path().join("spool");
+        let svc = AuditLogService::new(db.clone())
+            .with_spool(&spool_dir, spool_config(300))
+            .unwrap();
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE audit_log IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let started = Instant::now();
+        svc.record(sample_entry("create", "items", "admin")).await;
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(spool_files(&spool_dir).len(), 1);
+        assert_eq!(svc.spool_backlog().last_error.as_deref(), Some("timeout"));
+        lock.rollback().await.unwrap();
+
+        assert!(eventually(|| async { pg_count(&db).await == 1 }).await);
+        assert_eq!(svc.flush_spool().await.unwrap().flushed, 1);
+        assert_eq!(
+            pg_count(&db).await,
+            1,
+            "the flush does not write a second row"
+        );
+        pg_drop_schema(&admin, &schema).await;
     }
 }

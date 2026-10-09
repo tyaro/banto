@@ -244,7 +244,11 @@ fn iso_date_from_days_since_epoch(days: i64) -> String {
 /// no `chrono`/`time` crate anywhere in this workspace (see the root
 /// `Cargo.toml`), so this is the one small conversion routine rather than
 /// pulling one in just for this.
-fn iso_datetime_from_system_time(time: SystemTime) -> String {
+///
+/// Also used by `audit`'s spool (ADR-0019) for the explicit `ts` of a
+/// spooled entry on SQLite: this is exactly the text `datetime('now')` (the
+/// `audit_log.ts` DEFAULT) produces.
+pub(crate) fn iso_datetime_from_system_time(time: SystemTime) -> String {
     let secs = time
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
