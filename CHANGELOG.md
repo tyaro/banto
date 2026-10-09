@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 修正
+
+- `banto_server::static_files::static_router` が、どの API ルートにも一致しなかった `/api`・`/api/...` の要求を SPA のフォールバック（`index.html` を 200 で返す）に落とさず、JSON の 404（`{"kind":"not_found","resource":"api","id":"<パス>"}`）で返すようにした。どのメソッドでも同じ。`/apiary` など `/api/` で始まらないパスと画面のルートは従来どおり `index.html`。派生アプリへの影響: 存在しない `/api/...` が 200 の HTML ではなく 404 になる（`static_router` を merge しているアプリは配線の変更なしで反映される）。banto-industrial#547
+
 ## [6.3.0] - 2026-10-08
 
 **v6.3.0 — `@banto/charts` の欠測・開放端しきい値・値なしの表示を足した（#369）: `LineChart` の `gaps`（欠測で線を分ける）、開放端を持てる `OpenThresholdBand`（`bands` のクリップ）、`Gauge` の `value: number | null` と下側しきい値 `warningLow` / `dangerLow`、文字 `messages.gaugeNoValue`。docs のみの変更として ADR-0018 の段階 3 の記録（#367）と README の再構成（#368）を含む。版の種類: minor（追加のみ。後方互換。ただし 1 点、既定の見た目が変わる: プロット領域の外だけのバンドは描かなくなる）。

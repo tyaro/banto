@@ -9,10 +9,10 @@
 use std::borrow::Cow;
 
 use axum::body::Body;
-use axum::http::{header, StatusCode, Uri};
+use axum::http::{header, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
+use axum::{Json, Router};
+use banto_core::ErrorBody;
 
 /// Injection point for embedded frontend assets. Implementors are
 /// zero-sized types (the data lives in a `rust-embed`-generated `static`, or
@@ -54,7 +54,36 @@ fn respond(mime: String, bytes: Cow<'static, [u8]>) -> Response {
         .into_response()
 }
 
-async fn serve_asset<A: UiAssets>(uri: Uri) -> Response {
+/// `/api` itself or anything under `/api/`. `/apiary` and the like are SPA
+/// routes, not API paths.
+fn is_api_path(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
+}
+
+async fn serve_asset<A: UiAssets>(method: Method, uri: Uri) -> Response {
+    // An `/api` request that no API route matched must not fall through to the
+    // SPA fallback: that answered 200 with `index.html`, so a caller with a
+    // mistyped or stale endpoint got HTML instead of an error (banto-industrial
+    // #547). Answer a JSON 404 in the same `ErrorBody` shape as every other
+    // REST error, for any method.
+    if is_api_path(uri.path()) {
+        let body = ErrorBody::NotFound {
+            resource: "api".to_string(),
+            id: uri.path().to_string(),
+        };
+        return (StatusCode::NOT_FOUND, Json(body)).into_response();
+    }
+
+    // The assets/SPA fallback is read-only (the router used `get`, which also
+    // serves HEAD): keep answering other methods with 405.
+    if method != Method::GET && method != Method::HEAD {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET,HEAD")],
+        )
+            .into_response();
+    }
+
     let path = uri.path().trim_start_matches('/');
     let lookup = if path.is_empty() { "index.html" } else { path };
 
@@ -75,8 +104,13 @@ async fn serve_asset<A: UiAssets>(uri: Uri) -> Response {
 /// Build a fallback router serving embedded assets (or, with `A` being the
 /// placeholder impl, a single built-in page) for any path not otherwise
 /// routed. Mount this *after* the `/api/*` routes so those take priority.
+///
+/// Unmatched `/api` requests (`/api` or `/api/...`) get a JSON `404`
+/// ([`ErrorBody::NotFound`]) instead of the SPA's `index.html`. It lives here
+/// rather than in each app's `api_router` so every consumer that merges this
+/// router gets it with no extra wiring.
 pub fn static_router<A: UiAssets + Send + Sync + 'static>() -> Router {
-    Router::new().fallback(get(serve_asset::<A>))
+    Router::new().fallback(serve_asset::<A>)
 }
 
 #[cfg(test)]
@@ -117,6 +151,86 @@ mod tests {
             .await
             .unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("index"));
+    }
+
+    async fn status_and_type(
+        router: Router,
+        method: &str,
+        uri: &str,
+    ) -> (StatusCode, String, Vec<u8>) {
+        let response = router
+            .oneshot(
+                HttpRequest::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let ct = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, ct, bytes.to_vec())
+    }
+
+    #[tokio::test]
+    async fn unknown_api_path_is_json_404_not_index_html() {
+        for uri in ["/api/x", "/api/collect/status", "/api", "/api/"] {
+            let (status, ct, bytes) =
+                status_and_type(static_router::<FakeAssets>(), "GET", uri).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert!(ct.starts_with("application/json"), "{uri}: {ct}");
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v["kind"], "not_found", "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_api_path_is_404_for_other_methods() {
+        for method in ["POST", "PUT", "DELETE", "HEAD"] {
+            let (status, _, _) =
+                status_and_type(static_router::<FakeAssets>(), method, "/api/x").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method}");
+        }
+    }
+
+    #[tokio::test]
+    async fn api_like_prefix_and_nested_spa_route_still_serve_index_html() {
+        for uri in ["/apiary", "/settings/foo", "/settings/api/x"] {
+            let (status, ct, bytes) =
+                status_and_type(static_router::<FakeAssets>(), "GET", uri).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            assert!(ct.starts_with("text/html"), "{uri}");
+            assert!(String::from_utf8_lossy(&bytes).contains("index"));
+        }
+    }
+
+    #[tokio::test]
+    async fn real_api_route_wins_over_the_404_fallback() {
+        let router = Router::new()
+            .route("/api/ping", axum::routing::get(|| async { "pong" }))
+            .merge(static_router::<FakeAssets>());
+        let (status, _, bytes) = status_and_type(router.clone(), "GET", "/api/ping").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(bytes, b"pong");
+        let (status, ct, _) = status_and_type(router, "GET", "/api/pong").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(ct.starts_with("application/json"));
+    }
+
+    #[tokio::test]
+    async fn non_read_method_on_spa_path_is_405() {
+        let (status, _, _) =
+            status_and_type(static_router::<FakeAssets>(), "POST", "/settings/foo").await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
