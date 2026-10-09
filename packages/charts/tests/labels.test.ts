@@ -101,4 +101,35 @@ describe('leftMarginForTicks', () => {
 	it('returns the base margin for no labels', () => {
 		expect(leftMarginForTicks([], 48)).toBe(48);
 	});
+
+	// Cap: a pathological label must not squeeze the plot area to zero.
+	it('caps a huge label (1e100 via the default formatter) so the plot keeps a width', () => {
+		const huge = [0, 1e100].map((n) => n.toLocaleString());
+		expect(estimateLabelWidth(huge[1])).toBeGreaterThan(500); // uncapped would be ~900px
+		const totalWidth = 380;
+		const left = leftMarginForTicks(huge, 48, { totalWidth });
+		expect(left).toBeLessThanOrEqual(Math.floor(totalWidth * 0.4));
+		expect(left).toBeGreaterThanOrEqual(48);
+		const right = 16;
+		expect(totalWidth - left - right).toBeGreaterThan(0);
+	});
+
+	it('caps at the absolute max when the width is unknown or large', () => {
+		const huge = ['1'.repeat(130)];
+		expect(leftMarginForTicks(huge, 48)).toBe(140);
+		expect(leftMarginForTicks(huge, 48, { totalWidth: 2000 })).toBe(140);
+	});
+
+	it('never goes below the base margin, even when the cap would be smaller', () => {
+		expect(leftMarginForTicks(['1'.repeat(130)], 80, { totalWidth: 100 })).toBe(80);
+		expect(leftMarginForTicks(['0'], 200, { totalWidth: 100 })).toBe(200);
+	});
+
+	it('leaves normal cases unchanged by the cap', () => {
+		expect(leftMarginForTicks(['0', '50', '100'], 48, { totalWidth: 380 })).toBe(48);
+		const labels = ['0', '400,000,000', '800,000,000'];
+		expect(leftMarginForTicks(labels, 48, { totalWidth: 380 })).toBe(
+			leftMarginForTicks(labels, 48)
+		);
+	});
 });

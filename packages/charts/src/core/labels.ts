@@ -57,23 +57,36 @@ export function leftMarginFor(labels: string[], options: AxisMarginOptions = {})
 	return Math.round(Math.min(max, Math.max(min, widest + gap)));
 }
 
+/** Max share of the chart width the auto-grown y-axis margin may take. */
+const MAX_TICK_MARGIN_RATIO = 0.4;
+
 /**
  * Left margin needed to fit the end-anchored y tick labels of a value axis
  * (line/combo/area/scatter charts): `max(baseLeft, widest label + gap)`.
  * `baseLeft` is the caller's (or the chart's default) left margin and acts as
  * the minimum, so charts whose labels already fit keep their exact previous
- * layout; only clipped cases widen. Not clamped on purpose: unlike category
- * names, tick labels come from `niceTicks` + `formatY` and are bounded.
+ * layout; only clipped cases widen.
+ *
+ * The growth is capped (same policy as `leftMarginFor`: absolute `max`,
+ * default 140px) and, when the container width is known (`totalWidth` > 0),
+ * also at 40% of it, so a pathological label (e.g. `1e100` through the
+ * default formatter, ~130 chars) can't squeeze the plot area to zero. When
+ * capped, the label simply clips at the container edge rather than the plot
+ * disappearing. The cap never goes below `baseLeft`.
  */
 export function leftMarginForTicks(
 	labels: string[],
 	baseLeft: number,
-	options: AxisMarginOptions = {}
+	options: AxisMarginOptions & { totalWidth?: number } = {}
 ): number {
-	const { fontSize = 11, gap = 8 } = options;
+	const { fontSize = 11, gap = 8, max = 140, totalWidth = 0 } = options;
 	let widest = 0;
 	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
-	return Math.max(baseLeft, Math.ceil(widest + gap));
+	const cap = Math.max(
+		baseLeft,
+		totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max
+	);
+	return Math.min(cap, Math.max(baseLeft, Math.ceil(widest + gap)));
 }
 
 /**

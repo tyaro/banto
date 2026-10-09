@@ -113,7 +113,8 @@
 			...m,
 			left: leftMarginForTicks(
 				ticks.map((t) => formatYValue(t)),
-				m.left
+				m.left,
+				{ totalWidth: plotWidth }
 			)
 		};
 	});

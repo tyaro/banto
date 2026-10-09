@@ -193,7 +193,9 @@
 	// unchanged.
 	const MARGIN = $derived.by(() => {
 		const base = { ...DEFAULT_MARGIN, ...margins };
-		const left = leftMarginForTicks(leftTicks.map(formatYValue), base.left);
+		const left = leftMarginForTicks(leftTicks.map(formatYValue), base.left, {
+			totalWidth: plotWidth
+		});
 		if (!hasRight) return { ...base, left };
 		let widest = 0;
 		for (const t of rightTicks) widest = Math.max(widest, estimateLabelWidth(formatYRightValue(t)));
