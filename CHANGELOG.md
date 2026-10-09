@@ -22,6 +22,26 @@
 
 ## [Unreleased]
 
+## [6.4.0] - 2026-10-09
+
+**v6.4.0 — `@banto/charts` の `LineChart` に、左の縦軸の範囲に必ず含める値を指定する `includeY` を足した（tyaro/banto-industrial#554）。版の種類: minor（追加のみ。後方互換。指定しなければ描画は変わらない）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                            |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.3.2` → `v6.4.0`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要。`includeY` を使わなければ描画は変わらない |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                        |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                         |
+
+### 消費側への注意
+
+- 既存の `@banto/*` の公開 API は変わらない（追加のみ）。`includeY` を指定しない `LineChart` の描画は v6.3.2 と同じ。
+- `includeY` は左の軸の目盛の範囲だけを広げる。データ点・ツールチップ・凡例・系列は増えず、データが無いチャートは空表示のまま。右の軸には効かない。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加
 
 - `@banto/charts`: `LineChart` に任意の `includeY?: readonly number[]` を追加した。左の縦軸の範囲に必ず含める値を指定でき、左の軸の系列のデータの範囲との和集合で目盛を決める（データが無ければ指定値だけ。非有限の値は無視する）。ビット（0/1）のタグだけの推移で、見えている値が 0.5 の 1 点だけのときに目盛が 0.2〜0.8 になり、0 と 1 しか書かない書式で目盛がすべて空になる問題を、偽のデータ点を入れずに避けるためのもの（tyaro/banto-industrial#554）。データ点・ツールチップ・凡例・系列は増えず、データが無いチャートの空表示も変わらない。指定しなければ描画は従来と同じ。右の軸には効かない。
@@ -2671,7 +2691,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.3.2...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.4.0...HEAD
+[6.4.0]: https://github.com/tyaro/banto/compare/v6.3.2...v6.4.0
 [6.3.2]: https://github.com/tyaro/banto/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/tyaro/banto/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/tyaro/banto/compare/v6.2.0...v6.3.0
