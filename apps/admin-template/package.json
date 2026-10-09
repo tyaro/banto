@@ -1,7 +1,7 @@
 {
   "name": "admin-template",
   "private": true,
-  "version": "6.3.1",
+  "version": "6.3.2",
   "type": "module",
   "banto": {
     "i18n": "keys"
