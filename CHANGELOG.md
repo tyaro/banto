@@ -22,9 +22,29 @@
 
 ## [Unreleased]
 
+## [6.3.2] - 2026-10-09
+
+**v6.3.2 — `@banto/charts` の `LineChart` / `ComboChart` / `StackedAreaChart` / `ScatterChart` の左の余白が、左の軸の目盛の文字の幅に合わせて自動で広がるようにした（長い目盛が左で見切れていたのを直した）。版の種類: patch（修正のみ。公開 API の変更は無い）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                           |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.3.1` → `v6.3.2`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要。目盛が長いチャートの左の余白が広がる（配線の変更は不要） |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                       |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                        |
+
+### 消費側への注意
+
+- 公開 API は変わらない（修正のみ）。`margins.left` は引き続き指定でき、最小値として扱われる。
+- 目盛が左の余白に収まっていたチャートの描画は変わらない。ただし文字幅は推定で見積もるため、6 文字の目盛を持つチャートは余白が約 1px 広がることがある。スナップショットテストや画素比較をしているアプリは、この差を確認する。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 修正
 
-- `@banto/charts`: `LineChart` / `ComboChart` / `StackedAreaChart` / `ScatterChart` の左の余白が、左の軸の目盛（`formatY` を通した後）の文字の幅に合わせて自動で広がるようにした。これまで 48px 固定で、`800,000,000` のような長い目盛が左で見切れていた（tyaro/banto-industrial#550）。目盛が収まっていたチャートの描画は変わらない。呼び出し側の `margins.left` は最小値として扱う。
+- `@banto/charts`: `LineChart` / `ComboChart` / `StackedAreaChart` / `ScatterChart` の左の余白が、左の軸の目盛（`formatY` を通した後）の文字の幅に合わせて自動で広がるようにした。これまで 48px 固定で、`800,000,000` のような長い目盛が左で見切れていた（tyaro/banto-industrial#550）。余白は左の軸の目盛の幅に合わせて広がるが、上限は 140px とチャート幅の 40% のうち小さい方（巨大な目盛でプロットが消えないようにする）。`LineChart` の右の軸にも同じ上限を付けた。目盛が収まっていたチャートの描画は変わらない（ただし 6 文字の目盛は、文字幅を推定で見積もるため約 1px 広がることがある）。呼び出し側の `margins.left` は最小値として扱う。
 
 ## [6.3.1] - 2026-10-09
 
@@ -2629,7 +2649,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.3.1...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.3.2...HEAD
+[6.3.2]: https://github.com/tyaro/banto/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/tyaro/banto/compare/v6.3.0...v6.3.1
 [6.3.0]: https://github.com/tyaro/banto/compare/v6.2.0...v6.3.0
 [6.2.0]: https://github.com/tyaro/banto/compare/v6.1.0...v6.2.0
