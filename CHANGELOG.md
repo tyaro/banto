@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [6.5.0] - 2026-10-10
+
+**v6.5.0 — `@banto/charts` の `LineChart` にツールチップ専用の書式 `formatTooltip` を足した（#376）。`banto-admin-services` に、DB に書けない監査を保留ファイルに退避し、復旧後に 1 回だけ流し込む保留（spool）を足した（tyaro/banto-industrial#437、ADR-0019）。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 C は、監査の保留を使うアプリだけ migration 0008 の取り込みが必要。経路 B は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                            |
+| -------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.4.0` → `v6.5.0`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要。`formatTooltip`・`with_spool` を使わなければ挙動は変わらない                                                              |
+| B. コピーしたテンプレート        | なし | 変更なし（admin-template の配線は変えていない）                                                                                                                                                                 |
+| C. DB・設定・配布資産            | あり | DB のマイグレーション `0008_audit_log_pending_id.sql`（SQLite・PostgreSQL）を追加。**監査の保留（`with_spool`）を使うアプリは取り込む必要がある**。使わないアプリは取り込まなくても動く（取り込んでも害はない） |
+
+### 消費側への注意
+
+- 既存の公開 API は変わらない（追加のみ）。`formatTooltip` を指定しない `LineChart`、`with_spool` を呼ばない `AuditLogService`（`record` / `try_record`）は v6.4.0 と同じ。
+- `with_spool` を使うときは、migration `0008_audit_log_pending_id.sql` を自分の migrations にそのまま写してから使う（`audit_log.pending_id` が無いと、保留を付けた `record` の INSERT が失敗し続け、すべて保留に回る）。起動時（migration の後）に `flush_spool()` を 1 回呼び、`spawn_spool_flusher()` のハンドルを持って終了時に止める。保留の状態は `spool_backlog()` で見られる。
+- 保留ファイルには監査の内容（ユーザー名・操作の要約）が残る。データディレクトリと同じ権限で守る（ADR-0019）。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加
 
 - `@banto/charts`: `LineChart` に任意の `formatTooltip?: (value, series, index) => string` を追加した。ツールチップの値の書式だけを、系列の情報（`id` / `label` / `axis`）とデータの添字を受け取って系列ごとに変えられる。縦軸の目盛と余白の自動計算には使わず、有限の値にだけ呼ばれる（非有限は従来どおり `-`）。bit と数値のタグが混ざったグループでツールチップの bit だけを `True` / `False` にしたり、縦軸を `False` / `True` だけにしたままツールチップでは区間の中点も出したりするためのもの（tyaro/banto#376、tyaro/banto-industrial#551）。指定しなければ描画は従来と同じ（`formatY`、右の軸の系列は `formatYRight`）。
@@ -2714,7 +2735,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.4.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.5.0...HEAD
+[6.5.0]: https://github.com/tyaro/banto/compare/v6.4.0...v6.5.0
 [6.4.0]: https://github.com/tyaro/banto/compare/v6.3.2...v6.4.0
 [6.3.2]: https://github.com/tyaro/banto/compare/v6.3.1...v6.3.2
 [6.3.1]: https://github.com/tyaro/banto/compare/v6.3.0...v6.3.1
