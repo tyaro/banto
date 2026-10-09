@@ -60,6 +60,7 @@ corresponding ADR exists, be traced from there.
 | [0016](0016-session-controller-single-writer.en.md)    | Give the front end's session one writer (SessionController), make the provider answer in one round trip, and write credentials only by compare-and-set                                                   | Accepted                   |
 | [0017](0017-credential-less-grant.en.md)               | Unify credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (v3.0.0; no auth-bypass hook; `adopt()`/`end()` removed) | Accepted                   |
 | [0018](0018-shared-ui-package.en.md)                   | Move general-purpose UI components into a new `@banto/ui` package in stages, and have callers inject text, icons, state and actions                                                                      | Accepted (phases 1-3 done) |
+| [0019](0019-audit-spool.en.md)                         | Spool an audit entry the database cannot take to a file, and flush it exactly once by `pending_id` after recovery                                                                                        | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 

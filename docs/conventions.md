@@ -427,7 +427,7 @@ LAN 閲覧公開（#189）の `publicViewer` は**4番目のモードではな�
 
 ## 11. マイグレーションの流儀
 
-- 連番ファイル名（`0001_items.sql` … `0006_attachments.sql`）を `sqlx::migrate!`
+- 連番ファイル名（`0001_items.sql` … `0008_audit_log_pending_id.sql`）を `sqlx::migrate!`
   で埋め込み実行。V2「PostgreSQL アプリ全体対応」以降、方言ごとに2系統に分岐:
   `apps/admin-template/core/migrations-sqlite/`（従来の DDL を後方互換のため
   byte 等価で維持）と `.../migrations-postgres/`（同一スキーマの Postgres 厳密

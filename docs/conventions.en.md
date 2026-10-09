@@ -500,7 +500,7 @@ ordinary sessions.
 
 ## 11. The migration style
 
-- Sequentially-numbered file names (`0001_items.sql` … `0006_attachments.sql`)
+- Sequentially-numbered file names (`0001_items.sql` … `0008_audit_log_pending_id.sql`)
   are embedded and run by `sqlx::migrate!`. Since V2 "full PostgreSQL support
   for the app," they branch into two lines per dialect:
   `apps/admin-template/core/migrations-sqlite/` (the existing DDL kept

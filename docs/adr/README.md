@@ -59,6 +59,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0016](0016-session-controller-single-writer.md)    | フロントのセッションの確定は 1 つの書き手（SessionController）に寄せ、provider は 1 往復で答え、資格情報の書き込みは compare-and-set にする                                 | Accepted                   |
 | [0017](0017-credential-less-grant.md)               | 資格情報なしのセッション発行は「grant」に一本化し、閲覧公開を 1 種類目・派生アプリの試運転を 2 種類目にする（v3.0.0。認証を迂回する口は作らない。`adopt()`/`end()` は削除） | Accepted                   |
 | [0018](0018-shared-ui-package.md)                   | 汎用 UI 部品は新パッケージ `@banto/ui` へ段階的に切り出し、文言・アイコン・状態・操作は呼び出し側から注入する                                                               | Accepted（段階 1〜3 完了） |
+| [0019](0019-audit-spool.md)                         | DB に書けない監査は保留ファイルに退避し、復旧後に `pending_id` で 1 回だけ流し込む                                                                                          | Accepted                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
