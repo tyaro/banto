@@ -58,6 +58,25 @@ export function leftMarginFor(labels: string[], options: AxisMarginOptions = {})
 }
 
 /**
+ * Left margin needed to fit the end-anchored y tick labels of a value axis
+ * (line/combo/area/scatter charts): `max(baseLeft, widest label + gap)`.
+ * `baseLeft` is the caller's (or the chart's default) left margin and acts as
+ * the minimum, so charts whose labels already fit keep their exact previous
+ * layout; only clipped cases widen. Not clamped on purpose: unlike category
+ * names, tick labels come from `niceTicks` + `formatY` and are bounded.
+ */
+export function leftMarginForTicks(
+	labels: string[],
+	baseLeft: number,
+	options: AxisMarginOptions = {}
+): number {
+	const { fontSize = 11, gap = 8 } = options;
+	let widest = 0;
+	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
+	return Math.max(baseLeft, Math.ceil(widest + gap));
+}
+
+/**
  * Right margin needed so the LAST middle-anchored tick label of a bottom
  * value axis doesn't clip at the container edge: half the label overhangs
  * the plot's right edge, so reserve that half (plus a small pad).

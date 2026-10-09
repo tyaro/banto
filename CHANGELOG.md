@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### 修正
+
+- `@banto/charts`: `LineChart` / `ComboChart` / `StackedAreaChart` / `ScatterChart` の左の余白が、左の軸の目盛（`formatY` を通した後）の文字の幅に合わせて自動で広がるようにした。これまで 48px 固定で、`800,000,000` のような長い目盛が左で見切れていた（tyaro/banto-industrial#550）。目盛が収まっていたチャートの描画は変わらない。呼び出し側の `margins.left` は最小値として扱う。
+
 ## [6.3.1] - 2026-10-09
 
 **v6.3.1 — `banto_server::static_files::static_router` が、どの API ルートにも一致しなかった `/api`・`/api/...` の要求を、SPA の HTML（200）ではなく JSON の 404 で返すようにした。版の種類: patch（修正のみ。公開 API の変更は無い。ただし 1 点、見える挙動が変わる: 存在しない `/api/...` の応答が 200 の HTML から 404 の JSON になる）。

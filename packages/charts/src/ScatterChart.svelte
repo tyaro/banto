@@ -6,6 +6,7 @@
 	 * minimum without a separate invisible hit-circle.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
+	import { leftMarginForTicks } from './core/labels';
 	import { seriesColorVar } from './core/color';
 	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -41,7 +42,18 @@
 	}: Props = $props();
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 28, left: 48 };
-	const MARGIN = $derived({ ...DEFAULT_MARGIN, ...margins });
+	// Left margin auto-expands to fit the y tick labels (never below the
+	// caller's/default left margin, so labels that already fit are unchanged).
+	const MARGIN = $derived.by(() => {
+		const m = { ...DEFAULT_MARGIN, ...margins };
+		return {
+			...m,
+			left: leftMarginForTicks(
+				yTicks.map((t) => formatYValue(t)),
+				m.left
+			)
+		};
+	});
 	const POINT_RADIUS = 4;
 	const HOVER_RADIUS = 6;
 

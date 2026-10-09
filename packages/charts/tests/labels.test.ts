@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { estimateLabelWidth, leftMarginFor, rightMarginForLastTick } from '../src/core/labels';
+import {
+	estimateLabelWidth,
+	leftMarginFor,
+	leftMarginForTicks,
+	rightMarginForLastTick
+} from '../src/core/labels';
 
 describe('estimateLabelWidth', () => {
 	it('estimates CJK characters as ~13px each at the 11px tick font', () => {
@@ -55,5 +60,45 @@ describe('rightMarginForLastTick', () => {
 
 	it('never shrinks below the minimum', () => {
 		expect(rightMarginForLastTick('1', { min: 16 })).toBe(16);
+	});
+});
+
+describe('leftMarginForTicks', () => {
+	it('keeps the base margin when the labels already fit', () => {
+		expect(leftMarginForTicks(['0', '50', '100'], 48)).toBe(48);
+		expect(leftMarginForTicks(['1,000', '2,000'], 48)).toBe(48);
+	});
+
+	it('expands for long labels such as 800,000,000', () => {
+		const left = leftMarginForTicks(['0', '400,000,000', '800,000,000'], 48);
+		expect(left).toBeGreaterThan(48);
+		// the label (estimated) plus the 8px axis gap must fit
+		expect(left).toBeGreaterThanOrEqual(estimateLabelWidth('800,000,000') + 8);
+	});
+
+	it('accounts for the minus sign of negative numbers', () => {
+		const positive = leftMarginForTicks(['100,000,000'], 0);
+		const negative = leftMarginForTicks(['-100,000,000'], 0);
+		expect(negative).toBeGreaterThan(positive);
+	});
+
+	it('measures the formatter output, not the raw number', () => {
+		const formatted = [0, 800_000_000].map((n) => (n === 0 ? '0' : `${n / 1e6}M`));
+		expect(leftMarginForTicks(formatted, 48)).toBe(48);
+		expect(
+			leftMarginForTicks(
+				[0, 800_000_000].map((n) => n.toLocaleString()),
+				48
+			)
+		).toBeGreaterThan(48);
+	});
+
+	it('treats an explicit caller margin as the minimum', () => {
+		expect(leftMarginForTicks(['0', '10'], 80)).toBe(80);
+		expect(leftMarginForTicks(['800,000,000'], 20)).toBeGreaterThan(20);
+	});
+
+	it('returns the base margin for no labels', () => {
+		expect(leftMarginForTicks([], 48)).toBe(48);
 	});
 });
