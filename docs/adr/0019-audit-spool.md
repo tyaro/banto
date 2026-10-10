@@ -67,7 +67,7 @@
 13. 状態は `spool_backlog()`（件数・最古の `ts`・`dropped`・`failed`・最後のエラー）で見られる。
     保留したとき・流し込んだときに `eprintln` で 1 行出す（ADR-0004）。標準エラー出力を持たないアプリ
     （Windows サービス）は `AuditLogService::with_log_sink` でこれらの行（`record` の失敗を含む）を
-    自前のログへ流せる（`with_spool` の前後どちらで呼んでもよい。既定は `eprintln` のまま。`tracing` は
+    自前のログへ流せる（`with_spool` の前後どちらで呼んでもよい。共有済みの `AuditLogSink` は `with_shared_log_sink` で渡す。既定は `eprintln` のまま。`tracing` は
     入れない）。
 14. banto-industrial の ChronoGazer への適用は後で行う。
 

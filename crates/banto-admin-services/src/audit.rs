@@ -333,6 +333,16 @@ impl AuditLogService {
         self
     }
 
+    /// Like [`AuditLogService::with_log_sink`], but takes an already-shared
+    /// [`AuditLogSink`] (an `Arc<dyn Fn(&str) + Send + Sync>`), so one sink
+    /// can be cloned into several services. A separate method because
+    /// `Arc<dyn Fn>` does not implement `Fn` and so cannot be passed to the
+    /// generic `with_log_sink`; closures keep using that one.
+    pub fn with_shared_log_sink(mut self, sink: AuditLogSink) -> Self {
+        self.log = sink;
+        self
+    }
+
     /// Opt in to the spool (ADR-0019, see the module doc): `record` then
     /// writes an entry the database cannot take within `config.timeout` to
     /// `dir` instead of losing it. `dir` is created if missing and the
@@ -2408,6 +2418,25 @@ mod tests {
         bring_back(&pool).await;
         assert_eq!(svc.flush_spool().await.unwrap().flushed, 1);
         assert!(has_line(&lines, "流し込みました"));
+    }
+
+    /// The public `AuditLogSink` type can be stored, cloned and passed
+    /// straight to `with_shared_log_sink` (it cannot go to `with_log_sink`).
+    #[tokio::test]
+    async fn shared_log_sink_accepts_the_public_type() {
+        let lines: Lines = Arc::default();
+        let store = lines.clone();
+        let sink: AuditLogSink = Arc::new(move |l: &str| store.lock().unwrap().push(l.to_string()));
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let svc = AuditLogService::new(db)
+            .with_spool(tmp.path().join("spool"), spool_config(2_000))
+            .unwrap()
+            .with_shared_log_sink(sink.clone());
+        take_offline(&pool).await;
+        svc.record(sample_entry("create", "items", "admin")).await;
+        assert!(has_line(&lines, "保留ファイルに退避しました"));
     }
 
     /// The sink works whether it is set before or after `with_spool`.

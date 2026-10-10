@@ -22,7 +22,7 @@
 
 ## [Unreleased]
 
-- `banto-admin-services`: `AuditLogService::with_log_sink` と型 `AuditLogSink` を追加（追加のみ。後方互換）。`record` の失敗と保留（spool）の警告行を、既定の `eprintln!` の代わりにアプリ自前のログへ流せる（標準エラー出力を持たない Windows サービス向け。`with_spool` の前後どちらでも可。呼ばなければ従来どおり `eprintln!`、文言も同じ。ADR-0019）。
+- `banto-admin-services`: `AuditLogService::with_log_sink`（クロージャ）・`with_shared_log_sink`（共有済みの `Arc`）と型 `AuditLogSink` を追加（追加のみ。後方互換）。`record` の失敗と保留（spool）の警告行を、既定の `eprintln!` の代わりにアプリ自前のログへ流せる（標準エラー出力を持たない Windows サービス向け。`with_spool` の前後どちらでも可。呼ばなければ従来どおり `eprintln!`、文言も同じ。ADR-0019）。
 
 ## [6.5.0] - 2026-10-10
 
