@@ -22,6 +22,28 @@
 
 ## [Unreleased]
 
+## [6.6.0] - 2026-10-10
+
+**v6.6.0 — `banto-admin-services` の監査に、記録の失敗と保留（spool）の警告行をアプリ自前のログへ流す `with_log_sink` / `with_shared_log_sink` と型 `AuditLogSink` を足した（ADR-0019、tyaro/banto-industrial#437 の続き）。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                          |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.5.0` → `v6.6.0`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要。`with_log_sink` / `with_shared_log_sink` を呼ばなければ挙動は変わらない |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                                      |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                       |
+
+### 消費側への注意
+
+- 既存の公開 API は変わらない（追加のみ）。`with_log_sink` / `with_shared_log_sink` を呼ばない `AuditLogService` は v6.5.0 と同じく `eprintln!` に出す（文言も同じ）。
+- 標準エラー出力がどこにも届かない構成（Windows サービスなど）では、`with_log_sink(|line| ...)` でアプリのログに流す。1 つの sink を複数のサービスで共有するときは `AuditLogSink`（`Arc`）を `with_shared_log_sink` に渡す。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
+### 追加
+
 - `banto-admin-services`: `AuditLogService::with_log_sink`（クロージャ）・`with_shared_log_sink`（共有済みの `Arc`）と型 `AuditLogSink` を追加（追加のみ。後方互換）。`record` の失敗と保留（spool）の警告行を、既定の `eprintln!` の代わりにアプリ自前のログへ流せる（標準エラー出力を持たない Windows サービス向け。`with_spool` の前後どちらでも可。呼ばなければ従来どおり `eprintln!`、文言も同じ。ADR-0019）。
 
 ## [6.5.0] - 2026-10-10
@@ -2755,7 +2777,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.5.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.6.0...HEAD
+[6.6.0]: https://github.com/tyaro/banto/compare/v6.5.0...v6.6.0
 [6.5.0]: https://github.com/tyaro/banto/compare/v6.4.0...v6.5.0
 [6.4.0]: https://github.com/tyaro/banto/compare/v6.3.2...v6.4.0
 [6.3.2]: https://github.com/tyaro/banto/compare/v6.3.1...v6.3.2
