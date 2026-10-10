@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- `banto-admin-services`: `AuditLogService::with_log_sink` と型 `AuditLogSink` を追加（追加のみ。後方互換）。`record` の失敗と保留（spool）の警告行を、既定の `eprintln!` の代わりにアプリ自前のログへ流せる（標準エラー出力を持たない Windows サービス向け。`with_spool` の前後どちらでも可。呼ばなければ従来どおり `eprintln!`、文言も同じ。ADR-0019）。
+
 ## [6.5.0] - 2026-10-10
 
 **v6.5.0 — `@banto/charts` の `LineChart` にツールチップ専用の書式 `formatTooltip` を足した（#376）。`banto-admin-services` に、DB に書けない監査を保留ファイルに退避し、復旧後に 1 回だけ流し込む保留（spool）を足した（tyaro/banto-industrial#437、ADR-0019）。版の種類: minor（追加のみ。後方互換）。

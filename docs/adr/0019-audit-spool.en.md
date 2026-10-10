@@ -69,7 +69,10 @@ Add an **opt-in spool** to `banto-admin-services`' `AuditLogService` (owner deci
     already older than the retention period may be deleted right after the flush (`ts` is the time
     of the operation, so this is correct).
 13. The state is visible through `spool_backlog()` (count, oldest `ts`, `dropped`, `failed`, last
-    error). Spooling and flushing each log one `eprintln` line (ADR-0004).
+    error). Spooling and flushing each log one `eprintln` line (ADR-0004). An app with no stderr (a Windows
+    service) can route these lines (and the `record` failure) to its own log with
+    `AuditLogService::with_log_sink`, called before or after `with_spool`; the default stays
+    `eprintln`, and no `tracing` is added.
 14. Applying it to banto-industrial's ChronoGazer comes later.
 
 ## Alternatives considered
