@@ -28,6 +28,8 @@ use std::time::{Duration, Instant, SystemTime};
 use banto_core::BantoError;
 use serde::{Deserialize, Serialize};
 
+use super::AuditLogSink;
+
 /// A `.tmp` file older than this is a leftover of an interrupted write and is
 /// removed by a flush. Younger ones may be a write in progress (this process
 /// or another one sharing the directory) and are left alone.
@@ -167,6 +169,9 @@ pub(super) struct Scan {
     /// Valid entries, oldest first (`ts`, then `pending_id`).
     pub entries: Vec<(PathBuf, PendingEntry)>,
     pub quarantined: u64,
+    /// Warning lines produced while reading (the blocking scan collects them
+    /// and [`Spool::scan`] sends them to the log sink afterwards).
+    logs: Vec<String>,
 }
 
 pub(super) struct Spool {
@@ -255,7 +260,7 @@ impl Spool {
 
     /// Write `entry` to the spool. Never fails the caller: a full spool or a
     /// failed write is counted and logged, and the entry is lost.
-    pub async fn write(&self, mut entry: PendingEntry, reason: String) {
+    pub async fn write(&self, log: &AuditLogSink, mut entry: PendingEntry, reason: String) {
         entry.spooled_reason = reason.clone();
         {
             let mut state = self.state();
@@ -264,10 +269,10 @@ impl Spool {
                 state.dropped += 1;
                 let dropped = state.dropped;
                 drop(state);
-                eprintln!(
+                log(&format!(
                     "banto: 監査ログの保留ファイルが上限（{} 件）に達したため、記録を破棄しました（action={}, resource={}, 理由={reason}, 破棄の累計 {dropped} 件）",
                     self.config.max_files, entry.action, entry.resource
-                );
+                ));
                 return;
             }
             // Reserve the slot before the (slow) write so concurrent writers
@@ -287,10 +292,10 @@ impl Spool {
         match written {
             Ok(()) => {
                 let count = self.count();
-                eprintln!(
+                log(&format!(
                     "banto: 監査ログを DB に書けないため保留ファイルに退避しました（action={}, resource={}, 理由={reason}, 保留 {count} 件）",
                     entry.action, entry.resource
-                );
+                ));
             }
             Err(err) => {
                 let mut state = self.state();
@@ -299,10 +304,10 @@ impl Spool {
                 let message = format!("保留ファイルの書き込みに失敗: {err}");
                 state.last_error = Some(message.clone());
                 drop(state);
-                eprintln!(
+                log(&format!(
                     "banto: 監査ログの記録に失敗しました（action={}, resource={}）: DB: {reason} / {message}",
                     entry.action, entry.resource
-                );
+                ));
             }
         }
     }
@@ -311,7 +316,7 @@ impl Spool {
     /// quarantines unreadable entries, and returns the valid ones oldest
     /// first. Entries found on disk that the index did not know (another
     /// process spooled them) are added to the index.
-    pub async fn scan(&self) -> Result<Scan, BantoError> {
+    pub async fn scan(&self, log: &AuditLogSink) -> Result<Scan, BantoError> {
         let dir = self.dir.clone();
         let scan = tokio::task::spawn_blocking(move || scan_dir(&dir, true))
             .await
@@ -322,6 +327,9 @@ impl Spool {
                     self.dir.display()
                 ))
             })?;
+        for line in &scan.logs {
+            log(line);
+        }
         let mut state = self.state();
         state.last_scan = Some(Instant::now());
         for (_, entry) in &scan.entries {
@@ -335,7 +343,7 @@ impl Spool {
 
     /// Remove a flushed entry's file (a missing file is fine: another process
     /// flushed it too) and forget it.
-    pub async fn remove(&self, path: PathBuf, pending_id: &str) {
+    pub async fn remove(&self, log: &AuditLogSink, path: PathBuf, pending_id: &str) {
         let removed = tokio::task::spawn_blocking(move || match fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -349,9 +357,9 @@ impl Spool {
             Ok(()) => {
                 self.state().index.remove(pending_id);
             }
-            Err(err) => eprintln!(
+            Err(err) => log(&format!(
                 "banto: 流し込み済みの監査ログの保留ファイルを消せませんでした（{pending_id}）: {err}"
-            ),
+            )),
         }
     }
 
@@ -414,6 +422,7 @@ fn write_file(dir: &Path, entry: &PendingEntry) -> io::Result<()> {
 fn scan_dir(dir: &Path, mutate: bool) -> io::Result<Scan> {
     let mut entries = Vec::new();
     let mut quarantined = 0;
+    let mut logs = Vec::new();
     for item in fs::read_dir(dir)? {
         let item = item?;
         let path = item.path();
@@ -451,14 +460,16 @@ fn scan_dir(dir: &Path, mutate: bool) -> io::Result<Scan> {
             // Windows): skip it this time rather than block the others.
             Err(err) => {
                 if mutate {
-                    eprintln!("banto: 監査ログの保留ファイルを読めませんでした（{name}）: {err}");
+                    logs.push(format!(
+                        "banto: 監査ログの保留ファイルを読めませんでした（{name}）: {err}"
+                    ));
                 }
                 continue;
             }
         };
         match parse_entry(stem, &bytes) {
             Some(entry) => entries.push((path, entry)),
-            None if mutate && quarantine(dir, &path, &name) => quarantined += 1,
+            None if mutate && quarantine(dir, &path, &name, &mut logs) => quarantined += 1,
             None => {}
         }
     }
@@ -466,6 +477,7 @@ fn scan_dir(dir: &Path, mutate: bool) -> io::Result<Scan> {
     Ok(Scan {
         entries,
         quarantined,
+        logs,
     })
 }
 
@@ -480,21 +492,21 @@ fn parse_entry(stem: &str, bytes: &[u8]) -> Option<PendingEntry> {
     valid.then_some(entry)
 }
 
-fn quarantine(dir: &Path, path: &Path, name: &str) -> bool {
+fn quarantine(dir: &Path, path: &Path, name: &str, logs: &mut Vec<String>) -> bool {
     let qdir = dir.join(QUARANTINE_DIR);
     let moved = fs::create_dir_all(&qdir).and_then(|()| fs::rename(path, qdir.join(name)));
     match moved {
         Ok(()) => {
-            eprintln!(
+            logs.push(format!(
                 "banto: 読めない監査ログの保留ファイルを隔離しました（{QUARANTINE_DIR}/{name}）"
-            );
+            ));
             true
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => false,
         Err(err) => {
-            eprintln!(
+            logs.push(format!(
                 "banto: 読めない監査ログの保留ファイルを隔離できませんでした（{name}）: {err}"
-            );
+            ));
             false
         }
     }

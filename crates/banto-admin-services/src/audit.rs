@@ -66,6 +66,16 @@
 //! never spools - its callers want the operation to fail when the audit
 //! write does.
 //!
+//! ## Where the warning lines go
+//!
+//! By default every warning line this service logs (a `record` failure
+//! without a spool, and all spool messages: spooled, flushed, dropped,
+//! failed, quarantined, unreadable or unremovable file, flush failed) is
+//! printed with `eprintln!` (ADR-0004). An app without a stderr - a Windows
+//! service - routes them to its own log with
+//! [`AuditLogService::with_log_sink`] ([`AuditLogSink`]); the sink gets the
+//! same text `eprintln!` would print, without the trailing newline.
+//!
 //! [`try_record`]: AuditLogService::try_record
 
 mod spool;
@@ -195,6 +205,19 @@ pub struct AuditLogService {
     db: Db,
     /// `None` = no spool (the behavior before ADR-0019).
     spool: Option<Arc<Spool>>,
+    /// Where warning lines go (default: stderr). Held here, not in the
+    /// spool, so [`AuditLogService::with_log_sink`] works before or after
+    /// [`AuditLogService::with_spool`].
+    log: AuditLogSink,
+}
+
+/// A destination for the warning lines [`AuditLogService`] logs, set with
+/// [`AuditLogService::with_log_sink`]. Called with one line, no trailing
+/// newline; may be called from any thread or task, so keep it quick.
+pub type AuditLogSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+fn stderr_sink() -> AuditLogSink {
+    Arc::new(|line| eprintln!("{line}"))
 }
 
 /// The `audit_log` INSERT of an entry that has a `pending_id` (the spool
@@ -290,7 +313,34 @@ async fn insert_pending(db: &Db, entry: &PendingEntry, flushed: bool) -> Result<
 
 impl AuditLogService {
     pub fn new(db: Db) -> Self {
-        Self { db, spool: None }
+        Self {
+            db,
+            spool: None,
+            log: stderr_sink(),
+        }
+    }
+
+    /// Send every warning line this service logs - the `record` failure
+    /// without a spool, and all spool messages (spooled, flushed, dropped,
+    /// failed, quarantined, unreadable or unremovable file, flush failed) -
+    /// to `sink` instead of stderr. For an app that has no stderr (a Windows
+    /// service) and keeps its own log file. The line is the text `eprintln!`
+    /// would print, without the trailing newline. Not calling this keeps the
+    /// default (`eprintln!`), unchanged. Works before or after
+    /// [`AuditLogService::with_spool`].
+    pub fn with_log_sink(mut self, sink: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        self.log = Arc::new(sink);
+        self
+    }
+
+    /// Like [`AuditLogService::with_log_sink`], but takes an already-shared
+    /// [`AuditLogSink`] (an `Arc<dyn Fn(&str) + Send + Sync>`), so one sink
+    /// can be cloned into several services. A separate method because
+    /// `Arc<dyn Fn>` does not implement `Fn` and so cannot be passed to the
+    /// generic `with_log_sink`; closures keep using that one.
+    pub fn with_shared_log_sink(mut self, sink: AuditLogSink) -> Self {
+        self.log = sink;
+        self
     }
 
     /// Opt in to the spool (ADR-0019, see the module doc): `record` then
@@ -375,10 +425,11 @@ impl AuditLogService {
     /// Fire-and-forget wrapper around [`AuditLogService::try_record`] (spec
     /// M14 design decision): a failure to WRITE an audit entry must never
     /// fail the operation being audited (e.g. an `items.create` that
-    /// otherwise succeeded) - it is only logged as a warning (`eprintln`;
-    /// this workspace has no `tracing` dependency, see the root
-    /// `Cargo.toml`). Every REST handler and Tauri command calls this, not
-    /// `try_record`, directly.
+    /// otherwise succeeded) - it is only logged as a warning (`eprintln` by
+    /// default, or the sink of [`AuditLogService::with_log_sink`]; this
+    /// workspace has no `tracing` dependency, see the root `Cargo.toml`).
+    /// Every REST handler and Tauri command calls this, not `try_record`,
+    /// directly.
     ///
     /// With a spool ([`AuditLogService::with_spool`], ADR-0019) a failed or
     /// hanging write is spooled instead of lost, and `record` returns within
@@ -391,9 +442,9 @@ impl AuditLogService {
         let action = entry.action.to_string();
         let resource = entry.resource.to_string();
         if let Err(err) = self.try_record(entry).await {
-            eprintln!(
+            (self.log)(&format!(
                 "banto: 監査ログの記録に失敗しました（action={action}, resource={resource}）: {err}"
-            );
+            ));
         }
     }
 
@@ -423,7 +474,7 @@ impl AuditLogService {
             Ok(Err(join_err)) => format!("error: {join_err}"),
             Err(_) => "timeout".to_string(),
         };
-        spool.write(pending, reason).await;
+        spool.write(&self.log, pending, reason).await;
     }
 
     /// The spool's backlog as seen by this process (ADR-0019). All zero /
@@ -459,12 +510,14 @@ impl AuditLogService {
             return;
         };
         if let Err(err) = self.flush_locked(spool).await {
-            eprintln!("banto: 監査ログの保留分を流し込めませんでした: {err}");
+            (self.log)(&format!(
+                "banto: 監査ログの保留分を流し込めませんでした: {err}"
+            ));
         }
     }
 
     async fn flush_locked(&self, spool: &Spool) -> Result<SpoolFlushReport, BantoError> {
-        let scan = spool.scan().await?;
+        let scan = spool.scan(&self.log).await?;
         let total = scan.entries.len() as u64;
         let mut report = SpoolFlushReport {
             quarantined: scan.quarantined,
@@ -476,7 +529,7 @@ impl AuditLogService {
                     .await;
             match inserted {
                 Ok(Ok(())) => {
-                    spool.remove(path, &entry.pending_id).await;
+                    spool.remove(&self.log, path, &entry.pending_id).await;
                     report.flushed += 1;
                 }
                 Ok(Err(err)) => {
@@ -499,7 +552,7 @@ impl AuditLogService {
             .await;
         report.remaining = spool.count() as u64;
         if total > 0 || report.quarantined > 0 {
-            eprintln!(
+            (self.log)(&format!(
                 "banto: 監査ログの保留分を {} 件 DB へ流し込みました（残り {} 件、隔離 {} 件{}）",
                 report.flushed,
                 report.remaining,
@@ -509,7 +562,7 @@ impl AuditLogService {
                     .as_ref()
                     .map(|err| format!("、中断: {err}"))
                     .unwrap_or_default()
-            );
+            ));
         }
         Ok(report)
     }
@@ -2323,5 +2376,131 @@ mod tests {
                 }
             }
         }
+    }
+
+    // --- log sink (with_log_sink) ---------------------------------------------
+
+    type Lines = Arc<std::sync::Mutex<Vec<String>>>;
+
+    fn collecting_sink() -> (Lines, impl Fn(&str) + Send + Sync + 'static) {
+        let lines: Lines = Arc::default();
+        let sink = lines.clone();
+        (lines, move |line: &str| {
+            sink.lock().unwrap().push(line.to_string())
+        })
+    }
+
+    fn has_line(lines: &Lines, needle: &str) -> bool {
+        lines.lock().unwrap().iter().any(|l| l.contains(needle))
+    }
+
+    /// Spooling and flushing log through the sink, with the `banto: ` text.
+    #[tokio::test]
+    async fn log_sink_receives_spooled_and_flushed_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let (lines, sink) = collecting_sink();
+        let svc = AuditLogService::new(db)
+            .with_spool(tmp.path().join("spool"), spool_config(2_000))
+            .unwrap()
+            .with_log_sink(sink);
+
+        take_offline(&pool).await;
+        svc.record(sample_entry("create", "items", "admin")).await;
+        assert!(has_line(&lines, "保留ファイルに退避しました"));
+        assert!(lines
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|l| l.starts_with("banto: ")));
+
+        bring_back(&pool).await;
+        assert_eq!(svc.flush_spool().await.unwrap().flushed, 1);
+        assert!(has_line(&lines, "流し込みました"));
+    }
+
+    /// The public `AuditLogSink` type can be stored, cloned and passed
+    /// straight to `with_shared_log_sink` (it cannot go to `with_log_sink`).
+    #[tokio::test]
+    async fn shared_log_sink_accepts_the_public_type() {
+        let lines: Lines = Arc::default();
+        let store = lines.clone();
+        let sink: AuditLogSink = Arc::new(move |l: &str| store.lock().unwrap().push(l.to_string()));
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let svc = AuditLogService::new(db)
+            .with_spool(tmp.path().join("spool"), spool_config(2_000))
+            .unwrap()
+            .with_shared_log_sink(sink.clone());
+        take_offline(&pool).await;
+        svc.record(sample_entry("create", "items", "admin")).await;
+        assert!(has_line(&lines, "保留ファイルに退避しました"));
+    }
+
+    /// The sink works whether it is set before or after `with_spool`.
+    #[tokio::test]
+    async fn log_sink_works_before_and_after_with_spool() {
+        for sink_first in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let db = file_db(tmp.path(), 4, true).await;
+            let pool = db.as_sqlite().unwrap().clone();
+            let (lines, sink) = collecting_sink();
+            let spool_dir = tmp.path().join("spool");
+            let svc = if sink_first {
+                AuditLogService::new(db)
+                    .with_log_sink(sink)
+                    .with_spool(&spool_dir, spool_config(2_000))
+                    .unwrap()
+            } else {
+                AuditLogService::new(db)
+                    .with_spool(&spool_dir, spool_config(2_000))
+                    .unwrap()
+                    .with_log_sink(sink)
+            };
+            take_offline(&pool).await;
+            svc.record(sample_entry("create", "items", "admin")).await;
+            assert!(
+                has_line(&lines, "保留ファイルに退避しました"),
+                "sink_first={sink_first}"
+            );
+        }
+    }
+
+    /// Without a spool the `record` failure goes to the sink too.
+    #[tokio::test]
+    async fn log_sink_receives_the_record_failure_without_a_spool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let (lines, sink) = collecting_sink();
+        let svc = AuditLogService::new(db).with_log_sink(sink);
+        take_offline(&pool).await;
+        svc.record(sample_entry("create", "items", "admin")).await;
+        assert!(has_line(&lines, "監査ログの記録に失敗しました"));
+    }
+
+    /// A drop on a full spool reaches the sink.
+    #[tokio::test]
+    async fn log_sink_receives_the_dropped_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = file_db(tmp.path(), 4, true).await;
+        let pool = db.as_sqlite().unwrap().clone();
+        let (lines, sink) = collecting_sink();
+        let svc = AuditLogService::new(db)
+            .with_spool(
+                tmp.path().join("spool"),
+                SpoolConfig {
+                    max_files: 1,
+                    ..spool_config(2_000)
+                },
+            )
+            .unwrap()
+            .with_log_sink(sink);
+        take_offline(&pool).await;
+        svc.record(sample_entry("a", "items", "admin")).await;
+        svc.record(sample_entry("b", "items", "admin")).await;
+        assert!(has_line(&lines, "記録を破棄しました"));
     }
 }
