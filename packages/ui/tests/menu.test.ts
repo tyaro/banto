@@ -9,6 +9,9 @@
  * jsdom has no Popover API, so a minimal stand-in is installed: it flips a
  * `data-popover-open` marker and fires the `toggle` event asynchronously like
  * browsers do (the component's `open` state follows `ToggleEvent.newState`).
+ * Newer jsdom hides `[popover]:not(:popover-open)` with `display: none` (and
+ * cannot match `:popover-open` for the stand-in), so the stand-in also toggles
+ * an inline `display: block`; otherwise the items are not focusable.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -29,11 +32,13 @@ beforeAll(() => {
 	proto.showPopover = function (this: HTMLElement) {
 		if (this.dataset.popoverOpen === 'true') throw new Error('already open');
 		this.dataset.popoverOpen = 'true';
+		this.style.display = 'block';
 		fireToggle(this, 'open');
 	};
 	proto.hidePopover = function (this: HTMLElement) {
 		if (this.dataset.popoverOpen !== 'true') return;
 		delete this.dataset.popoverOpen;
+		this.style.removeProperty('display');
 		fireToggle(this, 'closed');
 	};
 });
