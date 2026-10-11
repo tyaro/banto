@@ -349,11 +349,14 @@ ChronoGazer）が共有できるよう、banto-hub の `Modal`・`Drawer` と層
   `IconButton` と同梱の lucide の X。生の `rgba()` は無くなった。動きは Svelte の `transition:` をやめて CSS に
   し（Menu・ToastHost・CommandPalette と同じ）、長さと緩急はテーマの `--banto-duration-fast`・
   `--banto-duration-base`・`--banto-ease-out`（`prefers-reduced-motion` で 0ms）。出現は `@starting-style`、
-  閉じる動きは `--banto-duration-base` のあいだ層を残す（`data-layer-inactive` 付き）。移動量（48px・0.96）は
+  閉じる動きは `--banto-duration-base` のあいだ層を残す（`data-layer-inactive` と `inert` 付き。`inert` が
+  無いと消えかけの層へ Tab・Enter が届く）。止まっている状態は `transform: none`（`translateX(0)`・`scale(1)`
+  でも固定の子孫の基準になり、`Drawer` の中の `Modal` がどのテーマでも `Drawer` に閉じ込められる）。移動量（48px・0.96）は
   他の部品と同じく部品の CSS に置く。新しいトークンは足していない。
-- **背景のクリックも手前の層に譲る**（#389 レビュー）: glass では `Drawer` のパネルの `backdrop-filter` が
-  中に置いた `Modal` の固定のオーバーレイの基準になり、`Modal` の背景は `Drawer` の範囲に閉じる。その外側の
-  クリックは `Drawer` 自身の背景に当たり、以前は `Drawer` を `Modal` ごと閉じて `Modal` の `dirty`・
+- **背景のクリックも手前の層に譲る**（#389 レビュー）: `Drawer` のパネルが固定の子孫の基準になると
+  （レビュー時点では止まっている状態の `translateX(0)` が原因で、`transform: none` にして解消した。アプリの
+  CSS の `transform`・`filter` や、`backdrop-filter` をそう扱うブラウザでも起きうる）、中に置いた `Modal` の
+  背景は `Drawer` の範囲に閉じる。その外側のクリックは `Drawer` 自身の背景に当たり、以前は `Drawer` を `Modal` ごと閉じて `Modal` の `dirty`・
   `onRequestClose` を飛ばしていた。背景のクリックも Esc と同じ `hasVisibleLayerAbove` で手前の層に譲る。
   子のオーバーレイを `<body>` へ移す（portal）案は採らなかった: Svelte 5 に標準の portal は無く、DOM の位置を
   変えると「中にあって自分の z-index を持つ層は手前」の判定やフォーカストラップの `contains` が使えなく

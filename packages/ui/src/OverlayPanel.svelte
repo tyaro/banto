@@ -25,7 +25,9 @@
 	 * - Motion is CSS, driven by the theme's motion tokens like Menu / ToastHost /
 	 *   CommandPalette (`--banto-duration-*`, `--banto-ease-out`; reduced motion
 	 *   turns the tokens to 0ms): the entry uses `@starting-style`, the exit keeps
-	 *   the layer mounted (`leaving`) for `--banto-duration-base`.
+	 *   the layer mounted (`leaving`) for `--banto-duration-base`, `inert` so
+	 *   neither Tab nor clicks can reach the fading layer (`data-layer-inactive`
+	 *   alone only hides it from the layer checks).
 	 * - On open, focus goes to the first focusable (the × in the header comes
 	 *   first in DOM order).
 	 *
@@ -109,8 +111,9 @@
 	// Only a click on the scrim itself (not one bubbling from the panel), so
 	// the panel needs no stopPropagation click handler. It also yields to a
 	// layer above (promise 2), like Esc: a fixed overlay nested in the panel is
-	// confined to it when the panel is a containing block (glass's
-	// backdrop-filter), so a click beside it lands on OUR scrim - closing here
+	// confined to it when the panel is a containing block (an app's transform /
+	// filter on it, or an engine treating backdrop-filter that way), so a click
+	// beside it lands on OUR scrim - closing here
 	// would take the child down too, past its own `dirty` / `onRequestClose`.
 	function handleOverlayClick(event: MouseEvent): void {
 		if (!closeOnOverlayClick || event.target !== event.currentTarget) return;
@@ -191,6 +194,7 @@
 		class:overlay--drawer={variant === 'drawer'}
 		class:overlay--modal={variant === 'modal'}
 		class:leaving={!open}
+		inert={!open}
 		role="presentation"
 		onclick={handleOverlayClick}
 		bind:this={overlayEl}
@@ -267,11 +271,15 @@
 	}
 
 	/* Motion distances are local, like Menu (-4px) / ToastHost (24px) /
-	   CommandPalette (0.98); durations and easing come from the theme. */
+	   CommandPalette (0.98); durations and easing come from the theme. The
+	   resting state is `transform: none` on purpose: any other transform makes
+	   the panel the containing block of fixed descendants, so a Modal placed in
+	   the body would be confined to the panel in every theme. Only the entry
+	   (@starting-style) and the exit (.leaving) move the panel. */
 	.panel--drawer {
 		height: 100%;
 		border-left: 1px solid var(--banto-border);
-		transform: translateX(0);
+		transform: none;
 	}
 
 	.leaving .panel--drawer {
@@ -282,7 +290,7 @@
 		max-height: calc(100vh - 3rem);
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
-		transform: scale(1);
+		transform: none;
 	}
 
 	.leaving .panel--modal {

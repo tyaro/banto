@@ -12,13 +12,15 @@
  * so: `getClientRects()` returns one rect for a connected element; the scrim
  * (`role="presentation"`) gets `position: fixed; z-index: 900` from a test
  * style (the theme's `--banto-z-modal`); the palette's overlay gets 1000
- * inline when a test opens it. The motion tokens are unset, so the exit
+ * inline when a test opens it; `inert` is reflected to its attribute (jsdom
+ * lacks the IDL attribute). The motion tokens are unset, so the exit
  * motion takes 0ms unless a test sets `--banto-duration-base`.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
 	defaultUiMessages,
+	focusablesIn,
 	hasVisibleLayerAbove,
 	LAYER_INACTIVE_ATTR,
 	type UiMessages
@@ -29,6 +31,19 @@ beforeAll(() => {
 	Element.prototype.getClientRects = function (this: Element) {
 		return (this.isConnected ? [{}] : []) as unknown as DOMRectList;
 	};
+	// jsdom has no `inert` IDL attribute; Svelte sets the property, so reflect
+	// it to the content attribute the way browsers do.
+	if (!('inert' in HTMLElement.prototype)) {
+		Object.defineProperty(HTMLElement.prototype, 'inert', {
+			configurable: true,
+			get(this: HTMLElement) {
+				return this.hasAttribute('inert');
+			},
+			set(this: HTMLElement, value: boolean) {
+				this.toggleAttribute('inert', Boolean(value));
+			}
+		});
+	}
 	const style = document.createElement('style');
 	style.textContent = '[role="presentation"] { position: fixed; z-index: 900; }';
 	document.head.append(style);
@@ -195,11 +210,58 @@ describe('Modal / Drawer: close routes', () => {
 			expect(dialog.isConnected).toBe(true);
 			expect(dialog.getAttribute(LAYER_INACTIVE_ATTR)).toBe('true');
 			expect(dialog.parentElement?.classList.contains('leaving')).toBe(true);
+			expect(dialog.parentElement?.hasAttribute('inert')).toBe(true);
 			expect(hasVisibleLayerAbove()).toBe(false);
 			await flush();
 			expect(document.activeElement).toBe(opener);
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			expect(screen.queryByRole('dialog')).toBeNull();
+		} finally {
+			document.documentElement.style.removeProperty('--banto-duration-base');
+		}
+	});
+
+	it('a leaving child (non-zero exit) is inert and out of the parent trap; Tab wraps past it', async () => {
+		document.documentElement.style.setProperty('--banto-duration-base', '1s');
+		try {
+			const { dialog } = await openOverlay();
+			const openNested = screen.getByTestId('open-nested');
+			openNested.focus();
+			await fireEvent.click(openNested);
+			await flush();
+			const nested = screen.getByRole('dialog', { name: 'Confirm' });
+			await escape();
+			expect(nestedState()).toBe('closed');
+			expect(nested.isConnected).toBe(true);
+			expect(nested.parentElement?.hasAttribute('inert')).toBe(true);
+			expect(document.activeElement).toBe(openNested);
+			const reachable = focusablesIn(dialog);
+			expect(reachable.some((el) => nested.contains(el))).toBe(false);
+			// Tab from the drawer's last reachable element wraps to its first, never into the child.
+			const last = reachable[reachable.length - 1];
+			last.focus();
+			await fireEvent.keyDown(last, { key: 'Tab' });
+			expect(document.activeElement).toBe(closeButton(dialog));
+		} finally {
+			document.documentElement.style.removeProperty('--banto-duration-base');
+		}
+	});
+
+	it('reopening during the exit motion reuses the layer: not inert, focus on the first element', async () => {
+		document.documentElement.style.setProperty('--banto-duration-base', '1s');
+		try {
+			const { dialog, opener } = await openOverlay();
+			await fireEvent.click(closeButton(dialog));
+			await flush();
+			expect(dialog.parentElement?.hasAttribute('inert')).toBe(true);
+			await fireEvent.click(opener);
+			await flush();
+			expect(screen.getByRole('dialog', { name: 'Edit' })).toBe(dialog);
+			expect(dialog.parentElement?.hasAttribute('inert')).toBe(false);
+			expect(dialog.hasAttribute(LAYER_INACTIVE_ATTR)).toBe(false);
+			expect(document.activeElement).toBe(closeButton(dialog));
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(dialog.isConnected).toBe(true);
 		} finally {
 			document.documentElement.style.removeProperty('--banto-duration-base');
 		}

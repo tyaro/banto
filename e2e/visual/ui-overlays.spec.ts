@@ -68,21 +68,101 @@ test.describe('ui-demo Modal / Drawer behaviour', () => {
 	});
 });
 
-// Glass: the Drawer's backdrop-filter makes it the containing block of the
-// stacked Modal's fixed overlay, so the Modal's backdrop covers only the
-// Drawer and a click left of the Drawer lands on the Drawer's own backdrop.
-// That click must not close the Drawer (and the Modal with it).
+// Standard: the panels rest at `transform: none`, so a Modal placed in the
+// Drawer's body is NOT confined to it - full-viewport backdrop, centred in
+// the viewport (a resting translateX(0) / scale(1) would confine it).
+test('standard: a Modal stacked in a Drawer covers and centres in the whole viewport', async ({
+	page
+}) => {
+	await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+	await gotoDemo(page);
+	await page.getByTestId('ui-demo-open-drawer').click();
+	await page.getByTestId('ui-demo-open-nested').click();
+	const nested = page.getByRole('dialog', { name: '重ねたモーダル' });
+	await expect(nested).toBeVisible();
+	const viewport = page.viewportSize() ?? { width: 0, height: 0 };
+	const backdrop = await nested.locator('xpath=..').boundingBox();
+	expect(backdrop).toEqual({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+	const box = await nested.boundingBox();
+	expect(box).not.toBeNull();
+	if (box) {
+		expect(Math.abs(box.x + box.width / 2 - viewport.width / 2)).toBeLessThan(2);
+		expect(Math.abs(box.y + box.height / 2 - viewport.height / 2)).toBeLessThan(2);
+	}
+	const transforms = await page
+		.locator('[role="dialog"]')
+		.evaluateAll((els) => els.map((el) => getComputedStyle(el).transform));
+	expect(transforms).toEqual(['none', 'none']);
+});
+
+// A non-zero exit (the project forces reduced motion, i.e. 0ms): while the
+// stacked Modal fades out it is inert, so Tab / Enter from the Drawer never
+// reach it; reopening the Drawer during its own exit works.
+test('non-zero exit: a leaving layer is unreachable by keyboard; reopening mid-exit works', async ({
+	page
+}) => {
+	await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+	await gotoDemo(page);
+	await page.addStyleTag({ content: ':root { --banto-duration-base: 1s !important; }' });
+	const opener = page.getByTestId('ui-demo-open-drawer');
+	await opener.click();
+	const nestedOpener = page.getByTestId('ui-demo-open-nested');
+	await nestedOpener.click();
+	await expect(page.getByRole('dialog', { name: '重ねたモーダル' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	const leaving = page.locator('[role="dialog"][aria-label="重ねたモーダル"]');
+	await expect(leaving).toHaveAttribute('data-layer-inactive', 'true');
+	await expect(leaving.locator('xpath=..')).toHaveAttribute('inert', '');
+	await expect(nestedOpener).toBeFocused();
+	for (let i = 0; i < 6; i++) {
+		await page.keyboard.press('Tab');
+		const inLeaving = await page.evaluate(
+			() => document.activeElement?.closest('[aria-label="重ねたモーダル"]') !== null
+		);
+		expect(inLeaving).toBe(false);
+	}
+	// Not focusable at all while leaving (a programmatic focus() is refused too).
+	const refused = await page.evaluate(() => {
+		const close = document.querySelector<HTMLElement>('[aria-label="重ねたモーダル"] button');
+		close?.focus();
+		return document.activeElement !== close;
+	});
+	expect(refused).toBe(true);
+	await expect(leaving).toHaveCount(0);
+
+	const drawer = page.locator('[role="dialog"][aria-label="見本のドロワー"]');
+	await drawer.getByRole('button', { name: '閉じる' }).click();
+	await expect(drawer).toHaveAttribute('data-layer-inactive', 'true');
+	await opener.click();
+	await expect(drawer).not.toHaveAttribute('data-layer-inactive', 'true');
+	await expect(drawer.locator('xpath=..')).not.toHaveAttribute('inert', '');
+	await expect(drawer.getByRole('button', { name: '閉じる' })).toBeFocused();
+	await page.waitForTimeout(1200);
+	await expect(drawer).toBeVisible();
+});
+
+// Glass, with the Drawer panel forced to be a containing block (`will-change:
+// transform` - what an app's transform / filter, or an engine treating
+// backdrop-filter that way, does): the stacked Modal's backdrop then covers
+// only the Drawer, and a click left of the Drawer lands on the Drawer's own
+// backdrop. That click must not close the Drawer (and the Modal with it).
 test('glass: a click on the Drawer backdrop beside a stacked Modal closes nothing', async ({
 	page
 }) => {
 	await primeThemeAndAuth(page, DIAGONAL_MATRIX[1]);
 	await gotoDemo(page);
+	await page.addStyleTag({
+		content: '[role="dialog"][aria-label="見本のドロワー"] { will-change: transform; }'
+	});
 	const opener = page.getByTestId('ui-demo-open-drawer');
 	await opener.click();
 	const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
 	await page.getByTestId('ui-demo-open-nested').click();
 	const nested = page.getByRole('dialog', { name: '重ねたモーダル' });
 	await expect(nested).toBeVisible();
+	// The precondition: the Modal's backdrop is confined, so (100, 450) is the Drawer's backdrop.
+	const confined = await nested.locator('xpath=..').boundingBox();
+	expect(confined?.x ?? 0).toBeGreaterThan(100);
 
 	await page.mouse.click(100, 450);
 	await expect(nested).toBeVisible();

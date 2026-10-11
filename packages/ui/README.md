@@ -148,11 +148,14 @@ props は 2 つで同じ（型 `OverlayProps`）:
   `CommandPalette`（`--banto-z-overlay`）は `Modal`・`Drawer`（`--banto-z-modal`）より手前。
 - **見た目**: 背景 `--banto-scrim`、面 `--banto-surface-overlay`（glass の `--banto-backdrop` が効く）、
   影 `--banto-shadow-lg`。動きは CSS で、長さと緩急はテーマの `--banto-duration-fast`・`--banto-duration-base`・
-  `--banto-ease-out`（`prefers-reduced-motion` では 0ms）。閉じる動きのあいだは層を残し、もう無い層として扱う。
+  `--banto-ease-out`（`prefers-reduced-motion` では 0ms）。閉じる動きのあいだは層を残し、もう無い層として扱う
+  （`inert` にするので Tab・クリックも届かない）。止まっているパネルは `transform: none` なので、本文に置いた
+  `Modal` は画面全体を覆って中央に出る。
 - **置き場所**: `CommandPalette` と同じく `position: fixed`。`transform`・`filter`・`backdrop-filter` を
-  持つ要素の中に置かない（glass のカードの中など）。`Drawer` の本文に `Modal` を置く場合、glass では
-  `Modal` の背景が `Drawer` の範囲になる（`Drawer` の `backdrop-filter` が基準になるため）。その外側の
-  クリックは `Drawer` 自身の背景に当たるが、**手前に層がある間は背景のクリックでは閉じない**（Esc と同じく
+  持つ要素の中に置かない（glass のカードの中など）。`Drawer` の本文に `Modal` を置く場合、パネルが固定の子孫の
+  基準になる環境（パネルに `transform`・`filter` を足したアプリの CSS や、`backdrop-filter` をそう扱う
+  ブラウザ）では `Modal` の背景が `Drawer` の範囲になり、その外側のクリックは `Drawer` 自身の背景に当たる。
+  それでも**手前に層がある間は背景のクリックでは閉じない**（Esc と同じく
   譲る）ので、中の `Modal` の `dirty`・`onRequestClose` を飛ばして一緒に閉じることはない。
 - **非モーダルの右ペインは持たない**: banto-hub のタグ編集の右ペイン（広い画面）はページ側の分割表示で、
   この部品ではない。狭い画面ではページが `Modal`・`Drawer` に切り替える。

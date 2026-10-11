@@ -372,11 +372,16 @@ both banto-industrial apps (banto-hub, and ChronoGazer, which now has a copy) ca
   `transition:` (as Menu, ToastHost and CommandPalette), with durations and easing from the theme's
   `--banto-duration-fast`, `--banto-duration-base` and `--banto-ease-out` (0ms under
   `prefers-reduced-motion`). The entry uses `@starting-style`; on exit the layer stays mounted for
-  `--banto-duration-base` (with `data-layer-inactive`). Distances (48px, 0.96) live in the
+  `--banto-duration-base` (with `data-layer-inactive` and `inert` - without `inert`, Tab and Enter
+  reach the fading layer). The resting state is `transform: none` (even `translateX(0)` /
+  `scale(1)` makes the panel the containing block of fixed descendants, confining a `Modal` in a
+  `Drawer` in every theme). Distances (48px, 0.96) live in the
   component CSS like the other components'. No new tokens.
-- **The backdrop click also yields to a layer above** (#389 review): with glass, the `Drawer`
-  panel's `backdrop-filter` becomes the containing block of a nested `Modal`'s fixed overlay, so the
-  `Modal`'s backdrop covers only the `Drawer`. A click beside it lands on the `Drawer`'s own backdrop
+- **The backdrop click also yields to a layer above** (#389 review): when the `Drawer` panel becomes
+  the containing block of fixed descendants (at review time because of the resting `translateX(0)`,
+  fixed with `transform: none`; an app's `transform` / `filter` on it, or an engine treating
+  `backdrop-filter` that way, can still cause it), a nested `Modal`'s backdrop covers only the
+  `Drawer`. A click beside it lands on the `Drawer`'s own backdrop
   and used to close the `Drawer` with the `Modal`, skipping the `Modal`'s `dirty` / `onRequestClose`.
   The backdrop click now yields through the same `hasVisibleLayerAbove` as Esc. Moving the child's
   overlay to `<body>` (a portal) was not chosen: Svelte 5 has no built-in portal, and moving the DOM
