@@ -1,0 +1,102 @@
+/**
+ * `@banto/ui` Modal / Drawer on the `/ui-demo` page (ADR-0018 §10, phase 4):
+ * the Esc / focus layering in a real browser (jsdom has no layout, so the
+ * package's unit tests stub geometry and the scoped CSS that carries the
+ * `--banto-z-modal` z-index), plus an axe scan of the open layers in the two
+ * diagonal theme combos (the closed page's pixels are covered by the
+ * `ui-demo` screenshot in visual.spec.ts). Same `visual` project as the other
+ * specs here (vite preview, browser demo mode, reduced motion - so the
+ * transitions take 0ms).
+ */
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
+import { DIAGONAL_MATRIX, comboLabel, primeThemeAndAuth } from './theme';
+
+async function gotoDemo(page: Page): Promise<void> {
+	await page.goto('/ui-demo');
+	await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+}
+
+test.describe('ui-demo Modal / Drawer behaviour', () => {
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	test('Modal: focus moves in, Esc closes, focus returns to the opener', async ({ page }) => {
+		const opener = page.getByTestId('ui-demo-open-modal');
+		await opener.click();
+		const modal = page.getByRole('dialog', { name: '見本のモーダル' });
+		await expect(modal).toBeVisible();
+		await expect(modal.getByRole('button', { name: '閉じる' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(modal).toBeHidden();
+		await expect(opener).toBeFocused();
+		await expect(page.getByTestId('ui-demo-overlay-closed')).toContainText('1');
+	});
+
+	test('Drawer: dirty blocks Esc, a stacked Modal closes first, × closes the Drawer', async ({
+		page
+	}) => {
+		const opener = page.getByTestId('ui-demo-open-drawer');
+		await opener.click();
+		const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
+		await expect(drawer).toBeVisible();
+
+		await page.getByTestId('ui-demo-drawer-note').fill('draft');
+		await page.keyboard.press('Escape');
+		await expect(drawer).toBeVisible();
+		await expect(
+			page.getByText('未保存の入力があります。閉じるには × を押してください。')
+		).toBeVisible();
+
+		const nestedOpener = page.getByTestId('ui-demo-open-nested');
+		await nestedOpener.click();
+		const nested = page.getByRole('dialog', { name: '重ねたモーダル' });
+		await expect(nested).toBeVisible();
+		// The focus trap of the Drawer below must not pull focus out of the stacked Modal.
+		await page.keyboard.press('Tab');
+		await expect(nested.getByRole('button', { name: '閉じる' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(nested).toBeHidden();
+		await expect(drawer).toBeVisible();
+		await expect(nestedOpener).toBeFocused();
+
+		await drawer.getByRole('button', { name: '閉じる' }).first().click();
+		await expect(drawer).toBeHidden();
+		await expect(opener).toBeFocused();
+	});
+});
+
+/** Readable failure message: rule id + impact + affected node selectors. */
+function formatViolations(violations: import('axe-core').Result[]): string {
+	return violations
+		.map((v) => {
+			const nodes = v.nodes.map((n) => `    - ${n.target.join(' ')}`).join('\n');
+			return `[${v.impact ?? 'n/a'}] ${v.id}: ${v.help}\n${nodes}`;
+		})
+		.join('\n\n');
+}
+
+for (const combo of DIAGONAL_MATRIX) {
+	test.describe(`a11y ui-demo overlays ${comboLabel(combo)}`, () => {
+		test('open Modal has no wcag2a/wcag2aa violations', async ({ page }) => {
+			await primeThemeAndAuth(page, combo);
+			await gotoDemo(page);
+			await page.getByTestId('ui-demo-open-modal').click();
+			await expect(page.getByRole('dialog', { name: '見本のモーダル' })).toBeVisible();
+			const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+			expect(results.violations, formatViolations(results.violations)).toEqual([]);
+		});
+
+		test('open Drawer with a stacked Modal has no wcag2a/wcag2aa violations', async ({ page }) => {
+			await primeThemeAndAuth(page, combo);
+			await gotoDemo(page);
+			await page.getByTestId('ui-demo-open-drawer').click();
+			await page.getByTestId('ui-demo-open-nested').click();
+			await expect(page.getByRole('dialog', { name: '重ねたモーダル' })).toBeVisible();
+			const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+			expect(results.violations, formatViolations(results.violations)).toEqual([]);
+		});
+	});
+}

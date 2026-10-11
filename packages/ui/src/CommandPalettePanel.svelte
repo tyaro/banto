@@ -13,7 +13,7 @@
 		type CommandPaletteItem
 	} from './commandPalette';
 	import { defaultUiMessages, type UiMessages } from './messages';
-	import { attachFocusTrap, hasLayerAbove, restoreFocus } from './overlayFocus';
+	import { attachFocusTrap, hasVisibleLayerAbove, restoreFocus } from './layering';
 
 	interface Props {
 		items: readonly T[];
@@ -96,7 +96,7 @@
 		selectedIndex = first;
 	});
 
-	// The element focused when the palette opened (promise 5, overlayFocus.ts).
+	// The element focused when the palette opened (promise 5, layering.ts).
 	// Not $state - never rendered.
 	let opener: HTMLElement | null = null;
 	// Set when this panel is torn down (Esc / outside / parent set open=false).
@@ -157,11 +157,11 @@
 		}
 	}
 
-	// Promises 1-3 (overlayFocus.ts): consume the Esc that closes us, yield
+	// Promises 1-3 (layering.ts): consume the Esc that closes us, yield
 	// to an Esc already consumed or to a layer above.
 	function handleWindowKeydown(event: KeyboardEvent): void {
 		if (event.key !== 'Escape' || event.defaultPrevented) return;
-		if (paletteEl && hasLayerAbove(paletteEl)) return;
+		if (paletteEl && hasVisibleLayerAbove({ except: paletteEl })) return;
 		event.preventDefault();
 		onRequestClose('escape');
 	}

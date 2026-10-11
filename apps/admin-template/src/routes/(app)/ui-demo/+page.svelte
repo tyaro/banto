@@ -12,10 +12,12 @@
 	 * screenshot never depends on timing; the skeleton pulse is stopped by
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
-	 * The Menu card (phase 2a), the CommandPalette card (phase 2b) and the
-	 * Toast card (phase 2c) are closed / empty on load, so the screenshot shows
-	 * only their triggers; opening, keyboard and focus behaviour are covered by
-	 * the package's jsdom tests, not by the visual suite. The Toast card pushes
+	 * The Menu card (phase 2a), the CommandPalette card (phase 2b), the
+	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
+	 * empty on load, so the screenshot shows only their triggers; opening,
+	 * keyboard and focus behaviour are covered by the package's jsdom tests
+	 * (and the open Modal / Drawer by the axe scan in e2e/visual/a11y.spec.ts),
+	 * not by the visual suite. The Toast card pushes
 	 * into the app's own store (shown by the root layout's ToastHost).
 	 *
 	 * Not in the API on purpose (ADR-0018 §2): `IconButton` has no `disabled`
@@ -23,6 +25,7 @@
 	 */
 	import {
 		CommandPalette,
+		Drawer,
 		EmptyState,
 		ErrorState,
 		IconButton,
@@ -31,6 +34,7 @@
 		MenuGroup,
 		MenuItem,
 		MenuSeparator,
+		Modal,
 		PageHeader,
 		StatusBadge,
 		SurfaceCard,
@@ -73,6 +77,22 @@
 
 	let clicks = $state(0);
 	let undone = $state(0);
+
+	// Modal / Drawer card (phase 4): a modal, and a drawer whose note field
+	// makes it dirty (Esc / backdrop blocked, × discards) and which can stack
+	// a confirm modal on top - the Esc layering in one place.
+	let modalOpen = $state(false);
+	let drawerOpen = $state(false);
+	let nestedOpen = $state(false);
+	let drawerNote = $state('');
+	let overlayClosed = $state(0);
+	const overlayMessages = { overlayClose: () => m['common.close']() };
+
+	function closeDrawer(): void {
+		drawerOpen = false;
+		drawerNote = '';
+		overlayClosed += 1;
+	}
 	let selected = $state<string | undefined>(undefined);
 
 	// Static sample commands: two groups, an icon, a shortcut hint and a
@@ -263,6 +283,30 @@
 		</div>
 	</SurfaceCard>
 
+	<SurfaceCard title="Modal / Drawer" description={m['uiDemo.overlay.desc']()}>
+		<div class="row">
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				data-testid="ui-demo-open-modal"
+				onclick={() => (modalOpen = true)}
+			>
+				{m['uiDemo.overlay.openModal']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				data-testid="ui-demo-open-drawer"
+				onclick={() => (drawerOpen = true)}
+			>
+				{m['uiDemo.overlay.openDrawer']()}
+			</button>
+			<span class="caption" data-testid="ui-demo-overlay-closed">
+				{m['uiDemo.overlay.closedCount']()}: {overlayClosed}
+			</span>
+		</div>
+	</SurfaceCard>
+
 	<SurfaceCard title="ToastHost" description={m['uiDemo.toast.desc']()}>
 		<div class="row">
 			<button
@@ -387,7 +431,56 @@
 
 <!-- Outside the cards: under the glass preset SurfaceCard has a
      backdrop-filter, which would make it the containing block of the
-     palette's fixed overlay. -->
+     palette's (and the Modal / Drawer's) fixed overlay. -->
+<Modal
+	open={modalOpen}
+	title={m['uiDemo.overlay.modalTitle']()}
+	messages={overlayMessages}
+	onclose={() => {
+		modalOpen = false;
+		overlayClosed += 1;
+	}}
+>
+	<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
+</Modal>
+
+<Drawer
+	open={drawerOpen}
+	title={m['uiDemo.overlay.drawerTitle']()}
+	messages={overlayMessages}
+	dirty={drawerNote !== ''}
+	onBlockedClose={() => toastStore.push('info', m['uiDemo.overlay.blocked']())}
+	onclose={closeDrawer}
+>
+	<div class="stack">
+		<p class="body-text">{m['uiDemo.overlay.drawerBody']()}</p>
+		<label class="field">
+			<span class="caption">{m['uiDemo.overlay.drawerField']()}</span>
+			<input class="banto-input" data-testid="ui-demo-drawer-note" bind:value={drawerNote} />
+		</label>
+		<div class="row">
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				data-testid="ui-demo-open-nested"
+				onclick={() => (nestedOpen = true)}
+			>
+				{m['uiDemo.overlay.openNested']()}
+			</button>
+		</div>
+	</div>
+	<!-- Rendered inside the drawer's body on purpose: a nested layer with its
+	     own z-index is "above" its parent (@banto/ui layering.ts). -->
+	<Modal
+		open={nestedOpen}
+		title={m['uiDemo.overlay.nestedTitle']()}
+		messages={overlayMessages}
+		onclose={() => (nestedOpen = false)}
+	>
+		<p class="body-text">{m['uiDemo.overlay.nestedBody']()}</p>
+	</Modal>
+</Drawer>
+
 <CommandPalette
 	bind:open={paletteOpen}
 	items={paletteItems}
@@ -443,6 +536,12 @@
 		padding: 0.75rem;
 		border: 1px dashed var(--banto-border);
 		border-radius: var(--banto-radius-md);
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
 	}
 
 	.caption {
