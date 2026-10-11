@@ -8,8 +8,9 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `package-bare-imports` が `svelte`・`svelte/*`・相対パス以外を落とす）。
 
 段階 1 の部品は次の 7 つ。段階 2a でメニュー部品（4 つ、下の表の後）、段階 2b で
-`CommandPalette`（その後）、段階 2c でトースト（`createToastStore()` + `ToastHost`、末尾の節）を足した
-（段階 2 は完了。ADR-0018 §8）。
+`CommandPalette`（その後）、段階 2c でトースト（`createToastStore()` + `ToastHost`、その後の節）を足した
+（段階 2 は完了。ADR-0018 §8）。段階 4 で `Modal`・`Drawer` と Esc・フォーカスの層の補助を足した
+（トーストの後の節。ADR-0018 §10）。
 
 | 部品           | 役割                                                      | props / snippet                                   |
 | -------------- | --------------------------------------------------------- | ------------------------------------------------- |
@@ -74,7 +75,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `UiIconComponent`（`icon` に渡せる部品の型）、`UiMessages` / `defaultUiMessages`、
 `CommandPaletteItem`・`CommandPaletteCloseReason`・`defaultCommandPaletteSearch`、トーストの
 `createToastStore`・`DEFAULT_TOAST_DURATION_MS` と型 `Toast`・`ToastAction`・`ToastKind`・`ToastPushOptions`・`ToastStore`・
-`ToastStoreOptions` も export する。
+`ToastStoreOptions`、`Modal`・`Drawer` の型 `ModalProps`・`DrawerProps`・`OverlayProps` と層の補助
+（下の「層の補助」）も export する。
 
 トースト（段階 2c。**パッケージ唯一の `.svelte.ts`** を含む）:
 
@@ -111,6 +113,99 @@ toastStore.push('info', '削除しました', { action: { label: '取り消し',
 ```svelte
 <ToastHost store={toastStore} messages={{ toastClose: () => '閉じる' }} />
 ```
+
+モーダルとドロワー（段階 4。banto-industrial の banto-hub の部品を props ごと移したもの）:
+
+| 部品     | 役割                                                                                       | 既定の `width` |
+| -------- | ------------------------------------------------------------------------------------------ | -------------- |
+| `Modal`  | 中央のダイアログ（fade + scale）。作成のウィザードなど、前後の画面を見ずに済む一方向の作業 | `'560px'`      |
+| `Drawer` | 右端の全高のパネル（fade + 横から）。一覧を見ながら直す編集                                | `'480px'`      |
+
+props は 2 つで同じ（型 `OverlayProps`）:
+
+| prop                   | 型                                       | 意味                                                                                                     |
+| ---------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `open`                 | `boolean`                                | 出すか。**親が持つ**（部品は書き換えない。`onclose` で `false` にする）                                  |
+| `title?`               | `string`                                 | 見出し（`<h3>`）とダイアログの名前（`aria-label`）。名前が要るので渡す                                   |
+| `width?`               | `string`                                 | CSS の長さ（`'36rem'` など）。画面の幅から 2rem 引いた値を超えない（狭い画面でも収まる）                 |
+| `closeOnOverlayClick?` | `boolean`                                | 背景（スクリム）そのもののクリックで閉じるか。既定 `true`。パネルの中のクリックでは閉じない              |
+| `onclose?`             | `() => void`                             | 閉じてよいと決まったときに 1 回呼ぶ                                                                      |
+| `onRequestClose?`      | `() => boolean`                          | Esc・背景・× のどれでも閉じる前に聞く。`false` で開いたまま（未保存の破棄確認・処理中の抑止）            |
+| `dirty?`               | `boolean`                                | 未保存の入力があるか。`true` の間は **Esc と背景のクリックでは閉じず** `onBlockedClose` を呼ぶ。× は通す |
+| `onBlockedClose?`      | `() => void`                             | `dirty` で Esc・背景が止められたことの通知（トーストで「× で閉じる」と案内するなど）                     |
+| `focusFallback?`       | `() => HTMLElement \| null \| undefined` | 閉じたときに開いた元が消えている・`inert`・見えないときのフォーカスの行き先。無ければ動かさない          |
+| `messages?`            | `UiMessages`                             | `overlayClose`（× の名前と title。既定 `'閉じる'`）                                                      |
+| `children?`            | snippet                                  | 本文                                                                                                     |
+
+- **閉じる経路は 1 つ**: Esc・背景のクリック・× は同じ処理を通り、`onRequestClose` → `onclose` の順。
+  閉じると決めた後（閉じる動きの最中）に × をもう一度押しても、`onRequestClose` は二度聞かない。
+- **フォーカス**: 開いたら最初のフォーカスできる要素（見出しの ×）へ移す。開いている間は閉じ込める
+  （Tab は中で折り返し、外へ出たフォーカスは引き戻す）。閉じたら開いた時にフォーカスがあった要素へ戻す
+  （同じ更新で消えた要素へは戻さず `focusFallback()` へ）。
+- **Esc は手前の層から 1 つずつ**: Esc は window で受け、閉じるときは `preventDefault()` する。消費済みの
+  Esc と、手前に見えている層（z-index が大きい・同じなら文書で後ろ・中に置いた自分の z-index を持つ層・
+  開いている popover）には譲る。`Drawer` の本文の中に `Modal` を置けば、Esc はまず `Modal` を閉じる。
+  `CommandPalette`（`--banto-z-overlay`）は `Modal`・`Drawer`（`--banto-z-modal`）より手前。
+- **見た目**: 背景 `--banto-scrim`、面 `--banto-surface-overlay`（glass の `--banto-backdrop` が効く）、
+  影 `--banto-shadow-lg`。動きは CSS で、長さと緩急はテーマの `--banto-duration-fast`・`--banto-duration-base`・
+  `--banto-ease-out`（`prefers-reduced-motion` では 0ms）。閉じる動きのあいだは層を残し、もう無い層として扱う
+  （`inert` にするので Tab・クリックも届かない）。止まっているパネルは `transform: none` なので、本文に置いた
+  `Modal` は画面全体を覆って中央に出る。
+- **置き場所**: `CommandPalette` と同じく `position: fixed`。`transform`・`filter`・`backdrop-filter` を
+  持つ要素の中に置かない（glass のカードの中など）。`Drawer` の本文に `Modal` を置く場合、パネルが固定の子孫の
+  基準になる環境（パネルに `transform`・`filter` を足したアプリの CSS や、`backdrop-filter` をそう扱う
+  ブラウザ）では `Modal` の背景が `Drawer` の範囲になり、その外側のクリックは `Drawer` 自身の背景に当たる。
+  それでも**手前に層がある間は背景のクリックでは閉じない**（Esc と同じく
+  譲る）ので、中の `Modal` の `dirty`・`onRequestClose` を飛ばして一緒に閉じることはない。
+- **非モーダルの右ペインは持たない**: banto-hub のタグ編集の右ペイン（広い画面）はページ側の分割表示で、
+  この部品ではない。狭い画面ではページが `Modal`・`Drawer` に切り替える。
+
+```svelte
+<script lang="ts">
+	import { Drawer } from '@banto/ui';
+
+	let open = $state(false);
+	let draft = $state('');
+	const dirty = $derived(draft !== '');
+</script>
+
+<button type="button" onclick={() => (open = true)}>編集</button>
+<Drawer
+	{open}
+	title="接続の編集"
+	{dirty}
+	onRequestClose={() => !dirty || window.confirm('変更を破棄しますか？')}
+	onBlockedClose={() =>
+		toastStore.push('info', '未保存の変更があります。閉じるには × を押してください。')}
+	onclose={() => {
+		open = false;
+		draft = '';
+	}}
+>
+	<input bind:value={draft} />
+</Drawer>
+```
+
+### 層の補助
+
+`CommandPalette`・`Modal`・`Drawer` が使う Esc とフォーカスの補助（`src/layering.ts`）を、アプリが自前の層
+（狭い画面で退避するツリー・コンテキストメニュー・ページの Esc）に使えるよう公開している。仕組みは 1 つで、
+層の約束（banto-industrial #378 / #381 の 7 項目）はファイル冒頭にある。
+
+| export                                  | 役割                                                                                                                  |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真        |
+| `hasVisibleMenuLayer()`                 | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）                                           |
+| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                                |
+| `focusablesIn(panel)`                   | Tab で届く要素（`tabindex="-1"`・`:disabled`（無効な `fieldset` の中も）・`inert`・レイアウトされていないものを除く） |
+| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）               |
+| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                               |
+| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                          |
+| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                                   |
+| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                                    |
+| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                       |
+| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                           |
+| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                        |
 
 ## 使用例
 
@@ -183,8 +278,8 @@ toastStore.push('info', '削除しました', { action: { label: '取り消し',
 `icon` には `size` と `aria-hidden` を受ける Svelte 部品なら何でも渡せる（型は
 `UiIconComponent`）。`@lucide/svelte` の部品はそのまま渡せる。このパッケージは lucide に
 依存しない。**既定のアイコン**（Inbox・OctagonAlert・Circle・CircleCheck・TriangleAlert・
-CircleAlert・Info の 7 つ）は lucide の SVG を `src/icons/` に同梱したもので、アイコン集としては
-公開しない。同梱アイコンは ISC（一部は Feather 由来の MIT）で、表記は各ファイルの先頭と
+CircleAlert・Info の 7 つと、`Modal`・`Drawer` の × に使う X）は lucide の SVG を `src/icons/` に同梱した
+もので、アイコン集としては公開しない。同梱アイコンは ISC（一部は Feather 由来の MIT）で、表記は各ファイルの先頭と
 [src/icons/LICENSE](src/icons/LICENSE) にある。
 
 ## テーマ
@@ -213,7 +308,7 @@ npm レジストリには公開していない。モノレポ内では `workspac
 ## 見本
 
 admin-template の `/ui-demo`（デモモードのときだけナビに出る）に各部品の主要な状態を
-並べてある（メニューとコマンドパレットはボタンから開く）。
+並べてある（メニュー・コマンドパレット・モーダル・ドロワーはボタンから開く）。
 
 ## 関連ドキュメント
 

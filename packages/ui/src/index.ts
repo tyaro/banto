@@ -9,6 +9,9 @@
  * Phase 2c: ToastHost + `createToastStore()` (the package's only `.svelte.ts`,
  * so consumers must list `@banto/ui` in `optimizeDeps.exclude`, ADR-0007; the
  * app keeps only the Notifier -> store wiring).
+ * Phase 4: Modal / Drawer (banto-industrial banto-hub's, prop for prop) and the
+ * Esc / focus layering helpers they share with CommandPalette (`layering.ts`,
+ * one module for all overlays and public for an app's own layers).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -16,6 +19,25 @@
  * tokens.
  */
 export { default as CommandPalette } from './CommandPalette.svelte';
+export { default as Drawer } from './Drawer.svelte';
+export { default as Modal } from './Modal.svelte';
+export type { DrawerProps, ModalProps, OverlayProps } from './overlay';
+export {
+	attachFocusTrap,
+	canRestoreFocusTo,
+	effectiveZIndex,
+	FOCUSABLE_SELECTOR,
+	focusablesIn,
+	hasVisibleLayerAbove,
+	hasVisibleMenuLayer,
+	isCloseAllowed,
+	LAYER_INACTIVE_ATTR,
+	LAYER_MARKER_ATTR,
+	LAYER_SELECTOR,
+	MENU_LAYER_SELECTOR,
+	restoreFocus,
+	type OverlayCloseSource
+} from './layering';
 export {
 	defaultCommandPaletteSearch,
 	type CommandPaletteCloseReason,

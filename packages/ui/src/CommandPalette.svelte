@@ -9,7 +9,7 @@
 	 * Standard behaviour (from banto-industrial's banto-hub, #381): focus is
 	 * trapped inside while open, Esc is handled at window level (yielding to a
 	 * layer above), and on close focus returns to the element that had it when
-	 * the palette opened (`overlayFocus.ts`). Look follows admin-template
+	 * the palette opened (`layering.ts`, shared with Modal / Drawer). Look follows admin-template
 	 * (tokens, @starting-style appearance, `--banto-surface-hover` selected
 	 * row).
 	 *
