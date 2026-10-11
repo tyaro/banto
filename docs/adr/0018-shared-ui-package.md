@@ -2,7 +2,7 @@
 
 > English: [0018-shared-ui-package.en.md](0018-shared-ui-package.en.md)
 
-- 状態: Accepted（段階 1〜3 完了。Modal / Drawer と層の補助は決定 10 のとおり保留）
+- 状態: Accepted（段階 1〜4 完了。段階 4 = Modal / Drawer と層の補助、2026-10-11 オーナー決定で決定 10 を改めた。§10）
 - 日付: 2026-10-07
 - 関連: Issue #220 / [conventions.md](../conventions.md) §4・§5・§9・§13・§14 /
   [ADR-0002](0002-minimal-dependencies.md)・[ADR-0005](0005-i18n-paraglide.md)・
@@ -325,7 +325,77 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
   （`aria-disabled` の項目、banto-hub の Esc の層への組み込み）と形が違う。寄せるには `Menu` に座標で
   出す形を足す必要があり、得るものに見合わない。
 - Modal / Drawer と層の補助は決定 10 のとおり保留。banto-industrial 以外でも要るようになったら
-  新しい issue で扱う。
+  新しい issue で扱う。→ 2026-10-11 に段階 4 として入れた（§10）。
+
+### 10. 段階 4: Modal / Drawer と層の補助（2026-10-11 オーナー決定）
+
+オーナー決定（2026-10-11）: banto-industrial の 2 アプリ（banto-hub と、写しを持つようになった
+ChronoGazer）が共有できるよう、banto-hub の `Modal`・`Drawer` と層の補助（`escLayering.ts`・
+`focusTrap.ts`・`focusRestore.ts`・`drawerCloseGuard.ts`）を `@banto/ui` に移す（決定 10 を改めた）。
+
+- **部品**: `Modal`（中央・fade + scale・既定 560px）と `Drawer`（右端・全高・fade + 横から・既定 480px）を
+  公開する。中身は内部の `OverlayPanel.svelte` 1 つで、違いは置き場所と動きだけ（banto-hub は 2 つの写しを
+  揃えて直していた）。props は banto-hub と同じ（`open`・`title`・`width`・`closeOnOverlayClick`・
+  `onclose`・`onRequestClose`・`dirty`・`onBlockedClose`・`focusFallback`・`children`、型 `OverlayProps`）で、
+  足したのは `messages`（`UiMessages.overlayClose`、× の名前。既定 `'閉じる'`）だけ。`open` は親が持つ
+  （部品は書き換えない）。契約もそのまま: Esc・背景・× を 1 つの `requestClose` に通す、`onRequestClose` の
+  拒否、`dirty` の間は Esc と背景では閉じず `onBlockedClose`（× は通す）、二重に閉じない、閉じると決めた
+  時点で `data-layer-inactive`、開いたら先頭のフォーカスできる要素へ、フォーカストラップ、閉じたら
+  `tick()` の後に開いた元へ（駄目なら `focusFallback`）。banto-hub の `Drawer` に非モーダルの形は無い
+  （#375 のタグ編集の右ペインはページ側の分割表示）ので、この部品にも持たせない。狭い画面（#378）では
+  幅が画面の幅から 2rem 引いた値に収まる。
+- **見た目**: z-index は `--banto-z-modal`、背景は `--banto-scrim`、面は `--banto-surface-overlay`
+  （CommandPalette と同じ。glass の `--banto-backdrop` も効く）、影は `--banto-shadow-lg`、× は
+  `IconButton` と同梱の lucide の X。生の `rgba()` は無くなった。動きは Svelte の `transition:` をやめて CSS に
+  し（Menu・ToastHost・CommandPalette と同じ）、長さと緩急はテーマの `--banto-duration-fast`・
+  `--banto-duration-base`・`--banto-ease-out`（`prefers-reduced-motion` で 0ms）。出現は `@starting-style`、
+  閉じる動きは `--banto-duration-base` のあいだ層を残す（`data-layer-inactive` と `inert` 付き。`inert` が
+  無いと消えかけの層へ Tab・Enter が届く）。止まっている状態は `transform: none`（`translateX(0)`・`scale(1)`
+  でも固定の子孫の基準になり、`Drawer` の中の `Modal` がどのテーマでも `Drawer` に閉じ込められる）。移動量（48px・0.96）は
+  他の部品と同じく部品の CSS に置く。新しいトークンは足していない。
+- **背景のクリックも手前の層に譲る**（#389 レビュー）: `Drawer` のパネルが固定の子孫の基準になると
+  （レビュー時点では止まっている状態の `translateX(0)` が原因で、`transform: none` にして解消した。アプリの
+  CSS の `transform`・`filter` や、`backdrop-filter` をそう扱うブラウザでも起きうる）、中に置いた `Modal` の
+  背景は `Drawer` の範囲に閉じる。その外側のクリックは `Drawer` 自身の背景に当たり、以前は `Drawer` を `Modal` ごと閉じて `Modal` の `dirty`・
+  `onRequestClose` を飛ばしていた。背景のクリックも Esc と同じ `hasVisibleLayerAbove` で手前の層に譲る。
+  子のオーバーレイを `<body>` へ移す（portal）案は採らなかった: Svelte 5 に標準の portal は無く、DOM の位置を
+  変えると「中にあって自分の z-index を持つ層は手前」の判定やフォーカストラップの `contains` が使えなく
+  なり、呼び出し側の CSS の継承も変わる。見た目の範囲は残るが、閉じる経路は塞がる。
+- **閉じたかどうかは `open` で決める**: `onclose` を渡さない・`open` を `false` にしない親では、層は
+  そのまま操作でき、手前の層の判定にも残る（閉じると決めた時点で印を付けていた banto-hub の形は、
+  閉じない親で層が見えたまま無視される穴があった）。二重に閉じないのは同じ tick の中の再入と、
+  `open` が `false` になった後の操作を止めることで保つ。
+- **層の補助は 1 つのモジュール**（`layering.ts`）: 段階 2b のパレット用の内部の `overlayFocus.ts` と
+  banto-hub の 4 ファイルを 1 つにまとめ、`CommandPalette`・`Modal`・`Drawer` が同じものを使う（2 つの
+  仕組みを並べない）。アプリの自前の層（退避ツリー・コンテキストメニュー・ページの Esc）も使えるよう
+  公開する: `hasVisibleLayerAbove`・`hasVisibleMenuLayer`・`attachFocusTrap`・`focusablesIn`・
+  `restoreFocus`・`canRestoreFocusTo`・`effectiveZIndex`・`isCloseAllowed`・`LAYER_SELECTOR`・
+  `MENU_LAYER_SELECTOR`・`LAYER_MARKER_ATTR`・`LAYER_INACTIVE_ATTR`・`FOCUSABLE_SELECTOR`。名前と形は
+  banto-hub と同じ（`LAYER_ABOVE_SELECTOR` だけ `LAYER_SELECTOR` に改名）。層の約束 7 項目はファイル冒頭の
+  doc に移した。
+- **2 つの判定の突き合わせ**（どちらの結果も変えない範囲で和を取った）:
+  - 「手前の層」: z が大きい層（banto-hub）に加えて、z が同じなら文書で後ろの層（パレット）、開いている
+    popover（パレット）、`except` の**中**にあって自分の z-index を持つ層（新規。`Drawer` の本文に置いた
+    `Modal`、ダイアログの中のポップアップ）。中にあっても自分の z-index を持たない層は `except` の一部と
+    みなす。banto-hub は同じ z の層を同時に出さない（`blockedByOtherResourceDrawer`）ので、同じ z の
+    扱いを足しても banto-hub の結果は変わらない（以前は互いに譲って Esc が効かなかった組み合わせが、
+    文書で後ろの層から閉じるようになる）。
+  - 「もう無い層」: `data-layer-inactive`（自分か祖先）・`inert` の中・矩形が無い・`display: none`・
+    `visibility: hidden`。banto-hub は矩形を見てパレットは `inert` と祖先の印を見ていたので、両方を見る。
+    パレットにとっては、レイアウトされていない層を手前と数えなくなった点だけが違う。
+  - フォーカストラップ: パネルの `keydown` は、入れ子の層が先に処理した Tab（`defaultPrevented`）には
+    触らない（`Drawer` の中の `Modal` で二重に折り返さないため）。パレットでは起きない。
+  - `restoreFocus(target, fallback)`: `fallback` が要素を返せば同じ判定をかけてフォーカスし、何も返さ
+    なければ `fallback` 自身が動かしてよい（パレットと banto-hub の両方の呼び方を受ける）。
+- **テスト**: `packages/ui/tests/layering.test.ts`（層の積み重ね・同じ z・入れ子・もう無い層・トラップ・
+  戻し先の選び方・`drawerCloseGuard.test.ts` の移植）と `overlay.test.ts`（閉じる 3 経路・拒否・`dirty`・
+  二重に閉じない・`Drawer` の中の `Modal` と `CommandPalette` を Esc で 1 つずつ・トラップ・戻し）。
+  `CommandPalette` のテストは変えずに通る。見本ページ `/ui-demo` に `Modal`・`Drawer` を足し、
+  `e2e/visual/ui-overlays.spec.ts` が実ブラウザでの層の振る舞いと、開いた層の axe を見る。閉じた状態の
+  見本ページはカードが 1 枚増えるので、`ui-demo` の基準画像を visual-baselines.yml で作り直す。
+- **版**: 追加だけ（minor）。`@banto/ui` は段階 2c から `optimizeDeps.exclude` の対象なので、派生アプリの
+  設定は変わらない。banto-industrial の移行は import の差し替えが主で、props は同じ（移行のときは
+  `LAYER_ABOVE_SELECTOR` → `LAYER_SELECTOR`、`DrawerCloseSource` → `OverlayCloseSource`）。
 
 ## 検討した代替案
 
@@ -387,6 +457,7 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
    `.svelte.ts` が入るので、同じ PR で `optimizeDeps.exclude` と外部利用 fixture に載せる。
 10. **Modal / Drawer と層の補助**: 段階 2 には入れない。段階 3、または banto-industrial が必要と
     したときに扱う（オーナー注記: 「後ほど banto 側に入れるかもしれないが、その時はその時で」）。
+    → 2026-10-11 オーナー決定: 段階 4 として入れる（banto-hub と ChronoGazer で共有するため。§10）。
 11. **テーマのトークン**: オーバーレイの背景（`--banto-scrim` など）と z-index の層をテーマの
     トークンにする。
 12. **メニュー**: `popover` API を前提にしたままにする。banto-hub の `TreeContextMenu` を `Menu`
@@ -425,6 +496,7 @@ CommandPalette・ToastHost（2 アプリ）と、段階 2 に入れた場合は 
     banto-industrial の需要として段階 3 に回すか。入れる場合、banto-hub の契約を全部 option
     として持ち込むか、どれかを落とすか。
     → 決定: 段階 2 には入れない（段階 3 または需要のあるとき）。
+    → 2026-10-11 オーナー決定: 段階 4 として入れる（§10）。
 11. **テーマのトークン**: オーバーレイの背景（`--banto-scrim` など）と z-index の層
     （1000 / 900 など）をトークンにするか。
     → 決定: トークンにする。

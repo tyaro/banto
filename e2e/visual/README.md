@@ -16,6 +16,9 @@ never runs together with smoke.
   dashboard, items, users, settings, and the command palette.
 - `a11y.spec.ts` - `@axe-core/playwright` scans (`wcag2a`/`wcag2aa`) of
   dashboard, items, settings, and login.
+- `ui-overlays.spec.ts` - `@banto/ui` Modal / Drawer on `/ui-demo`: the Esc /
+  focus layering in a real browser (dirty guard, a Modal stacked in a Drawer,
+  focus restore) and axe scans of the open layers (ADR-0018 §10).
 
 ## Running
 

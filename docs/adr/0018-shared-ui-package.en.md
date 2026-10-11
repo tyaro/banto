@@ -2,7 +2,7 @@
 
 > 日本語: [0018-shared-ui-package.md](0018-shared-ui-package.md)
 
-- Status: Accepted (phases 1-3 done; Modal / Drawer and the layering helpers are deferred per decision 10)
+- Status: Accepted (phases 1-4 done; phase 4 = Modal / Drawer and the layering helpers, after the owner revised decision 10 on 2026-10-11, §10)
 - Date: 2026-10-07
 - Related: Issue #220 / [conventions.md](../conventions.en.md) §4, §5, §9, §13, §14 /
   [ADR-0002](0002-minimal-dependencies.en.md), [ADR-0005](0005-i18n-paraglide.en.md),
@@ -343,7 +343,93 @@ Outcome (2026-10-08):
   right-click coordinates (with `aria-disabled` items and hooks into banto-hub's Esc layering).
   Moving it would mean adding coordinate placement to `Menu`, which is not worth it.
 - Modal / Drawer and the layering helpers stay deferred per decision 10. If something other than
-  banto-industrial needs them, open a new issue.
+  banto-industrial needs them, open a new issue. -> Added as phase 4 on 2026-10-11 (§10).
+
+### 10. Phase 4: Modal / Drawer and the layering helpers (owner decision, 2026-10-11)
+
+Owner decision (2026-10-11): move banto-hub's `Modal`, `Drawer` and layering helpers
+(`escLayering.ts`, `focusTrap.ts`, `focusRestore.ts`, `drawerCloseGuard.ts`) into `@banto/ui` so
+both banto-industrial apps (banto-hub, and ChronoGazer, which now has a copy) can share them
+(revising decision 10).
+
+- **Components**: `Modal` (centred, fade + scale, default 560px) and `Drawer` (right edge, full
+  height, fade + slide, default 480px) are public. Both are thin wrappers around one internal
+  `OverlayPanel.svelte`; only placement and motion differ (banto-hub kept two copies edited in
+  lockstep). The props are banto-hub's (`open`, `title`, `width`, `closeOnOverlayClick`,
+  `onclose`, `onRequestClose`, `dirty`, `onBlockedClose`, `focusFallback`, `children`; type
+  `OverlayProps`); the only addition is `messages` (`UiMessages.overlayClose`, the ×'s name,
+  default `'閉じる'`). The parent owns `open` (the component never writes it). The contract is
+  unchanged: Esc, the scrim and × go through one `requestClose`; `onRequestClose` can veto; while
+  `dirty`, Esc and the scrim do not close and report `onBlockedClose` (× still goes through); no
+  double close; `data-layer-inactive` from the moment the close is decided; focus to the first
+  focusable on open; focus trap; focus back to the opener after `tick()` (else `focusFallback`).
+  banto-hub's `Drawer` has no non-modal mode (#375's tag-edit right pane is a page-level split
+  view), so neither does this one. On narrow screens (#378) the width stays within the viewport
+  width minus 2rem.
+- **Look**: z-index `--banto-z-modal`, scrim `--banto-scrim`, surface `--banto-surface-overlay`
+  (as CommandPalette; glass's `--banto-backdrop` applies), shadow `--banto-shadow-lg`, the × is an
+  `IconButton` with a vendored lucide X. No raw `rgba()` is left. Motion is CSS instead of Svelte
+  `transition:` (as Menu, ToastHost and CommandPalette), with durations and easing from the theme's
+  `--banto-duration-fast`, `--banto-duration-base` and `--banto-ease-out` (0ms under
+  `prefers-reduced-motion`). The entry uses `@starting-style`; on exit the layer stays mounted for
+  `--banto-duration-base` (with `data-layer-inactive` and `inert` - without `inert`, Tab and Enter
+  reach the fading layer). The resting state is `transform: none` (even `translateX(0)` /
+  `scale(1)` makes the panel the containing block of fixed descendants, confining a `Modal` in a
+  `Drawer` in every theme). Distances (48px, 0.96) live in the
+  component CSS like the other components'. No new tokens.
+- **The backdrop click also yields to a layer above** (#389 review): when the `Drawer` panel becomes
+  the containing block of fixed descendants (at review time because of the resting `translateX(0)`,
+  fixed with `transform: none`; an app's `transform` / `filter` on it, or an engine treating
+  `backdrop-filter` that way, can still cause it), a nested `Modal`'s backdrop covers only the
+  `Drawer`. A click beside it lands on the `Drawer`'s own backdrop
+  and used to close the `Drawer` with the `Modal`, skipping the `Modal`'s `dirty` / `onRequestClose`.
+  The backdrop click now yields through the same `hasVisibleLayerAbove` as Esc. Moving the child's
+  overlay to `<body>` (a portal) was not chosen: Svelte 5 has no built-in portal, and moving the DOM
+  would break the "nested layer with its own z-index is above" check and the focus trap's
+  `contains`, and change CSS inheritance for callers. The visual extent stays, but the closing path
+  is closed.
+- **Closed means `open` is false**: with no `onclose`, or a parent that keeps `open` true, the layer
+  stays fully usable and keeps counting in the layer checks (banto-hub marked it inactive as soon as
+  the close was requested, which left a visible layer that ignored itself). No double close is kept
+  by blocking re-entry within the same tick and any action after `open` became false.
+- **One layering module** (`layering.ts`): phase 2b's package-internal `overlayFocus.ts` for the
+  palette and banto-hub's four files are merged into one, used by `CommandPalette`, `Modal` and
+  `Drawer` alike (no two parallel mechanisms). It is public so an app's own layers (a retreating
+  tree, a context menu, a page-level Esc) can use it: `hasVisibleLayerAbove`,
+  `hasVisibleMenuLayer`, `attachFocusTrap`, `focusablesIn`, `restoreFocus`, `canRestoreFocusTo`,
+  `effectiveZIndex`, `isCloseAllowed`, `LAYER_SELECTOR`, `MENU_LAYER_SELECTOR`,
+  `LAYER_MARKER_ATTR`, `LAYER_INACTIVE_ATTR`, `FOCUSABLE_SELECTOR`. Names and shapes follow
+  banto-hub (only `LAYER_ABOVE_SELECTOR` became `LAYER_SELECTOR`). The seven layer promises moved
+  into the file's header doc.
+- **Reconciling the two checks** (the union, kept within what changes neither side's results):
+  - "Above": a higher z (banto-hub), plus at equal z the later one in document order (palette), an
+    open popover (palette), and a layer **inside** `except` with its own z-index (new: a `Modal`
+    placed in a `Drawer`'s body, a popup inside a dialog). A nested layer without its own z-index
+    is part of `except`. banto-hub never shows two equal-z layers at once
+    (`blockedByOtherResourceDrawer`), so the equal-z rule does not change its results (a pair that
+    used to deadlock now closes the later one first).
+  - "Not there": `data-layer-inactive` (self or ancestor), inside `inert`, no client rects,
+    `display: none`, `visibility: hidden`. banto-hub checked rects and the palette checked `inert`
+    and ancestor markers, so both are checked. For the palette the only difference is that a layer
+    that is not laid out no longer counts as above.
+  - Focus trap: the panel's `keydown` leaves a Tab already handled by a nested layer
+    (`defaultPrevented`) alone, so a `Modal` inside a `Drawer` does not wrap twice. It never
+    happens for the palette.
+  - `restoreFocus(target, fallback)`: an element returned by `fallback` gets the same check and is
+    focused; a `fallback` that returns nothing may move focus itself (accepting both the palette's
+    and banto-hub's call shapes).
+- **Tests**: `packages/ui/tests/layering.test.ts` (the stack, equal z, nesting, layers that are
+  not there, the trap, restore-target selection, banto-hub's `drawerCloseGuard.test.ts` ported) and
+  `overlay.test.ts` (the three close routes, veto, `dirty`, no double close, Esc one layer at a time
+  through a `Modal` in a `Drawer` and a `CommandPalette` over it, trap, restore). The
+  `CommandPalette` tests pass unchanged. The `/ui-demo` page gains `Modal` and `Drawer`, and
+  `e2e/visual/ui-overlays.spec.ts` checks the layering in a real browser plus axe on the open
+  layers. The closed demo page gains one card, so the `ui-demo` baselines are regenerated with
+  visual-baselines.yml.
+- **Version**: additive (minor). `@banto/ui` has been under `optimizeDeps.exclude` since phase 2c,
+  so derived apps' config does not change. banto-industrial's migration is mostly an import swap
+  with the same props (`LAYER_ABOVE_SELECTOR` -> `LAYER_SELECTOR`, `DrawerCloseSource` ->
+  `OverlayCloseSource`).
 
 ## Alternatives considered
 
@@ -414,7 +500,7 @@ Phase-2 decision points (added 2026-10-07):
    to `optimizeDeps.exclude` and the external-consumer fixture.
 10. **Modal / Drawer and the layering helpers**: not part of phase 2; deferred to phase 3 or to
     when banto-industrial needs them (owner note: "後ほど banto 側に入れるかもしれないが、その時は
-    その時で").
+    その時で"). -> Owner decision 2026-10-11: added as phase 4 (shared by banto-hub and ChronoGazer, §10).
 11. **Theme tokens**: the overlay scrim and the z-index layers become theme tokens.
 12. **Menu**: keep the `popover` API assumption. Whether banto-hub's `TreeContextMenu` aligns
     with `Menu` is decided in phase 3. -> Phase 3 (owner decision, 2026-10-08): it does **not** (§9).
@@ -454,6 +540,7 @@ Before phase 2 (settled; see decisions 8 to 12 in the owner decisions):
     page that uses them), or leave them to phase 3 as banto-industrial's need? If included, bring
     all of banto-hub's contracts as options, or drop some?
     -> Decided: not in phase 2 (phase 3 or when needed).
+    -> Owner decision 2026-10-11: added as phase 4 (§10).
 11. **Theme tokens**: make the overlay background (`--banto-scrim` or similar) and the z-index
     layers (1000 / 900 and so on) tokens?
     -> Decided: make them tokens.

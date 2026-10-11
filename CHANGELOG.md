@@ -22,6 +22,11 @@
 
 ## [Unreleased]
 
+### 追加
+
+- `@banto/ui`: `Modal`（中央）・`Drawer`（右端）と、Esc・フォーカスの層の補助（`hasVisibleLayerAbove`・`hasVisibleMenuLayer`・`attachFocusTrap`・`focusablesIn`・`restoreFocus`・`canRestoreFocusTo`・`effectiveZIndex`・`isCloseAllowed` と `LAYER_*`・`FOCUSABLE_SELECTOR`、型 `ModalProps`・`DrawerProps`・`OverlayProps`・`OverlayCloseSource`）を追加（ADR-0018 段階 4、2026-10-11 オーナー決定。追加のみ。後方互換）。banto-industrial の banto-hub の部品の props（`open`・`title`・`width`・`closeOnOverlayClick`・`onclose`・`onRequestClose`・`dirty`・`onBlockedClose`・`focusFallback`）をそのまま持ち、× の名前は `UiMessages.overlayClose`（既定 `'閉じる'`）。重なりは `--banto-z-modal`、背景は `--banto-scrim`。派生アプリへの影響: 経路 A はタグを上げるだけ（`@banto/ui` は既に `optimizeDeps.exclude` の対象で、変更は不要）。経路 B・C は変更なし。
+- `@banto/ui`: `CommandPalette` の Esc・フォーカスの扱いは、`Modal`・`Drawer` と同じ 1 つの補助（`layering.ts`。段階 2b の内部の `overlayFocus.ts` を置き換えた）を使うようにした。パレットの振る舞いは変わらない（違いは、レイアウトされていない層・`display: none` の中の層を手前の層と数えなくなったことだけ）。admin-template の `/ui-demo` に `Modal`・`Drawer` の見本を足した。
+
 ## [6.6.0] - 2026-10-10
 
 **v6.6.0 — `banto-admin-services` の監査に、記録の失敗と保留（spool）の警告行をアプリ自前のログへ流す `with_log_sink` / `with_shared_log_sink` と型 `AuditLogSink` を足した（ADR-0019、tyaro/banto-industrial#437 の続き）。版の種類: minor（追加のみ。後方互換）。
