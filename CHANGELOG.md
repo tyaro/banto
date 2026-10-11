@@ -22,6 +22,27 @@
 
 ## [Unreleased]
 
+## [6.7.0] - 2026-10-11
+
+**v6.7.0 — `@banto/ui` に `Modal`・`Drawer` と、Esc・フォーカスの層の補助（`layering.ts`）を足した（ADR-0018 段階 4）。`CommandPalette` も同じ補助を使う。版の種類: minor（追加のみ。後方互換）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 B・C は変更なし。**
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                 |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v6.6.0` → `v6.7.0`（npm と Rust を同じタグに）。`optimizeDeps.exclude` の変更は不要。`Modal`・`Drawer`・層の補助を使わなければ挙動は変わらない（`CommandPalette` の振る舞いも同じ） |
+| B. コピーしたテンプレート        | なし | 変更なし                                                                                                                                                                             |
+| C. DB・設定・配布資産            | なし | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                              |
+
+### 消費側への注意
+
+- 既存の公開 API は変わらない（追加のみ）。`CommandPalette` の Esc・フォーカスの扱いは共通の補助に移ったが、振る舞いは同じ（配置されていない層を手前の層と数えなくなった、という端の違いだけ）。
+- 自前の Modal・Drawer やフォーカスの閉じ込めの写しを持つアプリは、`@banto/ui` の `Modal`・`Drawer`・`hasVisibleLayerAbove` などに置き換えられる（props は banto-industrial の banto-hub と同じ。`LAYER_ABOVE_SELECTOR` → `LAYER_SELECTOR`、`DrawerCloseSource` → `OverlayCloseSource`）。面は `--banto-surface-overlay`、z は `--banto-z-modal`。
+- 開発用の依存を更新した（Playwright 1.64、Svelte 5.57.2、SvelteKit 3.0.1、Vite 8.3.3、jsdom 30.1.2 など）。external-consumer の fixture の版の範囲も admin-template に揃えた。
+
+### 検証した組み合わせ
+
+- （タグの後に追記: external-consumer.yml の run の URL と、Node.js / pnpm / Svelte / SvelteKit / Vite / Rust の版）
+
 ### 追加
 
 - `@banto/ui`: `Modal`（中央）・`Drawer`（右端）と、Esc・フォーカスの層の補助（`hasVisibleLayerAbove`・`hasVisibleMenuLayer`・`attachFocusTrap`・`focusablesIn`・`restoreFocus`・`canRestoreFocusTo`・`effectiveZIndex`・`isCloseAllowed` と `LAYER_*`・`FOCUSABLE_SELECTOR`、型 `ModalProps`・`DrawerProps`・`OverlayProps`・`OverlayCloseSource`）を追加（ADR-0018 段階 4、2026-10-11 オーナー決定。追加のみ。後方互換）。banto-industrial の banto-hub の部品の props（`open`・`title`・`width`・`closeOnOverlayClick`・`onclose`・`onRequestClose`・`dirty`・`onBlockedClose`・`focusFallback`）をそのまま持ち、× の名前は `UiMessages.overlayClose`（既定 `'閉じる'`）。重なりは `--banto-z-modal`、背景は `--banto-scrim`。派生アプリへの影響: 経路 A はタグを上げるだけ（`@banto/ui` は既に `optimizeDeps.exclude` の対象で、変更は不要）。経路 B・C は変更なし。
@@ -2800,7 +2821,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.6.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.7.0...HEAD
+[6.7.0]: https://github.com/tyaro/banto/compare/v6.6.0...v6.7.0
 [6.6.0]: https://github.com/tyaro/banto/compare/v6.5.0...v6.6.0
 [6.5.0]: https://github.com/tyaro/banto/compare/v6.4.0...v6.5.0
 [6.4.0]: https://github.com/tyaro/banto/compare/v6.3.2...v6.4.0
