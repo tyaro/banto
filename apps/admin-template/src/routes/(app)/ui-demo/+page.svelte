@@ -90,6 +90,7 @@
 
 	function closeDrawer(): void {
 		drawerOpen = false;
+		nestedOpen = false;
 		drawerNote = '';
 		overlayClosed += 1;
 	}

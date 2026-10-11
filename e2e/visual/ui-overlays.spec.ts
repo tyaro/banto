@@ -68,6 +68,38 @@ test.describe('ui-demo Modal / Drawer behaviour', () => {
 	});
 });
 
+// Glass: the Drawer's backdrop-filter makes it the containing block of the
+// stacked Modal's fixed overlay, so the Modal's backdrop covers only the
+// Drawer and a click left of the Drawer lands on the Drawer's own backdrop.
+// That click must not close the Drawer (and the Modal with it).
+test('glass: a click on the Drawer backdrop beside a stacked Modal closes nothing', async ({
+	page
+}) => {
+	await primeThemeAndAuth(page, DIAGONAL_MATRIX[1]);
+	await gotoDemo(page);
+	const opener = page.getByTestId('ui-demo-open-drawer');
+	await opener.click();
+	const drawer = page.getByRole('dialog', { name: '見本のドロワー' });
+	await page.getByTestId('ui-demo-open-nested').click();
+	const nested = page.getByRole('dialog', { name: '重ねたモーダル' });
+	await expect(nested).toBeVisible();
+
+	await page.mouse.click(100, 450);
+	await expect(nested).toBeVisible();
+	await expect(drawer).toBeVisible();
+
+	// Esc closes the stacked Modal first; then the backdrop click closes the Drawer.
+	await page.keyboard.press('Escape');
+	await expect(nested).toBeHidden();
+	await page.mouse.click(100, 450);
+	await expect(drawer).toBeHidden();
+
+	// Closing the Drawer also reset the stacked Modal: reopening shows only the Drawer.
+	await opener.click();
+	await expect(drawer).toBeVisible();
+	await expect(nested).toBeHidden();
+});
+
 /** Readable failure message: rule id + impact + affected node selectors. */
 function formatViolations(violations: import('axe-core').Result[]): string {
 	return violations

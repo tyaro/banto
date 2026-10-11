@@ -151,7 +151,9 @@ props は 2 つで同じ（型 `OverlayProps`）:
   `--banto-ease-out`（`prefers-reduced-motion` では 0ms）。閉じる動きのあいだは層を残し、もう無い層として扱う。
 - **置き場所**: `CommandPalette` と同じく `position: fixed`。`transform`・`filter`・`backdrop-filter` を
   持つ要素の中に置かない（glass のカードの中など）。`Drawer` の本文に `Modal` を置く場合、glass では
-  `Modal` の背景が `Drawer` の範囲になる。
+  `Modal` の背景が `Drawer` の範囲になる（`Drawer` の `backdrop-filter` が基準になるため）。その外側の
+  クリックは `Drawer` 自身の背景に当たるが、**手前に層がある間は背景のクリックでは閉じない**（Esc と同じく
+  譲る）ので、中の `Modal` の `dirty`・`onRequestClose` を飛ばして一緒に閉じることはない。
 - **非モーダルの右ペインは持たない**: banto-hub のタグ編集の右ペイン（広い画面）はページ側の分割表示で、
   この部品ではない。狭い画面ではページが `Modal`・`Drawer` に切り替える。
 

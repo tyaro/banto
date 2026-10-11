@@ -107,9 +107,14 @@
 	}
 
 	// Only a click on the scrim itself (not one bubbling from the panel), so
-	// the panel needs no stopPropagation click handler.
+	// the panel needs no stopPropagation click handler. It also yields to a
+	// layer above (promise 2), like Esc: a fixed overlay nested in the panel is
+	// confined to it when the panel is a containing block (glass's
+	// backdrop-filter), so a click beside it lands on OUR scrim - closing here
+	// would take the child down too, past its own `dirty` / `onRequestClose`.
 	function handleOverlayClick(event: MouseEvent): void {
 		if (!closeOnOverlayClick || event.target !== event.currentTarget) return;
+		if (hasVisibleLayerAbove({ except: panelEl })) return;
 		if (!isCloseAllowed('overlay', dirty)) {
 			onBlockedClose?.();
 			return;

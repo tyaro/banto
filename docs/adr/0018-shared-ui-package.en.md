@@ -374,6 +374,15 @@ both banto-industrial apps (banto-hub, and ChronoGazer, which now has a copy) ca
   `prefers-reduced-motion`). The entry uses `@starting-style`; on exit the layer stays mounted for
   `--banto-duration-base` (with `data-layer-inactive`). Distances (48px, 0.96) live in the
   component CSS like the other components'. No new tokens.
+- **The backdrop click also yields to a layer above** (#389 review): with glass, the `Drawer`
+  panel's `backdrop-filter` becomes the containing block of a nested `Modal`'s fixed overlay, so the
+  `Modal`'s backdrop covers only the `Drawer`. A click beside it lands on the `Drawer`'s own backdrop
+  and used to close the `Drawer` with the `Modal`, skipping the `Modal`'s `dirty` / `onRequestClose`.
+  The backdrop click now yields through the same `hasVisibleLayerAbove` as Esc. Moving the child's
+  overlay to `<body>` (a portal) was not chosen: Svelte 5 has no built-in portal, and moving the DOM
+  would break the "nested layer with its own z-index is above" check and the focus trap's
+  `contains`, and change CSS inheritance for callers. The visual extent stays, but the closing path
+  is closed.
 - **Closed means `open` is false**: with no `onclose`, or a parent that keeps `open` true, the layer
   stays fully usable and keeps counting in the layer checks (banto-hub marked it inactive as soon as
   the close was requested, which left a visible layer that ignored itself). No double close is kept

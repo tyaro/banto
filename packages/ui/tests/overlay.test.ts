@@ -267,6 +267,21 @@ describe('Modal / Drawer: Esc layering and focus', () => {
 		expect(document.activeElement).toBe(opener);
 	});
 
+	it("a click on the parent's backdrop is ignored while a child layer is open (no bypass of the child)", async () => {
+		const { dialog } = await openOverlay();
+		await fireEvent.click(screen.getByTestId('open-nested'));
+		await flush();
+		await fireEvent.click(dialog.parentElement as HTMLElement);
+		await flush();
+		expect(state()).toBe('open');
+		expect(nestedState()).toBe('open');
+		await escape();
+		expect(nestedState()).toBe('closed');
+		await fireEvent.click(dialog.parentElement as HTMLElement);
+		await flush();
+		expect(state()).toBe('closed');
+	});
+
 	it('CommandPalette over a Drawer: Esc closes the palette only, then the Drawer', async () => {
 		await openOverlay();
 		await fireEvent.click(screen.getByTestId('open-palette'));
