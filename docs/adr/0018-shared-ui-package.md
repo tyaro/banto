@@ -346,7 +346,15 @@ ChronoGazer）が共有できるよう、banto-hub の `Modal`・`Drawer` と層
   幅が画面の幅から 2rem 引いた値に収まる。
 - **見た目**: z-index は `--banto-z-modal`、背景は `--banto-scrim`、面は `--banto-surface-overlay`
   （CommandPalette と同じ。glass の `--banto-backdrop` も効く）、影は `--banto-shadow-lg`、× は
-  `IconButton` と同梱の lucide の X。生の `rgba()` は無くなった。動きは `prefers-reduced-motion` で 0ms。
+  `IconButton` と同梱の lucide の X。生の `rgba()` は無くなった。動きは Svelte の `transition:` をやめて CSS に
+  し（Menu・ToastHost・CommandPalette と同じ）、長さと緩急はテーマの `--banto-duration-fast`・
+  `--banto-duration-base`・`--banto-ease-out`（`prefers-reduced-motion` で 0ms）。出現は `@starting-style`、
+  閉じる動きは `--banto-duration-base` のあいだ層を残す（`data-layer-inactive` 付き）。移動量（48px・0.96）は
+  他の部品と同じく部品の CSS に置く。新しいトークンは足していない。
+- **閉じたかどうかは `open` で決める**: `onclose` を渡さない・`open` を `false` にしない親では、層は
+  そのまま操作でき、手前の層の判定にも残る（閉じると決めた時点で印を付けていた banto-hub の形は、
+  閉じない親で層が見えたまま無視される穴があった）。二重に閉じないのは同じ tick の中の再入と、
+  `open` が `false` になった後の操作を止めることで保つ。
 - **層の補助は 1 つのモジュール**（`layering.ts`）: 段階 2b のパレット用の内部の `overlayFocus.ts` と
   banto-hub の 4 ファイルを 1 つにまとめ、`CommandPalette`・`Modal`・`Drawer` が同じものを使う（2 つの
   仕組みを並べない）。アプリの自前の層（退避ツリー・コンテキストメニュー・ページの Esc）も使えるよう

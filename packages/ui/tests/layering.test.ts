@@ -212,6 +212,34 @@ describe('focus trap (promise 4)', () => {
 		expect(focusablesIn(modal.panel)).toEqual([first, second]);
 	});
 
+	it('focusablesIn skips controls out of the tab order and controls disabled by a <fieldset>', () => {
+		const { modal, first, second } = trapped();
+		const untabbable = button('untabbable', modal.panel);
+		untabbable.tabIndex = -1;
+		modal.panel.prepend(untabbable.cloneNode(true));
+		const fieldset = document.createElement('fieldset');
+		fieldset.disabled = true;
+		const input = document.createElement('input');
+		fieldset.append(input);
+		button('in fieldset', fieldset);
+		modal.panel.append(fieldset);
+		expect(focusablesIn(modal.panel)).toEqual([first, second]);
+	});
+
+	it('wraps Tab between the real first / last when tabindex="-1" controls sit at both ends', () => {
+		const { modal, first, second } = trapped();
+		const head = document.createElement('button');
+		head.tabIndex = -1;
+		modal.panel.prepend(head);
+		const tail = button('tail', modal.panel);
+		tail.tabIndex = -1;
+		second.focus();
+		expect(tab(second).defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(first);
+		expect(tab(first, true).defaultPrevented).toBe(true);
+		expect(document.activeElement).toBe(second);
+	});
+
 	it('wraps Tab on the last and Shift+Tab on the first', () => {
 		const { first, second } = trapped();
 		second.focus();

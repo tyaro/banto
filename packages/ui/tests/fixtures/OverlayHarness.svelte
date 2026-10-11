@@ -2,7 +2,8 @@
 	// Test harness: an opener for a Drawer (or a Modal, `kind`), an element
 	// outside, a Modal nested inside the Drawer's body (the "Modal over Drawer"
 	// stack), and an optional CommandPalette over everything. The parent owns
-	// `open` like a real caller: `onclose` sets it to false.
+	// `open` like a real caller: `onclose` sets it to false (unless `keepOpen`,
+	// a parent that decides not to close).
 	import { CommandPalette, Drawer, Modal, type UiMessages } from '../../src/index';
 
 	let {
@@ -12,6 +13,7 @@
 		closeOnOverlayClick,
 		onRequestClose,
 		onclose,
+		keepOpen = false,
 		dirty,
 		onBlockedClose,
 		focusFallback,
@@ -23,6 +25,7 @@
 		closeOnOverlayClick?: boolean;
 		onRequestClose?: () => boolean;
 		onclose?: () => void;
+		keepOpen?: boolean;
 		dirty?: boolean;
 		onBlockedClose?: () => void;
 		focusFallback?: () => HTMLElement | null;
@@ -52,7 +55,7 @@
 	{messages}
 	onclose={() => {
 		onclose?.();
-		open = false;
+		if (!keepOpen) open = false;
 	}}
 >
 	<input data-testid="field" />

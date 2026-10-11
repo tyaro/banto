@@ -368,8 +368,16 @@ both banto-industrial apps (banto-hub, and ChronoGazer, which now has a copy) ca
   width minus 2rem.
 - **Look**: z-index `--banto-z-modal`, scrim `--banto-scrim`, surface `--banto-surface-overlay`
   (as CommandPalette; glass's `--banto-backdrop` applies), shadow `--banto-shadow-lg`, the × is an
-  `IconButton` with a vendored lucide X. No raw `rgba()` is left. Motion drops to 0ms under
-  `prefers-reduced-motion`.
+  `IconButton` with a vendored lucide X. No raw `rgba()` is left. Motion is CSS instead of Svelte
+  `transition:` (as Menu, ToastHost and CommandPalette), with durations and easing from the theme's
+  `--banto-duration-fast`, `--banto-duration-base` and `--banto-ease-out` (0ms under
+  `prefers-reduced-motion`). The entry uses `@starting-style`; on exit the layer stays mounted for
+  `--banto-duration-base` (with `data-layer-inactive`). Distances (48px, 0.96) live in the
+  component CSS like the other components'. No new tokens.
+- **Closed means `open` is false**: with no `onclose`, or a parent that keeps `open` true, the layer
+  stays fully usable and keeps counting in the layer checks (banto-hub marked it inactive as soon as
+  the close was requested, which left a visible layer that ignored itself). No double close is kept
+  by blocking re-entry within the same tick and any action after `open` became false.
 - **One layering module** (`layering.ts`): phase 2b's package-internal `overlayFocus.ts` for the
   palette and banto-hub's four files are merged into one, used by `CommandPalette`, `Modal` and
   `Drawer` alike (no two parallel mechanisms). It is public so an app's own layers (a retreating

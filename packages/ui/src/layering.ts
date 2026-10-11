@@ -83,13 +83,19 @@ function isRendered(el: Element): boolean {
 }
 
 /**
- * Focusables inside `panel` that can take focus now, in DOM order: not
- * `disabled`, not inside `inert`, laid out. Counted on every call - form
- * parts come and go while a layer is open.
+ * Focusables inside `panel` that Tab can reach now, in DOM order: in the tab
+ * order (`tabIndex >= 0`, so a native control with `tabindex="-1"` is out),
+ * not effectively disabled (`:disabled` also covers controls inside a
+ * disabled `<fieldset>`), not inside `inert`, laid out. Counted on every call
+ * - form parts come and go while a layer is open.
  */
 export function focusablesIn(panel: HTMLElement): HTMLElement[] {
 	return [...panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
-		(el) => !el.hasAttribute('disabled') && !el.closest('[inert]') && el.getClientRects().length > 0
+		(el) =>
+			el.tabIndex >= 0 &&
+			!el.matches(':disabled') &&
+			!el.closest('[inert]') &&
+			el.getClientRects().length > 0
 	);
 }
 

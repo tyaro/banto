@@ -147,7 +147,8 @@ props は 2 つで同じ（型 `OverlayProps`）:
   開いている popover）には譲る。`Drawer` の本文の中に `Modal` を置けば、Esc はまず `Modal` を閉じる。
   `CommandPalette`（`--banto-z-overlay`）は `Modal`・`Drawer`（`--banto-z-modal`）より手前。
 - **見た目**: 背景 `--banto-scrim`、面 `--banto-surface-overlay`（glass の `--banto-backdrop` が効く）、
-  影 `--banto-shadow-lg`。動きは `prefers-reduced-motion` で 0ms になる。
+  影 `--banto-shadow-lg`。動きは CSS で、長さと緩急はテーマの `--banto-duration-fast`・`--banto-duration-base`・
+  `--banto-ease-out`（`prefers-reduced-motion` では 0ms）。閉じる動きのあいだは層を残し、もう無い層として扱う。
 - **置き場所**: `CommandPalette` と同じく `position: fixed`。`transform`・`filter`・`backdrop-filter` を
   持つ要素の中に置かない（glass のカードの中など）。`Drawer` の本文に `Modal` を置く場合、glass では
   `Modal` の背景が `Drawer` の範囲になる。
@@ -186,20 +187,20 @@ props は 2 つで同じ（型 `OverlayProps`）:
 （狭い画面で退避するツリー・コンテキストメニュー・ページの Esc）に使えるよう公開している。仕組みは 1 つで、
 層の約束（banto-industrial #378 / #381 の 7 項目）はファイル冒頭にある。
 
-| export                                  | 役割                                                                                                           |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真 |
-| `hasVisibleMenuLayer()`                 | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）                                    |
-| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                         |
-| `focusablesIn(panel)`                   | いまフォーカスできる要素（`disabled`・`inert`・レイアウトされていないものを除く）                              |
-| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）        |
-| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                        |
-| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                   |
-| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                            |
-| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                             |
-| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                |
-| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                    |
-| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                 |
+| export                                  | 役割                                                                                                                  |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真        |
+| `hasVisibleMenuLayer()`                 | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）                                           |
+| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                                |
+| `focusablesIn(panel)`                   | Tab で届く要素（`tabindex="-1"`・`:disabled`（無効な `fieldset` の中も）・`inert`・レイアウトされていないものを除く） |
+| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）               |
+| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                               |
+| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                          |
+| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                                   |
+| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                                    |
+| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                       |
+| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                           |
+| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                        |
 
 ## 使用例
 

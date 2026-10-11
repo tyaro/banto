@@ -9,16 +9,23 @@
 	 *
 	 * - Esc, the scrim click and × all go through one `requestClose()`:
 	 *   `onRequestClose()` may veto, then `onclose()`. It is idempotent - an
-	 *   outro keeps the panel clickable for ~160ms, and a second × must not ask
-	 *   the unsaved-changes question twice.
+	 *   outro keeps the panel clickable for a moment, and a second × must not ask
+	 *   the unsaved-changes question twice. "Closed" means the parent set `open`
+	 *   to false: a parent that keeps it open (no `onclose`, or a later decision)
+	 *   leaves a fully working, still detectable layer.
 	 * - `dirty` blocks only the accidental routes (Esc, scrim) and reports
 	 *   `onBlockedClose()`; × is deliberate and always reaches `onRequestClose`
 	 *   (`isCloseAllowed`).
 	 * - The layer promises of `layering.ts`: Esc at window level, consumed when
 	 *   it closes us, yielded to an already-consumed Esc or a layer above;
-	 *   `data-layer-inactive` from the moment the close was decided (promise 6,
-	 *   set synchronously - the re-render is too late for the next Esc); focus
-	 *   trap while open; focus back to the opener on close.
+	 *   `data-layer-inactive` from the moment `open` is false (promise 6, set
+	 *   synchronously when the parent closed inside `onclose` - the re-render is
+	 *   too late for the next Esc); focus trap while open; focus back to the
+	 *   opener on close.
+	 * - Motion is CSS, driven by the theme's motion tokens like Menu / ToastHost /
+	 *   CommandPalette (`--banto-duration-*`, `--banto-ease-out`; reduced motion
+	 *   turns the tokens to 0ms): the entry uses `@starting-style`, the exit keeps
+	 *   the layer mounted (`leaving`) for `--banto-duration-base`.
 	 * - On open, focus goes to the first focusable (the × in the header comes
 	 *   first in DOM order).
 	 *
@@ -27,13 +34,12 @@
 	 * remove the opener (deleting the row being edited), and restoring before the
 	 * DOM update would focus a node that disappears right after.
 	 */
-	import { tick, untrack } from 'svelte';
-	import { fade, fly, scale } from 'svelte/transition';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import IconButton from './IconButton.svelte';
 	import X from './icons/X.svelte';
 	import {
 		attachFocusTrap,
-		FOCUSABLE_SELECTOR,
+		focusablesIn,
 		hasVisibleLayerAbove,
 		isCloseAllowed,
 		LAYER_INACTIVE_ATTR,
@@ -66,19 +72,29 @@
 	/** The `role="dialog"` panel - the `except` of the layer checks. */
 	let panelEl: HTMLDivElement | undefined = $state();
 
-	/** The close was decided (promise 6); reset when `open` turns true again. */
-	let closing = $state(false);
+	let overlayEl: HTMLDivElement | undefined = $state();
+
+	/**
+	 * A close request is in flight (between `onRequestClose` and the parent's
+	 * answer). Blocks re-entry only within the same tick: if the parent keeps
+	 * `open` true, it is cleared again so the controls keep working.
+	 */
+	let requesting = false;
 
 	function requestClose(): void {
-		if (closing) return;
+		if (!open || requesting) return;
 		if (onRequestClose && !onRequestClose()) return;
-		closing = true;
-		panelEl?.setAttribute(LAYER_INACTIVE_ATTR, 'true');
+		requesting = true;
 		onclose?.();
+		// Props are live: a parent that closed inside `onclose` is visible now.
+		if (!open) panelEl?.setAttribute(LAYER_INACTIVE_ATTR, 'true');
+		void tick().then(() => {
+			requesting = false;
+		});
 	}
 
 	function handleWindowKeydown(event: KeyboardEvent): void {
-		if (!open || closing || event.key !== 'Escape') return;
+		if (!open || requesting || event.key !== 'Escape') return;
 		// Promises 1-2: the listener of a layer opened earlier runs first, so
 		// `defaultPrevented` alone is not enough - also yield to a layer above.
 		if (event.defaultPrevented || hasVisibleLayerAbove({ except: panelEl })) return;
@@ -106,22 +122,48 @@
 	let opener: HTMLElement | null = null;
 	let openHandled = false;
 
+	/** Still mounted for the exit motion after `open` turned false (inactive, promise 6). */
+	let leaving = $state(false);
+	let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** The exit motion's length, read from the theme token (0 when unset or reduced motion). */
+	function exitMs(): number {
+		const node = overlayEl;
+		if (!node) return 0;
+		const raw = getComputedStyle(node).getPropertyValue('--banto-duration-base').trim();
+		const value = Number.parseFloat(raw);
+		if (!Number.isFinite(value) || value <= 0) return 0;
+		if (raw.endsWith('ms')) return value;
+		return raw.endsWith('s') ? value * 1000 : 0;
+	}
+
 	$effect.pre(() => {
 		const isOpen = open;
 		untrack(() => {
 			if (isOpen === openHandled) return;
 			openHandled = isOpen;
+			clearTimeout(leaveTimer);
 			if (isOpen) {
-				closing = false;
+				// Reopened during the exit motion: the same DOM stays, so the
+				// mount-time `focusFirst` does not run again - do it here.
+				if (leaving) void tick().then(() => panelEl && focusFirst(panelEl));
+				leaving = false;
 				const active = document.activeElement;
 				opener = active instanceof HTMLElement ? active : null;
 			} else {
 				const previous = opener;
 				opener = null;
+				const ms = exitMs();
+				if (ms > 0) {
+					leaving = true;
+					leaveTimer = setTimeout(() => (leaving = false), ms);
+				}
 				void tick().then(() => restoreFocus(previous, () => focusFallback?.()));
 			}
 		});
 	});
+
+	onDestroy(() => clearTimeout(leaveTimer));
 
 	// Promise 4 while open (`panelEl` is bound inside `{#if open}`).
 	$effect(() => {
@@ -132,32 +174,21 @@
 	});
 
 	function focusFirst(node: HTMLElement): void {
-		(node.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? node).focus();
-	}
-
-	/** Durations honour `prefers-reduced-motion` (the CSS tokens cannot reach JS transitions). */
-	function motion(ms: number): number {
-		if (typeof matchMedia !== 'function') return ms;
-		return matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : ms;
-	}
-
-	function panelTransition(node: Element) {
-		return variant === 'drawer'
-			? fly(node, { x: 48, duration: motion(160) })
-			: scale(node, { start: 0.96, duration: motion(160) });
+		(focusablesIn(node)[0] ?? node).focus();
 	}
 </script>
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-{#if open}
+{#if open || leaving}
 	<div
 		class="overlay"
 		class:overlay--drawer={variant === 'drawer'}
 		class:overlay--modal={variant === 'modal'}
+		class:leaving={!open}
 		role="presentation"
 		onclick={handleOverlayClick}
-		transition:fade={{ duration: motion(120) }}
+		bind:this={overlayEl}
 	>
 		<div
 			class="panel"
@@ -165,12 +196,11 @@
 			class:panel--modal={variant === 'modal'}
 			bind:this={panelEl}
 			role="dialog"
-			data-layer-inactive={open && !closing ? undefined : 'true'}
+			data-layer-inactive={open ? undefined : 'true'}
 			aria-modal="true"
 			aria-label={title}
 			style:width
 			use:focusFirst
-			transition:panelTransition
 		>
 			<div class="header">
 				{#if title}<h3>{title}</h3>{/if}
@@ -192,6 +222,20 @@
 		z-index: var(--banto-z-modal);
 		display: flex;
 		background: var(--banto-scrim);
+		opacity: 1;
+		transition: opacity var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* Exit: fade the scrim and move the panel back out while still mounted. */
+	.overlay.leaving {
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	@starting-style {
+		.overlay {
+			opacity: 0;
+		}
 	}
 
 	.overlay--drawer {
@@ -214,17 +258,40 @@
 		/* Glass preset: no-op under standard (--banto-backdrop: none). */
 		backdrop-filter: var(--banto-backdrop, none);
 		-webkit-backdrop-filter: var(--banto-backdrop, none);
+		transition: transform var(--banto-duration-base) var(--banto-ease-out);
 	}
 
+	/* Motion distances are local, like Menu (-4px) / ToastHost (24px) /
+	   CommandPalette (0.98); durations and easing come from the theme. */
 	.panel--drawer {
 		height: 100%;
 		border-left: 1px solid var(--banto-border);
+		transform: translateX(0);
+	}
+
+	.leaving .panel--drawer {
+		transform: translateX(48px);
 	}
 
 	.panel--modal {
 		max-height: calc(100vh - 3rem);
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
+		transform: scale(1);
+	}
+
+	.leaving .panel--modal {
+		transform: scale(0.96);
+	}
+
+	@starting-style {
+		.panel--drawer {
+			transform: translateX(48px);
+		}
+
+		.panel--modal {
+			transform: scale(0.96);
+		}
 	}
 
 	.header {

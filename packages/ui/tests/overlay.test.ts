@@ -12,24 +12,23 @@
  * so: `getClientRects()` returns one rect for a connected element; the scrim
  * (`role="presentation"`) gets `position: fixed; z-index: 900` from a test
  * style (the theme's `--banto-z-modal`); the palette's overlay gets 1000
- * inline when a test opens it; `prefers-reduced-motion` is on, so the
- * transitions take 0ms.
+ * inline when a test opens it. The motion tokens are unset, so the exit
+ * motion takes 0ms unless a test sets `--banto-duration-base`.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { defaultUiMessages, LAYER_INACTIVE_ATTR, type UiMessages } from '../src/index';
+import {
+	defaultUiMessages,
+	hasVisibleLayerAbove,
+	LAYER_INACTIVE_ATTR,
+	type UiMessages
+} from '../src/index';
 import OverlayHarness from './fixtures/OverlayHarness.svelte';
 
 beforeAll(() => {
 	Element.prototype.getClientRects = function (this: Element) {
 		return (this.isConnected ? [{}] : []) as unknown as DOMRectList;
 	};
-	window.matchMedia = ((query: string) => ({
-		matches: query.includes('prefers-reduced-motion'),
-		media: query,
-		addEventListener() {},
-		removeEventListener() {}
-	})) as unknown as typeof window.matchMedia;
 	const style = document.createElement('style');
 	style.textContent = '[role="presentation"] { position: fixed; z-index: 900; }';
 	document.head.append(style);
@@ -49,6 +48,7 @@ type HarnessProps = {
 	onBlockedClose?: () => void;
 	focusFallback?: () => HTMLElement | null;
 	messages?: UiMessages;
+	keepOpen?: boolean;
 };
 
 async function openOverlay(props: HarnessProps = {}) {
@@ -166,7 +166,46 @@ describe('Modal / Drawer: close routes', () => {
 		expect(onclose).toHaveBeenCalledTimes(1);
 	});
 
-	it('marks the panel inactive synchronously when the close is decided (promise 6)', async () => {
+	it('a parent that does not close keeps a working, detectable layer (controls, Esc, layer checks)', async () => {
+		const onRequestClose = vi.fn(() => true);
+		const { dialog, onclose } = await openOverlay({ keepOpen: true, onRequestClose });
+		await fireEvent.click(closeButton(dialog));
+		await flush();
+		expect(onclose).toHaveBeenCalledTimes(1);
+		expect(state()).toBe('open');
+		expect(dialog.hasAttribute(LAYER_INACTIVE_ATTR)).toBe(false);
+		expect(hasVisibleLayerAbove()).toBe(true);
+		await fireEvent.click(closeButton(dialog));
+		await flush();
+		expect(onclose).toHaveBeenCalledTimes(2);
+		const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+		window.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
+		await flush();
+		expect(onRequestClose).toHaveBeenCalledTimes(3);
+		expect(onclose).toHaveBeenCalledTimes(3);
+		expect(screen.getByRole('dialog', { name: 'Edit' })).toBe(dialog);
+	});
+
+	it('keeps the layer mounted but inactive for the exit motion (--banto-duration-base), then unmounts', async () => {
+		document.documentElement.style.setProperty('--banto-duration-base', '60ms');
+		try {
+			const { dialog, opener } = await openOverlay();
+			await fireEvent.click(closeButton(dialog));
+			expect(dialog.isConnected).toBe(true);
+			expect(dialog.getAttribute(LAYER_INACTIVE_ATTR)).toBe('true');
+			expect(dialog.parentElement?.classList.contains('leaving')).toBe(true);
+			expect(hasVisibleLayerAbove()).toBe(false);
+			await flush();
+			expect(document.activeElement).toBe(opener);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(screen.queryByRole('dialog')).toBeNull();
+		} finally {
+			document.documentElement.style.removeProperty('--banto-duration-base');
+		}
+	});
+
+	it('marks the panel inactive synchronously when the parent closes (promise 6)', async () => {
 		const { dialog } = await openOverlay();
 		expect(dialog.hasAttribute(LAYER_INACTIVE_ATTR)).toBe(false);
 		closeButton(dialog).click();
