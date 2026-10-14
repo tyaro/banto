@@ -46,7 +46,7 @@ flowchart TD
 
 ### 読み方
 
-- **Tauri Webview** — `invoke()` のみ。LAN 向け HTTP は別プロセス内の組み込みサーバ（設定で ON のとき）。
+- **Tauri Webview** — `invoke()` のみ。`isTauri()` は `__TAURI_INTERNALS__` の有無に加えて `location.origin` が Tauri 自身のアセットの origin（`http(s)://tauri.localhost`・`tauri://localhost`、開発ビルドは `devUrl`）であることを見る。Tauri の窓がローカルのサービス（`http://127.0.0.1:<port>`）へ navigate した画面は内部オブジェクトがあっても server 経路（#396）。LAN 向け HTTP は別プロセス内の組み込みサーバ（設定で ON のとき）。
 - **embedded server** — 同一オリジンの REST + SSE。`banto-serve` や LAN ブラウザもここ。
 - **demo** — `VITE_BANTO_DEMO=1` ビルド（Pages 等）、または `vite preview` 等で静的ホストが「API なし」と明確に答えたとき。通信失敗は demo にせず再試行画面（#286）。InMemory + デモ認証。
 - 画面コンポーネントは **mode を分岐しない**（`getDataProvider()` / `getAuthProvider()` 経由のみ）。

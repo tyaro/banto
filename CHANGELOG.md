@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+### 修正
+
+- `isTauri()`（`apps/admin-template/src/lib/banto/environment.ts`）が `__TAURI_INTERNALS__` の有無だけでなく `location.origin` も見るようにした
+  （#396）。Tauri のシェルが WebView をローカルのサービス（`http://127.0.0.1:<port>/`）へ navigate すると、Tauri はその窓にも
+  `__TAURI_INTERNALS__` を注入するため、以前は invoke の経路を選んで壊れていた。Tauri 自身の origin（`http://tauri.localhost`・
+  `https://tauri.localhost`・`tauri://localhost`、開発ビルドのみ `tauri.conf.json` の `build.devUrl` の origin）のときだけ true になる。
+  純関数 `isTauriOrigin(origin, devOrigin?)` と定数 `TAURI_ORIGINS`・`TAURI_DEV_ORIGIN` を足した。
+  派生アプリへの影響: `environment.ts` を写している経路 B・C の派生は同じ直しを取り込む。シェルが自前のサービスへ navigate しない派生は挙動が変わらない。
+
 ## [6.7.0] - 2026-10-11
 
 **v6.7.0 — `@banto/ui` に `Modal`・`Drawer` と、Esc・フォーカスの層の補助（`layering.ts`）を足した（ADR-0018 段階 4）。`CommandPalette` も同じ補助を使う。版の種類: minor（追加のみ。後方互換）。

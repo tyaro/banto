@@ -2,9 +2,13 @@
  * Desktop-only settings drafts under a stubbed Tauri IPC (issue #214, owner
  * review on PR #232). サーバ・接続 / セキュリティ only render their drafts
  * inside the Tauri webview, which the LAN/REST smoke suite cannot reach.
- * Here `window.__TAURI_INTERNALS__` is replaced before the app loads, so the
- * static build served by banto-serve boots in Tauri mode and every
- * `invoke()` lands in the table below (the backend itself is not used).
+ * Here `window.__TAURI_INTERNALS__` is replaced before the app loads, and the
+ * page is opened on a Tauri asset origin (`http://tauri.localhost`, Issue
+ * #396: `isTauri()` also checks the origin, so internals on
+ * `http://127.0.0.1:<port>` boot in server mode). The static build served by
+ * banto-serve is proxied to that origin with `page.route`, so the app boots in
+ * Tauri mode and every `invoke()` lands in the table below (the backend
+ * itself is not used; production code has no test-only switch).
  *
  * What it pins down:
  * - Until the saved values load, the drafts cannot be edited (an edit then
@@ -21,6 +25,26 @@ import { expect, test, type Page } from '@playwright/test';
 
 const LEAVE_PROMPT = '保存していない変更があります。変更を破棄してこの画面から移動しますか？';
 const CLOSE_PROMPT = '保存していない変更があります。変更を破棄してウィンドウを閉じますか？';
+
+/** One of `TAURI_ORIGINS` (environment.ts): where Tauri serves its own assets on Windows. */
+const TAURI_ORIGIN = 'http://tauri.localhost';
+
+/**
+ * Serves `TAURI_ORIGIN` from banto-serve (the project's `baseURL`): every
+ * request to it is fetched from the real server and fulfilled as-is, so
+ * `location.origin` is a Tauri asset origin while the static build is the
+ * real one. Pass the page's own relative paths to `page.goto(tauriUrl(...))`.
+ */
+async function serveOnTauriOrigin(page: Page, baseURL: string | undefined): Promise<void> {
+	if (!baseURL) throw new Error('project baseURL is required');
+	await page.route(`${TAURI_ORIGIN}/**`, async (route) => {
+		const url = new URL(route.request().url());
+		const response = await route.fetch({ url: new URL(url.pathname + url.search, baseURL).href });
+		await route.fulfill({ response });
+	});
+}
+
+const tauriUrl = (path: string): string => `${TAURI_ORIGIN}${path}`;
 
 /** Installs the IPC stub. Knobs live on `window.__bantoMock` (see `mock()`). */
 async function installTauriStub(page: Page): Promise<void> {
@@ -223,10 +247,12 @@ async function destroyedCount(page: Page): Promise<number> {
 
 test.describe('Tauri settings drafts (stubbed IPC)', () => {
 	test('サーバ・接続: not editable until the saved status loads; edits are then protected', async ({
-		page
+		page,
+		baseURL
 	}) => {
 		await installTauriStub(page);
-		await page.goto('/settings/connectivity');
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/connectivity'));
 		const port = page.getByLabel('ポート番号');
 		const save = page.getByRole('button', { name: '保存して適用' });
 		const unsaved = page.getByText('未保存の変更があります');
@@ -302,10 +328,12 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 	// provider catches up (S-84), the next answer confirms `kind: 'local'`, and
 	// `sessionStore.authDisabled` follows it: the user menu (logout) goes.
 	test('セキュリティ: enabling login-not-required mode switches the session to the local one (S-94)', async ({
-		page
+		page,
+		baseURL
 	}) => {
 		await installTauriStub(page);
-		await page.goto('/settings/security');
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/security'));
 		const toggle = page.getByRole('switch', { name: 'ログイン不要モードを有効にする' });
 		const save = page.getByRole('button', { name: '保存して適用' });
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toBeVisible();
@@ -341,16 +369,18 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 	});
 
 	test('セキュリティ: not editable while the saved auth settings failed to load', async ({
-		page
+		page,
+		baseURL
 	}) => {
 		await installTauriStub(page);
+		await serveOnTauriOrigin(page, baseURL);
 		// Fail from the very first load (the knob must be set before the app boots).
 		await page.addInitScript(() => {
 			(
 				window as unknown as { __bantoMock: { authConfigFails: boolean } }
 			).__bantoMock.authConfigFails = true;
 		});
-		await page.goto('/settings/security');
+		await page.goto(tauriUrl('/settings/security'));
 		const toggle = page.getByRole('switch', { name: 'ログイン不要モードを有効にする' });
 		const save = page.getByRole('button', { name: '保存して適用' });
 

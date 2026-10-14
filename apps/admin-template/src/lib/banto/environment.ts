@@ -9,9 +9,45 @@
  * entry point for the app.
  */
 
-/** True inside the Tauri webview, false in a plain browser tab (spec §11.1). */
+/**
+ * Origins from which Tauri serves its own bundled assets (Issue #396):
+ * `http://tauri.localhost` on Windows (WebView2; `https://` when the window
+ * sets `useHttpsScheme`), `tauri://localhost` on macOS / Linux.
+ */
+export const TAURI_ORIGINS: readonly string[] = [
+	'http://tauri.localhost',
+	'https://tauri.localhost',
+	'tauri://localhost'
+];
+
+/**
+ * The `tauri dev` window's origin - the same as `build.devUrl` in
+ * `src-tauri/tauri.conf.json` (`environment.test.ts` pins the match). Only a
+ * dev build (`import.meta.env.DEV`) counts it as Tauri's own origin; a
+ * production build has no reason to trust `localhost:1420`.
+ */
+export const TAURI_DEV_ORIGIN = 'http://localhost:1420';
+
+/**
+ * Is `origin` one where Tauri serves its own assets? Pure; pass `devOrigin`
+ * only in a dev build. A local service such as `http://127.0.0.1:8721` is not.
+ */
+export function isTauriOrigin(origin: string, devOrigin?: string): boolean {
+	return TAURI_ORIGINS.includes(origin) || (devOrigin !== undefined && origin === devOrigin);
+}
+
+/**
+ * True inside the Tauri webview showing Tauri's own assets, false in a plain
+ * browser tab (spec §11.1) - and false in a Tauri window that navigated to a
+ * local HTTP service (Issue #396): Tauri injects `__TAURI_INTERNALS__` into
+ * that window too, but such a page has to use the HTTP `server` mode, not
+ * `invoke()`. So both must hold: the internals exist AND the origin is one of
+ * Tauri's own ({@link TAURI_ORIGINS}, plus {@link TAURI_DEV_ORIGIN} in a dev
+ * build).
+ */
 export function isTauri(): boolean {
-	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+	if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return false;
+	return isTauriOrigin(window.location.origin, import.meta.env.DEV ? TAURI_DEV_ORIGIN : undefined);
 }
 
 /** Shared with the `*Admin.ts` modules (spec M10's `/api/users/*` calls need the same CSRF header every other fetch() here sends). */
