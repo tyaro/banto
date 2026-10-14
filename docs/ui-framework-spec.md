@@ -625,7 +625,13 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
 - SvelteKit `adapter-static`のビルド成果物を`rust-embed`等でバイナリに
   埋め込み、組み込みサーバから静的配信する。**TauriのWebviewと
   リモートブラウザが同一のフロントエンドビルドを共有する。**
-- フロントは起動時に実行環境を判定（`window.__TAURI__`の有無等）し、
+- フロントは起動時に実行環境を判定し（`isTauri()`: `window.__TAURI_INTERNALS__`
+  があり、かつ `location.origin` が Tauri 自身のアセットの origin
+  〔`http://tauri.localhost`・`https://tauri.localhost`・`tauri://localhost`、
+  開発ビルドでは `tauri.conf.json` の `build.devUrl` の origin〕であること。
+  Tauri の窓がローカルのサービスの `http://127.0.0.1:<port>/` へ navigate
+  した場合も `__TAURI_INTERNALS__` は注入されるが、その画面は
+  `HttpDataProvider` の経路にする。Issue #396）、
   Webview内なら`TauriDataProvider`、ブラウザなら`HttpDataProvider`を
   自動選択する。UI層（グリッド/フォーム/チャート/ドッキング）は
   実行環境を一切意識しない。
