@@ -38,6 +38,28 @@
 - 公開 API は変わらない（修正のみ）。`isTauri()` は、Tauri 自身の origin（`http://tauri.localhost`・`https://tauri.localhost`・`tauri://localhost`、開発ビルドのみ `tauri.conf.json` の `build.devUrl` の origin）でないときは false を返すようになった。シェルが WebView をローカルのサービス（`http://127.0.0.1:<port>/`）へ navigate する構成では、その窓が server 経路を使う。
 - `environment.ts` を写して使っている派生（経路 B）は、純関数 `isTauriOrigin(origin, devOrigin?)` と `TAURI_ORIGINS`・`TAURI_DEV_ORIGIN` を取り込むことを推奨する。シェルが自前のサービスへ navigate しない派生は、取り込んでも挙動は変わらない。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグ前（main の `a3a1d37`、`workflow_dispatch`）: [run 38610452739](https://github.com/tyaro/banto/actions/runs/38610452739)（success）。
+  - タグの push（`v6.7.1`）: [run 38610678688](https://github.com/tyaro/banto/actions/runs/38610678688)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）:
+
+    | 項目               | 版                             |
+    | ------------------ | ------------------------------ |
+    | Node.js            | 24.21.0                        |
+    | pnpm               | 10.33.0                        |
+    | Svelte             | 5.57.2                         |
+    | SvelteKit          | 3.0.1                          |
+    | Vite               | 8.3.4                          |
+    | vite-plugin-svelte | 7.3.1                          |
+    | TypeScript         | 6.0.3                          |
+    | Rust               | 1.99.0（b940084d7 2026-09-28） |
+
+  - 出所: Node.js は `node: v24.21.0`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.2` など）、
+    Rust は `Setup Rust toolchain` の `rustc 1.99.0`。step summary の表はログに出ないため、同じ値を持つこれらの行を読んだ。
+
 ### 修正
 
 - `isTauri()`（`apps/admin-template/src/lib/banto/environment.ts`）が `__TAURI_INTERNALS__` の有無だけでなく `location.origin` も見るようにした
