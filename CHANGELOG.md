@@ -22,6 +22,22 @@
 
 ## [Unreleased]
 
+## [6.7.1] - 2026-10-15
+
+**v6.7.1 — `isTauri()` が `location.origin` も見るようにし、サービスへ navigate した Tauri の窓を server 経路にした（#396）。版の種類: patch（修正のみ。公開 API の変更は無い。後方互換）。
+派生アプリへの影響: 経路 A はタグを上げるだけ（`optimizeDeps.exclude` の変更は不要）。経路 B は `environment.ts` を写している場合に取り込むと直る（任意）。経路 C は変更なし。**
+
+| 経路                             | 影響         | 内容                                                                                                                                                                                                     |
+| -------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | なし         | `v6.7.0` → `v6.7.1`（npm と Rust を同じタグに）。タグを上げるだけで、`optimizeDeps.exclude` の変更は不要。`isTauri()` は `admin-template` のコードで `@banto/*` には無いため、依存の差し替えでは直らない |
+| B. コピーしたテンプレート        | あり（任意） | `environment.ts` の `isTauri()` に origin の判定を取り込むと直る（下の注意）。取り込まなければ従来どおり                                                                                                 |
+| C. DB・設定・配布資産            | なし         | 変更なし（DB のマイグレーション・設定キーの追加は無い）                                                                                                                                                  |
+
+### 消費側への注意
+
+- 公開 API は変わらない（修正のみ）。`isTauri()` は、Tauri 自身の origin（`http://tauri.localhost`・`https://tauri.localhost`・`tauri://localhost`、開発ビルドのみ `tauri.conf.json` の `build.devUrl` の origin）でないときは false を返すようになった。シェルが WebView をローカルのサービス（`http://127.0.0.1:<port>/`）へ navigate する構成では、その窓が server 経路を使う。
+- `environment.ts` を写して使っている派生（経路 B）は、純関数 `isTauriOrigin(origin, devOrigin?)` と `TAURI_ORIGINS`・`TAURI_DEV_ORIGIN` を取り込むことを推奨する。シェルが自前のサービスへ navigate しない派生は、取り込んでも挙動は変わらない。
+
 ### 修正
 
 - `isTauri()`（`apps/admin-template/src/lib/banto/environment.ts`）が `__TAURI_INTERNALS__` の有無だけでなく `location.origin` も見るようにした
@@ -2848,7 +2864,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.7.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.7.1...HEAD
+[6.7.1]: https://github.com/tyaro/banto/compare/v6.7.0...v6.7.1
 [6.7.0]: https://github.com/tyaro/banto/compare/v6.6.0...v6.7.0
 [6.6.0]: https://github.com/tyaro/banto/compare/v6.5.0...v6.6.0
 [6.5.0]: https://github.com/tyaro/banto/compare/v6.4.0...v6.5.0
