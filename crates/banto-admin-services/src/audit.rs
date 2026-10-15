@@ -82,7 +82,7 @@ mod spool;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use banto_core::{BantoError, ListParams, ListResult};
 use banto_storage::{ColumnMap, Db, Dialect};
@@ -311,6 +311,38 @@ async fn insert_pending(db: &Db, entry: &PendingEntry, flushed: bool) -> Result<
     .map_err(banto_storage::storage_error)
 }
 
+/// Outcome of waiting for one spooled INSERT.
+///
+/// A timeout does not abort the task (ADR-0019): dropping the `JoinHandle`
+/// detaches it, so the INSERT may still complete, and the flush finds that
+/// row by `pending_id` instead of writing a second one.
+#[derive(Debug, PartialEq, Eq)]
+enum InsertWait {
+    /// The INSERT finished within the timeout.
+    Completed,
+    /// Spool the entry. The reason is `timeout` or `error: ...`.
+    NeedsSpool(String),
+}
+
+/// Wait for `insert` for at most `timeout`.
+///
+/// An error returns `error:` as soon as the INSERT fails and does not wait
+/// out the rest of the timeout. No answer returns `timeout` at exactly
+/// `timeout`, without aborting the task (ADR-0019, see [`InsertWait`]). The
+/// spool file's `sync_all` is outside this function, so it is not part of
+/// the elapsed time measured here.
+async fn wait_for_insert(
+    timeout: Duration,
+    insert: tokio::task::JoinHandle<Result<(), BantoError>>,
+) -> InsertWait {
+    match tokio::time::timeout(timeout, insert).await {
+        Ok(Ok(Ok(()))) => InsertWait::Completed,
+        Ok(Ok(Err(err))) => InsertWait::NeedsSpool(format!("error: {err}")),
+        Ok(Err(join_err)) => InsertWait::NeedsSpool(format!("error: {join_err}")),
+        Err(_) => InsertWait::NeedsSpool("timeout".to_string()),
+    }
+}
+
 impl AuditLogService {
     pub fn new(db: Db) -> Self {
         Self {
@@ -460,21 +492,19 @@ impl AuditLogService {
         let db = self.db.clone();
         let attempt = pending.clone();
         let insert = tokio::spawn(async move { insert_pending(&db, &attempt, false).await });
-        let reason = match tokio::time::timeout(spool.config.timeout, insert).await {
-            Ok(Ok(Ok(()))) => {
+        match wait_for_insert(spool.config.timeout, insert).await {
+            InsertWait::Completed => {
                 // Local backlog, or a directory not read for
                 // `flush_interval` (another process may have spooled to it).
                 if spool.should_flush_after_success() {
                     let svc = self.clone();
                     tokio::spawn(async move { svc.flush_spool_if_idle().await });
                 }
-                return;
             }
-            Ok(Ok(Err(err))) => format!("error: {err}"),
-            Ok(Err(join_err)) => format!("error: {join_err}"),
-            Err(_) => "timeout".to_string(),
-        };
-        spool.write(&self.log, pending, reason).await;
+            InsertWait::NeedsSpool(reason) => {
+                spool.write(&self.log, pending, reason).await;
+            }
+        }
     }
 
     /// The spool's backlog as seen by this process (ADR-0019). All zero /
@@ -1659,10 +1689,133 @@ mod tests {
         false
     }
 
+    /// Stop the test when `record` does not return.
+    ///
+    /// The limit is a hang guard, not a latency bound. The spool file's
+    /// `sync_all` takes seconds on Windows CI (#399).
+    async fn assert_record_returns(svc: &AuditLogService, entry: AuditEntry<'_>) {
+        assert!(
+            tokio::time::timeout(Duration::from_secs(60), svc.record(entry))
+                .await
+                .is_ok(),
+            "record did not return within the hang guard"
+        );
+    }
+
+    /// A failing INSERT takes the error path when it fails, and does not
+    /// wait out the configured timeout.
+    ///
+    /// The clock is paused, so this does not include the spool file's
+    /// `sync_all`. `spooledReason` starting with `error:` would not catch a
+    /// wait after the error. Elapsed time reaching `timeout` means the
+    /// error path waited the limit out (#399).
+    #[tokio::test(start_paused = true)]
+    async fn failing_insert_does_not_wait_out_the_timeout() {
+        let timeout = Duration::from_secs(2);
+        let started = tokio::time::Instant::now();
+        let insert = tokio::spawn(async { Err(BantoError::Other("no such table".into())) });
+        let outcome = super::wait_for_insert(timeout, insert).await;
+        assert_eq!(
+            started.elapsed(),
+            Duration::ZERO,
+            "an immediate error must not wait"
+        );
+        assert_eq!(
+            outcome,
+            super::InsertWait::NeedsSpool("error: no such table".to_string())
+        );
+
+        // Fails 1 s into a 2 s timeout, and does not pad the remaining second.
+        let fail_after = Duration::from_secs(1);
+        let started = tokio::time::Instant::now();
+        let insert = tokio::spawn(async move {
+            tokio::time::sleep(fail_after).await;
+            Err(BantoError::Other("no such table".into()))
+        });
+        let outcome = super::wait_for_insert(timeout, insert).await;
+        assert_eq!(started.elapsed(), fail_after);
+        assert!(started.elapsed() < timeout);
+        assert_eq!(
+            outcome,
+            super::InsertWait::NeedsSpool("error: no such table".to_string())
+        );
+    }
+
+    /// An INSERT that never answers becomes `timeout` at exactly `timeout`,
+    /// and the task keeps running.
+    ///
+    /// The clock is paused, so this does not wait 2 real seconds. Returning
+    /// early, sleeping past the timeout, or cancelling the task all fail
+    /// here (#399).
+    #[tokio::test(start_paused = true)]
+    async fn hanging_insert_waits_exactly_the_timeout_and_keeps_running() {
+        let timeout = Duration::from_secs(2);
+        let (release, released) = tokio::sync::oneshot::channel();
+        let (finished_tx, mut finished_rx) = tokio::sync::oneshot::channel();
+        let insert = tokio::spawn(async move {
+            let _ = released.await;
+            let _ = finished_tx.send(());
+            Ok(())
+        });
+        let started = tokio::time::Instant::now();
+        let outcome = super::wait_for_insert(timeout, insert).await;
+        assert_eq!(started.elapsed(), timeout);
+        assert_eq!(
+            outcome,
+            super::InsertWait::NeedsSpool("timeout".to_string())
+        );
+        assert!(
+            matches!(
+                finished_rx.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ),
+            "the insert is still running when the wait gives up"
+        );
+        release
+            .send(())
+            .expect("the timed-out insert is still running");
+        finished_rx
+            .await
+            .expect("the timed-out insert should still finish");
+    }
+
+    /// A successful INSERT completes without waiting out the timeout.
+    #[tokio::test(start_paused = true)]
+    async fn successful_insert_returns_without_waiting() {
+        let started = tokio::time::Instant::now();
+        let insert = tokio::spawn(async { Ok(()) });
+        let outcome = super::wait_for_insert(Duration::from_secs(2), insert).await;
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        assert_eq!(outcome, super::InsertWait::Completed);
+    }
+
+    /// A panicked INSERT task is an error, not a timeout, and does not wait.
+    #[tokio::test(start_paused = true)]
+    async fn panicked_insert_is_an_error_not_a_timeout() {
+        let started = tokio::time::Instant::now();
+        let insert: tokio::task::JoinHandle<Result<(), BantoError>> =
+            tokio::spawn(async { panic!("boom") });
+        let outcome = super::wait_for_insert(Duration::from_secs(2), insert).await;
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        let super::InsertWait::NeedsSpool(reason) = outcome else {
+            panic!("expected an error reason, got {outcome:?}");
+        };
+        assert!(reason.starts_with("error: "), "{reason}");
+        assert_ne!(reason, "timeout");
+    }
+
     /// A failing write (the table is gone) is spooled at once; after the
     /// table comes back one flush writes exactly one row with the original
     /// `ts` and `detail.spooled = true`, and flushing again (or the same
     /// file reappearing, as with a second process) adds nothing.
+    ///
+    /// "At once" is checked two ways (#399). The configured timeout here is
+    /// 30 s and `record` must return in under 30 s, so a regression that
+    /// waits the timeout out, including one outside `wait_for_insert`,
+    /// fails, while a slow spool-file `sync_all` (seconds on Windows CI)
+    /// does not. [`failing_insert_does_not_wait_out_the_timeout`] pauses
+    /// the clock and checks that the wait itself does not pad out to the
+    /// timeout.
     #[tokio::test]
     async fn spool_round_trip_after_a_failing_write() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1670,15 +1823,16 @@ mod tests {
         let pool = db.as_sqlite().unwrap().clone();
         let spool_dir = tmp.path().join("spool");
         let svc = AuditLogService::new(db)
-            .with_spool(&spool_dir, spool_config(2_000))
+            .with_spool(&spool_dir, spool_config(30_000))
             .unwrap();
 
         take_offline(&pool).await;
         let started = Instant::now();
-        svc.record(sample_entry("create", "items", "admin")).await;
+        assert_record_returns(&svc, sample_entry("create", "items", "admin")).await;
+        let elapsed = started.elapsed();
         assert!(
-            started.elapsed() < Duration::from_secs(1),
-            "an error is spooled without waiting for the timeout"
+            elapsed < Duration::from_secs(30),
+            "an error through record must not wait out the configured timeout, got {elapsed:?}"
         );
 
         let files = spool_files(&spool_dir);
@@ -1752,7 +1906,14 @@ mod tests {
     /// A hanging write (every pool connection is held) is spooled after the
     /// timeout and not cancelled: once the connection is released the
     /// original INSERT completes, and the flush then finds its row by
-    /// `pending_id` instead of writing a second one.
+    /// `pending_id` instead of writing a second one. The original INSERT's
+    /// detail wins over the flush.
+    ///
+    /// Waiting exactly `timeout`, and not cancelling the INSERT, is
+    /// [`hanging_insert_waits_exactly_the_timeout_and_keeps_running`] on a
+    /// paused clock. The 60 s guard below only stops a real hang; it is not
+    /// a latency bound. The old `< 2 s` bound included the spool file's
+    /// `sync_all` and failed on Windows CI at 4.77 s (#399).
     #[tokio::test]
     async fn spool_after_a_hang_does_not_duplicate_the_late_insert() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1765,10 +1926,15 @@ mod tests {
 
         let held = pool.acquire().await.unwrap();
         let started = Instant::now();
-        svc.record(sample_entry("create", "items", "admin")).await;
+        assert_record_returns(&svc, sample_entry("create", "items", "admin")).await;
+        // Real-time lower bound: the held connection must keep `record`
+        // from returning before the timeout. Slowness cannot fail it.
+        // An upper bound would include `sync_all` (#399).
         let elapsed = started.elapsed();
-        assert!(elapsed >= Duration::from_millis(200), "{elapsed:?}");
-        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+        assert!(
+            elapsed >= Duration::from_millis(200),
+            "record must wait out the timeout while every connection is held, got {elapsed:?}"
+        );
         assert_eq!(spool_files(&spool_dir).len(), 1);
         assert_eq!(svc.spool_backlog().last_error.as_deref(), Some("timeout"));
 
