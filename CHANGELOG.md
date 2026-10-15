@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- 監査の保留ファイルのテスト 2 件が、Windows CI で `sync_all` を含む経過時間の上限で不安定に落ちるのを直した（#399）。公開 API の変更は無い。
+
 ## [6.7.1] - 2026-10-15
 
 **v6.7.1 — `isTauri()` が `location.origin` も見るようにし、サービスへ navigate した Tauri の窓を server 経路にした（#396）。版の種類: patch（修正のみ。公開 API の変更は無い。後方互換）。

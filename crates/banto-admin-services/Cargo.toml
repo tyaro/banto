@@ -62,7 +62,11 @@ uuid = { workspace = true }
 sysinfo = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+# `test-util` lets the spool tests pause the clock (`start_paused`) and
+# assert the INSERT timeout without Windows file-sync time in the
+# measurement (#399). A feature of this existing dev-dependency, not a
+# new crate (ADR-0002).
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time", "test-util"] }
 # `backup`'s tests need real on-disk SQLite files (a `VACUUM INTO` against an
 # in-memory pool silently writes nothing - see `backup`'s test module), so they
 # stage tempdirs. Already a workspace dev-dep (`admin-template-core` used it for
