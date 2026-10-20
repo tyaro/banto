@@ -197,6 +197,156 @@ test.describe('dock layout (primed)', () => {
 	});
 });
 
+interface Box {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+async function boxOf(locator: Locator): Promise<Box> {
+	const box = await locator.boundingBox();
+	if (!box) throw new Error('no layout for the element');
+	return box;
+}
+
+/** `main`'s content box (its padding is the room the shell keeps for the bar). */
+async function mainContentBox(page: Page): Promise<{ left: number; right: number }> {
+	return page.locator('main').evaluate((el) => {
+		const rect = el.getBoundingClientRect();
+		const style = getComputedStyle(el);
+		return {
+			left: rect.left + Number.parseFloat(style.paddingLeft),
+			right: rect.right - Number.parseFloat(style.paddingRight)
+		};
+	});
+}
+
+/** The tooltip is the element actually drawn at its own centre (not clipped by the scrolling track). */
+async function drawnAtItsCentre(tooltip: Locator): Promise<boolean> {
+	return tooltip.evaluate((el) => {
+		const rect = el.getBoundingClientRect();
+		const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+		return hit !== null && el.contains(hit);
+	});
+}
+
+// Left / right bars (nav-launcher-plan.md §4.1, D4).
+for (const position of ['left', 'right'] as const) {
+	test.describe(`dock on the ${position} edge (primed)`, () => {
+		test.beforeEach(async ({ page }) => {
+			await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+			await primeLauncher(page, position);
+		});
+
+		test('sits vertically centred on its edge and the content keeps clear of it', async ({
+			page
+		}) => {
+			await gotoDashboard(page);
+			await expect(page.locator(`.launcher--${position}`)).toBeVisible();
+			await expect(page.locator('html')).toHaveAttribute(
+				'data-banto-shell-launcher-position',
+				position
+			);
+			const viewport = page.viewportSize();
+			if (!viewport) throw new Error('no viewport');
+			const bar = await boxOf(page.locator('.launcher__bar'));
+			expect(bar.height).toBeGreaterThan(bar.width);
+			expect(Math.abs(bar.y + bar.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(2);
+			const content = await mainContentBox(page);
+			if (position === 'left') {
+				expect(bar.x).toBeLessThan(20);
+				expect(content.left).toBeGreaterThanOrEqual(bar.x + bar.width);
+			} else {
+				expect(viewport.width - (bar.x + bar.width)).toBeLessThan(20);
+				expect(content.right).toBeLessThanOrEqual(bar.x);
+			}
+		});
+
+		test('the tooltip shows beside the item on the page side, unclipped, and stays across the gap', async ({
+			page
+		}) => {
+			await gotoDashboard(page);
+			const viewport = page.viewportSize();
+			if (!viewport) throw new Error('no viewport');
+			// The first and the last item: the edges of the scrolling track.
+			const items = page.locator('.launcher [data-launcher-item]');
+			for (const item of [items.first(), items.last()]) {
+				const tooltip = tooltipOf(item);
+				await item.hover();
+				await expect(tooltip).toBeVisible();
+				await expect.poll(() => visibilityOf(tooltip)).toBe('visible');
+				const itemBox = await boxOf(item);
+				const tip = await boxOf(tooltip);
+				if (position === 'left') expect(tip.x).toBeGreaterThanOrEqual(itemBox.x + itemBox.width);
+				else expect(tip.x + tip.width).toBeLessThanOrEqual(itemBox.x);
+				expect(tip.x).toBeGreaterThanOrEqual(0);
+				expect(tip.x + tip.width).toBeLessThanOrEqual(viewport.width);
+				const centreGap = Math.abs(tip.y + tip.height / 2 - (itemBox.y + itemBox.height / 2));
+				expect(centreGap).toBeLessThanOrEqual(2);
+				expect(await drawnAtItsCentre(tooltip)).toBe(true);
+
+				// Sideways across the gap onto the tooltip (the hover bridge).
+				await page.mouse.move(tip.x + tip.width / 2, tip.y + tip.height / 2, { steps: 12 });
+				await expect(tooltip).toBeVisible();
+				await page.mouse.move(viewport.width / 2, 200, { steps: 4 });
+				await expect(tooltip).toBeHidden();
+			}
+		});
+
+		test('a keyboard-shown tooltip still hides on Esc', async ({ page }) => {
+			await gotoDashboard(page);
+			await page.mouse.move(700, 200);
+			const first = page.locator('.launcher a.launcher__link').first();
+			for (let i = 0; i < 20; i++) {
+				await page.keyboard.press('Tab');
+				if (await first.evaluate((el) => el === document.activeElement)) break;
+			}
+			await expect(first).toBeFocused();
+			const tooltip = first.locator('xpath=..').locator('.launcher__tooltip');
+			await expect.poll(() => visibilityOf(tooltip)).toBe('visible');
+			await page.keyboard.press('Escape');
+			await expect.poll(() => visibilityOf(tooltip)).toBe('hidden');
+			await expect(first).toBeFocused();
+		});
+
+		test('a toast does not overlap the bar', async ({ page }) => {
+			await page.goto('/ui-demo');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			await page.getByRole('button', { name: '成功を表示' }).click();
+			const toast = page.locator('.toast-host .toast').first();
+			await expect(toast).toBeVisible();
+			const t = await boxOf(toast);
+			const bar = await boxOf(page.locator('.launcher__bar'));
+			const overlaps =
+				t.x < bar.x + bar.width &&
+				bar.x < t.x + t.width &&
+				t.y < bar.y + bar.height &&
+				bar.y < t.y + t.height;
+			expect(overlaps).toBe(false);
+			if (position === 'right') expect(t.x + t.width).toBeLessThanOrEqual(bar.x);
+		});
+
+		test('<=900px: still the full-width bottom tab bar (D5)', async ({ page }) => {
+			await page.setViewportSize({ width: 768, height: 1024 });
+			await gotoDashboard(page);
+			const bar = await boxOf(page.locator('.launcher__bar'));
+			expect(bar.width).toBeGreaterThanOrEqual(768 - 1);
+			expect(Math.round(bar.y + bar.height)).toBe(1024);
+			const padding = await page.locator('main').evaluate((el) => {
+				const style = getComputedStyle(el);
+				return {
+					left: Number.parseFloat(style.paddingLeft),
+					right: Number.parseFloat(style.paddingRight),
+					bottom: Number.parseFloat(style.paddingBottom)
+				};
+			});
+			expect(padding.left).toBe(padding.right);
+			expect(padding.bottom).toBeGreaterThanOrEqual(bar.height);
+		});
+	});
+}
+
 test('settings: choosing Dock shows the opacity slider, which applies live; Sidebar puts it back', async ({
 	page
 }) => {
@@ -233,6 +383,21 @@ test('settings: choosing Dock shows the opacity slider, which applies live; Side
 	await expect(page.locator('.launcher')).toBeVisible();
 	await expect(slider).toHaveValue('80');
 
+	// The edge (D4): a radiogroup shown only for the dock, keyboard-operable.
+	const positions = page.getByRole('radiogroup', { name: 'ドックの位置' });
+	await expect(positions.getByRole('radio', { name: '下' })).toBeChecked();
+	await positions.getByText('右', { exact: true }).click();
+	await expect(page.locator('.launcher--right')).toBeVisible();
+	await expect(page.locator('html')).toHaveAttribute('data-banto-shell-launcher-position', 'right');
+	await positions.getByRole('radio', { name: '右' }).focus();
+	await page.keyboard.press('ArrowUp');
+	await expect(positions.getByRole('radio', { name: '左' })).toBeChecked();
+	await expect(page.locator('.launcher--left')).toBeVisible();
+	await page.reload();
+	await expect(page.locator('.launcher--left')).toBeVisible();
+	await positions.getByText('下', { exact: true }).click();
+	await expect(page.locator('.launcher--bottom')).toBeVisible();
+
 	await page
 		.getByRole('radiogroup', { name: 'ナビゲーションの表示形式' })
 		.getByText('サイドバー', { exact: true })
@@ -240,4 +405,5 @@ test('settings: choosing Dock shows the opacity slider, which applies live; Side
 	await expect(page.locator('.launcher')).toHaveCount(0);
 	await expect(page.locator('aside')).toBeVisible();
 	await expect(page.locator('html')).not.toHaveAttribute('data-banto-shell-nav', 'launcher');
+	await expect(page.locator('html')).not.toHaveAttribute('data-banto-shell-launcher-position');
 });

@@ -118,6 +118,11 @@ const NAV_LAYOUT_KEY = 'banto.navLayout';
  * the first load.
  */
 const NAV_LAYOUT_PROVIDER_KEY = 'banto.ui.shell.navLayout';
+/** The dock's screen edge (D4): the cache key and the demo provider's key, primed for the same reason. */
+const LAUNCHER_POSITION_KEY = 'banto.launcherPosition';
+const LAUNCHER_POSITION_PROVIDER_KEY = 'banto.ui.shell.launcherPosition';
+
+export type LauncherPosition = 'bottom' | 'left' | 'right';
 
 /**
  * Forces the dock layout (nav-launcher-plan.md §3) before first paint, like
@@ -125,12 +130,23 @@ const NAV_LAYOUT_PROVIDER_KEY = 'banto.ui.shell.navLayout';
  * test that switches the layout in the UI must not use it. Call alongside
  * `primeThemeAndAuth`, before the test's first `page.goto()`.
  */
-export async function primeLauncher(page: Page): Promise<void> {
+export async function primeLauncher(
+	page: Page,
+	position: LauncherPosition = 'bottom'
+): Promise<void> {
 	await page.addInitScript(
-		({ cacheKey, providerKey }) => {
+		({ cacheKey, providerKey, positionKey, positionProviderKey, position }) => {
 			window.localStorage.setItem(cacheKey, 'launcher');
 			window.localStorage.setItem(providerKey, 'launcher');
+			window.localStorage.setItem(positionKey, position);
+			window.localStorage.setItem(positionProviderKey, position);
 		},
-		{ cacheKey: NAV_LAYOUT_KEY, providerKey: NAV_LAYOUT_PROVIDER_KEY }
+		{
+			cacheKey: NAV_LAYOUT_KEY,
+			providerKey: NAV_LAYOUT_PROVIDER_KEY,
+			positionKey: LAUNCHER_POSITION_KEY,
+			positionProviderKey: LAUNCHER_POSITION_PROVIDER_KEY,
+			position
+		}
 	);
 }

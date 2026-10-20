@@ -90,3 +90,18 @@ for (const combo of DIAGONAL_MATRIX) {
 		expect(results.violations, formatViolations(results.violations)).toEqual([]);
 	});
 }
+
+// A vertical dock (D4): one side and one combo - the same markup as the
+// bottom bar, but the tooltips, the active dot and the separator move.
+test(`a11y ${comboLabel(DIAGONAL_MATRIX[1])} dashboard with a left dock has no wcag2a/wcag2aa violations`, async ({
+	page
+}) => {
+	await primeThemeAndAuth(page, DIAGONAL_MATRIX[1]);
+	await primeLauncher(page, 'left');
+	await gotoScanned(page, PAGES[0]);
+	await expect(page.locator('.launcher--left')).toBeVisible();
+
+	const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+
+	expect(results.violations, formatViolations(results.violations)).toEqual([]);
+});

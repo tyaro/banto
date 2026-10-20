@@ -34,6 +34,7 @@ const DENSITY_KEY = 'banto.density';
 const KIOSK_KEY = 'banto.kiosk';
 const NAV_LAYOUT_KEY = 'banto.navLayout';
 const LAUNCHER_OPACITY_KEY = 'banto.launcherOpacity';
+const LAUNCHER_POSITION_KEY = 'banto.launcherPosition';
 
 /** `UiSettingsProvider` keys (wire contract, spec M12). */
 const MODE_SETTING = 'theme.mode';
@@ -42,6 +43,7 @@ const DENSITY_SETTING = 'theme.density';
 const KIOSK_SETTING = 'shell.kiosk';
 const NAV_LAYOUT_SETTING = 'shell.navLayout';
 const LAUNCHER_OPACITY_SETTING = 'shell.launcherOpacity';
+const LAUNCHER_POSITION_SETTING = 'shell.launcherPosition';
 
 /**
  * Kiosk shell default (display-preset-plan.md D1-b/§3.2). `false` here keeps
@@ -64,6 +66,16 @@ export type NavLayout = 'sidebar' | 'launcher';
  */
 export const NAV_LAYOUT_DEFAULT: NavLayout = 'sidebar';
 
+/**
+ * Which screen edge the dock sits on (nav-launcher-plan.md §3, D4). The same
+ * values as `@banto/ui`'s `LauncherPosition`; <=900px is always the bottom
+ * tab bar whatever this says (D5).
+ */
+export type LauncherPosition = 'bottom' | 'left' | 'right';
+
+/** Dock position default (nav-launcher-plan.md §3): the bottom edge. */
+export const LAUNCHER_POSITION_DEFAULT: LauncherPosition = 'bottom';
+
 /** Launcher bar opacity in whole percent (nav-launcher-plan.md D7): the slider's range, step and default (the theme's own default is the same 50%). */
 export const LAUNCHER_OPACITY_MIN = 40;
 export const LAUNCHER_OPACITY_MAX = 100;
@@ -75,6 +87,10 @@ const LAUNCHER_OPACITY_TOKEN = '--banto-shell-launcher-opacity';
 
 export function isNavLayout(value: unknown): value is NavLayout {
 	return value === 'sidebar' || value === 'launcher';
+}
+
+export function isLauncherPosition(value: unknown): value is LauncherPosition {
+	return value === 'bottom' || value === 'left' || value === 'right';
 }
 
 /** A whole percent on the slider's grid (40-100, step 5). */
@@ -127,6 +143,12 @@ function loadNavLayout(): NavLayout {
 	return isNavLayout(stored) ? stored : NAV_LAYOUT_DEFAULT;
 }
 
+function loadLauncherPosition(): LauncherPosition {
+	if (typeof localStorage === 'undefined') return LAUNCHER_POSITION_DEFAULT;
+	const stored = localStorage.getItem(LAUNCHER_POSITION_KEY);
+	return isLauncherPosition(stored) ? stored : LAUNCHER_POSITION_DEFAULT;
+}
+
 function loadLauncherOpacity(): number {
 	if (typeof localStorage === 'undefined') return LAUNCHER_OPACITY_DEFAULT;
 	return parseLauncherOpacity(localStorage.getItem(LAUNCHER_OPACITY_KEY));
@@ -145,6 +167,8 @@ class Settings {
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
 	kiosk: boolean = $state(loadKiosk());
 	navLayout: NavLayout = $state(loadNavLayout());
+	/** The dock's screen edge (only used while `navLayout === 'launcher'`). */
+	launcherPosition: LauncherPosition = $state(loadLauncherPosition());
 	/** Whole percent (40-100, step 5), written to the root's `--banto-shell-launcher-opacity`. */
 	launcherOpacity: number = $state(loadLauncherOpacity());
 	/**
@@ -205,6 +229,12 @@ class Settings {
 		localStorage.setItem(NAV_LAYOUT_KEY, layout);
 	}
 
+	/** Apply + cache locally, WITHOUT the provider write (nav-launcher-plan.md §3, D4). */
+	#applyLauncherPosition(position: LauncherPosition) {
+		this.launcherPosition = position;
+		localStorage.setItem(LAUNCHER_POSITION_KEY, position);
+	}
+
 	/** Apply + cache locally, WITHOUT the provider write: the one theme token the slider changes (D7). */
 	#applyLauncherOpacity(opacity: number) {
 		const value = isLauncherOpacity(opacity) ? opacity : LAUNCHER_OPACITY_DEFAULT;
@@ -243,6 +273,12 @@ class Settings {
 		persistRemote(NAV_LAYOUT_SETTING, layout);
 	}
 
+	setLauncherPosition(position: LauncherPosition) {
+		this.#changedSinceSync.add(LAUNCHER_POSITION_SETTING);
+		this.#applyLauncherPosition(position);
+		persistRemote(LAUNCHER_POSITION_SETTING, position);
+	}
+
 	/**
 	 * Live apply while the slider moves (its `input` event): the real dock
 	 * follows at once, but the provider is written only once the value is
@@ -268,6 +304,7 @@ class Settings {
 		this.#applyThemeDensity(this.themeDensity);
 		this.#applyKiosk(this.kiosk);
 		this.#applyNavLayout(this.navLayout);
+		this.#applyLauncherPosition(this.launcherPosition);
 		this.#applyLauncherOpacity(this.launcherOpacity);
 	}
 
@@ -278,9 +315,9 @@ class Settings {
 	 * guaranteed authenticated (the session was just confirmed). A
 	 * missing key (never saved) or any provider failure leaves the current
 	 * (localStorage-seeded) values in place - except the navigation layout
-	 * and the launcher opacity (nav-launcher-plan.md §3, #421 review): the
-	 * localStorage cache is not per user, so a successful read with no value
-	 * resets those two to their defaults (cached locally, not written back),
+	 * and the launcher position and opacity (nav-launcher-plan.md §3, #421
+	 * review): the localStorage cache is not per user, so a successful read
+	 * with no value resets those three to their defaults (cached locally, not written back),
 	 * or a user who never chose would inherit the previous user's dock on a
 	 * shared browser. A failed read keeps the local values for them too.
 	 * A key the user changed while the reads were in flight keeps the user's
@@ -291,14 +328,16 @@ class Settings {
 		const generation = ++this.#syncGeneration;
 		this.#changedSinceSync.clear();
 		try {
-			const [mode, preset, density, kiosk, navLayout, launcherOpacity] = await Promise.all([
-				ui.get(MODE_SETTING),
-				ui.get(PRESET_SETTING),
-				ui.get(DENSITY_SETTING),
-				ui.get(KIOSK_SETTING),
-				ui.get(NAV_LAYOUT_SETTING),
-				ui.get(LAUNCHER_OPACITY_SETTING)
-			]);
+			const [mode, preset, density, kiosk, navLayout, launcherPosition, launcherOpacity] =
+				await Promise.all([
+					ui.get(MODE_SETTING),
+					ui.get(PRESET_SETTING),
+					ui.get(DENSITY_SETTING),
+					ui.get(KIOSK_SETTING),
+					ui.get(NAV_LAYOUT_SETTING),
+					ui.get(LAUNCHER_POSITION_SETTING),
+					ui.get(LAUNCHER_OPACITY_SETTING)
+				]);
 			if (generation !== this.#syncGeneration) return;
 			const fresh = (key: string): boolean => !this.#changedSinceSync.has(key);
 			if (fresh(MODE_SETTING) && isThemeMode(mode)) this.#applyThemeMode(mode);
@@ -308,6 +347,10 @@ class Settings {
 				this.#applyKiosk(kiosk === 'true');
 			if (fresh(NAV_LAYOUT_SETTING))
 				this.#applyNavLayout(isNavLayout(navLayout) ? navLayout : NAV_LAYOUT_DEFAULT);
+			if (fresh(LAUNCHER_POSITION_SETTING))
+				this.#applyLauncherPosition(
+					isLauncherPosition(launcherPosition) ? launcherPosition : LAUNCHER_POSITION_DEFAULT
+				);
 			if (fresh(LAUNCHER_OPACITY_SETTING))
 				this.#applyLauncherOpacity(parseLauncherOpacity(launcherOpacity));
 		} catch {

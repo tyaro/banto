@@ -17,7 +17,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LauncherBar, type LauncherGroup } from '../src/index';
+import { LauncherBar, type LauncherGroup, type LauncherPosition } from '../src/index';
 import CustomIcon from './fixtures/CustomIcon.svelte';
 
 const groups: LauncherGroup[] = [
@@ -74,7 +74,9 @@ afterEach(() => {
 
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-function renderBar(props: Partial<{ magnify: boolean; ariaLabel: string }> = {}) {
+function renderBar(
+	props: Partial<{ magnify: boolean; ariaLabel: string; position: LauncherPosition }> = {}
+) {
 	const result = render(LauncherBar, { groups, ...props });
 	const bar = result.container.querySelector<HTMLElement>('.launcher__bar')!;
 	bar.style.setProperty('--banto-shell-launcher-magnify-max', '1.5');
@@ -127,7 +129,22 @@ describe('LauncherBar structure', () => {
 		const { container } = renderBar();
 		const root = container.querySelector('.launcher')!;
 		expect(root.classList.contains('launcher--bottom')).toBe(true);
+		expect(root.classList.contains('launcher--vertical')).toBe(false);
 		expect(root.hasAttribute('role')).toBe(false);
+	});
+
+	it.each(['left', 'right'] as const)('marks a %s bar as vertical', (position) => {
+		const { container } = renderBar({ position });
+		const root = container.querySelector('.launcher')!;
+		expect(root.classList.contains(`launcher--${position}`)).toBe(true);
+		expect(root.classList.contains('launcher--vertical')).toBe(true);
+		expect(root.classList.contains('launcher--bottom')).toBe(false);
+	});
+
+	it.each(['left', 'right'] as const)('keeps the edge item classes on a %s bar', (position) => {
+		renderBar({ position });
+		expect(itemOf('Dashboard').classList.contains('launcher__item--first')).toBe(true);
+		expect(itemOf('Users').classList.contains('launcher__item--last')).toBe(true);
 	});
 
 	it('names the whole bar as a group when ariaLabel is given', () => {
@@ -221,6 +238,22 @@ describe('LauncherBar tooltip Esc', () => {
 		expect(item.classList.contains('launcher__item--quiet')).toBe(false);
 	});
 
+	it('still hides on Esc while a lower in-page window (role="dialog") is shown', async () => {
+		const dialog = document.createElement('div');
+		dialog.setAttribute('role', 'dialog');
+		dialog.style.position = 'absolute';
+		dialog.style.zIndex = '5';
+		document.body.append(dialog);
+		const { container } = renderBar();
+		const root = container.querySelector<HTMLElement>('.launcher')!;
+		root.style.position = 'fixed';
+		root.style.zIndex = '200';
+		const item = itemOf('Items 3 updates');
+		await fireEvent.pointerEnter(item, { pointerType: 'mouse' });
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		expect(item.classList.contains('launcher__item--quiet')).toBe(true);
+	});
+
 	it('ignores an Esc another handler already consumed', async () => {
 		renderBar();
 		const item = itemOf('Users');
@@ -267,6 +300,47 @@ describe('LauncherBar magnification', () => {
 	it('does not magnify with magnify={false}', async () => {
 		const { bar, container } = renderBar({ magnify: false });
 		await fireEvent.pointerMove(bar, { pointerType: 'mouse', clientX: 0 });
+		await nextFrame();
+		await tick();
+		expect(scaled(container)).toHaveLength(0);
+	});
+
+	/**
+	 * Items stacked vertically (centres at y = 22, 72, 122) on x = 22; the
+	 * pointer is on the first item's vertical centre but 500px off on x.
+	 */
+	function stackItems(container: HTMLElement): void {
+		const items = [...container.querySelectorAll<HTMLElement>('[data-launcher-item]')];
+		items.forEach((li, index) => {
+			vi.spyOn(li, 'getBoundingClientRect').mockReturnValue({
+				left: 0,
+				top: index * 50,
+				width: 44,
+				height: 44
+			} as DOMRect);
+		});
+	}
+
+	it.each(['left', 'right'] as const)(
+		'magnifies along the vertical axis on a %s bar',
+		async (position) => {
+			const { bar, container } = renderBar({ position });
+			stackItems(container);
+			await fireEvent.pointerMove(bar, { pointerType: 'mouse', clientX: 500, clientY: 22 });
+			await nextFrame();
+			await tick();
+			expect(itemOf('Dashboard').style.getPropertyValue('--_scale')).toBe('1.5');
+			const items = Number(itemOf('Items 3 updates').style.getPropertyValue('--_scale'));
+			const users = Number(itemOf('Users').style.getPropertyValue('--_scale'));
+			expect(items).toBeGreaterThan(users);
+			expect(users).toBeGreaterThan(1);
+		}
+	);
+
+	it('magnifies along the horizontal axis on the bottom bar', async () => {
+		const { bar, container } = renderBar();
+		stackItems(container);
+		await fireEvent.pointerMove(bar, { pointerType: 'mouse', clientX: 500, clientY: 22 });
 		await nextFrame();
 		await tick();
 		expect(scaled(container)).toHaveLength(0);

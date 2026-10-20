@@ -90,6 +90,10 @@
 	);
 	--banto-shell-launcher-backdrop: blur(1px) saturate(1.5);
 	--banto-shell-launcher-tooltip-backdrop: blur(5px);
+	/* Left / right bars (D4, PR-4): the tooltip sits beside the item and may
+     wrap past this width; the bar's scrolling track keeps this much (+ the
+     gap) free on the page side so it is not clipped. */
+	--banto-shell-launcher-tooltip-max-width: 10rem;
 
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;
@@ -274,17 +278,35 @@
 	}
 }
 
-/* Toasts above the launcher (nav-launcher-plan.md §4.1). ToastHost is a
+/* Toasts clear of the launcher (nav-launcher-plan.md §4.1). ToastHost is a
    sibling of the app shell, so the shell marks the root while the dock is
    shown (routes/(app)/+layout.svelte) instead of setting a variable on
-   itself. 1rem is ToastHost's own default gap. */
+   itself: `data-banto-shell-nav="launcher"` plus the bar's side in
+   `data-banto-shell-launcher-position` (bottom / left / right, D4). 1rem is
+   ToastHost's own gap. The stack sits bottom-right: above a bottom bar,
+   left of a right bar, where it always was for a left bar. */
 :root[data-banto-shell-nav='launcher'] {
 	--banto-toast-bottom: calc(var(--banto-shell-launcher-reserve) + 1rem);
 }
 
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='left'],
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='right'] {
+	--banto-toast-bottom: 1rem;
+}
+
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='right'] {
+	--banto-toast-right: calc(var(--banto-shell-launcher-reserve) + 1rem);
+}
+
+/* <=900px every position is the bottom tab bar (§4.6, D5). */
 @media (max-width: 900px) {
-	:root[data-banto-shell-nav='launcher'] {
+	:root[data-banto-shell-nav='launcher'],
+	:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position] {
 		--banto-toast-bottom: calc(var(--banto-shell-launcher-tabbar-reserve) + 1rem);
+	}
+
+	:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='right'] {
+		--banto-toast-right: 1rem;
 	}
 }
 

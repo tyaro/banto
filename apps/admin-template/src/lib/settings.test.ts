@@ -236,3 +236,75 @@ describe('settings: navigation layout and launcher opacity', () => {
 		expect(settings.launcherOpacity).toBe(60);
 	});
 });
+
+describe('settings: launcher position (nav-launcher-plan.md §3, D4)', () => {
+	it('defaults to the bottom with nothing stored', async () => {
+		const settings = await loadSettings();
+		expect(settings.launcherPosition).toBe('bottom');
+	});
+
+	it.each(['bottom', 'left', 'right'] as const)('loads a stored %s', async (position) => {
+		const settings = await loadSettings({ 'banto.launcherPosition': position });
+		expect(settings.launcherPosition).toBe(position);
+	});
+
+	it.each(['top', 'LEFT', ''])('falls back to the bottom for an unknown %j', async (stored) => {
+		const settings = await loadSettings({ 'banto.launcherPosition': stored });
+		expect(settings.launcherPosition).toBe('bottom');
+	});
+
+	it('setLauncherPosition writes localStorage and the provider', async () => {
+		const settings = await loadSettings();
+		settings.setLauncherPosition('right');
+		expect(settings.launcherPosition).toBe('right');
+		expect(store.get('banto.launcherPosition')).toBe('right');
+		expect(mocks.set).toHaveBeenCalledWith('shell.launcherPosition', 'right');
+	});
+
+	it('syncFromProvider: the provider value wins over localStorage', async () => {
+		const settings = await loadSettings({ 'banto.launcherPosition': 'right' });
+		providerHolds({ 'shell.launcherPosition': 'left' });
+		await settings.syncFromProvider();
+		expect(settings.launcherPosition).toBe('left');
+		expect(store.get('banto.launcherPosition')).toBe('left');
+		expect(mocks.set).not.toHaveBeenCalled();
+	});
+
+	it('syncFromProvider: nothing saved (or an unknown value) resets to the bottom without writing back', async () => {
+		const settings = await loadSettings({ 'banto.launcherPosition': 'left' });
+		providerHolds({});
+		await settings.syncFromProvider();
+		expect(settings.launcherPosition).toBe('bottom');
+		expect(store.get('banto.launcherPosition')).toBe('bottom');
+
+		settings.setLauncherPosition('right');
+		mocks.set.mockClear();
+		providerHolds({ 'shell.launcherPosition': 'top' });
+		await settings.syncFromProvider();
+		expect(settings.launcherPosition).toBe('bottom');
+		expect(mocks.set).not.toHaveBeenCalled();
+	});
+
+	it('syncFromProvider: a failed read keeps the local value', async () => {
+		const settings = await loadSettings({ 'banto.launcherPosition': 'right' });
+		mocks.get.mockRejectedValue(new Error('offline'));
+		await settings.syncFromProvider();
+		expect(settings.launcherPosition).toBe('right');
+	});
+
+	it('syncFromProvider: a position changed while the reads are in flight keeps the user value', async () => {
+		const settings = await loadSettings();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		mocks.get.mockImplementation(async (key) => {
+			await gate;
+			return key === 'shell.launcherPosition' ? 'left' : null;
+		});
+		const sync = settings.syncFromProvider();
+		settings.setLauncherPosition('right');
+		release();
+		await sync;
+		expect(settings.launcherPosition).toBe('right');
+		expect(store.get('banto.launcherPosition')).toBe('right');
+	});
+});

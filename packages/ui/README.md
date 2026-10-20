@@ -216,12 +216,12 @@ ADR-0018 §11）。画面下に浮いたバーで、マウスを近づけたア�
 現在のページの判定（`active`）・バッジの件数・文言はすべて呼び出し側が渡す。リンクは素の `<a href>` なので、
 SvelteKit のクライアント遷移は呼び出し側のアプリでそのまま効く（このパッケージは `$app/*` を知らない）。
 
-| props       | 型                 | 既定       | 内容                                                                                        |
-| ----------- | ------------------ | ---------- | ------------------------------------------------------------------------------------------- |
-| `groups`    | `LauncherGroup[]`  | （必須）   | `{ id, ariaLabel, items }`。グループごとに `<nav aria-label>` を 1 つ描き、あいだに区切り線 |
-| `position`  | `LauncherPosition` | `'bottom'` | 今は `'bottom'` だけ（左右は計画のみ。足しても既存の呼び出しは壊れない）                    |
-| `magnify`   | `boolean`          | `true`     | 拡大する。`prefers-reduced-motion`・`(hover: none)`・900px 以下・マウス以外では自動で止まる |
-| `ariaLabel` | `string`           | なし       | バー全体の名前（付けると全体が `role="group"`）                                             |
+| props       | 型                 | 既定       | 内容                                                                                                                                                       |
+| ----------- | ------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `groups`    | `LauncherGroup[]`  | （必須）   | `{ id, ariaLabel, items }`。グループごとに `<nav aria-label>` を 1 つ描き、あいだに区切り線                                                                |
+| `position`  | `LauncherPosition` | `'bottom'` | `'bottom'`（下端の中央）・`'left'` / `'right'`（その端の縦中央の縦向きのバー。拡大は縦の軸、ツールチップは本文側の横）。900px 以下はどれでも下端のタブバー |
+| `magnify`   | `boolean`          | `true`     | 拡大する。`prefers-reduced-motion`・`(hover: none)`・900px 以下・マウス以外では自動で止まる                                                                |
+| `ariaLabel` | `string`           | なし       | バー全体の名前（付けると全体が `role="group"`）                                                                                                            |
 
 `LauncherItem` は `{ id, href, label, icon, active?, badge?: { text, label } }`。`label` がツールチップ・
 狭い画面の小さなラベル・アクセシブルな名前（視覚的に隠した実テキスト。`badge.label` も名前に入る）になり、
@@ -232,8 +232,9 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 
 寸法・倍率・重なり順はトークン（`--banto-shell-launcher-*`・`--banto-z-launcher`、
 [@banto/theme](../theme/README.md)）で、`@banto/theme/css` を読み込むこと（倍率のトークンが読めなければ
-拡大しない）。バーは `position: fixed` なので、本文の下に `--banto-shell-launcher-reserve` の余白を取るのは
-呼び出し側の仕事。拡大の曲線は純粋関数 `magnifyScale(distance, range, max)` として公開している。
+拡大しない）。バーは `position: fixed` なので、本文の下（左右に置くならその側）に
+`--banto-shell-launcher-reserve` の余白を取るのは呼び出し側の仕事（900px 以下はどの位置でも下に
+`--banto-shell-launcher-tabbar-reserve`）。拡大の曲線は純粋関数 `magnifyScale(distance, range, max)` として公開している。
 
 ```svelte
 <script lang="ts">

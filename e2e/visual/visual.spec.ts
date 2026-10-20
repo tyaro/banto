@@ -24,7 +24,9 @@ import {
 	primeKiosk,
 	primeLauncher,
 	primeTheme,
-	primeThemeAndAuth
+	primeThemeAndAuth,
+	type LauncherPosition,
+	type ThemeCombo
 } from './theme';
 
 /** Chart/dock layout settle after the data-dependent element becomes visible. */
@@ -96,21 +98,30 @@ test.describe('kiosk shell', () => {
 });
 
 // Dock layout (nav-launcher-plan.md §7.3): the diagonal at the baseline
-// viewport plus the <=900px tab bar. Primed like the kiosk shell, so every
-// other test here keeps the default sidebar.
-const LAUNCHER_SHOTS = [
-	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1440, height: 900 } },
-	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 } },
-	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 768, height: 1024 } }
+// viewport plus the <=900px tab bar, and one shot per side bar (D4, one
+// combo each). Primed like the kiosk shell, so every other test here keeps
+// the default sidebar.
+const LAUNCHER_SHOTS: {
+	combo: ThemeCombo;
+	viewport: { width: number; height: number };
+	position: LauncherPosition;
+}[] = [
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1440, height: 900 }, position: 'bottom' },
+	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 }, position: 'bottom' },
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 768, height: 1024 }, position: 'bottom' },
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1440, height: 900 }, position: 'left' },
+	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 }, position: 'right' }
 ];
 
 test.describe('dock layout', () => {
-	for (const { combo, viewport } of LAUNCHER_SHOTS) {
+	for (const { combo, viewport, position } of LAUNCHER_SHOTS) {
 		const size = `${viewport.width}x${viewport.height}`;
-		test(`dashboard launcher ${comboLabel(combo)} ${size}`, async ({ page }) => {
+		// The bottom bar keeps its original names (existing baselines).
+		const side = position === 'bottom' ? '' : `${position}-`;
+		test(`dashboard launcher ${side}${comboLabel(combo)} ${size}`, async ({ page }) => {
 			await page.setViewportSize(viewport);
 			await primeThemeAndAuth(page, combo);
-			await primeLauncher(page);
+			await primeLauncher(page, position);
 			await page.goto('/dashboard');
 			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 			await expect(page.locator('svg').first()).toBeVisible();
@@ -125,7 +136,9 @@ test.describe('dock layout', () => {
 			await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
 			await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
 			await page.waitForTimeout(SETTLE_MS);
-			await expect(page).toHaveScreenshot(`dashboard-launcher-${comboLabel(combo)}-${size}.png`);
+			await expect(page).toHaveScreenshot(
+				`dashboard-launcher-${side}${comboLabel(combo)}-${size}.png`
+			);
 		});
 	}
 });

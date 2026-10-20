@@ -10,11 +10,12 @@
 import type { UiIconComponent } from './types';
 
 /**
- * Where the bar sits. v1 ships `'bottom'` only; `'left' | 'right'` are
- * planned (nav-launcher-plan.md D4, PR-4) and will be added as members of this
- * union, so callers passing `position` today keep compiling.
+ * Where the bar sits (nav-launcher-plan.md §4.1, D4): `'bottom'` (the
+ * default) floats centred above the bottom edge; `'left' | 'right'` are a
+ * vertical bar centred on that edge. At <=900px every position becomes the
+ * full-width bottom tab bar (§4.6, D5).
  */
-export type LauncherPosition = 'bottom';
+export type LauncherPosition = 'bottom' | 'left' | 'right';
 
 /** One link of the bar. The caller decides routing, `active` and RBAC filtering. */
 export interface LauncherItem {
