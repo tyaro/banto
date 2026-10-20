@@ -42,10 +42,13 @@
 	// <=900px it drives the overlay drawer, above that the persisted fold.
 	// Same breakpoint as Sidebar.svelte's media query; a matchMedia listener
 	// (not a layout read) keeps the two in step.
-	let narrow = $state(false);
+	// Seeded from the query at once (the app shell is client-only, ssr =
+	// false), so a narrow first paint never shows the wide fold state.
+	const NARROW_QUERY = '(max-width: 900px)';
+	let narrow = $state(typeof window !== 'undefined' && window.matchMedia(NARROW_QUERY).matches);
 
 	$effect(() => {
-		const query = window.matchMedia('(max-width: 900px)');
+		const query = window.matchMedia(NARROW_QUERY);
 		narrow = query.matches;
 		const onChange = (event: MediaQueryListEvent): void => {
 			narrow = event.matches;
