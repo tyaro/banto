@@ -21,7 +21,7 @@
     "test": "pnpm --recursive --if-present test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "scaffold": "node scripts/scaffold.mjs",
     "verify:architecture": "node scripts/verify-architecture.mjs",
     "verify:migrations": "node scripts/verify-migrations-frozen.mjs",
