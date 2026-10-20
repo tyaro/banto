@@ -127,13 +127,13 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
 }
 
-interface HttpJsonInit {
+interface HttpInit {
 	method: string;
 	body?: unknown;
 	expectNoContent?: boolean;
 }
 
-async function httpJson<T>(path: string, init: HttpJsonInit): Promise<T> {
+async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
 	const hasBody = init.body !== undefined;
 	const headers = authHeaders(hasBody ? { 'Content-Type': 'application/json' } : undefined);
 
@@ -157,14 +157,14 @@ async function httpJson<T>(path: string, init: HttpJsonInit): Promise<T> {
 export async function createBackup(): Promise<BackupInfo> {
 	if (!isBackupsAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') return invokeCommand<BackupInfo>('backups_create');
-	return httpJson<BackupInfo>('/api/backups', { method: 'POST' });
+	return httpRequest<BackupInfo>('/api/backups', { method: 'POST' });
 }
 
 /** `admin`-only: list existing backups, newest first. */
 export async function listBackups(): Promise<BackupInfo[]> {
 	if (!isBackupsAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') return invokeCommand<BackupInfo[]>('backups_list');
-	return httpJson<BackupInfo[]>('/api/backups', { method: 'GET' });
+	return httpRequest<BackupInfo[]>('/api/backups', { method: 'GET' });
 }
 
 /**
@@ -229,7 +229,7 @@ export async function stageRestoreFromBackup(fileName: string): Promise<void> {
 		await invokeCommand<void>('backups_stage_restore', { fileName });
 		return;
 	}
-	await httpJson<void>(`/api/backups/${encodeURIComponent(fileName)}/restore`, {
+	await httpRequest<void>(`/api/backups/${encodeURIComponent(fileName)}/restore`, {
 		method: 'POST',
 		expectNoContent: true
 	});
@@ -274,7 +274,7 @@ export async function getPendingRestore(): Promise<PendingRestoreInfo | null> {
 	if (!isBackupsAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri')
 		return invokeCommand<PendingRestoreInfo | null>('backups_pending');
-	return httpJson<PendingRestoreInfo | null>('/api/backups/pending-restore', { method: 'GET' });
+	return httpRequest<PendingRestoreInfo | null>('/api/backups/pending-restore', { method: 'GET' });
 }
 
 /** `admin`-only: cancel a staged restore. */
@@ -284,5 +284,8 @@ export async function cancelPendingRestore(): Promise<void> {
 		await invokeCommand<void>('backups_cancel_restore');
 		return;
 	}
-	await httpJson<void>('/api/backups/pending-restore', { method: 'DELETE', expectNoContent: true });
+	await httpRequest<void>('/api/backups/pending-restore', {
+		method: 'DELETE',
+		expectNoContent: true
+	});
 }

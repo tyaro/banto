@@ -135,13 +135,13 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
 }
 
-interface HttpJsonInit {
+interface HttpInit {
 	method: string;
 	body?: unknown;
 	expectNoContent?: boolean;
 }
 
-async function httpJson<T>(path: string, init: HttpJsonInit): Promise<T> {
+async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
 	const hasBody = init.body !== undefined;
 	const headers = authHeaders(hasBody ? { 'Content-Type': 'application/json' } : undefined);
 
@@ -170,7 +170,7 @@ export async function listAttachments(
 	if (getBantoMode() === 'tauri') {
 		return invokeCommand<AttachmentMeta[]>('attachments_list', { resource, resourceId });
 	}
-	return httpJson<AttachmentMeta[]>('/api/attachments/list', {
+	return httpRequest<AttachmentMeta[]>('/api/attachments/list', {
 		method: 'POST',
 		body: { resource, resourceId }
 	});
@@ -230,7 +230,7 @@ export async function deleteAttachment(id: number): Promise<void> {
 		await invokeCommand<void>('attachments_delete', { id });
 		return;
 	}
-	await httpJson<void>(`/api/attachments/${id}`, { method: 'DELETE', expectNoContent: true });
+	await httpRequest<void>(`/api/attachments/${id}`, { method: 'DELETE', expectNoContent: true });
 }
 
 async function fetchThumbnailBlob(id: number): Promise<Blob> {

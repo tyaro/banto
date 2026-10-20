@@ -122,14 +122,25 @@ function currentToken(): string | null {
 	return auth.getToken ? auth.getToken() : null;
 }
 
-async function httpGet<T>(path: string): Promise<T> {
+interface HttpInit {
+	method: string;
+	body?: unknown;
+}
+
+async function httpRequest<T>(path: string, init: HttpInit): Promise<T> {
+	const hasBody = init.body !== undefined;
 	const headers: Record<string, string> = { ...CSRF_HEADER };
+	if (hasBody) headers['Content-Type'] = 'application/json';
 	const token = currentToken();
 	if (token) headers.Authorization = `Bearer ${token}`;
 
 	let response: Response;
 	try {
-		response = await fetch(path, { method: 'GET', headers });
+		response = await fetch(path, {
+			method: init.method,
+			headers,
+			body: hasBody ? JSON.stringify(init.body) : undefined
+		});
 	} catch {
 		throw new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
 	}
@@ -158,5 +169,5 @@ async function httpGet<T>(path: string): Promise<T> {
 export async function getSystemInfo(): Promise<SystemInfo> {
 	if (!isSystemInfoAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') return invokeCommand<SystemInfo>('system_info');
-	return httpGet<SystemInfo>('/api/system/info');
+	return httpRequest<SystemInfo>('/api/system/info', { method: 'GET' });
 }
