@@ -308,6 +308,8 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 </Menu>
 ```
 
+`Menu` は項目が多くてトリガーの上下どちらにも収まらないとき、広い側の可用高（余白・枠線込み）に高さを抑えて中をスクロールする。メニュー自身のスクロール（ホイールや End・矢印で項目へ移ったときの自動スクロール）では閉じず、外側のスクロールでは従来どおり閉じる。
+
 ```svelte
 <script lang="ts">
 	import { CommandPalette, type CommandPaletteItem } from '@banto/ui';

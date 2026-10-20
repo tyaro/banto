@@ -9,7 +9,10 @@
 	 * - Position: computed on open from `trigger.getBoundingClientRect()`,
 	 *   `position: fixed`, default bottom-end, flips above when there's no
 	 *   room below, clamped horizontally, recomputed on resize, and closed
-	 *   (not re-tracked) on any ancestor scroll (§7.4).
+	 *   (not re-tracked) on any ancestor scroll (§7.4). When the menu fits
+	 *   on neither side, its height is capped to the larger side and it
+	 *   scrolls internally; that scroll (wheel, or the browser bringing a
+	 *   focused item into view) does not count as an ancestor scroll (#427).
 	 * - Keyboard: see the table in §7.5. Enter/Space on menu items is
 	 *   native `<button>` behavior (handled in MenuItem); everything else
 	 *   funnels through the handlers below.
@@ -17,7 +20,7 @@
 	 * No app-specific store imports: lives in @banto/ui (ADR-0018 phase 2a),
 	 * which imports nothing but `svelte`.
 	 */
-	import type { Snippet } from 'svelte';
+	import { flushSync, type Snippet } from 'svelte';
 	import { setMenuContext } from './menuContext';
 
 	interface MenuTriggerProps {
@@ -68,22 +71,64 @@
 		list[wrapped]?.focus();
 	}
 
+	// Distance between the trigger and the menu, and the menu and the
+	// viewport edges (px).
+	const GAP = 4;
+
 	function computePosition(): void {
 		if (!triggerEl || !popoverEl) return;
+		// Measure the natural height: drop the cap a previous computePosition()
+		// (e.g. before a resize) may have set. Set imperatively (not through a
+		// `style:` directive) so the cap is in place synchronously, before the
+		// open-time focus scrolls an item into view. Dropping the cap resets
+		// the menu's own scroll, so it is restored afterwards (resize).
+		const scrollTop = popoverEl.scrollTop;
+		popoverEl.style.removeProperty('max-height');
 		const triggerRect = triggerEl.getBoundingClientRect();
 		const menuRect = popoverEl.getBoundingClientRect();
 		const viewportWidth = document.documentElement.clientWidth;
 		const viewportHeight = document.documentElement.clientHeight;
 
-		let top = triggerRect.bottom + 4;
-		const fitsBelow = top + menuRect.height <= viewportHeight;
-		if (!fitsBelow) {
-			const flippedTop = triggerRect.top - menuRect.height - 4;
-			if (flippedTop >= 0) top = flippedTop;
+		const below = triggerRect.bottom + GAP;
+		const aboveTop = triggerRect.top - menuRect.height - GAP;
+		let top = below;
+		let height = menuRect.height;
+		if (below + menuRect.height <= viewportHeight) {
+			// Fits below (the default side).
+		} else if (aboveTop >= 0) {
+			top = aboveTop;
+		} else {
+			// Fits on neither side: take the roomier one and cap the menu's
+			// whole box (padding and border included) to it.
+			const spaceBelow = Math.max(viewportHeight - below - GAP, 0);
+			const spaceAbove = Math.max(triggerRect.top - GAP - GAP, 0);
+			if (spaceAbove > spaceBelow) {
+				height = Math.min(menuRect.height, spaceAbove);
+				top = triggerRect.top - height - GAP;
+			} else {
+				height = Math.min(menuRect.height, spaceBelow);
+			}
+		}
+		if (height < menuRect.height) {
+			// Under `content-box` (the browser default; apps often reset to
+			// `border-box`) `max-height` excludes padding + border, so take
+			// them off the whole-box space computed above.
+			const style = getComputedStyle(popoverEl);
+			const frame =
+				style.boxSizing === 'border-box'
+					? 0
+					: [
+							style.paddingTop,
+							style.paddingBottom,
+							style.borderTopWidth,
+							style.borderBottomWidth
+						].reduce((sum, value) => sum + (parseFloat(value) || 0), 0);
+			popoverEl.style.maxHeight = `${Math.max(height - frame, 0)}px`;
+			popoverEl.scrollTop = scrollTop;
 		}
 
 		let left = placement === 'bottom-start' ? triggerRect.left : triggerRect.right - menuRect.width;
-		left = Math.min(Math.max(left, 4), viewportWidth - menuRect.width - 4);
+		left = Math.min(Math.max(left, GAP), viewportWidth - menuRect.width - GAP);
 
 		coords = { top, left };
 	}
@@ -111,11 +156,16 @@
 			// The popover is laid out by the time `toggle` fires, so
 			// dimensions are accurate here (unlike right after showPopover()).
 			computePosition();
+			// Apply `coords` (and with it `visibility: visible`) now: a
+			// still-hidden item cannot take focus, which left keyboard opens
+			// (and Home/End/arrows after them) on the trigger.
+			flushSync();
 			if (focusIntent === 'first') focusItem(0);
 			else if (focusIntent === 'last') focusItem(-1);
 			focusIntent = 'none';
 		} else {
 			coords = undefined;
+			popoverEl?.style.removeProperty('max-height');
 			// Return focus to the trigger only when it would otherwise be
 			// dropped (Escape / item selection leave it on a menu item; the
 			// browser then moves it to <body> once the popover hides). An
@@ -186,7 +236,10 @@
 		function handleResize(): void {
 			computePosition();
 		}
-		function handleScroll(): void {
+		function handleScroll(event: Event): void {
+			// The menu's own scroll (long menus, #427) - wheel, or the browser
+			// bringing a focused item into view - is not an ancestor scroll.
+			if (event.target instanceof Node && popoverEl?.contains(event.target)) return;
 			// Menus are short-lived; re-tracking the trigger on scroll isn't
 			// worth the complexity, so close instead (§7.4).
 			closeMenu();
@@ -242,6 +295,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
+		/* Long menus (#427): computePosition() caps max-height so the whole
+		   box (padding + border included) fits beside the trigger; the rest
+		   scrolls here without chaining to the page behind. */
+		overflow-y: auto;
+		overscroll-behavior: contain;
 		opacity: 0;
 		transform: translateY(-4px);
 		transition:
@@ -249,6 +307,12 @@
 			overlay var(--banto-duration-fast) allow-discrete,
 			opacity var(--banto-duration-fast) var(--banto-ease-out),
 			transform var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* Keep items at their size when the column is capped - an empty
+	   separator would otherwise shrink to nothing instead of scrolling. */
+	.menu-popover > :global(*) {
+		flex-shrink: 0;
 	}
 
 	.menu-popover:popover-open {
