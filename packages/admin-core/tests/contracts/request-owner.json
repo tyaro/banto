@@ -211,6 +211,23 @@
       ]
     },
     {
+      "name": "dispose also expires a finished handle the caller still holds (PR #441 review)",
+      "steps": [
+        { "op": "begin", "id": "a" },
+        { "op": "finish", "id": "a", "returns": true },
+        {
+          "op": "expect",
+          "current": { "a": true },
+          "aborted": { "a": false },
+          "busy": { "": false }
+        },
+        { "op": "dispose" },
+        { "op": "expect", "current": { "a": false }, "aborted": { "a": true }, "disposed": true },
+        { "op": "apply", "id": "a", "value": "late" },
+        { "op": "expect", "model": null }
+      ]
+    },
+    {
       "name": "dispose twice is a no-op",
       "steps": [
         { "op": "begin", "id": "a" },

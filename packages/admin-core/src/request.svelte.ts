@@ -45,6 +45,8 @@
  * (session-controller-design): authentication keeps its own check.
  */
 
+import { untrack } from 'svelte';
+
 /** Key used when `begin()` / `invalidate()` / `busy()` are called without one. */
 export const DEFAULT_REQUEST_KEY = '';
 
@@ -183,6 +185,14 @@ class Owner implements RequestOwner {
 	// `$derived` / templates re-evaluates. The map itself stays non-reactive.
 	#version = $state(0);
 
+	// `++` reads `#version` before writing it. `begin()` is typically called
+	// from an `$effect` (e.g. `ListResource.load()` on mount); a tracked read
+	// there would subscribe that effect to `#version` and the write would
+	// re-run it forever. Read untracked; `busy()` is the only tracked reader.
+	#bump(): void {
+		this.#version = untrack(() => this.#version) + 1;
+	}
+
 	get disposed(): boolean {
 		return this.#disposed;
 	}
@@ -197,7 +207,7 @@ class Owner implements RequestOwner {
 		this.#current.get(key)?.expire();
 		this.#current.set(key, request);
 		this.#live.add(request);
-		this.#version++;
+		this.#bump();
 		return request;
 	}
 
@@ -206,15 +216,20 @@ class Owner implements RequestOwner {
 		if (!request) return;
 		request.expire();
 		this.#current.delete(key);
-		this.#version++;
+		this.#bump();
 	}
 
 	dispose(): void {
 		if (this.#disposed) return;
 		this.#disposed = true;
 		const live = [...this.#live];
+		// A finished request stays in #current (settle) and is no longer live,
+		// but a caller may still hold its handle: expire it too, so disposal
+		// really makes every request stale (isCurrent() false, signal aborted).
+		const settled = [...this.#current.values()].filter((request) => !this.#live.has(request));
 		this.#live.clear();
 		this.#current.clear();
+		for (const request of settled) request.expire();
 		let failure: { error: unknown } | null = null;
 		for (const request of live) {
 			request.expire();
@@ -224,7 +239,7 @@ class Owner implements RequestOwner {
 				failure ??= { error };
 			}
 		}
-		this.#version++;
+		this.#bump();
 		if (failure) throw failure.error;
 	}
 
@@ -240,7 +255,7 @@ class Owner implements RequestOwner {
 		if (!request.isCurrent()) return false;
 		// Keep it in #current (still current, just not busy) so a later
 		// invalidate() of this key is a no-op for it; bump for busy().
-		this.#version++;
+		this.#bump();
 		return true;
 	}
 }
