@@ -1,7 +1,7 @@
 # SCADA Designer の共有部品を banto へ戻す計画書（Issue #432〜#438）
 
 作成日: 2026-10-21
-状態: **計画（一部オーナー判断待ち）**。D6・D10 は決定済み（2026-10-21、§9）。D1〜D5・D7〜D9・D11 は未決。実装は始めていない。
+状態: **計画（決定済み）**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。実装は段階 1 から始める。
 トラック: 保守者向け（トラックA）
 関連: Issue #432〜#438 / [nav-launcher-plan.md](nav-launcher-plan.md)（書式の手本）/
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`。§10 の層の約束）/
@@ -797,21 +797,21 @@ minor）なので v6.8.0 のまま。draft の #429 は、全 PR のマージ後
   `optimizeDeps.exclude`（`.svelte.ts` を持つなら）。
 - 実装 PR ごとに本書の `状態:` 行を更新する（AGENTS.md の寿命のルール）。
 
-## 9. 論点（D1〜D11）
+## 9. 論点（D1〜D11、すべて決定済み 2026-10-21）
 
 | 論点 | 推奨 |
 | --- | --- |
-| D1 #436 の primitive の置き場所 | a: admin-core。forms は同じ契約の内部実装を持つ |
-| D2 #435 の置き場所 | a: キーと保護と dispatcher は ui、`PaletteCommand` の任意の欄は admin-core |
-| D3 #432 の方式 | c: タブ / hide は DOM を保つ、dock / undock / close→open は draft を戻す、IME 変換中は保留 |
-| D4 hide と close の意味 | a: keepMounted の pane の × は hide（中身を保つ）、捨てる close は確認を通す |
-| D5 dock の keyboard のキー割り当て | a: divider は Window Splitter、window は明示の移動 / サイズ変更モード |
+| D1 #436 の primitive の置き場所 | **決定: a: admin-core。forms は同じ契約の内部実装を持つ** |
+| D2 #435 の置き場所 | **決定: a: キーと保護と dispatcher は ui、`PaletteCommand` の任意の欄は admin-core** |
+| D3 #432 の方式 | **決定: c: タブ / hide は DOM を保つ、dock / undock / close→open は draft を戻す、IME 変換中は保留** |
+| D4 hide と close の意味 | **決定: a: keepMounted の pane の × は hide（中身を保つ）、捨てる close は確認を通す** |
+| D5 dock の keyboard のキー割り当て | **決定: a: divider は Window Splitter、window は明示の移動 / サイズ変更モード** |
 | D6 #438 の扱い | **決定: a**（新しいオプションのパッケージとして作る。汎用 SCADA の次に案件用の特化 SCADA を作る予定で、2 つ目の consumer がある） |
-| D7 新パッケージと ADR | D6-a の帰結: #438 の新パッケージだけ ADR（ADR-0020）を書く。#436・#435 は既存パッケージの中で完結（新パッケージは作らない） |
-| D8 ダッシュボードの dock layout を #437 に載せ替えるか | b: 載せ替えない（別 Issue。見本として後で） |
-| D9 #432 の統合をどこで見るか | a: ダッシュボードのメモ pane を入力欄にして e2e |
+| D7 新パッケージと ADR | **決定**（D6-a の帰結）: #438 の新パッケージだけ ADR（ADR-0020）を書く。#436・#435 は既存パッケージの中で完結（新パッケージは作らない） |
+| D8 ダッシュボードの dock layout を #437 に載せ替えるか | **決定: b: 載せ替えない（別 Issue。見本として後で）** |
+| D9 #432 の統合をどこで見るか | **決定: a: ダッシュボードのメモ pane を入力欄にして e2e** |
 | D10 v6.8.0 との関係 | **決定: b**（7 件をすべて片付けてから 1 回で出す） |
-| D11 #438 の hash（平文 HTTP の LAN で `crypto.subtle` が無い） | a: `crypto.subtle` があれば使い、無ければ自前の SHA-256（同じ値）に落とす |
+| D11 #438 の hash（平文 HTTP の LAN で `crypto.subtle` が無い） | **決定: a: `crypto.subtle` があれば使い、無ければ自前の SHA-256（同じ値）に落とす** |
 
 ### D1. #436 の primitive の置き場所
 
