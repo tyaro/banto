@@ -12,6 +12,8 @@
 	import { isNavigationSettled } from '#lib/banto/navigationSettled.svelte.js';
 	import Header from '#lib/components/Header.svelte';
 	import Sidebar from '#lib/components/Sidebar.svelte';
+	import ShellLauncher from '#lib/components/ShellLauncher.svelte';
+	import { settings } from '#lib/settings.svelte.js';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import { watchRecentCommandOwner } from '#lib/recentCommands.js';
@@ -198,6 +200,26 @@
 		closeOverlay();
 	});
 
+	// Dock layout (nav-launcher-plan.md §4.1): the launcher replaces the
+	// sidebar, so there is no <=900px drawer to keep open (the header hides
+	// its hamburger) - close one left open when the layout is switched.
+	const launcher = $derived(settings.navLayout === 'launcher');
+	$effect(() => {
+		if (launcher) closeOverlay();
+	});
+
+	// The toast stack is a sibling of this shell (routes/+layout.svelte), so a
+	// variable set here would not reach it: while the dock is shown, a root
+	// attribute lets banto.css lift `--banto-toast-bottom` above the bar
+	// (§4.1). Removed on teardown - screens without the dock (login) keep the
+	// toasts where they were.
+	$effect(() => {
+		if (!launcher) return;
+		const root = document.documentElement;
+		root.setAttribute('data-banto-shell-nav', 'launcher');
+		return () => root.removeAttribute('data-banto-shell-nav');
+	});
+
 	// Ctrl+K / Cmd+K (spec M16): a global toggle registered here (the app
 	// shell), not inside CommandPalette itself - it must keep working to
 	// CLOSE the palette while focus is inside its own search input (or any
@@ -220,15 +242,19 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="shell">
-	<Sidebar {overlayOpen} />
-	{#if overlayOpen}
-		<button
-			type="button"
-			class="overlay-backdrop"
-			aria-label={m['shell.closeSidebar']()}
-			onclick={closeOverlay}
-		></button>
+<div class="shell" class:with-launcher={launcher}>
+	{#if launcher}
+		<ShellLauncher />
+	{:else}
+		<Sidebar {overlayOpen} />
+		{#if overlayOpen}
+			<button
+				type="button"
+				class="overlay-backdrop"
+				aria-label={m['shell.closeSidebar']()}
+				onclick={closeOverlay}
+			></button>
+		{/if}
 	{/if}
 	<div class="main">
 		<Header {overlayOpen} onToggleOverlay={toggleOverlay} />
@@ -264,11 +290,22 @@
 		padding: 1.25rem;
 	}
 
+	/* Dock layout (nav-launcher-plan.md §4.1): the fixed bar must not cover
+	   the end of the page. */
+	.shell.with-launcher main {
+		padding-bottom: calc(1.25rem + var(--banto-shell-launcher-reserve));
+	}
+
 	.overlay-backdrop {
 		display: none;
 	}
 
 	@media (max-width: 900px) {
+		/* The full-width tab bar instead (§4.6, D5). */
+		.shell.with-launcher main {
+			padding-bottom: calc(1.25rem + var(--banto-shell-launcher-tabbar-reserve));
+		}
+
 		.overlay-backdrop {
 			display: block;
 			position: fixed;

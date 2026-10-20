@@ -25,6 +25,7 @@
 ### Added
 
 - `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）。
+- 設定の「外観」に「ナビゲーション」カードを追加し、サイドバーの代わりに画面下のドック（`LauncherBar` を配線した `ShellLauncher`）を選べるようにした。ユーザーごとに保存し（`shell.navLayout` / `shell.launcherOpacity`、未保存のユーザーは既定のサイドバー）、ドックの不透明度をスライダー（40〜100%）とプレビューで調整できる。既定は `NAV_LAYOUT_DEFAULT = 'sidebar'`。ドック表示中はトーストをバーの上に上げる（`@banto/theme` に `--banto-shell-launcher-tabbar-reserve` を追加）（nav-launcher-plan.md PR-3）。
 
 ### Changed
 

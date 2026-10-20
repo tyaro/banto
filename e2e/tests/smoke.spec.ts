@@ -2609,6 +2609,74 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// nav-launcher-plan.md §3/§7.2: the dock is a per-user setting on the real
+	// REST provider. Chosen in 外観, it navigates and survives a reload; a user
+	// who never chose one gets the default sidebar on the same browser (the
+	// localStorage cache is shared, the provider's "nothing stored" resets it);
+	// the first user gets the dock back on their next login. Own context, and
+	// the admin's setting is put back to the sidebar at the end so the shared
+	// page of the scenarios below keeps the default.
+	test('13k. dock layout: chosen per user, kept across a reload, not inherited by another user', async ({
+		browser
+	}) => {
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const tab = await context.newPage();
+		const layoutGroup = () => tab.getByRole('radiogroup', { name: 'ナビゲーションの表示形式' });
+		const savedLayout = () =>
+			tab.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === '/api/ui-settings/shell.navLayout' &&
+					response.request().method() === 'PUT'
+			);
+		try {
+			await loginRemembered(tab, ADMIN_USERNAME, ADMIN_PASSWORD);
+			await tab.goto('/settings');
+			let saved = savedLayout();
+			await layoutGroup().getByText('ドック', { exact: true }).click();
+			expect((await saved).status()).toBe(204);
+			await expect(tab.locator('.launcher')).toBeVisible();
+			await expect(tab.locator('aside')).toHaveCount(0);
+			await expect(tab.locator('html')).toHaveAttribute('data-banto-shell-nav', 'launcher');
+
+			const nav = tab.getByRole('navigation', { name: '主要ナビゲーション' });
+			await nav.getByRole('link', { name: '商品' }).click();
+			await expect(tab).toHaveURL(/\/items$/);
+			await expect(nav.getByRole('link', { name: '商品' })).toHaveAttribute('aria-current', 'page');
+
+			await tab.reload();
+			await expect(tab.getByRole('grid')).toBeVisible();
+			await expect(tab.locator('.launcher')).toBeVisible();
+
+			// Another user on the same browser: nothing stored for them -> sidebar.
+			await logout(tab);
+			await expect(tab).toHaveURL(/\/login$/);
+			await tab.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
+			await tab.getByLabel('パスワード').fill(VIEWER_PASSWORD);
+			await tab.getByRole('button', { name: 'ログイン' }).click();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			await expect(tab.locator('aside')).toBeVisible();
+			await expect(tab.locator('.launcher')).toHaveCount(0);
+			await expect(tab.locator('html')).not.toHaveAttribute('data-banto-shell-nav', 'launcher');
+
+			// The admin gets their own choice back, then restores the default.
+			await logout(tab);
+			await expect(tab).toHaveURL(/\/login$/);
+			await tab.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+			await tab.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await tab.getByRole('button', { name: 'ログイン' }).click();
+			await expect(tab).toHaveURL(/\/dashboard$/);
+			await expect(tab.locator('.launcher')).toBeVisible();
+
+			await tab.goto('/settings');
+			saved = savedLayout();
+			await layoutGroup().getByText('サイドバー', { exact: true }).click();
+			expect((await saved).status()).toBe(204);
+			await expect(tab.locator('aside')).toBeVisible();
+		} finally {
+			await context.close();
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's

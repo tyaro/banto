@@ -32,12 +32,16 @@ const THEME_KEY = 'banto.theme';
 const PRESET_KEY = 'banto.preset';
 const DENSITY_KEY = 'banto.density';
 const KIOSK_KEY = 'banto.kiosk';
+const NAV_LAYOUT_KEY = 'banto.navLayout';
+const LAUNCHER_OPACITY_KEY = 'banto.launcherOpacity';
 
 /** `UiSettingsProvider` keys (wire contract, spec M12). */
 const MODE_SETTING = 'theme.mode';
 const PRESET_SETTING = 'theme.preset';
 const DENSITY_SETTING = 'theme.density';
 const KIOSK_SETTING = 'shell.kiosk';
+const NAV_LAYOUT_SETTING = 'shell.navLayout';
+const LAUNCHER_OPACITY_SETTING = 'shell.launcherOpacity';
 
 /**
  * Kiosk shell default (display-preset-plan.md D1-b/§3.2). `false` here keeps
@@ -47,6 +51,49 @@ const KIOSK_SETTING = 'shell.kiosk';
  * into the kiosk shell. Do not seed `kiosk` from anywhere else.
  */
 export const KIOSK_DEFAULT = false;
+
+/** Shell navigation layout (nav-launcher-plan.md §3, D1): the sidebar or the dock-like launcher (shown as "Dock"). */
+export type NavLayout = 'sidebar' | 'launcher';
+
+/**
+ * Navigation layout default (nav-launcher-plan.md §3, D3-a). `'sidebar'`
+ * keeps every existing app's shell unchanged; an app that wants the dock by
+ * default changes ONLY this constant (no server change - the provider key is
+ * generic). Same rule as `KIOSK_DEFAULT`: do not seed `navLayout` from
+ * anywhere else.
+ */
+export const NAV_LAYOUT_DEFAULT: NavLayout = 'sidebar';
+
+/** Launcher bar opacity in whole percent (nav-launcher-plan.md D7): the slider's range, step and default (the theme's own default is the same 50%). */
+export const LAUNCHER_OPACITY_MIN = 40;
+export const LAUNCHER_OPACITY_MAX = 100;
+export const LAUNCHER_OPACITY_STEP = 5;
+export const LAUNCHER_OPACITY_DEFAULT = 50;
+
+/** The only theme token the app writes for the launcher (the colour formula stays in banto.css, D7). */
+const LAUNCHER_OPACITY_TOKEN = '--banto-shell-launcher-opacity';
+
+export function isNavLayout(value: unknown): value is NavLayout {
+	return value === 'sidebar' || value === 'launcher';
+}
+
+/** A whole percent on the slider's grid (40-100, step 5). */
+export function isLauncherOpacity(value: unknown): value is number {
+	return (
+		typeof value === 'number' &&
+		Number.isInteger(value) &&
+		value >= LAUNCHER_OPACITY_MIN &&
+		value <= LAUNCHER_OPACITY_MAX &&
+		(value - LAUNCHER_OPACITY_MIN) % LAUNCHER_OPACITY_STEP === 0
+	);
+}
+
+/** Stored string -> opacity; anything off the slider's grid is the default (same rule as the theme guards). */
+export function parseLauncherOpacity(stored: string | null): number {
+	if (stored === null || !/^\d+$/.test(stored)) return LAUNCHER_OPACITY_DEFAULT;
+	const value = Number(stored);
+	return isLauncherOpacity(value) ? value : LAUNCHER_OPACITY_DEFAULT;
+}
 
 function loadThemeMode(): ThemeMode {
 	if (typeof localStorage === 'undefined') return 'system';
@@ -74,6 +121,17 @@ function loadKiosk(): boolean {
 	return KIOSK_DEFAULT;
 }
 
+function loadNavLayout(): NavLayout {
+	if (typeof localStorage === 'undefined') return NAV_LAYOUT_DEFAULT;
+	const stored = localStorage.getItem(NAV_LAYOUT_KEY);
+	return isNavLayout(stored) ? stored : NAV_LAYOUT_DEFAULT;
+}
+
+function loadLauncherOpacity(): number {
+	if (typeof localStorage === 'undefined') return LAUNCHER_OPACITY_DEFAULT;
+	return parseLauncherOpacity(localStorage.getItem(LAUNCHER_OPACITY_KEY));
+}
+
 /** Best-effort provider write: an unauthenticated/offline failure is expected and ignored (localStorage already holds the value). */
 function persistRemote(key: string, value: string): void {
 	void getUiSettings()
@@ -86,6 +144,9 @@ class Settings {
 	themePreset: ThemePreset = $state(loadThemePreset());
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
 	kiosk: boolean = $state(loadKiosk());
+	navLayout: NavLayout = $state(loadNavLayout());
+	/** Whole percent (40-100, step 5), written to the root's `--banto-shell-launcher-opacity`. */
+	launcherOpacity: number = $state(loadLauncherOpacity());
 	/**
 	 * Kiosk shell (display-preset-plan.md D1-b): the fold is not itself
 	 * persisted (unchanged from before this unit - it always started at
@@ -97,6 +158,15 @@ class Settings {
 	sidebarCollapsed = $state(this.kiosk);
 
 	#unwatchSystem: (() => void) | undefined;
+
+	/**
+	 * Stale-read guard for `syncFromProvider()` (#424 review): `(app)/+layout.ts`
+	 * does not await the sync, so the user can change a setting while its
+	 * reads are in flight. Keys set locally since the sync began are not
+	 * overwritten by its (older) results, and a newer sync supersedes an older one.
+	 */
+	#syncGeneration = 0;
+	#changedSinceSync = new Set<string>();
 
 	/** Apply + cache locally, WITHOUT the provider write (init/syncFromProvider must not echo values back). */
 	#applyThemeMode(mode: ThemeMode) {
@@ -129,24 +199,66 @@ class Settings {
 		localStorage.setItem(KIOSK_KEY, String(kiosk));
 	}
 
+	/** Apply + cache locally, WITHOUT the provider write (nav-launcher-plan.md §3). */
+	#applyNavLayout(layout: NavLayout) {
+		this.navLayout = layout;
+		localStorage.setItem(NAV_LAYOUT_KEY, layout);
+	}
+
+	/** Apply + cache locally, WITHOUT the provider write: the one theme token the slider changes (D7). */
+	#applyLauncherOpacity(opacity: number) {
+		const value = isLauncherOpacity(opacity) ? opacity : LAUNCHER_OPACITY_DEFAULT;
+		this.launcherOpacity = value;
+		localStorage.setItem(LAUNCHER_OPACITY_KEY, String(value));
+		document.documentElement.style.setProperty(LAUNCHER_OPACITY_TOKEN, `${value}%`);
+	}
+
 	setThemeMode(mode: ThemeMode) {
+		this.#changedSinceSync.add(MODE_SETTING);
 		this.#applyThemeMode(mode);
 		persistRemote(MODE_SETTING, mode);
 	}
 
 	setThemePreset(preset: ThemePreset) {
+		this.#changedSinceSync.add(PRESET_SETTING);
 		this.#applyThemePreset(preset);
 		persistRemote(PRESET_SETTING, preset);
 	}
 
 	setThemeDensity(density: ThemeDensity) {
+		this.#changedSinceSync.add(DENSITY_SETTING);
 		this.#applyThemeDensity(density);
 		persistRemote(DENSITY_SETTING, density);
 	}
 
 	setKiosk(kiosk: boolean) {
+		this.#changedSinceSync.add(KIOSK_SETTING);
 		this.#applyKiosk(kiosk);
 		persistRemote(KIOSK_SETTING, String(kiosk));
+	}
+
+	setNavLayout(layout: NavLayout) {
+		this.#changedSinceSync.add(NAV_LAYOUT_SETTING);
+		this.#applyNavLayout(layout);
+		persistRemote(NAV_LAYOUT_SETTING, layout);
+	}
+
+	/**
+	 * Live apply while the slider moves (its `input` event): the real dock
+	 * follows at once, but the provider is written only once the value is
+	 * committed (`setLauncherOpacity`, the `change` event), so a drag does not
+	 * fire a burst of writes that could land out of order.
+	 */
+	previewLauncherOpacity(opacity: number) {
+		this.#changedSinceSync.add(LAUNCHER_OPACITY_SETTING);
+		this.#applyLauncherOpacity(opacity);
+	}
+
+	/** Commit (the slider's `change` event); an off-grid value falls back to the default. */
+	setLauncherOpacity(opacity: number) {
+		this.#changedSinceSync.add(LAUNCHER_OPACITY_SETTING);
+		this.#applyLauncherOpacity(opacity);
+		persistRemote(LAUNCHER_OPACITY_SETTING, String(this.launcherOpacity));
 	}
 
 	/** Call once on app mount to sync the DOM and start OS-theme watching. No provider write - nothing changed yet. */
@@ -155,6 +267,8 @@ class Settings {
 		this.#applyThemePreset(this.themePreset);
 		this.#applyThemeDensity(this.themeDensity);
 		this.#applyKiosk(this.kiosk);
+		this.#applyNavLayout(this.navLayout);
+		this.#applyLauncherOpacity(this.launcherOpacity);
 	}
 
 	/**
@@ -163,21 +277,39 @@ class Settings {
 	 * `routes/(app)/+layout.ts` - that's the earliest point the provider is
 	 * guaranteed authenticated (the session was just confirmed). A
 	 * missing key (never saved) or any provider failure leaves the current
-	 * (localStorage-seeded) values in place.
+	 * (localStorage-seeded) values in place - except the navigation layout
+	 * and the launcher opacity (nav-launcher-plan.md §3, #421 review): the
+	 * localStorage cache is not per user, so a successful read with no value
+	 * resets those two to their defaults (cached locally, not written back),
+	 * or a user who never chose would inherit the previous user's dock on a
+	 * shared browser. A failed read keeps the local values for them too.
+	 * A key the user changed while the reads were in flight keeps the user's
+	 * value, and a sync superseded by a newer one applies nothing.
 	 */
 	async syncFromProvider(): Promise<void> {
 		const ui = getUiSettings();
+		const generation = ++this.#syncGeneration;
+		this.#changedSinceSync.clear();
 		try {
-			const [mode, preset, density, kiosk] = await Promise.all([
+			const [mode, preset, density, kiosk, navLayout, launcherOpacity] = await Promise.all([
 				ui.get(MODE_SETTING),
 				ui.get(PRESET_SETTING),
 				ui.get(DENSITY_SETTING),
-				ui.get(KIOSK_SETTING)
+				ui.get(KIOSK_SETTING),
+				ui.get(NAV_LAYOUT_SETTING),
+				ui.get(LAUNCHER_OPACITY_SETTING)
 			]);
-			if (isThemeMode(mode)) this.#applyThemeMode(mode);
-			if (isThemePreset(preset)) this.#applyThemePreset(preset);
-			if (isThemeDensity(density)) this.#applyThemeDensity(density);
-			if (kiosk === 'true' || kiosk === 'false') this.#applyKiosk(kiosk === 'true');
+			if (generation !== this.#syncGeneration) return;
+			const fresh = (key: string): boolean => !this.#changedSinceSync.has(key);
+			if (fresh(MODE_SETTING) && isThemeMode(mode)) this.#applyThemeMode(mode);
+			if (fresh(PRESET_SETTING) && isThemePreset(preset)) this.#applyThemePreset(preset);
+			if (fresh(DENSITY_SETTING) && isThemeDensity(density)) this.#applyThemeDensity(density);
+			if (fresh(KIOSK_SETTING) && (kiosk === 'true' || kiosk === 'false'))
+				this.#applyKiosk(kiosk === 'true');
+			if (fresh(NAV_LAYOUT_SETTING))
+				this.#applyNavLayout(isNavLayout(navLayout) ? navLayout : NAV_LAYOUT_DEFAULT);
+			if (fresh(LAUNCHER_OPACITY_SETTING))
+				this.#applyLauncherOpacity(parseLauncherOpacity(launcherOpacity));
 		} catch {
 			// Best-effort: offline/unauthenticated reads keep the local values.
 		}

@@ -2,6 +2,9 @@
 	/**
 	 * App shell header (visual-refresh-design.md §8.2). DOM order: hamburger
 	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
+	 * In the dock layout (nav-launcher-plan.md §4.1/§4.6) the hamburger is
+	 * never shown (there is no drawer) and the brand the sidebar carried
+	 * takes its place at the left.
 	 */
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -120,13 +123,28 @@
 </script>
 
 <header class:compact={settings.kiosk}>
-	<div class="hamburger">
-		<IconButton
-			label={overlayOpen ? m['shell.closeSidebar']() : m['shell.expandSidebar']()}
-			icon={MenuIcon}
-			onclick={() => onToggleOverlay?.()}
-		/>
-	</div>
+	{#if settings.navLayout === 'launcher'}
+		<div class="brand">
+			<span class="brand-mark" aria-hidden="true">
+				<svg viewBox="0 0 24 24" width="14" height="14">
+					<rect x="10" y="3" width="4" height="2" rx="1" />
+					<circle cx="12" cy="12" r="6" />
+					<rect x="10" y="19" width="4" height="2" rx="1" />
+				</svg>
+			</span>
+			<!-- "Banto" is the product brand (owner-fixed): a component constant,
+			     never keyed - same as Sidebar.svelte. -->
+			<span class="brand-name">Banto</span>
+		</div>
+	{:else}
+		<div class="hamburger">
+			<IconButton
+				label={overlayOpen ? m['shell.closeSidebar']() : m['shell.expandSidebar']()}
+				icon={MenuIcon}
+				onclick={() => onToggleOverlay?.()}
+			/>
+		</div>
+	{/if}
 
 	<!-- Deliberately NOT a heading: the document h1 belongs to the page
 	     content (ui/PageHeader.svelte) - two h1s per page would be a strict
@@ -267,6 +285,32 @@
 		.hamburger {
 			display: block;
 		}
+	}
+
+	/* Dock layout brand (same look as Sidebar.svelte's .brand). */
+	.brand {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		flex-shrink: 0;
+		padding-right: 0.75rem;
+		border-right: 1px solid var(--banto-border);
+		font-weight: 700;
+	}
+
+	.brand-mark {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 26px;
+		height: 26px;
+		border-radius: var(--banto-radius-md);
+		background: var(--banto-accent-gradient);
+	}
+
+	.brand-mark svg {
+		fill: var(--banto-text-inverse);
 	}
 
 	.page-title {
