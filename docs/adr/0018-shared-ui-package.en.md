@@ -462,9 +462,11 @@ presentation and interaction live in `@banto/ui` as `LauncherBar`; the wiring st
   conventions §14 keeps in sync.
 - **The sidebar does not move**: a large move with no behaviour change, with a big impact on the
   baselines and banto-industrial. Planned as a separate phase if needed.
-- **Bottom only for now**: `LauncherPosition` is just `'bottom'`, while the `position` prop exists
-  from the start. Left / right (plan D4, PR-4) are added to the type on demand without breaking
-  existing callers.
+- **Position**: the `position` prop existed from the start with `'bottom'` only. Left / right
+  (plan D4, PR-4) were added as `LauncherPosition = 'bottom' | 'left' | 'right'` without breaking
+  existing callers: a vertical bar centred on that screen edge, magnifying along the vertical axis,
+  with the tooltips beside the items on the page side. At <=900px every position is the bottom tab
+  bar (D5).
 - **Theme**: sizes, the magnification ratio and the stacking order are new tokens
   `--banto-shell-launcher-*` (`item-size`, `magnify-max`, `gap`, `padding`, `offset`, `reserve`)
   and `--banto-z-launcher` (200). `--banto-dock-*` belongs to `@banto/dock-svelte` and is not used

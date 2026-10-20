@@ -7,6 +7,7 @@
 	 * are turned into `@banto/ui` `LauncherBar` groups; presentation,
 	 * magnification, tooltips and the <=900px tab bar live in the package.
 	 * Mounted before `.main` by (app)/+layout.svelte, like the sidebar (§4.7).
+	 * The screen edge is the user's setting (`settings.launcherPosition`, D4).
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
@@ -14,6 +15,7 @@
 	import { NAV_ICONS } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
+	import { settings } from '#lib/settings.svelte.js';
 	import { LauncherBar, type LauncherGroup, type LauncherItem } from '@banto/ui';
 
 	const sections = $derived(
@@ -46,4 +48,4 @@
 	]);
 </script>
 
-<LauncherBar {groups} />
+<LauncherBar {groups} position={settings.launcherPosition} />

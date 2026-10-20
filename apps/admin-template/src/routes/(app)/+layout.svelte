@@ -208,16 +208,23 @@
 		if (launcher) closeOverlay();
 	});
 
+	const launcherPosition = $derived(settings.launcherPosition);
+
 	// The toast stack is a sibling of this shell (routes/+layout.svelte), so a
-	// variable set here would not reach it: while the dock is shown, a root
-	// attribute lets banto.css lift `--banto-toast-bottom` above the bar
-	// (§4.1). Removed on teardown - screens without the dock (login) keep the
-	// toasts where they were.
+	// variable set here would not reach it: while the dock is shown, root
+	// attributes (the layout and the bar's edge, D4) let banto.css move
+	// `--banto-toast-bottom` / `--banto-toast-right` clear of the bar (§4.1).
+	// Removed on teardown - screens without the dock (login) keep the toasts
+	// where they were.
 	$effect(() => {
 		if (!launcher) return;
 		const root = document.documentElement;
 		root.setAttribute('data-banto-shell-nav', 'launcher');
-		return () => root.removeAttribute('data-banto-shell-nav');
+		root.setAttribute('data-banto-shell-launcher-position', launcherPosition);
+		return () => {
+			root.removeAttribute('data-banto-shell-nav');
+			root.removeAttribute('data-banto-shell-launcher-position');
+		};
 	});
 
 	// Ctrl+K / Cmd+K (spec M16): a global toggle registered here (the app
@@ -242,7 +249,12 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="shell" class:with-launcher={launcher}>
+<div
+	class="shell"
+	class:with-launcher={launcher}
+	class:launcher-left={launcher && launcherPosition === 'left'}
+	class:launcher-right={launcher && launcherPosition === 'right'}
+>
 	{#if launcher}
 		<ShellLauncher />
 	{:else}
@@ -296,14 +308,30 @@
 		padding-bottom: calc(1.25rem + var(--banto-shell-launcher-reserve));
 	}
 
+	/* A left / right bar (D4) takes the room on that side instead. */
+	.shell.launcher-left main,
+	.shell.launcher-right main {
+		padding-bottom: 1.25rem;
+	}
+
+	.shell.launcher-left main {
+		padding-left: calc(1.25rem + var(--banto-shell-launcher-reserve));
+	}
+
+	.shell.launcher-right main {
+		padding-right: calc(1.25rem + var(--banto-shell-launcher-reserve));
+	}
+
 	.overlay-backdrop {
 		display: none;
 	}
 
 	@media (max-width: 900px) {
-		/* The full-width tab bar instead (§4.6, D5). */
-		.shell.with-launcher main {
-			padding-bottom: calc(1.25rem + var(--banto-shell-launcher-tabbar-reserve));
+		/* The full-width tab bar instead, whatever the position (§4.6, D5). */
+		.shell.with-launcher main,
+		.shell.launcher-left main,
+		.shell.launcher-right main {
+			padding: 1.25rem 1.25rem calc(1.25rem + var(--banto-shell-launcher-tabbar-reserve));
 		}
 
 		.overlay-backdrop {

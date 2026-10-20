@@ -21,8 +21,13 @@
 	 *   a `window` listener that exists only while a tooltip is shown; it yields
 	 *   to any visible layer above (`hasVisibleLayerAbove()`) and to handled
 	 *   events, and never consumes the event (the shell's Esc stays intact).
-	 * - <=900px (§4.6): a full-width bottom tab bar with small captions and
-	 *   44px minimum targets, scrolling sideways when the items do not fit.
+	 * - Position (§4.1, D4): `bottom` floats centred above the bottom edge;
+	 *   `left` / `right` are a vertical bar centred on that edge, magnifying
+	 *   along the vertical axis and growing towards the page, with the
+	 *   tooltips beside the items on the page side.
+	 * - <=900px (§4.6, D5): a full-width bottom tab bar with small captions and
+	 *   44px minimum targets, scrolling sideways when the items do not fit -
+	 *   whatever the `position` (the vertical rules only apply above 900px).
 	 */
 	import { onMount, untrack } from 'svelte';
 	import { hasVisibleLayerAbove } from './layering';
@@ -35,7 +40,7 @@
 
 	interface Props {
 		groups: LauncherGroup[];
-		/** Only `'bottom'` today (nav-launcher-plan.md D4). */
+		/** `'bottom'` (default), `'left'` or `'right'` (nav-launcher-plan.md D4); <=900px is always the bottom tab bar. */
 		position?: LauncherPosition;
 		/** Magnify on mouse hover (D6); still off under reduced motion, touch and <=900px. */
 		magnify?: boolean;
@@ -49,6 +54,11 @@
 	const ITEM_SIZE_TOKEN = '--banto-shell-launcher-item-size';
 
 	let bar: HTMLElement | undefined = $state();
+	/** The fixed root: its z-index (--banto-z-launcher) is what "a layer above" is measured against. */
+	let root: HTMLElement | undefined = $state();
+
+	/** Left / right: the main axis (magnification, scrolling) is vertical. */
+	const vertical = $derived(position === 'left' || position === 'right');
 
 	// --- environment (media queries, followed on `change`) -------------------
 	let reducedMotion = $state(false);
@@ -93,7 +103,8 @@
 		if (max > 1 && range > 0) {
 			for (const el of bar.querySelectorAll<HTMLElement>('[data-launcher-item]')) {
 				const rect = el.getBoundingClientRect();
-				const scale = magnifyScale(pointerMain - (rect.left + rect.width / 2), range, max);
+				const centre = vertical ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
+				const scale = magnifyScale(pointerMain - centre, range, max);
 				if (scale > 1) next[el.dataset.launcherItem ?? ''] = Math.round(scale * 1000) / 1000;
 			}
 		}
@@ -102,7 +113,7 @@
 
 	function onPointerMove(event: PointerEvent): void {
 		if (event.pointerType !== 'mouse' || !magnifyActive) return;
-		pointerMain = event.clientX;
+		pointerMain = vertical ? event.clientY : event.clientX;
 		if (!frame) frame = requestAnimationFrame(applyMagnify);
 	}
 
@@ -112,9 +123,11 @@
 	});
 
 	// --- tooltip (§4.4) --------------------------------------------------------
-	// The track scrolls sideways, so it clips anything past its small inline
-	// padding: the outermost items' tooltips align to the item's outer edge
-	// instead of centring on it, so a long label grows inwards (#423 review).
+	// The bottom bar's track scrolls sideways, so it clips anything past its
+	// small inline padding: the outermost items' tooltips align to the item's
+	// outer edge instead of centring on it, so a long label grows inwards
+	// (#423 review). A vertical bar's tooltip sits beside the item and is
+	// shorter than it, so the CSS keeps those centred (the classes stay).
 	const allIds = $derived(groups.flatMap((group) => group.items.map((item) => item.id)));
 	const firstId = $derived(allIds[0]);
 	const lastId = $derived(allIds.at(-1));
@@ -164,7 +177,10 @@
 		const onKeydown = (event: KeyboardEvent): void => {
 			if (event.key !== 'Escape' || event.defaultPrevented) return;
 			// A palette / Modal / Drawer / menu above us owns this Esc (layering.ts promise 2).
-			if (hasVisibleLayerAbove()) return;
+			// Measured against the bar's own z-index: a non-modal window inside
+			// the page (the dashboard's floating DockHost panel, role="dialog")
+			// sits below the bar and must not swallow the tooltip's Esc.
+			if (hasVisibleLayerAbove({ except: root })) return;
 			// No preventDefault / stopPropagation: the shell may still act on it.
 			quietHover = hoveredId;
 			quietFocus = focusId;
@@ -197,7 +213,9 @@
 </script>
 
 <div
+	bind:this={root}
 	class="launcher launcher--{position}"
+	class:launcher--vertical={vertical}
 	class:launcher--magnifying={Object.keys(scales).length > 0}
 	role={ariaLabel ? 'group' : undefined}
 	aria-label={ariaLabel}
@@ -524,10 +542,140 @@
 		visibility: visible;
 	}
 
+	/* Left / right (plan §4.1, D4): a vertical bar centred on that edge.
+	   Above 900px only - at <=900px the tab bar below wins over the setting
+	   (D5), so none of these rules may leak into it. */
+	@media not all and (max-width: 900px) {
+		.launcher--vertical {
+			inset-block: 0;
+			flex-direction: column;
+			justify-content: center;
+		}
+
+		.launcher--left {
+			left: 0;
+			align-items: flex-start;
+		}
+
+		.launcher--right {
+			right: 0;
+			align-items: flex-end;
+		}
+
+		/* Many items scroll vertically. The scroll box clips on both axes,
+		   so the page side keeps the room of the sideways tooltip (its max
+		   width + the gap; the bottom bar's 2.5rem top padding is the same
+		   idea), the ends along the edge keep 2.5rem for the bar's shadow
+		   (a sharp cut line otherwise), and the screen side the offset. */
+		.launcher--vertical .launcher__track {
+			max-width: none;
+			max-height: 100%;
+			overflow-x: hidden;
+			overflow-y: auto;
+		}
+
+		.launcher--left .launcher__track {
+			padding: 2.5rem calc(var(--banto-shell-launcher-tooltip-max-width) + 1rem) 2.5rem
+				var(--banto-shell-launcher-offset);
+		}
+
+		.launcher--right .launcher__track {
+			padding: 2.5rem var(--banto-shell-launcher-offset) 2.5rem
+				calc(var(--banto-shell-launcher-tooltip-max-width) + 1rem);
+		}
+
+		.launcher--vertical .launcher__bar,
+		.launcher--vertical .launcher__group,
+		.launcher--vertical .launcher__list {
+			flex-direction: column;
+		}
+
+		/* Items grow towards the page (§4.2): a left bar to the right, a
+		   right bar to the left (the bottom bar's flex-end grows upwards). */
+		.launcher--left .launcher__bar,
+		.launcher--left .launcher__list {
+			align-items: flex-start;
+		}
+
+		.launcher--right .launcher__bar,
+		.launcher--right .launcher__list {
+			align-items: flex-end;
+		}
+
+		/* The rule between groups lies across the bar (§4.5). */
+		.launcher--vertical .launcher__separator {
+			width: auto;
+			height: 1px;
+			margin-block: 0;
+			margin-inline: var(--banto-shell-launcher-padding);
+		}
+
+		/* Active dot on the icon's outer side, towards the screen edge (§4.3). */
+		.launcher--vertical .launcher__link--active::after {
+			top: 50%;
+			bottom: auto;
+			margin: -2px 0 0;
+		}
+
+		.launcher--left .launcher__link--active::after {
+			left: 2px;
+		}
+
+		.launcher--right .launcher__link--active::after {
+			left: auto;
+			right: 2px;
+		}
+
+		/* Tooltip beside the item on the page side, vertically centred. It
+		   is shorter than the item, so it never reaches past the item along
+		   the scrolling axis and the edge items need no inward alignment
+		   (this selector outranks the --first / --last rules). A long label
+		   wraps at the token width the track keeps free. */
+		.launcher--vertical .launcher__item .launcher__tooltip {
+			top: 50%;
+			bottom: auto;
+			translate: 0 -50%;
+			width: max-content;
+			max-width: var(--banto-shell-launcher-tooltip-max-width);
+			white-space: normal;
+		}
+
+		.launcher--left .launcher__item .launcher__tooltip {
+			left: calc(100% + var(--banto-shell-launcher-padding) + var(--banto-shell-launcher-gap));
+			right: auto;
+		}
+
+		.launcher--right .launcher__item .launcher__tooltip {
+			left: auto;
+			right: calc(100% + var(--banto-shell-launcher-padding) + var(--banto-shell-launcher-gap));
+		}
+
+		/* The hover bridge spans the horizontal gap to the tooltip. */
+		.launcher--vertical .launcher__item::before {
+			inset: 0 auto;
+			width: calc(var(--banto-shell-launcher-padding) + var(--banto-shell-launcher-gap));
+			height: auto;
+		}
+
+		.launcher--left .launcher__item::before {
+			left: 100%;
+		}
+
+		.launcher--right .launcher__item::before {
+			right: 100%;
+		}
+	}
+
 	/* <=900px (plan §4.6, D5): a full-width bottom tab bar. No magnification
 	   (JS skips it too), visible captions, 44px minimum targets, the home
 	   indicator inset, sideways scrolling when the items do not fit. */
 	@media (max-width: 900px) {
+		/* Every position, not only --bottom (D5). */
+		.launcher {
+			inset-inline: 0;
+			bottom: 0;
+		}
+
 		.launcher__track {
 			width: 100%;
 			padding: 0;

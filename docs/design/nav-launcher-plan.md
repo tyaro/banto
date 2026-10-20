@@ -6,6 +6,7 @@ PR-2（トークン + `LauncherBar`、`@banto/ui` と `banto.css`）を実装（
 PR-1（ナビの絞り込みの切り出し、#422）と PR-2（#423）はマージ済み。PR-3（シェルへの配線と設定、
 ストア・`ShellLauncher`・レイアウトとヘッダの分岐・外観カード・e2e / a11y / visual のテスト）を実装
 （visual のベースラインは visual-baselines.yml の dispatch で作る）。PR-3 で計画から変えた点は §8 の表の注記。
+PR-3（#424）はマージ済み。PR-4（左右の位置、D4 を b に変更）を実装。
 トラック: 保守者向け（トラックA）
 関連: [visual-refresh-design.md](visual-refresh-design.md)（§5 ナビのアイコン、§8 シェル）、
 [display-preset-plan.md](display-preset-plan.md)（D1-b キオスクシェル）、
@@ -411,7 +412,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | 1 | ナビの絞り込みの切り出し | `navSections()` を navigation.ts に足し、Sidebar をそれで書き直す。テスト。挙動は同じ | なし（visual が変わらないことを確かめる） |
 | 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、ADR-0018 §11。**計画からの変更**: `ui-demo` のカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo-*` の作り直しが要るため。実ブラウザの見た目は 3 の visual で見る） | なし |
 | 3 | シェルへの配線と設定 | 設定ストア、ShellLauncher、レイアウト・ヘッダの分岐、外観カード、辞書、e2e、a11y、visual 追加。**計画からの変更**: (1) デモモードの `UiSettingsProvider` は localStorage（`banto.ui.` 接頭辞）で読み出しが**成功**するので、§3 の「失敗したらローカルを残す」はデモには当たらない（デモでは `banto.ui.shell.navLayout` が真実源。テストは両方のキーを事前に入れる）。(2) スライダーは `input` でその場に反映し（ローカル保存だけ）、プロバイダへの書き込みは `change` の 1 回にした（ドラッグ中の書き込みが前後して届くのを避ける）。(3) 900px 以下のタブバーの高さはトークン `--banto-shell-launcher-tabbar-reserve` を `@banto/theme` に足して表した（本文の余白とトーストの位置で共有）。(4) ShellLauncher の単体テストは、アプリの vitest が node 環境で部品を描けないので足さず、`navSections()` の表（PR-1）と e2e（閲覧公開の許可リスト）で見る。トーストの位置の単体テスト（§7.1 の最後）も同じ理由で e2e（バーとトーストの位置の比較）にした | `settings-*` 作り直し + `dashboard-launcher-*` 追加 |
-| 4 | 左 / 右（D4-b のとき） | 部品の `position`、設定の副ラジオ、visual 2 枚追加 | `settings-*` 作り直し + 追加 |
+| 4 | 左 / 右（D4-b のとき） | 部品の `position`、設定の副ラジオ、visual 2 枚追加。**実装の注記**: (1) 位置はルートの 2 つ目の属性 `data-banto-shell-launcher-position` で表し（`data-banto-shell-nav="launcher"` はそのまま）、右のバーではトーストを `--banto-toast-right` でバーの左へ逃がす。(2) 縦のバーのツールチップは横に出て折り返すので、最大幅をトークン `--banto-shell-launcher-tooltip-max-width`（10rem）にし、スクロールするトラックが本文側にその幅ぶんの余白を持つ（切れないように）。端の項目の内寄せは要らない（ツールチップが項目より低い）。(3) ダッシュボードの浮き窓（`role="dialog"`、本文の中の層）が出ているとツールチップの Esc を譲っていたので、`hasVisibleLayerAbove` をバー自身の z-index と比べるようにした（e2e のキーボードの Esc がときどき落ちていた原因）。(4) 外観カードの説明文（「画面下のドック」→「画面の端のドック」）を直したので `settings-*` も作り直し | `settings-*` 作り直し + `dashboard-launcher-left-*` / `-right-*` 追加 |
 | 5 | 文書 | README / recipes（不要なら外す 3 行）、template-scope §2.2、CHANGELOG の未リリース節、upgrading.md（派生アプリが取り込む手順）、本書の状態行 | なし |
 
 - 1 は 2 と独立なので並行できる。3 は 1 と 2 の後。4 は 3 の後。5 は 3（4）の後でも各 PR に分けて
@@ -429,12 +430,12 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | D1 コード上の名前 | a: コード・トークン・設定値は `launcher`、画面の表示は ja「ドック」/ en「Dock」 |
 | D2 部品の置き場 | a: 表示と操作は `@banto/ui` の `LauncherBar`、配線は admin-template の `ShellLauncher` |
 | D3 コアかオプションか | a: コア。全プリセットに残す。既定はサイドバー |
-| D4 位置 | a: 最初は下だけ。`position` は API に最初から持たせ、左右は要望を見て PR-4 で足す |
+| D4 位置 | a: 最初は下だけ。`position` は API に最初から持たせ、左右は要望を見て PR-4 で足す。**2026-10-20 に左右も足すことにした（PR-4）**: 設定「ドックの位置」下 / 左 / 右（既定は下）、900px 以下はどの位置でも下のタブバー（D5） |
 | D5 狭い画面 | a: 下端いっぱいのタブバー（アイコン + 小さなラベル、拡大なし） |
 | D6 拡大の ON / OFF | a: 拡大は ON。reduced-motion・タッチ・狭い画面では自動で OFF。設定項目は足さない |
 | D7 背景の透け具合（#423 で追加） | バーとツールチップの地を半透明にし、後ろをぼかす。既定値はオーナーが実ブラウザで調整した値（バー 50%・ぼかし 1px・彩度 1.5、ツールチップ 80%・ぼかし 5px）。`prefers-reduced-transparency` と `backdrop-filter` 非対応では不透明。**ユーザーが設定のスライダーで調整できる**（2026-10-20 決定、PR-3）: バーの不透明度だけを 40〜100%・5% 刻み・既定 50% で選ぶ。ツールチップは 80% で固定（名前の読みやすさ）。スライダーの横にプレビューを置く（§3） |
 
-これにより、§8 の PR-4 は要望が出るまで保留、D3-b の scaffold PR は作らない。以下は検討の記録として残す。
+これにより、§8 の PR-4 は要望が出るまで保留（のちに D4 の注記のとおり実施）、D3-b の scaffold PR は作らない。以下は検討の記録として残す。
 
 ### D1. コード上の名前
 

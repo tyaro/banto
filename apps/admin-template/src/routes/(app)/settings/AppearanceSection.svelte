@@ -17,6 +17,7 @@
 		Palette,
 		PanelBottom,
 		PanelLeft,
+		PanelRight,
 		PanelsTopLeft,
 		Rows3,
 		Rows4,
@@ -31,6 +32,7 @@
 		LAUNCHER_OPACITY_MIN,
 		LAUNCHER_OPACITY_STEP,
 		settings,
+		type LauncherPosition,
 		type NavLayout
 	} from '#lib/settings.svelte.js';
 	import { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';
@@ -64,6 +66,13 @@
 	const navLayouts: { value: NavLayout; label: string; icon: Component }[] = [
 		{ value: 'sidebar', label: m['settings.navLayoutSidebar'](), icon: PanelLeft },
 		{ value: 'launcher', label: m['settings.navLayoutLauncher'](), icon: PanelBottom }
+	];
+
+	// The dock's screen edge (D4); <=900px is always the bottom tab bar (D5).
+	const launcherPositions: { value: LauncherPosition; label: string; icon: Component }[] = [
+		{ value: 'bottom', label: m['settings.launcherPositionBottom'](), icon: PanelBottom },
+		{ value: 'left', label: m['settings.launcherPositionLeft'](), icon: PanelLeft },
+		{ value: 'right', label: m['settings.launcherPositionRight'](), icon: PanelRight }
 	];
 
 	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
@@ -247,6 +256,30 @@
 		</div>
 
 		{#if settings.navLayout === 'launcher'}
+			<h4>{m['settings.launcherPositionHeading']()}</h4>
+			<div
+				class="options launcher-position-options"
+				role="radiogroup"
+				aria-label={m['settings.launcherPositionHeading']()}
+			>
+				{#each launcherPositions as option (option.value)}
+					{@const PositionIcon = option.icon}
+					<label class="theme-option" class:selected={settings.launcherPosition === option.value}>
+						<input
+							type="radio"
+							name="launcher-position"
+							value={option.value}
+							checked={settings.launcherPosition === option.value}
+							onchange={() => settings.setLauncherPosition(option.value)}
+						/>
+						<PositionIcon size={16} aria-hidden="true" />{option.label}
+						{#if settings.launcherPosition === option.value}
+							<Check size={14} aria-hidden="true" />
+						{/if}
+					</label>
+				{/each}
+			</div>
+
 			<div class="launcher-opacity">
 				<label class="field">
 					<span class="launcher-opacity-label">
