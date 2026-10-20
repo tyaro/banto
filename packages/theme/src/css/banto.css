@@ -52,6 +52,19 @@
      permanently-mounted dashboards. Opt-in via Header.svelte's
      `class:compact` - the plain height above is unaffected. */
 	--banto-shell-header-height-compact: 40px;
+	/* Launcher (nav-launcher-plan.md §5.2; @banto/ui LauncherBar). The shell
+     namespace, not --banto-dock-* (that is @banto/dock-svelte, §2.4).
+     magnify-max is unitless - LauncherBar reads it from JS (unreadable = no
+     magnification). reserve is the room the shell keeps below the content. */
+	--banto-shell-launcher-item-size: 44px;
+	--banto-shell-launcher-magnify-max: 1.5;
+	--banto-shell-launcher-gap: 6px;
+	--banto-shell-launcher-padding: 6px;
+	--banto-shell-launcher-offset: 10px;
+	--banto-shell-launcher-reserve: calc(
+		var(--banto-shell-launcher-item-size) + var(--banto-shell-launcher-padding) * 2 +
+			var(--banto-shell-launcher-offset)
+	);
 
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;
@@ -128,6 +141,9 @@
      unchanged, so stacking order is too. */
 	--banto-scrim: rgb(0 0 0 / 0.35);
 	--banto-z-header: 100;
+	/* Launcher bar (nav-launcher-plan.md §4.1): above the header, below the
+     sidebar scrim, modals, the palette and toasts. */
+	--banto-z-launcher: 200;
 	--banto-z-sidebar-scrim: 850;
 	--banto-z-sidebar: 900;
 	--banto-z-modal: 900;

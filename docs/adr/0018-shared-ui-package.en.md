@@ -2,7 +2,7 @@
 
 > 日本語: [0018-shared-ui-package.md](0018-shared-ui-package.md)
 
-- Status: Accepted (phases 1-4 done; phase 4 = Modal / Drawer and the layering helpers, after the owner revised decision 10 on 2026-10-11, §10)
+- Status: Accepted (phases 1-5 done; phase 4 = Modal / Drawer and the layering helpers, after the owner revised decision 10 on 2026-10-11, §10; phase 5 = LauncherBar, 2026-10-20, §11)
 - Date: 2026-10-07
 - Related: Issue #220 / [conventions.md](../conventions.en.md) §4, §5, §9, §13, §14 /
   [ADR-0002](0002-minimal-dependencies.en.md), [ADR-0005](0005-i18n-paraglide.en.md),
@@ -430,6 +430,52 @@ both banto-industrial apps (banto-hub, and ChronoGazer, which now has a copy) ca
   so derived apps' config does not change. banto-industrial's migration is mostly an import swap
   with the same props (`LAYER_ABOVE_SELECTOR` -> `LAYER_SELECTOR`, `DrawerCloseSource` ->
   `OverlayCloseSource`).
+
+### 11. Phase 5: LauncherBar (owner decision, 2026-10-20)
+
+Owner decision (2026-10-20, all of D1-D6 in [nav-launcher-plan.md](../design/nav-launcher-plan.md) §9
+as option a): the navigation can also be shown as a dock-like launcher instead of the sidebar. Its
+presentation and interaction live in `@banto/ui` as `LauncherBar`; the wiring stays in the app
+(D2-a). No new ADR - this extends the placement decision, so it is recorded here.
+
+- **In the package**: `LauncherBar.svelte` (presentation and interaction only) and `launcher.ts`
+  (types `LauncherPosition`, `LauncherItem`, `LauncherGroup` and the pure `magnifyScale`). Props:
+  `groups` (`{ id, ariaLabel, items }[]`), `position` (default `'bottom'`), `magnify` (default
+  `true`), `ariaLabel`. One `<nav aria-label>` per group with a rule between groups, plain
+  `<a href>` with `aria-current="page"`, a visually hidden real-text name (label + badge label),
+  magnification (mouse `pointermove` throttled with `requestAnimationFrame`, changing the item
+  size; off under reduced motion, `(hover: none)`, <=900px and for non-mouse pointers), a tooltip
+  (`aria-hidden`, hoverable, Esc handled on `window` only while shown, yielding to
+  `hasVisibleLayerAbove()` and never consuming the event) and the <=900px tab bar. All text comes
+  through props, so `UiMessages` does not grow.
+- **In the app**: the nav definition (`navigation.ts`), role and public-viewer filtering, the
+  active-page check, badge counts, the dictionary (Paraglide), the setting (sidebar or launcher),
+  the shell's bottom reserve and the toast position. In admin-template a ~50-line
+  `ShellLauncher.svelte` only passes props to `@banto/ui` (plan PR-3).
+- **Why**: (1) no growth of the copied surface - the ~250 lines of magnification, tooltip, Esc and
+  a11y are not copied into derived apps and fixes propagate (this ADR's motivation). (2) Both
+  banto-industrial apps keep their own `Sidebar.svelte` and can use the same component. (3) The
+  component does not know the nav definition (`NavItem`); it is a generic "row of links"
+  (conventions §5, rule `package-bare-imports`; callers pass lucide components as icons).
+- **No `.svelte.ts`**: state is `$state` inside the `.svelte` file. `@banto/ui` is already under
+  `optimizeDeps.exclude` since phase 2c, so it would do no harm, but it would add to what
+  conventions §14 keeps in sync.
+- **The sidebar does not move**: a large move with no behaviour change, with a big impact on the
+  baselines and banto-industrial. Planned as a separate phase if needed.
+- **Bottom only for now**: `LauncherPosition` is just `'bottom'`, while the `position` prop exists
+  from the start. Left / right (plan D4, PR-4) are added to the type on demand without breaking
+  existing callers.
+- **Theme**: sizes, the magnification ratio and the stacking order are new tokens
+  `--banto-shell-launcher-*` (`item-size`, `magnify-max`, `gap`, `padding`, `offset`, `reserve`)
+  and `--banto-z-launcher` (200). `--banto-dock-*` belongs to `@banto/dock-svelte` and is not used
+  (the name is `launcher` throughout, plan D1). Colours use existing tokens only. The component
+  reads the ratio with `getComputedStyle` and does not magnify if it cannot.
+- **Tests**: `packages/ui/tests/launcher.test.ts` (the curve) and `LauncherBar.test.ts`
+  (landmarks, names, `aria-current`, separators, the tooltip's `aria-hidden` and Esc, yielding to
+  layers, the magnification wiring). The `/ui-demo` card was dropped (a fixed bar would float over
+  the demo page and force regenerating the `ui-demo` baselines); the real-browser look and axe
+  come with the shell wiring's visual tests (plan PR-3).
+- **Version**: additive (minor).
 
 ## Alternatives considered
 

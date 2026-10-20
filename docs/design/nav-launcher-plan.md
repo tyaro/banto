@@ -1,8 +1,9 @@
 # ナビゲーションの「ドック」表示（ランチャー）計画書
 
 作成日: 2026-10-20
-状態: **計画のみ（未着手）**。§9 の論点 D1〜D6 は 2026-10-20 にオーナー決定済み（すべて推奨案 a）。
-次は PR-1（ナビの絞り込みの切り出し）と PR-2（トークン + `LauncherBar`）。
+状態: **実装中**。§9 の論点 D1〜D6 は 2026-10-20 にオーナー決定済み（すべて推奨案 a）。
+PR-2（トークン + `LauncherBar`、`@banto/ui` と `banto.css`）を実装（ui-demo のカードは見送り、§8）。
+PR-1（ナビの絞り込みの切り出し）は別の PR で並行。次は PR-3（シェルへの配線と設定）。
 トラック: 保守者向け（トラックA）
 関連: [visual-refresh-design.md](visual-refresh-design.md)（§5 ナビのアイコン、§8 シェル）、
 [display-preset-plan.md](display-preset-plan.md)（D1-b キオスクシェル）、
@@ -380,7 +381,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 |---|---|---|---|
 | 0 | 計画（本書） | 本書の追加。オーナー決定を §9 に書き込む | なし |
 | 1 | ナビの絞り込みの切り出し | `navSections()` を navigation.ts に足し、Sidebar をそれで書き直す。テスト。挙動は同じ | なし（visual が変わらないことを確かめる） |
-| 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、`ui-demo` にカード、ADR-0018 §11 | `ui-demo-*` を作り直し（デモビルドのみのページ） |
+| 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、ADR-0018 §11。**計画からの変更**: `ui-demo` のカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo-*` の作り直しが要るため。実ブラウザの見た目は 3 の visual で見る） | なし |
 | 3 | シェルへの配線と設定 | 設定ストア、ShellLauncher、レイアウト・ヘッダの分岐、外観カード、辞書、e2e、a11y、visual 追加 | `settings-*` 作り直し + `dashboard-launcher-*` 追加 |
 | 4 | 左 / 右（D4-b のとき） | 部品の `position`、設定の副ラジオ、visual 2 枚追加 | `settings-*` 作り直し + 追加 |
 | 5 | 文書 | README / recipes（不要なら外す 3 行）、template-scope §2.2、CHANGELOG の未リリース節、upgrading.md（派生アプリが取り込む手順）、本書の状態行 | なし |

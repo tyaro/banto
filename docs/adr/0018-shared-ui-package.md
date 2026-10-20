@@ -2,7 +2,7 @@
 
 > English: [0018-shared-ui-package.en.md](0018-shared-ui-package.en.md)
 
-- 状態: Accepted（段階 1〜4 完了。段階 4 = Modal / Drawer と層の補助、2026-10-11 オーナー決定で決定 10 を改めた。§10）
+- 状態: Accepted（段階 1〜5 完了。段階 4 = Modal / Drawer と層の補助、2026-10-11 オーナー決定で決定 10 を改めた。§10。段階 5 = LauncherBar、2026-10-20 オーナー決定。§11）
 - 日付: 2026-10-07
 - 関連: Issue #220 / [conventions.md](../conventions.md) §4・§5・§9・§13・§14 /
   [ADR-0002](0002-minimal-dependencies.md)・[ADR-0005](0005-i18n-paraglide.md)・
@@ -396,6 +396,43 @@ ChronoGazer）が共有できるよう、banto-hub の `Modal`・`Drawer` と層
 - **版**: 追加だけ（minor）。`@banto/ui` は段階 2c から `optimizeDeps.exclude` の対象なので、派生アプリの
   設定は変わらない。banto-industrial の移行は import の差し替えが主で、props は同じ（移行のときは
   `LAYER_ABOVE_SELECTOR` → `LAYER_SELECTOR`、`DrawerCloseSource` → `OverlayCloseSource`）。
+
+### 11. 段階 5: LauncherBar（2026-10-20 オーナー決定）
+
+オーナー決定（2026-10-20、[nav-launcher-plan.md](../design/nav-launcher-plan.md) §9 の D1〜D6 をすべて a）:
+ナビをサイドバーの代わりにドック風のランチャーでも出せるようにする。その表示と操作を `@banto/ui` の
+`LauncherBar` に置き、配線はアプリに残す（D2-a）。新しい ADR は作らず、置き場の判断の延長としてこの節に書く。
+
+- **パッケージに置くもの**: `LauncherBar.svelte`（表示と操作だけ）と `launcher.ts`（型 `LauncherPosition`・
+  `LauncherItem`・`LauncherGroup` と純粋関数 `magnifyScale`）。props は `groups`（`{ id, ariaLabel, items }[]`）・
+  `position`（既定 `'bottom'`）・`magnify`（既定 `true`）・`ariaLabel`。グループごとの `<nav aria-label>` と
+  区切り線、素の `<a href>` と `aria-current="page"`、視覚的に隠した実テキストの名前（ラベル + バッジの件数）、
+  拡大（マウスの `pointermove` を `requestAnimationFrame` で間引き、項目の寸法を変える。reduced-motion・
+  `(hover: none)`・900px 以下・マウス以外で止まる）、ツールチップ（`aria-hidden`、ホバーを保てる、Esc は
+  表示中だけ `window` で受け、`hasVisibleLayerAbove()` の層に譲り、イベントは奪わない）、900px 以下の
+  タブバー。文言は全部 props で受けるので `UiMessages` は増やしていない。
+- **アプリに残すもの**: ナビの定義（`navigation.ts`）・権限と閲覧公開の絞り込み・現在のページの判定・
+  バッジの件数・辞書（Paraglide）・設定（サイドバーかランチャーか）・シェルの余白とトーストの位置。
+  admin-template では約 50 行の `ShellLauncher.svelte` が `@banto/ui` に props を渡すだけにする（計画の PR-3）。
+- **理由**: (1) コピー面積を増やさない — 拡大・ツールチップ・Esc・a11y の約 250 行を派生アプリが写さずに
+  済み、直しが伝わる（この ADR の動機そのもの）。(2) banto-industrial の 2 アプリも自前の `Sidebar.svelte` を
+  持っており、同じ部品を使える。(3) 部品はナビ定義（`NavItem`）を知らない汎用の「リンクの並び」として切れる
+  （conventions §5、rule `package-bare-imports`。アイコンは呼び出し側が lucide の部品を渡す）。
+- **`.svelte.ts` を足さない**: 状態は `.svelte` の中の `$state` で持つ。`@banto/ui` は段階 2c から
+  `optimizeDeps.exclude` の対象なので実害は無いが、足すと conventions §14 の同期の対象が増える。
+- **サイドバーは移さない**: 挙動の変わらない大きな移設になり、基準画像と banto-industrial への影響が大きい。
+  必要になったら別の段階として計画する。
+- **位置は今は下だけ**: 型 `LauncherPosition` は `'bottom'` だけで、`position` の props は最初から持たせる。
+  左右（計画の D4、PR-4）は要望が出たら型に足す（既存の呼び出しは壊れない）。
+- **テーマ**: 寸法・倍率・重なり順を `--banto-shell-launcher-*`（`item-size`・`magnify-max`・`gap`・`padding`・
+  `offset`・`reserve`）と `--banto-z-launcher`（200）として足した。`--banto-dock-*` は `@banto/dock-svelte` の
+  ものなので使わない（名前は `launcher` で統一。計画の D1）。色は既存のトークンだけ。倍率は部品が
+  `getComputedStyle` で読み、読めなければ拡大しない。
+- **テスト**: `packages/ui/tests/launcher.test.ts`（拡大の曲線の表）と `LauncherBar.test.ts`（ランドマーク・
+  名前・`aria-current`・区切り・ツールチップの `aria-hidden` と Esc・層への譲り・拡大の配線）。見本ページ
+  `/ui-demo` へのカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo` の基準画像の作り直しが
+  要るため）。実ブラウザの見た目と axe はシェルへの配線（計画の PR-3）の visual で見る。
+- **版**: 追加だけ（minor）。
 
 ## 検討した代替案
 

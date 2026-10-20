@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）。
+
 ## [6.7.2] - 2026-10-20
 
 **v6.7.2 — 保守のみのリリース（CI の高速化、テストの安定化、内部の整理）。** 版の種類: patch（挙動の変更なし。公開 API の変更なし。後方互換）。
