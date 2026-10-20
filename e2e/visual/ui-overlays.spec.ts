@@ -2,7 +2,8 @@
  * `@banto/ui` Modal / Drawer on the `/ui-demo` page (ADR-0018 §10, phase 4):
  * the Esc / focus layering in a real browser (jsdom has no layout, so the
  * package's unit tests stub geometry and the scoped CSS that carries the
- * `--banto-z-modal` z-index), plus an axe scan of the open layers in the two
+ * `--banto-z-modal` z-index), the Menu's long-menu cap and internal scroll
+ * (#427), plus an axe scan of the open layers in the two
  * diagonal theme combos (the closed page's pixels are covered by the
  * `ui-demo` screenshot in visual.spec.ts). Same `visual` project as the other
  * specs here (vite preview, browser demo mode, reduced motion - so the
@@ -212,3 +213,112 @@ for (const combo of DIAGONAL_MATRIX) {
 		});
 	});
 }
+
+// Long menus (#427). The demo Menu has 4 items (~200px), so instead of adding
+// items to the page (it is the `ui-demo` visual baseline) the viewport is made
+// shorter than the menu on both sides of its trigger: 960x240 with the trigger
+// scrolled to the middle leaves ~100px per side - the same "fits on neither
+// side" path a 30-40 item menu takes at 960x480.
+test.describe('ui-demo Menu longer than the space beside its trigger', () => {
+	test.use({ viewport: { width: 960, height: 240 } });
+
+	const menuOf = (page: Page) => page.getByRole('menu', { name: '見本のメニュー' });
+	const triggerOf = (page: Page) =>
+		page.getByRole('button', { name: 'メニューを開く', exact: true });
+
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+		await triggerOf(page).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+	});
+
+	async function expectInsideViewport(page: Page, box: { y: number; height: number } | null) {
+		const viewport = page.viewportSize() ?? { width: 0, height: 0 };
+		expect(box).not.toBeNull();
+		if (box) {
+			expect(box.y).toBeGreaterThanOrEqual(0);
+			expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+		}
+	}
+
+	test('is capped to the viewport and scrolls inside without closing or moving the page', async ({
+		page
+	}) => {
+		await triggerOf(page).click();
+		const menu = menuOf(page);
+		await expect(menu).toBeVisible();
+		await expectInsideViewport(page, await menu.boundingBox());
+		expect(await menu.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+
+		// Scroll offsets of everything but the menu (window included).
+		const pageScroll = () =>
+			page.evaluate(() =>
+				[...document.querySelectorAll('*')]
+					.filter((el) => el.getAttribute('role') !== 'menu')
+					.map((el) => el.scrollTop)
+					.concat(window.scrollY)
+					.join()
+			);
+		const before = await pageScroll();
+		const box = await menu.boundingBox();
+		if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		// Far more than the menu's own overflow: the rest must not chain to the page.
+		await page.mouse.wheel(0, 2000);
+		await expect.poll(() => menu.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+		await expect(menu).toBeVisible();
+		const lastItem = menu.getByRole('menuitem', { name: '削除' });
+		await expectInsideViewport(page, await lastItem.boundingBox());
+		// Only the menu itself scrolled (overscroll-behavior: contain).
+		expect(await pageScroll()).toBe(before);
+
+		await lastItem.click();
+		await expect(menu).toBeHidden();
+		await expect(page.getByTestId('ui-demo-menu-selected')).toContainText('削除');
+	});
+
+	test('End focuses the last item in view and keeps the menu open', async ({ page }) => {
+		await triggerOf(page).focus();
+		await page.keyboard.press('ArrowDown');
+		const menu = menuOf(page);
+		await expect(menu).toBeVisible();
+		await page.keyboard.press('End');
+		const lastItem = menu.getByRole('menuitem', { name: '削除' });
+		await expect(lastItem).toBeFocused();
+		await expect(menu).toBeVisible();
+		await expectInsideViewport(page, await lastItem.boundingBox());
+		await page.keyboard.press('Home');
+		await expect(menu.getByRole('menuitem', { name: '編集' })).toBeFocused();
+		await expect(menu).toBeVisible();
+	});
+
+	test('ArrowUp on the trigger opens at the last item, in view', async ({ page }) => {
+		await triggerOf(page).focus();
+		await page.keyboard.press('ArrowUp');
+		const lastItem = menuOf(page).getByRole('menuitem', { name: '削除' });
+		await expect(lastItem).toBeFocused();
+		await expectInsideViewport(page, await lastItem.boundingBox());
+	});
+
+	test('an outer scroll still closes it', async ({ page }) => {
+		await triggerOf(page).click();
+		const menu = menuOf(page);
+		await expect(menu).toBeVisible();
+		// Scroll whatever ancestor of the trigger actually scrolls (the app
+		// shell's main area or the document).
+		await triggerOf(page).evaluate((el) => {
+			let node: HTMLElement | null = el.parentElement;
+			while (node && node.scrollHeight <= node.clientHeight) node = node.parentElement;
+			(node ?? document.scrollingElement ?? document.documentElement).scrollTop += 40;
+		});
+		await expect(menu).toBeHidden();
+	});
+
+	test('Esc closes it and returns focus to the trigger', async ({ page }) => {
+		await triggerOf(page).click();
+		const menu = menuOf(page);
+		await expect(menu).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(menu).toBeHidden();
+		await expect(triggerOf(page)).toBeFocused();
+	});
+});
