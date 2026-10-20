@@ -159,6 +159,15 @@ class Settings {
 
 	#unwatchSystem: (() => void) | undefined;
 
+	/**
+	 * Stale-read guard for `syncFromProvider()` (#424 review): `(app)/+layout.ts`
+	 * does not await the sync, so the user can change a setting while its
+	 * reads are in flight. Keys set locally since the sync began are not
+	 * overwritten by its (older) results, and a newer sync supersedes an older one.
+	 */
+	#syncGeneration = 0;
+	#changedSinceSync = new Set<string>();
+
 	/** Apply + cache locally, WITHOUT the provider write (init/syncFromProvider must not echo values back). */
 	#applyThemeMode(mode: ThemeMode) {
 		this.themeMode = mode;
@@ -205,26 +214,31 @@ class Settings {
 	}
 
 	setThemeMode(mode: ThemeMode) {
+		this.#changedSinceSync.add(MODE_SETTING);
 		this.#applyThemeMode(mode);
 		persistRemote(MODE_SETTING, mode);
 	}
 
 	setThemePreset(preset: ThemePreset) {
+		this.#changedSinceSync.add(PRESET_SETTING);
 		this.#applyThemePreset(preset);
 		persistRemote(PRESET_SETTING, preset);
 	}
 
 	setThemeDensity(density: ThemeDensity) {
+		this.#changedSinceSync.add(DENSITY_SETTING);
 		this.#applyThemeDensity(density);
 		persistRemote(DENSITY_SETTING, density);
 	}
 
 	setKiosk(kiosk: boolean) {
+		this.#changedSinceSync.add(KIOSK_SETTING);
 		this.#applyKiosk(kiosk);
 		persistRemote(KIOSK_SETTING, String(kiosk));
 	}
 
 	setNavLayout(layout: NavLayout) {
+		this.#changedSinceSync.add(NAV_LAYOUT_SETTING);
 		this.#applyNavLayout(layout);
 		persistRemote(NAV_LAYOUT_SETTING, layout);
 	}
@@ -236,11 +250,13 @@ class Settings {
 	 * fire a burst of writes that could land out of order.
 	 */
 	previewLauncherOpacity(opacity: number) {
+		this.#changedSinceSync.add(LAUNCHER_OPACITY_SETTING);
 		this.#applyLauncherOpacity(opacity);
 	}
 
 	/** Commit (the slider's `change` event); an off-grid value falls back to the default. */
 	setLauncherOpacity(opacity: number) {
+		this.#changedSinceSync.add(LAUNCHER_OPACITY_SETTING);
 		this.#applyLauncherOpacity(opacity);
 		persistRemote(LAUNCHER_OPACITY_SETTING, String(this.launcherOpacity));
 	}
@@ -267,9 +283,13 @@ class Settings {
 	 * resets those two to their defaults (cached locally, not written back),
 	 * or a user who never chose would inherit the previous user's dock on a
 	 * shared browser. A failed read keeps the local values for them too.
+	 * A key the user changed while the reads were in flight keeps the user's
+	 * value, and a sync superseded by a newer one applies nothing.
 	 */
 	async syncFromProvider(): Promise<void> {
 		const ui = getUiSettings();
+		const generation = ++this.#syncGeneration;
+		this.#changedSinceSync.clear();
 		try {
 			const [mode, preset, density, kiosk, navLayout, launcherOpacity] = await Promise.all([
 				ui.get(MODE_SETTING),
@@ -279,12 +299,17 @@ class Settings {
 				ui.get(NAV_LAYOUT_SETTING),
 				ui.get(LAUNCHER_OPACITY_SETTING)
 			]);
-			if (isThemeMode(mode)) this.#applyThemeMode(mode);
-			if (isThemePreset(preset)) this.#applyThemePreset(preset);
-			if (isThemeDensity(density)) this.#applyThemeDensity(density);
-			if (kiosk === 'true' || kiosk === 'false') this.#applyKiosk(kiosk === 'true');
-			this.#applyNavLayout(isNavLayout(navLayout) ? navLayout : NAV_LAYOUT_DEFAULT);
-			this.#applyLauncherOpacity(parseLauncherOpacity(launcherOpacity));
+			if (generation !== this.#syncGeneration) return;
+			const fresh = (key: string): boolean => !this.#changedSinceSync.has(key);
+			if (fresh(MODE_SETTING) && isThemeMode(mode)) this.#applyThemeMode(mode);
+			if (fresh(PRESET_SETTING) && isThemePreset(preset)) this.#applyThemePreset(preset);
+			if (fresh(DENSITY_SETTING) && isThemeDensity(density)) this.#applyThemeDensity(density);
+			if (fresh(KIOSK_SETTING) && (kiosk === 'true' || kiosk === 'false'))
+				this.#applyKiosk(kiosk === 'true');
+			if (fresh(NAV_LAYOUT_SETTING))
+				this.#applyNavLayout(isNavLayout(navLayout) ? navLayout : NAV_LAYOUT_DEFAULT);
+			if (fresh(LAUNCHER_OPACITY_SETTING))
+				this.#applyLauncherOpacity(parseLauncherOpacity(launcherOpacity));
 		} catch {
 			// Best-effort: offline/unauthenticated reads keep the local values.
 		}

@@ -182,4 +182,57 @@ describe('settings: navigation layout and launcher opacity', () => {
 		expect(settings.launcherOpacity).toBe(80);
 		expect(store.get('banto.navLayout')).toBe('launcher');
 	});
+
+	/** Provider reads that stay pending until `release()` (the sync is not awaited by the layout). */
+	function providerHoldsLater(values: Record<string, string>): () => void {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		mocks.get.mockImplementation(async (key) => {
+			await gate;
+			return values[key] ?? null;
+		});
+		return release;
+	}
+
+	it('syncFromProvider: a setting changed while the reads are in flight keeps the user value (#424)', async () => {
+		const settings = await loadSettings();
+		mocks.set.mockResolvedValue();
+		const release = providerHoldsLater({ 'shell.launcherOpacity': '90' });
+		const sync = settings.syncFromProvider();
+		settings.setNavLayout('launcher');
+		settings.previewLauncherOpacity(70);
+		release();
+		await sync;
+		// The (older) provider answers - null layout -> default, 90% - lose to the user's choices.
+		expect(settings.navLayout).toBe('launcher');
+		expect(settings.launcherOpacity).toBe(70);
+		expect(rootStyle.get(OPACITY_TOKEN)).toBe('70%');
+	});
+
+	it('syncFromProvider: untouched settings still take the provider value during that race', async () => {
+		const settings = await loadSettings();
+		mocks.set.mockResolvedValue();
+		const release = providerHoldsLater({
+			'shell.navLayout': 'launcher',
+			'shell.launcherOpacity': '90'
+		});
+		const sync = settings.syncFromProvider();
+		settings.setNavLayout('sidebar');
+		release();
+		await sync;
+		expect(settings.navLayout).toBe('sidebar');
+		expect(settings.launcherOpacity).toBe(90);
+	});
+
+	it('syncFromProvider: a superseded sync applies nothing', async () => {
+		const settings = await loadSettings();
+		const releaseOld = providerHoldsLater({ 'shell.navLayout': 'launcher' });
+		const older = settings.syncFromProvider();
+		providerHolds({ 'shell.navLayout': 'sidebar', 'shell.launcherOpacity': '60' });
+		await settings.syncFromProvider();
+		releaseOld();
+		await older;
+		expect(settings.navLayout).toBe('sidebar');
+		expect(settings.launcherOpacity).toBe(60);
+	});
 });
