@@ -1914,13 +1914,18 @@ mod tests {
     /// paused clock. The 60 s guard below only stops a real hang; it is not
     /// a latency bound. The old `< 2 s` bound included the spool file's
     /// `sync_all` and failed on Windows CI at 4.77 s (#399).
+    ///
+    /// The 200 ms timeout is only for the hang. The flush runs through a
+    /// second service on the same spool directory with a long timeout (as
+    /// another process would): with 200 ms the flush's own INSERT timed out
+    /// on Windows CI and left the entry in the spool.
     #[tokio::test]
     async fn spool_after_a_hang_does_not_duplicate_the_late_insert() {
         let tmp = tempfile::tempdir().unwrap();
         let db = file_db(tmp.path(), 1, true).await;
         let pool = db.as_sqlite().unwrap().clone();
         let spool_dir = tmp.path().join("spool");
-        let svc = AuditLogService::new(db)
+        let svc = AuditLogService::new(db.clone())
             .with_spool(&spool_dir, spool_config(200))
             .unwrap();
 
@@ -1944,7 +1949,10 @@ mod tests {
             "the timed-out INSERT completes on its own"
         );
 
-        let report = svc.flush_spool().await.unwrap();
+        let flusher = AuditLogService::new(db)
+            .with_spool(&spool_dir, spool_config(30_000))
+            .unwrap();
+        let report = flusher.flush_spool().await.unwrap();
         assert_eq!((report.flushed, report.remaining), (1, 0));
         let rows = audit_rows(&pool).await;
         assert_eq!(rows.len(), 1, "the flush does not write a second row");
