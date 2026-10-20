@@ -564,6 +564,7 @@ function removeCommandPalette() {
 	removeFile(`${APP}/src/lib/components/CommandPalette.svelte`, 'CommandPalette.svelte 削除');
 	removeFile(`${APP}/src/lib/commandPalette.svelte.ts`, 'commandPalette.svelte.ts 削除');
 	removeFile(`${APP}/src/lib/commands.ts`, 'commands.ts 削除');
+	removeFile(`${APP}/src/lib/commands.test.ts`, 'commands.test.ts 削除');
 	removeFile(`${APP}/src/lib/recentCommands.ts`, 'recentCommands.ts 削除');
 	removeFile(`${APP}/src/lib/recentCommands.test.ts`, 'recentCommands.test.ts 削除');
 }
