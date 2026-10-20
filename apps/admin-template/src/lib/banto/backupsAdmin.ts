@@ -284,5 +284,8 @@ export async function cancelPendingRestore(): Promise<void> {
 		await invokeCommand<void>('backups_cancel_restore');
 		return;
 	}
-	await httpRequest<void>('/api/backups/pending-restore', { method: 'DELETE', expectNoContent: true });
+	await httpRequest<void>('/api/backups/pending-restore', {
+		method: 'DELETE',
+		expectNoContent: true
+	});
 }
