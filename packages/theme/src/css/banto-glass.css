@@ -19,6 +19,10 @@
 	--banto-border: rgb(148 158 172 / 0.45);
 
 	--banto-backdrop: blur(14px) saturate(1.5);
+	/* The <=900px launcher tab bar mixes this at >= 85% (banto.css): an opaque
+     base keeps that floor real under glass (same literals as the standard
+     surfaces - keep in sync). */
+	--banto-shell-launcher-tabbar-base: #ffffff;
 
 	/* Subtle, dignified gradient so the translucency reads even in a plain
      browser window (no OS acrylic behind it). Painted by the app shell via
@@ -31,6 +35,7 @@
 
 /* --- dark x glass ------------------------------------------------------- */
 :root[data-theme='dark'][data-banto-preset='glass'] {
+	--banto-shell-launcher-tabbar-base: #262a31;
 	--banto-surface: rgb(30 33 39 / 0.55);
 	--banto-surface-raised: rgb(38 42 49 / 0.5);
 	--banto-border: rgb(255 255 255 / 0.14);

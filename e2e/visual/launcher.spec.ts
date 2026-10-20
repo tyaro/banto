@@ -438,3 +438,24 @@ test('settings: choosing Dock shows the opacity slider, which applies live; Side
 	await expect(page.locator('html')).not.toHaveAttribute('data-banto-shell-nav', 'launcher');
 	await expect(page.locator('html')).not.toHaveAttribute('data-banto-shell-launcher-position');
 });
+
+// #428 review: under glass the surfaces are already translucent, so the
+// tab bar mixes an opaque base (`--banto-shell-launcher-tabbar-base`) - the
+// 85% floor must hold there too, not drop to ~0.43-0.53.
+test.describe('dock tab bar floor under glass', () => {
+	for (const theme of ['light', 'dark'] as const) {
+		test(`<=900px ${theme}-glass: the tab bar is still at least 85% opaque`, async ({ page }) => {
+			await primeThemeAndAuth(page, { theme, preset: 'glass' });
+			await primeLauncher(page);
+			await page.setViewportSize({ width: 768, height: 1024 });
+			await gotoDashboard(page);
+			const alpha = await page.locator('.launcher__bar').evaluate((el) => {
+				const colour = getComputedStyle(el, '::before').backgroundColor;
+				const match =
+					/\/\s*([\d.]+)\s*\)$/.exec(colour) ?? /rgba\([^)]*,\s*([\d.]+)\)$/.exec(colour);
+				return match ? Number(match[1]) : 1;
+			});
+			expect(alpha).toBeGreaterThanOrEqual(0.85 - 0.005);
+		});
+	}
+});

@@ -80,6 +80,10 @@
 	--banto-shell-launcher-opacity: 50%;
 	/* The <=900px tab bar's floor for the opacity above (see the media rule below). */
 	--banto-shell-launcher-tabbar-opacity-min: 85%;
+	/* The tab bar's base colour must be OPAQUE for that floor to hold: the glass
+     preset's surfaces are already translucent, so banto-glass.css pins this
+     to opaque values (#428 review). */
+	--banto-shell-launcher-tabbar-base: var(--banto-surface-overlay);
 	--banto-shell-launcher-bg: color-mix(
 		in srgb,
 		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
@@ -269,7 +273,7 @@
 	:root {
 		--banto-shell-launcher-bg: color-mix(
 			in srgb,
-			var(--banto-surface-overlay)
+			var(--banto-shell-launcher-tabbar-base)
 				max(var(--banto-shell-launcher-opacity), var(--banto-shell-launcher-tabbar-opacity-min)),
 			transparent
 		);
