@@ -7,8 +7,24 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-/** scripts/scaffold.mjs の PRESETS のキーと一致させる（scaffold.test.mjs が検査）。 */
-export const SCAFFOLD_PRESETS = ['minimal', 'standard', 'full', 'display'];
+/**
+ * scripts/scaffold.mjs の PRESETS のキー（`--list-presets`）。手書きで複製すると、
+ * プリセットを足したときにその編集対象が検査から漏れる。
+ * @param {string} repoRoot
+ * @returns {string[]}
+ */
+export function listScaffoldPresets(repoRoot) {
+	const res = spawnSync(
+		process.execPath,
+		[path.join(repoRoot, 'scripts/scaffold.mjs'), '--list-presets'],
+		{ cwd: repoRoot, encoding: 'utf8' }
+	);
+	if (res.status !== 0) throw new Error(`scaffold --list-presets が失敗しました:\n${res.stderr}`);
+	const presets = res.stdout.split(/\r?\n/).filter(Boolean);
+	if (presets.length === 0)
+		throw new Error('scaffold --list-presets がプリセットを返しませんでした');
+	return presets;
+}
 
 /**
  * @param {string} repoRoot
@@ -19,7 +35,7 @@ export const SCAFFOLD_PRESETS = ['minimal', 'standard', 'full', 'display'];
 export function collectScaffoldTouchedFiles(repoRoot) {
 	const edited = new Set();
 	const removed = new Set();
-	for (const preset of SCAFFOLD_PRESETS) {
+	for (const preset of listScaffoldPresets(repoRoot)) {
 		const res = spawnSync(
 			process.execPath,
 			[

@@ -116,6 +116,7 @@ function parseArgs(argv) {
 		} else if (arg === '--dry-run') args.dryRun = true;
 		else if (arg === '--strict') args.strict = true;
 		else if (arg === '--list-touched') args.listTouched = true;
+		else if (arg === '--list-presets') args.listPresets = true;
 		else if (arg === '--interactive' || arg === '-i') args.interactive = true;
 		else if (arg === '--help' || arg === '-h') usage(0);
 		else fail(`不明な引数: ${arg}`);
@@ -124,6 +125,12 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+// 内部用（scripts/lib/scaffold-touched.mjs）。プリセット名を手書きで複製させず、
+// PRESETS のキーをそのまま出して終了する。
+if (args.listPresets) {
+	for (const name of Object.keys(PRESETS)) console.log(name);
+	process.exit(0);
+}
 if (args.interactive && args.preset)
 	fail('--interactive と --preset は同時に指定できません（どちらか一方を選んでください）');
 if (args.interactive && args.strict)
