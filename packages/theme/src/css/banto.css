@@ -69,7 +69,14 @@
      owner-tuned values on #423, nav-launcher-plan.md D7).
      Opaque again under prefers-reduced-transparency / no backdrop-filter
      (fallbacks below, same rule as the glass preset). */
-	--banto-shell-launcher-bg: color-mix(in srgb, var(--banto-surface-overlay) 50%, transparent);
+	/* The bar's opacity alone is its own token so an app's setting (a slider,
+     nav-launcher-plan.md D7) can change just this one value. */
+	--banto-shell-launcher-opacity: 50%;
+	--banto-shell-launcher-bg: color-mix(
+		in srgb,
+		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
+		transparent
+	);
 	--banto-shell-launcher-tooltip-bg: color-mix(
 		in srgb,
 		var(--banto-surface-raised) 80%,

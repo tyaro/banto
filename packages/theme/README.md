@@ -73,6 +73,7 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 | `--banto-shell-launcher-offset`           | `10px`                    | 画面端からの距離                                                              |
 | `--banto-shell-launcher-reserve`          | `calc(...)`               | 本文の下に取る余白（item-size + padding × 2 + offset）                        |
 | `--banto-z-launcher`                      | `200`                     | ランチャーのバー（ヘッダより上、狭幅サイドバーの覆い・Modal・トーストより下） |
+| `--banto-shell-launcher-opacity`          | `50%`                     | バーの不透明度（アプリの設定で変えるのはこの値だけ）                          |
 | `--banto-shell-launcher-bg`               | `surface-overlay` の 50%  | バーの半透明の地                                                              |
 | `--banto-shell-launcher-backdrop`         | `blur(1px) saturate(1.5)` | バーの後ろのぼかし                                                            |
 | `--banto-shell-launcher-tooltip-bg`       | `surface-raised` の 80%   | ツールチップの半透明の地                                                      |
