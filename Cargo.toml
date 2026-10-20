@@ -75,3 +75,12 @@ banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }
 banto-attachments = { path = "crates/banto-attachments" }
 banto-admin-services = { path = "crates/banto-admin-services" }
+
+# テスト・開発ビルドで argon2id のパスワードハッシュが opt-level 0 だと極端に遅く、
+# admin-template-core の rest::tests（ユーザー作成・ログインのたびにハッシュ）が
+# CI で Windows 79 秒 / ubuntu 36 秒かかっていた。依存の argon2 と blake2 だけを
+# 最適化する（ワークスペースのクレートと release は変えない。git 依存の利用側には効かない）。
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
