@@ -3,7 +3,7 @@
 作成日: 2026-10-20
 状態: **実装中**。§9 の論点 D1〜D6 は 2026-10-20 にオーナー決定済み（すべて推奨案 a）。
 PR-2（トークン + `LauncherBar`、`@banto/ui` と `banto.css`）を実装（ui-demo のカードは見送り、§8）。
-PR-1（ナビの絞り込みの切り出し）は別の PR で並行。次は PR-3（シェルへの配線と設定）。
+PR-1（ナビの絞り込みの切り出し、#422）はマージ済み。次は PR-3（シェルへの配線と設定）。
 トラック: 保守者向け（トラックA）
 関連: [visual-refresh-design.md](visual-refresh-design.md)（§5 ナビのアイコン、§8 シェル）、
 [display-preset-plan.md](display-preset-plan.md)（D1-b キオスクシェル）、

@@ -8,18 +8,11 @@
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import {
-		isPathActive,
-		navItems,
-		publicNavItems,
-		resolveAppPath,
-		type AppPath
-	} from '#lib/navigation.js';
+	import { isPathActive, navSections, resolveAppPath, type AppPath } from '#lib/navigation.js';
 	import { NAV_ICONS } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
-	import { isAdmin } from '#lib/permissions.js';
 	import { IconButton } from '@banto/ui';
 	import { PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
@@ -34,24 +27,12 @@
 		return isPathActive(path, page.url.pathname);
 	}
 
-	// Spec M10 RBAC: hide admin-only entries (「ユーザー管理」) rather than
-	// showing them disabled - navigation-level hiding, same as
-	// routes/(app)/users/+page.ts redirecting a non-admin instead of
-	// rendering a 403 screen.
-	//
-	// viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session
-	// sees ONLY the `publicViewer` allowlist and never the admin section,
-	// regardless of role (a publicViewer grant identity's role is always
-	// `viewer`, so `adminItems` would already be empty, but the explicit
-	// check keeps this correct even if that ever changed).
-	const mainItems = $derived(
-		sessionStore.publicViewer ? publicNavItems() : navItems.filter((item) => !item.adminOnly)
+	// RBAC hiding + viewer-public allowlist: see navSections() in #lib/navigation.ts.
+	const sections = $derived(
+		navSections({ publicViewer: sessionStore.publicViewer, role: sessionStore.role })
 	);
-	const adminItems = $derived(
-		!sessionStore.publicViewer && isAdmin(sessionStore.role)
-			? navItems.filter((item) => item.adminOnly)
-			: []
-	);
+	const mainItems = $derived(sections.main);
+	const adminItems = $derived(sections.admin);
 
 	/** Unseen-change badge text (wired by (app)/+layout.svelte). Capped for layout stability. */
 	function badgeText(count: number): string {
