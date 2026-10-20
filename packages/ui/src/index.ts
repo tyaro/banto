@@ -12,6 +12,9 @@
  * Phase 4: Modal / Drawer (banto-industrial banto-hub's, prop for prop) and the
  * Esc / focus layering helpers they share with CommandPalette (`layering.ts`,
  * one module for all overlays and public for an app's own layers).
+ * Phase 5: LauncherBar, the dock-like icon launcher, with its types and the
+ * pure `magnifyScale` curve (`launcher.ts`; docs/design/nav-launcher-plan.md -
+ * the app keeps the nav definition, routing, `active`, RBAC and the text).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -46,6 +49,14 @@ export {
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as ErrorState } from './ErrorState.svelte';
 export { default as IconButton } from './IconButton.svelte';
+export { default as LauncherBar } from './LauncherBar.svelte';
+export {
+	LAUNCHER_MAGNIFY_RANGE_ITEMS,
+	magnifyScale,
+	type LauncherGroup,
+	type LauncherItem,
+	type LauncherPosition
+} from './launcher';
 export { default as LoadingState } from './LoadingState.svelte';
 export { default as Menu } from './Menu.svelte';
 export { default as MenuGroup } from './MenuGroup.svelte';

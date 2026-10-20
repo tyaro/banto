@@ -52,6 +52,38 @@
      permanently-mounted dashboards. Opt-in via Header.svelte's
      `class:compact` - the plain height above is unaffected. */
 	--banto-shell-header-height-compact: 40px;
+	/* Launcher (nav-launcher-plan.md §5.2; @banto/ui LauncherBar). The shell
+     namespace, not --banto-dock-* (that is @banto/dock-svelte, §2.4).
+     magnify-max is unitless - LauncherBar reads it from JS (unreadable = no
+     magnification). reserve is the room the shell keeps below the content. */
+	--banto-shell-launcher-item-size: 44px;
+	--banto-shell-launcher-magnify-max: 1.5;
+	--banto-shell-launcher-gap: 6px;
+	--banto-shell-launcher-padding: 6px;
+	--banto-shell-launcher-offset: 10px;
+	--banto-shell-launcher-reserve: calc(
+		var(--banto-shell-launcher-item-size) + var(--banto-shell-launcher-padding) * 2 +
+			var(--banto-shell-launcher-offset)
+	);
+	/* Translucent bar and tooltip with a blur behind them (owner request and
+     owner-tuned values on #423, nav-launcher-plan.md D7).
+     Opaque again under prefers-reduced-transparency / no backdrop-filter
+     (fallbacks below, same rule as the glass preset). */
+	/* The bar's opacity alone is its own token so an app's setting (a slider,
+     nav-launcher-plan.md D7) can change just this one value. */
+	--banto-shell-launcher-opacity: 50%;
+	--banto-shell-launcher-bg: color-mix(
+		in srgb,
+		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
+		transparent
+	);
+	--banto-shell-launcher-tooltip-bg: color-mix(
+		in srgb,
+		var(--banto-surface-raised) 80%,
+		transparent
+	);
+	--banto-shell-launcher-backdrop: blur(1px) saturate(1.5);
+	--banto-shell-launcher-tooltip-backdrop: blur(5px);
 
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;
@@ -128,6 +160,9 @@
      unchanged, so stacking order is too. */
 	--banto-scrim: rgb(0 0 0 / 0.35);
 	--banto-z-header: 100;
+	/* Launcher bar (nav-launcher-plan.md §4.1): above the header, below the
+     sidebar scrim, modals, the palette and toasts. */
+	--banto-z-launcher: 200;
 	--banto-z-sidebar-scrim: 850;
 	--banto-z-sidebar: 900;
 	--banto-z-modal: 900;
@@ -212,6 +247,25 @@
 	--banto-control-height-lg: 36px;
 	--banto-grid-row-height: 32px;
 	--banto-grid-header-height: 36px;
+}
+
+/* Launcher translucency fallbacks (see --banto-shell-launcher-bg above). */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+	:root {
+		--banto-shell-launcher-bg: var(--banto-surface-overlay);
+		--banto-shell-launcher-tooltip-bg: var(--banto-surface-raised);
+		--banto-shell-launcher-backdrop: none;
+		--banto-shell-launcher-tooltip-backdrop: none;
+	}
+}
+
+@media (prefers-reduced-transparency: reduce) {
+	:root {
+		--banto-shell-launcher-bg: var(--banto-surface-overlay);
+		--banto-shell-launcher-tooltip-bg: var(--banto-surface-raised);
+		--banto-shell-launcher-backdrop: none;
+		--banto-shell-launcher-tooltip-backdrop: none;
+	}
 }
 
 /* visual-refresh-design.md §2.3: components must read duration only via these

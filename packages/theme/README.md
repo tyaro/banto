@@ -59,6 +59,28 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 }
 ```
 
+## ランチャーのトークン（v6.8.0 から）
+
+`@banto/ui` の `LauncherBar`（ドック風のランチャー、[nav-launcher-plan.md](../../docs/design/nav-launcher-plan.md) §5.2）が
+使う寸法と重なり順。シェルの名前空間に置く（`--banto-dock-*` は `@banto/dock-svelte` のもの）。
+
+| トークン                                  | 値                        | 用途                                                                          |
+| ----------------------------------------- | ------------------------- | ----------------------------------------------------------------------------- |
+| `--banto-shell-launcher-item-size`        | `44px`                    | 項目の基準寸法（狭い画面のタブバーでは最小の当たり判定）                      |
+| `--banto-shell-launcher-magnify-max`      | `1.5`                     | 拡大の最大倍率（単位なし。部品が JS で読む。`1` で拡大しない）                |
+| `--banto-shell-launcher-gap`              | `6px`                     | 項目の間隔                                                                    |
+| `--banto-shell-launcher-padding`          | `6px`                     | バーの内側の余白                                                              |
+| `--banto-shell-launcher-offset`           | `10px`                    | 画面端からの距離                                                              |
+| `--banto-shell-launcher-reserve`          | `calc(...)`               | 本文の下に取る余白（item-size + padding × 2 + offset）                        |
+| `--banto-z-launcher`                      | `200`                     | ランチャーのバー（ヘッダより上、狭幅サイドバーの覆い・Modal・トーストより下） |
+| `--banto-shell-launcher-opacity`          | `50%`                     | バーの不透明度（アプリの設定で変えるのはこの値だけ）                          |
+| `--banto-shell-launcher-bg`               | `surface-overlay` の 50%  | バーの半透明の地                                                              |
+| `--banto-shell-launcher-backdrop`         | `blur(1px) saturate(1.5)` | バーの後ろのぼかし                                                            |
+| `--banto-shell-launcher-tooltip-bg`       | `surface-raised` の 80%   | ツールチップの半透明の地                                                      |
+| `--banto-shell-launcher-tooltip-backdrop` | `blur(5px)`               | ツールチップの後ろのぼかし                                                    |
+
+半透明の 4 つは、`prefers-reduced-transparency: reduce` のときと `backdrop-filter` が使えないブラウザでは不透明（ぼかし無し）に戻る。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

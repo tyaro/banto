@@ -10,7 +10,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 段階 1 の部品は次の 7 つ。段階 2a でメニュー部品（4 つ、下の表の後）、段階 2b で
 `CommandPalette`（その後）、段階 2c でトースト（`createToastStore()` + `ToastHost`、その後の節）を足した
 （段階 2 は完了。ADR-0018 §8）。段階 4 で `Modal`・`Drawer` と Esc・フォーカスの層の補助を足した
-（トーストの後の節。ADR-0018 §10）。
+（トーストの後の節。ADR-0018 §10）。段階 5 でドック風のランチャー `LauncherBar` を足した
+（層の補助の後の節。ADR-0018 §11）。
 
 | 部品           | 役割                                                      | props / snippet                                   |
 | -------------- | --------------------------------------------------------- | ------------------------------------------------- |
@@ -206,6 +207,67 @@ props は 2 つで同じ（型 `OverlayProps`）:
 | `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                       |
 | `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                           |
 | `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                        |
+
+## LauncherBar（段階 5）
+
+macOS のドックのようなアイコンのランチャー（[nav-launcher-plan.md](../../docs/design/nav-launcher-plan.md)、
+ADR-0018 §11）。画面下に浮いたバーで、マウスを近づけたアイコンほど大きくなり、ホバーとキーボードの
+フォーカスで名前のツールチップを出す。**表示と操作だけ**を持ち、ナビの定義・どの項目を出すか（権限）・
+現在のページの判定（`active`）・バッジの件数・文言はすべて呼び出し側が渡す。リンクは素の `<a href>` なので、
+SvelteKit のクライアント遷移は呼び出し側のアプリでそのまま効く（このパッケージは `$app/*` を知らない）。
+
+| props       | 型                 | 既定       | 内容                                                                                        |
+| ----------- | ------------------ | ---------- | ------------------------------------------------------------------------------------------- |
+| `groups`    | `LauncherGroup[]`  | （必須）   | `{ id, ariaLabel, items }`。グループごとに `<nav aria-label>` を 1 つ描き、あいだに区切り線 |
+| `position`  | `LauncherPosition` | `'bottom'` | 今は `'bottom'` だけ（左右は計画のみ。足しても既存の呼び出しは壊れない）                    |
+| `magnify`   | `boolean`          | `true`     | 拡大する。`prefers-reduced-motion`・`(hover: none)`・900px 以下・マウス以外では自動で止まる |
+| `ariaLabel` | `string`           | なし       | バー全体の名前（付けると全体が `role="group"`）                                             |
+
+`LauncherItem` は `{ id, href, label, icon, active?, badge?: { text, label } }`。`label` がツールチップ・
+狭い画面の小さなラベル・アクセシブルな名前（視覚的に隠した実テキスト。`badge.label` も名前に入る）になり、
+`active` のリンクに `aria-current="page"` が付く。ツールチップは `aria-hidden` で、Esc はフォーカスの位置に
+よらず閉じる（手前に `hasVisibleLayerAbove()` の層があるときは譲る。イベントは奪わない）。
+900px 以下では画面下端いっぱいのタブバー（アイコン + 小さなラベル、拡大なし、最小 44×44px、
+`env(safe-area-inset-bottom)`、入り切らなければ横スクロール）になる。
+
+寸法・倍率・重なり順はトークン（`--banto-shell-launcher-*`・`--banto-z-launcher`、
+[@banto/theme](../theme/README.md)）で、`@banto/theme/css` を読み込むこと（倍率のトークンが読めなければ
+拡大しない）。バーは `position: fixed` なので、本文の下に `--banto-shell-launcher-reserve` の余白を取るのは
+呼び出し側の仕事。拡大の曲線は純粋関数 `magnifyScale(distance, range, max)` として公開している。
+
+```svelte
+<script lang="ts">
+	import { LauncherBar, type LauncherGroup } from '@banto/ui';
+	import { House, Package, Users } from '@lucide/svelte';
+	import { page } from '$app/state';
+
+	const groups: LauncherGroup[] = $derived([
+		{
+			id: 'main',
+			ariaLabel: '主要ナビゲーション',
+			items: [
+				{ id: 'home', href: '/', label: 'ホーム', icon: House, active: page.url.pathname === '/' },
+				{
+					id: 'items',
+					href: '/items',
+					label: '品目',
+					icon: Package,
+					active: page.url.pathname.startsWith('/items'),
+					badge: { text: '3', label: '3 件の更新' }
+				}
+			]
+		},
+		// 権限で出し分けるのは呼び出し側（例: 管理者だけに渡す）
+		{
+			id: 'admin',
+			ariaLabel: '管理ナビゲーション',
+			items: [{ id: 'users', href: '/users', label: 'ユーザー', icon: Users }]
+		}
+	]);
+</script>
+
+<LauncherBar {groups} />
+```
 
 ## 使用例
 

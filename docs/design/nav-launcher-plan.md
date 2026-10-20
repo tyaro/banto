@@ -1,8 +1,9 @@
 # ナビゲーションの「ドック」表示（ランチャー）計画書
 
 作成日: 2026-10-20
-状態: **計画のみ（未着手）**。§9 の論点 D1〜D6 は 2026-10-20 にオーナー決定済み（すべて推奨案 a）。
-次は PR-1（ナビの絞り込みの切り出し）と PR-2（トークン + `LauncherBar`）。
+状態: **実装中**。§9 の論点 D1〜D6 は 2026-10-20 にオーナー決定済み（すべて推奨案 a）。
+PR-2（トークン + `LauncherBar`、`@banto/ui` と `banto.css`）を実装（ui-demo のカードは見送り、§8）。
+PR-1（ナビの絞り込みの切り出し、#422）はマージ済み。次は PR-3（シェルへの配線と設定）。
 トラック: 保守者向け（トラックA）
 関連: [visual-refresh-design.md](visual-refresh-design.md)（§5 ナビのアイコン、§8 シェル）、
 [display-preset-plan.md](display-preset-plan.md)（D1-b キオスクシェル）、
@@ -104,6 +105,21 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
   読み出しが**失敗**したとき（オフライン・未認証・デモ）は今と同じくローカルの値を残す。
   テーマ・密度・キオスクも同じ漏れ方をするが、今回は変えない（既存の挙動の変更になるので、
   直すなら別の issue にする）。
+- **ドックの透け具合（D7）**: ドックを選んだときだけ、「ナビゲーション」カードにスライダーを出す
+  （`<input type="range">`、40〜100%・5% 刻み・既定 50%。ラベルと現在値の表示は辞書のキー経由）。
+  保存は他の設定と同じ 2 層（localStorage `banto.launcherOpacity`、`UiSettingsProvider` の
+  `shell.launcherOpacity`、値は整数のパーセント）。プロバイダに値が無ければ既定に戻す規則も
+  `navLayout` と同じ。値は `document.documentElement` の `--banto-shell-launcher-opacity` に書き込む
+  （アプリが書くのはこの 1 つのトークンだけで、色の式はテーマが持つ）。動かしている間もその場で
+  実際のドックに反映する。
+  - **プレビュー**: スライダーの横に小さな見本を置く。縞模様の本文の上に、アイコン 3 つの小さな
+    バーを重ね、スライダーの値で地の濃さが変わる（見本の要素に `--banto-shell-launcher-opacity` を
+    上書きし、地は `color-mix(in srgb, var(--banto-surface-overlay) var(--banto-shell-launcher-opacity), transparent)`
+    で塗る。トークンだけで描き、生の色は使わない）。設定画面ではドックが本文の下端にあって
+    透け方が見えにくいので、見本で確かめられるようにする。プレビューは `aria-hidden`。
+  - `prefers-reduced-transparency: reduce` のときは、スライダーの値にかかわらず不透明（テーマの
+    フォールバックが `--banto-shell-launcher-bg` を直接上書きする）。このときスライダーは出したまま、
+    「OS の設定で透明度を下げているため不透明で表示しています」と添える（辞書のキー）。
 
 ## 4. ランチャーの見た目と振る舞い
 
@@ -251,6 +267,11 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
 | `--banto-shell-launcher-offset` | 10px | 画面端からの距離 |
 | `--banto-shell-launcher-reserve` | calc(...) | 本文に取る余白（item-size + padding×2 + offset） |
 | `--banto-z-launcher` | 200 | 重なり順 |
+| `--banto-shell-launcher-opacity` | 50% | バーの不透明度。設定のスライダーが変えるのはこの値だけ（D7） |
+| `--banto-shell-launcher-bg` | `surface-overlay` を opacity で薄めた色 | バーの半透明の地（D7） |
+| `--banto-shell-launcher-backdrop` | `blur(1px) saturate(1.5)` | バーの後ろのぼかし（D7） |
+| `--banto-shell-launcher-tooltip-bg` | `surface-raised` の 80% | ツールチップの半透明の地（D7） |
+| `--banto-shell-launcher-tooltip-backdrop` | `blur(5px)` | ツールチップの後ろのぼかし（D7） |
 
 背景・枠・影・角丸・glass は既存のトークン（`--banto-surface` / `--banto-border` / `--banto-shadow-lg` /
 `--banto-radius-lg` / `--banto-backdrop`）を使い、新しい色は足さない。密度 `compact` で
@@ -351,6 +372,12 @@ publicViewer のスイート（`e2e/tests-public-viewer`）には、ドック表
    Esc でツールチップが消え、入力欄のフォーカスと入力は残る → 同じ位置でポインタを少し動かしても
    再表示しない。あわせて、パレット（`Ctrl+K`）を開いた状態の Esc はパレットが閉じ、
    ツールチップの処理は動かないこと。
+3. **キーボードフォーカスで出したツールチップの Esc**（#423 レビュー）: マウスをバーの外に置いたまま
+   Tab で項目にフォーカス → ツールチップの computed `visibility` が `visible` → Esc で `hidden` になり、
+   フォーカスはその項目に残る → Tab で次の項目へ移ると、次の項目のツールチップが出る。
+   `:focus-visible` と CSS の詳細度に関わるので、jsdom ではなく実ブラウザで確かめる。PR-2 の時点では
+   バーがアプリに出ていないため、自動テストは PR-3 で足す（PR-2 では一時的な確認用ページを作り、
+   実ブラウザで手で確かめた）。
 
 ### 7.3 visual（ベースラインは Linux でだけ生成）
 
@@ -380,7 +407,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 |---|---|---|---|
 | 0 | 計画（本書） | 本書の追加。オーナー決定を §9 に書き込む | なし |
 | 1 | ナビの絞り込みの切り出し | `navSections()` を navigation.ts に足し、Sidebar をそれで書き直す。テスト。挙動は同じ | なし（visual が変わらないことを確かめる） |
-| 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、`ui-demo` にカード、ADR-0018 §11 | `ui-demo-*` を作り直し（デモビルドのみのページ） |
+| 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、ADR-0018 §11。**計画からの変更**: `ui-demo` のカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo-*` の作り直しが要るため。実ブラウザの見た目は 3 の visual で見る） | なし |
 | 3 | シェルへの配線と設定 | 設定ストア、ShellLauncher、レイアウト・ヘッダの分岐、外観カード、辞書、e2e、a11y、visual 追加 | `settings-*` 作り直し + `dashboard-launcher-*` 追加 |
 | 4 | 左 / 右（D4-b のとき） | 部品の `position`、設定の副ラジオ、visual 2 枚追加 | `settings-*` 作り直し + 追加 |
 | 5 | 文書 | README / recipes（不要なら外す 3 行）、template-scope §2.2、CHANGELOG の未リリース節、upgrading.md（派生アプリが取り込む手順）、本書の状態行 | なし |
@@ -403,6 +430,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | D4 位置 | a: 最初は下だけ。`position` は API に最初から持たせ、左右は要望を見て PR-4 で足す |
 | D5 狭い画面 | a: 下端いっぱいのタブバー（アイコン + 小さなラベル、拡大なし） |
 | D6 拡大の ON / OFF | a: 拡大は ON。reduced-motion・タッチ・狭い画面では自動で OFF。設定項目は足さない |
+| D7 背景の透け具合（#423 で追加） | バーとツールチップの地を半透明にし、後ろをぼかす。既定値はオーナーが実ブラウザで調整した値（バー 50%・ぼかし 1px・彩度 1.5、ツールチップ 80%・ぼかし 5px）。`prefers-reduced-transparency` と `backdrop-filter` 非対応では不透明。**ユーザーが設定のスライダーで調整できる**（2026-10-20 決定、PR-3）: バーの不透明度だけを 40〜100%・5% 刻み・既定 50% で選ぶ。ツールチップは 80% で固定（名前の読みやすさ）。スライダーの横にプレビューを置く（§3） |
 
 これにより、§8 の PR-4 は要望が出るまで保留、D3-b の scaffold PR は作らない。以下は検討の記録として残す。
 
