@@ -119,7 +119,11 @@ test.describe('dock layout', () => {
 			// draws the fixed bar at the first viewport's bottom - mid-page - so it
 			// would show neither where the dock sits nor that the page's last
 			// content clears it (the shell's bottom reserve, plan §4.1).
+			// The charts lay out after first paint (the page is one viewport tall
+			// until then), so settle first, scroll, and wait until it really moved.
+			await page.waitForTimeout(SETTLE_MS);
 			await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+			await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
 			await page.waitForTimeout(SETTLE_MS);
 			await expect(page).toHaveScreenshot(`dashboard-launcher-${comboLabel(combo)}-${size}.png`);
 		});
