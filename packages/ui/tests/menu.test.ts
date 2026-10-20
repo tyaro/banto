@@ -3,8 +3,11 @@
  * @banto/ui menu contracts (docs/adr/0018-shared-ui-package.md §8, phase 2a):
  * open/close through the trigger, the ARIA wiring, roving keyboard focus
  * (arrows wrapping, Home/End, disabled items skipped, Tab closes), item
- * activation + close, and focus returning to the trigger. Placement and the
- * top-layer look are browser behaviour (e2e/visual), not asserted here.
+ * activation + close, and focus returning to the trigger, plus the long-menu
+ * rules of #427 (height capped to the space beside the trigger from stubbed
+ * rects; the menu's own scroll does not close it, an outer scroll does).
+ * Real placement and the top-layer look are browser behaviour
+ * (e2e/visual/ui-overlays.spec.ts), not asserted here.
  *
  * jsdom has no Popover API, so a minimal stand-in is installed: it flips a
  * `data-popover-open` marker and fires the `toggle` event asynchronously like
@@ -169,5 +172,111 @@ describe('Menu', () => {
 		expect(screen.getByRole('group', { hidden: true })).toBeTruthy();
 		expect(screen.getByRole('separator', { hidden: true })).toBeTruthy();
 		expect(item('Log out').className).toContain('danger');
+	});
+
+	describe('long menus (#427)', () => {
+		const root = document.documentElement;
+
+		afterEach(() => {
+			vi.restoreAllMocks();
+			// Drop the own-property overrides so jsdom's prototype getters return.
+			delete (root as unknown as Record<string, unknown>).clientHeight;
+			delete (root as unknown as Record<string, unknown>).clientWidth;
+		});
+
+		/** 960x480 viewport, a trigger at the given vertical span, and a menu
+		 * whose natural box is 900px tall (far more than either side). */
+		function stubLayout(
+			trigger: HTMLElement,
+			menu: HTMLElement,
+			top: number,
+			bottom: number
+		): void {
+			Object.defineProperty(root, 'clientHeight', { configurable: true, value: 480 });
+			Object.defineProperty(root, 'clientWidth', { configurable: true, value: 960 });
+			vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+				top,
+				bottom,
+				left: 800,
+				right: 900,
+				width: 100,
+				height: bottom - top
+			} as DOMRect);
+			vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({
+				top: 0,
+				bottom: 900,
+				left: 0,
+				right: 200,
+				width: 200,
+				height: 900
+			} as DOMRect);
+		}
+
+		const maxHeightOf = (menu: HTMLElement) => parseFloat(menu.style.maxHeight);
+
+		it('caps the height to the space below a trigger near the top', async () => {
+			const { trigger, menu } = setup();
+			stubLayout(trigger, menu, 10, 40);
+			await fireEvent.click(trigger);
+			await flush();
+			expect(menu.style.top).toBe('44px');
+			// 480 - (40 + 4) - 4 = 432 for the whole box, less padding + border.
+			expect(maxHeightOf(menu)).toBeGreaterThan(400);
+			expect(maxHeightOf(menu)).toBeLessThanOrEqual(432);
+		});
+
+		it('flips above and caps the height when the space above is larger', async () => {
+			const { trigger, menu } = setup();
+			stubLayout(trigger, menu, 400, 430);
+			await fireEvent.click(trigger);
+			await flush();
+			// 400 - 4 - 4 = 392 for the whole box, placed 4px from the top edge.
+			expect(menu.style.top).toBe('4px');
+			expect(maxHeightOf(menu)).toBeGreaterThan(360);
+			expect(maxHeightOf(menu)).toBeLessThanOrEqual(392);
+		});
+
+		it('does not cap a menu that fits, and clears the cap on close', async () => {
+			const { trigger, menu } = setup();
+			stubLayout(trigger, menu, 10, 40);
+			await fireEvent.click(trigger);
+			await flush();
+			expect(menu.style.maxHeight).not.toBe('');
+			(menu as PopoverElement).hidePopover();
+			await flush();
+			expect(menu.style.maxHeight).toBe('');
+			vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({
+				height: 120,
+				width: 200
+			} as DOMRect);
+			await fireEvent.click(trigger);
+			await flush();
+			expect(menu.style.maxHeight).toBe('');
+		});
+
+		it("stays open on the menu's own scroll and closes on an outer scroll", async () => {
+			const { trigger, menu } = setup();
+			await fireEvent.click(trigger);
+			await flush();
+			// Wheel inside the menu, or the browser scrolling a focused item
+			// into view, targets the menu itself (scroll does not bubble; the
+			// component listens in the capture phase on window).
+			menu.dispatchEvent(new Event('scroll'));
+			item('Log out').dispatchEvent(new Event('scroll'));
+			await flush();
+			expect(menu.dataset.popoverOpen).toBe('true');
+			document.dispatchEvent(new Event('scroll'));
+			await flush();
+			expect(menu.dataset.popoverOpen).toBeUndefined();
+		});
+
+		it('closes on an ancestor element scroll', async () => {
+			const { trigger, menu } = setup();
+			await fireEvent.click(trigger);
+			await flush();
+			(menu.parentElement as HTMLElement).dispatchEvent(new Event('scroll'));
+			await flush();
+			expect(menu.dataset.popoverOpen).toBeUndefined();
+		});
 	});
 });

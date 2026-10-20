@@ -195,6 +195,37 @@ test.describe('dock layout (primed)', () => {
 		if (!toastBox || !tabBar) throw new Error('no layout for the toast or the tab bar');
 		expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(tabBar.y);
 	});
+
+	test('<=900px: the tab bar is never fainter than the 85% floor; wider screens follow the setting', async ({
+		page
+	}) => {
+		/** Alpha of the bar's backdrop (`.launcher__bar::before`), as the browser computed it. */
+		const barAlpha = () =>
+			page.locator('.launcher__bar').evaluate((el) => {
+				const colour = getComputedStyle(el, '::before').backgroundColor;
+				const match =
+					/\/\s*([\d.]+)\s*\)$/.exec(colour) ?? /rgba\([^)]*,\s*([\d.]+)\)$/.exec(colour);
+				return match ? Number(match[1]) : 1;
+			});
+		const setOpacity = (percent: number) =>
+			page.evaluate(
+				(value) =>
+					document.documentElement.style.setProperty('--banto-shell-launcher-opacity', value),
+				`${percent}%`
+			);
+
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await gotoDashboard(page);
+		// The default 50% applies as is on a wide screen...
+		expect(await barAlpha()).toBeCloseTo(0.5, 2);
+
+		await page.setViewportSize({ width: 768, height: 1024 });
+		// ...but the tab bar is raised to the floor,
+		await expect.poll(barAlpha).toBeCloseTo(0.85, 2);
+		// and a setting above the floor still wins.
+		await setOpacity(95);
+		await expect.poll(barAlpha).toBeCloseTo(0.95, 2);
+	});
 });
 
 interface Box {
@@ -406,4 +437,25 @@ test('settings: choosing Dock shows the opacity slider, which applies live; Side
 	await expect(page.locator('aside')).toBeVisible();
 	await expect(page.locator('html')).not.toHaveAttribute('data-banto-shell-nav', 'launcher');
 	await expect(page.locator('html')).not.toHaveAttribute('data-banto-shell-launcher-position');
+});
+
+// #428 review: under glass the surfaces are already translucent, so the
+// tab bar mixes an opaque base (`--banto-shell-launcher-tabbar-base`) - the
+// 85% floor must hold there too, not drop to ~0.43-0.53.
+test.describe('dock tab bar floor under glass', () => {
+	for (const theme of ['light', 'dark'] as const) {
+		test(`<=900px ${theme}-glass: the tab bar is still at least 85% opaque`, async ({ page }) => {
+			await primeThemeAndAuth(page, { theme, preset: 'glass' });
+			await primeLauncher(page);
+			await page.setViewportSize({ width: 768, height: 1024 });
+			await gotoDashboard(page);
+			const alpha = await page.locator('.launcher__bar').evaluate((el) => {
+				const colour = getComputedStyle(el, '::before').backgroundColor;
+				const match =
+					/\/\s*([\d.]+)\s*\)$/.exec(colour) ?? /rgba\([^)]*,\s*([\d.]+)\)$/.exec(colour);
+				return match ? Number(match[1]) : 1;
+			});
+			expect(alpha).toBeGreaterThanOrEqual(0.85 - 0.005);
+		});
+	}
 });
