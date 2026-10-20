@@ -44,6 +44,9 @@
  *      crates/ の全 crate = fixture の rust/Cargo.toml の banto の Git 依存、
  *      npm と Cargo の ref が 1 つに揃っていること、fixture の Vite／Svelte 系の
  *      範囲指定が apps/admin-template/package.json と文字列で一致すること
+ *  14. scaffold が編集するファイル（全プリセットの `--dry-run --list-touched`）⊆
+ *      template-acceptance.yml の push / pull_request 両方の paths の glob。
+ *      足し忘れると受け入れ CI が走らず、アンカー切れが静かに潜伏する。ADR-0008
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -53,6 +56,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { readI18nMode } from './lib/i18n-mode.mjs';
+import { collectScaffoldTouchedFiles } from './lib/scaffold-touched.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -1040,6 +1044,89 @@ const isAllowedPackageImport = (spec) =>
 			pass(
 				rule,
 				`fixture が .svelte.ts ソース配布 ${svelteTs.length} パッケージ（import・exclude とも）と公開 crate ${crates.length} 個を網羅、Vite／Svelte 系 ${SYNCED_TOOLCHAIN.length} 件の範囲が admin-template と一致（ref ${[...refs].join(', ')}）`
+			);
+	}
+}
+
+// --- rule 14: scaffold が触るファイルと template-acceptance の paths の一致（ADR-0008）
+// scripts/scaffold.mjs は字面（アンカー）でアプリ側のファイルを編集する。template-
+// acceptance.yml はそのファイルを `paths` に手書きで列挙し、変わった PR でだけ受け入れ
+// CI を走らせる。足し忘れると、アプリ側の変更でアンカーが壊れても受け入れ CI が走らず
+// 静かに壊れる（#122 と 8730373 で再発。maintenance-review-2026-10 R-3 で
+// vite.config.ts の抜けを実際に検出）。編集対象は手書きせず、全プリセットの
+// `--dry-run --list-touched` から scaffold 自身に出させ、push / pull_request の両方の
+// `paths` のどれかの glob に一致することを検査する。削除だけの対象（removeFile /
+// removeDir）はアンカーが無いので対象外。この検査自体は frontend ジョブで毎回走る。
+{
+	const rule = 'scaffold-acceptance-paths';
+	const WF = '.github/workflows/template-acceptance.yml';
+	if (
+		!fs.existsSync(path.join(repoRoot, 'scripts/scaffold.mjs')) ||
+		!fs.existsSync(path.join(repoRoot, WF))
+	) {
+		// scaffold 済みの派生アプリでは scaffold.mjs / 受け入れ WF ごと無い。
+		pass(rule, `対象外（scripts/scaffold.mjs か ${WF} が無い — banto 本体専用）`);
+	} else {
+		// `on:` 直下の `push:` / `pull_request:` の `paths:` 配下の `- '...'` 行だけを読む。
+		const pathsOf = {};
+		let trigger = null;
+		let inPaths = false;
+		for (const line of read(WF).split(/\r?\n/)) {
+			if (/^\S/.test(line)) trigger = null; // `on:` 外のトップレベルキー
+			const t = /^ {2}(\w+):\s*$/.exec(line);
+			if (t) {
+				trigger = t[1];
+				inPaths = false;
+				continue;
+			}
+			if (trigger && /^ {4}paths:\s*$/.test(line)) {
+				inPaths = true;
+				pathsOf[trigger] = [];
+				continue;
+			}
+			if (inPaths) {
+				const m = /^ {6}- '([^']+)'/.exec(line);
+				if (m) pathsOf[trigger].push(m[1]);
+				else if (/^ {0,4}\S/.test(line)) inPaths = false;
+			}
+		}
+		// glob は `**`（`/` を越える）と `*`（越えない）だけ。
+		const globToRe = (g) =>
+			new RegExp(
+				`^${g
+					.split('**')
+					.map((part) =>
+						part
+							.split('*')
+							.map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+							.join('[^/]*')
+					)
+					.join('.*')}$`
+			);
+		const { edited } = collectScaffoldTouchedFiles(repoRoot);
+		let problems = 0;
+		for (const kind of ['push', 'pull_request']) {
+			const globs = pathsOf[kind];
+			if (!globs || globs.length === 0) {
+				problems++;
+				fail(rule, WF, `${kind} の paths を読めない（検査の前提が変わった — 本検査を更新）`);
+				continue;
+			}
+			const res = globs.map(globToRe);
+			const missing = edited.filter((f) => !res.some((re) => re.test(f)));
+			if (missing.length > 0) {
+				problems++;
+				fail(
+					rule,
+					WF,
+					`${kind} の paths に、scaffold が編集するファイルが無い: ${missing.join(', ')}（受け入れ CI が走らず、アンカー切れが潜伏する）`
+				);
+			}
+		}
+		if (problems === 0)
+			pass(
+				rule,
+				`scaffold が編集する ${edited.length} ファイル（全プリセット）が、${WF} の push / pull_request 両方の paths に含まれる`
 			);
 	}
 }

@@ -115,6 +115,7 @@ function parseArgs(argv) {
 			if (args.preset === undefined) fail('--preset に値がありません');
 		} else if (arg === '--dry-run') args.dryRun = true;
 		else if (arg === '--strict') args.strict = true;
+		else if (arg === '--list-touched') args.listTouched = true;
 		else if (arg === '--interactive' || arg === '-i') args.interactive = true;
 		else if (arg === '--help' || arg === '-h') usage(0);
 		else fail(`不明な引数: ${arg}`);
@@ -128,6 +129,7 @@ if (args.interactive && args.preset)
 if (args.interactive && args.strict)
 	fail('--strict は --preset 専用です（CI の pristine コピー検査用。対話モードでは使えません）');
 if (!args.interactive && !args.preset) usage(1);
+if (args.listTouched && !args.dryRun) fail('--list-touched は --dry-run 専用です（内部用）');
 if (args.preset && !Object.prototype.hasOwnProperty.call(PRESETS, args.preset))
 	fail(
 		`--preset は ${Object.keys(PRESETS).join(' / ')} のいずれかを指定してください: ${args.preset}`
@@ -1945,6 +1947,14 @@ async function main() {
 
 	if (editor.report(args.dryRun ? '\n--dry-run: 以下を適用します\n' : '\n適用しました\n')) {
 		process.exit(1);
+	}
+
+	// 内部用（verify-architecture の scaffold-acceptance-paths）。触ったパスを機械可読で
+	// 出す。`--dry-run` 専用で、通常の出力・挙動は変えない。
+	if (args.listTouched) {
+		for (const rel of [...editor.touched].sort()) console.log(`TOUCHED ${rel}`);
+		for (const rel of [...editor.removed].sort()) console.log(`REMOVED ${rel}`);
+		process.exit(0);
 	}
 
 	console.log(`
