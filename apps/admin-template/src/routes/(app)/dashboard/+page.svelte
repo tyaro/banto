@@ -194,8 +194,10 @@
 			try {
 				const remote = await getUiSettings().get(DOCK_SETTING_KEY);
 				if (remote !== null && remote !== localStorage.getItem(DOCK_STORAGE_KEY)) {
-					dock.hydrate(remote);
-					localStorage.setItem(DOCK_STORAGE_KEY, remote);
+					// Cache only what the dock accepted: a rejected (invalid) layout
+					// would otherwise replace the valid local copy and reset the
+					// dashboard on the next load.
+					if (dock.hydrate(remote)) localStorage.setItem(DOCK_STORAGE_KEY, remote);
 				}
 			} catch {
 				// Best-effort: offline/unauthenticated reads keep the local layout.

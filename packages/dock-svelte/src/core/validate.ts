@@ -67,12 +67,21 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 		else seen.add(id);
 	};
 
+	// Index every slot instead of `forEach`, which skips the holes of a sparse
+	// array (`Array(1)`) and would let an empty slot through to the renderer.
+	const eachSlot = (arr: unknown[], p: string, fn: (item: unknown, path: string) => void): void => {
+		for (let i = 0; i < arr.length; i++) {
+			const path = `${p}[${i}]`;
+			if (!(i in arr)) add('shape', path);
+			else fn(arr[i], path);
+		}
+	};
+
 	const floating: FloatingWindow[] = [];
 	if (!Array.isArray(value.floating)) {
 		add('shape', 'floating');
 	} else {
-		value.floating.forEach((raw: unknown, i) => {
-			const p = `floating[${i}]`;
+		eachSlot(value.floating, 'floating', (raw, p) => {
 			if (!isRecord(raw)) return add('shape', p);
 			if (typeof raw.id !== 'string' || raw.id === '') add('shape', `${p}.id`);
 			else claimId(raw.id, `${p}.id`);
@@ -94,8 +103,13 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 		});
 	}
 
+	// A caller-supplied object can contain itself; stop at the first revisit so
+	// the validator never recurses forever (it must not throw for any input).
+	const visited = new WeakSet<object>();
 	const checkNode = (raw: unknown, p: string, inTabs: boolean): void => {
 		if (!isRecord(raw)) return add('shape', p);
+		if (visited.has(raw)) return add('shape', p);
+		visited.add(raw);
 		if (typeof raw.id !== 'string' || raw.id === '') add('shape', `${p}.id`);
 		else claimId(raw.id, `${p}.id`);
 		if (raw.type === 'panel') {
@@ -108,7 +122,7 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 			if (!Array.isArray(raw.children) || raw.children.length === 0) {
 				return add('shape', `${p}.children`);
 			}
-			raw.children.forEach((c: unknown, i) => checkNode(c, `${p}.children[${i}]`, true));
+			eachSlot(raw.children, `${p}.children`, (c, cp) => checkNode(c, cp, true));
 			const n = raw.children.length;
 			const active = raw.activeIndex;
 			if (typeof active !== 'number' || !Number.isInteger(active) || active < 0 || active >= n) {
@@ -121,16 +135,22 @@ export function validateDockLayout(value: unknown): DockLayoutValidation {
 			if (!Array.isArray(raw.children) || raw.children.length < 2) {
 				return add('split-sizes', `${p}.children`);
 			}
-			raw.children.forEach((c: unknown, i) => checkNode(c, `${p}.children[${i}]`, false));
+			eachSlot(raw.children, `${p}.children`, (c, cp) => checkNode(c, cp, false));
 			const sizes = raw.sizes;
 			if (!Array.isArray(sizes) || sizes.length !== raw.children.length) {
 				return add('split-sizes', `${p}.sizes`);
 			}
-			sizes.forEach((s: unknown, i) => {
+			let total = 0;
+			let entriesOk = true;
+			eachSlot(sizes, `${p}.sizes`, (s, sp) => {
 				if (typeof s !== 'number' || !Number.isFinite(s) || s < 0) {
-					add('split-sizes', `${p}.sizes[${i}]`);
-				}
+					entriesOk = false;
+					add('split-sizes', sp);
+				} else total += s;
 			});
+			// Finite entries can still overflow when summed (`[1e308, 1e308]`),
+			// which normalizeSizes would turn into an all-zero split.
+			if (entriesOk && !Number.isFinite(total)) add('split-sizes', `${p}.sizes`);
 			return;
 		}
 		add('shape', `${p}.type`);

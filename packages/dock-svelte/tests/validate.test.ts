@@ -218,3 +218,53 @@ describe('DockState adopts only validated layouts', () => {
 		expect(createDockState(v1).layout).toEqual({ version: 2, floating: [win('a')], docked: null });
 	});
 });
+
+describe('caller-supplied objects that JSON cannot produce (PR #440 review)', () => {
+	it('rejects split weights whose sum overflows to Infinity', () => {
+		const docked = {
+			type: 'split',
+			id: 's1',
+			direction: 'row',
+			children: [
+				{ type: 'panel', id: 'p1', title: 'P1' },
+				{ type: 'panel', id: 'p2', title: 'P2' }
+			],
+			sizes: [1e308, 1e308]
+		};
+		const result = validateDockLayout(layoutOf([], docked));
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.issues).toContainEqual({ code: 'split-sizes', path: 'docked.sizes' });
+		}
+	});
+
+	it('stops at a split that contains itself instead of recursing forever', () => {
+		const split: Record<string, unknown> = {
+			type: 'split',
+			id: 's1',
+			direction: 'row',
+			sizes: [1, 1]
+		};
+		split.children = [split, { type: 'panel', id: 'p1', title: 'P1' }];
+		const result = validateDockLayout(layoutOf([], split));
+		expect(result.ok).toBe(false);
+		expect(() => createDockState(layoutOf([], split) as unknown as DockLayout)).not.toThrow();
+	});
+
+	it('rejects holes in sparse tab children and floating arrays', () => {
+		const tabs = { type: 'tabs', id: 't1', activeIndex: 0, children: new Array(1) };
+		const sparseTabs = validateDockLayout(layoutOf([], tabs));
+		expect(sparseTabs.ok).toBe(false);
+		if (!sparseTabs.ok) {
+			expect(sparseTabs.issues).toContainEqual({ code: 'shape', path: 'docked.children[0]' });
+		}
+
+		const floating: unknown[] = [win('a')];
+		floating.length = 2;
+		const sparseFloating = validateDockLayout(layoutOf(floating));
+		expect(sparseFloating.ok).toBe(false);
+		if (!sparseFloating.ok) {
+			expect(sparseFloating.issues).toContainEqual({ code: 'shape', path: 'floating[1]' });
+		}
+	});
+});
