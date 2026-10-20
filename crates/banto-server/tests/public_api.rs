@@ -4,7 +4,7 @@
 //! A unit test inside `src/` still compiles if an item is narrowed from `pub`
 //! back to `pub(crate)`; this file does not. Each function here is
 //! compile-only - it is never called - so it pins visibility and signature,
-//! not behaviour (behaviour is covered by the unit tests in `src/auth.rs`).
+//! not behaviour (behaviour is covered by the unit tests in `src/auth/tests.rs`).
 
 #![allow(dead_code)]
 
