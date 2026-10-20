@@ -252,6 +252,10 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
 | `--banto-shell-launcher-offset` | 10px | 画面端からの距離 |
 | `--banto-shell-launcher-reserve` | calc(...) | 本文に取る余白（item-size + padding×2 + offset） |
 | `--banto-z-launcher` | 200 | 重なり順 |
+| `--banto-shell-launcher-bg` | `surface-overlay` の 50% | バーの半透明の地（D7） |
+| `--banto-shell-launcher-backdrop` | `blur(1px) saturate(1.5)` | バーの後ろのぼかし（D7） |
+| `--banto-shell-launcher-tooltip-bg` | `surface-raised` の 80% | ツールチップの半透明の地（D7） |
+| `--banto-shell-launcher-tooltip-backdrop` | `blur(5px)` | ツールチップの後ろのぼかし（D7） |
 
 背景・枠・影・角丸・glass は既存のトークン（`--banto-surface` / `--banto-border` / `--banto-shadow-lg` /
 `--banto-radius-lg` / `--banto-backdrop`）を使い、新しい色は足さない。密度 `compact` で
@@ -410,6 +414,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | D4 位置 | a: 最初は下だけ。`position` は API に最初から持たせ、左右は要望を見て PR-4 で足す |
 | D5 狭い画面 | a: 下端いっぱいのタブバー（アイコン + 小さなラベル、拡大なし） |
 | D6 拡大の ON / OFF | a: 拡大は ON。reduced-motion・タッチ・狭い画面では自動で OFF。設定項目は足さない |
+| D7 背景の透け具合（#423 で追加） | バーとツールチップの地を半透明にし、後ろをぼかす。既定値はオーナーが実ブラウザで調整した値（バー 50%・ぼかし 1px・彩度 1.5、ツールチップ 80%・ぼかし 5px）。`prefers-reduced-transparency` と `backdrop-filter` 非対応では不透明。ユーザーが設定で調整できるようにするかは PR-3 で決める（形は未決） |
 
 これにより、§8 の PR-4 は要望が出るまで保留、D3-b の scaffold PR は作らない。以下は検討の記録として残す。
 

@@ -292,14 +292,30 @@
 		gap: var(--banto-shell-launcher-gap);
 		width: max-content;
 		padding: var(--banto-shell-launcher-padding);
-		background: var(--banto-surface-overlay);
+		position: relative;
+		/* Own stacking context for the ::before backdrop below (z-index: -1)
+		   without making the bar a backdrop root. */
+		isolation: isolate;
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
 		box-shadow: var(--banto-shadow-lg);
-		/* Glass preset: no-op under standard (--banto-backdrop: none). */
-		backdrop-filter: var(--banto-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-backdrop, none);
 		pointer-events: auto;
+	}
+
+	/* Translucent + frosted backdrop (theme tokens; opaque under reduced
+	   transparency). On a pseudo-element, not the bar itself: an element with
+	   `backdrop-filter` is a backdrop root, so the tooltips inside it could
+	   only blur the bar's own (empty) contents, never the page (#423). */
+	.launcher__bar::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		border-radius: inherit;
+		background: var(--banto-shell-launcher-bg);
+		backdrop-filter: var(--banto-shell-launcher-backdrop);
+		-webkit-backdrop-filter: var(--banto-shell-launcher-backdrop);
+		pointer-events: none;
 	}
 
 	.launcher__group {
@@ -449,7 +465,9 @@
 		left: 50%;
 		translate: -50% 0;
 		padding: 0.25rem 0.5rem;
-		background: var(--banto-surface-raised);
+		background: var(--banto-shell-launcher-tooltip-bg);
+		backdrop-filter: var(--banto-shell-launcher-tooltip-backdrop);
+		-webkit-backdrop-filter: var(--banto-shell-launcher-tooltip-backdrop);
 		color: var(--banto-text);
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius-md);
