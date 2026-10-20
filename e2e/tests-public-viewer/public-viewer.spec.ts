@@ -78,6 +78,17 @@ test.describe.serial('Banto viewer-public mode', () => {
 		// Allowlist: no admin nav, and settings is not public either.
 		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toHaveCount(0);
 		await expect(page.getByRole('link', { name: '設定' })).toHaveCount(0);
+
+		// The Ctrl+K palette follows the same allowlist (navSections()): it lists
+		// the public screen but not the ones the route guard would bounce.
+		await page.keyboard.press('Control+K');
+		const palette = page.getByRole('dialog', { name: 'コマンドパレット' });
+		await expect(palette).toBeVisible();
+		await expect(palette.getByText('ダッシュボード', { exact: true })).toBeVisible();
+		await expect(palette.getByText('ツリービュー', { exact: true })).toHaveCount(0);
+		await expect(palette.getByText('設定', { exact: true })).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		await expect(palette).toHaveCount(0);
 	});
 
 	// Issue #321: a wall monitor opening its screen while the server is

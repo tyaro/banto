@@ -5,7 +5,9 @@
  * (navigation.ts) - a page just needs an entry there to show up in the
  * palette too, no separate registration step - plus hand-written theme
  * (M12 settings API) and session (logout) commands. RBAC gating for nav
- * entries mirrors Sidebar.svelte's `visibleItems` condition exactly.
+ * entries follows `navSections()` (navigation.ts) - the same pure function the
+ * sidebar and the dock use - so a LAN viewer-public session (ADR-0012) and a
+ * non-admin role never see a page they cannot open.
  *
  * Recency (spec M16: "最近使ったコマンドの並び上げ"; per signed-in user,
  * Issue #258) lives in `./recentCommands.ts`.
@@ -16,10 +18,17 @@ import * as m from '#lib/paraglide/messages.js';
 import type { PaletteCommand } from '@banto/admin-core';
 import { logoutAndLeave } from './banto/logout.svelte';
 import { notifyLogoutOutcome } from './banto/logoutNotice';
-import { navItems, resolveAppPath } from './navigation';
+import { navItems, navSections, resolveAppPath, type NavItem } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
-import { isAdmin } from './permissions';
+
+function isNavItemVisible(item: NavItem): boolean {
+	const { main, admin } = navSections({
+		publicViewer: sessionStore.publicViewer,
+		role: sessionStore.role
+	});
+	return main.includes(item) || admin.includes(item);
+}
 
 function navigationCommands(): PaletteCommand[] {
 	return navItems.map((item) => ({
@@ -27,9 +36,9 @@ function navigationCommands(): PaletteCommand[] {
 		title: m[item.labelKey](),
 		group: m['commandPalette.groupNavigation'](),
 		keywords: [item.path],
-		// Spec M10 RBAC: same condition as Sidebar.svelte's `visibleItems`
-		// (adminOnly entries hidden from non-admin roles).
-		visible: item.adminOnly ? () => isAdmin(sessionStore.role) : undefined,
+		// Spec M10 RBAC + viewer-public allowlist (ADR-0012): visible iff the
+		// sidebar would list it. Evaluated per call so it follows the session.
+		visible: () => isNavItemVisible(item),
 		run: () => {
 			void goto(resolveAppPath(item.path));
 		}

@@ -136,7 +136,9 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 ### コマンドパレット（Ctrl+K、M16）
 
 `apps/admin-template/src/lib/components/CommandPalette.svelte`・
-`src/lib/commandPalette.svelte.ts`・`src/lib/commands.ts` を削除し、
+`src/lib/commandPalette.svelte.ts`・`src/lib/commands.ts`・`src/lib/commands.test.ts`・
+`src/lib/recentCommands.ts`・`src/lib/recentCommands.test.ts` を削除し
+（テストを残すと、消したモジュールを import して `pnpm --filter admin-template test` が落ちる）、
 `src/routes/(app)/+layout.svelte` と `src/lib/components/Header.svelte`
 からの参照（`commandPaletteStore`・Ctrl+Kのキーバインド・パレット起動
 ボタン）を外す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
