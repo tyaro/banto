@@ -23,6 +23,7 @@
 ## [Unreleased]
 
 - 監査の保留ファイルのテスト 2 件が、Windows CI で `sync_all` を含む経過時間の上限で不安定に落ちるのを直した（#399）。公開 API の変更は無い。
+- CI と手元の `cargo test` を速くするため、dev/test プロファイルで依存の argon2・blake2 だけを opt-level 3 でビルドするようにした（`rest::tests` が Windows CI で 79 秒だったのが数秒に）。公開 API の変更は無い（release と利用アプリには影響しない）。
 
 ## [6.7.1] - 2026-10-15
 
