@@ -1,8 +1,8 @@
 # リファクタ要否の再点検（2026-10）
 
 作成日: 2026-10-20
-状態: **判断の記録**。§3 の「やる」は小さな PR に分けて実施する（未着手）。§4・§5 は
-見直しの合図が来るまで判断を固定する。
+状態: **判断の記録**。§3 の「やる」（R-1〜R-5）は 2026-10-20 にすべて実施済み（§3 末尾の表）。
+§4・§5 は見直しの合図が来るまで判断を固定する。
 位置づけ: 「リファクタをするべきか、このままでよいか」に答える棚卸し。前回の
 [maintenance-review-2026-08.md](maintenance-review-2026-08.md)（以下「前回」）§3.3 の
 「やらないと決めること」と、その見直し条件が今も成り立つかを、2026-08-13 以降の変更履歴で
@@ -86,6 +86,19 @@
 R-4 の注意: 並行性まわりのコードなので、**移動だけ**にして差分を読みやすく保つ。`Inner` の
 private フィールドを使うテストには `pub(super)` が要る。`cargo test -p banto-server` の
 件数が前後で一致することを確認する。
+
+### 実施結果（2026-10-20）
+
+| # | PR | 実施内容 |
+| --- | --- | --- |
+| R-1 | #412 | conventions §2（ja/en）に Db ディスパッチの判断を追記。見直しの合図は「パリティの回帰」（match の片方の腕だけを直して両バックエンドの挙動がずれた不具合）に絞った。ADR-0008 の採否台帳に rule 13 を追記 |
+| R-2 | #413 | `pnpm lint` を `eslint . --max-warnings=0` にした |
+| R-3 | #417 | rule 14（scaffold-acceptance-paths）を追加。scaffold の `--dry-run --list-touched` から編集対象を得て、`template-acceptance.yml` の push / pull_request 両方の `paths` との一致を検査する。`vite.config.ts` と `core/Cargo.toml` の抜けを `paths` に足した。banto 本体でだけ動く（本体専用の fixture があり、ルート `package.json` の `name` が `banto` のとき）。ADR-0008 の採否台帳に追記 |
+| R-4 | #415 | `auth.rs` を `auth/{mod,session,policy,state,routes,tests}.rs` に分けた（移動のみ。テスト件数は前後で一致） |
+| R-5 | #414 | http 側のラッパを全ファイル `httpRequest(path, init: HttpInit)` にそろえた。名前だけでなく引数の形もそろえ、他ファイルの呼び出しをコピーしたとき init が本文として送られる取り違えを防いだ |
+
+あわせて、Windows CI で不安定だった `spool_after_a_hang_does_not_duplicate_the_late_insert`
+（流し込みの INSERT が 200 ms の timeout で中断していた）を #416 で直した。
 
 ## 4. 保留（見直しの合図を決めて固定する）
 
