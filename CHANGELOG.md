@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- CI の E2E のうち visual + axe-core を別ジョブ `E2E (visual + axe-core)` に分け、`BANTO_E2E_SERVERS=visual` で `vite preview` だけを起動できるようにして E2E を速くした。CI のみの変更で、公開 API と手元の `pnpm e2e*` の挙動は変わらない。
 - 監査の保留ファイルのテスト 2 件が、Windows CI で `sync_all` を含む経過時間の上限で不安定に落ちるのを直した（#399）。公開 API の変更は無い。
 - CI と手元の `cargo test` を速くするため、dev/test プロファイルで依存の argon2・blake2 だけを opt-level 3 でビルドするようにした（`rest::tests` が Windows CI で 79 秒だったのが数秒に）。公開 API の変更は無い（release と利用アプリには影響しない）。
 

@@ -12,8 +12,9 @@
  *   build` must run first here too - see visual/README.md.
  *
  * `webServer` is an array (Playwright starts every entry regardless of
- * which `--project` is selected), so running just the smoke suite still
- * spins up the idle preview server - harmless as long as `build/` already
+ * which `--project` is selected; set `BANTO_E2E_SERVERS=visual` to start
+ * only the `vite preview` entry, as CI's visual job does), so running just
+ * the smoke suite still spins up the idle preview server - harmless as long as `build/` already
  * exists, which the smoke suite already requires (see below). Root
  * `package.json`'s `e2e` script pins `--project=chromium` so a plain
  * `pnpm e2e` never runs the visual suite (and vice versa for `e2e:visual`).
@@ -83,6 +84,21 @@ const bantoServeBin = path.join(
 	'debug',
 	process.platform === 'win32' ? 'banto-serve.exe' : 'banto-serve'
 );
+
+/**
+ * `BANTO_E2E_SERVERS=visual` narrows `webServer` to the `vite preview` entry
+ * (matched by its URL, not its position) - CI's separate visual job only
+ * needs that, so it can skip building `banto-serve`. Unset (every local
+ * `pnpm e2e*`) keeps all entries.
+ */
+function selectWebServers<T extends { url?: string }>(servers: T[]): T[] {
+	if (process.env.BANTO_E2E_SERVERS !== 'visual') return servers;
+	const visual = servers.filter((s) => s.url === VISUAL_BASE_URL);
+	if (visual.length !== 1) {
+		throw new Error(`BANTO_E2E_SERVERS=visual: expected one webServer at ${VISUAL_BASE_URL}`);
+	}
+	return visual;
+}
 
 export default defineConfig({
 	testDir: './tests',
@@ -184,7 +200,7 @@ export default defineConfig({
 			}
 		}
 	],
-	webServer: [
+	webServer: selectWebServers([
 		{
 			command: bantoServeBin,
 			url: BASE_URL,
@@ -248,5 +264,5 @@ export default defineConfig({
 			// banner records which host it actually bound.
 			stdout: 'pipe'
 		}
-	]
+	])
 });
