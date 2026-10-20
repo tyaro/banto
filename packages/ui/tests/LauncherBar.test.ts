@@ -141,6 +141,36 @@ describe('LauncherBar structure', () => {
 		expect(tooltip.getAttribute('aria-hidden')).toBe('true');
 		expect(tooltip.textContent).toBe('Dashboard');
 	});
+
+	it('marks only the outermost items so their tooltips grow inwards across groups', () => {
+		renderBar();
+		const edges = (name: string) => {
+			const li = itemOf(name);
+			return [
+				li.classList.contains('launcher__item--first'),
+				li.classList.contains('launcher__item--last')
+			];
+		};
+		expect(edges('Dashboard')).toEqual([true, false]);
+		expect(edges('Items 3 updates')).toEqual([false, false]);
+		expect(edges('Users')).toEqual([false, true]);
+	});
+
+	it('treats a single item as first only and skips empty groups', () => {
+		render(LauncherBar, {
+			groups: [
+				{ id: 'empty', ariaLabel: 'Empty', items: [] },
+				{
+					id: 'main',
+					ariaLabel: 'Main navigation',
+					items: [{ id: 'only', href: '/only', label: 'Only', icon: CustomIcon }]
+				}
+			]
+		});
+		const li = itemOf('Only');
+		expect(li.classList.contains('launcher__item--first')).toBe(true);
+		expect(li.classList.contains('launcher__item--last')).toBe(false);
+	});
 });
 
 describe('LauncherBar tooltip Esc', () => {

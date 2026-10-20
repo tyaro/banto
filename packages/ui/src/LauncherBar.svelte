@@ -112,6 +112,13 @@
 	});
 
 	// --- tooltip (§4.4) --------------------------------------------------------
+	// The track scrolls sideways, so it clips anything past its small inline
+	// padding: the outermost items' tooltips align to the item's outer edge
+	// instead of centring on it, so a long label grows inwards (#423 review).
+	const allIds = $derived(groups.flatMap((group) => group.items.map((item) => item.id)));
+	const firstId = $derived(allIds[0]);
+	const lastId = $derived(allIds.at(-1));
+
 	let hoveredId: string | null = $state(null);
 	let focusId: string | null = $state(null);
 	/** Items whose tooltip Esc hid: until the pointer leaves / focus moves. */
@@ -216,6 +223,8 @@
 							<li
 								class="launcher__item"
 								class:launcher__item--quiet={isQuiet(item.id)}
+								class:launcher__item--first={item.id === firstId}
+								class:launcher__item--last={item.id === lastId && item.id !== firstId}
 								data-launcher-item={item.id}
 								style:--_scale={scales[item.id]}
 								onpointerenter={(event) => onItemEnter(event, item.id)}
@@ -453,6 +462,19 @@
 		transition:
 			opacity var(--banto-duration-fast) var(--banto-ease-out),
 			visibility var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* Edge items (see `firstId` / `lastId`): grow the tooltip inwards so the
+	   scrolling track does not clip it. */
+	.launcher__item--first .launcher__tooltip {
+		left: 0;
+		translate: 0 0;
+	}
+
+	.launcher__item--last .launcher__tooltip {
+		left: auto;
+		right: 0;
+		translate: 0 0;
 	}
 
 	.launcher__item::before {
