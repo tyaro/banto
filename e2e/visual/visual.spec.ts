@@ -115,10 +115,13 @@ test.describe('dock layout', () => {
 			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 			await expect(page.locator('svg').first()).toBeVisible();
 			await expect(page.locator('.launcher')).toBeVisible();
+			// Viewport shot scrolled to the end, not fullPage: a full-page capture
+			// draws the fixed bar at the first viewport's bottom - mid-page - so it
+			// would show neither where the dock sits nor that the page's last
+			// content clears it (the shell's bottom reserve, plan §4.1).
+			await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
 			await page.waitForTimeout(SETTLE_MS);
-			await expect(page).toHaveScreenshot(`dashboard-launcher-${comboLabel(combo)}-${size}.png`, {
-				fullPage: true
-			});
+			await expect(page).toHaveScreenshot(`dashboard-launcher-${comboLabel(combo)}-${size}.png`);
 		});
 	}
 });
