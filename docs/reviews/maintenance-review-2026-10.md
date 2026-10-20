@@ -66,6 +66,8 @@
   （external-consumer-fixture）の記載は無い。
 - Db enum ディスパッチの重複を受け入れる判断は、conventions にも ADR にも書かれていない
   （`docs/` を grep して、前回のレビュー本文にしか出てこない）。
+- `scripts/scaffold.mjs` は `apps/admin-template/vite.config.ts` にアンカーを張っている（405 行目・
+  1079 行目）が、`template-acceptance.yml` の `paths` にこのファイルは無い（R-3）。
 - `auth.rs` は `scripts/scaffold.mjs` と `scripts/verify-architecture.mjs` のどちらからも
   パスで参照されていない（分割しても道具は壊れない）。
 
@@ -77,9 +79,9 @@
 | --- | --- | --- | --- |
 | R-1 | 前回の約束の片付け: (a) Db enum ディスパッチの重複（約 50 対の match）を意図的なトレードオフとして conventions（ja/en）に 1 行書く、(b) ADR-0008 の採否台帳に rule 13 を追記する | 前回 §3.3 で「conventions に1行残す」と決めて未実施。ADR-0008 は新しい rule ごとに採否と理由を追記する義務がある | 文書のみ |
 | R-2 | `pnpm lint` に `--max-warnings=0` を付ける | 前回 §3.2 の「eslint warn がノーゲート」。現在 warnings 0 なので、付けても何も落ちず、今後の warn の積み上がりだけを止める | package.json 1 行 |
-| R-3 | scaffold のアンカー対象のファイル一覧と、`template-acceptance.yml` の `paths` が一致することを機械で検査する | 8/13 以降、scaffold のアンカー切れの修正が約 10 件（8eb0e45、3fbd691、3df7e45 など）。`paths` は手書きで、足し忘れると受け入れ CI が走らず静かに壊れる（template-acceptance.yml:26-30 に再発 2 回の記録）。ADR-0008 の3条件を満たすので、採否台帳にも追記する | scripts + ADR |
+| R-3 | scaffold のアンカー対象のファイル一覧と、`template-acceptance.yml` の `paths` が一致することを機械で検査する。あわせて、今ある抜け（`apps/admin-template/vite.config.ts`）を `paths` に足す | 8/13 以降、scaffold のアンカー切れの修正が約 10 件（8eb0e45、3fbd691、3df7e45 など）。`paths` は手書きで、足し忘れると受け入れ CI が走らず静かに壊れる（template-acceptance.yml:26-30 に再発 2 回の記録）。実際に、scaffold.mjs:405 と :1079 が `vite.config.ts` にアンカーを張っているのに、このファイルは `paths` に無い（vite の設定だけを変える PR では受け入れ CI が走らない）。ADR-0008 の3条件を満たすので、採否台帳にも追記する | scripts + template-acceptance.yml + ADR |
 | R-4 | `auth.rs` をモジュールに分ける（移動のみ）: 型（Identity・Session*）／ポリシー（TokenPolicy・RateLimitPolicy・FailureRecord・InFlight）／`AuthState`／axum のハンドラ／テスト | 前回 §3.3 の見直し条件（「これ以上足さない」「次に大きな機能を足すときに併せて」）を越えた。基準の 2.4 倍で、ADR-0014（セッション失効）と ADR-0017（grant 一本化）の2つの大きな機能が入った | Rust。公開 API は `auth::` の re-export で保つ。ロジックは触らない |
-| R-5 | fetch ラッパ名の再統一（`*Admin.ts` の http 側が `httpJson` / `httpRequest` / `httpPostJson` / `httpGet` / `call` の 5 種） | 前回 §3.3 で「fetch ラッパ名の再統一だけは行う」と決めて未実施。名前は 4 種から 5 種に増えた | 機械的な rename。挙動は変わらない |
+| R-5 | fetch ラッパ名の再統一（`*Admin.ts` の http 側が `httpJson` / `httpRequest` / `httpPostJson` / `httpGet` の 4 種） | 前回 §3.3 で「fetch ラッパ名の再統一だけは行う」と決めて未実施。4 種のまま。`authAdmin.ts` の `call` は Tauri のコマンドを呼ぶ補助関数で fetch のラッパではないので、対象に含めない（invoke 側は全ファイルで `invokeCommand` にそろっている） | 機械的な rename。挙動は変わらない |
 
 R-4 の注意: 並行性まわりのコードなので、**移動だけ**にして差分を読みやすく保つ。`Inner` の
 private フィールドを使うテストには `pub(super)` が要る。`cargo test -p banto-server` の
