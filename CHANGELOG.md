@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- CI の E2E のうち visual + axe-core を別ジョブ `E2E (visual + axe-core)` に分け、`BANTO_E2E_SERVERS=visual` で `vite preview` だけを起動できるようにして E2E を速くした。CI のみの変更で、公開 API と手元の `pnpm e2e*` の挙動は変わらない。
 - 監査の保留ファイルのテスト 2 件が、Windows CI で `sync_all` を含む経過時間の上限で不安定に落ちるのを直した（#399）。公開 API の変更は無い。
 
 ## [6.7.1] - 2026-10-15
