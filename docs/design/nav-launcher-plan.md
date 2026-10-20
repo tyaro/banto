@@ -96,6 +96,14 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
   （キーは汎用。Rust の変更が要らないので src-tauri のコンパイル制約も効かない）。
 - 値の検証は `isNavLayout()` / `isLauncherPosition()` の型ガードで行い、知らない値は既定に戻す
   （`isThemeMode` と同じ流儀）。
+- **プロバイダに値が無いときは既定に戻す**（#421 レビュー）: 今の `syncFromProvider()` は `get()` が
+  `null`（未保存）なら localStorage の値を残す。localStorage はユーザーで分かれていないので、同じ
+  ブラウザで A がドックを選んだ後に未保存の B がログインすると、B にも A のドックが出てしまう。
+  そこで `navLayout` / `launcherPosition` は、プロバイダの読み出しが**成功して値が無い**ときに
+  `NAV_LAYOUT_DEFAULT`（と `bottom`）を当て直す（ローカル保存はするがプロバイダには書き戻さない）。
+  読み出しが**失敗**したとき（オフライン・未認証・デモ）は今と同じくローカルの値を残す。
+  テーマ・密度・キオスクも同じ漏れ方をするが、今回は変えない（既存の挙動の変更になるので、
+  直すなら別の issue にする）。
 
 ## 4. ランチャーの見た目と振る舞い
 
@@ -103,7 +111,14 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
 
 - **下**（既定）: 画面下端の中央に浮いた角丸のバー。`position: fixed`、下端から少し離す。
   本文が隠れないよう、ドック表示のときは `main` の下に余白（`--banto-shell-launcher-reserve`）を取り、
-  シェルに `--banto-toast-bottom` を設定してトーストをドックの上に逃がす。
+  トーストはドックの上に逃がす。`ToastHost` はルートの `routes/+layout.svelte` で `(app)` のシェルの
+  **兄弟**として描かれるので、シェルに置いた変数は届かない（#421 レビュー）。そこで
+  `(app)/+layout.svelte` がドック表示のあいだだけ `document.documentElement` に
+  `data-banto-shell-nav="launcher"` を付け（`$effect` の後始末で外す。ログイン画面などドックの無い
+  画面ではトーストは元の位置）、`banto.css` に
+  `:root[data-banto-shell-nav='launcher'] { --banto-toast-bottom: … }` を置く（下のバーの高さ +
+  余白。900px 以下はタブバーの高さ + `env(safe-area-inset-bottom)` の値を別に持つ）。
+  生値はテーマに集まる（§9）。
 - **左 / 右**（D4）: 縦向きのバー、画面の縦中央。本文の左右に余白を取る。
   ヘッダは画面いっぱいの幅になる（サイドバーが無いので）。
 - サイドバーが持っていたブランド（ロゴ + "Banto"）は、ドック表示ではヘッダの左端に小さく出す
@@ -205,7 +220,8 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
   Sidebar と並ぶ「シェルの部品」。
 - `lib/settings.svelte.ts`: `navLayout` / `launcherPosition` と set/apply/sync（§3）。
 - `routes/(app)/+layout.svelte`: `settings.navLayout` で `Sidebar` と `ShellLauncher` を出し分け、
-  シェルにドック用のクラス（余白・トーストの位置）を付ける。
+  シェルにドック用のクラス（本文の余白）を付ける。トーストの位置はルート要素の
+  `data-banto-shell-nav` 属性で動かす（§4.1）。
 - `Header.svelte`: ドック表示ではハンバーガーを出さず、ブランドを出す。
 - `AppearanceSection.svelte`: 「ナビゲーション」カード。
 - `messages/{ja,en}.json`: `settings.navLayout*`（見出し・説明・選択肢・グループの aria）、
@@ -302,14 +318,17 @@ D2 で別案になったときは、その結論を同じ節に書く。
 - `apps/admin-template/src/lib/navigation.test.ts`: `navSections()` の表（通常 viewer / editor / admin /
   publicViewer、`demoOnly` の除外）。
 - 設定ストア: `navLayout` の読み込み（知らない値 → 既定）、set で localStorage とプロバイダに書く、
-  `syncFromProvider()` で上書きされる（既存のストアのテストの形に合わせる。無ければ新規
-  `settings.test.ts`）。
+  `syncFromProvider()` で上書きされる、**プロバイダが `null` を返したら localStorage が `launcher` でも
+  既定に戻る**、プロバイダが失敗したらローカルの値を残す（既存のストアのテストの形に合わせる。
+  無ければ新規 `settings.test.ts`）。
+- トーストの位置: ドック表示の `(app)` レイアウトを出すとルート要素に `data-banto-shell-nav` が付き、
+  外すと消える。
 
 ### 7.2 e2e（`pnpm e2e`、banto-serve）
 
 `e2e/tests/smoke.spec.ts` に 1 本:
 外観でドックを選ぶ → 主要ナビ（同じロケーター）のリンクで遷移でき `aria-current` が移る →
-再読み込みしても保たれる（localStorage）→ 別ユーザーでは既定のまま（UiSettings がユーザーごと）→
+再読み込みしても保たれる（localStorage）→ 同じブラウザで未保存の別ユーザーにログインし直すと既定のサイドバーに戻る（§3）→ トーストがドックに重ならない →
 サイドバーに戻す。狭い画面（`setViewportSize` 768×1024）でタブバーになり、ハンバーガーが無いこと。
 publicViewer のスイート（`e2e/tests-public-viewer`）には、ドック表示でも許可リストの項目だけが
 出ることを 1 本足す（localStorage を事前に入れる）。
