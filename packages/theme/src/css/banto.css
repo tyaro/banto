@@ -78,6 +78,8 @@
 	/* The bar's opacity alone is its own token so an app's setting (a slider,
      nav-launcher-plan.md D7) can change just this one value. */
 	--banto-shell-launcher-opacity: 50%;
+	/* The <=900px tab bar's floor for the opacity above (see the media rule below). */
+	--banto-shell-launcher-tabbar-opacity-min: 85%;
 	--banto-shell-launcher-bg: color-mix(
 		in srgb,
 		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
@@ -257,6 +259,21 @@
 	--banto-control-height-lg: 36px;
 	--banto-grid-row-height: 32px;
 	--banto-grid-header-height: 36px;
+}
+
+/* <=900px the launcher is a full-width tab bar (nav-launcher-plan.md §4.6)
+   whose small captions sit over the page: never fainter than this floor, so
+   they stay legible whatever the opacity setting (owner decision on v6.8.0).
+   Before the fallbacks below, so reduced transparency still turns it opaque. */
+@media (max-width: 900px) {
+	:root {
+		--banto-shell-launcher-bg: color-mix(
+			in srgb,
+			var(--banto-surface-overlay)
+				max(var(--banto-shell-launcher-opacity), var(--banto-shell-launcher-tabbar-opacity-min)),
+			transparent
+		);
+	}
 }
 
 /* Launcher translucency fallbacks (see --banto-shell-launcher-bg above). */
