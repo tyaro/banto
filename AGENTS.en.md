@@ -42,8 +42,10 @@ track your task belongs to.**
     feature reviews, maintainability reviews and feedback-handling records; the
     definitions behind `M-review` / `CR-N` / `AD-N`; files are named
     `<name>-review-YYYY-MM.md` etc.):
+    [docs/reviews/maintenance-review-2026-10.md](docs/reviews/maintenance-review-2026-10.md)
+    (latest refactoring decision: do / defer / don't, with the triggers for revisiting),
     [docs/reviews/maintenance-review-2026-08.md](docs/reviews/maintenance-review-2026-08.md)
-    (latest inventory + consolidation plan),
+    (previous inventory + consolidation plan),
     [docs/reviews/feature-review-2026-08.md](docs/reviews/feature-review-2026-08.md) (a.k.a.
     M-review 2026-08),
     [docs/reviews/maintainability-review-2026-07.md](docs/reviews/maintainability-review-2026-07.md)
