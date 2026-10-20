@@ -135,6 +135,14 @@ Effect: services can be driven directly from a `:memory:` pool in
 `cargo test`. Each service's `#[cfg(test)] mod tests` assumes this shape. New
 services also keep this contract.
 
+Deliberate trade-off: `Db` is an enum of `Db::Sqlite(..)` / `Db::Postgres(..)`, and each service method
+writes both backends' SQL side by side in a `match` (about 50 pairs). We do not fold this into macros or a
+trait: keeping the SQL differences between the backends readable comes first. As of 2026-10, history holds
+no parity regression — a bug where only one arm of a `match` was updated and the two backends drifted apart
+(bugs specific to one backend are a different thing and do not count). Revisit when a third backend is
+added or such a parity regression appears (maintenance-review-2026-10 §5; the earlier commitment is
+maintenance-review-2026-08 §3.3).
+
 ## 3. Do not add dependencies (a culture of hand-implementation)
 
 The workspace (root `Cargo.toml`) curates dependencies carefully and does
