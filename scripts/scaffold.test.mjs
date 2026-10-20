@@ -332,3 +332,16 @@ test('minimal と display は 2 回適用しても成功する（再実行安全
 		}
 	}
 });
+
+test('編集対象の一覧（verify-architecture の入力）に既知のファイルが含まれる', async () => {
+	const { collectScaffoldTouchedFiles, listScaffoldPresets } =
+		await import('./lib/scaffold-touched.mjs');
+	// 一覧は scaffold の PRESETS から得る（手書きの複製は無い）。既知の 4 つは必ず含む。
+	const presets = listScaffoldPresets(repoRoot);
+	for (const known of ['minimal', 'standard', 'full', 'display'])
+		assert.ok(presets.includes(known), `--list-presets に ${known} が無い`);
+	const { edited, removed } = collectScaffoldTouchedFiles(repoRoot);
+	assert.ok(edited.includes('apps/admin-template/vite.config.ts'), 'vite.config.ts が無い');
+	assert.ok(removed.includes('crates/banto-attachments'), '削除対象が REMOVED に出ていない');
+	assert.notEqual(run(['--preset', 'minimal', '--list-touched'], '').status, 0, '--dry-run 専用');
+});

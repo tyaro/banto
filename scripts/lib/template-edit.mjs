@@ -106,6 +106,15 @@ export function swap(s, from, to) {
 export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	/** 実行予定/実行済みの変更ログ（`--dry-run` 共用）。 */
 	const changes = [];
+	/**
+	 * 編集（editFile / jsonField）の対象にしたリポジトリ相対パス（存在しなくても記録する）。
+	 * verify-architecture の scaffold-acceptance-paths が、template-acceptance.yml の
+	 * `paths` との一致を検査するため、scaffold 自身から「触るファイル」を得る記録。
+	 * `addFile`（新規作成）は対象外 — 作るファイルはアンカーではない。
+	 */
+	const touched = new Set();
+	/** 削除（removeFile / removeDir）の対象。消すだけなのでアンカーは無く、一致検査の対象外。 */
+	const removed = new Set();
 	let failures = 0;
 
 	/**
@@ -121,6 +130,7 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	 * template-acceptance は `--strict` で走る）。
 	 */
 	function editFile(relPath, label, edit) {
+		touched.add(relPath);
 		const abs = path.join(repoRoot, relPath);
 		let before;
 		try {
@@ -227,6 +237,7 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	 * 報告）。`--dry-run` では削除しない。
 	 */
 	function removeFile(relPath, label) {
+		removed.add(relPath);
 		const abs = path.join(repoRoot, relPath);
 		if (!fs.existsSync(abs)) {
 			if (strict) {
@@ -246,6 +257,7 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 	 * `--dry-run` では削除しない。
 	 */
 	function removeDir(relPath, label) {
+		removed.add(relPath);
 		const abs = path.join(repoRoot, relPath);
 		if (!fs.existsSync(abs)) {
 			if (strict) {
@@ -308,6 +320,8 @@ export function createEditor({ repoRoot, dryRun = false, strict = false }) {
 
 	return {
 		changes,
+		touched,
+		removed,
 		addFile,
 		beginStep,
 		editFile,
