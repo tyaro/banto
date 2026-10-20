@@ -1060,12 +1060,22 @@ const isAllowedPackageImport = (spec) =>
 {
 	const rule = 'scaffold-acceptance-paths';
 	const WF = '.github/workflows/template-acceptance.yml';
+	// banto 本体だけで走らせる。派生アプリにも scaffold.mjs と受け入れ WF は残るが、
+	// 利用者が scaffold の編集対象（display の monitor 画面など）を書き換えると全プリセットの
+	// dry-run が失敗し、paths と無関係な編集でこの検査が落ちる。本体の目印は2つ:
+	// banto 本体専用の fixture（scaffold の共通 cleanup が消す。rule 13 と同じ目印）と、
+	// ルート package.json の name が `banto` のまま（rename.mjs が書き換える）。
+	const rootName = JSON.parse(read('package.json')).name;
 	if (
 		!fs.existsSync(path.join(repoRoot, 'scripts/scaffold.mjs')) ||
-		!fs.existsSync(path.join(repoRoot, WF))
+		!fs.existsSync(path.join(repoRoot, WF)) ||
+		!fs.existsSync(path.join(repoRoot, 'fixtures/external-consumer')) ||
+		rootName !== 'banto'
 	) {
-		// scaffold 済みの派生アプリでは scaffold.mjs / 受け入れ WF ごと無い。
-		pass(rule, `対象外（scripts/scaffold.mjs か ${WF} が無い — banto 本体専用）`);
+		pass(
+			rule,
+			`対象外（banto 本体専用 — scaffold 済み・rename 済みの派生アプリ、または scaffold.mjs / ${WF} が無い）`
+		);
 	} else {
 		// `on:` 直下の `push:` / `pull_request:` の `paths:` 配下の `- '...'` 行だけを読む。
 		const pathsOf = {};
