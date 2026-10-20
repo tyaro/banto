@@ -6,6 +6,7 @@
  */
 import { isPathActive, type AppPath } from '#lib/appPath.js';
 import { isDemoBuild } from '#lib/banto/environment.js';
+import { isAdmin, type Role } from '#lib/permissions.js';
 import * as m from '#lib/paraglide/messages.js';
 
 /** Icon resolution key (visual-refresh-design.md §5.1). Resolved to an actual
@@ -85,6 +86,35 @@ export const navItems: NavItem[] = allNavItems.filter((item) => !item.demoOnly |
 /** `navItems` entries visible to a LAN "viewer-public" session (see `NavItem.publicViewer`'s doc comment). Order preserved - the first entry is the guard's redirect target. */
 export function publicNavItems(): NavItem[] {
 	return navItems.filter((item) => item.publicViewer);
+}
+
+/**
+ * The sidebar's two sections for a session: `main` (primary nav) and `admin`
+ * (own heading). Pure - the session values come in as arguments so this module
+ * stays UI-agnostic (Sidebar.svelte passes `sessionStore` fields).
+ *
+ * Spec M10 RBAC: admin-only entries (the user-management page) are hidden
+ * rather than shown disabled - navigation-level hiding, same as
+ * routes/(app)/users/+page.ts redirecting a non-admin instead of rendering a
+ * 403 screen.
+ *
+ * viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session sees ONLY
+ * the `publicViewer` allowlist and never the admin section, regardless of role
+ * (a publicViewer grant identity's role is always `viewer`, so `admin` would
+ * already be empty, but the explicit check keeps this correct even if that
+ * ever changed).
+ */
+export function navSections(session: { publicViewer: boolean; role: Role }): {
+	main: NavItem[];
+	admin: NavItem[];
+} {
+	return {
+		main: session.publicViewer ? publicNavItems() : navItems.filter((item) => !item.adminOnly),
+		admin:
+			!session.publicViewer && isAdmin(session.role)
+				? navItems.filter((item) => item.adminOnly)
+				: []
+	};
 }
 
 // "Banto" is the product brand (owner-fixed): kept as a component constant,

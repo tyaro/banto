@@ -12,7 +12,7 @@ vi.mock('$app/paths', () => ({
 	resolve: (path: string) => `${state.base}/${path}`
 }));
 
-import { isPathActive, navItems, pageTitle, type AppPath } from './navigation';
+import { isPathActive, navItems, navSections, pageTitle, type AppPath } from './navigation';
 import { navBadges } from './navBadges.svelte';
 import * as m from '#lib/paraglide/messages.js';
 
@@ -55,5 +55,53 @@ describe.each(['', '/banto'])('base=%j', (base) => {
 		navBadges.clearFor(at('/nbt-items/3'));
 		expect(navBadges.count(key)).toBe(0);
 		off();
+	});
+});
+
+// navSections() (nav-launcher-plan PR-1): expectations derive from `navItems` so the
+// table also holds for scaffold presets that remove entries.
+describe('navSections', () => {
+	const paths = (items: { path: string }[]) => items.map((item) => item.path);
+	const normal = navItems.filter((item) => !item.adminOnly);
+	const adminOnly = navItems.filter((item) => item.adminOnly);
+	const publicOnly = navItems.filter((item) => item.publicViewer);
+
+	it.each([
+		{ name: 'viewer', publicViewer: false, role: 'viewer' as const, main: normal, admin: [] },
+		{ name: 'editor', publicViewer: false, role: 'editor' as const, main: normal, admin: [] },
+		{ name: 'admin', publicViewer: false, role: 'admin' as const, main: normal, admin: adminOnly },
+		{
+			name: 'publicViewer',
+			publicViewer: true,
+			role: 'viewer' as const,
+			main: publicOnly,
+			admin: []
+		},
+		{
+			name: 'publicViewer with role admin',
+			publicViewer: true,
+			role: 'admin' as const,
+			main: publicOnly,
+			admin: []
+		}
+	])('$name: main/admin contents and order', ({ publicViewer, role, main, admin }) => {
+		const sections = navSections({ publicViewer, role });
+		expect(paths(sections.main)).toEqual(paths(main));
+		expect(paths(sections.admin)).toEqual(paths(admin));
+	});
+
+	it('never lists a demoOnly entry in a non-demo build', () => {
+		for (const publicViewer of [false, true]) {
+			const { main, admin } = navSections({ publicViewer, role: 'admin' });
+			expect([...main, ...admin].some((item) => item.demoOnly)).toBe(false);
+		}
+	});
+
+	it('keeps admin-only entries out of main for every session', () => {
+		for (const publicViewer of [false, true]) {
+			expect(navSections({ publicViewer, role: 'admin' }).main.some((i) => i.adminOnly)).toBe(
+				false
+			);
+		}
 	});
 });
