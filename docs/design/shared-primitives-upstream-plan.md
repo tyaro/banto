@@ -1,7 +1,7 @@
 # SCADA Designer の共有部品を banto へ戻す計画書（Issue #432〜#438）
 
 作成日: 2026-10-21
-状態: **計画（オーナー判断待ち）**。§9 の論点 D1〜D10 は未決。実装は始めていない。
+状態: **計画（一部オーナー判断待ち）**。D6・D10 は決定済み（2026-10-21、§9）。D1〜D5・D7〜D9・D11 は未決。実装は始めていない。
 トラック: 保守者向け（トラックA）
 関連: Issue #432〜#438 / [nav-launcher-plan.md](nav-launcher-plan.md)（書式の手本）/
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`。§10 の層の約束）/
@@ -298,9 +298,13 @@ interface DockHostProps {
 	canStartGesture?: (kind: DockGestureKind, panelId: string | null) => boolean;
 	/** gesture の結末の通知（commit / cancel と理由）。 */
 	onGestureEnd?: (kind: DockGestureKind, outcome: 'commit' | 'cancel', reason?: DockCancelReason) => void;
-	/** Esc を dock が受けてよいか。上位の Menu / Modal が出ていれば false を返す（アプリが
-	 *  `@banto/ui` の `hasVisibleLayerAbove` をつなぐ）。省略時は defaultPrevented だけを見る。 */
-	isEscapeBlocked?: () => boolean;
+	/** Esc を dock が受けてはいけないか（true で譲る）。`activeLayer` は gesture 中の浮動 window の
+	 *  root（`role="dialog"` を持つ要素。docked の pane・divider の gesture では null）。
+	 *  `DockWindow` は浮動 window ごとに `role="dialog"` を付けるので、引数なしの
+	 *  `hasVisibleLayerAbove()` は **gesture 中の window 自身**を上位の層に数え、Esc で常に譲ってしまう。
+	 *  アプリは `(el) => hasVisibleLayerAbove({ except: el })` をつなぎ、自分より上の Modal・Menu・
+	 *  別の層だけで譲る。省略時は defaultPrevented だけを見る。 */
+	isEscapeBlocked?: (activeLayer: HTMLElement | null) => boolean;
 }
 ```
 
@@ -567,12 +571,21 @@ export interface CommandSpec {
 	readonly allowInEditable?: boolean;
 	/** 無効なときにブラウザの既定動作を止めるか（例: 無効でも Ctrl+S の「ページを保存」は止める）。 */
 	readonly preventDefaultWhenDisabled?: boolean;
+	/** この command が属する層の root（例: コマンドパレットの `aria-modal="true"` の dialog）。
+	 *  指定すると、層の判定はその層**より上**のモーダル・メニューだけで止める
+	 *  （`hasVisibleLayerAbove({ except: ownerLayer() })` と同じ考え方）。パレットの Ctrl+K のように、
+	 *  自分の層が開いている間も受ける command に使う。未指定ならモーダル・メニューが出ていれば止める。 */
+	readonly ownerLayer?: () => Element | null;
 	run(): void | Promise<void>;
 }
 
 /** 受けてよいキーか: isComposing / keyCode 229 / defaultPrevented / repeat（既定は拒否）/
- *  編集可能な要素（input・textarea・select・contenteditable）/ モーダル・メニューの層。 */
-export function shouldHandleShortcut(event: KeyboardEvent, spec: Pick<CommandSpec, 'allowInEditable'>): boolean;
+ *  編集可能な要素（input・textarea・select・contenteditable）/ モーダル・メニューの層（`ownerLayer`
+ *  があればその層自身と、それより下の層は数えない）。 */
+export function shouldHandleShortcut(
+	event: KeyboardEvent,
+	spec: Pick<CommandSpec, 'allowInEditable' | 'ownerLayer'>
+): boolean;
 
 export interface ShortcutDispatcher {
 	/** scope（ページ・pane）の command を足す。後から足した scope が優先。戻り値で外す。 */
@@ -591,8 +604,10 @@ export function formatShortcut(shortcut: string, platform: 'mac' | 'other'): str
   （アプリでつなぐ。ui は forms を知らない）。
 
 **既存 API との関係**: 追加だけ（minor）。`PaletteCommand` の欄は任意なので既存のコマンド定義はそのまま。
-アプリの Ctrl+K は dispatcher へ移す（挙動は同じ。入力欄の中でも閉じられる今の約束は
-`allowInEditable: true` で保つ）。
+アプリの Ctrl+K は dispatcher へ移す（挙動は同じ）。パレットの `CommandPalettePanel.svelte` 自身が
+`aria-modal="true"` の dialog なので、開いている間の Ctrl+K（閉じる）は層の判定で止まってしまう。
+`ownerLayer` にパレットの dialog を渡してその層自身を数えないようにし、検索欄の中でも閉じられる今の約束は
+`allowInEditable: true` で保つ。e2e で「開く → 検索欄にフォーカスしたまま Ctrl+K で閉じる」を確かめる（PR-11）。
 
 **テスト**: 単体（ui、jsdom）— `shouldHandleShortcut` の表（IME・229・repeat・修飾キー・各編集要素・
 defaultPrevented・モーダル / メニュー / 非モーダルの dialog）、dispatcher の scope の優先と実行前の再検証、
@@ -626,11 +641,22 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 | 3 代替不能性 | △ | decode は標準 API。検査のヘッダの読み取りは小さい。hash は上記の制約あり |
 | 4 無ドメイン性 | ○ | 工場の知識は無い。**banto-industrial（ドメイン特化の資産の置き場、template-scope §3.1）に置く理由は無い** |
 
-**推奨（D6-d）**: **今回は見送り、temp-scada に残す**。#436 の部品（URL・一時資源の解放）が入れば、
-temp-scada 側の `AssetStore` は banto の `createRequestOwner` を使って薄くできる。banto に入れるのは
-2 つ目の consumer（banto 本体の添付の事前検査、または別の派生アプリ）が出たときに再判断する。その時の
-置き場所の候補と必要な作業は D6 に書く（新パッケージなら ADR・template-scope §3 の行・削除手順・
-外部利用 fixture・LAN の secure context の扱い・文言をエラーコードにすること）。
+**決定（D6-a、2026-10-21）**: **新しいオプションのパッケージとして作る**（仮称 `image-assets`（予定のパッケージ名）、
+`packages/image-assets`）。オーナーは汎用 SCADA の次に案件用の特化 SCADA を作る予定で、2 つ目の consumer が
+決まっている。これで 4 条件の 1（横断性）と 3（代替不能性）の △ は「複数の派生アプリが同じ部品を要る」で補える。
+
+- **パッケージの境界**: サーバーの添付（`@banto/attachments`）とは目的が違うので分ける（D6-b を採らない理由）。
+  オプション扱い（template-scope §3 の表に行を足す）で、scaffold の minimal・display では削除する。
+- **#436 の部品は import できない**（§2.1）。image-assets は D1 の forms と同じく、要求の失効の契約を
+  内部に持ち、admin-core の `createRequestOwner` と同じ契約の表のテストを共有する。
+- **上限は consumer が渡す**（bytes・辺長・画素数・総容量・許可形式）。SCADA の 8MiB・8192px などは既定値に
+  しない（既定は「上限なし」ではなく、必須の引数にする）。
+- **例外の文言**: 日本語の直書きをやめ、エラーコード（`'unsupported-format' | 'too-large' | ...`）と
+  詳細の値を返す。表示文言はアプリ側の Paraglide のキー（conventions §13）。
+- **hash**: LAN の平文 HTTP で `crypto.subtle` が無い問題は D11。
+- 必要な作業: ADR-0020（D7）、template-scope §3 の行と削除手順、外部利用 fixture への import の追加
+  （`verify:architecture` の rule `external-consumer-fixture`）、`.svelte.ts` を持つなら
+  `optimizeDeps.exclude`（conventions §14）、scaffold の削除対象。
 
 ## 4. 横断する設計
 
@@ -670,11 +696,12 @@ temp-scada 側の `AssetStore` は banto の `createRequestOwner` を使って�
 | 0 | だれも受けない | IME 変換中（`isComposing` / `keyCode 229`） |
 | 1 | 進行中の dock の gesture（#433） | pointer が押されている間、または keyboard の移動モードの間。gesture 中は Menu が開かない（pointerdown で閉じる）ので衝突は少ないが、`isEscapeBlocked()` が true なら譲る |
 | 2 | 最前の層（Modal / Drawer / Menu / CommandPalette） | 既存の `layering.ts` の約束どおり |
-| 3 | ショートカット dispatcher（#435） | `defaultPrevented` でない・編集可能な要素の中なら `allowInEditable` のものだけ・**モーダルな層とメニュー**が出ていれば止める（非モーダルの浮動 window では止めない。§3.6 の注意） |
+| 3 | ショートカット dispatcher（#435） | `defaultPrevented` でない・編集可能な要素の中なら `allowInEditable` のものだけ・**モーダルな層とメニュー**が出ていれば止める（非モーダルの浮動 window では止めない。`ownerLayer` を持つ command は自分の層より上だけを見る。§3.6 の注意） |
 | 4 | ページの Esc（サイドバーのオーバーレイを閉じる等） | 既存の `+layout.svelte` の `handleKeydown` |
 
 - dock-svelte は `@banto/ui` を import できないので、1 の「譲る」はアプリが `isEscapeBlocked` に
-  `hasVisibleLayerAbove` をつなぐ（§3.3）。既定は `defaultPrevented` だけを見る。
+  `(el) => hasVisibleLayerAbove({ except: el })` をつなぐ（§3.3）。gesture 中の浮動 window 自身も
+  `role="dialog"` なので、`except` を渡さないと Esc の取消が効かなくなる。既定は `defaultPrevented` だけを見る。
 - dock の keyboard 操作（#433）のキーと、#435 の dispatcher に登録するショートカットが衝突しないよう、
   dock は「フォーカスが dock の中の操作要素にあるとき」だけキーを受ける（window の keydown で奪わない）。
 
@@ -703,8 +730,10 @@ temp-scada 側の `AssetStore` は banto の `createRequestOwner` を使って�
 | 9 | 3 | #432-b dock の lifecycle | `beforePanelChange` / `keepMounted` / `isStructureChangeDeferred`、hide と close の分離 | dock-svelte | 5 | minor |
 | 10 | 3 | #432-c アプリの統合 | ダッシュボードのメモ pane を入力欄にして draft と lifecycle をつなぐ（D9）、e2e、visual の作り直し | admin-template、e2e | 8・9 | minor（アプリ） |
 | 11 | 4 | #435-b アプリの配線 | Ctrl+K を dispatcher へ、Ctrl+S を forms の適用へ、メニューと command の id の共有、e2e | admin-template | 7・8 | minor（アプリ） |
-| 12 | 5 | #438 の結論 | D6 の決定に従う。推奨（見送り）なら Issue を閉じる理由と再判断の合図を template-scope §4.3 か本書に記録するだけ | docs | 3 | — |
-| 13 | 随時 | 文書 | upgrading.md（派生アプリの取り込み手順）、recipes、本書の状態行。CHANGELOG は各 PR で 1 行ずつ | docs | 各 PR | — |
+| 12 | 5 | #438-a 新パッケージの骨格 | ADR-0020、`packages/image-assets` の骨格、template-scope §3 の行と削除手順、scaffold の削除対象、外部利用 fixture への import | image-assets、docs、scripts、fixtures | 3 | minor |
+| 13 | 5 | #438-b 取込の検査と hash | decode 前のヘッダ検査（PNG / JPEG の形式・寸法・画素数）と decode 後の確認、エラーコード、hash（D11） | image-assets | 12 | minor |
+| 14 | 5 | #438-c 原本と URL の寿命 | 原本 bytes の保持、hash による重複排除、object URL の共有と解放、pin / release、失効の契約（§2.1。admin-core と同じ契約の表のテスト） | image-assets | 13 | minor |
+| 15 | 随時 | 文書 | upgrading.md（派生アプリの取り込み手順）、recipes、本書の状態行。CHANGELOG は各 PR で 1 行ずつ | docs | 各 PR | — |
 
 - 段階の中は並行できる（1・3 は独立。4〜7 は 4→5 と 3→6 の鎖のほかは独立）。
 - `@banto/*` の版は全パッケージで揃っている（`check:versions`）ので、リリースの版は中身の最大（minor）で決まる。
@@ -717,15 +746,21 @@ temp-scada 側の `AssetStore` は banto の `createRequestOwner` を使って�
 ## 6. リリースとの関係（v6.8.0、draft の #429）
 
 v6.8.0 の中身（ドックのランチャー、#421〜#426・#428・#430・#431）は揃っており、#429 は main の取り込み待ち。
-オーナーは「#219 以外の Issue を片付けてからリリース」の予定。#432〜#438 は本計画で 13 PR 前後になる。
+オーナーは「#219 以外の Issue を片付けてからリリース」の予定。#432〜#438 は本計画で 15 PR 前後（#438 の 3 本を含む）になる。
 
 - **a**: v6.8.0 を今の中身で出す。7 件は v6.9.0 以降。ランチャーを待たせないが、#434 の修正も後になる。
 - **b**: 7 件がすべて済むまで v6.8.0 を止める。ランチャーが数週間止まり、1 つのリリースが大きくなる
   （upgrading.md の手順も 1 回に集まる）。
-- **c（推奨）**: **#434（PR-1・PR-2）だけを v6.8.0 に入れて出す**。残りは v6.9.0（段階 1 の #436 + 段階 2）、
+- **c**: **#434（PR-1・PR-2）だけを v6.8.0 に入れて出す**。残りは v6.9.0（段階 1 の #436 + 段階 2）、
   v6.10.0（段階 3・4）に分ける。
 
-c の理由: #434 は小さく独立した不具合修正で、dock の利用者に効く。一方 #436 は **consumer（#437・#432）より
+**決定: b（2026-10-21）**。7 件をすべて片付けてから 1 回で出す。版は中身の最大（新パッケージと API の追加 =
+minor）なので v6.8.0 のまま。draft の #429 は、全 PR のマージ後に main を取り込み、CHANGELOG の版節に
+各 PR の行と「派生アプリへの影響」（新パッケージ・forms / dock-svelte / ui / admin-core の追加 API・
+テンプレートの配線）をまとめ直してから下書きを解除する。#436 の API も consumer（#437・#432・#438）と
+同じリリースで出るので、c で心配した「consumer より先に公開して後で major」は起きない。
+
+（以下は決定前の推奨の理由。記録として残す）c の理由: #434 は小さく独立した不具合修正で、dock の利用者に効く。一方 #436 は **consumer（#437・#432）より
 先に公開すると、API を直したくなったときに破壊的変更（major）になる**ので、最初の consumer と同じリリースで
 出したい。#433 以降は設計の判断（D3〜D5）が要り、v6.8.0 を待たせる理由にしない。v6.8.0 の
 「Issue を片付ける」は、7 件を本計画に載せて順番と版を決めたことで満たす（#434 は閉じる、他は計画済み）。
@@ -752,15 +787,17 @@ c の理由: #434 は小さく独立した不具合修正で、dock の利用者
 
 ## 8. ADR と文書の更新
 
-- 推奨どおりなら**新しいパッケージは作らない**（admin-core・ui・forms・dock-svelte の中で完結）ので、
-  ADR-0018 のような新パッケージの ADR は要らない（D7）。
+- #436・#435・#437・#432・#433・#434 は既存のパッケージ（admin-core・ui・forms・dock-svelte）の中で完結する。
+  **#438 は D6-a で新パッケージ（`image-assets`（予定のパッケージ名））になるので、ADR-0020 を書く**（D7）。
 - forms に #436 の契約の内部実装を持つ（複製を受け入れる）判断は、conventions §8 の箇条の更新と本書で記録し、
   ADR にはしない（§4 の不変条件を変えないので）。
-- #438 を新パッケージとして入れる決定をした場合だけ、ADR（代替案: attachments への追加・banto-industrial・
-  見送り）と template-scope §3 の行・削除手順・外部利用 fixture・`optimizeDeps.exclude`（`.svelte.ts` を持つなら）が要る。
+- ADR-0020 の中身: 決定（`image-assets`（予定のパッケージ名） をオプションのパッケージとして作る）、代替案（attachments への
+  追加・banto-industrial・見送り）と退けた理由、hash の扱い（D11）、上限を consumer が渡すこと、
+  #436 の契約を内部に持つこと（§2.1）。あわせて template-scope §3 の行・削除手順・外部利用 fixture・
+  `optimizeDeps.exclude`（`.svelte.ts` を持つなら）。
 - 実装 PR ごとに本書の `状態:` 行を更新する（AGENTS.md の寿命のルール）。
 
-## 9. 論点（D1〜D10）
+## 9. 論点（D1〜D11）
 
 | 論点 | 推奨 |
 | --- | --- |
@@ -769,11 +806,12 @@ c の理由: #434 は小さく独立した不具合修正で、dock の利用者
 | D3 #432 の方式 | c: タブ / hide は DOM を保つ、dock / undock / close→open は draft を戻す、IME 変換中は保留 |
 | D4 hide と close の意味 | a: keepMounted の pane の × は hide（中身を保つ）、捨てる close は確認を通す |
 | D5 dock の keyboard のキー割り当て | a: divider は Window Splitter、window は明示の移動 / サイズ変更モード |
-| D6 #438 の扱い | d: 見送り（temp-scada に残し、2 つ目の consumer で再判断） |
-| D7 新パッケージと ADR | a: 新パッケージは作らない。ADR は不要（#438 を入れる場合だけ書く） |
+| D6 #438 の扱い | **決定: a**（新しいオプションのパッケージとして作る。汎用 SCADA の次に案件用の特化 SCADA を作る予定で、2 つ目の consumer がある） |
+| D7 新パッケージと ADR | D6-a の帰結: #438 の新パッケージだけ ADR（ADR-0020）を書く。#436・#435 は既存パッケージの中で完結（新パッケージは作らない） |
 | D8 ダッシュボードの dock layout を #437 に載せ替えるか | b: 載せ替えない（別 Issue。見本として後で） |
 | D9 #432 の統合をどこで見るか | a: ダッシュボードのメモ pane を入力欄にして e2e |
-| D10 v6.8.0 との関係 | c: #434 だけ入れて出す。残りは v6.9.0 / v6.10.0 |
+| D10 v6.8.0 との関係 | **決定: b**（7 件をすべて片付けてから 1 回で出す） |
+| D11 #438 の hash（平文 HTTP の LAN で `crypto.subtle` が無い） | a: `crypto.subtle` があれば使い、無ければ自前の SHA-256（同じ値）に落とす |
 
 ### D1. #436 の primitive の置き場所
 
@@ -818,11 +856,16 @@ c の理由: #434 は小さく独立した不具合修正で、dock の利用者
 - b: `@banto/attachments` に足す。サーバーの添付とブラウザの原本の管理は目的が違い、attachments を外すと
   一緒に消える。
 - c: banto-industrial。工場の知識は無いので、ドメイン特化の置き場に入れる理由が無い。
-- **d（推奨）**: 見送り。temp-scada に残し、#436 の部品で薄くしてもらう。2 つ目の consumer が出たら a で再判断。
+- d: 見送り。temp-scada に残し、#436 の部品で薄くしてもらう。2 つ目の consumer が出たら a で再判断。
+
+**決定: a（2026-10-21、オーナー）**。汎用 SCADA の次に案件用の特化 SCADA を作るので、2 つ目の consumer がある。
+詳細は §3.7。
 
 ### D7. 新パッケージと ADR
 
-- **a（推奨）**: 新パッケージは作らない（D1-a・D2-a・D6-d の帰結）。ADR は不要。複製の判断は conventions §8 と本書に書く。
+- a: 新パッケージは作らない（D1-a・D2-a・D6-d の帰結）。ADR は不要。複製の判断は conventions §8 と本書に書く。
+- **D6-a の決定後の推奨**: #438 の `image-assets`（予定のパッケージ名） だけ新パッケージにし、**ADR-0020** を書く（§8）。
+  #436・#435 は a のとおり既存パッケージの中で完結させる。
 - b: #436・#435 をまとめて新パッケージにし、ADR を書く。D1-b と同じ理由で得が少ない。
 
 ### D8. ダッシュボードの dock layout を #437 に載せ替えるか
@@ -841,7 +884,21 @@ c の理由: #434 は小さく独立した不具合修正で、dock の利用者
 
 ### D10. v6.8.0 との関係
 
-§6 のとおり。**c（推奨）**: #434 だけを入れて出す。a は #434 も後回しになる。b はランチャーを長く止める。
+§6 のとおり。決定前の推奨は c（#434 だけを入れて出す）だった。
+
+**決定: b（2026-10-21、オーナー）**。7 件をすべて片付けてから v6.8.0 を 1 回で出す。
+
+### D11. #438 の hash（平文 HTTP の LAN で `crypto.subtle` が無い）
+
+banto の LAN 配信は平文 HTTP（ADR-0003）で、`crypto.subtle` は secure context でしか使えない（§3.7）。
+
+- **a（推奨）**: `crypto.subtle` があれば使い、無ければ自前の SHA-256（純粋な TS、数十行）に落とす。どちらも
+  同じ 16 進の値になるので、重複排除の結果が配信の形で変わらない。自前実装は conventions §3（依存を足さない・
+  自前実装の文化）に沿い、既知のテストベクタ（NIST の例）で単体テストする。8MiB の画像でも数十〜百ミリ秒程度の
+  見込み（未計測。PR で測る）。
+- b: secure context に限る機能として文書化し、平文 HTTP では hash を使わない（重複排除をしない、またはバイト列の
+  比較だけ）。実装は小さいが、LAN の派生アプリで挙動が変わる。
+- c: hash 関数を consumer が注入する。柔軟だが、各アプリが同じ問題を解くことになる。
 
 ## 10. 未確認の点
 
