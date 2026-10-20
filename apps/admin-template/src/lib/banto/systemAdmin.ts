@@ -122,7 +122,7 @@ function currentToken(): string | null {
 	return auth.getToken ? auth.getToken() : null;
 }
 
-async function httpGet<T>(path: string): Promise<T> {
+async function httpRequest<T>(path: string): Promise<T> {
 	const headers: Record<string, string> = { ...CSRF_HEADER };
 	const token = currentToken();
 	if (token) headers.Authorization = `Bearer ${token}`;
@@ -158,5 +158,5 @@ async function httpGet<T>(path: string): Promise<T> {
 export async function getSystemInfo(): Promise<SystemInfo> {
 	if (!isSystemInfoAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') return invokeCommand<SystemInfo>('system_info');
-	return httpGet<SystemInfo>('/api/system/info');
+	return httpRequest<SystemInfo>('/api/system/info');
 }

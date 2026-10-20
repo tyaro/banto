@@ -109,7 +109,7 @@ function currentToken(): string | null {
 	return auth.getToken ? auth.getToken() : null;
 }
 
-async function httpPostJson<T>(path: string, body: unknown): Promise<T> {
+async function httpRequest<T>(path: string, body: unknown): Promise<T> {
 	const headers: Record<string, string> = { ...CSRF_HEADER, 'Content-Type': 'application/json' };
 	const token = currentToken();
 	if (token) headers.Authorization = `Bearer ${token}`;
@@ -151,7 +151,7 @@ async function httpPostJson<T>(path: string, body: unknown): Promise<T> {
 export async function importItems(rows: ItemImportRow[]): Promise<ImportResult> {
 	if (!isItemsImportAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') return invokeCommand<ImportResult>('items_import', { rows });
-	return httpPostJson<ImportResult>('/api/items/import', rows);
+	return httpRequest<ImportResult>('/api/items/import', rows);
 }
 
 /**
