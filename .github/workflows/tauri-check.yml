@@ -52,6 +52,15 @@ concurrency:
   group: tauri-check-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Debug info = line tables only (CI only; the root Cargo.toml is untouched, so
+# local debugging is unaffected). dev/test profiles emit full debug info by
+# default (a PDB on Windows), which makes linking and the rust-cache save/restore
+# slow (measured on Windows: Cargo test 121s, cache save 36s). Panic backtrace
+# line numbers are kept. test inherits dev. Note: Swatinem/rust-cache keys on
+# env vars starting with `CARGO_`, so the cache misses once after this change.
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
   check:
     name: cargo check + test -p admin-template
