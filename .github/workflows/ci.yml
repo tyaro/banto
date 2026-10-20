@@ -16,6 +16,16 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Rust のデバッグ情報は行番号だけにする（CI 限定。ルートの Cargo.toml は
+# 変えないので手元のデバッグには影響しない）。dev/test プロファイルは既定で
+# 完全なデバッグ情報（Windows では PDB）を出し、そのリンクと rust-cache の
+# 保存・復元が重い（計測: Windows の rust ジョブ約 7 分のうち Cargo test
+# 202s・Post Setup Rust cache 40s）。panic のバックトレースの行番号は残る。
+# test は dev を継承する。注意: Swatinem/rust-cache は `CARGO_` で始まる環境
+# 変数をキャッシュのキーに含めるため、この追加のあと一度だけキャッシュが外れる。
+env:
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
   frontend:
     name: Frontend (check / test / build)

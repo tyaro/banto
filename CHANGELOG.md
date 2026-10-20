@@ -23,6 +23,7 @@
 ## [Unreleased]
 
 - 監査の保留ファイルのテスト 2 件が、Windows CI で `sync_all` を含む経過時間の上限で不安定に落ちるのを直した（#399）。公開 API の変更は無い。
+- CI の Rust のビルドを速くするため、ワークフロー（`ci.yml`・`tauri-check.yml`）でデバッグ情報を行番号だけにした（`CARGO_PROFILE_DEV_DEBUG=line-tables-only`）。CI のみの変更で、公開 API の変更は無い。
 
 ## [6.7.1] - 2026-10-15
 
