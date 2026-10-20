@@ -107,3 +107,30 @@ export async function primeKiosk(page: Page): Promise<void> {
 		{ kioskKey: KIOSK_KEY }
 	);
 }
+
+/** settings.svelte.ts's navigation-layout key (nav-launcher-plan.md §3). */
+const NAV_LAYOUT_KEY = 'banto.navLayout';
+/**
+ * The same setting in demo mode's `UiSettingsProvider` (`createLocalUiSettings`,
+ * prefix `banto.ui.`). Its reads succeed, and `syncFromProvider()` resets the
+ * layout to the default when the provider holds nothing (§3: localStorage is
+ * not per user), so priming only the cache key would be undone right after
+ * the first load.
+ */
+const NAV_LAYOUT_PROVIDER_KEY = 'banto.ui.shell.navLayout';
+
+/**
+ * Forces the dock layout (nav-launcher-plan.md §3) before first paint, like
+ * `primeKiosk`. Runs on every navigation of the page (an init script), so a
+ * test that switches the layout in the UI must not use it. Call alongside
+ * `primeThemeAndAuth`, before the test's first `page.goto()`.
+ */
+export async function primeLauncher(page: Page): Promise<void> {
+	await page.addInitScript(
+		({ cacheKey, providerKey }) => {
+			window.localStorage.setItem(cacheKey, 'launcher');
+			window.localStorage.setItem(providerKey, 'launcher');
+		},
+		{ cacheKey: NAV_LAYOUT_KEY, providerKey: NAV_LAYOUT_PROVIDER_KEY }
+	);
+}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	/**
 	 * 外観・言語カテゴリ（choiapp-feedback-2026-09 §3）: テーマ / 言語 /
+	 * ナビゲーション（サイドバー / ドック、nav-launcher-plan.md §3）/
 	 * キオスク / ウィンドウ効果(vibrancy)。`+page.svelte` の
 	 * `<section id="appearance">` ラッパーから描画される（settings-split
 	 * refactor: markup/state/CSS の移動のみ、挙動は変えない）。
@@ -14,6 +15,9 @@
 		MonitorPlay,
 		Moon,
 		Palette,
+		PanelBottom,
+		PanelLeft,
+		PanelsTopLeft,
 		Rows3,
 		Rows4,
 		Sparkles,
@@ -22,7 +26,13 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
 	import { SurfaceCard } from '@banto/ui';
-	import { settings } from '#lib/settings.svelte.js';
+	import {
+		LAUNCHER_OPACITY_MAX,
+		LAUNCHER_OPACITY_MIN,
+		LAUNCHER_OPACITY_STEP,
+		settings,
+		type NavLayout
+	} from '#lib/settings.svelte.js';
 	import { applyVibrancy, getVibrancyStatus, type VibrancyStatus } from '#lib/banto/vibrancy.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
@@ -47,6 +57,13 @@
 	const densities: { value: ThemeDensity; label: string }[] = [
 		{ value: 'standard', label: m['settings.densityStandard']() },
 		{ value: 'compact', label: m['settings.densityCompact']() }
+	];
+
+	// Navigation layout (nav-launcher-plan.md §3, D1: shown as "Dock", the
+	// value is 'launcher'). The opacity slider only matters for the dock.
+	const navLayouts: { value: NavLayout; label: string; icon: Component }[] = [
+		{ value: 'sidebar', label: m['settings.navLayoutSidebar'](), icon: PanelLeft },
+		{ value: 'launcher', label: m['settings.navLayoutLauncher'](), icon: PanelBottom }
 	];
 
 	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
@@ -192,6 +209,81 @@
 		<p class="note">
 			{m['settings.themeNote']()}
 		</p>
+	</SurfaceCard>
+
+	<SurfaceCard>
+		<div class="card-head">
+			<PanelsTopLeft size={20} aria-hidden="true" />
+			<div>
+				<h3>{m['settings.navLayoutHeading']()}</h3>
+				<p>{m['settings.navLayoutDesc']()}</p>
+			</div>
+		</div>
+
+		<div
+			class="options nav-layout-options"
+			role="radiogroup"
+			aria-label={m['settings.navLayoutGroupAria']()}
+		>
+			{#each navLayouts as layout (layout.value)}
+				{@const LayoutIcon = layout.icon}
+				<label class="theme-option" class:selected={settings.navLayout === layout.value}>
+					<input
+						type="radio"
+						name="nav-layout"
+						value={layout.value}
+						checked={settings.navLayout === layout.value}
+						onchange={() => settings.setNavLayout(layout.value)}
+					/>
+					<span class="nav-layout-preview" data-nav-layout={layout.value} aria-hidden="true">
+						<span class="preview-nav"></span>
+					</span>
+					<LayoutIcon size={14} aria-hidden="true" />{layout.label}
+					{#if settings.navLayout === layout.value}
+						<Check size={14} aria-hidden="true" />
+					{/if}
+				</label>
+			{/each}
+		</div>
+
+		{#if settings.navLayout === 'launcher'}
+			<div class="launcher-opacity">
+				<label class="field">
+					<span class="launcher-opacity-label">
+						{m['settings.launcherOpacityLabel']()}
+						<span class="launcher-opacity-value"
+							>{m['settings.launcherOpacityValue']({ value: settings.launcherOpacity })}</span
+						>
+					</span>
+					<input
+						type="range"
+						min={LAUNCHER_OPACITY_MIN}
+						max={LAUNCHER_OPACITY_MAX}
+						step={LAUNCHER_OPACITY_STEP}
+						value={settings.launcherOpacity}
+						oninput={(event) => settings.previewLauncherOpacity(event.currentTarget.valueAsNumber)}
+						onchange={(event) => settings.setLauncherOpacity(event.currentTarget.valueAsNumber)}
+					/>
+				</label>
+				<!-- D7 preview: the dock sits at the bottom edge of this page where its
+				     see-through is hard to judge, so a sample bar over striped
+				     "content" follows the slider. The token is overridden on the
+				     preview itself (the root's --banto-shell-launcher-bg is computed
+				     at :root and cannot be re-resolved here). -->
+				<span
+					class="launcher-preview"
+					style:--banto-shell-launcher-opacity="{settings.launcherOpacity}%"
+					aria-hidden="true"
+				>
+					<span class="launcher-preview-bar">
+						<span></span>
+						<span></span>
+						<span></span>
+					</span>
+				</span>
+			</div>
+			<p class="note launcher-opaque-note">{m['settings.launcherOpaqueNote']()}</p>
+		{/if}
 	</SurfaceCard>
 
 	<SurfaceCard>

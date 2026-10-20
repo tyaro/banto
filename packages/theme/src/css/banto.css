@@ -65,6 +65,12 @@
 		var(--banto-shell-launcher-item-size) + var(--banto-shell-launcher-padding) * 2 +
 			var(--banto-shell-launcher-offset)
 	);
+	/* <=900px the bar is a full-width tab bar (§4.6): a 44px item, its
+     caption and padding (0.5rem covers the caption overhang) plus the home
+     indicator inset. */
+	--banto-shell-launcher-tabbar-reserve: calc(
+		var(--banto-shell-launcher-item-size) + 0.5rem + env(safe-area-inset-bottom, 0px)
+	);
 	/* Translucent bar and tooltip with a blur behind them (owner request and
      owner-tuned values on #423, nav-launcher-plan.md D7).
      Opaque again under prefers-reduced-transparency / no backdrop-filter
@@ -265,6 +271,20 @@
 		--banto-shell-launcher-tooltip-bg: var(--banto-surface-raised);
 		--banto-shell-launcher-backdrop: none;
 		--banto-shell-launcher-tooltip-backdrop: none;
+	}
+}
+
+/* Toasts above the launcher (nav-launcher-plan.md §4.1). ToastHost is a
+   sibling of the app shell, so the shell marks the root while the dock is
+   shown (routes/(app)/+layout.svelte) instead of setting a variable on
+   itself. 1rem is ToastHost's own default gap. */
+:root[data-banto-shell-nav='launcher'] {
+	--banto-toast-bottom: calc(var(--banto-shell-launcher-reserve) + 1rem);
+}
+
+@media (max-width: 900px) {
+	:root[data-banto-shell-nav='launcher'] {
+		--banto-toast-bottom: calc(var(--banto-shell-launcher-tabbar-reserve) + 1rem);
 	}
 }
 

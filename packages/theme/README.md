@@ -72,6 +72,7 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 | `--banto-shell-launcher-padding`          | `6px`                     | バーの内側の余白                                                              |
 | `--banto-shell-launcher-offset`           | `10px`                    | 画面端からの距離                                                              |
 | `--banto-shell-launcher-reserve`          | `calc(...)`               | 本文の下に取る余白（item-size + padding × 2 + offset）                        |
+| `--banto-shell-launcher-tabbar-reserve`   | `calc(...)`               | 900px 以下のタブバーで本文の下に取る余白（item-size + 0.5rem + safe-area）    |
 | `--banto-z-launcher`                      | `200`                     | ランチャーのバー（ヘッダより上、狭幅サイドバーの覆い・Modal・トーストより下） |
 | `--banto-shell-launcher-opacity`          | `50%`                     | バーの不透明度（アプリの設定で変えるのはこの値だけ）                          |
 | `--banto-shell-launcher-bg`               | `surface-overlay` の 50%  | バーの半透明の地                                                              |
@@ -80,6 +81,7 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 | `--banto-shell-launcher-tooltip-backdrop` | `blur(5px)`               | ツールチップの後ろのぼかし                                                    |
 
 半透明の 4 つは、`prefers-reduced-transparency: reduce` のときと `backdrop-filter` が使えないブラウザでは不透明（ぼかし無し）に戻る。
+ルート要素に `data-banto-shell-nav="launcher"` が付いているあいだは、`--banto-toast-bottom` をバー（900px 以下はタブバー）の上に上げる（アプリのシェルがドック表示のときに付ける）。
 
 ## 依存
 

@@ -3,7 +3,9 @@
 作成日: 2026-10-20
 状態: **実装中**。§9 の論点 D1〜D6 は 2026-10-20 にオーナー決定済み（すべて推奨案 a）。
 PR-2（トークン + `LauncherBar`、`@banto/ui` と `banto.css`）を実装（ui-demo のカードは見送り、§8）。
-PR-1（ナビの絞り込みの切り出し、#422）はマージ済み。次は PR-3（シェルへの配線と設定）。
+PR-1（ナビの絞り込みの切り出し、#422）と PR-2（#423）はマージ済み。PR-3（シェルへの配線と設定、
+ストア・`ShellLauncher`・レイアウトとヘッダの分岐・外観カード・e2e / a11y / visual のテスト）を実装
+（visual のベースラインは visual-baselines.yml の dispatch で作る）。PR-3 で計画から変えた点は §8 の表の注記。
 トラック: 保守者向け（トラックA）
 関連: [visual-refresh-design.md](visual-refresh-design.md)（§5 ナビのアイコン、§8 シェル）、
 [display-preset-plan.md](display-preset-plan.md)（D1-b キオスクシェル）、
@@ -408,7 +410,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | 0 | 計画（本書） | 本書の追加。オーナー決定を §9 に書き込む | なし |
 | 1 | ナビの絞り込みの切り出し | `navSections()` を navigation.ts に足し、Sidebar をそれで書き直す。テスト。挙動は同じ | なし（visual が変わらないことを確かめる） |
 | 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、ADR-0018 §11。**計画からの変更**: `ui-demo` のカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo-*` の作り直しが要るため。実ブラウザの見た目は 3 の visual で見る） | なし |
-| 3 | シェルへの配線と設定 | 設定ストア、ShellLauncher、レイアウト・ヘッダの分岐、外観カード、辞書、e2e、a11y、visual 追加 | `settings-*` 作り直し + `dashboard-launcher-*` 追加 |
+| 3 | シェルへの配線と設定 | 設定ストア、ShellLauncher、レイアウト・ヘッダの分岐、外観カード、辞書、e2e、a11y、visual 追加。**計画からの変更**: (1) デモモードの `UiSettingsProvider` は localStorage（`banto.ui.` 接頭辞）で読み出しが**成功**するので、§3 の「失敗したらローカルを残す」はデモには当たらない（デモでは `banto.ui.shell.navLayout` が真実源。テストは両方のキーを事前に入れる）。(2) スライダーは `input` でその場に反映し（ローカル保存だけ）、プロバイダへの書き込みは `change` の 1 回にした（ドラッグ中の書き込みが前後して届くのを避ける）。(3) 900px 以下のタブバーの高さはトークン `--banto-shell-launcher-tabbar-reserve` を `@banto/theme` に足して表した（本文の余白とトーストの位置で共有）。(4) ShellLauncher の単体テストは、アプリの vitest が node 環境で部品を描けないので足さず、`navSections()` の表（PR-1）と e2e（閲覧公開の許可リスト）で見る。トーストの位置の単体テスト（§7.1 の最後）も同じ理由で e2e（バーとトーストの位置の比較）にした | `settings-*` 作り直し + `dashboard-launcher-*` 追加 |
 | 4 | 左 / 右（D4-b のとき） | 部品の `position`、設定の副ラジオ、visual 2 枚追加 | `settings-*` 作り直し + 追加 |
 | 5 | 文書 | README / recipes（不要なら外す 3 行）、template-scope §2.2、CHANGELOG の未リリース節、upgrading.md（派生アプリが取り込む手順）、本書の状態行 | なし |
 

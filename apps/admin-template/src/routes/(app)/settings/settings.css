@@ -209,6 +209,124 @@
 	-webkit-backdrop-filter: blur(3px);
 }
 
+/* Navigation layout previews (nav-launcher-plan.md §3): live tokens only,
+   like the preset previews - a sidebar column or a small bar at the bottom
+   over the current theme's surface. Sizes match the theme previews. */
+.settings-page .nav-layout-preview {
+	flex-basis: 100%;
+	position: relative;
+	display: flex;
+	width: 80px;
+	height: 48px;
+	overflow: hidden;
+	border: 1px solid var(--banto-border);
+	border-radius: var(--banto-radius-sm);
+	background: var(--banto-surface-subtle);
+}
+
+.settings-page .nav-layout-preview .preview-nav {
+	background: var(--banto-surface);
+	border: 0 solid var(--banto-border);
+}
+
+.settings-page .nav-layout-preview[data-nav-layout='sidebar'] .preview-nav {
+	width: 30%;
+	border-right-width: 1px;
+}
+
+.settings-page .nav-layout-preview[data-nav-layout='launcher'] .preview-nav {
+	position: absolute;
+	border-color: var(--banto-border-strong);
+	left: 25%;
+	right: 25%;
+	bottom: 4px;
+	height: 8px;
+	border-width: 1px;
+	border-radius: var(--banto-radius-sm);
+}
+
+/* Dock opacity slider + its D7 preview: striped "content" under a sample
+   bar whose background is the theme's own formula with the token
+   overridden on .launcher-preview (inline style from the slider). Token
+   colours only. */
+.settings-page .launcher-opacity {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 1rem;
+	margin-top: 0.75rem;
+}
+
+.settings-page .launcher-opacity .field {
+	flex: 1 1 200px;
+	max-width: 320px;
+}
+
+.settings-page .launcher-opacity-label {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.settings-page .launcher-opacity-value {
+	color: var(--banto-text);
+	font-variant-numeric: tabular-nums;
+}
+
+.settings-page .launcher-preview {
+	position: relative;
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	width: 120px;
+	height: 64px;
+	padding-bottom: 6px;
+	overflow: hidden;
+	border: 1px solid var(--banto-border);
+	border-radius: var(--banto-radius-sm);
+	background: repeating-linear-gradient(
+		135deg,
+		var(--banto-surface) 0 6px,
+		color-mix(in srgb, var(--banto-primary) 45%, var(--banto-surface)) 6px 12px
+	);
+}
+
+.settings-page .launcher-preview-bar {
+	display: flex;
+	gap: 4px;
+	padding: 4px;
+	border: 1px solid var(--banto-border);
+	border-radius: var(--banto-radius-md);
+	background: color-mix(
+		in srgb,
+		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
+		transparent
+	);
+	box-shadow: var(--banto-shadow-md);
+}
+
+.settings-page .launcher-preview-bar span {
+	width: 14px;
+	height: 14px;
+	border-radius: var(--banto-radius-sm);
+	background: var(--banto-text-muted);
+}
+
+.settings-page .launcher-opaque-note {
+	display: none;
+}
+
+/* Same fallback as the real bar (banto.css): opaque, and say why. */
+@media (prefers-reduced-transparency: reduce) {
+	.settings-page .launcher-preview-bar {
+		background: var(--banto-surface-overlay);
+	}
+
+	.settings-page .launcher-opaque-note {
+		display: block;
+	}
+}
+
 .settings-page .switch-row {
 	display: flex;
 	align-items: center;

@@ -111,6 +111,39 @@ test.describe.serial('Banto viewer-public mode', () => {
 		}
 	});
 
+	// nav-launcher-plan.md §4.9/§7.2: the dock shows the same allowlist as the
+	// sidebar. Own page with the dock chosen: the local cache is primed and the
+	// stored setting is answered as 'launcher' (a read with nothing stored
+	// resets the layout to the sidebar, §3).
+	test('2b. with the dock layout, only the allowlisted entries appear in the dock', async ({
+		browser
+	}) => {
+		const monitor = await browser.newPage({ reducedMotion: 'reduce' });
+		try {
+			await monitor.addInitScript(() => {
+				window.localStorage.setItem('banto.navLayout', 'launcher');
+			});
+			await monitor.route('**/api/ui-settings/shell.navLayout', (route) =>
+				route.request().method() === 'GET'
+					? route.fulfill({ json: { value: 'launcher' } })
+					: route.continue()
+			);
+			await monitor.goto('/dashboard');
+			await expect(monitor.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(monitor.locator('.launcher')).toBeVisible();
+			await expect(monitor.locator('aside')).toHaveCount(0);
+
+			const nav = monitor.getByRole('navigation', { name: '主要ナビゲーション' });
+			await expect(nav.getByRole('link')).toHaveCount(2);
+			await expect(nav.getByRole('link', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(nav.getByRole('link', { name: '商品' })).toBeVisible();
+			await expect(monitor.getByRole('navigation', { name: '管理ナビゲーション' })).toHaveCount(0);
+			await expect(monitor.getByRole('link', { name: '設定' })).toHaveCount(0);
+		} finally {
+			await monitor.close();
+		}
+	});
+
 	test('3. a non-public screen bounces back to the first public one', async () => {
 		await page.goto('/users');
 		await expect(page).toHaveURL(/\/dashboard$/);

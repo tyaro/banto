@@ -13,7 +13,7 @@
  */
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { DIAGONAL_MATRIX, comboLabel, primeTheme, primeThemeAndAuth } from './theme';
+import { DIAGONAL_MATRIX, comboLabel, primeLauncher, primeTheme, primeThemeAndAuth } from './theme';
 
 interface ScannedPage {
 	name: string;
@@ -72,5 +72,21 @@ for (const combo of DIAGONAL_MATRIX) {
 				expect(results.violations, formatViolations(results.violations)).toEqual([]);
 			});
 		}
+	});
+}
+
+// Dock layout (nav-launcher-plan.md §4.8/§7.3): the shell's other navigation.
+for (const combo of DIAGONAL_MATRIX) {
+	test(`a11y ${comboLabel(combo)} dashboard with the dock has no wcag2a/wcag2aa violations`, async ({
+		page
+	}) => {
+		await primeThemeAndAuth(page, combo);
+		await primeLauncher(page);
+		await gotoScanned(page, PAGES[0]);
+		await expect(page.locator('.launcher')).toBeVisible();
+
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+
+		expect(results.violations, formatViolations(results.violations)).toEqual([]);
 	});
 }

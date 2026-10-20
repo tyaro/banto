@@ -22,6 +22,7 @@ import {
 	VIEWPORTS,
 	comboLabel,
 	primeKiosk,
+	primeLauncher,
 	primeTheme,
 	primeThemeAndAuth
 } from './theme';
@@ -92,6 +93,34 @@ test.describe('kiosk shell', () => {
 			fullPage: true
 		});
 	});
+});
+
+// Dock layout (nav-launcher-plan.md §7.3): the diagonal at the baseline
+// viewport plus the <=900px tab bar. Primed like the kiosk shell, so every
+// other test here keeps the default sidebar.
+const LAUNCHER_SHOTS = [
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1440, height: 900 } },
+	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 } },
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 768, height: 1024 } }
+];
+
+test.describe('dock layout', () => {
+	for (const { combo, viewport } of LAUNCHER_SHOTS) {
+		const size = `${viewport.width}x${viewport.height}`;
+		test(`dashboard launcher ${comboLabel(combo)} ${size}`, async ({ page }) => {
+			await page.setViewportSize(viewport);
+			await primeThemeAndAuth(page, combo);
+			await primeLauncher(page);
+			await page.goto('/dashboard');
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(page.locator('svg').first()).toBeVisible();
+			await expect(page.locator('.launcher')).toBeVisible();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(`dashboard-launcher-${comboLabel(combo)}-${size}.png`, {
+				fullPage: true
+			});
+		});
+	}
 });
 
 interface DiagonalPage {
