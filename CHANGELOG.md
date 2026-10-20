@@ -30,6 +30,7 @@
 
 ### Changed
 
+- サイドバーの折りたたみボタンを、サイドバー下端からヘッダーの左端へ移した。900px 以下のハンバーガーと 1 つのボタンに統合し（900px 超は折りたたみ、以下はドロワーの開閉）、`aria-expanded` / `aria-controls` を付けた。`IconButton` に `expanded` / `controls` を追加。
 - サイドバーの表示項目の絞り込み（RBAC・閲覧公開の許可リスト）を `navSections()` に切り出し（挙動の変更なし、nav-launcher-plan PR-1）
 
 ### Fixed

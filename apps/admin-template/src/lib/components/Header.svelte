@@ -1,8 +1,8 @@
 <script lang="ts">
 	/**
-	 * App shell header (visual-refresh-design.md §8.2). DOM order: hamburger
-	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
-	 * In the dock layout (nav-launcher-plan.md §4.1/§4.6) the hamburger is
+	 * App shell header (visual-refresh-design.md §8.2). DOM order: sidebar toggle
+	 * (one button: folds the sidebar >900px, opens the drawer <=900px) -> page heading -> spacer -> search pill -> user menu.
+	 * In the dock layout (nav-launcher-plan.md §4.1/§4.6) the toggle is
 	 * never shown (there is no drawer) and the brand the sidebar carried
 	 * takes its place at the left.
 	 */
@@ -20,6 +20,8 @@
 	import { IconButton, Menu, MenuGroup, MenuItem, MenuSeparator, StatusBadge } from '@banto/ui';
 	import {
 		Menu as MenuIcon,
+		PanelLeftClose,
+		PanelLeftOpen,
 		Search,
 		Settings,
 		LogOut,
@@ -35,6 +37,38 @@
 	}
 
 	let { overlayOpen = false, onToggleOverlay }: Props = $props();
+
+	// One toggle button (a11y: a single control, not two shown by CSS): at
+	// <=900px it drives the overlay drawer, above that the persisted fold.
+	// Same breakpoint as Sidebar.svelte's media query; a matchMedia listener
+	// (not a layout read) keeps the two in step.
+	let narrow = $state(false);
+
+	$effect(() => {
+		const query = window.matchMedia('(max-width: 900px)');
+		narrow = query.matches;
+		const onChange = (event: MediaQueryListEvent): void => {
+			narrow = event.matches;
+		};
+		query.addEventListener('change', onChange);
+		return () => query.removeEventListener('change', onChange);
+	});
+
+	const sidebarExpanded = $derived(narrow ? overlayOpen : !settings.sidebarCollapsed);
+	const toggleLabel = $derived(
+		narrow
+			? overlayOpen
+				? m['shell.closeSidebar']()
+				: m['shell.expandSidebar']()
+			: settings.sidebarCollapsed
+				? m['shell.expandSidebar']()
+				: m['shell.collapseSidebar']()
+	);
+
+	function toggleSidebar(): void {
+		if (narrow) onToggleOverlay?.();
+		else settings.toggleSidebar();
+	}
 
 	const displayName = $derived(sessionStore.identity?.name ?? sessionStore.identity?.id ?? '');
 	const avatarInitial = $derived(displayName ? displayName.charAt(0).toUpperCase() : '?');
@@ -137,13 +171,13 @@
 			<span class="brand-name">Banto</span>
 		</div>
 	{:else}
-		<div class="hamburger">
-			<IconButton
-				label={overlayOpen ? m['shell.closeSidebar']() : m['shell.expandSidebar']()}
-				icon={MenuIcon}
-				onclick={() => onToggleOverlay?.()}
-			/>
-		</div>
+		<IconButton
+			label={toggleLabel}
+			icon={narrow ? MenuIcon : sidebarExpanded ? PanelLeftClose : PanelLeftOpen}
+			expanded={sidebarExpanded}
+			controls="app-sidebar"
+			onclick={toggleSidebar}
+		/>
 	{/if}
 
 	<!-- Deliberately NOT a heading: the document h1 belongs to the page
@@ -274,16 +308,6 @@
 	@media (min-width: 768px) {
 		.status-area {
 			display: flex;
-		}
-	}
-
-	.hamburger {
-		display: none;
-	}
-
-	@media (max-width: 900px) {
-		.hamburger {
-			display: block;
 		}
 	}
 
