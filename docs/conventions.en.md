@@ -250,7 +250,7 @@ without a runtime guard are **upheld by reviewing every call site**.
   rejects all separators, `..`, and anything outside `[A-Za-z0-9._-]` (which
   also simultaneously blocks Content-Disposition injection and Windows reserved
   names). Attachments have the same kind of check in `validate_file_name`.
-- **Throttle before heavy verification (argon2).** `auth.rs`
+- **Throttle before heavy verification (argon2).** `auth/state.rs`
   `login_rate_limited` passes a two-dimensional throttle, per-(IP+username) and
   per-IP, **before** the argon2 verifier (a DoS countermeasure against a
   username-rotation flood). The regression test

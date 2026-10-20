@@ -221,7 +221,7 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   設定された DB パス由来でリクエスト入力ではない）で、`scope_dir` の1関数に集約し
   `scope_name` が不正名を明示エラーにする（同一フォルダの複数 DB の混線防止、#280）。
   添付は `validate_file_name` が同種の検査。
-- **重い検証（argon2）の前にスロットルする。** `auth.rs` `login_rate_limited` は
+- **重い検証（argon2）の前にスロットルする。** `auth/state.rs` `login_rate_limited` は
   per-(IP+username) と per-IP の2次元スロットルを argon2 verifier の**前**に通す
   （username ローテーション flood での DoS 対策）。回帰テスト
   `per_ip_dimension_bounds_a_username_rotation_flood` が「ロックアウト中は argon2 を
