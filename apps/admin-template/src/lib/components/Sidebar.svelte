@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
 	 * App shell sidebar (visual-refresh-design.md §8.3). Four sections:
-	 * brand / primary nav / admin nav (role-gated, own heading) / footer
-	 * (collapse toggle). `overlayOpen` is owned by (app)/+layout.svelte (no
+	 * brand / primary nav / admin nav (role-gated, own heading). The fold
+	 * toggle lives at the left end of Header.svelte (aria-controls="app-sidebar").
+	 * `overlayOpen` is owned by (app)/+layout.svelte (no
 	 * new global store) and only matters at <=900px, where this component
 	 * renders as a fixed slide-in drawer instead of the flex column.
 	 */
@@ -13,8 +14,6 @@
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
-	import { IconButton } from '@banto/ui';
-	import { PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
 	interface Props {
 		/** <=900px overlay drawer state (design.md §8.1); not a fold state - see the media query below. */
@@ -41,6 +40,7 @@
 </script>
 
 <aside
+	id="app-sidebar"
 	class:collapsed={settings.sidebarCollapsed}
 	class:overlay-open={overlayOpen}
 	class:compact={settings.kiosk}
@@ -105,14 +105,6 @@
 			{/each}
 		</nav>
 	{/if}
-
-	<div class="footer">
-		<IconButton
-			label={settings.sidebarCollapsed ? m['shell.expandSidebar']() : m['shell.collapseSidebar']()}
-			icon={settings.sidebarCollapsed ? PanelLeftOpen : PanelLeftClose}
-			onclick={() => settings.toggleSidebar()}
-		/>
-	</div>
 </aside>
 
 <style>
@@ -314,12 +306,6 @@
 		font-size: 0;
 	}
 
-	.footer {
-		margin-top: auto;
-		padding: 0.5rem;
-		border-top: 1px solid var(--banto-border);
-	}
-
 	@media (max-width: 900px) {
 		aside {
 			position: fixed;
@@ -356,10 +342,6 @@
 
 		aside.overlay-open {
 			transform: translateX(0);
-		}
-
-		.footer {
-			display: none;
 		}
 	}
 </style>

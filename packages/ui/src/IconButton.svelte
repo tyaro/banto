@@ -10,10 +10,14 @@
 		label: string;
 		icon: UiIconComponent;
 		size?: 'sm' | 'md';
+		/** Disclosure state of what the button controls (aria-expanded); omitted = not a disclosure. */
+		expanded?: boolean;
+		/** id of the controlled element (aria-controls). */
+		controls?: string;
 		onclick: (event: MouseEvent) => void;
 	}
 
-	let { label, icon: Icon, size = 'md', onclick }: Props = $props();
+	let { label, icon: Icon, size = 'md', expanded, controls, onclick }: Props = $props();
 </script>
 
 <button
@@ -22,6 +26,8 @@
 	class:icon-button--sm={size === 'sm'}
 	aria-label={label}
 	title={label}
+	aria-expanded={expanded}
+	aria-controls={controls}
 	{onclick}
 >
 	<Icon size={size === 'sm' ? 16 : 20} aria-hidden="true" />
