@@ -22,19 +22,36 @@
 
 ## [Unreleased]
 
+## [6.8.0] - 2026-10-21
+
+**v6.8.0 — サイドバーの代わりに選べるドック（ランチャー）。** 版の種類: minor（機能追加。後方互換。既定はサイドバーのままで既存アプリの見た目は変わらない）。
+派生アプリへの影響: タグを上げるだけで済む。ドックを使うなら、テンプレートのファイルを取り込む（任意）。
+
+| 経路                             | 影響         | 内容                                                                                                                                                                                                                                                                        |
+| -------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | なし         | `v6.7.2` → `v6.8.0`（npm と Rust を同じタグに）。`@banto/ui` に `LauncherBar`・`magnifyScale`・`LauncherItem` などを追加、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` などのトークンを追加（追加のみ。既存の API は変わらない）（#423・#426）        |
+| B. コピーしたテンプレート        | あり（任意） | ドックを使うなら `ShellLauncher.svelte`・設定ストアの `shell.navLayout` / `shell.launcherOpacity` / `shell.launcherPosition`・外観設定の「ナビゲーション」カード・`(app)/+layout.svelte` と Header のブランド・メッセージキーを取り込む。取り込まなくても動く（#424・#426） |
+| C. DB・設定・配布資産            | なし         | DB のマイグレーションは無い。設定キー（ユーザーごとの `shell.*`）の追加のみで、未保存のユーザーは既定のサイドバー                                                                                                                                                           |
+
+### 消費側への注意
+
+- 既定は `NAV_LAYOUT_DEFAULT = 'sidebar'` のままで、既存アプリの見た目は変わらない。
+- ドックを取り込む派生アプリは `@banto/ui`・`@banto/theme` を v6.8.0 にそろえること（`LauncherBar` とトークンが無いと動かない）。
+
 ### Added
 
-- `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）。
-- 設定の「外観」に「ナビゲーション」カードを追加し、サイドバーの代わりに画面下のドック（`LauncherBar` を配線した `ShellLauncher`）を選べるようにした。ユーザーごとに保存し（`shell.navLayout` / `shell.launcherOpacity`、未保存のユーザーは既定のサイドバー）、ドックの不透明度をスライダー（40〜100%）とプレビューで調整できる。既定は `NAV_LAYOUT_DEFAULT = 'sidebar'`。ドック表示中はトーストをバーの上に上げる（`@banto/theme` に `--banto-shell-launcher-tabbar-reserve` を追加）（nav-launcher-plan.md PR-3）。
-- ドックを画面の左右にも置けるようにした（`LauncherBar` の `position` に `'left' | 'right'`、設定の「ドックの位置」下 / 左 / 右、`shell.launcherPosition`。900px 以下はどの位置でも下端のタブバー。`@banto/theme` に `--banto-shell-launcher-tooltip-max-width` を追加）。あわせて、ダッシュボードの浮き窓（`role="dialog"`）が出ているとツールチップが Esc で閉じなかったのを直した（nav-launcher-plan.md PR-4）。
+- `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）（#423）。
+- 設定の「外観」に「ナビゲーション」カードを追加し、サイドバーの代わりに画面下のドック（`LauncherBar` を配線した `ShellLauncher`）を選べるようにした。ユーザーごとに保存し（`shell.navLayout` / `shell.launcherOpacity`、未保存のユーザーは既定のサイドバー）、ドックの不透明度をスライダー（40〜100%）とプレビューで調整できる。既定は `NAV_LAYOUT_DEFAULT = 'sidebar'`。ドック表示中はトーストをバーの上に上げる（`@banto/theme` に `--banto-shell-launcher-tabbar-reserve` を追加）（nav-launcher-plan.md PR-3）（#424）。
+- ドックを画面の左右にも置けるようにした（`LauncherBar` の `position` に `'left' | 'right'`、設定の「ドックの位置」下 / 左 / 右、`shell.launcherPosition`。900px 以下はどの位置でも下端のタブバー。`@banto/theme` に `--banto-shell-launcher-tooltip-max-width` を追加）。あわせて、ダッシュボードの浮き窓（`role="dialog"`）が出ているとツールチップが Esc で閉じなかったのを直した（nav-launcher-plan.md PR-4）（#426）。
+- ドックの設計と段取りを `docs/nav-launcher-plan.md` にまとめた（#421）。
 
 ### Changed
 
-- サイドバーの表示項目の絞り込み（RBAC・閲覧公開の許可リスト）を `navSections()` に切り出し（挙動の変更なし、nav-launcher-plan PR-1）
+- サイドバーの表示項目の絞り込み（RBAC・閲覧公開の許可リスト）を `navSections()` に切り出し（挙動の変更なし、nav-launcher-plan PR-1）（#422）
 
 ### Fixed
 
-- 閲覧公開（LAN）セッションの Ctrl+K コマンドパレットが、開けない画面（許可リスト外）まで一覧に出していたのを直した。ナビゲーションのコマンドもサイドバー・ドックと同じ `navSections()` で絞る（ADR-0012）。
+- 閲覧公開（LAN）セッションの Ctrl+K コマンドパレットが、開けない画面（許可リスト外）まで一覧に出していたのを直した。ナビゲーションのコマンドもサイドバー・ドックと同じ `navSections()` で絞る（ADR-0012）（#425）。
 
 ## [6.7.2] - 2026-10-20
 
@@ -2954,7 +2971,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.7.2...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.8.0...HEAD
+[6.8.0]: https://github.com/tyaro/banto/compare/v6.7.2...v6.8.0
 [6.7.2]: https://github.com/tyaro/banto/compare/v6.7.1...v6.7.2
 [6.7.1]: https://github.com/tyaro/banto/compare/v6.7.0...v6.7.1
 [6.7.0]: https://github.com/tyaro/banto/compare/v6.6.0...v6.7.0
