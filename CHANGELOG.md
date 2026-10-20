@@ -37,6 +37,28 @@
 
 - 公開 API・挙動の変更は無い（保守のみ）。タグを上げるだけで済む。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `external-consumer.yml` を `workflow_dispatch` し、
+  タグの push の run でも確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグ前（main の `ea6a602`、`workflow_dispatch`）: [run 39377708546](https://github.com/tyaro/banto/actions/runs/39377708546)（success）。
+  - タグの push（`v6.7.2`）: [run 39377903663](https://github.com/tyaro/banto/actions/runs/39377903663)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）:
+
+    | 項目               | 版                             |
+    | ------------------ | ------------------------------ |
+    | Node.js            | 24.22.0                        |
+    | pnpm               | 10.33.0                        |
+    | Svelte             | 5.57.2                         |
+    | SvelteKit          | 3.1.0                          |
+    | Vite               | 8.3.4                          |
+    | vite-plugin-svelte | 7.3.1                          |
+    | TypeScript         | 6.0.3                          |
+    | Rust               | 1.99.1（58cf8f9c3 2026-10-13） |
+
+  - 出所: Node.js は `node: v24.22.0`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.2` など）、
+    Rust は `Setup Rust toolchain` の `rustc 1.99.1`。step summary の表はログに出ないため、同じ値を持つこれらの行を読んだ。
+
 ### その他
 
 - CI の E2E のうち visual + axe-core を別ジョブ `E2E (visual + axe-core)` に分け、`BANTO_E2E_SERVERS=visual` で `vite preview` だけを起動できるようにして E2E を速くした（#410）。CI のみの変更で、公開 API と手元の `pnpm e2e*` の挙動は変わらない。
