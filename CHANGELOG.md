@@ -36,6 +36,7 @@
 
 ### Fixed
 
+- `@banto/dock-svelte` の復元 layout を検証するようにした（#434、計画書 PR-1）。`DockState` の `hydrate`（JSON）と constructor の初期値（文字列・オブジェクト）が、version・構造・panel / node ID の一意性・有限の座標・正の寸法・split の `sizes`・tabs の `activeIndex` を全体として検証し、不正（`x=1e999`・`width=-1`・`height=0`・重複 ID など）なら拒否して現行 layout を変えない（constructor は空の layout で始める）。`hydrate` の戻り値を `void` → `boolean`（採用されたか）にし、検証の純関数 `validateDockLayout` と型を追加。**挙動の変化**: 従来は通っていた不正な layout が拒否される。正常な v1 / v2 は従来どおり読める。host 縮小時の到達性・能力指定は PR-2。
 - 閲覧公開（LAN）セッションの Ctrl+K コマンドパレットが、開けない画面（許可リスト外）まで一覧に出していたのを直した。ナビゲーションのコマンドもサイドバー・ドックと同じ `navSections()` で絞る（ADR-0012）。
 - `@banto/ui` の `Menu` で、項目がトリガーの上下の可用高を超えると下端が画面外に残り届かなかったのを直した。広い側の可用高（余白・枠線込み）に高さを抑えて中をスクロールし（`overscroll-behavior: contain`）、メニュー自身のスクロールでは閉じない（外側のスクロールでは従来どおり閉じる）。あわせて、開いた瞬間は項目がまだ不可視のためフォーカスが項目へ移らず、ブラウザでは開いた後の ↑↓・Home・End が効かなかったのを直した（#427）。
 

@@ -43,6 +43,13 @@ export {
 	splitInsert
 } from './core/tree';
 
+export {
+	validateDockLayout,
+	type DockLayoutIssue,
+	type DockLayoutIssueCode,
+	type DockLayoutValidation
+} from './core/validate';
+
 export { computeDropRegion } from './core/dropzones';
 
 export type {
