@@ -486,27 +486,24 @@
 		display: none;
 	}
 
+	/* The show rules skip a quiet item (Esc hid it: hidden until the pointer
+	   leaves / focus moves) instead of a later hide rule fighting them on
+	   specificity - `:focus-visible ~` outranked it, so a keyboard-shown
+	   tooltip stayed after Esc (#423 review). */
 	@media (hover: hover) {
-		.launcher__item:hover .launcher__tooltip {
+		.launcher__item:not(.launcher__item--quiet):hover .launcher__tooltip {
 			opacity: 1;
 			visibility: visible;
 		}
 
-		.launcher__item:hover::before {
+		.launcher__item:not(.launcher__item--quiet):hover::before {
 			display: block;
 		}
 	}
 
-	.launcher__link:focus-visible ~ .launcher__tooltip {
+	.launcher__item:not(.launcher__item--quiet) .launcher__link:focus-visible ~ .launcher__tooltip {
 		opacity: 1;
 		visibility: visible;
-	}
-
-	/* Esc hid it: stay hidden until the pointer leaves / focus moves. */
-	.launcher__item--quiet .launcher__tooltip,
-	.launcher__item--quiet:hover .launcher__tooltip {
-		opacity: 0;
-		visibility: hidden;
 	}
 
 	/* <=900px (plan §4.6, D5): a full-width bottom tab bar. No magnification
