@@ -27,8 +27,10 @@ Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共�
   - [docs/reviews/](docs/reviews/) — **調査・レビュー記録**（棚卸し・機能レビュー・
     保守性レビュー・フィードバック対応の記録。`M-review` / `CR-N` / `AD-N` の定義元。
     ファイル名は `<名前>-review-YYYY-MM.md` 等）:
+    [docs/reviews/maintenance-review-2026-10.md](docs/reviews/maintenance-review-2026-10.md)
+    （最新のリファクタ要否の判断。やる/保留/やらないと見直しの合図）、
     [docs/reviews/maintenance-review-2026-08.md](docs/reviews/maintenance-review-2026-08.md)
-    （最新の棚卸し + 整理統合プラン）、
+    （前回の棚卸し + 整理統合プラン）、
     [docs/reviews/feature-review-2026-08.md](docs/reviews/feature-review-2026-08.md)（通称
     M-review 2026-08）、
     [docs/reviews/maintainability-review-2026-07.md](docs/reviews/maintainability-review-2026-07.md)
