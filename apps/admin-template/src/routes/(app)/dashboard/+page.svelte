@@ -53,8 +53,10 @@
 	import {
 		MEMO_PANEL_ID,
 		createDashboardMemo,
-		createPanelChangeHandler
+		createPanelChangeHandler,
+		memoSaveCommand
 	} from '#lib/banto/dashboardMemo.svelte.js';
+	import { appShortcuts, firstPressOnly, SAVE_SHORTCUT } from '#lib/shortcuts.js';
 	import { createSettlePrompt } from '#lib/banto/settlePrompt.svelte.js';
 	import { untrack } from 'svelte';
 	import { formValidationMessages } from '#lib/banto/i18n.js';
@@ -218,6 +220,28 @@
 	async function saveMemo(): Promise<void> {
 		noteMemoSettled(await memo.save());
 	}
+
+	// Issue #435 PR-11: the pane's save button and Ctrl+S / Cmd+S are ONE
+	// command (memoSaveCommand) - the same serialized save, so a close asked
+	// meanwhile waits for it. The key is registered with the app's shortcut
+	// dispatcher for the page's lifetime (anywhere on this page, the memo's
+	// textarea included); a held key saves once (firstPressOnly). Elsewhere
+	// Ctrl+S stays the browser's.
+	const memoSave = memoSaveCommand({
+		memo,
+		title: m['common.save'](),
+		shortcut: SAVE_SHORTCUT,
+		save: () => void saveMemo()
+	});
+	const memoSaveTitle = m['common.withShortcut']({
+		label: m['common.save'](),
+		keys: appShortcuts.format(SAVE_SHORTCUT)
+	});
+	$effect(() =>
+		untrack(() =>
+			appShortcuts.register('dashboard', [firstPressOnly(memoSave, appShortcuts.isRepeat)])
+		)
+	);
 
 	// Page lifetime: register the draft's source, read the stored memo once, and
 	// drop everything (an open question answers 'cancel') on unmount.
@@ -670,9 +694,9 @@
 		{#if content.id === MEMO_PANEL_ID}
 			<DashboardMemoField
 				draft={memo.draft}
-				saving={memo.coordinator.settling || memo.setting.saving}
+				save={memoSave}
+				saveTitle={memoSaveTitle}
 				status={memoStatus}
-				onSave={() => void saveMemo()}
 			/>
 		{:else}
 			<DashboardPanel id={content.id} height={chartHeight(content.id)} />

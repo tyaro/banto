@@ -36,6 +36,7 @@ import {
 	type ValidationMessages
 } from '@banto/forms';
 import type { DockPanelChange } from '@banto/dock-svelte';
+import type { CommandSpec } from '@banto/ui';
 
 /** The dock panel id; also the draft's key (one draft per pane). */
 export const MEMO_PANEL_ID = 'memo';
@@ -145,6 +146,53 @@ export function serializeSettles(
 			tail = run.catch(() => {});
 			return run;
 		}
+	};
+}
+
+/** The command id of the memo save (the pane's button and Ctrl+S share it, plan §3.6). */
+export const MEMO_SAVE_COMMAND_ID = 'dashboard.memo.save';
+
+/**
+ * May the memo be saved now? The draft has unapplied input and no apply
+ * (save button, Ctrl+S, a close's apply) is in flight - the condition the
+ * pane's save button had before #435.
+ */
+export function canSaveMemo(
+	memo: Pick<DashboardMemo, 'draft' | 'coordinator' | 'setting'>
+): boolean {
+	return memo.draft.dirty && !memo.coordinator.settling && !memo.setting.saving;
+}
+
+export interface MemoSaveCommandOptions {
+	memo: Pick<DashboardMemo, 'draft' | 'coordinator' | 'setting'>;
+	/** Resolved label (conventions §13). */
+	title: string;
+	/** The key (`'Mod+S'`, `#lib/shortcuts.ts`). */
+	shortcut: string;
+	/** The save itself: {@link DashboardMemo.save} (serialized with closes) and the status line. */
+	save: () => void;
+}
+
+/**
+ * The memo save as ONE command (Issue #435 PR-11, plan §3.6): the pane's save
+ * button reads `enabled` / `run` from it, and the page registers it with the
+ * app's shortcut dispatcher for Ctrl+S / Cmd+S. So both go through the same
+ * `save` - `serializeSettles`, i.e. a close asked meanwhile waits for it.
+ *  - `allowInEditable`: the key is pressed in the memo's textarea.
+ *  - `preventDefaultWhenDisabled`: on this page Ctrl+S means "save the memo";
+ *    with nothing to save (or a save in flight - a second press right after
+ *    the first) it does nothing rather than open the browser's "save page".
+ *  - `enabled` is checked again by the dispatcher right before `run`.
+ */
+export function memoSaveCommand(options: MemoSaveCommandOptions): CommandSpec {
+	return {
+		id: MEMO_SAVE_COMMAND_ID,
+		title: options.title,
+		shortcut: options.shortcut,
+		allowInEditable: true,
+		preventDefaultWhenDisabled: true,
+		enabled: () => canSaveMemo(options.memo),
+		run: options.save
 	};
 }
 

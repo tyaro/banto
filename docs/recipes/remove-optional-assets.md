@@ -94,11 +94,12 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
 `DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
-`src/lib/banto/popout.ts`・`src/routes/panel/[id]/`（ポップアウト先の
+`src/lib/banto/popout.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
+Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップアウト先の
 スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
 （`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
 それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・
-`src/lib/components/DraftSettleDialog.svelte`。#432）を削除し、ダッシュボードページを固定
+`src/lib/components/DraftSettleDialog.svelte`。#432。メモの Ctrl+S の登録もここ。#435）を削除し、ダッシュボードページを固定
 レイアウトのパネル羅列に置き換える。`apps/admin-template/package.json` の
 `@banto/dock-svelte` 依存と、`apps/admin-template/vite.config.ts` の
 `optimizeDeps.exclude` にある `'@banto/dock-svelte'` 行を外す（残すと
@@ -143,8 +144,9 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 `src/lib/recentCommands.ts`・`src/lib/recentCommands.test.ts` を削除し
 （テストを残すと、消したモジュールを import して `pnpm --filter admin-template test` が落ちる）、
 `src/routes/(app)/+layout.svelte` と `src/lib/components/Header.svelte`
-からの参照（`commandPaletteStore`・Ctrl+Kのキーバインド・パレット起動
-ボタン）を外す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
+からの参照（`commandPaletteStore`・Ctrl+K の command の登録とパレットの host・パレット起動
+ボタンと鍵帽の表示）を外す。キーの dispatcher（`src/lib/shortcuts.ts`、#435）はページの command
+（ダッシュボードの Ctrl+S）のために残す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
 されるため、削除してもナビ自体には影響しない。
 
 ### 添付ファイル機能（`@banto/attachments` + items 添付デモ、M20）
