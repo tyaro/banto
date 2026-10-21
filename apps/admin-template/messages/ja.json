@@ -7,6 +7,7 @@
   "common.reload": "再読み込み",
   "common.delete": "削除",
   "common.backToList": "一覧へ戻る",
+  "common.withShortcut": "{label}（{keys}）",
   "unsaved.notice": "未保存の変更があります",
   "unsaved.confirmLeave": "保存していない変更があります。変更を破棄してこの画面から移動しますか？",
   "unsaved.confirmClose": "保存していない変更があります。変更を破棄してウィンドウを閉じますか？",

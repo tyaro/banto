@@ -12,19 +12,24 @@
 	 * dock holding structure changes until `compositionend`.
 	 */
 	import { UnsavedChangesNotice, type FormDraft } from '@banto/forms';
+	import type { CommandSpec } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { MEMO_FIELD, MEMO_MAX_LENGTH, memoText } from '#lib/banto/dashboardMemo.svelte.js';
 
 	interface Props {
 		draft: FormDraft;
-		/** A save (or a close's apply) is in flight. */
-		saving: boolean;
+		/**
+		 * The save command (`memoSaveCommand`, #435): the button is enabled by
+		 * its `enabled` and runs its `run` - the same command Ctrl+S runs.
+		 */
+		save: CommandSpec;
+		/** The button's tooltip (label and key, e.g. 「保存（Ctrl+S）」). */
+		saveTitle?: string;
 		/** Why the last save / close did not finish, or `null`. */
 		status: string | null;
-		onSave: () => void;
 	}
 
-	let { draft, saving, status, onSave }: Props = $props();
+	let { draft, save, saveTitle, status }: Props = $props();
 
 	const error = $derived(draft.errors[MEMO_FIELD]);
 </script>
@@ -48,8 +53,9 @@
 		<button
 			type="button"
 			class="banto-btn banto-btn--primary save"
-			disabled={saving || !draft.dirty}
-			onclick={onSave}
+			disabled={save.enabled ? !save.enabled() : false}
+			title={saveTitle}
+			onclick={() => void save.run()}
 		>
 			{m['common.save']()}
 		</button>

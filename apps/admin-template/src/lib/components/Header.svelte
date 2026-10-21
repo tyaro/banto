@@ -17,6 +17,7 @@
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
+	import { appShortcuts, COMMAND_PALETTE_SHORTCUT } from '#lib/shortcuts.js';
 	import { IconButton, Menu, MenuGroup, MenuItem, MenuSeparator, StatusBadge } from '@banto/ui';
 	import {
 		Menu as MenuIcon,
@@ -218,7 +219,8 @@
 		>
 			<Search size={16} aria-hidden="true" />
 			<span>{m['shell.searchPlaceholder']()}</span>
-			<kbd>Ctrl K</kbd>
+			<!-- The dispatcher's key, as the platform writes it (Ctrl+K / ⌘K, #435). -->
+			<kbd>{appShortcuts.format(COMMAND_PALETTE_SHORTCUT)}</kbd>
 		</button>
 		<div class="search-icon-only">
 			<IconButton
