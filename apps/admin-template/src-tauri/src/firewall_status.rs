@@ -783,11 +783,11 @@ fn compare(
 /// the script's stdout; [`evaluate`] interprets it.
 pub(crate) fn probe(names: &RuleNames) -> Result<String, UnknownReason> {
     let script = probe_script(names).ok_or(UnknownReason::InvalidIdentifier)?;
-    run_encoded(&encode_command(&script))
+    run_encoded(&encode_command(&script), PROBE_TIMEOUT)
 }
 
 #[cfg(not(windows))]
-fn run_encoded(_encoded: &str) -> Result<String, UnknownReason> {
+fn run_encoded(_encoded: &str, _timeout: Duration) -> Result<String, UnknownReason> {
     Err(UnknownReason::NotWindows)
 }
 
@@ -803,8 +803,11 @@ fn windows_powershell() -> Option<std::path::PathBuf> {
     exe.is_file().then_some(exe)
 }
 
+/// `timeout` is [`PROBE_TIMEOUT`] for the real read; the Windows-only tests
+/// pass a longer one, since a cold CI runner can take more than 10 s just to
+/// start PowerShell and load the NetSecurity module.
 #[cfg(windows)]
-fn run_encoded(encoded: &str) -> Result<String, UnknownReason> {
+fn run_encoded(encoded: &str, timeout: Duration) -> Result<String, UnknownReason> {
     use std::io::Read;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -838,7 +841,7 @@ fn run_encoded(encoded: &str) -> Result<String, UnknownReason> {
         let mut buf = Vec::new();
         stdout.take(MAX_OUTPUT).read_to_end(&mut buf).map(|_| buf)
     });
-    let deadline = Instant::now() + PROBE_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -1619,7 +1622,10 @@ mod tests {
     fn probe_with_prefix(prefix: &str) -> Result<String, UnknownReason> {
         let names = rule_names("com.example.banto.probe-test").unwrap();
         let script = format!("{prefix}\n{}", probe_script(&names).unwrap());
-        run_encoded(&encode_command(&script))
+        // Generous: these tests check what the script reports, not how fast a
+        // cold CI runner loads the module (PR #465's Windows CI timed out at
+        // the 10 s of the real read).
+        run_encoded(&encode_command(&script), Duration::from_secs(120))
     }
 
     /// `Get-NetFirewallRule` cannot be found (module auto-loading off, as
