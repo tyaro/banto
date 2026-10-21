@@ -53,6 +53,7 @@
 		setup: m['audit.actionSetup'](),
 		password_reset: m['audit.actionPasswordReset'](),
 		settings_change: m['audit.actionSettingsChange'](),
+		firewall_change: m['audit.actionFirewallChange'](),
 		denied: m['audit.actionDenied']()
 	};
 

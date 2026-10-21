@@ -537,6 +537,7 @@
   "audit.actionSetup": "初期セットアップ",
   "audit.actionPasswordReset": "パスワードリセット",
   "audit.actionSettingsChange": "設定変更",
+  "audit.actionFirewallChange": "ファイアウォールの変更",
   "audit.actionDenied": "権限拒否",
   "audit.resultOk": "成功",
   "audit.resultDenied": "拒否",

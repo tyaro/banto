@@ -34,6 +34,7 @@ on:
     paths:
       - 'apps/admin-template/src-tauri/**'
       - 'apps/admin-template/core/**'
+      - 'apps/admin-template/elev/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -42,6 +43,7 @@ on:
     paths:
       - 'apps/admin-template/src-tauri/**'
       - 'apps/admin-template/core/**'
+      - 'apps/admin-template/elev/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
