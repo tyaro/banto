@@ -70,6 +70,22 @@ export している。
 アプリ側の呼び出しも絞ること。アプリ固定の標準配置は、独自の default layout を `createDockState(layout)` に渡す
 （パッケージは SCADA などの panel ID を持たない）。
 
+## 操作の確定と取消（ドラッグ・resize・divider）
+
+`DockHost` の中のポインタ操作（タイトルバー / タブのドラッグ、浮動 window の resize、分割の
+divider）は、host ごとに 1 つの持ち主が 1 回の操作として扱う（#433）。
+
+- 同時に 1 つの操作だけ。操作中のほかの pointer（2 本目の指など）は動かさず、確定もさせない。
+- **確定**は、操作を始めた pointer の `pointerup` だけ。確定の直前に host の寸法を測り直す
+  （window の resize の通知が来る前に離しても、古い寸法では確定しない）。
+- **取消**は、Esc（ほかの層が `preventDefault` 済みなら譲る。受けたら `preventDefault` する。IME 変換中は
+  見ない）・`pointercancel`・`lostpointercapture`・window の `blur`・タブが隠れたとき・`DockHost` の
+  unmount。resize は対象の window の位置と寸法だけ、divider は対象の split の比率だけを押す前に戻す
+  （操作中にアプリが layout を変えていても、その変更は残る）。押した window が前面に来るのは押したこと
+  （フォーカス）の結果なので、取消でも前面のまま。ドラッグは確定まで layout を書かないので、取消では何も変えない。
+- 浮動 window は `pointerdown` に加えて `focusin`（Tab や中の入力欄へのフォーカス）でも前面に来る。
+  前面化は `z-index` で行い、DOM の順（= Tab の順）は変えない。
+
 ## 保存の約束（serialize / hydrate と書き込みは別）
 
 `serialize()` は文字列を返すだけで、`hydrate(json)` は文字列を検証して layout に採るだけ。**実ストレージへの書き込み

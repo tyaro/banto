@@ -33,6 +33,7 @@ import {
 } from './core/tree';
 import type {
 	DockLayout,
+	DockNode,
 	DockPanelNode,
 	DropRegion,
 	FloatingWindow,
@@ -276,6 +277,41 @@ export class DockState {
 	}
 
 	/** Resize a split's two panes adjacent to `dividerIndex` by `deltaFraction` (spec §5.2 split resizing). No-op if unknown/out of range. */
+	/**
+	 * Put one floating window's geometry back to what it was in `from` (a
+	 * cancelled resize, #433). Only that window changes; nothing happens if it
+	 * no longer exists in either layout.
+	 */
+	restoreWindowGeometry(id: string, from: DockLayout): void {
+		const before = from.floating.find((w) => w.id === id);
+		if (!before) return;
+		const { x, y, width, height } = before;
+		this.#update(id, (w) => ({ ...w, x, y, width, height }));
+	}
+
+	/**
+	 * Put one split's sizes back to what they were in `from` (a cancelled
+	 * divider drag, #433). Only that split changes; nothing happens if it no
+	 * longer exists or its child count changed.
+	 */
+	restoreSplitSizes(splitId: string, from: DockLayout): void {
+		const before = findNode(from.docked, splitId);
+		const now = findNode(this.layout.docked, splitId);
+		if (!before || !now || before.type !== 'split' || now.type !== 'split') return;
+		if (before.sizes.length !== now.children.length) return;
+		const sizes = before.sizes.slice();
+		// Tab groups hold panels only, so only splits need to be walked.
+		const replace = (node: DockNode): DockNode => {
+			if (node.type !== 'split') return node;
+			if (node.id === splitId) return { ...node, sizes };
+			return { ...node, children: node.children.map(replace) };
+		};
+		this.layout = {
+			...this.layout,
+			docked: this.layout.docked ? replace(this.layout.docked) : null
+		};
+	}
+
 	resizeSplit(splitId: string, dividerIndex: number, deltaFraction: number): void {
 		this.layout = {
 			...this.layout,
