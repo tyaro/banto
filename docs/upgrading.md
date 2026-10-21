@@ -78,6 +78,11 @@ cargo check --workspace
   含む版からは `.svelte.ts` を持つので、`optimizeDeps.exclude` に `'@banto/ui'` を必ず足す**（足さないと `pnpm dev` が 500 になる。
   ADR-0007）。ストアを使わなくても、`@banto/ui` を足すなら exclude に入れておく。使わなければ何も要らない
   （既存の `@banto/*` の API は変わらない）。
+- 次の版から `@banto/theme` に余白・文字サイズ・枠線幅の段階のトークン（`--banto-space-1`〜`-8`・
+  `--banto-font-size-xs`/`sm`/`md`/`lg`/`xl`・`--banto-border-width`/`-strong`）がある。**追加のみ・後方互換**で、
+  タグを上げても画面は変わらない。派生側の CSS の生の `rem` / `px` は、**任意で**これらに置き換えられる
+  （値と丸めの目安は [design/theme-dimension-tokens.md](design/theme-dimension-tokens.md) §5.2、一覧は
+  `packages/theme/README.md`）。置き換えると 1〜2px 動くことがあるので、画面を開いて確かめる。
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
