@@ -18,93 +18,25 @@ import {
 	cascadePosition,
 	clampWindowToHost
 } from './core/geometry';
+import { validateDockLayout } from './core/validate';
 import {
 	collectPanelIds,
 	defaultMakeId,
 	dockPanelIntoTree,
 	findNode,
 	moveTabWithinGroup,
-	normalizeSizes,
 	removePanel,
 	resizeSplit as resizeSplitTree,
 	setActiveTab as setActiveTabTree
 } from './core/tree';
 import type {
 	DockLayout,
-	DockNode,
 	DockPanelNode,
 	DropRegion,
 	FloatingWindow,
 	FloatingWindowDef,
 	ResizeEdge
 } from './types';
-
-function isFloatingWindow(value: unknown): value is FloatingWindow {
-	if (!value || typeof value !== 'object') return false;
-	const candidate = value as Record<string, unknown>;
-	return (
-		typeof candidate.id === 'string' &&
-		typeof candidate.title === 'string' &&
-		(candidate.icon === undefined || typeof candidate.icon === 'string') &&
-		typeof candidate.x === 'number' &&
-		typeof candidate.y === 'number' &&
-		typeof candidate.width === 'number' &&
-		typeof candidate.height === 'number' &&
-		typeof candidate.open === 'boolean'
-	);
-}
-
-function isDockNode(value: unknown): value is DockNode {
-	if (!value || typeof value !== 'object') return false;
-	const candidate = value as Record<string, unknown>;
-	if (typeof candidate.id !== 'string') return false;
-	if (candidate.type === 'panel') {
-		return (
-			typeof candidate.title === 'string' &&
-			(candidate.icon === undefined || typeof candidate.icon === 'string')
-		);
-	}
-	if (candidate.type === 'tabs') {
-		return (
-			Array.isArray(candidate.children) &&
-			candidate.children.every((c) => isDockNode(c) && c.type === 'panel') &&
-			typeof candidate.activeIndex === 'number'
-		);
-	}
-	if (candidate.type === 'split') {
-		return (
-			(candidate.direction === 'row' || candidate.direction === 'column') &&
-			Array.isArray(candidate.children) &&
-			candidate.children.length >= 2 &&
-			candidate.children.every(isDockNode) &&
-			Array.isArray(candidate.sizes) &&
-			candidate.sizes.length === candidate.children.length &&
-			candidate.sizes.every((s) => typeof s === 'number')
-		);
-	}
-	return false;
-}
-
-function isDockLayoutV2(value: unknown): value is DockLayout {
-	if (!value || typeof value !== 'object') return false;
-	const candidate = value as Record<string, unknown>;
-	return (
-		candidate.version === 2 &&
-		Array.isArray(candidate.floating) &&
-		candidate.floating.every(isFloatingWindow) &&
-		(candidate.docked === null || isDockNode(candidate.docked))
-	);
-}
-
-function isDockLayoutV1(value: unknown): value is { version: 1; floating: FloatingWindow[] } {
-	if (!value || typeof value !== 'object') return false;
-	const candidate = value as Record<string, unknown>;
-	return (
-		candidate.version === 1 &&
-		Array.isArray(candidate.floating) &&
-		candidate.floating.every(isFloatingWindow)
-	);
-}
 
 function emptyLayout(): DockLayout {
 	return { version: 2, floating: [], docked: null };
@@ -133,10 +65,13 @@ export class DockState {
 
 	constructor(initial?: DockLayout | string, makeId: () => string = defaultMakeId) {
 		this.#makeId = makeId;
+		// Both forms are validated (shared-primitives-upstream-plan §3.2); an
+		// invalid initial value starts from an empty layout rather than throwing.
 		if (typeof initial === 'string') {
 			this.hydrate(initial);
 		} else if (initial) {
-			this.layout = initial;
+			const result = validateDockLayout(initial);
+			if (result.ok) this.layout = result.layout;
 		}
 	}
 
@@ -318,30 +253,33 @@ export class DockState {
 	}
 
 	/**
-	 * Apply a previously-serialized layout onto this instance. Malformed JSON
-	 * or a payload that doesn't match a v1 or v2 `DockLayout` shape is ignored
-	 * (state is left unchanged). A v1 payload (M7, no `docked` field) is
-	 * migrated to v2 with `docked: null`. Ids that no longer correspond to a
-	 * known window definition are deliberately kept as-is - pruning them is
-	 * the host component's job at render time (`ensureWindow`/`ensurePanel`
-	 * never remove anything). A v2 payload's `docked` tree has its `sizes`
-	 * repaired via `normalizeSizes` in case of drift (e.g. hand-edited JSON).
+	 * Apply a previously-serialized layout onto this instance and return
+	 * whether it was adopted (shared-primitives-upstream-plan §3.2, spec §5.1).
+	 * The payload is validated as a whole by `validateDockLayout` (version,
+	 * structure, unique ids, finite coordinates, positive sizes, valid
+	 * split/tabs); malformed JSON or any issue returns `false` and leaves the
+	 * current layout untouched (never partially applied). A v1 payload (M7, no
+	 * `docked` field) is migrated to v2 with `docked: null`. Ids that no longer
+	 * correspond to a known window definition are deliberately kept as-is -
+	 * pruning them is the host component's job at render time
+	 * (`ensureWindow`/`ensurePanel` never remove anything). A v2 payload's
+	 * `docked` tree has its `sizes` repaired via `normalizeSizes`.
+	 *
+	 * `serialize()`/`hydrate()` only convert to/from a string; writing to real
+	 * storage is the app's job. Consumer contract: if that write fails, do not
+	 * mark the snapshot as saved (keep the previous saved snapshot).
 	 */
-	hydrate(json: string): void {
+	hydrate(json: string): boolean {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(json);
 		} catch {
-			return;
+			return false;
 		}
-		if (isDockLayoutV2(parsed)) {
-			this.layout = { ...parsed, docked: parsed.docked ? normalizeSizes(parsed.docked) : null };
-			return;
-		}
-		if (isDockLayoutV1(parsed)) {
-			this.layout = { version: 2, floating: parsed.floating, docked: null };
-			return;
-		}
+		const result = validateDockLayout(parsed);
+		if (!result.ok) return false;
+		this.layout = result.layout;
+		return true;
 	}
 
 	/** Discard the current layout (docked tree included) and re-place every def at its cascade default, all open, floating. */
