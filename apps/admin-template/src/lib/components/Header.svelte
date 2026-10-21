@@ -1,7 +1,8 @@
 <script lang="ts">
 	/**
 	 * App shell header (visual-refresh-design.md §8.2). DOM order: drawer button
-	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
+	 * (<=900px only) -> page heading -> spacer -> search pill -> theme toggle
+	 * (sun/moon) -> user menu.
 	 * The >900px fold button is NOT here: it sits at the left of the sidebar's
 	 * top row, before the logo (Sidebar.svelte; Google-apps style), so above
 	 * 900px the header starts with the page title.
@@ -30,7 +31,9 @@
 		LogOut,
 		LogIn,
 		Maximize,
-		Minimize
+		Minimize,
+		Moon,
+		Sun
 	} from '@lucide/svelte';
 
 	interface Props {
@@ -212,6 +215,17 @@
 			onclick={toggleFullscreen}
 		/>
 	{/if}
+
+	<!-- Colour mode toggle: shows the OPPOSITE of the theme on screen and pins
+	     it on click (no longer following the OS). Rendered in every layout and
+	     viewport; the picker left the settings page. -->
+	<IconButton
+		label={settings.resolvedTheme === 'dark'
+			? m['shell.switchToLightMode']()
+			: m['shell.switchToDarkMode']()}
+		icon={settings.resolvedTheme === 'dark' ? Sun : Moon}
+		onclick={() => settings.toggleThemeMode()}
+	/>
 
 	{#if sessionStore.publicViewer}
 		<!-- viewer-public-plan §3.1-6 (ADR-0012): a LAN "viewer-public" session

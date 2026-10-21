@@ -1761,19 +1761,15 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(palette).toHaveCount(0);
 	});
 
-	test('10. settings: switching to the dark theme sets data-theme', async () => {
+	test('10. header: the sun/moon button pins the opposite theme and sets data-theme', async () => {
 		await page.goto('/settings');
 
-		// Not .getByLabel(...).check(): the radio inputs here are visually
-		// hidden (`.options input { opacity: 0; pointer-events: none }`,
-		// settings/+page.svelte) so their own `<label>` is the real click
-		// target - clicking it activates the wrapped input via normal
-		// label/control association.
-		await page
-			.getByRole('radiogroup', { name: 'テーマ' })
-			.getByText('ダーク', { exact: true })
-			.click();
+		// The button shows the OPPOSITE of the theme on screen (the colour-mode
+		// picker left the settings page). This run's browser follows a light OS,
+		// so it starts as "switch to dark" and, once pressed, offers the way back.
+		await page.getByRole('button', { name: 'ダークモードに切り替え' }).click();
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+		await expect(page.getByRole('button', { name: 'ライトモードに切り替え' })).toBeVisible();
 	});
 
 	// Issue #214: the account page's password form is the save-type settings
