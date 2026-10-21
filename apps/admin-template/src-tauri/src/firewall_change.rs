@@ -227,6 +227,8 @@ impl FirewallChangeResult {
 }
 
 /// The code of a refused placement (the response's and audit's `refusal`).
+// Used by the Windows check (and the tests on every OS).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn refusal_code(refusal: &PlacementRefusal) -> &'static str {
     match refusal {
         PlacementRefusal::Missing(Which::Helper) => "helperMissing",
@@ -250,6 +252,8 @@ pub(crate) fn refusal_code(refusal: &PlacementRefusal) -> &'static str {
 /// trusted, like the helper's exit 2).
 pub(crate) const REFUSAL_UNVERIFIABLE: &str = "unverifiable";
 /// The running exe is the helper's neighbour but not the main exe.
+// Used by the Windows check (and the tests on every OS).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) const REFUSAL_NOT_MAIN_EXE: &str = "notMainExe";
 /// The app's bundle identifier is not the helper's built-in one (a rename
 /// that changed one but not the other): the helper would act on another
@@ -263,6 +267,8 @@ pub(crate) const REFUSAL_UNSUPPORTED: &str = "unsupported";
 /// (main) exe: the helper's own rule, plus that the anchor is the main exe
 /// (the helper accepts either exe as its anchor; the main app is the main
 /// exe). The accepted `helper_exe` is the path to start.
+// Used by the Windows check (and the tests on every OS).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn judge_before_elevation(facts: &PlacementFacts) -> Result<Placement, &'static str> {
     let accepted = placement::check_placement(facts, HELPER_EXE_FILE_NAME, MAIN_EXE_FILE_NAME)
         .map_err(|refusal| refusal_code(&refusal))?;

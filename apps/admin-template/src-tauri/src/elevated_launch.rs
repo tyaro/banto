@@ -32,11 +32,14 @@ pub(crate) enum LaunchError {
     /// UAC prompt was declined, otherwise e.g. the exe is missing.
     ShellExecute(u32),
     /// Started, but no process handle came back.
+    #[cfg_attr(not(windows), allow(dead_code))]
     NoProcessHandle,
     /// `WaitForSingleObject` returned something else than `WAIT_OBJECT_0`
     /// (the value is what it returned).
+    #[cfg_attr(not(windows), allow(dead_code))]
     Wait(u32),
     /// `GetExitCodeProcess` failed (`os error`).
+    #[cfg_attr(not(windows), allow(dead_code))]
     ExitCode(u32),
     /// Not Windows: nothing can be elevated.
     #[cfg_attr(windows, allow(dead_code))]
