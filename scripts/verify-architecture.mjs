@@ -422,6 +422,10 @@ const isAllowedPackageImport = (spec) =>
 		'autologin_enable',
 		'autologin_disable',
 		'server_apply',
+		// Issue #219 PR-C2: makes a one-time reach-check token (memory only, not
+		// audited - lan-reach-check-design D8). Only this PC's administrator
+		// issues; no REST twin by design (§5.1).
+		'reach_check_issue',
 		'settings_set',
 		'auth_config_apply',
 		'panel_open',
@@ -450,6 +454,9 @@ const isAllowedPackageImport = (spec) =>
 		'items_get',
 		'items_list',
 		'ping',
+		// Issue #219 PR-C2: the reach check of the live listener (admin, like
+		// server_status). Desktop-only by nature - no REST twin.
+		'reach_check_status',
 		'server_status',
 		'system_info',
 		'settings_get',

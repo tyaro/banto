@@ -232,6 +232,74 @@ export interface FirewallRuleStatus {
 }
 
 /**
+ * Mirrors src-tauri's `ReachCheckRefusal`: why `reach_check_issue` issued
+ * nothing (Issue #219 PR-C2, lan-reach-check-design §3.5). Codes only.
+ */
+export type ReachCheckRefusal =
+	| 'notListening'
+	| 'unsupportedBind'
+	| 'loopbackOnly'
+	| 'unknownHost'
+	| 'staleGeneration'
+	| 'localAddressesUnavailable';
+
+/**
+ * Mirrors src-tauri's `ReachCheckIssueResult` (`reach_check_issue`,
+ * lan-reach-check-design §5.1). `url` holds the one-time token in its
+ * fragment (`#t=...`) - never log it. Both answers name the server
+ * `generation` they were judged against.
+ */
+export type ReachCheckIssueResult =
+	| {
+			status: 'issued';
+			generation: number;
+			issueId: number;
+			url: string;
+			qrSvg: string;
+			expiresInMs: number;
+	  }
+	| { status: 'refused'; generation: number; reason: ReachCheckRefusal };
+
+/** Mirrors `banto_server::ReachOutcome`. */
+export type ReachOutcome = 'pending' | 'recorded' | 'expired';
+
+/** Mirrors `banto_server::LastIssue` (no token in it). */
+export interface ReachLastIssue {
+	issueId: number;
+	host: string;
+	port: number;
+	/** Epoch milliseconds. */
+	expiresAt: number;
+	outcome: ReachOutcome;
+	/** Remaining validity while `pending`, else 0. */
+	expiresInMs: number;
+}
+
+/** Mirrors `banto_server::ReachRecord`: one reach from another device. */
+export interface ReachRecord {
+	issueId: number;
+	/** Epoch milliseconds. */
+	at: number;
+	peerIp: string;
+	host: string;
+	port: number;
+}
+
+/**
+ * Mirrors `banto_server::ReachCheckStatus` (`reach_check_status`): the reach
+ * check of listener `generation`. `lastIssue` is `null` when nothing was
+ * issued in this generation (unverified).
+ */
+export interface ReachCheckStatus {
+	generation: number;
+	lastIssue: ReachLastIssue | null;
+	/** Epoch milliseconds of the last access from this PC itself, if any. */
+	selfAccessAt: number | null;
+	/** Newest first. */
+	records: ReachRecord[];
+}
+
+/**
  * The bind address the status line should describe: the live listener's
  * when the host reports one, else the saved `bind` (older hosts, or nothing
  * serving).
@@ -287,6 +355,19 @@ export function getServerStatus(): Promise<ServerStatus> {
  */
 export function getFirewallRuleStatus(): Promise<unknown> {
 	return invokeCommand('firewall_rule_status');
+}
+
+/**
+ * Issue a one-time reach-check URL for `host` - one of the live listener's
+ * non-loopback URL hosts (Issue #219 PR-C2). Admin-only, desktop-only.
+ */
+export function issueReachCheck(host: string): Promise<ReachCheckIssueResult> {
+	return invokeCommand('reach_check_issue', { host });
+}
+
+/** The reach check of the live listener (Issue #219 PR-C2). Admin-only, read-only. */
+export function getReachCheckStatus(): Promise<ReachCheckStatus> {
+	return invokeCommand('reach_check_status');
 }
 
 /**

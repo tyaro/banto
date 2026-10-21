@@ -1,7 +1,7 @@
 # 別の端末からの接続確認（LAN の到達確認）設計書 — Issue #219 段階 1 PR-C
 
 作成日: 2026-10-22
-状態: **決定（2026-10-22）・実装中**。D1〜D10 はすべて推奨どおりに決定（§7）。PR-C1 は #468（`banto-server` の保管所と口、組み込みサーバーへの merge。CSRF の層はルーター自身が持つ — §3.1 の「`api_router` の層の内側」は、待受ごとに `start_embedded_server` で merge するため成り立たない）。PR-C2・PR-C3 は未着手
+状態: **決定（2026-10-22）・実装中**。D1〜D10 はすべて推奨どおりに決定（§7）。PR-C1 は #468（`banto-server` の保管所と口、組み込みサーバーへの merge。CSRF の層はルーター自身が持つ — §3.1 の「`api_router` の層の内側」は、待受ごとに `start_embedded_server` で merge するため成り立たない）。PR-C2 は #TBD（Tauri の `reach_check_issue` / `reach_check_status` と `server_apply` での失効。発行しない理由は `BantoError` ではなく `{ status: "refused", reason }` のコードで返す）。PR-C3 は未着手
 トラック: 保守者向け（トラックA）
 関連: Issue #219（本文「状態表示と接続確認」、計画コメント 2026-10-21 の段階 1、設計レビュー 2026-10-11、
 セキュリティ監査 2026-10-21 の優先 4）、PR #463（PR-A: 許可に必要な情報とコマンド）、
@@ -254,7 +254,7 @@ Windows のファイアウォールのものなので Windows 限定だった）
 
 | コマンド | 認可 | verify:architecture | 内容 |
 | --- | --- | --- | --- |
-| `reach_check_issue({ host })` | `require_role(Admin, "settings")` | `DESKTOP_ONLY` | `host` は `live` の URL の候補から選んだもの（候補に無ければ拒否）。ロックの中で `generation`・`live` を読み、トークンを発行。応答 `{ generation, issueId, url, qrSvg, expiresInMs }` |
+| `reach_check_issue({ host })` | `require_role(Admin, "settings")` | `DESKTOP_ONLY` | `host` は `live` の URL の候補から選んだもの（候補に無ければ拒否）。ロックの中で `generation`・`live` を読み、トークンを発行。応答 `{ status: "issued", generation, issueId, url, qrSvg, expiresInMs }`、発行しないときは `{ status: "refused", generation, reason }`（§3.5 のコード + `unknownHost`・`staleGeneration`・`localAddressesUnavailable`） |
 | `reach_check_status()` | `require_role(Admin, "settings")` | `TAURI_READ` | 応答 `{ generation, lastIssue: { issueId, host, expiresAt, outcome: "pending" \| "recorded" \| "expired", expiresInMs } \| null, selfAccessAt: number \| null, records: [{ issueId, at, peerIp, host, port }] }`（コードと値だけ。`lastIssue` は同じ世代の最後の発行。`null` は一度も発行していない＝未確認） |
 
 - `reach_check_issue` は永続する状態を変えないが、トークンを作る操作なので read ではなく desktop-only に分類する
