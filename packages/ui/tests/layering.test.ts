@@ -18,6 +18,7 @@ import {
 	focusablesIn,
 	hasVisibleLayerAbove,
 	hasVisibleMenuLayer,
+	hasVisibleModalLayer,
 	isCloseAllowed,
 	LAYER_INACTIVE_ATTR,
 	LAYER_MARKER_ATTR,
@@ -353,5 +354,58 @@ describe('isCloseAllowed (unsaved-changes guard)', () => {
 
 	it('dirty=true: × is still allowed (onRequestClose has the final say)', () => {
 		expect(isCloseAllowed('close-button', true)).toBe(true);
+	});
+});
+
+describe('hasVisibleModalLayer (shared-primitives-upstream-plan §3.6)', () => {
+	function modalLayer(z: number, parent?: Element) {
+		const l = layer(z, { parent });
+		l.panel.setAttribute('aria-modal', 'true');
+		return l;
+	}
+
+	it('counts only aria-modal="true" layers: not a non-modal dialog, a menu or a marker', () => {
+		expect(hasVisibleModalLayer()).toBe(false);
+		layer(300); // dock floating window: role="dialog" without aria-modal
+		layer(700, { role: 'menu' });
+		const sidebar = document.createElement('aside');
+		sidebar.setAttribute(LAYER_MARKER_ATTR, '');
+		document.body.append(sidebar);
+		expect(hasVisibleLayerAbove()).toBe(true);
+		expect(hasVisibleModalLayer()).toBe(false);
+		modalLayer(900);
+		expect(hasVisibleModalLayer()).toBe(true);
+	});
+
+	it('ignores closing, inert and hidden modal layers', () => {
+		const a = modalLayer(900);
+		a.panel.setAttribute(LAYER_INACTIVE_ATTR, '');
+		const b = modalLayer(901);
+		b.overlay.setAttribute('inert', '');
+		const c = modalLayer(902);
+		c.overlay.style.display = 'none';
+		expect(hasVisibleModalLayer()).toBe(false);
+	});
+
+	it('with `except`: itself and lower layers do not count, a higher or nested-with-z one does', () => {
+		const drawer = modalLayer(900);
+		const palette = modalLayer(1000);
+		expect(hasVisibleModalLayer({ except: palette.panel })).toBe(false);
+		expect(hasVisibleModalLayer({ except: drawer.panel })).toBe(true);
+		const nested = modalLayer(1100, palette.panel);
+		expect(hasVisibleModalLayer({ except: palette.panel })).toBe(true);
+		nested.overlay.remove();
+		expect(hasVisibleModalLayer({ except: null })).toBe(true);
+	});
+});
+
+describe('hasVisibleMenuLayer with `except`', () => {
+	it('only menus above the given layer count', () => {
+		const palette = layer(1000);
+		layer(700, { role: 'menu' });
+		expect(hasVisibleMenuLayer()).toBe(true);
+		expect(hasVisibleMenuLayer({ except: palette.panel })).toBe(false);
+		layer(1200, { role: 'menu' });
+		expect(hasVisibleMenuLayer({ except: palette.panel })).toBe(true);
 	});
 });

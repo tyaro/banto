@@ -57,6 +57,11 @@
  *   layer without its own z-index is part of `except`, not above it.
  *
  * `except` itself and its ancestors never count.
+ *
+ * {@link hasVisibleMenuLayer} and {@link hasVisibleModalLayer} apply the same
+ * rules to the menus / the `aria-modal="true"` layers only - what keyboard
+ * shortcuts yield to (`shortcut.ts`, shared-primitives-upstream-plan §3.6),
+ * so a non-modal floating window does not silence them.
  */
 
 /** Set on a layer that is closing (still in the DOM during an outro) - promise 6. */
@@ -70,6 +75,13 @@ export const LAYER_SELECTOR = `[role="dialog"], [role="menu"], [${LAYER_MARKER_A
 
 /** Only the `[role="menu"]` layers (context menus). */
 export const MENU_LAYER_SELECTOR = '[role="menu"]';
+
+/**
+ * Only the modal layers - those that say `aria-modal="true"` (Modal, Drawer,
+ * CommandPalette; promise 4). A subset of what blocks the page, used where a
+ * non-modal `role="dialog"` must not count ({@link hasVisibleModalLayer}).
+ */
+export const MODAL_LAYER_SELECTOR = '[aria-modal="true"]';
 
 /** What the focus trap and the "focus first" of Modal / Drawer enumerate. */
 export const FOCUSABLE_SELECTOR =
@@ -160,22 +172,41 @@ function isAbove(el: Element, self: Element, selfZ: number): boolean {
  * counts. Pass the element that carries the layer's role as `except`.
  */
 export function hasVisibleLayerAbove(options: { except?: Element | null } = {}): boolean {
-	const self = options.except ?? null;
-	const selfZ = self ? effectiveZIndex(self) : 0;
-	for (const el of document.querySelectorAll(LAYER_SELECTOR)) {
-		if (self && (el === self || el.contains(self))) continue;
+	return hasVisibleLayerMatching(LAYER_SELECTOR, options.except ?? null);
+}
+
+/** Is a visible, active layer matching `selector` shown - above `except` when given (same rules as {@link hasVisibleLayerAbove})? */
+function hasVisibleLayerMatching(selector: string, except: Element | null): boolean {
+	const selfZ = except ? effectiveZIndex(except) : 0;
+	for (const el of document.querySelectorAll(selector)) {
+		if (except && (el === except || el.contains(except))) continue;
 		if (!isActiveLayer(el)) continue;
-		if (!self || isAbove(el, self, selfZ)) return true;
+		if (!except || isAbove(el, except, selfZ)) return true;
 	}
 	return false;
 }
 
-/** Is a visible, active `[role="menu"]` shown (e.g. to keep Ctrl+K from opening a palette over it)? */
-export function hasVisibleMenuLayer(): boolean {
-	for (const el of document.querySelectorAll(MENU_LAYER_SELECTOR)) {
-		if (isActiveLayer(el)) return true;
-	}
-	return false;
+/**
+ * Is a visible, active `[role="menu"]` shown (e.g. to keep Ctrl+K from
+ * opening a palette over it)? With `except`, only menus above it count (a
+ * popup menu inside the `except` dialog counts only with its own z-index).
+ */
+export function hasVisibleMenuLayer(options: { except?: Element | null } = {}): boolean {
+	return hasVisibleLayerMatching(MENU_LAYER_SELECTOR, options.except ?? null);
+}
+
+/**
+ * Is a visible, active **modal** layer shown ({@link MODAL_LAYER_SELECTOR}:
+ * `aria-modal="true"` - Modal, Drawer, CommandPalette)? Unlike
+ * {@link hasVisibleLayerAbove}, a non-modal `role="dialog"` (the dock's
+ * floating windows), a `data-esc-layer` (off-canvas sidebar) and a menu do
+ * not count - pair it with {@link hasVisibleMenuLayer} for "modal or menu".
+ * With `except`, the `except` layer itself, its ancestors and the layers
+ * below it do not count (shortcut `ownerLayer`, the dock's divider Esc:
+ * shared-primitives-upstream-plan §3.6 / §4.3).
+ */
+export function hasVisibleModalLayer(options: { except?: Element | null } = {}): boolean {
+	return hasVisibleLayerMatching(MODAL_LAYER_SELECTOR, options.except ?? null);
 }
 
 /**

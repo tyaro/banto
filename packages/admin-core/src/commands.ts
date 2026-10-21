@@ -7,6 +7,12 @@
  * `recentIds` is just an ordered array of ids passed in, same "headless core,
  * app owns persistence" split as `providers/uiSettings.ts` vs
  * `settings.svelte.ts`).
+ *
+ * `PaletteCommand` stays structurally assignable to `@banto/ui`'s
+ * `CommandSpec` (the optional `enabled` / `checked` / `shortcut` fields,
+ * shared-primitives-upstream-plan §3.6, D2-a), so one command list feeds the
+ * palette, menus and the shortcut dispatcher - without either package
+ * importing the other (conventions §4 / §5).
  */
 
 export interface PaletteCommand {
@@ -19,6 +25,16 @@ export interface PaletteCommand {
 	keywords?: string[];
 	/** RBAC/mode gate (e.g. admin-only nav entries, hidden when auth is disabled). Omitted = always visible. */
 	visible?: () => boolean;
+	/**
+	 * Usable now? Omitted = enabled. `searchCommands` ignores it (a disabled
+	 * command is still found); the UI shows it disabled and a dispatcher
+	 * calls it again right before `run` (shared-primitives-upstream-plan §3.6).
+	 */
+	enabled?: () => boolean;
+	/** Toggle state for menus (display only). */
+	checked?: () => boolean;
+	/** Shortcut such as `'Mod+K'` (`Mod` = Ctrl, or Meta on macOS) - parsed, matched and shown by `@banto/ui`. */
+	shortcut?: string;
 	run: () => void | Promise<void>;
 }
 
