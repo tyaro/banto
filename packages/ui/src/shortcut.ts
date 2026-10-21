@@ -103,6 +103,11 @@ const MODIFIERS: Record<string, 'mod' | 'ctrl' | 'meta' | 'alt' | 'shift'> = {
 	shift: 'shift'
 };
 
+/** Own-property lookup: user text such as `constructor` must not hit `Object.prototype`. */
+function own<V>(table: Record<string, V>, name: string): V | undefined {
+	return Object.prototype.hasOwnProperty.call(table, name) ? table[name] : undefined;
+}
+
 const KEY_ALIASES: Record<string, string> = {
 	esc: 'Escape',
 	escape: 'Escape',
@@ -133,7 +138,8 @@ const KEY_ALIASES: Record<string, string> = {
 function normalizeKey(raw: string): string | null {
 	if (raw.length === 1) return raw.toLowerCase();
 	const lower = raw.toLowerCase();
-	if (lower in KEY_ALIASES) return KEY_ALIASES[lower];
+	const alias = own(KEY_ALIASES, lower);
+	if (alias !== undefined) return alias;
 	if (/^f([1-9]|1[0-9]|2[0-4])$/.test(lower)) return lower.toUpperCase();
 	return null;
 }
@@ -160,7 +166,7 @@ export function parseShortcut(shortcut: string): ParsedShortcut | null {
 	if (key === null) return null;
 	const flags = { mod: false, ctrl: false, meta: false, alt: false, shift: false };
 	for (const part of parts) {
-		const modifier = MODIFIERS[part.trim().toLowerCase()];
+		const modifier = own(MODIFIERS, part.trim().toLowerCase());
 		if (!modifier || flags[modifier]) return null;
 		flags[modifier] = true;
 	}

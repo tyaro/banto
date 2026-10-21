@@ -473,3 +473,27 @@ describe('CommandSpec structural compatibility', () => {
 		expect(spec.shortcut).toBe('Mod+X');
 	});
 });
+
+describe('parseShortcut rejects names inherited from Object.prototype (PR #444 review)', () => {
+	it.each([
+		'constructor+K',
+		'toString+K',
+		'__proto__+K',
+		'hasOwnProperty+K',
+		'constructor',
+		'toString'
+	])('%s is not a valid shortcut', (shortcut) => {
+		expect(parseShortcut(shortcut)).toBeNull();
+	});
+
+	it('a dispatcher ignores such a shortcut instead of running on a plain key', () => {
+		const dispatcher = createShortcutDispatcher({ platform: 'other' });
+		let runs = 0;
+		dispatcher.register('page', [
+			{ id: 'bad', title: 'Bad', shortcut: 'constructor+K', run: () => void runs++ }
+		]);
+		const event = new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', cancelable: true });
+		expect(dispatcher.handle(event)).toBe(false);
+		expect(runs).toBe(0);
+	});
+});
