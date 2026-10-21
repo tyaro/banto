@@ -41,6 +41,12 @@ export interface ImageAssetErrorDetail {
 	readonly actual?: number;
 	/** For `invalid-limits`: the field of the limits object that was rejected. */
 	readonly field?: string;
+	/**
+	 * The image size behind the failure: the header's size for `dimensions-too-large` and
+	 * `too-many-pixels`, the decoded size for `dimensions-mismatch` (PR-13).
+	 */
+	readonly width?: number;
+	readonly height?: number;
 }
 
 export class ImageAssetError extends Error {

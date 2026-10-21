@@ -3,9 +3,10 @@
  * Browser-side image originals, import checks and object URL lifetimes, with no dependencies
  * and no display text (errors are codes, conventions §13).
  *
- * PR-12 (this skeleton) ships the shared ground: the formats, the consumer-supplied limits
- * and their validation, and the error codes. The import checks and the hash (PR-13) and the
- * store of originals with object URL lifetimes (PR-14) build on these.
+ * PR-12 shipped the shared ground: the formats, the consumer-supplied limits and their
+ * validation, and the error codes. PR-13 adds the import checks (the header check before
+ * decoding, the decode check after it) and the hash (D11). The store of originals with
+ * object URL lifetimes (PR-14) builds on these.
  */
 export {
 	IMAGE_FORMATS,
@@ -13,6 +14,16 @@ export {
 	type ImageFormat,
 	type ImageImportLimits
 } from './limits';
+export { inspectImageHeader, type ImageBytes, type ImageHeader } from './header';
+export {
+	inspectImage,
+	verifyDecodedImage,
+	type DecodeOptions,
+	type DecodedImage,
+	type DecodedSize,
+	type ImageDecoder,
+	type ImageMetadata
+} from './decode';
 export { sha256Hex } from './sha256';
 export {
 	IMAGE_ASSET_ERROR_CODES,
