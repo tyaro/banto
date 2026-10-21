@@ -10,7 +10,12 @@
 //! only counted. The read never changes the firewall.
 //!
 //! What is compared is the rule IN EFFECT: the ActiveStore's rule of that
-//! name, with its own filters and its source (`PolicyStoreSourceType`). A
+//! name, with its own filters, its source (`PolicyStoreSourceType` /
+//! `PolicyStoreSource`, traced with `-TracePolicyStore`) and its
+//! `EnforcementStatus`. Being in the ActiveStore is not being applied: only
+//! `Full` counts as applied, a documented other code (`InactiveProfile`,
+//! `LocalFirewallRulesDisallowed`, ...) as "there but not applied", and no
+//! code or an unknown one as "not known" (owner review on PR #465). A
 //! central policy (Group Policy, MDM) can define a rule of the same name that
 //! wins over the local one, so the local (PersistentStore) rule is reported
 //! only as a supplement - whether it exists and whether it has other values
@@ -26,7 +31,9 @@
 //! script prints one ASCII-only JSON object ([`evaluate`] parses it). A
 //! failure, a timeout ([`PROBE_TIMEOUT`]) or any output that does not parse
 //! is reported as `unknown` with a reason code - never as `missing`
-//! (security audit 2026-10-21: a failed read is not "no rule").
+//! (security audit 2026-10-21: a failed read is not "no rule"). `missing`
+//! needs the lookup itself to answer "no such rule"; missing cmdlets or a
+//! module that does not load are a failed read (owner review on PR #465).
 //!
 //! Codes and values only: the frontend builds every text (conventions §13).
 
@@ -55,8 +62,37 @@ const EXPECTED_PROFILE: &str = "Private";
 const EXPECTED_REMOTE_ADDRESS: &str = "LocalSubnet";
 /// What a rule filter reports when it does not restrict the value.
 const ANY: &str = "Any";
-/// `PolicyStoreSourceType` of a rule from the local (persistent) store.
-const LOCAL_SOURCE_TYPE: &str = "Local";
+/// `EnforcementStatus` code of a rule that is fully enforced (`Full`).
+const ENFORCEMENT_FULL: u64 = 1;
+/// `EnforcementStatus` codes by value, as `MSFT_NetFirewallRule` documents
+/// them (0-23). Codes past these (a newer Windows) are not guessed at: they
+/// make the enforcement `unknown`.
+const ENFORCEMENT_NAMES: [&str; 24] = [
+    "Invalid",
+    "Full",
+    "FirewallOffInProfile",
+    "CategoryOff",
+    "DisabledObject",
+    "InactiveProfile",
+    "LocalAddressResolutionEmpty",
+    "RemoteAddressResolutionEmpty",
+    "LocalPortResolutionEmpty",
+    "RemotePortResolutionEmpty",
+    "InterfaceResolutionEmpty",
+    "ApplicationResolutionEmpty",
+    "RemoteMachineEmpty",
+    "RemoteUserEmpty",
+    "LocalGlobalOpenPortsDisallowed",
+    "LocalAuthorizedApplicationsDisallowed",
+    "LocalFirewallRulesDisallowed",
+    "LocalConsecRulesDisallowed",
+    "NotTargetPlatform",
+    "OptimizedOut",
+    "LocalUserEmpty",
+    "TransportMachinesEmpty",
+    "TunnelMachinesEmpty",
+    "TupleResolutionEmpty",
+];
 
 /// The rule names derived from the app identifier (Issue #219, PR #463).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,23 +146,39 @@ pub(crate) fn quote_powershell_literal(value: &str) -> Option<String> {
 }
 
 /// The fixed read-only script. `{GROUP}`, `{PROGRAM}` and `{PORT}` are
-/// replaced with quoted literals. Each rule is read twice: `local` from the
-/// default (PersistentStore) store, the one the administrator commands write,
-/// and `effective` from the ActiveStore, the merge of every store that
-/// Windows actually enforces (Codex review on PR #465: a Group Policy rule of
-/// the same name wins there, so the local rule alone says nothing about what
-/// applies). Each read reports `s` = `missing` (only when PowerShell says
-/// the object was not found), `error` (anything else went wrong, or more
-/// than one object answered) or `present` with its values and where it comes
-/// from (`PolicyStoreSource` / `PolicyStoreSourceType`); `group` is how many
-/// OTHER rules carry the group, `-1` when unreadable. The JSON is escaped to
-/// ASCII so the console code page cannot mangle a non-ASCII path.
+/// replaced with quoted literals.
+///
+/// First it checks that the cmdlets it uses are there at all
+/// (`Get-Command`): without them nothing can be read (the NetSecurity
+/// module missing or failing to load), and the script exits with 3 - a
+/// failed read, never "no rule" (owner review on PR #465:
+/// `CommandNotFoundException` is also of the `ObjectNotFound` category).
+///
+/// Each rule is read twice: `local` from the default (PersistentStore)
+/// store, the one the administrator commands write, and `effective` from the
+/// ActiveStore, the merge of every store that Windows enforces (Codex review
+/// on PR #465: a Group Policy rule of the same name wins there). The
+/// ActiveStore read passes `-TracePolicyStore`, so `PolicyStoreSource` and
+/// `PolicyStoreSourceType` say where the rule comes from, and reports the
+/// raw `EnforcementStatus` codes (`uint16[]` of `MSFT_NetFirewallRule`, not
+/// the module's display text), which tell whether it is enforced at all.
+///
+/// Each read reports `s` = `missing` only when the lookup itself answered
+/// "no such rule" (`Test-BantoNotFound`: a `CimJobException` of category
+/// `ObjectNotFound` whose error id is the cmdlet's own
+/// `CmdletizationQuery_NotFound_*` for `Get-NetFirewallRule`, checked on a
+/// real PC), `error` for anything else (or more than one object answering),
+/// or `present` with its values. `group` is how many OTHER rules carry the
+/// group, `-1` when unreadable (only a "no such group" answer is `0`). The
+/// JSON is escaped to ASCII so the console code page cannot mangle a
+/// non-ASCII path.
 const PROBE_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-function Test-BantoNotFound($e) { $e.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound }
+try { $null = Get-Command -Name Get-NetFirewallRule, Get-NetFirewallApplicationFilter, Get-NetFirewallPortFilter, Get-NetFirewallAddressFilter -ErrorAction Stop } catch { exit 3 }
+function Test-BantoNotFound($e) { ([string]$e.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Cmdletization.Cim.CimJobException') -and ($e.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) -and ([string]$e.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound_*,Get-NetFirewallRule') }
 function Read-BantoStore([string]$name, [bool]$active) {
   try {
-    if ($active) { $found = @(Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -ErrorAction Stop) }
+    if ($active) { $found = @(Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -TracePolicyStore -ErrorAction Stop) }
     else { $found = @(Get-NetFirewallRule -Name $name -ErrorAction Stop) }
   } catch { if (Test-BantoNotFound $_) { return @{ s = 'missing' } }; return @{ s = 'error' } }
   if ($found.Count -ne 1) { return @{ s = 'error' } }
@@ -136,7 +188,14 @@ function Read-BantoStore([string]$name, [bool]$active) {
     $pf = $r | Get-NetFirewallPortFilter -ErrorAction Stop
     $af = $r | Get-NetFirewallAddressFilter -ErrorAction Stop
   } catch { return @{ s = 'error' } }
-  return @{ s = 'present'; enabled = [string]$r.Enabled; direction = [string]$r.Direction; action = [string]$r.Action; profile = [string]$r.Profile; program = [string]$app.Program; protocol = [string]$pf.Protocol; localPort = @($pf.LocalPort | ForEach-Object { [string]$_ }); remoteAddress = @($af.RemoteAddress | ForEach-Object { [string]$_ }); source = [string]$r.PolicyStoreSource; sourceType = [string]$r.PolicyStoreSourceType }
+  $h = @{ s = 'present'; enabled = [string]$r.Enabled; direction = [string]$r.Direction; action = [string]$r.Action; profile = [string]$r.Profile; program = [string]$app.Program; protocol = [string]$pf.Protocol; localPort = @($pf.LocalPort | ForEach-Object { [string]$_ }); remoteAddress = @($af.RemoteAddress | ForEach-Object { [string]$_ }) }
+  if ($active) {
+    $h.source = [string]$r.PolicyStoreSource
+    $h.sourceType = [string]$r.PolicyStoreSourceType
+    $es = $r.PSBase.CimInstanceProperties['EnforcementStatus']
+    $h.enforcement = @(if ($null -ne $es -and $null -ne $es.Value) { foreach ($v in $es.Value) { [int]$v } })
+  }
+  return $h
 }
 function Read-BantoRule([string]$name) { return @{ local = (Read-BantoStore $name $false); effective = (Read-BantoStore $name $true) } }
 $group = -1
@@ -215,7 +274,8 @@ pub(crate) enum UnknownReason {
     #[cfg_attr(not(windows), allow(dead_code))]
     Timeout,
     /// PowerShell reported an error (access refused, a policy that hides the
-    /// rule store, the NetSecurity module unavailable, ...).
+    /// rule store, the NetSecurity cmdlets missing or failing to load, ...):
+    /// anything but the lookup answering "no such rule".
     QueryFailed,
     /// The output was not what the script prints.
     UnreadableOutput,
@@ -239,6 +299,12 @@ pub(crate) enum FirewallField {
     /// Only ever a mismatch, never unchecked (an unreadable ActiveStore makes
     /// the whole rule `unknown`).
     Active,
+    /// The ActiveStore's rule is not fully enforced (`EnforcementStatus` is
+    /// not `Full`, e.g. `InactiveProfile`, `LocalFirewallRulesDisallowed`):
+    /// a mismatch then, and unchecked when the status is missing or unknown
+    /// (owner review on PR #465: being in the ActiveStore is not being
+    /// applied).
+    Enforcement,
 }
 
 /// The values of a rule that exists, as `Get-NetFirewall*` reports them.
@@ -255,19 +321,148 @@ pub(crate) struct FirewallRuleValues {
     pub(crate) remote_addresses: Vec<String>,
 }
 
+/// The kind of store the ActiveStore's rule comes from: its
+/// `PolicyStoreSourceType` (read with `-TracePolicyStore`), by the names the
+/// NetSecurity module gives them (its `PolicyStoreType`: `None`, `Local`,
+/// `GroupPolicy`, `Dynamic`, `Generated`, `Hardcoded`, `MDM` and the
+/// `HostFirewall*` ones, as `Get-NetFirewallRule -PolicyStoreSourceType`
+/// documents). Mirrors `serverAdmin.ts::FirewallSourceKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SourceKind {
+    /// The local store: the rule the administrator commands create.
+    Local,
+    /// A Group Policy object.
+    GroupPolicy,
+    /// Added at run time (not persisted).
+    Dynamic,
+    /// Generated by Windows.
+    Generated,
+    /// Built into Windows.
+    Hardcoded,
+    /// Mobile device management.
+    Mdm,
+    /// The `HostFirewall*` stores (Hyper-V host firewall).
+    HostFirewallLocal,
+    HostFirewallGroupPolicy,
+    HostFirewallDynamic,
+    HostFirewallMdm,
+    /// Not reported (empty, missing or `None`): the source is not known.
+    Unknown,
+    /// A value outside the list above (shown as is).
+    Other,
+}
+
+impl SourceKind {
+    fn from_source_type(source_type: Option<&str>) -> Self {
+        const NAMES: [(&str, SourceKind); 11] = [
+            ("None", SourceKind::Unknown),
+            ("Local", SourceKind::Local),
+            ("GroupPolicy", SourceKind::GroupPolicy),
+            ("Dynamic", SourceKind::Dynamic),
+            ("Generated", SourceKind::Generated),
+            ("Hardcoded", SourceKind::Hardcoded),
+            ("MDM", SourceKind::Mdm),
+            ("HostFirewallLocal", SourceKind::HostFirewallLocal),
+            (
+                "HostFirewallGroupPolicy",
+                SourceKind::HostFirewallGroupPolicy,
+            ),
+            ("HostFirewallDynamic", SourceKind::HostFirewallDynamic),
+            ("HostFirewallMDM", SourceKind::HostFirewallMdm),
+        ];
+        match source_type {
+            None => Self::Unknown,
+            Some(source_type) => NAMES
+                .iter()
+                .find(|(name, _)| source_type.eq_ignore_ascii_case(name))
+                .map_or(Self::Other, |(_, kind)| *kind),
+        }
+    }
+}
+
 /// Where the rule in effect (the ActiveStore's) comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuleOrigin {
-    /// `PolicyStoreSourceType`: `Local`, `GroupPolicy`, `Dynamic`, `MDM`, ...
-    pub(crate) source_type: String,
+    /// What `source_type` names (`unknown` when it was not reported).
+    pub(crate) kind: SourceKind,
+    /// `PolicyStoreSourceType` as reported, `None` when empty or missing.
+    pub(crate) source_type: Option<String>,
     /// `PolicyStoreSource`: `PersistentStore` for a local rule, the policy
-    /// otherwise (e.g. a GPO's domain path).
-    pub(crate) source: String,
-    /// `source_type` is `Local`: the rule the administrator commands create
-    /// is the one in effect. Otherwise central management (Group Policy and
-    /// the like) decides it, whatever the local rule says.
-    pub(crate) local: bool,
+    /// otherwise (e.g. a GPO's domain path); `None` when empty or missing
+    /// (then not known - an empty source is never taken for a policy).
+    pub(crate) source: Option<String>,
+}
+
+impl RuleOrigin {
+    fn from_value(value: &Value) -> Self {
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let source_type = text("sourceType");
+        Self {
+            kind: SourceKind::from_source_type(source_type.as_deref()),
+            source_type,
+            source: text("source"),
+        }
+    }
+}
+
+/// Whether the rule in effect is enforced: the ActiveStore's
+/// `EnforcementStatus`. Mirrors `serverAdmin.ts::FirewallEnforcement`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub(crate) enum Enforcement {
+    /// `Full` only: applied.
+    Enforced,
+    /// In the ActiveStore but not applied, for these documented reasons
+    /// (`InactiveProfile`, `LocalFirewallRulesDisallowed`, ...).
+    NotEnforced { reasons: Vec<String> },
+    /// No status, or a code outside the documented ones, or `Full` next to
+    /// another code (`values`, raw): whether it applies is not known.
+    Unknown { values: Vec<u64> },
+}
+
+impl Enforcement {
+    fn from_value(value: Option<&Value>) -> Self {
+        let codes: Option<Vec<u64>> = match value {
+            Some(Value::Array(items)) => items.iter().map(Value::as_u64).collect(),
+            // PowerShell can unwrap a one-element array.
+            Some(Value::Number(n)) => n.as_u64().map(|n| vec![n]),
+            _ => None,
+        };
+        let Some(codes) = codes.filter(|codes| !codes.is_empty()) else {
+            return Self::Unknown { values: Vec::new() };
+        };
+        let names: Option<Vec<&str>> = codes
+            .iter()
+            .map(|code| {
+                usize::try_from(*code)
+                    .ok()
+                    .and_then(|i| ENFORCEMENT_NAMES.get(i).copied())
+            })
+            .collect();
+        let full = codes.iter().filter(|c| **c == ENFORCEMENT_FULL).count();
+        match names {
+            Some(_) if full == codes.len() => Self::Enforced,
+            Some(names) if full == 0 => {
+                let mut reasons: Vec<String> = Vec::new();
+                for name in names {
+                    if !reasons.iter().any(|r| r == name) {
+                        reasons.push(name.to_string());
+                    }
+                }
+                Self::NotEnforced { reasons }
+            }
+            _ => Self::Unknown { values: codes },
+        }
+    }
 }
 
 /// The local (PersistentStore) rule of the same name, next to the one in
@@ -295,9 +490,11 @@ pub(crate) enum FirewallRuleCheck {
     /// No rule of this name, neither in effect nor in the local store.
     Missing,
     /// A rule of this name exists. `rule` holds the values in effect (the
-    /// ActiveStore's) and `origin` where they come from; a rule only in the
-    /// local store is not in effect: then `rule` is the local one, `origin`
-    /// is `None` and `mismatches` has `active`. `mismatches` lists what
+    /// ActiveStore's), `origin` where they come from and `enforcement`
+    /// whether Windows applies it (not `enforced`: `mismatches` has
+    /// `enforcement`; unknown: `unchecked` has it). A rule only in the local
+    /// store is not in effect: then `rule` is the local one, `origin` and
+    /// `enforcement` are `None` and `mismatches` has `active`. `mismatches` lists what
     /// differs from the command's rule (empty = as expected); `unchecked`
     /// what could not be compared (no live listener or executable path to
     /// compare with). `local` tells the local rule apart from the one in
@@ -305,6 +502,7 @@ pub(crate) enum FirewallRuleCheck {
     Present {
         rule: FirewallRuleValues,
         origin: Option<RuleOrigin>,
+        enforcement: Option<Enforcement>,
         local: LocalRule,
         mismatches: Vec<FirewallField>,
         unchecked: Vec<FirewallField>,
@@ -401,17 +599,26 @@ fn check_rule(
         Err(reason) => return FirewallRuleCheck::Unknown { reason },
     };
     match effective {
-        Some((rule, origin)) => {
+        Some((rule, read)) => {
             let local = match local {
                 Err(_) => LocalRule::Unknown,
                 Ok(None) => LocalRule::Missing,
                 Ok(Some((local, _))) if same_values(&local, &rule) => LocalRule::Same,
                 Ok(Some((local, _))) => LocalRule::Differs { rule: local },
             };
-            let (mismatches, unchecked) = compare(&rule, shape, expected);
+            let enforcement = Enforcement::from_value(read.get("enforcement"));
+            let (mut mismatches, mut unchecked) = compare(&rule, shape, expected);
+            match enforcement {
+                Enforcement::Enforced => {}
+                Enforcement::NotEnforced { .. } => mismatches.push(FirewallField::Enforcement),
+                Enforcement::Unknown { .. } => unchecked.push(FirewallField::Enforcement),
+            }
+            mismatches.sort();
+            unchecked.sort();
             FirewallRuleCheck::Present {
                 rule,
-                origin: Some(origin),
+                origin: Some(RuleOrigin::from_value(read)),
+                enforcement: Some(enforcement),
                 local,
                 mismatches,
                 unchecked,
@@ -427,6 +634,7 @@ fn check_rule(
                 FirewallRuleCheck::Present {
                     rule,
                     origin: None,
+                    enforcement: None,
                     local: LocalRule::Same,
                     mismatches,
                     unchecked,
@@ -454,30 +662,26 @@ fn same_values(local: &FirewallRuleValues, effective: &FirewallRuleValues) -> bo
         && same_list(&local.remote_addresses, &effective.remote_addresses)
 }
 
-/// One store's read: `Ok(None)` = no rule of this name there.
+/// One store's read: `Ok(None)` = no rule of this name there; otherwise the
+/// rule's values and the read itself (for the ActiveStore's source and
+/// enforcement).
 fn read_store(
     value: Option<&Value>,
-) -> Result<Option<(FirewallRuleValues, RuleOrigin)>, UnknownReason> {
+) -> Result<Option<(FirewallRuleValues, &Value)>, UnknownReason> {
     let value = value.ok_or(UnknownReason::UnreadableOutput)?;
     match value.get("s").and_then(Value::as_str) {
         Some("missing") => Ok(None),
         Some("error") => Err(UnknownReason::QueryFailed),
         Some("present") => parse_values(value)
-            .map(Some)
+            .map(|rule| Some((rule, value)))
             .ok_or(UnknownReason::UnreadableOutput),
         _ => Err(UnknownReason::UnreadableOutput),
     }
 }
 
-fn parse_values(value: &Value) -> Option<(FirewallRuleValues, RuleOrigin)> {
+fn parse_values(value: &Value) -> Option<FirewallRuleValues> {
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
-    let source_type = text("sourceType")?;
-    let origin = RuleOrigin {
-        local: source_type.eq_ignore_ascii_case(LOCAL_SOURCE_TYPE),
-        source_type,
-        source: text("source")?,
-    };
-    let rule = FirewallRuleValues {
+    Some(FirewallRuleValues {
         enabled: text("enabled")?,
         direction: text("direction")?,
         action: text("action")?,
@@ -486,8 +690,7 @@ fn parse_values(value: &Value) -> Option<(FirewallRuleValues, RuleOrigin)> {
         program: text("program")?,
         local_ports: string_list(value.get("localPort")?)?,
         remote_addresses: string_list(value.get("remoteAddress")?)?,
-    };
-    Some((rule, origin))
+    })
 }
 
 /// A JSON string array, or a lone string (PowerShell can unwrap a
@@ -691,7 +894,8 @@ mod tests {
             "localPort": ["Any"],
             "remoteAddress": ["LocalSubnet"],
             "source": "PersistentStore",
-            "sourceType": "Local"
+            "sourceType": "Local",
+            "enforcement": [1]
         });
         for (key, value) in overrides.as_object().unwrap() {
             rule[key] = value.clone();
@@ -891,9 +1095,8 @@ mod tests {
                 "{garbage:?}"
             );
         }
-        // A present rule with a missing value (or without its source) is
-        // not guessed at.
-        for key in ["action", "sourceType"] {
+        // A present rule with a missing value is not guessed at.
+        for key in ["action", "localPort"] {
             let mut rule = program_values(json!({}));
             rule.as_object_mut().unwrap().remove(key);
             let status = run(json!({ "program": both(rule), "port": both(missing()) }));
@@ -937,9 +1140,9 @@ mod tests {
                 ..
             } => {
                 let origin = origin.as_ref().expect("in effect");
-                assert!(origin.local);
-                assert_eq!(origin.source_type, "Local");
-                assert_eq!(origin.source, "PersistentStore");
+                assert_eq!(origin.kind, SourceKind::Local);
+                assert_eq!(origin.source_type.as_deref(), Some("Local"));
+                assert_eq!(origin.source.as_deref(), Some("PersistentStore"));
                 assert_eq!(local, &LocalRule::Same);
                 assert_eq!(mismatches, &vec![]);
             }
@@ -966,9 +1169,9 @@ mod tests {
             } => {
                 assert_eq!(rule.action, "Block");
                 let origin = origin.as_ref().expect("in effect");
-                assert!(!origin.local);
-                assert_eq!(origin.source_type, "GroupPolicy");
-                assert_eq!(origin.source, "contoso.local\\Banto");
+                assert_eq!(origin.kind, SourceKind::GroupPolicy);
+                assert_eq!(origin.source_type.as_deref(), Some("GroupPolicy"));
+                assert_eq!(origin.source.as_deref(), Some("contoso.local\\Banto"));
                 assert_eq!(mismatches, &vec![FirewallField::Action]);
                 match local {
                     LocalRule::Differs { rule } => assert_eq!(rule.action, "Allow"),
@@ -981,7 +1184,7 @@ mod tests {
         match &status.port {
             FirewallRuleCheck::Present { local, origin, .. } => {
                 assert_eq!(local, &LocalRule::Missing);
-                assert!(!origin.as_ref().unwrap().local);
+                assert_eq!(origin.as_ref().unwrap().kind, SourceKind::GroupPolicy);
             }
             other => panic!("{other:?}"),
         }
@@ -1000,7 +1203,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(mismatches, &vec![]);
-                assert!(!origin.as_ref().unwrap().local);
+                assert_eq!(origin.as_ref().unwrap().kind, SourceKind::GroupPolicy);
                 // Same values: only the source differs.
                 assert_eq!(local, &LocalRule::Same);
             }
@@ -1173,7 +1376,11 @@ mod tests {
         );
         assert_eq!(
             value["program"]["origin"],
-            json!({ "sourceType": "Local", "source": "PersistentStore", "local": true })
+            json!({ "kind": "local", "sourceType": "Local", "source": "PersistentStore" })
+        );
+        assert_eq!(
+            value["program"]["enforcement"],
+            json!({ "state": "enforced" })
         );
         assert_eq!(value["program"]["local"], json!({ "state": "same" }));
         assert_eq!(value["port"], json!({ "state": "missing" }));
@@ -1186,6 +1393,7 @@ mod tests {
         assert_eq!(value["program"]["local"]["state"], "differs");
         assert_eq!(value["program"]["local"]["rule"]["action"], "Allow");
         assert_eq!(value["port"]["origin"], Value::Null);
+        assert_eq!(value["port"]["enforcement"], Value::Null);
         assert_eq!(value["port"]["mismatches"], json!(["active"]));
         let unknown =
             serde_json::to_value(evaluate(1, expected(), Err(UnknownReason::Timeout))).unwrap();
@@ -1194,6 +1402,271 @@ mod tests {
             json!({ "state": "unknown", "reason": "timeout" })
         );
         assert_eq!(unknown["groupOtherRules"], Value::Null);
+    }
+
+    /// The script reads only after checking the cmdlets are there, tells
+    /// "no such rule" apart by the lookup's own error, traces where the rule
+    /// in effect comes from and reports its enforcement (owner review on PR
+    /// #465).
+    #[test]
+    fn the_script_checks_the_cmdlets_traces_the_source_and_reads_enforcement() {
+        let script = probe_script(&rule_names("com.example.banto").unwrap()).unwrap();
+        let check = script
+            .find("Get-Command -Name Get-NetFirewallRule")
+            .expect("cmdlet check");
+        assert!(script[check..].starts_with(
+            "Get-Command -Name Get-NetFirewallRule, Get-NetFirewallApplicationFilter, Get-NetFirewallPortFilter, Get-NetFirewallAddressFilter -ErrorAction Stop } catch { exit 3 }"
+        ));
+        // Checked before anything is read.
+        assert!(check < script.find("function Read-BantoStore").unwrap());
+        assert!(check < script.find("-Group 'com.example.banto'").unwrap());
+        // "No such rule" is the cmdlet's own not-found answer, not just the
+        // `ObjectNotFound` category (which `CommandNotFoundException` has too).
+        assert!(script.contains("'Microsoft.PowerShell.Cmdletization.Cim.CimJobException'"));
+        assert!(script.contains("-like 'CmdletizationQuery_NotFound_*,Get-NetFirewallRule'"));
+        assert!(script.contains(
+            "Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -TracePolicyStore -ErrorAction Stop"
+        ));
+        assert!(script.contains("CimInstanceProperties['EnforcementStatus']"));
+        // A group read that fails is -1 (unknown) unless it is "not found".
+        assert!(script.contains("$group = -1"));
+        assert!(script.contains("catch { if (Test-BantoNotFound $_) { $group = 0 } }"));
+    }
+
+    fn enforcement_of(code: Option<Value>) -> FirewallRuleCheck {
+        let mut rule = program_values(json!({}));
+        match code {
+            Some(code) => rule["enforcement"] = code,
+            None => {
+                rule.as_object_mut().unwrap().remove("enforcement");
+            }
+        }
+        let read = json!({ "local": program_values(json!({})), "effective": rule });
+        run(json!({ "program": read, "port": both(missing()) })).program
+    }
+
+    /// Only `Full` is applied; a documented other code is "there but not
+    /// applied"; no code or an unknown one is not known (owner review on PR
+    /// #465).
+    #[test]
+    fn only_a_fully_enforced_rule_counts_as_applied() {
+        let present = |check: FirewallRuleCheck| match check {
+            FirewallRuleCheck::Present {
+                enforcement,
+                mismatches,
+                unchecked,
+                ..
+            } => (enforcement.expect("in effect"), mismatches, unchecked),
+            other => panic!("{other:?}"),
+        };
+        let (enforcement, differing, unchecked) = present(enforcement_of(Some(json!([1]))));
+        assert_eq!(enforcement, Enforcement::Enforced);
+        assert_eq!((differing, unchecked), (vec![], vec![]));
+        // A lone code (PowerShell unwrapping the array) reads the same.
+        let (enforcement, ..) = present(enforcement_of(Some(json!(1))));
+        assert_eq!(enforcement, Enforcement::Enforced);
+
+        for (code, reason) in [
+            (5, "InactiveProfile"),
+            (16, "LocalFirewallRulesDisallowed"),
+            (3, "CategoryOff"),
+            (0, "Invalid"),
+        ] {
+            let (enforcement, differing, unchecked) = present(enforcement_of(Some(json!([code]))));
+            assert_eq!(
+                enforcement,
+                Enforcement::NotEnforced {
+                    reasons: vec![reason.to_string()]
+                },
+                "{code}"
+            );
+            assert_eq!(differing, vec![FirewallField::Enforcement], "{code}");
+            assert_eq!(unchecked, vec![], "{code}");
+        }
+        let (enforcement, ..) = present(enforcement_of(Some(json!([5, 16, 5]))));
+        assert_eq!(
+            enforcement,
+            Enforcement::NotEnforced {
+                reasons: vec![
+                    "InactiveProfile".to_string(),
+                    "LocalFirewallRulesDisallowed".to_string()
+                ]
+            }
+        );
+
+        // No value, an empty list, something not a code, a code past the
+        // documented ones, `Full` next to a reason: not known.
+        for (code, values) in [
+            (None, vec![]),
+            (Some(json!([])), vec![]),
+            (Some(json!(null)), vec![]),
+            (Some(json!(["Full"])), vec![]),
+            (Some(json!([25])), vec![25]),
+            (Some(json!([1, 5])), vec![1, 5]),
+        ] {
+            let (enforcement, differing, unchecked) = present(enforcement_of(code.clone()));
+            assert_eq!(enforcement, Enforcement::Unknown { values }, "{code:?}");
+            assert_eq!(differing, vec![], "{code:?}");
+            assert_eq!(unchecked, vec![FirewallField::Enforcement], "{code:?}");
+        }
+
+        // Next to other differences, sorted with them.
+        let mut rule = program_values(json!({ "action": "Block", "enforcement": [16] }));
+        rule["program"] = json!(EXE);
+        let status = run(json!({
+            "program": { "local": missing(), "effective": rule },
+            "port": both(missing()),
+        }));
+        assert_eq!(
+            mismatches(&status.program),
+            vec![FirewallField::Action, FirewallField::Enforcement]
+        );
+        let value = serde_json::to_value(&status).unwrap();
+        assert_eq!(
+            value["program"]["enforcement"],
+            json!({ "state": "notEnforced", "reasons": ["LocalFirewallRulesDisallowed"] })
+        );
+        assert_eq!(
+            value["program"]["mismatches"],
+            json!(["action", "enforcement"])
+        );
+        let unknown = serde_json::to_value(enforcement_of(Some(json!([25])))).unwrap();
+        assert_eq!(
+            unknown["enforcement"],
+            json!({ "state": "unknown", "values": [25] })
+        );
+        assert_eq!(unknown["unchecked"], json!(["enforcement"]));
+    }
+
+    fn origin_of(source_type: Option<&str>, source: Option<&str>) -> RuleOrigin {
+        let mut rule = program_values(json!({}));
+        let object = rule.as_object_mut().unwrap();
+        object.remove("sourceType");
+        object.remove("source");
+        if let Some(t) = source_type {
+            object.insert("sourceType".into(), json!(t));
+        }
+        if let Some(s) = source {
+            object.insert("source".into(), json!(s));
+        }
+        let read = json!({ "local": missing(), "effective": rule });
+        match run(json!({ "program": read, "port": both(missing()) })).program {
+            FirewallRuleCheck::Present { origin, .. } => origin.expect("in effect"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Every documented `PolicyStoreSourceType` keeps its own kind; an
+    /// unreported one is "not known", never central management; anything
+    /// else is "other" with its value (owner review on PR #465).
+    #[test]
+    fn the_source_is_classified_by_its_type_and_unknown_when_not_reported() {
+        for (source_type, kind) in [
+            ("Local", SourceKind::Local),
+            ("GroupPolicy", SourceKind::GroupPolicy),
+            ("Dynamic", SourceKind::Dynamic),
+            ("Generated", SourceKind::Generated),
+            ("Hardcoded", SourceKind::Hardcoded),
+            ("MDM", SourceKind::Mdm),
+            ("mdm", SourceKind::Mdm),
+            ("HostFirewallLocal", SourceKind::HostFirewallLocal),
+            (
+                "HostFirewallGroupPolicy",
+                SourceKind::HostFirewallGroupPolicy,
+            ),
+            ("HostFirewallDynamic", SourceKind::HostFirewallDynamic),
+            ("HostFirewallMDM", SourceKind::HostFirewallMdm),
+            ("SomethingNew", SourceKind::Other),
+            ("7", SourceKind::Other),
+            ("None", SourceKind::Unknown),
+        ] {
+            let origin = origin_of(Some(source_type), Some("x"));
+            assert_eq!(origin.kind, kind, "{source_type}");
+            assert_eq!(origin.source_type.as_deref(), Some(source_type));
+        }
+        // Not traced: no type, an empty type, an empty or blank source.
+        let origin = origin_of(None, None);
+        assert_eq!(
+            origin,
+            RuleOrigin {
+                kind: SourceKind::Unknown,
+                source_type: None,
+                source: None
+            }
+        );
+        let origin = origin_of(Some(""), Some(""));
+        assert_eq!(origin.kind, SourceKind::Unknown);
+        assert_eq!((origin.source_type, origin.source), (None, None));
+        let origin = origin_of(Some("GroupPolicy"), Some("  "));
+        assert_eq!(origin.kind, SourceKind::GroupPolicy);
+        assert_eq!(origin.source, None);
+        // An untraced origin does not make the rule unreadable: its values
+        // are still compared.
+        let mut rule = program_values(json!({}));
+        rule.as_object_mut().unwrap().remove("sourceType");
+        let status = run(json!({ "program": both(rule), "port": both(missing()) }));
+        assert_eq!(mismatches(&status.program), vec![]);
+        let value = serde_json::to_value(&status).unwrap();
+        assert_eq!(
+            value["program"]["origin"],
+            json!({ "kind": "unknown", "sourceType": null, "source": "PersistentStore" })
+        );
+    }
+
+    /// Runs the real script with `prefix` in front (Windows only). Nothing
+    /// is changed: the prefixes below keep the script from reading at all.
+    #[cfg(windows)]
+    fn probe_with_prefix(prefix: &str) -> Result<String, UnknownReason> {
+        let names = rule_names("com.example.banto.probe-test").unwrap();
+        let script = format!("{prefix}\n{}", probe_script(&names).unwrap());
+        run_encoded(&encode_command(&script))
+    }
+
+    /// `Get-NetFirewallRule` cannot be found (module auto-loading off, as
+    /// when the NetSecurity module is missing): `CommandNotFoundException`,
+    /// whose category is `ObjectNotFound` too, must not read as "no rule"
+    /// (owner review on PR #465). The cmdlet check exits with 3.
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_cmdlet_is_a_failed_read_not_missing() {
+        let outcome = probe_with_prefix("$PSModuleAutoLoadingPreference = 'None'");
+        assert_eq!(outcome, Err(UnknownReason::QueryFailed));
+        let status = evaluate(0, expected(), outcome);
+        let unknown = FirewallRuleCheck::Unknown {
+            reason: UnknownReason::QueryFailed,
+        };
+        assert_eq!(status.program, unknown);
+        assert_eq!(status.port, unknown);
+        assert_eq!(status.group_other_rules, None);
+    }
+
+    /// The cmdlet is there by name but cannot run (a stand-in that throws
+    /// `CommandNotFoundException`, as a module that fails to load does): the
+    /// reads are errors, not "missing", and the group count is unknown.
+    #[cfg(windows)]
+    #[test]
+    fn a_cmdlet_that_fails_is_not_missing() {
+        let outcome = probe_with_prefix(
+            // Loaded first, so auto-loading the module later cannot put the
+            // real cmdlet back over the stand-in.
+            "Import-Module NetSecurity
+function Get-NetFirewallRule { throw [System.Management.Automation.CommandNotFoundException]::new('Get-NetFirewallRule') }",
+        );
+        let stdout = outcome.clone().expect("the script still prints its JSON");
+        let value: Value = serde_json::from_str(&stdout).unwrap();
+        for rule in ["program", "port"] {
+            for store in ["local", "effective"] {
+                assert_eq!(value[rule][store]["s"], "error", "{rule} {store}");
+            }
+        }
+        assert_eq!(value["group"], -1);
+        let status = evaluate(0, expected(), outcome);
+        let unknown = FirewallRuleCheck::Unknown {
+            reason: UnknownReason::QueryFailed,
+        };
+        assert_eq!(status.program, unknown);
+        assert_eq!(status.port, unknown);
+        assert_eq!(status.group_other_rules, None);
     }
 
     /// Reads this PC's real firewall (read-only). Not run by default - CI is

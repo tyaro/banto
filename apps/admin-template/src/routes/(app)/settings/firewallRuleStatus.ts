@@ -11,7 +11,9 @@
  * Firewall holds under these names, and the panel says so. What is compared
  * is the rule in effect (the ActiveStore's), which a central policy of the
  * same name can override; the local rule is only a supplement (Codex review
- * on PR #465).
+ * on PR #465). Being in the ActiveStore is not being applied: only an
+ * `enforced` status reads as applied, and a rule whose status is not known
+ * never reads as plainly "as expected" (owner review on PR #465).
  *
  * Responses are ordered the same way as `serverStatusRequests.ts` (owner
  * review on PR #463): each check gets a ticket, an apply or a newer check
@@ -20,30 +22,76 @@
  * port and executable path) - never one for a listener that is gone.
  */
 import type {
+	FirewallEnforcement,
 	FirewallField,
 	FirewallRuleCheck,
-	FirewallRuleOrigin,
 	FirewallRuleStatus,
 	FirewallRuleValues,
+	FirewallSourceKind,
 	FirewallUnknownReason
 } from '#lib/banto/serverAdmin.js';
 import type { FirewallInfo } from './firewallInfo';
 
 const STATES = new Set(['missing', 'present', 'unknown']);
 const LOCAL_STATES = new Set(['missing', 'same', 'differs', 'unknown']);
+const SOURCE_KINDS: ReadonlySet<string> = new Set<FirewallSourceKind>([
+	'local',
+	'groupPolicy',
+	'dynamic',
+	'generated',
+	'hardcoded',
+	'mdm',
+	'hostFirewallLocal',
+	'hostFirewallGroupPolicy',
+	'hostFirewallDynamic',
+	'hostFirewallMdm',
+	'unknown',
+	'other'
+]);
+/** Sources that are central management: what applies is the policy's. */
+const POLICY_KINDS: ReadonlySet<FirewallSourceKind> = new Set<FirewallSourceKind>([
+	'groupPolicy',
+	'mdm',
+	'hostFirewallGroupPolicy',
+	'hostFirewallMdm'
+]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
+}
+
+function isTextOrNull(value: unknown): boolean {
+	return value === null || typeof value === 'string';
 }
 
 function isOrigin(value: unknown): boolean {
 	return (
 		value === null ||
 		(isObject(value) &&
-			typeof value.sourceType === 'string' &&
-			typeof value.source === 'string' &&
-			typeof value.local === 'boolean')
+			typeof value.kind === 'string' &&
+			SOURCE_KINDS.has(value.kind) &&
+			isTextOrNull(value.sourceType) &&
+			isTextOrNull(value.source))
 	);
+}
+
+function isEnforcement(value: unknown): boolean {
+	if (value === null) return true;
+	if (!isObject(value)) return false;
+	switch (value.state) {
+		case 'enforced':
+			return true;
+		case 'notEnforced':
+			return (
+				Array.isArray(value.reasons) &&
+				value.reasons.length > 0 &&
+				value.reasons.every((r) => typeof r === 'string')
+			);
+		case 'unknown':
+			return Array.isArray(value.values) && value.values.every((v) => typeof v === 'number');
+		default:
+			return false;
+	}
 }
 
 function isLocalRule(value: unknown): boolean {
@@ -62,6 +110,7 @@ function isRuleCheck(value: unknown): value is FirewallRuleCheck {
 		return (
 			isObject(check.rule) &&
 			isOrigin(check.origin) &&
+			isEnforcement(check.enforcement) &&
 			isLocalRule(check.local) &&
 			Array.isArray(check.mismatches) &&
 			Array.isArray(check.unchecked)
@@ -118,28 +167,45 @@ export type FirewallLocalView =
 	| { kind: 'differs'; values: FirewallLocalValue[] }
 	| { kind: 'unknown' };
 
+/**
+ * Where the rule in effect comes from, when it is not the local store's
+ * rule. `policy`: central management (Group Policy, MDM) decides what
+ * applies. `kind: 'unknown'`: the source was not reported (never taken for
+ * central management).
+ */
+export interface FirewallOriginView {
+	kind: Exclude<FirewallSourceKind, 'local'>;
+	sourceType: string | null;
+	source: string | null;
+	policy: boolean;
+}
+
+/** What a present rule carries besides its headline. */
+interface FirewallPresentView {
+	/** What could not be compared, except `enforcement` (`enforcement` words that). */
+	unchecked: FirewallField[];
+	/** `null` when the rule in effect is the local store's own rule. */
+	origin: FirewallOriginView | null;
+	/** `null` when the rule is not in the ActiveStore (`active` is then a mismatch). */
+	enforcement: FirewallEnforcement | null;
+	local: FirewallLocalView;
+}
+
 /** What one rule's state reads as on screen. */
 export type FirewallRuleView =
 	| { kind: 'missing' }
+	/** Present, as the administrator command creates it, and applied (`Full`). */
+	| ({ kind: 'matches' } & FirewallPresentView)
 	/**
-	 * Present and as the administrator command creates it. `policy`: the
-	 * rule in effect comes from central management (Group Policy and the
-	 * like), not the local store.
+	 * The values are as the command creates them, but whether Windows
+	 * applies the rule is not known (no or an unknown `EnforcementStatus`).
 	 */
-	| {
-			kind: 'matches';
-			unchecked: FirewallField[];
-			policy: FirewallRuleOrigin | null;
-			local: FirewallLocalView;
-	  }
-	/** Present but different (`fields`, e.g. changed to Block, a narrower source range, another exe, an old port). */
-	| {
-			kind: 'differs';
-			fields: FirewallField[];
-			unchecked: FirewallField[];
-			policy: FirewallRuleOrigin | null;
-			local: FirewallLocalView;
-	  }
+	| ({ kind: 'unconfirmed' } & FirewallPresentView)
+	/**
+	 * Present but different (`fields`, e.g. changed to Block, a narrower
+	 * source range, another exe, an old port, not applied).
+	 */
+	| ({ kind: 'differs'; fields: FirewallField[] } & FirewallPresentView)
 	| { kind: 'unknown'; reason: FirewallUnknownReason };
 
 const VALUE_FIELDS: readonly FirewallField[] = [
@@ -194,25 +260,37 @@ export function firewallRuleView(check: FirewallRuleCheck): FirewallRuleView {
 		case 'unknown':
 			return { kind: 'unknown', reason: check.reason };
 		case 'present': {
-			const policy = check.origin !== null && !check.origin.local ? check.origin : null;
-			const local = localView(check);
-			return check.mismatches.length === 0
-				? { kind: 'matches', unchecked: check.unchecked, policy, local }
-				: {
-						kind: 'differs',
-						fields: check.mismatches,
-						unchecked: check.unchecked,
-						policy,
-						local
-					};
+			const origin = check.origin;
+			const present: FirewallPresentView = {
+				unchecked: check.unchecked.filter((field) => field !== 'enforcement'),
+				origin:
+					origin === null || origin.kind === 'local'
+						? null
+						: {
+								kind: origin.kind,
+								sourceType: origin.sourceType,
+								source: origin.source,
+								policy: POLICY_KINDS.has(origin.kind)
+							},
+				enforcement: check.enforcement,
+				local: localView(check)
+			};
+			if (check.mismatches.length > 0) {
+				return { kind: 'differs', fields: check.mismatches, ...present };
+			}
+			// Applied only when the status says so; a status that is missing or
+			// unknown never reads as plainly "as expected".
+			return check.enforcement?.state === 'enforced'
+				? { kind: 'matches', ...present }
+				: { kind: 'unconfirmed', ...present };
 		}
 	}
 }
 
 /**
  * The value of `field` in `check`'s rule (the one in effect), as the
- * firewall reports it (lists joined with `, `). `null` for `active` (the
- * panel words it) and when the rule is not present.
+ * firewall reports it (lists joined with `, `). `null` for `active` and
+ * `enforcement` (the panel words them) and when the rule is not present.
  */
 export function firewallFieldValue(check: FirewallRuleCheck, field: FirewallField): string | null {
 	return check.state === 'present' ? ruleFieldValue(check.rule, field) : null;
@@ -237,6 +315,7 @@ function ruleFieldValue(rule: FirewallRuleValues, field: FirewallField): string 
 		case 'remoteAddress':
 			return rule.remoteAddresses.join(', ');
 		case 'active':
+		case 'enforcement':
 			return null;
 	}
 }
@@ -291,5 +370,37 @@ export class FirewallStatusRequests {
 			};
 		}
 		return { kind: 'ok', status: value };
+	}
+}
+
+/** What the panel shows: the last result and what went wrong with the last check. */
+export interface FirewallPanelState {
+	result: FirewallRuleStatus | null;
+	problem: 'unavailable' | 'changed' | null;
+}
+
+/**
+ * The panel's state after a check came to `outcome` (`superseded` changes
+ * nothing). A failed check (`unavailable`, or answered for an older snapshot)
+ * CLEARS the previous result instead of showing it next to the error, so an
+ * old "as expected" or "no rule" is never read as the answer to this check
+ * (owner review on PR #465). `refresh`: the host is already past what is
+ * shown - re-read the server status (the panel then checks again).
+ */
+export function nextFirewallPanelState(
+	state: FirewallPanelState,
+	outcome: FirewallCheckOutcome
+): FirewallPanelState & { refresh: boolean } {
+	switch (outcome.kind) {
+		case 'superseded':
+			return { ...state, refresh: false };
+		case 'ok':
+			return { result: outcome.status, problem: null, refresh: false };
+		case 'unavailable':
+			return { result: null, problem: 'unavailable', refresh: false };
+		case 'stale':
+			return outcome.newer
+				? { result: null, problem: null, refresh: true }
+				: { result: null, problem: 'changed', refresh: false };
 	}
 }

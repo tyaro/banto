@@ -132,7 +132,8 @@ export type FirewallField =
 	| 'program'
 	| 'localPort'
 	| 'remoteAddress'
-	| 'active';
+	| 'active'
+	| 'enforcement';
 
 /** Mirrors src-tauri's `FirewallRuleValues`: a rule as `Get-NetFirewall*` reports it. */
 export interface FirewallRuleValues {
@@ -146,15 +147,45 @@ export interface FirewallRuleValues {
 	remoteAddresses: string[];
 }
 
+/**
+ * Mirrors src-tauri's `SourceKind`: what the ActiveStore rule's
+ * `PolicyStoreSourceType` (traced with `-TracePolicyStore`) names.
+ * `unknown` = not reported; `other` = a value outside the documented ones.
+ */
+export type FirewallSourceKind =
+	| 'local'
+	| 'groupPolicy'
+	| 'dynamic'
+	| 'generated'
+	| 'hardcoded'
+	| 'mdm'
+	| 'hostFirewallLocal'
+	| 'hostFirewallGroupPolicy'
+	| 'hostFirewallDynamic'
+	| 'hostFirewallMdm'
+	| 'unknown'
+	| 'other';
+
 /** Mirrors src-tauri's `RuleOrigin`: where the rule in effect (the ActiveStore's) comes from. */
 export interface FirewallRuleOrigin {
-	/** `PolicyStoreSourceType`: `Local`, `GroupPolicy`, `Dynamic`, `MDM`, ... */
-	sourceType: string;
-	/** `PolicyStoreSource`: `PersistentStore` for a local rule, the policy otherwise. */
-	source: string;
-	/** `sourceType` is `Local` (otherwise central management decides it). */
-	local: boolean;
+	kind: FirewallSourceKind;
+	/** `PolicyStoreSourceType` as reported (`null` when not reported). */
+	sourceType: string | null;
+	/** `PolicyStoreSource`: `PersistentStore` for a local rule, the policy otherwise (`null` when not reported). */
+	source: string | null;
 }
+
+/**
+ * Mirrors src-tauri's `Enforcement`: whether the rule in effect is applied
+ * (the ActiveStore's `EnforcementStatus`). Only `Full` is `enforced`; a
+ * documented other code is `notEnforced` with its names (`InactiveProfile`,
+ * `LocalFirewallRulesDisallowed`, ...); no code or an unknown one is
+ * `unknown` (`values`: the raw codes).
+ */
+export type FirewallEnforcement =
+	| { state: 'enforced' }
+	| { state: 'notEnforced'; reasons: string[] }
+	| { state: 'unknown'; values: number[] };
 
 /** Mirrors src-tauri's `LocalRule`: the local (PersistentStore) rule next to the one in effect. */
 export type FirewallLocalRule =
@@ -170,10 +201,13 @@ export type FirewallRuleCheck =
 			state: 'present';
 			/**
 			 * The rule in effect (the ActiveStore's); the local one when it is
-			 * not in effect (`origin` is then `null` and `mismatches` has `active`).
+			 * not in the ActiveStore (`origin` and `enforcement` are then `null`
+			 * and `mismatches` has `active`).
 			 */
 			rule: FirewallRuleValues;
 			origin: FirewallRuleOrigin | null;
+			/** Not `enforced`: `mismatches` has `enforcement`; `unknown`: `unchecked` has it. */
+			enforcement: FirewallEnforcement | null;
 			local: FirewallLocalRule;
 			/** What differs from the rule the administrator command creates (empty = as expected). */
 			mismatches: FirewallField[];

@@ -10,10 +10,15 @@
 	 * 「確認できない（理由）」を出す。ルールがあることと LAN から接続できる
 	 * ことは同じではないので、そのことも書く。
 	 *
-	 * 照合するのは実際に効いている（ActiveStore の）ルール。同じ名前の
-	 * 集中管理のポリシーのルールが効いているときはその出どころを、ローカルの
-	 * ルールが無い・値が違う・読めないときはそれを補足で出す（PR #465 の
-	 * Codex の指摘）。
+	 * 照合するのは ActiveStore の（効いている）ルール。ActiveStore にあっても
+	 * 適用されているとは限らないので、EnforcementStatus が Full のときだけ
+	 * 「適用されている」、ほかの既知の値は「存在するが適用されていない（理由）」、
+	 * 読めない・未知の値は「適用状態は不明」と分けて出す。出どころがローカルの
+	 * ストアでなければ種別（グループポリシー・MDM・Dynamic など）と出どころを、
+	 * 取得できなければ「出どころ不明」を、ローカルのルールが無い・値が違う・
+	 * 読めないときはそれを補足で出す（PR #465 の Codex・オーナーの指摘）。
+	 *
+	 * 再確認が失敗したら前回の結果は消す（エラーと並べて古い結果を出さない）。
 	 *
 	 * 応答は `firewallRuleStatus.ts` の `FirewallStatusRequests` で順序を
 	 * 守る: 適用の開始・新しい確認で古い確認を捨て、表示している snapshot
@@ -25,6 +30,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import {
 		getFirewallRuleStatus,
+		type FirewallEnforcement,
 		type FirewallField,
 		type FirewallRuleCheck,
 		type FirewallRuleStatus,
@@ -35,7 +41,9 @@
 		FirewallStatusRequests,
 		firewallFieldValue,
 		firewallRuleView,
-		firewallStatusMatches
+		firewallStatusMatches,
+		nextFirewallPanelState,
+		type FirewallOriginView
 	} from './firewallRuleStatus';
 	import type { StatusRefresh } from './serverStatusRequests';
 
@@ -67,22 +75,12 @@
 		const outcome = await requests.check(getFirewallRuleStatus, () => untrack(() => info));
 		if (outcome.kind === 'superseded') return;
 		checking = false;
-		switch (outcome.kind) {
-			case 'ok':
-				result = outcome.status;
-				break;
-			case 'unavailable':
-				problem = 'unavailable';
-				break;
-			case 'stale':
-				if (outcome.newer) {
-					// The status re-read changes `info`, and the effect below checks again.
-					void refresh();
-				} else {
-					problem = 'changed';
-				}
-				break;
-		}
+		// A failed check clears the previous result (never shown next to the error).
+		const next = nextFirewallPanelState({ result, problem }, outcome);
+		result = next.result;
+		problem = next.problem;
+		// The status re-read changes `info`, and the effect below checks again.
+		if (next.refresh) void refresh();
 	}
 
 	$effect(() => {
@@ -116,7 +114,50 @@
 				return m['settings.firewallFieldRemoteAddress']();
 			case 'active':
 				return m['settings.firewallFieldActive']();
+			case 'enforcement':
+				return m['settings.firewallFieldEnforcement']();
 		}
+	}
+
+	function originKind(origin: FirewallOriginView): string {
+		const sourceType = origin.sourceType ?? '';
+		switch (origin.kind) {
+			case 'groupPolicy':
+				return m['settings.firewallSourceGroupPolicy']();
+			case 'mdm':
+				return m['settings.firewallSourceMdm']();
+			case 'dynamic':
+				return m['settings.firewallSourceDynamic']();
+			case 'generated':
+				return m['settings.firewallSourceGenerated']();
+			case 'hardcoded':
+				return m['settings.firewallSourceHardcoded']();
+			case 'hostFirewallLocal':
+			case 'hostFirewallGroupPolicy':
+			case 'hostFirewallDynamic':
+			case 'hostFirewallMdm':
+				return m['settings.firewallSourceHostFirewall']({ sourceType });
+			case 'other':
+			case 'unknown':
+				return m['settings.firewallSourceOther']({ sourceType });
+		}
+	}
+
+	function originText(origin: FirewallOriginView): string {
+		const source = origin.source ?? m['settings.firewallSourceUnknown']();
+		if (origin.kind === 'unknown') return m['settings.firewallStatusOriginUnknown']({ source });
+		const kind = originKind(origin);
+		return origin.policy
+			? m['settings.firewallStatusPolicy']({ kind, source })
+			: m['settings.firewallStatusOrigin']({ kind, source });
+	}
+
+	function notEnforcedText(enforcement: FirewallEnforcement | null): string {
+		const reasons =
+			enforcement?.state === 'notEnforced'
+				? enforcement.reasons.join(m['settings.firewallListSeparator']())
+				: m['settings.firewallSourceUnknown']();
+		return m['settings.firewallEnforcementNotEnforced']({ reasons });
 	}
 
 	function reasonText(reason: FirewallUnknownReason): string {
@@ -148,6 +189,8 @@
 			<p>{m['settings.firewallStatusMissing']()}</p>
 		{:else if view.kind === 'matches'}
 			<p>{m['settings.firewallStatusMatches']()}</p>
+		{:else if view.kind === 'unconfirmed'}
+			<p class="error">{m['settings.firewallStatusUnconfirmed']()}</p>
 		{:else if view.kind === 'differs'}
 			<p class="error">{m['settings.firewallStatusDiffers']()}</p>
 			<ul>
@@ -157,6 +200,8 @@
 						{fieldLabel(field)}:
 						{#if field === 'active'}
 							{m['settings.firewallFieldActiveNo']()}
+						{:else if field === 'enforcement'}
+							{notEnforcedText(view.enforcement)}
 						{:else}
 							<code>{value}</code>
 						{/if}
@@ -166,13 +211,30 @@
 		{:else}
 			<p>{m['settings.firewallStatusUnknown']({ reason: reasonText(view.reason) })}</p>
 		{/if}
-		{#if view.kind === 'matches' || view.kind === 'differs'}
-			{#if view.policy}
-				<p class="note" data-origin="policy">
-					{m['settings.firewallStatusPolicy']({
-						sourceType: view.policy.sourceType,
-						source: view.policy.source
-					})}
+		{#if view.kind === 'matches' || view.kind === 'unconfirmed' || view.kind === 'differs'}
+			{#if view.enforcement?.state === 'enforced'}
+				<p class="note" data-enforcement="enforced">
+					{m['settings.firewallEnforcementEnforced']()}
+				</p>
+			{:else if view.enforcement?.state === 'unknown'}
+				<p class="note" data-enforcement="unknown">
+					{view.enforcement.values.length > 0
+						? m['settings.firewallEnforcementUnknown']({
+								values: view.enforcement.values.join(', ')
+							})
+						: m['settings.firewallEnforcementUnread']()}
+				</p>
+			{/if}
+			{#if view.origin}
+				<p
+					class="note"
+					data-origin={view.origin.kind === 'unknown'
+						? 'unknown'
+						: view.origin.policy
+							? 'policy'
+							: 'other'}
+				>
+					{originText(view.origin)}
 				</p>
 			{/if}
 			{#if view.local.kind === 'missing'}
@@ -220,6 +282,10 @@
 						group: names.group,
 						count: shown.groupOtherRules
 					})}
+				</p>
+			{:else if shown.groupOtherRules === null && names}
+				<p class="note" data-group="unknown">
+					{m['settings.firewallStatusGroupUnknown']({ group: names.group })}
 				</p>
 			{/if}
 		{:else if checking}

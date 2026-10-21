@@ -461,7 +461,12 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 						remoteAddresses: ['LocalSubnet']
 					},
 					// A Group Policy rule of the same name is in effect; the local one says Allow.
-					origin: { sourceType: 'GroupPolicy', source: 'contoso.local\\Banto', local: false },
+					origin: {
+						kind: 'groupPolicy',
+						sourceType: 'GroupPolicy',
+						source: 'contoso.local\\Banto'
+					},
+					enforcement: { state: 'enforced' },
 					local: {
 						state: 'differs',
 						rule: {
@@ -510,7 +515,10 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await expect(differs).toContainText('操作:');
 		await expect(differs).toContainText('Block');
 		await expect(differs.locator('[data-origin="policy"]')).toContainText(
-			'集中管理のポリシーのルールです（出どころ: GroupPolicy contoso.local\\Banto）'
+			'集中管理のポリシー（グループポリシー）のルールです（出どころ: contoso.local\\Banto）'
+		);
+		await expect(differs.locator('[data-enforcement="enforced"]')).toContainText(
+			'適用されています（EnforcementStatus: Full）'
 		);
 		await expect(differs.locator('[data-local="differs"]')).toBeVisible();
 		await expect(differs).toContainText('Allow');
