@@ -569,6 +569,16 @@ impl SettingsService {
         key.starts_with("auth.")
     }
 
+    /// Is `key` one of the embedded-server keys (the `server.` namespace)?
+    /// The desktop app's generic `settings_set` refuses them (Issue #459):
+    /// they are written only through [`Self::set_server_config`] (by
+    /// `server_apply`, which replaces the listener under its server lock, and
+    /// by the launch-time port fallback), so a raw write could otherwise
+    /// leave the saved settings disagreeing with the listener that is running.
+    pub fn is_server_key(key: &str) -> bool {
+        key.starts_with("server.")
+    }
+
     /// Read the audit-log retention settings (spec M14), falling back to
     /// [`AuditSettings::default`] for any key that has never been set. See
     /// [`parse_retention`] for how a stored value maps to `Option<i64>`.
@@ -830,6 +840,12 @@ mod tests {
         assert!(SettingsService::is_auth_key("auth.disabled"));
         assert!(SettingsService::is_auth_key("auth.autologin.username"));
         assert!(!SettingsService::is_auth_key("audit.retention_days"));
+        // Issue #459: the `server.` namespace, and nothing that merely
+        // contains or resembles it.
+        assert!(SettingsService::is_server_key("server.port"));
+        assert!(SettingsService::is_server_key("server.viewer_public"));
+        assert!(!SettingsService::is_server_key("serverless"));
+        assert!(!SettingsService::is_server_key("ui.admin.server.port"));
     }
 
     #[tokio::test]

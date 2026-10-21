@@ -41,9 +41,9 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
-    bind as bind_listener, bind_with_port_fallback, lan_urls_for_bind, static_router,
-    with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError, RunningServer,
-    ServerConfig, ServerEvent,
+    bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_urls_for_bind,
+    static_router, with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError,
+    RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -125,16 +125,12 @@ struct AppState {
     /// its own session, over its own transport (both sessions ultimately
     /// check the same `users` credential store, though).
     rest_auth: AuthState,
-    /// `Some` while LAN access is enabled and successfully bound; `None`
-    /// otherwise (disabled, or a previous bind attempt failed - see
-    /// `server_apply`).
-    server: AsyncMutex<Option<RunningServer>>,
-    /// What the launch-time auto-start had to do about a saved port that was
-    /// in use ([`bind_saved_server_at_launch`]): `Some` until the next
-    /// successful `server_apply`, reported by `server_status` so the frontend
-    /// can tell the user (the text is built there, conventions §13). A std
-    /// `Mutex`, never held across an `.await`.
-    server_port_notice: Mutex<Option<ServerPortNotice>>,
+    /// The embedded LAN server's live state ([`ServerSlot`]): the running
+    /// listener (if any), its generation, and what the last launch / apply
+    /// reported. One lock for all of it, so `server_status` reads a
+    /// consistent snapshot and `server_apply` replaces it as a whole
+    /// (Issue #459).
+    server: AsyncMutex<ServerSlot>,
     /// Audit trail (spec M14): every mutating command below records a
     /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
     /// `login`/`login_failed`/`logout`/`setup` entry here (`origin:
@@ -1783,8 +1779,125 @@ struct QrSvgEntry {
     svg: String,
 }
 
+/// The embedded LAN server's live state, behind `AppState::server` (Issue
+/// #459). Everything `server_status` reports about the running server comes
+/// from here - never from the saved `server.*` settings - and `server_apply`
+/// changes it only while holding the lock, so a reader sees either the state
+/// before an apply or the state after it, never a mix.
+struct ServerSlot {
+    /// `Some` while a listener is serving; `None` when LAN access is
+    /// disabled, the launch-time bind failed, or an apply could not bring
+    /// back the previous listener.
+    live: Option<LiveServer>,
+    /// Bumped every time `live` is replaced (a successful apply, or a failed
+    /// one that stopped the old listener). Lets a caller that shows or copies
+    /// the live values (e.g. a firewall guide) tell that they went stale and
+    /// re-read them. Starts at 0 at launch; not persisted.
+    generation: u64,
+    /// What the launch-time auto-start had to do about a saved port that was
+    /// in use ([`bind_saved_server_at_launch`]): `Some` until the next
+    /// successful `server_apply`, reported by `server_status` so the frontend
+    /// can tell the user (the text is built there, conventions §13).
+    port_notice: Option<ServerPortNotice>,
+    /// The last `server_apply` that failed after it had stopped the old
+    /// listener, and what became of that listener. Cleared by a successful
+    /// apply.
+    apply_failure: Option<ServerApplyFailure>,
+}
+
+impl ServerSlot {
+    fn new(live: Option<LiveServer>, port_notice: Option<ServerPortNotice>) -> Self {
+        Self {
+            live,
+            generation: 0,
+            port_notice,
+            apply_failure: None,
+        }
+    }
+}
+
+/// A serving listener plus the bind address it was started from.
+struct LiveServer {
+    server: RunningServer,
+    /// The bind address exactly as it was passed to the bind (e.g.
+    /// `"0.0.0.0"`, `"[::1]"`), so a rollback re-binds the same thing. The
+    /// status reports `server.local_addr()` instead - the address the
+    /// listener actually has.
+    bind: String,
+}
+
+impl LiveServer {
+    fn new(server: RunningServer, bind: String) -> Self {
+        Self { server, bind }
+    }
+
+    /// The address and port the listener is actually bound to.
+    fn listener(&self) -> ServerListener {
+        let addr = self.server.local_addr();
+        ServerListener {
+            bind: addr.ip().to_string(),
+            port: addr.port(),
+        }
+    }
+}
+
+/// The bind address and port of the listener that is actually serving, from
+/// its `local_addr` (Issue #459). Mirrors `serverAdmin.ts::ServerListener`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServerListener {
+    bind: String,
+    port: u16,
+}
+
+/// A `server_apply` that failed after it had stopped the listener that was
+/// running (Issue #459). Codes and values only - the frontend builds any text
+/// (conventions §13). Mirrors `serverAdmin.ts::ServerApplyFailure`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServerApplyFailure {
+    /// The settings the failed apply asked for (none of them were saved).
+    enabled: bool,
+    bind: String,
+    port: u16,
+    reason: ServerApplyFailureReason,
+    previous: PreviousServerOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ServerApplyFailureReason {
+    /// The requested port was in use.
+    PortInUse,
+    /// The bind failed for another reason (address not available, ...).
+    BindFailed,
+    /// The new listener was bound but the settings could not be saved (a
+    /// storage error, or the final auth/LAN re-validation refused them).
+    SaveFailed,
+}
+
+/// What became of the listener that was running before a failed apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum PreviousServerOutcome {
+    /// Nothing was running before the apply.
+    None,
+    /// The previous listener was bound again on its old address and port.
+    Restored,
+    /// The previous listener could not be bound again: nothing is serving
+    /// although the saved settings still say enabled.
+    RestoreFailed,
+}
+
 /// `server_status`/`server_apply`'s shared response shape - mirrors
 /// `src/lib/banto/serverAdmin.ts::ServerStatus` field-for-field.
+///
+/// Issue #459: `enabled`/`bind`/`port`/`viewer_public` are the SAVED settings
+/// (what the next launch or the settings form starts from); `running`,
+/// `live`, `urls` and `qr_svgs` describe the listener that is actually
+/// serving. Both halves are read under the same `state.server` lock (all
+/// `server.*` writes happen under it too), so they are one consistent
+/// snapshot identified by `generation`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServerStatusResult {
@@ -1796,12 +1909,21 @@ struct ServerStatusResult {
     /// `viewer` session without logging in. Persisted alongside the other
     /// server settings and therefore reported (and applied) here, even though
     /// it only ever has an effect on the LAN surface, not in this window.
+    /// It is read per request, so the saved value is also the live one.
     viewer_public: bool,
+    /// The listener that is actually serving (`null` when nothing is).
+    live: Option<ServerListener>,
+    /// URLs (and their QR codes) for `live` - empty when nothing is serving.
     urls: Vec<String>,
     qr_svgs: Vec<QrSvgEntry>,
+    /// [`ServerSlot::generation`] of this snapshot.
+    generation: u64,
     /// What the launch-time auto-start did about a saved port that was in use
     /// (`null` when nothing happened, or after a successful `server_apply`).
     port_notice: Option<ServerPortNotice>,
+    /// The last failed `server_apply` that stopped the old listener (`null`
+    /// when there was none since the last successful apply).
+    apply_failure: Option<ServerApplyFailure>,
 }
 
 /// What [`bind_saved_server_at_launch`] had to do because the SAVED port was
@@ -1842,15 +1964,19 @@ fn qr_svg_for(data: &str) -> String {
         .unwrap_or_default()
 }
 
-fn build_status(
-    config: &ServerSettings,
-    running: bool,
-    port_notice: Option<ServerPortNotice>,
-) -> ServerStatusResult {
+/// One status snapshot from the `saved` settings and the live `slot`. The
+/// caller holds `state.server` (that is where `slot` comes from) and read
+/// `saved` under it, so both describe the same moment (Issue #459).
+fn build_status(saved: &ServerSettings, slot: &ServerSlot) -> ServerStatusResult {
+    let live = slot.live.as_ref().map(LiveServer::listener);
     // Issue #216: scope the advertised URLs (and therefore the QR codes
-    // below) to what `config.bind` actually listens on - a loopback bind
-    // must not advertise a LAN URL nobody outside this PC can reach.
-    let urls = lan_urls_for_bind(&config.bind, config.port);
+    // below) to what the listener actually listens on - a loopback bind
+    // must not advertise a LAN URL nobody outside this PC can reach. Issue
+    // #459: from the live listener, never from the saved settings.
+    let urls = live
+        .as_ref()
+        .map(|live| lan_urls_for_bind(&live.bind, live.port))
+        .unwrap_or_default();
     let qr_svgs = urls
         .iter()
         .map(|url| QrSvgEntry {
@@ -1859,14 +1985,17 @@ fn build_status(
         })
         .collect();
     ServerStatusResult {
-        enabled: config.enabled,
-        running,
-        bind: config.bind.clone(),
-        port: config.port,
-        viewer_public: config.viewer_public,
+        enabled: saved.enabled,
+        running: live.is_some(),
+        bind: saved.bind.clone(),
+        port: saved.port,
+        viewer_public: saved.viewer_public,
+        live,
         urls,
         qr_svgs,
-        port_notice,
+        generation: slot.generation,
+        port_notice: slot.port_notice.clone(),
+        apply_failure: slot.apply_failure.clone(),
     }
 }
 
@@ -1933,26 +2062,23 @@ async fn start_embedded_server(
 /// §11.4's status line). `admin`-only (spec M10: "サーバ制御系 = admin").
 #[tauri::command]
 async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusResult, BantoError> {
-    require_role(&state, Role::Admin, "settings").await?;
-    let mut config = state.settings.server_config().await?;
-    // Report the port the live server is actually on: normally the saved one,
-    // but after a launch-time fallback whose save failed it differs, and the
-    // URLs/QR codes must point at the server that answers.
-    let running_port = state
-        .server
-        .lock()
-        .await
-        .as_ref()
-        .map(|running| running.local_addr().port());
-    if let Some(port) = running_port {
-        config.port = port;
-    }
-    let notice = state
-        .server_port_notice
-        .lock()
-        .expect("server_port_notice mutex poisoned")
-        .clone();
-    Ok(build_status(&config, running_port.is_some(), notice))
+    server_status_body(&state).await
+}
+
+/// Body of [`server_status`] over a plain `&AppState` (testable without a
+/// Tauri `State`).
+///
+/// Issue #459: the lock is taken BEFORE the saved settings are read, and held
+/// until the snapshot is built. Every `server.*` write happens under the same
+/// lock (`server_apply`; the generic `settings_set` refuses the namespace;
+/// the launch-time fallback runs before `AppState` exists), so the saved half
+/// and the live half cannot come from different sides of an apply - and
+/// neither can the four `server.*` keys `server_config` reads one by one.
+async fn server_status_body(state: &AppState) -> Result<ServerStatusResult, BantoError> {
+    require_role(state, Role::Admin, "settings").await?;
+    let slot = state.server.lock().await;
+    let saved = state.settings.server_config().await?;
+    Ok(build_status(&saved, &slot))
 }
 
 /// `GET`-ish command (M-review 2026-08 §2.4): admin-only system diagnostics
@@ -2018,13 +2144,23 @@ async fn system_info(state: State<'_, AppState>) -> Result<SystemInfo, BantoErro
 /// public viewer token under a stale `viewer_public`). Serving a bound listener
 /// cannot fail, so there is no state in which the settings are saved but the
 /// server did not start. If the bind or the save fails, the listener is
-/// dropped, nothing is saved, the previously running server is restarted from
-/// the unchanged saved settings, and the command returns the error - so the
-/// saved values and the live server never silently diverge. `enabled = false`
-/// has no new listener (stop -> save). The attempt is audited as
-/// `settings_change` / `result: "failed"` (`detail.saved: false`); a success
-/// records the usual `ok` entry. Callers should re-read `server_status` after
-/// an error (the frontend does).
+/// dropped, nothing is saved, the previously running listener is bound again
+/// on the address and port it actually had (Issue #459: from the live
+/// listener, not from the saved settings), and the command returns the error
+/// - so the saved values and the live server never silently diverge.
+/// `enabled = false` has no new listener (stop -> save). The attempt is
+/// audited as `settings_change` / `result: "failed"` (`detail.saved: false`);
+/// a success records the usual `ok` entry. Callers should re-read
+/// `server_status` after an error (the frontend does): it reports the failure
+/// (`applyFailure`: port in use / other bind failure / save failure, and
+/// whether the previous listener was restored) until the next successful
+/// apply.
+///
+/// Issue #459: `state.server` is held for the WHOLE apply, including the
+/// save, and the slot (listener, generation, notices) is replaced as a whole
+/// before the lock is released; `server_status` reads the saved settings
+/// under the same lock. A status read therefore sees the complete state
+/// before or after an apply, never the old settings with the new listener.
 ///
 /// Lock order (#294 review): `state.server` -> `auth_config_lock` (see
 /// `AppState::auth_config_lock`). The final validation + save + token
@@ -2065,26 +2201,33 @@ async fn server_apply_body(
         viewer_public,
     };
 
-    // Held for the WHOLE apply: concurrent applies are serialized, and
-    // `server_status` cannot observe the stopped-but-not-yet-restarted gap.
+    // Held for the WHOLE apply (save included): concurrent applies are
+    // serialized, and `server_status` cannot observe the
+    // stopped-but-not-yet-restarted gap or the new settings with the old
+    // listener (Issue #459).
     let mut slot = state.server.lock().await;
 
-    // The saved config is the one the rollback below restores, and what the
-    // running listener (if any) was started from.
-    let mut previous = state.settings.server_config().await?;
-    // A launch-time port fallback whose save failed leaves the live server on
-    // another port than the saved one; the rollback must restore THAT port.
-    if let Some(running) = slot.as_ref() {
-        previous.port = running.local_addr().port();
-    }
     // Refuse an illegal auth/LAN combination BEFORE anything is stopped.
     state.settings.validate_server_config(&config).await?;
 
-    let was_running = slot.take();
-    let had_running = was_running.is_some();
-    if let Some(running) = was_running {
-        running.stop().await;
-    }
+    // From here on the live state changes (Issue #459: a new generation),
+    // whatever the outcome. Bumped before the first await that changes
+    // anything, so even an apply abandoned part-way leaves a new generation.
+    slot.generation += 1;
+    // The rollback below restores the listener that is actually running - its
+    // own bind address and port (Issue #459) - not the saved settings, which
+    // may differ (e.g. a launch-time port fallback whose save failed).
+    let previous = match slot.live.take() {
+        Some(live) => {
+            let previous = ServerConfig {
+                bind: live.bind.clone(),
+                port: live.server.local_addr().port(),
+            };
+            live.server.stop().await;
+            Some(previous)
+        }
+        None => None,
+    };
 
     // Serving on an already-bound listener cannot fail (the bind is the only
     // fallible step), so everything fallible happens BEFORE the listener is
@@ -2118,22 +2261,31 @@ async fn server_apply_body(
     // `viewer_public`) could hit the new listener while the old values were
     // still stored. (Saving first - the oldest order - left the new values
     // stored while the old server was already gone whenever the bind failed.)
-    let outcome: Result<Option<RunningServer>, BantoError> = async {
+    let outcome: Result<Option<LiveServer>, (ServerApplyFailureReason, BantoError)> = async {
         let bound = if config.enabled {
-            Some(
-                bind_listener(ServerConfig {
-                    bind: config.bind.clone(),
-                    port: config.port,
-                })
-                .await?,
-            )
+            // No fallback port here (an explicit choice is never silently
+            // changed), but a port in use is told apart for the status.
+            let bound = bind_without_fallback(ServerConfig {
+                bind: config.bind.clone(),
+                port: config.port,
+            })
+            .await
+            .map_err(|err| match err {
+                PortFallbackError::Exhausted { error, .. } => {
+                    (ServerApplyFailureReason::PortInUse, error)
+                }
+                PortFallbackError::Failed(error) => (ServerApplyFailureReason::BindFailed, error),
+            })?;
+            Some(bound)
         } else {
             None
         };
         // On error `bound` is dropped here, releasing the port.
-        save_server_config_locked(state, &config).await?;
+        save_server_config_locked(state, &config)
+            .await
+            .map_err(|err| (ServerApplyFailureReason::SaveFailed, err))?;
         Ok(match bound {
-            Some(bound) => Some(launch(bound).await),
+            Some(bound) => Some(LiveServer::new(launch(bound).await, config.bind.clone())),
             None => None,
         })
     }
@@ -2141,14 +2293,11 @@ async fn server_apply_body(
 
     match outcome {
         Ok(started) => {
-            let running = started.is_some();
-            *slot = started;
+            slot.live = started;
             // The user's own settings now apply; a launch-time port notice
-            // no longer describes the live server.
-            *state
-                .server_port_notice
-                .lock()
-                .expect("server_port_notice mutex poisoned") = None;
+            // or an earlier failure no longer describes the live server.
+            slot.port_notice = None;
+            slot.apply_failure = None;
             record_ok(
                 &state.audit,
                 &actor,
@@ -2163,28 +2312,38 @@ async fn server_apply_body(
                 })),
             )
             .await;
-            Ok(build_status(&config, running, None))
+            // `config` is what was just saved, under this same lock.
+            Ok(build_status(&config, &slot))
         }
-        Err(err) => {
-            // Nothing was saved. Bring back the server that was running so
-            // the live state matches the (unchanged) saved settings again.
-            let mut restored = !had_running;
-            if had_running {
-                match bind_listener(ServerConfig {
-                    bind: previous.bind.clone(),
-                    port: previous.port,
-                })
-                .await
-                {
-                    Ok(bound) => {
-                        *slot = Some(launch(bound).await);
-                        restored = true;
+        Err((reason, err)) => {
+            // Nothing was saved. Bring back the listener that was running, on
+            // the address and port it had.
+            let outcome = match previous {
+                None => PreviousServerOutcome::None,
+                Some(previous) => {
+                    let bind = previous.bind.clone();
+                    match bind_listener(previous).await {
+                        Ok(bound) => {
+                            slot.live = Some(LiveServer::new(launch(bound).await, bind));
+                            PreviousServerOutcome::Restored
+                        }
+                        Err(restore_err) => {
+                            eprintln!(
+                                "banto: LAN設定の適用に失敗し、旧設定でのサーバー再起動にも失敗しました: {restore_err}"
+                            );
+                            PreviousServerOutcome::RestoreFailed
+                        }
                     }
-                    Err(restore_err) => eprintln!(
-                        "banto: LAN設定の適用に失敗し、旧設定でのサーバー再起動にも失敗しました: {restore_err}"
-                    ),
                 }
-            }
+            };
+            let restored = outcome != PreviousServerOutcome::RestoreFailed;
+            slot.apply_failure = Some(ServerApplyFailure {
+                enabled: config.enabled,
+                bind: config.bind.clone(),
+                port: config.port,
+                reason,
+                previous: outcome,
+            });
             // The failed attempt is audited too (conventions §1: an applied
             // change and a refused/failed one both leave a record), with the
             // same `resource`/`action` as the success entry.
@@ -2403,6 +2562,16 @@ async fn settings_set(
 /// [`auth_config_apply`] (which re-binds the session under
 /// `auth_config_lock`, keeping `auth.disabled == true <=> AuthDisabledLocal`)
 /// and the `autologin_*` commands. A raw write would bypass both.
+///
+/// Likewise the `server.` namespace (Issue #459): it is written only by
+/// [`server_apply`] (bind -> save -> serve under `state.server`) and the
+/// launch-time port fallback. A raw write would change the saved settings
+/// without touching the listener, outside the server lock. The refusal sits
+/// here at the IPC entry, not in `SettingsService::set`, because the service's
+/// own callers (`set_server_config`, first-boot seeding) must keep writing.
+/// Like the `auth.` refusal it is a bad request, not a role denial, so it is
+/// not audited (conventions §1: `denied` is recorded only for a role that is
+/// too low).
 async fn settings_set_body(
     state: &AppState,
     actor: &UserIdentity,
@@ -2412,6 +2581,11 @@ async fn settings_set_body(
     if SettingsService::is_auth_key(&key) {
         return Err(BantoError::BadRequest(format!(
             "設定 {key} はこのコマンドでは変更できません。認証モードは auth_config_apply（自動ログインは autologin_enable/autologin_disable）で変更してください"
+        )));
+    }
+    if SettingsService::is_server_key(&key) {
+        return Err(BantoError::BadRequest(format!(
+            "設定 {key} はこのコマンドでは変更できません。LANアクセスの設定は server_apply で変更してください"
         )));
     }
     state.settings.set(&key, &value).await?;
@@ -3671,8 +3845,13 @@ pub fn run() {
                 settings,
                 events,
                 rest_auth,
-                server: AsyncMutex::new(initial_server),
-                server_port_notice: Mutex::new(initial_port_notice),
+                // The launch bind never changes the bind address (only the
+                // port may fall back), so the saved bind is what it used.
+                server: AsyncMutex::new(ServerSlot::new(
+                    initial_server
+                        .map(|server| LiveServer::new(server, server_config.bind.clone())),
+                    initial_port_notice,
+                )),
                 audit,
                 backup,
                 attachments,
@@ -3785,7 +3964,7 @@ mod tests {
                 UsersService::new(pool.clone()),
                 AuditLogService::new(pool.clone()),
             ),
-            server: AsyncMutex::new(None),
+            server: AsyncMutex::new(ServerSlot::new(None, None)),
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(
                 PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
@@ -3801,7 +3980,6 @@ mod tests {
             ),
             attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),
             exports_dir: PathBuf::from("unused-in-tests").join("exports"),
-            server_port_notice: Mutex::new(None),
             started_at: std::time::Instant::now(),
         }
     }
@@ -3848,7 +4026,7 @@ mod tests {
                 UsersService::new(pool.clone()),
                 AuditLogService::new(pool.clone()),
             ),
-            server: AsyncMutex::new(None),
+            server: AsyncMutex::new(ServerSlot::new(None, None)),
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(db_path, pool.clone()),
             system_info: SystemInfoService::new(pool.clone()),
@@ -3856,7 +4034,6 @@ mod tests {
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
             attachments_dir: dir.path().join("attachments"),
             exports_dir: dir.path().join("exports"),
-            server_port_notice: Mutex::new(None),
             started_at: std::time::Instant::now(),
         }
     }
@@ -6771,17 +6948,27 @@ mod tests {
 
     // ----- `server_apply_body` (#287 / #288 / #294 review) -----
     //
-    // Everything runs on loopback with ports picked by the OS and released
+    // Everything runs on loopback with ports picked by `free_port` and released
     // before use; ordering is made deterministic by port occupation and by
     // holding `auth_config_lock`, never by sleeping.
 
-    /// A currently free loopback port (picked by the OS, released again).
+    /// A currently free loopback port (released again), in 25000-29999 and
+    /// never the same one twice in this process. Ports the OS picks
+    /// (`127.0.0.1:0`) can be handed out again to a test running in parallel
+    /// once released, so a test asserting "this port is free / answers" could
+    /// see another test's listener (Issue #459 review of the server tests).
+    /// [`occupy_port_outside_ephemeral_range`] stays below 25000.
     fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind free port")
-            .local_addr()
-            .expect("local_addr")
-            .port()
+        static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+        let start = (std::process::id() % 1_000) as u16 * 5;
+        for _ in 0..5_000 {
+            let offset = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let port = 25_000 + (start + offset) % 5_000;
+            if port_is_free(port) {
+                return port;
+            }
+        }
+        panic!("no free port in 25000-29999");
     }
 
     /// Whether something answers HTTP on `127.0.0.1:port` (any status).
@@ -6821,8 +7008,9 @@ mod tests {
 
     /// Stop the server `server_apply_body` left running (if any).
     async fn stop_running_server(state: &AppState) {
-        if let Some(running) = state.server.lock().await.take() {
-            running.stop().await;
+        let live = state.server.lock().await.live.take();
+        if let Some(live) = live {
+            live.server.stop().await;
         }
     }
 
@@ -6870,7 +7058,7 @@ mod tests {
             (saved.enabled, saved.bind.as_str(), saved.port),
             (true, "127.0.0.1", port)
         );
-        assert!(state.server.lock().await.is_some());
+        assert!(state.server.lock().await.live.is_some());
         assert!(answers_http(port).await);
         let entries = settings_change_entries(&state).await;
         assert_eq!(entries.len(), 1);
@@ -6896,7 +7084,7 @@ mod tests {
 
         assert!(result.is_err(), "{result:?}");
         assert_eq!(state.settings.server_config().await.unwrap().port, port_a);
-        assert!(state.server.lock().await.is_some());
+        assert!(state.server.lock().await.live.is_some());
         assert!(answers_http(port_a).await, "old server must be restored");
         let entries = settings_change_entries(&state).await;
         let failed: Vec<_> = entries.iter().filter(|(r, _)| r == "failed").collect();
@@ -6911,22 +7099,23 @@ mod tests {
 
     // ----- `bind_saved_server_at_launch` (launch-time port fallback) -----
 
-    /// Occupy a loopback port in 20000-29999 whose next port is free. The
+    /// Occupy a loopback port in 20000-24899 whose next port is free. The
     /// fallback binds the ports right behind the occupied one; doing that
     /// next to an OS-picked port would take the port the OS hands out next
-    /// (Windows allocates them sequentially) and break a `free_port()` of a
-    /// test running in parallel. Both OS ephemeral ranges (Windows 49152+,
-    /// Linux 32768+) are well above this range.
+    /// (Windows allocates them sequentially) and break a test running in
+    /// parallel. Both OS ephemeral ranges (Windows 49152+, Linux 32768+) are
+    /// well above this range, and it stays below `free_port()`'s 25000+ (with
+    /// room for the `PORT_FALLBACK_SPAN` ports behind it).
     fn occupy_port_outside_ephemeral_range() -> std::net::TcpListener {
-        let start = 20_000 + (std::process::id() % 2_000) as u16 * 5;
-        for base in (start..30_000).step_by(7).chain((20_000..start).step_by(7)) {
+        let start = 20_000 + (std::process::id() % 900) as u16 * 5;
+        for base in (start..24_900).step_by(7).chain((20_000..start).step_by(7)) {
             if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", base)) {
                 if port_is_free(base + 1) {
                     return listener;
                 }
             }
         }
-        panic!("no free port pair in 20000-29999");
+        panic!("no free port pair in 20000-24899");
     }
 
     async fn save_enabled_server_config(state: &AppState, port: u16) -> ServerSettings {
@@ -6997,12 +7186,12 @@ mod tests {
 
         // Release the listener; the user's own apply clears the notice.
         drop(bound);
-        *state.server_port_notice.lock().unwrap() = notice;
+        state.server.lock().await.port_notice = notice;
         let status = apply(&state, true, free_port(), false)
             .await
             .expect("apply");
         assert_eq!(status.port_notice, None);
-        assert_eq!(*state.server_port_notice.lock().unwrap(), None);
+        assert_eq!(state.server.lock().await.port_notice, None);
 
         drop(occupied);
         stop_running_server(&state).await;
@@ -7093,7 +7282,10 @@ mod tests {
         let result = apply(&state, true, free_port(), false).await;
 
         assert!(result.is_err(), "{result:?}");
-        assert!(state.server.lock().await.is_some(), "nothing was stopped");
+        assert!(
+            state.server.lock().await.live.is_some(),
+            "nothing was stopped"
+        );
         assert!(answers_http(port_a).await);
         assert_eq!(state.settings.server_config().await.unwrap(), before);
 
@@ -7131,7 +7323,7 @@ mod tests {
 
         assert!(result.is_err(), "{result:?}");
         assert_eq!(state.settings.server_config().await.unwrap(), before);
-        assert!(state.server.lock().await.is_none());
+        assert!(state.server.lock().await.live.is_none());
         assert!(port_is_free(port), "the new listener must be released");
     }
 
@@ -7167,7 +7359,12 @@ mod tests {
         let status = apply(&state, false, port, false).await.expect("stop");
 
         assert!(!status.running);
-        assert!(state.server.lock().await.is_none());
+        // Issue #459: stopped = no live listener, no URL/QR, no failure.
+        assert_eq!(status.live, None);
+        assert!(status.urls.is_empty() && status.qr_svgs.is_empty());
+        assert_eq!(status.apply_failure, None);
+        assert_eq!(status.generation, 2);
+        assert!(state.server.lock().await.live.is_none());
         assert!(!state.settings.server_config().await.unwrap().enabled);
         assert!(port_is_free(port));
     }
@@ -7189,8 +7386,301 @@ mod tests {
 
         assert!(matches!(err, BantoError::Forbidden), "{err:?}");
         assert_eq!(state.settings.server_config().await.unwrap(), before);
-        assert!(state.server.lock().await.is_none());
+        assert!(state.server.lock().await.live.is_none());
         assert!(port_is_free(port));
         assert!(settings_change_entries(&state).await.is_empty());
+    }
+
+    // ----- Issue #459: `server.*` writes and the live status snapshot -----
+
+    /// The generic `settings_set` refuses every `server.` key (a bad request,
+    /// not audited - like the `auth.` refusal), the saved settings and the
+    /// live listener stay as they were, and `server_apply` still writes them.
+    #[tokio::test]
+    async fn settings_set_refuses_server_keys_but_server_apply_still_writes_them() {
+        let state = admin_app_state().await;
+        let actor = current_actor(&state).await;
+        let port_a = free_port();
+        apply(&state, true, port_a, false).await.expect("apply A");
+        let before = state.settings.server_config().await.unwrap();
+        let audited_before = settings_change_entries(&state).await.len();
+
+        for (key, value) in [
+            ("server.port", "1"),
+            ("server.bind", "0.0.0.0"),
+            ("server.enabled", "false"),
+            ("server.viewer_public", "true"),
+            ("server.future_key", "x"),
+        ] {
+            let result =
+                settings_set_body(&state, &actor, key.to_string(), value.to_string()).await;
+            assert!(
+                matches!(result, Err(BantoError::BadRequest(_))),
+                "{key}: {result:?}"
+            );
+        }
+
+        assert_eq!(state.settings.server_config().await.unwrap(), before);
+        assert_eq!(settings_change_entries(&state).await.len(), audited_before);
+        let status = server_status_body(&state).await.expect("status");
+        assert_eq!(status.port, port_a);
+        assert_eq!(status.live.map(|live| live.port), Some(port_a));
+
+        let port_b = free_port();
+        let status = apply(&state, true, port_b, false).await.expect("apply B");
+        assert_eq!(state.settings.server_config().await.unwrap().port, port_b);
+        assert_eq!(status.live.map(|live| live.port), Some(port_b));
+        assert!(answers_http(port_b).await);
+
+        stop_running_server(&state).await;
+    }
+
+    /// The account of the admin session [`admin_app_state`] set up.
+    async fn current_actor(state: &AppState) -> UserIdentity {
+        require_role(state, Role::Admin, "settings")
+            .await
+            .expect("admin session")
+    }
+
+    /// `server_status` keeps refusing viewer / editor / no session.
+    #[tokio::test]
+    async fn server_status_is_admin_only() {
+        let state = app_state().await;
+        assert!(matches!(
+            server_status_body(&state).await,
+            Err(BantoError::Unauthorized)
+        ));
+        for (name, role) in [("viewer", Role::Viewer), ("editor", Role::Editor)] {
+            let user = state
+                .users
+                .create_user(name, "password123", name, role)
+                .await
+                .expect("create_user");
+            state.set_session_for_test(Some(DesktopSession::Account(user)));
+            let result = server_status_body(&state).await;
+            assert!(
+                matches!(result, Err(BantoError::Forbidden)),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
+    /// The status reports the listener that is serving (its `local_addr`),
+    /// apart from the saved settings: a saved value that disagrees with the
+    /// live listener does not leak into `live` / the URLs.
+    #[tokio::test]
+    async fn server_status_reports_the_live_listener_apart_from_the_saved_settings() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        let applied = apply(&state, true, port_a, false).await.expect("apply A");
+        // Not reachable through IPC any more; stands for any disagreement
+        // (e.g. a launch-time fallback whose save failed).
+        let port_b = free_port();
+        state
+            .settings
+            .set("server.port", &port_b.to_string())
+            .await
+            .unwrap();
+        state.settings.set("server.bind", "0.0.0.0").await.unwrap();
+
+        let status = server_status_body(&state).await.expect("status");
+
+        assert!(status.running);
+        assert_eq!((status.bind.as_str(), status.port), ("0.0.0.0", port_b));
+        assert_eq!(
+            status.live,
+            Some(ServerListener {
+                bind: "127.0.0.1".to_string(),
+                port: port_a,
+            })
+        );
+        assert_eq!(status.urls, vec![format!("http://127.0.0.1:{port_a}")]);
+        assert_eq!(status.qr_svgs.len(), 1);
+        assert_eq!(status.generation, applied.generation);
+
+        stop_running_server(&state).await;
+    }
+
+    /// A status read that starts while an apply is in progress waits for the
+    /// whole apply (the apply holds `state.server` through its save) and then
+    /// reports the new settings with the new listener - never the old saved
+    /// values with the new listener or the other way round.
+    #[tokio::test]
+    async fn server_status_during_an_apply_sees_the_whole_apply() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        let first = apply(&state, true, port_a, false).await.expect("apply A");
+        let port_b = free_port();
+        let guard = state.auth_config_lock.lock().await;
+
+        // B also turns 閲覧公開 on: a status that read the saved settings
+        // before the apply's save would report it off with B's listener.
+        let applying = apply(&state, true, port_b, true);
+        tokio::pin!(applying);
+        // B is bound (A already stopped): the apply waits at its save.
+        drive_until!(applying, !port_is_free(port_b));
+        let reading = server_status_body(&state);
+        tokio::pin!(reading);
+        assert_stays_pending!(reading);
+        let saved = state.settings.server_config().await.unwrap();
+        assert_eq!((saved.port, saved.viewer_public), (port_a, false));
+
+        drop(guard);
+        let (applied, read) = tokio::join!(applying, reading);
+        let applied = applied.expect("apply B");
+        let read = read.expect("status");
+
+        assert_eq!((read.port, read.viewer_public), (port_b, true));
+        assert_eq!(read.live.as_ref().map(|live| live.port), Some(port_b));
+        assert_eq!(read.urls, vec![format!("http://127.0.0.1:{port_b}")]);
+        assert_eq!(read.generation, first.generation + 1);
+        assert_eq!(read.generation, applied.generation);
+
+        stop_running_server(&state).await;
+    }
+
+    /// A port conflict on apply: the previous listener is back on its port,
+    /// and the status says so (`portInUse` / `restored`) until the next
+    /// successful apply clears it.
+    #[tokio::test]
+    async fn server_status_reports_a_port_conflict_and_the_restored_listener() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        apply(&state, true, port_a, false).await.expect("apply A");
+        let port_b = free_port();
+        let occupied = std::net::TcpListener::bind(("127.0.0.1", port_b)).expect("occupy");
+
+        assert!(apply(&state, true, port_b, false).await.is_err());
+        let status = server_status_body(&state).await.expect("status");
+
+        assert!(status.running);
+        assert_eq!(status.port, port_a, "nothing was saved");
+        assert_eq!(status.live.as_ref().map(|live| live.port), Some(port_a));
+        assert!(answers_http(port_a).await);
+        assert_eq!(
+            status.apply_failure,
+            Some(ServerApplyFailure {
+                enabled: true,
+                bind: "127.0.0.1".to_string(),
+                port: port_b,
+                reason: ServerApplyFailureReason::PortInUse,
+                previous: PreviousServerOutcome::Restored,
+            })
+        );
+        assert_eq!(status.generation, 2);
+
+        drop(occupied);
+        let status = apply(&state, true, free_port(), false)
+            .await
+            .expect("apply C");
+        assert_eq!(status.apply_failure, None);
+        assert_eq!(status.generation, 3);
+
+        stop_running_server(&state).await;
+    }
+
+    /// The apply fails after the old listener was stopped, and the old port
+    /// was taken in the meantime: nothing serves, the saved settings still
+    /// say enabled on the old port, and the status reports
+    /// `saveFailed` / `restoreFailed` (no URL to show).
+    #[tokio::test]
+    async fn server_status_reports_a_failed_restore() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        // 閲覧公開 ON makes disabling auth below legal while LAN is enabled.
+        apply(&state, true, port_a, true).await.expect("apply A");
+        let port_b = free_port();
+        let guard = state.auth_config_lock.lock().await;
+
+        let applying = apply(&state, true, port_b, false);
+        tokio::pin!(applying);
+        drive_until!(applying, !port_is_free(port_b));
+        // A was stopped before B was bound; take it so the restore fails.
+        let occupied = std::net::TcpListener::bind(("127.0.0.1", port_a)).expect("occupy A");
+        // The final re-validation refuses LAN without 閲覧公開 once auth is
+        // disabled, so the save fails.
+        let mut auth = state.settings.auth_config().await.unwrap();
+        auth.disabled = true;
+        state.settings.set_auth_config(&auth).await.expect("auth");
+        drop(guard);
+
+        assert!(applying.await.is_err());
+        let status = server_status_body(&state).await.expect("status");
+
+        assert!(!status.running);
+        assert_eq!(status.live, None);
+        assert!(status.urls.is_empty());
+        assert!(status.enabled);
+        assert_eq!(status.port, port_a);
+        assert_eq!(
+            status
+                .apply_failure
+                .as_ref()
+                .map(|f| (f.reason, f.previous)),
+            Some((
+                ServerApplyFailureReason::SaveFailed,
+                PreviousServerOutcome::RestoreFailed
+            ))
+        );
+        let entries = settings_change_entries(&state).await;
+        let failed: Vec<_> = entries.iter().filter(|(r, _)| r == "failed").collect();
+        assert_eq!(failed.len(), 1, "{entries:?}");
+        assert_eq!(failed[0].1["restoredPrevious"], false);
+        assert!(port_is_free(port_b), "the new listener was released");
+
+        drop(occupied);
+    }
+
+    /// The new status fields reach the frontend as camelCase codes and values
+    /// only (conventions §13), matching `serverAdmin.ts::ServerStatus`.
+    #[test]
+    fn server_status_serializes_live_generation_and_apply_failure() {
+        let slot = ServerSlot {
+            live: None,
+            generation: 3,
+            port_notice: None,
+            apply_failure: Some(ServerApplyFailure {
+                enabled: true,
+                bind: "127.0.0.1".to_string(),
+                port: 8722,
+                reason: ServerApplyFailureReason::PortInUse,
+                previous: PreviousServerOutcome::RestoreFailed,
+            }),
+        };
+        let value = serde_json::to_value(build_status(&ServerSettings::default(), &slot)).unwrap();
+        assert_eq!(value["live"], serde_json::Value::Null);
+        assert_eq!(value["running"], false);
+        assert_eq!(value["urls"], serde_json::json!([]));
+        assert_eq!(value["generation"], 3);
+        assert_eq!(
+            value["applyFailure"],
+            serde_json::json!({
+                "enabled": true,
+                "bind": "127.0.0.1",
+                "port": 8722,
+                "reason": "portInUse",
+                "previous": "restoreFailed",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ServerListener {
+                bind: "0.0.0.0".to_string(),
+                port: 8721,
+            })
+            .unwrap(),
+            serde_json::json!({ "bind": "0.0.0.0", "port": 8721 })
+        );
+        for (outcome, code) in [
+            (PreviousServerOutcome::None, "none"),
+            (PreviousServerOutcome::Restored, "restored"),
+        ] {
+            assert_eq!(serde_json::to_value(outcome).unwrap(), code);
+        }
+        for (reason, code) in [
+            (ServerApplyFailureReason::BindFailed, "bindFailed"),
+            (ServerApplyFailureReason::SaveFailed, "saveFailed"),
+        ] {
+            assert_eq!(serde_json::to_value(reason).unwrap(), code);
+        }
     }
 }

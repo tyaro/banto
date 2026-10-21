@@ -15,7 +15,14 @@ export interface QrSvg {
 	svg: string;
 }
 
-/** Mirrors src-tauri's `server_status`/`server_apply` command response shape. */
+/**
+ * Mirrors src-tauri's `server_status`/`server_apply` command response shape.
+ *
+ * Issue #459: `enabled`/`bind`/`port`/`viewerPublic` are the SAVED settings
+ * (what the next launch uses - the settings form starts from them); `running`,
+ * `live`, `urls` and `qrSvgs` describe the listener that is actually serving.
+ * Both halves come from one snapshot, identified by `generation`.
+ */
 export interface ServerStatus {
 	enabled: boolean;
 	running: boolean;
@@ -28,8 +35,27 @@ export interface ServerStatus {
 	 * window, only on the LAN surface.
 	 */
 	viewerPublic: boolean;
+	/**
+	 * The listener that is actually serving, from its bound address (`null`
+	 * when nothing is). Optional so older mocks and hosts read as "unknown"
+	 * (see {@link liveBind}).
+	 */
+	live?: ServerListener | null;
+	/** URLs (and QR codes) of the live listener - empty when nothing is serving. */
 	urls: string[];
 	qrSvgs: QrSvg[];
+	/**
+	 * Changes whenever the live listener is replaced (each `server_apply`).
+	 * Anything shown or copied from the live values should be re-read when
+	 * it changes.
+	 */
+	generation?: number;
+	/**
+	 * The last `server_apply` that failed after stopping the old listener,
+	 * and what became of that listener (`null` when none since the last
+	 * successful apply). Codes only - any text is built from the messages.
+	 */
+	applyFailure?: ServerApplyFailure | null;
 	/**
 	 * What the launch-time auto-start did because the saved port was in use
 	 * (`null` when nothing happened, or after a successful `server_apply`).
@@ -49,6 +75,35 @@ export interface ServerStatus {
 export type ServerPortNotice =
 	| { kind: 'fallback'; requestedPort: number; port: number; saved: boolean }
 	| { kind: 'exhausted'; requestedPort: number; lastPort: number; allInUse: boolean };
+
+/** Mirrors src-tauri's `ServerListener`: the serving listener's actual address and port. */
+export interface ServerListener {
+	bind: string;
+	port: number;
+}
+
+/**
+ * Mirrors src-tauri's `ServerApplyFailure`: what a failed `server_apply`
+ * asked for (nothing was saved), why it failed, and whether the listener
+ * that was running before is back (`restored`), was never there (`none`),
+ * or could not be brought back (`restoreFailed` - nothing serves).
+ */
+export interface ServerApplyFailure {
+	enabled: boolean;
+	bind: string;
+	port: number;
+	reason: 'portInUse' | 'bindFailed' | 'saveFailed';
+	previous: 'none' | 'restored' | 'restoreFailed';
+}
+
+/**
+ * The bind address the status line should describe: the live listener's
+ * when the host reports one, else the saved `bind` (older hosts, or nothing
+ * serving).
+ */
+export function liveBind(status: ServerStatus): string {
+	return status.live?.bind ?? status.bind;
+}
 
 const ERROR_KINDS = new Set([
 	'not_found',
@@ -83,7 +138,7 @@ async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Pr
 	}
 }
 
-/** Current persisted settings + live running state (spec §11.4). */
+/** Current saved settings + the live listener, as one snapshot (spec §11.4, Issue #459). */
 export function getServerStatus(): Promise<ServerStatus> {
 	return invokeCommand('server_status');
 }

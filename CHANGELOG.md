@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 内蔵サーバー（LAN アクセス）の `server_status` が、保存した設定と稼働中のサーバーの値を混ぜて返し得たのを直した（#459、#219 の監査）。汎用の `settings_set` は `server.` で始まるキーを拒否し（書き込みは `server_apply` だけ）、status は保存値（`enabled`・`bind`・`port`・`viewerPublic`、フォームの初期値）と、実際の listener の値（`live` の bind・port、`urls`・`qrSvgs`）を同じロックの中で読んだ 1 つの snapshot として返す。新しい省略可能な項目 `generation`（適用のたびに変わる）・`applyFailure`（ポート使用中・bind の失敗・保存の失敗と、元のサーバーを戻せたか）を足した。`server_apply` の失敗時は、保存値ではなく稼働していた listener のアドレスとポートで戻す。`banto-server` に、ポート使用中をほかの失敗と分けて返す `bind_without_fallback` を追加（追加のみ）。
+
 ## [6.8.0] - 2026-10-21
 
 **v6.8.0 — サイドバーの代わりに選べるドック（ランチャー）、temp-scada からの共有部品の還元、シェルと設定の UI の見直し。** 版の種類: minor（機能追加。後方互換。公開 API の削除・改名なし）。

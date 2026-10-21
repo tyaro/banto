@@ -20,6 +20,7 @@
 	import {
 		applyServerSettings,
 		getServerStatus,
+		liveBind,
 		type ServerStatus
 	} from '#lib/banto/serverAdmin.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
@@ -138,18 +139,19 @@
 
 	// Issue #216: how far the *currently applied* bind reaches, driving the
 	// "running, this PC only" vs. "running, reachable from the LAN" status
-	// wording below. Deliberately reads `serverStatus.bind` (the last
-	// loaded/applied value), not `bindDraft` - an unsaved draft change must
-	// not change what the status line claims about the server that is
-	// actually running.
+	// wording below. Deliberately reads the status (the last loaded/applied
+	// value), not `bindDraft` - an unsaved draft change must not change what
+	// the status line claims about the server that is actually running.
+	// Issue #459: the live listener's bind (`liveBind`), not the saved one.
 	//
 	// Owner decision, 2026-09-29 (PR #254 review, 4th round): IPv6 binds are
 	// out of scope for URL/QR guidance for now (see `connectivityScope.ts`'s
 	// module doc) - `isBindIpv4` gates the normal local/LAN status line and
 	// the URLs/QR block; an IPv6 bind shows a dedicated "not guided" message
 	// instead (`settings.ipv6NotGuidedRunning`/`settings.ipv6NotGuidedNote`).
-	const isBindIpv4 = $derived(serverStatus ? isIpv4Bind(serverStatus.bind) : true);
-	const scope = $derived(serverStatus && isBindIpv4 ? connectivityScope(serverStatus.bind) : null);
+	const statusBind = $derived(serverStatus ? liveBind(serverStatus) : null);
+	const isBindIpv4 = $derived(statusBind !== null ? isIpv4Bind(statusBind) : true);
+	const scope = $derived(statusBind !== null && isBindIpv4 ? connectivityScope(statusBind) : null);
 
 	// --- System Info (M-review 2026-08 §2.4, Tauri + LAN browser, admin only)
 	// Read-only diagnostics: version, migration version, DB dialect+latency,

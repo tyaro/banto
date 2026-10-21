@@ -246,6 +246,19 @@ pub async fn bind_with_port_fallback(
     bind_with_port_fallback_span(config, PORT_FALLBACK_SPAN).await
 }
 
+/// Like [`bind`] (no other port is tried), but tells a port in use apart
+/// from every other bind failure, so a caller can report "that port is taken"
+/// without parsing the message (Issue #459: the desktop app's `server_apply`
+/// reports a port conflict in its status).
+///
+/// `Err(PortFallbackError::Exhausted { .. })` means exactly "the requested
+/// port is in use" (`last_tried == requested`, `unavailable` empty);
+/// `Err(PortFallbackError::Failed(_))` is any other failure. The error
+/// messages are the same as [`bind`]'s.
+pub async fn bind_without_fallback(config: ServerConfig) -> Result<BoundServer, PortFallbackError> {
+    bind_with_port_fallback_span(config, 0).await
+}
+
 async fn bind_with_port_fallback_span(
     config: ServerConfig,
     span: u16,
@@ -850,6 +863,39 @@ Connection: close
             other => panic!("expected Exhausted, got {other:?}"),
         }
         drop(held);
+    }
+
+    #[tokio::test]
+    async fn bind_without_fallback_reports_in_use_and_tries_no_other_port() {
+        let held = hold_consecutive_ports(1).await;
+        let port = held[0].local_addr().port();
+        let err = bind_without_fallback(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port,
+        })
+        .await
+        .err()
+        .expect("the port is in use");
+        match err {
+            PortFallbackError::Exhausted {
+                requested,
+                last_tried,
+                unavailable,
+                ..
+            } => {
+                assert_eq!((requested, last_tried), (port, port));
+                assert!(unavailable.is_empty());
+            }
+            other => panic!("expected Exhausted, got {other:?}"),
+        }
+        drop(held);
+        let bound = bind_without_fallback(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port,
+        })
+        .await
+        .expect("free again");
+        assert_eq!(bound.local_addr().port(), port);
     }
 
     #[tokio::test]
