@@ -520,6 +520,37 @@ async fn this_pc_is_self_access_and_does_not_consume() {
 }
 
 #[tokio::test]
+async fn self_access_needs_the_issued_url_first() {
+    let (store, _clock) = store();
+    let issued = issue(&store);
+    let router = reach_check_router(store.clone(), 0, PORT);
+    // A changed Host from this PC is a host mismatch, not a self access.
+    assert_eq!(
+        post(
+            &router,
+            Req::new(&issued.token)
+                .peer(peer(Ipv4Addr::LOCALHOST))
+                .host(Some("127.0.0.1:23456"))
+        )
+        .await
+        .1,
+        result_body("hostMismatch")
+    );
+    // A router of another port: also a mismatch, not a self access.
+    let other = reach_check_router(store.clone(), 0, PORT + 1);
+    assert_eq!(
+        post(
+            &other,
+            Req::new(&issued.token).peer(peer(Ipv4Addr::LOCALHOST))
+        )
+        .await
+        .1,
+        result_body("hostMismatch")
+    );
+    assert!(store.status().self_access_at_ms.is_none());
+}
+
+#[tokio::test]
 async fn unknown_peer_is_refused() {
     let (store, _clock) = store();
     let issued = issue(&store);
@@ -801,6 +832,32 @@ fn the_failure_table_is_bounded() {
         !inner.failures.contains_key(&first.ip()),
         "the least recently seen IP is evicted first"
     );
+}
+
+#[test]
+fn a_blocked_peer_that_keeps_trying_is_not_evicted_first() {
+    let (store, clock) = store();
+    let blocked = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 1, 0, 1)), 1);
+    for _ in 0..RATE_LIMIT_FAILURES {
+        store.check(Some(blocked), 0, PORT, None, "wrong");
+    }
+    // Fill the table with other peers, the blocked one retrying meanwhile.
+    for i in 1..=(RATE_LIMIT_TABLE_CAP as u32 + 10) {
+        clock.advance(Duration::from_millis(1));
+        let ip = Ipv4Addr::from(u32::from(Ipv4Addr::new(10, 2, 0, 0)) + i);
+        store.check(
+            Some(SocketAddr::new(IpAddr::V4(ip), 1)),
+            0,
+            PORT,
+            None,
+            "wrong",
+        );
+        assert!(matches!(
+            store.check(Some(blocked), 0, PORT, None, "wrong"),
+            CheckOutcome::RateLimited(_)
+        ));
+    }
+    assert!(store.lock().failures.contains_key(&blocked.ip()));
 }
 
 // --- outside authorization ------------------------------------------------------

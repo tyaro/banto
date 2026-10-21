@@ -41,7 +41,9 @@
 //! The peer comes ONLY from `ConnectInfo<SocketAddr>` (no `X-Forwarded-For`;
 //! no peer -> `403 unusable`, fail closed). A loopback peer, or one of this
 //! PC's own interface addresses (enumerated at issuance, not per request),
-//! is "this PC itself": the request is answered `selfAccess`, remembered only
+//! is "this PC itself" (judged after the Host and listener-port checks, so
+//! it is only reported for the URL the token was issued for): the request is
+//! answered `selfAccess`, remembered only
 //! as "this PC accessed at <time>", and the token is NOT consumed - the
 //! administrator may still scan it with a phone. Behind a same-host reverse
 //! proxy every peer is the proxy, so everything is "this PC itself" (the
@@ -318,9 +320,15 @@ impl Inner {
 
     /// `Some(retry_after)` while `ip` is blocked.
     fn blocked(&mut self, ip: IpAddr, now: Instant) -> Option<Duration> {
-        let entry = self.failures.get(&ip)?;
+        let entry = self.failures.get_mut(&ip)?;
         match entry.blocked_until {
-            Some(until) if now < until => Some(until - now),
+            Some(until) if now < until => {
+                // A blocked peer that keeps trying is recent activity: without
+                // this it could become the least recently seen entry, be
+                // evicted when the table is full and resume guessing early.
+                entry.last_seen = now;
+                Some(until - now)
+            }
             Some(_) => {
                 self.failures.remove(&ip);
                 None
@@ -548,15 +556,18 @@ impl ReachCheckState {
             inner.count_failure(peer_ip, now);
             return CheckOutcome::Unusable;
         }
-        if peer_ip.is_loopback() || active.self_addrs.contains(&peer_ip) {
-            inner.self_access_at_ms = Some(wall);
-            return CheckOutcome::SelfAccess;
-        }
+        // The URL binding (Host and the listener's port) is checked before
+        // "this PC": a self access is only reported for the URL the token was
+        // issued for, never for a changed Host or a wrong listener.
         if active.target.port != router_port
             || !host.is_some_and(|h| authority_matches(h, &active.target.host, router_port))
         {
             inner.count_failure(peer_ip, now);
             return CheckOutcome::HostMismatch;
+        }
+        if peer_ip.is_loopback() || active.self_addrs.contains(&peer_ip) {
+            inner.self_access_at_ms = Some(wall);
+            return CheckOutcome::SelfAccess;
         }
 
         let Some(active) = inner.active.take() else {
