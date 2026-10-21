@@ -27,6 +27,61 @@ Banto のフローティングウィンドウ/ドッキングレイアウト（s
 </DockHost>
 ```
 
+## host の縮小と浮動 window の到達性
+
+浮動 window は「保存してある希望の配置（layout の x / y / width / height）」と「いま描く配置」を分けて扱う
+（shared-primitives-upstream-plan §3.2、#434）。host が縮むと、描く配置だけが host 内に収まるよう補正され、
+**保存した希望は書き換わない**（host が戻れば希望の位置へ戻る。`serialize()` の結果も縮小の前後で同じ）。
+move / resize は描いている位置から始まり、確定した結果が新しい希望になる。
+
+`DockHost` の `clamp` で、補正の方針を consumer が渡す（省略時は汎用の既定値 `DEFAULT_MIN_*`。アプリ固有の数値は
+パッケージに固定しない）:
+
+```svelte
+<DockHost {dock} {panel} clamp={{ minW: 280, minH: 240, minVisible: 64, narrowHost: 'fit' }} />
+```
+
+- `minW` / `minH` — 最小の幅・高さ。
+- `minVisible` — host 内に必ず残す px（タイトルバーを掴み直せる量）。
+- `narrowHost` — host が最小寸法より狭いとき。`'overflow'`（既定。最小寸法を保ち、`minVisible` だけ到達可能）／
+  `'fit'`（その軸は host の大きさに縮め、window 全体を見せる）。
+
+純関数 `clampWindowToHost`（操作の結果の補正）と `displayWindowGeometry`（描画用。host が未計測の間は保存値のまま）も
+export している。
+
+## pane の能力（必須 pane の保護）
+
+`DockHost` の `capabilities` で pane ごとに UI の操作を絞れる（省略時はすべて可）:
+
+```svelte
+<DockHost
+	{dock}
+	{panel}
+	capabilities={(id) =>
+		id === 'canvas' ? { close: false, move: false, undock: false } : undefined}
+/>
+```
+
+- `close: false` — 閉じるボタンを出さない。
+- `move: false` — タイトルバー / タブのドラッグによる移動・再配置をしない（浮動 window の resize は別）。
+- `undock: false` — docked pane を浮動化・pop-out しない（空き領域へのドロップは無視され、pop-out ボタンも出ない）。
+
+これは UI の口であって権限の仕組みではない。`dock.close(id)` などをコードから呼べば動くので、守りたい pane は
+アプリ側の呼び出しも絞ること。アプリ固定の標準配置は、独自の default layout を `createDockState(layout)` に渡す
+（パッケージは SCADA などの panel ID を持たない）。
+
+## 保存の約束（serialize / hydrate と書き込みは別）
+
+`serialize()` は文字列を返すだけで、`hydrate(json)` は文字列を検証して layout に採るだけ。**実ストレージへの書き込み
+（localStorage・設定 DB など）はアプリの責任**で、このパッケージは永続化を持たない。
+
+- 書き込みが失敗したら「保存済み」の印（最後に成功した snapshot）を更新しない。失敗した内容を保存済みとして
+  扱うと、次の起動や再試行で古い内容を新しいものと取り違える。
+- 失敗した書き込みは、次の変更または再試行で最新の `serialize()` を改めて書く。成功した snapshot だけを
+  読み戻しの元にする。
+- `hydrate` の戻り値（`boolean`）が `false` のときは現行 layout が残っている。読み込み元（ストレージ）の値を
+  「保存済み」と見なしてよいかは、この戻り値で決める。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

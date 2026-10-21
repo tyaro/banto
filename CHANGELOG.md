@@ -30,6 +30,8 @@
 - ドックを画面の左右にも置けるようにした（`LauncherBar` の `position` に `'left' | 'right'`、設定の「ドックの位置」下 / 左 / 右、`shell.launcherPosition`。900px 以下はどの位置でも下端のタブバー。`@banto/theme` に `--banto-shell-launcher-tooltip-max-width` を追加）。あわせて、ダッシュボードの浮き窓（`role="dialog"`）が出ているとツールチップが Esc で閉じなかったのを直した（nav-launcher-plan.md PR-4）。
 - `@banto/admin-core` に、古い非同期結果を捨てて一時資源を一度だけ解放する `createRequestOwner`（`begin` / `invalidate` / `dispose` / `busy`、要求ごとの `signal`・`isCurrent`・`hold`・`adopt`・`finish`）と、他パッケージが同じ契約を流すための契約の表（`tests/contracts/request-owner.json`）を追加した。`ListResource` の要求番号をこれに置き換えた（挙動の変更なし。shared-primitives-upstream-plan PR-3、#436）。
 
+- `@banto/dock-svelte` に、host の縮小でも浮動 window を操作できるようにする表示用の補正と、consumer が渡す方針を追加した（#434、計画書 PR-2）。`DockHost` に `clamp`（最小寸法・`minVisible`・狭い host での `narrowHost: 'overflow' | 'fit'`）と `capabilities`（pane ごとの `close` / `move` / `undock`）を追加し、純関数 `displayWindowGeometry` と型 `DockCapabilities` を export。host の寸法が変わっても保存した希望の x / y / width / height は書き換えない（描くときだけ補正。move / resize は描いている位置から始まり、結果が新しい希望になる）。`DockState.move` / `resize` に任意の `clamp` 引数、README に書き込み失敗時の約束（保存済み snapshot を更新しない）を追記した。
+
 ### Changed
 
 - サイドバーの折りたたみボタンを、サイドバー下端からヘッダーの左端へ移した。900px 以下のハンバーガーと 1 つのボタンに統合し（900px 超は折りたたみ、以下はドロワーの開閉）、`aria-expanded` / `aria-controls` を付けた。`IconButton` に `expanded` / `controls` を追加。

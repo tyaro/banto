@@ -19,6 +19,7 @@ export {
 	bringToFront,
 	cascadePosition,
 	clampWindowToHost,
+	displayWindowGeometry,
 	DEFAULT_MIN_HEIGHT,
 	DEFAULT_MIN_VISIBLE,
 	DEFAULT_MIN_WIDTH,
@@ -51,6 +52,8 @@ export {
 } from './core/validate';
 
 export { computeDropRegion } from './core/dropzones';
+
+export { type DockCapabilities } from './core/policy';
 
 export type {
 	DockLayout,
