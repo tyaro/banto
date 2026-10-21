@@ -111,6 +111,72 @@ export interface ServerApplyFailure {
 }
 
 /**
+ * Mirrors src-tauri's `firewall_status::UnknownReason`: why a firewall rule's
+ * state could not be read (Issue #219 PR-B). Codes only.
+ */
+export type FirewallUnknownReason =
+	| 'notWindows'
+	| 'invalidIdentifier'
+	| 'launchFailed'
+	| 'timeout'
+	| 'queryFailed'
+	| 'unreadableOutput';
+
+/** Mirrors src-tauri's `firewall_status::FirewallField`. */
+export type FirewallField =
+	| 'enabled'
+	| 'direction'
+	| 'action'
+	| 'protocol'
+	| 'profile'
+	| 'program'
+	| 'localPort'
+	| 'remoteAddress'
+	| 'active';
+
+/** Mirrors src-tauri's `FirewallRuleValues`: a rule as `Get-NetFirewall*` reports it. */
+export interface FirewallRuleValues {
+	enabled: string;
+	direction: string;
+	action: string;
+	protocol: string;
+	profile: string;
+	program: string;
+	localPorts: string[];
+	remoteAddresses: string[];
+	/** Whether the rule is in effect (in the ActiveStore); `null` when unreadable. */
+	active: boolean | null;
+}
+
+/** Mirrors src-tauri's `FirewallRuleCheck`: one rule's state. */
+export type FirewallRuleCheck =
+	| { state: 'missing' }
+	| {
+			state: 'present';
+			rule: FirewallRuleValues;
+			/** What differs from the rule the administrator command creates (empty = as expected). */
+			mismatches: FirewallField[];
+			/** What could not be compared (no basis, or the ActiveStore was unreadable). */
+			unchecked: FirewallField[];
+	  }
+	| { state: 'unknown'; reason: FirewallUnknownReason };
+
+/**
+ * Mirrors src-tauri's `FirewallRuleStatus` (`firewall_rule_status`): the
+ * Banto rules in Windows Defender Firewall, read without elevation and
+ * compared with the server snapshot of `generation`.
+ */
+export interface FirewallRuleStatus {
+	generation: number;
+	/** The comparison basis: the same snapshot's executable path and live port. */
+	expected: { executablePath: string | null; port: number | null };
+	program: FirewallRuleCheck;
+	port: FirewallRuleCheck;
+	/** Other rules in `-Group <identifier>` (`null` when unknown). */
+	groupOtherRules: number | null;
+}
+
+/**
  * The bind address the status line should describe: the live listener's
  * when the host reports one, else the saved `bind` (older hosts, or nothing
  * serving).
@@ -155,6 +221,17 @@ async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Pr
 /** Current saved settings + the live listener, as one snapshot (spec §11.4, Issue #459). */
 export function getServerStatus(): Promise<ServerStatus> {
 	return invokeCommand('server_status');
+}
+
+/**
+ * Whether Windows Defender Firewall has the Banto rules (Issue #219 PR-B,
+ * spec §11.4). Read-only, no elevation; admin-only like `server_status`.
+ * Resolves to whatever the host returned - check it with
+ * `firewallRuleStatus.ts::isFirewallRuleStatus` (an older host has no such
+ * command).
+ */
+export function getFirewallRuleStatus(): Promise<unknown> {
+	return invokeCommand('firewall_rule_status');
 }
 
 /**

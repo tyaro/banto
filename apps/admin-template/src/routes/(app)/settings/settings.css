@@ -551,6 +551,25 @@
 	font-size: 0.75rem;
 }
 
+/* Issue #219 PR-B: the Windows Firewall status (FirewallRuleStatusPanel.svelte). */
+.settings-page .firewall-rule-status {
+	margin-top: 0.5rem;
+	font-size: 0.8rem;
+}
+
+.settings-page .firewall-rule-status p {
+	margin: 0.25rem 0 0;
+}
+
+.settings-page .firewall-rule-status ul {
+	margin: 0.25rem 0 0;
+	padding-left: 1.25rem;
+}
+
+.settings-page .firewall-status > .firewall-copy {
+	margin-top: 0.5rem;
+}
+
 /* High-impact cards (successor of plan Phase 5's danger zone; the choi-app
    feedback 2026-09 recategorization moved its cards into their own
    categories - backup/restore under data, auth disable under security).

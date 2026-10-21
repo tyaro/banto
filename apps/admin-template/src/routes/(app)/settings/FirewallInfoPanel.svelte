@@ -28,6 +28,7 @@
 		type FirewallInfo
 	} from './firewallInfo';
 	import type { StatusRefresh } from './serverStatusRequests';
+	import FirewallRuleStatusPanel from './FirewallRuleStatusPanel.svelte';
 
 	interface Props {
 		/** The last status snapshot the section loaded or applied. */
@@ -236,6 +237,8 @@
 				<p class="error">{m['settings.firewallCopyFailed']()}</p>
 			{/if}
 		</div>
+
+		<FirewallRuleStatusPanel {info} {identifier} {refresh} {applying} />
 
 		<p class="note">{m['settings.firewallBlockNote']()}</p>
 		<p class="note">{m['settings.firewallVendorNote']()}</p>
