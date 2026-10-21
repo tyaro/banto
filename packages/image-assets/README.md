@@ -47,12 +47,12 @@ try {
 
 ## 取込の検査（PR-13）
 
-| API                                              | 中身                                                                                                                                                                  |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inspectImage(input, limits, { decode? })`       | 下の 3 つを順に通す。`Blob` は `size` で `maxBytes` を見てから読む（大きすぎるファイルをメモリに載せない）。ヘッダで落ちたら decode しない                            |
-| `inspectImageHeader(bytes, limits)`              | decode 前のヘッダ検査。順に bytes（`too-large`）→ 形式（`unsupported-format`）→ 構造（`malformed-header`）→ 辺（`dimensions-too-large`）→ 画素数（`too-many-pixels`） |
-| `verifyDecodedImage(bytes, header, { decode? })` | ブラウザで実際に decode し、寸法がヘッダと一致するか確かめる（`decode-failed`・`dimensions-mismatch`）。decode した画像は必ず `close()` する                          |
-| `sha256Hex(bytes)`                               | SHA-256 の 16 進（小文字 64 桁）。`crypto.subtle` があれば使い、無ければ（平文 HTTP の LAN）自前の SHA-256。同じ値（D11）                                             |
+| API                                              | 中身                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inspectImage(input, limits, { decode? })`       | 下の 3 つを順に通す。`Blob` は `size` で `maxBytes` を見てから読み、読み取りの失敗は `read-failed`。バイト列は `maxBytes` を見てから 1 度だけ複製し、ヘッダ・decode・hash に同じ複製を使う（decode を待つあいだに呼び出し側が書き換えても食い違わない）。ヘッダで落ちたら decode しない |
+| `inspectImageHeader(bytes, limits)`              | decode 前のヘッダ検査。順に bytes（`too-large`）→ 形式（`unsupported-format`）→ 構造（`malformed-header`）→ 辺（`dimensions-too-large`）→ 画素数（`too-many-pixels`）                                                                                                                   |
+| `verifyDecodedImage(bytes, header, { decode? })` | ブラウザで実際に decode し、寸法がヘッダと一致するか確かめる（`decode-failed`・`dimensions-mismatch`）。decode した画像は必ず `close()` する                                                                                                                                            |
+| `sha256Hex(bytes)`                               | SHA-256 の 16 進（小文字 64 桁）。`crypto.subtle` があれば使い、無ければ（平文 HTTP の LAN）自前の SHA-256。同じ値（D11）                                                                                                                                                               |
 
 - **サーバーの検査の代わりではない**: 取込の画面で早く断るための検査。アップロードを受けるサーバーは自分で
   マジックバイトを判定する（docs/conventions.md §6）。

@@ -23,6 +23,8 @@ export const IMAGE_ASSET_ERROR_CODES = [
 	'dimensions-too-large',
 	/** `width * height` is over `maxPixels`. */
 	'too-many-pixels',
+	/** Reading the `Blob` / `File` failed (its data became unreadable, I/O error) (PR-13). */
+	'read-failed',
 	/** The browser could not decode the image (PR-13). */
 	'decode-failed',
 	/** The decoded size differs from what the header said (PR-13). */

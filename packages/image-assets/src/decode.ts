@@ -111,9 +111,18 @@ export async function inspectImage(
 		// Refuse an oversized file before reading it into memory.
 		if (input.size > checked.maxBytes)
 			throw new ImageAssetError('too-large', { limit: checked.maxBytes, actual: input.size });
-		bytes = new Uint8Array(await input.arrayBuffer());
+		try {
+			bytes = new Uint8Array(await input.arrayBuffer());
+		} catch {
+			throw new ImageAssetError('read-failed');
+		}
 	} else {
-		bytes = toBytes(input as ImageBytes);
+		const live = toBytes(input as ImageBytes);
+		// Refuse before copying, then snapshot: the caller owns this memory and may reuse it
+		// while decode is pending, so the header, the decoder and the hash must all see one copy.
+		if (live.byteLength > checked.maxBytes)
+			throw new ImageAssetError('too-large', { limit: checked.maxBytes, actual: live.byteLength });
+		bytes = live.slice();
 	}
 	const header = inspectImageHeader(bytes, checked);
 	const decoded = await verifyDecodedImage(bytes, header, options);

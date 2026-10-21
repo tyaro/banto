@@ -190,3 +190,44 @@ describe('inspectImage', () => {
 		});
 	});
 });
+
+describe('inspectImage review fixes (PR #452)', () => {
+	it.each(['Uint8Array', 'ArrayBuffer'] as const)(
+		'a %s mutated while decode is pending: header, decoder and hash all see one snapshot',
+		async (kind) => {
+			const original = png(2, 1);
+			const expected = await sha256Hex(original);
+			const view = original.slice();
+			const input = kind === 'Uint8Array' ? view : view.buffer;
+			let decodedHash = '';
+			const decode: ImageDecoder = async (blob) => {
+				view.fill(0); // the caller reuses its memory while decode is pending
+				decodedHash = await sha256Hex(new Uint8Array(await blob.arrayBuffer()));
+				return { width: 2, height: 1 };
+			};
+			const result = await inspectImage(input, limits, { decode });
+			expect(result).toMatchObject({ format: 'png', width: 2, height: 1 });
+			expect(result.sha256).toBe(expected);
+			expect(decodedHash).toBe(expected);
+		}
+	);
+
+	it('refuses oversized bytes before copying them', async () => {
+		const { decode, calls } = fakeDecoder(1, 1);
+		expect(
+			await rejection(inspectImage(new Uint8Array(101), { ...limits, maxBytes: 100 }, { decode }))
+		).toEqual({
+			code: 'too-large',
+			detail: { limit: 100, actual: 101 }
+		});
+		expect(calls).toHaveLength(0);
+	});
+
+	it('turns a Blob read failure into ImageAssetError read-failed', async () => {
+		const blob = new Blob([png(2, 1)]);
+		vi.spyOn(blob, 'arrayBuffer').mockRejectedValue(new DOMException('gone', 'NotReadableError'));
+		const { decode, calls } = fakeDecoder(2, 1);
+		expect((await rejection(inspectImage(blob, limits, { decode }))).code).toBe('read-failed');
+		expect(calls).toHaveLength(0);
+	});
+});
