@@ -5,7 +5,10 @@
 	so the component tests mount this wrapper instead and read assertions off the
 	passed-in `DockState` (the reactive source of truth). `clamp` /
 	`capabilities` and the gesture hooks (`canStartGesture` / `onGestureEnd` /
-	`isEscapeBlocked`, #433-b) are forwarded unchanged.
+	`isEscapeBlocked`, #433-b) and the pane lifecycle props (`beforePanelChange` /
+	`keepMounted` / `isStructureChangeDeferred`, #432) are forwarded unchanged;
+	`host()` returns the `DockHost` instance (its `hidePanel` / `closePanel` /
+	`resumeDeferredChange`).
 -->
 <script lang="ts">
 	import type { ComponentProps } from 'svelte';
@@ -23,7 +26,10 @@
 		capabilities,
 		canStartGesture,
 		onGestureEnd,
-		isEscapeBlocked
+		isEscapeBlocked,
+		beforePanelChange,
+		keepMounted,
+		isStructureChangeDeferred
 	}: {
 		dock: DockState;
 		clamp?: ClampOptions;
@@ -31,10 +37,21 @@
 		canStartGesture?: HostProps['canStartGesture'];
 		onGestureEnd?: HostProps['onGestureEnd'];
 		isEscapeBlocked?: HostProps['isEscapeBlocked'];
+		beforePanelChange?: HostProps['beforePanelChange'];
+		keepMounted?: HostProps['keepMounted'];
+		isStructureChangeDeferred?: HostProps['isStructureChangeDeferred'];
 	} = $props();
+
+	let hostRef: ReturnType<typeof DockHost> | undefined = $state();
+
+	export function host(): ReturnType<typeof DockHost> {
+		if (!hostRef) throw new Error('DockHost is not mounted');
+		return hostRef;
+	}
 </script>
 
 <DockHost
+	bind:this={hostRef}
 	{dock}
 	{panel}
 	{clamp}
@@ -42,6 +59,9 @@
 	{canStartGesture}
 	{onGestureEnd}
 	{isEscapeBlocked}
+	{beforePanelChange}
+	{keepMounted}
+	{isStructureChangeDeferred}
 />
 
 {#snippet panel(content: PanelContent)}

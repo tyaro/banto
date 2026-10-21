@@ -41,8 +41,25 @@
 	 * same owner, and the three gesture hooks below (`canStartGesture`,
 	 * `onGestureEnd`, `isEscapeBlocked`) are passed to it through getters, so
 	 * they always read the live props.
+	 *
+	 * DockHost also owns the single `PanelLifecycle` (`core/lifecycle.ts`, #432,
+	 * shared-primitives-upstream-plan §3.5 / §4.2 / D3-c / D4): every structure
+	 * change of the dock UI (dock / undock / move a docked pane / tab switch /
+	 * hide / close) asks `beforePanelChange` first and waits for an IME
+	 * composition to end; the content of `keepMounted` panes stays mounted
+	 * (`hidden` + `inert`) while their tab is not shown or their floating window
+	 * is hidden - those hidden windows are rendered here too. The ✕ button hides
+	 * a `keepMounted` pane and closes (discards) any other; `hidePanel` /
+	 * `closePanel` below are the same two actions for an app's own UI.
+	 *
+	 * Which guard applies first (README "Pane lifecycle"): `capabilities` decide
+	 * whether the control exists at all (no ✕, no drag); then a `drag` does not
+	 * start while `isStructureChangeDeferred()` is true; then `canStartGesture`
+	 * may refuse the gesture; then `beforePanelChange` decides, when the gesture
+	 * commits (after the gesture closed) or a button is pressed, whether the
+	 * layout changes.
 	 */
-	import { onDestroy, type Snippet } from 'svelte';
+	import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
 	import {
 		GestureOwner,
@@ -51,6 +68,13 @@
 		type GestureKind as DockGestureKind
 	} from './core/gesture.svelte';
 	import type { ClampOptions } from './core/geometry';
+	import {
+		PanelLifecycle,
+		setPanelLifecycle,
+		type DockPanelChange,
+		type DockPanelChangeOutcome
+	} from './core/lifecycle';
+	import { collectPanelIds } from './core/tree';
 	import { setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { PanelContent } from './types';
@@ -132,6 +156,35 @@
 		 * Omitted = only `defaultPrevented` is honoured.
 		 */
 		isEscapeBlocked?: (activeLayer: HTMLElement | null) => boolean;
+		/**
+		 * Asked before every structure change the dock UI makes (shared-primitives-
+		 * upstream-plan §3.5, #432): a drop that docks / undocks / moves a docked
+		 * pane, a tab switch, a hide and a close. Only `true` (or a promise that
+		 * resolves to `true`) lets it through; anything else - `false`, a throw, a
+		 * rejection - leaves the layout as it is. The app shows its own confirm UI.
+		 * An async answer is applied only if the layout's structure did not change
+		 * while it was pending, and never after the host unmounted. Geometry-only
+		 * changes (move / resize, dividers) and the app's own `DockState` calls
+		 * are not asked. Omitted = always allowed.
+		 */
+		beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>;
+		/**
+		 * Panes whose content stays mounted - `hidden` + `inert`, the same DOM
+		 * nodes - while their tab is not the active one or their floating window
+		 * is hidden (D3-c): IME state, selection, scroll and unfinished input
+		 * survive. For such a pane the ✕ button HIDES (D4-a); `closePanel`
+		 * discards the content. Moving between the docked tree and the floating
+		 * layer (dock / undock) still re-mounts. Omitted = none (today's behaviour).
+		 */
+		keepMounted?: (panelId: string) => boolean;
+		/**
+		 * `true` = hold structure changes now (shared-primitives-upstream-plan §3.5 /
+		 * §4.2): a `drag` does not start, and a requested change waits - it is
+		 * asked and applied after the next `compositionend` / `focusout` on the
+		 * document (or `resumeDeferredChange()`). Omitted = an IME composition is
+		 * in progress in the document.
+		 */
+		isStructureChangeDeferred?: () => boolean;
 	}
 
 	let {
@@ -143,7 +196,10 @@
 		capabilities,
 		canStartGesture,
 		onGestureEnd,
-		isEscapeBlocked
+		isEscapeBlocked,
+		beforePanelChange,
+		keepMounted,
+		isStructureChangeDeferred
 	}: Props = $props();
 
 	// Published through context; getters keep reading the live props.
@@ -161,15 +217,34 @@
 	let hostH: number = $state(0);
 	let hostEl: HTMLDivElement | null = $state(null);
 
+	// svelte-ignore state_referenced_locally
+	const lifecycle = new PanelLifecycle(dock, () => ({
+		beforePanelChange,
+		keepMounted,
+		isStructureChangeDeferred
+	}));
+	setPanelLifecycle(lifecycle);
+	onMount(() => lifecycle.attach());
+	onDestroy(() => lifecycle.dispose());
+
 	const openWindows = $derived(dock.layout.floating.filter((w) => w.open));
+	/** Open windows plus hidden ones whose content is kept (`keepMounted`, not discarded by `close`). */
+	const mountedWindows = $derived(
+		dock.layout.floating.filter((w) => w.open || lifecycle.isRetained(w.id))
+	);
+	// A pane shown again (open floating or docked) is kept again by a later hide.
+	$effect(() => {
+		const shown = [...openWindows.map((w) => w.id), ...collectPanelIds(dock.layout.docked)];
+		untrack(() => lifecycle.forgetDiscarded(shown));
+	});
 
 	// Stable DOM order (see the module doc): the first time an id is seen it
 	// gets the next sequence number and keeps it. A plain Map, not state - it
 	// only ever grows, and nothing reacts to it directly.
 	const domSeq = new Map<string, number>();
 	const renderedWindows = $derived.by(() => {
-		for (const w of openWindows) if (!domSeq.has(w.id)) domSeq.set(w.id, domSeq.size);
-		return [...openWindows].sort((a, b) => (domSeq.get(a.id) ?? 0) - (domSeq.get(b.id) ?? 0));
+		for (const w of mountedWindows) if (!domSeq.has(w.id)) domSeq.set(w.id, domSeq.size);
+		return [...mountedWindows].sort((a, b) => (domSeq.get(a.id) ?? 0) - (domSeq.get(b.id) ?? 0));
 	});
 	/** id → stacking position (index in `layout.floating`'s open windows = z-order). */
 	const zOrder = $derived(new Map(openWindows.map((w, i) => [w.id, i])));
@@ -180,7 +255,8 @@
 	const drag = createDragController(
 		dock,
 		() => hostEl,
-		() => policy
+		() => policy,
+		() => lifecycle
 	);
 	setDragController(drag);
 
@@ -189,13 +265,39 @@
 		dock,
 		() => hostEl,
 		() => ({
-			canStart: canStartGesture,
+			// A `drag` may end in dock / undock: not started while structure changes are held (IME).
+			canStart: (kind, panelId) =>
+				!(kind === 'drag' && lifecycle.isDeferred()) &&
+				(canStartGesture ? canStartGesture(kind, panelId) : true),
 			isEscapeBlocked,
 			onEnd: (session, outcome, reason) => onGestureEnd?.(session.kind, outcome, reason)
 		})
 	);
 	setGestureOwner(gesture);
 	onDestroy(() => gesture.dispose());
+
+	/**
+	 * Hide a pane through `beforePanelChange` (`hide`): a `keepMounted` floating
+	 * window keeps its content mounted (`hidden` + `inert`); a docked pane
+	 * becomes a closed floating window (re-mounted). Geometry is kept.
+	 */
+	export function hidePanel(panelId: string): Promise<DockPanelChangeOutcome> {
+		return lifecycle.hide(panelId);
+	}
+
+	/**
+	 * Close a pane through `beforePanelChange` (`close`): its content is
+	 * discarded even when `keepMounted`, until the pane is opened again.
+	 * Geometry is kept.
+	 */
+	export function closePanel(panelId: string): Promise<DockPanelChangeOutcome> {
+		return lifecycle.close(panelId);
+	}
+
+	/** Retry a change held by `isStructureChangeDeferred` now (a custom predicate turned false without a composition / focus event). */
+	export function resumeDeferredChange(): void {
+		lifecycle.resumeDeferred();
+	}
 </script>
 
 <div
@@ -219,7 +321,8 @@
 				{dock}
 				{hostW}
 				{hostH}
-				frontmost={z === openWindows.length - 1}
+				hidden={!win.open}
+				frontmost={win.open && z === openWindows.length - 1}
 				zIndex={z + 1}
 				{panel}
 				{onPopOut}

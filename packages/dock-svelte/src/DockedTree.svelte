@@ -49,13 +49,24 @@
 	 * `close` (marks that floating window `open: false`). The panel is fully
 	 * recoverable afterwards through the same floating open/close toggle any
 	 * other closed window uses - no data is lost, and no Phase A method
-	 * needed changing.
+	 * needed changing. Since #432 the ✕ goes through the host's pane lifecycle
+	 * (`core/lifecycle.ts`): `hide` for a `keepMounted` pane (the content is
+	 * re-mounted in the hidden floating window, since it leaves the tree),
+	 * `close` otherwise, both asked through `beforePanelChange`.
+	 *
+	 * Tab switches (click and arrows) are lifecycle requests too (`tab-switch`).
+	 * The tab body renders each tab in its own wrapper keyed by the panel id:
+	 * the active one, plus every `keepMounted` one with `hidden` + `inert`
+	 * (#432, shared-primitives-upstream-plan §3.5 / D3-c), so switching tabs
+	 * keeps a `keepMounted` pane's DOM. The wrapper is `display: contents`
+	 * while shown, so the active tab lays out exactly as before.
 	 */
 	import type { Snippet } from 'svelte';
 	import { pixelDeltaToFraction } from './core/geometry';
 	import { MIN_PANE_FRACTION } from './core/tree';
 	import { getDragController } from './core/drag.svelte';
 	import { getGestureOwner } from './core/gesture.svelte';
+	import { getPanelLifecycle } from './core/lifecycle';
 	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
@@ -86,14 +97,9 @@
 	const drag = getDragController();
 	const gesture = getGestureOwner();
 	const policy = getDockPolicy();
+	const lifecycle = getPanelLifecycle();
 	/** Per-pane capabilities from the host's `capabilities` prop (all allowed when absent). */
 	const capsOf = (id: string) => resolveCapabilities(policy, id);
-
-	/** Undock-then-close - see the module doc comment on why this is the "close a docked panel" behavior. */
-	function closeDockedPanel(id: string): void {
-		dock.undockPanel(id);
-		dock.close(id);
-	}
 
 	/**
 	 * Arms a drag candidate on a titlebar/tab pointerdown. `frameEl` is the
@@ -243,9 +249,15 @@
 		else if (event.key === 'End') next = count - 1;
 		else return;
 		event.preventDefault();
-		dock.setActiveTab(node.id, next);
-		// The tabs are keyed by id, so the element already exists; focus it now.
-		tabStripEl?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+		const to = node.children[next]?.id;
+		if (to === undefined) return;
+		// Focus follows only once the switch is applied (it may be refused or held).
+		void lifecycle.switchTab(node.id, to, () => {
+			// The tabs are keyed by id, so the element already exists.
+			const tabs = tabStripEl?.querySelectorAll<HTMLElement>('[role="tab"]');
+			const target = [...(tabs ?? [])].find((el) => el.dataset.dockTabId === to);
+			target?.focus();
+		});
 	}
 
 	let panelFrameEl: HTMLDivElement | null = $state(null);
@@ -304,7 +316,7 @@
 					class="close-btn"
 					aria-label={t.close(node.title)}
 					onpointerdown={(event) => event.stopPropagation()}
-					onclick={() => closeDockedPanel(node.id)}
+					onclick={() => void lifecycle.closeButton(node.id)}
 				>
 					✕
 				</button>
@@ -350,11 +362,13 @@
 					class="tab"
 					class:active={i === node.activeIndex}
 					role="tab"
+					data-dock-tab-id={child.id}
 					tabindex={i === node.activeIndex ? 0 : -1}
 					aria-selected={i === node.activeIndex}
 					aria-label={child.title}
 					onpointerdown={(event) =>
-						tabsFrameEl && armDrag(event, tabsFrameEl, child, () => dock.setActiveTab(node.id, i))}
+						tabsFrameEl &&
+						armDrag(event, tabsFrameEl, child, () => void lifecycle.switchTab(node.id, child.id))}
 					onkeydown={(event) => handleTabKeydown(event, i)}
 				>
 					{#if child.icon}
@@ -379,7 +393,7 @@
 								class="close-btn"
 								aria-label={t.close(child.title)}
 								onpointerdown={(event) => event.stopPropagation()}
-								onclick={() => closeDockedPanel(child.id)}
+								onclick={() => void lifecycle.closeButton(child.id)}
 							>
 								✕
 							</button>
@@ -391,9 +405,14 @@
 		<!-- Same scrollable-region-focusable rationale (and svelte-ignore) as the `panel` branch's `.body` above. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div class="body" role="region" aria-label={active?.title} tabindex="0">
-			{#if active}
-				{@render panel(active)}
-			{/if}
+			{#each node.children as child, i (child.id)}
+				{@const shown = i === node.activeIndex}
+				{#if shown || lifecycle.keepMounted(child.id)}
+					<div class="tab-content" hidden={!shown} inert={!shown}>
+						{@render panel(child)}
+					</div>
+				{/if}
+			{/each}
 		</div>
 	</div>
 {:else}
@@ -464,6 +483,15 @@
 
 	.titlebar:hover {
 		background: var(--banto-surface-hover);
+	}
+
+	/* A layout no-op while shown (the active tab lays out as before #432). */
+	.tab-content {
+		display: contents;
+	}
+
+	.tab-content[hidden] {
+		display: none;
 	}
 
 	.tab-strip {

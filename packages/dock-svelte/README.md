@@ -124,6 +124,80 @@ const isEscapeBlocked = (el: HTMLElement | null) =>
 
 見える文言（モードのボタンの `aria-label`）は `messages` の `moveWindow` / `resizeWindow` で差し替える。
 
+## pane の lifecycle（構造変更の前の確認・中身の保持・hide と close）
+
+中身の寿命に関わる**構造変更**（dock / undock / docked pane の移動 / タブの切替 / hide / close）の前に、アプリが
+確かめて止められる（#432。設計は docs/design/shared-primitives-upstream-plan.md の §3.5・§4.2・D3・D4）。
+
+```ts
+type DockPanelChange =
+	| { kind: 'dock' | 'undock' | 'move-docked'; panelId: string; remount: true }
+	| { kind: 'tab-switch'; groupId: string; from: string; to: string; remount: boolean }
+	| { kind: 'hide'; panelId: string; remount: boolean }
+	| { kind: 'close'; panelId: string };
+
+beforePanelChange?: (change: DockPanelChange) => boolean | Promise<boolean>; // true のときだけ変える
+keepMounted?: (panelId: string) => boolean; // 見えないあいだも中身を mount したままにする pane
+isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を保留（省略時は IME 変換中）
+```
+
+- **`beforePanelChange`**: `true`（または `true` に解決）のときだけ layout を変える。`false`・ほかの値・例外・
+  reject では変えない（変えないのは対象だけで、layout 全体を戻すことはしない）。確認の UI はアプリが出す。
+  ドラッグでは、操作が閉じた後（確定の一点）に聞くので、確認を待つあいだ pointer の操作は残らない。拒否
+  されると pane は元の場所のまま。**非同期の答え**は、適用の直前に確かめ直し、次のどれかなら採らずに
+  `stale` を返す: 待つあいだに layout の構造（docked の形・選択中のタブ・浮動 window の有無と open）が一度でも
+  変わった（`DockState.structureRevision` の世代で見るので、close → open やタブ A → B → A で同じ形に戻っても
+  `stale`。位置・寸法・split の比率・前後関係の変化は数えない）、または今の状態で組み立て直した変更が聞いた
+  ものと違う（`keepMounted` が変わって `remount` が変わった、`tab-switch` の `from` が変わった）。`DockHost` が
+  unmount されたら、答えを待っている要求（解決しない Promise を含む）はすぐに `disposed` になる。
+  **同じ要求**は、変更と行き先（ドロップ先と領域・undock の位置）が同じもの。答えを待つあいだの同じ要求
+  （✕ の二度押し）はもう一度聞かない。行き先が違う要求（X へのドロップを待つあいだに Y へドロップ）は別に
+  聞き、先に許可されたほうが適用され、もう一方は構造が変わったので `stale` になる。浮動 window の移動・
+  resize・divider（幾何だけの変更）と、アプリが `DockState` を直接呼ぶ変更は聞かない。
+- **`remount`**: `true` は中身がいったん unmount され、あとで別に mount されること（draft を capture しておけば
+  次の mount で戻せる）。`false` は DOM が残ること。`tab-switch` では `from` の pane のこと。dock / undock は
+  docked の木と浮動の層をまたぐので、`keepMounted` でも常に `true`。
+- **`keepMounted`**: その pane の中身を、表示していないタブのあいだ・hide した浮動 window のあいだ、
+  `hidden` + `inert` で同じ DOM のまま残す（IME・選択・scroll・未完成の入力が残る）。そのぶんメモリと effect は
+  常にかかる。`keepMounted` でない pane は今までどおり、見えなくなると unmount する。
+
+### hide と close（D4）
+
+| 操作                              | 中身                                                                                                           | `beforePanelChange` |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------- |
+| ✕ ボタン（`keepMounted` の pane） | **hide**: 浮動 window は中身を保ったまま隠す。docked の pane は閉じた浮動 window になる（そこで mount し直す） | `hide`              |
+| ✕ ボタン（それ以外）              | **close**: 中身を捨てる（今までと同じ）                                                                        | `close`             |
+| `host.hidePanel(id)`              | hide（上と同じ）                                                                                               | `hide`              |
+| `host.closePanel(id)`             | close。`keepMounted` の pane でも中身を捨てる（隠れている中身も捨てる）。次に開くと新しく mount する           | `close`             |
+
+どれも window の位置と寸法は残す（次の `dock.open(id)` で同じ場所に出る）。`hidePanel` / `closePanel` /
+`resumeDeferredChange` は `bind:this` で得た `DockHost` から呼び、結果（`DockPanelChangeOutcome`:
+`applied` / `refused` / `stale` / `superseded` / `disposed`）を返す。中身を捨てる close を ✕ 以外（メニュー・
+コマンド）に置くのはアプリ。アプリでのつなぎ方（hide・tab-switch・dock は draft の capture だけ、close は
+確認して apply / discard / cancel）は計画書 §3.5 の遷移ごとの表を見る。
+
+### IME 変換中は構造変更を保留する
+
+`isStructureChangeDeferred()` が `true` のあいだ（省略時: document で `compositionstart` があって
+`compositionend` がまだ来ておらず、その要素がまだ文書にあってフォーカスを持つあいだ）:
+
+- `drag`（dock / undock になりうるドラッグ）は始めない。浮動 window の resize・キーボードの移動 / サイズ変更・
+  divider は始める（中身の DOM を壊さない）。
+- 構造変更の要求（タブのクリック・✕・`closePanel` など、変換中に確定したドラッグも）は、聞かず・変えずに 1 つ
+  だけ持っておき（要求を作った順で新しいほうを残し、古いほうは `superseded`。遅れて許可が返った古い要求が、持っている新しい要求を追い出すことはない。すでに古くなった許可は持たずに `stale`）、document の `compositionend` / `focusout` の次の
+  タスクで改めて `beforePanelChange` に聞いて進める。独自の判定を渡したときは、判定が `false` になったら
+  `resumeDeferredChange()` を呼ぶ（`compositionend` / `focusout` でも試す）。DOM を壊して変換を戻せるとは仮定しない。
+- 保留は、非同期の答えが返ったときにも確かめ直す。答えを待つあいだに変換が始まったら、許可は同じように持って
+  おき、変換が終わってから（聞き直さずに）適用する。持っているあいだにアプリが構造を変えたら、その要求は
+  `stale` になる（保留した時点の構造の世代と比べる）。
+
+### どれが先に効くか
+
+1. `capabilities` — 操作の口そのもの（✕ を出さない・ドラッグにしない）。
+2. `isStructureChangeDeferred` — `drag` を始めない（変換中）。
+3. `canStartGesture` — 操作を始めるか（`drag` は閾値を越えたとき）。
+4. `beforePanelChange` — 操作が確定したとき・ボタンを押したときに、layout を変えるか。
+
 ## 保存の約束（serialize / hydrate と書き込みは別）
 
 `serialize()` は文字列を返すだけで、`hydrate(json)` は文字列を検証して layout に採るだけ。**実ストレージへの書き込み

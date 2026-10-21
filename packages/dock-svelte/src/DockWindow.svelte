@@ -42,11 +42,21 @@
 	 * taken (plan §4.3); Ctrl / Alt / Meta combinations, already-consumed keys
 	 * and IME composition pass through. Moving the focus off the button
 	 * cancels the mode (reason `blur`).
+	 *
+	 * Hidden (#432, shared-primitives-upstream-plan §3.5 / D3-c): `DockHost` also
+	 * renders a CLOSED window whose pane is `keepMounted`, with `hidden` and
+	 * `inert` on the root, so the content keeps its DOM until it is shown again.
+	 * A gesture or keyboard mode on this window ends (`api`) when it becomes
+	 * hidden - the focused control may vanish without a `blur` (Firefox). The ✕
+	 * button goes through the host's pane lifecycle: hide for a `keepMounted`
+	 * pane, close (discard the content) otherwise, both asked through
+	 * `beforePanelChange`.
 	 */
 	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { getDragController } from './core/drag.svelte';
 	import { displayWindowGeometry } from './core/geometry';
 	import { getGestureOwner } from './core/gesture.svelte';
+	import { getPanelLifecycle } from './core/lifecycle';
 	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
@@ -58,6 +68,8 @@
 		hostW: number;
 		hostH: number;
 		frontmost: boolean;
+		/** A closed window kept mounted for a `keepMounted` pane: `hidden` + `inert` (see the module doc). */
+		hidden?: boolean;
 		/** Stacking order inside the host's floating layer (1 = back). `DockHost` derives it from the window's index in `layout.floating` (= z-order) while keeping the DOM order stable. */
 		zIndex: number;
 		panel: Snippet<[PanelContent]>;
@@ -73,6 +85,7 @@
 		hostW,
 		hostH,
 		frontmost,
+		hidden = false,
 		zIndex,
 		panel,
 		onPopOut,
@@ -91,6 +104,7 @@
 	const drag = getDragController();
 	const gesture = getGestureOwner();
 	const policy = getDockPolicy();
+	const lifecycle = getPanelLifecycle();
 
 	// What is DRAWN: the saved preference clamped to the current host. The saved
 	// layout is untouched (shared-primitives-upstream-plan §3.2, #434).
@@ -275,6 +289,10 @@
 	$effect(() => {
 		if (keyMode === 'move' && !caps.move) untrack(() => gesture.cancel('api'));
 	});
+	// Hidden while a gesture / keyboard mode is on this window: end it (see the module doc).
+	$effect(() => {
+		if (hidden && gesture.session?.panelId === win.id) untrack(() => gesture.cancel('api'));
+	});
 </script>
 
 <!--
@@ -292,6 +310,8 @@
 	aria-label={win.title}
 	tabindex="-1"
 	bind:this={windowEl}
+	{hidden}
+	inert={hidden}
 	style:left={`${shown.x}px`}
 	style:top={`${shown.y}px`}
 	style:width={`${shown.width}px`}
@@ -365,7 +385,7 @@
 					class="close-btn"
 					aria-label={t.close(win.title)}
 					onpointerdown={(event) => event.stopPropagation()}
-					onclick={() => dock.close(win.id)}
+					onclick={() => void lifecycle.closeButton(win.id)}
 				>
 					✕
 				</button>
@@ -407,6 +427,10 @@
 		backdrop-filter: var(--banto-backdrop, none);
 		-webkit-backdrop-filter: var(--banto-backdrop, none);
 		transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.dock-window[hidden] {
+		display: none;
 	}
 
 	.dock-window.frontmost {
