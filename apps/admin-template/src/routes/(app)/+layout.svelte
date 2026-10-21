@@ -16,9 +16,15 @@
 	import { settings } from '#lib/settings.svelte.js';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
+	import { appShortcuts, commandPaletteCommand } from '#lib/shortcuts.js';
 	import { watchRecentCommandOwner } from '#lib/recentCommands.js';
 	import { navItems } from '#lib/navigation.js';
 	import { navBadges } from '#lib/navBadges.svelte.js';
+	import { isTauri } from '#lib/banto/setup.js';
+	import { getServerStatus } from '#lib/banto/serverAdmin.js';
+	import { notifyServerPortNoticeOnce } from '#lib/banto/serverPortNotice.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
 
 	let { children, data } = $props();
 
@@ -123,6 +129,15 @@
 			})
 		)
 	);
+
+	// Launch-time LAN port fallback (the saved port was in use, so the
+	// embedded server started on the next free port, or not at all): tell an
+	// admin once per page load (`#lib/banto/serverPortNotice.ts`). Desktop
+	// window only - the LAN surface has no embedded-server controls.
+	$effect(() => {
+		if (!isTauri() || !isAdmin(sessionStore.role)) return;
+		untrack(() => void notifyServerPortNoticeOnce({ getStatus: getServerStatus, notify }));
+	});
 
 	// Command palette history is per user (#258): dropped on a confirmed
 	// `none`, and another owner's entry dropped once an owner is confirmed
@@ -231,16 +246,29 @@
 	// shell), not inside CommandPalette itself - it must keep working to
 	// CLOSE the palette while focus is inside its own search input (or any
 	// other input/textarea on the page), which a listener scoped to just the
-	// palette component couldn't do once it's unmounted.
-	//
+	// palette component couldn't do once it's unmounted. Since #435 PR-11 it
+	// is a command of the app's shortcut dispatcher (#lib/shortcuts.ts): the
+	// open palette's dialog is its `ownerLayer`, so another Modal / Drawer or
+	// a menu keeps it from opening, and an IME composition never toggles it.
+	let paletteHost = $state<HTMLElement | null>(null);
+	$effect(() =>
+		untrack(() =>
+			appShortcuts.register('shell', [
+				commandPaletteCommand({
+					title: m['shell.openCommandPalette'](),
+					toggle: () => commandPaletteStore.toggle(),
+					layer: () => paletteHost?.querySelector('[role="dialog"][aria-modal="true"]') ?? null,
+					isRepeat: appShortcuts.isRepeat
+				})
+			])
+		)
+	);
+
+	// Page commands (the dashboard's Ctrl+S) come through the same dispatcher.
 	// Escape also closes the sidebar overlay here (design.md §8.1), unless
 	// the command palette is open - that owns Escape itself while visible.
 	function handleKeydown(event: KeyboardEvent): void {
-		if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
-			event.preventDefault();
-			commandPaletteStore.toggle();
-			return;
-		}
+		if (appShortcuts.handle(event)) return;
 		if (event.key === 'Escape' && overlayOpen && !commandPaletteStore.open) {
 			closeOverlay();
 		}
@@ -252,8 +280,10 @@
 <div
 	class="shell"
 	class:with-launcher={launcher}
+	class:launcher-top={launcher && launcherPosition === 'top'}
 	class:launcher-left={launcher && launcherPosition === 'left'}
 	class:launcher-right={launcher && launcherPosition === 'right'}
+	class:kiosk={settings.kiosk}
 >
 	{#if launcher}
 		<ShellLauncher />
@@ -281,7 +311,11 @@
 </div>
 
 {#if commandPaletteStore.open}
-	<CommandPalette />
+	<!-- The host only lets the Ctrl+K command find the palette's dialog (its
+	     `ownerLayer`); `display: contents` keeps it out of the layout. -->
+	<div class="palette-host" bind:this={paletteHost}>
+		<CommandPalette />
+	</div>
 {/if}
 
 <style>
@@ -308,10 +342,27 @@
 		padding-bottom: calc(1.25rem + var(--banto-shell-launcher-reserve));
 	}
 
-	/* A left / right bar (D4) takes the room on that side instead. */
+	/* A top / left / right bar (D4) takes the room on that side instead. */
+	.shell.launcher-top main,
 	.shell.launcher-left main,
 	.shell.launcher-right main {
 		padding-bottom: 1.25rem;
+	}
+
+	/* The top bar sits below the header (the header stays the top row): the
+	   bar is pushed down by the header's height - the compact one in the
+	   kiosk shell (Header.svelte's `compact`) - and the page starts below
+	   the bar. */
+	.shell.launcher-top {
+		--banto-shell-launcher-inset-top: var(--banto-shell-header-height);
+	}
+
+	.shell.launcher-top.kiosk {
+		--banto-shell-launcher-inset-top: var(--banto-shell-header-height-compact);
+	}
+
+	.shell.launcher-top main {
+		padding-top: calc(1.25rem + var(--banto-shell-launcher-reserve));
 	}
 
 	.shell.launcher-left main {
@@ -322,6 +373,10 @@
 		padding-right: calc(1.25rem + var(--banto-shell-launcher-reserve));
 	}
 
+	.palette-host {
+		display: contents;
+	}
+
 	.overlay-backdrop {
 		display: none;
 	}
@@ -329,6 +384,7 @@
 	@media (max-width: 900px) {
 		/* The full-width tab bar instead, whatever the position (§4.6, D5). */
 		.shell.with-launcher main,
+		.shell.launcher-top main,
 		.shell.launcher-left main,
 		.shell.launcher-right main {
 			padding: 1.25rem 1.25rem calc(1.25rem + var(--banto-shell-launcher-tabbar-reserve));

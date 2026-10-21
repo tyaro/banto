@@ -14,6 +14,7 @@
  *   after the SessionController confirmed the session), so a value saved from another
  *   client/session wins over this tab's stale localStorage.
  */
+import { untrack } from 'svelte';
 import {
 	applyDensity,
 	applyPreset,
@@ -21,7 +22,9 @@ import {
 	isThemeDensity,
 	isThemeMode,
 	isThemePreset,
+	resolveTheme,
 	watchSystemTheme,
+	type ResolvedTheme,
 	type ThemeDensity,
 	type ThemeMode,
 	type ThemePreset
@@ -71,7 +74,7 @@ export const NAV_LAYOUT_DEFAULT: NavLayout = 'sidebar';
  * values as `@banto/ui`'s `LauncherPosition`; <=900px is always the bottom
  * tab bar whatever this says (D5).
  */
-export type LauncherPosition = 'bottom' | 'left' | 'right';
+export type LauncherPosition = 'bottom' | 'top' | 'left' | 'right';
 
 /** Dock position default (nav-launcher-plan.md §3): the bottom edge. */
 export const LAUNCHER_POSITION_DEFAULT: LauncherPosition = 'bottom';
@@ -90,7 +93,7 @@ export function isNavLayout(value: unknown): value is NavLayout {
 }
 
 export function isLauncherPosition(value: unknown): value is LauncherPosition {
-	return value === 'bottom' || value === 'left' || value === 'right';
+	return value === 'bottom' || value === 'top' || value === 'left' || value === 'right';
 }
 
 /** A whole percent on the slider's grid (40-100, step 5). */
@@ -115,6 +118,12 @@ function loadThemeMode(): ThemeMode {
 	if (typeof localStorage === 'undefined') return 'system';
 	const stored = localStorage.getItem(THEME_KEY);
 	return isThemeMode(stored) ? stored : 'system';
+}
+
+function loadResolvedTheme(): ResolvedTheme {
+	// No `window` (SSR/prerender): the same default as an unset mode on a light OS.
+	if (typeof window === 'undefined') return 'light';
+	return resolveTheme(loadThemeMode());
 }
 
 function loadThemePreset(): ThemePreset {
@@ -163,6 +172,13 @@ function persistRemote(key: string, value: string): void {
 
 class Settings {
 	themeMode: ThemeMode = $state(loadThemeMode());
+	/**
+	 * The theme actually on screen (light/dark): `themeMode` with "system"
+	 * resolved against the OS. The header's toggle shows the opposite of this.
+	 * Kept current by `#applyThemeMode` and, while following the system, by the
+	 * OS watcher.
+	 */
+	resolvedTheme: ResolvedTheme = $state(loadResolvedTheme());
 	themePreset: ThemePreset = $state(loadThemePreset());
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
 	kiosk: boolean = $state(loadKiosk());
@@ -196,12 +212,14 @@ class Settings {
 	#applyThemeMode(mode: ThemeMode) {
 		this.themeMode = mode;
 		localStorage.setItem(THEME_KEY, mode);
-		applyTheme(mode);
+		this.resolvedTheme = applyTheme(mode);
 
 		this.#unwatchSystem?.();
 		this.#unwatchSystem = undefined;
 		if (mode === 'system') {
-			this.#unwatchSystem = watchSystemTheme(() => applyTheme('system'));
+			this.#unwatchSystem = watchSystemTheme(() => {
+				this.resolvedTheme = applyTheme('system');
+			});
 		}
 	}
 
@@ -247,6 +265,16 @@ class Settings {
 		this.#changedSinceSync.add(MODE_SETTING);
 		this.#applyThemeMode(mode);
 		persistRemote(MODE_SETTING, mode);
+	}
+
+	/**
+	 * The header's sun/moon button: pin the opposite of the theme on screen
+	 * (so from "system" it stores `light` or `dark` and stops following the OS).
+	 * The read is untracked so this is safe to call from an `$effect`.
+	 */
+	toggleThemeMode() {
+		const next: ThemeMode = untrack(() => this.resolvedTheme) === 'dark' ? 'light' : 'dark';
+		this.setThemeMode(next);
 	}
 
 	setThemePreset(preset: ThemePreset) {

@@ -98,7 +98,7 @@ test.describe('kiosk shell', () => {
 });
 
 // Dock layout (nav-launcher-plan.md §7.3): the diagonal at the baseline
-// viewport plus the <=900px tab bar, and one shot per side bar (D4, one
+// viewport plus the <=900px tab bar, and one shot per other edge (D4, one
 // combo each). Primed like the kiosk shell, so every other test here keeps
 // the default sidebar.
 const LAUNCHER_SHOTS: {
@@ -110,7 +110,8 @@ const LAUNCHER_SHOTS: {
 	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 }, position: 'bottom' },
 	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 768, height: 1024 }, position: 'bottom' },
 	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1440, height: 900 }, position: 'left' },
-	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 }, position: 'right' }
+	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 }, position: 'right' },
+	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 }, position: 'top' }
 ];
 
 test.describe('dock layout', () => {
@@ -132,10 +133,14 @@ test.describe('dock layout', () => {
 			// content clears it (the shell's bottom reserve, plan §4.1).
 			// The charts lay out after first paint (the page is one viewport tall
 			// until then), so settle first, scroll, and wait until it really moved.
+			// A top bar keeps the page start instead: that is where the shell's
+			// top reserve shows (the content starts below the bar).
 			await page.waitForTimeout(SETTLE_MS);
-			await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-			await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-			await page.waitForTimeout(SETTLE_MS);
+			if (position !== 'top') {
+				await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+				await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+				await page.waitForTimeout(SETTLE_MS);
+			}
 			await expect(page).toHaveScreenshot(
 				`dashboard-launcher-${side}${comboLabel(combo)}-${size}.png`
 			);

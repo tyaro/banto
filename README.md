@@ -187,23 +187,23 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
 
 やりたいことから、読む文書を引く表。手順の「正」は各リンク先にあり、README は要点だけを持つ。
 
-| やりたいこと                                                                          | 読む文書                                                                                                                                                                   |
-| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| テンプレートをコピーして自分のアプリにする（リネーム → プリセット選択 → 実装 → 配信） | 前節 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                             |
-| 名称・識別子をリネームする                                                            | [docs/recipes/rename.md](docs/recipes/rename.md)                                                                                                                           |
-| CRUD リソースを追加する / デモの `items` を差し替える                                 | [docs/recipes/add-resource.md](docs/recipes/add-resource.md)                                                                                                               |
-| 不要なオプション資産（dock/charts/添付/帳票/ツリー等）を外す                          | [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)（`pnpm scaffold --preset`）                                                               |
-| 表示専用アプリ（カンバン / 常設ダッシュボード / 展示デモ）を作る                      | 同上の [`--preset display`](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)                                                                         |
-| ログイン無しの小さなアプリとして始める                                                | [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)                                                                                                               |
-| RBAC ロールを足す                                                                     | [docs/recipes/add-role.md](docs/recipes/add-role.md)                                                                                                                       |
-| LAN の他端末に配信する / 閲覧公開 / TLS / PWA                                         | [docs/recipes/lan-access.md](docs/recipes/lan-access.md)                                                                                                                   |
-| DB の切り替え（SQLite / PostgreSQL）・バックアップ                                    | [docs/recipes/database-backup.md](docs/recipes/database-backup.md)                                                                                                         |
-| スキャナ入力 / 通知トースト / ツリービューを組み込む                                  | [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md) / [notifications.md](docs/recipes/notifications.md) / [tree-svelte.md](docs/recipes/tree-svelte.md)               |
-| 別リポジトリから `@banto/*` / `banto-*` を git 依存で使う                             | [docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)・[docs/publishing.md](docs/publishing.md)                                           |
-| Banto の新しい版を派生アプリに取り込む                                                | [docs/upgrading.md](docs/upgrading.md)（リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）                                             |
-| Windows で Tauri デスクトップとして動かす                                             | [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)                                                                                                             |
-| 全体構成・レイヤ・フローを一望する                                                    | [docs/architecture-overview.md](docs/architecture-overview.md) / [docs/architecture-flows.md](docs/architecture-flows.md)                                                  |
-| 仕様・ロードマップ・設計判断（テンプレート自体を保守する）                            | [docs/ui-framework-spec.md](docs/ui-framework-spec.md) / [docs/roadmap.md](docs/roadmap.md) / [docs/adr/](docs/adr/README.md) / [docs/conventions.md](docs/conventions.md) |
+| やりたいこと                                                                          | 読む文書                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| テンプレートをコピーして自分のアプリにする（リネーム → プリセット選択 → 実装 → 配信） | 前節 [テンプレートから自分のアプリを作る](#テンプレートから自分のアプリを作る)                                                                                                                                 |
+| 名称・識別子をリネームする                                                            | [docs/recipes/rename.md](docs/recipes/rename.md)                                                                                                                                                               |
+| CRUD リソースを追加する / デモの `items` を差し替える                                 | [docs/recipes/add-resource.md](docs/recipes/add-resource.md)                                                                                                                                                   |
+| 不要なオプション資産（dock/charts/添付/帳票/ツリー等）を外す                          | [docs/recipes/remove-optional-assets.md](docs/recipes/remove-optional-assets.md)（`pnpm scaffold --preset`）                                                                                                   |
+| 表示専用アプリ（カンバン / 常設ダッシュボード / 展示デモ）を作る                      | 同上の [`--preset display`](docs/recipes/remove-optional-assets.md#--preset-display表示専用アプリ)                                                                                                             |
+| ログイン無しの小さなアプリとして始める                                                | [docs/recipes/no-login-app.md](docs/recipes/no-login-app.md)                                                                                                                                                   |
+| RBAC ロールを足す                                                                     | [docs/recipes/add-role.md](docs/recipes/add-role.md)                                                                                                                                                           |
+| LAN の他端末に配信する / 閲覧公開 / TLS / PWA                                         | [docs/recipes/lan-access.md](docs/recipes/lan-access.md)                                                                                                                                                       |
+| DB の切り替え（SQLite / PostgreSQL）・バックアップ                                    | [docs/recipes/database-backup.md](docs/recipes/database-backup.md)                                                                                                                                             |
+| スキャナ入力 / 通知トースト / ツリービュー / 画像の取り込みを組み込む                 | [docs/recipes/scan-wedge.md](docs/recipes/scan-wedge.md) / [notifications.md](docs/recipes/notifications.md) / [tree-svelte.md](docs/recipes/tree-svelte.md) / [image-assets.md](docs/recipes/image-assets.md) |
+| 別リポジトリから `@banto/*` / `banto-*` を git 依存で使う                             | [docs/recipes/consume-as-git-dependency.md](docs/recipes/consume-as-git-dependency.md)・[docs/publishing.md](docs/publishing.md)                                                                               |
+| Banto の新しい版を派生アプリに取り込む                                                | [docs/upgrading.md](docs/upgrading.md)（リリース案内の雛形: [docs/release-notes-template.md](docs/release-notes-template.md)）                                                                                 |
+| Windows で Tauri デスクトップとして動かす                                             | [docs/recipes/windows-setup.md](docs/recipes/windows-setup.md)                                                                                                                                                 |
+| 全体構成・レイヤ・フローを一望する                                                    | [docs/architecture-overview.md](docs/architecture-overview.md) / [docs/architecture-flows.md](docs/architecture-flows.md)                                                                                      |
+| 仕様・ロードマップ・設計判断（テンプレート自体を保守する）                            | [docs/ui-framework-spec.md](docs/ui-framework-spec.md) / [docs/roadmap.md](docs/roadmap.md) / [docs/adr/](docs/adr/README.md) / [docs/conventions.md](docs/conventions.md)                                     |
 
 ## ドキュメントの2トラック
 
@@ -308,19 +308,20 @@ npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスはリ
 （2026-07-12 公開化に伴い統一）。モノレポ内ではソース直接参照、外部からは git 依存
 （サブディレクトリ指定）で消費する — 詳細は [docs/publishing.md](docs/publishing.md)）:
 
-| パッケージ           | 内容                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------ |
-| `@banto/admin-core`  | リソース定義・データ/認証プロバイダ・Runesコンポーザブル                                   |
-| `@banto/grid-svelte` | データグリッド（仮想化・編集・ソート/フィルタ・グルーピング）                              |
-| `@banto/forms`       | スキーマ駆動フォーム + 入力コンポーネント                                                  |
-| `@banto/charts`      | SVGチャート（折れ線/棒/円/散布図/スパークライン/積立エリア/ガント 他）                     |
-| `@banto/dock-svelte` | ドッキング/フローティングレイアウト                                                        |
-| `@banto/theme`       | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット                               |
-| `@banto/report`      | 帳票/印刷（Markdownテンプレート + データバインド、M19）                                    |
-| `@banto/attachments` | 添付ファイル/画像管理UI（M20）                                                             |
-| `@banto/scan-wedge`  | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）                                 |
-| `@banto/tree-svelte` | ツリービュー（展開/選択/チェックボックス/遅延/ドラッグ/リネーム/tree-grid/tree-select）    |
-| `@banto/ui`          | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState） |
+| パッケージ            | 内容                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| `@banto/admin-core`   | リソース定義・データ/認証プロバイダ・Runesコンポーザブル                                   |
+| `@banto/grid-svelte`  | データグリッド（仮想化・編集・ソート/フィルタ・グルーピング）                              |
+| `@banto/forms`        | スキーマ駆動フォーム + 入力コンポーネント                                                  |
+| `@banto/charts`       | SVGチャート（折れ線/棒/円/散布図/スパークライン/積立エリア/ガント 他）                     |
+| `@banto/dock-svelte`  | ドッキング/フローティングレイアウト                                                        |
+| `@banto/theme`        | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット                               |
+| `@banto/report`       | 帳票/印刷（Markdownテンプレート + データバインド、M19）                                    |
+| `@banto/attachments`  | 添付ファイル/画像管理UI（M20）                                                             |
+| `@banto/scan-wedge`   | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）                                 |
+| `@banto/tree-svelte`  | ツリービュー（展開/選択/チェックボックス/遅延/ドラッグ/リネーム/tree-grid/tree-select）    |
+| `@banto/ui`           | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState） |
+| `@banto/image-assets` | ブラウザ側の画像の原本・取込検査・object URL の寿命（ADR-0020、オプション・未配線）        |
 
 Rust クレート（`crates/`、MIT）:
 
@@ -385,6 +386,8 @@ git config core.hooksPath .githooks
 「LANアクセス（組み込みWebサーバ）」でトグルを ON、バインドアドレス・ポートを設定して
 「保存して適用」すると、表示された URL/QR コードから同一 LAN 内の他端末のブラウザで
 同じ画面を使える（REST + SSE、仕様 §11）。
+起動時に保存したポートが使用中なら、すぐ後ろの決まった範囲（+1〜+19）の空きポートで
+起動し、そのポートを保存して通知する（設定画面で指定して適用したときは自動で選ばない）。
 
 > ⚠️ **LAN サーバ機能は標準では HTTP（平文）。** ログイン情報・セッショントークン・
 > 業務データが暗号化されずにネットワークを流れる。信頼できる LAN 以外では有効化しない。

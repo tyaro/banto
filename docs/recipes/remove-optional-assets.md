@@ -28,6 +28,8 @@ pnpm install                       # 外れた依存の反映（lockfile も更�
   「足す」工程も持つ（下記）。
 - `@banto/scan-wedge` はレシピのみ・テンプレート未配線のため scaffold は触れない
   （[scan-wedge.md](scan-wedge.md)）。
+- `@banto/image-assets` もテンプレート未配線（アプリが依存しない）のため scaffold は触れない
+  （下記「`@banto/image-assets`」、[ADR-0020](../adr/0020-image-assets-package.md)）。
 - 設計は [design/scaffold-presets-plan.md](../design/scaffold-presets-plan.md)、
   受け入れ検査は `.github/workflows/template-acceptance.yml`（4 プリセットの
   scaffold → verify:architecture → check → build → cargo test）。
@@ -94,8 +96,12 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
 `DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
-`src/lib/banto/popout.ts`・`src/routes/panel/[id]/`（ポップアウト先の
-スタンドアロンウィンドウ用ルート）を削除し、ダッシュボードページを固定
+`src/lib/banto/popout.ts`・`src/lib/banto/dockEscape.ts` とその `.test.ts`（dock の gesture の
+Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップアウト先の
+スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
+（`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
+それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・
+`src/lib/components/DraftSettleDialog.svelte`。#432。メモの Ctrl+S の登録もここ。#435）を削除し、ダッシュボードページを固定
 レイアウトのパネル羅列に置き換える。`apps/admin-template/package.json` の
 `@banto/dock-svelte` 依存と、`apps/admin-template/vite.config.ts` の
 `optimizeDeps.exclude` にある `'@banto/dock-svelte'` 行を外す（残すと
@@ -140,8 +146,9 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 `src/lib/recentCommands.ts`・`src/lib/recentCommands.test.ts` を削除し
 （テストを残すと、消したモジュールを import して `pnpm --filter admin-template test` が落ちる）、
 `src/routes/(app)/+layout.svelte` と `src/lib/components/Header.svelte`
-からの参照（`commandPaletteStore`・Ctrl+Kのキーバインド・パレット起動
-ボタン）を外す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
+からの参照（`commandPaletteStore`・Ctrl+K の command の登録とパレットの host・パレット起動
+ボタンと鍵帽の表示）を外す。キーの dispatcher（`src/lib/shortcuts.ts`、#435）はページの command
+（ダッシュボードの Ctrl+S）のために残す。ナビ定義（`navigation.ts`）からの自動導出のみで構成
 されるため、削除してもナビ自体には影響しない。
 
 ### 添付ファイル機能（`@banto/attachments` + items 添付デモ、M20）
@@ -205,6 +212,21 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
    パッケージ本体（`packages/tree-svelte`）は同梱のままでも他に影響しないが、
    ナビが1項目減るぶんサイドバーが写る認証ページのビジュアル回帰ベースライン
    を再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。
+
+### `@banto/image-assets`（ブラウザ側の画像の原本・取込検査、Issue #438）
+
+テンプレートのアプリには配線していない（`apps/admin-template/package.json` に依存が無い）ので、
+アプリ側に外す配線は無く、`pnpm scaffold` もどのプリセットでも触れない。パッケージ本体を
+同梱のままにしても他に影響しない。リポジトリから消したい場合は以下。
+
+1. `packages/image-assets/` を削除し、`pnpm install` で lockfile を更新する。
+2. `docs/` と README の `@banto/image-assets` の参照（template-scope §3 の行・本節・
+   ADR-0020 など）を消すか、スコープ無しの書き方に直す（`verify:architecture` の
+   rule `docs-package-refs` が実在しないパッケージの参照を落とす）。
+3. banto 本体のリポジトリで消す場合は、外部利用 fixture（`fixtures/external-consumer/`）の
+   `package.json` の依存・`src/routes/+page.svelte` の import・`vite.config.ts` の
+   `optimizeDeps.exclude` からも外す（`verify:architecture` の rule `external-consumer-fixture`。
+   scaffold した派生アプリでは fixture ごと除去済み）。
 
 ### システムメトリクス（`sysinfo`）を外す（ADR-0013、Issue #185）
 

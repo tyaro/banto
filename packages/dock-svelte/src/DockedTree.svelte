@@ -18,10 +18,28 @@
 	 * shared `DragController`, see `core/drag.svelte.ts`) - below that
 	 * threshold a plain pointerup is just a tab click (`setActiveTab`),
 	 * mirroring grid-svelte's `HeaderCell.svelte` convention. Both threshold
-	 * tracking AND the split-divider resize below use window-level
-	 * pointermove/pointerup listeners rather than `setPointerCapture`, for
-	 * the same reason `HeaderCell.svelte` documents (a stray double-click can
-	 * wedge capture and break a later, unrelated drag).
+	 * tracking AND the split-divider resize below are sessions of the host's
+	 * single `GestureOwner` (`core/gesture.svelte.ts`, shared-primitives-
+	 * upstream-plan §3.3, #433): it holds the window-level listeners (rather
+	 * than `setPointerCapture`, for the same reason `HeaderCell.svelte`
+	 * documents - a stray double-click can wedge capture and break a later,
+	 * unrelated drag), only the owning pointer moves or commits, and Esc /
+	 * pointercancel / blur / unmount cancel (a tab click is not performed; a
+	 * divider drag is undone).
+	 *
+	 * Keyboard (#433-b, shared-primitives-upstream-plan §3.3 / D5-a), read only
+	 * from the focused control's own keydown (never a window listener, plan
+	 * §4.3), skipping Ctrl / Alt / Meta combinations, consumed keys and IME
+	 * composition:
+	 *  - the divider is a WAI-ARIA Window Splitter: a focusable `separator`
+	 *    whose `aria-valuenow` / `-valuemin` / `-valuemax` are the first pane's
+	 *    share (in %) of the pair it separates; the arrows of its axis move it
+	 *    by `KEY_STEP_FRACTION` of the split (Shift: `KEY_STEP_LARGE_FRACTION`),
+	 *    Home / End to the minimum / maximum. Each press is one `divider` step
+	 *    of the `GestureOwner` (`instant`): asked through `canStartGesture`,
+	 *    reported to `onGestureEnd`, refused while another gesture is active.
+	 *  - the tab strip uses a roving tabindex (the active tab is the one Tab
+	 *    stop); Left / Right (wrapping) and Home / End select and focus a tab.
 	 *
 	 * "Closing" a docked pane (the ✕ button) has no first-class "hidden but
 	 * still docked" state in the Phase A model (unlike a floating window's
@@ -31,11 +49,25 @@
 	 * `close` (marks that floating window `open: false`). The panel is fully
 	 * recoverable afterwards through the same floating open/close toggle any
 	 * other closed window uses - no data is lost, and no Phase A method
-	 * needed changing.
+	 * needed changing. Since #432 the ✕ goes through the host's pane lifecycle
+	 * (`core/lifecycle.ts`): `hide` for a `keepMounted` pane (the content is
+	 * re-mounted in the hidden floating window, since it leaves the tree),
+	 * `close` otherwise, both asked through `beforePanelChange`.
+	 *
+	 * Tab switches (click and arrows) are lifecycle requests too (`tab-switch`).
+	 * The tab body renders each tab in its own wrapper keyed by the panel id:
+	 * the active one, plus every `keepMounted` one with `hidden` + `inert`
+	 * (#432, shared-primitives-upstream-plan §3.5 / D3-c), so switching tabs
+	 * keeps a `keepMounted` pane's DOM. The wrapper is `display: contents`
+	 * while shown, so the active tab lays out exactly as before.
 	 */
 	import type { Snippet } from 'svelte';
 	import { pixelDeltaToFraction } from './core/geometry';
+	import { MIN_PANE_FRACTION } from './core/tree';
 	import { getDragController } from './core/drag.svelte';
+	import { getGestureOwner } from './core/gesture.svelte';
+	import { getPanelLifecycle } from './core/lifecycle';
+	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
@@ -59,13 +91,15 @@
 	const t = { ...defaultDockMessages, ...messages };
 
 	const DRAG_THRESHOLD_PX = 5;
+	/** Divider keyboard step (Window Splitter): a fraction of the whole split, and with Shift. */
+	const KEY_STEP_FRACTION = 0.02;
+	const KEY_STEP_LARGE_FRACTION = 0.1;
 	const drag = getDragController();
-
-	/** Undock-then-close - see the module doc comment on why this is the "close a docked panel" behavior. */
-	function closeDockedPanel(id: string): void {
-		dock.undockPanel(id);
-		dock.close(id);
-	}
+	const gesture = getGestureOwner();
+	const policy = getDockPolicy();
+	const lifecycle = getPanelLifecycle();
+	/** Per-pane capabilities from the host's `capabilities` prop (all allowed when absent). */
+	const capsOf = (id: string) => resolveCapabilities(policy, id);
 
 	/**
 	 * Arms a drag candidate on a titlebar/tab pointerdown. `frameEl` is the
@@ -83,76 +117,147 @@
 		content: PanelContent,
 		onPlainClick?: () => void
 	): void {
-		if (event.button !== 0) return;
+		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
 		const startX = event.clientX;
 		const startY = event.clientY;
-		const pointerId = event.pointerId;
 		const frameRect = frameEl.getBoundingClientRect();
+		// `move: false` (consumer capability): never becomes a drag, but a plain click (tab select) still works.
+		const canMove = capsOf(content.id).move;
 		let dragging = false;
+		let refused = false;
 
-		function onMove(moveEvent: PointerEvent) {
-			if (moveEvent.pointerId !== pointerId) return;
-			if (dragging) return;
-			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
-				return;
-			dragging = true;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			drag.start({
-				panelId: content.id,
-				title: content.title,
-				icon: content.icon,
-				source: 'docked',
-				width: frameRect.width,
-				height: frameRect.height,
-				clientX: moveEvent.clientX,
-				clientY: moveEvent.clientY,
-				originClientX: frameRect.left,
-				originClientY: frameRect.top
-			});
-		}
-
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			if (!dragging) onPlainClick?.();
-		}
-
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
+		gesture.begin(event, {
+			kind: 'drag-candidate',
+			panelId: content.id,
+			move(moveEvent) {
+				if (dragging) {
+					drag.update(moveEvent.clientX, moveEvent.clientY);
+					return;
+				}
+				if (!canMove || refused) return;
+				if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
+					return;
+				// `canStartGesture` is asked here, as `drag`; a refusal ignores the rest of the press.
+				if (!gesture.setKind('drag')) {
+					refused = true;
+					return;
+				}
+				dragging = true;
+				drag.start({
+					panelId: content.id,
+					title: content.title,
+					icon: content.icon,
+					source: 'docked',
+					width: frameRect.width,
+					height: frameRect.height,
+					clientX: moveEvent.clientX,
+					clientY: moveEvent.clientY,
+					originClientX: frameRect.left,
+					originClientY: frameRect.top
+				});
+			},
+			commit(upEvent) {
+				if (dragging) drag.commit(upEvent.clientX, upEvent.clientY);
+				else if (!refused) onPlainClick?.();
+			},
+			cancel() {
+				drag.cancel();
+			}
+		});
 	}
 
 	// --- split divider resize (a plain incremental pointer drag, unrelated to docking) ---
-	let splitW: number = $state(0);
-	let splitH: number = $state(0);
+	let splitEl: HTMLDivElement | null = $state(null);
 
+	/**
+	 * A `divider` session: each owning-pointer move writes `dock.resizeSplit`
+	 * live, as a fraction of the split's size read from layout at that moment
+	 * (not a reactive size binding, which can lag a window resize); the release
+	 * applies its own last delta the same way. Cancel (Esc / pointercancel /
+	 * blur / unmount) puts back only this split's sizes from before the press (#433).
+	 */
 	function startDivider(
 		event: PointerEvent,
 		dividerIndex: number,
 		direction: 'row' | 'column'
 	): void {
-		if (event.button !== 0) return;
+		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
-		const pointerId = event.pointerId;
-		const containerSize = direction === 'row' ? splitW : splitH;
+		const splitId = node.id;
 		let last = direction === 'row' ? event.clientX : event.clientY;
-
-		function onMove(moveEvent: PointerEvent) {
-			if (moveEvent.pointerId !== pointerId) return;
-			const pos = direction === 'row' ? moveEvent.clientX : moveEvent.clientY;
+		const step = (e: PointerEvent) => {
+			const pos = direction === 'row' ? e.clientX : e.clientY;
 			const deltaPx = pos - last;
 			last = pos;
-			dock.resizeSplit(node.id, dividerIndex, pixelDeltaToFraction(deltaPx, containerSize));
-		}
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		}
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
+			const size = direction === 'row' ? (splitEl?.clientWidth ?? 0) : (splitEl?.clientHeight ?? 0);
+			dock.resizeSplit(splitId, dividerIndex, pixelDeltaToFraction(deltaPx, size));
+		};
+		gesture.begin(event, {
+			kind: 'divider',
+			move: step,
+			commit: step,
+			restore: (snapshot) => dock.restoreSplitSizes(splitId, snapshot)
+		});
+	}
+
+	/** A key the dock may handle: not consumed, not IME composition, no Ctrl / Alt / Meta. */
+	function isPlainKey(event: KeyboardEvent): boolean {
+		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return false;
+		return !(event.altKey || event.ctrlKey || event.metaKey);
+	}
+
+	/** The divider's Window Splitter values: the first pane's share (in %) of the pair it separates. */
+	function splitterValues(sizes: number[], i: number): { now: number; min: number; max: number } {
+		const pair = (sizes[i] ?? 0) + (sizes[i + 1] ?? 0);
+		if (pair <= 0 || pair < 2 * MIN_PANE_FRACTION) return { now: 50, min: 50, max: 50 };
+		const min = Math.round((MIN_PANE_FRACTION / pair) * 100);
+		return { now: Math.round(((sizes[i] ?? 0) / pair) * 100), min, max: 100 - min };
+	}
+
+	function handleDividerKeydown(
+		event: KeyboardEvent,
+		dividerIndex: number,
+		direction: 'row' | 'column'
+	): void {
+		if (node.type !== 'split' || !isPlainKey(event)) return;
+		const back = direction === 'row' ? 'ArrowLeft' : 'ArrowUp';
+		const forward = direction === 'row' ? 'ArrowRight' : 'ArrowDown';
+		const step = event.shiftKey ? KEY_STEP_LARGE_FRACTION : KEY_STEP_FRACTION;
+		// Home / End: `resizeSplit` clamps to the pair's minimum / maximum.
+		let delta: number;
+		if (event.key === back) delta = -step;
+		else if (event.key === forward) delta = step;
+		else if (event.key === 'Home') delta = -1;
+		else if (event.key === 'End') delta = 1;
+		else return;
+		event.preventDefault();
+		const splitId = node.id;
+		gesture.instant('divider', null, () => dock.resizeSplit(splitId, dividerIndex, delta));
+	}
+
+	let tabStripEl: HTMLDivElement | null = $state(null);
+
+	function handleTabKeydown(event: KeyboardEvent, index: number): void {
+		// Only the tab itself - not its nested close / pop-out buttons.
+		if (node.type !== 'tabs' || event.target !== event.currentTarget || !isPlainKey(event)) return;
+		const count = node.children.length;
+		let next: number;
+		if (event.key === 'ArrowRight') next = (index + 1) % count;
+		else if (event.key === 'ArrowLeft') next = (index - 1 + count) % count;
+		else if (event.key === 'Home') next = 0;
+		else if (event.key === 'End') next = count - 1;
+		else return;
+		event.preventDefault();
+		const to = node.children[next]?.id;
+		if (to === undefined) return;
+		// Focus follows only once the switch is applied (it may be refused or held).
+		void lifecycle.switchTab(node.id, to, () => {
+			// The tabs are keyed by id, so the element already exists.
+			const tabs = tabStripEl?.querySelectorAll<HTMLElement>('[role="tab"]');
+			const target = [...(tabs ?? [])].find((el) => el.dataset.dockTabId === to);
+			target?.focus();
+		});
 	}
 
 	let panelFrameEl: HTMLDivElement | null = $state(null);
@@ -194,7 +299,7 @@
 				<span class="icon" aria-hidden="true">{node.icon}</span>
 			{/if}
 			<span class="title">{node.title}</span>
-			{#if onPopOut}
+			{#if onPopOut && capsOf(node.id).undock}
 				<button
 					type="button"
 					class="popout-btn"
@@ -205,15 +310,17 @@
 					⧉
 				</button>
 			{/if}
-			<button
-				type="button"
-				class="close-btn"
-				aria-label={t.close(node.title)}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => closeDockedPanel(node.id)}
-			>
-				✕
-			</button>
+			{#if capsOf(node.id).close}
+				<button
+					type="button"
+					class="close-btn"
+					aria-label={t.close(node.title)}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => void lifecycle.closeButton(node.id)}
+				>
+					✕
+				</button>
+			{/if}
 		</div>
 		<!-- role="region" + tabindex="0": the pane's content can overflow and
 		     scroll, and axe's scrollable-region-focusable rule requires a
@@ -249,24 +356,27 @@
 			never exercised by the axe scan in `e2e/visual/a11y.spec.ts` - flagged
 			here for whoever next touches tab-strip interaction/keyboard support.
 		-->
-		<div class="tab-strip" role="tablist">
+		<div class="tab-strip" role="tablist" bind:this={tabStripEl}>
 			{#each node.children as child, i (child.id)}
 				<div
 					class="tab"
 					class:active={i === node.activeIndex}
 					role="tab"
-					tabindex="-1"
+					data-dock-tab-id={child.id}
+					tabindex={i === node.activeIndex ? 0 : -1}
 					aria-selected={i === node.activeIndex}
 					aria-label={child.title}
 					onpointerdown={(event) =>
-						tabsFrameEl && armDrag(event, tabsFrameEl, child, () => dock.setActiveTab(node.id, i))}
+						tabsFrameEl &&
+						armDrag(event, tabsFrameEl, child, () => void lifecycle.switchTab(node.id, child.id))}
+					onkeydown={(event) => handleTabKeydown(event, i)}
 				>
 					{#if child.icon}
 						<span class="icon" aria-hidden="true">{child.icon}</span>
 					{/if}
 					<span class="title">{child.title}</span>
 					{#if i === node.activeIndex}
-						{#if onPopOut}
+						{#if onPopOut && capsOf(child.id).undock}
 							<button
 								type="button"
 								class="popout-btn"
@@ -277,15 +387,17 @@
 								⧉
 							</button>
 						{/if}
-						<button
-							type="button"
-							class="close-btn"
-							aria-label={t.close(child.title)}
-							onpointerdown={(event) => event.stopPropagation()}
-							onclick={() => closeDockedPanel(child.id)}
-						>
-							✕
-						</button>
+						{#if capsOf(child.id).close}
+							<button
+								type="button"
+								class="close-btn"
+								aria-label={t.close(child.title)}
+								onpointerdown={(event) => event.stopPropagation()}
+								onclick={() => void lifecycle.closeButton(child.id)}
+							>
+								✕
+							</button>
+						{/if}
 					{/if}
 				</div>
 			{/each}
@@ -293,9 +405,14 @@
 		<!-- Same scrollable-region-focusable rationale (and svelte-ignore) as the `panel` branch's `.body` above. -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div class="body" role="region" aria-label={active?.title} tabindex="0">
-			{#if active}
-				{@render panel(active)}
-			{/if}
+			{#each node.children as child, i (child.id)}
+				{@const shown = i === node.activeIndex}
+				{#if shown || lifecycle.keepMounted(child.id)}
+					<div class="tab-content" hidden={!shown} inert={!shown}>
+						{@render panel(child)}
+					</div>
+				{/if}
+			{/each}
 		</div>
 	</div>
 {:else}
@@ -303,22 +420,29 @@
 		class="dock-split"
 		class:row={node.direction === 'row'}
 		class:column={node.direction === 'column'}
-		bind:clientWidth={splitW}
-		bind:clientHeight={splitH}
+		bind:this={splitEl}
 	>
 		{#each node.children as child, i (child.id)}
 			<div class="split-child" style:flex-grow={node.sizes[i] ?? 0} style:flex-basis="0%">
 				<DockedTree node={child} {dock} {panel} {onPopOut} {messages} />
 			</div>
 			{#if i < node.children.length - 1}
+				{@const values = splitterValues(node.sizes, i)}
+				<!-- A focusable separator is an interactive widget (WAI-ARIA Window Splitter, #433-b). -->
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 				<div
 					class="divider"
 					class:row={node.direction === 'row'}
 					class:column={node.direction === 'column'}
 					role="separator"
+					tabindex="0"
 					aria-orientation={node.direction === 'row' ? 'vertical' : 'horizontal'}
 					aria-label={t.resizeHandle()}
+					aria-valuenow={values.now}
+					aria-valuemin={values.min}
+					aria-valuemax={values.max}
 					onpointerdown={(event) => startDivider(event, i, node.direction)}
+					onkeydown={(event) => handleDividerKeydown(event, i, node.direction)}
 				></div>
 			{/if}
 		{/each}
@@ -359,6 +483,15 @@
 
 	.titlebar:hover {
 		background: var(--banto-surface-hover);
+	}
+
+	/* A layout no-op while shown (the active tab lays out as before #432). */
+	.tab-content {
+		display: contents;
+	}
+
+	.tab-content[hidden] {
+		display: none;
 	}
 
 	.tab-strip {
@@ -495,6 +628,12 @@
 
 	.divider:hover {
 		background: var(--banto-dock-divider-hover);
+	}
+
+	.divider:focus-visible {
+		outline: none;
+		background: var(--banto-dock-divider-hover);
+		box-shadow: var(--banto-focus-ring);
 	}
 
 	.divider.row {

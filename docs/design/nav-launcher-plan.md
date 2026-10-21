@@ -7,6 +7,8 @@ PR-1（ナビの絞り込みの切り出し、#422）と PR-2（#423）はマー
 ストア・`ShellLauncher`・レイアウトとヘッダの分岐・外観カード・e2e / a11y / visual のテスト）を実装
 （visual のベースラインは visual-baselines.yml の dispatch で作る）。PR-3 で計画から変えた点は §8 の表の注記。
 PR-3（#424）はマージ済み。PR-4（左右の位置、D4 を b に変更）を実装。
+PR-4 はマージ済み。PR-6（上の位置、2026-10-21 オーナー決定。§8 の表と D4 の注記）を実装
+（visual の基準画像 `dashboard-launcher-top-*` は visual-baselines.yml の dispatch で作る）。
 トラック: 保守者向け（トラックA）
 関連: [visual-refresh-design.md](visual-refresh-design.md)（§5 ナビのアイコン、§8 シェル）、
 [display-preset-plan.md](display-preset-plan.md)（D1-b キオスクシェル）、
@@ -41,7 +43,7 @@ admin-template の左のサイドバーの**代わりに**、macOS のドック�
   900px 以下では固定のドロワーになり、開閉は `(app)/+layout.svelte` の `overlayOpen` が持つ。
 - **シェル** `routes/(app)/+layout.svelte`: `.shell { display: flex }` に `Sidebar` と `.main`（Header + main）。
   オーバーレイの幕、Esc でドロワーを閉じる、`Ctrl+K`、View Transitions（reduced-motion で開始しない）。
-- **ヘッダ** `lib/components/Header.svelte`: 900px 以下のハンバーガー（ドロワー開閉）、ページ名、
+- **ヘッダ** `lib/components/Header.svelte`: 900px 以下のハンバーガー（ドロワー開閉。900px 超の折りたたみボタンはサイドバー最上段のロゴの左）、ページ名、
   状態チップ、検索ピル。キオスク時はコンパクト。
 - **e2e** はナビを `getByRole('navigation', { name: '主要ナビゲーション' })` で掴む（`e2e/tests/smoke.spec.ts`）。
   `aside` やクラス名には依存していない。
@@ -89,10 +91,10 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
 
 - **設定画面「外観」に「ナビゲーション」カードを足す**。ラジオ 2 択「サイドバー / ドック」
   （テーマのカードと同じ形の小さなプレビュー付き。プレビューはトークンで描き、生値を使わない）。
-  D4 で位置を選べるようにする場合は、ドックを選んだときだけ「下 / 左 / 右」の副ラジオを出す。
+  D4 で位置を選べるようにする場合は、ドックを選んだときだけ「上 / 下 / 左 / 右」の副ラジオを出す（上は PR-6）。
 - **保存先は既存の 2 層をそのまま使う**: localStorage `banto.navLayout`（と `banto.launcherPosition`）、
   `UiSettingsProvider` のキー `shell.navLayout`（値 `sidebar` | `launcher`）と `shell.launcherPosition`
-  （値 `bottom` | `left` | `right`）。`setKiosk` と同じく「適用 + ローカル保存」と「プロバイダへの
+  （値 `bottom` | `top` | `left` | `right`。`top` は PR-6 で追加。既存の保存値はそのまま読める）。`setKiosk` と同じく「適用 + ローカル保存」と「プロバイダへの
   fire-and-forget の書き込み」を分け、`syncFromProvider()` で読み戻す。**ユーザーごと**の設定になる
   （テーマと同じ。管理者が全員に強制する仕組みは作らない）。
 - **既定値は定数 1 つ**: `NAV_LAYOUT_DEFAULT = 'sidebar'`（`KIOSK_DEFAULT` と同じ書き方と doc コメント）。
@@ -138,6 +140,11 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
   `:root[data-banto-shell-nav='launcher'] { --banto-toast-bottom: … }` を置く（下のバーの高さ +
   余白。900px 以下はタブバーの高さ + `env(safe-area-inset-bottom)` の値を別に持つ）。
   生値はテーマに集まる（§9）。
+- **上**（D4、PR-6）: 下のバーの上下反転。**ヘッダの下**の中央に浮いたバー（ヘッダは最上段のまま）。
+  部品はトークン `--banto-shell-launcher-inset-top`（既定 `0px`）だけ下げ、シェルがそこにヘッダの高さ
+  （キオスクではコンパクトの高さ）を入れる。本文の上に `--banto-shell-launcher-reserve` の余白を取り、
+  トーストは右下のまま（下を空けたまま）。重なり順は `--banto-z-launcher`（200）のままで、ヘッダの
+  ユーザーメニューは `popover` の最上位の層なのでバーより手前に出る。
 - **左 / 右**（D4）: 縦向きのバー、画面の縦中央。本文の左右に余白を取る。
   ヘッダは画面いっぱいの幅になる（サイドバーが無いので）。
 - サイドバーが持っていたブランド（ロゴ + "Banto"）は、ドック表示ではヘッダの左端に小さく出す
@@ -156,7 +163,7 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
   各項目に `--_scale` を inline の CSS 変数で渡す。項目の寸法は
   `calc(var(--banto-shell-launcher-item-size) * var(--_scale, 1))`。基準の寸法と最大倍率は
   トークン（§5.2）で、部品には生値を書かない（§9）。**寸法を変える**（transform ではない）ので、
-  macOS と同じく隣が押し広げられ、バーも伸びる。下のドックは上に、左は右に、右は左に伸びる。
+  macOS と同じく隣が押し広げられ、バーも伸びる。下のドックは上に、上のドックは下に、左は右に、右は左に伸びる。
 - `pointerleave` で全項目を `--banto-duration-base` で 1 に戻す。
 - **止める条件**: `prefers-reduced-motion: reduce`（JS で `matchMedia` を見て拡大の計算そのものをしない。
   `change` にも追従。トークンの 0ms と二重の守り。View Transitions と同じ考え方）、
@@ -174,7 +181,7 @@ scaffold の資産名 `dock`（`OPTIONAL_ASSETS`、`removeDock`、minimal が外
 
 ### 4.4 ツールチップ
 
-- ホバーと `:focus-visible` で項目の外側（下のドックなら上）に名前を出す。
+- ホバーと `:focus-visible` で項目の外側（下のドックなら上、上のドックなら下）に名前を出す。
   `--banto-surface-raised` / `--banto-text` / `--banto-border` / `--banto-shadow-md` / `--banto-radius-md`。
 - ツールチップ要素は `aria-hidden="true"`。アクセシブルな名前はリンク内の
   視覚的に隠したテキスト（ラベル + バッジ件数）で持つ（音声操作で「品目をクリック」が通るよう、
@@ -413,6 +420,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | 2 | トークン + `LauncherBar`（下のみ） | `banto.css` に §5.2 のトークン、`@banto/ui` に `LauncherBar` / `launcher.ts`、単体テスト、README、ADR-0018 §11。**計画からの変更**: `ui-demo` のカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo-*` の作り直しが要るため。実ブラウザの見た目は 3 の visual で見る） | なし |
 | 3 | シェルへの配線と設定 | 設定ストア、ShellLauncher、レイアウト・ヘッダの分岐、外観カード、辞書、e2e、a11y、visual 追加。**計画からの変更**: (1) デモモードの `UiSettingsProvider` は localStorage（`banto.ui.` 接頭辞）で読み出しが**成功**するので、§3 の「失敗したらローカルを残す」はデモには当たらない（デモでは `banto.ui.shell.navLayout` が真実源。テストは両方のキーを事前に入れる）。(2) スライダーは `input` でその場に反映し（ローカル保存だけ）、プロバイダへの書き込みは `change` の 1 回にした（ドラッグ中の書き込みが前後して届くのを避ける）。(3) 900px 以下のタブバーの高さはトークン `--banto-shell-launcher-tabbar-reserve` を `@banto/theme` に足して表した（本文の余白とトーストの位置で共有）。(4) ShellLauncher の単体テストは、アプリの vitest が node 環境で部品を描けないので足さず、`navSections()` の表（PR-1）と e2e（閲覧公開の許可リスト）で見る。トーストの位置の単体テスト（§7.1 の最後）も同じ理由で e2e（バーとトーストの位置の比較）にした | `settings-*` 作り直し + `dashboard-launcher-*` 追加 |
 | 4 | 左 / 右（D4-b のとき） | 部品の `position`、設定の副ラジオ、visual 2 枚追加。**実装の注記**: (1) 位置はルートの 2 つ目の属性 `data-banto-shell-launcher-position` で表し（`data-banto-shell-nav="launcher"` はそのまま）、右のバーではトーストを `--banto-toast-right` でバーの左へ逃がす。(2) 縦のバーのツールチップは横に出て折り返すので、最大幅をトークン `--banto-shell-launcher-tooltip-max-width`（10rem）にし、スクロールするトラックが本文側にその幅ぶんの余白を持つ（切れないように）。端の項目の内寄せは要らない（ツールチップが項目より低い）。(3) ダッシュボードの浮き窓（`role="dialog"`、本文の中の層）が出ているとツールチップの Esc を譲っていたので、`hasVisibleLayerAbove` をバー自身の z-index と比べるようにした（e2e のキーボードの Esc がときどき落ちていた原因）。(4) 外観カードの説明文（「画面下のドック」→「画面の端のドック」）を直したので `settings-*` も作り直し | `settings-*` 作り直し + `dashboard-launcher-left-*` / `-right-*` 追加 |
+| 6 | 上（2026-10-21 オーナー決定） | 部品の `position` に `'top'`、トークン `--banto-shell-launcher-inset-top`、設定の副ラジオ「上」、辞書、e2e、visual 1 枚追加。**判断**: (1) 上のバーはヘッダの下（§4.1）。(2) 900px 以下はほかの位置と同じく下端のタブバー（D5 のまま。親指の届く位置で、上にはヘッダがあり、上にタブバーを積むとヘッダと二段になって本文が狭くなる）。(3) アクティブの点は左右と同じく画面の端の側（上） | `settings-*` 作り直し + `dashboard-launcher-top-*` 追加 |
 | 5 | 文書 | README / recipes（不要なら外す 3 行）、template-scope §2.2、CHANGELOG の未リリース節、upgrading.md（派生アプリが取り込む手順）、本書の状態行 | なし |
 
 - 1 は 2 と独立なので並行できる。3 は 1 と 2 の後。4 は 3 の後。5 は 3（4）の後でも各 PR に分けて
@@ -430,7 +438,7 @@ raw-jp-in-app）・`pnpm format:check`。Rust の変更は無いので `cargo te
 | D1 コード上の名前 | a: コード・トークン・設定値は `launcher`、画面の表示は ja「ドック」/ en「Dock」 |
 | D2 部品の置き場 | a: 表示と操作は `@banto/ui` の `LauncherBar`、配線は admin-template の `ShellLauncher` |
 | D3 コアかオプションか | a: コア。全プリセットに残す。既定はサイドバー |
-| D4 位置 | a: 最初は下だけ。`position` は API に最初から持たせ、左右は要望を見て PR-4 で足す。**2026-10-20 に左右も足すことにした（PR-4）**: 設定「ドックの位置」下 / 左 / 右（既定は下）、900px 以下はどの位置でも下のタブバー（D5） |
+| D4 位置 | a: 最初は下だけ。`position` は API に最初から持たせ、左右は要望を見て PR-4 で足す。**2026-10-20 に左右も足すことにした（PR-4）**: 設定「ドックの位置」下 / 左 / 右（既定は下）、900px 以下はどの位置でも下のタブバー（D5）。**2026-10-21 に上も足すことにした（PR-6）**: 上 / 下 / 左 / 右、上はヘッダの下、ツールチップと拡大は下向き |
 | D5 狭い画面 | a: 下端いっぱいのタブバー（アイコン + 小さなラベル、拡大なし） |
 | D6 拡大の ON / OFF | a: 拡大は ON。reduced-motion・タッチ・狭い画面では自動で OFF。設定項目は足さない |
 | D7 背景の透け具合（#423 で追加） | バーとツールチップの地を半透明にし、後ろをぼかす。既定値はオーナーが実ブラウザで調整した値（バー 50%・ぼかし 1px・彩度 1.5、ツールチップ 80%・ぼかし 5px）。`prefers-reduced-transparency` と `backdrop-filter` 非対応では不透明。**ユーザーが設定のスライダーで調整できる**（2026-10-20 決定、PR-3）: バーの不透明度だけを 40〜100%・5% 刻み・既定 50% で選ぶ。ツールチップは 80% で固定（名前の読みやすさ）。スライダーの横にプレビューを置く（§3）。**900px 以下のタブバーは不透明度 85% を下限にする**（2026-10-21 オーナー決定。小さなラベルが本文の上に乗るため。トークン `--banto-shell-launcher-tabbar-opacity-min`） |

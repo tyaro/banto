@@ -15,6 +15,11 @@
  * Phase 5: LauncherBar, the dock-like icon launcher, with its types and the
  * pure `magnifyScale` curve (`launcher.ts`; docs/design/nav-launcher-plan.md -
  * the app keeps the nav definition, routing, `active`, RBAC and the text).
+ * #435-a: command definitions and shortcut protection (`shortcut.ts`:
+ * `CommandSpec`, `shouldHandleShortcut`, `createShortcutDispatcher`, the key
+ * parse / match / format helpers) plus `hasVisibleModalLayer` in
+ * `layering.ts` (docs/design/shared-primitives-upstream-plan.md §3.6, D2-a -
+ * the app keeps the key wiring and the command list).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -33,11 +38,13 @@ export {
 	focusablesIn,
 	hasVisibleLayerAbove,
 	hasVisibleMenuLayer,
+	hasVisibleModalLayer,
 	isCloseAllowed,
 	LAYER_INACTIVE_ATTR,
 	LAYER_MARKER_ATTR,
 	LAYER_SELECTOR,
 	MENU_LAYER_SELECTOR,
+	MODAL_LAYER_SELECTOR,
 	restoreFocus,
 	type OverlayCloseSource
 } from './layering';
@@ -46,6 +53,19 @@ export {
 	type CommandPaletteCloseReason,
 	type CommandPaletteItem
 } from './commandPalette';
+export {
+	createShortcutDispatcher,
+	detectShortcutPlatform,
+	formatShortcut,
+	isEditableTarget,
+	matchShortcut,
+	parseShortcut,
+	shouldHandleShortcut,
+	type CommandSpec,
+	type ParsedShortcut,
+	type ShortcutDispatcher,
+	type ShortcutPlatform
+} from './shortcut';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as ErrorState } from './ErrorState.svelte';
 export { default as IconButton } from './IconButton.svelte';

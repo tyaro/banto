@@ -11,6 +11,7 @@
  * deterministic counter and assert on generated ids.
  */
 import type {
+	DockLayout,
 	DockNode,
 	DockPanelNode,
 	DockSplitNode,
@@ -348,4 +349,24 @@ export function resizeSplit(
 		sizes[j] = b;
 		return { ...node, sizes };
 	});
+}
+
+/**
+ * The parts of the layout a structure change depends on: the docked tree's
+ * shape and active tabs, and which floating windows exist and are open
+ * (#432). Geometry, split sizes and z-order are left out (they change on
+ * focus / move / resize and never invalidate a structure decision). Floating
+ * ids are arbitrary strings, so they are encoded as sorted `[id, open]` pairs
+ * inside the JSON - never joined with a delimiter that an id could contain.
+ */
+export function structureKey(layout: DockLayout): string {
+	const node = (n: DockNode): unknown => {
+		if (n.type === 'panel') return n.id;
+		if (n.type === 'tabs') return [n.id, n.activeIndex, n.children.map((c) => c.id)];
+		return [n.id, n.direction, n.children.map(node)];
+	};
+	const floating = layout.floating
+		.map((w): [string, boolean] => [w.id, w.open])
+		.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : Number(a[1]) - Number(b[1])));
+	return JSON.stringify([floating, layout.docked ? node(layout.docked) : null]);
 }

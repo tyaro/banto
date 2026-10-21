@@ -1720,19 +1720,56 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/audit-log$/);
 	});
 
-	test('10. settings: switching to the dark theme sets data-theme', async () => {
+	// Issue #435 PR-11: Ctrl+K is a command of the app's shortcut dispatcher.
+	// The open palette is its `ownerLayer`, so the key that closes it still
+	// works from the palette's own search box (`allowInEditable`); an IME
+	// composition never toggles it; a held key toggles once and its repeats are
+	// still kept from the browser.
+	test('9a. command palette: Ctrl+K closes it from its own search box; IME and held keys do not toggle it', async () => {
+		await page.goto('/items');
+		await expect(page.getByRole('button', { name: 'CSVエクスポート' })).toBeVisible();
+		const palette = page.getByRole('dialog', { name: 'コマンドパレット' });
+		const search = page.getByPlaceholder('画面・操作を検索…');
+
+		/** Dispatch a synthetic Ctrl+K keydown at the focused element; was it consumed? */
+		const ctrlK = (init: { isComposing?: boolean; repeat?: boolean }) =>
+			page.evaluate((extra) => {
+				const event = new KeyboardEvent('keydown', {
+					key: 'k',
+					code: 'KeyK',
+					ctrlKey: true,
+					bubbles: true,
+					cancelable: true,
+					...extra
+				});
+				(document.activeElement ?? document.body).dispatchEvent(event);
+				return event.defaultPrevented;
+			}, init);
+
+		await page.keyboard.press('Control+K');
+		await expect(palette).toBeVisible();
+		await search.fill('監');
+		await expect(search).toBeFocused();
+		await page.keyboard.press('Control+K');
+		await expect(palette).toHaveCount(0);
+
+		// Composing: left to the IME / browser, nothing toggles.
+		expect(await ctrlK({ isComposing: true })).toBe(false);
+		await expect(palette).toHaveCount(0);
+		// An auto-repeat: consumed (no browser Ctrl+K), but it does not toggle.
+		expect(await ctrlK({ repeat: true })).toBe(true);
+		await expect(palette).toHaveCount(0);
+	});
+
+	test('10. header: the sun/moon button pins the opposite theme and sets data-theme', async () => {
 		await page.goto('/settings');
 
-		// Not .getByLabel(...).check(): the radio inputs here are visually
-		// hidden (`.options input { opacity: 0; pointer-events: none }`,
-		// settings/+page.svelte) so their own `<label>` is the real click
-		// target - clicking it activates the wrapped input via normal
-		// label/control association.
-		await page
-			.getByRole('radiogroup', { name: 'テーマ' })
-			.getByText('ダーク', { exact: true })
-			.click();
+		// The button shows the OPPOSITE of the theme on screen (the colour-mode
+		// picker left the settings page). This run's browser follows a light OS,
+		// so it starts as "switch to dark" and, once pressed, offers the way back.
+		await page.getByRole('button', { name: 'ダークモードに切り替え' }).click();
 		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+		await expect(page.getByRole('button', { name: 'ライトモードに切り替え' })).toBeVisible();
 	});
 
 	// Issue #214: the account page's password form is the save-type settings
@@ -2674,6 +2711,256 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(tab.locator('aside')).toBeVisible();
 		} finally {
 			await context.close();
+		}
+	});
+
+	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard
+	// メモ pane keeps unapplied input across the dock's structure changes (the
+	// draft is owned by the page, the pane is re-created), a close settles it
+	// (apply / discard / cancel), and leaving the page asks. The apply is held
+	// open by routing the memo's ui-settings PUT, so input typed while it is in
+	// flight must keep the pane open and dirty after v1 is saved.
+	test('13l. dashboard memo: unapplied input survives dock / undock / tabs; close settles it; leaving asks', async () => {
+		test.setTimeout(90_000);
+		const dialogs = trackDialogs(page);
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+		const workspace = page.locator('.workspace');
+		const unsaved = workspace.getByText('未保存の変更があります');
+		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+		const memoToggle = workspace.getByRole('toolbar').getByRole('button', { name: /メモ/ });
+
+		/** Press at `from`, cross the dock's drag threshold, release at `to`. */
+		async function drag(
+			from: { x: number; y: number },
+			to: { x: number; y: number }
+		): Promise<void> {
+			await page.mouse.move(from.x, from.y);
+			await page.mouse.down();
+			await page.mouse.move(from.x + 12, from.y + 12, { steps: 3 });
+			await page.mouse.move(to.x, to.y, { steps: 12 });
+			await page.mouse.up();
+		}
+		async function centerOf(locator: Locator): Promise<{ x: number; y: number }> {
+			const box = await locator.boundingBox();
+			if (!box) throw new Error('not visible');
+			return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+		}
+
+		const memoPath = '/api/ui-settings/dashboard.memo';
+		let releasePut: () => void = () => {};
+		const putHeld = new Promise<void>((resolve) => (releasePut = resolve));
+		const putBodies: string[] = [];
+		const holdPut = async (route: Route) => {
+			if (route.request().method() !== 'PUT') return route.continue();
+			putBodies.push(route.request().postData() ?? '');
+			await putHeld;
+			await route.continue();
+		};
+
+		try {
+			await page.goto('/dashboard');
+			await workspace.getByRole('button', { name: 'リセット' }).click();
+			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
+			await expect(memoWindow).toBeVisible();
+			await expect(unsaved).toHaveCount(0);
+
+			await memoInput.fill('unsaved');
+			await expect(unsaved).toBeVisible();
+
+			// dock: the floating title bar onto the centre of the 月別更新件数 pane.
+			const titlebar = memoWindow.locator('.titlebar');
+			const barBox = await titlebar.boundingBox();
+			if (!barBox) throw new Error('no title bar');
+			await drag(
+				{ x: barBox.x + 30, y: barBox.y + barBox.height / 2 },
+				await centerOf(page.locator('[data-dock-drop-id="monthly"]'))
+			);
+			await expect(memoWindow).toHaveCount(0);
+			const memoTab = page.getByRole('tab', { name: 'メモ' });
+			await expect(memoTab).toBeVisible();
+			await expect(memoInput).toHaveValue('unsaved');
+			await expect(unsaved).toBeVisible();
+
+			// tab switch away and back (the pane is re-created both times).
+			await page.getByRole('tab', { name: '月別更新件数' }).click();
+			await expect(memoInput).toHaveCount(0);
+			await memoTab.click();
+			await expect(memoInput).toHaveValue('unsaved');
+
+			// undock: the tab onto another floating window (= free floating space,
+			// the docked tree fills the host). The window opens at the top left, over
+			// the tab strip, so it is first moved down with the keyboard move mode
+			// (geometry only - a pointer drag over a docked pane would dock it).
+			const trendToggle = workspace.getByRole('toolbar').getByRole('button', { name: /トレンド/ });
+			await trendToggle.click();
+			const trendWindow = page.getByRole('dialog', { name: 'トレンド' });
+			await expect(trendWindow).toBeVisible();
+			// The mode buttons are visually hidden until focused (#433-b).
+			await trendWindow.getByRole('button', { name: /^トレンドをキーボードで移動/ }).focus();
+			await page.keyboard.press('Enter');
+			await page.keyboard.press('Shift+ArrowDown', { delay: 20 });
+			await page.keyboard.press('Shift+ArrowDown', { delay: 20 });
+			await page.keyboard.press('Shift+ArrowDown', { delay: 20 });
+			await page.keyboard.press('Enter');
+			await memoTab.click({ trial: true }); // the tab is not covered any more
+			await drag(
+				await centerOf(memoTab),
+				await centerOf(trendWindow.getByRole('region', { name: 'トレンド', exact: true }))
+			);
+			await expect(memoWindow).toBeVisible();
+			await expect(memoTab).toHaveCount(0);
+			await expect(memoInput).toHaveValue('unsaved');
+			await expect(unsaved).toBeVisible();
+			// A pane with nothing unapplied closes without a question (the toolbar
+			// goes through the same lifecycle as ✕).
+			await trendToggle.click();
+			await expect(trendWindow).toHaveCount(0);
+			await expect(settleDialog).toHaveCount(0);
+
+			// close -> apply, typing while the save is in flight: v1 is saved, the
+			// pane stays open with the later input still unapplied.
+			await page.route(`**${memoPath}`, holdPut);
+			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
+			await expect(settleDialog).toBeVisible();
+			await settleDialog.getByRole('button', { name: '保存して閉じる' }).click();
+			await expect(settleDialog).toHaveCount(0);
+			await expect.poll(() => putBodies.length).toBe(1);
+			await memoInput.fill('unsaved v2');
+			const saved = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === memoPath && response.request().method() === 'PUT'
+			);
+			releasePut();
+			expect((await saved).ok()).toBe(true);
+			expect((JSON.parse(putBodies[0]!) as { value: string }).value).toBe('unsaved');
+			await expect(
+				workspace.getByText('保存中に入力した内容は、まだ保存されていません。')
+			).toBeVisible();
+			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toHaveValue('unsaved v2');
+			await expect(unsaved).toBeVisible();
+			await page.unroute(`**${memoPath}`, holdPut);
+
+			// close -> discard: closes, and the reopened memo shows what was saved.
+			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
+			await settleDialog.getByRole('button', { name: '破棄して閉じる' }).click();
+			await expect(memoWindow).toHaveCount(0);
+			await expect(memoToggle).toHaveAttribute('aria-pressed', 'false');
+			await memoToggle.click();
+			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toHaveValue('unsaved');
+			await expect(unsaved).toHaveCount(0);
+			expect(putBodies).toHaveLength(1);
+
+			// Leaving with unapplied input asks (the router guard): stay, then leave.
+			await memoInput.fill('leave check');
+			dialogs.answer(false);
+			await mainNav.getByRole('link', { name: '商品' }).click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect(page).toHaveURL(/\/dashboard$/);
+			await expect(memoInput).toHaveValue('leave check');
+			dialogs.answer(true);
+			await mainNav.getByRole('link', { name: '商品' }).click();
+			await expect(page).toHaveURL(/\/items$/);
+			expect(dialogs.messages).toHaveLength(2);
+		} finally {
+			dialogs.stop();
+			await page.unroute(`**${memoPath}`, holdPut);
+			releasePut();
+		}
+	});
+
+	// Issue #435 PR-11: Ctrl+S in the memo is the pane's save button as a
+	// command of the app's shortcut dispatcher - taken inside the textarea, the
+	// same serialized save. With nothing to save (or a held key) it is still
+	// kept from the browser's "save page"; an IME composition is left alone.
+	// Ctrl+K is taken in the textarea too, but not while another modal (the
+	// memo's close prompt) is on screen.
+	test('13m. dashboard memo: Ctrl+S saves from the textarea; Ctrl+K does not open over the close prompt', async () => {
+		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+		const workspace = page.locator('.workspace');
+		const unsaved = workspace.getByText('未保存の変更があります');
+		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+		const palette = page.getByRole('dialog', { name: 'コマンドパレット' });
+		const memoPath = '/api/ui-settings/dashboard.memo';
+		const putBodies: string[] = [];
+		const recordPut = async (route: Route) => {
+			if (route.request().method() === 'PUT') putBodies.push(route.request().postData() ?? '');
+			await route.continue();
+		};
+
+		/** Dispatch a synthetic Ctrl+S keydown at the focused element; was it consumed? */
+		const ctrlS = (init: { isComposing?: boolean; repeat?: boolean }) =>
+			page.evaluate((extra) => {
+				const event = new KeyboardEvent('keydown', {
+					key: 's',
+					code: 'KeyS',
+					ctrlKey: true,
+					bubbles: true,
+					cancelable: true,
+					...extra
+				});
+				(document.activeElement ?? document.body).dispatchEvent(event);
+				return event.defaultPrevented;
+			}, init);
+
+		try {
+			await page.route(`**${memoPath}`, recordPut);
+			await page.goto('/dashboard');
+			await workspace.getByRole('button', { name: 'リセット' }).click();
+			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
+			await expect(memoWindow).toBeVisible();
+			await memoInput.fill('saved with ctrl+s');
+			await expect(unsaved).toBeVisible();
+
+			// Composing: not taken, nothing saved.
+			await memoInput.focus();
+			expect(await ctrlS({ isComposing: true })).toBe(false);
+			await expect(unsaved).toBeVisible();
+			expect(putBodies).toHaveLength(0);
+
+			// Ctrl+S in the textarea saves; the unsaved notice goes away.
+			const saved = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === memoPath && response.request().method() === 'PUT'
+			);
+			await memoInput.press('Control+S');
+			expect((await saved).ok()).toBe(true);
+			await expect(unsaved).toHaveCount(0);
+			expect(putBodies).toHaveLength(1);
+			expect((JSON.parse(putBodies[0]!) as { value: string }).value).toBe('saved with ctrl+s');
+
+			// Nothing to save, and a held key: consumed, nothing sent.
+			expect(await ctrlS({})).toBe(true);
+			expect(await ctrlS({ repeat: true })).toBe(true);
+			await expect(unsaved).toHaveCount(0);
+			expect(putBodies).toHaveLength(1);
+
+			// Ctrl+K from the textarea opens and closes the palette.
+			await memoInput.focus();
+			await page.keyboard.press('Control+K');
+			await expect(palette).toBeVisible();
+			await page.keyboard.press('Control+K');
+			await expect(palette).toHaveCount(0);
+
+			// Another modal on screen (the close prompt): Ctrl+K does not open the palette.
+			await memoInput.fill('typed again');
+			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
+			await expect(settleDialog).toBeVisible();
+			await page.keyboard.press('Control+K');
+			await expect(palette).toHaveCount(0);
+			await settleDialog.getByRole('button', { name: 'キャンセル' }).click();
+			await expect(settleDialog).toHaveCount(0);
+
+			// Leave clean for the next test (back to the stored text).
+			await memoInput.fill('saved with ctrl+s');
+			await expect(unsaved).toHaveCount(0);
+			expect(putBodies).toHaveLength(1);
+		} finally {
+			await page.unroute(`**${memoPath}`, recordPut);
 		}
 	});
 

@@ -470,8 +470,17 @@ Traps that are easy to fall into in `@banto/*` components.
 - **The owner revokes the object URL.** A URL created via `createObjectURL` must
   always be revoked in the `finally` of reload / teardown / download
   (`attachmentsAdmin.ts`: "Callers own the returned URL's lifetime").
-- **Invalidate async races with a loadToken.** Detect a superseded request with
-  `++loadToken`, discard the result, and revoke the already-obtained URL.
+- **Invalidate async races with a request owner.** admin-core, and apps that can
+  import it, use `createRequestOwner` (`request.svelte.ts`,
+  shared-primitives-upstream-plan §3.1): a stale request's result and error are not
+  applied, an old request's `finally` does not clear the new request's busy flag,
+  temporary resources are `hold`-ed and released exactly once on every path
+  (success, failure, staleness), and the ones taken into the model are `adopt`-ed.
+  Packages that cannot import admin-core (§4) keep the same contract internally and
+  run the contract table (`packages/admin-core/tests/contracts/request-owner.json`)
+  in their own tests. `AttachmentsPanel.svelte`'s `++loadToken` (discard a
+  superseded result and revoke its URL) is a hand-written instance of this
+  contract and is not replaced.
 
 ## 9. Theme tokens only; raw values consolidated in the theme [machine-checked: color values in packages only]
 

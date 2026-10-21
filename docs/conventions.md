@@ -402,8 +402,14 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
 - **object URL は所有者が revoke する。** `createObjectURL` した URL は reload /
   teardown / download の `finally` で必ず revoke（`attachmentsAdmin.ts`:
   「Callers own the returned URL's lifetime」）。
-- **非同期レースは loadToken で無効化する。** `++loadToken` で superseded な
-  リクエストを検出し、結果を破棄して取得済み URL を revoke する。
+- **非同期レースは要求の所有者で無効化する。** admin-core と、admin-core を import できるアプリは
+  `createRequestOwner`（`request.svelte.ts`、shared-primitives-upstream-plan §3.1）を使う:
+  失効した要求の結果・エラーを反映しない、旧要求の `finally` で新要求の busy を解かない、一時資源は
+  `hold` して成功・失敗・失効のどの経路でも一度だけ解放し、採用したものは `adopt` で移す。
+  admin-core を import できないパッケージ（§4）は同じ契約を内部に持ち、契約の表
+  （`packages/admin-core/tests/contracts/request-owner.json`）を自分のテストで流す。
+  `AttachmentsPanel.svelte` の `++loadToken`（superseded な結果を破棄して URL を revoke）は
+  この契約の手書きの実例で、置き換えない。
 
 ## 9. テーマトークンのみ・生値は theme に集約 [機械検査済み: packages の色値のみ]
 
@@ -413,7 +419,7 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 （visual-refresh-design.md）。適用範囲の注記: 機械検査（rule 5 raw-colors）が
 走査するのは `packages/` のみ。app 層（`apps/admin-template/src`）の生値は
 **正当化コメント付きの意図的例外としてのみ**許容する（login のブランド面・
-テーマプレビューの静的スウォッチ等が既存例。理由コメント無しの生値は書かない）。
+設定の QR コードの白地（暗い配色でも読み取れるよう固定）等が既存例。理由コメント無しの生値は書かない）。
 
 ## 10. 3-way provider 分岐 + demo は明示拒否
 

@@ -100,6 +100,10 @@
      wrap past this width; the bar's scrolling track keeps this much (+ the
      gap) free on the page side so it is not clipped. */
 	--banto-shell-launcher-tooltip-max-width: 10rem;
+	/* Top bar (D4): the room above it. 0 = the screen edge; a shell with a
+     header on top sets it to the header's height (admin-template's
+     routes/(app)/+layout.svelte) so the bar sits below the header. */
+	--banto-shell-launcher-inset-top: 0px;
 
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;
@@ -303,13 +307,14 @@
    sibling of the app shell, so the shell marks the root while the dock is
    shown (routes/(app)/+layout.svelte) instead of setting a variable on
    itself: `data-banto-shell-nav="launcher"` plus the bar's side in
-   `data-banto-shell-launcher-position` (bottom / left / right, D4). 1rem is
-   ToastHost's own gap. The stack sits bottom-right: above a bottom bar,
-   left of a right bar, where it always was for a left bar. */
+   `data-banto-shell-launcher-position` (bottom / top / left / right, D4).
+   1rem is ToastHost's own gap. The stack sits bottom-right: above a bottom
+   bar, left of a right bar, where it always was for a top or left bar. */
 :root[data-banto-shell-nav='launcher'] {
 	--banto-toast-bottom: calc(var(--banto-shell-launcher-reserve) + 1rem);
 }
 
+:root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='top'],
 :root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='left'],
 :root[data-banto-shell-nav='launcher'][data-banto-shell-launcher-position='right'] {
 	--banto-toast-bottom: 1rem;

@@ -12,6 +12,8 @@ export interface ValidationMessages {
 	minLength?: (def: FieldDef, min: number) => string;
 	maxLength?: (def: FieldDef, max: number) => string;
 	pattern?: (def: FieldDef) => string;
+	/** number: the raw text is not a number (only `FormDraft.commit` parses raw text; shared-primitives-upstream-plan §3.5). */
+	notANumber?: (def: FieldDef) => string;
 }
 
 const defaultMessages: Required<ValidationMessages> = {
@@ -20,7 +22,8 @@ const defaultMessages: Required<ValidationMessages> = {
 	max: (_def, max) => `${max}以下で入力してください`,
 	minLength: (_def, min) => `${min}文字以上で入力してください`,
 	maxLength: (_def, max) => `${max}文字以内で入力してください`,
-	pattern: () => '形式が正しくありません'
+	pattern: () => '形式が正しくありません',
+	notANumber: () => '数値を入力してください'
 };
 
 /**
@@ -94,4 +97,9 @@ export function validateAll(
 		if (message) errors.push({ field: def.name, message });
 	}
 	return errors;
+}
+
+/** Message for raw number text that does not parse (used by `FormDraft.commit`). */
+export function notANumberMessage(def: FieldDef, messages: ValidationMessages = {}): string {
+	return (messages.notANumber ?? defaultMessages.notANumber)(def);
 }

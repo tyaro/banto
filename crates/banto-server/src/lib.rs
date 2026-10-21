@@ -50,6 +50,7 @@ pub use security_headers::{
     TAURI_IPC_CONNECT_SRC,
 };
 pub use server::{
-    bind, lan_urls, lan_urls_for_bind, start, BoundServer, RunningServer, ServerConfig,
+    bind, bind_with_port_fallback, lan_urls, lan_urls_for_bind, start, BoundServer,
+    PortFallbackError, RunningServer, ServerConfig, PORT_FALLBACK_SPAN,
 };
 pub use static_files::{guess_mime, static_router, UiAssets};

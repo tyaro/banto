@@ -193,20 +193,60 @@ props は 2 つで同じ（型 `OverlayProps`）:
 （狭い画面で退避するツリー・コンテキストメニュー・ページの Esc）に使えるよう公開している。仕組みは 1 つで、
 層の約束（banto-industrial #378 / #381 の 7 項目）はファイル冒頭にある。
 
-| export                                  | 役割                                                                                                                  |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真        |
-| `hasVisibleMenuLayer()`                 | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）                                           |
-| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                                |
-| `focusablesIn(panel)`                   | Tab で届く要素（`tabindex="-1"`・`:disabled`（無効な `fieldset` の中も）・`inert`・レイアウトされていないものを除く） |
-| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）               |
-| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                               |
-| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                          |
-| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                                   |
-| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                                    |
-| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                       |
-| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                           |
-| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                        |
+| export                                  | 役割                                                                                                                                                                                               |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真                                                                                     |
+| `hasVisibleMenuLayer({ except? })`      | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）。`except` を渡すとその層より手前のものだけ                                                                             |
+| `hasVisibleModalLayer({ except? })`     | 見えている**モーダルな層**（`aria-modal="true"`）があるか。非モーダルの `role="dialog"`（dock の浮動 window）・`data-esc-layer`・メニューは数えない。`except` を渡すとその層自身と下の層は数えない |
+| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                                                                                                             |
+| `focusablesIn(panel)`                   | Tab で届く要素（`tabindex="-1"`・`:disabled`（無効な `fieldset` の中も）・`inert`・レイアウトされていないものを除く）                                                                              |
+| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）                                                                                            |
+| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                                                                                                            |
+| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                                                                                                       |
+| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                                                                                                                |
+| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                                                                                                                 |
+| `MODAL_LAYER_SELECTOR`                  | モーダルな層（`[aria-modal="true"]`）                                                                                                                                                              |
+| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                                                                                                    |
+| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                                                                                                        |
+| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                                                                                                     |
+
+### コマンドとショートカット（#435-a）
+
+操作の定義（`CommandSpec`）と、キーを受けてよいかの判定・dispatcher（`src/shortcut.ts`、
+docs/design/shared-primitives-upstream-plan.md §3.6）。キーの配線（window の `keydown`）と command の一覧は
+アプリが持つ。`@banto/admin-core` の `PaletteCommand` はそのまま `CommandSpec` として渡せる（構造的に互換）。
+
+```ts
+import { createShortcutDispatcher, formatShortcut } from '@banto/ui';
+
+const shortcuts = createShortcutDispatcher(); // platform は navigator から（'mac' | 'other' を渡してもよい）
+const off = shortcuts.register('page', [
+	{
+		id: 'record.save',
+		title: m['record.save'](),
+		shortcut: 'Mod+S', // Mod = Windows/Linux は Ctrl、macOS は Meta
+		allowInEditable: true, // 入力欄の中でも受ける
+		enabled: () => form.dirty, // 実行の直前にもう一度呼ばれる
+		preventDefaultWhenDisabled: true, // 無効でもブラウザの「ページを保存」は出さない
+		run: () => form.submit()
+	}
+]);
+// <svelte:window onkeydown={(e) => shortcuts.handle(e)} />
+formatShortcut('Mod+S', 'mac'); // '⌘S'（記号だけ。文言は持たない）
+```
+
+受けないとき（キーはブラウザと他のリスナーに残る）: IME の変換中（`isComposing`・`keyCode 229`）、
+`defaultPrevented`、`repeat`（`allowRepeat` で受ける）、入力欄（文字入力の `input`・`textarea`・`select`・
+`contenteditable`。`allowInEditable` で受ける）、モーダルな層かメニューが出ているとき（非モーダルの
+`role="dialog"` では止めない。`ownerLayer` を渡した command は自分の層と下の層を数えない — パレットを開いた
+まま Ctrl+K で閉じる、など）。後から `register` した scope が優先し、`visible` が偽のものは次へ譲る。
+
+| export                                                 | 役割                                                                                                  |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `createShortcutDispatcher({ platform? })`              | `register(scope, commands)`（外す関数を返す）と `handle(event)`（処理したら `preventDefault` して真） |
+| `shouldHandleShortcut(event, spec)`                    | 上の保護だけを判定する（自前のキー処理用）                                                            |
+| `parseShortcut`・`matchShortcut`・`formatShortcut`     | `'Mod+Shift+K'` の解釈・照合・表示                                                                    |
+| `isEditableTarget(target)`・`detectShortcutPlatform()` | 入力欄の判定・`'mac' \| 'other'`                                                                      |
 
 ## LauncherBar（段階 5）
 
@@ -216,12 +256,12 @@ ADR-0018 §11）。画面下に浮いたバーで、マウスを近づけたア�
 現在のページの判定（`active`）・バッジの件数・文言はすべて呼び出し側が渡す。リンクは素の `<a href>` なので、
 SvelteKit のクライアント遷移は呼び出し側のアプリでそのまま効く（このパッケージは `$app/*` を知らない）。
 
-| props       | 型                 | 既定       | 内容                                                                                                                                                       |
-| ----------- | ------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `groups`    | `LauncherGroup[]`  | （必須）   | `{ id, ariaLabel, items }`。グループごとに `<nav aria-label>` を 1 つ描き、あいだに区切り線                                                                |
-| `position`  | `LauncherPosition` | `'bottom'` | `'bottom'`（下端の中央）・`'left'` / `'right'`（その端の縦中央の縦向きのバー。拡大は縦の軸、ツールチップは本文側の横）。900px 以下はどれでも下端のタブバー |
-| `magnify`   | `boolean`          | `true`     | 拡大する。`prefers-reduced-motion`・`(hover: none)`・900px 以下・マウス以外では自動で止まる                                                                |
-| `ariaLabel` | `string`           | なし       | バー全体の名前（付けると全体が `role="group"`）                                                                                                            |
+| props       | 型                 | 既定       | 内容                                                                                                                                                                                                                                                             |
+| ----------- | ------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `groups`    | `LauncherGroup[]`  | （必須）   | `{ id, ariaLabel, items }`。グループごとに `<nav aria-label>` を 1 つ描き、あいだに区切り線                                                                                                                                                                      |
+| `position`  | `LauncherPosition` | `'bottom'` | `'bottom'`（下端の中央）・`'top'`（上端の中央。`--banto-shell-launcher-inset-top` だけ下げる。拡大は下向き、ツールチップは下）・`'left'` / `'right'`（その端の縦中央の縦向きのバー。拡大は縦の軸、ツールチップは本文側の横）。900px 以下はどれでも下端のタブバー |
+| `magnify`   | `boolean`          | `true`     | 拡大する。`prefers-reduced-motion`・`(hover: none)`・900px 以下・マウス以外では自動で止まる                                                                                                                                                                      |
+| `ariaLabel` | `string`           | なし       | バー全体の名前（付けると全体が `role="group"`）                                                                                                                                                                                                                  |
 
 `LauncherItem` は `{ id, href, label, icon, active?, badge?: { text, label } }`。`label` がツールチップ・
 狭い画面の小さなラベル・アクセシブルな名前（視覚的に隠した実テキスト。`badge.label` も名前に入る）になり、
@@ -232,9 +272,11 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 
 寸法・倍率・重なり順はトークン（`--banto-shell-launcher-*`・`--banto-z-launcher`、
 [@banto/theme](../theme/README.md)）で、`@banto/theme/css` を読み込むこと（倍率のトークンが読めなければ
-拡大しない）。バーは `position: fixed` なので、本文の下（左右に置くならその側）に
+拡大しない）。バーは `position: fixed` なので、本文の下（上・左右に置くならその側）に
 `--banto-shell-launcher-reserve` の余白を取るのは呼び出し側の仕事（900px 以下はどの位置でも下に
-`--banto-shell-launcher-tabbar-reserve`）。拡大の曲線は純粋関数 `magnifyScale(distance, range, max)` として公開している。
+`--banto-shell-launcher-tabbar-reserve`）。上に置くときは、シェルのヘッダーの高さを
+`--banto-shell-launcher-inset-top` に入れるとバーがヘッダーの下に来る（ヘッダーのメニューは
+`popover` の最上位の層なのでバーより手前に出る）。拡大の曲線は純粋関数 `magnifyScale(distance, range, max)` として公開している。
 
 ```svelte
 <script lang="ts">

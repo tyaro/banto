@@ -502,3 +502,50 @@ v4.0.0 はテンプレートを SvelteKit 3（`@sveltejs/kit` 3.0・`@sveltejs/a
 4. 起動前に保護画面を直接開く（スプラッシュ → 起動後に同じ URL が開く）、別タブでのログイン中の移動（移動が完了し、
    未保存の確認が出る）。
 5. 同期記録に「v4.0.0 SvelteKit 3 取込済（PR 番号）」を書く。
+
+### 例 5: v6.7.x → 次のリリース（共有部品の追加。A が中心・破壊的変更なし）
+
+Issue #432〜#438（temp-scada からの共有部品の還元。計画は
+[design/shared-primitives-upstream-plan.md](design/shared-primitives-upstream-plan.md)）で、`@banto/*` に部品が増える。
+**版は未定**（次のリリースで出す。タグ名は CHANGELOG のその版の節が正）。項目の全量は CHANGELOG の該当節。
+ここには取り込みの組み立てだけを書く。
+
+**破壊的変更は無い**（公開 API の削除・改名なし。既存のオプションは従来どおり）。ただし**挙動が変わる箇所が 3 つ**ある。
+`@banto/dock-svelte` を使う派生アプリは、A を上げたあとに確かめる:
+
+- **復元 layout の検証**（#434）: `DockState` の `hydrate` と constructor の初期値が、不正な layout（重複 ID・`x=1e999`・
+  `width=-1`・`height=0` など）を拒否する。従来は通っていた壊れた保存データが読めなくなる（正常な v1 / v2 は従来どおり）。
+  `hydrate` の戻り値が `void` → `boolean`（採用されたか）。戻り値を使わない呼び出しはそのまま動く。
+- **操作の確定**（#433）: ドラッグは、操作を始めた pointer の `pointerup` でだけ確定する。resize・divider も Esc・
+  `pointercancel`・window の `blur` などで取り消される（取消は対象の window / split だけを戻す）。これらのイベントに
+  依存した独自の操作やテストは見直す。
+- **IME 変換中の構造変更**（#432）: props を渡さなくても、`DockHost` は IME 変換中（pane の中の入力で
+  `compositionstart` 〜 `compositionend`）にドラッグを始めず、dock / undock / タブの切り替えなどの構造変更を
+  `compositionend` まで保留する（見た目は変わらない）。変換中の操作に依存した独自の処理や E2E は見直す。
+
+| 経路 | 項目                                                    | 取り込み                                                                                                                                                                                      |
+| ---- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | `@banto/*`・`banto-*` を次のリリースへ                  | タグを上げるだけで、既存の挙動は保たれる（上の 3 点を除く）。新しい部品は**使うときだけ**取り込む                                                                                             |
+| A    | `@banto/admin-core`（#436・#437）                       | `createRequestOwner`（古い非同期結果の不採用と一時資源の解放）、`createSavedSetting`（現在値と保存に成功した snapshot を分ける UI 設定）。どちらも追加のみ                                    |
+| A    | `@banto/forms`（#432）                                  | `createFormDraft` / `DraftCoordinator`（pane より長生きする未適用入力）、`DraftNumberField`。既存の `NumberField` は変えていない                                                              |
+| A    | `@banto/dock-svelte`（#432〜#434）                      | `DockHost` の `beforePanelChange`（pane の lifecycle）・`clamp` / `narrowHost`（縮小時の到達性）・`capabilities`（close / move / undock の制限）。キーボード操作と divider の ARIA は自動で入る |
+| A    | `@banto/ui`（#433・#435）                               | `CommandSpec`・`createShortcutDispatcher` / `shouldHandleShortcut` / `formatShortcut`（ショートカットの保護）。追加のみ                                                                        |
+| A    | `@banto/image-assets`（#438。新しいオプションのパッケージ） | 使うアプリだけ依存に足す。**`.svelte.ts` を含むので `optimizeDeps.exclude` に足す**（下）。使い方は [recipes/image-assets.md](recipes/image-assets.md)                                         |
+| B    | コピーしたテンプレート                                  | 取り込みは任意。ダッシュボードのメモ pane の draft 化（#432）、Ctrl+K / Ctrl+S の配線（#435、`#lib/shortcuts.ts`）、ドックの設定（#437）。差分を読んで写す                                     |
+| C    | DB・設定・配布資産                                      | 変更なし（マイグレーション不要）                                                                                                                                                              |
+
+進め方:
+
+1. A のタグを上げ、`pnpm check` と dock の画面（保存済みの layout が読めること、ドラッグ・resize）を確かめる。
+2. 新しい部品は、**そのパッケージの README を正**として、必要なものだけ取り込む。使わない部品は何もしなくてよい。
+3. `@banto/image-assets` を使うアプリは、依存に足し（`github:tyaro/banto#<タグ>&path:packages/image-assets`）、
+   `vite.config.ts` の `optimizeDeps.exclude` に `@banto/image-assets` を加える（足さないと dev が 500 になる。3.1・
+   [conventions §14](conventions.md)）。`pnpm build` と `pnpm check` はこの経路を通らないので、dev で画面を開いて確かめる。
+4. 派生側に同じ処理を自作していた（draft・request owner・ショートカットの保護・画像の取込）場合も、置き換えは**任意**。
+   置き換えるなら 1 つずつ、各 README の約束と突き合わせる。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm dev`（image-assets を入れたアプリは dev で画面を開く）。
+2. dock を使うアプリは、保存済みの layout が復元されること（拒否されたら現行の layout のまま。空にならないこと）。
+3. 同期記録に「共有部品（#432〜#438）取込済・使った部品」を書く。

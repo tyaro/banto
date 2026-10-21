@@ -1,5 +1,5 @@
 <script lang="ts">
-	// 外部利用 fixture（#271）の本体。`.svelte.ts` をソース配布する 6 パッケージを
+	// 外部利用 fixture（#271）の本体。`.svelte.ts` をソース配布する 7 パッケージを
 	// それぞれ import し、ブラウザがモジュールグラフを最後まで読み込めたことを
 	// `data-testid="banto-loaded"` の描画で示す。#150 が再現すると、dev の依存
 	// オプティマイザがここで import する `.svelte.ts` を js_parse_error にし、
@@ -9,13 +9,17 @@
 	// （存在の確認だけをする）。fixture が特定の版の API に縛られないようにするため。
 	// 例外: `@banto/ui` の `createToastStore` / `ToastHost`（#220 段階 2c）は v6.1.0 には無い。
 	// 次のリリースタグが切られるまで、タグの経路（v6.1.0 を依存にする）はここで落ちる。
-	// SHA の経路（PR・main）は通る。
+	// SHA の経路（PR・main）は通る。`@banto/image-assets`（#438）もパッケージごと v6.7.2 には
+	// 無いので、同じく次のリリースタグまではタグの経路で落ちる。
 	// 新しく `.svelte.ts` を持つパッケージを足したら、ここに import を 1 行足す
 	// （verify:architecture の rule `external-consumer-fixture` が漏れを落とす）。
 	import { createListResource } from '@banto/admin-core';
 	import { createDockState } from '@banto/dock-svelte';
 	import { BantoForm, createFormStore } from '@banto/forms';
 	import { BantoGrid, GridState } from '@banto/grid-svelte';
+	// @banto/image-assets（#438 PR-14）はアプリに配線しないオプションだが、`createImageStore`
+	// が `.svelte.ts` なので exclude の対象。ストアを作り、`$state` を持つ実体が動くことも確かめる。
+	import { createImageStore } from '@banto/image-assets';
 	import { BantoTree, TreeState } from '@banto/tree-svelte';
 	import { resolveTheme } from '@banto/theme';
 	// @banto/ui（#220）は `createToastStore()`（段階 2c）が `.svelte.ts` なので 6 つ目の
@@ -36,6 +40,8 @@
 		typeof TreeState,
 		typeof BantoTree,
 		typeof createToastStore,
+		typeof createImageStore,
+		createImageStore({ maxTotalBytes: 1 }).count,
 		resolveTheme('light')
 	].join(',');
 </script>

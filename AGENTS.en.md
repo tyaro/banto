@@ -69,7 +69,7 @@ track your task belongs to.**
   full procedures live in `docs/recipes/` (rename / add-resource /
   remove-optional-assets / consume-as-git-dependency / lan-access /
   database-backup / windows-setup / no-login-app / scan-wedge / notifications /
-  tree-svelte / add-role; mostly Japanese).
+  tree-svelte / image-assets / add-role; mostly Japanese).
 
 ## Entry points by task
 
@@ -79,7 +79,7 @@ track your task belongs to.**
 - **Add an RBAC role (extend admin/editor/viewer)** →
   [docs/recipes/add-role.en.md](docs/recipes/add-role.en.md).
 - **Integrate a package into your app** (scan-wedge / toast notifications /
-  tree-svelte) → [docs/recipes/](docs/recipes/) (Track-B recipes split out of
+  tree-svelte / image import) → [docs/recipes/](docs/recipes/) (Track-B recipes split out of
   the README; Japanese).
 - **Drop the optional assets as a batch (dock/charts/glass/command
   palette/attachments/reporting/tree)** → `pnpm scaffold --preset

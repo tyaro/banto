@@ -17,6 +17,7 @@
  *                audit-log **画面** + /dashboard を外し、`/monitor` を足して
  *                既定値を反転する（docs/design/display-preset-plan.md §3.2、Issue #190）。
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
+ *     image-assets（ADR-0020 §6）も同じく未配線（アプリが依存しない）なので触れない。
  *
  * 各資産の削除は docs/recipes/remove-optional-assets.md（旧 README「3. オプション
  * 資産の削除」）の手動手順を 1 対 1 で自動化した
@@ -386,6 +387,29 @@ function removeDock() {
 		'popout import 除去',
 		`\timport { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';\n`
 	);
+	// #433-b（#446）: dock の gesture の Esc をどの層に譲るか。dock と一緒に消える。
+	drop(
+		DASH,
+		'dockEscape import 除去',
+		`\timport { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';\n`
+	);
+	// #432 PR-10: メモ pane の draft と dock の lifecycle の配線（中身は下の「dock スクリプト
+	// 一式」・ワークスペース markup・dockPanel snippet の範囲に収めてある）。
+	drop(
+		DASH,
+		'メモ pane（draft・確認ダイアログ）import 除去',
+		`\timport {\n\t\tMEMO_PANEL_ID,\n\t\tcreateDashboardMemo,\n\t\tcreatePanelChangeHandler,\n\t\tmemoSaveCommand\n\t} from '#lib/banto/dashboardMemo.svelte.js';\n` +
+			// #435 PR-11: メモの Ctrl+S（登録は下の「dock スクリプト一式」の範囲）。
+			// shortcuts.ts 自体はアプリの dispatcher としてコアに残る。
+			`\timport { appShortcuts, firstPressOnly, SAVE_SHORTCUT } from '#lib/shortcuts.js';\n` +
+			`\timport { createSettlePrompt } from '#lib/banto/settlePrompt.svelte.js';\n` +
+			`\timport { untrack } from 'svelte';\n` +
+			`\timport { formValidationMessages } from '#lib/banto/i18n.js';\n` +
+			`\timport { guardUnsavedChanges } from '#lib/unsavedChanges.js';\n` +
+			`\timport type { DraftSettleResult } from '@banto/forms';\n` +
+			`\timport DashboardMemoField from '#lib/components/DashboardMemoField.svelte';\n` +
+			`\timport DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';\n`
+	);
 	cutRegion(
 		DASH,
 		'dock スクリプト一式除去',
@@ -406,6 +430,14 @@ function removeDock() {
 	);
 	removeFile(`${APP}/src/lib/banto/panels.ts`, 'panels.ts 削除');
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockEscape.ts`, 'dockEscape.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockEscape.test.ts`, 'dockEscape.test.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dashboardMemo.svelte.ts`, 'dashboardMemo.svelte.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dashboardMemo.test.ts`, 'dashboardMemo.test.ts 削除');
+	removeFile(`${APP}/src/lib/banto/settlePrompt.svelte.ts`, 'settlePrompt.svelte.ts 削除');
+	removeFile(`${APP}/src/lib/banto/settlePrompt.test.ts`, 'settlePrompt.test.ts 削除');
+	removeFile(`${APP}/src/lib/components/DashboardMemoField.svelte`, 'DashboardMemoField 削除');
+	removeFile(`${APP}/src/lib/components/DraftSettleDialog.svelte`, 'DraftSettleDialog 削除');
 	removeDir(`${APP}/src/routes/panel`, 'pop-out panel ルート削除');
 	removeAppDep('@banto/dock-svelte');
 	// dock-svelte は .svelte.ts を持つので optimizeDeps.exclude（issue #150 / ADR-0007）に
@@ -489,11 +521,26 @@ function removeCommandPalette() {
 		'commandPaletteStore import 除去',
 		`\timport { commandPaletteStore } from '#lib/commandPalette.svelte.js';\n`
 	);
+	// #435 PR-11: Ctrl+K はアプリの shortcut dispatcher（`#lib/shortcuts.ts`）の command。
+	// dispatcher 自体はページの command（ダッシュボードの Ctrl+S）のためにコアに残し、
+	// パレットの command の登録と、その ownerLayer を探すための host だけを外す。
 	swapText(
 		LAYOUT,
-		'handleKeydown から Ctrl+K/パレット参照を除去',
-		`\t\tif (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {\n\t\t\tevent.preventDefault();\n\t\t\tcommandPaletteStore.toggle();\n\t\t\treturn;\n\t\t}\n\t\tif (event.key === 'Escape' && overlayOpen && !commandPaletteStore.open) {\n\t\t\tcloseOverlay();\n\t\t}`,
-		`\t\tif (event.key === 'Escape' && overlayOpen) {\n\t\t\tcloseOverlay();\n\t\t}`
+		'shortcuts import からパレットの command を除去',
+		`\timport { appShortcuts, commandPaletteCommand } from '#lib/shortcuts.js';\n`,
+		`\timport { appShortcuts } from '#lib/shortcuts.js';\n`
+	);
+	cutRegion(
+		LAYOUT,
+		'Ctrl+K（パレットの command）の登録除去',
+		`\t// Ctrl+K / Cmd+K (spec M16): a global toggle registered here (the app`,
+		`\t\t\t])\n\t\t)\n\t);\n\n`
+	);
+	swapText(
+		LAYOUT,
+		'handleKeydown からパレット参照を除去',
+		`\t\tif (event.key === 'Escape' && overlayOpen && !commandPaletteStore.open) {`,
+		`\t\tif (event.key === 'Escape' && overlayOpen) {`
 	);
 	// 最近使った項目の所有者掃除（#258）: パレットと一緒に recentCommands.ts を消すため配線も外す。
 	drop(
@@ -516,14 +563,23 @@ function removeCommandPalette() {
 	drop(
 		LAYOUT,
 		'CommandPalette 描画除去',
-		`{#if commandPaletteStore.open}\n\t<CommandPalette />\n{/if}\n\n`
+		`{#if commandPaletteStore.open}\n` +
+			`\t<!-- The host only lets the Ctrl+K command find the palette's dialog (its\n` +
+			`\t     \`ownerLayer\`); \`display: contents\` keeps it out of the layout. -->\n` +
+			`\t<div class="palette-host" bind:this={paletteHost}>\n\t\t<CommandPalette />\n\t</div>\n{/if}\n\n`
 	);
+	drop(LAYOUT, 'パレットの host の CSS 除去', `\t.palette-host {\n\t\tdisplay: contents;\n\t}\n\n`);
 
 	// header: import・検索ピル/アイコンボタン
 	drop(
 		HEADER,
 		'commandPaletteStore import 除去',
 		`\timport { commandPaletteStore } from '#lib/commandPalette.svelte.js';\n`
+	);
+	drop(
+		HEADER,
+		'shortcuts import 除去（検索ピルの鍵帽の表示だけが使う）',
+		`\timport { appShortcuts, COMMAND_PALETTE_SHORTCUT } from '#lib/shortcuts.js';\n`
 	);
 	drop(
 		HEADER,
@@ -546,7 +602,8 @@ function removeCommandPalette() {
 		>
 			<Search size={16} aria-hidden="true" />
 			<span>{m['shell.searchPlaceholder']()}</span>
-			<kbd>Ctrl K</kbd>
+			<!-- The dispatcher's key, as the platform writes it (Ctrl+K / ⌘K, #435). -->
+			<kbd>{appShortcuts.format(COMMAND_PALETTE_SHORTCUT)}</kbd>
 		</button>
 		<div class="search-icon-only">
 			<IconButton
