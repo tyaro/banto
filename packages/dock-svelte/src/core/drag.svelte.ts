@@ -26,7 +26,9 @@
  * unreachable.
  *
  * No live mutation during the drag: `dock.move`/`dockPanel`/etc. are only
- * ever called once, from `commit()` on the owning pointer's pointerup. Every intermediate
+ * ever called once, from `commit()` on the owning pointer's pointerup (a
+ * structure change - dock / undock / move a docked pane - only once the host's
+ * pane lifecycle agrees, #432: refused = the pane stays where it was). Every intermediate
  * pointermove only updates this controller's own `$state` snapshot (read by
  * `DockHost` to position the ghost chip + snap-guide overlay) - the real
  * panel never moves mid-drag, matching the task's explicit ask.
@@ -40,6 +42,7 @@
  */
 import { getContext, setContext } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
+import type { DockPanelChange, PanelLifecycle } from './lifecycle';
 import { resolveCapabilities, type DockPolicy } from './policy';
 import { findParent } from './tree';
 import type { DockState } from '../state.svelte';
@@ -93,16 +96,32 @@ export class DragController {
 	state: DragSnapshot | null = $state(null);
 
 	#getPolicy: () => DockPolicy | undefined;
+	#getLifecycle: () => PanelLifecycle | undefined;
 
-	/** `getPolicy` supplies the host's clamp options and pane capabilities (see `core/policy.ts`); absent = package defaults, everything allowed. */
+	/**
+	 * `getPolicy` supplies the host's clamp options and pane capabilities (see
+	 * `core/policy.ts`); absent = package defaults, everything allowed.
+	 * `getLifecycle` is the host's pane lifecycle (`core/lifecycle.ts`, #432):
+	 * a drop that changes the structure (dock / undock / move a docked pane)
+	 * goes through its `request`; absent = applied directly.
+	 */
 	constructor(
 		dock: DockState,
 		getHostEl: () => HTMLElement | null,
-		getPolicy: () => DockPolicy | undefined = () => undefined
+		getPolicy: () => DockPolicy | undefined = () => undefined,
+		getLifecycle: () => PanelLifecycle | undefined = () => undefined
 	) {
 		this.#dock = dock;
 		this.#getHostEl = getHostEl;
 		this.#getPolicy = getPolicy;
+		this.#getLifecycle = getLifecycle;
+	}
+
+	/** A structure change: asked through the lifecycle (`beforePanelChange`, IME hold) when there is one. */
+	#structural(change: DockPanelChange, apply: () => void): void {
+		const lifecycle = this.#getLifecycle();
+		if (lifecycle) void lifecycle.request(change, apply);
+		else apply();
 	}
 
 	/** True while a drag is in progress - handy guard for consumers that don't need the full snapshot. */
@@ -231,8 +250,15 @@ export class DragController {
 				const ownContainerId = parent?.id ?? panelId;
 				if (ownContainerId === hoverTargetId) return;
 			}
-			if (source === 'floating') this.#dock.dockPanel(panelId, hoverTargetId, hoverRegion);
-			else this.#dock.dockExisting(panelId, hoverTargetId, hoverRegion);
+			const dock = this.#dock;
+			if (source === 'floating')
+				this.#structural({ kind: 'dock', panelId, remount: true }, () =>
+					dock.dockPanel(panelId, hoverTargetId, hoverRegion)
+				);
+			else
+				this.#structural({ kind: 'move-docked', panelId, remount: true }, () =>
+					dock.dockExisting(panelId, hoverTargetId, hoverRegion)
+				);
 			return;
 		}
 
@@ -244,7 +270,10 @@ export class DragController {
 			if (source === 'docked') {
 				// `undock: false` panes stay docked: a drop on free space is ignored.
 				if (policy && !resolveCapabilities(policy, panelId).undock) return;
-				this.#dock.undockPanel(panelId, { x, y, width, height });
+				const dock = this.#dock;
+				this.#structural({ kind: 'undock', panelId, remount: true }, () =>
+					dock.undockPanel(panelId, { x, y, width, height })
+				);
 			} else {
 				const win = this.#dock.layout.floating.find((w) => w.id === panelId);
 				if (win) {
@@ -267,9 +296,10 @@ export class DragController {
 export function createDragController(
 	dock: DockState,
 	getHostEl: () => HTMLElement | null,
-	getPolicy?: () => DockPolicy | undefined
+	getPolicy?: () => DockPolicy | undefined,
+	getLifecycle?: () => PanelLifecycle | undefined
 ): DragController {
-	return new DragController(dock, getHostEl, getPolicy);
+	return new DragController(dock, getHostEl, getPolicy, getLifecycle);
 }
 
 const DRAG_CONTEXT_KEY = Symbol('banto-dock-drag');

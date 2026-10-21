@@ -15,6 +15,12 @@ export type {
 	GestureCancelReason as DockCancelReason,
 	GestureKind as DockGestureKind
 } from './core/gesture.svelte';
+/**
+ * Pane lifecycle types of `DockHost` (`beforePanelChange` / `hidePanel` /
+ * `closePanel`; #432, shared-primitives-upstream-plan §3.5 / §4.2 / D3-c / D4).
+ * `structureKey` is what decides whether an async answer is stale.
+ */
+export { structureKey, type DockPanelChange, type DockPanelChangeOutcome } from './core/lifecycle';
 export { DockState, createDockState } from './state.svelte';
 export { defaultDockMessages, type DockMessages } from './messages';
 
