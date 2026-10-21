@@ -213,3 +213,56 @@ describe('createRequestOwner with real async work', () => {
 		expect(owner.busy()).toBe(false);
 	});
 });
+
+describe('createRequestOwner with re-entrant callbacks (PR #441 review)', () => {
+	it('an abort listener that disposes the owner leaves the new request stale too', () => {
+		const owner = createRequestOwner();
+		const a = owner.begin();
+		a.signal.addEventListener('abort', () => owner.dispose());
+		const b = owner.begin();
+		expect(owner.disposed).toBe(true);
+		expect(b.isCurrent()).toBe(false);
+		expect(b.signal.aborted).toBe(true);
+		expect(owner.busy()).toBe(false);
+		const released: string[] = [];
+		b.hold('r', (r) => released.push(r));
+		expect(released).toEqual(['r']);
+	});
+
+	it('an abort listener that begins again supersedes the outer begin', () => {
+		const owner = createRequestOwner();
+		const a = owner.begin();
+		let inner: ReturnType<typeof owner.begin> | null = null;
+		a.signal.addEventListener('abort', () => {
+			inner = owner.begin();
+		});
+		const outer = owner.begin();
+		expect(outer.isCurrent()).toBe(false);
+		expect(inner!.isCurrent()).toBe(true);
+		expect(owner.busy()).toBe(true);
+	});
+
+	it('invalidate does not delete a request begun from the abort listener', () => {
+		const owner = createRequestOwner();
+		const a = owner.begin();
+		let next: ReturnType<typeof owner.begin> | null = null;
+		a.signal.addEventListener('abort', () => {
+			next = owner.begin();
+		});
+		owner.invalidate();
+		expect(next!.isCurrent()).toBe(true);
+		expect(owner.busy()).toBe(true);
+	});
+
+	it('finish answers false when a release callback began a newer request', () => {
+		const owner = createRequestOwner();
+		const a = owner.begin();
+		let b: ReturnType<typeof owner.begin> | null = null;
+		a.hold('r', () => {
+			b = owner.begin();
+		});
+		expect(a.finish()).toBe(false);
+		expect(b!.isCurrent()).toBe(true);
+		expect(owner.busy()).toBe(true);
+	});
+});

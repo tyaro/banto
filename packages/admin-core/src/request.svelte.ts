@@ -150,9 +150,17 @@ class Request implements RequestHandle {
 	finish(): boolean {
 		if (this.#finished) return false;
 		this.#finished = true;
-		const wasCurrent = this.#owner.settle(this);
-		this.releaseHeld();
-		return wasCurrent;
+		// Release first, then ask "was I the latest?": a release callback may
+		// begin() a newer request on the same key, and answering before it ran
+		// would let `if (request.finish()) loading = false` clear that newer
+		// request's loading. settle() runs even if a release throws.
+		try {
+			this.releaseHeld();
+		} catch (error) {
+			this.#owner.settle(this);
+			throw error;
+		}
+		return this.#owner.settle(this);
 	}
 
 	/** Release every unadopted resource now; later `hold()`s release immediately. */
@@ -204,19 +212,26 @@ class Owner implements RequestOwner {
 			request.releaseHeld();
 			return request;
 		}
-		this.#current.get(key)?.expire();
+		// Register the new request before expiring the old one: expire() aborts
+		// synchronously, and an abort listener may dispose() this owner or
+		// begin() again. Committing first means such a re-entrant call sees (and
+		// expires / supersedes) the new request instead of being overwritten.
+		const previous = this.#current.get(key);
 		this.#current.set(key, request);
 		this.#live.add(request);
 		this.#bump();
+		previous?.expire();
 		return request;
 	}
 
 	invalidate(key: string = DEFAULT_REQUEST_KEY): void {
 		const request = this.#current.get(key);
 		if (!request) return;
-		request.expire();
+		// Remove before expire(): an abort listener that begin()s a new request
+		// on this key must not have it deleted afterwards.
 		this.#current.delete(key);
 		this.#bump();
+		request.expire();
 	}
 
 	dispose(): void {
