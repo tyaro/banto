@@ -122,7 +122,9 @@ export async function inspectImage(
 		// while decode is pending, so the header, the decoder and the hash must all see one copy.
 		if (live.byteLength > checked.maxBytes)
 			throw new ImageAssetError('too-large', { limit: checked.maxBytes, actual: live.byteLength });
-		bytes = live.slice();
+		// `new Uint8Array(view)` always copies; a subclass's `slice` may not (Node's
+		// `Buffer.slice` returns a view of the same memory).
+		bytes = new Uint8Array(live);
 	}
 	const header = inspectImageHeader(bytes, checked);
 	const decoded = await verifyDecodedImage(bytes, header, options);

@@ -212,6 +212,27 @@ describe('inspectImage review fixes (PR #452)', () => {
 		}
 	);
 
+	it('a Uint8Array subclass whose slice shares memory (like Node Buffer) still gets copied', async () => {
+		// Node's Buffer is a Uint8Array whose slice() returns a view, not a copy.
+		class SharedSlice extends Uint8Array {
+			override slice(start?: number, end?: number) {
+				return this.subarray(start, end) as never;
+			}
+		}
+		const original = png(2, 1);
+		const expected = await sha256Hex(original);
+		const input = new SharedSlice(original);
+		let decodedHash = '';
+		const decode: ImageDecoder = async (blob) => {
+			input.fill(0);
+			decodedHash = await sha256Hex(new Uint8Array(await blob.arrayBuffer()));
+			return { width: 2, height: 1 };
+		};
+		const result = await inspectImage(input, limits, { decode });
+		expect(result.sha256).toBe(expected);
+		expect(decodedHash).toBe(expected);
+	});
+
 	it('refuses oversized bytes before copying them', async () => {
 		const { decode, calls } = fakeDecoder(1, 1);
 		expect(
