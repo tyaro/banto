@@ -179,3 +179,6 @@ fixtures/external-consumer/rust/Cargo.lock
 
 # Editor settings (personal)
 .vscode/
+
+# Local hand-off notes across /clear (never committed)
+docs/STATUS.md
