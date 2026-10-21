@@ -43,9 +43,11 @@ use std::time::Duration;
 
 /// How long the read may take before it is reported as `unknown`/`timeout`.
 /// PowerShell's start plus the NetSecurity module's first load is a few
-/// seconds on a cold machine.
+/// seconds on a warm machine but went past 10 s on a cold CI runner (PR #465),
+/// so a slow PC right after boot gets room too. It runs off the async runtime
+/// and only on the admin's request, so waiting longer blocks nothing else.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Upper bound on what is read from the child's stdout. The real output is
 /// well under 4 KiB.
