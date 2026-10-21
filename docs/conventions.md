@@ -434,7 +434,7 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   `AttachmentsPanel.svelte` の `++loadToken`（superseded な結果を破棄して URL を revoke）は
   この契約の手書きの実例で、置き換えない。
 
-## 9. テーマトークンのみ・生値は theme に集約 [機械検査済み: packages の色値のみ]
+## 9. テーマトークンのみ・生値は theme に集約 [機械検査済み: packages の色値のみ。寸法は未検査]
 
 UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生値をコンポーネントに
 書かない**。生値の集約先は `packages/theme/src/css/banto.css`。glass プリセットは
@@ -443,6 +443,21 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 走査するのは `packages/` のみ。app 層（`apps/admin-template/src`）の生値は
 **正当化コメント付きの意図的例外としてのみ**許容する（login のブランド面・
 設定の QR コードの白地（暗い配色でも読み取れるよう固定）等が既存例。理由コメント無しの生値は書かない）。
+
+**寸法**とは、余白・文字サイズ・枠線幅の段階のこと。トークンは `--banto-space-1`〜`-8`・
+`--banto-font-size-xs`/`sm`/`md`/`lg`/`xl`・`--banto-border-width`/`-strong`（値と丸めの規則は
+[theme-dimension-tokens.md](design/theme-dimension-tokens.md) §5.2）。本文の文字サイズは root の `1rem` を
+継承し、トークンを付けない。次は「寸法」に含めず、トークンにしなくてよい（理由コメントも不要）:
+
+- `0`、`em` 単位の値（文脈相対。アイコンと文字の間隔など）、`1px` 未満の調整やヘアラインのオフセット
+  （`-1px` の margin など）、`calc()` の中で部品の形から導く値。
+- 部品の形（幅・高さ・列幅・アイコンの大きさ）。部品ごとのローカルなカスタムプロパティか、2 つ以上の
+  部品・アプリが共有するときだけ用途名のトークン（既存の `--banto-shell-*` のような）にする。
+- `3px`・`4px` の縁（左端の強調バーなど）。部品の形として扱う。
+
+寸法の機械検査はまだ無い（レビューで守る）。既存の生の寸法は範囲ごとの PR で段階のトークンへ移している
+途中で、移行が終わった範囲から `font-size` と `border-width` の生値だけを検査に足す予定
+（theme-dimension-tokens.md §6・D8）。
 
 ## 10. 3-way provider 分岐 + demo は明示拒否
 

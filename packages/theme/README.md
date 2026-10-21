@@ -86,6 +86,41 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 半透明の 4 つは、`prefers-reduced-transparency: reduce` のときと `backdrop-filter` が使えないブラウザでは不透明（ぼかし無し）に戻る。
 ルート要素に `data-banto-shell-nav="launcher"` が付いているあいだは、`--banto-toast-bottom` をバー（900px 以下はタブバー）の上に上げる（アプリのシェルがドック表示のときに付ける）。あわせて `data-banto-shell-launcher-position` が `top` / `left` / `right` のときは下を空けたままにし、`right` ではトーストを `--banto-toast-right` でバーの左へ逃がす（900px 以下はどの位置でもタブバーの上）。
 
+## 寸法のトークン（次の版から）
+
+余白・文字サイズ・枠線幅の段階（[theme-dimension-tokens.md](../../docs/design/theme-dimension-tokens.md) §5.2）。
+追加のみで、既存の値と画面は変わらない。生の `rem` / `px` から**任意で**置き換えられる。値はすべて `rem`
+（枠線幅は `px`）なので、root の `--banto-font-size`（既定 14px）に追従する。密度（compact）では切り替えない。
+部品の形（幅・高さ・列幅・アイコンの大きさ）は段階に入れない。
+
+| トークン                      | 値         | 用途                                   |
+| ----------------------------- | ---------- | -------------------------------------- |
+| `--banto-space-1`             | `0.25rem`  | 余白（序数。値は名前に含めない）       |
+| `--banto-space-2`             | `0.5rem`   | 余白                                   |
+| `--banto-space-3`             | `0.75rem`  | 余白                                   |
+| `--banto-space-4`             | `1rem`     | 余白                                   |
+| `--banto-space-5`             | `1.25rem`  | 余白                                   |
+| `--banto-space-6`             | `1.5rem`   | 余白                                   |
+| `--banto-space-7`             | `2rem`     | 余白                                   |
+| `--banto-space-8`             | `3rem`     | 余白（空状態など）                     |
+| `--banto-font-size-xs`        | `0.7rem`   | バッジ・極小ラベル                     |
+| `--banto-font-size-sm`        | `0.8rem`   | caption                                |
+| `--banto-font-size-md`        | `0.875rem` | 補足・表の副情報（本文より一段小さい） |
+| `--banto-font-size-lg`        | `1.125rem` | 見出し                                 |
+| `--banto-font-size-xl`        | `1.75rem`  | display（KPI の数値など）              |
+| `--banto-border-width`        | `1px`      | 枠線の幅                               |
+| `--banto-border-width-strong` | `2px`      | 選択・強調の縁                         |
+
+本文（body）は root の `1rem` を継承するので、本文用のトークンは無い。
+
+```css
+.my-card {
+	padding: var(--banto-space-4);
+	border: var(--banto-border-width) solid var(--banto-border);
+	font-size: var(--banto-font-size-md);
+}
+```
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
