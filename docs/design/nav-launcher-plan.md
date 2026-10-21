@@ -41,7 +41,7 @@ admin-template の左のサイドバーの**代わりに**、macOS のドック�
   900px 以下では固定のドロワーになり、開閉は `(app)/+layout.svelte` の `overlayOpen` が持つ。
 - **シェル** `routes/(app)/+layout.svelte`: `.shell { display: flex }` に `Sidebar` と `.main`（Header + main）。
   オーバーレイの幕、Esc でドロワーを閉じる、`Ctrl+K`、View Transitions（reduced-motion で開始しない）。
-- **ヘッダ** `lib/components/Header.svelte`: 900px 以下のハンバーガー（ドロワー開閉）、ページ名、
+- **ヘッダ** `lib/components/Header.svelte`: 900px 以下のハンバーガー（ドロワー開閉。900px 超の折りたたみボタンはサイドバー最上段のロゴの左）、ページ名、
   状態チップ、検索ピル。キオスク時はコンパクト。
 - **e2e** はナビを `getByRole('navigation', { name: '主要ナビゲーション' })` で掴む（`e2e/tests/smoke.spec.ts`）。
   `aside` やクラス名には依存していない。
