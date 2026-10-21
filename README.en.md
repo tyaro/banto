@@ -98,7 +98,8 @@ Architecture overview (Japanese, Mermaid diagrams):
   with deletable demo wiring (the tree view is the sidebar "Tree view" = `/tree`
   demo, reachable on the live demo too); scan-wedge is recipe-only (not wired
   into the demo app). Per-package integration recipes live under
-  [docs/recipes/](docs/recipes/) (scan-wedge, notifications, tree-svelte).
+  [docs/recipes/](docs/recipes/) (scan-wedge, notifications, tree-svelte,
+  image-assets).
 
 ## Try it first: browser demo (in-memory)
 

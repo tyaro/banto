@@ -510,7 +510,7 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 **版は未定**（次のリリースで出す。タグ名は CHANGELOG のその版の節が正）。項目の全量は CHANGELOG の該当節。
 ここには取り込みの組み立てだけを書く。
 
-**破壊的変更は無い**（公開 API の削除・改名なし。既存のオプションは従来どおり）。ただし**挙動が変わる箇所が 2 つ**ある。
+**破壊的変更は無い**（公開 API の削除・改名なし。既存のオプションは従来どおり）。ただし**挙動が変わる箇所が 3 つ**ある。
 `@banto/dock-svelte` を使う派生アプリは、A を上げたあとに確かめる:
 
 - **復元 layout の検証**（#434）: `DockState` の `hydrate` と constructor の初期値が、不正な layout（重複 ID・`x=1e999`・
@@ -519,10 +519,13 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 - **操作の確定**（#433）: ドラッグは、操作を始めた pointer の `pointerup` でだけ確定する。resize・divider も Esc・
   `pointercancel`・window の `blur` などで取り消される（取消は対象の window / split だけを戻す）。これらのイベントに
   依存した独自の操作やテストは見直す。
+- **IME 変換中の構造変更**（#432）: props を渡さなくても、`DockHost` は IME 変換中（pane の中の入力で
+  `compositionstart` 〜 `compositionend`）にドラッグを始めず、dock / undock / タブの切り替えなどの構造変更を
+  `compositionend` まで保留する（見た目は変わらない）。変換中の操作に依存した独自の処理や E2E は見直す。
 
 | 経路 | 項目                                                    | 取り込み                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `@banto/*`・`banto-*` を次のリリースへ                  | タグを上げるだけで、既存の挙動は保たれる（上の 2 点を除く）。新しい部品は**使うときだけ**取り込む                                                                                             |
+| A    | `@banto/*`・`banto-*` を次のリリースへ                  | タグを上げるだけで、既存の挙動は保たれる（上の 3 点を除く）。新しい部品は**使うときだけ**取り込む                                                                                             |
 | A    | `@banto/admin-core`（#436・#437）                       | `createRequestOwner`（古い非同期結果の不採用と一時資源の解放）、`createSavedSetting`（現在値と保存に成功した snapshot を分ける UI 設定）。どちらも追加のみ                                    |
 | A    | `@banto/forms`（#432）                                  | `createFormDraft` / `DraftCoordinator`（pane より長生きする未適用入力）、`DraftNumberField`。既存の `NumberField` は変えていない                                                              |
 | A    | `@banto/dock-svelte`（#432〜#434）                      | `DockHost` の `beforePanelChange`（pane の lifecycle）・`clamp` / `narrowHost`（縮小時の到達性）・`capabilities`（close / move / undock の制限）。キーボード操作と divider の ARIA は自動で入る |
