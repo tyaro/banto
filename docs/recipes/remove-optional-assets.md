@@ -95,7 +95,10 @@ scaffold が触らない箇所（`src-tauri` 側のポップアウト配線・�
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
 `DockHost`/`dock`/`onPopOut` 関連コード、`src/lib/banto/panels.ts`・
 `src/lib/banto/popout.ts`・`src/routes/panel/[id]/`（ポップアウト先の
-スタンドアロンウィンドウ用ルート）を削除し、ダッシュボードページを固定
+スタンドアロンウィンドウ用ルート）、メモ pane の draft と確認ダイアログ
+（`src/lib/banto/dashboardMemo.svelte.ts`・`src/lib/banto/settlePrompt.svelte.ts` と
+それぞれの `.test.ts`、`src/lib/components/DashboardMemoField.svelte`・
+`src/lib/components/DraftSettleDialog.svelte`。#432）を削除し、ダッシュボードページを固定
 レイアウトのパネル羅列に置き換える。`apps/admin-template/package.json` の
 `@banto/dock-svelte` 依存と、`apps/admin-template/vite.config.ts` の
 `optimizeDeps.exclude` にある `'@banto/dock-svelte'` 行を外す（残すと
