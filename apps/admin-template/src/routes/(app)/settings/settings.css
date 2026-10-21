@@ -113,74 +113,7 @@
 	pointer-events: none;
 }
 
-/* Mode picker previews intentionally hardcode static light/dark swatches
-   (visual-refresh-design.md §10): each card must always depict what
-   light/dark looks like, regardless of the CURRENTLY active theme - live
-   --banto-* tokens only ever hold one theme's values at a time, so they
-   can't represent "the other" theme here. Values mirror
-   packages/theme/src/css/banto.css's :root / [data-theme='dark'] blocks. */
-.settings-page .theme-preview {
-	flex-basis: 100%;
-	display: flex;
-	flex-direction: column;
-	width: 80px;
-	height: 48px;
-	overflow: hidden;
-	border: 1px solid var(--preview-border, var(--banto-border));
-	border-radius: var(--banto-radius-sm);
-	background: var(--preview-bg, var(--banto-surface));
-}
-
-.settings-page .theme-preview .preview-header {
-	height: 10px;
-	background: var(--preview-header, var(--banto-surface));
-	border-bottom: 1px solid var(--preview-border, var(--banto-border));
-}
-
-.settings-page .theme-preview .preview-row {
-	display: flex;
-	flex: 1;
-}
-
-.settings-page .theme-preview .preview-sidebar {
-	width: 30%;
-	background: var(--preview-sidebar, var(--banto-surface-subtle));
-}
-
-.settings-page .theme-preview .preview-surface {
-	flex: 1;
-	background: var(--preview-surface-bg, var(--banto-surface));
-}
-
-.settings-page .theme-preview[data-preview-mode='light'] {
-	--preview-bg: #f6f7f9;
-	--preview-header: #ffffff;
-	--preview-sidebar: #eef1f5;
-	--preview-surface-bg: #ffffff;
-	--preview-border: #d9dde3;
-}
-
-.settings-page .theme-preview[data-preview-mode='dark'] {
-	--preview-bg: #15171b;
-	--preview-header: #1e2127;
-	--preview-sidebar: #23262d;
-	--preview-surface-bg: #1e2127;
-	--preview-border: #363b44;
-}
-
-.settings-page .theme-preview[data-preview-mode='system'] {
-	background: linear-gradient(135deg, #f6f7f9 0%, #f6f7f9 48%, #15171b 52%, #15171b 100%);
-	border-color: var(--banto-border);
-}
-
-.settings-page .theme-preview[data-preview-mode='system'] .preview-header,
-.settings-page .theme-preview[data-preview-mode='system'] .preview-sidebar,
-.settings-page .theme-preview[data-preview-mode='system'] .preview-surface {
-	background: transparent;
-	border-color: transparent;
-}
-
-/* Preset previews use live tokens (unlike the mode previews above): glass
+/* Preset previews use live tokens: glass
    vs standard is orthogonal to light/dark, so showing the CURRENT theme's
    real surface/accent tokens with a fixed illustrative blur is enough to
    convey the difference without hardcoding colors. */
@@ -211,7 +144,7 @@
 
 /* Navigation layout previews (nav-launcher-plan.md §3): live tokens only,
    like the preset previews - a sidebar column or a small bar at the bottom
-   over the current theme's surface. Sizes match the theme previews. */
+   over the current theme's surface. Sizes match the preset previews. */
 .settings-page .nav-layout-preview {
 	flex-basis: 100%;
 	position: relative;

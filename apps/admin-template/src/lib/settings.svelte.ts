@@ -14,6 +14,7 @@
  *   after the SessionController confirmed the session), so a value saved from another
  *   client/session wins over this tab's stale localStorage.
  */
+import { untrack } from 'svelte';
 import {
 	applyDensity,
 	applyPreset,
@@ -21,7 +22,9 @@ import {
 	isThemeDensity,
 	isThemeMode,
 	isThemePreset,
+	resolveTheme,
 	watchSystemTheme,
+	type ResolvedTheme,
 	type ThemeDensity,
 	type ThemeMode,
 	type ThemePreset
@@ -117,6 +120,12 @@ function loadThemeMode(): ThemeMode {
 	return isThemeMode(stored) ? stored : 'system';
 }
 
+function loadResolvedTheme(): ResolvedTheme {
+	// No `window` (SSR/prerender): the same default as an unset mode on a light OS.
+	if (typeof window === 'undefined') return 'light';
+	return resolveTheme(loadThemeMode());
+}
+
 function loadThemePreset(): ThemePreset {
 	if (typeof localStorage === 'undefined') return 'standard';
 	const stored = localStorage.getItem(PRESET_KEY);
@@ -163,6 +172,13 @@ function persistRemote(key: string, value: string): void {
 
 class Settings {
 	themeMode: ThemeMode = $state(loadThemeMode());
+	/**
+	 * The theme actually on screen (light/dark): `themeMode` with "system"
+	 * resolved against the OS. The header's toggle shows the opposite of this.
+	 * Kept current by `#applyThemeMode` and, while following the system, by the
+	 * OS watcher.
+	 */
+	resolvedTheme: ResolvedTheme = $state(loadResolvedTheme());
 	themePreset: ThemePreset = $state(loadThemePreset());
 	themeDensity: ThemeDensity = $state(loadThemeDensity());
 	kiosk: boolean = $state(loadKiosk());
@@ -196,12 +212,14 @@ class Settings {
 	#applyThemeMode(mode: ThemeMode) {
 		this.themeMode = mode;
 		localStorage.setItem(THEME_KEY, mode);
-		applyTheme(mode);
+		this.resolvedTheme = applyTheme(mode);
 
 		this.#unwatchSystem?.();
 		this.#unwatchSystem = undefined;
 		if (mode === 'system') {
-			this.#unwatchSystem = watchSystemTheme(() => applyTheme('system'));
+			this.#unwatchSystem = watchSystemTheme(() => {
+				this.resolvedTheme = applyTheme('system');
+			});
 		}
 	}
 
@@ -247,6 +265,16 @@ class Settings {
 		this.#changedSinceSync.add(MODE_SETTING);
 		this.#applyThemeMode(mode);
 		persistRemote(MODE_SETTING, mode);
+	}
+
+	/**
+	 * The header's sun/moon button: pin the opposite of the theme on screen
+	 * (so from "system" it stores `light` or `dark` and stops following the OS).
+	 * The read is untracked so this is safe to call from an `$effect`.
+	 */
+	toggleThemeMode() {
+		const next: ThemeMode = untrack(() => this.resolvedTheme) === 'dark' ? 'light' : 'dark';
+		this.setThemeMode(next);
 	}
 
 	setThemePreset(preset: ThemePreset) {

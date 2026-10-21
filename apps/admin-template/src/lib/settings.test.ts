@@ -18,7 +18,8 @@ vi.mock('./banto/setup', () => ({
 
 vi.mock('@banto/theme', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@banto/theme')>()),
-	applyTheme: vi.fn(),
+	// Like the real one it returns the resolved theme (the OS is taken to be light here).
+	applyTheme: vi.fn((mode: string) => (mode === 'system' ? 'light' : mode)),
 	applyPreset: vi.fn(),
 	applyDensity: vi.fn(),
 	watchSystemTheme: vi.fn(() => () => {})
@@ -306,5 +307,34 @@ describe('settings: launcher position (nav-launcher-plan.md §3, D4)', () => {
 		await sync;
 		expect(settings.launcherPosition).toBe('right');
 		expect(store.get('banto.launcherPosition')).toBe('right');
+	});
+});
+
+describe('settings: the header colour-mode toggle', () => {
+	it('from "system" on a light screen pins dark (stored as dark, not system)', async () => {
+		const settings = await loadSettings();
+		settings.init();
+		expect(settings.themeMode).toBe('system');
+		expect(settings.resolvedTheme).toBe('light');
+
+		settings.toggleThemeMode();
+
+		expect(settings.themeMode).toBe('dark');
+		expect(settings.resolvedTheme).toBe('dark');
+		expect(store.get('banto.theme')).toBe('dark');
+		expect(mocks.set).toHaveBeenCalledWith('theme.mode', 'dark');
+	});
+
+	it('pins the opposite of what is on screen each time it is pressed', async () => {
+		const settings = await loadSettings({ 'banto.theme': 'dark' });
+		settings.init();
+		expect(settings.resolvedTheme).toBe('dark');
+
+		settings.toggleThemeMode();
+		expect(settings.themeMode).toBe('light');
+		expect(settings.resolvedTheme).toBe('light');
+
+		settings.toggleThemeMode();
+		expect(settings.themeMode).toBe('dark');
 	});
 });

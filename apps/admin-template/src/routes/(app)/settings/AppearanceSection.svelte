@@ -7,22 +7,19 @@
 	 * refactor: markup/state/CSS の移動のみ、挙動は変えない）。
 	 */
 	import type { Component } from 'svelte';
-	import type { ThemeDensity, ThemeMode, ThemePreset } from '@banto/theme';
+	import type { ThemeDensity, ThemePreset } from '@banto/theme';
 	import {
 		Check,
 		Languages,
-		Monitor,
 		MonitorPlay,
-		Moon,
 		Palette,
 		PanelBottom,
 		PanelLeft,
 		PanelRight,
 		PanelsTopLeft,
 		Rows3,
-		Rows4,
 		Sparkles,
-		Sun
+		Rows4
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
@@ -41,13 +38,8 @@
 	import { isAdmin } from '#lib/permissions.js';
 	import { errorMessage, tauri } from './shared';
 
-	const modes: { value: ThemeMode; label: string }[] = [
-		{ value: 'light', label: m['settings.modeLight']() },
-		{ value: 'dark', label: m['settings.modeDark']() },
-		{ value: 'system', label: m['settings.modeSystem']() }
-	];
-
-	// M12 preset axis (standard/glass), orthogonal to light/dark above.
+	// M12 preset axis (standard/glass), orthogonal to light/dark (which is
+	// switched from the header's sun/moon button, not on this page).
 	const presets: { value: ThemePreset; label: string }[] = [
 		{ value: 'standard', label: m['settings.presetStandard']() },
 		{ value: 'glass', label: m['settings.presetGlass']() }
@@ -75,7 +67,6 @@
 		{ value: 'right', label: m['settings.launcherPositionRight'](), icon: PanelRight }
 	];
 
-	const modeIcons: Record<ThemeMode, Component> = { light: Sun, dark: Moon, system: Monitor };
 	const densityIcons: Record<ThemeDensity, Component> = { standard: Rows3, compact: Rows4 };
 
 	// --- i18n layer ② (ADR-0005): the language picker ---------
@@ -139,32 +130,6 @@
 				<h3>{m['settings.themeHeading']()}</h3>
 				<p>{m['settings.themeDesc']()}</p>
 			</div>
-		</div>
-
-		<div class="options mode-options" role="radiogroup" aria-label={m['settings.themeHeading']()}>
-			{#each modes as mode (mode.value)}
-				{@const ModeIcon = modeIcons[mode.value]}
-				<label class="theme-option" class:selected={settings.themeMode === mode.value}>
-					<input
-						type="radio"
-						name="theme"
-						value={mode.value}
-						checked={settings.themeMode === mode.value}
-						onchange={() => settings.setThemeMode(mode.value)}
-					/>
-					<span class="theme-preview" data-preview-mode={mode.value} aria-hidden="true">
-						<span class="preview-header"></span>
-						<span class="preview-row">
-							<span class="preview-sidebar"></span>
-							<span class="preview-surface"></span>
-						</span>
-					</span>
-					<ModeIcon size={14} aria-hidden="true" />{mode.label}
-					{#if settings.themeMode === mode.value}
-						<Check size={14} aria-hidden="true" />
-					{/if}
-				</label>
-			{/each}
 		</div>
 
 		<h4>{m['settings.presetHeading']()}</h4>
