@@ -126,6 +126,8 @@ interface Entry {
 	pins: number;
 	leases: number;
 	url: string | null;
+	/** `create` is running for this original (a re-entrant `acquireUrl` of it is refused). */
+	creating: boolean;
 }
 
 const defaultObjectUrls: ObjectUrlFunctions = {
@@ -270,7 +272,14 @@ class Store implements ImageStore {
 		const total = this.#total + blob.size;
 		if (total > this.#maxTotalBytes)
 			throw new ImageAssetError('store-full', { limit: this.#maxTotalBytes, actual: total });
-		this.#entries.set(metadata.sha256, { metadata, blob, pins: 0, leases: 0, url: null });
+		this.#entries.set(metadata.sha256, {
+			metadata,
+			blob,
+			pins: 0,
+			leases: 0,
+			url: null,
+			creating: false
+		});
 		this.#total = total;
 		this.#bump();
 		return metadata;
@@ -302,9 +311,27 @@ class Store implements ImageStore {
 	acquireUrl(hash: string): ImageUrlLease {
 		if (this.#disposed) throw new ImageAssetError('store-disposed');
 		const entry = this.#entry(hash);
-		// Create before counting: if `create` throws, nothing changed.
-		entry.url ??= this.#urls.create(entry.blob);
-		entry.leases++;
+		if (entry.url === null) {
+			if (entry.creating) throw new ImageAssetError('url-pending', { hash });
+			// Hold the original and mark it before calling out: `create` is external and may call
+			// back in (`delete` / `collect` / `dispose` must not drop it, a nested `acquireUrl` must
+			// not make a second URL). If `create` throws, undo both.
+			entry.creating = true;
+			entry.leases++;
+			let created: string;
+			try {
+				created = this.#urls.create(entry.blob);
+			} catch (error) {
+				entry.creating = false;
+				entry.leases--;
+				if (this.#disposed) this.#dropUnheld([entry]);
+				throw error;
+			}
+			entry.creating = false;
+			entry.url = created;
+		} else {
+			entry.leases++;
+		}
 		const url = entry.url;
 		let released = false;
 		return Object.freeze({

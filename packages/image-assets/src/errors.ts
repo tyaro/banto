@@ -37,7 +37,12 @@ export const IMAGE_ASSET_ERROR_CODES = [
 	/** The store holds no original with that hash (PR-14). `detail.hash` names it. */
 	'unknown-asset',
 	/** The store was disposed before the call (PR-14). */
-	'store-disposed'
+	'store-disposed',
+	/**
+	 * `acquireUrl` was called for an original whose URL is still being created, from inside the
+	 * injected `create` (PR-14). `detail.hash` names it.
+	 */
+	'url-pending'
 ] as const;
 
 export type ImageAssetErrorCode = (typeof IMAGE_ASSET_ERROR_CODES)[number];
@@ -56,7 +61,7 @@ export interface ImageAssetErrorDetail {
 	 */
 	readonly width?: number;
 	readonly height?: number;
-	/** For `unknown-asset`: the hash that was asked for (PR-14). */
+	/** For `unknown-asset` / `url-pending`: the hash that was asked for (PR-14). */
 	readonly hash?: string;
 }
 

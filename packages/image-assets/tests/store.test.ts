@@ -378,6 +378,71 @@ describe('ImageStore object URLs', () => {
 		expect(target.delete(hash)).toBe(true);
 	});
 
+	it('a nested acquireUrl of the same original from create is refused: one URL, revoked on the last release', async () => {
+		let hash = '';
+		const inner: unknown[] = [];
+		const created: string[] = [];
+		const revoked: string[] = [];
+		const target: ImageStore = store({
+			objectUrls: {
+				create: () => {
+					if (created.length === 0) inner.push(caught(() => target.acquireUrl(hash)));
+					const url = `blob:test/${created.length + 1}`;
+					created.push(url);
+					return url;
+				},
+				revoke: (url) => void revoked.push(url)
+			}
+		});
+		hash = await added(target);
+		const lease = target.acquireUrl(hash);
+		expect(inner).toEqual([{ code: 'url-pending', detail: { hash } }]);
+		expect(created).toEqual(['blob:test/1']);
+		lease.release();
+		expect(revoked).toEqual(['blob:test/1']);
+		expect(target.delete(hash)).toBe(true);
+	});
+
+	it.each(['delete', 'collect', 'dispose'] as const)(
+		'%s called from create does not drop the original being leased',
+		async (call) => {
+			let hash = '';
+			const target: ImageStore = store({
+				objectUrls: {
+					create: () => {
+						if (call === 'delete') expect(target.delete(hash)).toBe(false);
+						else if (call === 'collect') expect(target.collect([])).toBe(0);
+						else target.dispose();
+						return 'blob:test/1';
+					},
+					revoke: () => {}
+				}
+			});
+			hash = await added(target);
+			const lease = target.acquireUrl(hash);
+			expect(lease.url).toBe('blob:test/1');
+			expect(await bytesOf(target.blob(hash))).toEqual([...png(3, 2)]);
+			lease.release();
+			expect(target.has(hash)).toBe(call === 'dispose' ? false : true);
+		}
+	);
+
+	it('a create that disposes and then throws leaves nothing held', async () => {
+		let hash = '';
+		const target: ImageStore = store({
+			objectUrls: {
+				create: () => {
+					target.dispose();
+					throw new Error('no URL');
+				},
+				revoke: () => {}
+			}
+		});
+		hash = await added(target);
+		expect(() => target.acquireUrl(hash)).toThrow('no URL');
+		expect(target.has(hash)).toBe(false);
+	});
+
 	it('the store is settled before revoke runs (revoke may call back in)', async () => {
 		let hash = '';
 		const seen: unknown[] = [];
