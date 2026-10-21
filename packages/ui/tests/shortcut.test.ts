@@ -497,3 +497,47 @@ describe('parseShortcut rejects names inherited from Object.prototype (PR #444 r
 		expect(runs).toBe(0);
 	});
 });
+
+describe('Space keeps an exact Shift match (PR #444 review)', () => {
+	const key = (init: KeyboardEventInit) =>
+		new KeyboardEvent('keydown', { cancelable: true, ...init });
+
+	it('Shift+Space matches only Shift+Space, and Space only Space', () => {
+		expect(matchShortcut(key({ key: ' ', code: 'Space', shiftKey: true }), 'Space', 'other')).toBe(
+			false
+		);
+		expect(
+			matchShortcut(key({ key: ' ', code: 'Space', shiftKey: true }), 'Shift+Space', 'other')
+		).toBe(true);
+		expect(matchShortcut(key({ key: ' ', code: 'Space' }), 'Space', 'other')).toBe(true);
+		expect(
+			matchShortcut(
+				key({ key: ' ', code: 'Space', ctrlKey: true, shiftKey: true }),
+				'Mod+Space',
+				'other'
+			)
+		).toBe(false);
+	});
+
+	it('a dispatcher runs the Shift+Space command even when Space is registered first in the same scope', () => {
+		const dispatcher = createShortcutDispatcher({ platform: 'other' });
+		const ran: string[] = [];
+		dispatcher.register('page', [
+			{ id: 'space', title: 'Space', shortcut: 'Space', run: () => void ran.push('space') },
+			{
+				id: 'shift-space',
+				title: 'Shift+Space',
+				shortcut: 'Shift+Space',
+				run: () => void ran.push('shift-space')
+			}
+		]);
+		dispatcher.handle(key({ key: ' ', code: 'Space', shiftKey: true }));
+		expect(ran).toEqual(['shift-space']);
+	});
+
+	it('a symbol that needs Shift to type still matches without naming Shift', () => {
+		expect(matchShortcut(key({ key: '?', code: 'Slash', shiftKey: true }), '?', 'other')).toBe(
+			true
+		);
+	});
+});

@@ -202,7 +202,10 @@ export function matchShortcut(
 	if (event.ctrlKey !== wantCtrl || event.metaKey !== wantMeta || event.altKey !== parsed.alt) {
 		return false;
 	}
-	const symbol = parsed.key.length === 1 && !/^[a-z0-9]$/.test(parsed.key);
+	// A printable symbol (`?`, `+`) may need Shift to type, so its Shift is not
+	// compared unless the shortcut names it. Space is a named key, not a symbol:
+	// `Space` and `Shift+Space` must stay distinct.
+	const symbol = parsed.key.length === 1 && parsed.key !== ' ' && !/^[a-z0-9]$/.test(parsed.key);
 	if (!(symbol && !parsed.shift) && event.shiftKey !== parsed.shift) return false;
 	const eventKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
 	if (eventKey === parsed.key) return true;
