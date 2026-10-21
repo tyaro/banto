@@ -22,9 +22,13 @@
 [conventions §14](../conventions.md)）:
 
 ```ts
-optimizeDeps: {
-	exclude: ['@banto/image-assets' /* ほかの @banto/* */];
-}
+// vite.config.ts
+export default defineConfig({
+	// ...
+	optimizeDeps: {
+		exclude: ['@banto/image-assets' /* ほかの @banto/* */]
+	}
+});
 ```
 
 ## 2. 取り込みの検査（`inspectImage`）
