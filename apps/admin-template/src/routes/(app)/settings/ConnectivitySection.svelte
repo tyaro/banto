@@ -29,6 +29,8 @@
 	import { systemInfoStore } from './systemInfoStore.svelte';
 	import { connectivityScope, isIpv4Bind, pickPrimaryLanUrl } from './connectivityScope';
 	import FirewallInfoPanel from './FirewallInfoPanel.svelte';
+	import LanReachCheckPanel from './LanReachCheckPanel.svelte';
+	import { reachCheckAvailable } from './lanReachCheck';
 	import { ServerStatusRequests, type StatusRefresh } from './serverStatusRequests';
 
 	let serverStatus = $state<ServerStatus | null>(null);
@@ -184,6 +186,14 @@
 	// doc comment - so `systemInfoStore.error` below is written by that effect.
 </script>
 
+{#snippet reachQr(svg: string)}
+	<!-- Issue #219 PR-C3: the reach-check URL's QR SVG, made by the server
+	     (Rust `qrcode` crate via `reach_check_issue`), not user input. Drawn
+	     here so `{@html}` stays in this allowlisted file (conventions §7). -->
+	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+	<div class="qr">{@html svg}</div>
+{/snippet}
+
 <div class="settings-grid">
 	<SurfaceCard>
 		<div class="card-head">
@@ -338,6 +348,17 @@
 				<!-- Issue #219: what a firewall rule for the LIVE listener needs
 				     (Windows only; "not needed" while stopped or loopback-only). -->
 				<FirewallInfoPanel status={serverStatus} refresh={refreshServerStatus} {applying} />
+				<!-- Issue #219 PR-C3: whether another device actually reached the
+				     live listener - its own block, apart from the firewall ones
+				     (lan-reach-check-design §4.1). Not Windows-only. -->
+				{#if reachCheckAvailable(serverStatus)}
+					<LanReachCheckPanel
+						status={serverStatus}
+						refresh={refreshServerStatus}
+						{applying}
+						qr={reachQr}
+					/>
+				{/if}
 			{/if}
 		{:else}
 			<p class="note">{m['settings.serverDesktopOnly']()}</p>

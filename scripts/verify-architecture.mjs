@@ -64,7 +64,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const HTML_ALLOWLIST = new Set([
 	// 自前エンジン renderHtml の出力のみ（html.ts が全 text/attribute をエスケープ）
 	'packages/report/src/ReportView.svelte',
-	// qrcode クレート生成の SVG（LAN 接続 QR）。settings-split refactor で
+	// qrcode クレート生成の SVG（LAN 接続 QR と到達確認の URL の QR。後者も LanReachCheckPanel へ渡す snippet としてこのファイルで描く）。settings-split refactor で
 	// +page.svelte から ConnectivitySection.svelte へ移動（choiapp-feedback-2026-09 §3）。
 	'apps/admin-template/src/routes/(app)/settings/ConnectivitySection.svelte'
 ]);

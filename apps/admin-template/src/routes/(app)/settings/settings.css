@@ -570,6 +570,66 @@
 	margin-top: 0.5rem;
 }
 
+/* Issue #219 PR-C3: the connection check from another device
+   (LanReachCheckPanel.svelte) - its own block below the firewall ones. */
+.settings-page .reach-check {
+	margin-top: var(--banto-space-4);
+	padding-top: var(--banto-space-3);
+	border-top: var(--banto-border-width) solid var(--banto-border);
+}
+
+.settings-page .reach-check h4 {
+	margin: 0;
+	font-size: var(--banto-font-size-md);
+}
+
+.settings-page .reach-state {
+	margin-top: var(--banto-space-2);
+	font-size: var(--banto-font-size-sm);
+}
+
+.settings-page .reach-state p {
+	margin: var(--banto-space-1) 0 0;
+}
+
+.settings-page .reach-verified {
+	color: var(--banto-success);
+	font-weight: 600;
+}
+
+.settings-page .reach-dim {
+	opacity: 0.7;
+}
+
+.settings-page .reach-url {
+	margin-top: var(--banto-space-2);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--banto-space-2);
+}
+
+.settings-page .reach-url code {
+	overflow-wrap: anywhere;
+}
+
+.settings-page .reach-record code {
+	overflow-wrap: anywhere;
+}
+
+.settings-page .reach-hints {
+	margin: var(--banto-space-1) 0 0;
+	padding-left: var(--banto-space-5);
+}
+
+.settings-page .reach-issue {
+	margin-top: var(--banto-space-3);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--banto-space-2);
+}
+
 /* High-impact cards (successor of plan Phase 5's danger zone; the choi-app
    feedback 2026-09 recategorization moved its cards into their own
    categories - backup/restore under data, auth disable under security).
