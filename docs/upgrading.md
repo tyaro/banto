@@ -503,11 +503,11 @@ v4.0.0 はテンプレートを SvelteKit 3（`@sveltejs/kit` 3.0・`@sveltejs/a
    未保存の確認が出る）。
 5. 同期記録に「v4.0.0 SvelteKit 3 取込済（PR 番号）」を書く。
 
-### 例 5: v6.7.x → 次のリリース（共有部品の追加。A が中心・破壊的変更なし）
+### 例 5: v6.7.x → v6.8.0（共有部品の追加。A が中心・破壊的変更なし）
 
 Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 [design/shared-primitives-upstream-plan.md](design/shared-primitives-upstream-plan.md)）で、`@banto/*` に部品が増える。
-**版は未定**（次のリリースで出す。タグ名は CHANGELOG のその版の節が正）。項目の全量は CHANGELOG の該当節。
+**v6.8.0** で出した。項目の全量は CHANGELOG の 6.8.0 の節（ドック・シェルと設定の UI の変更・起動時のポートの自動選択も同じ版に入っている）。
 ここには取り込みの組み立てだけを書く。
 
 **破壊的変更は無い**（公開 API の削除・改名なし。既存のオプションは従来どおり）。ただし**挙動が変わる箇所が 3 つ**ある。
@@ -525,7 +525,7 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 
 | 経路 | 項目                                                    | 取り込み                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A    | `@banto/*`・`banto-*` を次のリリースへ                  | タグを上げるだけで、既存の挙動は保たれる（上の 3 点を除く）。新しい部品は**使うときだけ**取り込む                                                                                             |
+| A    | `@banto/*`・`banto-*` を v6.8.0 へ                      | タグを上げるだけで、既存の挙動は保たれる（上の 3 点を除く）。新しい部品は**使うときだけ**取り込む                                                                                             |
 | A    | `@banto/admin-core`（#436・#437）                       | `createRequestOwner`（古い非同期結果の不採用と一時資源の解放）、`createSavedSetting`（現在値と保存に成功した snapshot を分ける UI 設定）。どちらも追加のみ                                    |
 | A    | `@banto/forms`（#432）                                  | `createFormDraft` / `DraftCoordinator`（pane より長生きする未適用入力）、`DraftNumberField`。既存の `NumberField` は変えていない                                                              |
 | A    | `@banto/dock-svelte`（#432〜#434）                      | `DockHost` の `beforePanelChange`（pane の lifecycle）・`clamp` / `narrowHost`（縮小時の到達性）・`capabilities`（close / move / undock の制限）。キーボード操作と divider の ARIA は自動で入る |
@@ -538,7 +538,7 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 
 1. A のタグを上げ、`pnpm check` と dock の画面（保存済みの layout が読めること、ドラッグ・resize）を確かめる。
 2. 新しい部品は、**そのパッケージの README を正**として、必要なものだけ取り込む。使わない部品は何もしなくてよい。
-3. `@banto/image-assets` を使うアプリは、依存に足し（`github:tyaro/banto#<タグ>&path:packages/image-assets`）、
+3. `@banto/image-assets` を使うアプリは、依存に足し（`github:tyaro/banto#v6.8.0&path:packages/image-assets`）、
    `vite.config.ts` の `optimizeDeps.exclude` に `@banto/image-assets` を加える（足さないと dev が 500 になる。3.1・
    [conventions §14](conventions.md)）。`pnpm build` と `pnpm check` はこの経路を通らないので、dev で画面を開いて確かめる。
 4. 派生側に同じ処理を自作していた（draft・request owner・ショートカットの保護・画像の取込）場合も、置き換えは**任意**。

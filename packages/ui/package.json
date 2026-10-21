@@ -1,6 +1,6 @@
 {
   "name": "@banto/ui",
-  "version": "6.7.2",
+  "version": "6.8.0",
   "description": "Banto shared UI components: page primitives (PageHeader, SurfaceCard, StatusBadge, IconButton, Empty/Error/Loading states), the dropdown Menu, the CommandPalette, ToastHost, Modal / Drawer, the Esc / focus layering helpers and the LauncherBar (Svelte 5, token-only styling)",
   "license": "MIT",
   "repository": {
