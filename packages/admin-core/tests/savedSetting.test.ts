@@ -463,3 +463,33 @@ describe('re-entrancy from callbacks', () => {
 		expect(s.saved).toBeUndefined();
 	});
 });
+
+describe('PR #442 review', () => {
+	it('saved is an independent copy of what was sent, even if the caller mutates its object meanwhile', async () => {
+		const m = manualProvider();
+		const s = createSavedSetting(options(m.provider));
+		const value = { x: 1 };
+		s.set(value);
+		const done = s.save();
+		value.x = 99; // the caller mutates its own object while the send is pending
+		m.sets[0].resolve();
+		expect(await done).toBe(true);
+		expect(m.sets[0].args[1]).toBe(raw(1));
+		expect(s.saved).toEqual({ x: 1 });
+		expect(s.saved).not.toBe(value);
+	});
+
+	it('a load started while a save is in flight is stale and does not roll current back', async () => {
+		const m = manualProvider();
+		const s = createSavedSetting(options(m.provider));
+		s.set({ x: 5 });
+		const saving = s.save();
+		expect(await s.load()).toBe('stale');
+		expect(m.gets).toHaveLength(0); // it does not even read
+		m.sets[0].resolve();
+		expect(await saving).toBe(true);
+		expect(s.current).toEqual({ x: 5 });
+		expect(s.saved).toEqual({ x: 5 });
+		expect(s.dirty).toBe(false);
+	});
+});

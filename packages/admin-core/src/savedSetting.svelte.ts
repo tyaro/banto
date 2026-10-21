@@ -215,6 +215,16 @@ class Impl<T> implements SavedSetting<T> {
 		return this.#send();
 	}
 
+	/** A copy of the sent value that the caller cannot mutate: parse the sent text again. */
+	#independent(raw: string, value: T): T {
+		try {
+			const copy = this.#options.parse(raw);
+			return copy === undefined ? value : copy;
+		} catch {
+			return value;
+		}
+	}
+
 	async #send(): Promise<boolean> {
 		// Everything below up to the first `await` is synchronous: the snapshot
 		// and the in-flight flag are fixed before the provider can re-enter.
@@ -229,7 +239,9 @@ class Impl<T> implements SavedSetting<T> {
 		try {
 			await this.#options.provider.set(this.#options.key, raw);
 			if (request.isCurrent()) {
-				this.#saved = value;
+				// Expose what was actually sent, not the caller's object: a mutable
+				// value may have been changed while the provider call was pending.
+				this.#saved = this.#independent(raw, value);
 				this.#hasSaved = true;
 				this.#baseRaw = raw;
 				this.#error = null;
@@ -255,6 +267,10 @@ class Impl<T> implements SavedSetting<T> {
 
 	async load(): Promise<SavedSettingLoad> {
 		if (this.#owner.disposed) return 'stale';
+		// A read started while a save is in flight may return the value from
+		// before that write and roll `current` back; the save's own result is
+		// authoritative. (A save that starts during a load invalidates it.)
+		if (this.#inflight) return 'stale';
 		const request = this.#owner.begin('load');
 		const editVersion = this.#editVersion;
 		try {
