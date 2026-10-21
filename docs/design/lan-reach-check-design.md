@@ -1,7 +1,7 @@
 # 別の端末からの接続確認（LAN の到達確認）設計書 — Issue #219 段階 1 PR-C
 
 作成日: 2026-10-22
-状態: **決定（2026-10-22）・実装中**。D1〜D10 はすべて推奨どおりに決定（§7）。PR-C1 は #468（`banto-server` の保管所と口、組み込みサーバーへの merge。CSRF の層はルーター自身が持つ — §3.1 の「`api_router` の層の内側」は、待受ごとに `start_embedded_server` で merge するため成り立たない）。PR-C2 は #469（Tauri の `reach_check_issue` / `reach_check_status` と `server_apply` での失効。発行しない理由は `BantoError` ではなく `{ status: "refused", reason }` のコードで返す）。PR-C3 は未着手
+状態: **決定（2026-10-22）・実装中**。D1〜D10 はすべて推奨どおりに決定（§7）。PR-C1 は #468（`banto-server` の保管所と口、組み込みサーバーへの merge。CSRF の層はルーター自身が持つ — §3.1 の「`api_router` の層の内側」は、待受ごとに `start_embedded_server` で merge するため成り立たない）。PR-C2 は #469（Tauri の `reach_check_issue` / `reach_check_status` と `server_apply` での失効。発行しない理由は `BantoError` ではなく `{ status: "refused", reason }` のコードで返す）。PR-C3 は #470（`LanReachCheckPanel` と端末側の `/reach` ページ、レシピ。QR は許可リストの `ConnectivitySection.svelte` が snippet で描く。実機のスマートフォンでの確認はオーナー待ち）
 トラック: 保守者向け（トラックA）
 関連: Issue #219（本文「状態表示と接続確認」、計画コメント 2026-10-21 の段階 1、設計レビュー 2026-10-11、
 セキュリティ監査 2026-10-21 の優先 4）、PR #463（PR-A: 許可に必要な情報とコマンド）、
