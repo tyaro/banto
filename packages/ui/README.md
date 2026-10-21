@@ -193,20 +193,60 @@ props は 2 つで同じ（型 `OverlayProps`）:
 （狭い画面で退避するツリー・コンテキストメニュー・ページの Esc）に使えるよう公開している。仕組みは 1 つで、
 層の約束（banto-industrial #378 / #381 の 7 項目）はファイル冒頭にある。
 
-| export                                  | 役割                                                                                                                  |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真        |
-| `hasVisibleMenuLayer()`                 | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）                                           |
-| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                                |
-| `focusablesIn(panel)`                   | Tab で届く要素（`tabindex="-1"`・`:disabled`（無効な `fieldset` の中も）・`inert`・レイアウトされていないものを除く） |
-| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）               |
-| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                               |
-| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                          |
-| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                                   |
-| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                                    |
-| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                       |
-| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                           |
-| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                        |
+| export                                  | 役割                                                                                                                                                                                               |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hasVisibleLayerAbove({ except? })`     | 手前に見えている層があるか。`except` に自分の層の要素を渡す。省くと（自分が層でないとき）層が 1 つでもあれば真                                                                                     |
+| `hasVisibleMenuLayer({ except? })`      | 見えている `role="menu"` があるか（メニューの上にパレットを開かない、など）。`except` を渡すとその層より手前のものだけ                                                                             |
+| `hasVisibleModalLayer({ except? })`     | 見えている**モーダルな層**（`aria-modal="true"`）があるか。非モーダルの `role="dialog"`（dock の浮動 window）・`data-esc-layer`・メニューは数えない。`except` を渡すとその層自身と下の層は数えない |
+| `attachFocusTrap(panel)`                | フォーカスを閉じ込める。外す関数を返す                                                                                                                                                             |
+| `focusablesIn(panel)`                   | Tab で届く要素（`tabindex="-1"`・`:disabled`（無効な `fieldset` の中も）・`inert`・レイアウトされていないものを除く）                                                                              |
+| `restoreFocus(target, fallback?)`       | `target` へ戻す。戻せなければ `fallback()` が返す要素へ（何も返さない `fallback` は自分で動かしてよい）                                                                                            |
+| `canRestoreFocusTo(el)`                 | 戻せるか（接続・`<body>` でない・`inert` の外・見える）                                                                                                                                            |
+| `effectiveZIndex(el)`                   | 祖先をたどった実際の z-index                                                                                                                                                                       |
+| `isCloseAllowed(source, dirty)`         | `dirty` のとき Esc・背景では閉じない判定（型 `OverlayCloseSource`）                                                                                                                                |
+| `LAYER_SELECTOR`・`MENU_LAYER_SELECTOR` | 層とみなす要素（`role="dialog"`・`role="menu"`・`data-esc-layer`）                                                                                                                                 |
+| `MODAL_LAYER_SELECTOR`                  | モーダルな層（`[aria-modal="true"]`）                                                                                                                                                              |
+| `LAYER_MARKER_ATTR`                     | `data-esc-layer`。role を名乗らない層に、開いている間だけ付ける                                                                                                                                    |
+| `LAYER_INACTIVE_ATTR`                   | `data-layer-inactive`。閉じる動きの最中の層に付ける（もう無い層として扱う）                                                                                                                        |
+| `FOCUSABLE_SELECTOR`                    | フォーカスできる要素のセレクタ                                                                                                                                                                     |
+
+### コマンドとショートカット（#435-a）
+
+操作の定義（`CommandSpec`）と、キーを受けてよいかの判定・dispatcher（`src/shortcut.ts`、
+docs/design/shared-primitives-upstream-plan.md §3.6）。キーの配線（window の `keydown`）と command の一覧は
+アプリが持つ。`@banto/admin-core` の `PaletteCommand` はそのまま `CommandSpec` として渡せる（構造的に互換）。
+
+```ts
+import { createShortcutDispatcher, formatShortcut } from '@banto/ui';
+
+const shortcuts = createShortcutDispatcher(); // platform は navigator から（'mac' | 'other' を渡してもよい）
+const off = shortcuts.register('page', [
+	{
+		id: 'record.save',
+		title: m['record.save'](),
+		shortcut: 'Mod+S', // Mod = Windows/Linux は Ctrl、macOS は Meta
+		allowInEditable: true, // 入力欄の中でも受ける
+		enabled: () => form.dirty, // 実行の直前にもう一度呼ばれる
+		preventDefaultWhenDisabled: true, // 無効でもブラウザの「ページを保存」は出さない
+		run: () => form.submit()
+	}
+]);
+// <svelte:window onkeydown={(e) => shortcuts.handle(e)} />
+formatShortcut('Mod+S', 'mac'); // '⌘S'（記号だけ。文言は持たない）
+```
+
+受けないとき（キーはブラウザと他のリスナーに残る）: IME の変換中（`isComposing`・`keyCode 229`）、
+`defaultPrevented`、`repeat`（`allowRepeat` で受ける）、入力欄（文字入力の `input`・`textarea`・`select`・
+`contenteditable`。`allowInEditable` で受ける）、モーダルな層かメニューが出ているとき（非モーダルの
+`role="dialog"` では止めない。`ownerLayer` を渡した command は自分の層と下の層を数えない — パレットを開いた
+まま Ctrl+K で閉じる、など）。後から `register` した scope が優先し、`visible` が偽のものは次へ譲る。
+
+| export                                                 | 役割                                                                                                  |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `createShortcutDispatcher({ platform? })`              | `register(scope, commands)`（外す関数を返す）と `handle(event)`（処理したら `preventDefault` して真） |
+| `shouldHandleShortcut(event, spec)`                    | 上の保護だけを判定する（自前のキー処理用）                                                            |
+| `parseShortcut`・`matchShortcut`・`formatShortcut`     | `'Mod+Shift+K'` の解釈・照合・表示                                                                    |
+| `isEditableTarget(target)`・`detectShortcutPlatform()` | 入力欄の判定・`'mac' \| 'other'`                                                                      |
 
 ## LauncherBar（段階 5）
 
