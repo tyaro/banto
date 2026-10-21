@@ -33,9 +33,14 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
   そのタイミングで ADR を1件書く。
 - ファイル名: `NNNN-kebab-title.md`（連番）。書式は
   [0000-template.md](0000-template.md)。
-- 状態は `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`。**過去の
-  ADR は書き換えず、覆すときは新しい ADR で supersede する**（判断の
-  履歴を残すのが ADR の価値）。
+- 状態は `Proposed` / `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`。
+  - `Proposed` はレビュー中。レビューが済みオーナーが承認したら `Accepted`
+    に変える。`Proposed` の間は実装を始めない。レビューの指摘はその ADR を
+    直接直して反映してよい。
+  - `Accepted` のあとは、覆すときに `Superseded by ADR-NNNN`、使わなくなった
+    ときに `Deprecated` にする。
+  - **`Accepted` になった過去の ADR は書き換えず、覆すときは新しい ADR で
+    supersede する**（判断の履歴を残すのが ADR の価値）。
 
 ## 索引
 

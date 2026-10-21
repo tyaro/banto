@@ -34,9 +34,15 @@ corresponding ADR exists, be traced from there.
   one direction), write one ADR at that moment.
 - File name: `NNNN-kebab-title.md` (sequential number). The format is
   [0000-template.en.md](0000-template.en.md).
-- Status is `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`. **Do not
-  rewrite a past ADR; when overturning one, supersede it with a new ADR**
-  (retaining the history of decisions is the value of ADRs).
+- Status is `Proposed` / `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`.
+  - `Proposed` means under review. Once the review is done and the owner
+    approves, change it to `Accepted`. Do not start implementation while it is
+    `Proposed`. Review findings may be applied by editing that ADR directly.
+  - After `Accepted`, it becomes `Superseded by ADR-NNNN` when overturned, or
+    `Deprecated` when no longer used.
+  - **Do not rewrite a past ADR once it is `Accepted`; when overturning one,
+    supersede it with a new ADR** (retaining the history of decisions is the
+    value of ADRs).
 
 ## Index
 

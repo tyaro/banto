@@ -113,15 +113,25 @@ at another app's rule, so rejected.
 
 ### 6. Ownership is judged by content, not only by name
 
-A rule is "owned" only when all of these match:
+A rule is "owned" only when all of these match. Every item that defines the rule shape in decision 1
+is compared, without exception.
 
 - Name = `<identifier>.lan.tcp.program`, Group = `<identifier>`
 - Program path equals the app exe next to the helper
-- Direction / Action / Protocol as in decision 1
+- Direction = Inbound, Action = Allow, Protocol = TCP
+- Profile = Private only (Public and Domain not included)
+- RemoteAddress = LocalSubnet only
+- LocalPort = Any (not specified)
+- All other filter conditions left at their defaults (LocalAddress, RemotePort, InterfaceType, Service
+  and so on; the implementation lists the items it compares)
+- Enabled = True
 - PolicyStoreSource is the local PersistentStore (not from GPO and the like)
 
+If even one differs, it is a "conflict" (exit 4): `firewall-allow` does not report "already there",
+and `firewall-remove` does not delete it.
 A rule with the same name but different content, pointing at another install's path, or changed by an
-administrator, **stops as a "conflict" (exit 4) and is neither overwritten nor deleted**. Block rules
+administrator (Profile widened to Public, RemoteAddress set to Any, a LocalPort added, disabled, and so
+on), **stops as a "conflict" (exit 4) and is neither overwritten nor deleted**. Block rules
 Banto does not own, profile settings and turning the firewall on or off are never touched.
 
 Alternative: judge by name (or prefix) alone - would treat derived apps, multiple installs and
@@ -148,18 +158,33 @@ Alternatives:
   pull all of the app's dependencies, so rejected.
 - A new shared crate - no benefit while admin-template is the only user; reconsider when there are more.
 
-### 8. Trust rests on "fixed name next to me" plus the perMachine ACL
+### 8. Trust rests on "fixed name next to me" plus an effective-ACL check at startup
 
 - The helper does not take the app exe as an argument. It only targets the fixed-name exe in the parent
   folder of `current_exe()`; no fallback to the CWD or a parent folder. The app likewise looks for the
   helper only by its fixed name next to itself.
 - The helper checks that both it and the app are under Program Files (compared on path-component
   boundaries, case-insensitively) and otherwise stops with exit 2. The Program Files location comes from
-  the OS known folder, not an environment variable.
-- String checks alone do not stop swaps or reparse points; for that part **the ACL of the perMachine
-  install directory (not writable by ordinary users) is the basis**. Replacement during updates is done
-  only by the (elevated) installer. Path-normalization details (resolving reparse points etc.) are
-  settled in the implementation PR; if that changes this, the ADR is updated.
+  the OS known folder (KNOWNFOLDERID), not an environment variable.
+- The string check alone is not enough: a portable copy placed in a folder under Program Files that a
+  vendor made writable for ordinary users would pass it. **The core of the trust is the effective-ACL
+  check the helper performs at startup.**
+  - What is checked: the helper's own exe, the app exe next to it, and every folder from the one
+    containing them up to the Program Files known folder.
+  - If the owner is anything other than Administrators, SYSTEM or TrustedInstaller, stop with exit 2
+    (precondition missing).
+  - If an ACE granting a write-type right (WRITE_DATA / APPEND_DATA / WRITE_DAC / WRITE_OWNER / DELETE /
+    FILE_DELETE_CHILD / GENERIC_WRITE / GENERIC_ALL and the like) has a SID other than Administrators,
+    SYSTEM or TrustedInstaller, stop with exit 2 (inherit-only ACEs for CREATOR OWNER may be excluded,
+    since they do not apply to the object itself).
+  - If a reparse point (junction or symbolic link) is anywhere on the path, stop with exit 2.
+  - To leave no window for swapping the path (TOCTOU), open handles first, check through them, and use
+    exactly the checked files (the app exe path is taken from that handle too).
+- Replacement during updates is done only by the (elevated) installer. Implementation details such as
+  how ACEs are enumerated are settled in the E1 PR; changing the rules above means updating this ADR.
+
+Alternative: verify the Authenticode signature - not required, since derived apps do not necessarily
+sign. An extra check when a signature is present is left as room for the future.
 
 ### 9. Firewall operations run through PowerShell with a fixed environment (recommended; may be revisited)
 
@@ -239,7 +264,8 @@ hand is also hard.
 From the 2026-10-21 audit's "negative cases acceptance tests must not skip", the stage-2 and real-network
 ones are completion criteria.
 
-- Helper: writable or bogus helper placement, a CWD decoy, direct CLI input, invalid arguments, a rule
+- Helper: writable or bogus helper placement (including a user-writable folder under Program Files;
+  decision 8's ACL check must stop it with exit 2), a CWD decoy, direct CLI input, invalid arguments, a rule
   with the same ID but different content, multiple installs, UAC cancellation, settings changing while
   UAC waits, partial failure while adding or removing.
 - Real network: no reach via other TCP ports (not listening), UDP, the Public profile or disallowed
@@ -265,7 +291,7 @@ security products are out of scope; they get only stage 1's common guidance and 
 - **Remote range**
   - **A (adopted): fixed LocalSubnet** (decision 4).
   - **B (rejected): CIDR as an argument**. More input to validate, and the risk of falling back to Any on bad values.
-- **Helper placement, operation method, dependencies**: alternatives and reasons are under decisions 7, 9 and 14.
+- **Helper placement, operation method, dependencies**: alternatives and reasons are under decisions 7, 8, 9 and 14.
 
 ## Consequences
 

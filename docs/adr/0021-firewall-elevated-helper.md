@@ -108,14 +108,24 @@ helper は CIDR などの接続元の指定を受けない。引数の検証を�
 
 ### 6. 自分のルールかどうかは、名前だけでなく中身で判定する
 
-次のすべてが一致したときだけ「所有するルール」とみなす。
+次のすべてが一致したときだけ「所有するルール」とみなす。決定 1 のルールの形を決める項目は、
+一つ残らず比べる。
 
 - Name = `<identifier>.lan.tcp.program`、Group = `<identifier>`
 - Program のパスが helper の隣の本体 exe と一致する
-- Direction / Action / Protocol が決定 1 のとおり
+- Direction = Inbound、Action = Allow、Protocol = TCP
+- Profile = Private だけ（Public や Domain が含まれていない）
+- RemoteAddress = LocalSubnet だけ
+- LocalPort = Any（指定なし）
+- そのほかの絞り込みの条件が既定のまま（LocalAddress・RemotePort・InterfaceType・Service など。
+  比べる項目は実装で列挙する）
+- Enabled = True
 - PolicyStoreSource がローカルの PersistentStore（GPO などから来たものではない）
 
-同じ名前で中身が違う、別のインストールのパスを指す、管理者が変えた、といったルールは
+一つでも違えば「競合」（終了コード 4）とする。`firewall-allow` は「既にある」とは言わず、
+`firewall-remove` は消さない。
+同じ名前で中身が違う、別のインストールのパスを指す、管理者が変えた（Profile を Public に広げた、
+RemoteAddress を Any にした、LocalPort を足した、無効にした、など）といったルールは
 **「競合」（終了コード 4）で止め、上書きも削除もしない**。Banto が所有しない block ルール、
 プロファイルの設定、ファイアウォール全体の有効・無効は変えない。
 
@@ -144,16 +154,31 @@ helper は CIDR などの接続元の指定を受けない。引数の検証を�
 - 共有の crate を新しく作る — 使うのが admin-template だけのうちは、置き場所を増やす利点が無いので
   見送る。使う側が増えたら改めて考える。
 
-### 8. 信頼の根拠は「隣の固定名」と perMachine の ACL に置く
+### 8. 信頼の根拠は「隣の固定名」と、起動時に検査する実効 ACL に置く
 
 - helper は本体の exe を引数で受けない。`current_exe()` の親フォルダにある固定名の exe だけを対象にする。
   CWD や親フォルダへの fallback はしない。本体側も helper を自分の隣の固定名でだけ探す。
 - helper と本体の両方が Program Files の下にある（パスの要素の境界で比べ、大文字小文字を区別しない）
   ことを確かめ、そうでなければ終了コード 2 で止める。Program Files の場所は環境変数ではなく OS の
-  既知のフォルダから得る。
-- 文字列の条件だけでは差し替えや reparse point を防げない。その部分は **perMachine のインストール先の
-  ACL（一般ユーザーが書き換えられない）を根拠にする**。更新時の差し替えもインストーラ（昇格済み）だけが
-  行える。パスの正規化の細部（reparse point の解決など）は実装の PR で決め、ここを変えるなら ADR を更新する。
+  既知のフォルダ（KNOWNFOLDERID）から得る。
+- ただし文字列の条件だけでは足りない。ベンダーが一般利用者に書き込みを許した Program Files の下の
+  フォルダに portable のコピーを置けば、文字列の条件は通ってしまう。**信頼の本体は、helper が起動時に
+  行う実効 ACL の検査**である。
+  - 検査の対象: helper 自身の exe、隣の本体 exe、それらを含むフォルダから Program Files の既知の
+    フォルダまでの各階層のフォルダ。
+  - 所有者が Administrators・SYSTEM・TrustedInstaller 以外なら、終了コード 2（前提が無い）で止める。
+  - 書き込み系の権限（WRITE_DATA / APPEND_DATA / WRITE_DAC / WRITE_OWNER / DELETE /
+    FILE_DELETE_CHILD / GENERIC_WRITE / GENERIC_ALL など）を許す ACE の SID が、Administrators・
+    SYSTEM・TrustedInstaller 以外にあれば、終了コード 2 で止める（CREATOR OWNER の継承専用の ACE は
+    対象のオブジェクト自身には効かないので除いてよい）。
+  - 経路のどこかに reparse point（ジャンクション・シンボリックリンク）があれば、終了コード 2 で止める。
+  - パスを差し替えられる隙（TOCTOU）を作らないため、ハンドルを開いてから検査し、検査したハンドルの
+    ファイルをそのまま扱う（本体 exe のパスもそのハンドルから得る）。
+- 更新時の差し替えはインストーラ（昇格済み）だけが行える。ACE の列挙の方法などの実装の細部は E1 の
+  PR で決めるが、上の判定の規則を変えるなら ADR を更新する。
+
+代替: Authenticode の署名を検証する — 派生アプリが署名するとは限らないので必須にはしない。
+署名がある場合に追加で確かめるのは、将来の余地として残す。
 
 ### 9. ファイアウォールの操作は、環境を固定した PowerShell で行う（推奨、実装で見直す余地を残す）
 
@@ -227,7 +252,8 @@ UAC の取消は helper の終了コードではなく、起動側の `ERROR_CAN
 2026-10-21 の監査の「受入試験で外せない否定ケース」のうち、段階 2 と実ネットワークの分を
 完了条件にする。
 
-- helper: 書き換えられる・不正な helper の配置、CWD の囮、CLI からの直接の入力、不正な引数、
+- helper: 書き換えられる・不正な helper の配置（一般利用者が書き込める Program Files の下のフォルダを
+  含む。決定 8 の ACL の検査で終了コード 2 になること）、CWD の囮、CLI からの直接の入力、不正な引数、
   同じ ID で中身が違うルール、複数のインストール、UAC の取消、UAC 待ちの間の設定変更、
   追加・削除の部分的な失敗。
 - 実ネットワーク: 指定外の TCP ポート（待ち受けていないもの）・UDP・Public プロファイル・許可外の
@@ -253,7 +279,7 @@ Windows 実機での追加・解除・UAC の取消・ポート変更の確認�
 - **接続元**
   - **案A（採用）: LocalSubnet に固定**（決定 4）。
   - **案B（不採用）: CIDR を引数で受ける**。検証すべき入力が増え、不正な値から Any への fallback の危険を抱える。
-- **helper の置き方・操作の方法・依存**: 決定 7・9・14 の各項に代替と理由を書いた。
+- **helper の置き方・操作の方法・依存**: 決定 7・8・9・14 の各項に代替と理由を書いた。
 
 ## 帰結
 
