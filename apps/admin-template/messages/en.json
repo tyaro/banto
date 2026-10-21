@@ -273,6 +273,7 @@
   "settings.navLayoutSidebar": "Sidebar",
   "settings.navLayoutLauncher": "Dock",
   "settings.launcherPositionHeading": "Dock position",
+  "settings.launcherPositionTop": "Top",
   "settings.launcherPositionBottom": "Bottom",
   "settings.launcherPositionLeft": "Left",
   "settings.launcherPositionRight": "Right",

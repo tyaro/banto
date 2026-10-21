@@ -18,6 +18,7 @@
 		PanelBottom,
 		PanelLeft,
 		PanelRight,
+		PanelTop,
 		PanelsTopLeft,
 		Rows3,
 		Rows4,
@@ -70,6 +71,7 @@
 
 	// The dock's screen edge (D4); <=900px is always the bottom tab bar (D5).
 	const launcherPositions: { value: LauncherPosition; label: string; icon: Component }[] = [
+		{ value: 'top', label: m['settings.launcherPositionTop'](), icon: PanelTop },
 		{ value: 'bottom', label: m['settings.launcherPositionBottom'](), icon: PanelBottom },
 		{ value: 'left', label: m['settings.launcherPositionLeft'](), icon: PanelLeft },
 		{ value: 'right', label: m['settings.launcherPositionRight'](), icon: PanelRight }

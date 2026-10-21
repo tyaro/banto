@@ -425,7 +425,9 @@ ChronoGazer）が共有できるよう、banto-hub の `Modal`・`Drawer` と層
 - **位置**: `position` の props は最初から持たせ、最初は `'bottom'` だけだった。左右（計画の D4、PR-4）を
   `LauncherPosition = 'bottom' | 'left' | 'right'` として足した（既存の呼び出しは壊れない）。左右は画面の端の
   縦中央に縦向きのバーを出し、拡大は縦の軸、ツールチップは本文側の横に出す。900px 以下はどの位置でも
-  下端のタブバー（D5）。
+  下端のタブバー（D5）。2026-10-21 に上（`'top'`、計画の PR-6）を足した: 下の上下反転で、拡大は下向き、
+  ツールチップは下に出る。ヘッダの下に置くため、部品はトークン `--banto-shell-launcher-inset-top`
+  （既定 `0px`）だけ下げ、ヘッダの高さを知っているシェルがその値を入れる（部品はヘッダを知らない）。
 - **テーマ**: 寸法・倍率・重なり順を `--banto-shell-launcher-*`（`item-size`・`magnify-max`・`gap`・`padding`・
   `offset`・`reserve`）と `--banto-z-launcher`（200）として足した。`--banto-dock-*` は `@banto/dock-svelte` の
   ものなので使わない（名前は `launcher` で統一。計画の D1）。色は既存のトークンだけ。倍率は部品が

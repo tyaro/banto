@@ -71,7 +71,7 @@ export const NAV_LAYOUT_DEFAULT: NavLayout = 'sidebar';
  * values as `@banto/ui`'s `LauncherPosition`; <=900px is always the bottom
  * tab bar whatever this says (D5).
  */
-export type LauncherPosition = 'bottom' | 'left' | 'right';
+export type LauncherPosition = 'bottom' | 'top' | 'left' | 'right';
 
 /** Dock position default (nav-launcher-plan.md §3): the bottom edge. */
 export const LAUNCHER_POSITION_DEFAULT: LauncherPosition = 'bottom';
@@ -90,7 +90,7 @@ export function isNavLayout(value: unknown): value is NavLayout {
 }
 
 export function isLauncherPosition(value: unknown): value is LauncherPosition {
-	return value === 'bottom' || value === 'left' || value === 'right';
+	return value === 'bottom' || value === 'top' || value === 'left' || value === 'right';
 }
 
 /** A whole percent on the slider's grid (40-100, step 5). */
