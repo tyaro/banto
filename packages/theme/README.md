@@ -59,24 +59,6 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 }
 ```
 
-## レイアウトの寸法トークン
-
-余白・小さい文字サイズ・細線の幅・名前/値リストのラベル列の幅（Issue #219 のファイアウォール
-情報から使い始めた）。生の `rem` / `px` をアプリの CSS に書かないための値で、light・dark・glass
-で共通。
-
-| トークン                     | 値         | 用途                                 |
-| ---------------------------- | ---------- | ------------------------------------ |
-| `--banto-space-1`            | `0.25rem`  | 余白（margin / padding / gap）の最小 |
-| `--banto-space-2`            | `0.5rem`   | 余白                                 |
-| `--banto-space-3`            | `0.75rem`  | 余白                                 |
-| `--banto-space-4`            | `1rem`     | 余白                                 |
-| `--banto-font-size-xs`       | `0.75rem`  | 補足・コード欄の文字                 |
-| `--banto-font-size-sm`       | `0.8rem`   | 一覧の文字                           |
-| `--banto-font-size-md`       | `0.875rem` | 小見出しの文字                       |
-| `--banto-border-width`       | `1px`      | 細線の枠・区切り線                   |
-| `--banto-label-column-width` | `8rem`     | 名前/値リストのラベル列の最小幅      |
-
 ## ランチャーのトークン（v6.8.0 から）
 
 `@banto/ui` の `LauncherBar`（ドック風のランチャー、[nav-launcher-plan.md](../../docs/design/nav-launcher-plan.md) §5.2）が

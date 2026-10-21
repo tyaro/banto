@@ -195,20 +195,6 @@
 	--banto-control-height-sm: 28px;
 	--banto-control-height-lg: 40px;
 
-	/* Layout scale (Issue #219 firewall block; fixed rem values so the scale
-     follows the user's font setting). Spacing for margin/padding/gap, text
-     sizes below the base size, the hairline width, and the label column of
-     a name/value list. Same in light, dark and glass. */
-	--banto-space-1: 0.25rem;
-	--banto-space-2: 0.5rem;
-	--banto-space-3: 0.75rem;
-	--banto-space-4: 1rem;
-	--banto-font-size-xs: 0.75rem;
-	--banto-font-size-sm: 0.8rem;
-	--banto-font-size-md: 0.875rem;
-	--banto-border-width: 1px;
-	--banto-label-column-width: 8rem;
-
 	/* Motion (visual-refresh-plan.md 付録A.6) */
 	--banto-duration-fast: 120ms;
 	--banto-duration-base: 160ms;
