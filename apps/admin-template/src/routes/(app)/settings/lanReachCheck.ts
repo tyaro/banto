@@ -28,6 +28,13 @@ export const REACH_STALE_AFTER_MS = 60 * 60 * 1000;
 export const REACH_POLL_INTERVAL_MS = 2000;
 
 /**
+ * How often the screen's own clock advances while a confirmation is shown,
+ * so "n minutes ago" keeps counting (a local clock only - nothing is
+ * re-read over IPC, design D9).
+ */
+export const REACH_CLOCK_TICK_MS = 60_000;
+
+/**
  * Whether the block is shown for `status` (design §4.1: the same gate as
  * the firewall information, minus "Windows only" - reaching a port does not
  * depend on the OS): the live listener runs on a non-loopback IPv4 bind and

@@ -21,7 +21,10 @@
  *
  * The status is re-read every {@link REACH_POLL_INTERVAL_MS} only while a
  * check is pending (design D9); it stops once the check is confirmed or
- * expired, while an apply runs, and when the block is disposed.
+ * expired, while an apply runs, and when the block is disposed. While a
+ * confirmation (fresh or stale) is shown, only the local clock advances,
+ * every {@link REACH_CLOCK_TICK_MS}, so the "n minutes ago" text keeps
+ * counting without any IPC.
  *
  * Every method may be called from a `$effect` (the panel's), so the state
  * it reads is read under `untrack` (conventions §8).
@@ -30,6 +33,7 @@ import { untrack } from 'svelte';
 import { isProviderError } from '@banto/admin-core';
 import type { ReachCheckRefusal, ReachCheckStatus } from '#lib/banto/serverAdmin.js';
 import {
+	REACH_CLOCK_TICK_MS,
 	REACH_POLL_INTERVAL_MS,
 	REACH_STALE_AFTER_MS,
 	isReachCheckIssueResult,
@@ -66,7 +70,7 @@ export class ReachCheckController {
 	issued = $state<IssuedReachUrl | null>(null);
 	issuing = $state(false);
 	issueProblem = $state<ReachIssueProblem | null>(null);
-	/** The clock the view is judged at (advanced by the re-read interval and the stale timer). */
+	/** The clock the view is judged at (advanced by the re-read interval, the clock tick and the stale timer). */
 	now = $state(0);
 	readonly view: ReachView = $derived(
 		reachView(this.status, this.unreadable, this.issued, this.now)
@@ -82,6 +86,7 @@ export class ReachCheckController {
 	#disposed = false;
 	#poll: ReturnType<typeof setInterval> | undefined;
 	#staleTimer: ReturnType<typeof setTimeout> | undefined;
+	#tick: ReturnType<typeof setInterval> | undefined;
 
 	constructor(deps: ReachCheckDeps) {
 		this.#deps = deps;
@@ -92,6 +97,11 @@ export class ReachCheckController {
 	/** Whether the re-read interval is running (tests). */
 	get polling(): boolean {
 		return this.#poll !== undefined;
+	}
+
+	/** Whether the local clock tick (no IPC) is running (tests). */
+	get ticking(): boolean {
+		return this.#tick !== undefined;
 	}
 
 	/**
@@ -228,6 +238,14 @@ export class ReachCheckController {
 			clearInterval(this.#poll);
 			this.#poll = undefined;
 		}
+		if (active && (view.kind === 'verified' || view.kind === 'stale')) {
+			this.#tick ??= setInterval(() => {
+				this.now = this.#clock();
+			}, REACH_CLOCK_TICK_MS);
+		} else if (this.#tick !== undefined) {
+			clearInterval(this.#tick);
+			this.#tick = undefined;
+		}
 		clearTimeout(this.#staleTimer);
 		this.#staleTimer = undefined;
 		if (active && view.kind === 'verified') {
@@ -248,5 +266,7 @@ export class ReachCheckController {
 		this.#poll = undefined;
 		clearTimeout(this.#staleTimer);
 		this.#staleTimer = undefined;
+		clearInterval(this.#tick);
+		this.#tick = undefined;
 	}
 }

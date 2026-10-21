@@ -6,6 +6,7 @@ import type {
 	ServerStatus
 } from '#lib/banto/serverAdmin.js';
 import {
+	REACH_CLOCK_TICK_MS,
 	REACH_POLL_INTERVAL_MS,
 	REACH_STALE_AFTER_MS,
 	formatRemaining,
@@ -277,6 +278,39 @@ describe('ReachCheckController', () => {
 		await vi.advanceTimersByTimeAsync(REACH_STALE_AFTER_MS);
 		expect(controller.view.kind).toBe('stale');
 		expect(getStatus).toHaveBeenCalledTimes(1);
+	});
+
+	it('advances its own clock every minute while confirmed, without re-reading', async () => {
+		const { controller, getStatus } = setup({ status: () => Promise.resolve(reach('recorded')) });
+		controller.target(1);
+		await settle();
+		expect(controller.ticking).toBe(true);
+		expect(minutesSince(record().at, controller.now)).toBe(0);
+		await vi.advanceTimersByTimeAsync(REACH_CLOCK_TICK_MS * 3);
+		expect(minutesSince(record().at, controller.now)).toBe(3);
+		await vi.advanceTimersByTimeAsync(REACH_STALE_AFTER_MS);
+		expect(controller.view.kind).toBe('stale');
+		// Still counting while stale.
+		await vi.advanceTimersByTimeAsync(REACH_CLOCK_TICK_MS);
+		expect(minutesSince(record().at, controller.now)).toBe(64);
+		expect(getStatus).toHaveBeenCalledTimes(1);
+		controller.dispose();
+		expect(controller.ticking).toBe(false);
+	});
+
+	it('runs no clock tick while nothing is confirmed, or while an apply runs', async () => {
+		const { controller } = setup({ status: () => Promise.resolve(reach('recorded')) });
+		expect(controller.ticking).toBe(false);
+		controller.target(1);
+		await settle();
+		expect(controller.ticking).toBe(true);
+		controller.suspend();
+		expect(controller.ticking).toBe(false);
+		const pending = setup({ status: () => Promise.resolve(reach('pending')) });
+		pending.controller.target(1);
+		await settle();
+		expect(pending.controller.ticking).toBe(false);
+		pending.controller.dispose();
 	});
 
 	it('drops an answer that a newer read or an apply superseded', async () => {
