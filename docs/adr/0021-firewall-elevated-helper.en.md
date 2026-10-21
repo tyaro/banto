@@ -158,7 +158,7 @@ Alternatives:
   pull all of the app's dependencies, so rejected.
 - A new shared crate - no benefit while admin-template is the only user; reconsider when there are more.
 
-### 8. Trust rests on "fixed name next to me" plus an effective-ACL check at startup
+### 8. Trust rests on "fixed name next to me" plus an effective-ACL check before and after elevation
 
 - The helper does not take the app exe as an argument. It only targets the fixed-name exe in the parent
   folder of `current_exe()`; no fallback to the CWD or a parent folder. The app likewise looks for the
@@ -168,7 +168,8 @@ Alternatives:
   the OS known folder (KNOWNFOLDERID), not an environment variable.
 - The string check alone is not enough: a portable copy placed in a folder under Program Files that a
   vendor made writable for ordinary users would pass it. **The core of the trust is the effective-ACL
-  check the helper performs at startup.**
+  check**, performed both by the app before it asks for elevation and by the helper at startup (see "Check
+  before asking for elevation" below).
   - What is checked: the helper's own exe, the app exe next to it, and every folder from the one
     containing them up to the Program Files known folder.
   - If the owner is anything other than Administrators, SYSTEM or TrustedInstaller, stop with exit 2
@@ -183,8 +184,33 @@ Alternatives:
 - Replacement during updates is done only by the (elevated) installer. Implementation details such as
   how ACEs are enumerated are settled in the E1 PR; changing the rules above means updating this ADR.
 
-Alternative: verify the Authenticode signature - not required, since derived apps do not necessarily
-sign. An extra check when a signature is present is left as room for the future.
+Check before asking for elevation:
+
+- A check after the helper starts is not enough on its own. If the helper has been swapped, the swapped
+  code runs as administrator the moment UAC is approved, so the helper's own check comes too late.
+- So the app (the unelevated Tauri side, E2's launcher module) also runs the same check before it asks for
+  elevation with `ShellExecuteExW` `runas`. The targets (the helper exe, the app exe next to it, and every
+  folder from theirs up to the Program Files known folder) and the rules (the Program Files string
+  condition, owner, write-type ACEs, reparse points on the path) are identical to the above.
+- If they are not met, the app does not start the helper, shows no UAC prompt, and falls back to the
+  stage-1 guidance. The result is audited and shown as "precondition missing" (equivalent to exit 2,
+  decision 11).
+- The rules are defined in one place, and the app and the helper share the same pure functions and the
+  same tests (e.g. the app also uses the lib of E1's helper crate; details are left to E1 and E2).
+- Role: **the pre-launch check is the primary defence** (no administrator rights are handed via UAC to a
+  swapped helper); the helper's post-launch check stays as defence in depth (the helper can also be
+  started directly or from the NSIS hook).
+- Remaining risk: a swap between the check and the runas launch (TOCTOU). `ShellExecuteExW` launches by
+  path, so the checked handle cannot be pinned to the launch. But passing the ACL check means ordinary
+  users cannot write to that path, so only someone who already has administrator rights could swap it
+  after the check; that does not cross the elevation boundary. It is accepted on that basis.
+
+Alternatives:
+
+- Verify the Authenticode signature - not required, since derived apps do not necessarily sign. An extra
+  check when a signature is present is left as room for the future.
+- Check only after the helper starts - rejected: once UAC is approved, the swapped code already runs as
+  administrator, which is too late.
 
 ### 9. Firewall operations run through PowerShell with a fixed environment (recommended; may be revisited)
 
@@ -265,7 +291,8 @@ From the 2026-10-21 audit's "negative cases acceptance tests must not skip", the
 ones are completion criteria.
 
 - Helper: writable or bogus helper placement (including a user-writable folder under Program Files;
-  decision 8's ACL check must stop it with exit 2), a CWD decoy, direct CLI input, invalid arguments, a rule
+  the app's pre-elevation check must stop it without showing UAC, and a directly started helper must stop
+  with exit 2 on decision 8's ACL check), a CWD decoy, direct CLI input, invalid arguments, a rule
   with the same ID but different content, multiple installs, UAC cancellation, settings changing while
   UAC waits, partial failure while adding or removing.
 - Real network: no reach via other TCP ports (not listening), UDP, the Public profile or disallowed
@@ -305,7 +332,9 @@ security products are out of scope; they get only stage 1's common guidance and 
 - `windows-sys` and `embed-resource` become direct dependencies (no new crates). When bumping them,
   keep them aligned with the transitive versions in the lock.
 - Expected split of implementation PRs (**implementation starts after this ADR is reviewed**):
-  1. E1: the helper crate (pure functions, tests with a fake)
-  2. E2: the launcher module, Tauri command, audit and generation check
+  1. E1: the helper crate (pure functions, tests with a fake). The placement rules (decision 8) live as
+     pure functions in the lib so the app can use them too
+  2. E2: the launcher module, the pre-elevation placement check (sharing E1's rules), Tauri command, audit
+     and generation check
   3. E3: the screens (confirmation, results and re-reading)
   4. E4: perMachine default and NSIS hook, scaffold follow-up, `docs/upgrading.md`
