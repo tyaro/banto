@@ -108,15 +108,44 @@ export function createPanelChangeHandler(
 }
 
 /**
- * Take a stored value into an UNTOUCHED draft as its new baseline. A draft
- * the user already edited keeps the edit (it stays dirty against the old
- * baseline), the same rule as `createSavedSetting.load()`.
+ * Make a stored value the draft's baseline. An untouched draft also shows it;
+ * a draft the user already edited keeps the edit, now dirty against the
+ * STORED value (so a later discard goes back to what is stored, not to the
+ * initial empty text). `FormDraft` has no "set the baseline only" call, so
+ * this goes through its public API: set the stored value, `markApplied` it,
+ * then put the edit back. Svelte flushes the DOM once afterwards, so the
+ * field never shows the intermediate value. Returns whether the shown text
+ * became the stored value.
  */
 export function adoptStoredMemo(draft: FormDraft, value: string): boolean {
-	if (draft.dirty) return false;
+	const edited = draft.dirty ? memoText(draft.values) : null;
 	draft.setValue(MEMO_FIELD, value);
 	draft.markApplied(draft.snapshotForApply());
-	return true;
+	if (edited === null || edited === value) return true;
+	draft.setValue(MEMO_FIELD, edited);
+	return false;
+}
+
+/**
+ * The coordinator with its `settle` calls run ONE AT A TIME (PR #449 review):
+ * a close asked while the save button's apply is still waiting for the
+ * provider waits for it, then settles what is left (`clean` when the save
+ * went through, so it closes without asking). Without this, a second settle
+ * could discard - and close - while the first write still lands and stores
+ * the discarded text.
+ */
+export function serializeSettles(
+	coordinator: Pick<DraftCoordinator, 'capture' | 'settle'>
+): Pick<DraftCoordinator, 'capture' | 'settle'> {
+	let tail: Promise<unknown> = Promise.resolve();
+	return {
+		capture: (keys) => coordinator.capture(keys),
+		settle(keys, ask) {
+			const run = tail.then(() => coordinator.settle(keys, ask));
+			tail = run.catch(() => {});
+			return run;
+		}
+	};
 }
 
 /** The memo's text from the draft's values (`''` for anything else). */
@@ -137,12 +166,14 @@ export interface DashboardMemoOptions {
 export interface DashboardMemo {
 	readonly draft: FormDraft;
 	readonly coordinator: DraftCoordinator;
+	/** {@link serializeSettles} over `coordinator`: give THIS to the dock lifecycle handler. */
+	readonly serial: Pick<DraftCoordinator, 'capture' | 'settle'>;
 	readonly setting: SavedSetting<string>;
 	/** Register the draft's source (page lifetime). Returns the unregister function. */
 	register(): () => void;
-	/** Read the stored memo; adopted only while the draft is untouched. */
+	/** Read the stored memo into the draft's baseline (an edit made meanwhile is kept). */
 	load(): Promise<void>;
-	/** The pane's save button: apply without a prompt. */
+	/** The pane's save button: apply without a prompt (serialized with closes). */
 	save(): Promise<DraftSettleResult>;
 	dispose(): void;
 }
@@ -169,16 +200,19 @@ export function createDashboardMemo(options: DashboardMemoOptions): DashboardMem
 		return setting.save();
 	});
 
+	const serial = serializeSettles(coordinator);
+
 	return {
 		draft,
 		coordinator,
+		serial,
 		setting,
 		register: () => coordinator.register(source),
 		async load() {
 			const result = await setting.load();
 			if (result === 'loaded') adoptStoredMemo(draft, setting.saved ?? '');
 		},
-		save: () => coordinator.settle([MEMO_PANEL_ID], () => Promise.resolve('apply')),
+		save: () => serial.settle([MEMO_PANEL_ID], () => Promise.resolve('apply')),
 		dispose() {
 			coordinator.dispose();
 			setting.dispose();

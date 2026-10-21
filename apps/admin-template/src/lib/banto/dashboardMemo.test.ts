@@ -279,25 +279,94 @@ describe('createDashboardMemo', () => {
 		memo.dispose();
 	});
 
-	it('load keeps input typed before the stored memo arrived', async () => {
+	it('load keeps input typed before the stored memo arrived, against the stored baseline; discard goes back to it', async () => {
 		const { provider, resolveGet } = heldProvider('stored text');
 		const memo = memoWith(provider);
+		memo.register();
 		const loading = memo.load();
 		memo.draft.setValue(MEMO_FIELD, 'typed first');
 		resolveGet();
 		await loading;
 		expect(memoText(memo.draft.values)).toBe('typed first');
+		expect(memoText(memo.draft.baseline)).toBe('stored text');
 		expect(memo.draft.dirty).toBe(true);
+
+		const handler = createPanelChangeHandler({
+			coordinator: memo.serial,
+			ask: async () => 'discard'
+		});
+		await expect(handler({ kind: 'close', panelId: MEMO_PANEL_ID })).resolves.toBe(true);
+		expect(memoText(memo.draft.values)).toBe('stored text');
+		memo.dispose();
+	});
+
+	it('a close during a save waits for it: nothing is asked or discarded, and it closes once the save landed', async () => {
+		const { provider, sets } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		const ask = vi.fn(async () => 'discard' as const);
+		const handler = createPanelChangeHandler({ coordinator: memo.serial, ask });
+
+		memo.draft.setValue(MEMO_FIELD, 'saving');
+		const saving = memo.save();
+		await flush();
+		expect(sets).toHaveLength(1);
+		const closing = handler({ kind: 'close', panelId: MEMO_PANEL_ID });
+		await flush();
+		expect(ask).not.toHaveBeenCalled();
+		expect(memoText(memo.draft.values)).toBe('saving');
+
+		sets[0]!.done.resolve();
+		await expect(saving).resolves.toBe('applied');
+		await expect(closing).resolves.toBe(true);
+		expect(ask).not.toHaveBeenCalled();
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		expect(memoText(memo.draft.baseline)).toBe('saving');
+		expect(memo.draft.dirty).toBe(false);
+		memo.dispose();
+	});
+
+	it('a close during a save asks only after it, about the input typed meanwhile; discard keeps the saved text as baseline', async () => {
+		const { provider, sets } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		const ask = vi.fn(async () => 'discard' as const);
+		const handler = createPanelChangeHandler({ coordinator: memo.serial, ask });
+
+		memo.draft.setValue(MEMO_FIELD, 'v1');
+		const saving = memo.save();
+		await flush();
+		memo.draft.setValue(MEMO_FIELD, 'v1 v2');
+		const closing = handler({ kind: 'close', panelId: MEMO_PANEL_ID });
+		await flush();
+		expect(ask).not.toHaveBeenCalled();
+
+		sets[0]!.done.resolve();
+		await expect(saving).resolves.toBe('dirty-again');
+		await expect(closing).resolves.toBe(true);
+		expect(ask).toHaveBeenCalledTimes(1);
+		expect(memoText(memo.draft.values)).toBe('v1');
+		expect(memo.draft.dirty).toBe(false);
 		memo.dispose();
 	});
 });
 
 describe('adoptStoredMemo', () => {
-	it('refuses a dirty draft', () => {
+	it('keeps an edit but moves the baseline to the stored value', () => {
 		const memo = memoWith(heldProvider().provider);
 		memo.draft.setValue(MEMO_FIELD, 'edit');
 		expect(adoptStoredMemo(memo.draft, 'stored')).toBe(false);
 		expect(memoText(memo.draft.values)).toBe('edit');
+		expect(memoText(memo.draft.baseline)).toBe('stored');
+		expect(memo.draft.dirty).toBe(true);
+		memo.dispose();
+	});
+
+	it('an edit equal to the stored value ends clean', () => {
+		const memo = memoWith(heldProvider().provider);
+		memo.draft.setValue(MEMO_FIELD, 'same');
+		expect(adoptStoredMemo(memo.draft, 'same')).toBe(true);
+		expect(memo.draft.dirty).toBe(false);
 		memo.dispose();
 	});
 });

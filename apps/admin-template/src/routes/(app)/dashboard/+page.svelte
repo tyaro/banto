@@ -209,7 +209,8 @@
 	// tab switch / hide only capture (no prompt); a close - which discards the
 	// pane's content - settles first and closes only when the draft is clean.
 	const beforePanelChange = createPanelChangeHandler({
-		coordinator: memo.coordinator,
+		// Serialized: a close waits for a save already in flight (PR #449 review).
+		coordinator: memo.serial,
 		ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
 		onSettled: (_panelId, result) => noteMemoSettled(result)
 	});
@@ -372,12 +373,13 @@
 	 */
 	const onPopOut = isTauri()
 		? async (content: PanelContent) => {
-				// Popping out leaves this dock like a close does: the memo's unapplied
-				// input is settled first (the pop-out window shows DashboardPanel's
-				// static memo text, not this page's draft).
-				if (!(await beforePanelChange({ kind: 'close', panelId: content.id }))) return;
-				if (isDocked(content.id)) dock.undockPanel(content.id);
-				dock.close(content.id);
+				// Popping out leaves this dock like a close does, so it goes through the
+				// host's lifecycle (`closePanel`: beforePanelChange settles the memo's
+				// unapplied input, and a structure change made while that waits makes
+				// it `stale`). Only an applied close pops out; the close already
+				// undocked + closed the pane with its geometry kept. (The pop-out
+				// window shows DashboardPanel's static memo text, not this page's draft.)
+				if ((await dockHost?.closePanel(content.id)) !== 'applied') return;
 				void openPanelWindow(content);
 			}
 		: undefined;
