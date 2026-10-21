@@ -194,7 +194,8 @@ class Impl<T> implements SavedSetting<T> {
 
 	revert(): void {
 		if (this.#hasSaved) {
-			this.#edit(this.#saved as T, this.#baseRaw);
+			// current gets its own copy: editing it must not change `saved`.
+			this.#edit(this.#independent(this.#baseRaw, this.#saved as T), this.#baseRaw);
 			return;
 		}
 		const value = this.#options.fallback();
@@ -238,10 +239,13 @@ class Impl<T> implements SavedSetting<T> {
 		let ok = false;
 		try {
 			await this.#options.provider.set(this.#options.key, raw);
+			// Expose what was actually sent, not the caller's object: a mutable
+			// value may have been changed while the provider call was pending.
+			// The copy runs the consumer's parse, which may re-enter (dispose):
+			// make it first, then check the request right before committing.
+			const sent = request.isCurrent() ? this.#independent(raw, value) : value;
 			if (request.isCurrent()) {
-				// Expose what was actually sent, not the caller's object: a mutable
-				// value may have been changed while the provider call was pending.
-				this.#saved = this.#independent(raw, value);
+				this.#saved = sent;
 				this.#hasSaved = true;
 				this.#baseRaw = raw;
 				this.#error = null;
@@ -285,11 +289,15 @@ class Impl<T> implements SavedSetting<T> {
 			}
 			if (!request.isCurrent()) return 'stale';
 
-			let parsed: { value: T; raw: string } | undefined;
+			let parsed: { value: T; raw: string; current: T } | undefined;
 			if (stored !== null) {
 				try {
 					const value = this.#options.parse(stored);
-					if (value !== undefined) parsed = { value, raw: this.#options.serialize(value) };
+					if (value !== undefined) {
+						const text = this.#options.serialize(value);
+						// current gets its own copy so editing it cannot change `saved`.
+						parsed = { value, raw: text, current: this.#independent(text, value) };
+					}
 				} catch {
 					parsed = undefined; // a throwing validator means "corrupted"
 				}
@@ -308,7 +316,7 @@ class Impl<T> implements SavedSetting<T> {
 				this.#hasSaved = true;
 				this.#baseRaw = parsed.raw;
 				if (untouched) {
-					this.#value = parsed.value;
+					this.#value = parsed.current;
 					this.#raw = parsed.raw;
 				}
 				this.#bump();

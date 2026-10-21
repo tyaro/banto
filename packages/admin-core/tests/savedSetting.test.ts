@@ -493,3 +493,57 @@ describe('PR #442 review', () => {
 		expect(s.dirty).toBe(false);
 	});
 });
+
+describe('PR #442 re-review', () => {
+	it('after revert, editing current in place does not change saved', async () => {
+		const m = manualProvider();
+		const s = createSavedSetting(options(m.provider));
+		s.set({ x: 1 });
+		const first = s.save();
+		m.sets[0].resolve();
+		expect(await first).toBe(true);
+		s.revert();
+		const v = s.current as Pos;
+		v.x = 2;
+		s.set(v);
+		const second = s.save();
+		m.sets[1].reject(new Error('offline'));
+		expect(await second).toBe(false);
+		expect(s.saved).toEqual({ x: 1 });
+		s.revert();
+		expect(s.current).toEqual({ x: 1 });
+		expect(s.dirty).toBe(false);
+	});
+
+	it('after load, editing current in place does not change saved', async () => {
+		const m = manualProvider();
+		const s = createSavedSetting(options(m.provider));
+		const loading = s.load();
+		m.gets[0].resolve(raw(1));
+		expect(await loading).toBe('loaded');
+		const v = s.current as Pos;
+		v.x = 7;
+		expect(s.saved).toEqual({ x: 1 });
+		expect(s.current).not.toBe(s.saved);
+	});
+
+	it('a parse that disposes during the success copy keeps the save from committing', async () => {
+		const m = manualProvider();
+		const ref: { s: SavedSetting<Pos> | null; armed: boolean } = { s: null, armed: false };
+		const base = options(m.provider);
+		const s = createSavedSetting({
+			...base,
+			parse: (text: string) => {
+				if (ref.armed) ref.s?.dispose();
+				return base.parse(text);
+			}
+		});
+		ref.s = s;
+		s.set({ x: 3 });
+		const done = s.save();
+		ref.armed = true;
+		m.sets[0].resolve();
+		expect(await done).toBe(false);
+		expect(s.saved).toBeUndefined();
+	});
+});
