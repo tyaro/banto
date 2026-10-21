@@ -12,11 +12,14 @@ import type { DraftSettleResult } from '@banto/forms';
 import {
 	MEMO_FIELD,
 	MEMO_PANEL_ID,
+	MEMO_SAVE_COMMAND_ID,
 	MEMO_SETTING_KEY,
 	adoptStoredMemo,
 	canDiscardAfterSettle,
+	canSaveMemo,
 	createDashboardMemo,
 	createPanelChangeHandler,
+	memoSaveCommand,
 	memoText
 } from './dashboardMemo.svelte';
 
@@ -367,6 +370,78 @@ describe('adoptStoredMemo', () => {
 		memo.draft.setValue(MEMO_FIELD, 'same');
 		expect(adoptStoredMemo(memo.draft, 'same')).toBe(true);
 		expect(memo.draft.dirty).toBe(false);
+		memo.dispose();
+	});
+});
+
+// Issue #435 PR-11: the pane's save button and Ctrl+S share one command.
+describe('memoSaveCommand', () => {
+	function commandFor(memo: ReturnType<typeof memoWith>) {
+		return memoSaveCommand({
+			memo,
+			title: 'save',
+			shortcut: 'Mod+S',
+			save: () => void memo.save()
+		});
+	}
+
+	it('is taken inside the textarea and keeps the browser save page away even when disabled', () => {
+		const memo = memoWith(heldProvider().provider);
+		const command = commandFor(memo);
+		expect(command).toMatchObject({
+			id: MEMO_SAVE_COMMAND_ID,
+			title: 'save',
+			shortcut: 'Mod+S',
+			allowInEditable: true,
+			preventDefaultWhenDisabled: true
+		});
+		expect(command.allowRepeat).toBeUndefined();
+		memo.dispose();
+	});
+
+	it('is enabled only with unapplied input and no save in flight (the button condition)', async () => {
+		const { provider, sets } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		const command = commandFor(memo);
+		expect(command.enabled?.()).toBe(false);
+		expect(canSaveMemo(memo)).toBe(false);
+
+		memo.draft.setValue(MEMO_FIELD, 'typed');
+		expect(command.enabled?.()).toBe(true);
+
+		void command.run();
+		await flush();
+		expect(sets).toHaveLength(1);
+		expect(command.enabled?.()).toBe(false);
+
+		sets[0]!.done.resolve();
+		await flush();
+		expect(memo.draft.dirty).toBe(false);
+		expect(command.enabled?.()).toBe(false);
+		expect(provider.set).toHaveBeenCalledTimes(1);
+		memo.dispose();
+	});
+
+	it('runs the serialized save: a close asked during it waits and then closes without asking', async () => {
+		const { provider, sets } = heldProvider();
+		const memo = memoWith(provider);
+		memo.register();
+		const ask = vi.fn(async () => 'discard' as const);
+		const handler = createPanelChangeHandler({ coordinator: memo.serial, ask });
+		const command = commandFor(memo);
+
+		memo.draft.setValue(MEMO_FIELD, 'ctrl+s');
+		void command.run();
+		await flush();
+		const closing = handler({ kind: 'close', panelId: MEMO_PANEL_ID });
+		await flush();
+		expect(ask).not.toHaveBeenCalled();
+
+		sets[0]!.done.resolve();
+		await expect(closing).resolves.toBe(true);
+		expect(ask).not.toHaveBeenCalled();
+		expect(memoText(memo.draft.baseline)).toBe('ctrl+s');
 		memo.dispose();
 	});
 });
