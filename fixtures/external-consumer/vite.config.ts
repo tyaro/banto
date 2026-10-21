@@ -5,7 +5,8 @@ import { defineConfig } from 'vite';
 
 // 派生アプリが置く `optimizeDeps.exclude`（ADR-0007、#150）。`.svelte.ts` を
 // ソース配布する `@banto/*` を dev の依存オプティマイザから外す。一覧は
-// apps/admin-template/vite.config.ts と同じで、verify:architecture（rule
+// apps/admin-template/vite.config.ts の分に、テンプレートのアプリが依存しない
+// `@banto/image-assets`（#438）を足したもの。verify:architecture（rule
 // `external-consumer-fixture`）が「packages/ のうち .svelte.ts を持つもの」との
 // 一致を検査する。
 //
@@ -28,6 +29,7 @@ export default defineConfig({
 					'@banto/dock-svelte',
 					'@banto/forms',
 					'@banto/grid-svelte',
+					'@banto/image-assets',
 					'@banto/tree-svelte',
 					'@banto/ui'
 				]
