@@ -22,6 +22,7 @@
  */
 import type { ServerStatus } from '#lib/banto/serverAdmin.js';
 import { isIpv4Bind, isLoopbackHost } from './connectivityScope';
+import type { StatusRefresh } from './serverStatusRequests';
 
 /** Direction, protocol, profile and remote range the guide recommends (PowerShell parameter values). */
 export const FIREWALL_DIRECTION = 'Inbound';
@@ -115,17 +116,39 @@ export interface FirewallCommands {
 }
 
 /**
- * The two commands, each `Remove-NetFirewallRule -Name <name>` (silent when
- * absent) followed by `New-NetFirewallRule -Name <name>`, on one line so it
- * pastes as one (the rule shape - per executable or
- * per port - is still an ADR decision, so both are offered; Issue #219
- * addendum 2026-10-21). `null` when the port or identifier is invalid: no
- * command is better than a wrong one.
+ * The warning a command prints when a rule of its name already exists
+ * (`name` is the rule's `-Name`). The panel passes the i18n message
+ * (`settings.firewallRuleExists`); this English text is only the default for
+ * callers without one (tests).
+ */
+export type FirewallRuleExistsWarning = (name: string) => string;
+
+const DEFAULT_RULE_EXISTS_WARNING: FirewallRuleExistsWarning = (name) =>
+	`A firewall rule named ${name} already exists, so nothing was changed. Check it with Get-NetFirewallRule -Name '${name}' | Format-List, then update or remove it yourself.`;
+
+/**
+ * The two commands (the rule shape - per executable or per port - is still
+ * an ADR decision, so both are offered; Issue #219 addendum 2026-10-21).
+ * Each is one line so it pastes as one:
+ *
+ *     $n = '<name>'; if (Get-NetFirewallRule -Name $n -ErrorAction SilentlyContinue) { Write-Warning '<warning>' } else { New-NetFirewallRule -Name $n ... }
+ *
+ * The deterministic `-Name` keeps a re-run from adding a duplicate, and a
+ * rule of that name that already exists is left exactly as it is: the
+ * command never removes or changes a rule (owner review on PR #463 - the
+ * existing one may have been narrowed or changed to Block by an
+ * administrator, or point at another installation's executable, and a
+ * remove-then-create loses it if the create fails). Checking and updating
+ * an existing rule is left to the administrator (docs/recipes/lan-access.md).
+ *
+ * `null` when the port or identifier is invalid, or the warning cannot be
+ * quoted: no command is better than a wrong one.
  */
 export function firewallCommands(
 	identifier: string,
 	port: number,
-	executablePath: string | null
+	executablePath: string | null,
+	existsWarning: FirewallRuleExistsWarning = DEFAULT_RULE_EXISTS_WARNING
 ): FirewallCommands | null {
 	if (!isValidPort(port) || !isValidAppIdentifier(identifier)) return null;
 	const names = firewallRuleNames(identifier);
@@ -137,25 +160,37 @@ export function firewallCommands(
 	const portName = quotePowerShellLiteral(names.portName);
 	const programDisplay = quotePowerShellLiteral(names.programDisplayName);
 	const portDisplay = quotePowerShellLiteral(names.portDisplayName);
+	const programWarning = quotePowerShellLiteral(existsWarning(names.programName));
+	const portWarning = quotePowerShellLiteral(existsWarning(names.portName));
 	if (
 		group === null ||
 		programName === null ||
 		portName === null ||
 		programDisplay === null ||
-		portDisplay === null
+		portDisplay === null ||
+		programWarning === null ||
+		portWarning === null
 	) {
 		return null;
 	}
 	const common = `-Protocol ${FIREWALL_PROTOCOL} -Profile ${FIREWALL_PROFILE} -RemoteAddress ${FIREWALL_REMOTE_ADDRESS} -Action Allow`;
-	const remove = (name: string) =>
-		`Remove-NetFirewallRule -Name ${name} -ErrorAction SilentlyContinue`;
+	const createIfAbsent = (name: string, warning: string, create: string) =>
+		`$n = ${name}; if (Get-NetFirewallRule -Name $n -ErrorAction SilentlyContinue) { Write-Warning ${warning} } else { New-NetFirewallRule -Name $n ${create} }`;
 	const program = executablePath ? quotePowerShellLiteral(executablePath) : null;
 	return {
 		program:
 			program === null
 				? null
-				: `${remove(programName)}; New-NetFirewallRule -Name ${programName} -DisplayName ${programDisplay} -Group ${group} -Direction ${FIREWALL_DIRECTION} -Program ${program} ${common}`,
-		port: `${remove(portName)}; New-NetFirewallRule -Name ${portName} -DisplayName ${portDisplay} -Group ${group} -Direction ${FIREWALL_DIRECTION} -LocalPort ${port} ${common}`
+				: createIfAbsent(
+						programName,
+						programWarning,
+						`-DisplayName ${programDisplay} -Group ${group} -Direction ${FIREWALL_DIRECTION} -Program ${program} ${common}`
+					),
+		port: createIfAbsent(
+			portName,
+			portWarning,
+			`-DisplayName ${portDisplay} -Group ${group} -Direction ${FIREWALL_DIRECTION} -LocalPort ${port} ${common}`
+		)
 	};
 }
 
@@ -193,7 +228,8 @@ export interface FirewallInfo {
  */
 export function firewallGuide(
 	status: ServerStatus | null,
-	identifier: string | null
+	identifier: string | null,
+	existsWarning?: FirewallRuleExistsWarning
 ): FirewallGuide {
 	if (status === null || status.platform !== 'windows') return { kind: 'hidden' };
 	if (!status.running) return { kind: 'notNeeded', reason: 'stopped' };
@@ -210,7 +246,10 @@ export function firewallGuide(
 			port: live.port,
 			bind: live.bind,
 			generation: status.generation ?? null,
-			commands: identifier === null ? null : firewallCommands(identifier, live.port, executablePath)
+			commands:
+				identifier === null
+					? null
+					: firewallCommands(identifier, live.port, executablePath, existsWarning)
 		}
 	};
 }
@@ -229,4 +268,23 @@ export function sameFirewallTarget(info: FirewallInfo, next: FirewallGuide): boo
 		next.info.bind === info.bind &&
 		next.info.executablePath === info.executablePath
 	);
+}
+
+/**
+ * Whether a copy may go ahead after the panel re-read the status
+ * (`refreshed`) for the target it showed (`shown`): `copy` only when the
+ * read is still the latest and describes the same listener. `stale` (the
+ * panel shows the updated values and asks to check them again) when the
+ * read was dropped - an apply or a newer read came after it, or it was
+ * older than what is shown (owner review on PR #463) - or the listener
+ * changed.
+ */
+export function firewallCopyCheck(
+	shown: FirewallInfo,
+	refreshed: StatusRefresh,
+	identifier: string | null
+): 'copy' | 'stale' | 'unavailable' {
+	if (refreshed.kind === 'unavailable') return 'unavailable';
+	if (refreshed.kind === 'superseded') return 'stale';
+	return sameFirewallTarget(shown, firewallGuide(refreshed.status, identifier)) ? 'copy' : 'stale';
 }

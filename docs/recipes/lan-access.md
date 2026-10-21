@@ -74,21 +74,36 @@ LAN アクセスを ON のままアプリを起動したとき、保存したポ
   - 実行ファイル単位（`-Program`）: このアプリが待ち受ける TCP ポートすべてが対象。
     ポートを変えても作り直さなくてよいが、許可の範囲は広い。
   - ポート単位（`-LocalPort`）: そのポートで待ち受けるプログラムすべてが対象。
-    ポートを変えたら、同じコマンドを（画面に出ている新しいポートで）もう一度実行する。
+    ポートを変えたときは、下の「既存のルールがあるとき」の手順で古いルールを直す。
   - どちらのコマンドも、形ごとに決まった `-Name`（`<identifier>.lan.tcp.program` /
-    `<identifier>.lan.tcp.port`。ポート番号は含めない）の既存ルールを
-    `Remove-NetFirewallRule -Name ... -ErrorAction SilentlyContinue` で消してから
-    `New-NetFirewallRule -Name ...` で作る 1 行になっている。`New-NetFirewallRule` は
+    `<identifier>.lan.tcp.port`。ポート番号は含めない）で作る。`New-NetFirewallRule` は
     `-Name` を省くと毎回ランダムな名前の新しいルールを作り、`-DisplayName` や
-    `-Group` では置き換わらないため、この形にしている。同じコマンドを再実行する・
-    ポートを変えて実行し直すと、同じ名前のルールが置き換わり、古いポートの許可は残らない。
-  - もう一方の形のルールは消さない。形を切り替えるときは古い形のルールを手で消す
-    （`Remove-NetFirewallRule -Group '<identifier>'` でこのアプリのルールを全部消せる）。
+    `-Group` では重複を防げないため、決まった名前にしている。
+  - コマンドは「同じ名前のルールが既にあれば、**何も変えずに**警告を出して止まり、
+    無ければ作る」1 行になっている:
+
+    ```powershell
+    $n = '<name>'; if (Get-NetFirewallRule -Name $n -ErrorAction SilentlyContinue) { Write-Warning '...' } else { New-NetFirewallRule -Name $n ... }
+    ```
+
+    既存のルールを消したり書き換えたりはしない。同じ名前のルールは、管理者が Block に
+    変えた・接続元を狭めた・同じ identifier の別インストールの exe を指している、
+    ということがあり得るため、名前だけを手がかりに消すと管理者の設定を壊す
+    （消してから作る形だと、作成に失敗したときに旧ルールも失う）。
+
+  - 既存のルールがあるとき（ポートを変えた・形を切り替えた・警告が出た）: 管理者が
+    `Get-NetFirewallRule -Name '<name>' | Format-List`（ポートや exe は
+    `| Get-NetFirewallPortFilter` / `| Get-NetFirewallApplicationFilter`）で中身を
+    確かめてから、自分で更新・削除する。不要なら `Remove-NetFirewallRule -Name '<name>'`
+    で消してから、画面のコマンドを実行し直す。この削除は画面のコピーするコマンドには
+    含めない。
   - ルール名（`-DisplayName`・`-Name`）とグループ（`-Group`）は `tauri.conf.json` の
     `identifier` から作る（派生アプリどうしで衝突しない。リネーム時に
     `identifier` を変えること）。
 - コピーの直前に状態を読み直し、表示していたポート・アドレス・実行ファイル
-  （`generation`）と変わっていたらコピーせずに表示を更新する。
+  （`generation`）と変わっていたらコピーせずに表示を更新する。適用中はコピーできず、
+  適用や新しい読み直しの後に届いた古い応答（読み直しの順番が古い、または
+  `generation` が表示中より小さい）は、表示にもコピーにも使わない。
 - 停止中、または待受が loopback（`127.0.0.0/8`）だけのときは「設定は不要」と表示し、
   コマンドは出さない。IPv6 の待受と Windows 以外では出さない。
 - 許可しても届かないことがある: 遮断のルールは許可より優先される（初回の

@@ -23,22 +23,30 @@
 		FIREWALL_PROFILE,
 		FIREWALL_PROTOCOL,
 		FIREWALL_REMOTE_ADDRESS,
+		firewallCopyCheck,
 		firewallGuide,
-		sameFirewallTarget,
 		type FirewallInfo
 	} from './firewallInfo';
+	import type { StatusRefresh } from './serverStatusRequests';
 
 	interface Props {
 		/** The last status snapshot the section loaded or applied. */
 		status: ServerStatus;
 		/**
-		 * Re-read the status (updating the section's snapshot) and return it,
-		 * or `null` when it could not be read.
+		 * Re-read the status (updating the section's snapshot when it is still
+		 * the latest read - see `serverStatusRequests.ts`).
 		 */
-		refresh: () => Promise<ServerStatus | null>;
+		refresh: () => Promise<StatusRefresh>;
+		/**
+		 * The section is applying new settings. No copy starts meanwhile, and
+		 * a copy already waiting for its re-read is dropped (the apply makes
+		 * that read stale), so a command is never copied for a listener the
+		 * apply is replacing (owner review on PR #463).
+		 */
+		applying: boolean;
 	}
 
-	let { status, refresh }: Props = $props();
+	let { status, refresh, applying }: Props = $props();
 
 	let identifier = $state<string | null>(null);
 	let identifierLoaded = $state(false);
@@ -52,7 +60,8 @@
 		});
 	});
 
-	const guide = $derived(firewallGuide(status, identifier));
+	const ruleExists = (name: string) => m['settings.firewallRuleExists']({ name });
+	const guide = $derived(firewallGuide(status, identifier, ruleExists));
 
 	type CopyKey =
 		'exe' | 'direction' | 'protocol' | 'port' | 'profile' | 'remote' | 'program' | 'portRule';
@@ -86,19 +95,20 @@
 	}
 
 	async function copy(key: CopyKey): Promise<void> {
-		if (guide.kind !== 'show' || copying) return;
-		const shown = guide.info;
+		const [current, busy] = untrack(() => [guide, copying || applying] as const);
+		if (current.kind !== 'show' || busy) return;
+		const shown = current.info;
 		copying = true;
 		copiedKey = null;
 		copyProblem = null;
 		try {
-			const next = await refresh();
-			if (next === null) {
-				copyProblem = 'unavailable';
-				return;
-			}
-			if (!sameFirewallTarget(shown, firewallGuide(next, identifier))) {
-				copyProblem = 'stale';
+			const check = firewallCopyCheck(
+				shown,
+				await refresh(),
+				untrack(() => identifier)
+			);
+			if (check !== 'copy') {
+				copyProblem = check;
 				return;
 			}
 			const text = textFor(key, shown);
@@ -122,7 +132,7 @@
 		class="banto-btn banto-btn--secondary firewall-copy"
 		aria-label={m['settings.firewallCopyLabel']({ item })}
 		onclick={() => copy(key)}
-		disabled={copying}
+		disabled={copying || applying}
 	>
 		{copiedKey === key ? m['settings.firewallCopied']() : m['settings.firewallCopy']()}
 	</button>

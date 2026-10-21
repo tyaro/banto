@@ -29,6 +29,7 @@
 	import { systemInfoStore } from './systemInfoStore.svelte';
 	import { connectivityScope, isIpv4Bind, pickPrimaryLanUrl } from './connectivityScope';
 	import FirewallInfoPanel from './FirewallInfoPanel.svelte';
+	import { ServerStatusRequests, type StatusRefresh } from './serverStatusRequests';
 
 	let serverStatus = $state<ServerStatus | null>(null);
 	let bindDraft = $state('127.0.0.1');
@@ -56,17 +57,27 @@
 		viewerPublicDraft = status.viewerPublic;
 	}
 
+	// Owner review on PR #463: the status responses below can arrive out of
+	// order (a slow read for the firewall copy after an apply). Every read and
+	// apply goes through this, so an older response never puts the screen
+	// back (`serverStatusRequests.ts`). Called from `$effect` too, so the
+	// read is untracked.
+	const statusRequests = new ServerStatusRequests(
+		() => untrack(() => serverStatus),
+		(status) => (serverStatus = status)
+	);
+
 	/** Initial load, and the retry button while it keeps failing. */
 	async function loadServerStatus(): Promise<void> {
 		loadingStatus = true;
 		loadError = null;
-		try {
-			applyStatusToDrafts(await getServerStatus());
-		} catch (err) {
-			loadError = isProviderError(err) ? err.message : String(err);
-		} finally {
-			loadingStatus = false;
+		const result = await statusRequests.refresh(getServerStatus);
+		if (result.kind === 'ok') {
+			applyStatusToDrafts(result.status);
+		} else if (result.kind === 'unavailable') {
+			loadError = isProviderError(result.error) ? result.error.message : String(result.error);
 		}
+		loadingStatus = false;
 	}
 
 	$effect(() => {
@@ -78,15 +89,11 @@
 	 * Issue #219: re-read the live status for the firewall information
 	 * (before it copies anything). Only `serverStatus` is replaced - like the
 	 * failed-apply path below, the drafts keep what the user typed. `null`
-	 * when the status could not be read.
+	 * `superseded` when an apply or a newer read came after it (nothing is
+	 * replaced then).
 	 */
-	async function refreshServerStatus(): Promise<ServerStatus | null> {
-		try {
-			serverStatus = await getServerStatus();
-			return serverStatus;
-		} catch {
-			return null;
-		}
+	function refreshServerStatus(): Promise<StatusRefresh> {
+		return statusRequests.refresh(getServerStatus);
 	}
 
 	// Issue #214: the drafts above differ from the last loaded/applied
@@ -110,9 +117,10 @@
 		applying = true;
 		serverError = null;
 		try {
-			applyStatusToDrafts(
-				await applyServerSettings(enabledDraft, bindDraft, portDraft, viewerPublicDraft)
+			const applied = await statusRequests.apply(() =>
+				applyServerSettings(enabledDraft, bindDraft, portDraft, viewerPublicDraft)
 			);
+			if (applied) applyStatusToDrafts(applied);
 		} catch (err) {
 			serverError = isProviderError(err) ? err.message : String(err);
 			// Issue #287: a failed apply may have stopped/restarted the server
@@ -121,11 +129,9 @@
 			// is replaced - the drafts keep what the user typed, so they can
 			// fix the value (e.g. a port in use) and retry; "変更を破棄" then
 			// resets them to this actual status.
-			try {
-				serverStatus = await getServerStatus();
-			} catch {
-				// Keep the previous status; the error above is already shown.
-			}
+			// An unavailable/superseded read keeps the previous status; the error
+			// above is already shown.
+			await statusRequests.refresh(getServerStatus);
 		} finally {
 			applying = false;
 		}
@@ -331,7 +337,7 @@
 				{/if}
 				<!-- Issue #219: what a firewall rule for the LIVE listener needs
 				     (Windows only; "not needed" while stopped or loopback-only). -->
-				<FirewallInfoPanel status={serverStatus} refresh={refreshServerStatus} />
+				<FirewallInfoPanel status={serverStatus} refresh={refreshServerStatus} {applying} />
 			{/if}
 		{:else}
 			<p class="note">{m['settings.serverDesktopOnly']()}</p>

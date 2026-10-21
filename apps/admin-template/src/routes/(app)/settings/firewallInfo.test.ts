@@ -99,39 +99,80 @@ describe('firewallRuleNames / firewallCommands', () => {
 		});
 	});
 
+	const WARN = (name: string) => `exists: ${name}`;
+
 	it('builds the per-executable and per-port commands', () => {
-		expect(firewallCommands(ID, 8721, EXE)).toEqual({
-			program: `Remove-NetFirewallRule -Name '${ID}.lan.tcp.program' -ErrorAction SilentlyContinue; New-NetFirewallRule -Name '${ID}.lan.tcp.program' -DisplayName '${ID} LAN (TCP-In, program)' -Group '${ID}' -Direction Inbound -Program '${EXE}' -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`,
-			port: `Remove-NetFirewallRule -Name '${ID}.lan.tcp.port' -ErrorAction SilentlyContinue; New-NetFirewallRule -Name '${ID}.lan.tcp.port' -DisplayName '${ID} LAN (TCP-In, port)' -Group '${ID}' -Direction Inbound -LocalPort 8721 -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`
+		const create = (name: string, rest: string) =>
+			`$n = '${name}'; if (Get-NetFirewallRule -Name $n -ErrorAction SilentlyContinue) { Write-Warning 'exists: ${name}' } else { New-NetFirewallRule -Name $n ${rest} }`;
+		expect(firewallCommands(ID, 8721, EXE, WARN)).toEqual({
+			program: create(
+				`${ID}.lan.tcp.program`,
+				`-DisplayName '${ID} LAN (TCP-In, program)' -Group '${ID}' -Direction Inbound -Program '${EXE}' -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`
+			),
+			port: create(
+				`${ID}.lan.tcp.port`,
+				`-DisplayName '${ID} LAN (TCP-In, port)' -Group '${ID}' -Direction Inbound -LocalPort 8721 -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`
+			)
 		});
 	});
 
-	it('uses the same -Name for any port, so a re-run replaces the old rule', () => {
+	it('uses the same -Name for any port, so a re-run never adds a duplicate', () => {
 		const a = firewallCommands(ID, 8721, EXE)!;
 		const b = firewallCommands(ID, 9000, EXE)!;
-		const nameOf = (command: string) => /New-NetFirewallRule -Name ('[^']*')/.exec(command)![1];
+		const nameOf = (command: string) => /^\$n = ('[^']*');/.exec(command)![1];
 		expect(nameOf(a.port)).toBe(nameOf(b.port));
 		expect(nameOf(a.port)).not.toContain('8721');
 		expect(nameOf(a.program!)).toBe(nameOf(b.program!));
 		expect(nameOf(a.port)).not.toBe(nameOf(a.program!));
 	});
 
-	it('removes the rule of the same name before creating it, on one line', () => {
+	// Owner review on PR #463: an existing rule of the same name may have been
+	// changed to Block, narrowed to some remote addresses, or point at another
+	// installation's executable. The command must leave it as it is - so it
+	// never removes anything, and creates only when no rule of that name
+	// exists. (Structure of the generated string; PowerShell is not run.)
+	it('never removes a rule, and creates only when no rule of the name exists', () => {
 		const { program, port } = firewallCommands(ID, 8721, EXE)!;
 		for (const command of [program!, port]) {
 			expect(command).not.toMatch(/[\r\n]/);
-			expect(command.indexOf('Remove-NetFirewallRule')).toBe(0);
-			expect(command.indexOf('Remove-NetFirewallRule')).toBeLessThan(
-				command.indexOf('New-NetFirewallRule')
-			);
-			const removed = /Remove-NetFirewallRule -Name ('[^']*')/.exec(command)![1];
-			expect(command).toContain(`New-NetFirewallRule -Name ${removed} `);
+			expect(command).not.toContain('Remove-NetFirewallRule');
+			expect(command).not.toContain('Set-NetFirewallRule');
+			const shape =
+				/^\$n = ('[^']*'); if \(Get-NetFirewallRule -Name \$n -ErrorAction SilentlyContinue\) \{ Write-Warning ('(?:[^']|'')*') \} else \{ (New-NetFirewallRule -Name \$n [^{}]*) \}$/.exec(
+					command
+				);
+			expect(shape).not.toBeNull();
+			const [, , warning, create] = shape!;
+			// The "exists" branch only warns; New-NetFirewallRule is in the else
+			// branch only, exactly once.
+			expect(warning).not.toContain('NetFirewallRule -Name $n');
+			expect(command.split('New-NetFirewallRule').length).toBe(2);
+			expect(command.indexOf('New-NetFirewallRule')).toBeGreaterThan(command.indexOf('} else {'));
+			expect(create).toContain('-Action Allow');
 		}
+	});
+
+	it('quotes the warning as a single-quoted literal, even with quotes in it', () => {
+		const { port } = firewallCommands(
+			ID,
+			8721,
+			null,
+			(name) => `Rule '${name}' exists; don’t $(calc) \`x`
+		)!;
+		expect(port).toContain(
+			`Write-Warning 'Rule ''${ID}.lan.tcp.port'' exists; don’’t $(calc) \`x' } else {`
+		);
+		// The default (English) warning names the rule in quotes, too.
+		expect(firewallCommands(ID, 8721, null)!.port).toContain(
+			`-Name ''${ID}.lan.tcp.port'' | Format-List`
+		);
+		// A warning that cannot be quoted builds no command at all.
+		expect(firewallCommands(ID, 8721, EXE, () => 'a\nb')).toBeNull();
 	});
 
 	it('quotes the names as PowerShell single-quoted literals', () => {
 		const { port } = firewallCommands('app.example-1', 8721, null)!;
-		expect(port).toContain("-Name 'app.example-1.lan.tcp.port'");
+		expect(port).toContain("$n = 'app.example-1.lan.tcp.port';");
 		expect(port).toContain("-Group 'app.example-1'");
 	});
 
