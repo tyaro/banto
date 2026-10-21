@@ -48,6 +48,7 @@
 	import { PANEL_DEFS } from '#lib/banto/panels.js';
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
+	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
@@ -557,7 +558,7 @@
 				>
 			</div>
 			<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
-				<DockHost {dock} panel={dockPanel} {onPopOut} />
+				<DockHost {dock} panel={dockPanel} {onPopOut} isEscapeBlocked={isDockEscapeBlocked} />
 			</div>
 		</section>
 	{/if}
