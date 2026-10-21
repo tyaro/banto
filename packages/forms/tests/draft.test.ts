@@ -70,12 +70,44 @@ describe('FormDraft raw text and commit', () => {
 		expect(draft.dirty).toBe(true);
 	});
 
-	it('commitAll commits every raw field and validates every schema field', () => {
+	it('commitAll is all or nothing: a failing field keeps every raw field uncommitted and lists every error', () => {
 		const draft = make({ title: '', qty: 1 });
 		draft.setRaw('qty', '3');
 		expect(draft.commitAll()).toBe(false);
-		expect(draft.values.qty).toBe(3);
+		expect(draft.values.qty).toBe(1);
+		expect(draft.raw.qty).toBe('3');
 		expect(Object.keys(draft.errors)).toEqual(['title']);
+		draft.setRaw('title', 'ok');
+		expect(draft.commitAll()).toBe(true);
+		expect(draft.values).toMatchObject({ title: 'ok', qty: 3 });
+		expect(draft.raw).toEqual({});
+	});
+
+	it('commitAll validates against the final values of every field (cross-field validator, #447 review)', () => {
+		const cross = createFormDraft({
+			key: 'cross',
+			schema: {
+				fields: [
+					{
+						name: 'start',
+						label: 'Start',
+						type: 'number',
+						validate: (v, values) => (Number(v) > Number(values.end) ? 'start > end' : null)
+					},
+					{ name: 'end', label: 'End', type: 'number' }
+				]
+			},
+			initial: { start: 1, end: 10 }
+		});
+		// start 5 is fine against the OLD end (10) but not against the new end (3).
+		cross.setRaw('start', '5');
+		cross.setRaw('end', '3');
+		expect(cross.commitAll()).toBe(false);
+		expect(cross.errors.start).toBe('start > end');
+		expect(cross.values).toEqual({ start: 1, end: 10 });
+		cross.setRaw('start', '2');
+		expect(cross.commitAll()).toBe(true);
+		expect(cross.values).toEqual({ start: 2, end: 3 });
 	});
 
 	it('setValue sets directly and drops the raw text', () => {

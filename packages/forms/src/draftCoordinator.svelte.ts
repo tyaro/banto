@@ -212,7 +212,10 @@ class Coordinator implements DraftCoordinator {
 			const value = source.capture!();
 			const dirty = source.isDirty();
 			untrack(() => {
-				if (!this.#disposed) this.#captures.set(source.key, { value, dirty });
+				// The callback may have registered a replacement under the same key.
+				if (!this.#disposed && this.#sources.get(source.key) === source) {
+					this.#captures.set(source.key, { value, dirty });
+				}
 			});
 		}
 		this.#syncRegistry();
@@ -227,22 +230,26 @@ class Coordinator implements DraftCoordinator {
 			if (this.#disposed) return null;
 			const all = new Set([...this.#sources.keys(), ...this.#captures.keys()]);
 			const wanted = keys === undefined ? [...all] : keys.filter((key) => all.has(key));
+			const targets = [...new Set(wanted)];
 			const dirty: { key: string; source: DraftSource | undefined }[] = [];
-			for (const key of new Set(wanted)) {
+			for (const key of targets) {
 				const source = this.#sources.get(key);
 				const isDirty = source ? source.isDirty() : this.#captures.get(key)?.dirty === true;
 				if (isDirty) dirty.push({ key, source });
 			}
 			if (dirty.length === 0) return null;
-			const handles = dirty.map(({ key }) => this.#owner.begin(key));
-			return { dirty, handles };
+			// Only the dirty ones are asked about / applied / discarded, but every
+			// wanted target (clean ones too) is tracked: it must still be clean at the
+			// end, and replacing / unregistering it makes the settle stale.
+			const handles = targets.map((key) => this.#owner.begin(key));
+			return { dirty, targets, handles };
 		});
 		if (!plan) return 'clean';
-		const { dirty, handles } = plan;
+		const { dirty, targets, handles } = plan;
 		const stale = () => handles.some((handle: RequestHandle) => !handle.isCurrent());
 		const allClean = () =>
 			untrack(() =>
-				dirty.every(({ key }) => {
+				targets.every((key) => {
 					const source = this.#sources.get(key);
 					return source ? !source.isDirty() : this.#captures.get(key)?.dirty !== true;
 				})
@@ -263,22 +270,23 @@ class Coordinator implements DraftCoordinator {
 				return allClean() ? 'discarded' : 'dirty-again';
 			}
 
-			let failed = false;
-			for (const { source } of dirty) {
+			// Start every apply first (each snapshots its own input at its start), then
+			// await them, so input typed during a slow apply is never saved by a later one.
+			const started = dirty.map(({ source }) => {
 				// A capture without its form cannot be applied.
-				if (!source) {
-					failed = true;
-					continue;
-				}
-				let ok = false;
+				if (!source) return Promise.resolve(false);
 				try {
-					ok = (await source.apply()) === true;
+					return Promise.resolve(source.apply()).then(
+						(r) => r === true,
+						() => false
+					);
 				} catch {
-					ok = false;
+					return Promise.resolve(false);
 				}
-				if (stale()) return 'stale';
-				if (!ok) failed = true;
-			}
+			});
+			const results = await Promise.all(started);
+			if (stale()) return 'stale';
+			const failed = results.some((ok) => !ok);
 			if (failed) return 'failed';
 			return allClean() ? 'applied' : 'dirty-again';
 		} finally {

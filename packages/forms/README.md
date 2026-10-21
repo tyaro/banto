@@ -86,10 +86,19 @@ pane の外（ページや controller）で `createFormDraft` を作り、pane �
 <!-- ページ（pane より長生きする側） -->
 <script lang="ts">
 	import { beforeNavigate } from '$app/navigation';
-	import { createDraftCoordinator, createFormDraft, guardUnsavedChanges } from '@banto/forms';
+	import {
+		createDraftCoordinator,
+		createFormDraft,
+		draftSourceFrom,
+		guardUnsavedChanges
+	} from '@banto/forms';
 
 	const coordinator = createDraftCoordinator({ message: () => m.unsaved_drafts() });
 	const memo = createFormDraft({ key: 'memo', schema, initial: loaded });
+	// FormDraft の登録は draft の寿命（ページ）に合わせる。pane の effect で登録すると、
+	// keepMounted なしの hide / tab-switch で pane が消えた dirty な draft が pending でも
+	// settle の対象でもなくなり、離脱時に未適用の入力を失う
+	$effect(() => coordinator.register(draftSourceFrom(memo, (values) => save(values))));
 	// ルーターの離脱でも確認するなら、画面のどこかで guard を mount しておく
 	guardUnsavedChanges({
 		isDirty: () => coordinator.pending,
@@ -111,12 +120,11 @@ pane の外（ページや controller）で `createFormDraft` を作り、pane �
 ```
 
 ```svelte
-<!-- pane（mount のたびに作り直される側） -->
+<!-- pane（mount のたびに作り直される側）: 欄を描くだけ。source の登録・解除はしない -->
 <script lang="ts">
-	import { DraftNumberField, draftSourceFrom } from '@banto/forms';
+	import { DraftNumberField } from '@banto/forms';
 
-	let { draft, coordinator } = $props();
-	$effect(() => coordinator.register(draftSourceFrom(draft, (values) => save(values))));
+	let { draft } = $props();
 </script>
 
 <DraftNumberField def={qtyField} {draft} />
@@ -129,8 +137,10 @@ pane の外（ページや controller）で `createFormDraft` を作り、pane �
   待機中に入力があれば `'dirty-again'`、適用の失敗は `'failed'`、待機中に対象が
   入れ替わった（再登録・登録解除・同じ key の別の settle・dispose）ら `'stale'`。
   中身を捨ててよいのは `'clean'` / `'applied'` / `'discarded'` のときだけ。
-- **自作フォーム**: `DraftSource`（`isDirty` / `apply` / `discard` と任意の `capture` /
-  `restore`）を書いて `register` すれば、BantoForm にしなくてよい。`capture([key])` で
+- **登録の寿命**: `FormDraft` の source は**ページ（draft の寿命）で**登録し、pane の mount /
+  unmount では消さない。非表示のままページを離れても pending で、`settle([key])` の対象になる。
+- **自作フォーム**: pane と一緒に生きて消える状態を持つ `DraftSource`（`isDirty` / `apply` /
+  `discard` と `capture` / `restore`）は pane の effect で `register` し、BantoForm にしなくてよい。`capture([key])` で
   取ったものは、同じ key の次の `register` で `restore` に渡る（rebind）。
 - **数値欄**: `DraftNumberField` は `type="text"` + `inputmode="decimal"` で、`1e` のような
   未完成の文字列も draft に残す（確定は blur / Enter）。スピンボタンは無い。

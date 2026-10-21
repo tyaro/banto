@@ -64,7 +64,11 @@ export interface FormDraft<V = Record<string, unknown>> {
 	 * Returns whether the field is valid now.
 	 */
 	commit(field: string): boolean;
-	/** Commit every raw field and validate every schema field. Returns whether all are valid. */
+	/**
+	 * Interpret every raw field into one final `values`, then validate every
+	 * schema field against it. All or nothing: when anything fails, nothing is
+	 * committed (raw stays) and `errors` lists every failing field.
+	 */
 	commitAll(): boolean;
 	/** A copy of the values and the revision at the START of an apply (commit first). */
 	snapshotForApply(): FormDraftSnapshot<V>;
@@ -263,13 +267,35 @@ class Draft implements FormDraft<Values> {
 
 	commitAll(): boolean {
 		return untrack(() => {
-			let ok = true;
-			const fields = new Set([
-				...Object.keys(this.#raw),
-				...this.#schema.fields.map((d) => d.name)
-			]);
-			for (const field of fields) ok = this.commit(field) && ok;
-			return ok;
+			const rawFields = Object.keys(this.#raw);
+			const names = new Set([...rawFields, ...this.#schema.fields.map((d) => d.name)]);
+			const errors: Record<string, string> = {};
+			// Interpret every raw field first, so that a validator that reads
+			// another field sees that field's final value, not a stale one.
+			let values = this.#values;
+			for (const field of rawFields) {
+				const parsed = parse(this.#def(field), this.#raw[field]!, this.#messages);
+				if (parsed.ok) values = { ...values, [field]: parsed.value };
+				else errors[field] = parsed.message;
+			}
+			for (const field of names) {
+				if (field in errors) continue;
+				const def = this.#def(field);
+				const message = def ? validateField(def, values[field], values, this.#messages) : null;
+				if (message) errors[field] = message;
+			}
+			if (Object.keys(errors).length > 0) {
+				// All or nothing: nothing is committed against a combination that failed.
+				this.#errors = errors;
+				return false;
+			}
+			this.#errors = {};
+			if (rawFields.length > 0) {
+				this.#values = values;
+				this.#raw = {};
+				this.#bump();
+			}
+			return true;
 		});
 	}
 

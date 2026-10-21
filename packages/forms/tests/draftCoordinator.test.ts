@@ -184,6 +184,61 @@ describe('DraftCoordinator.settle', () => {
 		expect(draft.raw.text).toBe('v2');
 	});
 
+	it('starts every apply before awaiting any: input typed into a later draft during a slow apply stays dirty (#447 review)', async () => {
+		const c = make();
+		const mk = (key: string) =>
+			createFormDraft({
+				key,
+				schema: { fields: [{ name: 'text', label: 'Text', type: 'text' }] },
+				initial: { text: 'committed' }
+			});
+		const first = mk('first');
+		const second = mk('second');
+		const gate = deferred<boolean>();
+		c.register(draftSourceFrom(first, () => gate.promise));
+		c.register(draftSourceFrom(second, async () => true));
+		first.setRaw('text', 'a1');
+		second.setRaw('text', 'b1');
+		const settling = c.settle(undefined, asker('apply').ask);
+		await new Promise((r) => setTimeout(r, 0));
+		second.setRaw('text', 'b2');
+		gate.resolve(true);
+		expect(await settling).toBe('dirty-again');
+		expect(second.baseline.text).toBe('b1');
+		expect(second.raw.text).toBe('b2');
+		expect(second.dirty).toBe(true);
+	});
+
+	it('a target that was clean at the start is still checked at the end: edited while another apply awaits -> dirty-again (#447 review)', async () => {
+		const c = make();
+		const b = fakeForm('b');
+		const gate = deferred<boolean>();
+		const slow = fakeForm('a', { applyResult: () => gate.promise });
+		c.register(slow.source);
+		c.register(b.source);
+		slow.state.text = 'edit';
+		const settling = c.settle(['a', 'b'], asker('apply').ask);
+		await new Promise((r) => setTimeout(r, 0));
+		b.state.text = 'typed-meanwhile';
+		gate.resolve(true);
+		expect(await settling).toBe('dirty-again');
+		expect(b.source.isDirty()).toBe(true);
+	});
+
+	it('a target that was clean at the start and is replaced while another apply awaits makes the settle stale (#447 review)', async () => {
+		const c = make();
+		const gate = deferred<boolean>();
+		const slow = fakeForm('a', { applyResult: () => gate.promise });
+		c.register(slow.source);
+		c.register(fakeForm('b').source);
+		slow.state.text = 'edit';
+		const settling = c.settle(['a', 'b'], asker('apply').ask);
+		await new Promise((r) => setTimeout(r, 0));
+		c.register(fakeForm('b').source);
+		gate.resolve(true);
+		expect(await settling).toBe('stale');
+	});
+
 	it('returns dirty-again when the discard did not make the form clean', async () => {
 		const c = make();
 		const a = fakeForm('a');
@@ -327,6 +382,26 @@ describe('DraftCoordinator capture / rebind (dock / undock keeps input, no promp
 		c.register(third.source);
 		expect(second.state.restored).toHaveLength(1);
 		expect(third.state.restored).toHaveLength(0);
+	});
+
+	it('a capture callback that re-registers the same key does not keep the old capture (#447 review)', () => {
+		const c = make();
+		const old = fakeForm('pane');
+		const replacement = fakeForm('pane');
+		old.state.text = 'old-unsaved';
+		const source: DraftSource = {
+			...old.source,
+			capture: () => {
+				c.register(replacement.source);
+				return old.source.capture!();
+			}
+		};
+		c.register(source);
+		c.capture(['pane']);
+		const next = fakeForm('pane');
+		c.register(next.source);
+		expect(next.state.restored).toHaveLength(0);
+		expect(next.state.text).toBe('committed');
 	});
 
 	it('a source without capture (FormDraft) holds nothing; the draft itself carries the input', () => {
