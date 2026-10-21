@@ -17,6 +17,7 @@
  *                audit-log **画面** + /dashboard を外し、`/monitor` を足して
  *                既定値を反転する（docs/design/display-preset-plan.md §3.2、Issue #190）。
  *   ※ scan-wedge は現状レシピのみ・未配線なので scaffold は一切触れない（plan §3）。
+ *     image-assets（ADR-0020 §6）も同じく未配線（アプリが依存しない）なので触れない。
  *
  * 各資産の削除は docs/recipes/remove-optional-assets.md（旧 README「3. オプション
  * 資産の削除」）の手動手順を 1 対 1 で自動化した

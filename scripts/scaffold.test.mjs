@@ -122,8 +122,10 @@ test('packages/ の全パッケージが scaffold の判断（remover / コア /
 	const CORE = new Set(['admin-core', 'forms', 'theme', 'grid-svelte', 'ui']);
 	// 資産 → 対応パッケージ（アプリ内資産のみの glass/commandPalette はパッケージ無し）
 	const ASSET_PACKAGES = new Set(['charts', 'dock-svelte', 'attachments', 'report', 'tree-svelte']);
-	// 意図的な除外（レシピのみ・未配線。scaffold.mjs 冒頭 doc と plan §3 の決定）
-	const EXCLUDED = new Set(['scan-wedge']);
+	// 意図的な除外（レシピのみ・未配線。scaffold.mjs 冒頭 doc と plan §3 の決定）。
+	// image-assets（ADR-0020 §6）もアプリが依存しない未配線のオプションで、外すアプリ側の配線が無い。
+	// パッケージ本体は他の remover と同じく同梱のまま（消すと docs の参照が rule docs-package-refs に落ちる）。
+	const EXCLUDED = new Set(['scan-wedge', 'image-assets']);
 
 	const source = fs.readFileSync(path.join(repoRoot, 'scripts/scaffold.mjs'), 'utf8');
 	const dirs = fs
