@@ -44,6 +44,27 @@
 - テンプレートを写すアプリ向け: 配色モード（ライト / ダーク / システム）のカードを外観設定から外し、ヘッダーの太陽 / 月のボタンにした（#458。保存値の形は変えない。文言キー `settings.modeLight` / `modeDark` / `modeSystem` を消し、`shell.switchToDarkMode` / `shell.switchToLightMode` を足した）。設定のカテゴリの切替は内容の上の横並びに、サイドバーの折りたたみボタンはロゴの左に移った（#455・#457）。visual の基準画像を持つ派生アプリは再生成が要る。
 - テンプレートを写すアプリ向け: 内蔵サーバーを起動時に自動で始めるとき、保存したポートが使用中なら +1〜+19 の範囲の空きポートで起動し、そのポートを `server.port` に保存して管理者にトーストで知らせる（監査は `settings_change`、`detail.reason: "portInUse"`）（#460）。固定のポートを前提にした運用（ファイアウォールの許可・ブックマーク）は見直す。設定画面の「保存して適用」は従来どおり自動で選ばない。
 
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: 今回はタグを打つ前の main の SHA での `workflow_dispatch` はしていない。代わりにリリース PR の head の `pull_request` の run と、タグの push の run で `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - リリース PR の head（`release/v6.8.0` の `35134f5`、`pull_request`）: [run 39587964047](https://github.com/tyaro/banto/actions/runs/39587964047)（success）。
+  - タグの push（`v6.8.0`、main の `85cb860`）: [run 39588604443](https://github.com/tyaro/banto/actions/runs/39588604443)（success）。
+  - 2 つの run の版は、Node.js 以外は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。Node.js は run とジョブで違う（`node-version: 24` で最新の 24.x を引くため）: リリース PR の run は 2 ジョブとも 24.21.0、タグの push の run は npm のジョブが 24.21.0、diagnostic のジョブが 24.22.0。
+
+    | 項目               | 版                                        |
+    | ------------------ | ----------------------------------------- |
+    | Node.js            | 24.21.0（タグの diagnostic のみ 24.22.0） |
+    | pnpm               | 10.33.0                                   |
+    | Svelte             | 5.57.2                                    |
+    | SvelteKit          | 3.1.0                                     |
+    | Vite               | 8.3.4                                     |
+    | vite-plugin-svelte | 7.3.1                                     |
+    | TypeScript         | 6.0.3                                     |
+    | Rust               | 1.99.1（58cf8f9c3 2026-10-13）            |
+
+  - 出所: Node.js は `node: v24.21.0`・`node: v24.22.0`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.2` など）、
+    Rust は `Setup Rust toolchain` の `rustc 1.99.1`。step summary の表はログに出ないため、同じ値を持つこれらの行を読んだ。
+
 ### Added
 
 - `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）（#423）。

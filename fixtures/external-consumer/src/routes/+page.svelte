@@ -9,8 +9,8 @@
 	// （存在の確認だけをする）。fixture が特定の版の API に縛られないようにするため。
 	// 例外: `@banto/ui` の `createToastStore` / `ToastHost`（#220 段階 2c）は v6.1.0 には無い。
 	// 次のリリースタグが切られるまで、タグの経路（v6.1.0 を依存にする）はここで落ちる。
-	// SHA の経路（PR・main）は通る。`@banto/image-assets`（#438）もパッケージごと v6.7.2 には
-	// 無いので、同じく次のリリースタグまではタグの経路で落ちる。
+	// SHA の経路（PR・main）は通る。`@banto/image-assets`（#438）は v6.8.0 で初めて入ったので、
+	// v6.8.0 より前のタグを依存にする経路ではここで落ちる。
 	// 新しく `.svelte.ts` を持つパッケージを足したら、ここに import を 1 行足す
 	// （verify:architecture の rule `external-consumer-fixture` が漏れを落とす）。
 	import { createListResource } from '@banto/admin-core';
