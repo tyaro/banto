@@ -223,6 +223,10 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
 2. `docs/` と README の `@banto/image-assets` の参照（template-scope §3 の行・本節・
    ADR-0020 など）を消すか、スコープ無しの書き方に直す（`verify:architecture` の
    rule `docs-package-refs` が実在しないパッケージの参照を落とす）。
+3. banto 本体のリポジトリで消す場合は、外部利用 fixture（`fixtures/external-consumer/`）の
+   `package.json` の依存・`src/routes/+page.svelte` の import・`vite.config.ts` の
+   `optimizeDeps.exclude` からも外す（`verify:architecture` の rule `external-consumer-fixture`。
+   scaffold した派生アプリでは fixture ごと除去済み）。
 
 ### システムメトリクス（`sysinfo`）を外す（ADR-0013、Issue #185）
 

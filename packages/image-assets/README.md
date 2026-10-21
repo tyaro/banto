@@ -13,7 +13,7 @@
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
 | PR-12 | 骨格: 形式（`IMAGE_FORMATS`）、上限の型と検証（`ImageImportLimits`・`validateImageImportLimits`）、エラーコード（`ImageAssetError`・`IMAGE_ASSET_ERROR_CODES`） | 入っている |
 | PR-13 | 取込の検査: decode 前のヘッダ検査（PNG / JPEG の形式・寸法・画素数）と decode 後の確認、hash（`crypto.subtle` があれば使い、無ければ自前の SHA-256。同じ値）    | 入っている |
-| PR-14 | 原本と URL の寿命: 原本 bytes の保持、hash による重複排除、object URL の共有と解放、pin / release、要求の失効の契約                                             | 未         |
+| PR-14 | 原本と URL の寿命: 原本 bytes の保持、hash による重複排除、object URL の共有と解放、pin / release、要求の失効の契約                                             | 入っている |
 
 計画は [docs/design/shared-primitives-upstream-plan.md](../../docs/design/shared-primitives-upstream-plan.md) §3.7・§5。
 
@@ -83,10 +83,59 @@ try {
   `maxEdge`（各辺に同じ上限）と `maxPixels` の判定は変わらない。decode 後の確認は入れ替わった寸法も一致と
   みなし、`transposed: true` で返す（`width` / `height` は表示される向きの寸法）。PNG の `eXIf` も同じ扱い。
 
+## 原本と URL の寿命（PR-14）
+
+```ts
+import { createImageStore, isImageAssetError } from '@banto/image-assets';
+
+const store = createImageStore({ maxTotalBytes: 256 * 1024 * 1024 }); // 総容量は必須
+const image = await store.add(file, limits, { key: 'background' }); // 新しい add が古い add を失効させる
+if (!image) return; // 失効した add は null（結果もエラーも出さない）
+const lease = store.acquireUrl(image.sha256); // <img src={lease.url}>
+// 表示をやめるとき: lease.release()（最後の release で revoke）
+const release = store.pin([image.sha256]); // 書き出し中は collect / delete / dispose で消えない
+try {
+	await exportProject(store.blob(image.sha256)); // 原本（ヘッダの MIME の Blob）
+} finally {
+	release();
+}
+store.collect(usedHashes); // 今の内容と Undo / Redo が参照する hash の和集合を渡す
+store.dispose(); // 画面を閉じるとき
+```
+
+| API                                                | 中身                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createImageStore({ maxTotalBytes, objectUrls? })` | 原本の store を作る。`maxTotalBytes`（保持する原本の合計バイト数の上限）は必須で、正の安全な整数でなければ `invalid-limits`（`field` は `options`・`maxTotalBytes`・`objectUrls`）。`objectUrls` は `{ create(blob), revoke(url) }` の注入（既定は `URL.createObjectURL` / `URL.revokeObjectURL`）                                                                        |
+| `add(input, limits, { key?, decode? })`            | `inspectImage` と同じ検査を通し、原本を保持する。入力（呼び出し側のメモリ）は 1 度だけ複製し、ヘッダの MIME の `Blob` として持つ（再 encode しない）。同じ内容（SHA-256 が同じ）は 1 件で、既に持っている metadata を返す。失敗は検査のコード・`store-full`・`store-disposed`（dispose 後の呼び出し）。**失効した add は `null`** で、保持も失敗の報告もしない            |
+| `busy(key)` / `cancel(key)`                        | `key` の add が処理中か（reactive）/ `key` の add を失効させる（対象が変わったとき）                                                                                                                                                                                                                                                                                      |
+| `has(hash)` / `metadata(hash)` / `blob(hash)`      | 保持しているか（reactive）/ metadata（凍結済み）/ 原本の `Blob`。無い hash は `unknown-asset`（`detail.hash`）                                                                                                                                                                                                                                                            |
+| `count` / `totalBytes` / `disposed`                | 件数 / 合計バイト数 / dispose 済みか（どれも reactive）                                                                                                                                                                                                                                                                                                                   |
+| `acquireUrl(hash)`                                 | object URL の利用を 1 つ借りる（`{ url, release() }`）。URL は原本ごとに 1 つを共有し、最初の借用で作り、**最後の `release()` で revoke** する。`release()` の 2 回目は何もしない。注入した `create` の実行中は原本を貸出中として扱い（`delete` / `collect` / `dispose` で消えない）、その中から同じ原本の `acquireUrl` は `url-pending`（`create` が失敗すれば元に戻す） |
+| `pin(hashes)`                                      | 原本を `collect` / `delete` / `dispose` から守り、解除の関数を返す（2 回目は何もしない）。全 hash を確かめてから pin する（1 つでも無ければ何も pin せず `unknown-asset`）。同じ hash を 2 回渡しても 1 回の pin                                                                                                                                                          |
+| `collect(retained)` / `delete(hash)`               | `retained` に無い・pin されていない・URL を貸していない原本を捨てる（件数を返す）/ 1 件を捨てる（pin 中・URL 貸出中・無い hash は `false`）                                                                                                                                                                                                                               |
+| `importFrom(source, hash)`                         | 別の store の原本をこちらでも持つ（同じ不変の `Blob` を共有し、bytes は複製しない。重複排除・総容量の判定はこちらの store）。取込の候補を一時 store に置き、採用したときだけ本体へ移す使い方のため                                                                                                                                                                        |
+| `dispose()`                                        | 処理中の add をすべて失効させ、pin も URL の貸出も無い原本を捨てる。pin・貸出中の原本は読めるまま残り、最後の解除で消える。以後の `add` / `importFrom` / `pin` / `acquireUrl` は `store-disposed`（`collect` / `delete` / `cancel` / 2 回目の `dispose` は何もしない）                                                                                                    |
+
+- **要求の失効**: 処理中の add は、admin-core の `createRequestOwner` と同じ契約の内部の写し
+  （`src/requestOwner.svelte.ts`）が持つ。パッケージ間の import は禁止なので（docs/conventions.md §4・§8）、
+  admin-core の契約の表（`packages/admin-core/tests/contracts/request-owner.json`）を自分のテストで流してずれを止める。
+  同じ `key` の新しい add・`cancel(key)`・`dispose()` で失効する。`key` の無い add は `dispose()` でだけ失効する。
+- **再入**: `revoke` などの外部の関数を呼ぶ前に store の状態を確定する（`revoke` の中から `delete` を呼んでも
+  正しく動く）。
+- **`$effect` から呼んでよい**: 書き込む method は reactive な版を追跡して読まないので、`$effect` の中から
+  呼んでも effect が自分を再実行し続けない。
+- **失敗はすべて `ImageAssetError`**: ただし `importFrom` に store 以外を渡したときは `TypeError`（バイト列の型を
+  間違えたときと同じ扱い）。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ（docs/conventions.md §4・§5）。
-SHA-256 も自前（docs/conventions.md §3。ADR-0020 §4）。`.svelte.ts` は持たないので `optimizeDeps.exclude`（docs/conventions.md §14）は要らない。
+SHA-256 も自前（docs/conventions.md §3。ADR-0020 §4）。
+
+**`.svelte.ts` を持つ**（store と要求の所有者が `$state` を使う）。使うアプリは `vite.config.ts` の
+`optimizeDeps.exclude` に `@banto/image-assets` を足す（docs/conventions.md §14、ADR-0007。足さないと派生アプリの
+dev が 500 になる）。テンプレートのアプリは依存しないので、`apps/admin-template/vite.config.ts` には無い。
+外部利用 fixture（`fixtures/external-consumer/`）には足してある。
 
 ## 導入方法
 

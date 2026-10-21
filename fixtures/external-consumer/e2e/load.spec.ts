@@ -1,7 +1,7 @@
 /**
  * 外部利用 fixture（#271）の合格条件:
  *
- * 1. `data-testid="banto-loaded"` が描画される（`.svelte.ts` を持つ 6 パッケージと
+ * 1. `data-testid="banto-loaded"` が描画される（`.svelte.ts` を持つ 7 パッケージと
  *    theme のモジュールグラフをブラウザが読み込み終えた）。
  * 2. その間に `console.error` と `pageerror` が 1 件も出ない（504 の
  *    Outdated Optimize Dep・動的 import の失敗はここに出る）。
@@ -29,7 +29,7 @@ test('@banto/* を Git 依存で導入した dev サーバでページが描画�
 			.first()
 			.waitFor({ timeout: 90_000 });
 		await expect(page.getByTestId('banto-loaded')).toHaveText(
-			'function,function,function,function,function,function,function,function,function,light',
+			'function,function,function,function,function,function,function,function,function,function,0,light',
 			{ timeout: 5_000 }
 		);
 		// @banto/ui のストア（.svelte.ts）が積んだトーストが ToastHost に描画される。

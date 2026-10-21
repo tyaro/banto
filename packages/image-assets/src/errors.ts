@@ -29,8 +29,20 @@ export const IMAGE_ASSET_ERROR_CODES = [
 	'decode-failed',
 	/** The decoded size differs from what the header said (PR-13). */
 	'dimensions-mismatch',
-	/** Keeping the original would go over the store's total size (PR-14). */
-	'store-full'
+	/**
+	 * Keeping the original would go over the store's total size (PR-14). `detail.limit` is
+	 * `maxTotalBytes`, `detail.actual` the total it would have become.
+	 */
+	'store-full',
+	/** The store holds no original with that hash (PR-14). `detail.hash` names it. */
+	'unknown-asset',
+	/** The store was disposed before the call (PR-14). */
+	'store-disposed',
+	/**
+	 * `acquireUrl` was called for an original whose URL is still being created, from inside the
+	 * injected `create` (PR-14). `detail.hash` names it.
+	 */
+	'url-pending'
 ] as const;
 
 export type ImageAssetErrorCode = (typeof IMAGE_ASSET_ERROR_CODES)[number];
@@ -49,6 +61,8 @@ export interface ImageAssetErrorDetail {
 	 */
 	readonly width?: number;
 	readonly height?: number;
+	/** For `unknown-asset` / `url-pending`: the hash that was asked for (PR-14). */
+	readonly hash?: string;
 }
 
 export class ImageAssetError extends Error {
