@@ -205,6 +205,11 @@ reimplementing it, the crate's `system` feature scopes it down, the crate is
 mature, and the binary-size delta was measured in the implementing PR). It is
 scoped to `banto-admin-services`'s opt-in `system-metrics` feature; the
 `SystemMetrics` type itself always compiles, feature or not.
+The decision to add `windows-sys` and `embed-resource` as direct dependencies of
+the elevated helper for the Windows firewall allowance (Issue #219 stage 2) is
+[ADR-0021](adr/0021-firewall-elevated-helper.en.md) (the third; pinned to the
+versions already in `Cargo.lock` transitively, so no crate is added to the
+build; limited to the helper and its launcher module; Proposed).
 
 ## 4. No reverse dependency from core → options [machine-checked]
 

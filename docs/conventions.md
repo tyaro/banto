@@ -171,6 +171,10 @@ System Info カードの CPU/メモリ取得に `sysinfo` を feature 限定で�
 増分を実装 PR で測定 - を根拠に採用。`banto-admin-services` の opt-in feature
 `system-metrics` に限定し、`SystemMetrics` 型自体は feature 無しでも常時
 コンパイルされる）。
+Windows のファイアウォールの許可（Issue #219 段階 2）で昇格する補助プログラムに
+`windows-sys` と `embed-resource` を直接の依存として足す判断は
+[ADR-0021](adr/0021-firewall-elevated-helper.md)（3 件目。既に `Cargo.lock` に推移的に入っている版に
+揃え、ビルドに入る crate は増えない。補助プログラムと起動のモジュールに限る。Proposed）。
 
 ## 4. コア → オプションの逆依存禁止 [機械検査済み]
 

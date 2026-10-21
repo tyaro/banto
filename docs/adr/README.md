@@ -61,6 +61,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0018](0018-shared-ui-package.md)                   | 汎用 UI 部品は新パッケージ `@banto/ui` へ段階的に切り出し、文言・アイコン・状態・操作は呼び出し側から注入する                                                                                   | Accepted（段階 1〜5 完了） |
 | [0019](0019-audit-spool.md)                         | DB に書けない監査は保留ファイルに退避し、復旧後に `pending_id` で 1 回だけ流し込む                                                                                                              | Accepted                   |
 | [0020](0020-image-assets-package.md)                | ブラウザ側の画像の原本・取込検査・URL 寿命は、新しいオプションのパッケージ `@banto/image-assets` に置く（上限は consumer が渡す・エラーコードで返す・hash は `crypto.subtle` か自前の SHA-256） | Accepted                   |
+| [0021](0021-firewall-elevated-helper.md)            | 段階 2 のファイアウォールの許可は、UAC で昇格する補助プログラムが実行ファイル単位のルール 1 本だけを足し外しする                                                                                | Proposed                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
