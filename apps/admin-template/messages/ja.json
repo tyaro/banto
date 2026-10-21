@@ -318,6 +318,7 @@
   "settings.portFallbackStarted": "ポート {requestedPort} が使用中のため、ポート {port} でLANアクセスを開始しました。次回の起動からもポート {port} を使います。",
   "settings.portFallbackNotSaved": "ポート {requestedPort} が使用中のため、ポート {port} でLANアクセスを開始しましたが、新しいポートを保存できませんでした。設定の「サーバ・接続」でポートを保存してください。",
   "settings.portFallbackExhausted": "LANアクセスを開始できませんでした。ポート {requestedPort} が使用中で、{lastPort} までのポートもすべて使用中です。設定の「サーバ・接続」で別のポートを指定してください。",
+  "settings.portFallbackNoUsablePort": "LANアクセスを開始できませんでした。ポート {requestedPort} が使用中で、{lastPort} までに使えるポートが見つかりませんでした（使用中または OS が予約しているポートを含みます）。設定の「サーバ・接続」で別のポートを指定してください。",
   "settings.autologinHeading": "自動ログイン",
   "settings.autologinDesc": "起動時に指定アカウントで自動的にログインします（デスクトップのみ）。",
   "settings.autologinUnneeded": "ログイン不要モードでは自動ログインは不要です。",

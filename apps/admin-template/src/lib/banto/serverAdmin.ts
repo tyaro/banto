@@ -48,7 +48,7 @@ export interface ServerStatus {
  */
 export type ServerPortNotice =
 	| { kind: 'fallback'; requestedPort: number; port: number; saved: boolean }
-	| { kind: 'exhausted'; requestedPort: number; lastPort: number };
+	| { kind: 'exhausted'; requestedPort: number; lastPort: number; allInUse: boolean };
 
 const ERROR_KINDS = new Set([
 	'not_found',

@@ -1819,10 +1819,16 @@ enum ServerPortNotice {
         port: u16,
         saved: bool,
     },
-    /// `requested_port` and every port up to `last_port` were in use, so the
-    /// server did not start.
+    /// `requested_port` was in use and no port up to `last_port` could be
+    /// bound, so the server did not start. `all_in_use` is true when every
+    /// candidate was in use, false when some failed for another reason (e.g.
+    /// a port the OS reserves) - the text must not claim "all in use" then.
     #[serde(rename_all = "camelCase")]
-    Exhausted { requested_port: u16, last_port: u16 },
+    Exhausted {
+        requested_port: u16,
+        last_port: u16,
+        all_in_use: bool,
+    },
 }
 
 /// Render `data` (a LAN access URL) as an inline SVG QR code (spec §11.4).
@@ -2244,7 +2250,8 @@ async fn save_server_config_locked(
 ///
 /// - The saved port is in use (`AddrInUse`, and only then): the ports right
 ///   behind it are tried in order (`banto_server::PORT_FALLBACK_SPAN`, never
-///   past 65535; never port 0, a random port or the OS's ephemeral range). The
+///   past 65535; never port 0 or a random port - the range follows the saved
+///   port, so it is not kept out of the OS's ephemeral range). The
 ///   bind address is never changed.
 /// - Another port was chosen: `server.port` is saved as that port (bind ->
 ///   save -> serve, the same order as `server_apply`, Issue #294 review - the
@@ -2257,8 +2264,9 @@ async fn save_server_config_locked(
 ///   `settings_change` / `settings`, no actor (nobody is logged in yet - the
 ///   same shape as the startup `restore_applied` entry), `origin: "tauri"`,
 ///   `detail.reason: "portInUse"`.
-/// - Every candidate in use: no server, as before, and an `Exhausted` notice
-///   saying the saved port was in use. Any other bind failure (permission,
+/// - No candidate could be bound: no server, as before, and an `Exhausted`
+///   notice saying the saved port was in use (`all_in_use` tells whether every
+///   candidate was in use too, or some failed for another reason). Any other bind failure (permission,
 ///   address not available): no server, no notice, logged as before.
 ///
 /// Called before `AppState` exists, while nothing else can write the
@@ -2279,15 +2287,20 @@ async fn bind_saved_server_at_launch(
             requested,
             last_tried,
             error,
+            unavailable,
         }) => {
             eprintln!(
-                "banto: 起動時のLANアクセス開始に失敗しました（保存されたポート {requested} が使用中で、{last_tried} までのポートもすべて使用中です）: {error}"
+                "banto: 起動時のLANアクセス開始に失敗しました（保存されたポート {requested} が使用中で、{last_tried} までに使えるポートがありませんでした）: {error}"
             );
+            for (port, err) in &unavailable {
+                eprintln!("banto: ポート {port} は使用中以外の理由で使えませんでした: {err}");
+            }
             return (
                 None,
                 Some(ServerPortNotice::Exhausted {
                     requested_port: requested,
                     last_port: last_tried,
+                    all_in_use: unavailable.is_empty(),
                 }),
             );
         }
@@ -7052,12 +7065,14 @@ mod tests {
             serde_json::to_value(ServerPortNotice::Exhausted {
                 requested_port: 8721,
                 last_port: 8740,
+                all_in_use: false,
             })
             .unwrap(),
             serde_json::json!({
                 "kind": "exhausted",
                 "requestedPort": 8721,
                 "lastPort": 8740,
+                "allInUse": false,
             })
         );
     }

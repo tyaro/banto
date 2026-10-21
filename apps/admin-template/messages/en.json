@@ -318,6 +318,7 @@
   "settings.portFallbackStarted": "Port {requestedPort} was in use, so LAN access started on port {port}. Port {port} will also be used from the next launch.",
   "settings.portFallbackNotSaved": "Port {requestedPort} was in use, so LAN access started on port {port}, but the new port could not be saved. Save a port under Settings > Server & Connectivity.",
   "settings.portFallbackExhausted": "LAN access could not start: port {requestedPort} is in use, and so is every port up to {lastPort}. Choose another port under Settings > Server & Connectivity.",
+  "settings.portFallbackNoUsablePort": "LAN access could not start: port {requestedPort} is in use, and no usable port was found up to {lastPort} (some are in use or reserved by the OS). Choose another port under Settings > Server & Connectivity.",
   "settings.autologinHeading": "Auto login",
   "settings.autologinDesc": "Automatically log in with a specified account at startup (desktop only).",
   "settings.autologinUnneeded": "Auto login is not needed in login-not-required mode.",

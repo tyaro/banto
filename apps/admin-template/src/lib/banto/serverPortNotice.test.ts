@@ -48,11 +48,22 @@ describe('serverPortNoticeMessage', () => {
 		const exhausted = serverPortNoticeMessage({
 			kind: 'exhausted',
 			requestedPort: 8721,
-			lastPort: 8740
+			lastPort: 8740,
+			allInUse: true
 		});
-		expect(new Set([saved, notSaved, exhausted]).size).toBe(3);
-		expect(exhausted).toContain('8721');
-		expect(exhausted).toContain('8740');
+		// Some candidate failed for another reason (e.g. reserved by the OS):
+		// the text must not claim every port was in use.
+		const noUsable = serverPortNoticeMessage({
+			kind: 'exhausted',
+			requestedPort: 8721,
+			lastPort: 8740,
+			allInUse: false
+		});
+		expect(new Set([saved, notSaved, exhausted, noUsable]).size).toBe(4);
+		for (const text of [exhausted, noUsable]) {
+			expect(text).toContain('8721');
+			expect(text).toContain('8740');
+		}
 	});
 });
 
@@ -83,7 +94,8 @@ describe('notifyServerPortNoticeOnce', () => {
 		});
 		resetServerPortNoticeForTest();
 		await notifyServerPortNoticeOnce({
-			getStatus: async () => status({ kind: 'exhausted', requestedPort: 8721, lastPort: 8740 }),
+			getStatus: async () =>
+				status({ kind: 'exhausted', requestedPort: 8721, lastPort: 8740, allInUse: true }),
 			notify
 		});
 		expect(notify.mock.calls.map((call) => call[0])).toEqual(['warning', 'error']);

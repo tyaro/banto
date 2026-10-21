@@ -18,10 +18,12 @@ export function serverPortNoticeMessage(notice: ServerPortNotice): string {
 	// Port numbers as plain strings: no locale digit grouping ("8,721").
 	const requestedPort = String(notice.requestedPort);
 	if (notice.kind === 'exhausted') {
-		return m['settings.portFallbackExhausted']({
-			requestedPort,
-			lastPort: String(notice.lastPort)
-		});
+		// Not "all in use" when some candidate failed for another reason
+		// (e.g. a port the OS reserves).
+		const message = notice.allInUse
+			? m['settings.portFallbackExhausted']
+			: m['settings.portFallbackNoUsablePort'];
+		return message({ requestedPort, lastPort: String(notice.lastPort) });
 	}
 	const port = String(notice.port);
 	return notice.saved

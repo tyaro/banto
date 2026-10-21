@@ -180,12 +180,14 @@ fn bound_from(listener: TcpListener) -> Result<BoundServer, BantoError> {
 /// How many ports after the requested one [`bind_with_port_fallback`] tries
 /// (requested + 1 ..= requested + 19, never past 65535).
 ///
-/// A small, fixed range right behind the configured port - not port 0, a
-/// random port or the OS's ephemeral range - so the port the server ends up
-/// on stays predictable: an administrator can tell which ports to allow or
-/// look for, the chosen port is saved and reused on the next launch (other
-/// devices' bookmarks and QR codes keep working), and it never collides with
-/// the ephemeral range outgoing connections draw from. 19 extra ports (20
+/// A small, fixed range right behind the configured port - not port 0 (an
+/// OS-assigned port) or a random port - so the port the server ends up on
+/// stays predictable: an administrator can tell which ports to allow or look
+/// for, and the chosen port is saved and reused on the next launch (other
+/// devices' bookmarks and QR codes keep working). The range is relative to
+/// the configured port, so it is NOT kept out of the OS's ephemeral range: a
+/// configured port near it (e.g. 49151 or 50000) yields candidates inside it.
+/// 19 extra ports (20
 /// candidates in all) is enough to step over another copy of the app or a
 /// couple of unrelated services on neighbouring ports without wandering far.
 pub const PORT_FALLBACK_SPAN: u16 = 19;
@@ -193,13 +195,17 @@ pub const PORT_FALLBACK_SPAN: u16 = 19;
 /// Why [`bind_with_port_fallback`] could not bind.
 #[derive(Debug)]
 pub enum PortFallbackError {
-    /// The requested port and every port of the fallback range
-    /// (`requested + 1 ..= last_tried`) were in use. `error` is the bind
-    /// error for the requested port.
+    /// The requested port was in use and no port of the fallback range
+    /// (`requested + 1 ..= last_tried`) could be bound. `error` is the bind
+    /// error for the requested port. `unavailable` lists the candidates that
+    /// failed for a reason other than being in use (e.g. a port the OS
+    /// reserves, which Windows reports as access denied), with their errors;
+    /// empty means every candidate was in use.
     Exhausted {
         requested: u16,
         last_tried: u16,
         error: BantoError,
+        unavailable: Vec<(u16, BantoError)>,
     },
     /// The bind failed for a reason other than the port being in use
     /// (permission, address not available, unparseable address, ...). No other
@@ -251,6 +257,7 @@ async fn bind_with_port_fallback_span(
         Err(err) => return Err(PortFallbackError::Failed(bind_error(&addr, &err))),
     };
     let mut last_tried = config.port;
+    let mut unavailable = Vec::new();
     for port in fallback_ports(config.port, span) {
         // `fallback_ports` never yields more than u16::MAX.
         let port = port as u16;
@@ -258,17 +265,20 @@ async fn bind_with_port_fallback_span(
         let candidate = format!("{}:{}", config.bind, port);
         match TcpListener::bind(&candidate).await {
             Ok(listener) => return bound_from(listener).map_err(PortFallbackError::Failed),
-            // In use - or some other failure on this one port (e.g. a port the
-            // OS reserves, which Windows reports as access denied): skip it.
+            Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => continue,
+            // Some other failure on this one port (e.g. a port the OS reserves,
+            // which Windows reports as access denied): skip it, but keep the
+            // error so the caller does not report the range as "all in use".
             // The requested port failed only with "in use", so the address
             // itself is fine and a neighbouring port may still work.
-            Err(_) => continue,
+            Err(err) => unavailable.push((port, bind_error(&candidate, &err))),
         }
     }
     Err(PortFallbackError::Exhausted {
         requested: config.port,
         last_tried,
         error: first_err,
+        unavailable,
     })
 }
 
@@ -742,22 +752,21 @@ Connection: close
         bind(config).await.expect("port is free after drop");
     }
 
-    /// Hold `count` consecutive loopback ports (retrying with a new OS-picked
-    /// base when a neighbour happens to be taken by something else).
+    /// Hold `count` consecutive loopback ports in 20000-29999 (retrying with
+    /// another base when a neighbour happens to be taken by something else).
+    /// Not next to an OS-picked port: these tests release and re-bind the
+    /// ports around the base, and Windows hands out ephemeral ports
+    /// sequentially, so a parallel test's `port: 0` bind could take one of
+    /// them in between. Both OS ephemeral ranges (Windows 49152+, Linux
+    /// 32768+) are well above this range.
     async fn hold_consecutive_ports(count: u16) -> Vec<BoundServer> {
-        for _ in 0..50 {
-            let first = bind(ServerConfig {
-                bind: "127.0.0.1".to_string(),
-                port: 0,
-            })
-            .await
-            .unwrap();
-            let base = first.local_addr().port();
-            if u32::from(base) + u32::from(count) > u32::from(u16::MAX) {
-                continue;
-            }
-            let mut held = vec![first];
-            for offset in 1..count {
+        let start = 20_000 + (std::process::id() % 2_000) as u16 * 5;
+        let bases = (start..30_000)
+            .step_by(23)
+            .chain((20_000..start).step_by(23));
+        for base in bases {
+            let mut held = Vec::new();
+            for offset in 0..count {
                 match bind(ServerConfig {
                     bind: "127.0.0.1".to_string(),
                     port: base + offset,
@@ -831,10 +840,12 @@ Connection: close
                 requested,
                 last_tried,
                 error,
+                unavailable,
             } => {
                 assert_eq!(requested, port);
                 assert_eq!(last_tried, port + 2);
                 assert!(error.to_string().contains(&port.to_string()));
+                assert!(unavailable.is_empty(), "every candidate was in use");
             }
             other => panic!("expected Exhausted, got {other:?}"),
         }
