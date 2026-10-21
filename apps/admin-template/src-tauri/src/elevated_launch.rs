@@ -35,9 +35,14 @@ pub(crate) enum LaunchError {
     #[cfg_attr(not(windows), allow(dead_code))]
     NoProcessHandle,
     /// `WaitForSingleObject` returned something else than `WAIT_OBJECT_0`
-    /// (the value is what it returned).
+    /// and `WAIT_FAILED` (e.g. `WAIT_ABANDONED`): the wait status, which is
+    /// not an OS error.
     #[cfg_attr(not(windows), allow(dead_code))]
     Wait(u32),
+    /// `WaitForSingleObject` returned `WAIT_FAILED` (`os error` from
+    /// `GetLastError`).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    WaitFailed(u32),
     /// `GetExitCodeProcess` failed (`os error`).
     #[cfg_attr(not(windows), allow(dead_code))]
     ExitCode(u32),
@@ -56,8 +61,10 @@ impl LaunchError {
     /// The OS error code, when there is one.
     pub(crate) fn os_error(&self) -> Option<u32> {
         match self {
-            Self::ShellExecute(code) | Self::Wait(code) | Self::ExitCode(code) => Some(*code),
-            Self::InvalidToken(_) | Self::NoProcessHandle | Self::Unsupported => None,
+            Self::ShellExecute(code) | Self::WaitFailed(code) | Self::ExitCode(code) => Some(*code),
+            Self::InvalidToken(_) | Self::NoProcessHandle | Self::Wait(_) | Self::Unsupported => {
+                None
+            }
         }
     }
 }
@@ -89,7 +96,7 @@ pub(crate) fn parameters_from_tokens(tokens: &[&str]) -> Result<String, LaunchEr
 #[cfg(windows)]
 pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32, LaunchError> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, WAIT_FAILED, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, WaitForSingleObject, INFINITE,
     };
@@ -132,7 +139,10 @@ pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32
 
     // SAFETY: a valid process handle from `ShellExecuteExW` (closed below).
     let wait = unsafe { WaitForSingleObject(info.hProcess, INFINITE) };
-    let result = if wait != WAIT_OBJECT_0 {
+    let result = if wait == WAIT_FAILED {
+        // SAFETY: only reads why the call just before failed.
+        Err(LaunchError::WaitFailed(unsafe { GetLastError() }))
+    } else if wait != WAIT_OBJECT_0 {
         Err(LaunchError::Wait(wait))
     } else {
         let mut exit_code: u32 = 0;
@@ -228,9 +238,14 @@ mod tests {
         assert!(LaunchError::ShellExecute(ERROR_CANCELLED).is_cancelled());
         assert!(!LaunchError::ShellExecute(2).is_cancelled());
         assert!(!LaunchError::Wait(ERROR_CANCELLED).is_cancelled());
+        assert!(!LaunchError::WaitFailed(ERROR_CANCELLED).is_cancelled());
         assert!(!LaunchError::ExitCode(ERROR_CANCELLED).is_cancelled());
         assert_eq!(LaunchError::ShellExecute(5).os_error(), Some(5));
         assert_eq!(LaunchError::NoProcessHandle.os_error(), None);
+        // WAIT_FAILED carries GetLastError; other wait statuses are no OS error.
+        assert_eq!(LaunchError::WaitFailed(6).os_error(), Some(6));
+        assert_eq!(LaunchError::Wait(0xffff_ffff).os_error(), None);
+        assert_eq!(LaunchError::Wait(0x80).os_error(), None);
     }
 
     /// A malformed argument starts nothing (`ShellExecuteExW` is not reached).
