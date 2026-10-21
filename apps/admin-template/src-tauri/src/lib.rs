@@ -44,7 +44,8 @@ use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
     bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_urls_for_bind,
     reach_check_router, static_router, with_security_headers, AuthState, BoundServer, GrantKind,
-    PortFallbackError, ReachCheckState, RunningServer, ServerConfig, ServerEvent,
+    PortFallbackError, ReachCheckState, ReachCheckStatus, ReachIssue, ReachIssueError, ReachTarget,
+    RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -135,11 +136,11 @@ struct AppState {
     /// The LAN reach check's one-time-token store (Issue #219 stage 1,
     /// `docs/design/lan-reach-check-design.md`). One per process, shared by
     /// every listener's `POST /api/reach-check` router; memory only. Its
-    /// generation follows [`ServerSlot::generation`] (starts at 0 like it).
-    /// PR-C1 only wires the route; issuance (`reach_check_issue`), status and
-    /// the revocation in `server_apply` (`begin_generation` under the
-    /// `server` lock) come in PR-C2 - until then no token exists and the
-    /// route can only answer `unusable`.
+    /// generation follows [`ServerSlot::generation`] (starts at 0 like it):
+    /// `server_apply` calls `begin_generation` with the bumped value under
+    /// the `server` lock (lan-reach-check-design §3.5), and
+    /// `reach_check_issue` issues under the same lock, so an issuance can
+    /// never slip in after the revocation.
     reach_check: ReachCheckState,
     /// Audit trail (spec M14): every mutating command below records a
     /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
@@ -2174,6 +2175,193 @@ async fn firewall_rule_status_body(
     Ok(firewall_status::evaluate(generation, expected, outcome))
 }
 
+/// Why `reach_check_issue` issued nothing (Issue #219 stage 1 / PR-C2,
+/// lan-reach-check-design §3.5 / §5.1). Codes only - the screen builds the
+/// text (conventions §13). Mirrors `serverAdmin.ts::ReachCheckRefusal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ReachCheckRefusal {
+    /// Nothing is serving.
+    NotListening,
+    /// The listener's bind gives no URL at all (IPv6, unparseable).
+    UnsupportedBind,
+    /// The listener's URLs are all loopback (no other device can reach it).
+    LoopbackOnly,
+    /// `host` is not one of the live listener's non-loopback URL hosts.
+    UnknownHost,
+    /// The listener changed between the snapshot and the issuance.
+    StaleGeneration,
+    /// This PC's own addresses could not be enumerated (design §3.6).
+    LocalAddressesUnavailable,
+}
+
+/// `reach_check_issue`'s response (lan-reach-check-design §5.1). `issued`
+/// carries the one URL holding the token (after `#`, the fragment) and its QR
+/// code; `refused` carries a code. Both name the server `generation` they were
+/// judged against, so the screen can drop an answer for a listener it no
+/// longer shows. Mirrors `serverAdmin.ts::ReachCheckIssueResult`.
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+enum ReachCheckIssueResult {
+    #[serde(rename_all = "camelCase")]
+    Issued {
+        generation: u64,
+        issue_id: u64,
+        /// `http://<host>:<port>/reach#t=<token>` - the token only in the
+        /// fragment, so it never reaches a server log or a `Referer`.
+        url: String,
+        qr_svg: String,
+        expires_in_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Refused {
+        generation: u64,
+        reason: ReachCheckRefusal,
+    },
+}
+
+/// `Debug` hides the URL and the QR code: both hold the token (design §3.9 -
+/// the token never reaches a log).
+impl std::fmt::Debug for ReachCheckIssueResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Issued {
+                generation,
+                issue_id,
+                expires_in_ms,
+                ..
+            } => f
+                .debug_struct("Issued")
+                .field("generation", generation)
+                .field("issue_id", issue_id)
+                .field("url", &"<redacted>")
+                .field("qr_svg", &"<redacted>")
+                .field("expires_in_ms", expires_in_ms)
+                .finish(),
+            Self::Refused { generation, reason } => f
+                .debug_struct("Refused")
+                .field("generation", generation)
+                .field("reason", reason)
+                .finish(),
+        }
+    }
+}
+
+/// The shape of [`lan_urls_for_bind`] (the live listener's URL candidates),
+/// injectable in [`reach_check_issue_body`].
+type LanUrlsFor = fn(&str, u16) -> Vec<String>;
+
+/// The host part of one of [`lan_urls_for_bind`]'s `http://<host>:<port>`
+/// URLs (`None` for any other shape).
+fn lan_url_host(url: &str, port: u16) -> Option<&str> {
+    url.strip_prefix("http://")?
+        .strip_suffix(&format!(":{port}"))
+        .filter(|host| !host.is_empty())
+}
+
+/// Whether a URL host is a loopback address (IPv6 literals in brackets).
+fn is_loopback_host(host: &str) -> bool {
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Desktop-only command (Issue #219 stage 1 / PR-C2, lan-reach-check-design
+/// §5.1): issue a one-time reach-check token for `host` - one of the live
+/// listener's non-loopback URL hosts (`server_status`'s `urls`) - and return
+/// the URL (token in the fragment) and its QR code for another device to
+/// open. `admin`-only; a refused caller never touches the store (no token is
+/// made). Not audited (design D8: memory only, nothing persistent changes),
+/// and there is no REST twin - only this PC's administrator issues (classified
+/// `DESKTOP_ONLY`, not read, because it makes a token).
+#[tauri::command]
+async fn reach_check_issue(
+    state: State<'_, AppState>,
+    host: String,
+) -> Result<ReachCheckIssueResult, BantoError> {
+    reach_check_issue_body(&state, &host, lan_urls_for_bind, ReachCheckState::issue).await
+}
+
+/// Body of [`reach_check_issue`] with the URL candidates (`lan_urls`) and the
+/// issuance (`issue`, which enumerates this PC's addresses) injected, so the
+/// tests can use a LAN address and a peer that are not this machine's.
+///
+/// Design §3.5: the snapshot (`generation`, `live`) is read and the token is
+/// issued under one `state.server` lock - the lock `server_apply` bumps the
+/// generation and revokes under - so an issuance cannot land after a
+/// revocation (the store also refuses a stale generation). The QR code is
+/// rendered after the lock is released.
+async fn reach_check_issue_body(
+    state: &AppState,
+    host: &str,
+    lan_urls: LanUrlsFor,
+    issue: fn(&ReachCheckState, u64, ReachTarget) -> Result<ReachIssue, ReachIssueError>,
+) -> Result<ReachCheckIssueResult, BantoError> {
+    require_role(state, Role::Admin, "settings").await?;
+    let (generation, port, issued) = {
+        let slot = state.server.lock().await;
+        let generation = slot.generation;
+        let refused = |reason| Ok(ReachCheckIssueResult::Refused { generation, reason });
+        let Some(live) = slot.live.as_ref().map(LiveServer::listener) else {
+            return refused(ReachCheckRefusal::NotListening);
+        };
+        let urls = lan_urls(&live.bind, live.port);
+        if urls.is_empty() {
+            return refused(ReachCheckRefusal::UnsupportedBind);
+        }
+        let candidates: Vec<&str> = urls
+            .iter()
+            .filter_map(|url| lan_url_host(url, live.port))
+            .filter(|candidate| !is_loopback_host(candidate))
+            .collect();
+        if candidates.is_empty() {
+            return refused(ReachCheckRefusal::LoopbackOnly);
+        }
+        if !candidates.contains(&host) {
+            return refused(ReachCheckRefusal::UnknownHost);
+        }
+        let target = ReachTarget {
+            host: host.to_string(),
+            port: live.port,
+        };
+        match issue(&state.reach_check, generation, target) {
+            Ok(issued) => (generation, live.port, issued),
+            Err(ReachIssueError::StaleGeneration) => {
+                return refused(ReachCheckRefusal::StaleGeneration);
+            }
+            Err(ReachIssueError::LocalAddressesUnavailable) => {
+                return refused(ReachCheckRefusal::LocalAddressesUnavailable);
+            }
+        }
+    };
+    let url = format!("http://{host}:{port}/reach#t={}", issued.token);
+    let qr_svg = qr_svg_for(&url);
+    Ok(ReachCheckIssueResult::Issued {
+        generation,
+        issue_id: issued.issue_id,
+        url,
+        qr_svg,
+        expires_in_ms: issued.expires_in_ms,
+    })
+}
+
+/// `GET`-ish command (Issue #219 stage 1 / PR-C2, lan-reach-check-design
+/// §5.1): the reach check of the current listener generation - the last
+/// issuance and its outcome, whether this PC itself opened the URL, and the
+/// reaches from other devices (codes and values, no token). `admin`-only like
+/// `server_status`; a read, so not audited; no REST twin.
+#[tauri::command]
+async fn reach_check_status(state: State<'_, AppState>) -> Result<ReachCheckStatus, BantoError> {
+    reach_check_status_body(&state).await
+}
+
+/// Body of [`reach_check_status`] over a plain `&AppState`.
+async fn reach_check_status_body(state: &AppState) -> Result<ReachCheckStatus, BantoError> {
+    require_role(state, Role::Admin, "settings").await?;
+    Ok(state.reach_check.status())
+}
+
 /// `GET`-ish command (M-review 2026-08 §2.4): admin-only system diagnostics
 /// for the settings「システム情報」card. Symmetric with `GET /api/system/info`
 /// (conventions §1) - both call `SystemInfoService::probe` and fold in the
@@ -2307,6 +2495,13 @@ async fn server_apply_body(
     // whatever the outcome. Bumped before the first await that changes
     // anything, so even an apply abandoned part-way leaves a new generation.
     slot.generation += 1;
+    // Issue #219 (lan-reach-check-design §3.5): the reach-check store follows
+    // the listener generation under this same lock - the issued token and the
+    // recorded results of the old listener are dropped whatever the outcome.
+    // `generation` (below) is also what the new listener's router gets, on
+    // success and when the previous listener is restored after a failure, so
+    // a token issued afterwards matches the router that is serving.
+    state.reach_check.begin_generation(slot.generation);
     // The rollback below restores the listener that is actually running - its
     // own bind address and port (Issue #459) - not the saved settings, which
     // may differ (e.g. a launch-time port fallback whose save failed).
@@ -3991,6 +4186,8 @@ pub fn run() {
             server_status,
             server_apply,
             firewall_rule_status,
+            reach_check_issue,
+            reach_check_status,
             system_info,
             settings_get,
             settings_set,
@@ -7606,6 +7803,384 @@ mod tests {
                 "{name}: {result:?}"
             );
         }
+    }
+
+    // ----- reach check (Issue #219 stage 1 / PR-C2, lan-reach-check-design) -----
+
+    /// The LAN address the tests pretend this PC's NIC has (TEST-NET-1), and
+    /// another device on the LAN (TEST-NET-3) - neither is this machine's, so
+    /// the outcome does not depend on the host the tests run on.
+    const REACH_LAN_HOST: &str = "192.0.2.10";
+    const REACH_PEER: &str = "203.0.113.7";
+
+    /// The live listener's real URLs plus the pretended NIC's.
+    fn reach_lan_urls(bind: &str, port: u16) -> Vec<String> {
+        let mut urls = lan_urls_for_bind(bind, port);
+        urls.push(format!("http://{REACH_LAN_HOST}:{port}"));
+        urls
+    }
+
+    /// An issuance whose "own addresses" are the pretended NIC's.
+    fn reach_issue(
+        store: &ReachCheckState,
+        generation: u64,
+        target: ReachTarget,
+    ) -> Result<ReachIssue, ReachIssueError> {
+        store.issue_with_local_addrs(
+            generation,
+            target,
+            vec![REACH_LAN_HOST.parse().expect("ip")],
+        )
+    }
+
+    /// An issuance that must not run (refused before the store).
+    fn unreachable_reach_issue(
+        _: &ReachCheckState,
+        _: u64,
+        _: ReachTarget,
+    ) -> Result<ReachIssue, ReachIssueError> {
+        panic!("the reach-check store must not be touched");
+    }
+
+    async fn issue_reach(state: &AppState) -> ReachCheckIssueResult {
+        reach_check_issue_body(state, REACH_LAN_HOST, reach_lan_urls, reach_issue)
+            .await
+            .expect("reach_check_issue")
+    }
+
+    /// `(generation, token)` of an `issued` answer (the token from the URL
+    /// fragment, the only place it is handed out).
+    fn issued_token(result: &ReachCheckIssueResult) -> (u64, String) {
+        match result {
+            ReachCheckIssueResult::Issued {
+                generation, url, ..
+            } => {
+                let (_, token) = url.split_once("#t=").expect("token in the fragment");
+                (*generation, token.to_string())
+            }
+            other => panic!("not issued: {other:?}"),
+        }
+    }
+
+    /// `POST /api/reach-check` from [`REACH_PEER`] to the listener of
+    /// `generation` on `port`, through the issued URL's `Host`.
+    fn check_from_another_device(
+        state: &AppState,
+        generation: u64,
+        port: u16,
+        token: &str,
+    ) -> banto_server::CheckOutcome {
+        let peer = std::net::SocketAddr::new(REACH_PEER.parse().expect("ip"), 40_000);
+        let host = format!("{REACH_LAN_HOST}:{port}");
+        state
+            .reach_check
+            .check(Some(peer), generation, port, Some(&host), token)
+    }
+
+    /// `POST /api/reach-check` to the listener on `127.0.0.1:port` with the
+    /// given `Host`; the raw HTTP response.
+    async fn post_reach_check(port: u16, host: &str, token: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        let body = serde_json::json!({ "token": token }).to_string();
+        let request = format!(
+            "POST {} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\
+             X-Banto-Client: banto\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            banto_server::reach_check::REACH_CHECK_PATH,
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await.expect("write");
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response).await;
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    /// No session / viewer / editor are refused before the store is
+    /// touched: no token is made, nothing is read.
+    #[tokio::test]
+    async fn reach_check_commands_are_admin_only() {
+        let state = app_state().await;
+        assert!(matches!(
+            reach_check_issue_body(
+                &state,
+                REACH_LAN_HOST,
+                reach_lan_urls,
+                unreachable_reach_issue
+            )
+            .await,
+            Err(BantoError::Unauthorized)
+        ));
+        assert!(matches!(
+            reach_check_status_body(&state).await,
+            Err(BantoError::Unauthorized)
+        ));
+        for (name, role) in [("viewer", Role::Viewer), ("editor", Role::Editor)] {
+            let user = state
+                .users
+                .create_user(name, "password123", name, role)
+                .await
+                .expect("create_user");
+            state.set_session_for_test(Some(DesktopSession::Account(user)));
+            let issued = reach_check_issue_body(
+                &state,
+                REACH_LAN_HOST,
+                reach_lan_urls,
+                unreachable_reach_issue,
+            )
+            .await;
+            assert!(
+                matches!(issued, Err(BantoError::Forbidden)),
+                "{name}: {issued:?}"
+            );
+            let status = reach_check_status_body(&state).await;
+            assert!(
+                matches!(status, Err(BantoError::Forbidden)),
+                "{name}: {status:?}"
+            );
+        }
+        assert_eq!(state.reach_check.status().last_issue, None);
+    }
+
+    /// Nothing is issued while nothing serves, for a loopback-only or an
+    /// unsupported listener, or for a host that is not a live URL candidate
+    /// (loopback included) - each answers its code, the store is untouched.
+    #[tokio::test]
+    async fn reach_check_issue_refuses_without_a_lan_url_for_the_host() {
+        fn no_urls(_: &str, _: u16) -> Vec<String> {
+            Vec::new()
+        }
+        let state = admin_app_state().await;
+        let refused = |reason| ReachCheckIssueResult::Refused {
+            generation: 0,
+            reason,
+        };
+        assert_eq!(
+            reach_check_issue_body(
+                &state,
+                REACH_LAN_HOST,
+                reach_lan_urls,
+                unreachable_reach_issue
+            )
+            .await
+            .unwrap(),
+            refused(ReachCheckRefusal::NotListening)
+        );
+
+        let port = free_port();
+        let applied = apply(&state, true, port, false).await.expect("apply");
+        let refused = |reason| ReachCheckIssueResult::Refused {
+            generation: applied.generation,
+            reason,
+        };
+        let cases: [(&str, LanUrlsFor, ReachCheckRefusal); 4] = [
+            // The real candidates of a 127.0.0.1 listener: loopback only.
+            (
+                REACH_LAN_HOST,
+                lan_urls_for_bind,
+                ReachCheckRefusal::LoopbackOnly,
+            ),
+            (REACH_LAN_HOST, no_urls, ReachCheckRefusal::UnsupportedBind),
+            ("192.0.2.99", reach_lan_urls, ReachCheckRefusal::UnknownHost),
+            ("127.0.0.1", reach_lan_urls, ReachCheckRefusal::UnknownHost),
+        ];
+        for (host, urls, reason) in cases {
+            assert_eq!(
+                reach_check_issue_body(&state, host, urls, unreachable_reach_issue)
+                    .await
+                    .unwrap(),
+                refused(reason),
+                "{host}"
+            );
+        }
+        assert_eq!(state.reach_check.status().last_issue, None);
+
+        stop_running_server(&state).await;
+    }
+
+    /// Issue -> another device posts the token -> `recorded`, and
+    /// `reach_check_status` shows the record for the live listener.
+    #[tokio::test]
+    async fn reach_check_issue_then_another_device_is_recorded() {
+        let state = admin_app_state().await;
+        let port = free_port();
+        let applied = apply(&state, true, port, false).await.expect("apply");
+
+        let issued = issue_reach(&state).await;
+        let (generation, token) = issued_token(&issued);
+        assert_eq!(generation, applied.generation);
+        let ReachCheckIssueResult::Issued { url, qr_svg, .. } = &issued else {
+            unreachable!();
+        };
+        assert_eq!(
+            url,
+            &format!("http://{REACH_LAN_HOST}:{port}/reach#t={token}")
+        );
+        assert!(qr_svg.starts_with("<?xml") || qr_svg.contains("<svg"));
+
+        assert_eq!(
+            check_from_another_device(&state, generation, port, &token),
+            banto_server::CheckOutcome::Recorded
+        );
+        let status = reach_check_status_body(&state).await.expect("status");
+        assert_eq!(status.generation, applied.generation);
+        let last = status.last_issue.expect("last issue");
+        assert_eq!(last.outcome, banto_server::ReachOutcome::Recorded);
+        assert_eq!((last.host.as_str(), last.port), (REACH_LAN_HOST, port));
+        assert_eq!(status.records.len(), 1);
+        let record = &status.records[0];
+        assert_eq!(record.peer_ip.to_string(), REACH_PEER);
+        assert_eq!((record.host.as_str(), record.port), (REACH_LAN_HOST, port));
+        assert_eq!(status.self_access_at_ms, None);
+
+        stop_running_server(&state).await;
+    }
+
+    /// Design §3.5: `server_apply` changes the listener -> the issued token
+    /// is unusable (on the new listener and on the old one) and the last
+    /// issuance is gone (old results are not carried over).
+    #[tokio::test]
+    async fn server_apply_revokes_the_issued_reach_check_token() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        apply(&state, true, port_a, false).await.expect("apply A");
+        let (generation_a, token) = issued_token(&issue_reach(&state).await);
+
+        let port_b = free_port();
+        let applied = apply(&state, true, port_b, false).await.expect("apply B");
+        assert_eq!(applied.generation, generation_a + 1);
+
+        let status = reach_check_status_body(&state).await.expect("status");
+        assert_eq!(status.generation, applied.generation);
+        assert_eq!(status.last_issue, None);
+        for (generation, port) in [(applied.generation, port_b), (generation_a, port_a)] {
+            assert_eq!(
+                check_from_another_device(&state, generation, port, &token),
+                banto_server::CheckOutcome::Unusable,
+                "generation {generation}, port {port}"
+            );
+        }
+        assert!(reach_check_status_body(&state)
+            .await
+            .expect("status")
+            .records
+            .is_empty());
+
+        stop_running_server(&state).await;
+    }
+
+    /// Design review: an apply that fails and restores the previous listener
+    /// still starts a new generation - the old token is unusable, and a
+    /// token issued afterwards is checked by the RESTORED listener's router
+    /// (same generation as the store) and recorded on the old port.
+    #[tokio::test]
+    async fn reach_check_after_a_failed_apply_works_on_the_restored_listener() {
+        let state = admin_app_state().await;
+        let port_a = free_port();
+        apply(&state, true, port_a, false).await.expect("apply A");
+        let (generation_a, old_token) = issued_token(&issue_reach(&state).await);
+        let port_b = free_port();
+        let occupied = std::net::TcpListener::bind(("127.0.0.1", port_b)).expect("occupy");
+
+        assert!(apply(&state, true, port_b, false).await.is_err());
+        let server = server_status_body(&state).await.expect("server status");
+        assert_eq!(server.live.as_ref().map(|live| live.port), Some(port_a));
+        assert_eq!(server.generation, generation_a + 1);
+        assert_eq!(
+            check_from_another_device(&state, server.generation, port_a, &old_token),
+            banto_server::CheckOutcome::Unusable
+        );
+        assert_eq!(
+            reach_check_status_body(&state)
+                .await
+                .expect("status")
+                .last_issue,
+            None
+        );
+
+        let (generation, token) = issued_token(&issue_reach(&state).await);
+        assert_eq!(generation, server.generation);
+        // Through the restored listener itself: from this PC (loopback) the
+        // router answers `selfAccess` only when its own generation and port
+        // match the token's (a router left on the old generation would answer
+        // `unusable`); a self access does not consume the token.
+        let response =
+            post_reach_check(port_a, &format!("{REACH_LAN_HOST}:{port_a}"), &token).await;
+        assert!(response.contains("\"selfAccess\""), "{response}");
+        assert_eq!(
+            check_from_another_device(&state, generation, port_a, &token),
+            banto_server::CheckOutcome::Recorded
+        );
+        let status = reach_check_status_body(&state).await.expect("status");
+        assert_eq!(status.records.len(), 1);
+        assert_eq!(status.records[0].port, port_a);
+
+        drop(occupied);
+        stop_running_server(&state).await;
+    }
+
+    /// Design §3.9: the token appears only in the issued URL's fragment - not
+    /// in the rest of the answer, its `Debug`, the status, or the audit log.
+    #[tokio::test]
+    async fn reach_check_answers_hold_the_token_only_in_the_url_fragment() {
+        let state = admin_app_state().await;
+        let port = free_port();
+        apply(&state, true, port, false).await.expect("apply");
+        let audit_before = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit")
+            .total_count;
+
+        let issued = issue_reach(&state).await;
+        let (generation, token) = issued_token(&issued);
+        let json = serde_json::to_string(&issued).expect("json");
+        assert_eq!(json.matches(token.as_str()).count(), 1, "{json}");
+        let value = serde_json::to_value(&issued).expect("json");
+        assert_eq!(value["status"], "issued");
+        let url = value["url"].as_str().expect("url");
+        let (base, fragment) = url.split_once('#').expect("fragment");
+        assert!(!base.contains(token.as_str()));
+        assert_eq!(fragment, format!("t={token}"));
+        for key in ["generation", "issueId", "qrSvg", "expiresInMs"] {
+            assert!(value.get(key).is_some(), "{key}: {value}");
+        }
+        assert!(!format!("{issued:?}").contains(token.as_str()));
+
+        check_from_another_device(&state, generation, port, &token);
+        let status = serde_json::to_string(&reach_check_status_body(&state).await.expect("status"))
+            .expect("json");
+        assert!(!status.contains(token.as_str()), "{status}");
+        // Neither the issuance nor the reach is audited (design D8).
+        let entries = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit");
+        assert_eq!(entries.total_count, audit_before);
+
+        stop_running_server(&state).await;
+    }
+
+    /// The refusal codes and the issued shape are camelCase on the wire.
+    #[test]
+    fn reach_check_refusal_serializes_as_a_code() {
+        let value = serde_json::to_value(ReachCheckIssueResult::Refused {
+            generation: 4,
+            reason: ReachCheckRefusal::LocalAddressesUnavailable,
+        })
+        .expect("json");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "status": "refused",
+                "generation": 4,
+                "reason": "localAddressesUnavailable",
+            })
+        );
     }
 
     /// A probe that must not run (the gate refused before the read).
