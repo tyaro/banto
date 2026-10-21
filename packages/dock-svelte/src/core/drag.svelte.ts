@@ -117,10 +117,15 @@ export class DragController {
 		this.#getLifecycle = getLifecycle;
 	}
 
-	/** A structure change: asked through the lifecycle (`beforePanelChange`, IME hold) when there is one. */
-	#structural(change: DockPanelChange, apply: () => void): void {
+	/**
+	 * A structure change: asked through the lifecycle (`beforePanelChange`, IME
+	 * hold) when there is one. `target` (where it is dropped) is part of the
+	 * request's identity, so a drop on Y while a drop on X waits is asked on
+	 * its own instead of being taken for the X request (`core/lifecycle.ts`).
+	 */
+	#structural(change: DockPanelChange, target: unknown, apply: () => void): void {
 		const lifecycle = this.#getLifecycle();
-		if (lifecycle) void lifecycle.request(change, apply);
+		if (lifecycle) void lifecycle.request(change, apply, { target });
 		else apply();
 	}
 
@@ -252,12 +257,16 @@ export class DragController {
 			}
 			const dock = this.#dock;
 			if (source === 'floating')
-				this.#structural({ kind: 'dock', panelId, remount: true }, () =>
-					dock.dockPanel(panelId, hoverTargetId, hoverRegion)
+				this.#structural(
+					{ kind: 'dock', panelId, remount: true },
+					{ to: hoverTargetId, region: hoverRegion },
+					() => dock.dockPanel(panelId, hoverTargetId, hoverRegion)
 				);
 			else
-				this.#structural({ kind: 'move-docked', panelId, remount: true }, () =>
-					dock.dockExisting(panelId, hoverTargetId, hoverRegion)
+				this.#structural(
+					{ kind: 'move-docked', panelId, remount: true },
+					{ to: hoverTargetId, region: hoverRegion },
+					() => dock.dockExisting(panelId, hoverTargetId, hoverRegion)
 				);
 			return;
 		}
@@ -271,7 +280,7 @@ export class DragController {
 				// `undock: false` panes stay docked: a drop on free space is ignored.
 				if (policy && !resolveCapabilities(policy, panelId).undock) return;
 				const dock = this.#dock;
-				this.#structural({ kind: 'undock', panelId, remount: true }, () =>
+				this.#structural({ kind: 'undock', panelId, remount: true }, { x, y, width, height }, () =>
 					dock.undockPanel(panelId, { x, y, width, height })
 				);
 			} else {

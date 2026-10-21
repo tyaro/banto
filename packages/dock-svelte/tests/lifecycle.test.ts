@@ -70,4 +70,15 @@ describe('structureKey', () => {
 		mutate(changed);
 		expect(structureKey(changed)).not.toBe(structureKey(base()));
 	});
+
+	it('does not confuse floating ids that contain delimiters', () => {
+		const win = (id: string) => ({ id, title: id, x: 0, y: 0, width: 10, height: 10, open: true });
+		const two: DockLayout = { version: 2, floating: [win('t'), win('a:1,b')], docked: null };
+		const three: DockLayout = {
+			version: 2,
+			floating: [win('t'), win('a'), win('b')],
+			docked: null
+		};
+		expect(structureKey(two)).not.toBe(structureKey(three));
+	});
 });

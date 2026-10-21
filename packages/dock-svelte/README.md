@@ -144,11 +144,16 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
 - **`beforePanelChange`**: `true`（または `true` に解決）のときだけ layout を変える。`false`・ほかの値・例外・
   reject では変えない（変えないのは対象だけで、layout 全体を戻すことはしない）。確認の UI はアプリが出す。
   ドラッグでは、操作が閉じた後（確定の一点）に聞くので、確認を待つあいだ pointer の操作は残らない。拒否
-  されると pane は元の場所のまま。**非同期の答え**は、待つあいだに layout の構造（docked の形・選択中の
-  タブ・浮動 window の有無と open）が変わっていたら、`DockHost` が unmount されていたら採らない（位置・寸法・
-  split の比率・前後関係の変化は数えない。判定は `structureKey`）。答えを待つあいだの同じ変更（✕ の二度押し）は
-  もう一度聞かない。浮動 window の移動・resize・divider（幾何だけの変更）と、アプリが `DockState` を直接呼ぶ
-  変更は聞かない。
+  されると pane は元の場所のまま。**非同期の答え**は、適用の直前に確かめ直し、次のどれかなら採らずに
+  `stale` を返す: 待つあいだに layout の構造（docked の形・選択中のタブ・浮動 window の有無と open）が一度でも
+  変わった（`DockState.structureRevision` の世代で見るので、close → open やタブ A → B → A で同じ形に戻っても
+  `stale`。位置・寸法・split の比率・前後関係の変化は数えない）、または今の状態で組み立て直した変更が聞いた
+  ものと違う（`keepMounted` が変わって `remount` が変わった、`tab-switch` の `from` が変わった）。`DockHost` が
+  unmount されたら、答えを待っている要求（解決しない Promise を含む）はすぐに `disposed` になる。
+  **同じ要求**は、変更と行き先（ドロップ先と領域・undock の位置）が同じもの。答えを待つあいだの同じ要求
+  （✕ の二度押し）はもう一度聞かない。行き先が違う要求（X へのドロップを待つあいだに Y へドロップ）は別に
+  聞き、先に許可されたほうが適用され、もう一方は構造が変わったので `stale` になる。浮動 window の移動・
+  resize・divider（幾何だけの変更）と、アプリが `DockState` を直接呼ぶ変更は聞かない。
 - **`remount`**: `true` は中身がいったん unmount され、あとで別に mount されること（draft を capture しておけば
   次の mount で戻せる）。`false` は DOM が残ること。`tab-switch` では `from` の pane のこと。dock / undock は
   docked の木と浮動の層をまたぐので、`keepMounted` でも常に `true`。
@@ -182,6 +187,9 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
   だけ持っておき（新しい要求が来たら古いものは `superseded`）、document の `compositionend` / `focusout` の次の
   タスクで改めて `beforePanelChange` に聞いて進める。独自の判定を渡したときは、判定が `false` になったら
   `resumeDeferredChange()` を呼ぶ（`compositionend` / `focusout` でも試す）。DOM を壊して変換を戻せるとは仮定しない。
+- 保留は、非同期の答えが返ったときにも確かめ直す。答えを待つあいだに変換が始まったら、許可は同じように持って
+  おき、変換が終わってから（聞き直さずに）適用する。持っているあいだにアプリが構造を変えたら、その要求は
+  `stale` になる（保留した時点の構造の世代と比べる）。
 
 ### どれが先に効くか
 

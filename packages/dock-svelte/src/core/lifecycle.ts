@@ -20,18 +20,34 @@
  * - **Only `true` applies.** `beforePanelChange` returning (or resolving to)
  *   `true` lets the change through; `false`, any other value, a throw or a
  *   rejection refuses it. Omitted = always `true`.
- * - **Own state first, re-check after.** The structure of the layout is
- *   recorded before the hook is called. After it returns (or its promise
- *   settles) the change is applied only if the host is still mounted and the
- *   structure is unchanged (`structureKey`: docked tree shape, active tabs,
- *   floating ids and their open flags - geometry, split sizes and z-order do
- *   not count). So a hook that re-enters (makes another structure change,
- *   unmounts the host) or a layout that changed while an async confirm was
- *   open never gets an old decision applied. This is narrower than the request
- *   owner of #436 (no busy flag, no resources, no "latest wins"): each change
- *   is checked against the structure it was asked about.
- * - **Same change twice** (a double click on ✕) while the first is pending
- *   returns the pending request instead of asking again.
+ * - **Own state first, re-check after.** When a request is made (or first held
+ *   for IME composition) it records the structure GENERATION of the layout:
+ *   `DockState.structureRevision`, a counter that goes up on every assignment
+ *   whose `structureKey` (docked tree shape, active tabs, floating ids and
+ *   their open flags) differs from the previous one - geometry, split sizes and
+ *   z-order do not count. Right before `apply` it checks again: the host is
+ *   still mounted, the revision (and, for a layout mutated in place, the key)
+ *   is unchanged, and the change described NOW (`describe`: which pane a tab
+ *   switch leaves, `remount` from `keepMounted` at this moment) is the one the
+ *   hook was asked about. Otherwise it is `stale`. A revision rather than a
+ *   key comparison, so a structure that came back to the same shape while the
+ *   hook waited (close -> open re-mounts a pane, tab A -> B -> A re-creates a
+ *   pane that is not `keepMounted`) never gets the old decision applied to the
+ *   new content. A hook that re-enters (makes another structure change,
+ *   unmounts the host) is covered by the same check. This is narrower than the
+ *   request owner of #436 (no busy flag, no resources, no "latest wins"): each
+ *   change is checked against the structure it was asked about.
+ * - **Which requests are the same.** A request is identified by the change
+ *   AND its destination (`target`: the drop target and region of a dock /
+ *   move-docked, the drop position of an undock). The same request while the
+ *   first is waiting (a double click on ✕) returns the pending one instead of
+ *   asking again. A different destination for the same pane (dropped on X,
+ *   then on Y while X waits) is a different request and is asked on its own;
+ *   whichever is approved first applies, and the other is then `stale` (the
+ *   structure moved).
+ * - **Disposal.** When the host unmounts, every waiting request - held, or
+ *   waiting for a promise that may never settle - resolves `disposed` at once
+ *   and drops its `apply` / `describe` callbacks.
  * - **Apply by id.** The `apply` callbacks look ids up when they run and are
  *   no-ops when the id is gone.
  *
@@ -44,7 +60,13 @@
  * which resolves `superseded`) and retried after `compositionend` / `focusout`
  * on the document (on the next task, after the IME's final `input`) or an
  * explicit `resumeDeferred()`. The DOM is never torn down mid-composition on
- * the assumption that the conversion could be restored. `DockHost` also
+ * the assumption that the conversion could be restored. This is checked
+ * twice: when the request is made and again when an async answer arrives - an
+ * approval that arrives while a composition is open is held the same way and
+ * applied after it ends (unless the structure changed meanwhile: `stale`). A
+ * held request keeps the structure generation of the moment it was held, so a
+ * layout change made by the app while it waits makes it `stale` too.
+ * `DockHost` also
  * refuses to START a `drag` while deferred (move / resize / divider still
  * start: they do not touch the DOM of the content).
  *
@@ -61,9 +83,8 @@
  */
 import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { findNode } from './tree';
+import { findNode, structureKey } from './tree';
 import type { DockState } from '../state.svelte';
-import type { DockLayout, DockNode } from '../types';
 
 /**
  * A structure change the dock UI is about to make (shared-primitives-upstream-
@@ -92,29 +113,30 @@ export interface PanelLifecycleOptions {
 	isStructureChangeDeferred?: () => boolean;
 }
 
-/**
- * The parts of the layout a structure change depends on: the docked tree's
- * shape and active tabs, and which floating windows exist and are open.
- * Geometry, split sizes and z-order are left out (they change on focus /
- * move / resize and never invalidate a structure decision).
- */
-export function structureKey(layout: DockLayout): string {
-	const node = (n: DockNode): unknown => {
-		if (n.type === 'panel') return n.id;
-		if (n.type === 'tabs') return [n.id, n.activeIndex, n.children.map((c) => c.id)];
-		return [n.id, n.direction, n.children.map(node)];
-	};
-	const floating = layout.floating
-		.map((w) => `${w.id}:${w.open ? 1 : 0}`)
-		.sort()
-		.join(',');
-	return JSON.stringify([floating, layout.docked ? node(layout.docked) : null]);
+/** Re-exported from `core/tree` (the encoding `DockState.structureRevision` counts changes of). */
+export { structureKey };
+
+/** How a request is told apart and re-checked (module doc). */
+export interface PanelChangeRequestOptions {
+	/** The destination of the change (drop target + region, drop position): part of the request's identity. */
+	target?: unknown;
+	/** The change as it would be described now; `null` = it no longer exists. Re-checked right before `apply`. */
+	describe?: () => DockPanelChange | null;
 }
 
-interface Held {
+interface Job {
 	change: DockPanelChange;
 	apply: () => void;
+	describe: (() => DockPanelChange | null) | undefined;
+	/** The structure generation the request is about (when it was made or first held). */
+	revision: number;
+	structure: string;
+	/** The hook said `true`; only the IME hold is in the way. */
+	approved: boolean;
+	done: boolean;
 	resolve: (outcome: DockPanelChangeOutcome) => void;
+	/** Drops the reaction attached to the hook's promise (which may never settle). */
+	release: () => void;
 }
 
 const CAPTURE: AddEventListenerOptions = { capture: true };
@@ -123,9 +145,11 @@ export class PanelLifecycle {
 	#dock: DockState;
 	#getOptions: () => PanelLifecycleOptions;
 	#disposed = false;
-	#held: Held | null = null;
+	#held: Job | null = null;
 	#retryTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Requests not resolved yet (asked, waiting for the hook, or held), by identity. */
 	#pending = new Map<string, Promise<DockPanelChangeOutcome>>();
+	#jobs = new Set<Job>();
 	/** The element of an open composition (`compositionstart` without `compositionend`). */
 	#composingIn: Element | null = null;
 	/** Panes whose content was discarded by `close` - not kept mounted while hidden, until shown again. */
@@ -183,26 +207,55 @@ export class PanelLifecycle {
 	 * the structure is still the one it was asked about (module doc). Held
 	 * while `isDeferred()`. A synchronous `true` applies synchronously.
 	 */
-	request(change: DockPanelChange, apply: () => void): Promise<DockPanelChangeOutcome> {
+	request(
+		change: DockPanelChange,
+		apply: () => void,
+		options: PanelChangeRequestOptions = {}
+	): Promise<DockPanelChangeOutcome> {
 		if (this.#disposed) return Promise.resolve('disposed');
-		if (this.isDeferred()) {
-			this.#held?.resolve('superseded');
-			return new Promise((resolve) => {
-				this.#held = { change, apply, resolve };
-			});
-		}
-		const id = JSON.stringify(change);
+		const id = JSON.stringify([change, options.target ?? null]);
 		const pending = this.#pending.get(id);
 		if (pending) return pending;
-		return this.#ask(id, change, apply);
+		const job: Job = {
+			change,
+			apply,
+			describe: options.describe,
+			revision: this.#dock.structureRevision,
+			structure: structureKey(this.#dock.layout),
+			approved: false,
+			done: false,
+			resolve: () => {},
+			release: () => {}
+		};
+		const promise = new Promise<DockPanelChangeOutcome>((resolve) => {
+			job.resolve = (outcome) => {
+				if (job.done) return;
+				job.done = true;
+				job.release();
+				// Let go of the consumer's closures (the hook's promise may keep `job` alive).
+				job.apply = () => {};
+				job.describe = undefined;
+				this.#jobs.delete(job);
+				if (this.#pending.get(id) === promise) this.#pending.delete(id);
+				if (this.#held === job) this.#held = null;
+				resolve(outcome);
+			};
+		});
+		this.#jobs.add(job);
+		this.#pending.set(id, promise);
+		if (this.isDeferred()) this.#hold(job);
+		else this.#ask(job);
+		return promise;
 	}
 
 	/** Retry the request held for IME composition now (when the consumer's predicate turned false). */
 	resumeDeferred(): void {
 		if (this.#disposed || !this.#held || this.isDeferred()) return;
-		const held = this.#held;
+		const job = this.#held;
 		this.#held = null;
-		void this.request(held.change, held.apply).then(held.resolve);
+		if (job.approved) this.#applyIfCurrent(job);
+		else if (!this.#isCurrent(job)) job.resolve('stale');
+		else this.#ask(job);
 	}
 
 	// --- the hide / close actions (module doc, D4-a) ---
@@ -212,8 +265,13 @@ export class PanelLifecycle {
 		const where = this.#whereIs(panelId);
 		if (where === null) return Promise.resolve('stale');
 		if (where === 'hidden') return Promise.resolve('applied');
-		const remount = this.#isDocked(panelId) || !this.keepMounted(panelId);
-		return this.request({ kind: 'hide', panelId, remount }, () => this.#takeOffScreen(panelId));
+		// `remount` follows `keepMounted` at the moment of applying, too (re-checked by `describe`).
+		const describe = (): DockPanelChange => ({
+			kind: 'hide',
+			panelId,
+			remount: this.#isDocked(panelId) || !this.keepMounted(panelId)
+		});
+		return this.request(describe(), () => this.#takeOffScreen(panelId), { describe });
 	}
 
 	/** Take the pane off the screen and discard its content (module doc). A hidden pane whose content is not kept = nothing to ask. */
@@ -235,35 +293,37 @@ export class PanelLifecycle {
 
 	/** Switch the docked tab group `groupId` to the tab `to` (by id; no-op when it is already active or gone). */
 	switchTab(groupId: string, to: string, after?: () => void): Promise<DockPanelChangeOutcome> {
-		const group = findNode(this.#dock.layout.docked, groupId);
-		if (!group || group.type !== 'tabs') return Promise.resolve('stale');
-		const from = group.children[group.activeIndex]?.id;
-		if (from === undefined || from === to) return Promise.resolve('applied');
-		const change: DockPanelChange = {
-			kind: 'tab-switch',
-			groupId,
-			from,
-			to,
-			remount: !this.keepMounted(from)
+		const describe = (): DockPanelChange | null => {
+			const group = findNode(this.#dock.layout.docked, groupId);
+			if (!group || group.type !== 'tabs') return null;
+			const from = group.children[group.activeIndex]?.id;
+			if (from === undefined) return null;
+			return { kind: 'tab-switch', groupId, from, to, remount: !this.keepMounted(from) };
 		};
-		return this.request(change, () => {
-			const now = findNode(this.#dock.layout.docked, groupId);
-			if (!now || now.type !== 'tabs') return;
-			const index = now.children.findIndex((c) => c.id === to);
-			if (index === -1) return;
-			this.#dock.setActiveTab(groupId, index);
-			after?.();
-		});
+		const change = describe();
+		if (change === null) return Promise.resolve('stale');
+		if (change.kind === 'tab-switch' && change.from === to) return Promise.resolve('applied');
+		return this.request(
+			change,
+			() => {
+				const now = findNode(this.#dock.layout.docked, groupId);
+				if (!now || now.type !== 'tabs') return;
+				const index = now.children.findIndex((c) => c.id === to);
+				if (index === -1) return;
+				this.#dock.setActiveTab(groupId, index);
+				after?.();
+			},
+			{ describe }
+		);
 	}
 
-	/** `DockHost` unmounts: nothing held or pending is applied any more. */
+	/** `DockHost` unmounts: nothing held or pending is applied any more, and every waiting request resolves `disposed` now. */
 	dispose(): void {
 		this.#disposed = true;
 		if (this.#retryTimer !== null) clearTimeout(this.#retryTimer);
 		this.#retryTimer = null;
-		const held = this.#held;
 		this.#held = null;
-		held?.resolve('disposed');
+		for (const job of [...this.#jobs]) job.resolve('disposed');
 	}
 
 	#whereIs(panelId: string): 'docked' | 'open' | 'hidden' | null {
@@ -283,30 +343,62 @@ export class PanelLifecycle {
 		this.#dock.close(panelId);
 	}
 
-	#ask(id: string, change: DockPanelChange, apply: () => void): Promise<DockPanelChangeOutcome> {
-		// Own state first: the structure the hook is asked about.
-		const before = structureKey(this.#dock.layout);
+	#ask(job: Job): void {
 		const hook = this.#getOptions().beforePanelChange;
-		const settle = (verdict: unknown): DockPanelChangeOutcome => {
-			if (this.#disposed) return 'disposed';
-			if (verdict !== true) return 'refused';
-			if (structureKey(this.#dock.layout) !== before) return 'stale';
-			apply();
-			return 'applied';
-		};
 		let verdict: unknown;
 		try {
-			verdict = hook ? hook(change) : true;
+			verdict = hook ? hook(job.change) : true;
 		} catch {
-			return Promise.resolve('refused');
+			job.resolve('refused');
+			return;
 		}
-		if (!isThenable(verdict)) return Promise.resolve(settle(verdict));
-		const pending = Promise.resolve(verdict).then(settle, () => 'refused' as const);
-		this.#pending.set(id, pending);
-		void pending.finally(() => {
-			if (this.#pending.get(id) === pending) this.#pending.delete(id);
-		});
-		return pending;
+		if (!isThenable(verdict)) {
+			this.#settle(job, verdict);
+			return;
+		}
+		// The reaction holds only `slot`, emptied when the job ends (dispose),
+		// so a promise that never settles does not keep the job's closures.
+		const slot: { settle: ((ok: boolean, value: unknown) => void) | null } = {
+			settle: (ok, value) => (ok ? this.#settle(job, value) : job.resolve('refused'))
+		};
+		job.release = () => (slot.settle = null);
+		Promise.resolve(verdict).then(
+			(value) => slot.settle?.(true, value),
+			() => slot.settle?.(false, undefined)
+		);
+	}
+
+	#settle(job: Job, verdict: unknown): void {
+		if (job.done) return;
+		if (this.#disposed) return job.resolve('disposed');
+		if (verdict !== true) return job.resolve('refused');
+		job.approved = true;
+		// A composition may have started while the hook waited: hold the approval.
+		if (this.isDeferred()) return this.#hold(job);
+		this.#applyIfCurrent(job);
+	}
+
+	/** One slot: a newer held request replaces the older one (`superseded`). */
+	#hold(job: Job): void {
+		if (this.#held && this.#held !== job) this.#held.resolve('superseded');
+		this.#held = job;
+	}
+
+	/** Is the structure still the one the job was asked about (module doc)? Calls `describe` (consumer code) first. */
+	#isCurrent(job: Job): boolean {
+		if (job.describe && JSON.stringify(job.describe()) !== JSON.stringify(job.change)) return false;
+		return (
+			!this.#disposed &&
+			this.#dock.structureRevision === job.revision &&
+			structureKey(this.#dock.layout) === job.structure
+		);
+	}
+
+	#applyIfCurrent(job: Job): void {
+		if (job.done) return;
+		if (!this.#isCurrent(job)) return job.resolve('stale');
+		job.apply();
+		job.resolve('applied');
 	}
 
 	#scheduleRetry(): void {

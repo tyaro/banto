@@ -327,6 +327,46 @@ describe('async answers', () => {
 	});
 });
 
+describe('async answers: identity and generation (PR #448 review)', () => {
+	it('a drop on Y while a drop on X waits is asked on its own; X approved first applies, Y is then stale', async () => {
+		const answers = [deferred<boolean>(), deferred<boolean>()];
+		const calls: DockPanelChange[] = [];
+		const { dock } = mount(mixed(), {
+			beforePanelChange: (c) => (calls.push(c), answers[calls.length - 1].promise)
+		});
+		const titlebar = () => dialogOf('F')!.querySelector('.titlebar')!;
+		hit = () => document.querySelector('[data-dock-drop-id="p"]');
+		dragFrom(titlebar());
+		hit = () => document.querySelector('[data-dock-drop-id="t"]');
+		dragFrom(titlebar());
+		expect(calls).toHaveLength(2);
+		answers[1].resolve(true); // the later drop (onto the tab group) is approved first
+		await nextTask();
+		expect(winOf(dock, 'f')).toBeUndefined();
+		expect(JSON.stringify(groupOf(dock))).toContain('"f"');
+		const afterY = JSON.parse(JSON.stringify(dock.layout)) as DockLayout;
+		answers[0].resolve(true);
+		await nextTask();
+		// The approval for P is stale: F stays where the approved drop put it.
+		expect(dock.layout).toEqual(afterY);
+	});
+
+	it('close -> open (a fresh mount) while a close waits: the old approval does not close the new content', async () => {
+		const answer = deferred<boolean>();
+		const { dock, host } = mount(floating(), { beforePanelChange: () => answer.promise });
+		const pending = host().closePanel('a');
+		dock.close('a');
+		flushSync();
+		dock.open('a');
+		flushSync();
+		inputOf('A')!.value = 'typed into the new mount';
+		answer.resolve(true);
+		expect(await pending).toBe('stale');
+		expect(winOf(dock, 'a')!.open).toBe(true);
+		expect(inputOf('A')!.value).toBe('typed into the new mount');
+	});
+});
+
 describe('re-entrant hooks', () => {
 	it('a hook that makes another structure change: the old decision is not applied, the new change is', () => {
 		const ref: { m?: ReturnType<typeof mount> } = {};

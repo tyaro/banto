@@ -29,7 +29,8 @@ import {
 	moveTabWithinGroup,
 	removePanel,
 	resizeSplit as resizeSplitTree,
-	setActiveTab as setActiveTabTree
+	setActiveTab as setActiveTabTree,
+	structureKey
 } from './core/tree';
 import type {
 	DockLayout,
@@ -61,8 +62,54 @@ function placeNew(
 	);
 }
 
+function sameFloatingStructure(a: FloatingWindow[], b: FloatingWindow[]): boolean {
+	if (a.length !== b.length) return false;
+	return a.every((w, i) => w.id === b[i].id && w.open === b[i].open);
+}
+
 export class DockState {
-	layout: DockLayout = $state(emptyLayout());
+	#layout: DockLayout = $state(emptyLayout());
+	/** The structure revision (plain, not reactive) - see `structureRevision`. */
+	#structureRevision = 0;
+	/** The layout last seen by the setter and its `structureKey` (plain fields: the setter never reads `$state`). */
+	#structureSeen: DockLayout | null = null;
+	#structureSeenKey = '';
+
+	/** The layout. Assign a new object to change it (every method here does); the setter counts structure changes. */
+	get layout(): DockLayout {
+		return this.#layout;
+	}
+
+	set layout(next: DockLayout) {
+		this.#noteStructure(next);
+		this.#layout = next;
+	}
+
+	/**
+	 * A counter that goes up every time a newly assigned layout has a different
+	 * `structureKey` from the previous one (docked shape, active tabs, floating
+	 * ids and open flags; geometry, split sizes and z-order do not count). Not
+	 * reactive. It tells a pending `beforePanelChange` answer whether the
+	 * structure changed at all while it waited - also when it came back to the
+	 * same shape (close -> open re-mounts the content, tab A -> B -> A
+	 * re-creates a pane that is not `keepMounted`), which comparing two keys
+	 * would miss (#432).
+	 */
+	get structureRevision(): number {
+		return this.#structureRevision;
+	}
+
+	#noteStructure(next: DockLayout): void {
+		const prev = this.#structureSeen;
+		this.#structureSeen = next;
+		// Fast path for the geometry-only updates of a move / resize (every pointermove).
+		if (prev && prev.docked === next.docked && sameFloatingStructure(prev.floating, next.floating))
+			return;
+		const key = structureKey(next);
+		if (key === this.#structureSeenKey) return;
+		this.#structureSeenKey = key;
+		this.#structureRevision++;
+	}
 	/** Injected id generator for newly-created split/tabs nodes - defaults to `crypto.randomUUID` (see `core/tree.ts#defaultMakeId`); tests pass a deterministic counter instead. */
 	#makeId: () => string;
 
