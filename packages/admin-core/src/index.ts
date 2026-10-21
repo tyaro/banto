@@ -111,6 +111,16 @@ export {
 	type RequestHandle
 } from './request.svelte';
 
+// UI setting current vs saved snapshot on top of UiSettingsProvider (spec §12.1;
+// shared-primitives-upstream-plan §3.4, Issue #437).
+export {
+	createSavedSetting,
+	type SavedSetting,
+	type SavedSettingOptions,
+	type SavedSettingMode,
+	type SavedSettingLoad
+} from './savedSetting.svelte';
+
 export {
 	createInMemoryDataProvider,
 	type InMemorySeed,
