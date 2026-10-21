@@ -419,18 +419,31 @@ describe('hooks and keyboard sessions (#433-b, PR-5)', () => {
 		expect(net).toBe(0);
 	});
 
-	it('canStart is not asked for drag-candidate, but as drag by setKind; a refusal keeps the kind', () => {
+	it('canStart is not asked for drag-candidate, but as drag by setKind; a refusal discards the press silently', () => {
 		const canStart = vi.fn(() => false);
-		const { owner } = setup({ canStart });
+		const onEnd = vi.fn();
+		const commit = vi.fn();
+		const cancel = vi.fn();
+		const { owner } = setup({ canStart, onEnd });
 		expect(
-			owner.begin(pointer('pointerdown') as PointerEvent, { kind: 'drag-candidate', panelId: 'a' })
+			owner.begin(pointer('pointerdown') as PointerEvent, {
+				kind: 'drag-candidate',
+				panelId: 'a',
+				commit,
+				cancel
+			})
 		).toBe(true);
 		expect(canStart).not.toHaveBeenCalled();
 		expect(owner.setKind('drag')).toBe(false);
 		expect(canStart).toHaveBeenCalledWith('drag', 'a');
-		expect(owner.session?.kind).toBe('drag-candidate');
-		owner.cancel();
+		// The vetoed gesture never started: no session, no listener, and the
+		// release reports nothing (PR #446 review).
+		expect(owner.active).toBe(false);
 		expect(net).toBe(0);
+		window.dispatchEvent(pointer('pointerup'));
+		expect(commit).not.toHaveBeenCalled();
+		expect(cancel).not.toHaveBeenCalled();
+		expect(onEnd).not.toHaveBeenCalled();
 	});
 
 	it('a canStart hook that starts a session itself makes the outer start fail (re-entrancy)', () => {

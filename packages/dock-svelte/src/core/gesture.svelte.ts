@@ -256,15 +256,20 @@ export class GestureOwner {
 	/**
 	 * Change the active session's kind (the drag threshold was crossed:
 	 * `drag-candidate` → `drag`). Crossing INTO `drag` asks `canStart`; on a
-	 * refusal the kind stays and `false` is returned - the caller then ignores
-	 * the rest of the press (it neither drags nor counts as a click).
+	 * refusal the session is discarded silently - listeners removed, no
+	 * `commit` / `cancel` callback and no `onEnd` (a vetoed gesture never
+	 * started, so it must not report an end) - and `false` is returned; the
+	 * rest of the press neither drags nor counts as a click.
 	 */
 	setKind(kind: GestureKind): boolean {
 		const session = this.session;
 		if (!session) return false;
 		if (kind === 'drag' && session.kind !== 'drag') {
 			const canStart = this.#getOptions().canStart;
-			if (canStart && canStart(kind, session.panelId) === false) return false;
+			if (canStart && canStart(kind, session.panelId) === false) {
+				if (this.session === session) this.#close();
+				return false;
+			}
 			// A re-entrant hook may have ended the session meanwhile.
 			if (this.session !== session) return false;
 		}

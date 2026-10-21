@@ -234,7 +234,8 @@ describe('canStartGesture', () => {
 		expect(document.querySelector('.drag-ghost')).toBeNull();
 		firePointer(window, 'pointerup', 140, 60);
 		expect((dock.layout.docked as { activeIndex: number }).activeIndex).toBe(0);
-		expect(onGestureEnd).toHaveBeenCalledExactlyOnceWith('drag-candidate', 'commit', undefined);
+		// The vetoed gesture never started, so it reports no end (PR #446 review).
+		expect(onGestureEnd).not.toHaveBeenCalled();
 		expect(net).toBe(0);
 	});
 
