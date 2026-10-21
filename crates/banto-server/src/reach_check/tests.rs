@@ -523,6 +523,27 @@ async fn this_pc_is_self_access_and_does_not_consume() {
     );
 }
 
+#[tokio::test]
+async fn a_new_issuance_drops_the_previous_self_access() {
+    let (store, _clock) = store();
+    let first = issue(&store);
+    let router = reach_check_router(store.clone(), 0, PORT);
+    assert_eq!(
+        post(
+            &router,
+            Req::new(&first.token).peer(peer(Ipv4Addr::LOCALHOST))
+        )
+        .await,
+        (StatusCode::OK, result_body("selfAccess"))
+    );
+    assert!(store.status().self_access_at_ms.is_some());
+    // Issuance B: A's self access is not B's result.
+    let second = issue(&store);
+    let status = store.status();
+    assert!(status.self_access_at_ms.is_none());
+    assert_eq!(status.last_issue.unwrap().issue_id, second.issue_id);
+}
+
 #[test]
 fn issuing_needs_this_pcs_own_addresses() {
     let (store, _clock) = store();

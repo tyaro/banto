@@ -23,6 +23,9 @@
  *   and says "not needed" for a loopback-only listener. The Windows Firewall
  *   status (PR-B) shows each rule's state, and drops a result for a
  *   listener the screen no longer shows.
+ * - The connection check from another device (PR-C3) issues a URL + QR for
+ *   a live LAN host and turns into "confirmed" when the 2 s re-read finds
+ *   a record (not Windows-only).
  *
  * Runs in its own page/context - independent of smoke.spec.ts's shared state.
  */
@@ -80,7 +83,15 @@ async function installTauriStub(page: Page): Promise<void> {
 			/** `@tauri-apps/api/app`'s `getIdentifier()` answer. */
 			appIdentifier: null as string | null,
 			/** `firewall_rule_status`'s answer (Issue #219 PR-B; `null` = an older host). */
-			firewallRuleStatus: null as unknown
+			firewallRuleStatus: null as unknown,
+			/** `reach_check_status`'s answer (Issue #219 PR-C3; `null` = an older host). */
+			reachCheckStatus: null as unknown,
+			/** `reach_check_issue`'s answer. */
+			reachCheckIssue: null as unknown,
+			/** Becomes `reachCheckStatus` when `reach_check_issue` is called (the host's new issuance). */
+			reachStatusAfterIssue: null as unknown,
+			/** The hosts `reach_check_issue` was called with. */
+			reachIssueHosts: [] as string[]
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
 			mock.releaseServerStatus = resolve;
@@ -165,6 +176,13 @@ async function installTauriStub(page: Page): Promise<void> {
 					return mock.appIdentifier;
 				case 'firewall_rule_status':
 					return mock.firewallRuleStatus;
+				case 'reach_check_status':
+					return mock.reachCheckStatus;
+				case 'reach_check_issue':
+					mock.reachIssueHosts.push(String(args.host));
+					if (mock.reachStatusAfterIssue !== null)
+						mock.reachCheckStatus = mock.reachStatusAfterIssue;
+					return mock.reachCheckIssue;
 				case 'vibrancy_status':
 					return { supported: false, applied: false };
 				case 'plugin:event|listen': {
@@ -567,5 +585,99 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 			page.getByText('このPCのみで待ち受けているため、ファイアウォールの設定は不要です。')
 		).toBeVisible();
 		await expect(commands).toHaveCount(0);
+	});
+
+	test('サーバ・接続: connection check from another device - issue, then confirmed (Issue #219 PR-C3)', async ({
+		page,
+		baseURL
+	}) => {
+		await installTauriStub(page);
+		// A running Linux host (the block is not Windows-only), nothing issued yet.
+		await page.addInitScript(() => {
+			const m = (window as unknown as { __bantoMock: Record<string, unknown> }).__bantoMock;
+			m.serverStatusGate = null;
+			m.serverStatusPatch = {
+				enabled: true,
+				running: true,
+				bind: '0.0.0.0',
+				port: 8721,
+				live: { bind: '0.0.0.0', port: 8721 },
+				urls: ['http://127.0.0.1:8721', 'http://192.168.1.20:8721'],
+				generation: 1,
+				platform: 'linux'
+			};
+			m.reachCheckStatus = { generation: 1, lastIssue: null, selfAccessAt: null, records: [] };
+			m.reachCheckIssue = {
+				status: 'issued',
+				generation: 1,
+				issueId: 1,
+				url: 'http://192.168.1.20:8721/reach#t=0d8b2f4e-1c3a-4b5d-9e6f-7a8b9c0d1e2f',
+				qrSvg:
+					'<svg xmlns="http://www.w3.org/2000/svg" data-reach-qr="1" width="10" height="10"></svg>',
+				expiresInMs: 300000
+			};
+			m.reachStatusAfterIssue = {
+				generation: 1,
+				lastIssue: {
+					issueId: 1,
+					host: '192.168.1.20',
+					port: 8721,
+					expiresAt: Date.now() + 300000,
+					outcome: 'pending',
+					expiresInMs: 300000
+				},
+				selfAccessAt: null,
+				records: []
+			};
+		});
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/connectivity'));
+
+		const block = page.locator('.reach-check');
+		await expect(page.getByRole('heading', { name: '別の端末からの接続確認' })).toBeVisible();
+		await expect(block).toContainText('別の端末からの接続はまだ確認していません。');
+		// The firewall blocks are Windows-only; this one is not.
+		await expect(page.locator('.firewall-info')).toHaveCount(0);
+
+		await block.getByRole('button', { name: '確認用の URL を発行' }).click();
+		await expect(block.locator('[data-reach-state="pending"]')).toBeVisible();
+		await expect(block).toContainText(
+			'http://192.168.1.20:8721/reach#t=0d8b2f4e-1c3a-4b5d-9e6f-7a8b9c0d1e2f'
+		);
+		await expect(block.locator('svg[data-reach-qr]')).toHaveCount(1);
+		await expect(block).toContainText('有効期限まで残り');
+		expect(
+			await page.evaluate(
+				() =>
+					(window as unknown as { __bantoMock: { reachIssueHosts: string[] } }).__bantoMock
+						.reachIssueHosts
+			)
+		).toEqual(['192.168.1.20']);
+
+		// Another device opened it: the 2 s re-read picks it up.
+		const at = Date.now();
+		await mock(page, {
+			reachCheckStatus: {
+				generation: 1,
+				lastIssue: {
+					issueId: 1,
+					host: '192.168.1.20',
+					port: 8721,
+					expiresAt: at + 300000,
+					outcome: 'recorded',
+					expiresInMs: 0
+				},
+				selfAccessAt: null,
+				records: [{ issueId: 1, at, peerIp: '192.168.1.31', host: '192.168.1.20', port: 8721 }]
+			}
+		});
+		const verified = block.locator('[data-reach-state="verified"]');
+		await expect(verified).toBeVisible({ timeout: 10_000 });
+		await expect(verified).toContainText('別の端末から到達を確認しました。');
+		await expect(verified).toContainText('192.168.1.31');
+		await expect(verified).toContainText('http://192.168.1.20:8721');
+		await expect(verified).toContainText('この時点に、この端末から届いたことの確認です。');
+		// The QR of the used URL is gone with the pending state.
+		await expect(block.locator('svg[data-reach-qr]')).toHaveCount(0);
 	});
 });

@@ -410,7 +410,7 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
 - `report/src/ReportView.svelte`: 自前エンジン `renderHtml` の出力のみ。
   `html.ts` は全 text/attribute を例外なくエスケープし、`javascript:` src も
   ブロック（「no 'trusted' string anywhere in this module」）。
-- `settings/ConnectivitySection.svelte`: `qrcode` クレート生成の SVG（LAN 接続 QR。
+- `settings/ConnectivitySection.svelte`: `qrcode` クレート生成の SVG（LAN 接続 QR と、到達確認の URL の QR。後者も `LanReachCheckPanel.svelte` へ渡す snippet としてこのファイルで描く — Issue #219 PR-C3。
   settings-split で `settings/+page.svelte` から移動、choiapp-feedback-2026-09 §3.1）。
 
 外部由来・未エスケープの文字列を `{@html}` に流さない。

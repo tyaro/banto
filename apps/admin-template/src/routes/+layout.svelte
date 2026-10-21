@@ -50,15 +50,29 @@
 			void refreshAll();
 		}
 	});
+
+	// Issue #219 (lan-reach-check-design §4.3, D2): the device side of the LAN
+	// reach check (`/reach#t=<token>`) never touches the auth or data
+	// providers - it only takes the token from the fragment and POSTs it. On
+	// a LAN browser `bantoReady` first probes `/api/auth/check` and, while
+	// that fails, waits for a manual reconnect on the splash; holding `/reach`
+	// behind it would leave the token in the address bar and the history and
+	// send nothing. So that route alone renders without waiting. It is outside
+	// `(app)`, so no route guard is skipped, and every other route still waits.
+	const startupIndependent = $derived(page.route.id === '/reach');
 </script>
 
-{#await bantoReady}
-	<StartupSplash />
-{:then}
-	{#if startupDeferred}
+{#if startupIndependent}
+	{@render children()}
+{:else}
+	{#await bantoReady}
 		<StartupSplash />
-	{:else}
-		{@render children()}
-		<ToastHost />
-	{/if}
-{/await}
+	{:then}
+		{#if startupDeferred}
+			<StartupSplash />
+		{:else}
+			{@render children()}
+			<ToastHost />
+		{/if}
+	{/await}
+{/if}

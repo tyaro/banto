@@ -229,6 +229,8 @@ pub struct ReachCheckStatus {
     pub generation: u64,
     /// `None` = nothing issued in this generation (unverified).
     pub last_issue: Option<LastIssue>,
+    /// The last access from this PC itself with the last issuance's URL
+    /// (cleared by every new issuance and listener change).
     #[serde(rename = "selfAccessAt")]
     pub self_access_at_ms: Option<i64>,
     /// Newest first, at most [`MAX_RECORDS`].
@@ -496,6 +498,12 @@ impl ReachCheckState {
             expires_at,
             self_addrs,
         });
+        // The self-access mark belongs to the issuance whose URL was opened
+        // on this PC: a new issuance revokes that token, so the mark goes
+        // with it - otherwise a screen reopened after issuing B (which has
+        // no issue answer of its own to compare with) would show A's self
+        // access as B's result (PR #470 review).
+        inner.self_access_at_ms = None;
         inner.last_issue = Some(IssueSummary {
             issue_id,
             target,
