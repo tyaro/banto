@@ -2677,6 +2677,164 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard
+	// メモ pane keeps unapplied input across the dock's structure changes (the
+	// draft is owned by the page, the pane is re-created), a close settles it
+	// (apply / discard / cancel), and leaving the page asks. The apply is held
+	// open by routing the memo's ui-settings PUT, so input typed while it is in
+	// flight must keep the pane open and dirty after v1 is saved.
+	test('13l. dashboard memo: unapplied input survives dock / undock / tabs; close settles it; leaving asks', async () => {
+		test.setTimeout(90_000);
+		const dialogs = trackDialogs(page);
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		const memoWindow = page.getByRole('dialog', { name: 'メモ' });
+		const memoInput = page.getByRole('textbox', { name: 'メモの本文' });
+		const workspace = page.locator('.workspace');
+		const unsaved = workspace.getByText('未保存の変更があります');
+		const settleDialog = page.getByRole('dialog', { name: '保存していないメモ' });
+		const memoToggle = workspace.getByRole('toolbar').getByRole('button', { name: /メモ/ });
+
+		/** Press at `from`, cross the dock's drag threshold, release at `to`. */
+		async function drag(
+			from: { x: number; y: number },
+			to: { x: number; y: number }
+		): Promise<void> {
+			await page.mouse.move(from.x, from.y);
+			await page.mouse.down();
+			await page.mouse.move(from.x + 12, from.y + 12, { steps: 3 });
+			await page.mouse.move(to.x, to.y, { steps: 12 });
+			await page.mouse.up();
+		}
+		async function centerOf(locator: Locator): Promise<{ x: number; y: number }> {
+			const box = await locator.boundingBox();
+			if (!box) throw new Error('not visible');
+			return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+		}
+
+		const memoPath = '/api/ui-settings/dashboard.memo';
+		let releasePut: () => void = () => {};
+		const putHeld = new Promise<void>((resolve) => (releasePut = resolve));
+		const putBodies: string[] = [];
+		const holdPut = async (route: Route) => {
+			if (route.request().method() !== 'PUT') return route.continue();
+			putBodies.push(route.request().postData() ?? '');
+			await putHeld;
+			await route.continue();
+		};
+
+		try {
+			await page.goto('/dashboard');
+			await workspace.getByRole('button', { name: 'リセット' }).click();
+			await page.locator('.dock-wrapper').scrollIntoViewIfNeeded();
+			await expect(memoWindow).toBeVisible();
+			await expect(unsaved).toHaveCount(0);
+
+			await memoInput.fill('unsaved');
+			await expect(unsaved).toBeVisible();
+
+			// dock: the floating title bar onto the centre of the 月別更新件数 pane.
+			const titlebar = memoWindow.locator('.titlebar');
+			const barBox = await titlebar.boundingBox();
+			if (!barBox) throw new Error('no title bar');
+			await drag(
+				{ x: barBox.x + 30, y: barBox.y + barBox.height / 2 },
+				await centerOf(page.locator('[data-dock-drop-id="monthly"]'))
+			);
+			await expect(memoWindow).toHaveCount(0);
+			const memoTab = page.getByRole('tab', { name: 'メモ' });
+			await expect(memoTab).toBeVisible();
+			await expect(memoInput).toHaveValue('unsaved');
+			await expect(unsaved).toBeVisible();
+
+			// tab switch away and back (the pane is re-created both times).
+			await page.getByRole('tab', { name: '月別更新件数' }).click();
+			await expect(memoInput).toHaveCount(0);
+			await memoTab.click();
+			await expect(memoInput).toHaveValue('unsaved');
+
+			// undock: the tab onto another floating window (= free floating space,
+			// the docked tree fills the host). The window opens at the top left, over
+			// the tab strip, so it is first moved down with the keyboard move mode
+			// (geometry only - a pointer drag over a docked pane would dock it).
+			const trendToggle = workspace.getByRole('toolbar').getByRole('button', { name: /トレンド/ });
+			await trendToggle.click();
+			const trendWindow = page.getByRole('dialog', { name: 'トレンド' });
+			await expect(trendWindow).toBeVisible();
+			// The mode buttons are visually hidden until focused (#433-b).
+			await trendWindow.getByRole('button', { name: /^トレンドをキーボードで移動/ }).focus();
+			await page.keyboard.press('Enter');
+			await page.keyboard.press('Shift+ArrowDown', { delay: 20 });
+			await page.keyboard.press('Shift+ArrowDown', { delay: 20 });
+			await page.keyboard.press('Shift+ArrowDown', { delay: 20 });
+			await page.keyboard.press('Enter');
+			await memoTab.click({ trial: true }); // the tab is not covered any more
+			await drag(
+				await centerOf(memoTab),
+				await centerOf(trendWindow.getByRole('region', { name: 'トレンド', exact: true }))
+			);
+			await expect(memoWindow).toBeVisible();
+			await expect(memoTab).toHaveCount(0);
+			await expect(memoInput).toHaveValue('unsaved');
+			await expect(unsaved).toBeVisible();
+			// A pane with nothing unapplied closes without a question (the toolbar
+			// goes through the same lifecycle as ✕).
+			await trendToggle.click();
+			await expect(trendWindow).toHaveCount(0);
+			await expect(settleDialog).toHaveCount(0);
+
+			// close -> apply, typing while the save is in flight: v1 is saved, the
+			// pane stays open with the later input still unapplied.
+			await page.route(`**${memoPath}`, holdPut);
+			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
+			await expect(settleDialog).toBeVisible();
+			await settleDialog.getByRole('button', { name: '保存して閉じる' }).click();
+			await expect(settleDialog).toHaveCount(0);
+			await expect.poll(() => putBodies.length).toBe(1);
+			await memoInput.fill('unsaved v2');
+			const saved = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === memoPath && response.request().method() === 'PUT'
+			);
+			releasePut();
+			expect((await saved).ok()).toBe(true);
+			expect((JSON.parse(putBodies[0]!) as { value: string }).value).toBe('unsaved');
+			await expect(
+				workspace.getByText('保存中に入力した内容は、まだ保存されていません。')
+			).toBeVisible();
+			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toHaveValue('unsaved v2');
+			await expect(unsaved).toBeVisible();
+			await page.unroute(`**${memoPath}`, holdPut);
+
+			// close -> discard: closes, and the reopened memo shows what was saved.
+			await memoWindow.getByRole('button', { name: 'メモを閉じる' }).click();
+			await settleDialog.getByRole('button', { name: '破棄して閉じる' }).click();
+			await expect(memoWindow).toHaveCount(0);
+			await expect(memoToggle).toHaveAttribute('aria-pressed', 'false');
+			await memoToggle.click();
+			await expect(memoWindow).toBeVisible();
+			await expect(memoInput).toHaveValue('unsaved');
+			await expect(unsaved).toHaveCount(0);
+			expect(putBodies).toHaveLength(1);
+
+			// Leaving with unapplied input asks (the router guard): stay, then leave.
+			await memoInput.fill('leave check');
+			dialogs.answer(false);
+			await mainNav.getByRole('link', { name: '商品' }).click();
+			await expect.poll(() => dialogs.messages).toEqual([LEAVE_PROMPT]);
+			await expect(page).toHaveURL(/\/dashboard$/);
+			await expect(memoInput).toHaveValue('leave check');
+			dialogs.answer(true);
+			await mainNav.getByRole('link', { name: '商品' }).click();
+			await expect(page).toHaveURL(/\/items$/);
+			expect(dialogs.messages).toHaveLength(2);
+		} finally {
+			dialogs.stop();
+			await page.unroute(`**${memoPath}`, holdPut);
+			releasePut();
+		}
+	});
+
 	// PR-B3 (i18n layer ②, ADR-0005): the settings
 	// language picker actually switches the whole UI locale. Deliberately LAST:
 	// Paraglide's setLocale() persists the choice to this shared page's

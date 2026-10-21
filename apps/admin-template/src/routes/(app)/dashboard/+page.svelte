@@ -50,6 +50,18 @@
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
+	import {
+		MEMO_PANEL_ID,
+		createDashboardMemo,
+		createPanelChangeHandler
+	} from '#lib/banto/dashboardMemo.svelte.js';
+	import { createSettlePrompt } from '#lib/banto/settlePrompt.svelte.js';
+	import { untrack } from 'svelte';
+	import { formValidationMessages } from '#lib/banto/i18n.js';
+	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
+	import type { DraftSettleResult } from '@banto/forms';
+	import DashboardMemoField from '#lib/components/DashboardMemoField.svelte';
+	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
 	const STOCK_TARGET = 3_000_000;
@@ -163,6 +175,67 @@
 	}
 
 	const dock = createDockState(loadDockLayout());
+	let dockHost: ReturnType<typeof DockHost> | undefined = $state();
+
+	/**
+	 * Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the メモ
+	 * pane is a text field whose unapplied input survives dock / undock / tab
+	 * switches. The draft, its coordinator and the saved setting live HERE (the
+	 * page), not in the pane: the pane is re-created by every structure change,
+	 * and the draft's source stays registered while the page lives, so a closed
+	 * memo with unapplied text still makes a router leave ask
+	 * (dashboardMemo.svelte.ts). Apply = the UiSettingsProvider (spec §12.1).
+	 */
+	const memo = createDashboardMemo({
+		provider: getUiSettings(),
+		label: m['panels.memo'](),
+		leaveMessage: () => m['unsaved.confirmLeave'](),
+		messages: formValidationMessages()
+	});
+	const memoPrompt = createSettlePrompt();
+	let memoStatus = $state<string | null>(null);
+
+	/** What to tell the user after a save / close settle of the memo. */
+	function noteMemoSettled(result: DraftSettleResult): void {
+		memoStatus =
+			result === 'failed'
+				? m['dashboard.memoSaveFailed']()
+				: result === 'dirty-again'
+					? m['dashboard.memoChangedWhileSaving']()
+					: null;
+	}
+
+	// Transition by transition (plan §3.5's table): dock / undock / move /
+	// tab switch / hide only capture (no prompt); a close - which discards the
+	// pane's content - settles first and closes only when the draft is clean.
+	const beforePanelChange = createPanelChangeHandler({
+		// Serialized: a close waits for a save already in flight (PR #449 review).
+		coordinator: memo.serial,
+		ask: (dirtyKeys) => memoPrompt.ask(dirtyKeys),
+		onSettled: (_panelId, result) => noteMemoSettled(result)
+	});
+
+	async function saveMemo(): Promise<void> {
+		noteMemoSettled(await memo.save());
+	}
+
+	// Page lifetime: register the draft's source, read the stored memo once, and
+	// drop everything (an open question answers 'cancel') on unmount.
+	$effect(() => untrack(() => memo.register()));
+	$effect(() => {
+		untrack(() => void memo.load());
+		return () => {
+			memoPrompt.dispose();
+			memo.dispose();
+		};
+	});
+
+	// A router leave with an unapplied memo asks first (Issue #214's guard; the
+	// coordinator also joins the registry the desktop window close reads).
+	guardUnsavedChanges({
+		isDirty: () => memo.coordinator.pending,
+		isSaving: () => memo.coordinator.settling || memo.setting.saving
+	});
 
 	let dockHostW = $state(0);
 	let dockHostH = $state(0);
@@ -274,7 +347,9 @@
 	function togglePanel(id: string): void {
 		if (isDocked(id)) return;
 		if (dock.isOpen(id)) {
-			dock.close(id);
+			// Through the dock lifecycle (not dock.close): closing discards the
+			// pane's content, so the memo's unapplied input is settled first.
+			void dockHost?.closePanel(id);
 			return;
 		}
 		const def = PANEL_DEFS.find((d) => d.id === id);
@@ -297,9 +372,14 @@
 	 * defense.
 	 */
 	const onPopOut = isTauri()
-		? (content: PanelContent) => {
-				if (isDocked(content.id)) dock.undockPanel(content.id);
-				dock.close(content.id);
+		? async (content: PanelContent) => {
+				// Popping out leaves this dock like a close does, so it goes through the
+				// host's lifecycle (`closePanel`: beforePanelChange settles the memo's
+				// unapplied input, and a structure change made while that waits makes
+				// it `stale`). Only an applied close pops out; the close already
+				// undocked + closed the pane with its geometry kept. (The pop-out
+				// window shows DashboardPanel's static memo text, not this page's draft.)
+				if ((await dockHost?.closePanel(content.id)) !== 'applied') return;
 				void openPanelWindow(content);
 			}
 		: undefined;
@@ -558,8 +638,22 @@
 				>
 			</div>
 			<div class="dock-wrapper" bind:clientWidth={dockHostW} bind:clientHeight={dockHostH}>
-				<DockHost {dock} panel={dockPanel} {onPopOut} isEscapeBlocked={isDockEscapeBlocked} />
+				<DockHost
+					bind:this={dockHost}
+					{dock}
+					panel={dockPanel}
+					{onPopOut}
+					{beforePanelChange}
+					isEscapeBlocked={isDockEscapeBlocked}
+				/>
 			</div>
+			<DraftSettleDialog
+				prompt={memoPrompt}
+				title={m['dashboard.memoCloseTitle']()}
+				body={m['dashboard.memoCloseBody']()}
+				applyLabel={m['dashboard.memoCloseApply']()}
+				discardLabel={m['dashboard.memoCloseDiscard']()}
+			/>
 		</section>
 	{/if}
 </div>
@@ -573,7 +667,16 @@
 		height below.
 	-->
 	<div class="dock-panel" bind:clientHeight={panelHeights[content.id]}>
-		<DashboardPanel id={content.id} height={chartHeight(content.id)} />
+		{#if content.id === MEMO_PANEL_ID}
+			<DashboardMemoField
+				draft={memo.draft}
+				saving={memo.coordinator.settling || memo.setting.saving}
+				status={memoStatus}
+				onSave={() => void saveMemo()}
+			/>
+		{:else}
+			<DashboardPanel id={content.id} height={chartHeight(content.id)} />
+		{/if}
 	</div>
 {/snippet}
 

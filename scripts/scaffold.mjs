@@ -386,6 +386,20 @@ function removeDock() {
 		'popout import 除去',
 		`\timport { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';\n`
 	);
+	// #432 PR-10: メモ pane の draft と dock の lifecycle の配線（中身は下の「dock スクリプト
+	// 一式」・ワークスペース markup・dockPanel snippet の範囲に収めてある）。
+	drop(
+		DASH,
+		'メモ pane（draft・確認ダイアログ）import 除去',
+		`\timport {\n\t\tMEMO_PANEL_ID,\n\t\tcreateDashboardMemo,\n\t\tcreatePanelChangeHandler\n\t} from '#lib/banto/dashboardMemo.svelte.js';\n` +
+			`\timport { createSettlePrompt } from '#lib/banto/settlePrompt.svelte.js';\n` +
+			`\timport { untrack } from 'svelte';\n` +
+			`\timport { formValidationMessages } from '#lib/banto/i18n.js';\n` +
+			`\timport { guardUnsavedChanges } from '#lib/unsavedChanges.js';\n` +
+			`\timport type { DraftSettleResult } from '@banto/forms';\n` +
+			`\timport DashboardMemoField from '#lib/components/DashboardMemoField.svelte';\n` +
+			`\timport DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';\n`
+	);
 	cutRegion(
 		DASH,
 		'dock スクリプト一式除去',
@@ -406,6 +420,12 @@ function removeDock() {
 	);
 	removeFile(`${APP}/src/lib/banto/panels.ts`, 'panels.ts 削除');
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dashboardMemo.svelte.ts`, 'dashboardMemo.svelte.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dashboardMemo.test.ts`, 'dashboardMemo.test.ts 削除');
+	removeFile(`${APP}/src/lib/banto/settlePrompt.svelte.ts`, 'settlePrompt.svelte.ts 削除');
+	removeFile(`${APP}/src/lib/banto/settlePrompt.test.ts`, 'settlePrompt.test.ts 削除');
+	removeFile(`${APP}/src/lib/components/DashboardMemoField.svelte`, 'DashboardMemoField 削除');
+	removeFile(`${APP}/src/lib/components/DraftSettleDialog.svelte`, 'DraftSettleDialog 削除');
 	removeDir(`${APP}/src/routes/panel`, 'pop-out panel ルート削除');
 	removeAppDep('@banto/dock-svelte');
 	// dock-svelte は .svelte.ts を持つので optimizeDeps.exclude（issue #150 / ADR-0007）に

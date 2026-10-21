@@ -1,7 +1,7 @@
 # SCADA Designer の共有部品を banto へ戻す計画書（Issue #432〜#438）
 
 作成日: 2026-10-21
-状態: **実装中**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。PR-1〜PR-9（段階 1〜3 の dock / forms の部品）を実施した（§5.1）。残りは PR-10（#432 のアプリ統合）・PR-11（#435 の配線）・PR-12〜14（#438）と文書。
+状態: **実装中**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。PR-1〜PR-10（段階 1〜3。dock / forms の部品と #432 のアプリ統合）を実施した（§5.1）。残りは PR-11（#435 の配線）・PR-12〜14（#438）と文書。
 トラック: 保守者向け（トラックA）
 関連: Issue #432〜#438 / [nav-launcher-plan.md](nav-launcher-plan.md)（書式の手本）/
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`。§10 の層の約束）/
@@ -796,8 +796,9 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 | 6 | #442 | マージ済み（#437 を閉じた） | 保存は直列で、保存中の save は 1 つにまとめる。保存中の load は読まずに `stale`。`saved` と `current` は parse し直した別の値（オブジェクトをその場で書き換えても混ざらない） |
 | 7 | #444 | マージ済み | `allowRepeat` を追加。保護で拒んだ command は下の scope に落とさない。名前の表は自分のプロパティだけを引く（`constructor+K` を拒否）。Space は Shift を無視する記号に含めない |
 | 8 | #447 | マージ済み | `DraftNumberField`（`type="text"` + `inputmode="decimal"`）を足し、既存の `NumberField` は変えない。`settle` の結果に `'stale'`。`commitAll` は全欄を解釈してから検証し、失敗したら何も確定しない。FormDraft の source はページの寿命で登録する（pane が見えなくても離脱の確認の対象）。並列の apply は 1 つずつ失効を確かめてから始める。forms は request owner の写しを内部に持ち、契約の表を流す |
-| 9 | #448 | このPR | `DockPanelChange` に `remount`。非同期の答えは `DockState.structureRevision`（構造の世代）で古さを判断する。重複除去のキーにドロップ先を含める。IME の保留と `keepMounted` は適用の直前にも確かめる。保留枠は作った順で新しい要求を残し、古くなった許可は持たない |
-| 10〜15 | — | 未着手 | PR-10（#432 のアプリ統合、`Closes #432`）→ PR-11（#435 の配線）→ PR-12〜14（#438） |
+| 9 | #448 | マージ済み | `DockPanelChange` に `remount`。非同期の答えは `DockState.structureRevision`（構造の世代）で古さを判断する。重複除去のキーにドロップ先を含める。IME の保留と `keepMounted` は適用の直前にも確かめる。保留枠は作った順で新しい要求を残し、古くなった許可は持たない |
+| 10 | このPR | レビュー待ち（#432 を閉じる） | `keepMounted` は使わない（draft がページ寿命なので再 mount で戻り、✕ を中身を捨てる close のまま確認に通す。IME は構造変更の保留で守る）。適用先は UiSettingsProvider の `dashboard.memo`（`createSavedSetting` 経由）。ツールバーの開閉と pop-out も `closePanel` / close と同じ確認を通す。確認 UI は `@banto/ui` の `Modal`、e2e は smoke の 13l |
+| 11〜15 | — | 未着手 | PR-11（#435 の配線）→ PR-12〜14（#438） |
 ## 6. リリースとの関係（v6.8.0、draft の #429）
 
 v6.8.0 の中身（ドックのランチャー、#421〜#426・#428・#430・#431）は揃っており、#429 は main の取り込み待ち。
