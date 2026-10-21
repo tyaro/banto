@@ -11,6 +11,7 @@
 //! | GET    | `/api/auth/status`   | -              | `{initialized,grants}` (NO auth required) |
 //! | POST   | `/api/auth/setup`     | `{username,password,displayName}` | `{success,error?,token?}` (needs `allow_setup`) |
 //! | POST   | `/api/auth/grant/{kind}` | -          | `{success,token}` (NO auth required; 404 unless `kind` is registered, 403 unless its condition holds - `publicViewer` = `server.viewer_public`, ADR-0017) |
+//! | POST   | `/api/reach-check`   | `{token}`      | `{result}` (NO auth required, never a session; Tauri embedded server only - `banto_server::reach_check`, Issue #219) |
 //! | POST   | `/api/auth/login`    | `{username,password}` | `{success,error?,token?}` |
 //! | POST   | `/api/auth/logout`   | -              | 200                    |
 //! | GET    | `/api/auth/check`    | -              | `bool`                 |
@@ -102,6 +103,19 @@
 //! other session of that role, and a mutating request made with a viewer
 //! grant is rejected `403` and recorded as `denied` with actor `public`.
 //! Issuance itself is not audited (see `banto_server::grant`).
+//!
+//! `POST /api/reach-check` (Issue #219 stage 1,
+//! `docs/design/lan-reach-check-design.md`) is the other route outside
+//! `require_auth`, and it is NOT assembled by [`api_router`]: `src-tauri`'s
+//! `start_embedded_server` merges `banto_server::reach_check_router` next to
+//! it, bound to that listener's generation and port (`banto-serve` has no
+//! screen to issue tokens and does not mount it). It checks a one-time token
+//! the administrator's screen issued, records that another device reached
+//! the listener, and answers `{ "result": "<code>" }` only - it never issues a
+//! session, so every other route stays `401` afterwards. It carries its own
+//! `X-Banto-Client` check because it sits outside this router's CSRF layer.
+//! Neither issuance nor reach is audited (an uncredentialed route must not
+//! amplify the audit log, conventions §1 / Issue #278).
 //!
 //! `POST /api/items/list` (rather than `GET` with query-string encoded
 //! `ListParams`) is chosen deliberately: `ListParams` (sort/filters/
