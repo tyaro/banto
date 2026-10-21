@@ -428,5 +428,3 @@ e2e:
 
 - ADR は書かない: 認証の仕組み（grant・セッション）を変えず、未認証の口の規約は conventions §6 に足す。
   もし D1 を b にする・D7 を b にする場合は、公開 API に触れるので ADR を検討する。
-- ファイル名: 本書は依頼どおり `lan-reach-check.md` とした（AGENTS.md の命名 `-plan.md` / `-design.md` に揃えるなら
-  `lan-reach-check-design.md` へ改名する）。
