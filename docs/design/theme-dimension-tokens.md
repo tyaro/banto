@@ -221,20 +221,23 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 }
 ```
 
-既存の値からの移し先（丸めの規則。D5）:
+既存の値からの移し先（丸めの規則。D5。**いちばん近い段**へ。等距離なら小さい方）:
 
 | 種類 | 既存の値 | 移し先 | ずれ |
 | --- | --- | --- | --- |
 | 余白 | `0.15rem`・`0.2rem`・`0.3rem` | `space-1`（0.25rem） | ≤ 1.4px |
 | 余白 | `0.35rem`・`0.4rem` | `space-1` か `space-2`（近い方。0.35 は 1、0.4 は 2） | ≤ 1.4px |
-| 余白 | `0.6rem`・`0.55rem`・`0.65rem` | `space-2`（0.5rem） | ≤ 2.1px |
-| 余白 | `0.7rem`・`0.8rem`・`0.85rem` | `space-3`（0.75rem） | ≤ 1.4px |
-| 余白 | `0.9rem`・`1.1rem`・`1.2rem` | `space-4`（1rem） | ≤ 2.8px |
+| 余白 | `0.55rem`・`0.6rem` | `space-2`（0.5rem） | ≤ 1.4px |
+| 余白 | `0.65rem`・`0.7rem`・`0.8rem`・`0.85rem` | `space-3`（0.75rem） | ≤ 1.4px |
+| 余白 | `0.9rem`・`1.1rem` | `space-4`（1rem） | ≤ 1.4px |
+| 余白 | `1.2rem` | `space-5`（1.25rem） | 0.7px |
 | 余白 | `2.5rem` | `space-7` か `space-8`（画面を見て） | 7px |
 | 文字 | `0.65rem`・`0.7rem`・`0.75rem` | `xs` / `sm`（0.75 は sm） | ≤ 0.7px |
 | 文字 | `0.8rem`・`0.85rem` | `sm` | ≤ 0.7px |
 | 文字 | `0.875rem`・`0.9rem`・`0.95rem` | `md` | ≤ 1px |
 | 文字 | charts の `10px`・`11px` | `xs`・`sm`（9.8 / 11.2px） | ≤ 0.2px |
+| 文字 | charts の `12px`（Tooltip・GanttChart）・`0.85rem`（ChartContainer） | `md`（12.25px） | ≤ 0.35px |
+| 文字 | charts の `1.6rem`（Gauge の値） | `xl`（1.75rem） | 2.1px |
 | 枠線 | `1px` / `2px` | `border-width` / `border-width-strong` | なし |
 
 トークンにしないもの（例外。理由コメント不要の範囲として規約に書く案。D6）:
@@ -267,7 +270,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 | PR-2 | `@banto/ui`（余白 54・文字 23・枠線 15） | ベースライン再生成 |
 | PR-3 | grid-svelte・forms・tree-svelte | 同上 |
 | PR-4 | dock-svelte・report・attachments | 同上 |
-| PR-5 | charts（SVG の px の文字サイズ 21 件を `xs`/`sm` へ） | 同上 |
+| PR-5 | charts（文字サイズの生値 25 件すべて: SVG の `10px`・`11px` 21 件を `xs`/`sm`、`12px` 2 件と `0.85rem` を `md`、Gauge の `1.6rem` を `xl` へ。どれかを残すと D8 の検査で例外が要るため、全件を移す） | 同上 |
 | PR-6〜 | admin-template（設定 → 一覧・詳細 → ダッシュボード → ログイン・その他。画面ごと） | 同上 |
 | 最後 | 機械検査（D8） | — |
 
