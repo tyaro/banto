@@ -16,7 +16,9 @@ import {
 	applyResize,
 	bringToFront,
 	cascadePosition,
-	clampWindowToHost
+	clampWindowToHost,
+	displayWindowGeometry,
+	type ClampOptions
 } from './core/geometry';
 import { validateDockLayout } from './core/validate';
 import {
@@ -101,13 +103,47 @@ export class DockState {
 		this.layout = bringToFront(this.layout, id);
 	}
 
-	move(id: string, dx: number, dy: number, hostW: number, hostH: number): void {
-		this.#update(id, (w) => applyDrag(w, dx, dy, hostW, hostH));
+	/**
+	 * Move by (dx, dy) from where the window is DRAWN (the saved preference
+	 * clamped to the current host, `displayWindowGeometry`) and save the clamped
+	 * result: an operation's outcome becomes the new preferred placement
+	 * (shared-primitives-upstream-plan §3.2). `clamp` is the host's consumer
+	 * policy (`DockHost`'s `clamp` prop).
+	 */
+	move(
+		id: string,
+		dx: number,
+		dy: number,
+		hostW: number,
+		hostH: number,
+		clamp?: ClampOptions
+	): void {
+		this.#update(id, (w) =>
+			applyDrag(displayWindowGeometry(w, hostW, hostH, clamp), dx, dy, hostW, hostH, clamp)
+		);
 	}
 
-	resize(id: string, edge: ResizeEdge, dx: number, dy: number, hostW: number, hostH: number): void {
+	/** Resize from the DRAWN geometry (see `move`); the result is saved as the new preference. Minimums come from `clamp`, defaulting to `DEFAULT_MIN_*`. */
+	resize(
+		id: string,
+		edge: ResizeEdge,
+		dx: number,
+		dy: number,
+		hostW: number,
+		hostH: number,
+		clamp?: ClampOptions
+	): void {
 		this.#update(id, (w) =>
-			applyResize(w, edge, dx, dy, hostW, hostH, DEFAULT_MIN_WIDTH, DEFAULT_MIN_HEIGHT)
+			applyResize(
+				displayWindowGeometry(w, hostW, hostH, clamp),
+				edge,
+				dx,
+				dy,
+				hostW,
+				hostH,
+				clamp?.minW ?? DEFAULT_MIN_WIDTH,
+				clamp?.minH ?? DEFAULT_MIN_HEIGHT
+			)
 		);
 	}
 

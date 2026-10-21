@@ -24,6 +24,8 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import { getDragController } from './core/drag.svelte';
+	import { displayWindowGeometry } from './core/geometry';
+	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
 	import { defaultDockMessages, type DockMessages } from './messages';
@@ -50,6 +52,12 @@
 
 	const DRAG_THRESHOLD_PX = 5;
 	const drag = getDragController();
+	const policy = getDockPolicy();
+
+	// What is DRAWN: the saved preference clamped to the current host. The saved
+	// layout is untouched (shared-primitives-upstream-plan §3.2, #434).
+	const shown = $derived(displayWindowGeometry(win, hostW, hostH, policy.clamp));
+	const caps = $derived(resolveCapabilities(policy, win.id));
 
 	function focusThis(): void {
 		dock.focus(win.id);
@@ -87,7 +95,8 @@
 		if (event.button !== 0) return;
 		event.preventDefault();
 		focusThis();
-		if (!windowEl) return;
+		// `move: false` (consumer capability): the title bar still focuses the window but never starts a drag.
+		if (!caps.move || !windowEl) return;
 
 		const startX = event.clientX;
 		const startY = event.clientY;
@@ -108,8 +117,8 @@
 				title: win.title,
 				icon: win.icon,
 				source: 'floating',
-				width: win.width,
-				height: win.height,
+				width: shown.width,
+				height: shown.height,
 				clientX: moveEvent.clientX,
 				clientY: moveEvent.clientY,
 				originClientX: winRect.left,
@@ -130,7 +139,7 @@
 		// otherwise also bubble into the titlebar/body focus handler below -
 		// harmless (focus is idempotent) but stopped anyway for clarity.
 		event.stopPropagation();
-		trackPointer(event, (dx, dy) => dock.resize(win.id, edge, dx, dy, hostW, hostH));
+		trackPointer(event, (dx, dy) => dock.resize(win.id, edge, dx, dy, hostW, hostH, policy.clamp));
 	}
 
 	const RESIZE_EDGES: ResizeEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
@@ -151,10 +160,10 @@
 	aria-label={win.title}
 	tabindex="-1"
 	bind:this={windowEl}
-	style:left={`${win.x}px`}
-	style:top={`${win.y}px`}
-	style:width={`${win.width}px`}
-	style:height={`${win.height}px`}
+	style:left={`${shown.x}px`}
+	style:top={`${shown.y}px`}
+	style:width={`${shown.width}px`}
+	style:height={`${shown.height}px`}
 	onpointerdown={focusThis}
 >
 	<!--
@@ -174,12 +183,12 @@
 			that isn't part of this milestone's scope.
 		-->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="titlebar" onpointerdown={handleTitlebarPointerDown}>
+		<div class="titlebar" class:immovable={!caps.move} onpointerdown={handleTitlebarPointerDown}>
 			{#if win.icon}
 				<span class="icon" aria-hidden="true">{win.icon}</span>
 			{/if}
 			<span class="title">{win.title}</span>
-			{#if onPopOut}
+			{#if onPopOut && caps.undock}
 				<button
 					type="button"
 					class="popout-btn"
@@ -190,15 +199,17 @@
 					⧉
 				</button>
 			{/if}
-			<button
-				type="button"
-				class="close-btn"
-				aria-label={t.close(win.title)}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => dock.close(win.id)}
-			>
-				✕
-			</button>
+			{#if caps.close}
+				<button
+					type="button"
+					class="close-btn"
+					aria-label={t.close(win.title)}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => dock.close(win.id)}
+				>
+					✕
+				</button>
+			{/if}
 		</div>
 
 		<!-- role="region" + tabindex="0": same scrollable-region-focusable
@@ -265,6 +276,10 @@
 		touch-action: none;
 		cursor: move;
 		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.titlebar.immovable {
+		cursor: default;
 	}
 
 	.titlebar:hover {

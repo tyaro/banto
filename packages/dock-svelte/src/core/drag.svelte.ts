@@ -32,7 +32,8 @@
  * panel never moves mid-drag, matching the task's explicit ask.
  */
 import { getContext, setContext } from 'svelte';
-import { dropRegionRect, type Rect } from './geometry';
+import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
+import { resolveCapabilities, type DockPolicy } from './policy';
 import { findParent } from './tree';
 import type { DockState } from '../state.svelte';
 import type { DropRegion } from '../types';
@@ -84,9 +85,17 @@ export class DragController {
 	#getHostEl: () => HTMLElement | null;
 	state: DragSnapshot | null = $state(null);
 
-	constructor(dock: DockState, getHostEl: () => HTMLElement | null) {
+	#getPolicy: () => DockPolicy | undefined;
+
+	/** `getPolicy` supplies the host's clamp options and pane capabilities (see `core/policy.ts`); absent = package defaults, everything allowed. */
+	constructor(
+		dock: DockState,
+		getHostEl: () => HTMLElement | null,
+		getPolicy: () => DockPolicy | undefined = () => undefined
+	) {
 		this.#dock = dock;
 		this.#getHostEl = getHostEl;
+		this.#getPolicy = getPolicy;
 	}
 
 	/** True while a drag is in progress - handy guard for consumers that don't need the full snapshot. */
@@ -226,12 +235,21 @@ export class DragController {
 			const hostRect = hostEl.getBoundingClientRect();
 			const x = clientX - hostRect.left - grabDx;
 			const y = clientY - hostRect.top - grabDy;
+			const policy = this.#getPolicy();
 			if (source === 'docked') {
+				// `undock: false` panes stay docked: a drop on free space is ignored.
+				if (policy && !resolveCapabilities(policy, panelId).undock) return;
 				this.#dock.undockPanel(panelId, { x, y, width, height });
 			} else {
 				const win = this.#dock.layout.floating.find((w) => w.id === panelId);
-				if (win)
-					this.#dock.move(panelId, x - win.x, y - win.y, hostEl.clientWidth, hostEl.clientHeight);
+				if (win) {
+					const hostW = hostEl.clientWidth;
+					const hostH = hostEl.clientHeight;
+					// The drag started from where the window was DRAWN (clamped to the
+					// host), so the delta is measured from there, not the saved x/y.
+					const shown = displayWindowGeometry(win, hostW, hostH, policy?.clamp);
+					this.#dock.move(panelId, x - shown.x, y - shown.y, hostW, hostH, policy?.clamp);
+				}
 			}
 			return;
 		}
@@ -250,9 +268,10 @@ export class DragController {
 
 export function createDragController(
 	dock: DockState,
-	getHostEl: () => HTMLElement | null
+	getHostEl: () => HTMLElement | null,
+	getPolicy?: () => DockPolicy | undefined
 ): DragController {
-	return new DragController(dock, getHostEl);
+	return new DragController(dock, getHostEl, getPolicy);
 }
 
 const DRAG_CONTEXT_KEY = Symbol('banto-dock-drag');

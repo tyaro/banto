@@ -29,6 +29,8 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
+	import type { ClampOptions } from './core/geometry';
+	import { setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
@@ -55,9 +57,37 @@
 		onPopOut?: (content: PanelContent) => void;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings, threaded down to `DockedTree` and `DockWindow`. Defaults reproduce today's Japanese output. */
 		messages?: Partial<DockMessages>;
+		/**
+		 * Clamp policy for floating windows (shared-primitives-upstream-plan §3.2,
+		 * #434): minimum size, px that must stay visible, and what to do when the
+		 * host is narrower than the minimum. Omitted = the package's generic
+		 * defaults (`DEFAULT_MIN_*`); an app passes its own numbers. It is applied
+		 * when DRAWING (the saved x/y/width/height are not rewritten, so a host
+		 * that shrinks and grows back restores the preferred placement) and when
+		 * the user moves/resizes (the result then becomes the new preference).
+		 */
+		clamp?: ClampOptions;
+		/**
+		 * Per-pane capabilities (close / move / undock; default all allowed). For
+		 * a pane an app must keep, such as a central canvas:
+		 * `(id) => (id === 'canvas' ? { close: false, move: false } : undefined)`.
+		 * UI affordances only - see `DockCapabilities`.
+		 */
+		capabilities?: (panelId: string) => DockCapabilities | undefined;
 	}
 
-	let { dock, panel, onPopOut, messages = {} }: Props = $props();
+	let { dock, panel, onPopOut, messages = {}, clamp, capabilities }: Props = $props();
+
+	// Published through context; getters keep reading the live props.
+	const policy: DockPolicy = {
+		get clamp() {
+			return clamp;
+		},
+		get capabilities() {
+			return capabilities;
+		}
+	};
+	setDockPolicy(policy);
 
 	let hostW: number = $state(0);
 	let hostH: number = $state(0);
@@ -68,7 +98,11 @@
 	// `dock` is a stable DockState instance for this component's lifetime, so
 	// capturing it once to build the drag controller is intentional.
 	// svelte-ignore state_referenced_locally
-	const drag = createDragController(dock, () => hostEl);
+	const drag = createDragController(
+		dock,
+		() => hostEl,
+		() => policy
+	);
 	setDragController(drag);
 </script>
 

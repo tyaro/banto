@@ -36,6 +36,7 @@
 	import type { Snippet } from 'svelte';
 	import { pixelDeltaToFraction } from './core/geometry';
 	import { getDragController } from './core/drag.svelte';
+	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
 	import DockedTree from './DockedTree.svelte';
@@ -60,6 +61,9 @@
 
 	const DRAG_THRESHOLD_PX = 5;
 	const drag = getDragController();
+	const policy = getDockPolicy();
+	/** Per-pane capabilities from the host's `capabilities` prop (all allowed when absent). */
+	const capsOf = (id: string) => resolveCapabilities(policy, id);
 
 	/** Undock-then-close - see the module doc comment on why this is the "close a docked panel" behavior. */
 	function closeDockedPanel(id: string): void {
@@ -89,11 +93,13 @@
 		const startY = event.clientY;
 		const pointerId = event.pointerId;
 		const frameRect = frameEl.getBoundingClientRect();
+		// `move: false` (consumer capability): never becomes a drag, but a plain click (tab select) still works.
+		const canMove = capsOf(content.id).move;
 		let dragging = false;
 
 		function onMove(moveEvent: PointerEvent) {
 			if (moveEvent.pointerId !== pointerId) return;
-			if (dragging) return;
+			if (dragging || !canMove) return;
 			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
 				return;
 			dragging = true;
@@ -194,7 +200,7 @@
 				<span class="icon" aria-hidden="true">{node.icon}</span>
 			{/if}
 			<span class="title">{node.title}</span>
-			{#if onPopOut}
+			{#if onPopOut && capsOf(node.id).undock}
 				<button
 					type="button"
 					class="popout-btn"
@@ -205,15 +211,17 @@
 					⧉
 				</button>
 			{/if}
-			<button
-				type="button"
-				class="close-btn"
-				aria-label={t.close(node.title)}
-				onpointerdown={(event) => event.stopPropagation()}
-				onclick={() => closeDockedPanel(node.id)}
-			>
-				✕
-			</button>
+			{#if capsOf(node.id).close}
+				<button
+					type="button"
+					class="close-btn"
+					aria-label={t.close(node.title)}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => closeDockedPanel(node.id)}
+				>
+					✕
+				</button>
+			{/if}
 		</div>
 		<!-- role="region" + tabindex="0": the pane's content can overflow and
 		     scroll, and axe's scrollable-region-focusable rule requires a
@@ -266,7 +274,7 @@
 					{/if}
 					<span class="title">{child.title}</span>
 					{#if i === node.activeIndex}
-						{#if onPopOut}
+						{#if onPopOut && capsOf(child.id).undock}
 							<button
 								type="button"
 								class="popout-btn"
@@ -277,15 +285,17 @@
 								⧉
 							</button>
 						{/if}
-						<button
-							type="button"
-							class="close-btn"
-							aria-label={t.close(child.title)}
-							onpointerdown={(event) => event.stopPropagation()}
-							onclick={() => closeDockedPanel(child.id)}
-						>
-							✕
-						</button>
+						{#if capsOf(child.id).close}
+							<button
+								type="button"
+								class="close-btn"
+								aria-label={t.close(child.title)}
+								onpointerdown={(event) => event.stopPropagation()}
+								onclick={() => closeDockedPanel(child.id)}
+							>
+								✕
+							</button>
+						{/if}
 					{/if}
 				</div>
 			{/each}
