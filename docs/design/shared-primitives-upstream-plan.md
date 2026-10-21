@@ -302,8 +302,11 @@ interface DockHostProps {
 	 *  root（`role="dialog"` を持つ要素。docked の pane・divider の gesture では null）。
 	 *  `DockWindow` は浮動 window ごとに `role="dialog"` を付けるので、引数なしの
 	 *  `hasVisibleLayerAbove()` は **gesture 中の window 自身**を上位の層に数え、Esc で常に譲ってしまう。
-	 *  アプリは `(el) => hasVisibleLayerAbove({ except: el })` をつなぎ、自分より上の Modal・Menu・
-	 *  別の層だけで譲る。省略時は defaultPrevented だけを見る。 */
+	 *  アプリは `(el) => el ? hasVisibleLayerAbove({ except: el }) : hasVisibleModalLayer() || hasVisibleMenuLayer()`
+	 *  をつなぐ。浮動 window の gesture は自分より上の層だけで譲り、docked の pane・divider の gesture（null）は
+	 *  **モーダルとメニューの層だけ**で譲る（非モーダルの別の浮動 window は `role="dialog"` でも数えない。
+	 *  `hasVisibleLayerAbove({ except: null })` はそれも数えて Esc の取消を止めてしまう）。
+	 *  省略時は defaultPrevented だけを見る。 */
 	isEscapeBlocked?: (activeLayer: HTMLElement | null) => boolean;
 }
 ```
@@ -450,8 +453,13 @@ export interface FormDraft<V = Record<string, unknown>> {
 	setRaw(field: string, text: string): void;
 	/** 確定（blur / Enter）。検証に通れば values を更新する。 */
 	commit(field: string): boolean;
-	/** baseline を values にする（適用成功後だけ呼ぶ）。 */
-	markApplied(): void;
+	/** 入力・確定のたびに増える版番号。 */
+	readonly revision: number;
+	/** 適用を始める時点の values と revision を取る（非同期の apply に渡す）。 */
+	snapshotForApply(): { readonly values: V; readonly revision: number };
+	/** 適用に成功した snapshot を baseline にする（適用成功後だけ呼ぶ）。適用中に追加入力があれば
+	 *  （`revision` が進んでいれば）dirty のまま残る。今の values を baseline にするのではない。 */
+	markApplied(applied: { readonly values: V; readonly revision: number }): void;
 	discard(): void;
 	/** pane が戻ったときの補助（選択位置・scroll）。DOM を保つ方式では使わない。 */
 	view: { selection?: { field: string; start: number; end: number }; scrollTop?: number };
@@ -464,12 +472,21 @@ export interface DraftSource {
 	/** 適用。検証失敗・適用失敗は false を返し、dirty を保つ。 */
 	apply(): Promise<boolean>;
 	discard(): void;
+	/** 未適用の入力を pane の外へ取り出す（dock / undock で再 mount される前）。FormDraft を使う
+	 *  フォームは draft 自体が pane より長生きするので不要。 */
+	capture?(): unknown;
+	/** capture したものを、再 mount 後の同じ key の source に戻す。 */
+	restore?(captured: unknown): void;
 }
 
 /** 複数フォームの適用 / 破棄 / キャンセル。確認は 1 回だけ出す。 */
 export interface DraftCoordinator {
+	/** 同じ key の capture が残っていれば、登録時に `restore` を呼んで戻す（rebind）。 */
 	register(source: DraftSource): () => void;
 	readonly pending: boolean;
+	/** 保持したまま移動する前に呼ぶ。対象の source の `capture()` を取り、次の register まで持つ。
+	 *  確認は出さない（適用も破棄もしない）。 */
+	capture(keys: readonly string[]): void;
 	/** 対象の key（省略で全部）を確かめる。'apply' | 'discard' | 'cancel' を consumer の確認 UI が返す。 */
 	settle(
 		keys: readonly string[] | undefined,
@@ -482,6 +499,9 @@ export function createDraftCoordinator(): DraftCoordinator;
 ```
 
 - 適用は**成功したときだけ** baseline を更新する。検証失敗・適用失敗・キャンセルでは dirty を失わない。
+  baseline にするのは**適用を始めた時点の snapshot**（`snapshotForApply()`）で、今の values ではない。
+  v1 の適用を始めたあと同じ対象を v2 に編集し、v1 が成功した場合、baseline は v1 になり v2 は dirty のまま
+  残る（§3.4 の「実際に送った snapshot を基準にする」と同じ考え方。#439 のレビュー）。
   適用中に対象が変わったときの古い結果は、#436 と同じ契約の forms 内部の実装で捨てる（§2.1）。
 - `DraftCoordinator` の登録は既存の `guardUnsavedChanges` の登録簿にもつなぐ（ルーターの離脱でも同じ draft が
   確認の対象になる。二重の確認は既存の「1 つの navigation に 1 回」の仕組みで防ぐ）。
@@ -510,15 +530,25 @@ interface DockHostProps {
 - **hide と close の意味を分ける**: 今の `DockState.close` は layout 上は「幾何を残して隠す」なのに中身は
   捨てる。`keepMounted` の pane では close ボタンの既定を hide（中身を保つ）にし、捨てる close は
   `beforePanelChange` の `close` を通す。名前と既定はこの PR で決める（D4）。
-- アプリでのつなぎ方: `beforePanelChange` で `coordinator.settle([panelId], 確認UI)` を呼ぶ。`hide` と
-  `tab-switch` は keepMounted なら確認しない。
+- アプリでのつなぎ方は**遷移ごとに契約を分ける**（#439 のレビュー）:
+
+  | 遷移 | 中身 | つなぎ方 |
+  | --- | --- | --- |
+  | `dock` / `undock` / `move-docked` | 再 mount するが未適用の入力は**保持**する | `coordinator.capture([panelId])` だけを呼んで `true` を返す。再 mount した pane が同じ key で register すると `restore` で戻る（rebind）。FormDraft を使う pane は何もしなくてよい。確認は出さない |
+  | `tab-switch` / `hide` | keepMounted なら DOM を保つ。keepMounted でなければ上と同じく capture / rebind | 確認は出さない |
+  | `close` | 中身を**捨てる** | `coordinator.settle([panelId], 確認UI)`。`apply` / `discard` / `cancel` を選ばせ、`cancel` と `failed` なら `false` を返して閉じない |
+
+  配置の変更は業務の変更・Undo を作らず、dirty も失わない。e2e では「`unsaved` を入力 → dock → undock →
+  まだ `unsaved` で dirty」を確かめる。
 
 **既存 API との関係**: すべて追加（minor）。`FormStore`・`guardUnsavedChanges` の挙動は変えない。
 `NumberField` の生の文字列を保つには `type="text"` + `inputmode="decimal"` に変える案があるが、これは見た目と
 操作（スピンボタン）の変更になるので、`FormDraft` を使うときだけの別の欄にするか、DOM を保つ方式で
 済ませるかを実装 PR で決める（**未決**。D3 の帰結として扱う）。
 
-**テスト**: 単体 — `FormDraft`（生の文字列・確定・`markApplied` の条件・discard）、`DraftCoordinator`
+**テスト**: 単体 — `FormDraft`（生の文字列・確定・`markApplied` の条件・discard。**遅延した適用の最中に
+同じ対象へ追加入力 → 適用成功後も追加入力が dirty のまま**）、`capture` / rebind（dock / undock で入力と
+dirty が残る）、`DraftCoordinator`
 （複数の dirty・適用の一部失敗・キャンセル・確認が 1 回）、dock の `beforePanelChange` の拒否で layout が
 変わらない。jsdom — `keepMounted` の pane がタブ切替で同じ DOM ノードのまま。e2e — 統合はアプリで見る
 （ダッシュボードのメモ pane を入力欄にして、`unsaved` を入れて dock / undock / タブ / close→open で残る、
@@ -700,8 +730,11 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 | 4 | ページの Esc（サイドバーのオーバーレイを閉じる等） | 既存の `+layout.svelte` の `handleKeydown` |
 
 - dock-svelte は `@banto/ui` を import できないので、1 の「譲る」はアプリが `isEscapeBlocked` に
-  `(el) => hasVisibleLayerAbove({ except: el })` をつなぐ（§3.3）。gesture 中の浮動 window 自身も
-  `role="dialog"` なので、`except` を渡さないと Esc の取消が効かなくなる。既定は `defaultPrevented` だけを見る。
+  §3.3 の判定（浮動 window なら `hasVisibleLayerAbove({ except: el })`、docked・divider なら
+  `hasVisibleModalLayer() || hasVisibleMenuLayer()`）をつなぐ。gesture 中の浮動 window 自身も、別の非モーダルの
+  浮動 window も `role="dialog"` なので、どちらも数えると Esc の取消が効かなくなる。回帰条件:「浮動 window を
+  開いたまま divider を操作 → Esc で開始前に戻る」。既定は `defaultPrevented` だけを見る。
+  `hasVisibleModalLayer` は §3.6 で `layering.ts` に足す判定で、PR-7（#435-a、ui）が足す。PR-5（#433-b）のアプリ側の配線と回帰テストはそれを使うので、PR-5 は 4 と 7 に依存する。
 - dock の keyboard 操作（#433）のキーと、#435 の dispatcher に登録するショートカットが衝突しないよう、
   dock は「フォーカスが dock の中の操作要素にあるとき」だけキーを受ける（window の keydown で奪わない）。
 
@@ -723,7 +756,7 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 | 2 | 1 | #434-b 到達性と能力 | 表示用 clamp（保存希望を書き換えない）、`clamp` / `capabilities` props、`clampWindowToHost` の doc の修正、README に書き込みの約束 | dock-svelte | 1（同じテストを触る） | minor |
 | 3 | 1 | #436 要求の所有者 | `createRequestOwner`、`ListResource` の内部の置き換え、conventions §8 の箇条を部品への参照に | admin-core、docs | — | minor |
 | 4 | 2 | #433-a gesture の所有者 | 4 経路を 1 つの所有者へ、pointerId、snapshot と取消、寸法の測り直し、focusin の前面化 | dock-svelte | 2（`DockWindow` を触るため衝突を避ける） | patch 相当（API なし） |
-| 5 | 2 | #433-b keyboard と hook | divider の Window Splitter、window の移動モード、tab の矢印、`canStartGesture` / `onGestureEnd` / `isEscapeBlocked` | dock-svelte | 4 | minor |
+| 5 | 2 | #433-b keyboard と hook | divider の Window Splitter、window の移動モード、tab の矢印、`canStartGesture` / `onGestureEnd` / `isEscapeBlocked(activeLayer)`、ダッシュボードでの Esc の配線と回帰（浮動 window を開いたまま divider → Esc） | dock-svelte、admin-template | 4・7 | minor |
 | 6 | 2 | #437 保存 snapshot | `createSavedSetting`、テスト | admin-core | 3 | minor |
 | 7 | 2 | #435-a dispatcher と保護 | `shouldHandleShortcut` / `createShortcutDispatcher` / `formatShortcut`、`hasVisibleModalLayer`、`PaletteCommand` の任意の欄 | ui、admin-core | — | minor |
 | 8 | 3 | #432-a forms の draft | `FormDraft` / `DraftSource` / `DraftCoordinator`、内部の要求の契約、`guardUnsavedChanges` との接続 | forms | 3（契約） | minor |
@@ -735,7 +768,7 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 | 14 | 5 | #438-c 原本と URL の寿命 | 原本 bytes の保持、hash による重複排除、object URL の共有と解放、pin / release、失効の契約（§2.1。admin-core と同じ契約の表のテスト） | image-assets | 13 | minor |
 | 15 | 随時 | 文書 | upgrading.md（派生アプリの取り込み手順）、recipes、本書の状態行。CHANGELOG は各 PR で 1 行ずつ | docs | 各 PR | — |
 
-- 段階の中は並行できる（1・3 は独立。4〜7 は 4→5 と 3→6 の鎖のほかは独立）。
+- 段階の中は並行できる（1・3 は独立。4〜7 は 4→5、7→5、3→6 の鎖のほかは独立）。
 - `@banto/*` の版は全パッケージで揃っている（`check:versions`）ので、リリースの版は中身の最大（minor）で決まる。
 - 委譲の単位は 1 PR = 1 エージェント（ユーザーの指示どおり小さく分ける）。設計の判断が要るのは 4・8・9
   （gesture と lifecycle の境界、draft の形）で、残りはテストと軽い実装が中心。
@@ -772,10 +805,10 @@ minor）なので v6.8.0 のまま。draft の #429 は、全 PR のマージ後
 | #436 の契約（失効・busy・解放が一度） | 単体（admin-core、forms の内部実装も同じ表） | — |
 | #434 の検証（不正値・v1/v2 の回帰） | 単体（`state.test.ts`） | — |
 | #434 の表示用 clamp と保存希望 | 単体（`geometry.test.ts`）+ jsdom（寸法の注入。無理なら e2e） | 実ブラウザで幅を縮める（実装者が PR-2 で 1 回） |
-| #433 の pointerId・取消・cleanup | 単体 + jsdom（合成 PointerEvent） | タッチの複数 pointer（オーナー、v6.9.0 の前に実機で 1 回） |
+| #433 の pointerId・取消・cleanup | 単体 + jsdom（合成 PointerEvent） | タッチの複数 pointer（オーナー、v6.8.0 のリリース前に実機で 1 回） |
 | #433 の keyboard 操作 | jsdom + e2e（矢印・Enter・Esc）+ axe（既存の a11y） | スクリーンリーダーの読み上げ（任意） |
 | #433 の focusin の前面化 | jsdom | Tab の順が変わらないこと（実装者が PR-4 で 1 回） |
-| #437 の保存の契約 | 単体（注入 provider の成功・失敗・遅延・順序の入れ替わり） | Tauri（Windows）の設定 DB への実書き込み（オーナー、v6.9.0 の前） |
+| #437 の保存の契約 | 単体（注入 provider の成功・失敗・遅延・順序の入れ替わり） | Tauri（Windows）の設定 DB への実書き込み（オーナー、v6.8.0 のリリース前） |
 | #432 の draft・coordinator | 単体 | — |
 | #432 のタブ / hide で DOM を保つ | jsdom（同じノードか） | — |
 | #432 の dock / undock / close→open で入力が戻る | e2e（Chromium、メモ pane） | 両テーマ・左右同時の draft（実装者が PR-10 で） |
