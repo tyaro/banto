@@ -395,6 +395,22 @@ fn allow_stops_with_policy_when_local_rules_are_not_merged() {
 }
 
 #[test]
+fn an_existing_own_rule_is_policy_when_local_rules_are_not_merged() {
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
+    for op in [Operation::Status, Operation::Allow] {
+        assert_eq!(run_op(op, &good(), &fw).0, EXIT_POLICY, "{op:?}");
+    }
+    assert_eq!(fw.calls().len(), 2, "only reads, nothing created");
+
+    // Remove still takes the rule away.
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
+    assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
+    assert!(fw.calls().contains(&format!("remove {NAME}")));
+}
+
+#[test]
 fn remove_removes_only_the_own_rule_and_absent_is_done() {
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
