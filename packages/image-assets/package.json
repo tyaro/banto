@@ -1,6 +1,6 @@
 {
   "name": "@banto/image-assets",
-  "version": "6.7.2",
+  "version": "6.8.0",
   "description": "Banto image-assets: browser-side image originals, import checks and object URL lifetimes, ADR-0020 (optional, not wired into the template)",
   "license": "MIT",
   "repository": {
