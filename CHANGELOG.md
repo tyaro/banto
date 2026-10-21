@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 設定画面のカテゴリ切り替えを、広い画面でも左の縦レールではなく内容の上の横並び（ピル型）にした。サイドバーと合わせて内容の幅が狭くなるのを避ける（visual の基準画像の再生成が要る）。
+
 ### Added
 
 - `@banto/image-assets` に原本の store を追加した（#438、計画書 PR-14）。`createImageStore({ maxTotalBytes })`（総容量は必須、超えると `store-full`）が `add()` で取込の検査を通した原本を不変の `Blob` として保持し、SHA-256 で重複排除する。object URL は原本ごとに共有して最後の `release()` で revoke し（`acquireUrl`）、`pin` / `collect` / `delete` / `dispose` は pin 中・URL 貸出中の原本を消さない（dispose 後は最後の解除で消える）。処理中の add は admin-core の `createRequestOwner` と同じ契約の内部の写しが持ち（同じ `key` の新しい add・`cancel`・`dispose` で失効し、`null` を返す）、admin-core の契約の表を自分のテストで流す。エラーコードに `unknown-asset`・`store-disposed` を足した。`.svelte.ts` を持つようになったので、使うアプリは `optimizeDeps.exclude` に足す（外部利用 fixture には足した）。
@@ -47,6 +51,7 @@
 
 ### Changed
 
+- サイドバーの折りたたみボタンを、ヘッダー左端からサイドバー最上段のロゴの左へ移した（900px 超）。最上段は `[ボタン][ロゴ] Banto` で、折りたたむとボタンだけが同じ位置に残り（ロゴは隠れる）、同じ場所をもう一度押せば戻る。900px 以下はこれまでどおりヘッダーのボタンでドロワーを開閉し、ドックのレイアウトでは出さない。visual の基準画像（サイドバー・ヘッダーを含むもの）は再生成が要る。
 - サイドバーの折りたたみボタンを、サイドバー下端からヘッダーの左端へ移した。900px 以下のハンバーガーと 1 つのボタンに統合し（900px 超は折りたたみ、以下はドロワーの開閉）、`aria-expanded` / `aria-controls` を付けた。`IconButton` に `expanded` / `controls` を追加。
 - サイドバーの表示項目の絞り込み（RBAC・閲覧公開の許可リスト）を `navSections()` に切り出し（挙動の変更なし、nav-launcher-plan PR-1）
 

@@ -1,8 +1,11 @@
 <script lang="ts">
 	/**
-	 * App shell sidebar (visual-refresh-design.md §8.3). Four sections:
-	 * brand / primary nav / admin nav (role-gated, own heading). The fold
-	 * toggle lives at the left end of Header.svelte (aria-controls="app-sidebar").
+	 * App shell sidebar (visual-refresh-design.md §8.3). Sections: top row
+	 * (fold button + brand) / primary nav / admin nav (role-gated, own
+	 * heading). The fold button is the first control of the top row, left of
+	 * the logo, above 900px only (aria-controls="app-sidebar"); folded, the
+	 * row keeps just that button, in the same place, so a second press
+	 * unfolds. At <=900px the drawer is opened by Header.svelte's button.
 	 * `overlayOpen` is owned by (app)/+layout.svelte (no
 	 * new global store) and only matters at <=900px, where this component
 	 * renders as a fixed slide-in drawer instead of the flex column.
@@ -14,6 +17,9 @@
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
+	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
+	import { IconButton } from '@banto/ui';
+	import { PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
 	interface Props {
 		/** <=900px overlay drawer state (design.md §8.1); not a fold state - see the media query below. */
@@ -33,6 +39,10 @@
 	const mainItems = $derived(sections.main);
 	const adminItems = $derived(sections.admin);
 
+	const foldLabel = $derived(
+		settings.sidebarCollapsed ? m['shell.expandSidebar']() : m['shell.collapseSidebar']()
+	);
+
 	/** Unseen-change badge text (wired by (app)/+layout.svelte). Capped for layout stability. */
 	function badgeText(count: number): string {
 		return count > 99 ? '99+' : String(count);
@@ -45,17 +55,32 @@
 	class:overlay-open={overlayOpen}
 	class:compact={settings.kiosk}
 >
-	<div class="brand">
-		<span class="brand-mark" aria-hidden="true">
-			<svg viewBox="0 0 24 24" width="14" height="14">
-				<rect x="10" y="3" width="4" height="2" rx="1" />
-				<circle cx="12" cy="12" r="6" />
-				<rect x="10" y="19" width="4" height="2" rx="1" />
-			</svg>
-		</span>
-		<!-- "Banto" is the product brand (owner-fixed): kept as a component
-		     constant, never keyed (PR-B2 scope rule). -->
-		<span class="brand-name">Banto</span>
+	<div class="brand" class:with-toggle={!narrowViewport.current}>
+		{#if !narrowViewport.current}
+			<!-- One persistent element: folding only changes its props, so focus
+			     stays on it. Not rendered at <=900px (the header's drawer button
+			     is the control there). -->
+			<IconButton
+				label={foldLabel}
+				icon={settings.sidebarCollapsed ? PanelLeftOpen : PanelLeftClose}
+				expanded={!settings.sidebarCollapsed}
+				controls="app-sidebar"
+				onclick={() => settings.toggleSidebar()}
+			/>
+		{/if}
+		<!-- The logo is decoration, not a link or a toggle. Hidden while folded. -->
+		<div class="brand-logo">
+			<span class="brand-mark" aria-hidden="true">
+				<svg viewBox="0 0 24 24" width="14" height="14">
+					<rect x="10" y="3" width="4" height="2" rx="1" />
+					<circle cx="12" cy="12" r="6" />
+					<rect x="10" y="19" width="4" height="2" rx="1" />
+				</svg>
+			</span>
+			<!-- "Banto" is the product brand (owner-fixed): kept as a component
+			     constant, never keyed (PR-B2 scope rule). -->
+			<span class="brand-name">Banto</span>
+		</div>
 	</div>
 
 	<nav class="nav-section" aria-label={m['shell.mainNav']()}>
@@ -145,6 +170,38 @@
 		font-weight: 700;
 	}
 
+	/* Fold button at the left (>900px): 0.6rem matches the nav items' own
+	   inset (0.5rem section + 0.6rem item), so the 36px button is centred on
+	   the icon column and fits the folded width exactly. */
+	.brand.with-toggle {
+		gap: 0.35rem;
+		padding: 0 0.6rem;
+	}
+
+	/* The button never shrinks while the aside's width transitions. */
+	.brand.with-toggle :global(.icon-button) {
+		flex-shrink: 0;
+	}
+
+	.brand-logo {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		min-width: 0;
+		overflow: hidden;
+		opacity: 1;
+		transition:
+			opacity var(--banto-duration-base) var(--banto-ease-out),
+			visibility var(--banto-duration-base) var(--banto-ease-out);
+	}
+
+	/* Folded: the row keeps only the button. visibility (not just opacity)
+	   takes the wordmark out of the accessibility tree. */
+	aside.collapsed .brand-logo {
+		opacity: 0;
+		visibility: hidden;
+	}
+
 	/* Kiosk shell (display-preset-plan.md D1-b): keep the brand row aligned
 	   with Header.svelte's compact height. */
 	aside.compact .brand {
@@ -171,10 +228,6 @@
 		white-space: nowrap;
 		opacity: 1;
 		transition: opacity var(--banto-duration-base) var(--banto-ease-out);
-	}
-
-	aside.collapsed .brand-name {
-		opacity: 0;
 	}
 
 	.nav-section {
@@ -324,9 +377,10 @@
 		}
 
 		aside.collapsed .label,
-		aside.collapsed .brand-name,
+		aside.collapsed .brand-logo,
 		aside.collapsed .section-heading {
 			opacity: 1;
+			visibility: visible;
 		}
 
 		/* Overlay mode always shows labels, so the badge stays a count pill
