@@ -87,9 +87,12 @@ export function isValidAppIdentifier(identifier: unknown): identifier is string 
  * `name` is the rule's identity (`-Name`): deterministic per shape and
  * deliberately free of the port. `New-NetFirewallRule` without `-Name`
  * creates a new rule with a random name every time, and `-DisplayName` /
- * `-Group` do not replace anything, so the command removes the rule of this
- * `name` first; running it again after a port change then replaces the old
- * rule instead of leaving the old port allowed. These are command content,
+ * `-Group` do not replace anything, so a fixed `name` is what keeps a second
+ * run from adding a duplicate. The command never removes or changes a rule:
+ * when a rule of this `name` already exists (possibly narrowed or turned into
+ * a Block by an administrator, or pointing at another install's exe) it only
+ * warns and leaves it alone, so a port or shape change is for the
+ * administrator to apply to the existing rule by hand. These are command content,
  * not UI text, so they stay ASCII and untranslated.
  */
 export function firewallRuleNames(identifier: string): {
