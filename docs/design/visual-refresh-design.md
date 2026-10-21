@@ -468,10 +468,10 @@ DOM 順: ハンバーガー(≤900px のみ) → ページ名表示 → スペ�
 ## 10. 設定・ユーザー管理・ダッシュボード（構造のみ）
 
 - 設定: セクションを `SurfaceCard` のグリッド
-  （`repeat(auto-fill, minmax(360px, 1fr))`）へ。テーマ選択は
-  Light/Dark/System × Standard/Glass のミニプレビュー（トークンを縮小
-  適用した 80×48 のサムネイル DOM）付き選択カード。密度トグル（§4.3）を
-  「表示密度」として追加。認証無効化・リストア系は `ErrorState` 系
+  （`repeat(auto-fill, minmax(360px, 1fr))`）へ。外観カードは
+  プリセット（Standard / Glass）の選択と、密度トグル（§4.3）の「表示密度」。
+  配色モード（ライト / ダーク / システム）の選択カードは置かない（ヘッダーの
+  太陽 / 月のボタンに移した。§8.2。#458）。認証無効化・リストア系は `ErrorState` 系
   トークンで囲った Danger zone カードへ分離。
 - ユーザー管理: ≥1100px で一覧+編集の 2 カラム、未満で縦積み。
   ロールは `StatusBadge`（admin=info、editor=neutral、viewer=neutral +
