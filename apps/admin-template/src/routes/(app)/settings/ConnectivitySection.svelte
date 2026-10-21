@@ -28,6 +28,7 @@
 	import { authSettingsStore } from './authSettingsStore.svelte';
 	import { systemInfoStore } from './systemInfoStore.svelte';
 	import { connectivityScope, isIpv4Bind, pickPrimaryLanUrl } from './connectivityScope';
+	import FirewallInfoPanel from './FirewallInfoPanel.svelte';
 
 	let serverStatus = $state<ServerStatus | null>(null);
 	let bindDraft = $state('127.0.0.1');
@@ -72,6 +73,21 @@
 		if (!tauri) return;
 		untrack(() => void loadServerStatus());
 	});
+
+	/**
+	 * Issue #219: re-read the live status for the firewall information
+	 * (before it copies anything). Only `serverStatus` is replaced - like the
+	 * failed-apply path below, the drafts keep what the user typed. `null`
+	 * when the status could not be read.
+	 */
+	async function refreshServerStatus(): Promise<ServerStatus | null> {
+		try {
+			serverStatus = await getServerStatus();
+			return serverStatus;
+		} catch {
+			return null;
+		}
+	}
 
 	// Issue #214: the drafts above differ from the last loaded/applied
 	// status. While the status is not loaded the inputs are disabled
@@ -313,6 +329,9 @@
 						<div class="qr">{@html firstLanQrSvg}</div>
 					{/if}
 				{/if}
+				<!-- Issue #219: what a firewall rule for the LIVE listener needs
+				     (Windows only; "not needed" while stopped or loopback-only). -->
+				<FirewallInfoPanel status={serverStatus} refresh={refreshServerStatus} />
 			{/if}
 		{:else}
 			<p class="note">{m['settings.serverDesktopOnly']()}</p>

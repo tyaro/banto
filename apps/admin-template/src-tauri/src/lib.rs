@@ -1924,6 +1924,26 @@ struct ServerStatusResult {
     /// The last failed `server_apply` that stopped the old listener (`null`
     /// when there was none since the last successful apply).
     apply_failure: Option<ServerApplyFailure>,
+    /// Issue #219: the absolute path of this desktop executable, for the
+    /// settings screen's firewall information (`null` when the OS cannot
+    /// tell, or the path is not valid UTF-8 and so cannot be shown or copied
+    /// as is). Local information about this PC, so it travels only in this
+    /// admin-gated response (`server_status`/`server_apply`) - there is no
+    /// REST twin.
+    executable_path: Option<String>,
+    /// `std::env::consts::OS` of this desktop host (`"windows"`, `"macos"`,
+    /// `"linux"`, ...): a code, not display text (conventions §13). The
+    /// frontend shows the Windows firewall information only for `"windows"`.
+    platform: &'static str,
+}
+
+/// [`ServerStatusResult::executable_path`]: `std::env::current_exe()` as a
+/// UTF-8 string, or `None` when it cannot be read or is not UTF-8 (a lossy
+/// conversion would show and copy a path that does not exist).
+fn current_executable_path() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.into_os_string().into_string().ok())
 }
 
 /// What [`bind_saved_server_at_launch`] had to do because the SAVED port was
@@ -1996,6 +2016,8 @@ fn build_status(saved: &ServerSettings, slot: &ServerSlot) -> ServerStatusResult
         generation: slot.generation,
         port_notice: slot.port_notice.clone(),
         apply_failure: slot.apply_failure.clone(),
+        executable_path: current_executable_path(),
+        platform: std::env::consts::OS,
     }
 }
 
@@ -7440,6 +7462,45 @@ mod tests {
         require_role(state, Role::Admin, "settings")
             .await
             .expect("admin session")
+    }
+
+    /// Issue #219: the executable path (local information) and the platform
+    /// code reach only an admin - they ride on the admin-gated status, so
+    /// viewer / editor / no session get no status at all (see
+    /// [`server_status_is_admin_only`]) and an admin gets both.
+    #[tokio::test]
+    async fn server_status_reports_the_executable_path_only_to_an_admin() {
+        let state = app_state().await;
+        assert!(matches!(
+            server_status_body(&state).await,
+            Err(BantoError::Unauthorized)
+        ));
+        for (name, role) in [("viewer", Role::Viewer), ("editor", Role::Editor)] {
+            let user = state
+                .users
+                .create_user(name, "password123", name, role)
+                .await
+                .expect("create_user");
+            state.set_session_for_test(Some(DesktopSession::Account(user)));
+            assert!(
+                matches!(server_status_body(&state).await, Err(BantoError::Forbidden)),
+                "{name}"
+            );
+        }
+
+        let state = admin_app_state().await;
+        let status = server_status_body(&state).await.expect("status");
+        let expected = std::env::current_exe()
+            .expect("current_exe")
+            .into_os_string()
+            .into_string()
+            .ok();
+        assert!(expected.is_some(), "the test binary path is UTF-8");
+        assert_eq!(status.executable_path, expected);
+        assert_eq!(status.platform, std::env::consts::OS);
+        let value = serde_json::to_value(&status).unwrap();
+        assert_eq!(value["executablePath"], serde_json::json!(expected));
+        assert_eq!(value["platform"], std::env::consts::OS);
     }
 
     /// `server_status` keeps refusing viewer / editor / no session.
