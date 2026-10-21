@@ -1,5 +1,5 @@
 /**
- * Copy plain text to the clipboard (Issue #219's firewall information).
+ * Spec §11.4 (LAN settings UX: the Windows Firewall guidance). Copy plain text to the clipboard (Issue #219's firewall information).
  * Same two-step approach as `@banto/grid-svelte`'s range copy:
  * `navigator.clipboard.writeText` first, then a hidden textarea +
  * `execCommand('copy')` for webviews without the async clipboard API or a

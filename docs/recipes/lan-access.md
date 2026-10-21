@@ -74,11 +74,19 @@ LAN アクセスを ON のままアプリを起動したとき、保存したポ
   - 実行ファイル単位（`-Program`）: このアプリが待ち受ける TCP ポートすべてが対象。
     ポートを変えても作り直さなくてよいが、許可の範囲は広い。
   - ポート単位（`-LocalPort`）: そのポートで待ち受けるプログラムすべてが対象。
-    ポートを変えたら作り直す。
-  - ルール名（`-DisplayName`）とグループ（`-Group`）は `tauri.conf.json` の
+    ポートを変えたら、同じコマンドを（画面に出ている新しいポートで）もう一度実行する。
+  - どちらのコマンドも、形ごとに決まった `-Name`（`<identifier>.lan.tcp.program` /
+    `<identifier>.lan.tcp.port`。ポート番号は含めない）の既存ルールを
+    `Remove-NetFirewallRule -Name ... -ErrorAction SilentlyContinue` で消してから
+    `New-NetFirewallRule -Name ...` で作る 1 行になっている。`New-NetFirewallRule` は
+    `-Name` を省くと毎回ランダムな名前の新しいルールを作り、`-DisplayName` や
+    `-Group` では置き換わらないため、この形にしている。同じコマンドを再実行する・
+    ポートを変えて実行し直すと、同じ名前のルールが置き換わり、古いポートの許可は残らない。
+  - もう一方の形のルールは消さない。形を切り替えるときは古い形のルールを手で消す
+    （`Remove-NetFirewallRule -Group '<identifier>'` でこのアプリのルールを全部消せる）。
+  - ルール名（`-DisplayName`・`-Name`）とグループ（`-Group`）は `tauri.conf.json` の
     `identifier` から作る（派生アプリどうしで衝突しない。リネーム時に
-    `identifier` を変えること）。不要になったら
-    `Remove-NetFirewallRule -Group '<identifier>'` で外せる。
+    `identifier` を変えること）。
 - コピーの直前に状態を読み直し、表示していたポート・アドレス・実行ファイル
   （`generation`）と変わっていたらコピーせずに表示を更新する。
 - 停止中、または待受が loopback（`127.0.0.0/8`）だけのときは「設定は不要」と表示し、

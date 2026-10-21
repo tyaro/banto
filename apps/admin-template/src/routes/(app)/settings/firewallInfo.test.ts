@@ -89,19 +89,50 @@ describe('isValidPort / isValidAppIdentifier', () => {
 });
 
 describe('firewallRuleNames / firewallCommands', () => {
-	it('names the group and both rules after the app identifier', () => {
-		expect(firewallRuleNames(ID, 8721)).toEqual({
+	it('names the group and both rules after the app identifier, without the port', () => {
+		expect(firewallRuleNames(ID)).toEqual({
 			group: ID,
-			programRule: `${ID} LAN (TCP-In, program)`,
-			portRule: `${ID} LAN (TCP-In, port 8721)`
+			programName: `${ID}.lan.tcp.program`,
+			portName: `${ID}.lan.tcp.port`,
+			programDisplayName: `${ID} LAN (TCP-In, program)`,
+			portDisplayName: `${ID} LAN (TCP-In, port)`
 		});
 	});
 
 	it('builds the per-executable and per-port commands', () => {
 		expect(firewallCommands(ID, 8721, EXE)).toEqual({
-			program: `New-NetFirewallRule -DisplayName '${ID} LAN (TCP-In, program)' -Group '${ID}' -Direction Inbound -Program '${EXE}' -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`,
-			port: `New-NetFirewallRule -DisplayName '${ID} LAN (TCP-In, port 8721)' -Group '${ID}' -Direction Inbound -LocalPort 8721 -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`
+			program: `Remove-NetFirewallRule -Name '${ID}.lan.tcp.program' -ErrorAction SilentlyContinue; New-NetFirewallRule -Name '${ID}.lan.tcp.program' -DisplayName '${ID} LAN (TCP-In, program)' -Group '${ID}' -Direction Inbound -Program '${EXE}' -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`,
+			port: `Remove-NetFirewallRule -Name '${ID}.lan.tcp.port' -ErrorAction SilentlyContinue; New-NetFirewallRule -Name '${ID}.lan.tcp.port' -DisplayName '${ID} LAN (TCP-In, port)' -Group '${ID}' -Direction Inbound -LocalPort 8721 -Protocol TCP -Profile Private -RemoteAddress LocalSubnet -Action Allow`
 		});
+	});
+
+	it('uses the same -Name for any port, so a re-run replaces the old rule', () => {
+		const a = firewallCommands(ID, 8721, EXE)!;
+		const b = firewallCommands(ID, 9000, EXE)!;
+		const nameOf = (command: string) => /New-NetFirewallRule -Name ('[^']*')/.exec(command)![1];
+		expect(nameOf(a.port)).toBe(nameOf(b.port));
+		expect(nameOf(a.port)).not.toContain('8721');
+		expect(nameOf(a.program!)).toBe(nameOf(b.program!));
+		expect(nameOf(a.port)).not.toBe(nameOf(a.program!));
+	});
+
+	it('removes the rule of the same name before creating it, on one line', () => {
+		const { program, port } = firewallCommands(ID, 8721, EXE)!;
+		for (const command of [program!, port]) {
+			expect(command).not.toMatch(/[\r\n]/);
+			expect(command.indexOf('Remove-NetFirewallRule')).toBe(0);
+			expect(command.indexOf('Remove-NetFirewallRule')).toBeLessThan(
+				command.indexOf('New-NetFirewallRule')
+			);
+			const removed = /Remove-NetFirewallRule -Name ('[^']*')/.exec(command)![1];
+			expect(command).toContain(`New-NetFirewallRule -Name ${removed} `);
+		}
+	});
+
+	it('quotes the names as PowerShell single-quoted literals', () => {
+		const { port } = firewallCommands('app.example-1', 8721, null)!;
+		expect(port).toContain("-Name 'app.example-1.lan.tcp.port'");
+		expect(port).toContain("-Group 'app.example-1'");
 	});
 
 	it('escapes the executable path inside the command', () => {

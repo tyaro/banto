@@ -1,6 +1,7 @@
 <script lang="ts">
 	/**
 	 * 「ファイアウォールの許可に必要な情報」（Issue #219 段階 1 / PR-A）。
+	 * spec §11.4（LAN 設定の UX・Windows ファイアウォールの案内）。
 	 * ConnectivitySection.svelte の LAN カードの中、待受状態の下に出す。
 	 *
 	 * 何を出すかは `firewallInfo.ts` の `firewallGuide` が決める（稼働中の

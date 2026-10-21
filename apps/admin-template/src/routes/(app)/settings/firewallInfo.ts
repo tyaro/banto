@@ -1,5 +1,6 @@
 /**
- * Pure decisions behind the settings screen's "information needed to allow
+ * Spec §11.4 (LAN settings UX: documenting the OS-side Windows Firewall
+ * behavior). Pure decisions behind the settings screen's "information needed to allow
  * through the firewall" block (Issue #219, stage 1 / PR-A): whether to show
  * it at all, and the values + PowerShell commands it shows and copies.
  * `FirewallInfoPanel.svelte` renders the result; nothing here touches the
@@ -80,18 +81,29 @@ export function isValidAppIdentifier(identifier: unknown): identifier is string 
 /**
  * Rule names that do not collide between apps derived from this template:
  * the Tauri bundle `identifier` (reverse-DNS, unique per app by design and
- * changed by the rename recipe) is the `-Group`, and prefixes both display
- * names. These are command content, not UI text, so they stay ASCII and
- * untranslated.
+ * changed by the rename recipe) is the `-Group`, and prefixes the rest.
+ *
+ * `name` is the rule's identity (`-Name`): deterministic per shape and
+ * deliberately free of the port. `New-NetFirewallRule` without `-Name`
+ * creates a new rule with a random name every time, and `-DisplayName` /
+ * `-Group` do not replace anything, so the command removes the rule of this
+ * `name` first; running it again after a port change then replaces the old
+ * rule instead of leaving the old port allowed. These are command content,
+ * not UI text, so they stay ASCII and untranslated.
  */
-export function firewallRuleNames(
-	identifier: string,
-	port: number
-): { group: string; programRule: string; portRule: string } {
+export function firewallRuleNames(identifier: string): {
+	group: string;
+	programName: string;
+	portName: string;
+	programDisplayName: string;
+	portDisplayName: string;
+} {
 	return {
 		group: identifier,
-		programRule: `${identifier} LAN (TCP-In, program)`,
-		portRule: `${identifier} LAN (TCP-In, port ${port})`
+		programName: `${identifier}.lan.tcp.program`,
+		portName: `${identifier}.lan.tcp.port`,
+		programDisplayName: `${identifier} LAN (TCP-In, program)`,
+		portDisplayName: `${identifier} LAN (TCP-In, port)`
 	};
 }
 
@@ -103,7 +115,9 @@ export interface FirewallCommands {
 }
 
 /**
- * The two `New-NetFirewallRule` commands (the rule shape - per executable or
+ * The two commands, each `Remove-NetFirewallRule -Name <name>` (silent when
+ * absent) followed by `New-NetFirewallRule -Name <name>`, on one line so it
+ * pastes as one (the rule shape - per executable or
  * per port - is still an ADR decision, so both are offered; Issue #219
  * addendum 2026-10-21). `null` when the port or identifier is invalid: no
  * command is better than a wrong one.
@@ -114,22 +128,34 @@ export function firewallCommands(
 	executablePath: string | null
 ): FirewallCommands | null {
 	if (!isValidPort(port) || !isValidAppIdentifier(identifier)) return null;
-	const names = firewallRuleNames(identifier, port);
-	// The names come from a checked identifier and a checked port, so they
-	// need no escaping - but quoting them the same way keeps one rule for
-	// every string in the command.
+	const names = firewallRuleNames(identifier);
+	// The names come from a checked identifier, so they need no escaping -
+	// but quoting them the same way keeps one rule for every string in the
+	// command.
 	const group = quotePowerShellLiteral(names.group);
-	const programRule = quotePowerShellLiteral(names.programRule);
-	const portRule = quotePowerShellLiteral(names.portRule);
-	if (group === null || programRule === null || portRule === null) return null;
+	const programName = quotePowerShellLiteral(names.programName);
+	const portName = quotePowerShellLiteral(names.portName);
+	const programDisplay = quotePowerShellLiteral(names.programDisplayName);
+	const portDisplay = quotePowerShellLiteral(names.portDisplayName);
+	if (
+		group === null ||
+		programName === null ||
+		portName === null ||
+		programDisplay === null ||
+		portDisplay === null
+	) {
+		return null;
+	}
 	const common = `-Protocol ${FIREWALL_PROTOCOL} -Profile ${FIREWALL_PROFILE} -RemoteAddress ${FIREWALL_REMOTE_ADDRESS} -Action Allow`;
+	const remove = (name: string) =>
+		`Remove-NetFirewallRule -Name ${name} -ErrorAction SilentlyContinue`;
 	const program = executablePath ? quotePowerShellLiteral(executablePath) : null;
 	return {
 		program:
 			program === null
 				? null
-				: `New-NetFirewallRule -DisplayName ${programRule} -Group ${group} -Direction ${FIREWALL_DIRECTION} -Program ${program} ${common}`,
-		port: `New-NetFirewallRule -DisplayName ${portRule} -Group ${group} -Direction ${FIREWALL_DIRECTION} -LocalPort ${port} ${common}`
+				: `${remove(programName)}; New-NetFirewallRule -Name ${programName} -DisplayName ${programDisplay} -Group ${group} -Direction ${FIREWALL_DIRECTION} -Program ${program} ${common}`,
+		port: `${remove(portName)}; New-NetFirewallRule -Name ${portName} -DisplayName ${portDisplay} -Group ${group} -Direction ${FIREWALL_DIRECTION} -LocalPort ${port} ${common}`
 	};
 }
 
