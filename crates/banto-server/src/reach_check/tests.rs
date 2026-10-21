@@ -449,7 +449,11 @@ fn issuance_under_a_stale_generation_is_refused() {
     store.begin_generation(observed + 1);
     assert_eq!(
         store
-            .issue_with_local_addrs(observed, target(), Vec::new())
+            .issue_with_local_addrs(
+                observed,
+                target(),
+                vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10))]
+            )
             .unwrap_err(),
         ReachIssueError::StaleGeneration
     );
@@ -517,6 +521,50 @@ async fn this_pc_is_self_access_and_does_not_consume() {
         post(&router, Req::new(&issued.token)).await,
         (StatusCode::OK, result_body("recorded"))
     );
+}
+
+#[test]
+fn issuing_needs_this_pcs_own_addresses() {
+    let (store, _clock) = store();
+    let target = || ReachTarget {
+        host: HOST.to_string(),
+        port: PORT,
+    };
+    // A failed enumeration reaches `issue_with_local_addrs` as no address
+    // (or loopback only): nothing is issued, so nothing can be recorded.
+    for addrs in [vec![], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]] {
+        assert!(matches!(
+            store.issue_with_local_addrs(0, target(), addrs),
+            Err(ReachIssueError::LocalAddressesUnavailable)
+        ));
+    }
+    assert!(store.status().last_issue.is_none());
+}
+
+#[tokio::test]
+async fn the_target_ip_is_always_this_pc() {
+    // Even if the enumeration missed the issued address, a request from it is
+    // this PC, not another device.
+    let (store, _clock) = store();
+    let issued = store
+        .issue_with_local_addrs(
+            0,
+            ReachTarget {
+                host: HOST.to_string(),
+                port: PORT,
+            },
+            vec![IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9))],
+        )
+        .unwrap();
+    let router = reach_check_router(store.clone(), 0, PORT);
+    let own: IpAddr = HOST.parse().unwrap();
+    assert_eq!(
+        post(&router, Req::new(&issued.token).peer(peer(own)))
+            .await
+            .1,
+        result_body("selfAccess")
+    );
+    assert!(store.status().records.is_empty());
 }
 
 #[tokio::test]
@@ -657,7 +705,7 @@ async fn host_name_matches_case_insensitively() {
                 host: "office-pc.local".to_string(),
                 port: PORT,
             },
-            Vec::new(),
+            vec![IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10))],
         )
         .unwrap();
     let router = reach_check_router(store.clone(), 0, PORT);

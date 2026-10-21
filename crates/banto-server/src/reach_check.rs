@@ -179,6 +179,11 @@ pub enum ReachIssueError {
     /// The generation the issuer observed is not the store's current one (a
     /// listener change happened in between): nothing is issued.
     StaleGeneration,
+    /// This PC's own addresses could not be enumerated (or none but loopback
+    /// came back), so a request from this PC to its own LAN address could not
+    /// be told from another device's: nothing is issued rather than risk a
+    /// false "reached from another device" (design §3.6).
+    LocalAddressesUnavailable,
 }
 
 /// The outcome of the last issuance.
@@ -439,17 +444,38 @@ impl ReachCheckState {
         generation: u64,
         target: ReachTarget,
     ) -> Result<ReachIssue, ReachIssueError> {
-        self.issue_with_local_addrs(generation, target, local_interface_addrs())
+        let local_addrs =
+            local_interface_addrs().map_err(|_| ReachIssueError::LocalAddressesUnavailable)?;
+        self.issue_with_local_addrs(generation, target, local_addrs)
     }
 
     /// [`ReachCheckState::issue`] with this PC's addresses given (tests, or an
-    /// app that already enumerated them).
+    /// app that already enumerated them). A list without any non-loopback
+    /// address is refused (`LocalAddressesUnavailable`): it cannot be a real
+    /// enumeration of a PC serving the LAN. The target host, when it is an IP
+    /// literal, is this PC's own address by construction and is always added.
     pub fn issue_with_local_addrs(
         &self,
         generation: u64,
         target: ReachTarget,
         local_addrs: Vec<IpAddr>,
     ) -> Result<ReachIssue, ReachIssueError> {
+        let mut self_addrs: Vec<IpAddr> = local_addrs.into_iter().map(canonical_ip).collect();
+        if !self_addrs.iter().any(|ip| !ip.is_loopback()) {
+            return Err(ReachIssueError::LocalAddressesUnavailable);
+        }
+        let target_ip = target
+            .host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .ok()
+            .map(canonical_ip);
+        if let Some(ip) = target_ip {
+            if !self_addrs.contains(&ip) {
+                self_addrs.push(ip);
+            }
+        }
         let now = self.clock.now();
         let wall = self.clock.wall_ms();
         let mut inner = self.lock();
@@ -468,7 +494,7 @@ impl ReachCheckState {
             issue_id,
             target: target.clone(),
             expires_at,
-            self_addrs: local_addrs.into_iter().map(canonical_ip).collect(),
+            self_addrs,
         });
         inner.last_issue = Some(IssueSummary {
             issue_id,
@@ -610,12 +636,11 @@ fn canonical_ip(ip: IpAddr) -> IpAddr {
 }
 
 /// This PC's interface addresses (loopback included; that is judged by
-/// `is_loopback` anyway). Empty when enumeration fails - loopback is still
-/// recognized, and the administrator's screen states what is not guaranteed.
-fn local_interface_addrs() -> Vec<IpAddr> {
-    if_addrs::get_if_addrs()
-        .map(|ifaces| ifaces.into_iter().map(|iface| iface.ip()).collect())
-        .unwrap_or_default()
+/// `is_loopback` anyway). An enumeration failure is an error, never an empty
+/// list: with no own addresses known, this PC reaching its own LAN address
+/// would be recorded as another device (owner review on PR #468).
+fn local_interface_addrs() -> std::io::Result<Vec<IpAddr>> {
+    if_addrs::get_if_addrs().map(|ifaces| ifaces.into_iter().map(|iface| iface.ip()).collect())
 }
 
 /// Whether the `Host` authority names `host` and `port` exactly. A missing
