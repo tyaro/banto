@@ -24,6 +24,7 @@
 
 ### Added
 
+- `@banto/dock-svelte` にキーボード操作と操作の hook を追加した（#433、計画書 PR-5）。divider は WAI-ARIA の Window Splitter（フォーカスでき、矢印・Shift・Home / End で動かし、`aria-valuenow` などを持つ）、タブは矢印・Home / End で選ぶ（roving tabindex）、浮動 window はタイトルバーのボタンで移動 / サイズ変更のモードに入り、矢印・Shift で動かして Enter で確定、Esc で取消。`DockHost` に `canStartGesture` / `onGestureEnd` / `isEscapeBlocked(activeLayer)` の props と型 `DockGestureKind` / `DockCancelReason`、`messages` に `moveWindow` / `resizeWindow` を足した。ダッシュボードは `isEscapeBlocked` に `@banto/ui` の層の判定をつなぎ、浮動 window を開いたままの divider の操作も Esc で戻る。
 - 900px 以下のドック（タブバー）は、透け具合の設定にかかわらず不透明度 85% を下限にし、ラベルを読みやすくした（`--banto-shell-launcher-tabbar-opacity-min`）。
 - `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）。
 - 設定の「外観」に「ナビゲーション」カードを追加し、サイドバーの代わりに画面下のドック（`LauncherBar` を配線した `ShellLauncher`）を選べるようにした。ユーザーごとに保存し（`shell.navLayout` / `shell.launcherOpacity`、未保存のユーザーは既定のサイドバー）、ドックの不透明度をスライダー（40〜100%）とプレビューで調整できる。既定は `NAV_LAYOUT_DEFAULT = 'sidebar'`。ドック表示中はトーストをバーの上に上げる（`@banto/theme` に `--banto-shell-launcher-tabbar-reserve` を追加）（nav-launcher-plan.md PR-3）。

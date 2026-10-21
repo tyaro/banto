@@ -396,3 +396,130 @@ describe('dispose refuses a session begun from its own cancel callbacks (PR #445
 		expect(dock.layout.floating[0].width).toBe(320);
 	});
 });
+
+describe('hooks and keyboard sessions (#433-b, PR-5)', () => {
+	it('canStart refuses before a session exists: no listener, no onEnd', () => {
+		const onEnd = vi.fn();
+		const canStart = vi.fn(() => false);
+		const { owner } = setup({ canStart, onEnd });
+		expect(
+			owner.begin(pointer('pointerdown') as PointerEvent, { kind: 'resize', panelId: 'a' })
+		).toBe(false);
+		expect(owner.beginKeyboard({ kind: 'move', panelId: 'a' })).toBe(false);
+		const apply = vi.fn();
+		expect(owner.instant('divider', null, apply)).toBe(false);
+		expect(canStart.mock.calls).toEqual([
+			['resize', 'a'],
+			['move', 'a'],
+			['divider', null]
+		]);
+		expect(apply).not.toHaveBeenCalled();
+		expect(onEnd).not.toHaveBeenCalled();
+		expect(owner.active).toBe(false);
+		expect(net).toBe(0);
+	});
+
+	it('canStart is not asked for drag-candidate, but as drag by setKind; a refusal discards the press silently', () => {
+		const canStart = vi.fn(() => false);
+		const onEnd = vi.fn();
+		const commit = vi.fn();
+		const cancel = vi.fn();
+		const { owner } = setup({ canStart, onEnd });
+		expect(
+			owner.begin(pointer('pointerdown') as PointerEvent, {
+				kind: 'drag-candidate',
+				panelId: 'a',
+				commit,
+				cancel
+			})
+		).toBe(true);
+		expect(canStart).not.toHaveBeenCalled();
+		expect(owner.setKind('drag')).toBe(false);
+		expect(canStart).toHaveBeenCalledWith('drag', 'a');
+		// The vetoed gesture never started: no session, no listener, and the
+		// release reports nothing (PR #446 review).
+		expect(owner.active).toBe(false);
+		expect(net).toBe(0);
+		window.dispatchEvent(pointer('pointerup'));
+		expect(commit).not.toHaveBeenCalled();
+		expect(cancel).not.toHaveBeenCalled();
+		expect(onEnd).not.toHaveBeenCalled();
+	});
+
+	it('a canStart hook that starts a session itself makes the outer start fail (re-entrancy)', () => {
+		const options: GestureOwnerOptions = {};
+		const { owner } = setup(options);
+		let inner = false;
+		options.canStart = (kind) => {
+			if (kind === 'resize') inner = owner.beginKeyboard({ kind: 'move', panelId: 'a' });
+			return true;
+		};
+		expect(owner.begin(pointer('pointerdown') as PointerEvent, { kind: 'resize' })).toBe(false);
+		expect(inner).toBe(true);
+		expect(owner.session?.kind).toBe('move');
+		owner.cancel();
+		expect(net).toBe(0);
+	});
+
+	it('a keyboard session ignores pointers, commits by commitKeyboard and cancels by blur', () => {
+		const onEnd = vi.fn();
+		const { dock, owner } = setup({ onEnd });
+		const commit = vi.fn();
+		expect(owner.beginKeyboard({ kind: 'move', panelId: 'a', commit })).toBe(true);
+		expect(owner.session?.pointerId).toBeNull();
+		window.dispatchEvent(pointer('pointerup'));
+		window.dispatchEvent(pointer('pointercancel'));
+		expect(owner.active).toBe(true);
+		dock.move('a', 10, 0, 1000, 600);
+		owner.commitKeyboard();
+		expect(commit).toHaveBeenCalledOnce();
+		expect(onEnd).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ kind: 'move' }),
+			'commit'
+		);
+		expect(dock.layout.floating[0].x).toBe(50);
+		expect(net).toBe(0);
+
+		owner.beginKeyboard({
+			kind: 'resize',
+			panelId: 'a',
+			restore: (snap) => dock.restoreWindowGeometry('a', snap)
+		});
+		dock.resize('a', 'se', 30, 0, 1000, 600);
+		window.dispatchEvent(new Event('blur'));
+		expect(dock.layout.floating[0].width).toBe(320);
+		expect(onEnd).toHaveBeenLastCalledWith(
+			expect.objectContaining({ kind: 'resize' }),
+			'cancel',
+			'blur'
+		);
+		expect(net).toBe(0);
+	});
+
+	it('commitKeyboard does not end a pointer session', () => {
+		const { owner } = setup();
+		owner.begin(pointer('pointerdown') as PointerEvent, { kind: 'resize' });
+		owner.commitKeyboard();
+		expect(owner.active).toBe(true);
+		owner.cancel();
+		expect(net).toBe(0);
+	});
+
+	it('instant applies and reports one commit; refused while a session is active or disposed', () => {
+		const onEnd = vi.fn();
+		const { owner } = setup({ onEnd });
+		const apply = vi.fn();
+		expect(owner.instant('divider', null, apply)).toBe(true);
+		expect(apply).toHaveBeenCalledOnce();
+		expect(onEnd).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ kind: 'divider', pointerId: null }),
+			'commit'
+		);
+		owner.beginKeyboard({ kind: 'move', panelId: 'a' });
+		expect(owner.instant('divider', null, apply)).toBe(false);
+		owner.dispose();
+		expect(owner.instant('divider', null, apply)).toBe(false);
+		expect(apply).toHaveBeenCalledOnce();
+		expect(net).toBe(0);
+	});
+});

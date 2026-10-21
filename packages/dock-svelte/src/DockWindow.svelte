@@ -29,8 +29,21 @@
 	 * the front (#433: Tab / a click into a back window's input must raise it
 	 * too). `DockHost` keeps the window DOM order stable and stacks by
 	 * z-index, so raising never moves the focused element in the DOM.
+	 *
+	 * Keyboard move / resize (#433-b, shared-primitives-upstream-plan §3.3 /
+	 * D5-a): an explicit MODE, entered from a titlebar button (visually hidden
+	 * until it has focus, so the pointer chrome is unchanged). While the mode
+	 * is on, the arrows move (or resize from the bottom-right corner) by
+	 * `KEY_STEP_PX`, Shift by `KEY_STEP_LARGE_PX`; Enter (or the button again)
+	 * commits; Esc cancels and restores only this window's geometry. The mode
+	 * is a `move` / `resize` session of the `GestureOwner` with
+	 * `pointerId: null`. Keys are read from the focused mode button's own
+	 * keydown - never a window-level listener - so no key outside the dock is
+	 * taken (plan §4.3); Ctrl / Alt / Meta combinations, already-consumed keys
+	 * and IME composition pass through. Moving the focus off the button
+	 * cancels the mode (reason `blur`).
 	 */
-	import type { Snippet } from 'svelte';
+	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { getDragController } from './core/drag.svelte';
 	import { displayWindowGeometry } from './core/geometry';
 	import { getGestureOwner } from './core/gesture.svelte';
@@ -72,6 +85,9 @@
 	const t = { ...defaultDockMessages, ...messages };
 
 	const DRAG_THRESHOLD_PX = 5;
+	/** Keyboard mode step (D5-a): an arrow press, and with Shift. */
+	const KEY_STEP_PX = 10;
+	const KEY_STEP_LARGE_PX = 50;
 	const drag = getDragController();
 	const gesture = getGestureOwner();
 	const policy = getDockPolicy();
@@ -105,6 +121,7 @@
 		const startY = event.clientY;
 		const winRect = windowEl.getBoundingClientRect();
 		let dragging = false;
+		let refused = false;
 
 		gesture.begin(event, {
 			kind: 'drag-candidate',
@@ -115,10 +132,15 @@
 					drag.update(moveEvent.clientX, moveEvent.clientY);
 					return;
 				}
+				if (refused) return;
 				if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
 					return;
+				// `canStartGesture` is asked here, as `drag` (see `DockHost`).
+				if (!gesture.setKind('drag')) {
+					refused = true;
+					return;
+				}
 				dragging = true;
-				gesture.setKind('drag');
 				drag.start({
 					panelId: win.id,
 					title: win.title,
@@ -180,6 +202,79 @@
 	}
 
 	const RESIZE_EDGES: ResizeEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+
+	/** The keyboard mode this window is in (from the owner's session), or `null`. */
+	const keyMode = $derived.by(() => {
+		const session = gesture.session;
+		if (!session || session.pointerId !== null || session.panelId !== win.id) return null;
+		return session.kind === 'move' || session.kind === 'resize' ? session.kind : null;
+	});
+
+	/** The mode button was activated: enter the mode, or commit it when already in it. */
+	function toggleKeyboardMode(kind: 'move' | 'resize'): void {
+		if (keyMode === kind) {
+			gesture.commitKeyboard();
+			return;
+		}
+		if (gesture.active) return;
+		focusThis();
+		gesture.beginKeyboard({
+			kind,
+			panelId: win.id,
+			activeLayer: windowEl,
+			restore: (snapshot) => dock.restoreWindowGeometry(win.id, snapshot)
+		});
+	}
+
+	function handleModeKeydown(event: KeyboardEvent, kind: 'move' | 'resize'): void {
+		if (keyMode !== kind) return;
+		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+		if (event.altKey || event.ctrlKey || event.metaKey) return;
+		if (event.key === 'Enter') {
+			// Also keeps the button from turning this Enter into a click.
+			event.preventDefault();
+			gesture.commitKeyboard();
+			return;
+		}
+		const step = event.shiftKey ? KEY_STEP_LARGE_PX : KEY_STEP_PX;
+		let dx = 0;
+		let dy = 0;
+		if (event.key === 'ArrowLeft') dx = -step;
+		else if (event.key === 'ArrowRight') dx = step;
+		else if (event.key === 'ArrowUp') dy = -step;
+		else if (event.key === 'ArrowDown') dy = step;
+		else return;
+		event.preventDefault();
+		const host = gesture.measureHost();
+		if (kind === 'move') dock.move(win.id, dx, dy, host.width, host.height, policy.clamp);
+		else dock.resize(win.id, 'se', dx, dy, host.width, host.height, policy.clamp);
+	}
+
+	/** Focus left the mode button: the mode ends without committing. */
+	function handleModeBlur(kind: 'move' | 'resize'): void {
+		if (keyMode === kind) gesture.cancel('blur');
+	}
+
+	/**
+	 * Is the owner's active session this window's keyboard mode? Only such a
+	 * session is ended from here - another window's teardown must never cancel
+	 * an unrelated gesture.
+	 */
+	function ownsKeyboardSession(): boolean {
+		const session = gesture.session;
+		return !!session && session.pointerId === null && session.panelId === win.id;
+	}
+
+	// The mode button can disappear without a `blur` (Firefox fires none when a
+	// focused element is removed): the window closed or docked while in the
+	// mode, or `capabilities` hid the move button. End the mode then, or the
+	// stale session would keep refusing every other gesture.
+	onDestroy(() => {
+		if (ownsKeyboardSession()) gesture.cancel('unmount');
+	});
+	$effect(() => {
+		if (keyMode === 'move' && !caps.move) untrack(() => gesture.cancel('api'));
+	});
 </script>
 
 <!--
@@ -215,11 +310,9 @@
 	-->
 	<div class="frame">
 		<!--
-			Dragging the titlebar is pointer-only in v1 (spec §5.2 describes free
-			drag/resize for floating panels; no keyboard-move equivalent is
-			specified). Same class of limitation as the resize handles below -
-			suppressed rather than "fixed" by inventing a keyboard interaction
-			that isn't part of this milestone's scope.
+			Dragging the titlebar is pointer-only; its keyboard equivalent is the
+			explicit move / resize mode of the buttons below (#433-b, D5-a), so the
+			titlebar itself stays a non-focusable drag surface.
 		-->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="titlebar" class:immovable={!caps.move} onpointerdown={handleTitlebarPointerDown}>
@@ -227,6 +320,34 @@
 				<span class="icon" aria-hidden="true">{win.icon}</span>
 			{/if}
 			<span class="title">{win.title}</span>
+			{#if caps.move}
+				<button
+					type="button"
+					class="key-btn"
+					class:active={keyMode === 'move'}
+					aria-label={t.moveWindow(win.title)}
+					aria-pressed={keyMode === 'move'}
+					onpointerdown={(event) => event.stopPropagation()}
+					onclick={() => toggleKeyboardMode('move')}
+					onkeydown={(event) => handleModeKeydown(event, 'move')}
+					onblur={() => handleModeBlur('move')}
+				>
+					✥
+				</button>
+			{/if}
+			<button
+				type="button"
+				class="key-btn"
+				class:active={keyMode === 'resize'}
+				aria-label={t.resizeWindow(win.title)}
+				aria-pressed={keyMode === 'resize'}
+				onpointerdown={(event) => event.stopPropagation()}
+				onclick={() => toggleKeyboardMode('resize')}
+				onkeydown={(event) => handleModeKeydown(event, 'resize')}
+				onblur={() => handleModeBlur('resize')}
+			>
+				⤡
+			</button>
 			{#if onPopOut && caps.undock}
 				<button
 					type="button"
@@ -261,7 +382,7 @@
 		</div>
 	</div>
 
-	<!-- Resize handles: pointer-only in v1 (no keyboard resize equivalent yet), so hidden from assistive tech. -->
+	<!-- Resize handles: pointer surfaces, hidden from assistive tech - the keyboard equivalent is the resize-mode button in the titlebar. -->
 	{#each RESIZE_EDGES as edge (edge)}
 		<div
 			class={`handle handle-${edge}`}
@@ -341,7 +462,8 @@
 	}
 
 	.close-btn,
-	.popout-btn {
+	.popout-btn,
+	.key-btn {
 		flex: 0 0 auto;
 		width: 22px;
 		height: 22px;
@@ -371,9 +493,27 @@
 	}
 
 	.close-btn:focus-visible,
-	.popout-btn:focus-visible {
+	.popout-btn:focus-visible,
+	.key-btn:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
+	}
+
+	.key-btn:hover,
+	.key-btn.active {
+		background: color-mix(in srgb, var(--banto-primary) 15%, transparent);
+		color: var(--banto-primary);
+	}
+
+	/* The keyboard-mode buttons stay out of sight until they have focus (or the
+	   mode is on): the pointer chrome looks exactly as before (#433-b). */
+	.key-btn:not(:focus):not(.active) {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 
 	.body {

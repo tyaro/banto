@@ -10,6 +10,11 @@
  * of this; no new .svelte components ship in Phase A.
  */
 export { default as DockHost } from './DockHost.svelte';
+/** Gesture hook types of `DockHost` (`canStartGesture` / `onGestureEnd`; #433-b, shared-primitives-upstream-plan §3.3). */
+export type {
+	GestureCancelReason as DockCancelReason,
+	GestureKind as DockGestureKind
+} from './core/gesture.svelte';
 export { DockState, createDockState } from './state.svelte';
 export { defaultDockMessages, type DockMessages } from './messages';
 
