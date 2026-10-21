@@ -556,6 +556,11 @@ Dark:
 | `--banto-control-height-sm` | `28px` | ツールバー内 |
 | `--banto-control-height-lg` | `40px` | ログイン等の主ボタン |
 | `--banto-grid-row-height` | standard `36px`（現行）/ compact `32px` | 密度軸で切替 |
+| `--banto-space-1` 〜 `--banto-space-8` | `0.25rem` / `0.5rem` / `0.75rem` / `1rem` / `1.25rem` / `1.5rem` / `2rem` / `3rem` | 余白の段階（序数。値は名前に含めない）。密度では切り替えない（[theme-dimension-tokens.md](theme-dimension-tokens.md) §5.2・D3） |
+| `--banto-border-width` | `1px` | 枠線の幅 |
+| `--banto-border-width-strong` | `2px` | 選択・強調の縁 |
+
+部品の形（幅・高さ・列幅・アイコンの大きさ）は汎用の段階に入れない（theme-dimension-tokens.md D7）。
 
 ### A.5 タイポグラフィ
 
@@ -568,6 +573,18 @@ Dark:
 | body | 14px / 1.6（現行） | 400 | |
 | caption（補足） | 12px / 1.5 | 400 | `--banto-text-muted` |
 | numeric（グリッド数値列） | body 同等 | 400 | `tabular-nums` 右揃え |
+
+文字サイズのトークン（[theme-dimension-tokens.md](theme-dimension-tokens.md) §5.2・D4。`rem` なので root の
+`--banto-font-size` に追従する）。本文（body）は root の `1rem` を継承し、トークンを持たない。`md` は本文より
+一段小さい補足で、本文ではない。
+
+| トークン | 値（root 14px のとき） | 役割 |
+|---|---|---|
+| `--banto-font-size-xs` | `0.7rem`（9.8px） | バッジ・極小ラベル |
+| `--banto-font-size-sm` | `0.8rem`（11.2px） | caption |
+| `--banto-font-size-md` | `0.875rem`（12.25px） | 補足・表の副情報（上の caption 12px） |
+| `--banto-font-size-lg` | `1.125rem`（15.75px） | heading（上の 16px） |
+| `--banto-font-size-xl` | `1.75rem`（24.5px） | display（上の 24–28px） |
 
 ### A.6 モーション
 
