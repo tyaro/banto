@@ -16,10 +16,27 @@ export const DEFAULT_WINDOW_HEIGHT = 280;
 /** Cascade step (spec §5.2 initial placement) for windows without saved geometry. */
 const CASCADE_STEP = 32;
 
+/**
+ * Consumer-supplied clamp policy (shared-primitives-upstream-plan §3.2, #434).
+ * Every field is optional; the package defaults (`DEFAULT_MIN_*`) are generic
+ * and carry no app's numbers - an app with larger minimums passes its own.
+ */
 export interface ClampOptions {
+	/** Px of the window that must stay inside the host on each axis (default `DEFAULT_MIN_VISIBLE`). */
 	minVisible?: number;
+	/** Minimum window width in px (default `DEFAULT_MIN_WIDTH`). */
 	minW?: number;
+	/** Minimum window height in px (default `DEFAULT_MIN_HEIGHT`). */
 	minH?: number;
+	/**
+	 * What to do when the host is narrower (or shorter) than `minW` (`minH`):
+	 * - `'overflow'` (default): keep the minimum size; the window is larger
+	 *   than the host and only `minVisible` px of it is guaranteed reachable.
+	 * - `'fit'`: give up the minimum on that axis and shrink the window to the
+	 *   host's size, so the whole window (title bar and close button included)
+	 *   stays visible.
+	 */
+	narrowHost?: 'overflow' | 'fit';
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -28,10 +45,17 @@ function clamp(value: number, min: number, max: number): number {
 
 /**
  * Clamp a window's size to [min, host] and its position so at least
- * `minVisible` px stays inside the host on both axes - dragging (or a host
- * resize shrinking below a window's saved position) can never make a window
- * fully unreachable. When the host is smaller than `2*minVisible - size` (a
- * host too small for any valid clamp range), the window is centered instead.
+ * `minVisible` px stays inside the host on both axes. When the host is too
+ * small for any valid position range, the window is centered instead.
+ * `opts.narrowHost` decides whether a host below the minimum size lets the
+ * window overflow it or shrinks the window to fit.
+ *
+ * Pure: it returns a new window and never touches the saved layout. It serves
+ * two callers with different consequences (shared-primitives-upstream-plan
+ * §3.2): operations (`applyDrag` / new placement / `DockState.move`) write the
+ * result back as the new preference, while rendering goes through
+ * `displayWindowGeometry` and only DRAWS the result - a host that shrinks and
+ * grows again does not rewrite the saved x/y/width/height.
  */
 export function clampWindowToHost(
 	win: FloatingWindow,
@@ -40,21 +64,46 @@ export function clampWindowToHost(
 	opts: ClampOptions = {}
 ): FloatingWindow {
 	const minVisible = opts.minVisible ?? DEFAULT_MIN_VISIBLE;
-	const minW = opts.minW ?? DEFAULT_MIN_WIDTH;
-	const minH = opts.minH ?? DEFAULT_MIN_HEIGHT;
+	const fit = opts.narrowHost === 'fit';
+	const baseMinW = opts.minW ?? DEFAULT_MIN_WIDTH;
+	const baseMinH = opts.minH ?? DEFAULT_MIN_HEIGHT;
+	const minW = fit ? Math.min(baseMinW, Math.max(0, hostW)) : baseMinW;
+	const minH = fit ? Math.min(baseMinH, Math.max(0, hostH)) : baseMinH;
 
 	const width = clamp(win.width, minW, Math.max(minW, hostW));
 	const height = clamp(win.height, minH, Math.max(minH, hostH));
 
 	const minX = minVisible - width;
 	const maxX = hostW - minVisible;
-	const x = maxX >= minX ? clamp(win.x, minX, maxX) : (hostW - width) / 2;
+	// 'fit' on a squeezed axis: the window IS the host on that axis, so it sits at the edge.
+	const squeezedX = fit && hostW < baseMinW;
+	const squeezedY = fit && hostH < baseMinH;
+	const x = squeezedX ? 0 : maxX >= minX ? clamp(win.x, minX, maxX) : (hostW - width) / 2;
 
 	const minY = minVisible - height;
 	const maxY = hostH - minVisible;
-	const y = maxY >= minY ? clamp(win.y, minY, maxY) : (hostH - height) / 2;
+	const y = squeezedY ? 0 : maxY >= minY ? clamp(win.y, minY, maxY) : (hostH - height) / 2;
 
 	return { ...win, x, y, width, height };
+}
+
+/**
+ * The geometry to DRAW for a saved window in a host of the current size
+ * (shared-primitives-upstream-plan §3.2, #434): the saved "preferred"
+ * placement clamped by `opts`, so a floating window stays reachable when the
+ * host shrinks. The saved layout is not modified - when the host grows back
+ * the window returns to its preferred place. A not-yet-measured host
+ * (`hostW`/`hostH` <= 0, before the first size binding) draws the saved
+ * geometry unchanged rather than squashing it to the minimums.
+ */
+export function displayWindowGeometry(
+	win: FloatingWindow,
+	hostW: number,
+	hostH: number,
+	opts: ClampOptions = {}
+): FloatingWindow {
+	if (!(hostW > 0) || !(hostH > 0)) return win;
+	return clampWindowToHost(win, hostW, hostH, opts);
 }
 
 /** Move a window by (dx, dy), then clamp to the host (spec §5.2 drag-by-titlebar). */
@@ -63,9 +112,10 @@ export function applyDrag(
 	dx: number,
 	dy: number,
 	hostW: number,
-	hostH: number
+	hostH: number,
+	opts: ClampOptions = {}
 ): FloatingWindow {
-	return clampWindowToHost({ ...win, x: win.x + dx, y: win.y + dy }, hostW, hostH);
+	return clampWindowToHost({ ...win, x: win.x + dx, y: win.y + dy }, hostW, hostH, opts);
 }
 
 /**
