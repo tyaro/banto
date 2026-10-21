@@ -42,6 +42,8 @@
 
 - `@banto/dock-svelte` に、host の縮小でも浮動 window を操作できるようにする表示用の補正と、consumer が渡す方針を追加した（#434、計画書 PR-2）。`DockHost` に `clamp`（最小寸法・`minVisible`・狭い host での `narrowHost: 'overflow' | 'fit'`）と `capabilities`（pane ごとの `close` / `move` / `undock`）を追加し、純関数 `displayWindowGeometry` と型 `DockCapabilities` を export。host の寸法が変わっても保存した希望の x / y / width / height は書き換えない（描くときだけ補正。move / resize は描いている位置から始まり、結果が新しい希望になる）。`DockState.move` / `resize` に任意の `clamp` 引数、README に書き込み失敗時の約束（保存済み snapshot を更新しない）を追記した。
 
+- docs: 共有部品の還元（#432〜#438）の完了を文書に反映した（計画書 PR-15）。`docs/upgrading.md` に例 5（派生アプリの取り込み手順。破壊的変更は無いが、dock の復元 layout の検証とドラッグの確定に挙動の変化がある点、`@banto/image-assets` の `optimizeDeps.exclude`）、レシピ `docs/recipes/image-assets.md`（画像の取り込みと表示）を足し、計画書の状態行・§5.1 を「実装完了（v6.8.0 のリリース待ち）」に更新した。コードの変更なし。
+
 ### Changed
 
 - サイドバーの折りたたみボタンを、サイドバー下端からヘッダーの左端へ移した。900px 以下のハンバーガーと 1 つのボタンに統合し（900px 超は折りたたみ、以下はドロワーの開閉）、`aria-expanded` / `aria-controls` を付けた。`IconButton` に `expanded` / `controls` を追加。

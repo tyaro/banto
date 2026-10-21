@@ -49,7 +49,7 @@ Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共�
   リネーム → プリセット選択 → 実装 → 配信）、手順の全量は `docs/recipes/` の各レシピ
   （rename / add-resource / remove-optional-assets / consume-as-git-dependency /
   lan-access / database-backup / windows-setup / no-login-app / scan-wedge /
-  notifications / tree-svelte / add-role）。
+  notifications / tree-svelte / image-assets / add-role）。
 
 ## タスク別の入り口
 
@@ -57,7 +57,7 @@ Banto（番頭）は **PC1台から始めて、必要に応じて LAN 内へ共�
   [docs/recipes/add-resource.md](docs/recipes/add-resource.md)（チェックリスト形式の正式手順）。
 - **RBAC ロールを追加する（admin/editor/viewer に足す）** →
   [docs/recipes/add-role.md](docs/recipes/add-role.md)。
-- **利用パッケージをアプリへ組み込む**（scan-wedge / 通知トースト / tree-svelte）→
+- **利用パッケージをアプリへ組み込む**（scan-wedge / 通知トースト / tree-svelte / 画像の取込）→
   [docs/recipes/](docs/recipes/)（README から切り出したトラックB レシピ群）。
 - **オプション資産を一括で外す（dock/charts/glass/コマンドパレット/添付/帳票/ツリー）** →
   `pnpm scaffold --preset minimal|standard|full|display`（`--interactive` / `--dry-run`
