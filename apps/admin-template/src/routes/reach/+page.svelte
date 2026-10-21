@@ -9,8 +9,12 @@
 	 * 送り、結果のコードごとの短い文言だけを出す（`reach.ts`）。ログイン・
 	 * セッションは作らず、ナビゲーションやアプリの中身も出さない。トークンが
 	 * 無い・形が違うときは送らない。文言はすべて messages 経由（conventions §13）。
+	 * 同じタブで新しい確認 URL を開いた（同一文書内でフラグメントだけが変わった）
+	 * ときも同じように取り出して送り直し、前の送信の結果は世代番号で捨てる。
+	 * ルートのレイアウトはこのページだけ起動（bantoReady）を待たずに出す。
 	 */
-	import { untrack } from 'svelte';
+	import { onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 	import * as m from '#lib/paraglide/messages.js';
 	import { postReachCheck, takeReachToken, type ReachResult } from './reach';
 
@@ -18,19 +22,48 @@
 		{ kind: 'checking' } | { kind: 'noToken' } | { kind: 'done'; result: ReachResult | 'failed' };
 
 	let pageState = $state<PageState>({ kind: 'checking' });
+	/**
+	 * Every fragment taken bumps this; an answer is shown only while its
+	 * request is still the latest, so the result of an earlier URL never
+	 * overwrites the one opened after it in the same tab.
+	 */
+	let generation = 0;
 
-	$effect(() => {
-		untrack(() => {
-			const token = takeReachToken(window.location, window.history);
-			if (token === null) {
-				pageState = { kind: 'noToken' };
-				return;
-			}
-			void postReachCheck(token).then((result) => {
-				pageState = { kind: 'done', result };
-			});
+	/**
+	 * Takes the token from the current fragment (removing it at once) and
+	 * sends it. `initial` is the page's first load: there, no fragment at
+	 * all means "no token"; later, an empty fragment is just the one this
+	 * page already removed (both `hashchange` and SvelteKit's navigation can
+	 * report the same change) and leaves the page as it is.
+	 */
+	function consumeFragment(initial: boolean): void {
+		const hash = window.location.hash;
+		if (!initial && (hash === '' || hash === '#')) return;
+		const token = takeReachToken(window.location, window.history);
+		const current = ++generation;
+		if (token === null) {
+			pageState = { kind: 'noToken' };
+			return;
+		}
+		pageState = { kind: 'checking' };
+		void postReachCheck(token).then((result) => {
+			if (current === generation) pageState = { kind: 'done', result };
 		});
+	}
+
+	onMount(() => {
+		consumeFragment(true);
+		// A new check URL opened in the same tab is a same-document fragment
+		// change: the browser reports it with `hashchange`, a SvelteKit link
+		// navigation with `afterNavigate` below.
+		const onHashChange = (): void => consumeFragment(false);
+		window.addEventListener('hashchange', onHashChange);
+		return () => {
+			window.removeEventListener('hashchange', onHashChange);
+			generation++;
+		};
 	});
+	afterNavigate(() => consumeFragment(false));
 
 	function resultText(result: ReachResult | 'failed'): string {
 		switch (result) {
