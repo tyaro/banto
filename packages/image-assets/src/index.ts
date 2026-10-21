@@ -5,8 +5,8 @@
  *
  * PR-12 shipped the shared ground: the formats, the consumer-supplied limits and their
  * validation, and the error codes. PR-13 adds the import checks (the header check before
- * decoding, the decode check after it) and the hash (D11). The store of originals with
- * object URL lifetimes (PR-14) builds on these.
+ * decoding, the decode check after it) and the hash (D11). PR-14 adds the store of originals
+ * (de-duplicated by hash, with a total size), shared object URLs and pin / release.
  */
 export {
 	IMAGE_FORMATS,
@@ -25,6 +25,14 @@ export {
 	type ImageMetadata
 } from './decode';
 export { sha256Hex } from './sha256';
+export {
+	createImageStore,
+	type AddImageOptions,
+	type ImageStore,
+	type ImageStoreOptions,
+	type ImageUrlLease,
+	type ObjectUrlFunctions
+} from './store.svelte';
 export {
 	IMAGE_ASSET_ERROR_CODES,
 	ImageAssetError,

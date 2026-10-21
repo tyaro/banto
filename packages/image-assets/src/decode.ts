@@ -106,26 +106,47 @@ export async function inspectImage(
 	options: DecodeOptions = {}
 ): Promise<ImageMetadata> {
 	const checked = validateImageImportLimits(limits);
-	let bytes: Uint8Array;
+	return inspectOwnedBytes(await readImageInput(input, checked), checked, options);
+}
+
+/**
+ * Package-internal (the store, PR-14): the byte length check and the one copy of the input.
+ * `limits` must already be validated. The returned bytes belong to the caller of this
+ * function alone (never the caller's memory).
+ */
+export async function readImageInput(
+	input: Blob | ImageBytes,
+	limits: ImageImportLimits
+): Promise<Uint8Array> {
 	if (typeof Blob !== 'undefined' && input instanceof Blob) {
 		// Refuse an oversized file before reading it into memory.
-		if (input.size > checked.maxBytes)
-			throw new ImageAssetError('too-large', { limit: checked.maxBytes, actual: input.size });
+		if (input.size > limits.maxBytes)
+			throw new ImageAssetError('too-large', { limit: limits.maxBytes, actual: input.size });
 		try {
-			bytes = new Uint8Array(await input.arrayBuffer());
+			return new Uint8Array(await input.arrayBuffer());
 		} catch {
 			throw new ImageAssetError('read-failed');
 		}
-	} else {
-		const live = toBytes(input as ImageBytes);
-		// Refuse before copying, then snapshot: the caller owns this memory and may reuse it
-		// while decode is pending, so the header, the decoder and the hash must all see one copy.
-		if (live.byteLength > checked.maxBytes)
-			throw new ImageAssetError('too-large', { limit: checked.maxBytes, actual: live.byteLength });
-		// `new Uint8Array(view)` always copies; a subclass's `slice` may not (Node's
-		// `Buffer.slice` returns a view of the same memory).
-		bytes = new Uint8Array(live);
 	}
+	const live = toBytes(input as ImageBytes);
+	// Refuse before copying, then snapshot: the caller owns this memory and may reuse it
+	// while decode is pending, so the header, the decoder and the hash must all see one copy.
+	if (live.byteLength > limits.maxBytes)
+		throw new ImageAssetError('too-large', { limit: limits.maxBytes, actual: live.byteLength });
+	// `new Uint8Array(view)` always copies; a subclass's `slice` may not (Node's
+	// `Buffer.slice` returns a view of the same memory).
+	return new Uint8Array(live);
+}
+
+/**
+ * Package-internal (the store, PR-14): header, decode and hash over bytes that nobody else
+ * can change (from `readImageInput`). `limits` must already be validated.
+ */
+export async function inspectOwnedBytes(
+	bytes: Uint8Array,
+	checked: ImageImportLimits,
+	options: DecodeOptions
+): Promise<ImageMetadata> {
 	const header = inspectImageHeader(bytes, checked);
 	const decoded = await verifyDecodedImage(bytes, header, options);
 	const sha256 = await sha256Hex(bytes);
