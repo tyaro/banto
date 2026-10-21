@@ -83,7 +83,7 @@ scaffold の glass remover が持つ anchor は `AppearanceSection.svelte` へ�
 段階 1（§3.1）の co-located な section コンポーネントを土台に、5 カテゴリを
 `settings/{appearance,account,connectivity,data,security}/+page.svelte` の
 実ルートへ分けた。`settings/+layout.svelte` が `PageHeader` + カテゴリナビ
-（≥1024px は左レール、それ未満は横タブ）+ `{@render children()}` を持ち、
+（当初は ≥1024px が左レール・それ未満が横タブ。のちに全幅で内容の上の横並びへ統一した）+ `{@render children()}` を持ち、
 `settings/+layout.ts` が可視カテゴリ（§3 の表の表示条件をそのまま流用）を
 `await parent()` 経由で計算して各ページに配る。`/settings` 自体は
 `+page.ts` が先頭の可視カテゴリへ 307 redirect するだけ、非可視カテゴリへ

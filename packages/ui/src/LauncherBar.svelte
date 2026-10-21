@@ -22,6 +22,9 @@
 	 *   to any visible layer above (`hasVisibleLayerAbove()`) and to handled
 	 *   events, and never consumes the event (the shell's Esc stays intact).
 	 * - Position (§4.1, D4): `bottom` floats centred above the bottom edge;
+	 *   `top` is its mirror below the top edge, under the room the shell
+	 *   keeps for its header (`--banto-shell-launcher-inset-top`), growing
+	 *   downwards with the tooltips below the items;
 	 *   `left` / `right` are a vertical bar centred on that edge, magnifying
 	 *   along the vertical axis and growing towards the page, with the
 	 *   tooltips beside the items on the page side.
@@ -40,7 +43,7 @@
 
 	interface Props {
 		groups: LauncherGroup[];
-		/** `'bottom'` (default), `'left'` or `'right'` (nav-launcher-plan.md D4); <=900px is always the bottom tab bar. */
+		/** `'bottom'` (default), `'top'`, `'left'` or `'right'` (nav-launcher-plan.md D4); <=900px is always the bottom tab bar. */
 		position?: LauncherPosition;
 		/** Magnify on mouse hover (D6); still off under reduced motion, touch and <=900px. */
 		magnify?: boolean;
@@ -540,6 +543,45 @@
 	.launcher__item:not(.launcher__item--quiet) .launcher__link:focus-visible ~ .launcher__tooltip {
 		opacity: 1;
 		visibility: visible;
+	}
+
+	/* Top (plan §4.1, D4): the bottom bar mirrored - centred below the top
+	   edge, under the shell's header (the inset token; the header stays the
+	   top row, and its menus are top-layer popovers above the bar). Items
+	   grow downwards, the tooltips and their hover bridge sit below the
+	   items, the active dot on the screen-edge side. The track scrolls
+	   sideways as on the bottom bar, so the edge items' inward tooltips stay.
+	   Above 900px only - at <=900px every position is the bottom tab bar
+	   (D5), so none of these rules may leak into it. */
+	@media not all and (max-width: 900px) {
+		.launcher--top {
+			inset-inline: 0;
+			top: var(--banto-shell-launcher-inset-top);
+		}
+
+		.launcher--top .launcher__track {
+			padding: var(--banto-shell-launcher-offset) var(--banto-shell-launcher-offset) 2.5rem;
+		}
+
+		.launcher--top .launcher__bar,
+		.launcher--top .launcher__list {
+			align-items: flex-start;
+		}
+
+		.launcher--top .launcher__link--active::after {
+			top: 2px;
+			bottom: auto;
+		}
+
+		.launcher--top .launcher__item .launcher__tooltip {
+			top: calc(100% + var(--banto-shell-launcher-padding) + var(--banto-shell-launcher-gap));
+			bottom: auto;
+		}
+
+		.launcher--top .launcher__item::before {
+			top: 100%;
+			bottom: auto;
+		}
 	}
 
 	/* Left / right (plan §4.1, D4): a vertical bar centred on that edge.

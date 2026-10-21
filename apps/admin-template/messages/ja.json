@@ -272,6 +272,7 @@
   "settings.navLayoutSidebar": "サイドバー",
   "settings.navLayoutLauncher": "ドック",
   "settings.launcherPositionHeading": "ドックの位置",
+  "settings.launcherPositionTop": "上",
   "settings.launcherPositionBottom": "下",
   "settings.launcherPositionLeft": "左",
   "settings.launcherPositionRight": "右",

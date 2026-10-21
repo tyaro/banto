@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 設定画面のカテゴリ切り替えを、広い画面でも左の縦レールではなく内容の上の横並び（ピル型）にした。サイドバーと合わせて内容の幅が狭くなるのを避ける（visual の基準画像の再生成が要る）。
+
 ### Added
 
 - 配色モード（ライト / ダーク）の切替をヘッダーの太陽 / 月のアイコンボタンへ移した。表示中の配色の反対を示し、押すと反対の配色に固定する（初期は OS に従う。保存値の形は変えない）。設定画面（外観・言語）のテーマのカードから配色モードの 3 枚を外し、プリセットと表示密度を残した。不要になった `settings.modeLight` / `modeDark` / `modeSystem` を消し、`shell.switchToDarkMode` / `shell.switchToLightMode` を足した。visual の基準画像の再生成が要る（Linux で `visual-baselines.yml` を dispatch）。
@@ -33,6 +37,7 @@
 - 900px 以下のドック（タブバー）は、透け具合の設定にかかわらず不透明度 85% を下限にし、ラベルを読みやすくした（`--banto-shell-launcher-tabbar-opacity-min`）。
 - `@banto/ui` にドック風のランチャー `LauncherBar`（グループごとの `<nav>`・近いアイコンほど大きくなる拡大・Esc で閉じるツールチップ・900px 以下のタブバー）と `magnifyScale` / `LauncherItem` などの型を追加し、`@banto/theme` に `--banto-shell-launcher-*`・`--banto-z-launcher` のトークンを追加した（シェルへの配線は次の PR。nav-launcher-plan.md PR-2、ADR-0018 §11）。
 - 設定の「外観」に「ナビゲーション」カードを追加し、サイドバーの代わりに画面下のドック（`LauncherBar` を配線した `ShellLauncher`）を選べるようにした。ユーザーごとに保存し（`shell.navLayout` / `shell.launcherOpacity`、未保存のユーザーは既定のサイドバー）、ドックの不透明度をスライダー（40〜100%）とプレビューで調整できる。既定は `NAV_LAYOUT_DEFAULT = 'sidebar'`。ドック表示中はトーストをバーの上に上げる（`@banto/theme` に `--banto-shell-launcher-tabbar-reserve` を追加）（nav-launcher-plan.md PR-3）。
+- ドックを画面の上にも置けるようにした（`LauncherBar` の `position` に `'top'`、設定の「ドックの位置」上 / 下 / 左 / 右、保存値 `shell.launcherPosition` は既存の `bottom` / `left` / `right` もそのまま読める）。上のバーはヘッダーの下に出し（`@banto/theme` に `--banto-shell-launcher-inset-top` を追加し、シェルがヘッダーの高さを入れる）、拡大とツールチップは下向き。900px 以下はほかの位置と同じく下端のタブバー（nav-launcher-plan.md PR-6）。
 - ドックを画面の左右にも置けるようにした（`LauncherBar` の `position` に `'left' | 'right'`、設定の「ドックの位置」下 / 左 / 右、`shell.launcherPosition`。900px 以下はどの位置でも下端のタブバー。`@banto/theme` に `--banto-shell-launcher-tooltip-max-width` を追加）。あわせて、ダッシュボードの浮き窓（`role="dialog"`）が出ているとツールチップが Esc で閉じなかったのを直した（nav-launcher-plan.md PR-4）。
 - `@banto/admin-core` に、古い非同期結果を捨てて一時資源を一度だけ解放する `createRequestOwner`（`begin` / `invalidate` / `dispose` / `busy`、要求ごとの `signal`・`isCurrent`・`hold`・`adopt`・`finish`）と、他パッケージが同じ契約を流すための契約の表（`tests/contracts/request-owner.json`）を追加した。`ListResource` の要求番号をこれに置き換えた（挙動の変更なし。shared-primitives-upstream-plan PR-3、#436）。
 - `@banto/admin-core` に、UI 設定の現在値と保存に成功した snapshot を分ける `createSavedSetting`（`current` / `saved` / `saving` / `error` / `dirty`、明示保存と即時保存、保存は直列・合流、失敗しても編集中の値と前の保存値を保つ、破損・未知の version は `parse` / `fallback` へ委譲）を追加した。既存の `UiSettingsProvider` の上に乗る helper で、既存の画面は変えない（shared-primitives-upstream-plan PR-6、#437）。

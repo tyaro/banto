@@ -141,11 +141,22 @@ describe('LauncherBar structure', () => {
 		expect(root.classList.contains('launcher--bottom')).toBe(false);
 	});
 
-	it.each(['left', 'right'] as const)('keeps the edge item classes on a %s bar', (position) => {
-		renderBar({ position });
-		expect(itemOf('Dashboard').classList.contains('launcher__item--first')).toBe(true);
-		expect(itemOf('Users').classList.contains('launcher__item--last')).toBe(true);
+	it('marks a top bar as horizontal, like the bottom one', () => {
+		const { container } = renderBar({ position: 'top' });
+		const root = container.querySelector('.launcher')!;
+		expect(root.classList.contains('launcher--top')).toBe(true);
+		expect(root.classList.contains('launcher--vertical')).toBe(false);
+		expect(root.classList.contains('launcher--bottom')).toBe(false);
 	});
+
+	it.each(['top', 'left', 'right'] as const)(
+		'keeps the edge item classes on a %s bar',
+		(position) => {
+			renderBar({ position });
+			expect(itemOf('Dashboard').classList.contains('launcher__item--first')).toBe(true);
+			expect(itemOf('Users').classList.contains('launcher__item--last')).toBe(true);
+		}
+	);
 
 	it('names the whole bar as a group when ariaLabel is given', () => {
 		renderBar({ ariaLabel: 'Launcher' });
@@ -337,14 +348,17 @@ describe('LauncherBar magnification', () => {
 		}
 	);
 
-	it('magnifies along the horizontal axis on the bottom bar', async () => {
-		const { bar, container } = renderBar();
-		stackItems(container);
-		await fireEvent.pointerMove(bar, { pointerType: 'mouse', clientX: 500, clientY: 22 });
-		await nextFrame();
-		await tick();
-		expect(scaled(container)).toHaveLength(0);
-	});
+	it.each(['bottom', 'top'] as const)(
+		'magnifies along the horizontal axis on the %s bar',
+		async (position) => {
+			const { bar, container } = renderBar({ position });
+			stackItems(container);
+			await fireEvent.pointerMove(bar, { pointerType: 'mouse', clientX: 500, clientY: 22 });
+			await nextFrame();
+			await tick();
+			expect(scaled(container)).toHaveLength(0);
+		}
+	);
 
 	it('does not magnify when the max token is unreadable', async () => {
 		const { bar, container } = renderBar();

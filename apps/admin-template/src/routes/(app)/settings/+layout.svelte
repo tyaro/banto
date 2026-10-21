@@ -10,11 +10,14 @@
 	 * capability-hide rule step 1 used for its in-page anchor nav (spec
 	 * §11.3), now applied to real routes instead of anchors.
 	 *
+	 * The nav is a horizontal strip above the content at every width (no left
+	 * rail any more, so the content is not narrowed next to the app sidebar).
+	 *
 	 * `.settings-page` stays the shared root class (unchanged from step 1)
 	 * so `settings.css` - and every category page's markup classes
 	 * (`.settings-section`/`.settings-grid`/etc.) - keep applying to
 	 * whichever category page renders inside `{@render children()}`. The
-	 * nav's own look/behavior (rail vs tabs, active state) is new for this
+	 * nav's own look/behavior (tab strip, active state) is new for this
 	 * step, so it lives in this component's own scoped style block instead of
 	 * settings.css's global namespace (moved out of the old
 	 * `.settings-page .section-nav` rules there).
@@ -115,7 +118,9 @@
 		gap: 1rem;
 	}
 
-	/* Below 1024px: horizontal tab strip above the content (choiapp-feedback-2026-09 §3.2). */
+	/* Horizontal pill strip above the content at every width (the former >=1024px
+	   left rail was dropped so the content gets the full width next to the app
+	   sidebar). Wraps onto extra rows when the categories don't fit. */
 	.section-nav {
 		display: flex;
 		flex-wrap: wrap;
@@ -157,29 +162,5 @@
 
 	.settings-content {
 		min-width: 0;
-	}
-
-	/* >=1024px: sticky left rail, content to its right (choiapp-feedback
-	   -2026-09 §3.2). Sticky offset reuses Header.svelte's own height token -
-	   the rail must clear the sticky app header (Header.svelte, z-index 100)
-	   while the page body scrolls, same as Sidebar.svelte's own `aside`. */
-	@media (min-width: 1024px) {
-		.settings-layout {
-			flex-direction: row;
-			align-items: flex-start;
-			gap: 1.5rem;
-		}
-
-		.section-nav {
-			flex-direction: column;
-			flex: 0 0 200px;
-			gap: 0.25rem;
-			position: sticky;
-			top: calc(var(--banto-shell-header-height) + 1rem);
-		}
-
-		.settings-content {
-			flex: 1;
-		}
 	}
 </style>

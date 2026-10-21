@@ -244,15 +244,18 @@ describe('settings: launcher position (nav-launcher-plan.md §3, D4)', () => {
 		expect(settings.launcherPosition).toBe('bottom');
 	});
 
-	it.each(['bottom', 'left', 'right'] as const)('loads a stored %s', async (position) => {
+	it.each(['bottom', 'top', 'left', 'right'] as const)('loads a stored %s', async (position) => {
 		const settings = await loadSettings({ 'banto.launcherPosition': position });
 		expect(settings.launcherPosition).toBe(position);
 	});
 
-	it.each(['top', 'LEFT', ''])('falls back to the bottom for an unknown %j', async (stored) => {
-		const settings = await loadSettings({ 'banto.launcherPosition': stored });
-		expect(settings.launcherPosition).toBe('bottom');
-	});
+	it.each(['center', 'TOP', 'LEFT', ''])(
+		'falls back to the bottom for an unknown %j',
+		async (stored) => {
+			const settings = await loadSettings({ 'banto.launcherPosition': stored });
+			expect(settings.launcherPosition).toBe('bottom');
+		}
+	);
 
 	it('setLauncherPosition writes localStorage and the provider', async () => {
 		const settings = await loadSettings();
@@ -271,6 +274,15 @@ describe('settings: launcher position (nav-launcher-plan.md §3, D4)', () => {
 		expect(mocks.set).not.toHaveBeenCalled();
 	});
 
+	it('syncFromProvider: a saved top is read from the provider', async () => {
+		const settings = await loadSettings({ 'banto.launcherPosition': 'bottom' });
+		providerHolds({ 'shell.launcherPosition': 'top' });
+		await settings.syncFromProvider();
+		expect(settings.launcherPosition).toBe('top');
+		expect(store.get('banto.launcherPosition')).toBe('top');
+		expect(mocks.set).not.toHaveBeenCalled();
+	});
+
 	it('syncFromProvider: nothing saved (or an unknown value) resets to the bottom without writing back', async () => {
 		const settings = await loadSettings({ 'banto.launcherPosition': 'left' });
 		providerHolds({});
@@ -280,7 +292,7 @@ describe('settings: launcher position (nav-launcher-plan.md §3, D4)', () => {
 
 		settings.setLauncherPosition('right');
 		mocks.set.mockClear();
-		providerHolds({ 'shell.launcherPosition': 'top' });
+		providerHolds({ 'shell.launcherPosition': 'center' });
 		await settings.syncFromProvider();
 		expect(settings.launcherPosition).toBe('bottom');
 		expect(mocks.set).not.toHaveBeenCalled();

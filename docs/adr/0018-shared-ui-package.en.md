@@ -466,7 +466,10 @@ presentation and interaction live in `@banto/ui` as `LauncherBar`; the wiring st
   (plan D4, PR-4) were added as `LauncherPosition = 'bottom' | 'left' | 'right'` without breaking
   existing callers: a vertical bar centred on that screen edge, magnifying along the vertical axis,
   with the tooltips beside the items on the page side. At <=900px every position is the bottom tab
-  bar (D5).
+  bar (D5). Top (`'top'`, plan PR-6) was added on 2026-10-21: the bottom bar mirrored, magnifying
+  downwards with the tooltips below. To sit below the header, the component is pushed down by the
+  token `--banto-shell-launcher-inset-top` (default `0px`), which the shell - the one that knows its
+  header's height - sets (the component does not know the header).
 - **Theme**: sizes, the magnification ratio and the stacking order are new tokens
   `--banto-shell-launcher-*` (`item-size`, `magnify-max`, `gap`, `padding`, `offset`, `reserve`)
   and `--banto-z-launcher` (200). `--banto-dock-*` belongs to `@banto/dock-svelte` and is not used

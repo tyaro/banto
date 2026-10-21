@@ -122,7 +122,7 @@ const NAV_LAYOUT_PROVIDER_KEY = 'banto.ui.shell.navLayout';
 const LAUNCHER_POSITION_KEY = 'banto.launcherPosition';
 const LAUNCHER_POSITION_PROVIDER_KEY = 'banto.ui.shell.launcherPosition';
 
-export type LauncherPosition = 'bottom' | 'left' | 'right';
+export type LauncherPosition = 'bottom' | 'top' | 'left' | 'right';
 
 /**
  * Forces the dock layout (nav-launcher-plan.md §3) before first paint, like

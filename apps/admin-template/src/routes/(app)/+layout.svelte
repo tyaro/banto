@@ -266,8 +266,10 @@
 <div
 	class="shell"
 	class:with-launcher={launcher}
+	class:launcher-top={launcher && launcherPosition === 'top'}
 	class:launcher-left={launcher && launcherPosition === 'left'}
 	class:launcher-right={launcher && launcherPosition === 'right'}
+	class:kiosk={settings.kiosk}
 >
 	{#if launcher}
 		<ShellLauncher />
@@ -326,10 +328,27 @@
 		padding-bottom: calc(1.25rem + var(--banto-shell-launcher-reserve));
 	}
 
-	/* A left / right bar (D4) takes the room on that side instead. */
+	/* A top / left / right bar (D4) takes the room on that side instead. */
+	.shell.launcher-top main,
 	.shell.launcher-left main,
 	.shell.launcher-right main {
 		padding-bottom: 1.25rem;
+	}
+
+	/* The top bar sits below the header (the header stays the top row): the
+	   bar is pushed down by the header's height - the compact one in the
+	   kiosk shell (Header.svelte's `compact`) - and the page starts below
+	   the bar. */
+	.shell.launcher-top {
+		--banto-shell-launcher-inset-top: var(--banto-shell-header-height);
+	}
+
+	.shell.launcher-top.kiosk {
+		--banto-shell-launcher-inset-top: var(--banto-shell-header-height-compact);
+	}
+
+	.shell.launcher-top main {
+		padding-top: calc(1.25rem + var(--banto-shell-launcher-reserve));
 	}
 
 	.shell.launcher-left main {
@@ -351,6 +370,7 @@
 	@media (max-width: 900px) {
 		/* The full-width tab bar instead, whatever the position (§4.6, D5). */
 		.shell.with-launcher main,
+		.shell.launcher-top main,
 		.shell.launcher-left main,
 		.shell.launcher-right main {
 			padding: 1.25rem 1.25rem calc(1.25rem + var(--banto-shell-launcher-tabbar-reserve));
