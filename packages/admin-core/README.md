@@ -83,6 +83,45 @@ const timedOut = $derived(list.failures.find((f) => f.kind === 'error' && f.code
 `expired` は今の世代が失効して続きを読まないことを示す（`failures` の
 `kind: 'expired'` は、そのブロックの取得が成功するまで前の世代の分も残る）。
 
+## 古い非同期結果を捨てる（`createRequestOwner`）
+
+画像の読み込み・ファイルの読込・保存の応答待ちのあいだに対象や画面が変わったとき、古い結果を
+反映せず、途中で作った一時資源（object URL・ImageBitmap など）を一度だけ解放するための部品
+（shared-primitives-upstream-plan §3.1）。画面・controller ごとに 1 つ作り、unmount で `dispose()` する。
+
+```ts
+import { createRequestOwner } from '@banto/admin-core';
+
+const requests = createRequestOwner();
+let busy = $derived(requests.busy('image'));
+
+async function loadImage(file: File) {
+	const request = requests.begin('image'); // 同じ key の前の要求は失効し、signal が abort される
+	try {
+		// abort できない処理は最後まで走る。得た資源は hold して寿命を要求に預ける
+		const bitmap = request.hold(await createImageBitmap(file), (b) => b.close());
+		// 失効していたら adopt は false（model もエラーも上書きしない。bitmap は finish で閉じる）
+		if (request.adopt(bitmap)) model.image = bitmap; // 採用した資源は model へ移る（閉じられない）
+	} catch (error) {
+		if (request.isCurrent()) model.error = error;
+	} finally {
+		request.finish(); // 未採用の資源を解放。旧要求の finish は新要求の busy を解かない
+	}
+}
+
+// 対象が変わったら（どの変化で失効させるかはアプリが決める）
+function onCropChanged() {
+	requests.invalidate('image');
+}
+// unmount で
+onDestroy(() => requests.dispose());
+```
+
+- `signal` は取り消せる処理（`fetch` など）に渡す。取り消せない処理は `isCurrent()` で結果を捨てる。
+- 完了済みの副作用（OS の clipboard への書き込みなど）は巻き戻さない。失効で約束するのは、
+  古い結果をもとに次の操作（切り取り元の削除など）をしないことまで。
+- 認証の credential revision（`sessionController`）の代わりにはしない。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
