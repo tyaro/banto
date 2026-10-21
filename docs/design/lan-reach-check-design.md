@@ -170,8 +170,10 @@ Tauri 側から `http://<自分の LAN の IP>:<port>/` へ接続して成功を
 ### 3.8 記録の量とレート制限
 
 - 記録はメモリだけに持ち、永続化しない（アプリの再起動・待受の変更で消える）。保管所が持つのは「今の世代の
-  有効なトークン（D5）」「到達の記録（最新の数件。推奨 8 件で古い順に捨てる）」「このPC自身からのアクセスの
-  有無（真偽と最後の時刻だけ）」だけ。
+  有効なトークン（D5）」「最後の発行の結果（`issueId`・期限の時刻・`host`・結果 = 確認待ち / 確認済み / 期限切れ。
+  トークンそのものは持たない）」「到達の記録（最新の数件。推奨 8 件で古い順に捨てる）」「このPC自身からのアクセスの
+  有無（真偽と最後の時刻だけ）」だけ。期限を過ぎたトークンは捨てるが、最後の発行の結果は「期限切れ」として残す
+  （画面を開き直しても、未確認と期限切れを区別できるように。§4.1）。待受の変更（generation が進む）では全部捨てる。
 - 未認証の口なので、失敗した照合（`unusable` / `hostMismatch`）に**接続元 IP ごとの回数制限**を掛ける
   （推奨: 1 分に 10 回で 1 分止める。超えたら照合もせずに 429）。数える IP の表は上限付き（推奨 256、古いものから
   捨てる）。照合自体は軽い（argon2 のような重い検証は無い）ので、目的は CPU ではなく、総当たりの試行回数と
@@ -253,7 +255,7 @@ Windows のファイアウォールのものなので Windows 限定だった）
 | コマンド | 認可 | verify:architecture | 内容 |
 | --- | --- | --- | --- |
 | `reach_check_issue({ host })` | `require_role(Admin, "settings")` | `DESKTOP_ONLY` | `host` は `live` の URL の候補から選んだもの（候補に無ければ拒否）。ロックの中で `generation`・`live` を読み、トークンを発行。応答 `{ generation, issueId, url, qrSvg, expiresInMs }` |
-| `reach_check_status()` | `require_role(Admin, "settings")` | `TAURI_READ` | 応答 `{ generation, pending: { issueId, expiresInMs, host } \| null, selfAccessAt: number \| null, records: [{ issueId, at, peerIp, host, port }] }`（コードと値だけ） |
+| `reach_check_status()` | `require_role(Admin, "settings")` | `TAURI_READ` | 応答 `{ generation, lastIssue: { issueId, host, expiresAt, outcome: "pending" \| "recorded" \| "expired", expiresInMs } \| null, selfAccessAt: number \| null, records: [{ issueId, at, peerIp, host, port }] }`（コードと値だけ。`lastIssue` は同じ世代の最後の発行。`null` は一度も発行していない＝未確認） |
 
 - `reach_check_issue` は永続する状態を変えないが、トークンを作る操作なので read ではなく desktop-only に分類する
   （REST に同等の口を作らない: 発行できるのはこの PC の管理者の画面だけ。ブラウザ配信の管理画面ではサーバの
