@@ -80,8 +80,9 @@ import 指定子は `svelte`・`svelte/*` と相対パスだけ（rule `package-
   受け取る。temp-scada の実装は日本語の例外メッセージを直書きしている（例: `image-assets.ts` の
   `inspectImage`）。banto へ移すときは**エラーコード**を返し、文言はアプリが決める。
 - **`.svelte.ts` のソース配布**（conventions §14）: 新しく `.svelte.ts` を持つパッケージが出たら
-  `optimizeDeps.exclude` と外部利用 fixture に足す。本計画の推奨（§9）では新パッケージを作らないので、
-  既に exclude にある admin-core・dock-svelte・forms・ui の中で完結する。
+  `optimizeDeps.exclude` と外部利用 fixture に足す。#436・#435・#437・#432・#433・#434 は既に exclude にある
+  admin-core・dock-svelte・forms・ui の中で完結する。新パッケージは #438 の `image-assets` だけ（D6-a）で、
+  `.svelte.ts` を持つようになった PR で exclude と fixture に足す（ADR-0020 §6）。
 - **Svelte 5 runes の落とし穴**（conventions §8）: object URL は所有者が revoke、非同期レースは token で
   無効化、`$effect` の中の副作用は `untrack`。#436・#438 はこの節の 2・3 番目の箇条を部品にする提案で、
   実装したら §8 の本文を部品への参照に書き換える。
@@ -681,7 +682,8 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 決まっている。これで 4 条件の 1（横断性）と 3（代替不能性）の △ は「複数の派生アプリが同じ部品を要る」で補える。
 
 - **パッケージの境界**: サーバーの添付（`@banto/attachments`）とは目的が違うので分ける（D6-b を採らない理由）。
-  オプション扱い（template-scope §3 の表に行を足す）で、scaffold の minimal・display では削除する。
+  オプション扱い（template-scope §3 の表に行を足す）。テンプレートのアプリには配線しないので、scaffold では
+  削除せず、scan-wedge と同じく除外のリストに理由付きで登録する（PR-12 で決定。§5.1）。
 - **#436 の部品は import できない**（§2.1）。image-assets は D1 の forms と同じく、要求の失効の契約を
   内部に持ち、admin-core の `createRequestOwner` と同じ契約の表のテストを共有する。
 - **上限は consumer が渡す**（bytes・辺長・画素数・総容量・許可形式）。SCADA の 8MiB・8192px などは既定値に
@@ -691,7 +693,7 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 - **hash**: LAN の平文 HTTP で `crypto.subtle` が無い問題は D11。
 - 必要な作業: ADR-0020（D7）、template-scope §3 の行と削除手順、外部利用 fixture への import の追加
   （`verify:architecture` の rule `external-consumer-fixture`）、`.svelte.ts` を持つなら
-  `optimizeDeps.exclude`（conventions §14）、scaffold の削除対象。
+  `optimizeDeps.exclude`（conventions §14。`.svelte.ts` を持つ場合）、scaffold の除外のリスト。
 
 ## 4. 横断する設計
 
