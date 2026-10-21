@@ -90,10 +90,9 @@ import { createImageStore, isImageAssetError } from '@banto/image-assets';
 
 const store = createImageStore({ maxTotalBytes: 256 * 1024 * 1024 }); // 総容量は必須
 const image = await store.add(file, limits, { key: 'background' }); // 新しい add が古い add を失効させる
-if (image) {
-	const lease = store.acquireUrl(image.sha256); // <img src={lease.url}>
-	// 表示をやめるとき: lease.release()（最後の release で revoke）
-}
+if (!image) return; // 失効した add は null（結果もエラーも出さない）
+const lease = store.acquireUrl(image.sha256); // <img src={lease.url}>
+// 表示をやめるとき: lease.release()（最後の release で revoke）
 const release = store.pin([image.sha256]); // 書き出し中は collect / delete / dispose で消えない
 try {
 	await exportProject(store.blob(image.sha256)); // 原本（ヘッダの MIME の Blob）
