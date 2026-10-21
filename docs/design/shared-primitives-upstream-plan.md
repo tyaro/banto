@@ -487,11 +487,15 @@ export interface DraftCoordinator {
 	/** 保持したまま移動する前に呼ぶ。対象の source の `capture()` を取り、次の register まで持つ。
 	 *  確認は出さない（適用も破棄もしない）。 */
 	capture(keys: readonly string[]): void;
-	/** 対象の key（省略で全部）を確かめる。'apply' | 'discard' | 'cancel' を consumer の確認 UI が返す。 */
+	/** 対象の key（省略で全部）を確かめる。'apply' | 'discard' | 'cancel' を consumer の確認 UI が返す。
+	 *  `'applied'` と `'discarded'` は「解決した時点で対象の source がすべて clean」を保証する: apply を
+	 *  await したあと各 source の `isDirty()` を確かめ直し、適用中に追加入力があって dirty が残れば
+	 *  `'dirty-again'` を返す（追加入力は失わない）。呼び出し側は `'applied'` / `'discarded'` / `'clean'` の
+	 *  ときだけ中身を捨ててよい。 */
 	settle(
 		keys: readonly string[] | undefined,
 		ask: (dirtyKeys: readonly string[]) => Promise<'apply' | 'discard' | 'cancel'>
-	): Promise<'clean' | 'applied' | 'discarded' | 'cancelled' | 'failed'>;
+	): Promise<'clean' | 'applied' | 'discarded' | 'cancelled' | 'failed' | 'dirty-again'>;
 }
 
 export function createFormDraft(/* schema, initial, messages */): FormDraft;
@@ -536,10 +540,11 @@ interface DockHostProps {
   | --- | --- | --- |
   | `dock` / `undock` / `move-docked` | 再 mount するが未適用の入力は**保持**する | `coordinator.capture([panelId])` だけを呼んで `true` を返す。再 mount した pane が同じ key で register すると `restore` で戻る（rebind）。FormDraft を使う pane は何もしなくてよい。確認は出さない |
   | `tab-switch` / `hide` | keepMounted なら DOM を保つ。keepMounted でなければ上と同じく capture / rebind | 確認は出さない |
-  | `close` | 中身を**捨てる** | `coordinator.settle([panelId], 確認UI)`。`apply` / `discard` / `cancel` を選ばせ、`cancel` と `failed` なら `false` を返して閉じない |
+  | `close` | 中身を**捨てる** | `coordinator.settle([panelId], 確認UI)`。`apply` / `discard` / `cancel` を選ばせ、`clean` / `applied` / `discarded` のときだけ `true` を返して閉じる。`cancelled` / `failed` / `dirty-again`（適用の待機中に追加入力があり、成功後も dirty が残った）では `false` を返して閉じない。適用の成功応答だけを閉じてよい条件にしない（#439 のレビュー） |
 
   配置の変更は業務の変更・Undo を作らず、dirty も失わない。e2e では「`unsaved` を入力 → dock → undock →
-  まだ `unsaved` で dirty」を確かめる。
+  まだ `unsaved` で dirty」と、「close で apply を選ぶ → 適用の待機中に v2 を入力 → v1 の成功後も pane と
+  v2 が残り dirty」を確かめる（後者は snapshot の単体テストでは拾えない、close の配線との組み合わせの境界）。
 
 **既存 API との関係**: すべて追加（minor）。`FormStore`・`guardUnsavedChanges` の挙動は変えない。
 `NumberField` の生の文字列を保つには `type="text"` + `inputmode="decimal"` に変える案があるが、これは見た目と
@@ -549,7 +554,7 @@ interface DockHostProps {
 **テスト**: 単体 — `FormDraft`（生の文字列・確定・`markApplied` の条件・discard。**遅延した適用の最中に
 同じ対象へ追加入力 → 適用成功後も追加入力が dirty のまま**）、`capture` / rebind（dock / undock で入力と
 dirty が残る）、`DraftCoordinator`
-（複数の dirty・適用の一部失敗・キャンセル・確認が 1 回）、dock の `beforePanelChange` の拒否で layout が
+（複数の dirty・適用の一部失敗・キャンセル・確認が 1 回・適用の await 後に dirty が戻ったら `dirty-again`）、dock の `beforePanelChange` の拒否で layout が
 変わらない。jsdom — `keepMounted` の pane がタブ切替で同じ DOM ノードのまま。e2e — 統合はアプリで見る
 （ダッシュボードのメモ pane を入力欄にして、`unsaved` を入れて dock / undock / タブ / close→open で残る、
 D9）。手での確認 — 実 OS の IME（変換中の dock 操作）、Windows 実機、左右同時の draft、両テーマ。
