@@ -122,6 +122,46 @@ onDestroy(() => requests.dispose());
   古い結果をもとに次の操作（切り取り元の削除など）をしないことまで。
 - 認証の credential revision（`sessionController`）の代わりにはしない。
 
+## UI 設定の現在値と保存済みの値を分ける（`createSavedSetting`）
+
+`UiSettingsProvider`（Local / Tauri / HTTP）の上に乗る helper。provider は置き換えない
+（shared-primitives-upstream-plan §3.4）。「今編集している値（`current`）」と「保存に成功した最後の値
+（`saved`）」を分け、保存が失敗しても編集中の値と前の保存値を守る。通知の文言・適用対象・標準値は
+アプリの責務（`error` / `save()` の結果を見て出す）。
+
+```ts
+import { createSavedSetting } from '@banto/admin-core';
+
+const layout = createSavedSetting({
+	provider: uiSettingsProvider,
+	key: 'dashboard.floating',
+	parse: (raw) => parseLayout(raw), // 破損・未知の version は undefined（throw でもよい）
+	serialize: (value) => JSON.stringify(value), // 同じ値は同じ文字列（dirty の判定に使う）
+	fallback: () => DEFAULT_LAYOUT, // 保存値が無い・壊れているときの標準値
+	mode: 'explicit' // 'immediate' なら set() のたびに送る
+});
+
+const result = await layout.load(); // 'loaded' | 'missing' | 'invalid' | 'failed' | 'stale'
+if (result === 'invalid') toast(m.settings_reset_to_default()); // 文言はアプリ
+
+layout.set(next); // current を変える（explicit では送らない）
+if (!(await layout.save())) toast(m.settings_save_failed()); // layout.error に ProviderError など
+layout.revert(); // current を saved へ（無ければ標準値へ）。保存はしない
+layout.resetToDefault(); // current を標準値へ。保存はしない（残すなら save()）
+onDestroy(() => layout.dispose());
+```
+
+- `current` / `saved` / `saving` / `loading` / `error` / `dirty` は reactive。`saved` は provider の
+  `set` が成功した後だけ、**実際に送った snapshot** に変わる。保存中の編集は保存済みにならず `dirty` のまま。
+- **並行保存の契約**: 送信は同時に 1 つだけ（直列）。送信中の `save()`・即時保存の `set()` は後続を 1 つだけ
+  待たせ、待っている `save()` は全部その結果を共有する（合流）。待たせた分の snapshot は**送り始める時点**の
+  `current`（最新）。失敗しても後続は送る（最新の値での再送になる）。`save()` は reject せず、失敗は
+  `false` と `error`。`dirty` でなくても送る（`'invalid'` の保存値を明示保存で上書きできる）。
+- `load()` は読み込み中の編集を上書きしない（保存値は `saved` に入る）。新しい `load()`・保存・`dispose()` で
+  古い読み込みの結果は捨てる（`'stale'`）。古い応答の破棄は `createRequestOwner` で行う。
+- 破損・未知の version は `parse` に任せる（`'invalid'` で `current` は `fallback()`、例外は外へ出さない）。
+- 即時保存のテーマ設定など既存の画面は載せ替えていない。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
