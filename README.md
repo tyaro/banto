@@ -308,19 +308,20 @@ npm パッケージ（`packages/`、すべて `@banto/*`、ライセンスはリ
 （2026-07-12 公開化に伴い統一）。モノレポ内ではソース直接参照、外部からは git 依存
 （サブディレクトリ指定）で消費する — 詳細は [docs/publishing.md](docs/publishing.md)）:
 
-| パッケージ           | 内容                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------ |
-| `@banto/admin-core`  | リソース定義・データ/認証プロバイダ・Runesコンポーザブル                                   |
-| `@banto/grid-svelte` | データグリッド（仮想化・編集・ソート/フィルタ・グルーピング）                              |
-| `@banto/forms`       | スキーマ駆動フォーム + 入力コンポーネント                                                  |
-| `@banto/charts`      | SVGチャート（折れ線/棒/円/散布図/スパークライン/積立エリア/ガント 他）                     |
-| `@banto/dock-svelte` | ドッキング/フローティングレイアウト                                                        |
-| `@banto/theme`       | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット                               |
-| `@banto/report`      | 帳票/印刷（Markdownテンプレート + データバインド、M19）                                    |
-| `@banto/attachments` | 添付ファイル/画像管理UI（M20）                                                             |
-| `@banto/scan-wedge`  | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）                                 |
-| `@banto/tree-svelte` | ツリービュー（展開/選択/チェックボックス/遅延/ドラッグ/リネーム/tree-grid/tree-select）    |
-| `@banto/ui`          | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState） |
+| パッケージ            | 内容                                                                                          |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| `@banto/admin-core`   | リソース定義・データ/認証プロバイダ・Runesコンポーザブル                                      |
+| `@banto/grid-svelte`  | データグリッド（仮想化・編集・ソート/フィルタ・グルーピング）                                 |
+| `@banto/forms`        | スキーマ駆動フォーム + 入力コンポーネント                                                     |
+| `@banto/charts`       | SVGチャート（折れ線/棒/円/散布図/スパークライン/積立エリア/ガント 他）                        |
+| `@banto/dock-svelte`  | ドッキング/フローティングレイアウト                                                           |
+| `@banto/theme`        | CSS変数テーマ + ライト/ダーク/システム切替 + Glassプリセット                                  |
+| `@banto/report`       | 帳票/印刷（Markdownテンプレート + データバインド、M19）                                       |
+| `@banto/attachments`  | 添付ファイル/画像管理UI（M20）                                                                |
+| `@banto/scan-wedge`   | バーコード/QRスキャナ（キーボードウェッジ）入力検出（M21）                                    |
+| `@banto/tree-svelte`  | ツリービュー（展開/選択/チェックボックス/遅延/ドラッグ/リネーム/tree-grid/tree-select）       |
+| `@banto/ui`           | 汎用 UI 部品（PageHeader・SurfaceCard・StatusBadge・IconButton・Empty/Error/LoadingState）    |
+| `@banto/image-assets` | ブラウザ側の画像の原本・取込検査・object URL の寿命（ADR-0020、オプション・未配線。骨格のみ） |
 
 Rust クレート（`crates/`、MIT）:
 

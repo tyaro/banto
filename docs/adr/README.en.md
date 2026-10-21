@@ -61,6 +61,7 @@ corresponding ADR exists, be traced from there.
 | [0017](0017-credential-less-grant.en.md)               | Unify credential-less session issuance into "grants", with viewer-public as the first kind and a derived app's commissioning mode as the second (v3.0.0; no auth-bypass hook; `adopt()`/`end()` removed) | Accepted                   |
 | [0018](0018-shared-ui-package.en.md)                   | Move general-purpose UI components into a new `@banto/ui` package in stages, and have callers inject text, icons, state and actions                                                                      | Accepted (phases 1-5 done) |
 | [0019](0019-audit-spool.en.md)                         | Spool an audit entry the database cannot take to a file, and flush it exactly once by `pending_id` after recovery                                                                                        | Accepted                   |
+| [0020](0020-image-assets-package.en.md)                | Keep browser-side image originals, import checks and URL lifetimes in a new optional package, `@banto/image-assets` (consumer-supplied limits, error codes, `crypto.subtle` or an in-house SHA-256)      | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 
