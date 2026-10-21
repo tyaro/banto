@@ -409,7 +409,12 @@ const isAllowedPackageImport = (spec) =>
 	// 存在せず（M11 ログイン不要モードは `auth_config_apply` の設定で入る別機構）、
 	// 同名の Tauri コマンドを足すのは誤りなので REST のみとする。
 	// desktop-only の鏡像として、ここに分類することで rule 8 (c) を通す。
-	const REST_ONLY = new Set(['POST /api/auth/grant/{kind}']);
+	// `POST /api/reach-check`（Issue #219 段階 1、lan-reach-check-design.md §5.2）は、
+	// 管理者の画面が発行した使い捨てのトークンで「別の端末から届いた」ことを記録する
+	// 口。Tauri のウィンドウに「別の端末として到達する」操作は存在せず、対の Tauri
+	// コマンドを作るとこのPC自身からのアクセスを確認として扱う誤りになるので REST のみ。
+	// セッションは発行しない（ロール床の照合の対象外）。
+	const REST_ONLY = new Set(['POST /api/auth/grant/{kind}', 'POST /api/reach-check']);
 
 	// desktop-only（OS/ローカル統合。REST を持たないのが正しい、§1 の対称対象外）。
 	const DESKTOP_ONLY = new Set([

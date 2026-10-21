@@ -1,7 +1,8 @@
 //! Banto server: embedded HTTP server for LAN browser access (spec §11).
 //!
 //! Domain-agnostic only: auth/token management, credential-less grant
-//! issuance ([`grant`], ADR-0017), CSRF header enforcement,
+//! issuance ([`grant`], ADR-0017), the LAN reach check's one-time-token
+//! store and route ([`reach_check`], Issue #219), CSRF header enforcement,
 //! baseline security response headers, SSE event fan-out, static/SPA
 //! fallback serving, server lifecycle (bind/serve/graceful-shutdown), plus
 //! (since theme C PR-C4, docs/template-scope.md §7 移行順 ④) the REST
@@ -25,6 +26,7 @@ pub mod auth;
 pub mod csrf;
 pub mod events;
 pub mod grant;
+pub mod reach_check;
 pub mod response;
 pub mod routes;
 pub mod security_headers;
@@ -41,6 +43,11 @@ pub use events::{sse_route, ServerEvent};
 pub use grant::{
     grant_router, is_loopback_peer, GrantCondition, GrantGeneration, GrantKind, GrantRegistry,
     GrantSpec, DEFAULT_GRANT_MAX_SESSIONS, PUBLIC_VIEWER_ID,
+};
+pub use reach_check::{
+    reach_check_router, CheckOutcome, LastIssue, ReachCheckClock, ReachCheckResult,
+    ReachCheckState, ReachCheckStatus, ReachIssue, ReachIssueError, ReachOutcome, ReachRecord,
+    ReachTarget, SystemReachCheckClock,
 };
 pub use response::ApiError;
 pub use routes::AuthStatusExtras;

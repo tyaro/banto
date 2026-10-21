@@ -43,8 +43,8 @@ use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
     bind as bind_listener, bind_with_port_fallback, bind_without_fallback, lan_urls_for_bind,
-    static_router, with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError,
-    RunningServer, ServerConfig, ServerEvent,
+    reach_check_router, static_router, with_security_headers, AuthState, BoundServer, GrantKind,
+    PortFallbackError, ReachCheckState, RunningServer, ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -132,6 +132,15 @@ struct AppState {
     /// consistent snapshot and `server_apply` replaces it as a whole
     /// (Issue #459).
     server: AsyncMutex<ServerSlot>,
+    /// The LAN reach check's one-time-token store (Issue #219 stage 1,
+    /// `docs/design/lan-reach-check-design.md`). One per process, shared by
+    /// every listener's `POST /api/reach-check` router; memory only. Its
+    /// generation follows [`ServerSlot::generation`] (starts at 0 like it).
+    /// PR-C1 only wires the route; issuance (`reach_check_issue`), status and
+    /// the revocation in `server_apply` (`begin_generation` under the
+    /// `server` lock) come in PR-C2 - until then no token exists and the
+    /// route can only answer `unusable`.
+    reach_check: ReachCheckState,
     /// Audit trail (spec M14): every mutating command below records a
     /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
     /// `login`/`login_failed`/`logout`/`setup` entry here (`origin:
@@ -2054,6 +2063,8 @@ async fn start_embedded_server(
     metrics: Option<MetricsProbe>,
     auth: AuthState,
     events: broadcast::Sender<ServerEvent>,
+    reach_check: ReachCheckState,
+    generation: u64,
     bound: BoundServer,
 ) -> RunningServer {
     // `allow_setup: false` - the Tauri app's first-run setup goes through
@@ -2075,8 +2086,17 @@ async fn start_embedded_server(
         system_info,
         metrics,
     };
+    // Issue #219 (`docs/design/lan-reach-check-design.md` §5.2): the one
+    // unauthenticated reach-check route, bound to THIS listener's generation
+    // and port. It is merged OUTSIDE `api_router` (whose CSRF layer covers
+    // only the routes inside it), so it carries its own `X-Banto-Client`
+    // check (`banto_server::reach_check`). `banto-serve` does not mount it
+    // (no screen to issue tokens there).
+    let port = bound.local_addr().port();
     let router = with_security_headers(
-        api_router(services, auth, events, false).merge(static_router::<FrontendAssets>()),
+        api_router(services, auth, events, false)
+            .merge(reach_check_router(reach_check, generation, port))
+            .merge(static_router::<FrontendAssets>()),
     );
     bound.serve(router)
 }
@@ -2305,6 +2325,7 @@ async fn server_apply_body(
     // Serving on an already-bound listener cannot fail (the bind is the only
     // fallible step), so everything fallible happens BEFORE the listener is
     // reachable by a request.
+    let generation = slot.generation;
     let launch = |bound: BoundServer| {
         async move {
             start_embedded_server(
@@ -2320,6 +2341,8 @@ async fn server_apply_body(
                 state.metrics.clone(),
                 state.rest_auth.clone(),
                 state.events.clone(),
+                state.reach_check.clone(),
+                generation,
                 bound,
             )
             .await
@@ -3668,6 +3691,7 @@ pub fn run() {
             // deleting/demoting/re-keying it (from this window or over REST)
             // ends its LAN sessions.
             let rest_auth = user_auth_state(users.clone(), audit.clone());
+            let reach_check = ReachCheckState::new();
 
             // Spec M17: record `restore_applied` now that a real
             // `AuditLogService` exists - `apply_pending_restore_at_startup`
@@ -3870,6 +3894,9 @@ pub fn run() {
                     metrics.clone(),
                     rest_auth.clone(),
                     events.clone(),
+                    reach_check.clone(),
+                    // `ServerSlot::new` starts at generation 0.
+                    0,
                     bound,
                 ))
             });
@@ -3918,6 +3945,7 @@ pub fn run() {
                 settings,
                 events,
                 rest_auth,
+                reach_check,
                 // The launch bind never changes the bind address (only the
                 // port may fall back), so the saved bind is what it used.
                 server: AsyncMutex::new(ServerSlot::new(
@@ -4039,6 +4067,7 @@ mod tests {
                 AuditLogService::new(pool.clone()),
             ),
             server: AsyncMutex::new(ServerSlot::new(None, None)),
+            reach_check: ReachCheckState::new(),
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(
                 PathBuf::from("unused-in-tests").join("admin-template.sqlite3"),
@@ -4101,6 +4130,7 @@ mod tests {
                 AuditLogService::new(pool.clone()),
             ),
             server: AsyncMutex::new(ServerSlot::new(None, None)),
+            reach_check: ReachCheckState::new(),
             audit: AuditLogService::new(pool.clone()),
             backup: BackupService::new(db_path, pool.clone()),
             system_info: SystemInfoService::new(pool.clone()),
