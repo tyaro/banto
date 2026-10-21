@@ -153,18 +153,122 @@ impl BoundServer {
 /// rather than a raw OS error).
 pub async fn bind(config: ServerConfig) -> Result<BoundServer, BantoError> {
     let addr = format!("{}:{}", config.bind, config.port);
-    let listener = TcpListener::bind(&addr).await.map_err(|err| {
-        BantoError::Other(format!(
-            "サーバの起動に失敗しました（{addr}）: {err}。ポート番号を変更するか、\
-             他のプロセスがそのポートを使用していないか確認してください。"
-        ))
-    })?;
+    let listener = TcpListener::bind(&addr)
+        .await
+        .map_err(|err| bind_error(&addr, &err))?;
+    bound_from(listener)
+}
+
+/// The readable message [`bind`] reports for a failed bind of `addr`.
+fn bind_error(addr: &str, err: &std::io::Error) -> BantoError {
+    BantoError::Other(format!(
+        "サーバの起動に失敗しました（{addr}）: {err}。ポート番号を変更するか、\
+         他のプロセスがそのポートを使用していないか確認してください。"
+    ))
+}
+
+fn bound_from(listener: TcpListener) -> Result<BoundServer, BantoError> {
     let local_addr = listener
         .local_addr()
         .map_err(|err| BantoError::Other(err.to_string()))?;
     Ok(BoundServer {
         listener,
         local_addr,
+    })
+}
+
+/// How many ports after the requested one [`bind_with_port_fallback`] tries
+/// (requested + 1 ..= requested + 19, never past 65535).
+///
+/// A small, fixed range right behind the configured port - not port 0, a
+/// random port or the OS's ephemeral range - so the port the server ends up
+/// on stays predictable: an administrator can tell which ports to allow or
+/// look for, the chosen port is saved and reused on the next launch (other
+/// devices' bookmarks and QR codes keep working), and it never collides with
+/// the ephemeral range outgoing connections draw from. 19 extra ports (20
+/// candidates in all) is enough to step over another copy of the app or a
+/// couple of unrelated services on neighbouring ports without wandering far.
+pub const PORT_FALLBACK_SPAN: u16 = 19;
+
+/// Why [`bind_with_port_fallback`] could not bind.
+#[derive(Debug)]
+pub enum PortFallbackError {
+    /// The requested port and every port of the fallback range
+    /// (`requested + 1 ..= last_tried`) were in use. `error` is the bind
+    /// error for the requested port.
+    Exhausted {
+        requested: u16,
+        last_tried: u16,
+        error: BantoError,
+    },
+    /// The bind failed for a reason other than the port being in use
+    /// (permission, address not available, unparseable address, ...). No other
+    /// port was tried.
+    Failed(BantoError),
+}
+
+impl PortFallbackError {
+    /// The underlying bind error (for the requested port).
+    pub fn into_error(self) -> BantoError {
+        match self {
+            PortFallbackError::Exhausted { error, .. } | PortFallbackError::Failed(error) => error,
+        }
+    }
+}
+
+/// The ports [`bind_with_port_fallback`] tries after `port`, clamped to 65535
+/// (empty when `port` is 65535).
+fn fallback_ports(port: u16, span: u16) -> std::ops::RangeInclusive<u32> {
+    let first = u32::from(port) + 1;
+    let last = (u32::from(port) + u32::from(span)).min(u32::from(u16::MAX));
+    first..=last
+}
+
+/// Like [`bind`], but when the requested port is in use (`AddrInUse`, and only
+/// then; spec §11.4's automatic fallback on a port conflict), try the ports right behind it ([`PORT_FALLBACK_SPAN`]) in order and
+/// bind the first free one. The bind address is never changed. Compare
+/// `local_addr().port()` with `config.port` to see whether another port was
+/// chosen.
+///
+/// Meant for starting a server from SAVED settings (e.g. at app launch),
+/// where serving on a neighbouring port beats not serving at all. A port the
+/// user has just typed in should be bound with plain [`bind`] instead, so an
+/// explicit choice is never silently changed.
+pub async fn bind_with_port_fallback(
+    config: ServerConfig,
+) -> Result<BoundServer, PortFallbackError> {
+    bind_with_port_fallback_span(config, PORT_FALLBACK_SPAN).await
+}
+
+async fn bind_with_port_fallback_span(
+    config: ServerConfig,
+    span: u16,
+) -> Result<BoundServer, PortFallbackError> {
+    let addr = format!("{}:{}", config.bind, config.port);
+    let first_err = match TcpListener::bind(&addr).await {
+        Ok(listener) => return bound_from(listener).map_err(PortFallbackError::Failed),
+        Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => bind_error(&addr, &err),
+        Err(err) => return Err(PortFallbackError::Failed(bind_error(&addr, &err))),
+    };
+    let mut last_tried = config.port;
+    for port in fallback_ports(config.port, span) {
+        // `fallback_ports` never yields more than u16::MAX.
+        let port = port as u16;
+        last_tried = port;
+        let candidate = format!("{}:{}", config.bind, port);
+        match TcpListener::bind(&candidate).await {
+            Ok(listener) => return bound_from(listener).map_err(PortFallbackError::Failed),
+            // In use - or some other failure on this one port (e.g. a port the
+            // OS reserves, which Windows reports as access denied): skip it.
+            // The requested port failed only with "in use", so the address
+            // itself is fine and a neighbouring port may still work.
+            Err(_) => continue,
+        }
+    }
+    Err(PortFallbackError::Exhausted {
+        requested: config.port,
+        last_tried,
+        error: first_err,
     })
 }
 
@@ -636,6 +740,129 @@ Connection: close
         assert!(bind(config.clone()).await.is_err());
         drop(bound);
         bind(config).await.expect("port is free after drop");
+    }
+
+    /// Hold `count` consecutive loopback ports (retrying with a new OS-picked
+    /// base when a neighbour happens to be taken by something else).
+    async fn hold_consecutive_ports(count: u16) -> Vec<BoundServer> {
+        for _ in 0..50 {
+            let first = bind(ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            })
+            .await
+            .unwrap();
+            let base = first.local_addr().port();
+            if u32::from(base) + u32::from(count) > u32::from(u16::MAX) {
+                continue;
+            }
+            let mut held = vec![first];
+            for offset in 1..count {
+                match bind(ServerConfig {
+                    bind: "127.0.0.1".to_string(),
+                    port: base + offset,
+                })
+                .await
+                {
+                    Ok(bound) => held.push(bound),
+                    Err(_) => break,
+                }
+            }
+            if held.len() == usize::from(count) {
+                return held;
+            }
+        }
+        panic!("could not hold {count} consecutive ports");
+    }
+
+    #[tokio::test]
+    async fn port_fallback_binds_the_requested_port_when_free() {
+        let held = hold_consecutive_ports(1).await;
+        let port = held[0].local_addr().port();
+        drop(held);
+        let bound = bind_with_port_fallback(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port,
+        })
+        .await
+        .expect("free port binds");
+        assert_eq!(bound.local_addr().port(), port);
+    }
+
+    #[tokio::test]
+    async fn port_fallback_picks_the_next_free_port_when_the_requested_one_is_in_use() {
+        // Hold two ports and release the second: the requested one stays in
+        // use, the one right behind it is (almost certainly) free.
+        let mut held = hold_consecutive_ports(2).await;
+        let port = held[0].local_addr().port();
+        drop(held.pop());
+        let bound = bind_with_port_fallback(ServerConfig {
+            bind: "127.0.0.1".to_string(),
+            port,
+        })
+        .await
+        .expect("a neighbouring port binds");
+        let chosen = bound.local_addr().port();
+        assert_ne!(chosen, port);
+        assert!(
+            (port + 1..=port.saturating_add(PORT_FALLBACK_SPAN)).contains(&chosen),
+            "chosen port {chosen} must be in the range right behind {port}"
+        );
+        assert_eq!(bound.local_addr().ip().to_string(), "127.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn port_fallback_fails_when_the_whole_range_is_in_use() {
+        // Span 2 keeps the test small: requested + 2 neighbours, all held.
+        let held = hold_consecutive_ports(3).await;
+        let port = held[0].local_addr().port();
+        let err = bind_with_port_fallback_span(
+            ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port,
+            },
+            2,
+        )
+        .await
+        .err()
+        .expect("every candidate is in use");
+        match err {
+            PortFallbackError::Exhausted {
+                requested,
+                last_tried,
+                error,
+            } => {
+                assert_eq!(requested, port);
+                assert_eq!(last_tried, port + 2);
+                assert!(error.to_string().contains(&port.to_string()));
+            }
+            other => panic!("expected Exhausted, got {other:?}"),
+        }
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn port_fallback_does_not_try_other_ports_for_a_non_in_use_failure() {
+        // 192.0.2.1 (TEST-NET-1) is not an address of this machine, so the
+        // bind fails with "address not available", not "in use".
+        let err = bind_with_port_fallback(ServerConfig {
+            bind: "192.0.2.1".to_string(),
+            port: 8721,
+        })
+        .await
+        .err()
+        .expect("foreign address cannot be bound");
+        assert!(
+            matches!(err, PortFallbackError::Failed(_)),
+            "expected Failed, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn fallback_ports_stay_behind_the_requested_port_and_below_65536() {
+        assert_eq!(fallback_ports(8721, PORT_FALLBACK_SPAN), 8722..=8740);
+        assert_eq!(fallback_ports(65530, PORT_FALLBACK_SPAN), 65531..=65535);
+        assert!(fallback_ports(65535, PORT_FALLBACK_SPAN).is_empty());
     }
 
     /// Tiny hand-rolled GET so this test does not need an HTTP client

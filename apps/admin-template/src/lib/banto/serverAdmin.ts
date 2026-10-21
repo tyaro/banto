@@ -30,7 +30,25 @@ export interface ServerStatus {
 	viewerPublic: boolean;
 	urls: string[];
 	qrSvgs: QrSvg[];
+	/**
+	 * What the launch-time auto-start did because the saved port was in use
+	 * (`null` when nothing happened, or after a successful `server_apply`).
+	 * Codes and port numbers only - the text is built from the messages
+	 * (`serverPortNotice.ts`, conventions §13). Optional so older mocks and
+	 * hosts that never send it read as "nothing happened".
+	 */
+	portNotice?: ServerPortNotice | null;
 }
+
+/**
+ * Mirrors src-tauri's `ServerPortNotice`: at launch the saved port was in
+ * use, so the server either started on `port` (right behind it; `saved`:
+ * whether `server.port` now holds it) or, with every port up to `lastPort`
+ * in use too, did not start.
+ */
+export type ServerPortNotice =
+	| { kind: 'fallback'; requestedPort: number; port: number; saved: boolean }
+	| { kind: 'exhausted'; requestedPort: number; lastPort: number };
 
 const ERROR_KINDS = new Set([
 	'not_found',

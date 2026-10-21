@@ -20,6 +20,11 @@
 	import { watchRecentCommandOwner } from '#lib/recentCommands.js';
 	import { navItems } from '#lib/navigation.js';
 	import { navBadges } from '#lib/navBadges.svelte.js';
+	import { isTauri } from '#lib/banto/setup.js';
+	import { getServerStatus } from '#lib/banto/serverAdmin.js';
+	import { notifyServerPortNoticeOnce } from '#lib/banto/serverPortNotice.js';
+	import { sessionStore } from '#lib/session.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
 
 	let { children, data } = $props();
 
@@ -124,6 +129,15 @@
 			})
 		)
 	);
+
+	// Launch-time LAN port fallback (the saved port was in use, so the
+	// embedded server started on the next free port, or not at all): tell an
+	// admin once per page load (`#lib/banto/serverPortNotice.ts`). Desktop
+	// window only - the LAN surface has no embedded-server controls.
+	$effect(() => {
+		if (!isTauri() || !isAdmin(sessionStore.role)) return;
+		untrack(() => void notifyServerPortNoticeOnce({ getStatus: getServerStatus, notify }));
+	});
 
 	// Command palette history is per user (#258): dropped on a confirmed
 	// `none`, and another owner's entry dropped once an owner is confirmed
