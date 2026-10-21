@@ -1,7 +1,7 @@
 # SCADA Designer の共有部品を banto へ戻す計画書（Issue #432〜#438）
 
 作成日: 2026-10-21
-状態: **計画（決定済み）**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。実装は段階 1 から始める。
+状態: **実装中**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。PR-1〜PR-9（段階 1〜3 の dock / forms の部品）を実施した（§5.1）。残りは PR-10（#432 のアプリ統合）・PR-11（#435 の配線）・PR-12〜14（#438）と文書。
 トラック: 保守者向け（トラックA）
 関連: Issue #432〜#438 / [nav-launcher-plan.md](nav-launcher-plan.md)（書式の手本）/
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`。§10 の層の約束）/
@@ -781,6 +781,23 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
   `format:check`。dock-svelte を触る PR は外部利用 fixture（external-consumer.yml）が回る。
 - 自作の PR はセルフマージしない。
 
+
+### 5.1 実施状況（2026-10-21 時点）
+
+実装とレビューで、計画から変えたこと・決めたことを残す（詳細は各 PR と CHANGELOG）。
+
+| # | PR | 状態 | 計画から変えたこと・決めたこと |
+| --- | --- | --- | --- |
+| 1 | #440 | マージ済み | `validateDockLayout`。ID の一意性は浮動・docked の panel と split / tabs の node をまとめて 1 つの集合で見る。穴あきの配列・自分を含む object・合計が溢れる sizes も拒否。ダッシュボードは受け入れた layout だけをキャッシュする |
+| 2 | #443 | マージ済み（#434 を閉じた） | 狭い host の退避方針は `narrowHost: 'overflow' \| 'fit'`。`capabilities` は close / move / undock（UI 上の制限で、コードからの呼び出しは止めない） |
+| 3 | #441 | マージ済み（#436 を閉じた） | `finish()` は最新の要求だったかを返す。外部コールバックの前に状態を確定する順序（begin は新しい要求を先に登録、finish は release のあとに判定）。`isCurrent()` は owner の破棄も見る。`$state` の読みは `untrack`（effect の無限ループを起こした）。契約の表は `packages/admin-core/tests/contracts/request-owner.json` |
+| 4 | #445 | マージ済み | `GestureOwner` は内部。取消は操作の対象だけを戻す（`GestureSpec.restore`。layout 全体は戻さない）。押した window の前面化はフォーカスの結果なので取消でも残す。前面化は z-index で行い DOM の順を変えない。dispose は取消の前に新しい操作を拒む |
+| 5 | #446 | マージ済み（#433 を閉じた） | `keyboard` の kind は作らず、`move` / `resize` / `divider` を `pointerId: null` で区別。`canStartGesture` はドラッグの閾値を越えた時点で `drag` として聞き、拒んだら黙って捨てる。キーボードのモードは window やボタンが消えたら終える（Firefox は削除で blur を出さない） |
+| 6 | #442 | マージ済み（#437 を閉じた） | 保存は直列で、保存中の save は 1 つにまとめる。保存中の load は読まずに `stale`。`saved` と `current` は parse し直した別の値（オブジェクトをその場で書き換えても混ざらない） |
+| 7 | #444 | マージ済み | `allowRepeat` を追加。保護で拒んだ command は下の scope に落とさない。名前の表は自分のプロパティだけを引く（`constructor+K` を拒否）。Space は Shift を無視する記号に含めない |
+| 8 | #447 | マージ済み | `DraftNumberField`（`type="text"` + `inputmode="decimal"`）を足し、既存の `NumberField` は変えない。`settle` の結果に `'stale'`。`commitAll` は全欄を解釈してから検証し、失敗したら何も確定しない。FormDraft の source はページの寿命で登録する（pane が見えなくても離脱の確認の対象）。並列の apply は 1 つずつ失効を確かめてから始める。forms は request owner の写しを内部に持ち、契約の表を流す |
+| 9 | #448 | このPR | `DockPanelChange` に `remount`。非同期の答えは `DockState.structureRevision`（構造の世代）で古さを判断する。重複除去のキーにドロップ先を含める。IME の保留と `keepMounted` は適用の直前にも確かめる。保留枠は作った順で新しい要求を残し、古くなった許可は持たない |
+| 10〜15 | — | 未着手 | PR-10（#432 のアプリ統合、`Closes #432`）→ PR-11（#435 の配線）→ PR-12〜14（#438） |
 ## 6. リリースとの関係（v6.8.0、draft の #429）
 
 v6.8.0 の中身（ドックのランチャー、#421〜#426・#428・#430・#431）は揃っており、#429 は main の取り込み待ち。
