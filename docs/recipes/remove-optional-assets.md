@@ -28,6 +28,8 @@ pnpm install                       # 外れた依存の反映（lockfile も更�
   「足す」工程も持つ（下記）。
 - `@banto/scan-wedge` はレシピのみ・テンプレート未配線のため scaffold は触れない
   （[scan-wedge.md](scan-wedge.md)）。
+- `@banto/image-assets` もテンプレート未配線（アプリが依存しない）のため scaffold は触れない
+  （下記「`@banto/image-assets`」、[ADR-0020](../adr/0020-image-assets-package.md)）。
 - 設計は [design/scaffold-presets-plan.md](../design/scaffold-presets-plan.md)、
   受け入れ検査は `.github/workflows/template-acceptance.yml`（4 プリセットの
   scaffold → verify:architecture → check → build → cargo test）。
@@ -210,6 +212,17 @@ DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の min
    パッケージ本体（`packages/tree-svelte`）は同梱のままでも他に影響しないが、
    ナビが1項目減るぶんサイドバーが写る認証ページのビジュアル回帰ベースライン
    を再生成する（`.github/workflows/visual-baselines.yml` を dispatch）。
+
+### `@banto/image-assets`（ブラウザ側の画像の原本・取込検査、Issue #438）
+
+テンプレートのアプリには配線していない（`apps/admin-template/package.json` に依存が無い）ので、
+アプリ側に外す配線は無く、`pnpm scaffold` もどのプリセットでも触れない。パッケージ本体を
+同梱のままにしても他に影響しない。リポジトリから消したい場合は以下。
+
+1. `packages/image-assets/` を削除し、`pnpm install` で lockfile を更新する。
+2. `docs/` と README の `@banto/image-assets` の参照（template-scope §3 の行・本節・
+   ADR-0020 など）を消すか、スコープ無しの書き方に直す（`verify:architecture` の
+   rule `docs-package-refs` が実在しないパッケージの参照を落とす）。
 
 ### システムメトリクス（`sysinfo`）を外す（ADR-0013、Issue #185）
 

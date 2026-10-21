@@ -1,7 +1,7 @@
 # SCADA Designer の共有部品を banto へ戻す計画書（Issue #432〜#438）
 
 作成日: 2026-10-21
-状態: **実装中**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。PR-1〜PR-11（段階 1〜4。dock / forms の部品、#432 のアプリ統合と #435 のアプリの配線）を実施した（§5.1）。残りは PR-12〜14（#438）と文書。
+状態: **実装中**。D1〜D11 はすべて決定（2026-10-21、§9。D6・D10 はオーナーの選択、ほかは推奨どおり）。PR-1〜PR-11（段階 1〜4。dock / forms の部品、#432 のアプリ統合と #435 のアプリの配線）を実施し、PR-12（#438 の新パッケージ `@banto/image-assets` の骨格と ADR-0020）に着手した（§5.1）。残りは PR-13・14（#438）と文書。
 トラック: 保守者向け（トラックA）
 関連: Issue #432〜#438 / [nav-launcher-plan.md](nav-launcher-plan.md)（書式の手本）/
 [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`。§10 の層の約束）/
@@ -799,7 +799,8 @@ Ctrl+C / Ctrl+Z がネイティブのまま。手での確認 — macOS の Meta
 | 9 | #448 | マージ済み | `DockPanelChange` に `remount`。非同期の答えは `DockState.structureRevision`（構造の世代）で古さを判断する。重複除去のキーにドロップ先を含める。IME の保留と `keepMounted` は適用の直前にも確かめる。保留枠は作った順で新しい要求を残し、古くなった許可は持たない |
 | 10 | #449 | マージ済み（#432 を閉じた） | `keepMounted` は使わない（draft がページ寿命なので再 mount で戻り、✕ を中身を捨てる close のまま確認に通す。IME は構造変更の保留で守る）。適用先は UiSettingsProvider の `dashboard.memo`（`createSavedSetting` 経由）。ツールバーの開閉と pop-out も `closePanel` / close と同じ確認を通す。確認 UI は `@banto/ui` の `Modal`、e2e は smoke の 13l |
 | 11 | このPR | レビュー待ち（#435 を閉じる） | dispatcher はアプリに 1 つ（`#lib/shortcuts.ts`）。Ctrl+K はパレットの dialog を `ownerLayer` に、狭い画面のサイドバーの上でも受ける（モーダルではない。パレットが上に開き、Esc はパレットが先に取る）。Ctrl+S はダッシュボードのメモだけ（保存ボタンと同じ `CommandSpec` = 同じ直列の保存、`preventDefaultWhenDisabled: true`、ほかのページはブラウザのまま）。押しっぱなしは `allowRepeat` で受けて無効扱いにし、ブラウザへ渡さない（`firstPressOnly`）。id から `CommandSpec` を引く口は作らない（共有はオブジェクトを渡す形で足り、ショートカットを持つメニュー項目がまだ無い）。ヘッダーの鍵帽は `formatShortcut` |
-| 12〜15 | — | 未着手 | PR-12〜14（#438） |
+| 12 | このPR | レビュー待ち | パッケージ名は `@banto/image-assets`。骨格は形式（`IMAGE_FORMATS`）・上限の型と検証（`ImageImportLimits`・`validateImageImportLimits`。辺長は `maxEdge` 1 つ、総容量は PR-14 の store の option）・エラーコード（`ImageAssetError` の `code` と `detail`、PR-13・14 の分も 1 つの union に先に置く）だけで、中身の無い関数は export しない。scaffold は**触れない**（アプリに配線しないので外す配線が無く、パッケージ本体を消すと docs の参照が rule `docs-package-refs` に落ちる。他の remover と同じく本体は同梱のまま。`scaffold.test.mjs` の除外に理由を書いた）。外部利用 fixture には足さない（rule `external-consumer-fixture` と conventions §14 の対象は `.svelte.ts` を持つパッケージで、骨格は型と検証だけ。PR-14 で `.svelte.ts` を持つならその PR で fixture と `optimizeDeps.exclude` に足す） |
+| 13〜15 | — | 未着手 | PR-13・14（#438）と文書 |
 ## 6. リリースとの関係（v6.8.0、draft の #429）
 
 v6.8.0 の中身（ドックのランチャー、#421〜#426・#428・#430・#431）は揃っており、#429 は main の取り込み待ち。
