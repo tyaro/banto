@@ -23,6 +23,8 @@ export const IMAGE_ASSET_ERROR_CODES = [
 	'dimensions-too-large',
 	/** `width * height` is over `maxPixels`. */
 	'too-many-pixels',
+	/** Reading the `Blob` / `File` failed (its data became unreadable, I/O error) (PR-13). */
+	'read-failed',
 	/** The browser could not decode the image (PR-13). */
 	'decode-failed',
 	/** The decoded size differs from what the header said (PR-13). */
@@ -41,6 +43,12 @@ export interface ImageAssetErrorDetail {
 	readonly actual?: number;
 	/** For `invalid-limits`: the field of the limits object that was rejected. */
 	readonly field?: string;
+	/**
+	 * The image size behind the failure: the header's size for `dimensions-too-large` and
+	 * `too-many-pixels`, the decoded size for `dimensions-mismatch` (PR-13).
+	 */
+	readonly width?: number;
+	readonly height?: number;
 }
 
 export class ImageAssetError extends Error {
