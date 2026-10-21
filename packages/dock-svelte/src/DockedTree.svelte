@@ -18,10 +18,14 @@
 	 * shared `DragController`, see `core/drag.svelte.ts`) - below that
 	 * threshold a plain pointerup is just a tab click (`setActiveTab`),
 	 * mirroring grid-svelte's `HeaderCell.svelte` convention. Both threshold
-	 * tracking AND the split-divider resize below use window-level
-	 * pointermove/pointerup listeners rather than `setPointerCapture`, for
-	 * the same reason `HeaderCell.svelte` documents (a stray double-click can
-	 * wedge capture and break a later, unrelated drag).
+	 * tracking AND the split-divider resize below are sessions of the host's
+	 * single `GestureOwner` (`core/gesture.svelte.ts`, shared-primitives-
+	 * upstream-plan §3.3, #433): it holds the window-level listeners (rather
+	 * than `setPointerCapture`, for the same reason `HeaderCell.svelte`
+	 * documents - a stray double-click can wedge capture and break a later,
+	 * unrelated drag), only the owning pointer moves or commits, and Esc /
+	 * pointercancel / blur / unmount cancel (a tab click is not performed; a
+	 * divider drag is undone).
 	 *
 	 * "Closing" a docked pane (the ✕ button) has no first-class "hidden but
 	 * still docked" state in the Phase A model (unlike a floating window's
@@ -36,6 +40,7 @@
 	import type { Snippet } from 'svelte';
 	import { pixelDeltaToFraction } from './core/geometry';
 	import { getDragController } from './core/drag.svelte';
+	import { getGestureOwner } from './core/gesture.svelte';
 	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { DockNode, PanelContent } from './types';
@@ -61,6 +66,7 @@
 
 	const DRAG_THRESHOLD_PX = 5;
 	const drag = getDragController();
+	const gesture = getGestureOwner();
 	const policy = getDockPolicy();
 	/** Per-pane capabilities from the host's `capabilities` prop (all allowed when absent). */
 	const capsOf = (id: string) => resolveCapabilities(policy, id);
@@ -87,78 +93,78 @@
 		content: PanelContent,
 		onPlainClick?: () => void
 	): void {
-		if (event.button !== 0) return;
+		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
 		const startX = event.clientX;
 		const startY = event.clientY;
-		const pointerId = event.pointerId;
 		const frameRect = frameEl.getBoundingClientRect();
 		// `move: false` (consumer capability): never becomes a drag, but a plain click (tab select) still works.
 		const canMove = capsOf(content.id).move;
 		let dragging = false;
 
-		function onMove(moveEvent: PointerEvent) {
-			if (moveEvent.pointerId !== pointerId) return;
-			if (dragging || !canMove) return;
-			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
-				return;
-			dragging = true;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			drag.start({
-				panelId: content.id,
-				title: content.title,
-				icon: content.icon,
-				source: 'docked',
-				width: frameRect.width,
-				height: frameRect.height,
-				clientX: moveEvent.clientX,
-				clientY: moveEvent.clientY,
-				originClientX: frameRect.left,
-				originClientY: frameRect.top
-			});
-		}
-
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			if (!dragging) onPlainClick?.();
-		}
-
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
+		gesture.begin(event, {
+			kind: 'drag-candidate',
+			panelId: content.id,
+			move(moveEvent) {
+				if (dragging) {
+					drag.update(moveEvent.clientX, moveEvent.clientY);
+					return;
+				}
+				if (!canMove) return;
+				if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
+					return;
+				dragging = true;
+				gesture.setKind('drag');
+				drag.start({
+					panelId: content.id,
+					title: content.title,
+					icon: content.icon,
+					source: 'docked',
+					width: frameRect.width,
+					height: frameRect.height,
+					clientX: moveEvent.clientX,
+					clientY: moveEvent.clientY,
+					originClientX: frameRect.left,
+					originClientY: frameRect.top
+				});
+			},
+			commit(upEvent) {
+				if (dragging) drag.commit(upEvent.clientX, upEvent.clientY);
+				else onPlainClick?.();
+			},
+			cancel() {
+				drag.cancel();
+			}
+		});
 	}
 
 	// --- split divider resize (a plain incremental pointer drag, unrelated to docking) ---
-	let splitW: number = $state(0);
-	let splitH: number = $state(0);
+	let splitEl: HTMLDivElement | null = $state(null);
 
+	/**
+	 * A `divider` session: each owning-pointer move writes `dock.resizeSplit`
+	 * live, as a fraction of the split's size read from layout at that moment
+	 * (not a reactive size binding, which can lag a window resize); the release
+	 * applies its own last delta the same way. Cancel (Esc / pointercancel /
+	 * blur / unmount) restores the layout from before the press (#433).
+	 */
 	function startDivider(
 		event: PointerEvent,
 		dividerIndex: number,
 		direction: 'row' | 'column'
 	): void {
-		if (event.button !== 0) return;
+		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
-		const pointerId = event.pointerId;
-		const containerSize = direction === 'row' ? splitW : splitH;
+		const splitId = node.id;
 		let last = direction === 'row' ? event.clientX : event.clientY;
-
-		function onMove(moveEvent: PointerEvent) {
-			if (moveEvent.pointerId !== pointerId) return;
-			const pos = direction === 'row' ? moveEvent.clientX : moveEvent.clientY;
+		const step = (e: PointerEvent) => {
+			const pos = direction === 'row' ? e.clientX : e.clientY;
 			const deltaPx = pos - last;
 			last = pos;
-			dock.resizeSplit(node.id, dividerIndex, pixelDeltaToFraction(deltaPx, containerSize));
-		}
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		}
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
+			const size = direction === 'row' ? (splitEl?.clientWidth ?? 0) : (splitEl?.clientHeight ?? 0);
+			dock.resizeSplit(splitId, dividerIndex, pixelDeltaToFraction(deltaPx, size));
+		};
+		gesture.begin(event, { kind: 'divider', move: step, commit: step });
 	}
 
 	let panelFrameEl: HTMLDivElement | null = $state(null);
@@ -313,8 +319,7 @@
 		class="dock-split"
 		class:row={node.direction === 'row'}
 		class:column={node.direction === 'column'}
-		bind:clientWidth={splitW}
-		bind:clientHeight={splitH}
+		bind:this={splitEl}
 	>
 		{#each node.children as child, i (child.id)}
 			<div class="split-child" style:flex-grow={node.sizes[i] ?? 0} style:flex-basis="0%">

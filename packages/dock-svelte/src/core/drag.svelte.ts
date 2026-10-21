@@ -26,10 +26,17 @@
  * unreachable.
  *
  * No live mutation during the drag: `dock.move`/`dockPanel`/etc. are only
- * ever called once, from `#finish()` on pointerup. Every intermediate
+ * ever called once, from `commit()` on the owning pointer's pointerup. Every intermediate
  * pointermove only updates this controller's own `$state` snapshot (read by
  * `DockHost` to position the ghost chip + snap-guide overlay) - the real
  * panel never moves mid-drag, matching the task's explicit ask.
+ *
+ * Listeners: this controller has none of its own. The `GestureOwner`
+ * (`core/gesture.svelte.ts`, shared-primitives-upstream-plan §3.3, #433)
+ * owns the pointer and routes the owning pointer's moves to `update`, its
+ * release to `commit`, and Esc / pointercancel / blur / unmount to `cancel` -
+ * so a different pointer's pointerup can no longer finish a drag, and an Esc
+ * that a higher layer already consumed is no longer taken.
  */
 import { getContext, setContext } from 'svelte';
 import { displayWindowGeometry, dropRegionRect, type Rect } from './geometry';
@@ -104,9 +111,8 @@ export class DragController {
 	}
 
 	start(opts: DragStartOptions): void {
-		// A second start while one is already active shouldn't happen (each
-		// gesture's pointerup/Esc cleans up before another can begin), but bail
-		// defensively rather than leak listeners if it ever does.
+		// The GestureOwner allows one session at a time, so a second start
+		// cannot normally happen; bail defensively anyway.
 		if (this.state) return;
 
 		this.state = {
@@ -126,30 +132,31 @@ export class DragController {
 			guideRect: null
 		};
 		this.#recomputeHover(opts.clientX, opts.clientY);
+	}
 
-		window.addEventListener('pointermove', this.#onMove);
-		window.addEventListener('pointerup', this.#onUp);
-		window.addEventListener('keydown', this.#onKeydown);
+	/** The owning pointer moved (routed by the `GestureOwner`). */
+	update(clientX: number, clientY: number): void {
+		this.#recomputeHover(clientX, clientY);
+	}
+
+	/**
+	 * The owning pointer was released (routed by the `GestureOwner`): resolve
+	 * the drop at the release point and apply it - the only `DockState` write
+	 * of the whole drag. The ghost is cleared FIRST, so the layout change and
+	 * anything it triggers never see a half-finished drag.
+	 */
+	commit(clientX: number, clientY: number): void {
+		if (!this.state) return;
+		this.#recomputeHover(clientX, clientY);
+		const snapshot = this.state;
+		this.state = null;
+		if (snapshot) this.#finish(snapshot);
 	}
 
 	/** Cancel the current drag with no side effects (spec §5.2: Esc cancels / an invalid drop is a no-op). */
 	cancel(): void {
-		this.#cleanup();
+		this.state = null;
 	}
-
-	#onMove = (event: PointerEvent): void => {
-		if (!this.state) return;
-		this.#recomputeHover(event.clientX, event.clientY);
-	};
-
-	#onUp = (): void => {
-		this.#finish();
-		this.#cleanup();
-	};
-
-	#onKeydown = (event: KeyboardEvent): void => {
-		if (event.key === 'Escape') this.cancel();
-	};
 
 	#recomputeHover(clientX: number, clientY: number): void {
 		if (!this.state) return;
@@ -198,9 +205,7 @@ export class DragController {
 		};
 	}
 
-	#finish(): void {
-		const snapshot = this.state;
-		if (!snapshot) return;
+	#finish(snapshot: DragSnapshot): void {
 		const {
 			panelId,
 			source,
@@ -256,13 +261,6 @@ export class DragController {
 
 		// No valid target (dragged outside the host entirely, or the host isn't
 		// mounted) - snap back: no DockState call at all.
-	}
-
-	#cleanup(): void {
-		window.removeEventListener('pointermove', this.#onMove);
-		window.removeEventListener('pointerup', this.#onUp);
-		window.removeEventListener('keydown', this.#onKeydown);
-		this.state = null;
 	}
 }
 

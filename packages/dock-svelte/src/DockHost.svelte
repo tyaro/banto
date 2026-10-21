@@ -9,10 +9,14 @@
 	 *  1. The docked tree (`DockedTree`, if `dock.layout.docked` isn't
 	 *     `null`) filling the whole host.
 	 *  2. Every OPEN floating window (`dock.layout.floating`, M7), absolutely
-	 *     positioned on top, in array order (render order = z-order - the
-	 *     last one is frontmost and simply painted last). Unchanged from M7:
-	 *     when `docked` is `null` the host looks exactly like it did before
-	 *     Phase B.
+	 *     positioned on top inside a pointer-transparent floating layer. The
+	 *     array order is still the z-order (last = frontmost, which is what is
+	 *     saved), but it is applied as `z-index`; the DOM order is the order in
+	 *     which windows were first seen and never changes when a window is
+	 *     raised (#433, shared-primitives-upstream-plan §3.3: raising on
+	 *     `focusin` must not move the focused element - moving a node drops its
+	 *     focus in browsers - nor reshuffle the Tab order). When `docked` is
+	 *     `null` the host looks exactly like it did before Phase B.
 	 * The `panel` snippet receives a `PanelContent` (id/title/icon) so a
 	 * docked pane and a floating window can share the exact same content -
 	 * DockHost itself has no notion of what a panel contains.
@@ -26,9 +30,17 @@
 	 * are `pointer-events: none`: `core/drag.svelte.ts` hit-tests drop
 	 * targets with `elementFromPoint`, so anything that could occlude the
 	 * real target under the cursor would break that.
+	 *
+	 * DockHost also owns the single `GestureOwner` (`core/gesture.svelte.ts`,
+	 * #433): every pointer gesture of the tree (title-bar / tab drag, floating
+	 * resize, split divider) is one session of it - one at a time, only the
+	 * owning pointer commits, Esc / pointercancel / blur / hidden cancel - and
+	 * unmounting the host cancels the active session (restoring the layout it
+	 * started from) and removes its listeners.
 	 */
-	import type { Snippet } from 'svelte';
+	import { onDestroy, type Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
+	import { GestureOwner, setGestureOwner } from './core/gesture.svelte';
 	import type { ClampOptions } from './core/geometry';
 	import { setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
@@ -95,6 +107,17 @@
 
 	const openWindows = $derived(dock.layout.floating.filter((w) => w.open));
 
+	// Stable DOM order (see the module doc): the first time an id is seen it
+	// gets the next sequence number and keeps it. A plain Map, not state - it
+	// only ever grows, and nothing reacts to it directly.
+	const domSeq = new Map<string, number>();
+	const renderedWindows = $derived.by(() => {
+		for (const w of openWindows) if (!domSeq.has(w.id)) domSeq.set(w.id, domSeq.size);
+		return [...openWindows].sort((a, b) => (domSeq.get(a.id) ?? 0) - (domSeq.get(b.id) ?? 0));
+	});
+	/** id → stacking position (index in `layout.floating`'s open windows = z-order). */
+	const zOrder = $derived(new Map(openWindows.map((w, i) => [w.id, i])));
+
 	// `dock` is a stable DockState instance for this component's lifetime, so
 	// capturing it once to build the drag controller is intentional.
 	// svelte-ignore state_referenced_locally
@@ -104,6 +127,11 @@
 		() => policy
 	);
 	setDragController(drag);
+
+	// svelte-ignore state_referenced_locally
+	const gesture = new GestureOwner(dock, () => hostEl);
+	setGestureOwner(gesture);
+	onDestroy(() => gesture.dispose());
 </script>
 
 <div
@@ -119,18 +147,22 @@
 		</div>
 	{/if}
 
-	{#each openWindows as win, index (win.id)}
-		<DockWindow
-			{win}
-			{dock}
-			{hostW}
-			{hostH}
-			frontmost={index === openWindows.length - 1}
-			{panel}
-			{onPopOut}
-			{messages}
-		/>
-	{/each}
+	<div class="floating-layer">
+		{#each renderedWindows as win (win.id)}
+			{@const z = zOrder.get(win.id) ?? 0}
+			<DockWindow
+				{win}
+				{dock}
+				{hostW}
+				{hostH}
+				frontmost={z === openWindows.length - 1}
+				zIndex={z + 1}
+				{panel}
+				{onPopOut}
+				{messages}
+			/>
+		{/each}
+	</div>
 
 	{#if drag.state}
 		{#if drag.state.guideRect}
@@ -169,6 +201,16 @@
 	.docked-layer {
 		position: absolute;
 		inset: 0;
+	}
+
+	/* Its own stacking context (z-index 1) so the windows' z-index (1..n) stays
+	   below the snap guide / ghost and never competes with the page; it lets
+	   pointers through to the docked tree, the windows opt back in. */
+	.floating-layer {
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+		pointer-events: none;
 	}
 
 	/* Snap guide follows the pointer every move - no transition, it must track instantly. */

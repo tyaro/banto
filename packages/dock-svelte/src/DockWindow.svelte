@@ -5,10 +5,13 @@
 	 * corners). Not exported from index.ts - DockHost is the only public
 	 * surface.
 	 *
-	 * Resize uses pointer events with window-level pointermove/pointerup
-	 * listeners added on pointerdown (see grid-svelte's HeaderCell.svelte for
-	 * why: setPointerCapture is per-element and a stray double-click can wedge
-	 * a later, unrelated drag). Each resize event applies an INCREMENTAL delta
+	 * Resize and the title-bar drag are sessions of the host's single
+	 * `GestureOwner` (`core/gesture.svelte.ts`, shared-primitives-upstream-plan
+	 * §3.3, #433), which holds the window-level listeners (no
+	 * setPointerCapture - see grid-svelte's HeaderCell.svelte for why: it is
+	 * per-element and a stray double-click can wedge a later, unrelated drag),
+	 * checks the owning pointer, and cancels on Esc / pointercancel / blur /
+	 * unmount by restoring the pre-gesture layout. Each resize event applies an INCREMENTAL delta
 	 * (this event's client position minus the previous one, not the original
 	 * pointerdown position) so that once the pointer re-enters the host's
 	 * valid range after dragging past a clamp boundary, the window immediately
@@ -21,10 +24,16 @@
 	 * floating window can also be dropped onto the docked tree to dock it. A
 	 * plain reposition (dropped back into empty floating space) is applied
 	 * once, on release, via the existing `dock.move` - unchanged from M7.
+	 *
+	 * Front-most: `pointerdown` AND `focusin` on the root bring the window to
+	 * the front (#433: Tab / a click into a back window's input must raise it
+	 * too). `DockHost` keeps the window DOM order stable and stacks by
+	 * z-index, so raising never moves the focused element in the DOM.
 	 */
 	import type { Snippet } from 'svelte';
 	import { getDragController } from './core/drag.svelte';
 	import { displayWindowGeometry } from './core/geometry';
+	import { getGestureOwner } from './core/gesture.svelte';
 	import { getDockPolicy, resolveCapabilities } from './core/policy';
 	import type { DockState } from './state.svelte';
 	import type { FloatingWindow, PanelContent, ResizeEdge } from './types';
@@ -36,6 +45,8 @@
 		hostW: number;
 		hostH: number;
 		frontmost: boolean;
+		/** Stacking order inside the host's floating layer (1 = back). `DockHost` derives it from the window's index in `layout.floating` (= z-order) while keeping the DOM order stable. */
+		zIndex: number;
 		panel: Snippet<[PanelContent]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
@@ -43,7 +54,17 @@
 		messages?: Partial<DockMessages>;
 	}
 
-	let { win, dock, hostW, hostH, frontmost, panel, onPopOut, messages = {} }: Props = $props();
+	let {
+		win,
+		dock,
+		hostW,
+		hostH,
+		frontmost,
+		zIndex,
+		panel,
+		onPopOut,
+		messages = {}
+	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
 	// reactive state) rather than re-read per usage below.
@@ -52,6 +73,7 @@
 
 	const DRAG_THRESHOLD_PX = 5;
 	const drag = getDragController();
+	const gesture = getGestureOwner();
 	const policy = getDockPolicy();
 
 	// What is DRAWN: the saved preference clamped to the current host. The saved
@@ -63,36 +85,17 @@
 		dock.focus(win.id);
 	}
 
-	function trackPointer(event: PointerEvent, onDelta: (dx: number, dy: number) => void): void {
-		if (event.button !== 0) return;
-		event.preventDefault();
-		focusThis();
-
-		const pointerId = event.pointerId;
-		let lastX = event.clientX;
-		let lastY = event.clientY;
-
-		function onMove(moveEvent: PointerEvent) {
-			if (moveEvent.pointerId !== pointerId) return;
-			const dx = moveEvent.clientX - lastX;
-			const dy = moveEvent.clientY - lastY;
-			lastX = moveEvent.clientX;
-			lastY = moveEvent.clientY;
-			onDelta(dx, dy);
-		}
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		}
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
-	}
-
 	let windowEl: HTMLDivElement | null = $state(null);
 
+	/**
+	 * Title-bar press: a `drag-candidate` session on the shared GestureOwner
+	 * that becomes a `drag` (ghost + snap guide via the DragController) once the
+	 * owning pointer crosses `DRAG_THRESHOLD_PX`. Commit / cancel rules are the
+	 * owner's (`core/gesture.svelte.ts`, #433): only this pointer's pointerup
+	 * drops; Esc / pointercancel / blur / unmount drop nothing.
+	 */
 	function handleTitlebarPointerDown(event: PointerEvent) {
-		if (event.button !== 0) return;
+		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
 		event.preventDefault();
 		focusThis();
 		// `move: false` (consumer capability): the title bar still focuses the window but never starts a drag.
@@ -100,46 +103,79 @@
 
 		const startX = event.clientX;
 		const startY = event.clientY;
-		const pointerId = event.pointerId;
 		const winRect = windowEl.getBoundingClientRect();
 		let dragging = false;
 
-		function onMove(moveEvent: PointerEvent) {
-			if (moveEvent.pointerId !== pointerId) return;
-			if (dragging) return;
-			if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
-				return;
-			dragging = true;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-			drag.start({
-				panelId: win.id,
-				title: win.title,
-				icon: win.icon,
-				source: 'floating',
-				width: shown.width,
-				height: shown.height,
-				clientX: moveEvent.clientX,
-				clientY: moveEvent.clientY,
-				originClientX: winRect.left,
-				originClientY: winRect.top
-			});
-		}
-		function onUp(upEvent: PointerEvent) {
-			if (upEvent.pointerId !== pointerId) return;
-			window.removeEventListener('pointermove', onMove);
-			window.removeEventListener('pointerup', onUp);
-		}
-		window.addEventListener('pointermove', onMove);
-		window.addEventListener('pointerup', onUp);
+		gesture.begin(event, {
+			kind: 'drag-candidate',
+			panelId: win.id,
+			activeLayer: windowEl,
+			move(moveEvent) {
+				if (dragging) {
+					drag.update(moveEvent.clientX, moveEvent.clientY);
+					return;
+				}
+				if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
+					return;
+				dragging = true;
+				gesture.setKind('drag');
+				drag.start({
+					panelId: win.id,
+					title: win.title,
+					icon: win.icon,
+					source: 'floating',
+					width: shown.width,
+					height: shown.height,
+					clientX: moveEvent.clientX,
+					clientY: moveEvent.clientY,
+					originClientX: winRect.left,
+					originClientY: winRect.top
+				});
+			},
+			commit(upEvent) {
+				if (dragging) drag.commit(upEvent.clientX, upEvent.clientY);
+			},
+			cancel() {
+				drag.cancel();
+			}
+		});
 	}
 
+	/**
+	 * Resize handle press: a `resize` session. Each owning-pointer move applies
+	 * an INCREMENTAL delta (see the module doc) against the host size read from
+	 * layout at that moment (`gesture.measureHost()`), not the `hostW`/`hostH`
+	 * props - those follow the ResizeObserver and can lag behind a window
+	 * resize. The release applies its own last delta against a freshly measured
+	 * host, so the committed geometry is clamped to the host as it is NOW.
+	 * Cancel restores the layout from before the press (#433).
+	 */
 	function handleResizePointerDown(event: PointerEvent, edge: ResizeEdge) {
 		// The handle sits on the window's own edge, so a pointerdown here would
-		// otherwise also bubble into the titlebar/body focus handler below -
-		// harmless (focus is idempotent) but stopped anyway for clarity.
+		// otherwise also bubble into the root's focus handler - harmless (focus
+		// is idempotent) but stopped anyway for clarity.
 		event.stopPropagation();
-		trackPointer(event, (dx, dy) => dock.resize(win.id, edge, dx, dy, hostW, hostH, policy.clamp));
+		if (event.button !== 0 || event.isPrimary === false || gesture.active) return;
+		event.preventDefault();
+		focusThis();
+
+		let lastX = event.clientX;
+		let lastY = event.clientY;
+		const step = (e: PointerEvent) => {
+			const dx = e.clientX - lastX;
+			const dy = e.clientY - lastY;
+			lastX = e.clientX;
+			lastY = e.clientY;
+			const host = gesture.measureHost();
+			dock.resize(win.id, edge, dx, dy, host.width, host.height, policy.clamp);
+		};
+		gesture.begin(event, {
+			kind: 'resize',
+			panelId: win.id,
+			activeLayer: windowEl,
+			move: step,
+			commit: step
+		});
 	}
 
 	const RESIZE_EDGES: ResizeEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
@@ -164,7 +200,9 @@
 	style:top={`${shown.y}px`}
 	style:width={`${shown.width}px`}
 	style:height={`${shown.height}px`}
+	style:z-index={zIndex}
 	onpointerdown={focusThis}
+	onfocusin={focusThis}
 >
 	<!--
 		Titlebar + body live in `.frame`, which is what actually clips content
@@ -235,6 +273,8 @@
 <style>
 	.dock-window {
 		position: absolute;
+		/* DockHost's floating layer is pointer-transparent; the window itself is not. */
+		pointer-events: auto;
 		border-radius: var(--banto-radius-lg);
 		border: 1px solid var(--banto-border);
 		box-shadow: var(--banto-dock-shadow);
