@@ -23,7 +23,7 @@
  * - **The decision is a pure table** (`decideLeave`) so every state
  *   combination is unit-tested without a router.
  */
-import { onMount } from 'svelte';
+import { onMount, untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 
 /** Structural subset of SvelteKit's `BeforeNavigate` that the guard reads. */
@@ -191,6 +191,21 @@ export function hasUnsavedChanges(): boolean {
 		if (source.isPending()) return true;
 	}
 	return false;
+}
+
+/**
+ * Package-internal: put a source into the shared registry outside a
+ * component (not exported from the package entry). `DraftCoordinator`
+ * (shared-primitives-upstream-plan §3.5) joins the registry this way so a
+ * router leave, a mounted guard and `hasUnsavedChanges()` see the same drafts;
+ * "one prompt per navigation" still holds because every guard checks the
+ * whole registry once per navigation. Returns the removal function.
+ */
+export function joinUnsavedChangesRegistry(source: UnsavedChangesSource): () => void {
+	untrack(() => registry.add(source));
+	return () => {
+		untrack(() => registry.delete(source));
+	};
 }
 
 export interface UnsavedChangesGuardOptions extends LeaveCheckOptions {

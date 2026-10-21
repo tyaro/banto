@@ -73,6 +73,70 @@ textarea/number/date/select/checkbox/password の各フィールド
 1 つでも未保存なら `true` を返すリアクティブな関数で、ルーターを通らない終了
 （Tauri のウィンドウを閉じる等）の判定に使う。
 
+## pane より長生きする draft と複数フォームの適用（issue #432）
+
+ドックの pane は dock / undock で中身が作り直される。未適用の入力を残すには、
+pane の外（ページや controller）で `createFormDraft` を作り、pane は mount のたびに
+借りる。`DraftCoordinator` は複数のフォームの適用 / 破棄 / キャンセルを 1 回の確認で
+まとめ、登録は `guardUnsavedChanges` の登録簿にもつながる（ルーターの離脱・
+`hasUnsavedChanges()` が同じ draft を見る。確認は 1 つの navigation に 1 回のまま）。
+設計は [shared-primitives-upstream-plan §3.5](../../docs/design/shared-primitives-upstream-plan.md)。
+
+```svelte
+<!-- ページ（pane より長生きする側） -->
+<script lang="ts">
+	import { beforeNavigate } from '$app/navigation';
+	import { createDraftCoordinator, createFormDraft, guardUnsavedChanges } from '@banto/forms';
+
+	const coordinator = createDraftCoordinator({ message: () => m.unsaved_drafts() });
+	const memo = createFormDraft({ key: 'memo', schema, initial: loaded });
+	// ルーターの離脱でも確認するなら、画面のどこかで guard を mount しておく
+	guardUnsavedChanges({
+		isDirty: () => coordinator.pending,
+		isSaving: () => coordinator.settling,
+		beforeNavigate,
+		message: () => m.unsaved_drafts()
+	});
+
+	// dock の lifecycle（@banto/dock-svelte 側）とのつなぎ方は遷移ごとに分ける:
+	// - dock / undock / move-docked / tab-switch / hide: coordinator.capture([panelId]) して進める（確認しない）
+	// - close: settle の結果が 'clean' / 'applied' / 'discarded' のときだけ閉じる
+	async function canClose(panelId: string): Promise<boolean> {
+		const result = await coordinator.settle([panelId], (dirtyKeys) =>
+			askApplyDiscardCancel(dirtyKeys)
+		);
+		return result === 'clean' || result === 'applied' || result === 'discarded';
+	}
+</script>
+```
+
+```svelte
+<!-- pane（mount のたびに作り直される側） -->
+<script lang="ts">
+	import { DraftNumberField, draftSourceFrom } from '@banto/forms';
+
+	let { draft, coordinator } = $props();
+	$effect(() => coordinator.register(draftSourceFrom(draft, (values) => save(values))));
+</script>
+
+<DraftNumberField def={qtyField} {draft} />
+```
+
+- **適用**: `draftSourceFrom` の `apply` は、全欄を確定 → `snapshotForApply()` → 送信 →
+  成功したときだけ `markApplied(snapshot)`。baseline になるのは**適用を始めた時点の
+  snapshot** で、適用の待機中に打った入力は dirty のまま残る。自前で書くときも同じ順で。
+- **`settle` の結果**: `'applied'` / `'discarded'` は「解決した時点で対象がすべて clean」。
+  待機中に入力があれば `'dirty-again'`、適用の失敗は `'failed'`、待機中に対象が
+  入れ替わった（再登録・登録解除・同じ key の別の settle・dispose）ら `'stale'`。
+  中身を捨ててよいのは `'clean'` / `'applied'` / `'discarded'` のときだけ。
+- **自作フォーム**: `DraftSource`（`isDirty` / `apply` / `discard` と任意の `capture` /
+  `restore`）を書いて `register` すれば、BantoForm にしなくてよい。`capture([key])` で
+  取ったものは、同じ key の次の `register` で `restore` に渡る（rebind）。
+- **数値欄**: `DraftNumberField` は `type="text"` + `inputmode="decimal"` で、`1e` のような
+  未完成の文字列も draft に残す（確定は blur / Enter）。スピンボタンは無い。
+  既存の `NumberField`（`type="number"`）は変わらない。
+- 文言（`message`・検証の `messages.notANumber`）は解決済みの文字列で渡す。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
