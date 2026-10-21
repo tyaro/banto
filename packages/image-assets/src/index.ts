@@ -13,6 +13,7 @@ export {
 	type ImageFormat,
 	type ImageImportLimits
 } from './limits';
+export { sha256Hex } from './sha256';
 export {
 	IMAGE_ASSET_ERROR_CODES,
 	ImageAssetError,
