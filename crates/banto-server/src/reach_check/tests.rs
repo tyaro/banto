@@ -529,7 +529,11 @@ async fn a_new_issuance_drops_the_previous_self_access() {
     let first = issue(&store);
     let router = reach_check_router(store.clone(), 0, PORT);
     assert_eq!(
-        post(&router, Req::new(&first.token).peer(peer(Ipv4Addr::LOCALHOST))).await,
+        post(
+            &router,
+            Req::new(&first.token).peer(peer(Ipv4Addr::LOCALHOST))
+        )
+        .await,
         (StatusCode::OK, result_body("selfAccess"))
     );
     assert!(store.status().self_access_at_ms.is_some());
