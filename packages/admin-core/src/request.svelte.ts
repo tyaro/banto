@@ -120,7 +120,10 @@ class Request implements RequestHandle {
 	}
 
 	isCurrent(): boolean {
-		return !this.#stale;
+		// The owner's disposal is checked too: dispose() expires requests one by
+		// one and each expire()/release can run consumer callbacks, so a request
+		// whose turn has not come yet must already answer "stale" to them.
+		return !this.#stale && !this.#owner.disposed;
 	}
 
 	get finished(): boolean {
@@ -142,7 +145,7 @@ class Request implements RequestHandle {
 	}
 
 	adopt(resource: unknown): boolean {
-		if (this.#stale || this.#finished) return false;
+		if (!this.isCurrent() || this.#finished) return false;
 		this.#held = this.#held.filter((entry) => entry.resource !== resource);
 		return true;
 	}

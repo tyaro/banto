@@ -266,3 +266,37 @@ describe('createRequestOwner with re-entrant callbacks (PR #441 review)', () => 
 		expect(owner.busy()).toBe(true);
 	});
 });
+
+describe('createRequestOwner during dispose (PR #441 review)', () => {
+	it('a release callback of one key cannot adopt the resource of another key', () => {
+		const owner = createRequestOwner();
+		const a = owner.begin('a');
+		const b = owner.begin('b');
+		const released: string[] = [];
+		b.hold('resource', (r) => released.push(r));
+		let adopted: boolean | null = null;
+		a.hold('cleanup', () => {
+			adopted = b.adopt('resource');
+		});
+		owner.dispose();
+		expect(owner.disposed).toBe(true);
+		expect(adopted).toBe(false);
+		expect(released).toEqual(['resource']);
+	});
+
+	it('an abort listener of one key sees another key as stale and cannot adopt', () => {
+		const owner = createRequestOwner();
+		const a = owner.begin('a');
+		const b = owner.begin('b');
+		b.hold('resource', () => {});
+		let current: boolean | null = null;
+		let adopted: boolean | null = null;
+		a.signal.addEventListener('abort', () => {
+			current = b.isCurrent();
+			adopted = b.adopt('resource');
+		});
+		owner.dispose();
+		expect(current).toBe(false);
+		expect(adopted).toBe(false);
+	});
+});
