@@ -9,7 +9,7 @@
  * the screenshots are in visual.spec.ts.
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { DIAGONAL_MATRIX, primeLauncher, primeThemeAndAuth } from './theme';
+import { DIAGONAL_MATRIX, primeKiosk, primeLauncher, primeThemeAndAuth } from './theme';
 
 function mainNav(page: Page): Locator {
 	return page.getByRole('navigation', { name: '主要ナビゲーション' });
@@ -377,6 +377,128 @@ for (const position of ['left', 'right'] as const) {
 		});
 	});
 }
+
+// Top bar (nav-launcher-plan.md §4.1, D4): below the header, which stays the
+// top row; tooltips and magnification point down (the bottom bar mirrored).
+test.describe('dock on the top edge (primed)', () => {
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await primeLauncher(page, 'top');
+	});
+
+	test('sits centred below the header and the content starts below it', async ({ page }) => {
+		await gotoDashboard(page);
+		await expect(page.locator('.launcher--top')).toBeVisible();
+		await expect(page.locator('html')).toHaveAttribute('data-banto-shell-launcher-position', 'top');
+		const viewport = page.viewportSize();
+		if (!viewport) throw new Error('no viewport');
+		const header = await boxOf(page.locator('.main > header'));
+		const bar = await boxOf(page.locator('.launcher__bar'));
+		expect(bar.width).toBeGreaterThan(bar.height);
+		expect(header.y).toBe(0);
+		expect(bar.y).toBeGreaterThanOrEqual(header.y + header.height);
+		expect(bar.y - (header.y + header.height)).toBeLessThan(20);
+		expect(Math.abs(bar.x + bar.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(2);
+		const contentTop = await page.locator('main').evaluate((el) => {
+			const rect = el.getBoundingClientRect();
+			return rect.top + Number.parseFloat(getComputedStyle(el).paddingTop);
+		});
+		expect(contentTop).toBeGreaterThanOrEqual(bar.y + bar.height);
+	});
+
+	test('the tooltip shows below the item, unclipped, and stays across the gap', async ({
+		page
+	}) => {
+		await gotoDashboard(page);
+		const viewport = page.viewportSize();
+		if (!viewport) throw new Error('no viewport');
+		// The first and the last item: the edges of the scrolling track.
+		const items = page.locator('.launcher [data-launcher-item]');
+		for (const item of [items.first(), items.last()]) {
+			const tooltip = tooltipOf(item);
+			await item.hover();
+			await expect(tooltip).toBeVisible();
+			await expect.poll(() => visibilityOf(tooltip)).toBe('visible');
+			const itemBox = await boxOf(item);
+			const tip = await boxOf(tooltip);
+			expect(tip.y).toBeGreaterThanOrEqual(itemBox.y + itemBox.height);
+			expect(tip.x).toBeGreaterThanOrEqual(0);
+			expect(tip.x + tip.width).toBeLessThanOrEqual(viewport.width);
+			expect(await drawnAtItsCentre(tooltip)).toBe(true);
+
+			// Down across the gap onto the tooltip (the hover bridge).
+			await page.mouse.move(tip.x + tip.width / 2, tip.y + tip.height / 2, { steps: 12 });
+			await expect(tooltip).toBeVisible();
+			await page.mouse.move(viewport.width / 2, viewport.height - 100, { steps: 4 });
+			await expect(tooltip).toBeHidden();
+		}
+	});
+
+	test('magnifies downwards: the bar keeps its top edge', async ({ page }) => {
+		// This suite reduces motion (no magnification); let it run here.
+		await page.emulateMedia({ reducedMotion: 'no-preference' });
+		await gotoDashboard(page);
+		const before = await boxOf(page.locator('.launcher__bar'));
+		const item = await boxOf(page.locator('.launcher [data-launcher-item]').first());
+		await page.mouse.move(item.x + item.width / 2, item.y + item.height / 2, { steps: 4 });
+		await expect
+			.poll(async () => (await boxOf(page.locator('.launcher__bar'))).height)
+			.toBeGreaterThan(before.height);
+		const after = await boxOf(page.locator('.launcher__bar'));
+		expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
+	});
+
+	test('the user menu is drawn over the bar', async ({ page }) => {
+		await gotoDashboard(page);
+		await page.getByRole('button', { name: 'ユーザーメニューを開く' }).click();
+		const logout = page.getByRole('menuitem', { name: 'ログアウト' });
+		await expect(logout).toBeVisible();
+		// The menu is a top-layer popover: whatever it overlaps, it is on top.
+		const onTop = await logout.evaluate((el) => {
+			const rect = el.getBoundingClientRect();
+			const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+			return hit !== null && el.contains(hit);
+		});
+		expect(onTop).toBe(true);
+	});
+
+	test('a toast does not overlap the bar', async ({ page }) => {
+		await page.goto('/ui-demo');
+		await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+		await page.getByRole('button', { name: '成功を表示' }).click();
+		const toast = page.locator('.toast-host .toast').first();
+		await expect(toast).toBeVisible();
+		const t = await boxOf(toast);
+		const bar = await boxOf(page.locator('.launcher__bar'));
+		expect(t.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+	});
+
+	test('<=900px: still the full-width bottom tab bar (D5)', async ({ page }) => {
+		await page.setViewportSize({ width: 768, height: 1024 });
+		await gotoDashboard(page);
+		const bar = await boxOf(page.locator('.launcher__bar'));
+		expect(bar.width).toBeGreaterThanOrEqual(768 - 1);
+		expect(Math.round(bar.y + bar.height)).toBe(1024);
+		const padding = await page.locator('main').evaluate((el) => {
+			const style = getComputedStyle(el);
+			return {
+				top: Number.parseFloat(style.paddingTop),
+				bottom: Number.parseFloat(style.paddingBottom)
+			};
+		});
+		expect(padding.top).toBeLessThan(bar.height);
+		expect(padding.bottom).toBeGreaterThanOrEqual(bar.height);
+	});
+
+	test('kiosk: sits below the compact header', async ({ page }) => {
+		await primeKiosk(page);
+		await gotoDashboard(page);
+		const header = await boxOf(page.locator('.main > header'));
+		const bar = await boxOf(page.locator('.launcher__bar'));
+		expect(bar.y).toBeGreaterThanOrEqual(header.y + header.height);
+		expect(bar.y - (header.y + header.height)).toBeLessThan(20);
+	});
+});
 
 test('settings: choosing Dock shows the opacity slider, which applies live; Sidebar puts it back', async ({
 	page

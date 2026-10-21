@@ -81,9 +81,10 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 | `--banto-shell-launcher-tooltip-bg`         | `surface-raised` の 80%   | ツールチップの半透明の地                                                                                     |
 | `--banto-shell-launcher-tooltip-backdrop`   | `blur(5px)`               | ツールチップの後ろのぼかし                                                                                   |
 | `--banto-shell-launcher-tooltip-max-width`  | `10rem`                   | 左右のバーのツールチップの最大幅（これを超えると折り返す。バーはこの幅ぶん本文側を空けて切れないようにする） |
+| `--banto-shell-launcher-inset-top`          | `0px`                     | 上のバーの上に空ける量（上にヘッダーがあるシェルはヘッダーの高さを入れ、バーをヘッダーの下に置く）           |
 
 半透明の 4 つは、`prefers-reduced-transparency: reduce` のときと `backdrop-filter` が使えないブラウザでは不透明（ぼかし無し）に戻る。
-ルート要素に `data-banto-shell-nav="launcher"` が付いているあいだは、`--banto-toast-bottom` をバー（900px 以下はタブバー）の上に上げる（アプリのシェルがドック表示のときに付ける）。あわせて `data-banto-shell-launcher-position` が `left` / `right` のときは下を空けたままにし、`right` ではトーストを `--banto-toast-right` でバーの左へ逃がす（900px 以下はどの位置でもタブバーの上）。
+ルート要素に `data-banto-shell-nav="launcher"` が付いているあいだは、`--banto-toast-bottom` をバー（900px 以下はタブバー）の上に上げる（アプリのシェルがドック表示のときに付ける）。あわせて `data-banto-shell-launcher-position` が `top` / `left` / `right` のときは下を空けたままにし、`right` ではトーストを `--banto-toast-right` でバーの左へ逃がす（900px 以下はどの位置でもタブバーの上）。
 
 ## 依存
 
