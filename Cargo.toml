@@ -8,6 +8,7 @@ members = [
   "crates/banto-admin-services",
   "apps/admin-template/core",
   "apps/admin-template/src-tauri",
+  "apps/admin-template/elev",
 ]
 
 [workspace.package]
@@ -70,6 +71,18 @@ sha2 = "0.11"
 # `system-metrics` (off by default there; the template app crates turn it on
 # by default per the ADR - see their own Cargo.toml comments).
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+# ADR-0021 decision 14 (Issue #219 stage 2): the third exception in
+# conventions §3's "依存を足す側の例外" - Win32 APIs (handle-based ACL checks,
+# known folders, the system directory) and the `requireAdministrator`
+# manifest for the UAC-elevated firewall helper (`apps/admin-template/elev`),
+# and later (E2) the small runas launch module of `src-tauri`. Only those use
+# them. Both are pinned to the versions ALREADY in Cargo.lock as transitive
+# dependencies (windows-sys 0.61.2, embed-resource 3.0.11), so no crate is
+# added to the build; when bumping, keep them equal to the transitive
+# versions. No default features here - each user lists the windows-sys
+# features it calls (see `apps/admin-template/elev/Cargo.toml`).
+windows-sys = "0.61"
+embed-resource = "3.0"
 banto-core = { path = "crates/banto-core" }
 banto-storage = { path = "crates/banto-storage" }
 banto-server = { path = "crates/banto-server" }

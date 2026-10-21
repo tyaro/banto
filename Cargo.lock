@@ -50,6 +50,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "admin-template-fw-elev"
+version = "6.8.0"
+dependencies = [
+ "embed-resource",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
