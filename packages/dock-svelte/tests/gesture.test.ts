@@ -322,3 +322,77 @@ describe('GestureOwner: re-entrant callbacks', () => {
 		expect(owner.active).toBe(false);
 	});
 });
+
+describe('cancel undoes only the gesture target (PR #445)', () => {
+	it('a resize with restore puts back the window geometry and keeps an app change made meanwhile', () => {
+		const { dock, owner } = setup();
+		let last = 0;
+		owner.begin(pointer('pointerdown') as PointerEvent, {
+			kind: 'resize',
+			panelId: 'a',
+			move(e) {
+				dock.resize('a', 'e', e.clientX - last, 0, 1000, 600);
+				last = e.clientX;
+			},
+			restore: (snapshot) => dock.restoreWindowGeometry('a', snapshot)
+		});
+		window.dispatchEvent(pointer('pointermove', { clientX: 70 }));
+		dock.ensureWindow({ id: 'b', title: 'B', width: 200, height: 150 }, 1000, 600); // the app opens a window
+		window.dispatchEvent(key('Escape'));
+		expect(dock.layout.floating.find((w) => w.id === 'a')?.width).toBe(320);
+		expect(dock.layout.floating.some((w) => w.id === 'b')).toBe(true);
+		expect(net).toBe(0);
+	});
+
+	it('restoreSplitSizes puts back one split and leaves the rest of the tree as it is now', () => {
+		const dock = createDockState({
+			version: 2,
+			floating: [{ id: 'f', title: 'F', x: 0, y: 0, width: 100, height: 100, open: true }],
+			docked: {
+				type: 'split',
+				id: 's',
+				direction: 'row',
+				sizes: [0.5, 0.5],
+				children: [
+					{ type: 'panel', id: 'p1', title: 'P1' },
+					{ type: 'panel', id: 'p2', title: 'P2' }
+				]
+			}
+		});
+		const before = JSON.parse(JSON.stringify(dock.layout)) as DockLayout;
+		dock.resizeSplit('s', 0, 0.2);
+		dock.close('f'); // an app change during the drag
+		dock.restoreSplitSizes('s', before);
+		const split = dock.layout.docked;
+		expect(split?.type === 'split' && split.sizes).toEqual([0.5, 0.5]);
+		expect(dock.layout.floating[0].open).toBe(false);
+	});
+});
+
+describe('dispose refuses a session begun from its own cancel callbacks (PR #445 review)', () => {
+	it('dispose -> cancel / onEnd -> begin leaves no live session or listener', () => {
+		const restarted: boolean[] = [];
+		const options: GestureOwnerOptions = {};
+		const { dock, owner } = setup(options);
+		options.onEnd = () => {
+			restarted.push(
+				owner.begin(pointer('pointerdown', { pointerId: 2 }) as PointerEvent, { kind: 'divider' })
+			);
+		};
+		owner.begin(pointer('pointerdown') as PointerEvent, {
+			kind: 'resize',
+			panelId: 'a',
+			cancel: () => {
+				restarted.push(
+					owner.begin(pointer('pointerdown', { pointerId: 3 }) as PointerEvent, { kind: 'divider' })
+				);
+			}
+		});
+		owner.dispose();
+		expect(restarted).toEqual([false, false]);
+		expect(owner.active).toBe(false);
+		expect(net).toBe(0);
+		window.dispatchEvent(pointer('pointerup', { pointerId: 2 }));
+		expect(dock.layout.floating[0].width).toBe(320);
+	});
+});

@@ -80,8 +80,9 @@ divider）は、host ごとに 1 つの持ち主が 1 回の操作として扱�
   （window の resize の通知が来る前に離しても、古い寸法では確定しない）。
 - **取消**は、Esc（ほかの層が `preventDefault` 済みなら譲る。受けたら `preventDefault` する。IME 変換中は
   見ない）・`pointercancel`・`lostpointercapture`・window の `blur`・タブが隠れたとき・`DockHost` の
-  unmount。resize と divider は押す前の layout に戻る（操作中にアプリが layout を変えていても、それごと
-  戻る）。ドラッグは確定まで layout を書かないので、取消では何も変えない。
+  unmount。resize は対象の window の位置と寸法だけ、divider は対象の split の比率だけを押す前に戻す
+  （操作中にアプリが layout を変えていても、その変更は残る）。押した window が前面に来るのは押したこと
+  （フォーカス）の結果なので、取消でも前面のまま。ドラッグは確定まで layout を書かないので、取消では何も変えない。
 - 浮動 window は `pointerdown` に加えて `focusin`（Tab や中の入力欄へのフォーカス）でも前面に来る。
   前面化は `z-index` で行い、DOM の順（= Tab の順）は変えない。
 

@@ -146,7 +146,7 @@
 	 * live, as a fraction of the split's size read from layout at that moment
 	 * (not a reactive size binding, which can lag a window resize); the release
 	 * applies its own last delta the same way. Cancel (Esc / pointercancel /
-	 * blur / unmount) restores the layout from before the press (#433).
+	 * blur / unmount) puts back only this split's sizes from before the press (#433).
 	 */
 	function startDivider(
 		event: PointerEvent,
@@ -164,7 +164,12 @@
 			const size = direction === 'row' ? (splitEl?.clientWidth ?? 0) : (splitEl?.clientHeight ?? 0);
 			dock.resizeSplit(splitId, dividerIndex, pixelDeltaToFraction(deltaPx, size));
 		};
-		gesture.begin(event, { kind: 'divider', move: step, commit: step });
+		gesture.begin(event, {
+			kind: 'divider',
+			move: step,
+			commit: step,
+			restore: (snapshot) => dock.restoreSplitSizes(splitId, snapshot)
+		});
 	}
 
 	let panelFrameEl: HTMLDivElement | null = $state(null);

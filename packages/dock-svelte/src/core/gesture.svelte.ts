@@ -36,9 +36,10 @@
  *   abort), window `blur`, `visibilitychange` to hidden, `dispose()` (the
  *   `DockHost` unmounting) and an explicit `cancel()`. For a kind that writes
  *   the layout live (`resize`, `divider`; the reserved `move` / `keyboard`),
- *   cancel restores the WHOLE layout to the snapshot taken at `begin` - so a
- *   programmatic layout change made by the app during the gesture is undone
- *   too. `drag-candidate` / `drag` never write the layout before commit, so
+ *   cancel undoes only the gesture's own target from the snapshot taken at
+ *   `begin` (`GestureSpec.restore`: the resized window's geometry, the
+ *   divider's split sizes), so a layout change the app made during the
+ *   gesture is kept. `drag-candidate` / `drag` never write the layout before commit, so
  *   they restore nothing (and cannot clobber a concurrent app change).
  * - **Re-entrancy.** Before any session callback (`commit` / `cancel`) or the
  *   `onEnd` hook runs, the session is already `null` and every listener is
@@ -82,6 +83,13 @@ export interface GestureSpec {
 	commit?: (event: PointerEvent) => void;
 	/** The session was cancelled. Runs after the session closed and after the snapshot was restored. */
 	cancel?: (reason: GestureCancelReason) => void;
+	/**
+	 * Undo what this live-writing gesture changed, from the layout taken at
+	 * `begin` - only its own target (one window's geometry, one split's sizes),
+	 * so a layout change the app made meanwhile is kept. Absent = the whole
+	 * layout is restored (fallback for a live kind that has no narrower undo).
+	 */
+	restore?: (snapshot: DockLayout) => void;
 }
 
 export interface GestureOwnerOptions {
@@ -170,15 +178,20 @@ export class GestureOwner {
 		const ended = this.#close();
 		if (!ended) return;
 		const { session, spec } = ended;
-		if (LIVE_KINDS.has(session.kind)) this.#dock.layout = session.snapshot;
+		if (LIVE_KINDS.has(session.kind)) {
+			if (spec.restore) spec.restore(session.snapshot);
+			else this.#dock.layout = session.snapshot;
+		}
 		spec.cancel?.(reason);
 		this.#getOptions().onEnd?.(session, 'cancel', reason);
 	}
 
 	/** `DockHost` unmounts: cancel the active session and refuse new ones. */
 	dispose(): void {
-		this.cancel('unmount');
+		// Refuse new sessions BEFORE the cancel callbacks run: a cancel / onEnd
+		// that begin()s again must not leave a live session after disposal.
 		this.#disposed = true;
+		this.cancel('unmount');
 	}
 
 	/** Close the session and remove every listener BEFORE any callback runs (re-entrancy). */

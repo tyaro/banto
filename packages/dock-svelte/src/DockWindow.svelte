@@ -148,7 +148,7 @@
 	 * props - those follow the ResizeObserver and can lag behind a window
 	 * resize. The release applies its own last delta against a freshly measured
 	 * host, so the committed geometry is clamped to the host as it is NOW.
-	 * Cancel restores the layout from before the press (#433).
+	 * Cancel puts back only this window's geometry from before the press (#433).
 	 */
 	function handleResizePointerDown(event: PointerEvent, edge: ResizeEdge) {
 		// The handle sits on the window's own edge, so a pointerdown here would
@@ -174,7 +174,8 @@
 			panelId: win.id,
 			activeLayer: windowEl,
 			move: step,
-			commit: step
+			commit: step,
+			restore: (snapshot) => dock.restoreWindowGeometry(win.id, snapshot)
 		});
 	}
 

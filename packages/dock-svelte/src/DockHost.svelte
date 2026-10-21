@@ -35,8 +35,8 @@
 	 * #433): every pointer gesture of the tree (title-bar / tab drag, floating
 	 * resize, split divider) is one session of it - one at a time, only the
 	 * owning pointer commits, Esc / pointercancel / blur / hidden cancel - and
-	 * unmounting the host cancels the active session (restoring the layout it
-	 * started from) and removes its listeners.
+	 * unmounting the host cancels the active session (undoing only that
+	 * gesture's own target) and removes its listeners.
 	 */
 	import { onDestroy, type Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
