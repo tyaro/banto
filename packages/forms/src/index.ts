@@ -25,6 +25,28 @@ export {
 } from './unsavedChanges.svelte';
 export { default as UnsavedChangesNotice } from './UnsavedChangesNotice.svelte';
 
+// Unapplied input that outlives a pane, and apply / discard / cancel of several
+// forms with one prompt (Issue #432; shared-primitives-upstream-plan §3.5・D3).
+// The dock side (`beforePanelChange` etc.) lives in @banto/dock-svelte; the app
+// connects the two (plan §4.2) - forms never imports dock-svelte (plan §2.1).
+export {
+	createFormDraft,
+	draftSourceFrom,
+	formatDraftValue,
+	type FormDraft,
+	type FormDraftOptions,
+	type FormDraftSnapshot
+} from './draft.svelte';
+export {
+	createDraftCoordinator,
+	type DraftCoordinator,
+	type DraftCoordinatorOptions,
+	type DraftSettleChoice,
+	type DraftSettleResult,
+	type DraftSource
+} from './draftCoordinator.svelte';
+export { default as DraftNumberField } from './fields/DraftNumberField.svelte';
+
 export { default as BantoForm } from './BantoForm.svelte';
 export { default as TextField } from './fields/TextField.svelte';
 export { default as PasswordField } from './fields/PasswordField.svelte';
