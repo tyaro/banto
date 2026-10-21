@@ -248,3 +248,49 @@ describe('dispose resolves every waiting request (review 6)', () => {
 		expect(await lifecycle.close('a')).toBe('disposed');
 	});
 });
+
+describe('a late approval does not push out a newer held request (PR #448 re-review)', () => {
+	function hookFor(answerA: Promise<boolean>) {
+		return vi.fn((change: DockPanelChange) =>
+			'panelId' in change && change.panelId === 'a' ? answerA : true
+		);
+	}
+
+	it('a stale A approved late leaves the current held B in place, and B applies on resume', async () => {
+		let deferring = false;
+		const answerA = deferred<boolean>();
+		const { dock, lifecycle } = setup({
+			hook: hookFor(answerA.promise),
+			deferred: () => deferring
+		});
+		const a = lifecycle.close('a');
+		dock.setActiveTab('t', 1); // another structure change: A's request is now stale
+		deferring = true;
+		const b = lifecycle.close('b'); // held under the current generation
+		answerA.resolve(true);
+		expect(await a).toBe('stale');
+		deferring = false;
+		lifecycle.resumeDeferred();
+		expect(await b).toBe('applied');
+		expect(winOf(dock, 'b').open).toBe(false);
+		expect(winOf(dock, 'a').open).toBe(true);
+	});
+
+	it('an older current approval arriving after a newer held request is the one superseded', async () => {
+		let deferring = false;
+		const answerA = deferred<boolean>();
+		const { dock, lifecycle } = setup({
+			hook: hookFor(answerA.promise),
+			deferred: () => deferring
+		});
+		const a = lifecycle.close('a');
+		deferring = true;
+		const b = lifecycle.close('b');
+		answerA.resolve(true);
+		expect(await a).toBe('superseded');
+		deferring = false;
+		lifecycle.resumeDeferred();
+		expect(await b).toBe('applied');
+		expect(winOf(dock, 'a').open).toBe(true);
+	});
+});

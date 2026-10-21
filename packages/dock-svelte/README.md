@@ -184,7 +184,7 @@ isStructureChangeDeferred?: () => boolean; // true のあいだ構造変更を�
 - `drag`（dock / undock になりうるドラッグ）は始めない。浮動 window の resize・キーボードの移動 / サイズ変更・
   divider は始める（中身の DOM を壊さない）。
 - 構造変更の要求（タブのクリック・✕・`closePanel` など、変換中に確定したドラッグも）は、聞かず・変えずに 1 つ
-  だけ持っておき（新しい要求が来たら古いものは `superseded`）、document の `compositionend` / `focusout` の次の
+  だけ持っておき（要求を作った順で新しいほうを残し、古いほうは `superseded`。遅れて許可が返った古い要求が、持っている新しい要求を追い出すことはない。すでに古くなった許可は持たずに `stale`）、document の `compositionend` / `focusout` の次の
   タスクで改めて `beforePanelChange` に聞いて進める。独自の判定を渡したときは、判定が `false` になったら
   `resumeDeferredChange()` を呼ぶ（`compositionend` / `focusout` でも試す）。DOM を壊して変換を戻せるとは仮定しない。
 - 保留は、非同期の答えが返ったときにも確かめ直す。答えを待つあいだに変換が始まったら、許可は同じように持って

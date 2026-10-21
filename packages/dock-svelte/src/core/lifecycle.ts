@@ -133,6 +133,8 @@ interface Job {
 	structure: string;
 	/** The hook said `true`; only the IME hold is in the way. */
 	approved: boolean;
+	/** Creation order: a held slot keeps the newer request (README). */
+	seq: number;
 	done: boolean;
 	resolve: (outcome: DockPanelChangeOutcome) => void;
 	/** Drops the reaction attached to the hook's promise (which may never settle). */
@@ -146,6 +148,7 @@ export class PanelLifecycle {
 	#getOptions: () => PanelLifecycleOptions;
 	#disposed = false;
 	#held: Job | null = null;
+	#nextSeq = 0;
 	#retryTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Requests not resolved yet (asked, waiting for the hook, or held), by identity. */
 	#pending = new Map<string, Promise<DockPanelChangeOutcome>>();
@@ -223,6 +226,7 @@ export class PanelLifecycle {
 			revision: this.#dock.structureRevision,
 			structure: structureKey(this.#dock.layout),
 			approved: false,
+			seq: this.#nextSeq++,
 			done: false,
 			resolve: () => {},
 			release: () => {}
@@ -374,13 +378,26 @@ export class PanelLifecycle {
 		if (verdict !== true) return job.resolve('refused');
 		job.approved = true;
 		// A composition may have started while the hook waited: hold the approval.
-		if (this.isDeferred()) return this.#hold(job);
+		// An approval that is already stale must not take the slot (it would push
+		// out a current held request and then be dropped itself on resume).
+		if (this.isDeferred()) {
+			if (!this.#isCurrent(job)) return job.resolve('stale');
+			return this.#hold(job);
+		}
 		this.#applyIfCurrent(job);
 	}
 
-	/** One slot: a newer held request replaces the older one (`superseded`). */
+	/**
+	 * One slot: a newer request replaces the older one (`superseded`), by
+	 * creation order - an older request whose approval arrives late does not
+	 * push out a newer held one; it is the one superseded.
+	 */
 	#hold(job: Job): void {
-		if (this.#held && this.#held !== job) this.#held.resolve('superseded');
+		const held = this.#held;
+		if (held && held !== job) {
+			if (held.seq > job.seq) return job.resolve('superseded');
+			held.resolve('superseded');
+		}
 		this.#held = job;
 	}
 
