@@ -67,6 +67,16 @@ describe('validateImageImportLimits', () => {
 		]);
 	});
 
+	it('rejects a sparse formats array (a hole is not a known format)', () => {
+		const sparse = new Array<string>(2);
+		sparse[0] = 'png';
+		const bad = { ...limits, formats: sparse } as unknown as ImageImportLimits;
+		expect(codeAndField(() => validateImageImportLimits(bad))).toEqual([
+			'invalid-limits',
+			'formats'
+		]);
+	});
+
 	it('rejects a non-object', () => {
 		const bad = null as unknown as ImageImportLimits;
 		expect(codeAndField(() => validateImageImportLimits(bad))).toEqual([

@@ -31,6 +31,15 @@ const NUMERIC_FIELDS = ['maxBytes', 'maxEdge', 'maxPixels'] as const;
  * given order). Throws `ImageAssetError('invalid-limits', { field })` when a number is not a
  * positive safe integer, or when `formats` is empty or names an unknown format.
  */
+/** Every slot is a known format. Index each slot: `every` skips the holes of a sparse array. */
+function allKnownFormats(formats: unknown[]): boolean {
+	for (let i = 0; i < formats.length; i++) {
+		if (!(i in formats) || !(IMAGE_FORMATS as readonly unknown[]).includes(formats[i]))
+			return false;
+	}
+	return true;
+}
+
 export function validateImageImportLimits(limits: ImageImportLimits): ImageImportLimits {
 	if (typeof limits !== 'object' || limits === null)
 		throw new ImageAssetError('invalid-limits', { field: 'limits' });
@@ -40,11 +49,7 @@ export function validateImageImportLimits(limits: ImageImportLimits): ImageImpor
 			throw new ImageAssetError('invalid-limits', { field });
 	}
 	const formats: unknown = limits.formats;
-	if (
-		!Array.isArray(formats) ||
-		formats.length === 0 ||
-		!formats.every((f) => (IMAGE_FORMATS as readonly unknown[]).includes(f))
-	)
+	if (!Array.isArray(formats) || formats.length === 0 || !allKnownFormats(formats))
 		throw new ImageAssetError('invalid-limits', { field: 'formats' });
 	return Object.freeze({
 		maxBytes: limits.maxBytes,
