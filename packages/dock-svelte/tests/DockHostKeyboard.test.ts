@@ -604,3 +604,38 @@ describe('tab strip: arrows', () => {
 		expect(active()).toBe(0);
 	});
 });
+
+describe('keyboard mode ends when its window or button goes away (PR #446 review)', () => {
+	it('closing the window in move mode cancels that session (no blur needed), so other windows work again', () => {
+		const onGestureEnd = vi.fn();
+		const { dock, dialog } = mount(floating(), { onGestureEnd });
+		const names = dock.layout.floating.map((w) => w.id);
+		enterMode(dialog(names[0].toUpperCase()), 'move');
+		dock.close(names[0]);
+		flushSync();
+		expect(onGestureEnd).toHaveBeenCalledWith('move', 'cancel', 'unmount');
+		const other = enterMode(dialog(names[1].toUpperCase()), 'move');
+		expect(other.getAttribute('aria-pressed')).toBe('true');
+	});
+
+	it("another window's teardown does not cancel this window's mode", () => {
+		const onGestureEnd = vi.fn();
+		const { dock, dialog } = mount(floating(), { onGestureEnd });
+		const names = dock.layout.floating.map((w) => w.id);
+		const button = enterMode(dialog(names[0].toUpperCase()), 'resize');
+		dock.close(names[1]);
+		flushSync();
+		expect(onGestureEnd).not.toHaveBeenCalled();
+		expect(button.getAttribute('aria-pressed')).toBe('true');
+	});
+
+	it('hiding the move button through capabilities ends the move mode', async () => {
+		const onGestureEnd = vi.fn();
+		const { dock, view, dialog } = mount(floating(), { onGestureEnd });
+		const id = dock.layout.floating[0].id;
+		enterMode(dialog(id.toUpperCase()), 'move');
+		await view.rerender({ capabilities: () => ({ move: false }) });
+		flushSync();
+		expect(onGestureEnd).toHaveBeenCalledWith('move', 'cancel', 'api');
+	});
+});

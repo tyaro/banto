@@ -43,7 +43,7 @@
 	 * and IME composition pass through. Moving the focus off the button
 	 * cancels the mode (reason `blur`).
 	 */
-	import type { Snippet } from 'svelte';
+	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { getDragController } from './core/drag.svelte';
 	import { displayWindowGeometry } from './core/geometry';
 	import { getGestureOwner } from './core/gesture.svelte';
@@ -254,6 +254,27 @@
 	function handleModeBlur(kind: 'move' | 'resize'): void {
 		if (keyMode === kind) gesture.cancel('blur');
 	}
+
+	/**
+	 * Is the owner's active session this window's keyboard mode? Only such a
+	 * session is ended from here - another window's teardown must never cancel
+	 * an unrelated gesture.
+	 */
+	function ownsKeyboardSession(): boolean {
+		const session = gesture.session;
+		return !!session && session.pointerId === null && session.panelId === win.id;
+	}
+
+	// The mode button can disappear without a `blur` (Firefox fires none when a
+	// focused element is removed): the window closed or docked while in the
+	// mode, or `capabilities` hid the move button. End the mode then, or the
+	// stale session would keep refusing every other gesture.
+	onDestroy(() => {
+		if (ownsKeyboardSession()) gesture.cancel('unmount');
+	});
+	$effect(() => {
+		if (keyMode === 'move' && !caps.move) untrack(() => gesture.cancel('api'));
+	});
 </script>
 
 <!--
