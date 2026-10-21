@@ -67,4 +67,30 @@ test.describe('/reach (device side of the LAN reach check)', () => {
 		expect(new URL(page.url()).hash).toBe('');
 		expect(sent).toBe(1);
 	});
+
+	test('works while the startup probe (/api/auth/check) is slow or failing', async ({ page }) => {
+		// The app's startup never finishes here: the probe hangs, then fails.
+		let releaseProbe: () => void = () => {};
+		const probeHeld = new Promise<void>((resolve) => (releaseProbe = resolve));
+		await page.route('**/api/auth/check', async (route) => {
+			await probeHeld;
+			await route.abort('failed');
+		});
+		await page.route('**/api/reach-check', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ result: 'recorded' })
+			});
+		});
+		await page.goto(`/reach#t=${TOKEN}`);
+		await expect(page.locator('[data-reach="recorded"]')).toContainText(
+			'この端末からの接続を記録しました。'
+		);
+		expect(new URL(page.url()).hash).toBe('');
+		releaseProbe();
+		// Still the result, not the startup splash.
+		await expect(page.locator('[data-reach="recorded"]')).toBeVisible();
+	});
+
 });
