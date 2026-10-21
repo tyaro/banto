@@ -490,3 +490,55 @@ describe('DraftCoordinator and the unsaved-changes registry', () => {
 		expect(hasUnsavedChanges()).toBe(false);
 	});
 });
+
+describe('settle never starts an apply after a synchronous re-entry made it stale (PR #447 re-review)', () => {
+	function dirtySource(
+		key: string,
+		apply: () => Promise<boolean>
+	): { source: DraftSource; calls: () => number } {
+		let calls = 0;
+		return {
+			source: {
+				key,
+				isDirty: () => true,
+				apply: () => {
+					calls++;
+					return apply();
+				},
+				discard: () => {}
+			},
+			calls: () => calls
+		};
+	}
+
+	it('A.apply disposing the coordinator keeps B.apply from being called', async () => {
+		const coordinator = make();
+		const a = dirtySource('A', async () => {
+			coordinator.dispose();
+			return true;
+		});
+		const b = dirtySource('B', async () => true);
+		coordinator.register(a.source);
+		coordinator.register(b.source);
+		const result = await coordinator.settle(['A', 'B'], asker('apply').ask);
+		expect(result).toBe('stale');
+		expect(a.calls()).toBe(1);
+		expect(b.calls()).toBe(0);
+	});
+
+	it('A.apply replacing B keeps the old B.apply from being called', async () => {
+		const coordinator = make();
+		const replacement = dirtySource('B', async () => true);
+		const a = dirtySource('A', async () => {
+			coordinator.register(replacement.source);
+			return true;
+		});
+		const b = dirtySource('B', async () => true);
+		coordinator.register(a.source);
+		coordinator.register(b.source);
+		const result = await coordinator.settle(['A', 'B'], asker('apply').ask);
+		expect(result).toBe('stale');
+		expect(b.calls()).toBe(0);
+		expect(replacement.calls()).toBe(0);
+	});
+});

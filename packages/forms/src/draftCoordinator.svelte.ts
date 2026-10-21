@@ -272,18 +272,29 @@ class Coordinator implements DraftCoordinator {
 
 			// Start every apply first (each snapshots its own input at its start), then
 			// await them, so input typed during a slow apply is never saved by a later one.
-			const started = dirty.map(({ source }) => {
+			// Each apply runs consumer code synchronously up to its first await, which
+			// may dispose the coordinator or replace / unregister a target: check
+			// before starting the next one, and never start an apply after that.
+			const started: Promise<boolean>[] = [];
+			for (const { source } of dirty) {
+				if (stale()) return 'stale';
 				// A capture without its form cannot be applied.
-				if (!source) return Promise.resolve(false);
+				if (!source) {
+					started.push(Promise.resolve(false));
+					continue;
+				}
 				try {
-					return Promise.resolve(source.apply()).then(
-						(r) => r === true,
-						() => false
+					started.push(
+						Promise.resolve(source.apply()).then(
+							(r) => r === true,
+							() => false
+						)
 					);
 				} catch {
-					return Promise.resolve(false);
+					started.push(Promise.resolve(false));
 				}
-			});
+			}
+			if (stale()) return 'stale';
 			const results = await Promise.all(started);
 			if (stale()) return 'stale';
 			const failed = results.some((ok) => !ok);
