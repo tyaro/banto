@@ -18,6 +18,7 @@
 //! half (`packages/admin-core/src/events.ts`) - and auto-starts the server
 //! if it was left enabled on a previous run.
 
+mod firewall_status;
 mod keyring_store;
 
 use admin_template_core::assets::FrontendAssets;
@@ -2103,6 +2104,56 @@ async fn server_status_body(state: &AppState) -> Result<ServerStatusResult, Bant
     Ok(build_status(&saved, &slot))
 }
 
+/// `GET`-ish command (Issue #219, stage 1 / PR-B; spec §11.4): whether
+/// Windows Defender Firewall has the rules the settings screen's
+/// administrator commands create, read without elevation, and how they
+/// compare with what those commands would create for the listener that is
+/// serving now. `admin`-only like `server_status` (the response carries the
+/// executable path); a read, so not audited; desktop-only - there is no REST
+/// twin (the firewall is this PC's). The rule names come from this app's own
+/// bundle identifier, never from the caller.
+#[tauri::command]
+async fn firewall_rule_status(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<firewall_status::FirewallRuleStatus, BantoError> {
+    let identifier = app.config().identifier.clone();
+    firewall_rule_status_body(&state, &identifier, firewall_status::probe).await
+}
+
+/// Body of [`firewall_rule_status`] with the read injected (`probe`), so the
+/// gate and the snapshot are testable without Windows.
+///
+/// The comparison basis (live port, executable path) and its `generation`
+/// come from one `state.server` snapshot, taken under the lock exactly like
+/// `server_status`; the lock is released before the read, which may take
+/// seconds, so an apply is never held up by it. The screen drops a result
+/// whose `generation` is not the one it shows.
+async fn firewall_rule_status_body(
+    state: &AppState,
+    identifier: &str,
+    probe: fn(&firewall_status::RuleNames) -> Result<String, firewall_status::UnknownReason>,
+) -> Result<firewall_status::FirewallRuleStatus, BantoError> {
+    require_role(state, Role::Admin, "settings").await?;
+    let (generation, expected) = {
+        let slot = state.server.lock().await;
+        (
+            slot.generation,
+            firewall_status::FirewallExpectation {
+                executable_path: current_executable_path(),
+                port: slot.live.as_ref().map(|live| live.listener().port),
+            },
+        )
+    };
+    let outcome = match firewall_status::rule_names(identifier) {
+        None => Err(firewall_status::UnknownReason::InvalidIdentifier),
+        Some(names) => tokio::task::spawn_blocking(move || probe(&names))
+            .await
+            .unwrap_or(Err(firewall_status::UnknownReason::QueryFailed)),
+    };
+    Ok(firewall_status::evaluate(generation, expected, outcome))
+}
+
 /// `GET`-ish command (M-review 2026-08 §2.4): admin-only system diagnostics
 /// for the settings「システム情報」card. Symmetric with `GET /api/system/info`
 /// (conventions §1) - both call `SystemInfoService::probe` and fold in the
@@ -3911,6 +3962,7 @@ pub fn run() {
             autologin_disable,
             server_status,
             server_apply,
+            firewall_rule_status,
             system_info,
             settings_get,
             settings_set,
@@ -7524,6 +7576,99 @@ mod tests {
                 "{name}: {result:?}"
             );
         }
+    }
+
+    /// A probe that must not run (the gate refused before the read).
+    fn unreachable_probe(
+        _: &firewall_status::RuleNames,
+    ) -> Result<String, firewall_status::UnknownReason> {
+        panic!("the firewall must not be read");
+    }
+
+    /// Issue #219 PR-B: the firewall read is admin-only like `server_status`
+    /// - no session / viewer / editor are refused before anything is read
+    /// (no PowerShell runs for them).
+    #[tokio::test]
+    async fn firewall_rule_status_is_admin_only() {
+        let state = app_state().await;
+        assert!(matches!(
+            firewall_rule_status_body(&state, "com.example.banto", unreachable_probe).await,
+            Err(BantoError::Unauthorized)
+        ));
+        for (name, role) in [("viewer", Role::Viewer), ("editor", Role::Editor)] {
+            let user = state
+                .users
+                .create_user(name, "password123", name, role)
+                .await
+                .expect("create_user");
+            state.set_session_for_test(Some(DesktopSession::Account(user)));
+            let result =
+                firewall_rule_status_body(&state, "com.example.banto", unreachable_probe).await;
+            assert!(
+                matches!(result, Err(BantoError::Forbidden)),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
+    /// The probe gets the names derived from the app identifier, and the
+    /// result is compared with the live listener and executable of the same
+    /// snapshot (its `generation`), not the saved settings.
+    #[tokio::test]
+    async fn firewall_rule_status_compares_with_the_live_snapshot() {
+        fn probe(
+            names: &firewall_status::RuleNames,
+        ) -> Result<String, firewall_status::UnknownReason> {
+            assert_eq!(names.program, "com.example.banto.lan.tcp.program");
+            assert_eq!(names.port, "com.example.banto.lan.tcp.port");
+            assert_eq!(names.group, "com.example.banto");
+            let rule = r#"{"s":"present","enabled":"True","direction":"Inbound","action":"Allow","protocol":"TCP","profile":"Private","program":"Any","localPort":["1"],"remoteAddress":["LocalSubnet"],"source":"PersistentStore","sourceType":"Local"}"#;
+            Ok(format!(
+                r#"{{"program":{{"local":{{"s":"missing"}},"effective":{{"s":"missing"}}}},"port":{{"local":{rule},"effective":{rule}}},"group":0}}"#
+            ))
+        }
+        let state = admin_app_state().await;
+        let port = free_port();
+        let applied = apply(&state, true, port, false).await.expect("apply");
+        // A saved value that disagrees with the live listener is not used.
+        state
+            .settings
+            .set("server.port", &free_port().to_string())
+            .await
+            .unwrap();
+
+        let status = firewall_rule_status_body(&state, "com.example.banto", probe)
+            .await
+            .expect("status");
+
+        assert_eq!(status.generation, applied.generation);
+        assert_eq!(status.expected.port, Some(port));
+        assert_eq!(status.expected.executable_path, applied.executable_path);
+        assert_eq!(status.program, firewall_status::FirewallRuleCheck::Missing);
+        match &status.port {
+            firewall_status::FirewallRuleCheck::Present { mismatches, .. } => {
+                // The rule says port 1; the live port is another one.
+                assert_eq!(mismatches, &vec![firewall_status::FirewallField::LocalPort]);
+            }
+            other => panic!("{other:?}"),
+        }
+        stop_running_server(&state).await;
+    }
+
+    /// An identifier outside Tauri's alphabet reads nothing and reports
+    /// `unknown`, never `missing`.
+    #[tokio::test]
+    async fn firewall_rule_status_refuses_an_invalid_identifier() {
+        let state = admin_app_state().await;
+        let status = firewall_rule_status_body(&state, "x'; calc; '", unreachable_probe)
+            .await
+            .expect("status");
+        let unknown = firewall_status::FirewallRuleCheck::Unknown {
+            reason: firewall_status::UnknownReason::InvalidIdentifier,
+        };
+        assert_eq!(status.program, unknown);
+        assert_eq!(status.port, unknown);
+        assert_eq!(status.expected.port, None);
     }
 
     /// The status reports the listener that is serving (its `local_addr`),

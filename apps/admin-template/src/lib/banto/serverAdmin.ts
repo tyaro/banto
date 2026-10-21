@@ -111,6 +111,127 @@ export interface ServerApplyFailure {
 }
 
 /**
+ * Mirrors src-tauri's `firewall_status::UnknownReason`: why a firewall rule's
+ * state could not be read (Issue #219 PR-B). Codes only.
+ */
+export type FirewallUnknownReason =
+	| 'notWindows'
+	| 'invalidIdentifier'
+	| 'launchFailed'
+	| 'timeout'
+	| 'queryFailed'
+	| 'unreadableOutput';
+
+/** Mirrors src-tauri's `firewall_status::FirewallField`. */
+export type FirewallField =
+	| 'enabled'
+	| 'direction'
+	| 'action'
+	| 'protocol'
+	| 'profile'
+	| 'program'
+	| 'localPort'
+	| 'remoteAddress'
+	| 'active'
+	| 'enforcement';
+
+/** Mirrors src-tauri's `FirewallRuleValues`: a rule as `Get-NetFirewall*` reports it. */
+export interface FirewallRuleValues {
+	enabled: string;
+	direction: string;
+	action: string;
+	protocol: string;
+	profile: string;
+	program: string;
+	localPorts: string[];
+	remoteAddresses: string[];
+}
+
+/**
+ * Mirrors src-tauri's `SourceKind`: what the ActiveStore rule's
+ * `PolicyStoreSourceType` (traced with `-TracePolicyStore`) names.
+ * `unknown` = not reported; `other` = a value outside the documented ones.
+ */
+export type FirewallSourceKind =
+	| 'local'
+	| 'groupPolicy'
+	| 'dynamic'
+	| 'generated'
+	| 'hardcoded'
+	| 'mdm'
+	| 'hostFirewallLocal'
+	| 'hostFirewallGroupPolicy'
+	| 'hostFirewallDynamic'
+	| 'hostFirewallMdm'
+	| 'unknown'
+	| 'other';
+
+/** Mirrors src-tauri's `RuleOrigin`: where the rule in effect (the ActiveStore's) comes from. */
+export interface FirewallRuleOrigin {
+	kind: FirewallSourceKind;
+	/** `PolicyStoreSourceType` as reported (`null` when not reported). */
+	sourceType: string | null;
+	/** `PolicyStoreSource`: `PersistentStore` for a local rule, the policy otherwise (`null` when not reported). */
+	source: string | null;
+}
+
+/**
+ * Mirrors src-tauri's `Enforcement`: whether the rule in effect is applied
+ * (the ActiveStore's `EnforcementStatus`). Only `Full` is `enforced`; a
+ * documented other code is `notEnforced` with its names (`InactiveProfile`,
+ * `LocalFirewallRulesDisallowed`, ...); no code or an unknown one is
+ * `unknown` (`values`: the raw codes).
+ */
+export type FirewallEnforcement =
+	| { state: 'enforced' }
+	| { state: 'notEnforced'; reasons: string[] }
+	| { state: 'unknown'; values: number[] };
+
+/** Mirrors src-tauri's `LocalRule`: the local (PersistentStore) rule next to the one in effect. */
+export type FirewallLocalRule =
+	| { state: 'missing' }
+	| { state: 'same' }
+	| { state: 'differs'; rule: FirewallRuleValues }
+	| { state: 'unknown' };
+
+/** Mirrors src-tauri's `FirewallRuleCheck`: one rule's state. */
+export type FirewallRuleCheck =
+	| { state: 'missing' }
+	| {
+			state: 'present';
+			/**
+			 * The rule in effect (the ActiveStore's); the local one when it is
+			 * not in the ActiveStore (`origin` and `enforcement` are then `null`
+			 * and `mismatches` has `active`).
+			 */
+			rule: FirewallRuleValues;
+			origin: FirewallRuleOrigin | null;
+			/** Not `enforced`: `mismatches` has `enforcement`; `unknown`: `unchecked` has it. */
+			enforcement: FirewallEnforcement | null;
+			local: FirewallLocalRule;
+			/** What differs from the rule the administrator command creates (empty = as expected). */
+			mismatches: FirewallField[];
+			/** What could not be compared (no live listener or executable path to compare with). */
+			unchecked: FirewallField[];
+	  }
+	| { state: 'unknown'; reason: FirewallUnknownReason };
+
+/**
+ * Mirrors src-tauri's `FirewallRuleStatus` (`firewall_rule_status`): the
+ * Banto rules in Windows Defender Firewall, read without elevation and
+ * compared with the server snapshot of `generation`.
+ */
+export interface FirewallRuleStatus {
+	generation: number;
+	/** The comparison basis: the same snapshot's executable path and live port. */
+	expected: { executablePath: string | null; port: number | null };
+	program: FirewallRuleCheck;
+	port: FirewallRuleCheck;
+	/** Other rules in `-Group <identifier>` (`null` when unknown). */
+	groupOtherRules: number | null;
+}
+
+/**
  * The bind address the status line should describe: the live listener's
  * when the host reports one, else the saved `bind` (older hosts, or nothing
  * serving).
@@ -155,6 +276,17 @@ async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Pr
 /** Current saved settings + the live listener, as one snapshot (spec §11.4, Issue #459). */
 export function getServerStatus(): Promise<ServerStatus> {
 	return invokeCommand('server_status');
+}
+
+/**
+ * Whether Windows Defender Firewall has the Banto rules (Issue #219 PR-B,
+ * spec §11.4). Read-only, no elevation; admin-only like `server_status`.
+ * Resolves to whatever the host returned - check it with
+ * `firewallRuleStatus.ts::isFirewallRuleStatus` (an older host has no such
+ * command).
+ */
+export function getFirewallRuleStatus(): Promise<unknown> {
+	return invokeCommand('firewall_rule_status');
 }
 
 /**

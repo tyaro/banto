@@ -439,6 +439,9 @@ const isAllowedPackageImport = (spec) =>
 		'auth_status',
 		'backups_list',
 		'backups_pending',
+		// Issue #219 PR-B: reads this PC's Windows Firewall (admin, like
+		// server_status). Desktop-only by nature - no REST twin.
+		'firewall_rule_status',
 		'items_get',
 		'items_list',
 		'ping',

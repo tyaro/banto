@@ -20,7 +20,9 @@
  *   something is unsaved).
  * - The firewall information (Issue #219) shows the LIVE listener's port and
  *   an escaped executable path, refuses to copy once the listener changed,
- *   and says "not needed" for a loopback-only listener.
+ *   and says "not needed" for a loopback-only listener. The Windows Firewall
+ *   status (PR-B) shows each rule's state, and drops a result for a
+ *   listener the screen no longer shows.
  *
  * Runs in its own page/context - independent of smoke.spec.ts's shared state.
  */
@@ -76,7 +78,9 @@ async function installTauriStub(page: Page): Promise<void> {
 			/** Merged into every `server_status` answer (Issue #219: a running Windows host). */
 			serverStatusPatch: {} as Record<string, unknown>,
 			/** `@tauri-apps/api/app`'s `getIdentifier()` answer. */
-			appIdentifier: null as string | null
+			appIdentifier: null as string | null,
+			/** `firewall_rule_status`'s answer (Issue #219 PR-B; `null` = an older host). */
+			firewallRuleStatus: null as unknown
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
 			mock.releaseServerStatus = resolve;
@@ -159,6 +163,8 @@ async function installTauriStub(page: Page): Promise<void> {
 					return { ...serverStatus, ...mock.serverStatusPatch };
 				case 'plugin:app|identifier':
 					return mock.appIdentifier;
+				case 'firewall_rule_status':
+					return mock.firewallRuleStatus;
 				case 'vibrancy_status':
 					return { supported: false, applied: false };
 				case 'plugin:event|listen': {
@@ -439,6 +445,47 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 				executablePath: "C:\\Program Files\\O'Brien\\banto-admin.exe",
 				platform: 'windows'
 			};
+			m.firewallRuleStatus = {
+				generation: 1,
+				expected: { executablePath: "C:\\Program Files\\O'Brien\\banto-admin.exe", port: 8721 },
+				program: {
+					state: 'present',
+					rule: {
+						enabled: 'True',
+						direction: 'Inbound',
+						action: 'Block',
+						protocol: 'TCP',
+						profile: 'Private',
+						program: "C:\\Program Files\\O'Brien\\banto-admin.exe",
+						localPorts: ['Any'],
+						remoteAddresses: ['LocalSubnet']
+					},
+					// A Group Policy rule of the same name is in effect; the local one says Allow.
+					origin: {
+						kind: 'groupPolicy',
+						sourceType: 'GroupPolicy',
+						source: 'contoso.local\\Banto'
+					},
+					enforcement: { state: 'enforced' },
+					local: {
+						state: 'differs',
+						rule: {
+							enabled: 'True',
+							direction: 'Inbound',
+							action: 'Allow',
+							protocol: 'TCP',
+							profile: 'Private',
+							program: "C:\\Program Files\\O'Brien\\banto-admin.exe",
+							localPorts: ['Any'],
+							remoteAddresses: ['LocalSubnet']
+						}
+					},
+					mismatches: ['action'],
+					unchecked: []
+				},
+				port: { state: 'missing' },
+				groupOtherRules: 0
+			};
 		});
 		await serveOnTauriOrigin(page, baseURL);
 		await page.goto(tauriUrl('/settings/connectivity'));
@@ -457,6 +504,28 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		);
 		await expect(commands.nth(1)).toContainText('-LocalPort 8721 ');
 		await expect(page.locator('.firewall-info')).not.toContainText('9000');
+		// The Windows Firewall status: a central policy's Block is in effect for
+		// the program rule (the local Allow does not apply), no port rule.
+		const ruleStatus = page.locator('.firewall-status');
+		await expect(
+			page.getByRole('heading', { name: 'Windows ファイアウォールの状態' })
+		).toBeVisible();
+		const differs = ruleStatus.locator('[data-state="differs"]');
+		await expect(differs).toContainText('dev.banto.admin.lan.tcp.program');
+		await expect(differs).toContainText('操作:');
+		await expect(differs).toContainText('Block');
+		await expect(differs.locator('[data-origin="policy"]')).toContainText(
+			'集中管理のポリシー（グループポリシー）のルールです（出どころ: contoso.local\\Banto）'
+		);
+		await expect(differs.locator('[data-enforcement="enforced"]')).toContainText(
+			'適用されています（EnforcementStatus: Full）'
+		);
+		await expect(differs.locator('[data-local="differs"]')).toBeVisible();
+		await expect(differs).toContainText('Allow');
+		await expect(ruleStatus.locator('[data-state="missing"]')).toContainText('ルール無し');
+		await expect(ruleStatus).toContainText(
+			'ルールがあることと、LAN の端末から接続できることは同じではありません。'
+		);
 		// The listener changed behind the screen: copying refuses and shows the new values.
 		await mock(page, {
 			serverStatusPatch: {
@@ -475,6 +544,11 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 			page.getByText('待ち受けの状態が変わったため、コピーしませんでした。')
 		).toBeVisible();
 		await expect(commands.nth(1)).toContainText('-LocalPort 8722 ');
+		// The firewall status still answers for generation 1: not shown for 8722.
+		await expect(ruleStatus.locator('[data-state]')).toHaveCount(0);
+		await expect(
+			page.getByText('確認の途中でサーバーの状態が変わりました。もう一度確認してください。')
+		).toBeVisible();
 
 		// Loopback only: no rule needed, no commands.
 		await mock(page, {
