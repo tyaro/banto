@@ -293,7 +293,11 @@ export interface ReachRecord {
 export interface ReachCheckStatus {
 	generation: number;
 	lastIssue: ReachLastIssue | null;
-	/** Epoch milliseconds of the last access from this PC itself, if any. */
+	/**
+	 * Epoch milliseconds of the last access from this PC itself with the last
+	 * issuance's URL, if any (every new issuance clears it, so it never stands
+	 * for an earlier issuance).
+	 */
 	selfAccessAt: number | null;
 	/** Newest first. */
 	records: ReachRecord[];
