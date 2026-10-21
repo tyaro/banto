@@ -386,6 +386,12 @@ function removeDock() {
 		'popout import 除去',
 		`\timport { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';\n`
 	);
+	// #433-b（#446）: dock の gesture の Esc をどの層に譲るか。dock と一緒に消える。
+	drop(
+		DASH,
+		'dockEscape import 除去',
+		`\timport { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';\n`
+	);
 	// #432 PR-10: メモ pane の draft と dock の lifecycle の配線（中身は下の「dock スクリプト
 	// 一式」・ワークスペース markup・dockPanel snippet の範囲に収めてある）。
 	drop(
@@ -420,6 +426,8 @@ function removeDock() {
 	);
 	removeFile(`${APP}/src/lib/banto/panels.ts`, 'panels.ts 削除');
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockEscape.ts`, 'dockEscape.ts 削除');
+	removeFile(`${APP}/src/lib/banto/dockEscape.test.ts`, 'dockEscape.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dashboardMemo.svelte.ts`, 'dashboardMemo.svelte.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dashboardMemo.test.ts`, 'dashboardMemo.test.ts 削除');
 	removeFile(`${APP}/src/lib/banto/settlePrompt.svelte.ts`, 'settlePrompt.svelte.ts 削除');
