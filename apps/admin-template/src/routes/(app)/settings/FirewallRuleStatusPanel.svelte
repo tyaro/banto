@@ -10,6 +10,11 @@
 	 * 「確認できない（理由）」を出す。ルールがあることと LAN から接続できる
 	 * ことは同じではないので、そのことも書く。
 	 *
+	 * 照合するのは実際に効いている（ActiveStore の）ルール。同じ名前の
+	 * 集中管理のポリシーのルールが効いているときはその出どころを、ローカルの
+	 * ルールが無い・値が違う・読めないときはそれを補足で出す（PR #465 の
+	 * Codex の指摘）。
+	 *
 	 * 応答は `firewallRuleStatus.ts` の `FirewallStatusRequests` で順序を
 	 * 守る: 適用の開始・新しい確認で古い確認を捨て、表示している snapshot
 	 * （generation・ポート・実行ファイル）と照合した結果だけを出す。
@@ -161,12 +166,34 @@
 		{:else}
 			<p>{m['settings.firewallStatusUnknown']({ reason: reasonText(view.reason) })}</p>
 		{/if}
-		{#if (view.kind === 'matches' || view.kind === 'differs') && view.unchecked.length > 0}
-			<p class="note">
-				{m['settings.firewallStatusUnchecked']({
-					fields: view.unchecked.map(fieldLabel).join(m['settings.firewallListSeparator']())
-				})}
-			</p>
+		{#if view.kind === 'matches' || view.kind === 'differs'}
+			{#if view.policy}
+				<p class="note" data-origin="policy">
+					{m['settings.firewallStatusPolicy']({
+						sourceType: view.policy.sourceType,
+						source: view.policy.source
+					})}
+				</p>
+			{/if}
+			{#if view.local.kind === 'missing'}
+				<p class="note" data-local="missing">{m['settings.firewallStatusLocalMissing']()}</p>
+			{:else if view.local.kind === 'differs'}
+				<p class="note" data-local="differs">{m['settings.firewallStatusLocalDiffers']()}</p>
+				<ul>
+					{#each view.local.values as local (local.field)}
+						<li>{fieldLabel(local.field)}: <code>{local.value}</code></li>
+					{/each}
+				</ul>
+			{:else if view.local.kind === 'unknown'}
+				<p class="note" data-local="unknown">{m['settings.firewallStatusLocalUnknown']()}</p>
+			{/if}
+			{#if view.unchecked.length > 0}
+				<p class="note">
+					{m['settings.firewallStatusUnchecked']({
+						fields: view.unchecked.map(fieldLabel).join(m['settings.firewallListSeparator']())
+					})}
+				</p>
+			{/if}
 		{/if}
 	</div>
 {/snippet}

@@ -7622,7 +7622,10 @@ mod tests {
             assert_eq!(names.program, "com.example.banto.lan.tcp.program");
             assert_eq!(names.port, "com.example.banto.lan.tcp.port");
             assert_eq!(names.group, "com.example.banto");
-            Ok(r#"{"program":{"s":"missing"},"port":{"s":"present","enabled":"True","direction":"Inbound","action":"Allow","protocol":"TCP","profile":"Private","program":"Any","localPort":["1"],"remoteAddress":["LocalSubnet"],"active":true},"group":0}"#.to_string())
+            let rule = r#"{"s":"present","enabled":"True","direction":"Inbound","action":"Allow","protocol":"TCP","profile":"Private","program":"Any","localPort":["1"],"remoteAddress":["LocalSubnet"],"source":"PersistentStore","sourceType":"Local"}"#;
+            Ok(format!(
+                r#"{{"program":{{"local":{{"s":"missing"}},"effective":{{"s":"missing"}}}},"port":{{"local":{rule},"effective":{rule}}},"group":0}}"#
+            ))
         }
         let state = admin_app_state().await;
         let port = free_port();

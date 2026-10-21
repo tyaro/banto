@@ -144,19 +144,40 @@ export interface FirewallRuleValues {
 	program: string;
 	localPorts: string[];
 	remoteAddresses: string[];
-	/** Whether the rule is in effect (in the ActiveStore); `null` when unreadable. */
-	active: boolean | null;
 }
+
+/** Mirrors src-tauri's `RuleOrigin`: where the rule in effect (the ActiveStore's) comes from. */
+export interface FirewallRuleOrigin {
+	/** `PolicyStoreSourceType`: `Local`, `GroupPolicy`, `Dynamic`, `MDM`, ... */
+	sourceType: string;
+	/** `PolicyStoreSource`: `PersistentStore` for a local rule, the policy otherwise. */
+	source: string;
+	/** `sourceType` is `Local` (otherwise central management decides it). */
+	local: boolean;
+}
+
+/** Mirrors src-tauri's `LocalRule`: the local (PersistentStore) rule next to the one in effect. */
+export type FirewallLocalRule =
+	| { state: 'missing' }
+	| { state: 'same' }
+	| { state: 'differs'; rule: FirewallRuleValues }
+	| { state: 'unknown' };
 
 /** Mirrors src-tauri's `FirewallRuleCheck`: one rule's state. */
 export type FirewallRuleCheck =
 	| { state: 'missing' }
 	| {
 			state: 'present';
+			/**
+			 * The rule in effect (the ActiveStore's); the local one when it is
+			 * not in effect (`origin` is then `null` and `mismatches` has `active`).
+			 */
 			rule: FirewallRuleValues;
+			origin: FirewallRuleOrigin | null;
+			local: FirewallLocalRule;
 			/** What differs from the rule the administrator command creates (empty = as expected). */
 			mismatches: FirewallField[];
-			/** What could not be compared (no basis, or the ActiveStore was unreadable). */
+			/** What could not be compared (no live listener or executable path to compare with). */
 			unchecked: FirewallField[];
 	  }
 	| { state: 'unknown'; reason: FirewallUnknownReason };

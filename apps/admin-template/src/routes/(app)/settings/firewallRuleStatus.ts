@@ -8,7 +8,10 @@
  *
  * A rule that exists is not the same as being reachable from the LAN
  * (security audit 2026-10-21): this only tells what Windows Defender
- * Firewall's local store holds, and the panel says so.
+ * Firewall holds under these names, and the panel says so. What is compared
+ * is the rule in effect (the ActiveStore's), which a central policy of the
+ * same name can override; the local rule is only a supplement (Codex review
+ * on PR #465).
  *
  * Responses are ordered the same way as `serverStatusRequests.ts` (owner
  * review on PR #463): each check gets a ticket, an apply or a newer check
@@ -19,12 +22,36 @@
 import type {
 	FirewallField,
 	FirewallRuleCheck,
+	FirewallRuleOrigin,
 	FirewallRuleStatus,
+	FirewallRuleValues,
 	FirewallUnknownReason
 } from '#lib/banto/serverAdmin.js';
 import type { FirewallInfo } from './firewallInfo';
 
 const STATES = new Set(['missing', 'present', 'unknown']);
+const LOCAL_STATES = new Set(['missing', 'same', 'differs', 'unknown']);
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function isOrigin(value: unknown): boolean {
+	return (
+		value === null ||
+		(isObject(value) &&
+			typeof value.sourceType === 'string' &&
+			typeof value.source === 'string' &&
+			typeof value.local === 'boolean')
+	);
+}
+
+function isLocalRule(value: unknown): boolean {
+	if (!isObject(value) || typeof value.state !== 'string' || !LOCAL_STATES.has(value.state)) {
+		return false;
+	}
+	return value.state !== 'differs' || isObject(value.rule);
+}
 
 function isRuleCheck(value: unknown): value is FirewallRuleCheck {
 	if (typeof value !== 'object' || value === null) return false;
@@ -33,8 +60,9 @@ function isRuleCheck(value: unknown): value is FirewallRuleCheck {
 	if (check.state === 'unknown') return typeof check.reason === 'string';
 	if (check.state === 'present') {
 		return (
-			typeof check.rule === 'object' &&
-			check.rule !== null &&
+			isObject(check.rule) &&
+			isOrigin(check.origin) &&
+			isLocalRule(check.local) &&
 			Array.isArray(check.mismatches) &&
 			Array.isArray(check.unchecked)
 		);
@@ -74,14 +102,90 @@ export function firewallStatusMatches(info: FirewallInfo, status: FirewallRuleSt
 	);
 }
 
+/** A local field and its value, where the local rule differs from the one in effect. */
+export interface FirewallLocalValue {
+	field: FirewallField;
+	value: string;
+}
+
+/** The local rule next to the one in effect, as the panel words it. */
+export type FirewallLocalView =
+	/** Nothing to add: the local rule is the one shown, or has its values. */
+	| { kind: 'same' }
+	/** No local rule of this name (what applies comes from elsewhere). */
+	| { kind: 'missing' }
+	/** The local rule has other values (`values`, the local ones), and they do not apply. */
+	| { kind: 'differs'; values: FirewallLocalValue[] }
+	| { kind: 'unknown' };
+
 /** What one rule's state reads as on screen. */
 export type FirewallRuleView =
 	| { kind: 'missing' }
-	/** Present and as the administrator command creates it. */
-	| { kind: 'matches'; unchecked: FirewallField[] }
+	/**
+	 * Present and as the administrator command creates it. `policy`: the
+	 * rule in effect comes from central management (Group Policy and the
+	 * like), not the local store.
+	 */
+	| {
+			kind: 'matches';
+			unchecked: FirewallField[];
+			policy: FirewallRuleOrigin | null;
+			local: FirewallLocalView;
+	  }
 	/** Present but different (`fields`, e.g. changed to Block, a narrower source range, another exe, an old port). */
-	| { kind: 'differs'; fields: FirewallField[]; unchecked: FirewallField[] }
+	| {
+			kind: 'differs';
+			fields: FirewallField[];
+			unchecked: FirewallField[];
+			policy: FirewallRuleOrigin | null;
+			local: FirewallLocalView;
+	  }
 	| { kind: 'unknown'; reason: FirewallUnknownReason };
+
+const VALUE_FIELDS: readonly FirewallField[] = [
+	'enabled',
+	'direction',
+	'action',
+	'protocol',
+	'profile',
+	'program',
+	'localPort',
+	'remoteAddress'
+];
+
+/**
+ * The fields where `local` differs from `effective`, ignoring case (as
+ * src-tauri's `same_values`). The ActiveStore expands environment variables
+ * in a program path, so a local path with `%` is not held against it.
+ */
+function localDifferences(
+	local: FirewallRuleValues,
+	effective: FirewallRuleValues
+): FirewallLocalValue[] {
+	const values: FirewallLocalValue[] = [];
+	for (const field of VALUE_FIELDS) {
+		const a = ruleFieldValue(local, field) ?? '';
+		const b = ruleFieldValue(effective, field) ?? '';
+		if (field === 'program' && a.includes('%')) continue;
+		if (a.toLowerCase() !== b.toLowerCase()) values.push({ field, value: a });
+	}
+	return values;
+}
+
+function localView(check: Extract<FirewallRuleCheck, { state: 'present' }>): FirewallLocalView {
+	switch (check.local.state) {
+		case 'same':
+			return { kind: 'same' };
+		case 'missing':
+			return { kind: 'missing' };
+		case 'unknown':
+			return { kind: 'unknown' };
+		case 'differs': {
+			const values = localDifferences(check.local.rule, check.rule);
+			return values.length === 0 ? { kind: 'same' } : { kind: 'differs', values };
+		}
+	}
+}
 
 export function firewallRuleView(check: FirewallRuleCheck): FirewallRuleView {
 	switch (check.state) {
@@ -89,21 +193,32 @@ export function firewallRuleView(check: FirewallRuleCheck): FirewallRuleView {
 			return { kind: 'missing' };
 		case 'unknown':
 			return { kind: 'unknown', reason: check.reason };
-		case 'present':
+		case 'present': {
+			const policy = check.origin !== null && !check.origin.local ? check.origin : null;
+			const local = localView(check);
 			return check.mismatches.length === 0
-				? { kind: 'matches', unchecked: check.unchecked }
-				: { kind: 'differs', fields: check.mismatches, unchecked: check.unchecked };
+				? { kind: 'matches', unchecked: check.unchecked, policy, local }
+				: {
+						kind: 'differs',
+						fields: check.mismatches,
+						unchecked: check.unchecked,
+						policy,
+						local
+					};
+		}
 	}
 }
 
 /**
- * The value of `field` in `check`'s rule, as the firewall reports it (lists
- * joined with `, `). `null` for `active` (the panel words it) and when the
- * rule is not present.
+ * The value of `field` in `check`'s rule (the one in effect), as the
+ * firewall reports it (lists joined with `, `). `null` for `active` (the
+ * panel words it) and when the rule is not present.
  */
 export function firewallFieldValue(check: FirewallRuleCheck, field: FirewallField): string | null {
-	if (check.state !== 'present') return null;
-	const rule = check.rule;
+	return check.state === 'present' ? ruleFieldValue(check.rule, field) : null;
+}
+
+function ruleFieldValue(rule: FirewallRuleValues, field: FirewallField): string | null {
 	switch (field) {
 		case 'enabled':
 			return rule.enabled;

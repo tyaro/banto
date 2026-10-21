@@ -458,8 +458,22 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 						profile: 'Private',
 						program: "C:\\Program Files\\O'Brien\\banto-admin.exe",
 						localPorts: ['Any'],
-						remoteAddresses: ['LocalSubnet'],
-						active: true
+						remoteAddresses: ['LocalSubnet']
+					},
+					// A Group Policy rule of the same name is in effect; the local one says Allow.
+					origin: { sourceType: 'GroupPolicy', source: 'contoso.local\\Banto', local: false },
+					local: {
+						state: 'differs',
+						rule: {
+							enabled: 'True',
+							direction: 'Inbound',
+							action: 'Allow',
+							protocol: 'TCP',
+							profile: 'Private',
+							program: "C:\\Program Files\\O'Brien\\banto-admin.exe",
+							localPorts: ['Any'],
+							remoteAddresses: ['LocalSubnet']
+						}
 					},
 					mismatches: ['action'],
 					unchecked: []
@@ -485,7 +499,8 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		);
 		await expect(commands.nth(1)).toContainText('-LocalPort 8721 ');
 		await expect(page.locator('.firewall-info')).not.toContainText('9000');
-		// The Windows Firewall status: the program rule was changed to Block, no port rule.
+		// The Windows Firewall status: a central policy's Block is in effect for
+		// the program rule (the local Allow does not apply), no port rule.
 		const ruleStatus = page.locator('.firewall-status');
 		await expect(
 			page.getByRole('heading', { name: 'Windows ファイアウォールの状態' })
@@ -494,6 +509,11 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await expect(differs).toContainText('dev.banto.admin.lan.tcp.program');
 		await expect(differs).toContainText('操作:');
 		await expect(differs).toContainText('Block');
+		await expect(differs.locator('[data-origin="policy"]')).toContainText(
+			'集中管理のポリシーのルールです（出どころ: GroupPolicy contoso.local\\Banto）'
+		);
+		await expect(differs.locator('[data-local="differs"]')).toBeVisible();
+		await expect(differs).toContainText('Allow');
 		await expect(ruleStatus.locator('[data-state="missing"]')).toContainText('ルール無し');
 		await expect(ruleStatus).toContainText(
 			'ルールがあることと、LAN の端末から接続できることは同じではありません。'

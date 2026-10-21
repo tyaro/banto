@@ -9,6 +9,13 @@
 //! `firewallInfo.ts::firewallRuleNames`), and the `-Group <identifier>` is
 //! only counted. The read never changes the firewall.
 //!
+//! What is compared is the rule IN EFFECT: the ActiveStore's rule of that
+//! name, with its own filters and its source (`PolicyStoreSourceType`). A
+//! central policy (Group Policy, MDM) can define a rule of the same name that
+//! wins over the local one, so the local (PersistentStore) rule is reported
+//! only as a supplement - whether it exists and whether it has other values
+//! (Codex review on PR #465).
+//!
 //! How it reads: a child `powershell.exe` (the in-box Windows PowerShell,
 //! by absolute path under `%SystemRoot%`, never `PATH`) runs a FIXED script
 //! passed as `-EncodedCommand` (base64 of UTF-16LE), so nothing goes through
@@ -48,6 +55,8 @@ const EXPECTED_PROFILE: &str = "Private";
 const EXPECTED_REMOTE_ADDRESS: &str = "LocalSubnet";
 /// What a rule filter reports when it does not restrict the value.
 const ANY: &str = "Any";
+/// `PolicyStoreSourceType` of a rule from the local (persistent) store.
+const LOCAL_SOURCE_TYPE: &str = "Local";
 
 /// The rule names derived from the app identifier (Issue #219, PR #463).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,34 +110,40 @@ pub(crate) fn quote_powershell_literal(value: &str) -> Option<String> {
 }
 
 /// The fixed read-only script. `{GROUP}`, `{PROGRAM}` and `{PORT}` are
-/// replaced with quoted literals. Each rule reports `s` = `missing` (only
-/// when PowerShell says the object was not found), `error` (anything else
-/// went wrong) or `present` with its values; `active` is whether the rule is
-/// also in the ActiveStore (in effect), `null` when that could not be read;
-/// `group` is how many OTHER rules carry the group, `-1` when unreadable.
-/// The JSON is escaped to ASCII so the console code page cannot mangle a
-/// non-ASCII path.
+/// replaced with quoted literals. Each rule is read twice: `local` from the
+/// default (PersistentStore) store, the one the administrator commands write,
+/// and `effective` from the ActiveStore, the merge of every store that
+/// Windows actually enforces (Codex review on PR #465: a Group Policy rule of
+/// the same name wins there, so the local rule alone says nothing about what
+/// applies). Each read reports `s` = `missing` (only when PowerShell says
+/// the object was not found), `error` (anything else went wrong, or more
+/// than one object answered) or `present` with its values and where it comes
+/// from (`PolicyStoreSource` / `PolicyStoreSourceType`); `group` is how many
+/// OTHER rules carry the group, `-1` when unreadable. The JSON is escaped to
+/// ASCII so the console code page cannot mangle a non-ASCII path.
 const PROBE_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 function Test-BantoNotFound($e) { $e.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound }
-function Read-BantoRule([string]$name) {
-  try { $r = Get-NetFirewallRule -Name $name -ErrorAction Stop }
-  catch { if (Test-BantoNotFound $_) { return @{ s = 'missing' } }; return @{ s = 'error' } }
+function Read-BantoStore([string]$name, [bool]$active) {
+  try {
+    if ($active) { $found = @(Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -ErrorAction Stop) }
+    else { $found = @(Get-NetFirewallRule -Name $name -ErrorAction Stop) }
+  } catch { if (Test-BantoNotFound $_) { return @{ s = 'missing' } }; return @{ s = 'error' } }
+  if ($found.Count -ne 1) { return @{ s = 'error' } }
+  $r = $found[0]
   try {
     $app = $r | Get-NetFirewallApplicationFilter -ErrorAction Stop
     $pf = $r | Get-NetFirewallPortFilter -ErrorAction Stop
     $af = $r | Get-NetFirewallAddressFilter -ErrorAction Stop
   } catch { return @{ s = 'error' } }
-  $active = $null
-  try { $active = [bool](Get-NetFirewallRule -Name $name -PolicyStore ActiveStore -ErrorAction Stop) }
-  catch { if (Test-BantoNotFound $_) { $active = $false } }
-  return @{ s = 'present'; enabled = [string]$r.Enabled; direction = [string]$r.Direction; action = [string]$r.Action; profile = [string]$r.Profile; program = [string]$app.Program; protocol = [string]$pf.Protocol; localPort = @($pf.LocalPort | ForEach-Object { [string]$_ }); remoteAddress = @($af.RemoteAddress | ForEach-Object { [string]$_ }); active = $active }
+  return @{ s = 'present'; enabled = [string]$r.Enabled; direction = [string]$r.Direction; action = [string]$r.Action; profile = [string]$r.Profile; program = [string]$app.Program; protocol = [string]$pf.Protocol; localPort = @($pf.LocalPort | ForEach-Object { [string]$_ }); remoteAddress = @($af.RemoteAddress | ForEach-Object { [string]$_ }); source = [string]$r.PolicyStoreSource; sourceType = [string]$r.PolicyStoreSourceType }
 }
+function Read-BantoRule([string]$name) { return @{ local = (Read-BantoStore $name $false); effective = (Read-BantoStore $name $true) } }
 $group = -1
 try { $group = @(Get-NetFirewallRule -Group {GROUP} -ErrorAction Stop | Where-Object { $_.Name -ne {PROGRAM} -and $_.Name -ne {PORT} }).Count }
 catch { if (Test-BantoNotFound $_) { $group = 0 } }
 $out = @{ program = (Read-BantoRule {PROGRAM}); port = (Read-BantoRule {PORT}); group = $group }
-$json = ConvertTo-Json -InputObject $out -Compress -Depth 5
+$json = ConvertTo-Json -InputObject $out -Compress -Depth 6
 $sb = New-Object System.Text.StringBuilder
 foreach ($c in $json.ToCharArray()) { if ([int]$c -lt 128) { [void]$sb.Append($c) } else { [void]$sb.AppendFormat('\u{0:x4}', [int]$c) } }
 [Console]::Out.Write($sb.ToString())
@@ -194,8 +209,10 @@ pub(crate) enum UnknownReason {
     /// The app identifier is not a valid identifier, so no rule name exists.
     InvalidIdentifier,
     /// PowerShell could not be started.
+    #[cfg_attr(not(windows), allow(dead_code))]
     LaunchFailed,
     /// The read did not finish within [`PROBE_TIMEOUT`].
+    #[cfg_attr(not(windows), allow(dead_code))]
     Timeout,
     /// PowerShell reported an error (access refused, a policy that hides the
     /// rule store, the NetSecurity module unavailable, ...).
@@ -219,6 +236,8 @@ pub(crate) enum FirewallField {
     RemoteAddress,
     /// The rule is in the local store but not in the ActiveStore: a policy
     /// (e.g. Group Policy not merging local rules) keeps it from applying.
+    /// Only ever a mismatch, never unchecked (an unreadable ActiveStore makes
+    /// the whole rule `unknown`).
     Active,
 }
 
@@ -234,9 +253,36 @@ pub(crate) struct FirewallRuleValues {
     pub(crate) program: String,
     pub(crate) local_ports: Vec<String>,
     pub(crate) remote_addresses: Vec<String>,
-    /// Whether the rule is in effect (in the ActiveStore); `None` when that
-    /// could not be read.
-    pub(crate) active: Option<bool>,
+}
+
+/// Where the rule in effect (the ActiveStore's) comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuleOrigin {
+    /// `PolicyStoreSourceType`: `Local`, `GroupPolicy`, `Dynamic`, `MDM`, ...
+    pub(crate) source_type: String,
+    /// `PolicyStoreSource`: `PersistentStore` for a local rule, the policy
+    /// otherwise (e.g. a GPO's domain path).
+    pub(crate) source: String,
+    /// `source_type` is `Local`: the rule the administrator commands create
+    /// is the one in effect. Otherwise central management (Group Policy and
+    /// the like) decides it, whatever the local rule says.
+    pub(crate) local: bool,
+}
+
+/// The local (PersistentStore) rule of the same name, next to the one in
+/// effect. Mirrors `serverAdmin.ts::FirewallLocalRule`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub(crate) enum LocalRule {
+    /// No local rule of this name (the one in effect comes from elsewhere).
+    Missing,
+    /// The local rule has the same values as the reported `rule`.
+    Same,
+    /// The local rule has other values than the one in effect.
+    Differs { rule: FirewallRuleValues },
+    /// The local store could not be read.
+    Unknown,
 }
 
 /// One rule's state.
@@ -246,14 +292,20 @@ pub(crate) struct FirewallRuleValues {
 // only add an allocation.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum FirewallRuleCheck {
-    /// No rule of this name in the local store.
+    /// No rule of this name, neither in effect nor in the local store.
     Missing,
-    /// The rule exists. `mismatches` lists what differs from the command's
-    /// rule (empty = as expected); `unchecked` what could not be compared
-    /// (no live listener or executable path to compare with, or the
-    /// ActiveStore was unreadable).
+    /// A rule of this name exists. `rule` holds the values in effect (the
+    /// ActiveStore's) and `origin` where they come from; a rule only in the
+    /// local store is not in effect: then `rule` is the local one, `origin`
+    /// is `None` and `mismatches` has `active`. `mismatches` lists what
+    /// differs from the command's rule (empty = as expected); `unchecked`
+    /// what could not be compared (no live listener or executable path to
+    /// compare with). `local` tells the local rule apart from the one in
+    /// effect.
     Present {
         rule: FirewallRuleValues,
+        origin: Option<RuleOrigin>,
+        local: LocalRule,
         mismatches: Vec<FirewallField>,
         unchecked: Vec<FirewallField>,
     },
@@ -337,31 +389,95 @@ fn check_rule(
     shape: RuleShape,
     expected: &FirewallExpectation,
 ) -> FirewallRuleCheck {
-    let unknown = |reason| FirewallRuleCheck::Unknown { reason };
     let Some(value) = value else {
-        return unknown(UnknownReason::UnreadableOutput);
+        return FirewallRuleCheck::Unknown {
+            reason: UnknownReason::UnreadableOutput,
+        };
     };
-    match value.get("s").and_then(Value::as_str) {
-        Some("missing") => FirewallRuleCheck::Missing,
-        Some("error") => unknown(UnknownReason::QueryFailed),
-        Some("present") => match parse_values(value) {
-            Some(rule) => {
-                let (mismatches, unchecked) = compare(&rule, shape, expected);
+    let local = read_store(value.get("local"));
+    let effective = match read_store(value.get("effective")) {
+        Ok(effective) => effective,
+        // What applies is not known, whatever the local store says.
+        Err(reason) => return FirewallRuleCheck::Unknown { reason },
+    };
+    match effective {
+        Some((rule, origin)) => {
+            let local = match local {
+                Err(_) => LocalRule::Unknown,
+                Ok(None) => LocalRule::Missing,
+                Ok(Some((local, _))) if same_values(&local, &rule) => LocalRule::Same,
+                Ok(Some((local, _))) => LocalRule::Differs { rule: local },
+            };
+            let (mismatches, unchecked) = compare(&rule, shape, expected);
+            FirewallRuleCheck::Present {
+                rule,
+                origin: Some(origin),
+                local,
+                mismatches,
+                unchecked,
+            }
+        }
+        None => match local {
+            Err(reason) => FirewallRuleCheck::Unknown { reason },
+            Ok(None) => FirewallRuleCheck::Missing,
+            Ok(Some((rule, _))) => {
+                let (mut mismatches, unchecked) = compare(&rule, shape, expected);
+                mismatches.push(FirewallField::Active);
+                mismatches.sort();
                 FirewallRuleCheck::Present {
                     rule,
+                    origin: None,
+                    local: LocalRule::Same,
                     mismatches,
                     unchecked,
                 }
             }
-            None => unknown(UnknownReason::UnreadableOutput),
         },
-        _ => unknown(UnknownReason::UnreadableOutput),
     }
 }
 
-fn parse_values(value: &Value) -> Option<FirewallRuleValues> {
+/// Whether the local rule `local` has the values of `effective`, ignoring
+/// ASCII case. The ActiveStore expands environment variables in a program
+/// path (`%SystemRoot%\...` reads back as `C:\WINDOWS\...`, checked on a
+/// real PC), so a local path with `%` is not held against it.
+fn same_values(local: &FirewallRuleValues, effective: &FirewallRuleValues) -> bool {
+    let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+    let same_list =
+        |a: &[String], b: &[String]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a, b));
+    same(&local.enabled, &effective.enabled)
+        && same(&local.direction, &effective.direction)
+        && same(&local.action, &effective.action)
+        && same(&local.protocol, &effective.protocol)
+        && same(&local.profile, &effective.profile)
+        && (local.program.contains('%') || same(&local.program, &effective.program))
+        && same_list(&local.local_ports, &effective.local_ports)
+        && same_list(&local.remote_addresses, &effective.remote_addresses)
+}
+
+/// One store's read: `Ok(None)` = no rule of this name there.
+fn read_store(
+    value: Option<&Value>,
+) -> Result<Option<(FirewallRuleValues, RuleOrigin)>, UnknownReason> {
+    let value = value.ok_or(UnknownReason::UnreadableOutput)?;
+    match value.get("s").and_then(Value::as_str) {
+        Some("missing") => Ok(None),
+        Some("error") => Err(UnknownReason::QueryFailed),
+        Some("present") => parse_values(value)
+            .map(Some)
+            .ok_or(UnknownReason::UnreadableOutput),
+        _ => Err(UnknownReason::UnreadableOutput),
+    }
+}
+
+fn parse_values(value: &Value) -> Option<(FirewallRuleValues, RuleOrigin)> {
     let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
-    Some(FirewallRuleValues {
+    let source_type = text("sourceType")?;
+    let origin = RuleOrigin {
+        local: source_type.eq_ignore_ascii_case(LOCAL_SOURCE_TYPE),
+        source_type,
+        source: text("source")?,
+    };
+    let rule = FirewallRuleValues {
         enabled: text("enabled")?,
         direction: text("direction")?,
         action: text("action")?,
@@ -370,12 +486,8 @@ fn parse_values(value: &Value) -> Option<FirewallRuleValues> {
         program: text("program")?,
         local_ports: string_list(value.get("localPort")?)?,
         remote_addresses: string_list(value.get("remoteAddress")?)?,
-        active: match value.get("active") {
-            None | Some(Value::Null) => None,
-            Some(Value::Bool(active)) => Some(*active),
-            Some(_) => return None,
-        },
-    })
+    };
+    Some((rule, origin))
 }
 
 /// A JSON string array, or a lone string (PowerShell can unwrap a
@@ -458,10 +570,6 @@ fn compare(
                 None => unchecked.push(FirewallField::LocalPort),
             }
         }
-    }
-    match rule.active {
-        Some(active) => expect(FirewallField::Active, active),
-        None => unchecked.push(FirewallField::Active),
     }
     mismatches.sort();
     unchecked.sort();
@@ -582,7 +690,8 @@ mod tests {
             "program": "Any",
             "localPort": ["Any"],
             "remoteAddress": ["LocalSubnet"],
-            "active": true
+            "source": "PersistentStore",
+            "sourceType": "Local"
         });
         for (key, value) in overrides.as_object().unwrap() {
             rule[key] = value.clone();
@@ -590,7 +699,13 @@ mod tests {
         rule
     }
 
-    fn program_rule(overrides: Value) -> Value {
+    /// The same read from the local store and the ActiveStore: a local
+    /// rule in effect.
+    fn both(read: Value) -> Value {
+        json!({ "local": read, "effective": read })
+    }
+
+    fn program_values(overrides: Value) -> Value {
         let mut rule = present(json!({ "program": EXE }));
         for (key, value) in overrides.as_object().unwrap() {
             rule[key] = value.clone();
@@ -598,12 +713,24 @@ mod tests {
         rule
     }
 
-    fn port_rule(overrides: Value) -> Value {
+    fn port_values(overrides: Value) -> Value {
         let mut rule = present(json!({ "localPort": ["8721"] }));
         for (key, value) in overrides.as_object().unwrap() {
             rule[key] = value.clone();
         }
         rule
+    }
+
+    fn program_rule(overrides: Value) -> Value {
+        both(program_values(overrides))
+    }
+
+    fn port_rule(overrides: Value) -> Value {
+        both(port_values(overrides))
+    }
+
+    fn missing() -> Value {
+        json!({ "s": "missing" })
     }
 
     fn run(output: Value) -> FirewallRuleStatus {
@@ -720,8 +847,11 @@ mod tests {
 
     #[test]
     fn missing_rules_are_missing_and_errors_are_unknown() {
-        let status =
-            run(json!({ "program": { "s": "missing" }, "port": { "s": "error" }, "group": -1 }));
+        let status = run(json!({
+            "program": both(missing()),
+            "port": both(json!({ "s": "error" })),
+            "group": -1
+        }));
         assert_eq!(status.program, FirewallRuleCheck::Missing);
         assert_eq!(
             status.port,
@@ -761,16 +891,179 @@ mod tests {
                 "{garbage:?}"
             );
         }
-        // A present rule with a missing value is not guessed at.
-        let mut rule = program_rule(json!({}));
-        rule.as_object_mut().unwrap().remove("action");
-        let status = run(json!({ "program": rule, "port": { "s": "missing" } }));
-        assert_eq!(
-            status.program,
-            FirewallRuleCheck::Unknown {
-                reason: UnknownReason::UnreadableOutput
+        // A present rule with a missing value (or without its source) is
+        // not guessed at.
+        for key in ["action", "sourceType"] {
+            let mut rule = program_values(json!({}));
+            rule.as_object_mut().unwrap().remove(key);
+            let status = run(json!({ "program": both(rule), "port": both(missing()) }));
+            assert_eq!(
+                status.program,
+                FirewallRuleCheck::Unknown {
+                    reason: UnknownReason::UnreadableOutput
+                },
+                "{key}"
+            );
+        }
+    }
+
+    /// (a) Only the local rule, and it is the one in effect.
+    #[test]
+    fn a_local_rule_in_effect_is_as_expected() {
+        // The ActiveStore expands `%SystemRoot%`; case may differ too.
+        let status = run(json!({
+            "program": { "local": program_values(json!({ "program": r"%ProgramFiles%\Banto\banto.exe" })), "effective": program_values(json!({})) },
+            "port": { "local": port_values(json!({ "profile": "private" })), "effective": port_values(json!({})) },
+        }));
+        for check in [&status.program, &status.port] {
+            match check {
+                FirewallRuleCheck::Present {
+                    local, mismatches, ..
+                } => {
+                    assert_eq!(local, &LocalRule::Same);
+                    assert_eq!(mismatches, &vec![]);
+                }
+                other => panic!("{other:?}"),
             }
+        }
+
+        let status =
+            run(json!({ "program": program_rule(json!({})), "port": port_rule(json!({})) }));
+        match &status.program {
+            FirewallRuleCheck::Present {
+                origin,
+                local,
+                mismatches,
+                ..
+            } => {
+                let origin = origin.as_ref().expect("in effect");
+                assert!(origin.local);
+                assert_eq!(origin.source_type, "Local");
+                assert_eq!(origin.source, "PersistentStore");
+                assert_eq!(local, &LocalRule::Same);
+                assert_eq!(mismatches, &vec![]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// (b) A Group Policy rule of the same name wins in the ActiveStore: it
+    /// is compared, not the local Allow (Codex review on PR #465).
+    #[test]
+    fn a_group_policy_rule_of_the_same_name_is_what_is_compared() {
+        let gpo = json!({ "action": "Block", "source": "contoso.local\\Banto", "sourceType": "GroupPolicy" });
+        let status = run(json!({
+            "program": { "local": program_values(json!({})), "effective": program_values(gpo.clone()) },
+            "port": { "local": missing(), "effective": port_values(gpo) },
+        }));
+        match &status.program {
+            FirewallRuleCheck::Present {
+                rule,
+                origin,
+                local,
+                mismatches,
+                ..
+            } => {
+                assert_eq!(rule.action, "Block");
+                let origin = origin.as_ref().expect("in effect");
+                assert!(!origin.local);
+                assert_eq!(origin.source_type, "GroupPolicy");
+                assert_eq!(origin.source, "contoso.local\\Banto");
+                assert_eq!(mismatches, &vec![FirewallField::Action]);
+                match local {
+                    LocalRule::Differs { rule } => assert_eq!(rule.action, "Allow"),
+                    other => panic!("{other:?}"),
+                }
+            }
+            other => panic!("{other:?}"),
+        }
+        // No local rule at all: the policy's rule is still what applies.
+        match &status.port {
+            FirewallRuleCheck::Present { local, origin, .. } => {
+                assert_eq!(local, &LocalRule::Missing);
+                assert!(!origin.as_ref().unwrap().local);
+            }
+            other => panic!("{other:?}"),
+        }
+        // A policy rule identical to the command's matches, but still says
+        // where it comes from.
+        let same = json!({ "source": "contoso.local\\Banto", "sourceType": "GroupPolicy" });
+        let status = run(json!({
+            "program": { "local": program_values(json!({})), "effective": program_values(same) },
+            "port": port_rule(json!({})),
+        }));
+        match &status.program {
+            FirewallRuleCheck::Present {
+                origin,
+                local,
+                mismatches,
+                ..
+            } => {
+                assert_eq!(mismatches, &vec![]);
+                assert!(!origin.as_ref().unwrap().local);
+                // Same values: only the source differs.
+                assert_eq!(local, &LocalRule::Same);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// (c) In the local store but not in the ActiveStore: not in effect.
+    #[test]
+    fn a_local_rule_not_in_effect_is_told_apart() {
+        let status = run(json!({
+            "program": { "local": program_values(json!({})), "effective": missing() },
+            "port": { "local": port_values(json!({ "enabled": "False" })), "effective": missing() },
+        }));
+        match &status.program {
+            FirewallRuleCheck::Present {
+                origin,
+                local,
+                mismatches,
+                ..
+            } => {
+                assert_eq!(origin, &None);
+                assert_eq!(local, &LocalRule::Same);
+                assert_eq!(mismatches, &vec![FirewallField::Active]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            mismatches(&status.port),
+            vec![FirewallField::Enabled, FirewallField::Active]
         );
+    }
+
+    /// (d) An unreadable ActiveStore is `unknown` whatever the local store
+    /// holds; an unreadable local store only blurs the supplement.
+    #[test]
+    fn an_unreadable_active_store_is_unknown() {
+        let error = json!({ "s": "error" });
+        let status = run(json!({
+            "program": { "local": program_values(json!({})), "effective": error.clone() },
+            "port": { "local": missing(), "effective": error.clone() },
+        }));
+        let unknown = FirewallRuleCheck::Unknown {
+            reason: UnknownReason::QueryFailed,
+        };
+        assert_eq!(status.program, unknown);
+        assert_eq!(status.port, unknown);
+
+        let status = run(json!({
+            "program": { "local": error.clone(), "effective": program_values(json!({})) },
+            "port": { "local": error, "effective": missing() },
+        }));
+        match &status.program {
+            FirewallRuleCheck::Present {
+                local, mismatches, ..
+            } => {
+                assert_eq!(local, &LocalRule::Unknown);
+                assert_eq!(mismatches, &vec![]);
+            }
+            other => panic!("{other:?}"),
+        }
+        // Not in effect, and the local store unreadable: not "no rule".
+        assert_eq!(status.port, unknown);
     }
 
     #[test]
@@ -790,15 +1083,12 @@ mod tests {
         assert_eq!(mismatches(&status.program), vec![FirewallField::Program]);
         assert_eq!(mismatches(&status.port), vec![FirewallField::LocalPort]);
 
-        // Disabled, not in effect, broader profile, more than one address.
+        // Disabled, broader profile, more than one address.
         let status = run(json!({
-            "program": program_rule(json!({ "enabled": "False", "active": false })),
+            "program": program_rule(json!({ "enabled": "False" })),
             "port": port_rule(json!({ "profile": "Private, Public", "remoteAddress": ["LocalSubnet", "10.0.0.0/8"] })),
         }));
-        assert_eq!(
-            mismatches(&status.program),
-            vec![FirewallField::Enabled, FirewallField::Active]
-        );
+        assert_eq!(mismatches(&status.program), vec![FirewallField::Enabled]);
         assert_eq!(
             mismatches(&status.port),
             vec![FirewallField::Profile, FirewallField::RemoteAddress]
@@ -839,7 +1129,7 @@ mod tests {
                 port: None,
             },
             Ok(json!({
-                "program": program_rule(json!({ "active": null })),
+                "program": program_rule(json!({})),
                 "port": port_rule(json!({})),
             })
             .to_string()),
@@ -851,10 +1141,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(mismatches, &vec![]);
-                assert_eq!(
-                    unchecked,
-                    &vec![FirewallField::Program, FirewallField::Active]
-                );
+                assert_eq!(unchecked, &vec![FirewallField::Program]);
             }
             other => panic!("{other:?}"),
         }
@@ -870,7 +1157,7 @@ mod tests {
     fn the_response_serializes_as_codes_and_values() {
         let status = run(json!({
             "program": program_rule(json!({ "action": "Block" })),
-            "port": { "s": "missing" },
+            "port": both(missing()),
             "group": 2,
         }));
         let value = serde_json::to_value(&status).unwrap();
@@ -884,8 +1171,22 @@ mod tests {
             value["program"]["rule"]["remoteAddresses"],
             json!(["LocalSubnet"])
         );
+        assert_eq!(
+            value["program"]["origin"],
+            json!({ "sourceType": "Local", "source": "PersistentStore", "local": true })
+        );
+        assert_eq!(value["program"]["local"], json!({ "state": "same" }));
         assert_eq!(value["port"], json!({ "state": "missing" }));
         assert_eq!(value["groupOtherRules"], 2);
+        let differs = run(json!({
+            "program": { "local": program_values(json!({})), "effective": program_values(json!({ "action": "Block", "sourceType": "GroupPolicy" })) },
+            "port": { "local": port_values(json!({})), "effective": missing() },
+        }));
+        let value = serde_json::to_value(&differs).unwrap();
+        assert_eq!(value["program"]["local"]["state"], "differs");
+        assert_eq!(value["program"]["local"]["rule"]["action"], "Allow");
+        assert_eq!(value["port"]["origin"], Value::Null);
+        assert_eq!(value["port"]["mismatches"], json!(["active"]));
         let unknown =
             serde_json::to_value(evaluate(1, expected(), Err(UnknownReason::Timeout))).unwrap();
         assert_eq!(
