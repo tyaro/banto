@@ -86,6 +86,44 @@ divider）は、host ごとに 1 つの持ち主が 1 回の操作として扱�
 - 浮動 window は `pointerdown` に加えて `focusin`（Tab や中の入力欄へのフォーカス）でも前面に来る。
   前面化は `z-index` で行い、DOM の順（= Tab の順）は変えない。
 
+## キーボード操作と操作の hook
+
+キーは、フォーカスが dock の中の操作要素（divider・タブ・浮動 window のモードのボタン）にあるときだけ
+受ける（window の keydown では受けない）。入力欄の中のキー、IME 変換中（`isComposing` / `keyCode 229`）、
+Ctrl / Alt / Meta との組み合わせ、ほかが `preventDefault` 済みのキーは受けない。
+
+| 対象                                                                                                                                                               | キー                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| divider（WAI-ARIA の Window Splitter。フォーカスできる `separator` で、`aria-valuenow` / `-valuemin` / `-valuemax` は区切る 2 つの pane のうち先の pane の割合 %） | 矢印（横並びは ← →、縦並びは ↑ ↓）で split の 2%、Shift で 10%。Home / End で最小 / 最大                                                                                                                                                            |
+| タブ（roving tabindex。Tab で止まるのは選択中のタブだけ）                                                                                                          | ← →（端で折り返す）・Home / End で選んでフォーカスを移す                                                                                                                                                                                            |
+| 浮動 window の移動 / サイズ変更                                                                                                                                    | タイトルバーのボタン（フォーカスが来たときだけ見える）でモードに入る → 矢印で 10px、Shift で 50px（サイズ変更は右下の角から）→ Enter かボタンをもう一度で確定、Esc で取消（その window の位置と寸法だけを戻す）。フォーカスがボタンから外れても取消 |
+
+`DockHost` の props で、アプリが操作をつなげる（どれも省略できる）:
+
+```ts
+canStartGesture?: (kind: DockGestureKind, panelId: string | null) => boolean; // false で始めない
+onGestureEnd?: (kind: DockGestureKind, outcome: 'commit' | 'cancel', reason?: DockCancelReason) => void; // 1 回だけ
+isEscapeBlocked?: (activeLayer: HTMLElement | null) => boolean; // true で Esc を上位の層に譲る
+```
+
+- `canStartGesture` は操作が始まる前に聞く。タイトルバー / タブの押下はクリック（タブの選択）かもしれない
+  ので、閾値を越えたときに `drag` として聞く（拒否したらその押下の残りは何もしない）。divider のキー 1 回は
+  `divider` として聞く。
+- `onGestureEnd` は操作が閉じた後（確定した、または対象を戻した後）に 1 回だけ呼ぶ。中で次の操作を
+  始めても `DockHost` を unmount してもよい。
+- `isEscapeBlocked` の `activeLayer` は、浮動 window の操作ならその root（`role="dialog"`）、docked の
+  pane・divider なら `null`。浮動 window はどれも**非モーダルの** `role="dialog"` なので、どの dialog でも
+  数える判定では Esc で取り消せなくなる。`@banto/ui` を使うアプリは次をつなぐ（dock-svelte は `@banto/ui`
+  を import できないので、つなぐのはアプリ。apps/admin-template の `dockEscape.ts`）:
+
+```ts
+import { hasVisibleLayerAbove, hasVisibleMenuLayer, hasVisibleModalLayer } from '@banto/ui';
+const isEscapeBlocked = (el: HTMLElement | null) =>
+	el ? hasVisibleLayerAbove({ except: el }) : hasVisibleModalLayer() || hasVisibleMenuLayer();
+```
+
+見える文言（モードのボタンの `aria-label`）は `messages` の `moveWindow` / `resizeWindow` で差し替える。
+
 ## 保存の約束（serialize / hydrate と書き込みは別）
 
 `serialize()` は文字列を返すだけで、`hydrate(json)` は文字列を検証して layout に採るだけ。**実ストレージへの書き込み

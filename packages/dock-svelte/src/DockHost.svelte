@@ -36,11 +36,20 @@
 	 * resize, split divider) is one session of it - one at a time, only the
 	 * owning pointer commits, Esc / pointercancel / blur / hidden cancel - and
 	 * unmounting the host cancels the active session (undoing only that
-	 * gesture's own target) and removes its listeners.
+	 * gesture's own target) and removes its listeners. The keyboard paths
+	 * (#433-b, shared-primitives-upstream-plan §3.3 / D5) are sessions of the
+	 * same owner, and the three gesture hooks below (`canStartGesture`,
+	 * `onGestureEnd`, `isEscapeBlocked`) are passed to it through getters, so
+	 * they always read the live props.
 	 */
 	import { onDestroy, type Snippet } from 'svelte';
 	import { createDragController, setDragController } from './core/drag.svelte';
-	import { GestureOwner, setGestureOwner } from './core/gesture.svelte';
+	import {
+		GestureOwner,
+		setGestureOwner,
+		type GestureCancelReason as DockCancelReason,
+		type GestureKind as DockGestureKind
+	} from './core/gesture.svelte';
 	import type { ClampOptions } from './core/geometry';
 	import { setDockPolicy, type DockCapabilities, type DockPolicy } from './core/policy';
 	import type { DockState } from './state.svelte';
@@ -86,9 +95,56 @@
 		 * UI affordances only - see `DockCapabilities`.
 		 */
 		capabilities?: (panelId: string) => DockCapabilities | undefined;
+		/**
+		 * May this gesture start (exclusion with drawing, another DnD or a higher
+		 * layer; shared-primitives-upstream-plan §3.3, #433)? `false` = it does
+		 * not start: nothing moves, no listener is added, `onGestureEnd` is not
+		 * called. `panelId` is the window / pane's id, `null` for a divider. A
+		 * title-bar or tab press is asked as `drag` once it crosses the drag
+		 * threshold (until then it may still be a plain click - a tab selection -
+		 * and is not asked); a refused drag ignores the rest of that press.
+		 * Omitted = always allowed.
+		 */
+		canStartGesture?: (kind: DockGestureKind, panelId: string | null) => boolean;
+		/**
+		 * Called exactly once when a gesture ends, after the layout reflects the
+		 * outcome (committed, or the target restored): `commit`, or `cancel` with
+		 * the reason. Also called with `drag-candidate` / `commit` for a press
+		 * that never became a drag (a click), and with `divider` / `commit` for
+		 * each keyboard step on a divider. The gesture is already closed, so the
+		 * hook may start another one or unmount the host.
+		 */
+		onGestureEnd?: (
+			kind: DockGestureKind,
+			outcome: 'commit' | 'cancel',
+			reason?: DockCancelReason
+		) => void;
+		/**
+		 * Must the dock leave this Esc alone (`true` = yield it to a higher layer;
+		 * shared-primitives-upstream-plan §3.3 / §4.3)? Asked only while a gesture
+		 * is active and the Esc was not already consumed (`defaultPrevented`) nor
+		 * part of IME composition. `activeLayer` is the gesture's floating window
+		 * root (`role="dialog"`), `null` for a docked pane or a divider. Every
+		 * floating window is a NON-modal `role="dialog"`, so a check that counts
+		 * any dialog counts the gesture's own window (and, for a divider, any open
+		 * floating window) and Esc never cancels. With `@banto/ui` an app passes
+		 * `(el) => el ? hasVisibleLayerAbove({ except: el }) : hasVisibleModalLayer() || hasVisibleMenuLayer()`.
+		 * Omitted = only `defaultPrevented` is honoured.
+		 */
+		isEscapeBlocked?: (activeLayer: HTMLElement | null) => boolean;
 	}
 
-	let { dock, panel, onPopOut, messages = {}, clamp, capabilities }: Props = $props();
+	let {
+		dock,
+		panel,
+		onPopOut,
+		messages = {},
+		clamp,
+		capabilities,
+		canStartGesture,
+		onGestureEnd,
+		isEscapeBlocked
+	}: Props = $props();
 
 	// Published through context; getters keep reading the live props.
 	const policy: DockPolicy = {
@@ -129,7 +185,15 @@
 	setDragController(drag);
 
 	// svelte-ignore state_referenced_locally
-	const gesture = new GestureOwner(dock, () => hostEl);
+	const gesture = new GestureOwner(
+		dock,
+		() => hostEl,
+		() => ({
+			canStart: canStartGesture,
+			isEscapeBlocked,
+			onEnd: (session, outcome, reason) => onGestureEnd?.(session.kind, outcome, reason)
+		})
+	);
 	setGestureOwner(gesture);
 	onDestroy(() => gesture.dispose());
 </script>

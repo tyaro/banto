@@ -27,6 +27,20 @@
 	 * pointercancel / blur / unmount cancel (a tab click is not performed; a
 	 * divider drag is undone).
 	 *
+	 * Keyboard (#433-b, shared-primitives-upstream-plan §3.3 / D5-a), read only
+	 * from the focused control's own keydown (never a window listener, plan
+	 * §4.3), skipping Ctrl / Alt / Meta combinations, consumed keys and IME
+	 * composition:
+	 *  - the divider is a WAI-ARIA Window Splitter: a focusable `separator`
+	 *    whose `aria-valuenow` / `-valuemin` / `-valuemax` are the first pane's
+	 *    share (in %) of the pair it separates; the arrows of its axis move it
+	 *    by `KEY_STEP_FRACTION` of the split (Shift: `KEY_STEP_LARGE_FRACTION`),
+	 *    Home / End to the minimum / maximum. Each press is one `divider` step
+	 *    of the `GestureOwner` (`instant`): asked through `canStartGesture`,
+	 *    reported to `onGestureEnd`, refused while another gesture is active.
+	 *  - the tab strip uses a roving tabindex (the active tab is the one Tab
+	 *    stop); Left / Right (wrapping) and Home / End select and focus a tab.
+	 *
 	 * "Closing" a docked pane (the ✕ button) has no first-class "hidden but
 	 * still docked" state in the Phase A model (unlike a floating window's
 	 * `open` flag) - a `DockPanelNode` doesn't carry one. Rather than add one,
@@ -39,6 +53,7 @@
 	 */
 	import type { Snippet } from 'svelte';
 	import { pixelDeltaToFraction } from './core/geometry';
+	import { MIN_PANE_FRACTION } from './core/tree';
 	import { getDragController } from './core/drag.svelte';
 	import { getGestureOwner } from './core/gesture.svelte';
 	import { getDockPolicy, resolveCapabilities } from './core/policy';
@@ -65,6 +80,9 @@
 	const t = { ...defaultDockMessages, ...messages };
 
 	const DRAG_THRESHOLD_PX = 5;
+	/** Divider keyboard step (Window Splitter): a fraction of the whole split, and with Shift. */
+	const KEY_STEP_FRACTION = 0.02;
+	const KEY_STEP_LARGE_FRACTION = 0.1;
 	const drag = getDragController();
 	const gesture = getGestureOwner();
 	const policy = getDockPolicy();
@@ -101,6 +119,7 @@
 		// `move: false` (consumer capability): never becomes a drag, but a plain click (tab select) still works.
 		const canMove = capsOf(content.id).move;
 		let dragging = false;
+		let refused = false;
 
 		gesture.begin(event, {
 			kind: 'drag-candidate',
@@ -110,11 +129,15 @@
 					drag.update(moveEvent.clientX, moveEvent.clientY);
 					return;
 				}
-				if (!canMove) return;
+				if (!canMove || refused) return;
 				if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX)
 					return;
+				// `canStartGesture` is asked here, as `drag`; a refusal ignores the rest of the press.
+				if (!gesture.setKind('drag')) {
+					refused = true;
+					return;
+				}
 				dragging = true;
-				gesture.setKind('drag');
 				drag.start({
 					panelId: content.id,
 					title: content.title,
@@ -130,7 +153,7 @@
 			},
 			commit(upEvent) {
 				if (dragging) drag.commit(upEvent.clientX, upEvent.clientY);
-				else onPlainClick?.();
+				else if (!refused) onPlainClick?.();
 			},
 			cancel() {
 				drag.cancel();
@@ -170,6 +193,59 @@
 			commit: step,
 			restore: (snapshot) => dock.restoreSplitSizes(splitId, snapshot)
 		});
+	}
+
+	/** A key the dock may handle: not consumed, not IME composition, no Ctrl / Alt / Meta. */
+	function isPlainKey(event: KeyboardEvent): boolean {
+		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return false;
+		return !(event.altKey || event.ctrlKey || event.metaKey);
+	}
+
+	/** The divider's Window Splitter values: the first pane's share (in %) of the pair it separates. */
+	function splitterValues(sizes: number[], i: number): { now: number; min: number; max: number } {
+		const pair = (sizes[i] ?? 0) + (sizes[i + 1] ?? 0);
+		if (pair <= 0 || pair < 2 * MIN_PANE_FRACTION) return { now: 50, min: 50, max: 50 };
+		const min = Math.round((MIN_PANE_FRACTION / pair) * 100);
+		return { now: Math.round(((sizes[i] ?? 0) / pair) * 100), min, max: 100 - min };
+	}
+
+	function handleDividerKeydown(
+		event: KeyboardEvent,
+		dividerIndex: number,
+		direction: 'row' | 'column'
+	): void {
+		if (node.type !== 'split' || !isPlainKey(event)) return;
+		const back = direction === 'row' ? 'ArrowLeft' : 'ArrowUp';
+		const forward = direction === 'row' ? 'ArrowRight' : 'ArrowDown';
+		const step = event.shiftKey ? KEY_STEP_LARGE_FRACTION : KEY_STEP_FRACTION;
+		// Home / End: `resizeSplit` clamps to the pair's minimum / maximum.
+		let delta: number;
+		if (event.key === back) delta = -step;
+		else if (event.key === forward) delta = step;
+		else if (event.key === 'Home') delta = -1;
+		else if (event.key === 'End') delta = 1;
+		else return;
+		event.preventDefault();
+		const splitId = node.id;
+		gesture.instant('divider', null, () => dock.resizeSplit(splitId, dividerIndex, delta));
+	}
+
+	let tabStripEl: HTMLDivElement | null = $state(null);
+
+	function handleTabKeydown(event: KeyboardEvent, index: number): void {
+		// Only the tab itself - not its nested close / pop-out buttons.
+		if (node.type !== 'tabs' || event.target !== event.currentTarget || !isPlainKey(event)) return;
+		const count = node.children.length;
+		let next: number;
+		if (event.key === 'ArrowRight') next = (index + 1) % count;
+		else if (event.key === 'ArrowLeft') next = (index - 1 + count) % count;
+		else if (event.key === 'Home') next = 0;
+		else if (event.key === 'End') next = count - 1;
+		else return;
+		event.preventDefault();
+		dock.setActiveTab(node.id, next);
+		// The tabs are keyed by id, so the element already exists; focus it now.
+		tabStripEl?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
 	}
 
 	let panelFrameEl: HTMLDivElement | null = $state(null);
@@ -268,17 +344,18 @@
 			never exercised by the axe scan in `e2e/visual/a11y.spec.ts` - flagged
 			here for whoever next touches tab-strip interaction/keyboard support.
 		-->
-		<div class="tab-strip" role="tablist">
+		<div class="tab-strip" role="tablist" bind:this={tabStripEl}>
 			{#each node.children as child, i (child.id)}
 				<div
 					class="tab"
 					class:active={i === node.activeIndex}
 					role="tab"
-					tabindex="-1"
+					tabindex={i === node.activeIndex ? 0 : -1}
 					aria-selected={i === node.activeIndex}
 					aria-label={child.title}
 					onpointerdown={(event) =>
 						tabsFrameEl && armDrag(event, tabsFrameEl, child, () => dock.setActiveTab(node.id, i))}
+					onkeydown={(event) => handleTabKeydown(event, i)}
 				>
 					{#if child.icon}
 						<span class="icon" aria-hidden="true">{child.icon}</span>
@@ -331,14 +408,22 @@
 				<DockedTree node={child} {dock} {panel} {onPopOut} {messages} />
 			</div>
 			{#if i < node.children.length - 1}
+				{@const values = splitterValues(node.sizes, i)}
+				<!-- A focusable separator is an interactive widget (WAI-ARIA Window Splitter, #433-b). -->
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 				<div
 					class="divider"
 					class:row={node.direction === 'row'}
 					class:column={node.direction === 'column'}
 					role="separator"
+					tabindex="0"
 					aria-orientation={node.direction === 'row' ? 'vertical' : 'horizontal'}
 					aria-label={t.resizeHandle()}
+					aria-valuenow={values.now}
+					aria-valuemin={values.min}
+					aria-valuemax={values.max}
 					onpointerdown={(event) => startDivider(event, i, node.direction)}
+					onkeydown={(event) => handleDividerKeydown(event, i, node.direction)}
 				></div>
 			{/if}
 		{/each}
@@ -515,6 +600,12 @@
 
 	.divider:hover {
 		background: var(--banto-dock-divider-hover);
+	}
+
+	.divider:focus-visible {
+		outline: none;
+		background: var(--banto-dock-divider-hover);
+		box-shadow: var(--banto-focus-ring);
 	}
 
 	.divider.row {
