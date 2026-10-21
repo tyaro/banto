@@ -41,8 +41,9 @@ use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::routes::{MetricsProbe, SystemInfo};
 use banto_server::{
-    bind as bind_listener, lan_urls_for_bind, static_router, with_security_headers, AuthState,
-    BoundServer, GrantKind, RunningServer, ServerConfig, ServerEvent,
+    bind as bind_listener, bind_with_port_fallback, lan_urls_for_bind, static_router,
+    with_security_headers, AuthState, BoundServer, GrantKind, PortFallbackError, RunningServer,
+    ServerConfig, ServerEvent,
 };
 use qrcode::render::svg;
 use qrcode::QrCode;
@@ -128,6 +129,12 @@ struct AppState {
     /// otherwise (disabled, or a previous bind attempt failed - see
     /// `server_apply`).
     server: AsyncMutex<Option<RunningServer>>,
+    /// What the launch-time auto-start had to do about a saved port that was
+    /// in use ([`bind_saved_server_at_launch`]): `Some` until the next
+    /// successful `server_apply`, reported by `server_status` so the frontend
+    /// can tell the user (the text is built there, conventions §13). A std
+    /// `Mutex`, never held across an `.await`.
+    server_port_notice: Mutex<Option<ServerPortNotice>>,
     /// Audit trail (spec M14): every mutating command below records a
     /// `create`/`update`/`delete`/`password_reset`/`settings_change`/
     /// `login`/`login_failed`/`logout`/`setup` entry here (`origin:
@@ -1792,6 +1799,36 @@ struct ServerStatusResult {
     viewer_public: bool,
     urls: Vec<String>,
     qr_svgs: Vec<QrSvgEntry>,
+    /// What the launch-time auto-start did about a saved port that was in use
+    /// (`null` when nothing happened, or after a successful `server_apply`).
+    port_notice: Option<ServerPortNotice>,
+}
+
+/// What [`bind_saved_server_at_launch`] had to do because the SAVED port was
+/// in use. Carries only codes and port numbers - the message is built by the
+/// frontend from `messages/{en,ja}.json` (conventions §13), so this layer
+/// holds no display text. Mirrors `serverAdmin.ts::ServerPortNotice`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ServerPortNotice {
+    /// Started on `port` instead of `requested_port`. `saved`: whether
+    /// `server.port` was updated to `port` (so the next launch uses it).
+    #[serde(rename_all = "camelCase")]
+    Fallback {
+        requested_port: u16,
+        port: u16,
+        saved: bool,
+    },
+    /// `requested_port` was in use and no port up to `last_port` could be
+    /// bound, so the server did not start. `all_in_use` is true when every
+    /// candidate was in use, false when some failed for another reason (e.g.
+    /// a port the OS reserves) - the text must not claim "all in use" then.
+    #[serde(rename_all = "camelCase")]
+    Exhausted {
+        requested_port: u16,
+        last_port: u16,
+        all_in_use: bool,
+    },
 }
 
 /// Render `data` (a LAN access URL) as an inline SVG QR code (spec §11.4).
@@ -1805,7 +1842,11 @@ fn qr_svg_for(data: &str) -> String {
         .unwrap_or_default()
 }
 
-fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
+fn build_status(
+    config: &ServerSettings,
+    running: bool,
+    port_notice: Option<ServerPortNotice>,
+) -> ServerStatusResult {
     // Issue #216: scope the advertised URLs (and therefore the QR codes
     // below) to what `config.bind` actually listens on - a loopback bind
     // must not advertise a LAN URL nobody outside this PC can reach.
@@ -1825,6 +1866,7 @@ fn build_status(config: &ServerSettings, running: bool) -> ServerStatusResult {
         viewer_public: config.viewer_public,
         urls,
         qr_svgs,
+        port_notice,
     }
 }
 
@@ -1892,9 +1934,25 @@ async fn start_embedded_server(
 #[tauri::command]
 async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusResult, BantoError> {
     require_role(&state, Role::Admin, "settings").await?;
-    let config = state.settings.server_config().await?;
-    let running = state.server.lock().await.is_some();
-    Ok(build_status(&config, running))
+    let mut config = state.settings.server_config().await?;
+    // Report the port the live server is actually on: normally the saved one,
+    // but after a launch-time fallback whose save failed it differs, and the
+    // URLs/QR codes must point at the server that answers.
+    let running_port = state
+        .server
+        .lock()
+        .await
+        .as_ref()
+        .map(|running| running.local_addr().port());
+    if let Some(port) = running_port {
+        config.port = port;
+    }
+    let notice = state
+        .server_port_notice
+        .lock()
+        .expect("server_port_notice mutex poisoned")
+        .clone();
+    Ok(build_status(&config, running_port.is_some(), notice))
 }
 
 /// `GET`-ish command (M-review 2026-08 §2.4): admin-only system diagnostics
@@ -2013,7 +2071,12 @@ async fn server_apply_body(
 
     // The saved config is the one the rollback below restores, and what the
     // running listener (if any) was started from.
-    let previous = state.settings.server_config().await?;
+    let mut previous = state.settings.server_config().await?;
+    // A launch-time port fallback whose save failed leaves the live server on
+    // another port than the saved one; the rollback must restore THAT port.
+    if let Some(running) = slot.as_ref() {
+        previous.port = running.local_addr().port();
+    }
     // Refuse an illegal auth/LAN combination BEFORE anything is stopped.
     state.settings.validate_server_config(&config).await?;
 
@@ -2080,6 +2143,12 @@ async fn server_apply_body(
         Ok(started) => {
             let running = started.is_some();
             *slot = started;
+            // The user's own settings now apply; a launch-time port notice
+            // no longer describes the live server.
+            *state
+                .server_port_notice
+                .lock()
+                .expect("server_port_notice mutex poisoned") = None;
             record_ok(
                 &state.audit,
                 &actor,
@@ -2094,7 +2163,7 @@ async fn server_apply_body(
                 })),
             )
             .await;
-            Ok(build_status(&config, running))
+            Ok(build_status(&config, running, None))
         }
         Err(err) => {
             // Nothing was saved. Bring back the server that was running so
@@ -2168,6 +2237,134 @@ async fn save_server_config_locked(
             .revoke_grant_tokens(&GrantKind::public_viewer());
     }
     Ok(())
+}
+
+/// Bind the SAVED server settings when the app launches (`setup()`'s
+/// auto-start), stepping to a neighbouring port when the saved one is in use
+/// (spec §11.4「ポート競合時の自動フォールバックと再表示」).
+///
+/// Launch only: `server_apply` keeps the plain bind, so a port the user has
+/// just typed in is never silently changed (an in-use port is an error there).
+/// Here the user did not ask for anything right now, and a server on the next
+/// free port beats no server at all.
+///
+/// - The saved port is in use (`AddrInUse`, and only then): the ports right
+///   behind it are tried in order (`banto_server::PORT_FALLBACK_SPAN`, never
+///   past 65535; never port 0 or a random port - the range follows the saved
+///   port, so it is not kept out of the OS's ephemeral range). The
+///   bind address is never changed.
+/// - Another port was chosen: `server.port` is saved as that port (bind ->
+///   save -> serve, the same order as `server_apply`, Issue #294 review - the
+///   listener answers nothing until the caller serves it), so the next launch
+///   starts on it and other devices' bookmarks / QR codes keep working instead
+///   of the port changing on every launch. A failed save does NOT stop the
+///   server: it is logged, audited as `failed`, and reported (`saved: false`)
+///   so the user can save a port from the settings screen.
+/// - The change is audited like a settings change made by the system itself:
+///   `settings_change` / `settings`, no actor (nobody is logged in yet - the
+///   same shape as the startup `restore_applied` entry), `origin: "tauri"`,
+///   `detail.reason: "portInUse"`.
+/// - No candidate could be bound: no server, as before, and an `Exhausted`
+///   notice saying the saved port was in use (`all_in_use` tells whether every
+///   candidate was in use too, or some failed for another reason). Any other bind failure (permission,
+///   address not available): no server, no notice, logged as before.
+///
+/// Called before `AppState` exists, while nothing else can write the
+/// settings, so it does not take `auth_config_lock`.
+async fn bind_saved_server_at_launch(
+    settings: &SettingsService,
+    audit: &AuditLogService,
+    saved: &ServerSettings,
+) -> (Option<BoundServer>, Option<ServerPortNotice>) {
+    let bound = match bind_with_port_fallback(ServerConfig {
+        bind: saved.bind.clone(),
+        port: saved.port,
+    })
+    .await
+    {
+        Ok(bound) => bound,
+        Err(PortFallbackError::Exhausted {
+            requested,
+            last_tried,
+            error,
+            unavailable,
+        }) => {
+            eprintln!(
+                "banto: 起動時のLANアクセス開始に失敗しました（保存されたポート {requested} が使用中で、{last_tried} までに使えるポートがありませんでした）: {error}"
+            );
+            for (port, err) in &unavailable {
+                eprintln!("banto: ポート {port} は使用中以外の理由で使えませんでした: {err}");
+            }
+            return (
+                None,
+                Some(ServerPortNotice::Exhausted {
+                    requested_port: requested,
+                    last_port: last_tried,
+                    all_in_use: unavailable.is_empty(),
+                }),
+            );
+        }
+        Err(PortFallbackError::Failed(err)) => {
+            // Non-fatal: the desktop app itself works fine with no LAN
+            // access. The settings screen's `server_status` reports
+            // `running: false` and the user can pick another port there.
+            eprintln!("banto: 起動時のLANアクセス開始に失敗しました: {err}");
+            return (None, None);
+        }
+    };
+
+    let chosen = bound.local_addr().port();
+    if chosen == saved.port {
+        return (Some(bound), None);
+    }
+
+    let updated = ServerSettings {
+        port: chosen,
+        ..saved.clone()
+    };
+    let save_result = settings.set_server_config(&updated).await;
+    let saved_ok = save_result.is_ok();
+    let mut detail = serde_json::json!({
+        "serverEnabled": updated.enabled,
+        "bind": updated.bind,
+        "previousPort": saved.port,
+        "port": chosen,
+        "viewerPublic": updated.viewer_public,
+        "reason": "portInUse",
+        "saved": saved_ok,
+    });
+    if let Err(err) = &save_result {
+        eprintln!(
+            "banto: 保存されたポート {} が使用中のため {chosen} で起動しましたが、新しいポートの保存に失敗しました: {err}",
+            saved.port
+        );
+        detail["error"] = serde_json::Value::String(err.to_string());
+    } else {
+        eprintln!(
+            "banto: 保存されたポート {} が使用中のため {chosen} で起動し、設定を更新しました",
+            saved.port
+        );
+    }
+    audit
+        .record(AuditEntry {
+            actor_username: None,
+            actor_role: None,
+            action: "settings_change",
+            resource: "settings",
+            entity_id: None,
+            detail: Some(detail),
+            origin: "tauri",
+            result: if saved_ok { "ok" } else { "failed" },
+        })
+        .await;
+    (
+        Some(bound),
+        Some(ServerPortNotice::Fallback {
+            requested_port: saved.port,
+            port: chosen,
+            saved: saved_ok,
+        }),
+    )
 }
 
 /// `admin`-only, symmetric with `settings_set` below: the generic key/value
@@ -3396,13 +3593,24 @@ pub fn run() {
                     "banto: 認証無効モードとLANアクセスが同時に有効な不整合な設定を検出したため、LANサーバーの自動起動をスキップしました。設定画面でどちらかを無効にしてください。"
                 );
             }
-            let initial_server = if server_config.enabled && !inconsistent_auth_and_server {
-                let runtime_config = ServerConfig {
-                    bind: server_config.bind.clone(),
-                    port: server_config.port,
+            // A saved port that is now in use steps to a neighbouring one,
+            // which is saved and reported (`bind_saved_server_at_launch`).
+            let (initial_bound, initial_port_notice) =
+                if server_config.enabled && !inconsistent_auth_and_server {
+                    tauri::async_runtime::block_on(bind_saved_server_at_launch(
+                        &settings,
+                        &audit,
+                        &server_config,
+                    ))
+                } else {
+                    (None, None)
                 };
-                match tauri::async_runtime::block_on(bind_listener(runtime_config)) {
-                    Ok(bound) => Some(tauri::async_runtime::block_on(start_embedded_server(
+            // `None` (disabled, skipped, or the bind failed - already logged by
+            // `bind_saved_server_at_launch`) is non-fatal: the desktop app
+            // works without LAN access, and `server_status` reports
+            // `running: false` so the user can pick another port.
+            let initial_server = initial_bound.map(|bound| {
+                tauri::async_runtime::block_on(start_embedded_server(
                     // [scaffold:items] begin
                     items.clone(),
                     // [scaffold:items] end
@@ -3416,21 +3624,8 @@ pub fn run() {
                     rest_auth.clone(),
                     events.clone(),
                     bound,
-                    ))),
-                    Err(err) => {
-                        // Non-fatal: the desktop app itself works fine with
-                        // no LAN access; surface the failure (e.g. the
-                        // persisted port now being in use) to the log only.
-                        // The settings screen's `server_status` will report
-                        // `running: false` and the user can pick a different
-                        // port via `server_apply`.
-                        eprintln!("banto: 起動時のLANアクセス開始に失敗しました: {err}");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+                ))
+            });
 
             // M12: re-apply the persisted vibrancy (Windows Acrylic) choice
             // on launch. Best-effort by design - a failure (old Windows 10
@@ -3477,6 +3672,7 @@ pub fn run() {
                 events,
                 rest_auth,
                 server: AsyncMutex::new(initial_server),
+                server_port_notice: Mutex::new(initial_port_notice),
                 audit,
                 backup,
                 attachments,
@@ -3605,6 +3801,7 @@ mod tests {
             ),
             attachments_dir: PathBuf::from("unused-in-tests").join("attachments"),
             exports_dir: PathBuf::from("unused-in-tests").join("exports"),
+            server_port_notice: Mutex::new(None),
             started_at: std::time::Instant::now(),
         }
     }
@@ -3659,6 +3856,7 @@ mod tests {
             attachments: AttachmentsService::new(pool, dir.path().join("attachments")),
             attachments_dir: dir.path().join("attachments"),
             exports_dir: dir.path().join("exports"),
+            server_port_notice: Mutex::new(None),
             started_at: std::time::Instant::now(),
         }
     }
@@ -6709,6 +6907,174 @@ mod tests {
 
         drop(occupied);
         stop_running_server(&state).await;
+    }
+
+    // ----- `bind_saved_server_at_launch` (launch-time port fallback) -----
+
+    /// Occupy a loopback port in 20000-29999 whose next port is free. The
+    /// fallback binds the ports right behind the occupied one; doing that
+    /// next to an OS-picked port would take the port the OS hands out next
+    /// (Windows allocates them sequentially) and break a `free_port()` of a
+    /// test running in parallel. Both OS ephemeral ranges (Windows 49152+,
+    /// Linux 32768+) are well above this range.
+    fn occupy_port_outside_ephemeral_range() -> std::net::TcpListener {
+        let start = 20_000 + (std::process::id() % 2_000) as u16 * 5;
+        for base in (start..30_000).step_by(7).chain((20_000..start).step_by(7)) {
+            if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", base)) {
+                if port_is_free(base + 1) {
+                    return listener;
+                }
+            }
+        }
+        panic!("no free port pair in 20000-29999");
+    }
+
+    async fn save_enabled_server_config(state: &AppState, port: u16) -> ServerSettings {
+        let saved = ServerSettings {
+            enabled: true,
+            bind: "127.0.0.1".to_string(),
+            port,
+            viewer_public: false,
+        };
+        state
+            .settings
+            .set_server_config(&saved)
+            .await
+            .expect("save server config");
+        saved
+    }
+
+    /// The saved port is in use at launch: the server binds a port right
+    /// behind it, `server.port` is updated to that port, the change is audited
+    /// as a system `settings_change` (no actor), and the notice carries both
+    /// ports. A later `server_apply` clears the notice.
+    #[tokio::test]
+    async fn launch_with_saved_port_in_use_falls_back_saves_audits_and_reports() {
+        let state = admin_app_state().await;
+        let occupied = occupy_port_outside_ephemeral_range();
+        let port = occupied.local_addr().unwrap().port();
+        let saved = save_enabled_server_config(&state, port).await;
+
+        let (bound, notice) =
+            bind_saved_server_at_launch(&state.settings, &state.audit, &saved).await;
+
+        let bound = bound.expect("a neighbouring port is bound");
+        let chosen = bound.local_addr().port();
+        assert_ne!(chosen, port);
+        assert!(
+            (port + 1..=port.saturating_add(banto_server::PORT_FALLBACK_SPAN)).contains(&chosen),
+            "{chosen} must be right behind {port}"
+        );
+        assert_eq!(bound.local_addr().ip().to_string(), "127.0.0.1");
+        assert_eq!(
+            notice,
+            Some(ServerPortNotice::Fallback {
+                requested_port: port,
+                port: chosen,
+                saved: true,
+            })
+        );
+        let stored = state.settings.server_config().await.unwrap();
+        assert_eq!((stored.port, stored.bind.as_str()), (chosen, "127.0.0.1"));
+        let rows = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows;
+        let entry = rows
+            .iter()
+            .find(|r| r.action == "settings_change")
+            .expect("system settings_change entry");
+        assert_eq!(entry.result, "ok");
+        assert_eq!(entry.actor_username, None);
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail")).unwrap();
+        assert_eq!(detail["previousPort"], port);
+        assert_eq!(detail["port"], chosen);
+        assert_eq!(detail["reason"], "portInUse");
+        assert_eq!(detail["saved"], true);
+
+        // Release the listener; the user's own apply clears the notice.
+        drop(bound);
+        *state.server_port_notice.lock().unwrap() = notice;
+        let status = apply(&state, true, free_port(), false)
+            .await
+            .expect("apply");
+        assert_eq!(status.port_notice, None);
+        assert_eq!(*state.server_port_notice.lock().unwrap(), None);
+
+        drop(occupied);
+        stop_running_server(&state).await;
+    }
+
+    /// A free saved port is bound as-is: no notice, nothing saved or audited.
+    #[tokio::test]
+    async fn launch_with_saved_port_free_binds_it_without_a_notice() {
+        let state = admin_app_state().await;
+        let port = free_port();
+        let saved = save_enabled_server_config(&state, port).await;
+
+        let (bound, notice) =
+            bind_saved_server_at_launch(&state.settings, &state.audit, &saved).await;
+
+        assert_eq!(bound.expect("bound").local_addr().port(), port);
+        assert_eq!(notice, None);
+        assert!(settings_change_entries(&state).await.is_empty());
+    }
+
+    /// A failure other than "in use" (an address this machine does not have)
+    /// tries no other port and reports nothing.
+    #[tokio::test]
+    async fn launch_bind_failure_other_than_in_use_does_not_fall_back() {
+        let state = admin_app_state().await;
+        let saved = ServerSettings {
+            enabled: true,
+            bind: "192.0.2.1".to_string(),
+            port: free_port(),
+            viewer_public: false,
+        };
+
+        let (bound, notice) =
+            bind_saved_server_at_launch(&state.settings, &state.audit, &saved).await;
+
+        assert!(bound.is_none());
+        assert_eq!(notice, None);
+        assert!(settings_change_entries(&state).await.is_empty());
+    }
+
+    /// The notice reaches the frontend as codes + ports only (the text is
+    /// built from messages/{en,ja}.json there, conventions §13).
+    #[test]
+    fn server_port_notice_serializes_as_tagged_camel_case() {
+        assert_eq!(
+            serde_json::to_value(ServerPortNotice::Fallback {
+                requested_port: 8721,
+                port: 8722,
+                saved: true,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "kind": "fallback",
+                "requestedPort": 8721,
+                "port": 8722,
+                "saved": true,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ServerPortNotice::Exhausted {
+                requested_port: 8721,
+                last_port: 8740,
+                all_in_use: false,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "kind": "exhausted",
+                "requestedPort": 8721,
+                "lastPort": 8740,
+                "allInUse": false,
+            })
+        );
     }
 
     /// #288: with `auth.disabled` stored, enabling the LAN server without
