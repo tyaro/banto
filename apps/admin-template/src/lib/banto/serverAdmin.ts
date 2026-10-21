@@ -6,6 +6,7 @@
  * client cannot use is hidden by capability judgement, not disabled/greyed
  * out).
  */
+import { getIdentifier } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 
@@ -64,6 +65,19 @@ export interface ServerStatus {
 	 * hosts that never send it read as "nothing happened".
 	 */
 	portNotice?: ServerPortNotice | null;
+	/**
+	 * Issue #219: absolute path of this desktop executable (`std::env::current_exe()`),
+	 * for the firewall information. `null` when the OS cannot tell; optional
+	 * so older mocks and hosts read as "unknown". Only an admin ever gets a
+	 * status at all, so this local information stays with the admin.
+	 */
+	executablePath?: string | null;
+	/**
+	 * `std::env::consts::OS` of the desktop host (`'windows'`, `'macos'`,
+	 * `'linux'`, ...). A code, not text. Optional: unknown hosts show no
+	 * Windows firewall information.
+	 */
+	platform?: string;
 }
 
 /**
@@ -141,6 +155,21 @@ async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Pr
 /** Current saved settings + the live listener, as one snapshot (spec §11.4, Issue #459). */
 export function getServerStatus(): Promise<ServerStatus> {
 	return invokeCommand('server_status');
+}
+
+/**
+ * The Tauri bundle identifier (`tauri.conf.json` `identifier`), which names
+ * the firewall rules so apps derived from this template do not collide
+ * (Issue #219). `null` when it cannot be read - the caller then offers no
+ * commands rather than guessing a name.
+ */
+export async function getAppIdentifier(): Promise<string | null> {
+	try {
+		const identifier: unknown = await getIdentifier();
+		return typeof identifier === 'string' ? identifier : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Persist new settings, stop/restart the server to match, and return the resulting status. */

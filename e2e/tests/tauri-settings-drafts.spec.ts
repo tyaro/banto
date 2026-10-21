@@ -18,6 +18,9 @@
  * - Once loaded, an edit is protected: switching category asks, and so does
  *   closing the desktop window (close-requested is only watched while
  *   something is unsaved).
+ * - The firewall information (Issue #219) shows the LIVE listener's port and
+ *   an escaped executable path, refuses to copy once the listener changed,
+ *   and says "not needed" for a loopback-only listener.
  *
  * Runs in its own page/context - independent of smoke.spec.ts's shared state.
  */
@@ -69,7 +72,11 @@ async function installTauriStub(page: Page): Promise<void> {
 			 * does not observe that advance until its next `auth_resolve`.
 			 */
 			slot: { seq: 1, local: false, none: false, role: 'admin' as string },
-			resolves: [] as { checked: number; kind: string }[]
+			resolves: [] as { checked: number; kind: string }[],
+			/** Merged into every `server_status` answer (Issue #219: a running Windows host). */
+			serverStatusPatch: {} as Record<string, unknown>,
+			/** `@tauri-apps/api/app`'s `getIdentifier()` answer. */
+			appIdentifier: null as string | null
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
 			mock.releaseServerStatus = resolve;
@@ -149,7 +156,9 @@ async function installTauriStub(page: Page): Promise<void> {
 				case 'server_status':
 					if (mock.serverStatusGate) await mock.serverStatusGate;
 					if (mock.serverStatusFails) throw 'server status unavailable (stub)';
-					return serverStatus;
+					return { ...serverStatus, ...mock.serverStatusPatch };
+				case 'plugin:app|identifier':
+					return mock.appIdentifier;
 				case 'vibrancy_status':
 					return { supported: false, applied: false };
 				case 'plugin:event|listen': {
@@ -407,5 +416,82 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await expect.poll(() => messages).toEqual([LEAVE_PROMPT]);
 		await expect(page).toHaveURL(/\/settings\/security$/);
 		await expect(toggle).toBeChecked();
+	});
+
+	test('サーバ・接続: firewall information follows the live listener (Issue #219)', async ({
+		page,
+		baseURL
+	}) => {
+		await installTauriStub(page);
+		// Runs after the stub's own init script: a running Windows host whose
+		// SAVED port (9000) differs from the live one (8721).
+		await page.addInitScript(() => {
+			const m = (window as unknown as { __bantoMock: Record<string, unknown> }).__bantoMock;
+			m.serverStatusGate = null;
+			m.appIdentifier = 'dev.banto.admin';
+			m.serverStatusPatch = {
+				enabled: true,
+				running: true,
+				bind: '0.0.0.0',
+				port: 9000,
+				live: { bind: '0.0.0.0', port: 8721 },
+				generation: 1,
+				executablePath: "C:\\Program Files\\O'Brien\\banto-admin.exe",
+				platform: 'windows'
+			};
+		});
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/connectivity'));
+
+		await expect(
+			page.getByRole('heading', { name: 'ファイアウォールの許可に必要な情報' })
+		).toBeVisible();
+		await expect(
+			page.getByText("C:\\Program Files\\O'Brien\\banto-admin.exe", { exact: true })
+		).toBeVisible();
+		// The commands use the live port and the escaped path, never the saved port.
+		const commands = page.locator('.firewall-command pre');
+		await expect(commands).toHaveCount(2);
+		await expect(commands.nth(0)).toContainText(
+			"-Program 'C:\\Program Files\\O''Brien\\banto-admin.exe'"
+		);
+		await expect(commands.nth(1)).toContainText('-LocalPort 8721 ');
+		await expect(page.locator('.firewall-info')).not.toContainText('9000');
+		// The listener changed behind the screen: copying refuses and shows the new values.
+		await mock(page, {
+			serverStatusPatch: {
+				enabled: true,
+				running: true,
+				bind: '0.0.0.0',
+				port: 8722,
+				live: { bind: '0.0.0.0', port: 8722 },
+				generation: 2,
+				executablePath: "C:\\Program Files\\O'Brien\\banto-admin.exe",
+				platform: 'windows'
+			}
+		});
+		await page.getByRole('button', { name: 'ポート単位の許可をコピー' }).click();
+		await expect(
+			page.getByText('待ち受けの状態が変わったため、コピーしませんでした。')
+		).toBeVisible();
+		await expect(commands.nth(1)).toContainText('-LocalPort 8722 ');
+
+		// Loopback only: no rule needed, no commands.
+		await mock(page, {
+			serverStatusPatch: {
+				enabled: true,
+				running: true,
+				bind: '127.0.0.1',
+				port: 8722,
+				live: { bind: '127.0.0.1', port: 8722 },
+				generation: 3,
+				platform: 'windows'
+			}
+		});
+		await page.getByRole('button', { name: 'ポート単位の許可をコピー' }).click();
+		await expect(
+			page.getByText('このPCのみで待ち受けているため、ファイアウォールの設定は不要です。')
+		).toBeVisible();
+		await expect(commands).toHaveCount(0);
 	});
 });

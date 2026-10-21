@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 設定 > サーバ・接続に「ファイアウォールの許可に必要な情報」を追加した（#219 段階 1 の PR-A、Windows のみ・昇格なし）。稼働中のサーバーの値（`live`）から、実行ファイルの絶対パス・受信・TCP・待ち受け中のポート・プライベート・LocalSubnet を表示・コピーでき、管理者向けの `New-NetFirewallRule`（実行ファイル単位とポート単位の 2 形。ルール名は Tauri の `identifier`、文字列は単一引用符のリテラルにエスケープ）をコピーできる。同じ名前のルールが既にあるときは、コマンドは何も変えずに警告を出して止まる（既存のルールを消したり書き換えたりしない）。コピーの直前に状態を読み直し、適用や新しい読み直しの後に届いた古い応答は表示にもコピーにも使わない。停止中・loopback のみのときは不要と表示する。`server_status`（admin 専用）に省略可能な項目 `executablePath`・`platform` を足した（REST は変更なし）。
+
 ### Fixed
 
 - 内蔵サーバー（LAN アクセス）の `server_status` が、保存した設定と稼働中のサーバーの値を混ぜて返し得たのを直した（#459、#219 の監査）。汎用の `settings_set` は `server.` で始まるキーを拒否し（書き込みは `server_apply` だけ）、status は保存値（`enabled`・`bind`・`port`・`viewerPublic`、フォームの初期値）と、実際の listener の値（`live` の bind・port、`urls`・`qrSvgs`）を同じロックの中で読んだ 1 つの snapshot として返す。新しい省略可能な項目 `generation`（適用のたびに変わる）・`applyFailure`（ポート使用中・bind の失敗・保存の失敗と、元のサーバーを戻せたか）を足した。`server_apply` の失敗時は、保存値ではなく稼働していた listener のアドレスとポートで戻す。`banto-server` に、ポート使用中をほかの失敗と分けて返す `bind_without_fallback` を追加（追加のみ）。

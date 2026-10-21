@@ -58,6 +58,62 @@ LAN アクセスを ON のままアプリを起動したとき、保存したポ
 - `server.*` の設定は「保存して適用」（`server_apply`）でだけ変わる。汎用の
   `settings_set` は `server.` で始まるキーを拒否する（`auth.` と同じ扱い）。
 
+### ファイアウォールの許可に必要な情報（Windows）
+
+別の端末から接続できないときは、設定 > サーバ・接続の「ファイアウォールの許可に
+必要な情報」を使う（Issue #219 段階 1。アプリはファイアウォールを変更せず、
+昇格もしない）。
+
+- 出る内容: 実行ファイルの絶対パス、通信方向（受信）、プロトコル（TCP）、
+  待ち受け中のポート、ネットワークプロファイル（プライベート）、接続元の範囲
+  （`LocalSubnet` = この PC のすべてのネットワーク接続のサブネット。VPN を含む）。
+  どれも**稼働中のサーバーの値**（`live`）から作り、未保存のフォームの値や
+  保存値は使わない。各項目はコピーできる。
+- 管理者向けのコマンド: 同じ内容の `New-NetFirewallRule` を 2 つの形でコピーできる。
+  管理者として起動した PowerShell で**どちらか 1 つ**を実行する（または管理者に渡す）。
+  - 実行ファイル単位（`-Program`）: このアプリが待ち受ける TCP ポートすべてが対象。
+    ポートを変えても作り直さなくてよいが、許可の範囲は広い。
+  - ポート単位（`-LocalPort`）: そのポートで待ち受けるプログラムすべてが対象。
+    ポートを変えたときは、下の「既存のルールがあるとき」の手順で古いルールを直す。
+  - どちらのコマンドも、形ごとに決まった `-Name`（`<identifier>.lan.tcp.program` /
+    `<identifier>.lan.tcp.port`。ポート番号は含めない）で作る。`New-NetFirewallRule` は
+    `-Name` を省くと毎回ランダムな名前の新しいルールを作り、`-DisplayName` や
+    `-Group` では重複を防げないため、決まった名前にしている。
+  - コマンドは「同じ名前のルールが既にあれば、**何も変えずに**警告を出して止まり、
+    無ければ作る」1 行になっている:
+
+    ```powershell
+    $n = '<name>'; if (Get-NetFirewallRule -Name $n -ErrorAction SilentlyContinue) { Write-Warning '...' } else { New-NetFirewallRule -Name $n ... }
+    ```
+
+    既存のルールを消したり書き換えたりはしない。同じ名前のルールは、管理者が Block に
+    変えた・接続元を狭めた・同じ identifier の別インストールの exe を指している、
+    ということがあり得るため、名前だけを手がかりに消すと管理者の設定を壊す
+    （消してから作る形だと、作成に失敗したときに旧ルールも失う）。
+
+  - 既存のルールがあるとき（ポートを変えた・形を切り替えた・警告が出た）: 管理者が
+    `Get-NetFirewallRule -Name '<name>' | Format-List`（ポートや exe は
+    `| Get-NetFirewallPortFilter` / `| Get-NetFirewallApplicationFilter`）で中身を
+    確かめてから、自分で更新・削除する。不要なら `Remove-NetFirewallRule -Name '<name>'`
+    で消してから、画面のコマンドを実行し直す。この削除は画面のコピーするコマンドには
+    含めない。
+  - ルール名（`-DisplayName`・`-Name`）とグループ（`-Group`）は `tauri.conf.json` の
+    `identifier` から作る（派生アプリどうしで衝突しない。リネーム時に
+    `identifier` を変えること）。
+- コピーの直前に状態を読み直し、表示していたポート・アドレス・実行ファイル
+  （`generation`）と変わっていたらコピーせずに表示を更新する。適用中はコピーできず、
+  適用や新しい読み直しの後に届いた古い応答（読み直しの順番が古い、または
+  `generation` が表示中より小さい）は、表示にもコピーにも使わない。
+- 停止中、または待受が loopback（`127.0.0.0/8`）だけのときは「設定は不要」と表示し、
+  コマンドは出さない。IPv6 の待受と Windows 以外では出さない。
+- 許可しても届かないことがある: 遮断のルールは許可より優先される（初回の
+  Windows の通知で許可しなかった場合など）。独自のファイアウォールを持つ
+  セキュリティソフトや、集中管理（GPO）された PC では、Windows の許可だけでは
+  通らないことがあるので、上の情報を製品の設定や管理者に渡す。Windows の
+  ルールの優先順位は [Microsoft の説明](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/rules)、
+  ESET の例は [ESET Smart Security Premium のファイアウォールの基本設定](https://help.eset.com/essp/18/en-US/idh_config_epfw_basic_group.html)
+  （版・モードで挙動が変わる）を参照。
+
 ## 閲覧公開（ログイン無しで LAN から閲覧を許可）
 
 表示専用アプリ（アンドン・常設ダッシュボード・展示デモ）向けに、LAN 上の
