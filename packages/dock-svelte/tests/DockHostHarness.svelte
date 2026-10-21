@@ -27,5 +27,5 @@
 <DockHost {dock} {panel} {clamp} {capabilities} />
 
 {#snippet panel(content: PanelContent)}
-	<div class="panel-body">{content.title}</div>
+	<div class="panel-body">{content.title}<input aria-label={`${content.title} input`} /></div>
 {/snippet}

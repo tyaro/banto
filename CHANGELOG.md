@@ -43,6 +43,7 @@
 
 - `@banto/dock-svelte` の復元 layout を検証するようにした（#434、計画書 PR-1）。`DockState` の `hydrate`（JSON）と constructor の初期値（文字列・オブジェクト）が、version・構造・panel / node ID の一意性・有限の座標・正の寸法・split の `sizes`・tabs の `activeIndex` を全体として検証し、不正（`x=1e999`・`width=-1`・`height=0`・重複 ID など）なら拒否して現行 layout を変えない（constructor は空の layout で始める）。`hydrate` の戻り値を `void` → `boolean`（採用されたか）にし、検証の純関数 `validateDockLayout` と型を追加。**挙動の変化**: 従来は通っていた不正な layout が拒否される。正常な v1 / v2 は従来どおり読める。host 縮小時の到達性・能力指定は PR-2。
 - 閲覧公開（LAN）セッションの Ctrl+K コマンドパレットが、開けない画面（許可リスト外）まで一覧に出していたのを直した。ナビゲーションのコマンドもサイドバー・ドックと同じ `navSections()` で絞る（ADR-0012）。
+- `@banto/dock-svelte` のドラッグ・resize・divider・開始閾値の追跡を 1 つの操作の持ち主にまとめた（#433、計画書 PR-4）。**挙動の変化**: 操作を始めた pointer の `pointerup` でだけ確定し、別の pointer の `pointerup` ではドラッグが確定しなくなった。resize・divider も Esc（ほかの層が `preventDefault` 済みなら譲り、受けたら `preventDefault`）・`pointercancel`・`lostpointercapture`・window の `blur`・タブが隠れたとき・`DockHost` の unmount で押す前に戻り、listener が残らない。確定の直前に host の寸法を測り直す。浮動 window は `focusin` でも前面に来て、前面化は `z-index` で行い DOM（Tab）の順を変えない。公開 API の変更なし（keyboard 操作と hook は PR-5）。
 - `@banto/ui` の `Menu` で、項目がトリガーの上下の可用高を超えると下端が画面外に残り届かなかったのを直した。広い側の可用高（余白・枠線込み）に高さを抑えて中をスクロールし（`overscroll-behavior: contain`）、メニュー自身のスクロールでは閉じない（外側のスクロールでは従来どおり閉じる）。あわせて、開いた瞬間は項目がまだ不可視のためフォーカスが項目へ移らず、ブラウザでは開いた後の ↑↓・Home・End が効かなかったのを直した（#427）。
 
 ## [6.7.2] - 2026-10-20
