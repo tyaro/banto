@@ -34,9 +34,15 @@ corresponding ADR exists, be traced from there.
   one direction), write one ADR at that moment.
 - File name: `NNNN-kebab-title.md` (sequential number). The format is
   [0000-template.en.md](0000-template.en.md).
-- Status is `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`. **Do not
-  rewrite a past ADR; when overturning one, supersede it with a new ADR**
-  (retaining the history of decisions is the value of ADRs).
+- Status is `Proposed` / `Accepted` / `Superseded by ADR-NNNN` / `Deprecated`.
+  - `Proposed` means under review. Once the review is done and the owner
+    approves, change it to `Accepted`. Do not start implementation while it is
+    `Proposed`. Review findings may be applied by editing that ADR directly.
+  - After `Accepted`, it becomes `Superseded by ADR-NNNN` when overturned, or
+    `Deprecated` when no longer used.
+  - **Do not rewrite a past ADR once it is `Accepted`; when overturning one,
+    supersede it with a new ADR** (retaining the history of decisions is the
+    value of ADRs).
 
 ## Index
 
@@ -62,6 +68,7 @@ corresponding ADR exists, be traced from there.
 | [0018](0018-shared-ui-package.en.md)                   | Move general-purpose UI components into a new `@banto/ui` package in stages, and have callers inject text, icons, state and actions                                                                      | Accepted (phases 1-5 done) |
 | [0019](0019-audit-spool.en.md)                         | Spool an audit entry the database cannot take to a file, and flush it exactly once by `pending_id` after recovery                                                                                        | Accepted                   |
 | [0020](0020-image-assets-package.en.md)                | Keep browser-side image originals, import checks and URL lifetimes in a new optional package, `@banto/image-assets` (consumer-supplied limits, error codes, `crypto.subtle` or an in-house SHA-256)      | Accepted                   |
+| [0021](0021-firewall-elevated-helper.en.md)            | For stage 2, a UAC-elevated helper adds and removes a single per-executable firewall rule                                                                                                                | Proposed                   |
 
 ## ADR candidates (unstarted; do not backfill)
 
