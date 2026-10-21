@@ -1,10 +1,13 @@
 <script lang="ts">
 	/**
-	 * App shell header (visual-refresh-design.md §8.2). DOM order: sidebar toggle
-	 * (one button: folds the sidebar >900px, opens the drawer <=900px) -> page heading -> spacer -> search pill -> user menu.
-	 * In the dock layout (nav-launcher-plan.md §4.1/§4.6) the toggle is
-	 * never shown (there is no drawer) and the brand the sidebar carried
-	 * takes its place at the left.
+	 * App shell header (visual-refresh-design.md §8.2). DOM order: drawer button
+	 * (<=900px only) -> page heading -> spacer -> search pill -> user menu.
+	 * The >900px fold button is NOT here: it sits at the left of the sidebar's
+	 * top row, before the logo (Sidebar.svelte; Google-apps style), so above
+	 * 900px the header starts with the page title.
+	 * In the dock layout (nav-launcher-plan.md §4.1/§4.6) no toggle is shown
+	 * (there is no drawer) and the brand the sidebar carried takes its place
+	 * at the left.
 	 */
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -16,13 +19,12 @@
 	import { getBantoMode, isTauri } from '#lib/banto/setup.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
+	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import { appShortcuts, COMMAND_PALETTE_SHORTCUT } from '#lib/shortcuts.js';
 	import { IconButton, Menu, MenuGroup, MenuItem, MenuSeparator, StatusBadge } from '@banto/ui';
 	import {
 		Menu as MenuIcon,
-		PanelLeftClose,
-		PanelLeftOpen,
 		Search,
 		Settings,
 		LogOut,
@@ -39,40 +41,12 @@
 
 	let { overlayOpen = false, onToggleOverlay }: Props = $props();
 
-	// One toggle button (a11y: a single control, not two shown by CSS): at
-	// <=900px it drives the overlay drawer, above that the persisted fold.
-	// Same breakpoint as Sidebar.svelte's media query; a matchMedia listener
-	// (not a layout read) keeps the two in step.
-	// Seeded from the query at once (the app shell is client-only, ssr =
-	// false), so a narrow first paint never shows the wide fold state.
-	const NARROW_QUERY = '(max-width: 900px)';
-	let narrow = $state(typeof window !== 'undefined' && window.matchMedia(NARROW_QUERY).matches);
-
-	$effect(() => {
-		const query = window.matchMedia(NARROW_QUERY);
-		narrow = query.matches;
-		const onChange = (event: MediaQueryListEvent): void => {
-			narrow = event.matches;
-		};
-		query.addEventListener('change', onChange);
-		return () => query.removeEventListener('change', onChange);
-	});
-
-	const sidebarExpanded = $derived(narrow ? overlayOpen : !settings.sidebarCollapsed);
-	const toggleLabel = $derived(
-		narrow
-			? overlayOpen
-				? m['shell.closeSidebar']()
-				: m['shell.expandSidebar']()
-			: settings.sidebarCollapsed
-				? m['shell.expandSidebar']()
-				: m['shell.collapseSidebar']()
+	// <=900px: the one button that opens/closes the overlay drawer. Above 900px
+	// the sidebar's own top row carries the fold button instead (one control
+	// at a time: `narrowViewport` decides which is rendered, not CSS).
+	const drawerLabel = $derived(
+		overlayOpen ? m['shell.closeSidebar']() : m['shell.expandSidebar']()
 	);
-
-	function toggleSidebar(): void {
-		if (narrow) onToggleOverlay?.();
-		else settings.toggleSidebar();
-	}
 
 	const displayName = $derived(sessionStore.identity?.name ?? sessionStore.identity?.id ?? '');
 	const avatarInitial = $derived(displayName ? displayName.charAt(0).toUpperCase() : '?');
@@ -175,13 +149,15 @@
 			<span class="brand-name">Banto</span>
 		</div>
 	{:else}
-		<IconButton
-			label={toggleLabel}
-			icon={narrow ? MenuIcon : sidebarExpanded ? PanelLeftClose : PanelLeftOpen}
-			expanded={sidebarExpanded}
-			controls="app-sidebar"
-			onclick={toggleSidebar}
-		/>
+		{#if narrowViewport.current}
+			<IconButton
+				label={drawerLabel}
+				icon={MenuIcon}
+				expanded={overlayOpen}
+				controls="app-sidebar"
+				onclick={() => onToggleOverlay?.()}
+			/>
+		{/if}
 	{/if}
 
 	<!-- Deliberately NOT a heading: the document h1 belongs to the page
