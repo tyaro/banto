@@ -300,7 +300,7 @@
 		{:else if view.kind === 'unconfirmed'}
 			<p class="error">{m['settings.firewallStatusUnconfirmed']()}</p>
 		{:else if view.kind === 'notEnforced'}
-			<p class="error">{m['settings.firewallStatusNotEnforced']()}</p>
+			<p class="caution">{m['settings.firewallStatusNotEnforced']()}</p>
 			<p class="note" data-enforcement="notEnforced">{notEnforcedText(view.enforcement)}</p>
 			{#if view.reasons.includes('CategoryOff')}
 				<p class="note" data-enforcement-reason="CategoryOff">

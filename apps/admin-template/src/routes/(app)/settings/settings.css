@@ -462,10 +462,18 @@
 	border-radius: var(--banto-radius-md);
 }
 
-.settings-page .error {
+.settings-page .error,
+.settings-page .caution {
 	margin: 0.5rem 0 0;
 	color: var(--banto-danger);
 	font-size: 0.8rem;
+}
+
+/* Issue #479: a state that is not wrong but needs a look (the rule is as
+   expected, yet Windows does not enforce it). Laid out like `.error`
+   (shared above), only the colour is the warning one. */
+.settings-page .caution {
+	color: var(--banto-warning-tint-text);
 }
 
 .settings-page .note {
