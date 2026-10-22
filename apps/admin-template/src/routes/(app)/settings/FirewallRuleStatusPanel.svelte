@@ -6,8 +6,8 @@
 	 *
 	 * `firewall_rule_status` で、上のコマンドが作るルール（決まった名前）が
 	 * Windows ファイアウォールにあるかを読み取りだけで確かめ、形ごとに
-	 * 「ルール無し」「あり（期待どおり）」「あり（期待と違う: 項目）」
-	 * 「確認できない（理由）」を出す。ルールがあることと LAN から接続できる
+	 * 「ルール無し」「あり（期待どおり）」「あり（内容は期待どおり。ただし適用されていない）」
+	 * 「あり（期待と違う: 項目）」	 * 「確認できない（理由）」を出す。ルールがあることと LAN から接続できる
 	 * ことは同じではないので、そのことも書く。
 	 *
 	 * 照合するのは ActiveStore の（効いている）ルール。ActiveStore にあっても
@@ -298,6 +298,14 @@
 			<p>{m['settings.firewallStatusMatches']()}</p>
 		{:else if view.kind === 'unconfirmed'}
 			<p class="error">{m['settings.firewallStatusUnconfirmed']()}</p>
+		{:else if view.kind === 'notEnforced'}
+			<p class="error">{m['settings.firewallStatusNotEnforced']()}</p>
+			<p class="note" data-enforcement="notEnforced">{notEnforcedText(view.enforcement)}</p>
+			{#if view.reasons.includes('CategoryOff')}
+				<p class="note" data-enforcement-reason="CategoryOff">
+					{m['settings.firewallEnforcementCategoryOff']()}
+				</p>
+			{/if}
 		{:else if view.kind === 'differs'}
 			<p class="error">{m['settings.firewallStatusDiffers']()}</p>
 			<ul>
@@ -318,7 +326,7 @@
 		{:else}
 			<p>{m['settings.firewallStatusUnknown']({ reason: reasonText(view.reason) })}</p>
 		{/if}
-		{#if view.kind === 'matches' || view.kind === 'unconfirmed' || view.kind === 'differs'}
+		{#if view.kind === 'matches' || view.kind === 'unconfirmed' || view.kind === 'notEnforced' || view.kind === 'differs'}
 			{#if view.enforcement?.state === 'enforced'}
 				<p class="note" data-enforcement="enforced">
 					{m['settings.firewallEnforcementEnforced']()}
