@@ -9,29 +9,29 @@ importers:
   .:
     dependencies:
       '@banto/admin-core':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/admin-core
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/admin-core
+        specifier: github:tyaro/banto#v6.9.0&path:packages/admin-core
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/admin-core
       '@banto/dock-svelte':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/dock-svelte
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/dock-svelte
+        specifier: github:tyaro/banto#v6.9.0&path:packages/dock-svelte
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/dock-svelte
       '@banto/forms':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/forms
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/forms
+        specifier: github:tyaro/banto#v6.9.0&path:packages/forms
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/forms
       '@banto/grid-svelte':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/grid-svelte
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/grid-svelte
+        specifier: github:tyaro/banto#v6.9.0&path:packages/grid-svelte
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/grid-svelte
       '@banto/image-assets':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/image-assets
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/image-assets
+        specifier: github:tyaro/banto#v6.9.0&path:packages/image-assets
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/image-assets
       '@banto/theme':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/theme
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/theme
+        specifier: github:tyaro/banto#v6.9.0&path:packages/theme
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/theme
       '@banto/tree-svelte':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/tree-svelte
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/tree-svelte
+        specifier: github:tyaro/banto#v6.9.0&path:packages/tree-svelte
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/tree-svelte
       '@banto/ui':
-        specifier: github:tyaro/banto#v6.8.0&path:packages/ui
-        version: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/ui
+        specifier: github:tyaro/banto#v6.9.0&path:packages/ui
+        version: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/ui
     devDependencies:
       '@sveltejs/adapter-static':
         specifier: ^4.0.0
@@ -60,37 +60,37 @@ importers:
 
 packages:
 
-  '@banto/admin-core@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/admin-core':
-    resolution: {path: packages/admin-core, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/admin-core@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/admin-core':
+    resolution: {path: packages/admin-core, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/dock-svelte@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/dock-svelte':
-    resolution: {path: packages/dock-svelte, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/dock-svelte@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/dock-svelte':
+    resolution: {path: packages/dock-svelte, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/forms@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/forms':
-    resolution: {path: packages/forms, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/forms@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/forms':
+    resolution: {path: packages/forms, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/grid-svelte@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/grid-svelte':
-    resolution: {path: packages/grid-svelte, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/grid-svelte@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/grid-svelte':
+    resolution: {path: packages/grid-svelte, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/image-assets@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/image-assets':
-    resolution: {path: packages/image-assets, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/image-assets@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/image-assets':
+    resolution: {path: packages/image-assets, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/theme@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/theme':
-    resolution: {path: packages/theme, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/theme@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/theme':
+    resolution: {path: packages/theme, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/tree-svelte@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/tree-svelte':
-    resolution: {path: packages/tree-svelte, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/tree-svelte@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/tree-svelte':
+    resolution: {path: packages/tree-svelte, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
-  '@banto/ui@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/ui':
-    resolution: {path: packages/ui, tarball: https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020}
-    version: 6.8.0
+  '@banto/ui@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/ui':
+    resolution: {path: packages/ui, tarball: https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139}
+    version: 6.9.0
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -539,21 +539,21 @@ packages:
 
 snapshots:
 
-  '@banto/admin-core@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/admin-core': {}
+  '@banto/admin-core@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/admin-core': {}
 
-  '@banto/dock-svelte@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/dock-svelte': {}
+  '@banto/dock-svelte@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/dock-svelte': {}
 
-  '@banto/forms@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/forms': {}
+  '@banto/forms@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/forms': {}
 
-  '@banto/grid-svelte@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/grid-svelte': {}
+  '@banto/grid-svelte@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/grid-svelte': {}
 
-  '@banto/image-assets@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/image-assets': {}
+  '@banto/image-assets@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/image-assets': {}
 
-  '@banto/theme@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/theme': {}
+  '@banto/theme@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/theme': {}
 
-  '@banto/tree-svelte@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/tree-svelte': {}
+  '@banto/tree-svelte@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/tree-svelte': {}
 
-  '@banto/ui@https://codeload.github.com/tyaro/banto/tar.gz/85cb8608c5768435d83ede1ba0dfdca5e8fa9020#path:packages/ui': {}
+  '@banto/ui@https://codeload.github.com/tyaro/banto/tar.gz/1bd12fe023cf3958dbdde923e1bdd4fdb28a9139#path:packages/ui': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
