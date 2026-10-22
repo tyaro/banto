@@ -397,7 +397,7 @@
   "settings.firewallChangeDoneRemove": "The allow rule was removed (or there was none).",
   "settings.firewallChangeAlreadyAllow": "The allow rule is already in place. Nothing was changed.",
   "settings.firewallChangeAlready": "The rule is already as requested. Nothing was changed.",
-  "settings.firewallChangeConflict": "A rule with the same name that this app did not create exists, so nothing was changed. Check that rule in Windows Defender Firewall's advanced settings.",
+  "settings.firewallChangeConflict": "A rule with the same name that this app did not create exists, so nothing was created or removed. It may be managed by another app or an administrator. Check what that rule contains in Windows Defender Firewall's advanced settings, and leave the decision on it to an administrator.",
   "settings.firewallChangePolicy": "Central management such as Group Policy keeps this PC's local rules from applying. A change may still have been made (for example, a rule created and then not applied). Check the state shown above and ask your administrator.",
   "settings.firewallChangePrecondition": "The permission cannot be changed from here with this installation.",
   "settings.firewallChangeRefusal": "Reason: {reason}",

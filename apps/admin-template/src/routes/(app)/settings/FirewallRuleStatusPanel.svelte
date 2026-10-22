@@ -56,6 +56,7 @@
 	import { firewallRuleNames, type FirewallInfo } from './firewallInfo';
 	import {
 		FirewallStatusRequests,
+		firewallChangeFollowUp,
 		firewallFieldValue,
 		firewallRuleView,
 		firewallStatusMatches,
@@ -183,9 +184,16 @@
 		changeView = firewallChangeView(value);
 		changeOutcome = value.outcome;
 		// Every answer carries a fresh read (decision 11). It replaces what is
-		// shown through the same comparison as a check - unless a newer check
-		// took over, which then shows the status (`superseded` changes nothing).
-		if (outcome.kind === 'superseded') return;
+		// shown through the same comparison as a check - unless an apply or a
+		// newer check took over. That check may have read before the helper
+		// changed the rule, so read again once the change is done (or leave it
+		// to the check after the apply); the outcome text stays.
+		const follow = firewallChangeFollowUp(
+			outcome,
+			untrack(() => applying)
+		);
+		if (follow === 'recheck') void check();
+		if (follow !== 'show') return;
 		checking = false;
 		const next = nextFirewallPanelState({ result, problem }, outcome);
 		result = next.result;

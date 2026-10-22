@@ -232,14 +232,7 @@ describe('firewallChangeView', () => {
 	});
 
 	it('points a failed removal to deleting by hand, never to the allow guide', () => {
-		for (const outcome of [
-			'conflict',
-			'precondition',
-			'launchFailed',
-			'failed',
-			'usage',
-			'unexpectedExit'
-		]) {
+		for (const outcome of ['precondition', 'launchFailed', 'failed', 'usage', 'unexpectedExit']) {
 			expect(firewallChangeView(result({ operation: 'remove', outcome }))).toMatchObject({
 				manual: false,
 				manualRemove: true
@@ -251,11 +244,26 @@ describe('firewallChangeView', () => {
 		}
 	});
 
+	it('never guides deleting (or re-adding) a same-named rule it does not own (Codex review on PR #475)', () => {
+		for (const operation of ['allow', 'remove'] as const) {
+			expect(firewallChangeView(result({ operation, outcome: 'conflict', exitCode: 4 }))).toEqual(
+				expect.objectContaining({
+					tone: 'error',
+					message: 'settings.firewallChangeConflict',
+					manual: false,
+					manualRemove: false,
+					reach: false
+				})
+			);
+		}
+	});
+
 	it('words conflict / policy / failures, with the code when it adds something', () => {
 		expect(firewallChangeView(result({ outcome: 'conflict', exitCode: 4 }))).toMatchObject({
 			tone: 'error',
 			message: 'settings.firewallChangeConflict',
-			manual: true
+			manual: false,
+			manualRemove: false
 		});
 		expect(firewallChangeView(result({ outcome: 'policy', exitCode: 5 }))).toMatchObject({
 			tone: 'error',

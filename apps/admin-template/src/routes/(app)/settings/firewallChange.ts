@@ -233,7 +233,11 @@ export function firewallChangeView(result: FirewallChangeResult): FirewallChange
 				? view({ tone: 'success', message: 'settings.firewallChangeAlreadyAllow', reach: true })
 				: view({ tone: 'success', message: 'settings.firewallChangeAlready' });
 		case 'conflict':
-			return view({ tone: 'error', message: 'settings.firewallChangeConflict', manual: true });
+			// A rule of that name failed the ownership check (decision 6): it may
+			// belong to another app or an administrator. No by-hand guide - not
+			// "delete it" for a removal (Codex review on PR #475), and for an allow
+			// stage 1's command would only warn about the same name.
+			return view({ tone: 'error', message: 'settings.firewallChangeConflict' });
 		case 'policy':
 			return view({ tone: 'error', message: 'settings.firewallChangePolicy' });
 		case 'precondition': {

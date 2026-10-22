@@ -15,6 +15,7 @@ import {
 	isFirewallRuleStatus,
 	judgeFirewallStatus,
 	nextFirewallPanelState,
+	firewallChangeFollowUp,
 	type FirewallCheckOutcome,
 	type FirewallPanelState
 } from './firewallRuleStatus';
@@ -473,8 +474,24 @@ describe('FirewallStatusRequests.change', () => {
 	 * Owner review on PR #475: the change's re-read got generation 1, an apply
 	 * moved the panel to generation 2 while the helper was still answering,
 	 * and the late answer then cleared the new check's status and buttons.
+	 * Then (review of 1868d3f): the new check may read BEFORE the helper
+	 * changes the rule, so a dropped change answer is followed by a new read.
 	 */
-	async function lateChange(newCheckFirst: boolean): Promise<void> {
+	async function lateChange(
+		newCheckFirst: boolean,
+		reads: {
+			/** What the check of generation 2 read (it may predate the helper's change). */
+			check: FirewallRuleStatus;
+			/** The read the change ended with. */
+			change: FirewallRuleStatus;
+			/** The host after the change (what the follow-up check reads). */
+			after: FirewallRuleStatus;
+		} = {
+			check: result(8722, 2, present()),
+			change: result(8721, 1, present()),
+			after: result(8722, 2, present())
+		}
+	): Promise<void> {
 		const requests = new FirewallStatusRequests();
 		let shown = info(8721, 1);
 		let state: FirewallPanelState = { result: result(8721, 1), problem: null };
@@ -498,16 +515,24 @@ describe('FirewallStatusRequests.change', () => {
 			state = { result: next.result, problem: next.problem };
 		};
 		const finishCheck = async () => {
-			read.resolve(result(8722, 2, present()));
+			read.resolve(reads.check);
 			await settle(await checked);
 		};
 		const finishChange = async () => {
-			helper.resolve({ outcome: 'done', status: result(8721, 1, present()) });
+			helper.resolve({ outcome: 'done', status: reads.change });
 			const { value, outcome } = await changed;
 			// The outcome is still there to show; only its read is dropped.
 			expect(value.outcome).toBe('done');
 			expect(outcome).toEqual({ kind: 'superseded' });
 			await settle(outcome);
+			// ...and the panel reads again, after the change (the apply is over).
+			expect(firewallChangeFollowUp(outcome, false)).toBe('recheck');
+			await settle(
+				await requests.check(
+					async () => reads.after,
+					() => shown
+				)
+			);
 		};
 		if (newCheckFirst) {
 			await finishCheck();
@@ -517,7 +542,7 @@ describe('FirewallStatusRequests.change', () => {
 			await finishCheck();
 		}
 		const shownResult = state.result;
-		expect(state).toEqual({ result: result(8722, 2, present()), problem: null });
+		expect(state).toEqual({ result: reads.after, problem: null });
 		if (shownResult === null) throw new Error('the status is gone');
 		expect(firewallStatusMatches(shown, shownResult)).toBe(true);
 		// The buttons come from that status: the rule is there, so "remove".
@@ -536,6 +561,28 @@ describe('FirewallStatusRequests.change', () => {
 
 	it('keeps the new check when it finishes after a late change answer', async () => {
 		await lateChange(false);
+	});
+
+	it('shows the rule made after a check of the new generation read "no rule" (owner review on PR #475)', async () => {
+		// The check of generation 2 reads before the helper makes the rule; the
+		// change's own read (generation 2, rule there) is dropped as overtaken,
+		// so only the follow-up read shows the rule and the "remove" button.
+		for (const newCheckFirst of [true, false]) {
+			await lateChange(newCheckFirst, {
+				check: result(8722, 2),
+				change: result(8722, 2, present()),
+				after: result(8722, 2, present())
+			});
+		}
+	});
+
+	it('leaves the read to the check after the apply while settings are still applied', () => {
+		expect(firewallChangeFollowUp({ kind: 'superseded' }, true)).toBe('none');
+		const ok: FirewallCheckOutcome = { kind: 'ok', status: result(8721, 1) };
+		expect(firewallChangeFollowUp(ok, false)).toBe('show');
+		expect(firewallChangeFollowUp(ok, true)).toBe('show');
+		expect(firewallChangeFollowUp({ kind: 'stale', newer: true }, false)).toBe('show');
+		expect(firewallChangeFollowUp({ kind: 'unavailable' }, false)).toBe('show');
 	});
 
 	it('shows the read of a change nobody overtook, and drops the checks pending when it started', async () => {

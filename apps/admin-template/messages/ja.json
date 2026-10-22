@@ -397,7 +397,7 @@
   "settings.firewallChangeDoneRemove": "許可のルールを外しました（元から無かった場合も含みます）。",
   "settings.firewallChangeAlreadyAllow": "許可のルールは既にあります。何も変えていません。",
   "settings.firewallChangeAlready": "ルールは既に求めた状態です。何も変えていません。",
-  "settings.firewallChangeConflict": "同じ名前で、このアプリが作ったものではないルールがあるため、何も変えていません。Windows Defender ファイアウォールの詳細設定で、そのルールを確かめてください。",
+  "settings.firewallChangeConflict": "同じ名前で、このアプリが作ったものではないルールがあるため、作りも消しもしていません。ほかのアプリや管理者が管理しているルールかもしれません。Windows Defender ファイアウォールの詳細設定でそのルールの中身を確かめ、どうするかは管理者が判断してください。",
   "settings.firewallChangePolicy": "グループポリシーなどの集中管理の設定により、この PC のローカルのルールは反映されません。ルールを作った後で反映されなかった場合など、変更が残っていることもあります。上の表示を確かめ、管理者に相談してください。",
   "settings.firewallChangePrecondition": "この配置では、ここから許可を変更できません。",
   "settings.firewallChangeRefusal": "理由: {reason}",

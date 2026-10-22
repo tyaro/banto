@@ -386,6 +386,27 @@ export class FirewallStatusRequests {
 }
 
 /**
+ * What the panel does with the read a firewall change ended with:
+ * - `show`: nobody overtook the change - show its read (`nextFirewallPanelState`).
+ * - `recheck`: an apply or a check started while the change waited, so its
+ *   read was dropped - but that check may have read BEFORE the helper
+ *   changed the rule (owner review on PR #475: a check of the new generation
+ *   saw "no rule", then the helper made it). The rule is per executable, so
+ *   the change also applies to what is shown now: start a new check, which
+ *   reads after the change ended and drops any check still pending.
+ * - `none`: dropped while settings are still being applied - the check the
+ *   panel starts once the apply ends reads after the change, so no second
+ *   read here.
+ */
+export function firewallChangeFollowUp(
+	outcome: FirewallCheckOutcome,
+	applying: boolean
+): 'show' | 'recheck' | 'none' {
+	if (outcome.kind !== 'superseded') return 'show';
+	return applying ? 'none' : 'recheck';
+}
+
+/**
  * Whether a status read (`value`, as the host answered it) may be shown for
  * what the panel shows now (`info`; `null` = nothing). Shared by the checks
  * above and the re-read a firewall change ends with (ADR-0021 decision 11).
