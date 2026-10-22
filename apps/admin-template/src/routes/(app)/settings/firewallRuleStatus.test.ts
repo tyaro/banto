@@ -13,8 +13,13 @@ import {
 	firewallRuleView,
 	firewallStatusMatches,
 	isFirewallRuleStatus,
-	nextFirewallPanelState
+	judgeFirewallStatus,
+	nextFirewallPanelState,
+	firewallChangeFollowUp,
+	type FirewallCheckOutcome,
+	type FirewallPanelState
 } from './firewallRuleStatus';
+import { firewallChangeActions } from './firewallChange';
 
 const EXE = 'C:\\Program Files\\Banto\\banto-admin.exe';
 
@@ -461,5 +466,158 @@ describe('FirewallStatusRequests', () => {
 				() => info(8721, 1)
 			)
 		).toEqual({ kind: 'unavailable' });
+	});
+});
+
+describe('FirewallStatusRequests.change', () => {
+	/**
+	 * Owner review on PR #475: the change's re-read got generation 1, an apply
+	 * moved the panel to generation 2 while the helper was still answering,
+	 * and the late answer then cleared the new check's status and buttons.
+	 * Then (review of 1868d3f): the new check may read BEFORE the helper
+	 * changes the rule, so a dropped change answer is followed by a new read.
+	 */
+	async function lateChange(
+		newCheckFirst: boolean,
+		reads: {
+			/** What the check of generation 2 read (it may predate the helper's change). */
+			check: FirewallRuleStatus;
+			/** The read the change ended with. */
+			change: FirewallRuleStatus;
+			/** The host after the change (what the follow-up check reads). */
+			after: FirewallRuleStatus;
+		} = {
+			check: result(8722, 2, present()),
+			change: result(8721, 1, present()),
+			after: result(8722, 2, present())
+		}
+	): Promise<void> {
+		const requests = new FirewallStatusRequests();
+		let shown = info(8721, 1);
+		let state: FirewallPanelState = { result: result(8721, 1), problem: null };
+		const helper = deferred<{ outcome: string; status: unknown }>();
+		const changed = requests.change(
+			() => helper.promise,
+			(answer) => answer.status,
+			() => shown
+		);
+		// The apply to generation 2 is shown, and the panel checks that.
+		requests.invalidate();
+		shown = info(8722, 2);
+		const read = deferred<unknown>();
+		const checked = requests.check(
+			() => read.promise,
+			() => shown
+		);
+		const settle = async (outcome: FirewallCheckOutcome) => {
+			const next = nextFirewallPanelState(state, outcome);
+			expect(next.refresh).toBe(false);
+			state = { result: next.result, problem: next.problem };
+		};
+		const finishCheck = async () => {
+			read.resolve(reads.check);
+			await settle(await checked);
+		};
+		const finishChange = async () => {
+			helper.resolve({ outcome: 'done', status: reads.change });
+			const { value, outcome } = await changed;
+			// The outcome is still there to show; only its read is dropped.
+			expect(value.outcome).toBe('done');
+			expect(outcome).toEqual({ kind: 'superseded' });
+			await settle(outcome);
+			// ...and the panel reads again, after the change (the apply is over).
+			expect(firewallChangeFollowUp(outcome, false)).toBe('recheck');
+			await settle(
+				await requests.check(
+					async () => reads.after,
+					() => shown
+				)
+			);
+		};
+		if (newCheckFirst) {
+			await finishCheck();
+			await finishChange();
+		} else {
+			await finishChange();
+			await finishCheck();
+		}
+		const shownResult = state.result;
+		expect(state).toEqual({ result: reads.after, problem: null });
+		if (shownResult === null) throw new Error('the status is gone');
+		expect(firewallStatusMatches(shown, shownResult)).toBe(true);
+		// The buttons come from that status: the rule is there, so "remove".
+		expect(
+			firewallChangeActions({
+				admin: true,
+				status: shownResult,
+				ruleName: 'dev.banto.admin.lan.tcp.program'
+			})
+		).toEqual(['remove']);
+	}
+
+	it('keeps the new check when it finishes before a late change answer', async () => {
+		await lateChange(true);
+	});
+
+	it('keeps the new check when it finishes after a late change answer', async () => {
+		await lateChange(false);
+	});
+
+	it('shows the rule made after a check of the new generation read "no rule" (owner review on PR #475)', async () => {
+		// The check of generation 2 reads before the helper makes the rule; the
+		// change's own read (generation 2, rule there) is dropped as overtaken,
+		// so only the follow-up read shows the rule and the "remove" button.
+		for (const newCheckFirst of [true, false]) {
+			await lateChange(newCheckFirst, {
+				check: result(8722, 2),
+				change: result(8722, 2, present()),
+				after: result(8722, 2, present())
+			});
+		}
+	});
+
+	it('leaves the read to the check after the apply while settings are still applied', () => {
+		expect(firewallChangeFollowUp({ kind: 'superseded' }, true)).toBe('none');
+		const ok: FirewallCheckOutcome = { kind: 'ok', status: result(8721, 1) };
+		expect(firewallChangeFollowUp(ok, false)).toBe('show');
+		expect(firewallChangeFollowUp(ok, true)).toBe('show');
+		expect(firewallChangeFollowUp({ kind: 'stale', newer: true }, false)).toBe('show');
+		expect(firewallChangeFollowUp({ kind: 'unavailable' }, false)).toBe('show');
+	});
+
+	it('shows the read of a change nobody overtook, and drops the checks pending when it started', async () => {
+		const requests = new FirewallStatusRequests();
+		const pending = deferred<unknown>();
+		const before = requests.check(
+			() => pending.promise,
+			() => info(8721, 1)
+		);
+		const { outcome } = await requests.change(
+			async () => ({ status: result(8721, 1, present()) }),
+			(answer) => answer.status,
+			() => info(8721, 1)
+		);
+		expect(outcome).toEqual({ kind: 'ok', status: result(8721, 1, present()) });
+		pending.resolve(result(8721, 1));
+		expect(await before).toEqual({ kind: 'superseded' });
+	});
+});
+
+describe('judgeFirewallStatus', () => {
+	it('judges a read the way a check does (also the re-read of a firewall change)', () => {
+		expect(judgeFirewallStatus(result(8721, 1), info(8721, 1))).toEqual({
+			kind: 'ok',
+			status: result(8721, 1)
+		});
+		expect(judgeFirewallStatus(null, info(8721, 1))).toEqual({ kind: 'unavailable' });
+		expect(judgeFirewallStatus(result(8721, 1), null)).toEqual({ kind: 'superseded' });
+		expect(judgeFirewallStatus(result(8721, 2), info(8721, 1))).toEqual({
+			kind: 'stale',
+			newer: true
+		});
+		expect(judgeFirewallStatus(result(8721, 1), info(8721, 2))).toEqual({
+			kind: 'stale',
+			newer: false
+		});
 	});
 });

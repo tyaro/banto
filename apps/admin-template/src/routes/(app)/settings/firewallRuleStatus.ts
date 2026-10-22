@@ -360,17 +360,70 @@ export class FirewallStatusRequests {
 			return ticket === this.#latest ? { kind: 'unavailable' } : { kind: 'superseded' };
 		}
 		if (ticket !== this.#latest) return { kind: 'superseded' };
-		if (!isFirewallRuleStatus(value)) return { kind: 'unavailable' };
-		const info = shown();
-		if (info === null) return { kind: 'superseded' };
-		if (!firewallStatusMatches(info, value)) {
-			return {
-				kind: 'stale',
-				newer: info.generation !== null && value.generation > info.generation
-			};
-		}
-		return { kind: 'ok', status: value };
+		return judgeFirewallStatus(value, shown());
 	}
+
+	/**
+	 * Runs a firewall change (`run`) whose answer carries a fresh status read
+	 * (ADR-0021 decision 11; `statusOf` picks it out), in the same order as
+	 * the checks: the change takes a ticket when it starts, so the checks
+	 * pending then are dropped, and an apply or a check started while it waits
+	 * for UAC drops ITS read (`superseded`) - that newer check shows the
+	 * status, and an older read never clears it (owner review on PR #475).
+	 * The answer itself (`value`) is always returned; a failure of `run`
+	 * propagates.
+	 */
+	async change<T>(
+		run: () => Promise<T>,
+		statusOf: (value: T) => unknown,
+		shown: () => FirewallInfo | null
+	): Promise<{ value: T; outcome: FirewallCheckOutcome }> {
+		const ticket = ++this.#latest;
+		const value = await run();
+		if (ticket !== this.#latest) return { value, outcome: { kind: 'superseded' } };
+		return { value, outcome: judgeFirewallStatus(statusOf(value), shown()) };
+	}
+}
+
+/**
+ * What the panel does with the read a firewall change ended with:
+ * - `show`: nobody overtook the change - show its read (`nextFirewallPanelState`).
+ * - `recheck`: an apply or a check started while the change waited, so its
+ *   read was dropped - but that check may have read BEFORE the helper
+ *   changed the rule (owner review on PR #475: a check of the new generation
+ *   saw "no rule", then the helper made it). The rule is per executable, so
+ *   the change also applies to what is shown now: start a new check, which
+ *   reads after the change ended and drops any check still pending.
+ * - `none`: dropped while settings are still being applied - the check the
+ *   panel starts once the apply ends reads after the change, so no second
+ *   read here.
+ */
+export function firewallChangeFollowUp(
+	outcome: FirewallCheckOutcome,
+	applying: boolean
+): 'show' | 'recheck' | 'none' {
+	if (outcome.kind !== 'superseded') return 'show';
+	return applying ? 'none' : 'recheck';
+}
+
+/**
+ * Whether a status read (`value`, as the host answered it) may be shown for
+ * what the panel shows now (`info`; `null` = nothing). Shared by the checks
+ * above and the re-read a firewall change ends with (ADR-0021 decision 11).
+ */
+export function judgeFirewallStatus(
+	value: unknown,
+	info: FirewallInfo | null
+): FirewallCheckOutcome {
+	if (!isFirewallRuleStatus(value)) return { kind: 'unavailable' };
+	if (info === null) return { kind: 'superseded' };
+	if (!firewallStatusMatches(info, value)) {
+		return {
+			kind: 'stale',
+			newer: info.generation !== null && value.generation > info.generation
+		};
+	}
+	return { kind: 'ok', status: value };
 }
 
 /** What the panel shows: the last result and what went wrong with the last check. */
