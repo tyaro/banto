@@ -53,10 +53,35 @@ pub(crate) struct FirewallChangeTarget {
     pub(crate) generation: u64,
 }
 
+/// The in-process "a firewall change is running" guard (ADR-0021 decision
+/// 13): taken with [`RunningGuard::try_take`], released on drop (every path,
+/// panics included). Independent of the server lock, which is not held while
+/// UAC waits.
+pub(crate) struct RunningGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl<'a> RunningGuard<'a> {
+    /// `None` when another change holds the flag.
+    pub(crate) fn try_take(flag: &'a std::sync::atomic::AtomicBool) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self(flag))
+    }
+}
+
+impl Drop for RunningGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// How the change ended. Mirrors the frontend type to come (E3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum FirewallChangeOutcome {
+    /// Another firewall change of this process is still running; nothing was
+    /// started and nothing was audited. The screen shows the state again.
+    Busy,
     /// The confirmed target is not the current one; nothing was started and
     /// no UAC prompt was shown. The screen asks to confirm again.
     TargetChanged,
@@ -123,6 +148,15 @@ impl Attempt {
             outcome: FirewallChangeOutcome::Precondition,
             exit_code: None,
             refusal: Some(code),
+            os_error: None,
+        }
+    }
+
+    pub(crate) fn busy() -> Self {
+        Self {
+            outcome: FirewallChangeOutcome::Busy,
+            exit_code: None,
+            refusal: None,
             os_error: None,
         }
     }

@@ -272,6 +272,7 @@ stage 1's reach check.
   launch and asks to confirm again.
 - After the helper exits it compares again; if things changed, the result is treated as stale and re-read.
 - No lock is held while waiting for UAC (the user decides how long that takes).
+- Firewall changes within the same process run one at a time under a running guard independent of the server lock; an overlapping request starts nothing and answers `busy` (not audited; the re-read is still attached). Separate processes are out of scope.
 
 ### 14. Dependencies: versions already in the lock, only for the helper and the launcher
 

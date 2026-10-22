@@ -60,6 +60,11 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 /// App-wide state managed by Tauri (spec §10, §11).
 struct AppState {
+    /// A firewall change (UAC and the helper) is running in this process;
+    /// overlapping requests answer `busy` ([`firewall_change::RunningGuard`],
+    /// ADR-0021 decision 13). Separate from `server`, whose lock is not held
+    /// while UAC waits.
+    firewall_change_running: std::sync::atomic::AtomicBool,
     // [scaffold:items] begin
     items: ItemsService,
     // [scaffold:items] end
@@ -2243,18 +2248,21 @@ async fn firewall_target_is_current(
 ///
 /// 1. `require_role(Admin)` first - nothing below runs for a lower role
 ///    (`denied` audited) or without a session (not audited).
-/// 2. The pre-elevation placement check with the helper's own rule
+/// 2. A guard against overlapping firewall changes in this process is
+///    taken; if another is running, nothing starts and the answer is `busy`
+///    (not audited, with the re-read). It is held to the final re-read.
+/// 3. The pre-elevation placement check with the helper's own rule
 ///    ([`firewall_change::check_before_elevation`]), and the app identifier
 ///    against the helper's built-in one. A refusal starts nothing, shows no
 ///    UAC prompt, and is audited as `precondition` (decision 8).
-/// 3. Just before starting, the confirmed `target` is compared with the
+/// 4. Just before starting, the confirmed `target` is compared with the
 ///    current one; a difference starts nothing and answers `targetChanged`
 ///    so the screen confirms again (not audited: nothing was attempted).
-/// 4. The helper (the path the check accepted) is started and waited for
+/// 5. The helper (the path the check accepted) is started and waited for
 ///    on a blocking thread, holding no lock.
-/// 5. After it ended the target is compared again: a change makes the
+/// 6. After it ended the target is compared again: a change makes the
 ///    result `stale`.
-/// 6. The attempt is audited (`firewall_change`, `ok` only for done /
+/// 7. The attempt is audited (`firewall_change`, `ok` only for done /
 ///    already), and every answer carries a fresh stage-1 read.
 async fn firewall_rule_change_body(
     state: &AppState,
@@ -2266,6 +2274,16 @@ async fn firewall_rule_change_body(
     use firewall_change::{Attempt, FirewallChangeResult};
 
     let actor = require_role(state, Role::Admin, "firewall").await?;
+    let Some(_running) = firewall_change::RunningGuard::try_take(&state.firewall_change_running)
+    else {
+        let status = read_firewall_rule_status(state, identifier, deps.probe).await;
+        return Ok(FirewallChangeResult::new(
+            operation,
+            Attempt::busy(),
+            false,
+            status,
+        ));
+    };
     let checked = if identifier != admin_template_fw_elev::IDENTIFIER {
         Err(firewall_change::REFUSAL_IDENTIFIER_MISMATCH)
     } else {
@@ -4272,6 +4290,7 @@ pub fn run() {
                 items,
                 // [scaffold:items] end
                 auth: Mutex::new(AuthSlot::new(initial_auth)),
+                firewall_change_running: std::sync::atomic::AtomicBool::new(false),
                 auth_io: AuthIo::production(&users, &settings),
                 auth_config_lock: AsyncMutex::new(()),
                 users,
@@ -4388,6 +4407,7 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
             auth: Mutex::new(AuthSlot::default()),
+            firewall_change_running: std::sync::atomic::AtomicBool::new(false),
             auth_config_lock: AsyncMutex::new(()),
             auth_io: AuthIo::production(
                 &UsersService::new(pool.clone()),
@@ -4451,6 +4471,7 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
             auth: Mutex::new(AuthSlot::default()),
+            firewall_change_running: std::sync::atomic::AtomicBool::new(false),
             auth_config_lock: AsyncMutex::new(()),
             auth_io: AuthIo::production(
                 &UsersService::new(pool.clone()),
@@ -8809,6 +8830,98 @@ mod tests {
         assert_eq!(result.status.generation, target.generation + 1);
         let rows = fw_audit_rows(&state).await;
         assert_eq!(rows[0].3["stale"], true);
+    }
+
+    static FW_BUSY_STARTED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    static FW_BUSY_RELEASE: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    /// An overlapping change in the same process starts nothing (no check, no
+    /// launch) and is not audited; once the first ends, the next goes through.
+    #[tokio::test]
+    async fn firewall_rule_change_answers_busy_while_another_change_runs() {
+        use firewall_change::{FirewallChangeOperation::Allow, FirewallChangeOutcome};
+        use std::sync::atomic::Ordering;
+        fn launch(_: &std::path::Path, _: &[&str]) -> Result<u32, elevated_launch::LaunchError> {
+            FW_BUSY_STARTED.store(true, Ordering::SeqCst);
+            while !FW_BUSY_RELEASE.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Ok(0)
+        }
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let id = admin_template_fw_elev::IDENTIFIER;
+        let first = fw_change(&state, id, Allow, &target, fw_placement_ok, launch);
+        let second = async {
+            while !FW_BUSY_STARTED.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            let busy = fw_change(
+                &state,
+                id,
+                Allow,
+                &target,
+                fw_placement_unreachable,
+                fw_launch_unreachable,
+            )
+            .await;
+            FW_BUSY_RELEASE.store(true, Ordering::SeqCst);
+            busy
+        };
+        let (first, busy) = tokio::join!(first, second);
+        assert_eq!(first.expect("first").outcome, FirewallChangeOutcome::Done);
+        assert_eq!(busy.expect("busy").outcome, FirewallChangeOutcome::Busy);
+        assert_eq!(fw_audit_rows(&state).await.len(), 1);
+
+        let next = fw_change(&state, id, Allow, &target, fw_placement_ok, |_, _| Ok(0)).await;
+        assert_eq!(next.expect("next").outcome, FirewallChangeOutcome::Done);
+        assert_eq!(fw_audit_rows(&state).await.len(), 2);
+    }
+
+    /// Early returns (a refused check, a moved target) release the guard.
+    #[tokio::test]
+    async fn firewall_rule_change_releases_the_guard_on_early_returns() {
+        use firewall_change::{FirewallChangeOperation::Allow, FirewallChangeOutcome};
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let id = admin_template_fw_elev::IDENTIFIER;
+
+        let refused = fw_change(
+            &state,
+            id,
+            Allow,
+            &target,
+            fw_placement_reparse,
+            fw_launch_unreachable,
+        )
+        .await;
+        assert_eq!(
+            refused.expect("refused").outcome,
+            FirewallChangeOutcome::Precondition
+        );
+
+        let moved = firewall_change::FirewallChangeTarget {
+            executable_path: target.executable_path.clone(),
+            generation: target.generation + 1,
+        };
+        let changed = fw_change(
+            &state,
+            id,
+            Allow,
+            &moved,
+            fw_placement_ok,
+            fw_launch_unreachable,
+        )
+        .await;
+        assert_eq!(
+            changed.expect("changed").outcome,
+            FirewallChangeOutcome::TargetChanged
+        );
+
+        let done = fw_change(&state, id, Allow, &target, fw_placement_ok, |_, _| Ok(0)).await;
+        assert_eq!(done.expect("done").outcome, FirewallChangeOutcome::Done);
     }
 
     /// The status reports the listener that is serving (its `local_addr`),
