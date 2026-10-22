@@ -68,7 +68,7 @@ corresponding ADR exists, be traced from there.
 | [0018](0018-shared-ui-package.en.md)                   | Move general-purpose UI components into a new `@banto/ui` package in stages, and have callers inject text, icons, state and actions                                                                      | Accepted (phases 1-5 done) |
 | [0019](0019-audit-spool.en.md)                         | Spool an audit entry the database cannot take to a file, and flush it exactly once by `pending_id` after recovery                                                                                        | Accepted                   |
 | [0020](0020-image-assets-package.en.md)                | Keep browser-side image originals, import checks and URL lifetimes in a new optional package, `@banto/image-assets` (consumer-supplied limits, error codes, `crypto.subtle` or an in-house SHA-256)      | Accepted                   |
-| [0021](0021-firewall-elevated-helper.en.md)            | For stage 2, a UAC-elevated helper adds and removes a single per-executable firewall rule                                                                                                                | Proposed                   |
+| [0021](0021-firewall-elevated-helper.en.md)            | For stage 2, a UAC-elevated helper adds and removes a single per-executable firewall rule                                                                                                                | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 

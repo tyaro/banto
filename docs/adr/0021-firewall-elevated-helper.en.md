@@ -2,7 +2,7 @@
 
 > 日本語: [0021-firewall-elevated-helper.md](0021-firewall-elevated-helper.md)
 
-- Status: Proposed (awaiting review; decisions 1-4 are the owner's decisions of 2026-10-22, decisions 5 onward are recommendations to be confirmed in review; implementation starts after this ADR is reviewed)
+- Status: Accepted (2026-10-22; decisions 1-4 are the owner's decisions; decisions 5 onward were confirmed by the reviews of E2-E4 (#474, #475, #476) and the Windows real-machine test)
 - Date: 2026-10-22
 - Related: Issue #219 (the 2026-10-11 design review, the 2026-10-21 plan and security audit, the same day's addendum on automatic port selection, the 2026-10-22 scope change) / #459 / #460 /
   [conventions.md](../conventions.en.md) §1, §3, §6 /
