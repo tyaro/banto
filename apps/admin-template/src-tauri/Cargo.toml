@@ -103,12 +103,14 @@ window-vibrancy = { workspace = true }
 # launch module (`src/elevated_launch.rs`) only, at the version already in
 # Cargo.lock (0.61.2), so no new crate enters the build. Features, by use:
 # - Win32_Foundation: CloseHandle / GetLastError / WAIT_OBJECT_0
+# - Win32_System_Com: CoInitializeEx / CoUninitialize (COM on the launch thread)
 # - Win32_System_Registry: needed by SHELLEXECUTEINFOW (its `hkeyClass`)
 # - Win32_System_Threading: WaitForSingleObject / GetExitCodeProcess
-# - Win32_UI_Shell: ShellExecuteExW / SEE_MASK_NOCLOSEPROCESS
+# - Win32_UI_Shell: ShellExecuteExW / SEE_MASK_NOCLOSEPROCESS / SEE_MASK_NOASYNC
 # - Win32_UI_WindowsAndMessaging: SW_SHOWNORMAL
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_System_Com",
     "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_UI_Shell",

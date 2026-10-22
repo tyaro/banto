@@ -86,6 +86,50 @@ pub(crate) fn parameters_from_tokens(tokens: &[&str]) -> Result<String, LaunchEr
     Ok(tokens.join(" "))
 }
 
+/// `ShellExecuteExW` flags: keep the process handle (to wait on it), and
+/// `SEE_MASK_NOASYNC` because the caller is a background thread with no
+/// message loop (the docs require it there; without it the launch can end
+/// early and a valid request would come back as `launchFailed`).
+#[cfg(windows)]
+const LAUNCH_MASK: u32 = windows_sys::Win32::UI::Shell::SEE_MASK_NOCLOSEPROCESS
+    | windows_sys::Win32::UI::Shell::SEE_MASK_NOASYNC;
+
+/// Initializes COM on the current thread (as the `ShellExecuteEx` docs
+/// recommend) and uninitializes it on drop - only if this call succeeded.
+#[cfg(windows)]
+struct ComApartment(bool);
+
+#[cfg(windows)]
+impl ComApartment {
+    fn init() -> Self {
+        use windows_sys::Win32::System::Com::{
+            CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        };
+        // SAFETY: no reserved pointer; the flags are valid.
+        let hr = unsafe {
+            CoInitializeEx(
+                std::ptr::null(),
+                (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32,
+            )
+        };
+        // S_OK / S_FALSE (already initialized) both count one reference that
+        // `CoUninitialize` must release. A failure such as RPC_E_CHANGED_MODE
+        // (the thread is already in another mode) added none, so we go on
+        // without COM of our own and do not uninitialize.
+        Self(hr >= 0)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        if self.0 {
+            // SAFETY: pairs the successful `CoInitializeEx` in `init`.
+            unsafe { windows_sys::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
 /// Starts `exe` elevated (verb `runas`, `SW_SHOWNORMAL`) with `tokens` as its
 /// arguments, waits until it ends and returns its exit code.
 ///
@@ -100,9 +144,7 @@ pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, WaitForSingleObject, INFINITE,
     };
-    use windows_sys::Win32::UI::Shell::{
-        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
-    };
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let parameters = parameters_from_tokens(tokens)?;
@@ -120,13 +162,17 @@ pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32
 
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS,
+        fMask: LAUNCH_MASK,
         lpVerb: verb.as_ptr(),
         lpFile: file.as_ptr(),
         lpParameters: params.as_ptr(),
         nShow: SW_SHOWNORMAL,
         ..Default::default()
     };
+
+    // COM for this thread, undone when `_com` drops (also on the early returns
+    // below): `spawn_blocking` threads are reused, so init and uninit must pair.
+    let _com = ComApartment::init();
 
     // SAFETY: the strings are NUL-terminated and live for this scope.
     if unsafe { ShellExecuteExW(&mut info) } == 0 {
@@ -169,6 +215,17 @@ pub(crate) fn run_elevated(_exe: &std::path::Path, tokens: &[&str]) -> Result<u3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn launch_mask_has_noasync_and_noclose_process() {
+        use windows_sys::Win32::UI::Shell::{SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS};
+        assert_eq!(LAUNCH_MASK & SEE_MASK_NOASYNC, SEE_MASK_NOASYNC);
+        assert_eq!(
+            LAUNCH_MASK & SEE_MASK_NOCLOSEPROCESS,
+            SEE_MASK_NOCLOSEPROCESS
+        );
+    }
 
     #[test]
     fn tokens_accept_the_helper_operations() {
