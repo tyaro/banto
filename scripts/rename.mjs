@@ -22,6 +22,8 @@
  *     `--filter <旧アプリ名>` 参照 … 新アプリ名へ追随
  *   - src-tauri/tauri.conf.json    … productName（--title）/ identifier
  *     （--identifier）/ app.windows[0].title（--title）
+ *   - apps/admin-template/elev/src/lib.rs の IDENTIFIER（ファイアウォールの helper の
+ *     ビルド時の定数、ADR-0021 決定 5）… --identifier
  *   - src/app.html <title> + PWA の apple-mobile-web-app-title /
  *     Sidebar・ログイン画面のブランド表示 /
  *     panel ページの <title> 接尾辞 … --title
@@ -142,6 +144,23 @@ editFile(
 	'apps/admin-template/src-tauri/src/keyring_store.rs',
 	`keyring SERVICE_NAME → "${args.identifier}"`,
 	(s) => replaceAll(s, '"dev.banto.admin-template"', `"${args.identifier}"`)
+);
+
+// ファイアウォールの helper（Issue #219 段階 2、ADR-0021 決定 5）は identifier を
+// ビルド時の定数で持つ（引数では受けない）。tauri.conf.json と食い違うと、本体は
+// helper を起動せず（`firewall_rule_change` の照合）、helper の crate のテスト
+// `identifier_matches_tauri_conf` も落ちる。ファイル内の現在値を読んで置き換える
+// ので、部分的にリネーム済みのツリーでも追随する。NSIS のフック
+// （`src-tauri/windows/fw-elev-hooks.nsh`）は Tauri の定義（BUNDLEID・
+// MAINBINARYNAME）から名前を作るので、書き換え不要。
+editFile(
+	'apps/admin-template/elev/src/lib.rs',
+	`fw-elev helper IDENTIFIER → "${args.identifier}"`,
+	(s) => {
+		const m = /pub const IDENTIFIER: &str = "([^"]*)";/.exec(s);
+		if (!m) return undefined;
+		return replaceAll(s, m[0], `pub const IDENTIFIER: &str = "${args.identifier}";`);
+	}
 );
 
 // --- 3. 表示ブランド（現在の Sidebar 表記を正として全 UI を追随） -----------

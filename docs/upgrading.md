@@ -169,6 +169,46 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
 **戻せる境界は「新版を本番 DB で最初に起動するまで」**。リリースノートでは、マイグレーションの有無と、
 戻せる条件を明記する。
 
+### 4.1 Windows のインストール形態が perMachine に変わる（#219 段階 2）
+
+[ADR-0021](adr/0021-firewall-elevated-helper.md) の決定 2・3 により、テンプレートの
+`apps/admin-template/src-tauri/tauri.conf.json` は NSIS の `bundle.windows.nsis.installMode` を
+`"perMachine"` にし、アンインストール時のフック（`installerHooks`、`src-tauri/windows/fw-elev-hooks.nsh`）を
+持つ。B（コピーしたテンプレート部分）でこれを取り込むと、派生アプリの配布物に次の影響が出る。
+
+- **インストール先が Program Files に変わる**（既定は `C:\Program Files\<productName>`。以前の既定は
+  per-user の `%LOCALAPPDATA%\<productName>`）。
+- **インストール時（とアンインストール時）に UAC が出る**。管理者の承認が無いとインストールできない。
+- **データは移動しない**。DB・設定は `%APPDATA%\<identifier>\` にあり、インストール先とは別なので、
+  identifier を変えない限りそのまま使われる。
+- **helper の同梱**: ファイアウォールの許可を昇格して行う helper（`<本体の exe 名>-fw-elev.exe`）を
+  本体 exe の隣に置くには、インストーラを `pnpm --filter <アプリ名> tauri:build:windows`
+  （= `tauri build --config src-tauri/tauri.fw-elev.conf.json`。helper を先にビルドして
+  `externalBin` で同梱する）で作る。素の `tauri build` で作ったインストーラには helper が入らず、
+  段階 2 は「前提が無い」で止まって段階 1 の案内になる（アンインストールのフックは、helper が無い旨と
+  手で外す方法を表示して続行する）。
+- **portable・per-user では段階 2 は使えない**。`installMode` を `"currentUser"`・`"both"` に戻した
+  派生アプリや、exe をコピーして配る運用では、helper の配置の検査（Program Files の下・管理者だけが
+  書ける）に通らず、画面は段階 1 の案内（コピーする PowerShell のコマンド）だけになる。段階 2 が要らない
+  ならそれでよい（`tauri.conf.json` の `installMode` を戻すだけで、ほかは変えなくてよい）。
+- **インストール時にはルールを作らない**。許可はアプリの設定画面で admin が行う。アンインストール時は
+  helper の `firewall-remove` でアプリが作ったルール（`<identifier>.lan.tcp.program`）だけを外し、
+  外せなくても（helper が無い・管理者が変えたルール・失敗）アンインストールは止めずに、ルール名と手で
+  外す方法をアンインストールの詳細に表示する。Tauri の更新（`/UPDATE`）ではルールを残す。
+
+**既存の per-user インストールからの移り方**: perMachine のインストーラは per-user のインストールを
+見つけず（登録先が HKCU と HKLM で違う）、上書きもしない。そのままでは 2 つのコピーが並ぶので、次の順で移る。
+
+1. アプリを終了し、念のため DB をバックアップする（上の「順序」の 1）。
+2. 旧版（per-user）を「設定 > アプリ」からアンインストールする。**アプリのデータを消す選択肢は選ばない**
+   （選ぶと `%APPDATA%\<identifier>\` の DB も消える）。
+3. 新版（perMachine）をインストールする（UAC が出る）。DB・設定はそのまま引き継がれる。
+4. 段階 1 でコピーしたコマンドでファイアウォールのルールを手で作っていた場合、そのルールは旧パスの exe を
+   指しているので、設定画面の状態は「期待と違う」になり、段階 2 の許可は「競合」で止まる。管理者の
+   PowerShell で `Remove-NetFirewallRule -Name '<identifier>.lan.tcp.program'` を実行して外してから、
+   設定画面で改めて許可する。
+5. スタートメニュー・デスクトップのショートカットは新しいインストール先のもの（全ユーザー共通）に変わる。
+
 ## 5. 派生アプリの基準版の記録（同期記録）
 
 派生リポジトリに、Banto のどの版を基準にしているかを**依存とコピーで別々に**残す。ツールは作らず、

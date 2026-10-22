@@ -49,6 +49,10 @@ on:
       - 'apps/admin-template/core/Cargo.toml'
       - 'apps/admin-template/src-tauri/src/lib.rs'
       - 'apps/admin-template/src-tauri/Cargo.toml'
+      - 'apps/admin-template/src-tauri/tauri.conf.json'
+      - 'apps/admin-template/src-tauri/tauri.fw-elev.conf.json'
+      - 'apps/admin-template/src-tauri/windows/**'
+      - 'apps/admin-template/elev/**'
       - 'packages/theme/**'
       - 'scripts/verify-architecture.mjs'
       - 'Cargo.toml'
@@ -77,6 +81,10 @@ on:
       - 'apps/admin-template/core/Cargo.toml'
       - 'apps/admin-template/src-tauri/src/lib.rs'
       - 'apps/admin-template/src-tauri/Cargo.toml'
+      - 'apps/admin-template/src-tauri/tauri.conf.json'
+      - 'apps/admin-template/src-tauri/tauri.fw-elev.conf.json'
+      - 'apps/admin-template/src-tauri/windows/**'
+      - 'apps/admin-template/elev/**'
       - 'packages/theme/**'
       - 'scripts/verify-architecture.mjs'
       - 'Cargo.toml'
@@ -155,6 +163,13 @@ jobs:
       - name: Cargo check the renamed copy (core crates)
         working-directory: ${{ env.DEST }}
         run: cargo check -p banto-core -p banto-storage -p banto-server -p banto-attachments -p admin-template-core
+
+      # ファイアウォールの helper（#219 段階 2、ADR-0021 決定 5）は identifier をビルド時の
+      # 定数で持つ。リネームが tauri.conf.json と helper の両方を書き換えたことを、helper の
+      # テスト（identifier_matches_tauri_conf ほか、名前・インストーラの設定の照合）で確かめる。
+      - name: Test the fw-elev helper in the renamed copy
+        working-directory: ${{ env.DEST }}
+        run: cargo test -p admin-template-fw-elev
 
   # プリセット受け入れ（P4-9 / docs/design/scaffold-presets-plan.md §6）: 各プリセットで
   # `scaffold.mjs` を適用したクリーンコピーが「ビルド緑」であることを機械で保証する。

@@ -136,6 +136,42 @@ fn helper_name_and_manifest_match_the_build() {
         .contains("1 24 \"admin-template-fw-elev.manifest\""));
 }
 
+/// E4 (decisions 2, 3, 7 and 8): the installer puts the helper next to the
+/// main exe under the fixed name both sides look for, the default install is
+/// perMachine, and the uninstall hook finds the helper and names the rule
+/// through Tauri's defines - which only works while the helper is
+/// `<main binary>-fw-elev.exe`.
+#[test]
+fn installer_bundles_the_helper_next_to_the_main_exe() {
+    let main_stem = MAIN_EXE_FILE_NAME.strip_suffix(".exe").unwrap();
+    let helper_stem = HELPER_EXE_FILE_NAME.strip_suffix(".exe").unwrap();
+    assert_eq!(helper_stem, format!("{main_stem}-fw-elev"));
+
+    // Tauri strips the `-<target triple>` of an externalBin and installs it
+    // into the install folder, i.e. next to the main exe.
+    let fw_elev_conf: serde_json::Value =
+        serde_json::from_str(include_str!("../../src-tauri/tauri.fw-elev.conf.json")).unwrap();
+    assert_eq!(
+        fw_elev_conf["bundle"]["externalBin"],
+        serde_json::json!([format!("binaries/{helper_stem}")])
+    );
+
+    let nsis = &tauri_conf()["bundle"]["windows"]["nsis"];
+    assert_eq!(nsis["installMode"].as_str(), Some("perMachine"));
+    assert_eq!(
+        nsis["installerHooks"].as_str(),
+        Some("windows/fw-elev-hooks.nsh")
+    );
+
+    let hooks = include_str!("../../src-tauri/windows/fw-elev-hooks.nsh");
+    assert!(hooks.contains("!macro NSIS_HOOK_PREUNINSTALL"));
+    assert!(hooks.contains(r#"'"$INSTDIR\${MAINBINARYNAME}-fw-elev.exe" firewall-remove'"#));
+    assert!(hooks.contains("${BUNDLEID}.lan.tcp.program"));
+    // Decision 3: nothing is created at install time.
+    assert!(!hooks.contains("firewall-allow"));
+    assert!(!hooks.contains("NSIS_HOOK_POSTINSTALL"));
+}
+
 /// The first `name = "..."` of a TOML fragment.
 fn package_name(toml: &str) -> Option<String> {
     toml.lines().find_map(|line| {
@@ -307,19 +343,24 @@ fn good() -> FakeProbe {
     FakeProbe(Ok(good_facts()))
 }
 
-const NAME: &str = "dev.banto.admin.lan.tcp.program";
+/// The rule name of the built-in identifier (not a literal, so the tests
+/// keep passing after the rename recipe changes [`IDENTIFIER`]).
+fn rule_name() -> String {
+    format!("{IDENTIFIER}.lan.tcp.program")
+}
 
 #[test]
 fn allow_creates_decision_ones_rule_for_the_main_exe() {
+    let name = rule_name();
     let fw = FakeFirewall::empty();
     let (code, _) = run_op(Operation::Allow, &good(), &fw);
     assert_eq!(code, EXIT_OK);
     assert_eq!(
         fw.calls(),
         [
-            format!("query {NAME}"),
-            format!("create {NAME} {}", program()),
-            format!("query {NAME}"),
+            format!("query {name}"),
+            format!("create {name} {}", program()),
+            format!("query {name}"),
         ]
     );
     // Then status and allow see it as the helper's own.
@@ -329,6 +370,7 @@ fn allow_creates_decision_ones_rule_for_the_main_exe() {
 
 #[test]
 fn status_reports_absent_owned_conflict_and_policy() {
+    let name = rule_name();
     assert_eq!(
         run_op(Operation::Status, &good(), &FakeFirewall::empty()).0,
         EXIT_OK
@@ -341,13 +383,14 @@ fn status_reports_absent_owned_conflict_and_policy() {
     widened.insert("Profile".into(), vec!["Private, Public".into()]);
     let fw = FakeFirewall::with(vec![widened], vec![owned(true)]);
     assert_eq!(run_op(Operation::Status, &good(), &fw).0, EXIT_CONFLICT);
-    assert_eq!(fw.calls(), [format!("query {NAME}")]);
+    assert_eq!(fw.calls(), [format!("query {name}")]);
 }
 
 /// Decision 6: a rule of the name that is not the helper's own is neither
 /// "already there" nor removed.
 #[test]
 fn a_conflicting_rule_is_never_overwritten_or_removed() {
+    let name = rule_name();
     let mut other_install = owned(false);
     other_install.insert(
         "Program".into(),
@@ -371,17 +414,18 @@ fn a_conflicting_rule_is_never_overwritten_or_removed() {
             let fw = FakeFirewall::with(local.clone(), active.clone());
             let (code, _) = run_op(op, &good(), &fw);
             assert_eq!(code, EXIT_CONFLICT, "{op:?} {local:?}");
-            assert_eq!(fw.calls(), [format!("query {NAME}")], "{op:?}: only read");
+            assert_eq!(fw.calls(), [format!("query {name}")], "{op:?}: only read");
         }
     }
 }
 
 #[test]
 fn allow_stops_with_policy_when_local_rules_are_not_merged() {
+    let name = rule_name();
     let fw = FakeFirewall::empty();
     fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
     assert_eq!(run_op(Operation::Allow, &good(), &fw).0, EXIT_POLICY);
-    assert_eq!(fw.calls(), [format!("query {NAME}")], "nothing created");
+    assert_eq!(fw.calls(), [format!("query {name}")], "nothing created");
 
     // An own local rule that is not in effect: allow does not add another.
     let fw = FakeFirewall::with(vec![owned(false)], vec![]);
@@ -396,6 +440,7 @@ fn allow_stops_with_policy_when_local_rules_are_not_merged() {
 
 #[test]
 fn an_existing_own_rule_is_policy_when_local_rules_are_not_merged() {
+    let name = rule_name();
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
     for op in [Operation::Status, Operation::Allow] {
@@ -407,24 +452,25 @@ fn an_existing_own_rule_is_policy_when_local_rules_are_not_merged() {
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
-    assert!(fw.calls().contains(&format!("remove {NAME}")));
+    assert!(fw.calls().contains(&format!("remove {name}")));
 }
 
 #[test]
 fn remove_removes_only_the_own_rule_and_absent_is_done() {
+    let name = rule_name();
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
     assert_eq!(
         fw.calls(),
         [
-            format!("query {NAME}"),
-            format!("remove {NAME}"),
-            format!("query {NAME}"),
+            format!("query {name}"),
+            format!("remove {name}"),
+            format!("query {name}"),
         ]
     );
     let fw = FakeFirewall::empty();
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
-    assert_eq!(fw.calls(), [format!("query {NAME}")]);
+    assert_eq!(fw.calls(), [format!("query {name}")]);
     // Own rule not in effect: still removable.
     let fw = FakeFirewall::with(vec![owned(false)], vec![]);
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);

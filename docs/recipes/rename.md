@@ -40,6 +40,11 @@ Banto は**コピーして使う**前提のテンプレート（[template-scope.
 - OS keyring のサービス名: `apps/admin-template/src-tauri/src/keyring_store.rs` の
   `SERVICE_NAME`（既定 `"dev.banto.admin-template"` → `--identifier` の値。手動でやる場合に
   見落とすと、新アプリの資格情報が旧テンプレートの keyring 識別子のまま同居する）
+- ファイアウォールの許可を昇格して行う helper（Issue #219 段階 2、[ADR-0021](../adr/0021-firewall-elevated-helper.md)）の
+  identifier: `apps/admin-template/elev/src/lib.rs` の `IDENTIFIER`（`tauri.conf.json` の
+  `identifier` と同じ値。食い違うと本体が helper を起動しない。`cargo test -p admin-template-fw-elev`
+  の `identifier_matches_tauri_conf` が検出する）。NSIS のフック
+  （`src-tauri/windows/fw-elev-hooks.nsh`）は Tauri の定義から名前を作るので書き換え不要
 - Rust ワークスペース `Cargo.toml` の `workspace.package.repository` と各
   `packages/*/package.json` の `repository.url`（`--repo` 指定時。`@banto/*` パッケージを
   独自に配布する場合は [publishing.md](../publishing.md) の scope 問題も参照）

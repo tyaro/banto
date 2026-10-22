@@ -87,6 +87,12 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 			'keyring SERVICE_NAME にテンプレート既定が残っている'
 		);
 
+		// ファイアウォールの helper の identifier（ビルド時の定数、ADR-0021 決定 5）が
+		// tauri.conf.json の identifier に追随（食い違うと helper が起動されない）。
+		const fwElev = fs.readFileSync(path.join(dir, 'apps/admin-template/elev/src/lib.rs'), 'utf8');
+		assert.match(fwElev, new RegExp(`pub const IDENTIFIER: &str = "${SAMPLE.identifier}";`));
+		assert.doesNotMatch(fwElev, /"dev\.banto\.admin"/, 'helper に旧 identifier が残っている');
+
 		// app.html の <title> が新タイトルに。
 		const appHtml = fs.readFileSync(path.join(dir, 'apps/admin-template/src/app.html'), 'utf8');
 		assert.match(appHtml, new RegExp(`<title>${SAMPLE.title}</title>`));
