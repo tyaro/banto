@@ -252,6 +252,7 @@ pub fn classify(snapshot: &RuleSnapshot, spec: &RuleSpec) -> RuleState {
             match snapshot.active.as_slice() {
                 [] => RuleState::OwnedNotInEffect,
                 [active] => match first_difference(active, spec, true) {
+                    None if snapshot.local_rules_disallowed() => RuleState::OwnedNotInEffect,
                     None => RuleState::Owned,
                     Some(field) => conflict(Conflict::Differs {
                         store: Store::Active,
@@ -352,6 +353,19 @@ mod tests {
         local.insert("Direction".into(), vec![" inbound ".into()]);
         let s = snapshot(vec![local], vec![owned_rule(true)]);
         assert_eq!(classify(&s, &spec()), RuleState::Owned);
+    }
+
+    #[test]
+    fn matching_active_rule_is_not_in_effect_when_local_rules_are_disallowed() {
+        for (value, expected) in [
+            ("False", RuleState::OwnedNotInEffect),
+            ("NotConfigured", RuleState::Owned),
+            ("True", RuleState::Owned),
+        ] {
+            let mut s = snapshot(vec![owned_rule(false)], vec![owned_rule(true)]);
+            s.allow_local_rules = vec![value.into()];
+            assert_eq!(classify(&s, &spec()), expected, "{value}");
+        }
     }
 
     #[test]

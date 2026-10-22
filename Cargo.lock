@@ -13,6 +13,7 @@ name = "admin-template"
 version = "6.8.0"
 dependencies = [
  "admin-template-core",
+ "admin-template-fw-elev",
  "banto-attachments",
  "banto-core",
  "banto-server",
@@ -27,6 +28,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "window-vibrancy",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

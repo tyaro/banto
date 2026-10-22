@@ -537,6 +537,7 @@
   "audit.actionSetup": "Initial setup",
   "audit.actionPasswordReset": "Password reset",
   "audit.actionSettingsChange": "Settings change",
+  "audit.actionFirewallChange": "Firewall change",
   "audit.actionDenied": "Permission denied",
   "audit.resultOk": "Success",
   "audit.resultDenied": "Denied",

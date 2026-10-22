@@ -18,6 +18,8 @@
 //! half (`packages/admin-core/src/events.ts`) - and auto-starts the server
 //! if it was left enabled on a previous run.
 
+mod elevated_launch;
+mod firewall_change;
 mod firewall_status;
 mod keyring_store;
 
@@ -58,6 +60,11 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 /// App-wide state managed by Tauri (spec §10, §11).
 struct AppState {
+    /// A firewall change (UAC and the helper) is running in this process;
+    /// overlapping requests answer `busy` ([`firewall_change::RunningGuard`],
+    /// ADR-0021 decision 13). Separate from `server`, whose lock is not held
+    /// while UAC waits.
+    firewall_change_running: std::sync::atomic::AtomicBool,
     // [scaffold:items] begin
     items: ItemsService,
     // [scaffold:items] end
@@ -2156,6 +2163,16 @@ async fn firewall_rule_status_body(
     probe: fn(&firewall_status::RuleNames) -> Result<String, firewall_status::UnknownReason>,
 ) -> Result<firewall_status::FirewallRuleStatus, BantoError> {
     require_role(state, Role::Admin, "settings").await?;
+    Ok(read_firewall_rule_status(state, identifier, probe).await)
+}
+
+/// The read of [`firewall_rule_status_body`] without its gate (also the
+/// re-read `firewall_rule_change` ends with, ADR-0021 decision 11).
+async fn read_firewall_rule_status(
+    state: &AppState,
+    identifier: &str,
+    probe: fn(&firewall_status::RuleNames) -> Result<String, firewall_status::UnknownReason>,
+) -> firewall_status::FirewallRuleStatus {
     let (generation, expected) = {
         let slot = state.server.lock().await;
         (
@@ -2172,7 +2189,146 @@ async fn firewall_rule_status_body(
             .await
             .unwrap_or(Err(firewall_status::UnknownReason::QueryFailed)),
     };
-    Ok(firewall_status::evaluate(generation, expected, outcome))
+    firewall_status::evaluate(generation, expected, outcome)
+}
+
+/// Mutating, desktop-only command (Issue #219 stage 2, ADR-0021 E2): adds
+/// (`allow`) or removes (`remove`) the one per-executable firewall rule by
+/// starting the UAC-elevated helper next to this exe. `admin`-only, audited
+/// as `firewall_change` (decision 12); no REST twin - the firewall is this
+/// PC's (conventions §1's desktop-only exception, like `server_apply`).
+/// `target` is what the confirmation screen showed (decision 13).
+#[tauri::command]
+async fn firewall_rule_change(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    operation: firewall_change::FirewallChangeOperation,
+    target: firewall_change::FirewallChangeTarget,
+) -> Result<firewall_change::FirewallChangeResult, BantoError> {
+    let identifier = app.config().identifier.clone();
+    firewall_rule_change_body(
+        &state,
+        &identifier,
+        operation,
+        &target,
+        FirewallChangeDeps {
+            check: firewall_change::check_before_elevation,
+            launch: elevated_launch::run_elevated,
+            probe: firewall_status::probe,
+        },
+    )
+    .await
+}
+
+/// What [`firewall_rule_change_body`] calls out to, injected so the gate,
+/// the comparisons and the audit are testable without Windows, UAC or a
+/// real firewall.
+struct FirewallChangeDeps {
+    /// The pre-elevation placement check (decision 8): the helper to start,
+    /// or a refusal code. Blocking.
+    check: fn() -> Result<admin_template_fw_elev::placement::Placement, &'static str>,
+    /// Starts the helper elevated and waits for its exit code. Blocking.
+    launch: fn(&std::path::Path, &[&str]) -> Result<u32, elevated_launch::LaunchError>,
+    /// Stage 1's read, for the re-read every result ends with.
+    probe: fn(&firewall_status::RuleNames) -> Result<String, firewall_status::UnknownReason>,
+}
+
+/// Whether `target` is still what is there: this exe's path (as
+/// `firewall_rule_status` reports it) and the server generation. The lock is
+/// taken only for the comparison (decision 13: none is held while UAC waits).
+async fn firewall_target_is_current(
+    state: &AppState,
+    target: &firewall_change::FirewallChangeTarget,
+) -> bool {
+    let generation = state.server.lock().await.generation;
+    generation == target.generation && current_executable_path() == target.executable_path
+}
+
+/// Body of [`firewall_rule_change`] (ADR-0021 decisions 8, 11-13):
+///
+/// 1. `require_role(Admin)` first - nothing below runs for a lower role
+///    (`denied` audited) or without a session (not audited).
+/// 2. A guard against overlapping firewall changes in this process is
+///    taken; if another is running, nothing starts and the answer is `busy`
+///    (not audited, with the re-read). It is held to the final re-read.
+/// 3. The pre-elevation placement check with the helper's own rule
+///    ([`firewall_change::check_before_elevation`]), and the app identifier
+///    against the helper's built-in one. A refusal starts nothing, shows no
+///    UAC prompt, and is audited as `precondition` (decision 8).
+/// 4. Just before starting, the confirmed `target` is compared with the
+///    current one; a difference starts nothing and answers `targetChanged`
+///    so the screen confirms again (not audited: nothing was attempted).
+/// 5. The helper (the path the check accepted) is started and waited for
+///    on a blocking thread, holding no lock.
+/// 6. After it ended the target is compared again: a change makes the
+///    result `stale`.
+/// 7. The attempt is audited (`firewall_change`, `ok` only for done /
+///    already), and every answer carries a fresh stage-1 read.
+async fn firewall_rule_change_body(
+    state: &AppState,
+    identifier: &str,
+    operation: firewall_change::FirewallChangeOperation,
+    target: &firewall_change::FirewallChangeTarget,
+    deps: FirewallChangeDeps,
+) -> Result<firewall_change::FirewallChangeResult, BantoError> {
+    use firewall_change::{Attempt, FirewallChangeResult};
+
+    let actor = require_role(state, Role::Admin, "firewall").await?;
+    let Some(_running) = firewall_change::RunningGuard::try_take(&state.firewall_change_running)
+    else {
+        let status = read_firewall_rule_status(state, identifier, deps.probe).await;
+        return Ok(FirewallChangeResult::new(
+            operation,
+            Attempt::busy(),
+            false,
+            status,
+        ));
+    };
+    let checked = if identifier != admin_template_fw_elev::IDENTIFIER {
+        Err(firewall_change::REFUSAL_IDENTIFIER_MISMATCH)
+    } else {
+        tokio::task::spawn_blocking(deps.check)
+            .await
+            .unwrap_or(Err(firewall_change::REFUSAL_UNVERIFIABLE))
+    };
+    let (attempt, stale) = match checked {
+        Err(code) => (Attempt::refused(code), false),
+        Ok(placement) => {
+            if !firewall_target_is_current(state, target).await {
+                let status = read_firewall_rule_status(state, identifier, deps.probe).await;
+                return Ok(FirewallChangeResult::new(
+                    operation,
+                    Attempt::target_changed(),
+                    false,
+                    status,
+                ));
+            }
+            let helper = PathBuf::from(placement.helper_exe);
+            let arg = operation.helper_operation().arg();
+            let launch = deps.launch;
+            let launched = tokio::task::spawn_blocking(move || launch(&helper, &[arg]))
+                .await
+                .ok();
+            let stale = !firewall_target_is_current(state, target).await;
+            (Attempt::launched(launched), stale)
+        }
+    };
+    let entity_id = firewall_status::rule_names(identifier).map(|names| names.program);
+    state
+        .audit
+        .record(AuditEntry {
+            actor_username: Some(&actor.username),
+            actor_role: Some(actor.role.as_str()),
+            action: "firewall_change",
+            resource: "firewall",
+            entity_id: entity_id.as_deref(),
+            detail: Some(attempt.audit_detail(operation, stale)),
+            origin: "tauri",
+            result: attempt.outcome.audit_result(),
+        })
+        .await;
+    let status = read_firewall_rule_status(state, identifier, deps.probe).await;
+    Ok(FirewallChangeResult::new(operation, attempt, stale, status))
 }
 
 /// Why `reach_check_issue` issued nothing (Issue #219 stage 1 / PR-C2,
@@ -4134,6 +4290,7 @@ pub fn run() {
                 items,
                 // [scaffold:items] end
                 auth: Mutex::new(AuthSlot::new(initial_auth)),
+                firewall_change_running: std::sync::atomic::AtomicBool::new(false),
                 auth_io: AuthIo::production(&users, &settings),
                 auth_config_lock: AsyncMutex::new(()),
                 users,
@@ -4186,6 +4343,7 @@ pub fn run() {
             server_status,
             server_apply,
             firewall_rule_status,
+            firewall_rule_change,
             reach_check_issue,
             reach_check_status,
             system_info,
@@ -4249,6 +4407,7 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
             auth: Mutex::new(AuthSlot::default()),
+            firewall_change_running: std::sync::atomic::AtomicBool::new(false),
             auth_config_lock: AsyncMutex::new(()),
             auth_io: AuthIo::production(
                 &UsersService::new(pool.clone()),
@@ -4312,6 +4471,7 @@ mod tests {
             items: ItemsService::new(pool.clone()).with_events(events.clone()),
             // [scaffold:items] end
             auth: Mutex::new(AuthSlot::default()),
+            firewall_change_running: std::sync::atomic::AtomicBool::new(false),
             auth_config_lock: AsyncMutex::new(()),
             auth_io: AuthIo::production(
                 &UsersService::new(pool.clone()),
@@ -8274,6 +8434,494 @@ mod tests {
         assert_eq!(status.program, unknown);
         assert_eq!(status.port, unknown);
         assert_eq!(status.expected.port, None);
+    }
+
+    // --- firewall_rule_change (Issue #219 stage 2, ADR-0021 E2) -----------
+
+    const FW_HELPER: &str = r"C:\Program Files\Banto Admin\admin-template-fw-elev.exe";
+
+    type FwCheck = fn() -> Result<admin_template_fw_elev::placement::Placement, &'static str>;
+    type FwLaunch = fn(&std::path::Path, &[&str]) -> Result<u32, elevated_launch::LaunchError>;
+
+    fn fw_placement_ok() -> Result<admin_template_fw_elev::placement::Placement, &'static str> {
+        Ok(admin_template_fw_elev::placement::Placement {
+            helper_exe: FW_HELPER.into(),
+            main_exe: r"C:\Program Files\Banto Admin\admin-template.exe".into(),
+        })
+    }
+
+    fn fw_placement_unreachable(
+    ) -> Result<admin_template_fw_elev::placement::Placement, &'static str> {
+        panic!("the placement must not be checked");
+    }
+
+    fn fw_placement_reparse() -> Result<admin_template_fw_elev::placement::Placement, &'static str>
+    {
+        Err("reparsePoint")
+    }
+
+    fn fw_launch_unreachable(
+        _: &std::path::Path,
+        _: &[&str],
+    ) -> Result<u32, elevated_launch::LaunchError> {
+        panic!("the helper must not be started");
+    }
+
+    fn fw_probe_failed(
+        _: &firewall_status::RuleNames,
+    ) -> Result<String, firewall_status::UnknownReason> {
+        Err(firewall_status::UnknownReason::QueryFailed)
+    }
+
+    fn fw_deps(check: FwCheck, launch: FwLaunch) -> FirewallChangeDeps {
+        FirewallChangeDeps {
+            check,
+            launch,
+            probe: fw_probe_failed,
+        }
+    }
+
+    async fn fw_current_target(state: &AppState) -> firewall_change::FirewallChangeTarget {
+        firewall_change::FirewallChangeTarget {
+            executable_path: current_executable_path(),
+            generation: state.server.lock().await.generation,
+        }
+    }
+
+    async fn fw_change(
+        state: &AppState,
+        identifier: &str,
+        operation: firewall_change::FirewallChangeOperation,
+        target: &firewall_change::FirewallChangeTarget,
+        check: FwCheck,
+        launch: FwLaunch,
+    ) -> Result<firewall_change::FirewallChangeResult, BantoError> {
+        firewall_rule_change_body(state, identifier, operation, target, fw_deps(check, launch))
+            .await
+    }
+
+    /// The `firewall_change` rows as `(resource, entity_id, result, detail)`.
+    async fn fw_audit_rows(
+        state: &AppState,
+    ) -> Vec<(String, Option<String>, String, serde_json::Value)> {
+        state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .into_iter()
+            .filter(|row| row.action == "firewall_change")
+            .map(|row| {
+                let detail = row
+                    .detail
+                    .map(|d| serde_json::from_str(&d).expect("detail json"))
+                    .unwrap_or(serde_json::Value::Null);
+                (row.resource, row.entity_id, row.result, detail)
+            })
+            .collect()
+    }
+
+    /// Decision 12: admin-only. No session is refused unaudited, a lower
+    /// role is refused with `denied` - and neither reaches the placement
+    /// check or the helper.
+    #[tokio::test]
+    async fn firewall_rule_change_is_admin_only() {
+        let state = app_state().await;
+        let target = fw_current_target(&state).await;
+        let allow = firewall_change::FirewallChangeOperation::Allow;
+        let id = admin_template_fw_elev::IDENTIFIER;
+        assert!(matches!(
+            fw_change(
+                &state,
+                id,
+                allow,
+                &target,
+                fw_placement_unreachable,
+                fw_launch_unreachable
+            )
+            .await,
+            Err(BantoError::Unauthorized)
+        ));
+        for (name, role) in [("viewer", Role::Viewer), ("editor", Role::Editor)] {
+            let user = state
+                .users
+                .create_user(name, "password123", name, role)
+                .await
+                .expect("create_user");
+            state.set_session_for_test(Some(DesktopSession::Account(user)));
+            let result = fw_change(
+                &state,
+                id,
+                allow,
+                &target,
+                fw_placement_unreachable,
+                fw_launch_unreachable,
+            )
+            .await;
+            assert!(
+                matches!(result, Err(BantoError::Forbidden)),
+                "{name}: {result:?}"
+            );
+        }
+        let denied: Vec<_> = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list")
+            .rows
+            .into_iter()
+            .filter(|row| row.action == "denied")
+            .map(|row| row.resource)
+            .collect();
+        assert_eq!(denied, vec!["firewall", "firewall"]);
+        assert!(fw_audit_rows(&state).await.is_empty());
+    }
+
+    /// Decision 8: a refused placement starts nothing (no UAC prompt) and is
+    /// audited as a precondition failure with its code.
+    #[tokio::test]
+    async fn firewall_rule_change_refused_placement_starts_nothing() {
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let result = fw_change(
+            &state,
+            admin_template_fw_elev::IDENTIFIER,
+            firewall_change::FirewallChangeOperation::Allow,
+            &target,
+            fw_placement_reparse,
+            fw_launch_unreachable,
+        )
+        .await
+        .expect("result");
+        assert_eq!(
+            result.outcome,
+            firewall_change::FirewallChangeOutcome::Precondition
+        );
+        assert_eq!(result.refusal, Some("reparsePoint"));
+        assert_eq!(result.exit_code, None);
+        assert!(!result.stale);
+        assert_eq!(result.status.generation, target.generation);
+        assert_eq!(
+            fw_audit_rows(&state).await,
+            vec![(
+                "firewall".to_string(),
+                Some(format!(
+                    "{}.lan.tcp.program",
+                    admin_template_fw_elev::IDENTIFIER
+                )),
+                "failed".to_string(),
+                serde_json::json!({
+                    "operation": "allow",
+                    "outcome": "precondition",
+                    "stale": false,
+                    "refusal": "reparsePoint",
+                }),
+            )]
+        );
+    }
+
+    /// An app identifier other than the helper's built-in one is refused
+    /// before the placement is even read.
+    #[tokio::test]
+    async fn firewall_rule_change_refuses_another_identifier() {
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let result = fw_change(
+            &state,
+            "com.example.banto",
+            firewall_change::FirewallChangeOperation::Remove,
+            &target,
+            fw_placement_unreachable,
+            fw_launch_unreachable,
+        )
+        .await
+        .expect("result");
+        assert_eq!(
+            result.outcome,
+            firewall_change::FirewallChangeOutcome::Precondition
+        );
+        assert_eq!(result.refusal, Some("identifierMismatch"));
+        assert_eq!(fw_audit_rows(&state).await.len(), 1);
+    }
+
+    /// Decision 13: a target other than the current one (another generation
+    /// or another exe path) starts nothing and asks to confirm again; nothing
+    /// was attempted, so nothing is audited.
+    #[tokio::test]
+    async fn firewall_rule_change_refuses_a_target_that_changed() {
+        let state = admin_app_state().await;
+        let current = fw_current_target(&state).await;
+        for target in [
+            firewall_change::FirewallChangeTarget {
+                generation: current.generation + 1,
+                ..current.clone()
+            },
+            firewall_change::FirewallChangeTarget {
+                executable_path: Some(r"C:\elsewhere\admin-template.exe".into()),
+                ..current.clone()
+            },
+        ] {
+            let result = fw_change(
+                &state,
+                admin_template_fw_elev::IDENTIFIER,
+                firewall_change::FirewallChangeOperation::Allow,
+                &target,
+                fw_placement_ok,
+                fw_launch_unreachable,
+            )
+            .await
+            .expect("result");
+            assert_eq!(
+                result.outcome,
+                firewall_change::FirewallChangeOutcome::TargetChanged
+            );
+            // The fresh read the screen confirms again with.
+            assert_eq!(result.status.generation, current.generation);
+        }
+        assert!(fw_audit_rows(&state).await.is_empty());
+    }
+
+    /// The checked helper is started with the operation as its only
+    /// argument; exit 0 is `done` (not "reachable"), audited `ok`, and the
+    /// answer carries the re-read.
+    #[tokio::test]
+    async fn firewall_rule_change_starts_the_checked_helper() {
+        fn launch(
+            exe: &std::path::Path,
+            args: &[&str],
+        ) -> Result<u32, elevated_launch::LaunchError> {
+            assert_eq!(exe, std::path::Path::new(FW_HELPER));
+            assert_eq!(args, ["firewall-remove"]);
+            Ok(0)
+        }
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let result = fw_change(
+            &state,
+            admin_template_fw_elev::IDENTIFIER,
+            firewall_change::FirewallChangeOperation::Remove,
+            &target,
+            fw_placement_ok,
+            launch,
+        )
+        .await
+        .expect("result");
+        assert_eq!(result.outcome, firewall_change::FirewallChangeOutcome::Done);
+        assert_eq!(result.exit_code, Some(0));
+        assert!(!result.stale);
+        assert_eq!(
+            result.status.program,
+            firewall_status::FirewallRuleCheck::Unknown {
+                reason: firewall_status::UnknownReason::QueryFailed
+            }
+        );
+        let rows = fw_audit_rows(&state).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].2, "ok");
+        assert_eq!(
+            rows[0].3,
+            serde_json::json!({
+                "operation": "remove",
+                "outcome": "done",
+                "stale": false,
+                "exitCode": 0,
+            })
+        );
+    }
+
+    /// A declined UAC prompt (`ERROR_CANCELLED`) is `cancelled`, audited as
+    /// failed; a helper's conflict (exit 4) likewise.
+    #[tokio::test]
+    async fn firewall_rule_change_records_cancel_and_failures() {
+        fn cancelled(_: &std::path::Path, _: &[&str]) -> Result<u32, elevated_launch::LaunchError> {
+            Err(elevated_launch::LaunchError::ShellExecute(
+                elevated_launch::ERROR_CANCELLED,
+            ))
+        }
+        fn conflict(_: &std::path::Path, _: &[&str]) -> Result<u32, elevated_launch::LaunchError> {
+            Ok(4)
+        }
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        for (launch, outcome) in [
+            (
+                cancelled as FwLaunch,
+                firewall_change::FirewallChangeOutcome::Cancelled,
+            ),
+            (
+                conflict as FwLaunch,
+                firewall_change::FirewallChangeOutcome::Conflict,
+            ),
+        ] {
+            let result = fw_change(
+                &state,
+                admin_template_fw_elev::IDENTIFIER,
+                firewall_change::FirewallChangeOperation::Allow,
+                &target,
+                fw_placement_ok,
+                launch,
+            )
+            .await
+            .expect("result");
+            assert_eq!(result.outcome, outcome);
+        }
+        let mut rows: Vec<_> = fw_audit_rows(&state)
+            .await
+            .into_iter()
+            .map(|(_, _, result, detail)| {
+                (result, detail["outcome"].clone(), detail["osError"].clone())
+            })
+            .collect();
+        rows.sort_by_key(|row| row.1.to_string());
+        assert_eq!(
+            rows,
+            vec![
+                ("failed".to_string(), "cancelled".into(), 1223.into()),
+                (
+                    "failed".to_string(),
+                    "conflict".into(),
+                    serde_json::Value::Null
+                ),
+            ]
+        );
+    }
+
+    static FW_STALE_STARTED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    static FW_STALE_RELEASE: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    /// Decision 13: no lock is held while the helper runs (an apply can
+    /// advance the generation meanwhile), and a generation that moved makes
+    /// the result `stale`.
+    #[tokio::test]
+    async fn firewall_rule_change_marks_a_result_stale_when_the_generation_moved() {
+        use std::sync::atomic::Ordering;
+        fn launch(_: &std::path::Path, _: &[&str]) -> Result<u32, elevated_launch::LaunchError> {
+            FW_STALE_STARTED.store(true, Ordering::SeqCst);
+            while !FW_STALE_RELEASE.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Ok(0)
+        }
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let change = fw_change(
+            &state,
+            admin_template_fw_elev::IDENTIFIER,
+            firewall_change::FirewallChangeOperation::Allow,
+            &target,
+            fw_placement_ok,
+            launch,
+        );
+        let bump = async {
+            while !FW_STALE_STARTED.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            // Would never get the lock if the change held it while waiting.
+            state.server.lock().await.generation += 1;
+            FW_STALE_RELEASE.store(true, Ordering::SeqCst);
+        };
+        let (result, ()) = tokio::join!(change, bump);
+        let result = result.expect("result");
+        assert_eq!(result.outcome, firewall_change::FirewallChangeOutcome::Done);
+        assert!(result.stale);
+        assert_eq!(result.status.generation, target.generation + 1);
+        let rows = fw_audit_rows(&state).await;
+        assert_eq!(rows[0].3["stale"], true);
+    }
+
+    static FW_BUSY_STARTED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    static FW_BUSY_RELEASE: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    /// An overlapping change in the same process starts nothing (no check, no
+    /// launch) and is not audited; once the first ends, the next goes through.
+    #[tokio::test]
+    async fn firewall_rule_change_answers_busy_while_another_change_runs() {
+        use firewall_change::{FirewallChangeOperation::Allow, FirewallChangeOutcome};
+        use std::sync::atomic::Ordering;
+        fn launch(_: &std::path::Path, _: &[&str]) -> Result<u32, elevated_launch::LaunchError> {
+            FW_BUSY_STARTED.store(true, Ordering::SeqCst);
+            while !FW_BUSY_RELEASE.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Ok(0)
+        }
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let id = admin_template_fw_elev::IDENTIFIER;
+        let first = fw_change(&state, id, Allow, &target, fw_placement_ok, launch);
+        let second = async {
+            while !FW_BUSY_STARTED.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            let busy = fw_change(
+                &state,
+                id,
+                Allow,
+                &target,
+                fw_placement_unreachable,
+                fw_launch_unreachable,
+            )
+            .await;
+            FW_BUSY_RELEASE.store(true, Ordering::SeqCst);
+            busy
+        };
+        let (first, busy) = tokio::join!(first, second);
+        assert_eq!(first.expect("first").outcome, FirewallChangeOutcome::Done);
+        assert_eq!(busy.expect("busy").outcome, FirewallChangeOutcome::Busy);
+        assert_eq!(fw_audit_rows(&state).await.len(), 1);
+
+        let next = fw_change(&state, id, Allow, &target, fw_placement_ok, |_, _| Ok(0)).await;
+        assert_eq!(next.expect("next").outcome, FirewallChangeOutcome::Done);
+        assert_eq!(fw_audit_rows(&state).await.len(), 2);
+    }
+
+    /// Early returns (a refused check, a moved target) release the guard.
+    #[tokio::test]
+    async fn firewall_rule_change_releases_the_guard_on_early_returns() {
+        use firewall_change::{FirewallChangeOperation::Allow, FirewallChangeOutcome};
+        let state = admin_app_state().await;
+        let target = fw_current_target(&state).await;
+        let id = admin_template_fw_elev::IDENTIFIER;
+
+        let refused = fw_change(
+            &state,
+            id,
+            Allow,
+            &target,
+            fw_placement_reparse,
+            fw_launch_unreachable,
+        )
+        .await;
+        assert_eq!(
+            refused.expect("refused").outcome,
+            FirewallChangeOutcome::Precondition
+        );
+
+        let moved = firewall_change::FirewallChangeTarget {
+            executable_path: target.executable_path.clone(),
+            generation: target.generation + 1,
+        };
+        let changed = fw_change(
+            &state,
+            id,
+            Allow,
+            &moved,
+            fw_placement_ok,
+            fw_launch_unreachable,
+        )
+        .await;
+        assert_eq!(
+            changed.expect("changed").outcome,
+            FirewallChangeOutcome::TargetChanged
+        );
+
+        let done = fw_change(&state, id, Allow, &target, fw_placement_ok, |_, _| Ok(0)).await;
+        assert_eq!(done.expect("done").outcome, FirewallChangeOutcome::Done);
     }
 
     /// The status reports the listener that is serving (its `local_addr`),

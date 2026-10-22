@@ -60,6 +60,13 @@ futures-util = { workspace = true }
 # workspace `Cargo.toml`'s comment on this dependency for why it lives only
 # here and not on `admin-template-core`.
 keyring = { workspace = true }
+# Issue #219 stage 2 (ADR-0021 decisions 7 and 8): the firewall helper's
+# lib only - its placement judgement (`placement::check_placement`) and the
+# Windows fact collection, so the check before asking for elevation is the
+# helper's own rule (same function, same tests). Depending on the lib builds
+# neither the helper's bin nor its manifest into this exe (its build.rs
+# links the manifest into that `[[bin]]` only).
+admin-template-fw-elev = { path = "../elev" }
 
 # `#[tokio::test]` for this crate's own unit tests (spec M14: the
 # `change_own_password` audit-recording test) - the runtime/macros features
@@ -88,3 +95,24 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
 # `src/lib.rs` `#[cfg]`-degrade to "not supported" there.
 [target.'cfg(target_os = "windows")'.dependencies]
 window-vibrancy = { workspace = true }
+
+# A table of its own (not under window-vibrancy's above), so removing the
+# glass theme's dependency (scaffold / remove-optional-assets) leaves it.
+[target.'cfg(windows)'.dependencies]
+# ADR-0021 decisions 7 and 14 (conventions §3 "足す側の例外"): the runas
+# launch module (`src/elevated_launch.rs`) only, at the version already in
+# Cargo.lock (0.61.2), so no new crate enters the build. Features, by use:
+# - Win32_Foundation: CloseHandle / GetLastError / WAIT_OBJECT_0
+# - Win32_System_Com: CoInitializeEx / CoUninitialize (COM on the launch thread)
+# - Win32_System_Registry: needed by SHELLEXECUTEINFOW (its `hkeyClass`)
+# - Win32_System_Threading: WaitForSingleObject / GetExitCodeProcess
+# - Win32_UI_Shell: ShellExecuteExW / SEE_MASK_NOCLOSEPROCESS / SEE_MASK_NOASYNC
+# - Win32_UI_WindowsAndMessaging: SW_SHOWNORMAL
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

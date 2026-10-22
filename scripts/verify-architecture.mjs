@@ -426,6 +426,10 @@ const isAllowedPackageImport = (spec) =>
 		// audited - lan-reach-check-design D8). Only this PC's administrator
 		// issues; no REST twin by design (§5.1).
 		'reach_check_issue',
+		// Issue #219 stage 2 (ADR-0021 decision 12): adds/removes this PC's
+		// firewall rule through the UAC-elevated helper (admin, audited as
+		// `firewall_change`). The firewall is this PC's - no REST twin.
+		'firewall_rule_change',
 		'settings_set',
 		'auth_config_apply',
 		'panel_open',

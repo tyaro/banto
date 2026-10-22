@@ -66,9 +66,11 @@ pub const EXIT_ALREADY: i32 = 3;
 /// was changed.
 pub const EXIT_CONFLICT: i32 = 4;
 /// A policy keeps local rules from applying (e.g. Group Policy does not
-/// merge local rules): `firewall-allow` creates nothing, and
-/// `firewall-allow` / `firewall-status` report an own local rule that is
-/// not in effect with it.
+/// merge local rules), even for an own rule already in place
+/// (`firewall-allow`, `firewall-status`). Without a rule, `firewall-allow`
+/// creates nothing when the policy is known up front, but keeps the rule
+/// it created when only the re-read after creating it shows the policy -
+/// so 5 does not always mean nothing was changed.
 pub const EXIT_POLICY: i32 = 5;
 /// Wrong usage (decision 10).
 pub const EXIT_USAGE: i32 = 64;
