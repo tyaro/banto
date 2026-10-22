@@ -22,6 +22,8 @@ test('tauri.fw-elev.conf.json の externalBin は helper 1 件で、本体の隣
 		sidecarFileName(base, 'x86_64-pc-windows-msvc'),
 		'admin-template-fw-elev-x86_64-pc-windows-msvc.exe'
 	);
+	// アンインストールのフックがあるのは NSIS だけなので、MSI は作らない。
+	assert.deepEqual(JSON.parse(conf).bundle.targets, ['nsis']);
 	// beforeBuildCommand は通常のフロントのビルドに helper のビルドを足したもの。
 	assert.match(
 		JSON.parse(conf).build.beforeBuildCommand,

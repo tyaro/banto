@@ -155,6 +155,12 @@ fn installer_bundles_the_helper_next_to_the_main_exe() {
         fw_elev_conf["bundle"]["externalBin"],
         serde_json::json!([format!("binaries/{helper_stem}")])
     );
+    // Only the NSIS installer has the uninstall hook below; an MSI would bundle
+    // the helper but leave the rule behind on uninstall.
+    assert_eq!(
+        fw_elev_conf["bundle"]["targets"],
+        serde_json::json!(["nsis"])
+    );
 
     let nsis = &tauri_conf()["bundle"]["windows"]["nsis"];
     assert_eq!(nsis["installMode"].as_str(), Some("perMachine"));
@@ -167,6 +173,15 @@ fn installer_bundles_the_helper_next_to_the_main_exe() {
     assert!(hooks.contains("!macro NSIS_HOOK_PREUNINSTALL"));
     assert!(hooks.contains(r#"'"$INSTDIR\${MAINBINARYNAME}-fw-elev.exe" firewall-remove'"#));
     assert!(hooks.contains("${BUNDLEID}.lan.tcp.program"));
+    // The app-running check (whose Cancel aborts the uninstall) comes before the
+    // rule is touched, and the launch is guarded (Program Files, no reparse point).
+    let check = hooks
+        .find("!insertmacro CheckIfAppIsRunning")
+        .expect("the hook runs Tauri's app-running check");
+    let launch = hooks.find("ExecWait '").unwrap();
+    assert!(check < launch);
+    assert!(hooks.contains("$PROGRAMFILES64"));
+    assert!(hooks.contains(r#""REPARSE_POINT""#));
     // Decision 3: nothing is created at install time.
     assert!(!hooks.contains("firewall-allow"));
     assert!(!hooks.contains("NSIS_HOOK_POSTINSTALL"));

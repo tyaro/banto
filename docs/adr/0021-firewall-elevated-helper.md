@@ -195,6 +195,15 @@ RemoteAddress を Any にした、LocalPort を足した、無効にした、な
   ので、検査したハンドルを起動に固定できない。ただし ACL の検査に通ったということは、一般利用者は
   その経路に書けないということなので、検査の後に差し替えられるのは既に管理者権限を持つ者だけで、
   昇格の境界を越える攻撃にはならない。この理由で受け入れる。
+- NSIS のアンインストールのフック（E4）からの起動: フックは helper を起動する前に、安い検査だけを行う
+  （`$INSTDIR` が Program Files（`$PROGRAMFILES64` か `$PROGRAMFILES`）の下にあること。パスの要素の
+  境界で比べ、大文字小文字を区別しない。helper の exe、`$INSTDIR`、そこから Program Files のフォルダ
+  自身までの各階層に reparse point が無いこと）。満たさなければ helper を起動せず、理由と手で外す
+  方法を表示してアンインストールを続ける。実効 ACL の検査は NSIS では行わない。昇格して動くのは
+  Windows が起動する `$INSTDIR\uninstall.exe`（Tauri がレジストリの `UninstallString` に書く）で、
+  helper と同じフォルダにある。そこで helper を差し替えられる者は `uninstall.exe` も同じく差し替え
+  られるので、アンインストーラから helper を起動しても新たな昇格の境界は越えない。helper の起動後の
+  検査（終了コード 2）は多重の防御として残る。
 
 代替:
 

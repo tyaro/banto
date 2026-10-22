@@ -196,7 +196,8 @@ Windows ファイアウォールにあるかを、**昇格せず読み取りだ�
 
 - **前提: Program Files の下に perMachine でインストールしたとき**だけ働く。インストーラは
   `pnpm --filter admin-template tauri:build:windows` で作る（helper を先にビルドして
-  本体の隣に同梱する。素の `tauri build` では helper が入らない）。テンプレートの既定の
+  本体の隣に同梱する。素の `tauri build` では helper が入らない）。作るのは NSIS のインストーラ
+  だけで、MSI には対応しない（ルールを外すアンインストールのフックが NSIS にしか無い）。テンプレートの既定の
   `installMode` は `perMachine`。portable・per-user・移動したコピー・`tauri dev` では
   「前提が無い」になり、上の段階 1 の情報（コピーするコマンド）を使う。
 - インストール時にはルールを作らない。アンインストール時は、このアプリが作ったルールだけを

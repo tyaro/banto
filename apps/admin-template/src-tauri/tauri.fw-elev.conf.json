@@ -4,6 +4,7 @@
     "beforeBuildCommand": "pnpm build && node ../../scripts/build-fw-elev.mjs"
   },
   "bundle": {
+    "targets": ["nsis"],
     "externalBin": ["binaries/admin-template-fw-elev"]
   }
 }

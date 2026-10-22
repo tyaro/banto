@@ -204,6 +204,16 @@ Check before asking for elevation:
   path, so the checked handle cannot be pinned to the launch. But passing the ACL check means ordinary
   users cannot write to that path, so only someone who already has administrator rights could swap it
   after the check; that does not cross the elevation boundary. It is accepted on that basis.
+- Launch from the NSIS uninstall hook (E4): before starting the helper, the hook runs only cheap checks
+  (`$INSTDIR` is strictly inside Program Files (`$PROGRAMFILES64` or `$PROGRAMFILES`), compared on
+  path-component boundaries, case-insensitively; and no reparse point on the helper exe, `$INSTDIR`, or
+  any folder from there up to and including that Program Files folder). If they fail, it does not start
+  the helper, prints the reason and how to remove the rule by hand, and continues the uninstall. The
+  effective-ACL check is not done in NSIS: what runs elevated is `$INSTDIR\uninstall.exe`, which Windows
+  starts (Tauri writes it as the registry `UninstallString`), in the same folder as the helper. Anyone who
+  can replace the helper there can equally replace `uninstall.exe`, so starting the helper from the
+  uninstaller crosses no new elevation boundary. The helper's post-launch check (exit 2) remains as
+  defence in depth.
 
 Alternatives:
 
