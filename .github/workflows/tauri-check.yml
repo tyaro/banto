@@ -35,6 +35,8 @@ on:
       - 'apps/admin-template/src-tauri/**'
       - 'apps/admin-template/core/**'
       - 'apps/admin-template/elev/**'
+      - 'scripts/build-fw-elev.mjs'
+      - 'scripts/build-fw-elev.test.mjs'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -44,6 +46,8 @@ on:
       - 'apps/admin-template/src-tauri/**'
       - 'apps/admin-template/core/**'
       - 'apps/admin-template/elev/**'
+      - 'scripts/build-fw-elev.mjs'
+      - 'scripts/build-fw-elev.test.mjs'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -112,6 +116,22 @@ jobs:
       # architecture verifier). Extra cost here is just the run time.
       - name: Cargo test
         run: cargo test -p admin-template
+
+      # #219 段階 2（ADR-0021、E4）: Windows のインストーラは helper を Tauri の externalBin
+      # として本体 exe の隣に同梱する（`pnpm --filter admin-template tauri:build:windows` =
+      # `tauri build --config src-tauri/tauri.fw-elev.conf.json`）。tauri build はしないが、
+      # その beforeBuildCommand が呼ぶ build-fw-elev.mjs が helper を externalBin の場所へ
+      # 置けることと、その設定を重ねた tauri-build（externalBin の解決）が通ることを確かめる。
+      # TAURI_ENV_DEBUG=true は上の check と同じ dev プロファイルで helper を作るため。
+      - name: Bundle the fw-elev helper as externalBin (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        env:
+          TAURI_ENV_DEBUG: 'true'
+        run: |
+          node --test scripts/build-fw-elev.test.mjs
+          node scripts/build-fw-elev.mjs
+          TAURI_CONFIG="$(cat apps/admin-template/src-tauri/tauri.fw-elev.conf.json)"             cargo check -p admin-template
 
   # A failed scheduled run has no PR to turn red and nobody staring at the
   # Actions tab, so surface it as a tracking issue (deduplicated by label:

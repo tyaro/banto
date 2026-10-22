@@ -7,8 +7,8 @@ use std::ffi::OsString;
 
 use super::*;
 use crate::placement::{
-    AceFact, ObjectFacts, PlacementFacts, ATTRIBUTE_DIRECTORY, SID_ADMINISTRATORS, SID_SYSTEM,
-    SID_TRUSTED_INSTALLER,
+    AceFact, InstalledFacts, ObjectFacts, PlacementFacts, ATTRIBUTE_DIRECTORY, SID_ADMINISTRATORS,
+    SID_SYSTEM, SID_TRUSTED_INSTALLER,
 };
 use crate::rules::{expected_fields, RuleFields, EXPECTED_SOURCE};
 
@@ -20,14 +20,17 @@ fn args(list: &[&str]) -> Vec<OsString> {
 
 #[test]
 fn each_operation_is_one_exact_argument() {
-    assert_eq!(parse_args(args(&["firewall-allow"])), Ok(Operation::Allow));
+    assert_eq!(
+        parse_args(args(&["firewall-allow"])),
+        Ok(Request::Run(Operation::Allow))
+    );
     assert_eq!(
         parse_args(args(&["firewall-remove"])),
-        Ok(Operation::Remove)
+        Ok(Request::Run(Operation::Remove))
     );
     assert_eq!(
         parse_args(args(&["firewall-status"])),
-        Ok(Operation::Status)
+        Ok(Request::Run(Operation::Status))
     );
 }
 
@@ -61,6 +64,47 @@ fn anything_else_is_usage() {
             "{unknown}"
         );
     }
+}
+
+/// The uninstaller's request takes exactly the install folder after it;
+/// no other operation takes a second argument.
+#[test]
+fn remove_installed_takes_exactly_the_install_folder() {
+    assert_eq!(
+        parse_args(args(&[
+            REMOVE_INSTALLED_ARG,
+            r"C:\Program Files\banto-admin"
+        ])),
+        Ok(Request::RemoveInstalled {
+            install_dir: r"C:\Program Files\banto-admin".into()
+        })
+    );
+    assert_eq!(
+        parse_args(args(&[REMOVE_INSTALLED_ARG])),
+        Err(UsageError::NoInstallDir)
+    );
+    assert_eq!(
+        parse_args(args(&[REMOVE_INSTALLED_ARG, ""])),
+        Err(UsageError::Empty)
+    );
+    assert_eq!(
+        parse_args(args(&[REMOVE_INSTALLED_ARG, r"C:\a", r"C:\b"])),
+        Err(UsageError::TooMany(3))
+    );
+    for op in Operation::ALL {
+        assert_eq!(
+            parse_args(args(&[op.arg(), r"C:\Program Files\banto-admin"])),
+            Err(UsageError::TooMany(2)),
+            "{op:?}"
+        );
+    }
+    assert_eq!(
+        parse_args(args(&[
+            r"C:\Program Files\banto-admin",
+            REMOVE_INSTALLED_ARG
+        ])),
+        Err(UsageError::TooMany(2))
+    );
 }
 
 #[test]
@@ -134,6 +178,78 @@ fn helper_name_and_manifest_match_the_build() {
     assert!(app_manifest.contains(r#"level="requireAdministrator""#));
     assert!(include_str!("../admin-template-fw-elev.rc")
         .contains("1 24 \"admin-template-fw-elev.manifest\""));
+}
+
+/// E4 (decisions 2, 3, 7 and 8): the installer puts the helper next to the
+/// main exe under the fixed name both sides look for, the default install is
+/// perMachine, and the uninstall hook embeds the same helper file into the
+/// uninstaller, runs that copy (not the installed one) and names the rule
+/// through Tauri's defines - which only works while the helper is
+/// `<main binary>-fw-elev.exe`.
+#[test]
+fn installer_bundles_the_helper_next_to_the_main_exe() {
+    let main_stem = MAIN_EXE_FILE_NAME.strip_suffix(".exe").unwrap();
+    let helper_stem = HELPER_EXE_FILE_NAME.strip_suffix(".exe").unwrap();
+    assert_eq!(helper_stem, format!("{main_stem}-fw-elev"));
+
+    // Tauri strips the `-<target triple>` of an externalBin and installs it
+    // into the install folder, i.e. next to the main exe.
+    let fw_elev_conf: serde_json::Value =
+        serde_json::from_str(include_str!("../../src-tauri/tauri.fw-elev.conf.json")).unwrap();
+    assert_eq!(
+        fw_elev_conf["bundle"]["externalBin"],
+        serde_json::json!([format!("binaries/{helper_stem}")])
+    );
+    // Only the NSIS installer has the uninstall hook below; an MSI would bundle
+    // the helper but leave the rule behind on uninstall.
+    assert_eq!(
+        fw_elev_conf["bundle"]["targets"],
+        serde_json::json!(["nsis"])
+    );
+
+    let nsis = &tauri_conf()["bundle"]["windows"]["nsis"];
+    assert_eq!(nsis["installMode"].as_str(), Some("perMachine"));
+    assert_eq!(
+        nsis["installerHooks"].as_str(),
+        Some("windows/fw-elev-hooks.nsh")
+    );
+
+    let hooks = include_str!("../../src-tauri/windows/fw-elev-hooks.nsh");
+    assert!(hooks.contains("!macro NSIS_HOOK_PREUNINSTALL"));
+    assert!(hooks.contains("${BUNDLEID}.lan.tcp.program"));
+    // Decision 8: the uninstaller runs the helper it carries (the externalBin
+    // source, embedded by `File` and extracted to $PLUGINSDIR), never the
+    // file in the install folder.
+    assert!(hooks.contains(&format!(
+        r"\..\{}\${{MAINBINARYNAME}}-fw-elev-${{FW_ELEV_TRIPLE}}.exe",
+        fw_elev_conf["bundle"]["externalBin"][0]
+            .as_str()
+            .unwrap()
+            .strip_suffix(&format!("/{helper_stem}"))
+            .unwrap()
+    )));
+    assert!(hooks.contains(r#"File "/oname=$PLUGINSDIR\${MAINBINARYNAME}-fw-elev.exe""#));
+    // The helper runs via nsExec (no console window; its output goes to the
+    // details log), and its exit code is popped into $0 right after.
+    let launch_line = format!(
+        r#"nsExec::ExecToLog '"$PLUGINSDIR\${{MAINBINARYNAME}}-fw-elev.exe" {REMOVE_INSTALLED_ARG} "$INSTDIR"'"#
+    );
+    assert!(hooks.contains(&launch_line));
+    assert_eq!(hooks.matches("nsExec::ExecToLog '").count(), 1);
+    assert!(!hooks.contains("ExecWait"));
+    let after_launch = &hooks[hooks.find(&launch_line).unwrap() + launch_line.len()..];
+    assert!(after_launch.trim_start().starts_with("Pop $0"));
+    assert!(!hooks.contains(r"$INSTDIR\${MAINBINARYNAME}-fw-elev.exe"));
+    // The app-running check (whose Cancel aborts the uninstall) comes before the
+    // rule is touched.
+    let check = hooks
+        .find("!insertmacro CheckIfAppIsRunning")
+        .expect("the hook runs Tauri's app-running check");
+    let launch = hooks.find(&launch_line).unwrap();
+    assert!(check < launch);
+    // Decision 3: nothing is created at install time.
+    assert!(!hooks.contains("firewall-allow"));
+    assert!(!hooks.contains("NSIS_HOOK_POSTINSTALL"));
 }
 
 /// The first `name = "..."` of a TOML fragment.
@@ -307,19 +423,24 @@ fn good() -> FakeProbe {
     FakeProbe(Ok(good_facts()))
 }
 
-const NAME: &str = "dev.banto.admin.lan.tcp.program";
+/// The rule name of the built-in identifier (not a literal, so the tests
+/// keep passing after the rename recipe changes [`IDENTIFIER`]).
+fn rule_name() -> String {
+    format!("{IDENTIFIER}.lan.tcp.program")
+}
 
 #[test]
 fn allow_creates_decision_ones_rule_for_the_main_exe() {
+    let name = rule_name();
     let fw = FakeFirewall::empty();
     let (code, _) = run_op(Operation::Allow, &good(), &fw);
     assert_eq!(code, EXIT_OK);
     assert_eq!(
         fw.calls(),
         [
-            format!("query {NAME}"),
-            format!("create {NAME} {}", program()),
-            format!("query {NAME}"),
+            format!("query {name}"),
+            format!("create {name} {}", program()),
+            format!("query {name}"),
         ]
     );
     // Then status and allow see it as the helper's own.
@@ -329,6 +450,7 @@ fn allow_creates_decision_ones_rule_for_the_main_exe() {
 
 #[test]
 fn status_reports_absent_owned_conflict_and_policy() {
+    let name = rule_name();
     assert_eq!(
         run_op(Operation::Status, &good(), &FakeFirewall::empty()).0,
         EXIT_OK
@@ -341,13 +463,14 @@ fn status_reports_absent_owned_conflict_and_policy() {
     widened.insert("Profile".into(), vec!["Private, Public".into()]);
     let fw = FakeFirewall::with(vec![widened], vec![owned(true)]);
     assert_eq!(run_op(Operation::Status, &good(), &fw).0, EXIT_CONFLICT);
-    assert_eq!(fw.calls(), [format!("query {NAME}")]);
+    assert_eq!(fw.calls(), [format!("query {name}")]);
 }
 
 /// Decision 6: a rule of the name that is not the helper's own is neither
 /// "already there" nor removed.
 #[test]
 fn a_conflicting_rule_is_never_overwritten_or_removed() {
+    let name = rule_name();
     let mut other_install = owned(false);
     other_install.insert(
         "Program".into(),
@@ -371,17 +494,18 @@ fn a_conflicting_rule_is_never_overwritten_or_removed() {
             let fw = FakeFirewall::with(local.clone(), active.clone());
             let (code, _) = run_op(op, &good(), &fw);
             assert_eq!(code, EXIT_CONFLICT, "{op:?} {local:?}");
-            assert_eq!(fw.calls(), [format!("query {NAME}")], "{op:?}: only read");
+            assert_eq!(fw.calls(), [format!("query {name}")], "{op:?}: only read");
         }
     }
 }
 
 #[test]
 fn allow_stops_with_policy_when_local_rules_are_not_merged() {
+    let name = rule_name();
     let fw = FakeFirewall::empty();
     fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
     assert_eq!(run_op(Operation::Allow, &good(), &fw).0, EXIT_POLICY);
-    assert_eq!(fw.calls(), [format!("query {NAME}")], "nothing created");
+    assert_eq!(fw.calls(), [format!("query {name}")], "nothing created");
 
     // An own local rule that is not in effect: allow does not add another.
     let fw = FakeFirewall::with(vec![owned(false)], vec![]);
@@ -396,6 +520,7 @@ fn allow_stops_with_policy_when_local_rules_are_not_merged() {
 
 #[test]
 fn an_existing_own_rule_is_policy_when_local_rules_are_not_merged() {
+    let name = rule_name();
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
     for op in [Operation::Status, Operation::Allow] {
@@ -407,24 +532,25 @@ fn an_existing_own_rule_is_policy_when_local_rules_are_not_merged() {
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     fw.state.borrow_mut().allow_local_rules = vec!["False".into()];
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
-    assert!(fw.calls().contains(&format!("remove {NAME}")));
+    assert!(fw.calls().contains(&format!("remove {name}")));
 }
 
 #[test]
 fn remove_removes_only_the_own_rule_and_absent_is_done() {
+    let name = rule_name();
     let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
     assert_eq!(
         fw.calls(),
         [
-            format!("query {NAME}"),
-            format!("remove {NAME}"),
-            format!("query {NAME}"),
+            format!("query {name}"),
+            format!("remove {name}"),
+            format!("query {name}"),
         ]
     );
     let fw = FakeFirewall::empty();
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
-    assert_eq!(fw.calls(), [format!("query {NAME}")]);
+    assert_eq!(fw.calls(), [format!("query {name}")]);
     // Own rule not in effect: still removable.
     let fw = FakeFirewall::with(vec![owned(false)], vec![]);
     assert_eq!(run_op(Operation::Remove, &good(), &fw).0, EXIT_OK);
@@ -478,6 +604,81 @@ fn an_untrusted_placement_touches_nothing() {
             assert!(fw.calls().is_empty(), "{op:?}: firewall untouched");
             assert!(lines[0].starts_with("precondition not met"));
         }
+    }
+}
+
+// --- the uninstaller's copy (decisions 3, 8 and 10) ---------------------------
+
+fn installed(main: Option<ObjectFacts>) -> Result<InstalledFacts, String> {
+    Ok(InstalledFacts {
+        program_files: vec![r"C:\Program Files".into()],
+        main,
+    })
+}
+
+fn run_installed(facts: Result<InstalledFacts, String>, fw: &FakeFirewall) -> (i32, Vec<String>) {
+    let mut lines = Vec::new();
+    let code = run_remove_installed(facts, fw, &mut |l| lines.push(l.to_string()));
+    (code, lines)
+}
+
+/// The rule's `Program` is the main exe's final path, so only the rule this
+/// app created for it is removed - same as `firewall-remove` next to it.
+#[test]
+fn remove_installed_removes_only_the_own_rule_of_that_main_exe() {
+    let name = rule_name();
+    let main = || Some(trusted(&program(), 0x20));
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    assert_eq!(run_installed(installed(main()), &fw).0, EXIT_OK);
+    assert_eq!(
+        fw.calls(),
+        [
+            format!("query {name}"),
+            format!("remove {name}"),
+            format!("query {name}"),
+        ]
+    );
+    let fw = FakeFirewall::empty();
+    assert_eq!(run_installed(installed(main()), &fw).0, EXIT_OK);
+    assert_eq!(fw.calls(), [format!("query {name}")]);
+    // A rule of the name for another exe is a conflict, never removed.
+    let other = Some(trusted(
+        &format!(r"C:\Program Files\other\{MAIN_EXE_FILE_NAME}"),
+        0x20,
+    ));
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    assert_eq!(run_installed(installed(other), &fw).0, EXIT_CONFLICT);
+    assert!(!fw.calls().iter().any(|c| c.starts_with("remove")));
+    // No ACL check: a main exe others may write still gets its rule removed.
+    let mut writable = trusted(&program(), 0x20);
+    writable.dacl.as_mut().unwrap().push(AceFact {
+        ace_type: 0,
+        flags: 0,
+        mask: 0x0013_01BF,
+        sid: Some("S-1-5-11".into()),
+    });
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    assert_eq!(run_installed(installed(Some(writable)), &fw).0, EXIT_OK);
+}
+
+#[test]
+fn remove_installed_needs_the_fixed_name_main_exe_under_program_files() {
+    for facts in [
+        installed(None),
+        installed(Some(trusted(&format!(r"{DIR}\other.exe"), 0x20))),
+        installed(Some(trusted(&program(), ATTRIBUTE_DIRECTORY))),
+        installed(Some(trusted(&program(), 0x400))),
+        installed(Some(trusted(
+            &format!(r"C:\Tools\{MAIN_EXE_FILE_NAME}"),
+            0x20,
+        ))),
+        Err("the install folder is not a plain drive path".into()),
+    ] {
+        let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+        let (code, lines) = run_installed(facts.clone(), &fw);
+        assert_eq!(code, EXIT_PRECONDITION, "{facts:?}");
+        assert!(fw.calls().is_empty(), "{facts:?}: firewall untouched");
+        assert!(lines[0].starts_with("precondition not met"));
     }
 }
 

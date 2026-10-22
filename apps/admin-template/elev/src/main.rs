@@ -8,12 +8,17 @@
 //!
 //! ```text
 //! admin-template-fw-elev.exe firewall-allow | firewall-remove | firewall-status
+//! admin-template-fw-elev.exe firewall-remove-installed <install folder>
 //! ```
 
 #[cfg(windows)]
 fn main() {
-    use admin_template_fw_elev::win::{CurrentExeProbe, PowerShellFirewall};
-    use admin_template_fw_elev::{parse_args, run, usage_lines, EXIT_FAILED, EXIT_USAGE};
+    use admin_template_fw_elev::win::{
+        collect_installed_facts, CurrentExeProbe, PowerShellFirewall,
+    };
+    use admin_template_fw_elev::{
+        parse_args, run, run_remove_installed, usage_lines, Request, EXIT_FAILED, EXIT_USAGE,
+    };
 
     // Decision 7: an elevated process's working directory is chosen by its
     // caller, so DLLs loaded from here on are looked up in System32 only.
@@ -24,8 +29,8 @@ fn main() {
         );
     }
 
-    let op = match parse_args(std::env::args_os().skip(1)) {
-        Ok(op) => op,
+    let request = match parse_args(std::env::args_os().skip(1)) {
+        Ok(request) => request,
         Err(reason) => {
             for line in usage_lines(&reason.to_string()) {
                 eprintln!("{line}");
@@ -40,9 +45,13 @@ fn main() {
             std::process::exit(EXIT_FAILED);
         }
     };
-    let code = run(op, &CurrentExeProbe, &firewall, &mut |line| {
-        println!("{line}")
-    });
+    let mut out = |line: &str| println!("{line}");
+    let code = match request {
+        Request::Run(op) => run(op, &CurrentExeProbe, &firewall, &mut out),
+        Request::RemoveInstalled { install_dir } => {
+            run_remove_installed(collect_installed_facts(&install_dir), &firewall, &mut out)
+        }
+    };
     std::process::exit(code);
 }
 

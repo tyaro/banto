@@ -47,7 +47,7 @@ use windows_sys::Win32::UI::Shell::{
     FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, SHGetKnownFolderPath,
 };
 
-use crate::placement::{self, AceFact, ObjectFacts, PlacementFacts};
+use crate::placement::{self, AceFact, InstalledFacts, ObjectFacts, PlacementFacts};
 use crate::powershell::{self, PowerShellPaths};
 use crate::rules::{RuleNames, RuleSnapshot, RuleSpec};
 use crate::{FirewallOps, PlacementProbe, HELPER_EXE_FILE_NAME, MAIN_EXE_FILE_NAME};
@@ -336,6 +336,23 @@ pub fn collect_placement_facts(anchor: &Path) -> Result<PlacementFacts, String> 
         helper: next_to(HELPER_EXE_FILE_NAME)?,
         main: next_to(MAIN_EXE_FILE_NAME)?,
         folders,
+    })
+}
+
+/// The facts for the uninstaller's `firewall-remove-installed`
+/// (`crate::run_remove_installed`): the fixed-name main exe in
+/// `install_dir`, read through its handle like every other object (its
+/// final path is the rule's `Program`). `install_dir` must be a plain drive
+/// path.
+pub fn collect_installed_facts(install_dir: &str) -> Result<InstalledFacts, String> {
+    let dir = placement::normalize_final_path(install_dir)
+        .ok_or("the install folder is not a plain drive path")?;
+    Ok(InstalledFacts {
+        program_files: program_files_dirs(),
+        main: object_facts(&format!(
+            r"{}\{MAIN_EXE_FILE_NAME}",
+            dir.trim_end_matches('\\')
+        ))?,
     })
 }
 

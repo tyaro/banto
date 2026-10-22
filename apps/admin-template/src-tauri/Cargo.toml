@@ -107,7 +107,7 @@ window-vibrancy = { workspace = true }
 # - Win32_System_Registry: needed by SHELLEXECUTEINFOW (its `hkeyClass`)
 # - Win32_System_Threading: WaitForSingleObject / GetExitCodeProcess
 # - Win32_UI_Shell: ShellExecuteExW / SEE_MASK_NOCLOSEPROCESS / SEE_MASK_NOASYNC
-# - Win32_UI_WindowsAndMessaging: SW_SHOWNORMAL
+# - Win32_UI_WindowsAndMessaging: SW_HIDE
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_System_Com",
