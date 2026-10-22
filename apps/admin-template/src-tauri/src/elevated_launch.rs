@@ -94,8 +94,10 @@ pub(crate) fn parameters_from_tokens(tokens: &[&str]) -> Result<String, LaunchEr
 const LAUNCH_MASK: u32 = windows_sys::Win32::UI::Shell::SEE_MASK_NOCLOSEPROCESS
     | windows_sys::Win32::UI::Shell::SEE_MASK_NOASYNC;
 
-/// Initializes COM on the current thread (as the `ShellExecuteEx` docs
-/// recommend) and uninitializes it on drop - only if this call succeeded.
+/// Initializes COM (STA) on the current thread for the `ShellExecuteExW` call
+/// (as its docs recommend) and uninitializes it on drop - only if this call
+/// succeeded. Drop it before waiting for the program: the wait pumps no
+/// messages.
 #[cfg(windows)]
 struct ComApartment(bool);
 
@@ -170,14 +172,20 @@ pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32
         ..Default::default()
     };
 
-    // COM for this thread, undone when `_com` drops (also on the early returns
-    // below): `spawn_blocking` threads are reused, so init and uninit must pair.
-    let _com = ComApartment::init();
-
+    // COM only around the launch call: the STA is released before the wait
+    // below, which pumps no messages (`WaitForSingleObject` docs: waiting
+    // without pumping on a COM thread can deadlock). `spawn_blocking` threads
+    // are reused, so init and uninit must pair.
+    let com = ComApartment::init();
     // SAFETY: the strings are NUL-terminated and live for this scope.
-    if unsafe { ShellExecuteExW(&mut info) } == 0 {
-        // SAFETY: only reads why the call just before failed.
-        return Err(LaunchError::ShellExecute(unsafe { GetLastError() }));
+    let launched = unsafe { ShellExecuteExW(&mut info) } != 0;
+    // SAFETY: only reads why the call just before failed - before
+    // `CoUninitialize`, which may overwrite the last error.
+    let launch_error = (!launched).then(|| unsafe { GetLastError() });
+    drop(com);
+
+    if let Some(code) = launch_error {
+        return Err(LaunchError::ShellExecute(code));
     }
     if info.hProcess.is_null() {
         return Err(LaunchError::NoProcessHandle);
@@ -215,6 +223,35 @@ pub(crate) fn run_elevated(_exe: &std::path::Path, tokens: &[&str]) -> Result<u3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether the current thread is in a single-threaded apartment (the
+    /// process's first STA reports as the main STA; an implicit MTA from other
+    /// test threads does not count).
+    #[cfg(windows)]
+    fn in_sta() -> bool {
+        use windows_sys::Win32::System::Com::{CoGetApartmentType, APTTYPE_MAINSTA, APTTYPE_STA};
+        let (mut kind, mut qualifier) = (-1, 0);
+        // SAFETY: two places to write to.
+        let hr = unsafe { CoGetApartmentType(&mut kind, &mut qualifier) };
+        hr >= 0 && (kind == APTTYPE_STA || kind == APTTYPE_MAINSTA)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn com_apartment_is_left_when_the_guard_drops() {
+        // A fresh thread: no apartment before, one while the guard lives, and
+        // none again after it drops (so the wait after the launch holds no STA).
+        std::thread::spawn(|| {
+            assert!(!in_sta());
+            let com = ComApartment::init();
+            assert!(com.0);
+            assert!(in_sta());
+            drop(com);
+            assert!(!in_sta());
+        })
+        .join()
+        .unwrap();
+    }
 
     #[cfg(windows)]
     #[test]
