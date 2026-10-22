@@ -425,11 +425,12 @@ mod tests {
     }
 
     /// The real collection runs without elevation and refuses a build
-    /// folder: the test exe has no helper next to it.
+    /// folder: the test exe is not under Program Files (that reason is
+    /// given before the missing helper, #480).
     #[cfg(windows)]
     #[test]
     fn the_real_check_refuses_a_build_folder() {
-        assert_eq!(check_before_elevation(), Err("helperMissing"));
+        assert_eq!(check_before_elevation(), Err("notUnderProgramFiles"));
     }
 
     #[test]

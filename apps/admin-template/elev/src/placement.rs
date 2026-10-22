@@ -386,6 +386,18 @@ pub fn check_placement(
     helper_name: &str,
     main_name: &str,
 ) -> Result<Placement, PlacementRefusal> {
+    // Where the install is comes first: the running exe (the anchor, always
+    // present - it is one of the two checked exes, see below) outside a
+    // Program Files folder is a portable / per-user / moved copy, and that
+    // is the reason to give even when the helper is not shipped there. Every
+    // case this early return refuses is refused below as well (an accepted
+    // anchor is the helper or the main exe, in the helper's folder, which is
+    // inside Program Files), so only the reason changes, never the verdict.
+    if containing_program_files(&facts.anchor, &facts.program_files).is_none() {
+        return Err(PlacementRefusal::NotUnderProgramFiles {
+            path: facts.anchor.clone(),
+        });
+    }
     let helper = facts
         .helper
         .as_ref()
@@ -679,6 +691,26 @@ mod tests {
             check(&f),
             Err(PlacementRefusal::NotUnderProgramFiles { .. })
         ));
+    }
+
+    #[test]
+    fn outside_program_files_is_reported_before_a_missing_helper() {
+        // Per-user / portable copy without the helper: the place is the reason.
+        let dir = r"C:\Users\me\AppData\Local\App";
+        let mut f = facts();
+        f.anchor = format!(r"{dir}\app.exe");
+        f.helper = None;
+        f.main = Some(object(&format!(r"{dir}\app.exe"), 0));
+        f.folders.clear();
+        assert!(matches!(
+            check(&f),
+            Err(PlacementRefusal::NotUnderProgramFiles { .. })
+        ));
+        // Inside Program Files, only the helper missing: still Missing(Helper).
+        let mut f = facts();
+        f.anchor = r"C:\Program Files\Vendor\App\app.exe".into();
+        f.helper = None;
+        assert_eq!(check(&f), Err(PlacementRefusal::Missing(Which::Helper)));
     }
 
     #[test]
