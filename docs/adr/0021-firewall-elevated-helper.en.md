@@ -238,15 +238,15 @@ Alternatives:
 
 ### 11. Results are exit codes, and the caller always re-reads
 
-| Code | Meaning                                                                                                                   |
-| ---- | ------------------------------------------------------------------------------------------------------------------------- |
-| 0    | done (`firewall-allow` created it; `firewall-remove` removed it or there was none; `firewall-status` found no owned rule) |
-| 3    | already there (the owned rule is as expected; `firewall-allow` and `firewall-status`)                                     |
-| 4    | conflict (a same-name rule not owned, decision 6; nothing changed)                                                        |
-| 5    | not effective due to policy (e.g. GPO disables local rule merge; stops without creating the rule)                         |
-| 2    | precondition missing (untrusted placement, decision 8)                                                                    |
-| 1    | failure (anything else)                                                                                                   |
-| 64   | usage error (decision 10)                                                                                                 |
+| Code | Meaning                                                                                                                                                                                                                                                                                                           |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | done (`firewall-allow` created it; `firewall-remove` removed it or there was none; `firewall-status` found no owned rule)                                                                                                                                                                                         |
+| 3    | already there (the owned rule is as expected; `firewall-allow` and `firewall-status`)                                                                                                                                                                                                                             |
+| 4    | conflict (a same-name rule not owned, decision 6; nothing changed)                                                                                                                                                                                                                                                |
+| 5    | not effective due to policy (e.g. GPO disables local rule merge; 5 even with an owned rule already in place. `firewall-allow` stops without creating the rule when there is none, but keeps the rule it created when only the re-read after creating it shows the policy. 5 does not always mean nothing changed) |
+| 2    | precondition missing (untrusted placement, decision 8)                                                                                                                                                                                                                                                            |
+| 1    | failure (anything else)                                                                                                                                                                                                                                                                                           |
+| 64   | usage error (decision 10)                                                                                                                                                                                                                                                                                         |
 
 UAC cancellation is told apart by the launcher's `ERROR_CANCELLED` (1223), not by a helper exit code.
 
