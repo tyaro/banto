@@ -360,17 +360,28 @@ export class FirewallStatusRequests {
 			return ticket === this.#latest ? { kind: 'unavailable' } : { kind: 'superseded' };
 		}
 		if (ticket !== this.#latest) return { kind: 'superseded' };
-		if (!isFirewallRuleStatus(value)) return { kind: 'unavailable' };
-		const info = shown();
-		if (info === null) return { kind: 'superseded' };
-		if (!firewallStatusMatches(info, value)) {
-			return {
-				kind: 'stale',
-				newer: info.generation !== null && value.generation > info.generation
-			};
-		}
-		return { kind: 'ok', status: value };
+		return judgeFirewallStatus(value, shown());
 	}
+}
+
+/**
+ * Whether a status read (`value`, as the host answered it) may be shown for
+ * what the panel shows now (`info`; `null` = nothing). Shared by the checks
+ * above and the re-read a firewall change ends with (ADR-0021 decision 11).
+ */
+export function judgeFirewallStatus(
+	value: unknown,
+	info: FirewallInfo | null
+): FirewallCheckOutcome {
+	if (!isFirewallRuleStatus(value)) return { kind: 'unavailable' };
+	if (info === null) return { kind: 'superseded' };
+	if (!firewallStatusMatches(info, value)) {
+		return {
+			kind: 'stale',
+			newer: info.generation !== null && value.generation > info.generation
+		};
+	}
+	return { kind: 'ok', status: value };
 }
 
 /** What the panel shows: the last result and what went wrong with the last check. */

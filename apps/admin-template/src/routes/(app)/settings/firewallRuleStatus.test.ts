@@ -13,6 +13,7 @@ import {
 	firewallRuleView,
 	firewallStatusMatches,
 	isFirewallRuleStatus,
+	judgeFirewallStatus,
 	nextFirewallPanelState
 } from './firewallRuleStatus';
 
@@ -461,5 +462,24 @@ describe('FirewallStatusRequests', () => {
 				() => info(8721, 1)
 			)
 		).toEqual({ kind: 'unavailable' });
+	});
+});
+
+describe('judgeFirewallStatus', () => {
+	it('judges a read the way a check does (also the re-read of a firewall change)', () => {
+		expect(judgeFirewallStatus(result(8721, 1), info(8721, 1))).toEqual({
+			kind: 'ok',
+			status: result(8721, 1)
+		});
+		expect(judgeFirewallStatus(null, info(8721, 1))).toEqual({ kind: 'unavailable' });
+		expect(judgeFirewallStatus(result(8721, 1), null)).toEqual({ kind: 'superseded' });
+		expect(judgeFirewallStatus(result(8721, 2), info(8721, 1))).toEqual({
+			kind: 'stale',
+			newer: true
+		});
+		expect(judgeFirewallStatus(result(8721, 1), info(8721, 2))).toEqual({
+			kind: 'stale',
+			newer: false
+		});
 	});
 });

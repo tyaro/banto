@@ -232,6 +232,59 @@ export interface FirewallRuleStatus {
 }
 
 /**
+ * Mirrors src-tauri's `firewall_change::FirewallChangeOperation` (Issue #219
+ * stage 2, ADR-0021): the two changing operations. The state is read with
+ * `firewall_rule_status`, never through this command.
+ */
+export type FirewallChangeOperation = 'allow' | 'remove';
+
+/**
+ * Mirrors src-tauri's `FirewallChangeTarget` (ADR-0021 decision 13): what the
+ * confirmation screen showed - `expected.executablePath` and `generation` of
+ * the `firewall_rule_status` answer it displayed.
+ */
+export interface FirewallChangeTarget {
+	executablePath: string | null;
+	generation: number;
+}
+
+/**
+ * Mirrors src-tauri's `FirewallChangeOutcome` (ADR-0021 decisions 11, 13).
+ * `done` is exit code 0 - never "reachable" (that is the reach check's).
+ */
+export type FirewallChangeOutcome =
+	| 'busy'
+	| 'targetChanged'
+	| 'precondition'
+	| 'cancelled'
+	| 'launchFailed'
+	| 'done'
+	| 'already'
+	| 'conflict'
+	| 'policy'
+	| 'failed'
+	| 'usage'
+	| 'unexpectedExit';
+
+/**
+ * Mirrors src-tauri's `FirewallChangeResult` (`firewall_rule_change`).
+ * `refusal` is the code of the app's own pre-elevation refusal
+ * (`firewall_change::refusal_code` / `REFUSAL_*`); `stale`: the target
+ * changed while the helper ran; `status` is always a fresh stage-1 read.
+ * `outcome` and `refusal` are kept as plain strings here: a newer host may
+ * send codes this screen does not know, and it must still say something.
+ */
+export interface FirewallChangeResult {
+	operation: FirewallChangeOperation;
+	outcome: FirewallChangeOutcome | (string & {});
+	exitCode: number | null;
+	refusal: string | null;
+	osError: number | null;
+	stale: boolean;
+	status: unknown;
+}
+
+/**
  * Mirrors src-tauri's `ReachCheckRefusal`: why `reach_check_issue` issued
  * nothing (Issue #219 PR-C2, lan-reach-check-design §3.5). Codes only.
  */
@@ -359,6 +412,22 @@ export function getServerStatus(): Promise<ServerStatus> {
  */
 export function getFirewallRuleStatus(): Promise<unknown> {
 	return invokeCommand('firewall_rule_status');
+}
+
+/**
+ * Add (`allow`) or remove (`remove`) the per-executable firewall rule through
+ * the UAC-elevated helper (Issue #219 stage 2, ADR-0021). Admin-only,
+ * desktop-only; waits until the UAC prompt is answered and the helper ended.
+ * `target` is what the confirmation screen showed (decision 13). Resolves to
+ * whatever the host returned - check it with
+ * `firewallChange.ts::isFirewallChangeResult` (an older host has no such
+ * command).
+ */
+export function changeFirewallRule(
+	operation: FirewallChangeOperation,
+	target: FirewallChangeTarget
+): Promise<unknown> {
+	return invokeCommand('firewall_rule_change', { operation, target });
 }
 
 /**
