@@ -425,11 +425,18 @@ mod tests {
     }
 
     /// The real collection runs without elevation and refuses a build
-    /// folder: the test exe has no helper next to it.
+    /// folder. Usually the test exe is not under Program Files (that reason
+    /// is given before the missing helper, #480); a checkout or target dir
+    /// under Program Files has no helper beside the test exe instead. Which
+    /// reason comes first is pinned by the synthetic placement tests.
     #[cfg(windows)]
     #[test]
     fn the_real_check_refuses_a_build_folder() {
-        assert_eq!(check_before_elevation(), Err("helperMissing"));
+        let refusal = check_before_elevation().expect_err("a build folder must be refused");
+        assert!(
+            matches!(refusal, "notUnderProgramFiles" | "helperMissing"),
+            "unexpected refusal: {refusal}"
+        );
     }
 
     #[test]
