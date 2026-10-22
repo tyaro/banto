@@ -13,6 +13,7 @@ import {
 	isReachCheckStatus,
 	minutesSince,
 	reachCandidateHosts,
+	lanUiMissing,
 	reachCheckAvailable,
 	reachPolls,
 	reachView,
@@ -33,6 +34,7 @@ function server(patch: Partial<ServerStatus> = {}): ServerStatus {
 		live: { bind: '0.0.0.0', port: 8721 },
 		urls: ['http://127.0.0.1:8721', 'http://192.168.1.20:8721', 'http://10.0.0.5:8721'],
 		qrSvgs: [],
+		uiEmbedded: true,
 		generation: 1,
 		...patch
 	};
@@ -79,6 +81,12 @@ describe('reachCheckAvailable / reachCandidateHosts', () => {
 		// Not Windows-only (design §4.1).
 		expect(reachCheckAvailable(server({ platform: 'macos' }))).toBe(true);
 		expect(reachCheckAvailable(null)).toBe(false);
+		// Issue #478: no embedded web UI -> no check, only the note.
+		expect(reachCheckAvailable(server({ uiEmbedded: false }))).toBe(false);
+		expect(lanUiMissing(server({ uiEmbedded: false }))).toBe(true);
+		expect(lanUiMissing(server())).toBe(false);
+		expect(lanUiMissing(server({ uiEmbedded: false, running: false }))).toBe(false);
+		expect(lanUiMissing(null)).toBe(false);
 		expect(reachCheckAvailable(server({ running: false }))).toBe(false);
 		expect(reachCheckAvailable(server({ live: null }))).toBe(false);
 		expect(reachCheckAvailable(server({ live: { bind: '127.0.0.1', port: 8721 } }))).toBe(false);

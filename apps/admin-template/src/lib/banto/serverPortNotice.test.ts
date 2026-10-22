@@ -15,6 +15,7 @@ function status(portNotice: ServerStatus['portNotice']): ServerStatus {
 		viewerPublic: false,
 		urls: [],
 		qrSvgs: [],
+		uiEmbedded: true,
 		portNotice
 	};
 }

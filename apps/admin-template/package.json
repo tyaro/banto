@@ -16,7 +16,7 @@
     "check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "tauri": "tauri",
-    "tauri:build:windows": "tauri build --config src-tauri/tauri.fw-elev.conf.json"
+    "tauri:build:windows": "tauri build --features embed-ui --config src-tauri/tauri.fw-elev.conf.json"
   },
   "dependencies": {
     "@banto/admin-core": "workspace:*",

@@ -119,7 +119,7 @@ jobs:
 
       # #219 段階 2（ADR-0021、E4）: Windows のインストーラは helper を Tauri の externalBin
       # として本体 exe の隣に同梱する（`pnpm --filter admin-template tauri:build:windows` =
-      # `tauri build --config src-tauri/tauri.fw-elev.conf.json`）。tauri build はしないが、
+      # `tauri build --features embed-ui --config src-tauri/tauri.fw-elev.conf.json`）。tauri build はしないが、
       # その beforeBuildCommand が呼ぶ build-fw-elev.mjs が helper を externalBin の場所へ
       # 置けることと、その設定を重ねた tauri-build（externalBin の解決）が通ることを確かめる。
       # TAURI_ENV_DEBUG=true は上の check と同じ dev プロファイルで helper を作るため。

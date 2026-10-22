@@ -30,7 +30,7 @@
 	import { connectivityScope, isIpv4Bind, pickPrimaryLanUrl } from './connectivityScope';
 	import FirewallInfoPanel from './FirewallInfoPanel.svelte';
 	import LanReachCheckPanel from './LanReachCheckPanel.svelte';
-	import { reachCheckAvailable } from './lanReachCheck';
+	import { lanUiMissing, reachCheckAvailable } from './lanReachCheck';
 	import { ServerStatusRequests, type StatusRefresh } from './serverStatusRequests';
 
 	let serverStatus = $state<ServerStatus | null>(null);
@@ -326,6 +326,11 @@
 					     always empty for one, so show an explanatory note
 					     instead of an empty list. -->
 					<p class="note">{m['settings.ipv6NotGuidedNote']()}</p>
+				{:else if lanUiMissing(serverStatus)}
+					<!-- Issue #478: a build without the embedded web UI serves
+					     only a placeholder to other devices, so no URL, QR or
+					     connection check (lanReachCheck.ts `lanUiMissing`). -->
+					<p class="note" data-lan-ui-missing>{m['settings.lanUiNotEmbedded']()}</p>
 				{:else if serverStatus.running}
 					<ul class="urls">
 						{#each serverStatus.urls as url (url)}
