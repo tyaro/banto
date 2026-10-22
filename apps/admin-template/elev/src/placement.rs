@@ -129,6 +129,17 @@ pub struct PlacementFacts {
     pub folders: Vec<ObjectFacts>,
 }
 
+/// What [`check_installed_main`] judges for the uninstaller's
+/// `firewall-remove-installed` (`crate::run_remove_installed`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InstalledFacts {
+    /// As in [`PlacementFacts::program_files`].
+    pub program_files: Vec<String>,
+    /// The fixed-name main exe in the install folder the uninstaller named,
+    /// `None` when it is not there.
+    pub main: Option<ObjectFacts>,
+}
+
 /// Which object a refusal is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Which {
@@ -444,6 +455,43 @@ pub fn check_placement(
         helper_exe: helper.path.clone(),
         main_exe: main.path.clone(),
     })
+}
+
+/// The uninstaller's request (`crate::run_remove_installed`): the main exe
+/// in the install folder is there under `main_name`, is a file and not a
+/// reparse point, and is strictly inside a Program Files known folder.
+/// Returns its final path - the rule's `Program`. Neither the owner nor the
+/// ACL is judged here: this only removes the own rule (see the caller).
+pub fn check_installed_main(
+    facts: &InstalledFacts,
+    main_name: &str,
+) -> Result<String, PlacementRefusal> {
+    let main = facts
+        .main
+        .as_ref()
+        .ok_or(PlacementRefusal::Missing(Which::Main))?;
+    if !file_name(&main.path).eq_ignore_ascii_case(main_name) {
+        return Err(PlacementRefusal::WrongName {
+            which: Which::Main,
+            path: main.path.clone(),
+        });
+    }
+    if main.attributes & ATTRIBUTE_DIRECTORY != 0 {
+        return Err(PlacementRefusal::WrongKind {
+            path: main.path.clone(),
+        });
+    }
+    if main.attributes & ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(PlacementRefusal::ReparsePoint {
+            path: main.path.clone(),
+        });
+    }
+    if containing_program_files(&main.path, &facts.program_files).is_none() {
+        return Err(PlacementRefusal::NotUnderProgramFiles {
+            path: main.path.clone(),
+        });
+    }
+    Ok(main.path.clone())
 }
 
 #[cfg(test)]

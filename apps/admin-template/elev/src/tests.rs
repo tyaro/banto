@@ -7,8 +7,8 @@ use std::ffi::OsString;
 
 use super::*;
 use crate::placement::{
-    AceFact, ObjectFacts, PlacementFacts, ATTRIBUTE_DIRECTORY, SID_ADMINISTRATORS, SID_SYSTEM,
-    SID_TRUSTED_INSTALLER,
+    AceFact, InstalledFacts, ObjectFacts, PlacementFacts, ATTRIBUTE_DIRECTORY, SID_ADMINISTRATORS,
+    SID_SYSTEM, SID_TRUSTED_INSTALLER,
 };
 use crate::rules::{expected_fields, RuleFields, EXPECTED_SOURCE};
 
@@ -20,14 +20,17 @@ fn args(list: &[&str]) -> Vec<OsString> {
 
 #[test]
 fn each_operation_is_one_exact_argument() {
-    assert_eq!(parse_args(args(&["firewall-allow"])), Ok(Operation::Allow));
+    assert_eq!(
+        parse_args(args(&["firewall-allow"])),
+        Ok(Request::Run(Operation::Allow))
+    );
     assert_eq!(
         parse_args(args(&["firewall-remove"])),
-        Ok(Operation::Remove)
+        Ok(Request::Run(Operation::Remove))
     );
     assert_eq!(
         parse_args(args(&["firewall-status"])),
-        Ok(Operation::Status)
+        Ok(Request::Run(Operation::Status))
     );
 }
 
@@ -61,6 +64,47 @@ fn anything_else_is_usage() {
             "{unknown}"
         );
     }
+}
+
+/// The uninstaller's request takes exactly the install folder after it;
+/// no other operation takes a second argument.
+#[test]
+fn remove_installed_takes_exactly_the_install_folder() {
+    assert_eq!(
+        parse_args(args(&[
+            REMOVE_INSTALLED_ARG,
+            r"C:\Program Files\banto-admin"
+        ])),
+        Ok(Request::RemoveInstalled {
+            install_dir: r"C:\Program Files\banto-admin".into()
+        })
+    );
+    assert_eq!(
+        parse_args(args(&[REMOVE_INSTALLED_ARG])),
+        Err(UsageError::NoInstallDir)
+    );
+    assert_eq!(
+        parse_args(args(&[REMOVE_INSTALLED_ARG, ""])),
+        Err(UsageError::Empty)
+    );
+    assert_eq!(
+        parse_args(args(&[REMOVE_INSTALLED_ARG, r"C:\a", r"C:\b"])),
+        Err(UsageError::TooMany(3))
+    );
+    for op in Operation::ALL {
+        assert_eq!(
+            parse_args(args(&[op.arg(), r"C:\Program Files\banto-admin"])),
+            Err(UsageError::TooMany(2)),
+            "{op:?}"
+        );
+    }
+    assert_eq!(
+        parse_args(args(&[
+            r"C:\Program Files\banto-admin",
+            REMOVE_INSTALLED_ARG
+        ])),
+        Err(UsageError::TooMany(2))
+    );
 }
 
 #[test]
@@ -138,7 +182,8 @@ fn helper_name_and_manifest_match_the_build() {
 
 /// E4 (decisions 2, 3, 7 and 8): the installer puts the helper next to the
 /// main exe under the fixed name both sides look for, the default install is
-/// perMachine, and the uninstall hook finds the helper and names the rule
+/// perMachine, and the uninstall hook embeds the same helper file into the
+/// uninstaller, runs that copy (not the installed one) and names the rule
 /// through Tauri's defines - which only works while the helper is
 /// `<main binary>-fw-elev.exe`.
 #[test]
@@ -171,17 +216,32 @@ fn installer_bundles_the_helper_next_to_the_main_exe() {
 
     let hooks = include_str!("../../src-tauri/windows/fw-elev-hooks.nsh");
     assert!(hooks.contains("!macro NSIS_HOOK_PREUNINSTALL"));
-    assert!(hooks.contains(r#"'"$INSTDIR\${MAINBINARYNAME}-fw-elev.exe" firewall-remove'"#));
     assert!(hooks.contains("${BUNDLEID}.lan.tcp.program"));
+    // Decision 8: the uninstaller runs the helper it carries (the externalBin
+    // source, embedded by `File` and extracted to $PLUGINSDIR), never the
+    // file in the install folder.
+    assert!(hooks.contains(&format!(
+        r"\..\{}\${{MAINBINARYNAME}}-fw-elev-${{FW_ELEV_TRIPLE}}.exe",
+        fw_elev_conf["bundle"]["externalBin"][0]
+            .as_str()
+            .unwrap()
+            .strip_suffix(&format!("/{helper_stem}"))
+            .unwrap()
+    )));
+    assert!(hooks.contains(r#"File "/oname=$PLUGINSDIR\${MAINBINARYNAME}-fw-elev.exe""#));
+    let launch_line = format!(
+        r#"ExecWait '"$PLUGINSDIR\${{MAINBINARYNAME}}-fw-elev.exe" {REMOVE_INSTALLED_ARG} "$INSTDIR"' $0"#
+    );
+    assert!(hooks.contains(&launch_line));
+    assert_eq!(hooks.matches("ExecWait '").count(), 1);
+    assert!(!hooks.contains(r"$INSTDIR\${MAINBINARYNAME}-fw-elev.exe"));
     // The app-running check (whose Cancel aborts the uninstall) comes before the
-    // rule is touched, and the launch is guarded (Program Files, no reparse point).
+    // rule is touched.
     let check = hooks
         .find("!insertmacro CheckIfAppIsRunning")
         .expect("the hook runs Tauri's app-running check");
-    let launch = hooks.find("ExecWait '").unwrap();
+    let launch = hooks.find(&launch_line).unwrap();
     assert!(check < launch);
-    assert!(hooks.contains("$PROGRAMFILES64"));
-    assert!(hooks.contains(r#""REPARSE_POINT""#));
     // Decision 3: nothing is created at install time.
     assert!(!hooks.contains("firewall-allow"));
     assert!(!hooks.contains("NSIS_HOOK_POSTINSTALL"));
@@ -539,6 +599,81 @@ fn an_untrusted_placement_touches_nothing() {
             assert!(fw.calls().is_empty(), "{op:?}: firewall untouched");
             assert!(lines[0].starts_with("precondition not met"));
         }
+    }
+}
+
+// --- the uninstaller's copy (decisions 3, 8 and 10) ---------------------------
+
+fn installed(main: Option<ObjectFacts>) -> Result<InstalledFacts, String> {
+    Ok(InstalledFacts {
+        program_files: vec![r"C:\Program Files".into()],
+        main,
+    })
+}
+
+fn run_installed(facts: Result<InstalledFacts, String>, fw: &FakeFirewall) -> (i32, Vec<String>) {
+    let mut lines = Vec::new();
+    let code = run_remove_installed(facts, fw, &mut |l| lines.push(l.to_string()));
+    (code, lines)
+}
+
+/// The rule's `Program` is the main exe's final path, so only the rule this
+/// app created for it is removed - same as `firewall-remove` next to it.
+#[test]
+fn remove_installed_removes_only_the_own_rule_of_that_main_exe() {
+    let name = rule_name();
+    let main = || Some(trusted(&program(), 0x20));
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    assert_eq!(run_installed(installed(main()), &fw).0, EXIT_OK);
+    assert_eq!(
+        fw.calls(),
+        [
+            format!("query {name}"),
+            format!("remove {name}"),
+            format!("query {name}"),
+        ]
+    );
+    let fw = FakeFirewall::empty();
+    assert_eq!(run_installed(installed(main()), &fw).0, EXIT_OK);
+    assert_eq!(fw.calls(), [format!("query {name}")]);
+    // A rule of the name for another exe is a conflict, never removed.
+    let other = Some(trusted(
+        &format!(r"C:\Program Files\other\{MAIN_EXE_FILE_NAME}"),
+        0x20,
+    ));
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    assert_eq!(run_installed(installed(other), &fw).0, EXIT_CONFLICT);
+    assert!(!fw.calls().iter().any(|c| c.starts_with("remove")));
+    // No ACL check: a main exe others may write still gets its rule removed.
+    let mut writable = trusted(&program(), 0x20);
+    writable.dacl.as_mut().unwrap().push(AceFact {
+        ace_type: 0,
+        flags: 0,
+        mask: 0x0013_01BF,
+        sid: Some("S-1-5-11".into()),
+    });
+    let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+    assert_eq!(run_installed(installed(Some(writable)), &fw).0, EXIT_OK);
+}
+
+#[test]
+fn remove_installed_needs_the_fixed_name_main_exe_under_program_files() {
+    for facts in [
+        installed(None),
+        installed(Some(trusted(&format!(r"{DIR}\other.exe"), 0x20))),
+        installed(Some(trusted(&program(), ATTRIBUTE_DIRECTORY))),
+        installed(Some(trusted(&program(), 0x400))),
+        installed(Some(trusted(
+            &format!(r"C:\Tools\{MAIN_EXE_FILE_NAME}"),
+            0x20,
+        ))),
+        Err("the install folder is not a plain drive path".into()),
+    ] {
+        let fw = FakeFirewall::with(vec![owned(false)], vec![owned(true)]);
+        let (code, lines) = run_installed(facts.clone(), &fw);
+        assert_eq!(code, EXIT_PRECONDITION, "{facts:?}");
+        assert!(fw.calls().is_empty(), "{facts:?}: firewall untouched");
+        assert!(lines[0].starts_with("precondition not met"));
     }
 }
 

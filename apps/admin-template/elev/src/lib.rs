@@ -4,6 +4,7 @@
 //!
 //! ```text
 //! admin-template-fw-elev.exe firewall-allow | firewall-remove | firewall-status
+//! admin-template-fw-elev.exe firewall-remove-installed <install folder>
 //! ```
 //!
 //! The operation name is the only argument (decision 10): the identifier is
@@ -14,6 +15,13 @@
 //! [`EXIT_PRECONDITION`] 2, [`EXIT_ALREADY`] 3, [`EXIT_CONFLICT`] 4,
 //! [`EXIT_POLICY`] 5, [`EXIT_USAGE`] 64. Callers always re-read the state
 //! with stage 1's `firewall_rule_status` afterwards.
+//!
+//! The one exception is the uninstaller's [`REMOVE_INSTALLED_ARG`]
+//! (decisions 3, 8 and 10): the NSIS uninstall hook runs a copy of this
+//! helper it carries itself (extracted to its own `$PLUGINSDIR`), never the
+//! one in the install folder, so that copy is not next to the main exe and
+//! is told the install folder instead ([`run_remove_installed`]). It can
+//! only remove the own rule for the fixed-name main exe in that folder.
 //!
 //! Layout (decision 7): this lib holds the pure functions - arguments,
 //! rule ownership ([`rules`]), the placement judgement ([`placement`],
@@ -32,7 +40,7 @@ pub mod rules;
 #[cfg(windows)]
 pub mod win;
 
-use placement::{PlacementFacts, PlacementRefusal};
+use placement::{InstalledFacts, PlacementFacts, PlacementRefusal, Which};
 use rules::{RuleNames, RuleSnapshot, RuleSpec, RuleState};
 
 /// The app's Tauri bundle identifier (`apps/admin-template/src-tauri/tauri.conf.json`
@@ -99,6 +107,20 @@ impl Operation {
     }
 }
 
+/// The uninstaller's operation (decisions 3 and 10): `firewall-remove` for
+/// the main exe in the install folder given as the one further argument.
+pub const REMOVE_INSTALLED_ARG: &str = "firewall-remove-installed";
+
+/// What the arguments ask for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Request {
+    /// One of the three operations, on the main exe next to this helper.
+    Run(Operation),
+    /// [`REMOVE_INSTALLED_ARG`]: remove the own rule of the main exe in
+    /// `install_dir` (the NSIS uninstaller's `$INSTDIR`).
+    RemoveInstalled { install_dir: String },
+}
+
 /// Why the arguments are wrong usage (all exit 64).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsageError {
@@ -112,6 +134,8 @@ pub enum UsageError {
     Empty,
     /// Not one of the three operations (exact, case-sensitive).
     Unknown(String),
+    /// [`REMOVE_INSTALLED_ARG`] without the install folder.
+    NoInstallDir,
 }
 
 impl fmt::Display for UsageError {
@@ -122,14 +146,16 @@ impl fmt::Display for UsageError {
             Self::NotUtf8 => f.write_str("an argument is not valid UTF-8"),
             Self::Empty => f.write_str("an argument is empty"),
             Self::Unknown(arg) => write!(f, "unknown operation: {arg:?}"),
+            Self::NoInstallDir => write!(f, "{REMOVE_INSTALLED_ARG} needs the install folder"),
         }
     }
 }
 
-/// Decision 10: exactly one argument, one of the three operation names.
-/// Every argument is checked (UTF-8, not empty) before the count, so no
-/// argument is ever skipped unchecked.
-pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Operation, UsageError> {
+/// Decision 10: exactly one argument, one of the three operation names -
+/// or exactly [`REMOVE_INSTALLED_ARG`] and the install folder. Every
+/// argument is checked (UTF-8, not empty) before the count, so no argument
+/// is ever skipped unchecked.
+pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Request, UsageError> {
     let mut texts = Vec::new();
     for arg in args {
         let text = arg.into_string().map_err(|_| UsageError::NotUtf8)?;
@@ -140,10 +166,15 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Operation
     }
     match texts.as_slice() {
         [] => Err(UsageError::Missing),
+        [one] if one == REMOVE_INSTALLED_ARG => Err(UsageError::NoInstallDir),
         [one] => Operation::ALL
             .into_iter()
             .find(|op| op.arg() == one)
+            .map(Request::Run)
             .ok_or_else(|| UsageError::Unknown(one.clone())),
+        [op, dir] if op == REMOVE_INSTALLED_ARG => Ok(Request::RemoveInstalled {
+            install_dir: dir.clone(),
+        }),
         many => Err(UsageError::TooMany(many.len())),
     }
 }
@@ -154,6 +185,7 @@ pub fn usage_lines(reason: &str) -> Vec<String> {
         format!("admin-template-fw-elev: {reason}"),
         "usage: admin-template-fw-elev.exe firewall-allow | firewall-remove | firewall-status"
             .into(),
+        format!("       admin-template-fw-elev.exe {REMOVE_INSTALLED_ARG} <install folder>"),
     ]
 }
 
@@ -201,6 +233,55 @@ pub fn run(op: Operation, probe: &impl PlacementProbe, fw: &impl FirewallOps, ou
         names,
         program: placement.main_exe,
     };
+    act(op, &spec, fw, out)
+}
+
+/// [`REMOVE_INSTALLED_ARG`] (decisions 3, 8 and 10): `firewall-remove` for
+/// the main exe in the install folder the NSIS uninstaller names.
+///
+/// This copy of the helper runs from the uninstaller's `$PLUGINSDIR` (it is
+/// what the uninstaller carries, not the file in the install folder), so it
+/// is not next to the main exe and decision 8's placement check does not
+/// apply. What it checks instead ([`placement::check_installed_main`]):
+/// the main exe is there under its fixed name, is a plain file (no reparse
+/// point) and is strictly inside Program Files. No ACL check: removing the
+/// own rule only narrows what the firewall lets in, and the rule's
+/// ownership (decision 6, including `Program` = this exe's final path) is
+/// still judged by content, so no other rule is touched.
+pub fn run_remove_installed(
+    facts: Result<InstalledFacts, String>,
+    fw: &impl FirewallOps,
+    out: Out<'_>,
+) -> i32 {
+    let Some(names) = rules::rule_names(IDENTIFIER) else {
+        out("the built-in identifier is not valid");
+        return EXIT_FAILED;
+    };
+    let main_exe = match facts
+        .map_err(|e| format!("the install folder could not be checked: {e}"))
+        .and_then(|facts| {
+            placement::check_installed_main(&facts, MAIN_EXE_FILE_NAME).map_err(|r| match r {
+                PlacementRefusal::Missing(Which::Main) => {
+                    format!("{MAIN_EXE_FILE_NAME} is not in the install folder")
+                }
+                other => other.to_string(),
+            })
+        }) {
+        Ok(main_exe) => main_exe,
+        Err(reason) => {
+            out(&format!("precondition not met: {reason}"));
+            return EXIT_PRECONDITION;
+        }
+    };
+    let spec = RuleSpec {
+        names,
+        program: main_exe,
+    };
+    act(Operation::Remove, &spec, fw, out)
+}
+
+/// Reads the rule and acts on decision 6's ownership, for a trusted `spec`.
+fn act(op: Operation, spec: &RuleSpec, fw: &impl FirewallOps, out: Out<'_>) -> i32 {
     let read = |out: Out<'_>| match fw.query(&spec.names) {
         Ok(snapshot) => Some(snapshot),
         Err(e) => {
@@ -211,7 +292,7 @@ pub fn run(op: Operation, probe: &impl PlacementProbe, fw: &impl FirewallOps, ou
     let Some(snapshot) = read(out) else {
         return EXIT_FAILED;
     };
-    let state = match rules::classify(&snapshot, &spec) {
+    let state = match rules::classify(&snapshot, spec) {
         RuleState::Conflict(conflict) => {
             out(&format!(
                 "conflict: a rule named {} exists that this helper does not own ({conflict}); nothing was changed",
@@ -241,14 +322,14 @@ pub fn run(op: Operation, probe: &impl PlacementProbe, fw: &impl FirewallOps, ou
                 out("a policy keeps local rules from applying; no rule was created");
                 return EXIT_POLICY;
             }
-            if let Err(e) = fw.create(&spec) {
+            if let Err(e) = fw.create(spec) {
                 out(&format!("the rule could not be created: {e}"));
                 return EXIT_FAILED;
             }
             let Some(after) = read(out) else {
                 return EXIT_FAILED;
             };
-            match rules::classify(&after, &spec) {
+            match rules::classify(&after, spec) {
                 RuleState::Owned => {
                     out(&format!("created the rule {}", spec.names.name));
                     EXIT_OK

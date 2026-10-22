@@ -93,7 +93,9 @@ per-user installs move over) is written into `docs/upgrading.md` in the implemen
 ### 3. The NSIS hook only removes (owner decision)
 
 - No allow rule is created at install time. Allowing is done explicitly by an admin inside the app.
-- A PREUNINSTALL hook calls the helper's `firewall-remove`, which removes only the owned rule.
+- A PREUNINSTALL hook has the helper remove only the owned rule. What it starts is not the helper in the
+  install folder but a copy of the helper embedded in the uninstaller (`firewall-remove-installed`,
+  decisions 8 and 10).
 - Failure does not stop the uninstall; a `DetailPrint` explains how to remove the rule by hand (its name).
 
 ### 4. The remote range is fixed to LocalSubnet (owner decision)
@@ -162,7 +164,9 @@ Alternatives:
 
 - The helper does not take the app exe as an argument. It only targets the fixed-name exe in the parent
   folder of `current_exe()`; no fallback to the CWD or a parent folder. The app likewise looks for the
-  helper only by its fixed name next to itself.
+  helper only by its fixed name next to itself. The one exception is `firewall-remove-installed`, used by
+  the copy the uninstaller starts (see "Launch from the NSIS uninstall hook" below): it takes the install
+  folder and can only remove the rule of the fixed-name app exe there.
 - The helper checks that both it and the app are under Program Files (compared on path-component
   boundaries, case-insensitively) and otherwise stops with exit 2. The Program Files location comes from
   the OS known folder (KNOWNFOLDERID), not an environment variable.
@@ -204,16 +208,31 @@ Check before asking for elevation:
   path, so the checked handle cannot be pinned to the launch. But passing the ACL check means ordinary
   users cannot write to that path, so only someone who already has administrator rights could swap it
   after the check; that does not cross the elevation boundary. It is accepted on that basis.
-- Launch from the NSIS uninstall hook (E4): before starting the helper, the hook runs only cheap checks
-  (`$INSTDIR` is strictly inside Program Files (`$PROGRAMFILES64` or `$PROGRAMFILES`), compared on
-  path-component boundaries, case-insensitively; and no reparse point on the helper exe, `$INSTDIR`, or
-  any folder from there up to and including that Program Files folder). If they fail, it does not start
-  the helper, prints the reason and how to remove the rule by hand, and continues the uninstall. The
-  effective-ACL check is not done in NSIS: what runs elevated is `$INSTDIR\uninstall.exe`, which Windows
-  starts (Tauri writes it as the registry `UninstallString`), in the same folder as the helper. Anyone who
-  can replace the helper there can equally replace `uninstall.exe`, so starting the helper from the
-  uninstaller crosses no new elevation boundary. The helper's post-launch check (exit 2) remains as
-  defence in depth.
+- Launch from the NSIS uninstall hook (E4): **the helper in the install folder is never started.** ACLs
+  are per file: even with the folder and `uninstall.exe` protected, if only the helper exe grants ordinary
+  users a write right (FILE_WRITE_DATA etc.), its contents can be changed with no change of path or
+  reparse point, and the elevated uninstaller would run them as administrator (the helper's own check
+  after launch is too late). So the uninstaller carries its own copy. At build time, the same file the
+  installer bundles (`src-tauri/binaries/<helper>-<target triple>.exe`, the source of Tauri's
+  `externalBin`) is embedded into `uninstall.exe` by a `File` in the Uninstall section; at run time it is
+  extracted into `$PLUGINSDIR` (after `InitPluginsDir`) and that copy is started with
+  `firewall-remove-installed "$INSTDIR"`. The copy is not next to the app exe, so the placement check above
+  does not apply; instead it opens the fixed-name app exe in `$INSTDIR` by handle, checks that it is a file,
+  not a reparse point, and inside a Program Files known folder, and removes only its own rule (decision 6's
+  content check) whose Program is that handle's final path. The app exe's ACL is not judged (removing only
+  narrows what is allowed and touches no other rule). If the copy cannot be extracted or started, or a build
+  without the helper (plain `tauri build`) has no copy, the rule is left as is and the reason and how to
+  remove it by hand are printed; the uninstall continues.
+  - Not adopted: an effective-ACL check equivalent to `check_object` in NSIS before starting the installed
+    helper. A gap between the check and the launch by path (TOCTOU) would remain, and the case it must
+    stop is exactly the one where ordinary users can write the file, so the runas reasoning above ("after
+    passing the check only administrators can swap it") does not hold.
+  - Remaining risk: `$PLUGINSDIR` is a new folder under the elevated user's `%TEMP%`. When administrators
+    approve their own UAC prompt, that user's unelevated processes can write there too, and could swap the
+    copy between extraction and launch. NSIS uninstallers already copy themselves to `%TEMP%` and run that
+    copy, so this is the level of risk the uninstaller itself already carries, not a new one (when the
+    prompt is approved with another administrator's credentials, it is that administrator's `%TEMP%`, which
+    ordinary users cannot write).
 
 Alternatives:
 
@@ -241,6 +260,9 @@ Alternatives:
 
 - Only three actions: `firewall-allow` / `firewall-remove` / `firewall-status`. By decisions 1, 4, 5
   and 8 nothing else is needed (**the only argument is the action name**).
+- The single exception is `firewall-remove-installed <install folder>`, used by the uninstaller's copy
+  (decisions 3 and 8). It takes only the folder, targets the fixed-name app exe there, and can only remove
+  the owned rule. Any other action with a second argument stays a usage error (64).
 - A wrong argument count, unknown action, duplicate, empty argument or non-UTF-8 argument is a usage
   error (64).
 - The helper validates assuming a Windows administrator may launch it directly (a separate boundary from

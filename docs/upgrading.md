@@ -194,7 +194,8 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
   書ける）に通らず、画面は段階 1 の案内（コピーする PowerShell のコマンド）だけになる。段階 2 が要らない
   ならそれでよい（`tauri.conf.json` の `installMode` を戻すだけで、ほかは変えなくてよい）。
 - **インストール時にはルールを作らない**。許可はアプリの設定画面で admin が行う。アンインストール時は
-  helper の `firewall-remove` でアプリが作ったルール（`<identifier>.lan.tcp.program`）だけを外し、
+  アンインストーラに埋め込んだ helper の写し（インストール先の helper は起動しない）でアプリが作ったルール
+  （`<identifier>.lan.tcp.program`）だけを外し、
   外せなくても（helper が無い・管理者が変えたルール・失敗）アンインストールは止めずに、ルール名と手で
   外す方法をアンインストールの詳細に表示する。Tauri の更新（`/UPDATE`）ではルールを残す。
 
