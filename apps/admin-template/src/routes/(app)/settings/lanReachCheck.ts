@@ -42,10 +42,20 @@ export const REACH_CLOCK_TICK_MS = 60_000;
  * against one). The caller adds "inside the Tauri window".
  */
 export function reachCheckAvailable(status: ServerStatus | null): boolean {
-	if (status === null || !status.running) return false;
+	if (status === null || !status.running || !status.uiEmbedded) return false;
 	const live = status.live;
 	if (!live || !isIpv4Bind(live.bind) || isLoopbackHost(live.bind)) return false;
 	return typeof status.generation === 'number';
+}
+
+/**
+ * Issue #478: the listener is serving but this build has no web UI embedded
+ * (plain `tauri build` / `tauri dev`), so another device would only get a
+ * placeholder page: the settings screen shows no URL, QR or connection
+ * check, only a note saying why.
+ */
+export function lanUiMissing(status: ServerStatus | null): boolean {
+	return status !== null && status.running && !status.uiEmbedded;
 }
 
 /**

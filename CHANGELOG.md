@@ -40,6 +40,7 @@
 
 ### Fixed
 
+- **配布用の Windows ビルド（`pnpm --filter admin-template tauri:build:windows`）に LAN 向けの Web UI が入らなかったのを直した**（#478）。`--features embed-ui` を付けたので、別端末が `http://<PC>:<port>/` を開くと実際の画面が出る。`server_status` に `uiEmbedded`（必須）を足し、UI が埋め込まれていないビルド（素の `tauri build`・`tauri dev`）では設定画面が URL・QR・「別の端末からの接続確認」を出さず、確認できない旨だけを出す。
 - 内蔵サーバー（LAN アクセス）の `server_status` が、保存した設定と稼働中のサーバーの値を混ぜて返し得たのを直した（#459、#219 の監査）。汎用の `settings_set` は `server.` で始まるキーを拒否し（書き込みは `server_apply` だけ）、status は保存値（`enabled`・`bind`・`port`・`viewerPublic`、フォームの初期値）と、実際の listener の値（`live` の bind・port、`urls`・`qrSvgs`）を同じロックの中で読んだ 1 つの snapshot として返す。新しい省略可能な項目 `generation`（適用のたびに変わる）・`applyFailure`（ポート使用中・bind の失敗・保存の失敗と、元のサーバーを戻せたか）を足した。`server_apply` の失敗時は、保存値ではなく稼働していた listener のアドレスとポートで戻す。`banto-server` に、ポート使用中をほかの失敗と分けて返す `bind_without_fallback` を追加（追加のみ）。
 
 ## [6.8.0] - 2026-10-21

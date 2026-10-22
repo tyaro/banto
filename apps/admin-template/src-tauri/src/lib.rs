@@ -1953,6 +1953,11 @@ struct ServerStatusResult {
     /// `"linux"`, ...): a code, not display text (conventions §13). The
     /// frontend shows the Windows firewall information only for `"windows"`.
     platform: &'static str,
+    /// Issue #478: whether this build embeds the web UI that other devices
+    /// get from the LAN listener (`admin_template_core::assets::UI_EMBEDDED`).
+    /// When `false` the LAN page is a placeholder, so the settings screen
+    /// shows no URL/QR/connection check.
+    ui_embedded: bool,
 }
 
 /// [`ServerStatusResult::executable_path`]: `std::env::current_exe()` as a
@@ -2036,6 +2041,7 @@ fn build_status(saved: &ServerSettings, slot: &ServerSlot) -> ServerStatusResult
         apply_failure: slot.apply_failure.clone(),
         executable_path: current_executable_path(),
         platform: std::env::consts::OS,
+        ui_embedded: admin_template_core::assets::UI_EMBEDDED,
     }
 }
 

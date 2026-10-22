@@ -5,7 +5,7 @@
  *
  * 呼ばれ方: `apps/admin-template/src-tauri/tauri.fw-elev.conf.json` の
  * `build.beforeBuildCommand`（`pnpm --filter admin-template tauri:build:windows` が
- * `tauri build --config` でこの設定を重ねる）。Tauri が渡す `TAURI_ENV_TARGET_TRIPLE`・
+ * `tauri build --features embed-ui --config` でこの設定を重ねる）。Tauri が渡す `TAURI_ENV_TARGET_TRIPLE`・
  * `TAURI_ENV_DEBUG` に合わせて helper をビルドし、
  * `src-tauri/binaries/<bin>-<target triple>.exe` に複写する。Tauri はこれを
  * インストール先の本体 exe の**隣**に `<bin>.exe`（triple を外した固定名）で置く

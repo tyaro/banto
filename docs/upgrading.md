@@ -183,9 +183,9 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
   identifier を変えない限りそのまま使われる。
 - **helper の同梱**: ファイアウォールの許可を昇格して行う helper（`<本体の exe 名>-fw-elev.exe`）を
   本体 exe の隣に置くには、インストーラを `pnpm --filter <アプリ名> tauri:build:windows`
-  （= `tauri build --config src-tauri/tauri.fw-elev.conf.json`。helper を先にビルドして
+  （= `tauri build --features embed-ui --config src-tauri/tauri.fw-elev.conf.json`。helper を先にビルドして
   `externalBin` で同梱する）で作る。この設定は `bundle.targets` を `["nsis"]` に絞るので、MSI は
-  作られない（MSI には helper のルールを外すアンインストールのフックが無く、アンインストールしても
+  作られない（このスクリプトは `--features embed-ui` も付けるので LAN 向けの Web UI も入る。素の `tauri build` には入らず、設定画面は別端末からの接続確認を出さない。MSI には helper のルールを外すアンインストールのフックが無く、アンインストールしても
   ルールが残るため、段階 2 では MSI に対応しない）。素の `tauri build` で作ったインストーラには helper が入らず、
   段階 2 は「前提が無い」で止まって段階 1 の案内になる（アンインストールのフックは、helper が無い旨と
   手で外す方法を表示して続行する）。

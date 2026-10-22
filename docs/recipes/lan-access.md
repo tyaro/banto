@@ -196,7 +196,7 @@ Windows ファイアウォールにあるかを、**昇格せず読み取りだ�
 
 - **前提: Program Files の下に perMachine でインストールしたとき**だけ働く。インストーラは
   `pnpm --filter admin-template tauri:build:windows` で作る（helper を先にビルドして
-  本体の隣に同梱する。素の `tauri build` では helper が入らない）。作るのは NSIS のインストーラ
+  本体の隣に同梱する。素の `tauri build` では helper が入らない）。このスクリプトは `--features embed-ui` も付けるので、LAN 向けの Web UI も入る（下の「`embed-ui` フィーチャー」）。作るのは NSIS のインストーラ
   だけで、MSI には対応しない（ルールを外すアンインストールのフックが NSIS にしか無い）。テンプレートの既定の
   `installMode` は `perMachine`。portable・per-user・移動したコピー・`tauri dev` では
   「前提が無い」になり、上の段階 1 の情報（コピーするコマンド）を使う。
@@ -309,6 +309,10 @@ embed-ui`を省略すると組み込みのプレースホルダページを返�
 --features embed-ui`）を指定しないと、LANアクセス経由のブラウザには
   プレースホルダページしか返らない（Tauriウィンドウ自体の表示には影響
   しない — Webview は常にバンドルされた実フロントを表示する）。
+- 配布用の`pnpm --filter admin-template tauri:build:windows`は`--features embed-ui`
+  付きなので、そのインストーラにはLAN向けのUIが入る。素の`tauri build`・`tauri dev`では入らず、
+  設定画面は（別の端末が開く画面が仮のページなので）URL・QRと「別の端末からの接続確認」を出さず、
+  確認できない旨の注記だけを出す（`ServerStatus.uiEmbedded`、Issue #478）。
 
 ## セキュリティ注意
 

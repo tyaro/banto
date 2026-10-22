@@ -310,6 +310,7 @@
   "settings.stopped": "Stopped",
   "settings.scopeLocalRunning": "Running, this PC only",
   "settings.scopeLanRunning": "Running, reachable from devices on the same network",
+  "settings.lanUiNotEmbedded": "This build does not include the web UI for other devices, so the connection check from another device is not available (the distributable installer built with `tauri:build:windows` includes it; for development, run `pnpm build` and then build with `--features embed-ui`).",
   "settings.lanReachabilityNote": "Depending on firewall or router settings, a device on the same network may still be unable to connect.",
   "settings.ipv6NotGuidedRunning": "Running (IPv6 binds are not guided to a connection address)",
   "settings.ipv6NotGuidedNote": "This bind address is IPv6, so this screen does not guide to a connection URL or QR code for it.",

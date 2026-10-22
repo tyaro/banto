@@ -16,6 +16,11 @@ use banto_server::guess_mime;
 use banto_server::UiAssets;
 use std::borrow::Cow;
 
+/// Whether the SvelteKit UI is embedded in this build (`embed-ui`). Without
+/// it, `http://<PC>:<port>/` from another device serves only a placeholder,
+/// so the settings screen must not guide a LAN connection check (Issue #478).
+pub const UI_EMBEDDED: bool = cfg!(feature = "embed-ui");
+
 /// Injectable into `banto_server::static_files::static_router`.
 pub struct FrontendAssets;
 
@@ -65,6 +70,11 @@ impl UiAssets for FrontendAssets {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_embedded_matches_feature() {
+        assert_eq!(UI_EMBEDDED, cfg!(feature = "embed-ui"));
+    }
 
     #[cfg(not(feature = "embed-ui"))]
     #[test]

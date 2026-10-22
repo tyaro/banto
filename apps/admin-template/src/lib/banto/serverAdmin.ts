@@ -46,6 +46,13 @@ export interface ServerStatus {
 	urls: string[];
 	qrSvgs: QrSvg[];
 	/**
+	 * Issue #478: whether this build embeds the web UI that other devices
+	 * get from the LAN listener. `false` (a plain `tauri build` / `tauri dev`)
+	 * means that page is a placeholder, so no URL, QR or connection check is
+	 * offered (see `lanUiMissing`).
+	 */
+	uiEmbedded: boolean;
+	/**
 	 * Changes whenever the live listener is replaced (each `server_apply`).
 	 * Anything shown or copied from the live values should be re-read when
 	 * it changes.

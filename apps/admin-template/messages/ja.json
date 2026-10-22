@@ -310,6 +310,7 @@
   "settings.stopped": "停止中",
   "settings.scopeLocalRunning": "このPC内で稼働中",
   "settings.scopeLanRunning": "同じネットワークの端末から接続できる設定で稼働中",
+  "settings.lanUiNotEmbedded": "このビルドには LAN 向けの画面が入っていないため、別の端末からの接続確認はできません（配布用のインストーラ `tauri:build:windows` では入ります。開発時は `pnpm build` の後に `--features embed-ui` でビルドしてください）。",
   "settings.lanReachabilityNote": "ファイアウォールやルーターの設定によっては、同じネットワークの端末からでも接続できない場合があります。",
   "settings.ipv6NotGuidedRunning": "稼働中（IPv6の待受は接続先の案内対象外）",
   "settings.ipv6NotGuidedNote": "このバインドアドレスはIPv6のため、接続先URL・QRコードの案内には対応していません。",

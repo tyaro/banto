@@ -15,6 +15,7 @@ function status(port: number, generation: number | undefined): ServerStatus {
 		live: { bind: '0.0.0.0', port },
 		urls: [`http://192.168.1.20:${port}/`],
 		qrSvgs: [],
+		uiEmbedded: true,
 		generation,
 		executablePath: 'C:\\banto-admin.exe',
 		platform: 'windows'

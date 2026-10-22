@@ -47,7 +47,8 @@ describe('liveBind (#459)', () => {
 		port: 8721,
 		viewerPublic: false,
 		urls: [],
-		qrSvgs: []
+		qrSvgs: [],
+		uiEmbedded: true
 	};
 
 	it('prefers the live listener over the saved bind', () => {

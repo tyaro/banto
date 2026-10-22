@@ -25,6 +25,7 @@ function status(patch: Partial<ServerStatus> = {}): ServerStatus {
 		live: { bind: '0.0.0.0', port: 8721 },
 		urls: [],
 		qrSvgs: [],
+		uiEmbedded: true,
 		generation: 4,
 		executablePath: EXE,
 		platform: 'windows',
