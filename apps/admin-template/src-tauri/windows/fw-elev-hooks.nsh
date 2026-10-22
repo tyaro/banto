@@ -13,8 +13,9 @@
 ; (decision 5). Both come from Tauri's own defines (MAINBINARYNAME, BUNDLEID), so
 ; renaming the app needs no edit here.
 ;
-; The uninstaller of a perMachine install runs elevated, so ExecWait can start the
-; helper (requireAdministrator) without another UAC prompt. `$UpdateMode` is the
+; The uninstaller of a perMachine install runs elevated, so nsExec can start the
+; helper (requireAdministrator) without another UAC prompt, and without a console
+; window (its output goes to the details log). `$UpdateMode` is the
 ; Tauri template's flag for an update in place (same install path, so the rule
 ; still names the right exe): the rule is kept then.
 ;
@@ -78,8 +79,10 @@
         StrCpy $0 "the helper could not be extracted"
       ${Else}
         ClearErrors
-        ExecWait '"$PLUGINSDIR\${MAINBINARYNAME}-fw-elev.exe" firewall-remove-installed "$INSTDIR"' $0
-        ${If} ${Errors}
+        ; nsExec pushes the exit code, or "error" when it could not start the program.
+        nsExec::ExecToLog '"$PLUGINSDIR\${MAINBINARYNAME}-fw-elev.exe" firewall-remove-installed "$INSTDIR"'
+        Pop $0
+        ${If} $0 == "error"
           StrCpy $0 "not started"
         ${EndIf}
       ${EndIf}

@@ -132,7 +132,7 @@ impl Drop for ComApartment {
     }
 }
 
-/// Starts `exe` elevated (verb `runas`, `SW_SHOWNORMAL`) with `tokens` as its
+/// Starts `exe` elevated (verb `runas`, `SW_HIDE`) with `tokens` as its
 /// arguments, waits until it ends and returns its exit code.
 ///
 /// The calling thread blocks without a time limit - as long as the user
@@ -147,7 +147,7 @@ pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32
         GetExitCodeProcess, WaitForSingleObject, INFINITE,
     };
     use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
     let parameters = parameters_from_tokens(tokens)?;
 
@@ -168,7 +168,9 @@ pub(crate) fn run_elevated(exe: &std::path::Path, tokens: &[&str]) -> Result<u32
         lpVerb: verb.as_ptr(),
         lpFile: file.as_ptr(),
         lpParameters: params.as_ptr(),
-        nShow: SW_SHOWNORMAL,
+        // The helper is a console program: a shown window would be an empty
+        // console flashing up. Hiding it does not affect the UAC prompt.
+        nShow: SW_HIDE,
         ..Default::default()
     };
 
