@@ -373,6 +373,8 @@
   "settings.firewallEnforcementEnforced": "適用状態: 適用されています（EnforcementStatus: Full）",
   "settings.firewallEnforcementUnknown": "適用状態は不明です（EnforcementStatus: {values}）",
   "settings.firewallEnforcementUnread": "適用状態は不明です（EnforcementStatus を読み取れませんでした）",
+  "settings.firewallStatusNotEnforced": "あり（内容は期待どおり。ただし Windows ファイアウォールとしては適用されていません）",
+  "settings.firewallEnforcementCategoryOff": "別のファイアウォール製品が有効なため、Windows ファイアウォールのルールとしては適用されていません。製品によっては Windows のルールも参照します。届くかどうかは「別の端末からの接続確認」で確かめ、届かなければその製品の設定で許可してください。",
   "settings.firewallEnforcementNotEnforced": "存在するが適用されていません（理由: {reasons}）",
   "settings.firewallFieldEnforcement": "適用状態",
   "settings.firewallStatusGroupUnknown": "同じグループ（{group}）に名前の違うルールがあるかは確認できませんでした。",

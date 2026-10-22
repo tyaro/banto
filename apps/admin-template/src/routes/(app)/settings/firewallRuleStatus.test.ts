@@ -182,18 +182,35 @@ describe('firewallRuleView', () => {
 	});
 
 	it('reads only a Full enforcement as applied (owner review on PR #465)', () => {
-		// In the ActiveStore but not applied: a difference, with its reasons.
-		for (const reasons of [['InactiveProfile'], ['LocalFirewallRulesDisallowed']]) {
+		// In the ActiveStore with the values as expected but not applied: its own
+		// kind (not "different"), for every reason (#479).
+		for (const reasons of [
+			['CategoryOff'],
+			['InactiveProfile'],
+			['LocalFirewallRulesDisallowed']
+		]) {
 			const check = {
 				...present(['enforcement']),
 				enforcement: { state: 'notEnforced' as const, reasons }
 			};
 			expect(firewallRuleView(check)).toMatchObject({
-				kind: 'differs',
-				fields: ['enforcement'],
+				kind: 'notEnforced',
+				reasons,
 				enforcement: { state: 'notEnforced', reasons }
 			});
 		}
+		// A content mismatch next to CategoryOff stays a difference.
+		expect(
+			firewallRuleView({
+				...present(['action', 'enforcement']),
+				enforcement: { state: 'notEnforced' as const, reasons: ['CategoryOff'] }
+			})
+		).toMatchObject({ kind: 'differs', fields: ['action', 'enforcement'] });
+		// Not in the ActiveStore (`active`) is a content mismatch.
+		expect(firewallRuleView(present(['active']))).toMatchObject({
+			kind: 'differs',
+			fields: ['active']
+		});
 		// Values as expected but the status missing or unknown: never plainly
 		// "as expected", and `enforcement` is worded on its own, not in the
 		// "not compared" list.

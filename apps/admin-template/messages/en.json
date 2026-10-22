@@ -373,6 +373,8 @@
   "settings.firewallEnforcementEnforced": "Enforcement: applied (EnforcementStatus: Full)",
   "settings.firewallEnforcementUnknown": "Enforcement unknown (EnforcementStatus: {values})",
   "settings.firewallEnforcementUnread": "Enforcement unknown (EnforcementStatus could not be read)",
+  "settings.firewallStatusNotEnforced": "Present (values as expected, but not applied as a Windows Firewall rule)",
+  "settings.firewallEnforcementCategoryOff": "Another firewall product is on, so the rule is not applied as a Windows Firewall rule. Some products also evaluate Windows rules. Check whether connections arrive with the connection check from another device, and if they do not, allow the port in that product's settings.",
   "settings.firewallEnforcementNotEnforced": "present but not applied (reason: {reasons})",
   "settings.firewallFieldEnforcement": "Enforcement",
   "settings.firewallStatusGroupUnknown": "Whether the group {group} has rules with other names could not be checked.",

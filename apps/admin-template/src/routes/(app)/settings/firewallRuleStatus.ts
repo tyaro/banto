@@ -202,6 +202,13 @@ export type FirewallRuleView =
 	 */
 	| ({ kind: 'unconfirmed' } & FirewallPresentView)
 	/**
+	 * The values are as the command creates them, but the ActiveStore says the
+	 * rule is present and not applied (`EnforcementStatus` other than `Full`,
+	 * e.g. `CategoryOff` while another vendor's firewall is on). Not a
+	 * difference in the rule, so nothing here asks for a re-create (#479).
+	 */
+	| ({ kind: 'notEnforced'; reasons: string[] } & FirewallPresentView)
+	/**
 	 * Present but different (`fields`, e.g. changed to Block, a narrower
 	 * source range, another exe, an old port, not applied).
 	 */
@@ -275,8 +282,15 @@ export function firewallRuleView(check: FirewallRuleCheck): FirewallRuleView {
 				enforcement: check.enforcement,
 				local: localView(check)
 			};
-			if (check.mismatches.length > 0) {
+			const contentMismatches = check.mismatches.filter((field) => field !== 'enforcement');
+			if (contentMismatches.length > 0) {
 				return { kind: 'differs', fields: check.mismatches, ...present };
+			}
+			if (check.mismatches.length > 0) {
+				// Only the enforcement differs: the rule's values are as expected.
+				return check.enforcement?.state === 'notEnforced'
+					? { kind: 'notEnforced', reasons: check.enforcement.reasons, ...present }
+					: { kind: 'differs', fields: check.mismatches, ...present };
 			}
 			// Applied only when the status says so; a status that is missing or
 			// unknown never reads as plainly "as expected".
