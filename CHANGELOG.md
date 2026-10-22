@@ -3094,7 +3094,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.8.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.9.0...HEAD
+[6.9.0]: https://github.com/tyaro/banto/compare/v6.8.0...v6.9.0
 [6.8.0]: https://github.com/tyaro/banto/compare/v6.7.2...v6.8.0
 [6.7.2]: https://github.com/tyaro/banto/compare/v6.7.1...v6.7.2
 [6.7.1]: https://github.com/tyaro/banto/compare/v6.7.0...v6.7.1
