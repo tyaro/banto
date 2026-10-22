@@ -468,6 +468,14 @@
 	font-size: 0.8rem;
 }
 
+/* Issue #479: a state that is not wrong but needs a look (the rule is as
+   expected, yet Windows does not enforce it), so not the danger colour. */
+.settings-page .caution {
+	margin: 0.5rem 0 0;
+	color: var(--banto-warning-tint-text);
+	font-size: 0.8rem;
+}
+
 .settings-page .note {
 	margin: 0.75rem 0 0;
 	color: var(--banto-text-muted);
