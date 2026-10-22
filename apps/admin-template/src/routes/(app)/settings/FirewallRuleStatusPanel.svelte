@@ -59,12 +59,13 @@
 		firewallFieldValue,
 		firewallRuleView,
 		firewallStatusMatches,
-		judgeFirewallStatus,
 		nextFirewallPanelState,
+		type FirewallCheckOutcome,
 		type FirewallOriginView
 	} from './firewallRuleStatus';
 	import {
 		firewallChangeActions,
+		firewallChangeManualHints,
 		firewallChangeTarget,
 		firewallChangeView,
 		isFirewallChangeResult,
@@ -157,9 +158,16 @@
 		changeOutcome = null;
 		changeProblem = null;
 		let value: unknown = null;
+		let outcome: FirewallCheckOutcome = { kind: 'superseded' };
 		try {
 			// The target is the read the confirmation screen showed (decision 13).
-			value = await changeFirewallRule(asked.operation, firewallChangeTarget(asked.status));
+			// The change runs in the checks' order: an apply or a check started
+			// while it waits drops its read (owner review on PR #475).
+			({ value, outcome } = await requests.change<unknown>(
+				() => changeFirewallRule(asked.operation, firewallChangeTarget(asked.status)),
+				(answer) => (isFirewallChangeResult(answer) ? answer.status : null),
+				() => untrack(() => info)
+			));
 		} catch (err) {
 			const kind = isProviderError(err) ? err.body.kind : null;
 			changeProblem = kind === 'forbidden' || kind === 'unauthorized' ? 'denied' : 'unavailable';
@@ -171,19 +179,15 @@
 			void check();
 			return;
 		}
+		// The outcome is shown whatever the read it carries came to.
 		changeView = firewallChangeView(value);
 		changeOutcome = value.outcome;
 		// Every answer carries a fresh read (decision 11). It replaces what is
-		// shown through the same comparison as a check; pending checks are older.
-		requests.invalidate();
+		// shown through the same comparison as a check - unless a newer check
+		// took over, which then shows the status (`superseded` changes nothing).
+		if (outcome.kind === 'superseded') return;
 		checking = false;
-		const next = nextFirewallPanelState(
-			{ result, problem },
-			judgeFirewallStatus(
-				value.status,
-				untrack(() => info)
-			)
-		);
+		const next = nextFirewallPanelState({ result, problem }, outcome);
 		result = next.result;
 		problem = next.problem;
 		if (next.refresh) void refresh();
@@ -406,6 +410,9 @@
 		<div class="firewall-change">
 			<h4>{m['settings.firewallChangeHeading']()}</h4>
 			<p class="note">{m['settings.firewallChangeDesc']()}</p>
+			{#each firewallChangeManualHints(actions) as hint (hint)}
+				<p class="note" data-change-manual-hint={hint}>{m[hint]()}</p>
+			{/each}
 			{#if actions.length > 0}
 				<div class="firewall-change-actions">
 					{#each actions as operation (operation)}

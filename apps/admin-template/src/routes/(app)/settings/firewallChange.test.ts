@@ -9,6 +9,7 @@ import type {
 } from '#lib/banto/serverAdmin.js';
 import {
 	firewallChangeActions,
+	firewallChangeManualHints,
 	firewallChangeTarget,
 	firewallChangeView,
 	firewallRefusalMessage,
@@ -127,6 +128,29 @@ describe('firewallChangeActions', () => {
 				ruleName: RULE
 			})
 		).toEqual([]);
+	});
+});
+
+describe('firewallChangeManualHints', () => {
+	it('names the by-hand way of each offered operation, never the allow command for a removal (Codex review on PR #475)', () => {
+		expect(firewallChangeManualHints(['allow'])).toEqual(['settings.firewallChangeDescAllow']);
+		expect(firewallChangeManualHints(['remove'])).toEqual(['settings.firewallChangeDescRemove']);
+		expect(firewallChangeManualHints(['allow', 'remove'])).toEqual([
+			'settings.firewallChangeDescAllow',
+			'settings.firewallChangeDescRemove'
+		]);
+		expect(firewallChangeManualHints([])).toEqual([]);
+	});
+
+	it('keeps the shared description free of the allow command, and the removal text on Remove-NetFirewallRule', () => {
+		const catalogs: Record<string, Record<string, string>> = { en, ja };
+		for (const catalog of Object.values(catalogs)) {
+			expect(catalog['settings.firewallChangeDesc']).not.toMatch(/PowerShell/);
+			expect(catalog['settings.firewallChangeDescRemove']).toContain(
+				'Remove-NetFirewallRule -Name'
+			);
+			expect(catalog['settings.firewallChangeDescRemove']).not.toMatch(/New-NetFirewallRule/);
+		}
 	});
 });
 

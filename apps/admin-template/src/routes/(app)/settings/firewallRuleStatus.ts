@@ -362,6 +362,27 @@ export class FirewallStatusRequests {
 		if (ticket !== this.#latest) return { kind: 'superseded' };
 		return judgeFirewallStatus(value, shown());
 	}
+
+	/**
+	 * Runs a firewall change (`run`) whose answer carries a fresh status read
+	 * (ADR-0021 decision 11; `statusOf` picks it out), in the same order as
+	 * the checks: the change takes a ticket when it starts, so the checks
+	 * pending then are dropped, and an apply or a check started while it waits
+	 * for UAC drops ITS read (`superseded`) - that newer check shows the
+	 * status, and an older read never clears it (owner review on PR #475).
+	 * The answer itself (`value`) is always returned; a failure of `run`
+	 * propagates.
+	 */
+	async change<T>(
+		run: () => Promise<T>,
+		statusOf: (value: T) => unknown,
+		shown: () => FirewallInfo | null
+	): Promise<{ value: T; outcome: FirewallCheckOutcome }> {
+		const ticket = ++this.#latest;
+		const value = await run();
+		if (ticket !== this.#latest) return { value, outcome: { kind: 'superseded' } };
+		return { value, outcome: judgeFirewallStatus(statusOf(value), shown()) };
+	}
 }
 
 /**

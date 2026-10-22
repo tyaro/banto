@@ -51,6 +51,25 @@ export function firewallChangeActions(input: {
 	}
 }
 
+/** The way to do an operation by hand, when the helper cannot (not under Program Files). */
+export type FirewallChangeManualKey =
+	'settings.firewallChangeDescAllow' | 'settings.firewallChangeDescRemove';
+
+/**
+ * The by-hand way the panel's description names for the operations it
+ * offers (`actions`, in button order): the allow command above for "allow",
+ * `Remove-NetFirewallRule` or the advanced firewall console for "remove"
+ * (Codex review on PR #475: a panel offering only "remove" must not point at
+ * the command that adds the rule). Both when both are offered.
+ */
+export function firewallChangeManualHints(
+	actions: readonly FirewallChangeOperation[]
+): FirewallChangeManualKey[] {
+	return actions.map((operation) =>
+		operation === 'allow' ? 'settings.firewallChangeDescAllow' : 'settings.firewallChangeDescRemove'
+	);
+}
+
 /** What the confirmation screen sends (decision 13): the shown read's own target. */
 export function firewallChangeTarget(status: FirewallRuleStatus): FirewallChangeTarget {
 	return { executablePath: status.expected.executablePath, generation: status.generation };

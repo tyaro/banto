@@ -715,6 +715,13 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		const allow = panel.getByRole('button', { name: 'ファイアウォールで許可する…' });
 		await expect(allow).toBeVisible();
 		await expect(panel.getByRole('button', { name: '許可を外す…' })).toHaveCount(0);
+		// The by-hand way follows the offered operation (Codex review on PR #475).
+		const allowHint = panel.locator('[data-change-manual-hint="settings.firewallChangeDescAllow"]');
+		const removeHint = panel.locator(
+			'[data-change-manual-hint="settings.firewallChangeDescRemove"]'
+		);
+		await expect(allowHint).toContainText('上のコマンドを管理者の PowerShell で実行');
+		await expect(removeHint).toHaveCount(0);
 
 		// The confirmation screen: decision 1's two sentences, the target, the UAC note.
 		await allow.click();
@@ -780,6 +787,10 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		);
 		await expect(panel.getByRole('button', { name: '許可を外す…' })).toBeEnabled();
 		await expect(allow).toHaveCount(0);
+		// Only "remove" is offered now: its by-hand way, never the allow command.
+		await expect(removeHint).toContainText("Remove-NetFirewallRule -Name '<ルール名>'");
+		await expect(allowHint).toHaveCount(0);
+		await expect(panel.locator('.firewall-change')).not.toContainText('上のコマンド');
 	});
 
 	test('サーバ・接続: firewall change results - cancelled, busy, precondition, target changed (Issue #219 stage 2)', async ({

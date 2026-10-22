@@ -14,8 +14,11 @@ import {
 	firewallStatusMatches,
 	isFirewallRuleStatus,
 	judgeFirewallStatus,
-	nextFirewallPanelState
+	nextFirewallPanelState,
+	type FirewallCheckOutcome,
+	type FirewallPanelState
 } from './firewallRuleStatus';
+import { firewallChangeActions } from './firewallChange';
 
 const EXE = 'C:\\Program Files\\Banto\\banto-admin.exe';
 
@@ -462,6 +465,94 @@ describe('FirewallStatusRequests', () => {
 				() => info(8721, 1)
 			)
 		).toEqual({ kind: 'unavailable' });
+	});
+});
+
+describe('FirewallStatusRequests.change', () => {
+	/**
+	 * Owner review on PR #475: the change's re-read got generation 1, an apply
+	 * moved the panel to generation 2 while the helper was still answering,
+	 * and the late answer then cleared the new check's status and buttons.
+	 */
+	async function lateChange(newCheckFirst: boolean): Promise<void> {
+		const requests = new FirewallStatusRequests();
+		let shown = info(8721, 1);
+		let state: FirewallPanelState = { result: result(8721, 1), problem: null };
+		const helper = deferred<{ outcome: string; status: unknown }>();
+		const changed = requests.change(
+			() => helper.promise,
+			(answer) => answer.status,
+			() => shown
+		);
+		// The apply to generation 2 is shown, and the panel checks that.
+		requests.invalidate();
+		shown = info(8722, 2);
+		const read = deferred<unknown>();
+		const checked = requests.check(
+			() => read.promise,
+			() => shown
+		);
+		const settle = async (outcome: FirewallCheckOutcome) => {
+			const next = nextFirewallPanelState(state, outcome);
+			expect(next.refresh).toBe(false);
+			state = { result: next.result, problem: next.problem };
+		};
+		const finishCheck = async () => {
+			read.resolve(result(8722, 2, present()));
+			await settle(await checked);
+		};
+		const finishChange = async () => {
+			helper.resolve({ outcome: 'done', status: result(8721, 1, present()) });
+			const { value, outcome } = await changed;
+			// The outcome is still there to show; only its read is dropped.
+			expect(value.outcome).toBe('done');
+			expect(outcome).toEqual({ kind: 'superseded' });
+			await settle(outcome);
+		};
+		if (newCheckFirst) {
+			await finishCheck();
+			await finishChange();
+		} else {
+			await finishChange();
+			await finishCheck();
+		}
+		const shownResult = state.result;
+		expect(state).toEqual({ result: result(8722, 2, present()), problem: null });
+		if (shownResult === null) throw new Error('the status is gone');
+		expect(firewallStatusMatches(shown, shownResult)).toBe(true);
+		// The buttons come from that status: the rule is there, so "remove".
+		expect(
+			firewallChangeActions({
+				admin: true,
+				status: shownResult,
+				ruleName: 'dev.banto.admin.lan.tcp.program'
+			})
+		).toEqual(['remove']);
+	}
+
+	it('keeps the new check when it finishes before a late change answer', async () => {
+		await lateChange(true);
+	});
+
+	it('keeps the new check when it finishes after a late change answer', async () => {
+		await lateChange(false);
+	});
+
+	it('shows the read of a change nobody overtook, and drops the checks pending when it started', async () => {
+		const requests = new FirewallStatusRequests();
+		const pending = deferred<unknown>();
+		const before = requests.check(
+			() => pending.promise,
+			() => info(8721, 1)
+		);
+		const { outcome } = await requests.change(
+			async () => ({ status: result(8721, 1, present()) }),
+			(answer) => answer.status,
+			() => info(8721, 1)
+		);
+		expect(outcome).toEqual({ kind: 'ok', status: result(8721, 1, present()) });
+		pending.resolve(result(8721, 1));
+		expect(await before).toEqual({ kind: 'superseded' });
 	});
 });
 
