@@ -26,6 +26,10 @@
  * - The connection check from another device (PR-C3) issues a URL + QR for
  *   a live LAN host and turns into "confirmed" when the 2 s re-read finds
  *   a record (not Windows-only).
+ * - The stage-2 firewall change (ADR-0021 E3) opens a confirmation with
+ *   decision 1's two sentences, sends the target it showed, disables itself
+ *   while "UAC" waits, words each outcome (done never as "reachable") and
+ *   shows the re-read that came with the result.
  *
  * Runs in its own page/context - independent of smoke.spec.ts's shared state.
  */
@@ -91,7 +95,16 @@ async function installTauriStub(page: Page): Promise<void> {
 			/** Becomes `reachCheckStatus` when `reach_check_issue` is called (the host's new issuance). */
 			reachStatusAfterIssue: null as unknown,
 			/** The hosts `reach_check_issue` was called with. */
-			reachIssueHosts: [] as string[]
+			reachIssueHosts: [] as string[],
+			/**
+			 * `firewall_rule_change`'s answer (Issue #219 stage 2, ADR-0021 E3).
+			 * Its `status` (the re-read) also becomes `firewallRuleStatus`.
+			 */
+			firewallChange: null as unknown,
+			/** The args `firewall_rule_change` was called with. */
+			firewallChangeCalls: [] as unknown[],
+			/** When set, `firewall_rule_change` waits for it (the UAC prompt is open). */
+			firewallChangeGate: null as Promise<void> | null
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
 			mock.releaseServerStatus = resolve;
@@ -183,6 +196,13 @@ async function installTauriStub(page: Page): Promise<void> {
 					if (mock.reachStatusAfterIssue !== null)
 						mock.reachCheckStatus = mock.reachStatusAfterIssue;
 					return mock.reachCheckIssue;
+				case 'firewall_rule_change': {
+					mock.firewallChangeCalls.push(args);
+					if (mock.firewallChangeGate) await mock.firewallChangeGate;
+					const answer = mock.firewallChange as { status?: unknown } | null;
+					if (answer?.status !== undefined) mock.firewallRuleStatus = answer.status;
+					return answer;
+				}
 				case 'vibrancy_status':
 					return { supported: false, applied: false };
 				case 'plugin:event|listen': {
@@ -680,4 +700,220 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		// The QR of the used URL is gone with the pending state.
 		await expect(block.locator('svg[data-reach-qr]')).toHaveCount(0);
 	});
+
+	test('サーバ・接続: allow through the elevated helper - confirm, wait, result and re-read (Issue #219 stage 2)', async ({
+		page,
+		baseURL
+	}) => {
+		await installTauriStub(page);
+		await page.addInitScript(windowsHostWithoutRule);
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/connectivity'));
+
+		const panel = page.locator('.firewall-status');
+		await expect(panel.locator('[data-state="missing"]').first()).toBeVisible();
+		const allow = panel.getByRole('button', { name: 'ファイアウォールで許可する…' });
+		await expect(allow).toBeVisible();
+		await expect(panel.getByRole('button', { name: '許可を外す…' })).toHaveCount(0);
+
+		// The confirmation screen: decision 1's two sentences, the target, the UAC note.
+		await allow.click();
+		const dialog = page.getByRole('dialog', { name: 'Windows ファイアウォールで許可する' });
+		await expect(dialog).toBeVisible();
+		await expect(dialog.locator('[data-confirm="ports"]')).toHaveText(
+			'この実行ファイルが待ち受ける全ての TCP ポートを、プライベート ネットワークから許可します。'
+		);
+		await expect(dialog.locator('[data-confirm="subnet"]')).toHaveText(
+			'接続元の範囲「ローカル サブネット」は、PC に複数のネットワーク アダプターや VPN があると、そのそれぞれのサブネットを含むことがあります。'
+		);
+		await expect(dialog).toContainText(FW_EXE);
+		await expect(dialog).toContainText('dev.banto.admin.lan.tcp.program');
+		await expect(dialog).toContainText('Windows の確認（ユーザー アカウント制御）が表示されます');
+		// Cancelling starts nothing.
+		await dialog.getByRole('button', { name: 'キャンセル' }).click();
+		await expect(page.getByRole('dialog')).toHaveCount(0);
+		expect(await firewallChangeCalls(page)).toEqual([]);
+
+		// Approve: the helper "waits for UAC" until released.
+		await page.evaluate((status) => {
+			const m = (window as unknown as { __bantoMock: Record<string, unknown> }).__bantoMock;
+			m.firewallChangeGate = new Promise<void>((resolve) => {
+				m.releaseFirewallChange = resolve;
+			});
+			m.firewallChange = {
+				operation: 'allow',
+				outcome: 'done',
+				exitCode: 0,
+				refusal: null,
+				osError: null,
+				stale: false,
+				status
+			};
+		}, firewallStatusWithRule());
+		await allow.click();
+		await dialog.getByRole('button', { name: '許可する', exact: true }).click();
+		await expect(panel.locator('[data-change="waiting"]')).toContainText(
+			'Windows の確認（ユーザー アカウント制御）の応答を待っています。'
+		);
+		await expect(allow).toBeDisabled();
+		await expect(panel.getByRole('button', { name: '再確認' })).toBeDisabled();
+		// The target is what the confirmation showed (decision 13).
+		expect(await firewallChangeCalls(page)).toEqual([
+			{ operation: 'allow', target: { executablePath: FW_EXE, generation: 1 } }
+		]);
+
+		await page.evaluate(() =>
+			(
+				window as unknown as { __bantoMock: { releaseFirewallChange: () => void } }
+			).__bantoMock.releaseFirewallChange()
+		);
+		const outcome = panel.locator('[data-change="result"]');
+		await expect(outcome).toHaveAttribute('data-outcome', 'done');
+		await expect(outcome).toContainText('許可のルールを作りました。');
+		// Exit 0 is "done", never "reachable": it points to the reach check.
+		await expect(outcome.locator('[data-change="reach"]')).toContainText(
+			'別の端末からの接続確認」で確かめてください。'
+		);
+		// The re-read that came with the result replaced the status.
+		await expect(panel.locator('[data-state="matches"]')).toContainText(
+			'dev.banto.admin.lan.tcp.program'
+		);
+		await expect(panel.getByRole('button', { name: '許可を外す…' })).toBeEnabled();
+		await expect(allow).toHaveCount(0);
+	});
+
+	test('サーバ・接続: firewall change results - cancelled, busy, precondition, target changed (Issue #219 stage 2)', async ({
+		page,
+		baseURL
+	}) => {
+		await installTauriStub(page);
+		await page.addInitScript(windowsHostWithoutRule);
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/connectivity'));
+
+		const panel = page.locator('.firewall-status');
+		const allow = panel.getByRole('button', { name: 'ファイアウォールで許可する…' });
+		const outcome = panel.locator('[data-change="result"]');
+
+		async function run(answer: Record<string, unknown>): Promise<void> {
+			await page.evaluate(
+				(a) => {
+					const m = (window as unknown as { __bantoMock: Record<string, unknown> }).__bantoMock;
+					m.firewallChange = { ...a, status: m.firewallRuleStatus };
+				},
+				{
+					operation: 'allow',
+					exitCode: null,
+					refusal: null,
+					osError: null,
+					stale: false,
+					...answer
+				}
+			);
+			await expect(page.getByRole('dialog')).toHaveCount(0);
+			await allow.click();
+			await page
+				.getByRole('dialog', { name: 'Windows ファイアウォールで許可する' })
+				.getByRole('button', { name: '許可する', exact: true })
+				.click();
+			await expect(outcome).toHaveAttribute('data-outcome', String(answer.outcome));
+		}
+
+		await run({ outcome: 'cancelled' });
+		await expect(outcome).toContainText(
+			'Windows の確認（ユーザー アカウント制御）で取り消されました。何も変えていません。'
+		);
+		await expect(outcome).not.toContainText('失敗');
+
+		await run({ outcome: 'busy' });
+		await expect(outcome).toContainText(
+			'別のファイアウォールの変更が実行中のため、何もしていません。'
+		);
+
+		await run({ outcome: 'precondition', refusal: 'notUnderProgramFiles' });
+		await expect(outcome).toContainText('この配置では、ここから許可を変更できません。');
+		await expect(outcome.locator('[data-change="refusal"]')).toContainText(
+			'Program Files の下にインストールされていません'
+		);
+		await expect(outcome).toContainText(
+			'Windows の確認（ユーザー アカウント制御）は出していません。'
+		);
+		await expect(outcome.locator('[data-change="manual"]')).toBeVisible();
+
+		await run({ outcome: 'targetChanged' });
+		await expect(outcome).toContainText(
+			'確認の画面を出した後にサーバーの状態が変わったため、何もしていません。'
+		);
+
+		// A result whose target changed while the helper ran is marked stale.
+		await run({ outcome: 'done', exitCode: 0, stale: true });
+		await expect(outcome.locator('[data-change="stale"]')).toContainText(
+			'変更の途中でサーバーの状態が変わりました。'
+		);
+
+		expect((await firewallChangeCalls(page)).length).toBe(5);
+	});
 });
+
+const FW_EXE = 'C:\\Program Files\\Banto\\banto-admin.exe';
+
+/** A per-executable rule as the helper creates it (enforced). */
+function firewallStatusWithRule(): unknown {
+	return {
+		generation: 1,
+		expected: { executablePath: FW_EXE, port: 8721 },
+		program: {
+			state: 'present',
+			rule: {
+				enabled: 'True',
+				direction: 'Inbound',
+				action: 'Allow',
+				protocol: 'TCP',
+				profile: 'Private',
+				program: FW_EXE,
+				localPorts: ['Any'],
+				remoteAddresses: ['LocalSubnet']
+			},
+			origin: { kind: 'local', sourceType: 'Local', source: 'PersistentStore' },
+			enforcement: { state: 'enforced' },
+			local: { state: 'same' },
+			mismatches: [],
+			unchecked: []
+		},
+		port: { state: 'missing' },
+		groupOtherRules: 0
+	};
+}
+
+/** Init script: a running Windows host serving the LAN, with no firewall rule yet. */
+function windowsHostWithoutRule(): void {
+	const exe = 'C:\\Program Files\\Banto\\banto-admin.exe';
+	const m = (window as unknown as { __bantoMock: Record<string, unknown> }).__bantoMock;
+	m.serverStatusGate = null;
+	m.appIdentifier = 'dev.banto.admin';
+	m.serverStatusPatch = {
+		enabled: true,
+		running: true,
+		bind: '0.0.0.0',
+		port: 8721,
+		live: { bind: '0.0.0.0', port: 8721 },
+		generation: 1,
+		executablePath: exe,
+		platform: 'windows'
+	};
+	m.firewallRuleStatus = {
+		generation: 1,
+		expected: { executablePath: exe, port: 8721 },
+		program: { state: 'missing' },
+		port: { state: 'missing' },
+		groupOtherRules: 0
+	};
+}
+
+async function firewallChangeCalls(page: Page): Promise<unknown[]> {
+	return page.evaluate(
+		() =>
+			(window as unknown as { __bantoMock: { firewallChangeCalls: unknown[] } }).__bantoMock
+				.firewallChangeCalls
+	);
+}

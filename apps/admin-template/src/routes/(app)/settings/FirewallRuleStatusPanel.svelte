@@ -24,12 +24,29 @@
 	 * 守る: 適用の開始・新しい確認で古い確認を捨て、表示している snapshot
 	 * （generation・ポート・実行ファイル）と照合した結果だけを出す。
 	 *
+	 * 段階 2（ADR-0021 E3）: admin には、表示している読み取り結果に応じて
+	 * 「許可する」「許可を外す」を出す（`firewallChange.ts` の
+	 * `firewallChangeActions`）。押すと確認画面（FirewallChangeDialog.svelte）を
+	 * 出し、承認で `firewall_rule_change` を、そのとき表示していた
+	 * `expected.executablePath` と `generation` 付きで呼ぶ（決定 13）。実行中は
+	 * ボタンを止め、Windows の確認（UAC）を待っている旨を出す。結果は
+	 * `firewallChangeView` の文言で出し、結果に付いて返る読み直しで状態の表示を
+	 * 置き換える（決定 11。表示している snapshot と照合できたときだけ）。
+	 * 完了（終了コード 0）でも「接続できる」とは言わず、到達確認を促す。
+	 * この欄はデスクトップ（Tauri）の LAN 設定の中にしか出ない
+	 * （ConnectivitySection.svelte）。
+	 *
 	 * 文言はすべて messages 経由（conventions §13）。
 	 */
 	import { untrack } from 'svelte';
+	import { isProviderError } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
+	import { isAdmin } from '#lib/permissions.js';
+	import { sessionStore } from '#lib/session.svelte.js';
 	import {
+		changeFirewallRule,
 		getFirewallRuleStatus,
+		type FirewallChangeOperation,
 		type FirewallEnforcement,
 		type FirewallField,
 		type FirewallRuleCheck,
@@ -42,10 +59,19 @@
 		firewallFieldValue,
 		firewallRuleView,
 		firewallStatusMatches,
+		judgeFirewallStatus,
 		nextFirewallPanelState,
 		type FirewallOriginView
 	} from './firewallRuleStatus';
+	import {
+		firewallChangeActions,
+		firewallChangeTarget,
+		firewallChangeView,
+		isFirewallChangeResult,
+		type FirewallChangeView
+	} from './firewallChange';
 	import type { StatusRefresh } from './serverStatusRequests';
+	import FirewallChangeDialog from './FirewallChangeDialog.svelte';
 
 	interface Props {
 		/** The live snapshot the firewall block shows. */
@@ -93,6 +119,75 @@
 	});
 
 	const names = $derived(identifier === null ? null : firewallRuleNames(identifier));
+
+	// --- Stage 2 (ADR-0021 E3): allow / remove through the elevated helper.
+
+	/** The confirmation screen: the operation and the read it was opened for. */
+	let confirming = $state<{
+		operation: FirewallChangeOperation;
+		status: FirewallRuleStatus;
+	} | null>(null);
+	/** The change waiting for UAC and the helper (`null` = none). */
+	let changing = $state<FirewallChangeOperation | null>(null);
+	let changeView = $state<FirewallChangeView | null>(null);
+	let changeOutcome = $state<string | null>(null);
+	let changeProblem = $state<'denied' | 'unavailable' | null>(null);
+
+	const actions = $derived(
+		shown
+			? firewallChangeActions({
+					admin: isAdmin(sessionStore.role),
+					status: shown,
+					ruleName: names?.programName ?? null
+				})
+			: []
+	);
+
+	function confirm(operation: FirewallChangeOperation): void {
+		if (shown === null || changing !== null) return;
+		confirming = { operation, status: shown };
+	}
+
+	async function change(): Promise<void> {
+		const asked = confirming;
+		confirming = null;
+		if (asked === null || changing !== null) return;
+		changing = asked.operation;
+		changeView = null;
+		changeOutcome = null;
+		changeProblem = null;
+		let value: unknown = null;
+		try {
+			// The target is the read the confirmation screen showed (decision 13).
+			value = await changeFirewallRule(asked.operation, firewallChangeTarget(asked.status));
+		} catch (err) {
+			const kind = isProviderError(err) ? err.body.kind : null;
+			changeProblem = kind === 'forbidden' || kind === 'unauthorized' ? 'denied' : 'unavailable';
+		} finally {
+			changing = null;
+		}
+		if (!isFirewallChangeResult(value)) {
+			changeProblem ??= 'unavailable';
+			void check();
+			return;
+		}
+		changeView = firewallChangeView(value);
+		changeOutcome = value.outcome;
+		// Every answer carries a fresh read (decision 11). It replaces what is
+		// shown through the same comparison as a check; pending checks are older.
+		requests.invalidate();
+		checking = false;
+		const next = nextFirewallPanelState(
+			{ result, problem },
+			judgeFirewallStatus(
+				value.status,
+				untrack(() => info)
+			)
+		);
+		result = next.result;
+		problem = next.problem;
+		if (next.refresh) void refresh();
+	}
 
 	function fieldLabel(field: FirewallField): string {
 		switch (field) {
@@ -302,10 +397,94 @@
 		type="button"
 		class="banto-btn banto-btn--secondary firewall-copy"
 		onclick={() => check()}
-		disabled={checking || applying}
+		disabled={checking || applying || changing !== null}
 	>
 		{m['settings.firewallStatusRecheck']()}
 	</button>
 
+	{#if actions.length > 0 || changing !== null || changeView !== null || changeProblem !== null}
+		<div class="firewall-change">
+			<h4>{m['settings.firewallChangeHeading']()}</h4>
+			<p class="note">{m['settings.firewallChangeDesc']()}</p>
+			{#if actions.length > 0}
+				<div class="firewall-change-actions">
+					{#each actions as operation (operation)}
+						<button
+							type="button"
+							class="banto-btn banto-btn--secondary"
+							data-change-operation={operation}
+							onclick={() => confirm(operation)}
+							disabled={changing !== null || applying}
+						>
+							{operation === 'allow'
+								? m['settings.firewallChangeAllow']()
+								: m['settings.firewallChangeRemove']()}
+						</button>
+					{/each}
+				</div>
+			{/if}
+			<div role="status" aria-live="polite">
+				{#if changing !== null}
+					<p class="note" data-change="waiting">{m['settings.firewallChangeWaiting']()}</p>
+				{:else if changeProblem === 'denied'}
+					<p class="error" data-change="denied">{m['settings.firewallChangeDenied']()}</p>
+				{:else if changeProblem === 'unavailable'}
+					<p class="error" data-change="unavailable">
+						{m['settings.firewallChangeUnavailable']()}
+					</p>
+				{:else if changeView !== null}
+					<div
+						class="firewall-change-result"
+						data-change="result"
+						data-outcome={changeOutcome}
+						data-tone={changeView.tone}
+					>
+						{#if changeView.stale}
+							<p class="error" data-change="stale">{m['settings.firewallChangeStale']()}</p>
+						{/if}
+						<p
+							class:error={changeView.tone === 'error'}
+							class:firewall-change-success={changeView.tone === 'success'}
+						>
+							{m[changeView.message]()}
+						</p>
+						{#if changeView.refusal !== null}
+							<p data-change="refusal">
+								{m['settings.firewallChangeRefusal']({ reason: m[changeView.refusal]() })}
+							</p>
+						{/if}
+						{#if changeView.exitCode !== null}
+							<p class="note">
+								{m['settings.firewallChangeExitCode']({ code: changeView.exitCode })}
+							</p>
+						{/if}
+						{#if changeView.osError !== null}
+							<p class="note">
+								{m['settings.firewallChangeOsError']({ code: changeView.osError })}
+							</p>
+						{/if}
+						{#if changeView.noPrompt}
+							<p class="note">{m['settings.firewallChangeNoPrompt']()}</p>
+						{/if}
+						{#if changeView.manual}
+							<p class="note" data-change="manual">{m['settings.firewallChangeManual']()}</p>
+						{/if}
+						{#if changeView.reach}
+							<p class="note" data-change="reach">{m['settings.firewallChangeReach']()}</p>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	<p class="note">{m['settings.firewallStatusReachNote']()}</p>
 </div>
+
+<FirewallChangeDialog
+	operation={confirming?.operation ?? null}
+	executablePath={confirming?.status.expected.executablePath ?? ''}
+	ruleName={names?.programName ?? ''}
+	onconfirm={() => void change()}
+	oncancel={() => (confirming = null)}
+/>

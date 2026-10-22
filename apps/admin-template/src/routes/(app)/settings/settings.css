@@ -570,6 +570,33 @@
 	margin-top: 0.5rem;
 }
 
+/* Issue #219 stage 2 (ADR-0021 E3): allow / remove through the elevated
+   helper (FirewallRuleStatusPanel.svelte), under the status. */
+.settings-page .firewall-change {
+	margin-top: var(--banto-space-3);
+	font-size: var(--banto-font-size-sm);
+}
+
+.settings-page .firewall-change p {
+	margin: var(--banto-space-1) 0 0;
+}
+
+.settings-page .firewall-change-actions {
+	margin-top: var(--banto-space-2);
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--banto-space-2);
+}
+
+.settings-page .firewall-change-result {
+	margin-top: var(--banto-space-2);
+}
+
+.settings-page .firewall-change-success {
+	color: var(--banto-success);
+	font-weight: 600;
+}
+
 /* Issue #219 PR-C3: the connection check from another device
    (LanReachCheckPanel.svelte) - its own block below the firewall ones. */
 .settings-page .reach-check {
