@@ -22,6 +22,55 @@
 
 ## [Unreleased]
 
+## [6.9.0] - 2026-10-22
+
+**v6.9.0 — LAN 公開のファイアウォール支援（#219。状態の確認・別の端末からの到達確認・昇格の補助プログラムによる許可と解除）と、Windows のインストーラの既定を perMachine にして補助プログラムを同梱。** 版の種類: minor（機能追加。後方互換。公開 API の削除・改名なし）。
+中身は 3 つ: (1) ファイアウォール支援の段階 1（設定 > サーバ・接続の情報・「Windows ファイアウォールの状態」・「別の端末からの接続確認」。#459 ほか）、(2) 段階 2（昇格の補助プログラム `admin-template-fw-elev` による「ファイアウォールで許可する」「許可を外す」。[ADR-0021](docs/adr/0021-firewall-elevated-helper.md)）と、そのための **Windows のインストーラの既定の perMachine 化・補助プログラムの同梱**、(3) 配布用ビルドへの LAN の Web UI の埋め込み（`tauri:build:windows` に `--features embed-ui`、#478）と、適用状態・Program Files の外のコピーの表示の見直し（#479〜#482）。
+派生アプリへの影響: タグを上げるだけで動く（経路 A は追加のみ）。ただしテンプレートを写している派生アプリは、**インストーラの既定が perMachine になり補助プログラムを同梱した**ので、コピー部分（`tauri.conf.json`・`src-tauri/tauri.fw-elev.conf.json`・`scripts/build-fw-elev.mjs`・`apps/admin-template/elev`・NSIS のフック・設定画面ほか）の取り込みが要る。取り込まなければ従来どおり動くが、ファイアウォール支援は使えない。手順と既存の per-user のインストールからの移り方は [docs/upgrading.md §4.1](docs/upgrading.md#41-windows-のインストール形態が-permachine-に変わる219-段階-2)。
+
+| 経路                             | 影響         | 内容                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり（任意） | `v6.8.0` → `v6.9.0`（npm と Rust を同じタグに）。追加のみ: `banto-server` の `reach_check` モジュール（到達確認の保管所と口）・`bind_without_fallback`、`@banto/theme` の寸法トークン（`--banto-space-*`・`--banto-font-size-*`・`--banto-border-width*`）。既存の API・挙動は変わらない                                                                |
+| B. コピーしたテンプレート        | あり（任意） | ファイアウォール支援の設定画面・Tauri コマンド（`firewall_rule_status`・`firewall_rule_change`・`reach_check_*`）・`/reach` ページ・`apps/admin-template/elev`・`tauri.conf.json` の `installMode: "perMachine"`・`tauri.fw-elev.conf.json`・`scripts/build-fw-elev.mjs`・`windows/fw-elev-hooks.nsh`・`server_status` の項目追加。取り込まなくても動く |
+| C. DB・設定・配布資産            | あり（配布） | DB のマイグレーションは無い。インストーラの既定が perMachine に変わる（インストール先が Program Files、インストール時に UAC。データは `%APPDATA%\<identifier>\` のまま）。配布用ビルドは `tauri:build:windows`（NSIS のみ）                                                                                                                             |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `banto-server`（`reach_check` の追加・`bind_without_fallback` の追加）、`@banto/theme`（寸法トークンの追加）。他は版数のみ。
+- 更新: `v6.8.0` → `v6.9.0`（npm と Rust を同じタグに）。
+- 追従: なし（追加のみ。削除・改名した API は無い）。`reach_check_router` はテンプレートの Tauri 組み込みサーバーにだけ載せる（`banto-serve` には載せない）。
+- 依存を上げずに留まれるか: できる。
+
+### B. コピーしたテンプレート
+
+- 対象: `apps/admin-template/` の設定 > サーバ・接続（ファイアウォールの情報・状態・許可と解除・別の端末からの接続確認）、`/reach`、`src-tauri`（コマンド・昇格の起動のモジュール・`tauri.conf.json`・`tauri.fw-elev.conf.json`・`windows/fw-elev-hooks.nsh`）、`elev`（`admin-template-fw-elev`）、`scripts/build-fw-elev.mjs`・`scripts/rename.mjs`、CI の該当ジョブ。
+- 関連 PR: #219 の各 PR（段階 1 の PR-A・PR-B・PR-C1〜C3、段階 2 の E1〜E4）、#459、#478、#481、#482。
+- 手で取り込む変更: 手順は [docs/upgrading.md §4.1](docs/upgrading.md#41-windows-のインストール形態が-permachine-に変わる219-段階-2)。配布用ビルドは `pnpm --filter <app> tauri:build:windows` に切り替え、`server_status` の必須項目 `uiEmbedded` を画面側が読むようにする。
+- 派生側の独自変更と衝突しやすい箇所: 設定 > サーバ・接続の画面、`tauri.conf.json` の `bundle`、インストーラの独自のフック。
+- 取り込まなくても動くか: 動く（ファイアウォール支援が無いだけ）。ただしインストール形態を変えないなら per-user のままになり、段階 2 は使えない。
+- 手本: `apps/admin-template/` の上記ファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 不要。
+- 戻せる条件: DB・設定は変わらない。インストール形態の移り方・戻し方は upgrading.md §4.1。
+- 設定キー・`tauri.conf.json`・配布物: `bundle.windows.nsis.installMode` が `"perMachine"`、補助プログラムが本体 exe の隣に入る。`settings_set` は `server.` で始まるキーを拒否する（書き込みは `server_apply` だけ）。
+- 順序: A・B を先に完成 → 検証用の環境でインストール・アンインストール（UAC とルールの解除を含む）→ 配布。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。
+2. 設定 > サーバ・接続の表示、「ファイアウォールで許可する」「許可を外す」、別の端末からの接続確認、perMachine のインストーラのインストール・アンインストール。
+3. Rust: `cargo check` / `cargo test`。
+
+### セキュリティ
+
+- なし。昇格の補助プログラムは本体 exe の隣の固定名だけを起動し、Program Files の外のコピーでは UAC を出さずに止める（[ADR-0021](docs/adr/0021-firewall-elevated-helper.md)）。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証と、各ツールの版: リリース PR の head とタグの push の run の URL・版は、PR とタグの後に追記する。
+
 ### Added
 
 - 設定 > サーバ・接続に「ファイアウォールの許可に必要な情報」を追加した（#219 段階 1 の PR-A、Windows のみ・昇格なし）。稼働中のサーバーの値（`live`）から、実行ファイルの絶対パス・受信・TCP・待ち受け中のポート・プライベート・LocalSubnet を表示・コピーでき、管理者向けの `New-NetFirewallRule`（実行ファイル単位とポート単位の 2 形。ルール名は Tauri の `identifier`、文字列は単一引用符のリテラルにエスケープ）をコピーできる。同じ名前のルールが既にあるときは、コマンドは何も変えずに警告を出して止まる（既存のルールを消したり書き換えたりしない）。コピーの直前に状態を読み直し、適用や新しい読み直しの後に届いた古い応答は表示にもコピーにも使わない。停止中・loopback のみのときは不要と表示する。`server_status`（admin 専用）に省略可能な項目 `executablePath`・`platform` を足した（REST は変更なし）。
@@ -37,6 +86,8 @@
 ### Changed
 
 - **Windows のインストーラの既定を perMachine にし、ファイアウォールの helper を同梱した**（#219 段階 2 の E4、[ADR-0021](docs/adr/0021-firewall-elevated-helper.md) 決定 2・3・7・8）。`tauri.conf.json` の `bundle.windows.nsis.installMode` を `"perMachine"` にしたので、インストール先が Program Files に変わり、インストール時に UAC が出る（データは `%APPDATA%\<identifier>\` のまま）。インストーラは `pnpm --filter admin-template tauri:build:windows`（`tauri build --config src-tauri/tauri.fw-elev.conf.json`）で作る: その `beforeBuildCommand` が `scripts/build-fw-elev.mjs` で helper を先にビルドし、Tauri の `externalBin` として本体 exe の隣に `admin-template-fw-elev.exe` の固定名で置く（素の `tauri build`・`tauri dev`・`cargo check` は helper を要求しない）。この設定は `bundle.targets` を `["nsis"]` に絞る: ルールを外すアンインストールのフックは NSIS にしか無く、MSI ではアンインストール後もルールが残るので、段階 2 では MSI に対応しない。NSIS の PREUNINSTALL のフック（`src-tauri/windows/fw-elev-hooks.nsh`）が所有するルールだけを外し（フックは先に Tauri の「アプリが動いていれば閉じる」確認を行うので、そこで取り消してもルールは残る。起動するのはインストール先の helper ではなく、ビルド時にアンインストーラへ埋め込んで `$PLUGINSDIR` に展開した写しで、helper に足した `firewall-remove-installed <インストール先>` で Program Files の下の本体 exe の自分のルールだけを外す。インストール先の helper の exe だけが一般利用者に書き換えられる場合に、それを管理者として動かさないため）、外せなくてもアンインストールは止めずにルール名（`<identifier>.lan.tcp.program`）と手で外す方法を表示する（インストール時にはルールを作らない。Tauri の更新ではルールを残す）。`scripts/rename.mjs` が helper の `IDENTIFIER` を `--identifier` に追随させるようにした。CI: tauri-check（Windows）で helper を externalBin の場所へ置いてその設定で `cargo check`、template-acceptance でリネーム後の helper のテストを回す。**派生アプリへの影響**: 既存の per-user のインストールからの移り方、portable・per-user では段階 2 が使えず段階 1 の案内になることは [docs/upgrading.md §4.1](docs/upgrading.md#41-windows-のインストール形態が-permachine-に変わる219-段階-2)。
+- 設定 > サーバ・接続の「Windows ファイアウォールの状態」で、ルールの中身が一致して適用状態（`EnforcementStatus`）だけが `Full` でないとき（例: 他社ファイアウォールが有効で `CategoryOff`）、「違う項目」ではなく「あり（内容は期待どおり。ただし Windows ファイアウォールとしては適用されていません）」の見出しを出すようにした（#481、#479）。`CategoryOff` のときは接続確認へ案内する。見出しは警告の色にした（#484）。
+- Program Files の外のコピー（per-user・ポータブル・移動したコピー）で「ファイアウォールで許可する」を押したとき、拒否の理由を「補助プログラムが無い」ではなく「Program Files の下にない」にした（#482、#480）。UAC を出さずに止める判断は変わらない。
 
 ### Fixed
 
