@@ -118,7 +118,8 @@ async function installTauriStub(page: Page): Promise<void> {
 			port: 8721,
 			viewerPublic: false,
 			urls: [],
-			qrSvgs: []
+			qrSvgs: [],
+			uiEmbedded: true
 		};
 		const authSettings = {
 			disabled: false,
@@ -481,7 +482,8 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 				live: { bind: '0.0.0.0', port: 8721 },
 				generation: 1,
 				executablePath: "C:\\Program Files\\O'Brien\\banto-admin.exe",
-				platform: 'windows'
+				platform: 'windows',
+				uiEmbedded: true
 			};
 			m.firewallRuleStatus = {
 				generation: 1,
@@ -574,7 +576,8 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 				live: { bind: '0.0.0.0', port: 8722 },
 				generation: 2,
 				executablePath: "C:\\Program Files\\O'Brien\\banto-admin.exe",
-				platform: 'windows'
+				platform: 'windows',
+				uiEmbedded: true
 			}
 		});
 		await page.getByRole('button', { name: 'ポート単位の許可をコピー' }).click();
@@ -597,7 +600,8 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 				port: 8722,
 				live: { bind: '127.0.0.1', port: 8722 },
 				generation: 3,
-				platform: 'windows'
+				platform: 'windows',
+				uiEmbedded: true
 			}
 		});
 		await page.getByRole('button', { name: 'ポート単位の許可をコピー' }).click();
@@ -624,7 +628,8 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 				live: { bind: '0.0.0.0', port: 8721 },
 				urls: ['http://127.0.0.1:8721', 'http://192.168.1.20:8721'],
 				generation: 1,
-				platform: 'linux'
+				platform: 'linux',
+				uiEmbedded: true
 			};
 			m.reachCheckStatus = { generation: 1, lastIssue: null, selfAccessAt: null, records: [] };
 			m.reachCheckIssue = {
@@ -910,7 +915,8 @@ function windowsHostWithoutRule(): void {
 		live: { bind: '0.0.0.0', port: 8721 },
 		generation: 1,
 		executablePath: exe,
-		platform: 'windows'
+		platform: 'windows',
+		uiEmbedded: true
 	};
 	m.firewallRuleStatus = {
 		generation: 1,

@@ -185,10 +185,13 @@ git log --oneline vFROM..vTO -- apps/admin-template e2e scripts   # 関連コミ
   本体 exe の隣に置くには、インストーラを `pnpm --filter <アプリ名> tauri:build:windows`
   （= `tauri build --features embed-ui --config src-tauri/tauri.fw-elev.conf.json`。helper を先にビルドして
   `externalBin` で同梱する）で作る。この設定は `bundle.targets` を `["nsis"]` に絞るので、MSI は
-  作られない（このスクリプトは `--features embed-ui` も付けるので LAN 向けの Web UI も入る。素の `tauri build` には入らず、設定画面は別端末からの接続確認を出さない。MSI には helper のルールを外すアンインストールのフックが無く、アンインストールしても
+  作られない（MSI には helper のルールを外すアンインストールのフックが無く、アンインストールしても
   ルールが残るため、段階 2 では MSI に対応しない）。素の `tauri build` で作ったインストーラには helper が入らず、
   段階 2 は「前提が無い」で止まって段階 1 の案内になる（アンインストールのフックは、helper が無い旨と
   手で外す方法を表示して続行する）。
+- **LAN 向けの Web UI の埋め込み（#478）**: `tauri:build:windows` は `--features embed-ui` も付けるので、
+  別の端末が LAN から開く画面（と `/reach` の接続確認）が入る。素の `tauri build` には入らず、別の端末には
+  仮のページが返る。そのビルドの設定画面は URL・QR・接続確認を出さず、入っていない旨を出す。
 - **portable・per-user では段階 2 は使えない**。`installMode` を `"currentUser"`・`"both"` に戻した
   派生アプリや、exe をコピーして配る運用では、helper の配置の検査（Program Files の下・管理者だけが
   書ける）に通らず、画面は段階 1 の案内（コピーする PowerShell のコマンド）だけになる。段階 2 が要らない
