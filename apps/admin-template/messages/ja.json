@@ -411,6 +411,7 @@
   "settings.firewallChangeOsError": "Windows のエラー コード: {code}",
   "settings.firewallChangeNoPrompt": "Windows の確認（ユーザー アカウント制御）は出していません。",
   "settings.firewallChangeManual": "上の「管理者向けのコマンド」を、管理者の PowerShell で実行して許可することもできます。",
+  "settings.firewallChangeManualRemove": "自分で解除することもできます。管理者の PowerShell で Remove-NetFirewallRule -Name '<ルール名>' を実行するか、「セキュリティが強化された Windows Defender ファイアウォール」でルールを削除してください。",
   "settings.firewallChangeReach": "ルールがあっても、別の端末から接続できるとは限りません。下の「別の端末からの接続確認」で確かめてください。",
   "settings.firewallRefusalNotUnderProgramFiles": "Program Files の下にインストールされていません（ポータブル版・ユーザー単位のインストール・移動したコピーでは使えません）。",
   "settings.firewallRefusalHelperMissing": "補助プログラムが、アプリの実行ファイルと同じフォルダーにありません。",

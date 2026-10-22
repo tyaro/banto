@@ -128,6 +128,8 @@ export interface FirewallChangeView {
 	stale: boolean;
 	/** Point to stage 1's manual commands above (stage 2 cannot do it here). */
 	manual: boolean;
+	/** The same for a removal: point to deleting the rule by hand (never the allow guidance). */
+	manualRemove: boolean;
 	/** Point to the reach check (a rule is not "reachable", decision 11). */
 	reach: boolean;
 }
@@ -180,6 +182,7 @@ const BASE = {
 	osError: null,
 	noPrompt: false,
 	manual: false,
+	manualRemove: false,
 	reach: false
 } as const;
 
@@ -190,7 +193,17 @@ export function firewallChangeView(result: FirewallChangeResult): FirewallChange
 	const allow = result.operation === 'allow';
 	const view = (
 		fields: Partial<FirewallChangeView> & Pick<FirewallChangeView, 'tone' | 'message'>
-	) => ({ ...BASE, stale, ...fields }) satisfies FirewallChangeView;
+	) => {
+		// `manual` is asked for by outcome only; which guide it is depends on the operation.
+		const wantsManual = fields.manual === true;
+		return {
+			...BASE,
+			stale,
+			...fields,
+			manual: wantsManual && allow,
+			manualRemove: wantsManual && !allow
+		} satisfies FirewallChangeView;
+	};
 	switch (result.outcome) {
 		case 'done':
 			return allow

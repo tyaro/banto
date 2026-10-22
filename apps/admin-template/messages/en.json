@@ -411,6 +411,7 @@
   "settings.firewallChangeOsError": "Windows error code: {code}",
   "settings.firewallChangeNoPrompt": "No Windows prompt (User Account Control) was shown.",
   "settings.firewallChangeManual": "You can also allow it by running the administrator command above in an administrator PowerShell.",
+  "settings.firewallChangeManualRemove": "You can also remove it yourself: in an administrator PowerShell, run Remove-NetFirewallRule -Name '<rule name>', or delete the rule in Windows Defender Firewall with Advanced Security.",
   "settings.firewallChangeReach": "A rule being present does not mean other devices can connect. Check with \"Connection check from another device\" below.",
   "settings.firewallRefusalNotUnderProgramFiles": "The app is not installed under Program Files (portable copies, per-user installations and moved copies are not supported).",
   "settings.firewallRefusalHelperMissing": "The helper program is not in the same folder as the app's executable.",

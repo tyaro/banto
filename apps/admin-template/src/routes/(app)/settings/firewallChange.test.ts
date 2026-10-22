@@ -207,6 +207,26 @@ describe('firewallChangeView', () => {
 		).toMatchObject({ refusal: 'settings.firewallRefusalHelper', noPrompt: false, manual: true });
 	});
 
+	it('points a failed removal to deleting by hand, never to the allow guide', () => {
+		for (const outcome of [
+			'conflict',
+			'precondition',
+			'launchFailed',
+			'failed',
+			'usage',
+			'unexpectedExit'
+		]) {
+			expect(firewallChangeView(result({ operation: 'remove', outcome }))).toMatchObject({
+				manual: false,
+				manualRemove: true
+			});
+			expect(firewallChangeView(result({ operation: 'allow', outcome }))).toMatchObject({
+				manual: true,
+				manualRemove: false
+			});
+		}
+	});
+
 	it('words conflict / policy / failures, with the code when it adds something', () => {
 		expect(firewallChangeView(result({ outcome: 'conflict', exitCode: 4 }))).toMatchObject({
 			tone: 'error',

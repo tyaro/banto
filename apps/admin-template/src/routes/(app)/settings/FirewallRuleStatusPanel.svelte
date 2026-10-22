@@ -469,6 +469,11 @@
 						{#if changeView.manual}
 							<p class="note" data-change="manual">{m['settings.firewallChangeManual']()}</p>
 						{/if}
+						{#if changeView.manualRemove}
+							<p class="note" data-change="manual-remove">
+								{m['settings.firewallChangeManualRemove']()}
+							</p>
+						{/if}
 						{#if changeView.reach}
 							<p class="note" data-change="reach">{m['settings.firewallChangeReach']()}</p>
 						{/if}
