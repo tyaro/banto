@@ -229,11 +229,16 @@ fn installer_bundles_the_helper_next_to_the_main_exe() {
             .unwrap()
     )));
     assert!(hooks.contains(r#"File "/oname=$PLUGINSDIR\${MAINBINARYNAME}-fw-elev.exe""#));
+    // The helper runs via nsExec (no console window; its output goes to the
+    // details log), and its exit code is popped into $0 right after.
     let launch_line = format!(
-        r#"ExecWait '"$PLUGINSDIR\${{MAINBINARYNAME}}-fw-elev.exe" {REMOVE_INSTALLED_ARG} "$INSTDIR"' $0"#
+        r#"nsExec::ExecToLog '"$PLUGINSDIR\${{MAINBINARYNAME}}-fw-elev.exe" {REMOVE_INSTALLED_ARG} "$INSTDIR"'"#
     );
     assert!(hooks.contains(&launch_line));
-    assert_eq!(hooks.matches("ExecWait '").count(), 1);
+    assert_eq!(hooks.matches("nsExec::ExecToLog '").count(), 1);
+    assert!(!hooks.contains("ExecWait"));
+    let after_launch = &hooks[hooks.find(&launch_line).unwrap() + launch_line.len()..];
+    assert!(after_launch.trim_start().starts_with("Pop $0"));
     assert!(!hooks.contains(r"$INSTDIR\${MAINBINARYNAME}-fw-elev.exe"));
     // The app-running check (whose Cancel aborts the uninstall) comes before the
     // rule is touched.
