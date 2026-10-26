@@ -22,6 +22,28 @@
 
 ## [Unreleased]
 
+## [6.9.1] - 2026-10-26
+
+**v6.9.1 — RustSec の依存監査で検出された `ctutils` の脆弱性を修正し、既存の Dependabot 更新を取り込む。** 版の種類: patch（公開 API・アプリの機能・DB スキーマの変更なし。後方互換）。
+派生アプリへの影響: git 依存のタグを `v6.9.0` から `v6.9.1` に上げられる。テンプレートをコピーして使う場合、依存と CI の更新は必要に応じて取り込む。
+
+| 経路                             | 影響         | 内容                                                                                                                        |
+| -------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり（任意） | npm と Rust の git 依存を同じ `v6.9.1` タグへ更新できる。公開 API は変わらない                                              |
+| B. コピーしたテンプレート        | あり（任意） | `Cargo.lock`・`pnpm-lock.yaml`・Vite の範囲指定・GitHub Actions の更新を取り込める。`Cargo.lock` の更新は脆弱性の修正に必要 |
+| C. DB・設定・配布資産            | なし         | マイグレーション、設定キー、配布形式の変更は無い                                                                            |
+
+### 変更点
+
+- **security:** `ctutils` 0.4.2 → 0.4.4。`digest` 0.11.3 を経由する依存に対し、[RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385) の修正を `Cargo.lock` に取り込んだ（#487、#488、#489）。
+- **chore(deps):** npm の minor/patch グループ（Vite 8.3.5 など）と Cargo の minor/patch グループ（Tokio、Tauri など）を更新した。外部 consumer fixture の Vite 範囲と lockfile も管理アプリと一致させた（#488、#489）。
+- **ci:** `Swatinem/rust-cache` と `taiki-e/install-action` を更新した（#487）。
+
+### 消費側への注意
+
+- 公開 API・DB スキーマ・設定キーの変更は無い。git 依存を使う派生アプリは、更新する場合に npm と Rust のタグを一緒に `v6.9.1` へ上げる。
+- テンプレートをコピーした派生アプリには、今回の lockfile と CI の更新を必要に応じて取り込む。特に `Cargo.lock` の `ctutils` 0.4.4 は依存監査の修正に必要。
+
 ## [6.9.0] - 2026-10-22
 
 **v6.9.0 — LAN 公開のファイアウォール支援（#219。状態の確認・別の端末からの到達確認・昇格の補助プログラムによる許可と解除）と、Windows のインストーラの既定を perMachine にして補助プログラムを同梱。** 版の種類: minor（機能追加。後方互換。公開 API の削除・改名なし）。
@@ -3111,7 +3133,8 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
 - M18（#20）: 基盤整備 Phase A〜C（lint/format基盤・Playwrightスモーク
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
-[unreleased]: https://github.com/tyaro/banto/compare/v6.9.0...HEAD
+[unreleased]: https://github.com/tyaro/banto/compare/v6.9.1...HEAD
+[6.9.1]: https://github.com/tyaro/banto/compare/v6.9.0...v6.9.1
 [6.9.0]: https://github.com/tyaro/banto/compare/v6.8.0...v6.9.0
 [6.8.0]: https://github.com/tyaro/banto/compare/v6.7.2...v6.8.0
 [6.7.2]: https://github.com/tyaro/banto/compare/v6.7.1...v6.7.2
