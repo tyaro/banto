@@ -328,6 +328,10 @@
 	margin: 0.75rem 0;
 }
 
+.settings-page .server-fields > .field--floating {
+	min-width: min(100%, 12rem);
+}
+
 /* Save button + "discard" + unsaved marker (issue #214). */
 .settings-page .save-row {
 	display: flex;
