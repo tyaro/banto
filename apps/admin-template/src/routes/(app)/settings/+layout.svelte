@@ -2,7 +2,7 @@
 	/**
 	 * Settings shell (settings-routes step 2, choiapp-feedback-2026-09 §3.2 -
 	 * overrides step 1/§3's "tabs vs anchors" call, see that doc section for
-	 * why): `PageHeader` + a category nav + the active category's own route
+	 * why): a description + a category nav + the active category's own route
 	 * rendered via `{@render children()}`.
 	 *
 	 * Categories come from `+layout.ts`'s visible subset (`data.categories`)
@@ -41,7 +41,6 @@
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import { PageHeader } from '@banto/ui';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { isPathActive, resolveAppPath } from '#lib/navigation.js';
@@ -90,7 +89,10 @@
 </script>
 
 <div class="page settings-page">
-	<PageHeader title={m['nav.settings']()} description={m['settings.pageDescription']()} />
+	<!-- The shell already shows the page title. Keep a document heading for
+	     assistive technology without repeating the visible title in the content. -->
+	<h1 class="sr-only">{m['nav.settings']()}</h1>
+	<p class="settings-description">{m['settings.pageDescription']()}</p>
 
 	<div class="settings-layout">
 		<nav class="section-nav" aria-label={m['settings.sectionNavAria']()}>
@@ -112,29 +114,54 @@
 </div>
 
 <style>
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	.settings-description {
+		margin: 0;
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-md);
+		text-wrap: pretty;
+	}
+
 	.settings-layout {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
+		min-width: 0;
 	}
 
-	/* Horizontal pill strip above the content at every width (the former >=1024px
-	   left rail was dropped so the content gets the full width next to the app
-	   sidebar). Wraps onto extra rows when the categories don't fit. */
+	/* ADR-0022: these are page links, not ARIA tabs. Each link keeps its own underline
+	   when the strip wraps, so the current category is clear on narrow screens. */
 	.section-nav {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.4rem;
+		gap: var(--banto-space-1) var(--banto-space-2);
+		border-bottom: var(--banto-border-width) solid var(--banto-border);
 	}
 
 	.section-nav a {
-		padding: 0.3rem 0.7rem;
-		border: 1px solid var(--banto-border);
-		border-radius: 999px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-height: var(--banto-control-height-lg);
+		max-width: 100%;
+		padding: var(--banto-space-2) var(--banto-space-3);
+		border-bottom: var(--banto-border-width-strong) solid transparent;
 		color: var(--banto-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-md);
 		font-weight: 600;
 		text-decoration: none;
+		overflow-wrap: anywhere;
 		transition:
 			background var(--banto-duration-fast) var(--banto-ease-out),
 			color var(--banto-duration-fast) var(--banto-ease-out);
@@ -146,18 +173,24 @@
 	}
 
 	.section-nav a:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
+		/* A real outline also remains visible in forced-colors mode. */
+		outline: var(--banto-border-width-strong) solid currentColor;
+		outline-offset: calc(-1 * var(--banto-border-width-strong));
 	}
 
-	/* axe-core wcag2aa color-contrast (visual-refresh-plan.md §7.1): same
-	   fix as Sidebar.svelte's .nav-item.active / the old
-	   .theme-option.selected - plain --banto-primary text on this tint
-	   background falls short of 4.5:1 (light theme). */
 	.section-nav a.active {
-		border-color: var(--banto-primary);
+		/* Keep the stronger text token for contrast in the light theme. */
 		color: var(--banto-primary-hover);
-		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
+		border-bottom-color: currentColor;
+	}
+
+	@media (forced-colors: active) {
+		/* Transparent borders become visible in forced colors. Remove inactive
+		   underlines and keep their space so the current category stays distinct. */
+		.section-nav a:not(.active) {
+			border-bottom-style: none;
+			padding-bottom: calc(var(--banto-space-2) + var(--banto-border-width-strong));
+		}
 	}
 
 	.settings-content {
