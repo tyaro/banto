@@ -78,7 +78,7 @@ mod sampler {
     /// minimum interval has passed, rather than re-collapsing to `0%`.
     #[derive(Clone)]
     pub struct SystemMetricsSampler {
-        inner: Arc<Mutex<Inner>>,
+        inner: Arc<Mutex<Option<Inner>>>,
     }
 
     impl SystemMetricsSampler {
@@ -86,21 +86,30 @@ mod sampler {
         /// Cheap enough to call once at app/server startup (spec: `banto-serve`
         /// / `src-tauri`'s `setup()`) and share the resulting handle.
         pub fn new() -> Self {
-            let mut system = System::new();
-            let pid = sysinfo::get_current_pid().unwrap_or(Pid::from_u32(0));
-            system.refresh_memory_specifics(MemoryRefreshKind::everything());
-            system.refresh_cpu_usage();
-            system.refresh_processes_specifics(
-                ProcessesToUpdate::Some(&[pid]),
-                true,
-                ProcessRefreshKind::nothing().with_cpu().with_memory(),
-            );
-            Self {
-                inner: Arc::new(Mutex::new(Inner {
+            Self::from_system(System::new())
+        }
+
+        // sysinfo 0.40 reports unsupported platforms and initialization failures
+        // through Result. Preserve the infallible public constructor and the
+        // existing metrics: null fallback instead of failing app startup.
+        fn from_system(system: Result<System, sysinfo::Error>) -> Self {
+            let inner = system.ok().map(|mut system| {
+                let pid = sysinfo::get_current_pid().unwrap_or(Pid::from_u32(0));
+                system.refresh_memory_specifics(MemoryRefreshKind::everything());
+                system.refresh_cpu_usage();
+                system.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&[pid]),
+                    true,
+                    ProcessRefreshKind::nothing().with_cpu().with_memory(),
+                );
+                Inner {
                     system,
                     pid,
                     last_cpu_refresh: Instant::now(),
-                })),
+                }
+            });
+            Self {
+                inner: Arc::new(Mutex::new(inner)),
             }
         }
 
@@ -110,19 +119,16 @@ mod sampler {
         /// via `tokio::task::spawn_blocking` rather than `.await`ing it
         /// directly (see `banto_server::routes::system_info`'s handler).
         ///
-        /// Returns `None` on a platform `sysinfo` does not support
-        /// (`!sysinfo::IS_SUPPORTED_SYSTEM`) - ADR-0013's degrade-to-`null`
-        /// path. Memory is refreshed unconditionally (cheap, always fresh);
+        /// Returns `None` when `sysinfo::System` could not be initialized,
+        /// including on unsupported platforms - ADR-0013's degrade-to-`null`
+        /// path. Initialization is attempted once, when constructing the sampler.
+        /// Memory is refreshed unconditionally (cheap, always fresh);
         /// the CPU figures (host + this process) are only re-measured once
         /// [`sysinfo::MINIMUM_CPU_UPDATE_INTERVAL`] has elapsed since the
         /// last refresh - a closer-spaced call reuses the previous CPU
         /// numbers rather than re-measuring (which would report `0%`, see
         /// the struct doc comment).
         pub fn sample(&self) -> Option<SystemMetrics> {
-            if !sysinfo::IS_SUPPORTED_SYSTEM {
-                return None;
-            }
-
             let mut guard = self
                 .inner
                 .lock()
@@ -131,7 +137,7 @@ mod sampler {
                 system,
                 pid,
                 last_cpu_refresh,
-            } = &mut *guard;
+            } = guard.as_mut()?;
 
             system.refresh_memory_specifics(MemoryRefreshKind::everything());
 
@@ -173,12 +179,19 @@ mod sampler {
     mod tests {
         use super::*;
 
+        fn supported_sampler() -> Option<SystemMetricsSampler> {
+            match System::new() {
+                Ok(system) => Some(SystemMetricsSampler::from_system(Ok(system))),
+                Err(sysinfo::Error::Unsupported) => None,
+                Err(error) => panic!("system initialization failed: {error}"),
+            }
+        }
+
         #[test]
         fn sampler_reports_positive_host_memory_on_supported_platforms() {
-            if !sysinfo::IS_SUPPORTED_SYSTEM {
+            let Some(sampler) = supported_sampler() else {
                 return;
-            }
-            let sampler = SystemMetricsSampler::new();
+            };
             let metrics = sampler.sample().expect("supported platform samples Some");
             assert!(metrics.host_memory_total_bytes > 0);
             assert!(metrics.host_memory_used_bytes <= metrics.host_memory_total_bytes);
@@ -187,10 +200,9 @@ mod sampler {
 
         #[test]
         fn repeated_samples_stay_finite() {
-            if !sysinfo::IS_SUPPORTED_SYSTEM {
+            let Some(sampler) = supported_sampler() else {
                 return;
-            }
-            let sampler = SystemMetricsSampler::new();
+            };
             let first = sampler.sample().expect("first sample");
             std::thread::sleep(std::time::Duration::from_millis(250));
             let second = sampler.sample().expect("second sample");
@@ -211,13 +223,44 @@ mod sampler {
 
         #[test]
         fn sampler_is_clone_and_shares_state() {
-            let sampler = SystemMetricsSampler::new();
+            let Some(sampler) = supported_sampler() else {
+                return;
+            };
             let cloned = sampler.clone();
-            // Both handles wrap the same `Arc<Mutex<Inner>>` - sampling
+            // Both handles wrap the same `Arc<Mutex<Option<Inner>>>` - sampling
             // through either one advances the same `last_cpu_refresh`
             // state, proving `Clone` shares rather than duplicates it.
-            assert!(sampler.sample().is_some() || !sysinfo::IS_SUPPORTED_SYSTEM);
-            assert!(cloned.sample().is_some() || !sysinfo::IS_SUPPORTED_SYSTEM);
+            assert!(Arc::ptr_eq(&sampler.inner, &cloned.inner));
+            assert!(sampler.sample().is_some());
+            assert!(cloned.sample().is_some());
+        }
+
+        #[test]
+        fn initialization_failure_returns_none_for_original_and_clone() {
+            for error in [
+                sysinfo::Error::Unsupported,
+                sysinfo::Error::Io(std::io::Error::other("initialization unavailable")),
+            ] {
+                let sampler = SystemMetricsSampler::from_system(Err(error));
+                let cloned = sampler.clone();
+                assert!(sampler.sample().is_none());
+                assert!(cloned.sample().is_none());
+            }
+        }
+
+        #[test]
+        fn sampling_recovers_a_poisoned_mutex() {
+            let Some(sampler) = supported_sampler() else {
+                return;
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = sampler.inner.lock().expect("initial lock");
+                panic!("poison the sampler lock");
+            }));
+            assert!(result.is_err());
+            assert!(sampler.inner.is_poisoned());
+            assert!(sampler.sample().is_some());
+            assert!(sampler.clone().sample().is_some());
         }
     }
 }

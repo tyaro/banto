@@ -65,9 +65,9 @@ sha2 = "0.11"
 # Mach/sysctl FFI), and three apps (this template + two downstream) were each
 # about to reimplement it. `default-features = false, features = ["system"]`
 # drops `component`/`disk`/`gpu`/`network`/`user` (the ADR's P1-5 ④
-# feature-limiting) - only process/CPU/memory stays. `sysinfo` 0.39's MSRV is
-# 1.95, but the workspace already requires 1.94+ for sqlx 0.9, so this is not
-# a new floor in practice. Feature-gated behind `banto-admin-services`'s
+# feature-limiting) - only process/CPU/memory stays. `sysinfo` 0.40 retains
+# the Rust 1.95 minimum already required by 0.39 for system-metrics builds.
+# Feature-gated behind `banto-admin-services`'s
 # `system-metrics` (off by default there; the template app crates turn it on
 # by default per the ADR - see their own Cargo.toml comments).
 sysinfo = { version = "0.40", default-features = false, features = ["system"] }
