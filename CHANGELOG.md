@@ -22,6 +22,10 @@
 
 ## [Unreleased]
 
+- **chore(deps):** Svelte・Paraglide・Lucide・typescript-eslint を更新し、外部利用 fixture の Svelte 範囲と lockfile を管理アプリに揃えた（#494）。
+- **chore(deps):** `uuid` を 1.28.0 から 1.29.0 に更新した（#492）。
+- **ci:** `taiki-e/install-action` を 2.88.0 のコミット SHA に更新した（#491）。
+
 - **ui:** 設定カテゴリの下線型ナビゲーションと、移動型ラベル・下線付きのテキスト系入力およびネイティブ select を設定画面の正式デザインとして採用した（#495、[ADR-0022](docs/adr/0022-settings-controls.md)）。
 - **ui:** 設定画面でヘッダーと重複していた内容側のタイトルを非表示にし、説明文とカテゴリナビゲーションから始まる構成にした。読み上げ用のページ見出しは維持した。
 
