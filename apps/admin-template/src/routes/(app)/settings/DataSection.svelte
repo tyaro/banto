@@ -243,13 +243,25 @@
 			</div>
 
 			<div class="server-fields">
-				<label class="field">
-					{m['settings.retentionDays']()}
-					<input class="banto-input" type="number" min="0" bind:value={retentionDaysDraft} />
+				<label class="field field--floating">
+					<input
+						class="banto-input"
+						type="number"
+						placeholder=" "
+						min="0"
+						bind:value={retentionDaysDraft}
+					/>
+					<span class="field-label">{m['settings.retentionDays']()}</span>
 				</label>
-				<label class="field">
-					{m['settings.retentionRows']()}
-					<input class="banto-input" type="number" min="0" bind:value={retentionRowsDraft} />
+				<label class="field field--floating">
+					<input
+						class="banto-input"
+						type="number"
+						placeholder=" "
+						min="0"
+						bind:value={retentionRowsDraft}
+					/>
+					<span class="field-label">{m['settings.retentionRows']()}</span>
 				</label>
 			</div>
 

@@ -143,32 +143,35 @@
 			</p>
 		{:else if changePassword}
 			<form onsubmit={submitChangePassword}>
-				<label class="field">
-					{m['settings.currentPassword']()}
+				<label class="field field--floating">
 					<input
 						class="banto-input"
 						type="password"
+						placeholder=" "
 						bind:value={currentPassword}
 						autocomplete="current-password"
 					/>
+					<span class="field-label">{m['settings.currentPassword']()}</span>
 				</label>
-				<label class="field">
-					{m['common.newPasswordMinLabel']()}
+				<label class="field field--floating">
 					<input
 						class="banto-input"
 						type="password"
+						placeholder=" "
 						bind:value={newPassword}
 						autocomplete="new-password"
 					/>
+					<span class="field-label">{m['common.newPasswordMinLabel']()}</span>
 				</label>
-				<label class="field">
-					{m['settings.newPasswordConfirm']()}
+				<label class="field field--floating">
 					<input
 						class="banto-input"
 						type="password"
+						placeholder=" "
 						bind:value={newPasswordConfirm}
 						autocomplete="new-password"
 					/>
+					<span class="field-label">{m['settings.newPasswordConfirm']()}</span>
 				</label>
 
 				{#if passwordError}
@@ -232,23 +235,25 @@
 					</button>
 				{:else}
 					<form onsubmit={submitEnableAutologin}>
-						<label class="field">
-							{m['common.username']()}
+						<label class="field field--floating">
 							<input
 								class="banto-input"
 								type="text"
+								placeholder=" "
 								bind:value={autologinUsername}
 								autocomplete="username"
 							/>
+							<span class="field-label">{m['common.username']()}</span>
 						</label>
-						<label class="field">
-							{m['common.password']()}
+						<label class="field field--floating">
 							<input
 								class="banto-input"
 								type="password"
+								placeholder=" "
 								bind:value={autologinPassword}
 								autocomplete="current-password"
 							/>
+							<span class="field-label">{m['common.password']()}</span>
 						</label>
 						<button type="submit" class="banto-btn banto-btn--primary" disabled={enablingAutologin}>
 							{m['settings.autologinEnable']()}
