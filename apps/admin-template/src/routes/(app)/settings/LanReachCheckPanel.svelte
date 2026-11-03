@@ -228,8 +228,7 @@
 	{#if hosts.length > 0}
 		<div class="reach-issue">
 			{#if hosts.length > 1}
-				<label class="field">
-					{m['settings.reachHost']()}
+				<label class="field field--floating">
 					<select
 						class="banto-input"
 						value={host}
@@ -240,6 +239,7 @@
 							<option value={candidate}>{candidate}</option>
 						{/each}
 					</select>
+					<span class="field-label">{m['settings.reachHost']()}</span>
 				</label>
 			{/if}
 			<button
