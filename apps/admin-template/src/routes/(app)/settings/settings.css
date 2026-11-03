@@ -328,6 +328,10 @@
 	margin: 0.75rem 0;
 }
 
+.settings-page .server-fields > .field--floating {
+	min-width: min(100%, 12rem);
+}
+
 /* Save button + "discard" + unsaved marker (issue #214). */
 .settings-page .save-row {
 	display: flex;
@@ -353,6 +357,113 @@
 	gap: 0.3rem;
 	font-size: 0.8rem;
 	color: var(--banto-text-muted);
+}
+
+/* ADR-0022: settings selects keep their native arrow and popup. The wrapping
+   label moves above the selected value, without replacing native behavior. */
+.settings-page select.banto-input {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	min-height: calc(var(--banto-control-height-lg) + var(--banto-space-2));
+	height: auto;
+	padding: var(--banto-space-7) var(--banto-space-3) var(--banto-space-1);
+	border: none;
+	border-bottom: var(--banto-border-width-strong) solid var(--banto-border-strong);
+	border-radius: var(--banto-radius-sm) var(--banto-radius-sm) 0 0;
+	background: var(--banto-surface-subtle);
+	transition:
+		background var(--banto-duration-fast) var(--banto-ease-out),
+		border-color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.settings-page select.banto-input:hover:not(:disabled) {
+	border-bottom-color: var(--banto-primary-hover);
+	background: var(--banto-surface-hover);
+}
+
+.settings-page select.banto-input:focus-visible {
+	border-bottom-color: var(--banto-primary-hover);
+	outline: var(--banto-border-width-strong) solid currentColor;
+	outline-offset: var(--banto-border-width);
+	box-shadow: none;
+}
+
+.settings-page select.banto-input:disabled {
+	border-bottom-style: dashed;
+}
+
+/* Settings text, password, number and select fields share a moving label.
+   Their real <label> wraps the native control, retaining its accessible name. */
+.settings-page .field--floating {
+	position: relative;
+	display: block;
+	min-width: 0;
+}
+
+.settings-page .field--floating input.banto-input {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	min-height: calc(var(--banto-control-height-lg) + var(--banto-space-2));
+	height: auto;
+	padding: var(--banto-space-7) var(--banto-space-3) var(--banto-space-1);
+	border: none;
+	border-bottom: var(--banto-border-width-strong) solid var(--banto-border-strong);
+	border-radius: var(--banto-radius-sm) var(--banto-radius-sm) 0 0;
+	background: var(--banto-surface-subtle);
+	transition:
+		background var(--banto-duration-fast) var(--banto-ease-out),
+		border-color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.settings-page .field--floating .field-label {
+	position: absolute;
+	inset-block-start: 50%;
+	inset-inline-start: var(--banto-space-3);
+	max-width: calc(100% - 2 * var(--banto-space-3));
+	transform: translateY(-50%);
+	color: var(--banto-text-muted);
+	font-size: var(--banto-font-size);
+	pointer-events: none;
+	overflow-wrap: anywhere;
+	transition:
+		inset-block-start var(--banto-duration-fast) var(--banto-ease-out),
+		transform var(--banto-duration-fast) var(--banto-ease-out),
+		font-size var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.settings-page .field--floating input:focus + .field-label,
+.settings-page .field--floating input:not(:placeholder-shown) + .field-label,
+.settings-page .field--floating select + .field-label {
+	inset-block-start: var(--banto-space-1);
+	transform: none;
+	font-size: var(--banto-font-size-md);
+}
+
+/* A select with an empty placeholder can start with its label in the field.
+   :has() is progressive enhancement; without it the label remains above. */
+.settings-page .field--floating select:has(option:checked[value='']):not(:focus) + .field-label {
+	inset-block-start: 50%;
+	transform: translateY(-50%);
+	font-size: var(--banto-font-size);
+}
+
+.settings-page .field--floating input.banto-input:hover:not(:disabled) {
+	border-bottom-color: var(--banto-primary-hover);
+	background: var(--banto-surface-hover);
+}
+
+.settings-page .field--floating input.banto-input:focus-visible {
+	border-bottom-color: var(--banto-primary-hover);
+	outline: var(--banto-border-width-strong) solid currentColor;
+	outline-offset: var(--banto-border-width);
+	box-shadow: none;
+}
+
+.settings-page .field--floating input.banto-input:disabled {
+	border-bottom-style: dashed;
 }
 
 .settings-page .backup-toolbar {

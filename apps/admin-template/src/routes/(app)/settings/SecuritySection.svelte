@@ -151,8 +151,7 @@
 			</label>
 
 			<div class="server-fields">
-				<label class="field">
-					{m['settings.startupRole']()}
+				<label class="field field--floating">
 					<select
 						class="banto-input"
 						bind:value={disabledRoleDraft}
@@ -162,6 +161,7 @@
 							<option value={option.value}>{option.label}</option>
 						{/each}
 					</select>
+					<span class="field-label">{m['settings.startupRole']()}</span>
 				</label>
 			</div>
 
