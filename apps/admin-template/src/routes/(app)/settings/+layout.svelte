@@ -17,10 +17,8 @@
 	 * so `settings.css` - and every category page's markup classes
 	 * (`.settings-section`/`.settings-grid`/etc.) - keep applying to
 	 * whichever category page renders inside `{@render children()}`. The
-	 * nav's own look/behavior (tab strip, active state) is new for this
-	 * step, so it lives in this component's own scoped style block instead of
-	 * settings.css's global namespace (moved out of the old
-	 * `.settings-page .section-nav` rules there).
+	 * nav uses the shared @banto/theme/css page-link styles (ADR-0023);
+	 * route selection and visibility remain in this layout.
 	 *
 	 * Copilot review on PR #198 also moved the shared cross-category stores'
 	 * INITIAL loads here (see the `$effect`s below) - previously
@@ -95,11 +93,10 @@
 	<p class="settings-description">{m['settings.pageDescription']()}</p>
 
 	<div class="settings-layout">
-		<nav class="section-nav" aria-label={m['settings.sectionNavAria']()}>
+		<nav class="banto-section-nav" aria-label={m['settings.sectionNavAria']()}>
 			{#each data.categories as category (category.id)}
 				<a
 					href={resolveAppPath(category.path)}
-					class:active={isActive(category)}
 					aria-current={isActive(category) ? 'page' : undefined}
 				>
 					{m[category.labelKey]()}
@@ -138,59 +135,6 @@
 		flex-direction: column;
 		gap: var(--banto-space-4);
 		min-width: 0;
-	}
-
-	/* ADR-0022: these are page links, not ARIA tabs. Each link keeps its own underline
-	   when the strip wraps, so the current category is clear on narrow screens. */
-	.section-nav {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--banto-space-1) var(--banto-space-2);
-		border-bottom: var(--banto-border-width) solid var(--banto-border);
-	}
-
-	.section-nav a {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-height: var(--banto-control-height-lg);
-		max-width: 100%;
-		padding: var(--banto-space-2) var(--banto-space-3);
-		border-bottom: var(--banto-border-width-strong) solid transparent;
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-md);
-		font-weight: 600;
-		text-decoration: none;
-		overflow-wrap: anywhere;
-		transition:
-			background var(--banto-duration-fast) var(--banto-ease-out),
-			color var(--banto-duration-fast) var(--banto-ease-out);
-	}
-
-	.section-nav a:hover {
-		background: var(--banto-surface-hover);
-		color: var(--banto-text);
-	}
-
-	.section-nav a:focus-visible {
-		/* A real outline also remains visible in forced-colors mode. */
-		outline: var(--banto-border-width-strong) solid currentColor;
-		outline-offset: calc(-1 * var(--banto-border-width-strong));
-	}
-
-	.section-nav a.active {
-		/* Keep the stronger text token for contrast in the light theme. */
-		color: var(--banto-primary-hover);
-		border-bottom-color: currentColor;
-	}
-
-	@media (forced-colors: active) {
-		/* Transparent borders become visible in forced colors. Remove inactive
-		   underlines and keep their space so the current category stays distinct. */
-		.section-nav a:not(.active) {
-			border-bottom-style: none;
-			padding-bottom: calc(var(--banto-space-2) + var(--banto-border-width-strong));
-		}
 	}
 
 	.settings-content {

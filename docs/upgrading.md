@@ -98,6 +98,11 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
+設定の共有スタイル移行（次リリース、ADR-0023）では、設定の入力とページナビが
+`@banto/theme/css` の専用クラスを使う。更新された設定 markup を取り込む場合は theme も
+同じ版へ更新する。従来の `.banto-input` や `@banto/forms` の既定表示は変更されない。
+他画面での利用は [theme README](../packages/theme/README.md#入力とページナビの共通スタイル次リリース) を参照。
+
 **v6.1.0 以降の admin-template は `components/ui/` の 7 部品（EmptyState・ErrorState・IconButton・LoadingState・PageHeader・
 StatusBadge・SurfaceCard）を持たず、`@banto/ui` から import する**（#220）。派生側が写した `components/ui/` はそのまま
 残しても動く（移行は任意）。取り込むなら、`@banto/ui` を依存に足して import 文を `#lib/components/ui/X.svelte` から

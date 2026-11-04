@@ -68,6 +68,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0020](0020-image-assets-package.md)                | ブラウザ側の画像の原本・取込検査・URL 寿命は、新しいオプションのパッケージ `@banto/image-assets` に置く（上限は consumer が渡す・エラーコードで返す・hash は `crypto.subtle` か自前の SHA-256） | Accepted                   |
 | [0021](0021-firewall-elevated-helper.md)            | 段階 2 のファイアウォールの許可は、UAC で昇格する補助プログラムが実行ファイル単位のルール 1 本だけを足し外しする                                                                                | Accepted                   |
 | [0022](0022-settings-controls.md)                   | 設定カテゴリは下線型ナビゲーション、入力は移動型ラベルと下線を使う                                                                                                                              | Accepted                   |
+| [0023](0023-shared-control-styles.md)               | 設定で採用した入力とページナビのスタイルをテーマで共有する                                                                                                                                      | Accepted                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
