@@ -222,6 +222,10 @@
 	--banto-control-height: 36px;
 	--banto-control-height-sm: 28px;
 	--banto-control-height-lg: 40px;
+	--banto-checkbox-size: 1.1rem;
+	--banto-switch-width: 36px;
+	--banto-switch-height: 20px;
+	--banto-switch-inset: 2px;
 
 	/* Motion (visual-refresh-plan.md 付録A.6) */
 	--banto-duration-fast: 120ms;
@@ -487,6 +491,109 @@ html[data-theme='dark'] {
 	max-width: 100%;
 	transform: none;
 	font-size: var(--banto-font-size-md);
+}
+
+/* Opt-in boolean switches (ADR-0026). State and labels stay native. */
+.banto-switch-field {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	gap: var(--banto-space-2);
+	min-height: var(--banto-control-height-lg);
+	font-size: var(--banto-font-size-md);
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+
+.banto-switch-field:has(> input:disabled) {
+	cursor: not-allowed;
+	color: var(--banto-text-muted);
+}
+
+input.banto-switch[type='checkbox'][role='switch'] {
+	box-sizing: border-box;
+	position: relative;
+	display: inline-flex;
+	flex-shrink: 0;
+	width: var(--banto-switch-width);
+	height: var(--banto-switch-height);
+	margin: 0;
+	appearance: none;
+	border: none;
+	border-radius: 999px;
+	background: var(--banto-border-strong);
+	cursor: pointer;
+	transition: background var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+input.banto-switch[type='checkbox'][role='switch']::before {
+	content: '';
+	position: absolute;
+	inset-block-start: var(--banto-switch-inset);
+	inset-inline-start: var(--banto-switch-inset);
+	width: calc(var(--banto-switch-height) - 2 * var(--banto-switch-inset));
+	height: calc(var(--banto-switch-height) - 2 * var(--banto-switch-inset));
+	border-radius: 50%;
+	background: var(--banto-surface);
+	transition: transform var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+input.banto-switch[type='checkbox'][role='switch']:checked {
+	background: var(--banto-primary-solid);
+}
+
+input.banto-switch[type='checkbox'][role='switch']:checked::before {
+	transform: translateX(calc(var(--banto-switch-width) - var(--banto-switch-height)));
+}
+
+input.banto-switch[type='checkbox'][role='switch']:dir(rtl):checked::before {
+	transform: translateX(calc(var(--banto-switch-height) - var(--banto-switch-width)));
+}
+
+input.banto-switch[type='checkbox'][role='switch']:focus-visible {
+	outline: var(--banto-border-width-strong) solid var(--banto-primary);
+	outline-offset: var(--banto-border-width);
+	box-shadow: var(--banto-focus-ring);
+}
+
+input.banto-switch[type='checkbox'][role='switch']:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+	input.banto-switch[type='checkbox'][role='switch'] {
+		/* Preserve the track and thumb when the UA removes author fills.
+		   The checked state also moves the thumb; focus keeps its own outline. */
+		forced-color-adjust: none;
+		background: ButtonText;
+	}
+
+	input.banto-switch[type='checkbox'][role='switch']::before {
+		background: ButtonFace;
+	}
+
+	input.banto-switch[type='checkbox'][role='switch']:checked {
+		background: Highlight;
+	}
+
+	input.banto-switch[type='checkbox'][role='switch']:checked::before {
+		background: HighlightText;
+	}
+
+	input.banto-switch[type='checkbox'][role='switch']:disabled {
+		background: GrayText;
+		opacity: 1;
+	}
+
+	input.banto-switch[type='checkbox'][role='switch']:disabled::before {
+		background: ButtonFace;
+	}
+
+	input.banto-switch[type='checkbox'][role='switch']:focus-visible {
+		outline-color: Highlight;
+		box-shadow: none;
+	}
 }
 
 /* Page links, not ARIA tabs. Routing and visibility belong to the consumer. */

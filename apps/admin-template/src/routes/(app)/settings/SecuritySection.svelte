@@ -139,7 +139,7 @@
 				</div>
 			</div>
 
-			<label class="switch-row">
+			<label class="banto-switch-field">
 				<input
 					type="checkbox"
 					role="switch"
@@ -151,7 +151,7 @@
 			</label>
 
 			<div class="server-fields">
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<select
 						class="banto-field-control"
 						bind:value={disabledRoleDraft}

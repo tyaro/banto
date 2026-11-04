@@ -2,7 +2,7 @@
 
 作成日: 2026-07-15  
 状態: **実装済み**（M22 完了。本書はコンポーネント API・DOM・キーボード挙動の
-仕様アンカーとして現役。2026-11-04: 内容側の重複タイトルを非表示にする指定を追加）
+仕様アンカーとして現役。2026-11-04: 重複タイトル非表示、boolean control の共有化と狭幅対応を追補）
 
 対応計画: [visual-refresh-plan.md](visual-refresh-plan.md)（M22）  
 運用: 以後トークン値を変える場合は `banto.css` と計画書付録 A を同時更新する
@@ -257,7 +257,8 @@ named import で使用する。**`import * as` 形式は禁止**（ツリーシ�
 - DOM: `<header class="page-header"><div><h1/><p/></div><div class="actions"/></header>`
 - 狭幅ではタイトル行と操作行を縦積みに折り返す（`flex-wrap`）。
   操作の並び順は DOM 順を維持し、Primary が先頭。
-- `view-transition-name: page-header` を持つ（§11.1）。
+- `view-transition-name: page-header` を持つ（§11.1）。操作欄の stacking context は
+  シェルヘッダーより1段下とし、列表示 popup が sticky grid header の背面へ隠れないようにする。
 - `hideTitle`（既定 `false`）で内容側のタイトルを読み上げ用の `<h1>` にできる。
   シェルがタイトルを表示するテンプレートの画面では `true` を使い、説明・操作のみ表示する。
   説明も操作もなければ可視の header 行を省き、タイトル分の余白も作らない。

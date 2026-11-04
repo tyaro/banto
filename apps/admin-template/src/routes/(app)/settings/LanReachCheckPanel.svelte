@@ -228,7 +228,7 @@
 	{#if hosts.length > 0}
 		<div class="reach-issue">
 			{#if hosts.length > 1}
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<select
 						class="banto-field-control"
 						value={host}

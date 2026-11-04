@@ -295,7 +295,7 @@
 			</div>
 		</div>
 
-		<label class="banto-field">
+		<label class="banto-field banto-field--stacked">
 			<select
 				class="banto-field-control"
 				value={getLocale()}
@@ -321,7 +321,7 @@
 				<p>{m['settings.kioskDesc']()}</p>
 			</div>
 		</div>
-		<label class="switch-row">
+		<label class="banto-switch-field">
 			<input
 				type="checkbox"
 				role="switch"
@@ -342,7 +342,7 @@
 					<p>{m['settings.vibrancyDesc']()}</p>
 				</div>
 			</div>
-			<label class="switch-row">
+			<label class="banto-switch-field">
 				<input
 					type="checkbox"
 					role="switch"

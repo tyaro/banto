@@ -208,7 +208,7 @@
 			     "auth disabled + LAN enabled" pass validation at all (§2.3).
 			     Shown above the LAN toggle so the dependency reads top to
 			     bottom - check this, then the toggle below unlocks. -->
-			<label class="switch-row">
+			<label class="banto-switch-field">
 				<input
 					type="checkbox"
 					role="switch"
@@ -220,10 +220,7 @@
 			</label>
 			<p class="note warning">{m['settings.viewerPublicNote']()}</p>
 
-			<label
-				class="switch-row"
-				class:disabled={authSettingsStore.value?.disabled && !viewerPublicDraft}
-			>
+			<label class="banto-switch-field">
 				<input
 					type="checkbox"
 					role="switch"
@@ -238,7 +235,7 @@
 			{/if}
 
 			<div class="server-fields">
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<select class="banto-field-control" bind:value={bindDraft} disabled={!editable}>
 						<option value="127.0.0.1">{m['settings.bindLocalOnly']()}</option>
 						<option value="0.0.0.0">{m['settings.bindLanPublic']()}</option>

@@ -71,6 +71,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0023](0023-shared-control-styles.md)               | 設定で採用した入力とページナビのスタイルをテーマで共有する                                                                                                                                      | Accepted                   |
 | [0024](0024-schema-form-appearance.md)              | スキーマフォームの下線型表示は任意指定とし、ラベルを上に固定する                                                                                                                                | Accepted                   |
 | [0025](0025-transparent-control-backgrounds.md)     | 入力欄と選択入力の背景は既定で透明にする                                                                                                                                                        | Accepted                   |
+| [0026](0026-shared-boolean-controls.md)             | スイッチとネイティブ checkbox のスタイルを共有する                                                                                                                                              | Accepted                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 

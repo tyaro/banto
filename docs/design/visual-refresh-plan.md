@@ -7,7 +7,8 @@
 改訂2: 2026-07-15（メニューコンポーネント一式を Phase 1 共通 UI へ追加。
 実装詳細は設計書へ分離）  
 状態: **実装済み**（roadmap **M22** として実施・完了、PR #25。検証基盤は後続 PR。
-§11 の v2 候補のみ未実施のバックログとして現役）  
+§11 の v2 候補のみ未実施のバックログとして現役。2026-11-04: 共通 boolean control の寸法を追補）
+
 対象: `apps/admin-template` とフロントエンド UI パッケージ  
 設計書: [visual-refresh-design.md](visual-refresh-design.md)（本計画の実装レベル設計）  
 付録 A のトークン確定値は `packages/theme/src/css/banto.css` の仕様アンカーとして
@@ -555,6 +556,8 @@ Dark:
 | `--banto-control-height` | standard `36px` / compact `32px` | 入力欄・ボタン md |
 | `--banto-control-height-sm` | `28px` | ツールバー内 |
 | `--banto-control-height-lg` | `40px` | ログイン等の主ボタン |
+| `--banto-checkbox-size` | `1.1rem` | forms と列表示メニューのネイティブ checkbox（ADR-0026） |
+| `--banto-switch-width` / `--banto-switch-height` / `--banto-switch-inset` | `36px` / `20px` / `2px` | 共通スイッチの形（ADR-0026） |
 | `--banto-grid-row-height` | standard `36px`（現行）/ compact `32px` | 密度軸で切替 |
 | `--banto-space-1` 〜 `--banto-space-8` | `0.25rem` / `0.5rem` / `0.75rem` / `1rem` / `1.25rem` / `1.5rem` / `2rem` / `3rem` | 余白の段階（序数。値は名前に含めない）。密度では切り替えない（[theme-dimension-tokens.md](theme-dimension-tokens.md) §5.2・D3） |
 | `--banto-border-width` | `1px` | 枠線の幅 |

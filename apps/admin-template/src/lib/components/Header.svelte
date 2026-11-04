@@ -333,10 +333,13 @@
 
 	.page-title {
 		margin: 0;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		font-size: 1rem;
 		font-weight: 600;
 		font-feature-settings: 'palt';
-		text-wrap: balance;
 	}
 
 	.spacer {

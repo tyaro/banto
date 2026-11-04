@@ -36,7 +36,9 @@ forms と theme は同じ対応版へ更新し、アプリで theme CSS を読�
 ```
 
 下線型では、すべての項目名を入力の上に固定して全文の高さを確保する。
-text / password / number / select / date / textarea が対象で、checkbox は従来表示を保つ。
+text / password / number / select / date / textarea が対象で、checkbox はネイティブの形を使う。
+checkbox の寸法は `--banto-checkbox-size`（既定・fallback とも `1.1rem`）で列表示メニューと揃える。
+Space 操作・readonly の disabled fallback・送信対象の扱いは維持する（ADR-0026）。
 placeholder・日付のネイティブ UI・textarea の4行と縦リサイズを維持し、浮動ラベルにはしない。
 `FieldDef` や送信データ、検証・エラー関連付け、readonly / disabled の扱いは変わらない。
 下線型の操作欄は折り返し、送信ボタンと直下の `.banto-btn` は文字に応じて高さが伸びる。

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
-test('settings labels clear selected values and move with text input', async ({ page }) => {
+test('settings labels stay above selected values and password input', async ({ page }) => {
 	await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
 	await page.goto('/settings/appearance');
 
@@ -25,10 +25,10 @@ test('settings labels clear selected values and move with text input', async ({ 
 	const emptyTop = await labelTop();
 	await password.focus();
 	const focusedTop = await labelTop();
-	expect(focusedTop).toBeLessThan(emptyTop);
+	expect(focusedTop).toBeCloseTo(emptyTop, 0);
 	await password.fill('入力テスト');
 	await password.blur();
-	expect(await labelTop()).toBeLessThan(emptyTop);
+	expect(await labelTop()).toBeCloseTo(emptyTop, 0);
 	await password.fill('');
 	await password.blur();
 	expect(await labelTop()).toBeCloseTo(emptyTop, 0);
@@ -38,6 +38,7 @@ test('settings labels clear selected values and move with text input', async ({ 
 	await page.setViewportSize({ width: 320, height: 700 });
 	await page.goto('/settings/appearance');
 	await page.getByLabel('表示言語').selectOption('en');
+	await expect(page.getByLabel('Display language')).toHaveValue('en');
 	await page.goto('/settings/account');
 	const newPassword = page.getByLabel('New password (8+ characters)');
 	await newPassword.fill('abcdefgh');

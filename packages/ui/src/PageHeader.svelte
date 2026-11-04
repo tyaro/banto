@@ -59,6 +59,10 @@
 
 	.page-header {
 		view-transition-name: page-header;
+		/* The transition name creates a stacking context. Keep action popovers
+		   above sticky grid cells, while leaving the shell header above them. */
+		position: relative;
+		z-index: calc(var(--banto-z-header) - 1);
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-start;
