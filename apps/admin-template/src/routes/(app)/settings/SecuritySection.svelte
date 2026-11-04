@@ -151,7 +151,7 @@
 			</label>
 
 			<div class="server-fields">
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<select
 						class="banto-field-control"
 						bind:value={disabledRoleDraft}

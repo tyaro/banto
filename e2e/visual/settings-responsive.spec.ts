@@ -50,6 +50,9 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 						.toBeLessThanOrEqual(1);
 					for (const control of await page.locator('.settings-page .banto-field-control').all()) {
 						if (await control.isEnabled()) await control.focus();
+						const label = await control.evaluate(
+							(element) => element.nextElementSibling!.textContent
+						);
 						const gap = await control.evaluate(
 							(element) =>
 								element.getBoundingClientRect().top +
@@ -58,7 +61,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 						);
 						expect(
 							gap,
-							`${locale}/${width}/${scale}/${category}: label must clear the input value`
+							`${locale}/${width}/${scale}/${category}/${label}: label must clear the input value`
 						).toBeGreaterThanOrEqual(-1);
 						await control.blur();
 					}
