@@ -76,10 +76,24 @@
 
 ### 検証した組み合わせ
 
-- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認する。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
-  - タグの前（main の SHA、`workflow_dispatch`）: タグ後に確定する。
-  - タグの push（`v6.10.0`）: タグ後に確定する。
-  - Node.js・pnpm・Svelte・SvelteKit・Vite・Rust の版: 2 つの run の確認後に確定する。
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `0acaa5b`、`workflow_dispatch`）: [run 41876322896](https://github.com/tyaro/banto/actions/runs/41876322896)（success）。
+  - タグの push（`v6.10.0`、main の `0acaa5b`）: [run 41879665011](https://github.com/tyaro/banto/actions/runs/41879665011)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。Node.js は npm のジョブも diagnostic のジョブも同じ版だった。
+
+    | 項目               | 版                             |
+    | ------------------ | ------------------------------ |
+    | Node.js            | 24.22.1                        |
+    | pnpm               | 10.33.0                        |
+    | Svelte             | 5.57.3                         |
+    | SvelteKit          | 3.1.0                          |
+    | Vite               | 8.3.5                          |
+    | vite-plugin-svelte | 7.3.1                          |
+    | TypeScript         | 6.0.3                          |
+    | Rust               | 1.99.1（58cf8f9c3 2026-10-13） |
+
+  - 出所: Node.js は `node: v24.22.1`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、
+    Rust は `Setup Rust toolchain` の `rustc 1.99.1`。
 
 ### 変更点
 
