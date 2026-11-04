@@ -65,6 +65,8 @@
   "grid.filterStartsWith": "Starts with",
   "grid.filterEquals": "Equals",
   "grid.filterAriaLabel": "Filter {header}",
+  "grid.filterOperatorLabel": "Filter operator",
+  "grid.filterValueLabel": "Filter value",
   "grid.filterValuePlaceholder": "Enter a value",
   "grid.filterApply": "Apply",
   "grid.filterClear": "Clear",

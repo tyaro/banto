@@ -36,6 +36,20 @@ checkbox editor は `--banto-checkbox-size`（fallback `1.1rem`）で native の
 セル全幅・全高へは伸ばさない。フォーカスは既存の編集セル枠で示す。
 行高・列幅・仮想化・native の checked / Space / 即時確定は維持する。
 
+## フィルタ・選択範囲の操作性（次リリース）
+
+列フィルタの条件選択と値入力の名前は `messages.filterOperatorLabel` /
+`filterValueLabel` で上書きできる。省略時は日本語を使い、placeholder は名前と独立して維持する。
+開閉ボタンは `aria-haspopup="dialog"`、`aria-expanded` と、開いている間だけ一意な dialog ID への
+`aria-controls` を持つ。開くと値入力へ移り、内部の Escape・適用・クリア後はボタンへ戻る。
+同じボタンの再クリックでも閉じる。外クリックは閉じるだけでフォーカスを取り戻さず、
+Tab / Shift+Tab はブラウザの標準移動を使う非modalのまま。
+値を空にして適用すると条件を解除する。数値入力の空欄も解除し、数値 `0` は値として維持する。
+
+グリッド入口・見出し・フィルタ操作子のフォーカスは実線枠で示す。
+強制配色では範囲選択を内側の破線、active セルを実線で区別する。選択計算・通常配色・
+ソートやフィルタの値・セル編集・仮想スクロールの契約は維持する。
+
 ## 依存
 
 `ColumnsMenu` の checkbox はネイティブ描画を使い、`--banto-checkbox-size`（既定・fallback は `1.1rem`）で

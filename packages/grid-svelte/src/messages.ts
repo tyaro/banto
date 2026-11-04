@@ -19,6 +19,10 @@ export interface GridMessages {
 	filterAriaLabel?: (header: string) => string;
 	/** FilterPopover's value input placeholder. */
 	filterValuePlaceholder?: () => string;
+	/** Accessible name of FilterPopover's operator select. */
+	filterOperatorLabel?: () => string;
+	/** Accessible name of FilterPopover's value input. */
+	filterValueLabel?: () => string;
 	/** FilterPopover's apply button label. */
 	filterApply?: () => string;
 	/** FilterPopover's clear button label. */
@@ -45,6 +49,8 @@ export const defaultGridMessages: Required<GridMessages> = {
 	filterOpEquals: () => '一致する',
 	filterAriaLabel: (header) => `${header}の絞り込み`,
 	filterValuePlaceholder: () => '値を入力',
+	filterOperatorLabel: () => '絞り込み条件',
+	filterValueLabel: () => '絞り込み値',
 	filterApply: () => '適用',
 	filterClear: () => 'クリア',
 	inlineEditInvalid: () => '入力値が不正です',
