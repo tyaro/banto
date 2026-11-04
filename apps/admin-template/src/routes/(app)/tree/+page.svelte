@@ -64,7 +64,7 @@
 </script>
 
 <div class="page">
-	<PageHeader title={m['nav.tree']()} description={m['tree.demo.intro']()} />
+	<PageHeader hideTitle title={m['nav.tree']()} description={m['tree.demo.intro']()} />
 
 	<SurfaceCard title={m['tree.demo.explorerTitle']()} description={m['tree.demo.explorerHint']()}>
 		<BantoTree

@@ -35,15 +35,17 @@
 	let passwordError: string | null = $state(null);
 	let changingPassword = $state(false);
 
-	// Issue #214: typed-but-not-submitted password fields. Only while the
-	// form is actually shown (same conditions as the markup below). A failed
+	// Issue #214: an unsubmitted replacement password. The current password
+	// only authenticates the change; autofilling it is not an unsaved edit.
+	// Guard only while the form is actually shown (same conditions as the
+	// markup below). A failed
 	// change keeps the fields, so the marker stays; a successful one clears
 	// them. (The Tauri-only autologin form below is not guarded yet.)
 	const passwordFormShown = $derived(
 		!sessionStore.publicViewer && !sessionStore.authDisabled && !!changePassword
 	);
 	const passwordDirty = $derived(
-		passwordFormShown && (currentPassword !== '' || newPassword !== '' || newPasswordConfirm !== '')
+		passwordFormShown && (newPassword !== '' || newPasswordConfirm !== '')
 	);
 	const passwordGuard = guardUnsavedChanges({
 		isDirty: () => passwordDirty,

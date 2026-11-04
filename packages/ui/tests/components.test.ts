@@ -167,6 +167,25 @@ describe('PageHeader', () => {
 		expect(container.querySelector('.actions')).toBeNull();
 		expect(container.querySelector('p')).toBeNull();
 	});
+
+	it('keeps an accessible h1, description and actions when the shell shows the title', () => {
+		const { container } = render(PageHeader, {
+			title: 'Items',
+			hideTitle: true,
+			description: 'All items',
+			actions: text('New')
+		});
+		expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+		expect(screen.getByRole('heading', { name: 'Items' }).getAttribute('aria-hidden')).toBeNull();
+		expect(container.querySelector('header')?.textContent).toContain('All items');
+		expect(container.querySelector('.actions')?.textContent).toContain('New');
+	});
+
+	it('leaves only the document heading when the shell shows a title without description or actions', () => {
+		const { container } = render(PageHeader, { title: 'Items', hideTitle: true });
+		expect(screen.getByRole('heading', { level: 1, name: 'Items' })).toBeTruthy();
+		expect(container.querySelector('header')).toBeNull();
+	});
 });
 
 describe('SurfaceCard', () => {

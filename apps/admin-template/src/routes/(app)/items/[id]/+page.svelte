@@ -170,7 +170,7 @@
 </script>
 
 <div class="page">
-	<PageHeader title={m['items.editTitle']({ resource: resource.label })} />
+	<PageHeader hideTitle title={m['items.editTitle']({ resource: resource.label })} />
 
 	<div class="form-panel">
 		{#if isNotFoundError}

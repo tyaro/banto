@@ -13,15 +13,19 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 （トーストの後の節。ADR-0018 §10）。段階 5 でドック風のランチャー `LauncherBar` を足した
 （層の補助の後の節。ADR-0018 §11）。
 
-| 部品           | 役割                                                      | props / snippet                                   |
-| -------------- | --------------------------------------------------------- | ------------------------------------------------- |
-| `PageHeader`   | ページの `<h1>` + 説明 + 操作（`view-transition-name`）   | `title` `description?` `actions?`(snippet)        |
-| `SurfaceCard`  | 区画・カードの面（`<h2>` 見出し + 本文 + フッタ）         | `title?` `description?` `children` `footer?`      |
-| `StatusBadge`  | 状態/ロールのバッジ（色だけに頼らず常にアイコンを出す）   | `variant` `label` `icon?`                         |
-| `IconButton`   | アイコンだけのボタン（`label` が `aria-label`・`title`）  | `label` `icon` `size?`(`'sm'`/`'md'`) `onclick`   |
-| `EmptyState`   | ページ単位の「データなし」                                | `icon?` `title` `description?` `action?`(snippet) |
-| `ErrorState`   | ページ単位のエラー（`role="alert"`）                      | `icon?` `title` `description?` `action?`(snippet) |
-| `LoadingState` | ページ単位の読み込み中（スケルトン + `aria-live` の文言） | `label?` `lines?`                                 |
+| 部品           | 役割                                                      | props / snippet                                         |
+| -------------- | --------------------------------------------------------- | ------------------------------------------------------- |
+| `PageHeader`   | ページの `<h1>` + 説明 + 操作（`view-transition-name`）   | `title` `hideTitle?` `description?` `actions?`(snippet) |
+| `SurfaceCard`  | 区画・カードの面（`<h2>` 見出し + 本文 + フッタ）         | `title?` `description?` `children` `footer?`            |
+| `StatusBadge`  | 状態/ロールのバッジ（色だけに頼らず常にアイコンを出す）   | `variant` `label` `icon?`                               |
+| `IconButton`   | アイコンだけのボタン（`label` が `aria-label`・`title`）  | `label` `icon` `size?`(`'sm'`/`'md'`) `onclick`         |
+| `EmptyState`   | ページ単位の「データなし」                                | `icon?` `title` `description?` `action?`(snippet)       |
+| `ErrorState`   | ページ単位のエラー（`role="alert"`）                      | `icon?` `title` `description?` `action?`(snippet)       |
+| `LoadingState` | ページ単位の読み込み中（スケルトン + `aria-live` の文言） | `label?` `lines?`                                       |
+
+`PageHeader` の `hideTitle` は既定 `false`。シェルに同じタイトルがある画面では `true` にすると、
+内容側の `<h1>` を読み上げ用に残し、説明と操作だけを表示する。説明も操作もない場合は可視の行を作らない。
+テンプレートのシェル内画面はこの指定を使う。ログイン・帳票本文・UI 部品の見本にはそれぞれの見出しを表示する。
 
 メニュー部品（段階 2a。`popover` API を前提にする）:
 

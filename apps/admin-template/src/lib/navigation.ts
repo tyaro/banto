@@ -5,7 +5,9 @@
  * (spec §3.1); manual entries like the ones below remain possible.
  */
 import { isPathActive, type AppPath } from '#lib/appPath.js';
+import type { RouteId } from '$app/types';
 import { isDemoBuild } from '#lib/banto/environment.js';
+import { resources } from '#lib/banto/resources/index.js';
 import { isAdmin, type Role } from '#lib/permissions.js';
 import * as m from '#lib/paraglide/messages.js';
 
@@ -29,6 +31,10 @@ export interface NavItem {
 	path: AppPath;
 	labelKey: NavLabelKey | DemoNavLabelKey;
 	icon: NavIconKey | DemoNavIconKey;
+	/** Resource whose current localized label is passed to route-specific titles. */
+	pageTitleResource?: string;
+	/** Exact route IDs keep static child pages distinct from record-edit routes. */
+	pageTitles?: Partial<Record<RouteId, (resourceLabel: string) => string>>;
 	/** Spec M10 RBAC: only shown to the `admin` role. Undefined/false = visible to every role. */
 	adminOnly?: boolean;
 	/**
@@ -70,6 +76,11 @@ const allNavItems: NavItem[] = [
 		labelKey: 'nav.items',
 		icon: 'items',
 		badgeResource: 'items',
+		pageTitleResource: 'items',
+		pageTitles: {
+			'/(app)/items/new': (resource) => m['items.createTitle']({ resource }),
+			'/(app)/items/[id]': (resource) => m['items.editTitle']({ resource })
+		},
 		publicViewer: true
 	},
 	// [scaffold:items] end
@@ -121,8 +132,16 @@ export function navSections(session: { publicViewer: boolean; role: Role }): {
 // never entered into the dictionary (PR-B2 scope rule).
 const BRAND = 'Banto';
 
-export function pageTitle(pathname: string): string {
+export function pageTitle(pathname: string, routeId?: RouteId | null): string {
 	// Over every entry, not just the visible ones: a `demoOnly` page keeps its title when opened by URL.
 	const item = allNavItems.find((entry) => isPathActive(entry.path, pathname));
-	return item ? m[item.labelKey]() : BRAND;
+	if (!item) return BRAND;
+	const title = routeId ? item.pageTitles?.[routeId] : undefined;
+	if (title) {
+		// Read the definition lazily: localized getters and replacement resources
+		// work without requiring the runtime registry to have been initialized.
+		const label = resources.find((resource) => resource.name === item.pageTitleResource)?.label;
+		return title(label ?? m[item.labelKey]());
+	}
+	return m[item.labelKey]();
 }

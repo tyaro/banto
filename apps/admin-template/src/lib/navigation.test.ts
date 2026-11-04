@@ -6,6 +6,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { invalidate, onInvalidate } from '@banto/admin-core';
+import type { RouteId } from '$app/types';
+import { resources } from './banto/resources';
 
 const state = vi.hoisted(() => ({ base: '' }));
 vi.mock('$app/paths', () => ({
@@ -41,6 +43,39 @@ describe.each(['', '/banto'])('base=%j', (base) => {
 		expect(pageTitle(at(first.path))).toBe(m[first.labelKey]());
 		expect(pageTitle(at(`${first.path}/3`))).toBe(m[first.labelKey]());
 		expect(pageTitle(at('/nowhere'))).toBe('Banto');
+	});
+
+	it('uses exact route titles and preserves entry and unknown-route fallbacks', () => {
+		for (const entry of navItems) {
+			for (const [route, title] of Object.entries(entry.pageTitles ?? {})) {
+				const routeId = route as RouteId;
+				const path = route.replace(/\/\([^/]+\)/g, '').replace(/\[[^/]+\]/g, 'record-42');
+				const label = resources.find(
+					(resource) => resource.name === entry.pageTitleResource
+				)?.label;
+				expect(pageTitle(at(path), routeId)).toBe(title(label ?? m[entry.labelKey]()));
+				expect(pageTitle(at(`${path}/`), routeId)).toBe(title(label ?? m[entry.labelKey]()));
+				expect(pageTitle(at(path))).toBe(m[entry.labelKey]());
+				expect(pageTitle(at(path), null)).toBe(m[entry.labelKey]());
+				expect(pageTitle(at('/nowhere'), routeId)).toBe('Banto');
+				// Keep the route group, but choose an unconfigured static sibling.
+				const reportRoute = route.replace(/\/[^/]+$/, '/report') as RouteId;
+				expect(pageTitle(at(`${entry.path}/report`), reportRoute)).toBe(m[entry.labelKey]());
+
+				const resourceIndex = resources.findIndex(
+					(resource) => resource.name === entry.pageTitleResource
+				);
+				if (resourceIndex >= 0) {
+					const original = resources[resourceIndex];
+					try {
+						resources[resourceIndex] = { ...original, label: 'Replacement resource' };
+						expect(pageTitle(at(path), routeId)).toBe(title('Replacement resource'));
+					} finally {
+						resources[resourceIndex] = original;
+					}
+				}
+			}
+		}
 	});
 
 	it('navBadges counts elsewhere, not on the owning page, and clears on arrival', () => {
