@@ -21,6 +21,7 @@
 		type GridColumn,
 		type SortState
 	} from './types';
+	import CellEditor from './CellEditor.svelte';
 	import { GridState } from './state.svelte';
 	import { CellSelection } from './selection.svelte';
 	import { getColumnValue, sortRows } from './core/sort';
@@ -1254,70 +1255,22 @@
 									{linkInfo.text}
 								{/if}
 							{:else if isEditingCell && editing}
-								{#if (column.editor ?? 'text') === 'select'}
-									<select
-										bind:this={editorEl}
-										aria-label={column.header.trim() || column.id}
-										aria-invalid={!!editing.error}
-										aria-describedby={editing.error ? editErrorId : undefined}
-										class="cell-editor"
-										class:pending={editing.pending}
-										value={String(editing.draft ?? '')}
-										onpointerdown={(event) => event.stopPropagation()}
-										onchange={(event) => {
-											if (editing) {
-												editing.draft = resolveSelectValue(
-													event.currentTarget.value,
-													column.editorOptions
-												);
-											}
-										}}
-										onkeydown={(event) => handleEditorKeydown(event, column, row)}
-										onblur={(event) => handleEditorBlur(event, column, row)}
-									>
-										{#each column.editorOptions ?? [] as option (option.value)}
-											<option value={String(option.value)}>{option.label}</option>
-										{/each}
-									</select>
-								{:else if (column.editor ?? 'text') === 'checkbox'}
-									<input
-										type="checkbox"
-										bind:this={editorEl}
-										aria-label={column.header.trim() || column.id}
-										aria-invalid={!!editing.error}
-										aria-describedby={editing.error ? editErrorId : undefined}
-										class="cell-editor"
-										class:pending={editing.pending}
-										checked={!!editing.draft}
-										onpointerdown={(event) => event.stopPropagation()}
-										onclick={(event) => event.stopPropagation()}
-										onchange={(event) =>
-											handleCheckboxToggle(column, row, event.currentTarget.checked)}
-										onkeydown={(event) => handleEditorKeydown(event, column, row)}
-										onblur={(event) => handleEditorBlur(event, column, row)}
-									/>
-								{:else}
-									<input
-										type={column.editor === 'number'
-											? 'number'
-											: column.editor === 'date'
-												? 'date'
-												: 'text'}
-										bind:this={editorEl}
-										aria-label={column.header.trim() || column.id}
-										aria-invalid={!!editing.error}
-										aria-describedby={editing.error ? editErrorId : undefined}
-										class="cell-editor"
-										class:pending={editing.pending}
-										value={String(editing.draft ?? '')}
-										onpointerdown={(event) => event.stopPropagation()}
-										oninput={(event) => {
-											if (editing) editing.draft = event.currentTarget.value;
-										}}
-										onkeydown={(event) => handleEditorKeydown(event, column, row)}
-										onblur={(event) => handleEditorBlur(event, column, row)}
-									/>
-								{/if}
+								<CellEditor
+									editor={column.editor}
+									label={column.header.trim() || column.id}
+									invalid={!!editing.error}
+									describedBy={editing.error ? editErrorId : undefined}
+									pending={editing.pending}
+									draft={editing.draft}
+									options={column.editorOptions}
+									bind:editorEl
+									onDraftChange={(value) => {
+										if (editing) editing.draft = value;
+									}}
+									onToggle={(checked) => handleCheckboxToggle(column, row, checked)}
+									onKeydown={(event) => handleEditorKeydown(event, column, row)}
+									onBlur={(event) => handleEditorBlur(event, column, row)}
+								/>
 							{:else}
 								{renderCell(column, row)}
 							{/if}
@@ -1623,33 +1576,6 @@
 
 	.cell-link:hover {
 		text-decoration: underline;
-	}
-
-	.cell-editor {
-		width: 100%;
-		height: 100%;
-		box-sizing: border-box;
-		padding: 0 0.6rem;
-		border: none;
-		outline: none;
-		background: var(--banto-surface);
-		color: var(--banto-text);
-		font: inherit;
-	}
-
-	/* Keep the native checkbox compact instead of stretching the editor box. */
-	.cell-editor[type='checkbox'] {
-		width: var(--banto-checkbox-size, 1.1rem);
-		height: var(--banto-checkbox-size, 1.1rem);
-		flex-shrink: 0;
-		padding: 0;
-		margin-inline: var(--banto-space-2);
-		accent-color: var(--banto-primary);
-	}
-
-	.cell-editor.pending {
-		opacity: 0.5;
-		pointer-events: none;
 	}
 
 	.empty-row {
