@@ -37,6 +37,10 @@
 //!
 //! Codes and values only: the frontend builds every text (conventions §13).
 
+use admin_template_fw_elev::powershell::{
+    encode_command, quote_literal as quote_powershell_literal,
+};
+use admin_template_fw_elev::rules::rule_names as elev_rule_names;
 use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
@@ -104,47 +108,17 @@ pub(crate) struct RuleNames {
     pub(crate) port: String,
 }
 
-/// Whether `identifier` is in Tauri's bundle identifier alphabet - ASCII
-/// letters, digits, `-` and `.`, starting with a letter or digit, at most 255
-/// characters. Mirrors `firewallInfo.ts::isValidAppIdentifier`.
-pub(crate) fn is_valid_identifier(identifier: &str) -> bool {
-    let bytes = identifier.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 255
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || *b == b'.' || *b == b'-')
-}
-
 /// The rule names for `identifier`, or `None` when it is not a valid
-/// identifier (then nothing is read).
+/// identifier (then nothing is read). The group and the program rule's name
+/// are the helper's own ([`elev_rule_names`]), so stage 1 reads exactly the
+/// rule stage 2 creates; the port rule's name is read by stage 1 only.
 pub(crate) fn rule_names(identifier: &str) -> Option<RuleNames> {
-    is_valid_identifier(identifier).then(|| RuleNames {
-        group: identifier.to_string(),
-        program: format!("{identifier}.lan.tcp.program"),
+    let elev = elev_rule_names(identifier)?;
+    Some(RuleNames {
+        group: elev.group,
+        program: elev.name,
         port: format!("{identifier}.lan.tcp.port"),
     })
-}
-
-/// `value` as a PowerShell single-quoted literal: wrapped in `'` with every
-/// character PowerShell treats as a single quote (ASCII `'` and U+2018-U+201B)
-/// doubled, so nothing inside is expanded. `None` when `value` contains a
-/// control character. Mirrors `firewallInfo.ts::quotePowerShellLiteral`.
-pub(crate) fn quote_powershell_literal(value: &str) -> Option<String> {
-    if value.chars().any(char::is_control) {
-        return None;
-    }
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('\'');
-    for c in value.chars() {
-        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
-            quoted.push(c);
-        }
-        quoted.push(c);
-    }
-    quoted.push('\'');
-    Some(quoted)
 }
 
 /// The fixed read-only script. `{GROUP}`, `{PROGRAM}` and `{PORT}` are
@@ -222,41 +196,6 @@ pub(crate) fn probe_script(names: &RuleNames) -> Option<String> {
             .replace("{PROGRAM}", &program)
             .replace("{PORT}", &port),
     )
-}
-
-/// `script` as PowerShell's `-EncodedCommand` argument: base64 of its
-/// UTF-16LE bytes. The result is only `[A-Za-z0-9+/=]`.
-pub(crate) fn encode_command(script: &str) -> String {
-    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    base64_encode(&bytes)
-}
-
-/// Standard base64 with padding (RFC 4648 §4). Small enough to keep rather
-/// than add a dependency for one call (conventions §3).
-fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [
-            chunk[0],
-            chunk.get(1).copied().unwrap_or(0),
-            chunk.get(2).copied().unwrap_or(0),
-        ];
-        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
-        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[(n >> 6) as usize & 63] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[n as usize & 63] as char
-        } else {
-            '='
-        });
-    }
-    out
 }
 
 /// Why a rule's state could not be told. Mirrors
@@ -876,6 +815,7 @@ fn run_encoded(encoded: &str, timeout: Duration) -> Result<String, UnknownReason
 #[cfg(test)]
 mod tests {
     use super::*;
+    use admin_template_fw_elev::rules::is_valid_identifier;
     use serde_json::json;
 
     const EXE: &str = r"C:\Program Files\Banto\banto.exe";
@@ -1028,11 +968,6 @@ mod tests {
 
     #[test]
     fn the_encoded_command_is_base64_of_utf16le() {
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"f"), "Zg==");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
-        assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
         // `[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('dir'))`
         assert_eq!(encode_command("dir"), "ZABpAHIA");
         let names = rule_names("com.example.banto").unwrap();

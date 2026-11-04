@@ -89,7 +89,8 @@ pub fn arguments(script: &str) -> Vec<String> {
 /// `value` as a PowerShell single-quoted literal: wrapped in `'` with every
 /// character PowerShell treats as a single quote (ASCII `'` and
 /// U+2018-U+201B) doubled, so nothing inside is expanded. `None` when it
-/// contains a control character. Same as `firewall_status.rs::quote_powershell_literal`.
+/// contains a control character. Stage 1 (`firewall_status.rs`) uses this function;
+/// `firewallInfo.ts::quotePowerShellLiteral` is its TypeScript copy.
 pub fn quote_literal(value: &str) -> Option<String> {
     if value.chars().any(char::is_control) {
         return None;
