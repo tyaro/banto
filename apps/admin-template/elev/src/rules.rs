@@ -12,9 +12,10 @@ use std::fmt;
 
 /// Whether `identifier` is in Tauri's bundle identifier alphabet - ASCII
 /// letters, digits, `-` and `.`, starting with a letter or digit, at most 255
-/// characters. Same rule as `src-tauri/src/firewall_status.rs::is_valid_identifier`
-/// and `firewallInfo.ts::isValidAppIdentifier`; `const` so that
-/// [`crate::IDENTIFIER`] is checked at compile time.
+/// characters. The one definition: stage 1 (`src-tauri/src/firewall_status.rs`)
+/// uses this function, and `firewallInfo.ts::isValidAppIdentifier` is its
+/// TypeScript copy; `const` so that [`crate::IDENTIFIER`] is checked at
+/// compile time.
 pub const fn is_valid_identifier(identifier: &str) -> bool {
     let bytes = identifier.as_bytes();
     if bytes.is_empty() || bytes.len() > 255 || !bytes[0].is_ascii_alphanumeric() {
@@ -31,9 +32,10 @@ pub const fn is_valid_identifier(identifier: &str) -> bool {
     true
 }
 
-/// The rule's name (`-Name`) and group (`-Group`), the same as stage 1's
-/// program rule (`firewallInfo.ts::firewallRuleNames`,
-/// `firewall_status.rs::rule_names`), so stage 1's read finds stage 2's rule.
+/// The rule's name (`-Name`) and group (`-Group`). Stage 1's
+/// `firewall_status.rs::rule_names` takes its group and program rule name from
+/// [`rule_names`], so its read finds stage 2's rule by construction
+/// (`firewallInfo.ts::firewallRuleNames` is the TypeScript copy).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleNames {
     /// `<identifier>.lan.tcp.program`

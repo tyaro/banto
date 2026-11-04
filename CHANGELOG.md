@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- **refactor(firewall):** 段階 1（読み取り）の識別子検証・グループ名・プログラムルール名・PowerShell 単一引用符・`-EncodedCommand` 変換を、段階 2 の helper（`admin-template-fw-elev`）の関数へ一本化した。段階 1 が段階 2 のルールを見つけられる条件をコメントの約束ではなくコンパイルで保つ。移動のみで挙動・Tauri コマンド・TS 側は変えない。
+
 - **refactor(grid):** `BantoGrid` のセルエディタ（select / checkbox / text・number・date）のテンプレートを `CellEditor.svelte` へ切り出した。DOM・属性・挙動は変えず、編集の状態遷移・キー/blur 処理・フォーカス処理は `BantoGrid` に残す。公開 API は変えない。
 
 - **fix(grid):** 適用済みフィルタに二重下線と列固有の説明を追加。強制配色でも色以外の印を残し、ボタン幅と開閉・条件適用・フォーカス処理を維持する。説明は optional message 経由で日英へ対応（#495）。
