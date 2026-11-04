@@ -79,7 +79,11 @@
 	let filterButton: HTMLButtonElement | undefined = $state();
 	const headerId = $props.id();
 	const filterId = `${headerId}-filter`;
+	const filterAppliedId = `${headerId}-filter-applied`;
 	const columnLabel = $derived(column.header.trim() || column.id);
+	const appliedDescription = $derived(
+		activeFilter ? t.filterAppliedDescription(columnLabel) : undefined
+	);
 
 	function handleBodyPointerDown(event: PointerEvent) {
 		if (event.button !== 0) return;
@@ -211,6 +215,8 @@
 			class="filter-button"
 			class:active={!!activeFilter}
 			aria-label={t.filterAriaLabel(columnLabel)}
+			aria-describedby={activeFilter ? filterAppliedId : undefined}
+			title={appliedDescription}
 			aria-haspopup="dialog"
 			aria-expanded={filterOpen}
 			aria-controls={filterOpen ? filterId : undefined}
@@ -218,6 +224,9 @@
 		>
 			▾
 		</button>
+		{#if activeFilter}
+			<span id={filterAppliedId} hidden>{appliedDescription}</span>
+		{/if}
 		{#if filterOpen}
 			<FilterPopover
 				id={filterId}
@@ -339,6 +348,10 @@
 
 	.filter-button.active {
 		color: var(--banto-primary);
+		text-decoration-line: underline;
+		text-decoration-style: double;
+		text-decoration-thickness: var(--banto-border-width, 1px);
+		text-underline-offset: 0.15em;
 	}
 
 	.resize-handle {
