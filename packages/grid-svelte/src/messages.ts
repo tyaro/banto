@@ -17,6 +17,8 @@ export interface GridMessages {
 	filterOpEquals?: () => string;
 	/** Filter button/popover aria-label (HeaderCell + FilterPopover), given the column's header text. */
 	filterAriaLabel?: (header: string) => string;
+	/** Applied-filter state description, independent of the popover's open state. */
+	filterAppliedDescription?: (header: string) => string;
 	/** FilterPopover's value input placeholder. */
 	filterValuePlaceholder?: () => string;
 	/** Accessible name of FilterPopover's operator select. */
@@ -52,6 +54,7 @@ export const defaultGridMessages: Required<GridMessages> = {
 	filterOpStartsWith: () => 'で始まる',
 	filterOpEquals: () => '一致する',
 	filterAriaLabel: (header) => `${header}の絞り込み`,
+	filterAppliedDescription: (header) => `${header}の絞り込みを適用中`,
 	filterValuePlaceholder: () => '値を入力',
 	filterOperatorLabel: () => '絞り込み条件',
 	filterValueLabel: () => '絞り込み値',

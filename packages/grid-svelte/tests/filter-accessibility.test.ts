@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /** Nonmodal filter focus belongs to the control the user is operating. */
 import { cleanup, fireEvent, render, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import BantoGrid from '../src/BantoGrid.svelte';
 import { GridState } from '../src/state.svelte';
@@ -39,9 +40,10 @@ const columns: GridColumn<Row>[] = [
 function setup(
 	mode: 'client' | 'server' = 'client',
 	messages: Partial<GridMessages> = {},
-	cols = columns
+	cols = columns,
+	initialState?: GridState<Row>
 ) {
-	const state = new GridState(cols);
+	const state = initialState ?? new GridState(cols);
 	const onParamsChange = vi.fn();
 	const view = render(BantoGrid<Row>, {
 		rows: [{ id: 1, name: 'Alpha', price: 10 }],
@@ -241,4 +243,130 @@ describe.each(['client', 'server'] as const)('%s filter actions', (mode) => {
 		expect(document.activeElement).toBe(trigger);
 		expect(view.onParamsChange).toHaveBeenCalledTimes(mode === 'server' ? 1 : 0);
 	});
+});
+
+function expectApplied(trigger: HTMLElement, description?: string) {
+	expect(trigger.hasAttribute('aria-pressed')).toBe(false);
+	if (description === undefined) {
+		expect(trigger.classList.contains('active')).toBe(false);
+		expect(trigger.hasAttribute('aria-describedby')).toBe(false);
+		expect(trigger.hasAttribute('title')).toBe(false);
+		return undefined;
+	}
+	expect(trigger.classList.contains('active')).toBe(true);
+	const id = trigger.getAttribute('aria-describedby');
+	expect(id).toBeTruthy();
+	const text = document.getElementById(id!)!;
+	expect(text.textContent).toBe(description);
+	expect(text.hidden).toBe(true);
+	expect(text.hasAttribute('aria-live')).toBe(false);
+	expect(text.hasAttribute('role')).toBe(false);
+	expect(trigger.getAttribute('title')).toBe(description);
+	return text;
+}
+
+describe.each(['client', 'server'] as const)('%s applied filter descriptions', (mode) => {
+	it('keeps applied state independent of opening, draft changes, cancellation and clearing', async () => {
+		const view = setup(mode);
+		const trigger = view.query.getByRole('button', { name: 'Nameの絞り込み' });
+		expectApplied(trigger);
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		let controls = await open(view);
+		expectApplied(trigger);
+		expect(trigger.getAttribute('aria-expanded')).toBe('true');
+		await fireEvent.input(controls.input, { target: { value: 'Alpha' } });
+		expectApplied(trigger);
+		await fireEvent.keyDown(controls.input, { key: 'Escape' });
+		expectApplied(trigger);
+		expect(view.onParamsChange).not.toHaveBeenCalled();
+		controls = await open(view);
+		await fireEvent.change(controls.select, { target: { value: 'eq' } });
+		await fireEvent.input(controls.input, { target: { value: 'Alpha' } });
+		await fireEvent.keyDown(controls.input, { key: 'Enter' });
+		const description = expectApplied(trigger, 'Nameの絞り込みを適用中')!;
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		expect(trigger.hasAttribute('aria-controls')).toBe(false);
+		expect(view.state.filters).toEqual([{ field: 'name', op: 'eq', value: 'Alpha' }]);
+		controls = await open(view);
+		expect(trigger.getAttribute('aria-expanded')).toBe('true');
+		expect(expectApplied(trigger, 'Nameの絞り込みを適用中')).toBe(description);
+		expect(trigger.getAttribute('aria-controls')).not.toBe(description.id);
+		await fireEvent.input(controls.input, { target: { value: 'unsaved' } });
+		await fireEvent.keyDown(controls.input, { key: 'Escape' });
+		expectApplied(trigger, 'Nameの絞り込みを適用中');
+		expect(view.state.filters).toEqual([{ field: 'name', op: 'eq', value: 'Alpha' }]);
+		expect(view.onParamsChange).toHaveBeenCalledTimes(mode === 'server' ? 1 : 0);
+		if (mode === 'server')
+			expect(view.onParamsChange).toHaveBeenLastCalledWith({
+				sort: [],
+				filters: [{ field: 'name', op: 'eq', value: 'Alpha' }]
+			});
+		controls = await open(view);
+		await fireEvent.click(within(controls.dialog).getByRole('button', { name: 'クリア' }));
+		expectApplied(trigger);
+		expect(document.getElementById(description.id)).toBeNull();
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		expect(view.state.filters).toEqual([]);
+		expect(view.onParamsChange).toHaveBeenCalledTimes(mode === 'server' ? 2 : 0);
+		if (mode === 'server')
+			expect(view.onParamsChange).toHaveBeenLastCalledWith({ sort: [], filters: [] });
+	});
+
+	it('describes numeric zero as applied and removes the description on empty-value clearing', async () => {
+		const view = setup(mode);
+		let controls = await open(view, 'Priceの絞り込み');
+		await fireEvent.input(controls.input, { target: { value: '0' } });
+		expectApplied(controls.trigger);
+		await fireEvent.keyDown(controls.input, { key: 'Enter' });
+		expectApplied(controls.trigger, 'Priceの絞り込みを適用中');
+		expect(view.state.filters).toEqual([{ field: 'price', op: 'eq', value: 0 }]);
+		controls = await open(view, 'Priceの絞り込み');
+		await fireEvent.input(controls.input, { target: { value: '' } });
+		expectApplied(controls.trigger, 'Priceの絞り込みを適用中');
+		await fireEvent.keyDown(controls.input, { key: 'Enter' });
+		expectApplied(controls.trigger);
+		expect(view.state.filters).toEqual([]);
+		expect(view.onParamsChange).toHaveBeenCalledTimes(mode === 'server' ? 2 : 0);
+		if (mode === 'server')
+			expect(view.onParamsChange).toHaveBeenLastCalledWith({ sort: [], filters: [] });
+	});
+});
+
+it('reflects existing and hydrated external filters without firing callbacks', async () => {
+	const state = new GridState(columns);
+	state.setFilter({ field: 'price', op: 'eq', value: 0 });
+	const serialized = state.serialize();
+	const view = setup(
+		'server',
+		{ filterAppliedDescription: (header) => `${header}: filter applied` },
+		columns,
+		state
+	);
+	const trigger = view.query.getByRole('button', { name: 'Priceの絞り込み' });
+	expectApplied(trigger, 'Price: filter applied');
+	state.removeFilter('price');
+	await tick();
+	expectApplied(trigger);
+	state.hydrate(serialized);
+	await tick();
+	expectApplied(trigger, 'Price: filter applied');
+	expect(view.onParamsChange).not.toHaveBeenCalled();
+});
+
+it('uses column-ID fallback and unique description IDs across columns and identical grids', async () => {
+	const cols = [{ ...columns[0], header: '  ' }, columns[1]];
+	const ids: string[] = [];
+	for (let i = 0; i < 2; i++) {
+		const state = new GridState(cols);
+		state.setFilter({ field: 'name', op: 'eq', value: 'Alpha' });
+		state.setFilter({ field: 'price', op: 'eq', value: 0 });
+		const view = setup('server', {}, cols, state);
+		for (const label of ['name', 'Price']) {
+			const trigger = view.query.getByRole('button', { name: `${label}の絞り込み` });
+			const description = expectApplied(trigger, `${label}の絞り込みを適用中`)!;
+			expect(view.container.contains(description)).toBe(true);
+			ids.push(description.id);
+		}
+	}
+	expect(new Set(ids).size).toBe(4);
 });

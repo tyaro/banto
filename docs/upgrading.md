@@ -118,6 +118,10 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 多言語アプリは message bundle も更新する。admin-template では対応する日英の辞書と bridge を取り込む。
 詳細は [grid README](../packages/grid-svelte/README.md#長いエラーの全文を読む次リリースadr-0027) を参照。
 
+適用済みフィルタの説明にも、任意の `GridMessages.filterAppliedDescription(header)` を追加した。
+既定は日本語なので、多言語利用は対応する辞書と bridge も取り込む。
+適用状態は二重下線・説明で示し、ボタン名や `aria-expanded` の開閉契約は維持する。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 設定のスイッチ共有化（次リリース、ADR-0026）は `banto-switch-field` / `banto-switch` を使う。
