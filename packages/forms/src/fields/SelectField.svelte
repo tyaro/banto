@@ -5,6 +5,7 @@
 	interface Props {
 		def: FieldDef;
 		id?: string;
+		class?: string;
 		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
@@ -22,6 +23,7 @@
 	let {
 		def,
 		id,
+		class: className,
 		'aria-describedby': describedBy,
 		value,
 		error,
@@ -42,6 +44,7 @@
 </script>
 
 <select
+	class={className}
 	id={id ?? def.name}
 	value={value === undefined || value === null ? '' : String(value)}
 	disabled={isDisabled}

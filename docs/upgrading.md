@@ -96,6 +96,10 @@ select / checkbox はネイティブ readonly がないため disabled を維持
 readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止するが、値は引き続き検証・送信対象。
 詳細と直接利用の契約は [forms README](../packages/forms/README.md#ラベルエラー読み取り専用issue-495) を参照。
 
+`BantoForm` の `appearance="underline"`（ADR-0024）は任意指定で、対応版の forms と theme CSS を
+組み合わせる。省略時の表示は従来どおり。商品・ユーザー管理の更新された markup を取り込む場合も
+両方を同じ対応版へ更新する。各 field の追加 `class` はネイティブ要素へ渡される。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 共有スタイルへの移行（次リリース、ADR-0023）では、設定の入力・ページナビとログイン・初回セットアップの入力が

@@ -8,6 +8,9 @@
 export type FieldType =
 	'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'password';
 
+/** Underline is opt-in and needs matching @banto/theme/css (ADR-0024). */
+export type FormAppearance = 'default' | 'underline';
+
 export interface FieldOption {
 	value: string | number;
 	label: string;

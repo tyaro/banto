@@ -9,7 +9,7 @@
  */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushSync } from 'svelte';
+import { flushSync, type ComponentProps } from 'svelte';
 import BantoForm from '../src/BantoForm.svelte';
 import { createFormStore } from '../src/store.svelte';
 import type { FieldDef, FormSchema } from '../src/types';
@@ -23,20 +23,30 @@ const schema: FormSchema = {
 	]
 };
 
-describe('BantoForm', () => {
+describe.each(['default', 'underline'] as const)('BantoForm (%s)', (appearance) => {
+	const renderForm = (props: ComponentProps<typeof BantoForm>) =>
+		render(BantoForm, {
+			...props,
+			appearance: appearance === 'underline' ? appearance : undefined
+		});
 	it('renders one labelled field per schema entry and a submit button', () => {
-		render(BantoForm, { schema, store: createFormStore(schema), onSubmit: vi.fn() });
+		renderForm({ schema, store: createFormStore(schema), onSubmit: vi.fn() });
 
 		expect(screen.getByText('商品名')).toBeTruthy();
 		expect(screen.getByText('備考')).toBeTruthy();
 		// The generated input id remains associated with its visible label.
 		expect(screen.getByLabelText(/商品名/)).toBeTruthy();
+		const control = screen.getByLabelText(/商品名/);
+		expect(control.classList.contains('banto-field-control')).toBe(appearance === 'underline');
+		expect(control.closest('label')?.classList.contains('banto-field--stacked') ?? false).toBe(
+			appearance === 'underline'
+		);
 		expect(screen.getByRole('button', { name: '保存' })).toBeTruthy();
 	});
 
 	it('writes input back into the store', async () => {
 		const store = createFormStore(schema);
-		render(BantoForm, { schema, store, onSubmit: vi.fn() });
+		renderForm({ schema, store, onSubmit: vi.fn() });
 
 		await fireEvent.input(screen.getByLabelText(/商品名/), { target: { value: 'ペン' } });
 
@@ -46,7 +56,7 @@ describe('BantoForm', () => {
 	it('submits collected values when valid', async () => {
 		const store = createFormStore(schema);
 		const onSubmit = vi.fn();
-		render(BantoForm, { schema, store, onSubmit });
+		renderForm({ schema, store, onSubmit });
 
 		await fireEvent.input(screen.getByLabelText(/商品名/), { target: { value: 'ペン' } });
 		await fireEvent.click(screen.getByRole('button', { name: '保存' }));
@@ -58,7 +68,7 @@ describe('BantoForm', () => {
 	it('blocks submit and surfaces the error when a required field is empty', async () => {
 		const store = createFormStore(schema);
 		const onSubmit = vi.fn();
-		render(BantoForm, { schema, store, onSubmit });
+		renderForm({ schema, store, onSubmit });
 
 		await fireEvent.click(screen.getByRole('button', { name: '保存' }));
 
@@ -72,7 +82,7 @@ describe('BantoForm', () => {
 	});
 
 	it('disables inputs and submit while submitting', () => {
-		render(BantoForm, {
+		renderForm({
 			schema,
 			store: createFormStore(schema),
 			onSubmit: vi.fn(),
@@ -97,7 +107,7 @@ describe('BantoForm', () => {
 		const sharedSchema = { fields };
 		const stores = [createFormStore(sharedSchema), createFormStore(sharedSchema)];
 		const forms = stores.map((store) =>
-			render(BantoForm, { schema: sharedSchema, store, onSubmit: vi.fn() })
+			renderForm({ schema: sharedSchema, store, onSubmit: vi.fn() })
 		);
 		const ids: string[] = [];
 		flushSync(() => {
@@ -116,6 +126,10 @@ describe('BantoForm', () => {
 				expect(container.contains(error)).toBe(true);
 				expect(error.textContent).toBe(`${index}: ${field.label}`);
 				expect(control.getAttribute('aria-invalid')).toBe('true');
+				expect(control.closest('label')?.contains(error) ?? false).toBe(false);
+				expect(control.classList.contains('banto-field-control')).toBe(
+					appearance === 'underline' && field.type !== 'checkbox'
+				);
 				ids.push(control.id, errorId);
 			});
 		});
@@ -158,7 +172,7 @@ describe('BantoForm', () => {
 			const store = createFormStore(readonlySchema, { value });
 			store.setServerErrors([{ field: 'value', message: 'Server error' }]);
 			const onSubmit = vi.fn();
-			render(BantoForm, { schema: readonlySchema, store, onSubmit });
+			renderForm({ schema: readonlySchema, store, onSubmit });
 			const control = screen.getByLabelText('Stored') as
 				HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 			const nativeReadonly = type !== 'select' && type !== 'checkbox';
@@ -188,7 +202,7 @@ describe('BantoForm', () => {
 		};
 		const store = createFormStore(readonlySchema, { qty: 1 });
 		const onSubmit = vi.fn();
-		render(BantoForm, { schema: readonlySchema, store, onSubmit });
+		renderForm({ schema: readonlySchema, store, onSubmit });
 		await fireEvent.click(screen.getByRole('button', { name: '保存' }));
 		expect(onSubmit).not.toHaveBeenCalled();
 		expect(store.errors.qty).toBe('5以上で入力してください');

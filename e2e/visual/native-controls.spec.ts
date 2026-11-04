@@ -39,6 +39,10 @@ const markup = `<!doctype html><html lang="en"><head><title>Native controls</tit
   <label class="banto-field"><input class="banto-field-control" type="text" value="bad" placeholder=" " aria-invalid="true" aria-describedby="name-error">
     <span class="banto-field-label">Invalid name</span></label>
   <p id="name-error">Enter a valid name.</p>
+  <label class="banto-field banto-field--stacked"><input class="banto-field-control" type="date" value="2026-11-04">
+    <span class="banto-field-label">Date</span></label>
+  <label class="banto-field banto-field--stacked"><textarea class="banto-field-control" rows="4">One\nTwo\nThree\nFour</textarea>
+    <span class="banto-field-label">Notes</span></label>
   <label class="banto-field banto-field--stacked"><input class="banto-field-control" type="text" value="Kept clear of the label" placeholder=" ">
     <span class="banto-field-label">A long translated label that must remain fully readable above the input value at narrow widths and enlarged text</span></label>
 </form>
@@ -101,6 +105,16 @@ for (const combo of FULL_MATRIX) {
 			await connection.selectOption('local');
 			await expect(connection).toHaveValue('local');
 			await expect(connection).toHaveCSS('appearance', 'auto');
+			const date = page.getByLabel('Date', { exact: true });
+			await date.fill('2027-03-04');
+			await expect(date).toHaveValue('2027-03-04');
+			await expect(date).toHaveCSS('appearance', 'auto');
+			const notes = page.getByRole('textbox', { name: 'Notes', exact: true });
+			await expect(notes).toHaveCSS('resize', 'vertical');
+			const fourRows = (await notes.boundingBox())!.height;
+			await notes.evaluate((element: HTMLTextAreaElement) => (element.rows = 1));
+			expect(fourRows).toBeGreaterThan((await notes.boundingBox())!.height + 10);
+			await notes.evaluate((element: HTMLTextAreaElement) => (element.rows = 4));
 
 			const reference = page.getByLabel('Reference');
 			await reference.focus();
@@ -133,6 +147,10 @@ for (const combo of FULL_MATRIX) {
 			}, japaneseLabel);
 			const japaneseBox = await labelBox(page.getByRole('textbox', { name: japaneseLabel }));
 			expect(japaneseBox.bottom).toBeLessThan(japaneseBox.valueTop);
+			for (const control of [date, notes]) {
+				const box = await labelBox(control);
+				expect(box.bottom).toBeLessThan(box.valueTop);
+			}
 			expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
 				320
 			);

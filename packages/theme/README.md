@@ -68,7 +68,8 @@ app.css・Tailwind・Svelte の wrapper は不要。専用クラスを付けな�
 
 - `.banto-field` は実際の `label` に付け、ネイティブ control → ラベル文字列の順で、
   直下に `.banto-field-control` と `.banto-field-label` を置く。対象は text / password / number と
-  単一選択 select。textarea・date・checkbox・range・複数選択用のスタイルではない。
+  単一選択 select。date / textarea は `.banto-field--stacked` を必須とし、日付のネイティブ表示と
+  textarea の行数・縦リサイズを保つ。checkbox・range・複数選択は対象外。
 - テキスト系で空欄のラベルを中央へ置くときは `placeholder=" "` を指定する。
   フォーカス中や値があると上がり、自動入力・プログラムからの値設定にも CSS で追従する。
   select のラベルは空 option の説明文とも重ならないよう、常に上に置く。
@@ -84,7 +85,8 @@ app.css・Tailwind・Svelte の wrapper は不要。専用クラスを付けな�
   キー操作・パネル切替は提供しない。既存の tablist や SCADA の画面切替へ自動適用しない。
 
 通常のテーマと密度、reduced-motion、forced-colors に追従する。
-`@banto/forms` はラベル構造が異なるため、このクラスを直接付ける API は提供していない。
+スキーマフォームでは `BantoForm` の `appearance="underline"` で固定上表示を選べる
+（[forms README](../forms/README.md)、ADR-0024）。省略時の表示は変わらない。
 
 ## オーバーレイのトークン（v6.1.0 から）
 

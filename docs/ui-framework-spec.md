@@ -513,6 +513,8 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
 
 ### 7.3 挙動
 
+- `BantoForm` の `appearance` は `default`（省略時）/ `underline`。下線型は対応版 theme CSS が必要で、
+  全ラベルを通常フローで入力の上に置き、checkbox は従来表示を保つ（ADR-0024）。
 - 値・dirty・touched・エラーをRunesベースのフォームストアで一元管理。
 - `BantoForm` の入力・エラーにはフォームごとに一意な DOM ID を割り当て、ラベルとエラー文を
   入力へ関連付ける。項目名は store / 送信データのキーとして維持する。

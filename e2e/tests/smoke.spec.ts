@@ -1080,6 +1080,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// which makes an unscoped getByLabel ambiguous once the grid is on
 		// the same page (users/+page.svelte's "section.create").
 		const createForm = page.locator('section.create');
+		await expect(createForm.getByLabel('パスワード（8文字以上）')).toHaveCSS(
+			'border-bottom-width',
+			'2px'
+		);
+		const createFont = await createForm
+			.getByLabel('ユーザー名')
+			.evaluate((element) => getComputedStyle(element).fontSize);
 		await createForm.getByLabel('ユーザー名').fill(VIEWER_USERNAME);
 		await createForm.getByLabel('パスワード（8文字以上）').fill(VIEWER_PASSWORD);
 		await createForm.getByLabel('表示名').fill(VIEWER_DISPLAY_NAME);
@@ -1110,6 +1117,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		for (const outcome of ['success', 'failure', 'reselect'] as const) {
 			await selectUserRow(VIEWER_USERNAME);
+			await expect(displayName).toHaveCSS('font-size', createFont);
+			await expect(role).toHaveCSS('border-bottom-width', '2px');
 			const savedName = `${VIEWER_DISPLAY_NAME}-${outcome}`;
 			await displayName.fill(savedName);
 			if (outcome === 'reselect') await role.selectOption('editor');
@@ -1197,6 +1206,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// password draft alone. Reset only the viewer to its existing password.
 		await selectUserRow(VIEWER_USERNAME);
 		const password = panel.getByLabel('新しいパスワード（8文字以上）', { exact: true });
+		await expect(password).toHaveCSS('font-size', createFont);
+		await expect(password).toHaveCSS('border-bottom-width', '2px');
 		await password.fill(VIEWER_PASSWORD);
 		let releaseReset!: () => void;
 		const resetGate = new Promise<void>((resolve) => (releaseReset = resolve));
