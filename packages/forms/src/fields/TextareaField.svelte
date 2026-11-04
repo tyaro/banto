@@ -53,7 +53,7 @@
 		padding: 0.5rem 0.6rem;
 		border: 1px solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
-		background: var(--banto-bg);
+		background: transparent;
 		color: var(--banto-text);
 		font: inherit;
 		width: 100%;
@@ -74,7 +74,6 @@
 	}
 
 	textarea.muted {
-		background: var(--banto-surface);
 		color: var(--banto-text-muted);
 	}
 </style>

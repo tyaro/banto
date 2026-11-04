@@ -97,14 +97,19 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 詳細と直接利用の契約は [forms README](../packages/forms/README.md#ラベルエラー読み取り専用issue-495) を参照。
 
 `BantoForm` の `appearance="underline"`（ADR-0024）は任意指定で、対応版の forms と theme CSS を
-組み合わせる。省略時の表示は従来どおり。商品・ユーザー管理の更新された markup を取り込む場合も
+組み合わせる。省略時は従来の枠型の構造・配置を維持し、背景は ADR-0025 により透明になる。
+商品・ユーザー管理の更新された markup を取り込む場合も
 両方を同じ対応版へ更新する。各 field の追加 `class` はネイティブ要素へ渡される。
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
+入力背景の透明化（次リリース、ADR-0025）は `appearance="default"` と field の直接利用にも適用する。
+従来の `.banto-input` も透明になる。枠・下線・レイアウト・状態属性は維持し、背景色だけを意図的に更新する。
+独自の親背景を使う画面では、文字や下線の読みやすさを確認する。
+
 共有スタイルへの移行（次リリース、ADR-0023）では、設定の入力・ページナビとログイン・初回セットアップの入力が
 `@banto/theme/css` の専用クラスを使う。更新された画面の markup を取り込む場合は theme も
-同じ版へ更新する。従来の `.banto-input` や `@banto/forms` の既定表示は変更されない。
+同じ版へ更新する。従来の `.banto-input` や `@banto/forms` の既定の枠・配置は維持し、背景は ADR-0025 により透明になる。
 他画面での利用は [theme README](../packages/theme/README.md#入力とページナビの共通スタイル次リリース) を参照。
 
 **v6.1.0 以降の admin-template は `components/ui/` の 7 部品（EmptyState・ErrorState・IconButton・LoadingState・PageHeader・

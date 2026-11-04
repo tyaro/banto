@@ -28,7 +28,8 @@ textarea/number/date/select/checkbox/password の各フィールド
 
 `BantoForm` に `appearance="underline"` を渡すと、対応版の `@banto/theme/css` の共有スタイルを使う。
 forms と theme は同じ対応版へ更新し、アプリで theme CSS を読み込む。
-省略または `appearance="default"` は従来表示。新しい依存・パッケージ間 import はない。
+省略または `appearance="default"` は従来の枠型表示。背景は両表示・直接利用とも既定で透明（ADR-0025）。
+新しい依存・パッケージ間 import はない。
 
 ```svelte
 <BantoForm {schema} {store} onSubmit={handleSubmit} appearance="underline" />

@@ -513,6 +513,7 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
 
 ### 7.3 挙動
 
+- 入力・ネイティブ select の背景は既定で透明とし、hover / readonly でも塗りを加えない（ADR-0025）。
 - `BantoForm` の `appearance` は `default`（省略時）/ `underline`。下線型は対応版 theme CSS が必要で、
   全ラベルを通常フローで入力の上に置き、checkbox は従来表示を保つ（ADR-0024）。
 - 値・dirty・touched・エラーをRunesベースのフォームストアで一元管理。

@@ -407,17 +407,14 @@ html[data-theme='dark'] {
 	border: none;
 	border-bottom: var(--banto-border-width-strong) solid var(--banto-border-strong);
 	border-radius: var(--banto-radius-sm) var(--banto-radius-sm) 0 0;
-	background: var(--banto-surface-subtle);
+	background: transparent;
 	color: var(--banto-text);
 	font: inherit;
-	transition:
-		background var(--banto-duration-fast) var(--banto-ease-out),
-		border-color var(--banto-duration-fast) var(--banto-ease-out);
+	transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
 }
 
 .banto-field > .banto-field-control:hover:not(:disabled) {
 	border-bottom-color: var(--banto-primary-hover);
-	background: var(--banto-surface-hover);
 }
 
 .banto-field > .banto-field-control:focus-visible {
