@@ -12,7 +12,7 @@
 	 * pure decision logic it calls into (`prepareCommit`, TSV helpers) is
 	 * factored into `core/*.ts` and unit-tested there.
 	 */
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import {
 		DEFAULT_COLUMN_WIDTH,
 		type CellEdit,
@@ -30,6 +30,7 @@
 	import { prepareCommit, isColumnEditable } from './core/edit';
 	import { buildGroupedView, type FlatEntry } from './core/group';
 	import HeaderCell from './HeaderCell.svelte';
+	import CellEditError from './CellEditError.svelte';
 	import { defaultGridMessages, type GridMessages } from './messages';
 
 	interface Props {
@@ -121,6 +122,8 @@
 	const OVERSCAN = 8;
 
 	let containerEl: HTMLDivElement | undefined = $state();
+	let frameEl: HTMLDivElement | undefined = $state();
+	let errorRegionEl: HTMLDivElement | undefined = $state();
 	let headerRowEl: HTMLDivElement | undefined = $state();
 	let editorEl: HTMLInputElement | HTMLSelectElement | undefined = $state();
 
@@ -908,11 +911,15 @@
 			const parsed = parseCellInput(String(editing.draft ?? ''), editorType);
 			if (!parsed.ok) {
 				editing = { ...editing, error: t.inlineEditInvalid() };
+				if (moveAfter === 'left' || moveAfter === 'right') await focusEditError(sessionId);
 				return;
 			}
 			value = parsed.value;
 		}
 		const closed = await commitValue(column, row, value);
+		if (!closed && (moveAfter === 'left' || moveAfter === 'right')) {
+			await focusEditError(sessionId);
+		}
 		// A newer session may start between commitValue closing this one
 		// and this continuation running, including after a synchronous save.
 		if (
@@ -934,6 +941,38 @@
 	function handleCheckboxToggle(column: GridColumn<TRow>, row: TRow, checked: boolean) {
 		if (!editing || editing.pending) return;
 		void commitValue(column, row, checked);
+	}
+
+	function canFocusEditError(sessionId: number) {
+		return (
+			editing?.sessionId === sessionId &&
+			!!editing.error &&
+			editFocus?.sessionId === sessionId &&
+			editFocus.owned &&
+			editorEl?.isConnected &&
+			editorEl.ownerDocument.activeElement === editorEl
+		);
+	}
+
+	async function focusEditError(sessionId: number) {
+		if (!canFocusEditError(sessionId)) return;
+		// The error/position must be rendered first. A newer edit, outside click
+		// or focus departure during that wait owns the focus instead.
+		await tick();
+		if (
+			canFocusEditError(sessionId) &&
+			errorRegionEl?.isConnected &&
+			!errorRegionEl.hidden &&
+			errorRegionEl.dataset.editSession === String(sessionId)
+		) {
+			errorRegionEl.focus({ preventScroll: true });
+		}
+	}
+
+	function returnFromEditError(sessionId: number): boolean {
+		if (editing?.sessionId !== sessionId || !editing.error || !editorEl?.isConnected) return false;
+		editorEl.focus({ preventScroll: true });
+		return true;
 	}
 
 	function handleEditorKeydown(event: KeyboardEvent, column: GridColumn<TRow>, row: TRow) {
@@ -970,13 +1009,22 @@
 		}
 		if (event.key === 'Tab') {
 			event.preventDefault();
-			void commitFromEditor(column, row, event.shiftKey ? 'left' : 'right');
+			// Reading an existing failure must not retry a rejected API request,
+			// even if the user has since changed the draft. Enter retries it.
+			if (editing.error) void focusEditError(editing.sessionId);
+			else void commitFromEditor(column, row, event.shiftKey ? 'left' : 'right');
 			return;
 		}
 	}
 
-	function handleEditorBlur(column: GridColumn<TRow>, row: TRow) {
+	function handleEditorBlur(event: FocusEvent, column: GridColumn<TRow>, row: TRow) {
 		if (!editing || editing.rowId !== getRowId(row) || editing.field !== column.id) return;
+		if (
+			event.relatedTarget instanceof Node &&
+			errorRegionEl?.contains(event.relatedTarget) &&
+			errorRegionEl.dataset.editSession === String(editing.sessionId)
+		)
+			return;
 		void commitFromEditor(column, row);
 	}
 
@@ -1110,63 +1158,65 @@
 	}
 </script>
 
-<div
-	class="banto-grid"
-	bind:this={containerEl}
-	role="grid"
-	tabindex="0"
-	aria-rowcount={effectiveRowCount + 1}
-	aria-colcount={gridState.orderedColumns.length}
-	onscroll={handleScroll}
-	onkeydown={handleContainerKeydown}
-	onpaste={handlePaste}
->
-	<div class="scroll-content" role="presentation" style:width={`${totalColumnsWidth}px`}>
-		<div
-			class="header-row"
-			role="row"
-			aria-rowindex={1}
-			bind:this={headerRowEl}
-			style:grid-template-columns={templateColumns}
-		>
-			{#each gridState.orderedColumns as column (column.id)}
-				<HeaderCell
-					{column}
-					state={gridState}
-					width={widthOf(column)}
-					showPriority={showSortPriority}
-					onDragStart={handleDragStart}
-					onDragMove={handleDragMove}
-					onDragEnd={handleDragEnd}
-					onSortOrFilterChange={notifyParamsChange}
-					{messages}
-				/>
-			{/each}
-		</div>
-
-		{#if dropIndicatorX !== null}
+<div class="banto-grid-frame" bind:this={frameEl}>
+	<div
+		class="banto-grid"
+		bind:this={containerEl}
+		role="grid"
+		tabindex="0"
+		aria-rowcount={effectiveRowCount + 1}
+		aria-colcount={gridState.orderedColumns.length}
+		onscroll={handleScroll}
+		onkeydown={handleContainerKeydown}
+		onpaste={handlePaste}
+	>
+		<div class="scroll-content" role="presentation" style:width={`${totalColumnsWidth}px`}>
 			<div
-				class="drop-indicator"
-				style:left={`${dropIndicatorX}px`}
-				style:height={`${headerHeight + windowResult.totalHeight}px`}
-			></div>
-		{/if}
-
-		{#snippet dataRow(row: TRow, rowIndex: number)}
-			<div
-				class="row {rowClass?.(row) ?? ''}"
+				class="header-row"
 				role="row"
-				aria-rowindex={rowIndex + 2}
+				aria-rowindex={1}
+				bind:this={headerRowEl}
 				style:grid-template-columns={templateColumns}
-				style:height={`${gridState.rowHeight}px`}
 			>
-				{#each gridState.orderedColumns as column, fieldIndex (column.id)}
-					{@const isActiveCell =
-						selection.active?.rowIndex === rowIndex && selection.active?.field === column.id}
-					{@const isInRange = selection.isSelected(rowIndex, fieldIndex, orderedFieldIds)}
-					{@const isEditingCell = editing?.rowId === getRowId(row) && editing?.field === column.id}
-					{@const linkInfo = column.cell?.(row)}
-					<!--
+				{#each gridState.orderedColumns as column (column.id)}
+					<HeaderCell
+						{column}
+						state={gridState}
+						width={widthOf(column)}
+						showPriority={showSortPriority}
+						onDragStart={handleDragStart}
+						onDragMove={handleDragMove}
+						onDragEnd={handleDragEnd}
+						onSortOrFilterChange={notifyParamsChange}
+						{messages}
+					/>
+				{/each}
+			</div>
+
+			{#if dropIndicatorX !== null}
+				<div
+					class="drop-indicator"
+					style:left={`${dropIndicatorX}px`}
+					style:height={`${headerHeight + windowResult.totalHeight}px`}
+				></div>
+			{/if}
+
+			{#snippet dataRow(row: TRow, rowIndex: number)}
+				<div
+					class="row {rowClass?.(row) ?? ''}"
+					role="row"
+					aria-rowindex={rowIndex + 2}
+					style:grid-template-columns={templateColumns}
+					style:height={`${gridState.rowHeight}px`}
+				>
+					{#each gridState.orderedColumns as column, fieldIndex (column.id)}
+						{@const isActiveCell =
+							selection.active?.rowIndex === rowIndex && selection.active?.field === column.id}
+						{@const isInRange = selection.isSelected(rowIndex, fieldIndex, orderedFieldIds)}
+						{@const isEditingCell =
+							editing?.rowId === getRowId(row) && editing?.field === column.id}
+						{@const linkInfo = column.cell?.(row)}
+						<!--
 						Keyboard focus/activation for cells is handled at the grid
 						container level (roving "virtual" focus via `selection.active`
 						+ handleContainerKeydown), not per-cell DOM focus/tabindex:
@@ -1174,126 +1224,127 @@
 						literal per-cell tabindex would be meaningless as soon as a
 						row scrolls out. Mouse users still get click/dblclick here.
 					-->
-					<!-- svelte-ignore a11y_interactive_supports_focus -->
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<div
-						class="cell"
-						role="gridcell"
-						aria-selected={isInRange}
-						aria-busy={isEditingCell ? !!editing?.pending : undefined}
-						data-cell-row={rowIndex}
-						data-cell-field={column.id}
-						style:justify-content={justifyFor(column.align)}
-						class:active={isActiveCell}
-						class:in-range={isInRange && !isActiveCell}
-						class:editing={isEditingCell}
-						class:error={isEditingCell && !!editing?.error}
-						onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
-						onclick={() => handleCellClick(row)}
-						ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}
-					>
-						{#if linkInfo}
-							{#if linkInfo.href}
-								<a
-									class="cell-link"
-									href={linkInfo.href}
-									onclick={(event) => event.stopPropagation()}
-									ondblclick={(event) => event.stopPropagation()}>{linkInfo.text}</a
-								>
+						<!-- svelte-ignore a11y_interactive_supports_focus -->
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<div
+							class="cell"
+							role="gridcell"
+							aria-selected={isInRange}
+							aria-busy={isEditingCell ? !!editing?.pending : undefined}
+							data-cell-row={rowIndex}
+							data-cell-field={column.id}
+							style:justify-content={justifyFor(column.align)}
+							class:active={isActiveCell}
+							class:in-range={isInRange && !isActiveCell}
+							class:editing={isEditingCell}
+							class:error={isEditingCell && !!editing?.error}
+							onpointerdown={(event) => handleCellPointerDown(event, rowIndex, column.id)}
+							onclick={() => handleCellClick(row)}
+							ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}
+						>
+							{#if linkInfo}
+								{#if linkInfo.href}
+									<a
+										class="cell-link"
+										href={linkInfo.href}
+										onclick={(event) => event.stopPropagation()}
+										ondblclick={(event) => event.stopPropagation()}>{linkInfo.text}</a
+									>
+								{:else}
+									{linkInfo.text}
+								{/if}
+							{:else if isEditingCell && editing}
+								{#if (column.editor ?? 'text') === 'select'}
+									<select
+										bind:this={editorEl}
+										aria-label={column.header.trim() || column.id}
+										aria-invalid={!!editing.error}
+										aria-describedby={editing.error ? editErrorId : undefined}
+										class="cell-editor"
+										class:pending={editing.pending}
+										value={String(editing.draft ?? '')}
+										onpointerdown={(event) => event.stopPropagation()}
+										onchange={(event) => {
+											if (editing) {
+												editing.draft = resolveSelectValue(
+													event.currentTarget.value,
+													column.editorOptions
+												);
+											}
+										}}
+										onkeydown={(event) => handleEditorKeydown(event, column, row)}
+										onblur={(event) => handleEditorBlur(event, column, row)}
+									>
+										{#each column.editorOptions ?? [] as option (option.value)}
+											<option value={String(option.value)}>{option.label}</option>
+										{/each}
+									</select>
+								{:else if (column.editor ?? 'text') === 'checkbox'}
+									<input
+										type="checkbox"
+										bind:this={editorEl}
+										aria-label={column.header.trim() || column.id}
+										aria-invalid={!!editing.error}
+										aria-describedby={editing.error ? editErrorId : undefined}
+										class="cell-editor"
+										class:pending={editing.pending}
+										checked={!!editing.draft}
+										onpointerdown={(event) => event.stopPropagation()}
+										onclick={(event) => event.stopPropagation()}
+										onchange={(event) =>
+											handleCheckboxToggle(column, row, event.currentTarget.checked)}
+										onkeydown={(event) => handleEditorKeydown(event, column, row)}
+										onblur={(event) => handleEditorBlur(event, column, row)}
+									/>
+								{:else}
+									<input
+										type={column.editor === 'number'
+											? 'number'
+											: column.editor === 'date'
+												? 'date'
+												: 'text'}
+										bind:this={editorEl}
+										aria-label={column.header.trim() || column.id}
+										aria-invalid={!!editing.error}
+										aria-describedby={editing.error ? editErrorId : undefined}
+										class="cell-editor"
+										class:pending={editing.pending}
+										value={String(editing.draft ?? '')}
+										onpointerdown={(event) => event.stopPropagation()}
+										oninput={(event) => {
+											if (editing) editing.draft = event.currentTarget.value;
+										}}
+										onkeydown={(event) => handleEditorKeydown(event, column, row)}
+										onblur={(event) => handleEditorBlur(event, column, row)}
+									/>
+								{/if}
 							{:else}
-								{linkInfo.text}
+								{renderCell(column, row)}
 							{/if}
-						{:else if isEditingCell && editing}
-							{#if (column.editor ?? 'text') === 'select'}
-								<select
-									bind:this={editorEl}
-									aria-label={column.header.trim() || column.id}
-									aria-invalid={!!editing.error}
-									aria-describedby={editing.error ? editErrorId : undefined}
-									class="cell-editor"
-									class:pending={editing.pending}
-									value={String(editing.draft ?? '')}
-									onpointerdown={(event) => event.stopPropagation()}
-									onchange={(event) => {
-										if (editing) {
-											editing.draft = resolveSelectValue(
-												event.currentTarget.value,
-												column.editorOptions
-											);
-										}
-									}}
-									onkeydown={(event) => handleEditorKeydown(event, column, row)}
-									onblur={() => handleEditorBlur(column, row)}
-								>
-									{#each column.editorOptions ?? [] as option (option.value)}
-										<option value={String(option.value)}>{option.label}</option>
-									{/each}
-								</select>
-							{:else if (column.editor ?? 'text') === 'checkbox'}
-								<input
-									type="checkbox"
-									bind:this={editorEl}
-									aria-label={column.header.trim() || column.id}
-									aria-invalid={!!editing.error}
-									aria-describedby={editing.error ? editErrorId : undefined}
-									class="cell-editor"
-									class:pending={editing.pending}
-									checked={!!editing.draft}
-									onpointerdown={(event) => event.stopPropagation()}
-									onclick={(event) => event.stopPropagation()}
-									onchange={(event) =>
-										handleCheckboxToggle(column, row, event.currentTarget.checked)}
-									onkeydown={(event) => handleEditorKeydown(event, column, row)}
-									onblur={() => handleEditorBlur(column, row)}
-								/>
-							{:else}
-								<input
-									type={column.editor === 'number'
-										? 'number'
-										: column.editor === 'date'
-											? 'date'
-											: 'text'}
-									bind:this={editorEl}
-									aria-label={column.header.trim() || column.id}
-									aria-invalid={!!editing.error}
-									aria-describedby={editing.error ? editErrorId : undefined}
-									class="cell-editor"
-									class:pending={editing.pending}
-									value={String(editing.draft ?? '')}
-									onpointerdown={(event) => event.stopPropagation()}
-									oninput={(event) => {
-										if (editing) editing.draft = event.currentTarget.value;
-									}}
-									onkeydown={(event) => handleEditorKeydown(event, column, row)}
-									onblur={() => handleEditorBlur(column, row)}
-								/>
-							{/if}
-							{#if editing.error}
-								<div id={editErrorId} class="cell-error" role="alert">{editing.error}</div>
-							{/if}
-						{:else}
-							{renderCell(column, row)}
-						{/if}
-					</div>
-				{/each}
-			</div>
-		{/snippet}
+						</div>
+					{/each}
+				</div>
+			{/snippet}
 
-		{#if effectiveRowCount === 0}
-			<div class="empty-row">{t.emptyState()}</div>
-		{:else}
-			<div class="rows-viewport" role="presentation" style:height={`${windowResult.totalHeight}px`}>
+			{#if effectiveRowCount === 0}
+				<div class="empty-row">{t.emptyState()}</div>
+			{:else}
 				<div
-					class="rows-block"
-					role="rowgroup"
-					style:transform={`translateY(${windowResult.offsetY}px)`}
+					class="rows-viewport"
+					role="presentation"
+					style:height={`${windowResult.totalHeight}px`}
 				>
-					{#if groupedEntries}
-						<!-- Client mode, grouped (spec §4.3): group headers + rows flattened by buildGroupedView. -->
-						{#each visibleEntries as entry, i (entryKeyFor(entry))}
-							{@const rowIndex = windowResult.start + i}
-							{#if entry.kind === 'group'}
-								<!--
+					<div
+						class="rows-block"
+						role="rowgroup"
+						style:transform={`translateY(${windowResult.offsetY}px)`}
+					>
+						{#if groupedEntries}
+							<!-- Client mode, grouped (spec §4.3): group headers + rows flattened by buildGroupedView. -->
+							{#each visibleEntries as entry, i (entryKeyFor(entry))}
+								{@const rowIndex = windowResult.start + i}
+								{#if entry.kind === 'group'}
+									<!--
 									role="row" (not "button"): this is still a grid row
 									semantically (spec §4.3 asks for role="row" +
 									aria-expanded), just one that toggles on click/Enter/
@@ -1303,35 +1354,35 @@
 									the interactive-role a11y lint is suppressed rather than
 									"fixed" by adding a real tabindex here.
 								-->
-								<!-- svelte-ignore a11y_click_events_have_key_events -->
-								<!-- svelte-ignore a11y_interactive_supports_focus -->
-								<div
-									class="row group-header-row"
-									role="row"
-									aria-rowindex={rowIndex + 2}
-									aria-expanded={!entry.collapsed}
-									style:height={`${gridState.rowHeight}px`}
-									onclick={() => handleGroupHeaderClick(rowIndex, entry.key)}
-								>
-									<span class="disclosure" aria-hidden="true">{entry.collapsed ? '▸' : '▾'}</span>
-									<span class="group-label"
-										>{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}</span
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<!-- svelte-ignore a11y_interactive_supports_focus -->
+									<div
+										class="row group-header-row"
+										role="row"
+										aria-rowindex={rowIndex + 2}
+										aria-expanded={!entry.collapsed}
+										style:height={`${gridState.rowHeight}px`}
+										onclick={() => handleGroupHeaderClick(rowIndex, entry.key)}
 									>
-									{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
-										<span class="agg-chip"
-											>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
+										<span class="disclosure" aria-hidden="true">{entry.collapsed ? '▸' : '▾'}</span>
+										<span class="group-label"
+											>{entry.label}{t.groupCountSuffix(entry.count.toLocaleString())}</span
 										>
-									{/each}
-								</div>
-							{:else}
-								{@render dataRow(entry.row, rowIndex)}
-							{/if}
-						{/each}
-					{:else}
-						{#each visibleRows as row, i (rowKeyFor(row, windowResult.start + i))}
-							{@const rowIndex = windowResult.start + i}
-							{#if row === undefined}
-								<!--
+										{#each gridState.orderedColumns.filter((c) => c.aggregate) as aggColumn (aggColumn.id)}
+											<span class="agg-chip"
+												>{aggColumn.header}: {entry.aggregates[aggColumn.id] ?? ''}</span
+											>
+										{/each}
+									</div>
+								{:else}
+									{@render dataRow(entry.row, rowIndex)}
+								{/if}
+							{/each}
+						{:else}
+							{#each visibleRows as row, i (rowKeyFor(row, windowResult.start + i))}
+								{@const rowIndex = windowResult.start + i}
+								{#if row === undefined}
+									<!--
 									Server mode (spec §4.1, M5): this absolute row
 									index hasn't been fetched yet (a hole in the
 									sparse `rows` array) - render an inert
@@ -1341,35 +1392,60 @@
 									hidden from assistive tech (there's nothing
 									meaningful to announce yet).
 								-->
-								<div
-									class="row placeholder-row"
-									role="row"
-									aria-rowindex={rowIndex + 2}
-									aria-hidden="true"
-									style:grid-template-columns={templateColumns}
-									style:height={`${gridState.rowHeight}px`}
-								>
-									{#each gridState.orderedColumns as column, fieldIndex (column.id)}
-										<div
-											class="cell placeholder-cell"
-											style:justify-content={justifyFor(column.align)}
-										>
-											{#if fieldIndex === 0}…{/if}
-										</div>
-									{/each}
-								</div>
-							{:else}
-								{@render dataRow(row, rowIndex)}
-							{/if}
-						{/each}
-					{/if}
+									<div
+										class="row placeholder-row"
+										role="row"
+										aria-rowindex={rowIndex + 2}
+										aria-hidden="true"
+										style:grid-template-columns={templateColumns}
+										style:height={`${gridState.rowHeight}px`}
+									>
+										{#each gridState.orderedColumns as column, fieldIndex (column.id)}
+											<div
+												class="cell placeholder-cell"
+												style:justify-content={justifyFor(column.align)}
+											>
+												{#if fieldIndex === 0}…{/if}
+											</div>
+										{/each}
+									</div>
+								{:else}
+									{@render dataRow(row, rowIndex)}
+								{/if}
+							{/each}
+						{/if}
+					</div>
 				</div>
-			</div>
-		{/if}
+			{/if}
+		</div>
 	</div>
+	{#if editing?.error}
+		<CellEditError
+			frame={frameEl}
+			grid={containerEl}
+			editor={editorEl}
+			bind:element={errorRegionEl}
+			sessionId={editing.sessionId}
+			anchorLayout={`${editingRowIndex}:${orderedFieldIds.indexOf(editing.field)}:${templateColumns}:${headerHeight}`}
+			errorId={editErrorId}
+			message={editing.error}
+			label={t.inlineEditErrorLabel(
+				columns.find((column) => column.id === editing?.field)?.header.trim() || editing.field
+			)}
+			hint={t.inlineEditErrorHint()}
+			onReturn={returnFromEditError}
+		/>
+	{/if}
 </div>
 
 <style>
+	.banto-grid-frame {
+		position: relative;
+		width: 100%;
+		height: 100%;
+		min-width: 0;
+		min-height: 0;
+	}
 	.banto-grid {
 		position: relative;
 		height: 100%;
@@ -1574,24 +1650,6 @@
 	.cell-editor.pending {
 		opacity: 0.5;
 		pointer-events: none;
-	}
-
-	.cell-error {
-		position: absolute;
-		top: 100%;
-		left: 0;
-		z-index: 30;
-		margin-top: 2px;
-		padding: 0.25rem 0.5rem;
-		background: var(--banto-danger-solid);
-		/* Fixed white, NOT --banto-on-solid: that token pairs with the PRIMARY
-		   solid and goes dark in dark mode, where danger-solid stays #dc2626
-		   and needs white text (plan Appendix A.3). */
-		color: #ffffff;
-		border-radius: var(--banto-radius-sm);
-		font-size: 0.7rem;
-		white-space: nowrap;
-		box-shadow: var(--banto-shadow-md);
 	}
 
 	.empty-row {

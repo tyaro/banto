@@ -71,6 +71,8 @@
   "grid.filterApply": "Apply",
   "grid.filterClear": "Clear",
   "grid.inlineEditInvalid": "Invalid value",
+  "grid.inlineEditErrorLabel": "Error in {header}",
+  "grid.inlineEditErrorHint": "In the input, Tab reads the error and Enter retries. In the error, Shift+Tab or Escape returns to the input.",
   "grid.groupCountSuffix": " ({count})",
   "grid.columnsMenuButton": "Columns",
   "grid.columnsMenuTitle": "Column visibility",

@@ -73,10 +73,7 @@ const HTML_ALLOWLIST = new Set([
 const RAW_COLOR_ALLOWLIST = new Map([
 	// 印刷 CSS はテーマ非依存の白地・黒文字固定（帳票の再現性優先、
 	// template-scope §3 / report-plan §3.4）
-	['packages/report/src/ReportView.svelte', new Set(['#ffffff'])],
-	// danger-solid 上の文字色は両モードとも固定白（--banto-on-solid はダークで
-	// 暗転するため使えない — BantoGrid.svelte 内コメント / plan Appendix A.3）
-	['packages/grid-svelte/src/BantoGrid.svelte', new Set(['#ffffff'])]
+	['packages/report/src/ReportView.svelte', new Set(['#ffffff'])]
 ]);
 
 /**

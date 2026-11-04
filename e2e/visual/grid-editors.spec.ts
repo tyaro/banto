@@ -36,6 +36,15 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await expect(error).toHaveAttribute('role', 'alert');
 			await expect(error).toBeVisible();
 			await expect(price).toHaveAccessibleDescription(await error.innerText());
+			const errorRegion = page.getByRole('region', {
+				name: copy['grid.inlineEditErrorLabel'].replace('{header}', copy['items.fieldPrice']),
+				exact: true
+			});
+			await expect(errorRegion).toBeVisible();
+			await price.press('Tab');
+			await expect(errorRegion).toBeFocused();
+			await errorRegion.press('Escape');
+			await expect(price).toBeFocused();
 			await price.blur();
 			await price.focus();
 			await expect(price).toHaveAccessibleDescription(await error.innerText());

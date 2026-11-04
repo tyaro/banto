@@ -28,6 +28,8 @@ export function gridMessages(): Partial<GridMessages> {
 		filterApply: () => m['grid.filterApply'](),
 		filterClear: () => m['grid.filterClear'](),
 		inlineEditInvalid: () => m['grid.inlineEditInvalid'](),
+		inlineEditErrorLabel: (header) => m['grid.inlineEditErrorLabel']({ header }),
+		inlineEditErrorHint: () => m['grid.inlineEditErrorHint'](),
 		emptyState: () => m['items.list.empty'](),
 		groupCountSuffix: (count) => m['grid.groupCountSuffix']({ count }),
 		columnsMenuButton: () => m['grid.columnsMenuButton'](),

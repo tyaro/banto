@@ -71,6 +71,8 @@
   "grid.filterApply": "適用",
   "grid.filterClear": "クリア",
   "grid.inlineEditInvalid": "入力値が不正です",
+  "grid.inlineEditErrorLabel": "{header}のエラー",
+  "grid.inlineEditErrorHint": "入力欄ではTabでエラーを確認、Enterで再試行。エラー欄ではShift+TabまたはEscapeで入力欄に戻ります。",
   "grid.groupCountSuffix": "（{count}件）",
   "grid.columnsMenuButton": "列",
   "grid.columnsMenuTitle": "列の表示",
