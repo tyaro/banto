@@ -49,6 +49,7 @@
 			<LoadingState label={m['common.loading']()} />
 		{:else}
 			<BantoForm
+				appearance="underline"
 				{schema}
 				{store}
 				onSubmit={handleSubmit}
@@ -77,6 +78,7 @@
 		border: 1px solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
 		box-shadow: var(--banto-shadow-sm);
-		padding: 1.25rem;
+		/* Keep native date segments usable in a narrow form at enlarged text. */
+		padding: min(var(--banto-space-5), 3%);
 	}
 </style>

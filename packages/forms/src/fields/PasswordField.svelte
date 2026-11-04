@@ -12,6 +12,7 @@
 	interface Props {
 		def: FieldDef;
 		id?: string;
+		class?: string;
 		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
@@ -23,6 +24,7 @@
 	let {
 		def,
 		id,
+		class: className,
 		'aria-describedby': describedBy,
 		value,
 		error,
@@ -34,6 +36,7 @@
 
 <input
 	type="password"
+	class={className}
 	id={id ?? def.name}
 	value={(value as string | undefined) ?? ''}
 	placeholder={def.placeholder}

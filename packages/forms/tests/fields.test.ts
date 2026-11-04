@@ -31,8 +31,16 @@ describe('standalone fields', () => {
 			const control = view.container.querySelector('input, textarea, select')!;
 			expect(control.id).toBe('original');
 			expect(control.getAttribute('aria-describedby')).toBeNull();
-			await view.rerender({ id: 'custom-id', 'aria-describedby': 'help-id error-id' });
+			await view.rerender({
+				id: 'custom-id',
+				class: 'custom-control',
+				'aria-describedby': 'help-id error-id'
+			});
 			expect(control.id).toBe('custom-id');
+			expect(control.classList.contains('custom-control')).toBe(true);
+			await view.rerender({ def: { ...def, readonly: true } });
+			expect(control.classList.contains('custom-control')).toBe(true);
+			expect(control.classList.contains('muted')).toBe(true);
 			expect(control.getAttribute('aria-describedby')).toBe('help-id error-id');
 			expect(def.name).toBe('original');
 		}
@@ -68,8 +76,9 @@ describe('DraftNumberField', () => {
 		const view = render(DraftNumberField, { def, draft });
 		const control = screen.getByRole('textbox');
 		expect(control.id).toBe('qty');
-		await view.rerender({ id: 'draft-qty', 'aria-describedby': 'qty-help' });
+		await view.rerender({ id: 'draft-qty', class: 'custom-draft', 'aria-describedby': 'qty-help' });
 		expect(control.id).toBe('draft-qty');
+		expect(control.classList.contains('custom-draft')).toBe(true);
 		expect(control.getAttribute('aria-describedby')).toBe('qty-help');
 		await fireEvent.input(control, { target: { value: '7' } });
 		expect(draft.raw.qty).toBe('7');

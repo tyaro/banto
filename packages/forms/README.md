@@ -24,6 +24,27 @@ textarea/number/date/select/checkbox/password の各フィールド
 <BantoForm {schema} {store} onSubmit={handleSubmit} />
 ```
 
+## 下線型表示を選ぶ（次リリース、ADR-0024）
+
+`BantoForm` に `appearance="underline"` を渡すと、対応版の `@banto/theme/css` の共有スタイルを使う。
+forms と theme は同じ対応版へ更新し、アプリで theme CSS を読み込む。
+省略または `appearance="default"` は従来表示。新しい依存・パッケージ間 import はない。
+
+```svelte
+<BantoForm {schema} {store} onSubmit={handleSubmit} appearance="underline" />
+```
+
+下線型では、すべての項目名を入力の上に固定して全文の高さを確保する。
+text / password / number / select / date / textarea が対象で、checkbox は従来表示を保つ。
+placeholder・日付のネイティブ UI・textarea の4行と縦リサイズを維持し、浮動ラベルにはしない。
+`FieldDef` や送信データ、検証・エラー関連付け、readonly / disabled の扱いは変わらない。
+下線型の操作欄は折り返し、送信ボタンと直下の `.banto-btn` は文字に応じて高さが伸びる。
+
+8種類の field は任意の `class` をネイティブ要素へ渡せる。checkbox を除く field で直接共通スタイルを使うときは、
+実際の `label.banto-field.banto-field--stacked` 内に field（`class="banto-field-control"`）、
+`span.banto-field-label` の順で置く。エラーは label 外へ描画し、ID・ARIA は呼び出し側で関連付ける。
+`DraftNumberField` も class を受け取るが、`BantoForm` の number は従来の `NumberField` を使う。
+
 ## ラベル・エラー・読み取り専用（Issue #495）
 
 `BantoForm` はフォームごとに入力とエラーの DOM ID を生成し、ラベルの `for` と

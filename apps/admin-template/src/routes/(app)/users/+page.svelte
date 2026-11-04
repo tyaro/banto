@@ -305,6 +305,7 @@
 					     filter buttons below. -->
 					<section class="create">
 						<BantoForm
+							appearance="underline"
 							schema={createSchema}
 							store={createStore}
 							onSubmit={handleCreate}
@@ -356,17 +357,17 @@
 							/>
 						</div>
 
-						<label class="field">
-							{m['common.displayName']()}
-							<input class="banto-input" type="text" bind:value={editDisplayName} />
+						<label class="banto-field banto-field--stacked edit-field">
+							<input class="banto-field-control" type="text" bind:value={editDisplayName} />
+							<span class="banto-field-label">{m['common.displayName']()}</span>
 						</label>
-						<label class="field">
-							{m['common.role']()}
-							<select class="banto-input" bind:value={editRole}>
+						<label class="banto-field banto-field--stacked edit-field">
+							<select class="banto-field-control" bind:value={editRole}>
 								{#each roleOptions as option (option.value)}
 									<option value={option.value}>{option.label}</option>
 								{/each}
 							</select>
+							<span class="banto-field-label">{m['common.role']()}</span>
 						</label>
 						<button
 							type="button"
@@ -385,14 +386,14 @@
 
 							<div class="danger-section">
 								<p class="note">{m['users.resetDesc']()}</p>
-								<label class="field">
-									{m['common.newPasswordMinLabel']()}
+								<label class="banto-field banto-field--stacked edit-field">
 									<input
-										class="banto-input"
+										class="banto-field-control"
 										type="password"
 										bind:value={resetPassword}
 										autocomplete="new-password"
 									/>
+									<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
 								</label>
 								<button
 									type="button"
@@ -492,12 +493,7 @@
 		height: 320px;
 	}
 
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-		font-size: 0.8rem;
-		color: var(--banto-text-muted);
+	.edit-field {
 		margin-bottom: 0.75rem;
 	}
 

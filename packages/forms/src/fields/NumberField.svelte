@@ -5,6 +5,7 @@
 	interface Props {
 		def: FieldDef;
 		id?: string;
+		class?: string;
 		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
@@ -16,6 +17,7 @@
 	let {
 		def,
 		id,
+		class: className,
 		'aria-describedby': describedBy,
 		value,
 		error,
@@ -33,6 +35,7 @@
 
 <input
 	type="number"
+	class={className}
 	id={id ?? def.name}
 	value={value === '' || value === undefined || value === null ? '' : (value as number)}
 	placeholder={def.placeholder}
@@ -58,10 +61,15 @@
 		background: var(--banto-bg);
 		color: var(--banto-text);
 		font: inherit;
-		font-variant-numeric: tabular-nums;
 		width: 100%;
 		box-sizing: border-box;
 		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	/* Keep numeric glyphs tabular when theme font shorthand is applied. */
+	input,
+	input.banto-field-control {
+		font-variant-numeric: tabular-nums;
 	}
 
 	input:focus-visible {

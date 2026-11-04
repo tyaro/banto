@@ -474,6 +474,16 @@ html[data-theme='dark'] {
 	padding: var(--banto-space-2) var(--banto-space-3);
 }
 
+/* Multiline and native date controls use the stacked label contract. */
+.banto-field--stacked > input.banto-field-control[type='date'] {
+	/* Native date segments also need space for their own internal padding. */
+	padding-inline: var(--banto-space-1);
+}
+
+.banto-field--stacked > textarea.banto-field-control {
+	resize: vertical;
+}
+
 .banto-field.banto-field--stacked > .banto-field-label {
 	position: static;
 	order: -1;

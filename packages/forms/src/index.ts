@@ -1,7 +1,14 @@
 /**
  * Public entry point for @banto/forms (spec §7).
  */
-export type { FieldType, FieldOption, FieldDef, FormSchema, FieldError } from './types';
+export type {
+	FieldType,
+	FieldOption,
+	FieldDef,
+	FormSchema,
+	FieldError,
+	FormAppearance
+} from './types';
 
 export { validateField, validateAll, type ValidationMessages } from './validate';
 export { FormStore, createFormStore } from './store.svelte';

@@ -5,6 +5,7 @@
 	interface Props {
 		def: FieldDef;
 		id?: string;
+		class?: string;
 		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
@@ -16,6 +17,7 @@
 	let {
 		def,
 		id,
+		class: className,
 		'aria-describedby': describedBy,
 		value,
 		error,
@@ -30,6 +32,7 @@
 
 <input
 	type="checkbox"
+	class={className}
 	id={id ?? def.name}
 	checked={!!value}
 	disabled={isDisabled}
