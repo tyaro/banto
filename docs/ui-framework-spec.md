@@ -575,7 +575,7 @@ Tauri v2 + SvelteKit（ファイルベースルーティング使用）で、全
 - **入力・ページナビの共有スタイル**: `@banto/theme/css` の opt-in クラスで
   浮動ラベル・長ラベルの固定上表示・ネイティブ select・下線型ページリンクを提供する。
   app.css / Tailwind に依存せず、値・イベント・権限・経路は利用側が管理する。
-  設定画面で利用するが、`@banto/forms` の既定表示や SCADA へは自動適用しない
+  設定・ログイン・初回セットアップ画面で利用するが、`@banto/forms` の既定表示や SCADA へは自動適用しない
   （[theme README](../packages/theme/README.md)、ADR-0023）。
 
 ## 9. 技術スタック
