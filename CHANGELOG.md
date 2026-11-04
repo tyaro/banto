@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- **refactor(login):** ログイン・初回セットアップの入力を theme の共通スタイルへ移行し、長いパスワード項目名は入力の上に表示する。フォーム全体のエラーを alert として通知し、認証処理・自動入力用属性・LAN のログイン保持条件は維持する（#495）。
+
 - **refactor(theme):** 設定で採用した下線型入力・浮動ラベル・ページナビを `@banto/theme/css` の opt-in クラスとして共有し、設定画面を移行した。app.css / Tailwind なしでも利用でき、長いラベルには通常フローで上に表示する形式を用意した。既存フォームの既定表示・SCADA 側の採用範囲は維持する（#495、ADR-0023）。
 
 - **fix(forms):** `BantoForm` のラベル・入力・エラーをフォームごとに一意な ID で関連付けた。内部の入力 ID は項目名から生成 ID に変わるため、DOM 参照はラベル経由へ移行する。各 field の直接利用では既定 ID を維持し、任意の `id`・`aria-describedby` を追加した。テキスト系の readonly を disabled から分離し、読み取り専用欄の blur や数値ドラフトの確定が状態を変えないようにした。select / checkbox の disabled 表示と、readonly 値の検証・送信は維持する。forced-colors でもフォーカス枠が残るようにした（#495）。

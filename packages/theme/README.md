@@ -38,7 +38,7 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 
 `@banto/theme/css` だけで使える opt-in の HTML クラス（[ADR-0023](../../docs/adr/0023-shared-control-styles.md)）。
 app.css・Tailwind・Svelte の wrapper は不要。専用クラスを付けない既存の入力や
-`@banto/forms` の既定表示は変わらない。設定画面もこのクラスを利用する。
+`@banto/forms` の既定表示は変わらない。設定とログイン・初回セットアップ画面がこのクラスを利用する。
 
 ```html
 <label class="banto-field">

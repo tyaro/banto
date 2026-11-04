@@ -181,38 +181,50 @@
 					<h1>Banto</h1>
 					<p class="note">{m['auth.setupNote']()}</p>
 
-					<label>
-						{m['common.displayName']()}
-						<input class="banto-input" type="text" bind:value={displayName} autocomplete="name" />
-					</label>
-
-					<label>
-						{m['common.username']()}
-						<input class="banto-input" type="text" bind:value={username} autocomplete="username" />
-					</label>
-
-					<label>
-						{m['common.passwordMinLabel']()}
+					<label class="banto-field banto-field--stacked">
 						<input
-							class="banto-input"
+							class="banto-field-control"
+							type="text"
+							placeholder=" "
+							bind:value={displayName}
+							autocomplete="name"
+						/>
+						<span class="banto-field-label">{m['common.displayName']()}</span>
+					</label>
+
+					<label class="banto-field">
+						<input
+							class="banto-field-control"
+							type="text"
+							placeholder=" "
+							bind:value={username}
+							autocomplete="username"
+						/>
+						<span class="banto-field-label">{m['common.username']()}</span>
+					</label>
+
+					<label class="banto-field banto-field--stacked">
+						<input
+							class="banto-field-control"
 							type="password"
 							bind:value={password}
 							autocomplete="new-password"
 						/>
+						<span class="banto-field-label">{m['common.passwordMinLabel']()}</span>
 					</label>
 
-					<label>
-						{m['auth.passwordConfirmLabel']()}
+					<label class="banto-field banto-field--stacked">
 						<input
-							class="banto-input"
+							class="banto-field-control"
 							type="password"
 							bind:value={passwordConfirm}
 							autocomplete="new-password"
 						/>
+						<span class="banto-field-label">{m['auth.passwordConfirmLabel']()}</span>
 					</label>
 
 					{#if error}
-						<p class="error">{error}</p>
+						<p class="error" role="alert">{error}</p>
 					{/if}
 
 					<!-- Also locked while the skip path runs (Copilot review on PR
@@ -248,19 +260,26 @@
 						{m['auth.loginNote']()}
 					</p>
 
-					<label>
-						{m['common.username']()}
-						<input class="banto-input" type="text" bind:value={username} autocomplete="username" />
+					<label class="banto-field">
+						<input
+							class="banto-field-control"
+							type="text"
+							placeholder=" "
+							bind:value={username}
+							autocomplete="username"
+						/>
+						<span class="banto-field-label">{m['common.username']()}</span>
 					</label>
 
-					<label>
-						{m['common.password']()}
+					<label class="banto-field">
 						<input
-							class="banto-input"
+							class="banto-field-control"
 							type="password"
+							placeholder=" "
 							bind:value={password}
 							autocomplete="current-password"
 						/>
+						<span class="banto-field-label">{m['common.password']()}</span>
 					</label>
 
 					{#if showRemember}
@@ -271,7 +290,7 @@
 					{/if}
 
 					{#if error}
-						<p class="error">{error}</p>
+						<p class="error" role="alert">{error}</p>
 					{/if}
 
 					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
@@ -361,15 +380,10 @@
 		text-wrap: pretty;
 	}
 
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-		font-size: 0.875rem;
-		color: var(--banto-text-muted);
-	}
-
 	.remember {
+		display: flex;
+		font-size: var(--banto-font-size-md);
+		color: var(--banto-text-muted);
 		flex-direction: row;
 		align-items: center;
 		gap: 0.4rem;
@@ -403,7 +417,9 @@
 
 	.banto-btn--primary {
 		justify-content: center;
-		height: var(--banto-control-height-lg);
+		min-height: var(--banto-control-height-lg);
+		height: auto;
+		padding: var(--banto-space-2) var(--banto-space-3);
 	}
 
 	.continue-as-viewer {
@@ -421,6 +437,18 @@
 	:global([data-banto-preset='glass']) .banto-btn--primary:hover:not(:disabled) {
 		background: var(--banto-accent-gradient);
 		filter: brightness(1.08);
+	}
+
+	/* Keep room for values and translated labels inside the card at narrow
+	   widths and enlarged text; the shared field styles need no overrides. */
+	@media (max-width: 960px) {
+		.login-page {
+			padding: var(--banto-space-3);
+		}
+
+		.form-pane {
+			padding: var(--banto-space-4);
+		}
 	}
 
 	@media (min-width: 961px) {
@@ -501,7 +529,8 @@
 
 		.form-pane {
 			justify-content: center;
-			padding: 3rem;
+			/* Reserve input space as text grows inside the two-column card. */
+			padding: min(var(--banto-space-8), 12%);
 		}
 	}
 </style>
