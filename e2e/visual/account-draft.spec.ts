@@ -52,10 +52,11 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		// Either replacement field alone is valuable draft input. Clearing
 		// both makes the form clean even while current credentials remain.
 		for (const field of [next, confirmation]) {
+			const expectedDialogs = dialogs.length + 1;
 			await field.fill('draft-password');
 			await expect(notice).toBeVisible();
 			await categories.getByRole('link', { name: copy['settings.sectionAppearance'] }).click();
-			await expect.poll(() => dialogs.length).toBeGreaterThan(0);
+			await expect.poll(() => dialogs.length).toBe(expectedDialogs);
 			await expect(page).toHaveURL(/\/settings\/account$/);
 			await expect(field).toHaveValue('draft-password');
 			await field.fill('');
