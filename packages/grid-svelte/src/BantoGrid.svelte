@@ -106,6 +106,10 @@
 	// reactive state) rather than re-read per usage below.
 	// svelte-ignore state_referenced_locally
 	const t = { ...defaultGridMessages, ...messages };
+	// Only one editor is mounted per grid; keep its error reference local to
+	// this instance without deriving DOM IDs from row or column identifiers.
+	const gridId = $props.id();
+	const editErrorId = `${gridId}-edit-error`;
 
 	// Created once per component instance. If the caller passes `state`, that
 	// instance is the single source of truth (including its own rowHeight);
@@ -1172,6 +1176,7 @@
 						class="cell"
 						role="gridcell"
 						aria-selected={isInRange}
+						aria-busy={isEditingCell ? !!editing?.pending : undefined}
 						data-cell-row={rowIndex}
 						data-cell-field={column.id}
 						style:justify-content={justifyFor(column.align)}
@@ -1198,6 +1203,9 @@
 							{#if (column.editor ?? 'text') === 'select'}
 								<select
 									bind:this={editorEl}
+									aria-label={column.header.trim() || column.id}
+									aria-invalid={!!editing.error}
+									aria-describedby={editing.error ? editErrorId : undefined}
 									class="cell-editor"
 									class:pending={editing.pending}
 									value={String(editing.draft ?? '')}
@@ -1221,6 +1229,9 @@
 								<input
 									type="checkbox"
 									bind:this={editorEl}
+									aria-label={column.header.trim() || column.id}
+									aria-invalid={!!editing.error}
+									aria-describedby={editing.error ? editErrorId : undefined}
 									class="cell-editor"
 									class:pending={editing.pending}
 									checked={!!editing.draft}
@@ -1239,6 +1250,9 @@
 											? 'date'
 											: 'text'}
 									bind:this={editorEl}
+									aria-label={column.header.trim() || column.id}
+									aria-invalid={!!editing.error}
+									aria-describedby={editing.error ? editErrorId : undefined}
 									class="cell-editor"
 									class:pending={editing.pending}
 									value={String(editing.draft ?? '')}
@@ -1251,7 +1265,7 @@
 								/>
 							{/if}
 							{#if editing.error}
-								<div class="cell-error" role="alert">{editing.error}</div>
+								<div id={editErrorId} class="cell-error" role="alert">{editing.error}</div>
 							{/if}
 						{:else}
 							{renderCell(column, row)}
@@ -1525,6 +1539,16 @@
 		background: var(--banto-surface);
 		color: var(--banto-text);
 		font: inherit;
+	}
+
+	/* Keep the native checkbox compact instead of stretching the editor box. */
+	.cell-editor[type='checkbox'] {
+		width: var(--banto-checkbox-size, 1.1rem);
+		height: var(--banto-checkbox-size, 1.1rem);
+		flex-shrink: 0;
+		padding: 0;
+		margin-inline: var(--banto-space-2);
+		accent-color: var(--banto-primary);
 	}
 
 	.cell-editor.pending {

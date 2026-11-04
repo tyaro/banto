@@ -24,6 +24,18 @@ Banto のデータグリッド。仮想スクロール・複数列ソート・�
 <BantoGrid {rows} {columns} {state} getRowId={(row) => row.id} />
 ```
 
+## セル編集の名前・エラー・保存状態（次リリース）
+
+組み込み editor の名前は列の `header`、空白の見出しは列 `id` を使う。
+入力の `aria-invalid` と、グリッドごとに一意なエラー要素への `aria-describedby` を設定し、
+エラーがなくなったら参照も外す。既存の `role="alert"` とセルの枠は維持する。
+保存待ちの状態は編集中セルの `aria-busy` で示す。pending の操作抑止・フォーカス所有権・
+保存結果の反映・検証・コールバックは既存のまま。
+
+checkbox editor は `--banto-checkbox-size`（fallback `1.1rem`）で native の形を保ち、
+セル全幅・全高へは伸ばさない。フォーカスは既存の編集セル枠で示す。
+行高・列幅・仮想化・native の checked / Space / 即時確定は維持する。
+
 ## 依存
 
 `ColumnsMenu` の checkbox はネイティブ描画を使い、`--banto-checkbox-size`（既定・fallback は `1.1rem`）で
