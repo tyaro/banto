@@ -38,7 +38,7 @@
 - 対象: `@banto/grid-svelte`・`@banto/forms`・`@banto/theme`・`@banto/ui`（実装変更あり）、`banto-admin-services`（`sysinfo` 0.40 対応。公開 API は不変）。他のパッケージ・クレートは版数と `svelte` の範囲（`^5.57.3`）のみ。
 - 更新: `v6.9.1` → `v6.10.0`（npm と Rust を同じタグに）。
 - 追加 API（いずれも任意。既定の挙動は維持）:
-  - `@banto/forms`: 型 `FormAppearance`（`'default' | 'underline'`）、`BantoForm` の `appearance` プロパティ（既定 `'default'`）、各 field コンポーネントの `id` と `aria-describedby` プロパティ（`TextField`・`NumberField` ほか。`id` 未指定なら従来どおり項目名）、`TextField` の `class`。
+  - `@banto/forms`: 型 `FormAppearance`（`'default' | 'underline'`）、`BantoForm` の `appearance` プロパティ（既定 `'default'`）、8 種類の field コンポーネントの `id`・`aria-describedby`・`class` プロパティ（`id` 未指定なら従来どおり項目名）。
   - `@banto/ui`: `PageHeader` の `hideTitle`（見出しを読み上げ用に残し、表示は非表示にする）。
   - `@banto/theme/css`: opt-in クラス `.banto-field`（`-control`・`-label`・`--stacked`）、`.banto-switch-field`、`.banto-section-nav`。
   - `@banto/grid-svelte`: 任意の messages `filterAppliedDescription`・`filterOperatorLabel`・`filterValueLabel`・`inlineEditErrorLabel`・`inlineEditErrorHint`。
@@ -52,7 +52,7 @@
 ### B. コピーしたテンプレート
 
 - 対象: `apps/admin-template/src/routes/(app)/settings/`（`+layout.svelte`・各 `*Section.svelte`・`LanReachCheckPanel.svelte`・`settings.css`）、`login/+page.svelte`、`(app)/users`・`items`・`items/new`・`items/[id]`・`audit-log`・`dashboard`・`tree`・`ui-demo`、`src/lib/`（`Header.svelte`・`navigation.ts`・`i18n.ts`）、`src/app.css`、`messages/ja.json`・`en.json`（`grid.*` の追加ほか）、`elev/src/powershell.rs`・`rules.rs`、`src-tauri/src/firewall_status.rs`、`e2e/`。
-- 関連 PR: #495〜#497、#499〜#501、#503〜#511。
+- 関連 Issue・PR: Issue #495、PR #496、#497、#499〜#511。
 - 手で取り込む変更: 設定画面の下線型入力・ナビゲーション・スイッチ（[ADR-0022](docs/adr/0022-settings-controls.md)、[ADR-0023](docs/adr/0023-shared-control-styles.md)）、`BantoForm appearance="underline"`（[ADR-0024](docs/adr/0024-schema-form-appearance.md)）、透明な入力背景（ADR-0025）、共通のスイッチ・checkbox（[ADR-0026](docs/adr/0026-shared-boolean-controls.md)）、グリッドのエラー読み取り（ADR-0027）。ファイアウォール支援の段階 1 は、識別子検証・ルール名・PowerShell 変換を段階 2 の `elev` の関数に共有した（#511）。外から見える挙動は変えない。
 - 派生側の独自変更と衝突しやすい箇所: 設定画面の各セクションとその CSS、ログイン画面の入力、`app.css` の入力スタイル、`elev` と `firewall_status.rs`。
 - 取り込まなくても動くか: 動く（A の移行注意 1〜3 の確認は要る）。
