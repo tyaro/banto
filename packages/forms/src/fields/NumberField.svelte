@@ -4,6 +4,8 @@
 
 	interface Props {
 		def: FieldDef;
+		id?: string;
+		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
 		disabled?: boolean;
@@ -11,11 +13,19 @@
 		onBlur?: () => void;
 	}
 
-	let { def, value, error, disabled = false, onInput, onBlur }: Props = $props();
-
-	const isDisabled = $derived(disabled || !!def.readonly);
+	let {
+		def,
+		id,
+		'aria-describedby': describedBy,
+		value,
+		error,
+		disabled = false,
+		onInput,
+		onBlur
+	}: Props = $props();
 
 	function handleInput(event: Event & { currentTarget: HTMLInputElement }) {
+		if (disabled || def.readonly) return;
 		const raw = event.currentTarget.value;
 		onInput(raw === '' ? '' : Number(raw));
 	}
@@ -23,16 +33,20 @@
 
 <input
 	type="number"
-	id={def.name}
+	id={id ?? def.name}
 	value={value === '' || value === undefined || value === null ? '' : (value as number)}
 	placeholder={def.placeholder}
 	min={def.min}
 	max={def.max}
-	disabled={isDisabled}
+	{disabled}
+	readonly={def.readonly}
 	class:muted={def.readonly}
 	aria-invalid={!!error}
+	aria-describedby={describedBy}
 	oninput={handleInput}
-	onblur={onBlur}
+	onblur={() => {
+		if (!disabled && !def.readonly) onBlur?.();
+	}}
 />
 
 <style>
@@ -51,7 +65,8 @@
 	}
 
 	input:focus-visible {
-		outline: none;
+		outline: var(--banto-border-width-strong) solid transparent;
+		outline-offset: var(--banto-border-width);
 		box-shadow: var(--banto-focus-ring);
 	}
 

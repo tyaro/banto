@@ -24,6 +24,29 @@ textarea/number/date/select/checkbox/password の各フィールド
 <BantoForm {schema} {store} onSubmit={handleSubmit} />
 ```
 
+## ラベル・エラー・読み取り専用（Issue #495）
+
+`BantoForm` はフォームごとに入力とエラーの DOM ID を生成し、ラベルの `for` と
+入力の `aria-describedby` を対応させる。同じスキーマを複数表示しても ID が重複しない。
+エラーが消えると参照も外れる。`FieldDef.name` と store のキー・送信データは変わらない。
+DOM の参照は項目名の `#id` ではなく、ラベルやフォーム内の要素から行う。
+
+各 field 部品を直接使う場合、既定の ID は従来どおり `def.name`。任意の `id` と
+`aria-describedby` も渡せる。補足・エラー要素の描画とその ID の一意性は呼び出し側が管理する。
+
+- text / password / textarea / number / date と `DraftNumberField` の `def.readonly` は、
+  ネイティブの readonly 属性を使う。フォーカス可能で、テキスト入力では値を選択できる。
+- `disabled` は別の状態で、送信中などの操作を無効にするときに使う。
+- select / checkbox はネイティブ readonly がないため、`def.readonly` でも従来どおり disabled にする。
+- readonly / disabled の field は入力・変更・blur の callback を呼ばない。
+  `DraftNumberField` は raw の更新・blur / Enter での確定・`onCommit` も行わない。
+  編集途中から切り替えた場合も draft の値・未完成文字列・エラーを保つ。
+- readonly 値は従来どおり検証・送信対象。store / draft の API による更新は可能で、
+  UI の readonly は認可やデータの書き込み禁止を保証するものではない。
+
+各 field のフォーカス枠は、通常のテーマの影に加えて透明な outline を持つ。
+forced-colors で影が無効になってもシステム色の outline が残る。
+
 ## 未保存の変更の確認（issue #214）
 
 保存型の画面では、`guardUnsavedChanges` をコンポーネントの初期化中に呼ぶと、

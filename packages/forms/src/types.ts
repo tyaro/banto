@@ -20,6 +20,7 @@ export interface FieldDef {
 	required?: boolean;
 	default?: unknown;
 	placeholder?: string;
+	/** UI-only: native readonly for text-like fields; select/checkbox remain disabled. Values still validate and submit. */
 	readonly?: boolean;
 	/** select */
 	options?: FieldOption[];

@@ -84,6 +84,18 @@ cargo check --workspace
   （値と丸めの目安は [design/theme-dimension-tokens.md](design/theme-dimension-tokens.md) §5.2、一覧は
   `packages/theme/README.md`）。置き換えると 1〜2px 動くことがあるので、画面を開いて確かめる。
 
+#### 共通フォームの ID と readonly（次リリース）
+
+`BantoForm` 内の入力 ID は項目名そのものからフォームごとの生成 ID に変わる。
+`#name` のような CSS / テスト / DOM 参照をしている場合は、ラベルやフォーム内の要素からの参照へ移す。
+`FieldDef.name` と検証・送信のキーは変わらない。各 field を直接使う場合の既定 ID は従来どおりで、
+任意の `id` と `aria-describedby` を渡せる。
+
+テキスト系の readonly は disabled と分離され、フォーカスできるようになる。
+select / checkbox はネイティブ readonly がないため disabled を維持する。
+readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止するが、値は引き続き検証・送信対象。
+詳細と直接利用の契約は [forms README](../packages/forms/README.md#ラベルエラー読み取り専用issue-495) を参照。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 **v6.1.0 以降の admin-template は `components/ui/` の 7 部品（EmptyState・ErrorState・IconButton・LoadingState・PageHeader・

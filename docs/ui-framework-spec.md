@@ -514,6 +514,11 @@ VSCode/Rider等のエディタに近い、本格的なドッキング・タブ�
 ### 7.3 挙動
 
 - 値・dirty・touched・エラーをRunesベースのフォームストアで一元管理。
+- `BantoForm` の入力・エラーにはフォームごとに一意な DOM ID を割り当て、ラベルとエラー文を
+  入力へ関連付ける。項目名は store / 送信データのキーとして維持する。
+- text / password / textarea / number / date（および `DraftNumberField`）の readonly は
+  フォーカス可能なネイティブ属性で表し、disabled と区別する。select / checkbox は readonly を
+  持たないため disabled の表示を維持する。readonly 値も検証・送信対象であり、認可の代わりにはしない。
 - 送信時は`onSubmit(values)`でTauri `invoke()`等に接続。`admin-core`併用時は
   `createFormResource`（3.4節）がcreate/update呼び分け・サーバーサイド
   エラー（Rustからのフィールド別エラー）の差し戻し表示まで配線する。
