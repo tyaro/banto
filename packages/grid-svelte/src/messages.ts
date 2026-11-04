@@ -29,6 +29,10 @@ export interface GridMessages {
 	filterClear?: () => string;
 	/** BantoGrid inline-edit error shown when parseCellInput rejects the draft value. */
 	inlineEditInvalid?: () => string;
+	/** Name of the keyboard-readable error region for a column. */
+	inlineEditErrorLabel?: (header: string) => string;
+	/** Explains reading an error without retrying the save. */
+	inlineEditErrorHint?: () => string;
 	/** BantoGrid's empty-state message when there are zero rows. */
 	emptyState?: () => string;
 	/** BantoGrid group header's row-count suffix, given the already-`toLocaleString()`-ed count. */
@@ -54,6 +58,9 @@ export const defaultGridMessages: Required<GridMessages> = {
 	filterApply: () => '適用',
 	filterClear: () => 'クリア',
 	inlineEditInvalid: () => '入力値が不正です',
+	inlineEditErrorLabel: (header) => `${header}のエラー`,
+	inlineEditErrorHint: () =>
+		'入力欄ではTabでエラーを確認、Enterで再試行。エラー欄ではShift+TabまたはEscapeで入力欄に戻ります。',
 	emptyState: () => 'データがありません',
 	groupCountSuffix: (count) => `（${count}件）`,
 	columnsMenuButton: () => '列',

@@ -74,6 +74,7 @@ corresponding ADR exists, be traced from there.
 | [0024](0024-schema-form-appearance.en.md)              | Make schema-form underline styling opt-in and keep labels above controls                                                                                                                                 | Accepted                   |
 | [0025](0025-transparent-control-backgrounds.en.md)     | Use transparent backgrounds by default for inputs and selects                                                                                                                                            | Accepted                   |
 | [0026](0026-shared-boolean-controls.en.md)             | Share switch and native checkbox styling                                                                                                                                                                 | Accepted                   |
+| [0027](0027-grid-error-reader.en.md)                   | Read cell errors in a local overlay and separate reading from retrying                                                                                                                                   | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 

@@ -101,6 +101,23 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 商品・ユーザー管理の更新された markup を取り込む場合も
 両方を同じ対応版へ更新する。各 field の追加 `class` はネイティブ要素へ渡される。
 
+#### グリッドのエラー領域（次リリース、ADR-0027）
+
+`BantoGrid` の外側に常設の `.banto-grid-frame` が入り、スクロールする `.banto-grid` と
+エラーを読む `.cell-error-region` が兄弟になる。表の寸法や入力 DOM は維持するが、
+独自 CSS / DOM / テストが `親 > .banto-grid` や `.banto-grid .cell-error` に依存する場合は更新する。
+表は子孫の `.banto-grid`、本文は入力の `aria-describedby` が参照する要素から探す。
+既存のエラー本文 ID と `role="alert"` は維持する。
+
+エラーがある時の Tab / Shift+Tab は再送信せず全文を読む領域へ進む。
+入力変更後も Enter が明示的な再試行となる。エラーなしの Tab は従来の確定・セル移動を保ち、
+失敗した場合だけ同じ編集のエラー領域へ進む。領域の Shift+Tab / Escape は入力へ戻り、取消しない。
+入力と領域の往復では blur 保存を抑止する。外部の操作先からフォーカスを奪わない。
+
+新しい `GridMessages.inlineEditErrorLabel(header)` / `inlineEditErrorHint()` は省略可能で、日本語が既定。
+多言語アプリは message bundle も更新する。admin-template では対応する日英の辞書と bridge を取り込む。
+詳細は [grid README](../packages/grid-svelte/README.md#長いエラーの全文を読む次リリースadr-0027) を参照。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 設定のスイッチ共有化（次リリース、ADR-0026）は `banto-switch-field` / `banto-switch` を使う。
