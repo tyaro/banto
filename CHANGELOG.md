@@ -22,6 +22,67 @@
 
 ## [Unreleased]
 
+## [6.10.0] - 2026-11-05
+
+**v6.10.0 — グリッド・フォーム・設定画面のアクセシビリティ修正と、共通の入力スタイル（`@banto/theme` の opt-in クラス、`BantoForm` の `appearance="underline"`）の追加。** 版の種類: minor（機能追加。公開 API の削除・改名なし。挙動変更は下の「移行注意」を参照。[docs/publishing.md](docs/publishing.md)「バージョニング規約」）。
+派生アプリへの影響: git 依存のタグは `v6.9.1` から `v6.10.0` に上げられるが、`BantoForm` の入力 ID・入力の既定背景・グリッドのセルエラー表示は挙動が変わるため、該当する画面の確認が要る。コピーしたテンプレートは、設定画面・ログイン・ユーザー管理・商品作成などの取り込みが任意で可能。
+
+| 経路                             | 影響         | 内容                                                                                                                                                                      |
+| -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり         | `v6.9.1` → `v6.10.0`（npm と Rust を同じタグに）。追加 API あり、公開 API の削除・改名なし。挙動変更（入力 ID・既定背景・セルエラー・optional message）は下の「移行注意」 |
+| B. コピーしたテンプレート        | あり（任意） | 設定画面・ログイン・ユーザー管理・商品作成/編集・メッセージ辞書・CSS・ファイアウォール補助プログラム（`elev`）の変更。取り込まなくても動く                                |
+| C. DB・設定・配布資産            | なし         | マイグレーション、`tauri.conf.json`（版数以外）、設定キーの変更は無い                                                                                                     |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/grid-svelte`・`@banto/forms`・`@banto/theme`・`@banto/ui`（実装変更あり）、`banto-admin-services`（`sysinfo` 0.40 対応。公開 API は不変）。他のパッケージ・クレートは版数と `svelte` の範囲（`^5.57.3`）のみ。
+- 更新: `v6.9.1` → `v6.10.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。既定の挙動は維持）:
+  - `@banto/forms`: 型 `FormAppearance`（`'default' | 'underline'`）、`BantoForm` の `appearance` プロパティ（既定 `'default'`）、8 種類の field コンポーネントの `id`・`aria-describedby`・`class` プロパティ（`id` 未指定なら従来どおり項目名）。
+  - `@banto/ui`: `PageHeader` の `hideTitle`（見出しを読み上げ用に残し、表示は非表示にする）。
+  - `@banto/theme/css`: opt-in クラス `.banto-field`（`-control`・`-label`・`--stacked`）、`.banto-switch-field`、`.banto-section-nav`。
+  - `@banto/grid-svelte`: 任意の messages `filterAppliedDescription`・`filterOperatorLabel`・`filterValueLabel`・`inlineEditErrorLabel`・`inlineEditErrorHint`。
+- 移行注意（消費側に影響する挙動変更。どれも型エラーにはならない）:
+  1. **`BantoForm` 内部の入力 ID**: 入力の `id` が項目名（`def.name`）から、フォームごとに一意な生成 ID に変わる。`document.getElementById(項目名)` や `#項目名` のセレクタで入力を参照しているテストやスクリプトは、ラベル経由（`getByLabel` など）に置き換える（#498）。なお readonly のテキスト系項目は `disabled` ではなくネイティブの `readonly` になる（select・checkbox は従来どおり `disabled`）。
+  2. **入力・ネイティブ select の既定背景が透明になる**: `@banto/forms` の各 field の背景が不透明な塗りから `transparent` になる。不透明な背景を前提にした画面は、親の背景との重なりで読みにくくならないか確認する（[ADR-0025](docs/adr/0025-transparent-control-backgrounds.md)、#502）。
+  3. **グリッドのセルエラー**: `BantoGrid` が `.banto-grid-frame` の wrapper を持つようになり、セルエラーは表の可視範囲に収まるキーボード読み取り可能な領域で表示される。エラー中の Tab はエラー領域へ移動し（再送信しない）、再試行は Enter で行う。`.banto-grid` の直下構造やエラー中の Tab に依存する CSS・テストは見直す（[ADR-0027](docs/adr/0027-grid-error-reader.md)、#505・#507・#508）。
+  4. **optional message の追加**: `@banto/grid-svelte` の messages に上記 5 件を追加した（既定の日本語文言あり。未指定でも動く）。多言語化している派生アプリは辞書に追加する（#505・#506・#508・#509）。
+- 依存を上げずに留まれるか: できる（`v6.9.1` のまま使える）。
+
+### B. コピーしたテンプレート
+
+- 対象: `apps/admin-template/src/routes/(app)/settings/`（`+layout.svelte`・各 `*Section.svelte`・`LanReachCheckPanel.svelte`・`settings.css`）、`login/+page.svelte`、`(app)/users`・`items`・`items/new`・`items/[id]`・`audit-log`・`dashboard`・`tree`・`ui-demo`、`src/lib/`（`Header.svelte`・`navigation.ts`・`i18n.ts`）、`src/app.css`、`messages/ja.json`・`en.json`（`grid.*` の追加ほか）、`elev/src/powershell.rs`・`rules.rs`、`src-tauri/src/firewall_status.rs`、`e2e/`。
+- 関連 Issue・PR: Issue #495、PR #496、#497、#499〜#511。
+- 手で取り込む変更: 設定画面の下線型入力・ナビゲーション・スイッチ（[ADR-0022](docs/adr/0022-settings-controls.md)、[ADR-0023](docs/adr/0023-shared-control-styles.md)）、`BantoForm appearance="underline"`（[ADR-0024](docs/adr/0024-schema-form-appearance.md)）、透明な入力背景（ADR-0025）、共通のスイッチ・checkbox（[ADR-0026](docs/adr/0026-shared-boolean-controls.md)）、グリッドのエラー読み取り（ADR-0027）。ファイアウォール支援の段階 1 は、識別子検証・ルール名・PowerShell 変換を段階 2 の `elev` の関数に共有した（#511）。外から見える挙動は変えない。
+- 派生側の独自変更と衝突しやすい箇所: 設定画面の各セクションとその CSS、ログイン画面の入力、`app.css` の入力スタイル、`elev` と `firewall_status.rs`。
+- 取り込まなくても動くか: 動く（A の移行注意 1〜3 の確認は要る）。
+- 手本: 上記の `apps/admin-template/` のファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 不要。
+- 設定キー・`tauri.conf.json`・配布物: 変更なし（`tauri.conf.json` は版数のみ）。
+- 戻せる条件: DB・設定は変わらないため、タグを戻すだけで戻せる。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。
+2. `BantoForm` の入力を ID で参照している箇所、入力の背景を前提にした画面、グリッドのセル編集エラーの表示と Enter での再試行、設定の各カテゴリの表示と保存。
+3. Rust: `cargo check` / `cargo test`。
+
+### セキュリティ
+
+- なし。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認する。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の SHA、`workflow_dispatch`）: タグ後に確定する。
+  - タグの push（`v6.10.0`）: タグ後に確定する。
+  - Node.js・pnpm・Svelte・SvelteKit・Vite・Rust の版: 2 つの run の確認後に確定する。
+
+### 変更点
+
 - **refactor(firewall):** 段階 1（読み取り）の識別子検証・グループ名・プログラムルール名・PowerShell 単一引用符・`-EncodedCommand` 変換を、段階 2 の helper（`admin-template-fw-elev`）の関数へ一本化した。段階 1 が段階 2 のルールを見つけられる条件をコメントの約束ではなくコンパイルで保つ。移動のみで挙動・Tauri コマンド・TS 側は変えない。
 
 - **refactor(grid):** `BantoGrid` のセルエディタ（select / checkbox / text・number・date）のテンプレートを `CellEditor.svelte` へ切り出した。DOM・属性・挙動は変えず、編集の状態遷移・キー/blur 処理・フォーカス処理は `BantoGrid` に残す。公開 API は変えない。
@@ -3176,6 +3237,7 @@ minimal`/`standard` が失敗していたのを現行コードに追随させて
   E2E・パッケージ配布可能化）— 残ギャップは `[Unreleased]` の #32 で解消
 
 [unreleased]: https://github.com/tyaro/banto/compare/v6.9.1...HEAD
+[6.10.0]: https://github.com/tyaro/banto/compare/v6.9.1...v6.10.0
 [6.9.1]: https://github.com/tyaro/banto/compare/v6.9.0...v6.9.1
 [6.9.0]: https://github.com/tyaro/banto/compare/v6.8.0...v6.9.0
 [6.8.0]: https://github.com/tyaro/banto/compare/v6.7.2...v6.8.0
