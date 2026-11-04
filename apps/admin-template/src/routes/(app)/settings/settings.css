@@ -40,9 +40,31 @@
 
 .settings-page .settings-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
 	align-items: start;
 	gap: 1rem;
+}
+
+.settings-page .surface-card {
+	min-width: 0;
+	padding: min(var(--banto-space-5), 5%);
+	overflow-wrap: anywhere;
+}
+
+.settings-page .banto-btn {
+	height: auto;
+	min-height: var(--banto-control-height);
+	max-width: 100%;
+	padding-block: var(--banto-space-1);
+	white-space: normal;
+	overflow-wrap: anywhere;
+	line-height: 1.5;
+	justify-content: center;
+}
+
+.settings-page .card-head > svg,
+.settings-page .banto-btn > svg {
+	flex-shrink: 0;
 }
 
 .settings-page .card-head {
@@ -258,66 +280,7 @@
 	}
 }
 
-.settings-page .switch-row {
-	display: flex;
-	align-items: center;
-	gap: 0.6rem;
-	font-size: 0.875rem;
-	cursor: pointer;
-}
-
-.settings-page .switch-row.disabled {
-	cursor: not-allowed;
-	color: var(--banto-text-muted);
-}
-
-/* Common boolean-switch look (plan Phase 5: "boolean 設定は共通のスイッチ
-   表現へ揃える"). role="switch" is set on each usage site; the change
-   handlers/bindings there are unmodified. */
-.settings-page .banto-switch {
-	position: relative;
-	display: inline-flex;
-	flex-shrink: 0;
-	width: 36px;
-	height: 20px;
-	margin: 0;
-	appearance: none;
-	border: none;
-	border-radius: 999px;
-	background: var(--banto-border-strong);
-	cursor: pointer;
-	transition: background var(--banto-duration-fast) var(--banto-ease-out);
-}
-
-.settings-page .banto-switch::before {
-	content: '';
-	position: absolute;
-	top: 2px;
-	left: 2px;
-	width: 16px;
-	height: 16px;
-	border-radius: 50%;
-	background: var(--banto-surface);
-	transition: transform var(--banto-duration-fast) var(--banto-ease-out);
-}
-
-.settings-page .banto-switch:checked {
-	background: var(--banto-primary-solid);
-}
-
-.settings-page .banto-switch:checked::before {
-	transform: translateX(16px);
-}
-
-.settings-page .banto-switch:focus-visible {
-	outline: none;
-	box-shadow: var(--banto-focus-ring);
-}
-
-.settings-page .banto-switch:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
+/* Switch controls and label rows use @banto/theme/css (ADR-0026). */
 
 .settings-page .server-fields {
 	display: flex;
@@ -460,11 +423,19 @@
 .settings-page .qr {
 	margin-top: 0.75rem;
 	width: fit-content;
+	box-sizing: border-box;
+	max-width: 100%;
 	/* Fixed white, not a --banto-* surface var: a QR code must stay
 	   black-on-white to stay scannable in dark mode too. */
 	background: #fff;
 	padding: 0.5rem;
 	border-radius: var(--banto-radius-md);
+}
+
+.settings-page .qr svg {
+	display: block;
+	max-width: 100%;
+	height: auto;
 }
 
 .settings-page .error,
@@ -518,7 +489,7 @@
 
 .settings-page .firewall-row {
 	display: grid;
-	grid-template-columns: minmax(8rem, max-content) 1fr;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
 	gap: 0.75rem;
 	align-items: center;
 }

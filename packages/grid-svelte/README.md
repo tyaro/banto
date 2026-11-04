@@ -26,6 +26,10 @@ Banto のデータグリッド。仮想スクロール・複数列ソート・�
 
 ## 依存
 
+`ColumnsMenu` の checkbox はネイティブ描画を使い、`--banto-checkbox-size`（既定・fallback は `1.1rem`）で
+forms と寸法・実線フォーカス・無効状態を揃える。ラベル行の最小高さは `--banto-control-height-sm`。
+最後の表示列を隠せない制約やキーボード操作は維持する（ADR-0026）。
+
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ
 （コアパッケージのためオプション側への依存も持たない、docs/conventions.md §4・§5）。
 

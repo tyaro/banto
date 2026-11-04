@@ -139,7 +139,7 @@
 				</div>
 			</div>
 
-			<label class="switch-row">
+			<label class="banto-switch-field">
 				<input
 					type="checkbox"
 					role="switch"

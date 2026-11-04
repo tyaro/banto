@@ -103,6 +103,10 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
+設定のスイッチ共有化（次リリース、ADR-0026）は `banto-switch-field` / `banto-switch` を使う。
+更新済み markup と対応版の theme CSS を同時に取り込む。forms / 列表示メニューの checkbox は
+package 内の CSS と `1.1rem` fallback を持ち、旧 theme でも寸法を保つ。
+
 シェルにページタイトルを表示する画面は `PageHeader hideTitle`（次リリース）を使い、
 内容側の重複タイトルを表示しない。読み上げ用の `<h1>`、説明・操作は維持する。
 更新済みの markup と同じ対応版の `@banto/ui` を取り込む。部品単独の既定表示は変わらない。

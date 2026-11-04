@@ -145,7 +145,7 @@
 			</p>
 		{:else if changePassword}
 			<form onsubmit={submitChangePassword}>
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<input
 						class="banto-field-control"
 						type="password"
@@ -155,7 +155,7 @@
 					/>
 					<span class="banto-field-label">{m['settings.currentPassword']()}</span>
 				</label>
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<input
 						class="banto-field-control"
 						type="password"
@@ -165,7 +165,7 @@
 					/>
 					<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
 				</label>
-				<label class="banto-field">
+				<label class="banto-field banto-field--stacked">
 					<input
 						class="banto-field-control"
 						type="password"

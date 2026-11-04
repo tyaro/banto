@@ -163,7 +163,9 @@
 	}
 
 	.item {
+		box-sizing: border-box;
 		display: flex;
+		min-height: var(--banto-control-height-sm, 28px);
 		align-items: center;
 		gap: 0.45rem;
 		padding: 0.25rem 0.3rem;
@@ -180,6 +182,27 @@
 	.item:has(input:disabled) {
 		color: var(--banto-text-muted);
 		cursor: default;
+	}
+
+	/* Native checkbox styling remains local for standalone package consumers. */
+	input {
+		width: var(--banto-checkbox-size, 1.1rem);
+		height: var(--banto-checkbox-size, 1.1rem);
+		flex-shrink: 0;
+		accent-color: var(--banto-primary);
+		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	input:focus-visible {
+		outline: var(--banto-border-width-strong, 2px) solid var(--banto-primary);
+		outline-offset: var(--banto-border-width, 1px);
+		box-shadow: var(--banto-focus-ring);
+		border-radius: var(--banto-radius-sm);
+	}
+
+	input:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
 	}
 
 	.label {

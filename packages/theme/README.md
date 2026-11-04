@@ -92,6 +92,24 @@ app.css・Tailwind・Svelte の wrapper は不要。下線型を選ばない欄�
 スキーマフォームでは `BantoForm` の `appearance="underline"` で固定上表示を選べる
 （[forms README](../forms/README.md)、ADR-0024）。省略時は従来の枠型の構造を保つ。
 
+## スイッチとチェックボックス（次リリース、ADR-0026）
+
+```html
+<label class="banto-switch-field">
+	<input type="checkbox" role="switch" class="banto-switch" name="enabled" />
+	自動同期を有効にする
+</label>
+```
+
+スイッチも theme CSS だけで使える。値・変更イベント・保存は consumer が扱い、
+checked / disabled とラベル・Space 操作・フォーム送信はネイティブの契約を使う。
+行の最小高さは `--banto-control-height-lg`。通常の checkbox にはこの class を付けない。
+forced-colors のカスタム描画は system colors を使い、フォーカス枠と丸の位置で状態を識別できる。
+
+寸法は `--banto-switch-width: 36px` / `--banto-switch-height: 20px` / `--banto-switch-inset: 2px`。
+forms と列表示メニューのネイティブ checkbox は `--banto-checkbox-size: 1.1rem` を共有する。
+両 package は旧 theme 向けの寸法 fallback と自分の CSS を持ち、theme 内の class に依存しない。
+
 ## オーバーレイのトークン（v6.1.0 から）
 
 モーダル的な重ね表示が使う背景と重なり順のトークン（ADR-0018 §8）。値は light・dark・glass
