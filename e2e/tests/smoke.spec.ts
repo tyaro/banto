@@ -1800,7 +1800,17 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(page).toHaveURL(/\/settings\/account$/);
 			await expect(unsaved).toHaveCount(0);
 
+			// Current credentials alone (including browser autofill) are not a
+			// replacement password draft and must not block navigation.
 			await current.fill('typed-but-not-saved');
+			await expect(unsaved).toHaveCount(0);
+			await categoryNav.getByRole('link', { name: '外観・言語' }).click();
+			await expect(page).toHaveURL(/\/settings\/appearance$/);
+			expect(dialogs.messages).toHaveLength(0);
+			await categoryNav.getByRole('link', { name: 'アカウント' }).click();
+			await expect(page).toHaveURL(/\/settings\/account$/);
+			await current.fill('typed-but-not-saved');
+			await next.fill('E2eUnsavedNew1');
 			await expect(unsaved).toBeVisible();
 
 			dialogs.answer(false);
@@ -1811,7 +1821,6 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 			// A failed save keeps the input and the unsaved marker (network
 			// failure stubbed: no password attempt reaches the server).
-			await next.fill('E2eUnsavedNew1');
 			await confirmNext.fill('E2eUnsavedNew1');
 			await page.route(changePassword, (route) => route.abort());
 			try {

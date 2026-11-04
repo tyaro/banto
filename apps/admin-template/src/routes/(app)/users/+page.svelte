@@ -281,7 +281,7 @@
 </script>
 
 <div class="page">
-	<PageHeader title={m['nav.users']()} description={m['users.pageDescription']()} />
+	<PageHeader hideTitle title={m['nav.users']()} description={m['users.pageDescription']()} />
 
 	{#if !available}
 		<EmptyState title={m['users.unavailableTitle']()} description={m['users.unavailableDesc']()} />

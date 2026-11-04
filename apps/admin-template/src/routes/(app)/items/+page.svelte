@@ -675,7 +675,7 @@
 </script>
 
 <div class="page">
-	<PageHeader title={resource.label} description={m['items.description']()}>
+	<PageHeader hideTitle title={resource.label} description={m['items.description']()}>
 		{#snippet actions()}
 			<div class="mode-toggle" role="group" aria-label={m['items.modeToggleAria']()}>
 				<button

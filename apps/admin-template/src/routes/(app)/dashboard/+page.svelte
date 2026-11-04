@@ -425,6 +425,7 @@
 
 <div class="page">
 	<PageHeader
+		hideTitle
 		title={m['nav.dashboard']()}
 		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
 	/>

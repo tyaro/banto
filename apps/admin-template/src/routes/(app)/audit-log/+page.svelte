@@ -255,7 +255,7 @@
 </script>
 
 <div class="page">
-	<PageHeader title={m['nav.auditLog']()} description={m['audit.pageDescription']()} />
+	<PageHeader hideTitle title={m['nav.auditLog']()} description={m['audit.pageDescription']()} />
 
 	{#if !available}
 		<EmptyState

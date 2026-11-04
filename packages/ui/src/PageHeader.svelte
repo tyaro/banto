@@ -11,29 +11,52 @@
 
 	interface Props {
 		title: string;
+		/** The shell displays the title; retain the document h1 for assistive technology. */
+		hideTitle?: boolean;
 		description?: string;
 		/** Primary action first in DOM order; layout wraps under narrow widths. */
 		actions?: Snippet;
 	}
 
-	let { title, description, actions }: Props = $props();
+	let { title, hideTitle = false, description, actions }: Props = $props();
 </script>
 
-<header class="page-header">
-	<div>
-		<h1>{title}</h1>
-		{#if description}
-			<p>{description}</p>
+{#if hideTitle}
+	<h1 class="sr-only">{title}</h1>
+{/if}
+{#if !hideTitle || description || actions}
+	<header class="page-header" class:title-hidden={hideTitle}>
+		{#if !hideTitle || description}
+			<div>
+				{#if !hideTitle}
+					<h1>{title}</h1>
+				{/if}
+				{#if description}
+					<p>{description}</p>
+				{/if}
+			</div>
 		{/if}
-	</div>
-	{#if actions}
-		<div class="actions">
-			{@render actions()}
-		</div>
-	{/if}
-</header>
+		{#if actions}
+			<div class="actions">
+				{@render actions()}
+			</div>
+		{/if}
+	</header>
+{/if}
 
 <style>
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
+	}
+
 	.page-header {
 		view-transition-name: page-header;
 		display: flex;
@@ -57,6 +80,10 @@
 		color: var(--banto-text-muted);
 		font-size: 0.85rem;
 		text-wrap: pretty;
+	}
+
+	.title-hidden p {
+		margin: 0;
 	}
 
 	.actions {

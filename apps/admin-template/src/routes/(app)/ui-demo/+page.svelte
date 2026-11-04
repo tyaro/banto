@@ -131,7 +131,7 @@
 </script>
 
 <div class="page">
-	<PageHeader title={m['nav.uiDemo']()} description={m['uiDemo.intro']()}>
+	<PageHeader hideTitle title={m['nav.uiDemo']()} description={m['uiDemo.intro']()}>
 		{#snippet actions()}
 			<button type="button" class="banto-btn banto-btn--secondary">{m['common.cancel']()}</button>
 			<button type="button" class="banto-btn banto-btn--primary">{m['common.save']()}</button>

@@ -163,10 +163,9 @@
 		{/if}
 	{/if}
 
-	<!-- Deliberately NOT a heading: the document h1 belongs to the page
-	     content (ui/PageHeader.svelte) - two h1s per page would be a strict
-	     a11y violation once every page adopts PageHeader (units 4-5). -->
-	<p class="page-title">{pageTitle(page.url.pathname)}</p>
+	<!-- The shell shows the title visually. Page content retains its document
+	     h1 for assistive technology, using PageHeader's hideTitle option. -->
+	<p class="page-title">{pageTitle(page.url.pathname, page.route.id)}</p>
 
 	<div class="spacer"></div>
 
