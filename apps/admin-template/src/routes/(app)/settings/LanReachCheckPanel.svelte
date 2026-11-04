@@ -228,9 +228,9 @@
 	{#if hosts.length > 0}
 		<div class="reach-issue">
 			{#if hosts.length > 1}
-				<label class="field field--floating">
+				<label class="banto-field">
 					<select
-						class="banto-input"
+						class="banto-field-control"
 						value={host}
 						onchange={(event) => (hostChoice = event.currentTarget.value)}
 						disabled={applying || controller.issuing}
@@ -239,7 +239,7 @@
 							<option value={candidate}>{candidate}</option>
 						{/each}
 					</select>
-					<span class="field-label">{m['settings.reachHost']()}</span>
+					<span class="banto-field-label">{m['settings.reachHost']()}</span>
 				</label>
 			{/if}
 			<button

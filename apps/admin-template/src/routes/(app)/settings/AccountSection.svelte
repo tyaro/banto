@@ -143,35 +143,35 @@
 			</p>
 		{:else if changePassword}
 			<form onsubmit={submitChangePassword}>
-				<label class="field field--floating">
+				<label class="banto-field">
 					<input
-						class="banto-input"
+						class="banto-field-control"
 						type="password"
 						placeholder=" "
 						bind:value={currentPassword}
 						autocomplete="current-password"
 					/>
-					<span class="field-label">{m['settings.currentPassword']()}</span>
+					<span class="banto-field-label">{m['settings.currentPassword']()}</span>
 				</label>
-				<label class="field field--floating">
+				<label class="banto-field">
 					<input
-						class="banto-input"
+						class="banto-field-control"
 						type="password"
 						placeholder=" "
 						bind:value={newPassword}
 						autocomplete="new-password"
 					/>
-					<span class="field-label">{m['common.newPasswordMinLabel']()}</span>
+					<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
 				</label>
-				<label class="field field--floating">
+				<label class="banto-field">
 					<input
-						class="banto-input"
+						class="banto-field-control"
 						type="password"
 						placeholder=" "
 						bind:value={newPasswordConfirm}
 						autocomplete="new-password"
 					/>
-					<span class="field-label">{m['settings.newPasswordConfirm']()}</span>
+					<span class="banto-field-label">{m['settings.newPasswordConfirm']()}</span>
 				</label>
 
 				{#if passwordError}
@@ -235,25 +235,25 @@
 					</button>
 				{:else}
 					<form onsubmit={submitEnableAutologin}>
-						<label class="field field--floating">
+						<label class="banto-field">
 							<input
-								class="banto-input"
+								class="banto-field-control"
 								type="text"
 								placeholder=" "
 								bind:value={autologinUsername}
 								autocomplete="username"
 							/>
-							<span class="field-label">{m['common.username']()}</span>
+							<span class="banto-field-label">{m['common.username']()}</span>
 						</label>
-						<label class="field field--floating">
+						<label class="banto-field">
 							<input
-								class="banto-input"
+								class="banto-field-control"
 								type="password"
 								placeholder=" "
 								bind:value={autologinPassword}
 								autocomplete="current-password"
 							/>
-							<span class="field-label">{m['common.password']()}</span>
+							<span class="banto-field-label">{m['common.password']()}</span>
 						</label>
 						<button type="submit" class="banto-btn banto-btn--primary" disabled={enablingAutologin}>
 							{m['settings.autologinEnable']()}

@@ -238,17 +238,17 @@
 			{/if}
 
 			<div class="server-fields">
-				<label class="field field--floating">
-					<select class="banto-input" bind:value={bindDraft} disabled={!editable}>
+				<label class="banto-field">
+					<select class="banto-field-control" bind:value={bindDraft} disabled={!editable}>
 						<option value="127.0.0.1">{m['settings.bindLocalOnly']()}</option>
 						<option value="0.0.0.0">{m['settings.bindLanPublic']()}</option>
 					</select>
-					<span class="field-label">{m['settings.bindAddress']()}</span>
+					<span class="banto-field-label">{m['settings.bindAddress']()}</span>
 				</label>
 
-				<label class="field field--floating">
+				<label class="banto-field">
 					<input
-						class="banto-input"
+						class="banto-field-control"
 						type="number"
 						placeholder=" "
 						min="1"
@@ -256,7 +256,7 @@
 						bind:value={portDraft}
 						disabled={!editable}
 					/>
-					<span class="field-label">{m['settings.port']()}</span>
+					<span class="banto-field-label">{m['settings.port']()}</span>
 				</label>
 			</div>
 

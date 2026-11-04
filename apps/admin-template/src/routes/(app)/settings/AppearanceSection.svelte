@@ -295,9 +295,9 @@
 			</div>
 		</div>
 
-		<label class="field field--floating">
+		<label class="banto-field">
 			<select
-				class="banto-input"
+				class="banto-field-control"
 				value={getLocale()}
 				onchange={(event) => changeLocale(event.currentTarget.value as Locale)}
 			>
@@ -305,7 +305,7 @@
 					<option value={loc}>{localeLabels[loc]()}</option>
 				{/each}
 			</select>
-			<span class="field-label">{m['settings.languageLabel']()}</span>
+			<span class="banto-field-label">{m['settings.languageLabel']()}</span>
 		</label>
 
 		<p class="note">

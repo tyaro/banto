@@ -70,6 +70,7 @@ corresponding ADR exists, be traced from there.
 | [0020](0020-image-assets-package.en.md)                | Keep browser-side image originals, import checks and URL lifetimes in a new optional package, `@banto/image-assets` (consumer-supplied limits, error codes, `crypto.subtle` or an in-house SHA-256)      | Accepted                   |
 | [0021](0021-firewall-elevated-helper.en.md)            | For stage 2, a UAC-elevated helper adds and removes a single per-executable firewall rule                                                                                                                | Accepted                   |
 | [0022](0022-settings-controls.en.md)                   | Use underline navigation and moving labels for settings controls                                                                                                                                         | Accepted                   |
+| [0023](0023-shared-control-styles.en.md)               | Share the adopted control and page-navigation styles through the theme                                                                                                                                   | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 

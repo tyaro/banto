@@ -151,9 +151,9 @@
 			</label>
 
 			<div class="server-fields">
-				<label class="field field--floating">
+				<label class="banto-field">
 					<select
-						class="banto-input"
+						class="banto-field-control"
 						bind:value={disabledRoleDraft}
 						disabled={!editable || !disabledDraft}
 					>
@@ -161,7 +161,7 @@
 							<option value={option.value}>{option.label}</option>
 						{/each}
 					</select>
-					<span class="field-label">{m['settings.startupRole']()}</span>
+					<span class="banto-field-label">{m['settings.startupRole']()}</span>
 				</label>
 			</div>
 

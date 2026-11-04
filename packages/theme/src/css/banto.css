@@ -385,3 +385,150 @@ html {
 html[data-theme='dark'] {
 	color-scheme: dark;
 }
+
+/* Opt-in native controls (ADR-0023). These classes include their foundations:
+   neither app.css nor a framework reset is required. */
+.banto-field {
+	position: relative;
+	display: block;
+	min-width: 0;
+	font-size: var(--banto-font-size-sm);
+	color: var(--banto-text-muted);
+}
+
+.banto-field > .banto-field-control {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	min-height: calc(var(--banto-control-height-lg) + var(--banto-space-2));
+	height: auto;
+	padding: var(--banto-space-7) var(--banto-space-3) var(--banto-space-1);
+	border: none;
+	border-bottom: var(--banto-border-width-strong) solid var(--banto-border-strong);
+	border-radius: var(--banto-radius-sm) var(--banto-radius-sm) 0 0;
+	background: var(--banto-surface-subtle);
+	color: var(--banto-text);
+	font: inherit;
+	transition:
+		background var(--banto-duration-fast) var(--banto-ease-out),
+		border-color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.banto-field > .banto-field-control:hover:not(:disabled) {
+	border-bottom-color: var(--banto-primary-hover);
+	background: var(--banto-surface-hover);
+}
+
+.banto-field > .banto-field-control:focus-visible {
+	border-bottom-color: var(--banto-primary-hover);
+	outline: var(--banto-border-width-strong) solid currentColor;
+	outline-offset: var(--banto-border-width);
+	box-shadow: none;
+}
+
+.banto-field > .banto-field-control:disabled {
+	border-bottom-style: dashed;
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.banto-field > .banto-field-control[aria-invalid='true'] {
+	border-bottom-color: var(--banto-danger);
+}
+
+.banto-field > .banto-field-label {
+	position: absolute;
+	inset-block-start: 50%;
+	inset-inline-start: var(--banto-space-3);
+	max-width: calc(100% - 2 * var(--banto-space-3));
+	transform: translateY(-50%);
+	color: var(--banto-text-muted);
+	font-size: var(--banto-font-size);
+	pointer-events: none;
+	overflow-wrap: anywhere;
+	transition:
+		inset-block-start var(--banto-duration-fast) var(--banto-ease-out),
+		transform var(--banto-duration-fast) var(--banto-ease-out),
+		font-size var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.banto-field > input.banto-field-control:focus + .banto-field-label,
+.banto-field > input.banto-field-control:not(:placeholder-shown) + .banto-field-label,
+.banto-field > select.banto-field-control + .banto-field-label {
+	inset-block-start: var(--banto-space-1);
+	transform: none;
+	font-size: var(--banto-font-size-md);
+}
+
+/* Reserve the full label height for long translations, narrow fields, or zoom.
+   The same native-control → label DOM contract is retained. */
+.banto-field.banto-field--stacked {
+	display: flex;
+	flex-direction: column;
+	gap: var(--banto-space-1);
+}
+
+.banto-field--stacked > .banto-field-control {
+	min-height: var(--banto-control-height-lg);
+	padding: var(--banto-space-2) var(--banto-space-3);
+}
+
+.banto-field.banto-field--stacked > .banto-field-label {
+	position: static;
+	order: -1;
+	max-width: 100%;
+	transform: none;
+	font-size: var(--banto-font-size-md);
+}
+
+/* Page links, not ARIA tabs. Routing and visibility belong to the consumer. */
+.banto-section-nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--banto-space-1) var(--banto-space-2);
+	border-bottom: var(--banto-border-width) solid var(--banto-border);
+}
+
+.banto-section-nav > a[href] {
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: var(--banto-control-height-lg);
+	max-width: 100%;
+	padding: var(--banto-space-2) var(--banto-space-3);
+	border-bottom: var(--banto-border-width-strong) solid transparent;
+	color: var(--banto-text-muted);
+	font-size: var(--banto-font-size-md);
+	font-weight: 600;
+	text-decoration: none;
+	overflow-wrap: anywhere;
+	transition:
+		background var(--banto-duration-fast) var(--banto-ease-out),
+		color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.banto-section-nav > a[href]:hover {
+	background: var(--banto-surface-hover);
+	color: var(--banto-text);
+}
+
+.banto-section-nav > a[href]:focus-visible {
+	outline: var(--banto-border-width-strong) solid currentColor;
+	outline-offset: calc(-1 * var(--banto-border-width-strong));
+}
+
+.banto-section-nav > a[href][aria-current='page'] {
+	color: var(--banto-primary-hover);
+	border-bottom-color: currentColor;
+}
+
+@media (forced-colors: active) {
+	/* Transparent borders become visible in forced colors. Keep only the
+	   current link's underline, compensating for the removed border's space. */
+	.banto-section-nav > a[href]:not([aria-current='page']) {
+		border-bottom-style: none;
+		padding-bottom: calc(var(--banto-space-2) + var(--banto-border-width-strong));
+	}
+}

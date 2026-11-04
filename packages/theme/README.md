@@ -34,6 +34,58 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 型の解決は exports の条件を読む `moduleResolution: "bundler"`（SvelteKit 3 の
 `$app/tsconfig` の既定）を前提にしている。
 
+## 入力とページナビの共通スタイル（次リリース）
+
+`@banto/theme/css` だけで使える opt-in の HTML クラス（[ADR-0023](../../docs/adr/0023-shared-control-styles.md)）。
+app.css・Tailwind・Svelte の wrapper は不要。専用クラスを付けない既存の入力や
+`@banto/forms` の既定表示は変わらない。設定画面もこのクラスを利用する。
+
+```html
+<label class="banto-field">
+	<input type="text" class="banto-field-control" placeholder=" " aria-describedby="host-help" />
+	<span class="banto-field-label">接続先</span>
+</label>
+<p id="host-help">ホスト名または IP アドレスを入力してください。</p>
+
+<label class="banto-field">
+	<select class="banto-field-control">
+		<option value="">選択してください</option>
+		<option value="local">この端末のみ</option>
+	</select>
+	<span class="banto-field-label">接続範囲</span>
+</label>
+
+<label class="banto-field banto-field--stacked">
+	<input type="text" class="banto-field-control" value="既存値" />
+	<span class="banto-field-label">長い説明を含み、複数行に折り返して表示したい項目名</span>
+</label>
+
+<nav class="banto-section-nav" aria-label="設定カテゴリ">
+	<a href="/settings/appearance" aria-current="page">外観・言語</a>
+	<a href="/settings/account">アカウント</a>
+</nav>
+```
+
+- `.banto-field` は実際の `label` に付け、ネイティブ control → ラベル文字列の順で、
+  直下に `.banto-field-control` と `.banto-field-label` を置く。対象は text / password / number と
+  単一選択 select。textarea・date・checkbox・range・複数選択用のスタイルではない。
+- テキスト系で空欄のラベルを中央へ置くときは `placeholder=" "` を指定する。
+  フォーカス中や値があると上がり、自動入力・プログラムからの値設定にも CSS で追従する。
+  select のラベルは空 option の説明文とも重ならないよう、常に上に置く。
+- 浮動表示は短い項目名向け。長い翻訳・狭い欄・文字拡大で複数行になる場合は
+  `.banto-field--stacked` を付ける。ラベルを通常フローで入力の上に置き、全文の高さを確保する。
+  項目の幅や配置、どちらの表示を使うかは consumer が決める。
+- readonly / disabled はネイティブ属性を渡す。readonly のテキスト欄はフォーカス・選択ができ、
+  disabled は減光と破線で示す。select に readonly はない。CSS はイベント、値、検証、送信や認可を制御しない。
+- 説明・単位・エラーはラベル領域の外に描画し、必要な `aria-describedby` / `aria-invalid` と
+  一意な ID を consumer が設定する。`aria-invalid="true"` は下線の色も変えるが、エラー文を併記する。
+- `.banto-section-nav` は実際の `nav`、直下は `a[href]`。現在地は `aria-current="page"` で指定する。
+  href・経路判定・文言・権限は consumer が管理する。これはページへのリンクで、ARIA tabs の
+  キー操作・パネル切替は提供しない。既存の tablist や SCADA の画面切替へ自動適用しない。
+
+通常のテーマと密度、reduced-motion、forced-colors に追従する。
+`@banto/forms` はラベル構造が異なるため、このクラスを直接付ける API は提供していない。
+
 ## オーバーレイのトークン（v6.1.0 から）
 
 モーダル的な重ね表示が使う背景と重なり順のトークン（ADR-0018 §8）。値は light・dark・glass
