@@ -159,4 +159,24 @@ describe('FilterPopover', () => {
 		expect(onApply).not.toHaveBeenCalled();
 		expect(onClear).not.toHaveBeenCalled();
 	});
+
+	it.each(['Enter', 'Escape'])('leaves legacy composition %s to the IME', async (key) => {
+		const { onApply, onClear, onClose } = renderPopover();
+		const input = screen.getByRole('textbox');
+		input.focus();
+		await fireEvent.input(input, { target: { value: '変換中' } });
+		const event = new KeyboardEvent('keydown', {
+			key,
+			keyCode: 229,
+			isComposing: false,
+			bubbles: true,
+			cancelable: true
+		});
+		await fireEvent(input, event);
+		expect(event.defaultPrevented).toBe(false);
+		expect(onApply).not.toHaveBeenCalled();
+		expect(onClear).not.toHaveBeenCalled();
+		expect(onClose).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(input);
+	});
 });

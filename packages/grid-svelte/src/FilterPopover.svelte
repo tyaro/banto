@@ -83,6 +83,7 @@
 				event.key !== 'Escape' ||
 				event.defaultPrevented ||
 				event.isComposing ||
+				event.keyCode === 229 ||
 				!(event.target instanceof Node) ||
 				!rootEl?.contains(event.target) ||
 				!rootEl.contains(document.activeElement)
@@ -136,7 +137,12 @@
 		bind:value
 		placeholder={t.filterValuePlaceholder()}
 		onkeydown={(event) => {
-			if (event.key === 'Enter' && !event.isComposing && !event.defaultPrevented) {
+			if (
+				event.key === 'Enter' &&
+				!event.isComposing &&
+				event.keyCode !== 229 &&
+				!event.defaultPrevented
+			) {
 				// Applying restores focus to the trigger. Cancel native Enter
 				// activation first so it cannot click that trigger and reopen us.
 				event.preventDefault();
