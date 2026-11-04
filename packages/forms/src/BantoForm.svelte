@@ -34,6 +34,10 @@
 		children
 	}: Props = $props();
 
+	// Svelte keeps this namespace stable across SSR/hydration. Field names stay
+	// store keys; indices avoid whitespace and input/error ID collisions.
+	const formId = $props.id();
+
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (!store.validateAll()) return;
@@ -61,15 +65,19 @@
 </script>
 
 <form onsubmit={handleSubmit} novalidate>
-	{#each schema.fields as def (def.name)}
+	{#each schema.fields as def, index (def.name)}
 		{@const Field = fieldComponent(def)}
+		{@const inputId = `${formId}-field-${index}`}
+		{@const errorId = `${formId}-error-${index}`}
 		<div class="field">
-			<label for={def.name}>
+			<label for={inputId}>
 				{def.label}
 				{#if def.required}<span class="required">*</span>{/if}
 			</label>
 			<Field
 				{def}
+				id={inputId}
+				aria-describedby={store.errors[def.name] ? errorId : undefined}
 				value={store.values[def.name]}
 				error={store.errors[def.name]}
 				disabled={submitting}
@@ -77,7 +85,7 @@
 				onBlur={() => store.touch(def.name)}
 			/>
 			{#if store.errors[def.name]}
-				<p class="error">{store.errors[def.name]}</p>
+				<p id={errorId} class="error">{store.errors[def.name]}</p>
 			{/if}
 		</div>
 	{/each}

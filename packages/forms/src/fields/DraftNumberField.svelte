@@ -17,19 +17,28 @@
 
 	interface Props {
 		def: FieldDef;
+		id?: string;
+		'aria-describedby'?: string;
 		draft: FormDraft;
 		disabled?: boolean;
 		/** Called after each commit (blur / Enter) with whether the field is valid. */
 		onCommit?: (valid: boolean) => void;
 	}
 
-	let { def, draft, disabled = false, onCommit }: Props = $props();
+	let {
+		def,
+		id,
+		'aria-describedby': describedBy,
+		draft,
+		disabled = false,
+		onCommit
+	}: Props = $props();
 
-	const isDisabled = $derived(disabled || !!def.readonly);
 	const text = $derived(draft.raw[def.name] ?? formatDraftValue(draft.values[def.name]));
 	const error = $derived(draft.errors[def.name]);
 
 	function commit() {
+		if (disabled || def.readonly) return;
 		const valid = draft.commit(def.name);
 		onCommit?.(valid);
 	}
@@ -43,13 +52,17 @@
 	type="text"
 	inputmode="decimal"
 	autocomplete="off"
-	id={def.name}
+	id={id ?? def.name}
 	value={text}
 	placeholder={def.placeholder}
-	disabled={isDisabled}
+	{disabled}
+	readonly={def.readonly}
 	class:muted={def.readonly}
 	aria-invalid={!!error}
-	oninput={(event) => draft.setRaw(def.name, event.currentTarget.value)}
+	aria-describedby={describedBy}
+	oninput={(event) => {
+		if (!disabled && !def.readonly) draft.setRaw(def.name, event.currentTarget.value);
+	}}
 	onblur={commit}
 	onkeydown={handleKeydown}
 />
@@ -70,7 +83,8 @@
 	}
 
 	input:focus-visible {
-		outline: none;
+		outline: var(--banto-border-width-strong) solid transparent;
+		outline-offset: var(--banto-border-width);
 		box-shadow: var(--banto-focus-ring);
 	}
 

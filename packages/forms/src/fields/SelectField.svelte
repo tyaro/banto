@@ -4,6 +4,8 @@
 
 	interface Props {
 		def: FieldDef;
+		id?: string;
+		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
 		disabled?: boolean;
@@ -17,24 +19,39 @@
 		messages?: { selectPlaceholder?: string };
 	}
 
-	let { def, value, error, disabled = false, onInput, onBlur, messages = {} }: Props = $props();
+	let {
+		def,
+		id,
+		'aria-describedby': describedBy,
+		value,
+		error,
+		disabled = false,
+		onInput,
+		onBlur,
+		messages = {}
+	}: Props = $props();
 
+	// Native selects have no readonly state; preserve their disabled fallback.
 	const isDisabled = $derived(disabled || !!def.readonly);
 
 	function handleChange(event: Event & { currentTarget: HTMLSelectElement }) {
+		if (isDisabled) return;
 		const option = def.options?.find((entry) => String(entry.value) === event.currentTarget.value);
 		onInput(option ? option.value : event.currentTarget.value);
 	}
 </script>
 
 <select
-	id={def.name}
+	id={id ?? def.name}
 	value={value === undefined || value === null ? '' : String(value)}
 	disabled={isDisabled}
 	class:muted={def.readonly}
 	aria-invalid={!!error}
+	aria-describedby={describedBy}
 	onchange={handleChange}
-	onblur={onBlur}
+	onblur={() => {
+		if (!isDisabled) onBlur?.();
+	}}
 >
 	<option value="" disabled hidden
 		>{def.placeholder ?? messages.selectPlaceholder ?? '選択してください'}</option
@@ -59,7 +76,8 @@
 	}
 
 	select:focus-visible {
-		outline: none;
+		outline: var(--banto-border-width-strong) solid transparent;
+		outline-offset: var(--banto-border-width);
 		box-shadow: var(--banto-focus-ring);
 	}
 

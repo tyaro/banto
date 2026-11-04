@@ -4,6 +4,8 @@
 
 	interface Props {
 		def: FieldDef;
+		id?: string;
+		'aria-describedby'?: string;
 		value: unknown;
 		error?: string;
 		disabled?: boolean;
@@ -11,21 +13,34 @@
 		onBlur?: () => void;
 	}
 
-	let { def, value, error, disabled = false, onInput, onBlur }: Props = $props();
-
-	const isDisabled = $derived(disabled || !!def.readonly);
+	let {
+		def,
+		id,
+		'aria-describedby': describedBy,
+		value,
+		error,
+		disabled = false,
+		onInput,
+		onBlur
+	}: Props = $props();
 </script>
 
 <textarea
-	id={def.name}
+	id={id ?? def.name}
 	value={(value as string | undefined) ?? ''}
 	placeholder={def.placeholder}
-	disabled={isDisabled}
+	{disabled}
+	readonly={def.readonly}
 	class:muted={def.readonly}
 	aria-invalid={!!error}
+	aria-describedby={describedBy}
 	rows="4"
-	oninput={(event) => onInput(event.currentTarget.value)}
-	onblur={onBlur}></textarea>
+	oninput={(event) => {
+		if (!disabled && !def.readonly) onInput(event.currentTarget.value);
+	}}
+	onblur={() => {
+		if (!disabled && !def.readonly) onBlur?.();
+	}}></textarea>
 
 <style>
 	textarea {
@@ -45,7 +60,8 @@
 	}
 
 	textarea:focus-visible {
-		outline: none;
+		outline: var(--banto-border-width-strong) solid transparent;
+		outline-offset: var(--banto-border-width);
 		box-shadow: var(--banto-focus-ring);
 	}
 
