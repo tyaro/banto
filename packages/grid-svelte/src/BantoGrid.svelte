@@ -945,6 +945,10 @@
 			event.preventDefault();
 			return;
 		}
+		// IME confirmation/cancellation and keys already handled elsewhere do
+		// not own a grid edit command. Some engines report composition as 229
+		// even when isComposing is false. Native blur keeps its existing contract.
+		if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
 		// Returning from another window need not emit focusin on the editor.
 		// A fresh key action on the focused, non-pending draft renews ownership.
 		if (

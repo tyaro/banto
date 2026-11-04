@@ -36,6 +36,11 @@ checkbox editor は `--banto-checkbox-size`（fallback `1.1rem`）で native の
 セル全幅・全高へは伸ばさない。フォーカスは既存の編集セル枠で示す。
 行高・列幅・仮想化・native の checked / Space / 即時確定は維持する。
 
+変換中（`isComposing` または互換用の `keyCode === 229`）と処理済み（`defaultPrevented`）の
+keydown は保存・取消・セル移動へ渡さず、グリッド本体へも伝播させない。
+続く通常の Enter / Escape / Tab は従来どおり動く。pending 中の操作抑止と blur による確定は維持するため、
+変換中の Tab がブラウザの標準動作で blur を起こした場合まで保存を止める契約ではない。
+
 ## フィルタ・選択範囲の操作性（次リリース）
 
 列フィルタの条件選択と値入力の名前は `messages.filterOperatorLabel` /
@@ -45,6 +50,7 @@ checkbox editor は `--banto-checkbox-size`（fallback `1.1rem`）で native の
 同じボタンの再クリックでも閉じる。外クリックは閉じるだけでフォーカスを取り戻さず、
 Tab / Shift+Tab はブラウザの標準移動を使う非modalのまま。
 値を空にして適用すると条件を解除する。数値入力の空欄も解除し、数値 `0` は値として維持する。
+値入力の Enter と内部の Escape も、変換中（`isComposing` / `keyCode === 229`）や処理済みのキーを奪わない。
 
 グリッド入口・見出し・フィルタ操作子のフォーカスは実線枠で示す。
 強制配色では範囲選択を内側の破線、active セルを実線で区別する。選択計算・通常配色・
