@@ -1381,6 +1381,22 @@
 		outline: none;
 	}
 
+	.banto-grid:focus-visible {
+		outline: var(--banto-border-width-strong, 2px) solid var(--banto-primary);
+		outline-offset: calc(-1 * var(--banto-border-width-strong, 2px));
+	}
+
+	@media (forced-colors: active) {
+		.banto-grid:focus-visible {
+			outline-color: Highlight;
+		}
+
+		.cell.in-range {
+			outline: var(--banto-border-width-strong, 2px) dashed Highlight;
+			outline-offset: calc(-1 * var(--banto-border-width-strong, 2px));
+		}
+	}
+
 	.scroll-content {
 		min-width: 100%;
 		position: relative;

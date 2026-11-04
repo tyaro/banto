@@ -5,7 +5,7 @@
  * improvements.md §8 flagged the popover's "focus trap" as unverified. On
  * inspection the popover does NOT implement a Tab-cycling focus trap; its
  * focus/interaction boundary is instead a DISMISS model: it closes on Escape
- * and on a pointer-down anywhere outside its root, while a pointer-down
+ * owned by its focused controls and on a pointer-down outside its root/trigger, while a pointer-down
  * inside is left alone. These tests pin exactly that behavior (plus the
  * dialog semantics and apply/clear wiring), so the §8 item is resolved by
  * documenting + covering the real contract rather than a trap that isn't there.
@@ -18,7 +18,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import FilterPopover from '../src/FilterPopover.svelte';
-import type { GridColumn } from '../src/types';
+import type { FilterState, GridColumn } from '../src/types';
 
 afterEach(cleanup);
 
@@ -35,15 +35,15 @@ const textColumn: GridColumn<Row> = {
 	filterType: 'text'
 };
 
-function renderPopover() {
+function renderPopover(column = textColumn, current: FilterState | undefined = undefined) {
 	const handlers = {
 		onApply: vi.fn(),
 		onClear: vi.fn(),
 		onClose: vi.fn()
 	};
 	const { unmount } = render(FilterPopover<Row>, {
-		column: textColumn,
-		current: undefined,
+		column,
+		current,
 		...handlers
 	});
 	return { ...handlers, unmount };
@@ -59,10 +59,12 @@ describe('FilterPopover', () => {
 		expect(screen.getByRole('dialog', { name: '商品名の絞り込み' })).toBeTruthy();
 	});
 
-	it('closes on Escape', async () => {
+	it('closes on Escape from its focused input', async () => {
 		const { onClose } = renderPopover();
-		await fireEvent.keyDown(document.body, { key: 'Escape' });
-		expect(onClose).toHaveBeenCalledTimes(1);
+		const input = screen.getByRole('textbox');
+		input.focus();
+		await fireEvent.keyDown(input, { key: 'Escape' });
+		expect(onClose).toHaveBeenCalledExactlyOnceWith('escape');
 	});
 
 	it('does not close on other keys', async () => {
@@ -110,11 +112,51 @@ describe('FilterPopover', () => {
 		expect(onApply).not.toHaveBeenCalled();
 	});
 
+	it('clears an existing numeric zero after erasing the input without applying NaN', async () => {
+		const { onApply, onClear } = renderPopover(
+			{ id: 'price', header: 'Price', accessor: 'price', filterType: 'number' },
+			{ field: 'price', op: 'eq', value: 0 }
+		);
+		const input = screen.getByRole('spinbutton') as HTMLInputElement;
+		expect(input.value).toBe('0');
+		await fireEvent.input(input, { target: { value: '' } });
+		const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+		await fireEvent(input, enter);
+		expect(enter.defaultPrevented).toBe(true);
+		expect(onClear).toHaveBeenCalledTimes(1);
+		expect(onApply).not.toHaveBeenCalled();
+	});
+
 	it('applies on Enter in the value input', async () => {
 		const { onApply } = renderPopover();
 		const input = screen.getByPlaceholderText('値を入力');
 		await fireEvent.input(input, { target: { value: 'ノート' } });
-		await fireEvent.keyDown(input, { key: 'Enter' });
-		expect(onApply).toHaveBeenCalledWith({ field: 'name', op: 'contains', value: 'ノート' });
+		const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+		await fireEvent(input, enter);
+		expect(enter.defaultPrevented).toBe(true);
+		expect(onApply).toHaveBeenCalledExactlyOnceWith({
+			field: 'name',
+			op: 'contains',
+			value: 'ノート'
+		});
+	});
+
+	it('leaves composing and already handled Enter events to their owner', async () => {
+		const { onApply, onClear } = renderPopover();
+		const input = screen.getByRole('textbox');
+		await fireEvent.input(input, { target: { value: '変換中' } });
+		const composing = new KeyboardEvent('keydown', {
+			key: 'Enter',
+			bubbles: true,
+			cancelable: true,
+			isComposing: true
+		});
+		await fireEvent(input, composing);
+		expect(composing.defaultPrevented).toBe(false);
+		const handled = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+		handled.preventDefault();
+		await fireEvent(input, handled);
+		expect(onApply).not.toHaveBeenCalled();
+		expect(onClear).not.toHaveBeenCalled();
 	});
 });

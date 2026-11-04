@@ -76,6 +76,10 @@
 	const activeFilter = $derived(gridState.filters.find((entry) => entry.field === column.id));
 
 	let filterOpen = $state(false);
+	let filterButton: HTMLButtonElement | undefined = $state();
+	const headerId = $props.id();
+	const filterId = `${headerId}-filter`;
+	const columnLabel = $derived(column.header.trim() || column.id);
 
 	function handleBodyPointerDown(event: PointerEvent) {
 		if (event.button !== 0) return;
@@ -155,15 +159,24 @@
 		filterOpen = !filterOpen;
 	}
 
+	function closeFilter(restoreFocus = false) {
+		filterOpen = false;
+		// Restore only for an action owned by this popover. Outside pointer
+		// actions keep their native focus destination; never queue a late focus.
+		if (restoreFocus && filterButton?.isConnected) {
+			filterButton.focus({ preventScroll: true });
+		}
+	}
+
 	function applyFilter(filter: FilterState) {
 		gridState.setFilter(filter);
-		filterOpen = false;
+		closeFilter(true);
 		onSortOrFilterChange?.();
 	}
 
 	function clearFilter() {
 		gridState.removeFilter(column.id);
-		filterOpen = false;
+		closeFilter(true);
 		onSortOrFilterChange?.();
 	}
 </script>
@@ -193,21 +206,27 @@
 
 	{#if column.filterable}
 		<button
+			bind:this={filterButton}
 			type="button"
 			class="filter-button"
 			class:active={!!activeFilter}
-			aria-label={t.filterAriaLabel(column.header)}
+			aria-label={t.filterAriaLabel(columnLabel)}
+			aria-haspopup="dialog"
+			aria-expanded={filterOpen}
+			aria-controls={filterOpen ? filterId : undefined}
 			onclick={toggleFilter}
 		>
 			▾
 		</button>
 		{#if filterOpen}
 			<FilterPopover
+				id={filterId}
+				trigger={filterButton}
 				{column}
 				current={activeFilter}
 				onApply={applyFilter}
 				onClear={clearFilter}
-				onClose={() => (filterOpen = false)}
+				onClose={(reason) => closeFilter(reason === 'escape')}
 				{messages}
 			/>
 		{/if}
@@ -262,10 +281,19 @@
 		cursor: pointer;
 	}
 
-	.cell-body:focus-visible {
-		outline: none;
+	.cell-body:focus-visible,
+	.filter-button:focus-visible {
+		outline: var(--banto-border-width-strong, 2px) solid var(--banto-primary);
+		outline-offset: calc(-1 * var(--banto-border-width-strong, 2px));
 		box-shadow: var(--banto-focus-ring);
 		border-radius: var(--banto-radius-md);
+	}
+
+	@media (forced-colors: active) {
+		.cell-body:focus-visible,
+		.filter-button:focus-visible {
+			outline-color: Highlight;
+		}
 	}
 
 	.label {
