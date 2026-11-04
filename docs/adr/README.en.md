@@ -72,6 +72,7 @@ corresponding ADR exists, be traced from there.
 | [0022](0022-settings-controls.en.md)                   | Use underline navigation and moving labels for settings controls                                                                                                                                         | Accepted                   |
 | [0023](0023-shared-control-styles.en.md)               | Share the adopted control and page-navigation styles through the theme                                                                                                                                   | Accepted                   |
 | [0024](0024-schema-form-appearance.en.md)              | Make schema-form underline styling opt-in and keep labels above controls                                                                                                                                 | Accepted                   |
+| [0025](0025-transparent-control-backgrounds.en.md)     | Use transparent backgrounds by default for inputs and selects                                                                                                                                            | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 

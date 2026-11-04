@@ -19,6 +19,9 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		const name = form.getByLabel(copy['items.fieldName']);
 		const price = form.getByRole('spinbutton', { name: copy['items.fieldPrice'] });
 		await expect(name).toBeVisible();
+		await expect(name).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+		await name.hover();
+		await expect(name).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 		await expect(form.locator('.banto-field-control')).toHaveCount(4);
 		await expect(price).toHaveCSS('border-bottom-width', '2px');
 		await expect(price).toHaveCSS('font-variant-numeric', 'tabular-nums');
@@ -36,6 +39,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		await form.getByRole('spinbutton', { name: copy['items.fieldStock'] }).fill('2');
 		const date = form.getByLabel(copy['items.fieldUpdatedAt']);
 		await expect(date).toHaveJSProperty('readOnly', true);
+		await expect(date).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
 		await expect(date).toBeEnabled();
 		await date.focus();
 		await expect(date).toBeFocused();

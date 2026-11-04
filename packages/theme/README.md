@@ -37,8 +37,12 @@ TS / Svelte の `<script>` から副作用の import（`import '@banto/theme/css
 ## 入力とページナビの共通スタイル（次リリース）
 
 `@banto/theme/css` だけで使える opt-in の HTML クラス（[ADR-0023](../../docs/adr/0023-shared-control-styles.md)）。
-app.css・Tailwind・Svelte の wrapper は不要。専用クラスを付けない既存の入力や
-`@banto/forms` の既定表示は変わらない。設定とログイン・初回セットアップ画面がこのクラスを利用する。
+app.css・Tailwind・Svelte の wrapper は不要。下線型を選ばない欄の枠や配置は変わらない。
+設定とログイン・初回セットアップ画面がこのクラスを利用する。
+
+背景は通常・hover・readonly・disabled とも既定で透明（ADR-0025）。枠・下線・フォーカスと
+文字色・減光・破線で状態を示し、カードやページの背景をそのまま見せる。
+ブラウザが autofill / forced-colors 等で付ける背景は強制的に消さない。select の popup はネイティブのまま。
 
 ```html
 <label class="banto-field">
@@ -86,7 +90,7 @@ app.css・Tailwind・Svelte の wrapper は不要。専用クラスを付けな�
 
 通常のテーマと密度、reduced-motion、forced-colors に追従する。
 スキーマフォームでは `BantoForm` の `appearance="underline"` で固定上表示を選べる
-（[forms README](../forms/README.md)、ADR-0024）。省略時の表示は変わらない。
+（[forms README](../forms/README.md)、ADR-0024）。省略時は従来の枠型の構造を保つ。
 
 ## オーバーレイのトークン（v6.1.0 から）
 

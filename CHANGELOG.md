@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- **style(forms):** 入力・ネイティブ select の既定背景を透明にし、hover / readonly でも塗りを加えない。共通下線型、`appearance="default"`、各 field の直接利用、従来の `.banto-input` が対象。枠・下線・フォーカス・文字色・無効状態の減光や破線は維持する（#495、ADR-0025）。
+
 - **feat(forms):** `BantoForm` に任意の `appearance="underline"` を追加し、対応版 theme の共通スタイルを商品・ユーザー管理のフォームで採用した。ラベルは上に固定し、checkbox と既定表示は維持する。各 field の `class` 転送、固定ラベルでの date / textarea 対応も追加。値・検証・送信・エラー関連付けは変わらない（#495、ADR-0024）。
 
 - **refactor(login):** ログイン・初回セットアップの入力を theme の共通スタイルへ移行し、長いパスワード項目名は入力の上に表示する。フォーム全体のエラーを alert として通知し、認証処理・自動入力用属性・LAN のログイン保持条件は維持する（#495）。

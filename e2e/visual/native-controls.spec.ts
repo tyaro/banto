@@ -117,6 +117,13 @@ for (const combo of FULL_MATRIX) {
 			await notes.evaluate((element: HTMLTextAreaElement) => (element.rows = 4));
 
 			const reference = page.getByLabel('Reference');
+			for (const control of await page.locator('.banto-field-control').all()) {
+				await expect(control).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+				if (await control.isEnabled()) {
+					await control.hover();
+					await expect(control).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+				}
+			}
 			await reference.focus();
 			await expect(reference).toBeFocused();
 			await reference.press('ControlOrMeta+A');
