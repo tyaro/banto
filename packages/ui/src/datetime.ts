@@ -446,3 +446,67 @@ export function nearestTime(time: string, candidates: readonly string[]): string
 	}
 	return best;
 }
+
+// --- Date and time ----------------------------------------------------------
+//
+// A date and time is the canonical string `YYYY-MM-DDTHH:mm` (§5.1, D4): a
+// wall-clock time with no time zone and no seconds - the `datetime-local`
+// value. Fixed width, so string order = time order. It is shown and typed with
+// a space in place of the `T` (`2026-11-07 09:30`, §5.3); the value keeps the
+// `T`.
+
+export interface DateTimeParts {
+	/** Canonical `YYYY-MM-DD`. */
+	date: string;
+	/** Canonical `HH:mm`. */
+	time: string;
+}
+
+const CANONICAL_DATETIME = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/;
+
+/** Date and time of a canonical `YYYY-MM-DDTHH:mm` (a real day, 00:00-23:59), else `null`. Strict. */
+export function parseIsoDateTime(value: string): DateTimeParts | null {
+	const match = CANONICAL_DATETIME.exec(value);
+	if (!match || !isIsoDate(match[1]) || !isIsoTime(match[2])) return null;
+	return { date: match[1], time: match[2] };
+}
+
+/** Is `value` a canonical `YYYY-MM-DDTHH:mm`? */
+export function isIsoDateTime(value: string): boolean {
+	return parseIsoDateTime(value) !== null;
+}
+
+/** `YYYY-MM-DDTHH:mm` from a canonical date and time (no validation). */
+export function joinDateTime(date: string, time: string): string {
+	return `${date}T${time}`;
+}
+
+/**
+ * How a value is shown in the text box: a canonical date and time with a
+ * space for the `T` (`2026-11-07 09:30`, §5.3); anything else unchanged
+ * (`null` -> `''`).
+ */
+export function formatDateTimeText(value: string | null | undefined): string {
+	if (value == null) return '';
+	const parts = parseIsoDateTime(value);
+	return parts ? `${parts.date} ${parts.time}` : value;
+}
+
+/** A date part, then `T` or white space, then a time part (after NFKC, so a full-width space is a space). */
+const DATETIME_TEXT = /^([^\sT]+)(?:T|\s+)([^\sT]+)$/;
+
+/**
+ * Typed text -> canonical `YYYY-MM-DDTHH:mm`, or `null` when it is not a date
+ * and time (blank text is also `null` - check {@link isBlankDateText} first).
+ * Accepted (§5.3): a date as {@link parseDateText} reads it, then a space or
+ * `T`, then a time as {@link parseTimeText} reads it (`2026/11/7 9:30`,
+ * `20261107 0930`, `11/7 9` for this year, full-width). Both parts are
+ * required; seconds are refused like {@link parseTimeText} does.
+ */
+export function parseDateTimeText(text: string, currentYear?: number): string | null {
+	const match = DATETIME_TEXT.exec(text.normalize('NFKC').trim());
+	if (!match) return null;
+	const date = parseDateText(match[1], currentYear);
+	const time = parseTimeText(match[2]);
+	return date !== null && time !== null ? joinDateTime(date, time) : null;
+}

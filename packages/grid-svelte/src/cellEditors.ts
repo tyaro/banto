@@ -4,22 +4,24 @@
  * §4, shared-primitives-upstream-plan §2.1 - "the app connects the two"). The
  * counterpart of @banto/forms' `provideFieldInputs`.
  *
- * - `provideCellEditors({ date })` in a layout puts them in the component
+ * - `provideCellEditors({ date, time, datetime })` in a layout puts them in the component
  *   context for every `BantoGrid` below it; the `cellEditors` prop of one
  *   grid overrides it, per editor type.
  * - A type with no injected component keeps the native input
- *   (`<input type="date">`), so the grid used on its own still works (D3-a).
+ *   (`<input type="date">` / `"time"` / `"datetime-local"`), so the grid
+ *   used on its own still works (D3-a).
  *
- * `CellDateEditorProps` is a STRUCTURAL description of what the grid passes
- * - the subset of `@banto/ui`'s `DateInput` props it uses (§5.2), so
- * `DateInput` (or an app wrapper that adds `messages` / `locale`) fits as is.
+ * `CellDateEditorProps` / `CellTimeEditorProps` / `CellDateTimeEditorProps`
+ * are STRUCTURAL descriptions of what the grid passes - the subsets of
+ * `@banto/ui`'s `DateInput` / `TimeInput` / `DateTimeInput` props it uses
+ * (§5.2), so those (or an app wrapper that adds `messages` / `locale`) fit
+ * as they are.
  * The grid keeps its edit state machine (`BantoGrid.svelte`) and relies on
  * the component keeping §5.8's promises: keys inside its popover do not
  * propagate and Esc there closes only the popover; keys the text box handles
  * itself are `preventDefault`ed before `onkeydown`; `onblur` fires only when
  * focus leaves the whole component; `pointerdown` does not propagate out of
- * it (the grid also stops it on its own wrapper). The time / datetime
- * entries come with their field types (date-time-pickers PR-5).
+ * it (the grid also stops it on its own wrapper).
  */
 import { getContext, setContext, type Component } from 'svelte';
 
@@ -54,9 +56,47 @@ export interface CellDateEditorProps {
 	inputEl?: HTMLInputElement;
 }
 
+/** Props the grid passes to an injected time editor (a subset of `@banto/ui` `TimeInput`'s, §5.2). */
+export interface CellTimeEditorProps extends Omit<
+	CellDateEditorProps,
+	'value' | 'min' | 'max' | 'isDateDisabled'
+> {
+	/** The draft as a time: canonical `HH:mm`, or `null` while the text is not one. */
+	value?: string | null;
+	/** Earliest time (canonical `HH:mm`, inclusive): `GridColumn.editorMin`. */
+	min?: string;
+	/** Latest time (canonical `HH:mm`, inclusive): `GridColumn.editorMax`. */
+	max?: string;
+	/** Minutes between the listed times: `GridColumn.editorStep`. */
+	step?: number;
+}
+
+/** Props the grid passes to an injected date-and-time editor (a subset of `@banto/ui` `DateTimeInput`'s, §5.2). */
+export interface CellDateTimeEditorProps extends Omit<
+	CellDateEditorProps,
+	'value' | 'min' | 'max'
+> {
+	/** The draft as a date and time: canonical `YYYY-MM-DDTHH:mm`, or `null` while the text is not one. */
+	value?: string | null;
+	/** Earliest date and time (canonical `YYYY-MM-DDTHH:mm`, inclusive): `GridColumn.editorMin`. */
+	min?: string;
+	/** Latest date and time (canonical `YYYY-MM-DDTHH:mm`, inclusive): `GridColumn.editorMax`. */
+	max?: string;
+	/** Minutes between the listed times: `GridColumn.editorStep`. */
+	step?: number;
+}
+
+/**
+ * What `CellEditor` passes to the editor of any of the three types: every
+ * injected editor above accepts it (each ignores what it does not take).
+ */
+export type CellTemporalEditorProps = CellDateEditorProps & { step?: number };
+
 /** Components the grid renders instead of its native cell inputs, by editor type. */
 export interface CellEditors {
 	date?: Component<CellDateEditorProps>;
+	time?: Component<CellTimeEditorProps>;
+	datetime?: Component<CellDateTimeEditorProps>;
 }
 
 const CELL_EDITORS = Symbol('banto-grid-cell-editors');

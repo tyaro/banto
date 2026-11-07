@@ -15,11 +15,19 @@
  * No Svelte imports — usable standalone and easy to unit test.
  */
 import type { CellEditorType, FilterType, GridColumn } from '../types';
-import { isIsoDate } from './date';
+import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime, isOnTimeStep } from './date';
 
 /** Structural mirror of @banto/forms' `FieldType`. */
 export type SchemaFieldType =
-	'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'password';
+	| 'text'
+	| 'textarea'
+	| 'number'
+	| 'date'
+	| 'time'
+	| 'datetime'
+	| 'select'
+	| 'checkbox'
+	| 'password';
 
 /** Structural mirror of the `FieldDef` properties column derivation reads. */
 export interface SchemaField {
@@ -30,14 +38,17 @@ export interface SchemaField {
 	readonly?: boolean;
 	options?: { value: string | number; label: string }[];
 	/**
-	 * number: value bounds. text/textarea/password: length bounds. date:
-	 * canonical `YYYY-MM-DD` bounds, inclusive (date-time-pickers D9). A bound
-	 * of the other kind is ignored, like forms.
+	 * number: value bounds. text/textarea/password: length bounds. date /
+	 * time / datetime: canonical `YYYY-MM-DD` / `HH:mm` / `YYYY-MM-DDTHH:mm`
+	 * bounds, inclusive (date-time-pickers D9). A bound of the other kind is
+	 * ignored, like forms.
 	 */
 	min?: number | string;
 	max?: number | string;
-	/** date: days that cannot be picked (weekends, holidays). Mirrors forms' `FieldDef.isDateDisabled`. */
+	/** date / datetime: days that cannot be picked (weekends, holidays). Mirrors forms' `FieldDef.isDateDisabled`. */
 	isDateDisabled?: (date: string) => boolean;
+	/** time / datetime: minutes between allowed times from 00:00 (D8). Mirrors forms' `FieldDef.step`. */
+	step?: number;
 	/** text: RegExp source. */
 	pattern?: string;
 	/** Custom validation; return an error message, or null when valid. */
@@ -116,8 +127,22 @@ export interface ColumnValidationMessages {
 	dateMin?: (field: SchemaField, min: string) => string;
 	/** date: later than `max` (canonical `YYYY-MM-DD`). */
 	dateMax?: (field: SchemaField, max: string) => string;
-	/** date: `isDateDisabled` refused the day. */
+	/** date / datetime: `isDateDisabled` refused the day. */
 	dateDisabled?: (field: SchemaField, date: string) => string;
+	/** time: the value is not a canonical `HH:mm` (00:00-23:59). */
+	timeInvalid?: (field: SchemaField) => string;
+	/** time: earlier than `min` (canonical `HH:mm`). */
+	timeMin?: (field: SchemaField, min: string) => string;
+	/** time: later than `max` (canonical `HH:mm`). */
+	timeMax?: (field: SchemaField, max: string) => string;
+	/** time / datetime: the time is off the `step` grid counted from 00:00 (`step` in minutes). */
+	timeStep?: (field: SchemaField, step: number) => string;
+	/** datetime: the value is not a canonical `YYYY-MM-DDTHH:mm`. */
+	dateTimeInvalid?: (field: SchemaField) => string;
+	/** datetime: earlier than `min`; `min` is shown as `YYYY-MM-DD HH:mm`. */
+	dateTimeMin?: (field: SchemaField, min: string) => string;
+	/** datetime: later than `max`; `max` is shown as `YYYY-MM-DD HH:mm`. */
+	dateTimeMax?: (field: SchemaField, max: string) => string;
 }
 
 const defaultColumnValidationMessages: Required<ColumnValidationMessages> = {
@@ -130,7 +155,14 @@ const defaultColumnValidationMessages: Required<ColumnValidationMessages> = {
 	dateInvalid: () => '日付を YYYY-MM-DD の形で入力してください',
 	dateMin: (_field, min) => `${min}以降の日付を入力してください`,
 	dateMax: (_field, max) => `${max}以前の日付を入力してください`,
-	dateDisabled: () => 'この日付は選べません'
+	dateDisabled: () => 'この日付は選べません',
+	timeInvalid: () => '時刻を HH:mm の形で入力してください',
+	timeMin: (_field, min) => `${min}以降の時刻を入力してください`,
+	timeMax: (_field, max) => `${max}以前の時刻を入力してください`,
+	timeStep: (_field, step) => `${step}分刻みの時刻を入力してください`,
+	dateTimeInvalid: () => '日時を YYYY-MM-DD HH:mm の形で入力してください',
+	dateTimeMin: (_field, min) => `${min}以降の日時を入力してください`,
+	dateTimeMax: (_field, max) => `${max}以前の日時を入力してください`
 };
 
 /**
@@ -171,6 +203,26 @@ function fieldValidator<TRow>(
 					return msg.dateMax(field, field.max);
 				if (field.isDateDisabled?.(value)) return msg.dateDisabled(field, value);
 			}
+			if (field.type === 'time') {
+				if (!isIsoTime(value)) return msg.timeInvalid(field);
+				if (typeof field.min === 'string' && value < field.min)
+					return msg.timeMin(field, field.min);
+				if (typeof field.max === 'string' && value > field.max)
+					return msg.timeMax(field, field.max);
+				if (field.step !== undefined && !isOnTimeStep(value, field.step))
+					return msg.timeStep(field, field.step);
+			}
+			if (field.type === 'datetime') {
+				if (!isIsoDateTime(value)) return msg.dateTimeInvalid(field);
+				if (typeof field.min === 'string' && value < field.min)
+					return msg.dateTimeMin(field, formatDateTimeText(field.min));
+				if (typeof field.max === 'string' && value > field.max)
+					return msg.dateTimeMax(field, formatDateTimeText(field.max));
+				const [date, time] = value.split('T');
+				if (field.isDateDisabled?.(date)) return msg.dateDisabled(field, date);
+				if (field.step !== undefined && !isOnTimeStep(time, field.step))
+					return msg.timeStep(field, field.step);
+			}
 			if (field.type === 'text' || field.type === 'textarea' || field.type === 'password') {
 				// Trimmed length + raw-string pattern, same as forms' validateField.
 				const str = String(value);
@@ -190,6 +242,8 @@ const EDITOR_BY_TYPE: Partial<Record<SchemaFieldType, CellEditorType>> = {
 	textarea: 'text',
 	number: 'number',
 	date: 'date',
+	time: 'time',
+	datetime: 'datetime',
 	select: 'select',
 	checkbox: 'checkbox'
 };
@@ -206,9 +260,10 @@ const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
  * - `password` fields are skipped entirely (a grid must never display them).
  * - `label` → `header`, `name` → `id` + `accessor`.
  * - `text`/`textarea`/`number` become filterable with the matching
- *   `filterType`; `number` is right-aligned. `date`/`select`/`checkbox` are
+ *   `filterType`; `number` is right-aligned. `date`/`time`/`datetime`/`select`/`checkbox` are
  *   not filterable by default (FilterPopover only offers text/number ops) -
  *   opt in via `overrides`.
+ * - `datetime` is shown with a space for the `T` (a default `format`).
  * - Non-`readonly` fields get the matching cell editor + a validator with
  *   the same rules/messages the form applies (see [`fieldValidator`]);
  *   `readonly` fields derive as display-only columns.
@@ -245,6 +300,12 @@ export function columnsFromSchema<TRow>(
 			column.filterType = filterType;
 		}
 		if (field.type === 'number') column.align = 'right';
+		// A date and time is shown with a space (`2026-11-07 09:30`, date-time-pickers
+		// §5.3); the value (and a copy to the clipboard) keeps the `T`.
+		if (field.type === 'datetime') {
+			column.format = (value) =>
+				typeof value === 'string' ? formatDateTimeText(value) : value == null ? '' : String(value);
+		}
 
 		if (field.type === 'select' && field.options) {
 			const labels = new Map(field.options.map((option) => [option.value, option.label]));
@@ -259,12 +320,13 @@ export function columnsFromSchema<TRow>(
 			column.editable = true;
 			column.editor = editor;
 			if (editor === 'select' && field.options) column.editorOptions = field.options;
-			if (editor === 'date') {
-				// The calendar's range / disabled days (date-time-pickers §5.6); the
-				// validator enforces the same rules on commit.
+			if (editor === 'date' || editor === 'time' || editor === 'datetime') {
+				// The picker's range / disabled days / step (date-time-pickers §5.6);
+				// the validator enforces the same rules on commit.
 				if (typeof field.min === 'string') column.editorMin = field.min;
 				if (typeof field.max === 'string') column.editorMax = field.max;
-				if (field.isDateDisabled) column.isDateDisabled = field.isDateDisabled;
+				if (field.isDateDisabled && editor !== 'time') column.isDateDisabled = field.isDateDisabled;
+				if (field.step !== undefined && editor !== 'date') column.editorStep = field.step;
 			}
 			column.validate = fieldValidator<TRow>(field, options.messages);
 		}

@@ -4,7 +4,7 @@
  * package's unit tests stub geometry and the scoped CSS that carries the
  * `--banto-z-modal` z-index), the Menu's long-menu cap and internal scroll
  * (#427), the DateInput calendar (date-time-pickers PR-1), the TimeInput
- * list (PR-2), plus an axe scan
+ * list (PR-2), the DateTimeInput dialog (PR-5), plus an axe scan
  * of the open layers in the two
  * diagonal theme combos (the closed page's pixels are covered by the
  * `ui-demo` screenshot in visual.spec.ts). Same `visual` project as the other
@@ -418,6 +418,90 @@ for (const combo of DIAGONAL_MATRIX) {
 			await input.focus();
 			await page.keyboard.press('ArrowDown');
 			await expect(list).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(results.violations, formatViolations(results.violations)).toEqual([]);
+	});
+}
+
+test.describe('ui-demo DateTimeInput', () => {
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	test('a day moves to the time list, a time sets the value and returns to the text box', async ({
+		page
+	}) => {
+		const input = page.getByRole('textbox', { name: '開始日時' });
+		const dialog = page.getByRole('dialog', { name: '日時の選択' });
+		const list = dialog.getByRole('listbox', { name: '時刻の一覧' });
+		// A key pressed before hydration is lost: retry the open until it shows.
+		await expect(async () => {
+			await input.focus();
+			await page.keyboard.press('Alt+ArrowDown');
+			await expect(dialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		await expect(dialog.locator('[data-date="2026-11-07"]')).toBeFocused();
+		await page.keyboard.press('ArrowRight');
+		await page.keyboard.press('Enter');
+		await expect(list).toBeFocused();
+		await expect(input).toHaveValue('2026-11-07 09:30');
+		const activeId = await list.getAttribute('aria-activedescendant');
+		await expect(page.locator(`[id="${activeId}"]`)).toHaveText('09:30');
+		await expect(list.getByRole('option', { name: '09:30' })).toBeInViewport();
+		await page.keyboard.press('ArrowDown');
+		await page.keyboard.press('Enter');
+		await expect(dialog).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('2026-11-08 10:00');
+		await expect(page.getByTestId('ui-demo-starts-at-value')).toContainText('2026-11-08T10:00');
+		// Typed text: Excel's form, normalised on Enter.
+		await input.fill('2026/12/24 9:05');
+		await page.keyboard.press('Enter');
+		await expect(input).toHaveValue('2026-12-24 09:05');
+	});
+
+	test('the bounds refuse times on the edge days; Esc closes without a change', async ({
+		page
+	}) => {
+		const input = page.getByRole('textbox', { name: /^訪問日時/ });
+		const opener = page.getByRole('button', { name: '日時を選択' });
+		await opener.scrollIntoViewIfNeeded();
+		await page.waitForTimeout(100);
+		const dialog = page.getByRole('dialog', { name: '日時の選択' });
+		await expect(async () => {
+			await opener.click();
+			await expect(dialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		await dialog.locator('[data-date="2026-11-02"]').click();
+		const list = dialog.getByRole('listbox', { name: '時刻の一覧' });
+		await expect(list).toBeFocused();
+		await expect(list.getByRole('option', { name: '08:30' })).toHaveAttribute(
+			'aria-disabled',
+			'true'
+		);
+		await list.getByRole('option', { name: '08:30' }).click({ force: true });
+		await expect(dialog).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('');
+	});
+});
+
+for (const combo of DIAGONAL_MATRIX) {
+	test(`open date-time dialog has no wcag2a/wcag2aa violations (${comboLabel(combo)})`, async ({
+		page
+	}) => {
+		await primeThemeAndAuth(page, combo);
+		await gotoDemo(page);
+		const input = page.getByRole('textbox', { name: '開始日時' });
+		const dialog = page.getByRole('dialog', { name: '日時の選択' });
+		await expect(async () => {
+			await input.focus();
+			await page.keyboard.press('Alt+ArrowDown');
+			await expect(dialog).toBeVisible({ timeout: 1000 });
 		}).toPass();
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 		expect(results.violations, formatViolations(results.violations)).toEqual([]);

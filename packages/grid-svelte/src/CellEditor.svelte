@@ -1,13 +1,15 @@
 <script lang="ts">
 	/**
-	 * Inline cell editor markup (select / checkbox / text-number-date input).
+	 * Inline cell editor markup (select / checkbox / text-number-date-time input).
 	 * Template only: edit state transitions, key/blur handling and focus
 	 * management stay in `BantoGrid.svelte` and arrive here as callbacks. The
 	 * draft is never written here; `onDraftChange` lets the grid own it.
 	 *
-	 * A date editor injected by the app (`dateEditor`, date-time-pickers §5.8,
-	 * `cellEditors.ts`) replaces the native `<input type="date">`. It gets the
-	 * draft as its text and reports every text change back, so the grid's
+	 * A date / time / date-and-time editor injected by the app (`dateEditor`
+	 * / `timeEditor` / `dateTimeEditor`, date-time-pickers §5.8,
+	 * `cellEditors.ts`) replaces the native `<input type="date">` / `"time"` /
+	 * `"datetime-local"`. It gets the draft as its text (a canonical date and
+	 * time shown with a space, §5.3) and reports every text change back, so the grid's
 	 * Enter / Tab / blur commit stays the one path. Its wrapper is the
 	 * editor's root for the grid (`editorRootEl`): pointerdown, click and
 	 * dblclick inside it - the button, the calendar (a top-layer popover that
@@ -18,9 +20,20 @@
 	 */
 	import type { Component } from 'svelte';
 	import type { CellEditorType } from './types';
-	import type { CellDateEditorProps } from './cellEditors';
+	import type {
+		CellDateEditorProps,
+		CellDateTimeEditorProps,
+		CellTemporalEditorProps,
+		CellTimeEditorProps
+	} from './cellEditors';
 	import { resolveSelectValue } from './core/clipboard';
-	import { isIsoDate } from './core/date';
+	import {
+		formatDateTimeText,
+		isIsoDate,
+		isIsoDateTime,
+		isIsoTime,
+		nativeTimeStep
+	} from './core/date';
 
 	let {
 		editor,
@@ -31,9 +44,12 @@
 		draft,
 		options,
 		dateEditor,
+		timeEditor,
+		dateTimeEditor,
 		min,
 		max,
 		isDateDisabled,
+		step,
 		editorEl = $bindable(),
 		editorRootEl = $bindable(),
 		onDraftChange,
@@ -50,9 +66,15 @@
 		options: { value: string | number; label: string }[] | undefined;
 		/** Injected date editor (`CellEditors.date`); omitted: the native input. */
 		dateEditor?: Component<CellDateEditorProps>;
+		/** Injected time editor (`CellEditors.time`); omitted: the native input. */
+		timeEditor?: Component<CellTimeEditorProps>;
+		/** Injected date-and-time editor (`CellEditors.datetime`); omitted: the native input. */
+		dateTimeEditor?: Component<CellDateTimeEditorProps>;
 		min?: string;
 		max?: string;
 		isDateDisabled?: (date: string) => boolean;
+		/** Minutes between listed times (time / datetime). */
+		step?: number;
 		editorEl: HTMLInputElement | HTMLSelectElement | undefined;
 		/** The injected editor's wrapper (unset for the native inputs, whose root is `editorEl`). */
 		editorRootEl?: HTMLElement | null;
@@ -62,8 +84,54 @@
 		onBlur: (event: FocusEvent) => void;
 	} = $props();
 
-	const DateEditor = $derived(editor === 'date' ? dateEditor : undefined);
+	const DateEditor = $derived<Component<CellTemporalEditorProps> | undefined>(
+		editor === 'date'
+			? dateEditor
+			: editor === 'time'
+				? timeEditor
+				: editor === 'datetime'
+					? dateTimeEditor
+					: undefined
+	);
 	const draftText = $derived(String(draft ?? ''));
+	/** The draft as the injected editor's value: canonical for the column's type, else `null`. */
+	const pickerValue = $derived.by(() => {
+		if (editor === 'time') return isIsoTime(draft) ? draft : null;
+		if (editor !== 'datetime') return isIsoDate(draft) ? draft : null;
+		// The shown form (`2026-11-07 09:30`, what the editor writes back after
+		// a pick or a commit) is that value too.
+		const canonical = draftText.replace(' ', 'T');
+		return isIsoDateTime(canonical) ? canonical : null;
+	});
+	// A canonical date and time is shown with a space (§5.3) until the editor
+	// reports text of its own: from then on the box shows the draft as typed
+	// (rewriting it mid-typing would move the caret); `parseCellInput`
+	// normalises it on commit.
+	let typedText = $state(false);
+	const pickerText = $derived(
+		editor === 'datetime' && !typedText ? formatDateTimeText(draftText) : draftText
+	);
+	function handleTextInput(text: string) {
+		typedText = true;
+		onDraftChange(text);
+	}
+	const nativeType = $derived(
+		editor === 'number'
+			? 'number'
+			: editor === 'date'
+				? 'date'
+				: editor === 'time'
+					? 'time'
+					: editor === 'datetime'
+						? 'datetime-local'
+						: 'text'
+	);
+	const isTemporal = $derived(editor === 'date' || editor === 'time' || editor === 'datetime');
+	// The native time inputs count `step` in seconds and from `min`: given only
+	// when that agrees with the validator's 00:00-based step (`nativeTimeStep`).
+	const nativeStep = $derived(
+		editor === 'time' || editor === 'datetime' ? nativeTimeStep(editor, step, min) : undefined
+	);
 
 	function stop(event: Event) {
 		event.stopPropagation();
@@ -117,26 +185,30 @@
 	>
 		<DateEditor
 			bind:inputEl={() => editorEl as HTMLInputElement | undefined, (el) => (editorEl = el)}
-			value={isIsoDate(draft) ? draft : null}
-			text={draftText}
-			onTextInput={onDraftChange}
+			value={pickerValue}
+			text={pickerText}
+			onTextInput={handleTextInput}
 			{label}
 			{describedBy}
 			{invalid}
 			readonly={pending}
 			{min}
 			{max}
-			{isDateDisabled}
+			isDateDisabled={editor === 'time' ? undefined : isDateDisabled}
+			{step}
 			onkeydown={onKeydown}
 			onblur={onBlur}
 		/>
 	</div>
 {:else}
 	<input
-		type={editor === 'number' ? 'number' : editor === 'date' ? 'date' : 'text'}
+		type={nativeType}
 		bind:this={editorEl}
 		{...common}
 		class:pending
+		min={isTemporal ? min : undefined}
+		max={isTemporal ? max : undefined}
+		step={nativeStep}
 		value={String(draft ?? '')}
 		oninput={(event) => onDraftChange(event.currentTarget.value)}
 	/>

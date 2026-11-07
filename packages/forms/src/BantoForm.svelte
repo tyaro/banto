@@ -4,12 +4,12 @@
 	 * single column (default layout), wires value/blur to the FormStore, and
 	 * runs full validation on submit before calling `onSubmit`.
 	 *
-	 * Date fields render the date input injected by `provideFieldInputs`
-	 * (context) or the `fieldInputs` prop (which wins, per type), else the
-	 * native input (date-time-pickers §5.7, D1-a / D3-a).
+	 * Date / time / datetime fields render the input of their type injected
+	 * by `provideFieldInputs` (context) or the `fieldInputs` prop (which wins,
+	 * per type), else the native input (date-time-pickers §5.7, D1-a / D3-a).
 	 */
 	import type { Snippet } from 'svelte';
-	import type { FieldDef, FormSchema, FormAppearance } from './types';
+	import { isTemporalType, type FieldDef, type FormSchema, type FormAppearance } from './types';
 	import type { FormStore } from './store.svelte';
 	import { getFieldInputs, type FieldInputs } from './fieldInputs';
 	import TextField from './fields/TextField.svelte';
@@ -82,9 +82,10 @@
 		{@const inputId = `${formId}-field-${index}`}
 		{@const errorId = `${formId}-error-${index}`}
 		{@const underline = appearance === 'underline' && def.type !== 'checkbox'}
-		{@const injected = def.type === 'date' && !!inputs.date}
+		{@const temporalInput = isTemporalType(def.type) ? inputs[def.type] : undefined}
+		{@const injected = !!temporalInput}
 		{#snippet control()}
-			{#if def.type === 'date'}
+			{#if isTemporalType(def.type)}
 				<DateField
 					{def}
 					class={underline ? 'banto-field-control' : undefined}
@@ -95,7 +96,7 @@
 					disabled={submitting}
 					onInput={(value: unknown) => store.setValue(def.name, value)}
 					onBlur={() => store.touch(def.name)}
-					input={inputs.date}
+					input={temporalInput}
 				/>
 			{:else}
 				<Field
