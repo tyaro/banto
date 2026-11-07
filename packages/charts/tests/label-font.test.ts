@@ -125,6 +125,75 @@ describe('trackFontSize', () => {
 		expect(trackFontSize((px) => seen.push(px))(el)).toBeUndefined();
 		expect(seen).toEqual([14]);
 	});
+
+	// In a real SVG the label itself is not observed: an empty label ('' from
+	// a formatter) has a zero box that never resizes, so a hidden probe with
+	// the same classes and fixed text is measured and observed instead.
+	it('observes a non-empty probe with the label classes, not the (possibly empty) label', () => {
+		const fontByNode = new Map<object, string>();
+		const observed: object[] = [];
+		let callback: (() => void) | undefined;
+		vi.stubGlobal('getComputedStyle', (node: object) => ({ fontSize: fontByNode.get(node) ?? '' }));
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(cb: () => void) {
+					callback = cb;
+				}
+				observe(node: object) {
+					observed.push(node);
+				}
+				disconnect() {}
+			}
+		);
+		const children: object[] = [];
+		const created: Record<string, unknown>[] = [];
+		const doc = {
+			createElementNS: (_ns: string, tag: string) => {
+				const attrs: Record<string, string> = {};
+				const node: Record<string, unknown> = {
+					tag,
+					attrs,
+					textContent: '',
+					setAttribute: (k: string, v: string) => (attrs[k] = v),
+					remove: () => children.splice(children.indexOf(node), 1)
+				};
+				created.push(node);
+				return node;
+			}
+		};
+		const svg = { appendChild: (n: object) => children.push(n) };
+		const label = {
+			textContent: '', // e.g. formatY(0) === ''
+			ownerSVGElement: svg,
+			ownerDocument: doc,
+			getAttribute: (k: string) => (k === 'class' ? 'tick-label svelte-abc' : null)
+		} as unknown as Element;
+
+		const seen: number[] = [];
+		const attach = trackFontSize((px) => seen.push(px));
+		// the probe gets its size from the same scoped class rule
+		const origCreate = doc.createElementNS;
+		doc.createElementNS = (ns: string, tag: string) => {
+			const node = origCreate(ns, tag);
+			fontByNode.set(node, '11.2px');
+			return node;
+		};
+		const cleanup = attach(label) as () => void;
+		const probe = created[0];
+		expect(probe.tag).toBe('text');
+		expect(probe.textContent).toBe('0');
+		expect((probe.attrs as Record<string, string>).class).toBe('tick-label svelte-abc');
+		expect((probe.attrs as Record<string, string>)['aria-hidden']).toBe('true');
+		expect(children).toEqual([probe]);
+		expect(observed).toEqual([probe]); // not the empty label
+		expect(seen).toEqual([11.2]);
+		fontByNode.set(probe, '16px'); // root font size changed: the probe resizes
+		callback?.();
+		expect(seen).toEqual([11.2, 16]);
+		cleanup();
+		expect(children).toEqual([]);
+	});
 });
 
 // Verification conditions of D9-b: (1) root font size other than 14px,

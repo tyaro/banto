@@ -28,14 +28,43 @@ export function readFontSizePx(
 	return Number.isFinite(px) && px > 0 ? px : fallback;
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Fixed text of the measuring probe: never empty, so its box always tracks the font. */
+export const PROBE_TEXT = '0';
+
+/**
+ * A hidden `<text>` carrying the label's classes (so the same scoped
+ * `font-size` rule applies) with a fixed, non-empty string, appended to the
+ * label's root `<svg>` (after everything Svelte renders there, so it never
+ * sits inside a keyed block's range). Returns null where it can't be made
+ * (no owner SVG / DOM, e.g. node tests): the label itself is observed then.
+ */
+function createProbe(label: Element): SVGTextElement | null {
+	const svg = (label as SVGElement).ownerSVGElement;
+	const doc = label.ownerDocument;
+	if (!svg || !doc) return null;
+	const probe = doc.createElementNS(SVG_NS, 'text');
+	probe.setAttribute('class', label.getAttribute('class') ?? '');
+	probe.setAttribute('aria-hidden', 'true');
+	probe.setAttribute('visibility', 'hidden');
+	probe.setAttribute('data-banto-font-probe', '');
+	probe.textContent = PROBE_TEXT;
+	svg.appendChild(probe);
+	return probe;
+}
+
 /**
  * Attachment for ONE representative label `<text>` (all labels of a class
- * share the size): reports its computed font size on mount and again whenever
- * its box resizes - a root font-size change or a token override at runtime
- * resizes the glyphs, so the margins re-estimate without a remount.
+ * share the size): reports the computed font size on mount and again whenever
+ * a hidden probe with the same classes and a fixed non-empty text resizes - a
+ * root font-size change or a token override at runtime resizes the glyphs,
+ * so the margins re-estimate without a remount. The probe (not the label) is
+ * observed because a label can be empty (e.g. `formatY` turning 0 into ''),
+ * whose zero-size box would never report a font change.
  *
- * No feedback loop: the margin only moves the label (`x`), it never changes
- * its font size or box size, and the callback is expected to store a
+ * No feedback loop: the margin only moves the labels (`x`); the probe's size
+ * depends on the font alone, and the callback is expected to store a
  * primitive `$state` (re-assigning the same number is a no-op). The first
  * read runs synchronously in the attach effect, i.e. before the first paint,
  * so the 11px fallback layout is never shown when the real size differs.
@@ -44,16 +73,21 @@ export function readFontSizePx(
  */
 export function trackFontSize(onChange: (px: number) => void): Attachment<Element> {
 	return (element) => {
+		const probe = createProbe(element);
+		const target = probe ?? element;
 		// An unreadable size (e.g. a transiently detached node) keeps the last
 		// reported value instead of snapping back to the 11px fallback.
 		const read = () => {
-			const px = readFontSizePx(element, Number.NaN);
+			const px = readFontSizePx(target, Number.NaN);
 			if (!Number.isNaN(px)) onChange(px);
 		};
 		read();
-		if (typeof ResizeObserver !== 'function') return;
-		const observer = new ResizeObserver(read);
-		observer.observe(element);
-		return () => observer.disconnect();
+		const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(read) : null;
+		observer?.observe(target);
+		if (!observer && !probe) return;
+		return () => {
+			observer?.disconnect();
+			probe?.remove();
+		};
 	};
 }
