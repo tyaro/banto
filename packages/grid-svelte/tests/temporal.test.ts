@@ -177,7 +177,9 @@ describe('columnsFromSchema for time / datetime', () => {
 			editorStep: 30
 		});
 		expect(starts.isDateDisabled).toBeTypeOf('function');
-		expect(starts.filterable).toBeUndefined();
+		// A date and time filters by a day range (§5.9); a time does not.
+		expect(starts).toMatchObject({ filterable: true, filterType: 'datetime' });
+		expect(at.filterable).toBeUndefined();
 	});
 
 	it('shows a date and time with a space', () => {

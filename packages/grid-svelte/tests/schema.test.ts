@@ -59,9 +59,11 @@ describe('columnsFromSchema', () => {
 		expect(byId('name').filterType).toBe('text');
 		expect(byId('price').filterType).toBe('number');
 		expect(byId('price').align).toBe('right');
-		// date/select/checkbox: not filterable by default (FilterPopover has
-		// no ops for them).
-		expect(byId('updatedAt').filterable).toBeUndefined();
+		// date: a day range (date-time-pickers §5.9), read-only columns too.
+		expect(byId('updatedAt').filterable).toBe(true);
+		expect(byId('updatedAt').filterType).toBe('date');
+		// select/checkbox: not filterable by default (FilterPopover has no ops
+		// for them).
 		expect(byId('category').filterable).toBeUndefined();
 	});
 

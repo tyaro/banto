@@ -25,7 +25,13 @@ export type FilterOp =
 	| 'starts_with'
 	| 'in'
 	| 'is_null'
-	| 'not_null';
+	| 'not_null'
+	/**
+	 * Half-open range `[from, to)` (date-time-pickers §5.9, D12): the value is
+	 * `[from | null, to | null]`, matched as text (`from <= v && v < to`); a
+	 * `null` end drops that side. Mirrors Rust's `FilterOp::Between`.
+	 */
+	| 'between';
 
 export interface FilterState {
 	field: string;
@@ -33,7 +39,12 @@ export interface FilterState {
 	value: unknown;
 }
 
-export type FilterType = 'text' | 'number';
+/**
+ * What FilterPopover offers for a column: text / number operators, or a
+ * day range (`between`) for a column of canonical dates (`date`) or dates
+ * and times (`datetime`) - date-time-pickers §5.9.
+ */
+export type FilterType = 'text' | 'number' | 'date' | 'datetime';
 
 /** Built-in per-group aggregate functions for a column (spec §4.3, client mode only). */
 export type AggregateKind = 'sum' | 'avg' | 'count';
@@ -89,7 +100,12 @@ export interface GridColumn<TRow> {
 	sortable?: boolean;
 	/** Default false. */
 	filterable?: boolean;
-	/** Default 'text'; controls which ops FilterPopover offers. */
+	/**
+	 * Default 'text'; controls which ops FilterPopover offers. `date` /
+	 * `datetime` offer a day range (`between`) and also make the client sort
+	 * and filter compare the values as text (canonical strings sort in time
+	 * order, §5.9).
+	 */
 	filterType?: FilterType;
 	align?: 'left' | 'right' | 'center';
 	format?: (value: unknown, row: TRow) => string;

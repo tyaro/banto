@@ -74,9 +74,34 @@ function matchOne(row: Record<string, unknown>, filter: FilterState): boolean {
 			return isNullish(value);
 		case 'not_null':
 			return !isNullish(value);
+		case 'between':
+			return matchesBetween(value, filter.value);
 		default:
 			return true;
 	}
+}
+
+/**
+ * `between` (date-time-pickers §5.9): the half-open `[from, to)` compared as
+ * text, a `null` end dropping that side, both `null` keeping every row.
+ * Must stay in sync with `packages/grid-svelte/src/core/filter.ts`'s
+ * `matchesBetween` and banto-storage's `push_between` (shared cases:
+ * `crates/banto-storage/testdata/filter-between-parity.json`). A malformed
+ * value matches nothing (the server answers it with a 400).
+ */
+function matchesBetween(value: unknown, range: unknown): boolean {
+	if (
+		!Array.isArray(range) ||
+		range.length !== 2 ||
+		!range.every((end) => end === null || typeof end === 'string')
+	) {
+		return false;
+	}
+	const [from, to] = range as [string | null, string | null];
+	if (from === null && to === null) return true;
+	if (isNullish(value)) return false;
+	const text = String(value);
+	return (from === null || text >= from) && (to === null || text < to);
 }
 
 /** Apply all filters with AND semantics. */

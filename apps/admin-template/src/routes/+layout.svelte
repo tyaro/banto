@@ -16,6 +16,7 @@
 	import CellTimeInput from '#lib/components/CellTimeInput.svelte';
 	import FormDateTimeInput from '#lib/components/FormDateTimeInput.svelte';
 	import CellDateTimeInput from '#lib/components/CellDateTimeInput.svelte';
+	import FilterDateRangeInput from '#lib/components/FilterDateRangeInput.svelte';
 	import {
 		isNavigationSettled,
 		trackFirstNavigation
@@ -28,7 +29,12 @@
 	// so the app hands them the components. A form / grid can still override
 	// them with its `fieldInputs` / `cellEditors` prop.
 	provideFieldInputs({ date: FormDateInput, time: FormTimeInput, datetime: FormDateTimeInput });
-	provideCellEditors({ date: CellDateInput, time: CellTimeInput, datetime: CellDateTimeInput });
+	provideCellEditors({
+		date: CellDateInput,
+		time: CellTimeInput,
+		datetime: CellDateTimeInput,
+		dateRange: FilterDateRangeInput
+	});
 
 	// Start theme handling (applies persisted mode, watches OS changes) and sync
 	// <html lang> to the persisted locale (ADR-0005; the strategy itself is

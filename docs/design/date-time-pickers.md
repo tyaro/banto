@@ -1,7 +1,7 @@
 # 日付・時刻ピッカーの設計（日付・時刻・日時・期間）
 
 作成日: 2026-11-07
-状態: **実装中**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）完了（#520）。PR-2（ui: `TimeInput`・時刻の解析と刻み）完了（#522）。PR-3（forms への組み込み）完了（#523）。PR-4（grid への組み込み）完了（#527）。PR-5（時刻・日時の型・`DateTimeInput`・banto-core の検証関数）実装中。PR-6 は未着手。
+状態: **完了**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）完了（#520）。PR-2（ui: `TimeInput`・時刻の解析と刻み）完了（#522）。PR-3（forms への組み込み）完了（#523）。PR-4（grid への組み込み）完了（#527）。PR-5（時刻・日時の型・`DateTimeInput`・banto-core の検証関数）完了（#530）。PR-6（期間: `DateRangeInput`・`FilterOp::between`・FilterPopover）で全 PR が揃い、本書の範囲は**完了**（§8 の未確認の点のうち実機に関わるものは残る）。
 トラック: 保守者向け（トラックA）
 関連: [conventions](../conventions.md) §3（依存を足さない）・§4／§5（パッケージ間の import 禁止）・§9（寸法トークン）・
 §13（文言はキー経由）/ [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`）/
@@ -489,6 +489,10 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
   重ならない。PR-4 では同じグリッドで、カレンダーを開いたまま見出しの絞り込みボタンを押すとカレンダーが閉じて編集が
   確定し、開いた FilterPopover の Esc は FilterPopover だけを閉じることを確かめた（`e2e/visual/ui-overlays.spec.ts` の
   ui-demo のグリッド）。FilterPopover の上にカレンダーを重ねたときの Esc は PR-6 で確かめる。
+  → PR-6 で確かめた。FilterPopover の中の `DateRangeInput` でカレンダーを開くと、カレンダーの Esc はパネルの中で止まって
+  カレンダーだけが閉じ（入力欄へ戻る）、次の Esc で FilterPopover が閉じてフォーカスは絞り込みボタンへ戻る。カレンダーの
+  `pointerdown` は DOM では FilterPopover の根の中なので、FilterPopover の外側判定（window の capture）にも掛からない
+  （`packages/grid-svelte/tests/filterRange.test.ts` と e2e の smoke `3g`。ui・FilterPopover の Esc の経路の変更は不要だった）。
 - `editFocus.owned` が「ダイアログ → 入力欄」へ戻ったときに正しく取り直されるか（§5.8）。
   → PR-4 で `relinquishFocus` の判定を部品の根（grid が注入した部品を包む要素）に広げ、ボタン・カレンダーの日を押しても、
   カレンダーへフォーカスが移っても持ち主のままにした。カレンダーを開いたままセルの外を押すと、`DateInput` が閉じる
@@ -496,8 +500,15 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
   フォーカスを奪い返さない、#212 の規則）。`packages/grid-svelte/tests/cellEditors.test.ts` で確かめた。
 - PostgreSQL の TEXT の比較が照合順序（collation）の影響を受けないか。固定幅の ISO 文字列なら順序は保たれる
   見込みだが、`between` では `COLLATE "C"` を付けるかを実装の PR で確かめる。
+  → PR-6 で付けた。PostgreSQL の既定の照合順序（`en_US.UTF-8` など）は記号を後回しにして比べるので、正規の形どうしなら
+  順は保たれるが、形の違う値（秒付き、`T` と空白）や英字を含む値でクライアントの文字列比較（JS の `<`）と食い違いうる。
+  `between` は `CAST(列 AS TEXT) COLLATE "C" >= $1 AND ... < $2` で比べる（SQLite の既定 `BINARY` は既に符号単位の順）。
+  キャストは `DATE`／`TIMESTAMP` の列でも動かすため。代わりにその列の通常の索引は効かない（`COLLATE "C"` の索引が要る）。
+  CI の `storage-postgres`（既定の照合順序のコンテナ）で共通ケースを流す。
 - スクリーンリーダーの実機での読み上げ（NVDA ＋ WebView2、VoiceOver ＋ WKWebView）。
 - 既存の基準画像のうち、ネイティブの date 入力が写っているものの数（PR-3 で再生成する範囲）。
 - 派生アプリ（banto-industrial など）が date 型の空値を `''` として扱っていないか（D6 の影響）。
 - `items.updated_at` の `date('now')` は SQLite では UTC の日付で、ピッカーの「今日」（ブラウザのローカル日付）と
   日本時間の 0〜9 時に食い違う。本設計の範囲外だが、期間の絞り込みの確認で目に付くはず。
+  → PR-6 の時点でも未対応（範囲外）。日本時間の 0〜9 時に保存した行は前日の日付になるので、カレンダーの「今日」で
+  絞り込むとその行が出ない。直すなら保存側でローカルの日付を書く（別の課題）。

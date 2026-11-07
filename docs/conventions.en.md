@@ -318,6 +318,10 @@ without a runtime guard are **upheld by reviewing every call site**.
   grid's client sort keeps the order of the array it was given). One fixture,
   `crates/banto-storage/testdata/list-order-parity.json`, is read by all three
   test suites - change the fixture and all three together.
+  **The `between` filter (the half-open `[from, to)` compared as text,
+  date-time-pickers §5.9) is shared by the same three implementations**: one
+  fixture, `crates/banto-storage/testdata/filter-between-parity.json`, is read
+  by the SQL (SQLite and PostgreSQL), InMemory and grid client-filter tests.
   **Lists with a boundary (`asOfId`)** (Issue #248,
   [ADR-0015](adr/0015-snapshot-list-resource.en.md)): a list whose rows come
   and go without change events (the audit log) is read with

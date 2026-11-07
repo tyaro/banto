@@ -84,9 +84,10 @@
 		 */
 		messages?: Partial<GridMessages>;
 		/**
-		 * Injected cell editors (date-time-pickers §5.8, D1-a), per editor type;
-		 * wins over `provideCellEditors` (context). A type with neither keeps
-		 * the native input (D3-a).
+		 * Injected cell editors (date-time-pickers §5.8, D1-a), per editor type,
+		 * and the filter's day-range input (`dateRange`, §5.9); wins over
+		 * `provideCellEditors` (context). A type with neither keeps the native
+		 * input (D3-a).
 		 */
 		cellEditors?: CellEditors;
 	}
@@ -1136,6 +1137,9 @@
 	// plain Ctrl/Cmd+V with no extra permission.
 	function handlePaste(event: ClipboardEvent) {
 		if (editing) return; // let the focused editor input's native paste behavior run instead
+		// A paste into a header control - the filter popover's value or date
+		// boxes - is that control's own, like a bubbled key (handleContainerKeydown).
+		if (event.target !== event.currentTarget) return;
 		if (!onRangePaste) return;
 		if (!selection.active) return;
 		const text = event.clipboardData?.getData('text/plain') ?? '';
@@ -1228,6 +1232,7 @@
 						onDragEnd={handleDragEnd}
 						onSortOrFilterChange={notifyParamsChange}
 						{messages}
+						dateRangeInput={editors.dateRange}
 					/>
 				{/each}
 			</div>

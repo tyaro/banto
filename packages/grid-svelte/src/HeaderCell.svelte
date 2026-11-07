@@ -23,6 +23,8 @@
 	import { DEFAULT_COLUMN_WIDTH, type FilterState, type GridColumn } from './types';
 	import type { GridState } from './state.svelte';
 	import FilterPopover from './FilterPopover.svelte';
+	import type { Component } from 'svelte';
+	import type { FilterDateRangeInputProps } from './cellEditors';
 	import { defaultGridMessages, type GridMessages } from './messages';
 
 	interface Props {
@@ -42,6 +44,8 @@
 		onSortOrFilterChange?: () => void;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's (and FilterPopover's) visible strings. Defaults reproduce today's Japanese output. */
 		messages?: Partial<GridMessages>;
+		/** Injected day-range input for a date / date-and-time column's filter (`CellEditors.dateRange`). */
+		dateRangeInput?: Component<FilterDateRangeInputProps>;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -56,7 +60,8 @@
 		onDragMove,
 		onDragEnd,
 		onSortOrFilterChange,
-		messages = {}
+		messages = {},
+		dateRangeInput
 	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
@@ -237,6 +242,7 @@
 				onClear={clearFilter}
 				onClose={(reason) => closeFilter(reason === 'escape')}
 				{messages}
+				{dateRangeInput}
 			/>
 		{/if}
 	{/if}

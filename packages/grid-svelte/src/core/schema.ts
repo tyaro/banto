@@ -16,6 +16,7 @@
  */
 import type { CellEditorType, FilterType, GridColumn } from '../types';
 import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime, isOnTimeStep } from './date';
+import { compareTemporal } from './sort';
 
 /** Structural mirror of @banto/forms' `FieldType`. */
 export type SchemaFieldType =
@@ -251,7 +252,9 @@ const EDITOR_BY_TYPE: Partial<Record<SchemaFieldType, CellEditorType>> = {
 const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
 	text: 'text',
 	textarea: 'text',
-	number: 'number'
+	number: 'number',
+	date: 'date',
+	datetime: 'datetime'
 };
 
 /**
@@ -259,10 +262,12 @@ const FILTER_BY_TYPE: Partial<Record<SchemaFieldType, FilterType>> = {
  *
  * - `password` fields are skipped entirely (a grid must never display them).
  * - `label` → `header`, `name` → `id` + `accessor`.
- * - `text`/`textarea`/`number` become filterable with the matching
- *   `filterType`; `number` is right-aligned. `date`/`time`/`datetime`/`select`/`checkbox` are
- *   not filterable by default (FilterPopover only offers text/number ops) -
- *   opt in via `overrides`.
+ * - `text`/`textarea`/`number`/`date`/`datetime` become filterable with the
+ *   matching `filterType` (`date`/`datetime`: a day range, date-time-pickers
+ *   §5.9); `number` is right-aligned. `time`/`select`/`checkbox` are not
+ *   filterable by default - opt in via `overrides`.
+ * - `date`/`time`/`datetime` sort as text (`comparator: compareTemporal`,
+ *   read-only ones too): canonical strings sort in time order, as in SQL.
  * - `datetime` is shown with a space for the `T` (a default `format`).
  * - Non-`readonly` fields get the matching cell editor + a validator with
  *   the same rules/messages the form applies (see [`fieldValidator`]);
@@ -300,6 +305,9 @@ export function columnsFromSchema<TRow>(
 			column.filterType = filterType;
 		}
 		if (field.type === 'number') column.align = 'right';
+		if (field.type === 'date' || field.type === 'time' || field.type === 'datetime') {
+			column.comparator = compareTemporal;
+		}
 		// A date and time is shown with a space (`2026-11-07 09:30`, date-time-pickers
 		// §5.3); the value (and a copy to the clipboard) keeps the `T`.
 		if (field.type === 'datetime') {
