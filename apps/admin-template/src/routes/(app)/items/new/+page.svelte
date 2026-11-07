@@ -68,14 +68,14 @@
 	.page {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 		/* Readable form width (design.md §Phase 4), not the full page width. */
 		max-width: 720px;
 	}
 
 	.form-panel {
 		background: var(--banto-surface);
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
 		box-shadow: var(--banto-shadow-sm);
 		/* Keep native date segments usable in a narrow form at enlarged text. */

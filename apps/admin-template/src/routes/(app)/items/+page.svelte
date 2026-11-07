@@ -961,16 +961,16 @@
 	   the front once the toolbar wraps under 768px, below. */
 	.mode-toggle {
 		display: inline-flex;
-		border: 1px solid var(--banto-border-strong);
+		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
 		overflow: hidden;
 	}
 
 	.mode-toggle .banto-btn {
 		height: var(--banto-control-height-sm);
-		padding: 0 0.75rem;
+		padding: 0 var(--banto-space-3);
 		border-radius: 0;
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 	}
 
 	.mode-toggle .banto-btn.active {
@@ -981,14 +981,14 @@
 	.group-by {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
-		font-size: 0.8rem;
+		gap: var(--banto-space-2);
+		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text-muted);
 	}
 
 	.group-by select {
 		height: var(--banto-control-height-sm);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 	}
 
 	.group-by select:disabled {
@@ -1006,9 +1006,9 @@
 
 	.note {
 		flex: 0 0 auto;
-		margin: 0 0 0.75rem;
+		margin: 0 0 var(--banto-space-3);
 		color: var(--banto-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 	}
 
 	/* Issue #215: same info-tint idiom as the import panel's success/warning/
@@ -1019,13 +1019,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.75rem;
-		margin: 0 0 0.75rem;
-		padding: 0.5rem 0.75rem;
+		gap: var(--banto-space-3);
+		margin: 0 0 var(--banto-space-3);
+		padding: var(--banto-space-2) var(--banto-space-3);
 		border-left: 3px solid var(--banto-primary);
 		border-radius: var(--banto-radius-sm);
 		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
-		font-size: 0.85rem;
+		font-size: var(--banto-font-size-md);
 	}
 
 	/* Issue #215: highlights whichever row this mode's grid was last
@@ -1058,11 +1058,11 @@
 	   variant icon so the state never depends on color alone. */
 	.import-panel {
 		flex: 0 0 auto;
-		margin: 0 0 0.75rem;
-		padding: 0.85rem 1rem;
+		margin: 0 0 var(--banto-space-3);
+		padding: var(--banto-space-3) var(--banto-space-4);
 		border-radius: var(--banto-radius-lg);
 		background: var(--banto-surface);
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 	}
 
 	.import-panel--success {
@@ -1083,19 +1083,19 @@
 	.import-panel-header {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
-		margin: 0 0 0.5rem;
+		gap: var(--banto-space-2);
+		margin: 0 0 var(--banto-space-2);
 	}
 
 	.import-panel-header h3 {
 		margin: 0;
-		font-size: 0.9rem;
+		font-size: var(--banto-font-size-md);
 		color: var(--banto-text-muted);
 	}
 
 	.panel-text {
-		margin: 0 0 0.5rem;
-		font-size: 0.85rem;
+		margin: 0 0 var(--banto-space-2);
+		font-size: var(--banto-font-size-md);
 	}
 
 	.panel-text.summary {
@@ -1119,34 +1119,34 @@
 	}
 
 	.error-list {
-		margin: 0 0 0.5rem;
-		padding-left: 1.25rem;
+		margin: 0 0 var(--banto-space-2);
+		padding-left: var(--banto-space-5);
 		max-height: 220px;
 		overflow-y: auto;
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text);
 	}
 
 	.error-list li {
-		margin-bottom: 0.25rem;
+		margin-bottom: var(--banto-space-1);
 	}
 
 	.preview-table-wrap {
-		margin: 0 0 0.5rem;
+		margin: 0 0 var(--banto-space-2);
 		overflow-x: auto;
 	}
 
 	.preview-table {
 		border-collapse: collapse;
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text);
 		background: var(--banto-surface);
 	}
 
 	.preview-table th,
 	.preview-table td {
-		padding: 0.25rem 0.6rem;
-		border-bottom: 1px solid var(--banto-border);
+		padding: var(--banto-space-1) var(--banto-space-2);
+		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		text-align: left;
 		white-space: nowrap;
 	}
@@ -1162,8 +1162,8 @@
 	/* 新規/更新は文字ラベル + 枠線の形（更新は破線）で区別し、色だけに依存しない。 */
 	.kind {
 		display: inline-block;
-		padding: 0 0.4rem;
-		border: 1px solid var(--banto-border);
+		padding: 0 var(--banto-space-2);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
 		font-weight: 600;
 	}
@@ -1186,6 +1186,6 @@
 
 	.import-panel .actions {
 		display: flex;
-		gap: 0.75rem;
+		gap: var(--banto-space-3);
 	}
 </style>
