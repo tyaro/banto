@@ -203,7 +203,7 @@
 	.memo {
 		margin: 0;
 		color: var(--banto-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		text-wrap: pretty;
 	}
 
@@ -214,7 +214,7 @@
 	.spc-panel {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 		height: 100%;
 		overflow-y: auto;
 	}
@@ -224,15 +224,15 @@
 	   of card as the top-level dashboard grid. */
 	.spc-chart {
 		background: var(--banto-surface);
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
 		box-shadow: var(--banto-shadow-sm);
-		padding: 0.85rem 1rem;
+		padding: var(--banto-space-3) var(--banto-space-4);
 	}
 
 	.spc-chart h3 {
-		margin: 0 0 0.25rem;
-		font-size: 1rem;
+		margin: 0 0 var(--banto-space-1);
+		font-size: var(--banto-font-size-base);
 		font-weight: 600;
 		color: var(--banto-text);
 		font-feature-settings: 'palt';
@@ -242,7 +242,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.5rem;
+		gap: var(--banto-space-2);
 	}
 
 	.spc-chart-header h3 {
@@ -250,12 +250,12 @@
 	}
 
 	.export-btn {
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: 999px;
 		background: var(--banto-surface);
 		color: var(--banto-text);
-		padding: 0.2rem 0.7rem;
-		font-size: 0.75rem;
+		padding: var(--banto-space-1) var(--banto-space-3);
+		font-size: var(--banto-font-size-sm);
 		cursor: pointer;
 		transition:
 			border-color var(--banto-duration-fast) var(--banto-ease-out),
