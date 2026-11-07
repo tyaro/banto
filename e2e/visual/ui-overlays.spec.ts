@@ -299,9 +299,15 @@ for (const combo of DIAGONAL_MATRIX) {
 	}) => {
 		await primeThemeAndAuth(page, combo);
 		await gotoDemo(page);
-		await page.getByRole('textbox', { name: '出荷日（2026年11月2日〜27日の平日のみ）' }).focus();
-		await page.keyboard.press('Alt+ArrowDown');
-		await expect(page.getByRole('dialog', { name: '日付の選択' })).toBeVisible();
+		// The heading is server-rendered, so it can be visible before hydration
+		// attaches the key handler: retry the open until the dialog shows.
+		const field = page.getByRole('textbox', { name: '出荷日（2026年11月2日〜27日の平日のみ）' });
+		const dialog = page.getByRole('dialog', { name: '日付の選択' });
+		await expect(async () => {
+			await field.focus();
+			await page.keyboard.press('Alt+ArrowDown');
+			await expect(dialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 		expect(results.violations, formatViolations(results.violations)).toEqual([]);
 	});
@@ -377,9 +383,14 @@ for (const combo of DIAGONAL_MATRIX) {
 	}) => {
 		await primeThemeAndAuth(page, combo);
 		await gotoDemo(page);
-		await page.getByRole('combobox', { name: '会議の時刻（15 分刻み、9:00〜18:00）' }).focus();
-		await page.keyboard.press('ArrowDown');
-		await expect(page.getByRole('listbox', { name: '時刻の一覧' })).toBeVisible();
+		// Same hydration race as the calendar scan above: retry the open.
+		const input = page.getByRole('combobox', { name: '会議の時刻（15 分刻み、9:00〜18:00）' });
+		const list = page.getByRole('listbox', { name: '時刻の一覧' });
+		await expect(async () => {
+			await input.focus();
+			await page.keyboard.press('ArrowDown');
+			await expect(list).toBeVisible({ timeout: 1000 });
+		}).toPass();
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 		expect(results.violations, formatViolations(results.violations)).toEqual([]);
 	});
