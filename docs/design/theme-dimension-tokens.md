@@ -2,7 +2,7 @@
 
 作成日: 2026-10-21
 状態: **実装中**。D1〜D9 は 2026-10-21 にすべて推奨どおりに決定（§7）。§6 の PR-1（トークンの追加・付録 A・規約 §9 の
-文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）・PR-5（`@banto/charts`。文字幅の見積もりの追従＝D9 を含む）は実施済み。PR-6 のうち admin-template の設定画面（6a）と一覧・詳細（6b。本文サイズのトークン `--banto-font-size-base` の追加を含む）は実施済み。残りの画面（ダッシュボード → ログイン・その他）と機械検査は未着手。
+文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）・PR-5（`@banto/charts`。文字幅の見積もりの追従＝D9 を含む）は実施済み。PR-6 のうち admin-template の設定画面（6a）、一覧・詳細（6b。本文サイズのトークン `--banto-font-size-base` の追加を含む）、ダッシュボード（6c）は実施済み。残りの画面（ログイン・その他）と機械検査は未着手。
 トラック: 保守者向け（トラックA）
 関連: PR #463（Codex の指摘の発端）/ [conventions §9](../conventions.md) /
 [AGENTS.md](../../AGENTS.md) の不変条件 6 / [visual-refresh-plan.md](visual-refresh-plan.md) §3.2・§3.4・§3.5・
@@ -282,7 +282,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 | PR-3 | grid-svelte・forms・tree-svelte | 同上 |
 | PR-4 | dock-svelte・report・attachments（report の印刷用 CSS＝`print.css`・`@page`・用紙の幅は、mm / pt / em の紙面基準なので対象外） | 同上 |
 | PR-5 | charts（文字サイズの生値 25 件すべて: SVG の `10px`・`11px` 21 件を `xs`/`sm`、`12px` 2 件と `0.85rem` を `md`、Gauge の `1.6rem` を `xl` へ。どれかを残すと D8 の検査で例外が要るため、全件を移す）。**値の置き換えだけにはしない**: 軸ラベルの幅の見積もり（`core/labels.ts` の既定 11px、`LineChart` などの余白計算）を実際の文字サイズに追従させる変更を同じ PR に含める（D9） | 同上 |
-| PR-6〜 | admin-template（設定 → 一覧・詳細 → ダッシュボード → ログイン・その他。画面ごと。**設定画面は実施済み**: 余白 54 宣言・文字サイズ 18・枠線幅 11。ミニチュアのプレビュー（`preset-preview`・`nav-layout-preview`・`launcher-preview`）の中の寸法は部品の形として据え置き。本文サイズの `1rem` は 6b で `base` へ。**一覧・詳細（6b）も実施済み**: items（一覧・グリッド 2 種・`[id]`・`new`・`report`）・users・audit-log・tree・`DraftSettleDialog` の余白 59 宣言・文字サイズ 25（ほかに設定画面の `1rem` 1 件）・枠線幅 10。本文サイズのトークン `--banto-font-size-base` を足した（§5.1） | 同上 |
+| PR-6〜 | admin-template（設定 → 一覧・詳細 → ダッシュボード → ログイン・その他。画面ごと。**設定画面は実施済み**: 余白 54 宣言・文字サイズ 18・枠線幅 11。ミニチュアのプレビュー（`preset-preview`・`nav-layout-preview`・`launcher-preview`）の中の寸法は部品の形として据え置き。本文サイズの `1rem` は 6b で `base` へ。**一覧・詳細（6b）も実施済み**: items（一覧・グリッド 2 種・`[id]`・`new`・`report`）・users・audit-log・tree・`DraftSettleDialog` の余白 59 宣言・文字サイズ 25（ほかに設定画面の `1rem` 1 件）・枠線幅 10。本文サイズのトークン `--banto-font-size-base` を足した（§5.1）。**ダッシュボード（6c）も実施済み**: `dashboard/+page.svelte`・`DashboardPanel`・`DashboardMemoField`・別窓の `panel/[id]` の余白 33 宣言（40 値）・文字サイズ 17・枠線幅 6。グリッドの列幅・カードの最小寸法・アイコン 36px・パネルの高さ 520px・`min-height`・タイトルバー高さ（`--banto-dock-titlebar-height` の既定値）・999px 角丸・メディアクエリの幅は部品の形として据え置き。最大のずれは KPI の値 `1.6rem` → `xl` の 2.1px、余白は最大約 1.4px | 同上 |
 | 最後 | 機械検査（D8） | — |
 
 - 各 PR は値の置き換えだけにし、レイアウトの見直しは混ぜない（例外は PR-5。文字幅の見積もりとの同期が要るため。D9）。丸めで画面が動いたらベースラインを
