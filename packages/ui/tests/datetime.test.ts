@@ -205,6 +205,24 @@ describe('Intl names (§5.5)', () => {
 		expect(formatFullDate('0050-03-01', 'en-US')).toContain('March 1');
 	});
 
+	it('always uses the Gregorian calendar, whatever the locale default (fa-IR, -u-ca-japanese)', () => {
+		const fa = formatMonthYear('2026-11-07', 'fa-IR');
+		expect(fa).toBe(
+			new Intl.DateTimeFormat('fa-IR', {
+				year: 'numeric',
+				month: 'long',
+				calendar: 'gregory',
+				timeZone: 'UTC'
+			}).format(new Date(Date.UTC(2026, 10, 7, 12)))
+		);
+		// Not the Persian year (1405) - the Gregorian 2026 in Persian digits.
+		expect(fa).not.toMatch(/۱۴۰۵|1405/);
+		expect(fa).toMatch(/۲۰۲۶|2026/);
+		expect(formatMonthYear('2026-11-07', 'ja-JP-u-ca-japanese')).toBe('2026年11月');
+		expect(formatFullDate('2026-11-07', 'ja-JP-u-ca-japanese')).toBe('2026年11月7日土曜日');
+		expect(formatFullDate('2026-11-07', 'th-TH')).toContain('2026');
+	});
+
 	it('weekday names start at weekStartsOn', () => {
 		const ja = weekdayNames('ja-JP', 0);
 		expect(ja.map((d) => d.short)).toEqual(['日', '月', '火', '水', '木', '金', '土']);

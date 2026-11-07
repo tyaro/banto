@@ -278,11 +278,16 @@ function utcDate(parts: DateParts): Date {
 	return d;
 }
 
+// Always the Gregorian calendar: the grid, the values and the parser are
+// Gregorian, so a locale whose default calendar differs (`fa-IR` Persian,
+// `ja-JP-u-ca-japanese`, `th-TH` Buddhist) must not label the same day as
+// another calendar's month / year in the heading and the spoken name.
 function formatter(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+	const fixed: Intl.DateTimeFormatOptions = { ...options, calendar: 'gregory', timeZone: 'UTC' };
 	try {
-		return new Intl.DateTimeFormat(locale, { ...options, timeZone: 'UTC' });
+		return new Intl.DateTimeFormat(locale, fixed);
 	} catch {
-		return new Intl.DateTimeFormat(undefined, { ...options, timeZone: 'UTC' });
+		return new Intl.DateTimeFormat(undefined, fixed);
 	}
 }
 
