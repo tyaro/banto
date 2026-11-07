@@ -90,6 +90,34 @@ function stripAllowed(value) {
 	return removeCalls(v, 'var', () => true);
 }
 
+/** 長さを保ったまま空白にする（改行は残し、行番号と位置をずらさない）。 */
+const blank = (s) => s.replace(/[^\n]/g, ' ');
+
+/**
+ * `font` ショートハンドの `/` の後の行送り（line-height）を、式ごと空白にする。
+ * `calc(1rem + 2px)` のように空白を含む関数は括弧の対応をとって丸ごと飛ばす。
+ */
+function blankLineHeight(value) {
+	let out = value;
+	for (let i = out.indexOf('/'); i >= 0; i = out.indexOf('/', i + 1)) {
+		let j = i + 1;
+		while (j < out.length && /\s/.test(out[j])) j++;
+		const fn = /^[a-z-]+\(/i.exec(out.slice(j));
+		if (fn) {
+			let depth = 0;
+			for (j += fn[0].length - 1; j < out.length; j++) {
+				if (out[j] === '(') depth++;
+				else if (out[j] === ')' && --depth === 0) break;
+			}
+			j++;
+		} else {
+			while (j < out.length && !/[\s,]/.test(out[j])) j++;
+		}
+		out = out.slice(0, i) + blank(out.slice(i, j)) + out.slice(j);
+	}
+	return out;
+}
+
 /**
  * CSS の本文から、文字サイズと枠線幅の生値を探す。
  *
@@ -97,7 +125,11 @@ function stripAllowed(value) {
  * @returns {{ line: number, prop: string, raw: string }[]} `line` は `css` の中の 1 始まりの行
  */
 export function findRawDimensions(css) {
-	const src = blankComments(css);
+	// コメント → 文字列 → url() の中身の順に空白にする。文字列や data URI の中の `;`・`{`・`}`
+	// で宣言を切り違えないため（フォント名や `content` の文字列の中も見ない）。
+	const src = blankComments(css)
+		.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, blank)
+		.replace(/(?<![\w-])url\([^)]*\)/gi, blank);
 	const hits = [];
 	// 宣言は `;` か `}` で終わる区間。`{` で終わる区間はセレクタ・@規則なので見ない。
 	let start = 0;
@@ -114,11 +146,9 @@ export function findRawDimensions(css) {
 		const isFont = FONT_PROPS.test(prop);
 		const isBorder = !isFont && BORDER_PROPS.test(prop);
 		if (!isFont && !isBorder) continue;
-		// 文字列（フォント名など）は見ない。長さを保ったまま空白にする。
-		const blank = (s) => ' '.repeat(s.length);
-		let value = stripAllowed(seg.slice(colon + 1).replace(/"[^"]*"|'[^']*'/g, blank));
+		let value = stripAllowed(seg.slice(colon + 1));
 		// `font` ショートハンドの `/` の後は行送り（line-height）。§9 の寸法に含めない。
-		if (prop === 'font') value = value.replace(/\/\s*[^\s,]+/g, blank);
+		if (prop === 'font') value = blankLineHeight(value);
 		const valueStart = segStart + colon + 1;
 		const patterns = [ABS_LENGTH, isFont ? FONT_KEYWORDS : BORDER_KEYWORDS];
 		for (const re of patterns) {

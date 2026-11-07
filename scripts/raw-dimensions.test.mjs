@@ -23,6 +23,26 @@ test('違反: font-size の生の絶対値と絶対キーワード', () => {
 test('違反: font ショートハンドの文字サイズ（行送りは見ない）', () => {
 	assert.deepEqual(raws('.a { font: 600 0.8rem/1.2rem system-ui; }'), ['font 0.8rem']);
 	assert.deepEqual(raws(".a { font: 12px 'Noto Sans Medium', sans-serif; }"), ['font 12px']);
+	assert.deepEqual(raws('.a { font: 12px / calc(1rem + 2px) system-ui; }'), ['font 12px']);
+});
+
+test('許可: font ショートハンドの行送りは空白を含む式でも見ない（#531 の Codex 指摘）', () => {
+	const ok = [
+		'.a { font: var(--banto-font-size-base)/calc(1rem + 2px) system-ui; }',
+		'.a { font: var(--banto-font-size-md) / max(1.2rem, 16px) system-ui; }',
+		'.a { font: 600 var(--banto-font-size-sm)/1.4rem system-ui; }'
+	];
+	for (const css of ok) assert.deepEqual(raws(css), [], css);
+});
+
+test('文字列・url() の中の `;`・`{`・`}` で宣言を切り違えない', () => {
+	assert.deepEqual(raws('.a { background: url(data:image/svg+xml;utf8,x{y}); font-size: 12px; }'), [
+		'font-size 12px'
+	]);
+	assert.deepEqual(raws('.a { content: "a; font-size: 9px; }"; border: 1px solid; }'), [
+		'border 1px'
+	]);
+	assert.deepEqual(raws(".a { font-family: 'x;y'; font-size: var(--banto-font-size-sm); }"), []);
 });
 
 test('違反: border・outline 系の幅', () => {
