@@ -1,7 +1,7 @@
 # 日付・時刻ピッカーの設計（日付・時刻・日時・期間）
 
 作成日: 2026-11-07
-状態: **完了**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）完了（#520）。PR-2（ui: `TimeInput`・時刻の解析と刻み）完了（#522）。PR-3（forms への組み込み）完了（#523）。PR-4（grid への組み込み）完了（#527）。PR-5（時刻・日時の型・`DateTimeInput`・banto-core の検証関数）完了（#530）。PR-6（期間: `DateRangeInput`・`FilterOp::between`・FilterPopover）で全 PR が揃い、本書の範囲は**完了**（§8 の未確認の点のうち実機に関わるものは残る）。
+状態: **完了**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）完了（#520）。PR-2（ui: `TimeInput`・時刻の解析と刻み）完了（#522）。PR-3（forms への組み込み）完了（#523）。PR-4（grid への組み込み）完了（#527）。PR-5（時刻・日時の型・`DateTimeInput`・banto-core の検証関数）完了（#530）。PR-6（期間: `DateRangeInput`・`FilterOp::between`・FilterPopover、#532）で全 PR が揃い、本書の範囲は**完了**（§8 の未確認の点のうち実機に関わるものは残る）。
 トラック: 保守者向け（トラックA）
 関連: [conventions](../conventions.md) §3（依存を足さない）・§4／§5（パッケージ間の import 禁止）・§9（寸法トークン）・
 §13（文言はキー経由）/ [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`）/
