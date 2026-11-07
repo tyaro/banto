@@ -240,10 +240,13 @@ test.describe('ui-demo DateInput', () => {
 		page
 	}) => {
 		const input = page.getByRole('textbox', { name: '納期' });
-		await input.focus();
-		await page.keyboard.press('Alt+ArrowDown');
 		const dialog = page.getByRole('dialog', { name: '日付の選択' });
-		await expect(dialog).toBeVisible();
+		// Same hydration race as the calendar scan below: retry the open.
+		await expect(async () => {
+			await input.focus();
+			await page.keyboard.press('Alt+ArrowDown');
+			await expect(dialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
 		await expect(dialog.getByRole('gridcell', { name: '2026年11月7日土曜日' })).toBeFocused();
 		await page.keyboard.press('ArrowRight');
 		await page.keyboard.press('Enter');
