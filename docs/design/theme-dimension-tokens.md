@@ -2,7 +2,7 @@
 
 作成日: 2026-10-21
 状態: **実装中**。D1〜D9 は 2026-10-21 にすべて推奨どおりに決定（§7）。§6 の PR-1（トークンの追加・付録 A・規約 §9 の
-文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）は実施済み。PR-5 以降と機械検査は未着手。
+文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）・PR-5（`@banto/charts`。文字幅の見積もりの追従＝D9 を含む）は実施済み。PR-6 以降と機械検査は未着手。
 トラック: 保守者向け（トラックA）
 関連: PR #463（Codex の指摘の発端）/ [conventions §9](../conventions.md) /
 [AGENTS.md](../../AGENTS.md) の不変条件 6 / [visual-refresh-plan.md](visual-refresh-plan.md) §3.2・§3.4・§3.5・
@@ -232,6 +232,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 | 余白 | `0.9rem`・`1.1rem` | `space-4`（1rem） | ≤ 1.4px |
 | 余白 | `1.2rem` | `space-5`（1.25rem） | 0.7px |
 | 余白 | `2.5rem` | `space-7`（2rem。等距離なので小さい方） | 7px |
+| 余白 | charts の `6px`（LineChart のズーム解除ボタンの `top`・`right`） | `space-2`（0.5rem = 7px） | 1px |
 | 文字 | `0.65rem`・`0.7rem` | `xs`（0.7rem） | ≤ 0.7px |
 | 文字 | `0.75rem`・`0.8rem` | `sm`（0.8rem。0.75 は等距離なので大きい方） | ≤ 0.7px |
 | 文字 | `0.85rem` | `md`（0.875rem） | 0.35px |
@@ -371,6 +372,12 @@ charts は軸ラベルの幅を文字サイズから見積もって余白を決�
 PR-5 の検証条件（b のとき）: (1) root の文字サイズを 14px 以外（例 20px）にした状態、(2) `--banto-font-size-sm`
 を上書きした状態の両方で、長い軸ラベルが切れず、余白が文字サイズに追従することを単体テストか visual で
 確かめる。
+
+実装（PR-5）: `internal/label-font.ts` の attachment を各チャートの代表のラベル 1 つ（最初の y 目盛り・項目名）に付け、
+描画直後と、その要素の大きさが変わったとき（`ResizeObserver`。root の文字サイズ・トークンの実行時の変更）に
+計算済みの文字サイズを読み直して `labels.ts` に渡す。読めない間は 11px。余白を固定値で持っていた縦の BarChart・
+BoxPlot・Histogram・ParetoChart も、既定の余白を下限として目盛りに合わせて広げ、RadarChart は周囲のラベルの
+余白を文字サイズに比例させ、左右のラベルが収まる半径に抑えた。余白の上限（既定 140px）も文字サイズに比例させた。検証は `tests/label-font.test.ts`（単体）と `e2e/visual/chart-label-font.spec.ts`。
 
 ## 8. 未確認の点
 

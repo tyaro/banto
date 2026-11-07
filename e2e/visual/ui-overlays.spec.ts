@@ -262,7 +262,7 @@ test.describe('ui-demo DateInput', () => {
 	}) => {
 		const input = page.getByRole('textbox', { name: '納期' });
 		const dialog = page.getByRole('dialog', { name: '日付の選択' });
-		// Server-rendered heading: retry until hydration has attached the key handler.
+		// Same hydration race as the calendar scan below: retry the open.
 		await expect(async () => {
 			await input.focus();
 			await page.keyboard.press('Alt+ArrowDown');
