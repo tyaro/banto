@@ -13,6 +13,7 @@
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
 	 * The Menu card (phase 2a), the DateInput card (date-time-pickers PR-1),
+	 * the TimeInput card (PR-2),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
@@ -41,6 +42,7 @@
 		PageHeader,
 		StatusBadge,
 		SurfaceCard,
+		TimeInput,
 		type CommandPaletteItem,
 		type StatusBadgeVariant,
 		type UiMessages
@@ -120,6 +122,17 @@
 		datePickerToday: () => m['datePicker.today'](),
 		datePickerClear: () => m['datePicker.clear'](),
 		dateFormatHint: () => m['datePicker.formatHint']()
+	};
+
+	// TimeInput card (date-time-pickers PR-2): a 30-minute list without a step
+	// (any minute can be typed, D8) and a 15-minute list inside office hours.
+	// Fixed values, so the open list's screenshot is deterministic.
+	let startTime = $state<string | null>('09:30');
+	let meetingTime = $state<string | null>(null);
+	const timeMessages: UiMessages = {
+		timePickerOpen: () => m['timePicker.open'](),
+		timePickerList: () => m['timePicker.list'](),
+		timeFormatHint: () => m['timePicker.formatHint']()
 	};
 
 	// Static sample commands: two groups, an icon, a shortcut hint and a
@@ -322,6 +335,32 @@
 				/>
 				<span class="caption" data-testid="ui-demo-ship-date-value">
 					{m['uiDemo.date.value']()}: {shipDate ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="TimeInput" description={m['uiDemo.time.desc']()}>
+		<div class="grid">
+			<div class="sample">
+				<label class="caption" for="ui-demo-start-time">{m['uiDemo.time.label']()}</label>
+				<TimeInput id="ui-demo-start-time" bind:value={startTime} messages={timeMessages} />
+				<span class="caption" data-testid="ui-demo-start-time-value">
+					{m['uiDemo.date.value']()}: {startTime ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
+			<div class="sample">
+				<label class="caption" for="ui-demo-meeting-time">{m['uiDemo.time.stepLabel']()}</label>
+				<TimeInput
+					id="ui-demo-meeting-time"
+					bind:value={meetingTime}
+					step={15}
+					min="09:00"
+					max="18:00"
+					messages={timeMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-meeting-time-value">
+					{m['uiDemo.date.value']()}: {meetingTime ?? m['uiDemo.date.empty']()}
 				</span>
 			</div>
 		</div>

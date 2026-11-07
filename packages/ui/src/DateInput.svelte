@@ -35,7 +35,11 @@
 	 * §13).
 	 */
 	import { flushSync, untrack } from 'svelte';
-	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
+	import {
+		computeAnchoredPosition,
+		revealInPopover,
+		watchAnchoredPopover
+	} from './anchoredPopover';
 	import {
 		addDays,
 		addMonths,
@@ -212,20 +216,7 @@
 		// the focused day into its visible box by hand - `scrollIntoView` would
 		// move the ancestors too.
 		cell.focus({ preventScroll: true });
-		revealInPanel(panel, cell);
-	}
-
-	function revealInPanel(panel: HTMLElement, cell: HTMLElement): void {
-		const box = panel.getBoundingClientRect();
-		const rect = cell.getBoundingClientRect();
-		const top = box.top + panel.clientTop;
-		const bottom = top + panel.clientHeight;
-		if (rect.top < top) panel.scrollTop -= top - rect.top;
-		else if (rect.bottom > bottom) panel.scrollTop += rect.bottom - bottom;
-		const left = box.left + panel.clientLeft;
-		const right = left + panel.clientWidth;
-		if (rect.left < left) panel.scrollLeft -= left - rect.left;
-		else if (rect.right > right) panel.scrollLeft += rect.right - right;
+		revealInPopover(panel, cell);
 	}
 
 	function openPicker(): void {
