@@ -164,11 +164,11 @@
 		z-index: 20;
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
+		gap: var(--banto-space-2);
 		width: 190px;
-		padding: 0.6rem;
+		padding: var(--banto-space-2);
 		background: var(--banto-surface-overlay);
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-md);
 		box-shadow: var(--banto-shadow-lg);
 		/* Standard preset: no-op (var(--banto-backdrop) is `none`). Glass
@@ -181,12 +181,12 @@
 		width: 100%;
 		box-sizing: border-box;
 		height: var(--banto-control-height-sm);
-		padding: 0 0.4rem;
-		border: 1px solid var(--banto-border-strong);
+		padding: 0 var(--banto-space-2);
+		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
 		background: var(--banto-surface);
 		color: var(--banto-text);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		transition: box-shadow var(--banto-duration-fast) var(--banto-ease-out);
 	}
 
@@ -214,17 +214,17 @@
 
 	.actions {
 		display: flex;
-		gap: 0.4rem;
+		gap: var(--banto-space-2);
 		justify-content: flex-end;
 	}
 
 	button {
 		box-sizing: border-box;
 		height: var(--banto-control-height-sm);
-		border: 1px solid var(--banto-border-strong);
+		border: var(--banto-border-width) solid var(--banto-border-strong);
 		border-radius: var(--banto-radius-md);
-		padding: 0 0.6rem;
-		font-size: 0.75rem;
+		padding: 0 var(--banto-space-2);
+		font-size: var(--banto-font-size-sm);
 		cursor: pointer;
 		background: var(--banto-surface);
 		color: var(--banto-text);

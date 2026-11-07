@@ -2,7 +2,7 @@
 
 作成日: 2026-10-21
 状態: **実装中**。D1〜D9 は 2026-10-21 にすべて推奨どおりに決定（§7）。§6 の PR-1（トークンの追加・付録 A・規約 §9 の
-文言）は #466。PR-2（`@banto/ui` の消費側の移行）は実施済み。PR-3 以降と機械検査は未着手。
+文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）は実施済み。PR-4 以降と機械検査は未着手。
 トラック: 保守者向け（トラックA）
 関連: PR #463（Codex の指摘の発端）/ [conventions §9](../conventions.md) /
 [AGENTS.md](../../AGENTS.md) の不変条件 6 / [visual-refresh-plan.md](visual-refresh-plan.md) §3.2・§3.4・§3.5・
@@ -225,9 +225,9 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 
 | 種類 | 既存の値 | 移し先 | ずれ |
 | --- | --- | --- | --- |
-| 余白 | `0.15rem`・`0.2rem`・`0.3rem` | `space-1`（0.25rem） | ≤ 1.4px |
+| 余白 | `0.1rem`・`0.15rem`・`0.2rem`・`0.3rem` | `space-1`（0.25rem） | ≤ 2.1px（`0.1rem` のみ。ほかは ≤ 1.4px） |
 | 余白 | `0.35rem`・`0.4rem` | `space-1` か `space-2`（近い方。0.35 は 1、0.4 は 2） | ≤ 1.4px |
-| 余白 | `0.55rem`・`0.6rem` | `space-2`（0.5rem） | ≤ 1.4px |
+| 余白 | `0.45rem`・`0.55rem`・`0.6rem` | `space-2`（0.5rem） | ≤ 1.4px |
 | 余白 | `0.65rem`・`0.7rem`・`0.8rem`・`0.85rem` | `space-3`（0.75rem） | ≤ 1.4px |
 | 余白 | `0.9rem`・`1.1rem` | `space-4`（1rem） | ≤ 1.4px |
 | 余白 | `1.2rem` | `space-5`（1.25rem） | 0.7px |

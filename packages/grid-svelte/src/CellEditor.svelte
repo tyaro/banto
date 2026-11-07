@@ -85,7 +85,7 @@
 		width: 100%;
 		height: 100%;
 		box-sizing: border-box;
-		padding: 0 0.6rem;
+		padding: 0 var(--banto-space-2);
 		border: none;
 		outline: none;
 		background: var(--banto-surface);
