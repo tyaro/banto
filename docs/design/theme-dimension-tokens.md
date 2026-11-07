@@ -1,8 +1,8 @@
 # `@banto/theme` の汎用寸法トークン（余白・文字サイズ・枠線幅）の設計
 
 作成日: 2026-10-21
-状態: **実装中**。D1〜D9 は 2026-10-21 にすべて推奨どおりに決定（§7）。§6 の PR-1（トークンの追加・付録 A・規約 §9 の
-文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）・PR-5（`@banto/charts`。文字幅の見積もりの追従＝D9 を含む）は実施済み。PR-6 のうち admin-template の設定画面（6a）、一覧・詳細（6b。本文サイズのトークン `--banto-font-size-base` の追加を含む）、ダッシュボード（6c）、ログイン・その他（6d）は実施済み。admin-template は全画面実施済みで、残りは機械検査（D8）のみ。
+状態: **実施済み**（最終検証日: 2026-11-07）。D1〜D9 は 2026-10-21 にすべて推奨どおりに決定（§7）。§6 の PR-1（トークンの追加・付録 A・規約 §9 の
+文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）・PR-5（`@banto/charts`。文字幅の見積もりの追従＝D9 を含む）は実施済み。PR-6 のうち admin-template の設定画面（6a）、一覧・詳細（6b。本文サイズのトークン `--banto-font-size-base` の追加を含む）、ダッシュボード（6c）、ログイン・その他（6d）は実施済み。admin-template は全画面実施済み。最後の機械検査（D8。verify-architecture の rule `raw-dimensions`）も実施済みで、§6 の手順はすべて終わった。
 トラック: 保守者向け（トラックA）
 関連: PR #463（Codex の指摘の発端）/ [conventions §9](../conventions.md) /
 [AGENTS.md](../../AGENTS.md) の不変条件 6 / [visual-refresh-plan.md](visual-refresh-plan.md) §3.2・§3.4・§3.5・
@@ -284,7 +284,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 | PR-4 | dock-svelte・report・attachments（report の印刷用 CSS＝`print.css`・`@page`・用紙の幅は、mm / pt / em の紙面基準なので対象外） | 同上 |
 | PR-5 | charts（文字サイズの生値 25 件すべて: SVG の `10px`・`11px` 21 件を `xs`/`sm`、`12px` 2 件と `0.85rem` を `md`、Gauge の `1.6rem` を `xl` へ。どれかを残すと D8 の検査で例外が要るため、全件を移す）。**値の置き換えだけにはしない**: 軸ラベルの幅の見積もり（`core/labels.ts` の既定 11px、`LineChart` などの余白計算）を実際の文字サイズに追従させる変更を同じ PR に含める（D9） | 同上 |
 | PR-6〜 | admin-template（設定 → 一覧・詳細 → ダッシュボード → ログイン・その他。画面ごと。**設定画面は実施済み**: 余白 54 宣言・文字サイズ 18・枠線幅 11。ミニチュアのプレビュー（`preset-preview`・`nav-layout-preview`・`launcher-preview`）の中の寸法は部品の形として据え置き。本文サイズの `1rem` は 6b で `base` へ。**一覧・詳細（6b）も実施済み**: items（一覧・グリッド 2 種・`[id]`・`new`・`report`）・users・audit-log・tree・`DraftSettleDialog` の余白 59 宣言・文字サイズ 25（ほかに設定画面の `1rem` 1 件）・枠線幅 10。本文サイズのトークン `--banto-font-size-base` を足した（§5.1）。**ダッシュボード（6c）も実施済み**: `dashboard/+page.svelte`・`DashboardPanel`・`DashboardMemoField`・別窓の `panel/[id]` の余白 33 宣言（40 値）・文字サイズ 17・枠線幅 6。グリッドの列幅・カードの最小寸法・アイコン 36px・パネルの高さ 520px・`min-height`・タイトルバー高さ（`--banto-dock-titlebar-height` の既定値）・999px 角丸・メディアクエリの幅は部品の形として据え置き。最大のずれは KPI の値 `1.6rem` → `xl` の 2.1px、余白は最大約 1.4px。**ログイン・その他（6d）も実施済み（admin-template は全画面実施済み、残りは機械検査 D8）**: `Sidebar`・`Header`・`StartupSplash`・`login`・`+error`・`(app)/+layout`・`ui-demo`・`app.css` の余白 64 値・文字サイズ 17・枠線幅 12（`ShellLauncher`・`reach` は生の寸法なし）。サイドバーの幅・アイコン／ロゴ寸法・件数バッジ（18px・5px・999px 角丸）・折りたたみ時のドット・強調の縁（2px）・1px の区切り線・項目間の 2px・ログインのカード幅（`min(320px…)`・960px）・ロゴ 44px・`ui-demo` の列幅（18rem）・高さ（12rem）・メディアクエリの幅は部品の形として据え置き。最大のずれは文字サイズでログインの見出し `1.5rem` → `xl` の 3.5px（§5.2 の表に追記）、余白は最大約 2.1px（`0.1rem`） | 同上 |
-| 最後 | 機械検査（D8） | — |
+| 最後 | 機械検査（D8）。**実施済み**: verify-architecture の rule `raw-dimensions`（判定は `scripts/lib/raw-dimensions.mjs`、テストは `scripts/raw-dimensions.test.mjs`）。対象は packages 全体と admin-template（D8 の補足）。検査で見つかった残りの生値は `@banto/ui` の `font-size: 1rem` 6 件（`CommandPalettePanel`・`EmptyState`・`ErrorState`・`OverlayPanel`・`SurfaceCard`・`ToastHost`）を `base` へ、別窓の `panel/[id]` の区切りの `1px` を `--banto-border-width` へ、display プリセットの雛形（`/monitor`）の `1rem`・`0.9rem` を `base`・`md` へ（ずれは雛形の `0.9rem` → `md` の 0.35px のみ。ほかは同値で visual の基準画像に影響なし） | — |
 
 - 各 PR は値の置き換えだけにし、レイアウトの見直しは混ぜない（例外は PR-5。文字幅の見積もりとの同期が要るため。D9）。丸めで画面が動いたらベースラインを
   再生成し、差分の画像を PR に載せる。
@@ -303,7 +303,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 | D5 刻みから外れた既存値 | **a: 近い段に丸め、範囲ごとの PR でベースラインを再生成** |
 | D6 規約の文言 | **a: §9 に「寸法 = 余白・文字サイズ・枠線幅の段階」と例外の一覧を書く（PR-1）** |
 | D7 部品の形（列幅など） | **a: 汎用の段階に入れない。共有されるときだけ用途名で足す** |
-| D8 機械検査 | **b: 移行が終わった範囲から font-size と border-width だけ検査に足す** |
+| D8 機械検査 | **b: 移行が終わった範囲から font-size と border-width だけ検査に足す**（2026-11-07 実施済み。範囲は packages と admin-template） |
 | D9 charts の文字サイズと文字幅の見積もり | **b: 共通の段（rem）に移し、余白計算は描画した要素の実際の文字サイズを読んで見積もる** |
 
 ### D1. 方針
@@ -366,6 +366,26 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
   （`packages/` の `<style>`、許可リスト付き）で検査する。余白は `em`・`calc()`・部品の形の例外が多く、
   誤検知が多いので検査しない。
 - c: 余白も含めて全部検査する。例外の許可リストが大きくなる。
+
+**実施（2026-11-07）**: verify-architecture の rule `raw-dimensions` として足した。中身:
+
+- 対象: `packages/*/src`（theme を含む。トークンの定義はカスタムプロパティの宣言なので検査に掛からない）と
+  `apps/admin-template/src` の、`.svelte` の `<style>` と `.css`。D8 の文言は packages だけだが、admin-template も
+  PR-6a〜6d で移行が終わったので含める。app 層は派生アプリが書き換える場所でもあるが、scaffold の 4 プリセットとも
+  検査が通ることを確かめてあり、派生アプリにとっても「新しく書く CSS もトークンで」が §9 の約束どおりなので、
+  外す理由は無いと判断した。
+- 見るプロパティ: `font-size`・`font`（`/` の後の行送りは見ない）と、`border`・`border-{top,right,bottom,left,block,inline}[-{start,end}]`・
+  それぞれの `-width`・`border-width`・`outline`・`outline-width`・`column-rule[-width]`。`border-radius`・`border-color`・
+  `border-style`・`border-collapse`・`border-spacing`・`outline-offset` などの幅でないものは見ない。
+- 生値: 絶対の長さ（`px`・`rem`・`pt`・`pc`・`mm`・`cm`・`in`・`q`・`vw`・`vh`・`vmin`・`vmax`）と絶対キーワード
+  （文字の `small`・`large` など、枠線の `thin`・`medium`・`thick`）。許可: `0`、キーワード、`em`・`%` などの相対値、
+  `var()`（フォールバック込み）、トークンを使う `calc()`/`min()`/`max()`/`clamp()`、`border` 系の `3px`・`4px`
+  （§5.2 の強調の縁。`outline` には効かせない）。コメントの中は見ず、複数行の宣言・`!important`・`@media` や入れ子の中も見る。
+- 例外: `RAW_DIMENSION_ALLOWLIST`（ファイル → 許す値、理由つき。rule 5 と同じ方式）。使われなくなった値は落とす。
+  項目は 2 つ: `@banto/report` の `print.css`（`11pt`・`1px`。印刷はテーマ非依存）と、display プリセットだけが置く
+  `(app)/monitor/+page.svelte`（壁掛け時刻の `clamp(3rem, 12vw, 7rem)`。画面幅に追従する部品の形）。
+- 見ないもの（レビューで守る）: SVG の属性・`style` 属性・`style:` ディレクティブ・Tailwind のクラス・`.ts` の中の CSS、
+  ローカルのカスタムプロパティの値（`--x: 1px` を `border: var(--x) solid` で使う形。D7 の部品の形のための口）。
 
 ### D9. charts の文字サイズと文字幅の見積もり
 

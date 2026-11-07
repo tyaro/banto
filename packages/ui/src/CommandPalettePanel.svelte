@@ -292,7 +292,7 @@
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		background: transparent;
 		color: var(--banto-text);
-		font-size: 1rem;
+		font-size: var(--banto-font-size-base);
 	}
 
 	.search:focus {

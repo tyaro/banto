@@ -487,7 +487,7 @@ Traps that are easy to fall into in `@banto/*` components.
   superseded result and revoke its URL) is a hand-written instance of this
   contract and is not replaced.
 
-## 9. Theme tokens only; raw values consolidated in the theme [machine-checked: color values in packages only]
+## 9. Theme tokens only; raw values consolidated in the theme [machine-checked: color values in packages; font sizes and border widths in packages and admin-template]
 
 UI CSS uses only `var(--banto-*)` tokens and **does not write raw values of
 color or dimension into components**. Raw values are consolidated in
@@ -498,6 +498,26 @@ values in the app layer (`apps/admin-template/src`) are tolerated **only as
 deliberate exceptions with a justification comment** (existing examples: the
 login brand pane, the static theme-preview swatches; never write a raw value
 without a reason comment).
+
+**Font sizes and border widths are machine-checked** (rule `raw-dimensions`,
+theme-dimension-tokens.md §7 D8; dimension tokens are described in the Japanese
+original of this section). In `<style>` blocks of `.svelte` files and in `.css`
+files under `packages/*/src` and `apps/admin-template/src`, `font-size` / `font`
+and `border`, `border-*` (including `-width`), `outline` and `outline-width`
+must not carry raw absolute values (`px`, `rem`, `pt`, `mm`, `vw`, …, or keywords
+such as `small` / `thin`). Allowed: `0`, `none`, `inherit` and other keywords,
+relative values (`em`, `%`), `var(--banto-*)` (with its fallback), `calc()` /
+`min()` / `max()` / `clamp()` that use a `--banto-*` token, and `3px` / `4px` on
+`border` properties (accent edges are part of the component's shape; not for
+`outline`). Non-width properties (`border-radius`, `border-color`,
+`border-style`, `border-collapse`, `outline-offset`, …), spacing (not checked:
+too many false positives) and shapes (`width` / `height`) are out of scope. The
+matcher is `scripts/lib/raw-dimensions.mjs`, with examples in
+`scripts/raw-dimensions.test.mjs`. Exceptions: write a reason comment next to the
+declaration and add "file → allowed values" with the reason to
+`RAW_DIMENSION_ALLOWLIST` in `scripts/verify-architecture.mjs` (same style as
+rule 5). Keep the list small; an allowed value that no longer occurs fails the
+check, so remove the entry then.
 
 ## 10. 3-way provider branching + demo explicitly refuses
 

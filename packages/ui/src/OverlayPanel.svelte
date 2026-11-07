@@ -319,7 +319,7 @@
 
 	.header h3 {
 		margin: 0;
-		font-size: 1rem;
+		font-size: var(--banto-font-size-base);
 	}
 
 	/* Keeps the × at the right edge when there is no title. */
