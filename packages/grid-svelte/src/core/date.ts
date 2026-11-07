@@ -175,6 +175,30 @@ export function isOnTimeStep(time: string, step?: number): boolean {
 }
 
 /**
+ * The `step` attribute (seconds) for the native `time` / `datetime-local`
+ * fallback (D3-a), or `undefined` to leave it off. A native input counts its
+ * step from `min` (or, for `datetime-local` without one, from 1970-01-01T00:00),
+ * while the validator counts it from each day's 00:00 (D8). They agree only
+ * when the base is on the step grid - `min` absent or on it, and for a date
+ * and time the step dividing the day - so otherwise no native step is given
+ * (the validator still checks the step; the input simply offers every minute).
+ */
+export function nativeTimeStep(
+	type: 'time' | 'datetime',
+	step: number | undefined,
+	min: string | undefined
+): number | undefined {
+	const by = normalizeTimeStep(step);
+	if (by === undefined) return undefined;
+	if (type === 'datetime' && (24 * 60) % by !== 0) return undefined;
+	if (min !== undefined) {
+		const time = type === 'datetime' ? (isIsoDateTime(min) ? min.slice(11) : null) : min;
+		if (time === null || !isOnTimeStep(time, by)) return undefined;
+	}
+	return by * 60;
+}
+
+/**
  * A cell's text -> canonical `YYYY-MM-DDTHH:mm`, or `null`. Like
  * {@link parseCellDate}, a year-less date part (`11/7 9:30`) is taken only
  * when `typed` (paste and CSV import never guess the year, §5.10).

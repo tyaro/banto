@@ -27,7 +27,13 @@
 		CellTimeEditorProps
 	} from './cellEditors';
 	import { resolveSelectValue } from './core/clipboard';
-	import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime } from './core/date';
+	import {
+		formatDateTimeText,
+		isIsoDate,
+		isIsoDateTime,
+		isIsoTime,
+		nativeTimeStep
+	} from './core/date';
 
 	let {
 		editor,
@@ -121,11 +127,10 @@
 						: 'text'
 	);
 	const isTemporal = $derived(editor === 'date' || editor === 'time' || editor === 'datetime');
-	// The native time inputs count `step` in seconds.
+	// The native time inputs count `step` in seconds and from `min`: given only
+	// when that agrees with the validator's 00:00-based step (`nativeTimeStep`).
 	const nativeStep = $derived(
-		editor !== 'date' && step !== undefined && Number.isInteger(step) && step > 0
-			? step * 60
-			: undefined
+		editor === 'time' || editor === 'datetime' ? nativeTimeStep(editor, step, min) : undefined
 	);
 
 	function stop(event: Event) {

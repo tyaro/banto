@@ -283,6 +283,18 @@ describe('native fallback (D3-a) and the injected inputs (D1-a)', () => {
 		expect(store.errors.at).toBe('15分刻みの時刻を入力してください');
 	});
 
+	it('an off-grid min leaves the native step off (native steps count from min)', () => {
+		const offGrid: FormSchema = {
+			fields: [
+				{ ...at, min: '09:10', step: 15 },
+				{ ...starts, min: '2026-11-02T09:10', step: 30 }
+			]
+		};
+		render(FieldInputsHarness, { schema: offGrid, store: createFormStore(offGrid) });
+		expect((screen.getByLabelText('At') as HTMLInputElement).hasAttribute('step')).toBe(false);
+		expect((screen.getByLabelText('Starts') as HTMLInputElement).hasAttribute('step')).toBe(false);
+	});
+
 	it('the date input is not given to a time field', () => {
 		const store = createFormStore(schema);
 		render(FieldInputsHarness, { providedInputs: { date: TimeInput }, schema, store });

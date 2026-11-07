@@ -20,6 +20,7 @@ import {
 	isIsoDateTime,
 	isIsoTime,
 	isOnTimeStep,
+	nativeTimeStep,
 	parseCellDateTime,
 	parseDateTimeText,
 	parseTimeText
@@ -71,6 +72,31 @@ describe('time / datetime parsing mirrors @banto/ui (and forms)', () => {
 	] as [string, number | undefined][])('isOnTimeStep(%j, %j)', (time, step) => {
 		expect(isOnTimeStep(time, step)).toBe(uiDatetime.isOnTimeStep(time, step));
 	});
+	it('nativeTimeStep gives a native step only when its base agrees with 00:00 (forms’ copy too)', () => {
+		const cases: [
+			'time' | 'datetime',
+			number | undefined,
+			string | undefined,
+			number | undefined
+		][] = [
+			['time', 15, undefined, 900],
+			['time', 15, '09:00', 900],
+			['time', 15, '09:10', undefined],
+			['time', 25, undefined, 1500],
+			['time', 0, undefined, undefined],
+			['time', undefined, '09:00', undefined],
+			['datetime', 30, undefined, 1800],
+			['datetime', 30, '2026-11-02T09:00', 1800],
+			['datetime', 30, '2026-11-02T09:10', undefined],
+			['datetime', 25, undefined, undefined],
+			['datetime', 30, '2026-11-02', undefined]
+		];
+		for (const [type, step, min, expected] of cases) {
+			expect(nativeTimeStep(type, step, min), `${type} ${step} ${min}`).toBe(expected);
+			expect(formsDate.nativeTimeStep(type, step, min)).toBe(expected);
+		}
+	});
+
 	it('parseCellDateTime refuses a year-less date unless typed', () => {
 		expect(parseCellDateTime('11/7 9:30')).toBeNull();
 		expect(parseCellDateTime('11/7 9:30', true)).toBe(`${new Date().getFullYear()}-11-07T09:30`);

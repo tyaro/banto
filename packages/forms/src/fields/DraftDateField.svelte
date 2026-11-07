@@ -19,7 +19,7 @@
 	 *   `DraftNumberField`.
 	 */
 	import type { Component } from 'svelte';
-	import { formatDateTimeText } from '../date';
+	import { formatDateTimeText, nativeTimeStep } from '../date';
 	import { formatDraftValue, type FormDraft } from '../draft.svelte';
 	import { getFieldInputs, type TemporalFieldInputProps } from '../fieldInputs';
 	import type { FieldDef } from '../types';
@@ -81,8 +81,12 @@
 	const nativeType = $derived(
 		def.type === 'datetime' ? 'datetime-local' : def.type === 'time' ? 'time' : 'date'
 	);
+	// The native time inputs count `step` in seconds and from `min`: given only
+	// when that agrees with the validator's 00:00-based step (`nativeTimeStep`).
 	const nativeStep = $derived(
-		step !== undefined && Number.isInteger(step) && step > 0 ? step * 60 : undefined
+		def.type === 'date'
+			? undefined
+			: nativeTimeStep(def.type === 'time' ? 'time' : 'datetime', step, min)
 	);
 
 	function setText(next: string) {
