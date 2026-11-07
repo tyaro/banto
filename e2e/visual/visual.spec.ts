@@ -205,3 +205,26 @@ test.describe('command palette', () => {
 		});
 	}
 });
+
+// @banto/ui DateInput with its calendar open (date-time-pickers §6, PR-1). The
+// clock is pinned so the "today" ring (aria-current) is the same on every
+// run; the selected day (the sample's fixed value) is a different day, so both
+// states show. Viewport shot (not fullPage): the popover is in the top layer
+// beside the field, and the closed card is already in the ui-demo baseline.
+test.describe('date picker', () => {
+	for (const combo of DIAGONAL_MATRIX) {
+		test(`ui-demo-date-picker ${comboLabel(combo)} 1440x900`, async ({ page }) => {
+			await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/ui-demo');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			const opener = page.getByRole('button', { name: '日付を変更、2026年11月7日土曜日' });
+			await opener.scrollIntoViewIfNeeded();
+			await page.waitForTimeout(SETTLE_MS);
+			await opener.click();
+			await expect(page.getByRole('dialog', { name: '日付の選択' })).toBeVisible();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(`ui-demo-date-picker-${comboLabel(combo)}-1440x900.png`);
+		});
+	}
+});

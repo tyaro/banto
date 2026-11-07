@@ -12,7 +12,8 @@
 	 * screenshot never depends on timing; the skeleton pulse is stopped by
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
-	 * The Menu card (phase 2a), the CommandPalette card (phase 2b), the
+	 * The Menu card (phase 2a), the DateInput card (date-time-pickers PR-1),
+	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
 	 * keyboard and focus behaviour are covered by the package's jsdom tests
@@ -25,6 +26,8 @@
 	 */
 	import {
 		CommandPalette,
+		DateInput,
+		dayOfWeek,
 		Drawer,
 		EmptyState,
 		ErrorState,
@@ -39,7 +42,8 @@
 		StatusBadge,
 		SurfaceCard,
 		type CommandPaletteItem,
-		type StatusBadgeVariant
+		type StatusBadgeVariant,
+		type UiMessages
 	} from '@banto/ui';
 	import {
 		ChevronDown,
@@ -56,6 +60,7 @@
 		X
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
+	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
@@ -95,6 +100,27 @@
 		overlayClosed += 1;
 	}
 	let selected = $state<string | undefined>(undefined);
+
+	// DateInput card (date-time-pickers PR-1): fixed values and a fixed range
+	// so the closed page is deterministic; the open calendar's screenshot
+	// pins the clock (e2e/visual/visual.spec.ts). The package's text comes in
+	// through `messages`, the month / weekday names from `Intl` with the
+	// current Paraglide locale (§5.5).
+	let dueDate = $state<string | null>('2026-11-07');
+	let shipDate = $state<string | null>(null);
+	const isWeekend = (date: string) => [0, 6].includes(dayOfWeek(date));
+	const dateMessages: UiMessages = {
+		datePickerOpen: () => m['datePicker.open'](),
+		datePickerChange: (date) => m['datePicker.change']({ date }),
+		datePickerDialog: () => m['datePicker.dialog'](),
+		datePickerPrevMonth: () => m['datePicker.prevMonth'](),
+		datePickerNextMonth: () => m['datePicker.nextMonth'](),
+		datePickerPrevYear: () => m['datePicker.prevYear'](),
+		datePickerNextYear: () => m['datePicker.nextYear'](),
+		datePickerToday: () => m['datePicker.today'](),
+		datePickerClear: () => m['datePicker.clear'](),
+		dateFormatHint: () => m['datePicker.formatHint']()
+	};
 
 	// Static sample commands: two groups, an icon, a shortcut hint and a
 	// disabled row. The palette's own text reuses the app's palette messages;
@@ -266,6 +292,38 @@
 			<span class="caption" data-testid="ui-demo-menu-selected">
 				{m['uiDemo.menu.selected']()}: {selected ?? m['uiDemo.menu.none']()}
 			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="DateInput" description={m['uiDemo.date.desc']()}>
+		<div class="grid">
+			<div class="sample">
+				<label class="caption" for="ui-demo-due-date">{m['uiDemo.date.label']()}</label>
+				<DateInput
+					id="ui-demo-due-date"
+					bind:value={dueDate}
+					locale={getLocale()}
+					messages={dateMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-due-date-value">
+					{m['uiDemo.date.value']()}: {dueDate ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
+			<div class="sample">
+				<label class="caption" for="ui-demo-ship-date">{m['uiDemo.date.rangeLabel']()}</label>
+				<DateInput
+					id="ui-demo-ship-date"
+					bind:value={shipDate}
+					min="2026-11-02"
+					max="2026-11-27"
+					isDateDisabled={isWeekend}
+					locale={getLocale()}
+					messages={dateMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-ship-date-value">
+					{m['uiDemo.date.value']()}: {shipDate ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
 		</div>
 	</SurfaceCard>
 
