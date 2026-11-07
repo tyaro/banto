@@ -173,9 +173,19 @@ fn column_map() -> ColumnMap {
 
 const RESOURCE: &str = "items";
 
+/// The SQL that yields "today" as the **local** date of the process:
+/// SQLite's `localtime` modifier uses the process time zone (C `localtime`),
+/// so this needs no date library (conventions §3: no `chrono`/`time`).
+const LOCAL_TODAY_SQL: &str = "SELECT date('now','localtime')";
+
 /// "Today" as the **local** date of the machine running the app process,
 /// rendered `YYYY-MM-DD`; stamped into `items.updated_at` by
 /// `create`/`update`/`import` (bound as a parameter, never interpolated).
+///
+/// Computed by asking the in-process SQLite (`date('now','localtime')`): on
+/// the SQLite backend via the app's own pool, on PostgreSQL via a throwaway
+/// `sqlite::memory:` connection - so both backends yield the same app-local
+/// date without adding a dependency.
 ///
 /// This intentionally CHANGES the previous behavior (it is not
 /// byte-for-byte compatible with the old SQL expressions): `items.updated_at`
@@ -183,15 +193,27 @@ const RESOURCE: &str = "items";
 /// SQLite, `CURRENT_DATE::text` = the DB server's time zone on PostgreSQL),
 /// so a row saved between 00:00 and 09:00 JST carried the previous day's
 /// date and fell outside a period filter built from the picker's "today"
-/// (the local date). Computing the date in Rust makes both backends agree
-/// and match the picker. The stored shape is unchanged (a bare `YYYY-MM-DD`
+/// (the local date). The stored shape is unchanged (a bare `YYYY-MM-DD`
 /// TEXT, not `Dialect::now_expr()`'s datetime). Existing rows are not
 /// rewritten.
-fn local_today() -> String {
-    chrono::Local::now()
-        .date_naive()
-        .format("%Y-%m-%d")
-        .to_string()
+async fn local_today(db: &Db) -> Result<String, BantoError> {
+    match db {
+        Db::Sqlite(pool) => sqlx::query_scalar::<_, String>(LOCAL_TODAY_SQL)
+            .fetch_one(pool)
+            .await
+            .map_err(banto_storage::storage_error),
+        #[cfg(feature = "postgres")]
+        Db::Postgres(_) => {
+            use sqlx::Connection;
+            let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:")
+                .await
+                .map_err(banto_storage::storage_error)?;
+            sqlx::query_scalar::<_, String>(LOCAL_TODAY_SQL)
+                .fetch_one(&mut conn)
+                .await
+                .map_err(banto_storage::storage_error)
+        }
+    }
 }
 
 /// Service layer for the `items` resource (spec §10): the same methods a
@@ -206,9 +228,9 @@ fn local_today() -> String {
 pub struct ItemsService {
     db: Db,
     events: Option<broadcast::Sender<ServerEvent>>,
-    /// Source of the `updated_at` date (`YYYY-MM-DD`); [`local_today`] by
-    /// default, replaceable via [`ItemsService::with_today`] so tests can pin it.
-    today: fn() -> String,
+    /// Test override for the `updated_at` date (`YYYY-MM-DD`); `None` (the
+    /// default) uses [`local_today`]. Set via [`ItemsService::with_today`].
+    today: Option<fn() -> String>,
 }
 
 impl ItemsService {
@@ -216,15 +238,23 @@ impl ItemsService {
         Self {
             db,
             events: None,
-            today: local_today,
+            today: None,
         }
     }
 
     /// Replace the "today" source used to stamp `updated_at` (tests pin a
     /// fixed date with this; production keeps the local date).
     pub fn with_today(mut self, today: fn() -> String) -> Self {
-        self.today = today;
+        self.today = Some(today);
         self
+    }
+
+    /// The `YYYY-MM-DD` date to stamp into `updated_at`.
+    async fn today(&self) -> Result<String, BantoError> {
+        match self.today {
+            Some(f) => Ok(f()),
+            None => local_today(&self.db).await,
+        }
     }
 
     /// Attach an event sender: `create`/`update`/`delete` will emit
@@ -364,7 +394,7 @@ impl ItemsService {
             dialect.placeholder(3),
             dialect.placeholder(4),
         );
-        let today = (self.today)();
+        let today = self.today().await?;
         let item = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
@@ -404,7 +434,7 @@ impl ItemsService {
             dialect.placeholder(4),
             dialect.placeholder(5),
         );
-        let today = (self.today)();
+        let today = self.today().await?;
         let item = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
@@ -543,7 +573,7 @@ impl ItemsService {
             dialect.placeholder(3),
             dialect.placeholder(4),
         );
-        let today = (self.today)();
+        let today = self.today().await?;
 
         let result = match &self.db {
             Db::Sqlite(pool) => {
@@ -838,11 +868,17 @@ mod tests {
         assert!(all.rows.iter().all(|r| r.updated_at == "2031-02-03"));
     }
 
-    #[test]
-    fn local_today_is_a_yyyy_mm_dd_date() {
-        let t = local_today();
-        assert_eq!(t.len(), 10);
-        assert!(chrono::NaiveDate::parse_from_str(&t, "%Y-%m-%d").is_ok());
+    #[tokio::test]
+    async fn local_today_is_a_yyyy_mm_dd_date() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let t = local_today(&pool).await.unwrap();
+        let b = t.as_bytes();
+        assert_eq!(b.len(), 10);
+        assert!(b.iter().enumerate().all(|(i, c)| if i == 4 || i == 7 {
+            *c == b'-'
+        } else {
+            c.is_ascii_digit()
+        }));
     }
 
     #[tokio::test]

@@ -41,7 +41,6 @@ dependencies = [
  "banto-core",
  "banto-server",
  "banto-storage",
- "chrono",
  "futures-util",
  "rust-embed",
  "serde",

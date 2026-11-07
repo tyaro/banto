@@ -67,7 +67,7 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 - Rust 側には汎用の「フィールドの型」は無い。検証はリソースごとの手書き（例: app の `core/src/items.rs` の
   `validate_item_input` が forms の `validateAll` の鏡像）。日付を検証している場所はまだ無い。
 - 日時は chrono／time を使わず手書き（conventions §3 の表。`civil_from_days` は 3 か所に移植済み）。
-- `items.updated_at` は SQLite・PostgreSQL とも **TEXT** の `YYYY-MM-DD`（Rust の `local_today()` が求めたローカル日付をパラメータで束縛。PR #533 より前は `date('now')` /
+- `items.updated_at` は SQLite・PostgreSQL とも **TEXT** の `YYYY-MM-DD`（`local_today()` がプロセス内の SQLite（`date('now','localtime')`）で求めたローカル日付をパラメータで束縛。PR #533 より前は `date('now')` /
   `CURRENT_DATE::text`）。forms 側は `type: 'date', readonly: true`。
 - 絞り込みの SQL は `crates/banto-storage/src/list_query.rs`（`FilterOp` ごとに `push_binop`。値は文字列か数値で束縛）。
 - `scripts/scaffold.mjs` はフィールドの型を生成しない。items のデモを外すプリセットがあるので、デモに列を
@@ -510,5 +510,5 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 - 派生アプリ（banto-industrial など）が date 型の空値を `''` として扱っていないか（D6 の影響）。
 - `items.updated_at` の `date('now')` は SQLite では UTC の日付で、ピッカーの「今日」（ブラウザのローカル日付）と
   日本時間の 0〜9 時に食い違う。本設計の範囲外だが、期間の絞り込みの確認で目に付くはず。
-  → **対応済み**（PR #533）。保存側で、アプリのプロセスが動く PC のローカル日付を Rust（chrono の `Local`）で求め、
+  → **対応済み**（PR #533）。保存側で、アプリのプロセスが動く PC のローカル日付をプロセス内の SQLite（`date('now','localtime')`。PostgreSQL では使い捨ての `sqlite::memory:` 接続）で求め、
   SQL にはパラメータで束縛するようにした（SQLite・PostgreSQL 共通）。既存の行は書き換えない。
