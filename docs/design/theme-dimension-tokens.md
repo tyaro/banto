@@ -2,7 +2,7 @@
 
 作成日: 2026-10-21
 状態: **実装中**。D1〜D9 は 2026-10-21 にすべて推奨どおりに決定（§7）。§6 の PR-1（トークンの追加・付録 A・規約 §9 の
-文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）は実施済み。PR-4 以降と機械検査は未着手。
+文言）は #466。PR-2（`@banto/ui` の消費側の移行）・PR-3（`@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte`）・PR-4（`@banto/dock-svelte`・`@banto/report`・`@banto/attachments`）は実施済み。PR-5 以降と機械検査は未着手。
 トラック: 保守者向け（トラックA）
 関連: PR #463（Codex の指摘の発端）/ [conventions §9](../conventions.md) /
 [AGENTS.md](../../AGENTS.md) の不変条件 6 / [visual-refresh-plan.md](visual-refresh-plan.md) §3.2・§3.4・§3.5・
@@ -270,7 +270,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 | PR-1 | `banto.css` にトークンを足す。visual-refresh-plan 付録 A.4・A.5 を同時に更新（付録 A は banto.css の仕様アンカー）。docs/upgrading.md に「任意で置き換えられる」。conventions §9 の文言の明確化（D6 の例外と、寸法の検査範囲の注記）。**消費側は変えない** | 変化なし |
 | PR-2 | `@banto/ui`（余白 54・文字 23・枠線 15） | ベースライン再生成 |
 | PR-3 | grid-svelte・forms・tree-svelte | 同上 |
-| PR-4 | dock-svelte・report・attachments | 同上 |
+| PR-4 | dock-svelte・report・attachments（report の印刷用 CSS＝`print.css`・`@page`・用紙の幅は、mm / pt / em の紙面基準なので対象外） | 同上 |
 | PR-5 | charts（文字サイズの生値 25 件すべて: SVG の `10px`・`11px` 21 件を `xs`/`sm`、`12px` 2 件と `0.85rem` を `md`、Gauge の `1.6rem` を `xl` へ。どれかを残すと D8 の検査で例外が要るため、全件を移す）。**値の置き換えだけにはしない**: 軸ラベルの幅の見積もり（`core/labels.ts` の既定 11px、`LineChart` などの余白計算）を実際の文字サイズに追従させる変更を同じ PR に含める（D9） | 同上 |
 | PR-6〜 | admin-template（設定 → 一覧・詳細 → ダッシュボード → ログイン・その他。画面ごと） | 同上 |
 | 最後 | 機械検査（D8） | — |
