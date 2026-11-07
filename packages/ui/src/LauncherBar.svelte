@@ -303,7 +303,8 @@
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: thin;
-		padding: 2.5rem var(--banto-shell-launcher-offset) var(--banto-shell-launcher-offset);
+		padding: var(--banto-space-7) var(--banto-shell-launcher-offset)
+			var(--banto-shell-launcher-offset);
 		pointer-events: none;
 	}
 
@@ -560,7 +561,8 @@
 		}
 
 		.launcher--top .launcher__track {
-			padding: var(--banto-shell-launcher-offset) var(--banto-shell-launcher-offset) 2.5rem;
+			padding: var(--banto-shell-launcher-offset) var(--banto-shell-launcher-offset)
+				var(--banto-space-7);
 		}
 
 		.launcher--top .launcher__bar,
@@ -606,8 +608,8 @@
 
 		/* Many items scroll vertically. The scroll box clips on both axes,
 		   so the page side keeps the room of the sideways tooltip (its max
-		   width + the gap; the bottom bar's 2.5rem top padding is the same
-		   idea), the ends along the edge keep 2.5rem for the bar's shadow
+		   width + the gap; the bottom bar's space-7 top padding is the same
+		   idea), the ends along the edge keep space-7 for the bar's shadow
 		   (a sharp cut line otherwise), and the screen side the offset. */
 		.launcher--vertical .launcher__track {
 			max-width: none;
@@ -617,12 +619,12 @@
 		}
 
 		.launcher--left .launcher__track {
-			padding: 2.5rem calc(var(--banto-shell-launcher-tooltip-max-width) + 1rem) 2.5rem
-				var(--banto-shell-launcher-offset);
+			padding: var(--banto-space-7) calc(var(--banto-shell-launcher-tooltip-max-width) + 1rem)
+				var(--banto-space-7) var(--banto-shell-launcher-offset);
 		}
 
 		.launcher--right .launcher__track {
-			padding: 2.5rem var(--banto-shell-launcher-offset) 2.5rem
+			padding: var(--banto-space-7) var(--banto-shell-launcher-offset) var(--banto-space-7)
 				calc(var(--banto-shell-launcher-tooltip-max-width) + 1rem);
 		}
 
