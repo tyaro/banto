@@ -110,12 +110,12 @@
 					top: 8,
 					right: rightMarginForLastTick(
 						formatValueDisplay(valueTicks[valueTicks.length - 1] ?? 0),
-						{ fontSize: tickFontSize }
+						{ fontSize: tickFontSize, totalWidth: plotWidth }
 					),
 					bottom: 26,
 					left: leftMarginFor(
 						categories.map((cat) => String(cat ?? '')),
-						{ fontSize: tickFontSize }
+						{ fontSize: tickFontSize, totalWidth: plotWidth }
 					)
 				}
 			: {

@@ -61,26 +61,36 @@ function defaultMax(fontSize: number): number {
 }
 
 /**
- * Left margin needed to fit end-anchored axis labels (horizontal bar chart
- * category names): the longest estimated label + gap, clamped to [min, max]
- * so one pathological label can't crush the plot area.
+ * Max share of the chart width each auto-grown margin may take. Left and
+ * right are capped separately, so together they never exceed 80% and the
+ * plot keeps at least 20% of the width.
  */
-export function leftMarginFor(labels: string[], options: AxisMarginOptions = {}): number {
-	const { fontSize = 11, gap = 8, min = 48 } = options;
-	const max = options.max ?? defaultMax(fontSize);
-	const widest = labels.reduce(
-		(acc, label) => Math.max(acc, estimateLabelWidth(label, fontSize)),
-		0
-	);
-	return Math.round(Math.min(max, Math.max(min, widest + gap)));
-}
-
-/** Max share of the chart width each auto-grown y-axis margin may take. */
 const MAX_TICK_MARGIN_RATIO = 0.4;
 
 export interface TickMarginOptions extends AxisMarginOptions {
 	/** Measured container width (px). Unknown/0 -> only the absolute `max` applies. */
 	totalWidth?: number;
+}
+
+/** `max`, further capped at 40% of `totalWidth` when the width is known. */
+function widthCap(max: number, totalWidth: number): number {
+	return totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max;
+}
+
+/**
+ * Left margin needed to fit end-anchored axis labels (horizontal bar chart
+ * category names): the longest estimated label + gap, clamped to [min, max]
+ * so one pathological label can't crush the plot area. With `totalWidth`,
+ * also capped at 40% of it (that cap wins over `min` in a very narrow chart).
+ */
+export function leftMarginFor(labels: string[], options: TickMarginOptions = {}): number {
+	const { fontSize = 11, gap = 8, min = 48, totalWidth = 0 } = options;
+	const max = widthCap(options.max ?? defaultMax(fontSize), totalWidth);
+	const widest = labels.reduce(
+		(acc, label) => Math.max(acc, estimateLabelWidth(label, fontSize)),
+		0
+	);
+	return Math.floor(Math.min(max, Math.round(Math.max(min, widest + gap))));
 }
 
 /** Grow `base` to fit the widest label (+ `gap`), capped by `max` and 40% of `totalWidth`; never below `base`. */
@@ -89,10 +99,7 @@ function growMargin(labels: string[], base: number, gap: number, o: TickMarginOp
 	const max = Math.floor(o.max ?? defaultMax(fontSize));
 	let widest = 0;
 	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
-	const cap = Math.max(
-		base,
-		totalWidth > 0 ? Math.min(max, Math.floor(totalWidth * MAX_TICK_MARGIN_RATIO)) : max
-	);
+	const cap = Math.max(base, widthCap(max, totalWidth));
 	return Math.min(cap, Math.max(base, Math.ceil(widest + gap)));
 }
 
@@ -130,9 +137,12 @@ export function rightMarginForTicks(
 /**
  * Right margin needed so the LAST middle-anchored tick label of a bottom
  * value axis doesn't clip at the container edge: half the label overhangs
- * the plot's right edge, so reserve that half (plus a small pad).
+ * the plot's right edge, so reserve that half (plus a small pad). With
+ * `totalWidth`, capped at 40% of it like the other margins.
  */
-export function rightMarginForLastTick(lastLabel: string, options: AxisMarginOptions = {}): number {
-	const { fontSize = 11, gap = 4, min = 16 } = options;
-	return Math.round(Math.max(min, estimateLabelWidth(lastLabel, fontSize) / 2 + gap));
+export function rightMarginForLastTick(lastLabel: string, options: TickMarginOptions = {}): number {
+	const { fontSize = 11, gap = 4, min = 16, totalWidth = 0 } = options;
+	const margin = Math.round(Math.max(min, estimateLabelWidth(lastLabel, fontSize) / 2 + gap));
+	// No absolute cap (as before); with `totalWidth`, at most 40% of it.
+	return Math.min(margin, widthCap(Infinity, totalWidth));
 }

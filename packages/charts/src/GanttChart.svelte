@@ -71,7 +71,7 @@
 				base.left,
 				leftMarginFor(
 					tasks.map((t) => t.label),
-					{ fontSize: taskFontSize }
+					{ fontSize: taskFontSize, totalWidth: plotWidth }
 				)
 			)
 		};

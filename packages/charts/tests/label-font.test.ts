@@ -167,6 +167,25 @@ describe('margins follow the rendered label size (D9-b conditions)', () => {
 });
 
 describe('caps and the radar follow the label size (D9-b)', () => {
+	it('a narrow horizontal bar chart (240px, root 20px) keeps a plot area', () => {
+		const totalWidth = 240;
+		const px = readFontSizePx(el, 11, style(resolveSm(20))); // 16px
+		const left = leftMarginFor(['あ'.repeat(12)], { fontSize: px, totalWidth });
+		const right = rightMarginForLastTick('1,000,000,000,000', { fontSize: px, totalWidth });
+		expect(left).toBe(96);
+		expect(right).toBe(Math.min(96, rightMarginForLastTick('1,000,000,000,000', { fontSize: px })));
+		expect(totalWidth - left - right).toBeGreaterThanOrEqual(totalWidth * 0.2);
+		// without the width they would eat the whole chart (204 + 88 > 240)
+		expect(
+			leftMarginFor(['あ'.repeat(12)], { fontSize: px }) +
+				rightMarginForLastTick('1,000,000,000,000', { fontSize: px })
+		).toBeGreaterThan(totalWidth);
+		// a wide chart is unaffected by the width cap
+		expect(leftMarginFor(['あ'.repeat(12)], { fontSize: px, totalWidth: 1440 })).toBe(
+			leftMarginFor(['あ'.repeat(12)], { fontSize: px })
+		);
+	});
+
 	it('a narrow chart (240px, 16px labels) stops both value-axis margins at 40% of the width', () => {
 		const totalWidth = 240;
 		const values = ['0', '500,000,000', '1,000,000,000'];
@@ -240,10 +259,11 @@ describe('chart wiring', () => {
 	});
 
 	it.each(Object.keys(SOURCES))(
-		'%s passes the measured width to every tick-margin estimate (40%% cap)',
+		'%s passes the measured width to every margin estimate (40%% cap)',
 		(name) => {
 			const src = SOURCES[name];
-			const calls = src.match(/(left|right)MarginForTicks\([\s\S]*?\}\)/g) ?? [];
+			const calls =
+				src.match(/(leftMarginFor(Ticks)?|rightMarginFor(Ticks|LastTick))\([\s\S]*?\}\s*\)/g) ?? [];
 			for (const call of calls) expect(call).toContain('totalWidth: plotWidth');
 			if (calls.length > 0) expect(src).toContain('bind:width={plotWidth}');
 		}

@@ -54,6 +54,9 @@
 
 	// The estimate uses the rendered tick font (D9-b: read from the first y
 	// category label, 11px until/unless it can be read).
+	// Measured container width (bound from ChartContainer) so the margin cap can
+	// be relative to it (40%), same as LineChart.
+	let plotWidth: number = $state(0);
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by((): ChartMargin => {
@@ -61,7 +64,7 @@
 			top: 8,
 			right: 16,
 			bottom: 26,
-			left: leftMarginFor(grid.yCats, { fontSize: tickFontSize })
+			left: leftMarginFor(grid.yCats, { fontSize: tickFontSize, totalWidth: plotWidth })
 		};
 	});
 
@@ -86,7 +89,7 @@
 </script>
 
 <div class="banto-heatmap">
-	<ChartContainer {label} {height} empty={isEmpty} {messages}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const xScale = bandScale(grid.xCats.length, [m.innerLeft, m.innerLeft + m.innerWidth], 0)}
