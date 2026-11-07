@@ -35,6 +35,26 @@ test('許可: font ショートハンドの行送りは空白を含む式でも�
 	for (const css of ok) assert.deepEqual(raws(css), [], css);
 });
 
+test('font ショートハンドは文字サイズの成分だけを見る（引用符なしのフォント名は見ない。#531 の Codex 指摘）', () => {
+	const ok = [
+		'.a { font: var(--banto-font-size-base) Noto Sans Medium, sans-serif; }',
+		'.a { font: 600 var(--banto-font-size-sm) Hiragino Kaku Gothic ProN, Medium Large; }',
+		'.a { font: var(--w) var(--banto-font-size-md)/1.5 Small Fonts; }',
+		'.a { font: caption; }',
+		'.a { font: italic bold smaller Arial; }',
+		'.a { font: italic small-caps bold larger Medium; }',
+		'.a { font: small-caps var(--banto-font-size-sm) Small Fonts, Medium; }',
+		'.a { font: var(--banto-font-size-md) / 1.4 Large Type; }',
+		'.a { font: inherit; }'
+	];
+	for (const css of ok) assert.deepEqual(raws(css), [], css);
+	assert.deepEqual(raws('.a { font: bold small Arial; }'), ['font small']);
+	assert.deepEqual(raws('.a { font: italic 600 large/1.2 Medium Sans; }'), ['font large']);
+	assert.deepEqual(raws('.a { font: var(--w) 12px Medium Sans; }'), ['font 12px']);
+	assert.deepEqual(raws('.a { font: oblique 10deg condensed 0.9rem/2 x; }'), ['font 0.9rem']);
+	assert.deepEqual(raws('.a { font: calc(1rem + 2px)/1 x; }'), ['font 1rem', 'font 2px']);
+});
+
 test('文字列・url() の中の `;`・`{`・`}` で宣言を切り違えない', () => {
 	assert.deepEqual(raws('.a { background: url(data:image/svg+xml;utf8,x{y}); font-size: 12px; }'), [
 		'font-size 12px'

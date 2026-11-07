@@ -6,7 +6,7 @@
  * 次の宣言の値に残っている生の寸法を返す。余白（gap / padding / margin など）は
  * `em`・`calc()`・部品の形の例外が多く誤検知が多いので見ない（D8-b）。
  *
- * - 文字サイズ: `font-size`、`font`（ショートハンド。`/` の後の行送りは見ない）。
+ * - 文字サイズ: `font-size`、`font`（ショートハンド。文字サイズの成分だけを見て、`/` の後の行送りとフォント名は見ない）。
  *   絶対の長さ（`px`・`rem`・`pt`・`mm` など）と絶対キーワード（`small`・`large` など）。
  * - 枠線幅: `border`、`border-{top,right,bottom,left,block,inline}[-{start,end}]`、
  *   それぞれの `-width`、`border-width`、`outline`、`outline-width`、`column-rule[-width]`。
@@ -93,29 +93,71 @@ function stripAllowed(value) {
 /** 長さを保ったまま空白にする（改行は残し、行番号と位置をずらさない）。 */
 const blank = (s) => s.replace(/[^\n]/g, ' ');
 
-/**
- * `font` ショートハンドの `/` の後の行送り（line-height）を、式ごと空白にする。
- * `calc(1rem + 2px)` のように空白を含む関数は括弧の対応をとって丸ごと飛ばす。
- */
-function blankLineHeight(value) {
-	let out = value;
-	for (let i = out.indexOf('/'); i >= 0; i = out.indexOf('/', i + 1)) {
-		let j = i + 1;
-		while (j < out.length && /\s/.test(out[j])) j++;
-		const fn = /^[a-z-]+\(/i.exec(out.slice(j));
-		if (fn) {
-			let depth = 0;
-			for (j += fn[0].length - 1; j < out.length; j++) {
-				if (out[j] === '(') depth++;
-				else if (out[j] === ')' && --depth === 0) break;
-			}
-			j++;
-		} else {
-			while (j < out.length && !/[\s,]/.test(out[j])) j++;
+/** `font` ショートハンドで文字サイズより前に来てよい語（style・variant・weight・stretch）。 */
+const FONT_PREFIX =
+	/^(?:normal|italic|oblique|small-caps|bold|bolder|lighter|(?:ultra-|extra-|semi-)?(?:condensed|expanded)|[+-]?(?:\d+\.?\d*|\.\d+)(?:deg|grad|rad|turn)?)$/i;
+
+/** 文字サイズの成分らしい先頭（長さ・パーセント・キーワード・関数）。 */
+const FONT_SIZE_LIKE =
+	/^(?:[+-]?(?:\d|\.\d)|[a-z-]+\(|(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|smaller|larger)(?:\/|$))/i;
+
+/** 最上位（括弧の外）の空白で区切った語と、その位置。 */
+function topLevelTokens(value) {
+	const tokens = [];
+	let depth = 0;
+	let start = -1;
+	for (let i = 0; i <= value.length; i++) {
+		const ch = value[i];
+		const sep = i === value.length || (depth === 0 && /\s/.test(ch));
+		if (!sep) {
+			if (start < 0) start = i;
+			if (ch === '(') depth++;
+			else if (ch === ')') depth = Math.max(0, depth - 1);
+		} else if (start >= 0) {
+			tokens.push({ text: value.slice(start, i), start });
+			start = -1;
 		}
-		out = out.slice(0, i) + blank(out.slice(i, j)) + out.slice(j);
 	}
-	return out;
+	return tokens;
+}
+
+/**
+ * `font` ショートハンドから文字サイズの成分だけを残し、ほかを空白にする。行送り（`/` の後）と
+ * フォント名（引用符なしの `Noto Sans Medium` など）は §9 の寸法に含めないので見ない。
+ * 文字サイズより前の style・weight などは飛ばし、`var()`（weight かもしれない）も飛ばす。
+ * 次の語が長さ・キーワード・関数なら、それが文字サイズ。それ以外の語が来たらフォント名が
+ * 始まったとみなし、文字サイズは `var()` だった（＝許可）とする。
+ */
+function fontSizePart(value) {
+	let afterVar = false;
+	for (const { text, start } of topLevelTokens(value)) {
+		// `/` で始まる語は行送り。その前の語（`var()`）が文字サイズだった。
+		if (text.startsWith('/')) break;
+		if (/^var\(/i.test(text)) {
+			// `var(--size)/1.5` のように最上位に `/` を持つ var は文字サイズそのもの（＝許可）。
+			if (/^var\((?:[^()]|\([^()]*\))*\)\s*\//i.test(text)) break;
+			afterVar = true;
+			continue;
+		}
+		if (FONT_PREFIX.test(text)) continue;
+		if (!FONT_SIZE_LIKE.test(text)) break;
+		// var() の後の語は、var が文字サイズだった場合はフォント名の始まり（`Small Fonts`・
+		// `Medium` など）。キーワードは見分けられないので、誤検知を避けてフォント名とみなす
+		// （`var(--weight) small Arial` の `small` は見逃す。長さ・関数は引き続き見る）。
+		if (afterVar && /^[a-z]/i.test(text) && !/^[a-z-]+\(/i.test(text)) break;
+		// 語の中の最上位の `/` から後ろ（行送り）は落とす。
+		let end = text.length;
+		for (let i = 0, depth = 0; i < text.length; i++) {
+			if (text[i] === '(') depth++;
+			else if (text[i] === ')') depth--;
+			else if (text[i] === '/' && depth === 0) {
+				end = i;
+				break;
+			}
+		}
+		return blank(value.slice(0, start)) + text.slice(0, end) + blank(value.slice(start + end));
+	}
+	return blank(value);
 }
 
 /**
@@ -146,9 +188,9 @@ export function findRawDimensions(css) {
 		const isFont = FONT_PROPS.test(prop);
 		const isBorder = !isFont && BORDER_PROPS.test(prop);
 		if (!isFont && !isBorder) continue;
-		let value = stripAllowed(seg.slice(colon + 1));
-		// `font` ショートハンドの `/` の後は行送り（line-height）。§9 の寸法に含めない。
-		if (prop === 'font') value = blankLineHeight(value);
+		// `font` ショートハンドは文字サイズの成分だけを見る（行送り・フォント名は見ない）。
+		const raw = seg.slice(colon + 1);
+		const value = stripAllowed(prop === 'font' ? fontSizePart(raw) : raw);
 		const valueStart = segStart + colon + 1;
 		const patterns = [ABS_LENGTH, isFont ? FONT_KEYWORDS : BORDER_KEYWORDS];
 		for (const re of patterns) {

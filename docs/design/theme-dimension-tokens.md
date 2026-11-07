@@ -374,7 +374,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
   PR-6a〜6d で移行が終わったので含める。app 層は派生アプリが書き換える場所でもあるが、scaffold の 4 プリセットとも
   検査が通ることを確かめてあり、派生アプリにとっても「新しく書く CSS もトークンで」が §9 の約束どおりなので、
   外す理由は無いと判断した。
-- 見るプロパティ: `font-size`・`font`（`/` の後の行送りは見ない）と、`border`・`border-{top,right,bottom,left,block,inline}[-{start,end}]`・
+- 見るプロパティ: `font-size`・`font`（文字サイズの成分だけ。`/` の後の行送りとフォント名は見ない）と、`border`・`border-{top,right,bottom,left,block,inline}[-{start,end}]`・
   それぞれの `-width`・`border-width`・`outline`・`outline-width`・`column-rule[-width]`。`border-radius`・`border-color`・
   `border-style`・`border-collapse`・`border-spacing`・`outline-offset` などの幅でないものは見ない。
 - 生値: 絶対の長さ（`px`・`rem`・`pt`・`pc`・`mm`・`cm`・`in`・`q`・`vw`・`vh`・`vmin`・`vmax`）と絶対キーワード
@@ -385,7 +385,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
   項目は 2 つ: `@banto/report` の `print.css`（`11pt`・`1px`。印刷はテーマ非依存）と、display プリセットだけが置く
   `(app)/monitor/+page.svelte`（壁掛け時刻の `clamp(3rem, 12vw, 7rem)`。画面幅に追従する部品の形）。
 - 見ないもの（レビューで守る）: SVG の属性・`style` 属性・`style:` ディレクティブ・Tailwind のクラス・`.ts` の中の CSS、
-  ローカルのカスタムプロパティの値（`--x: 1px` を `border: var(--x) solid` で使う形。D7 の部品の形のための口）。
+  ローカルのカスタムプロパティの値（`--x: 1px` を `border: var(--x) solid` で使う形。D7 の部品の形のための口）、`font` ショートハンドで `var()` の後に来る文字サイズのキーワード（`var(--weight) small Arial` の `small`。引用符なしのフォント名 `Small Fonts` などと見分けられないため、誤検知を避けてフォント名とみなす）。
 
 ### D9. charts の文字サイズと文字幅の見積もり
 
