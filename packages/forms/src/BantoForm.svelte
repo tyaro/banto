@@ -120,28 +120,28 @@
 	form {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 	}
 
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
+		gap: var(--banto-space-1);
 	}
 
 	.label {
-		font-size: 0.875rem;
+		font-size: var(--banto-font-size-md);
 		color: var(--banto-text-muted);
 	}
 
 	.required {
 		color: var(--banto-danger);
-		margin-left: 0.15rem;
+		margin-left: var(--banto-space-1);
 	}
 
 	.error {
 		margin: 0;
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		color: var(--banto-danger);
 	}
 
@@ -149,8 +149,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: 0.75rem;
-		margin-top: 0.5rem;
+		gap: var(--banto-space-3);
+		margin-top: var(--banto-space-2);
 	}
 
 	.footer--underline {
@@ -177,7 +177,7 @@
 	button {
 		height: var(--banto-control-height);
 		box-sizing: border-box;
-		padding: 0 1.25rem;
+		padding: 0 var(--banto-space-5);
 		border: none;
 		border-radius: var(--banto-radius-md);
 		background: var(--banto-primary-solid);
