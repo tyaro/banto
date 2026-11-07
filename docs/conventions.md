@@ -438,7 +438,7 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   `AttachmentsPanel.svelte` の `++loadToken`（superseded な結果を破棄して URL を revoke）は
   この契約の手書きの実例で、置き換えない。
 
-## 9. テーマトークンのみ・生値は theme に集約 [機械検査済み: packages の色値のみ。寸法は未検査]
+## 9. テーマトークンのみ・生値は theme に集約 [機械検査済み: packages の色値、packages と admin-template の文字サイズ・枠線幅]
 
 UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生値をコンポーネントに
 書かない**。生値の集約先は `packages/theme/src/css/banto.css`。glass プリセットは
@@ -459,9 +459,22 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
   部品・アプリが共有するときだけ用途名のトークン（既存の `--banto-shell-*` のような）にする。
 - `3px`・`4px` の縁（左端の強調バーなど）。部品の形として扱う。
 
-寸法の機械検査はまだ無い（レビューで守る）。既存の生の寸法は範囲ごとの PR で段階のトークンへ移している
-途中で、移行が終わった範囲から `font-size` と `border-width` の生値だけを検査に足す予定
-（theme-dimension-tokens.md §6・D8）。
+**文字サイズと枠線幅は機械検査で守る**（rule `raw-dimensions`、theme-dimension-tokens.md §7 D8）。
+`packages/*/src` と `apps/admin-template/src` の `.svelte` の `<style>` と `.css` で、`font-size`・`font` と
+`border`・`border-*`（`-width` を含む）・`outline`・`outline-width` の値に生の絶対値（`px`・`rem`・`pt`・`mm`・
+`vw` など、`small`・`thin` などのキーワード）があると落ちる。許可するのは `0`・`none`・`inherit` などのキーワード、
+`em`・`%` などの相対値、`var(--banto-*)`（フォールバック込み）、`--banto-*` を使う `calc()`/`min()`/`max()`/`clamp()`、
+`border` 系の `3px`・`4px`（上の強調の縁。`outline` には効かない）。`border-radius`・`border-color`・`border-style`・
+`border-collapse`・`outline-offset` などの幅でないプロパティと、余白（誤検知が多いので見ない）・部品の形
+（`width`・`height`。1px の区切り線の `height` を含む）は対象外。判定は `scripts/lib/raw-dimensions.mjs`、
+例はそのテスト `scripts/raw-dimensions.test.mjs`。属性（SVG の `font-size="…"`）・`style` 属性・`style:` ディレクティブ・
+Tailwind のクラスは見ないので、そこはレビューで守る。
+
+例外の書き方: 部品の形などで段に入れない値は、(1) その行か宣言の直前に理由のコメントを書き、(2)
+`scripts/verify-architecture.mjs` の `RAW_DIMENSION_ALLOWLIST` に「ファイル → 許す値」を理由つきで足す（rule 5 の
+`RAW_COLOR_ALLOWLIST` と同じ方式）。許可リストは小さく保つ。許した値がファイルから無くなると「もう使われていない」
+として落ちるので、そのときは項目を外す。現在の項目は印刷 CSS（`@banto/report` の `print.css`。テーマ非依存の
+`11pt`・`1px`）と、display プリセットだけが置く `/monitor` の壁掛け時刻（`clamp(3rem, 12vw, 7rem)`）の 2 つ。
 
 ## 10. 3-way provider 分岐 + demo は明示拒否
 

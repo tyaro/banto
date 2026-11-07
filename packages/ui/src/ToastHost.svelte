@@ -184,7 +184,7 @@
 		color: inherit;
 		opacity: 0.65;
 		cursor: pointer;
-		font-size: 1rem;
+		font-size: var(--banto-font-size-base);
 		line-height: 1;
 		padding: var(--banto-space-1);
 		border-radius: var(--banto-radius-sm);

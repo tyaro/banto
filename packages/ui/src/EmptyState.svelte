@@ -48,7 +48,7 @@
 	h2 {
 		margin: 0;
 		color: var(--banto-text);
-		font-size: 1rem;
+		font-size: var(--banto-font-size-base);
 		font-weight: 600;
 	}
 
