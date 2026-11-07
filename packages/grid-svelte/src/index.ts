@@ -17,6 +17,12 @@ export { default as ColumnsMenu } from './ColumnsMenu.svelte';
 export { GridState, DEFAULT_ROW_HEIGHT, type GridStateOptions } from './state.svelte';
 export { CellSelection, type CellPos } from './selection.svelte';
 export { defaultGridMessages, type GridMessages } from './messages';
+export {
+	provideCellEditors,
+	getCellEditors,
+	type CellEditors,
+	type CellDateEditorProps
+} from './cellEditors';
 
 export { sortRows, getColumnValue } from './core/sort';
 export { filterRows } from './core/filter';

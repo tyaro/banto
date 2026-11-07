@@ -15,6 +15,7 @@
  * No Svelte imports — usable standalone and easy to unit test.
  */
 import type { CellEditorType, FilterType, GridColumn } from '../types';
+import { isIsoDate } from './date';
 
 /** Structural mirror of @banto/forms' `FieldType`. */
 export type SchemaFieldType =
@@ -29,13 +30,14 @@ export interface SchemaField {
 	readonly?: boolean;
 	options?: { value: string | number; label: string }[];
 	/**
-	 * number: value bounds. text/textarea/password: length bounds. Mirrors
-	 * forms' `number | string` (date-time-pickers D9: a date's bounds are
-	 * canonical strings); only numeric bounds are read here - the date checks
-	 * come with the grid's date editor (date-time-pickers PR-4).
+	 * number: value bounds. text/textarea/password: length bounds. date:
+	 * canonical `YYYY-MM-DD` bounds, inclusive (date-time-pickers D9). A bound
+	 * of the other kind is ignored, like forms.
 	 */
 	min?: number | string;
 	max?: number | string;
+	/** date: days that cannot be picked (weekends, holidays). Mirrors forms' `FieldDef.isDateDisabled`. */
+	isDateDisabled?: (date: string) => boolean;
 	/** text: RegExp source. */
 	pattern?: string;
 	/** Custom validation; return an error message, or null when valid. */
@@ -108,6 +110,14 @@ export interface ColumnValidationMessages {
 	minLength?: (field: SchemaField, min: number) => string;
 	maxLength?: (field: SchemaField, max: number) => string;
 	pattern?: (field: SchemaField) => string;
+	/** date: the value is not a canonical `YYYY-MM-DD` real day (date-time-pickers §5.3). */
+	dateInvalid?: (field: SchemaField) => string;
+	/** date: earlier than `min` (canonical `YYYY-MM-DD`). */
+	dateMin?: (field: SchemaField, min: string) => string;
+	/** date: later than `max` (canonical `YYYY-MM-DD`). */
+	dateMax?: (field: SchemaField, max: string) => string;
+	/** date: `isDateDisabled` refused the day. */
+	dateDisabled?: (field: SchemaField, date: string) => string;
 }
 
 const defaultColumnValidationMessages: Required<ColumnValidationMessages> = {
@@ -116,13 +126,17 @@ const defaultColumnValidationMessages: Required<ColumnValidationMessages> = {
 	max: (_field, max) => `${max}以下で入力してください`,
 	minLength: (_field, min) => `${min}文字以上で入力してください`,
 	maxLength: (_field, max) => `${max}文字以内で入力してください`,
-	pattern: () => '形式が正しくありません'
+	pattern: () => '形式が正しくありません',
+	dateInvalid: () => '日付を YYYY-MM-DD の形で入力してください',
+	dateMin: (_field, min) => `${min}以降の日付を入力してください`,
+	dateMax: (_field, max) => `${max}以前の日付を入力してください`,
+	dateDisabled: () => 'この日付は選べません'
 };
 
 /**
  * Column-level validator with the SAME rule order and (by default) Japanese
  * messages as @banto/forms' `validateField` (required → number bounds /
- * string length → custom `validate`), so a cell edit and the resource's form
+ * date format, bounds and disabled days / string length → custom `validate`), so a cell edit and the resource's form
  * reject the same input with the same message. MUST be kept in sync with
  * `packages/forms/src/validate.ts` (structural-mirror convention, see
  * module doc). The row itself is passed as the cross-field `values` record,
@@ -137,13 +151,25 @@ function fieldValidator<TRow>(
 		if (field.required && isEmpty(value)) return msg.required(field);
 
 		if (!isEmpty(value)) {
-			// Numeric bounds only, like forms (a string bound is a date's, D9).
+			// Bounds are read by the field's type, like forms (D9): numbers for
+			// number / text, canonical strings for date.
 			const min = typeof field.min === 'number' ? field.min : undefined;
 			const max = typeof field.max === 'number' ? field.max : undefined;
 			if (field.type === 'number') {
 				const num = typeof value === 'number' ? value : Number(value);
 				if (min !== undefined && num < min) return msg.min(field, min);
 				if (max !== undefined && num > max) return msg.max(field, max);
+			}
+			if (field.type === 'date') {
+				// Anything but a canonical real day is an error, like forms (the
+				// grid's parse already refuses such text; this guards values fed
+				// to the validator directly).
+				if (!isIsoDate(value)) return msg.dateInvalid(field);
+				if (typeof field.min === 'string' && value < field.min)
+					return msg.dateMin(field, field.min);
+				if (typeof field.max === 'string' && value > field.max)
+					return msg.dateMax(field, field.max);
+				if (field.isDateDisabled?.(value)) return msg.dateDisabled(field, value);
 			}
 			if (field.type === 'text' || field.type === 'textarea' || field.type === 'password') {
 				// Trimmed length + raw-string pattern, same as forms' validateField.
@@ -233,6 +259,13 @@ export function columnsFromSchema<TRow>(
 			column.editable = true;
 			column.editor = editor;
 			if (editor === 'select' && field.options) column.editorOptions = field.options;
+			if (editor === 'date') {
+				// The calendar's range / disabled days (date-time-pickers §5.6); the
+				// validator enforces the same rules on commit.
+				if (typeof field.min === 'string') column.editorMin = field.min;
+				if (typeof field.max === 'string') column.editorMax = field.max;
+				if (field.isDateDisabled) column.isDateDisabled = field.isDateDisabled;
+			}
 			column.validate = fieldValidator<TRow>(field, options.messages);
 		}
 

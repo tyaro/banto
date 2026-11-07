@@ -96,6 +96,16 @@ export interface GridColumn<TRow> {
 	editor?: CellEditorType;
 	/** Options for `editor: 'select'`. */
 	editorOptions?: { value: string | number; label: string }[];
+	/**
+	 * `editor: 'date'` with an injected date editor (date-time-pickers §5.6 /
+	 * §5.8): the earliest / latest day the calendar offers (canonical
+	 * `YYYY-MM-DD`, inclusive) and the days it refuses. Display hints for the
+	 * picker only - `validate` is what rejects a committed value
+	 * (`columnsFromSchema` sets both from the schema field).
+	 */
+	editorMin?: string;
+	editorMax?: string;
+	isDateDisabled?: (date: string) => boolean;
 	/** Column-level validator; return a Japanese error message, or null when valid. */
 	validate?: (value: unknown, row: TRow) => string | null;
 	/**

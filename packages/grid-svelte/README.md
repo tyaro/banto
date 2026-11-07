@@ -85,6 +85,41 @@ Tab / Shift+Tab はブラウザの標準移動を使う非modalのまま。
 強制配色では範囲選択を内側の破線、active セルを実線で区別する。選択計算・通常配色・
 ソートやフィルタの値・セル編集・仮想スクロールの契約は維持する。
 
+## 日付のセルと注入（date-time-pickers PR-4）
+
+`editor: 'date'` のセルの値は `YYYY-MM-DD`（実在の日）か、空なら **`null`**（`''` ではない。
+[docs/design/date-time-pickers.md](../../docs/design/date-time-pickers.md) D6）。
+
+- **解析**: `parseCellInput(raw, 'date')`（セルの確定・貼り付け・CSV 取り込みの共通の入口）は、寛容な形
+  （`2026/11/7`・`2026.11.7`・`20261107`・全角）を `YYYY-MM-DD` に直し、空白だけなら `null`、それ以外（実在しない日・
+  `11/07/2026` のような別の順・時刻付き）は失敗にする。年を省いた `11/7` は、セルで打って確定したときだけ今年として
+  受け付け、貼り付けと CSV では失敗にする（どの年か決まらないため）。
+- **検証**: `columnsFromSchema` の date の列は forms の `validateField` と同じ規則・文言で、形式 → `min` / `max`
+  （正規の文字列、両端を含む）→ `isDateDisabled` を検査する。文言は `ColumnValidationMessages` の任意の
+  `dateInvalid` / `dateMin` / `dateMax` / `dateDisabled`。範囲と無効日は列の `editorMin` / `editorMax` /
+  `isDateDisabled` にも入り、注入したピッカーのカレンダーで選べなくなる。
+- **ピッカーの注入**: grid は `@banto/ui` を import しない（docs/conventions.md §4）。アプリが部品を渡す。
+
+  ```svelte
+  <!-- +layout.svelte: 下のすべての BantoGrid に効く -->
+  <script lang="ts">
+  	import { provideCellEditors } from '@banto/grid-svelte';
+  	import CellDateInput from '#lib/components/CellDateInput.svelte'; // DateInput + messages + locale
+
+  	provideCellEditors({ date: CellDateInput });
+  </script>
+  ```
+
+  グリッドごとに替えるときは `<BantoGrid cellEditors={{ date: OtherInput }} … />`（型ごとに context より優先）。
+  渡される props は `CellDateEditorProps`（`@banto/ui` の `DateInput` の props の一部。`inputEl` は bindable で、grid が
+  フォーカスを置く先）。注入が無ければネイティブの `<input type="date">` のまま。
+
+- **セル編集の約束**（§5.8）: 編集の状態遷移は変わらない。カレンダーで日を選んでも下書きに入るだけで確定しない
+  （確定は Enter・Tab・セルの外を押したとき）。Esc の 1 回目はカレンダーを閉じて入力欄へ戻り、2 回目で編集を
+  取り消す。ボタンやカレンダーの日をマウスで押しても、選ぶ前に確定したり編集欄が消えたりしない。注入する部品は
+  `DateInput` と同じく、ポップオーバーの中のキーと `pointerdown` を外へ出さず、自分で処理したキーは
+  `preventDefault` してから `onkeydown` に渡し、`onblur` は部品全体からフォーカスが出たときだけ呼ぶこと。
+
 ## 依存
 
 `ColumnsMenu` の checkbox はネイティブ描画を使い、`--banto-checkbox-size`（既定・fallback は `1.1rem`）で

@@ -33,6 +33,7 @@
 	import HeaderCell from './HeaderCell.svelte';
 	import CellEditError from './CellEditError.svelte';
 	import { defaultGridMessages, type GridMessages } from './messages';
+	import { getCellEditors, type CellEditors } from './cellEditors';
 
 	interface Props {
 		/**
@@ -82,6 +83,12 @@
 		 * FilterPopover. Defaults reproduce today's Japanese output.
 		 */
 		messages?: Partial<GridMessages>;
+		/**
+		 * Injected cell editors (date-time-pickers §5.8, D1-a), per editor type;
+		 * wins over `provideCellEditors` (context). A type with neither keeps
+		 * the native input (D3-a).
+		 */
+		cellEditors?: CellEditors;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune (a local binding named
@@ -101,8 +108,12 @@
 		onParamsChange,
 		onVisibleRangeChange,
 		rowClass,
-		messages = {}
+		messages = {},
+		cellEditors
 	}: Props = $props();
+
+	const providedCellEditors = getCellEditors();
+	const editors = $derived<CellEditors>({ ...providedCellEditors, ...cellEditors });
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
 	// reactive state) rather than re-read per usage below.
@@ -127,6 +138,9 @@
 	let errorRegionEl: HTMLDivElement | undefined = $state();
 	let headerRowEl: HTMLDivElement | undefined = $state();
 	let editorEl: HTMLInputElement | HTMLSelectElement | undefined = $state();
+	// An injected editor's wrapper (button and calendar included); the native
+	// editors have none and are their own root.
+	let editorRootEl: HTMLElement | null | undefined = $state();
 
 	let scrollTop = $state(0);
 	let viewportHeight = $state(0);
@@ -160,10 +174,31 @@
 		const container = containerEl;
 		if (!container) return;
 		const document = container.ownerDocument;
+		// The whole editor counts (date-time-pickers §5.8 promise 4): pressing
+		// an injected editor's button or a calendar day, or focus moving into
+		// its calendar, keeps the session's claim on focus.
+		function insideEditor(target: EventTarget | null): boolean {
+			const root = editorRootEl ?? editorEl;
+			return !!root && target instanceof Node && root.contains(target);
+		}
+		// A press outside can make an injected editor park focus on its own text
+		// box while it dismisses its popover (DateInput's light dismiss), in the
+		// same pointerdown dispatch: that focusin is not the user coming back.
+		let pressedOutside = false;
+		let pressTimer: ReturnType<typeof setTimeout> | undefined;
 		function relinquishFocus(event: Event) {
-			if (editFocus && (event.type === 'focusin' || event.target !== editorEl)) {
-				editFocus.owned = event.target === editorEl;
+			if (!editFocus) return;
+			const inside = insideEditor(event.target);
+			if (event.type === 'pointerdown') {
+				if (inside) return;
+				editFocus.owned = false;
+				pressedOutside = true;
+				clearTimeout(pressTimer);
+				pressTimer = setTimeout(() => (pressedOutside = false));
+				return;
 			}
+			if (inside && pressedOutside) return;
+			editFocus.owned = inside;
 		}
 		function leaveWindow() {
 			if (editFocus) editFocus.owned = false;
@@ -175,6 +210,7 @@
 			document.removeEventListener('pointerdown', relinquishFocus, true);
 			document.removeEventListener('focusin', relinquishFocus, true);
 			document.defaultView?.removeEventListener('blur', leaveWindow);
+			clearTimeout(pressTimer);
 			if (editFocus) editFocus.owned = false;
 		};
 	});
@@ -909,7 +945,9 @@
 			// (e.g. numeric) option values.
 			value = resolveSelectValue(String(editing.draft ?? ''), column.editorOptions);
 		} else {
-			const parsed = parseCellInput(String(editing.draft ?? ''), editorType);
+			// Typed: a year-less date is this year's (the injected date input's
+			// rule); a paste or CSV cell never guesses it (date-time-pickers §5.10).
+			const parsed = parseCellInput(String(editing.draft ?? ''), editorType, { typed: true });
 			if (!parsed.ok) {
 				editing = { ...editing, error: t.inlineEditInvalid() };
 				if (moveAfter === 'left' || moveAfter === 'right') await focusEditError(sessionId);
@@ -1255,15 +1293,23 @@
 									{linkInfo.text}
 								{/if}
 							{:else if isEditingCell && editing}
+								<!-- `editing?.`: Esc / a commit can end the session and move focus
+								     synchronously, before this block is removed - an injected editor
+								     reads its props in its own blur (date-time-pickers §5.8). -->
 								<CellEditor
 									editor={column.editor}
 									label={column.header.trim() || column.id}
-									invalid={!!editing.error}
-									describedBy={editing.error ? editErrorId : undefined}
-									pending={editing.pending}
-									draft={editing.draft}
+									invalid={!!editing?.error}
+									describedBy={editing?.error ? editErrorId : undefined}
+									pending={!!editing?.pending}
+									draft={editing?.draft}
 									options={column.editorOptions}
+									dateEditor={editors.date}
+									min={column.editorMin}
+									max={column.editorMax}
+									isDateDisabled={column.isDateDisabled}
 									bind:editorEl
+									bind:editorRootEl
 									onDraftChange={(value) => {
 										if (editing) editing.draft = value;
 									}}

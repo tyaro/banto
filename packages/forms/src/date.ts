@@ -6,8 +6,10 @@
  *
  * A copy of `@banto/ui`'s `datetime.ts` `isIsoDate` / `parseDateText` -
  * forms cannot import ui (conventions §4, shared-primitives-upstream-plan
- * §2.1) - kept in lockstep by `tests/date.test.ts`, which runs the same cases
- * through both. Change the two together.
+ * §2.1) - kept in lockstep by `tests/dateField.test.ts`, which runs the same
+ * cases through both. `@banto/grid-svelte` has a third copy
+ * (`src/core/date.ts`, checked against both by its `tests/date.test.ts`).
+ * Change the three together.
  *
  * - Canonical: `YYYY-MM-DD`, years 0001-9999, a real calendar day. String
  *   order = date order, so `min` / `max` are plain string comparisons.

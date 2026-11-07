@@ -153,8 +153,26 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
   のフォームでも枠のある入力欄のまま）。FormDraft には `DraftDateField` を使う。詳細は
   [forms README](../packages/forms/README.md#日付の入力と注入date-time-pickers-pr-3)。
 
-`@banto/grid-svelte` の `SchemaField` の `min` / `max` も `number | string` に広げた（構造の鏡像。数値の範囲だけを読む）。
-グリッドのセル編集の date は今までどおりネイティブの入力で、値の扱いも変えていない（PR-4 で揃える）。
+`@banto/grid-svelte` の `SchemaField` の `min` / `max` も `number | string` に広げた（構造の鏡像）。
+
+#### グリッドの日付のセル（次リリース、date-time-pickers PR-4）
+
+`@banto/grid-svelte` の `editor: 'date'` も forms に揃える。
+
+- **空の日付は `null`**: セルを空にして確定・空のセルを貼り付け・CSV の空の欄で、`onCellEdit` / `onRangePaste` /
+  `convertCsvRow` の値が `''` から `null` になる。受け取る側（保存・Rust の入力の型）は上の「日付のフィールド」と同じに直す。
+- **正規化**: `parseCellInput(raw, 'date')` が素通しをやめ、`2026/11/7`（Excel で保存した CSV の形）・全角などを
+  `YYYY-MM-DD` に直す。実在しない日・別の順（`11/07/2026`）・時刻付き・年を省いた `11/7`（貼り付けと CSV のみ）は
+  失敗（`inlineEditInvalid`・貼り付けはスキップ・CSV は `convertError`）になる。今まで素通しで入っていた不正な文字列が
+  入らなくなる。
+- **検証**: `columnsFromSchema` の date の列に、forms と同じ形式・`min` / `max`・`isDateDisabled` の検証が付く
+  （`SchemaField` に `isDateDisabled` を追加。文言は `ColumnValidationMessages` の任意の `dateInvalid` / `dateMin` /
+  `dateMax` / `dateDisabled`。多言語アプリは admin-template の `columnValidationMessages()` のように bridge へ足す）。
+- **日付ピッカーの注入**: `provideCellEditors({ date })`（context）か `BantoGrid` の `cellEditors` prop で、`@banto/ui` の
+  `DateInput` などをセルの編集に使える。注入しなければネイティブの入力のまま。admin-template はルートの
+  `+layout.svelte` で `CellDateInput.svelte` を注入している。`GridColumn` に任意の `editorMin` / `editorMax` /
+  `isDateDisabled`（カレンダーの範囲と無効日）を追加。詳細は
+  [grid README](../packages/grid-svelte/README.md#日付のセルと注入date-time-pickers-pr-4)。
 
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 

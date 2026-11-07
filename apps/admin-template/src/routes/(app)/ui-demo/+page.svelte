@@ -13,7 +13,7 @@
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
 	 * The Menu card (phase 2a), the DateInput card (date-time-pickers PR-1),
-	 * the TimeInput card (PR-2),
+	 * the TimeInput card (PR-2), the BantoGrid date cell card (PR-4),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
@@ -64,7 +64,8 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
-	import { dateInputMessages } from '#lib/banto/i18n.js';
+	import { BantoGrid, columnsFromSchema, type CellEdit } from '@banto/grid-svelte';
+	import { columnValidationMessages, dateInputMessages, gridMessages } from '#lib/banto/i18n.js';
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
 
@@ -122,6 +123,39 @@
 	// Fixed values, so the open list's screenshot is deterministic.
 	let startTime = $state<string | null>('09:30');
 	let meetingTime = $state<string | null>(null);
+	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
+	// the DateInput the root layout injects (`provideCellEditors`); the range
+	// comes from the schema (min / max, like the ship date above). Fixed
+	// rows, so the closed page is deterministic; edits stay on this page.
+	interface Shipment {
+		code: string;
+		due: string | null;
+	}
+	let shipments = $state<Shipment[]>([
+		{ code: 'A-100', due: '2026-11-07' },
+		{ code: 'B-200', due: null },
+		{ code: 'C-300', due: '2026-11-20' }
+	]);
+	const shipmentColumns = columnsFromSchema<Shipment>(
+		{
+			fields: [
+				{ name: 'code', label: m['uiDemo.gridDate.code'](), type: 'text', readonly: true },
+				{
+					name: 'due',
+					label: m['uiDemo.gridDate.due'](),
+					type: 'date',
+					min: '2026-11-02',
+					max: '2026-11-27'
+				}
+			]
+		},
+		{ messages: columnValidationMessages() }
+	);
+	function saveShipment(edit: CellEdit<Shipment>) {
+		shipments = shipments.map((row) =>
+			row.code === edit.rowId ? { ...row, [edit.field]: edit.value } : row
+		);
+	}
 	const timeMessages: UiMessages = {
 		timePickerOpen: () => m['timePicker.open'](),
 		timePickerList: () => m['timePicker.list'](),
@@ -518,6 +552,18 @@
 			</div>
 		</div>
 	</SurfaceCard>
+
+	<SurfaceCard title="BantoGrid + DateInput" description={m['uiDemo.gridDate.desc']()}>
+		<div class="grid-sample" data-testid="ui-demo-grid-date">
+			<BantoGrid
+				rows={shipments}
+				columns={shipmentColumns}
+				getRowId={(row) => row.code}
+				onCellEdit={saveShipment}
+				messages={gridMessages()}
+			/>
+		</div>
+	</SurfaceCard>
 </div>
 
 <!-- Outside the cards: under the glass preset SurfaceCard has a
@@ -632,6 +678,12 @@
 		flex-direction: column;
 		gap: 0.4rem;
 		min-width: 0;
+	}
+
+	/* The grid sample's frame (a part's shape, conventions §9): the grid
+	   scrolls inside a fixed height; three rows and the header fit. */
+	.grid-sample {
+		height: 12rem;
 	}
 
 	.sample--frame {

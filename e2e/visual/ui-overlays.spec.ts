@@ -532,3 +532,110 @@ test.describe('ui-demo Menu longer than the space beside its trigger', () => {
 		await expect(triggerOf(page)).toBeFocused();
 	});
 });
+
+// BantoGrid with the injected DateInput (date-time-pickers §5.8, PR-4): a list
+// cell edits a date through the calendar - Esc in two steps, a picked day is
+// only a draft until Enter, pressing the button and a day with the mouse keeps
+// the editor - and a FilterPopover over the same grid keeps its own Esc. The
+// full key table is in the grid's jsdom tests (cellEditors.test.ts).
+test.describe('ui-demo BantoGrid date cell', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	const gridOf = (page: Page) => page.getByTestId('ui-demo-grid-date').getByRole('grid');
+	const dueCell = (page: Page, row: number) =>
+		gridOf(page).locator(`[data-cell-row="${row}"][data-cell-field="due"]`);
+	const calendarOf = (page: Page) => page.getByRole('dialog', { name: '日付の選択' });
+
+	async function startEditing(page: Page, row: number) {
+		const cell = dueCell(page, row);
+		await cell.scrollIntoViewIfNeeded();
+		const editor = cell.getByRole('textbox', { name: '出荷日' });
+		// A double click before hydration does nothing: retry until the editor shows.
+		await expect(async () => {
+			await cell.dblclick();
+			await expect(editor).toBeFocused({ timeout: 1000 });
+		}).toPass();
+		return editor;
+	}
+
+	test('Esc closes the calendar first, then cancels the edit', async ({ page }) => {
+		const editor = await startEditing(page, 0);
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(calendarOf(page)).toBeVisible();
+		await expect(calendarOf(page).locator('[data-date="2026-11-07"]')).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(calendarOf(page)).toBeHidden();
+		await expect(editor).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(editor).toHaveCount(0);
+		await expect(gridOf(page)).toBeFocused();
+		await expect(dueCell(page, 0)).toHaveText('2026-11-07');
+	});
+
+	test('a day picked with the mouse is a draft; Enter commits it and moves down', async ({
+		page
+	}) => {
+		const editor = await startEditing(page, 0);
+		await dueCell(page, 0)
+			.getByRole('button', { name: /日付を変更/ })
+			.click();
+		await expect(calendarOf(page)).toBeVisible();
+		await expect(editor).toHaveCount(1);
+		await calendarOf(page).locator('[data-date="2026-11-20"]').click();
+		await expect(calendarOf(page)).toBeHidden();
+		await expect(editor).toBeFocused();
+		await expect(editor).toHaveValue('2026-11-20');
+		// Before the range (min 2026-11-02): the calendar stops at November.
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(calendarOf(page)).toBeVisible();
+		await expect(calendarOf(page).locator('[data-date="2026-11-01"]')).toHaveAttribute(
+			'aria-disabled',
+			'true'
+		);
+		await page.keyboard.press('Escape');
+		await expect(calendarOf(page)).toBeHidden();
+		await expect(editor).toHaveValue('2026-11-20');
+		await page.keyboard.press('Enter');
+		await expect(editor).toHaveCount(0);
+		await expect(dueCell(page, 0)).toHaveText('2026-11-20');
+		await expect(dueCell(page, 1)).toHaveClass(/active/);
+		await expect(gridOf(page)).toBeFocused();
+	});
+
+	test('typed text is normalised; an out-of-range day is an error', async ({ page }) => {
+		const editor = await startEditing(page, 1);
+		await editor.fill('2026/11/9');
+		await page.keyboard.press('Enter');
+		await expect(dueCell(page, 1)).toHaveText('2026-11-09');
+		const again = await startEditing(page, 1);
+		await again.fill('2026-11-30');
+		await page.keyboard.press('Enter');
+		await expect(again).toHaveAttribute('aria-invalid', 'true');
+		await expect(page.getByText('2026-11-27以前の日付を入力してください')).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(dueCell(page, 1)).toHaveText('2026-11-09');
+	});
+
+	test('pressing a filter button with the calendar open commits; Esc closes only the filter', async ({
+		page
+	}) => {
+		const editor = await startEditing(page, 2);
+		await editor.fill('2026/11/25');
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(calendarOf(page)).toBeVisible();
+		const trigger = gridOf(page).getByRole('button', { name: '出荷番号の絞り込み', exact: true });
+		await trigger.click();
+		await expect(calendarOf(page)).toBeHidden();
+		await expect(editor).toHaveCount(0);
+		await expect(dueCell(page, 2)).toHaveText('2026-11-25');
+		const filter = gridOf(page).getByRole('dialog', { name: '出荷番号の絞り込み', exact: true });
+		await expect(filter).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(filter).toHaveCount(0);
+		await expect(trigger).toBeFocused();
+	});
+});
