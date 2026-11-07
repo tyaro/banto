@@ -55,7 +55,7 @@
 
 	h2 {
 		margin: 0;
-		font-size: 1rem;
+		font-size: var(--banto-font-size-base);
 		font-weight: 600;
 		font-feature-settings: 'palt';
 	}

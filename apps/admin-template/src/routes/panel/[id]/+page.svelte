@@ -98,7 +98,7 @@
 		height: var(--banto-dock-titlebar-height, 2rem);
 		padding: 0 var(--banto-space-3);
 		background: var(--banto-surface-raised);
-		border-bottom: 1px solid var(--banto-border);
+		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		font-size: var(--banto-font-size-md);
 		font-weight: 600;
 		color: var(--banto-text);
