@@ -27,9 +27,17 @@ export interface FieldDef {
 	readonly?: boolean;
 	/** select */
 	options?: FieldOption[];
-	/** number: value bounds. text/textarea/password: length bounds. */
-	min?: number;
-	max?: number;
+	/**
+	 * number: value bounds. text/textarea/password: length bounds. date: the
+	 * earliest / latest day as a canonical `YYYY-MM-DD` string, inclusive
+	 * (date-time-pickers §5.6, D9). Read by the field's type: a bound of the
+	 * other kind (a string on a number field, a number on a date field) is
+	 * ignored.
+	 */
+	min?: number | string;
+	max?: number | string;
+	/** date: days that cannot be chosen (weekends, holidays); `date` is canonical `YYYY-MM-DD` (§5.6). */
+	isDateDisabled?: (date: string) => boolean;
 	/** text: RegExp source. */
 	pattern?: string;
 	/** Custom validation; return an error message, or null when valid. */

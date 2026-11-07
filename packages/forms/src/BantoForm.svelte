@@ -3,10 +3,15 @@
 	 * Schema-driven form (spec §7.3): renders one field per `FieldDef` in a
 	 * single column (default layout), wires value/blur to the FormStore, and
 	 * runs full validation on submit before calling `onSubmit`.
+	 *
+	 * Date fields render the date input injected by `provideFieldInputs`
+	 * (context) or the `fieldInputs` prop (which wins, per type), else the
+	 * native input (date-time-pickers §5.7, D1-a / D3-a).
 	 */
 	import type { Snippet } from 'svelte';
 	import type { FieldDef, FormSchema, FormAppearance } from './types';
 	import type { FormStore } from './store.svelte';
+	import { getFieldInputs, type FieldInputs } from './fieldInputs';
 	import TextField from './fields/TextField.svelte';
 	import PasswordField from './fields/PasswordField.svelte';
 	import TextareaField from './fields/TextareaField.svelte';
@@ -25,6 +30,8 @@
 		appearance?: FormAppearance;
 		/** Escape hatch for extra footer content (e.g. a delete button) next to the submit button. */
 		children?: Snippet;
+		/** Field inputs for this form; each type given here overrides `provideFieldInputs`. */
+		fieldInputs?: FieldInputs;
 	}
 
 	let {
@@ -34,8 +41,12 @@
 		submitting = false,
 		submitLabel = '保存',
 		appearance = 'default',
-		children
+		children,
+		fieldInputs
 	}: Props = $props();
+
+	const providedInputs = getFieldInputs();
+	const inputs = $derived<FieldInputs>({ ...providedInputs, ...fieldInputs });
 
 	// Svelte keeps this namespace stable across SSR/hydration. Field names stay
 	// store keys; indices avoid whitespace and input/error ID collisions.
@@ -55,8 +66,6 @@
 				return TextareaField;
 			case 'number':
 				return NumberField;
-			case 'date':
-				return DateField;
 			case 'select':
 				return SelectField;
 			case 'checkbox':
@@ -73,21 +82,49 @@
 		{@const inputId = `${formId}-field-${index}`}
 		{@const errorId = `${formId}-error-${index}`}
 		{@const underline = appearance === 'underline' && def.type !== 'checkbox'}
+		{@const injected = def.type === 'date' && !!inputs.date}
 		{#snippet control()}
-			<Field
-				{def}
-				class={underline ? 'banto-field-control' : undefined}
-				id={inputId}
-				aria-describedby={store.errors[def.name] ? errorId : undefined}
-				value={store.values[def.name]}
-				error={store.errors[def.name]}
-				disabled={submitting}
-				onInput={(value: unknown) => store.setValue(def.name, value)}
-				onBlur={() => store.touch(def.name)}
-			/>
+			{#if def.type === 'date'}
+				<DateField
+					{def}
+					class={underline ? 'banto-field-control' : undefined}
+					id={inputId}
+					aria-describedby={store.errors[def.name] ? errorId : undefined}
+					value={store.values[def.name]}
+					error={store.errors[def.name]}
+					disabled={submitting}
+					onInput={(value: unknown) => store.setValue(def.name, value)}
+					onBlur={() => store.touch(def.name)}
+					input={inputs.date}
+				/>
+			{:else}
+				<Field
+					{def}
+					class={underline ? 'banto-field-control' : undefined}
+					id={inputId}
+					aria-describedby={store.errors[def.name] ? errorId : undefined}
+					value={store.values[def.name]}
+					error={store.errors[def.name]}
+					disabled={submitting}
+					onInput={(value: unknown) => store.setValue(def.name, value)}
+					onBlur={() => store.touch(def.name)}
+				/>
+			{/if}
 		{/snippet}
 		<div class="field">
-			{#if underline}
+			{#if underline && injected}
+				<!-- An injected input is a composite (text box, button, popover):
+				     the stacked look with a sibling <label for>, never a wrapping
+				     <label> - a click inside the calendar would be re-targeted to
+				     the text box and its text would join the accessible name. -->
+				<div class="banto-field banto-field--stacked">
+					{@render control()}
+					<label class="banto-field-label" for={inputId}>
+						{def.label}
+						{#if def.required}<span class="required">*</span>{/if}
+					</label>
+				</div>
+			{:else if underline}
 				<label class="banto-field banto-field--stacked" for={inputId}>
 					{@render control()}
 					<span class="banto-field-label">

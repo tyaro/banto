@@ -28,9 +28,14 @@ export interface SchemaField {
 	required?: boolean;
 	readonly?: boolean;
 	options?: { value: string | number; label: string }[];
-	/** number: value bounds. text/textarea/password: length bounds. */
-	min?: number;
-	max?: number;
+	/**
+	 * number: value bounds. text/textarea/password: length bounds. Mirrors
+	 * forms' `number | string` (date-time-pickers D9: a date's bounds are
+	 * canonical strings); only numeric bounds are read here - the date checks
+	 * come with the grid's date editor (date-time-pickers PR-4).
+	 */
+	min?: number | string;
+	max?: number | string;
 	/** text: RegExp source. */
 	pattern?: string;
 	/** Custom validation; return an error message, or null when valid. */
@@ -132,19 +137,20 @@ function fieldValidator<TRow>(
 		if (field.required && isEmpty(value)) return msg.required(field);
 
 		if (!isEmpty(value)) {
+			// Numeric bounds only, like forms (a string bound is a date's, D9).
+			const min = typeof field.min === 'number' ? field.min : undefined;
+			const max = typeof field.max === 'number' ? field.max : undefined;
 			if (field.type === 'number') {
 				const num = typeof value === 'number' ? value : Number(value);
-				if (field.min !== undefined && num < field.min) return msg.min(field, field.min);
-				if (field.max !== undefined && num > field.max) return msg.max(field, field.max);
+				if (min !== undefined && num < min) return msg.min(field, min);
+				if (max !== undefined && num > max) return msg.max(field, max);
 			}
 			if (field.type === 'text' || field.type === 'textarea' || field.type === 'password') {
 				// Trimmed length + raw-string pattern, same as forms' validateField.
 				const str = String(value);
 				const trimmedLen = str.trim().length;
-				if (field.min !== undefined && trimmedLen < field.min)
-					return msg.minLength(field, field.min);
-				if (field.max !== undefined && trimmedLen > field.max)
-					return msg.maxLength(field, field.max);
+				if (min !== undefined && trimmedLen < min) return msg.minLength(field, min);
+				if (max !== undefined && trimmedLen > max) return msg.maxLength(field, max);
 				if (field.pattern && !new RegExp(field.pattern).test(str)) return msg.pattern(field);
 			}
 		}

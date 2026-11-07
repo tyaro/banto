@@ -38,6 +38,27 @@ test.describe('ui-demo Modal / Drawer behaviour', () => {
 		await expect(page.getByTestId('ui-demo-overlay-closed')).toContainText('1');
 	});
 
+	test('Modal: a DateInput calendar inside takes the first Esc, the Modal the second', async ({
+		page
+	}) => {
+		// date-time-pickers §8 (PR-3): the calendar is a top-layer popover inside
+		// the Modal's z-index stack - a form in a dialog.
+		await page.getByTestId('ui-demo-open-modal').click();
+		const modal = page.getByRole('dialog', { name: '見本のモーダル' });
+		await expect(modal).toBeVisible();
+		const input = modal.getByRole('textbox', { name: '期日' });
+		const calendar = page.getByRole('dialog', { name: '日付の選択' });
+		await input.focus();
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(calendar).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(calendar).toBeHidden();
+		await expect(modal).toBeVisible();
+		await expect(input).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(modal).toBeHidden();
+	});
+
 	test('Drawer: dirty blocks Esc, a stacked Modal closes first, × closes the Drawer', async ({
 		page
 	}) => {

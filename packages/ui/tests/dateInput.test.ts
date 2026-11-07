@@ -16,6 +16,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { flushSync } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import DateInputHarness from './fixtures/DateInputHarness.svelte';
+import ModalDateInputHarness from './fixtures/ModalDateInputHarness.svelte';
 
 type PopoverElement = HTMLElement & { showPopover(): void; hidePopover(): void };
 
@@ -617,5 +618,29 @@ describe('DateInput locale and messages (§5.5)', () => {
 		expect(button.getAttribute('aria-label')).toBe('Choose date');
 		fireEvent.click(button);
 		expect(screen.getByRole('dialog', { name: 'Calendar' })).toBeTruthy();
+	});
+});
+
+describe('DateInput inside a Modal (§8, PR-3: a form in a dialog)', () => {
+	it('Esc closes only the calendar first; the second Esc closes the Modal', () => {
+		const onclose = vi.fn();
+		render(ModalDateInputHarness, { onclose });
+		flushSync();
+		const modal = screen.getByRole('dialog', { name: 'Edit' });
+		const input = screen.getByRole('textbox', { name: 'Due date' });
+		fireEvent.click(modal.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!);
+		flushSync();
+		expect(isOpen()).toBe(true);
+		expect(modal.contains(document.activeElement)).toBe(true);
+
+		fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+		flushSync();
+		expect(isOpen()).toBe(false);
+		expect(document.activeElement).toBe(input);
+		expect(onclose).not.toHaveBeenCalled();
+
+		fireEvent.keyDown(input, { key: 'Escape' });
+		flushSync();
+		expect(onclose).toHaveBeenCalledTimes(1);
 	});
 });

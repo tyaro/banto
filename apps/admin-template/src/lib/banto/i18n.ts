@@ -13,6 +13,7 @@
 import type { GridMessages, ColumnValidationMessages } from '@banto/grid-svelte';
 import type { ValidationMessages } from '@banto/forms';
 import type { TreeMessages } from '@banto/tree-svelte';
+import type { UiMessages } from '@banto/ui';
 import * as m from '#lib/paraglide/messages.js';
 
 /** @banto/grid-svelte `messages` prop: FilterPopover / HeaderCell / BantoGrid / ColumnsMenu strings. */
@@ -48,7 +49,27 @@ export function formValidationMessages(): ValidationMessages {
 		max: (_def, max) => m['validation.max']({ max }),
 		minLength: (_def, min) => m['validation.minLength']({ min }),
 		maxLength: (_def, max) => m['validation.maxLength']({ max }),
-		pattern: () => m['validation.pattern']()
+		pattern: () => m['validation.pattern'](),
+		dateInvalid: () => m['validation.dateInvalid'](),
+		dateMin: (_def, min) => m['validation.dateMin']({ min }),
+		dateMax: (_def, max) => m['validation.dateMax']({ max }),
+		dateDisabled: () => m['validation.dateDisabled']()
+	};
+}
+
+/** @banto/ui `DateInput` `messages` (date-time-pickers §5.5): the calendar's button / dialog / hint copy. */
+export function dateInputMessages(): UiMessages {
+	return {
+		datePickerOpen: () => m['datePicker.open'](),
+		datePickerChange: (date) => m['datePicker.change']({ date }),
+		datePickerDialog: () => m['datePicker.dialog'](),
+		datePickerPrevMonth: () => m['datePicker.prevMonth'](),
+		datePickerNextMonth: () => m['datePicker.nextMonth'](),
+		datePickerPrevYear: () => m['datePicker.prevYear'](),
+		datePickerNextYear: () => m['datePicker.nextYear'](),
+		datePickerToday: () => m['datePicker.today'](),
+		datePickerClear: () => m['datePicker.clear'](),
+		dateFormatHint: () => m['datePicker.formatHint']()
 	};
 }
 

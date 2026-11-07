@@ -64,6 +64,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
+	import { dateInputMessages } from '#lib/banto/i18n.js';
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
 
@@ -111,18 +112,10 @@
 	let dueDate = $state<string | null>('2026-11-07');
 	let shipDate = $state<string | null>(null);
 	const isWeekend = (date: string) => [0, 6].includes(dayOfWeek(date));
-	const dateMessages: UiMessages = {
-		datePickerOpen: () => m['datePicker.open'](),
-		datePickerChange: (date) => m['datePicker.change']({ date }),
-		datePickerDialog: () => m['datePicker.dialog'](),
-		datePickerPrevMonth: () => m['datePicker.prevMonth'](),
-		datePickerNextMonth: () => m['datePicker.nextMonth'](),
-		datePickerPrevYear: () => m['datePicker.prevYear'](),
-		datePickerNextYear: () => m['datePicker.nextYear'](),
-		datePickerToday: () => m['datePicker.today'](),
-		datePickerClear: () => m['datePicker.clear'](),
-		dateFormatHint: () => m['datePicker.formatHint']()
-	};
+	const dateMessages = dateInputMessages();
+	// Inside the sample Modal: a picker over a Modal, Esc closes the calendar
+	// first and the Modal on the second press (date-time-pickers §8, PR-3).
+	let modalDate = $state<string | null>(null);
 
 	// TimeInput card (date-time-pickers PR-2): a 30-minute list without a step
 	// (any minute can be typed, D8) and a 15-minute list inside office hours.
@@ -539,7 +532,18 @@
 		overlayClosed += 1;
 	}}
 >
-	<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
+	<div class="stack">
+		<p class="body-text">{m['uiDemo.overlay.modalBody']()}</p>
+		<div class="field">
+			<label class="caption" for="ui-demo-modal-date">{m['uiDemo.overlay.modalDate']()}</label>
+			<DateInput
+				id="ui-demo-modal-date"
+				bind:value={modalDate}
+				locale={getLocale()}
+				messages={dateMessages}
+			/>
+		</div>
+	</div>
 </Modal>
 
 <Drawer

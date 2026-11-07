@@ -2,18 +2,25 @@
 	import '../app.css';
 	import { refreshAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import { provideFieldInputs } from '@banto/forms';
 	import { bantoReady } from '#lib/banto/setup.js'; // initBanto() (+ EventProvider) before any route guard runs (spec §3, §11.1)
 	import { initLocale } from '#lib/banto/locale.js'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
 	import { settings } from '#lib/settings.svelte.js';
 	import ToastHost from '#lib/components/ToastHost.svelte';
 	import StartupSplash from '#lib/components/StartupSplash.svelte';
 	import { isStartupDeferral } from '#lib/banto/startupGate.js';
+	import FormDateInput from '#lib/components/FormDateInput.svelte';
 	import {
 		isNavigationSettled,
 		trackFirstNavigation
 	} from '#lib/banto/navigationSettled.svelte.js';
 
 	let { children } = $props();
+
+	// The pickers every schema form below uses (date-time-pickers §5.7, D1-a):
+	// @banto/forms never imports @banto/ui, so the app hands it the component.
+	// A form can still override it with its `fieldInputs` prop.
+	provideFieldInputs({ date: FormDateInput });
 
 	// Start theme handling (applies persisted mode, watches OS changes) and sync
 	// <html lang> to the persisted locale (ADR-0005; the strategy itself is

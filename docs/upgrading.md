@@ -122,6 +122,40 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 既定は日本語なので、多言語利用は対応する辞書と bridge も取り込む。
 適用状態は二重下線・説明で示し、ボタン名や `aria-expanded` の開閉契約は維持する。
 
+#### 日付のフィールド（次リリース、date-time-pickers PR-3）
+
+**空の日付は `''` ではなく `null` になる**（[design/date-time-pickers.md](design/date-time-pickers.md) D6）。
+`@banto/forms` の `type: 'date'` について、次の 3 か所が変わる。
+
+- `DateField`（`BantoForm` の中も直接利用も）が、入力を消したときに `onInput(null)` を呼ぶ（今までは `''`）。
+- `createFormStore` / `createFormDraft` の初期値で、`default` の無い date の項目が `null` になる（今までは `''`）。
+- `FormDraft.commit` が、空の date を `null` として確定する。
+
+送信する値・`values` の date を `=== ''` や `.length` で見ている箇所は、`null` も空として扱うように直す
+（`value == null || value === ''` など）。Rust 側の入力の型が `String` で date を受け取っている場合は `Option<String>` にする
+（`null` は `String` に deserialize できない）。DB の TEXT の列に `''` が入らなくなるので、並べ替え・絞り込みで空が先頭に
+混ざることも無くなる。既存の行の `''` はそのまま残るので、必要なら `NULL` に揃える。
+
+あわせて次が増える（後方互換。指定しなければ今までどおり）。
+
+- date の**形式の検証**: `validateField` が、値が `YYYY-MM-DD` の実在の日でなければエラーにする。ネイティブの
+  `<input type="date">` は常にこの形を返すので、ネイティブのままのアプリでは結果は変わらない。値を自分で入れている場合
+  （`store.setValue`・`initial`）は正規の形にする。
+- `FieldDef` の `min` / `max` が `number | string` になる。date では `'2026-11-02'` のような正規の文字列で範囲を指定する
+  （両端を含む）。型に合わない側の値は無視する（number の項目の文字列、date の項目の数値）。`isDateDisabled(date)` で
+  選べない日を指定できる。新しい文言は `ValidationMessages` の任意の `dateInvalid` / `dateMin` / `dateMax` /
+  `dateDisabled`（既定は日本語）で、多言語アプリは辞書と bridge にも足す（admin-template の `validation.date*` と
+  `formValidationMessages()`）。
+- **日付ピッカーの注入**: `provideFieldInputs({ date })`（context。レイアウトで 1 回）か `BantoForm` の `fieldInputs`
+  prop（フォームごとの上書き）で、`@banto/ui` の `DateInput` などを date の項目に使える。注入しなければネイティブの
+  入力のまま。admin-template はルートの `+layout.svelte` で `FormDateInput.svelte`（`DateInput` に文言と locale を足す
+  薄い包み）を注入している。取り込むと date の項目の見た目が変わる（入力欄 ＋ カレンダーのボタン。`appearance="underline"`
+  のフォームでも枠のある入力欄のまま）。FormDraft には `DraftDateField` を使う。詳細は
+  [forms README](../packages/forms/README.md#日付の入力と注入date-time-pickers-pr-3)。
+
+`@banto/grid-svelte` の `SchemaField` の `min` / `max` も `number | string` に広げた（構造の鏡像。数値の範囲だけを読む）。
+グリッドのセル編集の date は今までどおりネイティブの入力で、値の扱いも変えていない（PR-4 で揃える）。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 設定のスイッチ共有化（次リリース、ADR-0026）は `banto-switch-field` / `banto-switch` を使う。
