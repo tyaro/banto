@@ -209,7 +209,15 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 - 横のボタン: `aria-haspopup="dialog"`・`aria-expanded`。名前は値が無いとき「日付を選択」、あるとき
   「日付を変更、2026年11月7日 土曜日」（日付は `Intl` の `dateStyle: 'full'`）。
 - ポップオーバー: `role="dialog"`・`aria-modal="true"`・`aria-label`。`attachFocusTrap` でフォーカスを閉じ込め、
-  Esc は `layering.ts` の規則（window で受けて消費、上に層があれば譲る）。
+  Esc は `layering.ts` の規則（消費した Esc に譲る、上に層があれば譲る）に従う。受け口は 2 つで、閉じる処理は
+  1 つの関数 `closeOnEscape(event)`（`defaultPrevented` か `hasVisibleLayerAbove({ except: panel })` なら何もしない。
+  それ以外は `preventDefault` → 閉じる → 入力欄へフォーカスを戻す）にまとめる:
+  - **ポップオーバーの `keydown`**（フォーカスが中にあるとき）: §5.8 の約束 1 で伝播を止める**前に**
+    `closeOnEscape` を呼ぶ。伝播を止めるので window の受け口には届かず、二重には閉じない。
+  - **window の `keydown`**（規則 3。フォーカスが何かの拍子に外へ出たとき）: 同じ `closeOnEscape` を呼ぶ。
+    フォーカスがポップオーバーの中にあるときのキーはここに届かないので、この受け口は外にあるときだけ働く。
+  - 捕獲（capture）の段階の window の受け口は使わない。捕獲は Modal・Drawer の bubble の受け口より先に走り、
+    「上の層から 1 枚ずつ」の順序を `hasVisibleLayerAbove` だけに頼ることになるため。
 - 見出し（「2026年11月」）は `aria-live="polite"`。前年・前月・翌月・翌年のボタン。
 - マス目は `role="grid"`（`aria-labelledby` = 見出し）、曜日の列見出しは短い名前を表示し `abbr` に長い名前。
   日のマスは roving tabindex（タブで入るのは 1 マス）、`aria-selected`、今日は `aria-current="date"`、
@@ -272,7 +280,10 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
   `'time' | 'datetime'` を足す。無ければネイティブ input。
 - 状態遷移は変えない。部品側が次の約束を守る:
   1. **ポップオーバーの中のキーは部品が処理して伝播を止める**（Popover API の top layer は見た目だけで、DOM の
-     位置はセルの中なので、止めないと grid のコンテナのセル移動に届く）。
+     位置はセルの中なので、止めないと grid のコンテナのセル移動に届く）。Esc は止める前に §5.4 の
+     `closeOnEscape` で部品自身が閉じる（window の受け口にも `handleEditorKeydown` にも頼らない。
+     `handleEditorKeydown` は入力欄の `onkeydown` で、しかも無条件に `stopPropagation` するので、ここへ渡しても
+     閉じる経路にはならない）。閉じたあとフォーカスは入力欄に戻り、次の Esc は約束 2 の側で編集の取り消しになる。
   2. **入力欄で部品が処理したキー（ポップオーバーが開いている間の Esc・Enter・矢印、Alt+↓）は
      `preventDefault` してから `onkeydown` に渡す**。`handleEditorKeydown` は `defaultPrevented` なら何もしないので、
      「Esc 1 回目 = ポップオーバーを閉じる、2 回目 = 編集の取り消し」「時刻の一覧で Enter = 選ぶ、次の Enter = 確定」
