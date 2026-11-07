@@ -14,7 +14,7 @@
 	import { linearScale, niceTicks } from './core/scale';
 	import { ganttDomain, ganttLayout, toMs, type GanttTask } from './core/gantt';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginFor } from './core/labels';
+	import { leftMarginFor, truncateLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -176,6 +176,9 @@
 				{@const bx = m.innerLeft + bar.startFrac * m.innerWidth}
 				{@const bw = Math.max(1, bar.widthFrac * m.innerWidth)}
 				{@const color = seriesColorVar(bar.colorIndex)}
+				<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
+				{@const full = tasks[bar.index].label}
+				{@const shown = truncateLabel(full, m.innerLeft - 10, taskFontSize)}
 				<text
 					x={m.innerLeft - 10}
 					y={rowY(bar.index) + rowHeight / 2}
@@ -184,7 +187,7 @@
 					dominant-baseline="middle"
 					{@attach bi === 0 ? trackTaskFont : null}
 				>
-					{tasks[bar.index].label}
+					{shown}{#if shown !== full}<title>{full}</title>{/if}
 				</text>
 				<rect
 					x={bx}

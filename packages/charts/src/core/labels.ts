@@ -40,6 +40,29 @@ export function estimateLabelWidth(text: string, fontSize = 11): number {
 	return em * fontSize;
 }
 
+const ELLIPSIS = '…';
+
+/**
+ * `text` shortened with a trailing ellipsis so its estimated width at
+ * `fontSize` fits `maxWidth` (px); unchanged when it already fits. Used for
+ * category labels whose margin hit its cap (absolute `max` or 40% of the
+ * chart width): the cap wins so the plot never collapses, and the label is
+ * cut visibly instead of overflowing the chart edge (the components keep the
+ * full text in a `<title>`). Returns '' when not even the ellipsis fits.
+ */
+export function truncateLabel(text: string, maxWidth: number, fontSize = 11): string {
+	if (estimateLabelWidth(text, fontSize) <= maxWidth) return text;
+	// CJK fonts draw '…' fullwidth: budget it like a fullwidth glyph.
+	const ellipsis = CJK_CHAR_WIDTH_EM * fontSize;
+	const chars = [...text];
+	while (chars.length > 0) {
+		chars.pop();
+		const prefix = chars.join('');
+		if (estimateLabelWidth(prefix, fontSize) + ellipsis <= maxWidth) return prefix + ELLIPSIS;
+	}
+	return ellipsis <= maxWidth ? ELLIPSIS : '';
+}
+
 export interface AxisMarginOptions {
 	fontSize?: number;
 	/** Gap between the label's end and the plot edge (the `x = innerLeft - gap` offset used by the components). */
@@ -90,7 +113,8 @@ export function leftMarginFor(labels: string[], options: TickMarginOptions = {})
 		(acc, label) => Math.max(acc, estimateLabelWidth(label, fontSize)),
 		0
 	);
-	return Math.floor(Math.min(max, Math.round(Math.max(min, widest + gap))));
+	// ceil (not round): a label that sets the margin must never be cut by `truncateLabel`.
+	return Math.floor(Math.min(max, Math.ceil(Math.max(min, widest + gap))));
 }
 
 /** Grow `base` to fit the widest label (+ `gap`), capped by `max` and 40% of `totalWidth`; never below `base`. */

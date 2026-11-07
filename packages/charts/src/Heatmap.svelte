@@ -12,7 +12,7 @@
 	import { heatmapGrid, heatmapCellKey } from './core/heatmap';
 	import { sequentialColor, SEQ_RAMP } from './core/color';
 	import { everyNthIndex } from './core/ticks-time';
-	import { leftMarginFor } from './core/labels';
+	import { leftMarginFor, truncateLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { Accessor, ChartMargin } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -123,6 +123,8 @@
 
 			<!-- Y labels (left), X labels (bottom, thinned when crowded). -->
 			{#each grid.yCats as yCat, i (i)}
+				<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
+				{@const shown = truncateLabel(yCat, m.innerLeft - 8, tickFontSize)}
 				<text
 					x={m.innerLeft - 8}
 					y={yScale.center(i)}
@@ -131,7 +133,7 @@
 					dominant-baseline="middle"
 					{@attach i === 0 ? trackTickFont : null}
 				>
-					{yCat}
+					{shown}{#if shown !== yCat}<title>{yCat}</title>{/if}
 				</text>
 			{/each}
 			{@const xTickIndices = everyNthIndex(grid.xCats.length, maxXTicksFor(m.innerWidth))}

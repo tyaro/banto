@@ -7,6 +7,11 @@
  * the font. Both changes are applied AFTER the charts rendered, so this also
  * covers the runtime re-measure path (ResizeObserver on the measured label),
  * not just the first render. Assertion-only: no screenshots.
+ *
+ * Margins are capped (40% of the chart width, and a font-scaled absolute
+ * cap) so the plot never collapses; a category label that still doesn't fit
+ * is cut with an ellipsis and keeps its full text in a <title>, so "fits" here
+ * means "never overflows the chart edge", and every cut label must be titled.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { primeThemeAndAuth } from './theme';
@@ -24,6 +29,9 @@ interface LabelProbe {
 	labels: number;
 	/** Which label has `minLeftGap` (for the failure message). */
 	worst: string;
+	/** Labels cut with an ellipsis (margin at its cap) - each must carry the full text in a <title>. */
+	truncated: number;
+	untitled: number;
 }
 
 function probe(page: Page): Promise<LabelProbe> {
@@ -32,6 +40,8 @@ function probe(page: Page): Promise<LabelProbe> {
 		let labels = 0;
 		let fontSize = 0;
 		let worst = '';
+		let truncated = 0;
+		let untitled = 0;
 		const anchors: Record<string, number> = {};
 		for (const [index, svg] of document
 			.querySelectorAll<SVGSVGElement>('svg.chart-svg')
@@ -46,6 +56,10 @@ function probe(page: Page): Promise<LabelProbe> {
 			if (!fontSize) fontSize = parseFloat(getComputedStyle(ends[0]).fontSize);
 			for (const t of ends) {
 				labels++;
+				if ((t.firstChild?.textContent ?? '').trim().endsWith('…')) {
+					truncated++;
+					if (!t.querySelector('title')?.textContent?.trim()) untitled++;
+				}
 				const gap = t.getBoundingClientRect().left - svgLeft;
 				if (gap < minLeftGap) {
 					minLeftGap = gap;
@@ -53,7 +67,7 @@ function probe(page: Page): Promise<LabelProbe> {
 				}
 			}
 		}
-		return { minLeftGap, anchors, fontSize, labels, worst };
+		return { minLeftGap, anchors, fontSize, labels, worst, truncated, untitled };
 	});
 }
 
@@ -102,6 +116,7 @@ for (const scenario of scenarios) {
 			});
 		// ... and at least one chart's left margin grew with the font.
 		const after = await probe(page);
+		expect(after.untitled, 'a cut label without its full text').toBe(0);
 		const grown = Object.keys(before.anchors).filter(
 			(key) => key in after.anchors && after.anchors[key] > before.anchors[key]
 		);

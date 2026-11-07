@@ -10,6 +10,7 @@ import {
 	leftMarginFor,
 	leftMarginForTicks,
 	rightMarginForTicks,
+	truncateLabel,
 	rightMarginForLastTick
 } from '../src/core/labels';
 import { labelFitRadius, spokeAngle } from '../src/core/radar';
@@ -167,6 +168,22 @@ describe('margins follow the rendered label size (D9-b conditions)', () => {
 });
 
 describe('caps and the radar follow the label size (D9-b)', () => {
+	it('a capped category label is cut with an ellipsis to fit the margin', () => {
+		const px = 16;
+		const label = 'オレンジジュース';
+		expect(truncateLabel(label, 1000, px)).toBe(label);
+		const cut = truncateLabel(label, 119, px);
+		expect(cut.endsWith('…')).toBe(true);
+		expect(label.startsWith(cut.slice(0, -1))).toBe(true);
+		// the ellipsis is budgeted as a fullwidth glyph
+		expect(estimateLabelWidth(cut.slice(0, -1), px) + 1.18 * px).toBeLessThanOrEqual(119);
+		expect(truncateLabel(label, 1.18 * px, px)).toBe('…');
+		expect(truncateLabel(label, 5, px)).toBe('');
+		// the margin and the cut agree: a label that set the margin is never cut
+		const margin = leftMarginFor([label], { fontSize: px });
+		expect(truncateLabel(label, margin - 8, px)).toBe(label);
+	});
+
 	it('a narrow horizontal bar chart (240px, root 20px) keeps a plot area', () => {
 		const totalWidth = 240;
 		const px = readFontSizePx(el, 11, style(resolveSm(20))); // 16px

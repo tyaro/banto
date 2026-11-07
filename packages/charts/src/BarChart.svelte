@@ -16,7 +16,12 @@
 	import { stackSeries, type StackSegment } from './core/stack';
 	import { roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginFor, leftMarginForTicks, rightMarginForLastTick } from './core/labels';
+	import {
+		leftMarginFor,
+		leftMarginForTicks,
+		rightMarginForLastTick,
+		truncateLabel
+	} from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { getValue, toNumber, type Accessor, type ChartMargin, type TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -317,6 +322,9 @@
 						[m.innerTop, m.innerTop + m.innerHeight],
 						CATEGORY_PADDING
 					)}
+					<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
+					{@const full = String(cat ?? '')}
+					{@const shown = truncateLabel(full, m.innerLeft - 8, tickFontSize)}
 					<text
 						x={m.innerLeft - 8}
 						y={catScale.center(i)}
@@ -325,7 +333,7 @@
 						dominant-baseline="middle"
 						{@attach i === 0 ? trackTickFont : null}
 					>
-						{cat}
+						{shown}{#if shown !== full}<title>{full}</title>{/if}
 					</text>
 				{/each}
 				<line
