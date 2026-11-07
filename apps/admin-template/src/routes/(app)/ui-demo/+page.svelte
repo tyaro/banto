@@ -13,7 +13,8 @@
 	 * `prefers-reduced-motion` (the visual project forces it).
 	 *
 	 * The Menu card (phase 2a), the DateInput card (date-time-pickers PR-1),
-	 * the TimeInput card (PR-2), the BantoGrid date cell card (PR-4),
+	 * the TimeInput card (PR-2), the BantoGrid date cell card (PR-4), the
+	 * DateTimeInput card (PR-5),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
@@ -28,6 +29,7 @@
 	import {
 		CommandPalette,
 		DateInput,
+		DateTimeInput,
 		dayOfWeek,
 		Drawer,
 		EmptyState,
@@ -65,7 +67,12 @@
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { BantoGrid, columnsFromSchema, type CellEdit } from '@banto/grid-svelte';
-	import { columnValidationMessages, dateInputMessages, gridMessages } from '#lib/banto/i18n.js';
+	import {
+		columnValidationMessages,
+		dateInputMessages,
+		dateTimeInputMessages,
+		gridMessages
+	} from '#lib/banto/i18n.js';
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
 
@@ -123,6 +130,12 @@
 	// Fixed values, so the open list's screenshot is deterministic.
 	let startTime = $state<string | null>('09:30');
 	let meetingTime = $state<string | null>(null);
+	// DateTimeInput card (date-time-pickers PR-5): one box, one dialog with the
+	// calendar and the time list; the second sample bounds both and steps the
+	// list. Fixed values, so the closed page is deterministic.
+	let startsAt = $state<string | null>('2026-11-07T09:30');
+	let visitAt = $state<string | null>(null);
+	const dateTimeMessages = dateTimeInputMessages();
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
 	// comes from the schema (min / max, like the ship date above). Fixed
@@ -388,6 +401,38 @@
 				/>
 				<span class="caption" data-testid="ui-demo-meeting-time-value">
 					{m['uiDemo.date.value']()}: {meetingTime ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="DateTimeInput" description={m['uiDemo.dateTime.desc']()}>
+		<div class="grid">
+			<div class="sample">
+				<label class="caption" for="ui-demo-starts-at">{m['uiDemo.dateTime.label']()}</label>
+				<DateTimeInput
+					id="ui-demo-starts-at"
+					bind:value={startsAt}
+					locale={getLocale()}
+					messages={dateTimeMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-starts-at-value">
+					{m['uiDemo.date.value']()}: {startsAt ?? m['uiDemo.date.empty']()}
+				</span>
+			</div>
+			<div class="sample">
+				<label class="caption" for="ui-demo-visit-at">{m['uiDemo.dateTime.rangeLabel']()}</label>
+				<DateTimeInput
+					id="ui-demo-visit-at"
+					bind:value={visitAt}
+					min="2026-11-02T09:00"
+					max="2026-11-27T18:00"
+					step={30}
+					locale={getLocale()}
+					messages={dateTimeMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-visit-at-value">
+					{m['uiDemo.date.value']()}: {visitAt ?? m['uiDemo.date.empty']()}
 				</span>
 			</div>
 		</div>

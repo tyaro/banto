@@ -586,9 +586,12 @@
 		font-weight: 600;
 	}
 
+	/* The value's colour does not keep its contrast on the hover background
+	   (dark themes): the active option uses the text colour; the value stays bold. */
 	.time-option--active {
 		background: var(--banto-surface-hover);
 		box-shadow: inset 0 0 0 var(--banto-border-width) var(--banto-border-strong);
+		color: var(--banto-text);
 	}
 
 	.time-option[aria-disabled='true'] {

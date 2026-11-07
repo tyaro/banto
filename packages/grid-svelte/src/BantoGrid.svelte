@@ -1305,9 +1305,12 @@
 									draft={editing?.draft}
 									options={column.editorOptions}
 									dateEditor={editors.date}
+									timeEditor={editors.time}
+									dateTimeEditor={editors.datetime}
 									min={column.editorMin}
 									max={column.editorMax}
 									isDateDisabled={column.isDateDisabled}
+									step={column.editorStep}
 									bind:editorEl
 									bind:editorRootEl
 									onDraftChange={(value) => {

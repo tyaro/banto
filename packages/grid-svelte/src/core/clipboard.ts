@@ -3,7 +3,7 @@
  * No Svelte imports — usable standalone and easy to unit test.
  */
 import type { CellEditorType, CellRange, GridColumn } from '../types';
-import { parseCellDate } from './date';
+import { parseCellDate, parseCellDateTime, parseTimeText } from './date';
 
 type EditorOption = { value: string | number; label: string };
 
@@ -63,7 +63,9 @@ export function parseTsv(text: string): string[][] {
  * Excel saves it, full-width digits), gives `null` for blank text (D6) and
  * rejects anything else - an impossible day, another order, and the
  * year-less `M/D` unless `typed` (the editor's own commit; paste and CSV
- * import never guess the year); 'text'/'select' pass the string through
+ * import never guess the year); `time` and `datetime` the same way
+ * (`HH:mm`, `YYYY-MM-DDTHH:mm` from `9:30`, `2026/11/7 9:30`; PR-5);
+ * 'text'/'select' pass the string through
  * unchanged (select's option-value typing is reconciled by the caller
  * against `column.editorOptions`).
  */
@@ -76,6 +78,11 @@ export function parseCellInput(
 		if (raw.trim() === '') return { ok: true, value: null };
 		const date = parseCellDate(raw, options.typed);
 		return date === null ? { ok: false } : { ok: true, value: date };
+	}
+	if (editor === 'time' || editor === 'datetime') {
+		if (raw.trim() === '') return { ok: true, value: null };
+		const value = editor === 'time' ? parseTimeText(raw) : parseCellDateTime(raw, options.typed);
+		return value === null ? { ok: false } : { ok: true, value };
 	}
 	if (editor === 'number') {
 		if (raw.trim() === '') return { ok: false };

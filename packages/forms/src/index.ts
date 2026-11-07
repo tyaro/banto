@@ -19,7 +19,10 @@ export {
 	provideFieldInputs,
 	getFieldInputs,
 	type FieldInputs,
-	type DateFieldInputProps
+	type DateFieldInputProps,
+	type TimeFieldInputProps,
+	type DateTimeFieldInputProps,
+	type TemporalFieldInputProps
 } from './fieldInputs';
 export {
 	guardUnsavedChanges,

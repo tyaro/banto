@@ -174,6 +174,23 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
   `isDateDisabled`（カレンダーの範囲と無効日）を追加。詳細は
   [grid README](../packages/grid-svelte/README.md#日付のセルと注入date-time-pickers-pr-4)。
 
+#### 時刻・日時の型（次リリース、date-time-pickers PR-5）
+
+追加のみで、既存の型の挙動は変わらない。使うときは次を揃える。
+
+- **型**: `FieldType`（forms）・`SchemaFieldType`／`CellEditorType`（grid）に `'time'`（`HH:mm`）と `'datetime'`
+  （`YYYY-MM-DDTHH:mm`、タイムゾーンを持たない壁時計の時刻）。空は `null`。`min`／`max` は正規の文字列、`step` は分
+  （省略時は一覧 30 分刻み・任意の分を受け付ける）。datetime の入力欄・グリッドの表示は空白区切り、値は `T`。
+- **ピッカーの注入**: `provideFieldInputs({ date, time, datetime })`・`provideCellEditors({ date, time, datetime })`。
+  admin-template はルートの `+layout.svelte` で `FormTimeInput`・`FormDateTimeInput`・`CellTimeInput`・
+  `CellDateTimeInput`（`src/lib/components/`）を注入している。注入しなければネイティブの `time`／`datetime-local`。
+- **文言**: 多言語アプリは `ValidationMessages`／`ColumnValidationMessages` の `timeInvalid`・`timeMin`・`timeMax`・
+  `timeStep`・`dateTimeInvalid`・`dateTimeMin`・`dateTimeMax` と、`UiMessages` の `dateTimePicker*`・`dateTimeFormatHint` を
+  bridge へ足す（admin-template の `i18n.ts` の `timeInputMessages()`・`dateTimeInputMessages()`）。
+- **DB と Rust**: 列は SQLite・PostgreSQL とも TEXT。リソースの入力の検証から `banto_core::datetime::validate_time` /
+  `validate_datetime`（date は `validate_date`）を呼ぶと、フロントと同じ規則・同じ既定の文言でエラーを返す（正規の形だけを
+  受け付ける。空の扱いと `isDateDisabled` に当たる規則はリソース側で書く）。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 設定のスイッチ共有化（次リリース、ADR-0026）は `banto-switch-field` / `banto-switch` を使う。

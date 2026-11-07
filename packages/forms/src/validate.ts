@@ -3,7 +3,7 @@
  * imports — usable standalone and easy to unit test. Default messages are
  * Japanese; override via the `messages` param for i18n injection.
  */
-import { isIsoDate } from './date';
+import { formatDateTimeText, isIsoDate, isIsoDateTime, isIsoTime, isOnTimeStep } from './date';
 import type { FieldDef, FieldError, FormSchema } from './types';
 
 export interface ValidationMessages {
@@ -21,8 +21,22 @@ export interface ValidationMessages {
 	dateMin?: (def: FieldDef, min: string) => string;
 	/** date: later than `max` (canonical `YYYY-MM-DD`). */
 	dateMax?: (def: FieldDef, max: string) => string;
-	/** date: `isDateDisabled` refused the day. */
+	/** date / datetime: `isDateDisabled` refused the day. */
 	dateDisabled?: (def: FieldDef, date: string) => string;
+	/** time: the value is not a canonical `HH:mm` (00:00-23:59). */
+	timeInvalid?: (def: FieldDef) => string;
+	/** time: earlier than `min` (canonical `HH:mm`). */
+	timeMin?: (def: FieldDef, min: string) => string;
+	/** time: later than `max` (canonical `HH:mm`). */
+	timeMax?: (def: FieldDef, max: string) => string;
+	/** time / datetime: the time is off the `step` grid counted from 00:00 (`step` in minutes). */
+	timeStep?: (def: FieldDef, step: number) => string;
+	/** datetime: the value is not a canonical `YYYY-MM-DDTHH:mm`. */
+	dateTimeInvalid?: (def: FieldDef) => string;
+	/** datetime: earlier than `min`; `min` is shown as `YYYY-MM-DD HH:mm`. */
+	dateTimeMin?: (def: FieldDef, min: string) => string;
+	/** datetime: later than `max`; `max` is shown as `YYYY-MM-DD HH:mm`. */
+	dateTimeMax?: (def: FieldDef, max: string) => string;
 }
 
 const defaultMessages: Required<ValidationMessages> = {
@@ -36,7 +50,14 @@ const defaultMessages: Required<ValidationMessages> = {
 	dateInvalid: () => '日付を YYYY-MM-DD の形で入力してください',
 	dateMin: (_def, min) => `${min}以降の日付を入力してください`,
 	dateMax: (_def, max) => `${max}以前の日付を入力してください`,
-	dateDisabled: () => 'この日付は選べません'
+	dateDisabled: () => 'この日付は選べません',
+	timeInvalid: () => '時刻を HH:mm の形で入力してください',
+	timeMin: (_def, min) => `${min}以降の時刻を入力してください`,
+	timeMax: (_def, max) => `${max}以前の時刻を入力してください`,
+	timeStep: (_def, step) => `${step}分刻みの時刻を入力してください`,
+	dateTimeInvalid: () => '日時を YYYY-MM-DD HH:mm の形で入力してください',
+	dateTimeMin: (_def, min) => `${min}以降の日時を入力してください`,
+	dateTimeMax: (_def, max) => `${max}以前の日時を入力してください`
 };
 
 /**
@@ -86,6 +107,29 @@ export function validateField(
 			if (def.isDateDisabled?.(value)) return msg.dateDisabled(def, value);
 		}
 
+		// time / datetime: the same order as date - format, bounds (string
+		// order = time order), disabled day, then the step (D8; Rust's
+		// `banto_core::datetime` checks the same, datetime-cases.json).
+		if (def.type === 'time') {
+			if (!isIsoTime(value)) return msg.timeInvalid(def);
+			if (typeof min === 'string' && value < min) return msg.timeMin(def, min);
+			if (typeof max === 'string' && value > max) return msg.timeMax(def, max);
+			if (def.step !== undefined && !isOnTimeStep(value, def.step))
+				return msg.timeStep(def, def.step);
+		}
+
+		if (def.type === 'datetime') {
+			if (!isIsoDateTime(value)) return msg.dateTimeInvalid(def);
+			if (typeof min === 'string' && value < min)
+				return msg.dateTimeMin(def, formatDateTimeText(min));
+			if (typeof max === 'string' && value > max)
+				return msg.dateTimeMax(def, formatDateTimeText(max));
+			const [date, time] = value.split('T');
+			if (def.isDateDisabled?.(date)) return msg.dateDisabled(def, date);
+			if (def.step !== undefined && !isOnTimeStep(time, def.step))
+				return msg.timeStep(def, def.step);
+		}
+
 		if (def.type === 'text' || def.type === 'textarea' || def.type === 'password') {
 			const str = String(value);
 			// Length bounds are checked against the TRIMMED length, matching
@@ -129,6 +173,16 @@ export function validateAll(
 /** Message for raw date text that does not parse (used by `FormDraft.commit`). */
 export function dateInvalidMessage(def: FieldDef, messages: ValidationMessages = {}): string {
 	return (messages.dateInvalid ?? defaultMessages.dateInvalid)(def);
+}
+
+/** Message for raw time text that does not parse (used by `FormDraft.commit`). */
+export function timeInvalidMessage(def: FieldDef, messages: ValidationMessages = {}): string {
+	return (messages.timeInvalid ?? defaultMessages.timeInvalid)(def);
+}
+
+/** Message for raw date-and-time text that does not parse (used by `FormDraft.commit`). */
+export function dateTimeInvalidMessage(def: FieldDef, messages: ValidationMessages = {}): string {
+	return (messages.dateTimeInvalid ?? defaultMessages.dateTimeInvalid)(def);
 }
 
 /** Message for raw number text that does not parse (used by `FormDraft.commit`). */

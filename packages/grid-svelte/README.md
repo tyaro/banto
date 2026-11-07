@@ -120,6 +120,19 @@ Tab / Shift+Tab はブラウザの標準移動を使う非modalのまま。
   `DateInput` と同じく、ポップオーバーの中のキーと `pointerdown` を外へ出さず、自分で処理したキーは
   `preventDefault` してから `onkeydown` に渡し、`onblur` は部品全体からフォーカスが出たときだけ呼ぶこと。
 
+## 時刻・日時のセル（date-time-pickers PR-5）
+
+`editor: 'time'`（`HH:mm`）と `editor: 'datetime'`（`YYYY-MM-DDTHH:mm`、タイムゾーンなし）。空は `null`。
+
+- **解析**: `parseCellInput(raw, 'time' | 'datetime')` は `930`・`9:30`・全角や、Excel の `2026/11/7 9:30` を正規の形に
+  直す。秒付き・`24:00`・日付だけの datetime は失敗。年を省いた `11/7 9:30` はセルで打ったときだけ今年。
+- **検証**: `columnsFromSchema` の列は forms と同じ規則・文言（`timeInvalid` / `timeMin` / `timeMax` / `timeStep` /
+  `dateTimeInvalid` / `dateTimeMin` / `dateTimeMax`）。範囲・刻み・（datetime の）無効日は `editorMin` / `editorMax` /
+  `editorStep` / `isDateDisabled` にも入る。datetime の列は既定の `format` で空白区切りに見せる（値とコピーは `T`）。
+- **ピッカーの注入**: `provideCellEditors({ date, time, datetime })`。props は `CellTimeEditorProps` /
+  `CellDateTimeEditorProps`。注入が無ければネイティブの `time` / `datetime-local`。§5.8 の約束は date と同じで、
+  `DateTimeInput` では日を選ぶと時刻の一覧へ移り、時刻を選ぶと下書きに入って入力欄へ戻る（確定は次の Enter・Tab・外を押す）。
+
 ## 依存
 
 `ColumnsMenu` の checkbox はネイティブ描画を使い、`--banto-checkbox-size`（既定・fallback は `1.1rem`）で

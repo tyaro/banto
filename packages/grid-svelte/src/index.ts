@@ -21,7 +21,10 @@ export {
 	provideCellEditors,
 	getCellEditors,
 	type CellEditors,
-	type CellDateEditorProps
+	type CellDateEditorProps,
+	type CellTimeEditorProps,
+	type CellDateTimeEditorProps,
+	type CellTemporalEditorProps
 } from './cellEditors';
 
 export { sortRows, getColumnValue } from './core/sort';
