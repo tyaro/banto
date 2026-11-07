@@ -351,10 +351,14 @@ test.describe('ui-demo TimeInput', () => {
 		page
 	}) => {
 		const input = page.getByRole('combobox', { name: '開始時刻' });
-		await input.focus();
-		await page.keyboard.press('ArrowDown');
 		const list = page.getByRole('listbox', { name: '時刻の一覧' });
-		await expect(list).toBeVisible();
+		// The heading is server-rendered, so a key pressed before hydration is
+		// lost: retry the open until the list shows (like the calendar tests).
+		await expect(async () => {
+			await input.focus();
+			await page.keyboard.press('ArrowDown');
+			await expect(list).toBeVisible({ timeout: 1000 });
+		}).toPass();
 		await expect(input).toBeFocused();
 		await expect(input).toHaveAttribute('aria-expanded', 'true');
 		const activeId = await input.getAttribute('aria-activedescendant');
