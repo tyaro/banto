@@ -122,9 +122,9 @@
 <style>
 	.note {
 		flex: 0 0 auto;
-		margin: 0 0 0.75rem;
+		margin: 0 0 var(--banto-space-3);
 		color: var(--banto-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 	}
 
 	.loading {
