@@ -71,6 +71,27 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter' && !event.isComposing) commit();
 	}
+
+	// One commit per user action with the injected input. Its own commit
+	// (blur / Enter) reports a changed value first and then hands over the
+	// blur / key in the same task - that blur / Enter must not commit (and
+	// notify `onCommit`) a second time. A day picked in the calendar has no
+	// blur / key after it, so it is committed at once by `onValueChange`.
+	let committedThisTask = false;
+
+	function commitFromInput() {
+		commit();
+		committedThisTask = true;
+		queueMicrotask(() => (committedThisTask = false));
+	}
+
+	function commitUnlessDone() {
+		if (!committedThisTask) commit();
+	}
+
+	function handleInputKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter' && !event.isComposing) commitUnlessDone();
+	}
 </script>
 
 {#if Input}
@@ -86,9 +107,9 @@
 		{max}
 		isDateDisabled={def.isDateDisabled}
 		onTextInput={setText}
-		onValueChange={commit}
-		onkeydown={handleKeydown}
-		onblur={commit}
+		onValueChange={commitFromInput}
+		onkeydown={handleInputKeydown}
+		onblur={commitUnlessDone}
 	/>
 {:else}
 	<input

@@ -310,7 +310,24 @@ describe('DraftDateField with @banto/ui DateInput injected (FormDraft path)', ()
 		expect(draft.values.due).toBe('2026-01-02');
 		expect(draft.raw.due).toBeUndefined();
 		expect(input.value).toBe('2026-01-02');
+		// One blur, one commit (the component's own commit is not repeated).
+		expect(onCommit).toHaveBeenCalledTimes(1);
 		expect(onCommit).toHaveBeenLastCalledWith(true);
+	});
+
+	it('Enter commits typed text once', async () => {
+		const { draft, onCommit, input } = setup();
+		input.focus();
+		fireEvent.input(input, { target: { value: '2026/1/2' } });
+		flushSync();
+		await fireEvent.keyDown(input, { key: 'Enter' });
+		expect(draft.values.due).toBe('2026-01-02');
+		expect(onCommit).toHaveBeenCalledTimes(1);
+		expect(onCommit).toHaveBeenLastCalledWith(true);
+		// A later blur of the already committed field still validates it (an ordinary blur).
+		screen.getByRole('button', { name: 'Outside' }).focus();
+		flushSync();
+		expect(onCommit).toHaveBeenCalledTimes(2);
 	});
 
 	it('unparsable text stays raw with an error after blur', () => {
@@ -322,11 +339,12 @@ describe('DraftDateField with @banto/ui DateInput injected (FormDraft path)', ()
 		expect(draft.raw.due).toBe('next week');
 		expect(draft.errors.due).toBe('日付を YYYY-MM-DD の形で入力してください');
 		expect(input.value).toBe('next week');
+		expect(onCommit).toHaveBeenCalledTimes(1);
 		expect(onCommit).toHaveBeenLastCalledWith(false);
 	});
 
 	it('a day picked in the calendar is committed at once', () => {
-		const { draft, input } = setup();
+		const { draft, onCommit, input } = setup();
 		input.focus();
 		fireEvent.input(input, { target: { value: '2026-11-07' } });
 		flushSync();
@@ -338,5 +356,6 @@ describe('DraftDateField with @banto/ui DateInput injected (FormDraft path)', ()
 		expect(draft.values.due).toBe('2026-11-06');
 		expect(draft.raw.due).toBeUndefined();
 		expect(document.activeElement).toBe(input);
+		expect(onCommit).toHaveBeenCalledTimes(1);
 	});
 });
