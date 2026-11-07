@@ -9,7 +9,9 @@
 	import ToastHost from '#lib/components/ToastHost.svelte';
 	import StartupSplash from '#lib/components/StartupSplash.svelte';
 	import { isStartupDeferral } from '#lib/banto/startupGate.js';
+	import { provideCellEditors } from '@banto/grid-svelte';
 	import FormDateInput from '#lib/components/FormDateInput.svelte';
+	import CellDateInput from '#lib/components/CellDateInput.svelte';
 	import {
 		isNavigationSettled,
 		trackFirstNavigation
@@ -17,10 +19,12 @@
 
 	let { children } = $props();
 
-	// The pickers every schema form below uses (date-time-pickers §5.7, D1-a):
-	// @banto/forms never imports @banto/ui, so the app hands it the component.
-	// A form can still override it with its `fieldInputs` prop.
+	// The pickers every schema form and grid below uses (date-time-pickers §5.7 /
+	// §5.8, D1-a): @banto/forms and @banto/grid-svelte never import @banto/ui,
+	// so the app hands them the components. A form / grid can still override
+	// them with its `fieldInputs` / `cellEditors` prop.
 	provideFieldInputs({ date: FormDateInput });
+	provideCellEditors({ date: CellDateInput });
 
 	// Start theme handling (applies persisted mode, watches OS changes) and sync
 	// <html lang> to the persisted locale (ADR-0005; the strategy itself is

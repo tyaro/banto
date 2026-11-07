@@ -81,7 +81,11 @@ export function columnValidationMessages(): ColumnValidationMessages {
 		max: (_field, max) => m['validation.max']({ max }),
 		minLength: (_field, min) => m['validation.minLength']({ min }),
 		maxLength: (_field, max) => m['validation.maxLength']({ max }),
-		pattern: () => m['validation.pattern']()
+		pattern: () => m['validation.pattern'](),
+		dateInvalid: () => m['validation.dateInvalid'](),
+		dateMin: (_field, min) => m['validation.dateMin']({ min }),
+		dateMax: (_field, max) => m['validation.dateMax']({ max }),
+		dateDisabled: () => m['validation.dateDisabled']()
 	};
 }
 
