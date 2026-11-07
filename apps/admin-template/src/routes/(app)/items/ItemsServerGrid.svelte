@@ -216,9 +216,9 @@
 <style>
 	.note {
 		flex: 0 0 auto;
-		margin: 0 0 0.75rem;
+		margin: 0 0 var(--banto-space-3);
 		color: var(--banto-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 	}
 
 	.load-error {
@@ -226,21 +226,21 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.75rem;
-		margin: 0 0 0.75rem;
-		padding: 0.5rem 0.75rem;
+		gap: var(--banto-space-3);
+		margin: 0 0 var(--banto-space-3);
+		padding: var(--banto-space-2) var(--banto-space-3);
 		border-left: 3px solid var(--banto-danger-solid);
 		border-radius: var(--banto-radius-sm);
 		background: var(--banto-danger-tint);
 		color: var(--banto-danger-tint-text);
-		font-size: 0.85rem;
+		font-size: var(--banto-font-size-md);
 	}
 
 	.load-error p {
 		margin: 0;
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 0.5rem;
+		gap: var(--banto-space-1) var(--banto-space-2);
 	}
 
 	.grid-wrap {

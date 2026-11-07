@@ -109,12 +109,12 @@
 	.page {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 	}
 
 	.back-link {
 		align-self: flex-start;
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text-muted);
 	}
 

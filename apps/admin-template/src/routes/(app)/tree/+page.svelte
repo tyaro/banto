@@ -140,30 +140,30 @@
 	.page {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 	}
 
 	.selection {
-		margin: 0.75rem 0 0;
-		font-size: 0.8rem;
+		margin: var(--banto-space-3) 0 0;
+		font-size: var(--banto-font-size-sm);
 		color: var(--banto-text-muted);
 	}
 
 	.selects {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 1.5rem;
+		gap: var(--banto-space-6);
 	}
 
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
+		gap: var(--banto-space-1);
 		min-width: 220px;
 	}
 
 	.field label {
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		font-weight: 600;
 	}
 </style>
