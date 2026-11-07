@@ -1,7 +1,7 @@
 # 日付・時刻ピッカーの設計（日付・時刻・日時・期間）
 
 作成日: 2026-11-07
-状態: **実装中**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）完了（#520）。PR-2（ui: `TimeInput`・時刻の解析と刻み）実装中。PR-3 以降は未着手。
+状態: **実装中**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）完了（#520）。PR-2（ui: `TimeInput`・時刻の解析と刻み）完了（#522）。PR-3（forms への組み込み）実装中。PR-4 以降は未着手。
 トラック: 保守者向け（トラックA）
 関連: [conventions](../conventions.md) §3（依存を足さない）・§4／§5（パッケージ間の import 禁止）・§9（寸法トークン）・
 §13（文言はキー経由）/ [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`）/
@@ -482,6 +482,9 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
   → PR-1 では `DateInput` を `popover="manual"` にし、外側の `pointerdown` で閉じる処理を部品が持つ形にした
   （開いている Menu などの `auto` を閉じない）。閉じている間はポップオーバーの要素自体を描かない（ページに見えない
   `role="dialog"` を残さない）。Modal・FilterPopover の上に重ねたときの確認は、つなぎ込む PR-3／PR-4 で行う。
+  → PR-3 で Modal の中を確かめた。カレンダーにフォーカスがあるときの Esc はポップオーバーの中で止まり（カレンダーだけが
+  閉じて入力欄へ戻る）、2 回目の Esc で Modal が閉じる（`packages/ui/tests/dateInput.test.ts` と
+  `e2e/visual/ui-overlays.spec.ts`。ui の変更は不要だった）。FilterPopover の上は PR-4 で確かめる。
 - `editFocus.owned` が「ダイアログ → 入力欄」へ戻ったときに正しく取り直されるか（§5.8）。
 - PostgreSQL の TEXT の比較が照合順序（collation）の影響を受けないか。固定幅の ISO 文字列なら順序は保たれる
   見込みだが、`between` では `COLLATE "C"` を付けるかを実装の PR で確かめる。

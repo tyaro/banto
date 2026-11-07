@@ -99,6 +99,18 @@ describe('columnsFromSchema', () => {
 		expect(price.validate?.(0, row)).toBeNull();
 	});
 
+	it('reads only numeric bounds, like forms (a string bound is a date, date-time-pickers D9)', () => {
+		const [qty, note] = columnsFromSchema<Row>({
+			fields: [
+				{ name: 'qty', label: '数量', type: 'number', min: '2026-01-01', max: 10 },
+				{ name: 'note', label: '備考', type: 'text', max: '2026-12-31' }
+			]
+		});
+		expect(qty.validate?.(-5, row)).toBeNull();
+		expect(qty.validate?.(11, row)).toBe('10以下で入力してください');
+		expect(note.validate?.('x'.repeat(100), row)).toBeNull();
+	});
+
 	it('editable: false derives a fully read-only grid', () => {
 		const readOnly = columnsFromSchema<Row>(schema, { editable: false });
 		expect(readOnly.every((c) => c.editable === undefined && c.editor === undefined)).toBe(true);

@@ -11,6 +11,8 @@ function defaultsFrom(schema: FormSchema): Record<string, unknown> {
 	for (const field of schema.fields) {
 		if (field.default !== undefined) values[field.name] = field.default;
 		else if (field.type === 'checkbox') values[field.name] = false;
+		// An empty date is `null`, not `''` (date-time-pickers D6).
+		else if (field.type === 'date') values[field.name] = null;
 		else values[field.name] = '';
 	}
 	return values;
