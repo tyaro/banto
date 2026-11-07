@@ -222,15 +222,20 @@ export function clampDate(date: string, min?: string | null, max?: string | null
  * starting on the `weekStartsOn` day on or before the 1st of the month of
  * `date` (so the leading / trailing days of the neighbouring months fill the
  * rows). Always 6 rows - the popover does not change height between months.
+ * Positions before 0001-01-01 or after 9999-12-31 are `null` (empty slots):
+ * clamping them would put 0001-01-01 under the wrong weekday or repeat
+ * 9999-12-31.
  */
-export function monthGrid(date: string, weekStartsOn: Weekday): string[][] {
-	let day = startOfWeek(startOfMonth(date), weekStartsOn);
-	const weeks: string[][] = [];
+export function monthGrid(date: string, weekStartsOn: Weekday): (string | null)[][] {
+	const first = daysFromCivil(requireDate(startOfMonth(date)));
+	const offset = (((((first + 4) % 7) + 7) % 7) - weekStartsOn + 7) % 7;
+	const start = first - offset;
+	const weeks: (string | null)[][] = [];
 	for (let w = 0; w < 6; w++) {
-		const week: string[] = [];
+		const week: (string | null)[] = [];
 		for (let d = 0; d < 7; d++) {
-			week.push(day);
-			day = addDays(day, 1);
+			const day = start + w * 7 + d;
+			week.push(day < FIRST_DAY || day > LAST_DAY ? null : formatDate(civilFromDays(day)));
 		}
 		weeks.push(week);
 	}

@@ -502,6 +502,99 @@ describe('DateInput min / max / isDateDisabled (§5.6)', () => {
 	});
 });
 
+describe('DateInput focus follows the tracked day (clicks, edge months)', () => {
+	it('a click on an unpickable day of the next month moves the view and focus there', () => {
+		const { button, onValueChange } = setup({
+			value: '2026-11-07',
+			isDateDisabled: (date: string) => date === '2026-12-05'
+		});
+		fireEvent.click(button);
+		fireEvent.click(cell('2026-12-05'));
+		expect(onValueChange).not.toHaveBeenCalled();
+		expect(isOpen()).toBe(true);
+		expect(screen.getByRole('heading').textContent?.trim()).toBe('2026年12月');
+		// The browser focus is on the 12/5 cell, the same day focusDate tracks.
+		expect(focusedDate()).toBe('2026-12-05');
+		expect(cell('2026-12-05').getAttribute('tabindex')).toBe('0');
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+		expect(focusedDate()).toBe('2026-12-06');
+	});
+
+	it('a click on a pickable day of the next month picks it and returns to the box', () => {
+		const { input, button, onValueChange } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		fireEvent.click(cell('2026-12-01'));
+		expect(onValueChange).toHaveBeenCalledWith('2026-12-01');
+		expect(isOpen()).toBe(false);
+		expect(document.activeElement).toBe(input);
+	});
+
+	it('9999-12: one 12/31, empty slots after it that cannot take focus', () => {
+		const { button } = setup({ value: '9999-12-31' });
+		fireEvent.click(button);
+		expect(document.querySelectorAll('[data-date="9999-12-31"]')).toHaveLength(1);
+		expect(document.querySelectorAll('td[tabindex="0"]')).toHaveLength(1);
+		const empty = document.querySelectorAll<HTMLElement>('td.date-picker-day--empty');
+		expect(empty.length).toBeGreaterThan(0);
+		expect(empty[0].hasAttribute('tabindex')).toBe(false);
+		expect(empty[0].hasAttribute('aria-selected')).toBe(false);
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+		fireEvent.keyDown(document.activeElement!, { key: 'PageDown' });
+		fireEvent.keyDown(document.activeElement!, { key: 'End' });
+		expect(focusedDate()).toBe('9999-12-31');
+		const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+		empty[0].dispatchEvent(mousedown);
+		expect(mousedown.defaultPrevented).toBe(true);
+		fireEvent.click(empty[0]);
+		expect(focusedDate()).toBe('9999-12-31');
+		expect(screen.getByRole('button', { name: '次の月' }).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+		expect(screen.getByRole('button', { name: '次の年' }).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+	});
+
+	it('0001-01: the 1st sits under its weekday (Monday) after an empty slot', () => {
+		const { button } = setup({ value: '0001-01-01' });
+		fireEvent.click(button);
+		const firstRow = document.querySelector('tbody tr')!.querySelectorAll('td');
+		expect(firstRow[0].classList.contains('date-picker-day--empty')).toBe(true);
+		expect(firstRow[1].dataset.date).toBe('0001-01-01');
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+		fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+		fireEvent.keyDown(document.activeElement!, { key: 'PageUp', shiftKey: true });
+		expect(focusedDate()).toBe('0001-01-01');
+		expect(screen.getByRole('button', { name: '前の月' }).getAttribute('aria-disabled')).toBe(
+			'true'
+		);
+	});
+
+	it('a press on the heading or a weekday header does not take focus off the tracked day', () => {
+		const { button } = setup({ value: '2026-11-07' });
+		fireEvent.click(button);
+		for (const target of [screen.getByRole('heading'), screen.getAllByRole('columnheader')[0]]) {
+			const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+			target.dispatchEvent(mousedown);
+			expect(mousedown.defaultPrevented).toBe(true);
+		}
+		const onDay = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+		cell('2026-11-10').dispatchEvent(onDay);
+		expect(onDay.defaultPrevented).toBe(false);
+		expect(focusedDate()).toBe('2026-11-07');
+	});
+
+	it('moving the view across months keeps focus inside the component (no blur)', () => {
+		const { button, onblur } = setup({ value: '9999-11-30' });
+		fireEvent.click(button);
+		fireEvent.keyDown(document.activeElement!, { key: 'PageDown' });
+		fireEvent.keyDown(document.activeElement!, { key: 'PageUp' });
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+		expect(focusedDate()).toBe('9999-12-07');
+		expect(onblur).not.toHaveBeenCalled();
+	});
+});
+
 describe('DateInput locale and messages (§5.5)', () => {
 	it('uses Intl for the names and weekStartsOn for the first column', () => {
 		const { button } = setup({ value: '2026-11-07', locale: 'en-US', weekStartsOn: 1 });

@@ -276,6 +276,22 @@
 		focusCell();
 	}
 
+	/**
+	 * A click on a cell: move the tracked day there (the view follows into a
+	 * neighbouring month) and focus it, then pick it if it can be picked. A
+	 * cell that cannot be tracked (empty slot, outside [min, max]) only puts
+	 * focus back on the tracked day. Either way focus ends on the focusDate
+	 * cell (or, once picked, on the text box).
+	 */
+	function handleDayClick(date: string | null): void {
+		if (date === null || isOutOfRange(date, min, max)) {
+			focusCell();
+			return;
+		}
+		moveFocus(date);
+		select(date);
+	}
+
 	function select(date: string): void {
 		if (!isSelectable(date)) return;
 		setText(date);
@@ -479,6 +495,15 @@
 			style:top={coords ? `${coords.top}px` : undefined}
 			style:left={coords ? `${coords.left}px` : undefined}
 			style:visibility={coords ? 'visible' : 'hidden'}
+			onmousedown={(event) => {
+				// A press on something that cannot take focus (heading, weekday
+				// header, gaps) would focus the dialog itself and strand the
+				// arrow keys: keep focus where it is (the tracked day).
+				const target = event.target;
+				if (!(target instanceof Element) || !target.closest('button, td[tabindex]')) {
+					event.preventDefault();
+				}
+			}}
 		>
 			{#if focusDate}
 				<div class="date-picker-header">
@@ -542,30 +567,31 @@
 						{#each weeks as week, w (w)}
 							<tr>
 								{#each week as date, d (d)}
+									<!-- One <td> per position whether it holds a day or an empty
+									     slot (before 0001-01-01 / after 9999-12-31), so a month
+									     change never replaces the element that has focus. -->
 									<td
-										data-date={date}
-										tabindex={date === focusDate ? 0 : -1}
-										aria-label={formatFullDate(date, locale)}
-										aria-selected={date === selectedDate ? 'true' : 'false'}
-										aria-current={date === today ? 'date' : undefined}
-										aria-disabled={isSelectable(date) ? undefined : 'true'}
-										class:date-picker-day--outside={!isSameMonth(date, focusDate)}
+										data-date={date ?? undefined}
+										tabindex={date === null ? undefined : date === focusDate ? 0 : -1}
+										aria-label={date === null ? undefined : formatFullDate(date, locale)}
+										aria-selected={date === null
+											? undefined
+											: date === selectedDate
+												? 'true'
+												: 'false'}
+										aria-current={date !== null && date === today ? 'date' : undefined}
+										aria-disabled={date === null || isSelectable(date) ? undefined : 'true'}
+										class:date-picker-day--outside={date !== null && !isSameMonth(date, focusDate)}
+										class:date-picker-day--empty={date === null}
 										onmousedown={(event) => {
-											// Outside [min, max]: keep focus on the tracked day, so
-											// focusDate and the focused cell never part ways.
-											if (isOutOfRange(date, min, max)) event.preventDefault();
+											// An empty slot or a day outside [min, max] cannot be
+											// focused: keep focus on the tracked day, so focusDate and
+											// the focused cell never part ways.
+											if (date === null || isOutOfRange(date, min, max)) event.preventDefault();
 										}}
-										onclick={() => {
-											if (isOutOfRange(date, min, max)) {
-												// Belt and braces (touch, or focus moved anyway).
-												focusCell();
-												return;
-											}
-											focusDate = date;
-											select(date);
-										}}
+										onclick={() => handleDayClick(date)}
 									>
-										{Number(date.slice(8))}
+										{date === null ? '' : Number(date.slice(8))}
 									</td>
 								{/each}
 							</tr>
@@ -788,7 +814,11 @@
 		color: var(--banto-text-muted);
 	}
 
-	.date-picker-grid td:hover:not([aria-disabled='true']) {
+	.date-picker-grid td.date-picker-day--empty {
+		cursor: default;
+	}
+
+	.date-picker-grid td:hover:not([aria-disabled='true'], .date-picker-day--empty) {
 		background: var(--banto-surface-hover);
 	}
 

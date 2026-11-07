@@ -168,6 +168,25 @@ describe('calendar arithmetic', () => {
 		expect(monday.flat()).toContain('2026-11-30');
 	});
 
+	it('monthGrid: positions before 0001-01-01 / after 9999-12-31 are empty slots, not clamped', () => {
+		// 0001-01-01 was a Monday.
+		const first = monthGrid('0001-01-15', 0);
+		expect(first[0][0]).toBeNull();
+		expect(first[0][1]).toBe('0001-01-01');
+		expect(first.flat().filter((d) => d === '0001-01-01')).toHaveLength(1);
+		expect(monthGrid('0001-01-15', 1)[0][0]).toBe('0001-01-01');
+		const last = monthGrid('9999-12-15', 0);
+		const cells = last.flat();
+		expect(cells.filter((d) => d === '9999-12-31')).toHaveLength(1);
+		const end = cells.indexOf('9999-12-31');
+		expect(cells.slice(end + 1).every((d) => d === null)).toBe(true);
+		expect(cells.slice(0, end + 1).every((d) => d !== null)).toBe(true);
+		// Weekday columns stay true: the cell's column is its weekday.
+		expect(end % 7).toBe(dayOfWeek('9999-12-31'));
+		// An ordinary month has no empty slot.
+		expect(monthGrid('2026-11-07', 0).flat().includes(null)).toBe(false);
+	});
+
 	it('range helpers compare canonical strings, bounds inclusive', () => {
 		expect(isOutOfRange('2026-11-07', '2026-11-07', '2026-11-07')).toBe(false);
 		expect(isOutOfRange('2026-11-06', '2026-11-07')).toBe(true);
