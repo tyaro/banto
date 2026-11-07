@@ -765,6 +765,14 @@ Connection: close
         bind(config).await.expect("port is free after drop");
     }
 
+    /// ポートを放して取り直すテストを直列にするロック。
+    /// `hold_consecutive_ports` の探索起点はプロセス id で決まり、同じ
+    /// プロセスのテストは同じ起点を使う。並列に走ると、あるテストが放した
+    /// 直後のポートを別のテストが握り、fallback が隣のポートを選んでしまう。
+    /// 非同期で保持するので tokio の Mutex を使う（テストごとにランタイムが
+    /// 別でも使える）。
+    static PORT_RANGE_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// Hold `count` consecutive loopback ports in 20000-29999 (retrying with
     /// another base when a neighbour happens to be taken by something else).
     /// Not next to an OS-picked port: these tests release and re-bind the
@@ -772,6 +780,9 @@ Connection: close
     /// sequentially, so a parallel test's `port: 0` bind could take one of
     /// them in between. Both OS ephemeral ranges (Windows 49152+, Linux
     /// 32768+) are well above this range.
+    ///
+    /// 同じプロセスのテストは同じ起点を使うので、ポートを放して取り直す
+    /// テストは `PORT_RANGE_TESTS` のロックで直列にする。
     async fn hold_consecutive_ports(count: u16) -> Vec<BoundServer> {
         let start = 20_000 + (std::process::id() % 2_000) as u16 * 5;
         let bases = (start..30_000)
@@ -799,6 +810,7 @@ Connection: close
 
     #[tokio::test]
     async fn port_fallback_binds_the_requested_port_when_free() {
+        let _guard = PORT_RANGE_TESTS.lock().await;
         let held = hold_consecutive_ports(1).await;
         let port = held[0].local_addr().port();
         drop(held);
@@ -813,6 +825,7 @@ Connection: close
 
     #[tokio::test]
     async fn port_fallback_picks_the_next_free_port_when_the_requested_one_is_in_use() {
+        let _guard = PORT_RANGE_TESTS.lock().await;
         // Hold two ports and release the second: the requested one stays in
         // use, the one right behind it is (almost certainly) free.
         let mut held = hold_consecutive_ports(2).await;
@@ -835,6 +848,7 @@ Connection: close
 
     #[tokio::test]
     async fn port_fallback_fails_when_the_whole_range_is_in_use() {
+        let _guard = PORT_RANGE_TESTS.lock().await;
         // Span 2 keeps the test small: requested + 2 neighbours, all held.
         let held = hold_consecutive_ports(3).await;
         let port = held[0].local_addr().port();
@@ -867,6 +881,7 @@ Connection: close
 
     #[tokio::test]
     async fn bind_without_fallback_reports_in_use_and_tries_no_other_port() {
+        let _guard = PORT_RANGE_TESTS.lock().await;
         let held = hold_consecutive_ports(1).await;
         let port = held[0].local_addr().port();
         let err = bind_without_fallback(ServerConfig {
