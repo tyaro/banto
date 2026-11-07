@@ -228,3 +228,25 @@ test.describe('date picker', () => {
 		});
 	}
 });
+
+// @banto/ui TimeInput with its list open (date-time-pickers §6, PR-2): the
+// sample's fixed value (09:30) is the active option, centred in the list.
+// Opened from the keyboard so no pointer hovers an option. Viewport shot, like
+// the date picker above.
+test.describe('time picker', () => {
+	for (const combo of DIAGONAL_MATRIX) {
+		test(`ui-demo-time-picker ${comboLabel(combo)} 1440x900`, async ({ page }) => {
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/ui-demo');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			const input = page.getByRole('combobox', { name: '開始時刻' });
+			await input.scrollIntoViewIfNeeded();
+			await page.waitForTimeout(SETTLE_MS);
+			await input.focus();
+			await page.keyboard.press('ArrowDown');
+			await expect(page.getByRole('listbox', { name: '時刻の一覧' })).toBeVisible();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(`ui-demo-time-picker-${comboLabel(combo)}-1440x900.png`);
+		});
+	}
+});

@@ -39,11 +39,12 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `trigger` snippet は `aria-haspopup`・`aria-expanded`・`onclick`・`onkeydown` を props で受け取る
 ので、ボタンに `{...props}` で展開する。項目を選ぶとメニューは閉じ、フォーカスはトリガーへ戻る。
 
-日付の入力（[date-time-pickers.md](../../docs/design/date-time-pickers.md) PR-1。`popover` API を前提にする）:
+日付・時刻の入力（[date-time-pickers.md](../../docs/design/date-time-pickers.md) PR-1・PR-2。`popover` API を前提にする）:
 
-| 部品        | 役割                                                                                                                       | props                                                                                                                                                                                                                                                              |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DateInput` | 直接打てる入力欄 ＋ 横のボタンで開くカレンダー（`role="dialog"` + `aria-modal`、矢印・Home・End・PageUp/Down・Enter・Esc） | `value`(`'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable) |
+| 部品        | 役割                                                                                                                                                      | props                                                                                                                                                                                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DateInput` | 直接打てる入力欄 ＋ 横のボタンで開くカレンダー（`role="dialog"` + `aria-modal`、矢印・Home・End・PageUp/Down・Enter・Esc）                                | `value`(`'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable) |
+| `TimeInput` | 直接打てる入力欄 ＋ 時刻の一覧（`role="combobox"` + `role="listbox"`、フォーカスは入力欄のまま `aria-activedescendant`。↓・Alt+↓ で開く、↑↓・Enter・Esc） | `value`(`'HH:mm'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `step?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable)                                          |
 
 値は `YYYY-MM-DD`（タイムゾーンを持たない日付）か `null`。手入力は blur・Enter で解析し、通れば正規の形に直す
 （`2026/11/7`・`20261107`・全角・`11/7`（今年）も可。`11/07/2026` のような年月日の順でない形は受け付けない）。
@@ -54,9 +55,18 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `onblur` は入力欄・ボタン・カレンダーの全体からフォーカスが出たときだけ呼ぶ。カレンダーの中のキーと、部品の中の
 `pointerdown` は外へ伝えない（グリッドのセル編集に組み込むための約束。設計書 §5.8）。
 
+時刻の値は `HH:mm`（00:00〜23:59、24 時間、タイムゾーンなし）か `null`。手入力は `9:30`・`0930`・`930`・`9`・全角も可で、
+blur・Enter で正規の形に直す。表示は全ロケールで `HH:mm`（ロケールの 12 時間制に従わない）。`step`（分）を指定すると一覧は
+0:00 からその刻み、省略すると 30 分刻み（どちらも 23:59 を越えて翌日へは回らない）。手入力は任意の分を受け付け、刻み・`min`・`max` の
+検査は親の役目（`isOnTimeStep`・`isOutOfRange`）。一覧では `min`・`max` の外の時刻を `aria-disabled` にして選べなくする。
+一覧を開くと値（打ちかけの文字列が解析できればそれ）に一番近い項目を指し、一覧の中だけをスクロールして見せる。横のボタンは
+マウス用（`tabindex="-1"`）。文言（`timePickerOpen`・`timePickerList`・`timeFormatHint`）の既定は日本語。`onblur`・`pointerdown` の
+約束は `DateInput` と同じ（一覧を開いてもフォーカスは入力欄から動かない）。
+
 解析・暦の純粋関数（`parseDateText`・`parseIsoDate`・`isIsoDate`・`addDays`・`addMonths`・`addYears`・`dayOfWeek`・
-`monthGrid`・`clampDate`・`isOutOfRange`・`todayDate`・`resolveWeekStart`・`formatFullDate` など）も公開する
-（`Date.parse` を使わず、文字列の大小 = 日付の前後で比べる）。
+`monthGrid`・`clampDate`・`isOutOfRange`・`todayDate`・`resolveWeekStart`・`formatFullDate` など、時刻は `parseTimeText`・
+`parseIsoTime`・`isIsoTime`・`timeOptions`・`isOnTimeStep`・`nearestTime`・`timeToMinutes`・`minutesToTime` など）も公開する
+（`Date.parse` を使わず、文字列の大小 = 日付・時刻の前後で比べる）。
 
 コマンドパレット（段階 2b）:
 
@@ -409,7 +419,7 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 `UiIconComponent`）。`@lucide/svelte` の部品はそのまま渡せる。このパッケージは lucide に
 依存しない。**既定のアイコン**（Inbox・OctagonAlert・Circle・CircleCheck・TriangleAlert・
 CircleAlert・Info の 7 つと、`Modal`・`Drawer` の × に使う X、`DateInput` の Calendar・ChevronLeft・ChevronRight・
-ChevronsLeft・ChevronsRight）は lucide の SVG を `src/icons/` に同梱した
+ChevronsLeft・ChevronsRight、`TimeInput` の Clock）は lucide の SVG を `src/icons/` に同梱した
 もので、アイコン集としては公開しない。同梱アイコンは ISC（一部は Feather 由来の MIT）で、表記は各ファイルの先頭と
 [src/icons/LICENSE](src/icons/LICENSE) にある。
 

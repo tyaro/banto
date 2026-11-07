@@ -23,6 +23,7 @@
  * Date pickers (docs/design/date-time-pickers.md PR-1): `DateInput` and the
  * pure date helpers of `datetime.ts` (parse / calendar / `Intl` names), with
  * the popover placement shared with Menu (`anchoredPopover.ts`, internal).
+ * PR-2: `TimeInput` (combobox + listbox, step) and the time helpers.
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -31,7 +32,9 @@
  */
 export { default as CommandPalette } from './CommandPalette.svelte';
 export { default as DateInput } from './DateInput.svelte';
+export { default as TimeInput } from './TimeInput.svelte';
 export {
+	DEFAULT_TIME_STEP,
 	addDays,
 	addMonths,
 	addYears,
@@ -41,16 +44,27 @@ export {
 	formatFullDate,
 	formatMonthYear,
 	isBlankDateText,
+	formatTime,
 	isIsoDate,
+	isIsoTime,
 	isLeapYear,
+	isOnTimeStep,
 	isOutOfRange,
+	minutesToTime,
 	monthGrid,
+	nearestTime,
+	normalizeTimeStep,
 	parseDateText,
 	parseIsoDate,
+	parseIsoTime,
+	parseTimeText,
 	resolveWeekStart,
+	timeOptions,
+	timeToMinutes,
 	todayDate,
 	weekdayNames,
 	type DateParts,
+	type TimeParts,
 	type Weekday
 } from './datetime';
 export { default as Drawer } from './Drawer.svelte';

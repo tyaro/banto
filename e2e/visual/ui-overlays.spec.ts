@@ -3,7 +3,8 @@
  * the Esc / focus layering in a real browser (jsdom has no layout, so the
  * package's unit tests stub geometry and the scoped CSS that carries the
  * `--banto-z-modal` z-index), the Menu's long-menu cap and internal scroll
- * (#427), the DateInput calendar (date-time-pickers PR-1), plus an axe scan
+ * (#427), the DateInput calendar (date-time-pickers PR-1), the TimeInput
+ * list (PR-2), plus an axe scan
  * of the open layers in the two
  * diagonal theme combos (the closed page's pixels are covered by the
  * `ui-demo` screenshot in visual.spec.ts). Same `visual` project as the other
@@ -301,6 +302,84 @@ for (const combo of DIAGONAL_MATRIX) {
 		await page.getByRole('textbox', { name: '出荷日（2026年11月2日〜27日の平日のみ）' }).focus();
 		await page.keyboard.press('Alt+ArrowDown');
 		await expect(page.getByRole('dialog', { name: '日付の選択' })).toBeVisible();
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(results.violations, formatViolations(results.violations)).toEqual([]);
+	});
+}
+
+// TimeInput (date-time-pickers PR-2): the combobox keeps focus while the list
+// is open (aria-activedescendant), keys and clicks pick, a click on a disabled
+// time changes nothing - the full key table is in the package's jsdom tests -
+// plus an axe scan of the open list.
+test.describe('ui-demo TimeInput', () => {
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	test('ArrowDown opens on the value with focus kept, ArrowDown + Enter picks the next time', async ({
+		page
+	}) => {
+		const input = page.getByRole('combobox', { name: '開始時刻' });
+		await input.focus();
+		await page.keyboard.press('ArrowDown');
+		const list = page.getByRole('listbox', { name: '時刻の一覧' });
+		await expect(list).toBeVisible();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveAttribute('aria-expanded', 'true');
+		const activeId = await input.getAttribute('aria-activedescendant');
+		await expect(page.locator(`[id="${activeId}"]`)).toHaveText('09:30');
+		await expect(list.getByRole('option', { name: '09:30' })).toBeInViewport();
+		await page.keyboard.press('ArrowDown');
+		await page.keyboard.press('Enter');
+		await expect(list).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('10:00');
+		await expect(page.getByTestId('ui-demo-start-time-value')).toContainText('10:00');
+		// Typed text: any minute, normalised on Enter.
+		await input.fill('1017');
+		await page.keyboard.press('Enter');
+		await expect(input).toHaveValue('10:17');
+	});
+
+	test('a click picks; a click on a disabled time keeps the list, the value and the focus', async ({
+		page
+	}) => {
+		const input = page.getByRole('combobox', { name: '会議の時刻（15 分刻み、9:00〜18:00）' });
+		const opener = page.getByRole('button', { name: '時刻を選択' }).nth(1);
+		await opener.scrollIntoViewIfNeeded();
+		await page.waitForTimeout(100);
+		await opener.click();
+		const list = page.getByRole('listbox', { name: '時刻の一覧' });
+		await expect(list).toBeVisible();
+		await expect(input).toBeFocused();
+		const disabled = list.getByRole('option', { name: '08:45' });
+		await expect(disabled).toHaveAttribute('aria-disabled', 'true');
+		await disabled.click({ force: true });
+		await expect(list).toBeVisible();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('');
+		await list.getByRole('option', { name: '09:15' }).click();
+		await expect(list).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('09:15');
+		await page.keyboard.press('ArrowDown');
+		await expect(list).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(list).toBeHidden();
+		await expect(input).toHaveValue('09:15');
+	});
+});
+
+for (const combo of DIAGONAL_MATRIX) {
+	test(`open time list has no wcag2a/wcag2aa violations (${comboLabel(combo)})`, async ({
+		page
+	}) => {
+		await primeThemeAndAuth(page, combo);
+		await gotoDemo(page);
+		await page.getByRole('combobox', { name: '会議の時刻（15 分刻み、9:00〜18:00）' }).focus();
+		await page.keyboard.press('ArrowDown');
+		await expect(page.getByRole('listbox', { name: '時刻の一覧' })).toBeVisible();
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 		expect(results.violations, formatViolations(results.violations)).toEqual([]);
 	});
