@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- refactor(ui): `@banto/ui` の CSS の生の寸法（余白 66・文字サイズ 17・枠線幅 14）を `--banto-space-*` / `--banto-font-size-*` / `--banto-border-width` へ置き換え（[theme-dimension-tokens.md](docs/design/theme-dimension-tokens.md) §6 の PR-2）。派生アプリへの影響: 丸めにより見た目が最大約 1.4px（`LauncherBar` の `top` などを含む余白）、文字サイズは最大約 0.7px 動く箇所がある。API・DOM は変えない。
+
 ## [6.10.0] - 2026-11-05
 
 **v6.10.0 — グリッド・フォーム・設定画面のアクセシビリティ修正と、共通の入力スタイル（`@banto/theme` の opt-in クラス、`BantoForm` の `appearance="underline"`）の追加。** 版の種類: minor（機能追加。公開 API の削除・改名なし。挙動変更は下の「移行注意」を参照。[docs/publishing.md](docs/publishing.md)「バージョニング規約」）。

@@ -317,7 +317,7 @@
 		/* Own stacking context for the ::before backdrop below (z-index: -1)
 		   without making the bar a backdrop root. */
 		isolation: isolate;
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
 		box-shadow: var(--banto-shadow-lg);
 		pointer-events: auto;
@@ -460,7 +460,7 @@
 		border-radius: 999px;
 		background: var(--banto-primary-solid);
 		color: var(--banto-on-solid);
-		font-size: 0.7rem;
+		font-size: var(--banto-font-size-xs);
 		font-weight: 700;
 		line-height: 1;
 	}
@@ -485,15 +485,15 @@
 		bottom: calc(100% + var(--banto-shell-launcher-padding) + var(--banto-shell-launcher-gap));
 		left: 50%;
 		translate: -50% 0;
-		padding: 0.25rem 0.5rem;
+		padding: var(--banto-space-1) var(--banto-space-2);
 		background: var(--banto-shell-launcher-tooltip-bg);
 		backdrop-filter: var(--banto-shell-launcher-tooltip-backdrop);
 		-webkit-backdrop-filter: var(--banto-shell-launcher-tooltip-backdrop);
 		color: var(--banto-text);
-		border: 1px solid var(--banto-border);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-md);
 		box-shadow: var(--banto-shadow-md);
-		font-size: 0.8rem;
+		font-size: var(--banto-font-size-sm);
 		white-space: nowrap;
 		pointer-events: auto;
 		opacity: 0;
@@ -730,7 +730,7 @@
 			align-items: stretch;
 			padding: 0 0 env(safe-area-inset-bottom);
 			border: none;
-			border-top: 1px solid var(--banto-border);
+			border-top: var(--banto-border-width) solid var(--banto-border);
 			border-radius: 0;
 			box-shadow: none;
 		}
@@ -755,8 +755,8 @@
 
 		.launcher__link {
 			flex-direction: column;
-			gap: 0.15rem;
-			padding: 0.25rem 0.5rem;
+			gap: var(--banto-space-1);
+			padding: var(--banto-space-1) var(--banto-space-2);
 			border-radius: 0;
 		}
 
@@ -776,11 +776,11 @@
 			overflow: hidden;
 			text-overflow: ellipsis;
 			white-space: nowrap;
-			font-size: 0.7rem;
+			font-size: var(--banto-font-size-xs);
 		}
 
 		.launcher__badge {
-			top: 0.15rem;
+			top: var(--banto-space-1);
 			right: auto;
 			left: calc(50% + 0.4rem);
 		}
