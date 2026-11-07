@@ -287,6 +287,9 @@
 		/* The wrapper and the track only make room (tooltips, shadow); clicks
 		   pass through to the page except on the bar itself. */
 		pointer-events: none;
+		/* The tooltip's line height (shared by the tooltip and the track's
+		   tooltip room). 1.5 = what the template's page already gave it. */
+		--launcher-tooltip-line-height: 1.5;
 	}
 
 	.launcher--bottom {
@@ -299,11 +302,20 @@
 		/* Many items scroll sideways inside the track. The track's top padding
 		   is the tooltips' room (an overflow box clips its children); the
 		   offset padding keeps the bar off the screen edge with room for its
-		   shadow. */
+		   shadow.
+		   The tooltips' room is the shape of the tooltip, not a step of the
+		   spacing scale (theme-dimension-tokens.md §5.2): one line of the
+		   tooltip text + its padding and border + the gap above the bar + a
+		   space-1 margin for its shadow (about 35px by default). Rounding it to
+		   space-7 (28px) clipped the tooltip (#516 review). */
+		--launcher-tooltip-room: calc(
+			var(--banto-font-size-sm) * var(--launcher-tooltip-line-height) + 2 * var(--banto-space-1) +
+				2 * var(--banto-border-width) + var(--banto-shell-launcher-gap) + var(--banto-space-1)
+		);
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: thin;
-		padding: var(--banto-space-7) var(--banto-shell-launcher-offset)
+		padding: var(--launcher-tooltip-room) var(--banto-shell-launcher-offset)
 			var(--banto-shell-launcher-offset);
 		pointer-events: none;
 	}
@@ -495,6 +507,9 @@
 		border-radius: var(--banto-radius-md);
 		box-shadow: var(--banto-shadow-md);
 		font-size: var(--banto-font-size-sm);
+		/* Fixed so the track's tooltip room (`--launcher-tooltip-room`) can be
+		   derived from it. */
+		line-height: var(--launcher-tooltip-line-height);
 		white-space: nowrap;
 		pointer-events: auto;
 		opacity: 0;
@@ -562,7 +577,7 @@
 
 		.launcher--top .launcher__track {
 			padding: var(--banto-shell-launcher-offset) var(--banto-shell-launcher-offset)
-				var(--banto-space-7);
+				var(--launcher-tooltip-room);
 		}
 
 		.launcher--top .launcher__bar,

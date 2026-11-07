@@ -22,7 +22,7 @@
 
 ## [Unreleased]
 
-- refactor(ui): `@banto/ui` の CSS の生の寸法（余白 72・文字サイズ 17・枠線幅 14）を `--banto-space-*` / `--banto-font-size-*` / `--banto-border-width` へ置き換え（[theme-dimension-tokens.md](docs/design/theme-dimension-tokens.md) §6 の PR-2）。派生アプリへの影響: 丸めにより余白が最大約 1.4px（`LauncherBar` の `top` など）、`LauncherBar` のトラックの padding（2.5rem → `space-7`）だけは 7px 縮む、文字サイズは最大約 0.7px 動く箇所がある。API・DOM は変えない。
+- refactor(ui): `@banto/ui` の CSS の生の寸法（余白 70・文字サイズ 17・枠線幅 14）を `--banto-space-*` / `--banto-font-size-*` / `--banto-border-width` へ置き換え（[theme-dimension-tokens.md](docs/design/theme-dimension-tokens.md) §6 の PR-2）。派生アプリへの影響: 丸めにより余白が最大約 1.4px（`LauncherBar` の `top` など）、文字サイズは最大約 0.7px 動く箇所がある。API・DOM は変えない。
 
 ## [6.10.0] - 2026-11-05
 
