@@ -6,7 +6,7 @@
  * verbatim, so passing nothing reproduces the stock output.
  *
  * Components with their own text take `messages?: UiMessages` and merge it
- * over the defaults (CommandPalette, ToastHost, Modal, Drawer). Apps that localise (admin-template
+ * over the defaults (CommandPalette, ToastHost, Modal, Drawer, DateInput). Apps that localise (admin-template
  * does, via Paraglide) pass their own text explicitly - see `LoadingState`'s
  * `label` and admin-template's CommandPalette wrapper.
  */
@@ -28,6 +28,26 @@ export interface UiMessages {
 	toastClose?: () => string;
 	/** Modal / Drawer: the close (×) button's accessible name and tooltip. */
 	overlayClose?: () => string;
+	/** DateInput: the calendar button's name while there is no value. */
+	datePickerOpen?: () => string;
+	/** DateInput: the calendar button's name with a value; `date` is the long form (`Intl` `dateStyle: 'full'`). */
+	datePickerChange?: (date: string) => string;
+	/** DateInput: the calendar dialog's accessible name. */
+	datePickerDialog?: () => string;
+	/** DateInput: the previous-month button. */
+	datePickerPrevMonth?: () => string;
+	/** DateInput: the next-month button. */
+	datePickerNextMonth?: () => string;
+	/** DateInput: the previous-year button. */
+	datePickerPrevYear?: () => string;
+	/** DateInput: the next-year button. */
+	datePickerNextYear?: () => string;
+	/** DateInput: the button that picks today. */
+	datePickerToday?: () => string;
+	/** DateInput: the button that empties the value. */
+	datePickerClear?: () => string;
+	/** DateInput: the format hint read with the text box (`aria-describedby`). */
+	dateFormatHint?: () => string;
 }
 
 export const defaultUiMessages: Required<UiMessages> = {
@@ -38,5 +58,15 @@ export const defaultUiMessages: Required<UiMessages> = {
 	commandPaletteEmpty: () => '一致するコマンドがありません',
 	commandPaletteRecent: () => '最近使ったもの',
 	toastClose: () => '閉じる',
-	overlayClose: () => '閉じる'
+	overlayClose: () => '閉じる',
+	datePickerOpen: () => '日付を選択',
+	datePickerChange: (date) => `日付を変更、${date}`,
+	datePickerDialog: () => '日付の選択',
+	datePickerPrevMonth: () => '前の月',
+	datePickerNextMonth: () => '次の月',
+	datePickerPrevYear: () => '前の年',
+	datePickerNextYear: () => '次の年',
+	datePickerToday: () => '今日',
+	datePickerClear: () => 'クリア',
+	dateFormatHint: () => 'YYYY-MM-DD の形で入力（例: 2026-11-07）'
 };

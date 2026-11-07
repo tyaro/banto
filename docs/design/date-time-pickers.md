@@ -1,7 +1,7 @@
 # 日付・時刻ピッカーの設計（日付・時刻・日時・期間）
 
 作成日: 2026-11-07
-状態: **設計中**。§7 の D1〜D17 はオーナーの判断待ち。実装は未着手。
+状態: **実装中**。§7 の D1〜D17 は推奨 a で合意（2026-11-07）。PR-1（ui: `datetime.ts`・位置決めの切り出し・`DateInput`・`UiMessages`・ui-demo）実装中。PR-2 以降は未着手。
 トラック: 保守者向け（トラックA）
 関連: [conventions](../conventions.md) §3（依存を足さない）・§4／§5（パッケージ間の import 禁止）・§9（寸法トークン）・
 §13（文言はキー経由）/ [ADR-0018](../adr/0018-shared-ui-package.md)（`@banto/ui`）/
@@ -355,6 +355,8 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 
 ## 7. 判断が要る点（D1〜D17）
 
+**2026-11-07 にオーナーと合意: D1〜D17 はすべて下の表の推奨（a）で進める。** 各節の b・c は検討の記録として残す。
+
 | 論点 | 推奨 |
 | --- | --- |
 | D1 forms・grid への渡し方 | **a: アプリが context／prop で注入**（パッケージ間 import は足さない） |
@@ -472,10 +474,14 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 ## 8. 未確認の点
 
 - `Intl.Locale.prototype.getWeekInfo()` が WebKitGTK（Linux の Tauri）と LAN から開く Firefox で使えるか。
-  使えないときは日曜に倒す前提（D15）。
+  使えないときは日曜に倒す前提（D15）。 → PR-1 では `getWeekInfo()` と古い `weekInfo` の両方を見て、
+  どちらも無ければ日曜に倒す（単体テストで確認）。実機の WebKitGTK・Firefox での値は未確認。
 - Popover API の top layer に出したダイアログを、`Modal`（`aria-modal` の div）と FilterPopover（`role="dialog"`）の
   上に重ねたときの層の判定（`effectiveZIndex`・`hasVisibleLayerAbove`）が期待どおりか。`popover="auto"` だと
   入れ子でない別の auto ポップオーバーを閉じるので、`manual` にして閉じる操作を自前で持つほうが良いかもしれない。
+  → PR-1 では `DateInput` を `popover="manual"` にし、外側の `pointerdown` で閉じる処理を部品が持つ形にした
+  （開いている Menu などの `auto` を閉じない）。閉じている間はポップオーバーの要素自体を描かない（ページに見えない
+  `role="dialog"` を残さない）。Modal・FilterPopover の上に重ねたときの確認は、つなぎ込む PR-3／PR-4 で行う。
 - `editFocus.owned` が「ダイアログ → 入力欄」へ戻ったときに正しく取り直されるか（§5.8）。
 - PostgreSQL の TEXT の比較が照合順序（collation）の影響を受けないか。固定幅の ISO 文字列なら順序は保たれる
   見込みだが、`between` では `COLLATE "C"` を付けるかを実装の PR で確かめる。

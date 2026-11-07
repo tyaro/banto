@@ -3,7 +3,8 @@
  * the Esc / focus layering in a real browser (jsdom has no layout, so the
  * package's unit tests stub geometry and the scoped CSS that carries the
  * `--banto-z-modal` z-index), the Menu's long-menu cap and internal scroll
- * (#427), plus an axe scan of the open layers in the two
+ * (#427), the DateInput calendar (date-time-pickers PR-1), plus an axe scan
+ * of the open layers in the two
  * diagonal theme combos (the closed page's pixels are covered by the
  * `ui-demo` screenshot in visual.spec.ts). Same `visual` project as the other
  * specs here (vite preview, browser demo mode, reduced motion - so the
@@ -211,6 +212,97 @@ for (const combo of DIAGONAL_MATRIX) {
 			const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 			expect(results.violations, formatViolations(results.violations)).toEqual([]);
 		});
+	});
+}
+
+// DateInput (date-time-pickers PR-1): the keyboard path and focus in a real
+// browser (top layer, focus trap, Esc layering) - the full key table is in
+// the package's jsdom tests - plus an axe scan of the open calendar.
+// Scroll first and let the scroll events land: like Menu, the open calendar
+// closes on any ancestor scroll, and Playwright's own scroll-into-view of the
+// click would otherwise arrive just after it opened.
+async function openDueDate(page: Page): Promise<void> {
+	const opener = page.getByRole('button', { name: '日付を変更、2026年11月7日土曜日' });
+	await opener.scrollIntoViewIfNeeded();
+	await page.waitForTimeout(100);
+	await opener.click();
+}
+
+test.describe('ui-demo DateInput', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	test('Alt+ArrowDown opens on the value, Enter picks, focus returns to the text box', async ({
+		page
+	}) => {
+		const input = page.getByRole('textbox', { name: '納期' });
+		await input.focus();
+		await page.keyboard.press('Alt+ArrowDown');
+		const dialog = page.getByRole('dialog', { name: '日付の選択' });
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByRole('gridcell', { name: '2026年11月7日土曜日' })).toBeFocused();
+		await page.keyboard.press('ArrowRight');
+		await page.keyboard.press('Enter');
+		await expect(dialog).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('2026-11-08');
+		await expect(page.getByTestId('ui-demo-due-date-value')).toContainText('2026-11-08');
+	});
+
+	test('Esc closes without changing the value; typed text is normalised on blur', async ({
+		page
+	}) => {
+		const input = page.getByRole('textbox', { name: '納期' });
+		await openDueDate(page);
+		const dialog = page.getByRole('dialog', { name: '日付の選択' });
+		await expect(dialog).toBeVisible();
+		await page.keyboard.press('PageDown');
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(input).toBeFocused();
+		await expect(input).toHaveValue('2026-11-07');
+		await input.fill('2026/12/1');
+		// Tab to the calendar button stays inside the component (no blur); the
+		// next Tab leaves it and commits.
+		await page.keyboard.press('Tab');
+		await expect(input).toHaveValue('2026/12/1');
+		await page.keyboard.press('Tab');
+		await expect(input).toHaveValue('2026-12-01');
+		await expect(page.getByTestId('ui-demo-due-date-value')).toContainText('2026-12-01');
+	});
+
+	test('a click outside closes it and the calendar stays inside the viewport', async ({ page }) => {
+		await openDueDate(page);
+		const dialog = page.getByRole('dialog', { name: '日付の選択' });
+		await expect(dialog).toBeVisible();
+		const box = await dialog.boundingBox();
+		const viewport = page.viewportSize() ?? { width: 0, height: 0 };
+		expect(box).not.toBeNull();
+		if (box) {
+			expect(box.x).toBeGreaterThanOrEqual(0);
+			expect(box.y).toBeGreaterThanOrEqual(0);
+			expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+			expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+		}
+		await page.getByText('DateInput', { exact: true }).click();
+		await expect(dialog).toBeHidden();
+	});
+});
+
+for (const combo of DIAGONAL_MATRIX) {
+	test(`open calendar has no wcag2a/wcag2aa violations (${comboLabel(combo)})`, async ({
+		page
+	}) => {
+		await primeThemeAndAuth(page, combo);
+		await gotoDemo(page);
+		await page.getByRole('textbox', { name: '出荷日（2026年11月2日〜27日の平日のみ）' }).focus();
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(page.getByRole('dialog', { name: '日付の選択' })).toBeVisible();
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(results.violations, formatViolations(results.violations)).toEqual([]);
 	});
 }
 
