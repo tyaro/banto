@@ -53,13 +53,17 @@
 	// tick font (D9-b: read from the first y tick label, 11px until/unless it
 	// can be read); never below the previous fixed default, and an explicit
 	// `margins.left` still wins as-is.
+	// Measured container width (bound from ChartContainer) so the margin cap can
+	// be relative to it (40%), same as LineChart.
+	let plotWidth: number = $state(0);
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	// Lazy (`$derived.by`): the ticks/formatters are declared below.
 	const MARGIN = $derived.by((): ChartMargin => ({
 		...DEFAULT_MARGIN,
 		left: leftMarginForTicks(valueTicks.map(formatValueDisplay), DEFAULT_MARGIN.left, {
-			fontSize: tickFontSize
+			fontSize: tickFontSize,
+			totalWidth: plotWidth
 		}),
 		...margins
 	}));
@@ -106,7 +110,7 @@
 </script>
 
 <div class="banto-boxplot">
-	<ChartContainer {label} {height} empty={isEmpty} {messages}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const valueScale = linearScale(

@@ -9,6 +9,7 @@ import {
 	estimateLabelWidth,
 	leftMarginFor,
 	leftMarginForTicks,
+	rightMarginForTicks,
 	rightMarginForLastTick
 } from '../src/core/labels';
 import { labelFitRadius, spokeAngle } from '../src/core/radar';
@@ -166,6 +167,18 @@ describe('margins follow the rendered label size (D9-b conditions)', () => {
 });
 
 describe('caps and the radar follow the label size (D9-b)', () => {
+	it('a narrow chart (240px, 16px labels) stops both value-axis margins at 40% of the width', () => {
+		const totalWidth = 240;
+		const values = ['0', '500,000,000', '1,000,000,000'];
+		const left = leftMarginForTicks(values, 48, { fontSize: 16, totalWidth });
+		const right = rightMarginForTicks(['0%', '50%', '100%'], 40, { fontSize: 16, totalWidth });
+		expect(left).toBe(Math.floor(totalWidth * 0.4));
+		expect(right).toBeLessThanOrEqual(Math.floor(totalWidth * 0.4));
+		// without the width the font-scaled absolute cap alone would leave no plot area
+		expect(leftMarginForTicks(values, 48, { fontSize: 16 })).toBeGreaterThan(left);
+		expect(totalWidth - left - right).toBeGreaterThan(0);
+	});
+
 	it('the default 140px cap scales with the font (140 at 11px)', () => {
 		const long = ['オレンジジュース']; // 8 fullwidth chars
 		expect(leftMarginFor(['あ'.repeat(50)])).toBe(140);
@@ -225,6 +238,16 @@ describe('chart wiring', () => {
 		expect(calls.length).toBeGreaterThan(0);
 		expect(withFont.length).toBe(calls.length);
 	});
+
+	it.each(Object.keys(SOURCES))(
+		'%s passes the measured width to every tick-margin estimate (40%% cap)',
+		(name) => {
+			const src = SOURCES[name];
+			const calls = src.match(/(left|right)MarginForTicks\([\s\S]*?\}\)/g) ?? [];
+			for (const call of calls) expect(call).toContain('totalWidth: plotWidth');
+			if (calls.length > 0) expect(src).toContain('bind:width={plotWidth}');
+		}
+	);
 
 	it.each(Object.keys(SOURCES))('%s has no raw px font size left', (name) => {
 		expect(SOURCES[name]).not.toMatch(/font-size:\s*[\d.]+(px|rem)/);

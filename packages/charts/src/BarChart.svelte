@@ -99,6 +99,9 @@
 	// The estimates use the rendered tick font (D9-b: read from the first
 	// category label (horizontal) / y tick label (vertical), 11px
 	// until/unless it can be read).
+	// Measured container width (bound from ChartContainer) so the margin cap can
+	// be relative to it (40%), same as LineChart.
+	let plotWidth: number = $state(0);
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	const MARGIN = $derived.by((): ChartMargin => {
@@ -121,7 +124,8 @@
 					bottom: 26,
 					// Vertical: the value tick labels, never below the previous 48px.
 					left: leftMarginForTicks(valueTicks.map(formatValueDisplay), 48, {
-						fontSize: tickFontSize
+						fontSize: tickFontSize,
+						totalWidth: plotWidth
 					})
 				};
 		return { ...base, ...margins };
@@ -280,7 +284,7 @@
 
 <div class="banto-barchart">
 	<Legend items={legendItems} />
-	<ChartContainer {label} {height} empty={isEmpty} {messages}>
+	<ChartContainer {label} {height} empty={isEmpty} bind:width={plotWidth} {messages}>
 		{#snippet plot({ width, height: plotHeight })}
 			{@const m = plotMetrics(width, plotHeight)}
 			{@const bars = computeBars(width, plotHeight)}
