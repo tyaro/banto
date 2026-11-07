@@ -337,6 +337,76 @@ describe('DateInput calendar dialog', () => {
 	});
 });
 
+describe('DateInput in a height-capped panel', () => {
+	it('scrolls the panel itself (not the page) to show the focused day', () => {
+		const { button } = setup({ value: '2026-11-07' });
+		// jsdom has no layout: a panel showing y 100..200 and cells 40px per week
+		// row from y 120 (the first row), all following the panel's scrollTop.
+		let scrollTop = 0;
+		const rowOf = (date: string) =>
+			Math.floor(
+				[...document.querySelectorAll('[data-date]')].findIndex(
+					(el) => (el as HTMLElement).dataset.date === date
+				) / 7
+			);
+		const original = HTMLElement.prototype.getBoundingClientRect;
+		HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+			if (this.getAttribute('role') === 'dialog') return new DOMRect(0, 100, 300, 100);
+			const date = this.dataset.date;
+			if (date) return new DOMRect(10, 120 + rowOf(date) * 40 - scrollTop, 30, 30);
+			return original.call(this);
+		};
+		const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+		const isPanel = (el: HTMLElement) => el.getAttribute('role') === 'dialog';
+		Object.defineProperty(proto, 'clientHeight', {
+			get(this: HTMLElement) {
+				return isPanel(this) ? 100 : 0;
+			},
+			configurable: true
+		});
+		Object.defineProperty(proto, 'clientWidth', {
+			get(this: HTMLElement) {
+				return isPanel(this) ? 300 : 0;
+			},
+			configurable: true
+		});
+		Object.defineProperty(proto, 'scrollTop', {
+			get(this: HTMLElement) {
+				return isPanel(this) ? scrollTop : 0;
+			},
+			set(this: HTMLElement, v: number) {
+				if (isPanel(this)) scrollTop = v;
+			},
+			configurable: true
+		});
+		try {
+			fireEvent.click(button);
+			expect(scrollTop).toBe(0);
+			const scrollSpy = vi.spyOn(window, 'scrollTo');
+			// 2026-11-07 is row 0 (y 120..150): visible, no scroll.
+			fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+			expect(scrollTop).toBe(0);
+			// Two weeks down: row 2 (y 200..230) -> scrolled by 30 to end at 200.
+			fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+			fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+			expect(focusedDate()).toBe('2026-11-20');
+			expect(scrollTop).toBe(30);
+			// Back to row 0 (y 90..120 at scrollTop 30): scrolled up by 10, so it starts at 100.
+			fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+			fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+			fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+			expect(focusedDate()).toBe('2026-11-01');
+			expect(scrollTop).toBe(20);
+			expect(scrollSpy).not.toHaveBeenCalled();
+		} finally {
+			HTMLElement.prototype.getBoundingClientRect = original;
+			delete proto.clientHeight;
+			delete proto.clientWidth;
+			delete proto.scrollTop;
+		}
+	});
+});
+
 describe('DateInput min / max / isDateDisabled (§5.6)', () => {
 	it('days outside [min, max] are aria-disabled, focus is clamped into range', () => {
 		const { button, onValueChange } = setup({
@@ -355,6 +425,30 @@ describe('DateInput min / max / isDateDisabled (§5.6)', () => {
 		fireEvent.click(cell('2026-11-21'));
 		expect(onValueChange).not.toHaveBeenCalled();
 		expect(isOpen()).toBe(true);
+	});
+
+	it('a click on a day outside the range leaves focus on the tracked day (focusDate)', () => {
+		const { button, onValueChange } = setup({
+			value: '2026-11-07',
+			min: '2026-11-05',
+			max: '2026-11-20'
+		});
+		fireEvent.click(button);
+		const outside = cell('2026-11-21');
+		// What a browser does: mousedown focuses the cell unless prevented.
+		const mousedown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+		outside.dispatchEvent(mousedown);
+		expect(mousedown.defaultPrevented).toBe(true);
+		fireEvent.click(outside);
+		expect(focusedDate()).toBe('2026-11-07');
+		// Even when focus got there anyway (touch), the click puts it back.
+		outside.focus();
+		fireEvent.click(outside);
+		expect(focusedDate()).toBe('2026-11-07');
+		expect(cell('2026-11-07').getAttribute('tabindex')).toBe('0');
+		fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' });
+		fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+		expect(onValueChange).toHaveBeenCalledWith('2026-11-08');
 	});
 
 	it('month / year buttons cannot leave the range', () => {
