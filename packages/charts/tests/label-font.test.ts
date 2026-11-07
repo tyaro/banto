@@ -11,6 +11,7 @@ import {
 	leftMarginForTicks,
 	rightMarginForLastTick
 } from '../src/core/labels';
+import { labelFitRadius, spokeAngle } from '../src/core/radar';
 import { DEFAULT_LABEL_FONT_SIZE, readFontSizePx, trackFontSize } from '../src/internal/label-font';
 // @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
 import BarChartSrc from '../src/BarChart.svelte?raw';
@@ -161,6 +162,41 @@ describe('margins follow the rendered label size (D9-b conditions)', () => {
 	it('the standard environment (root 14px, sm 0.8rem = 11.2px) stays within 0.2px of the old 11px', () => {
 		const px = readFontSizePx(el, 11, style(resolveSm(14)));
 		expect(Math.abs(px - 11)).toBeLessThanOrEqual(0.2 + 1e-9);
+	});
+});
+
+describe('caps and the radar follow the label size (D9-b)', () => {
+	it('the default 140px cap scales with the font (140 at 11px)', () => {
+		const long = ['オレンジジュース']; // 8 fullwidth chars
+		expect(leftMarginFor(['あ'.repeat(50)])).toBe(140);
+		const px = readFontSizePx(el, 11, style(resolveSm(20))); // 16px
+		const margin = leftMarginFor(long, { fontSize: px });
+		expect(margin).toBeGreaterThan(140);
+		expect(margin - 8 - estimateLabelWidth(long[0], px)).toBeGreaterThanOrEqual(-0.5);
+		expect(leftMarginForTicks(['1'.repeat(130)], 48, { fontSize: 22 })).toBe(280);
+		// an explicit max still wins
+		expect(leftMarginFor(long, { fontSize: px, max: 100 })).toBe(100);
+	});
+
+	it.each([11, 16, 17.5])('radar labels at %spx fit horizontally within the fit radius', (px) => {
+		const labels = ['抹茶ラテ', '緑茶', 'オレンジジュース', 'コーヒー', '紅茶'];
+		const widths = labels.map((l) => estimateLabelWidth(l, px));
+		const width = 400;
+		const cx = width / 2;
+		const gap = 10;
+		const r = labelFitRadius(widths, cx, width, gap);
+		expect(r).toBeGreaterThan(0);
+		labels.forEach((_, i) => {
+			const s = Math.sin((spokeAngle(i, labels.length) * Math.PI) / 180);
+			const x = cx + (r + gap) * s;
+			if (s < -1e-9) expect(x - widths[i]).toBeGreaterThanOrEqual(-1e-6);
+			if (s > 1e-9) expect(x + widths[i]).toBeLessThanOrEqual(width + 1e-6);
+		});
+	});
+
+	it('the radar fit radius is unbounded without side labels and never negative', () => {
+		expect(labelFitRadius([40, 40], 100, 200, 10)).toBe(Infinity); // top + bottom only
+		expect(labelFitRadius([10, 500, 10, 500], 100, 200, 10)).toBe(0);
 	});
 });
 

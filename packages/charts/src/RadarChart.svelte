@@ -8,7 +8,14 @@
 	 * would make polygon area meaningless to compare).
 	 */
 	import { niceTicks } from './core/scale';
-	import { radarPoints, ringPolygon, spokeAngle, spokeLabelAnchor } from './core/radar';
+	import {
+		labelFitRadius,
+		radarPoints,
+		ringPolygon,
+		spokeAngle,
+		spokeLabelAnchor
+	} from './core/radar';
+	import { estimateLabelWidth } from './core/labels';
 	import { seriesColorVar } from './core/color';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { getValue, toNumber, type Accessor, type TooltipRow } from './types';
@@ -60,6 +67,9 @@
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 
 	const axisLabels = $derived(data.map((row) => getValue(row, axis)));
+	const labelWidths = $derived(
+		axisLabels.map((label) => estimateLabelWidth(String(label ?? ''), labelFontSize))
+	);
 	const valueMatrix = $derived(
 		series.map((s) => data.map((row) => toNumber(getValue(row, s.value))))
 	);
@@ -85,7 +95,9 @@
 		const cx = width / 2;
 		const cy = plotHeight / 2;
 		const padding = (LABEL_PADDING * labelFontSize) / DEFAULT_LABEL_FONT_SIZE;
-		const radius = Math.max(0, Math.min(width, plotHeight) / 2 - padding);
+		// ... and never wider than what keeps the estimated side labels inside.
+		const fit = labelFitRadius(labelWidths, cx, width, LABEL_GAP);
+		const radius = Math.max(0, Math.min(Math.min(width, plotHeight) / 2 - padding, fit));
 		return { cx, cy, radius };
 	}
 

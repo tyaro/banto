@@ -82,3 +82,28 @@ export function spokeLabelAnchor(angleDeg: number): LabelAnchor {
 	];
 	return table[octant];
 }
+
+/**
+ * Largest radius at which every perimeter label (placed `gap` px beyond the
+ * ring, anchored by `spokeLabelAnchor`) stays inside `[0, width]`
+ * horizontally, given each label's estimated width (`widths[i]`, px) and the
+ * center `cx`. Infinity when no label constrains it (only top/bottom labels).
+ * Used as an upper bound next to the fixed label padding so a larger label
+ * font (root font size / token override, theme-dimension-tokens.md D9-b)
+ * shrinks the plot instead of clipping the side labels.
+ */
+export function labelFitRadius(widths: number[], cx: number, width: number, gap: number): number {
+	let limit = Infinity;
+	const count = widths.length;
+	for (let index = 0; index < count; index++) {
+		const angle = spokeAngle(index, count);
+		const s = Math.sin((angle * Math.PI) / 180);
+		if (Math.abs(s) < 1e-9) continue;
+		const { textAnchor } = spokeLabelAnchor(angle);
+		// Horizontal room the label needs beyond its anchor point, on the side it extends to.
+		const reach = textAnchor === 'middle' ? widths[index] / 2 : widths[index];
+		const room = s > 0 ? width - cx - reach : cx - reach;
+		limit = Math.min(limit, room / Math.abs(s) - gap);
+	}
+	return Math.max(0, limit);
+}

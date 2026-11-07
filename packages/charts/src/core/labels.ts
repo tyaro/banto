@@ -45,7 +45,19 @@ export interface AxisMarginOptions {
 	/** Gap between the label's end and the plot edge (the `x = innerLeft - gap` offset used by the components). */
 	gap?: number;
 	min?: number;
+	/**
+	 * Absolute cap (px). Default: 140px at the 11px label font, scaled with
+	 * `fontSize` so a larger rendered font (root font size / token override,
+	 * D9-b) doesn't clip labels that fit at the standard size.
+	 */
 	max?: number;
+}
+
+const DEFAULT_MAX_MARGIN = 140;
+
+/** The default absolute cap for `fontSize` (140px at 11px). */
+function defaultMax(fontSize: number): number {
+	return (DEFAULT_MAX_MARGIN * fontSize) / 11;
 }
 
 /**
@@ -54,7 +66,8 @@ export interface AxisMarginOptions {
  * so one pathological label can't crush the plot area.
  */
 export function leftMarginFor(labels: string[], options: AxisMarginOptions = {}): number {
-	const { fontSize = 11, gap = 8, min = 48, max = 140 } = options;
+	const { fontSize = 11, gap = 8, min = 48 } = options;
+	const max = options.max ?? defaultMax(fontSize);
 	const widest = labels.reduce(
 		(acc, label) => Math.max(acc, estimateLabelWidth(label, fontSize)),
 		0
@@ -72,7 +85,8 @@ export interface TickMarginOptions extends AxisMarginOptions {
 
 /** Grow `base` to fit the widest label (+ `gap`), capped by `max` and 40% of `totalWidth`; never below `base`. */
 function growMargin(labels: string[], base: number, gap: number, o: TickMarginOptions): number {
-	const { fontSize = 11, max = 140, totalWidth = 0 } = o;
+	const { fontSize = 11, totalWidth = 0 } = o;
+	const max = Math.floor(o.max ?? defaultMax(fontSize));
 	let widest = 0;
 	for (const label of labels) widest = Math.max(widest, estimateLabelWidth(label, fontSize));
 	const cap = Math.max(

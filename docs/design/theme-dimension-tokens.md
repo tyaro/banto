@@ -377,7 +377,7 @@ PR-5 の検証条件（b のとき）: (1) root の文字サイズを 14px 以�
 描画直後と、その要素の大きさが変わったとき（`ResizeObserver`。root の文字サイズ・トークンの実行時の変更）に
 計算済みの文字サイズを読み直して `labels.ts` に渡す。読めない間は 11px。余白を固定値で持っていた縦の BarChart・
 BoxPlot・Histogram・ParetoChart も、既定の余白を下限として目盛りに合わせて広げ、RadarChart は周囲のラベルの
-余白を文字サイズに比例させた。検証は `tests/label-font.test.ts`（単体）と `e2e/visual/chart-label-font.spec.ts`。
+余白を文字サイズに比例させ、左右のラベルが収まる半径に抑えた。余白の上限（既定 140px）も文字サイズに比例させた。検証は `tests/label-font.test.ts`（単体）と `e2e/visual/chart-label-font.spec.ts`。
 
 ## 8. 未確認の点
 
