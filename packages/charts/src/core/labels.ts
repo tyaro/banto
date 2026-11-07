@@ -7,6 +7,11 @@
  * (~1.18em, i.e. ~13px at the 11px tick font), everything else (~digits,
  * ASCII, halfwidth kana) averages ~0.62em. Deliberately slightly generous -
  * a few px of unused margin is invisible; a clipped label is not.
+ *
+ * The charts pass `fontSize` = the computed font size of a rendered label
+ * (`internal/label-font.ts`, theme-dimension-tokens.md D9-b), since the label
+ * CSS uses the rem type tokens; the 11px default is what they use until it
+ * can be read (SSR, tests) and what direct callers get when they omit it.
  */
 
 const CJK_CHAR_WIDTH_EM = 1.18;

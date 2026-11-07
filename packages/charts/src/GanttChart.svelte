@@ -15,6 +15,7 @@
 	import { ganttDomain, ganttLayout, toMs, type GanttTask } from './core/gantt';
 	import { seriesColorVar } from './core/color';
 	import { leftMarginFor } from './core/labels';
+	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
 	import Tooltip from './internal/Tooltip.svelte';
@@ -57,10 +58,23 @@
 	const bars = $derived(domain ? ganttLayout(tasks, domain) : []);
 
 	// Left margin auto-fits the widest task label so long names aren't clipped.
+	// The estimate uses the rendered task-label font (D9-b: read from the first
+	// task label, 11px until/unless it can be read).
+	let taskFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
+	const trackTaskFont = trackFontSize((px) => (taskFontSize = px));
 	const MARGIN = $derived.by(() => {
 		const base = { ...DEFAULT_MARGIN, ...margins };
 		if (margins?.left !== undefined) return base;
-		return { ...base, left: Math.max(base.left, leftMarginFor(tasks.map((t) => t.label))) };
+		return {
+			...base,
+			left: Math.max(
+				base.left,
+				leftMarginFor(
+					tasks.map((t) => t.label),
+					{ fontSize: taskFontSize }
+				)
+			)
+		};
 	});
 
 	// Derived total height: header/footer margins + one row per task. Empty
@@ -157,7 +171,7 @@
 			/>
 
 			<!-- Task rows: label + bar (+ progress overlay). -->
-			{#each bars as bar (tasks[bar.index].id)}
+			{#each bars as bar, bi (tasks[bar.index].id)}
 				{@const y = rowY(bar.index) + barOffset}
 				{@const bx = m.innerLeft + bar.startFrac * m.innerWidth}
 				{@const bw = Math.max(1, bar.widthFrac * m.innerWidth)}
@@ -168,6 +182,7 @@
 					class="task-label"
 					text-anchor="end"
 					dominant-baseline="middle"
+					{@attach bi === 0 ? trackTaskFont : null}
 				>
 					{tasks[bar.index].label}
 				</text>
@@ -247,12 +262,12 @@
 
 	.task-label {
 		fill: var(--banto-text);
-		font-size: 12px;
+		font-size: var(--banto-font-size-md);
 	}
 
 	.tick-label {
 		fill: var(--banto-text-muted);
-		font-size: 11px;
+		font-size: var(--banto-font-size-sm);
 		font-variant-numeric: tabular-nums;
 	}
 
@@ -265,6 +280,6 @@
 
 	.today-label {
 		fill: var(--banto-text-muted);
-		font-size: 10px;
+		font-size: var(--banto-font-size-xs);
 	}
 </style>
