@@ -1,6 +1,6 @@
 /**
  * Placement of a `position: fixed` popover next to its anchor, shared by
- * `Menu` and `DateInput` (date-time-pickers §5.2: "位置決めは Menu から切り出して
+ * `Menu`, `DateInput` and `TimeInput` (date-time-pickers §5.2: "位置決めは Menu から切り出して
  * 共有する（Menu の挙動は変えない）"). Moved out of `Menu.svelte` unchanged
  * (visual-refresh-design.md §7.4, #427): default below the anchor, flip above
  * when there is no room below, and when the popover fits on neither side cap
@@ -107,4 +107,38 @@ export function watchAnchoredPopover(
 		window.removeEventListener('resize', handleResize);
 		window.removeEventListener('scroll', handleScroll, true);
 	};
+}
+
+/**
+ * Scroll `popover` itself so `item` is inside its visible box (a popover whose
+ * height `computeAnchoredPosition` capped, or a list with its own max height,
+ * scrolls internally). Only the popover's `scrollTop` / `scrollLeft` change:
+ * `scrollIntoView` would scroll the ancestors as well, and an ancestor scroll
+ * closes the popover (`watchAnchoredPopover`). `block`: `'nearest'` (default)
+ * moves as little as possible; `'center'` puts an item that is not fully
+ * visible in the middle (a list opening on its value). Moved out of
+ * DateInput (date-time-pickers PR-2, shared with TimeInput).
+ */
+export function revealInPopover(
+	popover: HTMLElement,
+	item: HTMLElement,
+	block: 'nearest' | 'center' = 'nearest'
+): void {
+	const box = popover.getBoundingClientRect();
+	const rect = item.getBoundingClientRect();
+	const top = box.top + popover.clientTop;
+	const bottom = top + popover.clientHeight;
+	if (rect.top < top || rect.bottom > bottom) {
+		if (block === 'center') {
+			popover.scrollTop += rect.top + rect.height / 2 - (top + popover.clientHeight / 2);
+		} else if (rect.top < top) {
+			popover.scrollTop -= top - rect.top;
+		} else {
+			popover.scrollTop += rect.bottom - bottom;
+		}
+	}
+	const left = box.left + popover.clientLeft;
+	const right = left + popover.clientWidth;
+	if (rect.left < left) popover.scrollLeft -= left - rect.left;
+	else if (rect.right > right) popover.scrollLeft += rect.right - right;
 }

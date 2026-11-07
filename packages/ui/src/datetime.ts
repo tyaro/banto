@@ -320,3 +320,129 @@ export function weekdayNames(
 		return { weekday, short: short.format(date), long: long.format(date) };
 	});
 }
+
+// --- Times (date-time-pickers §5.1 / §5.3 / §5.6, D7 / D8) ------------------
+//
+// A time is the canonical string `HH:mm` (00:00-23:59, 24-hour, no seconds),
+// a wall-clock time with no time zone. Fixed width, so string order = time
+// order (`isOutOfRange` / `clampDate` work on it too). Display is always this
+// form in every locale - no `Intl`, so neither the locale's `hourCycle`
+// (`h12` "9:30 AM") nor its digits change what is shown (D7).
+
+export interface TimeParts {
+	hour: number; // 0-23
+	minute: number; // 0-59
+}
+
+/** Minutes in a day: the step list ends before this (no wrap past 23:59). */
+const MINUTES_PER_DAY = 24 * 60;
+
+/** The list step when `step` is not given (D8: the list only; any minute is accepted). */
+export const DEFAULT_TIME_STEP = 30;
+
+function isValidTimeParts(hour: number, minute: number): boolean {
+	return (
+		Number.isInteger(hour) &&
+		Number.isInteger(minute) &&
+		hour >= 0 &&
+		hour <= 23 &&
+		minute >= 0 &&
+		minute <= 59
+	);
+}
+
+/** `HH:mm` from parts (no validation - pass valid parts). */
+export function formatTime(parts: TimeParts): string {
+	return `${pad(parts.hour, 2)}:${pad(parts.minute, 2)}`;
+}
+
+const CANONICAL_TIME = /^(\d{2}):(\d{2})$/;
+
+/** Parts of a canonical `HH:mm` (00:00-23:59), else `null`. Strict: no lenient forms. */
+export function parseIsoTime(value: string): TimeParts | null {
+	const match = CANONICAL_TIME.exec(value);
+	if (!match) return null;
+	const [hour, minute] = [Number(match[1]), Number(match[2])];
+	return isValidTimeParts(hour, minute) ? { hour, minute } : null;
+}
+
+/** Is `value` a canonical `HH:mm` (00:00-23:59)? */
+export function isIsoTime(value: string): boolean {
+	return parseIsoTime(value) !== null;
+}
+
+/**
+ * Typed text -> canonical `HH:mm`, or `null` when it is not a time (blank
+ * text is also `null` - check {@link isBlankDateText} first). Accepted (§5.3):
+ * `H:mm` / `HH:mm`, `HHmm`, `Hmm`, and `H` / `HH` alone (`9` -> `09:00`);
+ * full-width digits and `：` through NFKC. 24-hour only: no `AM` / `PM`, no
+ * `24:00`, no seconds.
+ */
+export function parseTimeText(text: string): string | null {
+	const s = text.normalize('NFKC').trim();
+	const match =
+		/^(\d{1,2}):(\d{2})$/.exec(s) ?? /^(\d{1,2})(\d{2})$/.exec(s) ?? /^(\d{1,2})()$/.exec(s);
+	if (!match) return null;
+	const hour = Number(match[1]);
+	const minute = match[2] === '' ? 0 : Number(match[2]);
+	return isValidTimeParts(hour, minute) ? formatTime({ hour, minute }) : null;
+}
+
+/** Minutes since 00:00 of a canonical `HH:mm`. */
+export function timeToMinutes(time: string): number {
+	const parts = parseIsoTime(time);
+	if (!parts) throw new RangeError(`not an HH:mm time: ${time}`);
+	return parts.hour * 60 + parts.minute;
+}
+
+/** Canonical `HH:mm` of `minutes` since 00:00 (0-1439; out-of-day values throw). */
+export function minutesToTime(minutes: number): string {
+	if (!Number.isInteger(minutes) || minutes < 0 || minutes >= MINUTES_PER_DAY) {
+		throw new RangeError(`not a minute of the day: ${minutes}`);
+	}
+	return formatTime({ hour: Math.floor(minutes / 60), minute: minutes % 60 });
+}
+
+/** `step` as a usable step in minutes (a positive integer), else `undefined` (not given / invalid). */
+export function normalizeTimeStep(step: number | null | undefined): number | undefined {
+	return typeof step === 'number' && Number.isInteger(step) && step > 0 ? step : undefined;
+}
+
+/**
+ * The times of the list: from 00:00 every `step` minutes (default
+ * {@link DEFAULT_TIME_STEP}; an invalid step falls back to it), up to the
+ * last one on or before 23:59 - a step that does not divide the day ends
+ * early (step 25: ... 23:45, not 00:10) instead of wrapping into the next day, and a
+ * step of a day or more leaves 00:00 alone.
+ */
+export function timeOptions(step?: number): string[] {
+	const by = normalizeTimeStep(step) ?? DEFAULT_TIME_STEP;
+	const times: string[] = [];
+	for (let m = 0; m < MINUTES_PER_DAY; m += by) times.push(minutesToTime(m));
+	return times;
+}
+
+/** Is `time` on the `step` grid counted from 00:00 (D8)? No (valid) step: always true. */
+export function isOnTimeStep(time: string, step?: number): boolean {
+	const by = normalizeTimeStep(step);
+	return by === undefined || timeToMinutes(time) % by === 0;
+}
+
+/**
+ * The candidate nearest to `time` (smallest distance in minutes; a tie goes
+ * to the earlier one), or `null` when there is none. Used to point the list
+ * at the value when it opens (§5.4) - the value may be off the list's step.
+ */
+export function nearestTime(time: string, candidates: readonly string[]): string | null {
+	const target = timeToMinutes(time);
+	let best: string | null = null;
+	let bestDistance = Infinity;
+	for (const candidate of candidates) {
+		const distance = Math.abs(timeToMinutes(candidate) - target);
+		if (distance < bestDistance) {
+			best = candidate;
+			bestDistance = distance;
+		}
+	}
+	return best;
+}

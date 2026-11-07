@@ -6,7 +6,7 @@
  * verbatim, so passing nothing reproduces the stock output.
  *
  * Components with their own text take `messages?: UiMessages` and merge it
- * over the defaults (CommandPalette, ToastHost, Modal, Drawer, DateInput). Apps that localise (admin-template
+ * over the defaults (CommandPalette, ToastHost, Modal, Drawer, DateInput, TimeInput). Apps that localise (admin-template
  * does, via Paraglide) pass their own text explicitly - see `LoadingState`'s
  * `label` and admin-template's CommandPalette wrapper.
  */
@@ -48,6 +48,12 @@ export interface UiMessages {
 	datePickerClear?: () => string;
 	/** DateInput: the format hint read with the text box (`aria-describedby`). */
 	dateFormatHint?: () => string;
+	/** TimeInput: the list button's name (the button is for the mouse, `tabindex="-1"`). */
+	timePickerOpen?: () => string;
+	/** TimeInput: the time list's accessible name (`role="listbox"`). */
+	timePickerList?: () => string;
+	/** TimeInput: the format hint read with the text box (`aria-describedby`). */
+	timeFormatHint?: () => string;
 }
 
 export const defaultUiMessages: Required<UiMessages> = {
@@ -68,5 +74,8 @@ export const defaultUiMessages: Required<UiMessages> = {
 	datePickerNextYear: () => '次の年',
 	datePickerToday: () => '今日',
 	datePickerClear: () => 'クリア',
-	dateFormatHint: () => 'YYYY-MM-DD の形で入力（例: 2026-11-07）'
+	dateFormatHint: () => 'YYYY-MM-DD の形で入力（例: 2026-11-07）',
+	timePickerOpen: () => '時刻を選択',
+	timePickerList: () => '時刻の一覧',
+	timeFormatHint: () => 'HH:mm の形で入力（例: 09:30）'
 };
