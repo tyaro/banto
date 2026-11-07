@@ -250,3 +250,29 @@ test.describe('time picker', () => {
 		});
 	}
 });
+
+// @banto/ui DateTimeInput with its dialog open (date-time-pickers §6, PR-5): the
+// calendar and the time list side by side, on the sample's fixed value
+// (2026-11-07 09:30, the active time centred in the list). The clock is pinned
+// like the date picker's. Viewport shot, like the pickers above.
+test.describe('date-time picker', () => {
+	for (const combo of DIAGONAL_MATRIX) {
+		test(`ui-demo-datetime-picker ${comboLabel(combo)} 1440x900`, async ({ page }) => {
+			await page.clock.setFixedTime(new Date('2026-11-10T10:00:00'));
+			await primeThemeAndAuth(page, combo);
+			await page.goto('/ui-demo');
+			await expect(page.getByRole('heading', { name: 'UI 部品の見本' })).toBeVisible();
+			const opener = page.getByRole('button', {
+				name: '日時を変更、2026年11月7日土曜日 09:30'
+			});
+			await opener.scrollIntoViewIfNeeded();
+			await page.waitForTimeout(SETTLE_MS);
+			await opener.click();
+			await expect(page.getByRole('dialog', { name: '日時の選択' })).toBeVisible();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(
+				`ui-demo-datetime-picker-${comboLabel(combo)}-1440x900.png`
+			);
+		});
+	}
+});

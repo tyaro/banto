@@ -16,7 +16,8 @@
  *   text input - `DraftNumberField` (plan §3.5 "未決" decided in this PR).
  *   A date's raw text is typed text in any lenient form (`2026/11/7`); commit
  *   normalises it to `YYYY-MM-DD` (blank -> `null`) - `DraftDateField`
- *   (date-time-pickers §5.3 / §5.7).
+ *   (date-time-pickers §5.3 / §5.7). Times (`HH:mm`) and dates and times
+ *   (`YYYY-MM-DDTHH:mm`) the same way (PR-5).
  * - `values` / `baseline` / `dirty` / `errors` like `FormStore`, but `baseline`
  *   is never the same object as `values` (in-place mutation of one never moves
  *   the other; the #437 review).
@@ -32,11 +33,13 @@
  * Not persisted to disk, no expiry, no multi-tab sync (Issue #432: out of scope).
  */
 import { untrack } from 'svelte';
-import { parseDateText } from './date';
-import type { FieldDef, FormSchema } from './types';
+import { parseDateText, parseDateTimeText, parseTimeText } from './date';
+import { isTemporalType, type FieldDef, type FormSchema } from './types';
 import {
 	dateInvalidMessage,
+	dateTimeInvalidMessage,
 	notANumberMessage,
+	timeInvalidMessage,
 	validateField,
 	type ValidationMessages
 } from './validate';
@@ -118,8 +121,8 @@ function defaultsFrom(schema: FormSchema): Values {
 	for (const field of schema.fields) {
 		if (field.default !== undefined) values[field.name] = field.default;
 		else if (field.type === 'checkbox') values[field.name] = false;
-		// An empty date is `null`, not `''` (date-time-pickers D6).
-		else if (field.type === 'date') values[field.name] = null;
+		// An empty date / time / datetime is `null`, not `''` (date-time-pickers D6).
+		else if (isTemporalType(field.type)) values[field.name] = null;
 		else values[field.name] = '';
 	}
 	return values;
@@ -161,6 +164,22 @@ function parse(def: FieldDef | undefined, text: string, messages: ValidationMess
 			return date !== null
 				? { ok: true, value: date }
 				: { ok: false, message: dateInvalidMessage(def, messages) };
+		}
+		case 'time': {
+			// Lenient typed text -> canonical `HH:mm`; the same flow as date.
+			if (text.trim() === '') return { ok: true, value: null };
+			const time = parseTimeText(text);
+			return time !== null
+				? { ok: true, value: time }
+				: { ok: false, message: timeInvalidMessage(def, messages) };
+		}
+		case 'datetime': {
+			// Lenient typed text (`2026/11/7 9:30`) -> canonical `YYYY-MM-DDTHH:mm`.
+			if (text.trim() === '') return { ok: true, value: null };
+			const dateTime = parseDateTimeText(text);
+			return dateTime !== null
+				? { ok: true, value: dateTime }
+				: { ok: false, message: dateTimeInvalidMessage(def, messages) };
 		}
 		case 'checkbox':
 			return { ok: true, value: text === 'true' };

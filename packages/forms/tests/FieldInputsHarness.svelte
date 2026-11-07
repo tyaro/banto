@@ -18,6 +18,8 @@
 
 	interface Props {
 		provided?: Component<DateFieldInputProps>;
+		/** Every type at once (wins over `provided`). */
+		providedInputs?: FieldInputs;
 		schema?: FormSchema;
 		store?: FormStore;
 		onSubmit?: (values: Record<string, unknown>) => void;
@@ -27,11 +29,20 @@
 		onCommit?: (valid: boolean) => void;
 	}
 
-	let { provided, schema, store, onSubmit, fieldInputs, draft, draftDef, onCommit }: Props =
-		$props();
+	let {
+		provided,
+		providedInputs,
+		schema,
+		store,
+		onSubmit,
+		fieldInputs,
+		draft,
+		draftDef,
+		onCommit
+	}: Props = $props();
 
 	// svelte-ignore state_referenced_locally
-	provideFieldInputs(provided ? { date: provided } : {});
+	provideFieldInputs(providedInputs ?? (provided ? { date: provided } : {}));
 </script>
 
 {#if schema && store}

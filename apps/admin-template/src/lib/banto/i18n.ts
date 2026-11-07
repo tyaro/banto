@@ -53,7 +53,14 @@ export function formValidationMessages(): ValidationMessages {
 		dateInvalid: () => m['validation.dateInvalid'](),
 		dateMin: (_def, min) => m['validation.dateMin']({ min }),
 		dateMax: (_def, max) => m['validation.dateMax']({ max }),
-		dateDisabled: () => m['validation.dateDisabled']()
+		dateDisabled: () => m['validation.dateDisabled'](),
+		timeInvalid: () => m['validation.timeInvalid'](),
+		timeMin: (_def, min) => m['validation.timeMin']({ min }),
+		timeMax: (_def, max) => m['validation.timeMax']({ max }),
+		timeStep: (_def, step) => m['validation.timeStep']({ step }),
+		dateTimeInvalid: () => m['validation.dateTimeInvalid'](),
+		dateTimeMin: (_def, min) => m['validation.dateTimeMin']({ min }),
+		dateTimeMax: (_def, max) => m['validation.dateTimeMax']({ max })
 	};
 }
 
@@ -73,6 +80,27 @@ export function dateInputMessages(): UiMessages {
 	};
 }
 
+/** @banto/ui `TimeInput` `messages` (date-time-pickers §5.5): the list button / list / hint copy. */
+export function timeInputMessages(): UiMessages {
+	return {
+		timePickerOpen: () => m['timePicker.open'](),
+		timePickerList: () => m['timePicker.list'](),
+		timeFormatHint: () => m['timePicker.formatHint']()
+	};
+}
+
+/** @banto/ui `DateTimeInput` `messages` (date-time-pickers §5.5, PR-5): the calendar's copy, the time list's and its own. */
+export function dateTimeInputMessages(): UiMessages {
+	return {
+		...dateInputMessages(),
+		timePickerList: () => m['timePicker.list'](),
+		dateTimePickerOpen: () => m['dateTimePicker.open'](),
+		dateTimePickerChange: (dateTime) => m['dateTimePicker.change']({ dateTime }),
+		dateTimePickerDialog: () => m['dateTimePicker.dialog'](),
+		dateTimeFormatHint: () => m['dateTimePicker.formatHint']()
+	};
+}
+
 /** @banto/grid-svelte `ColumnValidationMessages` (columnsFromSchema): inline-edit validation copy, kept in lockstep with {@link formValidationMessages}. */
 export function columnValidationMessages(): ColumnValidationMessages {
 	return {
@@ -85,7 +113,14 @@ export function columnValidationMessages(): ColumnValidationMessages {
 		dateInvalid: () => m['validation.dateInvalid'](),
 		dateMin: (_field, min) => m['validation.dateMin']({ min }),
 		dateMax: (_field, max) => m['validation.dateMax']({ max }),
-		dateDisabled: () => m['validation.dateDisabled']()
+		dateDisabled: () => m['validation.dateDisabled'](),
+		timeInvalid: () => m['validation.timeInvalid'](),
+		timeMin: (_field, min) => m['validation.timeMin']({ min }),
+		timeMax: (_field, max) => m['validation.timeMax']({ max }),
+		timeStep: (_field, step) => m['validation.timeStep']({ step }),
+		dateTimeInvalid: () => m['validation.dateTimeInvalid'](),
+		dateTimeMin: (_field, min) => m['validation.dateTimeMin']({ min }),
+		dateTimeMax: (_field, max) => m['validation.dateTimeMax']({ max })
 	};
 }
 

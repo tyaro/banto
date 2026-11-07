@@ -35,37 +35,21 @@
 	 * §13).
 	 */
 	import { flushSync, untrack } from 'svelte';
+	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
 	import {
-		computeAnchoredPosition,
-		revealInPopover,
-		watchAnchoredPopover
-	} from './anchoredPopover';
-	import {
-		addDays,
-		addMonths,
-		addYears,
 		clampDate,
-		endOfWeek,
 		formatFullDate,
-		formatMonthYear,
 		isBlankDateText,
 		isIsoDate,
 		isOutOfRange,
-		isSameMonth,
-		monthGrid,
 		parseDateText,
 		resolveWeekStart,
-		startOfWeek,
-		todayDate,
-		weekdayNames
+		todayDate
 	} from './datetime';
 	import Calendar from './icons/Calendar.svelte';
-	import ChevronLeft from './icons/ChevronLeft.svelte';
-	import ChevronRight from './icons/ChevronRight.svelte';
-	import ChevronsLeft from './icons/ChevronsLeft.svelte';
-	import ChevronsRight from './icons/ChevronsRight.svelte';
 	import { attachFocusTrap, hasVisibleLayerAbove } from './layering';
 	import { defaultUiMessages, type UiMessages } from './messages';
+	import MonthCalendar from './MonthCalendar.svelte';
 
 	interface Props {
 		/** Canonical `YYYY-MM-DD`, or `null` (`''` is read as empty too). */
@@ -129,7 +113,6 @@
 	const t = $derived({ ...defaultUiMessages, ...messages });
 	const uid = $props.id();
 	const hintId = `${uid}-hint`;
-	const headingId = `${uid}-heading`;
 
 	// --- text and value --------------------------------------------------
 
@@ -183,10 +166,9 @@
 	let focusDate = $state('');
 	let today = $state('');
 	let detachTrap: (() => void) | undefined;
+	let calendar: ReturnType<typeof MonthCalendar> | undefined = $state();
 
 	const weekStart = $derived(resolveWeekStart(locale, weekStartsOn));
-	const weekdays = $derived(weekdayNames(locale, weekStart));
-	const weeks = $derived(open && focusDate ? monthGrid(focusDate, weekStart) : []);
 	const buttonLabel = $derived(
 		selectedDate ? t.datePickerChange(formatFullDate(selectedDate, locale)) : t.datePickerOpen()
 	);
@@ -206,19 +188,6 @@
 		coords = computeAnchoredPosition(fieldEl, panelEl, 'bottom-start');
 	}
 
-	function focusCell(): void {
-		const panel = panelEl;
-		const cell = panel?.querySelector<HTMLElement>(`[data-date="${focusDate}"]`);
-		if (!panel || !cell) return;
-		// `preventScroll`: never scroll the page / ancestors (an ancestor scroll
-		// would close the popover). But when `computeAnchoredPosition` capped the
-		// panel's height (a short viewport) the panel scrolls inside, so bring
-		// the focused day into its visible box by hand - `scrollIntoView` would
-		// move the ancestors too.
-		cell.focus({ preventScroll: true });
-		revealInPopover(panel, cell);
-	}
-
 	function openPicker(): void {
 		if (open || disabled || readonly) return;
 		today = todayDate();
@@ -233,7 +202,7 @@
 		reposition();
 		flushSync();
 		detachTrap = attachFocusTrap(panelEl);
-		focusCell();
+		calendar?.focusCell();
 	}
 
 	function closePicker(focusInput: boolean): void {
@@ -261,28 +230,6 @@
 		closePicker(true);
 	}
 
-	function moveFocus(date: string): void {
-		focusDate = clampDate(date, min, max);
-		flushSync();
-		focusCell();
-	}
-
-	/**
-	 * A click on a cell: move the tracked day there (the view follows into a
-	 * neighbouring month) and focus it, then pick it if it can be picked. A
-	 * cell that cannot be tracked (empty slot, outside [min, max]) only puts
-	 * focus back on the tracked day. Either way focus ends on the focusDate
-	 * cell (or, once picked, on the text box).
-	 */
-	function handleDayClick(date: string | null): void {
-		if (date === null || isOutOfRange(date, min, max)) {
-			focusCell();
-			return;
-		}
-		moveFocus(date);
-		select(date);
-	}
-
 	function select(date: string): void {
 		if (!isSelectable(date)) return;
 		setText(date);
@@ -296,65 +243,11 @@
 		closePicker(true);
 	}
 
-	/** Month / year buttons: the target moved into range; disabled when that stays in this month. */
-	function navTarget(months: number): string {
-		return clampDate(addMonths(focusDate, months), min, max);
-	}
-
-	function navDisabled(months: number): boolean {
-		return isSameMonth(navTarget(months), focusDate);
-	}
-
-	function navigate(months: number): void {
-		if (navDisabled(months)) return;
-		focusDate = navTarget(months);
-	}
-
-	function handleGridKey(event: KeyboardEvent): void {
-		let next: string | undefined;
-		switch (event.key) {
-			case 'ArrowLeft':
-				next = addDays(focusDate, -1);
-				break;
-			case 'ArrowRight':
-				next = addDays(focusDate, 1);
-				break;
-			case 'ArrowUp':
-				next = addDays(focusDate, -7);
-				break;
-			case 'ArrowDown':
-				next = addDays(focusDate, 7);
-				break;
-			case 'Home':
-				next = startOfWeek(focusDate, weekStart);
-				break;
-			case 'End':
-				next = endOfWeek(focusDate, weekStart);
-				break;
-			case 'PageUp':
-				next = event.shiftKey ? addYears(focusDate, -1) : addMonths(focusDate, -1);
-				break;
-			case 'PageDown':
-				next = event.shiftKey ? addYears(focusDate, 1) : addMonths(focusDate, 1);
-				break;
-			case 'Enter':
-			case ' ':
-				event.preventDefault();
-				select(focusDate);
-				return;
-			default:
-				return;
-		}
-		event.preventDefault();
-		moveFocus(next);
-	}
-
 	// Promise 1: a native listener (Svelte delegates `onkeydown` to the app
 	// root, past a host's own native listeners), so stopPropagation here
-	// keeps every key inside. Promise 4 the same way for pointerdown.
+	// keeps every key inside. The calendar's own grid listener runs first
+	// (arrows, Enter). Promise 4 the same way for pointerdown.
 	function handlePanelKeydown(event: KeyboardEvent): void {
-		const target = event.target;
-		if (target instanceof HTMLElement && target.dataset.date) handleGridKey(event);
 		closeOnEscape(event);
 		event.stopPropagation();
 	}
@@ -497,98 +390,20 @@
 			}}
 		>
 			{#if focusDate}
-				<div class="date-picker-header">
-					<button
-						type="button"
-						class="date-picker-nav"
-						aria-label={t.datePickerPrevYear()}
-						title={t.datePickerPrevYear()}
-						aria-disabled={navDisabled(-12) ? 'true' : undefined}
-						onclick={() => navigate(-12)}
-					>
-						<ChevronsLeft size={16} aria-hidden="true" />
-					</button>
-					<button
-						type="button"
-						class="date-picker-nav"
-						aria-label={t.datePickerPrevMonth()}
-						title={t.datePickerPrevMonth()}
-						aria-disabled={navDisabled(-1) ? 'true' : undefined}
-						onclick={() => navigate(-1)}
-					>
-						<ChevronLeft size={16} aria-hidden="true" />
-					</button>
-					<h2 id={headingId} class="date-picker-heading" aria-live="polite">
-						{formatMonthYear(focusDate, locale)}
-					</h2>
-					<button
-						type="button"
-						class="date-picker-nav"
-						aria-label={t.datePickerNextMonth()}
-						title={t.datePickerNextMonth()}
-						aria-disabled={navDisabled(1) ? 'true' : undefined}
-						onclick={() => navigate(1)}
-					>
-						<ChevronRight size={16} aria-hidden="true" />
-					</button>
-					<button
-						type="button"
-						class="date-picker-nav"
-						aria-label={t.datePickerNextYear()}
-						title={t.datePickerNextYear()}
-						aria-disabled={navDisabled(12) ? 'true' : undefined}
-						onclick={() => navigate(12)}
-					>
-						<ChevronsRight size={16} aria-hidden="true" />
-					</button>
-				</div>
-
-				<table class="date-picker-grid" role="grid" aria-labelledby={headingId}>
-					<thead>
-						<tr>
-							{#each weekdays as day (day.weekday)}
-								<th scope="col" abbr={day.long}>{day.short}</th>
-							{/each}
-						</tr>
-					</thead>
-					<tbody>
-						<!-- Keyed by position on purpose: the cells are reused across
-					     months, so the focused one is never removed mid-move (a removed
-					     focus target would read as "focus left the component"). -->
-						{#each weeks as week, w (w)}
-							<tr>
-								{#each week as date, d (d)}
-									<!-- One <td> per position whether it holds a day or an empty
-									     slot (before 0001-01-01 / after 9999-12-31), so a month
-									     change never replaces the element that has focus. -->
-									<td
-										data-date={date ?? undefined}
-										tabindex={date === null ? undefined : date === focusDate ? 0 : -1}
-										aria-label={date === null ? undefined : formatFullDate(date, locale)}
-										aria-selected={date === null
-											? undefined
-											: date === selectedDate
-												? 'true'
-												: 'false'}
-										aria-current={date !== null && date === today ? 'date' : undefined}
-										aria-disabled={date === null || isSelectable(date) ? undefined : 'true'}
-										class:date-picker-day--outside={date !== null && !isSameMonth(date, focusDate)}
-										class:date-picker-day--empty={date === null}
-										onmousedown={(event) => {
-											// An empty slot or a day outside [min, max] cannot be
-											// focused: keep focus on the tracked day, so focusDate and
-											// the focused cell never part ways.
-											if (date === null || isOutOfRange(date, min, max)) event.preventDefault();
-										}}
-										onclick={() => handleDayClick(date)}
-									>
-										{date === null ? '' : Number(date.slice(8))}
-									</td>
-								{/each}
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+				<MonthCalendar
+					bind:this={calendar}
+					bind:focusDate
+					{selectedDate}
+					{today}
+					{min}
+					{max}
+					{isDateDisabled}
+					{locale}
+					{weekStart}
+					{t}
+					scroller={panelEl}
+					onPick={select}
+				/>
 
 				<div class="date-picker-footer">
 					<button
@@ -718,23 +533,6 @@
 		outline: none;
 	}
 
-	.date-picker-header {
-		display: flex;
-		align-items: center;
-		gap: var(--banto-space-1);
-		margin-block-end: var(--banto-space-2);
-	}
-
-	.date-picker-heading {
-		flex: 1 1 auto;
-		margin: 0;
-		font-size: var(--banto-font-size-md);
-		font-weight: 600;
-		text-align: center;
-		white-space: nowrap;
-	}
-
-	.date-picker-nav,
 	.date-picker-action {
 		display: inline-flex;
 		align-items: center;
@@ -747,98 +545,25 @@
 		cursor: pointer;
 	}
 
-	.date-picker-nav {
-		inline-size: var(--banto-control-height-sm);
-		block-size: var(--banto-control-height-sm);
-		padding: 0;
-	}
-
 	.date-picker-action {
 		padding: var(--banto-space-1) var(--banto-space-2);
 		color: var(--banto-primary);
 		font-size: var(--banto-font-size-md);
 	}
 
-	.date-picker-nav:hover:not([aria-disabled='true']),
 	.date-picker-action:hover:not([aria-disabled='true']) {
 		background: var(--banto-surface-hover);
 		color: var(--banto-text);
 	}
 
-	.date-picker-nav[aria-disabled='true'],
 	.date-picker-action[aria-disabled='true'] {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}
 
-	.date-picker-nav:focus-visible,
 	.date-picker-action:focus-visible {
 		outline: none;
 		box-shadow: var(--banto-focus-ring);
-	}
-
-	.date-picker-grid {
-		border-collapse: collapse;
-		margin-inline: auto;
-	}
-
-	.date-picker-grid th {
-		block-size: var(--banto-date-cell-size);
-		padding: 0;
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
-		font-weight: 500;
-		text-align: center;
-	}
-
-	.date-picker-grid td {
-		inline-size: var(--banto-date-cell-size);
-		block-size: var(--banto-date-cell-size);
-		padding: 0;
-		border-radius: var(--banto-radius-sm);
-		font-variant-numeric: tabular-nums;
-		text-align: center;
-		cursor: pointer;
-	}
-
-	.date-picker-grid td.date-picker-day--outside {
-		color: var(--banto-text-muted);
-	}
-
-	.date-picker-grid td.date-picker-day--empty {
-		cursor: default;
-	}
-
-	.date-picker-grid td:hover:not([aria-disabled='true'], .date-picker-day--empty) {
-		background: var(--banto-surface-hover);
-	}
-
-	.date-picker-grid td[aria-current='date'] {
-		box-shadow: inset 0 0 0 var(--banto-border-width) var(--banto-border-strong);
-		font-weight: 600;
-	}
-
-	.date-picker-grid td[aria-selected='true'] {
-		background: var(--banto-primary-solid);
-		color: var(--banto-on-solid);
-	}
-
-	.date-picker-grid td[aria-disabled='true'] {
-		color: var(--banto-text-muted);
-		text-decoration: line-through;
-		opacity: 0.55;
-		cursor: not-allowed;
-	}
-
-	.date-picker-grid td:focus {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	.date-picker-grid td[aria-current='date']:focus {
-		box-shadow:
-			inset 0 0 0 var(--banto-border-width) var(--banto-border-strong),
-			var(--banto-focus-ring);
 	}
 
 	.date-picker-footer {
@@ -848,23 +573,6 @@
 	}
 
 	@media (forced-colors: active) {
-		.date-picker-grid td[aria-selected='true'] {
-			forced-color-adjust: none;
-			background: Highlight;
-			color: HighlightText;
-		}
-
-		.date-picker-grid td[aria-current='date'] {
-			outline: var(--banto-border-width) solid CanvasText;
-			outline-offset: calc(-1 * var(--banto-border-width));
-		}
-
-		.date-picker-grid td[aria-disabled='true'] {
-			color: GrayText;
-		}
-
-		.date-picker-grid td:focus,
-		.date-picker-nav:focus-visible,
 		.date-picker-action:focus-visible,
 		.date-input-text:focus-visible,
 		.date-input-button:focus-visible {

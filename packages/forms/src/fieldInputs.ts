@@ -3,16 +3,18 @@
  * forms the picker components, forms never imports them (conventions §4,
  * shared-primitives-upstream-plan §2.1 - "the app connects the two").
  *
- * - `provideFieldInputs({ date })` in a layout puts them in the component
+ * - `provideFieldInputs({ date, time, datetime })` in a layout puts them in the component
  *   context for every `BantoForm` / `DraftDateField` below it; the
- *   `fieldInputs` / `input` prop of one form or field overrides it.
+ *   `fieldInputs` / `input` prop of one form or field overrides it, per type.
  * - A type with no injected component keeps the native input
- *   (`<input type="date">`), so forms used on its own still works (D3-a).
+ *   (`<input type="date">` / `"time"` / `"datetime-local"`), so forms used
+ *   on its own still works (D3-a).
  *
- * `DateFieldInputProps` is a STRUCTURAL description of what forms passes -
- * the subset of `@banto/ui`'s `DateInput` props it uses (§5.2), so `DateInput`
- * (or an app wrapper that adds `messages` / `locale`) fits as is. The time /
- * datetime entries come with their field types (date-time-pickers PR-5).
+ * `DateFieldInputProps` / `TimeFieldInputProps` / `DateTimeFieldInputProps`
+ * are STRUCTURAL descriptions of what forms passes - the subsets of
+ * `@banto/ui`'s `DateInput` / `TimeInput` / `DateTimeInput` props it uses
+ * (§5.2), so those components (or an app wrapper that adds `messages` /
+ * `locale`) fit as they are.
  */
 import { getContext, setContext, type Component } from 'svelte';
 
@@ -44,9 +46,45 @@ export interface DateFieldInputProps {
 	onblur?: (event: FocusEvent) => void;
 }
 
+/** Props forms passes to an injected time input (a subset of `@banto/ui` `TimeInput`'s, §5.2). */
+export interface TimeFieldInputProps extends Omit<
+	DateFieldInputProps,
+	'min' | 'max' | 'isDateDisabled'
+> {
+	/** Canonical `HH:mm`, or `null`. The FormStore path may pass text that did not parse (§5.3). */
+	value?: string | null;
+	/** Earliest time (canonical `HH:mm`, inclusive). */
+	min?: string;
+	/** Latest time (canonical `HH:mm`, inclusive). */
+	max?: string;
+	/** Minutes between the listed times, counted from 00:00 (`FieldDef.step`, D8). */
+	step?: number;
+}
+
+/** Props forms passes to an injected date-and-time input (a subset of `@banto/ui` `DateTimeInput`'s, §5.2). */
+export interface DateTimeFieldInputProps extends Omit<DateFieldInputProps, 'min' | 'max'> {
+	/** Canonical `YYYY-MM-DDTHH:mm`, or `null`. The FormStore path may pass text that did not parse (§5.3). */
+	value?: string | null;
+	/** Earliest date and time (canonical `YYYY-MM-DDTHH:mm`, inclusive). */
+	min?: string;
+	/** Latest date and time (canonical `YYYY-MM-DDTHH:mm`, inclusive). */
+	max?: string;
+	/** Minutes between the listed times, counted from 00:00 (`FieldDef.step`, D8). */
+	step?: number;
+}
+
+/**
+ * What `DateField` / `DraftDateField` pass to the input of any of the three
+ * types: every injected input above accepts it (each ignores what it does
+ * not take).
+ */
+export type TemporalFieldInputProps = DateFieldInputProps & { step?: number };
+
 /** Components forms renders instead of its native inputs, by field type. */
 export interface FieldInputs {
 	date?: Component<DateFieldInputProps>;
+	time?: Component<TimeFieldInputProps>;
+	datetime?: Component<DateTimeFieldInputProps>;
 }
 
 const FIELD_INPUTS = Symbol('banto-forms-field-inputs');
