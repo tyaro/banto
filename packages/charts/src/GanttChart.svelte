@@ -46,6 +46,9 @@
 	const msg = { ...defaultChartMessages, ...messages };
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 24, right: 16, bottom: 24, left: 96 };
+	// Task label end <-> plot edge: used for the label's x, its truncation and
+	// the margin estimate alike, so a label that sets the margin is never cut.
+	const TASK_LABEL_GAP = 10;
 	const MIN_TICK_SPACING = 80;
 	const BAR_RATIO = 0.6;
 
@@ -71,7 +74,7 @@
 				base.left,
 				leftMarginFor(
 					tasks.map((t) => t.label),
-					{ fontSize: taskFontSize, totalWidth: plotWidth }
+					{ fontSize: taskFontSize, gap: TASK_LABEL_GAP, totalWidth: plotWidth }
 				)
 			)
 		};
@@ -178,9 +181,9 @@
 				{@const color = seriesColorVar(bar.colorIndex)}
 				<!-- Cut with an ellipsis when the margin hit its cap (full text in <title>). -->
 				{@const full = tasks[bar.index].label}
-				{@const shown = truncateLabel(full, m.innerLeft - 10, taskFontSize)}
+				{@const shown = truncateLabel(full, m.innerLeft - TASK_LABEL_GAP, taskFontSize)}
 				<text
-					x={m.innerLeft - 10}
+					x={m.innerLeft - TASK_LABEL_GAP}
 					y={rowY(bar.index) + rowHeight / 2}
 					class="task-label"
 					text-anchor="end"

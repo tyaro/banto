@@ -253,6 +253,40 @@ describe('caps and the radar follow the label size (D9-b)', () => {
 		expect(truncateLabel(label, margin - 8, px)).toBe(label);
 	});
 
+	it('with the placement gap passed to the estimate, the longest task name is never cut', () => {
+		// GanttChart places task names at innerLeft - 10 (800px chart, md = 12.25px)
+		const px = 12.25;
+		const task = '開発作業進捗確認';
+		const margin = leftMarginFor([task], { fontSize: px, gap: 10, totalWidth: 800, min: 96 });
+		expect(truncateLabel(task, margin - 10, px)).toBe(task);
+		// the default 8px gap would have under-reserved by 2px and cut it
+		const wrong = leftMarginFor([task], { fontSize: px, totalWidth: 800, min: 96 });
+		expect(truncateLabel(task, wrong - 10, px)).not.toBe(task);
+	});
+
+	// Each chart that cuts labels must estimate with the same gap it places them at.
+	it.each([
+		['BarChart', 8],
+		['Heatmap', 8],
+		['GanttChart', 10]
+	] as const)('%s truncates and places labels at the gap the margin reserved', (name, gap) => {
+		const src = SOURCES[name];
+		const offsets = [...src.matchAll(/truncateLabel\([^,]+, m\.innerLeft - (\w+)/g)].map(
+			(m) => m[1]
+		);
+		expect(offsets.length).toBe(1);
+		if (name === 'GanttChart') {
+			expect(src).toContain(`const TASK_LABEL_GAP = ${gap};`);
+			expect(offsets[0]).toBe('TASK_LABEL_GAP');
+			expect(src).toContain('x={m.innerLeft - TASK_LABEL_GAP}');
+			expect(src).toMatch(/leftMarginFor\([\s\S]*?gap: TASK_LABEL_GAP/);
+		} else {
+			// default `gap` of leftMarginFor is 8
+			expect(offsets[0]).toBe(String(gap));
+			expect(src).not.toMatch(/leftMarginFor\([^)]*gap:/);
+		}
+	});
+
 	it('a narrow horizontal bar chart (240px, root 20px) keeps a plot area', () => {
 		const totalWidth = 240;
 		const px = readFontSizePx(el, 11, style(resolveSm(20))); // 16px
