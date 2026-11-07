@@ -13,7 +13,13 @@ import {
 	truncateLabel,
 	rightMarginForLastTick
 } from '../src/core/labels';
-import { labelFitRadius, spokeAngle } from '../src/core/radar';
+import {
+	MIN_RADIUS_RATIO,
+	labelFitRadius,
+	labelMaxWidth,
+	radarRadius,
+	spokeAngle
+} from '../src/core/radar';
 import { DEFAULT_LABEL_FONT_SIZE, readFontSizePx, trackFontSize } from '../src/internal/label-font';
 // @ts-expect-error -- Vite ?raw import; this package has no vite/client or node types
 import BarChartSrc from '../src/BarChart.svelte?raw';
@@ -349,6 +355,36 @@ describe('caps and the radar follow the label size (D9-b)', () => {
 	it('the radar fit radius is unbounded without side labels and never negative', () => {
 		expect(labelFitRadius([40, 40], 100, 200, 10)).toBe(Infinity); // top + bottom only
 		expect(labelFitRadius([10, 500, 10, 500], 100, 200, 10)).toBe(0);
+	});
+
+	it('a radar whose side label cannot fit keeps half its radius and cuts the label instead', () => {
+		// 240px, 16px labels, 4 spokes, the right one 'オレンジジュース' (~151px estimated)
+		const px = 16;
+		const labels = ['緑茶', 'オレンジジュース', '紅茶', 'コーヒー'];
+		const widths = labels.map((l) => estimateLabelWidth(l, px));
+		const [width, height, gap] = [240, 240, 10];
+		const padding = (34 * px) / 11;
+		expect(labelFitRadius(widths, width / 2, width, gap)).toBe(0); // the old collapse
+		const r = radarRadius(width, height, padding, widths, gap);
+		expect(r).toBe((Math.min(width, height) / 2) * MIN_RADIUS_RATIO);
+		expect(r).toBeGreaterThan(0);
+		labels.forEach((label, i) => {
+			const room = labelMaxWidth(i, labels.length, width / 2, width, r, gap);
+			const shown = truncateLabel(label, room, px);
+			// what is drawn fits horizontally (ellipsis budgeted fullwidth)
+			const drawn = shown.endsWith('…')
+				? estimateLabelWidth(shown.slice(0, -1), px) + 1.18 * px
+				: estimateLabelWidth(shown, px);
+			expect(drawn).toBeLessThanOrEqual(room + 1e-6);
+		});
+		expect(
+			truncateLabel(labels[1], labelMaxWidth(1, 4, width / 2, width, r, gap), px).endsWith('…')
+		).toBe(true);
+	});
+
+	it('the radar radius is unchanged when the labels fit (no floor, no cut)', () => {
+		const widths = ['A', 'B', 'C'].map((l) => estimateLabelWidth(l, 11.2));
+		expect(radarRadius(600, 300, 34, widths, 10)).toBe(150 - 34);
 	});
 });
 

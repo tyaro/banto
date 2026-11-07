@@ -9,13 +9,14 @@
 	 */
 	import { niceTicks } from './core/scale';
 	import {
-		labelFitRadius,
+		labelMaxWidth,
 		radarPoints,
+		radarRadius,
 		ringPolygon,
 		spokeAngle,
 		spokeLabelAnchor
 	} from './core/radar';
-	import { estimateLabelWidth } from './core/labels';
+	import { estimateLabelWidth, truncateLabel } from './core/labels';
 	import { seriesColorVar } from './core/color';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { getValue, toNumber, type Accessor, type TooltipRow } from './types';
@@ -96,8 +97,8 @@
 		const cy = plotHeight / 2;
 		const padding = (LABEL_PADDING * labelFontSize) / DEFAULT_LABEL_FONT_SIZE;
 		// ... and never wider than what keeps the estimated side labels inside.
-		const fit = labelFitRadius(labelWidths, cx, width, LABEL_GAP);
-		const radius = Math.max(0, Math.min(Math.min(width, plotHeight) / 2 - padding, fit));
+		// (never below half of the available half-size: `radarRadius`).
+		const radius = radarRadius(width, plotHeight, padding, labelWidths, LABEL_GAP);
 		return { cx, cy, radius };
 	}
 
@@ -139,6 +140,12 @@
 					g.radius > 0
 						? ringPolygon(data.length, (g.radius + LABEL_GAP) / g.radius, g.cx, g.cy, g.radius)[i]
 						: { x: g.cx, y: g.cy }}
+				{@const full = String(axisLabel ?? '')}
+				{@const shown = truncateLabel(
+					full,
+					labelMaxWidth(i, data.length, g.cx, g.cx * 2, g.radius, LABEL_GAP),
+					labelFontSize
+				)}
 				<text
 					x={labelPoint.x}
 					y={labelPoint.y}
@@ -147,7 +154,7 @@
 					dominant-baseline={anchor.dominantBaseline}
 					{@attach i === 0 ? trackLabelFont : null}
 				>
-					{String(axisLabel ?? '')}
+					{shown}{#if shown !== full}<title>{full}</title>{/if}
 				</text>
 			{/each}
 

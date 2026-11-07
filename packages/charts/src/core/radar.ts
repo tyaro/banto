@@ -84,6 +84,27 @@ export function spokeLabelAnchor(angleDeg: number): LabelAnchor {
 }
 
 /**
+ * Horizontal room (px) perimeter label `index` (of `count`) has at radius `r`
+ * before it leaves `[0, width]`: the counterpart of `labelFitRadius` for
+ * cutting labels that still don't fit once the radius hit its floor.
+ */
+export function labelMaxWidth(
+	index: number,
+	count: number,
+	cx: number,
+	width: number,
+	r: number,
+	gap: number
+): number {
+	const angle = spokeAngle(index, count);
+	const x = cx + (r + gap) * Math.sin((angle * Math.PI) / 180);
+	const { textAnchor } = spokeLabelAnchor(angle);
+	const room =
+		textAnchor === 'end' ? x : textAnchor === 'start' ? width - x : 2 * Math.min(x, width - x);
+	return Math.max(0, room);
+}
+
+/**
  * Largest radius at which every perimeter label (placed `gap` px beyond the
  * ring, anchored by `spokeLabelAnchor`) stays inside `[0, width]`
  * horizontally, given each label's estimated width (`widths[i]`, px) and the
@@ -106,4 +127,27 @@ export function labelFitRadius(widths: number[], cx: number, width: number, gap:
 		limit = Math.min(limit, room / Math.abs(s) - gap);
 	}
 	return Math.max(0, limit);
+}
+
+/** Share of the available half-size the radius never goes below (see `radarRadius`). */
+export const MIN_RADIUS_RATIO = 0.5;
+
+/**
+ * Plot radius for a `width` x `height` radar: the half-size minus the label
+ * `padding`, shrunk further so the estimated side labels (`widths`) fit, but
+ * never below `MIN_RADIUS_RATIO` of the half-size - the plot shrinks, it
+ * never collapses; labels that still don't fit are cut by the component
+ * (`labelMaxWidth` + `truncateLabel`, full text in `<title>`).
+ */
+export function radarRadius(
+	width: number,
+	height: number,
+	padding: number,
+	widths: number[],
+	gap: number
+): number {
+	const half = Math.min(width, height) / 2;
+	const base = Math.max(0, half - padding);
+	const fit = labelFitRadius(widths, width / 2, width, gap);
+	return Math.min(base, Math.max(fit, half * MIN_RADIUS_RATIO));
 }
