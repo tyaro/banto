@@ -39,6 +39,25 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `trigger` snippet は `aria-haspopup`・`aria-expanded`・`onclick`・`onkeydown` を props で受け取る
 ので、ボタンに `{...props}` で展開する。項目を選ぶとメニューは閉じ、フォーカスはトリガーへ戻る。
 
+日付の入力（[date-time-pickers.md](../../docs/design/date-time-pickers.md) PR-1。`popover` API を前提にする）:
+
+| 部品        | 役割                                                                                                                       | props                                                                                                                                                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DateInput` | 直接打てる入力欄 ＋ 横のボタンで開くカレンダー（`role="dialog"` + `aria-modal`、矢印・Home・End・PageUp/Down・Enter・Esc） | `value`(`'YYYY-MM-DD'`/`null`、bindable) `onValueChange?` `text?` `onTextInput?` `id?` `label?` `describedBy?` `invalid?` `disabled?` `readonly?` `min?` `max?` `isDateDisabled?` `locale?` `weekStartsOn?` `messages?` `onkeydown?` `onblur?` `inputEl`(bindable) |
+
+値は `YYYY-MM-DD`（タイムゾーンを持たない日付）か `null`。手入力は blur・Enter で解析し、通れば正規の形に直す
+（`2026/11/7`・`20261107`・全角・`11/7`（今年）も可。`11/07/2026` のような年月日の順でない形は受け付けない）。
+通らない文字列はそのまま残し、値は変えない（エラーの表示は親が `invalid` で出す）。`min`・`max`・`isDateDisabled` の日は
+カレンダーで選べない（手入力の範囲検査は親の役目）。閉じるとフォーカスは入力欄へ戻る。月名・曜日名・読み上げの日付は
+`Intl.DateTimeFormat(locale)`（既定 `'ja-JP'`）、週の始まりは `weekStartsOn` → ロケールの週の情報 → 日曜。
+文言（`datePicker*`・`dateFormatHint`）の既定は日本語で、多言語化するアプリは `messages` で渡す。
+`onblur` は入力欄・ボタン・カレンダーの全体からフォーカスが出たときだけ呼ぶ。カレンダーの中のキーと、部品の中の
+`pointerdown` は外へ伝えない（グリッドのセル編集に組み込むための約束。設計書 §5.8）。
+
+解析・暦の純粋関数（`parseDateText`・`parseIsoDate`・`isIsoDate`・`addDays`・`addMonths`・`addYears`・`dayOfWeek`・
+`monthGrid`・`clampDate`・`isOutOfRange`・`todayDate`・`resolveWeekStart`・`formatFullDate` など）も公開する
+（`Date.parse` を使わず、文字列の大小 = 日付の前後で比べる）。
+
 コマンドパレット（段階 2b）:
 
 | 部品             | 役割                                                                              | props                                                                                               |
@@ -389,7 +408,8 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 `icon` には `size` と `aria-hidden` を受ける Svelte 部品なら何でも渡せる（型は
 `UiIconComponent`）。`@lucide/svelte` の部品はそのまま渡せる。このパッケージは lucide に
 依存しない。**既定のアイコン**（Inbox・OctagonAlert・Circle・CircleCheck・TriangleAlert・
-CircleAlert・Info の 7 つと、`Modal`・`Drawer` の × に使う X）は lucide の SVG を `src/icons/` に同梱した
+CircleAlert・Info の 7 つと、`Modal`・`Drawer` の × に使う X、`DateInput` の Calendar・ChevronLeft・ChevronRight・
+ChevronsLeft・ChevronsRight）は lucide の SVG を `src/icons/` に同梱した
 もので、アイコン集としては公開しない。同梱アイコンは ISC（一部は Feather 由来の MIT）で、表記は各ファイルの先頭と
 [src/icons/LICENSE](src/icons/LICENSE) にある。
 

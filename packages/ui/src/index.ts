@@ -20,6 +20,9 @@
  * parse / match / format helpers) plus `hasVisibleModalLayer` in
  * `layering.ts` (docs/design/shared-primitives-upstream-plan.md §3.6, D2-a -
  * the app keeps the key wiring and the command list).
+ * Date pickers (docs/design/date-time-pickers.md PR-1): `DateInput` and the
+ * pure date helpers of `datetime.ts` (parse / calendar / `Intl` names), with
+ * the popover placement shared with Menu (`anchoredPopover.ts`, internal).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -27,6 +30,29 @@
  * tokens.
  */
 export { default as CommandPalette } from './CommandPalette.svelte';
+export { default as DateInput } from './DateInput.svelte';
+export {
+	addDays,
+	addMonths,
+	addYears,
+	clampDate,
+	dayOfWeek,
+	daysInMonth,
+	formatFullDate,
+	formatMonthYear,
+	isBlankDateText,
+	isIsoDate,
+	isLeapYear,
+	isOutOfRange,
+	monthGrid,
+	parseDateText,
+	parseIsoDate,
+	resolveWeekStart,
+	todayDate,
+	weekdayNames,
+	type DateParts,
+	type Weekday
+} from './datetime';
 export { default as Drawer } from './Drawer.svelte';
 export { default as Modal } from './Modal.svelte';
 export type { DrawerProps, ModalProps, OverlayProps } from './overlay';
