@@ -290,6 +290,12 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
      になる。
   3. **`onblur` は部品全体からフォーカスが出たときだけ**呼ぶ。カレンダーのダイアログへフォーカスが移っても
      確定しない（`handleEditorBlur` の `relatedTarget` の判定を grid に足さずに済む）。
+  4. **`pointerdown` は部品全体（入力欄・ボタン・ポップオーバー）で伝播を止める**。今の `CellEditor.svelte` は
+     入力欄でだけ止めていて、止めないとセルの `handleCellPointerDown` がコンテナにフォーカスを移し、その場で
+     blur → 確定 → 編集欄が消える（ボタンや日を押した瞬間に選ぶ前に確定してしまう）。ポップオーバーは DOM では
+     セルの子なので、top layer に出していても同じく届く。部品の根の要素で `onpointerdown` を止める。
+     あわせて grid の `relinquishFocus`（document の capture の `pointerdown`）の `editFocus.owned` の判定を
+     「`target === editorEl`」から「注入された部品の根が `target` を含む」に広げる（PR-4 で grid 側を直す）。
 - カレンダーで日を選んだら、draft に入れてポップオーバーを閉じ、入力欄にフォーカスを戻す。**確定はしない**
   （D11）。確定は今と同じ Enter・Tab・blur。マウスでセルの外を押せば blur で確定する。
 - `editFocus.owned`（フォーカスの持ち主）: ダイアログから入力欄へ戻ったときの `focusin` で今の仕組みが
@@ -338,7 +344,7 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 | PR-1 | ui: `datetime.ts`（解析・暦・`Intl`）、位置決めを Menu から切り出し（挙動不変）、`DateInput`、`UiMessages` の追加、ui-demo への掲載 | 単体テスト（解析・暦・キー操作・フォーカス）。ui-demo のベースラインを再生成（開いた状態を 1 枚足す） |
 | PR-2 | ui: `TimeInput`（combobox ＋ listbox、刻み） | 同上 |
 | PR-3 | forms: 注入の口、date の形式・`min`／`max`・無効日の検証、draft の正規化、空値を `null` に。アプリが注入 | forms の単体テスト。forms の画面のベースライン再生成。docs/upgrading.md・CHANGELOG |
-| PR-4 | grid: 注入の口、§5.8 の約束、`parseCellInput`・CSV の正規化、`fieldValidator` の鏡像。アプリが注入 | grid の単体テスト（Esc 2 段・Enter 2 段・blur で確定しない）。e2e: 一覧のセルで日付を編集 |
+| PR-4 | grid: 注入の口、§5.8 の約束、`parseCellInput`・CSV の正規化、`fieldValidator` の鏡像。アプリが注入 | grid の単体テスト（Esc 2 段・Enter 2 段・blur で確定しない・ボタンや日をマウスで押しても選ぶ前に確定も unmount もしない）。e2e: 一覧のセルで日付を編集 |
 | PR-5 | 時刻・日時の型: `FieldType` の追加（forms・grid の鏡像）、`DateTimeInput`、Rust の検証関数（banto-core） | 単体テスト・`cargo test`。scaffold の dry-run |
 | PR-6 | 期間: `DateRangeInput`、`FilterType` の追加、`FilterOp::between`（TS・Rust・SQLite・PostgreSQL）、FilterPopover | 単体テスト・`cargo test`（両方言）。e2e: items の更新日で期間の絞り込み |
 
