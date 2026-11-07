@@ -26,6 +26,8 @@
  * PR-2: `TimeInput` (combobox + listbox, step) and the time helpers.
  * PR-5: `DateTimeInput` (one text box, one dialog: the calendar and a time
  * list) and the date-and-time helpers.
+ * PR-6: `DateRangeInput` (two `DateInput`s in a `role="group"`, inclusive
+ * days; the grid's filter turns them into a half-open `between`).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -36,6 +38,7 @@ export { default as CommandPalette } from './CommandPalette.svelte';
 export { default as DateInput } from './DateInput.svelte';
 export { default as TimeInput } from './TimeInput.svelte';
 export { default as DateTimeInput } from './DateTimeInput.svelte';
+export { default as DateRangeInput } from './DateRangeInput.svelte';
 export {
 	DEFAULT_TIME_STEP,
 	addDays,

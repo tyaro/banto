@@ -1021,6 +1021,89 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// date-time-pickers PR-6 (§5.9): the 更新日 column filters by a day range.
+	// Both days are inclusive on screen; the request carries the half-open
+	// `between` with the day after the end day. With the calendar open over
+	// the filter popover, Esc closes only the calendar and the next Esc the
+	// popover (§5.8 promise 1 inside FilterPopover).
+	test('3g. items: 更新日 filters by a day range (between), Esc closes the calendar before the popover', async () => {
+		await page.goto('/items');
+		const serverMode = page.getByRole('button', { name: 'サーバー' });
+		// Before hydration a click does nothing: retry until it takes.
+		await expect(async () => {
+			await serverMode.click();
+			await expect(serverMode).toHaveAttribute('aria-pressed', 'true', { timeout: 1000 });
+		}).toPass();
+		const grid = page.getByRole('grid');
+		const dayCells = grid.locator('[data-cell-field="updatedAt"]');
+		await expect(dayCells.first()).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
+		const day = (await dayCells.first().textContent())!.trim();
+		const next = new Date(`${day}T00:00:00Z`);
+		next.setUTCDate(next.getUTCDate() + 1);
+		const nextDay = next.toISOString().slice(0, 10);
+
+		const filterButton = page.getByRole('button', { name: '更新日の絞り込み' });
+		const dialog = page.getByRole('dialog', { name: '更新日の絞り込み' });
+		await expect(async () => {
+			if (!(await dialog.isVisible())) await filterButton.click();
+			await expect(dialog).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		const range = dialog.getByRole('group', { name: '期間' });
+		const start = range.getByRole('textbox', { name: '開始日' });
+		const end = range.getByRole('textbox', { name: '終了日' });
+		await expect(start).toBeFocused();
+
+		// The calendar over the popover: Esc 1 closes it only.
+		const calendar = page.getByRole('dialog', { name: '日付の選択' });
+		await end.focus();
+		await page.keyboard.press('Alt+ArrowDown');
+		await expect(calendar).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(calendar).toBeHidden();
+		await expect(dialog).toBeVisible();
+		await expect(end).toBeFocused();
+
+		// An end before the start is refused in the popover, nothing is sent.
+		await start.fill('2999-01-01');
+		await end.fill(day);
+		await page.keyboard.press('Enter');
+		await expect(dialog.getByRole('alert')).toHaveText(
+			'終了日は開始日と同じ日かそれより後にしてください'
+		);
+		await expect(dialog).toBeVisible();
+
+		// One day, typed leniently: the request ends at the next day.
+		await start.fill(day.replaceAll('-', '/'));
+		await end.fill(day);
+		const applied = page.waitForRequest(
+			(request) =>
+				new URL(request.url()).pathname === '/api/items/list' && request.method() === 'POST'
+		);
+		await page.keyboard.press('Enter');
+		expect((await applied).postDataJSON().filters).toContainEqual({
+			field: 'updatedAt',
+			op: 'between',
+			value: [day, nextDay]
+		});
+		await expect(dialog).toHaveCount(0);
+		await expect(filterButton).toBeFocused();
+		await expect(dayCells.first()).toHaveText(day);
+		const shown = await dayCells.allTextContents();
+		expect(shown.length).toBeGreaterThan(0);
+		expect(new Set(shown.map((text) => text.trim()))).toEqual(new Set([day]));
+
+		// Reopened, the popover shows the inclusive end day; Esc 2 closes it.
+		await filterButton.click();
+		await expect(start).toHaveValue(day);
+		await expect(end).toHaveValue(day);
+		await page.keyboard.press('Escape');
+		await expect(dialog).toHaveCount(0);
+		await expect(filterButton).toBeFocused();
+
+		await clearColumnFilter(page, '更新日');
+		await expect(dialog).toHaveCount(0);
+	});
+
 	test('4. CSV export downloads a UTF-8-BOM CSV file', async () => {
 		await page.goto('/items');
 

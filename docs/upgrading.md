@@ -191,6 +191,21 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
   `validate_datetime`（date は `validate_date`）を呼ぶと、フロントと同じ規則・同じ既定の文言でエラーを返す（正規の形だけを
   受け付ける。空の扱いと `isDateDisabled` に当たる規則はリソース側で書く）。
 
+#### 期間の絞り込み（次リリース、date-time-pickers PR-6）
+
+- **見た目が変わる**: `columnsFromSchema` が date・datetime の列を絞り込みできるようにする（見出しに ▾ が出る。読み取り
+  専用の列も）。出したくない列は `overrides` で `{ filterable: false }`。date・time・datetime の列の並べ替えは
+  `localeCompare` から文字列の大小に変わる（正規の形なら順は同じ）。
+- **`FilterOp` に `'between'`**（`@banto/grid-svelte`・`@banto/admin-core`・`banto_core` の鏡像）。値は
+  `[from | null, to | null]` の半開区間。`banto-storage` の `ColumnMap` 経由の一覧は何もしなくても受け付ける。
+  **自前の `DataProvider` や、`FilterOp` を `match`／`switch` で網羅している派生アプリのコードは `between` を足す**
+  （Rust は `match` が網羅でなくなりコンパイルが止まる。規則は grid README の「期間の絞り込み」）。
+- **期間の部品の注入**: admin-template はルートの `+layout.svelte` で `provideCellEditors({ ..., dateRange:
+  FilterDateRangeInput })` を渡している（`src/lib/components/FilterDateRangeInput.svelte`）。注入しなければ
+  ネイティブの日付入力 2 つ。
+- **文言**: 多言語アプリは `GridMessages` の `filterRange*` と `UiMessages` の `dateRangeStart`・`dateRangeEnd` を
+  bridge へ足す（admin-template の `i18n.ts` の `gridMessages()`・`dateRangeInputMessages()`）。
+
 ### 3.2 B: コピーしたテンプレート部分の取り込み
 
 設定のスイッチ共有化（次リリース、ADR-0026）は `banto-switch-field` / `banto-switch` を使う。

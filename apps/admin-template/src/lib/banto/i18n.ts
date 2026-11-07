@@ -29,6 +29,11 @@ export function gridMessages(): Partial<GridMessages> {
 		filterValuePlaceholder: () => m['grid.filterValuePlaceholder'](),
 		filterApply: () => m['grid.filterApply'](),
 		filterClear: () => m['grid.filterClear'](),
+		filterRangeLabel: () => m['grid.filterRangeLabel'](),
+		filterRangeStart: () => m['grid.filterRangeStart'](),
+		filterRangeEnd: () => m['grid.filterRangeEnd'](),
+		filterRangeInvalid: () => m['grid.filterRangeInvalid'](),
+		filterRangeOrder: () => m['grid.filterRangeOrder'](),
 		inlineEditInvalid: () => m['grid.inlineEditInvalid'](),
 		inlineEditErrorLabel: (header) => m['grid.inlineEditErrorLabel']({ header }),
 		inlineEditErrorHint: () => m['grid.inlineEditErrorHint'](),
@@ -98,6 +103,15 @@ export function dateTimeInputMessages(): UiMessages {
 		dateTimePickerChange: (dateTime) => m['dateTimePicker.change']({ dateTime }),
 		dateTimePickerDialog: () => m['dateTimePicker.dialog'](),
 		dateTimeFormatHint: () => m['dateTimePicker.formatHint']()
+	};
+}
+
+/** @banto/ui `DateRangeInput` `messages` (date-time-pickers §5.9, PR-6): both boxes' names plus the calendar's copy. */
+export function dateRangeInputMessages(): UiMessages {
+	return {
+		...dateInputMessages(),
+		dateRangeStart: () => m['dateRange.start'](),
+		dateRangeEnd: () => m['dateRange.end']()
 	};
 }
 

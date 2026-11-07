@@ -24,7 +24,8 @@ export {
 	type CellDateEditorProps,
 	type CellTimeEditorProps,
 	type CellDateTimeEditorProps,
-	type CellTemporalEditorProps
+	type CellTemporalEditorProps,
+	type FilterDateRangeInputProps
 } from './cellEditors';
 
 export { sortRows, getColumnValue } from './core/sort';
@@ -41,6 +42,15 @@ export {
 	type ColumnsFromSchemaOptions,
 	type ColumnValidationMessages
 } from './core/schema';
+export {
+	dateRangeToBetween,
+	betweenToDateRange,
+	isBetweenValue,
+	nextDay,
+	previousDay,
+	type BetweenValue,
+	type DateRangeValue
+} from './core/dateRange';
 export {
 	toCsv,
 	csvForExcel,

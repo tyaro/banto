@@ -92,11 +92,41 @@ export interface CellDateTimeEditorProps extends Omit<
  */
 export type CellTemporalEditorProps = CellDateEditorProps & { step?: number };
 
-/** Components the grid renders instead of its native cell inputs, by editor type. */
+/**
+ * Props FilterPopover passes to an injected day-range input (a subset of
+ * `@banto/ui`'s `DateRangeInput` props, date-time-pickers §5.9, PR-6) for a
+ * `date` / `datetime` column. Both ends are INCLUSIVE days; the popover turns
+ * them into the half-open `between` value (`dateRangeToBetween`).
+ */
+export interface FilterDateRangeInputProps {
+	/** The inclusive days, canonical `YYYY-MM-DD` or `null` (an open end). */
+	value?: { from: string | null; to: string | null };
+	onValueChange?: (value: { from: string | null; to: string | null }) => void;
+	/** Every change of either box's typed text: the popover reads the text on apply. */
+	onTextInput?: (end: 'from' | 'to', text: string) => void;
+	/** Accessible name of the group (the popover's range label). */
+	label?: string;
+	/** The popover's error message, for both text boxes. */
+	describedBy?: string;
+	invalid?: boolean;
+	/** `vertical`: the popover is narrow. */
+	orientation?: 'horizontal' | 'vertical';
+	/** Keys from either text box after the component handled its own (Enter applies). */
+	onkeydown?: (event: KeyboardEvent) => void;
+	/** The start day's text box (bindable): focused when the popover opens. */
+	fromInputEl?: HTMLInputElement;
+}
+
+/**
+ * Components the grid renders instead of its native inputs: the cell editors
+ * by editor type, and `dateRange` for the filter of a `date` / `datetime`
+ * column (FilterPopover; without it, two native `<input type="date">`).
+ */
 export interface CellEditors {
 	date?: Component<CellDateEditorProps>;
 	time?: Component<CellTimeEditorProps>;
 	datetime?: Component<CellDateTimeEditorProps>;
+	dateRange?: Component<FilterDateRangeInputProps>;
 }
 
 const CELL_EDITORS = Symbol('banto-grid-cell-editors');

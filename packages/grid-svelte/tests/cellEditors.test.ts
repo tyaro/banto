@@ -11,10 +11,11 @@
  * tests is installed.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
-import { flushSync, tick } from 'svelte';
+import { flushSync, tick, type Component } from 'svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import DateInput from '../../ui/src/DateInput.svelte';
-import type { CellEditors } from '../src/cellEditors';
+import DateRangeInput from '../../ui/src/DateRangeInput.svelte';
+import type { CellEditors, FilterDateRangeInputProps } from '../src/cellEditors';
 import { columnsFromSchema } from '../src/core/schema';
 import type { CellEdit, GridColumn } from '../src/types';
 import CellEditorsHarness from './CellEditorsHarness.svelte';
@@ -171,6 +172,44 @@ describe('pasting into a date column (§5.10)', () => {
 		// Line 2 (blank -> null) lands on a null: a no-op, not skipped. Lines 3
 		// (year-less) and 4 (no such day) fail to parse; line 5 is after `max`.
 		expect(info.skipped).toBe(3);
+	});
+});
+
+describe('the day-range filter of a date column (§5.9, PR-6)', () => {
+	it('uses the provided dateRange, else two native date inputs', async () => {
+		setup({
+			provided: { dateRange: DateRangeInput as unknown as Component<FilterDateRangeInputProps> }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Dueの絞り込み' }));
+		const group = screen.getByRole('group', { name: '期間' });
+		expect(group.classList.contains('date-range-input')).toBe(true);
+		cleanup();
+		setup({});
+		await fireEvent.click(screen.getByRole('button', { name: 'Dueの絞り込み' }));
+		const native = screen.getByRole('group', { name: '期間' });
+		expect([...native.querySelectorAll('input')].map((input) => input.type)).toEqual([
+			'date',
+			'date'
+		]);
+	});
+
+	it('a paste into the filter popover stays there with a cell selected', async () => {
+		const onRangePaste = vi.fn();
+		const view = render(CellEditorsHarness<Row>, {
+			provided: { dateRange: DateRangeInput as unknown as Component<FilterDateRangeInputProps> },
+			rows,
+			columns,
+			getRowId: (row: Row) => row.id,
+			onRangePaste
+		});
+		await fireEvent.pointerDown(
+			view.container.querySelector('[data-cell-row="0"][data-cell-field="due"]')!,
+			{ button: 0 }
+		);
+		await fireEvent.click(screen.getByRole('button', { name: 'Dueの絞り込み' }));
+		const start = screen.getByRole('textbox', { name: '開始日' });
+		await fireEvent.paste(start, { clipboardData: { getData: () => '2026-11-10' } });
+		expect(onRangePaste).not.toHaveBeenCalled();
 	});
 });
 

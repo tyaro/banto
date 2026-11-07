@@ -133,6 +133,30 @@ Tab / Shift+Tab はブラウザの標準移動を使う非modalのまま。
   `CellDateTimeEditorProps`。注入が無ければネイティブの `time` / `datetime-local`。§5.8 の約束は date と同じで、
   `DateTimeInput` では日を選ぶと時刻の一覧へ移り、時刻を選ぶと下書きに入って入力欄へ戻る（確定は次の Enter・Tab・外を押す）。
 
+## 期間の絞り込み（date-time-pickers PR-6）
+
+`filterType: 'date' | 'datetime'` の列は、絞り込みが演算子と値ではなく期間（開始日・終了日）になる。
+
+- **値の形**: `FilterOp` の `'between'`。値は `[from | null, to | null]` で、意味は**半開区間 `from <= v && v < to`**
+  （文字列の大小で比べる）。`null` の端はその側の条件を省き、両方 `null` は条件なし（`null` のセルも残る）。
+  Rust の `FilterOp::Between`（`banto-storage` の `list_query.rs` が `>=` と `<` の 2 つの束縛に展開。PostgreSQL では
+  `CAST(列 AS TEXT) COLLATE "C"` で比べ、DB の照合順序に左右されない）・admin-core の InMemory と同じ規則で、共通の
+  ケースは `crates/banto-storage/testdata/filter-between-parity.json`。形の崩れた値はサーバーでは 400、クライアントでは
+  一致なし、保存した状態の復元（`GridState.hydrate`）では捨てる。
+- **画面と値の変換は 1 か所**: FilterPopover は両端とも含む日を見せ、適用すると終了日の**翌日**を `to` にして送る
+  （`dateRangeToBetween`。月末・年末・うるう日を繰り上げ、`9999-12-31` は開いた端になる）。開き直すと
+  `betweenToDateRange` で含む日に戻して見せる。日時の列でも同じ日の範囲になり、秒が付いた値も取りこぼさない。
+  終了日が開始日より前・日付でない入力は、ポップオーバーにエラーを出して適用しない。両方空で適用すると絞り込みを外す。
+- **部品の注入**: `provideCellEditors({ dateRange })`（`BantoGrid` の `cellEditors.dateRange` も可）。props は
+  `FilterDateRangeInputProps`（`@banto/ui` の `DateRangeInput` がそのまま合う）。注入が無ければ 2 つのネイティブの
+  `<input type="date">`。カレンダーを開いた状態の Esc はカレンダーだけを閉じ、次の Esc でポップオーバーが閉じる。
+- **既定の変化**: `columnsFromSchema` は date・datetime の列を絞り込みできるようにする（以前は不可。読み取り専用の列も）。
+  date・time・datetime の列は並べ替えと `lt`／`gt` などの比較も文字列の大小で行う（`comparator: compareTemporal`、
+  手書きの列は `editor`／`filterType` が日付・時刻なら同じ）。
+- **文言**: `GridMessages` に `filterRangeLabel`・`filterRangeStart`・`filterRangeEnd`・`filterRangeInvalid`・
+  `filterRangeOrder`。
+- 選択中のセルがあっても、FilterPopover の入力欄への貼り付けはその入力欄のもの（範囲の貼り付けにしない）。
+
 ## 依存
 
 `ColumnsMenu` の checkbox はネイティブ描画を使い、`--banto-checkbox-size`（既定・fallback は `1.1rem`）で

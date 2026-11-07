@@ -277,6 +277,9 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   一意キーの昇順（grid の client sort だけは、受け取った配列の順を保つ）。
   共通の fixture `crates/banto-storage/testdata/list-order-parity.json` を 3 つの
   テストが読むので、どれかを変えるときは fixture と 3 つを同時に直す。
+  **絞り込みの `between`（半開区間 `[from, to)` を文字列で比べる。date-time-pickers §5.9）も同じ 3 つの実装で共通**で、
+  共通の fixture `crates/banto-storage/testdata/filter-between-parity.json` を SQL（SQLite・PostgreSQL）・InMemory・
+  grid の client filter のテストが読む。
   **境界（`asOfId`）付きの一覧**（Issue #248、[ADR-0015](adr/0015-snapshot-list-resource.md)）:
   通知なしに行が増減する一覧（監査ログ）は `@banto/admin-core` の
   `SnapshotListResource` で読み、サーバー側は次を守る — 境界の決定・行・件数を
