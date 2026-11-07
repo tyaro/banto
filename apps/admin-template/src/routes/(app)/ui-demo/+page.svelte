@@ -692,36 +692,36 @@
 	.page {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 	}
 
 	.stack {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--banto-space-4);
 	}
 
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-		gap: 1rem;
+		gap: var(--banto-space-4);
 	}
 
 	.row {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.75rem;
+		gap: var(--banto-space-3);
 	}
 
 	.row--spaced {
-		margin-top: 0.75rem;
+		margin-top: var(--banto-space-3);
 	}
 
 	.sample {
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
+		gap: var(--banto-space-2);
 		min-width: 0;
 	}
 
@@ -732,25 +732,25 @@
 	}
 
 	.sample--frame {
-		padding: 0.75rem;
-		border: 1px dashed var(--banto-border);
+		padding: var(--banto-space-3);
+		border: var(--banto-border-width) dashed var(--banto-border);
 		border-radius: var(--banto-radius-md);
 	}
 
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
+		gap: var(--banto-space-1);
 	}
 
 	.caption {
 		color: var(--banto-text-muted);
-		font-size: 0.75rem;
+		font-size: var(--banto-font-size-sm);
 	}
 
 	.body-text {
 		margin: 0;
-		font-size: 0.85rem;
+		font-size: var(--banto-font-size-md);
 	}
 
 	/* Samples must not claim the page-level view-transition name (see the
