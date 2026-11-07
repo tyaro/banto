@@ -24,6 +24,7 @@
 
 - refactor(ui): `@banto/ui` の CSS の生の寸法（余白 70・文字サイズ 17・枠線幅 14）を `--banto-space-*` / `--banto-font-size-*` / `--banto-border-width` へ置き換え（[theme-dimension-tokens.md](docs/design/theme-dimension-tokens.md) §6 の PR-2）。派生アプリへの影響: 丸めにより余白が最大約 1.4px（`LauncherBar` の `top` など）、文字サイズは最大約 0.7px 動く箇所がある。API・DOM は変えない。
 - refactor(grid-svelte, forms, tree-svelte): `@banto/grid-svelte`・`@banto/forms`・`@banto/tree-svelte` の CSS の生の寸法（余白 47 宣言・文字サイズ 19・枠線幅 27）を `--banto-space-*` / `--banto-font-size-*` / `--banto-border-width(-strong)` へ置き換え（[theme-dimension-tokens.md](docs/design/theme-dimension-tokens.md) §6 の PR-3）。派生アプリへの影響: 丸めにより余白が最大約 2.1px（グリッドの集計チップなどの `0.1rem`。ほかは約 1.4px 以内）、文字サイズは最大約 0.7px 動く箇所がある。列幅・アイコンの大きさ・区切り線などの部品の形は対象外。API・DOM は変えない。
+- refactor(dock-svelte, report, attachments): `@banto/dock-svelte`・`@banto/report`・`@banto/attachments` の CSS の生の寸法（余白 25 宣言・文字サイズ 18・枠線幅 11）を `--banto-space-*` / `--banto-font-size-*` / `--banto-border-width(-strong)` へ置き換え（[theme-dimension-tokens.md](docs/design/theme-dimension-tokens.md) §6 の PR-4）。派生アプリへの影響: 丸めにより余白が最大約 1.4px、文字サイズが最大約 1.1px 動く箇所がある。リサイズハンドル・アイコンの大きさ・列幅などの部品の形と、印刷用の CSS（`print.css`・`@page` の余白・用紙の幅。mm / pt / em 単位で紙面基準）は対象外。API・DOM は変えない。
 
 ## [6.10.0] - 2026-11-05
 
