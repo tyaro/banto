@@ -283,8 +283,8 @@
 		margin: 0;
 		min-width: 180px;
 		max-width: 320px;
-		padding: 0.35rem;
-		border: 1px solid var(--banto-border);
+		padding: var(--banto-space-1);
+		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-md);
 		background: var(--banto-surface-overlay);
 		box-shadow: var(--banto-shadow-lg);
