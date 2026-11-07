@@ -65,6 +65,12 @@ function setup(props: Record<string, unknown> = {}) {
 	};
 }
 
+function setupWithRerender(props: Record<string, unknown>) {
+	const { rerender } = render(TimeInputHarness, props);
+	const input = screen.getByRole('combobox', { name: 'Start time' }) as HTMLInputElement;
+	return { input, rerender };
+}
+
 const listbox = () => screen.queryByRole('listbox', { name: '時刻の一覧' });
 const option = (time: string) => document.querySelector<HTMLElement>(`[data-time="${time}"]`)!;
 const isOpen = () => listbox()?.dataset.popoverOpen === 'true';
@@ -165,12 +171,13 @@ describe('TimeInput text box', () => {
 		expect(onValueChange).toHaveBeenLastCalledWith(null);
 	});
 
-	it('disabled / readonly cannot open the list', () => {
+	it('disabled / readonly cannot open the list; readonly passes ArrowDown through untouched', () => {
 		for (const props of [{ disabled: true }, { readonly: true }]) {
-			const { input, button } = setup(props);
+			const { input, button, onkeydown } = setup(props);
 			expect(button.disabled).toBe(true);
 			press(input, 'ArrowDown');
 			expect(listbox()).toBeNull();
+			expect((onkeydown.mock.calls.at(-1)![0] as KeyboardEvent).defaultPrevented).toBe(false);
 			cleanup();
 		}
 	});
@@ -417,6 +424,22 @@ describe('TimeInput pointer: the active option, the highlight and focus never pa
 		expect(active(early.input)).toBe('09:00');
 		press(early.input, 'ArrowUp');
 		expect(active(early.input)).toBe('09:00');
+	});
+
+	it('a parent narrowing [min, max] while open drops an active option that is now disabled', async () => {
+		const { input, rerender } = setupWithRerender({ value: '09:30' });
+		input.focus();
+		press(input, 'ArrowDown');
+		expect(active(input)).toBe('09:30');
+		await rerender({ min: '12:00' });
+		flushSync();
+		expect(option('09:30').getAttribute('aria-disabled')).toBe('true');
+		expect(active(input)).toBeNull();
+		press(input, 'ArrowDown');
+		expect(active(input)).toBe('12:00');
+		await rerender({ readonly: true });
+		flushSync();
+		expect(listbox()).toBeNull();
 	});
 
 	it('with no selectable time (min > max) nothing becomes active', () => {

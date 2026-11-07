@@ -253,6 +253,21 @@
 		revealActive('nearest');
 	}
 
+	// The parent changed `step` / `min` / `max` (or disabled the input) while
+	// the list is open: never leave the active option on a time that is gone
+	// or disabled, nor the list open on an input that cannot change.
+	$effect(() => {
+		if (!open) return;
+		if (disabled || readonly) {
+			untrack(closeList);
+			return;
+		}
+		const list = selectable;
+		untrack(() => {
+			if (activeTime !== null && !list.includes(activeTime)) activeTime = null;
+		});
+	});
+
 	function select(time: string): void {
 		if (!isSelectable(time)) return;
 		setText(time);
@@ -264,9 +279,13 @@
 		if (!event.isComposing) {
 			switch (event.key) {
 				case 'ArrowDown':
-					event.preventDefault();
-					if (!open) openList();
-					else if (!event.altKey) moveActive(1);
+					if (open) {
+						event.preventDefault();
+						if (!event.altKey) moveActive(1);
+					} else if (!disabled && !readonly) {
+						event.preventDefault();
+						openList();
+					}
 					break;
 				case 'ArrowUp':
 					if (open) {
