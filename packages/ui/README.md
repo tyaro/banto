@@ -80,6 +80,11 @@ blur・Enter で正規の形に直す。表示は全ロケールで `HH:mm`（�
 `DateInput` のまま。`onblur` は 2 つの入力欄の全体からフォーカスが出たときだけ、`pointerdown` はまとまりの外へ伝えない。
 `orientation="vertical"` で縦に積む（幅の狭いポップオーバー向け）。
 
+入力欄の幅は CSS カスタムプロパティで調整できる（公開の調整点）: `DateInput` と `DateRangeInput` の各欄は
+`--banto-date-input-width`（既定 `11em`）、`TimeInput` は `--banto-time-input-width`（`7.5em`）、`DateTimeInput` は
+`--banto-datetime-input-width`（`15em`）。祖先の要素で上書きする（`100%` で親の幅に合わせる）。高さは `--banto-control-height`。
+`@banto/grid-svelte` のセル編集はこの 3 つの幅を `100%` にし、高さを行に収める。
+
 解析・暦の純粋関数（`parseDateText`・`parseIsoDate`・`isIsoDate`・`addDays`・`addMonths`・`addYears`・`dayOfWeek`・
 `monthGrid`・`clampDate`・`isOutOfRange`・`todayDate`・`resolveWeekStart`・`formatFullDate` など、時刻は `parseTimeText`・
 `parseIsoTime`・`isIsoTime`・`timeOptions`・`isOnTimeStep`・`nearestTime`・`timeToMinutes`・`minutesToTime` など）も公開する

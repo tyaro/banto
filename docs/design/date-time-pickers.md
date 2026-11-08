@@ -180,6 +180,11 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 - 寸法は §9 の段階トークン（`--banto-space-*`・`--banto-font-size-*`・`--banto-border-width`）。
   カレンダーのマスの大きさ・ポップオーバーの幅は部品の形なので、部品ローカルのカスタムプロパティにする。
   forced-colors・`prefers-reduced-motion`・文字 200%・幅 320px を確かめる（ADR-0026 と同じ確認項目）。
+- 入力欄の幅は公開の調整点（CSS カスタムプロパティ）: DateInput `--banto-date-input-width`（既定 11em）、TimeInput
+  `--banto-time-input-width`（7.5em）、DateTimeInput `--banto-datetime-input-width`（15em）。DateRangeInput は中の
+  DateInput 2 つの幅（`--banto-date-input-width`）に従い、狭いと折り返す。grid のセル編集（`.cell-editor-host`）は 3 つとも
+  `100%` にしてセル幅に合わせ、高さも行の内側（行の下罫線 1px を引いた値）に収まるよう `--banto-control-height` を上書きする
+  （部品は grid を知らない。下限は `--banto-control-height-sm`）。
 
 ### 5.3 手入力の解析と検証
 
