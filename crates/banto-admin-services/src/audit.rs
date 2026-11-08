@@ -89,6 +89,7 @@ use banto_storage::{ColumnMap, Db, Dialect};
 use serde::Serialize;
 use sqlx::{QueryBuilder, Sqlite};
 
+use crate::settings::SettingsService;
 use spool::{PendingEntry, Spool};
 pub use spool::{SpoolBacklog, SpoolConfig, SpoolFlushReport};
 
@@ -821,6 +822,28 @@ impl AuditLogService {
                     as_of_id,
                     deletion_epoch,
                 })
+            }
+        }
+    }
+
+    /// The opportunistic prune in front of the audit-log list, shared by the
+    /// REST route and the Tauri command: applies the stored retention policy,
+    /// best-effort (a settings or prune failure must never block an admin from
+    /// viewing existing entries, so both are discarded).
+    ///
+    /// **A bounded read (`as_of_id` given = block 2+ of a viewer generation)
+    /// does not prune** (Issue #248, same as banto-industrial #448/#464): a
+    /// prune deletes rows inside the boundary, which the viewer must treat as
+    /// an expired snapshot. With the row cap reached and entries still being
+    /// written, every list call deletes the oldest rows, so pruning here would
+    /// expire every generation at its second block. The unbounded read (the
+    /// first block of a generation, i.e. the viewer's "reload") still prunes.
+    pub async fn prune_before_list(&self, settings: &SettingsService, as_of_id: Option<i64>) {
+        if as_of_id.is_none() {
+            if let Ok(config) = settings.audit_config().await {
+                let _ = self
+                    .prune(config.retention_days, config.retention_rows)
+                    .await;
             }
         }
     }

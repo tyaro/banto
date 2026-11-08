@@ -89,25 +89,8 @@ async fn items_delete(
 ) -> Result<StatusCode, ApiError> {
     state.items.delete(id).await?;
     // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left
-    // pointing at the now-deleted record. Best-effort - a storage hiccup
-    // here must not turn an already-successful item delete into a client
-    // error (the item is gone either way; a stray attachment row is a
-    // cleanup nit, not data loss).
-    let attachments_removed = match state
-        .attachments
-        .delete_for_record("items", &id.to_string())
-        .await
-    {
-        Ok(count) => count,
-        Err(err) => {
-            eprintln!(
-                "banto: item {id} の添付ファイル削除に失敗しました（item自体の削除は完了済み）: {err}"
-            );
-            0
-        }
-    };
-    let detail =
-        (attachments_removed > 0).then(|| json!({ "attachmentsRemoved": attachments_removed }));
+    // pointing at the now-deleted record (best-effort).
+    let detail = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;
     record_write(
         &state.audit,
         &state.auth,

@@ -718,7 +718,7 @@ function removeAttachments() {
 		REST_ITEMS,
 		'rest/items: items_delete の delete_for_record 除去',
 		`    // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left`,
-		`        (attachments_removed > 0).then(|| json!({ "attachmentsRemoved": attachments_removed }));`
+		`    let detail = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;`
 	);
 	swapText(
 		REST_ITEMS,
@@ -726,6 +726,9 @@ function removeAttachments() {
 		`        Some(&id.to_string()),\n        detail,\n    )`,
 		`        Some(&id.to_string()),\n        None,\n    )`
 	);
+	//   core の共通部品（item 削除の掃除 + 監査 detail。REST/Tauri の両方から使う）
+	drop(CORE_LIB, 'core/lib.rs: pub mod attachment_wiring 除去', `pub mod attachment_wiring;\n`);
+	removeFile(`${APP}/core/src/attachment_wiring.rs`, 'core/src/attachment_wiring.rs 削除');
 	//   rest/tests.rs（cargo test 対象。api_router の attachments 引数除去に追随）
 	removeAttachmentsFromRestTests();
 	//   banto-serve.rs（AttachmentsService の構築 + api_router 実引数）
@@ -958,6 +961,11 @@ function removeAttachmentsFromLibRs() {
 		'lib.rs: banto_attachments use 除去',
 		`use banto_attachments::{AttachmentMeta, AttachmentsService, NewAttachment};\n`
 	);
+	drop(
+		LIB_RS,
+		'lib.rs: attachment_wiring use 除去',
+		`use admin_template_core::attachment_wiring::{attachment_audit_detail, sweep_item_attachments};\n`
+	);
 	cutRegion(
 		LIB_RS,
 		'lib.rs: AppState の attachments/attachments_dir フィールド除去',
@@ -968,7 +976,7 @@ function removeAttachmentsFromLibRs() {
 		LIB_RS,
 		'lib.rs: items_delete の delete_for_record 除去',
 		`    // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up`,
-		`        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));`
+		`    let detail = sweep_item_attachments(&state.attachments, id).await;`
 	);
 	// items_delete は監査記録を `record_ok(…, Some(&id.to_string()), detail)` で書く
 	// （M-1 で AuditEntry から record_ok へ集約）。attachments を外すと sweep が
