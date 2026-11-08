@@ -151,7 +151,7 @@ implementation:
 
 | Dependency you might want | Instead | Where it is implemented |
 |---|---|---|
-| `chrono` / `time` | hand-written date conversion | `iso_datetime_from_system_time` / `compact_stamp` in `backup.rs`. Howard Hinnant's `civil_from_days` is ported in three places (`banto-attachments`, `backup.rs`, the app's `core/src/db.rs`; if a fourth appears, decide on consolidating into `banto-core`) |
+| `chrono` / `time` | hand-written date conversion | `iso_datetime_from_system_time` / `compact_stamp` in `backup.rs`. Howard Hinnant's `civil_from_days` is ported in three places (`banto-attachments`, `backup.rs`, the app's `core/src/db.rs`; if a fourth appears, decide on consolidating into `banto-core`). Exception: only for reading the local date, the app core uses `chrono` (`clock` only) ([ADR-0028](adr/0028-chrono-local-date.en.md)) |
 | MIME detection library | magic-byte detection | `banto-attachments` `detect_mime` (see §6 below) |
 | `multipart` | raw byte body + `?fileName=` query | uploads in `banto-server` `routes/backups.rs` · app `rest/attachments.rs` |
 | `tower-http` | hand-written `axum::middleware::from_fn` | `security_headers.rs` / `csrf.rs` |
