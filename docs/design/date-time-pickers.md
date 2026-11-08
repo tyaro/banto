@@ -66,7 +66,7 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
 
 - Rust 側には汎用の「フィールドの型」は無い。検証はリソースごとの手書き（例: app の `core/src/items.rs` の
   `validate_item_input` が forms の `validateAll` の鏡像）。日付を検証している場所はまだ無い。
-- 日時は chrono／time を使わず手書き（conventions §3 の表。`civil_from_days` は 3 か所に移植済み）。
+- 日時の文字列変換は `banto-core::datetime` の 1 か所が `chrono` で行う（conventions §3 の表・ADR-0029。手書きの `civil_from_days` は無い）。
 - `items.updated_at` は SQLite・PostgreSQL とも **TEXT** の `YYYY-MM-DD`（Rust の `local_today()` が求めたローカル日付をパラメータで束縛。PR #533 より前は `date('now')` /
   `CURRENT_DATE::text`）。forms 側は `type: 'date', readonly: true`。
 - 絞り込みの SQL は `crates/banto-storage/src/list_query.rs`（`FilterOp` ごとに `push_binop`。値は文字列か数値で束縛）。
@@ -204,7 +204,7 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
   `schema.ts` の `fieldValidator` は forms の検査の鏡像として同時に直す。
 - Rust: `banto-core` に純粋関数（`YYYY-MM-DD`・`HH:mm`・`YYYY-MM-DDTHH:mm` の形式と暦の妥当性、うるう年）を
   置き、リソースごとの検証から呼ぶ。Rust は**正規の形だけ**を受け付ける（寛容な解析は UI と CSV 取り込みの役目）。
-  日数への変換は要らないので `civil_from_days` の 4 か所目にはならない。
+  日数への変換は要らないので、暦の計算を自前で足すことにはならない。
 
 ### 5.4 a11y（WAI-ARIA APG）
 

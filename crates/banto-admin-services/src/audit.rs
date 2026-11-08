@@ -236,7 +236,7 @@ const PG_INSERT_PENDING: &str = "INSERT INTO audit_log \
 /// `ts` of an entry recorded at `now`, as bound by the pending INSERT (see
 /// the module doc).
 fn pending_ts(dialect: Dialect, now: SystemTime) -> String {
-    let seconds = crate::backup::iso_datetime_from_system_time(now);
+    let seconds = banto_core::datetime::iso_datetime_from_system_time(now);
     match dialect {
         Dialect::Sqlite => seconds,
         Dialect::Postgres => {

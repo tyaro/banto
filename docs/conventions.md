@@ -130,7 +130,7 @@ SQL の違いが読めることを優先する。match の片方の腕だけを�
 
 | 引きたくなる依存 | 代わりに | 実装箇所 |
 |---|---|---|
-| `chrono` / `time` | 手書きの日付変換 | `backup.rs` の `iso_datetime_from_system_time` / `compact_stamp`。Howard Hinnant の `civil_from_days` は3箇所に移植（`banto-attachments`・`backup.rs`・app `core/src/db.rs`。4箇所目が生えたら `banto-core` への一本化を判断する）。例外: ローカル日付の取得だけは app の core が `chrono`（`clock` のみ）を使う（[ADR-0028](adr/0028-chrono-local-date.md)） |
+| `chrono` / `time` | 例外あり（[ADR-0029](adr/0029-chrono-datetime-formatting.md)） | 日時の文字列変換（`SystemTime`・エポックからの日数 → `YYYY-MM-DD` など）は `banto-core::datetime` の 1 か所が `chrono`（`default-features = false`）で行い、`banto-attachments`・`banto-admin-services`（backup・audit）・app の `core/src/db.rs` はそれを呼ぶ（手書きの `civil_from_days` は無い）。`compact_stamp` は文字列処理のまま。ローカル日付の取得だけは app の core が `clock` feature を足す（[ADR-0028](adr/0028-chrono-local-date.md)） |
 | MIME 検出ライブラリ | マジックバイト判定 | `banto-attachments` `detect_mime`（下記§6） |
 | `multipart` | 生バイト body + `?fileName=` クエリ | `banto-server` `routes/backups.rs`・app `rest/attachments.rs` のアップロード |
 | `tower-http` | `axum::middleware::from_fn` の手書き | `security_headers.rs` / `csrf.rs` |

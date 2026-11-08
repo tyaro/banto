@@ -9,8 +9,9 @@
 //! - Only the canonical forms are accepted here: lenient parsing (`2026/11/7`,
 //!   full-width digits) is the UI's and the CSV import's job (§5.3).
 //! - Fixed width, so string order = time order: `min` / `max` are string
-//!   comparisons, like the frontend. No day-number arithmetic is needed (not a
-//!   fourth `civil_from_days`, conventions §3).
+//!   comparisons, like the frontend. The validators need no day-number
+//!   arithmetic; the formatters at the bottom (`SystemTime` / epoch days ->
+//!   text) are the one place that uses `chrono` (ADR-0029).
 //! - The `validate_*` functions return the same default (Japanese) message as
 //!   the frontend, in the same rule order (format, min, max, step); the
 //!   frontend's `isDateDisabled` has no Rust counterpart (a resource writes
@@ -19,6 +20,10 @@
 //!
 //! An empty value is the caller's to handle (`null` in the frontend, D6): an
 //! empty string is not a valid date / time here.
+
+use std::time::SystemTime;
+
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
 const MIN_YEAR: u32 = 1;
 const MAX_YEAR: u32 = 9999;
@@ -174,9 +179,169 @@ pub fn validate_datetime(
     None
 }
 
+// --- Formatting ---------------------------------------------------------
+//
+// `SystemTime` / epoch days -> canonical text, the one shared implementation
+// (ADR-0029; it replaced three hand-written `civil_from_days` ports). None of
+// these panics: `chrono`'s `Option`-returning constructors are used so an
+// out-of-range value (a file mtime is an external input) falls back to the
+// UNIX epoch, like a time before the epoch always did.
+
+/// Days from chrono's day 1 (0001-01-01) to 1970-01-01.
+const DAYS_FROM_CE_TO_UNIX_EPOCH: i64 = 719_163;
+
+/// Whole seconds since the UNIX epoch; a time before it counts as the epoch,
+/// and the sub-second part is dropped.
+fn unix_secs(time: SystemTime) -> i64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
+}
+
+/// `time` as a UTC date and time of day (the epoch when out of chrono's range).
+fn utc_naive(time: SystemTime) -> NaiveDateTime {
+    DateTime::from_timestamp(unix_secs(time), 0)
+        .unwrap_or(DateTime::UNIX_EPOCH)
+        .naive_utc()
+}
+
+/// `YYYY-MM-DD` (a year past 9999 keeps its extra digits, as before).
+fn format_date(date: NaiveDate) -> String {
+    format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day())
+}
+
+/// `HH:MM:SS`.
+fn format_time(time: NaiveTime) -> String {
+    format!(
+        "{:02}:{:02}:{:02}",
+        time.hour(),
+        time.minute(),
+        time.second()
+    )
+}
+
+/// Days since 1970-01-01 -> `YYYY-MM-DD` (`-1` is `1969-12-31`). A day count
+/// outside chrono's range gives `1970-01-01`.
+pub fn iso_date_from_days_since_epoch(days: i64) -> String {
+    let date = days
+        .checked_add(DAYS_FROM_CE_TO_UNIX_EPOCH)
+        .and_then(|d| i32::try_from(d).ok())
+        .and_then(NaiveDate::from_num_days_from_ce_opt)
+        .unwrap_or_else(|| DateTime::UNIX_EPOCH.date_naive());
+    format_date(date)
+}
+
+/// `SystemTime` -> `"YYYY-MM-DD HH:MM:SS"` (UTC): exactly the text SQLite's
+/// `datetime('now')` produces. A time before the epoch (or out of range) is
+/// the epoch; fractions of a second are dropped.
+pub fn iso_datetime_from_system_time(time: SystemTime) -> String {
+    let t = utc_naive(time);
+    format!("{} {}", format_date(t.date()), format_time(t.time()))
+}
+
+/// `SystemTime` -> `"YYYY-MM-DDTHH:MM:SSZ"` (UTC, ISO 8601). Same range rules
+/// as [`iso_datetime_from_system_time`].
+pub fn iso8601_utc_from_system_time(time: SystemTime) -> String {
+    let t = utc_naive(time);
+    format!("{}T{}Z", format_date(t.date()), format_time(t.time()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn formats_the_epoch_and_known_values() {
+        assert_eq!(
+            iso_datetime_from_system_time(SystemTime::UNIX_EPOCH),
+            "1970-01-01 00:00:00"
+        );
+        assert_eq!(
+            iso8601_utc_from_system_time(SystemTime::UNIX_EPOCH),
+            "1970-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            iso_datetime_from_system_time(at(86_400 + 3661)),
+            "1970-01-02 01:01:01"
+        );
+        assert_eq!(
+            iso8601_utc_from_system_time(at(86_400 + 3661)),
+            "1970-01-02T01:01:01Z"
+        );
+        // 2026-07-02 12:34:56 UTC = 20636 days + 45296 s.
+        assert_eq!(
+            iso_datetime_from_system_time(at(20_636 * 86_400 + 45_296)),
+            "2026-07-02 12:34:56"
+        );
+        assert_eq!(
+            iso_datetime_from_system_time(at(86_399)),
+            "1970-01-01 23:59:59"
+        );
+    }
+
+    #[test]
+    fn formats_leap_day_boundaries() {
+        // 2024-02-29 (divisible by 4, not by 100) and 2000-02-29 (by 400).
+        assert_eq!(
+            iso8601_utc_from_system_time(at(19_782 * 86_400)),
+            "2024-02-29T00:00:00Z"
+        );
+        assert_eq!(
+            iso8601_utc_from_system_time(at(11_016 * 86_400)),
+            "2000-02-29T00:00:00Z"
+        );
+        assert_eq!(iso_date_from_days_since_epoch(19_782), "2024-02-29");
+        assert_eq!(iso_date_from_days_since_epoch(19_783), "2024-03-01");
+        // 2100-03-01 follows 2100-02-28 (2100 is not a leap year).
+        assert_eq!(iso_date_from_days_since_epoch(47_541), "2100-03-01");
+    }
+
+    #[test]
+    fn drops_the_fraction_of_a_second() {
+        let t = SystemTime::UNIX_EPOCH + Duration::from_millis(1_999);
+        assert_eq!(iso_datetime_from_system_time(t), "1970-01-01 00:00:01");
+        assert_eq!(iso8601_utc_from_system_time(t), "1970-01-01T00:00:01Z");
+    }
+
+    #[test]
+    fn a_time_before_the_epoch_is_the_epoch() {
+        let t = SystemTime::UNIX_EPOCH - Duration::from_secs(90_000);
+        assert_eq!(iso_datetime_from_system_time(t), "1970-01-01 00:00:00");
+        assert_eq!(iso8601_utc_from_system_time(t), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn an_extreme_time_does_not_panic_and_falls_back_to_the_epoch() {
+        // Far beyond chrono's year range (~262143), and beyond i64 seconds.
+        for secs in [u64::MAX, i64::MAX as u64, 1u64 << 50] {
+            let t = SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(secs));
+            // Some platforms cannot even represent the instant; only check
+            // the ones that can.
+            if let Some(t) = t {
+                assert_eq!(iso_datetime_from_system_time(t), "1970-01-01 00:00:00");
+                assert_eq!(iso8601_utc_from_system_time(t), "1970-01-01T00:00:00Z");
+            }
+        }
+    }
+
+    #[test]
+    fn epoch_days_to_a_date() {
+        assert_eq!(iso_date_from_days_since_epoch(0), "1970-01-01");
+        assert_eq!(iso_date_from_days_since_epoch(1), "1970-01-02");
+        assert_eq!(iso_date_from_days_since_epoch(-1), "1969-12-31");
+        assert_eq!(iso_date_from_days_since_epoch(-365), "1969-01-01");
+        // 2026-07-02, the demo seed's fixed "today".
+        assert_eq!(iso_date_from_days_since_epoch(20_636), "2026-07-02");
+        // Out of range never panics.
+        assert_eq!(iso_date_from_days_since_epoch(i64::MAX), "1970-01-01");
+        assert_eq!(iso_date_from_days_since_epoch(i64::MIN), "1970-01-01");
+    }
 
     #[test]
     fn leap_years_follow_the_gregorian_rule() {

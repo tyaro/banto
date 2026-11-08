@@ -64,6 +64,7 @@ pub use location::{base_dir_for_target, legacy_base_dir, postgres_storage_key, s
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use banto_core::datetime::iso8601_utc_from_system_time;
 use banto_core::{BantoError, FieldError};
 use banto_storage::{Db, Dialect};
 use image::{GenericImageView, ImageEncoder, ImageFormat};
@@ -395,46 +396,6 @@ fn make_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Howard Hinnant's `civil_from_days` algorithm
-/// (http://howardhinnant.github.io/date_algorithms.html) - the same
-/// dependency-free date conversion `admin-template-core::db` uses for its
-/// seed data / `backup.rs`'s timestamps (spec: no `chrono`/`time` crate
-/// anywhere in this workspace). Ported here rather than shared because this
-/// crate cannot depend on `admin-template-core` (that dependency would run
-/// the wrong way - `admin-template-core` is meant to depend on THIS crate).
-fn civil_date_from_days_since_epoch(days: i64) -> (i64, u32, u32) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m as u32, d as u32)
-}
-
-/// `SystemTime` -> `"YYYY-MM-DDTHH:MM:SSZ"` (UTC, ISO 8601). Used for
-/// `attachments.created_at` - same no-`chrono` convention as
-/// `backup.rs::iso_datetime_from_system_time`, just with a `T`/`Z` ISO 8601
-/// separator/suffix instead of that module's `"YYYY-MM-DD HH:MM:SS"` (attachments-plan
-/// §3.2 explicitly calls for ISO 8601 here).
-fn iso_datetime_from_system_time(time: SystemTime) -> String {
-    let secs = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let days = secs.div_euclid(86_400);
-    let secs_of_day = secs.rem_euclid(86_400);
-    let (y, m, d) = civil_date_from_days_since_epoch(days);
-    let h = secs_of_day / 3600;
-    let min = (secs_of_day % 3600) / 60;
-    let s = secs_of_day % 60;
-    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
-}
-
 /// SHA-256 of the file at `path`, or `None` if it does not exist.
 async fn file_sha256(path: &Path) -> std::io::Result<Option<String>> {
     match tokio::fs::read(path).await {
@@ -613,7 +574,7 @@ impl AttachmentsService {
 
         let sha256 = sha256_hex(&input.bytes);
         let mime = detect_mime(&input.bytes);
-        let created_at = iso_datetime_from_system_time(SystemTime::now());
+        let created_at = iso8601_utc_from_system_time(SystemTime::now());
 
         let dialect = self.db.dialect();
         // The `has_thumbnail` literal (initially false) sits between the
@@ -1822,11 +1783,11 @@ mod tests {
     #[test]
     fn iso_datetime_formats_known_values() {
         assert_eq!(
-            iso_datetime_from_system_time(SystemTime::UNIX_EPOCH),
+            iso8601_utc_from_system_time(SystemTime::UNIX_EPOCH),
             "1970-01-01T00:00:00Z"
         );
         assert_eq!(
-            iso_datetime_from_system_time(
+            iso8601_utc_from_system_time(
                 SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(86_400 + 3661)
             ),
             "1970-01-02T01:01:01Z"
@@ -1834,7 +1795,7 @@ mod tests {
         // 2024-02-29 00:00:00Z is a leap-day boundary: 19782 days since
         // epoch (2024 is divisible by 4 and not by 100).
         assert_eq!(
-            iso_datetime_from_system_time(
+            iso8601_utc_from_system_time(
                 SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(19_782 * 86_400)
             ),
             "2024-02-29T00:00:00Z"
@@ -1842,7 +1803,7 @@ mod tests {
         // 2000-02-29 is a leap-day boundary in a century year that IS
         // divisible by 400 (so still a leap year, unlike 1900/2100).
         assert_eq!(
-            iso_datetime_from_system_time(
+            iso8601_utc_from_system_time(
                 SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(11_016 * 86_400)
             ),
             "2000-02-29T00:00:00Z"

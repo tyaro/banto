@@ -367,29 +367,6 @@ const SEED: u32 = 0x8a17c05;
 const UPDATED_AT_END_DAYS_SINCE_EPOCH: i64 = 20636; // 2026-07-02 UTC
 const UPDATED_AT_SPAN_DAYS: i64 = 900; // ~2.5 years of history
 
-/// Days-since-epoch (1970-01-01) -> `YYYY-MM-DD`, using Howard Hinnant's
-/// `civil_from_days` algorithm (http://howardhinnant.github.io/date_algorithms.html).
-/// No date/time crate dependency for one small conversion.
-///
-/// Private to this module: the seed-data generator below is the only user.
-/// (`backup` no longer lives in this crate as of theme C PR-C3 - it moved to
-/// `banto-admin-services`, where it carries its own copy of this small pure
-/// algorithm rather than depending back on the app crate, conventions
-/// §"逆依存禁止".)
-fn iso_date_from_days_since_epoch(days: i64) -> String {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
 /// Port of `generateSampleItems` (`apps/admin-template/src/lib/banto/sampleData.ts`):
 /// same PRNG, same product tables, same per-row draw order, so the first
 /// `count` rows are identical to the TS dataset's first `count` rows.
@@ -416,7 +393,7 @@ fn generate_sample_items(count: usize) -> Vec<SeedItem> {
 
         let days_ago = (random.next() * UPDATED_AT_SPAN_DAYS as f64).floor() as i64;
         let updated_at_days = UPDATED_AT_END_DAYS_SINCE_EPOCH - days_ago;
-        let updated_at = iso_date_from_days_since_epoch(updated_at_days);
+        let updated_at = banto_core::datetime::iso_date_from_days_since_epoch(updated_at_days);
 
         rows.push(SeedItem {
             id,
@@ -440,12 +417,21 @@ mod tests {
 
     #[test]
     fn iso_date_round_trips_known_epoch_days() {
-        assert_eq!(iso_date_from_days_since_epoch(0), "1970-01-01");
-        assert_eq!(iso_date_from_days_since_epoch(1), "1970-01-02");
-        assert_eq!(iso_date_from_days_since_epoch(-1), "1969-12-31");
+        assert_eq!(
+            banto_core::datetime::iso_date_from_days_since_epoch(0),
+            "1970-01-01"
+        );
+        assert_eq!(
+            banto_core::datetime::iso_date_from_days_since_epoch(1),
+            "1970-01-02"
+        );
+        assert_eq!(
+            banto_core::datetime::iso_date_from_days_since_epoch(-1),
+            "1969-12-31"
+        );
         // 2026-07-02 is the fixed "today" used by the seed generator.
         assert_eq!(
-            iso_date_from_days_since_epoch(UPDATED_AT_END_DAYS_SINCE_EPOCH),
+            banto_core::datetime::iso_date_from_days_since_epoch(UPDATED_AT_END_DAYS_SINCE_EPOCH),
             "2026-07-02"
         );
     }
