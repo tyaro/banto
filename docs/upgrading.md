@@ -193,6 +193,11 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 
 #### 期間の絞り込み（次リリース、date-time-pickers PR-6）
 
+- **PostgreSQL で期間の絞り込みを速くするには索引を張る**: `between` は `CAST(列 AS TEXT) COLLATE "C"` で比べるので、列の通常の
+  索引は効かない。自前の date・datetime 列で絞り込むなら、同じ式の索引を migration で足す
+  （`CREATE INDEX ... ON テーブル ((CAST(列 AS TEXT) COLLATE "C"));`。例は admin-template の
+  `migrations-postgres/0009_items_updated_at_index.sql`）。SQLite は通常の列の索引でよい。
+
 - **見た目が変わる**: `columnsFromSchema` が date・datetime の列を絞り込みできるようにする（見出しに ▾ が出る。読み取り
   専用の列も）。出したくない列は `overrides` で `{ filterable: false }`。date・time・datetime の列の並べ替えは
   `localeCompare` から文字列の大小に変わる（正規の形なら順は同じ）。
