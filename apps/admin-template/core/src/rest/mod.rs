@@ -27,7 +27,7 @@
 //! | POST   | `/api/items/import`  | `ItemImportRow[]` | `ImportResult` (editor+, spec M15) |
 // [scaffold:items] end
 //! | GET    | `/api/users`         | -              | `UserSummary[]` (admin) |
-//! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityResponse` (admin) |
+//! | POST   | `/api/users`         | `{username,password,displayName,role}` | `UserIdentityView` (admin) |
 //! | PUT    | `/api/users/{id}`    | `{displayName,role}` | `UserSummary` (admin) |
 //! | POST   | `/api/users/{id}/reset-password` | `{newPassword}` | `{success}` (admin) |
 //! | DELETE | `/api/users/{id}`    | -              | 204 (admin)             |
