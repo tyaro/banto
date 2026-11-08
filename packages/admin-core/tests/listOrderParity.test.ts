@@ -58,7 +58,7 @@ describe('InMemory list order matches the shared SQL contract', () => {
  * grid's client filter (`crates/banto-storage/testdata/filter-between-parity.json`).
  * A malformed value matches nothing here (the server answers 400).
  */
-describe('InMemory between matches the shared SQL contract', () => {
+describe('InMemory between and lt/lte/gt/gte match the shared SQL contract', () => {
 	interface RangeRow {
 		id: number;
 		day: string | null;
@@ -67,6 +67,13 @@ describe('InMemory between matches the shared SQL contract', () => {
 	const between = betweenFixture as {
 		rows: RangeRow[];
 		cases: { name: string; field: string; value: unknown; expectedIds: number[] }[];
+		compare: {
+			name: string;
+			field: string;
+			op: FilterState['op'];
+			value: unknown;
+			expectedIds: number[];
+		}[];
 		invalid: { name: string; value: unknown }[];
 	};
 	const provider = createInMemoryDataProvider(
@@ -81,6 +88,12 @@ describe('InMemory between matches the shared SQL contract', () => {
 	for (const { name, field, value, expectedIds } of between.cases) {
 		it(name, async () => {
 			expect(await list({ field, op: 'between', value })).toEqual(expectedIds);
+		});
+	}
+
+	for (const { name, field, op, value, expectedIds } of between.compare) {
+		it(`${op}: ${name}`, async () => {
+			expect(await list({ field, op, value })).toEqual(expectedIds);
 		});
 	}
 

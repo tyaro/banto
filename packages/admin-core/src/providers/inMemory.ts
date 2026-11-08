@@ -39,6 +39,28 @@ function toComparable(value: unknown): number {
 	return NaN;
 }
 
+/**
+ * `lt`/`lte`/`gt`/`gte`. Two strings that are not both numbers (dates,
+ * times, date-times) compare as text by UTF-16 code unit, like banto-storage's
+ * TEXT columns (PostgreSQL: `COLLATE "C"`; shared cases: `compare` in
+ * `crates/banto-storage/testdata/filter-between-parity.json`) - never via
+ * `Date.parse`, which reads a date as UTC but a date-time as local time.
+ * Everything else keeps the numeric `toComparable` order. A NULL never matches.
+ */
+function compareOrder(value: unknown, operand: unknown): number | null {
+	if (isNullish(value) || isNullish(operand)) return null;
+	if (typeof value === 'string' && typeof operand === 'string') {
+		const bothNumeric = [value, operand].every(
+			(text) => text.trim() !== '' && !Number.isNaN(Number(text))
+		);
+		if (!bothNumeric) return value < operand ? -1 : value > operand ? 1 : 0;
+	}
+	const a = toComparable(value);
+	const b = toComparable(operand);
+	if (Number.isNaN(a) || Number.isNaN(b)) return null;
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function looseEquals(a: unknown, b: unknown): boolean {
 	if (a === b) return true;
 	if (isNullish(a) || isNullish(b)) return false;
@@ -52,14 +74,22 @@ function matchOne(row: Record<string, unknown>, filter: FilterState): boolean {
 			return looseEquals(value, filter.value);
 		case 'ne':
 			return !looseEquals(value, filter.value);
-		case 'lt':
-			return toComparable(value) < toComparable(filter.value);
-		case 'lte':
-			return toComparable(value) <= toComparable(filter.value);
-		case 'gt':
-			return toComparable(value) > toComparable(filter.value);
-		case 'gte':
-			return toComparable(value) >= toComparable(filter.value);
+		case 'lt': {
+			const order = compareOrder(value, filter.value);
+			return order !== null && order < 0;
+		}
+		case 'lte': {
+			const order = compareOrder(value, filter.value);
+			return order !== null && order <= 0;
+		}
+		case 'gt': {
+			const order = compareOrder(value, filter.value);
+			return order !== null && order > 0;
+		}
+		case 'gte': {
+			const order = compareOrder(value, filter.value);
+			return order !== null && order >= 0;
+		}
 		case 'contains':
 			return String(value ?? '')
 				.toLowerCase()
