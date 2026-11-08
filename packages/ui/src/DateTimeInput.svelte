@@ -779,7 +779,7 @@
 	}
 
 	.datetime-option--value {
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 		font-weight: 600;
 	}
 
@@ -812,7 +812,7 @@
 		border: none;
 		border-radius: var(--banto-radius-sm);
 		background: transparent;
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 		font: inherit;
 		font-size: var(--banto-font-size-md);
 		cursor: pointer;

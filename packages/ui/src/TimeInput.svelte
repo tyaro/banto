@@ -582,7 +582,7 @@
 	}
 
 	.time-option--value {
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 		font-weight: 600;
 	}
 

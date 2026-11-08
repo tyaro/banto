@@ -547,7 +547,7 @@
 
 	.date-picker-action {
 		padding: var(--banto-space-1) var(--banto-space-2);
-		color: var(--banto-primary);
+		color: var(--banto-primary-text);
 		font-size: var(--banto-font-size-md);
 	}
 
