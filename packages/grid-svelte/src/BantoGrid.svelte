@@ -1252,6 +1252,7 @@
 					aria-rowindex={rowIndex + 2}
 					style:grid-template-columns={templateColumns}
 					style:height={`${gridState.rowHeight}px`}
+					style:--banto-grid-editor-height={`min(var(--banto-control-height), calc(${gridState.rowHeight}px - var(--banto-border-width)))`}
 				>
 					{#each gridState.orderedColumns as column, fieldIndex (column.id)}
 						{@const isActiveCell =

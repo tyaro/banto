@@ -750,7 +750,8 @@
 	}
 
 	.datetime-picker-calendar {
-		flex: 0 0 auto;
+		flex: 0 1 auto;
+		min-inline-size: 0;
 	}
 
 	.datetime-picker-times {

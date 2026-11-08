@@ -237,16 +237,28 @@
 		accent-color: var(--banto-primary);
 	}
 
-	/* The injected editor fills the cell. `--banto-date-input-width` is the
-	   width hook `@banto/ui`'s DateInput reads (its default is a fixed width
-	   for forms); another component simply ignores it. */
+	/* The injected editor fills the cell. The three `--banto-*-input-width`
+	   variables are the width hooks `@banto/ui`'s DateInput / TimeInput /
+	   DateTimeInput read (their defaults are fixed widths for forms); another
+	   component simply ignores them. A picker is `--banto-control-height` tall,
+	   which is 1px more than the default 36px row's content box (the row's
+	   bottom border takes 1px), so the row publishes
+	   `--banto-grid-editor-height` (the control height capped to the row's
+	   content box) and the host re-points `--banto-control-height` at it. The
+	   floor keeps a target of at least the small control height. */
 	.cell-editor-host {
 		display: flex;
 		align-items: center;
 		width: 100%;
 		height: 100%;
 		min-width: 0;
+		--banto-control-height: max(
+			var(--banto-grid-editor-height, var(--banto-control-height-sm)),
+			var(--banto-control-height-sm)
+		);
 		--banto-date-input-width: 100%;
+		--banto-time-input-width: 100%;
+		--banto-datetime-input-width: 100%;
 	}
 
 	.cell-editor.pending,

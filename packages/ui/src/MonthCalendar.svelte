@@ -324,7 +324,12 @@
 		box-shadow: var(--banto-focus-ring);
 	}
 
+	/* The grid is exactly seven cells wide, and on a narrow screen with large
+	   text the labels shrink with the cell: a wide font's "30" at 200% is wider
+	   than the cell and would push the table out of its popover. */
 	.date-picker-grid {
+		table-layout: fixed;
+		inline-size: calc(7 * var(--banto-date-cell-size));
 		border-collapse: collapse;
 		margin-inline: auto;
 	}
@@ -333,7 +338,7 @@
 		block-size: var(--banto-date-cell-size);
 		padding: 0;
 		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
+		font-size: min(var(--banto-font-size-sm), calc(var(--banto-date-cell-size) / 2.4));
 		font-weight: 500;
 		text-align: center;
 	}
@@ -343,6 +348,7 @@
 		block-size: var(--banto-date-cell-size);
 		padding: 0;
 		border-radius: var(--banto-radius-sm);
+		font-size: min(1em, calc(var(--banto-date-cell-size) / 1.4));
 		font-variant-numeric: tabular-nums;
 		text-align: center;
 		cursor: pointer;
