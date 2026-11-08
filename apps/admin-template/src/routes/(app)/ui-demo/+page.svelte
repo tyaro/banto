@@ -143,8 +143,8 @@
 	// one group; the second sample bounds both ends. Fixed values, so the
 	// closed page is deterministic.
 	let stayRange = $state<{ from: string | null; to: string | null }>({
-		from: '2026-11-07',
-		to: '2026-11-12'
+		from: '2026-11-10',
+		to: '2026-11-14'
 	});
 	let campaignRange = $state<{ from: string | null; to: string | null }>({ from: null, to: null });
 	const dateRangeMessages = dateRangeInputMessages();
