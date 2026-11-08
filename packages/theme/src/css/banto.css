@@ -34,6 +34,8 @@
 	/* Brand / state */
 	--banto-primary: #2563eb;
 	--banto-primary-hover: #1d4ed8;
+	/* 面（overlay・raised）の上に置く primary の文字色。白に 5.17:1 */
+	--banto-primary-text: var(--banto-primary);
 	--banto-danger: #dc2626;
 	--banto-warning: #d97706;
 	--banto-success: #16a34a;
@@ -251,6 +253,8 @@
 
 	--banto-primary: #3b82f6;
 	--banto-primary-hover: #60a5fa;
+	/* 暗い面 #262a31 の上で 4.5:1 を満たす（--banto-primary #3b82f6 は 3.91:1） */
+	--banto-primary-text: #60a5fa;
 	--banto-danger: #ef4444;
 	--banto-warning: #f59e0b;
 	--banto-success: #22c55e;
