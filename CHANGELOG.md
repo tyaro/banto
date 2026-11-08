@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- fix(users): 新しく作るアカウントのユーザー名に `.` を使えないようにする（初回セットアップ・ユーザー追加が `username` のフィールドエラーで拒否する）。利用者ごとの UI 設定のキー `ui.{username}.{key}` が `.` 入りの名前で他の利用者のキーと衝突し得たため。キーの形式は変えない。この制限より前に作られた `.` 入りのアカウントはそのまま使える（ログイン・編集・削除・パスワード変更は変わらない）が、UI 設定のキーが衝突し得る点は残る
 - fix(ui, grid-svelte): grid のセル編集の日付・時刻部品を行に収める。`.cell-editor-host` が `--banto-control-height` を行の内側（既定 36px の行は下罫線を引いた 35px）に上書きし、`--banto-time-input-width`・`--banto-datetime-input-width` も `100%` にしてセル幅に広げる。3 つの幅の変数を公開の調整点として文書化し、幅 320px・文字 200% の e2e（`e2e/visual/date-picker-narrow.spec.ts`）を追加
 - perf(admin-template): 期間の絞り込み `between` の PostgreSQL の式 `CAST(列 AS TEXT) COLLATE "C"` に合わせた索引を `items.updated_at` に追加（migration `0009_items_updated_at_index.sql`、SQLite は通常の索引）。`pg_smoke` で `EXPLAIN` により使われることを確認。scaffold は items を外すとき 0009 も外す。派生アプリ向けの注意は [docs/upgrading.md](docs/upgrading.md)「期間の絞り込み」。（#536）
 - fix(admin-core, banto-storage): InMemory の DataProvider の `lt`/`lte`/`gt`/`gte` が日付・日時の文字列を `Date.parse` で比べ、SQL（TEXT の文字列比較。PostgreSQL は `COLLATE "C"`）と食い違っていた（日付は UTC・日時はローカル解釈で、混ざると順序がずれる）のを、両方が数値でない文字列同士は符号単位順の文字列比較にそろえた。数値の比較は変えない。共通 fixture `filter-between-parity.json` に `compare` を足し、SQLite・PostgreSQL・InMemory で突き合わせる。
