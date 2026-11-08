@@ -8,7 +8,7 @@
 
 use banto_core::{BantoError, FieldError, ListParams, ListResult};
 use banto_server::ServerEvent;
-use banto_storage::{ColumnMap, Db, Dialect};
+use banto_storage::{ColumnMap, Db};
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite};
 use tokio::sync::broadcast;
@@ -173,28 +173,25 @@ fn column_map() -> ColumnMap {
 
 const RESOURCE: &str = "items";
 
-/// The dialect-specific SQL expression for "today's date" (a **date**, not a
-/// datetime), used by `create`/`update`/`import` to stamp `items.updated_at`.
+/// "Today" as the **local** date of the machine running the app process,
+/// rendered `YYYY-MM-DD`; stamped into `items.updated_at` by
+/// `create`/`update`/`import` (bound as a parameter, never interpolated).
 ///
-/// This is deliberately NOT `Dialect::now_expr()`: that helper renders
-/// `datetime('now')` (a `YYYY-MM-DD HH:MM:SS` timestamp) on SQLite, whereas
-/// this crate has always written `items.updated_at` with `date('now')` (a
-/// bare `YYYY-MM-DD` date). Routing this through `now_expr()` would silently
-/// change the stored SQLite value's shape and break byte-for-byte
-/// compatibility with the pre-V2 behavior (see `docs/conventions.md` "既定
-/// SQLite 経路は挙動不変"). `Dialect` itself only exposes a *datetime*
-/// current-time expression, so the date-only variant is kept here in the app
-/// layer rather than widening PR1's `banto-storage` API for this one call
-/// site. The Postgres rendering is `CURRENT_DATE::text`: `items.updated_at` is
-/// a TEXT column (it decodes into `String`), and Postgres has no implicit
-/// assignment cast from `date` to `text`, so a bare `CURRENT_DATE` would fail
-/// to insert - the `::text` cast yields the same `YYYY-MM-DD` shape SQLite's
-/// `date('now')` produces (PR3, first time this arm is actually exercised).
-fn today_expr(dialect: Dialect) -> &'static str {
-    match dialect {
-        Dialect::Sqlite => "date('now')",
-        Dialect::Postgres => "CURRENT_DATE::text",
-    }
+/// This intentionally CHANGES the previous behavior (it is not
+/// byte-for-byte compatible with the old SQL expressions): `items.updated_at`
+/// used to be written by the database (`date('now')` = the UTC date on
+/// SQLite, `CURRENT_DATE::text` = the DB server's time zone on PostgreSQL),
+/// so a row saved between 00:00 and 09:00 JST carried the previous day's
+/// date and fell outside a period filter built from the picker's "today"
+/// (the local date). Computing the date in Rust makes both backends agree
+/// and match the picker. The stored shape is unchanged (a bare `YYYY-MM-DD`
+/// TEXT, not `Dialect::now_expr()`'s datetime). Existing rows are not
+/// rewritten.
+fn local_today() -> String {
+    chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// Service layer for the `items` resource (spec §10): the same methods a
@@ -209,11 +206,25 @@ fn today_expr(dialect: Dialect) -> &'static str {
 pub struct ItemsService {
     db: Db,
     events: Option<broadcast::Sender<ServerEvent>>,
+    /// Source of the `updated_at` date (`YYYY-MM-DD`); [`local_today`] by
+    /// default, replaceable via [`ItemsService::with_today`] so tests can pin it.
+    today: fn() -> String,
 }
 
 impl ItemsService {
     pub fn new(db: Db) -> Self {
-        Self { db, events: None }
+        Self {
+            db,
+            events: None,
+            today: local_today,
+        }
+    }
+
+    /// Replace the "today" source used to stamp `updated_at` (tests pin a
+    /// fixed date with this; production keeps the local date).
+    pub fn with_today(mut self, today: fn() -> String) -> Self {
+        self.today = today;
+        self
     }
 
     /// Attach an event sender: `create`/`update`/`delete` will emit
@@ -315,9 +326,10 @@ impl ItemsService {
     pub async fn get(&self, id: i64) -> Result<Item, BantoError> {
         let dialect = self.db.dialect();
         // AssertSqlSafe (here and throughout this impl): only
-        // `dialect.placeholder(n)`/`today_expr(dialect)` are interpolated -
-        // both internally generated from the `Dialect` enum, never caller
-        // input. Every actual value is bound below via `.bind(...)`.
+        // `dialect.placeholder(n)` is interpolated -
+        // internally generated from the `Dialect` enum, never caller
+        // input. Every actual value (incl. the `updated_at` date) is bound
+        // below via `.bind(...)`.
         let sql = format!(
             "SELECT id, name, price, stock, updated_at FROM items WHERE id = {}",
             dialect.placeholder(1)
@@ -350,14 +362,16 @@ impl ItemsService {
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
-            today_expr(dialect),
+            dialect.placeholder(4),
         );
+        let today = (self.today)();
         let item = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
+                    .bind(&today)
                     .fetch_one(pool)
                     .await
             }
@@ -367,6 +381,7 @@ impl ItemsService {
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
+                    .bind(&today)
                     .fetch_one(pool)
                     .await
             }
@@ -386,15 +401,17 @@ impl ItemsService {
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
-            today_expr(dialect),
             dialect.placeholder(4),
+            dialect.placeholder(5),
         );
+        let today = (self.today)();
         let item = match &self.db {
             Db::Sqlite(pool) => {
                 sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
+                    .bind(&today)
                     .bind(id)
                     .fetch_one(pool)
                     .await
@@ -405,6 +422,7 @@ impl ItemsService {
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
+                    .bind(&today)
                     .bind(id)
                     .fetch_one(pool)
                     .await
@@ -507,8 +525,7 @@ impl ItemsService {
             });
         }
 
-        // The SQL is dialect-independent apart from placeholders / the
-        // date-stamp expression, so build it once (shared by both backend
+        // The SQL is dialect-independent apart from placeholders, so build it once (shared by both backend
         // arms) and only the transaction execution dispatches per backend.
         let dialect = self.db.dialect();
         let update_sql = format!(
@@ -516,22 +533,25 @@ impl ItemsService {
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
-            today_expr(dialect),
             dialect.placeholder(4),
+            dialect.placeholder(5),
         );
         let insert_sql = format!(
             "INSERT INTO items (name, price, stock, updated_at) VALUES ({}, {}, {}, {})",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
-            today_expr(dialect),
+            dialect.placeholder(4),
         );
+        let today = (self.today)();
 
         let result = match &self.db {
-            Db::Sqlite(pool) => import_apply_sqlite(pool, &rows, &update_sql, &insert_sql).await?,
+            Db::Sqlite(pool) => {
+                import_apply_sqlite(pool, &rows, &update_sql, &insert_sql, &today).await?
+            }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                import_apply_postgres(pool, &rows, &update_sql, &insert_sql).await?
+                import_apply_postgres(pool, &rows, &update_sql, &insert_sql, &today).await?
             }
         };
 
@@ -555,14 +575,15 @@ impl ItemsService {
 ///
 /// `update_sql`/`insert_sql` are wrapped in `sqlx::AssertSqlSafe` at their
 /// call sites below: both are built once by [`ItemsService::import`] from
-/// `dialect.placeholder(n)`/`today_expr(dialect)` only (internally
-/// generated, never caller input) - every row's actual field values are
-/// bound, never interpolated.
+/// `dialect.placeholder(n)` only (internally generated, never caller
+/// input) - every row's actual field values and the `today` date (bound as
+/// `$4`/`?4`) are bound, never interpolated.
 async fn import_apply_sqlite(
     pool: &sqlx::SqlitePool,
     rows: &[ItemImportRow],
     update_sql: &str,
     insert_sql: &str,
+    today: &str,
 ) -> Result<ImportResult, BantoError> {
     let mut errors: Vec<ImportRowError> = Vec::new();
     let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
@@ -576,6 +597,7 @@ async fn import_apply_sqlite(
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
+                    .bind(today)
                     .bind(id)
                     .execute(&mut *tx)
                     .await
@@ -594,6 +616,7 @@ async fn import_apply_sqlite(
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
+                    .bind(today)
                     .execute(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
@@ -629,6 +652,7 @@ async fn import_apply_postgres(
     rows: &[ItemImportRow],
     update_sql: &str,
     insert_sql: &str,
+    today: &str,
 ) -> Result<ImportResult, BantoError> {
     let mut errors: Vec<ImportRowError> = Vec::new();
     let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
@@ -642,6 +666,7 @@ async fn import_apply_postgres(
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
+                    .bind(today)
                     .bind(id)
                     .execute(&mut *tx)
                     .await
@@ -660,6 +685,7 @@ async fn import_apply_postgres(
                     .bind(row.name.trim())
                     .bind(row.price)
                     .bind(row.stock)
+                    .bind(today)
                     .execute(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
@@ -760,6 +786,63 @@ mod tests {
         assert_eq!(updated.name, "After");
         assert_eq!(updated.price, 20);
         assert_eq!(updated.stock, 2);
+    }
+
+    fn fixed_today() -> String {
+        "2031-02-03".to_string()
+    }
+
+    #[tokio::test]
+    async fn create_update_import_stamp_the_injected_local_date() {
+        let pool = migrate_memory().await.expect("migrate_memory");
+        let svc = ItemsService::new(pool).with_today(fixed_today);
+        let created = svc
+            .create(ItemInput {
+                name: "A".to_string(),
+                price: 1,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.updated_at, "2031-02-03");
+        let updated = svc
+            .update(
+                created.id,
+                ItemInput {
+                    name: "B".to_string(),
+                    price: 2,
+                    stock: 2,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.updated_at, "2031-02-03");
+        svc.import(vec![
+            ItemImportRow {
+                id: Some(created.id),
+                name: "C".to_string(),
+                price: 3,
+                stock: 3,
+            },
+            ItemImportRow {
+                id: None,
+                name: "D".to_string(),
+                price: 4,
+                stock: 4,
+            },
+        ])
+        .await
+        .unwrap();
+        let all = svc.list(ListParams::default()).await.unwrap();
+        assert_eq!(all.rows.len(), 2);
+        assert!(all.rows.iter().all(|r| r.updated_at == "2031-02-03"));
+    }
+
+    #[test]
+    fn local_today_is_a_yyyy_mm_dd_date() {
+        let t = local_today();
+        assert_eq!(t.len(), 10);
+        assert!(chrono::NaiveDate::parse_from_str(&t, "%Y-%m-%d").is_ok());
     }
 
     #[tokio::test]

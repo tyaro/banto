@@ -87,7 +87,9 @@ async fn app_layer_crud_round_trips_on_postgres() {
     period_filter_uses_the_collate_c_index(&url).await;
 
     // --- items: seed count, create, update, list, delete ---------------------
-    let items = ItemsService::new(db.clone());
+    // The `updated_at` date is bound from the app side (local date), so pin it
+    // and check it round-trips through the TEXT column unchanged.
+    let items = ItemsService::new(db.clone()).with_today(|| "2031-02-03".to_string());
 
     let seeded = items
         .list(ListParams::default())
@@ -120,6 +122,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
         10,
         "updated_at is a YYYY-MM-DD date"
     );
+    assert_eq!(created.updated_at, "2031-02-03");
 
     let updated = items
         .update(

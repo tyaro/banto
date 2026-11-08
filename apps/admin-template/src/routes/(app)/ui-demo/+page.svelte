@@ -14,7 +14,8 @@
 	 *
 	 * The Menu card (phase 2a), the DateInput card (date-time-pickers PR-1),
 	 * the TimeInput card (PR-2), the BantoGrid date cell card (PR-4), the
-	 * DateTimeInput card (PR-5),
+	 * DateTimeInput card (PR-5), the DateRangeInput card and the grid's datetime
+	 * column (PR-6),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
@@ -29,6 +30,7 @@
 	import {
 		CommandPalette,
 		DateInput,
+		DateRangeInput,
 		DateTimeInput,
 		dayOfWeek,
 		Drawer,
@@ -70,6 +72,7 @@
 	import {
 		columnValidationMessages,
 		dateInputMessages,
+		dateRangeInputMessages,
 		dateTimeInputMessages,
 		gridMessages
 	} from '#lib/banto/i18n.js';
@@ -136,6 +139,15 @@
 	let startsAt = $state<string | null>('2026-11-07T09:30');
 	let visitAt = $state<string | null>(null);
 	const dateTimeMessages = dateTimeInputMessages();
+	// DateRangeInput card (date-time-pickers PR-6): a start and an end day in
+	// one group; the second sample bounds both ends. Fixed values, so the
+	// closed page is deterministic.
+	let stayRange = $state<{ from: string | null; to: string | null }>({
+		from: '2026-11-10',
+		to: '2026-11-14'
+	});
+	let campaignRange = $state<{ from: string | null; to: string | null }>({ from: null, to: null });
+	const dateRangeMessages = dateRangeInputMessages();
 	// BantoGrid card (date-time-pickers PR-4): an editable date column gets
 	// the DateInput the root layout injects (`provideCellEditors`); the range
 	// comes from the schema (min / max, like the ship date above). Fixed
@@ -143,11 +155,12 @@
 	interface Shipment {
 		code: string;
 		due: string | null;
+		shippedAt: string | null;
 	}
 	let shipments = $state<Shipment[]>([
-		{ code: 'A-100', due: '2026-11-07' },
-		{ code: 'B-200', due: null },
-		{ code: 'C-300', due: '2026-11-20' }
+		{ code: 'A-100', due: '2026-11-07', shippedAt: '2026-11-06T09:30' },
+		{ code: 'B-200', due: null, shippedAt: null },
+		{ code: 'C-300', due: '2026-11-20', shippedAt: '2026-11-19T15:00' }
 	]);
 	const shipmentColumns = columnsFromSchema<Shipment>(
 		{
@@ -159,6 +172,13 @@
 					type: 'date',
 					min: '2026-11-02',
 					max: '2026-11-27'
+				},
+				{
+					name: 'shippedAt',
+					label: m['uiDemo.gridDate.shippedAt'](),
+					type: 'datetime',
+					min: '2026-11-02T09:00',
+					max: '2026-11-27T18:00'
 				}
 			]
 		},
@@ -438,6 +458,43 @@
 		</div>
 	</SurfaceCard>
 
+	<SurfaceCard title="DateRangeInput" description={m['uiDemo.dateRange.desc']()}>
+		<div class="grid">
+			<div class="sample">
+				<span class="caption" id="ui-demo-stay-label">{m['uiDemo.dateRange.label']()}</span>
+				<DateRangeInput
+					id="ui-demo-stay"
+					labelledBy="ui-demo-stay-label"
+					bind:value={stayRange}
+					locale={getLocale()}
+					messages={dateRangeMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-stay-value">
+					{m['uiDemo.date.value']()}: {stayRange.from ?? m['uiDemo.date.empty']()} – {stayRange.to ??
+						m['uiDemo.date.empty']()}
+				</span>
+			</div>
+			<div class="sample">
+				<span class="caption" id="ui-demo-campaign-label">{m['uiDemo.dateRange.rangeLabel']()}</span
+				>
+				<DateRangeInput
+					id="ui-demo-campaign"
+					labelledBy="ui-demo-campaign-label"
+					bind:value={campaignRange}
+					min="2026-11-02"
+					max="2026-11-27"
+					isDateDisabled={isWeekend}
+					locale={getLocale()}
+					messages={dateRangeMessages}
+				/>
+				<span class="caption" data-testid="ui-demo-campaign-value">
+					{m['uiDemo.date.value']()}: {campaignRange.from ?? m['uiDemo.date.empty']()} – {campaignRange.to ??
+						m['uiDemo.date.empty']()}
+				</span>
+			</div>
+		</div>
+	</SurfaceCard>
+
 	<SurfaceCard title="CommandPalette" description={m['uiDemo.palette.desc']()}>
 		<div class="row">
 			<button
@@ -598,7 +655,10 @@
 		</div>
 	</SurfaceCard>
 
-	<SurfaceCard title="BantoGrid + DateInput" description={m['uiDemo.gridDate.desc']()}>
+	<SurfaceCard
+		title="BantoGrid + DateInput / DateTimeInput"
+		description={m['uiDemo.gridDate.desc']()}
+	>
 		<div class="grid-sample" data-testid="ui-demo-grid-date">
 			<BantoGrid
 				rows={shipments}
