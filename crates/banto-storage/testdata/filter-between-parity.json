@@ -1,5 +1,5 @@
 {
-  "$comment": "Shared `between` filter contract (date-time-pickers §5.9, D12): the half-open [from, to) compared as text, a null end drops that side, both null is no condition. Asserted by banto-storage (SQLite + PostgreSQL, list_query.rs), the InMemory DataProvider (packages/admin-core/tests/listOrderParity.test.ts) and the grid's client filter (packages/grid-svelte/tests/filterBetween.test.ts). `day` holds canonical dates, `at` canonical dates and times (one with seconds). `cases` list the matching ids in id order; `invalid` values are a BadRequest in SQL and match no row on the client.",
+  "$comment": "Shared `between` filter contract (date-time-pickers §5.9, D12): the half-open [from, to) compared as text, a null end drops that side, both null is no condition. `compare` holds lt/lte/gt/gte on the same text columns (text order too, mixing dates and date-times). Asserted by banto-storage (SQLite + PostgreSQL, list_query.rs), the InMemory DataProvider (packages/admin-core/tests/listOrderParity.test.ts) and the grid's client filter (packages/grid-svelte/tests/filterBetween.test.ts). `day` holds canonical dates, `at` canonical dates and times (one with seconds). `cases` list the matching ids in id order; `invalid` values are a BadRequest in SQL and match no row on the client.",
   "rows": [
     { "id": 1, "day": "2024-02-28", "at": "2024-02-28T23:59" },
     { "id": 2, "day": "2024-02-29", "at": "2024-02-29T00:00" },
@@ -66,6 +66,58 @@
       "value": ["2024-02-28T23:59", "2024-03-01T09:30"],
       "expectedIds": [1, 2]
     }
+  ],
+  "compare": [
+    {
+      "name": "lt a date: a datetime on that day is not before it (prefix sorts first)",
+      "field": "at",
+      "op": "lt",
+      "value": "2026-01-01",
+      "expectedIds": [1, 2, 3, 4]
+    },
+    {
+      "name": "gte a date: a datetime on that day is on or after it",
+      "field": "at",
+      "op": "gte",
+      "value": "2026-01-01",
+      "expectedIds": [5, 7]
+    },
+    {
+      "name": "gt a date: the same day's datetime is after it",
+      "field": "at",
+      "op": "gt",
+      "value": "2024-02-29",
+      "expectedIds": [2, 3, 4, 5, 7]
+    },
+    {
+      "name": "lte a date: the same day's datetime is after it",
+      "field": "at",
+      "op": "lte",
+      "value": "2024-02-29",
+      "expectedIds": [1]
+    },
+    {
+      "name": "lt a datetime on a date column: the date is a prefix, so before",
+      "field": "day",
+      "op": "lt",
+      "value": "2024-03-01T00:00",
+      "expectedIds": [1, 2, 3]
+    },
+    {
+      "name": "gt a datetime on a date column",
+      "field": "day",
+      "op": "gt",
+      "value": "2024-03-01T00:00",
+      "expectedIds": [4, 5, 7]
+    },
+    {
+      "name": "lte a date, null never matches",
+      "field": "day",
+      "op": "lte",
+      "value": "2026-01-01",
+      "expectedIds": [1, 2, 3, 4, 5]
+    },
+    { "name": "gte a date", "field": "day", "op": "gte", "value": "2026-11-07", "expectedIds": [7] }
   ],
   "invalid": [
     { "name": "not an array", "value": "2026-01-01" },
