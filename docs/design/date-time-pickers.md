@@ -504,6 +504,7 @@ LAN から開くブラウザで見た目・操作・表示の書式がばらば�
   順は保たれるが、形の違う値（秒付き、`T` と空白）や英字を含む値でクライアントの文字列比較（JS の `<`）と食い違いうる。
   `between` は `CAST(列 AS TEXT) COLLATE "C" >= $1 AND ... < $2` で比べる（SQLite の既定 `BINARY` は既に符号単位の順）。
   キャストは `DATE`／`TIMESTAMP` の列でも動かすため。代わりにその列の通常の索引は効かない（`COLLATE "C"` の索引が要る）。
+  → 対応済み（#536）: admin-template の `items.updated_at` に同じ式の索引（migration `0009_items_updated_at_index.sql`）を張り、`pg_smoke` の `EXPLAIN` で使われることを確かめる。派生アプリは自前の date 列に同じ式の索引を張る。なお lt/lte/gt/gte は列そのものを比べる（`COLLATE "C"` は `between` だけ）。
   CI の `storage-postgres`（既定の照合順序のコンテナ）で共通ケースを流す。
 - スクリーンリーダーの実機での読み上げ（NVDA ＋ WebView2、VoiceOver ＋ WKWebView）。
 - 既存の基準画像のうち、ネイティブの date 入力が写っているものの数（PR-3 で再生成する範囲）。

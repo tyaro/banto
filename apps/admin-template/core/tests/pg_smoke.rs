@@ -84,6 +84,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("users get_by_username after the upgrade")
         .expect("the pre-#204 account survives the upgrade");
     assert_eq!(existing.auth_epoch, 0);
+    period_filter_uses_the_collate_c_index(&url).await;
 
     // --- items: seed count, create, update, list, delete ---------------------
     // The `updated_at` date is bound from the app side (local date), so pin it
@@ -692,4 +693,41 @@ async fn concurrent_admin_removals_on_postgres(url: &str) {
     first_pool.close().await;
     second_pool.close().await;
     control.close().await;
+}
+
+/// Migration 0009's expression index must be the very expression
+/// `banto-storage`'s PostgreSQL `between` generates
+/// (`CAST(col AS TEXT) COLLATE "C"`), or the planner cannot use it. With
+/// sequential scans disabled the planner takes any usable index, so an
+/// expression mismatch shows up as a `Seq Scan` in the plan.
+async fn period_filter_uses_the_collate_c_index(url: &str) {
+    let pool = banto_storage::connect_postgres(url)
+        .await
+        .expect("connect for EXPLAIN");
+    let mut conn = pool.acquire().await.expect("acquire for EXPLAIN");
+    sqlx::query("ANALYZE items")
+        .execute(&mut *conn)
+        .await
+        .expect("analyze items");
+    sqlx::query("SET enable_seqscan = off")
+        .execute(&mut *conn)
+        .await
+        .expect("disable seqscan");
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT id FROM items \
+         WHERE CAST(updated_at AS TEXT) COLLATE \"C\" >= $1 \
+         AND CAST(updated_at AS TEXT) COLLATE \"C\" < $2",
+    )
+    .bind("2020-01-01")
+    .bind("2020-01-02")
+    .fetch_all(&mut *conn)
+    .await
+    .expect("explain between");
+    let plan = plan.join("\n");
+    assert!(
+        plan.contains("idx_items_updated_at"),
+        "between on items.updated_at should use idx_items_updated_at:\n{plan}"
+    );
+    drop(conn);
+    pool.close().await;
 }
