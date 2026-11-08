@@ -75,6 +75,7 @@ corresponding ADR exists, be traced from there.
 | [0025](0025-transparent-control-backgrounds.en.md)     | Use transparent backgrounds by default for inputs and selects                                                                                                                                            | Accepted                   |
 | [0026](0026-shared-boolean-controls.en.md)             | Share switch and native checkbox styling                                                                                                                                                                 | Accepted                   |
 | [0027](0027-grid-error-reader.en.md)                   | Read cell errors in a local overlay and separate reading from retrying                                                                                                                                   | Accepted                   |
+| [0028](0028-chrono-local-date.en.md)                   | Get the app's local date with `chrono` (`clock` only) (exception to ADR-0002)                                                                                                                            | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 
