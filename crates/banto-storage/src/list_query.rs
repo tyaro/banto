@@ -629,6 +629,26 @@ pub(crate) mod between_fixture {
             .collect()
     }
 
+    /// `(name, params, expected ids)` per `lt`/`lte`/`gt`/`gte` case.
+    pub fn compare_cases() -> Vec<(String, ListParams, Vec<i64>)> {
+        fixture()["compare"]
+            .as_array()
+            .expect("compare")
+            .iter()
+            .map(|c| {
+                let mut p = params(c["field"].as_str().expect("field"), c["value"].clone());
+                p.filters[0].op = serde_json::from_value(c["op"].clone()).expect("op");
+                let ids = c["expectedIds"]
+                    .as_array()
+                    .expect("expectedIds")
+                    .iter()
+                    .map(|id| id.as_i64().expect("id"))
+                    .collect();
+                (c["name"].as_str().expect("name").to_string(), p, ids)
+            })
+            .collect()
+    }
+
     /// `(name, params)` for the malformed values (a `BadRequest`).
     pub fn invalid() -> Vec<(String, ListParams)> {
         fixture()["invalid"]
@@ -1340,7 +1360,10 @@ mod tests {
                 .expect("insert row");
         }
         let cols = super::between_fixture::columns();
-        for (name, params, expected) in super::between_fixture::cases() {
+        for (name, params, expected) in super::between_fixture::cases()
+            .into_iter()
+            .chain(super::between_fixture::compare_cases())
+        {
             let mut builder = QueryBuilder::new("SELECT id FROM ranges");
             apply_list_params(&mut builder, &cols, &params).expect("apply params");
             let ids: Vec<i64> = builder
@@ -1995,7 +2018,10 @@ mod postgres_tests {
             .expect("insert row");
         }
         let cols = super::between_fixture::columns();
-        for (name, params, expected) in super::between_fixture::cases() {
+        for (name, params, expected) in super::between_fixture::cases()
+            .into_iter()
+            .chain(super::between_fixture::compare_cases())
+        {
             let mut builder = QueryBuilder::new(format!("SELECT id FROM {table}"));
             apply_list_params(&mut builder, &cols, &params).expect("apply params");
             let ids: Vec<i64> = builder
