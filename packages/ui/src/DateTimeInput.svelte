@@ -50,6 +50,7 @@
 	} from './anchoredPopover';
 	import {
 		clampDate,
+		currentTime,
 		formatDateTimeText,
 		formatFullDate,
 		isBlankDateText,
@@ -267,7 +268,8 @@
 		// while open, so a closed picker leaves no `role="dialog"` in the page.
 		flushSync();
 		if (!panelEl) return;
-		activeTime = nearestSelectable(initial?.time);
+		// Empty: point at the time nearest to now (only points, never picks).
+		activeTime = nearestSelectable(initial?.time ?? currentTime());
 		panelEl.showPopover();
 		reposition();
 		flushSync();

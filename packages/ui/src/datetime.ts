@@ -242,6 +242,11 @@ export function monthGrid(date: string, weekStartsOn: Weekday): (string | null)[
 	return weeks;
 }
 
+/** The local time of day now as `HH:mm` (the device clock; where an empty time list starts, §5.4). */
+export function currentTime(now: Date = new Date()): string {
+	return minutesToTime(now.getHours() * 60 + now.getMinutes());
+}
+
 /** Today's local calendar date (the device clock, like the native date input). */
 export function todayDate(now: Date = new Date()): string {
 	return formatDate({ year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() });
