@@ -33,6 +33,7 @@ beforeAll(() => {
 
 afterEach(() => {
 	cleanup();
+	vi.useRealTimers();
 });
 
 function setup(props: Record<string, unknown> = {}) {
@@ -231,11 +232,37 @@ describe('TimeInput list (combobox + listbox)', () => {
 		expect(active(input)).toBe('15:00');
 	});
 
-	it('without a value it opens on the first option', () => {
-		const { input } = setup();
+	it('without a value it opens on the option nearest to now, and does not pick it', () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 7, 14, 20));
+		const { input, onValueChange } = setup();
 		input.focus();
 		press(input, 'ArrowDown');
-		expect(active(input)).toBe('00:00');
+		expect(active(input)).toBe('14:30');
+		expect(input.value).toBe('');
+		expect(onValueChange).not.toHaveBeenCalled();
+		press(input, 'ArrowDown');
+		expect(active(input)).toBe('15:00');
+	});
+
+	it('without a value the nearest-to-now option follows step and min / max', () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 7, 14, 20));
+		const first = setup({ step: 15 });
+		first.input.focus();
+		press(first.input, 'ArrowDown');
+		expect(active(first.input)).toBe('14:15');
+		cleanup();
+		const before = setup({ min: '15:00', max: '18:00' });
+		before.input.focus();
+		press(before.input, 'ArrowDown');
+		expect(active(before.input)).toBe('15:00');
+		cleanup();
+		vi.setSystemTime(new Date(2026, 10, 7, 23, 50));
+		const after = setup({ min: '09:00', max: '18:00' });
+		after.input.focus();
+		press(after.input, 'ArrowDown');
+		expect(active(after.input)).toBe('18:00');
 	});
 
 	it('ArrowDown / ArrowUp move the active option and stop at the ends (00:00, last)', () => {
@@ -490,6 +517,60 @@ describe('TimeInput pointer: the active option, the highlight and focus never pa
 	});
 });
 
+/** jsdom has no layout: fake a 100px list of 20px options and a scrollTop that the list keeps. */
+function installListLayout() {
+	let scrollTop = 0;
+	const isList = (el: HTMLElement) => el.getAttribute('role') === 'listbox';
+	const original = HTMLElement.prototype.getBoundingClientRect;
+	HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+		if (isList(this)) return new DOMRect(0, 100, 100, 100);
+		const time = this.dataset.time;
+		if (time) {
+			const index = [...document.querySelectorAll<HTMLElement>('[data-time]')].indexOf(this);
+			return new DOMRect(0, 100 + index * 20 - scrollTop, 100, 20);
+		}
+		return original.call(this);
+	};
+	const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+	Object.defineProperty(proto, 'clientHeight', {
+		get(this: HTMLElement) {
+			return isList(this) ? 100 : 0;
+		},
+		configurable: true
+	});
+	Object.defineProperty(proto, 'clientWidth', {
+		get(this: HTMLElement) {
+			return isList(this) ? 100 : 0;
+		},
+		configurable: true
+	});
+	Object.defineProperty(proto, 'scrollTop', {
+		get(this: HTMLElement) {
+			return isList(this) ? scrollTop : 0;
+		},
+		set(this: HTMLElement, v: number) {
+			if (isList(this)) scrollTop = v;
+		},
+		configurable: true
+	});
+	const scrollSpy = vi.spyOn(window, 'scrollTo');
+	const intoView = vi.fn();
+	const originalIntoView = HTMLElement.prototype.scrollIntoView;
+	HTMLElement.prototype.scrollIntoView = intoView;
+	return {
+		scrollTop: () => scrollTop,
+		scrollSpy,
+		intoView,
+		restore() {
+			HTMLElement.prototype.getBoundingClientRect = original;
+			HTMLElement.prototype.scrollIntoView = originalIntoView;
+			delete proto.clientHeight;
+			delete proto.clientWidth;
+			delete proto.scrollTop;
+		}
+	};
+}
+
 describe('TimeInput in a height-capped list', () => {
 	it('scrolls the list itself (not the page) to show the active option', () => {
 		const { input } = setup({ value: '09:30' });
@@ -564,6 +645,25 @@ describe('TimeInput in a height-capped list', () => {
 			delete proto.clientHeight;
 			delete proto.clientWidth;
 			delete proto.scrollTop;
+		}
+	});
+
+	it('without a value it scrolls to the option nearest to now (centred) and leaves the value alone', () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 7, 14, 20));
+		const { input, onValueChange } = setup();
+		const layout = installListLayout();
+		try {
+			input.focus();
+			press(input, 'ArrowDown');
+			// 14:30 is option 29 (middle y 100+29*20+10 = 690): centred in the
+			// list's middle (150) -> scrollTop 540.
+			expect(active(input)).toBe('14:30');
+			expect(layout.scrollTop()).toBe(540);
+			expect(input.value).toBe('');
+			expect(onValueChange).not.toHaveBeenCalled();
+		} finally {
+			layout.restore();
 		}
 	});
 });

@@ -53,6 +53,7 @@
 		watchAnchoredPopover
 	} from './anchoredPopover';
 	import {
+		currentTime,
 		isBlankDateText,
 		isIsoTime,
 		isOutOfRange,
@@ -184,12 +185,14 @@
 		return !isOutOfRange(time, minTime, maxTime);
 	}
 
-	/** Nearest selectable option to the typed (parsable) text, else the value; else the first one (§5.4). */
+	/**
+	 * Nearest selectable option to the typed (parsable) text, else the value,
+	 * else the current time (§5.4) - the list opens near "now" when empty, and
+	 * only points there: the value is never changed by opening.
+	 */
 	function initialActive(): string | null {
 		const typed = isBlankDateText(shownText) ? null : parseTimeText(shownText);
-		const target = typed ?? selectedTime;
-		if (target) return nearestTime(target, selectable);
-		return selectable[0] ?? null;
+		return nearestTime(typed ?? selectedTime ?? currentTime(), selectable);
 	}
 
 	function reposition(): void {

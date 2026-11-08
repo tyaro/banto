@@ -403,6 +403,25 @@ test.describe('ui-demo TimeInput', () => {
 		await expect(list).toBeHidden();
 		await expect(input).toHaveValue('09:15');
 	});
+
+	test('an empty input opens on the time nearest to now (in view, not picked)', async ({
+		page
+	}) => {
+		await page.clock.setFixedTime(new Date(2026, 10, 7, 13, 7));
+		const input = page.getByRole('combobox', { name: '会議の時刻（15 分刻み、9:00〜18:00）' });
+		const list = page.getByRole('listbox', { name: '時刻の一覧' });
+		await input.scrollIntoViewIfNeeded();
+		// Same hydration race as above: retry the open until the list shows.
+		await expect(async () => {
+			await input.focus();
+			await page.keyboard.press('ArrowDown');
+			await expect(list).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		const activeId = await input.getAttribute('aria-activedescendant');
+		await expect(page.locator(`[id="${activeId}"]`)).toHaveText('13:00');
+		await expect(list.getByRole('option', { name: '13:00' })).toBeInViewport();
+		await expect(input).toHaveValue('');
+	});
 });
 
 for (const combo of DIAGONAL_MATRIX) {

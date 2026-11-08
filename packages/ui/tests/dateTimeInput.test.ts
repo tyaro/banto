@@ -254,18 +254,19 @@ describe('DateTimeInput dialog', () => {
 		expect(document.activeElement).toBe(input);
 	});
 
-	it('without a value the list starts on its first time and the tracked day is used', () => {
+	it('without a value the list points at the time nearest to now (not picked) and the tracked day is used', () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
-		vi.setSystemTime(new Date(2026, 1, 14, 10, 0));
+		vi.setSystemTime(new Date(2026, 1, 14, 10, 10));
 		const { button, onValueChange } = setup();
 		fireEvent.click(button);
 		expect(focusedDate()).toBe('2026-02-14');
-		expect(list().hasAttribute('aria-activedescendant')).toBe(false);
+		expect(activeTime()).toBe('10:00');
+		expect(onValueChange).not.toHaveBeenCalled();
 		list().focus();
 		flushSync();
-		expect(activeTime()).toBe('00:00');
+		expect(activeTime()).toBe('10:00');
 		fireEvent.keyDown(list(), { key: 'Enter' });
-		expect(onValueChange).toHaveBeenCalledWith('2026-02-14T00:00');
+		expect(onValueChange).toHaveBeenCalledWith('2026-02-14T10:00');
 	});
 
 	it('Today marks today and moves to the list; Clear empties the value', () => {
