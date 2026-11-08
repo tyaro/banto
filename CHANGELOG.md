@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- refactor(core): REST と Tauri に重複していた処理を共通化した。item 削除時の添付の掃除と監査 detail（`sweep_item_attachments`）・添付の監査 detail（`attachment_audit_detail`）は `admin-template-core` の `attachment_wiring` へ、監査ログ一覧の前の保持期間削除は `AuditLogService::prune_before_list` へまとめた。挙動は変えない。派生アプリへの影響: 添付を手で外す場合は `attachment_wiring.rs` も消す（[remove-optional-assets.md](docs/recipes/remove-optional-assets.md)、`pnpm scaffold` は対応済み）。
 - refactor(core): 手書きの日付変換（Howard Hinnant の `civil_from_days` の 3 コピー: `banto-attachments`・`banto-admin-services` の `backup.rs`・app の `core/src/db.rs`）を `chrono`（`default-features = false`、feature なし。`banto-core` が依存）に置き換え、`banto_core::datetime` の `iso_datetime_from_system_time` / `iso8601_utc_from_system_time` / `iso_date_from_days_since_epoch` の 1 か所にまとめた。DB に保存する形式・ファイル名の形式・エポック前や小数秒の扱いは変えない。範囲外の値（バックアップの mtime など）は panic せずエポックにする。`Cargo.lock` に新しい crate は増えない。派生アプリへの影響: `banto-core` が `chrono` に依存する。理由と代替案は [ADR-0029](docs/adr/0029-chrono-datetime-formatting.md)、conventions §3 の表を更新。
 - fix(users): 新しく作るアカウントのユーザー名に `.` を使えないようにする（初回セットアップ・ユーザー追加が `username` のフィールドエラーで拒否する）。利用者ごとの UI 設定のキー `ui.{username}.{key}` が `.` 入りの名前で他の利用者のキーと衝突し得たため。キーの形式は変えない。この制限より前に作られた `.` 入りのアカウントはそのまま使える（ログイン・編集・削除・パスワード変更は変わらない）が、UI 設定のキーが衝突し得る点は残る
 - fix(ui, grid-svelte): grid のセル編集の日付・時刻部品を行に収める。`.cell-editor-host` が `--banto-control-height` を行の内側（既定 36px の行は下罫線を引いた 35px）に上書きし、`--banto-time-input-width`・`--banto-datetime-input-width` も `100%` にしてセル幅に広げる。3 つの幅の変数を公開の調整点として文書化し、幅 320px・文字 200% の e2e（`e2e/visual/date-picker-narrow.spec.ts`）を追加

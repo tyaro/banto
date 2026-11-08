@@ -24,6 +24,7 @@ mod firewall_status;
 mod keyring_store;
 
 use admin_template_core::assets::FrontendAssets;
+use admin_template_core::attachment_wiring::{attachment_audit_detail, sweep_item_attachments};
 use admin_template_core::audit::{AuditEntry, AuditLogList, AuditLogService};
 use admin_template_core::backup::{BackupInfo, BackupService, PendingRestoreInfo};
 use admin_template_core::db::init_db;
@@ -755,25 +756,8 @@ async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> 
     let actor = require_role(state, Role::Editor, "items").await?;
     state.items.delete(id).await?;
     // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up
-    // any attachments left pointing at the now-deleted record. Best-effort,
-    // same reasoning as the REST handler (admin-template-core's
-    // `rest.rs::items_delete`) - a storage hiccup here must not turn an
-    // already-successful item delete into a command error.
-    let attachments_removed = match state
-        .attachments
-        .delete_for_record("items", &id.to_string())
-        .await
-    {
-        Ok(count) => count,
-        Err(err) => {
-            eprintln!(
-                "banto: item {id} の添付ファイル削除に失敗しました（item自体の削除は完了済み）: {err}"
-            );
-            0
-        }
-    };
-    let detail = (attachments_removed > 0)
-        .then(|| serde_json::json!({ "attachmentsRemoved": attachments_removed }));
+    // any attachments left pointing at the now-deleted record (best-effort).
+    let detail = sweep_item_attachments(&state.attachments, id).await;
     record_ok(
         &state.audit,
         &actor,
@@ -3366,9 +3350,7 @@ async fn users_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> 
 /// argument, optional, Issue #248) is the snapshot boundary
 /// (`AuditLogService::list_as_of`); the answer carries the boundary it used.
 /// An unbounded read opportunistically prunes first; **a bounded read does
-/// not** - same reasoning as the REST route (see its doc comment: pruning
-/// inside a pinned boundary would expire every viewer generation at its
-/// second block once the row cap is reached).
+/// not** (see [`AuditLogService::prune_before_list`], shared with the REST route).
 #[tauri::command]
 async fn audit_log_list(
     state: State<'_, AppState>,
@@ -3376,14 +3358,10 @@ async fn audit_log_list(
     as_of_id: Option<i64>,
 ) -> Result<AuditLogList, BantoError> {
     require_role(&state, Role::Admin, "audit_log").await?;
-    if as_of_id.is_none() {
-        if let Ok(config) = state.settings.audit_config().await {
-            let _ = state
-                .audit
-                .prune(config.retention_days, config.retention_rows)
-                .await;
-        }
-    }
+    state
+        .audit
+        .prune_before_list(&state.settings, as_of_id)
+        .await;
     state.audit.list_as_of(params, as_of_id).await
 }
 
@@ -3743,12 +3721,7 @@ async fn attachments_upload_body(
         "create",
         "attachments",
         Some(&meta.id.to_string()),
-        Some(serde_json::json!({
-            "fileName": meta.file_name,
-            "sizeBytes": meta.size_bytes,
-            "parentResource": meta.resource,
-            "parentId": meta.resource_id,
-        })),
+        Some(attachment_audit_detail(&meta)),
     )
     .await;
     let _ = state.events.send(ServerEvent::ResourceChanged {
@@ -3790,12 +3763,7 @@ async fn attachments_delete_body(state: &AppState, id: i64) -> Result<(), BantoE
         "delete",
         "attachments",
         Some(&id.to_string()),
-        Some(serde_json::json!({
-            "fileName": meta.file_name,
-            "sizeBytes": meta.size_bytes,
-            "parentResource": meta.resource,
-            "parentId": meta.resource_id,
-        })),
+        Some(attachment_audit_detail(&meta)),
     )
     .await;
     let _ = state.events.send(ServerEvent::ResourceChanged {

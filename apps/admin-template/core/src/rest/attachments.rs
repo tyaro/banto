@@ -1,4 +1,5 @@
 use super::*;
+use crate::attachment_wiring::attachment_audit_detail;
 
 // --- M20: attachments -------------------------------------------------------
 
@@ -157,15 +158,6 @@ fn notify_attachments_changed(events: &broadcast::Sender<ServerEvent>) {
     let _ = events.send(ServerEvent::ResourceChanged {
         resource: "attachments".to_string(),
     });
-}
-
-fn attachment_audit_detail(meta: &AttachmentMeta) -> serde_json::Value {
-    json!({
-        "fileName": meta.file_name,
-        "sizeBytes": meta.size_bytes,
-        "parentResource": meta.resource,
-        "parentId": meta.resource_id,
-    })
 }
 
 /// `POST /api/attachments?resource=&resourceId=&fileName=` query parameters
