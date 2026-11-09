@@ -626,6 +626,35 @@ function removeCommandPalette() {
 	removeFile(`${APP}/src/lib/recentCommands.test.ts`, 'recentCommands.test.ts 削除');
 }
 
+/** items も同じ適用で外すか（main が選択から設定する。removeAttachmentsRestModImports 参照）。 */
+let removingItems = false;
+
+/**
+ * rest/*.rs は `use super::*` で mod.rs の import を使う。`rest/attachments.rs` だけが
+ * 使っていた import は、残すと unused import 警告になり、派生アプリの
+ * `-D warnings` ビルドが落ちるので一緒に外す。items も同じ適用で外す（display）ときは、
+ * items 側の `removeItemsFromRestModImports()` が同じ行を（より広く）消す。先にここで
+ * 消すとそちらのアンカーが無くなって失敗するので、何もしない。
+ */
+function removeAttachmentsRestModImports() {
+	if (removingItems) return;
+	drop(REST_MOD, 'rest: use axum::body::Bytes 除去', `use axum::body::Bytes;\n`);
+	swapText(
+		REST_MOD,
+		'rest: axum::extract から Query 除去',
+		`use axum::extract::{Path, Query, State};`,
+		`use axum::extract::{Path, State};`
+	);
+	drop(REST_MOD, 'rest: use axum::response::Response 除去', `use axum::response::Response;\n`);
+	swapText(
+		REST_MOD,
+		'rest: banto_core から BantoError 除去',
+		`use banto_core::{BantoError, ListParams, ListResult};`,
+		`use banto_core::{ListParams, ListResult};`
+	);
+	drop(REST_MOD, 'rest: use serde::Deserialize 除去', `use serde::Deserialize;\n`);
+}
+
 /**
  * 添付ファイル（`@banto/attachments` + items 添付デモ、M20）。remove-optional-assets.md「添付ファイル機能」。
  * remove-optional-assets.md の 6 ステップ順（依存の少ない順）で外す。src-tauri（lib.rs / Cargo）は
@@ -675,6 +704,10 @@ function removeAttachments() {
 	);
 	drop(REST_MOD, 'rest: mod attachments 除去', `mod attachments;\n`);
 	drop(REST_MOD, 'rest: use attachments_router 除去', `use attachments::attachments_router;\n`);
+	// mod を消したら実体も消す。残すと、下で消す crate::attachment_wiring を参照する
+	// コンパイル対象外の孤児ファイルになる。
+	removeFile(`${APP}/core/src/rest/attachments.rs`, 'rest/attachments.rs 削除');
+	removeAttachmentsRestModImports();
 	cutRegion(
 		REST_MOD,
 		'rest: ATTACHMENT_BODY_LIMIT_SLACK_BYTES 除去',
@@ -2019,6 +2052,7 @@ async function main() {
 	beginStep(null);
 	removeBantoReleaseOnly();
 
+	removingItems = toRemove.has('items');
 	for (const asset of ORDER) {
 		if (!toRemove.has(asset)) continue;
 		console.log(`# ${asset}`);

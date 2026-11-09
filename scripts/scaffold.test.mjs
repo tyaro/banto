@@ -335,6 +335,41 @@ test('minimal と display は 2 回適用しても成功する（再実行安全
 	}
 });
 
+test('添付を外すプリセットでは rest/attachments.rs が消え、mod.rs に余る import も残らない', () => {
+	const rest = 'apps/admin-template/core/src/rest';
+	for (const preset of ['minimal', 'standard', 'display']) {
+		const dir = copyRepo();
+		try {
+			const res = runIn(dir, ['--preset', preset, '--strict']);
+			assert.equal(res.status, 0, `${preset} が失敗:\n${res.stdout}\n${res.stderr}`);
+			assert.ok(
+				!fs.existsSync(path.join(dir, rest, 'attachments.rs')),
+				`${preset}: rest/attachments.rs が残っている（mod を消したのに実体が孤児になる）`
+			);
+			// 孤児ファイルが残っていないこと: 消した attachment_wiring を参照する .rs が無い。
+			const orphans = fs
+				.readdirSync(path.join(dir, rest))
+				.filter((f) => f.endsWith('.rs'))
+				.filter((f) =>
+					fs.readFileSync(path.join(dir, rest, f), 'utf8').includes('crate::attachment_wiring')
+				);
+			assert.deepEqual(orphans, [], `${preset}: 削除済みの attachment_wiring を参照するファイル`);
+			// attachments.rs だけが使っていた import（余ると -D warnings で落ちる）
+			const mod = fs.readFileSync(path.join(dir, rest, 'mod.rs'), 'utf8');
+			for (const unused of [
+				'use axum::body::Bytes;',
+				'use axum::response::Response;',
+				'use serde::Deserialize;',
+				'BantoError, ListParams',
+				'Path, Query, State'
+			])
+				assert.ok(!mod.includes(unused), `${preset}: mod.rs に余る import が残っている: ${unused}`);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}
+});
+
 test('編集対象の一覧（verify-architecture の入力）に既知のファイルが含まれる', async () => {
 	const { collectScaffoldTouchedFiles, listScaffoldPresets } =
 		await import('./lib/scaffold-touched.mjs');
