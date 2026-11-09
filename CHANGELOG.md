@@ -53,7 +53,7 @@
   - `GridMessages` の `filterRange*`・`UiMessages` の `dateRange*` などの任意メッセージの追加。多言語化している派生アプリは辞書と bridge に足す。
   - 新規ユーザー名に `.` を使えなくなる（#544）。初回セットアップ・ユーザー追加が `username` のフィールドエラーで拒否する。既存の `.` 入りのアカウントはそのまま使える。
   - `banto-core` が `chrono`（`default-features = false`）に依存する（#545、[ADR-0029](docs/adr/0029-chrono-datetime-formatting.md)）。
-  - 寸法トークンへの移行（`--banto-space-*`・`--banto-font-size-*`・`--banto-border-width`）で、余白が最大約 1.4px、文字サイズが最大約 0.7px 動く箇所がある。`@banto/charts` は文字がトークンと root の文字サイズに追従し、軸ラベルの幅の見積もりが変わるため、root の文字サイズを大きくした環境では左右の余白が変わる。
+  - 寸法トークンへの移行（`--banto-space-*`・`--banto-font-size-*`・`--banto-border-width`）で、共通パッケージの余白が最大約 2.1px（グリッドの集計チップなど）、文字サイズが最大約 2.1px（`@banto/charts` の Gauge の値。ほかは約 1.1px 以内）動く箇所がある。コピーしたテンプレートの画面では、文字サイズが最大約 3.5px（ログインの見出し）動く。`@banto/charts` は文字がトークンと root の文字サイズに追従し、軸ラベルの幅の見積もりが変わるため、root の文字サイズを大きくした環境では左右の余白が変わる。
   - `pnpm verify:architecture` に rule `raw-dimensions`（文字サイズと枠線幅の生値の検査）が増え、scaffold で配られる。生の寸法を書いている派生アプリは検査で止まり得る。
 - 依存を上げずに留まれるか: できる（`v6.10.0` のタグに固定したまま使える）。
 
