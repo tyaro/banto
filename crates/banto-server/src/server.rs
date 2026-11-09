@@ -361,14 +361,22 @@ pub fn lan_urls(port: u16) -> Vec<String> {
 ///   raw, unnormalized `bind:port` string verbatim; that was itself
 ///   sometimes not a connectable URL, e.g. a zone-qualified address).
 pub fn lan_urls_for_bind(bind: &str, port: u16) -> Vec<String> {
+    addr_urls(&lan_addrs_for_bind(bind), port)
+}
+
+/// The IPv4 addresses a client could use to reach a server bound to `bind`,
+/// the same set, in the same order, that [`lan_urls_for_bind`] formats as
+/// `http://<addr>:<port>` URLs (see its doc for the per-bind rules: IPv6 and
+/// unparseable binds yield none). For callers that need the addresses
+/// themselves rather than URL strings (e.g. to exclude loopback).
+pub fn lan_addrs_for_bind(bind: &str) -> Vec<std::net::Ipv4Addr> {
     use std::net::IpAddr;
 
     match parse_bind(bind) {
-        Some(IpAddr::V4(v4)) if v4.is_loopback() => vec![format!("http://{v4}:{port}")],
         Some(IpAddr::V4(v4)) if v4.is_unspecified() => {
-            unspecified_v4_urls(&non_loopback_v4_addrs(), port)
+            unspecified_v4_addrs(&non_loopback_v4_addrs())
         }
-        Some(IpAddr::V4(v4)) => vec![format!("http://{v4}:{port}")],
+        Some(IpAddr::V4(v4)) => vec![v4],
         Some(IpAddr::V6(_)) | None => Vec::new(),
     }
 }
@@ -420,7 +428,7 @@ fn parse_bind(bind: &str) -> Option<std::net::IpAddr> {
 
 /// This machine's non-loopback IPv4 interface addresses - the one place
 /// that talks to `if_addrs` for the `0.0.0.0` case. Kept separate from URL
-/// *formatting* ([`unspecified_v4_urls`] below) so tests can exercise the
+/// *formatting* ([`addr_urls`] below) so tests can exercise the
 /// formatting logic against a fixed fixture instead of this machine's
 /// actual NICs (owner review on PR #254, P2 2nd round: a test that called
 /// this function directly was flaky on any machine/container with no
@@ -440,13 +448,21 @@ fn non_loopback_v4_addrs() -> Vec<std::net::Ipv4Addr> {
     addrs
 }
 
-/// Pure: the full `0.0.0.0`-bind URL list - loopback first, then `addrs`
+/// Pure: the full `0.0.0.0`-bind address list - loopback first, then `addrs`
 /// (already-enumerated non-loopback IPv4 addresses, [`non_loopback_v4_addrs`]
 /// in production, a fixed fixture in tests).
-fn unspecified_v4_urls(addrs: &[std::net::Ipv4Addr], port: u16) -> Vec<String> {
-    let mut urls = vec![format!("http://127.0.0.1:{port}")];
-    urls.extend(addrs.iter().map(|v4| format!("http://{v4}:{port}")));
-    urls
+fn unspecified_v4_addrs(addrs: &[std::net::Ipv4Addr]) -> Vec<std::net::Ipv4Addr> {
+    let mut all = vec![std::net::Ipv4Addr::LOCALHOST];
+    all.extend_from_slice(addrs);
+    all
+}
+
+/// Pure: formats addresses as `http://<addr>:<port>` URLs.
+fn addr_urls(addrs: &[std::net::Ipv4Addr], port: u16) -> Vec<String> {
+    addrs
+        .iter()
+        .map(|v4| format!("http://{v4}:{port}"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -630,7 +646,7 @@ mod tests {
     // with no non-loopback IPv4 interface - a real, common case, not just a
     // theoretical one - `lan_urls(8721)` legitimately degenerates to the
     // same single loopback URL, so `assert_ne!` failed there even though
-    // nothing was wrong. Fixed by testing `unspecified_v4_urls` (the pure
+    // nothing was wrong. Fixed by testing `unspecified_v4_addrs` + `addr_urls` (the pure
     // formatter `lan_urls`/`lan_urls_for_bind("0.0.0.0", ..)` delegates to)
     // against a fixed fixture instead of this machine's real NICs, and by
     // testing the "no LAN interfaces" case explicitly as an expected normal
@@ -646,7 +662,7 @@ mod tests {
         // fix - this test fails if `lan_urls` is ever "fixed" to somehow
         // guess a narrower scope on its own (it can't, and shouldn't try).
         let fixture = [std::net::Ipv4Addr::new(192, 168, 1, 50)];
-        let old_shaped = unspecified_v4_urls(&fixture, 8721);
+        let old_shaped = addr_urls(&unspecified_v4_addrs(&fixture), 8721);
         let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
         assert_ne!(
             old_shaped, loopback_scoped,
@@ -662,13 +678,13 @@ mod tests {
         // This is exactly the case the old, network-dependent counter-proof
         // test was silently hitting in some CI/container environments.
         let no_lan_interfaces: [std::net::Ipv4Addr; 0] = [];
-        let old_shaped = unspecified_v4_urls(&no_lan_interfaces, 8721);
+        let old_shaped = addr_urls(&unspecified_v4_addrs(&no_lan_interfaces), 8721);
         let loopback_scoped = lan_urls_for_bind("127.0.0.1", 8721);
         assert_eq!(old_shaped, loopback_scoped);
     }
 
     #[test]
-    fn unspecified_v4_urls_fixture_loopback_first_then_given_addrs() {
+    fn unspecified_v4_addrs_fixture_loopback_first_then_given_addrs() {
         // Pins the pure formatter's own shape against a fixed fixture,
         // independent of this machine's real NICs.
         let fixture = [
@@ -676,7 +692,7 @@ mod tests {
             std::net::Ipv4Addr::new(10, 0, 0, 2),
         ];
         assert_eq!(
-            unspecified_v4_urls(&fixture, 8721),
+            addr_urls(&unspecified_v4_addrs(&fixture), 8721),
             vec![
                 "http://127.0.0.1:8721".to_string(),
                 "http://192.168.1.50:8721".to_string(),

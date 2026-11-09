@@ -185,6 +185,32 @@ pub struct UserSummary {
     pub created_at: String,
 }
 
+/// Wire shape of a freshly created account (`users_create`'s REST body and
+/// Tauri return value, spec M10): everything [`UserIdentity`] carries except
+/// `auth_epoch`, which must never reach the wire - hence this type instead
+/// of a `Serialize` derive on `UserIdentity`. No `created_at` (unlike
+/// [`UserSummary`]): `UsersService::create_user` does not read it back from
+/// the DB, only the row it just inserted.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserIdentityView {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub role: Role,
+}
+
+impl From<UserIdentity> for UserIdentityView {
+    fn from(identity: UserIdentity) -> Self {
+        Self {
+            id: identity.id,
+            username: identity.username,
+            display_name: identity.display_name,
+            role: identity.role,
+        }
+    }
+}
+
 /// Local credential store (spec §8.2): argon2id password hashes in the
 /// `users` table (migration `0003_users.sql`). No seed user - the app starts
 /// "uninitialized" and the first run walks through `setup_first_user`.
