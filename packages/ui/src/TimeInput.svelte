@@ -64,6 +64,7 @@
 	import Clock from './icons/Clock.svelte';
 	import { hasVisibleLayerAbove } from './layering';
 	import { defaultUiMessages, type UiMessages } from './messages';
+	import { stopPointerdown } from './stopPointerdown';
 
 	interface Props {
 		/** Canonical `HH:mm`, or `null` (`''` is read as empty too). */
@@ -327,14 +328,6 @@
 	}
 
 	$effect(() => {
-		const root = rootEl;
-		if (!root) return;
-		const stop = (event: Event) => event.stopPropagation();
-		root.addEventListener('pointerdown', stop);
-		return () => root.removeEventListener('pointerdown', stop);
-	});
-
-	$effect(() => {
 		const panel = panelEl;
 		if (!panel) return;
 		const stop = (event: Event) => event.stopPropagation();
@@ -381,7 +374,7 @@
 
 <svelte:window onkeydown={closeOnEscape} />
 
-<div class="time-input" bind:this={rootEl} onfocusout={handleFocusOut}>
+<div class="time-input" bind:this={rootEl} {@attach stopPointerdown} onfocusout={handleFocusOut}>
 	<div class="time-input-field" class:time-input-field--invalid={invalid} bind:this={fieldEl}>
 		<input
 			bind:this={inputEl}

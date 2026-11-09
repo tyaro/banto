@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- refactor(ui,grid): `@banto/ui` の DateInput / DateTimeInput / DateRangeInput / TimeInput に 4 つ並んでいた「`pointerdown` を root から外へ出さない」`$effect` を、内部の `stopPointerdown`（`{@attach}`、ネイティブ listener のまま）にまとめた。`@banto/grid-svelte` の `core/dateRange.ts` にあった `isLeapYear` / `daysInMonth` / `pad` の複製を `core/date.ts` の共有に寄せ、`@banto/ui` の未使用だった `endOfMonth`（package 外へ export していない）を削除した。挙動と公開 API は変えない。
 - refactor(server): 使われていなかった `PortFallbackError::into_error` を削除した。派生アプリへの影響: 呼んでいる場合は `PortFallbackError` を `match` して `error` を取り出す（`Exhausted { error, .. }` と `Failed(error)`）。
 - refactor(server): LAN 到達先のアドレスを返す `banto_server::lan_addrs_for_bind` を追加し、`lan_urls_for_bind` はそれを URL に整形するだけにした（シグネチャと返り値は変えない）。`users_create` の応答型は REST と Tauri で `banto_admin_services::users::UserIdentityView` にまとめた（JSON の形は変えない）。
 - fix(scaffold): 添付を外すプリセット（minimal / standard / display）が `apps/admin-template/core/src/rest/attachments.rs` を消さず、`mod attachments;` だけ消えて「コンパイル対象外・削除済みの `crate::attachment_wiring` を参照する」孤児ファイルが残っていたのを修正。あわせて `rest/mod.rs` に残って unused import 警告（`-D warnings` で失敗）になっていた 5 件（`Bytes`・`Query`・`Response`・`BantoError`・`Deserialize`）を外す。`scaffold.test.mjs` に回帰テスト、`remove-optional-assets.md` の添付の手動手順にファイル削除と import 整理を追記。

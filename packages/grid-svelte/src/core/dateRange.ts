@@ -16,7 +16,7 @@
  * - Pure, no Svelte: `filter.ts` (the client filter), `state.svelte.ts`
  *   (restoring a saved state) and the popover share it.
  */
-import { isIsoDate } from './date';
+import { daysInMonth, isIsoDate, pad } from './date';
 
 /** A `between` filter value: `[from | null, to | null]`, the half-open `[from, to)`. */
 export type BetweenValue = [string | null, string | null];
@@ -35,17 +35,6 @@ export function isBetweenValue(value: unknown): value is BetweenValue {
 		value.every((end) => end === null || typeof end === 'string')
 	);
 }
-
-function isLeapYear(year: number): boolean {
-	return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-function daysInMonth(year: number, month: number): number {
-	if (month === 2) return isLeapYear(year) ? 29 : 28;
-	return [4, 6, 9, 11].includes(month) ? 30 : 31;
-}
-
-const pad = (n: number, width: number) => String(n).padStart(width, '0');
 
 function format(year: number, month: number, day: number): string {
 	return `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}`;
