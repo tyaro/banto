@@ -122,7 +122,7 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 既定は日本語なので、多言語利用は対応する辞書と bridge も取り込む。
 適用状態は二重下線・説明で示し、ボタン名や `aria-expanded` の開閉契約は維持する。
 
-#### 日付のフィールド（次リリース、date-time-pickers PR-3）
+#### 日付のフィールド（v7.0.0、date-time-pickers PR-3）
 
 **空の日付は `''` ではなく `null` になる**（[design/date-time-pickers.md](design/date-time-pickers.md) D6）。
 `@banto/forms` の `type: 'date'` について、次の 3 か所が変わる。
@@ -155,7 +155,7 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
 
 `@banto/grid-svelte` の `SchemaField` の `min` / `max` も `number | string` に広げた（構造の鏡像）。
 
-#### グリッドの日付のセル（次リリース、date-time-pickers PR-4）
+#### グリッドの日付のセル（v7.0.0、date-time-pickers PR-4）
 
 `@banto/grid-svelte` の `editor: 'date'` も forms に揃える。
 
@@ -174,7 +174,7 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
   `isDateDisabled`（カレンダーの範囲と無効日）を追加。詳細は
   [grid README](../packages/grid-svelte/README.md#日付のセルと注入date-time-pickers-pr-4)。
 
-#### 時刻・日時の型（次リリース、date-time-pickers PR-5）
+#### 時刻・日時の型（v7.0.0、date-time-pickers PR-5）
 
 追加のみで、既存の型の挙動は変わらない。使うときは次を揃える。
 
@@ -191,7 +191,7 @@ readonly / disabled 時の入力・blur・数値ドラフトの確定は抑止�
   `validate_datetime`（date は `validate_date`）を呼ぶと、フロントと同じ規則・同じ既定の文言でエラーを返す（正規の形だけを
   受け付ける。空の扱いと `isDateDisabled` に当たる規則はリソース側で書く）。
 
-#### 期間の絞り込み（次リリース、date-time-pickers PR-6）
+#### 期間の絞り込み（v7.0.0、date-time-pickers PR-6）
 
 - **PostgreSQL で期間の絞り込みを速くするには索引を張る**: `between` は `CAST(列 AS TEXT) COLLATE "C"` で比べるので、列の通常の
   索引は効かない。自前の date・datetime 列で絞り込むなら、同じ式の索引を migration で足す
