@@ -21,6 +21,7 @@
 	 */
 	import DateInput from './DateInput.svelte';
 	import { defaultUiMessages, type UiMessages } from './messages';
+	import { stopPointerdown } from './stopPointerdown';
 
 	/** A day range: inclusive canonical `YYYY-MM-DD` ends, `null` when open. */
 	interface DateRange {
@@ -109,20 +110,13 @@
 		if (next instanceof Node && rootEl?.contains(next)) return;
 		onblur?.(event);
 	}
-
-	// Promise 4 for the gap and the dash between the boxes (each DateInput
-	// already stops it at its own root).
-	$effect(() => {
-		const root = rootEl;
-		if (!root) return;
-		const stop = (event: Event) => event.stopPropagation();
-		root.addEventListener('pointerdown', stop);
-		return () => root.removeEventListener('pointerdown', stop);
-	});
 </script>
 
+<!-- Promise 4 for the gap and the dash between the boxes (each DateInput
+	already stops it at its own root). -->
 <div
 	bind:this={rootEl}
+	{@attach stopPointerdown}
 	{id}
 	class="date-range-input"
 	class:date-range-input--vertical={orientation === 'vertical'}

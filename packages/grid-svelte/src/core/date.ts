@@ -32,7 +32,7 @@ function isLeapYear(year: number): boolean {
 	return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
 
-function daysInMonth(year: number, month: number): number {
+export function daysInMonth(year: number, month: number): number {
 	if (month === 2) return isLeapYear(year) ? 29 : 28;
 	return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
@@ -51,7 +51,7 @@ function isValidParts(year: number, month: number, day: number): boolean {
 	);
 }
 
-const pad = (n: number, width: number) => String(n).padStart(width, '0');
+export const pad = (n: number, width: number) => String(n).padStart(width, '0');
 
 const CANONICAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const YEARLESS_DATE = /^(\d{1,2})([-/])(\d{1,2})$/;

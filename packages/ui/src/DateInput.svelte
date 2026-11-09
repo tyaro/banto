@@ -50,6 +50,7 @@
 	import { attachFocusTrap, hasVisibleLayerAbove } from './layering';
 	import { defaultUiMessages, type UiMessages } from './messages';
 	import MonthCalendar from './MonthCalendar.svelte';
+	import { stopPointerdown } from './stopPointerdown';
 
 	interface Props {
 		/** Canonical `YYYY-MM-DD`, or `null` (`''` is read as empty too). */
@@ -253,14 +254,6 @@
 	}
 
 	$effect(() => {
-		const root = rootEl;
-		if (!root) return;
-		const stop = (event: Event) => event.stopPropagation();
-		root.addEventListener('pointerdown', stop);
-		return () => root.removeEventListener('pointerdown', stop);
-	});
-
-	$effect(() => {
 		const panel = panelEl;
 		if (!panel) return;
 		panel.addEventListener('keydown', handlePanelKeydown);
@@ -332,7 +325,7 @@
 
 <svelte:window onkeydown={closeOnEscape} />
 
-<div class="date-input" bind:this={rootEl} onfocusout={handleFocusOut}>
+<div class="date-input" bind:this={rootEl} {@attach stopPointerdown} onfocusout={handleFocusOut}>
 	<div class="date-input-field" class:date-input-field--invalid={invalid} bind:this={fieldEl}>
 		<input
 			bind:this={inputEl}

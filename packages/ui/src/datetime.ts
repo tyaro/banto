@@ -194,12 +194,6 @@ export function startOfMonth(date: string): string {
 	return formatDate({ year, month, day: 1 });
 }
 
-/** The last day of `date`'s month. */
-export function endOfMonth(date: string): string {
-	const { year, month } = requireDate(date);
-	return formatDate({ year, month, day: daysInMonth(year, month) });
-}
-
 /** Same year and month? */
 export function isSameMonth(a: string, b: string): boolean {
 	return a.slice(0, 7) === b.slice(0, 7);
