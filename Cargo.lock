@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "admin-template"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "admin-template-core",
  "admin-template-fw-elev",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "admin-template-core"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "axum",
  "banto-admin-services",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "admin-template-fw-elev"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "embed-resource",
  "serde_json",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "banto-admin-services"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "argon2",
  "banto-core",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "banto-attachments"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "banto-core",
  "banto-storage",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "banto-core"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "banto-server"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "async-stream",
  "axum",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "banto-storage"
-version = "6.10.0"
+version = "7.0.0"
 dependencies = [
  "banto-core",
  "serde_json",
