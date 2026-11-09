@@ -213,15 +213,6 @@ pub enum PortFallbackError {
     Failed(BantoError),
 }
 
-impl PortFallbackError {
-    /// The underlying bind error (for the requested port).
-    pub fn into_error(self) -> BantoError {
-        match self {
-            PortFallbackError::Exhausted { error, .. } | PortFallbackError::Failed(error) => error,
-        }
-    }
-}
-
 /// The ports [`bind_with_port_fallback`] tries after `port`, clamped to 65535
 /// (empty when `port` is 65535).
 fn fallback_ports(port: u16, span: u16) -> std::ops::RangeInclusive<u32> {
