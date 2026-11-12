@@ -46,6 +46,7 @@
 	import type { DraftSettleResult } from '@banto/forms';
 	import DashboardMemoField from '#lib/components/DashboardMemoField.svelte';
 	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
+	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
@@ -394,11 +395,15 @@
 		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
 	>
 		{#snippet actions()}
-			<AnnotationDrawer>
-				<p>{m['dashboard.aboutNote']({ count: list.totalCount.toLocaleString() })}</p>
-			</AnnotationDrawer>
+			<AnnotationButton />
 		{/snippet}
 	</PageHeader>
+
+	<!-- At the page root, not in PageHeader's actions: the header is a
+	     containing block for fixed descendants (annotation.svelte.ts). -->
+	<AnnotationDrawer>
+		<p>{m['dashboard.aboutNote']({ count: list.totalCount.toLocaleString() })}</p>
+	</AnnotationDrawer>
 
 	<div class="stat-row">
 		<section class="stat-tile">

@@ -1,35 +1,29 @@
 <script lang="ts">
 	/**
 	 * Per-page annotations for developers looking at the demo (Issue #553,
-	 * step 4): a "?" button for a PageHeader's `actions` that opens the page's
-	 * explanation in a right-hand Drawer. Renders nothing outside the demo
-	 * build (`isDemoBuild()`, a build-time constant), so a product build never
-	 * shows developer-facing prose. A page with no annotation does not use it.
+	 * step 4): the explanation opens in a right-hand Drawer from the page's
+	 * `AnnotationButton`. Put this at the page ROOT, not inside PageHeader's
+	 * actions (see annotation.svelte.ts). Renders nothing outside the demo build.
 	 */
 	import type { Snippet } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { Drawer } from '@banto/ui';
-	import { CircleQuestionMark } from '@lucide/svelte';
 	import { isDemoBuild } from '#lib/banto/environment.js';
 	import * as m from '#lib/paraglide/messages.js';
+	import { annotation } from './annotation.svelte.js';
 
 	let { children }: { children: Snippet } = $props();
 
-	let open = $state(false);
+	// Leaving the page must not leave the next page's drawer open.
+	onDestroy(() => (annotation.open = false));
 </script>
 
 {#if isDemoBuild()}
-	<button
-		type="button"
-		class="banto-btn banto-btn--ghost annotation-trigger"
-		aria-label={m['annotation.open']()}
-		title={m['annotation.open']()}
-		aria-haspopup="dialog"
-		data-testid="annotation-open"
-		onclick={() => (open = true)}
+	<Drawer
+		open={annotation.open}
+		title={m['annotation.title']()}
+		onclose={() => (annotation.open = false)}
 	>
-		<CircleQuestionMark size={16} aria-hidden="true" />
-	</button>
-	<Drawer {open} title={m['annotation.title']()} onclose={() => (open = false)}>
 		<div class="annotation-body" data-testid="annotation-body">
 			{@render children()}
 		</div>

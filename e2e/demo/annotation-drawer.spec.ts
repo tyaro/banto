@@ -31,6 +31,13 @@ test.beforeEach(async ({ page }) => {
 test('items: ? opens the drawer with the grid explanation and CSV rules', async ({ page }) => {
 	await page.goto('/items');
 	const dialog = await openAnnotation(page);
+	// The drawer must span the viewport, not be boxed into PageHeader (which
+	// is a containing block for fixed descendants).
+	const viewport = page.viewportSize();
+	const box = await dialog.boundingBox();
+	expect(viewport).not.toBeNull();
+	expect(box).not.toBeNull();
+	expect(box!.height).toBeGreaterThan(viewport!.height * 0.9);
 	await expect(dialog).toContainText('セル編集');
 	await expect(dialog).toContainText('少しずつ読み込む');
 	await expect(dialog).toContainText('1件でもエラーがあると全体が取り消されます');

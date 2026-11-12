@@ -46,6 +46,7 @@
 		StatusBadge,
 		type StatusBadgeVariant
 	} from '@banto/ui';
+	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
@@ -777,15 +778,19 @@
 					{m['items.create']()}
 				</button>
 			{/if}
-			<AnnotationDrawer>
-				<p>{m['items.annotationEdit']()}</p>
-				<p>{m['items.annotationMode']()}</p>
-				<p>{m['items.annotationGroup']()}</p>
-				<p>{m['items.annotationExport']()}</p>
-				<p>{m['items.importRules']()}</p>
-			</AnnotationDrawer>
+			<AnnotationButton />
 		{/snippet}
 	</PageHeader>
+
+	<!-- At the page root, not in PageHeader's actions: the header is a
+	     containing block for fixed descendants (annotation.svelte.ts). -->
+	<AnnotationDrawer>
+		<p>{m['items.annotationEdit']()}</p>
+		<p>{m['items.annotationMode']()}</p>
+		<p>{m['items.annotationGroup']()}</p>
+		<p>{m['items.annotationExport']()}</p>
+		<p>{m['items.importRules']()}</p>
+	</AnnotationDrawer>
 
 	<!-- Issue #215: the row just saved may no longer match the filter the
 	     user still has active (restored from this session, above). Never
