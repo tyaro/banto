@@ -307,61 +307,89 @@ const CI_WORKFLOW = '.github/workflows/ci.yml';
  * `dashboard.ts` はスタットタイルが `computeStatTiles` を使うため残す（未使用の
  * 集計エクスポートはビルドを壊さない）。stat タイルの Sparkline のみ外す。
  *
- * ドリフト注意: dashboard/+page.svelte の チャート markup・見出し・派生を
- * 変えたら（特に #74 M24 で追加した StackedAreaChart/GanttChart セクション、
- * i18n キー化で可視文言が `m['...']()` になった箇所）このパターンも更新すること。
+ * ドリフト注意: dashboard/+page.svelte のチャート markup・import 行・Sparkline を
+ * 変えたら（i18n キー化で可視文言が `m['...']()` になった箇所を含む）このパターンも
+ * 更新すること。積立エリア/ガントなどの見本は dashboard ではなく `/chart-gallery`
+ * （デモ専用ルート。navigation.ts / navIcons.ts / messages の `chartGallery.*` 込み）に
+ * あり、ここで丸ごと外す。
  * charts 除去後に dashboard/+page.svelte と dashboard.ts に `@banto/charts` 参照が
  * 一切残らないことが不変条件（残ると `Cannot find module '@banto/charts'` /
  * 未定義コンポーネント / 暗黙 any でチェックが赤くなる）。
  */
 function removeCharts() {
-	cutRegion(DASH, 'charts import 除去', `\timport {\n\t\tBarChart,`, `} from '@banto/charts';`);
+	drop(
+		DASH,
+		'charts import 除去',
+		`	import { BarChart, LineChart, PieChart, ScatterChart, Sparkline } from '@banto/charts';
+`
+	);
 	drop(
 		DASH,
 		'DashboardPanel import 除去',
-		`\timport DashboardPanel from '#lib/components/DashboardPanel.svelte';\n`
-	);
-	// #74 M24: 積立エリア/ガントは dashboard.ts の集計に依存する。charts 除去後に
-	// dashboard.ts から `@banto/charts`（GanttTask 型）参照が残らないよう、対応する
-	// import・派生・markup をここで確実に外す。
-	drop(DASH, 'M24 集計 import(categoryTrendByMonth)除去', `\t\tcategoryTrendByMonth,\n`);
-	drop(DASH, 'M24 集計 import(inventorySchedule)除去', `\t\tinventorySchedule,\n`);
-	drop(DASH, 'M24 型 import(MonthCategoryCount)除去', `\t\ttype MonthCategoryCount,\n`);
-	drop(
-		DASH,
-		'M24 派生(categoryTrend/schedule)除去',
-		`\t// M24 chart types (spec §6.1, roadmap.md M24): stacked area (積立エリア), Gantt.\n\tconst categoryTrend = $derived(categoryTrendByMonth(list.rows));\n\tconst schedule = $derived(inventorySchedule(list.rows));\n\n`
-	);
-	cutRegion(
-		DASH,
-		'formatGanttDate ヘルパ除去',
-		`\t// UTC getters (not toLocaleDateString): the schedule's dates are UTC`,
-		`\t};`
+		`	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
+`
 	);
 	drop(
 		DASH,
 		'stat タイルの Sparkline 除去',
-		`\t\t\t\t\t<Sparkline values={monthCounts.map((mc) => mc.count)} width={72} height={24} />\n`
+		`					<Sparkline values={monthCounts.map((mc) => mc.count)} width={72} height={24} />
+`
 	);
-	cutRegion(DASH, 'チャートグリッド(トレンド系)除去', `\t\t<div class="chart-grid">`, `\t\t</div>`);
+	// /dashboard に残るチャートは最初の chart-grid だけ（積立エリア/ガントなどの見本は
+	// /chart-gallery にある。下の removeDir で丸ごと外す）。
+	cutRegion(DASH, 'チャートグリッド除去', `		<div class="chart-grid">`, `		</div>`);
+	// /chart-gallery（チャート見本。デモ専用ルート）: ルート・ナビ行・union の語・
+	// アイコン・文言キーを外す。`@banto/charts` と dashboard.ts の M24 集計に依存するので
+	// charts と運命を共にする（display は charts も外すので /chart-gallery は常に先に消える）。
+	removeDir(`${APP}/src/routes/(app)/chart-gallery`, 'chart-gallery 画面削除');
 	drop(
-		DASH,
-		'チャート拡張見出し(v2)除去',
-		`\t\t<h2 class="section-heading">{m['dashboard.chartsV2Heading']()}</h2>\n`
+		NAV,
+		'nav: /chart-gallery 行除去',
+		`	{ path: '/chart-gallery', labelKey: 'nav.chartGallery', icon: 'chart-gallery', demoOnly: true },
+`
 	);
-	cutRegion(DASH, 'チャートグリッド(拡張)除去', `\t\t<div class="chart-grid">`, `\t\t</div>`);
+	swapText(
+		NAV,
+		'nav: DemoNavIconKey から chart-gallery 除去',
+		`DemoNavIconKey = 'ui-demo' | 'chart-gallery';`,
+		`DemoNavIconKey = 'ui-demo';`
+	);
+	swapText(
+		NAV,
+		'nav: DemoNavLabelKey から nav.chartGallery 除去',
+		`DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery';`,
+		`DemoNavLabelKey = 'nav.uiDemo';`
+	);
 	drop(
-		DASH,
-		'チャート拡張見出し(M24)除去',
-		`\t\t<h2 class="section-heading">{m['dashboard.chartsM24Heading']()}</h2>\n`
+		NAV_ICONS,
+		'navIcons: ChartColumn import 除去',
+		`import { ChartColumn } from '@lucide/svelte';
+`
 	);
-	cutRegion(DASH, 'チャートグリッド(M24)除去', `\t\t<div class="chart-grid">`, `\t\t</div>`);
+	swapText(
+		NAV_ICONS,
+		'navIcons: chart-gallery エントリ除去',
+		`	'ui-demo': Palette,
+	'chart-gallery': ChartColumn
+`,
+		`	'ui-demo': Palette
+`
+	);
+	for (const [file, label] of [
+		[MSG_JA, 'messages/ja'],
+		[MSG_EN, 'messages/en']
+	])
+		removeMessageKeys(file, `${label}: chartGallery.* / nav.chartGallery キー除去`, [
+			'chartGallery',
+			'nav.chartGallery'
+		]);
 	// dashboard.ts（stat タイル用に残すが M24 集計だけは `@banto/charts` の GanttTask に
 	// 依存するので切り離す）。GanttTask import と M24 セクション（EOFまで）を外す。
 	drop(
 		DASH_LIB,
 		'dashboard.ts: GanttTask import 除去',
-		`import type { GanttTask } from '@banto/charts';\n`
+		`import type { GanttTask } from '@banto/charts';
+`
 	);
 	cutEnd(DASH_LIB, 'dashboard.ts: M24 集計セクション(EOFまで)除去', `// --- M24 chart demo data`);
 	removeFile(`${APP}/src/lib/components/DashboardPanel.svelte`, 'DashboardPanel.svelte 削除');

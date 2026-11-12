@@ -6,19 +6,7 @@
 	 * createListResource) since the dashboard needs the full set to
 	 * aggregate, not a paginated window.
 	 */
-	import {
-		BarChart,
-		ComboChart,
-		GanttChart,
-		Gauge,
-		Heatmap,
-		LineChart,
-		PieChart,
-		RadarChart,
-		ScatterChart,
-		Sparkline,
-		StackedAreaChart
-	} from '@banto/charts';
+	import { BarChart, LineChart, PieChart, ScatterChart, Sparkline } from '@banto/charts';
 	import { createListResource } from '@banto/admin-core';
 	import {
 		DockHost,
@@ -33,17 +21,11 @@
 	import type { Item } from '#lib/banto/sampleData.js';
 	import {
 		byCategory,
-		categoryCountsTop,
-		categoryTrendByMonth,
 		computeStatTiles,
-		inventorySchedule,
-		monthlyWithMovingAvg,
 		priceBuckets,
 		scatterSample,
 		stockByCategoryPriceBand,
-		type MonthCategoryCount,
-		updatesByMonth,
-		weekdayMonthHeat
+		updatesByMonth
 	} from '#lib/banto/dashboard.js';
 	import { PANEL_DEFS } from '#lib/banto/panels.js';
 	import { getUiSettings, isTauri } from '#lib/banto/setup.js';
@@ -66,8 +48,6 @@
 	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
-	const STOCK_TARGET = 3_000_000;
-
 	const list = createListResource<Item>('items', {
 		initialParams: { pagination: { offset: 0, limit: 20_000 } }
 	});
@@ -84,25 +64,8 @@
 	const monthCounts = $derived(updatesByMonth(list.rows));
 	const scatterRows = $derived(scatterSample(list.rows));
 
-	// v2 chart types (spec §6.1): combo (bar+line), radar, heatmap, gauge.
-	const monthlyAvg = $derived(monthlyWithMovingAvg(list.rows));
-	const weekdayHeat = $derived(weekdayMonthHeat(list.rows));
-	const topCategories = $derived(categoryCountsTop(list.rows, 5));
-
-	// M24 chart types (spec §6.1, roadmap.md M24): stacked area (積立エリア), Gantt.
-	const categoryTrend = $derived(categoryTrendByMonth(list.rows));
-	const schedule = $derived(inventorySchedule(list.rows));
-
 	const yen = (n: number) => `¥${n.toLocaleString()}`;
 	const countLabel = (n: number) => m['dashboard.countUnit']({ count: n.toLocaleString() });
-	// UTC getters (not toLocaleDateString): the schedule's dates are UTC
-	// midnight `YYYY-MM-DD` instants (see dashboard.ts inventorySchedule), and
-	// a locale-dependent format would make the visual regression snapshot
-	// unstable across environments.
-	const formatGanttDate = (ms: number) => {
-		const d = new Date(ms);
-		return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
-	};
 
 	/**
 	 * M8 dock demo (spec §5, @banto/dock-svelte): the default layout docks the
@@ -549,95 +512,6 @@
 			</section>
 		</div>
 
-		<h2 class="section-heading">{m['dashboard.chartsV2Heading']()}</h2>
-		<div class="chart-grid">
-			<section class="card primary">
-				<h2>{m['dashboard.comboTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.comboCaption']()}</p>
-				<ComboChart
-					data={monthlyAvg}
-					x={(row) => row.month}
-					bars={[{ id: 'count', label: m['dashboard.seriesUpdates'](), value: (row) => row.count }]}
-					lines={[{ id: 'avg3', label: m['dashboard.series3mAvg'](), y: (row) => row.avg3 }]}
-					label={m['dashboard.comboAria']()}
-					height={280}
-					formatY={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.heatmapTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.heatmapCaption']()}</p>
-				<Heatmap
-					data={weekdayHeat}
-					x={(row) => row.month}
-					y={(row) => row.weekday}
-					value={(row) => row.count}
-					label={m['dashboard.heatmapAria']()}
-					height={300}
-					formatValue={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.gaugeTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.gaugeCaption']({ target: yen(STOCK_TARGET) })}</p>
-				<Gauge
-					value={stats.stockTotal}
-					max={STOCK_TARGET}
-					label={m['dashboard.gaugeAria']()}
-					height={220}
-					formatValue={(n) => `${Math.round((n / STOCK_TARGET) * 100)}%`}
-				/>
-			</section>
-
-			<section class="card secondary">
-				<h2>{m['dashboard.radarTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.radarCaption']()}</p>
-				<RadarChart
-					data={topCategories}
-					axis={(row) => row.category}
-					series={[
-						{ id: 'count', label: m['dashboard.seriesProductCount'](), value: (row) => row.count }
-					]}
-					label={m['dashboard.radarAria']()}
-					height={280}
-					formatValue={(n) => n.toLocaleString()}
-				/>
-			</section>
-		</div>
-
-		<h2 class="section-heading">{m['dashboard.chartsM24Heading']()}</h2>
-		<div class="chart-grid">
-			<section class="card">
-				<h2>{m['dashboard.categoryTrendTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.categoryTrendCaption']()}</p>
-				<StackedAreaChart
-					data={categoryTrend.rows}
-					x={(row) => row.month}
-					series={categoryTrend.categories.map((c) => ({
-						id: c,
-						label: c,
-						y: (row: MonthCategoryCount) => row.values[c] ?? 0
-					}))}
-					label={m['dashboard.categoryTrendAria']()}
-					height={280}
-					formatY={(n) => n.toLocaleString()}
-				/>
-			</section>
-
-			<section class="card">
-				<h2>{m['dashboard.scheduleTitle']()}</h2>
-				<p class="card-caption">{m['dashboard.scheduleCaption']()}</p>
-				<GanttChart
-					tasks={schedule.tasks}
-					label={m['dashboard.scheduleAria']()}
-					today={schedule.today}
-					formatDate={formatGanttDate}
-				/>
-			</section>
-		</div>
-
 		<section class="workspace">
 			<h2 class="workspace-heading">
 				<LayoutGrid size={18} aria-hidden="true" />{m['dashboard.workspaceHeading']()}
@@ -791,12 +665,6 @@
 		display: flex;
 		align-items: center;
 		gap: var(--banto-space-3);
-	}
-
-	.section-heading {
-		margin: var(--banto-space-1) 0 0;
-		font-size: var(--banto-font-size-base);
-		color: var(--banto-text-muted);
 	}
 
 	/* Asymmetric 12-column chart grid (design.md §10, plan Phase 3): the

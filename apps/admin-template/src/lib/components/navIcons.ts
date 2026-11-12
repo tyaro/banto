@@ -7,6 +7,7 @@
 import type { Component } from 'svelte';
 import { LayoutDashboard, Package, ListTree, Users, ScrollText, Settings } from '@lucide/svelte';
 import { Palette } from '@lucide/svelte';
+import { ChartColumn } from '@lucide/svelte';
 import type { DemoNavIconKey, NavIconKey } from '#lib/navigation.js';
 
 export const NAV_ICONS: Record<NavIconKey | DemoNavIconKey, Component> = {
@@ -16,5 +17,6 @@ export const NAV_ICONS: Record<NavIconKey | DemoNavIconKey, Component> = {
 	users: Users,
 	'audit-log': ScrollText,
 	settings: Settings,
-	'ui-demo': Palette
+	'ui-demo': Palette,
+	'chart-gallery': ChartColumn
 };

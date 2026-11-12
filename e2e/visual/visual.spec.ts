@@ -171,7 +171,9 @@ const DIAGONAL_PAGES: DiagonalPage[] = [
 	// @banto/ui catalog page (Issue #220 / ADR-0018 §6). Reached by URL: its
 	// sidebar entry is demo-build-only (`demoOnly`), and this suite builds
 	// without VITE_BANTO_DEMO, so the shared sidebar baselines stay unchanged.
-	{ name: 'ui-demo', path: '/ui-demo', heading: 'UI 部品の見本' }
+	{ name: 'ui-demo', path: '/ui-demo', heading: 'UI 部品の見本' },
+	// Chart types that are not on the dashboard (demo-only route, same rule as ui-demo).
+	{ name: 'chart-gallery', path: '/chart-gallery', heading: 'チャート見本' }
 ];
 
 test.describe('diagonal pages', () => {
@@ -181,6 +183,8 @@ test.describe('diagonal pages', () => {
 				await primeThemeAndAuth(page, combo);
 				await page.goto(p.path);
 				await expect(page.getByRole('heading', { name: p.heading })).toBeVisible();
+				// Chart-heavy page: wait for a drawn chart, not just the heading.
+				if (p.name === 'chart-gallery') await expect(page.locator('svg').first()).toBeVisible();
 				await page.waitForTimeout(SETTLE_MS);
 				await expect(page).toHaveScreenshot(`${p.name}-${comboLabel(combo)}-1440x900.png`, {
 					fullPage: true
