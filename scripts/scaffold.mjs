@@ -901,8 +901,8 @@ function removeReport() {
 	swapText(
 		ITEMS,
 		'lucide から FileText 除去',
-		`import { Download, FileText, Plus, Upload } from '@lucide/svelte';`,
-		`import { Download, Plus, Upload } from '@lucide/svelte';`
+		`import { Download, FileText, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';`,
+		`import { Download, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';`
 	);
 	cutRegion(
 		ITEMS,

@@ -29,7 +29,7 @@
 	} from '@banto/admin-core';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { Download, FileText, Plus, Upload } from '@lucide/svelte';
+	import { Download, FileText, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { columnValidationMessages, gridMessages } from '#lib/banto/i18n.js';
 	import type { Item } from '#lib/banto/sampleData.js';
@@ -38,7 +38,14 @@
 	import { canWriteResources } from '#lib/permissions.js';
 	import { exportCsvToFolder, importItems, isItemsImportAvailable } from '#lib/banto/itemsAdmin.js';
 	import { getBantoMode } from '#lib/banto/setup.js';
-	import { PageHeader, StatusBadge, type StatusBadgeVariant } from '@banto/ui';
+	import {
+		Menu,
+		MenuGroup,
+		MenuItem,
+		PageHeader,
+		StatusBadge,
+		type StatusBadgeVariant
+	} from '@banto/ui';
 	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
 	import {
@@ -677,26 +684,26 @@
 <div class="page">
 	<PageHeader hideTitle title={resource.label} description={m['items.description']()}>
 		{#snippet actions()}
-			<div class="mode-toggle" role="group" aria-label={m['items.modeToggleAria']()}>
-				<button
-					type="button"
-					class="banto-btn banto-btn--ghost"
-					class:active={mode === 'client'}
-					aria-pressed={mode === 'client'}
-					onclick={() => (mode = 'client')}
-				>
-					{m['items.modeClient']()}
-				</button>
-				<button
-					type="button"
-					class="banto-btn banto-btn--ghost"
-					class:active={mode === 'server'}
-					aria-pressed={mode === 'server'}
-					onclick={() => (mode = 'server')}
-				>
-					{m['items.modeServer']()}
-				</button>
-			</div>
+			<Menu label={m['items.modeToggleAria']()} placement="bottom-start">
+				{#snippet trigger(props)}
+					<button {...props} type="button" class="banto-btn banto-btn--ghost view-trigger">
+						<SlidersHorizontal size={14} aria-hidden="true" />
+						{m['items.viewMenu']()}
+					</button>
+				{/snippet}
+				<MenuGroup label={m['items.modeToggleAria']()}>
+					<MenuItem
+						label={m['items.modeClient']()}
+						checked={mode === 'client'}
+						onSelect={() => (mode = 'client')}
+					/>
+					<MenuItem
+						label={m['items.modeServer']()}
+						checked={mode === 'server'}
+						onSelect={() => (mode = 'server')}
+					/>
+				</MenuGroup>
+			</Menu>
 			<label class="group-by">
 				{m['items.groupByLabel']()}
 				<select
@@ -954,28 +961,15 @@
 		min-height: 0;
 	}
 
-	/* Priority-ordered toolbar (design.md §Phase 4): view-mode/group-by stay
+	/* Priority-ordered toolbar (design.md §Phase 4): view menu/group-by stay
 	   ghost, export/import are secondary, 新規作成 is the sole primary
 	   action. DOM order is left as it always was (existing convention
 	   preserved per the implementation brief); only 新規作成 is pulled to
 	   the front once the toolbar wraps under 768px, below. */
-	.mode-toggle {
-		display: inline-flex;
-		border: var(--banto-border-width) solid var(--banto-border-strong);
-		border-radius: var(--banto-radius-md);
-		overflow: hidden;
-	}
-
-	.mode-toggle .banto-btn {
+	.view-trigger {
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
-		border-radius: 0;
 		font-size: var(--banto-font-size-sm);
-	}
-
-	.mode-toggle .banto-btn.active {
-		background: var(--banto-primary-solid);
-		color: var(--banto-on-solid);
 	}
 
 	.group-by {

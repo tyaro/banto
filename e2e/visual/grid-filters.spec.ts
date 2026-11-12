@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator } from '@playwright/test';
+import { chooseItemsMode } from '../items-view-mode';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
 async function expectSolidFocus(control: Locator) {
@@ -26,8 +27,11 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await primeThemeAndAuth(page, DIAGONAL_MATRIX[index]);
 			await page.addInitScript((locale) => localStorage.setItem('banto.locale', locale), locale);
 			await page.goto('/items');
-			const modeButton = page.getByRole('button', { name: copy[`items.mode${mode}`], exact: true });
-			await modeButton.click();
+			const modeButton = page.getByRole('button', { name: copy['items.viewMenu'], exact: true });
+			await chooseItemsMode(page, {
+				trigger: copy['items.viewMenu'],
+				item: copy[`items.mode${mode}`]
+			});
 			const grid = page.getByRole('grid');
 			const firstName = grid.locator('[data-cell-row="0"][data-cell-field="name"]');
 			const originalName = (await firstName.innerText()).trim();
@@ -145,6 +149,8 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await trigger.click();
 			await expect(input).toBeFocused();
 			await modeButton.click();
+			// The outside click opens the 表示 menu; Escape closes it and returns focus to the button.
+			await page.keyboard.press('Escape');
 			await expect(dialog).toHaveCount(0);
 			await expect(modeButton).toBeFocused();
 

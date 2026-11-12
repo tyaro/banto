@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { chooseItemsMode } from '../items-view-mode';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
 for (const [index, locale] of ['ja', 'en'].entries()) {
@@ -18,7 +19,10 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await primeThemeAndAuth(page, DIAGONAL_MATRIX[index]);
 			await page.addInitScript((locale) => localStorage.setItem('banto.locale', locale), locale);
 			await page.goto('/items');
-			await page.getByRole('button', { name: copy[`items.mode${mode}`], exact: true }).click();
+			await chooseItemsMode(page, {
+				trigger: copy['items.viewMenu'],
+				item: copy[`items.mode${mode}`]
+			});
 			const grid = page.getByRole('grid');
 			const priceCell = grid.locator('[data-cell-row="0"][data-cell-field="price"]');
 			await priceCell.dblclick();

@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- テンプレート（B）: items のツールバーから「クライアント / サーバー」の切り替えを外し、「表示」ボタンのメニューで「全件を読み込む（グループ化できる）」「少しずつ読み込む（大量データ向け）」から選ぶ形にした。機能・モードごとの状態の保存は変えていない。`items.modeClient` / `items.modeServer` / `items.modeToggleAria` の値を変え、`items.viewMenu` を足した。派生アプリは `+page.svelte` の `.mode-toggle` の差分を取り込むこと。共通パッケージ（A）: `@banto/ui` の `MenuItem` に任意の `checked` prop を足した（指定すると `role="menuitemradio"` + `aria-checked` + チェック表示。未指定なら従来どおり、後方互換）。#553
 - テンプレート（B）: 画面の文言から開発者向けの内部用語（マイルストーン番号・パッケージ名・型名・仕様の節番号・通信方式）を取り除いた。`messages/ja.json`・`en.json` の 12 キーの値だけを変え、キー名は変えていない（#553）。
 - 依存監査: `.cargo/audit.toml` で RUSTSEC-2026-0459（libsqlite3-sys 0.30.1 の同梱 SQLite）を、理由と見直しの条件をつけて一時的に除外した。sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けないため。sqlx の次のリリースで外す。
 

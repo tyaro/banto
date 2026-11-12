@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator } from '@playwright/test';
+import { chooseItemsMode } from '../items-view-mode';
 import { DIAGONAL_MATRIX, primeThemeAndAuth } from './theme';
 
 async function dimensions(header: Locator) {
@@ -31,8 +32,11 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await primeThemeAndAuth(page, DIAGONAL_MATRIX[index]);
 			await page.addInitScript((locale) => localStorage.setItem('banto.locale', locale), locale);
 			await page.goto('/items');
-			const modeButton = page.getByRole('button', { name: copy[`items.mode${mode}`], exact: true });
-			await modeButton.click();
+			const modeButton = page.getByRole('button', { name: copy['items.viewMenu'], exact: true });
+			await chooseItemsMode(page, {
+				trigger: copy['items.viewMenu'],
+				item: copy[`items.mode${mode}`]
+			});
 			const grid = page.getByRole('grid');
 			const header = grid.getByRole('columnheader').filter({ hasText: copy['items.fieldName'] });
 			const label = copy['grid.filterAriaLabel'].replace('{header}', copy['items.fieldName']);
