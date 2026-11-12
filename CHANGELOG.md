@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- テンプレート（B）: 画面の文言から開発者向けの内部用語（マイルストーン番号・パッケージ名・型名・仕様の節番号・通信方式）を取り除いた。`messages/ja.json`・`en.json` の 12 キーの値だけを変え、キー名は変えていない（#553）。
+
 ## [7.0.0] - 2026-11-09
 
 **v7.0.0 — 日付・時刻ピッカー（`DateInput`・`TimeInput`・`DateTimeInput`）と期間の絞り込み（`FilterOp` の `between`）の追加、CSS の寸法トークン（`--banto-space-*` など）への移行、内部の単純化。** 版の種類: major（破壊的）。理由: 公開 API の削除（`banto-server` の `PortFallbackError::into_error`、#549）と、date の空値の意味変更（`''` から `null`。`@banto/forms`・`@banto/grid-svelte`）。[docs/publishing.md](docs/publishing.md)「バージョニング規約」。
