@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- 依存監査: `.cargo/audit.toml` で RUSTSEC-2026-0459（libsqlite3-sys 0.30.1 の同梱 SQLite）を、理由と見直しの条件をつけて一時的に除外した。sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けないため。sqlx の次のリリースで外す。
+
 ## [7.0.0] - 2026-11-09
 
 **v7.0.0 — 日付・時刻ピッカー（`DateInput`・`TimeInput`・`DateTimeInput`）と期間の絞り込み（`FilterOp` の `between`）の追加、CSS の寸法トークン（`--banto-space-*` など）への移行、内部の単純化。** 版の種類: major（破壊的）。理由: 公開 API の削除（`banto-server` の `PortFallbackError::into_error`、#549）と、date の空値の意味変更（`''` から `null`。`@banto/forms`・`@banto/grid-svelte`）。[docs/publishing.md](docs/publishing.md)「バージョニング規約」。

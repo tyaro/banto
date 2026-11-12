@@ -36,4 +36,22 @@ ignore = [
 	# (upstream plist/tauri-utils bump) - then REMOVE both entries.
 	"RUSTSEC-2026-0194",
 	"RUSTSEC-2026-0195",
+	# libsqlite3-sys 0.30.1: bundled SQLite <3.54.0 can return uninitialized
+	# page-cache memory when a database is opened together with a crafted
+	# sibling `-wal` file of a different page size (CVE-2026-119375, Medium
+	# 6.8, local, needs the victim to open attacker-written files). Fixed in
+	# libsqlite3-sys >=0.39.0, but the newest sqlx release (sqlx-sqlite 0.9.0)
+	# requires libsqlite3-sys ">=0.30.1, <0.38.0", so `cargo update` can only
+	# reach 0.37.0 (verified 2026-11-12). sqlx main already allows <0.40
+	# (launchbadge/sqlx#4502, merged 2026-11-08) but is unreleased; a git
+	# [patch] was rejected because it would not reach downstream apps that
+	# depend on banto-* by git tag, and would pull unreleased DB code.
+	# Exposure here is low: the only place Banto opens a database file from
+	# outside is DB restore (admin-only). An upload can supply only the main
+	# file - backup.rs writes the bytes to a fresh temp path and validates it
+	# read-only, so no attacker-written `-wal` sits beside it - and the apply
+	# step deletes stale `-wal`/`-shm` sidecars before swapping the file in.
+	# Revisit on the next sqlx release that allows libsqlite3-sys >=0.39 -
+	# then `cargo update -p libsqlite3-sys` and REMOVE this entry.
+	"RUSTSEC-2026-0459",
 ]
