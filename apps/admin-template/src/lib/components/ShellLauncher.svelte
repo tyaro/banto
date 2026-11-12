@@ -11,8 +11,14 @@
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import { isPathActive, navSections, resolveAppPath, type NavItem } from '#lib/navigation.js';
-	import { NAV_ICONS } from './navIcons';
+	import {
+		isPathActive,
+		navLabel,
+		navSections,
+		resolveAppPath,
+		type NavItem
+	} from '#lib/navigation.js';
+	import { navIcon } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
@@ -32,8 +38,8 @@
 		return {
 			id: item.path,
 			href: resolveAppPath(item.path),
-			label: m[item.labelKey](),
-			icon: NAV_ICONS[item.icon],
+			label: navLabel(item),
+			icon: navIcon(item.icon),
 			active: isPathActive(item.path, page.url.pathname),
 			badge:
 				count > 0 ? { text: badgeText(count), label: m['shell.navUpdates']({ count }) } : undefined

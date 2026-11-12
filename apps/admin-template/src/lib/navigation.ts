@@ -5,6 +5,7 @@
  * (spec §3.1); manual entries like the ones below remain possible.
  */
 import { isPathActive, type AppPath } from '#lib/appPath.js';
+import type { Component } from 'svelte';
 import type { RouteId } from '$app/types';
 import { isDemoBuild } from '#lib/banto/environment.js';
 import { resources } from '#lib/banto/resources/index.js';
@@ -14,13 +15,13 @@ import * as m from '#lib/paraglide/messages.js';
 /** Icon resolution key (visual-refresh-design.md §5.1). Resolved to an actual
  *  icon component only in the display layer (#lib/components/navIcons.ts) -
  *  this module stays UI-agnostic. */
-export type NavIconKey = 'dashboard' | 'items' | 'tree' | 'users' | 'audit-log' | 'settings';
+export type NavIconKey = 'dashboard' | 'tree' | 'users' | 'audit-log' | 'settings';
 
 /** Paraglide message key for a nav entry's visible label (i18n layer ②,
  *  ADR-0005). The label itself is resolved at render time via `m[labelKey]()`
  *  so it tracks the active locale — see `pageTitle` below and Sidebar.svelte. */
 export type NavLabelKey =
-	'nav.dashboard' | 'nav.items' | 'nav.tree' | 'nav.users' | 'nav.auditLog' | 'nav.settings';
+	'nav.dashboard' | 'nav.tree' | 'nav.users' | 'nav.auditLog' | 'nav.settings';
 
 /** Keys of the demo-only catalog entry (`NavItem.demoOnly`). Kept out of the unions above on purpose:
  *  scaffold's removers edit those unions by exact text (scripts/scaffold.mjs). */
@@ -29,8 +30,12 @@ export type DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery';
 
 export interface NavItem {
 	path: AppPath;
-	labelKey: NavLabelKey | DemoNavLabelKey;
-	icon: NavIconKey | DemoNavIconKey;
+	/** Fixed pages name a dictionary key; resource entries give `label` instead. */
+	labelKey?: NavLabelKey | DemoNavLabelKey;
+	/** Lazy label (resource entries: `nav.label` or the resource label). Read it via `navLabel()`. */
+	label?: () => string;
+	/** Fixed pages use a key resolved in navIcons.ts; resource entries carry the component from `nav.icon`. */
+	icon: NavIconKey | DemoNavIconKey | Component;
 	/** Resource whose current localized label is passed to route-specific titles. */
 	pageTitleResource?: string;
 	/** Exact route IDs keep static child pages distinct from record-edit routes. */
@@ -68,22 +73,44 @@ export interface NavItem {
 
 export { isPathActive, resolveAppPath, type AppPath } from '#lib/appPath.js';
 
+/** The entry's visible label, resolved lazily so it follows the active locale. */
+export function navLabel(item: NavItem): string {
+	return item.label ? item.label() : m[item.labelKey as NavLabelKey | DemoNavLabelKey]();
+}
+
+/**
+ * Entries derived from the resource definitions (ADR-0030 §8): every resource
+ * with a `nav` object, in `resources` array order (placed right after the
+ * dashboard). Labels stay functions so module evaluation does not freeze the
+ * locale. `nav` false/undefined = no entry.
+ */
+function resourceNavItems(): NavItem[] {
+	return resources.flatMap((resource) => {
+		const nav = resource.nav;
+		if (!nav) return [];
+		const createRoute = `/(app)${resource.path}/new`;
+		const editRoute = `/(app)${resource.path}/[id]`;
+		return [
+			{
+				path: resource.path,
+				label: nav.label ?? (() => resource.label),
+				icon: nav.icon,
+				badgeResource: nav.badge ? resource.name : undefined,
+				pageTitleResource: resource.name,
+				pageTitles: {
+					[createRoute]: (name: string) => m['resource.createTitle']({ resource: name }),
+					[editRoute]: (name: string) => m['resource.editTitle']({ resource: name })
+				} as NavItem['pageTitles'],
+				publicViewer: nav.publicViewer,
+				adminOnly: nav.adminOnly
+			}
+		];
+	});
+}
+
 const allNavItems: NavItem[] = [
 	{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', publicViewer: true },
-	// [scaffold:items] begin
-	{
-		path: '/items',
-		labelKey: 'nav.items',
-		icon: 'items',
-		badgeResource: 'items',
-		pageTitleResource: 'items',
-		pageTitles: {
-			'/(app)/items/new': (resource) => m['items.createTitle']({ resource }),
-			'/(app)/items/[id]': (resource) => m['items.editTitle']({ resource })
-		},
-		publicViewer: true
-	},
-	// [scaffold:items] end
+	...resourceNavItems(),
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/ui-demo', labelKey: 'nav.uiDemo', icon: 'ui-demo', demoOnly: true },
 	{ path: '/chart-gallery', labelKey: 'nav.chartGallery', icon: 'chart-gallery', demoOnly: true },
@@ -142,7 +169,7 @@ export function pageTitle(pathname: string, routeId?: RouteId | null): string {
 		// Read the definition lazily: localized getters and replacement resources
 		// work without requiring the runtime registry to have been initialized.
 		const label = resources.find((resource) => resource.name === item.pageTitleResource)?.label;
-		return title(label ?? m[item.labelKey]());
+		return title(label ?? navLabel(item));
 	}
-	return m[item.labelKey]();
+	return navLabel(item);
 }

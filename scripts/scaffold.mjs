@@ -1345,8 +1345,8 @@ function removeItems() {
 	swapText(
 		RESOURCES_INDEX,
 		'resources: 登録配列を空に',
-		`// D1-d note (display-preset-plan.md, Issue #190 prep): the future \`items\`\n// remover needs a \`swapText\` here, not a \`cutRegion\` delete - \`resources\`\n// must still be a valid (possibly empty) array afterwards:\n//   \`[itemsResource]\` -> \`[]\`\nexport const resources: ResourceDefinition[] = [itemsResource];`,
-		`export const resources: ResourceDefinition[] = [];`
+		`// D1-d note (display-preset-plan.md, Issue #190 prep): the future \`items\`\n// remover needs a \`swapText\` here, not a \`cutRegion\` delete - \`resources\`\n// must still be a valid (possibly empty) array afterwards:\n//   \`[itemsResource]\` -> \`[]\`\nexport const resources: AppResourceDefinition[] = [itemsResource];`,
+		`export const resources: AppResourceDefinition[] = [];`
 	);
 	drop(SETUP_TS, 'setup: sampleItems import 除去', `import { sampleItems } from './sampleData';\n`);
 	swapText(
@@ -1362,13 +1362,8 @@ function removeItems() {
 		` * - \`resources/index.ts\` — resource definitions and registration\n *   (docs/recipes/add-resource.md。display プリセットは items デモを外した\n *   空配列から始まる)`
 	);
 
-	// union の縮小は「自分の1語だけ」を落とす形にする（他の remover の編集結果に
-	// 依存しない = `--dry-run`（＝書き込まないので連鎖しない）でも計画が出せる）。
-	cutMarked(NAV, 'nav: navItems の /items 行除去', 'items', '\t');
-	drop(NAV, 'nav: NavIconKey union から items 除去', `'items' | `);
-	drop(NAV, 'nav: NavLabelKey union から nav.items 除去', `'nav.items' | `);
-	drop(NAV_ICONS, 'navIcons: Package import 除去', `Package, `);
-	drop(NAV_ICONS, 'navIcons: items エントリ除去', `\titems: Package,\n`);
+	// ナビの items 項目は `resources` から導出される（ADR-0030 §8）ので、navigation.ts /
+	// navIcons.ts への items の編集は無い（ルート・定義・辞書を消すだけ）。
 	// grid の空状態だけ items 辞書を借りていた（パッケージ既定の日本語に戻す）。
 	drop(
 		I18N,

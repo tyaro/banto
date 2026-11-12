@@ -14,8 +14,17 @@ vi.mock('$app/paths', () => ({
 	resolve: (path: string) => `${state.base}/${path}`
 }));
 
-import { isPathActive, navItems, navSections, pageTitle, type AppPath } from './navigation';
+import {
+	isPathActive,
+	navItems,
+	navLabel,
+	navSections,
+	pageTitle,
+	type AppPath
+} from './navigation';
 import { navBadges } from './navBadges.svelte';
+import type { AppResourceDefinition } from './resource/types';
+import type { Component } from 'svelte';
 import * as m from '#lib/paraglide/messages.js';
 
 // Scaffold presets remove nav entries (items, dashboard, ...), so the cases below
@@ -40,8 +49,8 @@ describe.each(['', '/banto'])('base=%j', (base) => {
 	});
 
 	it('pageTitle resolves the entry title from a base-carrying pathname', () => {
-		expect(pageTitle(at(first.path))).toBe(m[first.labelKey]());
-		expect(pageTitle(at(`${first.path}/3`))).toBe(m[first.labelKey]());
+		expect(pageTitle(at(first.path))).toBe(navLabel(first));
+		expect(pageTitle(at(`${first.path}/3`))).toBe(navLabel(first));
 		expect(pageTitle(at('/nowhere'))).toBe('Banto');
 	});
 
@@ -53,14 +62,14 @@ describe.each(['', '/banto'])('base=%j', (base) => {
 				const label = resources.find(
 					(resource) => resource.name === entry.pageTitleResource
 				)?.label;
-				expect(pageTitle(at(path), routeId)).toBe(title(label ?? m[entry.labelKey]()));
-				expect(pageTitle(at(`${path}/`), routeId)).toBe(title(label ?? m[entry.labelKey]()));
-				expect(pageTitle(at(path))).toBe(m[entry.labelKey]());
-				expect(pageTitle(at(path), null)).toBe(m[entry.labelKey]());
+				expect(pageTitle(at(path), routeId)).toBe(title(label ?? navLabel(entry)));
+				expect(pageTitle(at(`${path}/`), routeId)).toBe(title(label ?? navLabel(entry)));
+				expect(pageTitle(at(path))).toBe(navLabel(entry));
+				expect(pageTitle(at(path), null)).toBe(navLabel(entry));
 				expect(pageTitle(at('/nowhere'), routeId)).toBe('Banto');
 				// Keep the route group, but choose an unconfigured static sibling.
 				const reportRoute = route.replace(/\/[^/]+$/, '/report') as RouteId;
-				expect(pageTitle(at(`${entry.path}/report`), reportRoute)).toBe(m[entry.labelKey]());
+				expect(pageTitle(at(`${entry.path}/report`), reportRoute)).toBe(navLabel(entry));
 
 				const resourceIndex = resources.findIndex(
 					(resource) => resource.name === entry.pageTitleResource
@@ -138,5 +147,106 @@ describe('navSections', () => {
 				false
 			);
 		}
+	});
+});
+
+// ADR-0030 §8: the entries for resources are derived from the resource definitions.
+// The module reads `resources` once at import, so each case mocks the array and
+// re-imports `./navigation` (independent of which scaffold preset the copy is).
+describe('navigation derived from resource definitions', () => {
+	const Icon = (() => {}) as unknown as Component;
+	const def = (
+		name: string,
+		nav: AppResourceDefinition['nav'],
+		path = `/${name}` as AppPath
+	): AppResourceDefinition => ({
+		name,
+		label: `${name} label`,
+		path,
+		nav,
+		schema: { fields: [] },
+		capabilities: { list: true }
+	});
+
+	async function load(defs: AppResourceDefinition[]) {
+		vi.resetModules();
+		vi.doMock('./banto/resources/index.js', () => ({ resources: defs }));
+		return import('./navigation');
+	}
+
+	afterEach(() => {
+		vi.doUnmock('./banto/resources/index.js');
+		vi.resetModules();
+	});
+
+	// The fixed pages differ by scaffold preset (display swaps the dashboard for
+	// /monitor), so read them from a copy with no resources instead of hard-coding.
+	const fixedPaths = async () => (await load([])).navItems.map((item) => item.path);
+	const fixedPublicPaths = async () => (await load([])).publicNavItems().map((item) => item.path);
+
+	it('lists nav resources in array order, right after the first fixed page', async () => {
+		const [home] = await fixedPaths();
+		const nav = await load([
+			def('alpha', { icon: Icon, label: () => 'Alpha nav' }),
+			def('hidden', false),
+			def('unset', undefined),
+			def('beta', { icon: Icon })
+		]);
+		const paths = nav.navItems.map((item) => item.path);
+		expect(paths.slice(0, 3)).toEqual([home, '/alpha', '/beta']);
+		expect(paths).not.toContain('/hidden');
+		expect(paths).not.toContain('/unset');
+		const [, alpha, beta] = nav.navItems;
+		expect(alpha.icon).toBe(Icon);
+		expect(nav.navLabel(alpha)).toBe('Alpha nav');
+		// label defaults to the resource label
+		expect(nav.navLabel(beta)).toBe('beta label');
+	});
+
+	it('carries badge / adminOnly / publicViewer from nav', async () => {
+		const fixedPublic = await fixedPublicPaths();
+		const nav = await load([
+			def('seen', { icon: Icon, badge: true, publicViewer: true }),
+			def('plain', { icon: Icon }),
+			def('secret', { icon: Icon, adminOnly: true })
+		]);
+		const by = (path: string) => nav.navItems.find((item) => item.path === path)!;
+		expect(by('/seen').badgeResource).toBe('seen');
+		expect(by('/plain').badgeResource).toBeUndefined();
+		expect(by('/secret').adminOnly).toBe(true);
+		const paths = (items: { path: string }[]) => items.map((item) => item.path);
+		const viewer = nav.navSections({ publicViewer: false, role: 'viewer' });
+		expect(paths(viewer.main)).toEqual(expect.arrayContaining(['/seen', '/plain']));
+		expect(paths(viewer.main)).not.toContain('/secret');
+		expect(paths(nav.navSections({ publicViewer: false, role: 'admin' }).admin)).toContain(
+			'/secret'
+		);
+		// viewer-public sessions see only publicViewer entries (the fixed public pages + 'seen')
+		const publicPaths = paths(nav.publicNavItems());
+		expect(publicPaths).toContain('/seen');
+		expect(publicPaths.filter((path) => path !== '/seen')).toEqual(fixedPublic);
+		expect(paths(nav.navSections({ publicViewer: true, role: 'viewer' }).main)).toEqual(
+			publicPaths
+		);
+	});
+
+	it('works with no resources (display preset): fixed pages only', async () => {
+		const nav = await load([]);
+		const paths = nav.navItems.map((item) => item.path);
+		expect(paths.length).toBeGreaterThan(0);
+		expect(paths).toContain('/settings');
+		expect(nav.navItems.every((item) => item.labelKey !== undefined)).toBe(true);
+		expect(nav.pageTitle('/nowhere')).toBe('Banto');
+	});
+
+	it('derives the create / edit page titles from the resource path', async () => {
+		const nav = await load([def('parts', { icon: Icon })]);
+		expect(nav.pageTitle('/parts', '/(app)/parts' as RouteId)).toBe('parts label');
+		expect(nav.pageTitle('/parts/new', '/(app)/parts/new' as RouteId)).toBe(
+			m['resource.createTitle']({ resource: 'parts label' })
+		);
+		expect(nav.pageTitle('/parts/7', '/(app)/parts/[id]' as RouteId)).toBe(
+			m['resource.editTitle']({ resource: 'parts label' })
+		);
 	});
 });

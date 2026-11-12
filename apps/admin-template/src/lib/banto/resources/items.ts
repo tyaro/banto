@@ -5,9 +5,10 @@
  * step 7) - copy it to `resources/<yours>.ts`, rewrite, register in
  * `resources/index.ts`, and delete this one when done.
  */
-import type { ResourceDefinition } from '@banto/admin-core';
+import { Package } from '@lucide/svelte';
 import type { FormSchema } from '@banto/forms';
 import * as m from '#lib/paraglide/messages.js';
+import { defineResource } from '#lib/resource/types.js';
 
 // Rust's ItemInput.price/.stock (apps/admin-template/core/src/items.rs) are
 // `i64`, so a fractional value must be rejected client-side too (not just
@@ -76,12 +77,19 @@ export const itemsSchema: FormSchema = {
 	]
 };
 
-export const itemsResource: ResourceDefinition = {
+export const itemsResource = defineResource({
 	name: 'items',
+	path: '/items',
+	nav: {
+		icon: Package,
+		label: () => m['nav.items'](),
+		publicViewer: true,
+		badge: true
+	},
 	get label() {
 		return m['items.resourceLabel']();
 	},
 	icon: '📦',
 	schema: itemsSchema,
 	capabilities: { list: true, create: true, edit: true, delete: true }
-};
+});
