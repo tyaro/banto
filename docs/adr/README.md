@@ -75,6 +75,7 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
 | [0027](0027-grid-error-reader.md)                   | セルエラーを局所オーバーレイで読み、参照と再試行を分ける                                                                                                                                        | Accepted                   |
 | [0028](0028-chrono-local-date.md)                   | アプリのローカル日付は `chrono`（`clock` のみ）で求める（ADR-0002 の例外）                                                                                                                      | Accepted                   |
 | [0029](0029-chrono-datetime-formatting.md)          | 日時の文字列変換は `banto-core` の 1 か所で `chrono`（feature なし）を使う（ADR-0002 の例外）                                                                                                   | Accepted                   |
+| [0030](0030-resource-page.md)                       | リソースの画面は app 層の共通部品 `ResourceListPage` / `ResourceDetail` で組み、ナビとコマンドはリソース定義から導出する（ルートは動的化しない）                                                | Proposed                   |
 
 ## ADR 化候補（未着手・バックフィルはしない）
 
@@ -86,4 +87,5 @@ conventions.md の各不変条件の背後にある判断は、対応する ADR 
   （template-scope §3.1）→ ADR-0009 と template-scope §4.2（2026-08-25
   追記）で実質記録済み。独立 ADR は起こさない
 - なぜリソースのルートを動的化せず「items をコピーする規約」にしたか
-  （recipes/add-resource.md、spec §14 決着）
+  （recipes/add-resource.md、spec §14 決着）→ ADR-0030（Proposed）で記録する。
+  動的化しない判断は維持し、「コピーする」部分を共通部品に置き換える
