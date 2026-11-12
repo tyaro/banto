@@ -17,10 +17,16 @@
 		icon?: UiIconComponent;
 		danger?: boolean;
 		disabled?: boolean;
+		/**
+		 * Opt-in single-choice item: when set (true or false) the item is a
+		 * `role="menuitemradio"` with `aria-checked`, and the chosen one shows
+		 * a check mark. Omit it for an ordinary action item.
+		 */
+		checked?: boolean;
 		onSelect: () => void;
 	}
 
-	let { label, icon: Icon, danger = false, disabled = false, onSelect }: Props = $props();
+	let { label, icon: Icon, danger = false, disabled = false, checked, onSelect }: Props = $props();
 
 	const menu = getMenuContext();
 
@@ -41,7 +47,8 @@
 <button
 	bind:this={itemEl}
 	type="button"
-	role="menuitem"
+	role={checked === undefined ? 'menuitem' : 'menuitemradio'}
+	aria-checked={checked === undefined ? undefined : checked}
 	tabindex="-1"
 	class="menu-item"
 	class:danger
@@ -49,6 +56,11 @@
 	aria-disabled={disabled ? 'true' : undefined}
 	onclick={handleClick}
 >
+	{#if checked !== undefined}
+		<svg class="check" class:on={checked} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+			<path d="M3 8.5l3.5 3.5L13 4.5" fill="none" stroke="currentColor" stroke-width="1.75" />
+		</svg>
+	{/if}
 	{#if Icon}
 		<Icon size={16} aria-hidden="true" />
 	{/if}
@@ -56,6 +68,17 @@
 </button>
 
 <style>
+	.check {
+		flex: none;
+		width: var(--banto-space-4);
+		height: var(--banto-space-4);
+		visibility: hidden;
+	}
+
+	.check.on {
+		visibility: visible;
+	}
+
 	.menu-item {
 		display: flex;
 		align-items: center;

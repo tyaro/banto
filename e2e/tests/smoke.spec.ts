@@ -26,7 +26,18 @@
  */
 import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
 import fs from 'node:fs';
+import { chooseItemsMode, expectItemsMode, type ItemsViewLabels } from '../items-view-mode';
 import { expectCheckOutageKeepsTheSession } from './session-check-outage';
+
+// items の「表示」メニュー（読み込み方の切り替え、#553）。
+const CLIENT_MODE: ItemsViewLabels = {
+	trigger: '表示',
+	item: '全件を読み込む（グループ化できる）'
+};
+const SERVER_MODE: ItemsViewLabels = {
+	trigger: '表示',
+	item: '少しずつ読み込む（大量データ向け）'
+};
 
 // #209: this ordinary account must not be confused with a synthetic session.
 const ADMIN_USERNAME = 'public';
@@ -848,11 +859,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// visible in the grid.
 	test('3e. items: client mode - saving a field other than category keeps a category-filtered row visible, no false exclusion notice', async () => {
 		await page.goto('/items');
-		await page.getByRole('button', { name: 'クライアント' }).click();
-		await expect(page.getByRole('button', { name: 'クライアント' })).toHaveAttribute(
-			'aria-pressed',
-			'true'
-		);
+		await chooseItemsMode(page, CLIENT_MODE);
+		await expectItemsMode(page, CLIENT_MODE, true);
 
 		await applyColumnFilter(page, 'カテゴリ', '緑茶');
 		const row = page.getByRole('row').filter({ hasText: '緑茶' }).first();
@@ -875,21 +883,15 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// Still visible under the same カテゴリ filter, and no false "この行
 		// は現在の絞り込み条件に当てはまりません" notice.
-		await expect(page.getByRole('button', { name: 'クライアント' })).toHaveAttribute(
-			'aria-pressed',
-			'true'
-		);
+		await expectItemsMode(page, CLIENT_MODE, true);
 		await expect(rowAfterHref()).toBeVisible();
 		await expect(page.getByText(/現在の絞り込み条件に当てはまりません/)).toHaveCount(0);
 
 		await clearColumnFilter(page, 'カテゴリ');
 		// Cleanup: leave the page in the same サーバー default later scenarios
 		// expect (mode is itself session-persisted, Issue #215).
-		await page.getByRole('button', { name: 'サーバー' }).click();
-		await expect(page.getByRole('button', { name: 'サーバー' })).toHaveAttribute(
-			'aria-pressed',
-			'true'
-		);
+		await chooseItemsMode(page, SERVER_MODE);
+		await expectItemsMode(page, SERVER_MODE, true);
 	});
 
 	// Issue #290: SvelteKit reuses the page component between two URLs of the
@@ -1028,12 +1030,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// popover (§5.8 promise 1 inside FilterPopover).
 	test('3g. items: 更新日 filters by a day range (between), Esc closes the calendar before the popover', async () => {
 		await page.goto('/items');
-		const serverMode = page.getByRole('button', { name: 'サーバー' });
-		// Before hydration a click does nothing: retry until it takes.
-		await expect(async () => {
-			await serverMode.click();
-			await expect(serverMode).toHaveAttribute('aria-pressed', 'true', { timeout: 1000 });
-		}).toPass();
+		// Before hydration a click does nothing: chooseItemsMode retries until it takes.
+		await chooseItemsMode(page, SERVER_MODE);
+		await expectItemsMode(page, SERVER_MODE, true);
 		const grid = page.getByRole('grid');
 		const dayCells = grid.locator('[data-cell-field="updatedAt"]');
 		await expect(dayCells.first()).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
