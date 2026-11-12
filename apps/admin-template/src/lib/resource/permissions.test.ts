@@ -35,6 +35,14 @@ describe('resourcePermissions', () => {
 		});
 	});
 
+	it('import needs both create and edit (CSV import inserts and updates)', () => {
+		expect(resourcePermissions({ capabilities: { create: true } }, 'admin').import).toBe(false);
+		expect(resourcePermissions({ capabilities: { edit: true } }, 'admin').import).toBe(false);
+		expect(
+			resourcePermissions({ capabilities: { create: true, edit: true } }, 'admin').import
+		).toBe(true);
+	});
+
 	it('export looks only at capabilities.list', () => {
 		expect(resourcePermissions({ capabilities: { create: true } }, 'admin').export).toBe(false);
 		expect(resourcePermissions({ capabilities: { list: true } }, 'viewer').export).toBe(true);

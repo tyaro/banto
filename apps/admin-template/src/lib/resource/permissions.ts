@@ -23,7 +23,8 @@ export interface ResourcePermissions {
 /**
  * Write operations need the definition's capability AND `canWrite(role)`
  * (default `canWriteResources`); export is a read and only needs `list`.
- * `import` follows `create` (the import creates rows).
+ * `import` needs both `create` and `edit`: a CSV import inserts new rows AND
+ * updates existing ones.
  */
 export function resourcePermissions(
 	definition: Pick<ResourceDefinition, 'capabilities'>,
@@ -36,7 +37,7 @@ export function resourcePermissions(
 		create: writable && caps.create === true,
 		edit: writable && caps.edit === true,
 		delete: writable && caps.delete === true,
-		import: writable && caps.create === true,
+		import: writable && caps.create === true && caps.edit === true,
 		export: caps.list === true
 	};
 }
