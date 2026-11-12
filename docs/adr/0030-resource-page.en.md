@@ -233,7 +233,7 @@ definition and routes. Both are measured in the stage 4 and 5 PRs and reported t
 - **Option B (rejected): a dynamic route `routes/(app)/[resource]/`.** The reason of the 2026-07-18 decision
   (magic users cannot read) remains. Per-resource injection turns into branching in the route, and `RouteId`-typed
   page titles, the viewer-public guard and scaffold's "delete the directory" stop working.
-- **Option C (rejected): a new package `@banto/resource-page`.** With zero inter-package imports (§4) it cannot use
+- **Option C (rejected): a new package `resource-page`.** With zero inter-package imports (§4) it cannot use
   grid, forms or ui; injecting everything means dozens of props and `messages`. It cannot hold a dictionary (§13).
   Derived apps cannot rewrite code inside node_modules.
 - **Option D (rejected): generate screens from a scaffold (the E-2 generator).** Generated code does not receive

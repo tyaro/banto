@@ -220,7 +220,7 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 - **案B（不採用）: 動的ルート `routes/(app)/[resource]/`。** 2026-07-18 の判断の理由（利用者が読み解けない
   魔法）がそのまま残る。リソースごとの差し込みがルートの分岐になり、`RouteId` の型のページ題、閲覧公開の
   ガード、scaffold の「ディレクトリを消せば外れる」がどれも効かなくなる。
-- **案C（不採用）: 新しいパッケージ `@banto/resource-page`。** パッケージ間 import ゼロ（§4）のもとでは
+- **案C（不採用）: 新しいパッケージ `resource-page`。** パッケージ間 import ゼロ（§4）のもとでは
   grid・forms・ui を使えず、すべてを注入にすると props と `messages` が数十個になる。辞書を持てない（§13）。
   派生アプリは node_modules の中を書き換えられない。
 - **案D（不採用）: 雛形からの生成（E-2 のジェネレータで画面も出す）。** 生成した後のコードには #555・#556 の
