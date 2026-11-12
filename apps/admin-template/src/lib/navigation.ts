@@ -24,8 +24,8 @@ export type NavLabelKey =
 
 /** Keys of the demo-only catalog entry (`NavItem.demoOnly`). Kept out of the unions above on purpose:
  *  scaffold's removers edit those unions by exact text (scripts/scaffold.mjs). */
-export type DemoNavIconKey = 'ui-demo';
-export type DemoNavLabelKey = 'nav.uiDemo';
+export type DemoNavIconKey = 'ui-demo' | 'chart-gallery';
+export type DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery';
 
 export interface NavItem {
 	path: AppPath;
@@ -86,6 +86,7 @@ const allNavItems: NavItem[] = [
 	// [scaffold:items] end
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
 	{ path: '/ui-demo', labelKey: 'nav.uiDemo', icon: 'ui-demo', demoOnly: true },
+	{ path: '/chart-gallery', labelKey: 'nav.chartGallery', icon: 'chart-gallery', demoOnly: true },
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },
 	{ path: '/settings', labelKey: 'nav.settings', icon: 'settings' }

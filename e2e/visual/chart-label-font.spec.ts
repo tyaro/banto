@@ -90,36 +90,47 @@ const scenarios: { name: string; apply: (page: Page) => Promise<void>; fontSize:
 	}
 ];
 
-for (const scenario of scenarios) {
-	test(`chart axis labels follow the type tokens: ${scenario.name}`, async ({ page }) => {
-		await page.setViewportSize({ width: 1440, height: 900 });
-		await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
-		await page.goto('/dashboard');
-		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
-		await expect(page.locator('svg.chart-svg').first()).toBeVisible();
+// The dashboard keeps the bar/line charts; the chart gallery holds the other chart types.
+const chartPages = [
+	{ path: '/dashboard', heading: 'ダッシュボード' },
+	{ path: '/chart-gallery', heading: 'チャート見本' }
+];
 
-		await expect.poll(async () => (await probe(page)).labels).toBeGreaterThan(0);
-		const before = await probe(page);
-		expect(before.fontSize).toBeCloseTo(11.2, 1);
-		expect(before.minLeftGap).toBeGreaterThanOrEqual(-0.5);
+for (const chartPage of chartPages)
+	for (const scenario of scenarios) {
+		test(`chart axis labels follow the type tokens: ${chartPage.path} ${scenario.name}`, async ({
+			page
+		}) => {
+			await page.setViewportSize({ width: 1440, height: 900 });
+			await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
+			await page.goto(chartPage.path);
+			await expect(page.getByRole('heading', { name: chartPage.heading })).toBeVisible();
+			await expect(page.locator('svg.chart-svg').first()).toBeVisible();
 
-		await scenario.apply(page);
-		await expect
-			.poll(async () => (await probe(page)).fontSize, { message: 'label font follows the token' })
-			.toBeCloseTo(scenario.fontSize, 1);
-		// Margins re-estimated from the measured size: the widest label fits ...
-		await expect
-			.poll(async () => (await probe(page)).minLeftGap, { message: 'a left axis label clipped' })
-			.toBeGreaterThanOrEqual(-0.5)
-			.catch(async (error) => {
-				throw new Error(`${error}\nworst: ${(await probe(page)).worst}`);
-			});
-		// ... and at least one chart's left margin grew with the font.
-		const after = await probe(page);
-		expect(after.untitled, 'a cut label without its full text').toBe(0);
-		const grown = Object.keys(before.anchors).filter(
-			(key) => key in after.anchors && after.anchors[key] > before.anchors[key]
-		);
-		expect(grown.length).toBeGreaterThan(0);
-	});
-}
+			await expect.poll(async () => (await probe(page)).labels).toBeGreaterThan(0);
+			const before = await probe(page);
+			expect(before.fontSize).toBeCloseTo(11.2, 1);
+			expect(before.minLeftGap).toBeGreaterThanOrEqual(-0.5);
+
+			await scenario.apply(page);
+			await expect
+				.poll(async () => (await probe(page)).fontSize, { message: 'label font follows the token' })
+				.toBeCloseTo(scenario.fontSize, 1);
+			// Margins re-estimated from the measured size: the widest label fits ...
+			await expect
+				.poll(async () => (await probe(page)).minLeftGap, { message: 'a left axis label clipped' })
+				.toBeGreaterThanOrEqual(-0.5)
+				.catch(async (error) => {
+					throw new Error(`${error}\nworst: ${(await probe(page)).worst}`);
+				});
+			// ... and at least one chart's left margin grew with the font.
+			const after = await probe(page);
+			expect(after.untitled, 'a cut label without its full text').toBe(0);
+			const grown = Object.keys(before.anchors).filter(
+				(key) => key in after.anchors && after.anchors[key] > before.anchors[key]
+			);
+			// The gallery's charts only have to stay unclipped (checked above); the
+			// margin growth is asserted on the dashboard's axis-labelled charts.
+			if (chartPage.path === '/dashboard') expect(grown.length).toBeGreaterThan(0);
+		});
+	}

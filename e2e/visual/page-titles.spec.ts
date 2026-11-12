@@ -20,6 +20,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		['/users', copy['nav.users']],
 		['/audit-log', copy['nav.auditLog']],
 		['/ui-demo', copy['nav.uiDemo']],
+		['/chart-gallery', copy['nav.chartGallery']],
 		['/settings/account', copy['nav.settings']]
 	];
 

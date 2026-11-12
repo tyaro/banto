@@ -120,10 +120,17 @@ Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップア
 ### `@banto/charts`（SVGチャート）
 
 `apps/admin-template/src/routes/(app)/dashboard/+page.svelte` の
-チャートデモ（トレンド/SPC系パネル）と `src/lib/components/DashboardPanel.svelte`・
-`src/lib/banto/dashboard.ts` の集計処理を削除。`items`
+チャートのカード（最初の `chart-grid`）とスタットタイルの `Sparkline`、
+`src/lib/components/DashboardPanel.svelte`・`src/lib/banto/dashboard.ts` の
+`@banto/charts` に依存する集計処理（`// --- M24 chart demo data` 以降と `GanttTask` の import）を削除。
+チャート見本のデモ専用ルート `src/routes/(app)/chart-gallery/` も丸ごと削除し、あわせて
+`src/lib/navigation.ts` の `allNavItems` の `/chart-gallery` 行と
+`DemoNavIconKey`（`'chart-gallery'`）・`DemoNavLabelKey`（`'nav.chartGallery'`）の語、
+`src/lib/components/navIcons.ts` の `ChartColumn` の import と `'chart-gallery'` の行、
+`messages/{ja,en}.json` の `chartGallery.*`・`nav.chartGallery` を外す。`items`
 自体は他機能（CSVエクスポート等）で使うため残してよい。
-`package.json` の `@banto/charts` 依存を外す。
+`package.json` の `@banto/charts` 依存を外す（外した後に `@banto/charts` を参照する
+ファイルが残らないこと）。
 
 ### Glassテーマ + Windows vibrancy（M12）
 
