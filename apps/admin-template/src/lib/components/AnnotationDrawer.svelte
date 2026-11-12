@@ -14,6 +14,8 @@
 
 	let { children }: { children: Snippet } = $props();
 
+	const overlayMessages = { overlayClose: () => m['common.close']() };
+
 	// Leaving the page must not leave the next page's drawer open.
 	onDestroy(() => (annotation.open = false));
 </script>
@@ -23,6 +25,7 @@
 		open={annotation.open}
 		title={m['annotation.title']()}
 		onclose={() => (annotation.open = false)}
+		messages={overlayMessages}
 	>
 		<div class="annotation-body" data-testid="annotation-body">
 			{@render children()}
