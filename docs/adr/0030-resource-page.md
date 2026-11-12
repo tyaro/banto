@@ -2,7 +2,7 @@
 
 > English: [0030-resource-page.en.md](0030-resource-page.en.md)
 
-- 状態: Proposed
+- 状態: Accepted（2026-11-13）
 - 日付: 2026-11-13
 - 関連: Issue #554 / [design-ux-review-2026-11](../reviews/design-ux-review-2026-11.md) E-1 /
   conventions §4・§5・§10・§13 / [template-scope](../template-scope.md) §3.1・§6 /
@@ -137,7 +137,7 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 **`<ResourceDetail resource={…} id={…}>`** — `id` が `null` なら新規、値があれば編集。`createFormResource` と
 `BantoForm`、未保存の確認、保存・削除、viewer の読み取り専用を持つ。差し込み口は `after`（フォームの下。
 添付パネルはここ）と `actions`。B-3（詳細を右ドロワーで開く）は、同じ部品を一覧のドロワーの中に置けるよう
-「ページの外枠に依存しない」形にしておくが、ドロワーを既定にする切替そのものは本 ADR の段に入れない（未決 4）。
+「ページの外枠に依存しない」形にしておくが、ドロワーを既定にする切替そのものは本 ADR の段に入れない（論点 4）。
 
 ### 5. 権限による出し分け
 
@@ -166,7 +166,7 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 ### 8. ナビとコマンドパレットの導出
 
 - `navigation.ts` は `resources` のうち `nav !== false` のものから項目を作り、ダッシュボードの直後に
-  `resources` の順で並べる（未決 8）。`pageTitles` の `/(app)/<name>/new`・`/(app)/<name>/[id]` は
+  `resources` の順で並べる（論点 8）。`pageTitles` の `/(app)/<name>/new`・`/(app)/<name>/[id]` は
   `resource.createTitle` / `resource.editTitle` で導出する。
 - `NavIconKey` / `NavLabelKey` の union と `NAV_ICONS` は**手書きの固定ページ（dashboard・tree・users など）
   だけ**のものに戻す。リソース由来の項目はアイコンの部品と文言の関数を定義から受け取る。
@@ -197,14 +197,14 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 
 | 段  | 内容                                                                                                                                                                                                                                                                                                                         | 規模の目安                       |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| 0   | 本 ADR（Proposed）と索引                                                                                                                                                                                                                                                                                                     | 文書のみ                         |
+| 0   | 本 ADR と索引                                                                                                                                                                                                                                                                                                                | 文書のみ                         |
 | 1   | ナビをリソース定義から導出。`AppResourceDefinition` の `path` と `nav` だけを入れ、items の定義に足す。`navigation.ts` の items 項目・union の 2 語・`Package` を消し、`removeItems` を直す。`navigation.test.ts` に導出・空・閲覧公開・ページ題のケース                                                                     | 小（±150 行）                    |
 | 2   | `resourcePermissions` と「<label>を新規作成」コマンド。純関数のテストと `commands.test.ts`                                                                                                                                                                                                                                   | 小（±120 行）                    |
 | 3   | `ResourceDetail` を切り出し、items の `[id]`・`new` を置き換える。添付は `after` snippet と `[scaffold:attachments]` の印。`removeAttachments` を直す。`verify:architecture` に「`lib/resource/` はオプションを import しない」と conventions §4 への追記                                                                    | 中（移動が主）                   |
 | 4   | `ResourceListPage` の骨格: 見出し・「表示」メニュー・列メニュー・新規作成・注釈・権限・2 つのグリッド（`ItemsServerGrid`/`ItemsClientGrid` を汎用化して移す）・#215 の復元・セルの編集と保存キュー・CSV 出力。CSV 取込は一時的に items のルートの snippet に残す。日報ボタンは `actions` snippet と `[scaffold:report]` の印 | 大（移動が主。差分の多くは移設） |
 | 5   | CSV 取込を `csv.import` で汎用化し、確認パネルを `lib/resource/` へ。add-resource ステップ 7〜9（日英）、template-scope §6 の 2026-07-18 の項を更新                                                                                                                                                                          | 中                               |
 
-段 0 が Accepted になるまで段 1 に着手しない（ADR の運用）。#556 の `ConfirmDialog` は段 3 の後に
+段 0（本 ADR）が Accepted になってから段 1 に着手する（ADR の運用）。#556 の `ConfirmDialog` は段 3 の後に
 `ResourceDetail` の削除へ 1 回入れれば全リソースに届く。#555 は段 4 の後に `ResourceListPage` へ入れる。
 
 **行数の見込み（控えめに）。** テンプレート自身の行数はほぼ変わらない（汎用部品へ移すだけで、汎用化の分だけ
@@ -242,21 +242,25 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
   `capabilities`）は変えず、関数・部品を持つ拡張は Web のレンダラ（app 層）に固有の拡張点として置く。
   `ResourceListPage` は Svelte の部品で、レンダラに依らない UI の DSL ではない（ADR-0009 §3）。
   template-scope §4.2（画面エディタを入れない）とも衝突しない — 定義はコードで、GUI の組み立てではない。
-- 汎用の文言のキーが `items.*` から `resource.*` に移るので、派生アプリの辞書に差分が出る（CHANGELOG に書く。未決 6）。
+- 汎用の文言のキーが `items.*` から `resource.*` に移るので、派生アプリの辞書に差分が出る（CHANGELOG に書く。論点 6 で minor）。
 - 外し方: 部品は app 層のコードなので、ルートのファイルに中身を書き戻せば外せる。
 
-## 未決事項（オーナーの判断を求める点）
+## 決めた論点（2026-11-13、オーナーが推奨どおりに承認）
 
-1. 置き場を app 層の `lib/resource/` にし、パッケージにしない（§1）。Issue のタイトルは `feat(admin-core)` だが、
-   admin-core は段 1〜5 で変えない。これでよいか。
-2. `resource` の prop に文字列の名前ではなく定義のオブジェクトを渡す（§4）。これでよいか。
-3. 定義が指定しないときの読み込み方の既定を server（ページング）にするか client にするか。items は今どおり
-   両方を持ち、「表示」メニューで切り替えるデモを続けるか。
-4. B-3（詳細を右ドロワーで開く）を既定にする時期。本 ADR の段ではページのまま（DOM 同等）にし、別の Issue に
-   するか、段 4 の後に段を足すか。
-5. admin-core の `ResourceDefinition.icon`（文字列。今はどこからも読まれない）を残すか、非推奨にするか。
-6. 汎用の文言を `resource.*` に移すことによる派生アプリの辞書の差分を、破壊的変更として扱うか（版番号を
-   major にするか minor にするか）。
-7. users・監査ログの画面を将来 `ResourceListPage` に載せるか（本 ADR では対象外）。
-8. リソース由来のナビ項目の位置を「ダッシュボードの直後、`resources` の順」に固定してよいか、`nav.order` を
-   持たせるか。
+1. **置き場:** app 層の `lib/resource/` にし、パッケージにしない（§1）。段 1〜5 で admin-core は変えない。
+   Issue のタイトルの `feat(admin-core)` は実装の PR では使わない。
+2. **prop の形:** `resource` には文字列の名前ではなく定義のオブジェクトを渡す（§4）。
+3. **読み込み方の既定:** 定義が `loadModes` を指定しないときは server（ページング）だけにする。件数が増えても
+   重くならない側を既定にする。items は今どおり両方を持ち、「表示」メニューで切り替えるデモを続ける。
+4. **B-3（詳細を右ドロワーで開く）:** 本 ADR の段には入れない。`ResourceDetail` はページの外枠に依存しない形に
+   しておき、ドロワーを既定にするかどうかは段 4 の後に別の Issue で決める。
+5. **`ResourceDefinition.icon`:** 削除しない（admin-core の公開 API の削除は major になるため）。doc コメントに
+   「画面では読まない。ナビのアイコンは app 層の `nav.icon` を使う」と書いて非推奨にする（段 1 で行う）。
+   削除は次に major を出すときに改めて判断する。
+6. **キーの移動の版番号:** minor とする。辞書はコピーしたテンプレート（CHANGELOG の B 節）にあり、`@banto/*` の
+   公開 API ではない。CHANGELOG の「消費側への注意」に移ったキーの一覧と取り込み方を書く（publishing.md の
+   2.x 以降の運用上の例外と同じ扱い）。
+7. **users・監査ログ:** 本 ADR の対象外のままにする。リソース定義（`capabilities` と スキーマ）を持たず、画面の
+   要件も違うため。載せたくなったら別の Issue にする。
+8. **ナビの位置:** 「ダッシュボードの直後、`resources` の配列の順」に固定し、`nav.order` は持たせない。
+   順は配列の並べ替えで変えられる。固定ページの間に挟みたい要望が出たら足す。

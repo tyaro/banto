@@ -2,7 +2,7 @@
 
 > 日本語: [0030-resource-page.md](0030-resource-page.md)
 
-- Status: Proposed
+- Status: Accepted (2026-11-13)
 - Date: 2026-11-13
 - Related: Issue #554 / [design-ux-review-2026-11](../reviews/design-ux-review-2026-11.md) E-1 /
   conventions §4, §5, §10, §13 / [template-scope](../template-scope.md) §3.1, §6 /
@@ -144,7 +144,7 @@ not snippets.
 `createFormResource` and `BantoForm`, the unsaved-changes guard, save/delete, and read-only for viewers.
 Snippets: `after` (below the form; the attachments panel goes here) and `actions`. For B-3 (open details in a
 right drawer) the component does not depend on the page frame so it can sit inside a list drawer, but switching
-the default to the drawer is not in this ADR's stages (open question 4).
+the default to the drawer is not in this ADR's stages (question 4).
 
 ### 5. Permission-based visibility
 
@@ -176,7 +176,7 @@ button title and the preview panel. Whether they also appear in the annotation i
 ### 8. Deriving navigation and the command palette
 
 - `navigation.ts` builds entries from the `resources` with `nav !== false`, placed right after the dashboard in
-  `resources` order (open question 8). `pageTitles` for `/(app)/<name>/new` and `/(app)/<name>/[id]` come from
+  `resources` order (question 8). `pageTitles` for `/(app)/<name>/new` and `/(app)/<name>/[id]` come from
   `resource.createTitle` / `resource.editTitle`.
 - The `NavIconKey` / `NavLabelKey` unions and `NAV_ICONS` go back to covering **only hand-written fixed pages**
   (dashboard, tree, users, …). Resource entries take their icon component and text function from the definition.
@@ -208,14 +208,14 @@ the screen DOM; if it does, regenerate the visual baselines by dispatching `visu
 
 | Stage | Content                                                                                                                                                                                                                                                                                                                                                                 | Rough size            |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| 0     | This ADR (Proposed) and the index                                                                                                                                                                                                                                                                                                                                       | docs only             |
+| 0     | This ADR and the index                                                                                                                                                                                                                                                                                                                                                  | docs only             |
 | 1     | Derive navigation from the resource definition. Add only `path` and `nav` of `AppResourceDefinition` and set them on items. Remove the items entry, two union words and `Package`; fix `removeItems`. Add derivation / empty / viewer-public / page-title cases to `navigation.test.ts`                                                                                 | small (±150 lines)    |
 | 2     | `resourcePermissions` and the "New <label>" command. Tests for the pure function and `commands.test.ts`                                                                                                                                                                                                                                                                 | small (±120 lines)    |
 | 3     | Extract `ResourceDetail`; replace items' `[id]` and `new`. Attachments via the `after` snippet and a `[scaffold:attachments]` marker; fix `removeAttachments`. Add the "`lib/resource/` imports no optional asset" rule to `verify:architecture` and amend conventions §4                                                                                               | medium (mostly moves) |
 | 4     | `ResourceListPage` skeleton: heading, "View" menu, columns menu, New, annotation, permissions, the two grids (`ItemsServerGrid`/`ItemsClientGrid` generalized and moved), #215 restore, cell editing and save queue, CSV export. CSV import temporarily stays in a snippet of the items route. Report button via the `actions` snippet and a `[scaffold:report]` marker | large (mostly moves)  |
 | 5     | Generalize CSV import through `csv.import` and move the preview panel into `lib/resource/`. Update add-resource steps 7–9 (ja/en), and the 2026-07-18 entry in template-scope §6                                                                                                                                                                                        | medium                |
 
-Do not start stage 1 until stage 0 is Accepted (ADR process). #556's `ConfirmDialog`, once inserted into
+Stage 1 starts once stage 0 (this ADR) is Accepted (ADR process). #556's `ConfirmDialog`, once inserted into
 `ResourceDetail`'s delete after stage 3, reaches every resource. #555 goes into `ResourceListPage` after stage 4.
 
 **Line-count expectations (conservative).** The template's own line count stays about the same (code moves into
@@ -259,19 +259,25 @@ definition and routes. Both are measured in the stage 4 and 5 PRs and reported t
   renderer-independent UI DSL (ADR-0009 §3). It also does not conflict with template-scope §4.2 (no screen
   editor) — the definition is code, not GUI assembly.
 - Generic text keys move from `items.*` to `resource.*`, which shows up as a diff in derived apps' dictionaries
-  (noted in the CHANGELOG; open question 6).
+  (noted in the CHANGELOG; question 6: minor).
 - How to remove: the components are app-layer code, so writing their content back into the route files removes them.
 
-## Open questions (for the owner)
+## Resolved questions (2026-11-13, approved by the owner as recommended)
 
-1. Place the components in the app layer `lib/resource/` rather than a package (§1). The Issue title says
-   `feat(admin-core)`, but admin-core does not change in stages 1–5. Is this acceptable?
-2. Pass the definition object, not the string name, as the `resource` prop (§4). Is this acceptable?
-3. Default load mode when the definition does not specify one: server (paging) or client? Should items keep both
-   and continue the "View" menu switching demo?
-4. When to make B-3 (details in a right drawer) the default. Keep pages (DOM-equivalent) in this ADR's stages and
-   open a separate Issue, or add a stage after stage 4?
-5. Keep admin-core's `ResourceDefinition.icon` (a string read by nothing today), or deprecate it?
-6. Treat the dictionary diff from moving generic text to `resource.*` as a breaking change (major or minor version)?
-7. Should the users and audit-log screens later move onto `ResourceListPage` (out of scope here)?
-8. Fix resource-derived nav entries "right after the dashboard, in `resources` order", or add `nav.order`?
+1. **Location:** the app layer `lib/resource/`, not a package (§1). admin-core does not change in stages 1–5.
+   Implementation PRs do not use the Issue title's `feat(admin-core)`.
+2. **Prop shape:** pass the definition object, not the string name, as `resource` (§4).
+3. **Default load mode:** when a definition does not set `loadModes`, use server (paging) only — the side that
+   stays light as row counts grow. items keeps both and continues the "View" menu switching demo.
+4. **B-3 (details in a right drawer):** not in this ADR's stages. `ResourceDetail` stays independent of the page
+   frame; whether to make the drawer the default is decided in a separate Issue after stage 4.
+5. **`ResourceDefinition.icon`:** not removed (removing admin-core public API would be major). Deprecate it with a
+   doc comment saying screens do not read it and navigation icons come from the app-layer `nav.icon` (stage 1).
+   Revisit removal at the next major release.
+6. **Version for the key move:** minor. The dictionary lives in the copied template (CHANGELOG section B), not in
+   the `@banto/*` public API. The CHANGELOG "Notes for consumers" lists the moved keys and how to take them in
+   (same treatment as the 2.x operational exception in publishing.md).
+7. **users and audit log:** stay out of scope. They have no resource definition (`capabilities` and schema) and
+   different screen requirements. Open a separate Issue if they should move later.
+8. **Navigation position:** fixed as "right after the dashboard, in `resources` array order"; no `nav.order`.
+   Reorder the array to change it. Add an order field only if someone needs to place a resource between fixed pages.

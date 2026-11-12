@@ -77,7 +77,7 @@ corresponding ADR exists, be traced from there.
 | [0027](0027-grid-error-reader.en.md)                   | Read cell errors in a local overlay and separate reading from retrying                                                                                                                                   | Accepted                   |
 | [0028](0028-chrono-local-date.en.md)                   | Get the app's local date with `chrono` (`clock` only) (exception to ADR-0002)                                                                                                                            | Accepted                   |
 | [0029](0029-chrono-datetime-formatting.en.md)          | Format dates and times in one place in `banto-core` with `chrono` (no features) (exception to ADR-0002)                                                                                                  | Accepted                   |
-| [0030](0030-resource-page.en.md)                       | Build resource screens from app-layer shared components `ResourceListPage` / `ResourceDetail`, and derive navigation and commands from the resource definition (routes stay non-dynamic)                 | Proposed                   |
+| [0030](0030-resource-page.en.md)                       | Build resource screens from app-layer shared components `ResourceListPage` / `ResourceDetail`, and derive navigation and commands from the resource definition (routes stay non-dynamic)                 | Accepted                   |
 
 ## ADR candidates (unstarted; do not backfill)
 
@@ -89,5 +89,5 @@ Raise one at a time when you next touch the decision (P4-7):
   (template-scope §3.1) → already effectively recorded by ADR-0009 and
   template-scope §4.2 (added 2026-08-25). No separate ADR will be raised.
 - Why we did not make resource routes dynamic but chose "a convention of copying
-  items" (recipes/add-resource.en.md, spec §14 resolution) → recorded by ADR-0030
-  (Proposed), which keeps routes non-dynamic and replaces the "copy" part with shared components
+  items" (recipes/add-resource.en.md, spec §14 resolution) → recorded by ADR-0030,
+  which keeps routes non-dynamic and replaces the "copy" part with shared components
