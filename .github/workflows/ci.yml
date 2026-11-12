@@ -389,6 +389,12 @@ jobs:
           BANTO_E2E_SERVERS: visual
         run: pnpm e2e:visual
 
+      # Demo-build-only UI (Issue #553): `vite dev` with VITE_BANTO_DEMO=1.
+      - name: Run demo-build suite
+        env:
+          BANTO_E2E_SERVERS: demo
+        run: pnpm e2e:demo
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

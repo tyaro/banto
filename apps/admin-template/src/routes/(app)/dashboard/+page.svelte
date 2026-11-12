@@ -46,6 +46,7 @@
 	import type { DraftSettleResult } from '@banto/forms';
 	import DashboardMemoField from '#lib/components/DashboardMemoField.svelte';
 	import DraftSettleDialog from '#lib/components/DraftSettleDialog.svelte';
+	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { PageHeader, LoadingState } from '@banto/ui';
 
 	const list = createListResource<Item>('items', {
@@ -391,7 +392,13 @@
 		hideTitle
 		title={m['nav.dashboard']()}
 		description={m['dashboard.summary']({ count: list.totalCount.toLocaleString() })}
-	/>
+	>
+		{#snippet actions()}
+			<AnnotationDrawer>
+				<p>{m['dashboard.aboutNote']({ count: list.totalCount.toLocaleString() })}</p>
+			</AnnotationDrawer>
+		{/snippet}
+	</PageHeader>
 
 	<div class="stat-row">
 		<section class="stat-tile">
@@ -426,11 +433,6 @@
 			</div>
 		</section>
 	</div>
-
-	<details class="about-demo">
-		<summary>{m['dashboard.aboutSummary']()}</summary>
-		<p class="note">{m['dashboard.aboutNote']({ count: list.totalCount.toLocaleString() })}</p>
-	</details>
 
 	{#if list.loading && list.rows.length === 0}
 		<LoadingState label={m['items.loadingData']()} />
@@ -589,27 +591,6 @@
 	/* "About this demo" collapsible (design.md §10): the long technical note
 	   used to sit at the top of the page, ahead of the KPIs/charts it
 	   describes. Closed by default. */
-	.about-demo {
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
-	}
-
-	.about-demo summary {
-		cursor: pointer;
-		color: var(--banto-text);
-		font-weight: 600;
-		font-size: var(--banto-font-size-md);
-	}
-
-	.about-demo summary:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	.note {
-		margin: var(--banto-space-2) 0 0;
-	}
-
 	/* KPI tiles (design.md §10): icon + label + tabular-nums value. Tile-only
 	   card (not SurfaceCard, spec §K3): same face/border/radius/shadow tokens
 	   without SurfaceCard's optional title/description header. */

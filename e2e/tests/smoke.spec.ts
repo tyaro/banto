@@ -1138,6 +1138,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const panel = page.locator('section.import-panel');
 		await expect(panel).toBeVisible();
 		await expect(panel.getByText('新規 11件 / 更新 1件 / エラー 0件（全12行）')).toBeVisible();
+		// Issue #553: the import rules sit in the confirmation panel itself
+		// (production build too, where the page-level annotation is gone).
+		await expect(panel.getByTestId('import-rules')).toContainText(
+			'1件でもエラーがあると全体が取り消されます'
+		);
 		await expect(panel.getByText('全12行中 先頭10行を表示')).toBeVisible();
 		const table = panel.getByRole('table', { name: '取込内容のプレビュー（先頭の行）' });
 		// header row + 10 shown rows (the 12-row file is cut at the limit)

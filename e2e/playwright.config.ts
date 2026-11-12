@@ -66,6 +66,13 @@ const PUBLIC_VIEWER_BASE_URL = `http://127.0.0.1:${PUBLIC_VIEWER_PORT}`;
 const VISUAL_PORT = 4173;
 const VISUAL_BASE_URL = `http://127.0.0.1:${VISUAL_PORT}`;
 
+// `demo` project (Issue #553): the same app as a DEMO build (`VITE_BANTO_DEMO=1`,
+// which `isDemoBuild()` reads at build time). The `visual` preview above is a
+// production-style build, so demo-only UI (the annotation drawer) needs its
+// own server: `vite dev` with the flag set, on its own port.
+const DEMO_PORT = 4174;
+const DEMO_BASE_URL = `http://127.0.0.1:${DEMO_PORT}`;
+
 // `SqliteConnectOptions::create_if_missing` (crates/banto-storage/src/
 // sqlite.rs) creates the DB *file* but not missing parent directories, so
 // the temp dir itself must exist before banto-serve starts.
@@ -92,12 +99,18 @@ const bantoServeBin = path.join(
  * `pnpm e2e*`) keeps all entries.
  */
 function selectWebServers<T extends { url?: string }>(servers: T[]): T[] {
-	if (process.env.BANTO_E2E_SERVERS !== 'visual') return servers;
-	const visual = servers.filter((s) => s.url === VISUAL_BASE_URL);
-	if (visual.length !== 1) {
-		throw new Error(`BANTO_E2E_SERVERS=visual: expected one webServer at ${VISUAL_BASE_URL}`);
-	}
-	return visual;
+	const wanted = process.env.BANTO_E2E_SERVERS;
+	if (wanted === undefined || wanted === '') return servers;
+	// Comma-separated names: `visual` (vite preview) and/or `demo` (vite dev, Issue #553).
+	const urls: Record<string, string> = { visual: VISUAL_BASE_URL, demo: DEMO_BASE_URL };
+	return wanted.split(',').map((name) => {
+		const url = urls[name.trim()];
+		const found = servers.filter((s) => s.url === url);
+		if (url === undefined || found.length !== 1) {
+			throw new Error(`BANTO_E2E_SERVERS=${wanted}: expected one webServer for "${name}"`);
+		}
+		return found[0];
+	});
 }
 
 export default defineConfig({
@@ -155,6 +168,12 @@ export default defineConfig({
 			name: 'public-viewer',
 			testDir: './tests-public-viewer',
 			use: { ...devices['Desktop Chrome'], baseURL: PUBLIC_VIEWER_BASE_URL }
+		},
+		// Demo-build-only UI (Issue #553), against `vite dev` with VITE_BANTO_DEMO=1.
+		{
+			name: 'demo',
+			testDir: './demo',
+			use: { ...devices['Desktop Chrome'], baseURL: DEMO_BASE_URL }
 		},
 		// Phase 0 visual regression + axe-core (visual-refresh-design.md §12).
 		// 1440x900 is the project-wide default viewport; individual specs
@@ -263,6 +282,19 @@ export default defineConfig({
 			// Same rationale as the banto-serve entry above - vite's startup
 			// banner records which host it actually bound.
 			stdout: 'pipe'
+		},
+		{
+			// Demo BUILD stand-in for the `demo` project: `isDemoBuild()` is
+			// `import.meta.env.VITE_BANTO_DEMO === '1'`, which `vite dev` reads
+			// from the environment at startup. Heavier to hydrate than a
+			// prebuilt preview, so specs open overlays inside `toPass()`.
+			command: `pnpm --filter admin-template dev --port ${DEMO_PORT} --strictPort --host 127.0.0.1`,
+			cwd: repoRoot,
+			url: DEMO_BASE_URL,
+			reuseExistingServer: !process.env.CI,
+			timeout: 120_000,
+			stdout: 'pipe',
+			env: { VITE_BANTO_DEMO: '1' }
 		}
 	])
 });
