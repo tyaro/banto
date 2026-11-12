@@ -158,6 +158,7 @@
   "items.exportedToPathClosed": "{count}件をエクスポートしました（{path}）",
   "items.importFailedCount": "インポートに失敗しました（{count}件のエラー）",
   "items.importSucceeded": "インポートしました（新規{created}件・更新{updated}件）",
+  "resource.createCommand": "{resource}を新規作成",
   "resource.createTitle": "{resource}を新規作成",
   "items.createTitle": "{resource}を新規作成",
   "resource.editTitle": "{resource}を編集",
