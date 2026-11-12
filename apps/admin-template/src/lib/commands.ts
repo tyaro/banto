@@ -18,7 +18,7 @@ import * as m from '#lib/paraglide/messages.js';
 import type { PaletteCommand } from '@banto/admin-core';
 import { logoutAndLeave } from './banto/logout.svelte';
 import { notifyLogoutOutcome } from './banto/logoutNotice';
-import { navItems, navSections, resolveAppPath, type NavItem } from './navigation';
+import { navItems, navLabel, navSections, resolveAppPath, type NavItem } from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
 
@@ -33,7 +33,7 @@ function isNavItemVisible(item: NavItem): boolean {
 function navigationCommands(): PaletteCommand[] {
 	return navItems.map((item) => ({
 		id: `nav.${item.path}`,
-		title: m[item.labelKey](),
+		title: navLabel(item),
 		group: m['commandPalette.groupNavigation'](),
 		keywords: [item.path],
 		// Spec M10 RBAC + viewer-public allowlist (ADR-0012): visible iff the

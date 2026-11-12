@@ -10,6 +10,11 @@ import { bindDefaultSessionProvider } from './sessionController.svelte';
 export interface ResourceDefinition {
 	name: string;
 	label: string;
+	/**
+	 * @deprecated The screens do not read this. Use the app layer's `nav.icon`
+	 * (`AppResourceDefinition`, apps/admin-template `lib/resource/types.ts`) for the
+	 * navigation icon. Kept (not removed) so the public API stays compatible.
+	 */
 	icon?: string;
 	/**
 	 * Schema-driven form definition (spec §7). Typed as `unknown` so

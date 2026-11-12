@@ -5,7 +5,7 @@
  * so registering here is all it takes for Tauri, LAN-browser, and demo mode
  * alike.
  */
-import type { ResourceDefinition } from '@banto/admin-core';
+import type { AppResourceDefinition } from '#lib/resource/types.js';
 // [scaffold:items] begin
 import { itemsResource } from './items';
 // [scaffold:items] end
@@ -14,4 +14,4 @@ import { itemsResource } from './items';
 // remover needs a `swapText` here, not a `cutRegion` delete - `resources`
 // must still be a valid (possibly empty) array afterwards:
 //   `[itemsResource]` -> `[]`
-export const resources: ResourceDefinition[] = [itemsResource];
+export const resources: AppResourceDefinition[] = [itemsResource];

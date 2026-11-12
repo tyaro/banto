@@ -12,8 +12,14 @@
 	 */
 	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
-	import { isPathActive, navSections, resolveAppPath, type AppPath } from '#lib/navigation.js';
-	import { NAV_ICONS } from './navIcons';
+	import {
+		isPathActive,
+		navLabel,
+		navSections,
+		resolveAppPath,
+		type AppPath
+	} from '#lib/navigation.js';
+	import { navIcon } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
@@ -85,17 +91,17 @@
 
 	<nav class="nav-section" aria-label={m['shell.mainNav']()}>
 		{#each mainItems as item (item.path)}
-			{@const Icon = NAV_ICONS[item.icon]}
+			{@const Icon = navIcon(item.icon)}
 			{@const badgeCount = navBadges.count(item.path)}
 			<a
 				href={resolveAppPath(item.path)}
 				class="nav-item"
 				class:active={isActive(item.path)}
 				aria-current={isActive(item.path) ? 'page' : undefined}
-				title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
+				title={settings.sidebarCollapsed ? navLabel(item) : undefined}
 			>
 				<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-				<span class="label">{m[item.labelKey]()}</span>
+				<span class="label">{navLabel(item)}</span>
 				{#if badgeCount > 0}
 					<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
 						>{badgeText(badgeCount)}</span
@@ -110,17 +116,17 @@
 		<nav class="nav-section" aria-label={m['shell.adminNav']()}>
 			<p class="section-heading" aria-hidden="true">{m['shell.adminHeading']()}</p>
 			{#each adminItems as item (item.path)}
-				{@const Icon = NAV_ICONS[item.icon]}
+				{@const Icon = navIcon(item.icon)}
 				{@const badgeCount = navBadges.count(item.path)}
 				<a
 					href={resolveAppPath(item.path)}
 					class="nav-item"
 					class:active={isActive(item.path)}
 					aria-current={isActive(item.path) ? 'page' : undefined}
-					title={settings.sidebarCollapsed ? m[item.labelKey]() : undefined}
+					title={settings.sidebarCollapsed ? navLabel(item) : undefined}
 				>
 					<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-					<span class="label">{m[item.labelKey]()}</span>
+					<span class="label">{navLabel(item)}</span>
 					{#if badgeCount > 0}
 						<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
 							>{badgeText(badgeCount)}</span
