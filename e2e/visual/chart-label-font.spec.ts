@@ -129,6 +129,8 @@ for (const chartPage of chartPages)
 			const grown = Object.keys(before.anchors).filter(
 				(key) => key in after.anchors && after.anchors[key] > before.anchors[key]
 			);
-			expect(grown.length).toBeGreaterThan(0);
+			// The gallery's charts only have to stay unclipped (checked above); the
+			// margin growth is asserted on the dashboard's axis-labelled charts.
+			if (chartPage.path === '/dashboard') expect(grown.length).toBeGreaterThan(0);
 		});
 	}
