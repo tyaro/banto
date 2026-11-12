@@ -179,7 +179,13 @@ describe('navigation derived from resource definitions', () => {
 		vi.resetModules();
 	});
 
-	it('lists nav resources in array order, right after the dashboard', async () => {
+	// The fixed pages differ by scaffold preset (display swaps the dashboard for
+	// /monitor), so read them from a copy with no resources instead of hard-coding.
+	const fixedPaths = async () => (await load([])).navItems.map((item) => item.path);
+	const fixedPublicPaths = async () => (await load([])).publicNavItems().map((item) => item.path);
+
+	it('lists nav resources in array order, right after the first fixed page', async () => {
+		const [home] = await fixedPaths();
 		const nav = await load([
 			def('alpha', { icon: Icon, label: () => 'Alpha nav' }),
 			def('hidden', false),
@@ -187,7 +193,7 @@ describe('navigation derived from resource definitions', () => {
 			def('beta', { icon: Icon })
 		]);
 		const paths = nav.navItems.map((item) => item.path);
-		expect(paths.slice(0, 3)).toEqual(['/dashboard', '/alpha', '/beta']);
+		expect(paths.slice(0, 3)).toEqual([home, '/alpha', '/beta']);
 		expect(paths).not.toContain('/hidden');
 		expect(paths).not.toContain('/unset');
 		const [, alpha, beta] = nav.navItems;
@@ -198,6 +204,7 @@ describe('navigation derived from resource definitions', () => {
 	});
 
 	it('carries badge / adminOnly / publicViewer from nav', async () => {
+		const fixedPublic = await fixedPublicPaths();
 		const nav = await load([
 			def('seen', { icon: Icon, badge: true, publicViewer: true }),
 			def('plain', { icon: Icon }),
@@ -214,19 +221,21 @@ describe('navigation derived from resource definitions', () => {
 		expect(paths(nav.navSections({ publicViewer: false, role: 'admin' }).admin)).toContain(
 			'/secret'
 		);
-		// viewer-public sessions see only publicViewer entries (dashboard + 'seen')
-		expect(paths(nav.publicNavItems())).toEqual(['/dashboard', '/seen']);
-		expect(paths(nav.navSections({ publicViewer: true, role: 'viewer' }).main)).toEqual([
-			'/dashboard',
-			'/seen'
-		]);
+		// viewer-public sessions see only publicViewer entries (the fixed public pages + 'seen')
+		const publicPaths = paths(nav.publicNavItems());
+		expect(publicPaths).toContain('/seen');
+		expect(publicPaths.filter((path) => path !== '/seen')).toEqual(fixedPublic);
+		expect(paths(nav.navSections({ publicViewer: true, role: 'viewer' }).main)).toEqual(
+			publicPaths
+		);
 	});
 
 	it('works with no resources (display preset): fixed pages only', async () => {
 		const nav = await load([]);
 		const paths = nav.navItems.map((item) => item.path);
-		expect(paths[0]).toBe('/dashboard');
+		expect(paths.length).toBeGreaterThan(0);
 		expect(paths).toContain('/settings');
+		expect(nav.navItems.every((item) => item.labelKey !== undefined)).toBe(true);
 		expect(nav.pageTitle('/nowhere')).toBe('Banto');
 	});
 
