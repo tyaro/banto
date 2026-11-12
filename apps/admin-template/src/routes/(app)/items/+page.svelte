@@ -46,6 +46,8 @@
 		StatusBadge,
 		type StatusBadgeVariant
 	} from '@banto/ui';
+	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
+	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import ItemsClientGrid from './ItemsClientGrid.svelte';
 	import ItemsServerGrid from './ItemsServerGrid.svelte';
 	import {
@@ -753,6 +755,7 @@
 				<button
 					type="button"
 					class="banto-btn banto-btn--secondary"
+					title={m['items.importRules']()}
 					onclick={handleImportButtonClick}
 				>
 					<Upload size={16} aria-hidden="true" />
@@ -775,10 +778,19 @@
 					{m['items.create']()}
 				</button>
 			{/if}
+			<AnnotationButton />
 		{/snippet}
 	</PageHeader>
 
-	<p class="note">{m['items.note']()}</p>
+	<!-- At the page root, not in PageHeader's actions: the header is a
+	     containing block for fixed descendants (annotation.svelte.ts). -->
+	<AnnotationDrawer>
+		<p>{m['items.annotationEdit']()}</p>
+		<p>{m['items.annotationMode']()}</p>
+		<p>{m['items.annotationGroup']()}</p>
+		<p>{m['items.annotationExport']()}</p>
+		<p>{m['items.importRules']()}</p>
+	</AnnotationDrawer>
 
 	<!-- Issue #215: the row just saved may no longer match the filter the
 	     user still has active (restored from this session, above). Never
@@ -811,6 +823,7 @@
 				</p>
 			{:else}
 				{@const errorRows = importPreview.rows.filter((row) => row.errors.length > 0)}
+				<p class="panel-text muted" data-testid="import-rules">{m['items.importRules']()}</p>
 				{@const createCount = importPreview.rows.filter((row) => row.id === undefined).length}
 				{@const updateCount = importPreview.rows.filter((row) => row.id !== undefined).length}
 				<p class="panel-text summary">
@@ -996,13 +1009,6 @@
 		.new-item-btn {
 			order: -1;
 		}
-	}
-
-	.note {
-		flex: 0 0 auto;
-		margin: 0 0 var(--banto-space-3);
-		color: var(--banto-text-muted);
-		font-size: var(--banto-font-size-sm);
 	}
 
 	/* Issue #215: same info-tint idiom as the import panel's success/warning/
