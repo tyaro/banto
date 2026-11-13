@@ -46,7 +46,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		await expect(page.getByLabel(copy['settings.currentPassword'])).toBeVisible();
 		await page.goto('/items');
 		await expect(
-			page.getByRole('button', { name: copy['items.create'], exact: true })
+			page.getByRole('button', { name: copy['resource.create'], exact: true })
 		).toBeVisible();
 		await page.goto('/items/new');
 		await expect(page.getByRole('main').locator('.page-header')).toHaveCount(0);

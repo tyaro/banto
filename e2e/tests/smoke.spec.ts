@@ -664,7 +664,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Edit 1: price still satisfies both filters (name unaffected, price
 		// 850 >= 500) - the row must still be there, under the same filters
 		// and sort, AND marked as the one just worked on (rowClass
-		// `items-row-last-opened`, +page.svelte).
+		// `resource-row-last-opened`, ResourceListPage.svelte).
 		await openLink.click();
 		await expect(page).toHaveURL(itemUrl);
 		await page.getByLabel('価格').fill('850');
@@ -673,7 +673,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'descending');
 		await expect(row).toBeVisible();
-		await expect(row).toHaveClass(/items-row-last-opened/);
+		await expect(row).toHaveClass(/resource-row-last-opened/);
 		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
@@ -1498,7 +1498,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			'aria-sort',
 			'none'
 		);
-		await expect(page.locator('.items-row-last-opened')).toHaveCount(0);
+		await expect(page.locator('.resource-row-last-opened')).toHaveCount(0);
 
 		// M20 attachments (attachments-plan §2.1: "閲覧 = viewer 以上、追加/削除 = editor
 		// 以上"): open any seeded demo item (the grid always has 1,000 rows,
@@ -1555,7 +1555,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(first.getByRole('heading', { name: '商品を編集' })).toBeVisible();
 			await first.goBack();
 			await expect(first).toHaveURL(/\/items$/);
-			await expect(first.locator('.items-row-last-opened')).toHaveCount(1);
+			await expect(first.locator('.resource-row-last-opened')).toHaveCount(1);
 			const savedState = () =>
 				first.evaluate(() =>
 					Object.keys(sessionStorage)
@@ -1595,7 +1595,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			).toHaveValue('');
 			await first.keyboard.press('Escape');
 			await expect(firstPrice).toHaveAttribute('aria-sort', 'none');
-			await expect(first.locator('.items-row-last-opened')).toHaveCount(0);
+			await expect(first.locator('.resource-row-last-opened')).toHaveCount(0);
 			expect(await savedState(), "the admin's search term is gone").not.toContain('茶');
 		} finally {
 			await context.close();

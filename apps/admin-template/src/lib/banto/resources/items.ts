@@ -8,7 +8,8 @@
 import { Package } from '@lucide/svelte';
 import type { FormSchema } from '@banto/forms';
 import * as m from '#lib/paraglide/messages.js';
-import { defineResource } from '#lib/resource/types.js';
+import { defineResource, type ResourceRow } from '#lib/resource/types.js';
+import { exportCsvToFolder } from '#lib/banto/itemsAdmin.js';
 
 // Rust's ItemInput.price/.stock (apps/admin-template/core/src/items.rs) are
 // `i64`, so a fractional value must be rejected client-side too (not just
@@ -77,9 +78,77 @@ export const itemsSchema: FormSchema = {
 	]
 };
 
+/**
+ * M5 Phase B (spec §4.3) grouping demo: the client grid's rows get a derived
+ * `category` field (the item name's first whitespace token, e.g. "緑茶
+ * 500ml" -> "緑茶"), so the group-by select has a column worth grouping by.
+ * `Item` itself (and the server grid) stay untouched - this is purely a
+ * client-mode presentation concern. ResourceListPage also runs the "did this
+ * save fall outside the restored filters?" check through it (Issue #215/#255),
+ * so a category filter never reports a false "excluded".
+ */
+function toItemRow(row: ResourceRow): ResourceRow {
+	const name = String(row.name ?? '');
+	return { ...row, category: name.split(/\s+/)[0] ?? name };
+}
+
 export const itemsResource = defineResource({
 	name: 'items',
 	path: '/items',
+	description: () => m['items.description'](),
+	list: {
+		// Both, as the demo of the "View" menu's switch (a new resource gets
+		// `server` only by default, ADR-0030 decision 3).
+		loadModes: ['client', 'server'],
+		columns: {
+			name: { width: 260 },
+			price: { width: 120, format: (value) => `¥${(value as number).toLocaleString()}` },
+			stock: { width: 100 },
+			updatedAt: { width: 140 }
+		},
+		groupBy: [
+			{ field: 'category', label: () => m['items.groupCategory']() },
+			{ field: 'updatedAt', label: () => m['items.fieldUpdatedAt']() }
+		],
+		client: {
+			toRow: toItemRow,
+			// The client grid gets the derived 「カテゴリ」 column plus
+			// per-column aggregates (spec §4.3).
+			columns: (columns) => {
+				const byId = (id: string) => columns.find((column) => column.id === id)!;
+				return [
+					byId('open'),
+					{ ...byId('id'), aggregate: 'count' },
+					byId('name'),
+					{
+						id: 'category',
+						header: m['items.groupCategory'](),
+						accessor: 'category',
+						width: 140,
+						filterable: true,
+						filterType: 'text',
+						groupable: true
+					},
+					{ ...byId('price'), aggregate: 'avg' },
+					{ ...byId('stock'), aggregate: 'sum' },
+					byId('updatedAt')
+				];
+			}
+		}
+	},
+	csv: {
+		// Desktop: write into the app's `exports/` folder (WebView2 has no save
+		// dialog for `<a download>`). A wrapper, not the bare function: this
+		// module and itemsAdmin.ts sit on an import cycle through setup.ts.
+		export: { toFolder: (csv, filename) => exportCsvToFolder(csv, filename) }
+	},
+	demoNotes: () => [
+		m['items.annotationEdit'](),
+		m['items.annotationMode'](),
+		m['items.annotationGroup'](),
+		m['items.annotationExport'](),
+		m['items.importRules']()
+	],
 	nav: {
 		icon: Package,
 		label: () => m['nav.items'](),

@@ -213,6 +213,17 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 定義ファイル（100〜150 行）とルート 3 本（各 10〜40 行）程度になる見込み。items の固有のコードは定義と
 ルートに 300〜400 行ほど残る見込み。どちらも段 4・5 の PR で実測して本文に書く。
 
+**段 4 の実測（2026-11-13）。** 一覧の部品は `lib/resource/` に 1,324 行（`ResourceListPage.svelte` 691・
+`ResourceServerGrid.svelte` 263・`ResourceClientGrid.svelte` 161・`rowSaveQueue.ts` 84・`listState.ts` 68・
+`columns.ts` 57。テストを除く）になり、`types.ts` が 71 行増えた。items の一覧はルート一式 1,691 行
+（`+page.svelte` 1,191・グリッド 2 本 391・`rowSaveQueue.ts` 84・`itemRow.ts` 25）から、ルート 555 行と定義の
+増分 69 行（`items.ts` 95 → 164）になった。ルート 555 行のうち約 510 行は段 5 で部品へ移す CSV 取込で、それを
+除くとルートは 50 行弱。テンプレート全体の一覧まわりは約 1,790 行から約 2,110 行に**増えた**（doc コメントと
+汎用化の型の分。見込みの「ほぼ変わらない」より多い）。2 本目のリソースが CSV 取込なし・server だけで書く量は、
+定義が 60〜100 行（items から client のグループ化の見本 約 55 行を除いた量）、ルートが一覧 10 行前後・`[id]` と
+`new` が各 20〜30 行で、合わせて 150 行前後になる。items の固有のコードは今 797 行（定義 164・ルート 3 本 633）
+で、段 5 で取込を移した後に改めて測る。
+
 ## 検討した代替案
 
 - **案A（採用）: app 層の共通部品 ＋ 薄いルート ＋ app 層の定義の拡張。** パッケージ間 import の制約に触れず、

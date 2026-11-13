@@ -225,6 +225,18 @@ write**: today about 1,950 lines copied and rewritten, expected to become a defi
 three routes (10–40 lines each). About 300–400 lines of items-specific code are expected to remain in its
 definition and routes. Both are measured in the stage 4 and 5 PRs and reported there.
 
+**Stage 4 measurements (2026-11-13).** The list parts in `lib/resource/` are 1,324 lines (`ResourceListPage.svelte`
+691, `ResourceServerGrid.svelte` 263, `ResourceClientGrid.svelte` 161, `rowSaveQueue.ts` 84, `listState.ts` 68,
+`columns.ts` 57; tests excluded), and `types.ts` grew by 71 lines. The items list went from a 1,691-line route set
+(`+page.svelte` 1,191, the two grids 391, `rowSaveQueue.ts` 84, `itemRow.ts` 25) to a 555-line route plus 69 more
+lines in the definition (`items.ts` 95 → 164). About 510 of the route's 555 lines are the CSV import that stage 5
+moves into the component; without it the route is under 50 lines. The template's own list code **grew** from about
+1,790 to about 2,110 lines (doc comments and the generic types; more than the "about the same" expected). A second
+resource without CSV import, server mode only, now writes a 60–100-line definition (items minus its ~55-line client
+grouping demo), a list route of about 10 lines and `[id]` / `new` routes of 20–30 lines each: about 150 lines in
+total. Items-specific code is 797 lines today (definition 164, the three routes 633); it is measured again after
+stage 5 moves the import.
+
 ## Alternatives considered
 
 - **Option A (chosen): app-layer shared components + thin routes + an app-layer definition extension.** Does not

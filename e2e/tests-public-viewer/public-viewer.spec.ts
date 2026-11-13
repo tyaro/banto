@@ -322,7 +322,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(page.getByRole('heading', { name: '商品を編集' })).toBeVisible();
 		await page.goBack();
 		await expect(page).toHaveURL(/\/items$/);
-		await expect(page.locator('.items-row-last-opened')).toHaveCount(1);
+		await expect(page.locator('.resource-row-last-opened')).toHaveCount(1);
 
 		// End this account's sessions from inside the session itself: a
 		// password reset (to the same value) bumps the account's auth epoch
@@ -361,7 +361,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 				page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 			).toHaveValue('');
 			await page.keyboard.press('Escape');
-			await expect(page.locator('.items-row-last-opened')).toHaveCount(0);
+			await expect(page.locator('.resource-row-last-opened')).toHaveCount(0);
 			const saved = await page.evaluate(() =>
 				Object.keys(sessionStorage)
 					.filter((key) => key.startsWith('banto.listView.'))

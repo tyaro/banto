@@ -20,7 +20,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await page.addInitScript((locale) => localStorage.setItem('banto.locale', locale), locale);
 			await page.goto('/items');
 			await chooseItemsMode(page, {
-				trigger: copy['items.viewMenu'],
+				trigger: copy['resource.viewMenu'],
 				item: copy[`items.mode${mode}`]
 			});
 			const grid = page.getByRole('grid');
