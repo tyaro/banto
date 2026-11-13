@@ -140,6 +140,8 @@ export interface SnapshotListRequest {
 	pagination: Pagination;
 	sort: SortState[];
 	filters: FilterState[];
+	/** The quick-search term (`ListParams.search`, #555), present only when set. */
+	search?: string;
 	/**
 	 * The generation's boundary, or `null` for the request that starts a
 	 * generation (the server picks the boundary and returns it).
