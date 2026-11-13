@@ -44,59 +44,9 @@ body {
 	animation-duration: var(--banto-duration-slow);
 }
 
-/* Common classes (visual-refresh-design.md §3.1). No Button/Card wrapper
-   component - these cover the recurring markup instead. Values are tokens
-   only, no raw literals other than the fixed white on-danger text. */
-.banto-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--banto-space-2);
-	height: var(--banto-control-height);
-	padding: 0 var(--banto-space-4);
-	border-radius: var(--banto-radius-md);
-	border: var(--banto-border-width) solid transparent;
-	font: inherit;
-	color: var(--banto-text);
-	cursor: pointer;
-	transition: background var(--banto-duration-fast) var(--banto-ease-out);
-}
-.banto-btn--primary {
-	background: var(--banto-primary-solid);
-	color: var(--banto-on-solid);
-}
-.banto-btn--primary:hover {
-	background: var(--banto-primary-solid-hover);
-}
-.banto-btn--secondary {
-	background: var(--banto-surface);
-	border-color: var(--banto-border-strong);
-}
-.banto-btn--secondary:hover {
-	background: var(--banto-surface-hover);
-}
-.banto-btn--ghost {
-	background: transparent;
-	color: var(--banto-text-muted);
-}
-.banto-btn--ghost:hover {
-	background: var(--banto-surface-hover);
-}
-.banto-btn--danger {
-	background: var(--banto-danger-solid);
-	color: #ffffff;
-}
-.banto-btn--danger:hover {
-	background: var(--banto-danger-solid-hover);
-}
-.banto-btn:focus-visible {
-	outline: none;
-	box-shadow: var(--banto-focus-ring);
-}
-.banto-btn:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
-}
-
+/* Common classes (visual-refresh-design.md §3.1). Values are tokens only.
+   .banto-btn lives in @banto/theme (banto.css) since #556; @banto/ui has the
+   <Button> that renders it. */
 .banto-input {
 	height: var(--banto-control-height);
 	padding: 0 var(--banto-space-2);

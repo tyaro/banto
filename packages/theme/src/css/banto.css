@@ -658,3 +658,112 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 		padding-bottom: calc(var(--banto-space-2) + var(--banto-border-width-strong));
 	}
 }
+
+/* Buttons (visual-refresh-design.md §3.1). Common classes so a page can write
+   the markup itself; @banto/ui's <Button> renders exactly these. Variants:
+   --primary / --secondary / --ghost / --danger; --sm is the compact size. */
+.banto-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--banto-space-2);
+	height: var(--banto-control-height);
+	padding: 0 var(--banto-space-4);
+	border-radius: var(--banto-radius-md);
+	border: var(--banto-border-width) solid transparent;
+	font: inherit;
+	color: var(--banto-text);
+	cursor: pointer;
+	transition: background var(--banto-duration-fast) var(--banto-ease-out);
+}
+.banto-btn--sm {
+	height: var(--banto-control-height-sm);
+	padding: 0 var(--banto-space-3);
+	font-size: var(--banto-font-size-md);
+}
+.banto-btn--primary {
+	background: var(--banto-primary-solid);
+	color: var(--banto-on-solid);
+}
+.banto-btn--primary:hover {
+	background: var(--banto-primary-solid-hover);
+}
+.banto-btn--secondary {
+	background: var(--banto-surface);
+	border-color: var(--banto-border-strong);
+}
+.banto-btn--secondary:hover {
+	background: var(--banto-surface-hover);
+}
+.banto-btn--ghost {
+	background: transparent;
+	color: var(--banto-text-muted);
+}
+.banto-btn--ghost:hover {
+	background: var(--banto-surface-hover);
+}
+.banto-btn--danger {
+	background: var(--banto-danger-solid);
+	color: var(--banto-on-danger-solid);
+}
+.banto-btn--danger:hover {
+	background: var(--banto-danger-solid-hover);
+}
+.banto-btn:focus-visible {
+	outline: none;
+	box-shadow: var(--banto-focus-ring);
+}
+.banto-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* Busy state (<Button loading>): the label stays in the same grid cell as the
+   spinner and is only made transparent, so the button keeps the width of its
+   label (no jump) and the label is still read out. */
+.banto-btn--loading {
+	display: inline-grid;
+	grid-template-areas: 'stack';
+	place-items: center;
+}
+.banto-btn--loading > * {
+	grid-area: stack;
+}
+.banto-btn--loading:disabled {
+	opacity: 0.7;
+	cursor: progress;
+}
+.banto-btn--loading > .banto-btn__content {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--banto-space-2);
+	opacity: 0;
+}
+.banto-btn__spinner {
+	width: 1em;
+	height: 1em;
+	box-sizing: border-box;
+	border: var(--banto-border-width-strong) solid currentColor;
+	border-inline-end-color: transparent;
+	border-radius: 50%;
+	/* Ambient loop, deliberately not an interaction duration token (those
+	   drop to 0ms under reduced motion, which would freeze a rotating
+	   indicator at an arbitrary angle). Reduced motion swaps it for a pulse. */
+	animation: banto-btn-spin 0.8s linear infinite;
+}
+@keyframes banto-btn-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@keyframes banto-btn-pulse {
+	50% {
+		opacity: 0.35;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.banto-btn__spinner {
+		animation: banto-btn-pulse 1.6s ease-in-out infinite;
+		border-inline-end-color: currentColor;
+	}
+}

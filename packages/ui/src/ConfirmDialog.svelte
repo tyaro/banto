@@ -23,6 +23,7 @@
 	 * form, use `createConfirmStore()` + `ConfirmHost` (confirm.svelte.ts).
 	 */
 	import { tick, type Snippet } from 'svelte';
+	import Button from './Button.svelte';
 	import OverlayPanel from './OverlayPanel.svelte';
 	import { defaultUiMessages, type UiMessages } from './messages';
 
@@ -157,23 +158,16 @@
 			</div>
 		{/if}
 		<div class="actions">
-			<button
-				type="button"
-				class="button button--secondary"
+			<Button
+				variant="secondary"
 				data-confirm-initial={requireText === undefined ? '' : undefined}
 				onclick={oncancel}
 			>
 				{cancelLabel ?? t.confirmCancel()}
-			</button>
-			<button
-				type="submit"
-				class="button"
-				class:button--danger={danger}
-				class:button--primary={!danger}
-				disabled={!matches}
-			>
+			</Button>
+			<Button type="submit" variant={danger ? 'danger' : 'primary'} disabled={!matches}>
 				{confirmLabel ?? t.confirmOk()}
-			</button>
+			</Button>
 		</div>
 	</form>
 </OverlayPanel>
@@ -226,57 +220,5 @@
 		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: var(--banto-space-2);
-	}
-
-	/* The look of admin-template's `.banto-btn` (app.css), kept here because a
-	   package cannot rely on the app's global classes. */
-	.button {
-		display: inline-flex;
-		align-items: center;
-		height: var(--banto-control-height);
-		padding: 0 var(--banto-space-4);
-		border: var(--banto-border-width) solid transparent;
-		border-radius: var(--banto-radius-md);
-		font: inherit;
-		color: var(--banto-text);
-		cursor: pointer;
-		transition: background var(--banto-duration-fast) var(--banto-ease-out);
-	}
-
-	.button:focus-visible {
-		outline: none;
-		box-shadow: var(--banto-focus-ring);
-	}
-
-	.button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.button--secondary {
-		background: var(--banto-surface);
-		border-color: var(--banto-border-strong);
-	}
-
-	.button--secondary:hover {
-		background: var(--banto-surface-hover);
-	}
-
-	.button--primary {
-		background: var(--banto-primary-solid);
-		color: var(--banto-on-solid);
-	}
-
-	.button--primary:hover:not(:disabled) {
-		background: var(--banto-primary-solid-hover);
-	}
-
-	.button--danger {
-		background: var(--banto-danger-solid);
-		color: var(--banto-on-danger-solid);
-	}
-
-	.button--danger:hover:not(:disabled) {
-		background: var(--banto-danger-solid-hover);
 	}
 </style>
