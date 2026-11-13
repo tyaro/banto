@@ -40,3 +40,23 @@ export async function expectItemsMode(
 	await page.keyboard.press('Escape');
 	await expect(item).toBeHidden();
 }
+
+/**
+ * /items の「…」（その他の操作）メニューから項目を選ぶ（#555）。ハイドレーション前の
+ * クリックは何も起こさないので、項目が見えるまで開く操作を `toPass()` で再試行する。
+ * 項目の選択そのものは 1 回だけ行う（ダウンロードを二重に起こさない）。
+ */
+export async function chooseItemsMoreAction(
+	page: Page,
+	moreLabel: string,
+	itemName: string
+): Promise<void> {
+	const item = page.getByRole('menuitem', { name: itemName, exact: true });
+	await expect(async () => {
+		if (!(await item.isVisible())) {
+			await page.getByRole('button', { name: moreLabel, exact: true }).click();
+		}
+		await expect(item).toBeVisible({ timeout: 1000 });
+	}).toPass();
+	await item.click();
+}

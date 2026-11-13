@@ -201,8 +201,8 @@ Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップア
 DB/バックエンド配線を一切持たない最小デモのため、以下だけで外せる。
 
 1. `apps/admin-template/src/routes/(app)/items/+page.svelte` の「日報」
-   ボタン（`ResourceListPage` に渡す `actions` snippet）と、その import
-   （`goto`・`resolve`・`FileText`・`m`）を削除。どちらも `[scaffold:report]` の印で
+   メニュー項目（一覧の「…」メニューへ足す `ResourceListPage` の `actions` snippet）と、その import
+   （`goto`・`resolve`・`FileText`・`MenuItem`・`m`）を削除。どちらも `[scaffold:report]` の印で
    囲んである。残るのは `<ResourceListPage resource={itemsResource}>` の呼び出しだけ
    （CSV 取込は定義の `csv.import` で部品が描く）。
 2. `apps/admin-template/src/routes/(app)/items/report/`（ルート丸ごと）と

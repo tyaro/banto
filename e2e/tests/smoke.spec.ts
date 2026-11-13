@@ -27,7 +27,12 @@
  */
 import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
 import fs from 'node:fs';
-import { chooseItemsMode, expectItemsMode, type ItemsViewLabels } from '../items-view-mode';
+import {
+	chooseItemsMode,
+	chooseItemsMoreAction,
+	expectItemsMode,
+	type ItemsViewLabels
+} from '../items-view-mode';
 import { expectCheckOutageKeepsTheSession } from './session-check-outage';
 
 // items の「表示」メニュー（読み込み方の切り替え、#553）。
@@ -1131,7 +1136,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/items');
 
 		const downloadPromise = page.waitForEvent('download');
-		await page.getByRole('button', { name: 'CSVエクスポート' }).click();
+		await chooseItemsMoreAction(page, 'その他の操作', 'CSVエクスポート');
 		const download = await downloadPromise;
 
 		expect(download.suggestedFilename()).toMatch(/^items-\d{8}-\d{4}\.csv$/);
@@ -1841,7 +1846,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// the session confirmation) resolves - later than page.goto()'s "load"
 		// event. Wait for a page-specific element first so the keypress below
 		// isn't racing that mount.
-		await expect(page.getByRole('button', { name: 'CSVエクスポート' })).toBeVisible();
+		await expect(page.getByRole('button', { name: '新規作成' })).toBeVisible();
 
 		await page.keyboard.press('Control+K');
 		const search = page.getByPlaceholder('画面・操作を検索…');
@@ -1859,7 +1864,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// still kept from the browser.
 	test('9a. command palette: Ctrl+K closes it from its own search box; IME and held keys do not toggle it', async () => {
 		await page.goto('/items');
-		await expect(page.getByRole('button', { name: 'CSVエクスポート' })).toBeVisible();
+		await expect(page.getByRole('button', { name: '新規作成' })).toBeVisible();
 		const palette = page.getByRole('dialog', { name: 'コマンドパレット' });
 		const search = page.getByPlaceholder('画面・操作を検索…');
 
@@ -2030,7 +2035,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// the report's total-count string is deterministic.
 	test('12. items: 日報 report renders a heading, totals, and a category table', async () => {
 		await page.goto('/items');
-		await page.getByRole('button', { name: '日報' }).click();
+		await chooseItemsMoreAction(page, 'その他の操作', '日報');
 		await expect(page).toHaveURL(/\/items\/report$/);
 
 		await expect(page.getByRole('heading', { level: 1, name: /^日報/ })).toBeVisible();

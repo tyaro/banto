@@ -4,9 +4,9 @@
 
 	`<ResourceListPage resource={definition}>` renders the whole page: the
 	heading (`label` / `description`), the "View" menu (load mode, when the
-	definition offers two), the group-by select (client grid), the column
-	menu, CSV export and import (`csv.import`, with its confirmation panel),
-	"New", the demo build's annotation, and the server /
+	definition offers two; group-by, client grid only), the column menu, the
+	"..." menu (CSV export and import with `csv.import` and its confirmation
+	panel, plus the `actions` entries), "New" (the only button left in view, #555), the demo build's annotation, and the server /
 	client grid with #215's restore (sort / filters / group-by per load mode,
 	the last-opened row marker, the "saved row left the filter" notice), inline
 	cell edits and range pastes through one per-row save queue (#284).
@@ -18,7 +18,7 @@
 	check (conventions §1). A LAN viewer-public session is a `viewer`.
 
 	Slots (snippets):
-	- `actions`: extra header buttons before CSV export (the items daily report).
+	- `actions`: extra `MenuItem`s at the start of the "..." menu (the items daily report).
 	- `viewMenu`: extra entries at the end of the "View" menu.
 	- `beforeGrid`: above the grid (KPIs etc.), below the import panel.
 	- `annotation`: the demo annotation's paragraphs, instead of `demoNotes`.
@@ -57,8 +57,8 @@
 	} from '@banto/admin-core';
 	import type { FormSchema } from '@banto/forms';
 	import { goto } from '$app/navigation';
-	import { Download, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
-	import { Button, Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
+	import { Download, Ellipsis, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
+	import { Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode } from '#lib/banto/setup.js';
@@ -258,11 +258,6 @@
 	// `saveLastOpenedId` on mount instead. Reading it once here is enough -
 	// returning from the detail page always remounts this page.
 	const lastOpenedId = loadLastOpenedId(scope, name);
-
-	function handleGroupByChange(event: Event) {
-		const value = (event.currentTarget as HTMLSelectElement).value;
-		clientGridState.setGroupBy(value === '' ? null : value);
-	}
 
 	function handleRowClick(row: ResourceRow) {
 		goto(detailHref(def, row.id));
@@ -551,6 +546,13 @@
 		}
 	}
 
+	const hasViewMenu = $derived(
+		loadModes.length > 1 || groupByOptions.length > 0 || viewMenu !== undefined
+	);
+	const hasMoreMenu = $derived(
+		canExport || (canImport && importOption !== undefined) || extraActions !== undefined
+	);
+
 	const demoNotes = def.demoNotes;
 	const hasAnnotation = $derived(annotation !== undefined || demoNotes !== undefined);
 </script>
@@ -558,8 +560,13 @@
 <div class="page">
 	<PageHeader hideTitle title={def.label} description={def.description?.()}>
 		{#snippet actions()}
-			{#if loadModes.length > 1 || viewMenu}
-				<Menu label={m['resource.modeToggleAria']()} placement="bottom-start">
+			<!-- #555 (1): "New" is the only action left in view. Everything else is
+			     in two menus: "View" (how the list looks) and "…" (what to do with
+			     its data). The column manager stays a button next to "View": a
+			     Menu item closes the menu on every pick, and a menu item has no
+			     checkbox role, so a multi-toggle list does not fit one. -->
+			{#if hasViewMenu}
+				<Menu label={m['resource.viewMenu']()} placement="bottom-start">
 					{#snippet trigger(props)}
 						<button {...props} type="button" class="banto-btn banto-btn--ghost view-trigger">
 							<SlidersHorizontal size={14} aria-hidden="true" />
@@ -577,25 +584,32 @@
 							{/each}
 						</MenuGroup>
 					{/if}
+					{#if groupByOptions.length > 0}
+						<!-- Grouping exists in the client grid only (spec §4.3): in server
+						     mode the items stay visible but disabled, and the heading says why. -->
+						<MenuGroup
+							label={mode === 'client'
+								? m['resource.groupByMenu']()
+								: m['resource.groupByClientOnly']()}
+						>
+							<MenuItem
+								label={m['resource.groupNone']()}
+								checked={mode === 'client' && !clientGridState.groupBy}
+								disabled={mode !== 'client'}
+								onSelect={() => clientGridState.setGroupBy(null)}
+							/>
+							{#each groupByOptions as option (option.field)}
+								<MenuItem
+									label={option.label()}
+									checked={mode === 'client' && clientGridState.groupBy === option.field}
+									disabled={mode !== 'client'}
+									onSelect={() => clientGridState.setGroupBy(option.field)}
+								/>
+							{/each}
+						</MenuGroup>
+					{/if}
 					{@render viewMenu?.()}
 				</Menu>
-			{/if}
-			{#if groupByOptions.length > 0}
-				<label class="group-by">
-					{m['resource.groupByLabel']()}
-					<select
-						class="banto-input"
-						disabled={mode !== 'client'}
-						title={mode !== 'client' ? m['resource.groupByClientOnly']() : undefined}
-						value={clientGridState.groupBy ?? ''}
-						onchange={handleGroupByChange}
-					>
-						<option value="">{m['resource.groupNone']()}</option>
-						{#each groupByOptions as option (option.field)}
-							<option value={option.field}>{option.label()}</option>
-						{/each}
-					</select>
-				</label>
 			{/if}
 			<!-- Column manager (spec §4.4, issue #168): takes the SAME GridState
 			     the active grid was handed, so hiding a column here immediately
@@ -607,22 +621,37 @@
 				state={mode === 'client' ? clientGridState : serverGridState}
 				messages={gridMessages()}
 			/>
-			{@render extraActions?.()}
-			{#if canExport}
-				<Button variant="secondary" icon={Download} onclick={handleExport} loading={exporting}>
-					{m['resource.exportCsv']()}
-				</Button>
+			{#if hasMoreMenu}
+				<Menu label={m['resource.moreMenu']()} placement="bottom-end">
+					{#snippet trigger(props)}
+						<button
+							{...props}
+							type="button"
+							class="banto-btn banto-btn--ghost more-trigger"
+							aria-label={m['resource.moreMenu']()}
+						>
+							<Ellipsis size={16} aria-hidden="true" />
+						</button>
+					{/snippet}
+					{@render extraActions?.()}
+					{#if canExport}
+						<MenuItem
+							label={m['resource.exportCsv']()}
+							icon={Download}
+							disabled={exporting}
+							onSelect={handleExport}
+						/>
+					{/if}
+					{#if canImport && importOption}
+						<MenuItem
+							label={m['resource.importCsv']()}
+							icon={Upload}
+							onSelect={handleImportButtonClick}
+						/>
+					{/if}
+				</Menu>
 			{/if}
 			{#if canImport && importOption}
-				<button
-					type="button"
-					class="banto-btn banto-btn--secondary"
-					title={importOption.rules()}
-					onclick={handleImportButtonClick}
-				>
-					<Upload size={16} aria-hidden="true" />
-					{m['resource.importCsv']()}
-				</button>
 				<input
 					class="file-input"
 					type="file"
@@ -735,7 +764,8 @@
 	   ghost, export/import are secondary, "New" is the sole primary action.
 	   DOM order is left as it always was; only "New" is pulled to the front
 	   once the toolbar wraps under 768px, below. */
-	.view-trigger {
+	.view-trigger,
+	.more-trigger {
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
@@ -753,24 +783,6 @@
 		clip: rect(0, 0, 0, 0);
 		white-space: nowrap;
 		border: 0;
-	}
-
-	.group-by {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--banto-space-2);
-		font-size: var(--banto-font-size-sm);
-		color: var(--banto-text-muted);
-	}
-
-	.group-by select {
-		height: var(--banto-control-height-sm);
-		font-size: var(--banto-font-size-sm);
-	}
-
-	.group-by select:disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
 	}
 
 	/* 768px 前後で折り返した際、主要操作（新規作成）を先頭に維持する

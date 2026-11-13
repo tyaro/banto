@@ -120,6 +120,8 @@
   "resource.groupByLabel": "グループ化:",
   "resource.groupByClientOnly": "グループ化はクライアントモードのみ",
   "resource.groupNone": "グループなし",
+  "resource.groupByMenu": "グループ化",
+  "resource.moreMenu": "その他の操作",
   "items.groupCategory": "カテゴリ",
   "items.report": "日報",
   "resource.exportCsv": "CSVエクスポート",

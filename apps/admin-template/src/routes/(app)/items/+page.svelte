@@ -10,6 +10,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { FileText } from '@lucide/svelte';
+	import { MenuItem } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	// [scaffold:report] end
 </script>
@@ -17,18 +18,15 @@
 <ResourceListPage resource={itemsResource}>
 	<!-- [scaffold:report] begin -->
 	<!-- M19 report demo (docs/design/report-plan.md §3.5, deletable per
-	     docs/template-scope.md §3): ghost so it reads as a secondary,
-	     non-mutating action alongside CSVエクスポート - no permission check, a
-	     `viewer` can read a report same as they can export CSV. -->
+	     docs/template-scope.md §3): an entry of the list's "..." menu next to
+	     the CSV export (#555) - no permission check, a `viewer` can read a
+	     report same as they can export CSV. -->
 	{#snippet actions()}
-		<button
-			type="button"
-			class="banto-btn banto-btn--ghost"
-			onclick={() => goto(resolve(`items/report`))}
-		>
-			<FileText size={16} aria-hidden="true" />
-			{m['items.report']()}
-		</button>
+		<MenuItem
+			label={m['items.report']()}
+			icon={FileText}
+			onSelect={() => goto(resolve(`items/report`))}
+		/>
 	{/snippet}
 	<!-- [scaffold:report] end -->
 </ResourceListPage>
