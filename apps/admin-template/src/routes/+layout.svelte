@@ -7,6 +7,7 @@
 	import { initLocale } from '#lib/banto/locale.js'; // registers the Paraglide client strategy + syncs <html lang> (ADR-0005)
 	import { settings } from '#lib/settings.svelte.js';
 	import ToastHost from '#lib/components/ToastHost.svelte';
+	import ConfirmHost from '#lib/components/ConfirmHost.svelte';
 	import StartupSplash from '#lib/components/StartupSplash.svelte';
 	import { isStartupDeferral } from '#lib/banto/startupGate.js';
 	import { provideCellEditors } from '@banto/grid-svelte';
@@ -94,6 +95,7 @@
 		{:else}
 			{@render children()}
 			<ToastHost />
+			<ConfirmHost />
 		{/if}
 	{/await}
 {/if}

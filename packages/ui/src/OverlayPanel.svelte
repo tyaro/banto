@@ -29,7 +29,8 @@
 	 *   neither Tab nor clicks can reach the fading layer (`data-layer-inactive`
 	 *   alone only hides it from the layer checks).
 	 * - On open, focus goes to the first focusable (the × in the header comes
-	 *   first in DOM order).
+	 *   first in DOM order), or to `initialFocus` when the package-internal
+	 *   caller gives one (ConfirmDialog: Cancel or the text box).
 	 *
 	 * The opener is captured in `$effect.pre` (before `focusFirst` moves focus)
 	 * and restored after `tick()`: the same update that closes the layer can
@@ -52,6 +53,18 @@
 
 	interface Props extends OverlayProps {
 		variant: 'modal' | 'drawer';
+		/**
+		 * Package-internal (ConfirmDialog.svelte): `alertdialog` for a question
+		 * that interrupts the task. Default `dialog`.
+		 */
+		role?: 'dialog' | 'alertdialog';
+		/** Package-internal: id of the element that describes the dialog (`aria-describedby`). */
+		describedBy?: string;
+		/**
+		 * Package-internal: the element to focus on open instead of the first
+		 * focusable (the ×) - ConfirmDialog's safe choice (Cancel or the text box).
+		 */
+		initialFocus?: (panel: HTMLElement) => HTMLElement | null | undefined;
 	}
 
 	let {
@@ -66,7 +79,10 @@
 		onBlockedClose,
 		focusFallback,
 		messages,
-		children
+		children,
+		role = 'dialog',
+		describedBy,
+		initialFocus
 	}: Props = $props();
 
 	const t = $derived({ ...defaultUiMessages, ...messages });
@@ -182,7 +198,7 @@
 	});
 
 	function focusFirst(node: HTMLElement): void {
-		(focusablesIn(node)[0] ?? node).focus();
+		(initialFocus?.(node) ?? focusablesIn(node)[0] ?? node).focus();
 	}
 </script>
 
@@ -204,10 +220,11 @@
 			class:panel--drawer={variant === 'drawer'}
 			class:panel--modal={variant === 'modal'}
 			bind:this={panelEl}
-			role="dialog"
+			{role}
 			data-layer-inactive={open ? undefined : 'true'}
 			aria-modal="true"
 			aria-label={title}
+			aria-describedby={describedBy}
 			style:width
 			use:focusFirst
 		>

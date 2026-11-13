@@ -60,7 +60,10 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 > スコープ・最近使った記録・通知・文言）で、表示と操作は `@banto/ui` にある。`toast.svelte.ts` と
 > `ToastHost.svelte` も薄い包み（ストアの生成と文言だけ）。scaffold の `commandPalette` オプションが
 > 消すファイルは変わらない。`@banto/ui` は `.svelte.ts` を持つので `optimizeDeps.exclude` に載り、
-> scaffold はこの行を残す（常に使うため）。
+> scaffold はこの行を残す（常に使うため）。Modal / Drawer はその後の段階 4 で入り、その上に確認の
+> ダイアログ（`ConfirmDialog` と `await confirm()` 用の `createConfirmStore()` + `ConfirmHost`、#556）が
+> 載る。admin-template の `confirm.svelte.ts` と `components/ConfirmHost.svelte` も薄い包みで、
+> どのプリセットでも残る。
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 

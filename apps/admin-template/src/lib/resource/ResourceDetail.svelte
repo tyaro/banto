@@ -38,6 +38,7 @@
 	} from '@banto/admin-core';
 	import { EmptyState, ErrorState, LoadingState } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { formValidationMessages } from '#lib/banto/i18n.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
@@ -186,7 +187,15 @@
 
 	async function handleDelete() {
 		if (isNew || !formResource || !perms.delete) return;
-		if (!window.confirm(m['resource.deleteConfirm']())) return;
+		const confirmed = await confirmAction({
+			title: m['common.deleteConfirmTitle'](),
+			message: m['resource.deleteConfirm'](),
+			confirmLabel: m['common.delete'](),
+			danger: true
+		});
+		// `destroyed`: the page may have gone while the dialog was open (the
+		// host cancels on navigation; this is the second guard).
+		if (!confirmed || destroyed) return;
 		const removed = await formResource.remove();
 		if (!removed) return;
 		// The record is gone: unsaved edits to it are moot, don't prompt.

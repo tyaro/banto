@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { getAuthProvider, isProviderError, notify } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
 	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
 	import { SurfaceCard } from '@banto/ui';
@@ -142,7 +143,13 @@
 	// operator needs everything; it stays changeable later under
 	// 設定 → セキュリティ.
 	async function skipLogin(): Promise<void> {
-		if (!window.confirm(m['settings.authDisableConfirm']())) return;
+		const confirmed = await confirmAction({
+			title: m['settings.authDisableConfirmTitle'](),
+			message: m['settings.authDisableConfirm'](),
+			confirmLabel: m['settings.authDisableConfirmSubmit'](),
+			danger: true
+		});
+		if (!confirmed) return;
 		error = null;
 		skippingLogin = true;
 		try {

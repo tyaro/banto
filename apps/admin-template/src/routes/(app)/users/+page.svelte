@@ -28,6 +28,7 @@
 		Users
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import {
 		PageHeader,
@@ -259,8 +260,16 @@
 
 	async function handleDelete(): Promise<void> {
 		if (!selected || deleting) return;
-		if (!window.confirm(m['users.deleteConfirm']({ username: selected.username }))) return;
-		const targetId = selected.id;
+		// Cannot be undone: the user types the user name to confirm (Issue #556).
+		const { id: targetId, username } = selected;
+		const confirmed = await confirmAction({
+			title: m['users.deleteConfirmTitle'](),
+			message: m['users.deleteConfirm']({ username }),
+			confirmLabel: m['common.delete'](),
+			danger: true,
+			requireText: username
+		});
+		if (!confirmed || deleting) return;
 		deleting = true;
 		try {
 			await deleteUser(targetId);
