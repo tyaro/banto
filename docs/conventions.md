@@ -191,6 +191,14 @@ Windows のファイアウォールの許可（Issue #219 段階 2）で昇格�
 - パッケージ間の `from '@banto/...'` import はゼロ。
 - `theme/banto.css` の「charts/dock がこのトークンを消費する」等はコメントで
   あって import ではない。
+- app 層の **`apps/admin-template/src/lib/resource/`**（リソースの画面の共通部品。
+  `ResourceDetail` など、[ADR-0030](adr/0030-resource-page.md)）もコアと同じ扱いにする。
+  どのプリセットでも残るので、オプションの資産（添付・帳票・コマンドパレットなど）や
+  items のデモを import しない。オプションはルートのファイルから snippet（`after`・`actions`）で
+  差し込み、`[scaffold:<tag>]` の印で囲む。機械検査は `verify:architecture` の rule
+  `resource-no-optional`: `@banto/*` はコアのパッケージだけ、`#lib`・相対の import は
+  scaffold のどれかのプリセットが消すファイルを指さない（消す対象は全プリセットの
+  `--dry-run --list-touched` から得る。照合は banto 本体だけで行う）。
 
 オプションを同梱するときは template-scope §3 の表に行を追加し、
 **削除手順（外すファイル一覧）を明文化する義務**を負う。削除して他が壊れない
