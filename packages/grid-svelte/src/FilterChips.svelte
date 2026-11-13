@@ -22,7 +22,7 @@
 	import type { GridState } from './state.svelte';
 	import type { FilterOp, FilterState } from './types';
 	import { defaultGridMessages, type GridMessages } from './messages';
-	import { isBetweenValue } from './core/dateRange';
+	import { betweenToDateRange, isBetweenValue } from './core/dateRange';
 
 	interface Props {
 		/** The SAME GridState instance passed to BantoGrid - this component reads `filters` and calls `removeFilter` / `clearFilters`. */
@@ -31,10 +31,12 @@
 		messages?: Partial<GridMessages>;
 		/** Called after the last chip disappears (an x on the only chip, or "clear all") so the page can place focus somewhere stable. */
 		onEmpty?: () => void;
+		/** Called after an x or "clear all" changed `GridState.filters`. A server-mode page re-fetches here (BantoGrid only reports header-driven changes). */
+		onchange?: () => void;
 	}
 
 	// Aliased to avoid clashing with the `$state` rune.
-	let { state: gridState, messages = {}, onEmpty }: Props = $props();
+	let { state: gridState, messages = {}, onEmpty, onchange }: Props = $props();
 
 	// svelte-ignore state_referenced_locally
 	const t = { ...defaultGridMessages, ...messages };
@@ -56,8 +58,12 @@
 		return column.header.trim() === '' ? column.id : column.header;
 	}
 
+	function columnOf(field: string) {
+		return gridState.allColumns.find((entry) => entry.id === field);
+	}
+
 	function isNumeric(filter: FilterState): boolean {
-		const column = gridState.allColumns.find((entry) => entry.id === filter.field);
+		const column = columnOf(filter.field);
 		return column?.filterType === 'number' || typeof filter.value === 'number';
 	}
 
@@ -85,7 +91,14 @@
 	function valueLabel(filter: FilterState): string {
 		if (filter.op === 'is_null' || filter.op === 'not_null') return '';
 		if (filter.op === 'between' && isBetweenValue(filter.value)) {
-			const [from, to] = filter.value;
+			let [from, to] = filter.value;
+			// FilterPopover stores the day AFTER the chosen end as an exclusive
+			// bound; show the days the user picked. Unconvertible values stay as is.
+			const type = columnOf(filter.field)?.filterType;
+			if (type === 'date' || type === 'datetime') {
+				const range = betweenToDateRange(filter.value);
+				if (range) [from, to] = [range.from, range.to];
+			}
 			return `${from ?? ''} ${t.filterChipRangeSeparator()} ${to ?? ''}`.trim();
 		}
 		if (Array.isArray(filter.value)) return filter.value.map(String).join(', ');
@@ -106,6 +119,7 @@
 		if (field === undefined) return;
 		const remaining = chips.length - 1;
 		gridState.removeFilter(field);
+		onchange?.();
 		if (remaining === 0) {
 			onEmpty?.();
 			return;
@@ -117,6 +131,7 @@
 
 	function clearAll() {
 		gridState.clearFilters();
+		onchange?.();
 		onEmpty?.();
 	}
 </script>

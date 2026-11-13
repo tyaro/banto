@@ -366,12 +366,19 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// jsdom cannot perform default Tab navigation, so exercise both grid
 		// boundaries here, with one filtered row to keep the sequence bounded.
 		const createButton = page.getByRole('button', { name: '新規作成' });
+		// The applied filter's chip x sits between "New" and the grid (#555 B-2).
+		const chipRemove = page.getByRole('button', { name: /の絞り込みを外す$/ });
+		await expect(chipRemove).toHaveCount(1);
 		await row.locator('[data-cell-field="name"]').click();
 		await expect(grid).toBeFocused();
 		await page.keyboard.press('Home');
 		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'open');
 		await page.keyboard.press('Shift+Tab');
+		await expect(chipRemove).toBeFocused();
+		await page.keyboard.press('Shift+Tab');
 		await expect(createButton).toBeFocused();
+		await page.keyboard.press('Tab');
+		await expect(chipRemove).toBeFocused();
 		await page.keyboard.press('Tab');
 		await expect(grid).toBeFocused();
 		await page.keyboard.press('End');
@@ -392,7 +399,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 		await page.keyboard.press('Tab');
 		await expect(grid.locator(':focus')).toHaveCount(0);
-		for (const control of [openLink, ...[...headerControls].reverse(), grid, createButton]) {
+		for (const control of [
+			openLink,
+			...[...headerControls].reverse(),
+			grid,
+			chipRemove,
+			createButton
+		]) {
 			await page.keyboard.press('Shift+Tab');
 			await expect(control).toBeFocused();
 		}
@@ -878,6 +891,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			});
 			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
 		}, itemId!);
+	});
+
+	// #555 B-2 review: in SERVER mode the chip's x must reach the fetch too
+	// (BantoGrid only reports header-driven changes).
+	test('3d2. items: server mode - the filter chip x brings the rows back', async () => {
+		await page.goto('/items');
+		await expectItemsMode(page, SERVER_MODE, true);
+		const openLinks = page.getByRole('link', { name: '開く' });
+		await expect(openLinks.first()).toBeVisible();
+		await applyColumnFilter(page, '商品名', 'zz-no-such-item-zz');
+		await expect(openLinks).toHaveCount(0);
+		const chipRemove = page.getByRole('button', { name: '商品名の絞り込みを外す' });
+		await expect(chipRemove).toBeVisible();
+		await chipRemove.click();
+		await expect(chipRemove).toHaveCount(0);
+		await expect(openLinks.first()).toBeVisible();
 	});
 
 	// Issue #215/#255 review (fix 3): the CLIENT grid filters/shows rows

@@ -149,6 +149,11 @@
 		void windowed.ensureRange(visibleRange.start, visibleRange.end);
 	}
 
+	/** Re-fetch with the GridState's current sort/filters (FilterChips changes filters outside BantoGrid's header path). */
+	export function applyStateParams(): void {
+		handleParamsChange({ sort: gridState.sort, filters: gridState.filters });
+	}
+
 	function handleVisibleRangeChange(range: { start: number; end: number }): void {
 		visibleRange = range;
 		void windowed.ensureRange(range.start, range.end);

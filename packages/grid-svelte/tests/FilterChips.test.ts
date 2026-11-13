@@ -118,4 +118,36 @@ describe('FilterChips', () => {
 		expect(screen.getByRole('group', { name: 'Applied' })).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'drop 商品名' })).toBeTruthy();
 	});
+
+	it('shows a date range as the chosen days, not the exclusive upper bound', async () => {
+		const { state } = setup();
+		state.setFilter({ field: 'day', op: 'between', value: ['2026-11-10', '2026-11-14'] });
+		await tick();
+		const group = screen.getByRole('group', { name: '適用中の絞り込み' });
+		expect(group.textContent).toContain('2026-11-10');
+		expect(group.textContent).toContain('2026-11-13');
+		expect(group.textContent).not.toContain('2026-11-14');
+	});
+
+	it('keeps a non-day boundary of a date column as given', async () => {
+		const { state } = setup();
+		state.setFilter({ field: 'day', op: 'between', value: ['2026-11-10', '2026-11-14T09:00:00'] });
+		await tick();
+		expect(screen.getByRole('group').textContent).toContain('2026-11-14T09:00:00');
+	});
+
+	it('calls onchange after an x and after "clear all"', async () => {
+		const state = new GridState<Row>(columns);
+		const onchange = vi.fn();
+		render(FilterChips<Row>, { state, onchange });
+		state.setFilter({ field: 'name', op: 'contains', value: 'a' });
+		state.setFilter({ field: 'price', op: 'gt', value: 1 });
+		await tick();
+		await fireEvent.click(screen.getByRole('button', { name: '商品名の絞り込みを外す' }));
+		expect(onchange).toHaveBeenCalledTimes(1);
+		state.setFilter({ field: 'name', op: 'contains', value: 'a' });
+		await tick();
+		await fireEvent.click(screen.getByRole('button', { name: 'すべて解除' }));
+		expect(onchange).toHaveBeenCalledTimes(2);
+	});
 });

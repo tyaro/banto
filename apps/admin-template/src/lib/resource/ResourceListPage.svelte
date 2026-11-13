@@ -561,6 +561,8 @@
 	// FilterChips' last x / "clear all" removes the focused button itself;
 	// hand focus to the grid instead of losing it to <body>.
 	let pageEl: HTMLDivElement | undefined = $state();
+	// Server mode only: chips change filters outside BantoGrid's header path.
+	let serverGridRef: ReturnType<typeof ResourceServerGrid> | undefined = $state();
 	function focusGrid() {
 		pageEl?.querySelector<HTMLElement>('[role="grid"]')?.focus();
 	}
@@ -748,6 +750,7 @@
 		state={mode === 'client' ? clientGridState : serverGridState}
 		messages={gridMessages()}
 		onEmpty={focusGrid}
+		onchange={() => serverGridRef?.applyStateParams()}
 	/>
 
 	{#if mode === 'client'}
@@ -765,6 +768,7 @@
 		/>
 	{:else}
 		<ResourceServerGrid
+			bind:this={serverGridRef}
 			resource={name}
 			{columns}
 			state={serverGridState}
