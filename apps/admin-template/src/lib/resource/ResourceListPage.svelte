@@ -168,12 +168,14 @@
 	// M5 Phase B (spec §4.3): the client grid may rework the column set (items
 	// adds a derived grouping column and per-column aggregates) through
 	// `list.client.columns`; the server grid keeps `columns` as-is (grouping
-	// has no server-mode equivalent yet). Derived from `columns`, so the
-	// permission above applies to it too.
+	// has no server-mode equivalent yet). The permission is applied again to
+	// the callback's result: a column the callback adds (or re-enables) must
+	// not hand a viewer an inline editor.
 	const toClientRow = def.list?.client?.toRow;
-	const clientColumns = $derived.by(
-		(): GridColumn<ResourceRow>[] => def.list?.client?.columns?.(columns) ?? columns
-	);
+	const clientColumns = $derived.by((): GridColumn<ResourceRow>[] => {
+		const reworked = def.list?.client?.columns?.(columns);
+		return reworked ? withWritePermission(reworked) : columns;
+	});
 
 	// Owned here (not inside the grids) so the group-by <select>, the column
 	// menu and CSV export can read / drive them directly (spec §4.1/§4.3,

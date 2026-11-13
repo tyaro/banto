@@ -18,9 +18,13 @@ import { columnValidationMessages } from '#lib/banto/i18n.js';
 import { resolveAppPath, type AppPath } from '#lib/appPath.js';
 import type { AppResourceDefinition, ResourceRow } from './types';
 
-/** The detail page of one row (`<path>/<id>`). */
+/**
+ * The detail page of one row (`<path>/<id>`). The id is encoded as one path
+ * segment so a string id containing `/`, `?` or `#` cannot turn into another
+ * path, a query or a fragment.
+ */
 export function detailHref(definition: Pick<AppResourceDefinition, 'path'>, id: string | number) {
-	return resolveAppPath(`${definition.path}/${id}` as AppPath);
+	return resolveAppPath(`${definition.path}/${encodeURIComponent(String(id))}` as AppPath);
 }
 
 export function resourceColumns(definition: AppResourceDefinition): GridColumn<ResourceRow>[] {
