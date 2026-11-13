@@ -71,6 +71,10 @@ function probe(page: Page): Promise<LabelProbe> {
 	});
 }
 
+// --banto-font-size-sm in rem (13px at the 14px root; keep in sync with banto.css)
+const SM_REM = 0.9286;
+const BASE_ROOT_PX = 14;
+
 const scenarios: { name: string; apply: (page: Page) => Promise<void>; fontSize: number }[] = [
 	{
 		name: '(1) root font size 20px',
@@ -78,7 +82,7 @@ const scenarios: { name: string; apply: (page: Page) => Promise<void>; fontSize:
 			page.evaluate(() => {
 				document.documentElement.style.fontSize = '20px';
 			}),
-		fontSize: 16 // sm = 0.8rem
+		fontSize: SM_REM * 20 // sm token at the 20px root
 	},
 	{
 		name: '(2) --banto-font-size-sm overridden to 1.25rem',
@@ -109,7 +113,7 @@ for (const chartPage of chartPages)
 
 			await expect.poll(async () => (await probe(page)).labels).toBeGreaterThan(0);
 			const before = await probe(page);
-			expect(before.fontSize).toBeCloseTo(11.2, 1);
+			expect(before.fontSize).toBeCloseTo(SM_REM * BASE_ROOT_PX, 1);
 			expect(before.minLeftGap).toBeGreaterThanOrEqual(-0.5);
 
 			await scenario.apply(page);

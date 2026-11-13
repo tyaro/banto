@@ -286,18 +286,22 @@
 	}
 
 	.date-picker-heading {
-		flex: 1 1 auto;
+		flex: 1 1 0;
+		/* Shrinkable below its text width, and wraps: at 200% text the month label
+		   must not push the prev/next buttons out of the popover. */
+		min-inline-size: 0;
 		margin: 0;
 		font-size: var(--banto-font-size-md);
 		font-weight: 600;
 		text-align: center;
-		white-space: nowrap;
+		overflow-wrap: break-word;
 	}
 
 	.date-picker-nav {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		flex: 0 0 auto;
 		inline-size: var(--banto-control-height-sm);
 		block-size: var(--banto-control-height-sm);
 		padding: 0;

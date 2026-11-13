@@ -189,13 +189,13 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 - 余白は**序数**（`-1`, `-2`, …）。値を名前に埋め込まない（`-4` が「4 × 0.25rem」を約束しない）。
   compact で値を縮めても名前が嘘にならない（D3）。結果として 1〜6 は 0.25rem の倍数と一致するが、
   それは約束にしない。
-- 文字サイズは**大きさの呼び名**（`xs` / `sm` / `md` / `lg` / `xl`）。本文（body）は root の `1rem` で、
-  ふつうは継承に任せる。`md` は「本文より一段小さい補足」で、本文ではない（D4）。
+- 文字サイズは**大きさの呼び名**（`xs` / `sm` / `md` / `lg` / `xl` / `2xl`）。本文（body）は root の `1rem` で、
+  ふつうは継承に任せる。`md` は #557 で本文と同じ 14px になったが、「補足」の名前として残している（D4 の当初は本文より一段小さい補足）。
 - 本文の大きさを明示する場合だけ `--banto-font-size-base`（`1rem`）を使う（2026-11-07 にオーナーが追加を決定。
   PR-6b）。小さい親の中で本文の大きさに戻すカードの見出しなど、`font-size: 1rem` を書く箇所が画面に残り、
   トークン無しの例外のままだと D8 の機械検査で `1rem` だけ例外が要るため。名前は `md`（本文より小さい）と `lg` の
   間に入る段として、Tailwind の `text-base`（1rem）と同じ `base` にした。`body` のような役割名にしないのは、
-  D4 で役割名（b 案）を退けたのと揃えるため。段の並びは `xs` < `sm` < `md` < `base` < `lg` < `xl`。root の
+  D4 で役割名（b 案）を退けたのと揃えるため。段の並びは `xs` < `sm` < `md` = `base` < `lg` < `xl` < `2xl`（#557 で `md` が本文と並び、`2xl` が加わった）。root の
   大きさの `--banto-font-size`（14px）とは別物（`base` は rem なので root に追従する）。
 - 部品専用の形（列幅・アイコンの大きさ・ランチャーなど）は汎用の段階に入れない。2 つ以上の部品が同じ値を
   共有する場合だけ、既存の `--banto-shell-*` のように用途名で足す。
@@ -214,19 +214,22 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 	--banto-space-7: 2rem; /* 28px */
 	--banto-space-8: 3rem; /* 42px — 空状態など */
 
-	/* Type scale (付録 A.5 の役割). Body = 1rem (root), inherited; base only when stated explicitly. */
-	--banto-font-size-xs: 0.7rem; /* 9.8px  バッジ・極小ラベル */
-	--banto-font-size-sm: 0.8rem; /* 11.2px caption（最多 51） */
-	--banto-font-size-md: 0.875rem; /* 12.25px 補足・表の副情報（A.5 caption 12px） */
+	/* Type scale (付録 A.5 の役割。#557 で最小 12px に底上げ: 12 / 13 / 14 / 16 / 20 / 28px). Body = 1rem (root), inherited; base only when stated explicitly. */
+	--banto-font-size-xs: 0.8572rem; /* 12px   バッジ・極小ラベル（下限） */
+	--banto-font-size-sm: 0.9286rem; /* 13px   caption */
+	--banto-font-size-md: 1rem; /* 14px   補足・表の副情報（本文と同じ大きさ） */
 	--banto-font-size-base: 1rem; /* 14px   本文（PR-6b で追加。明示が要るときだけ） */
-	--banto-font-size-lg: 1.125rem; /* 15.75px heading（A.5 16px） */
-	--banto-font-size-xl: 1.75rem; /* 24.5px display（A.5 24–28px） */
+	--banto-font-size-lg: 1.1429rem; /* 16px   heading */
+	--banto-font-size-xl: 1.4286rem; /* 20px   見出し */
+	--banto-font-size-2xl: 2rem; /* 28px   display・大きな KPI の数値（#557 で追加） */
 
 	/* Border widths */
 	--banto-border-width: 1px;
 	--banto-border-width-strong: 2px; /* 選択・強調の縁 */
 }
 ```
+
+> #557 で文字サイズの段の値を底上げした（最小 12px）。下の表の「移し先」の段の名前は当時のまま、値は上のコードブロックが現行。Gauge の値と KPI の数値は `2xl`、ログインの見出しは `xl`（20px）へ振り直した。
 
 既存の値からの移し先（丸めの規則。D5。**いちばん近い段**へ。等距離のときは、余白は小さい方・文字サイズは大きい方（文字を小さくして読みにくくしないため）。表に例外は置かない）:
 
@@ -328,6 +331,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 ### D4. 文字サイズの段と名前
 
 - **a（推奨）**: `xs` 0.7rem / `sm` 0.8rem / `md` 0.875rem / `lg` 1.125rem / `xl` 1.75rem。本文は 1rem の継承。
+  （注記 #557: 値は 12 / 13 / 14 / 16 / 20 / 28px に変わり、`2xl` が加わった。下は当時の決定の記録。）
   （注記 2026-11-07: オーナーの決定で、本文の大きさを明示するときの `base` 1rem を足した。本文は引き続き継承が
   基本で、`base` は `font-size: 1rem` を書く箇所の置き換え先。理由と名前の選び方は §5.1。PR-6b）
   #463 で試した `xs/sm/md` と名前が揃う。`md` が本文より小さいのは分かりにくいので、banto.css の

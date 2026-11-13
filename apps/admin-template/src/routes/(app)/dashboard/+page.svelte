@@ -679,7 +679,7 @@
 	}
 
 	.stat-value {
-		font-size: var(--banto-font-size-xl);
+		font-size: var(--banto-font-size-2xl);
 		font-weight: 650;
 		color: var(--banto-text);
 		font-variant-numeric: tabular-nums;

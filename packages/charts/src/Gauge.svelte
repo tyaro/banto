@@ -136,7 +136,7 @@
 
 	.hero-value {
 		fill: var(--banto-text);
-		font-size: var(--banto-font-size-xl);
+		font-size: var(--banto-font-size-2xl);
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 	}
