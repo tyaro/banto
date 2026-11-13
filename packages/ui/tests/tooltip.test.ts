@@ -132,6 +132,23 @@ describe('Tooltip', () => {
 		expect(isShown(screen.getByRole('tooltip', { hidden: true }))).toBe(false);
 	});
 
+	it('a keyboard activation (click without pointerdown) hides it until focus moves', async () => {
+		render(TooltipHarness);
+		const button = screen.getByRole('button', { name: 'Save' });
+		// A key press first: an earlier test's pointerdown leaves jsdom in pointer
+		// modality, where focus() would not match :focus-visible.
+		await fireEvent.keyDown(document.body, { key: 'Tab' });
+		button.focus();
+		await vi.advanceTimersByTimeAsync(300);
+		const tip = screen.getByRole('tooltip', { hidden: true });
+		expect(isShown(tip)).toBe(true);
+		// Enter / Space on a button dispatch only `click`.
+		await fireEvent.click(button);
+		expect(isShown(tip)).toBe(false);
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(isShown(tip)).toBe(false);
+	});
+
 	it('describe={false}: no aria-describedby and no bubble until shown', async () => {
 		render(TooltipHarness, { describe: false });
 		const button = screen.getByRole('button', { name: 'Save' });

@@ -6,7 +6,7 @@
 	 *
 	 * - Shown after `delay` ms of hover (mouse / pen; a touch is not a hover) or
 	 *   keyboard focus (`:focus-visible`, so a click does not leave one open).
-	 *   Hidden on blur, on a press of the trigger, and on leaving the trigger -
+	 *   Hidden on blur, on a press (pointer or Enter / Space) of the trigger, and on leaving the trigger -
 	 *   after a short grace period, so the pointer can move onto the bubble and
 	 *   stay there (WCAG 1.4.13 "hoverable").
 	 * - Esc hides it until the pointer leaves / focus moves (1.4.13
@@ -133,12 +133,16 @@
 		el.addEventListener('focus', onFocus);
 		el.addEventListener('blur', onBlur);
 		el.addEventListener('pointerdown', onPress);
+		// Enter / Space on a focused button fire only `click`: hide on it too,
+		// or a keyboard activation that keeps focus leaves the bubble open.
+		el.addEventListener('click', onPress);
 		return () => {
 			el.removeEventListener('pointerenter', onEnter);
 			el.removeEventListener('pointerleave', onLeave);
 			el.removeEventListener('focus', onFocus);
 			el.removeEventListener('blur', onBlur);
 			el.removeEventListener('pointerdown', onPress);
+			el.removeEventListener('click', onPress);
 			clearTimers();
 			open = false;
 			if (triggerEl === el) triggerEl = undefined;
