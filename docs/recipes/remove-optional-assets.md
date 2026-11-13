@@ -201,8 +201,9 @@ Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップア
 DB/バックエンド配線を一切持たない最小デモのため、以下だけで外せる。
 
 1. `apps/admin-template/src/routes/(app)/items/+page.svelte` の「日報」
-   ボタン（`M19 report demo` コメントの1ブロック）と `FileText` の import
-   を削除。
+   ボタン（`ResourceListPage` に渡す `actions` snippet）と、その import
+   （`goto`・`resolve`・`FileText`）を削除。どちらも `[scaffold:report]` の印で
+   囲んである。
 2. `apps/admin-template/src/routes/(app)/items/report/`（ルート丸ごと）と
    `src/lib/banto/reports/`（`daily.md`・`raw.d.ts`）を削除。
 3. `apps/admin-template/package.json` の `@banto/report` 依存、

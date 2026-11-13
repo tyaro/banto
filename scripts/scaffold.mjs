@@ -915,21 +915,21 @@ function removeAttachmentsFromRestTests() {
 
 /**
  * 帳票デモ（`@banto/report` + 日報デモ、M19）。remove-optional-assets.md「帳票デモ」。
- * DB/バックエンド配線を持たない最小デモなので、items ページの日報ボタン・
+ * DB/バックエンド配線を持たない最小デモなので、items 一覧の日報ボタン（`actions` snippet）・
  * ルート/ライブラリ・@banto/report 依存 + print CSS だけで外せる。
  */
 function removeReport() {
-	swapText(
-		ITEMS,
-		'lucide から FileText 除去',
-		`import { Download, FileText, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';`,
-		`import { Download, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';`
-	);
+	// items の一覧の薄いルート（ADR-0030 段 4）: import と `actions` snippet の 2 か所を
+	// `[scaffold:report]` の印で挟んである。別々の区間なので 2 回の削除で外す
+	// （どちらも元のファイルに対して単独で当たるので、--dry-run でも 2 回目が見つかる）。
+	// `actions` を消すと ResourceListPage は追加の操作を描かない。
+	cutMarked(ITEMS, 'items 一覧の日報の import 除去', 'report', '\t');
 	cutRegion(
 		ITEMS,
-		'items ページの日報ボタン除去',
-		`\t\t\t<!-- M19 report demo`,
-		`\t\t\t\t{m['items.report']()}\n\t\t\t</button>`
+		'items 一覧の日報ボタン（actions snippet）除去',
+		`\n\t<!-- [scaffold:report] begin -->`,
+		// 続く空行も消す（開きタグの直後に空行を残さない）。
+		`<!-- [scaffold:report] end -->\n`
 	);
 	removeDir(`${APP}/src/routes/(app)/items/report`, 'items/report ルート削除');
 	removeDir(`${APP}/src/lib/banto/reports`, 'lib/banto/reports 削除');

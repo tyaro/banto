@@ -396,6 +396,44 @@ test('添付を外すと items/[id] は ResourceDetail だけの薄いルート�
 	}
 });
 
+test('帳票を外すと items の一覧から日報の import と actions snippet が消える（ADR-0030 段 4）', () => {
+	const dir = copyRepo();
+	try {
+		const res = runIn(dir, ['--preset', 'standard', '--strict']);
+		assert.equal(res.status, 0, `standard が失敗:\n${res.stdout}\n${res.stderr}`);
+		const list = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/routes/(app)/items/+page.svelte'),
+			'utf8'
+		);
+		for (const gone of [
+			'FileText',
+			'items/report',
+			"m['items.report']",
+			'[scaffold:',
+			'snippet actions',
+			"from '$app/navigation'",
+			"from '$app/paths'"
+		])
+			assert.ok(!list.includes(gone), `items の一覧に残っている: ${gone}`);
+		// 一覧の部品と、段 5 まで route に残す CSV 取込の snippet はそのまま。
+		assert.ok(
+			list.includes('<ResourceListPage resource={itemsResource}>\n\t<!-- Rendered by'),
+			`ResourceListPage の開きタグの後が整っていない:\n${list}`
+		);
+		for (const kept of ['{#snippet csvImport()}', '{#snippet beforeGrid()}'])
+			assert.ok(list.includes(kept), `items の一覧から消えている: ${kept}`);
+		// import の区間を消した後に空白だけの行が残らない（prettier 整合）。
+		assert.ok(
+			list.includes(
+				"import ResourceListPage from '#lib/resource/ResourceListPage.svelte';\n\timport {\n"
+			),
+			'日報の import を消した跡が整っていない'
+		);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test('編集対象の一覧（verify-architecture の入力）に既知のファイルが含まれる', async () => {
 	const { collectScaffoldTouchedFiles, listScaffoldPresets } =
 		await import('./lib/scaffold-touched.mjs');

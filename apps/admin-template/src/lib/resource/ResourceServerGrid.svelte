@@ -6,9 +6,11 @@
 	 * have scrolled into view (+ overscan) - fetched block-by-block through
 	 * `createWindowedListResource` as the virtualization window moves.
 	 *
-	 * Split out from +page.svelte so the mode toggle can cleanly mount/
-	 * unmount whichever side is inactive (see ItemsClientGrid.svelte's doc
-	 * comment for why: no double `onInvalidate` subscriptions).
+	 * Rendered by ResourceListPage (ADR-0030 stage 4; formerly items'
+	 * ItemsServerGrid) as one side of an `{#if}`, so the load-mode switch
+	 * cleanly mounts/unmounts whichever side is inactive (see
+	 * ResourceClientGrid.svelte's doc comment for why: no double
+	 * `onInvalidate` subscriptions).
 	 */
 	import {
 		BantoGrid,
@@ -21,39 +23,46 @@
 	import { createWindowedListResource, invalidate } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
-	import type { Item } from '#lib/banto/sampleData.js';
+	import type { ResourceRow } from './types';
 
 	interface Props {
-		columns: GridColumn<Item>[];
+		/** The resource name (`createWindowedListResource` / `invalidate`). */
+		resource: string;
+		columns: GridColumn<ResourceRow>[];
 		/**
-		 * Owned by the parent page (+page.svelte, spec M15 Phase C addition) so
-		 * its CSV export button can read `state.sort`/`state.filters` directly
-		 * and reproduce the exact same ListParams this grid is currently
-		 * showing - same wiring pattern ItemsClientGrid.svelte already uses for
-		 * its own externally-owned GridState (spec §4.3's group-by <select>).
+		 * Owned by the parent page (ResourceListPage, spec M15 Phase C
+		 * addition) so its CSV export button can read `state.sort`/
+		 * `state.filters` directly and reproduce the exact same ListParams this
+		 * grid is currently showing - same wiring pattern
+		 * ResourceClientGrid.svelte already uses for its own externally-owned
+		 * GridState (spec §4.3's group-by <select>).
 		 */
-		state: GridState<Item>;
-		onRowClick: (item: Item) => void;
-		onCellEdit: (edit: CellEdit<Item>) => Promise<Item>;
-		onRangePaste: (edits: CellEdit<Item>[], info: { skipped: number }) => Promise<Item[]>;
+		state: GridState<ResourceRow>;
+		onRowClick: (row: ResourceRow) => void;
+		onCellEdit: (edit: CellEdit<ResourceRow>) => Promise<ResourceRow>;
+		onRangePaste: (
+			edits: CellEdit<ResourceRow>[],
+			info: { skipped: number }
+		) => Promise<ResourceRow[]>;
 		/**
 		 * Issue #215: forwarded straight to BantoGrid's own `rowClass` prop so
 		 * the parent page can highlight the row it was last opened/saved from
 		 * (the round trip's "work position" marker) - same passthrough as
 		 * `columns`/`state` above, no grid-mode-specific logic here.
 		 */
-		rowClass?: (row: Item) => string | undefined;
+		rowClass?: (row: ResourceRow) => string | undefined;
 		/**
 		 * Issue #284: lets the page's save queue read the row as currently
 		 * displayed (publishSaved-updated) at SEND time. Called with a lookup on
 		 * mount and `undefined` on teardown.
 		 */
 		registerCurrentRow?: (
-			lookup: ((rowId: string | number) => Item | undefined) | undefined
+			lookup: ((rowId: string | number) => ResourceRow | undefined) | undefined
 		) => void;
 	}
 
 	let {
+		resource,
 		columns,
 		state: gridState,
 		onRowClick,
@@ -63,12 +72,16 @@
 		registerCurrentRow
 	}: Props = $props();
 
+	// The resource name is fixed for this instance (the page remounts per route).
+	// svelte-ignore state_referenced_locally
+	const name = resource;
+
 	// リソース自身が作る失敗（期限切れ・応答の形の不正）の文言を Paraglide の
 	// 文言に差し替える（banto #344。トーストにもこの文言が出る）。
-	const windowed = createWindowedListResource<Item>('items', {
+	const windowed = createWindowedListResource<ResourceRow>(name, {
 		messages: {
-			timeout: (ms) => m['items.loadTimeout']({ seconds: Math.round(ms / 1000) }),
-			malformed: () => m['items.malformedResult']()
+			timeout: (ms) => m['resource.loadTimeout']({ seconds: Math.round(ms / 1000) }),
+			malformed: () => m['resource.malformedResult']()
 		}
 	});
 
@@ -78,7 +91,7 @@
 	// calls after a HEADER interaction (sort click / filter apply), never on
 	// mount. Before #215 this was unobservable (`gridState` itself always
 	// started empty too), but restoring a saved sort/filters onto
-	// `gridState` (+page.svelte) now means the two can start out of sync:
+	// `gridState` (ResourceListPage) now means the two can start out of sync:
 	// the grid's header would show the restored sort arrow and filter while
 	// `ensureRange()` below quietly fetches the unfiltered/unsorted first
 	// page. Seed `windowed.params` from whatever `gridState` already holds
@@ -109,7 +122,7 @@
 	// every `setParams()` call (i.e. every sort/filter change) then reruns
 	// it, and Svelte runs the OLD run's cleanup first. If that cleanup were
 	// `windowed.dispose()`, the very first sort/filter click would
-	// permanently unsubscribe `windowed` from `invalidate('items')` (its
+	// permanently unsubscribe `windowed` from `invalidate(<resource>)` (its
 	// constructor-time subscription is never re-established), silently
 	// breaking "edit -> invalidate -> refetch" for the rest of the page's
 	// life. Keeping disposal in its own effect - one that reads nothing
@@ -144,9 +157,9 @@
 	// Publish confirmed saves before allowing another edit (spec §4.5).
 	// Replace by ID only: a changed query may have removed or moved the row.
 	// Invalidation is synchronous with publication, superseding older GETs.
-	function publishSaved(saved: Item[]): void {
+	function publishSaved(saved: ResourceRow[]): void {
 		if (saved.length === 0) return;
-		const byId = new Map(saved.map((item) => [item.id, item]));
+		const byId = new Map(saved.map((row) => [row.id, row]));
 		// Only enumerate loaded slots; rows.length can span millions of holes.
 		for (const key of Object.keys(windowed.rows)) {
 			const index = Number(key);
@@ -154,7 +167,7 @@
 			const replacement = row && byId.get(row.id);
 			if (replacement) windowed.rows[index] = replacement;
 		}
-		invalidate('items');
+		invalidate(name);
 	}
 
 	$effect(() => {
@@ -169,25 +182,25 @@
 		return () => registerCurrentRow?.(undefined);
 	});
 
-	async function handleCellEdit(edit: CellEdit<Item>): Promise<void> {
+	async function handleCellEdit(edit: CellEdit<ResourceRow>): Promise<void> {
 		publishSaved([await onCellEdit(edit)]);
 	}
 
 	async function handleRangePaste(
-		edits: CellEdit<Item>[],
+		edits: CellEdit<ResourceRow>[],
 		info: { skipped: number }
 	): Promise<void> {
 		publishSaved(await onRangePaste(edits, info));
 	}
 </script>
 
-<p class="note">{m['items.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
+<p class="note">{m['resource.rowCount']({ count: windowed.totalCount.toLocaleString() })}</p>
 
 {#if windowed.failures.length > 0}
 	<div class="load-error" role="alert">
 		<p>
-			<strong>{m['items.loadError']()}</strong>
-			<span>{m['items.loadErrorDesc']()}</span>
+			<strong>{m['resource.loadError']()}</strong>
+			<span>{m['resource.loadErrorDesc']()}</span>
 		</p>
 		<button type="button" class="banto-btn banto-btn--secondary" onclick={handleReload}>
 			{m['common.reload']()}
@@ -203,7 +216,7 @@
 		rows={windowed.rows}
 		totalRows={windowed.totalCount}
 		{columns}
-		getRowId={(item) => item.id}
+		getRowId={(row) => row.id}
 		{onRowClick}
 		onCellEdit={handleCellEdit}
 		onRangePaste={handleRangePaste}

@@ -1,499 +1,39 @@
+<!--
+	The items list (ADR-0030 stage 4): `ResourceListPage` renders the page from
+	`itemsResource`; this route only adds what is specific to items - the daily
+	report button (an optional asset; the report remover cuts it) and the CSV import
+	(TEMPORARY here until stage 5 moves it into the component via `csv.import`).
+-->
 <script lang="ts">
-	import {
-		ColumnsMenu,
-		GridState,
-		convertCsvRow,
-		csvFilename,
-		csvForExcel,
-		filterRows,
-		mapCsvHeader,
-		parseCsv,
-		toCsv,
-		columnsFromSchema,
-		type CellEdit,
-		type GridColumn
-	} from '@banto/grid-svelte';
-	import {
-		currentSessionScope,
-		getDataProvider,
-		getResource,
-		invalidate,
-		isProviderError,
-		loadActiveListMode,
-		loadLastOpenedId,
-		loadListViewState,
-		notify,
-		saveActiveListMode,
-		saveListViewState,
-		takeLastEditedRecord
-	} from '@banto/admin-core';
+	import { convertCsvRow, mapCsvHeader, parseCsv, type GridColumn } from '@banto/grid-svelte';
+	import { invalidate, isProviderError, notify } from '@banto/admin-core';
+	import { Upload } from '@lucide/svelte';
+	import { StatusBadge, type StatusBadgeVariant } from '@banto/ui';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { Item } from '#lib/banto/sampleData.js';
+	import { itemsResource } from '#lib/banto/resources/items.js';
+	import { importItems, isItemsImportAvailable } from '#lib/banto/itemsAdmin.js';
+	import { resourceColumns } from '#lib/resource/columns.js';
+	import ResourceListPage from '#lib/resource/ResourceListPage.svelte';
+	// [scaffold:report] begin
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { Download, FileText, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
-	import * as m from '#lib/paraglide/messages.js';
-	import { columnValidationMessages, gridMessages } from '#lib/banto/i18n.js';
-	import type { Item } from '#lib/banto/sampleData.js';
-	import { itemsSchema } from '#lib/banto/resources/items.js';
-	import { sessionStore } from '#lib/session.svelte.js';
-	import { canWriteResources } from '#lib/permissions.js';
-	import { exportCsvToFolder, importItems, isItemsImportAvailable } from '#lib/banto/itemsAdmin.js';
-	import { getBantoMode } from '#lib/banto/setup.js';
-	import {
-		Menu,
-		MenuGroup,
-		MenuItem,
-		PageHeader,
-		StatusBadge,
-		type StatusBadgeVariant
-	} from '@banto/ui';
-	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
-	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
-	import ItemsClientGrid from './ItemsClientGrid.svelte';
-	import ItemsServerGrid from './ItemsServerGrid.svelte';
+	import { FileText } from '@lucide/svelte';
+	// [scaffold:report] end
 	import {
 		importRowKind,
 		previewRows,
 		toImportPayload,
 		type ImportRowPreview
 	} from './importPreview';
-	import { toItemRow, type ItemRow } from './itemRow';
-	import { createRowSaveQueue } from './rowSaveQueue';
 
-	const resource = getResource('items');
+	// --- M15 Phase C: CSV import (moves into ResourceListPage in stage 5) ---
 
-	// Spec M10 RBAC: `viewer` gets a read-only items page (no 新規作成 button,
-	// no inline cell editing below); `editor`/`admin` are unchanged from
-	// before M10.
-	const canWrite = $derived(canWriteResources(sessionStore.role));
+	/** The list's base columns (the same set ResourceListPage builds), for header mapping and labels. `Item` has the index signature `ResourceRow` needs, so the narrowing cast is sound. */
+	const columns = resourceColumns(itemsResource) as unknown as GridColumn<Item>[];
 
-	// Issue #215: a list -> detail -> save/cancel -> list round trip must
-	// restore the filter/sort the user had, not reset to the page's own
-	// defaults. Persistence is `@banto/admin-core`'s `saveListViewState`/
-	// `loadListViewState` (sessionStorage-backed, spec docs/... see that
-	// module's doc comment) keyed per grid mode - クライアント and サーバー
-	// keep independent GridStates/column sets (spec §4.1/§4.3), so their
-	// saved sort/filters/groupBy must not bleed into each other.
-	const RESOURCE_NAME = 'items';
-	const CLIENT_VIEW_KEY = `${RESOURCE_NAME}:client`;
-	const SERVER_VIEW_KEY = `${RESOURCE_NAME}:server`;
-
-	// Issue #215/#255 (4th review): the session this page instance was built
-	// for. Every list-state read/write below passes it: reads only return
-	// state saved by this scope's owner (another account's - or the public
-	// viewer's - search terms are never restored, however the identity
-	// changed), and writes stop the moment the session ends or changes
-	// owner, so this instance cannot save its (old session's) GridState back
-	// on behalf of the next session. `(app)/+layout.svelte` rebuilds the page
-	// for the new session, which captures a fresh scope.
-	const scope = currentSessionScope();
-
-	// M5 Phase A (spec §4.1, §10): the items page demonstrates both grid data
-	// modes side by side via a toggle. Restored from the last mode the user
-	// had (#215) - without this, `lastOpenedId`/the restored filters of
-	// whichever mode was actually active on save would silently go unused,
-	// since the page would always come back up in サーバー (the intrinsic
-	// default below) regardless. Falls back to サーバー the same as before
-	// #215 when nothing was saved yet (first visit this session).
-	let mode: 'client' | 'server' = $state(
-		loadActiveListMode(scope, RESOURCE_NAME) === 'client' ? 'client' : 'server'
-	);
-	$effect(() => {
-		saveActiveListMode(scope, RESOURCE_NAME, mode);
-	});
-
-	const baseColumns: GridColumn<Item>[] = [
-		{
-			id: 'open',
-			// axe-core wcag2a aria-command-name (visual-refresh-plan.md §7.1):
-			// HeaderCell.svelte always renders its cell-body as role="button"
-			// (even for non-sortable columns like this one), so an empty header
-			// left it with no accessible name at all.
-			header: m['items.colActions'](),
-			accessor: () => '',
-			width: 70,
-			resizable: false,
-			sortable: false,
-			cell: (row) => ({ text: m['items.open'](), href: resolve(`items/${row.id}`) })
-		},
-		{
-			id: 'id',
-			header: 'ID',
-			accessor: 'id',
-			width: 80,
-			align: 'right',
-			filterable: true,
-			filterType: 'number'
-		},
-		// M23 (spec §3.1): every schema-backed column (name/price/stock/
-		// updatedAt) is DERIVED from the same itemsSchema the create/edit forms
-		// use - header labels, editors, and validation rules (the integer
-		// checks, the trimmed-length name bounds, the exact Japanese messages)
-		// all come from that one definition instead of being duplicated here.
-		// `overrides` carries only the presentation tuning derivation cannot
-		// know (widths, the ¥ price format). Hand-written columns remain for
-		// everything outside the schema: the row-link 操作 column above and the
-		// DB-generated id.
-		...columnsFromSchema<Item>(itemsSchema, {
-			overrides: {
-				name: { width: 260 },
-				price: { width: 120, format: (value) => `¥${(value as number).toLocaleString()}` },
-				stock: { width: 100 },
-				updatedAt: { width: 140 }
-			},
-			// i18n layer ② (ADR-0005): feed the inline-edit validator the same
-			// Paraglide-backed messages the create/edit form uses.
-			messages: columnValidationMessages()
-		})
-	];
-
-	/**
-	 * Force every column's `editable` off for `viewer` (spec M10 RBAC):
-	 * `editable: false` disables BantoGrid's inline cell editor for that
-	 * column entirely, same mechanism already used for naturally read-only
-	 * columns like `updatedAt`/`open`. `editor`/`admin` get `baseColumns`
-	 * unchanged.
-	 */
-	function withWritePermission(cols: GridColumn<Item>[]): GridColumn<Item>[] {
-		if (canWrite) return cols;
-		return cols.map((column) => (column.editable ? { ...column, editable: false } : column));
-	}
-
-	const columns = $derived(withWritePermission(baseColumns));
-
-	function columnById(id: string): GridColumn<Item> {
-		return columns.find((column) => column.id === id)!;
-	}
-
-	// M5 Phase B (spec §4.3) grouping demo: the CLIENT grid only gets an extra
-	// 「カテゴリ」 column (ItemsClientGrid derives it from `name`) plus
-	// per-column aggregates, so its own column array is built separately from
-	// the shared `columns` above (which stays exactly as-is for サーバー mode -
-	// grouping has no server-mode equivalent yet, spec §4.3). `$derived.by`
-	// (rather than a plain `const`, pre-M10) since it now reads `columns`,
-	// itself derived from `canWrite`/`sessionStore.role`.
-	const clientColumns = $derived.by((): GridColumn<ItemRow>[] => [
-		columnById('open'),
-		{ ...columnById('id'), aggregate: 'count' },
-		columnById('name'),
-		{
-			id: 'category',
-			header: m['items.groupCategory'](),
-			accessor: 'category',
-			width: 140,
-			filterable: true,
-			filterType: 'text',
-			groupable: true
-		},
-		{ ...columnById('price'), aggregate: 'avg' },
-		{ ...columnById('stock'), aggregate: 'sum' },
-		columnById('updatedAt')
-	]);
-
-	// Owned here (not inside ItemsClientGrid) so the shared header's group-by
-	// <select> below can call `.setGroupBy(...)` directly - same wiring
-	// pattern ItemsServerGrid already uses for its own externally-owned
-	// GridState (spec §4.1/§4.3).
-	// svelte-ignore state_referenced_locally
-	const clientGridState = new GridState<ItemRow>(clientColumns);
-
-	// M15 Phase C: owned here (not inside ItemsServerGrid) so the CSV export
-	// button below can read `.sort`/`.filters` directly and reproduce the
-	// exact same ListParams the server-mode grid is currently showing - same
-	// externally-owned-GridState pattern as clientGridState above.
-	// svelte-ignore state_referenced_locally
-	const serverGridState = new GridState<Item>(columns);
-
-	// Issue #215: restore whatever sort/filters/groupBy this session last
-	// left each mode with, BEFORE either grid's first render (plain
-	// synchronous assignment, not inside an $effect - `state.svelte.ts`'s
-	// setters below are perfectly ordinary property writes, no different
-	// from the constructor's own seeding a few lines up). Deliberately NOT
-	// `GridState.hydrate()`: that also restores column order/widths/hidden,
-	// which is issue #168's scope, not this one's - mixing the two would
-	// silently start persisting column layout as a side effect of this fix.
-	// `knownFields` (#255 review): drop any restored sort/filter whose field
-	// isn't one of THIS session's actual columns - a schema/column change
-	// between sessions must not resurrect a filter/sort the current screen
-	// has no column for (`loadListViewState`'s own doc comment has the full
-	// reasoning). `groupBy` gets the same treatment inline below, since it's
-	// a single field id outside the array `loadListViewState` already checks.
-	// svelte-ignore state_referenced_locally
-	const clientFieldIds = clientColumns.map((column) => column.id);
-	const clientSnapshot = loadListViewState(scope, CLIENT_VIEW_KEY, clientFieldIds);
-	if (clientSnapshot) {
-		clientGridState.sort = clientSnapshot.sort;
-		clientGridState.filters = clientSnapshot.filters;
-		if (clientSnapshot.groupBy && clientFieldIds.includes(clientSnapshot.groupBy)) {
-			clientGridState.setGroupBy(clientSnapshot.groupBy);
-		}
-	}
-	// svelte-ignore state_referenced_locally
-	const serverSnapshot = loadListViewState(
-		scope,
-		SERVER_VIEW_KEY,
-		columns.map((column) => column.id)
-	);
-	if (serverSnapshot) {
-		serverGridState.sort = serverSnapshot.sort;
-		serverGridState.filters = serverSnapshot.filters;
-	}
-
-	// Persist on every sort/filter/groupBy change - cheap (a small JSON blob
-	// into sessionStorage) and keeps the saved snapshot live even if the user
-	// never leaves this page instance before closing the tab mid-session.
-	$effect(() => {
-		saveListViewState(scope, CLIENT_VIEW_KEY, {
-			sort: clientGridState.sort,
-			filters: clientGridState.filters,
-			groupBy: clientGridState.groupBy
-		});
-	});
-	$effect(() => {
-		saveListViewState(scope, SERVER_VIEW_KEY, {
-			sort: serverGridState.sort,
-			filters: serverGridState.filters
-		});
-	});
-
-	// The row most recently opened for this RESOURCE (#215's "直前の作業位置
-	// を見つけられるようにする" - via `rowClass` highlighting below, rather
-	// than scroll restoration). Deliberately ONE value shared by both grid
-	// modes (admin-core's `saveLastOpenedId` doc comment explains why), and
-	// deliberately NOT set from `handleRowClick` below: the items page's
-	// "開く" cell is a plain link (`cell: (row) => ({ text, href })`), so
-	// clicking it navigates via its own `href` and never runs `onRowClick` at
-	// all once the grid has editable columns
-	// (`packages/grid-svelte/src/BantoGrid.svelte`'s `handleCellClick` doc
-	// comment) - `handleRowClick` only fires from a double-click on a
-	// read-only cell (spec §4.5's "dedicated affordance" alternative). The
-	// one place every way of reaching the detail page actually passes
-	// through is that page itself, so it calls `saveLastOpenedId` on mount
-	// instead. Reading it once here (a plain `const`, not `$state`) is
-	// enough - the list page never mutates it itself, and a NEW value only
-	// ever matters on a fresh mount of this page (returning from the
-	// detail page always remounts it).
-	const lastOpenedId = loadLastOpenedId(scope, RESOURCE_NAME);
-
-	type GroupByOption = '' | 'category' | 'updatedAt';
-
-	function handleGroupByChange(event: Event) {
-		const value = (event.currentTarget as HTMLSelectElement).value as GroupByOption;
-		clientGridState.setGroupBy(value === '' ? null : value);
-	}
-
-	function handleRowClick(item: Item) {
-		goto(resolve(`items/${item.id}`));
-	}
-
-	/** Issue #215: highlight whichever row was last opened (any mode, any navigation path - see `lastOpenedId` above) - same `rowClass` mechanism audit-log's `+page.svelte` already uses for its selected-row accent. */
-	function clientRowClass(row: ItemRow): string | undefined {
-		return lastOpenedId !== null && row.id === lastOpenedId ? 'items-row-last-opened' : undefined;
-	}
-	function serverRowClass(row: Item): string | undefined {
-		return lastOpenedId !== null && row.id === lastOpenedId ? 'items-row-last-opened' : undefined;
-	}
-
-	// Issue #215: "編集結果が絞り込みの条件から外れた場合も、フィルタを勝手に
-	// 解除しない" - a detail page that just saved leaves a one-shot marker
-	// (admin-core's `noteLastEditedRecord`/`takeLastEditedRecord`) with the
-	// row's values AT SAVE TIME. Reusing `filterRows` (the exact function
-	// BantoGrid's own client mode filters with) against the CURRENT mode's
-	// restored filters answers "does this row still match?" without a round
-	// trip - if not, explain it instead of silently clearing the filter.
-	// Naturally one-shot and idempotent: `takeLastEditedRecord` clears the
-	// marker on read, so a later re-run of this effect (e.g. `mode` toggled)
-	// finds nothing and leaves `filterExclusionNotice` alone.
-	let filterExclusionNotice: { id: string | number } | null = $state(null);
-	$effect(() => {
-		const record = takeLastEditedRecord(scope, RESOURCE_NAME);
-		if (!record) return;
-		// #255 review: the CLIENT grid never filters the raw saved row - it
-		// filters `toItemRow(row)` (ItemsClientGrid.svelte, shared via
-		// `itemRow.ts`), which adds the synthetic `category` field a category
-		// filter/group-by actually matches against. Checking `record.values`
-		// (no `category` at all) here would report every category-filtered
-		// row as "excluded" even when it's still plainly visible on screen -
-		// the exclusion check must run through the exact same derivation the
-		// grid renders/filters with.
-		const activeColumns = mode === 'client' ? clientColumns : columns;
-		const activeFilters = mode === 'client' ? clientGridState.filters : serverGridState.filters;
-		const row = mode === 'client' ? toItemRow(record.values as Item) : (record.values as Item);
-		const matches = filterRows([row], activeFilters, activeColumns as GridColumn<Item>[]);
-		if (matches.length === 0) {
-			filterExclusionNotice = { id: record.id };
-		}
-	});
-
-	/** Merge changed columns onto the base row's other values (DataProvider.update expects the full editable value set). */
-	function mergedValues(row: Item, changes: Record<string, unknown>): Record<string, unknown> {
-		return { name: row.name, price: row.price, stock: row.stock, ...changes };
-	}
-
-	// Issue #284: inline edits and range pastes share ONE per-row save queue.
-	// Saves for the same row run in order, and each request body is composed at
-	// send time from the previous save's confirmed row + only that save's
-	// changed columns - never from the stale `edit.row` snapshot, which used to
-	// make an overlapping save revert the earlier one's column.
-	let currentRowLookup: ((rowId: string | number) => Item | undefined) | undefined;
-	const registerCurrentRow = (lookup: typeof currentRowLookup): void => {
-		currentRowLookup = lookup;
-	};
-	const saveQueue = createRowSaveQueue<Item>({
-		save: (rowId, values) => getDataProvider().update<Item>('items', rowId, values),
-		compose: mergedValues,
-		currentRow: (rowId) => currentRowLookup?.(rowId)
-	});
-
-	// M3 (spec §4.5): commit a single inline cell edit. A validation error
-	// from the provider is re-thrown as a plain Error so BantoGrid re-enters
-	// edit mode on that cell and shows the message inline; any other
-	// provider error is unexpected, so it's also toasted before rethrowing.
-	//
-	// BantoGrid's onCellEdit contract only understands `Error.message` - a
-	// cell can display exactly one message, no structured shape - so when the
-	// provider returns several field_errors (mergedValues always sends the
-	// full row, so an edit to one field can surface a violation on another),
-	// we must pick just one. Priority: the entry for the field the user
-	// actually edited wins if present (that's the one they can see and fix
-	// inline); only fall back to the first entry when the edited field itself
-	// has no violation (rare - e.g. some other field was already invalid).
-	// This is a known limitation of the current onCellEdit contract, pending
-	// a richer (multi-field) error shape in a later milestone.
-	//
-	// Return the saved row to the resource-owning grid. It publishes that
-	// row before invalidating, so the next edit merges against confirmed
-	// values even while the follow-up list request is still in flight (spec §4.5).
-	async function handleCellEdit(edit: CellEdit<Item>): Promise<Item> {
-		try {
-			return await saveQueue.enqueue(edit.rowId, edit.row, { [edit.field]: edit.value });
-		} catch (err) {
-			if (isProviderError(err) && err.body.kind === 'validation') {
-				const fieldError =
-					err.body.field_errors.find((fe) => fe.field === edit.field) ?? err.body.field_errors[0];
-				throw new Error(fieldError?.message ?? err.message, { cause: err });
-			}
-			notify('error', isProviderError(err) ? err.message : String(err));
-			throw err;
-		}
-	}
-
-	// M3 (spec §4.5): a pasted TSV range can touch several rows/columns at
-	// once. Group by row so multi-column pastes on one row become a single
-	// queued save with all of that row's edited fields merged.
-	async function handleRangePaste(
-		edits: CellEdit<Item>[],
-		info: { skipped: number }
-	): Promise<Item[]> {
-		const byRow = new Map<string | number, { row: Item; changes: Record<string, unknown> }>();
-		for (const edit of edits) {
-			const entry = byRow.get(edit.rowId) ?? { row: edit.row, changes: {} };
-			entry.changes[edit.field] = edit.value;
-			byRow.set(edit.rowId, entry);
-		}
-
-		// Enqueue every row first (rows are independent lanes), then settle in
-		// row order. A failed row only toasts; it never poisons later saves.
-		const results = await Promise.allSettled(
-			[...byRow].map(([rowId, entry]) => saveQueue.enqueue(rowId, entry.row, entry.changes))
-		);
-		const saved: Item[] = [];
-		for (const result of results) {
-			if (result.status === 'fulfilled') {
-				saved.push(result.value);
-			} else {
-				const err = result.reason;
-				notify('error', isProviderError(err) ? err.message : String(err));
-			}
-		}
-
-		if (saved.length > 0) {
-			notify('success', m['items.updatedCount']({ count: saved.length }));
-		}
-		if (info.skipped > 0) {
-			notify('info', m['items.skippedCells']({ count: info.skipped }));
-		}
-		return saved;
-	}
-
-	// --- M15 Phase C: CSV export/import ------------------------------------
-
-	/** CSV columns: every real `items` column except the synthetic 「開く」 link column (its accessor is `() => ''` - a blank, useless CSV cell/header). Shared by export (toCsv) and import (mapCsvHeader) so a round-tripped export re-imports cleanly. */
-	const csvColumns = $derived(columns.filter((column) => column.id !== 'open'));
-
-	/** Trigger a browser download of `content` named `filename` via a temporary Blob object URL - same pattern as `packages/charts/src/core/export.ts`'s `downloadSvg`. */
-	function downloadTextFile(content: string, filename: string, mimeType: string): void {
-		const blob = new Blob([content], { type: mimeType });
-		const url = URL.createObjectURL(blob);
-		try {
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = filename;
-			document.body.appendChild(a);
-			a.click();
-			document.body.removeChild(a);
-		} finally {
-			URL.revokeObjectURL(url);
-		}
-	}
-
-	let exporting = $state(false);
-
-	// Export always reflects whichever grid mode is currently on screen: the
-	// server-mode grid's sort/filters are sent straight through to
-	// getDataProvider().getList() (they ARE ListParams already); the
-	// client-mode grid instead applies sort/filters itself inside BantoGrid,
-	// so its GridState is read the same way and forwarded through the same
-	// getList() call - the DataProvider (InMemory/Tauri/REST) reproduces
-	// identical filtering to what BantoGrid shows client-side (spec §4.1/§4.2
-	// keep both implementations in lockstep). One exception: filter out any
-	// sort/filter entry whose field isn't a real `items` column - the client
-	// grouping demo's synthetic 'category' column (ItemsClientGrid.svelte)
-	// has no server-side equivalent, and forwarding it would silently match
-	// zero rows instead of the rows actually shown.
-	async function handleExport(): Promise<void> {
-		exporting = true;
-		try {
-			const active = mode === 'client' ? clientGridState : serverGridState;
-			const validFields = new Set(csvColumns.map((column) => column.id));
-			const sort = active.sort.filter((entry) => validFields.has(entry.field));
-			const filters = active.filters.filter((entry) => validFields.has(entry.field));
-
-			const result = await getDataProvider().getList<Item>('items', {
-				pagination: { offset: 0, limit: 20_000 },
-				sort,
-				filters
-			});
-			const csv = csvForExcel(toCsv(csvColumns, result.rows, { formulaSafe: true }));
-			const filename = csvFilename('items');
-			if (getBantoMode() === 'tauri') {
-				// Desktop (finding⑤ Option A): WebView2 has no visible save
-				// dialog for `<a download>`, so write into the app's
-				// `exports/` folder and reveal it in Explorer instead - same
-				// "no native save dialog in v1" fallback as
-				// `openBackupsFolder`/backups' folder UX.
-				const folderResult = await exportCsvToFolder(csv, filename);
-				// Always show the saved path (the folder opens on success, but
-				// the toast makes the location explicit so the file is never
-				// "missing"). `opened: false` = non-Windows, where no folder opens.
-				notify(
-					'success',
-					folderResult.opened
-						? m['items.exportedToPath']({ count: result.rows.length, path: folderResult.path })
-						: m['items.exportedToPathClosed']({
-								count: result.rows.length,
-								path: folderResult.path
-							})
-				);
-			} else {
-				downloadTextFile(csv, filename, 'text/csv;charset=utf-8');
-				notify('success', m['items.exported']({ count: result.rows.length }));
-			}
-		} catch (err) {
-			notify('error', isProviderError(err) ? err.message : String(err));
-		} finally {
-			exporting = false;
-		}
-	}
+	/** CSV columns: every real `items` column except the synthetic 「開く」 link column - the same set the export writes, so a round-tripped export re-imports cleanly. */
+	const csvColumns = columns.filter((column) => column.id !== 'open');
 
 	interface ImportPreviewState {
 		fileName: string;
@@ -683,361 +223,185 @@
 	}
 </script>
 
-<div class="page">
-	<PageHeader hideTitle title={resource.label} description={m['items.description']()}>
-		{#snippet actions()}
-			<Menu label={m['items.modeToggleAria']()} placement="bottom-start">
-				{#snippet trigger(props)}
-					<button {...props} type="button" class="banto-btn banto-btn--ghost view-trigger">
-						<SlidersHorizontal size={14} aria-hidden="true" />
-						{m['items.viewMenu']()}
-					</button>
-				{/snippet}
-				<MenuGroup label={m['items.modeToggleAria']()}>
-					<MenuItem
-						label={m['items.modeClient']()}
-						checked={mode === 'client'}
-						onSelect={() => (mode = 'client')}
-					/>
-					<MenuItem
-						label={m['items.modeServer']()}
-						checked={mode === 'server'}
-						onSelect={() => (mode = 'server')}
-					/>
-				</MenuGroup>
-			</Menu>
-			<label class="group-by">
-				{m['items.groupByLabel']()}
-				<select
-					class="banto-input"
-					disabled={mode !== 'client'}
-					title={mode !== 'client' ? m['items.groupByClientOnly']() : undefined}
-					onchange={handleGroupByChange}
-				>
-					<option value="">{m['items.groupNone']()}</option>
-					<option value="category">{m['items.groupCategory']()}</option>
-					<option value="updatedAt">{m['items.fieldUpdatedAt']()}</option>
-				</select>
-			</label>
-			<!-- Column manager (spec §4.4, issue #168): takes the SAME GridState
-			     the active grid was handed, so hiding a column here immediately
-			     drops it from that grid. Deliberately per-mode - クライアント and
-			     サーバー own separate GridStates (and separate column sets), so
-			     one shared menu would show the wrong list for whichever mode is
-			     not active. -->
-			<ColumnsMenu
-				state={mode === 'client' ? clientGridState : serverGridState}
-				messages={gridMessages()}
-			/>
-			<!-- M19 report demo (docs/design/report-plan.md §3.5, deletable per
-			     docs/template-scope.md §3): ghost so it reads as a secondary,
-			     non-mutating action alongside CSVエクスポート below - `canWrite`
-			     is deliberately NOT checked, a `viewer` can read a report same
-			     as they can export CSV. -->
-			<button
-				type="button"
-				class="banto-btn banto-btn--ghost"
-				onclick={() => goto(resolve(`items/report`))}
-			>
-				<FileText size={16} aria-hidden="true" />
-				{m['items.report']()}
-			</button>
-			<button
-				type="button"
-				class="banto-btn banto-btn--secondary"
-				onclick={handleExport}
-				disabled={exporting}
-			>
-				<Download size={16} aria-hidden="true" />
-				{exporting ? m['items.exporting']() : m['items.exportCsv']()}
-			</button>
-			{#if canWrite}
-				<button
-					type="button"
-					class="banto-btn banto-btn--secondary"
-					title={m['items.importRules']()}
-					onclick={handleImportButtonClick}
-				>
-					<Upload size={16} aria-hidden="true" />
-					{m['items.importCsv']()}
-				</button>
-				<input
-					class="file-input"
-					type="file"
-					accept=".csv,.txt"
-					aria-label={m['items.importCsv']()}
-					bind:this={importFileInput}
-					onchange={handleImportFileChange}
-				/>
-				<button
-					type="button"
-					class="banto-btn banto-btn--primary new-item-btn"
-					onclick={() => goto(resolve(`items/new`))}
-				>
-					<Plus size={16} aria-hidden="true" />
-					{m['items.create']()}
-				</button>
-			{/if}
-			<AnnotationButton />
-		{/snippet}
-	</PageHeader>
+<ResourceListPage resource={itemsResource}>
+	<!-- [scaffold:report] begin -->
+	<!-- M19 report demo (docs/design/report-plan.md §3.5, deletable per
+	     docs/template-scope.md §3): ghost so it reads as a secondary,
+	     non-mutating action alongside CSVエクスポート - no permission check, a
+	     `viewer` can read a report same as they can export CSV. -->
+	{#snippet actions()}
+		<button
+			type="button"
+			class="banto-btn banto-btn--ghost"
+			onclick={() => goto(resolve(`items/report`))}
+		>
+			<FileText size={16} aria-hidden="true" />
+			{m['items.report']()}
+		</button>
+	{/snippet}
+	<!-- [scaffold:report] end -->
 
-	<!-- At the page root, not in PageHeader's actions: the header is a
-	     containing block for fixed descendants (annotation.svelte.ts). -->
-	<AnnotationDrawer>
-		<p>{m['items.annotationEdit']()}</p>
-		<p>{m['items.annotationMode']()}</p>
-		<p>{m['items.annotationGroup']()}</p>
-		<p>{m['items.annotationExport']()}</p>
-		<p>{m['items.importRules']()}</p>
-	</AnnotationDrawer>
+	<!-- Rendered by ResourceListPage only with the `import` permission. -->
+	{#snippet csvImport()}
+		<button
+			type="button"
+			class="banto-btn banto-btn--secondary"
+			title={m['items.importRules']()}
+			onclick={handleImportButtonClick}
+		>
+			<Upload size={16} aria-hidden="true" />
+			{m['items.importCsv']()}
+		</button>
+		<input
+			class="file-input"
+			type="file"
+			accept=".csv,.txt"
+			aria-label={m['items.importCsv']()}
+			bind:this={importFileInput}
+			onchange={handleImportFileChange}
+		/>
+	{/snippet}
 
-	<!-- Issue #215: the row just saved may no longer match the filter the
-	     user still has active (restored from this session, above). Never
-	     clear that filter for them - explain the mismatch instead, and let
-	     them dismiss the notice once they've seen it. -->
-	{#if filterExclusionNotice}
-		<div class="filter-exclusion-notice" role="status">
-			<span>{m['items.filterExcludedNotice']({ id: filterExclusionNotice.id })}</span>
-			<button
-				type="button"
-				class="banto-btn banto-btn--ghost"
-				onclick={() => (filterExclusionNotice = null)}
-			>
-				{m['common.close']()}
-			</button>
-		</div>
-	{/if}
-
-	{#if importPreview}
-		<section class="import-panel import-panel--{importStatusVariant}">
-			<header class="import-panel-header">
-				<StatusBadge variant={importStatusVariant} label={importStatusLabel} />
-				<h3>{importPreview.fileName}</h3>
-			</header>
-			{#if importPreview.missingRequired.length > 0}
-				<p class="panel-text">
-					{m['items.importMissingRequiredDetail']({
-						columns: importPreview.missingRequired.map(columnLabel).join('、')
-					})}
-				</p>
-			{:else}
-				{@const errorRows = importPreview.rows.filter((row) => row.errors.length > 0)}
-				<p class="panel-text muted" data-testid="import-rules">{m['items.importRules']()}</p>
-				{@const createCount = importPreview.rows.filter((row) => row.id === undefined).length}
-				{@const updateCount = importPreview.rows.filter((row) => row.id !== undefined).length}
-				<p class="panel-text summary">
-					{m['items.importSummary']({
-						create: createCount,
-						update: updateCount,
-						error: errorRows.length,
-						total: importPreview.rows.length
-					})}
-				</p>
-				{#if importPreview.ignoredHeaders.length > 0}
-					<p class="panel-text muted">
-						{m['items.importIgnored']({ columns: importPreview.ignoredHeaders.join('、') })}
+	{#snippet beforeGrid()}
+		{#if importPreview}
+			<section class="import-panel import-panel--{importStatusVariant}">
+				<header class="import-panel-header">
+					<StatusBadge variant={importStatusVariant} label={importStatusLabel} />
+					<h3>{importPreview.fileName}</h3>
+				</header>
+				{#if importPreview.missingRequired.length > 0}
+					<p class="panel-text">
+						{m['items.importMissingRequiredDetail']({
+							columns: importPreview.missingRequired.map(columnLabel).join('、')
+						})}
 					</p>
-				{/if}
-				{#if importPreview.rows.length > 0}
-					{@const shown = previewRows(importPreview.rows)}
-					<p class="panel-text muted">
-						{m['items.importPreviewShown']({
-							shown: shown.length,
+				{:else}
+					{@const errorRows = importPreview.rows.filter((row) => row.errors.length > 0)}
+					<p class="panel-text muted" data-testid="import-rules">{m['items.importRules']()}</p>
+					{@const createCount = importPreview.rows.filter((row) => row.id === undefined).length}
+					{@const updateCount = importPreview.rows.filter((row) => row.id !== undefined).length}
+					<p class="panel-text summary">
+						{m['items.importSummary']({
+							create: createCount,
+							update: updateCount,
+							error: errorRows.length,
 							total: importPreview.rows.length
 						})}
 					</p>
-					<div class="preview-table-wrap">
-						<table class="preview-table">
-							<caption class="sr-only">{m['items.importPreviewCaption']()}</caption>
-							<thead>
-								<tr>
-									<th scope="col">{m['items.importPreviewLine']()}</th>
-									<th scope="col">{m['items.importPreviewKind']()}</th>
-									<th scope="col">ID</th>
-									<th scope="col">{columnLabel('name')}</th>
-									<th scope="col" class="num">{columnLabel('price')}</th>
-									<th scope="col" class="num">{columnLabel('stock')}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each shown as row (row.csvLine)}
-									<tr class:has-error={row.errors.length > 0}>
-										<td>{row.csvLine}</td>
-										<td>
-											<span class="kind kind--{importRowKind(row)}">
-												{importRowKind(row) === 'update'
-													? m['items.importKindUpdate']()
-													: m['items.importKindCreate']()}
-											</span>
-										</td>
-										<td>{row.id ?? '—'}</td>
-										<td>{row.name ?? '—'}</td>
-										<td class="num">{row.price ?? '—'}</td>
-										<td class="num">{row.stock ?? '—'}</td>
+					{#if importPreview.ignoredHeaders.length > 0}
+						<p class="panel-text muted">
+							{m['items.importIgnored']({ columns: importPreview.ignoredHeaders.join('、') })}
+						</p>
+					{/if}
+					{#if importPreview.rows.length > 0}
+						{@const shown = previewRows(importPreview.rows)}
+						<p class="panel-text muted">
+							{m['items.importPreviewShown']({
+								shown: shown.length,
+								total: importPreview.rows.length
+							})}
+						</p>
+						<div class="preview-table-wrap">
+							<table class="preview-table">
+								<caption class="sr-only">{m['items.importPreviewCaption']()}</caption>
+								<thead>
+									<tr>
+										<th scope="col">{m['items.importPreviewLine']()}</th>
+										<th scope="col">{m['items.importPreviewKind']()}</th>
+										<th scope="col">ID</th>
+										<th scope="col">{columnLabel('name')}</th>
+										<th scope="col" class="num">{columnLabel('price')}</th>
+										<th scope="col" class="num">{columnLabel('stock')}</th>
 									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-					{#if updateCount > 0}
-						<p class="panel-text muted">{m['items.importUpdateNote']({ count: updateCount })}</p>
+								</thead>
+								<tbody>
+									{#each shown as row (row.csvLine)}
+										<tr class:has-error={row.errors.length > 0}>
+											<td>{row.csvLine}</td>
+											<td>
+												<span class="kind kind--{importRowKind(row)}">
+													{importRowKind(row) === 'update'
+														? m['items.importKindUpdate']()
+														: m['items.importKindCreate']()}
+												</span>
+											</td>
+											<td>{row.id ?? '—'}</td>
+											<td>{row.name ?? '—'}</td>
+											<td class="num">{row.price ?? '—'}</td>
+											<td class="num">{row.stock ?? '—'}</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+						{#if updateCount > 0}
+							<p class="panel-text muted">{m['items.importUpdateNote']({ count: updateCount })}</p>
+						{/if}
+					{/if}
+					{#if errorRows.length > 0}
+						<ul class="error-list">
+							{#each errorRows.slice(0, 20) as row (row.csvLine)}
+								<li>
+									{m['items.importErrorLine']({
+										line: row.csvLine,
+										message: row.errors
+											.map((e) => formatCsvError(e.columnId, e.message))
+											.join(' / ')
+									})}
+								</li>
+							{/each}
+						</ul>
+						{#if errorRows.length > 20}
+							<p class="panel-text muted">
+								{m['items.importMore']({ count: errorRows.length - 20 })}
+							</p>
+						{/if}
+					{/if}
+					{#if importPreview.serverErrors}
+						<p class="panel-text">{m['items.importServerRollback']()}</p>
+						<ul class="error-list">
+							{#each importPreview.serverErrors.slice(0, 20) as serverError, i (i)}
+								<li>
+									{m['items.importErrorLine']({
+										line: importPreview.rows[serverError.row]?.csvLine ?? serverError.row + 2,
+										message: serverError.message
+									})}
+								</li>
+							{/each}
+						</ul>
+						{#if importPreview.serverErrors.length > 20}
+							<p class="panel-text muted">
+								{m['items.importMore']({ count: importPreview.serverErrors.length - 20 })}
+							</p>
+						{/if}
 					{/if}
 				{/if}
-				{#if errorRows.length > 0}
-					<ul class="error-list">
-						{#each errorRows.slice(0, 20) as row (row.csvLine)}
-							<li>
-								{m['items.importErrorLine']({
-									line: row.csvLine,
-									message: row.errors.map((e) => formatCsvError(e.columnId, e.message)).join(' / ')
-								})}
-							</li>
-						{/each}
-					</ul>
-					{#if errorRows.length > 20}
-						<p class="panel-text muted">
-							{m['items.importMore']({ count: errorRows.length - 20 })}
-						</p>
-					{/if}
-				{/if}
-				{#if importPreview.serverErrors}
-					<p class="panel-text">{m['items.importServerRollback']()}</p>
-					<ul class="error-list">
-						{#each importPreview.serverErrors.slice(0, 20) as serverError, i (i)}
-							<li>
-								{m['items.importErrorLine']({
-									line: importPreview.rows[serverError.row]?.csvLine ?? serverError.row + 2,
-									message: serverError.message
-								})}
-							</li>
-						{/each}
-					</ul>
-					{#if importPreview.serverErrors.length > 20}
-						<p class="panel-text muted">
-							{m['items.importMore']({ count: importPreview.serverErrors.length - 20 })}
-						</p>
-					{/if}
-				{/if}
-			{/if}
-			<div class="actions">
-				<button
-					type="button"
-					class="banto-btn banto-btn--primary"
-					onclick={executeImport}
-					disabled={importSubmitting ||
-						importPreview.missingRequired.length > 0 ||
-						importPreview.rows.some((row) => row.errors.length > 0)}
-				>
-					{importSubmitting ? m['items.importRunning']() : m['items.importRun']()}
-				</button>
-				<button
-					type="button"
-					class="banto-btn banto-btn--ghost"
-					onclick={cancelImport}
-					disabled={importSubmitting}
-				>
-					{m['common.cancel']()}
-				</button>
-			</div>
-		</section>
-	{/if}
-
-	{#if mode === 'client'}
-		<ItemsClientGrid
-			columns={clientColumns}
-			state={clientGridState}
-			onRowClick={handleRowClick}
-			onCellEdit={handleCellEdit}
-			onRangePaste={handleRangePaste}
-			rowClass={clientRowClass}
-			{registerCurrentRow}
-		/>
-	{:else}
-		<ItemsServerGrid
-			{columns}
-			state={serverGridState}
-			onRowClick={handleRowClick}
-			onCellEdit={handleCellEdit}
-			onRangePaste={handleRangePaste}
-			rowClass={serverRowClass}
-			{registerCurrentRow}
-		/>
-	{/if}
-</div>
+				<div class="actions">
+					<button
+						type="button"
+						class="banto-btn banto-btn--primary"
+						onclick={executeImport}
+						disabled={importSubmitting ||
+							importPreview.missingRequired.length > 0 ||
+							importPreview.rows.some((row) => row.errors.length > 0)}
+					>
+						{importSubmitting ? m['items.importRunning']() : m['items.importRun']()}
+					</button>
+					<button
+						type="button"
+						class="banto-btn banto-btn--ghost"
+						onclick={cancelImport}
+						disabled={importSubmitting}
+					>
+						{m['common.cancel']()}
+					</button>
+				</div>
+			</section>
+		{/if}
+	{/snippet}
+</ResourceListPage>
 
 <style>
-	.page {
-		height: calc(100vh - var(--banto-shell-header-height) - 2.5rem);
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
-	}
-
-	/* Priority-ordered toolbar (design.md §Phase 4): view menu/group-by stay
-	   ghost, export/import are secondary, 新規作成 is the sole primary
-	   action. DOM order is left as it always was (existing convention
-	   preserved per the implementation brief); only 新規作成 is pulled to
-	   the front once the toolbar wraps under 768px, below. */
-	.view-trigger {
-		height: var(--banto-control-height-sm);
-		padding: 0 var(--banto-space-3);
-		font-size: var(--banto-font-size-sm);
-	}
-
-	.group-by {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--banto-space-2);
-		font-size: var(--banto-font-size-sm);
-		color: var(--banto-text-muted);
-	}
-
-	.group-by select {
-		height: var(--banto-control-height-sm);
-		font-size: var(--banto-font-size-sm);
-	}
-
-	.group-by select:disabled {
-		cursor: not-allowed;
-		opacity: 0.5;
-	}
-
-	/* 768px 前後で折り返した際、主要操作（新規作成）を先頭に維持する
-	   (design.md §Phase 4)。 */
-	@media (max-width: 48rem) {
-		.new-item-btn {
-			order: -1;
-		}
-	}
-
-	/* Issue #215: same info-tint idiom as the import panel's success/warning/
-	   danger variants below, but neutral - this isn't an error, just context
-	   the user should know about before it's dismissed. */
-	.filter-exclusion-notice {
-		flex: 0 0 auto;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--banto-space-3);
-		margin: 0 0 var(--banto-space-3);
-		padding: var(--banto-space-2) var(--banto-space-3);
-		border-left: 3px solid var(--banto-primary);
-		border-radius: var(--banto-radius-sm);
-		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
-		font-size: var(--banto-font-size-md);
-	}
-
-	/* Issue #215: highlights whichever row this mode's grid was last
-	   opened/saved from (`rowClass` -> BantoGrid's `.row` element,
-	   packages/grid-svelte/src/BantoGrid.svelte) - same left-accent idiom and
-	   `:global()` requirement as audit-log's `.audit-row-selected`
-	   (apps/admin-template/src/routes/(app)/audit-log/+page.svelte). */
-	:global(.row.items-row-last-opened) {
-		background: color-mix(in srgb, var(--banto-primary) 10%, transparent);
-		border-left: 3px solid var(--banto-primary);
-	}
-
 	/* Visually hidden but still focusable/clickable via the CSVインポート
 	   button's importFileInput?.click() - same "real file input, no fake
 	   input" approach as a plain native file picker, just not shown itself. */

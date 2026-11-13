@@ -20,8 +20,8 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await page.addInitScript((locale) => localStorage.setItem('banto.locale', locale), locale);
 			await page.goto('/items');
 			await chooseItemsMode(page, {
-				trigger: copy['items.viewMenu'],
-				item: copy[`items.mode${mode}`]
+				trigger: copy['resource.viewMenu'],
+				item: copy[`resource.mode${mode}`]
 			});
 			const grid = page.getByRole('grid');
 			const priceCell = grid.locator('[data-cell-row="0"][data-cell-field="price"]');

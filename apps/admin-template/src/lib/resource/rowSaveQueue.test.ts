@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createRowSaveQueue } from './rowSaveQueue';
 
-// Issue #284 regression tests. Both ItemsClientGrid and ItemsServerGrid route
+// Issue #284 regression tests. Both ResourceClientGrid and ResourceServerGrid route
 // their inline edits (onCellEdit) and range pastes (onRangePaste) through the
-// single queue created in +page.svelte, so these cover both grid paths.
+// single queue created in ResourceListPage.svelte, so these cover both grid paths.
 
 interface Row {
 	id: number;

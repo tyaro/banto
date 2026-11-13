@@ -6,9 +6,9 @@
 import { expect, type Page } from '@playwright/test';
 
 export interface ItemsViewLabels {
-	/** 「表示」ボタンの名前（`items.viewMenu`）。 */
+	/** 「表示」ボタンの名前（`resource.viewMenu`）。 */
 	trigger: string;
-	/** 選ぶ項目の名前（`items.modeClient` / `items.modeServer`）。 */
+	/** 選ぶ項目の名前（`resource.modeClient` / `resource.modeServer`）。 */
 	item: string;
 }
 

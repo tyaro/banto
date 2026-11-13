@@ -50,10 +50,10 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			await primeThemeAndAuth(page, DIAGONAL_MATRIX[index]);
 			await page.addInitScript((locale) => localStorage.setItem('banto.locale', locale), locale);
 			await page.goto('/items');
-			const modeButton = page.getByRole('button', { name: copy['items.viewMenu'], exact: true });
+			const modeButton = page.getByRole('button', { name: copy['resource.viewMenu'], exact: true });
 			await chooseItemsMode(page, {
-				trigger: copy['items.viewMenu'],
-				item: copy[`items.mode${mode}`]
+				trigger: copy['resource.viewMenu'],
+				item: copy[`resource.mode${mode}`]
 			});
 			const grid = page.getByRole('grid');
 			const cell = grid.locator('[data-cell-row="0"][data-cell-field="name"]');
