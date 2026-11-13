@@ -785,6 +785,9 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 	margin: 0;
 	opacity: 0;
 	cursor: inherit;
+	/* The label takes the click (and checks the radio): an invisible input on
+	   top of the text would intercept a click aimed at the visible label. */
+	pointer-events: none;
 }
 
 .banto-segmented__option:hover:not(:has(> input:checked, > input:disabled)) {
