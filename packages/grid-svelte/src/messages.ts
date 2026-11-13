@@ -57,6 +57,20 @@ export interface GridMessages {
 	columnsMenuCount?: (visible: number, total: number) => string;
 	/** ColumnsMenu's tooltip on the last remaining visible column's (disabled) checkbox. */
 	columnsMenuLastColumn?: () => string;
+	/** FilterChips: accessible name of the group of applied-filter chips. */
+	filterChipsLabel?: () => string;
+	/** FilterChips: accessible name of a chip's x button, given the column's header text. */
+	filterChipRemove?: (header: string) => string;
+	/** FilterChips: the "clear all filters" button (shown with two or more filters). */
+	filterChipsClearAll?: () => string;
+	/** FilterChips: operator word of an `is_null` filter (no value follows). */
+	filterChipIsNull?: () => string;
+	/** FilterChips: operator word of a `not_null` filter (no value follows). */
+	filterChipNotNull?: () => string;
+	/** FilterChips: operator word of an `in` filter (the values follow, comma-separated). */
+	filterChipIn?: () => string;
+	/** FilterChips: separator between the two ends of a `between` (range) filter. */
+	filterChipRangeSeparator?: () => string;
 }
 
 export const defaultGridMessages: Required<GridMessages> = {
@@ -84,5 +98,12 @@ export const defaultGridMessages: Required<GridMessages> = {
 	columnsMenuButton: () => '列',
 	columnsMenuTitle: () => '列の表示',
 	columnsMenuCount: (visible, total) => `${visible}/${total}`,
-	columnsMenuLastColumn: () => '最後の1列は非表示にできません'
+	columnsMenuLastColumn: () => '最後の1列は非表示にできません',
+	filterChipsLabel: () => '適用中の絞り込み',
+	filterChipRemove: (header) => `${header}の絞り込みを外す`,
+	filterChipsClearAll: () => 'すべて解除',
+	filterChipIsNull: () => '空',
+	filterChipNotNull: () => '空でない',
+	filterChipIn: () => 'いずれか',
+	filterChipRangeSeparator: () => '〜'
 };

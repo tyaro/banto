@@ -303,7 +303,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
 		await mainNav.getByRole('link', { name: '商品' }).click();
 		await expect(page).toHaveURL(/\/items$/);
-		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 		const nameFilter = page.getByRole('dialog', { name: '商品名の絞り込み' });
 		await nameFilter.getByPlaceholder('値を入力').fill(SEARCH);
 		await nameFilter.getByRole('button', { name: '適用' }).click();
@@ -356,7 +356,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(page).toHaveURL(/\/items$/);
 
 		const expectNoOldSession = async () => {
-			await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+			await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 			await expect(
 				page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 			).toHaveValue('');

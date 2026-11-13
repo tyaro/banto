@@ -42,7 +42,14 @@ export function gridMessages(): Partial<GridMessages> {
 		columnsMenuButton: () => m['grid.columnsMenuButton'](),
 		columnsMenuTitle: () => m['grid.columnsMenuTitle'](),
 		columnsMenuCount: (visible, total) => m['grid.columnsMenuCount']({ visible, total }),
-		columnsMenuLastColumn: () => m['grid.columnsMenuLastColumn']()
+		columnsMenuLastColumn: () => m['grid.columnsMenuLastColumn'](),
+		filterChipsLabel: () => m['grid.filterChipsLabel'](),
+		filterChipRemove: (header) => m['grid.filterChipRemove']({ header }),
+		filterChipsClearAll: () => m['grid.filterChipsClearAll'](),
+		filterChipIsNull: () => m['grid.filterChipIsNull'](),
+		filterChipNotNull: () => m['grid.filterChipNotNull'](),
+		filterChipIn: () => m['grid.filterChipIn'](),
+		filterChipRangeSeparator: () => m['grid.filterChipRangeSeparator']()
 	};
 }
 
