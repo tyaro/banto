@@ -294,7 +294,7 @@
 		font-size: var(--banto-font-size-md);
 		font-weight: 600;
 		text-align: center;
-		overflow-wrap: anywhere;
+		overflow-wrap: break-word;
 	}
 
 	.date-picker-nav {
