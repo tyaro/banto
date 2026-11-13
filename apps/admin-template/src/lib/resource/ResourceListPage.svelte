@@ -424,6 +424,7 @@
 	// resource column (a client-only derived field) are dropped
 	// (`exportListParams`).
 	async function handleExport(): Promise<void> {
+		if (exporting) return;
 		exporting = true;
 		try {
 			const active = mode === 'client' ? clientGridState : serverGridState;
@@ -627,10 +628,18 @@
 						<button
 							{...props}
 							type="button"
-							class="banto-btn banto-btn--ghost more-trigger"
+							class={['banto-btn banto-btn--ghost more-trigger', exporting && 'banto-btn--loading']}
 							aria-label={m['resource.moreMenu']()}
+							aria-busy={exporting ? 'true' : undefined}
 						>
-							<Ellipsis size={16} aria-hidden="true" />
+							<!-- The menu closes on pick, so a running CSV export shows here
+							     (same spinner as <Button loading>). -->
+							{#if exporting}
+								<span class="banto-btn__content"><Ellipsis size={16} aria-hidden="true" /></span>
+								<span class="banto-btn__spinner" aria-hidden="true"></span>
+							{:else}
+								<Ellipsis size={16} aria-hidden="true" />
+							{/if}
 						</button>
 					{/snippet}
 					{@render extraActions?.()}
