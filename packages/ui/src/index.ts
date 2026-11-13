@@ -31,6 +31,8 @@
  * #556: ConfirmDialog (the in-page `window.confirm`, on the Modal body) and
  * its `await confirm()` form, `createConfirmStore()` + ConfirmHost (also a
  * `.svelte.ts`, shaped like the toast store).
+ * #556 (2): Button (variant / size / loading with a fixed width / icon), the
+ * Svelte face of `@banto/theme`'s `.banto-btn` classes; ConfirmDialog uses it.
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -82,6 +84,7 @@ export {
 	type TimeParts,
 	type Weekday
 } from './datetime';
+export { default as Button } from './Button.svelte';
 export { default as ConfirmDialog } from './ConfirmDialog.svelte';
 export { default as ConfirmHost } from './ConfirmHost.svelte';
 export {

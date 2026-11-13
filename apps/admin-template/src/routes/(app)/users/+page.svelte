@@ -36,7 +36,8 @@
 		StatusBadge,
 		type StatusBadgeVariant,
 		EmptyState,
-		LoadingState
+		LoadingState,
+		Button
 	} from '@banto/ui';
 	import {
 		createUser,
@@ -378,14 +379,9 @@
 							</select>
 							<span class="banto-field-label">{m['common.role']()}</span>
 						</label>
-						<button
-							type="button"
-							class="banto-btn banto-btn--primary"
-							onclick={saveEdit}
-							disabled={saving}
-						>
+						<Button variant="primary" onclick={saveEdit} loading={saving}>
 							{m['common.save']()}
-						</button>
+						</Button>
 
 						<!-- Danger zone (plan Phase 5): delete + password reset are
 						     visually separated from the normal save action above.
@@ -404,28 +400,16 @@
 									/>
 									<span class="banto-field-label">{m['common.newPasswordMinLabel']()}</span>
 								</label>
-								<button
-									type="button"
-									class="banto-btn banto-btn--danger"
-									onclick={saveReset}
-									disabled={resetting}
-								>
-									<KeyRound size={16} aria-hidden="true" />
+								<Button variant="danger" icon={KeyRound} onclick={saveReset} loading={resetting}>
 									{m['users.resetPassword']()}
-								</button>
+								</Button>
 							</div>
 
 							<div class="danger-section">
 								<p class="note">{m['users.deleteDesc']()}</p>
-								<button
-									type="button"
-									class="banto-btn banto-btn--danger"
-									onclick={handleDelete}
-									disabled={deleting}
-								>
-									<Trash2 size={16} aria-hidden="true" />
+								<Button variant="danger" icon={Trash2} onclick={handleDelete} loading={deleting}>
 									{m['common.delete']()}
-								</button>
+								</Button>
 							</div>
 						</div>
 					</SurfaceCard>
@@ -527,7 +511,7 @@
 		border-top: var(--banto-border-width) dashed var(--banto-border);
 	}
 
-	.danger-section .banto-btn {
+	.danger-section :global(.banto-btn) {
 		margin-top: var(--banto-space-1);
 	}
 </style>

@@ -22,6 +22,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { copyText } from '#lib/clipboard.js';
+	import { Button } from '@banto/ui';
 	import {
 		getReachCheckStatus,
 		issueReachCheck,
@@ -242,14 +243,14 @@
 					<span class="banto-field-label">{m['settings.reachHost']()}</span>
 				</label>
 			{/if}
-			<button
-				type="button"
-				class="banto-btn banto-btn--secondary"
+			<Button
+				variant="secondary"
 				onclick={issue}
-				disabled={applying || controller.issuing || host === null}
+				loading={controller.issuing}
+				disabled={applying || host === null}
 			>
-				{controller.issuing ? m['settings.reachIssuing']() : m['settings.reachIssue']()}
-			</button>
+				{m['settings.reachIssue']()}
+			</Button>
 			{#if view.kind === 'unreadable'}
 				<button
 					type="button"

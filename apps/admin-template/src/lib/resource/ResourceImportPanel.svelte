@@ -8,7 +8,7 @@
 	renders it.
 -->
 <script lang="ts">
-	import { StatusBadge } from '@banto/ui';
+	import { Button, StatusBadge } from '@banto/ui';
 	import type { GridColumn } from '@banto/grid-svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import {
@@ -190,14 +190,14 @@
 		{/if}
 	{/if}
 	<div class="actions">
-		<button
-			type="button"
-			class="banto-btn banto-btn--primary"
+		<Button
+			variant="primary"
 			onclick={onRun}
-			disabled={submitting || !canRunImport(preview)}
+			loading={submitting}
+			disabled={!canRunImport(preview)}
 		>
-			{submitting ? m['resource.importRunning']() : m['resource.importRun']()}
-		</button>
+			{m['resource.importRun']()}
+		</Button>
 		<button
 			type="button"
 			class="banto-btn banto-btn--ghost"

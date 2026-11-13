@@ -129,12 +129,12 @@ describe('createConfirmStore + ConfirmHost', () => {
 		void store.confirm({ title: 'Plain' });
 		await flush();
 		const ok = confirmButton(defaultUiMessages.confirmOk());
-		expect(ok.classList.contains('button--primary')).toBe(true);
+		expect(ok.classList.contains('banto-btn--primary')).toBe(true);
 		store.settle(store.current!.id, false);
 		await flush();
 		void store.confirm({ title: 'Danger', danger: true, confirmLabel: 'Remove' });
 		await flush();
-		expect(confirmButton('Remove').classList.contains('button--danger')).toBe(true);
+		expect(confirmButton('Remove').classList.contains('banto-btn--danger')).toBe(true);
 		opener.remove();
 	});
 });

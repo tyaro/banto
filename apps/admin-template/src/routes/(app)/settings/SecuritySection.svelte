@@ -22,7 +22,7 @@
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { SurfaceCard } from '@banto/ui';
+	import { Button, SurfaceCard } from '@banto/ui';
 	import { applyAuthSettings, type AuthDisabledRole } from '#lib/banto/authAdmin.js';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
@@ -174,14 +174,14 @@
 
 			<p class="note">{m['settings.explicitSaveHint']()}</p>
 			<div class="save-row">
-				<button
-					type="button"
-					class="banto-btn banto-btn--primary"
+				<Button
+					variant="primary"
 					onclick={saveAuthSettings}
-					disabled={applyingAuth || !editable}
+					loading={applyingAuth}
+					disabled={!editable}
 				>
 					{m['settings.saveAndApply']()}
-				</button>
+				</Button>
 				{#if dirty}
 					<button
 						type="button"
@@ -197,14 +197,9 @@
 
 			{#if authSettingsStore.error}
 				<p class="error">{m['settings.savedValuesUnavailable']()} {authSettingsStore.error}</p>
-				<button
-					type="button"
-					class="banto-btn banto-btn--secondary"
-					onclick={retryLoad}
-					disabled={reloading}
-				>
+				<Button variant="secondary" onclick={retryLoad} loading={reloading}>
 					{m['common.reload']()}
-				</button>
+				</Button>
 			{/if}
 
 			{#if authSettingsStore.value}

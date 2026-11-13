@@ -63,7 +63,8 @@ Banto は **Tauri デスクトップ + LAN ブラウザ配信の二形態で動�
 > scaffold はこの行を残す（常に使うため）。Modal / Drawer はその後の段階 4 で入り、その上に確認の
 > ダイアログ（`ConfirmDialog` と `await confirm()` 用の `createConfirmStore()` + `ConfirmHost`、#556）が
 > 載る。admin-template の `confirm.svelte.ts` と `components/ConfirmHost.svelte` も薄い包みで、
-> どのプリセットでも残る。
+> どのプリセットでも残る。文字のボタン `Button`（`@banto/theme` の `.banto-btn` の Svelte 版。`loading` で
+> 幅を保つスピナー、#556）も同じ `@banto/ui` にある。
 
 ### 2.2 横断機能（M10〜M17 で追加した運用系）
 
