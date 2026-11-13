@@ -474,7 +474,9 @@ html[data-theme='dark'] {
 .banto-field > select.banto-field-control + .banto-field-label {
 	inset-block-start: var(--banto-space-1);
 	transform: none;
-	font-size: var(--banto-font-size-md);
+	/* xs (12px, the floor): at md (14px) a long label wraps to a second line at
+	   200% text on a narrow card and runs into the value below. */
+	font-size: var(--banto-font-size-xs);
 }
 
 /* Reserve the full label height for long translations, narrow fields, or zoom.
