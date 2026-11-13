@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	clearAllListViewState,
 	clearListViewState,
+	isListViewSnapshot,
 	loadActiveListMode,
 	loadLastOpenedId,
 	loadListViewState,
@@ -660,5 +661,24 @@ describe('purgeListViewStateNotOwnedBy', () => {
 		);
 		purgeListViewStateNotOwnedBy(null, storage);
 		expect(storage.length).toBe(0);
+	});
+});
+
+describe('isListViewSnapshot (Issue #555 saved views)', () => {
+	it('accepts a well-formed snapshot and rejects malformed ones', () => {
+		expect(
+			isListViewSnapshot({
+				sort: [{ field: 'stock', direction: 'asc' }],
+				filters: [{ field: 'stock', op: 'lt', value: 50 }],
+				search: 'tea'
+			})
+		).toBe(true);
+		expect(isListViewSnapshot({ sort: [], filters: [] })).toBe(true);
+		expect(isListViewSnapshot(null)).toBe(false);
+		expect(
+			isListViewSnapshot({ sort: [], filters: [{ field: 'stock', op: 'nope', value: 1 }] })
+		).toBe(false);
+		expect(isListViewSnapshot({ sort: [{ field: 'stock' }], filters: [] })).toBe(false);
+		expect(isListViewSnapshot({ sort: [], filters: [], search: 3 })).toBe(false);
 	});
 });

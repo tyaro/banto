@@ -179,7 +179,8 @@ export {
 	saveLastOpenedId,
 	loadLastOpenedId,
 	noteLastEditedRecord,
-	takeLastEditedRecord
+	takeLastEditedRecord,
+	isListViewSnapshot
 } from './listViewState';
 
 export type { SessionScope } from './sessionScope.svelte';

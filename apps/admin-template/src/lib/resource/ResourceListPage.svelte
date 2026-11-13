@@ -3,7 +3,10 @@
 	The list page of one resource (ADR-0030 §4, stage 4).
 
 	`<ResourceListPage resource={definition}>` renders the whole page: the
-	heading (`label` / `description`), the "View" menu (load mode, when the
+	heading (`label` / `description`), the "Views" menu (#555 (4): the
+	definition's `list.views` and the user's saved views - filters, sort and
+	search term - with "save the current view" / delete; `?view=<id>` opens the
+	list with one), the "View" menu (load mode, when the
 	definition offers two; group-by, client grid only), the column menu, the
 	"..." menu (CSV export and import with `csv.import` and its confirmation
 	panel, plus the `actions` entries), "New" (the only button left in view, #555), the demo build's annotation, and the server /
@@ -45,8 +48,10 @@
 		type GridColumn
 	} from '@banto/grid-svelte';
 	import {
+		createSavedSetting,
 		currentSessionScope,
 		getDataProvider,
+		getSessionController,
 		invalidate,
 		isProviderError,
 		loadActiveListMode,
@@ -55,15 +60,26 @@
 		notify,
 		saveActiveListMode,
 		saveListViewState,
-		takeLastEditedRecord
+		takeLastEditedRecord,
+		type SavedSetting
 	} from '@banto/admin-core';
 	import type { FormSchema } from '@banto/forms';
-	import { goto } from '$app/navigation';
-	import { Download, Ellipsis, Plus, Search, SlidersHorizontal, Upload } from '@lucide/svelte';
-	import { Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
+	import { goto, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import {
+		Bookmark,
+		Download,
+		Ellipsis,
+		Plus,
+		Search,
+		SlidersHorizontal,
+		Upload
+	} from '@lucide/svelte';
+	import { Button, Menu, MenuGroup, MenuItem, MenuSeparator, Modal, PageHeader } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
-	import { getBantoMode } from '#lib/banto/setup.js';
+	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { resolveAppPath, type AppPath } from '#lib/appPath.js';
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
@@ -85,6 +101,22 @@
 		initialLoadMode,
 		listLoadModes
 	} from './listState';
+	import {
+		SAVED_VIEW_LIMIT,
+		VIEW_LABEL_MAX,
+		canSaveListViews,
+		newSavedViewId,
+		parseSavedViews,
+		presetViewContent,
+		removeSavedView,
+		sameViewContent,
+		savedViewsKey,
+		serializeSavedViews,
+		upsertSavedView,
+		viewForFields,
+		type ListViewContent,
+		type SavedListView
+	} from './listViews';
 	import { resourcePermissions } from './permissions';
 	import { createRowSaveQueue } from './rowSaveQueue';
 	import ResourceClientGrid from './ResourceClientGrid.svelte';
@@ -204,10 +236,14 @@
 	// #555 (3): the quick-search term is ONE value for the page (the box sits
 	// in the toolbar, above whichever grid is shown), saved into both modes'
 	// snapshots; the active mode's saved term wins on restore.
+	// The column ids each grid has (fixed for the page's life: the definition
+	// is read once). Also what a list view is narrowed to when applied.
+	// svelte-ignore state_referenced_locally
+	const clientFieldIds = clientColumns.map((column) => column.id);
+	// svelte-ignore state_referenced_locally
+	const serverFieldIds = columns.map((column) => column.id);
 	const restoredSearch: Partial<Record<ListLoadMode, string>> = {};
 	if (hasClient) {
-		// svelte-ignore state_referenced_locally
-		const clientFieldIds = clientColumns.map((column) => column.id);
 		const clientSnapshot = loadListViewState(scope, CLIENT_VIEW_KEY, clientFieldIds);
 		if (clientSnapshot) {
 			restoredSearch.client = clientSnapshot.search;
@@ -224,8 +260,6 @@
 		}
 	}
 	if (hasServer) {
-		// svelte-ignore state_referenced_locally
-		const serverFieldIds = columns.map((column) => column.id);
 		const serverSnapshot = loadListViewState(scope, SERVER_VIEW_KEY, serverFieldIds);
 		if (serverSnapshot) {
 			restoredSearch.server = serverSnapshot.search;
@@ -255,6 +289,197 @@
 		}, SEARCH_DEBOUNCE_MS);
 	}
 	$effect(() => () => clearTimeout(searchTimer));
+
+	// --- #555 (4): list views -------------------------------------------------
+	//
+	// A view = filters + sort + quick-search term (`listViews.ts`). Applying one
+	// REPLACES what both grids had (each keeps only the entries it has a
+	// column for), so the chips, the search box and - in server mode - the
+	// fetched rows follow. Sources: the definition's `list.views`, then the
+	// user's own saved views in the per-user UI settings. `?view=<id>` opens
+	// the list with either; the parameter is then removed from the URL (a
+	// reload must not re-apply it over what the user changed since).
+
+	const presetViews = def.list?.views ?? [];
+	const savedViewsSettingKey = savedViewsKey(name);
+	// A grant session (LAN public viewer) shares one settings namespace across
+	// every screen it runs on, so it gets the views but no "Save".
+	const canSaveViews = $derived(
+		savedViewsSettingKey !== null && canSaveListViews(getSessionController().snapshot)
+	);
+	const savedViewsSetting = savedViewsSettingKey
+		? createSavedSetting<SavedListView[]>({
+				provider: getUiSettings(),
+				key: savedViewsSettingKey,
+				parse: parseSavedViews,
+				serialize: serializeSavedViews,
+				fallback: () => []
+			})
+		: null;
+	// `idle` until the first load starts. Saving waits for `ready`: a save
+	// before the load answered would overwrite the views stored meanwhile.
+	let savedViewsLoad: 'idle' | 'loading' | 'ready' | 'failed' = $state('idle');
+	const savedViews = $derived(canSaveViews ? (savedViewsSetting?.saved ?? []) : []);
+	const hasViewsMenu = $derived(presetViews.length > 0 || canSaveViews);
+
+	/** A `?view=` id that names a saved view, waiting for the saved views to load. */
+	let pendingViewId: string | null = null;
+
+	$effect(() => {
+		if (!canSaveViews || !savedViewsSetting) return;
+		untrack(() => {
+			if (savedViewsLoad === 'idle') void loadSavedViews(savedViewsSetting);
+		});
+	});
+	$effect(() => () => savedViewsSetting?.dispose());
+
+	async function loadSavedViews(setting: SavedSetting<SavedListView[]>): Promise<void> {
+		savedViewsLoad = 'loading';
+		const result = await setting.load();
+		if (result === 'stale') return;
+		savedViewsLoad = result === 'failed' ? 'failed' : 'ready';
+		const pending = pendingViewId;
+		pendingViewId = null;
+		if (pending) resolveViewRequest(pending, true);
+	}
+
+	function setGridView(state: GridState<ResourceRow>, content: ListViewContent): void {
+		state.sort = [...content.sort];
+		state.filters = [...content.filters];
+	}
+
+	/** Apply a view to both grids and the search box. `refetch`: the server grid already exists. */
+	function applyView(content: ListViewContent, refetch: boolean): void {
+		if (hasClient) setGridView(clientGridState, viewForFields(content, clientFieldIds));
+		if (hasServer) setGridView(serverGridState, viewForFields(content, serverFieldIds));
+		clearTimeout(searchTimer);
+		searchInput = content.search;
+		search = content.search;
+		if (refetch && mode === 'server') serverGridRef?.applyStateParams();
+	}
+
+	/** `?view=<id>`: a definition view, else a saved one (once loaded), else a notice. */
+	function resolveViewRequest(id: string, refetch: boolean): void {
+		const preset = presetViews.find((view) => view.id === id);
+		if (preset) {
+			applyView(presetViewContent(preset), refetch);
+			return;
+		}
+		if (canSaveViews && (savedViewsLoad === 'idle' || savedViewsLoad === 'loading')) {
+			pendingViewId = id;
+			return;
+		}
+		const own = savedViews.find((view) => view.id === id);
+		if (own) applyView(own, refetch);
+		else notify('info', m['resource.viewNotFound']({ id }));
+	}
+
+	// The URL this page was created with: a definition view in it is applied
+	// right here, before either grid exists (so the server grid's first fetch
+	// already carries it). The effect below handles a later `?view=` (a link
+	// to the same list while it is open) and removes the parameter.
+	const initialUrl = page.url;
+	const initialViewId = initialUrl.searchParams.get('view');
+	if (initialViewId) resolveViewRequest(initialViewId, false);
+
+	$effect(() => {
+		const url = page.url;
+		const id = url.searchParams.get('view');
+		if (id === null) return;
+		untrack(() => {
+			if (url !== initialUrl) resolveViewRequest(id, true);
+			const next = new URL(url.href);
+			next.searchParams.delete('view');
+			try {
+				replaceState(next, page.state);
+			} catch {
+				// Router not ready yet: the parameter stays, which only means a
+				// reload applies the view again.
+			}
+		});
+	});
+
+	/** What the active grid shows now, as a view (for the menu's check mark and "Save"). */
+	function currentViewContent(): ListViewContent {
+		const state = mode === 'client' ? clientGridState : serverGridState;
+		return {
+			sort: $state.snapshot(state.sort),
+			filters: $state.snapshot(state.filters),
+			search
+		};
+	}
+
+	function isShownView(content: ListViewContent): boolean {
+		const fields = mode === 'client' ? clientFieldIds : serverFieldIds;
+		return sameViewContent(viewForFields(content, fields), currentViewContent());
+	}
+
+	/** Store `next` as the saved views; on failure the menu keeps the stored ones. */
+	async function persistSavedViews(next: SavedListView[]): Promise<boolean> {
+		if (!savedViewsSetting) return false;
+		const previous = savedViewsSetting.saved ?? [];
+		savedViewsSetting.set(next);
+		const ok = await savedViewsSetting.save();
+		if (!ok) savedViewsSetting.set(previous);
+		return ok;
+	}
+
+	let saveViewOpen = $state(false);
+	let saveViewName = $state('');
+	let saveViewBusy = $state(false);
+
+	function openSaveView(): void {
+		if (savedViewsLoad !== 'ready') {
+			notify('error', m['resource.viewSaveFailed']());
+			return;
+		}
+		saveViewName = '';
+		saveViewOpen = true;
+	}
+
+	async function submitSaveView(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		const label = saveViewName.trim();
+		if (!savedViewsSetting || saveViewBusy || label === '') return;
+		const stored = savedViewsSetting.saved ?? [];
+		const result = upsertSavedView(
+			stored,
+			label,
+			{ ...currentViewContent(), search: searchInput },
+			() => newSavedViewId(stored)
+		);
+		if (result.kind === 'limit') {
+			notify('error', m['resource.viewLimit']({ count: SAVED_VIEW_LIMIT }));
+			return;
+		}
+		saveViewBusy = true;
+		try {
+			if (await persistSavedViews(result.views)) {
+				notify('success', m['resource.viewSaved']({ name: label }));
+				saveViewOpen = false;
+			} else {
+				notify('error', m['resource.viewSaveFailed']());
+			}
+		} finally {
+			saveViewBusy = false;
+		}
+	}
+
+	async function deleteSavedView(view: SavedListView): Promise<void> {
+		const confirmed = await confirmAction({
+			title: m['resource.viewDeleteTitle'](),
+			message: m['resource.viewDeleteMessage']({ name: view.label }),
+			confirmLabel: m['common.delete'](),
+			danger: true
+		});
+		if (!confirmed || !savedViewsSetting) return;
+		const next = removeSavedView(savedViewsSetting.saved ?? [], view.id);
+		if (await persistSavedViews(next)) {
+			notify('success', m['resource.viewDeleted']({ name: view.label }));
+		} else {
+			notify('error', m['resource.viewDeleteFailed']());
+		}
+	}
 
 	// Persist on every sort/filter/groupBy change - cheap (a small JSON blob
 	// into sessionStorage) and keeps the saved snapshot live even if the user
@@ -622,6 +847,61 @@
 					oninput={handleSearchInput}
 				/>
 			</label>
+			<!-- #555 (4): named views (filters + sort + search term). The one
+			     the list shows right now carries the check mark. -->
+			{#if hasViewsMenu}
+				<Menu label={m['resource.savedViewsMenu']()} placement="bottom-start">
+					{#snippet trigger(props)}
+						<button {...props} type="button" class="banto-btn banto-btn--ghost views-trigger">
+							<Bookmark size={14} aria-hidden="true" />
+							{m['resource.savedViewsMenu']()}
+						</button>
+					{/snippet}
+					{#if presetViews.length > 0}
+						<MenuGroup label={m['resource.viewsPreset']()}>
+							{#each presetViews as view (view.id)}
+								<MenuItem
+									label={view.label()}
+									checked={isShownView(presetViewContent(view))}
+									onSelect={() => applyView(presetViewContent(view), true)}
+								/>
+							{/each}
+						</MenuGroup>
+					{/if}
+					{#if savedViews.length > 0}
+						<MenuGroup label={m['resource.viewsSaved']()}>
+							{#each savedViews as view (view.id)}
+								<MenuItem
+									label={view.label}
+									checked={isShownView(view)}
+									onSelect={() => applyView(view, true)}
+								/>
+							{/each}
+						</MenuGroup>
+					{/if}
+					{#if canSaveViews}
+						{#if presetViews.length > 0 || savedViews.length > 0}
+							<MenuSeparator />
+						{/if}
+						<MenuItem
+							label={m['resource.viewSave']()}
+							disabled={savedViewsLoad !== 'ready'}
+							onSelect={openSaveView}
+						/>
+						{#if savedViews.length > 0}
+							<MenuGroup label={m['resource.viewDeleteGroup']()}>
+								{#each savedViews as view (view.id)}
+									<MenuItem
+										label={m['resource.viewDeleteItem']({ name: view.label })}
+										danger
+										onSelect={() => void deleteSavedView(view)}
+									/>
+								{/each}
+							</MenuGroup>
+						{/if}
+					{/if}
+				</Menu>
+			{/if}
 			<!-- #555 (1): "New" is the only action left in view. Everything else is
 			     in two menus: "View" (how the list looks) and "…" (what to do with
 			     its data). The column manager stays a button next to "View": a
@@ -761,6 +1041,51 @@
 		</AnnotationDrawer>
 	{/if}
 
+	<!-- #555 (4): name the current view and save it (personal UI settings). -->
+	{#if canSaveViews}
+		<Modal
+			open={saveViewOpen}
+			title={m['resource.viewSaveTitle']()}
+			width="28rem"
+			messages={{ overlayClose: () => m['common.close']() }}
+			onRequestClose={() => !saveViewBusy}
+			onclose={() => (saveViewOpen = false)}
+		>
+			<form class="save-view" onsubmit={submitSaveView}>
+				<p class="save-view-hint">{m['resource.viewSaveHint']()}</p>
+				<label class="save-view-field">
+					<span>{m['resource.viewName']()}</span>
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						class="banto-input"
+						type="text"
+						required
+						autofocus
+						maxlength={VIEW_LABEL_MAX}
+						bind:value={saveViewName}
+					/>
+				</label>
+				<div class="save-view-actions">
+					<Button
+						variant="secondary"
+						disabled={saveViewBusy}
+						onclick={() => (saveViewOpen = false)}
+					>
+						{m['common.cancel']()}
+					</Button>
+					<Button
+						variant="primary"
+						type="submit"
+						loading={saveViewBusy}
+						disabled={saveViewName.trim() === ''}
+					>
+						{m['common.save']()}
+					</Button>
+				</div>
+			</form>
+		</Modal>
+	{/if}
+
 	<!-- Issue #215: the row just saved may no longer match the filter the
 	     user still has active (restored from this session, above). Never
 	     clear that filter for them - explain the mismatch instead, and let
@@ -846,11 +1171,39 @@
 	   menus stay ghost, "New" is the sole primary action.
 	   DOM order is left as it always was; only "New" is pulled to the front
 	   once the toolbar wraps under 768px, below. */
+	.views-trigger,
 	.view-trigger,
 	.more-trigger {
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
+	}
+
+	/* #555 (4): the "save the current view" dialog. */
+	.save-view {
+		display: flex;
+		flex-direction: column;
+		gap: var(--banto-space-4);
+	}
+
+	.save-view-hint {
+		margin: 0;
+		color: var(--banto-text-muted);
+		font-size: var(--banto-font-size-sm);
+		text-wrap: pretty;
+	}
+
+	.save-view-field {
+		display: flex;
+		flex-direction: column;
+		gap: var(--banto-space-1);
+		font-size: var(--banto-font-size-sm);
+	}
+
+	.save-view-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--banto-space-2);
 	}
 
 	/* #555 (3): the quick-search box, first in the toolbar. */

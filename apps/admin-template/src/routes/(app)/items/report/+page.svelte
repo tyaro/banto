@@ -22,6 +22,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import { byCategory, categoryCounts, computeStatTiles } from '#lib/banto/dashboard.js';
+	import { LOW_STOCK_THRESHOLD } from '#lib/banto/resources/items.js';
 	import { LoadingState } from '@banto/ui';
 	import dailyTemplate from '#lib/banto/reports/daily.md?raw';
 
@@ -34,12 +35,11 @@
 		return () => list.dispose();
 	});
 
-	// Same cutoff as dashboard.ts's own (unexported) LOW_STOCK_THRESHOLD -
-	// mirrored here rather than duplicated as a new aggregation: this is a
-	// single filter over already-loaded rows, not a new count/sum
+	// `LOW_STOCK_THRESHOLD` (resources/items.ts) is the same cutoff the
+	// dashboard's tile and the list's `low-stock` view use (#555 (4)). This is
+	// a single filter over already-loaded rows, not a new count/sum
 	// computation (those still all come from computeStatTiles/byCategory/
 	// categoryCounts below).
-	const LOW_STOCK_THRESHOLD = 50;
 	// Caps the printed 在庫僅少一覧 table to a reasonable page length - with
 	// 1,000 seeded items and a uniform stock draw, ~100 rows would be low
 	// stock; `lowStockCount` in the summary paragraph still reports the
@@ -89,6 +89,7 @@
 			stockTotal: stats.stockTotal,
 			avgPrice: stats.avgPrice,
 			lowStockCount: stats.lowStockCount,
+			lowStockThreshold: LOW_STOCK_THRESHOLD,
 			categories: mergeCategoryRows(items),
 			lowStock
 		};
