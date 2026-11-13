@@ -293,7 +293,9 @@ export class SnapshotListResource<T> {
 		this.#notify = options.notify ?? true;
 		this.#params = {
 			sort: options.params?.sort ?? [],
-			filters: options.params?.filters ?? []
+			filters: options.params?.filters ?? [],
+			// #555 (3): keep an initial quick-search term too (Codex P2 on #578).
+			...(options.params?.search !== undefined && { search: options.params.search })
 		};
 		this.params = this.#params;
 	}

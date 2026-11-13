@@ -630,6 +630,16 @@ describe('SnapshotListResource: before the first ensureRange()', () => {
 		list.ensureRange(0, 10);
 		expect(server.calls[0].request.sort).toEqual([{ field: 'ts', direction: 'desc' }]);
 	});
+
+	it('sends an initial search term from the options on the first load (#555)', () => {
+		const server = createServer(5);
+		const list = createSnapshotListResource<Row>(server.fetcher, {
+			blockSize: BLOCK,
+			params: { search: 'tea' }
+		});
+		list.ensureRange(0, 10);
+		expect(server.calls[0].request.search).toBe('tea');
+	});
 });
 
 describe('SnapshotListResource: failure codes, messages and notifications (#342)', () => {
