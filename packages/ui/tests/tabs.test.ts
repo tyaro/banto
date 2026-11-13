@@ -42,6 +42,18 @@ describe('Tabs', () => {
 		expect(screen.queryByText('Panel b')).toBeNull();
 	});
 
+	it('writes the fallback tab back to the bound value without onchange', async () => {
+		const onchange = vi.fn();
+		const view = render(TabsHarness, { tabs: TABS, onchange });
+		// No value yet: the first enabled tab is shown and bound.
+		expect(screen.getByTestId('value').textContent).toBe('a');
+		// The selected tab becomes disabled: the next shown tab is bound.
+		await view.rerender({ tabs: [{ ...TABS[0], disabled: true }, TABS[1], TABS[2]], onchange });
+		expect(screen.getByRole('tabpanel').textContent).toContain('Panel b');
+		expect(screen.getByTestId('value').textContent).toBe('b');
+		expect(onchange).not.toHaveBeenCalled();
+	});
+
 	it('keeps one tab in the Tab order (the selected one)', () => {
 		render(TabsHarness, { tabs: TABS, value: 'b' });
 		const tabs = screen.getAllByRole('tab');

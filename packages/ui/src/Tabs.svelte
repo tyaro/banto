@@ -53,6 +53,13 @@
 	const enabled = $derived(tabs.filter((tab) => !tab.disabled));
 	/** `value` when it names an enabled tab, else the first enabled one. */
 	const selected = $derived(enabled.some((tab) => tab.id === value) ? value : enabled[0]?.id);
+	// Keep the bound value on the tab actually shown: the fallback above (no
+	// value yet, or the chosen tab was removed / disabled) is written back, so
+	// the caller never acts on a tab that is not displayed. Not a user choice,
+	// so `onchange` is not called.
+	$effect.pre(() => {
+		if (value !== selected) value = selected;
+	});
 	/** Manual activation lets focus rest on another tab; that tab holds the tab stop. */
 	let focusedId: string | undefined = $state();
 	const tabStop = $derived(
