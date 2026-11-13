@@ -276,6 +276,14 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
   バックアップ/リストアは SQLite 専用（PostgreSQL は明示エラー）。仕様 §12.1、
   [docs/recipes/database-backup.md](docs/recipes/database-backup.md)。
 - **Glass テーマプリセット**（M12）と現代的な UI（M22 ビジュアルリフレッシュ）。
+- **ブランドの色を 1 行で変えられる**: 配色は OKLCH の役割ベース（ニュートラル 12 段 + ブランド 1 色 +
+  状態 4 色）で、ブランド由来の色（primary・ボタンの塗り・アクセントのグラデーション・フォーカスの輪・
+  glass の光・ニュートラルのわずかな色味）は色相 1 つから導く。`apps/admin-template/src/app.css` の
+  `@import '@banto/theme/css';` より後に `:root { --banto-brand-hue: 150; }`（0〜360 の色相。既定 258 の青）
+  と書けば、ライト / ダークとも追従する。ボタンの文字のコントラスト（4.5:1）はどの色相でも保つように
+  値を選んである。危険・警告・成功・情報の色は意味が変わらないよう固定。CSS の外にある
+  静的な色（`src/app.html` の `theme-color`・`static/manifest.webmanifest` の `theme_color`・アイコン画像）は
+  追従しないので手で合わせる。
 - **UI の i18n（英語 / 日本語）**: app 層の UI は**英語（一次言語）と日本語**に対応し、設定画面で
   切り替えられる（Paraglide JS 採用・[ADR-0005](docs/adr/0005-i18n-paraglide.md)）。既定の表示
   ロケールは日本語。共有パッケージ（`@banto/*`）は辞書を持たず、可視文言は注入された解決済み

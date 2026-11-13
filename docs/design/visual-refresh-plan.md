@@ -500,48 +500,60 @@ Phase 4〜6 は、そのデザインを日常操作する全画面へ展開し�
 「本文 4.5:1 / 大文字・UI 3:1」基準。Glass はここに列挙した面トークンのみを
 `[data-banto-preset='glass']` で半透明値に上書きする（現行方式を踏襲）。
 
+#557（2026-11）で色は OKLCH の役割ベースに組み直した（ニュートラル 12 段 + ブランド 1 色 +
+状態 4 色。考え方は [visual-refresh-design.md §2.4](visual-refresh-design.md#24-配色の考え方)）。
+下の表の値は既定の `--banto-brand-hue: 258` のときのもの。括弧の16進は sRGB に換算した目安。
+
 ### A.1 面と境界線
 
 | トークン | Light | Dark | 備考 |
 |---|---|---|---|
-| `--banto-bg` | `#f6f7f9`（現行） | `#15171b`（現行） | |
-| `--banto-surface` | `#ffffff`（現行） | `#1e2127`（現行） | |
-| `--banto-surface-subtle` | `#f1f3f6` | `#23262d` | セクション地・行ストライプ |
-| `--banto-surface-hover` | `#eef1f5` | `#2a2f37` | ホバー面 |
-| `--banto-surface-raised` | `#ffffff`（現行） | `#262a31`（現行） | |
-| `--banto-surface-overlay` | `#ffffff` + shadow-lg | `#262a31` + shadow-lg | メニュー・ポップオーバー |
-| `--banto-border`（弱） | `#d9dde3`（現行） | `#363b44`（現行） | 区切り線用 |
-| `--banto-border-strong` | `#848b96`（3.4:1） | `#6b7480`（3.4:1） | 入力欄など操作境界。UI 3:1 ✓ |
+| `--banto-bg` | neutral-2（`#f6f7fa`） | neutral-1（`#14161a`） | |
+| `--banto-surface` | neutral-1（`#ffffff`） | neutral-2（`#1d2126`） | |
+| `--banto-surface-subtle` | neutral-3（`#f1f3f6`） | neutral-3（`#22262c`） | セクション地・行ストライプ |
+| `--banto-surface-hover` | neutral-4（`#eef0f4`） | neutral-5（`#2b2f36`） | ホバー面 |
+| `--banto-surface-raised` | neutral-1（`#ffffff`） | neutral-4（`#262a31`） | |
+| `--banto-surface-overlay` | = surface + shadow-lg | = raised + shadow-lg | メニュー・ポップオーバー |
+| `--banto-border`（弱） | neutral-6（`#d8dde3`） | neutral-6（`#373c44`） | 区切り線用 |
+| `--banto-border-strong` | neutral-9（`#858b94`、3.4:1） | neutral-9（`#6f757d`、surface 3.5:1 / raised 3.1:1） | 入力欄など操作境界。UI 3:1 ✓ |
 
 ### A.2 テキスト
 
 | トークン | Light | 対 surface | Dark | 対 surface | 判定 |
 |---|---|---|---|---|---|
-| `--banto-text` | `#1a1d21` | 16.9:1 | `#e8eaed` | 13.4:1 | ✓ |
-| `--banto-text-muted` | `#5c6470` | 6.0:1（subtle 上 5.4:1） | `#9aa3af` | 6.3:1（raised 上 5.7:1） | ✓ |
+| `--banto-text` | neutral-12（`#1a1d22`） | 16.9:1 | neutral-12（`#e7eaed`） | 13.4:1 | ✓ |
+| `--banto-text-muted` | neutral-11（`#5e646d`） | 6.0:1（hover 上 5.3:1） | neutral-11（`#9ea3ac`） | 6.4:1（raised 上 5.7:1） | ✓ |
+| `--banto-text-inverse` | neutral-1（白） | — | neutral-1（`#14161a`） | — | 塗りの上の文字 |
 
 ### A.3 状態色（文字用 / 塗り用 / 淡色ペアの3系統）
 
 塗り用（solid）はボタン等の背景。文字用（text）は surface 上のリンク・アイコン・
-バッジ文字。淡色ペア（tint）は通知パネル等の「淡い地 + 濃い文字」。
+バッジ文字。淡色ペア（tint）は通知パネル等の「淡い地 + 濃い文字」。primary は
+`--banto-brand-hue` に追従し、状態 4 色の色相（danger 27 / warning 58・46 / success 149 / info 235）は固定。
 
 Light:
 
 | 状態 | text（対 surface） | solid（対ボタン文字） | tint 地 / 文字（比） |
 |---|---|---|---|
-| primary | `#2563eb`（5.2:1 ✓） | `#2563eb` / 白（5.2:1 ✓）、hover `#1d4ed8`（6.7:1） | — |
-| danger | `#b91c1c` | `#dc2626` / 白（4.8:1 ✓）、hover `#b91c1c`（6.5:1） | `#fee2e2` / `#991b1b`（6.8:1 ✓） |
-| success | `#15803d` | `#15803d` / 白（5.0:1 ✓）※現行 `#16a34a` は 3.3:1 で不可 | `#dcfce7` / `#166534`（6.5:1 ✓） |
-| warning | `#92400e` | 塗りボタンは作らない | `#fef3c7` / `#92400e`（6.4:1 ✓） |
+| primary | `oklch(0.5 0.17 H)` `#145ec1`（6.1:1 ✓） | 同じ / 白（6.1:1 ✓）、hover `oklch(0.44 0.16 H)`（8.0:1） | — |
+| danger | `#dc2627`（4.8:1 ✓） | 同じ / 白（4.8:1 ✓）、hover `#b91c1e`（6.5:1） | `#fee2e2` / `#991b1b`（6.8:1 ✓） |
+| success | `#18a349`（3.3:1。文字には tint-text を使う） | `#15803d` / 白（5.0:1 ✓） | `#dcfce7` / `#176534`（6.5:1 ✓） |
+| warning | `#d9770a`（3.2:1。同上） | 塗りボタンは作らない | `#fef3c7` / `#92400e`（6.4:1 ✓） |
+| info | `#207aa6`（4.8:1 ✓） | 塗りボタンは作らない | `#e3f3fd` / `#135372`（7.3:1 ✓） |
+
+アクセントのグラデーションの終点 `--banto-brand-accent` は `oklch(0.5 0.2 H+40)`（`#743bc3`、白に 6.6:1）。
 
 Dark:
 
-| 状態 | text(対 surface) | solid（対ボタン文字） | tint 地 / 文字 |
+| 状態 | text(対 surface / raised) | solid（対ボタン文字） | tint 地 / 文字（surface / raised 上） |
 |---|---|---|---|
-| primary | `#60a5fa`（6.3:1 ✓） | `#3b82f6` / `--banto-text-inverse` `#1a1d21`（4.6:1 ✓）。白文字は 3.7:1 で不可 | — |
-| danger | `#f87171`（5.8:1 ✓） | `#dc2626` / 白（4.8:1 ✓）。`#ef4444`+白は 3.8:1 で不可 | 低透過 tint（`color-mix` 18%）/ `#f87171` |
-| success | `#4ade80`（9.3:1 ✓） | 同様に `#15803d` / 白 | `color-mix` 18% / `#4ade80` |
-| warning | `#fbbf24`（9.7:1 ✓） | 塗りボタンは作らない | `color-mix` 18% / `#fbbf24` |
+| primary | `--banto-primary-text` `oklch(0.74 0.12 H)` `#7aacf6`（7.0 / 6.2:1 ✓）。`--banto-primary` `#5492ec` は 5.2 / 4.6:1 | `#5492ec` / `--banto-text-inverse`（5.8:1 ✓）、hover `#7aacf6`（7.8:1） | — |
+| danger | `#ef4445`（4.3 / 3.8:1。文字には tint-text） | light と同じ `#dc2627` / 白（4.8:1 ✓） | 18% / `oklch(0.76 0.14 22)` `#fe8a88`（5.1 / 4.5:1 ✓） |
+| success | `#1ec55f`（7.1 / 6.3:1 ✓） | light と同じ `#15803d` / 白 | 18% / `#48de81`（6.2 / 5.5:1 ✓） |
+| warning | `#f59e0a`（7.6 / 6.7:1 ✓） | 塗りボタンは作らない | 18% / `#fcbf26`（6.4 / 5.7:1 ✓） |
+| info | `#4cb0e5`（6.7 / 5.9:1 ✓） | 塗りボタンは作らない | 18% / `#7ac8f5`（5.9 / 5.3:1 ✓） |
+
+アクセントの終点は `oklch(0.7 0.14 H+40)`（`#a98aea`、`--banto-text-inverse` に 6.5:1）。
 
 ### A.4 形状・影・寸法
 
