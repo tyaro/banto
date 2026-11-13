@@ -33,6 +33,10 @@
  * `.svelte.ts`, shaped like the toast store).
  * #556 (2): Button (variant / size / loading with a fixed width / icon), the
  * Svelte face of `@banto/theme`'s `.banto-btn` classes; ConfirmDialog uses it.
+ * #556 (3): Tabs (ARIA tabs, roving focus; `.banto-tabs`), SegmentedControl
+ * (native radios in a radiogroup; `.banto-segmented`) and Tooltip (hover /
+ * focus, hoverable, Esc; IconButton's label now shows through it instead of
+ * `title`).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -149,9 +153,12 @@ export { default as MenuGroup } from './MenuGroup.svelte';
 export { default as MenuItem } from './MenuItem.svelte';
 export { default as MenuSeparator } from './MenuSeparator.svelte';
 export { default as PageHeader } from './PageHeader.svelte';
+export { default as SegmentedControl } from './SegmentedControl.svelte';
 export { default as StatusBadge } from './StatusBadge.svelte';
 export { default as SurfaceCard } from './SurfaceCard.svelte';
+export { default as Tabs } from './Tabs.svelte';
 export { default as ToastHost } from './ToastHost.svelte';
+export { default as Tooltip } from './Tooltip.svelte';
 export {
 	createToastStore,
 	DEFAULT_TOAST_DURATION_MS,
@@ -163,4 +170,10 @@ export {
 	type ToastStoreOptions
 } from './toast.svelte';
 export { defaultUiMessages, type UiMessages } from './messages';
-export type { StatusBadgeVariant, UiIconComponent } from './types';
+export type {
+	SegmentedOption,
+	StatusBadgeVariant,
+	TabItem,
+	TooltipTriggerProps,
+	UiIconComponent
+} from './types';

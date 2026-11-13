@@ -18,7 +18,7 @@
 	 * column (PR-6),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c), the Modal / Drawer card (phase 4) and the
-	 * ConfirmDialog card (#556) are closed /
+	 * ConfirmDialog card (#556) and the Tooltip card (#556) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
 	 * keyboard and focus behaviour are covered by the package's jsdom tests
 	 * (and the open Modal / Drawer by the axe scan in e2e/visual/a11y.spec.ts),
@@ -45,11 +45,16 @@
 		MenuSeparator,
 		Modal,
 		PageHeader,
+		SegmentedControl,
 		StatusBadge,
 		SurfaceCard,
+		Tabs,
 		TimeInput,
+		Tooltip,
 		type CommandPaletteItem,
+		type SegmentedOption,
 		type StatusBadgeVariant,
+		type TabItem,
 		type UiMessages
 	} from '@banto/ui';
 	import {
@@ -97,6 +102,23 @@
 	}
 
 	let clicks = $state(0);
+
+	// Tabs / SegmentedControl / Tooltip (#556). The tooltip is closed on load,
+	// so the screenshot shows only its trigger.
+	const demoTabs: TabItem[] = [
+		{ id: 'overview', label: m['uiDemo.tabs.overview']() },
+		{ id: 'history', label: m['uiDemo.tabs.history']() },
+		{ id: 'archived', label: m['uiDemo.tabs.archived'](), disabled: true }
+	];
+	let demoTab = $state('overview');
+	type DemoView = 'list' | 'cards' | 'map';
+	const demoViews: SegmentedOption<DemoView>[] = [
+		{ value: 'list', label: m['uiDemo.segmented.list']() },
+		{ value: 'cards', label: m['uiDemo.segmented.cards']() },
+		{ value: 'map', label: m['uiDemo.segmented.map']() }
+	];
+	let demoView = $state<DemoView>('list');
+	const demoViewLabel = $derived(demoViews.find((view) => view.value === demoView)?.label ?? '');
 	let undone = $state(0);
 
 	// Modal / Drawer card (phase 4): a modal, and a drawer whose note field
@@ -583,6 +605,55 @@
 						? m['uiDemo.confirm.answerYes']()
 						: m['uiDemo.confirm.answerNo']()}
 			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="Tabs" description={m['uiDemo.tabs.desc']()}>
+		<Tabs tabs={demoTabs} bind:value={demoTab} label={m['uiDemo.tabs.label']()}>
+			{#snippet panel(id)}
+				<p class="body-text">
+					{id === 'history' ? m['uiDemo.tabs.historyBody']() : m['uiDemo.tabs.overviewBody']()}
+				</p>
+			{/snippet}
+		</Tabs>
+	</SurfaceCard>
+
+	<SurfaceCard title="SegmentedControl" description={m['uiDemo.segmented.desc']()}>
+		<div class="row">
+			<SegmentedControl
+				options={demoViews}
+				bind:value={demoView}
+				name="ui-demo-view"
+				label={m['uiDemo.segmented.label']()}
+			/>
+			<SegmentedControl
+				options={demoViews}
+				bind:value={demoView}
+				name="ui-demo-view-sm"
+				label={m['uiDemo.segmented.label']()}
+				size="sm"
+			/>
+			<span class="caption" data-testid="ui-demo-segmented">
+				{m['uiDemo.segmented.selected']()}: {demoViewLabel}
+			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="Tooltip" description={m['uiDemo.tooltip.desc']()}>
+		<div class="row">
+			<Tooltip text={m['uiDemo.tooltip.text']()}>
+				{#snippet children(trigger)}
+					<button
+						{...trigger}
+						type="button"
+						class="banto-btn banto-btn--secondary"
+						data-testid="ui-demo-tooltip-trigger"
+					>
+						<Save size={16} aria-hidden="true" />
+						{m['uiDemo.tooltip.trigger']()}
+					</button>
+				{/snippet}
+			</Tooltip>
 		</div>
 	</SurfaceCard>
 

@@ -27,11 +27,13 @@ afterEach(cleanup);
 const text = (value: string) => createRawSnippet(() => ({ render: () => `<span>${value}</span>` }));
 
 describe('IconButton', () => {
-	it('puts the required label on aria-label and title, and fires onclick', async () => {
+	it('puts the required label on aria-label (the tooltip, not title, shows it) and fires onclick', async () => {
 		const onclick = vi.fn();
 		render(IconButton, { label: 'Close', icon: CustomIcon, onclick });
 		const button = screen.getByRole('button', { name: 'Close' });
-		expect(button.getAttribute('title')).toBe('Close');
+		expect(button.getAttribute('aria-label')).toBe('Close');
+		// #556: tooltip.test.ts covers the Tooltip that replaced the title.
+		expect(button.hasAttribute('title')).toBe(false);
 		expect(button.getAttribute('type')).toBe('button');
 		await fireEvent.click(button);
 		expect(onclick).toHaveBeenCalledTimes(1);

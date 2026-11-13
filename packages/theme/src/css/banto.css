@@ -659,6 +659,176 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 	}
 }
 
+/* In-page tabs (#556): ARIA tabs that switch a panel on the same page, drawn
+   like .banto-section-nav (which is for page links). @banto/ui's <Tabs>
+   renders these; the roles and the keyboard belong to it. */
+.banto-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--banto-space-1) var(--banto-space-2);
+	border-bottom: var(--banto-border-width) solid var(--banto-border);
+}
+
+.banto-tabs > [role='tab'] {
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--banto-space-2);
+	min-height: var(--banto-control-height-lg);
+	max-width: 100%;
+	margin: 0;
+	padding: var(--banto-space-2) var(--banto-space-3);
+	border: none;
+	border-bottom: var(--banto-border-width-strong) solid transparent;
+	border-radius: 0;
+	background: transparent;
+	color: var(--banto-text-muted);
+	font: inherit;
+	font-size: var(--banto-font-size-md);
+	font-weight: 600;
+	overflow-wrap: anywhere;
+	cursor: pointer;
+	transition:
+		background var(--banto-duration-fast) var(--banto-ease-out),
+		color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.banto-tabs > [role='tab']:hover:not([aria-disabled='true']) {
+	background: var(--banto-surface-hover);
+	color: var(--banto-text);
+}
+
+.banto-tabs > [role='tab']:focus-visible {
+	outline: var(--banto-border-width-strong) solid currentColor;
+	outline-offset: calc(-1 * var(--banto-border-width-strong));
+}
+
+.banto-tabs > [role='tab'][aria-selected='true'] {
+	color: var(--banto-primary-hover);
+	border-bottom-color: currentColor;
+}
+
+.banto-tabs > [role='tab'][aria-disabled='true'] {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.banto-tabs__panel {
+	padding-block-start: var(--banto-space-3);
+}
+
+.banto-tabs__panel:focus-visible {
+	outline: var(--banto-border-width-strong) solid var(--banto-primary);
+	outline-offset: var(--banto-border-width);
+}
+
+@media (forced-colors: active) {
+	/* Same as .banto-section-nav: only the selected tab keeps its underline. */
+	.banto-tabs > [role='tab']:not([aria-selected='true']) {
+		border-bottom-style: none;
+		padding-bottom: calc(var(--banto-space-2) + var(--banto-border-width-strong));
+	}
+
+	.banto-tabs > [role='tab'][aria-disabled='true'] {
+		color: GrayText;
+		opacity: 1;
+	}
+}
+
+/* Segmented control (#556): a short single choice drawn as one row of
+   segments. The segments are native radios (keyboard, form submission and
+   the checked state stay the browser's); the radio itself is invisible but
+   keeps its box so it still takes focus and clicks. @banto/ui's
+   <SegmentedControl> renders these. */
+.banto-segmented {
+	box-sizing: border-box;
+	display: inline-flex;
+	flex-wrap: wrap;
+	max-width: 100%;
+	gap: var(--banto-border-width);
+	padding: var(--banto-border-width);
+	border: var(--banto-border-width) solid var(--banto-border-strong);
+	border-radius: var(--banto-radius-md);
+	background: var(--banto-surface-subtle);
+}
+
+.banto-segmented__option {
+	position: relative;
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--banto-space-2);
+	min-height: var(--banto-control-height);
+	padding: 0 var(--banto-space-3);
+	border-radius: var(--banto-radius-sm);
+	color: var(--banto-text-muted);
+	font-size: var(--banto-font-size-md);
+	overflow-wrap: anywhere;
+	cursor: pointer;
+	transition:
+		background var(--banto-duration-fast) var(--banto-ease-out),
+		color var(--banto-duration-fast) var(--banto-ease-out);
+}
+
+.banto-segmented--sm > .banto-segmented__option {
+	min-height: var(--banto-control-height-sm);
+	padding: 0 var(--banto-space-2);
+}
+
+.banto-segmented__input {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	opacity: 0;
+	cursor: inherit;
+	/* The label takes the click (and checks the radio): an invisible input on
+	   top of the text would intercept a click aimed at the visible label. */
+	pointer-events: none;
+}
+
+.banto-segmented__option:hover:not(:has(> input:checked, > input:disabled)) {
+	background: var(--banto-surface-hover);
+	color: var(--banto-text);
+}
+
+.banto-segmented__option:has(> input:checked) {
+	background: var(--banto-primary-solid);
+	color: var(--banto-on-solid);
+}
+
+.banto-segmented__option:has(> input:focus-visible) {
+	outline: var(--banto-border-width-strong) solid var(--banto-primary);
+	outline-offset: var(--banto-border-width);
+	box-shadow: var(--banto-focus-ring);
+}
+
+.banto-segmented__option:has(> input:disabled) {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+	.banto-segmented__option:has(> input:checked) {
+		forced-color-adjust: none;
+		background: Highlight;
+		color: HighlightText;
+	}
+
+	.banto-segmented__option:has(> input:disabled) {
+		color: GrayText;
+		opacity: 1;
+	}
+
+	.banto-segmented__option:has(> input:focus-visible) {
+		outline-color: CanvasText;
+		box-shadow: none;
+	}
+}
+
 /* Buttons (visual-refresh-design.md §3.1). Common classes so a page can write
    the markup itself; @banto/ui's <Button> renders exactly these. Variants:
    --primary / --secondary / --ghost / --danger; --sm is the compact size. */

@@ -1,9 +1,12 @@
 <script lang="ts">
 	/**
 	 * Icon-only button (visual-refresh-design.md §6.3). `label` is required
-	 * so an accessible name can never be forgotten - it feeds both
-	 * `aria-label` and a `title` tooltip.
+	 * so an accessible name can never be forgotten - it feeds `aria-label` and
+	 * a `Tooltip` (#556; formerly the `title` attribute, which keyboard users
+	 * never saw). The tooltip repeats the name, so it does not also describe
+	 * the button (`describe={false}`: no `aria-describedby`, read once).
 	 */
+	import Tooltip from './Tooltip.svelte';
 	import type { UiIconComponent } from './types';
 
 	interface Props {
@@ -20,18 +23,22 @@
 	let { label, icon: Icon, size = 'md', expanded, controls, onclick }: Props = $props();
 </script>
 
-<button
-	type="button"
-	class="icon-button"
-	class:icon-button--sm={size === 'sm'}
-	aria-label={label}
-	title={label}
-	aria-expanded={expanded}
-	aria-controls={controls}
-	{onclick}
->
-	<Icon size={size === 'sm' ? 16 : 20} aria-hidden="true" />
-</button>
+<Tooltip text={label} describe={false}>
+	{#snippet children(trigger)}
+		<button
+			{...trigger}
+			type="button"
+			class="icon-button"
+			class:icon-button--sm={size === 'sm'}
+			aria-label={label}
+			aria-expanded={expanded}
+			aria-controls={controls}
+			{onclick}
+		>
+			<Icon size={size === 'sm' ? 16 : 20} aria-hidden="true" />
+		</button>
+	{/snippet}
+</Tooltip>
 
 <style>
 	.icon-button {
