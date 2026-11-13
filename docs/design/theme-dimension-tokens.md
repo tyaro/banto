@@ -214,19 +214,22 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 	--banto-space-7: 2rem; /* 28px */
 	--banto-space-8: 3rem; /* 42px — 空状態など */
 
-	/* Type scale (付録 A.5 の役割). Body = 1rem (root), inherited; base only when stated explicitly. */
-	--banto-font-size-xs: 0.7rem; /* 9.8px  バッジ・極小ラベル */
-	--banto-font-size-sm: 0.8rem; /* 11.2px caption（最多 51） */
-	--banto-font-size-md: 0.875rem; /* 12.25px 補足・表の副情報（A.5 caption 12px） */
+	/* Type scale (付録 A.5 の役割。#557 で最小 12px に底上げ: 12 / 13 / 14 / 16 / 20 / 28px). Body = 1rem (root), inherited; base only when stated explicitly. */
+	--banto-font-size-xs: 0.8572rem; /* 12px   バッジ・極小ラベル（下限） */
+	--banto-font-size-sm: 0.9286rem; /* 13px   caption */
+	--banto-font-size-md: 1rem; /* 14px   補足・表の副情報（本文と同じ大きさ） */
 	--banto-font-size-base: 1rem; /* 14px   本文（PR-6b で追加。明示が要るときだけ） */
-	--banto-font-size-lg: 1.125rem; /* 15.75px heading（A.5 16px） */
-	--banto-font-size-xl: 1.75rem; /* 24.5px display（A.5 24–28px） */
+	--banto-font-size-lg: 1.1429rem; /* 16px   heading */
+	--banto-font-size-xl: 1.4286rem; /* 20px   見出し */
+	--banto-font-size-2xl: 2rem; /* 28px   display・大きな KPI の数値（#557 で追加） */
 
 	/* Border widths */
 	--banto-border-width: 1px;
 	--banto-border-width-strong: 2px; /* 選択・強調の縁 */
 }
 ```
+
+> #557 で文字サイズの段の値を底上げした（最小 12px）。下の表の「移し先」の段の名前は当時のまま、値は上のコードブロックが現行。Gauge の値と KPI の数値は `2xl`、ログインの見出しは `xl`（20px）へ振り直した。
 
 既存の値からの移し先（丸めの規則。D5。**いちばん近い段**へ。等距離のときは、余白は小さい方・文字サイズは大きい方（文字を小さくして読みにくくしないため）。表に例外は置かない）:
 

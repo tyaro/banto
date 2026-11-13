@@ -227,6 +227,7 @@
 	.axis-label {
 		fill: var(--banto-text-muted);
 		font-size: var(--banto-font-size-sm);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.vertex {

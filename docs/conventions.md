@@ -465,7 +465,7 @@ UI CSS は `var(--banto-*)` トークンのみを使い、色・寸法の**生�
 設定の QR コードの白地（暗い配色でも読み取れるよう固定）等が既存例。理由コメント無しの生値は書かない）。
 
 **寸法**とは、余白・文字サイズ・枠線幅の段階のこと。トークンは `--banto-space-1`〜`-8`・
-`--banto-font-size-xs`/`sm`/`md`/`base`/`lg`/`xl`・`--banto-border-width`/`-strong`（値と丸めの規則は
+`--banto-font-size-xs`/`sm`/`md`/`base`/`lg`/`xl`/`2xl`（12 / 13 / 14 / 14 / 16 / 20 / 28px。最小 12px。#557）・`--banto-border-width`/`-strong`（値と丸めの規則は
 [theme-dimension-tokens.md](design/theme-dimension-tokens.md) §5.2）。本文の文字サイズは root の `1rem` を
 継承する。本文の大きさを明示するときだけ `--banto-font-size-base`（`1rem`）を使い、生の `font-size: 1rem` は書かない。次は「寸法」に含めず、トークンにしなくてよい（理由コメントも不要）:
 
