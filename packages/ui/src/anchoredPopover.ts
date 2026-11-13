@@ -1,6 +1,6 @@
 /**
  * Placement of a `position: fixed` popover next to its anchor, shared by
- * `Menu`, `DateInput` and `TimeInput` (date-time-pickers §5.2: "位置決めは Menu から切り出して
+ * `Menu`, `DateInput`, `TimeInput` and `Tooltip` (date-time-pickers §5.2: "位置決めは Menu から切り出して
  * 共有する（Menu の挙動は変えない）"). Moved out of `Menu.svelte` unchanged
  * (visual-refresh-design.md §7.4, #427): default below the anchor, flip above
  * when there is no room below, and when the popover fits on neither side cap
@@ -14,7 +14,8 @@
 /** Distance between the anchor and the popover, and the popover and the viewport edges (px). */
 export const ANCHORED_POPOVER_GAP = 4;
 
-export type AnchoredPlacement = 'bottom-start' | 'bottom-end';
+/** `'bottom-center'` centres the popover under the anchor (Tooltip, #556). */
+export type AnchoredPlacement = 'bottom-start' | 'bottom-end' | 'bottom-center';
 
 /**
  * Measure `popover` against `anchor` and return its viewport coordinates.
@@ -77,7 +78,12 @@ export function computeAnchoredPosition(
 		popover.scrollTop = scrollTop;
 	}
 
-	let left = placement === 'bottom-start' ? anchorRect.left : anchorRect.right - popoverRect.width;
+	let left =
+		placement === 'bottom-start'
+			? anchorRect.left
+			: placement === 'bottom-center'
+				? anchorRect.left + (anchorRect.width - popoverRect.width) / 2
+				: anchorRect.right - popoverRect.width;
 	left = Math.min(Math.max(left, GAP), viewportWidth - popoverRect.width - GAP);
 
 	return { top, left };
