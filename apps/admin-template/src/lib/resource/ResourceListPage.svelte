@@ -760,8 +760,8 @@
 		min-height: 0;
 	}
 
-	/* Priority-ordered toolbar (design.md §Phase 4): view menu/group-by stay
-	   ghost, export/import are secondary, "New" is the sole primary action.
+	/* Priority-ordered toolbar (design.md §Phase 4, #555): the "View" and "..."
+	   menus stay ghost, "New" is the sole primary action.
 	   DOM order is left as it always was; only "New" is pulled to the front
 	   once the toolbar wraps under 768px, below. */
 	.view-trigger,
