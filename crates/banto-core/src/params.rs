@@ -81,6 +81,27 @@ pub struct ListParams {
     pub sort: Vec<SortState>,
     #[serde(default)]
     pub filters: Vec<FilterState>,
+    /// Quick search across the resource's text columns (Issue #555): a row
+    /// matches when ANY column the service registered with
+    /// `ColumnMap::text_column` contains the term, case-insensitively (the
+    /// same `LIKE` as the `contains` filter). ANDed with `filters`. The term
+    /// is trimmed; `None`, empty or whitespace-only means no search (see
+    /// [`ListParams::search_term`]). Mirrors `ListParams.search` in
+    /// `packages/admin-core/src/types.ts`; the shared cases are
+    /// `crates/banto-storage/testdata/list-search-parity.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+}
+
+impl ListParams {
+    /// The effective quick-search term: [`ListParams::search`] trimmed, or
+    /// `None` when it is absent, empty or only whitespace.
+    pub fn search_term(&self) -> Option<&str> {
+        self.search
+            .as_deref()
+            .map(str::trim)
+            .filter(|term| !term.is_empty())
+    }
 }
 
 /// Result envelope for `DataProvider.getList`.
@@ -210,6 +231,7 @@ mod tests {
                 op: FilterOp::Gte,
                 value: json!(0),
             }],
+            search: None,
         };
         assert_eq!(
             serde_json::to_value(&value).unwrap(),
@@ -219,5 +241,35 @@ mod tests {
                 "filters": [{ "field": "stock", "op": "gte", "value": 0 }]
             })
         );
+    }
+
+    /// `search` is optional on the wire (older clients omit it) and is
+    /// trimmed; an empty or whitespace-only term is no search at all.
+    #[test]
+    fn search_is_optional_and_trimmed() {
+        let without: ListParams = serde_json::from_value(json!({ "sort": [], "filters": [] }))
+            .expect("deserialize without search");
+        assert_eq!(without.search, None);
+        assert_eq!(without.search_term(), None);
+
+        let with: ListParams =
+            serde_json::from_value(json!({ "sort": [], "filters": [], "search": "  Alpha " }))
+                .expect("deserialize with search");
+        assert_eq!(with.search_term(), Some("Alpha"));
+        assert_eq!(
+            serde_json::to_value(&with).unwrap()["search"],
+            json!("  Alpha ")
+        );
+
+        for blank in [
+            "", "   ", "	
+",
+        ] {
+            let params = ListParams {
+                search: Some(blank.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(params.search_term(), None, "{blank:?}");
+        }
     }
 }

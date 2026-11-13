@@ -15,6 +15,10 @@
 //!   `id`, see [`ColumnMap`]) so the order is total and `LIMIT`/`OFFSET`
 //!   paging neither repeats nor skips rows that tie on the sort column
 //!   (Issue #243).
+//! - `ListParams::search` (the quick search, Issue #555) matches a row when
+//!   ANY text column (registered with [`ColumnMap::text_column`]) contains
+//!   the term case-insensitively - the same bound, escaped `LIKE` as the
+//!   `contains` filter - and is ANDed with the filters.
 //!
 //! A single generic implementation over `sqlx::Database` fights sqlx's
 //! trait bounds hard enough (see the module-level discussion in the spec
@@ -50,10 +54,18 @@ use serde_json::Value;
 ///   (every Banto resource and every known derived-app resource maps `id`
 ///   to its primary key). A map without an `id` column and without an
 ///   explicit declaration has no unique key and keeps the pre-#243 order.
+///
+/// Finally it names the **text columns** the quick search
+/// (`ListParams::search`, Issue #555) looks in: every field registered with
+/// [`ColumnMap::text_column`] instead of [`ColumnMap::column`]. A map with no
+/// text column matches no row for a non-blank search term.
 #[derive(Debug, Clone, Default)]
 pub struct ColumnMap {
     columns: HashMap<String, String>,
     unique_key: UniqueKey,
+    /// Wire fields registered with [`ColumnMap::text_column`], in
+    /// registration order (so the generated SQL is deterministic).
+    text_fields: Vec<String>,
 }
 
 /// See [`ColumnMap`]'s doc comment for the precedence.
@@ -77,10 +89,30 @@ impl ColumnMap {
     }
 
     /// Register `field` (wire name) -> `sql_column` (actual SQL column).
+    /// The quick search does not look in it; use [`ColumnMap::text_column`]
+    /// for a text column it should.
     pub fn column(mut self, field: &str, sql_column: &str) -> Self {
         self.columns
             .insert(field.to_string(), sql_column.to_string());
+        self.text_fields.retain(|text| text != field);
         self
+    }
+
+    /// Register `field` -> `sql_column` like [`ColumnMap::column`], and mark
+    /// it as a text column the quick search (`ListParams::search`, Issue
+    /// #555) looks in. Sort and filters treat it exactly like a `column`.
+    pub fn text_column(mut self, field: &str, sql_column: &str) -> Self {
+        self = self.column(field, sql_column);
+        self.text_fields.push(field.to_string());
+        self
+    }
+
+    /// The SQL columns of the text columns (see [`ColumnMap::text_column`]),
+    /// in registration order.
+    pub fn text_columns(&self) -> impl Iterator<Item = &str> {
+        self.text_fields
+            .iter()
+            .filter_map(|field| self.resolve(field))
     }
 
     /// Declare `field` (a wire name, which must ALSO be registered with
@@ -222,21 +254,49 @@ macro_rules! impl_list_query {
                 columns: &ColumnMap,
                 params: &ListParams,
             ) -> Result<(), BantoError> {
-                append_where(builder, columns, &params.filters)?;
+                append_list_where(builder, columns, params)?;
                 append_order_by(builder, columns, &params.sort);
                 append_pagination(builder, params.pagination);
                 Ok(())
             }
 
-            /// Append only the `WHERE` clause (used by services that need
-            /// a separate `COUNT(*)` query sharing the same filters).
+            /// Append only the `WHERE` clause for `params`' filters AND its
+            /// quick search (used by services that need a separate
+            /// `COUNT(*)` query matching the same rows as
+            /// [`apply_list_params`]).
+            pub fn append_list_where(
+                builder: &mut QueryBuilder<$db>,
+                columns: &ColumnMap,
+                params: &ListParams,
+            ) -> Result<(), BantoError> {
+                let opened = append_filters_where(builder, columns, &params.filters)?;
+                if let Some(term) = params.search_term() {
+                    builder.push(if opened { " AND " } else { " WHERE " });
+                    push_search(builder, columns, term);
+                }
+                Ok(())
+            }
+
+            /// Append only the `WHERE` clause for `filters` - without the
+            /// quick search, which [`append_list_where`] adds. A count
+            /// query next to [`apply_list_params`] must use
+            /// `append_list_where` instead, or a search is not counted.
             pub fn append_where(
                 builder: &mut QueryBuilder<$db>,
                 columns: &ColumnMap,
                 filters: &[FilterState],
             ) -> Result<(), BantoError> {
+                append_filters_where(builder, columns, filters).map(|_| ())
+            }
+
+            /// [`append_where`]; returns whether a `WHERE` was written.
+            fn append_filters_where(
+                builder: &mut QueryBuilder<$db>,
+                columns: &ColumnMap,
+                filters: &[FilterState],
+            ) -> Result<bool, BantoError> {
                 if filters.is_empty() {
-                    return Ok(());
+                    return Ok(false);
                 }
                 builder.push(" WHERE ");
                 let mut first = true;
@@ -250,7 +310,27 @@ macro_rules! impl_list_query {
                     first = false;
                     push_condition(builder, column, filter)?;
                 }
-                Ok(())
+                Ok(true)
+            }
+
+            /// The quick search (Issue #555): one parenthesised OR of a
+            /// case-insensitive `contains` per text column, each with its
+            /// own bound pattern. With no text column it matches nothing
+            /// (`1=0`): a search term never silently widens the result.
+            fn push_search(builder: &mut QueryBuilder<$db>, columns: &ColumnMap, term: &str) {
+                let mut text_columns = columns.text_columns().peekable();
+                if text_columns.peek().is_none() {
+                    builder.push("1=0");
+                    return;
+                }
+                builder.push("(");
+                for (i, column) in text_columns.enumerate() {
+                    if i > 0 {
+                        builder.push(" OR ");
+                    }
+                    push_like_pattern(builder, column, term, true, true);
+                }
+                builder.push(")");
             }
 
             /// Append only the `ORDER BY` clause. Unknown fields are
@@ -399,7 +479,20 @@ macro_rules! impl_list_query {
                 suffix_wildcard: bool,
             ) -> Result<(), BantoError> {
                 let raw = value_as_like_operand(value)?;
-                let escaped = escape_like(&raw);
+                push_like_pattern(builder, column, &raw, prefix_wildcard, suffix_wildcard);
+                Ok(())
+            }
+
+            /// The `LIKE` of [`push_like`] for an operand already read as
+            /// text (also the quick search's, per text column).
+            fn push_like_pattern(
+                builder: &mut QueryBuilder<$db>,
+                column: &str,
+                raw: &str,
+                prefix_wildcard: bool,
+                suffix_wildcard: bool,
+            ) {
+                let escaped = escape_like(raw);
                 let mut pattern = String::with_capacity(escaped.len() + 2);
                 if prefix_wildcard {
                     pattern.push('%');
@@ -423,7 +516,6 @@ macro_rules! impl_list_query {
                 builder.push(" AS TEXT)) LIKE LOWER(");
                 builder.push_bind(pattern);
                 builder.push(") ESCAPE '\\'");
-                Ok(())
             }
 
             /// `between`: the half-open `[from, to)` as `>=` and `<` on two
@@ -670,6 +762,88 @@ pub(crate) mod between_fixture {
             .column("id", "id")
             .column("day", "day")
             .column("at", "at_text")
+    }
+}
+
+/// The shared quick-search contract (Issue #555): the same rows, terms and
+/// expected ids are asserted here (SQLite + PostgreSQL), by the InMemory
+/// `DataProvider` and by the grid's client search.
+#[cfg(test)]
+pub(crate) mod search_fixture {
+    use banto_core::{FilterState, ListParams};
+    use serde_json::Value;
+
+    pub const JSON: &str = include_str!("../testdata/list-search-parity.json");
+
+    fn fixture() -> Value {
+        serde_json::from_str(JSON).expect("fixture is JSON")
+    }
+
+    /// One fixture row: `(id, name, note, price, day)`.
+    pub type Row = (i64, String, Option<String>, f64, Option<String>);
+
+    /// The rows in insertion order.
+    pub fn rows() -> Vec<Row> {
+        fixture()["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|r| {
+                (
+                    r["id"].as_i64().expect("id"),
+                    r["name"].as_str().expect("name").to_string(),
+                    r["note"].as_str().map(str::to_string),
+                    r["price"].as_f64().expect("price"),
+                    r["day"].as_str().map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    /// `(name, params, expected ids)` per case.
+    pub fn cases() -> Vec<(String, ListParams, Vec<i64>)> {
+        fixture()["cases"]
+            .as_array()
+            .expect("cases")
+            .iter()
+            .map(|c| {
+                let filters: Vec<FilterState> = match c.get("filters") {
+                    Some(f) => serde_json::from_value(f.clone()).expect("filters"),
+                    None => Vec::new(),
+                };
+                let ids = c["expectedIds"]
+                    .as_array()
+                    .expect("expectedIds")
+                    .iter()
+                    .map(|id| id.as_i64().expect("id"))
+                    .collect();
+                let params = ListParams {
+                    filters,
+                    search: c["search"].as_str().map(str::to_string),
+                    ..Default::default()
+                };
+                (c["name"].as_str().expect("name").to_string(), params, ids)
+            })
+            .collect()
+    }
+
+    /// The fixture's `textFields` are text columns (`note` under a different
+    /// SQL name, like a real resource); `price` and `day` are plain columns.
+    pub fn columns() -> super::ColumnMap {
+        let v = fixture();
+        let text: Vec<&str> = v["textFields"]
+            .as_array()
+            .expect("textFields")
+            .iter()
+            .map(|f| f.as_str().expect("text field"))
+            .collect();
+        assert_eq!(text, ["name", "note"], "columns() maps exactly these");
+        super::ColumnMap::new()
+            .column("id", "id")
+            .text_column("name", "name")
+            .text_column("note", "note_text")
+            .column("price", "price")
+            .column("day", "day")
     }
 }
 
@@ -1338,7 +1512,110 @@ mod tests {
         }
     }
 
-    /// The shared `between` contract (fixture
+    /// The shared quick-search contract (fixture
+    /// `testdata/list-search-parity.json`, also asserted by the InMemory
+    /// provider and the grid's client search), through both the rows query
+    /// and the `COUNT(*)` that `append_list_where` builds.
+    #[tokio::test]
+    async fn search_matches_the_shared_parity_fixture() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        pool.execute(
+            "CREATE TABLE things (id INTEGER PRIMARY KEY, name TEXT NOT NULL, \
+             note_text TEXT, price REAL NOT NULL, day TEXT)",
+        )
+        .await
+        .expect("create table");
+        for (id, name, note, price, day) in super::search_fixture::rows() {
+            sqlx::query(
+                "INSERT INTO things (id, name, note_text, price, day) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(note)
+            .bind(price)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .expect("insert row");
+        }
+        let cols = super::search_fixture::columns();
+        for (name, params, expected) in super::search_fixture::cases() {
+            let mut builder = QueryBuilder::new("SELECT id FROM things");
+            apply_list_params(&mut builder, &cols, &params).expect("apply params");
+            let ids: Vec<i64> = builder
+                .build()
+                .fetch_all(&pool)
+                .await
+                .expect("query")
+                .into_iter()
+                .map(|r| r.get::<i64, _>(0))
+                .collect();
+            assert_eq!(ids, expected, "{name}");
+
+            let mut count = QueryBuilder::new("SELECT COUNT(*) FROM things");
+            super::sqlite::append_list_where(&mut count, &cols, &params).expect("count where");
+            let total: i64 = count
+                .build_query_scalar()
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+            assert_eq!(total as usize, expected.len(), "{name} (count)");
+        }
+    }
+
+    /// The search term is bound once per text column (never interpolated),
+    /// the columns are ORed in parentheses after the filters' AND, and a map
+    /// without a text column matches nothing instead of ignoring the term.
+    #[test]
+    fn search_binds_the_term_per_text_column() {
+        let params = ListParams {
+            filters: vec![FilterState {
+                field: "price".to_string(),
+                op: FilterOp::Gt,
+                value: json!(1),
+            }],
+            search: Some("x' OR 1=1 --".to_string()),
+            ..Default::default()
+        };
+        let mut builder = QueryBuilder::<sqlx::Sqlite>::new("SELECT id FROM things");
+        super::sqlite::append_list_where(&mut builder, &super::search_fixture::columns(), &params)
+            .expect("where");
+        let sql = builder.sql().as_str().to_string();
+        assert_eq!(
+            sql,
+            "SELECT id FROM things WHERE price > ? AND (\
+             LOWER(CAST(name AS TEXT)) LIKE LOWER(?) ESCAPE '\\' OR \
+             LOWER(CAST(note_text AS TEXT)) LIKE LOWER(?) ESCAPE '\\')"
+        );
+        assert!(!sql.contains("OR 1=1"));
+
+        let no_text = ColumnMap::new().column("id", "id").column("price", "price");
+        let mut builder = QueryBuilder::<sqlx::Sqlite>::new("SELECT id FROM things");
+        let search_only = ListParams {
+            search: Some("a".to_string()),
+            ..Default::default()
+        };
+        super::sqlite::append_list_where(&mut builder, &no_text, &search_only).expect("where");
+        assert_eq!(builder.sql().as_str(), "SELECT id FROM things WHERE 1=0");
+    }
+
+    /// `column` after `text_column` for the same field takes it out of the
+    /// search again; the other text columns keep their order.
+    #[test]
+    fn text_columns_follow_registration() {
+        let cols = ColumnMap::new()
+            .text_column("a", "col_a")
+            .text_column("b", "col_b")
+            .column("id", "id")
+            .column("a", "col_a");
+        assert_eq!(cols.text_columns().collect::<Vec<_>>(), ["col_b"]);
+        assert_eq!(cols.resolve("a"), Some("col_a"));
+    }
+
+    /// The shared contract (fixture
     /// `testdata/filter-between-parity.json`, also asserted by the InMemory
     /// provider and the grid's client filter).
     #[tokio::test]
@@ -2033,6 +2310,66 @@ mod postgres_tests {
                 .map(|r| r.get::<i64, _>(0))
                 .collect();
             assert_eq!(ids, expected, "{name}");
+        }
+    }
+
+    /// The shared quick-search contract on PostgreSQL (fixture
+    /// `testdata/list-search-parity.json`): `price` is a real
+    /// `DOUBLE PRECISION` column there, which the search must leave alone,
+    /// and `LOWER(CAST(.. AS TEXT))` keeps the text columns case-insensitive.
+    #[tokio::test]
+    async fn search_matches_the_shared_parity_fixture() {
+        let Some(pool) = pool_or_skip().await else {
+            return;
+        };
+        let table = "lq_pg_search";
+        // AssertSqlSafe: `table` is the hardcoded literal above.
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
+            .execute(&pool)
+            .await
+            .expect("drop table");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TABLE {table} (id BIGINT PRIMARY KEY, name TEXT NOT NULL, \
+             note_text TEXT, price DOUBLE PRECISION NOT NULL, day TEXT)"
+        )))
+        .execute(&pool)
+        .await
+        .expect("create table");
+        for (id, name, note, price, day) in super::search_fixture::rows() {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO {table} (id, name, note_text, price, day) VALUES ($1, $2, $3, $4, $5)"
+            )))
+            .bind(id)
+            .bind(name)
+            .bind(note)
+            .bind(price)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .expect("insert row");
+        }
+        let cols = super::search_fixture::columns();
+        for (name, params, expected) in super::search_fixture::cases() {
+            let mut builder = QueryBuilder::new(format!("SELECT id FROM {table}"));
+            apply_list_params(&mut builder, &cols, &params).expect("apply params");
+            let ids: Vec<i64> = builder
+                .build()
+                .fetch_all(&pool)
+                .await
+                .expect("query")
+                .into_iter()
+                .map(|r| r.get::<i64, _>(0))
+                .collect();
+            assert_eq!(ids, expected, "{name}");
+
+            let mut count = QueryBuilder::new(format!("SELECT COUNT(*) FROM {table}"));
+            super::postgres::append_list_where(&mut count, &cols, &params).expect("count where");
+            let total: i64 = count
+                .build_query_scalar()
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+            assert_eq!(total as usize, expected.len(), "{name} (count)");
         }
     }
 

@@ -466,6 +466,7 @@ export class SnapshotListResource<T> {
 							pagination: { offset, limit: this.#blockSize },
 							sort: this.#params.sort,
 							filters: this.#params.filters,
+							...(this.#params.search !== undefined && { search: this.#params.search }),
 							asOfId
 						},
 						entry.controller.signal

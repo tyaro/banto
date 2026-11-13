@@ -13,7 +13,13 @@
 	 * A plain `{#if}` in the parent already destroys this component (running
 	 * the `$effect` cleanup below) when the switch flips to server.
 	 */
-	import { BantoGrid, GridState, type CellEdit, type GridColumn } from '@banto/grid-svelte';
+	import {
+		BantoGrid,
+		GridState,
+		searchRows,
+		type CellEdit,
+		type GridColumn
+	} from '@banto/grid-svelte';
 	import { createListResource, invalidate } from '@banto/admin-core';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
@@ -39,6 +45,12 @@
 		 * Saves are still published as the raw rows, so it re-derives.
 		 */
 		toRow?: (row: ResourceRow) => ResourceRow;
+		/**
+		 * #555 (3): the page's quick-search term. Narrows the rows handed to
+		 * BantoGrid to those where a text column (`filterType` text) contains
+		 * it, case-insensitively - the client side of `ListParams.search`.
+		 */
+		search?: string;
 		onRowClick: (row: ResourceRow) => void;
 		onCellEdit: (edit: CellEdit<ResourceRow>) => Promise<ResourceRow>;
 		onRangePaste: (
@@ -68,6 +80,7 @@
 		columns,
 		state: gridState,
 		toRow,
+		search,
 		onRowClick,
 		onCellEdit,
 		onRangePaste,
@@ -88,7 +101,7 @@
 		return () => list.dispose();
 	});
 
-	const rows = $derived(toRow ? list.rows.map(toRow) : list.rows);
+	const rows = $derived(searchRows(toRow ? list.rows.map(toRow) : list.rows, search, columns));
 
 	// Publish confirmed saves before allowing another edit (spec §4.5).
 	// Replace by ID only: a changed query may have removed or moved the row.

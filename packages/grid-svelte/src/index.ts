@@ -31,6 +31,7 @@ export {
 
 export { sortRows, getColumnValue } from './core/sort';
 export { filterRows } from './core/filter';
+export { searchRows, searchableColumns } from './core/search';
 export { computeWindow, type ComputeWindowParams, type WindowResult } from './core/virtual';
 export { rangeToTsv, parseTsv, parseCellInput } from './core/clipboard';
 export { prepareCommit, type PrepareCommitResult } from './core/edit';

@@ -1111,3 +1111,29 @@ describe('failure codes, messages and notifications (#344)', () => {
 		windowed.dispose();
 	});
 });
+
+describe('createWindowedListResource: quick search (#555)', () => {
+	it('sends params.search only once it is set', async () => {
+		const seen: Record<string, unknown>[] = [];
+		const provider = {
+			getList: async (_resource: string, params: Record<string, unknown>) => {
+				seen.push(params);
+				return { rows: [], totalCount: 0 };
+			}
+		} as unknown as DataProvider;
+		initBanto({
+			dataProvider: provider,
+			authProvider,
+			resources: [{ name: 'w-search', label: 'W' }]
+		});
+		const windowed = createWindowedListResource<Row>('w-search', { blockSize: 10 });
+
+		await windowed.ensureRange(0, 5);
+		expect(seen[0]).not.toHaveProperty('search');
+
+		windowed.setParams({ search: 'tea' });
+		await windowed.ensureRange(0, 5);
+		expect(seen.at(-1)).toMatchObject({ search: 'tea', sort: [], filters: [] });
+		windowed.dispose();
+	});
+});

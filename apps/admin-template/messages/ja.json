@@ -129,6 +129,8 @@
   "resource.groupNone": "グループなし",
   "resource.groupByMenu": "グループ化",
   "resource.moreMenu": "その他の操作",
+  "resource.searchLabel": "{resource}を検索",
+  "resource.searchPlaceholder": "検索…",
   "items.groupCategory": "カテゴリ",
   "items.report": "日報",
   "resource.exportCsv": "CSVエクスポート",

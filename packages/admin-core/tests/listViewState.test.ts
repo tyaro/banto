@@ -124,7 +124,8 @@ describe('saveListViewState / loadListViewState', () => {
 		const snapshot = {
 			sort: [{ field: 'price', direction: 'desc' as const }],
 			filters: [{ field: 'name', op: 'contains' as const, value: 'tea' }],
-			groupBy: 'category'
+			groupBy: 'category',
+			search: 'green'
 		};
 		saveListViewState(scope, 'items:server', snapshot, storage);
 		expect(loadListViewState(scope, 'items:server', undefined, storage)).toEqual(snapshot);
@@ -220,6 +221,7 @@ describe('saveListViewState / loadListViewState', () => {
 				{ sort: [], filters: [{ field: 'price', op: 'eq' }] }
 			],
 			['groupBy that is neither a string nor null', { sort: [], filters: [], groupBy: 42 }],
+			['a search that is not a string (#555)', { sort: [], filters: [], search: 7 }],
 			[
 				'a between whose value is not [from, to] (date-time-pickers §5.9)',
 				{ sort: [], filters: [{ field: 'updatedAt', op: 'between', value: '2026-11-01' }] }

@@ -1,0 +1,44 @@
+{
+  "$comment": "Shared quick-search contract (Issue #555, ListParams.search): a row matches when ANY text column contains the trimmed term, case-insensitively, with % _ \\ matched literally; a missing, empty or whitespace-only term is no search; NULL never matches; the search is ANDed with `filters`. `textFields` are the text columns (SQL: ColumnMap::text_column; InMemory: InMemorySeed.searchFields; grid client: columns whose filterType is text). `price` (a number) and `day` (a date string) are deliberately NOT text columns, so a term found only there matches nothing. Asserted by banto-storage (SQLite + PostgreSQL, list_query.rs), the InMemory DataProvider (packages/admin-core/tests/listOrderParity.test.ts) and the grid's client search (packages/grid-svelte/tests/search.test.ts). `expectedIds` are in id order. Case folding is ASCII-only in SQLite, so no case relies on folding a non-ASCII letter.",
+  "textFields": ["name", "note"],
+  "rows": [
+    { "id": 1, "name": "Alpha Widget", "note": "blue", "price": 10, "day": "2024-02-28" },
+    { "id": 2, "name": "beta widget", "note": null, "price": 20, "day": "2024-03-01" },
+    { "id": 3, "name": "100% Off", "note": "sale_item", "price": 5, "day": "2025-12-31" },
+    { "id": 4, "name": "Gamma", "note": "path C:\\temp", "price": 30, "day": "2026-01-01" },
+    { "id": 5, "name": "デルタ部品", "note": "WIDGET kit", "price": 40, "day": null },
+    { "id": 6, "name": "Epsilon", "note": "", "price": 2024, "day": "2026-11-07" }
+  ],
+  "cases": [
+    { "name": "no search", "search": null, "expectedIds": [1, 2, 3, 4, 5, 6] },
+    { "name": "an empty term is no search", "search": "", "expectedIds": [1, 2, 3, 4, 5, 6] },
+    {
+      "name": "a whitespace-only term is no search",
+      "search": "  \t ",
+      "expectedIds": [1, 2, 3, 4, 5, 6]
+    },
+    { "name": "any text column, case-insensitively", "search": "widget", "expectedIds": [1, 2, 5] },
+    { "name": "upper-case term", "search": "WIDGET", "expectedIds": [1, 2, 5] },
+    { "name": "the term is trimmed", "search": "  alpha  ", "expectedIds": [1] },
+    { "name": "found only in the second text column", "search": "blue", "expectedIds": [1] },
+    { "name": "percent is literal", "search": "%", "expectedIds": [3] },
+    { "name": "underscore is literal", "search": "_", "expectedIds": [3] },
+    { "name": "backslash is literal", "search": "\\", "expectedIds": [4] },
+    { "name": "a non-ASCII substring", "search": "部品", "expectedIds": [5] },
+    { "name": "a number column is not searched", "search": "2024", "expectedIds": [] },
+    { "name": "a date column is not searched", "search": "2026-01", "expectedIds": [] },
+    { "name": "no row contains it", "search": "zeta", "expectedIds": [] },
+    {
+      "name": "ANDed with the filters",
+      "search": "widget",
+      "filters": [{ "field": "price", "op": "gte", "value": 20 }],
+      "expectedIds": [2, 5]
+    },
+    {
+      "name": "a blank term keeps the filters alone",
+      "search": " ",
+      "filters": [{ "field": "price", "op": "lt", "value": 20 }],
+      "expectedIds": [1, 3]
+    }
+  ]
+}

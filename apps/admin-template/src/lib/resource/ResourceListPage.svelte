@@ -39,6 +39,7 @@
 		csvFilename,
 		csvForExcel,
 		filterRows,
+		searchRows,
 		toCsv,
 		type CellEdit,
 		type GridColumn
@@ -58,7 +59,7 @@
 	} from '@banto/admin-core';
 	import type { FormSchema } from '@banto/forms';
 	import { goto } from '$app/navigation';
-	import { Download, Ellipsis, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
+	import { Download, Ellipsis, Plus, Search, SlidersHorizontal, Upload } from '@lucide/svelte';
 	import { Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
@@ -200,11 +201,16 @@
 	// between sessions must not resurrect a filter/sort the current screen
 	// has no column for (`loadListViewState`'s own doc comment has the full
 	// reasoning). `groupBy` must also be one of the definition's candidates.
+	// #555 (3): the quick-search term is ONE value for the page (the box sits
+	// in the toolbar, above whichever grid is shown), saved into both modes'
+	// snapshots; the active mode's saved term wins on restore.
+	const restoredSearch: Partial<Record<ListLoadMode, string>> = {};
 	if (hasClient) {
 		// svelte-ignore state_referenced_locally
 		const clientFieldIds = clientColumns.map((column) => column.id);
 		const clientSnapshot = loadListViewState(scope, CLIENT_VIEW_KEY, clientFieldIds);
 		if (clientSnapshot) {
+			restoredSearch.client = clientSnapshot.search;
 			clientGridState.sort = clientSnapshot.sort;
 			clientGridState.filters = clientSnapshot.filters;
 			const groupBy = clientSnapshot.groupBy;
@@ -222,10 +228,33 @@
 		const serverFieldIds = columns.map((column) => column.id);
 		const serverSnapshot = loadListViewState(scope, SERVER_VIEW_KEY, serverFieldIds);
 		if (serverSnapshot) {
+			restoredSearch.server = serverSnapshot.search;
 			serverGridState.sort = serverSnapshot.sort;
 			serverGridState.filters = serverSnapshot.filters;
 		}
 	}
+
+	// #555 (3): quick search across the resource's text columns
+	// (`ListParams.search`). `searchInput` follows the box keystroke by
+	// keystroke; `search` - what the grids, the CSV export and the saved
+	// snapshot use - follows it SEARCH_DEBOUNCE_MS after the last keystroke,
+	// so typing a word is one query, not one per letter. Not a filter chip:
+	// the box itself shows the term and clears it.
+	const SEARCH_DEBOUNCE_MS = 300;
+	// svelte-ignore state_referenced_locally
+	let searchInput = $state(
+		restoredSearch[mode] ?? restoredSearch.server ?? restoredSearch.client ?? ''
+	);
+	// svelte-ignore state_referenced_locally
+	let search = $state(searchInput);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	function handleSearchInput(): void {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(() => {
+			search = searchInput;
+		}, SEARCH_DEBOUNCE_MS);
+	}
+	$effect(() => () => clearTimeout(searchTimer));
 
 	// Persist on every sort/filter/groupBy change - cheap (a small JSON blob
 	// into sessionStorage) and keeps the saved snapshot live even if the user
@@ -235,14 +264,16 @@
 		saveListViewState(scope, CLIENT_VIEW_KEY, {
 			sort: clientGridState.sort,
 			filters: clientGridState.filters,
-			groupBy: clientGridState.groupBy
+			groupBy: clientGridState.groupBy,
+			search
 		});
 	});
 	$effect(() => {
 		if (!hasServer) return;
 		saveListViewState(scope, SERVER_VIEW_KEY, {
 			sort: serverGridState.sort,
-			filters: serverGridState.filters
+			filters: serverGridState.filters,
+			search
 		});
 	});
 
@@ -294,7 +325,11 @@
 		const row = isClient && toClientRow ? toClientRow(values) : values;
 		const activeColumns = isClient ? clientColumns : columns;
 		const activeFilters = isClient ? clientGridState.filters : serverGridState.filters;
-		if (filterRows([row], activeFilters, activeColumns).length === 0) {
+		// #555 (3): the quick search narrows the list too.
+		const term = untrack(() => search);
+		if (
+			searchRows(filterRows([row], activeFilters, activeColumns), term, activeColumns).length === 0
+		) {
 			filterExclusionNotice = { id: record.id };
 		}
 	});
@@ -435,7 +470,9 @@
 			const result = await getDataProvider().getList<ResourceRow>(name, {
 				pagination: { offset: 0, limit: 20_000 },
 				sort,
-				filters
+				filters,
+				// #555 (3): the rows on screen are also narrowed by the quick search.
+				search
 			});
 			const csv = csvForExcel(toCsv(csvColumns, result.rows, { formulaSafe: true }));
 			const filename = csvFilename(name);
@@ -571,6 +608,20 @@
 <div class="page" bind:this={pageEl}>
 	<PageHeader hideTitle title={def.label} description={def.description?.()}>
 		{#snippet actions()}
+			<!-- #555 (3): quick search across the text columns. A real <label>
+			     (its text visually hidden; the icon and placeholder show what the
+			     box is for). -->
+			<label class="search">
+				<Search size={14} aria-hidden="true" />
+				<span class="search-label">{m['resource.searchLabel']({ resource: def.label })}</span>
+				<input
+					class="banto-input search-input"
+					type="search"
+					placeholder={m['resource.searchPlaceholder']()}
+					bind:value={searchInput}
+					oninput={handleSearchInput}
+				/>
+			</label>
 			<!-- #555 (1): "New" is the only action left in view. Everything else is
 			     in two menus: "View" (how the list looks) and "…" (what to do with
 			     its data). The column manager stays a button next to "View": a
@@ -759,6 +810,7 @@
 			label={def.label}
 			columns={clientColumns}
 			state={clientGridState}
+			{search}
 			toRow={toClientRow}
 			onRowClick={handleRowClick}
 			onCellEdit={handleCellEdit}
@@ -772,6 +824,7 @@
 			resource={name}
 			{columns}
 			state={serverGridState}
+			{search}
 			onRowClick={handleRowClick}
 			onCellEdit={handleCellEdit}
 			onRangePaste={handleRangePaste}
@@ -798,6 +851,41 @@
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
+	}
+
+	/* #555 (3): the quick-search box, first in the toolbar. */
+	.search {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		color: var(--banto-text-muted);
+	}
+
+	.search :global(svg) {
+		position: absolute;
+		left: var(--banto-space-2);
+		pointer-events: none;
+	}
+
+	.search-input {
+		height: var(--banto-control-height-sm);
+		width: 14em;
+		max-width: 100%;
+		padding-left: calc(var(--banto-space-2) * 2 + 14px);
+		font-size: var(--banto-font-size-sm);
+	}
+
+	/* The label's text, for assistive technology only (same clip as .file-input). */
+	.search-label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	/* Visually hidden but still clickable through the import button's

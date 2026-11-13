@@ -1346,7 +1346,7 @@ function removeItems() {
 	swapText(
 		SETUP_TS,
 		'setup: デモ provider の items シード除去',
-		`createInMemoryDataProvider({ items: { rows: sampleItems } })`,
+		`createInMemoryDataProvider({\n\t\t\t// \`name\` only, like the server's \`ColumnMap::text_column\` (Issue #555):\n\t\t\t// \`updatedAt\` is a date stored as text, not free text.\n\t\t\titems: { rows: sampleItems, searchFields: ['name'] }\n\t\t})`,
 		`createInMemoryDataProvider({})`
 	);
 	swapText(

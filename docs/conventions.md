@@ -288,6 +288,11 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   **絞り込みの `between`（半開区間 `[from, to)` を文字列で比べる。date-time-pickers §5.9）も同じ 3 つの実装で共通**で、
   共通の fixture `crates/banto-storage/testdata/filter-between-parity.json` を SQL（SQLite・PostgreSQL）・InMemory・
   grid の client filter のテストが読む。
+  **クイック検索（`ListParams.search`、#555）も同じ 3 つの実装で共通**: 前後の空白を除いた語を、文字列列
+  （SQL は `ColumnMap::text_column` で登録した列、InMemory は `searchFields`、grid は `filterType` が text の列）の
+  どれかが大文字小文字を無視して含む行（`%`・`_`・`\` は文字どおり、NULL は当たらない）。空・空白だけの語は
+  検索なし、filters とは AND。列名は `ColumnMap` 経由、語はバインドする。共通の fixture
+  `crates/banto-storage/testdata/list-search-parity.json` を SQL（SQLite・PostgreSQL）・InMemory・grid のテストが読む。
   **境界（`asOfId`）付きの一覧**（Issue #248、[ADR-0015](adr/0015-snapshot-list-resource.md)）:
   通知なしに行が増減する一覧（監査ログ）は `@banto/admin-core` の
   `SnapshotListResource` で読み、サーバー側は次を守る — 境界の決定・行・件数を

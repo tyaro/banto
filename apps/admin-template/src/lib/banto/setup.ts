@@ -158,7 +158,11 @@ export const bantoReady: Promise<void> = (async () => {
 	// `VITE_BANTO_DEMO=1` build): no Banto backend at all, no EventProvider.
 	bantoMode = 'demo';
 	initBanto({
-		dataProvider: createInMemoryDataProvider({ items: { rows: sampleItems } }),
+		dataProvider: createInMemoryDataProvider({
+			// `name` only, like the server's `ColumnMap::text_column` (Issue #555):
+			// `updatedAt` is a date stored as text, not free text.
+			items: { rows: sampleItems, searchFields: ['name'] }
+		}),
 		authProvider: demoAuthProvider,
 		notifier,
 		resources

@@ -12,6 +12,13 @@ export interface InMemorySeed {
 	rows: Record<string, unknown>[];
 	/** Defaults to 'id'. */
 	idField?: string;
+	/**
+	 * The text fields `ListParams.search` looks in (the InMemory side of
+	 * banto-storage's `ColumnMap::text_column`, Issue #555). Defaults to every
+	 * field that holds a string in some row - list them to leave out a field
+	 * stored as text that is not free text (a `YYYY-MM-DD` date, for one).
+	 */
+	searchFields?: string[];
 }
 
 export interface InMemoryDataProviderOptions {
@@ -134,6 +141,39 @@ function matchesBetween(value: unknown, range: unknown): boolean {
 	return (from === null || text >= from) && (to === null || text < to);
 }
 
+/**
+ * `ListParams.search` (Issue #555): keep the rows where any of `fields`
+ * contains the trimmed term, case-insensitively; a blank term keeps every row.
+ * Must stay in sync with banto-storage's `push_search` and grid-svelte's
+ * `searchRows` (shared cases:
+ * `crates/banto-storage/testdata/list-search-parity.json`).
+ */
+function applySearch(
+	rows: Record<string, unknown>[],
+	search: string | undefined,
+	fields: readonly string[]
+): Record<string, unknown>[] {
+	const term = search?.trim().toLowerCase() ?? '';
+	if (term === '') return rows;
+	return rows.filter((row) =>
+		fields.some((field) => {
+			const value = row[field];
+			return !isNullish(value) && String(value).toLowerCase().includes(term);
+		})
+	);
+}
+
+/** Every field holding a string in some row (`InMemorySeed.searchFields`' default). */
+function stringFields(rows: Record<string, unknown>[]): string[] {
+	const fields = new Set<string>();
+	for (const row of rows) {
+		for (const [field, value] of Object.entries(row)) {
+			if (typeof value === 'string') fields.add(field);
+		}
+	}
+	return [...fields];
+}
+
 /** Apply all filters with AND semantics. */
 function applyFilters(
 	rows: Record<string, unknown>[],
@@ -241,12 +281,21 @@ export function createInMemoryDataProvider(
 	options: InMemoryDataProviderOptions = {}
 ): DataProvider {
 	const latencyMs = options.latencyMs ?? 150;
-	const tables = new Map<string, { rows: Record<string, unknown>[]; idField: string }>();
+	interface Table {
+		rows: Record<string, unknown>[];
+		idField: string;
+		searchFields?: readonly string[];
+	}
+	const tables = new Map<string, Table>();
 	for (const [resource, def] of Object.entries(seed)) {
-		tables.set(resource, { rows: def.rows.slice(), idField: def.idField ?? 'id' });
+		tables.set(resource, {
+			rows: def.rows.slice(),
+			idField: def.idField ?? 'id',
+			searchFields: def.searchFields
+		});
 	}
 
-	function table(resource: string): { rows: Record<string, unknown>[]; idField: string } {
+	function table(resource: string): Table {
 		let found = tables.get(resource);
 		if (!found) {
 			found = { rows: [], idField: 'id' };
@@ -262,8 +311,12 @@ export function createInMemoryDataProvider(
 	return {
 		async getList<T>(resource: string, params: ListParams): Promise<ListResult<T>> {
 			await delay();
-			const { rows, idField } = table(resource);
-			const filtered = applyFilters(rows, params.filters);
+			const { rows, idField, searchFields } = table(resource);
+			const filtered = applySearch(
+				applyFilters(rows, params.filters),
+				params.search,
+				searchFields ?? stringFields(rows)
+			);
 			const sorted = applySort(filtered, params.sort, idField, tableColumns(rows));
 			const totalCount = sorted.length;
 			const paged = params.pagination
