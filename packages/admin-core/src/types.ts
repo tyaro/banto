@@ -52,6 +52,16 @@ export interface ListParams {
 	pagination?: Pagination;
 	sort: SortState[];
 	filters: FilterState[];
+	/**
+	 * Quick search (Issue #555): a row matches when ANY of the resource's text
+	 * columns contains the term, case-insensitively; ANDed with `filters`. The
+	 * term is trimmed, and a missing, empty or whitespace-only one is no search.
+	 * Which columns are text is the server's call (`ColumnMap::text_column` in
+	 * banto-storage; `InMemorySeed.searchFields` here). Mirrors
+	 * `crates/banto-core/src/params.rs::ListParams::search`; the shared cases are
+	 * `crates/banto-storage/testdata/list-search-parity.json`.
+	 */
+	search?: string;
 }
 
 /** Result envelope for `DataProvider.getList`. */

@@ -140,6 +140,8 @@ export interface SnapshotListRequest {
 	pagination: Pagination;
 	sort: SortState[];
 	filters: FilterState[];
+	/** The quick-search term (`ListParams.search`, #555), present only when set. */
+	search?: string;
 	/**
 	 * The generation's boundary, or `null` for the request that starts a
 	 * generation (the server picks the boundary and returns it).
@@ -293,7 +295,9 @@ export class SnapshotListResource<T> {
 		this.#notify = options.notify ?? true;
 		this.#params = {
 			sort: options.params?.sort ?? [],
-			filters: options.params?.filters ?? []
+			filters: options.params?.filters ?? [],
+			// #555 (3): keep an initial quick-search term too (Codex P2 on #578).
+			...(options.params?.search !== undefined && { search: options.params.search })
 		};
 		this.params = this.#params;
 	}
@@ -466,6 +470,7 @@ export class SnapshotListResource<T> {
 							pagination: { offset, limit: this.#blockSize },
 							sort: this.#params.sort,
 							filters: this.#params.filters,
+							...(this.#params.search !== undefined && { search: this.#params.search }),
 							asOfId
 						},
 						entry.controller.signal

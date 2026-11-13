@@ -162,10 +162,14 @@ fn format_field_errors(field_errors: &[FieldError]) -> String {
         .join("; ")
 }
 
+/// Column whitelist for [`ItemsService::list`] (conventions §6). `name` is the
+/// one text column the quick search (`ListParams::search`, Issue #555) looks
+/// in: `updatedAt` is stored as text but is a date column, like its grid
+/// column (`filterType: date`), so the client search skips it too.
 fn column_map() -> ColumnMap {
     ColumnMap::new()
         .column("id", "id")
-        .column("name", "name")
+        .text_column("name", "name")
         .column("price", "price")
         .column("stock", "stock")
         .column("updatedAt", "updated_at")
@@ -272,10 +276,10 @@ impl ItemsService {
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
-                banto_storage::list_query::sqlite::append_where(
+                banto_storage::list_query::sqlite::append_list_where(
                     &mut count_builder,
                     &columns,
-                    &params.filters,
+                    &params,
                 )?;
                 let total_count: i64 = count_builder
                     .build_query_scalar()
@@ -304,10 +308,10 @@ impl ItemsService {
 
                 let mut count_builder: QueryBuilder<sqlx::Postgres> =
                     QueryBuilder::new(SELECT_COUNT);
-                banto_storage::list_query::postgres::append_where(
+                banto_storage::list_query::postgres::append_list_where(
                     &mut count_builder,
                     &columns,
-                    &params.filters,
+                    &params,
                 )?;
                 let total_count: i64 = count_builder
                     .build_query_scalar()
@@ -1011,6 +1015,7 @@ mod tests {
                     offset: 0,
                     limit: 1,
                 }),
+                search: None,
             })
             .await
             .expect("list should succeed");
@@ -1018,6 +1023,44 @@ mod tests {
         assert_eq!(result.total_count, 2); // Beta and Gamma match the filter
         assert_eq!(result.rows.len(), 1); // pagination limits the page to 1
         assert_eq!(result.rows[0].name, "Gamma"); // highest price first
+    }
+
+    /// Issue #555: the quick search looks in `name` (case-insensitively),
+    /// not in `updatedAt` or the numbers, and the count matches the rows.
+    #[tokio::test]
+    async fn list_search_matches_the_name_and_is_counted() {
+        let svc = service().await;
+        for (name, price, stock) in [
+            ("Green Tea", 10, 1),
+            ("Black tea", 20, 2),
+            ("Coffee", 30, 3),
+        ] {
+            svc.create(ItemInput {
+                name: name.to_string(),
+                price,
+                stock,
+            })
+            .await
+            .unwrap();
+        }
+        let search = |term: &str| ListParams {
+            pagination: Some(Pagination {
+                offset: 0,
+                limit: 1,
+            }),
+            search: Some(term.to_string()),
+            ..Default::default()
+        };
+
+        let tea = svc.list(search("TEA")).await.expect("list");
+        assert_eq!(tea.total_count, 2);
+        assert_eq!(tea.rows.len(), 1);
+        assert_eq!(tea.rows[0].name, "Green Tea");
+
+        // `30` is a price, the year is in `updatedAt`: neither is searched.
+        assert_eq!(svc.list(search("30")).await.expect("list").total_count, 0);
+        assert_eq!(svc.list(search("20")).await.expect("list").total_count, 0);
+        assert_eq!(svc.list(search("  ")).await.expect("list").total_count, 3);
     }
 
     #[tokio::test]

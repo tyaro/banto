@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import betweenFixture from '../../../crates/banto-storage/testdata/filter-between-parity.json';
 import parityFixture from '../../../crates/banto-storage/testdata/list-order-parity.json';
+import searchFixture from '../../../crates/banto-storage/testdata/list-search-parity.json';
 import { createInMemoryDataProvider } from '../src/providers/inMemory';
 import type { FilterState, SortState } from '../src/types';
 
@@ -102,4 +103,65 @@ describe('InMemory between and lt/lte/gt/gte match the shared SQL contract', () 
 			expect(await list({ field: 'day', op: 'between', value })).toEqual([]);
 		});
 	}
+});
+
+/**
+ * The quick search (`ListParams.search`, Issue #555): any text field contains
+ * the trimmed term, case-insensitively, ANDed with the filters - the same
+ * cases banto-storage's SQL and the grid's client search assert
+ * (`crates/banto-storage/testdata/list-search-parity.json`).
+ */
+describe('InMemory search matches the shared SQL contract', () => {
+	interface SearchRow {
+		id: number;
+		name: string;
+		note: string | null;
+		price: number;
+		day: string | null;
+	}
+	const search = searchFixture as {
+		textFields: string[];
+		rows: SearchRow[];
+		cases: {
+			name: string;
+			search: string | null;
+			filters?: FilterState[];
+			expectedIds: number[];
+		}[];
+	};
+	const provider = createInMemoryDataProvider(
+		{
+			things: {
+				rows: search.rows as unknown as Record<string, unknown>[],
+				searchFields: search.textFields
+			}
+		},
+		{ latencyMs: 0 }
+	);
+
+	for (const { name, search: term, filters, expectedIds } of search.cases) {
+		it(name, async () => {
+			const result = await provider.getList<SearchRow>('things', {
+				sort: [],
+				filters: filters ?? [],
+				...(term !== null && { search: term })
+			});
+			expect(result.rows.map((row) => row.id)).toEqual(expectedIds);
+			expect(result.totalCount).toBe(expectedIds.length);
+		});
+	}
+
+	it('defaults the search fields to every field holding a string', async () => {
+		const defaults = createInMemoryDataProvider(
+			{ things: { rows: search.rows as unknown as Record<string, unknown>[] } },
+			{ latencyMs: 0 }
+		);
+		// `day` holds strings, so without `searchFields` it is searched too.
+		const result = await defaults.getList<SearchRow>('things', {
+			sort: [],
+			filters: [],
+			search: '2026-01'
+		});
+		expect(result.rows.map((row) => row.id)).toEqual([4]);
+	});
 });

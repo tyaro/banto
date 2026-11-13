@@ -129,6 +129,8 @@
   "resource.groupNone": "No grouping",
   "resource.groupByMenu": "Group by",
   "resource.moreMenu": "More actions",
+  "resource.searchLabel": "Search {resource}",
+  "resource.searchPlaceholder": "Search…",
   "items.groupCategory": "Category",
   "items.report": "Daily report",
   "resource.exportCsv": "Export CSV",

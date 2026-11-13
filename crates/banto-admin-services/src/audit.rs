@@ -182,18 +182,21 @@ pub struct AuditEntry<'a> {
 /// Column whitelist for [`AuditLogService::list`] (spec M14, mirrors
 /// `admin_template_core::items::column_map`): wire field name (camelCase, as
 /// sent by the audit-log viewer) -> actual `audit_log` SQL column.
+/// Every `TEXT` column except `ts` (a timestamp, not free text) is a text
+/// column for the quick search (`ListParams::search`,
+/// Issue #555); `detail` is searched as its JSON text.
 fn column_map() -> ColumnMap {
     ColumnMap::new()
         .column("id", "id")
         .column("ts", "ts")
-        .column("actorUsername", "actor_username")
-        .column("actorRole", "actor_role")
-        .column("action", "action")
-        .column("resource", "resource")
-        .column("entityId", "entity_id")
-        .column("detail", "detail")
-        .column("origin", "origin")
-        .column("result", "result")
+        .text_column("actorUsername", "actor_username")
+        .text_column("actorRole", "actor_role")
+        .text_column("action", "action")
+        .text_column("resource", "resource")
+        .text_column("entityId", "entity_id")
+        .text_column("detail", "detail")
+        .text_column("origin", "origin")
+        .text_column("result", "result")
 }
 
 /// Audit trail service (spec M14): append-only writes, a filtered/sorted/
@@ -735,10 +738,10 @@ impl AuditLogService {
                 let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
                 count_builder.push_bind(as_of_id);
                 count_builder.push(BOUNDED_ALIAS);
-                banto_storage::list_query::sqlite::append_where(
+                banto_storage::list_query::sqlite::append_list_where(
                     &mut count_builder,
                     &columns,
-                    &params.filters,
+                    &params,
                 )?;
                 let total_count: i64 = count_builder
                     .build_query_scalar()
@@ -797,10 +800,10 @@ impl AuditLogService {
                     QueryBuilder::new(SELECT_COUNT);
                 count_builder.push_bind(as_of_id);
                 count_builder.push(BOUNDED_ALIAS);
-                banto_storage::list_query::postgres::append_where(
+                banto_storage::list_query::postgres::append_list_where(
                     &mut count_builder,
                     &columns,
-                    &params.filters,
+                    &params,
                 )?;
                 let total_count: i64 = count_builder
                     .build_query_scalar()

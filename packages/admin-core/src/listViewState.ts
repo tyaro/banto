@@ -65,6 +65,8 @@ export interface ListViewSnapshot {
 	filters: FilterState[];
 	/** Client-mode-only grouping column id (grid-svelte `GridState.groupBy`). Omit for a list with no grouping concept. */
 	groupBy?: string | null;
+	/** The quick-search term (`ListParams.search`, Issue #555). Omit for a list without a search box. */
+	search?: string;
 }
 
 const SORT_DIRECTIONS: ReadonlySet<SortDirection> = new Set(['asc', 'desc']);
@@ -152,6 +154,7 @@ function isSnapshot(value: unknown): value is ListViewSnapshot {
 	) {
 		return false;
 	}
+	if (candidate.search !== undefined && typeof candidate.search !== 'string') return false;
 	return true;
 }
 

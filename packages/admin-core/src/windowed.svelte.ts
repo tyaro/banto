@@ -104,6 +104,8 @@ export interface CreateWindowedListResourceOptions {
 export interface WindowedParams {
 	sort: SortState[];
 	filters: FilterState[];
+	/** `ListParams.search` (Issue #555); omitted from the request when unset. */
+	search?: string;
 }
 
 interface InFlightBlock {
@@ -269,7 +271,8 @@ export class WindowedListResource<T> {
 				getDataProvider().getList<T>(this.#resource, {
 					pagination: { offset, limit: this.#blockSize },
 					sort: this.params.sort,
-					filters: this.params.filters
+					filters: this.params.filters,
+					...(this.params.search !== undefined && { search: this.params.search })
 				})
 			);
 		} catch (err) {

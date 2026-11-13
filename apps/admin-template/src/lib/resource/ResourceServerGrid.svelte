@@ -12,6 +12,7 @@
 	 * ResourceClientGrid.svelte's doc comment for why: no double
 	 * `onInvalidate` subscriptions).
 	 */
+	import { untrack } from 'svelte';
 	import {
 		BantoGrid,
 		GridState,
@@ -38,6 +39,11 @@
 		 * GridState (spec §4.3's group-by <select>).
 		 */
 		state: GridState<ResourceRow>;
+		/**
+		 * #555 (3): the page's quick-search term, sent as `ListParams.search`.
+		 * A change re-fetches from the first row and scrolls back to the top.
+		 */
+		search?: string;
 		onRowClick: (row: ResourceRow) => void;
 		onCellEdit: (edit: CellEdit<ResourceRow>) => Promise<ResourceRow>;
 		onRangePaste: (
@@ -65,6 +71,7 @@
 		resource,
 		columns,
 		state: gridState,
+		search,
 		onRowClick,
 		onCellEdit,
 		onRangePaste,
@@ -101,7 +108,11 @@
 	// `onParamsChange` -> `handleParamsChange` -> `windowed.setParams()` path
 	// below, same as before this fix.
 	// svelte-ignore state_referenced_locally
-	windowed.setParams({ sort: gridState.sort, filters: gridState.filters });
+	windowed.setParams({
+		sort: gridState.sort,
+		filters: gridState.filters,
+		search: searchParam(search ?? '')
+	});
 
 	// The most recently requested visible window, so a param change (sort/
 	// filter) knows which range to re-fetch under the new params. Updated
@@ -143,6 +154,33 @@
 	function handleReload(): void {
 		void windowed.refresh();
 	}
+
+	/** A blank term is no search: `search` is then left out of the request. */
+	function searchParam(term: string): string | undefined {
+		return term.trim() === '' ? undefined : term;
+	}
+
+	// #555 (3): a new search term starts over from the first row - the old
+	// scroll position points into a result set that no longer exists. Only a
+	// CHANGE re-fetches (the initial term is in the seed above); the work is
+	// untracked so `ensureRange()` reading `windowed.params` cannot make this
+	// effect depend on it (see the two-effects comment above).
+	let gridWrapEl: HTMLDivElement | undefined = $state();
+	// svelte-ignore state_referenced_locally
+	let appliedSearch = search ?? '';
+	$effect(() => {
+		const next = search ?? '';
+		if (next === appliedSearch) return;
+		appliedSearch = next;
+		untrack(() => {
+			windowed.setParams({ search: searchParam(next) });
+			const scroller = gridWrapEl?.querySelector<HTMLElement>('[role="grid"]');
+			if (scroller) scroller.scrollTop = 0;
+			const span = Math.max(visibleRange.end - visibleRange.start, 100);
+			visibleRange = { start: 0, end: span };
+			void windowed.ensureRange(0, span);
+		});
+	});
 
 	function handleParamsChange(params: { sort: SortState[]; filters: FilterState[] }): void {
 		windowed.setParams(params);
@@ -213,7 +251,7 @@
 	</div>
 {/if}
 
-<div class="grid-wrap">
+<div class="grid-wrap" bind:this={gridWrapEl}>
 	<BantoGrid
 		mode="server"
 		state={gridState}

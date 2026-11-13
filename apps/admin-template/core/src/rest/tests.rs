@@ -225,6 +225,7 @@ async fn items_list_supports_sort_filter_and_pagination() {
             offset: 0,
             limit: 1,
         }),
+        search: None,
     };
     let response = router
         .oneshot(
