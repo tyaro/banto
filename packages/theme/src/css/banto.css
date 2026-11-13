@@ -11,6 +11,17 @@
  */
 @import './banto-glass.css';
 
+/* --banto-brand-hue is a plain number of degrees: write `150`, NOT `150deg`
+   (the derived tokens do `calc(var(--banto-brand-hue) + 40)`, which a value
+   with a unit would make invalid, and the accent would vanish). Registering it
+   as <number> makes a value with a unit invalid at computed time, so it falls
+   back to the initial 258 instead. */
+@property --banto-brand-hue {
+	syntax: '<number>';
+	inherits: true;
+	initial-value: 258;
+}
+
 :root {
 	/* Colour system (#557, visual-refresh-design.md §2.4). Role-based, in
      OKLCH: 12 neutral steps + 1 brand colour + 4 state colours. The light and
@@ -20,94 +31,62 @@
 
      --banto-brand-hue is the ONE knob for the brand: the primary family, the
      accent gradient, the focus ring and the faint tint of the neutrals all
-     follow it. Set it on :root (not on a nested element: the derived tokens
-     are computed on :root). Lightness and chroma are chosen so white on the
+     follow it. Write it as a unitless number (150, not 150deg). Set it on
+     :root (not on a nested element: the derived tokens are computed on :root
+     and on each [data-theme] element, and the hue is inherited from :root). Lightness and chroma are chosen so white on the
      light solid and the dark text on the dark solid stay >= 4.5:1 at any hue.
      The state hues (danger / warning / success / info) are fixed on purpose -
      they must not change meaning with the brand. */
 	--banto-brand-hue: 258;
-
-	/* Neutral steps. 1 = the lightest surface, 12 = body text. A very low
-     chroma carries a hint of the brand hue. */
-	--banto-neutral-1: oklch(1 0 var(--banto-brand-hue));
-	--banto-neutral-2: oklch(0.977 0.004 var(--banto-brand-hue));
-	--banto-neutral-3: oklch(0.964 0.005 var(--banto-brand-hue));
-	--banto-neutral-4: oklch(0.955 0.006 var(--banto-brand-hue));
-	--banto-neutral-5: oklch(0.935 0.008 var(--banto-brand-hue));
-	--banto-neutral-6: oklch(0.895 0.01 var(--banto-brand-hue));
-	--banto-neutral-7: oklch(0.83 0.012 var(--banto-brand-hue));
-	--banto-neutral-8: oklch(0.74 0.014 var(--banto-brand-hue));
-	--banto-neutral-9: oklch(0.635 0.015 var(--banto-brand-hue));
-	--banto-neutral-10: oklch(0.56 0.015 var(--banto-brand-hue));
-	--banto-neutral-11: oklch(0.5 0.016 var(--banto-brand-hue));
-	--banto-neutral-12: oklch(0.23 0.01 var(--banto-brand-hue));
-
-	/* Surfaces */
-	--banto-bg: var(--banto-neutral-2);
-	--banto-surface: var(--banto-neutral-1);
-	--banto-surface-raised: var(--banto-neutral-1);
-	--banto-border: var(--banto-neutral-6);
 
 	/* Preset axis (spec M12). Standard preset: no blur, no page bg image;
      shell components wire `backdrop-filter: var(--banto-backdrop, none)` /
      `background-image: var(--banto-bg-image)` so glass is a pure variable
      swap and standard stays a no-op. */
 	--banto-backdrop: none;
-	/* The accent gradient runs from the primary to --banto-brand-accent (the
-     brand hue + 40deg), so it follows --banto-brand-hue too. White (light) /
-     the dark text-inverse (dark) stays >= 4.5:1 on both ends. */
-	--banto-accent-gradient: linear-gradient(135deg, var(--banto-primary), var(--banto-brand-accent));
+
 	--banto-bg-image: none;
 
-	/* Text */
-	--banto-text: var(--banto-neutral-12);
-	--banto-text-muted: var(--banto-neutral-11);
-	--banto-text-inverse: var(--banto-neutral-1);
-
-	/* Brand / state */
-	--banto-primary: oklch(0.5 0.17 var(--banto-brand-hue));
-	--banto-primary-hover: oklch(0.44 0.16 var(--banto-brand-hue));
-	/* 面（overlay・raised）の上に置く primary の文字色。白に 6.1:1 */
-	--banto-primary-text: var(--banto-primary);
-	--banto-brand-accent: oklch(0.5 0.2 calc(var(--banto-brand-hue) + 40));
-	--banto-danger: oklch(0.577 0.215 27);
-	--banto-warning: oklch(0.666 0.157 58);
-	--banto-success: oklch(0.627 0.17 149);
-	--banto-info: oklch(0.55 0.105 235);
-
-	/* Focus */
-	--banto-focus-ring: 0 0 0 2px color-mix(in srgb, var(--banto-primary) 45%, transparent);
-
 	/* Layout */
-	--banto-radius: var(
-		--banto-radius-md
-	); /* visual-refresh-design.md §2.2: alias, value unchanged (6px) */
+	--banto-radius: var(--banto-radius-md);
+	/* visual-refresh-design.md §2.2: alias, value unchanged (6px) */
 	--banto-shell-sidebar-width: 240px;
+
 	--banto-shell-sidebar-width-collapsed: 56px;
+
 	--banto-shell-header-height: 48px;
+
 	/* Kiosk shell (display-preset-plan.md D1-b): a shorter header for
      permanently-mounted dashboards. Opt-in via Header.svelte's
      `class:compact` - the plain height above is unaffected. */
 	--banto-shell-header-height-compact: 40px;
+
 	/* Launcher (nav-launcher-plan.md §5.2; @banto/ui LauncherBar). The shell
      namespace, not --banto-dock-* (that is @banto/dock-svelte, §2.4).
      magnify-max is unitless - LauncherBar reads it from JS (unreadable = no
      magnification). reserve is the room the shell keeps below the content. */
 	--banto-shell-launcher-item-size: 44px;
+
 	--banto-shell-launcher-magnify-max: 1.5;
+
 	--banto-shell-launcher-gap: 6px;
+
 	--banto-shell-launcher-padding: 6px;
+
 	--banto-shell-launcher-offset: 10px;
+
 	--banto-shell-launcher-reserve: calc(
 		var(--banto-shell-launcher-item-size) + var(--banto-shell-launcher-padding) * 2 +
 			var(--banto-shell-launcher-offset)
 	);
+
 	/* <=900px the bar is a full-width tab bar (§4.6): a 44px item, its
      caption and padding (0.5rem covers the caption overhang) plus the home
      indicator inset. */
 	--banto-shell-launcher-tabbar-reserve: calc(
 		var(--banto-shell-launcher-item-size) + 0.5rem + env(safe-area-inset-bottom, 0px)
 	);
+
 	/* Translucent bar and tooltip with a blur behind them (owner request and
      owner-tuned values on #423, nav-launcher-plan.md D7).
      Opaque again under prefers-reduced-transparency / no backdrop-filter
@@ -115,28 +94,19 @@
 	/* The bar's opacity alone is its own token so an app's setting (a slider,
      nav-launcher-plan.md D7) can change just this one value. */
 	--banto-shell-launcher-opacity: 50%;
+
 	/* The <=900px tab bar's floor for the opacity above (see the media rule below). */
 	--banto-shell-launcher-tabbar-opacity-min: 85%;
-	/* The tab bar's base colour must be OPAQUE for that floor to hold: the glass
-     preset's surfaces are already translucent, so banto-glass.css pins this
-     to opaque values (#428 review). */
-	--banto-shell-launcher-tabbar-base: var(--banto-surface-overlay);
-	--banto-shell-launcher-bg: color-mix(
-		in srgb,
-		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
-		transparent
-	);
-	--banto-shell-launcher-tooltip-bg: color-mix(
-		in srgb,
-		var(--banto-surface-raised) 80%,
-		transparent
-	);
+
 	--banto-shell-launcher-backdrop: blur(1px) saturate(1.5);
+
 	--banto-shell-launcher-tooltip-backdrop: blur(5px);
+
 	/* Left / right bars (D4, PR-4): the tooltip sits beside the item and may
      wrap past this width; the bar's scrolling track keeps this much (+ the
      gap) free on the page side so it is not clipped. */
 	--banto-shell-launcher-tooltip-max-width: 10rem;
+
 	/* Top bar (D4): the room above it. 0 = the screen edge; a shell with a
      header on top sets it to the header's height (admin-template's
      routes/(app)/+layout.svelte) so the bar sits below the header. */
@@ -144,40 +114,19 @@
 
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;
-	--banto-grid-header-height: 40px;
 
-	/* Charts (consumed by @banto/charts from M4, spec §6). Categorical series
-     take slots 1..8 in fixed order by series index - never cycle/reassign. */
-	--banto-chart-1: #2a78d6;
-	--banto-chart-2: #1baf7a;
-	--banto-chart-3: #eda100;
-	--banto-chart-4: #008300;
-	--banto-chart-5: #4a3aa7;
-	--banto-chart-6: #e34948;
-	--banto-chart-7: #e87ba4;
-	--banto-chart-8: #eb6834;
-	--banto-chart-grid: #e1e0d9;
-	--banto-chart-axis: #c3c2b7;
+	--banto-grid-header-height: 40px;
 
 	/* Dock (consumed by @banto/dock-svelte). M7 shipped floating pseudo-windows
      only; M8 Phase B adds the docked-tree chrome (splits/tabs/snap-guide/drag
      ghost) below, reusing --banto-dock-titlebar-height for both the floating
      titlebar and the docked pane titlebar/tab-strip height. */
 	--banto-dock-titlebar-height: 32px;
-	--banto-dock-shadow: var(
-		--banto-shadow-lg
-	); /* visual-refresh-design.md §2.2: alias, value unchanged */
-	--banto-dock-divider: var(--banto-border);
-	--banto-dock-divider-hover: var(--banto-primary);
-	--banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 18%, transparent);
-	--banto-dock-snap-border: var(--banto-primary);
-	--banto-dock-tab-active-bg: var(--banto-surface);
-	--banto-dock-ghost-bg: var(--banto-surface-raised);
-	--banto-dock-ghost-border: var(--banto-primary);
 
 	/* Typography */
 	--banto-font-family:
 		system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+
 	--banto-font-size: 14px;
 
 	/* Dimension scales (theme-dimension-tokens.md §5.2; visual-refresh-plan.md
@@ -186,14 +135,22 @@
      yet (D3). Component shapes (widths, heights, column widths, icon sizes)
      are not part of these scales (D7). */
 	/* Spacing scale (theme-dimension-tokens.md §5.2). Ordinal names: the value is not part of the name. */
-	--banto-space-1: 0.25rem; /* 3.5px */
-	--banto-space-2: 0.5rem; /* 7px    — 最多（73） */
-	--banto-space-3: 0.75rem; /* 10.5px */
-	--banto-space-4: 1rem; /* 14px */
-	--banto-space-5: 1.25rem; /* 17.5px */
-	--banto-space-6: 1.5rem; /* 21px */
-	--banto-space-7: 2rem; /* 28px */
-	--banto-space-8: 3rem; /* 42px — 空状態など */
+	--banto-space-1: 0.25rem;
+	/* 3.5px */
+	--banto-space-2: 0.5rem;
+	/* 7px    — 最多（73） */
+	--banto-space-3: 0.75rem;
+	/* 10.5px */
+	--banto-space-4: 1rem;
+	/* 14px */
+	--banto-space-5: 1.25rem;
+	/* 17.5px */
+	--banto-space-6: 1.5rem;
+	/* 21px */
+	--banto-space-7: 2rem;
+	/* 28px */
+	--banto-space-8: 3rem;
+	/* 42px — 空状態など */
 
 	/* Type scale (付録 A.5 の役割。#557 で最小 12px に底上げ: 12 / 13 / 14 / 16 /
      20 / 28px). Body text inherits the root 1rem and needs no declaration;
@@ -203,57 +160,43 @@
      now (14px) but stays a separate name for "secondary text" so a consumer
      can still retune it. Not to be confused with --banto-font-size above (the
      root size in px). */
-	--banto-font-size-xs: 0.8572rem; /* 12px   バッジ・極小ラベル（下限） */
-	--banto-font-size-sm: 0.9286rem; /* 13px   caption（最多 51） */
-	--banto-font-size-md: 1rem; /* 14px   補足・表の副情報（本文と同じ大きさ） */
-	--banto-font-size-base: 1rem; /* 14px   本文（root と同じ。明示が要るときだけ使う） */
-	--banto-font-size-lg: 1.1429rem; /* 16px   heading */
-	--banto-font-size-xl: 1.4286rem; /* 20px   見出し（ページ・ログインのタイトル） */
-	--banto-font-size-2xl: 2rem; /* 28px   display・大きな KPI の数値 */
+	--banto-font-size-xs: 0.8572rem;
+	/* 12px   バッジ・極小ラベル（下限） */
+	--banto-font-size-sm: 0.9286rem;
+	/* 13px   caption（最多 51） */
+	--banto-font-size-md: 1rem;
+	/* 14px   補足・表の副情報（本文と同じ大きさ） */
+	--banto-font-size-base: 1rem;
+	/* 14px   本文（root と同じ。明示が要るときだけ使う） */
+	--banto-font-size-lg: 1.1429rem;
+	/* 16px   heading */
+	--banto-font-size-xl: 1.4286rem;
+	/* 20px   見出し（ページ・ログインのタイトル） */
+	--banto-font-size-2xl: 2rem;
+	/* 28px   display・大きな KPI の数値 */
 
 	/* Border widths */
 	--banto-border-width: 1px;
-	--banto-border-width-strong: 2px; /* 選択・強調の縁 */
 
-	/* Surface hierarchy (visual-refresh-plan.md 付録A.1) */
-	--banto-surface-subtle: var(--banto-neutral-3);
-	--banto-surface-hover: var(--banto-neutral-4);
-	--banto-surface-overlay: var(--banto-surface);
-	--banto-border-strong: var(--banto-neutral-9);
+	--banto-border-width-strong: 2px;
 
-	/* State colors: text/solid/tint 3-系統 (visual-refresh-plan.md 付録A.3).
-     Existing --banto-primary etc. stay the "text" default; these add the
-     solid (button fill) and tint (soft panel) pairs. */
-	--banto-primary-solid: var(--banto-primary);
-	--banto-primary-solid-hover: var(--banto-primary-hover);
-	/* The light text-inverse (white) here; the dark theme's text-inverse is
-	   dark, matching its lighter primary solid. */
-	--banto-on-solid: var(--banto-text-inverse);
 	--banto-danger-solid: oklch(0.577 0.215 27);
+
 	--banto-danger-solid-hover: oklch(0.505 0.19 27);
+
 	/* Text on the danger solid. Not --banto-on-solid: the dark theme turns that
 	   dark for its lighter primary solid, while the danger solid keeps the light
 	   value, where only white keeps AA contrast (ConfirmDialog's danger button). */
 	--banto-on-danger-solid: #ffffff;
+
 	--banto-success-solid: oklch(0.527 0.137 150);
-	--banto-danger-tint: oklch(0.936 0.031 18);
-	--banto-danger-tint-text: oklch(0.444 0.161 27);
-	--banto-success-tint: oklch(0.962 0.043 157);
-	--banto-success-tint-text: oklch(0.448 0.108 151);
-	--banto-warning-tint: oklch(0.962 0.058 95);
-	--banto-warning-tint-text: oklch(0.473 0.125 46);
-	/* Info (#557): neutral notices that are neither success nor a warning.
-	   Same pairs as warning (no solid - there is no "info" button). */
-	--banto-info-tint: oklch(0.955 0.022 235);
-	--banto-info-tint-text: oklch(0.42 0.08 235);
 
 	/* Shape and shadow (visual-refresh-plan.md 付録A.4) */
 	--banto-radius-sm: 4px;
+
 	--banto-radius-md: 6px;
+
 	--banto-radius-lg: 10px;
-	--banto-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
-	--banto-shadow-md: 0 2px 8px rgb(0 0 0 / 0.1);
-	--banto-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.18);
 
 	/* Overlay scrim and stacking layers (ADR-0018 §8, phase 2a). The scrim is
      the dimming layer behind modal-like overlays (CommandPalette, later
@@ -261,32 +204,224 @@
      The z-index tokens name the layers apps used to hard-code - values are
      unchanged, so stacking order is too. */
 	--banto-scrim: rgb(0 0 0 / 0.35);
+
 	--banto-z-header: 100;
+
 	/* Launcher bar (nav-launcher-plan.md §4.1): above the header, below the
      sidebar scrim, modals, the palette and toasts. */
 	--banto-z-launcher: 200;
+
 	--banto-z-sidebar-scrim: 850;
+
 	--banto-z-sidebar: 900;
+
 	--banto-z-modal: 900;
+
 	--banto-z-overlay: 1000;
+
 	--banto-z-toast: 1000;
 
 	/* Control dimensions (visual-refresh-plan.md 付録A.4; overridden by the
      density axis, see [data-banto-density='compact'] below). */
 	--banto-control-height: 36px;
+
 	--banto-control-height-sm: 28px;
+
 	--banto-control-height-lg: 40px;
+
 	--banto-checkbox-size: 1.1rem;
+
 	--banto-switch-width: 36px;
+
 	--banto-switch-height: 20px;
+
 	--banto-switch-inset: 2px;
 
 	/* Motion (visual-refresh-plan.md 付録A.6) */
 	--banto-duration-fast: 120ms;
+
 	--banto-duration-base: 160ms;
+
 	--banto-duration-slow: 240ms;
+
 	--banto-ease-out: cubic-bezier(0.2, 0, 0, 1);
+
 	--banto-ease-spring: linear(0, 0.35 12%, 0.8 24%, 1.04 40%, 0.99 65%, 1);
+}
+
+/* Themed values (light). Declared for :root AND every [data-theme] element so a
+   nested data-theme re-derives the roles (text, border, primary, ...) from its
+   own steps instead of inheriting the outer theme's resolved colours. The
+   dark block below comes later at the same specificity and overrides. */
+:root,
+[data-theme] {
+	/* Neutral steps. 1 = the lightest surface, 12 = body text. A very low
+     chroma carries a hint of the brand hue. */
+	--banto-neutral-1: oklch(1 0 var(--banto-brand-hue));
+
+	--banto-neutral-2: oklch(0.977 0.004 var(--banto-brand-hue));
+
+	--banto-neutral-3: oklch(0.964 0.005 var(--banto-brand-hue));
+
+	--banto-neutral-4: oklch(0.955 0.006 var(--banto-brand-hue));
+
+	--banto-neutral-5: oklch(0.935 0.008 var(--banto-brand-hue));
+
+	--banto-neutral-6: oklch(0.895 0.01 var(--banto-brand-hue));
+
+	--banto-neutral-7: oklch(0.83 0.012 var(--banto-brand-hue));
+
+	--banto-neutral-8: oklch(0.74 0.014 var(--banto-brand-hue));
+
+	--banto-neutral-9: oklch(0.635 0.015 var(--banto-brand-hue));
+
+	--banto-neutral-10: oklch(0.56 0.015 var(--banto-brand-hue));
+
+	--banto-neutral-11: oklch(0.5 0.016 var(--banto-brand-hue));
+
+	--banto-neutral-12: oklch(0.23 0.01 var(--banto-brand-hue));
+
+	/* Surfaces */
+	--banto-bg: var(--banto-neutral-2);
+
+	--banto-surface: var(--banto-neutral-1);
+
+	--banto-surface-raised: var(--banto-neutral-1);
+
+	--banto-border: var(--banto-neutral-6);
+
+	/* The accent gradient runs from the primary to --banto-brand-accent (the
+     brand hue + 40deg), so it follows --banto-brand-hue too. White (light) /
+     the dark text-inverse (dark) stays >= 4.5:1 on both ends. */
+	--banto-accent-gradient: linear-gradient(135deg, var(--banto-primary), var(--banto-brand-accent));
+
+	/* Text */
+	--banto-text: var(--banto-neutral-12);
+
+	--banto-text-muted: var(--banto-neutral-11);
+
+	--banto-text-inverse: var(--banto-neutral-1);
+
+	/* Brand / state */
+	--banto-primary: oklch(0.5 0.17 var(--banto-brand-hue));
+
+	--banto-primary-hover: oklch(0.44 0.16 var(--banto-brand-hue));
+
+	/* 面（overlay・raised）の上に置く primary の文字色。白に 6.1:1 */
+	--banto-primary-text: var(--banto-primary);
+
+	--banto-brand-accent: oklch(0.5 0.2 calc(var(--banto-brand-hue) + 40));
+
+	--banto-danger: oklch(0.577 0.215 27);
+
+	--banto-warning: oklch(0.666 0.157 58);
+
+	--banto-success: oklch(0.627 0.17 149);
+
+	--banto-info: oklch(0.55 0.105 235);
+
+	/* Focus */
+	--banto-focus-ring: 0 0 0 2px color-mix(in srgb, var(--banto-primary) 45%, transparent);
+
+	/* The tab bar's base colour must be OPAQUE for that floor to hold: the glass
+     preset's surfaces are already translucent, so banto-glass.css pins this
+     to opaque values (#428 review). */
+	--banto-shell-launcher-tabbar-base: var(--banto-surface-overlay);
+
+	--banto-shell-launcher-bg: color-mix(
+		in srgb,
+		var(--banto-surface-overlay) var(--banto-shell-launcher-opacity),
+		transparent
+	);
+
+	--banto-shell-launcher-tooltip-bg: color-mix(
+		in srgb,
+		var(--banto-surface-raised) 80%,
+		transparent
+	);
+
+	/* Charts (consumed by @banto/charts from M4, spec §6). Categorical series
+     take slots 1..8 in fixed order by series index - never cycle/reassign. */
+	--banto-chart-1: #2a78d6;
+
+	--banto-chart-2: #1baf7a;
+
+	--banto-chart-3: #eda100;
+
+	--banto-chart-4: #008300;
+
+	--banto-chart-5: #4a3aa7;
+
+	--banto-chart-6: #e34948;
+
+	--banto-chart-7: #e87ba4;
+
+	--banto-chart-8: #eb6834;
+
+	--banto-chart-grid: #e1e0d9;
+
+	--banto-chart-axis: #c3c2b7;
+
+	--banto-dock-shadow: var(--banto-shadow-lg);
+	/* visual-refresh-design.md §2.2: alias, value unchanged */
+	--banto-dock-divider: var(--banto-border);
+
+	--banto-dock-divider-hover: var(--banto-primary);
+
+	--banto-dock-snap-fill: color-mix(in srgb, var(--banto-primary) 18%, transparent);
+
+	--banto-dock-snap-border: var(--banto-primary);
+
+	--banto-dock-tab-active-bg: var(--banto-surface);
+
+	--banto-dock-ghost-bg: var(--banto-surface-raised);
+
+	--banto-dock-ghost-border: var(--banto-primary);
+	/* 選択・強調の縁 */
+
+	/* Surface hierarchy (visual-refresh-plan.md 付録A.1) */
+	--banto-surface-subtle: var(--banto-neutral-3);
+
+	--banto-surface-hover: var(--banto-neutral-4);
+
+	--banto-surface-overlay: var(--banto-surface);
+
+	--banto-border-strong: var(--banto-neutral-9);
+
+	/* State colors: text/solid/tint 3-系統 (visual-refresh-plan.md 付録A.3).
+     Existing --banto-primary etc. stay the "text" default; these add the
+     solid (button fill) and tint (soft panel) pairs. */
+	--banto-primary-solid: var(--banto-primary);
+
+	--banto-primary-solid-hover: var(--banto-primary-hover);
+
+	/* The light text-inverse (white) here; the dark theme's text-inverse is
+	   dark, matching its lighter primary solid. */
+	--banto-on-solid: var(--banto-text-inverse);
+
+	--banto-danger-tint: oklch(0.936 0.031 18);
+
+	--banto-danger-tint-text: oklch(0.444 0.161 27);
+
+	--banto-success-tint: oklch(0.962 0.043 157);
+
+	--banto-success-tint-text: oklch(0.448 0.108 151);
+
+	--banto-warning-tint: oklch(0.962 0.058 95);
+
+	--banto-warning-tint-text: oklch(0.473 0.125 46);
+
+	/* Info (#557): neutral notices that are neither success nor a warning.
+	   Same pairs as warning (no solid - there is no "info" button). */
+	--banto-info-tint: oklch(0.955 0.022 235);
+
+	--banto-info-tint-text: oklch(0.42 0.08 235);
+
+	--banto-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+
+	--banto-shadow-md: 0 2px 8px rgb(0 0 0 / 0.1);
+
+	--banto-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.18);
 }
 
 [data-theme='dark'] {

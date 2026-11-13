@@ -35,6 +35,67 @@ export function inlineCssVarRefs(value: string, resolve: (name: string) => strin
 	});
 }
 
+/** Colour functions a standalone SVG viewer may not understand (computed style returns them as written, e.g. `oklch(...)`). */
+const MODERN_COLOR_FN = /\b(?:oklch|oklab|lab|lch|color|color-mix|hwb)\(/i;
+
+/** Paints `value` and returns its sRGB [r, g, b, a] (0-255 each), or null when it cannot (no canvas, invalid colour). */
+export type PaintToRgba = (value: string) => [number, number, number, number] | null;
+
+let paintCanvas: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * Default painter: fills a 1x1 canvas with `value` and reads the pixel back.
+ * The browser does the OKLCH/color-mix -> sRGB conversion (including gamut
+ * clipping), so any way of writing a colour works. null outside a browser or
+ * where canvas is unavailable (jsdom without the canvas package).
+ */
+const canvasPaint: PaintToRgba = (value) => {
+	if (paintCanvas === undefined) {
+		try {
+			paintCanvas =
+				typeof document === 'undefined'
+					? null
+					: document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+		} catch {
+			paintCanvas = null;
+		}
+	}
+	const ctx = paintCanvas;
+	if (!ctx) return null;
+	try {
+		// fillStyle ignores an invalid value, so set two different sentinels: the
+		// colour is valid only if both runs read back the same pixel.
+		const read = (sentinel: string): [number, number, number, number] => {
+			ctx.clearRect(0, 0, 1, 1);
+			ctx.fillStyle = sentinel;
+			ctx.fillStyle = value;
+			ctx.fillRect(0, 0, 1, 1);
+			const d = ctx.getImageData(0, 0, 1, 1).data;
+			return [d[0], d[1], d[2], d[3]];
+		};
+		const a = read('#000000');
+		const b = read('#ffffff');
+		return a.every((n, i) => n === b[i]) ? a : null;
+	} catch {
+		return null;
+	}
+};
+
+/**
+ * Convert a CSS colour written in a modern function (`oklch()`, `color()`,
+ * `color-mix()`, ...) to `rgb()` / `rgba()` so the exported SVG renders in
+ * viewers that only know sRGB. Anything else (hex, `rgb()`, `none`, `url(...)`,
+ * a font name) and anything `paint` cannot convert passes through unchanged.
+ */
+export function colorToSrgb(value: string, paint: PaintToRgba = canvasPaint): string {
+	if (!MODERN_COLOR_FN.test(value)) return value;
+	const px = paint(value);
+	if (!px) return value;
+	const [r, g, b, a] = px;
+	if (a === 255) return `rgb(${r}, ${g}, ${b})`;
+	return `rgba(${r}, ${g}, ${b}, ${Math.round((a / 255) * 1000) / 1000})`;
+}
+
 /** SVG presentation properties baked from computed style onto the clone (covers both attribute-set and class-driven styling). */
 const BAKED_PROPS = [
 	'fill',
@@ -69,7 +130,7 @@ export function serializeChartSvg(svg: SVGSVGElement, opts: { background?: boole
 		const computed = getComputedStyle(originals[i]);
 		for (const prop of BAKED_PROPS) {
 			const value = computed.getPropertyValue(prop).trim();
-			if (value) clones[i].setAttribute(prop, value);
+			if (value) clones[i].setAttribute(prop, colorToSrgb(value));
 		}
 	}
 
@@ -81,7 +142,7 @@ export function serializeChartSvg(svg: SVGSVGElement, opts: { background?: boole
 	for (const el of clones) {
 		for (const attr of Array.from(el.attributes)) {
 			if (attr.value.includes('var(')) {
-				el.setAttribute(attr.name, inlineCssVarRefs(attr.value, resolve));
+				el.setAttribute(attr.name, colorToSrgb(inlineCssVarRefs(attr.value, resolve)));
 			}
 		}
 	}
@@ -112,7 +173,10 @@ export function serializeChartSvg(svg: SVGSVGElement, opts: { background?: boole
 		bg.setAttribute('y', String(y));
 		bg.setAttribute('width', String(w));
 		bg.setAttribute('height', String(h));
-		bg.setAttribute('fill', rootStyle.getPropertyValue('--banto-surface').trim() || '#ffffff');
+		bg.setAttribute(
+			'fill',
+			colorToSrgb(rootStyle.getPropertyValue('--banto-surface').trim()) || '#ffffff'
+		);
 		clone.insertBefore(bg, clone.firstChild);
 	}
 

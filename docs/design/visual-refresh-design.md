@@ -126,7 +126,7 @@
 - **状態 4 色**（danger / warning / success / info）は色相を固定し、ブランドに追従させない。
   `--banto-info`・`--banto-info-tint`・`--banto-info-tint-text` を新設（warning と同じ組。塗りは作らない）。
 
-明るさと彩度は、どの色相でも次を満たすように選んだ（0〜330 の 30 度刻みで確かめた）:
+明るさと彩度は、どの色相でも次を満たすように選んだ（0〜359 を 1 度刻みで `packages/theme/tests/contrast.test.ts` が確かめる。最も低いのは約 4.7:1）:
 ライトの塗り（primary-solid）の上の白、ダークの塗りの上の `--banto-text-inverse`、ダークの
 `--banto-primary-text` が raised の上で 4.5:1 以上。ダークの `--banto-primary` を文字に使うと、赤〜紫の
 色相では raised の上で 4.3:1 まで下がるので、面の上の文字は `--banto-primary-text` を使う。
@@ -135,6 +135,11 @@
 使わない（WebKitGTK など対応が新しい）。`oklch()` と `color-mix()` は Baseline 2023（Chrome/Edge 111・
 Safari 16.2・Firefox 113）で、spec §13 の「Widely available を優先」を満たす。導いた色は `:root` で
 計算されるので、`--banto-brand-hue` は `:root` に置く（入れ子の要素で変えても primary は変わらない）。
+`--banto-brand-hue` は**単位なしの数値**で書く（`150`。`150deg` を付けない: `calc(var(--banto-brand-hue) + 40)` が
+無効になりアクセントが消える）。`@property --banto-brand-hue { syntax: '<number>'; … initial-value: 258; }` を
+登録してあるので、単位付きの値は既定の 258 に戻る。ロールのトークン（text・border・primary など）は
+`:root, [data-theme]` で宣言し、`data-theme` を付けた要素の上でも段から計算し直す（入れ子のダークで
+ライトの値が残らない）。
 
 ## 3. Tailwind `@theme` 橋渡し（`app.css`）
 
