@@ -18,7 +18,16 @@ import * as m from '#lib/paraglide/messages.js';
 import type { PaletteCommand } from '@banto/admin-core';
 import { logoutAndLeave } from './banto/logout.svelte';
 import { notifyLogoutOutcome } from './banto/logoutNotice';
-import { navItems, navLabel, navSections, resolveAppPath, type NavItem } from './navigation';
+import { resources } from './banto/resources';
+import { resourcePermissions } from './resource/permissions';
+import {
+	navItems,
+	navLabel,
+	navSections,
+	resolveAppPath,
+	type AppPath,
+	type NavItem
+} from './navigation';
 import { settings } from './settings.svelte';
 import { sessionStore } from './session.svelte';
 
@@ -41,6 +50,27 @@ function navigationCommands(): PaletteCommand[] {
 		visible: () => isNavItemVisible(item),
 		run: () => {
 			void goto(resolveAppPath(item.path));
+		}
+	}));
+}
+
+/**
+ * "Create <label>" per resource (ADR-0030 §8), derived from the resource
+ * definitions. `visible()` follows `resourcePermissions` and the session role,
+ * so a viewer (incl. the LAN viewer-public session) and resources without the
+ * `create` capability never get one. The resource list is read per call, so
+ * zero resources yields zero commands (display preset). Record search is out of
+ * scope.
+ */
+function createCommands(): PaletteCommand[] {
+	return resources.map((resource) => ({
+		id: `create.${resource.name}`,
+		title: m['resource.createCommand']({ resource: resource.label }),
+		group: m['commandPalette.groupNavigation'](),
+		keywords: [resource.path, resource.name, 'new', 'create'],
+		visible: () => resourcePermissions(resource, sessionStore.role).create,
+		run: () => {
+			void goto(resolveAppPath(`${resource.path}/new` as AppPath));
 		}
 	}));
 }
@@ -104,7 +134,7 @@ function sessionCommands(): PaletteCommand[] {
 	];
 }
 
-/** All palette commands, in a fixed order (navigation, then theme, then session) - `searchCommands` re-sorts/filters this for display. */
+/** All palette commands, in a fixed order (navigation, create, then theme, then session) - `searchCommands` re-sorts/filters this for display. */
 export function buildCommands(): PaletteCommand[] {
-	return [...navigationCommands(), ...themeCommands(), ...sessionCommands()];
+	return [...navigationCommands(), ...createCommands(), ...themeCommands(), ...sessionCommands()];
 }

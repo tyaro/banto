@@ -158,6 +158,7 @@
   "items.exportedToPathClosed": "Exported {count} records ({path})",
   "items.importFailedCount": "Import failed ({count} errors)",
   "items.importSucceeded": "Import complete (created {created}, updated {updated})",
+  "resource.createCommand": "Create {resource}",
   "resource.createTitle": "Create {resource}",
   "items.createTitle": "Create {resource}",
   "resource.editTitle": "Edit {resource}",
