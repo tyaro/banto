@@ -150,7 +150,8 @@ the default to the drawer is not in this ADR's stages (question 4).
 
 `resourcePermissions(definition, role)` (pure) returns `{ create, edit, delete, import, export }`. Write actions
 require "the definition's `capabilities` has the action" and "`canWrite(role)` (default `canWriteResources`)";
-export is a read and only checks `capabilities.list`. Actions not allowed are **hidden** (not shown disabled — the
+export is a read and only checks `capabilities.list`. Import both inserts new rows and updates existing ones, so it
+requires both `create` and `edit` in `capabilities` (decided in stage 2). Actions not allowed are **hidden** (not shown disabled — the
 M10 policy). This is screen visibility; authorization stays with the server's `RoleGuard` and Tauri's
 `require_role` (conventions §1, unchanged). A viewer-public session has role viewer and so is read-only
 automatically; `nav.publicViewer` stays a screen allowlist (ADR-0012).
