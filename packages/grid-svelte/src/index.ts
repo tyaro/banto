@@ -14,6 +14,7 @@
  */
 export { default as BantoGrid } from './BantoGrid.svelte';
 export { default as ColumnsMenu } from './ColumnsMenu.svelte';
+export { default as FilterChips } from './FilterChips.svelte';
 export { GridState, DEFAULT_ROW_HEIGHT, type GridStateOptions } from './state.svelte';
 export { CellSelection, type CellPos } from './selection.svelte';
 export { defaultGridMessages, type GridMessages } from './messages';

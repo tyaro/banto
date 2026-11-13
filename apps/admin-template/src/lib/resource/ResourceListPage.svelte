@@ -34,6 +34,7 @@
 	import { untrack, type Snippet } from 'svelte';
 	import {
 		ColumnsMenu,
+		FilterChips,
 		GridState,
 		csvFilename,
 		csvForExcel,
@@ -556,9 +557,16 @@
 
 	const demoNotes = def.demoNotes;
 	const hasAnnotation = $derived(annotation !== undefined || demoNotes !== undefined);
+
+	// FilterChips' last x / "clear all" removes the focused button itself;
+	// hand focus to the grid instead of losing it to <body>.
+	let pageEl: HTMLDivElement | undefined = $state();
+	function focusGrid() {
+		pageEl?.querySelector<HTMLElement>('[role="grid"]')?.focus();
+	}
 </script>
 
-<div class="page">
+<div class="page" bind:this={pageEl}>
 	<PageHeader hideTitle title={def.label} description={def.description?.()}>
 		{#snippet actions()}
 			<!-- #555 (1): "New" is the only action left in view. Everything else is
@@ -733,6 +741,14 @@
 	{/if}
 
 	{@render beforeGrid?.()}
+
+	<!-- #555 B-2: what the active mode's grid is filtered by, with x to remove.
+	     Takes the same per-mode GridState as the grid below (and the Columns menu). -->
+	<FilterChips
+		state={mode === 'client' ? clientGridState : serverGridState}
+		messages={gridMessages()}
+		onEmpty={focusGrid}
+	/>
 
 	{#if mode === 'client'}
 		<ResourceClientGrid
