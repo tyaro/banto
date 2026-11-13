@@ -49,6 +49,13 @@ export interface ConfirmStore {
 	confirm(options: ConfirmOptions): Promise<boolean>;
 	/** Answers the question `id` (ConfirmHost's buttons). Unknown or already answered ids are ignored. */
 	settle(id: number, confirmed: boolean): void;
+	/**
+	 * Answers the open question `false` (no-op when none is open). Call it when
+	 * the page that asked goes away - e.g. from SvelteKit's `beforeNavigate` -
+	 * so a handler awaiting a destructive confirm cannot carry on from a page
+	 * the user has already left.
+	 */
+	cancel(): void;
 }
 
 class ConfirmStoreImpl implements ConfirmStore {
@@ -71,6 +78,10 @@ class ConfirmStoreImpl implements ConfirmStore {
 		this.#resolve = null;
 		this.current = null;
 		resolve?.(confirmed);
+	}
+
+	cancel(): void {
+		if (this.current) this.settle(this.current.id, false);
 	}
 }
 

@@ -113,6 +113,17 @@ describe('createConfirmStore + ConfirmHost', () => {
 		opener.remove();
 	});
 
+	it('cancel() answers the open question false and closes it; no-op when none is open', async () => {
+		const { store, opener } = setup();
+		store.cancel();
+		const pending = store.confirm({ title: 'Leaving' });
+		await flush();
+		store.cancel();
+		await expect(pending).resolves.toBe(false);
+		expect(store.current).toBeNull();
+		opener.remove();
+	});
+
 	it('uses the default labels, and the danger look on request', async () => {
 		const { store, opener } = setup();
 		void store.confirm({ title: 'Plain' });

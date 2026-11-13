@@ -193,7 +193,9 @@
 			confirmLabel: m['common.delete'](),
 			danger: true
 		});
-		if (!confirmed) return;
+		// `destroyed`: the page may have gone while the dialog was open (the
+		// host cancels on navigation; this is the second guard).
+		if (!confirmed || destroyed) return;
 		const removed = await formResource.remove();
 		if (!removed) return;
 		// The record is gone: unsaved edits to it are moot, don't prompt.
