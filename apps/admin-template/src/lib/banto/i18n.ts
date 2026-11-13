@@ -85,6 +85,16 @@ export function dateInputMessages(): UiMessages {
 	};
 }
 
+/** @banto/ui `ConfirmHost` / `ConfirmDialog` `messages` (Issue #556): the default buttons, the type-to-confirm label and the ×. */
+export function confirmDialogMessages(): UiMessages {
+	return {
+		confirmOk: () => m['common.confirmOk'](),
+		confirmCancel: () => m['common.cancel'](),
+		confirmTypeToConfirm: (text) => m['common.typeToConfirm']({ text }),
+		overlayClose: () => m['common.close']()
+	};
+}
+
 /** @banto/ui `TimeInput` `messages` (date-time-pickers §5.5): the list button / list / hint copy. */
 export function timeInputMessages(): UiMessages {
 	return {

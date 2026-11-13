@@ -42,7 +42,8 @@
  *
  * ## What counts as "above"
  *
- * Layers are `[role="dialog"]`, `[role="menu"]` and `[data-esc-layer]`
+ * Layers are `[role="dialog"]`, `[role="alertdialog"]` (ConfirmDialog),
+ * `[role="menu"]` and `[data-esc-layer]`
  * ({@link LAYER_SELECTOR}). Active = not inside {@link LAYER_INACTIVE_ATTR} or
  * `inert`, laid out (has client rects) and not `display: none` /
  * `visibility: hidden`. Against `except`, an active layer is above when:
@@ -71,7 +72,7 @@ export const LAYER_INACTIVE_ATTR = 'data-layer-inactive';
 export const LAYER_MARKER_ATTR = 'data-esc-layer';
 
 /** Elements that count as Esc-closable layers. */
-export const LAYER_SELECTOR = `[role="dialog"], [role="menu"], [${LAYER_MARKER_ATTR}]`;
+export const LAYER_SELECTOR = `[role="dialog"], [role="alertdialog"], [role="menu"], [${LAYER_MARKER_ATTR}]`;
 
 /** Only the `[role="menu"]` layers (context menus). */
 export const MENU_LAYER_SELECTOR = '[role="menu"]';

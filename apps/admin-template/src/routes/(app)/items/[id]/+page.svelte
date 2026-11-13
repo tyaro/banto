@@ -8,6 +8,7 @@
 	import { AttachmentsPanel } from '@banto/attachments';
 	import { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';
 	import { attachmentsClient } from '#lib/banto/attachmentsClient.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	// [scaffold:attachments] end
 
 	// SvelteKit REUSES a page component between two [id] values (Issue #290);
@@ -38,6 +39,13 @@
 					resource="items"
 					resourceId={String(recordId)}
 					{canWrite}
+					confirmDelete={(message) =>
+						confirmAction({
+							title: m['common.deleteConfirmTitle'](),
+							message,
+							confirmLabel: m['common.delete'](),
+							danger: true
+						})}
 				/>
 			{/if}
 		{/snippet}

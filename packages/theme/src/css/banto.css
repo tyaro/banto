@@ -191,6 +191,10 @@
 	--banto-on-solid: #ffffff;
 	--banto-danger-solid: #dc2626;
 	--banto-danger-solid-hover: #b91c1c;
+	/* Text on the danger solid. Not --banto-on-solid: the dark theme turns that
+	   dark for its lighter primary solid, while the danger solid stays #dc2626,
+	   where only white keeps AA contrast (ConfirmDialog's danger button). */
+	--banto-on-danger-solid: #ffffff;
 	--banto-success-solid: #15803d;
 	--banto-danger-tint: #fee2e2;
 	--banto-danger-tint-text: #991b1b;

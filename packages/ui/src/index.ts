@@ -6,9 +6,9 @@
  * parts (Menu, MenuGroup, MenuItem, MenuSeparator) from components/menu/.
  * Phase 2b: CommandPalette (display + interaction; the app keeps the command
  * list, Ctrl+K, session scoping, recent items and notifications).
- * Phase 2c: ToastHost + `createToastStore()` (the package's only `.svelte.ts`,
- * so consumers must list `@banto/ui` in `optimizeDeps.exclude`, ADR-0007; the
- * app keeps only the Notifier -> store wiring).
+ * Phase 2c: ToastHost + `createToastStore()` (a `.svelte.ts`, so consumers
+ * must list `@banto/ui` in `optimizeDeps.exclude`, ADR-0007; the app keeps
+ * only the Notifier -> store wiring).
  * Phase 4: Modal / Drawer (banto-industrial banto-hub's, prop for prop) and the
  * Esc / focus layering helpers they share with CommandPalette (`layering.ts`,
  * one module for all overlays and public for an app's own layers).
@@ -28,6 +28,9 @@
  * list) and the date-and-time helpers.
  * PR-6: `DateRangeInput` (two `DateInput`s in a `role="group"`, inclusive
  * days; the grid's filter turns them into a half-open `between`).
+ * #556: ConfirmDialog (the in-page `window.confirm`, on the Modal body) and
+ * its `await confirm()` form, `createConfirmStore()` + ConfirmHost (also a
+ * `.svelte.ts`, shaped like the toast store).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -79,6 +82,14 @@ export {
 	type TimeParts,
 	type Weekday
 } from './datetime';
+export { default as ConfirmDialog } from './ConfirmDialog.svelte';
+export { default as ConfirmHost } from './ConfirmHost.svelte';
+export {
+	createConfirmStore,
+	type ConfirmOptions,
+	type ConfirmRequest,
+	type ConfirmStore
+} from './confirm.svelte';
 export { default as Drawer } from './Drawer.svelte';
 export { default as Modal } from './Modal.svelte';
 export type { DrawerProps, ModalProps, OverlayProps } from './overlay';

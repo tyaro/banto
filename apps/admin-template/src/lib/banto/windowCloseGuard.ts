@@ -3,8 +3,10 @@
  * window is an OS window event, not a router navigation, so the
  * unsaved-changes guard (`#lib/unsavedChanges.ts`, built on SvelteKit's
  * `beforeNavigate`) is not relied on for it. This listens to Tauri's
- * close-requested event and asks with the same `window.confirm` the rest of
- * the app uses.
+ * close-requested event and asks with the same `window.confirm` as the
+ * unsaved-changes guard. Not the in-page ConfirmDialog (Issue #556): the
+ * answer must be known synchronously, before the handler returns, to
+ * `preventDefault()` the close.
  *
  * Kept in the provider layer (conventions §10): the caller only decides
  * WHEN to watch; the Tauri branch lives here.

@@ -17,7 +17,8 @@
 	 * DateTimeInput card (PR-5), the DateRangeInput card and the grid's datetime
 	 * column (PR-6),
 	 * the CommandPalette card (phase 2b), the
-	 * Toast card (phase 2c) and the Modal / Drawer card (phase 4) are closed /
+	 * Toast card (phase 2c), the Modal / Drawer card (phase 4) and the
+	 * ConfirmDialog card (#556) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
 	 * keyboard and focus behaviour are covered by the package's jsdom tests
 	 * (and the open Modal / Drawer by the axe scan in e2e/visual/a11y.spec.ts),
@@ -68,6 +69,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale } from '#lib/paraglide/runtime.js';
 	import { toastStore } from '#lib/toast.svelte.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { BantoGrid, columnsFromSchema, type CellEdit } from '@banto/grid-svelte';
 	import {
 		columnValidationMessages,
@@ -114,6 +116,28 @@
 		overlayClosed += 1;
 	}
 	let selected = $state<string | undefined>(undefined);
+
+	// ConfirmDialog card (#556): the app's confirm store (shown by the root
+	// layout's ConfirmHost), plain and with a name to type.
+	let confirmAnswer = $state<boolean | null>(null);
+
+	async function askPlain(): Promise<void> {
+		confirmAnswer = await confirmAction({
+			title: m['uiDemo.confirm.plainTitle'](),
+			message: m['uiDemo.confirm.plainBody']()
+		});
+	}
+
+	async function askTyped(): Promise<void> {
+		const name = m['uiDemo.confirm.typedName']();
+		confirmAnswer = await confirmAction({
+			title: m['uiDemo.confirm.typedTitle'](),
+			message: m['uiDemo.confirm.typedBody']({ name }),
+			confirmLabel: m['common.delete'](),
+			danger: true,
+			requireText: name
+		});
+	}
 
 	// DateInput card (date-time-pickers PR-1): fixed values and a fixed range
 	// so the closed page is deterministic; the open calendar's screenshot
@@ -530,6 +554,34 @@
 			</button>
 			<span class="caption" data-testid="ui-demo-overlay-closed">
 				{m['uiDemo.overlay.closedCount']()}: {overlayClosed}
+			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="ConfirmDialog" description={m['uiDemo.confirm.desc']()}>
+		<div class="row">
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				data-testid="ui-demo-open-confirm"
+				onclick={askPlain}
+			>
+				{m['uiDemo.confirm.openPlain']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				data-testid="ui-demo-open-confirm-typed"
+				onclick={askTyped}
+			>
+				{m['uiDemo.confirm.openTyped']()}
+			</button>
+			<span class="caption" data-testid="ui-demo-confirm-answer">
+				{m['uiDemo.confirm.answer']()}: {confirmAnswer === null
+					? m['uiDemo.menu.none']()
+					: confirmAnswer
+						? m['uiDemo.confirm.answerYes']()
+						: m['uiDemo.confirm.answerNo']()}
 			</span>
 		</div>
 	</SurfaceCard>

@@ -13,6 +13,7 @@
 	 */
 	import { DatabaseBackup, ScrollText } from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { SurfaceCard } from '@banto/ui';
 	import {
 		getAuditConfig,
@@ -175,13 +176,21 @@
 	// Confirmation copy is fixed per spec M17 ("現在のデータは適用時に自動
 	// バックアップされます。適用には再起動が必要です" must be explicit) -
 	// only the leading line describing the source (existing file vs upload)
-	// varies between the two callers below.
-	function confirmRestore(sourceDescription: string): boolean {
-		return window.confirm(m['backup.restoreConfirm']({ source: sourceDescription }));
+	// varies between the two callers below. The restore replaces every record,
+	// so the user types the backup's file name (Issue #556): it is the one thing
+	// the two sources share, and it makes the user check WHICH backup comes back.
+	function confirmRestore(sourceDescription: string, fileName: string): Promise<boolean> {
+		return confirmAction({
+			title: m['backup.restoreConfirmTitle'](),
+			message: m['backup.restoreConfirm']({ source: sourceDescription }),
+			confirmLabel: m['backup.restoreConfirmSubmit'](),
+			danger: true,
+			requireText: fileName
+		});
 	}
 
 	async function handleRestoreFromExisting(fileName: string): Promise<void> {
-		if (!confirmRestore(m['backup.restoreSourceExisting']({ fileName }))) return;
+		if (!(await confirmRestore(m['backup.restoreSourceExisting']({ fileName }), fileName))) return;
 		stagingRestore = true;
 		try {
 			await stageRestoreFromBackup(fileName);
@@ -203,7 +212,8 @@
 		const file = input.files?.[0];
 		input.value = ''; // allow re-selecting the same file (e.g. after fixing it) later
 		if (!file) return;
-		if (!confirmRestore(m['backup.restoreSourceUpload']({ fileName: file.name }))) return;
+		const source = m['backup.restoreSourceUpload']({ fileName: file.name });
+		if (!(await confirmRestore(source, file.name))) return;
 
 		stagingRestore = true;
 		try {

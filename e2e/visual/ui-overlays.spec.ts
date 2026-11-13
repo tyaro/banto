@@ -4,7 +4,8 @@
  * package's unit tests stub geometry and the scoped CSS that carries the
  * `--banto-z-modal` z-index), the Menu's long-menu cap and internal scroll
  * (#427), the DateInput calendar (date-time-pickers PR-1), the TimeInput
- * list (PR-2), the DateTimeInput dialog (PR-5), plus an axe scan
+ * list (PR-2), the DateTimeInput dialog (PR-5), the ConfirmDialog (#556),
+ * plus an axe scan
  * of the open layers in the two
  * diagonal theme combos (the closed page's pixels are covered by the
  * `ui-demo` screenshot in visual.spec.ts). Same `visual` project as the other
@@ -231,6 +232,69 @@ for (const combo of DIAGONAL_MATRIX) {
 			await page.getByTestId('ui-demo-open-drawer').click();
 			await page.getByTestId('ui-demo-open-nested').click();
 			await expect(page.getByRole('dialog', { name: '重ねたモーダル' })).toBeVisible();
+			const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+			expect(results.violations, formatViolations(results.violations)).toEqual([]);
+		});
+	});
+}
+
+// ConfirmDialog (#556): the in-page confirm that replaced `window.confirm`.
+// Opened through the app's confirm store (`await confirmAction(...)`), shown by
+// the root layout's ConfirmHost. The opening click is retried (`toPass`): one
+// that lands before hydration does nothing.
+async function openConfirm(page: Page, testId: string, title: string) {
+	const opener = page.getByTestId(testId);
+	const dialog = page.getByRole('alertdialog', { name: title });
+	await expect(async () => {
+		if (!(await dialog.isVisible())) await opener.click();
+		await expect(dialog).toBeVisible({ timeout: 1_000 });
+	}).toPass();
+	return { opener, dialog };
+}
+
+test.describe('ui-demo ConfirmDialog', () => {
+	test.beforeEach(async ({ page }) => {
+		await primeThemeAndAuth(page, DIAGONAL_MATRIX[0]);
+		await gotoDemo(page);
+	});
+
+	test('focus goes to Cancel, Esc answers no, focus returns to the opener', async ({ page }) => {
+		const { opener, dialog } = await openConfirm(page, 'ui-demo-open-confirm', '見本の確認');
+		await expect(dialog).toHaveAttribute('aria-modal', 'true');
+		await expect(dialog).toHaveAccessibleDescription('この操作を続けますか？');
+		await expect(dialog.getByRole('button', { name: 'キャンセル' })).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(opener).toBeFocused();
+		await expect(page.getByTestId('ui-demo-confirm-answer')).toContainText('やめた');
+	});
+
+	test('the name must be typed before the danger button confirms', async ({ page }) => {
+		const { dialog } = await openConfirm(page, 'ui-demo-open-confirm-typed', '見本の削除');
+		const input = dialog.getByRole('textbox', { name: '確認のため「sample」と入力してください' });
+		const confirm = dialog.getByRole('button', { name: '削除', exact: true });
+		await expect(input).toBeFocused();
+		await expect(confirm).toBeDisabled();
+		await input.fill('sampl');
+		await expect(confirm).toBeDisabled();
+		await input.fill('sample');
+		await expect(confirm).toBeEnabled();
+		await input.press('Enter');
+		await expect(dialog).toBeHidden();
+		await expect(page.getByTestId('ui-demo-confirm-answer')).toContainText('確認した');
+	});
+});
+
+for (const combo of DIAGONAL_MATRIX) {
+	test.describe(`a11y ui-demo ConfirmDialog ${comboLabel(combo)}`, () => {
+		test('open ConfirmDialog (danger, with a name to type) has no wcag2a/wcag2aa violations', async ({
+			page
+		}) => {
+			await primeThemeAndAuth(page, combo);
+			await gotoDemo(page);
+			const { dialog } = await openConfirm(page, 'ui-demo-open-confirm-typed', '見本の削除');
+			await dialog.getByRole('textbox').fill('sample');
+			await expect(dialog.getByRole('button', { name: '削除', exact: true })).toBeEnabled();
 			const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
 			expect(results.violations, formatViolations(results.violations)).toEqual([]);
 		});

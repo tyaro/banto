@@ -184,8 +184,15 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await expect(toggle).toBeEnabled();
 
 		await toggle.check();
-		page.once('dialog', (dialog) => void dialog.accept()); // authDisableConfirm
-		await save.click();
+		// authDisableConfirm: the in-page confirm dialog (Issue #556).
+		const confirmDialog = page.getByRole('alertdialog', {
+			name: 'ログイン不要モードを有効にしますか？'
+		});
+		await expect(async () => {
+			if (!(await confirmDialog.isVisible())) await save.click();
+			await expect(confirmDialog).toBeVisible({ timeout: 1_000 });
+		}).toPass();
+		await confirmDialog.getByRole('button', { name: '有効にする', exact: true }).click();
 
 		await expect(page.getByRole('button', { name: 'ユーザーメニューを開く' })).toHaveCount(0);
 		const resolves = await page.evaluate(

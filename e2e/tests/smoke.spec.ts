@@ -21,7 +21,8 @@
  * Flakiness: no explicit `waitForTimeout`/`sleep` in this file except one -
  * every wait is either Playwright's built-in locator auto-retry
  * (`expect(locator)...`) or a real event (`page.waitForEvent('download')`,
- * `page.once('dialog', ...)`). The exception is scenario 13b's "the event
+ * `page.once('dialog', ...)` for the unsaved-changes prompt, still a
+ * `window.confirm`). The exception is scenario 13b's "the event
  * stream sends nothing more" check, which can only be observed over a window.
  */
 import { expect, test, type Dialog, type Locator, type Page, type Route } from '@playwright/test';
@@ -154,6 +155,27 @@ function trackDialogs(page: Page): {
 		answer: (accept) => answers.push(accept),
 		stop: () => page.off('dialog', onDialog)
 	};
+}
+
+/**
+ * Answers the in-page confirm dialog (`@banto/ui` ConfirmDialog, Issue #556)
+ * that replaced `window.confirm` for deletes and the like. The click that opens
+ * it is retried (`toPass`): a click that lands before hydration does nothing.
+ * `type` fills the type-to-confirm text box first (user delete).
+ */
+async function confirmInDialog(
+	page: Page,
+	trigger: Locator,
+	options: { title: string; confirm: string; type?: string }
+): Promise<void> {
+	const dialog = page.getByRole('alertdialog', { name: options.title });
+	await expect(async () => {
+		if (!(await dialog.isVisible())) await trigger.click();
+		await expect(dialog).toBeVisible({ timeout: 1_000 });
+	}).toPass();
+	if (options.type !== undefined) await dialog.getByRole('textbox').fill(options.type);
+	await dialog.getByRole('button', { name: options.confirm, exact: true }).click();
+	await expect(dialog).toBeHidden();
 }
 
 test.describe.serial('Banto LAN/REST smoke', () => {
@@ -453,9 +475,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto(href!);
 		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));
 
-		// Delete (window.confirm - accept it before triggering the click).
-		page.once('dialog', (dialog) => dialog.accept());
-		await page.getByRole('button', { name: '削除' }).click();
+		// Delete (the in-page confirm dialog, Issue #556).
+		await confirmInDialog(page, page.getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
 		await expect(page).toHaveURL(/\/items$/);
 
 		await page.goto(href!);
@@ -1423,8 +1447,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				return pending.finally(() => pendingReplies.delete(pending));
 			});
 			try {
-				page.once('dialog', (dialog) => dialog.accept());
-				await panel.getByRole('button', { name: '削除', exact: true }).click();
+				// Cannot be undone: the dialog asks for the user name (Issue #556).
+				await confirmInDialog(page, panel.getByRole('button', { name: '削除', exact: true }), {
+					title: 'ユーザーの削除',
+					confirm: '削除',
+					type: username
+				});
 				await deleted;
 				await selectUserRow(ADMIN_USERNAME);
 				if (reselect) await selectUserRow(username);
@@ -1762,18 +1790,22 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(fileRow).toBeVisible();
 		await expect(fileRow.getByText('TXT', { exact: true })).toBeVisible();
 
-		// 3. Delete the text file first (confirm() - accept before the click,
-		// same discipline as scenario 3's item delete). Partial state: the
+		// 3. Delete the text file first (the in-page confirm dialog the app
+		// injects as `confirmDelete`, Issue #556). Partial state: the
 		// file-row list empties out but the PNG thumbnail is still there.
-		page.once('dialog', (dialog) => dialog.accept());
-		await fileRow.getByRole('button', { name: '削除' }).click();
+		await confirmInDialog(page, fileRow.getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
 		await expect(fileRow).toHaveCount(0);
 		await expect(page.getByRole('img', { name: PNG_FILE_NAME, exact: true })).toBeVisible();
 
 		// 4. Delete the PNG too - the panel returns to its empty-state copy.
 		const thumbTile = page.locator('.thumb-tile').filter({ hasText: PNG_FILE_NAME });
-		page.once('dialog', (dialog) => dialog.accept());
-		await thumbTile.getByRole('button', { name: '削除' }).click();
+		await confirmInDialog(page, thumbTile.getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
 
 		// 5. Re-upload one attachment and deliberately leave it in place: the
@@ -1792,8 +1824,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// attachment tile above has its own same-labelled "削除" button, so an
 		// unscoped getByRole would be ambiguous). Deleting an item that still
 		// has an attachment must not error.
-		page.once('dialog', (dialog) => dialog.accept());
-		await page.locator('.form-panel').getByRole('button', { name: '削除' }).click();
+		await confirmInDialog(page, page.locator('.form-panel').getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
 		await expect(page).toHaveURL(/\/items$/);
 
 		await page.goto(href!);

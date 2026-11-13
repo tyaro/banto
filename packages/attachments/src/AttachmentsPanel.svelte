@@ -12,6 +12,12 @@
 	 * has no app-specific import (no `sessionStore`, no `@banto/admin-core`
 	 * `ProviderError`; see `core/errors.ts`). The app wires a concrete
 	 * client from `attachmentsAdmin.ts`.
+	 *
+	 * The delete confirmation is injected the same way (`confirmDelete`): an
+	 * app with an in-page dialog (admin-template: `@banto/ui`'s ConfirmDialog,
+	 * Issue #556) passes it in, since this package imports nothing but `svelte`
+	 * (conventions §4, verify:architecture `package-bare-imports`). Omitted =
+	 * `window.confirm`, today's behaviour.
 	 */
 	import { untrack } from 'svelte';
 	import type { AttachmentMeta, AttachmentsClient } from './types';
@@ -29,6 +35,11 @@
 		title?: string;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
 		messages?: Partial<AttachmentsMessages>;
+		/**
+		 * Asks before a delete; resolve `true` to delete. `message` is
+		 * `messages.deleteConfirm(item.fileName)`. Default: `window.confirm(message)`.
+		 */
+		confirmDelete?: (message: string, item: AttachmentMeta) => boolean | Promise<boolean>;
 	}
 
 	let {
@@ -37,7 +48,8 @@
 		resourceId,
 		canWrite,
 		title = '添付ファイル',
-		messages = {}
+		messages = {},
+		confirmDelete = (message: string) => window.confirm(message)
 	}: Props = $props();
 
 	// `messages` is merged once (i18n layer 1: an override bundle, not
@@ -167,7 +179,7 @@
 	}
 
 	async function handleDelete(item: AttachmentMeta): Promise<void> {
-		if (!window.confirm(t.deleteConfirm(item.fileName))) return;
+		if (!(await confirmDelete(t.deleteConfirm(item.fileName), item))) return;
 		deletingId = item.id;
 		actionError = null;
 		try {

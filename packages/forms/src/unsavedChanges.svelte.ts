@@ -88,7 +88,11 @@ export interface UnsavedChangesSource {
 }
 
 export interface LeaveCheckOptions {
-	/** Host confirm dialog. Default: `window.confirm` (Banto's existing confirm UI). */
+	/**
+	 * Host confirm dialog. Default: `window.confirm`. It stays synchronous on
+	 * purpose (not `@banto/ui`'s ConfirmDialog, Issue #556): `beforeNavigate`
+	 * must cancel or let the navigation go before it returns.
+	 */
 	confirm?: (message: string) => boolean;
 	/** Navigations that must never be held back (logout, session end). */
 	isForced?: (navigation: LeaveNavigation) => boolean;

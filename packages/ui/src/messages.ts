@@ -6,7 +6,7 @@
  * verbatim, so passing nothing reproduces the stock output.
  *
  * Components with their own text take `messages?: UiMessages` and merge it
- * over the defaults (CommandPalette, ToastHost, Modal, Drawer, DateInput, TimeInput, DateTimeInput, DateRangeInput). Apps that localise (admin-template
+ * over the defaults (CommandPalette, ToastHost, Modal, Drawer, ConfirmDialog, DateInput, TimeInput, DateTimeInput, DateRangeInput). Apps that localise (admin-template
  * does, via Paraglide) pass their own text explicitly - see `LoadingState`'s
  * `label` and admin-template's CommandPalette wrapper.
  */
@@ -28,6 +28,12 @@ export interface UiMessages {
 	toastClose?: () => string;
 	/** Modal / Drawer: the close (×) button's accessible name and tooltip. */
 	overlayClose?: () => string;
+	/** ConfirmDialog: the confirm button when the caller gives no `confirmLabel`. */
+	confirmOk?: () => string;
+	/** ConfirmDialog: the cancel button when the caller gives no `cancelLabel`. */
+	confirmCancel?: () => string;
+	/** ConfirmDialog: the text box's label when `requireText` is set; `text` is what must be typed. */
+	confirmTypeToConfirm?: (text: string) => string;
 	/** DateInput: the calendar button's name while there is no value. */
 	datePickerOpen?: () => string;
 	/** DateInput: the calendar button's name with a value; `date` is the long form (`Intl` `dateStyle: 'full'`). */
@@ -77,6 +83,9 @@ export const defaultUiMessages: Required<UiMessages> = {
 	commandPaletteRecent: () => '最近使ったもの',
 	toastClose: () => '閉じる',
 	overlayClose: () => '閉じる',
+	confirmOk: () => 'OK',
+	confirmCancel: () => 'キャンセル',
+	confirmTypeToConfirm: (text) => `確認のため「${text}」と入力してください`,
 	datePickerOpen: () => '日付を選択',
 	datePickerChange: (date) => `日付を変更、${date}`,
 	datePickerDialog: () => '日付の選択',

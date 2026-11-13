@@ -21,6 +21,7 @@
 	import { ShieldAlert } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
+	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { SurfaceCard } from '@banto/ui';
 	import { applyAuthSettings, type AuthDisabledRole } from '#lib/banto/authAdmin.js';
 	import { toastStore } from '#lib/toast.svelte.js';
@@ -85,8 +86,14 @@
 	}
 
 	async function saveAuthSettings(): Promise<void> {
-		if (disabledDraft && !window.confirm(m['settings.authDisableConfirm']())) {
-			return;
+		if (disabledDraft) {
+			const confirmed = await confirmAction({
+				title: m['settings.authDisableConfirmTitle'](),
+				message: m['settings.authDisableConfirm'](),
+				confirmLabel: m['settings.authDisableConfirmSubmit'](),
+				danger: true
+			});
+			if (!confirmed) return;
 		}
 
 		applyingAuth = true;
