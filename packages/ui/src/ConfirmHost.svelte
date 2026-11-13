@@ -39,6 +39,7 @@
 		cancelLabel={request.cancelLabel}
 		danger={request.danger}
 		requireText={request.requireText}
+		requestKey={request.id}
 		{messages}
 		onconfirm={() => store.settle(request.id, true)}
 		oncancel={() => store.settle(request.id, false)}

@@ -168,6 +168,37 @@ describe('ConfirmDialog: requireText', () => {
 		opener.remove();
 	});
 
+	it('clears the text box when a newer question with the same text replaces the open one', async () => {
+		const { store, opener } = setup();
+		const first = store.confirm({ title: 'One', requireText: 'alice', confirmLabel: 'Delete' });
+		await flush();
+		await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'alice' } });
+		expect((confirmButton('Delete') as HTMLButtonElement).disabled).toBe(false);
+		const second = store.confirm({ title: 'Two', requireText: 'alice', confirmLabel: 'Delete' });
+		await expect(first).resolves.toBe(false);
+		await flush();
+		const input = screen.getByRole('textbox') as HTMLInputElement;
+		expect(input.value).toBe('');
+		expect((confirmButton('Delete') as HTMLButtonElement).disabled).toBe(true);
+		expect(document.activeElement).toBe(input);
+		store.settle(store.current!.id, false);
+		await expect(second).resolves.toBe(false);
+		opener.remove();
+	});
+
+	it('matches a decomposed (NFD) name against composed (NFC) typing, ignoring outer spaces', async () => {
+		const { store, opener } = setup();
+		const nfd = 'バックアップ.db'.normalize('NFD');
+		void store.confirm({ title: 'Restore', requireText: nfd, confirmLabel: 'Restore' });
+		await flush();
+		await fireEvent.input(screen.getByRole('textbox'), {
+			target: { value: ' ' + 'バックアップ.db'.normalize('NFC') + ' ' }
+		});
+		expect((confirmButton('Restore') as HTMLButtonElement).disabled).toBe(false);
+		store.settle(store.current!.id, false);
+		opener.remove();
+	});
+
 	it('starts each question with an empty text box', async () => {
 		const { store, opener } = setup();
 		void store.confirm({ title: 'One', requireText: 'alice' });

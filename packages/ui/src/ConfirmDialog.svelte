@@ -22,7 +22,7 @@
 	 * Controlled like Modal: the parent owns `open`. For the `await confirm()`
 	 * form, use `createConfirmStore()` + `ConfirmHost` (confirm.svelte.ts).
 	 */
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import OverlayPanel from './OverlayPanel.svelte';
 	import { defaultUiMessages, type UiMessages } from './messages';
 
@@ -41,6 +41,13 @@
 		danger?: boolean;
 		/** Text the user must type before confirming (e.g. the name of what is deleted). Omitted = no text box. */
 		requireText?: string;
+		/**
+		 * Identifies the question (ConfirmHost passes the request id). When it
+		 * changes while open - a newer question replaced the open one - the text
+		 * box is cleared and focus goes back to the safe control, so the new
+		 * question is never answered by what was typed for the old one.
+		 */
+		requestKey?: unknown;
 		/** Any CSS length. Default `28rem`. */
 		width?: string;
 		/** The confirm button was pressed (or Enter in a matching text box). */
@@ -61,6 +68,7 @@
 		cancelLabel,
 		danger = false,
 		requireText,
+		requestKey,
 		width = '28rem',
 		onconfirm,
 		oncancel,
@@ -75,15 +83,37 @@
 	const inputId = `${uid}-input`;
 
 	let typed = $state('');
+	let form: HTMLFormElement | undefined = $state();
 
 	// A fresh text box for every opening and every new question (ConfirmHost
-	// reuses one instance, and a newer question can replace an open one).
+	// reuses one instance, and a newer question can replace an open one -
+	// possibly with the same `requireText`, hence `requestKey`).
 	$effect.pre(() => {
 		void requireText;
+		void requestKey;
 		if (open) typed = '';
 	});
 
-	const matches = $derived(requireText === undefined || typed === requireText);
+	// The panel's initial focus runs once per opening; a replacing question
+	// keeps the panel open, so put focus back on the safe control ourselves
+	// (the previous question's text box may be gone).
+	let shownKey: unknown;
+	$effect(() => {
+		const key = requestKey;
+		if (!open) {
+			shownKey = undefined;
+			return;
+		}
+		const replaced = shownKey !== undefined && shownKey !== key;
+		shownKey = key;
+		if (replaced) void tick().then(() => form && safeFocus(form)?.focus());
+	});
+
+	// NFC + trim on both sides: a file name from macOS can arrive decomposed
+	// (NFD) while an IME types composed (NFC) text, and the two must match.
+	const normalize = (text: string) => text.normalize('NFC').trim();
+	const expected = $derived(requireText === undefined ? undefined : normalize(requireText));
+	const matches = $derived(expected === undefined || normalize(typed) === expected);
 
 	function handleSubmit(event: SubmitEvent): void {
 		event.preventDefault();
@@ -107,14 +137,14 @@
 	initialFocus={safeFocus}
 	onclose={oncancel}
 >
-	<form class="confirm" onsubmit={handleSubmit}>
+	<form class="confirm" bind:this={form} onsubmit={handleSubmit}>
 		{#if message}
 			<p class="message" id={messageId}>{message}</p>
 		{/if}
 		{@render children?.()}
 		{#if requireText !== undefined}
 			<div class="field">
-				<label class="label" for={inputId}>{t.confirmTypeToConfirm(requireText)}</label>
+				<label class="label" for={inputId}>{t.confirmTypeToConfirm(expected ?? requireText)}</label>
 				<input
 					id={inputId}
 					class="input"
@@ -243,7 +273,7 @@
 
 	.button--danger {
 		background: var(--banto-danger-solid);
-		color: var(--banto-on-danger-solid);
+		color: var(--banto-on-danger-solid, #ffffff);
 	}
 
 	.button--danger:hover:not(:disabled) {
