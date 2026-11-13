@@ -6,7 +6,7 @@
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
 	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
-	import { SurfaceCard } from '@banto/ui';
+	import { Button, SurfaceCard } from '@banto/ui';
 
 	// Undecided until `status()` resolves (or is absent, treated as
 	// "already initialized" - see below): render nothing rather than
@@ -238,24 +238,20 @@
 					     #182): the two paths mutate the same auth state, so
 					     neither may start while the other is in flight - mirrors
 					     the skip button's own `submitting || skippingLogin`. -->
-					<button
-						type="submit"
-						class="banto-btn banto-btn--primary"
-						disabled={submitting || skippingLogin}
-					>
+					<Button type="submit" variant="primary" loading={submitting} disabled={skippingLogin}>
 						{m['auth.createAccount']()}
-					</button>
+					</Button>
 
 					{#if showSkipLogin}
 						<div class="skip-login">
-							<button
-								type="button"
-								class="banto-btn banto-btn--secondary"
+							<Button
+								variant="secondary"
 								onclick={skipLogin}
-								disabled={submitting || skippingLogin}
+								loading={skippingLogin}
+								disabled={submitting}
 							>
 								{m['auth.skipLoginButton']()}
-							</button>
+							</Button>
 							<p class="note">{m['auth.skipLoginNote']()}</p>
 						</div>
 					{/if}
@@ -300,9 +296,9 @@
 						<p class="error" role="alert">{error}</p>
 					{/if}
 
-					<button type="submit" class="banto-btn banto-btn--primary" disabled={submitting}>
+					<Button type="submit" variant="primary" loading={submitting}>
 						{m['auth.login']()}
-					</button>
+					</Button>
 
 					{#if showContinueAsViewer}
 						<button
@@ -418,11 +414,11 @@
 		border-top: var(--banto-border-width) solid var(--banto-border);
 	}
 
-	.skip-login .banto-btn--secondary {
+	.skip-login :global(.banto-btn--secondary) {
 		justify-content: center;
 	}
 
-	.banto-btn--primary {
+	.login-page :global(.banto-btn--primary) {
 		justify-content: center;
 		min-height: var(--banto-control-height-lg);
 		height: auto;
@@ -437,11 +433,13 @@
 	   gradient; hover brightens it instead of swapping to the flat hover
 	   color (a gradient has no single hover counterpart). Same pattern the
 	   pre-refresh login page used with its own `button` selector. */
-	:global([data-banto-preset='glass']) .banto-btn--primary {
+	:global([data-banto-preset='glass']) .login-page :global(.banto-btn--primary) {
 		background: var(--banto-accent-gradient);
 	}
 
-	:global([data-banto-preset='glass']) .banto-btn--primary:hover:not(:disabled) {
+	:global([data-banto-preset='glass'])
+		.login-page
+		:global(.banto-btn--primary:hover:not(:disabled)) {
 		background: var(--banto-accent-gradient);
 		filter: brightness(1.08);
 	}

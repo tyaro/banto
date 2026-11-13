@@ -41,6 +41,7 @@
 	 */
 	import { untrack } from 'svelte';
 	import { isProviderError } from '@banto/admin-core';
+	import { Button } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { sessionStore } from '#lib/session.svelte.js';
@@ -414,14 +415,15 @@
 		{/if}
 	</div>
 
-	<button
-		type="button"
-		class="banto-btn banto-btn--secondary firewall-copy"
+	<Button
+		variant="secondary"
+		class="firewall-copy"
 		onclick={() => check()}
-		disabled={checking || applying || changing !== null}
+		loading={checking}
+		disabled={applying || changing !== null}
 	>
 		{m['settings.firewallStatusRecheck']()}
-	</button>
+	</Button>
 
 	{#if actions.length > 0 || changing !== null || changeView !== null || changeProblem !== null}
 		<div class="firewall-change">
@@ -433,17 +435,17 @@
 			{#if actions.length > 0}
 				<div class="firewall-change-actions">
 					{#each actions as operation (operation)}
-						<button
-							type="button"
-							class="banto-btn banto-btn--secondary"
+						<Button
+							variant="secondary"
 							data-change-operation={operation}
 							onclick={() => confirm(operation)}
+							loading={changing === operation}
 							disabled={changing !== null || applying}
 						>
 							{operation === 'allow'
 								? m['settings.firewallChangeAllow']()
 								: m['settings.firewallChangeRemove']()}
-						</button>
+						</Button>
 					{/each}
 				</div>
 			{/if}

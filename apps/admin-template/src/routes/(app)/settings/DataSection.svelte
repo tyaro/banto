@@ -14,7 +14,7 @@
 	import { DatabaseBackup, ScrollText } from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
-	import { SurfaceCard } from '@banto/ui';
+	import { Button, SurfaceCard } from '@banto/ui';
 	import {
 		getAuditConfig,
 		isAuditLogAvailable,
@@ -275,14 +275,9 @@
 				</label>
 			</div>
 
-			<button
-				type="button"
-				class="banto-btn banto-btn--primary"
-				onclick={saveAuditConfig}
-				disabled={applyingAudit}
-			>
+			<Button variant="primary" onclick={saveAuditConfig} loading={applyingAudit}>
 				{m['common.save']()}
-			</button>
+			</Button>
 
 			{#if auditError}
 				<p class="error">{auditError}</p>
@@ -325,14 +320,9 @@
 					<p class="note">{m['backup.postgresNotice']()}</p>
 				{:else}
 					<div class="backup-toolbar">
-						<button
-							type="button"
-							class="banto-btn banto-btn--primary"
-							onclick={handleCreateBackup}
-							disabled={creatingBackup}
-						>
-							{creatingBackup ? m['backup.creating']() : m['backup.createNow']()}
-						</button>
+						<Button variant="primary" onclick={handleCreateBackup} loading={creatingBackup}>
+							{m['backup.createNow']()}
+						</Button>
 						{#if tauri}
 							<button
 								type="button"
@@ -352,14 +342,9 @@
 						<p class="pending-restore">
 							{m['backup.pendingApplied']()}<strong>{pendingRestore.stagedAt}</strong
 							>（{formatBytes(pendingRestore.sizeBytes)}）
-							<button
-								type="button"
-								class="banto-btn banto-btn--secondary"
-								onclick={handleCancelRestore}
-								disabled={cancellingRestore}
-							>
+							<Button variant="secondary" onclick={handleCancelRestore} loading={cancellingRestore}>
 								{m['backup.cancel']()}
-							</button>
+							</Button>
 						</p>
 					{/if}
 

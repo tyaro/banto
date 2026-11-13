@@ -14,7 +14,7 @@
 	import { getAuthProvider } from '@banto/admin-core';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
-	import { SurfaceCard } from '@banto/ui';
+	import { Button, SurfaceCard } from '@banto/ui';
 	import { toastStore } from '#lib/toast.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
@@ -180,9 +180,9 @@
 					<p class="error">{passwordError}</p>
 				{/if}
 
-				<button type="submit" class="banto-btn banto-btn--primary" disabled={changingPassword}>
+				<Button type="submit" variant="primary" loading={changingPassword}>
 					{m['settings.changePassword']()}
-				</button>
+				</Button>
 				{#if passwordGuard.pending}
 					<div class="save-row">
 						<button
@@ -227,14 +227,9 @@
 				</p>
 
 				{#if authSettingsStore.value?.autologinEnabled}
-					<button
-						type="button"
-						class="banto-btn banto-btn--secondary"
-						onclick={submitDisableAutologin}
-						disabled={disablingAutologin}
-					>
+					<Button variant="secondary" onclick={submitDisableAutologin} loading={disablingAutologin}>
 						{m['settings.autologinDisable']()}
-					</button>
+					</Button>
 				{:else}
 					<form onsubmit={submitEnableAutologin}>
 						<label class="banto-field">
@@ -257,9 +252,9 @@
 							/>
 							<span class="banto-field-label">{m['common.password']()}</span>
 						</label>
-						<button type="submit" class="banto-btn banto-btn--primary" disabled={enablingAutologin}>
+						<Button type="submit" variant="primary" loading={enablingAutologin}>
 							{m['settings.autologinEnable']()}
-						</button>
+						</Button>
 					</form>
 				{/if}
 

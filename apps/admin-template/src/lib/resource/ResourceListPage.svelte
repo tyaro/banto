@@ -58,7 +58,7 @@
 	import type { FormSchema } from '@banto/forms';
 	import { goto } from '$app/navigation';
 	import { Download, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
-	import { Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
+	import { Button, Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode } from '#lib/banto/setup.js';
@@ -609,15 +609,9 @@
 			/>
 			{@render extraActions?.()}
 			{#if canExport}
-				<button
-					type="button"
-					class="banto-btn banto-btn--secondary"
-					onclick={handleExport}
-					disabled={exporting}
-				>
-					<Download size={16} aria-hidden="true" />
-					{exporting ? m['resource.exporting']() : m['resource.exportCsv']()}
-				</button>
+				<Button variant="secondary" icon={Download} onclick={handleExport} loading={exporting}>
+					{m['resource.exportCsv']()}
+				</Button>
 			{/if}
 			{#if canImport && importOption}
 				<button

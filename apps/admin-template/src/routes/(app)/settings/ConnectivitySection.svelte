@@ -16,7 +16,7 @@
 	import { Server, Wifi } from '@lucide/svelte';
 	import { UnsavedChangesNotice } from '@banto/forms';
 	import * as m from '#lib/paraglide/messages.js';
-	import { SurfaceCard } from '@banto/ui';
+	import { Button, SurfaceCard } from '@banto/ui';
 	import {
 		applyServerSettings,
 		getServerStatus,
@@ -259,26 +259,16 @@
 
 			{#if loadError}
 				<p class="error">{m['settings.savedValuesUnavailable']()} {loadError}</p>
-				<button
-					type="button"
-					class="banto-btn banto-btn--secondary"
-					onclick={loadServerStatus}
-					disabled={loadingStatus}
-				>
+				<Button variant="secondary" onclick={loadServerStatus} loading={loadingStatus}>
 					{m['common.reload']()}
-				</button>
+				</Button>
 			{/if}
 
 			<p class="note">{m['settings.explicitSaveHint']()}</p>
 			<div class="save-row">
-				<button
-					type="button"
-					class="banto-btn banto-btn--primary"
-					onclick={saveAndApply}
-					disabled={applying || !editable}
-				>
+				<Button variant="primary" onclick={saveAndApply} loading={applying} disabled={!editable}>
 					{m['settings.saveAndApply']()}
-				</button>
+				</Button>
 				{#if dirty}
 					<button
 						type="button"
