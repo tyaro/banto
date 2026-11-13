@@ -120,6 +120,8 @@
   "resource.groupByLabel": "Group by:",
   "resource.groupByClientOnly": "Grouping is available in client mode only",
   "resource.groupNone": "No grouping",
+  "resource.groupByMenu": "Group by",
+  "resource.moreMenu": "More actions",
   "items.groupCategory": "Category",
   "items.report": "Daily report",
   "resource.exportCsv": "Export CSV",
