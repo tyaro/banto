@@ -685,28 +685,28 @@ input.banto-switch[type='checkbox'][role='switch']:disabled {
 	background: var(--banto-primary-solid);
 	color: var(--banto-on-solid);
 }
-.banto-btn--primary:hover {
+.banto-btn--primary:hover:not(:disabled) {
 	background: var(--banto-primary-solid-hover);
 }
 .banto-btn--secondary {
 	background: var(--banto-surface);
 	border-color: var(--banto-border-strong);
 }
-.banto-btn--secondary:hover {
+.banto-btn--secondary:hover:not(:disabled) {
 	background: var(--banto-surface-hover);
 }
 .banto-btn--ghost {
 	background: transparent;
 	color: var(--banto-text-muted);
 }
-.banto-btn--ghost:hover {
+.banto-btn--ghost:hover:not(:disabled) {
 	background: var(--banto-surface-hover);
 }
 .banto-btn--danger {
 	background: var(--banto-danger-solid);
 	color: var(--banto-on-danger-solid);
 }
-.banto-btn--danger:hover {
+.banto-btn--danger:hover:not(:disabled) {
 	background: var(--banto-danger-solid-hover);
 }
 .banto-btn:focus-visible {
