@@ -143,7 +143,8 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 
 `resourcePermissions(definition, role)`（純関数）が `{ create, edit, delete, import, export }` を返す。書き込み系は
 「定義の `capabilities` がその操作を持つ」かつ「`canWrite(role)`（既定 `canWriteResources`）」、出力は読み取り
-なので `capabilities.list` だけを見る。持たない操作は**隠す**（無効表示にしない — M10 の方針）。これは画面の
+なので `capabilities.list` だけを見る。取込は新規の行を足すだけでなく既存の行も更新するので、`capabilities` の
+`create` と `edit` を両方持つときだけ許す（段 2 で決定）。持たない操作は**隠す**（無効表示にしない — M10 の方針）。これは画面の
 出し分けで、認可はサーバーの `RoleGuard` と Tauri の `require_role` が持つ（conventions §1。変えない）。
 閲覧公開のセッションは role が viewer なので自動的に読み取り専用になり、`nav.publicViewer` は画面の許可リストの
 ままにする（ADR-0012）。
