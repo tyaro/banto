@@ -350,6 +350,9 @@
 
 	/** Apply a view to both grids and the search box. `refetch`: the server grid already exists. */
 	function applyView(content: ListViewContent, refetch: boolean): void {
+		// A newer choice supersedes a `?view=` still waiting for the saved
+		// views to load: it must not land over this one afterwards.
+		pendingViewId = null;
 		if (hasClient) setGridView(clientGridState, viewForFields(content, clientFieldIds));
 		if (hasServer) setGridView(serverGridState, viewForFields(content, serverFieldIds));
 		clearTimeout(searchTimer);
@@ -414,14 +417,30 @@
 		return sameViewContent(viewForFields(content, fields), currentViewContent());
 	}
 
-	/** Store `next` as the saved views; on failure the menu keeps the stored ones. */
-	async function persistSavedViews(next: SavedListView[]): Promise<boolean> {
-		if (!savedViewsSetting) return false;
-		const previous = savedViewsSetting.saved ?? [];
-		savedViewsSetting.set(next);
-		const ok = await savedViewsSetting.save();
-		if (!ok) savedViewsSetting.set(previous);
-		return ok;
+	/**
+	 * Store the saved views `build` derives from the stored ones; on failure
+	 * the menu keeps the stored ones. The whole read-modify-write runs one at
+	 * a time: two deletes confirmed back to back must each start from what the
+	 * previous one stored, or the second would write the first's view back.
+	 * `build` returning `null` skips the write (resolves `null`).
+	 */
+	let savedViewsMutation: Promise<unknown> = Promise.resolve();
+	function mutateSavedViews(
+		build: (stored: SavedListView[]) => SavedListView[] | null
+	): Promise<boolean | null> {
+		const run = savedViewsMutation.then(async () => {
+			const setting = savedViewsSetting;
+			if (!setting) return false;
+			const previous = setting.saved ?? [];
+			const next = build(previous);
+			if (next === null) return null;
+			setting.set(next);
+			const ok = await setting.save();
+			if (!ok) setting.set(previous);
+			return ok;
+		});
+		savedViewsMutation = run.catch(() => undefined);
+		return run;
 	}
 
 	let saveViewOpen = $state(false);
@@ -441,20 +460,16 @@
 		event.preventDefault();
 		const label = saveViewName.trim();
 		if (!savedViewsSetting || saveViewBusy || label === '') return;
-		const stored = savedViewsSetting.saved ?? [];
-		const result = upsertSavedView(
-			stored,
-			label,
-			{ ...currentViewContent(), search: searchInput },
-			() => newSavedViewId(stored)
-		);
-		if (result.kind === 'limit') {
-			notify('error', m['resource.viewLimit']({ count: SAVED_VIEW_LIMIT }));
-			return;
-		}
+		const content = { ...currentViewContent(), search: searchInput };
 		saveViewBusy = true;
 		try {
-			if (await persistSavedViews(result.views)) {
+			const ok = await mutateSavedViews((stored) => {
+				const result = upsertSavedView(stored, label, content, () => newSavedViewId(stored));
+				return result.kind === 'limit' ? null : result.views;
+			});
+			if (ok === null) {
+				notify('error', m['resource.viewLimit']({ count: SAVED_VIEW_LIMIT }));
+			} else if (ok) {
 				notify('success', m['resource.viewSaved']({ name: label }));
 				saveViewOpen = false;
 			} else {
@@ -473,8 +488,7 @@
 			danger: true
 		});
 		if (!confirmed || !savedViewsSetting) return;
-		const next = removeSavedView(savedViewsSetting.saved ?? [], view.id);
-		if (await persistSavedViews(next)) {
+		if (await mutateSavedViews((stored) => removeSavedView(stored, view.id))) {
 			notify('success', m['resource.viewDeleted']({ name: view.label }));
 		} else {
 			notify('error', m['resource.viewDeleteFailed']());
