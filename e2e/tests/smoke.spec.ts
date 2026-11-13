@@ -92,7 +92,7 @@ function minimalPngBuffer(): Buffer {
 /** Open a filterable column's header filter and apply a "contains" filter (the default op) with `value`. Mirrors a user clicking the ▾ icon, typing, and clicking 適用 (FilterPopover.svelte). */
 async function applyColumnFilter(page: Page, columnHeader: string, value: string): Promise<void> {
 	const label = `${columnHeader}の絞り込み`;
-	await page.getByRole('button', { name: label }).click();
+	await page.getByRole('button', { name: label, exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: label });
 	await dialog.getByPlaceholder('値を入力').fill(value);
 	await dialog.getByRole('button', { name: '適用' }).click();
@@ -106,7 +106,7 @@ async function applyNumberFilter(
 	value: number
 ): Promise<void> {
 	const label = `${columnHeader}の絞り込み`;
-	await page.getByRole('button', { name: label }).click();
+	await page.getByRole('button', { name: label, exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: label });
 	await dialog.getByRole('combobox').selectOption(op);
 	await dialog.getByPlaceholder('値を入力').fill(String(value));
@@ -116,7 +116,7 @@ async function applyNumberFilter(
 /** Reopen a column's filter and clear it (クリア), leaving the grid unfiltered on that column. */
 async function clearColumnFilter(page: Page, columnHeader: string): Promise<void> {
 	const label = `${columnHeader}の絞り込み`;
-	await page.getByRole('button', { name: label }).click();
+	await page.getByRole('button', { name: label, exact: true }).click();
 	await page.getByRole('dialog', { name: label }).getByRole('button', { name: 'クリア' }).click();
 }
 
@@ -425,7 +425,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await page.keyboard.press('Tab');
 			await expect(control).toBeFocused();
 		}
-		await expect(grid.getByRole('button', { name: '商品名の絞り込み' })).toBeFocused();
+		await expect(grid.getByRole('button', { name: '商品名の絞り込み', exact: true })).toBeFocused();
 		await page.keyboard.press('Enter');
 		const filterDialog = page.getByRole('dialog', { name: '商品名の絞り込み' });
 		await expect(filterDialog).toBeVisible();
@@ -716,12 +716,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'descending');
 		await expect(row).toBeVisible();
 		await expect(row).toHaveClass(/resource-row-last-opened/);
-		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue(ROUNDTRIP_ITEM_NAME);
 		await page.keyboard.press('Escape');
-		await page.getByRole('button', { name: '価格の絞り込み' }).click();
+		await page.getByRole('button', { name: '価格の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '価格の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue('500');
@@ -742,12 +742,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(
 			page.getByText(new RegExp(`商品 #${itemId} は現在の絞り込み条件に当てはまりません`))
 		).toBeVisible();
-		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue(ROUNDTRIP_ITEM_NAME);
 		await page.keyboard.press('Escape');
-		await page.getByRole('button', { name: '価格の絞り込み' }).click();
+		await page.getByRole('button', { name: '価格の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '価格の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue('500');
@@ -756,7 +756,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// Dismissing the notice hides it without touching the filters again.
 		await page.locator('.filter-exclusion-notice').getByRole('button', { name: '閉じる' }).click();
 		await expect(page.locator('.filter-exclusion-notice')).toHaveCount(0);
-		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue(ROUNDTRIP_ITEM_NAME);
@@ -1099,7 +1099,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		next.setUTCDate(next.getUTCDate() + 1);
 		const nextDay = next.toISOString().slice(0, 10);
 
-		const filterButton = page.getByRole('button', { name: '更新日の絞り込み' });
+		const filterButton = page.getByRole('button', { name: '更新日の絞り込み', exact: true });
 		const dialog = page.getByRole('dialog', { name: '更新日の絞り込み' });
 		await expect(async () => {
 			if (!(await dialog.isVisible())) await filterButton.click();
@@ -1551,7 +1551,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// be gone - saved list state carries its owner and is only restored
 		// for the identity the guard confirmed (the logout also cleared it;
 		// scenario 6a covers the case where no logout happened in this tab).
-		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue('');
@@ -1651,7 +1651,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(firstGrid).toBeVisible();
 			await expect(first.getByRole('button', { name: '新規作成' })).toHaveCount(0);
 
-			await first.getByRole('button', { name: '商品名の絞り込み' }).click();
+			await first.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 			await expect(
 				first.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 			).toHaveValue('');
@@ -1688,7 +1688,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.unroute('**/api/auth/identity', outage);
 		await page.getByRole('button', { name: '再試行' }).click();
 		await expect(page).toHaveURL(/\/items$/);
-		await page.getByRole('button', { name: '商品名の絞り込み' }).click();
+		await page.getByRole('button', { name: '商品名の絞り込み', exact: true }).click();
 		await expect(
 			page.getByRole('dialog', { name: '商品名の絞り込み' }).getByPlaceholder('値を入力')
 		).toHaveValue('茶');
