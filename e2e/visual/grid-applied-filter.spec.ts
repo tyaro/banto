@@ -35,7 +35,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			const modeButton = page.getByRole('button', { name: copy['resource.viewMenu'], exact: true });
 			await chooseItemsMode(page, {
 				trigger: copy['resource.viewMenu'],
-				item: copy[`items.mode${mode}`]
+				item: copy[`resource.mode${mode}`]
 			});
 			const grid = page.getByRole('grid');
 			const header = grid.getByRole('columnheader').filter({ hasText: copy['items.fieldName'] });

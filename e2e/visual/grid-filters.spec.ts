@@ -30,7 +30,7 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 			const modeButton = page.getByRole('button', { name: copy['resource.viewMenu'], exact: true });
 			await chooseItemsMode(page, {
 				trigger: copy['resource.viewMenu'],
-				item: copy[`items.mode${mode}`]
+				item: copy[`resource.mode${mode}`]
 			});
 			const grid = page.getByRole('grid');
 			const firstName = grid.locator('[data-cell-row="0"][data-cell-field="name"]');
