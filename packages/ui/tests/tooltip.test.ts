@@ -101,6 +101,22 @@ describe('Tooltip', () => {
 		expect(isShown(tip)).toBe(false);
 	});
 
+	it('a blur while hovered keeps it open until the pointer leaves', async () => {
+		render(TooltipHarness);
+		const button = screen.getByRole('button', { name: 'Save' });
+		await hover(button);
+		await vi.advanceTimersByTimeAsync(300);
+		const tip = screen.getByRole('tooltip', { hidden: true });
+		expect(isShown(tip)).toBe(true);
+		button.focus();
+		screen.getByRole('button', { name: 'Elsewhere' }).focus();
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(isShown(tip)).toBe(true);
+		await fireEvent.pointerLeave(button, { pointerType: 'mouse' });
+		await vi.advanceTimersByTimeAsync(100);
+		expect(isShown(tip)).toBe(false);
+	});
+
 	it('Esc hides it without consuming the key, until the pointer leaves', async () => {
 		render(TooltipHarness);
 		const button = screen.getByRole('button', { name: 'Save' });

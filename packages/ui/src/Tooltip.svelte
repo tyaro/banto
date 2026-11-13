@@ -121,7 +121,9 @@
 		};
 		const onBlur = (): void => {
 			focused = false;
-			if (!hovering) quiet = false;
+			// Still hovered (trigger or bubble): leaving the pointer hides it.
+			if (hovering) return;
+			quiet = false;
 			hideNow();
 		};
 		const onPress = (): void => {
