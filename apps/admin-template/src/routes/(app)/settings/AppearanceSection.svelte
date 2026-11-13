@@ -24,7 +24,7 @@
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
-	import { SurfaceCard } from '@banto/ui';
+	import { SegmentedControl, SurfaceCard, type SegmentedOption } from '@banto/ui';
 	import {
 		LAUNCHER_OPACITY_MAX,
 		LAUNCHER_OPACITY_MIN,
@@ -48,10 +48,10 @@
 
 	// Density axis (visual-refresh-design.md §4.3), orthogonal to
 	// theme/preset. settings.setThemeDensity() persistence is unchanged -
-	// this page only adds the picker UI.
-	const densities: { value: ThemeDensity; label: string }[] = [
-		{ value: 'standard', label: m['settings.densityStandard']() },
-		{ value: 'compact', label: m['settings.densityCompact']() }
+	// this page only adds the picker UI (a SegmentedControl, #556).
+	const densities: SegmentedOption<ThemeDensity>[] = [
+		{ value: 'standard', label: m['settings.densityStandard'](), icon: Rows3 },
+		{ value: 'compact', label: m['settings.densityCompact'](), icon: Rows4 }
 	];
 
 	// Navigation layout (nav-launcher-plan.md §3, D1: shown as "Dock", the
@@ -62,14 +62,18 @@
 	];
 
 	// The dock's screen edge (D4); <=900px is always the bottom tab bar (D5).
-	const launcherPositions: { value: LauncherPosition; label: string; icon: Component }[] = [
+	// A SegmentedControl (#556), like the density.
+	const launcherPositions: SegmentedOption<LauncherPosition>[] = [
 		{ value: 'top', label: m['settings.launcherPositionTop'](), icon: PanelTop },
 		{ value: 'bottom', label: m['settings.launcherPositionBottom'](), icon: PanelBottom },
 		{ value: 'left', label: m['settings.launcherPositionLeft'](), icon: PanelLeft },
 		{ value: 'right', label: m['settings.launcherPositionRight'](), icon: PanelRight }
 	];
 
-	const densityIcons: Record<ThemeDensity, Component> = { standard: Rows3, compact: Rows4 };
+	// Ids for the headings that name the segmented controls (aria-labelledby).
+	const uid = $props.id();
+	const densityHeadingId = `${uid}-density`;
+	const launcherPositionHeadingId = `${uid}-launcher-position`;
 
 	// --- i18n layer ② (ADR-0005): the language picker ---------
 	// Locale labels are shown in each language's OWN native name (日本語 /
@@ -158,29 +162,14 @@
 			{/each}
 		</div>
 
-		<h4>{m['settings.densityHeading']()}</h4>
-		<div
-			class="options density-options"
-			role="radiogroup"
-			aria-label={m['settings.densityHeading']()}
-		>
-			{#each densities as density (density.value)}
-				{@const DensityIcon = densityIcons[density.value]}
-				<label class="theme-option" class:selected={settings.themeDensity === density.value}>
-					<input
-						type="radio"
-						name="density"
-						value={density.value}
-						checked={settings.themeDensity === density.value}
-						onchange={() => settings.setThemeDensity(density.value)}
-					/>
-					<DensityIcon size={16} aria-hidden="true" />{density.label}
-					{#if settings.themeDensity === density.value}
-						<Check size={14} aria-hidden="true" />
-					{/if}
-				</label>
-			{/each}
-		</div>
+		<h4 id={densityHeadingId}>{m['settings.densityHeading']()}</h4>
+		<SegmentedControl
+			options={densities}
+			value={settings.themeDensity}
+			name="density"
+			labelledby={densityHeadingId}
+			onchange={(value) => settings.setThemeDensity(value)}
+		/>
 
 		<p class="note">
 			{m['settings.themeNote']()}
@@ -223,29 +212,14 @@
 		</div>
 
 		{#if settings.navLayout === 'launcher'}
-			<h4>{m['settings.launcherPositionHeading']()}</h4>
-			<div
-				class="options launcher-position-options"
-				role="radiogroup"
-				aria-label={m['settings.launcherPositionHeading']()}
-			>
-				{#each launcherPositions as option (option.value)}
-					{@const PositionIcon = option.icon}
-					<label class="theme-option" class:selected={settings.launcherPosition === option.value}>
-						<input
-							type="radio"
-							name="launcher-position"
-							value={option.value}
-							checked={settings.launcherPosition === option.value}
-							onchange={() => settings.setLauncherPosition(option.value)}
-						/>
-						<PositionIcon size={16} aria-hidden="true" />{option.label}
-						{#if settings.launcherPosition === option.value}
-							<Check size={14} aria-hidden="true" />
-						{/if}
-					</label>
-				{/each}
-			</div>
+			<h4 id={launcherPositionHeadingId}>{m['settings.launcherPositionHeading']()}</h4>
+			<SegmentedControl
+				options={launcherPositions}
+				value={settings.launcherPosition}
+				name="launcher-position"
+				labelledby={launcherPositionHeadingId}
+				onchange={(value) => settings.setLauncherPosition(value)}
+			/>
 
 			<div class="launcher-opacity">
 				<label class="field">
