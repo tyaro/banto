@@ -6,8 +6,8 @@
  * `definition.list.columns` carries only the presentation tuning derivation
  * cannot know (widths, a currency format).
  *
- * Exported (not inlined in `ResourceListPage`) so a route that adds its own
- * CSV import (items, until stage 5) maps headers against the very same columns.
+ * Exported (not inlined in `ResourceListPage`) so the CSV import
+ * (`csvImport.ts`) maps headers against the very same columns.
  * Call it while the locale is resolved (component init), not at module load:
  * the headers are read once.
  */

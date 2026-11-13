@@ -3,9 +3,9 @@
  *
  * `AppResourceDefinition` extends admin-core's `ResourceDefinition` (which stays
  * unchanged, so no breaking change for consumers) with what the screens need.
- * Stage 1 added `path` and `nav`; stage 4 adds what `ResourceListPage` reads
- * (`description`, `list`, `csv.export`, `demoNotes`). CSV import and `canWrite`
- * arrive in stage 5.
+ * Stage 1 added `path` and `nav`; stage 4 added what `ResourceListPage` reads
+ * (`description`, `list`, `csv.export`, `demoNotes`); stage 5 adds the CSV
+ * import (`csv.import`).
  *
  * Text is a function (`label?: () => string`) for the same reason
  * `resources/items.ts` uses `get label()`: evaluating at module load would
@@ -79,6 +79,46 @@ export interface FolderExportResult {
 	opened: boolean;
 }
 
+/** One row handed to `csv.import.run`: `id` absent = create, present = update; then the editable columns the CSV names. */
+export type ResourceImportRow = { id?: string | number } & Record<string, unknown>;
+
+/**
+ * What `csv.import.run` resolves with. `errors[].row` is the 0-based index into
+ * the rows passed to `run` (not a CSV line number). Ideally all-or-nothing
+ * (items' server rolls the whole batch back, so `created` / `updated` are then
+ * 0); a `run` that applies part of a batch reports what it did apply, and the
+ * page reloads the list and keeps the run button off for that file.
+ */
+export interface ResourceImportResult {
+	created: number;
+	updated: number;
+	errors: { row: number; message: string }[];
+}
+
+/**
+ * CSV import (ADR-0030 §4, stage 5). `DataProvider` has no import entry point,
+ * so the definition passes the call itself (`run`). Offered only with the
+ * `import` permission (`capabilities.create` AND `edit`, plus a writing role).
+ */
+export interface ResourceCsvImport {
+	/**
+	 * Is the import backed by a real server right now (provider layer,
+	 * conventions §10)? When false, the button explains it instead of opening
+	 * the file picker. Default: always available.
+	 */
+	available?: () => boolean;
+	/** The import rules, shown as the button's title and in the confirmation panel (production builds too). */
+	rules: () => string;
+	/** Send the confirmed rows. Map them to the resource's own request type here. */
+	run: (rows: ResourceImportRow[]) => Promise<ResourceImportResult>;
+	/** Fields the CSV header must contain. Default: the schema's `required`, non-`readonly` fields. */
+	required?: readonly string[];
+	/** Fields the preview table shows, after line / action / ID. Default: `required`. */
+	preview?: readonly string[];
+	/** How a non-blank `id` cell is read. Default `'integer'` (anything else is a row error). */
+	idType?: 'integer' | 'string';
+}
+
 export interface ResourceCsvOptions {
 	/**
 	 * Offer "Export CSV" (a read: shown to every role when `capabilities.list`).
@@ -86,6 +126,8 @@ export interface ResourceCsvOptions {
 	 * falls back to a browser download.
 	 */
 	export?: boolean | { toFolder?: (csv: string, filename: string) => Promise<FolderExportResult> };
+	/** "Import CSV" and its confirmation panel. Omit for no import. */
+	import?: ResourceCsvImport;
 }
 
 export interface AppResourceDefinition extends ResourceDefinition {

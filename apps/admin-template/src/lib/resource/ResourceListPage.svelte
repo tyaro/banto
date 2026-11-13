@@ -5,24 +5,22 @@
 	`<ResourceListPage resource={definition}>` renders the whole page: the
 	heading (`label` / `description`), the "View" menu (load mode, when the
 	definition offers two), the group-by select (client grid), the column
-	menu, CSV export, "New", the demo build's annotation, and the server /
+	menu, CSV export and import (`csv.import`, with its confirmation panel),
+	"New", the demo build's annotation, and the server /
 	client grid with #215's restore (sort / filters / group-by per load mode,
 	the last-opened row marker, the "saved row left the filter" notice), inline
 	cell edits and range pastes through one per-row save queue (#284).
 
 	What is offered follows `resourcePermissions` (ADR-0030 §5 - hidden, not
 	disabled): "New" needs `create`, inline edits need `edit` (every column is
-	read-only otherwise), the CSV import slot needs `import`, export needs only
-	`list`. The server's `RoleGuard` / Tauri's `require_role` stay the real
+	read-only otherwise), CSV import needs `import` (create AND edit), export
+	needs only `list`. The server's `RoleGuard` / Tauri's `require_role` stay the real
 	check (conventions §1). A LAN viewer-public session is a `viewer`.
 
 	Slots (snippets):
 	- `actions`: extra header buttons before CSV export (the items daily report).
-	- `csvImport`: the CSV import button, after export. TEMPORARY (stage 5 moves
-	  the import into this component through `csv.import`); rendered only with
-	  the `import` permission.
 	- `viewMenu`: extra entries at the end of the "View" menu.
-	- `beforeGrid`: above the grid (KPIs, the items import preview panel).
+	- `beforeGrid`: above the grid (KPIs etc.), below the import panel.
 	- `annotation`: the demo annotation's paragraphs, instead of `demoNotes`.
 
 	The definition is read ONCE, when the component is created (the (app)
@@ -47,6 +45,7 @@
 	import {
 		currentSessionScope,
 		getDataProvider,
+		invalidate,
 		isProviderError,
 		loadActiveListMode,
 		loadLastOpenedId,
@@ -58,7 +57,7 @@
 	} from '@banto/admin-core';
 	import type { FormSchema } from '@banto/forms';
 	import { goto } from '$app/navigation';
-	import { Download, Plus, SlidersHorizontal } from '@lucide/svelte';
+	import { Download, Plus, SlidersHorizontal, Upload } from '@lucide/svelte';
 	import { Menu, MenuGroup, MenuItem, PageHeader } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
@@ -69,6 +68,15 @@
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { detailHref, resourceColumns } from './columns';
 	import {
+		buildImportPreview,
+		canRunImport,
+		numericFields,
+		previewImportFields,
+		toImportPayload,
+		withImportResult,
+		type ImportPreviewState
+	} from './csvImport';
+	import {
 		composeEditableValues,
 		editableFieldNames,
 		exportListParams,
@@ -78,27 +86,20 @@
 	import { resourcePermissions } from './permissions';
 	import { createRowSaveQueue } from './rowSaveQueue';
 	import ResourceClientGrid from './ResourceClientGrid.svelte';
+	import ResourceImportPanel from './ResourceImportPanel.svelte';
 	import ResourceServerGrid from './ResourceServerGrid.svelte';
 	import type { AppResourceDefinition, ListLoadMode, ResourceRow } from './types';
 
 	interface Props {
 		resource: AppResourceDefinition;
 		actions?: Snippet;
-		csvImport?: Snippet;
 		viewMenu?: Snippet;
 		beforeGrid?: Snippet;
 		annotation?: Snippet;
 	}
 
 	// `actions` is renamed: PageHeader's own `actions` snippet below shadows the name.
-	let {
-		resource,
-		actions: extraActions,
-		csvImport,
-		viewMenu,
-		beforeGrid,
-		annotation
-	}: Props = $props();
+	let { resource, actions: extraActions, viewMenu, beforeGrid, annotation }: Props = $props();
 
 	// Read once (see the component doc above); `untrack` says so explicitly.
 	const def = untrack(() => resource);
@@ -471,6 +472,85 @@
 		}
 	}
 
+	// --- M15 Phase C: CSV import (`csv.import`) -----------------------------
+
+	const importOption = def.csv?.import;
+	const canImport = $derived(perms.import && importOption !== undefined);
+	const importPreviewFields = importOption ? previewImportFields(def, importOption) : [];
+	const importNumericFields = numericFields(def);
+
+	let importPreview: ImportPreviewState | null = $state(null);
+	let importSubmitting = $state(false);
+	let importFileInput: HTMLInputElement | undefined = $state();
+
+	function handleImportButtonClick(): void {
+		if (importOption?.available && !importOption.available()) {
+			notify('info', m['resource.importUnavailable']());
+			return;
+		}
+		importFileInput?.click();
+	}
+
+	async function handleImportFileChange(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // allow re-selecting the same file (e.g. after fixing it) later
+		if (!file || !importOption) return;
+		const text = await file.text();
+		// Base columns, not the permission-narrowed ones: `editable` there marks
+		// a writable schema field (the `import` permission implies `edit` anyway).
+		const preview = buildImportPreview(def, importOption, baseColumns, file.name, text);
+		if (!preview) notify('error', m['resource.csvEmpty']());
+		importPreview = preview;
+	}
+
+	// Guarded a second time here (not just via the button's `disabled`, spec
+	// M15: 実行ボタンを無効化) - items' server runs the whole batch
+	// all-or-nothing, so sending it with known-bad rows would just get every
+	// row rejected together.
+	async function executeImport(): Promise<void> {
+		const preview = importPreview;
+		if (!preview || !importOption || !canRunImport(preview)) return;
+
+		importSubmitting = true;
+		try {
+			// Same validated rows the preview table renders (issue #218).
+			const result = await importOption.run(toImportPayload(preview.rows));
+			if (result.errors.length > 0) {
+				// Keep the panel open so the user sees exactly what to fix. A
+				// partial apply (a `run` that is not all-or-nothing) still
+				// changed rows: reload the list, and the run button stays off.
+				importPreview = withImportResult(preview, result);
+				if (result.created + result.updated > 0) {
+					notify(
+						'error',
+						m['resource.importPartialCount']({
+							count: result.errors.length,
+							created: result.created,
+							updated: result.updated
+						})
+					);
+					invalidate(name);
+				} else {
+					notify('error', m['resource.importFailedCount']({ count: result.errors.length }));
+				}
+			} else {
+				notify(
+					'success',
+					m['resource.importSucceeded']({ created: result.created, updated: result.updated })
+				);
+				// Both grids subscribe to `invalidate(<resource>)`: the server grid
+				// refetches its blocks, the client grid its full list.
+				invalidate(name);
+				importPreview = null;
+			}
+		} catch (err) {
+			notify('error', isProviderError(err) ? err.message : String(err));
+		} finally {
+			importSubmitting = false;
+		}
+	}
+
 	const demoNotes = def.demoNotes;
 	const hasAnnotation = $derived(annotation !== undefined || demoNotes !== undefined);
 </script>
@@ -539,8 +619,24 @@
 					{exporting ? m['resource.exporting']() : m['resource.exportCsv']()}
 				</button>
 			{/if}
-			{#if perms.import}
-				{@render csvImport?.()}
+			{#if canImport && importOption}
+				<button
+					type="button"
+					class="banto-btn banto-btn--secondary"
+					title={importOption.rules()}
+					onclick={handleImportButtonClick}
+				>
+					<Upload size={16} aria-hidden="true" />
+					{m['resource.importCsv']()}
+				</button>
+				<input
+					class="file-input"
+					type="file"
+					accept=".csv,.txt"
+					aria-label={m['resource.importCsv']()}
+					bind:this={importFileInput}
+					onchange={handleImportFileChange}
+				/>
 			{/if}
 			{#if perms.create}
 				<button
@@ -591,6 +687,19 @@
 		</div>
 	{/if}
 
+	{#if importPreview && importOption && canImport}
+		<ResourceImportPanel
+			preview={importPreview}
+			columns={baseColumns}
+			rules={importOption.rules()}
+			previewFields={importPreviewFields}
+			numeric={importNumericFields}
+			submitting={importSubmitting}
+			onRun={executeImport}
+			onCancel={() => (importPreview = null)}
+		/>
+	{/if}
+
 	{@render beforeGrid?.()}
 
 	{#if mode === 'client'}
@@ -636,6 +745,20 @@
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
+	}
+
+	/* Visually hidden but still clickable through the import button's
+	   importFileInput?.click() - a real file input, just not shown itself. */
+	.file-input {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.group-by {

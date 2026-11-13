@@ -209,7 +209,13 @@ banto-industrial 側の現行の計画・実装状況は同リポジトリの `d
       決着）→ **2026-07-18 決定: 動的ルート `[resource]` は採用せず、
       「items のルート一式をコピーして書き換える」規約で確定。手順は
       [docs/recipes/add-resource.md](recipes/add-resource.md) に固定化し、
-      README・AGENTS.md から参照**（improvement-plan-2026-07.md P1-3）
+      README・AGENTS.md から参照**（improvement-plan-2026-07.md P1-3）。
+      **2026-11-13 更新（[ADR-0030](adr/0030-resource-page.md)、段 1〜5 で実施）:
+      動的ルートは採用しない（維持）。画面は定義 1 つとルート 3 本** — リソースごとに
+      `resources/<name>.ts` の定義（`AppResourceDefinition`）と、共通部品
+      （`lib/resource/` の `ResourceListPage`・`ResourceDetail`）を呼ぶ薄いルート
+      （一覧・`[id]`・`new`）を置く。ナビ・新規作成のコマンド・CSV 出力と取込
+      （`csv.import`）は定義から出る
 
 ## 7. コピー面積縮小方針（M18 Phase C 記録 → V2 テーマC で ①〜④ 実施済み）
 

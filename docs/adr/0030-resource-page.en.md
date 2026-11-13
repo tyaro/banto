@@ -106,9 +106,12 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 		export?:
 			boolean | { toFolder?: (csv: string, filename: string) => Promise<FolderExportResult> };
 		import?: {
-			available: () => boolean; // provider-layer check (conventions §10)
+			available?: () => boolean; // provider-layer check (conventions §10); default: always
 			rules: () => string; // home of items.importRules
-			run: (rows: Record<string, unknown>[]) => Promise<ImportResult>;
+			run: (rows: ResourceImportRow[]) => Promise<ResourceImportResult>;
+			required?: readonly string[]; // default: the schema's required, non-readonly fields (stage 5)
+			preview?: readonly string[]; // preview table columns; default: required (stage 5)
+			idType?: 'integer' | 'string'; // how the id column is read; default integer (stage 5)
 		};
 	};
 	demoNotes?: () => string[]; // paragraphs of the demo-build annotation drawer
@@ -136,7 +139,7 @@ error is needed. Built-in by default:
 - permission-based visibility (§5) and demo-build annotations (§7)
 
 Start with few snippets: `actions` (actions before the primary one; the report button goes here), `viewMenu`
-(extra "View" menu items), `beforeGrid` (KPIs etc. above the list), `empty` (empty state; B-6), `annotation`
+(extra "View" menu items), `beforeGrid` (KPIs etc. above the list, below the import confirmation panel), `empty` (empty state; B-6), `annotation`
 (draw the annotation yourself instead of `demoNotes`). Column looks change through grid column `overrides`,
 not snippets.
 
@@ -236,6 +239,18 @@ resource without CSV import, server mode only, now writes a 60–100-line defini
 grouping demo), a list route of about 10 lines and `[id]` / `new` routes of 20–30 lines each: about 150 lines in
 total. Items-specific code is 797 lines today (definition 164, the three routes 633); it is measured again after
 stage 5 moves the import.
+
+**Stage 5 measurements (2026-11-13).** The CSV import moved into the component and stage 4's temporary `csvImport`
+slot is gone (`beforeGrid` stays, for KPIs and the like). The list parts are 2,015 lines (`ResourceListPage.svelte`
+816, `ResourceImportPanel.svelte` 348, `csvImport.ts` 214, `ResourceServerGrid.svelte` 263,
+`ResourceClientGrid.svelte` 161, `rowSaveQueue.ts` 84, `listState.ts` 68, `columns.ts` 61; tests excluded), and
+`types.ts` grew by another 42 lines (111 → 153). The items list route went from 555 to 34 lines, the definition from
+164 to 193 (`csv.import`, plus `toItemImportRow`, which maps a generic row to `ItemImportRow`), and `importPreview.ts`
+(45 lines) was replaced by the generic `csvImport.ts`. Items-specific code went from 797 to **305 lines**
+(definition 193, the three routes 112) — the low end of the 300–400 expected. The template's own list code grew from
+about 2,110 to about 2,200 lines (the generic import — required columns, preview columns, string ids, showing a
+partly applied batch — and doc comments). A second resource with a CSV import now adds only 5–10 lines of
+`csv.import` in its definition and the import API client (items' `importItems` is about 10 lines).
 
 ## Alternatives considered
 
