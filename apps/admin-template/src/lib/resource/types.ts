@@ -13,7 +13,7 @@
  */
 import type { Component } from 'svelte';
 import type { ResourceDefinition } from '@banto/admin-core';
-import type { GridColumn } from '@banto/grid-svelte';
+import type { FilterState, GridColumn, SortState } from '@banto/grid-svelte';
 import type { AppPath } from '#lib/appPath.js';
 
 export interface ResourceNav {
@@ -44,6 +44,22 @@ export type ResourceRow = { id: string | number } & Record<string, unknown>;
  */
 export type ListLoadMode = 'server' | 'client';
 
+/**
+ * A named list view the definition ships (#555 (4)): the "Views" menu lists
+ * it, and `<path>?view=<id>` opens the list with it (a KPI card links there).
+ * A view holds the filters, sort and quick-search term - not the columns or
+ * the load mode. Applying it replaces what the list had. Entries on a field
+ * the active grid has no column for are dropped when applied.
+ */
+export interface ResourceListView {
+	/** URL-safe id (`?view=<id>`), unique among the resource's views. */
+	id: string;
+	label: () => string;
+	sort?: SortState[];
+	filters?: FilterState[];
+	search?: string;
+}
+
 export interface ResourceListOptions {
 	/**
 	 * Which load modes the list offers. Default `['server']` (ADR-0030 decision
@@ -59,6 +75,11 @@ export interface ResourceListOptions {
 	 * server grid is on screen.
 	 */
 	groupBy?: readonly { field: string; label: () => string }[];
+	/**
+	 * Views shipped with the resource (#555 (4)), listed first in the "Views"
+	 * menu, before the user's own saved views.
+	 */
+	views?: readonly ResourceListView[];
 	/** Client grid only. */
 	client?: {
 		/**

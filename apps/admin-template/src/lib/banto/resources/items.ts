@@ -98,6 +98,16 @@ function toItemRow(row: ResourceRow): ResourceRow {
 }
 
 /**
+ * 在庫僅少 = `stock` below this. The ONE place the cutoff lives (#555 (4)):
+ * the dashboard's KPI tile (`computeStatTiles`), the daily report's table and
+ * the list's `low-stock` view below all read it.
+ */
+export const LOW_STOCK_THRESHOLD = 50;
+
+/** The list view the dashboard's 在庫僅少 tile opens (`/items?view=low-stock`). */
+export const LOW_STOCK_VIEW_ID = 'low-stock';
+
+/**
  * The generic import row -> `ItemImportRow` (the Rust `ItemImportRow` shape).
  * The panel only sends rows without errors and with every required column
  * present, so the defaults never stand in for real input.
@@ -128,6 +138,16 @@ export const itemsResource = defineResource({
 		groupBy: [
 			{ field: 'category', label: () => m['items.groupCategory']() },
 			{ field: 'updatedAt', label: () => m['items.fieldUpdatedAt']() }
+		],
+		// #555 (4): views shipped with the resource. `low-stock` is what the
+		// dashboard's 在庫僅少 tile counts, lowest stock first.
+		views: [
+			{
+				id: LOW_STOCK_VIEW_ID,
+				label: () => m['items.viewLowStock']({ threshold: LOW_STOCK_THRESHOLD }),
+				filters: [{ field: 'stock', op: 'lt', value: LOW_STOCK_THRESHOLD }],
+				sort: [{ field: 'stock', direction: 'asc' }]
+			}
 		],
 		client: {
 			toRow: toItemRow,

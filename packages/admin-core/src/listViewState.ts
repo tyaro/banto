@@ -158,6 +158,17 @@ function isSnapshot(value: unknown): value is ListViewSnapshot {
 	return true;
 }
 
+/**
+ * Is `value` a well-formed {@link ListViewSnapshot}? The same element-by-element
+ * check `loadListViewState` runs, for a caller that stores snapshots elsewhere
+ * (e.g. an app's saved list views in the per-user UI settings, Issue #555). It
+ * says nothing about whether the fields still exist: drop unknown fields
+ * yourself, as `loadListViewState`'s `knownFields` does.
+ */
+export function isListViewSnapshot(value: unknown): value is ListViewSnapshot {
+	return isSnapshot(value);
+}
+
 /** The global `sessionStorage`, or `null` when unavailable (SSR, disabled storage, ...). Never throws. */
 function defaultStorage(): Storage | null {
 	try {

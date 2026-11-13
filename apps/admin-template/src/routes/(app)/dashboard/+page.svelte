@@ -17,6 +17,14 @@
 		type PanelContent
 	} from '@banto/dock-svelte';
 	import { LayoutGrid, JapaneseYen, Package, TriangleAlert, Warehouse } from '@lucide/svelte';
+	// Its own line: scaffold.mjs's dock remover rewrites the line above by text.
+	import { ChevronRight } from '@lucide/svelte';
+	import { resolveAppPath } from '#lib/appPath.js';
+	import {
+		LOW_STOCK_THRESHOLD,
+		LOW_STOCK_VIEW_ID,
+		itemsResource
+	} from '#lib/banto/resources/items.js';
 	import * as m from '#lib/paraglide/messages.js';
 	import type { Item } from '#lib/banto/sampleData.js';
 	import {
@@ -53,6 +61,9 @@
 	const list = createListResource<Item>('items', {
 		initialParams: { pagination: { offset: 0, limit: 20_000 } }
 	});
+
+	// #555 (4): the 在庫僅少 tile opens this list view (ResourceListPage reads `?view=`).
+	const lowStockHref = `${resolveAppPath(itemsResource.path)}?view=${LOW_STOCK_VIEW_ID}`;
 
 	$effect(() => {
 		void list.load();
@@ -430,13 +441,18 @@
 				<span class="stat-value">{yen(stats.avgPrice)}</span>
 			</div>
 		</section>
-		<section class="stat-tile">
+		<!-- #555 (4): the tile opens the items list on its `low-stock` view
+		     (same LOW_STOCK_THRESHOLD as the count). -->
+		<a class="stat-tile stat-link" href={lowStockHref} title={m['dashboard.statLowStockOpen']()}>
 			<span class="stat-icon" aria-hidden="true"><TriangleAlert size={18} /></span>
 			<div class="stat-body">
-				<span class="stat-label">{m['dashboard.statLowStock']()}</span>
+				<span class="stat-label">
+					{m['dashboard.statLowStock']({ threshold: LOW_STOCK_THRESHOLD })}
+				</span>
 				<span class="stat-value">{stats.lowStockCount.toLocaleString()}</span>
 			</div>
-		</section>
+			<ChevronRight class="stat-link-icon" size={16} aria-hidden="true" />
+		</a>
 	</div>
 
 	{#if list.loading && list.rows.length === 0}
@@ -614,6 +630,28 @@
 		display: flex;
 		align-items: center;
 		gap: var(--banto-space-3);
+	}
+
+	/* #555 (4): a tile that opens a list view (the 在庫僅少 tile). */
+	.stat-link {
+		color: inherit;
+		text-decoration: none;
+		transition: border-color var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.stat-link:hover {
+		border-color: var(--banto-primary);
+	}
+
+	.stat-link:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
+	}
+
+	.stat-link :global(.stat-link-icon) {
+		margin-left: auto;
+		flex: none;
+		color: var(--banto-text-muted);
 	}
 
 	.stat-icon {

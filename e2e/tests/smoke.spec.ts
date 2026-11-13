@@ -909,6 +909,59 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(openLinks.first()).toBeVisible();
 	});
 
+	// #555 (4): the dashboard's 在庫僅少 tile opens /items on the `low-stock`
+	// view (the view id leaves the URL once applied), then a saved view round
+	// trip: save the current view, find it checked in the menu, delete it.
+	test('3d3. items: the low-stock tile opens its view; a saved view can be saved and deleted', async () => {
+		await page.goto('/dashboard');
+		await page.getByRole('link', { name: /^在庫僅少/ }).click();
+		await expect(page).toHaveURL(/\/items$/);
+		const chipRemove = page.getByRole('button', { name: '在庫の絞り込みを外す', exact: true });
+		await expect(chipRemove).toBeVisible();
+
+		const viewsTrigger = page.getByRole('button', { name: 'ビュー', exact: true });
+		async function expectViewChecked(name: string): Promise<void> {
+			const item = page.getByRole('menuitemradio', { name, exact: true });
+			await expect(async () => {
+				if (!(await item.isVisible())) await viewsTrigger.click();
+				await expect(item).toHaveAttribute('aria-checked', 'true', { timeout: 1000 });
+			}).toPass();
+		}
+		await expectViewChecked('在庫僅少（50未満）');
+
+		await page.getByRole('menuitem', { name: '今の表示を保存…', exact: true }).click();
+		const saveDialog = page.getByRole('dialog', { name: '今の表示をビューとして保存' });
+		await saveDialog.getByLabel('ビューの名前').fill('e2e 在庫僅少');
+		await saveDialog.getByRole('button', { name: '保存', exact: true }).click();
+		await expect(saveDialog).toBeHidden();
+
+		await expectViewChecked('e2e 在庫僅少');
+		await page.getByRole('menuitem', { name: '「e2e 在庫僅少」を削除', exact: true }).click();
+		const confirmDialog = page.getByRole('alertdialog', { name: 'ビューの削除' });
+		await confirmDialog.getByRole('button', { name: '削除', exact: true }).click();
+		await expect(confirmDialog).toBeHidden();
+
+		const savedItem = page.getByRole('menuitemradio', { name: 'e2e 在庫僅少', exact: true });
+		const lowStockItem = page.getByRole('menuitemradio', {
+			name: '在庫僅少（50未満）',
+			exact: true
+		});
+		await expect(async () => {
+			if (!(await lowStockItem.isVisible())) await viewsTrigger.click();
+			await expect(lowStockItem).toBeVisible({ timeout: 1000 });
+		}).toPass();
+		await expect(savedItem).toHaveCount(0);
+		await page.keyboard.press('Escape');
+
+		// Cleanup: the view's filter and sort live on in this session's list
+		// state; later scenarios expect the unfiltered, unsorted list.
+		await page.evaluate(() => {
+			for (const key of Object.keys(sessionStorage)) {
+				if (key.startsWith('banto.listView.items:')) sessionStorage.removeItem(key);
+			}
+		});
+	});
+
 	// Issue #215/#255 review (fix 3): the CLIENT grid filters/shows rows
 	// through `toItemRow()` (adds the synthetic `category` field), not the
 	// raw `Item`. The exclusion check must run the SAME derivation, or a

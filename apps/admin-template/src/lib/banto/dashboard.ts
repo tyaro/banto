@@ -13,6 +13,7 @@
  */
 import type { GanttTask } from '@banto/charts';
 import type { Item } from './sampleData';
+import { LOW_STOCK_THRESHOLD } from './resources/items';
 
 export interface StatTiles {
 	count: number;
@@ -21,9 +22,7 @@ export interface StatTiles {
 	lowStockCount: number;
 }
 
-const LOW_STOCK_THRESHOLD = 50;
-
-/** 商品数 / 在庫合計 / 平均価格 (rounded mean) / 在庫僅少 (stock < 50) counts. */
+/** 商品数 / 在庫合計 / 平均価格 (rounded mean) / 在庫僅少 (stock < `LOW_STOCK_THRESHOLD`) counts. */
 export function computeStatTiles(items: Item[]): StatTiles {
 	const count = items.length;
 	const stockTotal = items.reduce((sum, item) => sum + item.stock, 0);
