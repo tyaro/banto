@@ -273,7 +273,7 @@
 
 	.button--danger {
 		background: var(--banto-danger-solid);
-		color: var(--banto-on-danger-solid, #ffffff);
+		color: var(--banto-on-danger-solid);
 	}
 
 	.button--danger:hover:not(:disabled) {
