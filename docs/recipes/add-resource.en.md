@@ -45,8 +45,8 @@ follows the "demo explicitly refuses" of conventions §10).
 
 To keep a list's filters, sort and the row opened last across a list →
 detail → save → list round trip, use `@banto/admin-core`'s list view state
-API (reference: `routes/(app)/items/+page.svelte` and
-`items/[id]/+page.svelte`).
+API (reference: `routes/(app)/items/+page.svelte` and the shared detail part
+`lib/resource/ResourceDetail.svelte`).
 
 - The list page takes `const scope = currentSessionScope()` when it is
   created and passes it to every call (`loadListViewState`,

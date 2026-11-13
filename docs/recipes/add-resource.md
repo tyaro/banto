@@ -89,7 +89,8 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
 
 一覧 → 詳細 → 保存 → 一覧と往復しても絞り込み・並び順・直前に開いた行を
 残したい場合は、`@banto/admin-core` の一覧状態 API を使う（手本は
-`routes/(app)/items/+page.svelte` と `items/[id]/+page.svelte`）。
+`routes/(app)/items/+page.svelte` と、詳細の共通部品
+`lib/resource/ResourceDetail.svelte`）。
 
 - 一覧ページは生成時に `const scope = currentSessionScope()` を取り、
   `loadListViewState`/`saveListViewState`/`loadLastOpenedId` などすべてに

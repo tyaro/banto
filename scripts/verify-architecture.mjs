@@ -52,6 +52,9 @@
  *        対象外になる）と apps/admin-template/src の .svelte <style> と .css で、
  *        font-size / font と border・outline 系の幅に生の絶対値が無いこと。
  *        余白は見ない。判定は scripts/lib/raw-dimensions.mjs（テストあり）
+ *  16. §4 app 層の `lib/resource/`（リソースの画面の共通部品、ADR-0030）はオプションの
+ *      資産を import しない … `@banto/*` はコアのパッケージだけ、`#lib`・相対の import は
+ *      scaffold のどれかのプリセットが消すファイルを指さない（後者は banto 本体だけ）
  *
  * 許可リストへの追加は「設計判断としてコード内コメントで正当化されている」
  * ことを条件とし、理由をここに1行で書く（レビュー対象）。
@@ -141,6 +144,10 @@ function* walk(dir, exts) {
 }
 
 const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+
+/** 全プリセットの scaffold dry-run は重いので 1 回だけ回す（rule 14・16 が共用）。 */
+let scaffoldTouchedCache = null;
+const scaffoldTouched = () => (scaffoldTouchedCache ??= collectScaffoldTouchedFiles(repoRoot));
 
 // --- 1. サービス層は tauri/axum を知らない（conventions §2） ----------------
 
@@ -1154,7 +1161,7 @@ const isAllowedPackageImport = (spec) =>
 					)
 					.join('.*')}$`
 			);
-		const { edited } = collectScaffoldTouchedFiles(repoRoot);
+		const { edited } = scaffoldTouched();
 		let problems = 0;
 		for (const kind of ['push', 'pull_request']) {
 			const globs = pathsOf[kind];
@@ -1235,6 +1242,90 @@ const isAllowedPackageImport = (spec) =>
 		pass(
 			rule,
 			`packages・admin-template の ${checkedBlocks} スタイル（<style>・.css）に未許可の文字サイズ・枠線幅の生値なし`
+		);
+}
+
+// --- 16. lib/resource/ はオプションの資産を import しない（conventions §4、ADR-0030 §9） --
+//
+// `apps/admin-template/src/lib/resource/` はリソースの画面の共通部品（app 層）。どのプリセットでも
+// 残るので、オプション（添付・帳票・コマンドパレット…）や items のデモを import すると、それを
+// 外したコピーで壊れる。差し込みはルートの snippet（`after`・`actions`）で行う。
+// (a) `@banto/*` はコアのパッケージだけ（conventions §4 のコアの列挙。どの環境でも検査する）。
+// (b) `#lib/…`・相対の import は、scaffold のどれかのプリセットが消すファイルを指さない。
+//     消す対象は全プリセットの `--dry-run --list-touched` から scaffold 自身に出させる（手書きの
+//     一覧はドリフトする）。banto 本体だけで走らせる（rule 14 と同じ目印。派生アプリでは消した
+//     ファイルへの import は型検査が落とす）。
+{
+	const rule = 'resource-no-optional';
+	const DIR = 'apps/admin-template/src/lib/resource';
+	const CORE_PACKAGES = new Set(['admin-core', 'grid-svelte', 'forms', 'theme', 'ui']);
+	const stripExt = (p) => p.replace(/\.(?:svelte\.ts|svelte\.js|svelte|ts|js|mjs)$/, '');
+	/** import 指定子 → リポジトリ相対の対象（拡張子なし）。app の外を指すものは null。 */
+	const targetOf = (file, spec) => {
+		if (spec.startsWith('#lib/'))
+			return stripExt(`apps/admin-template/src/lib/${spec.slice('#lib/'.length)}`);
+		if (spec.startsWith('./') || spec.startsWith('../'))
+			return stripExt(path.posix.join(path.posix.dirname(file), spec));
+		return null;
+	};
+	/** 対象が消えるファイル（またはその下）か。`removed` はリポジトリ相対のファイル／ディレクトリ。 */
+	const hitsRemoved = (target, removed) =>
+		removed.some((r) => stripExt(r) === target || target.startsWith(`${r}/`));
+	// 対策の対策: 照合が黙って空振りしないことを毎回確かめる。
+	const sampleRemoved = [
+		'apps/admin-template/src/lib/banto/attachmentsAdmin.ts',
+		'apps/admin-template/src/routes/(app)/items'
+	];
+	const sampleFile = `${DIR}/X.svelte`;
+	const selfOk =
+		hitsRemoved(targetOf(sampleFile, '#lib/banto/attachmentsAdmin.js'), sampleRemoved) &&
+		hitsRemoved(targetOf(sampleFile, '../../routes/(app)/items/itemRow.js'), sampleRemoved) &&
+		!hitsRemoved(targetOf(sampleFile, '#lib/banto/attachmentsAdminX.js'), sampleRemoved) &&
+		!hitsRemoved(targetOf(sampleFile, './permissions'), sampleRemoved);
+	if (!selfOk)
+		fail(
+			rule,
+			'scripts/verify-architecture.mjs',
+			'自己検査に失敗 — targetOf / hitsRemoved を見直す'
+		);
+
+	const files = [...walk(DIR, ['.ts', '.svelte'])];
+	const rootName = JSON.parse(read('package.json')).name;
+	const upstream =
+		fs.existsSync(path.join(repoRoot, 'scripts/scaffold.mjs')) &&
+		fs.existsSync(path.join(repoRoot, 'fixtures/external-consumer')) &&
+		rootName === 'banto';
+	const removed = upstream ? scaffoldTouched().removed : [];
+	let imports = 0;
+	for (const file of files) {
+		for (const spec of importSpecifiers(read(file))) {
+			imports++;
+			const pkg = /^@banto\/([^/]+)/.exec(spec);
+			if (pkg && !CORE_PACKAGES.has(pkg[1])) {
+				fail(
+					rule,
+					file,
+					`\`${spec}\` — lib/resource/ はコアのパッケージだけを import する（§4）。オプションはルートの snippet で差し込む`
+				);
+				continue;
+			}
+			const target = targetOf(file, spec);
+			if (target && hitsRemoved(target, removed))
+				fail(
+					rule,
+					file,
+					`\`${spec}\` — scaffold のプリセットが消すファイルを import している（§4）。ルートの snippet で差し込む`
+				);
+		}
+	}
+	if (!results.some((r) => r.includes(`[${rule}]`)))
+		pass(
+			rule,
+			`lib/resource/ の ${files.length} ファイル（import ${imports} 件）はコアのパッケージだけを使い、${
+				upstream
+					? `scaffold が消す ${removed.length} 件のファイルを指さない`
+					: '（scaffold が消すファイルの照合は banto 本体だけ）'
+			}`
 		);
 }
 

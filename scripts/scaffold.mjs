@@ -690,28 +690,21 @@ function removeAttachmentsRestModImports() {
  * 更新し、全プリセットで `cargo test` が緑になるようにする。
  */
 function removeAttachments() {
-	// (1) フロント: items/[id] の AttachmentsPanel 配線 + 関連 import
-	drop(
-		ITEM_EDIT,
-		'AttachmentsPanel import 除去',
-		`\timport { AttachmentsPanel } from '@banto/attachments';\n`
-	);
-	drop(
-		ITEM_EDIT,
-		'isAttachmentsAvailable import 除去',
-		`\timport { isAttachmentsAvailable } from '#lib/banto/attachmentsAdmin.js';\n`
-	);
-	drop(
-		ITEM_EDIT,
-		'attachmentsClient import 除去',
-		`\timport { attachmentsClient } from '#lib/banto/attachmentsClient.js';\n`
-	);
-	cutRegion(
-		ITEM_EDIT,
-		'AttachmentsPanel markup 除去',
-		`\t<!--\n\t\tM20 demo wiring`,
-		`\t\t/>\n\t{/if}`
-	);
+	// (1) フロント: items/[id] の薄いルートにある AttachmentsPanel 配線（ResourceDetail の
+	// `after` snippet）と関連 import。どちらも `[scaffold:attachments]` の印で挟んである
+	// （ADR-0030 §9）。snippet を消すと ResourceDetail の中身が空になるので、同じ 1 回の
+	// 編集で自己終了タグにする（--dry-run は編集を積み重ねずに各編集を元のファイルへ当てるので、
+	// 「消してから閉じタグを置換」の 2 段に分けると 2 段目が見つからない）。
+	cutMarked(ITEM_EDIT, 'AttachmentsPanel import 除去', 'attachments', '\t');
+	editRemoval(ITEM_EDIT, 'AttachmentsPanel の after snippet 除去', (s) => {
+		const start = `>\n\t\t<!-- [scaffold:attachments] begin -->`;
+		const end = `<!-- [scaffold:attachments] end -->\n\t</ResourceDetail>`;
+		const i = s.indexOf(start);
+		if (i === -1) return null;
+		const j = s.indexOf(end, i + start.length);
+		if (j === -1) return undefined;
+		return `${s.slice(0, i)} />${s.slice(j + end.length)}`;
+	});
 
 	// (2) フロント: アプリ側クライアント/アダプタ
 	removeFile(`${APP}/src/lib/banto/attachmentsClient.ts`, 'attachmentsClient.ts 削除');

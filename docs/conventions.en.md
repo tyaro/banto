@@ -226,6 +226,16 @@ Current guarantees:
 - There are zero `from '@banto/...'` imports between packages.
 - Notes like "charts/dock consume this token" in `theme/banto.css` are comments,
   not imports.
+- The app layer's **`apps/admin-template/src/lib/resource/`** (the shared parts of
+  the resource screens, such as `ResourceDetail`,
+  [ADR-0030](adr/0030-resource-page.md)) is treated like core. It stays in every
+  preset, so it does not import optional assets (attachments, reports, the
+  command palette, ...) or the items demo. Options are plugged in from the route
+  files through snippets (`after`, `actions`) wrapped in `[scaffold:<tag>]`
+  markers. Machine check: `verify:architecture` rule `resource-no-optional` —
+  `@banto/*` imports are core packages only, and `#lib` / relative imports do not
+  point at a file any scaffold preset removes (the removed files come from every
+  preset's `--dry-run --list-touched`; that part runs only in banto itself).
 
 When you bundle an option, add a row to the table in template-scope §3 and take
 on **the obligation to document its removal procedure (the list of files to

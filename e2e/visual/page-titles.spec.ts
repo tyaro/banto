@@ -14,8 +14,8 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 	const pages = [
 		['/dashboard', copy['nav.dashboard']],
 		['/items', copy['nav.items'], resource],
-		['/items/new', copy['items.createTitle'].replace('{resource}', resource)],
-		['/items/1', copy['items.editTitle'].replace('{resource}', resource)],
+		['/items/new', copy['resource.createTitle'].replace('{resource}', resource)],
+		['/items/1', copy['resource.editTitle'].replace('{resource}', resource)],
 		['/tree', copy['nav.tree']],
 		['/users', copy['nav.users']],
 		['/audit-log', copy['nav.auditLog']],

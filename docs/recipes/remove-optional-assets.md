@@ -163,9 +163,10 @@ Esc をどの層に譲るか。#433）・`src/routes/panel/[id]/`（ポップア
 以下の順で外すとビルド・テストが引き続き通る（依存の少ない順）。
 
 1. `apps/admin-template/src/routes/(app)/items/[id]/+page.svelte` の
-   `AttachmentsPanel` 配線（`M20 demo wiring` コメントのブロック）と
+   `AttachmentsPanel` 配線（`ResourceDetail` の `after` snippet）と
    関連 import（`@banto/attachments`・`isAttachmentsAvailable`・
-   `attachmentsClient`）を削除。
+   `attachmentsClient`）を削除。どちらも `[scaffold:attachments]` の印で
+   囲んである。snippet を消したら `<ResourceDetail … />` の自己終了タグにする。
 2. `apps/admin-template/src/lib/banto/attachmentsClient.ts`・
    `src/lib/banto/attachmentsAdmin.ts` を削除。
 3. `apps/admin-template/core/src/rest/attachments.rs` **ファイルを削除**し、

@@ -370,6 +370,32 @@ test('添付を外すプリセットでは rest/attachments.rs が消え、mod.r
 	}
 });
 
+test('添付を外すと items/[id] は ResourceDetail だけの薄いルートになる（ADR-0030 段 3）', () => {
+	const dir = copyRepo();
+	try {
+		const res = runIn(dir, ['--preset', 'standard', '--strict']);
+		assert.equal(res.status, 0, `standard が失敗:\n${res.stdout}\n${res.stderr}`);
+		const edit = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/routes/(app)/items/[id]/+page.svelte'),
+			'utf8'
+		);
+		for (const gone of ['attachments', 'AttachmentsPanel', '[scaffold:', 'snippet after'])
+			assert.ok(!edit.includes(gone), `items/[id] に残っている: ${gone}`);
+		assert.ok(
+			edit.includes('\t<ResourceDetail resource={itemsResource} {id} />\n</div>'),
+			`ResourceDetail が自己終了タグになっていない:\n${edit}`
+		);
+		// 新規作成のルートは添付と無関係なので変わらない。
+		const created = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/routes/(app)/items/new/+page.svelte'),
+			'utf8'
+		);
+		assert.ok(created.includes('<ResourceDetail resource={itemsResource} id={null} />'));
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test('編集対象の一覧（verify-architecture の入力）に既知のファイルが含まれる', async () => {
 	const { collectScaffoldTouchedFiles, listScaffoldPresets } =
 		await import('./lib/scaffold-touched.mjs');
