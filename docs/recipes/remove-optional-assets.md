@@ -202,8 +202,9 @@ DB/バックエンド配線を一切持たない最小デモのため、以下�
 
 1. `apps/admin-template/src/routes/(app)/items/+page.svelte` の「日報」
    ボタン（`ResourceListPage` に渡す `actions` snippet）と、その import
-   （`goto`・`resolve`・`FileText`）を削除。どちらも `[scaffold:report]` の印で
-   囲んである。
+   （`goto`・`resolve`・`FileText`・`m`）を削除。どちらも `[scaffold:report]` の印で
+   囲んである。残るのは `<ResourceListPage resource={itemsResource}>` の呼び出しだけ
+   （CSV 取込は定義の `csv.import` で部品が描く）。
 2. `apps/admin-template/src/routes/(app)/items/report/`（ルート丸ごと）と
    `src/lib/banto/reports/`（`daily.md`・`raw.d.ts`）を削除。
 3. `apps/admin-template/package.json` の `@banto/report` 依存、

@@ -922,7 +922,8 @@ function removeReport() {
 	// items の一覧の薄いルート（ADR-0030 段 4）: import と `actions` snippet の 2 か所を
 	// `[scaffold:report]` の印で挟んである。別々の区間なので 2 回の削除で外す
 	// （どちらも元のファイルに対して単独で当たるので、--dry-run でも 2 回目が見つかる）。
-	// `actions` を消すと ResourceListPage は追加の操作を描かない。
+	// `actions` を消すと ResourceListPage は追加の操作を描かず、ルートは部品の呼び出しだけになる
+	// （CSV 取込は段 5 で部品の `csv.import` へ移った）。
 	cutMarked(ITEMS, 'items 一覧の日報の import 除去', 'report', '\t');
 	cutRegion(
 		ITEMS,

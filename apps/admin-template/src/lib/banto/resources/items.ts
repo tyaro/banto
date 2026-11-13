@@ -8,8 +8,13 @@
 import { Package } from '@lucide/svelte';
 import type { FormSchema } from '@banto/forms';
 import * as m from '#lib/paraglide/messages.js';
-import { defineResource, type ResourceRow } from '#lib/resource/types.js';
-import { exportCsvToFolder } from '#lib/banto/itemsAdmin.js';
+import { defineResource, type ResourceImportRow, type ResourceRow } from '#lib/resource/types.js';
+import {
+	exportCsvToFolder,
+	importItems,
+	isItemsImportAvailable,
+	type ItemImportRow
+} from '#lib/banto/itemsAdmin.js';
 
 // Rust's ItemInput.price/.stock (apps/admin-template/core/src/items.rs) are
 // `i64`, so a fractional value must be rejected client-side too (not just
@@ -92,6 +97,20 @@ function toItemRow(row: ResourceRow): ResourceRow {
 	return { ...row, category: name.split(/\s+/)[0] ?? name };
 }
 
+/**
+ * The generic import row -> `ItemImportRow` (the Rust `ItemImportRow` shape).
+ * The panel only sends rows without errors and with every required column
+ * present, so the defaults never stand in for real input.
+ */
+export function toItemImportRow(row: ResourceImportRow): ItemImportRow {
+	return {
+		id: row.id === undefined ? undefined : Number(row.id),
+		name: String(row.name ?? ''),
+		price: Number(row.price ?? 0),
+		stock: Number(row.stock ?? 0)
+	};
+}
+
 export const itemsResource = defineResource({
 	name: 'items',
 	path: '/items',
@@ -140,7 +159,17 @@ export const itemsResource = defineResource({
 		// Desktop: write into the app's `exports/` folder (WebView2 has no save
 		// dialog for `<a download>`). A wrapper, not the bare function: this
 		// module and itemsAdmin.ts sit on an import cycle through setup.ts.
-		export: { toFolder: (csv, filename) => exportCsvToFolder(csv, filename) }
+		export: { toFolder: (csv, filename) => exportCsvToFolder(csv, filename) },
+		// Bulk import (spec M15). `DataProvider` has no import entry point, so
+		// the definition passes the items endpoint itself (wrappers for the
+		// same import-cycle reason as above). Required columns and the
+		// preview table default to the schema's required fields
+		// (name / price / stock); `id` is an integer.
+		import: {
+			available: () => isItemsImportAvailable(),
+			rules: () => m['items.importRules'](),
+			run: (rows) => importItems(rows.map(toItemImportRow))
+		}
 	},
 	demoNotes: () => [
 		m['items.annotationEdit'](),

@@ -103,9 +103,12 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 		export?:
 			boolean | { toFolder?: (csv: string, filename: string) => Promise<FolderExportResult> };
 		import?: {
-			available: () => boolean; // provider 層の判定（conventions §10）
+			available?: () => boolean; // provider 層の判定（conventions §10）。既定は常に可
 			rules: () => string; // items.importRules の置き場
-			run: (rows: Record<string, unknown>[]) => Promise<ImportResult>;
+			run: (rows: ResourceImportRow[]) => Promise<ResourceImportResult>;
+			required?: readonly string[]; // 既定はスキーマの required で readonly でない欄（段 5）
+			preview?: readonly string[]; // 確認表の列。既定は required（段 5）
+			idType?: 'integer' | 'string'; // id 列の読み方。既定は integer（段 5）
 		};
 	};
 	demoNotes?: () => string[]; // デモビルドの注釈ドロワーの段落
@@ -131,7 +134,7 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 - 権限による出し分け（§5）、デモビルドの注釈（§7）
 
 差し込み口（snippet）は少なく始める: `actions`（主操作の前に足す操作。日報ボタンはここ）、`viewMenu`
-（「表示」メニューへの追加項目）、`beforeGrid`（KPI など一覧の上）、`empty`（空状態。B-6）、`annotation`
+（「表示」メニューへの追加項目）、`beforeGrid`（KPI など一覧の上。取込の確認パネルの下）、`empty`（空状態。B-6）、`annotation`
 （`demoNotes` の代わりに注釈を自分で描く）。列の見た目はグリッドの列定義の `overrides` で変え、snippet にしない。
 
 **`<ResourceDetail resource={…} id={…}>`** — `id` が `null` なら新規、値があれば編集。`createFormResource` と
@@ -223,6 +226,18 @@ interface AppResourceDefinition<T extends { id: string | number }> extends Resou
 定義が 60〜100 行（items から client のグループ化の見本 約 55 行を除いた量）、ルートが一覧 10 行前後・`[id]` と
 `new` が各 20〜30 行で、合わせて 150 行前後になる。items の固有のコードは今 797 行（定義 164・ルート 3 本 633）
 で、段 5 で取込を移した後に改めて測る。
+
+**段 5 の実測（2026-11-13）。** CSV 取込を部品へ移し、段 4 の一時的な差し込み口 `csvImport` を消した
+（`beforeGrid` は KPI などのために残す）。一覧の部品は 2,015 行（`ResourceListPage.svelte` 816・
+`ResourceImportPanel.svelte` 348・`csvImport.ts` 214・`ResourceServerGrid.svelte` 263・
+`ResourceClientGrid.svelte` 161・`rowSaveQueue.ts` 84・`listState.ts` 68・`columns.ts` 61。テストを除く）に
+なり、`types.ts` がさらに 42 行増えた（111 → 153）。items の一覧のルートは 555 行から 34 行に、定義は
+164 行から 193 行（`csv.import` と、汎用の行を `ItemImportRow` に直す `toItemImportRow`）になり、
+`importPreview.ts`（45 行）は汎用の `csvImport.ts` に置き換わった。items の固有のコードは 797 行から
+**305 行**（定義 193・ルート 3 本 112）になった — 見込みの 300〜400 行の下端。テンプレート全体の一覧まわりは
+約 2,110 行から約 2,200 行に増えた（取込の汎用化 — 必須列・確認表の列・文字列 id・一部だけ反映された
+ときの表示 — と doc コメントの分）。2 本目のリソースが CSV 取込を持つときに足す量は、定義の `csv.import`
+の 5〜10 行と取込の API のクライアント（items の `importItems` は約 10 行）だけになる。
 
 ## 検討した代替案
 

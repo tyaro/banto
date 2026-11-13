@@ -396,7 +396,7 @@ test('添付を外すと items/[id] は ResourceDetail だけの薄いルート�
 	}
 });
 
-test('帳票を外すと items の一覧から日報の import と actions snippet が消える（ADR-0030 段 4）', () => {
+test('帳票を外すと items の一覧から日報の import と actions snippet が消える（ADR-0030 段 4・5）', () => {
 	const dir = copyRepo();
 	try {
 		const res = runIn(dir, ['--preset', 'standard', '--strict']);
@@ -415,17 +415,15 @@ test('帳票を外すと items の一覧から日報の import と actions snipp
 			"from '$app/paths'"
 		])
 			assert.ok(!list.includes(gone), `items の一覧に残っている: ${gone}`);
-		// 一覧の部品と、段 5 まで route に残す CSV 取込の snippet はそのまま。
+		// CSV 取込は段 5 で部品の `csv.import` へ移ったので、ルートは部品を呼ぶだけになる。
 		assert.ok(
-			list.includes('<ResourceListPage resource={itemsResource}>\n\t<!-- Rendered by'),
-			`ResourceListPage の開きタグの後が整っていない:\n${list}`
+			list.includes('<ResourceListPage resource={itemsResource}></ResourceListPage>\n'),
+			`ResourceListPage の呼び出しが整っていない:\n${list}`
 		);
-		for (const kept of ['{#snippet csvImport()}', '{#snippet beforeGrid()}'])
-			assert.ok(list.includes(kept), `items の一覧から消えている: ${kept}`);
 		// import の区間を消した後に空白だけの行が残らない（prettier 整合）。
 		assert.ok(
 			list.includes(
-				"import ResourceListPage from '#lib/resource/ResourceListPage.svelte';\n\timport {\n"
+				"import ResourceListPage from '#lib/resource/ResourceListPage.svelte';\n</script>\n"
 			),
 			'日報の import を消した跡が整っていない'
 		);
