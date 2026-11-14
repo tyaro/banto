@@ -519,6 +519,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			`¥${ITEM_PRICE_UPDATED.toLocaleString('en-US')}`
 		);
 		await expect(drawer).toBeVisible();
+
+		// History tab (#591 stage 2, admin only): this record's audit log,
+		// narrowed by resource and entityId. The save above is on the list.
+		await drawer.getByRole('tab', { name: '履歴', exact: true }).click();
+		const historyTable = drawer.getByRole('table', { name: /履歴/ });
+		await expect(async () => {
+			await expect(historyTable).toBeVisible();
+			await expect(
+				historyTable.getByRole('cell', { name: '更新', exact: true }).first()
+			).toBeVisible();
+		}).toPass();
+		await drawer.getByRole('tab', { name: '詳細', exact: true }).click();
+		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE_UPDATED));
+
 		await drawer.getByRole('button', { name: '閉じる', exact: true }).first().click();
 		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);

@@ -40,6 +40,12 @@
 	Under 768px the drawer is not used: opening goes to that page. Closing,
 	moving and expanding with unsaved edits go through a confirmation.
 
+	History tab (#591, stage 2): for `admin` only (and not in the browser-only
+	demo, which has no audit log), the drawer has "Details" / "History" tabs;
+	"History" lists the audit log of this record (`ResourceHistory`), read when
+	the tab is opened. The form stays mounted (hidden) while the history shows,
+	so unsaved edits survive a tab switch. Other roles see the drawer as before.
+
 	The definition is read ONCE, when the component is created (the (app)
 	layout keys every page on its route).
 
@@ -102,13 +108,17 @@
 		MenuItem,
 		MenuSeparator,
 		Modal,
-		PageHeader
+		PageHeader,
+		Tabs,
+		type TabItem
 	} from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { sessionStore } from '#lib/session.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
+	import { isAuditLogAvailable } from '#lib/banto/auditLogAdmin.js';
 	import { resolveAppPath, type AppPath } from '#lib/appPath.js';
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
@@ -149,6 +159,7 @@
 	import { createRowSaveQueue } from './rowSaveQueue';
 	import ResourceClientGrid from './ResourceClientGrid.svelte';
 	import ResourceDetail from './ResourceDetail.svelte';
+	import ResourceHistory from './ResourceHistory.svelte';
 	import ResourceImportPanel from './ResourceImportPanel.svelte';
 	import ResourceServerGrid from './ResourceServerGrid.svelte';
 	import type { AppResourceDefinition, ListLoadMode, ResourceRow } from './types';
@@ -598,6 +609,21 @@
 	}
 
 	const drawerRowId = $derived(drawerId === null ? null : normalizeId(drawerId));
+
+	// --- #591 stage 2: the drawer's "History" tab ----------------------------
+	/** Who may read the audit log (the server's `audit_log_list` is `admin`-only and stays the real check), and only where there is one. */
+	const historyAvailable = $derived(isAdmin(sessionStore.role) && isAuditLogAvailable());
+	let drawerTab = $state('detail');
+	/** Bumped when a save answers while the History tab is open, so the list reads again. */
+	let historyReloadKey = $state(0);
+	const drawerTabs: TabItem[] = $derived([
+		{ id: 'detail', label: m['resource.detailTab']() },
+		{ id: 'history', label: m['resource.historyTab']() }
+	]);
+	/** The tab actually shown (without the tabs, always the form). */
+	const historyShown = $derived(
+		historyAvailable && drawerTab === 'history' && typeof drawerRowId === 'number'
+	);
 	const previousRow = $derived(
 		drawerOpen && drawerRowId !== null ? adjacentLookup?.(drawerRowId, -1) : undefined
 	);
@@ -644,6 +670,7 @@
 		drawerOpen = false;
 		drawerId = null;
 		drawerOpenedWith = null;
+		drawerTab = 'detail';
 		writeDrawerParam(null);
 		// The Drawer gives focus back to the button that opened it. After a
 		// move to another record, that record's button is the better place -
@@ -735,6 +762,8 @@
 		// The list refreshes itself (`createFormResource` invalidates the
 		// resource); only the #215 "left the filter" check is ours.
 		checkFilterExclusion(row);
+		// A save that answered after the History tab was opened: read it again.
+		if (historyShown) historyReloadKey++;
 	}
 
 	// Alt+Up / Alt+Down: previous / next, only while focus is in the drawer
@@ -1486,17 +1515,35 @@
 >
 	{#if drawerId !== null}
 		<div class="drawer-body" tabindex="-1" bind:this={drawerBodyEl}>
-			{#key drawerId}
-				<ResourceDetail
-					bind:this={detailRef}
-					resource={def}
-					id={drawerId}
-					after={detailAfter}
-					onClose={closeDrawerFromDetail}
-					onSaved={handleDrawerSaved}
-					onDeleted={closeDrawerNow}
-				/>
-			{/key}
+			{#if historyAvailable && typeof drawerRowId === 'number'}
+				<!-- Only the History panel is drawn by the tabs; the form below stays mounted (hidden) so unsaved edits survive. -->
+				<Tabs tabs={drawerTabs} bind:value={drawerTab} label={m['resource.tabsLabel']()}>
+					{#snippet panel(tab)}
+						{#if tab === 'history'}
+							{#key drawerRowId}
+								<ResourceHistory
+									resource={def.name}
+									id={drawerRowId}
+									reloadKey={historyReloadKey}
+								/>
+							{/key}
+						{/if}
+					{/snippet}
+				</Tabs>
+			{/if}
+			<div class="detail-pane" hidden={historyShown}>
+				{#key drawerId}
+					<ResourceDetail
+						bind:this={detailRef}
+						resource={def}
+						id={drawerId}
+						after={detailAfter}
+						onClose={closeDrawerFromDetail}
+						onSaved={handleDrawerSaved}
+						onDeleted={closeDrawerNow}
+					/>
+				{/key}
+			</div>
 		</div>
 	{/if}
 </Drawer>
@@ -1637,6 +1684,17 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-4);
+	}
+
+	/* #591 stage 2: the form's host; `hidden` while the History tab shows. */
+	.detail-pane {
+		display: flex;
+		flex-direction: column;
+		gap: var(--banto-space-4);
+	}
+
+	.detail-pane[hidden] {
+		display: none;
 	}
 
 	/* Issue #215: highlights whichever row was last opened/saved from
