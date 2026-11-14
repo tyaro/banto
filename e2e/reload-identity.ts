@@ -1,4 +1,4 @@
-import { expect, type Frame, type Page } from '@playwright/test';
+import { expect, type Frame, type Page, type Response } from '@playwright/test';
 
 /**
  * Reloads the page and returns the body of the `/api/auth/identity` response
@@ -12,7 +12,9 @@ import { expect, type Frame, type Page } from '@playwright/test';
  */
 export async function reloadAndReadIdentity(page: Page): Promise<unknown> {
 	let reloaded = false;
-	let body: unknown;
+	// Predicates run concurrently for overlapping responses, so keep each body
+	// with its own response and return the one waitForResponse settled on.
+	const bodies = new Map<Response, unknown>();
 	const markReloaded = (frame: Frame) => {
 		if (frame === page.mainFrame()) reloaded = true;
 	};
@@ -21,12 +23,11 @@ export async function reloadAndReadIdentity(page: Page): Promise<unknown> {
 		const identity = page.waitForResponse(async (response) => {
 			if (!reloaded || new URL(response.url()).pathname !== '/api/auth/identity') return false;
 			expect(response.ok()).toBe(true);
-			body = await response.json();
+			bodies.set(response, await response.json());
 			return true;
 		});
 		await page.reload();
-		await identity;
-		return body;
+		return bodies.get(await identity);
 	} finally {
 		page.off('framenavigated', markReloaded);
 	}
