@@ -341,23 +341,39 @@
 	);
 
 	/* Charts (consumed by @banto/charts from M4, spec §6). Categorical series
-     take slots 1..8 in fixed order by series index - never cycle/reassign. */
-	--banto-chart-1: #2a78d6;
-
-	--banto-chart-2: #1baf7a;
-
-	--banto-chart-3: #eda100;
-
-	--banto-chart-4: #008300;
-
-	--banto-chart-5: #4a3aa7;
-
-	--banto-chart-6: #e34948;
-
-	--banto-chart-7: #e87ba4;
-
-	--banto-chart-8: #eb6834;
-
+     take slots 1..8 in fixed order by series index - never cycle/reassign.
+     Fixed sRGB values (they do NOT follow --banto-brand-hue): checked by
+     packages/theme/tests/chart-palette.test.ts - every pair (and, with a
+     larger margin, every neighbour i/i+1) stays apart in OKLab under normal
+     vision and simulated protan/deutan/tritan vision, and each is >= 3:1 on
+     the surface (#557). */
+	--banto-chart-1: #1a469d;
+	--banto-chart-2: #da7306;
+	--banto-chart-3: #6a3961;
+	--banto-chart-4: #58a175;
+	--banto-chart-5: #8d1920;
+	--banto-chart-6: #117c72;
+	--banto-chart-7: #8c69cd;
+	--banto-chart-8: #915f21;
+	/* Sequential (magnitude, one blue hue): step 1 = low = closest to the
+     surface, step 7 = high = most contrast; OKLab lightness is monotone. */
+	--banto-chart-seq-1: #cde2fb;
+	--banto-chart-seq-2: #9ec5f4;
+	--banto-chart-seq-3: #6da7ec;
+	--banto-chart-seq-4: #3987e5;
+	--banto-chart-seq-5: #256abf;
+	--banto-chart-seq-6: #184f95;
+	--banto-chart-seq-7: #0d366b;
+	/* Diverging (blue <- neutral -> orange, no red/green): step 4 is the
+     neutral midpoint, lightness moves away from it monotonically and
+     symmetrically on both sides. */
+	--banto-chart-div-1: #0465af;
+	--banto-chart-div-2: #5e93ca;
+	--banto-chart-div-3: #a6c1dd;
+	--banto-chart-div-4: #eeeeee;
+	--banto-chart-div-5: #d8b6a0;
+	--banto-chart-div-6: #be7e51;
+	--banto-chart-div-7: #964c04;
 	--banto-chart-grid: #e1e0d9;
 
 	--banto-chart-axis: #c3c2b7;
@@ -458,14 +474,31 @@
 	--banto-success: oklch(0.723 0.192 150);
 	--banto-info: oklch(0.72 0.12 235);
 
-	--banto-chart-1: #3987e5;
-	--banto-chart-2: #199e70;
-	--banto-chart-3: #c98500;
-	--banto-chart-4: #008300;
-	--banto-chart-5: #9085e9;
-	--banto-chart-6: #e66767;
-	--banto-chart-7: #d55181;
-	--banto-chart-8: #d95926;
+	/* Same slot order and hue families as light, re-tuned for the dark
+     surface (and raised); same checks (chart-palette.test.ts). Sequential
+     runs dark -> bright here so "more" still means "more contrast". */
+	--banto-chart-1: #407aea;
+	--banto-chart-2: #f48815;
+	--banto-chart-3: #a7719d;
+	--banto-chart-4: #75b992;
+	--banto-chart-5: #de401b;
+	--banto-chart-6: #3df4ef;
+	--banto-chart-7: #ca99ef;
+	--banto-chart-8: #fed48d;
+	--banto-chart-seq-1: #1f3f61;
+	--banto-chart-seq-2: #23578d;
+	--banto-chart-seq-3: #2a71b8;
+	--banto-chart-seq-4: #3e8cdd;
+	--banto-chart-seq-5: #5da8fa;
+	--banto-chart-seq-6: #93c5fe;
+	--banto-chart-seq-7: #c8e1fe;
+	--banto-chart-div-1: #89c3fe;
+	--banto-chart-div-2: #6394c7;
+	--banto-chart-div-3: #51687f;
+	--banto-chart-div-4: #3d3d3d;
+	--banto-chart-div-5: #7b5e4c;
+	--banto-chart-div-6: #bc8157;
+	--banto-chart-div-7: #ffa666;
 	--banto-chart-grid: #2c2c2a;
 	--banto-chart-axis: #383835;
 

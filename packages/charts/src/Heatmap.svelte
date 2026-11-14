@@ -2,7 +2,8 @@
 	/**
 	 * Heatmap (spec §6.1 v2 chart types): two categorical axes (x, y), one
 	 * numeric value per (x, y) cell, encoded as a SEQUENTIAL (single-hue,
-	 * light -> dark) color ramp (spec §6.4 rule 9) - never the categorical
+	 * low = close to the surface -> high = most contrast) color ramp
+	 * (`SEQ_RAMP` = the --banto-chart-seq-N tokens, spec §6.4 rule 9) - never the categorical
 	 * `seriesColorVar` slots, since a cell's color here is a magnitude, not an
 	 * entity. Category order on both axes is FIRST-APPEARANCE order in `data`
 	 * (see `core/heatmap.ts`); callers wanting a specific order (e.g. a fixed

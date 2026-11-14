@@ -15,20 +15,31 @@ export function seriesColorVar(index: number): string {
 }
 
 /**
- * Sequential (single-hue, light -> dark) ramp for magnitude encodings (spec
- * §6.4 rule 9: a heatmap cell's color is a MAGNITUDE, not a category,
- * so it must never borrow from the categorical `seriesColorVar` slots - one
- * hue only, varying in lightness). Validated blue ramp, light to dark.
+ * Sequential (single-hue) ramp for magnitude encodings (spec §6.4 rule 9: a
+ * heatmap cell's color is a MAGNITUDE, not a category, so it must never borrow
+ * from the categorical `seriesColorVar` slots - one hue only, varying in
+ * lightness). Step 0 = low = closest to the surface, last step = high = most
+ * contrast. The values are theme tokens (`--banto-chart-seq-1..7` in banto.css,
+ * light and dark, checked by packages/theme/tests/chart-palette.test.ts), so the
+ * ramp follows the theme. SVG export bakes the resolved colour of every
+ * `fill="var(...)"` (export.ts), so a reference is safe there too.
  */
-export const SEQ_RAMP: readonly string[] = [
-	'#cde2fb',
-	'#9ec5f4',
-	'#6da7ec',
-	'#3987e5',
-	'#256abf',
-	'#184f95',
-	'#0d366b'
-];
+export const SEQ_STEPS = 7;
+export const SEQ_RAMP: readonly string[] = Array.from(
+	{ length: SEQ_STEPS },
+	(_, i) => `var(--banto-chart-seq-${i + 1})`
+);
+
+/**
+ * Diverging ramp (blue <- neutral -> orange, no red/green) for signed values
+ * around a meaningful midpoint (deviation from a target, change since the last
+ * period). The middle step (`--banto-chart-div-4`) is the neutral midpoint.
+ */
+export const DIV_STEPS = 7;
+export const DIV_RAMP: readonly string[] = Array.from(
+	{ length: DIV_STEPS },
+	(_, i) => `var(--banto-chart-div-${i + 1})`
+);
 
 /**
  * Bin `value` into one of `ramp`'s steps by its linear position within
@@ -51,4 +62,34 @@ export function sequentialColor(
 	const ratio = Math.min(1, Math.max(0, (value - min) / (max - min)));
 	const step = Math.min(ramp.length - 1, Math.floor(ratio * ramp.length));
 	return ramp[step];
+}
+
+/**
+ * Pick a `ramp` step for `value` around `mid`: the middle step for `value ===
+ * mid`, the steps below the middle for `[min, mid)` and the steps above it for
+ * `(mid, max]`. Each side is binned linearly over its own half, so an
+ * asymmetric domain (e.g. -10..+40) still uses the whole of both sides, and
+ * any value off `mid` lands at least one step away from the neutral middle.
+ * Values outside `[min, max]` are clamped; a side with no extent (`min === mid`
+ * or `max === mid`) maps everything on that side to its outermost step.
+ * `ramp` defaults to `DIV_RAMP` and should have an odd length (with an even
+ * length the step just below the centre is treated as the middle).
+ */
+export function divergingColor(
+	value: number,
+	min: number,
+	mid: number,
+	max: number,
+	ramp: readonly string[] = DIV_RAMP
+): string {
+	if (ramp.length === 0) return '';
+	const centre = Math.floor((ramp.length - 1) / 2);
+	if (value === mid) return ramp[centre];
+	const below = value < mid;
+	const side = below ? centre : ramp.length - 1 - centre;
+	if (side === 0) return ramp[centre];
+	const extent = below ? mid - min : max - mid;
+	const ratio = extent <= 0 ? 1 : Math.min(1, Math.abs(value - mid) / extent);
+	const k = Math.min(side, Math.max(1, Math.ceil(ratio * side)));
+	return ramp[below ? centre - k : centre + k];
 }

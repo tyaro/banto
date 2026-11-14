@@ -52,7 +52,16 @@ export {
 } from './core/path';
 export { toMs, ganttDomain, ganttLayout, type GanttTask, type GanttBar } from './core/gantt';
 export { everyNthIndex } from './core/ticks-time';
-export { seriesColorVar, MAX_CHART_SERIES, sequentialColor, SEQ_RAMP } from './core/color';
+export {
+	seriesColorVar,
+	MAX_CHART_SERIES,
+	sequentialColor,
+	SEQ_RAMP,
+	SEQ_STEPS,
+	divergingColor,
+	DIV_RAMP,
+	DIV_STEPS
+} from './core/color';
 export {
 	estimateLabelWidth,
 	leftMarginFor,

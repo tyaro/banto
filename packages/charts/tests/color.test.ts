@@ -1,5 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { SEQ_RAMP, sequentialColor, seriesColorVar } from '../src/core/color';
+import {
+	DIV_RAMP,
+	DIV_STEPS,
+	divergingColor,
+	SEQ_RAMP,
+	SEQ_STEPS,
+	sequentialColor,
+	seriesColorVar
+} from '../src/core/color';
+
+describe('SEQ_RAMP / DIV_RAMP', () => {
+	it('reference the theme tokens in step order', () => {
+		expect(SEQ_RAMP).toHaveLength(SEQ_STEPS);
+		expect(SEQ_RAMP[0]).toBe('var(--banto-chart-seq-1)');
+		expect(SEQ_RAMP[SEQ_STEPS - 1]).toBe(`var(--banto-chart-seq-${SEQ_STEPS})`);
+		expect(DIV_RAMP).toHaveLength(DIV_STEPS);
+		expect(DIV_RAMP[0]).toBe('var(--banto-chart-div-1)');
+		expect(DIV_RAMP[DIV_STEPS - 1]).toBe(`var(--banto-chart-div-${DIV_STEPS})`);
+	});
+});
+
+describe('divergingColor', () => {
+	const ramp = ['a', 'b', 'c', 'MID', 'e', 'f', 'g'];
+
+	it('uses the neutral middle step exactly at the midpoint', () => {
+		expect(divergingColor(0, -10, 0, 10, ramp)).toBe('MID');
+		expect(divergingColor(0, -10, 0, 10)).toBe('var(--banto-chart-div-4)');
+	});
+
+	it('bins each side over its own half (asymmetric domains use both sides fully)', () => {
+		expect(divergingColor(-10, -10, 0, 40, ramp)).toBe('a');
+		expect(divergingColor(40, -10, 0, 40, ramp)).toBe('g');
+		expect(divergingColor(-5, -10, 0, 40, ramp)).toBe('b');
+		expect(divergingColor(20, -10, 0, 40, ramp)).toBe('f');
+	});
+
+	it('never puts a value off the midpoint on the neutral step', () => {
+		expect(divergingColor(0.001, -10, 0, 10, ramp)).toBe('e');
+		expect(divergingColor(-0.001, -10, 0, 10, ramp)).toBe('c');
+	});
+
+	it('clamps outside the domain and handles a side with no extent', () => {
+		expect(divergingColor(-99, -10, 0, 10, ramp)).toBe('a');
+		expect(divergingColor(99, -10, 0, 10, ramp)).toBe('g');
+		expect(divergingColor(-1, 0, 0, 10, ramp)).toBe('a');
+	});
+
+	it('handles tiny ramps', () => {
+		expect(divergingColor(1, 0, 0.5, 1, [])).toBe('');
+		expect(divergingColor(1, 0, 0.5, 1, ['x'])).toBe('x');
+		expect(divergingColor(0, 0, 0.5, 1, ['x'])).toBe('x');
+	});
+});
 
 describe('seriesColorVar', () => {
 	it('maps series index 0..7 to slots 1..8 in fixed order', () => {
