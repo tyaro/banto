@@ -38,12 +38,11 @@
 
 	let { tasks, label, rowHeight = 28, formatDate, today, margins, messages = {} }: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below. Named `msg` (not
+	// `messages` is merged with the defaults via `$derived`, so a parent that
+	// swaps the bundle later (a locale switch) is followed. Named `msg` (not
 	// `t`) because `t` is already this file's per-task local variable name in
 	// `tooltipRows` below.
-	// svelte-ignore state_referenced_locally
-	const msg = { ...defaultChartMessages, ...messages };
+	const msg = $derived({ ...defaultChartMessages, ...messages });
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 24, right: 16, bottom: 24, left: 96 };
 	// Task label end <-> plot edge: used for the label's x, its truncation and
