@@ -1991,6 +1991,118 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(rowWithText(page, '設定変更').first()).toBeVisible();
 	});
 
+	// #591 stage 2: the drawer's 履歴 tab (the audit log of the record) is for
+	// admins only. An editor and a viewer see the detail directly - no tablist,
+	// no 履歴 tab - and the form is still there (editable / read-only).
+	test('7b. items drawer: editor and viewer get no 履歴 tab, the detail is shown as is', async () => {
+		test.setTimeout(60_000);
+		const EDITOR_USERNAME = 'e2e-editor';
+		const EDITOR_PASSWORD = 'E2eEditorPass1';
+
+		// The editor account is created through the API from the admin's own
+		// session (scenario 5 keeps the users list as the later scenarios expect).
+		const editorId = await page.evaluate(
+			async ({ username, password }) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const created = await fetch('/api/users', {
+					method: 'POST',
+					headers: {
+						'X-Banto-Client': 'banto',
+						Authorization: `Bearer ${token}`,
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						username,
+						password,
+						displayName: 'E2E編集者',
+						role: 'editor'
+					})
+				});
+				if (!created.ok) throw new Error(`create editor failed: ${created.status}`);
+				return ((await created.json()) as { id: number }).id;
+			},
+			{ username: EDITOR_USERNAME, password: EDITOR_PASSWORD }
+		);
+
+		async function loginAs(username: string, password: string): Promise<void> {
+			await logout(page);
+			await expect(page).toHaveURL(/\/login$/);
+			await page.getByLabel('ユーザー名').fill(username);
+			await page.getByLabel('パスワード').fill(password);
+			await page.getByRole('button', { name: 'ログイン' }).click();
+			await expect(page).toHaveURL(/\/dashboard$/);
+		}
+
+		// The same row is opened for every role (its id is fixed from the
+		// admin's first look), so only the role differs between the drawers.
+		let targetId: string | null = null;
+		async function openTargetRowDrawer(): Promise<Locator> {
+			await page.goto('/items');
+			const rows = page.getByRole('row').filter({ has: page.locator('[data-resource-open]') });
+			if (targetId === null) targetId = await rowItemId(rows.first());
+			const row = rows.filter({ has: page.locator(`[data-resource-open="${targetId}"]`) }).first();
+			return openInDrawer(page, row, targetId);
+		}
+
+		let cleanupError: unknown;
+		try {
+			// Control: the admin sees the 履歴 tab on that very row, so the
+			// locator is right and only the role explains its absence below.
+			const adminDrawer = await openTargetRowDrawer();
+			await expect(adminDrawer.getByRole('tab', { name: '履歴', exact: true })).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(adminDrawer).toBeHidden();
+
+			await loginAs(EDITOR_USERNAME, EDITOR_PASSWORD);
+			const editorDrawer = await openTargetRowDrawer();
+			await expect(editorDrawer.getByRole('tablist')).toHaveCount(0);
+			await expect(editorDrawer.getByRole('tab', { name: '履歴', exact: true })).toHaveCount(0);
+			await expect(editorDrawer.getByRole('spinbutton', { name: /^価格/ })).toBeEditable();
+			await expect(editorDrawer.getByRole('button', { name: '保存', exact: true })).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(editorDrawer).toBeHidden();
+
+			await loginAs(VIEWER_USERNAME, VIEWER_PASSWORD);
+			const viewerDrawer = await openTargetRowDrawer();
+			await expect(viewerDrawer.getByRole('tablist')).toHaveCount(0);
+			await expect(viewerDrawer.getByRole('tab', { name: '履歴', exact: true })).toHaveCount(0);
+			await expect(viewerDrawer.getByRole('spinbutton', { name: /^価格/ })).not.toBeEditable();
+			await expect(viewerDrawer.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+			await page.keyboard.press('Escape');
+			await expect(viewerDrawer).toBeHidden();
+		} finally {
+			// Cleanup must not hide the original failure: if a role check failed
+			// the drawer is still open and its overlay covers the header, so
+			// close it first, and let the original exception win over any
+			// cleanup error.
+			try {
+				if (targetId !== null) {
+					const openDrawer = itemDrawer(page, targetId);
+					if (await openDrawer.isVisible()) {
+						await page.keyboard.press('Escape');
+						await expect(openDrawer).toBeHidden({ timeout: 5_000 });
+					}
+				}
+				// Later scenarios continue as the admin, and the editor is removed again.
+				await loginAs(ADMIN_USERNAME, ADMIN_PASSWORD);
+				await page.evaluate(async (id) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const res = await fetch(`/api/users/${id}`, {
+						method: 'DELETE',
+						headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+					});
+					if (!res.ok) throw new Error(`delete editor failed: ${res.status}`);
+				}, editorId);
+			} catch (error) {
+				// Rethrown below only when the test body itself passed.
+				cleanupError = error;
+			}
+		}
+		if (cleanupError !== undefined) throw cleanupError;
+	});
+
 	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
 		await page.goto('/items');
 		await page.getByRole('button', { name: '新規作成' }).click();
