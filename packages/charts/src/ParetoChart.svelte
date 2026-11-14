@@ -44,10 +44,9 @@
 
 	let { items, label, height = 240, formatValue, margins, messages = {} }: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultChartMessages, ...messages };
+	// `messages` is merged with the defaults via `$derived`, so a parent that
+	// swaps the bundle later (a locale switch) is followed.
+	const t = $derived({ ...defaultChartMessages, ...messages });
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 40, bottom: 26, left: 48 };
 	// The default left/right margins grow to fit the value / cumulative-%

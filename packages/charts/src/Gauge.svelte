@@ -48,8 +48,7 @@
 	// r*sin(45deg) below center (see core/gauge.ts's angle-convention note).
 	const ARC_VERTICAL_FACTOR = 1 + Math.sin(Math.PI / 4);
 
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultChartMessages, ...messages };
+	const t = $derived({ ...defaultChartMessages, ...messages });
 
 	const formatValueDisplay = $derived(formatValue ?? ((n: number) => n.toLocaleString()));
 

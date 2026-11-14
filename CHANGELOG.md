@@ -23,6 +23,7 @@
 ## [Unreleased]
 
 - 共通パッケージ（A）: `@banto/dock-svelte`・`@banto/tree-svelte` の `messages` を後から差し替えても文言が変わらない不具合を直した。`DockedTree`・`DockWindow`・`BantoTree`・`TreeSelect` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした（`TreeSelect` は既定の `placeholder`・`selectedCount` を挟んだ順序のまま）。公開 API は変わらない。
+- 共通パッケージ（A）: `@banto/charts` の `messages` を後から差し替えても文言が変わらない不具合を直した。`BoxPlot`・`Gauge`・`Histogram`・`LineChart`・`ParetoChart`・`StackedAreaChart`・`GanttChart` と内部の `ChartContainer` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした。公開 API は変わらない。
 - 共通パッケージ（A）: `@banto/attachments`・`@banto/report` の `messages` を後から差し替えても文言が変わらない不具合を直した。`AttachmentsPanel`・`ReportView` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした（`@banto/grid-svelte` と同じ形）。公開 API は変わらない。
 - 共通パッケージ（A）: `@banto/grid-svelte` の `messages` を後から差し替えても文言が変わらない不具合を直した。`BantoGrid`・`HeaderCell`・`FilterPopover`・`FilterChips`・`ColumnsMenu` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした。公開 API は変わらない。
 - テンプレート（B）: 監査ログ画面の詳細に「対象を開く」リンクを足した（#597 の段 2）。選んだ記録の `resource`・`entityId` から、その resource の一覧画面を `?id=<entityId>` 付きで開く（ドロワーでそのレコードが開く。狭い画面は従来どおり詳細ページへ進む）。resource 名→パスは登録済みの `resources` から引く（対応表は持たない）。`delete` の記録・画面の無い resource（users・attachments など）・`entityId` の無い記録にはリンクを出さない。純関数は新しい `lib/resource/auditTarget.ts`、メッセージは `audit.openTarget`（en/ja）。派生アプリは `lib/resource/auditTarget.ts`・`routes/(app)/audit-log/+page.svelte`・メッセージの差分を取り込むこと。Closes #597
