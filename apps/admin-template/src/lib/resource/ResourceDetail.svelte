@@ -212,7 +212,20 @@
 			// Saved: nothing is unsaved any more, so the move back to the list
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).
-			store.markClean();
+			// #591 review: the drawer keeps the form open, so take the saved
+			// row as the new values - the server may have changed some
+			// (`updatedAt` stamped, the name trimmed). Only when nothing was
+			// typed during the save; otherwise keep that input as before.
+			if (
+				onSaved &&
+				!isNew &&
+				result.row &&
+				JSON.stringify(store.values) === JSON.stringify(values)
+			) {
+				store.reset({ ...(result.row as Record<string, unknown>) });
+			} else {
+				store.markClean();
+			}
 			if (!onSaved && guard.canAutoNavigate) goto(listHref);
 		} else {
 			store.setServerErrors(result.fieldErrors);
