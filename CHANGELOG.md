@@ -72,7 +72,7 @@
   - items の `column_map()` の `text_column` と、件数のクエリの `append_list_where`（`core/src`）。
   - 監査ログ: `audit/diff.rs`・`ItemsService::update_returning_previous`・`AuditChanges.svelte`・`lib/resource/auditTarget.ts` の差し替え。
 - 派生側の独自変更と衝突しやすい箇所: items の一覧・詳細のルート、`resources/items.ts`、`messages/*.json`、`app.css`、dashboard、settings の接続カテゴリ、`core/src` の items・audit。
-- 取り込まなくても動くか: 動く見込み。A のタグを `v7.1.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」1（`ListParams`・`append_where`）と「消費側への注意」1・2（見た目）は A のタグに伴う。組み合わせの確認は未実施（「検証した組み合わせ」はタグの後に追記する）。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.1.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」1（`ListParams`・`append_where`）と「消費側への注意」1・2（見た目）は A のタグに伴う。Git 依存での導入は下の「検証した組み合わせ」で確かめた（テンプレートを取り込まない派生アプリそのものでの確認は未実施）。
 - 手本: 上記の `apps/admin-template/` のファイル。
 
 ### C. DB・設定・配布資産
@@ -96,7 +96,24 @@
 
 ### 検証した組み合わせ
 
-- 外部利用（Git 依存 + dev 起動）の検証: タグの後に追記する（#514 と同様、タグの後で別 PR で埋める）。
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `c3158c1`、`workflow_dispatch`）: [run 43606765436](https://github.com/tyaro/banto/actions/runs/43606765436)（success）。
+  - タグの push（`v7.1.0`、main の `c3158c1`）: [run 43606988779](https://github.com/tyaro/banto/actions/runs/43606988779)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 24.22.2                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.57.3                          |
+    | SvelteKit          | 3.1.1                           |
+    | Vite               | 8.3.6                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v24.22.2`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、
+    Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
 
 ### 変更の一覧
 
