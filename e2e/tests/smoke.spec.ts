@@ -573,14 +573,26 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		).toHaveCount(0);
 
 		// #597: selecting the update row shows the field table (field / before /
-		// after) instead of the raw JSON.
+		// after) instead of the raw JSON. This record can have several update
+		// rows (earlier steps and retries reuse the id), so look through them for
+		// the one whose price went ITEM_PRICE -> ITEM_PRICE_UPDATED.
 		await expect(async () => {
-			await rowWithText(page, '更新').first().click();
-			const changes = page.getByTestId('audit-changes');
-			await expect(changes).toBeVisible();
-			const priceRow = changes.getByRole('row').filter({ hasText: '価格' });
-			await expect(priceRow).toContainText(String(ITEM_PRICE));
-			await expect(priceRow).toContainText(String(ITEM_PRICE_UPDATED));
+			const updateRows = rowWithText(page, '更新');
+			const count = await updateRows.count();
+			expect(count).toBeGreaterThan(0);
+			let found = false;
+			for (let i = 0; i < count && !found; i++) {
+				await updateRows.nth(i).click();
+				const changes = page.getByTestId('audit-changes');
+				await expect(changes).toBeVisible();
+				const priceRow = changes
+					.getByRole('row')
+					.filter({ hasText: '価格' })
+					.filter({ hasText: String(ITEM_PRICE) })
+					.filter({ hasText: String(ITEM_PRICE_UPDATED) });
+				found = (await priceRow.count()) > 0;
+			}
+			expect(found).toBe(true);
 		}).toPass();
 
 		await page.goto(href);
