@@ -432,7 +432,8 @@ impl ItemsService {
             ""
         } else {
             // PostgreSQL: lock the row so a concurrent update cannot slip in
-            // between the read and the write (SQLite serializes writers).
+            // between the read and the write. (SQLite reserves the writer up
+            // front with BEGIN IMMEDIATE below, so nothing can interleave.)
             " FOR UPDATE"
         };
         let select_sql = format!(
@@ -452,7 +453,12 @@ impl ItemsService {
         let not_found = |err| banto_storage::not_found(err, RESOURCE, id.to_string());
         let (previous, item) = match &self.db {
             Db::Sqlite(pool) => {
-                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                // Reserve the writer BEFORE reading: a deferred transaction that
+                // read first could hit SQLITE_BUSY when upgrading to a write.
+                let mut tx = pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
                 let previous = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(select_sql))
                     .bind(id)
                     .fetch_one(&mut *tx)
@@ -472,7 +478,12 @@ impl ItemsService {
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                // Explicit isolation level: a pool's repeatable-read default
+                // would pin the snapshot before the FOR UPDATE wait ends.
+                let mut tx = pool
+                    .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
                 let previous = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(select_sql))
                     .bind(id)
                     .fetch_one(&mut *tx)
