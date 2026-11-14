@@ -199,3 +199,51 @@ describe('state text colours >= 4.5:1 on every surface, at every --banto-brand-h
 		}
 	}
 });
+
+describe('state -tint-text >= 4.6:1 on its own -tint over every surface, at every --banto-brand-hue', () => {
+	const MIN = 4.6;
+	const states = ['danger', 'warning', 'success', 'info'];
+
+	// light: the -tint is an opaque colour, so the surface does not matter
+	for (const state of states) {
+		it(`light: --banto-${state}-tint-text on --banto-${state}-tint`, () => {
+			const fg = fixedToken(LIGHT, `--banto-${state}-tint-text`);
+			const bg = fixedToken(LIGHT, `--banto-${state}-tint`);
+			const ratio = contrast(oklchToSrgb(fg, fg.hue), oklchToSrgb(bg, bg.hue));
+			expect(ratio).toBeGreaterThanOrEqual(MIN);
+		});
+	}
+
+	// dark: -tint is `color-mix(in srgb, <tint-text> 18%, transparent)`, i.e. an 18%
+	// film of the text colour composited (in gamma-encoded sRGB) over the surface
+	const surfaces: [string, string][] = [
+		['bg', '--banto-neutral-1'],
+		['surface', '--banto-neutral-2'],
+		['raised', '--banto-neutral-4']
+	];
+	for (const state of states) {
+		for (const [surface, neutral] of surfaces) {
+			it(`dark: --banto-${state}-tint-text on its tint over ${surface}`, () => {
+				const t = fixedToken(DARK, `--banto-${state}-tint-text`);
+				const fg = oklchToSrgb(t, t.hue);
+				const { ratio, hue } = worst(
+					() => fg,
+					(h) => {
+						const base = oklchToSrgb(token(DARK, neutral), h);
+						return base.map((v, i) => 0.18 * fg[i] + 0.82 * v) as Rgb;
+					}
+				);
+				expect(ratio, `worst at hue ${hue}`).toBeGreaterThanOrEqual(MIN);
+			});
+		}
+		it(`${state}: --banto-${state}-tint-text is inside the sRGB gamut (light and dark)`, () => {
+			for (const rules of [LIGHT, DARK]) {
+				const t = fixedToken(rules, `--banto-${state}-tint-text`);
+				for (const v of oklchToLinear(t, t.hue)) {
+					expect(v).toBeGreaterThanOrEqual(0);
+					expect(v).toBeLessThanOrEqual(1);
+				}
+			}
+		});
+	}
+});

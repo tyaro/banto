@@ -548,7 +548,7 @@ Dark:
 | 状態 | text(対 surface / raised) | solid（対ボタン文字） | tint 地 / 文字（surface / raised 上） |
 |---|---|---|---|
 | primary | `--banto-primary-text` `oklch(0.74 0.12 H)` `#7aacf6`（7.0 / 6.2:1 ✓）。`--banto-primary` `#5492ec` は 5.2 / 4.6:1 | `#5492ec` / `--banto-text-inverse`（5.8:1 ✓）、hover `#7aacf6`（7.8:1） | — |
-| danger | `oklch(0.69 0.199 25)` `#ff5c59`（5.3 / 4.7:1 ✓） | light と同じ `#dc2627` / 白（4.8:1 ✓） | 18% / `oklch(0.76 0.14 22)` `#fe8a88`（5.1 / 4.5:1 ✓） |
+| danger | `oklch(0.69 0.199 25)` `#ff5c59`（5.3 / 4.7:1 ✓） | light と同じ `#dc2627` / 白（4.8:1 ✓） | 18% / `oklch(0.78 0.12 22)` `#fb9795`（tint 越しの最悪値 bg 6.1 / surface 5.4 / raised 4.7:1 ✓。旧 `oklch(0.76 0.14 22)` は raised で 4.49:1 だった） |
 | success | `#1ec55f`（7.1 / 6.3:1 ✓） | light と同じ `#15803d` / 白 | 18% / `#48de81`（6.2 / 5.5:1 ✓） |
 | warning | `#f59e0a`（7.6 / 6.7:1 ✓） | 塗りボタンは作らない | 18% / `#fcbf26`（6.4 / 5.7:1 ✓） |
 | info | `#4cb0e5`（6.7 / 5.9:1 ✓） | 塗りボタンは作らない | 18% / `#7ac8f5`（5.9 / 5.3:1 ✓） |
