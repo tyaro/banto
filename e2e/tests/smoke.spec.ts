@@ -584,7 +584,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			for (let i = 0; i < count && !found; i++) {
 				await updateRows.nth(i).click();
 				const changes = page.getByTestId('audit-changes');
-				await expect(changes).toBeVisible();
+				// An update that changed nothing shows a note instead of the table.
+				await expect(changes.or(page.getByText('変更された欄はありません'))).toBeVisible();
 				const priceRow = changes
 					.getByRole('row')
 					.filter({ hasText: '価格' })

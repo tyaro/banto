@@ -72,7 +72,9 @@ export function auditFieldLabel(resource: string, field: string): string {
 	const def = resources.find((r) => r.name === resource);
 	// `ResourceDefinition.schema` is `unknown` (admin-core does not know the form library).
 	const schema = def?.schema as { fields?: { name: string; label?: unknown }[] } | undefined;
-	const label = schema?.fields?.find((f) => f.name === field)?.label;
+	const raw = schema?.fields?.find((f) => f.name === field)?.label;
+	// A label may be a message function (`() => m['…']()`) rather than a string.
+	const label = typeof raw === 'function' ? (raw as () => unknown)() : raw;
 	return typeof label === 'string' && label !== '' ? label : field;
 }
 

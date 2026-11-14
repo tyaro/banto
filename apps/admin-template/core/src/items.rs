@@ -922,6 +922,31 @@ mod tests {
         assert!(matches!(err, BantoError::NotFound { .. }));
     }
 
+    #[test]
+    fn update_detail_leaves_out_the_updated_at_stamp() {
+        // The ignore list names the serialized key; a rename would let the
+        // stamp into every cross-day update, so check it against real values.
+        let before = Item {
+            id: 1,
+            name: "A".to_string(),
+            price: 10,
+            stock: 1,
+            updated_at: "2031-02-03".to_string(),
+        };
+        let after = Item {
+            updated_at: "2031-02-04".to_string(),
+            ..before.clone()
+        };
+        assert!(serde_json::to_value(&before)
+            .unwrap()
+            .get("updatedAt")
+            .is_some());
+        assert_eq!(
+            item_update_detail(&before, &after)["changes"],
+            serde_json::json!([])
+        );
+    }
+
     fn fixed_today() -> String {
         "2031-02-03".to_string()
     }
