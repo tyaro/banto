@@ -14,7 +14,8 @@
 use serde_json::{json, Value};
 
 /// Strings longer than this many characters are cut (a trailing `…` marks the
-/// cut) so a huge value cannot bloat the audit log.
+/// cut) so a huge value cannot bloat the audit log. Strings nested in arrays
+/// and objects are cut too.
 pub const MAX_VALUE_CHARS: usize = 200;
 
 fn clip(value: &Value) -> Value {
@@ -23,6 +24,10 @@ fn clip(value: &Value) -> Value {
             let mut out: String = s.chars().take(MAX_VALUE_CHARS).collect();
             out.push('…');
             Value::String(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(clip).collect()),
+        Value::Object(map) => {
+            Value::Object(map.iter().map(|(k, v)| (k.clone(), clip(v))).collect())
         }
         other => other.clone(),
     }
@@ -100,6 +105,19 @@ mod tests {
         let after = c[0]["after"].as_str().unwrap();
         assert_eq!(after.chars().count(), MAX_VALUE_CHARS + 1);
         assert!(after.ends_with('…'));
+    }
+
+    #[test]
+    fn nested_long_strings_are_clipped() {
+        let long = "x".repeat(MAX_VALUE_CHARS + 10);
+        let after = json!({"n": {"tags": [long.clone()], "note": long}});
+        let c = diff_changes(&json!({"n": null}), &after, &[], &[]);
+        let n = &c[0]["after"];
+        for s in [&n["tags"][0], &n["note"]] {
+            let s = s.as_str().unwrap();
+            assert_eq!(s.chars().count(), MAX_VALUE_CHARS + 1);
+            assert!(s.ends_with('…'));
+        }
     }
 
     #[test]
