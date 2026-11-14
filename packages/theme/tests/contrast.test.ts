@@ -41,18 +41,23 @@ function token(rules: string, name: string): Oklch {
 
 type Rgb = [number, number, number];
 
-function oklchToSrgb(color: Oklch, hue: number): Rgb {
+/** Linear sRGB before clipping (a component outside 0..1 is out of gamut). */
+function oklchToLinear(color: Oklch, hue: number): number[] {
 	const h = ((hue + color.offset) * Math.PI) / 180;
 	const a = color.c * Math.cos(h);
 	const b = color.c * Math.sin(h);
 	const l = (color.l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
 	const m = (color.l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
 	const s = (color.l - 0.0894841775 * a - 1.291485548 * b) ** 3;
-	const lin = [
+	return [
 		4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
 		-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
 		-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s
 	];
+}
+
+function oklchToSrgb(color: Oklch, hue: number): Rgb {
+	const lin = oklchToLinear(color, hue);
 	// clip per component, gamma-encode, round to the 8-bit value the screen shows
 	return lin.map((v) => {
 		const c = Math.min(1, Math.max(0, v));
@@ -181,6 +186,16 @@ describe('state text colours >= 4.5:1 on every surface, at every --banto-brand-h
 					expect(ratio, `worst at hue ${hue}`).toBeGreaterThanOrEqual(4.5);
 				});
 			}
+			// Out-of-gamut colours are drawn differently per browser (Chrome clips
+			// each component, CSS Color 4 gamut mapping lowers the chroma), so the
+			// contrast above only holds everywhere for a colour inside sRGB.
+			it(`${theme}: --banto-${state} is inside the sRGB gamut`, () => {
+				const t = fixedToken(rules, `--banto-${state}`);
+				for (const v of oklchToLinear(t, t.hue)) {
+					expect(v).toBeGreaterThanOrEqual(0);
+					expect(v).toBeLessThanOrEqual(1);
+				}
+			});
 		}
 	}
 });
