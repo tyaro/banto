@@ -121,7 +121,9 @@
 			header: m['audit.colEntityId'](),
 			accessor: (row) => row.entityId ?? '-',
 			width: 90,
-			align: 'right'
+			align: 'right',
+			filterable: true,
+			filterType: 'text'
 		},
 		{
 			id: 'origin',

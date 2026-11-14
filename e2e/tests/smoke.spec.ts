@@ -530,29 +530,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				historyTable.getByRole('cell', { name: '更新', exact: true }).first()
 			).toBeVisible();
 		}).toPass();
-		// The link to the audit-log screen carries resource + entityId; opened
-		// in a second page (so the drawer flow below goes on), the screen
-		// starts filtered to this record and the query leaves the URL.
+		// The link to the audit-log screen carries resource + entityId; it is
+		// followed after the drawer flow below (same page: the token lives in this
+		// tab's sessionStorage).
 		const auditHref = await drawer
 			.getByRole('link', { name: '監査ログで全部見る' })
 			.getAttribute('href');
 		expect(auditHref).toContain(`resource=items&entityId=${itemId}`);
-		const auditPage = await page.context().newPage();
-		try {
-			await auditPage.goto(auditHref!);
-			await expect(auditPage).toHaveURL(/\/audit-log$/);
-			await expect(auditPage.getByTestId('audit-count-note')).toContainText(/\d/);
-			await expect(rowWithText(auditPage, 'items').first()).toBeVisible();
-			// Every row shown belongs to this record: no other item's history.
-			await expect(auditPage.locator('[data-cell-field="entityId"]').first()).toHaveText(
-				String(itemId)
-			);
-			await expect(
-				auditPage.locator('[data-cell-field="entityId"]').filter({ hasNotText: String(itemId) })
-			).toHaveCount(0);
-		} finally {
-			await auditPage.close();
-		}
 		await drawer.getByRole('tab', { name: '詳細', exact: true }).click();
 		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE_UPDATED));
 
@@ -560,6 +544,18 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
 		await expect(openButton).toBeFocused();
+
+		// The audit-log screen starts filtered to this record and the query
+		// leaves the URL.
+		await page.goto(auditHref!);
+		await expect(page).toHaveURL(/\/audit-log$/);
+		await expect(page.getByTestId('audit-count-note')).toContainText(/\d/);
+		await expect(rowWithText(page, 'items').first()).toBeVisible();
+		// Every row shown belongs to this record: no other item's history.
+		await expect(page.locator('[data-cell-field="entityId"]').first()).toHaveText(String(itemId));
+		await expect(
+			page.locator('[data-cell-field="entityId"]').filter({ hasNotText: String(itemId) })
+		).toHaveCount(0);
 
 		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));
