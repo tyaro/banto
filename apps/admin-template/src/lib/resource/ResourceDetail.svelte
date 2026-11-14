@@ -223,10 +223,17 @@
 			// the save stays on screen and stays unsaved (dirty), so closing
 			// still asks.
 			if (onSaved && !isNew && result.row) {
-				const typedDuringSave = JSON.stringify(store.values) !== JSON.stringify(values);
 				const current = store.values;
-				store.reset({ ...(result.row as Record<string, unknown>) });
-				if (typedDuringSave) store.values = { ...current };
+				// The submitted values under the response: a DataProvider may
+				// answer an update with only some fields (or without `id`).
+				store.reset({ ...values, ...(result.row as Record<string, unknown>) });
+				// Only the fields edited during the save go back on top - the
+				// others keep what the server stored.
+				const typed: Record<string, unknown> = {};
+				for (const [key, value] of Object.entries(current)) {
+					if (JSON.stringify(value) !== JSON.stringify(values[key])) typed[key] = value;
+				}
+				if (Object.keys(typed).length > 0) store.values = { ...store.values, ...typed };
 			} else {
 				store.markClean();
 			}
