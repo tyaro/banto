@@ -814,6 +814,11 @@ impl UsersService {
     /// record's `detail.changes`; see [`user_update_detail`]). The previous row
     /// is read by the guard `SELECT` that already runs inside the write
     /// transaction, so the two rows are consistent and no extra read is added.
+    /// No `FOR UPDATE` is needed: `with_users_write_transaction!` takes the
+    /// writer before that read (SQLite `BEGIN IMMEDIATE`; PostgreSQL a
+    /// self-conflicting `SHARE ROW EXCLUSIVE` table lock under `READ
+    /// COMMITTED`), so concurrent user writes are serialized and the previous
+    /// row is the last committed one, never a stale one.
     /// The last-admin check and the `auth_epoch` handling are those of
     /// [`UsersService::update_user`].
     pub async fn update_user_returning_previous(
