@@ -38,8 +38,7 @@
 	// Aliased to avoid clashing with the `$state` rune.
 	let { state: gridState, messages = {}, onEmpty, onchange }: Props = $props();
 
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultGridMessages, ...messages };
+	const t = $derived({ ...defaultGridMessages, ...messages });
 
 	let rootEl: HTMLDivElement | undefined = $state();
 
