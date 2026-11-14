@@ -53,10 +53,13 @@ pub fn diff_changes(
         if ignored_fields.contains(&name.as_str()) {
             continue;
         }
-        let (bv, av) = (b.get(name).unwrap_or(&null), a.get(name).unwrap_or(&null));
-        if bv == av {
+        // Compare presence too: a field going from missing to `null` (or back)
+        // is a change; only the output shows the missing side as `null`.
+        let (bo, ao) = (b.get(name), a.get(name));
+        if bo == ao {
             continue;
         }
+        let (bv, av) = (bo.unwrap_or(&null), ao.unwrap_or(&null));
         if masked_fields.contains(&name.as_str()) {
             out.push(json!({ "field": name, "masked": true }));
         } else {
@@ -103,6 +106,14 @@ mod tests {
     fn missing_side_is_null() {
         let c = diff_changes(&json!({}), &json!({"a": 1}), &[], &[]);
         assert_eq!(c, vec![json!({"field": "a", "before": null, "after": 1})]);
+    }
+
+    #[test]
+    fn missing_to_null_and_back_is_a_change() {
+        let c = diff_changes(&json!({}), &json!({"x": null}), &[], &[]);
+        assert_eq!(c, vec![json!({"field": "x", "before": null, "after": null})]);
+        let c = diff_changes(&json!({"x": null}), &json!({}), &[], &[]);
+        assert_eq!(c, vec![json!({"field": "x", "before": null, "after": null})]);
     }
 
     #[test]
