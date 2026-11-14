@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- テンプレート（B）／共通クレート（A）: `users` の `update` の監査にも差分を記録して表示する（#597 の続き）。監査 `detail` は `{ role }` から `{ username, role, changes: [{ field, before, after }] }` になった（`role` は従来の読み手のため残す。`username` は対象を示す。変わった欄だけ・変化が無ければ `changes` は空配列・`id`・`username`・`createdAt` は除く）。差分は `audit::diff::diff_changes` で作り、秘密の欄名（`password`・`passwordHash`・`authEpoch`）は将来欄が増えたときの防御としてマスクに挙げた。公開 API の追加: `banto-admin-services` の `UsersService::update_user_returning_previous`（同じ書き込みトランザクションの guard の SELECT で旧行を読み、`(旧, 新)` を返す。追加の読み取りは無い。最後の admin を外せない判定と `auth_epoch` の扱いは `update_user` のまま。`update_user` はシグネチャを変えず、これを呼んで新しい行だけ返す）と、REST・Tauri が共有する `users::user_update_detail`（`admin_template_core::users::user_update_detail` からも使える）。フロントは `lib/resource/auditChanges.ts` が `users` の欄名（表示名・ロール）とロールの値（管理者・編集者・閲覧者）を既存のメッセージ（`common.displayName`・`common.role`・`role.*`）で表示する。`detail` の形が変わるので、`users` の `update` の監査 `detail` を読む派生アプリは `changes`・`username` が増えた点に注意（既存の `role` は変わらない）。
+
 ## [7.1.0] - 2026-11-14
 
 **v7.1.0 — 一覧・詳細の画面の共通化（`ResourceListPage`・`ResourceDetail`、ADR-0030）、一覧のクイック検索・保存ビュー・絞り込みチップ、行のドロワーと履歴タブ、監査ログの更新差分、`@banto/ui` の `Button`・`ConfirmDialog`・`Tabs`、配色（OKLCH）と文字スケールの見直し。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い。メッセージキーの移動・削除は ADR-0030 の決定で minor 扱い。items の `update` の監査 `detail` に `changes` が増えたのは追加。`ListParams` への `search` の追加は、[docs/publishing.md](docs/publishing.md)「バージョニング規約」の 1.x 系の例外（フィールド追加は「消費側への注意」に明記して minor）。
