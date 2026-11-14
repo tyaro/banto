@@ -653,7 +653,8 @@
 				const button = pageEl?.querySelector<HTMLElement>(
 					`[data-resource-open="${CSS.escape(String(shown))}"] button`
 				);
-				button?.focus();
+				// Scrolled out of the virtualised grid: back to the grid itself.
+				(button ?? pageEl?.querySelector<HTMLElement>('[role="grid"]'))?.focus();
 			}, 0);
 		}
 	}
@@ -665,6 +666,9 @@
 	 */
 	async function confirmLeaveRecord(): Promise<boolean> {
 		if (!drawerOpen || !detailRef?.hasPendingChanges()) return true;
+		// A save in flight cannot be called off: "discard" would be a lie (the
+		// change still lands). Stay until it finishes; then nothing is pending.
+		if (detailRef.isSaving()) return false;
 		if (drawerConfirming) return false;
 		const generation = drawerGeneration;
 		drawerConfirming = true;

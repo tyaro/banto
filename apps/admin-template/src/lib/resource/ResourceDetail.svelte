@@ -152,6 +152,11 @@
 	 * unsaved edit or a save still in flight (the same test as the leave
 	 * guard above). The drawer's host asks before it closes or moves.
 	 */
+	/** #591 review: a save is in flight - the host waits instead of offering to discard it. */
+	export function isSaving(): boolean {
+		return formResource?.saving ?? false;
+	}
+
 	export function hasPendingChanges(): boolean {
 		return guard.pending;
 	}
@@ -212,17 +217,16 @@
 			// Saved: nothing is unsaved any more, so the move back to the list
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).
-			// #591 review: the drawer keeps the form open, so take the saved
-			// row as the new values - the server may have changed some
-			// (`updatedAt` stamped, the name trimmed). Only when nothing was
-			// typed during the save; otherwise keep that input as before.
-			if (
-				onSaved &&
-				!isNew &&
-				result.row &&
-				JSON.stringify(store.values) === JSON.stringify(values)
-			) {
+			// #591 review: the drawer keeps the form open, so the saved row
+			// becomes the clean baseline - the server may have changed some
+			// values (`updatedAt` stamped, the name trimmed). Input typed during
+			// the save stays on screen and stays unsaved (dirty), so closing
+			// still asks.
+			if (onSaved && !isNew && result.row) {
+				const typedDuringSave = JSON.stringify(store.values) !== JSON.stringify(values);
+				const current = store.values;
 				store.reset({ ...(result.row as Record<string, unknown>) });
+				if (typedDuringSave) store.values = { ...current };
 			} else {
 				store.markClean();
 			}
