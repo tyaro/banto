@@ -251,6 +251,46 @@ describe('createSseEventProvider', () => {
 		}
 	});
 
+	// Issue #591: a login while the previous session's stream stays open.
+	it('reopens an open stream with a new login token at once', async () => {
+		let token: string | null = 'viewer';
+		const signals: AbortSignal[] = [];
+		const fetchFn: typeof fetch = vi.fn((_input, init) => {
+			const signal = init!.signal!;
+			signals.push(signal);
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					// Never ends on its own - only an abort closes it.
+					signal.addEventListener('abort', () => controller.error(signal.reason));
+				}
+			});
+			return Promise.resolve(new Response(stream));
+		});
+		const provider = createSseEventProvider({
+			getToken: () => token,
+			fetchFn,
+			reconnectDelayMs: 60_000,
+			tokenWaitDelayMs: 5
+		});
+		const unsubscribe = provider.subscribe(vi.fn());
+		await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
+
+		token = 'admin';
+		await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+		expect(signals[0].aborted).toBe(true);
+		expect(vi.mocked(fetchFn).mock.calls[1][1]?.headers).toMatchObject({
+			Authorization: 'Bearer admin'
+		});
+
+		// A cleared token is not a switch: the open stream is left alone.
+		token = null;
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		expect(fetchFn).toHaveBeenCalledTimes(2);
+		expect(signals[1].aborted).toBe(false);
+		unsubscribe();
+		expect(signals[1].aborted).toBe(true);
+	});
+
 	it('aborts the in-flight request on unsubscribe', async () => {
 		let capturedSignal: AbortSignal | undefined;
 		const fetchFn: typeof fetch = vi.fn((_input, init) => {
