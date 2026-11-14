@@ -231,6 +231,14 @@ jobs:
         working-directory: ${{ env.DEST }}
         run: pnpm install --no-frozen-lockfile
 
+      # vitest はコピーの messages/*.json から生成した paraglide を読む（pretest で再生成）。
+      # check・build も paraglide を作り直すので、その前に置いて「生成物が無い状態から
+      # `pnpm test` だけで通る」ことを確かめる。scaffold が足した nav キー等が単体テスト
+      # （navigation.test.ts ほか）で壊れていないことも保証する。
+      - name: Unit-test the scaffolded copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm --filter admin-template test
+
       - name: Architecture invariants still hold
         working-directory: ${{ env.DEST }}
         run: pnpm verify:architecture
@@ -242,12 +250,6 @@ jobs:
       - name: Build the scaffolded copy
         working-directory: ${{ env.DEST }}
         run: pnpm --filter admin-template build
-
-      # vitest はコピーの messages/*.json から生成した paraglide を読む（pretest で再生成）。
-      # scaffold が足した nav キー等が単体テスト（navigation.test.ts ほか）で壊れていないことを保証する。
-      - name: Unit-test the scaffolded copy
-        working-directory: ${{ env.DEST }}
-        run: pnpm --filter admin-template test
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
