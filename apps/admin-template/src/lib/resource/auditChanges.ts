@@ -52,7 +52,10 @@ export function parseAuditChanges(
  * the rest (`name` and anything else) next to the diff. `null` when nothing is
  * left, or when `detail` is not a JSON object.
  */
-export function auditDetailRest(detail: string | null | undefined): string | null {
+export function auditDetailRest(
+	detail: string | null | undefined,
+	resource: string | null | undefined
+): string | null {
 	if (!detail) return null;
 	let parsed: unknown;
 	try {
@@ -62,9 +65,10 @@ export function auditDetailRest(detail: string | null | undefined): string | nul
 	}
 	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
 	const { changes, ...rest } = parsed as Record<string, unknown>;
-	// `role` stays at the top level for older consumers. When the change table
-	// already shows it, hide the duplicate JSON value in the audit-log detail.
+	// `users` keeps a top-level `role` for older consumers. Hide that duplicate
+	// only for users; another resource may use the two `role` keys differently.
 	if (
+		resource === 'users' &&
 		Array.isArray(changes) &&
 		changes.some((entry) => typeof entry === 'object' && entry !== null && entry.field === 'role')
 	) {

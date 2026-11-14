@@ -51,14 +51,14 @@ describe('parseAuditChanges', () => {
 describe('auditDetailRest', () => {
 	it('keeps everything but changes', () => {
 		const detail = JSON.stringify({ name: 'a', changes: [], extra: 1 });
-		expect(JSON.parse(auditDetailRest(detail) ?? 'null')).toEqual({ name: 'a', extra: 1 });
+		expect(JSON.parse(auditDetailRest(detail, 'items') ?? 'null')).toEqual({ name: 'a', extra: 1 });
 	});
 
 	it('is null when nothing is left or detail is not an object', () => {
-		expect(auditDetailRest('{"changes":[]}')).toBeNull();
-		expect(auditDetailRest('[1]')).toBeNull();
-		expect(auditDetailRest('not json')).toBeNull();
-		expect(auditDetailRest(null)).toBeNull();
+		expect(auditDetailRest('{"changes":[]}', 'items')).toBeNull();
+		expect(auditDetailRest('[1]', 'items')).toBeNull();
+		expect(auditDetailRest('not json', 'items')).toBeNull();
+		expect(auditDetailRest(null, 'items')).toBeNull();
 	});
 
 	it('keeps attachment sweep metadata next to delete values', () => {
@@ -70,7 +70,7 @@ describe('auditDetailRest', () => {
 		expect(parseAuditChanges('delete', detail)).toEqual([
 			{ field: 'stock', masked: false, before: 3, after: null }
 		]);
-		expect(JSON.parse(auditDetailRest(detail) ?? 'null')).toEqual({
+		expect(JSON.parse(auditDetailRest(detail, 'items') ?? 'null')).toEqual({
 			name: 'Deleted',
 			attachmentsRemoved: 2
 		});
@@ -82,8 +82,14 @@ describe('auditDetailRest', () => {
 			role: 'editor',
 			changes: [{ field: 'role', before: 'editor', after: null }]
 		});
-		expect(JSON.parse(auditDetailRest(detail) ?? 'null')).toEqual({ username: 'target' });
-		expect(JSON.parse(auditDetailRest('{"username":"target","role":"editor"}') ?? 'null')).toEqual({
+		expect(JSON.parse(auditDetailRest(detail, 'users') ?? 'null')).toEqual({ username: 'target' });
+		expect(JSON.parse(auditDetailRest(detail, 'items') ?? 'null')).toEqual({
+			username: 'target',
+			role: 'editor'
+		});
+		expect(
+			JSON.parse(auditDetailRest('{"username":"target","role":"editor"}', 'users') ?? 'null')
+		).toEqual({
 			username: 'target',
 			role: 'editor'
 		});
