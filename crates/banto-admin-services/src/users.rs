@@ -1021,30 +1021,34 @@ impl UsersService {
             self.db.dialect().placeholder(1),
         );
         type Deleted = (i64, String, String, String, String);
-        let deleted: Option<Deleted> = with_users_write_transaction!(&self.db, |tx| {
+        let deleted: Option<UserSummary> = with_users_write_transaction!(&self.db, |tx| {
             let state: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
                 .bind(id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(banto_storage::storage_error)?;
             ensure_admin_removal_allowed(id, state, true)?;
-            sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            let row: Option<Deleted> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_optional(&mut *tx)
                 .await
-                .map_err(banto_storage::storage_error)?
+                .map_err(banto_storage::storage_error)?;
+            // Convert before commit: an unexpected role must roll the delete back,
+            // never leave a deleted user with a failed, unaudited response.
+            row.map(|(id, username, display_name, role, created_at)| {
+                Ok(UserSummary {
+                    id,
+                    username,
+                    display_name,
+                    role: Role::from_str(&role)?,
+                    created_at,
+                })
+            })
+            .transpose()?
         });
-        let (id, username, display_name, role, created_at) =
-            deleted.ok_or_else(|| BantoError::NotFound {
-                resource: "users".to_string(),
-                id: id.to_string(),
-            })?;
-        Ok(UserSummary {
-            id,
-            username,
-            display_name,
-            role: Role::from_str(&role)?,
-            created_at,
+        deleted.ok_or_else(|| BantoError::NotFound {
+            resource: "users".to_string(),
+            id: id.to_string(),
         })
     }
 }
