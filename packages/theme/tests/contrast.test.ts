@@ -135,3 +135,52 @@ describe('contrast >= 4.5:1 at every --banto-brand-hue (0..359)', () => {
 		});
 	}
 });
+
+/** Reads `--name: oklch(L C H)` with a fixed hue (the state colours do not follow the brand hue). */
+function fixedToken(rules: string, name: string): Oklch & { hue: number } {
+	const m = new RegExp(String.raw`${name}:\s*oklch\(\s*([\d.]+)\s+([\d.]+)\s+(\d+)\s*\)`).exec(
+		rules
+	);
+	if (!m) throw new Error(`banto.css: ${name} is not oklch(L C <fixed hue>)`);
+	return { l: Number(m[1]), c: Number(m[2]), offset: 0, hue: Number(m[3]) };
+}
+
+describe('state text colours >= 4.5:1 on every surface, at every --banto-brand-hue', () => {
+	// the surfaces tint with the brand hue, so the sweep is over the background
+	const themes: [string, string, [string, string][]][] = [
+		[
+			'light',
+			LIGHT,
+			[
+				['bg', '--banto-neutral-2'],
+				['surface', '--banto-neutral-1'],
+				['raised', '--banto-neutral-1']
+			]
+		],
+		[
+			'dark',
+			DARK,
+			[
+				['bg', '--banto-neutral-1'],
+				['surface', '--banto-neutral-2'],
+				['raised', '--banto-neutral-4']
+			]
+		]
+	];
+
+	for (const [theme, rules, surfaces] of themes) {
+		for (const state of ['danger', 'warning', 'success', 'info']) {
+			for (const [surface, neutral] of surfaces) {
+				it(`${theme}: --banto-${state} on ${surface}`, () => {
+					const t = fixedToken(rules, `--banto-${state}`);
+					const fg = oklchToSrgb(t, t.hue);
+					const { ratio, hue } = worst(
+						() => fg,
+						(h) => oklchToSrgb(token(rules, neutral), h)
+					);
+					expect(ratio, `worst at hue ${hue}`).toBeGreaterThanOrEqual(4.5);
+				});
+			}
+		}
+	}
+});

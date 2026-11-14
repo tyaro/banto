@@ -312,13 +312,13 @@
 
 	--banto-brand-accent: oklch(0.5 0.2 calc(var(--banto-brand-hue) + 40));
 
-	--banto-danger: oklch(0.577 0.215 27);
+	--banto-danger: oklch(0.572 0.215 27);
 
-	--banto-warning: oklch(0.666 0.157 58);
+	--banto-warning: oklch(0.56 0.157 58);
 
-	--banto-success: oklch(0.627 0.17 149);
+	--banto-success: oklch(0.525 0.17 149);
 
-	--banto-info: oklch(0.55 0.105 235);
+	--banto-info: oklch(0.545 0.105 235);
 
 	/* Focus */
 	--banto-focus-ring: 0 0 0 2px color-mix(in srgb, var(--banto-primary) 45%, transparent);
@@ -469,7 +469,7 @@
 	/* 暗い面（raised）の上で 6.2:1。--banto-primary は 4.6:1 で、色相によっては 4.5 を割る */
 	--banto-primary-text: oklch(0.74 0.12 var(--banto-brand-hue));
 	--banto-brand-accent: oklch(0.7 0.14 calc(var(--banto-brand-hue) + 40));
-	--banto-danger: oklch(0.637 0.208 25);
+	--banto-danger: oklch(0.685 0.208 25);
 	--banto-warning: oklch(0.769 0.165 70);
 	--banto-success: oklch(0.723 0.192 150);
 	--banto-info: oklch(0.72 0.12 235);
