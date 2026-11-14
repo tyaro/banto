@@ -756,6 +756,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await drawer.getByRole('spinbutton', { name: /^価格/ }).fill('850');
 		await drawer.getByRole('button', { name: '保存', exact: true }).click();
 		await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥850');
+		// The list can show the new price (SSE refresh) before the save's own
+		// answer settles, and the drawer ignores closing while a save is in
+		// flight - wait for the save to finish, as test 4 does.
+		await expect(drawer.getByText('未保存の変更があります')).toHaveCount(0);
 		await page.keyboard.press('Escape');
 		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
