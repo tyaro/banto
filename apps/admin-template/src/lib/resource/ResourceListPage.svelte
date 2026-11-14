@@ -742,6 +742,9 @@
 	// Alt+Down opens the list of options.
 	function handleDrawerKeydown(event: KeyboardEvent): void {
 		if (!drawerOpen || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		// A field already used the key (DateInput / DateTimeInput open their
+		// picker on Alt+Down and prevent the default): leave it to the field.
+		if (event.defaultPrevented) return;
 		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
 		const dialog = drawerBodyEl?.closest('[role="dialog"]');
 		const target = event.target;
