@@ -45,6 +45,7 @@
 	import { auditLogFiltersFromQuery, hasAuditLogQuery } from '#lib/banto/auditLogQuery.js';
 	import AuditChanges from '#lib/resource/AuditChanges.svelte';
 	import { auditDetailRest, parseAuditChanges } from '#lib/resource/auditChanges.js';
+	import { auditTargetHref } from '#lib/resource/auditTarget.js';
 
 	const available = isAuditLogAvailable();
 
@@ -260,6 +261,11 @@
 	// #597: an `update` record with `changes` shows the field table instead of
 	// the raw JSON (the rest of detail stays below); older records and other operations keep the JSON.
 	const selectedChanges = $derived.by(() => parseAuditChanges(selected?.action, selected?.detail));
+	// #597 stage 2: the link to the record the audit record is about (none for
+	// delete, an unregistered resource, or no entity id).
+	const selectedTargetHref = $derived.by(() =>
+		selected ? auditTargetHref(selected.resource, selected.entityId, selected.action) : null
+	);
 	const selectedRest = $derived.by(() => auditDetailRest(selected?.detail));
 
 	const selectedDetail = $derived.by((): string | null => {
@@ -380,7 +386,14 @@
 					<dt>{m['audit.colResource']()}</dt>
 					<dd>{selected.resource}</dd>
 					<dt>{m['audit.colEntityId']()}</dt>
-					<dd>{selected.entityId ?? '-'}</dd>
+					<dd>
+						{selected.entityId ?? '-'}
+						{#if selectedTargetHref}
+							<a class="open-target" href={selectedTargetHref} data-testid="audit-open-target"
+								>{m['audit.openTarget']()}</a
+							>
+						{/if}
+					</dd>
 					<dt>{m['audit.colOrigin']()}</dt>
 					<dd>{originLabel(selected.origin)}</dd>
 					<dt>{m['audit.colResult']()}</dt>
@@ -494,6 +507,9 @@
 		font-size: var(--banto-font-size-md);
 	}
 
+	.open-target {
+		margin-inline-start: var(--banto-space-2);
+	}
 	.detail h4 {
 		margin: var(--banto-space-3) 0 var(--banto-space-2);
 		font-size: var(--banto-font-size-md);

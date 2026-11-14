@@ -596,6 +596,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			expect(found).toBe(true);
 		}).toPass();
 
+		// #597 stage 2: the detail's 「対象を開く」 opens that record in the
+		// list's drawer (`?id=`).
+		await page.getByTestId('audit-open-target').click();
+		await expect(page).toHaveURL(new RegExp(`/items[?]id=${itemId}$`));
+		await expect(itemDrawer(page, itemId)).toBeVisible();
+
 		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));
 
