@@ -723,7 +723,7 @@ async fn items_create(state: State<'_, AppState>, values: ItemInput) -> Result<I
         "create",
         "items",
         Some(&item.id.to_string()),
-        Some(serde_json::json!({ "name": item.name })),
+        Some(admin_template_core::items::item_create_detail(&item)),
     )
     .await;
     Ok(item)
@@ -756,17 +756,17 @@ async fn items_update(
 /// testable with a plain `&AppState` in this crate's own `cargo test`.
 async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Editor, "items").await?;
-    state.items.delete(id).await?;
+    let item = state.items.delete_returning_previous(id).await?;
     // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up
     // any attachments left pointing at the now-deleted record (best-effort).
-    let detail = sweep_item_attachments(&state.attachments, id).await;
+    let sweep = sweep_item_attachments(&state.attachments, id).await;
     record_ok(
         &state.audit,
         &actor,
         "delete",
         "items",
         Some(&id.to_string()),
-        detail,
+        Some(admin_template_core::items::item_delete_detail(&item, sweep)),
     )
     .await;
     Ok(())
@@ -3216,7 +3216,7 @@ async fn users_create_body(
         "create",
         "users",
         Some(&identity.id.to_string()),
-        Some(serde_json::json!({ "username": identity.username, "role": identity.role })),
+        Some(admin_template_core::users::user_create_detail(&identity)),
     )
     .await;
     Ok(identity.into())
@@ -3306,14 +3306,17 @@ async fn users_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoEr
 /// Body of [`users_delete`] (spec M14 pattern, see [`users_create_body`]).
 async fn users_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
     let acting = require_role(state, Role::Admin, "users").await?;
-    state.users.delete_user(id, Some(acting.id)).await?;
+    let removed = state
+        .users
+        .delete_user_returning_previous(id, Some(acting.id))
+        .await?;
     record_ok(
         &state.audit,
         &acting,
         "delete",
         "users",
         Some(&id.to_string()),
-        None,
+        Some(admin_template_core::users::user_delete_detail(&removed)),
     )
     .await;
     Ok(())
@@ -4820,9 +4823,7 @@ mod tests {
     }
 
     // [scaffold:items] begin
-    /// [`items_delete_body`] records one `delete`/`items` entry; with no
-    /// attachments swept for the record, `detail` is `None` (M-review 2026-08
-    /// M-5).
+    /// [`items_delete_body`] records the removed values in its audit detail.
     #[tokio::test]
     async fn items_delete_is_recorded_as_delete() {
         let state = app_state().await;
@@ -4864,9 +4865,61 @@ mod tests {
         );
         assert_eq!(entry.origin, "tauri");
         assert_eq!(entry.result, "ok");
-        assert_eq!(entry.detail, None, "no attachments removed -> detail None");
+        let detail: serde_json::Value =
+            serde_json::from_str(entry.detail.as_deref().expect("detail")).unwrap();
+        assert_eq!(detail["name"], "Doomed");
+        assert_eq!(
+            detail["changes"],
+            serde_json::json!([
+                { "field": "name", "before": "Doomed", "after": null },
+                { "field": "price", "before": 1, "after": null },
+                { "field": "stock", "before": 1, "after": null }
+            ])
+        );
+        assert!(detail.get("attachmentsRemoved").is_none());
     }
     // [scaffold:items] end
+
+    #[tokio::test]
+    async fn users_create_and_delete_record_values_via_tauri() {
+        let state = admin_app_state().await;
+        let created = users_create_body(&state, "target", "password123", "Target", Role::Editor)
+            .await
+            .unwrap();
+        users_delete_body(&state, created.id).await.unwrap();
+        let rows = state.audit.list(ListParams::default()).await.unwrap().rows;
+        for (action, before, after) in [
+            (
+                "create",
+                serde_json::json!(null),
+                serde_json::json!("Target"),
+            ),
+            (
+                "delete",
+                serde_json::json!("Target"),
+                serde_json::json!(null),
+            ),
+        ] {
+            let entry = rows
+                .iter()
+                .find(|r| {
+                    r.action == action
+                        && r.resource == "users"
+                        && r.entity_id.as_deref() == Some(created.id.to_string().as_str())
+                })
+                .unwrap();
+            let detail: serde_json::Value =
+                serde_json::from_str(entry.detail.as_deref().unwrap()).unwrap();
+            assert_eq!(detail["username"], "target");
+            assert!(detail["changes"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!({
+                    "field": "displayName", "before": before, "after": after
+                })));
+            assert!(!entry.detail.as_deref().unwrap().contains("password123"));
+        }
+    }
 
     /// [`auth_config_apply_body`]'s normal (non-escape-hatch) path records a
     /// `settings_change`/`settings` entry attributed to the admin, with an

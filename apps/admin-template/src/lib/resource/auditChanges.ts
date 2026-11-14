@@ -1,11 +1,13 @@
 /**
- * The field-level diff an `update` audit record carries (#597):
+ * The field-level values a create/update/delete audit record carries:
  * `detail = { name (users: username, role), changes: [{ field, before, after } | { field, masked }] }`.
  *
  * Plain TypeScript so the parsing and the label lookup can be unit-tested; the
  * screens (audit-log detail, the drawer's history tab) only draw the result.
  * `detail` is the stored JSON text; a record without a `changes` array (older
  * records, other operations) gives `null` and the caller keeps its own display.
+ * For create/update/delete audit detail, `changes` is reserved for field
+ * entries shaped as `{ field, before, after }` or `{ field, masked: true }`.
  */
 import { resources } from '#lib/banto/resources/index.js';
 import * as m from '#lib/paraglide/messages.js';
@@ -19,14 +21,14 @@ export interface AuditChange {
 }
 
 /**
- * `null` unless the record is an `update` whose `detail` is JSON with a
- * `changes` array (other actions never show a diff).
+ * `null` unless a create/update/delete record has a `changes` array. Older
+ * records and unrelated operations keep their existing detail display.
  */
 export function parseAuditChanges(
 	action: string | null | undefined,
 	detail: string | null | undefined
 ): AuditChange[] | null {
-	if (action !== 'update') return null;
+	if (action !== 'create' && action !== 'update' && action !== 'delete') return null;
 	if (!detail) return null;
 	let parsed: unknown;
 	try {
@@ -52,7 +54,10 @@ export function parseAuditChanges(
  * the rest (`name` and anything else) next to the diff. `null` when nothing is
  * left, or when `detail` is not a JSON object.
  */
-export function auditDetailRest(detail: string | null | undefined): string | null {
+export function auditDetailRest(
+	detail: string | null | undefined,
+	resource: string | null | undefined
+): string | null {
 	if (!detail) return null;
 	let parsed: unknown;
 	try {
@@ -61,7 +66,16 @@ export function auditDetailRest(detail: string | null | undefined): string | nul
 		return null;
 	}
 	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-	const { changes: _changes, ...rest } = parsed as Record<string, unknown>;
+	const { changes, ...rest } = parsed as Record<string, unknown>;
+	// `users` keeps a top-level `role` for older consumers. Hide that duplicate
+	// only for users; another resource may use the two `role` keys differently.
+	if (
+		resource === 'users' &&
+		Array.isArray(changes) &&
+		changes.some((entry) => typeof entry === 'object' && entry !== null && entry.field === 'role')
+	) {
+		delete rest.role;
+	}
 	return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
 }
 

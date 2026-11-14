@@ -26,6 +26,16 @@ pub struct Item {
     pub updated_at: String,
 }
 
+/// Only fields intentionally approved for audit. When an app adds an item
+/// field, decide explicitly whether it belongs here before recording it.
+fn item_audit_fields(item: &Item) -> serde_json::Value {
+    serde_json::json!({
+        "name": item.name,
+        "price": item.price,
+        "stock": item.stock,
+    })
+}
+
 /// `detail` of an `items` `update` audit record (Issue #597): `{ name,
 /// changes: [{ field, before, after }] }`. Both the REST and the Tauri wiring
 /// call this, so the two routes record the same shape (conventions section 1).
@@ -39,6 +49,34 @@ pub fn item_update_detail(before: &Item, after: &Item) -> serde_json::Value {
         &["id", "updatedAt"],
     );
     serde_json::json!({ "name": after.name, "changes": changes })
+}
+
+/// Snapshot fields for create/delete use the same bounded change shape as an
+/// update. The generated id and timestamp are not business values.
+pub fn item_create_detail(item: &Item) -> serde_json::Value {
+    let changes = banto_admin_services::audit::diff::diff_changes(
+        &serde_json::json!({}),
+        &item_audit_fields(item),
+        &[],
+        &[],
+    );
+    serde_json::json!({ "name": item.name, "changes": changes })
+}
+
+pub fn item_delete_detail(item: &Item, sweep: Option<serde_json::Value>) -> serde_json::Value {
+    let changes = banto_admin_services::audit::diff::diff_changes(
+        &item_audit_fields(item),
+        &serde_json::json!({}),
+        &[],
+        &[],
+    );
+    let mut detail = serde_json::json!({ "name": item.name, "changes": changes });
+    // sweep_item_attachments currently returns only attachmentsRemoved. Keep
+    // this field explicit so future sweep metadata needs an audit review.
+    if let Some(count) = sweep.and_then(|s| s.get("attachmentsRemoved").cloned()) {
+        detail["attachmentsRemoved"] = count;
+    }
+    detail
 }
 
 /// Create/update payload. Field names match the frontend form schema's
@@ -507,33 +545,54 @@ impl ItemsService {
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
+        self.delete_returning_previous(id).await.map(|_| ())
+    }
+
+    /// Delete and return the exact removed row for the audit snapshot. Decode
+    /// RETURNING before commit, so a decode failure cannot delete the row
+    /// without letting the wiring layer write its audit entry.
+    pub async fn delete_returning_previous(&self, id: i64) -> Result<Item, BantoError> {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `get` above.
-        let sql = format!("DELETE FROM items WHERE id = {}", dialect.placeholder(1));
-        // Map to `rows_affected` in each arm so the backend query-result types
-        // unify (see the same pattern across the service layer).
-        let rows_affected = match &self.db {
-            Db::Sqlite(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
-                .bind(id)
-                .execute(pool)
-                .await
-                .map(|r| r.rows_affected()),
+        let sql = format!(
+            "DELETE FROM items WHERE id = {} RETURNING id, name, price, stock, updated_at",
+            dialect.placeholder(1)
+        );
+        let item = match &self.db {
+            Db::Sqlite(pool) => {
+                let mut tx = pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                item
+            }
             #[cfg(feature = "postgres")]
-            Db::Postgres(pool) => sqlx::query(sqlx::AssertSqlSafe(sql))
-                .bind(id)
-                .execute(pool)
-                .await
-                .map(|r| r.rows_affected()),
-        }
-        .map_err(banto_storage::storage_error)?;
-        if rows_affected == 0 {
-            return Err(BantoError::NotFound {
-                resource: RESOURCE.to_string(),
-                id: id.to_string(),
-            });
-        }
+            Db::Postgres(pool) => {
+                let mut tx = pool
+                    .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                item
+            }
+        };
+        let item = item.ok_or_else(|| BantoError::NotFound {
+            resource: RESOURCE.to_string(),
+            id: id.to_string(),
+        })?;
         self.notify_changed();
-        Ok(())
+        Ok(item)
     }
 
     /// Bulk create/update (spec M15, `docs/roadmap.md`): each row carrying
@@ -798,6 +857,72 @@ mod tests {
     async fn service() -> ItemsService {
         let pool = migrate_memory().await.expect("migrate_memory");
         ItemsService::new(pool)
+    }
+
+    #[tokio::test]
+    async fn create_delete_details_capture_values_and_deleted_row() {
+        let svc = service().await;
+        let item = svc
+            .create(ItemInput {
+                name: "Test Item".into(),
+                price: 100,
+                stock: 5,
+            })
+            .await
+            .unwrap();
+        let created = item_create_detail(&item);
+        assert_eq!(created["name"], "Test Item");
+        assert_eq!(
+            created["changes"],
+            json!([
+                { "field": "name", "before": null, "after": "Test Item" },
+                { "field": "price", "before": null, "after": 100 },
+                { "field": "stock", "before": null, "after": 5 }
+            ])
+        );
+        let removed = svc.delete_returning_previous(item.id).await.unwrap();
+        assert_eq!(removed, item);
+        let deleted = item_delete_detail(&removed, Some(json!({ "attachmentsRemoved": 2 })));
+        assert_eq!(deleted["attachmentsRemoved"], 2);
+        assert_eq!(
+            deleted["changes"],
+            json!([
+                { "field": "name", "before": "Test Item", "after": null },
+                { "field": "price", "before": 100, "after": null },
+                { "field": "stock", "before": 5, "after": null }
+            ])
+        );
+        assert!(matches!(
+            svc.delete_returning_previous(item.id).await,
+            Err(BantoError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_decode_failure_rolls_back_the_row() {
+        let svc = service().await;
+        let item = svc
+            .create(ItemInput {
+                name: "Invalid storage value".into(),
+                price: 1,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        // SQLite's INTEGER affinity permits a text value in a non-STRICT
+        // table. Item::price cannot decode it as i64.
+        sqlx::query("UPDATE items SET price = 'invalid' WHERE id = ?")
+            .bind(item.id)
+            .execute(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert!(svc.delete_returning_previous(item.id).await.is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE id = ?")
+            .bind(item.id)
+            .fetch_one(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "a decode error must roll back the delete");
     }
 
     #[tokio::test]

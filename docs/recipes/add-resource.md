@@ -39,6 +39,10 @@ Rust 側 → フロント側の順に進める。各ステップの「手本」�
 | 8   | フロント: ルート 3 本（一覧 `<ResourceListPage resource={…}>`・`[id]` と `new` の `<ResourceDetail>` を呼ぶ薄いファイル。ナビ・ページ題・「<label>を新規作成」コマンドは定義から導出されるので `navigation.ts` は触らない。一覧の列はスキーマから導出され、手書きは `list.columns` の `overrides` だけ — M23）                                                                                                                                                           | `apps/admin-template/src/routes/(app)/items/`（`+page.svelte`・`[id]/+page.svelte`・`new/+page.svelte`）              |
 | 9   | （必要なら）CSV 取込: 取込の API（`DataProvider` に口が無いので専用のクライアント）を作り、定義の `csv.import` に `run`（行を API の型に直して送る）・`rules`（取込の規則の文言。取込ボタンの title と確認パネルに出る）・`available`（demo では false）を書く。必須列と確認表の列は既定でスキーマの `required` の欄、文字列の id は `idType: 'string'`。取込は `capabilities` の `create` と `edit` を両方持つときだけ出る。ほかにダッシュボードパネル・E2E スモーク1本 | `itemsAdmin.ts` の `importItems`・`items.ts` の `csv.import`・`src/lib/banto/dashboard.ts`・`e2e/tests/smoke.spec.ts` |
 
+create/update/delete の監査 `detail.changes` は変更表用の予約キー。
+`[{ field, before, after }]`（秘密の欄は `{ field, masked: true }`）の形で記録する。
+別の意味のデータには `changes` 以外のキーを使う。
+
 ブラウザ単体デモ（InMemory）にも出したい場合は
 `src/lib/banto/sampleData.ts` に生成データを足す（任意。デモに出さない
 機能は conventions §10 の「demo は明示拒否」に従う）。

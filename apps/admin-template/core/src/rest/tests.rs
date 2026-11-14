@@ -778,6 +778,62 @@ async fn items_update_records_a_field_diff_in_the_audit_log() {
     );
 }
 
+#[tokio::test]
+async fn items_create_and_delete_record_values_via_rest() {
+    let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &editor,
+                json!({ "name": "Recorded", "price": 12, "stock": 3 }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap();
+    let response = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/items/{id}"), &editor))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let rows = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let entity_id = id.to_string();
+    for (action, before, after) in [
+        ("create", json!(null), json!(12)),
+        ("delete", json!(12), json!(null)),
+    ] {
+        let entry = rows
+            .iter()
+            .find(|r| {
+                r["action"] == action && r["resource"] == "items" && r["entityId"] == entity_id
+            })
+            .unwrap();
+        let detail: serde_json::Value =
+            serde_json::from_str(entry["detail"].as_str().unwrap()).unwrap();
+        assert_eq!(detail["name"], "Recorded");
+        assert!(detail["changes"].as_array().unwrap().contains(&json!({
+            "field": "price", "before": before, "after": after
+        })));
+    }
+}
+
 // [scaffold:items] end
 
 #[tokio::test]
@@ -1286,10 +1342,54 @@ async fn admin_can_create_list_update_reset_password_and_delete_users() {
     assert_eq!(body_json(reset_response).await["success"], true);
 
     let delete_response = router
+        .clone()
         .oneshot(delete_auth(&format!("/api/users/{id}"), &admin))
         .await
         .unwrap();
     assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+    let rows = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let entity_id = id.to_string();
+    for (action, display_name, before, after) in [
+        ("create", "New Person", json!(null), json!("New Person")),
+        (
+            "delete",
+            "Updated Person",
+            json!("Updated Person"),
+            json!(null),
+        ),
+    ] {
+        let entry = rows
+            .iter()
+            .find(|r| {
+                r["action"] == action && r["resource"] == "users" && r["entityId"] == entity_id
+            })
+            .unwrap();
+        let detail: serde_json::Value =
+            serde_json::from_str(entry["detail"].as_str().unwrap()).unwrap();
+        assert_eq!(detail["username"], "newperson");
+        assert!(
+            detail["changes"].as_array().unwrap().contains(&json!({
+                "field": "displayName", "before": before, "after": after
+            })),
+            "{action}: {display_name}"
+        );
+        assert!(!entry["detail"].as_str().unwrap().contains("password123"));
+        assert!(!entry["detail"].as_str().unwrap().contains("resetpassword1"));
+    }
 }
 
 #[tokio::test]

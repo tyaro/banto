@@ -90,7 +90,7 @@ async fn users_create(
         "create",
         "users",
         Some(&identity.id.to_string()),
-        Some(json!({ "username": identity.username, "role": identity.role })),
+        Some(banto_admin_services::users::user_create_detail(&identity)),
     )
     .await;
     Ok(Json(identity.into()))
@@ -162,7 +162,10 @@ async fn users_delete(
     } else {
         Some(acting_user(&headers, &state.auth, &state.users).await?.id)
     };
-    state.users.delete_user(id, acting_id).await?;
+    let removed = state
+        .users
+        .delete_user_returning_previous(id, acting_id)
+        .await?;
     record_write(
         &state.audit,
         &state.auth,
@@ -170,7 +173,7 @@ async fn users_delete(
         "delete",
         "users",
         Some(&id.to_string()),
-        None,
+        Some(banto_admin_services::users::user_delete_detail(&removed)),
     )
     .await;
     Ok(StatusCode::NO_CONTENT)

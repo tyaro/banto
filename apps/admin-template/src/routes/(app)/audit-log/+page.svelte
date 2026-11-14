@@ -266,7 +266,7 @@
 	const selectedTargetHref = $derived.by(() =>
 		selected ? auditTargetHref(selected.resource, selected.entityId, selected.action) : null
 	);
-	const selectedRest = $derived.by(() => auditDetailRest(selected?.detail));
+	const selectedRest = $derived.by(() => auditDetailRest(selected?.detail, selected?.resource));
 
 	const selectedDetail = $derived.by((): string | null => {
 		if (!selected?.detail) return null;

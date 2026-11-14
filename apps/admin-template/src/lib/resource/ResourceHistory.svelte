@@ -2,7 +2,7 @@
 	@component
 	"History of this record" (#591, stage 2): the audit log narrowed to one
 	resource and one record, newest first, as a plain list (time / user /
-	action / result / origin). An `update` row with a recorded diff (#597) shows
+	action / result / origin). A create/update/delete row with recorded values shows
 	its changed fields under the row.
 
 	Mounted by the list's drawer only while its "History" tab is selected, so

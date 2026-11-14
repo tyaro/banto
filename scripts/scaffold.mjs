@@ -782,13 +782,15 @@ function removeAttachments() {
 		REST_ITEMS,
 		'rest/items: items_delete の delete_for_record 除去',
 		`    // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left`,
-		`    let detail = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;`
+		`    let sweep = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;`
 	);
+	// display の再実行では rest/items.rs 自体が削除済みなので editFile が
+	// 適用済みとして扱う。残る lib.rs ではコマンド区画だけが消えるため、下でガードする。
 	swapText(
 		REST_ITEMS,
-		'rest/items: items_delete の detail を None に',
-		`        Some(&id.to_string()),\n        detail,\n    )`,
-		`        Some(&id.to_string()),\n        None,\n    )`
+		'rest/items: items_delete の添付 sweep を None に',
+		`Some(crate::items::item_delete_detail(&item, sweep))`,
+		`Some(crate::items::item_delete_detail(&item, None))`
 	);
 	//   core の共通部品（item 削除の掃除 + 監査 detail。REST/Tauri の両方から使う）
 	drop(CORE_LIB, 'core/lib.rs: pub mod attachment_wiring 除去', `pub mod attachment_wiring;\n`);
@@ -1041,18 +1043,18 @@ function removeAttachmentsFromLibRs() {
 		LIB_RS,
 		'lib.rs: items_delete の delete_for_record 除去',
 		`    // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up`,
-		`    let detail = sweep_item_attachments(&state.attachments, id).await;`
+		`    let sweep = sweep_item_attachments(&state.attachments, id).await;`
 	);
-	// items_delete は監査記録を `record_ok(…, Some(&id.to_string()), detail)` で書く
-	// （M-1 で AuditEntry から record_ok へ集約）。attachments を外すと sweep が
-	// 消え `detail` 変数が無くなるので、6番目の実引数 `detail` を `None` に差し替える。
-	// rest/items.rs 側の同名 swap（record_write 呼び出し）と同形。
-	swapText(
-		LIB_RS,
-		'lib.rs: items_delete の detail を None に',
-		`        Some(&id.to_string()),\n        detail,\n    )`,
-		`        Some(&id.to_string()),\n        None,\n    )`
-	);
+	// 添付を外しても削除した item の値は監査 detail に残す。
+	editFile(LIB_RS, 'lib.rs: items_delete の添付 sweep を None に', (s) => {
+		// display の再実行では items コマンド自体が既に消えている。
+		if (!s.includes('async fn items_delete_body(')) return args.strict ? undefined : null;
+		return swap(
+			s,
+			`Some(admin_template_core::items::item_delete_detail(&item, sweep))`,
+			`Some(admin_template_core::items::item_delete_detail(&item, None))`
+		);
+	});
 	drop(
 		LIB_RS,
 		'lib.rs: start_embedded_server の attachments 引数除去',

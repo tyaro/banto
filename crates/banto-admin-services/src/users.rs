@@ -320,6 +320,34 @@ pub fn user_update_detail(before: &UserSummary, after: &UserSummary) -> serde_js
     serde_json::json!({ "username": after.username, "role": after.role, "changes": changes })
 }
 
+/// The public fields of a new user; credentials and auth state never enter
+/// the audit payload. Both transports use this function.
+pub fn user_create_detail(user: &UserIdentity) -> serde_json::Value {
+    let changes = crate::audit::diff::diff_changes(
+        &serde_json::json!({}),
+        &serde_json::json!({
+            "displayName": user.display_name,
+            "role": user.role,
+        }),
+        &["password", "passwordHash", "authEpoch"],
+        &[],
+    );
+    serde_json::json!({ "username": user.username, "role": user.role, "changes": changes })
+}
+
+pub fn user_delete_detail(user: &UserSummary) -> serde_json::Value {
+    let changes = crate::audit::diff::diff_changes(
+        &serde_json::json!({
+            "displayName": user.display_name,
+            "role": user.role,
+        }),
+        &serde_json::json!({}),
+        &["password", "passwordHash", "authEpoch"],
+        &[],
+    );
+    serde_json::json!({ "username": user.username, "role": user.role, "changes": changes })
+}
+
 impl UsersService {
     pub fn new(db: Db) -> Self {
         Self { db }
@@ -965,6 +993,17 @@ impl UsersService {
         id: i64,
         acting_user_id: Option<i64>,
     ) -> Result<(), BantoError> {
+        self.delete_user_returning_previous(id, acting_user_id)
+            .await
+            .map(|_| ())
+    }
+
+    /// Delete and return the removed public row from the same guarded write.
+    pub async fn delete_user_returning_previous(
+        &self,
+        id: i64,
+        acting_user_id: Option<i64>,
+    ) -> Result<UserSummary, BantoError> {
         if acting_user_id == Some(id) {
             return Err(BantoError::Other(
                 "自分自身を削除することはできません".to_string(),
@@ -973,7 +1012,7 @@ impl UsersService {
 
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "DELETE FROM users WHERE id = {}",
+            "DELETE FROM users WHERE id = {} RETURNING id, username, display_name, role, created_at",
             self.db.dialect().placeholder(1)
         );
         let guard_sql = format!(
@@ -981,27 +1020,36 @@ impl UsersService {
              FROM users WHERE id = {}",
             self.db.dialect().placeholder(1),
         );
-        let rows_affected = with_users_write_transaction!(&self.db, |tx| {
+        type Deleted = (i64, String, String, String, String);
+        let deleted: Option<UserSummary> = with_users_write_transaction!(&self.db, |tx| {
             let state: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
                 .bind(id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(banto_storage::storage_error)?;
             ensure_admin_removal_allowed(id, state, true)?;
-            sqlx::query(sqlx::AssertSqlSafe(sql))
+            let row: Option<Deleted> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(id)
-                .execute(&mut *tx)
+                .fetch_optional(&mut *tx)
                 .await
-                .map_err(banto_storage::storage_error)?
-                .rows_affected()
+                .map_err(banto_storage::storage_error)?;
+            // Convert before commit: an unexpected role must roll the delete back,
+            // never leave a deleted user with a failed, unaudited response.
+            row.map(|(id, username, display_name, role, created_at)| {
+                Ok(UserSummary {
+                    id,
+                    username,
+                    display_name,
+                    role: Role::from_str(&role)?,
+                    created_at,
+                })
+            })
+            .transpose()?
         });
-        if rows_affected == 0 {
-            return Err(BantoError::NotFound {
-                resource: "users".to_string(),
-                id: id.to_string(),
-            });
-        }
-        Ok(())
+        deleted.ok_or_else(|| BantoError::NotFound {
+            resource: "users".to_string(),
+            id: id.to_string(),
+        })
     }
 }
 
@@ -1040,6 +1088,52 @@ mod tests {
         .await
         .expect("create users table");
         UsersService::new(db)
+    }
+
+    #[tokio::test]
+    async fn create_delete_details_exclude_credentials_and_return_removed_row() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "owner-secret-password", "Owner")
+            .await
+            .unwrap();
+        let target = svc
+            .create_user("editor", "editor-secret-password", "Editor", Role::Editor)
+            .await
+            .unwrap();
+        let created = user_create_detail(&target);
+        assert_eq!(created["username"], "editor");
+        assert_eq!(
+            created["changes"],
+            serde_json::json!([
+                { "field": "displayName", "before": null, "after": "Editor" },
+                { "field": "role", "before": null, "after": "editor" }
+            ])
+        );
+        let removed = svc
+            .delete_user_returning_previous(target.id, Some(owner.id))
+            .await
+            .unwrap();
+        let deleted = user_delete_detail(&removed);
+        assert_eq!(deleted["username"], "editor");
+        assert_eq!(
+            deleted["changes"],
+            serde_json::json!([
+                { "field": "displayName", "before": "Editor", "after": null },
+                { "field": "role", "before": "editor", "after": null }
+            ])
+        );
+        for detail in [created, deleted] {
+            let serialized = detail.to_string();
+            assert!(!serialized.contains("secret-password"));
+            assert!(!serialized.contains("authEpoch"));
+            assert!(!serialized.contains("passwordHash"));
+        }
+        assert!(matches!(
+            svc.delete_user_returning_previous(target.id, Some(owner.id))
+                .await,
+            Err(BantoError::NotFound { .. })
+        ));
     }
 
     #[tokio::test]

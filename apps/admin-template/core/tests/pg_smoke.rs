@@ -138,7 +138,14 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert_eq!(updated.price, 200);
     assert_eq!(updated.stock, 3);
 
-    items.delete(created.id).await.expect("items delete");
+    let removed_item = items
+        .delete_returning_previous(created.id)
+        .await
+        .expect("items delete returning previous");
+    assert_eq!(
+        removed_item, updated,
+        "the RETURNING row uses TEXT updated_at"
+    );
     let after_delete = items
         .list(ListParams::default())
         .await
@@ -293,6 +300,17 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("users verify")
         .expect("alice verifies with the reset password");
     assert_eq!(verified.auth_epoch, 3);
+    let removed_user = users
+        .delete_user_returning_previous(identity.id, Some(existing.id))
+        .await
+        .expect("users delete returning previous");
+    assert_eq!(removed_user.username, "alice");
+    assert_eq!(removed_user.display_name, "Alice A.");
+    assert_eq!(removed_user.role, Role::Viewer);
+    assert!(
+        !removed_user.created_at.is_empty(),
+        "created_at decodes as TEXT"
+    );
 
     // --- settings: set + get -------------------------------------------------
     let settings = SettingsService::new(db.clone());
