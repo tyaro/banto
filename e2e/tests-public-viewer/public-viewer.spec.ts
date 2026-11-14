@@ -30,6 +30,7 @@
  * No `waitForTimeout`/`sleep`: every wait is a locator auto-retry.
  */
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { reloadAndReadIdentity } from '../reload-identity';
 import { expectCheckOutageKeepsTheSession } from '../tests/session-check-outage';
 
 // #209: a normal account may share the synthetic identity's string ID.
@@ -209,13 +210,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 
 		// Restoring an ordinary "public" account must keep its normal UI
 		// while anonymous public viewing is enabled on the same server.
-		const restoredIdentity = page.waitForResponse(
-			(response) => new URL(response.url()).pathname === '/api/auth/identity'
-		);
-		await page.reload();
-		const identity = await restoredIdentity;
-		expect(identity.ok()).toBe(true);
-		expect(await identity.json()).toMatchObject({
+		expect(await reloadAndReadIdentity(page)).toMatchObject({
 			id: 'public',
 			role: 'admin',
 			kind: 'account'
@@ -259,13 +254,7 @@ test.describe.serial('Banto viewer-public mode', () => {
 		await expect(loginButton(page)).toBeVisible();
 		await expect(page.getByRole('banner').getByText('閲覧者')).toBeVisible();
 
-		const restoredIdentity = page.waitForResponse(
-			(response) => new URL(response.url()).pathname === '/api/auth/identity'
-		);
-		await page.reload();
-		const identity = await restoredIdentity;
-		expect(identity.ok()).toBe(true);
-		expect(await identity.json()).toMatchObject({
+		expect(await reloadAndReadIdentity(page)).toMatchObject({
 			id: 'public',
 			role: 'viewer',
 			kind: 'publicViewer'
