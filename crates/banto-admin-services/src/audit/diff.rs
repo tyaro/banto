@@ -111,9 +111,15 @@ mod tests {
     #[test]
     fn missing_to_null_and_back_is_a_change() {
         let c = diff_changes(&json!({}), &json!({"x": null}), &[], &[]);
-        assert_eq!(c, vec![json!({"field": "x", "before": null, "after": null})]);
+        assert_eq!(
+            c,
+            vec![json!({"field": "x", "before": null, "after": null})]
+        );
         let c = diff_changes(&json!({"x": null}), &json!({}), &[], &[]);
-        assert_eq!(c, vec![json!({"field": "x", "before": null, "after": null})]);
+        assert_eq!(
+            c,
+            vec![json!({"field": "x", "before": null, "after": null})]
+        );
     }
 
     #[test]
