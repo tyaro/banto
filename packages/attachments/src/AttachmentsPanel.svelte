@@ -52,10 +52,9 @@
 		confirmDelete = (message: string) => window.confirm(message)
 	}: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultAttachmentsMessages, ...messages };
+	// i18n layer 1: `messages` is an override bundle, but a parent may swap it
+	// later (locale switch), so merge reactively.
+	const t = $derived({ ...defaultAttachmentsMessages, ...messages });
 
 	let items = $state<AttachmentMeta[]>([]);
 	let loading = $state(true);
