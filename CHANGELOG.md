@@ -22,18 +22,16 @@
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ## [7.1.0] - 2026-11-14
 
 **v7.1.0 — 一覧・詳細の画面の共通化（`ResourceListPage`・`ResourceDetail`、ADR-0030）、一覧のクイック検索・保存ビュー・絞り込みチップ、行のドロワーと履歴タブ、監査ログの更新差分、`@banto/ui` の `Button`・`ConfirmDialog`・`Tabs`、配色（OKLCH）と文字スケールの見直し。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い。メッセージキーの移動・削除は ADR-0030 の決定で minor 扱い。items の `update` の監査 `detail` に `changes` が増えたのは追加。`ListParams` への `search` の追加は、[docs/publishing.md](docs/publishing.md)「バージョニング規約」の 1.x 系の例外（フィールド追加は「消費側への注意」に明記して minor）。
 派生アプリへの影響: git 依存のタグを `v7.0.0` から `v7.1.0` に上げると、Rust で `ListParams { .. }` を全フィールド列挙で組み立てているコードと、`append_where` で件数を数えているサービスが追従を要する。コピーしたテンプレートを取り込む場合は、辞書のキーの移動・削除と、一覧のルートの差し替えが中心になる。マイグレーションの追加は無い。
 
-| 経路                             | 影響 | 内容                                                                                                                                                                                                                 |
-| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.0.0` → `v7.1.0`（npm と Rust を同じタグに）。破壊的変更は無い。ただし `ListParams` のフィールド追加（#578）と、見た目（文字サイズ・配色・チャートの色）の変更がある。追加 API 多数。下の「消費側への注意」       |
-| B. コピーしたテンプレート        | あり | 一覧・詳細の共通部品（`lib/resource/`）への切り出し、辞書のキーの移動・削除（`items.*` → `resource.*` ほか）、ドロワー・履歴タブ・保存ビュー・クイック検索、監査ログの差分、LAN 共有の画面、アイコン。取り込みは任意 |
-| C. DB・設定・配布資産            | なし | migration の追加なし。設定キー・`tauri.conf.json`（版数のみ）・配布物は変更なし。`.cargo/audit.toml` に RUSTSEC-2026-0459 の一時除外が入った                                                                         |
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.0.0` → `v7.1.0`（npm と Rust を同じタグに）。API の削除・改名は無い。`ListParams` のフィールド追加（#578）は全フィールド列挙の構造体リテラルをコンパイルエラーにする（規約の例外で minor。下の「移行注意」）。ほかに見た目（文字サイズ・配色・チャートの色）の変更がある。追加 API 多数。下の「消費側への注意」 |
+| B. コピーしたテンプレート        | あり | 一覧・詳細の共通部品（`lib/resource/`）への切り出し、辞書のキーの移動・削除（`items.*` → `resource.*` ほか）、ドロワー・履歴タブ・保存ビュー・クイック検索、監査ログの差分、LAN 共有の画面、アイコン。取り込みは任意                                                                                                |
+| C. DB・設定・配布資産            | なし | migration の追加なし。設定キー・`tauri.conf.json`（版数のみ）・配布物は変更なし。`.cargo/audit.toml` に RUSTSEC-2026-0459 の一時除外が入った                                                                                                                                                                        |
 
 ### A. 共通パッケージ・クレート
 
@@ -47,15 +45,15 @@
   - `banto-storage`: `ColumnMap::text_column`・`text_columns()`・`list_query::{sqlite,postgres}::append_list_where`。
   - `banto-admin-services`: `audit::diff::diff_changes`。
   - `@banto/theme`: 役割ベースの配色トークン（`--banto-brand-hue` など）、`--banto-font-size-2xl`、`.banto-btn`（`app.css` から移した）。
-- 移行注意（破壊的変更）: なし。
+- 移行注意（ソース互換の破壊。API の削除・改名は無いので docs/publishing.md「バージョニング規約」の例外で minor）:
+  1. **`banto-core`: `ListParams` にフィールド `search` が増えた**（#578）。**`ListParams { .. }` を全フィールド列挙で組み立てているコードはコンパイルエラーになる**ので、`search: None`（か `..Default::default()`）を足す。`append_where` は filters だけを書く（search は入らない）ので、`apply_list_params` の横で件数の `COUNT(*)` を `append_where` で数えているサービスは `append_list_where` に替える（替えないと検索中の件数が合わない）。クイック検索を効かせたいリソースは `column_map()` の文字列の列を `text_column` で登録する。
 - 消費側への注意（型エラーにはならないが、確かめるもの）:
-  1. **`banto-core`: `ListParams` にフィールド `search` が増えた**（#578）。`ListParams { .. }` を全フィールド列挙で組み立てているコードは `search: None`（か `..Default::default()`）を足す。`append_where` は filters だけを書く（search は入らない）ので、`apply_list_params` の横で件数の `COUNT(*)` を `append_where` で数えているサービスは `append_list_where` に替える（替えないと検索中の件数が合わない）。クイック検索を効かせたいリソースは `column_map()` の文字列の列を `text_column` で登録する。
-  2. **文字スケールの変更**（#557 の 1）: `--banto-font-size-xs`〜`xl` の値が変わり（`xl` は 24.5px → 20px）、旧 `xl` の振り分けが変わった。Gauge の値と dashboard の KPI の値は `2xl`（28px）へ、ログインの見出し・ブランド名は `xl` のまま（20px）。独自に `--banto-font-size-*` を上書きしている派生アプリは値を見直す。visual の基準画像の更新が要る。
-  3. **配色・チャートの色の変更**（#557 の 2・3、#581）: 色の値が変わる。`--banto-primary` だけを上書きしている派生アプリは塗りの色も変わる。`SEQ_RAMP` を hex として読んでいた派生アプリは `getComputedStyle` の値を使う。visual の基準画像の更新が要る。
-  4. **`.banto-btn` の CSS を `@banto/theme` へ移した**。`app.css` で `.banto-btn` を自前で上書きしている派生アプリは読み込み順を確認する。
-  5. **`@banto/admin-core`: `ResourceDefinition.icon` を非推奨にした**（ADR-0030 §5。画面は読まない。削除はしていない）。ナビのアイコンはアプリ層の `nav.icon`（`AppResourceDefinition`）を使う。
-  6. **監査ログの `detail` の形**（#598）: items の `update` の `detail` が `{ name, changes: [{ field, before, after }] }` になった（`name` は残る）。`detail` を機械で読む処理があれば確かめる。create・delete・users などは変えていない。
-  7. メッセージ: `@banto/grid-svelte`・`@banto/charts`・`@banto/attachments`・`@banto/report`・`@banto/dock-svelte`・`@banto/tree-svelte` は、`messages` を後から差し替えても文言が追従するようになった（#600〜#603）。`@banto/ui` の `Tooltip`、`@banto/admin-core` の `createSseEventProvider`、`@banto/charts` の `sequentialColor`・`divergingColor` の修正も入った（挙動が直るもの）。
+  1. **文字スケールの変更**（#557 の 1）: `--banto-font-size-xs`〜`xl` の値が変わり（`xl` は 24.5px → 20px）、旧 `xl` の振り分けが変わった。Gauge の値と dashboard の KPI の値は `2xl`（28px）へ、ログインの見出し・ブランド名は `xl` のまま（20px）。独自に `--banto-font-size-*` を上書きしている派生アプリは値を見直す。visual の基準画像の更新が要る。
+  2. **配色・チャートの色の変更**（#557 の 2・3、#581）: 色の値が変わる。`--banto-primary` だけを上書きしている派生アプリは塗りの色も変わる。`SEQ_RAMP` を hex として読んでいた派生アプリは `getComputedStyle` の値を使う。visual の基準画像の更新が要る。
+  3. **`.banto-btn` の CSS を `@banto/theme` へ移した**。`app.css` で `.banto-btn` を自前で上書きしている派生アプリは読み込み順を確認する。
+  4. **`@banto/admin-core`: `ResourceDefinition.icon` を非推奨にした**（ADR-0030 §5。画面は読まない。削除はしていない）。ナビのアイコンはアプリ層の `nav.icon`（`AppResourceDefinition`）を使う。
+  5. **監査ログの `detail` の形**（#598）: items の `update` の `detail` が `{ name, changes: [{ field, before, after }] }` になった（`name` は残る）。`detail` を機械で読む処理があれば確かめる。create・delete・users などは変えていない。
+  6. メッセージ: `@banto/grid-svelte`・`@banto/charts`・`@banto/attachments`・`@banto/report`・`@banto/dock-svelte`・`@banto/tree-svelte` は、`messages` を後から差し替えても文言が追従するようになった（#600〜#603）。`@banto/ui` の `Tooltip`、`@banto/admin-core` の `createSseEventProvider`、`@banto/charts` の `sequentialColor`・`divergingColor` の修正も入った（挙動が直るもの）。
 - 依存を上げずに留まれるか: できる（`v7.0.0` のタグに固定したまま使える）。
 
 ### B. コピーしたテンプレート
@@ -74,14 +72,14 @@
   - items の `column_map()` の `text_column` と、件数のクエリの `append_list_where`（`core/src`）。
   - 監査ログ: `audit/diff.rs`・`ItemsService::update_returning_previous`・`AuditChanges.svelte`・`lib/resource/auditTarget.ts` の差し替え。
 - 派生側の独自変更と衝突しやすい箇所: items の一覧・詳細のルート、`resources/items.ts`、`messages/*.json`、`app.css`、dashboard、settings の接続カテゴリ、`core/src` の items・audit。
-- 取り込まなくても動くか: 動く見込み。A のタグを `v7.1.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「消費側への注意」1（`ListParams`・`append_where`）と 2・3（見た目）は A のタグに伴う。組み合わせの確認は未実施（「検証した組み合わせ」はタグの後に追記する）。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.1.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」1（`ListParams`・`append_where`）と「消費側への注意」1・2（見た目）は A のタグに伴う。組み合わせの確認は未実施（「検証した組み合わせ」はタグの後に追記する）。
 - 手本: 上記の `apps/admin-template/` のファイル。
 
 ### C. DB・設定・配布資産
 
 - マイグレーション: 不要（追加なし）。
 - 設定キー・`tauri.conf.json`・配布物: 変更なし（`tauri.conf.json` は版数のみ）。アプリのアイコンの画像は塗り替わる（`src-tauri/icons/`。#586）。
-- 依存監査: `.cargo/audit.toml` で RUSTSEC-2026-0459（libsqlite3-sys の同梱 SQLite）を、理由と見直しの条件をつけて一時的に除外している。派生アプリには影響しない。
+- 依存監査: `.cargo/audit.toml` で RUSTSEC-2026-0459（libsqlite3-sys の同梱 SQLite）を、理由と見直しの条件をつけて一時的に除外している（下の「セキュリティ」）。
 - 戻せる条件: DB の変更が無いので、タグを戻せば戻る。
 - 順序: A・B を先に完成 → 検証用 DB で起動 → 本番。
 
@@ -93,7 +91,7 @@
 
 ### セキュリティ
 
-- なし。
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）を `.cargo/audit.toml` で一時的に除外している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けず、今は上げられない。見直しの条件: libsqlite3-sys 0.39 以上を許す sqlx のリリースが出たら `cargo update -p libsqlite3-sys` で上げ、除外を外す。派生アプリの `cargo audit` でも同じ警告が出る（banto の `.cargo/audit.toml` は派生アプリに届かない）。同じ理由で除外するか、sqlx の更新を待つ。
 
 ### 検証した組み合わせ
 
