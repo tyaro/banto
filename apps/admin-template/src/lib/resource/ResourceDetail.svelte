@@ -11,8 +11,15 @@
 
 	It does not depend on the page frame (no `.page` wrapper, no `PageHeader`):
 	it renders the form panel and then `after`, as siblings, into whatever the
-	host puts around them - a route today, a drawer later (B-3). The host owns
-	the heading (`resource.createTitle` / `resource.editTitle`).
+	host puts around them - a route (`/<path>/[id]`, `/<path>/new`) or the
+	list's drawer (#591, `ResourceListPage`). The host owns the heading
+	(`resource.createTitle` / `resource.editTitle`).
+
+	In a drawer the host passes `onClose` (and `onSaved` / `onDeleted`): the
+	"back to list" controls become "close" buttons that call it, a save or a
+	delete calls the callback instead of going back to the list (the list
+	refreshes itself - `createFormResource` invalidates the resource), and the
+	host asks `hasPendingChanges()` before it closes or switches the record.
 
 	`id` is read ONCE, when the component is created. A host that can switch
 	records under the same instance must key it (`{#key id}`); the (app) layout
@@ -44,7 +51,7 @@
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { resolveAppPath } from '#lib/appPath.js';
 	import { resourcePermissions } from './permissions';
-	import type { AppResourceDefinition } from './types';
+	import type { AppResourceDefinition, ResourceRow } from './types';
 
 	interface Props {
 		resource: AppResourceDefinition;
@@ -62,9 +69,24 @@
 		after?: Snippet<[{ id: number; canWrite: boolean }]>;
 		/** Extra buttons in the form's action row, before "back to list". */
 		actions?: Snippet;
+		/**
+		 * #591: shown inside a host that is not a page (the list's drawer).
+		 * "Back to list" becomes a "close" button that calls this, and the
+		 * panel drops its card frame (the drawer is the frame).
+		 */
+		onClose?: () => void;
+		/**
+		 * #591: called after a successful save of an existing record, instead
+		 * of going back to the list (and instead of the #215 one-shot marker
+		 * the list reads when it mounts - the host is the list itself). Also
+		 * called when the save answers after this form was torn down.
+		 */
+		onSaved?: (row: ResourceRow) => void;
+		/** #591: called after the record was deleted, instead of going back to the list. */
+		onDeleted?: () => void;
 	}
 
-	let { resource, id, after, actions }: Props = $props();
+	let { resource, id, after, actions, onClose, onSaved, onDeleted }: Props = $props();
 
 	// Read once (see the component doc above); `untrack` says so explicitly.
 	const def = untrack(() => resource);
@@ -125,6 +147,20 @@
 		isSaving: () => formResource?.saving ?? false
 	});
 
+	/**
+	 * #591: whether closing / switching away now would drop something - an
+	 * unsaved edit or a save still in flight (the same test as the leave
+	 * guard above). The drawer's host asks before it closes or moves.
+	 */
+	/** #591 review: a save is in flight - the host waits instead of offering to discard it. */
+	export function isSaving(): boolean {
+		return formResource?.saving ?? false;
+	}
+
+	export function hasPendingChanges(): boolean {
+		return guard.pending;
+	}
+
 	// Issue #215/#255 review (fix 2): a save's response can arrive after this
 	// form is no longer relevant (the user moved on, or logged out and someone
 	// else logged in). `guard.canAutoNavigate` only decides whether `goto()`
@@ -169,7 +205,12 @@
 			// (`noteLastEditedRecord` refuses a stale `scope` itself).
 			// `parsedId` is included since some DataProviders' update responses
 			// don't echo `id` back.
-			if (!isNew && !destroyed) {
+			if (!isNew && onSaved) {
+				// #591: the host (the list's drawer) checks the filter itself.
+				// The submitted values under the response, as for the form below
+				// (a partial response must not read as "left the filter").
+				onSaved({ ...values, ...(result.row as Record<string, unknown>), id: parsedId });
+			} else if (!isNew && !destroyed) {
 				noteLastEditedRecord(scope, def.name, {
 					id: parsedId,
 					values: { id: parsedId, ...(result.row as Record<string, unknown>) }
@@ -178,8 +219,27 @@
 			// Saved: nothing is unsaved any more, so the move back to the list
 			// must not prompt; and don't override a screen the user already
 			// chose while the save was in flight (even if it is still loading).
-			store.markClean();
-			if (guard.canAutoNavigate) goto(listHref);
+			// #591 review: the drawer keeps the form open, so the saved row
+			// becomes the clean baseline - the server may have changed some
+			// values (`updatedAt` stamped, the name trimmed). Input typed during
+			// the save stays on screen and stays unsaved (dirty), so closing
+			// still asks.
+			if (onSaved && !isNew) {
+				const current = store.values;
+				// The submitted values under the response: a DataProvider may
+				// answer an update with only some fields (or without `id`).
+				store.reset({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
+				// Only the fields edited during the save go back on top - the
+				// others keep what the server stored.
+				const typed: Record<string, unknown> = {};
+				for (const [key, value] of Object.entries(current)) {
+					if (JSON.stringify(value) !== JSON.stringify(values[key])) typed[key] = value;
+				}
+				if (Object.keys(typed).length > 0) store.values = { ...store.values, ...typed };
+			} else {
+				store.markClean();
+			}
+			if (!onSaved && guard.canAutoNavigate) goto(listHref);
 		} else {
 			store.setServerErrors(result.fieldErrors);
 		}
@@ -200,18 +260,32 @@
 		if (!removed) return;
 		// The record is gone: unsaved edits to it are moot, don't prompt.
 		store.markClean();
-		if (guard.canAutoNavigate) goto(listHref);
+		if (onDeleted) {
+			if (!destroyed) onDeleted();
+		} else if (guard.canAutoNavigate) {
+			goto(listHref);
+		}
 	}
 </script>
 
-<div class="form-panel">
+{#snippet backToList(variant: 'secondary' | 'ghost')}
+	{#if onClose}
+		<button type="button" class="banto-btn banto-btn--{variant}" onclick={onClose}>
+			{m['common.close']()}
+		</button>
+	{:else}
+		<a class="banto-btn banto-btn--{variant}" href={listHref}>{m['common.backToList']()}</a>
+	{/if}
+{/snippet}
+
+<div class="form-panel" class:embedded={onClose !== undefined}>
 	{#if isNotFoundError}
 		<EmptyState
 			title={m['resource.notFoundTitle']({ resource: def.label })}
 			description={m['resource.notFoundDesc']()}
 		>
 			{#snippet action()}
-				<a class="banto-btn banto-btn--secondary" href={listHref}>{m['common.backToList']()}</a>
+				{@render backToList('secondary')}
 			{/snippet}
 		</EmptyState>
 	{:else if formResource?.loading}
@@ -227,7 +301,7 @@
 					>
 						{m['common.reload']()}
 					</button>
-					<a class="banto-btn banto-btn--ghost" href={listHref}>{m['common.backToList']()}</a>
+					{@render backToList('ghost')}
 				</div>
 			{/snippet}
 		</ErrorState>
@@ -247,8 +321,8 @@
 				</button>
 			{/if}
 			{@render actions?.()}
-			<!-- Cancel = back to the list; the guard asks first if anything is unsaved. -->
-			<a class="banto-btn banto-btn--ghost" href={listHref}>{m['common.backToList']()}</a>
+			<!-- Cancel = back to the list (or close the drawer); the guard asks first if anything is unsaved. -->
+			{@render backToList('ghost')}
 		</BantoForm>
 	{/if}
 </div>
@@ -265,6 +339,14 @@
 		box-shadow: var(--banto-shadow-sm);
 		/* Keep native date segments usable in a narrow form at enlarged text. */
 		padding: min(var(--banto-space-5), 3%);
+	}
+
+	/* #591: inside the list's drawer, the drawer is the frame. */
+	.form-panel.embedded {
+		background: none;
+		border: 0;
+		box-shadow: none;
+		padding: 0;
 	}
 
 	.error-actions {

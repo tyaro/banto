@@ -164,6 +164,11 @@ const SSE_HEADERS = { 'X-Banto-Client': 'banto' } as const;
  *   not be verified or the stream simply ended, so reconnect after
  *   `reconnectDelayMs` as before. A revoked session's stream ends on the
  *   server's next revalidation, and the reconnect then gets the `401`.
+ * - `getToken()` returns a different non-null token while a stream is open
+ *   (a login in this tab, e.g. from the public viewer's synthetic session,
+ *   Issue #591): the stream is reopened at once with the new token, so the
+ *   new session's revocation reaches it like any other (the server keeps a
+ *   stream open as long as its OWN token stays valid).
  */
 export function createSseEventProvider(options: SseEventProviderOptions): EventProvider {
 	const baseUrl = options.baseUrl ?? '';
@@ -187,6 +192,10 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 			// next successful connect is a reconnect (Issue #289). Reset whenever
 			// the session ends or changes (401, cleared token, different token).
 			let hasConnected = false;
+			// Issue #591: the open stream's watch for a new login's token, and
+			// whether it aborted the stream for that (reconnect at once).
+			let tokenWatch: ReturnType<typeof setInterval> | null = null;
+			let switchedToken = false;
 
 			function dispatch(payload: string): void {
 				try {
@@ -247,6 +256,24 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 						hooks?.onReconnected?.();
 					}
 
+					// Issue #591: a login in this tab while the stream is open (the
+					// public viewer's synthetic session -> a real account) replaces
+					// the token without ending the stream, and the server never ends
+					// a stream whose own token is still valid. Left alone, the stream
+					// would stay on the previous token - the new session's
+					// revocation would never reach it (no `401`). So while streaming,
+					// watch for a DIFFERENT non-null token and reopen with it at once.
+					// A cleared token (`null`) is left to the existing paths: the
+					// server ends a logged-out token's stream at its next re-check,
+					// and the reconnect then reports `onTokenCleared`.
+					tokenWatch = setInterval(() => {
+						const current = options.getToken();
+						if (current !== null && current !== token) {
+							switchedToken = true;
+							controller?.abort();
+						}
+					}, tokenWaitDelayMs);
+
 					const parser = createSseParser();
 					const reader = response.body.getReader();
 					const decoder = new TextDecoder();
@@ -258,8 +285,17 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 						}
 					}
 				} catch {
-					// Network failure or abort() from unsubscribe - either way, fall
-					// through to the reconnect scheduling below (a no-op if stopped).
+					// Network failure or abort() from unsubscribe / a token switch -
+					// fall through to the reconnect scheduling below (a no-op if
+					// stopped).
+				} finally {
+					if (tokenWatch !== null) clearInterval(tokenWatch);
+					tokenWatch = null;
+				}
+				if (switchedToken) {
+					switchedToken = false;
+					scheduleReconnect(0);
+					return;
 				}
 				scheduleReconnect();
 			}
@@ -269,6 +305,7 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 			return () => {
 				stopped = true;
 				if (timer !== null) clearTimeout(timer);
+				if (tokenWatch !== null) clearInterval(tokenWatch);
 				controller?.abort();
 			};
 		}

@@ -11,6 +11,7 @@ import { createRawSnippet } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	defaultUiMessages,
+	Drawer,
 	EmptyState,
 	ErrorState,
 	IconButton,
@@ -27,6 +28,16 @@ afterEach(cleanup);
 const text = (value: string) => createRawSnippet(() => ({ render: () => `<span>${value}</span>` }));
 
 describe('IconButton', () => {
+	it('disabled (#591) renders a disabled button; enabled by default', () => {
+		const { unmount } = render(IconButton, { label: 'Next', icon: CustomIcon, onclick: () => {} });
+		expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(
+			false
+		);
+		unmount();
+		render(IconButton, { label: 'Next', icon: CustomIcon, disabled: true, onclick: () => {} });
+		expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
+	});
+
 	it('puts the required label on aria-label (the tooltip, not title, shows it) and fires onclick', async () => {
 		const onclick = vi.fn();
 		render(IconButton, { label: 'Close', icon: CustomIcon, onclick });
@@ -208,5 +219,22 @@ describe('SurfaceCard', () => {
 		const { container } = render(SurfaceCard, { children: text('Body') });
 		expect(container.querySelector('header')).toBeNull();
 		expect(container.querySelector('footer')).toBeNull();
+	});
+});
+
+describe('Drawer headerActions (#591)', () => {
+	it('renders the header controls between the title and the ×', () => {
+		render(Drawer, {
+			open: true,
+			title: 'Item 1',
+			headerActions: createRawSnippet(() => ({
+				render: () => '<button type="button">Next</button>'
+			}))
+		});
+		const dialog = screen.getByRole('dialog', { name: 'Item 1' });
+		const buttons = [...dialog.querySelectorAll('.header button')].map(
+			(b) => b.getAttribute('aria-label') ?? b.textContent
+		);
+		expect(buttons).toEqual(['Next', defaultUiMessages.overlayClose()]);
 	});
 });

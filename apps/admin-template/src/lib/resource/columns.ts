@@ -1,6 +1,7 @@
 /**
  * The list's base column set for a resource (ADR-0030 §4, stage 4): the
- * row-link "open" column, the DB-generated id, then every schema-backed column
+ * "open" button column (#591, when the list passes its `openCell` snippet),
+ * the DB-generated id, then every schema-backed column
  * derived from the SAME schema the create / edit forms use (spec §3.1, M23) -
  * header labels, editors and validation rules come from that one definition.
  * `definition.list.columns` carries only the presentation tuning derivation
@@ -11,6 +12,7 @@
  * Call it while the locale is resolved (component init), not at module load:
  * the headers are read once.
  */
+import type { Snippet } from 'svelte';
 import { columnsFromSchema, type GridColumn } from '@banto/grid-svelte';
 import type { FormSchema } from '@banto/forms';
 import * as m from '#lib/paraglide/messages.js';
@@ -27,21 +29,32 @@ export function detailHref(definition: Pick<AppResourceDefinition, 'path'>, id: 
 	return resolveAppPath(`${definition.path}/${encodeURIComponent(String(id))}` as AppPath);
 }
 
-export function resourceColumns(definition: AppResourceDefinition): GridColumn<ResourceRow>[] {
+export function resourceColumns(
+	definition: AppResourceDefinition,
+	openCell?: Snippet<[ResourceRow]>
+): GridColumn<ResourceRow>[] {
+	// #591: a small button at the start of the row opens it in the list's
+	// drawer (the snippet is `ResourceListPage`'s). It used to be a link to
+	// the detail page.
+	const open: GridColumn<ResourceRow>[] = openCell
+		? [
+				{
+					id: 'open',
+					// axe-core wcag2a aria-command-name (visual-refresh-plan.md §7.1):
+					// HeaderCell.svelte always renders its cell-body as role="button"
+					// (even for non-sortable columns like this one), so an empty header
+					// left it with no accessible name at all.
+					header: m['resource.colActions'](),
+					accessor: () => '',
+					width: 56,
+					resizable: false,
+					sortable: false,
+					render: openCell
+				}
+			]
+		: [];
 	return [
-		{
-			id: 'open',
-			// axe-core wcag2a aria-command-name (visual-refresh-plan.md §7.1):
-			// HeaderCell.svelte always renders its cell-body as role="button"
-			// (even for non-sortable columns like this one), so an empty header
-			// left it with no accessible name at all.
-			header: m['resource.colActions'](),
-			accessor: () => '',
-			width: 70,
-			resizable: false,
-			sortable: false,
-			cell: (row) => ({ text: m['resource.open'](), href: detailHref(definition, row.id) })
-		},
+		...open,
 		{
 			id: 'id',
 			header: 'ID',

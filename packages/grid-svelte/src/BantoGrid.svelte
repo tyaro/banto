@@ -568,10 +568,41 @@
 		const cellEl = containerEl.querySelector<HTMLElement>(
 			`[data-cell-row="${rowIndex}"][data-cell-field="${CSS.escape(field)}"]`
 		);
-		const anchor = cellEl?.querySelector<HTMLAnchorElement>('a.cell-link');
+		// A `render` cell (#591): its first enabled button or link is the
+		// control the keyboard reaches, same as a click on it.
+		const column = gridState.orderedColumns.find((candidate) => candidate.id === field);
+		const anchor = column?.render
+			? cellEl?.querySelector<HTMLElement>('button:not([disabled]), a[href]')
+			: cellEl?.querySelector<HTMLAnchorElement>('a.cell-link');
 		if (!anchor) return false;
 		anchor.click();
 		return true;
+	}
+
+	/**
+	 * The row `delta` places away from the row with id `rowId`, in the order
+	 * on screen (#591: an app's "previous / next record"): client mode follows
+	 * the filtered + sorted rows (and, when grouped, the rows of the expanded
+	 * groups), server mode the loaded rows of the windowed array - a neighbour
+	 * that is not loaded yet is `undefined`, the same as one past either end
+	 * or a `rowId` that is not on screen. Reading it in an effect / `$derived`
+	 * tracks the rows it read.
+	 */
+	export function adjacentRow(rowId: string | number, delta: number): TRow | undefined {
+		if (mode === 'server') {
+			// Only enumerate loaded slots; `rows.length` can span millions of holes.
+			for (const key of Object.keys(rows)) {
+				const index = Number(key);
+				const row = rows[index];
+				if (row !== undefined && getRowId(row) === rowId) return rows[index + delta];
+			}
+			return undefined;
+		}
+		const ordered = groupedEntries
+			? groupedEntries.flatMap((entry) => (entry.kind === 'row' ? [entry.row] : []))
+			: (sorted as TRow[]);
+		const index = ordered.findIndex((row) => getRowId(row) === rowId);
+		return index === -1 ? undefined : ordered[index + delta];
 	}
 
 	function handleCellPointerDown(event: PointerEvent, rowIndex: number, field: string) {
@@ -1287,7 +1318,9 @@
 							onclick={() => handleCellClick(row)}
 							ondblclick={() => handleCellDoubleClick(rowIndex, column, row)}
 						>
-							{#if linkInfo}
+							{#if column.render}
+								{@render column.render(row)}
+							{:else if linkInfo}
 								{#if linkInfo.href}
 									<a
 										class="cell-link"

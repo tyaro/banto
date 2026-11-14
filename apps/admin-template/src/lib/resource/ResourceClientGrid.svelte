@@ -72,6 +72,14 @@
 		registerCurrentRow?: (
 			lookup: ((rowId: string | number) => ResourceRow | undefined) | undefined
 		) => void;
+		/**
+		 * #591: lets the page's drawer find the previous / next row in the
+		 * order on screen (BantoGrid's `adjacentRow`). Called with a lookup on
+		 * mount and `undefined` on teardown.
+		 */
+		registerAdjacentRow?: (
+			lookup: ((rowId: string | number, delta: number) => ResourceRow | undefined) | undefined
+		) => void;
 	}
 
 	let {
@@ -85,7 +93,8 @@
 		onCellEdit,
 		onRangePaste,
 		rowClass,
-		registerCurrentRow
+		registerCurrentRow,
+		registerAdjacentRow
 	}: Props = $props();
 
 	// The resource name is fixed for this instance (the page remounts per route).
@@ -118,6 +127,12 @@
 		return () => registerCurrentRow?.(undefined);
 	});
 
+	let grid: ReturnType<typeof BantoGrid<ResourceRow>> | undefined = $state();
+	$effect(() => {
+		registerAdjacentRow?.((rowId, delta) => grid?.adjacentRow(rowId, delta));
+		return () => registerAdjacentRow?.(undefined);
+	});
+
 	async function handleCellEdit(edit: CellEdit<ResourceRow>): Promise<void> {
 		publishSaved([await onCellEdit(edit)]);
 	}
@@ -139,6 +154,7 @@
 {:else}
 	<div class="grid-wrap">
 		<BantoGrid
+			bind:this={grid}
 			{rows}
 			{columns}
 			state={gridState}

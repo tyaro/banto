@@ -27,7 +27,7 @@
 	 * props to spread on it (an attachment that wires the events, and
 	 * `aria-describedby`).
 	 */
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import { createAttachmentKey, type Attachment } from 'svelte/attachments';
 	import { computeAnchoredPosition, watchAnchoredPopover } from './anchoredPopover';
 	import { hasVisibleLayerAbove } from './layering';
@@ -124,7 +124,12 @@
 			// Still hovered (trigger or bubble): leaving the pointer hides it.
 			if (hovering) return;
 			quiet = false;
-			hideNow();
+			// Removing a focused trigger fires `blur` synchronously, while the
+			// block that removes it (an overlay closing - Esc on a drawer's
+			// header button, #592) is still running; a plain write there is
+			// Svelte's `state_unsafe_mutation` and breaks the app. `untrack`
+			// allows it; the teardown below hides it anyway.
+			untrack(hideNow);
 		};
 		const onPress = (): void => {
 			quiet = true;

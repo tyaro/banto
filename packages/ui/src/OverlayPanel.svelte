@@ -79,6 +79,7 @@
 		onBlockedClose,
 		focusFallback,
 		messages,
+		headerActions,
 		children,
 		role = 'dialog',
 		describedBy,
@@ -230,6 +231,9 @@
 		>
 			<div class="header">
 				{#if title}<h3>{title}</h3>{/if}
+				{#if headerActions}
+					<span class="header-actions">{@render headerActions()}</span>
+				{/if}
 				<span class="close">
 					<IconButton label={t.overlayClose()} icon={X} size="sm" onclick={() => requestClose()} />
 				</span>
@@ -343,6 +347,18 @@
 	.close {
 		margin-left: auto;
 		display: inline-flex;
+	}
+
+	/* `headerActions` (#591) sit right before the ×, pushed right with it. */
+	.header-actions {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: var(--banto-space-1);
+	}
+
+	.header-actions + .close {
+		margin-left: 0;
 	}
 
 	.body {

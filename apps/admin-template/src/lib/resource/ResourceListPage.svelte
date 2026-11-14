@@ -25,6 +25,20 @@
 	- `viewMenu`: extra entries at the end of the "View" menu.
 	- `beforeGrid`: above the grid (KPIs etc.), below the import panel.
 	- `annotation`: the demo annotation's paragraphs, instead of `demoNotes`.
+	- `detailAfter`: below the form in the detail drawer (`ResourceDetail`'s
+	  `after`; the items attachments panel).
+
+	Detail drawer (#591, B-3): the small button at the start of each row (and
+	a read-only grid's row click / a double-click on a read-only cell) opens
+	the record in a right-hand `Drawer` with `ResourceDetail`, next to the list.
+	The URL carries `?id=<id>` (replaceState: opening does not add history
+	entries), so the link can be shared; a URL with `?id=` opens the drawer;
+	closing removes it. The header has previous / next (also Alt+Up / Alt+Down
+	while focus is in the drawer) in the order on screen - within the rows the
+	grid has (server mode: the loaded ones) - and "open as a page" to the
+	`/<path>/[id]` route, which stays (direct links, and the create page).
+	Under 768px the drawer is not used: opening goes to that page. Closing,
+	moving and expanding with unsaved edits go through a confirmation.
 
 	The definition is read ONCE, when the component is created (the (app)
 	layout keys every page on its route).
@@ -34,7 +48,7 @@
 	rule `resource-no-optional`): optional extras come in through the slots.
 -->
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import {
 		ColumnsMenu,
 		FilterChips,
@@ -68,14 +82,28 @@
 	import { page } from '$app/state';
 	import {
 		Bookmark,
+		ChevronDown,
+		ChevronUp,
 		Download,
 		Ellipsis,
+		Maximize2,
+		PanelRightOpen,
 		Plus,
 		Search,
 		SlidersHorizontal,
 		Upload
 	} from '@lucide/svelte';
-	import { Button, Menu, MenuGroup, MenuItem, MenuSeparator, Modal, PageHeader } from '@banto/ui';
+	import {
+		Button,
+		Drawer,
+		IconButton,
+		Menu,
+		MenuGroup,
+		MenuItem,
+		MenuSeparator,
+		Modal,
+		PageHeader
+	} from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
@@ -120,6 +148,7 @@
 	import { resourcePermissions } from './permissions';
 	import { createRowSaveQueue } from './rowSaveQueue';
 	import ResourceClientGrid from './ResourceClientGrid.svelte';
+	import ResourceDetail from './ResourceDetail.svelte';
 	import ResourceImportPanel from './ResourceImportPanel.svelte';
 	import ResourceServerGrid from './ResourceServerGrid.svelte';
 	import type { AppResourceDefinition, ListLoadMode, ResourceRow } from './types';
@@ -130,10 +159,18 @@
 		viewMenu?: Snippet;
 		beforeGrid?: Snippet;
 		annotation?: Snippet;
+		detailAfter?: Snippet<[{ id: number; canWrite: boolean }]>;
 	}
 
 	// `actions` is renamed: PageHeader's own `actions` snippet below shadows the name.
-	let { resource, actions: extraActions, viewMenu, beforeGrid, annotation }: Props = $props();
+	let {
+		resource,
+		actions: extraActions,
+		viewMenu,
+		beforeGrid,
+		annotation,
+		detailAfter
+	}: Props = $props();
 
 	// Read once (see the component doc above); `untrack` says so explicitly.
 	const def = untrack(() => resource);
@@ -185,7 +222,8 @@
 
 	const groupByOptions = hasClient ? (def.list?.groupBy ?? []) : [];
 
-	const baseColumns = resourceColumns(def);
+	// `openCell` is the row's "open" button (#591, the snippet at the end of the markup).
+	const baseColumns = resourceColumns(def, openCell);
 
 	/**
 	 * Force every column's `editable` off without the `edit` permission (spec
@@ -520,18 +558,225 @@
 	// を見つけられるようにする" - via `rowClass` highlighting below, rather
 	// than scroll restoration). Deliberately ONE value shared by both load
 	// modes (admin-core's `saveLastOpenedId` doc comment explains why), and
-	// deliberately NOT set from `handleRowClick` below: the "open" cell is a
-	// plain link, so clicking it navigates via its own `href` and never runs
-	// `onRowClick` at all once the grid has editable columns
-	// (`packages/grid-svelte/src/BantoGrid.svelte`'s `handleCellClick` doc
-	// comment). The one place every way of reaching the detail page actually
-	// passes through is that page itself (ResourceDetail), so it calls
-	// `saveLastOpenedId` on mount instead. Reading it once here is enough -
-	// returning from the detail page always remounts this page.
-	const lastOpenedId = loadLastOpenedId(scope, name);
+	// stored by ResourceDetail itself (`saveLastOpenedId` on mount), the one
+	// place every way of opening a record passes through - the detail page and
+	// the drawer below (#591) alike. Read from storage once (returning from the
+	// detail page remounts this page); the drawer then updates it as it shows
+	// a record, so the highlight follows previous / next too.
+	let lastOpenedId: string | number | null = $state(loadLastOpenedId(scope, name));
+
+	// --- #591 (B-3): the detail drawer ---------------------------------------
+
+	/** Below this width the drawer is not used: opening goes to the detail page. */
+	const NARROW_DETAIL_QUERY = '(max-width: 767.98px)';
+	const DRAWER_PARAM = 'id';
+	const drawerMessages = { overlayClose: () => m['common.close']() };
+
+	/** The record the drawer shows (`null` = none). A `?id=` value stays a string until it parses. */
+	let drawerId: string | number | null = $state(null);
+	let drawerOpen = $state(false);
+	/** The id the drawer was opened with, to put focus back on another row's button when it moved. */
+	let drawerOpenedWith: string | number | null = null;
+	/** Bumped by every show / close: an answer to a confirmation that is no longer current is dropped. */
+	let drawerGeneration = 0;
+	/** A discard confirmation is on screen: a second request waits for it instead of asking twice. */
+	let drawerConfirming = false;
+	let detailRef: ReturnType<typeof ResourceDetail> | undefined = $state();
+	let drawerBodyEl: HTMLDivElement | undefined = $state();
+
+	// The active grid's "row next to this one" (BantoGrid's `adjacentRow`).
+	let adjacentLookup:
+		((rowId: string | number, delta: number) => ResourceRow | undefined) | undefined = $state.raw();
+	const registerAdjacentRow = (lookup: typeof adjacentLookup): void => {
+		adjacentLookup = lookup;
+	};
+
+	/** A `?id=` value as the rows hold ids (integers), so it matches `row.id`. */
+	function normalizeId(id: string | number): string | number {
+		if (typeof id === 'number') return id;
+		return /^-?\d+$/.test(id) && Number.isSafeInteger(Number(id)) ? Number(id) : id;
+	}
+
+	const drawerRowId = $derived(drawerId === null ? null : normalizeId(drawerId));
+	const previousRow = $derived(
+		drawerOpen && drawerRowId !== null ? adjacentLookup?.(drawerRowId, -1) : undefined
+	);
+	const nextRow = $derived(
+		drawerOpen && drawerRowId !== null ? adjacentLookup?.(drawerRowId, 1) : undefined
+	);
+
+	function isNarrowViewport(): boolean {
+		return typeof window !== 'undefined' && window.matchMedia(NARROW_DETAIL_QUERY).matches;
+	}
+
+	/** Put the shown record into the URL (or take it out) without a history entry or a navigation. */
+	function writeDrawerParam(id: string | number | null): void {
+		// From the address bar, not `page.url`: SvelteKit's shallow
+		// `replaceState` leaves `page.url` as it was, so after opening the
+		// drawer `page.url` still lacks `?id=` and closing would see nothing
+		// to remove.
+		const current = window.location.href;
+		const next = new URL(current);
+		if (id === null) next.searchParams.delete(DRAWER_PARAM);
+		else next.searchParams.set(DRAWER_PARAM, String(id));
+		if (next.href === current) return;
+		try {
+			replaceState(next, page.state);
+		} catch {
+			// Router not ready yet: the URL keeps its old value; the drawer is right.
+		}
+	}
+
+	function showInDrawer(id: string | number): void {
+		drawerGeneration++;
+		if (!drawerOpen) drawerOpenedWith = id;
+		drawerId = id;
+		drawerOpen = true;
+		lastOpenedId = normalizeId(id);
+		writeDrawerParam(id);
+	}
+
+	function closeDrawerNow(): void {
+		if (!drawerOpen) return;
+		drawerGeneration++;
+		const shown = drawerRowId;
+		const openedWith = drawerOpenedWith === null ? null : normalizeId(drawerOpenedWith);
+		drawerOpen = false;
+		drawerId = null;
+		drawerOpenedWith = null;
+		writeDrawerParam(null);
+		// The Drawer gives focus back to the button that opened it. After a
+		// move to another record, that record's button is the better place -
+		// after the Drawer's own restore (a microtask), when it is on screen.
+		if (shown !== null && shown !== openedWith) {
+			setTimeout(() => {
+				const button = pageEl?.querySelector<HTMLElement>(
+					`[data-resource-open="${CSS.escape(String(shown))}"] button`
+				);
+				// Scrolled out of the virtualised grid: back to the grid itself.
+				(button ?? pageEl?.querySelector<HTMLElement>('[role="grid"]'))?.focus();
+			}, 0);
+		}
+	}
+
+	/**
+	 * `true` when the drawer may leave its record now: nothing unsaved, or
+	 * the user chose to discard it. `false` also while another confirmation
+	 * of this drawer is open, and when the drawer changed while asking.
+	 */
+	async function confirmLeaveRecord(): Promise<boolean> {
+		if (!drawerOpen || !detailRef?.hasPendingChanges()) return true;
+		// A save in flight cannot be called off: "discard" would be a lie (the
+		// change still lands). Stay until it finishes; then nothing is pending.
+		if (detailRef.isSaving()) return false;
+		if (drawerConfirming) return false;
+		const generation = drawerGeneration;
+		drawerConfirming = true;
+		try {
+			const discard = await confirmAction({
+				title: m['resource.discardTitle'](),
+				message: m['resource.discardMessage'](),
+				confirmLabel: m['unsaved.discard'](),
+				danger: true
+			});
+			return discard && generation === drawerGeneration;
+		} finally {
+			drawerConfirming = false;
+		}
+	}
+
+	/** Open a record from the list: the drawer, or the detail page on a narrow screen. */
+	async function openRecord(id: string | number): Promise<void> {
+		if (isNarrowViewport()) {
+			void goto(detailHref(def, id));
+			return;
+		}
+		if (drawerOpen && drawerRowId === normalizeId(id)) return;
+		if (!(await confirmLeaveRecord())) return;
+		showInDrawer(id);
+	}
+
+	/** Previous (-1) / next (+1) row in the list's order. Nothing at either end. */
+	async function moveDrawer(delta: -1 | 1): Promise<void> {
+		const target = delta < 0 ? previousRow : nextRow;
+		if (!target) return;
+		if (!(await confirmLeaveRecord())) return;
+		// `{#key drawerId}` replaces the form, so a focused field goes away and
+		// focus would fall to <body> - out of the drawer, where Alt+Up / Down
+		// no longer reach `handleDrawerKeydown`. Keep it in the drawer body.
+		const focusWasInBody = drawerBodyEl?.contains(document.activeElement) ?? false;
+		showInDrawer(target.id);
+		if (!focusWasInBody) return;
+		await tick();
+		if (drawerBodyEl && !drawerBodyEl.contains(document.activeElement)) drawerBodyEl.focus();
+	}
+
+	/** The Drawer's Esc / scrim / × (sync): ask first when something would be lost. */
+	function handleDrawerRequestClose(): boolean {
+		if (!detailRef?.hasPendingChanges()) return true;
+		void (async () => {
+			if (await confirmLeaveRecord()) closeDrawerNow();
+		})();
+		return false;
+	}
+
+	/** The form's own "close" button: the same as the ×. */
+	function closeDrawerFromDetail(): void {
+		if (handleDrawerRequestClose()) closeDrawerNow();
+	}
+
+	/** "Open as a page": a real navigation, so the detail's unsaved guard asks. */
+	function expandDrawer(): void {
+		if (drawerId === null) return;
+		void goto(detailHref(def, drawerId));
+	}
+
+	function handleDrawerSaved(row: ResourceRow): void {
+		// The list refreshes itself (`createFormResource` invalidates the
+		// resource); only the #215 "left the filter" check is ours.
+		checkFilterExclusion(row);
+	}
+
+	// Alt+Up / Alt+Down: previous / next, only while focus is in the drawer
+	// (the grid's own arrows are not touched). Not on a <select>, where
+	// Alt+Down opens the list of options.
+	function handleDrawerKeydown(event: KeyboardEvent): void {
+		if (!drawerOpen || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+		// A field already used the key (DateInput / DateTimeInput open their
+		// picker on Alt+Down and prevent the default): leave it to the field.
+		if (event.defaultPrevented) return;
+		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+		const dialog = drawerBodyEl?.closest('[role="dialog"]');
+		const target = event.target;
+		if (!dialog || !(target instanceof Node) || !dialog.contains(target)) return;
+		if (target instanceof HTMLSelectElement) return;
+		event.preventDefault();
+		void moveDrawer(event.key === 'ArrowUp' ? -1 : 1);
+	}
+
+	// `?id=` in the URL: opening the page with it, or a later navigation to
+	// the same list with another value (a link, the browser's address bar).
+	// A navigation already went through the detail's unsaved guard, so this
+	// follows it without asking again. Our own replaceState lands here too,
+	// with the value the drawer already has - nothing to do then.
+	$effect(() => {
+		const raw = page.url.searchParams.get(DRAWER_PARAM);
+		untrack(() => {
+			if (raw === null || raw === '') {
+				closeDrawerNow();
+				return;
+			}
+			if (drawerOpen && drawerId !== null && String(drawerId) === raw) return;
+			if (isNarrowViewport()) {
+				void goto(detailHref(def, raw), { replaceState: true });
+				return;
+			}
+			showInDrawer(raw);
+		});
+	});
 
 	function handleRowClick(row: ResourceRow) {
-		goto(detailHref(def, row.id));
+		void openRecord(row.id);
 	}
 
 	/** Issue #215: highlight whichever row was last opened (any mode, any navigation path - see `lastOpenedId` above) - same `rowClass` mechanism audit-log's `+page.svelte` already uses for its selected-row accent. */
@@ -555,11 +800,15 @@
 	$effect(() => {
 		const record = takeLastEditedRecord(scope, name);
 		if (!record) return;
+		checkFilterExclusion({ ...record.values, id: record.id } as ResourceRow);
+	});
+
+	/** Show the notice when `values` (a row just saved) no longer matches the active filter / search. #591: the drawer's saves come here directly. */
+	function checkFilterExclusion(values: ResourceRow): void {
 		// #255 review: the CLIENT grid filters `toRow(row)`, which may add a
 		// derived field a filter matches against (items' `category`). The
 		// check must run through the exact same derivation the grid renders
 		// and filters with, or such a filter always reports a false "excluded".
-		const values = { ...record.values, id: record.id } as ResourceRow;
 		const isClient = mode === 'client';
 		const row = isClient && toClientRow ? toClientRow(values) : values;
 		const activeColumns = isClient ? clientColumns : columns;
@@ -569,9 +818,12 @@
 		if (
 			searchRows(filterRows([row], activeFilters, activeColumns), term, activeColumns).length === 0
 		) {
-			filterExclusionNotice = { id: record.id };
+			filterExclusionNotice = { id: values.id };
+		} else if (filterExclusionNotice !== null && filterExclusionNotice.id === values.id) {
+			// #591 review: saved again in the drawer and back inside the filter.
+			filterExclusionNotice = null;
 		}
-	});
+	}
 
 	// Issue #284: inline edits and range pastes share ONE per-row save queue.
 	// Saves for the same row run in order, and each request body is composed at
@@ -1156,6 +1408,7 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			{registerAdjacentRow}
 		/>
 	{:else}
 		<ResourceServerGrid
@@ -1169,9 +1422,84 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			{registerAdjacentRow}
 		/>
 	{/if}
 </div>
+
+<svelte:window onkeydown={handleDrawerKeydown} />
+
+<!-- #591: the row's "open" button (the `open` column's `render`, `columns.ts`).
+     The wrapper stops the click / double-click from reaching the cell: a
+     read-only grid opens the row on a cell click, which would open it twice. -->
+{#snippet openCell(row: ResourceRow)}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<span
+		class="open-cell"
+		data-resource-open={row.id}
+		onclick={(event) => event.stopPropagation()}
+		ondblclick={(event) => event.stopPropagation()}
+	>
+		<IconButton
+			size="sm"
+			icon={PanelRightOpen}
+			label={m['resource.openRecord']({ id: String(row.id) })}
+			onclick={() => void openRecord(row.id)}
+		/>
+	</span>
+{/snippet}
+
+{#snippet drawerActions()}
+	<IconButton
+		size="sm"
+		icon={ChevronUp}
+		label={m['resource.previousRecord']()}
+		disabled={!previousRow}
+		onclick={() => void moveDrawer(-1)}
+	/>
+	<IconButton
+		size="sm"
+		icon={ChevronDown}
+		label={m['resource.nextRecord']()}
+		disabled={!nextRow}
+		onclick={() => void moveDrawer(1)}
+	/>
+	<IconButton
+		size="sm"
+		icon={Maximize2}
+		label={m['resource.openFullPage']()}
+		onclick={expandDrawer}
+	/>
+{/snippet}
+
+<Drawer
+	open={drawerOpen}
+	title={drawerId === null
+		? undefined
+		: m['resource.drawerTitle']({ resource: def.label, id: String(drawerId) })}
+	width="40rem"
+	messages={drawerMessages}
+	headerActions={drawerActions}
+	onRequestClose={handleDrawerRequestClose}
+	onclose={closeDrawerNow}
+	focusFallback={() => pageEl?.querySelector<HTMLElement>('[role="grid"]')}
+>
+	{#if drawerId !== null}
+		<div class="drawer-body" tabindex="-1" bind:this={drawerBodyEl}>
+			{#key drawerId}
+				<ResourceDetail
+					bind:this={detailRef}
+					resource={def}
+					id={drawerId}
+					after={detailAfter}
+					onClose={closeDrawerFromDetail}
+					onSaved={handleDrawerSaved}
+					onDeleted={closeDrawerNow}
+				/>
+			{/key}
+		</div>
+	{/if}
+</Drawer>
 
 <style>
 	.page {
@@ -1292,6 +1620,23 @@
 		border-radius: var(--banto-radius-sm);
 		background: color-mix(in srgb, var(--banto-primary) 8%, transparent);
 		font-size: var(--banto-font-size-md);
+	}
+
+	/* #591: the row's "open" button, centred in its narrow column. */
+	.open-cell {
+		display: inline-flex;
+		align-items: center;
+	}
+
+	/* Focus lands here only by script (after previous / next replaced the form). */
+	.drawer-body:focus {
+		outline: none;
+	}
+
+	.drawer-body {
+		display: flex;
+		flex-direction: column;
+		gap: var(--banto-space-4);
 	}
 
 	/* Issue #215: highlights whichever row was last opened/saved from

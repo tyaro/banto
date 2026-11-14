@@ -17,10 +17,20 @@
 		expanded?: boolean;
 		/** id of the controlled element (aria-controls). */
 		controls?: string;
+		/** Not available right now (#591: "next" on the last row). Default `false`. */
+		disabled?: boolean;
 		onclick: (event: MouseEvent) => void;
 	}
 
-	let { label, icon: Icon, size = 'md', expanded, controls, onclick }: Props = $props();
+	let {
+		label,
+		icon: Icon,
+		size = 'md',
+		expanded,
+		controls,
+		disabled = false,
+		onclick
+	}: Props = $props();
 </script>
 
 <Tooltip text={label} describe={false}>
@@ -33,6 +43,7 @@
 			aria-label={label}
 			aria-expanded={expanded}
 			aria-controls={controls}
+			{disabled}
 			{onclick}
 		>
 			<Icon size={size === 'sm' ? 16 : 20} aria-hidden="true" />
@@ -62,7 +73,12 @@
 		height: var(--banto-control-height-sm);
 	}
 
-	.icon-button:hover {
+	.icon-button:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.icon-button:hover:not(:disabled) {
 		background: var(--banto-surface-hover);
 		color: var(--banto-text);
 	}

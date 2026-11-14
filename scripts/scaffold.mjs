@@ -705,6 +705,16 @@ function removeAttachments() {
 		if (j === -1) return undefined;
 		return `${s.slice(0, i)} />${s.slice(j + end.length)}`;
 	});
+	// items の一覧（#591）: 詳細ドロワーの `detailAfter` snippet と import。日報の印と隣り合うが、
+	// どちらの順で外しても当たるよう、snippet 側は前の改行を含めない（日報を先に外すと直前が `>` になる）。
+	cutMarked(ITEMS, 'items 一覧の添付パネル import 除去', 'attachments', '\t');
+	cutRegion(
+		ITEMS,
+		'items 一覧のドロワーの添付パネル（detailAfter snippet）除去',
+		`\t<!-- [scaffold:attachments] begin -->`,
+		`<!-- [scaffold:attachments] end -->\n`
+	);
+	removeFile(`${APP}/src/routes/(app)/items/ItemAttachments.svelte`, 'ItemAttachments.svelte 削除');
 
 	// (2) フロント: アプリ側クライアント/アダプタ
 	removeFile(`${APP}/src/lib/banto/attachmentsClient.ts`, 'attachmentsClient.ts 削除');
