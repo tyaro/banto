@@ -727,6 +727,7 @@
   "audit.snapshotExpired": "読み込みの途中で、保持ポリシーにより古い記録が削除されました。このまま続きを読むと行がずれるため、続きの読み込みを止めています。「再読み込み」で最新の状態から読み直してください。",
   "audit.reloadNote": "一覧は読み込んだ時点の記録です。新しい記録は「再読み込み」で取り込みます。",
   "audit.detailHeading": "詳細（ID: {id}）",
+  "audit.openTarget": "対象を開く",
   "audit.detailJson": "詳細情報（JSON）",
   "users.pageDescription": "アカウントの作成・編集・削除・パスワードリセットを行います。",
   "users.unavailableTitle": "この環境では利用できません",

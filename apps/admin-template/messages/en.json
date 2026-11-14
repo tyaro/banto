@@ -727,6 +727,7 @@
   "audit.snapshotExpired": "Older records were deleted by the retention policy while the list was loading. Reading on would shift the rows, so loading has stopped. Use \"Reload\" to read the current records again.",
   "audit.reloadNote": "The list shows the records as of when it was loaded. Use \"Reload\" to include newer records.",
   "audit.detailHeading": "Details (ID: {id})",
+  "audit.openTarget": "Open the target",
   "audit.detailJson": "Details (JSON)",
   "users.pageDescription": "Create, edit, delete accounts and reset passwords.",
   "users.unavailableTitle": "Unavailable in this environment",
