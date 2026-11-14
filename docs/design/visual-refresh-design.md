@@ -125,6 +125,12 @@
   1 / 2 / 4 段に置く。ライトは surface 1・bg 2）。
 - **状態 4 色**（danger / warning / success / info）は色相を固定し、ブランドに追従させない。
   `--banto-info`・`--banto-info-tint`・`--banto-info-tint-text` を新設（warning と同じ組。塗りは作らない）。
+- **チャートの色**（#557 の 3）も固定でブランドに追従させない。カテゴリ 8 色（`--banto-chart-1..8`）は
+  色覚の違い（1 型・2 型・3 型、Machado 2009 のシミュレーション）でも隣り合う系列が見分けられるよう、
+  OKLab 距離で選び直した（旧配色は系列 2 と 4 がどちらも緑で、2 型では全ペアの最小が 0.016 まで縮んでいた）。
+  量の sequential（`--banto-chart-seq-1..7`、単色相の青）と符号付きの diverging（`--banto-chart-div-1..7`、
+  青 ← 中立 → 橙）をトークンにした。条件と値は計画書の付録 A.3a、検査は
+  `packages/theme/tests/chart-palette.test.ts`。
 
 明るさと彩度は、どの色相でも次を満たすように選んだ（0〜359 を 1 度刻みで `packages/theme/tests/contrast.test.ts` が確かめる。最も低いのは約 4.7:1）:
 ライトの塗り（primary-solid）の上の白、ダークの塗りの上の `--banto-text-inverse`、ダークの
