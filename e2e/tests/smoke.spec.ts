@@ -1991,6 +1991,81 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(rowWithText(page, '設定変更').first()).toBeVisible();
 	});
 
+	// #591 stage 2: the drawer's 履歴 tab (the audit log of the record) is for
+	// admins only. An editor and a viewer see the detail directly - no tablist,
+	// no 履歴 tab - and the form is still there (editable / read-only).
+	test('7b. items drawer: editor and viewer get no 履歴 tab, the detail is shown as is', async () => {
+		test.setTimeout(60_000);
+		const EDITOR_USERNAME = 'e2e-editor';
+		const EDITOR_PASSWORD = 'E2eEditorPass1';
+
+		// The editor account is created through the API from the admin's own
+		// session (scenario 5 keeps the users list as the later scenarios expect).
+		await page.evaluate(
+			async ({ username, password }) => {
+				const token =
+					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+				const created = await fetch('/api/users', {
+					method: 'POST',
+					headers: {
+						'X-Banto-Client': 'banto',
+						Authorization: `Bearer ${token}`,
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						username,
+						password,
+						displayName: 'E2E編集者',
+						role: 'editor'
+					})
+				});
+				if (!created.ok) throw new Error(`create editor failed: ${created.status}`);
+			},
+			{ username: EDITOR_USERNAME, password: EDITOR_PASSWORD }
+		);
+
+		async function loginAs(username: string, password: string): Promise<void> {
+			await logout(page);
+			await expect(page).toHaveURL(/\/login$/);
+			await page.getByLabel('ユーザー名').fill(username);
+			await page.getByLabel('パスワード').fill(password);
+			await page.getByRole('button', { name: 'ログイン' }).click();
+			await expect(page).toHaveURL(/\/dashboard$/);
+		}
+
+		async function openFirstRowDrawer(): Promise<Locator> {
+			await page.goto('/items');
+			const row = page
+				.getByRole('row')
+				.filter({ has: page.locator('[data-resource-open]') })
+				.first();
+			return openInDrawer(page, row, await rowItemId(row));
+		}
+
+		try {
+			await loginAs(EDITOR_USERNAME, EDITOR_PASSWORD);
+			const editorDrawer = await openFirstRowDrawer();
+			await expect(editorDrawer.getByRole('tablist')).toHaveCount(0);
+			await expect(editorDrawer.getByRole('tab', { name: '履歴', exact: true })).toHaveCount(0);
+			await expect(editorDrawer.getByRole('spinbutton', { name: /^価格/ })).toBeEditable();
+			await expect(editorDrawer.getByRole('button', { name: '保存', exact: true })).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(editorDrawer).toBeHidden();
+
+			await loginAs(VIEWER_USERNAME, VIEWER_PASSWORD);
+			const viewerDrawer = await openFirstRowDrawer();
+			await expect(viewerDrawer.getByRole('tablist')).toHaveCount(0);
+			await expect(viewerDrawer.getByRole('tab', { name: '履歴', exact: true })).toHaveCount(0);
+			await expect(viewerDrawer.getByRole('spinbutton', { name: /^価格/ })).not.toBeEditable();
+			await expect(viewerDrawer.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+			await page.keyboard.press('Escape');
+			await expect(viewerDrawer).toBeHidden();
+		} finally {
+			// Later scenarios continue as the admin.
+			await loginAs(ADMIN_USERNAME, ADMIN_PASSWORD);
+		}
+	});
+
 	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
 		await page.goto('/items');
 		await page.getByRole('button', { name: '新規作成' }).click();
