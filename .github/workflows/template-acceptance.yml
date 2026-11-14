@@ -243,6 +243,12 @@ jobs:
         working-directory: ${{ env.DEST }}
         run: pnpm --filter admin-template build
 
+      # vitest はコピーの messages/*.json から生成した paraglide を読む（pretest で再生成）。
+      # scaffold が足した nav キー等が単体テスト（navigation.test.ts ほか）で壊れていないことを保証する。
+      - name: Unit-test the scaffolded copy
+        working-directory: ${{ env.DEST }}
+        run: pnpm --filter admin-template test
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
