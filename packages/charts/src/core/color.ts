@@ -61,7 +61,7 @@ export function sequentialColor(
 	if (ramp.length === 1) return ramp[0];
 	if (min === max) return ramp[Math.floor(ramp.length / 2)];
 
-	const ratio = Math.min(1, Math.max(0, (value - min) / (max - min)));
+	const ratio = Math.min(1, Math.max(0, halfDiff(value, min) / halfDiff(max, min)));
 	const step = Math.min(ramp.length - 1, Math.floor(ratio * ramp.length));
 	return ramp[step];
 }
@@ -92,12 +92,22 @@ export function divergingColor(
 	const below = value < mid;
 	const side = below ? centre : ramp.length - 1 - centre;
 	if (side === 0) return ramp[centre];
-	const extent = below ? mid - min : max - mid;
-	const ratio = extent <= 0 ? 1 : Math.min(1, Math.abs(value - mid) / extent);
+	const extent = below ? halfDiff(mid, min) : halfDiff(max, mid);
+	const ratio = extent <= 0 ? 1 : Math.min(1, Math.abs(halfDiff(value, mid)) / extent);
 	const k = Math.min(side, Math.max(1, Math.ceil(ratio * side)));
 	return ramp[below ? centre - k : centre + k];
 }
 
 function allFinite(...values: number[]): boolean {
 	return values.every(Number.isFinite);
+}
+
+/**
+ * `(a - b) / 2` without overflow: the plain difference of two finite numbers
+ * can exceed `Number.MAX_VALUE` (e.g. `1e308 - -1e308`) and become `Infinity`,
+ * which turns the ratio into `NaN`. Halving first keeps it finite; the ratios
+ * use half-differences on both sides, so the factor cancels out.
+ */
+function halfDiff(a: number, b: number): number {
+	return a / 2 - b / 2;
 }
