@@ -51,6 +51,29 @@ describe('divergingColor', () => {
 		expect(divergingColor(1, 0, 0.5, 1, ['x'])).toBe('x');
 		expect(divergingColor(0, 0, 0.5, 1, ['x'])).toBe('x');
 	});
+
+	it('returns an empty string for non-finite input instead of undefined', () => {
+		expect(divergingColor(NaN, -10, 0, 10)).toBe('');
+		expect(divergingColor(Infinity, -10, 0, 10)).toBe('');
+		expect(divergingColor(1, NaN, 0, 10)).toBe('');
+		expect(divergingColor(1, -10, NaN, 10)).toBe('');
+		expect(divergingColor(1, -10, 0, Infinity)).toBe('');
+	});
+
+	it('does not overflow on huge finite domains', () => {
+		const ramp = ['a', 'b', 'c', 'MID', 'e', 'f', 'g'];
+		expect(divergingColor(-9e307, -1e308, 1e308, 1.7e308, ramp)).toBe('a');
+		expect(divergingColor(5e307, -1e308, 1e308, 1.7e308, ramp)).toBe('c');
+		expect(divergingColor(-1e308, -1e308, 1e308, 1.7e308, ramp)).toBe('a');
+		expect(divergingColor(1.7e308, -1.7e308, -1e308, 1.7e308, ramp)).toBe('g');
+	});
+
+	it('keeps subnormal domains distinct', () => {
+		const ramp = ['a', 'b', 'c', 'MID', 'e', 'f', 'g'];
+		const m = Number.MIN_VALUE;
+		expect(divergingColor(-m, -m, 0, m, ramp)).toBe('a');
+		expect(divergingColor(m, -m, 0, m, ramp)).toBe('g');
+	});
 });
 
 describe('seriesColorVar', () => {
@@ -95,5 +118,25 @@ describe('sequentialColor', () => {
 		expect(sequentialColor(0, 0, 10, ramp)).toBe('#111');
 		expect(sequentialColor(10, 0, 10, ramp)).toBe('#333');
 		expect(sequentialColor(5, 5, 5, ramp)).toBe('#222');
+	});
+
+	it('returns an empty string for non-finite input instead of undefined', () => {
+		expect(sequentialColor(NaN, 0, 100)).toBe('');
+		expect(sequentialColor(-Infinity, 0, 100)).toBe('');
+		expect(sequentialColor(5, NaN, 100)).toBe('');
+		expect(sequentialColor(5, 0, Infinity)).toBe('');
+	});
+
+	it('does not overflow on huge finite domains', () => {
+		const ramp = ['#111', '#222', '#333'];
+		expect(sequentialColor(9e307, -1e308, 1e308, ramp)).toBe('#333');
+		expect(sequentialColor(-1e308, -1e308, 1e308, ramp)).toBe('#111');
+		expect(sequentialColor(0, -1.7e308, 1.7e308, ramp)).toBe('#222');
+	});
+
+	it('keeps subnormal domains distinct', () => {
+		const ramp = ['#111', '#222', '#333'];
+		expect(sequentialColor(0, 0, Number.MIN_VALUE, ramp)).toBe('#111');
+		expect(sequentialColor(Number.MIN_VALUE, 0, Number.MIN_VALUE, ramp)).toBe('#333');
 	});
 });
