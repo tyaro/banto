@@ -43,6 +43,12 @@ export interface OverlayProps {
 	focusFallback?: () => HTMLElement | null | undefined;
 	/** Text overrides (layer 1 i18n): `overlayClose`. Defaults: `defaultUiMessages`. */
 	messages?: UiMessages;
+	/**
+	 * Extra controls in the header, between the title and the × (#591: a
+	 * drawer's "previous / next / open full page" buttons). Inside the focus
+	 * trap like the body.
+	 */
+	headerActions?: Snippet;
 	/** Panel body. */
 	children?: Snippet;
 }

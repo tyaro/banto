@@ -299,17 +299,21 @@ test.describe.serial('Banto viewer-public mode', () => {
 		const priceHeader = page.getByRole('grid').getByRole('columnheader', { name: '価格' });
 		await priceHeader.locator('.cell-body').click();
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'ascending');
-		await page
+		// #591: the row's open button shows the record in the list's drawer;
+		// its ResourceDetail records the opened row when it is created.
+		const openButton = page
 			.getByRole('row')
 			.filter({ hasText: SEARCH })
 			.first()
-			.getByRole('link', { name: '開く' })
-			.click();
-		await expect(page).toHaveURL(/\/items\/\d+$/);
-		// Wait for the detail page itself (it records the opened row when it is
-		// created) - the URL changes before it has rendered.
-		await expect(page.getByRole('heading', { name: '商品を編集' })).toBeVisible();
-		await page.goBack();
+			.getByRole('button', { name: /^ID \d+ を開く$/ });
+		const drawer = page.getByRole('dialog', { name: /^商品 ID \d+$/ });
+		await expect(async () => {
+			if (!(await drawer.isVisible())) await openButton.click();
+			await expect(drawer).toBeVisible({ timeout: 1_000 });
+		}).toPass();
+		await expect(page).toHaveURL(/\/items\?id=\d+$/);
+		await page.keyboard.press('Escape');
+		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
 		await expect(page.locator('.resource-row-last-opened')).toHaveCount(1);
 

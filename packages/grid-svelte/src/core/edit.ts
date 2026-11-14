@@ -28,7 +28,8 @@ export type PrepareCommitResult<TRow> =
  * through, so none of them need their own `column.cell` check.
  */
 export function isColumnEditable<TRow>(column: GridColumn<TRow>, row: TRow): boolean {
-	if (column.cell) return false;
+	// `render` (#591) is custom content (a button), the same as `cell` here.
+	if (column.cell || column.render) return false;
 	return typeof column.editable === 'function' ? column.editable(row) : column.editable === true;
 }
 

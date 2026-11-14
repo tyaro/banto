@@ -6,6 +6,7 @@
  * client-side state can later drive server mode (spec §4.1, §10) without a
  * shape change. Keep these two definitions in sync by hand.
  */
+import type { Snippet } from 'svelte';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -140,6 +141,17 @@ export interface GridColumn<TRow> {
 	 * never both apply to the same cell.
 	 */
 	cell?: (row: TRow) => { text: string; href?: string };
+	/**
+	 * Custom cell content (#591): the snippet is rendered in the cell in
+	 * place of the value - e.g. a small "open" button at the start of the
+	 * row. Like `cell`, a column with `render` is never editable. When the
+	 * cell is the active one, Enter / Space click its first button or link
+	 * (the keyboard path of the same control). The control should stop the
+	 * `click` / `dblclick` from bubbling so the row's own click handling
+	 * (`onRowClick` of a read-only grid, the double-click) does not also run.
+	 * Takes precedence over `cell`.
+	 */
+	render?: Snippet<[TRow]>;
 	/**
 	 * Per-group aggregate shown as a chip in the group header row (spec
 	 * §4.3, client mode grouping only - a later milestone wires the server

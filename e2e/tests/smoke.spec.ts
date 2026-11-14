@@ -126,6 +126,33 @@ function rowWithText(page: Page, text: string): Locator {
 	return page.getByRole('row').filter({ hasText: text });
 }
 
+/** #591: the id of a grid data row (its ID cell), as text. */
+async function rowItemId(row: Locator): Promise<string> {
+	const id = (await row.locator('[data-cell-field="id"]').innerText()).trim();
+	expect(id).toMatch(/^\d+$/);
+	return id;
+}
+
+/** #591: the row's "open" button (the first column), which opens the record in the list's drawer. */
+function openButtonOf(row: Locator, id: string): Locator {
+	return row.getByRole('button', { name: `ID ${id} を開く`, exact: true });
+}
+
+/** #591: the list's detail drawer for item `id` (its title is the accessible name). */
+function itemDrawer(page: Page, id: string): Locator {
+	return page.getByRole('dialog', { name: `商品 ID ${id}`, exact: true });
+}
+
+/** #591: click the row's open button until the drawer shows (a click before hydration does nothing). */
+async function openInDrawer(page: Page, row: Locator, id: string): Promise<Locator> {
+	const drawer = itemDrawer(page, id);
+	await expect(async () => {
+		if (!(await drawer.isVisible())) await openButtonOf(row, id).click();
+		await expect(drawer).toBeVisible({ timeout: 1_000 });
+	}).toPass();
+	return drawer;
+}
+
 /** Opens the header's user menu and clicks "ログアウト" (Header.svelte moved logout off a bare header button into the shared Menu component - visual-refresh-design.md §8.2). */
 async function logout(page: Page): Promise<void> {
 	await page.getByRole('button', { name: 'ユーザーメニューを開く' }).click();
@@ -258,10 +285,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const row = rowWithText(page, ITEM_NAME);
 		await expect(row).toBeVisible();
 
-		const openLink = row.getByRole('link', { name: '開く' });
-		const href = await openLink.getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
-		const itemUrl = new RegExp(`${href}$`);
+		// #591: the row's open button (the first column) opens the drawer.
+		const itemId = await rowItemId(row);
+		const href = `/items/${itemId}`;
+		const openButton = openButtonOf(row, itemId);
 
 		// Keyboard edit completion returns focus for the next action (#212,
 		// spec §4.5). Use real server saves before continuing without a mouse.
@@ -308,7 +335,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				});
 				if (!response.ok) throw new Error(`get item failed: ${response.status}`);
 				return response.json();
-			}, href!);
+			}, href);
 			expect(saved).toMatchObject({ price: ITEM_PRICE + 1, stock: ITEM_STOCK + 1 });
 			// Restore through the same keyboard path, still without any list
 			// response reaching the app, for the existing CRUD assertions below.
@@ -379,7 +406,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.keyboard.press('End');
 		await expect(grid.locator('.cell.active')).toHaveAttribute('data-cell-field', 'updatedAt');
 
-		// Keep header sort/filter controls and the row link reachable. Tab
+		// Keep header sort/filter controls and the row's open button reachable. Tab
 		// events bubbling from those controls must not move the selected cell
 		// or trap focus either; the non-sortable actions header is not a tab stop.
 		const headerControls = await grid
@@ -388,14 +415,14 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			.locator('[tabindex="0"], button')
 			.all();
 		expect(headerControls.length).toBeGreaterThan(0);
-		for (const control of [...headerControls, openLink]) {
+		for (const control of [...headerControls, openButton]) {
 			await page.keyboard.press('Tab');
 			await expect(control).toBeFocused();
 		}
 		await page.keyboard.press('Tab');
 		await expect(grid.locator(':focus')).toHaveCount(0);
 		for (const control of [
-			openLink,
+			openButton,
 			...[...headerControls].reverse(),
 			grid,
 			chipRemove,
@@ -470,22 +497,34 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(grid.locator('.cell-editor')).toHaveCount(0);
 		await expect(row).toBeVisible();
 		await row.locator('[data-cell-field="name"]').click();
-		for (const control of [...headerControls, openLink]) {
+		for (const control of [...headerControls, openButton]) {
 			await page.keyboard.press('Tab');
 			await expect(control).toBeFocused();
 		}
 
-		// Edit: change price, save, and independently re-open the record (by
-		// URL, not via the grid/filter again) to confirm the new value
+		// Edit in the drawer (#591): Enter on the focused open button opens it
+		// next to the list with `?id=`; a save keeps it open and refreshes the
+		// row; closing gives focus back to the button. Then independently
+		// re-open the record (by URL, the detail page) to confirm the new value
 		// actually persisted server-side.
 		await page.keyboard.press('Enter');
-		await expect(page).toHaveURL(itemUrl);
-		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE));
-		await page.getByLabel('価格').fill(String(ITEM_PRICE_UPDATED));
-		await page.getByRole('button', { name: '保存' }).click();
+		const drawer = itemDrawer(page, itemId);
+		await expect(drawer).toBeVisible();
+		await expect(page).toHaveURL(new RegExp(`/items[?]id=${itemId}$`));
+		const drawerPrice = drawer.getByLabel('価格', { exact: true });
+		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE));
+		await drawerPrice.fill(String(ITEM_PRICE_UPDATED));
+		await drawer.getByRole('button', { name: '保存', exact: true }).click();
+		await expect(row.locator('[data-cell-field="price"]')).toHaveText(
+			`¥${ITEM_PRICE_UPDATED.toLocaleString('en-US')}`
+		);
+		await expect(drawer).toBeVisible();
+		await drawer.getByRole('button', { name: '閉じる', exact: true }).first().click();
+		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
+		await expect(openButton).toBeFocused();
 
-		await page.goto(href!);
+		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));
 
 		// Delete (the in-page confirm dialog, Issue #556).
@@ -495,7 +534,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 		await expect(page).toHaveURL(/\/items$/);
 
-		await page.goto(href!);
+		await page.goto(href);
 		await expect(page.getByText('商品が見つかりません')).toBeVisible();
 	});
 
@@ -692,20 +731,19 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await priceSortBody.click();
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'descending');
 
-		const openLink = row.getByRole('link', { name: '開く' });
-		const href = await openLink.getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
-		const itemId = href!.split('/').pop();
-		const itemUrl = new RegExp(`${href}$`);
+		const itemId = await rowItemId(row);
+		const href = `/items/${itemId}`;
 
-		// Edit 1: price still satisfies both filters (name unaffected, price
-		// 850 >= 500) - the row must still be there, under the same filters
-		// and sort, AND marked as the one just worked on (rowClass
-		// `resource-row-last-opened`, ResourceListPage.svelte).
-		await openLink.click();
-		await expect(page).toHaveURL(itemUrl);
-		await page.getByLabel('価格').fill('850');
-		await page.getByRole('button', { name: '保存' }).click();
+		// Edit 1 (in the list's drawer, #591): price still satisfies both
+		// filters (name unaffected, price 850 >= 500) - the row must still be
+		// there, under the same filters and sort, AND marked as the one just
+		// worked on (rowClass `resource-row-last-opened`, ResourceListPage.svelte).
+		const drawer = await openInDrawer(page, row, itemId);
+		await drawer.getByLabel('価格', { exact: true }).fill('850');
+		await drawer.getByRole('button', { name: '保存', exact: true }).click();
+		await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥850');
+		await page.keyboard.press('Escape');
+		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
 
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'descending');
@@ -723,11 +761,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.keyboard.press('Escape');
 		await expect(page.getByText(/現在の絞り込み条件に当てはまりません/)).toHaveCount(0);
 
-		// Edit 2: price now FAILS the 価格>=500 filter (still passes the name
-		// filter). The row must disappear from view (真面目にフィルタが効いて
-		// いる証拠) - but the filter itself must NOT be reset, and a notice
-		// must explain why this item no longer shows.
-		await page.goto(href!);
+		// Edit 2 (on the detail page, the round trip of #215): price now FAILS
+		// the 価格>=500 filter (still passes the name filter). The row must
+		// disappear from view (真面目にフィルタが効いて いる証拠) - but the
+		// filter itself must NOT be reset, and a notice must explain why this
+		// item no longer shows.
+		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue('850');
 		await page.getByLabel('価格').fill('100');
 		await page.getByRole('button', { name: '保存' }).click();
@@ -773,7 +812,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
 			});
 			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
-		}, itemId!);
+		}, itemId);
 	});
 
 	// Issue #215/#255 review (fix 2): a detail-page save's response can
@@ -796,11 +835,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		await applyColumnFilter(page, '商品名', STALE_SAVE_ITEM_NAME);
 		const row = rowWithText(page, STALE_SAVE_ITEM_NAME);
-		const href = await row.getByRole('link', { name: '開く' }).getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
-		const itemId = href!.split('/').pop();
+		const itemId = await rowItemId(row);
+		const href = `/items/${itemId}`;
 
-		await page.goto(href!);
+		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue('300');
 
 		let releaseSave!: () => void;
@@ -885,7 +923,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
 			});
 			if (!res.ok) throw new Error(`delete failed: ${res.status}`);
-		}, itemId!);
+		}, itemId);
 	});
 
 	// #555 B-2 review: in SERVER mode the chip's x must reach the fetch too
@@ -893,15 +931,15 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	test('3d2. items: server mode - the filter chip x brings the rows back', async () => {
 		await page.goto('/items');
 		await expectItemsMode(page, SERVER_MODE, true);
-		const openLinks = page.getByRole('link', { name: '開く' });
-		await expect(openLinks.first()).toBeVisible();
+		const openButtons = page.getByRole('button', { name: /^ID \d+ を開く$/ });
+		await expect(openButtons.first()).toBeVisible();
 		await applyColumnFilter(page, '商品名', 'zz-no-such-item-zz');
-		await expect(openLinks).toHaveCount(0);
+		await expect(openButtons).toHaveCount(0);
 		const chipRemove = page.getByRole('button', { name: '商品名の絞り込みを外す' });
 		await expect(chipRemove).toBeVisible();
 		await chipRemove.click();
 		await expect(chipRemove).toHaveCount(0);
-		await expect(openLinks.first()).toBeVisible();
+		await expect(openButtons.first()).toBeVisible();
 	});
 
 	// #555 (4): the dashboard's 在庫僅少 tile opens /items on the `low-stock`
@@ -971,26 +1009,29 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await applyColumnFilter(page, 'カテゴリ', '緑茶');
 		const row = page.getByRole('row').filter({ hasText: '緑茶' }).first();
 		await expect(row).toBeVisible();
-		const openLink = row.getByRole('link', { name: '開く' });
-		const href = await openLink.getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
-		// `href` (the row's item id) is unique, unlike its name/category text
-		// (many seeded rows share e.g. "緑茶 350ml") - identify the row again
-		// after the round trip by the exact link it renders, not by text.
-		const rowAfterHref = (): Locator =>
-			page.getByRole('row').filter({ has: page.locator(`a[href="${href}"]`) });
+		const itemId = await rowItemId(row);
+		// The item id is unique, unlike the row's name/category text (many
+		// seeded rows share e.g. "緑茶 350ml") - identify the row again after
+		// the save by its open button, not by text.
+		const rowAfterSave = (): Locator =>
+			page.getByRole('row').filter({ has: page.locator(`[data-resource-open="${itemId}"]`) });
 
-		await openLink.click();
-		await expect(page).toHaveURL(new RegExp(`${href}$`));
-		const currentPrice = await page.getByLabel('価格').inputValue();
-		await page.getByLabel('価格').fill(String(Number(currentPrice) + 1));
-		await page.getByRole('button', { name: '保存' }).click();
-		await expect(page).toHaveURL(/\/items$/);
+		// #591: saved in the list's drawer, the exclusion check runs in the
+		// page itself (`checkFilterExclusion` with the client `toRow`).
+		const drawer = await openInDrawer(page, row, itemId);
+		const drawerPrice = drawer.getByLabel('価格', { exact: true });
+		await expect(drawerPrice).not.toHaveValue('');
+		const currentPrice = await drawerPrice.inputValue();
+		await drawerPrice.fill(String(Number(currentPrice) + 1));
+		await drawer.getByRole('button', { name: '保存', exact: true }).click();
+		await expect(drawer.getByText('未保存の変更があります')).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		await expect(drawer).toBeHidden();
 
 		// Still visible under the same カテゴリ filter, and no false "この行
 		// は現在の絞り込み条件に当てはまりません" notice.
 		await expectItemsMode(page, CLIENT_MODE, true);
-		await expect(rowAfterHref()).toBeVisible();
+		await expect(rowAfterSave()).toBeVisible();
 		await expect(page.getByText(/現在の絞り込み条件に当てはまりません/)).toHaveCount(0);
 
 		await clearColumnFilter(page, 'カテゴリ');
@@ -998,6 +1039,98 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// expect (mode is itself session-persisted, Issue #215).
 		await chooseItemsMode(page, SERVER_MODE);
 		await expectItemsMode(page, SERVER_MODE, true);
+	});
+
+	// #591 (B-3): the list's detail drawer. `?id=` opens it (and a missing id
+	// shows not-found in it), previous / next (buttons and Alt+Up/Down while
+	// focus is inside) follow the list's order and stop at the ends, unsaved
+	// edits ask before closing or moving (in-page confirm), "open as a page"
+	// goes to the detail route, and under 768px `?id=` goes to that page.
+	test('3e2. items: the detail drawer - ?id=, previous/next, unsaved confirm, expand, narrow screens', async () => {
+		await page.goto('/items');
+		await expectItemsMode(page, SERVER_MODE, true);
+		const rows = page.getByRole('row').filter({ has: page.locator('[data-resource-open]') });
+		await expect(rows.nth(2)).toBeVisible();
+		const firstId = await rowItemId(rows.nth(0));
+		const secondId = await rowItemId(rows.nth(1));
+		const thirdId = await rowItemId(rows.nth(2));
+		const anyDrawer = page.getByRole('dialog', { name: /^商品 ID / });
+		const previous = anyDrawer.getByRole('button', { name: '前の行（Alt+↑）', exact: true });
+		const next = anyDrawer.getByRole('button', { name: '次の行（Alt+↓）', exact: true });
+
+		// `?id=` opens the drawer over the list.
+		await page.goto(`/items?id=${secondId}`);
+		await expect(itemDrawer(page, secondId)).toBeVisible();
+		await expect(rows.nth(1)).toHaveClass(/resource-row-last-opened/);
+
+		// Next (button), then back up with the keyboard from inside the form.
+		await next.click();
+		await expect(itemDrawer(page, thirdId)).toBeVisible();
+		await expect(page).toHaveURL(new RegExp(`/items[?]id=${thirdId}$`));
+		await expect(rows.nth(2)).toHaveClass(/resource-row-last-opened/);
+		const price = anyDrawer.getByLabel('価格', { exact: true });
+		await expect(price).not.toHaveValue('');
+		await price.focus();
+		await page.keyboard.press('Alt+ArrowUp');
+		await expect(itemDrawer(page, secondId)).toBeVisible();
+		await anyDrawer.getByLabel('価格', { exact: true }).focus();
+		await page.keyboard.press('Alt+ArrowUp');
+		await expect(itemDrawer(page, firstId)).toBeVisible();
+		// The first row: nothing before it.
+		await expect(previous).toBeDisabled();
+		await expect(next).toBeEnabled();
+
+		// Unsaved edits: closing asks; "cancel" keeps the edit and the drawer.
+		const edited = anyDrawer.getByLabel('価格', { exact: true });
+		await expect(edited).not.toHaveValue('');
+		const original = await edited.inputValue();
+		await edited.fill(String(Number(original) + 7));
+		const discard = page.getByRole('alertdialog', { name: '未保存の変更' });
+		await anyDrawer.getByRole('button', { name: '閉じる', exact: true }).first().click();
+		await expect(discard).toBeVisible();
+		await discard.getByRole('button', { name: 'キャンセル', exact: true }).click();
+		await expect(discard).toBeHidden();
+		await expect(itemDrawer(page, firstId)).toBeVisible();
+		await expect(edited).toHaveValue(String(Number(original) + 7));
+		// Moving asks too; discarding moves without saving.
+		await next.click();
+		await expect(discard).toBeVisible();
+		await discard.getByRole('button', { name: '変更を取り消す', exact: true }).click();
+		await expect(itemDrawer(page, secondId)).toBeVisible();
+		await expect(rows.nth(0).locator('[data-cell-field="price"]')).not.toHaveText(
+			`¥${(Number(original) + 7).toLocaleString('en-US')}`
+		);
+		// A clean drawer closes on Esc and gives focus back to the grid.
+		await page.keyboard.press('Escape');
+		await expect(anyDrawer).toBeHidden();
+		await expect(page).toHaveURL(/\/items$/);
+
+		// A missing id: not-found inside the drawer, no neighbours.
+		await page.goto('/items?id=999999999');
+		const missing = itemDrawer(page, '999999999');
+		await expect(missing.getByText('商品が見つかりません')).toBeVisible();
+		await expect(previous).toBeDisabled();
+		await expect(next).toBeDisabled();
+		await missing.getByRole('button', { name: '閉じる', exact: true }).last().click();
+		await expect(missing).toBeHidden();
+		await expect(page).toHaveURL(/\/items$/);
+
+		// "Open as a page" goes to the detail route.
+		await openInDrawer(page, rows.nth(0), firstId);
+		await anyDrawer.getByRole('button', { name: 'ページで開く', exact: true }).click();
+		await expect(page).toHaveURL(new RegExp(`/items/${firstId}$`));
+		await expect(page.getByRole('heading', { name: '商品を編集' })).toBeVisible();
+
+		// Under 768px the drawer is not used: `?id=` goes to the detail page.
+		const viewport = page.viewportSize();
+		try {
+			await page.setViewportSize({ width: 600, height: 800 });
+			await page.goto(`/items?id=${secondId}`);
+			await expect(page).toHaveURL(new RegExp(`/items/${secondId}$`));
+			await expect(page.getByRole('heading', { name: '商品を編集' })).toBeVisible();
+		} finally {
+			if (viewport) await page.setViewportSize(viewport);
+		}
 	});
 
 	// Issue #290: SvelteKit reuses the page component between two URLs of the
@@ -1574,10 +1707,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const priceHeader = grid.getByRole('columnheader', { name: '価格' });
 		await priceHeader.locator('.cell-body').click();
 		await expect(priceHeader).toHaveAttribute('aria-sort', 'ascending');
-		await rowWithText(page, '茶').first().getByRole('link', { name: '開く' }).click();
-		await expect(page).toHaveURL(/\/items\/\d+$/);
-		await page.goBack();
+		// #591: opening the row in the drawer marks it as the last opened one.
+		const teaRow = rowWithText(page, '茶').first();
+		const teaDrawer = await openInDrawer(page, teaRow, await rowItemId(teaRow));
+		await page.keyboard.press('Escape');
+		await expect(teaDrawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
+		await expect(page.locator('.resource-row-last-opened')).toHaveCount(1);
 
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
@@ -1614,10 +1750,18 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// 以上"): open any seeded demo item (the grid always has 1,000 rows,
 		// so this doesn't depend on scenario 3's item, which is deleted by
 		// now) and confirm the panel renders read-only - no upload affordance.
-		await page.getByRole('link', { name: '開く' }).first().click();
-		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
-		await expect(page.getByLabel('添付ファイルをアップロード')).toHaveCount(0);
-		await expect(page.getByRole('button', { name: 'アップロード' })).toHaveCount(0);
+		// #591: in the list's drawer (its `detailAfter`), read-only too.
+		const anyRow = page
+			.getByRole('row')
+			.filter({ has: page.locator('[data-resource-open]') })
+			.first();
+		const viewerDrawer = await openInDrawer(page, anyRow, await rowItemId(anyRow));
+		await expect(viewerDrawer.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
+		await expect(viewerDrawer.getByLabel('添付ファイルをアップロード')).toHaveCount(0);
+		await expect(viewerDrawer.getByRole('button', { name: 'アップロード' })).toHaveCount(0);
+		await expect(viewerDrawer.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+		await page.keyboard.press('Escape');
+		await expect(viewerDrawer).toBeHidden();
 	});
 
 	// Issue #215/#255 4th review (P2 1): two tabs of ONE browser share the
@@ -1658,12 +1802,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			const firstPrice = firstGrid.getByRole('columnheader', { name: '価格' });
 			await firstPrice.locator('.cell-body').click();
 			await expect(firstPrice).toHaveAttribute('aria-sort', 'ascending');
-			await rowWithText(first, '茶').first().getByRole('link', { name: '開く' }).click();
-			await expect(first).toHaveURL(/\/items\/\d+$/);
-			// Wait for the detail page itself (it records the opened row when it
-			// is created) - the URL changes before it has rendered.
-			await expect(first.getByRole('heading', { name: '商品を編集' })).toBeVisible();
-			await first.goBack();
+			// #591: the drawer's ResourceDetail records the opened row when it is created.
+			const firstTeaRow = rowWithText(first, '茶').first();
+			const firstDrawer = await openInDrawer(first, firstTeaRow, await rowItemId(firstTeaRow));
+			await first.keyboard.press('Escape');
+			await expect(firstDrawer).toBeHidden();
 			await expect(first).toHaveURL(/\/items$/);
 			await expect(first.locator('.resource-row-last-opened')).toHaveCount(1);
 			const savedState = () =>
@@ -1842,10 +1985,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
 		const row = rowWithText(page, ATTACHMENT_ITEM_NAME);
 		await expect(row).toBeVisible();
-		const href = await row.getByRole('link', { name: '開く' }).getAttribute('href');
-		expect(href).toMatch(/^\/items\/\d+$/);
+		const href = `/items/${await rowItemId(row)}`;
 
-		await page.goto(href!);
+		await page.goto(href);
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
 
@@ -1912,7 +2054,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		});
 		await expect(page).toHaveURL(/\/items$/);
 
-		await page.goto(href!);
+		await page.goto(href);
 		await expect(page.getByText('商品が見つかりません')).toBeVisible();
 	});
 
