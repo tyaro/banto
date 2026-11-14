@@ -14,6 +14,10 @@
 	 *   Enter / Space (for panels that are slow to draw).
 	 * - Every tab has its panel element (so `aria-controls` always resolves),
 	 *   but only the selected panel is drawn; the others are `hidden` and empty.
+	 *   With `keepMounted` the `panel` snippet is drawn for every tab (the
+	 *   unselected panels stay `hidden`), so a form in a panel keeps its state
+	 *   while another tab shows. Deferring a hidden panel's heavy content is up
+	 *   to the caller (branch on the selected tab inside the snippet).
 	 *   The panel is focusable (`tabindex="0"`) so Tab reaches a panel without
 	 *   focusable content.
 	 * - Disabled tabs carry `aria-disabled` (still announced, never selected).
@@ -32,6 +36,8 @@
 		/** Default `'automatic'`: moving focus selects the tab. */
 		activation?: 'automatic' | 'manual';
 		onchange?: (id: string) => void;
+		/** Draw the `panel` snippet for unselected tabs too (still `hidden`). Default `false`. */
+		keepMounted?: boolean;
 		/** The selected tab's panel content; receives the tab id. */
 		panel: Snippet<[string]>;
 	}
@@ -43,6 +49,7 @@
 		labelledby,
 		activation = 'automatic',
 		onchange,
+		keepMounted = false,
 		panel
 	}: Props = $props();
 
@@ -160,7 +167,7 @@
 		tabindex="0"
 		hidden={tab.id !== selected}
 	>
-		{#if tab.id === selected}
+		{#if keepMounted || tab.id === selected}
 			{@render panel(tab.id)}
 		{/if}
 	</div>

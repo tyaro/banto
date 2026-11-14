@@ -1501,6 +1501,20 @@
 	/>
 {/snippet}
 
+{#snippet detailForm()}
+	{#key drawerId}
+		<ResourceDetail
+			bind:this={detailRef}
+			resource={def}
+			id={drawerId}
+			after={detailAfter}
+			onClose={closeDrawerFromDetail}
+			onSaved={handleDrawerSaved}
+			onDeleted={closeDrawerNow}
+		/>
+	{/key}
+{/snippet}
+
 <Drawer
 	open={drawerOpen}
 	title={drawerId === null
@@ -1516,34 +1530,32 @@
 	{#if drawerId !== null}
 		<div class="drawer-body" tabindex="-1" bind:this={drawerBodyEl}>
 			{#if historyAvailable && typeof drawerRowId === 'number'}
-				<!-- Only the History panel is drawn by the tabs; the form below stays mounted (hidden) so unsaved edits survive. -->
-				<Tabs tabs={drawerTabs} bind:value={drawerTab} label={m['resource.tabsLabel']()}>
+				<!-- keepMounted: the form stays in the (hidden) Detail panel so unsaved edits survive; History is drawn only while selected. -->
+				<Tabs
+					tabs={drawerTabs}
+					bind:value={drawerTab}
+					label={m['resource.tabsLabel']()}
+					keepMounted
+				>
 					{#snippet panel(tab)}
-						{#if tab === 'history'}
-							{#key drawerRowId}
-								<ResourceHistory
-									resource={def.name}
-									id={drawerRowId}
-									reloadKey={historyReloadKey}
-								/>
-							{/key}
-						{/if}
+						<div class="tab-panel-body">
+							{#if tab === 'detail'}
+								{@render detailForm()}
+							{:else if tab === 'history' && drawerTab === 'history'}
+								{#key drawerRowId}
+									<ResourceHistory
+										resource={def.name}
+										id={drawerRowId}
+										reloadKey={historyReloadKey}
+									/>
+								{/key}
+							{/if}
+						</div>
 					{/snippet}
 				</Tabs>
+			{:else}
+				{@render detailForm()}
 			{/if}
-			<div class="detail-pane" hidden={historyShown}>
-				{#key drawerId}
-					<ResourceDetail
-						bind:this={detailRef}
-						resource={def}
-						id={drawerId}
-						after={detailAfter}
-						onClose={closeDrawerFromDetail}
-						onSaved={handleDrawerSaved}
-						onDeleted={closeDrawerNow}
-					/>
-				{/key}
-			</div>
 		</div>
 	{/if}
 </Drawer>
@@ -1686,15 +1698,11 @@
 		gap: var(--banto-space-4);
 	}
 
-	/* #591 stage 2: the form's host; `hidden` while the History tab shows. */
-	.detail-pane {
+	/* #591 stage 2: one Tabs panel's content (the form, or the history). */
+	.tab-panel-body {
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-4);
-	}
-
-	.detail-pane[hidden] {
-		display: none;
 	}
 
 	/* Issue #215: highlights whichever row was last opened/saved from
