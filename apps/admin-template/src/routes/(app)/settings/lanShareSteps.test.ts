@@ -7,7 +7,7 @@ const present: FirewallRuleCheck = {
 	state: 'present',
 	rule: {} as never,
 	origin: null,
-	enforcement: null,
+	enforcement: { state: 'enforced' },
 	local: { state: 'same' },
 	mismatches: [],
 	unchecked: []
@@ -55,6 +55,24 @@ describe('firewallFixHint (Issue #558)', () => {
 		expect(firewallFixHint(rules({ state: 'missing' }, present), ['allow'])).toBe('present');
 		expect(firewallFixHint(rules({ state: 'unknown', reason: 'notWindows' }), [])).toBeNull();
 		expect(firewallFixHint(null, [])).toBeNull();
+	});
+
+	it('does not take a stale, disabled or unconfirmed rule for a working one', () => {
+		const stalePort: FirewallRuleCheck = {
+			...present,
+			mismatches: ['localPort']
+		} as FirewallRuleCheck;
+		const notEnforced: FirewallRuleCheck = {
+			...present,
+			enforcement: { state: 'notEnforced', reasons: ['disabled'] },
+			mismatches: ['enforcement']
+		} as FirewallRuleCheck;
+		const unconfirmed: FirewallRuleCheck = { ...present, enforcement: null };
+		// A per-port rule for an old port does not hide the per-program "allow".
+		expect(firewallFixHint(rules({ state: 'missing' }, stalePort), ['allow'])).toBe('allow');
+		expect(firewallFixHint(rules(stalePort), [])).toBe('manual');
+		expect(firewallFixHint(rules(notEnforced), [])).toBe('manual');
+		expect(firewallFixHint(rules(unconfirmed), [])).toBe('manual');
 	});
 });
 

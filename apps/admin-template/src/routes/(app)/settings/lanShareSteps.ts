@@ -15,6 +15,7 @@
  * Windows 以外・まだ読めていない → 同じネットワークにいるかの確認。
  */
 import type { FirewallChangeOperation, FirewallRuleStatus } from '#lib/banto/serverAdmin.js';
+import { firewallRuleView } from './firewallRuleStatus';
 import type { ReachView } from './lanReachCheck';
 
 /** ② の結果の色: ok = 緑、ng = 赤、waiting = 確認待ち、unknown = まだ確認していない・読めない。 */
@@ -39,7 +40,7 @@ export function reachVerdict(view: ReachView | null): ReachVerdict {
  * What the Windows firewall read says about the most likely fix:
  * `allow` = no rule, and this screen can add it; `manual` = no rule (or it
  * could not be read) but it cannot be added from here; `present` = a rule
- * (per executable or per port) is there. `null` = nothing to say (not read
+ * (per executable or per port) matches the listener and is enforced. `null` = nothing to say (not read
  * yet, or not Windows).
  */
 export type FirewallFixHint = 'allow' | 'manual' | 'present';
@@ -50,8 +51,15 @@ export function firewallFixHint(
 ): FirewallFixHint | null {
 	if (status === null) return null;
 	const program = status.program;
-	// Either rule (per executable, or the per-port one) lets the port through.
-	if (program.state === 'present' || status.port.state === 'present') return 'present';
+	// Either rule (per executable, or the per-port one) lets the port through -
+	// but only one that matches the live listener and is in effect
+	// (`firewallRuleView` = 'matches'). A rule for an old port or path, a
+	// disabled one, or one whose enforcement is unknown keeps the firewall fix.
+	if (
+		firewallRuleView(program).kind === 'matches' ||
+		firewallRuleView(status.port).kind === 'matches'
+	)
+		return 'present';
 	if (actions.includes('allow')) return 'allow';
 	if (program.state === 'unknown' && program.reason === 'notWindows') return null;
 	return 'manual';
