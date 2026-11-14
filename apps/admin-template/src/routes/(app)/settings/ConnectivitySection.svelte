@@ -402,7 +402,10 @@
 							{m['settings.shareButton']()}
 						</Button>
 					</div>
-					{#if shareBlock === 'uiMissing'}
+					{#if shareBlock === 'notReady' && loadingStatus && !applying}
+						<!-- While applying, the button's own spinner says so; a failed read shows its error below. -->
+						<p class="note">{m['settings.shareBlockedLoading']()}</p>
+					{:else if shareBlock === 'uiMissing'}
 						<p class="note">{m['settings.lanUiNotEmbedded']()}</p>
 					{:else if shareBlock === 'auth'}
 						<p class="note">{m['settings.shareBlockedAuth']()}</p>

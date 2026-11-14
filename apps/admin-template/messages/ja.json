@@ -374,6 +374,7 @@
   "settings.shareFixFirewallInfoButton": "ファイアウォールの情報を見る",
   "settings.shareFixNetwork": "別の端末がこの PC と同じネットワーク（同じ Wi-Fi）につながっているか確かめてから、もう一度確かめてください。",
   "settings.shareBlockedAuth": "ログイン不要モードの間は、「詳しく」で「ログイン無しで LAN から閲覧を許可する（閲覧公開）」をオンにしないと共有できません。",
+  "settings.shareBlockedLoading": "接続の状態を読み込んでいます。読み込みが終わると共有できます。",
   "settings.shareBlockedUnsaved": "「詳しく」で変えた設定がまだ保存されていません。保存するか取り消してから共有してください。",
   "settings.lanDetails": "詳しく（公開範囲・ポート・ファイアウォール）",
   "settings.ipv6NotGuidedRunning": "稼働中（IPv6の待受は接続先の案内対象外）",

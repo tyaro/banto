@@ -374,6 +374,7 @@
   "settings.shareFixFirewallInfoButton": "Show the firewall information",
   "settings.shareFixNetwork": "Make sure the other device is on the same network (the same Wi-Fi) as this PC, then check again.",
   "settings.shareBlockedAuth": "While login is not required, turn on viewer-public under Details before sharing.",
+  "settings.shareBlockedLoading": "Loading the connection status. You can share once it has loaded.",
   "settings.shareBlockedUnsaved": "The settings changed under Details are not saved yet. Save or discard them before sharing.",
   "settings.lanDetails": "Details (scope, port, firewall)",
   "settings.ipv6NotGuidedRunning": "Running (IPv6 binds are not guided to a connection address)",
