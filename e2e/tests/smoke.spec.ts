@@ -2001,7 +2001,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 
 		// The editor account is created through the API from the admin's own
 		// session (scenario 5 keeps the users list as the later scenarios expect).
-		await page.evaluate(
+		const editorId = await page.evaluate(
 			async ({ username, password }) => {
 				const token =
 					localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
@@ -2020,6 +2020,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 					})
 				});
 				if (!created.ok) throw new Error(`create editor failed: ${created.status}`);
+				return ((await created.json()) as { id: number }).id;
 			},
 			{ username: EDITOR_USERNAME, password: EDITOR_PASSWORD }
 		);
@@ -2033,18 +2034,27 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(page).toHaveURL(/\/dashboard$/);
 		}
 
-		async function openFirstRowDrawer(): Promise<Locator> {
+		// The same row is opened for every role (its id is fixed from the
+		// admin's first look), so only the role differs between the drawers.
+		let targetId: string | null = null;
+		async function openTargetRowDrawer(): Promise<Locator> {
 			await page.goto('/items');
-			const row = page
-				.getByRole('row')
-				.filter({ has: page.locator('[data-resource-open]') })
-				.first();
-			return openInDrawer(page, row, await rowItemId(row));
+			const rows = page.getByRole('row').filter({ has: page.locator('[data-resource-open]') });
+			if (targetId === null) targetId = await rowItemId(rows.first());
+			const row = rows.filter({ has: page.locator(`[data-resource-open="${targetId}"]`) }).first();
+			return openInDrawer(page, row, targetId);
 		}
 
 		try {
+			// Control: the admin sees the 履歴 tab on that very row, so the
+			// locator is right and only the role explains its absence below.
+			const adminDrawer = await openTargetRowDrawer();
+			await expect(adminDrawer.getByRole('tab', { name: '履歴', exact: true })).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(adminDrawer).toBeHidden();
+
 			await loginAs(EDITOR_USERNAME, EDITOR_PASSWORD);
-			const editorDrawer = await openFirstRowDrawer();
+			const editorDrawer = await openTargetRowDrawer();
 			await expect(editorDrawer.getByRole('tablist')).toHaveCount(0);
 			await expect(editorDrawer.getByRole('tab', { name: '履歴', exact: true })).toHaveCount(0);
 			await expect(editorDrawer.getByRole('spinbutton', { name: /^価格/ })).toBeEditable();
@@ -2053,7 +2063,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await expect(editorDrawer).toBeHidden();
 
 			await loginAs(VIEWER_USERNAME, VIEWER_PASSWORD);
-			const viewerDrawer = await openFirstRowDrawer();
+			const viewerDrawer = await openTargetRowDrawer();
 			await expect(viewerDrawer.getByRole('tablist')).toHaveCount(0);
 			await expect(viewerDrawer.getByRole('tab', { name: '履歴', exact: true })).toHaveCount(0);
 			await expect(viewerDrawer.getByRole('spinbutton', { name: /^価格/ })).not.toBeEditable();
@@ -2064,6 +2074,17 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			// Later scenarios continue as the admin.
 			await loginAs(ADMIN_USERNAME, ADMIN_PASSWORD);
 		}
+
+		// Remove the editor again; a failed delete fails the test.
+		await page.evaluate(async (id) => {
+			const token =
+				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+			const res = await fetch(`/api/users/${id}`, {
+				method: 'DELETE',
+				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+			});
+			if (!res.ok) throw new Error(`delete editor failed: ${res.status}`);
+		}, editorId);
 	});
 
 	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
