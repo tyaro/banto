@@ -88,8 +88,7 @@
 		onActivate
 	}: Props = $props();
 
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultTreeMessages, ...messages };
+	const t = $derived({ ...defaultTreeMessages, ...messages });
 	// svelte-ignore state_referenced_locally
 	const tree = new TreeState({ expanded, selected, checked, selectionMode });
 

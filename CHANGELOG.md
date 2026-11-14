@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- 共通パッケージ（A）: `@banto/dock-svelte`・`@banto/tree-svelte` の `messages` を後から差し替えても文言が変わらない不具合を直した。`DockedTree`・`DockWindow`・`BantoTree`・`TreeSelect` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした（`TreeSelect` は既定の `placeholder`・`selectedCount` を挟んだ順序のまま）。公開 API は変わらない。
 - 共通パッケージ（A）: `@banto/charts` の `messages` を後から差し替えても文言が変わらない不具合を直した。`BoxPlot`・`Gauge`・`Histogram`・`LineChart`・`ParetoChart`・`StackedAreaChart`・`GanttChart` と内部の `ChartContainer` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした。公開 API は変わらない。
 - 共通パッケージ（A）: `@banto/attachments`・`@banto/report` の `messages` を後から差し替えても文言が変わらない不具合を直した。`AttachmentsPanel`・`ReportView` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした（`@banto/grid-svelte` と同じ形）。公開 API は変わらない。
 - 共通パッケージ（A）: `@banto/grid-svelte` の `messages` を後から差し替えても文言が変わらない不具合を直した。`BantoGrid`・`HeaderCell`・`FilterPopover`・`FilterChips`・`ColumnsMenu` が初期化時に 1 回だけ既定の文言と合成していたため、ロケール切替などで親が `messages` を渡し直しても追従しなかった。`$derived` で合成し直すようにした。公開 API は変わらない。
