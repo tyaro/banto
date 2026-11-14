@@ -48,7 +48,7 @@
 	rule `resource-no-optional`): optional extras come in through the slots.
 -->
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import {
 		ColumnsMenu,
 		FilterChips,
@@ -611,10 +611,15 @@
 
 	/** Put the shown record into the URL (or take it out) without a history entry or a navigation. */
 	function writeDrawerParam(id: string | number | null): void {
-		const next = new URL(page.url.href);
+		// From the address bar, not `page.url`: SvelteKit's shallow
+		// `replaceState` leaves `page.url` as it was, so after opening the
+		// drawer `page.url` still lacks `?id=` and closing would see nothing
+		// to remove.
+		const current = window.location.href;
+		const next = new URL(current);
 		if (id === null) next.searchParams.delete(DRAWER_PARAM);
 		else next.searchParams.set(DRAWER_PARAM, String(id));
-		if (next.href === page.url.href) return;
+		if (next.href === current) return;
 		try {
 			replaceState(next, page.state);
 		} catch {
@@ -692,7 +697,14 @@
 		const target = delta < 0 ? previousRow : nextRow;
 		if (!target) return;
 		if (!(await confirmLeaveRecord())) return;
+		// `{#key drawerId}` replaces the form, so a focused field goes away and
+		// focus would fall to <body> - out of the drawer, where Alt+Up / Down
+		// no longer reach `handleDrawerKeydown`. Keep it in the drawer body.
+		const focusWasInBody = drawerBodyEl?.contains(document.activeElement) ?? false;
 		showInDrawer(target.id);
+		if (!focusWasInBody) return;
+		await tick();
+		if (drawerBodyEl && !drawerBodyEl.contains(document.activeElement)) drawerBodyEl.focus();
 	}
 
 	/** The Drawer's Esc / scrim / × (sync): ask first when something would be lost. */
@@ -1463,7 +1475,7 @@
 	focusFallback={() => pageEl?.querySelector<HTMLElement>('[role="grid"]')}
 >
 	{#if drawerId !== null}
-		<div class="drawer-body" bind:this={drawerBodyEl}>
+		<div class="drawer-body" tabindex="-1" bind:this={drawerBodyEl}>
 			{#key drawerId}
 				<ResourceDetail
 					bind:this={detailRef}
@@ -1604,6 +1616,11 @@
 	.open-cell {
 		display: inline-flex;
 		align-items: center;
+	}
+
+	/* Focus lands here only by script (after previous / next replaced the form). */
+	.drawer-body:focus {
+		outline: none;
 	}
 
 	.drawer-body {

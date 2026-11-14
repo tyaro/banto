@@ -1073,7 +1073,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await price.focus();
 		await page.keyboard.press('Alt+ArrowUp');
 		await expect(itemDrawer(page, secondId)).toBeVisible();
-		await anyDrawer.getByRole('spinbutton', { name: /^価格/ }).focus();
+		// No refocus: the replaced form must not drop focus out of the drawer,
+		// or the next shortcut would not reach it (#592 review).
+		await expect(anyDrawer.locator(':focus')).toHaveCount(1);
 		await page.keyboard.press('Alt+ArrowUp');
 		await expect(itemDrawer(page, firstId)).toBeVisible();
 		// The first row: nothing before it.
