@@ -61,7 +61,8 @@ export function sequentialColor(
 	if (ramp.length === 1) return ramp[0];
 	if (min === max) return ramp[Math.floor(ramp.length / 2)];
 
-	const ratio = Math.min(1, Math.max(0, halfDiff(value, min) / halfDiff(max, min)));
+	const [offset, span] = differences(value, min, max, min);
+	const ratio = Math.min(1, Math.max(0, offset / span));
 	const step = Math.min(ramp.length - 1, Math.floor(ratio * ramp.length));
 	return ramp[step];
 }
@@ -92,8 +93,10 @@ export function divergingColor(
 	const below = value < mid;
 	const side = below ? centre : ramp.length - 1 - centre;
 	if (side === 0) return ramp[centre];
-	const extent = below ? halfDiff(mid, min) : halfDiff(max, mid);
-	const ratio = extent <= 0 ? 1 : Math.min(1, Math.abs(halfDiff(value, mid)) / extent);
+	const [offset, extent] = below
+		? differences(mid, value, mid, min)
+		: differences(value, mid, max, mid);
+	const ratio = extent <= 0 ? 1 : Math.min(1, offset / extent);
 	const k = Math.min(side, Math.max(1, Math.ceil(ratio * side)));
 	return ramp[below ? centre - k : centre + k];
 }
@@ -103,11 +106,15 @@ function allFinite(...values: number[]): boolean {
 }
 
 /**
- * `(a - b) / 2` without overflow: the plain difference of two finite numbers
- * can exceed `Number.MAX_VALUE` (e.g. `1e308 - -1e308`) and become `Infinity`,
- * which turns the ratio into `NaN`. Halving first keeps it finite; the ratios
- * use half-differences on both sides, so the factor cancels out.
+ * `[a - b, c - d]` for a ratio of the two. The plain differences of finite
+ * numbers can exceed `Number.MAX_VALUE` (e.g. `1e308 - -1e308`) and become
+ * `Infinity`, which turns the ratio into `NaN`; only then are both halved
+ * (the factor cancels out in the ratio). Halving always would instead flush
+ * subnormal differences (e.g. `Number.MIN_VALUE - 0`) to zero.
  */
-function halfDiff(a: number, b: number): number {
-	return a / 2 - b / 2;
+function differences(a: number, b: number, c: number, d: number): [number, number] {
+	const x = a - b;
+	const y = c - d;
+	if (Number.isFinite(x) && Number.isFinite(y)) return [x, y];
+	return [a / 2 - b / 2, c / 2 - d / 2];
 }

@@ -67,6 +67,13 @@ describe('divergingColor', () => {
 		expect(divergingColor(-1e308, -1e308, 1e308, 1.7e308, ramp)).toBe('a');
 		expect(divergingColor(1.7e308, -1.7e308, -1e308, 1.7e308, ramp)).toBe('g');
 	});
+
+	it('keeps subnormal domains distinct', () => {
+		const ramp = ['a', 'b', 'c', 'MID', 'e', 'f', 'g'];
+		const m = Number.MIN_VALUE;
+		expect(divergingColor(-m, -m, 0, m, ramp)).toBe('a');
+		expect(divergingColor(m, -m, 0, m, ramp)).toBe('g');
+	});
 });
 
 describe('seriesColorVar', () => {
@@ -125,5 +132,11 @@ describe('sequentialColor', () => {
 		expect(sequentialColor(9e307, -1e308, 1e308, ramp)).toBe('#333');
 		expect(sequentialColor(-1e308, -1e308, 1e308, ramp)).toBe('#111');
 		expect(sequentialColor(0, -1.7e308, 1.7e308, ramp)).toBe('#222');
+	});
+
+	it('keeps subnormal domains distinct', () => {
+		const ramp = ['#111', '#222', '#333'];
+		expect(sequentialColor(0, 0, Number.MIN_VALUE, ramp)).toBe('#111');
+		expect(sequentialColor(Number.MIN_VALUE, 0, Number.MIN_VALUE, ramp)).toBe('#333');
 	});
 });
