@@ -736,14 +736,16 @@ async fn items_update(
     values: ItemInput,
 ) -> Result<Item, BantoError> {
     let actor = require_role(&state, Role::Editor, "items").await?;
-    let item = state.items.update(id, values).await?;
+    let (previous, item) = state.items.update_returning_previous(id, values).await?;
     record_ok(
         &state.audit,
         &actor,
         "update",
         "items",
         Some(&item.id.to_string()),
-        Some(serde_json::json!({ "name": item.name })),
+        Some(admin_template_core::items::item_update_detail(
+            &previous, &item,
+        )),
     )
     .await;
     Ok(item)

@@ -78,6 +78,7 @@
 //!
 //! [`try_record`]: AuditLogService::try_record
 
+pub mod diff;
 mod spool;
 
 use std::path::PathBuf;

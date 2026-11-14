@@ -530,6 +530,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				historyTable.getByRole('cell', { name: '更新', exact: true }).first()
 			).toBeVisible();
 		}).toPass();
+		// #597: the update row carries what changed (the price, before -> after),
+		// under the form's label, not the internal field name.
+		const historyChanges = drawer.getByTestId('audit-changes-inline');
+		await expect(historyChanges).toContainText('価格');
+		await expect(historyChanges).toContainText(String(ITEM_PRICE));
+		await expect(historyChanges).toContainText(String(ITEM_PRICE_UPDATED));
 		// The link to the audit-log screen carries resource + entityId; it is
 		// followed after the drawer flow below (same page: the token lives in this
 		// tab's sessionStorage).
@@ -560,6 +566,17 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				.locator('[data-cell-field="entityId"]')
 				.filter({ hasNotText: new RegExp(`^\\s*${itemId}\\s*$`) })
 		).toHaveCount(0);
+
+		// #597: selecting the update row shows the field table (field / before /
+		// after) instead of the raw JSON.
+		await expect(async () => {
+			await rowWithText(page, '更新').first().click();
+			const changes = page.getByTestId('audit-changes');
+			await expect(changes).toBeVisible();
+			const priceRow = changes.getByRole('row').filter({ hasText: '価格' });
+			await expect(priceRow).toContainText(String(ITEM_PRICE));
+			await expect(priceRow).toContainText(String(ITEM_PRICE_UPDATED));
+		}).toPass();
 
 		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));

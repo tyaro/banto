@@ -26,6 +26,21 @@ pub struct Item {
     pub updated_at: String,
 }
 
+/// `detail` of an `items` `update` audit record (Issue #597): `{ name,
+/// changes: [{ field, before, after }] }`. Both the REST and the Tauri wiring
+/// call this, so the two routes record the same shape (conventions section 1).
+/// `items` has no secret column, so nothing is masked; `updatedAt` is a stamp,
+/// not a user edit, and `id` never changes.
+pub fn item_update_detail(before: &Item, after: &Item) -> serde_json::Value {
+    let changes = banto_admin_services::audit::diff::diff_changes(
+        &serde_json::to_value(before).unwrap_or_default(),
+        &serde_json::to_value(after).unwrap_or_default(),
+        &[],
+        &["id", "updatedAt"],
+    );
+    serde_json::json!({ "name": after.name, "changes": changes })
+}
+
 /// Create/update payload. Field names match the frontend form schema's
 /// field names exactly (`name`, `price`, `stock`) so that
 /// `BantoError::Validation`'s per-field messages land on the right inputs.
@@ -396,9 +411,34 @@ impl ItemsService {
     }
 
     pub async fn update(&self, id: i64, input: ItemInput) -> Result<Item, BantoError> {
+        self.update_returning_previous(id, input)
+            .await
+            .map(|(_, item)| item)
+    }
+
+    /// Like [`ItemsService::update`], but also returns the row as it was
+    /// BEFORE the update (`(previous, updated)`), read in the same transaction
+    /// so the pair is consistent. The audit wiring uses it to record a
+    /// field-level diff (Issue #597); the service itself stays audit-unaware.
+    pub async fn update_returning_previous(
+        &self,
+        id: i64,
+        input: ItemInput,
+    ) -> Result<(Item, Item), BantoError> {
         validate_item_input(&input)?;
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `get` above.
+        let lock = if matches!(self.db, Db::Sqlite(_)) {
+            ""
+        } else {
+            // PostgreSQL: lock the row so a concurrent update cannot slip in
+            // between the read and the write (SQLite serializes writers).
+            " FOR UPDATE"
+        };
+        let select_sql = format!(
+            "SELECT id, name, price, stock, updated_at FROM items WHERE id = {}{lock}",
+            dialect.placeholder(1),
+        );
         let sql = format!(
             "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {} WHERE id = {} \
              RETURNING id, name, price, stock, updated_at",
@@ -409,32 +449,50 @@ impl ItemsService {
             dialect.placeholder(5),
         );
         let today = (self.today)();
-        let item = match &self.db {
+        let not_found = |err| banto_storage::not_found(err, RESOURCE, id.to_string());
+        let (previous, item) = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let previous = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(select_sql))
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(not_found)?;
+                let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
                     .bind(&today)
                     .bind(id)
-                    .fetch_one(pool)
+                    .fetch_one(&mut *tx)
                     .await
+                    .map_err(not_found)?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                (previous, item)
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
+                let mut tx = pool.begin().await.map_err(banto_storage::storage_error)?;
+                let previous = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(select_sql))
+                    .bind(id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(not_found)?;
+                let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
                     .bind(input.stock)
                     .bind(&today)
                     .bind(id)
-                    .fetch_one(pool)
+                    .fetch_one(&mut *tx)
                     .await
+                    .map_err(not_found)?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                (previous, item)
             }
-        }
-        .map_err(|err| banto_storage::not_found(err, RESOURCE, id.to_string()))?;
+        };
         self.notify_changed();
-        Ok(item)
+        Ok((previous, item))
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
@@ -790,6 +848,67 @@ mod tests {
         assert_eq!(updated.name, "After");
         assert_eq!(updated.price, 20);
         assert_eq!(updated.stock, 2);
+    }
+
+    #[tokio::test]
+    async fn update_returning_previous_gives_the_old_row_and_the_detail_lists_changes() {
+        let svc = service().await;
+        let created = svc
+            .create(ItemInput {
+                name: "Before".to_string(),
+                price: 10,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        let (previous, updated) = svc
+            .update_returning_previous(
+                created.id,
+                ItemInput {
+                    name: "Before".to_string(),
+                    price: 20,
+                    stock: 1,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(previous, created);
+        assert_eq!(updated.price, 20);
+        let detail = item_update_detail(&previous, &updated);
+        assert_eq!(detail["name"], "Before");
+        assert_eq!(
+            detail["changes"],
+            serde_json::json!([{ "field": "price", "before": 10, "after": 20 }])
+        );
+        // no change -> empty array
+        let (p2, u2) = svc
+            .update_returning_previous(
+                created.id,
+                ItemInput {
+                    name: "Before".to_string(),
+                    price: 20,
+                    stock: 1,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            item_update_detail(&p2, &u2)["changes"],
+            serde_json::json!([])
+        );
+        // missing row -> NotFound
+        let err = svc
+            .update_returning_previous(
+                9999,
+                ItemInput {
+                    name: "x".to_string(),
+                    price: 1,
+                    stock: 1,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::NotFound { .. }));
     }
 
     fn fixed_today() -> String {
