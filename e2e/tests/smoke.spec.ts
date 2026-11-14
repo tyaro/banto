@@ -531,8 +531,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			).toBeVisible();
 		}).toPass();
 		// #597: the update row carries what changed (the price, before -> after),
-		// under the form's label, not the internal field name.
-		const historyChanges = drawer.getByTestId('audit-changes-inline');
+		// under the form's label, not the internal field name. This record can
+		// have several update rows (earlier steps and retries reuse the id), so
+		// take the newest one that carries the new price (the list is ts desc).
+		const historyChanges = drawer
+			.getByTestId('audit-changes-inline')
+			.filter({ hasText: String(ITEM_PRICE_UPDATED) })
+			.first();
 		await expect(historyChanges).toContainText('価格');
 		await expect(historyChanges).toContainText(String(ITEM_PRICE));
 		await expect(historyChanges).toContainText(String(ITEM_PRICE_UPDATED));
