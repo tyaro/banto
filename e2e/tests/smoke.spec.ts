@@ -511,7 +511,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const drawer = itemDrawer(page, itemId);
 		await expect(drawer).toBeVisible();
 		await expect(page).toHaveURL(new RegExp(`/items[?]id=${itemId}$`));
-		const drawerPrice = drawer.getByLabel('価格', { exact: true });
+		const drawerPrice = drawer.getByRole('spinbutton', { name: /^価格/ });
 		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE));
 		await drawerPrice.fill(String(ITEM_PRICE_UPDATED));
 		await drawer.getByRole('button', { name: '保存', exact: true }).click();
@@ -739,7 +739,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// there, under the same filters and sort, AND marked as the one just
 		// worked on (rowClass `resource-row-last-opened`, ResourceListPage.svelte).
 		const drawer = await openInDrawer(page, row, itemId);
-		await drawer.getByLabel('価格', { exact: true }).fill('850');
+		await drawer.getByRole('spinbutton', { name: /^価格/ }).fill('850');
 		await drawer.getByRole('button', { name: '保存', exact: true }).click();
 		await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥850');
 		await page.keyboard.press('Escape');
@@ -1019,7 +1019,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// #591: saved in the list's drawer, the exclusion check runs in the
 		// page itself (`checkFilterExclusion` with the client `toRow`).
 		const drawer = await openInDrawer(page, row, itemId);
-		const drawerPrice = drawer.getByLabel('価格', { exact: true });
+		const drawerPrice = drawer.getByRole('spinbutton', { name: /^価格/ });
 		await expect(drawerPrice).not.toHaveValue('');
 		const currentPrice = await drawerPrice.inputValue();
 		await drawerPrice.fill(String(Number(currentPrice) + 1));
@@ -1068,12 +1068,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(itemDrawer(page, thirdId)).toBeVisible();
 		await expect(page).toHaveURL(new RegExp(`/items[?]id=${thirdId}$`));
 		await expect(rows.nth(2)).toHaveClass(/resource-row-last-opened/);
-		const price = anyDrawer.getByLabel('価格', { exact: true });
+		const price = anyDrawer.getByRole('spinbutton', { name: /^価格/ });
 		await expect(price).not.toHaveValue('');
 		await price.focus();
 		await page.keyboard.press('Alt+ArrowUp');
 		await expect(itemDrawer(page, secondId)).toBeVisible();
-		await anyDrawer.getByLabel('価格', { exact: true }).focus();
+		await anyDrawer.getByRole('spinbutton', { name: /^価格/ }).focus();
 		await page.keyboard.press('Alt+ArrowUp');
 		await expect(itemDrawer(page, firstId)).toBeVisible();
 		// The first row: nothing before it.
@@ -1081,7 +1081,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(next).toBeEnabled();
 
 		// Unsaved edits: closing asks; "cancel" keeps the edit and the drawer.
-		const edited = anyDrawer.getByLabel('価格', { exact: true });
+		const edited = anyDrawer.getByRole('spinbutton', { name: /^価格/ });
 		await expect(edited).not.toHaveValue('');
 		const original = await edited.inputValue();
 		await edited.fill(String(Number(original) + 7));

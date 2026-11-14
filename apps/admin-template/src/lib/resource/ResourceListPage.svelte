@@ -1386,6 +1386,7 @@
 			onRangePaste={handleRangePaste}
 			{rowClass}
 			{registerCurrentRow}
+			{registerAdjacentRow}
 		/>
 	{:else}
 		<ResourceServerGrid
