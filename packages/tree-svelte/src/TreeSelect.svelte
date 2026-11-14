@@ -60,13 +60,12 @@
 		onBlur
 	}: Props = $props();
 
-	// svelte-ignore state_referenced_locally
-	const t = {
+	const t = $derived({
 		...defaultTreeMessages,
 		placeholder: () => '選択してください',
 		selectedCount: (n: number) => `${n} 件選択`,
 		...messages
-	};
+	});
 
 	let triggerEl = $state<HTMLButtonElement | null>(null);
 	let popoverEl = $state<HTMLDivElement | null>(null);

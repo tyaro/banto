@@ -85,10 +85,9 @@
 
 	let { node, dock, panel, onPopOut, messages = {} }: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultDockMessages, ...messages };
+	// i18n layer 1: an override bundle merged over the defaults. `$derived`, so a
+	// parent that swaps `messages` later (a locale switch) is followed.
+	const t = $derived({ ...defaultDockMessages, ...messages });
 
 	const DRAG_THRESHOLD_PX = 5;
 	/** Divider keyboard step (Window Splitter): a fraction of the whole split, and with Shift. */

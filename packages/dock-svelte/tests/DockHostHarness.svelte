@@ -29,7 +29,8 @@
 		isEscapeBlocked,
 		beforePanelChange,
 		keepMounted,
-		isStructureChangeDeferred
+		isStructureChangeDeferred,
+		messages
 	}: {
 		dock: DockState;
 		clamp?: ClampOptions;
@@ -40,6 +41,7 @@
 		beforePanelChange?: HostProps['beforePanelChange'];
 		keepMounted?: HostProps['keepMounted'];
 		isStructureChangeDeferred?: HostProps['isStructureChangeDeferred'];
+		messages?: HostProps['messages'];
 	} = $props();
 
 	let hostRef: ReturnType<typeof DockHost> | undefined = $state();
@@ -62,6 +64,7 @@
 	{beforePanelChange}
 	{keepMounted}
 	{isStructureChangeDeferred}
+	{messages}
 />
 
 {#snippet panel(content: PanelContent)}

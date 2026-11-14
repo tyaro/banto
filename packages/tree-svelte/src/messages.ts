@@ -3,7 +3,8 @@
  * app-specific strings: every message is a FUNCTION (parameterised ones take
  * args, static ones take none) with a Japanese default, and the app overrides
  * them with resolved (e.g. Paraglide) strings via the `messages` prop —
- * `const t = { ...defaultTreeMessages, ...messages }`.
+ * `const t = $derived({ ...defaultTreeMessages, ...messages })`
+ * (so a later swap of `messages`, e.g. a locale switch, is followed).
  */
 export interface TreeMessages {
 	/** Aria-label for the expand toggle of a collapsed node. */
