@@ -33,6 +33,7 @@ import {
 	expectItemsMode,
 	type ItemsViewLabels
 } from '../items-view-mode';
+import { reloadAndReadIdentity } from '../reload-identity';
 import { expectCheckOutageKeepsTheSession } from './session-check-outage';
 
 // items の「表示」メニュー（読み込み方の切り替え、#553）。
@@ -221,13 +222,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
 		// With public viewing disabled, reload restores the ordinary account
 		// from the identity endpoint even though its username is "public".
-		const restoredIdentity = page.waitForResponse(
-			(response) => new URL(response.url()).pathname === '/api/auth/identity'
-		);
-		await page.reload();
-		const identity = await restoredIdentity;
-		expect(identity.ok()).toBe(true);
-		expect(await identity.json()).toMatchObject({
+		expect(await reloadAndReadIdentity(page)).toMatchObject({
 			id: 'public',
 			role: 'admin',
 			kind: 'account'
