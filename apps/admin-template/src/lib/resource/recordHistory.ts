@@ -7,7 +7,7 @@
  * Plain TypeScript (no runes) so the filter and the stale-answer rule can be
  * unit-tested; `ResourceHistory.svelte` only draws the state this keeps.
  */
-import type { ListParams } from '@banto/admin-core';
+import { createRequestOwner, type ListParams } from '@banto/admin-core';
 import type { AuditLogEntry, AuditLogList } from '#lib/banto/auditLogAdmin.js';
 
 /** One page: the drawer shows the latest entries, the audit-log screen has the rest. */
@@ -55,42 +55,37 @@ export interface RecordHistoryLoader {
 }
 
 /**
- * A loader that reports to `onChange`. Each `load` takes a new generation: an
- * answer (or failure) of an older generation is thrown away, so moving between
- * rows quickly never shows another record's history. The REST call is aborted
- * through the signal; a Tauri `invoke()` cannot be, its late answer is just
- * ignored here.
+ * A loader that reports to `onChange`. Each `load` is a request of one
+ * `createRequestOwner`: an answer (or failure) of a superseded request is
+ * thrown away, so moving between rows quickly never shows another record's
+ * history. The REST call is aborted through the signal; a Tauri `invoke()`
+ * cannot be, its late answer is just ignored here. After `dispose()` a `load`
+ * does nothing.
  */
 export function createRecordHistoryLoader(
 	list: ListFn,
 	onChange: (state: RecordHistoryState) => void
 ): RecordHistoryLoader {
-	let generation = 0;
-	let controller: AbortController | null = null;
-
-	function drop(): number {
-		controller?.abort();
-		controller = null;
-		return ++generation;
-	}
+	const owner = createRequestOwner();
 
 	return {
 		async load(resource, id) {
-			const mine = drop();
-			const own = new AbortController();
-			controller = own;
+			const req = owner.begin();
+			if (!req.isCurrent()) return;
 			onChange({ status: 'loading' });
 			try {
-				const result = await list(recordHistoryParams(resource, id), null, own.signal);
-				if (mine !== generation) return;
+				const result = await list(recordHistoryParams(resource, id), null, req.signal);
+				if (!req.isCurrent()) return;
 				onChange({ status: 'ready', rows: result.rows, total: result.totalCount });
 			} catch (error) {
-				if (mine !== generation) return;
+				if (!req.isCurrent()) return;
 				onChange({ status: 'error', error });
+			} finally {
+				req.finish();
 			}
 		},
 		dispose() {
-			drop();
+			owner.dispose();
 		}
 	};
 }

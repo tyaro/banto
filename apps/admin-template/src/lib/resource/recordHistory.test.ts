@@ -145,4 +145,14 @@ describe('createRecordHistoryLoader', () => {
 		await pending;
 		expect(states.map((s) => s.status)).toEqual(['loading']);
 	});
+
+	it('does nothing when load is called after dispose', async () => {
+		const list = vi.fn().mockResolvedValue(answer(1));
+		const states: RecordHistoryState[] = [];
+		const loader = createRecordHistoryLoader(list, (s) => states.push(s));
+		loader.dispose();
+		await loader.load('items', 1);
+		expect(list).not.toHaveBeenCalled();
+		expect(states).toEqual([]);
+	});
 });
