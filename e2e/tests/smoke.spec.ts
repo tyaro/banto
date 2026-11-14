@@ -530,6 +530,29 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				historyTable.getByRole('cell', { name: '更新', exact: true }).first()
 			).toBeVisible();
 		}).toPass();
+		// The link to the audit-log screen carries resource + entityId; opened
+		// in a second page (so the drawer flow below goes on), the screen
+		// starts filtered to this record and the query leaves the URL.
+		const auditHref = await drawer
+			.getByRole('link', { name: '監査ログで全部見る' })
+			.getAttribute('href');
+		expect(auditHref).toContain(`resource=items&entityId=${itemId}`);
+		const auditPage = await page.context().newPage();
+		try {
+			await auditPage.goto(auditHref!);
+			await expect(auditPage).toHaveURL(/\/audit-log$/);
+			await expect(auditPage.getByTestId('audit-count-note')).toContainText(/\d/);
+			await expect(rowWithText(auditPage, 'items').first()).toBeVisible();
+			// Every row shown belongs to this record: no other item's history.
+			await expect(auditPage.locator('[data-cell-field="entityId"]').first()).toHaveText(
+				String(itemId)
+			);
+			await expect(
+				auditPage.locator('[data-cell-field="entityId"]').filter({ hasNotText: String(itemId) })
+			).toHaveCount(0);
+		} finally {
+			await auditPage.close();
+		}
 		await drawer.getByRole('tab', { name: '詳細', exact: true }).click();
 		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE_UPDATED));
 

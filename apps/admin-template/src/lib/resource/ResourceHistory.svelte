@@ -20,6 +20,7 @@
 	import { EmptyState, ErrorState, LoadingState } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
 	import { listAuditLog } from '#lib/banto/auditLogAdmin.js';
+	import { auditLogLink } from '#lib/banto/auditLogQuery.js';
 	import { navItems, resolveAppPath } from '#lib/navigation.js';
 	import { createRecordHistoryLoader, type RecordHistoryState } from './recordHistory';
 
@@ -74,7 +75,9 @@
 	// Matched as a string, not `'/audit-log'` as an `AppPath`: where the screen
 	// is removed, scaffold also removes it from those types.
 	const auditLogItem = navItems.find((item) => (item.path as string) === '/audit-log');
-	const auditLogHref = auditLogItem ? resolveAppPath(auditLogItem.path) : null;
+	// With the record's resource and id, so the screen opens filtered to it.
+	const auditLogBase = auditLogItem ? resolveAppPath(auditLogItem.path) : null;
+	const auditLogHref = $derived(auditLogBase ? auditLogLink(auditLogBase, resource, id) : null);
 </script>
 
 <div class="history">

@@ -32,6 +32,8 @@
 	} from '@banto/grid-svelte';
 	import { createSnapshotListResource } from '@banto/admin-core';
 	import { Info } from '@lucide/svelte';
+	import { replaceState } from '$app/navigation';
+	import { page } from '$app/state';
 	import * as m from '#lib/paraglide/messages.js';
 	import { PageHeader, EmptyState, StatusBadge } from '@banto/ui';
 	import {
@@ -40,6 +42,7 @@
 		listAuditLog,
 		type AuditLogEntry
 	} from '#lib/banto/auditLogAdmin.js';
+	import { auditLogFiltersFromQuery, hasAuditLogQuery } from '#lib/banto/auditLogQuery.js';
 
 	const available = isAuditLogAvailable();
 
@@ -139,6 +142,11 @@
 	const gridState = new GridState<AuditLogEntry>(columns);
 	// 既定ソート: 新しい記録が先頭に来るよう ts 降順（spec M14）。
 	gridState.sort = [{ field: 'ts', direction: 'desc' }];
+	// `?resource=` / `?entityId=` (the record drawer's history link, #591): the
+	// grid starts filtered, before the first fetch, so the first answer already
+	// carries it. An effect below handles a later URL and removes the query.
+	const initialUrl = page.url;
+	gridState.filters = auditLogFiltersFromQuery(initialUrl.searchParams);
 
 	/**
 	 * 監査ログのブロック読み込み（Issue #248）。取得 1 本は
@@ -157,7 +165,7 @@
 				signal
 			),
 		{
-			params: { sort: gridState.sort, filters: [] },
+			params: { sort: gridState.sort, filters: gridState.filters },
 			messages: {
 				timeout: (ms) => m['audit.loadTimeout']({ seconds: Math.round(ms / 1000) }),
 				boundaryMismatch: () => m['audit.boundaryMismatch'](),
@@ -186,6 +194,31 @@
 	function handleParamsChange(params: { sort: SortState[]; filters: FilterState[] }): void {
 		auditLog.setParams(params);
 	}
+
+	// The query is consumed once: it is applied (initially above, or here for a
+	// link to this screen while it is open) and then removed from the URL, so a
+	// filter the user later clears does not come back on reload. Same rule as
+	// the list's `?view=`. A newer request replaces the grid's filters and
+	// supersedes any block still in flight (`setParams` starts a new query).
+	$effect(() => {
+		const url = page.url;
+		if (!hasAuditLogQuery(url.searchParams)) return;
+		untrack(() => {
+			if (url !== initialUrl && available) {
+				gridState.filters = auditLogFiltersFromQuery(url.searchParams);
+				auditLog.setParams({ sort: gridState.sort, filters: gridState.filters });
+			}
+			const next = new URL(url.href);
+			next.searchParams.delete('resource');
+			next.searchParams.delete('entityId');
+			try {
+				replaceState(next, page.state);
+			} catch {
+				// Router not ready yet: the query stays, which only means a
+				// reload applies it again.
+			}
+		});
+	});
 
 	function handleVisibleRangeChange(range: { start: number; end: number }): void {
 		auditLog.ensureRange(range.start, range.end);
