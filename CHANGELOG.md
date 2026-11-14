@@ -72,7 +72,7 @@
   - items の `column_map()` の `text_column` と、件数のクエリの `append_list_where`（`core/src`）。
   - 監査ログ: `audit/diff.rs`・`ItemsService::update_returning_previous`・`AuditChanges.svelte`・`lib/resource/auditTarget.ts` の差し替え。
 - 派生側の独自変更と衝突しやすい箇所: items の一覧・詳細のルート、`resources/items.ts`、`messages/*.json`、`app.css`、dashboard、settings の接続カテゴリ、`core/src` の items・audit。
-- 取り込まなくても動くか: 動く見込み。A のタグを `v7.1.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」1（`ListParams`・`append_where`）と「消費側への注意」1・2（見た目）は A のタグに伴う。組み合わせの確認は未実施（「検証した組み合わせ」はタグの後に追記する）。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.1.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」1（`ListParams`・`append_where`）と「消費側への注意」1・2（見た目）は A のタグに伴う。Git 依存での導入は下の「検証した組み合わせ」で確かめた（テンプレートを取り込まない派生アプリそのものでの確認は未実施）。
 - 手本: 上記の `apps/admin-template/` のファイル。
 
 ### C. DB・設定・配布資産
