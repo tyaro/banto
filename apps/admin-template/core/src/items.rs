@@ -61,6 +61,8 @@ pub fn item_delete_detail(item: &Item, sweep: Option<serde_json::Value>) -> serd
         &["id", "updatedAt"],
     );
     let mut detail = serde_json::json!({ "name": item.name, "changes": changes });
+    // sweep_item_attachments currently returns only attachmentsRemoved. Keep
+    // this field explicit so future sweep metadata needs an audit review.
     if let Some(count) = sweep.and_then(|s| s.get("attachmentsRemoved").cloned()) {
         detail["attachmentsRemoved"] = count;
     }

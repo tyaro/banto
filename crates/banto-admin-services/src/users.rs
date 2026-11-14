@@ -337,10 +337,13 @@ pub fn user_create_detail(user: &UserIdentity) -> serde_json::Value {
 
 pub fn user_delete_detail(user: &UserSummary) -> serde_json::Value {
     let changes = crate::audit::diff::diff_changes(
-        &serde_json::to_value(user).unwrap_or_default(),
+        &serde_json::json!({
+            "displayName": user.display_name,
+            "role": user.role,
+        }),
         &serde_json::json!({}),
         &["password", "passwordHash", "authEpoch"],
-        &["id", "username", "createdAt"],
+        &[],
     );
     serde_json::json!({ "username": user.username, "role": user.role, "changes": changes })
 }
