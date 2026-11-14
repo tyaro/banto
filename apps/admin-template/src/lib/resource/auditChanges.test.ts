@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as m from '#lib/paraglide/messages.js';
 import {
 	auditDetailRest,
 	auditFieldLabel,
@@ -59,6 +60,17 @@ describe('auditFieldLabel / formatAuditValue', () => {
 	it('falls back to the internal name', () => {
 		expect(auditFieldLabel('no-such-resource', 'price')).toBe('price');
 		expect(auditFieldLabel('items', 'no_such_field')).toBe('no_such_field');
+	});
+
+	it('labels the users fields and role values', () => {
+		expect(auditFieldLabel('users', 'displayName')).toBe(m['common.displayName']());
+		expect(auditFieldLabel('users', 'role')).toBe(m['common.role']());
+		expect(auditFieldLabel('users', 'other')).toBe('other');
+		expect(formatAuditValue('editor', 'users', 'role')).toBe(m['role.editor']());
+		expect(formatAuditValue('admin', 'users', 'role')).toBe(m['role.admin']());
+		// not a users role: raw value
+		expect(formatAuditValue('editor', 'items', 'role')).toBe('editor');
+		expect(formatAuditValue('custom', 'users', 'role')).toBe('custom');
 	});
 
 	it('formats values', () => {

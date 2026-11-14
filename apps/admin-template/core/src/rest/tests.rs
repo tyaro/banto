@@ -1167,6 +1167,69 @@ async fn non_admin_users_write_routes_are_forbidden_with_forbidden_kind() {
     assert_eq!(json["kind"], "forbidden");
 }
 
+/// Issue #597: a `users` update records `detail.changes` (built by
+/// `user_update_detail`, the same function the Tauri command calls) and keeps
+/// the old `role` key.
+#[tokio::test]
+async fn users_update_records_a_field_diff_in_the_audit_log() {
+    let (router, admin, _editor, _viewer) = router_with_role_tokens().await;
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/users",
+                &admin,
+                json!({
+                    "username": "diffperson",
+                    "password": "password123",
+                    "displayName": "Before Name",
+                    "role": "editor"
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap();
+    let response = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/users/{id}"),
+            &admin,
+            json!({ "displayName": "After Name", "role": "editor" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let rows = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .clone();
+    let entry = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["action"] == "update" && r["resource"] == "users")
+        .expect("an update entry");
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(detail["username"], "diffperson");
+    assert_eq!(detail["role"], "editor");
+    assert_eq!(
+        detail["changes"],
+        json!([{ "field": "displayName", "before": "Before Name", "after": "After Name" }])
+    );
+}
+
 #[tokio::test]
 async fn admin_can_create_list_update_reset_password_and_delete_users() {
     let (router, admin, _editor, _viewer) = router_with_role_tokens().await;

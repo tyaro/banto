@@ -303,6 +303,23 @@ fn ensure_admin_removal_allowed(
     Ok(())
 }
 
+/// Audit `detail` for a `users` update (Issue #597): `{ username, role,
+/// changes }`. Both the REST and the Tauri wiring call this so the two routes
+/// record the same shape (conventions section 1). `role` stays for readers of
+/// the old shape; `username` names the target. `UserSummary` has no secret
+/// column, but the secret names are still masked in case a field is added
+/// later (conventions section 5). `username` cannot change and `createdAt` is
+/// a stamp, so both are ignored.
+pub fn user_update_detail(before: &UserSummary, after: &UserSummary) -> serde_json::Value {
+    let changes = crate::audit::diff::diff_changes(
+        &serde_json::to_value(before).unwrap_or_default(),
+        &serde_json::to_value(after).unwrap_or_default(),
+        &["password", "passwordHash", "authEpoch"],
+        &["id", "username", "createdAt"],
+    );
+    serde_json::json!({ "username": after.username, "role": after.role, "changes": changes })
+}
+
 impl UsersService {
     pub fn new(db: Db) -> Self {
         Self { db }
@@ -787,6 +804,24 @@ impl UsersService {
         display_name: &str,
         role: Role,
     ) -> Result<UserSummary, BantoError> {
+        self.update_user_returning_previous(id, display_name, role)
+            .await
+            .map(|(_, updated)| updated)
+    }
+
+    /// [`UsersService::update_user`] that also returns the row as it was
+    /// before the update, as `(previous, updated)` (Issue #597, for the audit
+    /// record's `detail.changes`; see [`user_update_detail`]). The previous row
+    /// is read by the guard `SELECT` that already runs inside the write
+    /// transaction, so the two rows are consistent and no extra read is added.
+    /// The last-admin check and the `auth_epoch` handling are those of
+    /// [`UsersService::update_user`].
+    pub async fn update_user_returning_previous(
+        &self,
+        id: i64,
+        display_name: &str,
+        role: Role,
+    ) -> Result<(UserSummary, UserSummary), BantoError> {
         let display_name = display_name.trim();
 
         let dialect = self.db.dialect();
@@ -803,42 +838,59 @@ impl UsersService {
             dialect.placeholder(4),
         );
         let guard_sql = format!(
-            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin') \
+            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin'), \
+             id, username, display_name, created_at \
              FROM users WHERE id = {}",
             dialect.placeholder(1),
         );
-        let row: Option<(i64, String, String, String, String)> =
+        type Guard = (String, i64, i64, String, String, String);
+        type Updated = (i64, String, String, String, String);
+        let rows: (Option<Guard>, Option<Updated>) =
             with_users_write_transaction!(&self.db, |tx| {
-                let state: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
+                let guard: Option<Guard> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
                     .bind(id)
                     .fetch_optional(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
-                ensure_admin_removal_allowed(id, state, !role.is_admin())?;
-                sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                ensure_admin_removal_allowed(
+                    id,
+                    guard.as_ref().map(|g| (g.0.clone(), g.1)),
+                    !role.is_admin(),
+                )?;
+                let updated: Option<Updated> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
                     .bind(display_name)
                     .bind(role.as_str())
                     .bind(role.as_str())
                     .bind(id)
                     .fetch_optional(&mut *tx)
                     .await
-                    .map_err(banto_storage::storage_error)?
+                    .map_err(banto_storage::storage_error)?;
+                (guard, updated)
             });
 
-        let Some((row_id, username, display_name, role_str, created_at)) = row else {
+        let (Some(guard), Some((row_id, username, display_name, role_str, created_at))) = rows
+        else {
             return Err(BantoError::NotFound {
                 resource: "users".to_string(),
                 id: id.to_string(),
             });
         };
 
-        Ok(UserSummary {
+        let previous = UserSummary {
+            id: guard.2,
+            username: guard.3,
+            display_name: guard.4,
+            role: Role::from_str(&guard.0)?,
+            created_at: guard.5,
+        };
+        let updated = UserSummary {
             id: row_id,
             username,
             display_name,
             role: Role::from_str(&role_str)?,
             created_at,
-        })
+        };
+        Ok((previous, updated))
     }
 
     /// Admin-initiated password reset (spec M10): unlike
@@ -1543,6 +1595,67 @@ mod tests {
             .await
             .expect("demoting one of two admins should succeed");
         assert_eq!(demoted.role, Role::Viewer);
+    }
+
+    #[tokio::test]
+    async fn update_user_returning_previous_gives_before_and_after_and_detail() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+
+        // display name only
+        let (prev, next) = svc
+            .update_user_returning_previous(editor.id, "編集者1改", Role::Editor)
+            .await
+            .unwrap();
+        assert_eq!(prev.display_name, "編集者1");
+        assert_eq!(next.display_name, "編集者1改");
+        let detail = user_update_detail(&prev, &next);
+        assert_eq!(detail["username"], "editor1");
+        assert_eq!(detail["role"], "editor");
+        assert_eq!(
+            detail["changes"],
+            serde_json::json!([
+                { "field": "displayName", "before": "編集者1", "after": "編集者1改" }
+            ])
+        );
+
+        // role change
+        let (prev, next) = svc
+            .update_user_returning_previous(editor.id, "編集者1改", Role::Viewer)
+            .await
+            .unwrap();
+        assert_eq!(
+            user_update_detail(&prev, &next)["changes"],
+            serde_json::json!([{ "field": "role", "before": "editor", "after": "viewer" }])
+        );
+
+        // no change -> empty
+        let (prev, next) = svc
+            .update_user_returning_previous(editor.id, "編集者1改", Role::Viewer)
+            .await
+            .unwrap();
+        assert_eq!(
+            user_update_detail(&prev, &next)["changes"],
+            serde_json::json!([])
+        );
+
+        // guard still applies; missing row -> NotFound
+        assert!(svc
+            .update_user_returning_previous(owner.id, "オーナー", Role::Viewer)
+            .await
+            .is_err());
+        let err = svc
+            .update_user_returning_previous(9999, "x", Role::Viewer)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, BantoError::NotFound { .. }));
     }
 
     #[tokio::test]

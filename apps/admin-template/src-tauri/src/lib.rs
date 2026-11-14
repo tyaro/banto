@@ -3243,14 +3243,19 @@ async fn users_update_body(
     role: Role,
 ) -> Result<UserSummary, BantoError> {
     let actor = require_role(state, Role::Admin, "users").await?;
-    let updated = state.users.update_user(id, display_name, role).await?;
+    let (previous, updated) = state
+        .users
+        .update_user_returning_previous(id, display_name, role)
+        .await?;
     record_ok(
         &state.audit,
         &actor,
         "update",
         "users",
         Some(&id.to_string()),
-        Some(serde_json::json!({ "role": updated.role })),
+        Some(admin_template_core::users::user_update_detail(
+            &previous, &updated,
+        )),
     )
     .await;
     Ok(updated)
