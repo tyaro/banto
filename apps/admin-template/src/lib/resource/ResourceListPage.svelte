@@ -819,6 +819,9 @@
 			searchRows(filterRows([row], activeFilters, activeColumns), term, activeColumns).length === 0
 		) {
 			filterExclusionNotice = { id: values.id };
+		} else if (filterExclusionNotice !== null && filterExclusionNotice.id === values.id) {
+			// #591 review: saved again in the drawer and back inside the filter.
+			filterExclusionNotice = null;
 		}
 	}
 

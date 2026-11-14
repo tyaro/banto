@@ -207,7 +207,9 @@
 			// don't echo `id` back.
 			if (!isNew && onSaved) {
 				// #591: the host (the list's drawer) checks the filter itself.
-				onSaved({ ...(result.row as Record<string, unknown>), id: parsedId });
+				// The submitted values under the response, as for the form below
+				// (a partial response must not read as "left the filter").
+				onSaved({ ...values, ...(result.row as Record<string, unknown>), id: parsedId });
 			} else if (!isNew && !destroyed) {
 				noteLastEditedRecord(scope, def.name, {
 					id: parsedId,
