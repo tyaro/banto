@@ -224,11 +224,11 @@
 			// values (`updatedAt` stamped, the name trimmed). Input typed during
 			// the save stays on screen and stays unsaved (dirty), so closing
 			// still asks.
-			if (onSaved && !isNew && result.row) {
+			if (onSaved && !isNew) {
 				const current = store.values;
 				// The submitted values under the response: a DataProvider may
 				// answer an update with only some fields (or without `id`).
-				store.reset({ ...values, ...(result.row as Record<string, unknown>) });
+				store.reset({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
 				// Only the fields edited during the save go back on top - the
 				// others keep what the server stored.
 				const typed: Record<string, unknown> = {};
