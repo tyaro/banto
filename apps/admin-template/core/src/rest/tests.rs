@@ -712,6 +712,72 @@ async fn items_import_validation_error_rolls_back_and_is_recorded_as_failed() {
     assert_eq!(detail, json!({ "errorCount": 1 }));
 }
 
+fn put_json_auth(path: &str, token: &str, body: serde_json::Value) -> HttpRequest<Body> {
+    HttpRequest::put(path)
+        .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// Issue #597: an `items` update records `detail.changes` (changed fields
+/// only, no `updatedAt`), built by the same `item_update_detail` the Tauri
+/// command calls (conventions section 1).
+#[tokio::test]
+async fn items_update_records_a_field_diff_in_the_audit_log() {
+    let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &editor,
+                json!({ "name": "Before", "price": 10, "stock": 1 }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap();
+    let response = router
+        .clone()
+        .oneshot(put_json_auth(
+            &format!("/api/items/{id}"),
+            &editor,
+            json!({ "name": "Before", "price": 20, "stock": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let rows = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .clone();
+    let entry = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["action"] == "update" && r["resource"] == "items")
+        .expect("an update entry");
+    let detail: serde_json::Value =
+        serde_json::from_str(entry["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(detail["name"], "Before");
+    assert_eq!(
+        detail["changes"],
+        json!([{ "field": "price", "before": 10, "after": 20 }])
+    );
+}
+
 // [scaffold:items] end
 
 #[tokio::test]

@@ -43,6 +43,8 @@
 		type AuditLogEntry
 	} from '#lib/banto/auditLogAdmin.js';
 	import { auditLogFiltersFromQuery, hasAuditLogQuery } from '#lib/banto/auditLogQuery.js';
+	import AuditChanges from '#lib/resource/AuditChanges.svelte';
+	import { auditDetailRest, parseAuditChanges } from '#lib/resource/auditChanges.js';
 
 	const available = isAuditLogAvailable();
 
@@ -255,6 +257,11 @@
 		selected = row;
 	}
 
+	// #597: an `update` record with `changes` shows the field table instead of
+	// the raw JSON (the rest of detail stays below); older records and other operations keep the JSON.
+	const selectedChanges = $derived.by(() => parseAuditChanges(selected?.action, selected?.detail));
+	const selectedRest = $derived.by(() => auditDetailRest(selected?.detail));
+
 	const selectedDetail = $derived.by((): string | null => {
 		if (!selected?.detail) return null;
 		try {
@@ -384,7 +391,14 @@
 						/>
 					</dd>
 				</dl>
-				{#if selectedDetail}
+				{#if selectedChanges}
+					<h4>{m['resource.changesCaption']()}</h4>
+					<AuditChanges resource={selected.resource} changes={selectedChanges} />
+					{#if selectedRest}
+						<h4>{m['audit.detailJson']()}</h4>
+						<pre>{selectedRest}</pre>
+					{/if}
+				{:else if selectedDetail}
 					<h4>{m['audit.detailJson']()}</h4>
 					<pre>{selectedDetail}</pre>
 				{/if}

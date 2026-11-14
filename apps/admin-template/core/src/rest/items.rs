@@ -68,7 +68,7 @@ async fn items_update(
     Path(id): Path<i64>,
     Json(input): Json<ItemInput>,
 ) -> Result<Json<Item>, ApiError> {
-    let item = state.items.update(id, input).await?;
+    let (previous, item) = state.items.update_returning_previous(id, input).await?;
     record_write(
         &state.audit,
         &state.auth,
@@ -76,7 +76,7 @@ async fn items_update(
         "update",
         "items",
         Some(&item.id.to_string()),
-        Some(json!({ "name": item.name })),
+        Some(crate::items::item_update_detail(&previous, &item)),
     )
     .await;
     Ok(Json(item))

@@ -530,6 +530,17 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				historyTable.getByRole('cell', { name: '更新', exact: true }).first()
 			).toBeVisible();
 		}).toPass();
+		// #597: the update row carries what changed (the price, before -> after),
+		// under the form's label, not the internal field name. This record can
+		// have several update rows (earlier steps and retries reuse the id), so
+		// take the newest one that carries the new price (the list is ts desc).
+		const historyChanges = drawer
+			.getByTestId('audit-changes-inline')
+			.filter({ hasText: String(ITEM_PRICE_UPDATED) })
+			.first();
+		await expect(historyChanges).toContainText('価格');
+		await expect(historyChanges).toContainText(String(ITEM_PRICE));
+		await expect(historyChanges).toContainText(String(ITEM_PRICE_UPDATED));
 		// The link to the audit-log screen carries resource + entityId; it is
 		// followed after the drawer flow below (same page: the token lives in this
 		// tab's sessionStorage).
@@ -560,6 +571,30 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				.locator('[data-cell-field="entityId"]')
 				.filter({ hasNotText: new RegExp(`^\\s*${itemId}\\s*$`) })
 		).toHaveCount(0);
+
+		// #597: selecting the update row shows the field table (field / before /
+		// after) instead of the raw JSON. This record can have several update
+		// rows (earlier steps and retries reuse the id), so look through them for
+		// the one whose price went ITEM_PRICE -> ITEM_PRICE_UPDATED.
+		await expect(async () => {
+			const updateRows = rowWithText(page, '更新');
+			const count = await updateRows.count();
+			expect(count).toBeGreaterThan(0);
+			let found = false;
+			for (let i = 0; i < count && !found; i++) {
+				await updateRows.nth(i).click();
+				const changes = page.getByTestId('audit-changes');
+				// An update that changed nothing shows a note instead of the table.
+				await expect(changes.or(page.getByText('変更された欄はありません'))).toBeVisible();
+				const priceRow = changes
+					.getByRole('row')
+					.filter({ hasText: '価格' })
+					.filter({ hasText: String(ITEM_PRICE) })
+					.filter({ hasText: String(ITEM_PRICE_UPDATED) });
+				found = (await priceRow.count()) > 0;
+			}
+			expect(found).toBe(true);
+		}).toPass();
 
 		await page.goto(href);
 		await expect(page.getByLabel('価格')).toHaveValue(String(ITEM_PRICE_UPDATED));

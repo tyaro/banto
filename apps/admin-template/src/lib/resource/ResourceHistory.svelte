@@ -2,7 +2,8 @@
 	@component
 	"History of this record" (#591, stage 2): the audit log narrowed to one
 	resource and one record, newest first, as a plain list (time / user /
-	action / result / origin). The diff view is C-5's job, not this list's.
+	action / result / origin). An `update` row with a recorded diff (#597) shows
+	its changed fields under the row.
 
 	Mounted by the list's drawer only while its "History" tab is selected, so
 	the read happens when the tab is opened (and again each time it is opened,
@@ -23,6 +24,8 @@
 	import { auditLogLink } from '#lib/banto/auditLogQuery.js';
 	import { navItems, resolveAppPath } from '#lib/navigation.js';
 	import { createRecordHistoryLoader, type RecordHistoryState } from './recordHistory';
+	import AuditChanges from './AuditChanges.svelte';
+	import { parseAuditChanges } from './auditChanges';
 
 	interface Props {
 		/** The resource name as the audit log records it (`ResourceDefinition.name`). */
@@ -118,6 +121,12 @@
 							<td>{label(resultLabels, row.result)}</td>
 							<td>{label(originLabels, row.origin)}</td>
 						</tr>
+						{@const changes = parseAuditChanges(row.action, row.detail)}
+						{#if changes && changes.length > 0}
+							<tr class="changes-row">
+								<td colspan="5"><AuditChanges {resource} {changes} variant="inline" /></td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -166,6 +175,11 @@
 	th {
 		color: var(--banto-text-muted);
 		font-weight: 600;
+	}
+
+	.changes-row td {
+		white-space: normal;
+		padding-block-start: var(--banto-space-1);
 	}
 
 	.ts {

@@ -260,7 +260,10 @@ ADR-0018 §5）。transport の注入の形はレビューで担保する。
   ヘッダが漏れない構造にする（`security_headers.rs`）。
 - **監査 detail に秘密を入れない。** password / hash / bearer token を `detail` に
   絶対入れない。ランタイムガードは無く**レビューで担保**。key/value ストアは
-  key のみ記録し value は入れない（`settings_set`）。
+  key のみ記録し value は入れない（`settings_set`）。更新の差分（`detail.changes`、
+  #597）は `audit::diff::diff_changes` で作り、秘密の欄名を**必須の引数**で渡して
+  マスクする（マスクした欄は `{ field, masked: true }` だけ）。新しい resource の
+  update に差分を足すときは、秘密の欄を必ずそこで挙げること。
 - **settings の生 key/value 読み取りは admin 対称。** `settings_get` は
   `settings_set` と対称に admin ゲート（任意 key を読めるのは書けるのと同格の
   権限）。UI 設定だけは別コマンド `ui_settings_get`（viewer 可・自名前空間限定）に
