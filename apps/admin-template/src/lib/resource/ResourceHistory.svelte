@@ -121,7 +121,7 @@
 							<td>{label(resultLabels, row.result)}</td>
 							<td>{label(originLabels, row.origin)}</td>
 						</tr>
-						{@const changes = parseAuditChanges(row.detail)}
+						{@const changes = parseAuditChanges(row.action, row.detail)}
 						{#if changes && changes.length > 0}
 							<tr class="changes-row">
 								<td colspan="5"><AuditChanges {resource} {changes} variant="inline" /></td>

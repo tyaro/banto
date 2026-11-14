@@ -11,7 +11,7 @@
 //! A masked field that changed is recorded as `{ "field", "masked": true }`
 //! with no values.
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 /// Strings longer than this many characters are cut (a trailing `…` marks the
 /// cut) so a huge value cannot bloat the audit log.
@@ -41,9 +41,9 @@ pub fn diff_changes(
     masked_fields: &[&str],
     ignored_fields: &[&str],
 ) -> Vec<Value> {
-    let empty = Map::new();
-    let b = before.as_object().unwrap_or(&empty);
-    let a = after.as_object().unwrap_or(&empty);
+    let (Some(b), Some(a)) = (before.as_object(), after.as_object()) else {
+        return Vec::new();
+    };
     let mut names: Vec<&String> = b.keys().chain(a.keys()).collect();
     names.sort();
     names.dedup();
@@ -103,5 +103,11 @@ mod tests {
     fn missing_side_is_null() {
         let c = diff_changes(&json!({}), &json!({"a": 1}), &[], &[]);
         assert_eq!(c, vec![json!({"field": "a", "before": null, "after": 1})]);
+    }
+
+    #[test]
+    fn non_object_side_gives_empty_list() {
+        assert!(diff_changes(&json!(null), &json!({"a": 1}), &[], &[]).is_empty());
+        assert!(diff_changes(&json!({"a": 1}), &json!([1]), &[], &[]).is_empty());
     }
 }

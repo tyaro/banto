@@ -17,8 +17,15 @@ export interface AuditChange {
 	after: unknown;
 }
 
-/** `null` when `detail` is not JSON or has no `changes` array. */
-export function parseAuditChanges(detail: string | null | undefined): AuditChange[] | null {
+/**
+ * `null` unless the record is an `update` whose `detail` is JSON with a
+ * `changes` array (other actions never show a diff).
+ */
+export function parseAuditChanges(
+	action: string | null | undefined,
+	detail: string | null | undefined
+): AuditChange[] | null {
+	if (action !== 'update') return null;
 	if (!detail) return null;
 	let parsed: unknown;
 	try {
@@ -37,6 +44,24 @@ export function parseAuditChanges(detail: string | null | undefined): AuditChang
 		out.push({ field: e.field, masked: e.masked === true, before: e.before, after: e.after });
 	}
 	return out;
+}
+
+/**
+ * `detail` without its `changes` array, as pretty JSON, so the screens can show
+ * the rest (`name` and anything else) next to the diff. `null` when nothing is
+ * left, or when `detail` is not a JSON object.
+ */
+export function auditDetailRest(detail: string | null | undefined): string | null {
+	if (!detail) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(detail);
+	} catch {
+		return null;
+	}
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+	const { changes: _changes, ...rest } = parsed as Record<string, unknown>;
+	return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
 }
 
 /**
