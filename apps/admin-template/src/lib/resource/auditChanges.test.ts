@@ -60,6 +60,21 @@ describe('auditDetailRest', () => {
 		expect(auditDetailRest('not json')).toBeNull();
 		expect(auditDetailRest(null)).toBeNull();
 	});
+
+	it('keeps attachment sweep metadata next to delete values', () => {
+		const detail = JSON.stringify({
+			name: 'Deleted',
+			changes: [{ field: 'stock', before: 3, after: null }],
+			attachmentsRemoved: 2
+		});
+		expect(parseAuditChanges('delete', detail)).toEqual([
+			{ field: 'stock', masked: false, before: 3, after: null }
+		]);
+		expect(JSON.parse(auditDetailRest(detail) ?? 'null')).toEqual({
+			name: 'Deleted',
+			attachmentsRemoved: 2
+		});
+	});
 });
 
 describe('auditFieldLabel / formatAuditValue', () => {

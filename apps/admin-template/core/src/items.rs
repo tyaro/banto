@@ -26,6 +26,16 @@ pub struct Item {
     pub updated_at: String,
 }
 
+/// Only fields intentionally approved for audit. When an app adds an item
+/// field, decide explicitly whether it belongs here before recording it.
+fn item_audit_fields(item: &Item) -> serde_json::Value {
+    serde_json::json!({
+        "name": item.name,
+        "price": item.price,
+        "stock": item.stock,
+    })
+}
+
 /// `detail` of an `items` `update` audit record (Issue #597): `{ name,
 /// changes: [{ field, before, after }] }`. Both the REST and the Tauri wiring
 /// call this, so the two routes record the same shape (conventions section 1).
@@ -46,19 +56,19 @@ pub fn item_update_detail(before: &Item, after: &Item) -> serde_json::Value {
 pub fn item_create_detail(item: &Item) -> serde_json::Value {
     let changes = banto_admin_services::audit::diff::diff_changes(
         &serde_json::json!({}),
-        &serde_json::to_value(item).unwrap_or_default(),
+        &item_audit_fields(item),
         &[],
-        &["id", "updatedAt"],
+        &[],
     );
     serde_json::json!({ "name": item.name, "changes": changes })
 }
 
 pub fn item_delete_detail(item: &Item, sweep: Option<serde_json::Value>) -> serde_json::Value {
     let changes = banto_admin_services::audit::diff::diff_changes(
-        &serde_json::to_value(item).unwrap_or_default(),
+        &item_audit_fields(item),
         &serde_json::json!({}),
         &[],
-        &["id", "updatedAt"],
+        &[],
     );
     let mut detail = serde_json::json!({ "name": item.name, "changes": changes });
     // sweep_item_attachments currently returns only attachmentsRemoved. Keep
