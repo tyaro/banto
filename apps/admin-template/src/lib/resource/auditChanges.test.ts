@@ -75,6 +75,19 @@ describe('auditDetailRest', () => {
 			attachmentsRemoved: 2
 		});
 	});
+
+	it('hides a duplicate top-level role when changes already shows it', () => {
+		const detail = JSON.stringify({
+			username: 'target',
+			role: 'editor',
+			changes: [{ field: 'role', before: 'editor', after: null }]
+		});
+		expect(JSON.parse(auditDetailRest(detail) ?? 'null')).toEqual({ username: 'target' });
+		expect(JSON.parse(auditDetailRest('{"username":"target","role":"editor"}') ?? 'null')).toEqual({
+			username: 'target',
+			role: 'editor'
+		});
+	});
 });
 
 describe('auditFieldLabel / formatAuditValue', () => {

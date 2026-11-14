@@ -61,7 +61,15 @@ export function auditDetailRest(detail: string | null | undefined): string | nul
 		return null;
 	}
 	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-	const { changes: _changes, ...rest } = parsed as Record<string, unknown>;
+	const { changes, ...rest } = parsed as Record<string, unknown>;
+	// `role` stays at the top level for older consumers. When the change table
+	// already shows it, hide the duplicate JSON value in the audit-log detail.
+	if (
+		Array.isArray(changes) &&
+		changes.some((entry) => typeof entry === 'object' && entry !== null && entry.field === 'role')
+	) {
+		delete rest.role;
+	}
 	return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
 }
 

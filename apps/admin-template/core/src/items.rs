@@ -548,7 +548,9 @@ impl ItemsService {
         self.delete_returning_previous(id).await.map(|_| ())
     }
 
-    /// Delete and return the exact removed row for the audit snapshot.
+    /// Delete and return the exact removed row for the audit snapshot. Decode
+    /// RETURNING before commit, so a decode failure cannot delete the row
+    /// without letting the wiring layer write its audit entry.
     pub async fn delete_returning_previous(&self, id: i64) -> Result<Item, BantoError> {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `get` above.
@@ -558,20 +560,33 @@ impl ItemsService {
         );
         let item = match &self.db {
             Db::Sqlite(pool) => {
-                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
-                    .bind(id)
-                    .fetch_optional(pool)
+                let mut tx = pool
+                    .begin_with("BEGIN IMMEDIATE")
                     .await
+                    .map_err(banto_storage::storage_error)?;
+                let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                item
             }
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => {
-                sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
-                    .bind(id)
-                    .fetch_optional(pool)
+                let mut tx = pool
+                    .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
                     .await
+                    .map_err(banto_storage::storage_error)?;
+                let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(banto_storage::storage_error)?;
+                tx.commit().await.map_err(banto_storage::storage_error)?;
+                item
             }
-        }
-        .map_err(banto_storage::storage_error)?;
+        };
         let item = item.ok_or_else(|| BantoError::NotFound {
             resource: RESOURCE.to_string(),
             id: id.to_string(),
@@ -881,6 +896,33 @@ mod tests {
             svc.delete_returning_previous(item.id).await,
             Err(BantoError::NotFound { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn delete_decode_failure_rolls_back_the_row() {
+        let svc = service().await;
+        let item = svc
+            .create(ItemInput {
+                name: "Invalid storage value".into(),
+                price: 1,
+                stock: 1,
+            })
+            .await
+            .unwrap();
+        // SQLite's INTEGER affinity permits a text value in a non-STRICT
+        // table. Item::price cannot decode it as i64.
+        sqlx::query("UPDATE items SET price = 'invalid' WHERE id = ?")
+            .bind(item.id)
+            .execute(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert!(svc.delete_returning_previous(item.id).await.is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE id = ?")
+            .bind(item.id)
+            .fetch_one(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "a decode error must roll back the delete");
     }
 
     #[tokio::test]
