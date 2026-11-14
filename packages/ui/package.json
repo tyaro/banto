@@ -1,6 +1,6 @@
 {
   "name": "@banto/ui",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "Banto shared UI components: page primitives (PageHeader, SurfaceCard, StatusBadge, IconButton, Empty/Error/Loading states), the dropdown Menu, the CommandPalette, ToastHost, Modal / Drawer, the Esc / focus layering helpers, the LauncherBar, the DateInput and the TimeInput (Svelte 5, token-only styling)",
   "license": "MIT",
   "repository": {
