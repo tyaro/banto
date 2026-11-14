@@ -26,10 +26,14 @@ describe('parseAuditChanges', () => {
 		expect(parseAuditChanges('update', '{"name":"a","changes":[]}')).toEqual([]);
 	});
 
-	it('returns null for any action other than update', () => {
+	it('reads create and delete values, but ignores unrelated actions', () => {
 		const detail = '{"name":"a","changes":[{"field":"price","before":1,"after":2}]}';
-		expect(parseAuditChanges('create', detail)).toBeNull();
-		expect(parseAuditChanges('delete', detail)).toBeNull();
+		for (const action of ['create', 'delete']) {
+			expect(parseAuditChanges(action, detail)).toEqual([
+				{ field: 'price', masked: false, before: 1, after: 2 }
+			]);
+		}
+		expect(parseAuditChanges('password_reset', detail)).toBeNull();
 		expect(parseAuditChanges(null, detail)).toBeNull();
 	});
 
@@ -39,6 +43,8 @@ describe('parseAuditChanges', () => {
 		expect(parseAuditChanges('update', '[1]')).toBeNull();
 		expect(parseAuditChanges('update', 'not json')).toBeNull();
 		expect(parseAuditChanges('update', null)).toBeNull();
+		expect(parseAuditChanges('create', '{"name":"old"}')).toBeNull();
+		expect(parseAuditChanges('delete', '{"attachmentsRemoved":2}')).toBeNull();
 	});
 });
 

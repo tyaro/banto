@@ -1,6 +1,6 @@
 <!--
 	@component
-	The changed fields of an `update` audit record (#597): field / before /
+	The recorded fields of a create/update/delete audit record: field / before /
 	after. `table` is the audit-log screen's detail; `inline` is the compact
 	list under a row of the drawer's history tab. Field names are the internal
 	names the record stores, shown as the resource's form label where there is

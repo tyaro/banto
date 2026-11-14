@@ -1,5 +1,5 @@
 /**
- * The field-level diff an `update` audit record carries (#597):
+ * The field-level values a create/update/delete audit record carries:
  * `detail = { name (users: username, role), changes: [{ field, before, after } | { field, masked }] }`.
  *
  * Plain TypeScript so the parsing and the label lookup can be unit-tested; the
@@ -19,14 +19,14 @@ export interface AuditChange {
 }
 
 /**
- * `null` unless the record is an `update` whose `detail` is JSON with a
- * `changes` array (other actions never show a diff).
+ * `null` unless a create/update/delete record has a `changes` array. Older
+ * records and unrelated operations keep their existing detail display.
  */
 export function parseAuditChanges(
 	action: string | null | undefined,
 	detail: string | null | undefined
 ): AuditChange[] | null {
-	if (action !== 'update') return null;
+	if (action !== 'create' && action !== 'update' && action !== 'delete') return null;
 	if (!detail) return null;
 	let parsed: unknown;
 	try {

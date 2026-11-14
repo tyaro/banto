@@ -56,7 +56,7 @@ async fn items_create(
         "create",
         "items",
         Some(&item.id.to_string()),
-        Some(json!({ "name": item.name })),
+        Some(crate::items::item_create_detail(&item)),
     )
     .await;
     Ok(Json(item))
@@ -87,10 +87,10 @@ async fn items_delete(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    state.items.delete(id).await?;
+    let item = state.items.delete_returning_previous(id).await?;
     // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left
     // pointing at the now-deleted record (best-effort).
-    let detail = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;
+    let sweep = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;
     record_write(
         &state.audit,
         &state.auth,
@@ -98,7 +98,7 @@ async fn items_delete(
         "delete",
         "items",
         Some(&id.to_string()),
-        detail,
+        Some(crate::items::item_delete_detail(&item, sweep)),
     )
     .await;
     Ok(StatusCode::NO_CONTENT)
