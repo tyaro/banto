@@ -1044,12 +1044,15 @@ function removeAttachmentsFromLibRs() {
 		`    let sweep = sweep_item_attachments(&state.attachments, id).await;`
 	);
 	// 添付を外しても削除した item の値は監査 detail に残す。
-	swapText(
-		LIB_RS,
-		'lib.rs: items_delete の添付 sweep を None に',
-		`Some(admin_template_core::items::item_delete_detail(&item, sweep))`,
-		`Some(admin_template_core::items::item_delete_detail(&item, None))`
-	);
+	editFile(LIB_RS, 'lib.rs: items_delete の添付 sweep を None に', (s) => {
+		// display の再実行では items コマンド自体が既に消えている。
+		if (!s.includes('async fn items_delete_body(')) return args.strict ? undefined : null;
+		return swap(
+			s,
+			`Some(admin_template_core::items::item_delete_detail(&item, sweep))`,
+			`Some(admin_template_core::items::item_delete_detail(&item, None))`
+		);
+	});
 	drop(
 		LIB_RS,
 		'lib.rs: start_embedded_server の attachments 引数除去',
