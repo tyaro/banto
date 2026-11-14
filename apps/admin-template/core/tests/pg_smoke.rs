@@ -376,6 +376,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert_eq!(remaining.total_count, 1);
 
     audit_snapshot_boundary_on_postgres(&audit, &db).await;
+    audit_related_record_history_on_postgres(&audit).await;
 
     concurrent_admin_removals_on_postgres(&url).await;
 
@@ -417,6 +418,70 @@ async fn app_layer_crud_round_trips_on_postgres() {
         backup.pending_restore().await.is_none(),
         "pending_restore reports nothing staged on Postgres"
     );
+}
+
+async fn audit_related_record_history_on_postgres(audit: &AuditLogService) {
+    use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
+    use serde_json::json;
+
+    for (resource, entity_id, detail) in [
+        ("items", "42", None),
+        (
+            "attachments",
+            "101",
+            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "a.txt" })),
+        ),
+        (
+            "attachments",
+            "102",
+            Some(json!({ "parentResource": "items", "parentId": "420" })),
+        ),
+    ] {
+        audit
+            .try_record(AuditEntry {
+                actor_username: Some("alice"),
+                actor_role: Some("editor"),
+                action: "create",
+                resource,
+                entity_id: Some(entity_id),
+                detail,
+                origin: "rest",
+                result: "ok",
+            })
+            .await
+            .expect("record related history fixture");
+    }
+    let params = ListParams {
+        pagination: Some(Pagination {
+            offset: 0,
+            limit: 50,
+        }),
+        sort: vec![SortState {
+            field: "id".into(),
+            direction: SortDirection::Desc,
+        }],
+        filters: vec![
+            FilterState {
+                field: "recordResource".into(),
+                op: FilterOp::Eq,
+                value: json!("items"),
+            },
+            FilterState {
+                field: "recordId".into(),
+                op: FilterOp::Eq,
+                value: json!("42"),
+            },
+        ],
+        ..Default::default()
+    };
+    let history = audit
+        .list_as_of(params, None)
+        .await
+        .expect("related history list");
+    assert_eq!(history.total_count, 2);
+    assert_eq!(history.rows[0].resource, "attachments");
+    assert_eq!(history.rows[0].entity_id.as_deref(), Some("101"));
+    assert_eq!(history.rows[1].resource, "items");
 }
 
 // Issue #248: `list_as_of` on PostgreSQL - the boundary pins the set across

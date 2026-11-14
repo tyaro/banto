@@ -2167,7 +2167,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		if (cleanupError !== undefined) throw cleanupError;
 	});
 
-	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
+	test('8. items detail: attachments upload, thumbnail, history, and delete', async () => {
 		await page.goto('/items');
 		await page.getByRole('button', { name: '新規作成' }).click();
 		await expect(page).toHaveURL(/\/items\/new$/);
@@ -2181,7 +2181,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
 		const row = rowWithText(page, ATTACHMENT_ITEM_NAME);
 		await expect(row).toBeVisible();
-		const href = `/items/${await rowItemId(row)}`;
+		const itemId = await rowItemId(row);
+		const href = `/items/${itemId}`;
 
 		await page.goto(href);
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
@@ -2227,6 +2228,21 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			confirm: '削除'
 		});
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
+
+		// The parent record's history includes both actions on the removed file.
+		await page.goto('/items');
+		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
+		const historyRow = rowWithText(page, ATTACHMENT_ITEM_NAME);
+		const drawer = await openInDrawer(page, historyRow, itemId);
+		await drawer.getByRole('tab', { name: '履歴', exact: true }).click();
+		const historyTable = drawer.getByRole('table', { name: /履歴/ });
+		await expect(
+			historyTable.getByRole('cell', { name: `attachments：作成（${TXT_FILE_NAME}）` })
+		).toBeVisible();
+		await expect(
+			historyTable.getByRole('cell', { name: `attachments：削除（${TXT_FILE_NAME}）` })
+		).toBeVisible();
+		await page.goto(href);
 
 		// 5. Re-upload one attachment and deliberately leave it in place: the
 		// cleanup step below deletes the item itself while it still owns an

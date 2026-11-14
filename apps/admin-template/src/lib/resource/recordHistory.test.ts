@@ -4,6 +4,7 @@ import { isAdmin } from '#lib/permissions.js';
 import {
 	HISTORY_PAGE_SIZE,
 	createRecordHistoryLoader,
+	relatedHistoryFileName,
 	recordHistoryParams,
 	type RecordHistoryState
 } from './recordHistory';
@@ -39,12 +40,21 @@ describe('who sees the history (#591 stage 2)', () => {
 	});
 });
 
+describe('relatedHistoryFileName', () => {
+	it('reads a file name and ignores unrelated or malformed detail', () => {
+		expect(relatedHistoryFileName('{"fileName":"notes.txt"}')).toBe('notes.txt');
+		expect(relatedHistoryFileName('{"name":"item"}')).toBeNull();
+		expect(relatedHistoryFileName('{"fileName":42}')).toBeNull();
+		expect(relatedHistoryFileName('not json')).toBeNull();
+	});
+});
+
 describe('recordHistoryParams', () => {
 	it('filters the resource and the record with eq (not contains), newest first, one page', () => {
 		const params = recordHistoryParams('items', 1);
 		expect(params.filters).toEqual([
-			{ field: 'resource', op: 'eq', value: 'items' },
-			{ field: 'entityId', op: 'eq', value: '1' }
+			{ field: 'recordResource', op: 'eq', value: 'items' },
+			{ field: 'recordId', op: 'eq', value: '1' }
 		]);
 		expect(params.filters.some((f) => f.op === 'contains')).toBe(false);
 		expect(params.sort[0]).toEqual({ field: 'ts', direction: 'desc' });
@@ -64,7 +74,7 @@ describe('createRecordHistoryLoader', () => {
 		await loader.load('items', 7);
 		expect(list).toHaveBeenCalledTimes(1);
 		const [params, asOfId, signal] = list.mock.calls[0];
-		expect(params.filters[1]).toEqual({ field: 'entityId', op: 'eq', value: '7' });
+		expect(params.filters[1]).toEqual({ field: 'recordId', op: 'eq', value: '7' });
 		expect(asOfId).toBeNull();
 		expect(signal).toBeInstanceOf(AbortSignal);
 		expect(states.map((s) => s.status)).toEqual(['loading', 'ready']);

@@ -5289,6 +5289,33 @@ mod tests {
                 "parentId": "1"
             })
         );
+        let history = state
+            .audit
+            .list(ListParams {
+                filters: vec![
+                    banto_core::FilterState {
+                        field: "recordResource".into(),
+                        op: banto_core::FilterOp::Eq,
+                        value: serde_json::json!("items"),
+                    },
+                    banto_core::FilterState {
+                        field: "recordId".into(),
+                        op: banto_core::FilterOp::Eq,
+                        value: serde_json::json!("1"),
+                    },
+                ],
+                ..Default::default()
+            })
+            .await
+            .expect("parent record history");
+        assert_eq!(
+            history
+                .rows
+                .iter()
+                .filter(|row| row.resource == "attachments")
+                .count(),
+            2
+        );
     }
     // --- end M20 attachments command tests ---------------------------------
 

@@ -195,6 +195,11 @@ fn column_map() -> ColumnMap {
         .text_column("action", "action")
         .text_column("resource", "resource")
         .text_column("entityId", "entity_id")
+        // A record's history also includes audit rows whose detail points to
+        // that record. These are computed columns of `list_as_of`'s bounded
+        // source; the canonical resource/entity_id remain unchanged.
+        .column("recordResource", "record_resource")
+        .column("recordId", "record_id")
         .text_column("detail", "detail")
         .text_column("origin", "origin")
         .text_column("result", "result")
@@ -695,17 +700,44 @@ impl AuditLogService {
         let columns = column_map();
         // The bounded set is wrapped as a subquery aliased `audit_log`, so the
         // column whitelist (`column_map`) and `apply_list_params` apply to it
-        // unchanged (`append_where` writes its own ` WHERE `, so the bound
-        // cannot simply be appended to the outer query).
+        // unchanged (`append_where` writes its own ` WHERE `). Generic
+        // `parentResource`/`parentId` detail keys opt a row into its parent's
+        // history; both keys must be present. The canonical audit target stays
+        // in `resource`/`entity_id`. SQLite guards malformed legacy detail
+        // before JSON extraction; PostgreSQL detail is JSON text written by
+        // this service, so it can be cast to jsonb.
         const SELECT_ROWS: &str =
             "SELECT id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result \
-             FROM (SELECT * FROM audit_log WHERE id <= ";
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (SELECT * FROM audit_log WHERE id <= ";
-        const BOUNDED_ALIAS: &str = ") AS audit_log";
+             FROM (";
+        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (";
+        const DIRECT_BOUNDED_SOURCE: &str = "SELECT * FROM audit_log WHERE id <= ";
+        const SQLITE_BOUNDED_SOURCE: &str = "SELECT *, \
+             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_resource ELSE resource END AS record_resource, \
+             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_id ELSE entity_id END AS record_id \
+             FROM (SELECT audit_log.*, \
+             json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.parentResource') AS parent_resource, \
+             json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.parentId') AS parent_id \
+             FROM audit_log WHERE id <= ";
+        #[cfg(feature = "postgres")]
+        const PG_BOUNDED_SOURCE: &str = "SELECT *, \
+             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_resource ELSE resource END AS record_resource, \
+             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_id ELSE entity_id END AS record_id \
+             FROM (SELECT audit_log.*, \
+             detail::jsonb ->> 'parentResource' AS parent_resource, \
+             detail::jsonb ->> 'parentId' AS parent_id \
+             FROM audit_log WHERE id <= ";
+        const DIRECT_ALIAS: &str = ") AS audit_log";
+        const RELATED_ALIAS: &str = ") AS relation_values) AS audit_log";
         const SELECT_MAX_ID: &str = "SELECT MAX(id) FROM audit_log";
         // The key literal here and in `prune` is [`DELETION_EPOCH_KEY`]
         // (`deletion_epoch_uses_the_documented_settings_key` pins it).
         const SELECT_EPOCH: &str = "SELECT value FROM settings WHERE key = 'audit.deletion_epoch'";
+        // Most audit-log reads do not request the virtual record scope. Keep
+        // their existing indexed source and avoid parsing every detail row.
+        let related_scope = params
+            .filters
+            .iter()
+            .any(|filter| matches!(filter.field.as_str(), "recordResource" | "recordId"));
 
         // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
         // `admin_template_core::items::ItemsService::list` (see that method's
@@ -723,8 +755,17 @@ impl AuditLogService {
                 };
 
                 let mut rows_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_ROWS);
+                rows_builder.push(if related_scope {
+                    SQLITE_BOUNDED_SOURCE
+                } else {
+                    DIRECT_BOUNDED_SOURCE
+                });
                 rows_builder.push_bind(as_of_id);
-                rows_builder.push(BOUNDED_ALIAS);
+                rows_builder.push(if related_scope {
+                    RELATED_ALIAS
+                } else {
+                    DIRECT_ALIAS
+                });
                 banto_storage::list_query::sqlite::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -737,8 +778,17 @@ impl AuditLogService {
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
+                count_builder.push(if related_scope {
+                    SQLITE_BOUNDED_SOURCE
+                } else {
+                    DIRECT_BOUNDED_SOURCE
+                });
                 count_builder.push_bind(as_of_id);
-                count_builder.push(BOUNDED_ALIAS);
+                count_builder.push(if related_scope {
+                    RELATED_ALIAS
+                } else {
+                    DIRECT_ALIAS
+                });
                 banto_storage::list_query::sqlite::append_list_where(
                     &mut count_builder,
                     &columns,
@@ -784,8 +834,17 @@ impl AuditLogService {
                 };
 
                 let mut rows_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(SELECT_ROWS);
+                rows_builder.push(if related_scope {
+                    PG_BOUNDED_SOURCE
+                } else {
+                    DIRECT_BOUNDED_SOURCE
+                });
                 rows_builder.push_bind(as_of_id);
-                rows_builder.push(BOUNDED_ALIAS);
+                rows_builder.push(if related_scope {
+                    RELATED_ALIAS
+                } else {
+                    DIRECT_ALIAS
+                });
                 banto_storage::list_query::postgres::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -799,8 +858,17 @@ impl AuditLogService {
 
                 let mut count_builder: QueryBuilder<sqlx::Postgres> =
                     QueryBuilder::new(SELECT_COUNT);
+                count_builder.push(if related_scope {
+                    PG_BOUNDED_SOURCE
+                } else {
+                    DIRECT_BOUNDED_SOURCE
+                });
                 count_builder.push_bind(as_of_id);
-                count_builder.push(BOUNDED_ALIAS);
+                count_builder.push(if related_scope {
+                    RELATED_ALIAS
+                } else {
+                    DIRECT_ALIAS
+                });
                 banto_storage::list_query::postgres::append_list_where(
                     &mut count_builder,
                     &columns,
@@ -1306,6 +1374,87 @@ mod tests {
 
     fn ids(list: &AuditLogList) -> Vec<i64> {
         list.rows.iter().map(|r| r.id).collect()
+    }
+
+    #[tokio::test]
+    async fn record_history_filter_includes_related_audit_rows() {
+        let svc = service().await;
+        let mut direct = sample_entry("update", "items", "alice");
+        direct.entity_id = Some("42");
+        svc.try_record(direct).await.unwrap();
+
+        let mut upload = sample_entry("create", "attachments", "alice");
+        upload.entity_id = Some("101");
+        upload.detail =
+            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "a.txt" }));
+        svc.try_record(upload).await.unwrap();
+
+        let mut other_parent = sample_entry("create", "attachments", "alice");
+        other_parent.entity_id = Some("102");
+        other_parent.detail = Some(json!({ "parentResource": "items", "parentId": "420" }));
+        svc.try_record(other_parent).await.unwrap();
+
+        let mut delete = sample_entry("delete", "attachments", "alice");
+        delete.entity_id = Some("101");
+        delete.detail =
+            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "a.txt" }));
+        svc.try_record(delete).await.unwrap();
+
+        let mut incomplete = sample_entry("create", "attachments", "alice");
+        incomplete.entity_id = Some("42");
+        incomplete.detail = Some(json!({ "parentResource": "items" }));
+        svc.try_record(incomplete).await.unwrap();
+
+        // A malformed legacy detail must not break the entire history read.
+        sqlx::query("INSERT INTO audit_log (action, resource, entity_id, detail, origin) VALUES ('create', 'attachments', '42', 'not-json', 'rest')")
+            .execute(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+
+        let params = ListParams {
+            pagination: Some(Pagination {
+                offset: 0,
+                limit: 2,
+            }),
+            sort: vec![SortState {
+                field: "id".into(),
+                direction: SortDirection::Desc,
+            }],
+            filters: vec![
+                FilterState {
+                    field: "recordResource".into(),
+                    op: FilterOp::Eq,
+                    value: json!("items"),
+                },
+                FilterState {
+                    field: "recordId".into(),
+                    op: FilterOp::Eq,
+                    value: json!("42"),
+                },
+            ],
+            ..Default::default()
+        };
+        let first = svc.list_as_of(params.clone(), None).await.unwrap();
+        assert_eq!(first.total_count, 3);
+        assert_eq!(ids(&first), vec![4, 2]);
+        assert_eq!(first.rows[0].resource, "attachments");
+        assert_eq!(first.rows[0].entity_id.as_deref(), Some("101"));
+
+        let second = svc
+            .list_as_of(
+                ListParams {
+                    pagination: Some(Pagination {
+                        offset: 2,
+                        limit: 2,
+                    }),
+                    ..params
+                },
+                Some(first.as_of_id),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ids(&second), vec![1]);
+        assert_eq!(second.total_count, 3);
     }
 
     /// Rows written between two block reads do not enter a pinned

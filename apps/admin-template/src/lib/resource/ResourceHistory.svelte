@@ -1,7 +1,7 @@
 <!--
 	@component
 	"History of this record" (#591, stage 2): the audit log narrowed to one
-	resource and one record, newest first, as a plain list (time / user /
+	record and its related operations, newest first, as a plain list (time / user /
 	action / result / origin). A create/update/delete row with recorded values shows
 	its changed fields under the row.
 
@@ -23,7 +23,11 @@
 	import { listAuditLog } from '#lib/banto/auditLogAdmin.js';
 	import { auditLogLink } from '#lib/banto/auditLogQuery.js';
 	import { navItems, resolveAppPath } from '#lib/navigation.js';
-	import { createRecordHistoryLoader, type RecordHistoryState } from './recordHistory';
+	import {
+		createRecordHistoryLoader,
+		relatedHistoryFileName,
+		type RecordHistoryState
+	} from './recordHistory';
 	import AuditChanges from './AuditChanges.svelte';
 	import { parseAuditChanges } from './auditChanges';
 
@@ -114,9 +118,25 @@
 				</thead>
 				<tbody>
 					{#each state.rows as row (row.id)}
+						{@const fileName = relatedHistoryFileName(row.detail)}
 						<tr>
 							<td class="ts">{row.ts}</td>
-							<td>{label(actionLabels, row.action)}</td>
+							<td>
+								{#if row.resource === resource}
+									{label(actionLabels, row.action)}
+								{:else if fileName}
+									{m['resource.historyRelatedFileAction']({
+										resource: row.resource,
+										action: label(actionLabels, row.action),
+										fileName
+									})}
+								{:else}
+									{m['resource.historyRelatedAction']({
+										resource: row.resource,
+										action: label(actionLabels, row.action)
+									})}
+								{/if}
+							</td>
 							<td>{row.actorUsername ?? '-'}</td>
 							<td>{label(resultLabels, row.result)}</td>
 							<td>{label(originLabels, row.origin)}</td>

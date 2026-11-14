@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { auditLogFiltersFromQuery, auditLogLink, hasAuditLogQuery } from './auditLogQuery';
+import {
+	auditLogFiltersFromQuery,
+	auditLogLink,
+	auditRecordScope,
+	hasAuditLogQuery
+} from './auditLogQuery';
 import { recordHistoryParams } from '#lib/resource/recordHistory.js';
 
 const q = (s: string) => new URLSearchParams(s);
@@ -14,7 +19,7 @@ describe('auditLogFiltersFromQuery (#591)', () => {
 
 	it('matches the filters the drawer history reads with', () => {
 		const fromDrawer = recordHistoryParams('items', 42).filters;
-		expect(auditLogFiltersFromQuery(q('resource=items&entityId=42'))).toEqual(fromDrawer);
+		expect(auditLogFiltersFromQuery(q('recordResource=items&recordId=42'))).toEqual(fromDrawer);
 	});
 
 	it('accepts either parameter alone', () => {
@@ -53,6 +58,7 @@ describe('hasAuditLogQuery', () => {
 	it('is true when either parameter is present, even an invalid one', () => {
 		expect(hasAuditLogQuery(q('resource='))).toBe(true);
 		expect(hasAuditLogQuery(q('entityId=1'))).toBe(true);
+		expect(hasAuditLogQuery(q('recordId=1'))).toBe(true);
 		expect(hasAuditLogQuery(q('view=a'))).toBe(false);
 	});
 });
@@ -60,11 +66,28 @@ describe('hasAuditLogQuery', () => {
 describe('auditLogLink', () => {
 	it('encodes the values and round-trips through the reader', () => {
 		const href = auditLogLink('/audit-log', 'items', 'a b&c/1');
-		expect(href).toBe('/audit-log?resource=items&entityId=a+b%26c%2F1');
+		expect(href).toBe('/audit-log?recordResource=items&recordId=a+b%26c%2F1');
 		const params = new URL(href, 'http://x').searchParams;
 		expect(auditLogFiltersFromQuery(params)).toEqual([
-			{ field: 'resource', op: 'eq', value: 'items' },
-			{ field: 'entityId', op: 'eq', value: 'a b&c/1' }
+			{ field: 'recordResource', op: 'eq', value: 'items' },
+			{ field: 'recordId', op: 'eq', value: 'a b&c/1' }
 		]);
+	});
+});
+
+describe('auditRecordScope', () => {
+	it('shows the parent scope when both keys are present', () => {
+		const row = {
+			resource: 'attachments',
+			entityId: '9',
+			detail: '{"parentResource":"items","parentId":"42"}'
+		};
+		expect(auditRecordScope(row as Parameters<typeof auditRecordScope>[0])).toEqual({
+			resource: 'items',
+			id: '42'
+		});
+		expect(
+			auditRecordScope({ ...row, detail: 'not-json' } as Parameters<typeof auditRecordScope>[0])
+		).toEqual({ resource: 'attachments', id: '9' });
 	});
 });

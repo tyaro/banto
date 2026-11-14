@@ -2976,6 +2976,7 @@ async fn attachment_upload_and_delete_are_recorded_in_the_audit_log() {
         .unwrap();
 
     let audit_response = router
+        .clone()
         .oneshot(post_json_auth(
             "/api/audit-log/list",
             &admin,
@@ -3012,6 +3013,27 @@ async fn attachment_upload_and_delete_are_recorded_in_the_audit_log() {
     )
     .unwrap();
     assert_eq!(delete_detail["fileName"], "photo.bin");
+
+    let history_response = router
+        .oneshot(post_json_auth(
+            "/api/audit-log/list",
+            &admin,
+            json!({
+                "filters": [
+                    { "field": "recordResource", "op": "eq", "value": "items" },
+                    { "field": "recordId", "op": "eq", "value": "7" }
+                ]
+            }),
+        ))
+        .await
+        .unwrap();
+    let history = body_json(history_response).await;
+    assert_eq!(history["totalCount"], 2);
+    assert!(history["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["resource"] == "attachments"));
 }
 
 /// Upload/delete each broadcast `ServerEvent::ResourceChanged { resource:
