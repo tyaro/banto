@@ -2045,6 +2045,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			return openInDrawer(page, row, targetId);
 		}
 
+		let cleanupError: unknown;
 		try {
 			// Control: the admin sees the 履歴 tab on that very row, so the
 			// locator is right and only the role explains its absence below.
@@ -2071,20 +2072,35 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			await page.keyboard.press('Escape');
 			await expect(viewerDrawer).toBeHidden();
 		} finally {
-			// Later scenarios continue as the admin.
-			await loginAs(ADMIN_USERNAME, ADMIN_PASSWORD);
+			// Cleanup must not hide the original failure: if a role check failed
+			// the drawer is still open and its overlay covers the header, so
+			// close it first, and let the original exception win over any
+			// cleanup error.
+			try {
+				if (targetId !== null) {
+					const openDrawer = itemDrawer(page, targetId);
+					if (await openDrawer.isVisible()) {
+						await page.keyboard.press('Escape');
+						await expect(openDrawer).toBeHidden({ timeout: 5_000 });
+					}
+				}
+				// Later scenarios continue as the admin, and the editor is removed again.
+				await loginAs(ADMIN_USERNAME, ADMIN_PASSWORD);
+				await page.evaluate(async (id) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const res = await fetch(`/api/users/${id}`, {
+						method: 'DELETE',
+						headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
+					});
+					if (!res.ok) throw new Error(`delete editor failed: ${res.status}`);
+				}, editorId);
+			} catch (error) {
+				// Rethrown below only when the test body itself passed.
+				cleanupError = error;
+			}
 		}
-
-		// Remove the editor again; a failed delete fails the test.
-		await page.evaluate(async (id) => {
-			const token =
-				localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
-			const res = await fetch(`/api/users/${id}`, {
-				method: 'DELETE',
-				headers: { 'X-Banto-Client': 'banto', Authorization: `Bearer ${token}` }
-			});
-			if (!res.ok) throw new Error(`delete editor failed: ${res.status}`);
-		}, editorId);
+		if (cleanupError !== undefined) throw cleanupError;
 	});
 
 	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
