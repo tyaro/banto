@@ -47,7 +47,9 @@ export const DIV_RAMP: readonly string[] = Array.from(
  * (`min === max`, e.g. every cell holds the same value) map to the ramp's
  * middle step rather than always the lightest/darkest end, since there is no
  * "low" or "high" to distinguish. `ramp` defaults to `SEQ_RAMP` but accepts a
- * caller-supplied ramp of any length >= 1.
+ * caller-supplied ramp of any length >= 1. A non-finite `value`, `min` or
+ * `max` (e.g. `NaN` for a missing value) has no step and returns `''`, like
+ * an empty `ramp` - callers should skip such a mark rather than paint it.
  */
 export function sequentialColor(
 	value: number,
@@ -55,7 +57,7 @@ export function sequentialColor(
 	max: number,
 	ramp: readonly string[] = SEQ_RAMP
 ): string {
-	if (ramp.length === 0) return '';
+	if (ramp.length === 0 || !allFinite(value, min, max)) return '';
 	if (ramp.length === 1) return ramp[0];
 	if (min === max) return ramp[Math.floor(ramp.length / 2)];
 
@@ -73,7 +75,9 @@ export function sequentialColor(
  * Values outside `[min, max]` are clamped; a side with no extent (`min === mid`
  * or `max === mid`) maps everything on that side to its outermost step.
  * `ramp` defaults to `DIV_RAMP` and should have an odd length (with an even
- * length the step just below the centre is treated as the middle).
+ * length the step just below the centre is treated as the middle). A
+ * non-finite `value`, `min`, `mid` or `max` returns `''`, as in
+ * `sequentialColor`.
  */
 export function divergingColor(
 	value: number,
@@ -82,7 +86,7 @@ export function divergingColor(
 	max: number,
 	ramp: readonly string[] = DIV_RAMP
 ): string {
-	if (ramp.length === 0) return '';
+	if (ramp.length === 0 || !allFinite(value, min, mid, max)) return '';
 	const centre = Math.floor((ramp.length - 1) / 2);
 	if (value === mid) return ramp[centre];
 	const below = value < mid;
@@ -92,4 +96,8 @@ export function divergingColor(
 	const ratio = extent <= 0 ? 1 : Math.min(1, Math.abs(value - mid) / extent);
 	const k = Math.min(side, Math.max(1, Math.ceil(ratio * side)));
 	return ramp[below ? centre - k : centre + k];
+}
+
+function allFinite(...values: number[]): boolean {
+	return values.every(Number.isFinite);
 }

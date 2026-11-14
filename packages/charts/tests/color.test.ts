@@ -51,6 +51,14 @@ describe('divergingColor', () => {
 		expect(divergingColor(1, 0, 0.5, 1, ['x'])).toBe('x');
 		expect(divergingColor(0, 0, 0.5, 1, ['x'])).toBe('x');
 	});
+
+	it('returns an empty string for non-finite input instead of undefined', () => {
+		expect(divergingColor(NaN, -10, 0, 10)).toBe('');
+		expect(divergingColor(Infinity, -10, 0, 10)).toBe('');
+		expect(divergingColor(1, NaN, 0, 10)).toBe('');
+		expect(divergingColor(1, -10, NaN, 10)).toBe('');
+		expect(divergingColor(1, -10, 0, Infinity)).toBe('');
+	});
 });
 
 describe('seriesColorVar', () => {
@@ -95,5 +103,12 @@ describe('sequentialColor', () => {
 		expect(sequentialColor(0, 0, 10, ramp)).toBe('#111');
 		expect(sequentialColor(10, 0, 10, ramp)).toBe('#333');
 		expect(sequentialColor(5, 5, 5, ramp)).toBe('#222');
+	});
+
+	it('returns an empty string for non-finite input instead of undefined', () => {
+		expect(sequentialColor(NaN, 0, 100)).toBe('');
+		expect(sequentialColor(-Infinity, 0, 100)).toBe('');
+		expect(sequentialColor(5, NaN, 100)).toBe('');
+		expect(sequentialColor(5, 0, Infinity)).toBe('');
 	});
 });
