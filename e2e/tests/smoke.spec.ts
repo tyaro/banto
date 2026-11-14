@@ -551,10 +551,14 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/audit-log$/);
 		await expect(page.getByTestId('audit-count-note')).toContainText(/\d/);
 		await expect(rowWithText(page, 'items').first()).toBeVisible();
-		// Every row shown belongs to this record: no other item's history.
+		// Every row shown belongs to this record: no other item's history. The
+		// whole cell text must equal the id (a string `hasNotText` is a substring
+		// match, so id 1 would let 10 / 100 through).
 		await expect(page.locator('[data-cell-field="entityId"]').first()).toHaveText(String(itemId));
 		await expect(
-			page.locator('[data-cell-field="entityId"]').filter({ hasNotText: String(itemId) })
+			page
+				.locator('[data-cell-field="entityId"]')
+				.filter({ hasNotText: new RegExp(`^\\s*${itemId}\\s*$`) })
 		).toHaveCount(0);
 
 		await page.goto(href);
