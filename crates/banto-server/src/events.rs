@@ -55,7 +55,7 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 
 use crate::auth::{bearer_token, require_auth, unauthorized_response, AuthState};
-use crate::server::ShutdownSignal;
+use crate::server::{ShutdownSignal, SseConnectionGuard, SseConnections};
 
 /// Interval of the SSE keepalive comment.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
@@ -176,6 +176,9 @@ struct Revalidation {
 
 /// The event stream of one connection: broadcast events, ended when the
 /// session behind `token` stops being valid (see the module doc).
+///
+/// `counted` (Issue #558) is owned by the stream: it is dropped - and the
+/// stream uncounted - when the stream ends or is dropped unfinished.
 fn event_stream(
     auth: AuthState,
     token: String,
@@ -183,8 +186,11 @@ fn event_stream(
     mut schedule: Schedule,
     timeout: Duration,
     mut shutdown: Option<ShutdownSignal>,
+    counted: Option<SseConnectionGuard>,
 ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
+        // Moved into the stream's state, so it lives exactly as long as it.
+        let _counted = counted;
         loop {
             // Both branches are cancel-safe (an event not taken stays in the
             // receiver; the deadline stays in `schedule`). `biased`: a due
@@ -238,6 +244,7 @@ async fn sse_handler(
     Extension(tx): Extension<broadcast::Sender<ServerEvent>>,
     Extension(revalidation): Extension<Revalidation>,
     shutdown: Option<Extension<ShutdownSignal>>,
+    connections: Option<Extension<SseConnections>>,
     req: Request,
 ) -> Response {
     // Always present behind `require_auth`, which just validated it.
@@ -251,6 +258,7 @@ async fn sse_handler(
         (revalidation.schedule)(),
         revalidation.timeout,
         shutdown.map(|Extension(signal)| signal),
+        connections.map(|Extension(connections)| connections.open()),
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL))
@@ -696,6 +704,81 @@ mod tests {
         // The checks are live again: a revocation now ends the stream.
         store.remove("alice");
         recheck_closes(&mut body, &ticks, &tx).await;
+    }
+
+    // ---- Issue #558: counting the open streams ----
+
+    /// Opens a stream through a router that counts its streams, as
+    /// `BoundServer::serve` does.
+    async fn open_counted(
+        auth: &AuthState,
+        tx: &broadcast::Sender<ServerEvent>,
+        token: &str,
+        connections: &SseConnections,
+    ) -> (Response, mpsc::UnboundedSender<()>) {
+        let (source, ticks) = manual_ticks();
+        let response = sse_route_with(auth.clone(), tx.clone(), source, REVALIDATE_TIMEOUT)
+            .layer(Extension(connections.clone()))
+            .oneshot(
+                HttpRequest::get("/api/events")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        (response, ticks)
+    }
+
+    #[tokio::test]
+    async fn the_stream_count_goes_down_however_a_stream_ends() {
+        let store = Store::default();
+        store.put("alice", "admin", 1, 0);
+        let auth = store.auth();
+        let token = auth.login("alice", "pw").await.unwrap();
+        let (tx, _rx) = broadcast::channel(16);
+        let connections = SseConnections::default();
+
+        // A refused open (no session) is never counted.
+        let refused = sse_route_with(
+            auth.clone(),
+            tx.clone(),
+            every(REVALIDATE_INTERVAL),
+            REVALIDATE_TIMEOUT,
+        )
+        .layer(Extension(connections.clone()))
+        .oneshot(HttpRequest::get("/api/events").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(connections.count(), 0);
+
+        // The client goes away: axum drops the body unfinished.
+        let (first, _ticks1) = open_counted(&auth, &tx, &token, &connections).await;
+        let (second, ticks2) = open_counted(&auth, &tx, &token, &connections).await;
+        assert_eq!(connections.count(), 2, "one per open stream");
+        drop(first);
+        assert_eq!(connections.count(), 1, "a dropped stream is uncounted");
+
+        // The session re-check ends the stream (the account was deleted).
+        let mut body = second.into_body();
+        store.remove("alice");
+        recheck_closes(&mut body, &ticks2, &tx).await;
+        assert_eq!(connections.count(), 0, "a stream ended by the re-check");
+        drop(body);
+        assert_eq!(connections.count(), 0, "never below zero");
+
+        // The event channel closes (the sender side is gone).
+        store.put("alice", "admin", 1, 0);
+        let token = auth.login("alice", "pw").await.unwrap();
+        let (tx, rx) = broadcast::channel::<ServerEvent>(16);
+        drop(rx);
+        let (third, _ticks3) = open_counted(&auth, &tx, &token, &connections).await;
+        assert_eq!(connections.count(), 1);
+        drop(tx);
+        let mut body = third.into_body();
+        assert_eq!(next_frame(&mut body).await, None, "the stream ends");
+        assert_eq!(connections.count(), 0, "a stream ended by a closed channel");
     }
 
     /// A grant spec for the stream tests (ADR-0017): the viewer-public kind

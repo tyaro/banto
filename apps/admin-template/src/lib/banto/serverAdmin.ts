@@ -85,6 +85,13 @@ export interface ServerStatus {
 	 * Windows firewall information.
 	 */
 	platform?: string;
+	/**
+	 * Issue #558: event streams (`GET /api/events`) open on the live listener
+	 * right now - one per browser tab or window, so the same device can count
+	 * more than once. This window gets its events over IPC and is never
+	 * counted. Optional so older mocks and hosts read as "unknown".
+	 */
+	sseConnections?: number;
 }
 
 /**

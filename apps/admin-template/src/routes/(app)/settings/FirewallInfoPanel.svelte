@@ -29,6 +29,7 @@
 	} from './firewallInfo';
 	import type { StatusRefresh } from './serverStatusRequests';
 	import FirewallRuleStatusPanel from './FirewallRuleStatusPanel.svelte';
+	import type { FirewallFixHint } from './lanShareSteps';
 
 	interface Props {
 		/** The last status snapshot the section loaded or applied. */
@@ -45,9 +46,21 @@
 		 * apply is replacing (owner review on PR #463).
 		 */
 		applying: boolean;
+		/** Issue #558: passed to the rule status panel (see its `onhint`). */
+		onhint?: (hint: FirewallFixHint | null) => void;
 	}
 
-	let { status, refresh, applying }: Props = $props();
+	let { status, refresh, applying, onhint }: Props = $props();
+
+	let ruleStatusPanel = $state<ReturnType<typeof FirewallRuleStatusPanel> | undefined>();
+
+	/**
+	 * Issue #558: opens the rule status panel's "allow" confirmation (see its
+	 * `requestAllow`). `false` when the panel is not shown or does not offer it.
+	 */
+	export function requestAllow(): boolean {
+		return ruleStatusPanel?.requestAllow() ?? false;
+	}
 
 	let identifier = $state<string | null>(null);
 	let identifierLoaded = $state(false);
@@ -238,7 +251,14 @@
 			{/if}
 		</div>
 
-		<FirewallRuleStatusPanel {info} {identifier} {refresh} {applying} />
+		<FirewallRuleStatusPanel
+			bind:this={ruleStatusPanel}
+			{info}
+			{identifier}
+			{refresh}
+			{applying}
+			{onhint}
+		/>
 
 		<p class="note">{m['settings.firewallBlockNote']()}</p>
 		<p class="note">{m['settings.firewallVendorNote']()}</p>

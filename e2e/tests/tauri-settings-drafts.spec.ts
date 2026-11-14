@@ -38,7 +38,12 @@ import { expect, test, type Page } from '@playwright/test';
 const LEAVE_PROMPT = '保存していない変更があります。変更を破棄してこの画面から移動しますか？';
 const CLOSE_PROMPT = '保存していない変更があります。変更を破棄してウィンドウを閉じますか？';
 
-import { installTauriStub, serveOnTauriOrigin, tauriUrl } from './tauri-settings-fixture';
+import {
+	installTauriStub,
+	openLanDetails,
+	serveOnTauriOrigin,
+	tauriUrl
+} from './tauri-settings-fixture';
 
 /** Set a knob on the stub. */
 async function mock(page: Page, patch: Record<string, unknown>): Promise<void> {
@@ -97,6 +102,7 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await installTauriStub(page);
 		await serveOnTauriOrigin(page, baseURL);
 		await page.goto(tauriUrl('/settings/connectivity'));
+		await openLanDetails(page);
 		const port = page.getByLabel('ポート番号');
 		const save = page.getByRole('button', { name: '保存して適用' });
 		const unsaved = page.getByText('未保存の変更があります');
@@ -326,6 +332,7 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		});
 		await serveOnTauriOrigin(page, baseURL);
 		await page.goto(tauriUrl('/settings/connectivity'));
+		await openLanDetails(page);
 
 		await expect(
 			page.getByRole('heading', { name: 'ファイアウォールの許可に必要な情報' })
@@ -454,6 +461,7 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		});
 		await serveOnTauriOrigin(page, baseURL);
 		await page.goto(tauriUrl('/settings/connectivity'));
+		await openLanDetails(page);
 
 		const block = page.locator('.reach-check');
 		await expect(page.getByRole('heading', { name: '別の端末からの接続確認' })).toBeVisible();
@@ -511,6 +519,7 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await page.addInitScript(windowsHostWithoutRule);
 		await serveOnTauriOrigin(page, baseURL);
 		await page.goto(tauriUrl('/settings/connectivity'));
+		await openLanDetails(page);
 
 		const panel = page.locator('.firewall-status');
 		await expect(panel.locator('[data-state="missing"]').first()).toBeVisible();
@@ -603,6 +612,7 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		await page.addInitScript(windowsHostWithoutRule);
 		await serveOnTauriOrigin(page, baseURL);
 		await page.goto(tauriUrl('/settings/connectivity'));
+		await openLanDetails(page);
 
 		const panel = page.locator('.firewall-status');
 		const allow = panel.getByRole('button', { name: 'ファイアウォールで許可する…' });
@@ -665,6 +675,107 @@ test.describe('Tauri settings drafts (stubbed IPC)', () => {
 		);
 
 		expect((await firewallChangeCalls(page)).length).toBe(5);
+	});
+
+	test('サーバ・接続: 共有する - URL and QR, the check result, one fix, and the header chip (Issue #558)', async ({
+		page,
+		baseURL
+	}) => {
+		await installTauriStub(page);
+		// A Windows host that is not sharing yet; the apply starts a LAN
+		// listener whose last check expired and that has no firewall rule.
+		await page.addInitScript(() => {
+			const exe = 'C:\\Program Files\\Banto\\banto-admin.exe';
+			const m = (window as unknown as { __bantoMock: Record<string, unknown> }).__bantoMock;
+			m.serverStatusGate = null;
+			m.appIdentifier = 'dev.banto.admin';
+			m.serverStatusPatch = { executablePath: exe, platform: 'windows', generation: 1 };
+			m.serverStatusAfterApply = {
+				enabled: true,
+				running: true,
+				bind: '0.0.0.0',
+				live: { bind: '0.0.0.0', port: 8721 },
+				urls: ['http://127.0.0.1:8721', 'http://192.168.1.20:8721'],
+				qrSvgs: [
+					{
+						url: 'http://192.168.1.20:8721',
+						svg: '<svg xmlns="http://www.w3.org/2000/svg" data-share-qr="1" width="10" height="10"></svg>'
+					}
+				],
+				generation: 2,
+				sseConnections: 3
+			};
+			m.firewallRuleStatus = {
+				generation: 2,
+				expected: { executablePath: exe, port: 8721 },
+				program: { state: 'missing' },
+				port: { state: 'missing' },
+				groupOtherRules: 0
+			};
+			m.reachCheckStatus = {
+				generation: 2,
+				lastIssue: {
+					issueId: 1,
+					host: '192.168.1.20',
+					port: 8721,
+					expiresAt: Date.now() - 1000,
+					outcome: 'expired',
+					expiresInMs: 0
+				},
+				selfAccessAt: null,
+				records: []
+			};
+		});
+		await serveOnTauriOrigin(page, baseURL);
+		await page.goto(tauriUrl('/settings/connectivity'));
+
+		const chip = page.locator('a.lan-share-link');
+		const share = page.getByRole('button', { name: '共有する', exact: true });
+		await expect(share).toBeEnabled();
+		await expect(chip).toHaveCount(0);
+		await expect(page.locator('details.lan-details')).not.toHaveAttribute('open', '');
+
+		await share.click();
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						(window as unknown as { __bantoMock: { serverApplyCalls: unknown[] } }).__bantoMock
+							.serverApplyCalls
+				)
+			)
+			.toEqual([{ enabled: true, bind: '0.0.0.0', port: 8721, viewerPublic: false }]);
+
+		// 1: the first LAN URL and its QR code.
+		const urlStep = page.locator('[data-share-step="url"]');
+		await expect(
+			urlStep.getByRole('link', { name: 'http://192.168.1.20:8721', exact: true })
+		).toBeVisible();
+		await expect(urlStep.locator('svg[data-share-qr]')).toHaveCount(1);
+		// 2: red - the last check expired.
+		await expect(page.locator('[data-share-verdict="ng"]')).toContainText(
+			'別の端末から届いていません'
+		);
+		// 3: one fix - no rule, and this screen can add it.
+		const fix = page.locator('[data-share-step="fix"]');
+		await expect(fix).toHaveAttribute('data-share-fix', 'firewallAllow');
+		await fix.getByRole('button', { name: 'ファイアウォールで許可する…', exact: true }).click();
+		await expect(
+			page.getByRole('dialog', { name: 'Windows ファイアウォールで許可する' })
+		).toBeVisible();
+		await expect(page.locator('details.lan-details')).toHaveAttribute('open', '');
+		await page.getByRole('dialog').getByRole('button', { name: 'キャンセル', exact: true }).click();
+		await expect(page.getByRole('dialog')).toHaveCount(0);
+
+		// The header shows the sharing state and the connection count, and leads back here.
+		await expect(chip).toHaveText('LAN 共有中・接続 3 台');
+		await page
+			.getByRole('navigation', { name: '設定カテゴリ' })
+			.getByRole('link', { name: '外観・言語' })
+			.click();
+		await expect(page).toHaveURL(/\/settings\/appearance$/);
+		await chip.click();
+		await expect(page).toHaveURL(/\/settings\/connectivity$/);
 	});
 });
 

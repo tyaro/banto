@@ -641,6 +641,81 @@
 	gap: var(--banto-space-2);
 }
 
+/* Issue #558: the share button and its three steps (ConnectivitySection.svelte),
+   then everything else folded under "詳しく". */
+.settings-page .lan-share {
+	margin-top: var(--banto-space-3);
+}
+
+.settings-page .lan-share-on,
+.settings-page .share-verdict {
+	margin: var(--banto-space-2) 0 0;
+}
+
+.settings-page .share-steps {
+	margin: var(--banto-space-3) 0 0;
+	padding-left: var(--banto-space-5);
+	display: grid;
+	gap: var(--banto-space-4);
+}
+
+/* Narrow screens with large text (320px, 200%): the badges (nowrap by default)
+   and the grid's items must be able to shrink and wrap, or they widen the page. */
+.settings-page .lan-share .status-badge {
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.settings-page .share-step {
+	min-width: 0;
+}
+
+.settings-page .share-step h4 {
+	margin: 0;
+	font-size: var(--banto-font-size-base);
+}
+
+.settings-page .share-step > p {
+	margin: var(--banto-space-2) 0 0;
+	font-size: var(--banto-font-size-md);
+}
+
+.settings-page .share-step > .banto-btn {
+	margin-top: var(--banto-space-2);
+}
+
+.settings-page .share-url {
+	font-size: var(--banto-font-size-lg);
+	overflow-wrap: anywhere;
+}
+
+.settings-page .share-url a {
+	color: var(--banto-primary-text);
+	font-weight: 600;
+}
+
+.settings-page .lan-details {
+	margin-top: var(--banto-space-4);
+	padding-top: var(--banto-space-3);
+	border-top: var(--banto-border-width) solid var(--banto-border);
+}
+
+.settings-page .lan-details > summary {
+	cursor: pointer;
+	font-weight: 600;
+	font-size: var(--banto-font-size-md);
+}
+
+.settings-page .lan-details > summary:focus-visible {
+	outline: none;
+	border-radius: var(--banto-radius-sm);
+	box-shadow: var(--banto-focus-ring);
+}
+
+.settings-page .lan-details[open] > summary {
+	margin-bottom: var(--banto-space-3);
+}
+
 /* High-impact cards (successor of plan Phase 5's danger zone; the choi-app
    feedback 2026-09 recategorization moved its cards into their own
    categories - backup/restore under data, auth disable under security).

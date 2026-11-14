@@ -18,6 +18,8 @@
 	import { notifyLogoutOutcome } from '#lib/banto/logoutNotice.js';
 	import { pageTitle } from '#lib/navigation.js';
 	import { getBantoMode, isTauri } from '#lib/banto/setup.js';
+	import { lanShareStatus } from '#lib/banto/lanShare.svelte.js';
+	import { isAdmin } from '#lib/permissions.js';
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { settings } from '#lib/settings.svelte.js';
 	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
@@ -60,6 +62,19 @@
 	// (same rule as settings/+page.svelte's `tauri` constant), and this
 	// component only mounts after the (app) layout guard awaited bantoReady.
 	const demoMode = getBantoMode() === 'demo';
+
+	// Issue #558 (design-ux-review-2026-11 D-2): "LAN 共有中・接続 n 台" while
+	// this PC shares the app on the LAN - only in the desktop window, and only
+	// for an admin (the LAN status is the admin-only `server_status`; a LAN
+	// browser never asks). Re-read every 10 s while shown
+	// (`lanShare.svelte.ts`); the watch stops with this header or the role.
+	const desktopWindow = isTauri();
+	const watchLanShare = $derived(desktopWindow && isAdmin(sessionStore.role));
+	$effect(() => {
+		if (!watchLanShare) return;
+		return lanShareStatus.watch();
+	});
+	const lanShare = $derived(watchLanShare ? lanShareStatus.summary : null);
 
 	const roleLabels = {
 		admin: m['role.admin'],
@@ -179,6 +194,21 @@
 	<div class="status-area">
 		{#if demoMode}
 			<StatusBadge variant="info" label={m['shell.statusDemo']()} />
+		{/if}
+		{#if lanShare}
+			<a
+				class="lan-share-link"
+				href={resolve(`settings/connectivity`)}
+				title={m['shell.lanSharingOpenSettings']()}
+				data-lan-share-connections={lanShare.connections ?? ''}
+			>
+				<StatusBadge
+					variant="success"
+					label={lanShare.connections === null
+						? m['shell.lanSharing']()
+						: m['shell.lanSharingConnections']({ count: lanShare.connections })}
+				/>
+			</a>
 		{/if}
 		{#if !sessionStore.authDisabled}
 			<StatusBadge variant="neutral" label={roleLabels[sessionStore.role]()} />
@@ -303,6 +333,22 @@
 		.status-area {
 			display: flex;
 		}
+	}
+
+	/* Issue #558: the "LAN 共有中" chip is a link to the connection settings. */
+	.lan-share-link {
+		display: inline-flex;
+		border-radius: var(--banto-radius-md);
+		text-decoration: none;
+	}
+
+	.lan-share-link:hover {
+		filter: brightness(0.96);
+	}
+
+	.lan-share-link:focus-visible {
+		outline: none;
+		box-shadow: var(--banto-focus-ring);
 	}
 
 	/* Dock layout brand (same look as Sidebar.svelte's .brand). */

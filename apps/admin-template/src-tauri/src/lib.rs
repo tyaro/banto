@@ -1942,6 +1942,12 @@ struct ServerStatusResult {
     /// When `false` the LAN page is a placeholder, so the settings screen
     /// shows no URL/QR/connection check.
     ui_embedded: bool,
+    /// Issue #558: how many event streams (`GET /api/events`) are open on the
+    /// live listener (0 when nothing is serving) - the header's "接続 n 台".
+    /// One per browser tab or window, so the same device can count more than
+    /// once. This window gets its events over IPC, never from the listener, so
+    /// it is not counted (a browser opened on this PC is).
+    sse_connections: usize,
 }
 
 /// [`ServerStatusResult::executable_path`]: `std::env::current_exe()` as a
@@ -2026,6 +2032,10 @@ fn build_status(saved: &ServerSettings, slot: &ServerSlot) -> ServerStatusResult
         executable_path: current_executable_path(),
         platform: std::env::consts::OS,
         ui_embedded: admin_template_core::assets::UI_EMBEDDED,
+        sse_connections: slot
+            .live
+            .as_ref()
+            .map_or(0, |live| live.server.sse_connections()),
     }
 }
 
@@ -9047,6 +9057,8 @@ mod tests {
         assert_eq!(value["running"], false);
         assert_eq!(value["urls"], serde_json::json!([]));
         assert_eq!(value["generation"], 3);
+        // Issue #558: nothing serving, nothing connected.
+        assert_eq!(value["sseConnections"], 0);
         assert_eq!(
             value["applyFailure"],
             serde_json::json!({

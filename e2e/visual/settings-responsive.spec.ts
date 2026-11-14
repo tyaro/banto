@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import {
 	installSettingsLayoutStub,
+	openLanDetails,
 	serveOnTauriOrigin,
 	tauriUrl
 } from '../tests/tauri-settings-fixture';
@@ -35,8 +36,11 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 							.getByRole('navigation', { name: copy['settings.sectionNavAria'] })
 							.getByRole('link')
 					).toHaveCount(5);
-					if (category === 'connectivity')
+					if (category === 'connectivity') {
+						// Issue #558: the fields sit under "詳しく".
+						await openLanDetails(page);
 						await expect(page.getByLabel(copy['settings.port'])).toBeEnabled();
+					}
 					if (category === 'data')
 						await expect(page.getByLabel(copy['settings.retentionDays'])).toHaveValue('90');
 					if (scale === 2)

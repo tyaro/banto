@@ -76,6 +76,7 @@
 	} from './firewallChange';
 	import type { StatusRefresh } from './serverStatusRequests';
 	import FirewallChangeDialog from './FirewallChangeDialog.svelte';
+	import { firewallFixHint, type FirewallFixHint } from './lanShareSteps';
 
 	interface Props {
 		/** The live snapshot the firewall block shows. */
@@ -86,9 +87,15 @@
 		refresh: () => Promise<StatusRefresh>;
 		/** The section is applying new settings: pending checks are dropped. */
 		applying: boolean;
+		/**
+		 * Issue #558: told what the shown read says about the most likely fix
+		 * (`lanShareSteps.ts`), so the share steps can offer one; `null` when
+		 * nothing is shown, and once more when this panel goes away.
+		 */
+		onhint?: (hint: FirewallFixHint | null) => void;
 	}
 
-	let { info, identifier, refresh, applying }: Props = $props();
+	let { info, identifier, refresh, applying, onhint }: Props = $props();
 
 	const requests = new FirewallStatusRequests();
 	let result = $state<FirewallRuleStatus | null>(null);
@@ -150,6 +157,24 @@
 	function confirm(operation: FirewallChangeOperation): void {
 		if (shown === null || changing !== null) return;
 		confirming = { operation, status: shown };
+	}
+
+	const hint = $derived(firewallFixHint(shown, actions));
+	$effect(() => {
+		const current = hint;
+		untrack(() => onhint?.(current));
+		return () => untrack(() => onhint?.(null));
+	});
+
+	/**
+	 * Issue #558: opens the "allow" confirmation for the shown read, as the
+	 * panel's own button does - the share steps' one fix. `false` when
+	 * "allow" is not offered now (nothing is opened then).
+	 */
+	export function requestAllow(): boolean {
+		if (!actions.includes('allow')) return false;
+		confirm('allow');
+		return confirming !== null;
 	}
 
 	async function change(): Promise<void> {

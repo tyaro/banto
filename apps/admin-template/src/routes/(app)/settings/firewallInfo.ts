@@ -21,7 +21,7 @@
  * double-quoted (that would expand `$(...)`) and never bare.
  */
 import type { ServerStatus } from '#lib/banto/serverAdmin.js';
-import { isIpv4Bind, isLoopbackHost } from './connectivityScope';
+import { isIpv4Bind, isLoopbackHost } from '#lib/banto/connectivityScope.js';
 import type { StatusRefresh } from './serverStatusRequests';
 
 /** Direction, protocol, profile and remote range the guide recommends (PowerShell parameter values). */
