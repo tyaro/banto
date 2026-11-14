@@ -519,6 +519,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			`¥${ITEM_PRICE_UPDATED.toLocaleString('en-US')}`
 		);
 		await expect(drawer).toBeVisible();
+
+		// History tab (#591 stage 2, admin only): this record's audit log,
+		// narrowed by resource and entityId. The save above is on the list.
+		await drawer.getByRole('tab', { name: '履歴', exact: true }).click();
+		const historyTable = drawer.getByRole('table', { name: /履歴/ });
+		await expect(async () => {
+			await expect(historyTable).toBeVisible();
+			await expect(
+				historyTable.getByRole('cell', { name: '更新', exact: true }).first()
+			).toBeVisible();
+		}).toPass();
+		await drawer.getByRole('tab', { name: '詳細', exact: true }).click();
+		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE_UPDATED));
+
 		await drawer.getByRole('button', { name: '閉じる', exact: true }).first().click();
 		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);
@@ -742,6 +756,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await drawer.getByRole('spinbutton', { name: /^価格/ }).fill('850');
 		await drawer.getByRole('button', { name: '保存', exact: true }).click();
 		await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥850');
+		// The list can show the new price (SSE refresh) before the save's own
+		// answer settles, and the drawer ignores closing while a save is in
+		// flight - wait for the save to finish, as test 4 does.
+		await expect(drawer.getByText('未保存の変更があります')).toHaveCount(0);
 		await page.keyboard.press('Escape');
 		await expect(drawer).toBeHidden();
 		await expect(page).toHaveURL(/\/items$/);

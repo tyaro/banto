@@ -124,6 +124,24 @@ describe('Tabs', () => {
 	});
 });
 
+describe('Tabs keepMounted', () => {
+	it('draws the unselected panels (hidden) only with keepMounted', () => {
+		const view = render(TabsHarness, { tabs: TABS, keepMounted: true });
+		const panels = view.container.querySelectorAll<HTMLElement>('[role="tabpanel"]');
+		expect(panels.length).toBe(TABS.length);
+		expect(panels[0].hidden).toBe(false);
+		expect(panels[1].hidden).toBe(true);
+		expect(panels[1].textContent).toContain(`Panel ${TABS[1].id}`);
+	});
+
+	it('leaves unselected panels empty by default', () => {
+		const view = render(TabsHarness, { tabs: TABS });
+		const panels = view.container.querySelectorAll<HTMLElement>('[role="tabpanel"]');
+		expect(panels[1].hidden).toBe(true);
+		expect(panels[1].textContent?.trim()).toBe('');
+	});
+});
+
 describe('SegmentedControl', () => {
 	const OPTIONS: SegmentedOption<'s' | 'c'>[] = [
 		{ value: 's', label: 'Standard', icon: CustomIcon },
