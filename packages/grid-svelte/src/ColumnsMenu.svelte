@@ -33,10 +33,9 @@
 	// store-subscription syntax instead of rune usage).
 	let { state: gridState, messages = {} }: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultGridMessages, ...messages };
+	// `messages` is an i18n layer 1 override bundle; merged reactively so a
+	// parent that swaps it later (a locale switch) is followed.
+	const t = $derived({ ...defaultGridMessages, ...messages });
 
 	let open = $state(false);
 	let rootEl: HTMLDivElement | undefined = $state();

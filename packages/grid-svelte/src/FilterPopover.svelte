@@ -51,18 +51,17 @@
 		dateRangeInput
 	}: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultGridMessages, ...messages };
+	// `messages` is an i18n layer 1 override bundle; merged reactively so a
+	// parent that swaps it later (a locale switch) is followed.
+	const t = $derived({ ...defaultGridMessages, ...messages });
 
 	const filterType = $derived(column.filterType ?? 'text');
 
-	const TEXT_OPS: { value: FilterOp; label: string }[] = [
+	const TEXT_OPS: { value: FilterOp; label: string }[] = $derived([
 		{ value: 'contains', label: t.filterOpContains() },
 		{ value: 'starts_with', label: t.filterOpStartsWith() },
 		{ value: 'eq', label: t.filterOpEquals() }
-	];
+	]);
 	const NUMBER_OPS: { value: FilterOp; label: string }[] = [
 		{ value: 'eq', label: '=' },
 		{ value: 'ne', label: '≠' },

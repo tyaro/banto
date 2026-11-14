@@ -116,10 +116,9 @@
 	const providedCellEditors = getCellEditors();
 	const editors = $derived<CellEditors>({ ...providedCellEditors, ...cellEditors });
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultGridMessages, ...messages };
+	// `messages` is an i18n layer 1 override bundle; merged reactively so a
+	// parent that swaps it later (a locale switch) is followed.
+	const t = $derived({ ...defaultGridMessages, ...messages });
 	// Only one editor is mounted per grid; keep its error reference local to
 	// this instance without deriving DOM IDs from row or column identifiers.
 	const gridId = $props.id();
