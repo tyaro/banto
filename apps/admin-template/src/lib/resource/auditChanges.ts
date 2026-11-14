@@ -1,6 +1,6 @@
 /**
  * The field-level diff an `update` audit record carries (#597):
- * `detail = { name, changes: [{ field, before, after } | { field, masked }] }`.
+ * `detail = { name (users: username, role), changes: [{ field, before, after } | { field, masked }] }`.
  *
  * Plain TypeScript so the parsing and the label lookup can be unit-tested; the
  * screens (audit-log detail, the drawer's history tab) only draw the result.
@@ -8,6 +8,7 @@
  * records, other operations) gives `null` and the caller keeps its own display.
  */
 import { resources } from '#lib/banto/resources/index.js';
+import * as m from '#lib/paraglide/messages.js';
 
 export interface AuditChange {
 	field: string;
@@ -69,6 +70,11 @@ export function auditDetailRest(detail: string | null | undefined): string | nul
  * its internal name), else the internal name itself.
  */
 export function auditFieldLabel(resource: string, field: string): string {
+	// `users` is a built-in screen, not a registered resource: its form labels are the common ones.
+	if (resource === 'users') {
+		if (field === 'displayName') return m['common.displayName']();
+		if (field === 'role') return m['common.role']();
+	}
 	const def = resources.find((r) => r.name === resource);
 	// `ResourceDefinition.schema` is `unknown` (admin-core does not know the form library).
 	const schema = def?.schema as { fields?: { name: string; label?: unknown }[] } | undefined;
@@ -78,8 +84,16 @@ export function auditFieldLabel(resource: string, field: string): string {
 	return typeof label === 'string' && label !== '' ? label : field;
 }
 
-/** A recorded value as text (`null`/missing as `-`; objects as JSON). */
-export function formatAuditValue(value: unknown): string {
+/**
+ * A recorded value as text (`null`/missing as `-`; objects as JSON). With
+ * `resource` and `field`, a `users` role is shown as its role name.
+ */
+export function formatAuditValue(value: unknown, resource?: string, field?: string): string {
+	if (resource === 'users' && field === 'role') {
+		if (value === 'admin') return m['role.admin']();
+		if (value === 'editor') return m['role.editor']();
+		if (value === 'viewer') return m['role.viewer']();
+	}
 	if (value === null || value === undefined) return '-';
 	if (typeof value === 'string') return value === '' ? '""' : value;
 	if (typeof value === 'object') return JSON.stringify(value);

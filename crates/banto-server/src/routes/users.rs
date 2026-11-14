@@ -102,9 +102,9 @@ async fn users_update(
     Path(id): Path<i64>,
     Json(body): Json<UpdateUserRequest>,
 ) -> Result<Json<UserSummary>, ApiError> {
-    let updated = state
+    let (previous, updated) = state
         .users
-        .update_user(id, &body.display_name, body.role)
+        .update_user_returning_previous(id, &body.display_name, body.role)
         .await?;
     record_write(
         &state.audit,
@@ -113,7 +113,9 @@ async fn users_update(
         "update",
         "users",
         Some(&id.to_string()),
-        Some(json!({ "role": updated.role })),
+        Some(banto_admin_services::users::user_update_detail(
+            &previous, &updated,
+        )),
     )
     .await;
     Ok(Json(updated))

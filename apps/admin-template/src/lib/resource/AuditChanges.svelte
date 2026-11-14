@@ -42,8 +42,8 @@
 						{#if change.masked}
 							<td colspan="2" class="muted">{m['resource.changesMasked']()}</td>
 						{:else}
-							<td>{formatAuditValue(change.before)}</td>
-							<td>{formatAuditValue(change.after)}</td>
+							<td>{formatAuditValue(change.before, resource, change.field)}</td>
+							<td>{formatAuditValue(change.after, resource, change.field)}</td>
 						{/if}
 					</tr>
 				{/each}
@@ -58,9 +58,9 @@
 				{#if change.masked}
 					<span class="muted">{m['resource.changesMasked']()}</span>
 				{:else}
-					<span>{formatAuditValue(change.before)}</span>
+					<span>{formatAuditValue(change.before, resource, change.field)}</span>
 					<span class="muted" aria-hidden="true">→</span>
-					<span>{formatAuditValue(change.after)}</span>
+					<span>{formatAuditValue(change.after, resource, change.field)}</span>
 				{/if}
 			</li>
 		{/each}
