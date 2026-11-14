@@ -19,7 +19,7 @@ import type {
 	ReachRecord,
 	ServerStatus
 } from '#lib/banto/serverAdmin.js';
-import { isIpv4Bind, isLoopbackHost, isUnspecifiedHost } from './connectivityScope';
+import { isIpv4Bind, isLoopbackHost, isUnspecifiedHost } from '#lib/banto/connectivityScope.js';
 
 /** Design D10: a confirmed reach older than this reads as "stale". */
 export const REACH_STALE_AFTER_MS = 60 * 60 * 1000;

@@ -35,7 +35,8 @@
 		minutesSince,
 		reachCandidateHosts,
 		recordUrl,
-		type IssuedReachUrl
+		type IssuedReachUrl,
+		type ReachView
 	} from './lanReachCheck';
 	import { ReachCheckController } from './lanReachCheckController.svelte';
 	import type { StatusRefresh } from './serverStatusRequests';
@@ -49,9 +50,14 @@
 		applying: boolean;
 		/** Renders the server-made QR SVG (drawn by ConnectivitySection, the file conventions §7 allows to). */
 		qr: Snippet<[string]>;
+		/**
+		 * Issue #558: told what the block shows, for the share steps' green /
+		 * red (`lanShareSteps.ts`); `null` once the block goes away.
+		 */
+		onview?: (view: ReachView | null) => void;
 	}
 
-	let { status, refresh, applying, qr }: Props = $props();
+	let { status, refresh, applying, qr, onview }: Props = $props();
 
 	const controller = new ReachCheckController({
 		getStatus: getReachCheckStatus,
@@ -82,6 +88,11 @@
 	);
 
 	const view = $derived(controller.view);
+	$effect(() => {
+		const current = view;
+		untrack(() => onview?.(current));
+	});
+	$effect(() => () => untrack(() => onview?.(null)));
 
 	let copied = $state<'ok' | 'failed' | null>(null);
 	let copiedTimer: ReturnType<typeof setTimeout> | undefined;

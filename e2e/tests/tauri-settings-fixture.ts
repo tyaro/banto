@@ -1,5 +1,5 @@
 /** Shared desktop IPC/asset fixture; no production test switch. */
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 /** One of `TAURI_ORIGINS` (environment.ts): where Tauri serves its own assets on Windows. */
 const TAURI_ORIGIN = 'http://tauri.localhost';
@@ -22,6 +22,20 @@ export async function serveOnTauriOrigin(page: Page, baseURL: string | undefined
 export const tauriUrl = (path: string): string => `${TAURI_ORIGIN}${path}`;
 
 /** Installs the IPC stub. Knobs live on `window.__bantoMock` (see `mock()`). */
+/**
+ * Issue #558: the LAN settings, URLs and firewall blocks sit under the
+ * connection card's "詳しく" (a `<details>`, closed on load). Opens it.
+ */
+export async function openLanDetails(page: Page): Promise<void> {
+	const details = page.locator('details.lan-details');
+	await expect(async () => {
+		if (!(await details.evaluate((element: HTMLDetailsElement) => element.open))) {
+			await details.locator('> summary').click();
+		}
+		await expect(details).toHaveAttribute('open', '');
+	}).toPass();
+}
+
 export async function installTauriStub(page: Page): Promise<void> {
 	await page.addInitScript(() => {
 		type Callback = (payload: unknown) => void;
@@ -67,7 +81,11 @@ export async function installTauriStub(page: Page): Promise<void> {
 			/** The args `firewall_rule_change` was called with. */
 			firewallChangeCalls: [] as unknown[],
 			/** When set, `firewall_rule_change` waits for it (the UAC prompt is open). */
-			firewallChangeGate: null as Promise<void> | null
+			firewallChangeGate: null as Promise<void> | null,
+			/** The args `server_apply` was called with (Issue #558). */
+			serverApplyCalls: [] as unknown[],
+			/** Merged into `serverStatusPatch` by `server_apply` (the listener it started). */
+			serverStatusAfterApply: null as Record<string, unknown> | null
 		};
 		mock.serverStatusGate = new Promise<void>((resolve) => {
 			mock.releaseServerStatus = resolve;
@@ -148,6 +166,11 @@ export async function installTauriStub(page: Page): Promise<void> {
 				case 'server_status':
 					if (mock.serverStatusGate) await mock.serverStatusGate;
 					if (mock.serverStatusFails) throw 'server status unavailable (stub)';
+					return { ...serverStatus, ...mock.serverStatusPatch };
+				case 'server_apply':
+					mock.serverApplyCalls.push(args);
+					if (mock.serverStatusAfterApply !== null)
+						mock.serverStatusPatch = { ...mock.serverStatusPatch, ...mock.serverStatusAfterApply };
 					return { ...serverStatus, ...mock.serverStatusPatch };
 				case 'plugin:app|identifier':
 					return mock.appIdentifier;

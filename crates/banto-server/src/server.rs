@@ -3,6 +3,8 @@
 use axum::Router;
 use banto_core::BantoError;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -50,11 +52,49 @@ impl ShutdownSignal {
     }
 }
 
+/// How many SSE streams (`GET /api/events`, [`crate::events`]) are open on
+/// one listener (Issue #558: the desktop header's "LAN 共有中・接続 n 台").
+/// Injected into every request as an `Extension` by [`BoundServer::serve`],
+/// like [`ShutdownSignal`]; absent when a router is served some other way, and
+/// then nothing is counted.
+///
+/// Each open stream holds one [`SseConnectionGuard`] and the count goes down
+/// when the guard is dropped - whichever way the stream ends: the client
+/// disconnects (axum drops the stream), the session re-check ends it, the
+/// event channel closes, the server stops ([`ShutdownSignal`]) or the server
+/// task is aborted (the stream is dropped with its connection). So the count
+/// never relies on a stream reaching some last line of code.
+#[derive(Clone, Default)]
+pub(crate) struct SseConnections(Arc<AtomicUsize>);
+
+impl SseConnections {
+    /// Counts one more open stream until the returned guard is dropped.
+    pub(crate) fn open(&self) -> SseConnectionGuard {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        SseConnectionGuard(Arc::clone(&self.0))
+    }
+
+    /// The streams open now.
+    pub(crate) fn count(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// One open SSE stream in [`SseConnections`]; dropping it uncounts it.
+pub(crate) struct SseConnectionGuard(Arc<AtomicUsize>);
+
+impl Drop for SseConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// A handle to a running server: its bound address, and a way to stop it.
 pub struct RunningServer {
     local_addr: SocketAddr,
     shutdown_tx: watch::Sender<bool>,
     join_handle: JoinHandle<()>,
+    sse_connections: SseConnections,
 }
 
 impl RunningServer {
@@ -62,6 +102,15 @@ impl RunningServer {
     /// a free port).
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    /// How many event streams (`GET /api/events`) are open on this listener
+    /// right now (Issue #558). One per open browser tab or window - two tabs
+    /// on the same device count twice. A window that receives events some
+    /// other way (the desktop app's own webview gets them over IPC) is not
+    /// counted. A snapshot: it can change right after it is read.
+    pub fn sse_connections(&self) -> usize {
+        self.sse_connections.count()
     }
 
     /// Signal graceful shutdown and wait for the server task to finish.
@@ -116,7 +165,10 @@ impl BoundServer {
             local_addr,
         } = self;
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-        let router = router.layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())));
+        let sse_connections = SseConnections::default();
+        let router = router
+            .layer(axum::Extension(ShutdownSignal(shutdown_rx.clone())))
+            .layer(axum::Extension(sse_connections.clone()));
         let join_handle = tokio::spawn(async move {
             // `into_make_service_with_connect_info::<SocketAddr>()` (rather than
             // the plain `into_make_service()`) makes each connection's peer
@@ -142,6 +194,7 @@ impl BoundServer {
             local_addr,
             shutdown_tx,
             join_handle,
+            sse_connections,
         }
     }
 }
@@ -1040,6 +1093,78 @@ Connection: close
                 .expect("client side sees the end of the stream")
                 .ok();
         }
+        drop(tx);
+    }
+
+    /// Polls `count` until it is `want` (the server side of a socket notices
+    /// on its own task, so the count follows a moment later).
+    async fn wait_for_count(count: impl Fn() -> usize, want: usize) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while count() != want {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("expected {want} open streams, got {}", count()));
+    }
+
+    #[tokio::test]
+    async fn sse_connections_count_the_open_streams_and_stop_uncounts_them() {
+        let auth = sse_auth();
+        let token = auth.login("admin", "admin").await.unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let router = crate::events::sse_route(auth, tx.clone());
+        let server = start(
+            ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            },
+            router,
+        )
+        .await
+        .unwrap();
+        assert_eq!(server.sse_connections(), 0);
+
+        let mut streams = Vec::new();
+        for _ in 0..2 {
+            streams.push(open_sse(server.local_addr(), &token).await);
+        }
+        // Each stream is counted before its response head is sent.
+        assert_eq!(server.sse_connections(), 2);
+
+        // Kept past `stop` (which consumes the handle) to see the end.
+        let counter = server.sse_connections.clone();
+        tokio::time::timeout(Duration::from_secs(3), server.stop())
+            .await
+            .expect("stop() must finish while SSE streams are open");
+        wait_for_count(|| counter.count(), 0).await;
+        drop(streams);
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn sse_connections_are_uncounted_even_when_stop_does_not_wait() {
+        let auth = sse_auth();
+        let token = auth.login("admin", "admin").await.unwrap();
+        let (tx, _rx) = tokio::sync::broadcast::channel(16);
+        let server = start(
+            ServerConfig {
+                bind: "127.0.0.1".to_string(),
+                port: 0,
+            },
+            crate::events::sse_route(auth, tx.clone()),
+        )
+        .await
+        .unwrap();
+        let stream = open_sse(server.local_addr(), &token).await;
+        assert_eq!(server.sse_connections(), 1);
+        let counter = server.sse_connections.clone();
+        // No graceful wait at all: the server task is aborted at once. The
+        // connection tasks axum spawned outlive it, and their streams end on
+        // the stop signal (or the dropped signal sender) - uncounting them.
+        server.stop_within(Duration::ZERO).await;
+        wait_for_count(|| counter.count(), 0).await;
+        drop(stream);
         drop(tx);
     }
 
