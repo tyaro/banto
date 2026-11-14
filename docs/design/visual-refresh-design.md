@@ -2,7 +2,8 @@
 
 作成日: 2026-07-15  
 状態: **実装済み**（M22 完了。本書はコンポーネント API・DOM・キーボード挙動の
-仕様アンカーとして現役。2026-11-04: 重複タイトル非表示、boolean control の共有化と狭幅対応を追補）
+仕様アンカーとして現役。2026-11-04: 重複タイトル非表示、boolean control の共有化と狭幅対応を追補。
+2026-11-14: #557 で配色を OKLCH の役割ベースに組み直し（§2.4））
 
 対応計画: [visual-refresh-plan.md](visual-refresh-plan.md)（M22）  
 運用: 以後トークン値を変える場合は `banto.css` と計画書付録 A を同時更新する
@@ -81,9 +82,9 @@
 ```
 
 `[data-theme='dark']` には付録 A の dark 列を同名で定義する
-（`--banto-surface-subtle: #23262d` など。solid 系は
-`--banto-primary-solid: #3b82f6` + `--banto-on-solid: var(--banto-text-inverse)`、
-danger solid は `#dc2626` + 白文字を維持 — 付録 A.3 の判定どおり）。
+（#557 以降はニュートラルの段とブランドの明るさを上書きする形。§2.4。solid 系は
+`--banto-on-solid: var(--banto-text-inverse)` で、danger solid はライトの値 + 白文字を維持 —
+付録 A.3 の判定どおり）。
 
 ### 2.2 エイリアスと後方互換
 
@@ -107,6 +108,38 @@ danger solid は `#dc2626` + 白文字を維持 — 付録 A.3 の判定どお�
 
 コンポーネントは duration をトークン経由でのみ使うこと。これで
 「非本質的アニメーションの無効化」（計画 Phase 6）が一括で効く。
+
+### 2.4 配色の考え方
+
+#557（design-ux-review-2026-11 A-2）で、色を OKLCH の役割ベースに組み直した。トークン名は変えず値だけを
+変え、次の新トークンを足した。具体値とコントラスト比は計画書の付録 A.1〜A.3。
+
+- **`--banto-brand-hue`**（数値、既定 258。Tailwind の `#2563eb`＝色相 263 から少し藍に寄せ、彩度を
+  抑えた青）。ブランド由来の色はすべてこの 1 つから導く: `--banto-primary`・`-hover`・`-text`・
+  `-solid`・`-solid-hover`、`--banto-brand-accent`（色相 +40。`--banto-accent-gradient` の終点）、
+  フォーカスの輪、glass の背景の光、ニュートラルのごく弱い色味。
+- **`--banto-neutral-1`〜`-12`**: ニュートラルの段。1 = いちばん奥の面に近い明るさ、12 = 本文の文字。
+  chroma は 0〜0.016 でブランドの色相をわずかに帯びる。ダークは**同じ段の明るさを反転**した値を
+  `[data-theme='dark']` で定義する。既存の `--banto-bg`・`--banto-surface*`・`--banto-border*`・
+  `--banto-text*` は段を参照する（ページ地がカードより暗いダークでは bg / surface / raised を
+  1 / 2 / 4 段に置く。ライトは surface 1・bg 2）。
+- **状態 4 色**（danger / warning / success / info）は色相を固定し、ブランドに追従させない。
+  `--banto-info`・`--banto-info-tint`・`--banto-info-tint-text` を新設（warning と同じ組。塗りは作らない）。
+
+明るさと彩度は、どの色相でも次を満たすように選んだ（0〜359 を 1 度刻みで `packages/theme/tests/contrast.test.ts` が確かめる。最も低いのは約 4.7:1）:
+ライトの塗り（primary-solid）の上の白、ダークの塗りの上の `--banto-text-inverse`、ダークの
+`--banto-primary-text` が raised の上で 4.5:1 以上。ダークの `--banto-primary` を文字に使うと、赤〜紫の
+色相では raised の上で 4.3:1 まで下がるので、面の上の文字は `--banto-primary-text` を使う。
+
+構文の制約: `oklch(L C var(--banto-brand-hue))` と `calc()` だけを使い、相対色構文（`oklch(from …)`）は
+使わない（WebKitGTK など対応が新しい）。`oklch()` と `color-mix()` は Baseline 2023（Chrome/Edge 111・
+Safari 16.2・Firefox 113）で、spec §13 の「Widely available を優先」を満たす。導いた色は `:root` で
+計算されるので、`--banto-brand-hue` は `:root` に置く（入れ子の要素で変えても primary は変わらない）。
+`--banto-brand-hue` は**単位なしの数値**で書く（`150`。`150deg` を付けない: `calc(var(--banto-brand-hue) + 40)` が
+無効になりアクセントが消える）。`@property --banto-brand-hue { syntax: '<number>'; … initial-value: 258; }` を
+登録してあるので、単位付きの値は既定の 258 に戻る。ロールのトークン（text・border・primary など）は
+`:root, [data-theme]` で宣言し、`data-theme` を付けた要素の上でも段から計算し直す（入れ子のダークで
+ライトの値が残らない）。
 
 ## 3. Tailwind `@theme` 橋渡し（`app.css`）
 

@@ -10,100 +10,121 @@
  * The data grid must stay fully opaque (10k-row virtual scroll repaint
  * performance), so the .banto-grid subtree gets its surface variables pinned
  * back to the standard opaque values below.
+ *
+ * Colours (#557): the surfaces and the brand glows come from banto.css's
+ * neutral steps and brand tokens, so they follow --banto-brand-hue and stay in
+ * sync with the standard theme by construction. Only the material itself is
+ * literal: the white hairline of the dark border and the green glow, which is
+ * decoration, not a brand or state colour.
  */
 
 /* --- light x glass ------------------------------------------------------ */
 :root[data-banto-preset='glass'] {
-	--banto-surface: rgb(255 255 255 / 0.62);
-	--banto-surface-raised: rgb(255 255 255 / 0.55);
+	--banto-surface: color-mix(in srgb, var(--banto-neutral-1) 62%, transparent);
+	--banto-surface-raised: color-mix(in srgb, var(--banto-neutral-1) 55%, transparent);
 	/* Floating surfaces (menus, pickers, popovers, dialogs, toasts) sit on top of
-     page text, so they stay OPAQUE even under glass - same literal as the
-     standard theme's overlay (keep in sync). The blur stays on them. */
-	--banto-surface-overlay: #ffffff;
-	--banto-border: rgb(148 158 172 / 0.45);
+     page text, so they stay OPAQUE even under glass - the standard theme's
+     overlay step. The blur stays on them. */
+	--banto-surface-overlay: var(--banto-neutral-1);
+	--banto-border: color-mix(in srgb, var(--banto-neutral-8) 50%, transparent);
 
 	--banto-backdrop: blur(14px) saturate(1.5);
 	/* The <=900px launcher tab bar mixes this at >= 85% (banto.css): an opaque
-     base keeps that floor real under glass (same literals as the standard
-     surfaces - keep in sync). */
-	--banto-shell-launcher-tabbar-base: #ffffff;
+     base keeps that floor real under glass (the standard surface step). */
+	--banto-shell-launcher-tabbar-base: var(--banto-neutral-1);
 
 	/* Subtle, dignified gradient so the translucency reads even in a plain
      browser window (no OS acrylic behind it). Painted by the app shell via
-     `background-image: var(--banto-bg-image)` (background-attachment: fixed). */
+     `background-image: var(--banto-bg-image)` (background-attachment: fixed).
+     The first two glows are the brand (primary, accent); the third is fixed. */
 	--banto-bg-image:
-		radial-gradient(1100px 750px at 8% -10%, rgb(37 99 235 / 0.16), transparent 60%),
-		radial-gradient(950px 700px at 102% 0%, rgb(124 58 237 / 0.14), transparent 55%),
+		radial-gradient(
+			1100px 750px at 8% -10%,
+			color-mix(in srgb, var(--banto-primary) 16%, transparent),
+			transparent 60%
+		),
+		radial-gradient(
+			950px 700px at 102% 0%,
+			color-mix(in srgb, var(--banto-brand-accent) 14%, transparent),
+			transparent 55%
+		),
 		radial-gradient(900px 900px at 50% 112%, rgb(22 163 74 / 0.1), transparent 60%);
 }
 
 /* --- dark x glass ------------------------------------------------------- */
 :root[data-theme='dark'][data-banto-preset='glass'] {
-	--banto-shell-launcher-tabbar-base: #262a31;
-	--banto-surface: rgb(30 33 39 / 0.55);
-	--banto-surface-raised: rgb(38 42 49 / 0.5);
+	--banto-shell-launcher-tabbar-base: var(--banto-neutral-4);
+	--banto-surface: color-mix(in srgb, var(--banto-neutral-2) 55%, transparent);
+	--banto-surface-raised: color-mix(in srgb, var(--banto-neutral-4) 50%, transparent);
 	/* Opaque floating surface (see the light x glass block; = standard dark raised). */
-	--banto-surface-overlay: #262a31;
+	--banto-surface-overlay: var(--banto-neutral-4);
 	--banto-border: rgb(255 255 255 / 0.14);
 
 	--banto-bg-image:
-		radial-gradient(1100px 750px at 8% -10%, rgb(59 130 246 / 0.22), transparent 60%),
-		radial-gradient(950px 700px at 102% 0%, rgb(139 92 246 / 0.18), transparent 55%),
+		radial-gradient(
+			1100px 750px at 8% -10%,
+			color-mix(in srgb, var(--banto-primary) 22%, transparent),
+			transparent 60%
+		),
+		radial-gradient(
+			950px 700px at 102% 0%,
+			color-mix(in srgb, var(--banto-brand-accent) 18%, transparent),
+			transparent 55%
+		),
 		radial-gradient(900px 900px at 50% 112%, rgb(45 212 191 / 0.1), transparent 60%);
 }
 
 /*
  * Grid opt-out (roadmap M12: cells/rows stay opaque for 10k-row virtual
  * scroll performance). Pins the surface variables inside the grid subtree
- * back to banto.css's standard opaque values, so header/cells/editors never
+ * back to banto.css's standard opaque steps, so header/cells/editors never
  * become translucent and the sticky header never lets rows shine through.
- * The literals intentionally mirror banto.css's :root / [data-theme="dark"]
- * values - keep in sync when those change.
+ * The steps mirror banto.css's :root / [data-theme="dark"] roles.
  */
 [data-banto-preset='glass'] .banto-grid {
-	--banto-surface: #ffffff;
-	--banto-surface-raised: #ffffff;
-	--banto-border: #d9dde3;
+	--banto-surface: var(--banto-neutral-1);
+	--banto-surface-raised: var(--banto-neutral-1);
+	--banto-border: var(--banto-neutral-6);
 }
 
 [data-theme='dark'][data-banto-preset='glass'] .banto-grid {
-	--banto-surface: #1e2127;
-	--banto-surface-raised: #262a31;
-	--banto-border: #363b44;
+	--banto-surface: var(--banto-neutral-2);
+	--banto-surface-raised: var(--banto-neutral-4);
+	--banto-border: var(--banto-neutral-6);
 }
 
 /*
  * Fallbacks: with no usable backdrop-filter (old engines) or when the user
  * asks for reduced transparency, glass degrades to the standard opaque
- * surfaces (same literals as banto.css) and no blur. The bg gradient stays -
+ * surfaces (same steps as banto.css) and no blur. The bg gradient stays -
  * it is opaque page decoration, not transparency.
  */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
 	:root[data-banto-preset='glass'] {
-		--banto-surface: #ffffff;
-		--banto-surface-raised: #ffffff;
-		--banto-border: #d9dde3;
+		--banto-surface: var(--banto-neutral-1);
+		--banto-surface-raised: var(--banto-neutral-1);
+		--banto-border: var(--banto-neutral-6);
 		--banto-backdrop: none;
 	}
 
 	:root[data-theme='dark'][data-banto-preset='glass'] {
-		--banto-surface: #1e2127;
-		--banto-surface-raised: #262a31;
-		--banto-border: #363b44;
+		--banto-surface: var(--banto-neutral-2);
+		--banto-surface-raised: var(--banto-neutral-4);
+		--banto-border: var(--banto-neutral-6);
 	}
 }
 
 @media (prefers-reduced-transparency: reduce) {
 	:root[data-banto-preset='glass'] {
-		--banto-surface: #ffffff;
-		--banto-surface-raised: #ffffff;
-		--banto-border: #d9dde3;
+		--banto-surface: var(--banto-neutral-1);
+		--banto-surface-raised: var(--banto-neutral-1);
+		--banto-border: var(--banto-neutral-6);
 		--banto-backdrop: none;
 	}
 
 	:root[data-theme='dark'][data-banto-preset='glass'] {
-		--banto-surface: #1e2127;
-		--banto-surface-raised: #262a31;
-		--banto-border: #363b44;
+		--banto-surface: var(--banto-neutral-2);
+		--banto-surface-raised: var(--banto-neutral-4);
+		--banto-border: var(--banto-neutral-6);
 	}
 }
