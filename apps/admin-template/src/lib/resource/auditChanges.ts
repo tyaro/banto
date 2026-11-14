@@ -6,6 +6,8 @@
  * screens (audit-log detail, the drawer's history tab) only draw the result.
  * `detail` is the stored JSON text; a record without a `changes` array (older
  * records, other operations) gives `null` and the caller keeps its own display.
+ * For create/update/delete audit detail, `changes` is reserved for field
+ * entries shaped as `{ field, before, after }` or `{ field, masked: true }`.
  */
 import { resources } from '#lib/banto/resources/index.js';
 import * as m from '#lib/paraglide/messages.js';

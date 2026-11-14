@@ -784,6 +784,8 @@ function removeAttachments() {
 		`    // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left`,
 		`    let sweep = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;`
 	);
+	// display の再実行では rest/items.rs 自体が削除済みなので editFile が
+	// 適用済みとして扱う。残る lib.rs ではコマンド区画だけが消えるため、下でガードする。
 	swapText(
 		REST_ITEMS,
 		'rest/items: items_delete の添付 sweep を None に',
