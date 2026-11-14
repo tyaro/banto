@@ -517,7 +517,7 @@
      below readable contrast mid-hover. The tint-text sits on its own 18% film
      over a dark surface: >= 4.5:1 on surface and raised. */
 	--banto-danger-tint: color-mix(in srgb, var(--banto-danger-tint-text) 18%, transparent);
-	--banto-danger-tint-text: oklch(0.76 0.14 22);
+	--banto-danger-tint-text: oklch(0.78 0.12 22);
 	--banto-success-tint: color-mix(in srgb, var(--banto-success-tint-text) 18%, transparent);
 	--banto-success-tint-text: oklch(0.8 0.182 152);
 	--banto-warning-tint: color-mix(in srgb, var(--banto-warning-tint-text) 18%, transparent);
