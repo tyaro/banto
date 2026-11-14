@@ -133,10 +133,9 @@
 		formatTooltip
 	}: Props = $props();
 
-	// `messages` is merged once (i18n layer 1: an override bundle, not
-	// reactive state) rather than re-read per usage below.
-	// svelte-ignore state_referenced_locally
-	const t = { ...defaultChartMessages, ...messages };
+	// `messages` is merged with the defaults via `$derived`, so a parent that
+	// swaps the bundle later (a locale switch) is followed.
+	const t = $derived({ ...defaultChartMessages, ...messages });
 
 	const DEFAULT_MARGIN: ChartMargin = { top: 12, right: 16, bottom: 28, left: 48 };
 	// Minimum px per x-axis tick label so dense datasets don't overlap; the
