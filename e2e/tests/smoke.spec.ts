@@ -262,7 +262,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.goto('/settings/appearance');
 		await page.getByRole('textbox', { name: 'お知らせ' }).fill('本日 18 時から保守します');
 		await page.getByRole('button', { name: 'お知らせを保存' }).click();
-		await expect(page.getByText('ログイン画面のお知らせを保存しました', { exact: true })).toBeVisible();
+		await expect(
+			page.getByText('ログイン画面のお知らせを保存しました', { exact: true })
+		).toBeVisible();
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
 		await expect(page.getByText('本日 18 時から保守します')).toBeVisible();
