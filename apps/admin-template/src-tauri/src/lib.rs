@@ -5178,7 +5178,7 @@ mod tests {
 
     #[tokio::test]
     async fn attachments_upload_rejects_untrusted_or_missing_parent() {
-        let (state, _dir) = app_state_with_tempdir().await;
+        let (state, dir) = app_state_with_tempdir().await;
         let editor = state
             .users
             .create_user("editor", "password123", "編集者", Role::Editor)
@@ -5199,13 +5199,28 @@ mod tests {
                 b"hello".to_vec(),
             )
             .await;
-            assert!(result.is_err(), "{resource}/{resource_id}");
+            if resource == "items" && resource_id == "999999" {
+                assert!(
+                    matches!(result, Err(BantoError::NotFound { .. })),
+                    "{resource}/{resource_id}"
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(BantoError::BadRequest(_))),
+                    "{resource}/{resource_id}"
+                );
+            }
         }
         let audit = state.audit.list(ListParams::default()).await.unwrap();
         assert!(audit
             .rows
             .iter()
             .all(|row| !(row.resource == "attachments" && row.action == "create")));
+        let attachment_dir = dir.path().join("attachments");
+        assert!(
+            !attachment_dir.exists() || std::fs::read_dir(attachment_dir).unwrap().next().is_none(),
+            "rejected uploads must not write an attachment body"
+        );
     }
 
     /// Issue #285: a failed `has_thumbnail` flag update (injected with a SQLite

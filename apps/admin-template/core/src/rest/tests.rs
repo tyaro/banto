@@ -2854,7 +2854,7 @@ async fn editor_can_upload_list_download_and_delete_an_attachment() {
 
 #[tokio::test]
 async fn attachment_upload_rejects_untrusted_or_missing_parent_without_audit_scope() {
-    let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let (router, dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
     for (url, expected) in [
         (
             "/api/attachments?resource=users&resourceId=1&fileName=note.txt",
@@ -2896,6 +2896,11 @@ async fn attachment_upload_rejects_untrusted_or_missing_parent_without_audit_sco
         .unwrap()
         .iter()
         .all(|row| { !(row["resource"] == "attachments" && row["action"] == "create") }));
+    let attachment_dir = dir.path().join("attachments");
+    assert!(
+        !attachment_dir.exists() || std::fs::read_dir(attachment_dir).unwrap().next().is_none(),
+        "rejected uploads must not write an attachment body"
+    );
 }
 
 /// `viewer` cannot upload or delete attachments (attachments-plan §3.5: `editor`+
