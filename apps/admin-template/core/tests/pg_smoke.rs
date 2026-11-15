@@ -424,36 +424,41 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
     use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
     use serde_json::json;
 
+    // Audit entity IDs are TEXT. Namespace this fixture so later smoke
+    // additions cannot accidentally enter the same record history.
+    const TARGET_ID: &str = "pg-hist-42";
     for (resource, entity_id, detail) in [
-        ("items", "42", None),
+        ("items", TARGET_ID, None),
         (
             "attachments",
-            "101",
-            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "a.txt" })),
+            "pg-hist-a101",
+            Some(json!({ "parentResource": "items", "parentId": TARGET_ID, "fileName": "a.txt" })),
         ),
         (
             "attachments",
-            "102",
-            Some(json!({ "parentResource": "items", "parentId": "420" })),
+            "pg-hist-a102",
+            Some(json!({ "parentResource": "items", "parentId": "pg-hist-420" })),
         ),
         (
             "attachments",
-            "103",
+            "pg-hist-a103",
             Some(json!({ "parentResource": "items", "parentId": 42 })),
         ),
         (
             "attachments",
-            "105",
+            "pg-hist-a105",
             Some(json!({ "parentResource": "items", "parentId": "\u{0000}" })),
         ),
         (
             "attachments",
-            "106",
-            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "\u{0000}" })),
+            "pg-hist-a106",
+            Some(
+                json!({ "parentResource": "items", "parentId": TARGET_ID, "fileName": "\u{0000}" }),
+            ),
         ),
         (
             "attachments",
-            "107",
+            "pg-hist-a107",
             Some(json!({ "parentResource": "items", "parentId": 42.5 })),
         ),
     ] {
@@ -472,7 +477,7 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
             .expect("record related history fixture");
     }
     let pool = db.as_postgres().expect("PostgreSQL history pool");
-    sqlx::query("INSERT INTO audit_log (action, resource, entity_id, detail, origin) VALUES ('create', 'attachments', '104', 'not-json', 'rest')")
+    sqlx::query("INSERT INTO audit_log (action, resource, entity_id, detail, origin) VALUES ('create', 'attachments', 'pg-hist-a104', 'not-json', 'rest')")
         .execute(pool)
         .await
         .expect("malformed historical detail");
@@ -494,7 +499,7 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
             FilterState {
                 field: "recordId".into(),
                 op: FilterOp::Eq,
-                value: json!("42"),
+                value: json!(TARGET_ID),
             },
         ],
         ..Default::default()
@@ -505,17 +510,17 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
         .expect("related history list");
     assert_eq!(history.total_count, 2);
     assert_eq!(history.rows[0].resource, "attachments");
-    assert_eq!(history.rows[0].entity_id.as_deref(), Some("101"));
+    assert_eq!(history.rows[0].entity_id.as_deref(), Some("pg-hist-a101"));
     assert_eq!(history.rows[1].resource, "items");
     let nul_detail_row: String = sqlx::query_scalar(
-        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = '106'",
+        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = 'pg-hist-a106'",
     )
     .fetch_one(pool)
     .await
     .expect("NUL detail row falls back to its direct resource");
     assert_eq!(nul_detail_row, "attachments");
     let numeric_parent_row: String = sqlx::query_scalar(
-        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = '103'",
+        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = 'pg-hist-a103'",
     )
     .fetch_one(pool)
     .await
@@ -541,7 +546,7 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
         .expect("disable seqscan");
     let plan: Vec<String> = sqlx::query_scalar(
         "EXPLAIN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000000) AS audit_log \
-         WHERE record_resource = 'items' AND record_id = '42'",
+         WHERE record_resource = 'items' AND record_id = 'pg-hist-42'",
     )
     .fetch_all(&mut *tx)
     .await

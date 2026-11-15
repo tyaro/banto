@@ -173,6 +173,10 @@ pub struct AuditEntry<'a> {
     /// e.g. `"items"`, `"users"`, `"settings"`, `"auth"`.
     pub resource: &'a str,
     pub entity_id: Option<&'a str>,
+    /// Caller-generated metadata only. With record-scope migration 0010,
+    /// top-level `parentResource` and `parentId` redirect history when both
+    /// are strings. Never spread request JSON into this object; reserve that
+    /// pair for a trusted relationship such as an attachment's parent.
     pub detail: Option<serde_json::Value>,
     /// `"rest"` or `"tauri"`.
     pub origin: &'a str,

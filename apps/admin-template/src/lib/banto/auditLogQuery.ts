@@ -15,7 +15,9 @@ export const AUDIT_QUERY_ENTITY_ID = 'entityId';
 export const AUDIT_QUERY_RECORD_RESOURCE = 'recordResource';
 export const AUDIT_QUERY_RECORD_ID = 'recordId';
 
-/** Display the same record scope that the server uses for history filters. */
+/** Approximate the server's record scope for optional display columns only.
+ * PostgreSQL rejects JSONB NUL escapes, and SQLite's JSON parser can differ
+ * from JavaScript's. Generated DB columns remain authoritative for filtering. */
 export function auditRecordScope(row: AuditLogEntry): { resource: string; id: string | null } {
 	if (row.detail) {
 		try {
