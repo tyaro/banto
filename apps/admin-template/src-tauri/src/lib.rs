@@ -3683,6 +3683,12 @@ async fn attachments_upload_body(
     bytes: Vec<u8>,
 ) -> Result<AttachmentMeta, BantoError> {
     let actor = require_role(state, Role::Editor, "attachments").await?;
+    admin_template_core::attachment_wiring::validate_attachment_parent(
+        &state.items,
+        &resource,
+        &resource_id,
+    )
+    .await?;
     let meta = state
         .attachments
         .upload(NewAttachment {
@@ -5165,6 +5171,38 @@ mod tests {
                 "parentId": "1"
             })
         );
+    }
+
+    #[tokio::test]
+    async fn attachments_upload_rejects_untrusted_or_missing_parent() {
+        let (state, _dir) = app_state_with_tempdir().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
+        for (resource, resource_id) in [
+            ("users", "1"),
+            ("items", "999999"),
+            ("items", "bad"),
+            ("items", "01"),
+        ] {
+            let result = attachments_upload_body(
+                &state,
+                resource.to_string(),
+                resource_id.to_string(),
+                "note.txt".to_string(),
+                b"hello".to_vec(),
+            )
+            .await;
+            assert!(result.is_err(), "{resource}/{resource_id}");
+        }
+        let audit = state.audit.list(ListParams::default()).await.unwrap();
+        assert!(audit
+            .rows
+            .iter()
+            .all(|row| !(row.resource == "attachments" && row.action == "create")));
     }
 
     /// Issue #285: a failed `has_thumbnail` flag update (injected with a SQLite

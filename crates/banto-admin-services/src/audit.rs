@@ -1043,7 +1043,9 @@ mod tests {
             .await
             .expect("create resource index");
         // Mirrors migration 0010 without making this shared crate depend on
-        // the app's migration files (conventions §4, §11).
+        // the app's migration files (conventions §4, §11). When changing these
+        // expressions, update migrations-sqlite/0010_audit_record_scope.sql
+        // and exercise the app's migrated schema in REST tests too.
         sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') = 'text' THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
             .execute(pool).await.expect("add record_resource");
         sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') = 'text' THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")

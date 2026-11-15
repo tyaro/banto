@@ -5,7 +5,36 @@
 //! authorization and the `record_write`/`record_ok` calls stay on each path.
 
 use banto_attachments::{AttachmentMeta, AttachmentsService};
+use banto_core::BantoError;
 use serde_json::{json, Value};
+
+use crate::items::ItemsService;
+
+/// The template wires attachments to items only. A derived app that adds an
+/// attachment target must extend this allowlist and its existence check.
+/// Run this after the route/command's role check and before writing the file
+/// or audit detail, so untrusted target text cannot redirect record history.
+pub async fn validate_attachment_parent(
+    items: &ItemsService,
+    resource: &str,
+    resource_id: &str,
+) -> Result<(), BantoError> {
+    if resource != "items" {
+        return Err(BantoError::BadRequest(format!(
+            "unsupported attachment resource: {resource}"
+        )));
+    }
+    let id = resource_id
+        .parse::<i64>()
+        .map_err(|_| BantoError::BadRequest("invalid items attachment id".to_string()))?;
+    if id.to_string() != resource_id {
+        return Err(BantoError::BadRequest(
+            "non-canonical items attachment id".to_string(),
+        ));
+    }
+    items.get(id).await?;
+    Ok(())
+}
 
 /// Audit `detail` of an attachment `create`/`delete` entry.
 pub fn attachment_audit_detail(meta: &AttachmentMeta) -> Value {

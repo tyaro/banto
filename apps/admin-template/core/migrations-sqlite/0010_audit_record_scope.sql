@@ -1,4 +1,6 @@
 -- Indexed record scope for direct audit rows and related rows such as attachments.
+-- Keep the generated expressions in sync with banto-admin-services/src/audit.rs's
+-- test setup; REST tests exercise this migrated schema rather than that copy.
 -- The parent keys are an optional pair in detail; invalid or incomplete JSON
 -- retains the row's canonical resource/entity_id. VIRTUAL columns also derive
 -- the scope for rows written through the existing audit spool INSERT.

@@ -769,7 +769,14 @@ function removeAttachments() {
 	drop(
 		REST_MOD,
 		'rest: attachments_router の合流除去',
-		`        .merge(attachments_router(attachments, audit, auth.clone(), events))\n`
+		`        .merge(attachments_router(
+            attachments,
+            items,
+            audit,
+            auth.clone(),
+            events,
+        ))
+`
 	);
 	//   rest/items.rs（ItemsWriteState.attachments / 両 fn の引数 / delete_for_record）
 	drop(
@@ -907,6 +914,21 @@ function removeAttachmentsFromRestTests() {
 		`    let attachments = unused_attachments_service(pool.clone());\n`
 	);
 	// (d) backup ヘルパの実 AttachmentsService 宣言（M17 テストで生き残るヘルパ内）。
+	drop(
+		REST_TESTS,
+		'rest/tests: backup ヘルパの添付親 fixture 除去',
+		`    // The template accepts attachments only for existing items. These IDs
+    // are used by the attachment routes below; other tests use returned IDs.
+    for id in [1_i64, 7, 42] {
+        sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (?, ?, 1, 1, '2026-11-15')")
+            .bind(id)
+            .bind(format!("fixture item {id}"))
+            .execute(&pool)
+            .await
+            .expect("seed attachment parent");
+    }
+`
+	);
 	drop(
 		REST_TESTS,
 		'rest/tests: backup ヘルパの実 attachments 宣言除去',

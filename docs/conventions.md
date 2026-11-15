@@ -86,7 +86,10 @@ maintenance-review-2026-08 §5.3 で実測・是正済み）:
   探す場合は従来の `resource`・`entityId` フィルタを使う。
   `parentResource`・`parentId` はどちらも文字列で記録する。
   別の意味でこの 2 キーを組にして使わない。監査 detail に外部入力をそのまま
-  展開しない（記録内容の選別はセキュリティ規約にも従う）。
+  展開しない（記録内容の選別はセキュリティ規約にも従う）。テンプレートの添付
+  upload は REST/Tauri とも共通の `attachment_wiring::validate_attachment_parent` で
+  `items` のみを許可し、対象の実在を調べてから監査 detail を作る。
+  派生アプリが添付先を増やすときは、この検証も増やす。
 - **denied の `detail` は経路で非対称を許容する。** REST は RoleGuard
   ミドルウェアの都合で `{method, path}` が付くが Tauri は `None`。denied は
   「操作が実行されなかった」記録なので監査の主眼は「誰がどの `resource` へ

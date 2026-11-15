@@ -2,7 +2,8 @@
 
 作成日: 2026-07-15  
 状態: 実装済み（単位A〜D完了。単位Dで検出した effect ループは §9 のとおり解消済み。
-2026-09-24: PostgreSQL の保存先を §3.3 のとおり変更、#208）  
+2026-09-24: PostgreSQL の保存先を §3.3 のとおり変更、#208。
+2026-11-15: upload の親検証を §3.5 に追加、#608）
 提供形態: `banto-attachments` クレート + `@banto/attachments` パッケージ +
 削除可能なデモ配線（roadmap.md「M19〜M21 の提供形態」の決定に従う）
 
@@ -139,6 +140,10 @@ REST（`attachments_router`、read = Viewer / write = Editor の RoleGuard、
 
 - アップロードは **multipart を使わず** backups リストアと同じ
   raw Bytes + クエリメタデータ方式（既存の設計判断を踏襲、依存追加なし）
+- テンプレートの配線では `items` の実在するレコードだけに添付を許可する。
+  REST/Tauri 共通の `attachment_wiring::validate_attachment_parent` を role check の後、
+  ファイル書き込みの前に通す。別リソースへ添付する派生アプリは許可先と実在確認を
+  ここで拡張する（クレート自体のリソース非依存は維持）。
 - サイズ上限: `DefaultBodyLimit::max(MAX_ATTACHMENT_BYTES)` =
   **25MB/ファイル**（定数。備考として計画書に明記し、変更はコード1箇所）
 

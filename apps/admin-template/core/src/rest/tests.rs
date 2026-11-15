@@ -1609,6 +1609,16 @@ async fn router_with_role_tokens_and_backup() -> (Router, tempfile::TempDir, Str
         .run(&pool)
         .await
         .expect("migrate");
+    // The template accepts attachments only for existing items. These IDs
+    // are used by the attachment routes below; other tests use returned IDs.
+    for id in [1_i64, 7, 42] {
+        sqlx::query("INSERT INTO items (id, name, price, stock, updated_at) VALUES (?, ?, 1, 1, '2026-11-15')")
+            .bind(id)
+            .bind(format!("fixture item {id}"))
+            .execute(&pool)
+            .await
+            .expect("seed attachment parent");
+    }
     // V2 PR2: services take a backend-agnostic `Db`; wrap the on-disk SQLite
     // pool (a real file is required here so `VACUUM INTO` actually writes).
     let db = banto_storage::Db::Sqlite(pool);
@@ -2842,6 +2852,52 @@ async fn editor_can_upload_list_download_and_delete_an_attachment() {
     assert_eq!(listed_after.as_array().unwrap().len(), 0);
 }
 
+#[tokio::test]
+async fn attachment_upload_rejects_untrusted_or_missing_parent_without_audit_scope() {
+    let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+    for (url, expected) in [
+        (
+            "/api/attachments?resource=users&resourceId=1&fileName=note.txt",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/attachments?resource=items&resourceId=999999&fileName=note.txt",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/api/attachments?resource=items&resourceId=bad&fileName=note.txt",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/attachments?resource=items&resourceId=01&fileName=note.txt",
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(post_bytes_auth(url, &editor, b"hello".to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{url}");
+    }
+    let audit = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(audit["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| { !(row["resource"] == "attachments" && row["action"] == "create") }));
+}
+
 /// `viewer` cannot upload or delete attachments (attachments-plan §3.5: `editor`+
 /// write floor) - both are rejected `403` with `{"kind":"forbidden"}`,
 /// same shape as every other RBAC-guarded write route in this module.
@@ -3045,7 +3101,16 @@ async fn attachment_upload_and_delete_are_recorded_in_the_audit_log() {
 async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, mut rx) = broadcast::channel(16);
-    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let items = ItemsService::new(pool.clone());
+    items
+        .create(ItemInput {
+            name: "attachment parent".into(),
+            price: 1,
+            stock: 1,
+        })
+        .await
+        .expect("seed item 1");
+    let items = items.with_events(tx.clone());
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());
@@ -3098,7 +3163,16 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
 async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_and_event() {
     let pool = migrate_memory().await.expect("migrate_memory");
     let (tx, mut rx) = broadcast::channel(16);
-    let items = ItemsService::new(pool.clone()).with_events(tx.clone());
+    let items = ItemsService::new(pool.clone());
+    items
+        .create(ItemInput {
+            name: "attachment parent".into(),
+            price: 1,
+            stock: 1,
+        })
+        .await
+        .expect("seed item 1");
+    let items = items.with_events(tx.clone());
     let users = UsersService::new(pool.clone());
     let settings = SettingsService::new(pool.clone());
     let backup = unused_backup_service(pool.clone());

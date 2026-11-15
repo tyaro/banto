@@ -368,7 +368,7 @@ pub fn api_router(
         .merge(sse_route(auth.clone(), events.clone()))
         // [scaffold:items] begin
         .merge(items_router(
-            items,
+            items.clone(),
             audit.clone(),
             auth.clone(),
             attachments.clone(),
@@ -387,7 +387,13 @@ pub fn api_router(
             audit.clone(),
             metrics,
         ))
-        .merge(attachments_router(attachments, audit, auth.clone(), events))
+        .merge(attachments_router(
+            attachments,
+            items,
+            audit,
+            auth.clone(),
+            events,
+        ))
         .merge(ui_settings_router(settings, auth))
         .layer(middleware::from_fn(require_banto_client_header))
 }
