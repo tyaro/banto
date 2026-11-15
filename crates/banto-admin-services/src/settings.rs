@@ -33,12 +33,15 @@ fn invalid_login_notice_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
-            '\u{061C}'
+            '\u{00AD}'
+                | '\u{061C}'
                 | '\u{180E}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{2028}'..='\u{202E}'
-                | '\u{2060}'..='\u{2069}'
+                | '\u{2060}'..='\u{206F}'
                 | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
         )
 }
 
@@ -784,6 +787,10 @@ mod tests {
             "first\u{061C}second".to_string(),
             "first\u{180E}second".to_string(),
             "first\u{2060}second".to_string(),
+            "first\u{00AD}second".to_string(),
+            "first\u{206A}second".to_string(),
+            "first\u{FFF9}second".to_string(),
+            "first\u{E0041}second".to_string(),
             "x".repeat(MAX_LOGIN_NOTICE_CHARS + 1),
         ] {
             assert!(matches!(

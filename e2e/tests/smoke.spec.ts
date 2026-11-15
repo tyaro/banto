@@ -276,6 +276,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.getByRole('button', { name: 'ログイン' }).click();
 
 		await expect(page).toHaveURL(/\/dashboard$/);
+		await page.goto('/settings/appearance');
+		await page.getByRole('textbox', { name: 'お知らせ' }).fill('');
+		await page.getByRole('button', { name: 'お知らせを保存' }).click();
+		await expect(
+			page.getByText('ログイン画面のお知らせを保存しました', { exact: true })
+		).toBeVisible();
 	});
 
 	test('3. items: create, appears in the grid, edit, delete', async () => {
