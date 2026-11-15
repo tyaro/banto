@@ -1040,9 +1040,9 @@ mod tests {
             .expect("create resource index");
         // Mirrors migration 0010 without making this shared crate depend on
         // the app's migration files (conventions §4, §11).
-        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer', 'real') THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer') THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
             .execute(pool).await.expect("add record_resource");
-        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer', 'real') THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer') THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")
             .execute(pool).await.expect("add record_id");
         sqlx::query(
             "CREATE INDEX idx_audit_log_record_scope ON audit_log(record_resource, record_id)",
@@ -1417,6 +1417,10 @@ mod tests {
         let mut direct = sample_entry("update", "items", "alice");
         direct.entity_id = Some("42");
         svc.try_record(direct).await.unwrap();
+        let mut fractional = sample_entry("create", "attachments", "alice");
+        fractional.entity_id = Some("102");
+        fractional.detail = Some(json!({ "parentResource": "items", "parentId": 42.5 }));
+        svc.try_record(fractional).await.unwrap();
 
         let filters = vec![
             FilterState {
@@ -1449,7 +1453,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(sorted.total_count, 2);
+        assert_eq!(sorted.total_count, 3);
 
         let contains = svc
             .list(ListParams {

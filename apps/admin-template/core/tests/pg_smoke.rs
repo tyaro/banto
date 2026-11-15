@@ -451,6 +451,11 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
             "106",
             Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "\u{0000}" })),
         ),
+        (
+            "attachments",
+            "107",
+            Some(json!({ "parentResource": "items", "parentId": 42.5 })),
+        ),
     ] {
         audit
             .try_record(AuditEntry {

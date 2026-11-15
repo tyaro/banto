@@ -7,7 +7,9 @@ DECLARE parsed JSONB;
 BEGIN
   parsed := raw_detail::jsonb;
   IF jsonb_typeof(parsed -> 'parentResource') = 'string'
-     AND jsonb_typeof(parsed -> 'parentId') IN ('string', 'number') THEN
+     AND (jsonb_typeof(parsed -> 'parentId') = 'string'
+          OR (jsonb_typeof(parsed -> 'parentId') = 'number'
+              AND (parsed ->> 'parentId') ~ '^-?[0-9]+$')) THEN
     RETURN parsed ->> field_name;
   END IF;
   RETURN NULL;
@@ -18,12 +20,13 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
-ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (
-  COALESCE(banto_audit_parent_detail(detail, 'parentResource'), resource)
-) STORED;
-
-ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (
-  COALESCE(banto_audit_parent_detail(detail, 'parentId'), entity_id)
-) STORED;
+-- One ALTER rewrites the existing table once for both stored columns.
+ALTER TABLE audit_log
+  ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (
+    COALESCE(banto_audit_parent_detail(detail, 'parentResource'), resource)
+  ) STORED,
+  ADD COLUMN record_id TEXT GENERATED ALWAYS AS (
+    COALESCE(banto_audit_parent_detail(detail, 'parentId'), entity_id)
+  ) STORED;
 
 CREATE INDEX idx_audit_log_record_scope ON audit_log(record_resource, record_id);

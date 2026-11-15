@@ -81,7 +81,7 @@ maintenance-review-2026-08 §5.3 で実測・是正済み）:
   からの restore はサーバ採番前で実体名が無いので `None` + `detail.fileName`）。
 - **監査 detail の最上位 `parentResource`・`parentId` は関連レコード用の予約キー。**
   両方が揃う監査行は、元の `resource`・`entity_id` を保ったまま親レコードの履歴にも
-  表示する。`parentResource` は文字列、`parentId` は文字列または数値で記録する。
+  表示する。`parentResource` は文字列、`parentId` は文字列または整数で記録する。
   別の意味でこの 2 キーを組にして使わない。監査 detail に外部入力をそのまま
   展開しない（記録内容の選別はセキュリティ規約にも従う）。
 - **denied の `detail` は経路で非対称を許容する。** REST は RoleGuard

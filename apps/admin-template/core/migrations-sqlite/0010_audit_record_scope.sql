@@ -6,7 +6,7 @@ ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (
   COALESCE(
     CASE WHEN json_valid(detail) THEN
       CASE WHEN json_type(detail, '$.parentResource') = 'text'
-        AND json_type(detail, '$.parentId') IN ('text', 'integer', 'real')
+        AND json_type(detail, '$.parentId') IN ('text', 'integer')
       THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END
     END,
     resource
@@ -17,7 +17,7 @@ ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (
   COALESCE(
     CASE WHEN json_valid(detail) THEN
       CASE WHEN json_type(detail, '$.parentResource') = 'text'
-        AND json_type(detail, '$.parentId') IN ('text', 'integer', 'real')
+        AND json_type(detail, '$.parentId') IN ('text', 'integer')
       THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END
     END,
     entity_id
