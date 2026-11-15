@@ -266,7 +266,7 @@ impl SettingsService {
                 }],
             });
         }
-        self.set(KEY_LOGIN_NOTICE, notice).await?;
+        self.set_unchecked(KEY_LOGIN_NOTICE, notice).await?;
         Ok(notice.to_string())
     }
 
@@ -296,12 +296,22 @@ impl SettingsService {
         .map_err(banto_storage::storage_error)
     }
 
-    /// Upsert a single setting.
+    /// Upsert a single setting. The public login notice uses its dedicated
+    /// validated method instead.
     ///
     /// `ON CONFLICT(key) DO UPDATE SET value = excluded.value` is valid in both
     /// dialects (the `excluded` pseudo-table is standard in SQLite and
     /// Postgres alike), so only the placeholders differ between backends.
     pub async fn set(&self, key: &str, value: &str) -> Result<(), BantoError> {
+        if key == KEY_LOGIN_NOTICE {
+            return Err(BantoError::BadRequest(
+                "login.notice must be written with set_login_notice".to_string(),
+            ));
+        }
+        self.set_unchecked(key, value).await
+    }
+
+    async fn set_unchecked(&self, key: &str, value: &str) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
         // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
         // (internal enum, never caller input); `key`/`value` are bound below.
@@ -338,6 +348,11 @@ impl SettingsService {
     /// leave `auth.disabled` saved and `auth.disabled_role` not, since the
     /// desktop app re-binds its session from what it saved).
     pub async fn set_many(&self, pairs: &[(&str, &str)]) -> Result<(), BantoError> {
+        if pairs.iter().any(|(key, _)| *key == KEY_LOGIN_NOTICE) {
+            return Err(BantoError::BadRequest(
+                "login.notice must be written with set_login_notice".to_string(),
+            ));
+        }
         let dialect = self.db.dialect();
         // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
         // (internal enum, never caller input); keys/values are bound below.
@@ -779,6 +794,16 @@ mod tests {
             "Maintenance tonight"
         );
         assert_eq!(svc.login_notice().await.unwrap(), "Maintenance tonight");
+        assert!(matches!(
+            svc.set(KEY_LOGIN_NOTICE, "first\nsecond").await,
+            Err(BantoError::BadRequest(_))
+        ));
+        assert!(matches!(
+            svc.set_many(&[("theme", "dark"), (KEY_LOGIN_NOTICE, "first\nsecond")])
+                .await,
+            Err(BantoError::BadRequest(_))
+        ));
+        assert_eq!(svc.get("theme").await.unwrap(), None);
         for invalid in [
             "first\nsecond".to_string(),
             "first\u{2028}second".to_string(),
