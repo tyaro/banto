@@ -24,7 +24,7 @@
 		memo: NotepadText,
 		'📝': NotepadText
 	};
-	const Icon = $derived(ICONS[icon]);
+	const Icon = $derived(Object.hasOwn(ICONS, icon) ? ICONS[icon] : undefined);
 </script>
 
 {#if Icon}

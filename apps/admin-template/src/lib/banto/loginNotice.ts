@@ -1,6 +1,6 @@
 /** Public login notice. Only this dedicated setting is readable before login. */
 import { invoke } from '@tauri-apps/api/core';
-import { getAuthProvider, ProviderError, type ErrorBody } from '@banto/admin-core';
+import { getAuthProvider, isProviderError, ProviderError, type ErrorBody } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
 
 const PATH = '/api/login-notice';
@@ -20,6 +20,21 @@ function isErrorBody(value: unknown): value is ErrorBody {
 	return typeof kind === 'string' && ERROR_KINDS.has(kind as ErrorBody['kind']);
 }
 
+function toProviderError(error: unknown): ProviderError {
+	if (isProviderError(error)) return error;
+	if (isErrorBody(error)) return new ProviderError(error);
+	const message = error instanceof Error ? error.message : String(error);
+	return new ProviderError({ kind: 'other', message });
+}
+
+async function invokeNotice(command: string, args?: Record<string, unknown>): Promise<string> {
+	try {
+		return await invoke<string>(command, args);
+	} catch (error) {
+		throw toProviderError(error);
+	}
+}
+
 async function responseError(response: Response): Promise<ProviderError> {
 	const body: unknown = await response.json().catch(() => null);
 	if (isErrorBody(body)) return new ProviderError(body);
@@ -29,7 +44,7 @@ async function responseError(response: Response): Promise<ProviderError> {
 export async function getLoginNotice(): Promise<string> {
 	switch (getBantoMode()) {
 		case 'tauri':
-			return invoke<string>('login_notice_get');
+			return invokeNotice('login_notice_get');
 		case 'server': {
 			const response = await fetch(PATH, { headers: CSRF_HEADER });
 			if (!response.ok) throw await responseError(response);
@@ -58,7 +73,7 @@ export function loginConnection(): { kind: 'local' | 'lan' | 'demo'; address?: s
 export async function setLoginNotice(notice: string): Promise<string> {
 	switch (getBantoMode()) {
 		case 'tauri':
-			return invoke<string>('login_notice_set', { notice });
+			return invokeNotice('login_notice_set', { notice });
 		case 'server': {
 			const auth = getAuthProvider() as { getToken?: () => string | null };
 			const token = auth.getToken?.();
