@@ -240,13 +240,19 @@ test('glass gives the header an 84% surface and the header and launcher a 16px b
 		.first()
 		.evaluate((el) => {
 			const style = getComputedStyle(el);
-			return { background: style.backgroundColor, blur: style.backdropFilter };
+			return {
+				background: style.backgroundColor,
+				blur: style.backdropFilter,
+				variable: style.getPropertyValue('--banto-shell-header-backdrop'),
+				webkitBlur: style.getPropertyValue('-webkit-backdrop-filter'),
+				supports: CSS.supports('backdrop-filter', 'blur(1px)')
+			};
 		});
 	const alpha =
 		/\/\s*([\d.]+)\s*\)$/.exec(headerStyle.background)?.[1] ??
 		/rgba\([^)]*,\s*([\d.]+)\)$/.exec(headerStyle.background)?.[1];
 	expect(Number(alpha)).toBeCloseTo(0.84, 2);
-	expect(headerStyle.blur).toContain('blur(16px)');
+	expect(headerStyle.blur, JSON.stringify(headerStyle)).toContain('blur(16px)');
 	expect(
 		await page
 			.locator('.launcher__bar')

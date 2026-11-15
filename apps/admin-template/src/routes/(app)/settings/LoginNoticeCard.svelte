@@ -42,8 +42,7 @@
 		</div>
 	</div>
 	<form onsubmit={save}>
-		<label class="field">
-			<span>{m['settings.loginNoticeLabel']()}</span>
+		<label class="banto-field banto-field--stacked">
 			<input
 				class="banto-field-control"
 				type="text"
@@ -51,6 +50,7 @@
 				bind:value={notice}
 				disabled={loading || saving}
 			/>
+			<span class="banto-field-label">{m['settings.loginNoticeLabel']()}</span>
 		</label>
 		<div class="save-row">
 			<Button type="submit" variant="primary" loading={saving} disabled={loading}
