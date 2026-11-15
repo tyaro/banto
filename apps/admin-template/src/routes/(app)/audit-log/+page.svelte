@@ -25,6 +25,7 @@
 	import { untrack } from 'svelte';
 	import {
 		BantoGrid,
+		FilterChips,
 		GridState,
 		type FilterState,
 		type GridColumn,
@@ -47,6 +48,7 @@
 		auditRecordScope,
 		hasAuditLogQuery
 	} from '#lib/banto/auditLogQuery.js';
+	import { gridMessages } from '#lib/banto/i18n.js';
 	import AuditChanges from '#lib/resource/AuditChanges.svelte';
 	import { auditDetailRest, parseAuditChanges } from '#lib/resource/auditChanges.js';
 	import { auditTargetHref } from '#lib/resource/auditTarget.js';
@@ -222,6 +224,11 @@
 		auditLog.setParams(params);
 	}
 
+	let pageEl: HTMLDivElement | undefined = $state();
+	function focusGrid(): void {
+		pageEl?.querySelector<HTMLElement>('[role="grid"]')?.focus();
+	}
+
 	// The query is consumed once: it is applied (initially above, or here for a
 	// link to this screen while it is open) and then removed from the URL, so a
 	// filter the user later clears does not come back on reload. Same rule as
@@ -326,7 +333,7 @@
 	});
 </script>
 
-<div class="page">
+<div class="page" bind:this={pageEl}>
 	<PageHeader hideTitle title={m['nav.auditLog']()} description={m['audit.pageDescription']()} />
 
 	{#if !available}
@@ -379,6 +386,12 @@
 			</button>
 			<span class="note">{m['audit.reloadNote']()}</span>
 		</div>
+		<FilterChips
+			state={gridState}
+			messages={gridMessages()}
+			onEmpty={focusGrid}
+			onchange={() => handleParamsChange({ sort: gridState.sort, filters: gridState.filters })}
+		/>
 
 		<section class="grid-wrap">
 			<BantoGrid

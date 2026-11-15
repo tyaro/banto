@@ -541,13 +541,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(historyChanges).toContainText('価格');
 		await expect(historyChanges).toContainText(String(ITEM_PRICE));
 		await expect(historyChanges).toContainText(String(ITEM_PRICE_UPDATED));
-		// The link to the audit-log screen carries resource + entityId; it is
+		// The link to the audit-log screen carries the record scope; it is
 		// followed after the drawer flow below (same page: the token lives in this
 		// tab's sessionStorage).
 		const auditHref = await drawer
 			.getByRole('link', { name: '監査ログで全部見る' })
 			.getAttribute('href');
-		expect(auditHref).toContain(`resource=items&entityId=${itemId}`);
+		expect(auditHref).toContain(`recordResource=items&recordId=${itemId}`);
 		await drawer.getByRole('tab', { name: '詳細', exact: true }).click();
 		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE_UPDATED));
 
@@ -560,6 +560,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// leaves the URL.
 		await page.goto(auditHref!);
 		await expect(page).toHaveURL(/\/audit-log$/);
+		const activeFilters = page.getByRole('group', { name: '適用中の絞り込み' });
+		await expect(activeFilters.getByText('記録先リソース')).toBeVisible();
+		await expect(activeFilters.getByText('記録先ID')).toBeVisible();
+		await expect(activeFilters.getByRole('button', { name: 'すべて解除' })).toBeVisible();
 		await expect(page.getByTestId('audit-count-note')).toContainText(/\d/);
 		await expect(rowWithText(page, 'items').first()).toBeVisible();
 		// Every row shown belongs to this record: no other item's history. The
