@@ -778,12 +778,11 @@ function removeAttachments() {
         ))
 `
 	);
-	swapText(
-		REST_MOD,
-		'rest: 添付除去後に items_router の clone を外す',
-		`            items.clone(),\n`,
-		`            items,\n`
-	);
+	editFile(REST_MOD, 'rest: 添付除去後に items_router の clone を外す', (s) => {
+		// display の再実行では items_router 自体を既に除去している。
+		if (!s.includes('items_router(')) return args.strict ? undefined : null;
+		return swap(s, `            items.clone(),\n`, `            items,\n`);
+	});
 	//   rest/items.rs（ItemsWriteState.attachments / 両 fn の引数 / delete_for_record）
 	drop(
 		REST_ITEMS,
