@@ -205,13 +205,11 @@ editFile(
 editFile('apps/admin-template/src/lib/components/Sidebar.svelte', 'ブランド表示', (s) =>
 	replaceAll(s, `class="brand-name">${oldBrand}<`, `class="brand-name">${args.title}<`)
 );
-editFile('apps/admin-template/src/lib/banto/loginBrand.ts', 'ログイン画面のブランド名', (s) =>
-	replaceAll(
-		s,
-		`name: '${escapeTsSingleQuoted(oldBrand)}',`,
-		`name: '${escapeTsSingleQuoted(args.title)}',`
-	)
-);
+editFile('apps/admin-template/src/lib/banto/loginBrand.ts', 'ログイン画面のブランド名', (s) => {
+	const current = /\bname: '((?:[^'\\]|\\.)*)',/.exec(s);
+	if (!current) return undefined;
+	return replaceAll(s, current[0], `name: '${escapeTsSingleQuoted(args.title)}',`);
+});
 editFile('apps/admin-template/src/routes/panel/[id]/+page.svelte', '<title> 接尾辞', (s) =>
 	replaceAll(s, ` - ${oldBrand}</title>`, ` - ${args.title}</title>`)
 );
