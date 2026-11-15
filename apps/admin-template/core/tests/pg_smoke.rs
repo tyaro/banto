@@ -25,9 +25,9 @@ use admin_template_core::users::{Role, UsersService};
 use banto_core::ListParams;
 use std::path::PathBuf;
 
-/// Drop every table this app owns (plus sqlx's migration bookkeeping) so the
-/// smoke test starts from a clean schema even if a previous run left state
-/// behind. `CASCADE` also drops the identity sequences. Uses the public
+/// Drop every table and helper function this app owns (plus sqlx's migration
+/// bookkeeping) so the smoke test starts from a clean schema even if a
+/// previous run left state behind. `CASCADE` also drops the identity sequences. Uses the public
 /// `connect_postgres` helper to get a raw pool for the DDL.
 async fn reset_schema(url: &str) {
     let pool = banto_storage::connect_postgres(url)
@@ -35,6 +35,7 @@ async fn reset_schema(url: &str) {
         .expect("connect for schema reset");
     for stmt in [
         "DROP TABLE IF EXISTS attachments, audit_log, users, settings, items CASCADE",
+        "DROP FUNCTION IF EXISTS banto_audit_parent_detail(TEXT, TEXT)",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
