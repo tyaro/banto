@@ -201,7 +201,11 @@ editFile('apps/admin-template/src/lib/components/Sidebar.svelte', 'ブランド�
 	replaceAll(s, `class="brand-name">${oldBrand}<`, `class="brand-name">${args.title}<`)
 );
 editFile('apps/admin-template/src/lib/banto/loginBrand.ts', 'ログイン画面のブランド名', (s) =>
-	replaceAll(s, `name: '${oldBrand}',`, `name: ${JSON.stringify(args.title)},`)
+	replaceAll(
+		s,
+		`name: '${oldBrand}',`,
+		`name: '${args.title.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}',`
+	)
 );
 editFile('apps/admin-template/src/routes/panel/[id]/+page.svelte', '<title> 接尾辞', (s) =>
 	replaceAll(s, ` - ${oldBrand}</title>`, ` - ${args.title}</title>`)

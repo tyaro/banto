@@ -310,10 +310,11 @@
 		gap: var(--banto-space-3);
 		height: var(--banto-shell-header-height);
 		padding: 0 var(--banto-space-4);
-		background: var(--banto-shell-header-bg);
+		background: var(--banto-shell-header-bg, var(--banto-surface));
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		/* The glass header uses stronger blur than cards (design-ux-review A-3). */
-		backdrop-filter: var(--banto-shell-header-backdrop, none);
+		/* Build tooling emits both standard and WebKit declarations from this one line. */
+		backdrop-filter: var(--banto-shell-header-backdrop, var(--banto-backdrop, none));
 	}
 
 	/* Kiosk shell (display-preset-plan.md D1-b): shorter header for a

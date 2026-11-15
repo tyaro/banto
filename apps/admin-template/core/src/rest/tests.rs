@@ -1463,6 +1463,25 @@ async fn login_notice_is_public_but_only_admin_can_change_it() {
         .unwrap();
     assert_eq!(body_json(public).await["notice"], "Service tonight");
 
+    // The only generic REST settings route is per-user UI state. Even using
+    // the same key suffix cannot overwrite this global, public notice.
+    let ui_write = router
+        .clone()
+        .oneshot(put_json(
+            "/api/ui-settings/login.notice",
+            &editor,
+            json!({ "value": "unvalidated\ntext" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(ui_write.status(), StatusCode::NO_CONTENT);
+    let still_public = router
+        .clone()
+        .oneshot(get("/api/login-notice"))
+        .await
+        .unwrap();
+    assert_eq!(body_json(still_public).await["notice"], "Service tonight");
+
     let audit = body_json(
         router
             .oneshot(post_json_auth("/api/audit-log/list", &admin, json!({})))

@@ -552,7 +552,7 @@
 						title={isDocked(def.id) ? m['dashboard.dockedAlwaysVisible']() : undefined}
 						onclick={() => togglePanel(def.id)}
 					>
-						<PanelIcon icon={def.icon ?? def.id} />
+						{#if def.icon}<PanelIcon icon={def.icon} />{/if}
 						{def.title}
 					</button>
 				{/each}

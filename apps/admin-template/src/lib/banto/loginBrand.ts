@@ -6,6 +6,8 @@ export const loginBrand = {
 	/** Optional image URL. When unset the built-in lantern mark is drawn. */
 	markUrl: '',
 	tagline: () => m['auth.tagline'](),
+	/** Shown before sign-in, including over LAN. Set false if the app version should stay private. */
+	showVersion: true,
 	/** Decorative brand surface: the only app-level literal colours here (conventions §9). */
 	background:
 		'radial-gradient(60% 80% at 20% 20%, color-mix(in srgb, var(--banto-primary) 28%, transparent), transparent), radial-gradient(50% 60% at 80% 90%, rgb(237 106 52 / 0.18), transparent), conic-gradient(from 210deg at 60% 40%, #171c26, #10131a)'

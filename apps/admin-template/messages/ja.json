@@ -344,6 +344,7 @@
   "settings.loginNoticeLabel": "お知らせ",
   "settings.loginNoticeSave": "お知らせを保存",
   "settings.loginNoticeSaved": "ログイン画面のお知らせを保存しました",
+  "settings.loginNoticeSignInAgain": "ログイン状態が切れました。お知らせを保存する前に再ログインしてください。",
   "settings.sectionNavAria": "設定カテゴリ",
   "settings.sectionAppearance": "外観・言語",
   "settings.sectionAccount": "アカウント",

@@ -54,6 +54,10 @@
 //!
 //! ## Where each router lives (theme C PR-C4, docs/template-scope.md §7 移行順 ④)
 //!
+//! There is no generic global `/api/settings/{key}` route. The only generic
+//! settings endpoint is `/api/ui-settings/{key}`, which writes to the caller's
+//! own `ui.{username}.{key}` namespace; it cannot replace `login.notice`.
+//!
 //! The table above stays here - it is the artifact conventions §1 designates
 //! as the REST side of the Tauri⇔REST correspondence table, and
 //! `scripts/verify-architecture.mjs` rule 8 anchors on it. The router

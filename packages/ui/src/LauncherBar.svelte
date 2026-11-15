@@ -347,6 +347,7 @@
 		z-index: -1;
 		border-radius: inherit;
 		background: var(--banto-shell-launcher-bg);
+		/* Build tooling emits both standard and WebKit declarations from this one line. */
 		backdrop-filter: var(--banto-shell-launcher-backdrop);
 		pointer-events: none;
 	}

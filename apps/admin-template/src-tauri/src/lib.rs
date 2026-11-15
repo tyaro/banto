@@ -6817,9 +6817,6 @@ mod tests {
         assert_eq!(answer.identity.expect("active").role, "viewer");
     }
 
-    /// S-103 (freshness audit of #266, P2-2): the generic `settings_set`
-    /// refuses the `auth.` keys (only `auth_config_apply` / `autologin_*`
-    /// write them, with the session re-bind); other keys still work.
     #[tokio::test]
     async fn login_notice_tauri_admin_write_and_viewer_denial() {
         let state = app_state().await;
@@ -6873,6 +6870,9 @@ mod tests {
             .any(|row| row.resource == "settings" && row.result == "denied"));
     }
 
+    /// S-103 (freshness audit of #266, P2-2): the generic `settings_set`
+    /// refuses the `auth.` keys (only `auth_config_apply` / `autologin_*`
+    /// write them, with the session re-bind); other keys still work.
     #[tokio::test]
     async fn s103_settings_set_refuses_auth_keys() {
         let state = app_state().await;

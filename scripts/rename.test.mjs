@@ -100,7 +100,7 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 			path.join(dir, 'apps/admin-template/src/lib/banto/loginBrand.ts'),
 			'utf8'
 		);
-		assert.match(loginBrand, new RegExp(`name: "${SAMPLE.title}"`));
+		assert.match(loginBrand, new RegExp(`name: '${SAMPLE.title}'`));
 
 		// PWA のインストール名（manifest name/short_name + apple-title）も追随。
 		const manifest = JSON.parse(

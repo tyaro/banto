@@ -54,7 +54,7 @@
 	// token from. Set once `status()` resolves below.
 	let showContinueAsViewer = $state(false);
 	let notice = $state('');
-	let connection = $state<{ kind: 'local' | 'lan' | 'demo'; address?: string }>({ kind: 'demo' });
+	let connection = $state<{ kind: 'local' | 'lan' | 'demo'; address?: string } | null>(null);
 
 	$effect(() => {
 		void (async () => {
@@ -177,7 +177,7 @@
 		<!-- B-7: author branding lives in loginBrand.ts; the notice comes from a
 		     dedicated public settings key. Text is escaped by Svelte. -->
 		<aside class="brand-pane" style:background={loginBrand.background}>
-			<span class="brand-mark">
+			<span class="brand-mark" aria-hidden="true">
 				{#if loginBrand.markUrl}
 					<img src={loginBrand.markUrl} alt="" />
 				{:else}
@@ -188,23 +188,23 @@
 					</svg>
 				{/if}
 			</span>
-			<p class="brand-name">{loginBrand.name}</p>
+			<p class="brand-name" aria-hidden="true">{loginBrand.name}</p>
 			<p class="tagline">{loginBrand.tagline()}</p>
 			<dl class="login-context">
-				<div>
-					<dt>{m['auth.connectionLabel']()}</dt>
-					<dd>
-						{connection.kind === 'lan'
-							? connection.address
-							: connection.kind === 'local'
-								? m['auth.connectionLocal']()
-								: m['auth.connectionDemo']()}
-					</dd>
-				</div>
-				<div>
-					<dt>{m['auth.versionLabel']()}</dt>
-					<dd>{appVersion}</dd>
-				</div>
+				{#if connection}<div>
+						<dt>{m['auth.connectionLabel']()}</dt>
+						<dd>
+							{connection.kind === 'lan'
+								? connection.address
+								: connection.kind === 'local'
+									? m['auth.connectionLocal']()
+									: m['auth.connectionDemo']()}
+						</dd>
+					</div>{/if}
+				{#if loginBrand.showVersion}<div>
+						<dt>{m['auth.versionLabel']()}</dt>
+						<dd class="login-version">{appVersion}</dd>
+					</div>{/if}
 			</dl>
 			{#if notice}<p class="login-notice"><span>{m['auth.noticeLabel']()}</span>{notice}</p>{/if}
 		</aside>

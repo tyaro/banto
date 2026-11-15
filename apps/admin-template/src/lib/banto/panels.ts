@@ -13,6 +13,8 @@
  * Kept as a plain array (not a `Record`) so it stays directly assignable to
  * `FloatingWindowDef[]`; `findPanelDef` below is the map-like lookup the
  * route needs.
+ * To give a new semantic icon id a line icon, add it to PanelIcon.svelte's
+ * lookup. Unknown ids still render as their original text for adopters.
  */
 import type { FloatingWindowDef } from '@banto/dock-svelte';
 import * as m from '#lib/paraglide/messages.js';

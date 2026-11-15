@@ -1,9 +1,30 @@
 /** Public login notice. Only this dedicated setting is readable before login. */
 import { invoke } from '@tauri-apps/api/core';
-import { getAuthProvider } from '@banto/admin-core';
+import { getAuthProvider, ProviderError, type ErrorBody } from '@banto/admin-core';
 import { CSRF_HEADER, getBantoMode } from './setup';
 
 const PATH = '/api/login-notice';
+const ERROR_KINDS = new Set<ErrorBody['kind']>([
+	'not_found',
+	'validation',
+	'bad_request',
+	'unauthorized',
+	'forbidden',
+	'storage',
+	'other'
+]);
+
+function isErrorBody(value: unknown): value is ErrorBody {
+	if (!value || typeof value !== 'object') return false;
+	const kind = (value as { kind?: unknown }).kind;
+	return typeof kind === 'string' && ERROR_KINDS.has(kind as ErrorBody['kind']);
+}
+
+async function responseError(response: Response): Promise<ProviderError> {
+	const body: unknown = await response.json().catch(() => null);
+	if (isErrorBody(body)) return new ProviderError(body);
+	return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
+}
 
 export async function getLoginNotice(): Promise<string> {
 	switch (getBantoMode()) {
@@ -11,7 +32,7 @@ export async function getLoginNotice(): Promise<string> {
 			return invoke<string>('login_notice_get');
 		case 'server': {
 			const response = await fetch(PATH, { headers: CSRF_HEADER });
-			if (!response.ok) throw new Error(`Login notice: ${response.status}`);
+			if (!response.ok) throw await responseError(response);
 			return ((await response.json()) as { notice: string }).notice;
 		}
 		case 'demo':
@@ -39,9 +60,9 @@ export async function setLoginNotice(notice: string): Promise<string> {
 		case 'tauri':
 			return invoke<string>('login_notice_set', { notice });
 		case 'server': {
-			const getToken = (getAuthProvider() as { getToken?: () => string | null }).getToken;
-			const token = getToken?.();
-			if (!token) throw new Error('No active session');
+			const auth = getAuthProvider() as { getToken?: () => string | null };
+			const token = auth.getToken?.();
+			if (!token) throw new ProviderError({ kind: 'unauthorized' });
 			const response = await fetch(PATH, {
 				method: 'PUT',
 				headers: {
@@ -51,7 +72,7 @@ export async function setLoginNotice(notice: string): Promise<string> {
 				},
 				body: JSON.stringify({ notice })
 			});
-			if (!response.ok) throw new Error(`Login notice: ${response.status}`);
+			if (!response.ok) throw await responseError(response);
 			return ((await response.json()) as { notice: string }).notice;
 		}
 		case 'demo':

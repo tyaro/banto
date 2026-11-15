@@ -29,4 +29,6 @@
 
 {#if Icon}
 	<Icon {size} aria-hidden="true" />
+{:else}
+	{icon}
 {/if}

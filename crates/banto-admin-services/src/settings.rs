@@ -29,6 +29,17 @@ const KEY_AUDIT_RETENTION_ROWS: &str = "audit.retention_rows";
 const KEY_LOGIN_NOTICE: &str = "login.notice";
 pub const MAX_LOGIN_NOTICE_CHARS: usize = 200;
 
+fn invalid_login_notice_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
+}
+
 /// Default audit-log retention (spec M14): 90 days / 100,000 rows. There is
 /// deliberately no "audit enabled" toggle - the audit trail is a standard
 /// part of the template (spec: "監査ログを標準装備する"), only its retention
@@ -238,7 +249,8 @@ impl SettingsService {
     /// Save only bounded, single-line public text. The UI renders it as text.
     pub async fn set_login_notice(&self, value: &str) -> Result<String, BantoError> {
         let notice = value.trim();
-        if notice.chars().count() > MAX_LOGIN_NOTICE_CHARS || notice.chars().any(|c| c.is_control())
+        if notice.chars().count() > MAX_LOGIN_NOTICE_CHARS
+            || notice.chars().any(invalid_login_notice_char)
         {
             return Err(BantoError::Validation {
                 field_errors: vec![FieldError {
@@ -764,6 +776,9 @@ mod tests {
         assert_eq!(svc.login_notice().await.unwrap(), "Maintenance tonight");
         for invalid in [
             "first\nsecond".to_string(),
+            "first\u{2028}second".to_string(),
+            "first\u{202E}second".to_string(),
+            "first\u{200B}second".to_string(),
             "x".repeat(MAX_LOGIN_NOTICE_CHARS + 1),
         ] {
             assert!(matches!(
