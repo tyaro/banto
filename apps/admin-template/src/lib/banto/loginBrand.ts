@@ -6,7 +6,7 @@ export const loginBrand = {
 	/** Optional image URL. When unset the built-in lantern mark is drawn. */
 	markUrl: '',
 	tagline: () => m['auth.tagline'](),
-	/** Shown before sign-in, including over LAN. Set false if the app version should stay private. */
+	/** Shown before sign-in, including over LAN. False hides it from the screen, not the JS bundle. */
 	showVersion: true,
 	/** Decorative brand surface: the only app-level literal colours here (conventions §9). */
 	background:

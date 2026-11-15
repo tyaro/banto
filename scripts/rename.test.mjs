@@ -121,6 +121,36 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 	}
 });
 
+test('rename.mjs は引用符を含む旧ブランド名を再リネームできる', () => {
+	const dir = copyRepo();
+	try {
+		for (const title of ["O'Brien Admin", 'Widget Next']) {
+			const res = spawnSync(
+				process.execPath,
+				[
+					path.join(dir, 'scripts/rename.mjs'),
+					'--name',
+					SAMPLE.name,
+					'--title',
+					title,
+					'--identifier',
+					SAMPLE.identifier
+				],
+				{ cwd: dir, encoding: 'utf8' }
+			);
+			assert.equal(res.status, 0, `rename.mjs が非0終了:\n${res.stdout}\n${res.stderr}`);
+		}
+		const loginBrand = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/lib/banto/loginBrand.ts'),
+			'utf8'
+		);
+		assert.match(loginBrand, /name: 'Widget Next',/);
+		assert.doesNotMatch(loginBrand, /O\\'Brien Admin/);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test('rename.mjs --repo は Cargo.toml と全パッケージの repository を書き換える', () => {
 	const dir = copyRepo();
 	try {
