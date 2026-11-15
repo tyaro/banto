@@ -96,6 +96,11 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 		// app.html の <title> が新タイトルに。
 		const appHtml = fs.readFileSync(path.join(dir, 'apps/admin-template/src/app.html'), 'utf8');
 		assert.match(appHtml, new RegExp(`<title>${SAMPLE.title}</title>`));
+		const loginBrand = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/lib/banto/loginBrand.ts'),
+			'utf8'
+		);
+		assert.match(loginBrand, new RegExp(`name: "${SAMPLE.title}"`));
 
 		// PWA のインストール名（manifest name/short_name + apple-title）も追随。
 		const manifest = JSON.parse(

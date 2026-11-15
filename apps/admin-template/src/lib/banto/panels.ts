@@ -36,7 +36,7 @@ export const PANEL_DEFS: FloatingWindowDef[] = [
 		get title() {
 			return m['panels.monthly']();
 		},
-		icon: '📈',
+		icon: 'monthly',
 		width: 420,
 		height: 320
 	},
@@ -45,7 +45,7 @@ export const PANEL_DEFS: FloatingWindowDef[] = [
 		get title() {
 			return m['panels.priceBuckets']();
 		},
-		icon: '🥧',
+		icon: 'priceBuckets',
 		width: 360,
 		height: 320
 	},
@@ -59,7 +59,7 @@ export const PANEL_DEFS: FloatingWindowDef[] = [
 		get title() {
 			return m['panels.spc']();
 		},
-		icon: '📊',
+		icon: 'spc',
 		width: 460,
 		height: 640
 	},
@@ -68,7 +68,7 @@ export const PANEL_DEFS: FloatingWindowDef[] = [
 		get title() {
 			return m['panels.trend']();
 		},
-		icon: '📉',
+		icon: 'trend',
 		width: 640,
 		height: 360
 	},
@@ -77,7 +77,7 @@ export const PANEL_DEFS: FloatingWindowDef[] = [
 		get title() {
 			return m['panels.memo']();
 		},
-		icon: '📝',
+		icon: 'memo',
 		width: 320,
 		height: 220
 	}

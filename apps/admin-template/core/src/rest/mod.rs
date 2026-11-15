@@ -18,6 +18,8 @@
 //! | GET    | `/api/auth/identity` | -              | `Identity \| null`     |
 //! | POST   | `/api/auth/change-password` | `{currentPassword,newPassword}` | `{success}` (auth required) |
 //! | GET    | `/api/events`        | -              | SSE stream of `ServerEvent` |
+//! | GET    | `/api/login-notice`  | -              | `{notice}` (NO auth required) |
+//! | PUT    | `/api/login-notice`  | `{notice}`     | `{notice}` (admin) |
 // [scaffold:items] begin (Route table doc rows)
 //! | POST   | `/api/items/list`    | `ListParams`   | `ListResult<Item>` (any role) |
 //! | GET    | `/api/items/{id}`    | -              | `Item` (any role)      |
@@ -238,6 +240,7 @@ use crate::system_info::SystemInfoService;
 use crate::users::{Role, UsersService};
 
 mod attachments;
+mod login_notice;
 // [scaffold:items] begin
 mod items;
 // [scaffold:items] end
@@ -256,6 +259,7 @@ pub use banto_server::routes::audited_credential_verifier;
 pub use banto_server::routes::user_auth_state;
 
 use attachments::attachments_router;
+use login_notice::login_notice_router;
 // [scaffold:items] begin
 use items::items_router;
 // [scaffold:items] end
@@ -386,6 +390,11 @@ pub fn api_router(
             auth.clone(),
             audit.clone(),
             metrics,
+        ))
+        .merge(login_notice_router(
+            settings.clone(),
+            audit.clone(),
+            auth.clone(),
         ))
         .merge(attachments_router(
             attachments,

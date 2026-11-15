@@ -200,15 +200,9 @@ editFile(
 editFile('apps/admin-template/src/lib/components/Sidebar.svelte', 'ブランド表示', (s) =>
 	replaceAll(s, `class="brand-name">${oldBrand}<`, `class="brand-name">${args.title}<`)
 );
-editFile('apps/admin-template/src/routes/login/+page.svelte', 'ブランド表示 + 見出し', (s) => {
-	const step1 = replaceAll(
-		s,
-		`class="brand-name">${oldBrand}<`,
-		`class="brand-name">${args.title}<`
-	);
-	if (step1 === undefined || step1 === null) return step1;
-	return replaceAll(step1, `<h1>${oldBrand}</h1>`, `<h1>${args.title}</h1>`) ?? step1;
-});
+editFile('apps/admin-template/src/lib/banto/loginBrand.ts', 'ログイン画面のブランド名', (s) =>
+	replaceAll(s, `name: '${oldBrand}',`, `name: ${JSON.stringify(args.title)},`)
+);
 editFile('apps/admin-template/src/routes/panel/[id]/+page.svelte', '<title> 接尾辞', (s) =>
 	replaceAll(s, ` - ${oldBrand}</title>`, ` - ${args.title}</title>`)
 );

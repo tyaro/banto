@@ -2990,6 +2990,36 @@ async fn settings_set(
     settings_set_body(&state, &actor, key, value).await
 }
 
+/// The login screen may read this one public key before authentication.
+#[tauri::command]
+async fn login_notice_get(state: State<'_, AppState>) -> Result<String, BantoError> {
+    state.settings.login_notice().await
+}
+
+/// Admin-only counterpart of REST PUT /api/login-notice. Audit the key only.
+#[tauri::command]
+async fn login_notice_set(
+    state: State<'_, AppState>,
+    notice: String,
+) -> Result<String, BantoError> {
+    login_notice_set_body(&state, &notice).await
+}
+
+async fn login_notice_set_body(state: &AppState, notice: &str) -> Result<String, BantoError> {
+    let actor = require_role(state, Role::Admin, "settings").await?;
+    let saved = state.settings.set_login_notice(notice).await?;
+    record_ok(
+        &state.audit,
+        &actor,
+        "settings_change",
+        "settings",
+        None,
+        Some(serde_json::json!({ "key": "login.notice" })),
+    )
+    .await;
+    Ok(saved)
+}
+
 /// Body of [`settings_set`]. Freshness audit of #266 (P2-2, S-103): keys in
 /// the `auth.` namespace are refused - they are written only by
 /// [`auth_config_apply`] (which re-binds the session under
@@ -3020,6 +3050,11 @@ async fn settings_set_body(
         return Err(BantoError::BadRequest(format!(
             "設定 {key} はこのコマンドでは変更できません。LANアクセスの設定は server_apply で変更してください"
         )));
+    }
+    if key == "login.notice" {
+        return Err(BantoError::BadRequest(
+            "ログイン画面のお知らせは login_notice_set で変更してください".to_string(),
+        ));
     }
     state.settings.set(&key, &value).await?;
     // Spec M14: only the KEY is recorded, never the value - this is a
@@ -4310,6 +4345,8 @@ pub fn run() {
             system_info,
             settings_get,
             settings_set,
+            login_notice_get,
+            login_notice_set,
             ui_settings_get,
             ui_settings_set,
             vibrancy_apply,
@@ -6783,6 +6820,59 @@ mod tests {
     /// S-103 (freshness audit of #266, P2-2): the generic `settings_set`
     /// refuses the `auth.` keys (only `auth_config_apply` / `autologin_*`
     /// write them, with the session re-bind); other keys still work.
+    #[tokio::test]
+    async fn login_notice_tauri_admin_write_and_viewer_denial() {
+        let state = app_state().await;
+        state
+            .users
+            .setup_first_user("admin", SLOT_PASSWORD, "Admin")
+            .await
+            .unwrap();
+        state
+            .users
+            .create_user("viewer", SLOT_PASSWORD, "Viewer", Role::Viewer)
+            .await
+            .unwrap();
+        let viewer = state
+            .users
+            .get_by_username("viewer")
+            .await
+            .unwrap()
+            .unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(viewer)));
+        assert!(matches!(
+            login_notice_set_body(&state, "denied").await,
+            Err(BantoError::Forbidden)
+        ));
+        assert_eq!(state.settings.login_notice().await.unwrap(), "");
+
+        let admin = state.users.get_by_username("admin").await.unwrap().unwrap();
+        state.set_session_for_test(Some(DesktopSession::Account(admin.clone())));
+        assert_eq!(
+            login_notice_set_body(&state, "  Service tonight  ")
+                .await
+                .unwrap(),
+            "Service tonight"
+        );
+        assert_eq!(
+            state.settings.login_notice().await.unwrap(),
+            "Service tonight"
+        );
+        let rows = state.audit.list(ListParams::default()).await.unwrap().rows;
+        let success = rows
+            .iter()
+            .find(|row| {
+                row.resource == "settings" && row.action == "settings_change" && row.result == "ok"
+            })
+            .unwrap();
+        let detail: serde_json::Value =
+            serde_json::from_str(success.detail.as_deref().unwrap()).unwrap();
+        assert_eq!(detail, serde_json::json!({ "key": "login.notice" }));
+        assert!(rows
+            .iter()
+            .any(|row| row.resource == "settings" && row.result == "denied"));
+    }
+
     #[tokio::test]
     async fn s103_settings_set_refuses_auth_keys() {
         let state = app_state().await;

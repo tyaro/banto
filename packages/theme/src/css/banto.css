@@ -55,6 +55,10 @@
 	--banto-shell-sidebar-width-collapsed: 56px;
 
 	--banto-shell-header-height: 48px;
+	/* Header gets its own material so glass can protect the title without
+	   changing the opacity of cards and dialogs (design-ux-review A-3). */
+	--banto-shell-header-bg: var(--banto-surface);
+	--banto-shell-header-backdrop: var(--banto-backdrop);
 
 	/* Kiosk shell (display-preset-plan.md D1-b): a shorter header for
      permanently-mounted dashboards. Opt-in via Header.svelte's

@@ -310,11 +310,11 @@
 		gap: var(--banto-space-3);
 		height: var(--banto-shell-header-height);
 		padding: 0 var(--banto-space-4);
-		background: var(--banto-surface);
+		background: var(--banto-shell-header-bg);
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
-		/* Glass preset (spec M12): no-op under standard (--banto-backdrop: none). */
-		backdrop-filter: var(--banto-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-backdrop, none);
+		/* The glass header uses stronger blur than cards (design-ux-review A-3). */
+		backdrop-filter: var(--banto-shell-header-backdrop, none);
+		-webkit-backdrop-filter: var(--banto-shell-header-backdrop, none);
 	}
 
 	/* Kiosk shell (display-preset-plan.md D1-b): shorter header for a

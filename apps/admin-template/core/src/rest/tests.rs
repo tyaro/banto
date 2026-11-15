@@ -1401,6 +1401,92 @@ async fn users_routes_are_unauthorized_without_a_token() {
 
 // --- M12 per-user UI settings ------------------------------------------
 
+#[tokio::test]
+async fn login_notice_is_public_but_only_admin_can_change_it() {
+    let (router, admin, editor, _viewer) = router_with_role_tokens().await;
+    let initial = router
+        .clone()
+        .oneshot(get("/api/login-notice"))
+        .await
+        .unwrap();
+    assert_eq!(initial.status(), StatusCode::OK);
+    assert_eq!(body_json(initial).await["notice"], "");
+
+    let denied = router
+        .clone()
+        .oneshot(put_json(
+            "/api/login-notice",
+            &editor,
+            json!({ "notice": "denied" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let unauthenticated = router
+        .clone()
+        .oneshot(
+            HttpRequest::put("/api/login-notice")
+                .header(CLIENT_HEADER.0, CLIENT_HEADER.1)
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "notice": "denied" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+    let invalid = router
+        .clone()
+        .oneshot(put_json(
+            "/api/login-notice",
+            &admin,
+            json!({ "notice": "two\nlines" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let saved = router
+        .clone()
+        .oneshot(put_json(
+            "/api/login-notice",
+            &admin,
+            json!({ "notice": "  Service tonight  " }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    assert_eq!(body_json(saved).await["notice"], "Service tonight");
+    let public = router
+        .clone()
+        .oneshot(get("/api/login-notice"))
+        .await
+        .unwrap();
+    assert_eq!(body_json(public).await["notice"], "Service tonight");
+
+    let audit = body_json(
+        router
+            .oneshot(post_json_auth("/api/audit-log/list", &admin, json!({})))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let rows = audit["rows"].as_array().unwrap();
+    let saved_entry = rows
+        .iter()
+        .find(|row| {
+            row["action"] == "settings_change"
+                && row["result"] == "ok"
+                && row["resource"] == "settings"
+        })
+        .unwrap();
+    let detail: serde_json::Value =
+        serde_json::from_str(saved_entry["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(detail, json!({ "key": "login.notice" }));
+    assert!(rows
+        .iter()
+        .any(|row| row["resource"] == "settings" && row["result"] == "denied"));
+}
+
 fn put_ui_setting(key: &str, token: &str, value: &str) -> HttpRequest<Body> {
     put_json(
         &format!("/api/ui-settings/{key}"),

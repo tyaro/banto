@@ -36,7 +36,7 @@ Banto は**コピーして使う**前提のテンプレート（[template-scope.
 - `apps/admin-template/src-tauri/tauri.conf.json` の `productName`/`identifier`
   （`dev.banto.admin` を自分の逆順ドメイン識別子に）・`app.windows[0].title`
 - アプリ内の表示文言（`src/app.html` の `<title>`、`src/lib/components/Sidebar.svelte`・
-  `src/routes/login/+page.svelte` 等の「Banto」表記）と、E2E のログイン見出しアサーション
+  `src/lib/banto/loginBrand.ts` のブランド名）と、E2E のログイン見出しアサーション
 - OS keyring のサービス名: `apps/admin-template/src-tauri/src/keyring_store.rs` の
   `SERVICE_NAME`（既定 `"dev.banto.admin-template"` → `--identifier` の値。手動でやる場合に
   見落とすと、新アプリの資格情報が旧テンプレートの keyring 識別子のまま同居する）
@@ -65,6 +65,8 @@ Banto は**コピーして使う**前提のテンプレート（[template-scope.
 - アイコン: `pnpm --filter <name>-app tauri icon <画像>`（Windows では `tauri dev`/
   `tauri build` に `icons/icon.ico` が必須。同梱済みで、独自アイコンに差し替えるとこの
   コマンドで全形式を再生成できる — [windows-setup.md](windows-setup.md)）
+- ログイン画面のロゴ・背景・キャッチコピー: `src/lib/banto/loginBrand.ts` を編集する。
+  管理者からのお知らせは、起動後に「設定 → 外観」で入力する（ログイン前にも表示）。
 - ルート `README.md`/`LICENSE`（著作権者名）の文言
 - visual regression スナップショットの再生成（旧ブランドの見た目で撮られているため
   `pnpm e2e:visual --update-snapshots`）

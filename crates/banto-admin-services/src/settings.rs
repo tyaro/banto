@@ -26,6 +26,8 @@ const KEY_AUTOLOGIN_ENABLED: &str = "auth.autologin.enabled";
 const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
 const KEY_AUDIT_RETENTION_DAYS: &str = "audit.retention_days";
 const KEY_AUDIT_RETENTION_ROWS: &str = "audit.retention_rows";
+const KEY_LOGIN_NOTICE: &str = "login.notice";
+pub const MAX_LOGIN_NOTICE_CHARS: usize = 200;
 
 /// Default audit-log retention (spec M14): 90 days / 100,000 rows. There is
 /// deliberately no "audit enabled" toggle - the audit trail is a standard
@@ -225,6 +227,30 @@ pub fn auth_server_combination_allowed(
 impl SettingsService {
     pub fn new(db: Db) -> Self {
         Self { db }
+    }
+
+    /// Public login-screen notice. This dedicated key prevents an unauthenticated
+    /// reader from requesting arbitrary (possibly secret) settings keys.
+    pub async fn login_notice(&self) -> Result<String, BantoError> {
+        Ok(self.get(KEY_LOGIN_NOTICE).await?.unwrap_or_default())
+    }
+
+    /// Save only bounded, single-line public text. The UI renders it as text.
+    pub async fn set_login_notice(&self, value: &str) -> Result<String, BantoError> {
+        let notice = value.trim();
+        if notice.chars().count() > MAX_LOGIN_NOTICE_CHARS || notice.chars().any(|c| c.is_control())
+        {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "notice".to_string(),
+                    message: format!(
+                        "お知らせは改行なし・{MAX_LOGIN_NOTICE_CHARS}文字以内で指定してください"
+                    ),
+                }],
+            });
+        }
+        self.set(KEY_LOGIN_NOTICE, notice).await?;
+        Ok(notice.to_string())
     }
 
     /// Read a single setting by key, or `None` if it has never been set.
@@ -723,6 +749,29 @@ mod tests {
         let svc = service().await;
         svc.set("theme", "dark").await.unwrap();
         assert_eq!(svc.get("theme").await.unwrap(), Some("dark".to_string()));
+    }
+
+    #[tokio::test]
+    async fn login_notice_is_public_text_with_a_single_bounded_line() {
+        let svc = service().await;
+        assert_eq!(svc.login_notice().await.unwrap(), "");
+        assert_eq!(
+            svc.set_login_notice("  Maintenance tonight  ")
+                .await
+                .unwrap(),
+            "Maintenance tonight"
+        );
+        assert_eq!(svc.login_notice().await.unwrap(), "Maintenance tonight");
+        for invalid in [
+            "first\nsecond".to_string(),
+            "x".repeat(MAX_LOGIN_NOTICE_CHARS + 1),
+        ] {
+            assert!(matches!(
+                svc.set_login_notice(&invalid).await,
+                Err(BantoError::Validation { .. })
+            ));
+        }
+        assert_eq!(svc.login_notice().await.unwrap(), "Maintenance tonight");
     }
 
     #[tokio::test]

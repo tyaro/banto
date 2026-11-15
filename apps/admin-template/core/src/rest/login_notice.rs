@@ -1,0 +1,73 @@
+use super::*;
+use axum::http::HeaderMap;
+use axum::routing::put;
+use serde::Serialize;
+
+#[derive(Clone)]
+struct LoginNoticeState {
+    settings: SettingsService,
+    audit: AuditLogService,
+    auth: AuthState,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LoginNoticeBody {
+    notice: String,
+}
+
+/// The one public settings key read by the login screen. No arbitrary key input.
+async fn login_notice_get(
+    State(state): State<LoginNoticeState>,
+) -> Result<Json<LoginNoticeBody>, ApiError> {
+    Ok(Json(LoginNoticeBody {
+        notice: state.settings.login_notice().await?,
+    }))
+}
+
+async fn login_notice_set(
+    State(state): State<LoginNoticeState>,
+    headers: HeaderMap,
+    Json(body): Json<LoginNoticeBody>,
+) -> Result<Json<LoginNoticeBody>, ApiError> {
+    let notice = state.settings.set_login_notice(&body.notice).await?;
+    record_write(
+        &state.audit,
+        &state.auth,
+        &headers,
+        "settings_change",
+        "settings",
+        None,
+        Some(json!({ "key": "login.notice" })),
+    )
+    .await;
+    Ok(Json(LoginNoticeBody { notice }))
+}
+
+pub fn login_notice_router(
+    settings: SettingsService,
+    audit: AuditLogService,
+    auth: AuthState,
+) -> Router {
+    let state = LoginNoticeState {
+        settings,
+        audit: audit.clone(),
+        auth: auth.clone(),
+    };
+    let public = Router::new()
+        .route("/api/login-notice", get(login_notice_get))
+        .with_state(state.clone());
+    let admin = Router::new()
+        .route("/api/login-notice", put(login_notice_set))
+        .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            RoleGuard {
+                auth: auth.clone(),
+                min: Role::Admin,
+                resource: "settings",
+                audit,
+            },
+            require_role_at_least,
+        ))
+        .layer(middleware::from_fn_with_state(auth, require_auth));
+    public.merge(admin)
+}
