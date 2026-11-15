@@ -21,7 +21,9 @@
   `parentId` が揃えば親を記録先とし、なければ監査行自身の `resource`・`entity_id`
   を使う。不正な JSON は直接の対象として扱う。既存行も migration 時に算出し、
   新規・spool からの行も INSERT 時に算出する。PostgreSQL の安全な JSON 抽出は
-  migration 内の immutable 関数にまとめる。
+  migration 内の immutable 関数にまとめる。PostgreSQL の `jsonb` が表せない
+  `\\u0000` などを detail のどこかに含む行は、親キーが有効でも直接の対象に戻す。
+  添付のファイル名には NUL を使えないが、異常な監査行が起動を止めない方針を優先する。
 - フィルタの値は SQL にバインドする。記録先を絞る履歴・監査一覧のクエリは
   複合インデックスを使い、読み取りごとの detail 全件解析を避ける。
 - 履歴のページング・並び順・件数は既存の `list_as_of` の単一読み取りトランザクション

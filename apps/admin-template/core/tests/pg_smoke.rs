@@ -498,12 +498,18 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
         .list_as_of(params, None)
         .await
         .expect("related history list");
-    assert_eq!(history.total_count, 4);
+    assert_eq!(history.total_count, 3);
     assert_eq!(history.rows[0].resource, "attachments");
-    assert_eq!(history.rows[0].entity_id.as_deref(), Some("106"));
-    assert_eq!(history.rows[1].entity_id.as_deref(), Some("103"));
-    assert_eq!(history.rows[2].entity_id.as_deref(), Some("101"));
-    assert_eq!(history.rows[3].resource, "items");
+    assert_eq!(history.rows[0].entity_id.as_deref(), Some("103"));
+    assert_eq!(history.rows[1].entity_id.as_deref(), Some("101"));
+    assert_eq!(history.rows[2].resource, "items");
+    let nul_detail_row: String = sqlx::query_scalar(
+        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = '106'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("NUL detail row falls back to its direct resource");
+    assert_eq!(nul_detail_row, "attachments");
 
     let sorted = audit
         .list(ListParams {

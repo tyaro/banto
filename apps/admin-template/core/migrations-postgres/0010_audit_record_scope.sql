@@ -3,16 +3,16 @@
 -- malformed historical detail and accepts only a complete parent pair.
 CREATE FUNCTION banto_audit_parent_detail(raw_detail TEXT, field_name TEXT)
 RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $$
-DECLARE parsed JSON;
+DECLARE parsed JSONB;
 BEGIN
-  parsed := raw_detail::json;
-  IF json_typeof(parsed -> 'parentResource') = 'string'
-     AND json_typeof(parsed -> 'parentId') IN ('string', 'number') THEN
+  parsed := raw_detail::jsonb;
+  IF jsonb_typeof(parsed -> 'parentResource') = 'string'
+     AND jsonb_typeof(parsed -> 'parentId') IN ('string', 'number') THEN
     RETURN parsed ->> field_name;
   END IF;
   RETURN NULL;
--- json keeps escapes in unrelated values (for example fileName with \u0000).
--- An invalid parent value or any parse failure leaves the row directly scoped.
+-- JSONB cannot represent \u0000 even in an unrelated value. Such a row, and
+-- any other parse failure, remains directly scoped rather than blocking boot.
 EXCEPTION WHEN OTHERS THEN
   RETURN NULL;
 END;
