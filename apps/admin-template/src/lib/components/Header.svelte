@@ -314,7 +314,6 @@
 		border-bottom: var(--banto-border-width) solid var(--banto-border);
 		/* The glass header uses stronger blur than cards (design-ux-review A-3). */
 		backdrop-filter: var(--banto-shell-header-backdrop, none);
-		-webkit-backdrop-filter: var(--banto-shell-header-backdrop, none);
 	}
 
 	/* Kiosk shell (display-preset-plan.md D1-b): shorter header for a

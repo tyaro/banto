@@ -348,7 +348,6 @@
 		border-radius: inherit;
 		background: var(--banto-shell-launcher-bg);
 		backdrop-filter: var(--banto-shell-launcher-backdrop);
-		-webkit-backdrop-filter: var(--banto-shell-launcher-backdrop);
 		pointer-events: none;
 	}
 
