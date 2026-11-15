@@ -30,5 +30,5 @@
 {#if Icon}
 	<Icon {size} aria-hidden="true" />
 {:else}
-	{icon}
+	<span aria-hidden="true">{icon}</span>
 {/if}

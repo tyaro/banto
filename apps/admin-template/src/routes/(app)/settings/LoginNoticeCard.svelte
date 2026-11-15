@@ -12,10 +12,18 @@
 	let loadFailed = $state(false);
 	let saving = $state(false);
 	let feedback = $state('');
-	const noticeError = (error: unknown) =>
-		isProviderError(error) && error.body.kind === 'unauthorized'
-			? m['settings.loginNoticeSignInAgain']()
-			: errorMessage(error);
+	function noticeError(error: unknown): string {
+		if (isProviderError(error)) {
+			if (error.body.kind === 'unauthorized') return m['settings.loginNoticeSignInAgain']();
+			if (
+				error.body.kind === 'validation' &&
+				error.body.field_errors.some((field) => field.field === 'notice')
+			) {
+				return m['settings.loginNoticeInvalid']();
+			}
+		}
+		return errorMessage(error);
+	}
 
 	async function load(): Promise<void> {
 		loading = true;
