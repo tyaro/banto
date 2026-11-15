@@ -15,9 +15,14 @@ denied や別の親レコードの添付操作は含めない。
 
 - 監査一覧に履歴専用のフィルタ `recordResource`・`recordId` を追加する。通常の
   `resource`・`entityId` フィルタと画面表示は維持する。
-- フィルタの値は SQL にバインドする。対象行は、detail に完全な親の組があれば
-  その組、なければ監査行自身の `resource`・`entity_id` で判定する。
-  SQLite と PostgreSQL の JSON 抽出式だけを方言別にする。
+- migration 0010 で `audit_log` に `record_resource`・`record_id` の生成列と複合
+  インデックスを追加する。detail に文字列の `parentResource` と文字列・数値の
+  `parentId` が揃えば親を記録先とし、なければ監査行自身の `resource`・`entity_id`
+  を使う。不正な JSON は直接の対象として扱う。既存行も migration 時に算出し、
+  新規・spool からの行も INSERT 時に算出する。PostgreSQL の安全な JSON 抽出は
+  migration 内の immutable 関数にまとめる。
+- フィルタの値は SQL にバインドする。記録先を絞る履歴・監査一覧のクエリは
+  複合インデックスを使い、読み取りごとの detail 全件解析を避ける。
 - 履歴のページング・並び順・件数は既存の `list_as_of` の単一読み取りトランザクション
   とスナップショット境界を使う。フロントで 2 つの一覧を結合しない。
 - 履歴行では別リソースの操作と分かるよう、監査行の `resource` を操作名に添える。
@@ -34,4 +39,4 @@ denied や別の親レコードの添付操作は含めない。
   添付自身の ID だけでは混入しないことを確認する。古い direct 行も残す。
 - REST と Tauri の既存の監査書き込みテストで、添付の親情報と denied を確認する。
 - `recordHistoryParams` と画面のテストで新フィルタと別リソース表示を確認する。
-- SQLite・PostgreSQL の両方でクエリを確認し、scaffold 4 プリセットを受け入れる。
+- SQLite・PostgreSQL の両方で migration・クエリを確認し、scaffold 4 プリセットを受け入れる。

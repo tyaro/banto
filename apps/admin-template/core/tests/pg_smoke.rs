@@ -376,7 +376,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert_eq!(remaining.total_count, 1);
 
     audit_snapshot_boundary_on_postgres(&audit, &db).await;
-    audit_related_record_history_on_postgres(&audit).await;
+    audit_related_record_history_on_postgres(&audit, &db).await;
 
     concurrent_admin_removals_on_postgres(&url).await;
 
@@ -420,7 +420,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
     );
 }
 
-async fn audit_related_record_history_on_postgres(audit: &AuditLogService) {
+async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &banto_storage::Db) {
     use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
     use serde_json::json;
 
@@ -435,6 +435,11 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService) {
             "attachments",
             "102",
             Some(json!({ "parentResource": "items", "parentId": "420" })),
+        ),
+        (
+            "attachments",
+            "103",
+            Some(json!({ "parentResource": "items", "parentId": 42 })),
         ),
     ] {
         audit
@@ -451,6 +456,11 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService) {
             .await
             .expect("record related history fixture");
     }
+    let pool = db.as_postgres().expect("PostgreSQL history pool");
+    sqlx::query("INSERT INTO audit_log (action, resource, entity_id, detail, origin) VALUES ('create', 'attachments', '104', 'not-json', 'rest')")
+        .execute(pool)
+        .await
+        .expect("malformed historical detail");
     let params = ListParams {
         pagination: Some(Pagination {
             offset: 0,
@@ -478,10 +488,40 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService) {
         .list_as_of(params, None)
         .await
         .expect("related history list");
-    assert_eq!(history.total_count, 2);
+    assert_eq!(history.total_count, 3);
     assert_eq!(history.rows[0].resource, "attachments");
-    assert_eq!(history.rows[0].entity_id.as_deref(), Some("101"));
-    assert_eq!(history.rows[1].resource, "items");
+    assert_eq!(history.rows[0].entity_id.as_deref(), Some("103"));
+    assert_eq!(history.rows[1].entity_id.as_deref(), Some("101"));
+    assert_eq!(history.rows[2].resource, "items");
+
+    let sorted = audit
+        .list(ListParams {
+            sort: vec![SortState {
+                field: "recordResource".into(),
+                direction: SortDirection::Asc,
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("sort by record scope without filters");
+    assert!(sorted.total_count >= 4);
+
+    let mut conn = pool.acquire().await.expect("acquire for history EXPLAIN");
+    sqlx::query("SET enable_seqscan = off")
+        .execute(&mut *conn)
+        .await
+        .expect("disable seqscan");
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000000) AS audit_log \
+         WHERE record_resource = 'items' AND record_id = '42'",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .expect("explain record scope");
+    assert!(
+        plan.join("\n").contains("idx_audit_log_record_scope"),
+        "record history should use its scope index: {plan:?}"
+    );
 }
 
 // Issue #248: `list_as_of` on PostgreSQL - the boundary pins the set across

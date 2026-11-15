@@ -195,9 +195,8 @@ fn column_map() -> ColumnMap {
         .text_column("action", "action")
         .text_column("resource", "resource")
         .text_column("entityId", "entity_id")
-        // A record's history also includes audit rows whose detail points to
-        // that record. These are computed columns of `list_as_of`'s bounded
-        // source; the canonical resource/entity_id remain unchanged.
+        // Migration 0010's indexed generated columns preserve the canonical
+        // resource/entity_id and include related rows in a record's history.
         .column("recordResource", "record_resource")
         .column("recordId", "record_id")
         .text_column("detail", "detail")
@@ -700,45 +699,19 @@ impl AuditLogService {
         let columns = column_map();
         // The bounded set is wrapped as a subquery aliased `audit_log`, so the
         // column whitelist (`column_map`) and `apply_list_params` apply to it
-        // unchanged (`append_where` writes its own ` WHERE `). Generic
-        // `parentResource`/`parentId` detail keys opt a row into its parent's
-        // history; both keys must be present. The canonical audit target stays
-        // in `resource`/`entity_id`. SQLite guards malformed legacy detail
-        // before JSON extraction; PostgreSQL detail is JSON text written by
-        // this service, so it can be cast to jsonb.
+        // unchanged (`append_where` writes its own ` WHERE `). Migration 0010
+        // computes and indexes record_resource/record_id on write, including
+        // spooled and older rows, so the filtered history need not parse the
+        // full audit table on each read.
         const SELECT_ROWS: &str =
             "SELECT id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result \
-             FROM (";
-        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (";
-        const DIRECT_BOUNDED_SOURCE: &str = "SELECT * FROM audit_log WHERE id <= ";
-        const SQLITE_BOUNDED_SOURCE: &str = "SELECT *, \
-             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_resource ELSE resource END AS record_resource, \
-             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_id ELSE entity_id END AS record_id \
-             FROM (SELECT audit_log.*, \
-             json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.parentResource') AS parent_resource, \
-             json_extract(CASE WHEN json_valid(detail) THEN detail END, '$.parentId') AS parent_id \
-             FROM audit_log WHERE id <= ";
-        #[cfg(feature = "postgres")]
-        const PG_BOUNDED_SOURCE: &str = "SELECT *, \
-             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_resource ELSE resource END AS record_resource, \
-             CASE WHEN parent_resource IS NOT NULL AND parent_id IS NOT NULL THEN parent_id ELSE entity_id END AS record_id \
-             FROM (SELECT audit_log.*, \
-             detail::jsonb ->> 'parentResource' AS parent_resource, \
-             detail::jsonb ->> 'parentId' AS parent_id \
-             FROM audit_log WHERE id <= ";
-        const DIRECT_ALIAS: &str = ") AS audit_log";
-        const RELATED_ALIAS: &str = ") AS relation_values) AS audit_log";
+             FROM (SELECT * FROM audit_log WHERE id <= ";
+        const SELECT_COUNT: &str = "SELECT COUNT(*) FROM (SELECT * FROM audit_log WHERE id <= ";
+        const BOUNDED_ALIAS: &str = ") AS audit_log";
         const SELECT_MAX_ID: &str = "SELECT MAX(id) FROM audit_log";
         // The key literal here and in `prune` is [`DELETION_EPOCH_KEY`]
         // (`deletion_epoch_uses_the_documented_settings_key` pins it).
         const SELECT_EPOCH: &str = "SELECT value FROM settings WHERE key = 'audit.deletion_epoch'";
-        // Most audit-log reads do not request the virtual record scope. Keep
-        // their existing indexed source and avoid parsing every detail row.
-        let related_scope = params
-            .filters
-            .iter()
-            .any(|filter| matches!(filter.field.as_str(), "recordResource" | "recordId"));
-
         // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
         // `admin_template_core::items::ItemsService::list` (see that method's
         // comment).
@@ -755,17 +728,8 @@ impl AuditLogService {
                 };
 
                 let mut rows_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_ROWS);
-                rows_builder.push(if related_scope {
-                    SQLITE_BOUNDED_SOURCE
-                } else {
-                    DIRECT_BOUNDED_SOURCE
-                });
                 rows_builder.push_bind(as_of_id);
-                rows_builder.push(if related_scope {
-                    RELATED_ALIAS
-                } else {
-                    DIRECT_ALIAS
-                });
+                rows_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::sqlite::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -778,17 +742,8 @@ impl AuditLogService {
                     .map_err(banto_storage::storage_error)?;
 
                 let mut count_builder: QueryBuilder<Sqlite> = QueryBuilder::new(SELECT_COUNT);
-                count_builder.push(if related_scope {
-                    SQLITE_BOUNDED_SOURCE
-                } else {
-                    DIRECT_BOUNDED_SOURCE
-                });
                 count_builder.push_bind(as_of_id);
-                count_builder.push(if related_scope {
-                    RELATED_ALIAS
-                } else {
-                    DIRECT_ALIAS
-                });
+                count_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::sqlite::append_list_where(
                     &mut count_builder,
                     &columns,
@@ -834,17 +789,8 @@ impl AuditLogService {
                 };
 
                 let mut rows_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(SELECT_ROWS);
-                rows_builder.push(if related_scope {
-                    PG_BOUNDED_SOURCE
-                } else {
-                    DIRECT_BOUNDED_SOURCE
-                });
                 rows_builder.push_bind(as_of_id);
-                rows_builder.push(if related_scope {
-                    RELATED_ALIAS
-                } else {
-                    DIRECT_ALIAS
-                });
+                rows_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::postgres::apply_list_params(
                     &mut rows_builder,
                     &columns,
@@ -858,17 +804,8 @@ impl AuditLogService {
 
                 let mut count_builder: QueryBuilder<sqlx::Postgres> =
                     QueryBuilder::new(SELECT_COUNT);
-                count_builder.push(if related_scope {
-                    PG_BOUNDED_SOURCE
-                } else {
-                    DIRECT_BOUNDED_SOURCE
-                });
                 count_builder.push_bind(as_of_id);
-                count_builder.push(if related_scope {
-                    RELATED_ALIAS
-                } else {
-                    DIRECT_ALIAS
-                });
+                count_builder.push(BOUNDED_ALIAS);
                 banto_storage::list_query::postgres::append_list_where(
                     &mut count_builder,
                     &columns,
@@ -1051,6 +988,7 @@ mod tests {
     use super::*;
     use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
     use serde_json::json;
+    use sqlx::Row;
 
     /// An in-memory SQLite handle with the `audit_log` table + indexes
     /// created inline. This crate owns no migrations (conventions §11: table
@@ -1100,6 +1038,18 @@ mod tests {
             .execute(pool)
             .await
             .expect("create resource index");
+        // Mirrors migration 0010 without making this shared crate depend on
+        // the app's migration files (conventions §4, §11).
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer', 'real') THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
+            .execute(pool).await.expect("add record_resource");
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer', 'real') THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")
+            .execute(pool).await.expect("add record_id");
+        sqlx::query(
+            "CREATE INDEX idx_audit_log_record_scope ON audit_log(record_resource, record_id)",
+        )
+        .execute(pool)
+        .await
+        .expect("create record scope index");
         add_pending_id(pool).await;
         AuditLogService::new(db)
     }
@@ -1455,6 +1405,63 @@ mod tests {
             .unwrap();
         assert_eq!(ids(&second), vec![1]);
         assert_eq!(second.total_count, 3);
+    }
+
+    #[tokio::test]
+    async fn record_scope_index_handles_numeric_parent_and_sort_only() {
+        let svc = service().await;
+        let mut related = sample_entry("create", "attachments", "alice");
+        related.entity_id = Some("101");
+        related.detail = Some(json!({ "parentResource": "items", "parentId": 42 }));
+        svc.try_record(related).await.unwrap();
+        let mut direct = sample_entry("update", "items", "alice");
+        direct.entity_id = Some("42");
+        svc.try_record(direct).await.unwrap();
+
+        let filters = vec![
+            FilterState {
+                field: "recordResource".into(),
+                op: FilterOp::Eq,
+                value: json!("items"),
+            },
+            FilterState {
+                field: "recordId".into(),
+                op: FilterOp::Eq,
+                value: json!("42"),
+            },
+        ];
+        let scoped = svc
+            .list(ListParams {
+                filters,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(scoped.total_count, 2);
+
+        let sorted = svc
+            .list(ListParams {
+                sort: vec![SortState {
+                    field: "recordResource".into(),
+                    direction: SortDirection::Asc,
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(sorted.total_count, 2);
+
+        let plan = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000) AS audit_log WHERE record_resource = 'items' AND record_id = '42'",
+        )
+        .fetch_all(svc.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+        assert!(plan.iter().any(|row| {
+            row.try_get::<String, _>("detail")
+                .unwrap()
+                .contains("idx_audit_log_record_scope")
+        }));
     }
 
     /// Rows written between two block reads do not enter a pinned
