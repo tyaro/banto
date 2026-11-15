@@ -1124,6 +1124,8 @@ mod tests {
             ])
         );
         for detail in [created, deleted] {
+            assert!(detail.get("parentResource").is_none());
+            assert!(detail.get("parentId").is_none());
             let serialized = detail.to_string();
             assert!(!serialized.contains("secret-password"));
             assert!(!serialized.contains("authEpoch"));
@@ -1717,6 +1719,8 @@ mod tests {
         assert_eq!(next.display_name, "編集者1改");
         let detail = user_update_detail(&prev, &next);
         assert_eq!(detail["username"], "editor1");
+        assert!(detail.get("parentResource").is_none());
+        assert!(detail.get("parentId").is_none());
         assert_eq!(detail["role"], "editor");
         assert_eq!(
             detail["changes"],

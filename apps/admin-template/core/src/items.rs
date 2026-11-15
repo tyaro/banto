@@ -892,6 +892,12 @@ mod tests {
                 { "field": "stock", "before": 5, "after": null }
             ])
         );
+        // These top-level keys redirect record history; item values must
+        // never promote user input into a parent relationship.
+        for detail in [&created, &deleted] {
+            assert!(detail.get("parentResource").is_none());
+            assert!(detail.get("parentId").is_none());
+        }
         assert!(matches!(
             svc.delete_returning_previous(item.id).await,
             Err(BantoError::NotFound { .. })
@@ -1012,6 +1018,8 @@ mod tests {
         assert_eq!(updated.price, 20);
         let detail = item_update_detail(&previous, &updated);
         assert_eq!(detail["name"], "Before");
+        assert!(detail.get("parentResource").is_none());
+        assert!(detail.get("parentId").is_none());
         assert_eq!(
             detail["changes"],
             serde_json::json!([{ "field": "price", "before": 10, "after": 20 }])

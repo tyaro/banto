@@ -1,8 +1,8 @@
 /**
  * The "history of this record" list in the detail drawer (#591, stage 2):
- * the audit log read through `listAuditLog`, narrowed to one resource and one
- * record. No diff view here (that is C-5); the drawer lists time / user /
- * action / result / origin only.
+ * the audit log read through `listAuditLog`, narrowed to one record including
+ * operations on a related object (such as an attachment). The drawer lists
+ * time / user / action / result / origin and recorded field changes.
  *
  * Plain TypeScript (no runes) so the filter and the stale-answer rule can be
  * unit-tested; `ResourceHistory.svelte` only draws the state this keeps.
@@ -13,9 +13,22 @@ import type { AuditLogEntry, AuditLogList } from '#lib/banto/auditLogAdmin.js';
 /** One page: the drawer shows the latest entries, the audit-log screen has the rest. */
 export const HISTORY_PAGE_SIZE = 50;
 
+/** A related object's name, when its audit detail supplies a file name. */
+export function relatedHistoryFileName(detail: string | null): string | null {
+	if (!detail) return null;
+	try {
+		const value: unknown = JSON.parse(detail);
+		if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+		const fileName = (value as Record<string, unknown>).fileName;
+		return typeof fileName === 'string' && fileName !== '' ? fileName : null;
+	} catch {
+		return null;
+	}
+}
+
 /**
- * Newest first, one resource, one record. `eq`, not `contains`: a substring
- * match would list the history of id 10 and 100 under id 1.
+ * Newest first, one record and its related operations. `eq`, not `contains`:
+ * a substring match would list the history of id 10 and 100 under id 1.
  */
 export function recordHistoryParams(
 	resource: string,
@@ -29,8 +42,8 @@ export function recordHistoryParams(
 			{ field: 'id', direction: 'desc' }
 		],
 		filters: [
-			{ field: 'resource', op: 'eq', value: resource },
-			{ field: 'entityId', op: 'eq', value: String(id) }
+			{ field: 'recordResource', op: 'eq', value: resource },
+			{ field: 'recordId', op: 'eq', value: String(id) }
 		]
 	};
 }

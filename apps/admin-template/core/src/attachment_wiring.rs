@@ -5,7 +5,36 @@
 //! authorization and the `record_write`/`record_ok` calls stay on each path.
 
 use banto_attachments::{AttachmentMeta, AttachmentsService};
+use banto_core::BantoError;
 use serde_json::{json, Value};
+
+use crate::items::ItemsService;
+
+/// The template wires attachments to items only. A derived app that adds an
+/// attachment target must extend this allowlist and its existence check.
+/// Run this after the route/command's role check and before writing the file
+/// or audit detail, so untrusted target text cannot redirect record history.
+pub async fn validate_attachment_parent(
+    items: &ItemsService,
+    resource: &str,
+    resource_id: &str,
+) -> Result<(), BantoError> {
+    if resource != "items" {
+        return Err(BantoError::BadRequest(format!(
+            "unsupported attachment resource: {resource}"
+        )));
+    }
+    let id = resource_id
+        .parse::<i64>()
+        .map_err(|_| BantoError::BadRequest("invalid items attachment id".to_string()))?;
+    if id.to_string() != resource_id {
+        return Err(BantoError::BadRequest(
+            "non-canonical items attachment id".to_string(),
+        ));
+    }
+    items.get(id).await?;
+    Ok(())
+}
 
 /// Audit `detail` of an attachment `create`/`delete` entry.
 pub fn attachment_audit_detail(meta: &AttachmentMeta) -> Value {
@@ -15,6 +44,19 @@ pub fn attachment_audit_detail(meta: &AttachmentMeta) -> Value {
         "parentResource": meta.resource,
         "parentId": meta.resource_id,
     })
+}
+
+/// Legacy metadata may point to a deleted or unsupported parent. Allow its
+/// cleanup, but do not redirect the delete audit row to an unverified record.
+pub async fn attachment_delete_audit_detail(items: &ItemsService, meta: &AttachmentMeta) -> Value {
+    match validate_attachment_parent(items, &meta.resource, &meta.resource_id).await {
+        Err(BantoError::NotFound { .. } | BantoError::BadRequest(_)) => {
+            json!({ "fileName": meta.file_name, "sizeBytes": meta.size_bytes })
+        }
+        // A transient DB failure cannot prove the stored relationship is
+        // invalid. Preserve it rather than silently losing a valid history row.
+        _ => attachment_audit_detail(meta),
+    }
 }
 
 /// Removes the attachments left pointing at the just-deleted item `id` and
@@ -46,6 +88,28 @@ mod tests {
     use super::*;
     use banto_attachments::NewAttachment;
     use banto_storage::Db;
+
+    #[tokio::test]
+    async fn legacy_attachment_delete_does_not_redirect_history_to_unverified_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::migrate_memory().await.unwrap();
+        let items = ItemsService::new(db.clone());
+        let attachments = AttachmentsService::new(db, dir.path().join("attachments"));
+        let meta = attachments
+            .upload(NewAttachment {
+                resource: "users".to_string(),
+                resource_id: "1".to_string(),
+                file_name: "legacy.txt".to_string(),
+                created_by: None,
+                bytes: b"legacy".to_vec(),
+            })
+            .await
+            .unwrap();
+        let detail = attachment_delete_audit_detail(&items, &meta).await;
+        assert_eq!(detail["fileName"], "legacy.txt");
+        assert!(detail.get("parentResource").is_none());
+        assert!(detail.get("parentId").is_none());
+    }
 
     #[tokio::test]
     async fn sweep_reports_the_removed_count_and_none_when_nothing_was_removed() {

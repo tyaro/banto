@@ -173,6 +173,10 @@ pub struct AuditEntry<'a> {
     /// e.g. `"items"`, `"users"`, `"settings"`, `"auth"`.
     pub resource: &'a str,
     pub entity_id: Option<&'a str>,
+    /// Caller-generated metadata only. With record-scope migration 0010,
+    /// top-level `parentResource` and `parentId` redirect history when both
+    /// are strings. Never spread request JSON into this object; reserve that
+    /// pair for a trusted relationship such as an attachment's parent.
     pub detail: Option<serde_json::Value>,
     /// `"rest"` or `"tauri"`.
     pub origin: &'a str,
@@ -195,6 +199,10 @@ fn column_map() -> ColumnMap {
         .text_column("action", "action")
         .text_column("resource", "resource")
         .text_column("entityId", "entity_id")
+        // Migration 0010's indexed generated columns preserve the canonical
+        // resource/entity_id and include related rows in a record's history.
+        .column("recordResource", "record_resource")
+        .column("recordId", "record_id")
         .text_column("detail", "detail")
         .text_column("origin", "origin")
         .text_column("result", "result")
@@ -695,8 +703,10 @@ impl AuditLogService {
         let columns = column_map();
         // The bounded set is wrapped as a subquery aliased `audit_log`, so the
         // column whitelist (`column_map`) and `apply_list_params` apply to it
-        // unchanged (`append_where` writes its own ` WHERE `, so the bound
-        // cannot simply be appended to the outer query).
+        // unchanged (`append_where` writes its own ` WHERE `). Migration 0010
+        // computes and indexes record_resource/record_id on write, including
+        // spooled and older rows, so the filtered history need not parse the
+        // full audit table on each read.
         const SELECT_ROWS: &str =
             "SELECT id, ts, actor_username, actor_role, action, resource, entity_id, detail, origin, result \
              FROM (SELECT * FROM audit_log WHERE id <= ";
@@ -706,7 +716,6 @@ impl AuditLogService {
         // The key literal here and in `prune` is [`DELETION_EPOCH_KEY`]
         // (`deletion_epoch_uses_the_documented_settings_key` pins it).
         const SELECT_EPOCH: &str = "SELECT value FROM settings WHERE key = 'audit.deletion_epoch'";
-
         // Per-backend `QueryBuilder`/`list_query` dispatch, same shape as
         // `admin_template_core::items::ItemsService::list` (see that method's
         // comment).
@@ -983,6 +992,7 @@ mod tests {
     use super::*;
     use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
     use serde_json::json;
+    use sqlx::Row;
 
     /// An in-memory SQLite handle with the `audit_log` table + indexes
     /// created inline. This crate owns no migrations (conventions §11: table
@@ -1032,6 +1042,20 @@ mod tests {
             .execute(pool)
             .await
             .expect("create resource index");
+        // Mirrors migration 0010 without making this shared crate depend on
+        // the app's migration files (conventions §4, §11). When changing these
+        // expressions, update migrations-sqlite/0010_audit_record_scope.sql
+        // and exercise the app's migrated schema in REST tests too.
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') = 'text' THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
+            .execute(pool).await.expect("add record_resource");
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') = 'text' THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")
+            .execute(pool).await.expect("add record_id");
+        sqlx::query(
+            "CREATE INDEX idx_audit_log_record_scope ON audit_log(record_resource, record_id)",
+        )
+        .execute(pool)
+        .await
+        .expect("create record scope index");
         add_pending_id(pool).await;
         AuditLogService::new(db)
     }
@@ -1306,6 +1330,161 @@ mod tests {
 
     fn ids(list: &AuditLogList) -> Vec<i64> {
         list.rows.iter().map(|r| r.id).collect()
+    }
+
+    #[tokio::test]
+    async fn record_history_filter_includes_related_audit_rows() {
+        let svc = service().await;
+        let mut direct = sample_entry("update", "items", "alice");
+        direct.entity_id = Some("42");
+        svc.try_record(direct).await.unwrap();
+
+        let mut upload = sample_entry("create", "attachments", "alice");
+        upload.entity_id = Some("101");
+        upload.detail =
+            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "a.txt" }));
+        svc.try_record(upload).await.unwrap();
+
+        let mut other_parent = sample_entry("create", "attachments", "alice");
+        other_parent.entity_id = Some("102");
+        other_parent.detail = Some(json!({ "parentResource": "items", "parentId": "420" }));
+        svc.try_record(other_parent).await.unwrap();
+
+        let mut delete = sample_entry("delete", "attachments", "alice");
+        delete.entity_id = Some("101");
+        delete.detail =
+            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "a.txt" }));
+        svc.try_record(delete).await.unwrap();
+
+        let mut incomplete = sample_entry("create", "attachments", "alice");
+        incomplete.entity_id = Some("42");
+        incomplete.detail = Some(json!({ "parentResource": "items" }));
+        svc.try_record(incomplete).await.unwrap();
+
+        // A malformed legacy detail must not break the entire history read.
+        sqlx::query("INSERT INTO audit_log (action, resource, entity_id, detail, origin) VALUES ('create', 'attachments', '42', 'not-json', 'rest')")
+            .execute(svc.db.as_sqlite().unwrap())
+            .await
+            .unwrap();
+
+        let params = ListParams {
+            pagination: Some(Pagination {
+                offset: 0,
+                limit: 2,
+            }),
+            sort: vec![SortState {
+                field: "id".into(),
+                direction: SortDirection::Desc,
+            }],
+            filters: vec![
+                FilterState {
+                    field: "recordResource".into(),
+                    op: FilterOp::Eq,
+                    value: json!("items"),
+                },
+                FilterState {
+                    field: "recordId".into(),
+                    op: FilterOp::Eq,
+                    value: json!("42"),
+                },
+            ],
+            ..Default::default()
+        };
+        let first = svc.list_as_of(params.clone(), None).await.unwrap();
+        assert_eq!(first.total_count, 3);
+        assert_eq!(ids(&first), vec![4, 2]);
+        assert_eq!(first.rows[0].resource, "attachments");
+        assert_eq!(first.rows[0].entity_id.as_deref(), Some("101"));
+
+        let second = svc
+            .list_as_of(
+                ListParams {
+                    pagination: Some(Pagination {
+                        offset: 2,
+                        limit: 2,
+                    }),
+                    ..params
+                },
+                Some(first.as_of_id),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ids(&second), vec![1]);
+        assert_eq!(second.total_count, 3);
+    }
+
+    #[tokio::test]
+    async fn record_scope_index_rejects_numeric_parent_and_handles_sort_only() {
+        let svc = service().await;
+        let mut related = sample_entry("create", "attachments", "alice");
+        related.entity_id = Some("101");
+        related.detail = Some(json!({ "parentResource": "items", "parentId": 42 }));
+        svc.try_record(related).await.unwrap();
+        let mut direct = sample_entry("update", "items", "alice");
+        direct.entity_id = Some("42");
+        svc.try_record(direct).await.unwrap();
+        let mut fractional = sample_entry("create", "attachments", "alice");
+        fractional.entity_id = Some("102");
+        fractional.detail = Some(json!({ "parentResource": "items", "parentId": 42.5 }));
+        svc.try_record(fractional).await.unwrap();
+
+        let filters = vec![
+            FilterState {
+                field: "recordResource".into(),
+                op: FilterOp::Eq,
+                value: json!("items"),
+            },
+            FilterState {
+                field: "recordId".into(),
+                op: FilterOp::Eq,
+                value: json!("42"),
+            },
+        ];
+        let scoped = svc
+            .list(ListParams {
+                filters,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(scoped.total_count, 1);
+
+        let sorted = svc
+            .list(ListParams {
+                sort: vec![SortState {
+                    field: "recordResource".into(),
+                    direction: SortDirection::Asc,
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(sorted.total_count, 3);
+
+        let contains = svc
+            .list(ListParams {
+                filters: vec![FilterState {
+                    field: "recordResource".into(),
+                    op: FilterOp::Contains,
+                    value: json!("tem"),
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(contains.total_count, 1);
+
+        let plan = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000) AS audit_log WHERE record_resource = 'items' AND record_id = '42'",
+        )
+        .fetch_all(svc.db.as_sqlite().unwrap())
+        .await
+        .unwrap();
+        assert!(plan.iter().any(|row| {
+            row.try_get::<String, _>("detail")
+                .unwrap()
+                .contains("idx_audit_log_record_scope")
+        }));
     }
 
     /// Rows written between two block reads do not enter a pinned

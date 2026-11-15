@@ -1,7 +1,7 @@
 <!--
 	@component
 	"History of this record" (#591, stage 2): the audit log narrowed to one
-	resource and one record, newest first, as a plain list (time / user /
+	record and its related operations, newest first, as a plain list (time / user /
 	action / result / origin). A create/update/delete row with recorded values shows
 	its changed fields under the row.
 
@@ -22,8 +22,13 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { listAuditLog } from '#lib/banto/auditLogAdmin.js';
 	import { auditLogLink } from '#lib/banto/auditLogQuery.js';
+	import { resources } from '#lib/banto/resources/index.js';
 	import { navItems, resolveAppPath } from '#lib/navigation.js';
-	import { createRecordHistoryLoader, type RecordHistoryState } from './recordHistory';
+	import {
+		createRecordHistoryLoader,
+		relatedHistoryFileName,
+		type RecordHistoryState
+	} from './recordHistory';
 	import AuditChanges from './AuditChanges.svelte';
 	import { parseAuditChanges } from './auditChanges';
 
@@ -72,6 +77,11 @@
 	};
 	/** An action the table does not know (a custom one) shows as recorded. */
 	const label = (table: Record<string, () => string>, key: string): string => table[key]?.() ?? key;
+	/** Use the app's current resource label; the optional attachment has no nav entry. */
+	const relatedResourceLabel = (name: string): string =>
+		name === 'attachments'
+			? m['resource.historyAttachmentLabel']()
+			: (resources.find((item) => item.name === name)?.label ?? name);
 
 	// The audit-log screen is not in every preset (display removes it): link
 	// to it only when the nav still has it.
@@ -114,9 +124,25 @@
 				</thead>
 				<tbody>
 					{#each state.rows as row (row.id)}
+						{@const fileName = relatedHistoryFileName(row.detail)}
 						<tr>
 							<td class="ts">{row.ts}</td>
-							<td>{label(actionLabels, row.action)}</td>
+							<td>
+								{#if row.resource === resource && row.entityId === String(id)}
+									{label(actionLabels, row.action)}
+								{:else if fileName}
+									{m['resource.historyRelatedFileAction']({
+										resource: relatedResourceLabel(row.resource),
+										action: label(actionLabels, row.action),
+										fileName
+									})}
+								{:else}
+									{m['resource.historyRelatedAction']({
+										resource: relatedResourceLabel(row.resource),
+										action: label(actionLabels, row.action)
+									})}
+								{/if}
+							</td>
 							<td>{row.actorUsername ?? '-'}</td>
 							<td>{label(resultLabels, row.result)}</td>
 							<td>{label(originLabels, row.origin)}</td>

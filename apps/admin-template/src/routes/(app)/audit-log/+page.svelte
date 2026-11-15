@@ -25,6 +25,7 @@
 	import { untrack } from 'svelte';
 	import {
 		BantoGrid,
+		FilterChips,
 		GridState,
 		type FilterState,
 		type GridColumn,
@@ -42,7 +43,12 @@
 		listAuditLog,
 		type AuditLogEntry
 	} from '#lib/banto/auditLogAdmin.js';
-	import { auditLogFiltersFromQuery, hasAuditLogQuery } from '#lib/banto/auditLogQuery.js';
+	import {
+		auditLogFiltersFromQuery,
+		auditRecordScope,
+		hasAuditLogQuery
+	} from '#lib/banto/auditLogQuery.js';
+	import { gridMessages } from '#lib/banto/i18n.js';
 	import AuditChanges from '#lib/resource/AuditChanges.svelte';
 	import { auditDetailRest, parseAuditChanges } from '#lib/resource/auditChanges.js';
 	import { auditTargetHref } from '#lib/resource/auditTarget.js';
@@ -129,6 +135,24 @@
 			filterType: 'text'
 		},
 		{
+			id: 'recordResource',
+			header: m['audit.colRecordResource'](),
+			accessor: (row) => auditRecordScope(row).resource,
+			width: 120,
+			hidden: true,
+			filterable: true,
+			filterType: 'text'
+		},
+		{
+			id: 'recordId',
+			header: m['audit.colRecordId'](),
+			accessor: (row) => auditRecordScope(row).id ?? '-',
+			width: 90,
+			hidden: true,
+			filterable: true,
+			filterType: 'text'
+		},
+		{
 			id: 'origin',
 			header: m['audit.colOrigin'](),
 			accessor: 'origin',
@@ -147,7 +171,7 @@
 	const gridState = new GridState<AuditLogEntry>(columns);
 	// 既定ソート: 新しい記録が先頭に来るよう ts 降順（spec M14）。
 	gridState.sort = [{ field: 'ts', direction: 'desc' }];
-	// `?resource=` / `?entityId=` (the record drawer's history link, #591): the
+	// `?recordResource=` / `?recordId=` (the record drawer's history link): the
 	// grid starts filtered, before the first fetch, so the first answer already
 	// carries it. An effect below handles a later URL and removes the query.
 	const initialUrl = page.url;
@@ -200,6 +224,11 @@
 		auditLog.setParams(params);
 	}
 
+	let pageEl: HTMLDivElement | undefined = $state();
+	function focusGrid(): void {
+		pageEl?.querySelector<HTMLElement>('[role="grid"]')?.focus();
+	}
+
 	// The query is consumed once: it is applied (initially above, or here for a
 	// link to this screen while it is open) and then removed from the URL, so a
 	// filter the user later clears does not come back on reload. Same rule as
@@ -216,6 +245,8 @@
 			const next = new URL(url.href);
 			next.searchParams.delete('resource');
 			next.searchParams.delete('entityId');
+			next.searchParams.delete('recordResource');
+			next.searchParams.delete('recordId');
 			try {
 				replaceState(next, page.state);
 			} catch {
@@ -302,7 +333,7 @@
 	});
 </script>
 
-<div class="page">
+<div class="page" bind:this={pageEl}>
 	<PageHeader hideTitle title={m['nav.auditLog']()} description={m['audit.pageDescription']()} />
 
 	{#if !available}
@@ -355,6 +386,12 @@
 			</button>
 			<span class="note">{m['audit.reloadNote']()}</span>
 		</div>
+		<FilterChips
+			state={gridState}
+			messages={gridMessages()}
+			onEmpty={focusGrid}
+			onchange={() => handleParamsChange({ sort: gridState.sort, filters: gridState.filters })}
+		/>
 
 		<section class="grid-wrap">
 			<BantoGrid

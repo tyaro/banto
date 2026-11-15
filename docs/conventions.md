@@ -79,6 +79,18 @@ maintenance-review-2026-08 §5.3 で実測・是正済み）:
 - **`entity_id` は「対象の実体名」。** backup 系は必ずバックアップファイルの
   実名（`backups_create` / 既存ファイルからの restore は `Some`、アップロード
   からの restore はサーバ採番前で実体名が無いので `None` + `detail.fileName`）。
+- **監査 detail の最上位 `parentResource`・`parentId` は関連レコード用の予約キー。**
+  両方が揃う監査行は、元の `resource`・`entity_id` を監査対象として保ち、
+  履歴検索用の記録先 `recordResource`・`recordId` は親に切り替える。
+  その行を自身の `resource`・`entityId` で記録先検索しても出ないので、監査対象で
+  探す場合は従来の `resource`・`entityId` フィルタを使う。
+  `parentResource`・`parentId` はどちらも文字列で記録する。
+  別の意味でこの 2 キーを組にして使わない。監査 detail に外部入力をそのまま
+  展開しない（記録内容の選別はセキュリティ規約にも従う）。テンプレートの添付
+  upload は REST/Tauri とも共通の `attachment_wiring::validate_attachment_parent` で
+  `items` のみを許可し、対象の実在を調べてから監査 detail を作る。
+  旧版の添付を削除する場合も親を再検証し、無効なら detail に親キーを付けない。
+  派生アプリが添付先を増やすときは、この検証も増やす。
 - **denied の `detail` は経路で非対称を許容する。** REST は RoleGuard
   ミドルウェアの都合で `{method, path}` が付くが Tauri は `None`。denied は
   「操作が実行されなかった」記録なので監査の主眼は「誰がどの `resource` へ

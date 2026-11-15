@@ -541,13 +541,13 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(historyChanges).toContainText('価格');
 		await expect(historyChanges).toContainText(String(ITEM_PRICE));
 		await expect(historyChanges).toContainText(String(ITEM_PRICE_UPDATED));
-		// The link to the audit-log screen carries resource + entityId; it is
+		// The link to the audit-log screen carries the record scope; it is
 		// followed after the drawer flow below (same page: the token lives in this
 		// tab's sessionStorage).
 		const auditHref = await drawer
 			.getByRole('link', { name: '監査ログで全部見る' })
 			.getAttribute('href');
-		expect(auditHref).toContain(`resource=items&entityId=${itemId}`);
+		expect(auditHref).toContain(`recordResource=items&recordId=${itemId}`);
 		await drawer.getByRole('tab', { name: '詳細', exact: true }).click();
 		await expect(drawerPrice).toHaveValue(String(ITEM_PRICE_UPDATED));
 
@@ -560,6 +560,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		// leaves the URL.
 		await page.goto(auditHref!);
 		await expect(page).toHaveURL(/\/audit-log$/);
+		const activeFilters = page.getByRole('group', { name: '適用中の絞り込み' });
+		await expect(activeFilters.getByText('記録先リソース')).toBeVisible();
+		await expect(activeFilters.getByText('記録先ID')).toBeVisible();
+		await expect(activeFilters.getByRole('button', { name: 'すべて解除' })).toBeVisible();
 		await expect(page.getByTestId('audit-count-note')).toContainText(/\d/);
 		await expect(rowWithText(page, 'items').first()).toBeVisible();
 		// Every row shown belongs to this record: no other item's history. The
@@ -2167,7 +2171,7 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		if (cleanupError !== undefined) throw cleanupError;
 	});
 
-	test('8. items detail: attachments upload, thumbnail, file row, and delete', async () => {
+	test('8. items detail: attachments upload, thumbnail, history, and delete', async () => {
 		await page.goto('/items');
 		await page.getByRole('button', { name: '新規作成' }).click();
 		await expect(page).toHaveURL(/\/items\/new$/);
@@ -2181,7 +2185,8 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
 		const row = rowWithText(page, ATTACHMENT_ITEM_NAME);
 		await expect(row).toBeVisible();
-		const href = `/items/${await rowItemId(row)}`;
+		const itemId = await rowItemId(row);
+		const href = `/items/${itemId}`;
 
 		await page.goto(href);
 		await expect(page.getByRole('heading', { name: '添付ファイル' })).toBeVisible();
@@ -2227,6 +2232,21 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			confirm: '削除'
 		});
 		await expect(page.getByText('添付ファイルはありません')).toBeVisible();
+
+		// The parent record's history includes both actions on the removed file.
+		await page.goto('/items');
+		await applyColumnFilter(page, '商品名', ATTACHMENT_ITEM_NAME);
+		const historyRow = rowWithText(page, ATTACHMENT_ITEM_NAME);
+		const drawer = await openInDrawer(page, historyRow, itemId);
+		await drawer.getByRole('tab', { name: '履歴', exact: true }).click();
+		const historyTable = drawer.getByRole('table', { name: /履歴/ });
+		await expect(
+			historyTable.getByRole('cell', { name: `添付ファイル：作成（${TXT_FILE_NAME}）` })
+		).toBeVisible();
+		await expect(
+			historyTable.getByRole('cell', { name: `添付ファイル：削除（${TXT_FILE_NAME}）` })
+		).toBeVisible();
+		await page.goto(href);
 
 		// 5. Re-upload one attachment and deliberately leave it in place: the
 		// cleanup step below deletes the item itself while it still owns an

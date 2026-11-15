@@ -25,9 +25,9 @@ use admin_template_core::users::{Role, UsersService};
 use banto_core::ListParams;
 use std::path::PathBuf;
 
-/// Drop every table this app owns (plus sqlx's migration bookkeeping) so the
-/// smoke test starts from a clean schema even if a previous run left state
-/// behind. `CASCADE` also drops the identity sequences. Uses the public
+/// Drop every table and helper function this app owns (plus sqlx's migration
+/// bookkeeping) so the smoke test starts from a clean schema even if a
+/// previous run left state behind. `CASCADE` also drops the identity sequences. Uses the public
 /// `connect_postgres` helper to get a raw pool for the DDL.
 async fn reset_schema(url: &str) {
     let pool = banto_storage::connect_postgres(url)
@@ -35,6 +35,7 @@ async fn reset_schema(url: &str) {
         .expect("connect for schema reset");
     for stmt in [
         "DROP TABLE IF EXISTS attachments, audit_log, users, settings, items CASCADE",
+        "DROP FUNCTION IF EXISTS banto_audit_parent_detail(TEXT, TEXT)",
         "DROP TABLE IF EXISTS _sqlx_migrations",
     ] {
         sqlx::query(stmt)
@@ -376,6 +377,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert_eq!(remaining.total_count, 1);
 
     audit_snapshot_boundary_on_postgres(&audit, &db).await;
+    audit_related_record_history_on_postgres(&audit, &db).await;
 
     concurrent_admin_removals_on_postgres(&url).await;
 
@@ -416,6 +418,143 @@ async fn app_layer_crud_round_trips_on_postgres() {
     assert!(
         backup.pending_restore().await.is_none(),
         "pending_restore reports nothing staged on Postgres"
+    );
+}
+
+async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &banto_storage::Db) {
+    use banto_core::{FilterOp, FilterState, Pagination, SortDirection, SortState};
+    use serde_json::json;
+
+    // Audit entity IDs are TEXT. Namespace this fixture so later smoke
+    // additions cannot accidentally enter the same record history.
+    const TARGET_ID: &str = "pg-hist-42";
+    for (resource, entity_id, detail) in [
+        ("items", TARGET_ID, None),
+        (
+            "attachments",
+            "pg-hist-a101",
+            Some(json!({ "parentResource": "items", "parentId": TARGET_ID, "fileName": "a.txt" })),
+        ),
+        (
+            "attachments",
+            "pg-hist-a102",
+            Some(json!({ "parentResource": "items", "parentId": "pg-hist-420" })),
+        ),
+        (
+            "attachments",
+            "pg-hist-a103",
+            Some(json!({ "parentResource": "items", "parentId": 42 })),
+        ),
+        (
+            "attachments",
+            "pg-hist-a105",
+            Some(json!({ "parentResource": "items", "parentId": "\u{0000}" })),
+        ),
+        (
+            "attachments",
+            "pg-hist-a106",
+            Some(
+                json!({ "parentResource": "items", "parentId": TARGET_ID, "fileName": "\u{0000}" }),
+            ),
+        ),
+        (
+            "attachments",
+            "pg-hist-a107",
+            Some(json!({ "parentResource": "items", "parentId": 42.5 })),
+        ),
+    ] {
+        audit
+            .try_record(AuditEntry {
+                actor_username: Some("alice"),
+                actor_role: Some("editor"),
+                action: "create",
+                resource,
+                entity_id: Some(entity_id),
+                detail,
+                origin: "rest",
+                result: "ok",
+            })
+            .await
+            .expect("record related history fixture");
+    }
+    let pool = db.as_postgres().expect("PostgreSQL history pool");
+    sqlx::query("INSERT INTO audit_log (action, resource, entity_id, detail, origin) VALUES ('create', 'attachments', 'pg-hist-a104', 'not-json', 'rest')")
+        .execute(pool)
+        .await
+        .expect("malformed historical detail");
+    let params = ListParams {
+        pagination: Some(Pagination {
+            offset: 0,
+            limit: 50,
+        }),
+        sort: vec![SortState {
+            field: "id".into(),
+            direction: SortDirection::Desc,
+        }],
+        filters: vec![
+            FilterState {
+                field: "recordResource".into(),
+                op: FilterOp::Eq,
+                value: json!("items"),
+            },
+            FilterState {
+                field: "recordId".into(),
+                op: FilterOp::Eq,
+                value: json!(TARGET_ID),
+            },
+        ],
+        ..Default::default()
+    };
+    let history = audit
+        .list_as_of(params, None)
+        .await
+        .expect("related history list");
+    assert_eq!(history.total_count, 2);
+    assert_eq!(history.rows[0].resource, "attachments");
+    assert_eq!(history.rows[0].entity_id.as_deref(), Some("pg-hist-a101"));
+    assert_eq!(history.rows[1].resource, "items");
+    let nul_detail_row: String = sqlx::query_scalar(
+        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = 'pg-hist-a106'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("NUL detail row falls back to its direct resource");
+    assert_eq!(nul_detail_row, "attachments");
+    let numeric_parent_row: String = sqlx::query_scalar(
+        "SELECT record_resource FROM audit_log WHERE resource = 'attachments' AND entity_id = 'pg-hist-a103'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("numeric parent id row falls back to its direct resource");
+    assert_eq!(numeric_parent_row, "attachments");
+
+    let sorted = audit
+        .list(ListParams {
+            sort: vec![SortState {
+                field: "recordResource".into(),
+                direction: SortDirection::Asc,
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("sort by record scope without filters");
+    assert!(sorted.total_count >= 4);
+
+    let mut tx = pool.begin().await.expect("begin history EXPLAIN");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("disable seqscan");
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000000) AS audit_log \
+         WHERE record_resource = 'items' AND record_id = 'pg-hist-42'",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .expect("explain record scope");
+    assert!(
+        plan.join("\n").contains("idx_audit_log_record_scope"),
+        "record history should use its scope index: {plan:?}"
     );
 }
 

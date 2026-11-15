@@ -3683,6 +3683,12 @@ async fn attachments_upload_body(
     bytes: Vec<u8>,
 ) -> Result<AttachmentMeta, BantoError> {
     let actor = require_role(state, Role::Editor, "attachments").await?;
+    admin_template_core::attachment_wiring::validate_attachment_parent(
+        &state.items,
+        &resource,
+        &resource_id,
+    )
+    .await?;
     let meta = state
         .attachments
         .upload(NewAttachment {
@@ -3735,13 +3741,16 @@ async fn attachments_upload(
 async fn attachments_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Editor, "attachments").await?;
     let meta = state.attachments.delete(id).await?;
+    let detail =
+        admin_template_core::attachment_wiring::attachment_delete_audit_detail(&state.items, &meta)
+            .await;
     record_ok(
         &state.audit,
         &actor,
         "delete",
         "attachments",
         Some(&id.to_string()),
-        Some(attachment_audit_detail(&meta)),
+        Some(detail),
     )
     .await;
     let _ = state.events.send(ServerEvent::ResourceChanged {
@@ -5167,6 +5176,53 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn attachments_upload_rejects_untrusted_or_missing_parent() {
+        let (state, dir) = app_state_with_tempdir().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
+        for (resource, resource_id) in [
+            ("users", "1"),
+            ("items", "999999"),
+            ("items", "bad"),
+            ("items", "01"),
+        ] {
+            let result = attachments_upload_body(
+                &state,
+                resource.to_string(),
+                resource_id.to_string(),
+                "note.txt".to_string(),
+                b"hello".to_vec(),
+            )
+            .await;
+            if resource == "items" && resource_id == "999999" {
+                assert!(
+                    matches!(result, Err(BantoError::NotFound { .. })),
+                    "{resource}/{resource_id}"
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(BantoError::BadRequest(_))),
+                    "{resource}/{resource_id}"
+                );
+            }
+        }
+        let audit = state.audit.list(ListParams::default()).await.unwrap();
+        assert!(audit
+            .rows
+            .iter()
+            .all(|row| !(row.resource == "attachments" && row.action == "create")));
+        let attachment_dir = dir.path().join("attachments");
+        assert!(
+            !attachment_dir.exists() || std::fs::read_dir(attachment_dir).unwrap().next().is_none(),
+            "rejected uploads must not write an attachment body"
+        );
+    }
+
     /// Issue #285: a failed `has_thumbnail` flag update (injected with a SQLite
     /// trigger) must not fail the upload - the body is stored, so the command
     /// still records the success audit entry and broadcasts the change event.
@@ -5288,6 +5344,33 @@ mod tests {
                 "parentResource": "items",
                 "parentId": "1"
             })
+        );
+        let history = state
+            .audit
+            .list(ListParams {
+                filters: vec![
+                    banto_core::FilterState {
+                        field: "recordResource".into(),
+                        op: banto_core::FilterOp::Eq,
+                        value: serde_json::json!("items"),
+                    },
+                    banto_core::FilterState {
+                        field: "recordId".into(),
+                        op: banto_core::FilterOp::Eq,
+                        value: serde_json::json!("1"),
+                    },
+                ],
+                ..Default::default()
+            })
+            .await
+            .expect("parent record history");
+        assert_eq!(
+            history
+                .rows
+                .iter()
+                .filter(|row| row.resource == "attachments")
+                .count(),
+            2
         );
     }
     // --- end M20 attachments command tests ---------------------------------
