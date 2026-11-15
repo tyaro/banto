@@ -1040,9 +1040,9 @@ mod tests {
             .expect("create resource index");
         // Mirrors migration 0010 without making this shared crate depend on
         // the app's migration files (conventions §4, §11).
-        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer') THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_resource TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') = 'text' THEN CAST(json_extract(detail, '$.parentResource') AS TEXT) END END, resource)) VIRTUAL")
             .execute(pool).await.expect("add record_resource");
-        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') IN ('text', 'integer') THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN record_id TEXT GENERATED ALWAYS AS (COALESCE(CASE WHEN json_valid(detail) THEN CASE WHEN json_type(detail, '$.parentResource') = 'text' AND json_type(detail, '$.parentId') = 'text' THEN CAST(json_extract(detail, '$.parentId') AS TEXT) END END, entity_id)) VIRTUAL")
             .execute(pool).await.expect("add record_id");
         sqlx::query(
             "CREATE INDEX idx_audit_log_record_scope ON audit_log(record_resource, record_id)",
@@ -1408,7 +1408,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn record_scope_index_handles_numeric_parent_and_sort_only() {
+    async fn record_scope_index_rejects_numeric_parent_and_handles_sort_only() {
         let svc = service().await;
         let mut related = sample_entry("create", "attachments", "alice");
         related.entity_id = Some("101");
@@ -1441,7 +1441,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(scoped.total_count, 2);
+        assert_eq!(scoped.total_count, 1);
 
         let sorted = svc
             .list(ListParams {
@@ -1466,7 +1466,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(contains.total_count, 2);
+        assert_eq!(contains.total_count, 1);
 
         let plan = sqlx::query(
             "EXPLAIN QUERY PLAN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000) AS audit_log WHERE record_resource = 'items' AND record_id = '42'",

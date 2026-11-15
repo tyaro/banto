@@ -17,8 +17,8 @@
 - 監査一覧に履歴専用のフィルタ `recordResource`・`recordId` を追加する。通常の
   `resource`・`entityId` フィルタと画面表示は維持する。
 - migration 0010 で `audit_log` に `record_resource`・`record_id` の生成列と複合
-  インデックスを追加する。detail に文字列の `parentResource` と文字列・整数の
-  `parentId` が揃えば親を記録先とし、なければ監査行自身の `resource`・`entity_id`
+  インデックスを追加する。detail に文字列の `parentResource`・`parentId` が
+  揃えば親を記録先とし、なければ監査行自身の `resource`・`entity_id`
   を使う。不正な JSON は直接の対象として扱う。既存行も migration 時に算出し、
   新規・spool からの行も INSERT 時に算出する。PostgreSQL の安全な JSON 抽出は
   migration 内の immutable 関数にまとめる。PostgreSQL の `jsonb` が表せない
@@ -28,6 +28,8 @@
   PostgreSQL の生成列と異なることがある。
 - フィルタの値は SQL にバインドする。記録先を絞る履歴・監査一覧のクエリは
   複合インデックスを使い、読み取りごとの detail 全件解析を避ける。
+  親キーを持つ行は記録先を親へ切り替える。監査行自身の操作を探す場合は
+  従来の `resource`・`entityId` フィルタを使う。
 - 履歴のページング・並び順・件数は既存の `list_as_of` の単一読み取りトランザクション
   とスナップショット境界を使う。フロントで 2 つの一覧を結合しない。
 - 履歴行では別リソースの操作と分かるよう、監査行の `resource` を操作名に添える。

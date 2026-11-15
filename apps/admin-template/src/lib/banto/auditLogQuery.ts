@@ -22,11 +22,7 @@ export function auditRecordScope(row: AuditLogEntry): { resource: string; id: st
 			const detail: unknown = JSON.parse(row.detail);
 			if (typeof detail === 'object' && detail !== null && !Array.isArray(detail)) {
 				const { parentResource, parentId } = detail as Record<string, unknown>;
-				if (
-					typeof parentResource === 'string' &&
-					(typeof parentId === 'string' ||
-						(typeof parentId === 'number' && Number.isInteger(parentId)))
-				) {
+				if (typeof parentResource === 'string' && typeof parentId === 'string') {
 					return { resource: parentResource, id: String(parentId) };
 				}
 			}
@@ -86,7 +82,9 @@ export function hasAuditLogQuery(params: Pick<URLSearchParams, 'get' | 'has'>): 
 
 /**
  * The link the record drawer's history tab offers: the audit-log path with
- * both parameters, URL-encoded. `base` is `resolveAppPath('/audit-log')`.
+ * both parameters, URL-encoded. This is the record's history scope; a related
+ * object's own canonical audit rows need the older resource/entityId filters.
+ * `base` is `resolveAppPath('/audit-log')`.
  */
 export function auditLogLink(base: string, resource: string, id: string | number): string {
 	const query = new URLSearchParams({

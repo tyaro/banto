@@ -7,9 +7,7 @@ DECLARE parsed JSONB;
 BEGIN
   parsed := raw_detail::jsonb;
   IF jsonb_typeof(parsed -> 'parentResource') = 'string'
-     AND (jsonb_typeof(parsed -> 'parentId') = 'string'
-          OR (jsonb_typeof(parsed -> 'parentId') = 'number'
-              AND (parsed ->> 'parentId') ~ '^-?[0-9]+$')) THEN
+     AND jsonb_typeof(parsed -> 'parentId') = 'string' THEN
     RETURN parsed ->> field_name;
   END IF;
   RETURN NULL;
