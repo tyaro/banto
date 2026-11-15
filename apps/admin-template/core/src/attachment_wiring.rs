@@ -49,13 +49,13 @@ pub fn attachment_audit_detail(meta: &AttachmentMeta) -> Value {
 /// Legacy metadata may point to a deleted or unsupported parent. Allow its
 /// cleanup, but do not redirect the delete audit row to an unverified record.
 pub async fn attachment_delete_audit_detail(items: &ItemsService, meta: &AttachmentMeta) -> Value {
-    if validate_attachment_parent(items, &meta.resource, &meta.resource_id)
-        .await
-        .is_ok()
-    {
-        attachment_audit_detail(meta)
-    } else {
-        json!({ "fileName": meta.file_name, "sizeBytes": meta.size_bytes })
+    match validate_attachment_parent(items, &meta.resource, &meta.resource_id).await {
+        Err(BantoError::NotFound { .. } | BantoError::BadRequest(_)) => {
+            json!({ "fileName": meta.file_name, "sizeBytes": meta.size_bytes })
+        }
+        // A transient DB failure cannot prove the stored relationship is
+        // invalid. Preserve it rather than silently losing a valid history row.
+        _ => attachment_audit_detail(meta),
     }
 }
 
