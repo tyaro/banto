@@ -158,6 +158,8 @@ Tauri コマンド（AppState に `attachments: AttachmentsService` を追加）
 
 監査: upload → `action:"create"`, delete → `action:"delete"`,
 `resource:"attachments"`, `detail: {fileName, sizeBytes, parentResource, parentId}`。
+旧版の添付を削除する際に親が無効なら、delete の detail は `{fileName, sizeBytes}` に
+戻す（監査対象は添付自身のまま）。
 ファイル内容は記録しない（既存の鉄則どおり）。
 
 ### 3.6 Tauri でのダウンロード

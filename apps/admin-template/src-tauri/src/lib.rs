@@ -3741,13 +3741,16 @@ async fn attachments_upload(
 async fn attachments_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Editor, "attachments").await?;
     let meta = state.attachments.delete(id).await?;
+    let detail =
+        admin_template_core::attachment_wiring::attachment_delete_audit_detail(&state.items, &meta)
+            .await;
     record_ok(
         &state.audit,
         &actor,
         "delete",
         "attachments",
         Some(&id.to_string()),
-        Some(attachment_audit_detail(&meta)),
+        Some(detail),
     )
     .await;
     let _ = state.events.send(ServerEvent::ResourceChanged {

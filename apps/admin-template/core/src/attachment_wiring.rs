@@ -46,6 +46,19 @@ pub fn attachment_audit_detail(meta: &AttachmentMeta) -> Value {
     })
 }
 
+/// Legacy metadata may point to a deleted or unsupported parent. Allow its
+/// cleanup, but do not redirect the delete audit row to an unverified record.
+pub async fn attachment_delete_audit_detail(items: &ItemsService, meta: &AttachmentMeta) -> Value {
+    if validate_attachment_parent(items, &meta.resource, &meta.resource_id)
+        .await
+        .is_ok()
+    {
+        attachment_audit_detail(meta)
+    } else {
+        json!({ "fileName": meta.file_name, "sizeBytes": meta.size_bytes })
+    }
+}
+
 /// Removes the attachments left pointing at the just-deleted item `id` and
 /// returns the audit `detail` of its `delete` entry (`None` when nothing was
 /// removed).
@@ -75,6 +88,28 @@ mod tests {
     use super::*;
     use banto_attachments::NewAttachment;
     use banto_storage::Db;
+
+    #[tokio::test]
+    async fn legacy_attachment_delete_does_not_redirect_history_to_unverified_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::migrate_memory().await.unwrap();
+        let items = ItemsService::new(db.clone());
+        let attachments = AttachmentsService::new(db, dir.path().join("attachments"));
+        let meta = attachments
+            .upload(NewAttachment {
+                resource: "users".to_string(),
+                resource_id: "1".to_string(),
+                file_name: "legacy.txt".to_string(),
+                created_by: None,
+                bytes: b"legacy".to_vec(),
+            })
+            .await
+            .unwrap();
+        let detail = attachment_delete_audit_detail(&items, &meta).await;
+        assert_eq!(detail["fileName"], "legacy.txt");
+        assert!(detail.get("parentResource").is_none());
+        assert!(detail.get("parentId").is_none());
+    }
 
     #[tokio::test]
     async fn sweep_reports_the_removed_count_and_none_when_nothing_was_removed() {

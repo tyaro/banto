@@ -1,5 +1,7 @@
 use super::*;
-use crate::attachment_wiring::{attachment_audit_detail, validate_attachment_parent};
+use crate::attachment_wiring::{
+    attachment_audit_detail, attachment_delete_audit_detail, validate_attachment_parent,
+};
 
 // --- M20: attachments -------------------------------------------------------
 
@@ -213,6 +215,7 @@ async fn attachments_delete(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let meta = state.attachments.delete(id).await?;
+    let detail = attachment_delete_audit_detail(&state.items, &meta).await;
     record_write(
         &state.audit,
         &state.auth,
@@ -220,7 +223,7 @@ async fn attachments_delete(
         "delete",
         "attachments",
         Some(&id.to_string()),
-        Some(attachment_audit_detail(&meta)),
+        Some(detail),
     )
     .await;
     notify_attachments_changed(&state.events);
