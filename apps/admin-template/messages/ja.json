@@ -346,6 +346,7 @@
   "settings.loginNoticeSaved": "ログイン画面のお知らせを保存しました",
   "settings.loginNoticeSignInAgain": "ログイン状態が切れました。お知らせを保存する前に再ログインしてください。",
   "settings.loginNoticeTooLong": "お知らせは200文字以内で指定してください。",
+  "settings.loginNoticeRetry": "お知らせを再読み込み",
   "settings.sectionNavAria": "設定カテゴリ",
   "settings.sectionAppearance": "外観・言語",
   "settings.sectionAccount": "アカウント",

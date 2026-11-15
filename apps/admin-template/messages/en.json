@@ -346,6 +346,7 @@
   "settings.loginNoticeSaved": "Login notice saved",
   "settings.loginNoticeSignInAgain": "Your session expired. Sign in again before saving the notice.",
   "settings.loginNoticeTooLong": "Keep the notice within 200 characters.",
+  "settings.loginNoticeRetry": "Retry loading notice",
   "settings.sectionNavAria": "Settings categories",
   "settings.sectionAppearance": "Appearance & Language",
   "settings.sectionAccount": "Account",

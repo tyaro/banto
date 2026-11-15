@@ -16,14 +16,22 @@
 			? m['settings.loginNoticeSignInAgain']()
 			: errorMessage(error);
 
+	async function load(): Promise<void> {
+		loading = true;
+		loadFailed = false;
+		feedback = '';
+		try {
+			notice = await getLoginNotice();
+		} catch (error) {
+			loadFailed = true;
+			feedback = noticeError(error);
+		} finally {
+			loading = false;
+		}
+	}
+
 	$effect(() => {
-		void getLoginNotice()
-			.then((value) => (notice = value))
-			.catch((error) => {
-				loadFailed = true;
-				feedback = noticeError(error);
-			})
-			.finally(() => (loading = false));
+		void load();
 	});
 
 	async function save(event: SubmitEvent): Promise<void> {
@@ -69,6 +77,11 @@
 			<Button type="submit" variant="primary" loading={saving} disabled={loading || loadFailed}
 				>{m['settings.loginNoticeSave']()}</Button
 			>
+			{#if loadFailed}
+				<Button type="button" variant="secondary" onclick={load}
+					>{m['settings.loginNoticeRetry']()}</Button
+				>
+			{/if}
 		</div>
 		{#if feedback}<p class="note" role="status">{feedback}</p>{/if}
 	</form>
