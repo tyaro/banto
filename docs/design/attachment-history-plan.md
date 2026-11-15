@@ -9,7 +9,8 @@
 既存の添付監査行は `resource: "attachments"`、`entity_id: 添付 ID` のままにし、
 監査 detail の `parentResource`・`parentId` を親レコードへの関連付けとして読む。
 これらのキーは既に REST と Tauri の共通関数で記録されているため、既存の監査行も対象になる。
-denied や別の親レコードの添付操作は含めない。
+別の親レコードの添付操作は含めない。denied 行も監査 detail に親キーが揃う場合は
+その親の履歴に出る。現行の添付 denied 行には親キーがない。
 
 ## 設計
 

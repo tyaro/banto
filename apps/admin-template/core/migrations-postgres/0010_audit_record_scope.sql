@@ -11,7 +11,9 @@ BEGIN
     RETURN parsed ->> field_name;
   END IF;
   RETURN NULL;
-EXCEPTION WHEN invalid_text_representation THEN
+-- JSONB also rejects otherwise well-formed JSON with \u0000; any parse
+-- failure must leave an audit row directly scoped instead of blocking boot.
+EXCEPTION WHEN OTHERS THEN
   RETURN NULL;
 END;
 $$;

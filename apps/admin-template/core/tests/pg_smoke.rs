@@ -441,6 +441,11 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
             "103",
             Some(json!({ "parentResource": "items", "parentId": 42 })),
         ),
+        (
+            "attachments",
+            "105",
+            Some(json!({ "parentResource": "items", "parentId": "\u{0000}" })),
+        ),
     ] {
         audit
             .try_record(AuditEntry {
@@ -506,16 +511,16 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
         .expect("sort by record scope without filters");
     assert!(sorted.total_count >= 4);
 
-    let mut conn = pool.acquire().await.expect("acquire for history EXPLAIN");
-    sqlx::query("SET enable_seqscan = off")
-        .execute(&mut *conn)
+    let mut tx = pool.begin().await.expect("begin history EXPLAIN");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
         .await
         .expect("disable seqscan");
     let plan: Vec<String> = sqlx::query_scalar(
         "EXPLAIN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000000) AS audit_log \
          WHERE record_resource = 'items' AND record_id = '42'",
     )
-    .fetch_all(&mut *conn)
+    .fetch_all(&mut *tx)
     .await
     .expect("explain record scope");
     assert!(
