@@ -22,6 +22,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import { listAuditLog } from '#lib/banto/auditLogAdmin.js';
 	import { auditLogLink } from '#lib/banto/auditLogQuery.js';
+	import { resources } from '#lib/banto/resources/index.js';
 	import { navItems, resolveAppPath } from '#lib/navigation.js';
 	import {
 		createRecordHistoryLoader,
@@ -76,6 +77,11 @@
 	};
 	/** An action the table does not know (a custom one) shows as recorded. */
 	const label = (table: Record<string, () => string>, key: string): string => table[key]?.() ?? key;
+	/** Use the app's current resource label; the optional attachment has no nav entry. */
+	const relatedResourceLabel = (name: string): string =>
+		name === 'attachments'
+			? m['resource.historyAttachmentLabel']()
+			: (resources.find((item) => item.name === name)?.label ?? name);
 
 	// The audit-log screen is not in every preset (display removes it): link
 	// to it only when the nav still has it.
@@ -126,13 +132,13 @@
 									{label(actionLabels, row.action)}
 								{:else if fileName}
 									{m['resource.historyRelatedFileAction']({
-										resource: row.resource,
+										resource: relatedResourceLabel(row.resource),
 										action: label(actionLabels, row.action),
 										fileName
 									})}
 								{:else}
 									{m['resource.historyRelatedAction']({
-										resource: row.resource,
+										resource: relatedResourceLabel(row.resource),
 										action: label(actionLabels, row.action)
 									})}
 								{/if}

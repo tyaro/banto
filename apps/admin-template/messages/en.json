@@ -186,6 +186,7 @@
   "resource.historyActionDenied": "Permission denied",
   "resource.historyRelatedAction": "{resource}: {action}",
   "resource.historyRelatedFileAction": "{resource}: {action} ({fileName})",
+  "resource.historyAttachmentLabel": "Attachments",
   "resource.historyResultOk": "Success",
   "resource.historyResultDenied": "Denied",
   "resource.historyResultFailed": "Failed",

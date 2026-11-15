@@ -2241,10 +2241,10 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await drawer.getByRole('tab', { name: '履歴', exact: true }).click();
 		const historyTable = drawer.getByRole('table', { name: /履歴/ });
 		await expect(
-			historyTable.getByRole('cell', { name: `attachments：作成（${TXT_FILE_NAME}）` })
+			historyTable.getByRole('cell', { name: `添付ファイル：作成（${TXT_FILE_NAME}）` })
 		).toBeVisible();
 		await expect(
-			historyTable.getByRole('cell', { name: `attachments：削除（${TXT_FILE_NAME}）` })
+			historyTable.getByRole('cell', { name: `添付ファイル：削除（${TXT_FILE_NAME}）` })
 		).toBeVisible();
 		await page.goto(href);
 

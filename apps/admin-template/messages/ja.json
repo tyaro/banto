@@ -186,6 +186,7 @@
   "resource.historyActionDenied": "権限なし",
   "resource.historyRelatedAction": "{resource}：{action}",
   "resource.historyRelatedFileAction": "{resource}：{action}（{fileName}）",
+  "resource.historyAttachmentLabel": "添付ファイル",
   "resource.historyResultOk": "成功",
   "resource.historyResultDenied": "拒否",
   "resource.historyResultFailed": "失敗",
