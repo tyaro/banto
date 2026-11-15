@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { MessageSquareText } from '@lucide/svelte';
 	import { Button, SurfaceCard } from '@banto/ui';
 	import { isProviderError } from '@banto/admin-core';
@@ -30,7 +31,7 @@
 		}
 	}
 
-	$effect(() => {
+	onMount(() => {
 		void load();
 	});
 
