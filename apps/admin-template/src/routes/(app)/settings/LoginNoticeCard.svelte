@@ -31,6 +31,11 @@
 		if (saving || loading || loadFailed) return;
 		saving = true;
 		feedback = '';
+		if ([...notice.trim()].length > 200) {
+			feedback = m['settings.loginNoticeTooLong']();
+			saving = false;
+			return;
+		}
 		try {
 			notice = await setLoginNotice(notice);
 			feedback = m['settings.loginNoticeSaved']();
@@ -55,7 +60,6 @@
 			<input
 				class="banto-field-control"
 				type="text"
-				maxlength="200"
 				bind:value={notice}
 				disabled={loading || saving || loadFailed}
 			/>

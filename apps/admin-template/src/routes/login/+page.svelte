@@ -176,7 +176,11 @@
 	<div class="login-card">
 		<!-- B-7: author branding lives in loginBrand.ts; the notice comes from a
 		     dedicated public settings key. Text is escaped by Svelte. -->
-		<aside class="brand-pane" style:background={loginBrand.background}>
+		<aside
+			class="brand-pane"
+			style:background={loginBrand.background}
+			style:color={loginBrand.foreground}
+		>
 			<span class="brand-mark" aria-hidden="true">
 				{#if loginBrand.markUrl}
 					<img src={loginBrand.markUrl} alt="" />
@@ -376,7 +380,6 @@
 		flex-direction: column;
 		gap: var(--banto-space-2);
 		padding: var(--banto-space-4);
-		color: #fff;
 		overflow: hidden;
 	}
 
@@ -597,7 +600,7 @@
 			position: relative;
 			z-index: 1;
 			margin: 0;
-			color: rgb(255 255 255 / 0.75);
+			color: color-mix(in srgb, currentColor 75%, transparent);
 			font-size: var(--banto-font-size-md);
 			text-wrap: pretty;
 		}

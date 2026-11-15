@@ -65,7 +65,8 @@ Banto は**コピーして使う**前提のテンプレート（[template-scope.
 - アイコン: `pnpm --filter <name>-app tauri icon <画像>`（Windows では `tauri dev`/
   `tauri build` に `icons/icon.ico` が必須。同梱済みで、独自アイコンに差し替えるとこの
   コマンドで全形式を再生成できる — [windows-setup.md](windows-setup.md)）
-- ログイン画面のロゴ・背景・キャッチコピー: `src/lib/banto/loginBrand.ts` を編集する。
+- ログイン画面のロゴ・背景・文字色・キャッチコピー: `src/lib/banto/loginBrand.ts` を編集する。
+  背景と文字色は読みやすさを保てる組み合わせにする。
   既定では正確なアプリ版をログイン前にも表示する（LAN クライアントからも見える）。
   公開しない場合は同ファイルの `showVersion` を `false` にする。
   管理者からのお知らせは、起動後に「設定 → 外観」で入力する（ログイン前にも表示）。
