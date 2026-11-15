@@ -89,5 +89,11 @@ describe('auditRecordScope', () => {
 		expect(
 			auditRecordScope({ ...row, detail: 'not-json' } as Parameters<typeof auditRecordScope>[0])
 		).toEqual({ resource: 'attachments', id: '9' });
+		expect(
+			auditRecordScope({
+				...row,
+				detail: '{"parentResource":"items","parentId":42.5}'
+			} as Parameters<typeof auditRecordScope>[0])
+		).toEqual({ resource: 'attachments', id: '9' });
 	});
 });

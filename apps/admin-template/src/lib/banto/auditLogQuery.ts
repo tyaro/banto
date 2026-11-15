@@ -24,7 +24,8 @@ export function auditRecordScope(row: AuditLogEntry): { resource: string; id: st
 				const { parentResource, parentId } = detail as Record<string, unknown>;
 				if (
 					typeof parentResource === 'string' &&
-					(typeof parentId === 'string' || typeof parentId === 'number')
+					(typeof parentId === 'string' ||
+						(typeof parentId === 'number' && Number.isInteger(parentId)))
 				) {
 					return { resource: parentResource, id: String(parentId) };
 				}

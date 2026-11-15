@@ -122,7 +122,7 @@
 						<tr>
 							<td class="ts">{row.ts}</td>
 							<td>
-								{#if row.resource === resource}
+								{#if row.resource === resource && row.entityId === String(id)}
 									{label(actionLabels, row.action)}
 								{:else if fileName}
 									{m['resource.historyRelatedFileAction']({
