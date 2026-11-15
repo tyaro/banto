@@ -587,6 +587,13 @@
 			fill: #fff;
 		}
 
+		.brand-mark img {
+			display: block;
+			width: 100%;
+			height: 100%;
+			object-fit: contain;
+		}
+
 		.brand-name {
 			position: relative;
 			z-index: 1;
