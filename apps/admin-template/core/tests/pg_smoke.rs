@@ -446,6 +446,11 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
             "105",
             Some(json!({ "parentResource": "items", "parentId": "\u{0000}" })),
         ),
+        (
+            "attachments",
+            "106",
+            Some(json!({ "parentResource": "items", "parentId": "42", "fileName": "\u{0000}" })),
+        ),
     ] {
         audit
             .try_record(AuditEntry {
@@ -493,11 +498,12 @@ async fn audit_related_record_history_on_postgres(audit: &AuditLogService, db: &
         .list_as_of(params, None)
         .await
         .expect("related history list");
-    assert_eq!(history.total_count, 3);
+    assert_eq!(history.total_count, 4);
     assert_eq!(history.rows[0].resource, "attachments");
-    assert_eq!(history.rows[0].entity_id.as_deref(), Some("103"));
-    assert_eq!(history.rows[1].entity_id.as_deref(), Some("101"));
-    assert_eq!(history.rows[2].resource, "items");
+    assert_eq!(history.rows[0].entity_id.as_deref(), Some("106"));
+    assert_eq!(history.rows[1].entity_id.as_deref(), Some("103"));
+    assert_eq!(history.rows[2].entity_id.as_deref(), Some("101"));
+    assert_eq!(history.rows[3].resource, "items");
 
     let sorted = audit
         .list(ListParams {

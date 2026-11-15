@@ -1451,6 +1451,19 @@ mod tests {
             .unwrap();
         assert_eq!(sorted.total_count, 2);
 
+        let contains = svc
+            .list(ListParams {
+                filters: vec![FilterState {
+                    field: "recordResource".into(),
+                    op: FilterOp::Contains,
+                    value: json!("tem"),
+                }],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(contains.total_count, 2);
+
         let plan = sqlx::query(
             "EXPLAIN QUERY PLAN SELECT id FROM (SELECT * FROM audit_log WHERE id <= 1000) AS audit_log WHERE record_resource = 'items' AND record_id = '42'",
         )
