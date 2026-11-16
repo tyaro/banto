@@ -359,6 +359,20 @@ describe('HeaderNav', () => {
 		expect(row.style.visibility).toBe('');
 	});
 
+	it('closes an open dropdown when the width becomes insufficient', async () => {
+		const { nav } = await setup();
+		await resizeTo(300);
+		const more = within(nav).getByRole('button', { name: 'More' });
+		await fireEvent.click(more);
+		await flush();
+		const popover = document.getElementById(more.getAttribute('aria-controls') ?? '')!;
+		expect(popover.dataset.popoverOpen).toBe('true');
+		await resizeTo(50);
+		await flush();
+		expect(popover.dataset.popoverOpen).toBeUndefined();
+		expect(more.getAttribute('aria-expanded')).toBe('false');
+	});
+
 	it('moves along the top row with the arrows and Home / End (every item a Tab stop)', async () => {
 		const { nav } = await setup();
 		await resizeTo(300);

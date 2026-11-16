@@ -362,6 +362,9 @@
 			const focus = captureFocus();
 			fit = next;
 			const now = next === HEADER_NAV_INSUFFICIENT;
+			// The row hides while insufficient; an open dropdown (top layer, its own
+			// `visibility`) would stay usable without its button, so close it.
+			if (now && !was) closeDropdown();
 			if (was !== now) onInsufficient?.(now);
 			if (focus) {
 				flushSync();
