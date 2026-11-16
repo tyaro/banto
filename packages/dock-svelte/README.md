@@ -27,6 +27,18 @@ Banto のフローティングウィンドウ/ドッキングレイアウト（s
 </DockHost>
 ```
 
+`FloatingWindowDef.icon` はレイアウトに保存される文字列。`DockHost` に
+`iconContent` snippet を渡すと、タイトルバー・タブ・ドラッグ中のアイコンを
+アプリ側の SVG やアイコン部品で描ける。省略時は従来どおり文字列をそのまま表示する。
+
+```svelte
+<DockHost {dock} {panel}>
+	{#snippet iconContent(icon: string)}
+		<MyIcon name={icon} />
+	{/snippet}
+</DockHost>
+```
+
 ## host の縮小と浮動 window の到達性
 
 浮動 window は「保存してある希望の配置（layout の x / y / width / height）」と「いま描く配置」を分けて扱う

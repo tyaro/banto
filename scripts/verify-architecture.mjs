@@ -413,6 +413,7 @@ const isAllowedPackageImport = (spec) =>
 		{ tauri: 'users_delete', rest: 'DELETE /api/users/{id}', role: 'Admin' },
 		{ tauri: 'users_reset_password', rest: 'POST /api/users/{id}/reset-password', role: 'Admin' },
 		{ tauri: 'ui_settings_set', rest: 'PUT /api/ui-settings/{key}', role: 'Viewer' },
+		{ tauri: 'login_notice_set', rest: 'PUT /api/login-notice', role: 'Admin' },
 		{ tauri: 'audit_config_apply', rest: 'PUT /api/audit-log/config', role: 'Admin' },
 		{ tauri: 'backups_create', rest: 'POST /api/backups', role: 'Admin' },
 		{ tauri: 'backups_stage_restore', rest: 'POST /api/backups/restore', role: 'Admin' },
@@ -486,6 +487,7 @@ const isAllowedPackageImport = (spec) =>
 		'firewall_rule_status',
 		'items_get',
 		'items_list',
+		'login_notice_get',
 		'ping',
 		// Issue #219 PR-C2: the reach check of the live listener (admin, like
 		// server_status). Desktop-only by nature - no REST twin.
@@ -501,6 +503,7 @@ const isAllowedPackageImport = (spec) =>
 	// 読み取り系 REST ルート（GET と、body を使うため POST の *_list）。
 	const REST_READ = new Set([
 		'GET /api/auth/status',
+		'GET /api/login-notice',
 		'GET /api/auth/check',
 		'GET /api/auth/identity',
 		'GET /api/events',

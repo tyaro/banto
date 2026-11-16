@@ -18,6 +18,8 @@
 //! | GET    | `/api/auth/identity` | -              | `Identity \| null`     |
 //! | POST   | `/api/auth/change-password` | `{currentPassword,newPassword}` | `{success}` (auth required) |
 //! | GET    | `/api/events`        | -              | SSE stream of `ServerEvent` |
+//! | GET    | `/api/login-notice`  | -              | `{notice}` (NO auth required) |
+//! | PUT    | `/api/login-notice`  | `{notice}`     | `{notice}` (admin) |
 // [scaffold:items] begin (Route table doc rows)
 //! | POST   | `/api/items/list`    | `ListParams`   | `ListResult<Item>` (any role) |
 //! | GET    | `/api/items/{id}`    | -              | `Item` (any role)      |
@@ -51,6 +53,10 @@
 //! | DELETE | `/api/attachments/{id}` | -              | 204 (editor+)           |
 //!
 //! ## Where each router lives (theme C PR-C4, docs/template-scope.md §7 移行順 ④)
+//!
+//! There is no generic global `/api/settings/{key}` route. The only generic
+//! settings endpoint is `/api/ui-settings/{key}`, which writes to the caller's
+//! own `ui.{username}.{key}` namespace; it cannot replace `login.notice`.
 //!
 //! The table above stays here - it is the artifact conventions §1 designates
 //! as the REST side of the Tauri⇔REST correspondence table, and
@@ -238,6 +244,7 @@ use crate::system_info::SystemInfoService;
 use crate::users::{Role, UsersService};
 
 mod attachments;
+mod login_notice;
 // [scaffold:items] begin
 mod items;
 // [scaffold:items] end
@@ -256,6 +263,7 @@ pub use banto_server::routes::audited_credential_verifier;
 pub use banto_server::routes::user_auth_state;
 
 use attachments::attachments_router;
+use login_notice::login_notice_router;
 // [scaffold:items] begin
 use items::items_router;
 // [scaffold:items] end
@@ -386,6 +394,11 @@ pub fn api_router(
             auth.clone(),
             audit.clone(),
             metrics,
+        ))
+        .merge(login_notice_router(
+            settings.clone(),
+            audit.clone(),
+            auth.clone(),
         ))
         .merge(attachments_router(
             attachments,

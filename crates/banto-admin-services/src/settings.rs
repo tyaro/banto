@@ -26,6 +26,24 @@ const KEY_AUTOLOGIN_ENABLED: &str = "auth.autologin.enabled";
 const KEY_AUTOLOGIN_USERNAME: &str = "auth.autologin.username";
 const KEY_AUDIT_RETENTION_DAYS: &str = "audit.retention_days";
 const KEY_AUDIT_RETENTION_ROWS: &str = "audit.retention_rows";
+const KEY_LOGIN_NOTICE: &str = "login.notice";
+pub const MAX_LOGIN_NOTICE_CHARS: usize = 200;
+
+fn invalid_login_notice_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{061C}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
+}
 
 /// Default audit-log retention (spec M14): 90 days / 100,000 rows. There is
 /// deliberately no "audit enabled" toggle - the audit trail is a standard
@@ -227,6 +245,31 @@ impl SettingsService {
         Self { db }
     }
 
+    /// Public login-screen notice. This dedicated key prevents an unauthenticated
+    /// reader from requesting arbitrary (possibly secret) settings keys.
+    pub async fn login_notice(&self) -> Result<String, BantoError> {
+        Ok(self.get(KEY_LOGIN_NOTICE).await?.unwrap_or_default())
+    }
+
+    /// Save only bounded, single-line public text. The UI renders it as text.
+    pub async fn set_login_notice(&self, value: &str) -> Result<String, BantoError> {
+        let notice = value.trim();
+        if notice.chars().count() > MAX_LOGIN_NOTICE_CHARS
+            || notice.chars().any(invalid_login_notice_char)
+        {
+            return Err(BantoError::Validation {
+                field_errors: vec![FieldError {
+                    field: "notice".to_string(),
+                    message: format!(
+                        "お知らせは改行なし・{MAX_LOGIN_NOTICE_CHARS}文字以内で指定してください"
+                    ),
+                }],
+            });
+        }
+        self.set_unchecked(KEY_LOGIN_NOTICE, notice).await?;
+        Ok(notice.to_string())
+    }
+
     /// Read a single setting by key, or `None` if it has never been set.
     pub async fn get(&self, key: &str) -> Result<Option<String>, BantoError> {
         // AssertSqlSafe: only `dialect.placeholder(1)` is interpolated
@@ -253,12 +296,22 @@ impl SettingsService {
         .map_err(banto_storage::storage_error)
     }
 
-    /// Upsert a single setting.
+    /// Upsert a single setting. The public login notice uses its dedicated
+    /// validated method instead.
     ///
     /// `ON CONFLICT(key) DO UPDATE SET value = excluded.value` is valid in both
     /// dialects (the `excluded` pseudo-table is standard in SQLite and
     /// Postgres alike), so only the placeholders differ between backends.
     pub async fn set(&self, key: &str, value: &str) -> Result<(), BantoError> {
+        if key == KEY_LOGIN_NOTICE {
+            return Err(BantoError::BadRequest(
+                "login.notice must be written with set_login_notice".to_string(),
+            ));
+        }
+        self.set_unchecked(key, value).await
+    }
+
+    async fn set_unchecked(&self, key: &str, value: &str) -> Result<(), BantoError> {
         let dialect = self.db.dialect();
         // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
         // (internal enum, never caller input); `key`/`value` are bound below.
@@ -295,6 +348,11 @@ impl SettingsService {
     /// leave `auth.disabled` saved and `auth.disabled_role` not, since the
     /// desktop app re-binds its session from what it saved).
     pub async fn set_many(&self, pairs: &[(&str, &str)]) -> Result<(), BantoError> {
+        if pairs.iter().any(|(key, _)| *key == KEY_LOGIN_NOTICE) {
+            return Err(BantoError::BadRequest(
+                "login.notice must be written with set_login_notice".to_string(),
+            ));
+        }
         let dialect = self.db.dialect();
         // AssertSqlSafe: only `dialect.placeholder(n)` is interpolated
         // (internal enum, never caller input); keys/values are bound below.
@@ -723,6 +781,49 @@ mod tests {
         let svc = service().await;
         svc.set("theme", "dark").await.unwrap();
         assert_eq!(svc.get("theme").await.unwrap(), Some("dark".to_string()));
+    }
+
+    #[tokio::test]
+    async fn login_notice_is_public_text_with_a_single_bounded_line() {
+        let svc = service().await;
+        assert_eq!(svc.login_notice().await.unwrap(), "");
+        assert_eq!(
+            svc.set_login_notice("  Maintenance tonight  ")
+                .await
+                .unwrap(),
+            "Maintenance tonight"
+        );
+        assert_eq!(svc.login_notice().await.unwrap(), "Maintenance tonight");
+        assert!(matches!(
+            svc.set(KEY_LOGIN_NOTICE, "first\nsecond").await,
+            Err(BantoError::BadRequest(_))
+        ));
+        assert!(matches!(
+            svc.set_many(&[("theme", "dark"), (KEY_LOGIN_NOTICE, "first\nsecond")])
+                .await,
+            Err(BantoError::BadRequest(_))
+        ));
+        assert_eq!(svc.get("theme").await.unwrap(), None);
+        for invalid in [
+            "first\nsecond".to_string(),
+            "first\u{2028}second".to_string(),
+            "first\u{202E}second".to_string(),
+            "first\u{200B}second".to_string(),
+            "first\u{061C}second".to_string(),
+            "first\u{180E}second".to_string(),
+            "first\u{2060}second".to_string(),
+            "first\u{00AD}second".to_string(),
+            "first\u{206A}second".to_string(),
+            "first\u{FFF9}second".to_string(),
+            "first\u{E0041}second".to_string(),
+            "x".repeat(MAX_LOGIN_NOTICE_CHARS + 1),
+        ] {
+            assert!(matches!(
+                svc.set_login_notice(&invalid).await,
+                Err(BantoError::Validation { .. })
+            ));
+        }
+        assert_eq!(svc.login_notice().await.unwrap(), "Maintenance tonight");
     }
 
     #[tokio::test]

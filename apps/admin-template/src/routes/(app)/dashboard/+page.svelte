@@ -40,6 +40,7 @@
 	import { listenPanelClosed, openPanelWindow } from '#lib/banto/popout.js';
 	import { isDockEscapeBlocked } from '#lib/banto/dockEscape.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
+	import PanelIcon from '#lib/components/PanelIcon.svelte';
 	import {
 		MEMO_PANEL_ID,
 		createDashboardMemo,
@@ -551,7 +552,7 @@
 						title={isDocked(def.id) ? m['dashboard.dockedAlwaysVisible']() : undefined}
 						onclick={() => togglePanel(def.id)}
 					>
-						{def.icon}
+						{#if def.icon}<PanelIcon icon={def.icon} />{/if}
 						{def.title}
 					</button>
 				{/each}
@@ -564,6 +565,7 @@
 					bind:this={dockHost}
 					{dock}
 					panel={dockPanel}
+					iconContent={dockIcon}
 					{onPopOut}
 					{beforePanelChange}
 					isEscapeBlocked={isDockEscapeBlocked}
@@ -579,6 +581,10 @@
 		</section>
 	{/if}
 </div>
+
+{#snippet dockIcon(icon: string)}
+	<PanelIcon {icon} />
+{/snippet}
 
 {#snippet dockPanel(content: PanelContent)}
 	<!--

@@ -23,6 +23,7 @@
 	import { bantoReady } from '#lib/banto/setup.js';
 	import { findPanelDef } from '#lib/banto/panels.js';
 	import DashboardPanel from '#lib/components/DashboardPanel.svelte';
+	import PanelIcon from '#lib/components/PanelIcon.svelte';
 
 	const id = $derived(page.params.id ?? '');
 	const def = $derived(findPanelDef(id));
@@ -64,7 +65,7 @@
 {:else}
 	<div class="panel-window">
 		<header class="panel-header">
-			{#if def?.icon}<span class="icon" aria-hidden="true">{def.icon}</span>{/if}
+			{#if def?.icon}<span class="icon" aria-hidden="true"><PanelIcon icon={def.icon} /></span>{/if}
 			<span class="title">{def?.title ?? id}</span>
 		</header>
 		<div class="panel-body" bind:clientHeight={bodyHeight}>

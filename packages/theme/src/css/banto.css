@@ -55,6 +55,8 @@
 	--banto-shell-sidebar-width-collapsed: 56px;
 
 	--banto-shell-header-height: 48px;
+	/* The header reads --banto-surface/--banto-backdrop at its own element in
+	   the standard preset. Glass gives it separate tokens (A-3). */
 
 	/* Kiosk shell (display-preset-plan.md D1-b): a shorter header for
      permanently-mounted dashboards. Opt-in via Header.svelte's

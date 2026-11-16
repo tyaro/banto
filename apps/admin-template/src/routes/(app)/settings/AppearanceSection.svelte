@@ -38,6 +38,8 @@
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { isAdmin } from '#lib/permissions.js';
 	import { errorMessage, tauri } from './shared';
+	import { canEditLoginNotice } from '#lib/banto/loginNotice.js';
+	import LoginNoticeCard from './LoginNoticeCard.svelte';
 
 	// M12 preset axis (standard/glass), orthogonal to light/dark (which is
 	// switched from the header's sun/moon button, not on this page).
@@ -306,6 +308,10 @@
 			{m['settings.kioskToggle']()}
 		</label>
 	</SurfaceCard>
+
+	{#if isAdmin(sessionStore.role) && canEditLoginNotice()}
+		<LoginNoticeCard />
+	{/if}
 
 	{#if tauri && isAdmin(sessionStore.role) && vibrancyStatus?.supported}
 		<SurfaceCard>

@@ -73,6 +73,7 @@
 		/** Stacking order inside the host's floating layer (1 = back). `DockHost` derives it from the window's index in `layout.floating` (= z-order) while keeping the DOM order stable. */
 		zIndex: number;
 		panel: Snippet<[PanelContent]>;
+		iconContent?: Snippet<[string]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings. Defaults reproduce today's Japanese output. */
@@ -88,6 +89,7 @@
 		hidden = false,
 		zIndex,
 		panel,
+		iconContent,
 		onPopOut,
 		messages = {}
 	}: Props = $props();
@@ -336,7 +338,13 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="titlebar" class:immovable={!caps.move} onpointerdown={handleTitlebarPointerDown}>
 			{#if win.icon}
-				<span class="icon" aria-hidden="true">{win.icon}</span>
+				<span class="icon" aria-hidden="true">
+					{#if iconContent}
+						{@render iconContent(win.icon)}
+					{:else}
+						{win.icon}
+					{/if}
+				</span>
 			{/if}
 			<span class="title">{win.title}</span>
 			{#if caps.move}

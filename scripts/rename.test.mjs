@@ -96,6 +96,11 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 		// app.html の <title> が新タイトルに。
 		const appHtml = fs.readFileSync(path.join(dir, 'apps/admin-template/src/app.html'), 'utf8');
 		assert.match(appHtml, new RegExp(`<title>${SAMPLE.title}</title>`));
+		const loginBrand = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/lib/banto/loginBrand.ts'),
+			'utf8'
+		);
+		assert.match(loginBrand, new RegExp(`name: '${SAMPLE.title}'`));
 
 		// PWA のインストール名（manifest name/short_name + apple-title）も追随。
 		const manifest = JSON.parse(
@@ -111,6 +116,64 @@ test('rename.mjs はサンプル引数で成功し、約束どおりの書き換
 			/dev\.banto\.admin|"Banto"/,
 			'tauri.conf.json に旧ブランドが残っている'
 		);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('rename.mjs は引用符を含む旧ブランド名を再リネームできる', () => {
+	const dir = copyRepo();
+	try {
+		for (const title of ["O'Brien Admin", 'Widget Next']) {
+			const res = spawnSync(
+				process.execPath,
+				[
+					path.join(dir, 'scripts/rename.mjs'),
+					'--name',
+					SAMPLE.name,
+					'--title',
+					title,
+					'--identifier',
+					SAMPLE.identifier
+				],
+				{ cwd: dir, encoding: 'utf8' }
+			);
+			assert.equal(res.status, 0, `rename.mjs が非0終了:\n${res.stdout}\n${res.stderr}`);
+		}
+		const loginBrand = fs.readFileSync(
+			path.join(dir, 'apps/admin-template/src/lib/banto/loginBrand.ts'),
+			'utf8'
+		);
+		assert.match(loginBrand, /name: 'Widget Next',/);
+		assert.doesNotMatch(loginBrand, /O\\'Brien Admin/);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test('rename.mjs は手で変更したログインブランド名も置き換える', () => {
+	const dir = copyRepo();
+	try {
+		const brandPath = path.join(dir, 'apps/admin-template/src/lib/banto/loginBrand.ts');
+		fs.writeFileSync(
+			brandPath,
+			fs.readFileSync(brandPath, 'utf8').replace("name: 'Banto',", "name: 'Hand Edited',")
+		);
+		const res = spawnSync(
+			process.execPath,
+			[
+				path.join(dir, 'scripts/rename.mjs'),
+				'--name',
+				SAMPLE.name,
+				'--title',
+				SAMPLE.title,
+				'--identifier',
+				SAMPLE.identifier
+			],
+			{ cwd: dir, encoding: 'utf8' }
+		);
+		assert.equal(res.status, 0, `rename.mjs が非0終了:\n${res.stdout}\n${res.stderr}`);
+		assert.match(fs.readFileSync(brandPath, 'utf8'), /name: 'Widget Admin',/);
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
