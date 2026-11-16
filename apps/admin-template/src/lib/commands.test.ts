@@ -123,6 +123,24 @@ describe('create commands derived from resource definitions', () => {
 		expect(goto).toHaveBeenCalledWith('/a/new');
 	});
 
+	it('a grouped nav entry carries the translated group name in keywords', async () => {
+		session.role = 'admin';
+		const { buildCommands } = await load([
+			{ ...def('a', full), nav: { icon: (() => {}) as never, group: 'nav.group.demo' } },
+			{ ...def('b', full), nav: { icon: (() => {}) as never } },
+			{
+				...def('c', full),
+				nav: { icon: (() => {}) as never, group: 'nav.group.demo', adminOnly: true }
+			}
+		]);
+		const m = await import('#lib/paraglide/messages.js');
+		const commands = buildCommands();
+		expect(commands.find((c) => c.id === 'nav./a')?.keywords).toContain(m['nav.group.demo']());
+		expect(commands.find((c) => c.id === 'nav./b')?.keywords).toEqual(['/b']);
+		// adminOnly entries ignore their group (navBarEntries), so the name is not searchable either.
+		expect(commands.find((c) => c.id === 'nav./c')?.keywords).toEqual(['/c']);
+	});
+
 	it('no resources, no create commands', async () => {
 		session.role = 'admin';
 		const { buildCommands } = await load([]);
