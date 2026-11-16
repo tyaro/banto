@@ -13,6 +13,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import {
 		isPathActive,
+		navBarEntries,
 		navLabel,
 		navSections,
 		resolveAppPath,
@@ -46,8 +47,28 @@
 		};
 	}
 
+	/**
+	 * The main nav is one dock group (one `<nav>` landmark). A nav group (`NavItem.group`,
+	 * nav-menubar-plan D8-b) is ruled off inside it: `separatorBefore` on the group's first item and
+	 * on the standalone item right after it. With no group this is a plain run of items.
+	 */
+	function mainGroup(): LauncherGroup {
+		const items: LauncherItem[] = [];
+		let afterGroup = false;
+		for (const entry of navBarEntries(sections.main)) {
+			const own = entry.kind === 'group' ? entry.items : [entry.item];
+			own.forEach((item, index) => {
+				const rule = items.length > 0 && (afterGroup || (entry.kind === 'group' && index === 0));
+				items.push({ ...toItem(item), ...(rule ? { separatorBefore: true } : {}) });
+				afterGroup = false;
+			});
+			afterGroup = entry.kind === 'group';
+		}
+		return { id: 'main', ariaLabel: m['shell.mainNav'](), items };
+	}
+
 	const groups: LauncherGroup[] = $derived([
-		{ id: 'main', ariaLabel: m['shell.mainNav'](), items: sections.main.map(toItem) },
+		mainGroup(),
 		...(sections.admin.length > 0
 			? [{ id: 'admin', ariaLabel: m['shell.adminNav'](), items: sections.admin.map(toItem) }]
 			: [])
