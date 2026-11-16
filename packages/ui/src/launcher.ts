@@ -31,6 +31,8 @@ export interface LauncherItem {
 	active?: boolean;
 	/** Count pill: `text` is drawn, `label` (e.g. "3 updates") joins the accessible name. */
 	badge?: { text: string; label: string };
+	/** Draw a separator rule before this item, within the same group (not for the group's own edge). */
+	separatorBefore?: boolean;
 }
 
 /** One landmark: rendered as its own `<nav aria-label>`, separated from the next by a rule. */

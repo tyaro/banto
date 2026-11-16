@@ -125,6 +125,29 @@ describe('LauncherBar structure', () => {
 		expect(main.nextElementSibling).toBe(separators[0]);
 	});
 
+	it('draws a separator inside a group before an item with separatorBefore', () => {
+		const single: LauncherGroup[] = [
+			{
+				id: 'main',
+				ariaLabel: 'Main navigation',
+				items: [
+					{ id: 'a', href: '/a', label: 'A', icon: CustomIcon },
+					{ id: 'b', href: '/b', label: 'B', icon: CustomIcon, separatorBefore: true },
+					{ id: 'c', href: '/c', label: 'C', icon: CustomIcon }
+				]
+			}
+		];
+		const { container } = render(LauncherBar, { groups: single });
+		const separators = container.querySelectorAll('.launcher__separator');
+		expect(separators).toHaveLength(1);
+		expect(separators[0].tagName).toBe('LI');
+		expect(separators[0].getAttribute('aria-hidden')).toBe('true');
+		expect(separators[0].hasAttribute('data-launcher-item')).toBe(false);
+		expect(separators[0].nextElementSibling?.getAttribute('data-launcher-item')).toBe('b');
+		expect(container.querySelectorAll('[data-launcher-item]')).toHaveLength(3);
+		expect(screen.getAllByRole('navigation')).toHaveLength(1);
+	});
+
 	it('has the position class and no group role without ariaLabel', () => {
 		const { container } = renderBar();
 		const root = container.querySelector('.launcher')!;

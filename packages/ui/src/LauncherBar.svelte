@@ -241,6 +241,9 @@
 					<ul class="launcher__list">
 						{#each group.items as item (item.id)}
 							{@const Icon = item.icon}
+							{#if item.separatorBefore}
+								<li class="launcher__separator" aria-hidden="true"></li>
+							{/if}
 							<li
 								class="launcher__item"
 								class:launcher__item--quiet={isQuiet(item.id)}
