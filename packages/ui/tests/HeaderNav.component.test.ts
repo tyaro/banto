@@ -19,6 +19,12 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/sve
 import { tick } from 'svelte';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HeaderNav, type HeaderNavEntry } from '../src/index';
+import { computeAnchoredPosition } from '../src/anchoredPopover';
+
+vi.mock('../src/anchoredPopover', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../src/anchoredPopover')>();
+	return { ...actual, computeAnchoredPosition: vi.fn(actual.computeAnchoredPosition) };
+});
 import CustomIcon from './fixtures/CustomIcon.svelte';
 
 type PopoverElement = HTMLElement & { showPopover(): void; hidePopover(): void };
@@ -266,6 +272,19 @@ describe('HeaderNav', () => {
 		// 200 + 100 = 300 > 180, and 60 + 200 > 180: only the "more" button stays on top.
 		await resizeTo(180);
 		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual(['More']);
+	});
+
+	it('re-anchors an open dropdown when the row is measured again', async () => {
+		const { nav } = await setup();
+		await resizeTo(300);
+		await fireEvent.click(within(nav).getByRole('button', { name: 'More' }));
+		await flush();
+		const anchored = vi.mocked(computeAnchoredPosition);
+		const before = anchored.mock.calls.length;
+		// 60 + 100 = 160 <= 200 < 260: one entry fewer on top, so "more" moves left.
+		await resizeTo(200);
+		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual(['A', 'More']);
+		expect(anchored.mock.calls.length).toBeGreaterThan(before);
 	});
 
 	it('marks "more" active when the current page moved into it', async () => {

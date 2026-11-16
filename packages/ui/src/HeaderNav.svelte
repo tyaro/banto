@@ -320,6 +320,12 @@
 			if (was !== now) onInsufficient?.(now);
 		}
 		if (!measured) measured = true;
+		// An open dropdown follows its button: the row may have just changed
+		// (a new fit, or a label / count width), so lay it out, then re-anchor.
+		if (openKey !== null) {
+			flushSync();
+			reposition();
+		}
 	}
 
 	let pending = false;
