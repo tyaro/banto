@@ -22,11 +22,81 @@
 
 ## [Unreleased]
 
+## [7.2.0] - 2026-11-17
+
+**v7.2.0 — ナビの「メニューバー」表示（`@banto/ui` の `HeaderNav`、テンプレートの `ShellMenubar`・ナビのグループ）、レコード履歴の充実（添付の追加・削除、`items`・`users` の create/delete と `users` の update の差分）、ログイン画面の接続先・版・お知らせ、監査表への生成列と索引（migration 0010）。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加は `@banto/ui` の `HeaderNav` 一式ほか）。監査 `detail` の形の追加（`changes`・`parentResource`・`parentId`）と、migration 0010・汎用 `SettingsService::set` / `set_many` の `login.notice` 拒否は、追加または運用上の挙動変更で、[docs/publishing.md](docs/publishing.md)「バージョニング規約」の運用上の例外（移行手順を「消費側への注意」に明記して minor）に当たる。データを失う変更ではない。
+派生アプリへの影響: git 依存のタグを `v7.1.0` から `v7.2.0` に上げるだけなら、コンパイルエラーになる変更は無い。ただし監査の新フィルタ（`recordResource`・`recordId`）を使うには `audit_log` の生成列と索引（migration 0010）が要る。`users` の `update` の監査 `detail` を読む処理、`login.notice` を汎用の設定 API で書く処理があれば確かめる。コピーしたテンプレートを取り込む場合は、migration 0010、辞書のキー（追加 38 キー・書き換え 1 キー）、メニューバー表示の配線が中心になる。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.1.0` → `v7.2.0`（npm と Rust を同じタグに）。API の削除・改名は無い。追加のみ（`HeaderNav`・`LauncherItem.separatorBefore`・`--banto-shell-menubar-*`・`SettingsService` のお知らせ操作・`DockHost.iconContent`・`ItemsService::delete_returning_previous`・`UsersService::update_user_returning_previous` / `delete_user_returning_previous`・監査一覧の `recordResource` / `recordId` フィルタ）。監査 `detail` の形と `login.notice` の扱いに注意（下の「消費側への注意」） |
+| B. コピーしたテンプレート        | あり | メニューバー表示（`ShellMenubar`・ナビのグループ）、レコード履歴の添付・create/delete・users の差分、ログイン画面のお知らせ、glass の調整、辞書のキー（追加 38・書き換え 1）、migration 0010。取り込みは任意（メニューバーは選ばなければ見た目は変わらない）                                                                                                                                                                                                                       |
+| C. DB・設定・配布資産            | あり | migration 0010（監査表の生成列 `record_resource`・`record_id` と複合索引。PostgreSQL は既存の監査表を書き直す）。設定キー `login.notice` が増えた（汎用の設定 API では書けない）。`tauri.conf.json` は版数のみ。`.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続                                                                                                                                                                                                          |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/ui`・`@banto/theme`・`@banto/charts`・`@banto/grid-svelte`・`@banto/admin-core`・`@banto/attachments`・`@banto/report`・`@banto/dock-svelte`・`@banto/tree-svelte`・`banto-core`・`banto-storage`・`banto-admin-services`・`banto-server`。
+- 更新: `v7.1.0` → `v7.2.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。既定の挙動は維持）:
+  - `@banto/ui`: `HeaderNav`・`headerNav*`（`fitCount`・`headerNavTopRowTarget` など）・`HeaderNavLink`・`HeaderNavEntry`、`LauncherItem.separatorBefore`。
+  - `@banto/theme`: `--banto-shell-menubar-*`（5 トークン）。
+  - `DockHost.iconContent`（#609 の記述による。置き場所は CHANGELOG の行から特定していない）。
+  - `banto-admin-services`: `SettingsService` のお知らせ操作、`UsersService::update_user_returning_previous`・`delete_user_returning_previous`、users の detail 生成関数（`users::user_update_detail` ほか）、監査一覧の `recordResource`・`recordId` フィルタ。
+  - `ItemsService::delete_returning_previous`（テンプレートの `admin_template_core`）。
+- 移行注意（ソース互換の破壊）: 無い。
+- 消費側への注意（型エラーにはならないが、確かめるもの）:
+  1. **監査 `detail` の最上位 `parentResource`・`parentId` が全リソースで予約キーになった**（関連レコード用。どちらも文字列で記録する）。自前の監査 `detail` でこの名前を別の意味で使っていれば改める。
+  2. **`users` の `update` の監査 `detail` の形**: `{ role }` から `{ username, role, changes: [{ field, before, after }] }` になった（`role` は残す）。`detail` を機械で読む処理があれば `changes`・`username` が増えた点を確かめる。
+  3. **items・users の create/delete の監査 `detail` に `changes` が増えた**（create は `before: null`、delete は `after: null`。既存の `name`／`username`／`role`・`attachmentsRemoved` は維持。古い記録は従来のまま）。`users` の資格情報・認証状態、生成 ID・時刻は記録しない。ユーザー削除後も表示名は監査ログの保持ポリシーで整理されるまで残る。
+  4. **migration 0010（監査表の生成列と索引）**: 共通クレートだけを更新する派生アプリでも、新フィルタ（`recordResource`・`recordId`）を使う前に `audit_log` へ生成列 `record_resource`・`record_id` と索引を追加する（DDL は [SQLite](apps/admin-template/core/migrations-sqlite/0010_audit_record_scope.sql) / [PostgreSQL](apps/admin-template/core/migrations-postgres/0010_audit_record_scope.sql)）。PostgreSQL は生成列の追加で既存の監査表を書き直すので、監査行が多いと起動時の migration に時間がかかる（メンテナンス時間内に適用する）。PostgreSQL の監査 INSERT は、以後も生成列の JSON 抽出関数を 1 行 2 回呼ぶ費用がかかる。
+  5. **汎用の `SettingsService::set` / `set_many` で `login.notice` を書くと拒否される**。お知らせは専用の公開 GET と admin 限定 PUT（REST・Tauri の両経路）で扱う。監査には設定キーだけを記録する。
+  6. **添付アップロードの対象を実在する `items` に限った**（テンプレート）: 未対応リソースは 400、存在しない親は 404、成功監査行は作らない。派生アプリが添付先を増やす場合は共通の親検証を拡張する。
+- 依存を上げずに留まれるか: できる（`v7.1.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 対象ファイル・ルート: `ShellMenubar.svelte`（新規）・`Header.svelte`・`(app)/+layout.svelte`・`Sidebar.svelte`・`ShellLauncher.svelte`・`navigation.ts`・`resource/types.ts`・`commands.ts`・`settings.svelte.ts`・`AppearanceSection.svelte`、`loginBrand.ts`・ログイン画面、レコードの履歴タブ（`lib/resource/`）・`auditChanges.ts`、添付のアップロード・`items`・`users` の監査 detail（`core/src`）、`messages/*.json`、`core/migrations-*/0010_audit_record_scope.sql`。
+- 関連 PR・コミット: nav-menubar 計画（#616〜#620）、#597 の続き（#606・#607・#608）、#609（#610）。
+- 手で取り込む変更（辞書のキー。**`messages/*.json` の差分をまとめて取り込む**。v7.1.0 の `ja.json` との比較では、削除は 0 キー、追加は 38 キー（966 → 1004）、値の書き換えは 1 キー `settings.navLayoutDesc`（3 択の説明）。`en.json` は見ていない）。
+- 手で取り込む変更（そのほか）:
+  - migration 0010（SQLite・PostgreSQL）を適用する。
+  - メニューバー表示（`NavLayout` の `'menubar'`・`ShellMenubar`・`Header`・`(app)/+layout`）。使わない派生アプリは、`ShellMenubar.svelte` と参照する分岐をまとめて取り込まない（[upgrading.md 例 6](docs/upgrading.md)）。
+  - ナビのグループ（`NavGroupKey`・`NavItem.group`・`ResourceNav.group`・`navBarEntries()`）。
+  - レコードの履歴タブ（添付・create/delete・users の差分）と、`items` の添付アップロードの親検証。
+  - ログイン画面の接続先・アプリ版・お知らせ（`loginBrand.ts`、お知らせの公開 GET と admin 限定 PUT）。
+- 派生側の独自変更と衝突しやすい箇所: `Header.svelte`・`(app)/+layout.svelte`・`Sidebar.svelte`・`messages/*.json`・`core/src` の audit・attachments・users・items・settings。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.2.0` に上げるだけなら、テンプレートの取り込みは不要（既定はサイドバーのまま）。Git 依存での導入は下の「検証した組み合わせ」で確かめる（タグ後に追記）。
+- 手本: 上記の `apps/admin-template/` のファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 0010（`audit_log` の生成列 `record_resource`・`record_id` と複合索引。SQLite・PostgreSQL）。コピーしたテンプレートと、新フィルタを使う派生アプリが適用する。PostgreSQL は既存の監査表を書き直す。
+- 設定キー・`tauri.conf.json`: 設定キー `login.notice` が増えた（ログイン画面のお知らせ。汎用の設定 API では書けない）。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+- 依存監査: `.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続（下の「セキュリティ」）。
+- 戻せる条件: migration 0010 は生成列と索引の追加で、既存の列は変えない。タグを戻しても追加した生成列と索引が残るだけの見込み（戻す手順は未検証）。
+- 順序: A・B を先に完成 → 検証用 DB で migration 0010 を適用 → 本番（PostgreSQL はメンテナンス時間内）。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。
+2. 辞書のキー（`messages/*.json`）の取りこぼしが無いこと（画面に生のキーが出ない）。設定の「外観」で 3 つの表示を切り替えられること。visual の基準画像の更新が要るか。
+3. Rust: `cargo check` / `cargo test`。migration 0010 の適用後、レコードの履歴タブに添付の追加・削除が出ること。
+4. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+
+### セキュリティ
+
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けず、今は上げられない。見直しの条件: libsqlite3-sys 0.39 以上を許す sqlx のリリースが出たら `cargo update -p libsqlite3-sys` で上げ、除外を外す。派生アプリの `cargo audit` でも同じ警告が出る（banto の `.cargo/audit.toml` は派生アプリに届かない）。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: 未実施。タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認して、結果（run の URL と Node.js・pnpm・Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript・Rust の版）をタグ後に追記する。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+
+### 変更の一覧
+
 - 共通パッケージ（A）: ナビの「メニューバー表示」の部品（nav-menubar 計画 PR-2・PR-5。PR #617・#618）。`@banto/ui` に `HeaderNav`（ヘッダーに並べるリンク列。グループのドロップダウン、入りきらない項目の「その他」、未読バッジ、矢印・Home / End での移動）と、その純粋関数（`fitCount`・`headerNavTopRowTarget` など `headerNav*`）・型（`HeaderNavLink`・`HeaderNavEntry`）を追加。`LauncherItem` に任意の `separatorBefore`（`LauncherBar` が項目の前に区切り線を描く）を追加。`@banto/theme` に `--banto-shell-menubar-*` のトークン 5 つ（余白・項目の間隔・下線の太さ・ページ名の最大幅・ドロップダウンの最小幅）を追加。いずれも追加のみで、使わなければ従来どおり。
 - テンプレート（B）: ナビの「メニューバー」表示（nav-menubar 計画。PR #616・#617・#618・#619）。設定の「外観」の表示形式に 3 つ目の `'menubar'`（ヘッダーに主要ナビを並べる。ユーザーごと。保存先は既存の `shell.navLayout` で、サーバー・DB の変更なし）。`ShellMenubar.svelte` の新設、`Header.svelte`・`(app)/+layout.svelte` の分岐（900px 以下と、メニューバーが入りきらないときはサイドバーをドロワーとして使う）。ナビの項目をまとめる `NavItem.group` / `ResourceNav.group`（`NavGroupKey`、`navBarEntries()`。デモ専用の 2 項目に「見本」グループ）。サイドバーはグループを見出しに、ドックは区切り線にする。コマンドパレットのナビ項目の `keywords` にグループ名を追加。辞書に `settings.navLayoutMenubar`・`shell.navMore`・`shell.openCommandPaletteWithShortcut`・`nav.group.demo` を追加し、`settings.navLayoutDesc` を 3 択の説明に書き直した。既定は従来どおりサイドバーで、選ばなければ見た目は変わらない。
-
 - テンプレート（B）／共通クレート（A）: #609（A-3・A-5・B-7）。glass の固定ヘッダーとランチャーの透け・ぼかしを調整し、分析ワークスペースの絵文字を保存済み Dock 配置にも追従する線アイコンに変更。ログイン画面に接続先・アプリ版・管理者のお知らせを表示し、ブランドのロゴ・背景・コピーを `loginBrand.ts` に集約。お知らせは専用の公開 GET と admin 限定 PUT を REST/Tauri 双経路に追加し、監査には設定キーだけを記録する。汎用の `SettingsService::set` / `set_many` から `login.notice` を書くことは拒否する。公開 API の追加（`SettingsService` のお知らせ操作、`DockHost.iconContent`）のため minor。
-
 - テンプレート（B）／共通クレート（A）: レコードの履歴タブに添付ファイルの追加・削除も表示する。既存の添付監査 detail の `parentResource`・`parentId` を履歴検索に使い、監査行自身の `resource: attachments`・`entityId` は維持する。親キーのある行の履歴検索先 `recordResource`・`recordId` は親に切り替わる。添付自身を探す場合は従来の `resource`・`entityId` フィルタを使う。監査一覧の `recordResource`・`recordId` フィルタを追加（公開 API の追加＝minor）。監査 detail の最上位 `parentResource`・`parentId` は全リソースで関連レコード用の予約キーになり、どちらも文字列で記録する。migration 0010 で SQLite・PostgreSQL の監査表に記録先の生成列と複合インデックスを追加し、既存行・新規行を同じ対象に絞る。**共通クレートだけを更新する派生アプリでも、新フィルタを使う前に `audit_log` へ生成列 `record_resource`・`record_id` と索引を追加する必要がある**（DDL は [SQLite](apps/admin-template/core/migrations-sqlite/0010_audit_record_scope.sql) / [PostgreSQL](apps/admin-template/core/migrations-postgres/0010_audit_record_scope.sql)）。テンプレートを取り込む場合は migration 0010 も適用する。PostgreSQL は生成列の追加時に既存の監査表を書き直すため、監査行が多い場合は起動時の migration に時間がかかる。運用環境ではメンテナンス時間内に適用する。
   テンプレートの添付アップロードは、実在する `items` レコードに限る。未対応リソースは 400、存在しない親は 404 とし、成功監査行を作らない。派生アプリが添付先を増やす場合は共通の親検証を拡張する。既存の添付データや監査行は移行時に遡及検証しない。旧版の添付を削除するときに親が無効なら、削除監査には親キーを付けない。旧版で任意の親を指定して作られた監査行は移行後もその親の履歴に出る可能性があるため、疑わしい行は元の `resource`・`entity_id` と照合する。PostgreSQL の監査 INSERT には、以後も生成列の JSON 抽出関数を1行2回呼ぶ費用がかかる。
 - テンプレート（B）／共通クレート（A）: `items`・`users` の create/delete の監査 `detail` に、公開可能な業務値を `changes`（create は `before: null`、delete は `after: null`）として記録し、監査ログ詳細とレコード履歴に表示する。REST・Tauri は同じ生成関数を使い、削除した行は `DELETE ... RETURNING` で取得する。`users` の資格情報・認証状態、生成 ID・時刻は記録しない。既存の `name`／`username`／`role` と `attachmentsRemoved` は維持。公開 API に `ItemsService::delete_returning_previous`、`UsersService::delete_user_returning_previous` と detail 生成関数を追加（minor）。古い記録は従来の表示のまま。ユーザー削除後も表示名は監査ログの保持ポリシーで整理されるまで残るため、個人名を使う場合はバックアップを含めた保持方針を確認する。
