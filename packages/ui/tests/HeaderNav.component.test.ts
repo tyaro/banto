@@ -463,4 +463,70 @@ describe('HeaderNav', () => {
 		expect(nav.querySelector('[data-header-nav-measure]')).toBeNull();
 		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual(['Group']);
 	});
+
+	it('gives groups whose ids differ only by an escaped character distinct popover ids', async () => {
+		const link = (id: string) => ({ id, href: `/${id}`, label: id, icon: CustomIcon });
+		const { nav } = await setup({
+			entries: [
+				{ kind: 'group', id: 'a:b', label: 'Colon', items: [link('x1')] },
+				{ kind: 'group', id: 'a_3a_b', label: 'Escaped', items: [link('x2')] },
+				{ kind: 'group', id: 'a_b', label: 'Plain', items: [link('x3')] }
+			]
+		});
+		const ids = ['Colon', 'Escaped', 'Plain'].map(
+			(name) => within(nav).getByRole('button', { name }).getAttribute('aria-controls') ?? ''
+		);
+		expect(new Set(ids).size).toBe(3);
+		for (const id of ids) expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+	});
+
+	it('reports "not insufficient" when overflow is turned off while insufficient', async () => {
+		const onInsufficient = vi.fn();
+		const { nav, rerender } = await setup({ onInsufficient });
+		await resizeTo(50);
+		expect(onInsufficient).toHaveBeenLastCalledWith(true);
+		await rerender({ overflow: false });
+		await tick();
+		await flush();
+		expect(onInsufficient).toHaveBeenLastCalledWith(false);
+		expect(onInsufficient).toHaveBeenCalledTimes(2);
+		const row = nav.querySelector('ul.row') as HTMLElement;
+		expect(row.style.visibility).toBe('');
+	});
+
+	it('keeps focus on the "more" button when the focused top item moves into it', async () => {
+		const { nav } = await setup();
+		const c = within(nav).getByRole('link', { name: 'C' });
+		c.focus();
+		expect(document.activeElement).toBe(c);
+		await resizeTo(300);
+		const more = within(nav).getByRole('button', { name: /More/ });
+		expect(document.activeElement).toBe(more);
+		expect(more.getAttribute('aria-expanded')).toBe('false');
+	});
+
+	it('moves focus to the top item when "more" disappears around a focused link in it', async () => {
+		const { nav } = await setup();
+		await resizeTo(300);
+		const more = within(nav).getByRole('button', { name: /More/ });
+		await fireEvent.click(more);
+		await flush();
+		const inner = screen.getByRole('link', { name: 'C' });
+		inner.focus();
+		expect(document.activeElement).toBe(inner);
+		await resizeTo(1000);
+		expect(within(nav).queryByRole('button', { name: /More/ })).toBeNull();
+		const c = within(nav).getByRole('link', { name: 'C' });
+		expect(document.activeElement).toBe(c);
+	});
+
+	it('leaves focus alone when it is outside the nav', async () => {
+		const outside = document.createElement('button');
+		document.body.append(outside);
+		await setup();
+		outside.focus();
+		await resizeTo(300);
+		expect(document.activeElement).toBe(outside);
+		outside.remove();
+	});
 });

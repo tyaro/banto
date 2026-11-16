@@ -111,7 +111,8 @@
 
 	function popoverId(key: string): string {
 		// `key` carries a group id, which may hold characters unfit for an id.
-		return `${uid}-dropdown-${key.replace(/[^A-Za-z0-9_-]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}`;
+		// `_` is encoded too, so it only ever marks an escape and no two keys collide.
+		return `${uid}-dropdown-${key.replace(/[^A-Za-z0-9-]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}`;
 	}
 
 	function linksIn(key: string): HTMLElement[] {
@@ -297,6 +298,49 @@
 		return parseFloat(style.columnGap) || parseFloat(style.gap) || 0;
 	}
 
+	// A re-layout can remove the focused element (an item moves into "more", or
+	// "more" disappears). Remember where focus was, then follow it to where that
+	// item lives now. Dropdowns are never opened by this.
+	type FocusSpot =
+		| { kind: 'top'; id: string }
+		| { kind: 'more'; moved: string[] }
+		| { kind: 'link'; id: string; key: string };
+
+	function captureFocus(): FocusSpot | null {
+		const active = typeof document === 'undefined' ? null : document.activeElement;
+		if (!rowEl || !active || !rowEl.contains(active)) return null;
+		if (active === buttons[MORE]) return { kind: 'more', moved: moved.map((entry) => entry.id) };
+		const el = active as HTMLElement;
+		if (el.hasAttribute?.('data-header-nav-top') && el.dataset?.headerNavId !== undefined)
+			return { kind: 'top', id: el.dataset.headerNavId };
+		const linkId = el.dataset?.headerNavLink;
+		if (linkId === undefined) return null;
+		for (const key of Object.keys(popovers)) {
+			if (popovers[key]?.contains(active)) return { kind: 'link', id: linkId, key };
+		}
+		return null;
+	}
+
+	function restoreFocus(spot: FocusSpot): void {
+		if (!rowEl || rowEl.contains(document.activeElement)) return;
+		let id: string | undefined;
+		if (spot.kind === 'top') id = spot.id;
+		else if (spot.kind === 'more') id = spot.moved.find((m) => entries.some((e) => e.id === m));
+		else if (spot.key !== MORE)
+			id = spot.key.slice(2); // its group, still on top
+		else
+			id = entries.find(
+				(entry) =>
+					entry.id === spot.id ||
+					(entry.kind === 'group' && entry.items.some((item) => item.id === spot.id))
+			)?.id;
+		const tops = Array.from(rowEl.querySelectorAll<HTMLElement>('[data-header-nav-top]'));
+		const target =
+			(id !== undefined ? tops.find((el) => el.dataset.headerNavId === id) : undefined) ??
+			buttons[MORE];
+		if (target?.isConnected) target.focus();
+	}
+
 	function measure(): void {
 		if (!overflow || !navEl || !measureEl) return;
 		// "more" carries its own marker so an entry whose id is 'more' is never mistaken for it.
@@ -315,9 +359,14 @@
 		// Write only on a change (§4.4 ちらつき防止 (2)).
 		if (next !== fit) {
 			const was = fit === HEADER_NAV_INSUFFICIENT;
+			const focus = captureFocus();
 			fit = next;
 			const now = next === HEADER_NAV_INSUFFICIENT;
 			if (was !== now) onInsufficient?.(now);
+			if (focus) {
+				flushSync();
+				restoreFocus(focus);
+			}
 		}
 		if (!measured) measured = true;
 		// An open dropdown follows its button: the row may have just changed
@@ -327,6 +376,14 @@
 			reposition();
 		}
 	}
+
+	// `overflow` turned off while the width was insufficient: nothing measures
+	// any more, so release the state here.
+	$effect(() => {
+		if (overflow || fit !== HEADER_NAV_INSUFFICIENT) return;
+		fit = Number.POSITIVE_INFINITY;
+		untrack(() => onInsufficient?.(false));
+	});
 
 	let pending = false;
 	let frame: number | null = null;
@@ -414,6 +471,7 @@
 					class="link"
 					class:active={item.active}
 					aria-current={item.active ? 'page' : undefined}
+					data-header-nav-link={item.id}
 					onclick={() => closeDropdown(key)}
 					onkeydown={(event) => handleLinkKeydown(key, event)}
 				>
@@ -494,6 +552,7 @@
 						class:active={entry.active}
 						aria-current={entry.active ? 'page' : undefined}
 						data-header-nav-top
+						data-header-nav-id={entry.id}
 						onkeydown={handleTopKeydown}
 					>
 						<span>{entry.label}</span>
@@ -509,6 +568,7 @@
 						aria-expanded={openKey === key}
 						aria-controls={popoverId(key)}
 						data-header-nav-top
+						data-header-nav-id={entry.id}
 						onclick={() => handleButtonClick(key)}
 						onkeydown={(event) => handleButtonKeydown(key, event)}
 					>
@@ -714,7 +774,7 @@
 		inset: auto;
 		box-sizing: border-box;
 		min-width: var(--banto-shell-menubar-popover-min-width);
-		max-width: 20rem;
+		max-width: min(20rem, calc(100vw - 2 * var(--banto-space-2)));
 		margin: 0;
 		padding: var(--banto-space-1);
 		border: var(--banto-border-width) solid var(--banto-border);
@@ -782,8 +842,14 @@
 		color: var(--banto-text);
 		font-size: var(--banto-font-size-md);
 		text-decoration: none;
-		white-space: nowrap;
+		/* A long name wraps inside the dropdown; the top row stays nowrap. */
+		overflow-wrap: anywhere;
 		transition: background var(--banto-duration-fast) var(--banto-ease-out);
+	}
+
+	.link > :global(svg),
+	.link .badge {
+		flex: none;
 	}
 
 	.link:hover,
@@ -798,5 +864,6 @@
 
 	.link-label {
 		flex: 1;
+		min-width: 0;
 	}
 </style>
