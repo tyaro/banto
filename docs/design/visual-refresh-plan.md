@@ -609,7 +609,7 @@ diverging（7 段、青 ← 中立 → 橙）: ライト `#0465af` `#5e93ca` `#a
 | `--banto-checkbox-size` | `1.1rem` | forms と列表示メニューのネイティブ checkbox（ADR-0026） |
 | `--banto-switch-width` / `--banto-switch-height` / `--banto-switch-inset` | `36px` / `20px` / `2px` | 共通スイッチの形（ADR-0026） |
 | `--banto-grid-row-height` | standard `36px`（現行）/ compact `32px` | 密度軸で切替 |
-| `--banto-space-1` 〜 `--banto-space-8` | `0.25rem` / `0.5rem` / `0.75rem` / `1rem` / `1.25rem` / `1.5rem` / `2rem` / `3rem` | 余白の段階（序数。値は名前に含めない）。密度では切り替えない（[theme-dimension-tokens.md](theme-dimension-tokens.md) §5.2・D3） |
+| `--banto-space-1` 〜 `--banto-space-8` | `0.25rem` / `0.5rem` / `0.75rem` / `1rem` / `1.25rem` / `1.5rem` / `2rem` / `3rem` | 余白の段階（序数。値は名前に含めない）。compact で `space-3`〜`space-6` を 1 段下げる（2026-11 #623。当初は切り替えない決定。[theme-dimension-tokens.md](theme-dimension-tokens.md) §5.2・D3） |
 | `--banto-border-width` | `1px` | 枠線の幅 |
 | `--banto-border-width-strong` | `2px` | 選択・強調の縁 |
 
