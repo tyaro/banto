@@ -776,7 +776,11 @@
 		position: fixed;
 		inset: auto;
 		box-sizing: border-box;
-		min-width: var(--banto-shell-menubar-popover-min-width);
+		/* Both bounds stay inside the viewport (min-width would win over max-width). */
+		min-width: min(
+			var(--banto-shell-menubar-popover-min-width),
+			calc(100vw - 2 * var(--banto-space-2))
+		);
 		max-width: min(20rem, calc(100vw - 2 * var(--banto-space-2)));
 		margin: 0;
 		padding: var(--banto-space-1);

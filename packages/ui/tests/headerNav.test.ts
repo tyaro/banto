@@ -86,6 +86,15 @@ describe('fitCount', () => {
 			expect(fitCount(widths, 200, 60, 10, { previous: INSUFFICIENT })).toBe(1);
 		});
 
+		it('recovers from the smallest layout that fits, all-in-a-row included (not just "more")', () => {
+			// One 30px entry, a 60px "more": it is insufficient below 30px, so it
+			// comes back at 30 + slack, well before "more" itself would fit.
+			const previous = INSUFFICIENT;
+			expect(fitCount([30], 29, 60, 10, { previous: 1 })).toBe(INSUFFICIENT);
+			expect(fitCount([30], 30 + slack - 1, 60, 10, { previous })).toBe(INSUFFICIENT);
+			expect(fitCount([30], 30 + slack, 60, 10, { previous })).toBe(1);
+		});
+
 		it('takes a custom slack', () => {
 			const options = { previous: INSUFFICIENT, recoverSlack: 40 };
 			expect(fitCount(widths, 99, 60, 10, options)).toBe(INSUFFICIENT);
