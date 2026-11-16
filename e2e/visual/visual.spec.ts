@@ -21,6 +21,7 @@ import {
 	FULL_MATRIX,
 	VIEWPORTS,
 	comboLabel,
+	primeDensity,
 	primeKiosk,
 	primeLauncher,
 	primeMenubar,
@@ -95,6 +96,23 @@ test.describe('kiosk shell', () => {
 		await expect(page.locator('svg').first()).toBeVisible();
 		await page.waitForTimeout(SETTLE_MS);
 		await expect(page).toHaveScreenshot('dashboard-kiosk-light-standard-1440x900.png', {
+			fullPage: true
+		});
+	});
+});
+
+// Compact density (#623): the only full-page shot with density 'compact'.
+// Every other test keeps the 'standard' density `primeTheme` sets.
+test.describe('compact density', () => {
+	test('dashboard compact light-standard 1440x900', async ({ page }) => {
+		await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
+		await primeDensity(page, 'compact');
+		await page.goto('/dashboard');
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'compact');
+		await expect(page.locator('svg').first()).toBeVisible();
+		await page.waitForTimeout(SETTLE_MS);
+		await expect(page).toHaveScreenshot('dashboard-compact-light-standard-1440x900.png', {
 			fullPage: true
 		});
 	});
