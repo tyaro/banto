@@ -70,8 +70,8 @@
 <style>
 	.check {
 		flex: none;
-		width: var(--banto-space-4);
-		height: var(--banto-space-4);
+		width: 1rem;
+		height: 1rem;
 		visibility: hidden;
 	}
 
