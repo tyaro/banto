@@ -123,8 +123,12 @@
 		// focus: retry for a few frames while focus is still nowhere (body).
 		let frames = 10;
 		const handOver = (): void => {
+			// A bar that leaves for another layout (a settings change, possibly
+			// synced from another tab) has no drawer button above 900px: the
+			// replacement is then the sidebar's or the dock's first link.
 			const target = fromBar
-				? drawerButtonHost?.querySelector<HTMLElement>('button')
+				? (drawerButtonHost?.querySelector<HTMLElement>('button') ??
+					document.querySelector<HTMLElement>('#app-sidebar a[href], .launcher a[href]'))
 				: barHost?.querySelector<HTMLElement>('[data-header-nav-top]');
 			if (!target?.isConnected || target.closest('[inert]')) return;
 			target.focus();
