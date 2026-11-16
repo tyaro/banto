@@ -167,6 +167,8 @@ test.describe('menu bar layout (primed)', () => {
 
 		// Top links + the links in "その他" = the whole main nav (no count of either).
 		await more.click();
+		await expect(more).toHaveAttribute('aria-expanded', 'true');
+		await expect(nav.locator('[popover] a[href]').first()).toBeVisible();
 		const hrefs = await nav
 			.getByRole('link')
 			.evaluateAll((links) =>
@@ -178,7 +180,8 @@ test.describe('menu bar layout (primed)', () => {
 		const moved = nav.locator('[popover] a[href]').last();
 		const href = await moved.getAttribute('href');
 		await moved.click();
-		await expect(page).toHaveURL(new RegExp(`${href}$`));
+		// `/settings` redirects to its first section, so allow a sub-path.
+		await expect(page).toHaveURL(new RegExp(`${href}(/[^/]+)?$`));
 		await expect(more).toHaveClass(/active/);
 	});
 
