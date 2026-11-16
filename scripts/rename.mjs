@@ -143,7 +143,11 @@ editFile(tauriConf, `app.windows[0].title → "${args.title}"`, (s) => {
 editFile(
 	'apps/admin-template/src-tauri/src/keyring_store.rs',
 	`keyring SERVICE_NAME → "${args.identifier}"`,
-	(s) => replaceAll(s, '"dev.banto.admin-template"', `"${args.identifier}"`)
+	(s) => {
+		const current = /const SERVICE_NAME: &str = "([^"]*)";/.exec(s);
+		if (!current) return undefined;
+		return replaceAll(s, current[0], `const SERVICE_NAME: &str = "${args.identifier}";`);
+	}
 );
 
 // ファイアウォールの helper（Issue #219 段階 2、ADR-0021 決定 5）は identifier を
@@ -172,6 +176,7 @@ const sidebarSrc = fs.readFileSync(
 const brandMatch = sidebarSrc.match(/class="brand-name">([^<]+)</);
 if (!brandMatch) fail('Sidebar.svelte から現在のブランド名を検出できません');
 const oldBrand = brandMatch[1];
+const escapeTsSingleQuoted = (value) => value.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
 
 editFile('apps/admin-template/src/app.html', `<title> → ${args.title}`, (s) =>
 	replaceAll(s, `<title>${oldBrand}</title>`, `<title>${args.title}</title>`)
@@ -200,14 +205,10 @@ editFile(
 editFile('apps/admin-template/src/lib/components/Sidebar.svelte', 'ブランド表示', (s) =>
 	replaceAll(s, `class="brand-name">${oldBrand}<`, `class="brand-name">${args.title}<`)
 );
-editFile('apps/admin-template/src/routes/login/+page.svelte', 'ブランド表示 + 見出し', (s) => {
-	const step1 = replaceAll(
-		s,
-		`class="brand-name">${oldBrand}<`,
-		`class="brand-name">${args.title}<`
-	);
-	if (step1 === undefined || step1 === null) return step1;
-	return replaceAll(step1, `<h1>${oldBrand}</h1>`, `<h1>${args.title}</h1>`) ?? step1;
+editFile('apps/admin-template/src/lib/banto/loginBrand.ts', 'ログイン画面のブランド名', (s) => {
+	const current = /\bname: '((?:[^'\\]|\\.)*)',/.exec(s);
+	if (!current) return undefined;
+	return replaceAll(s, current[0], `name: '${escapeTsSingleQuoted(args.title)}',`);
 });
 editFile('apps/admin-template/src/routes/panel/[id]/+page.svelte', '<title> 接尾辞', (s) =>
 	replaceAll(s, ` - ${oldBrand}</title>`, ` - ${args.title}</title>`)

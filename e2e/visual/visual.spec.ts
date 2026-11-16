@@ -46,7 +46,9 @@ test.describe('login', () => {
 				await expect(page).toHaveScreenshot(
 					`login-${comboLabel(combo)}-${viewport.width}x${viewport.height}.png`,
 					{
-						fullPage: true
+						fullPage: true,
+						// The release number changes independently of this layout.
+						mask: [page.locator('.login-version')]
 					}
 				);
 			});

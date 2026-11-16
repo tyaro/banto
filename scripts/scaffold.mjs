@@ -407,6 +407,11 @@ function removeDock() {
 	drop(DASH, 'panels import 除去', `\timport { PANEL_DEFS } from '#lib/banto/panels.js';\n`);
 	drop(
 		DASH,
+		'PanelIcon import 除去',
+		`\timport PanelIcon from '#lib/components/PanelIcon.svelte';\n`
+	);
+	drop(
+		DASH,
 		'setup(getUiSettings/isTauri) import 除去',
 		`\timport { getUiSettings, isTauri } from '#lib/banto/setup.js';\n`
 	);
@@ -450,6 +455,7 @@ function removeDock() {
 		`\t\t<section class="workspace">`,
 		`\t\t</section>`
 	);
+	cutRegion(DASH, 'dockIcon snippet 除去', `{#snippet dockIcon(icon: string)}`, `{/snippet}`);
 	cutRegion(
 		DASH,
 		'dockPanel snippet 除去',
@@ -457,6 +463,7 @@ function removeDock() {
 		`{/snippet}`
 	);
 	removeFile(`${APP}/src/lib/banto/panels.ts`, 'panels.ts 削除');
+	removeFile(`${APP}/src/lib/components/PanelIcon.svelte`, 'PanelIcon.svelte 削除');
 	removeFile(`${APP}/src/lib/banto/popout.ts`, 'popout.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.ts`, 'dockEscape.ts 削除');
 	removeFile(`${APP}/src/lib/banto/dockEscape.test.ts`, 'dockEscape.test.ts 削除');

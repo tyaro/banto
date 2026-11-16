@@ -85,6 +85,8 @@
 	interface Props {
 		dock: DockState;
 		panel: Snippet<[PanelContent]>;
+		/** Optional app-owned renderer for persisted icon strings. Defaults to the original text glyph. */
+		iconContent?: Snippet<[string]>;
 		/**
 		 * Optional pop-out affordance (spec §5.3 v2: "ウィンドウ分離"モード).
 		 * When provided, both `DockWindow` titlebars and `DockedTree` pane
@@ -190,6 +192,7 @@
 	let {
 		dock,
 		panel,
+		iconContent,
 		onPopOut,
 		messages = {},
 		clamp,
@@ -309,7 +312,7 @@
 >
 	{#if dock.layout.docked}
 		<div class="docked-layer">
-			<DockedTree node={dock.layout.docked} {dock} {panel} {onPopOut} {messages} />
+			<DockedTree node={dock.layout.docked} {dock} {panel} {iconContent} {onPopOut} {messages} />
 		</div>
 	{/if}
 
@@ -325,6 +328,7 @@
 				frontmost={win.open && z === openWindows.length - 1}
 				zIndex={z + 1}
 				{panel}
+				{iconContent}
 				{onPopOut}
 				{messages}
 			/>
@@ -348,7 +352,15 @@
 			style:left={`${drag.state.clientX}px`}
 			style:top={`${drag.state.clientY}px`}
 		>
-			{#if drag.state.icon}<span class="icon">{drag.state.icon}</span>{/if}
+			{#if drag.state.icon}
+				<span class="icon">
+					{#if iconContent}
+						{@render iconContent(drag.state.icon)}
+					{:else}
+						{drag.state.icon}
+					{/if}
+				</span>
+			{/if}
 			<span class="title">{drag.state.title}</span>
 		</div>
 	{/if}

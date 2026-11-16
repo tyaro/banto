@@ -348,8 +348,16 @@
 		border-radius: inherit;
 		background: var(--banto-shell-launcher-bg);
 		backdrop-filter: var(--banto-shell-launcher-backdrop);
-		-webkit-backdrop-filter: var(--banto-shell-launcher-backdrop);
 		pointer-events: none;
+	}
+
+	/* Source consumers may not run CSS prefixing. Keep the legacy WebKit
+	   declaration separate so the production minifier retains the standard one. */
+	@supports not (backdrop-filter: blur(1px)) {
+		.launcher__bar::before {
+			backdrop-filter: var(--banto-shell-launcher-backdrop);
+			-webkit-backdrop-filter: var(--banto-shell-launcher-backdrop);
+		}
 	}
 
 	.launcher__group {

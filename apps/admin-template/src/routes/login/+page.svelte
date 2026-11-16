@@ -7,6 +7,9 @@
 	import { bantoReady, getBantoMode } from '#lib/banto/setup.js';
 	import { applyAuthSettings } from '#lib/banto/authAdmin.js';
 	import { Button, SurfaceCard } from '@banto/ui';
+	import { version as appVersion } from '../../../package.json';
+	import { loginBrand } from '#lib/banto/loginBrand.js';
+	import { getLoginNotice, loginConnection } from '#lib/banto/loginNotice.js';
 
 	// Undecided until `status()` resolves (or is absent, treated as
 	// "already initialized" - see below): render nothing rather than
@@ -50,10 +53,16 @@
 	// this window") and the plain-browser demo has no backend to mint a
 	// token from. Set once `status()` resolves below.
 	let showContinueAsViewer = $state(false);
+	let notice = $state('');
+	let connection = $state<{ kind: 'local' | 'lan' | 'demo'; address?: string } | null>(null);
 
 	$effect(() => {
 		void (async () => {
 			await bantoReady; // provider selection (spec §11.1's three-way probe) must finish first
+			connection = loginConnection();
+			void getLoginNotice()
+				.then((value) => (notice = value))
+				.catch(() => {});
 			showRemember = getBantoMode() === 'server';
 			showDemoNote = getBantoMode() === 'demo';
 			showSkipLogin = getBantoMode() === 'tauri';
@@ -165,27 +174,49 @@
 
 <div class="login-page">
 	<div class="login-card">
-		<!-- Brand pane (visual-refresh-design.md §9): 3 fixed slots (logo mark,
-		     app name, one-line tagline) so a template user rebranding this page
-		     only ever touches these three. Purely decorative/duplicate of the
-		     real <h1> below - hidden from assistive tech and hidden entirely
-		     under 960px. -->
-		<aside class="brand-pane" aria-hidden="true">
-			<span class="brand-mark">
-				<svg viewBox="0 0 24 24" width="22" height="22">
-					<rect x="10" y="3" width="4" height="2" rx="1" />
-					<circle cx="12" cy="12" r="6" />
-					<rect x="10" y="19" width="4" height="2" rx="1" />
-				</svg>
+		<!-- B-7: author branding lives in loginBrand.ts; the notice comes from a
+		     dedicated public settings key. Text is escaped by Svelte. -->
+		<aside
+			class="brand-pane"
+			style:background={loginBrand.background}
+			style:color={loginBrand.foreground}
+		>
+			<span class="brand-mark" aria-hidden="true">
+				{#if loginBrand.markUrl}
+					<img src={loginBrand.markUrl} alt="" />
+				{:else}
+					<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+						<rect x="10" y="3" width="4" height="2" rx="1" />
+						<circle cx="12" cy="12" r="6" />
+						<rect x="10" y="19" width="4" height="2" rx="1" />
+					</svg>
+				{/if}
 			</span>
-			<p class="brand-name">Banto</p>
-			<p class="tagline">{m['auth.tagline']()}</p>
+			<p class="brand-name" aria-hidden="true">{loginBrand.name}</p>
+			<p class="tagline">{loginBrand.tagline()}</p>
+			<dl class="login-context">
+				{#if connection}<div>
+						<dt>{m['auth.connectionLabel']()}</dt>
+						<dd>
+							{connection.kind === 'lan'
+								? connection.address
+								: connection.kind === 'local'
+									? m['auth.connectionLocal']()
+									: m['auth.connectionDemo']()}
+						</dd>
+					</div>{/if}
+				{#if loginBrand.showVersion}<div>
+						<dt>{m['auth.versionLabel']()}</dt>
+						<dd class="login-version">{appVersion}</dd>
+					</div>{/if}
+			</dl>
+			{#if notice}<p class="login-notice"><span>{m['auth.noticeLabel']()}</span>{notice}</p>{/if}
 		</aside>
 
 		<div class="form-pane">
 			{#if mode === 'setup'}
 				<form onsubmit={submitSetup}>
-					<h1>Banto</h1>
+					<h1>{loginBrand.name}</h1>
 					<p class="note">{m['auth.setupNote']()}</p>
 
 					<label class="banto-field banto-field--stacked">
@@ -258,7 +289,7 @@
 				</form>
 			{:else if mode === 'login'}
 				<form onsubmit={submitLogin}>
-					<h1>Banto</h1>
+					<h1>{loginBrand.name}</h1>
 					<p class="note">
 						{m['auth.loginNote']()}
 					</p>
@@ -344,7 +375,53 @@
 	}
 
 	.brand-pane {
-		display: none;
+		display: flex;
+		position: relative;
+		flex-direction: column;
+		gap: var(--banto-space-2);
+		padding: var(--banto-space-4);
+		overflow: hidden;
+	}
+
+	.login-context,
+	.login-notice {
+		position: relative;
+		z-index: 1;
+	}
+
+	.login-context {
+		display: grid;
+		gap: var(--banto-space-2);
+		margin: var(--banto-space-4) 0 0;
+	}
+
+	.login-context div {
+		display: flex;
+		gap: var(--banto-space-2);
+		flex-wrap: wrap;
+	}
+
+	.login-context dt {
+		min-width: 5em;
+		opacity: 0.75;
+	}
+
+	.login-context dd {
+		margin: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.login-notice {
+		margin: var(--banto-space-3) 0 0;
+		border-top: var(--banto-border-width) solid currentColor;
+		padding-top: var(--banto-space-3);
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+	}
+
+	.login-notice span {
+		display: block;
+		opacity: 0.75;
 	}
 
 	.form-pane {
@@ -451,6 +528,20 @@
 			padding: var(--banto-space-3);
 		}
 
+		.brand-mark {
+			display: none;
+		}
+
+		.brand-name {
+			margin: 0;
+			font-size: var(--banto-font-size-lg);
+			font-weight: 700;
+		}
+
+		.tagline {
+			margin: 0;
+		}
+
 		.form-pane {
 			padding: var(--banto-space-4);
 		}
@@ -464,26 +555,8 @@
 		}
 
 		.brand-pane {
-			display: flex;
-			position: relative;
-			flex-direction: column;
 			justify-content: center;
-			gap: var(--banto-space-2);
 			padding: var(--banto-space-8);
-			overflow: hidden;
-			color: #fff;
-			/* Background generated with no image assets (design.md §9): two
-			   radial gradients + a conic mesh. The warm accent (rgb 237 106 52,
-			   evoking the Banto lantern) and the dark conic base are the one
-			   exception to token-only colors, scoped to this decorative pane. */
-			background:
-				radial-gradient(
-					60% 80% at 20% 20%,
-					color-mix(in srgb, var(--banto-primary) 28%, transparent),
-					transparent
-				),
-				radial-gradient(50% 60% at 80% 90%, rgb(237 106 52 / 0.18), transparent),
-				conic-gradient(from 210deg at 60% 40%, #171c26, #10131a);
 		}
 
 		.brand-pane::after {
@@ -514,6 +587,13 @@
 			fill: #fff;
 		}
 
+		.brand-mark img {
+			display: block;
+			width: 100%;
+			height: 100%;
+			object-fit: contain;
+		}
+
 		.brand-name {
 			position: relative;
 			z-index: 1;
@@ -527,7 +607,7 @@
 			position: relative;
 			z-index: 1;
 			margin: 0;
-			color: rgb(255 255 255 / 0.75);
+			color: color-mix(in srgb, currentColor 75%, transparent);
 			font-size: var(--banto-font-size-md);
 			text-wrap: pretty;
 		}

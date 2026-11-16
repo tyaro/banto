@@ -77,13 +77,14 @@
 		node: DockNode;
 		dock: DockState;
 		panel: Snippet<[PanelContent]>;
+		iconContent?: Snippet<[string]>;
 		/** Pop-out affordance (spec §5.3 v2), forwarded unchanged from `DockHost` - see its doc comment. Absent in browser mode (no button rendered). */
 		onPopOut?: (content: PanelContent) => void;
 		/** i18n layer 1 (docs/conventions.md §13): overrides for this component's visible strings, threaded into recursive `DockedTree` instances. Defaults reproduce today's Japanese output. */
 		messages?: Partial<DockMessages>;
 	}
 
-	let { node, dock, panel, onPopOut, messages = {} }: Props = $props();
+	let { node, dock, panel, iconContent, onPopOut, messages = {} }: Props = $props();
 
 	// i18n layer 1: an override bundle merged over the defaults. `$derived`, so a
 	// parent that swaps `messages` later (a locale switch) is followed.
@@ -295,7 +296,13 @@
 			onpointerdown={(event) => panelFrameEl && armDrag(event, panelFrameEl, node)}
 		>
 			{#if node.icon}
-				<span class="icon" aria-hidden="true">{node.icon}</span>
+				<span class="icon" aria-hidden="true">
+					{#if iconContent}
+						{@render iconContent(node.icon)}
+					{:else}
+						{node.icon}
+					{/if}
+				</span>
 			{/if}
 			<span class="title">{node.title}</span>
 			{#if onPopOut && capsOf(node.id).undock}
@@ -371,7 +378,13 @@
 					onkeydown={(event) => handleTabKeydown(event, i)}
 				>
 					{#if child.icon}
-						<span class="icon" aria-hidden="true">{child.icon}</span>
+						<span class="icon" aria-hidden="true">
+							{#if iconContent}
+								{@render iconContent(child.icon)}
+							{:else}
+								{child.icon}
+							{/if}
+						</span>
 					{/if}
 					<span class="title">{child.title}</span>
 					{#if i === node.activeIndex}
@@ -423,7 +436,7 @@
 	>
 		{#each node.children as child, i (child.id)}
 			<div class="split-child" style:flex-grow={node.sizes[i] ?? 0} style:flex-basis="0%">
-				<DockedTree node={child} {dock} {panel} {onPopOut} {messages} />
+				<DockedTree node={child} {dock} {panel} {iconContent} {onPopOut} {messages} />
 			</div>
 			{#if i < node.children.length - 1}
 				{@const values = splitterValues(node.sizes, i)}

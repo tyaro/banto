@@ -29,6 +29,11 @@
 	--banto-border: color-mix(in srgb, var(--banto-neutral-8) 50%, transparent);
 
 	--banto-backdrop: blur(14px) saturate(1.5);
+	/* The sticky header overlays scrolling charts. An 84% floor and a stronger
+	   blur keep chart labels from competing with the page title (A-3). */
+	--banto-shell-header-bg: color-mix(in srgb, var(--banto-neutral-1) 84%, transparent);
+	--banto-shell-header-backdrop: blur(16px) saturate(1.5);
+	--banto-shell-launcher-backdrop: blur(16px) saturate(1.5);
 	/* The <=900px launcher tab bar mixes this at >= 85% (banto.css): an opaque
      base keeps that floor real under glass (the standard surface step). */
 	--banto-shell-launcher-tabbar-base: var(--banto-neutral-1);
@@ -56,6 +61,7 @@
 	--banto-shell-launcher-tabbar-base: var(--banto-neutral-4);
 	--banto-surface: color-mix(in srgb, var(--banto-neutral-2) 55%, transparent);
 	--banto-surface-raised: color-mix(in srgb, var(--banto-neutral-4) 50%, transparent);
+	--banto-shell-header-bg: color-mix(in srgb, var(--banto-neutral-2) 84%, transparent);
 	/* Opaque floating surface (see the light x glass block; = standard dark raised). */
 	--banto-surface-overlay: var(--banto-neutral-4);
 	--banto-border: rgb(255 255 255 / 0.14);
@@ -105,11 +111,15 @@
 		--banto-surface-raised: var(--banto-neutral-1);
 		--banto-border: var(--banto-neutral-6);
 		--banto-backdrop: none;
+		--banto-shell-header-bg: var(--banto-neutral-1);
+		--banto-shell-header-backdrop: none;
+		--banto-shell-launcher-backdrop: none;
 	}
 
 	:root[data-theme='dark'][data-banto-preset='glass'] {
 		--banto-surface: var(--banto-neutral-2);
 		--banto-surface-raised: var(--banto-neutral-4);
+		--banto-shell-header-bg: var(--banto-neutral-2);
 		--banto-border: var(--banto-neutral-6);
 	}
 }
@@ -120,11 +130,15 @@
 		--banto-surface-raised: var(--banto-neutral-1);
 		--banto-border: var(--banto-neutral-6);
 		--banto-backdrop: none;
+		--banto-shell-header-bg: var(--banto-neutral-1);
+		--banto-shell-header-backdrop: none;
+		--banto-shell-launcher-backdrop: none;
 	}
 
 	:root[data-theme='dark'][data-banto-preset='glass'] {
 		--banto-surface: var(--banto-neutral-2);
 		--banto-surface-raised: var(--banto-neutral-4);
+		--banto-shell-header-bg: var(--banto-neutral-2);
 		--banto-border: var(--banto-neutral-6);
 	}
 }

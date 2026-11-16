@@ -258,14 +258,30 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	});
 
 	test('2. logout returns to the login screen, then login restores the session', async () => {
+		// #609 B-7: an admin notice is saved once and visible before login.
+		await page.goto('/settings/appearance');
+		await page.getByRole('textbox', { name: 'お知らせ' }).fill('本日 18 時から保守します');
+		await page.getByRole('button', { name: 'お知らせを保存' }).click();
+		await expect(
+			page.getByText('ログイン画面のお知らせを保存しました', { exact: true })
+		).toBeVisible();
 		await logout(page);
 		await expect(page).toHaveURL(/\/login$/);
+		await expect(page.getByText('本日 18 時から保守します')).toBeVisible();
+		await expect(page.locator('.login-context')).toContainText('接続先');
+		await expect(page.locator('.login-context')).toContainText('バージョン');
 
 		await page.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
 		await page.getByLabel('パスワード').fill(ADMIN_PASSWORD);
 		await page.getByRole('button', { name: 'ログイン' }).click();
 
 		await expect(page).toHaveURL(/\/dashboard$/);
+		await page.goto('/settings/appearance');
+		await page.getByRole('textbox', { name: 'お知らせ' }).fill('');
+		await page.getByRole('button', { name: 'お知らせを保存' }).click();
+		await expect(
+			page.getByText('ログイン画面のお知らせを保存しました', { exact: true })
+		).toBeVisible();
 	});
 
 	test('3. items: create, appears in the grid, edit, delete', async () => {
