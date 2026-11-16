@@ -264,7 +264,8 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
   `'menubar'` に、選ばせないなら `AppearanceSection.svelte` の「ナビゲーション」カードと `settings.navLayout*`・
   `settings.launcherOpacity*`・`settings.launcherOpaqueNote` のキーを消す（既定のサイドバーのまま）。
   メニューバーだけを選択肢から外すなら、同じファイルの `navLayouts` から `'menubar'` の行と
-  `settings.navLayoutMenubar` を消す（保存済みの `'menubar'` は未知の値としてサイドバーに戻る）。
+  `settings.navLayoutMenubar` を消し、`settings.svelte.ts` の `isNavLayout()` からも `'menubar'` を外す
+  （保存済みの `'menubar'` が未知の値として `NAV_LAYOUT_DEFAULT` に戻る）。
   ナビの項目はグループにまとめられる。`navigation.ts` の `NavItem.group`（リソースは定義の `nav.group`）に
   `NavGroupKey`（辞書キー。`nav.group.demo` が見本）を付けると、メニューバーではドロップダウン、サイドバーでは
   見出し、ドックでは区切り線になる。新しいグループは `NavGroupKey` の union に足し、名前を `messages/ja.json` と
