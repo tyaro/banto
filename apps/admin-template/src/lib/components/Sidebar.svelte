@@ -32,9 +32,18 @@
 	interface Props {
 		/** <=900px overlay drawer state (design.md §8.1); not a fold state - see the media query below. */
 		overlayOpen?: boolean;
+		/**
+		 * Shown as the drawer above 900px (the menu bar layout's fallback,
+		 * nav-menubar-plan.md §4.9): like the <=900px drawer it has no fold -
+		 * full width with labels whatever `sidebarCollapsed` says, no fold button.
+		 */
+		drawer?: boolean;
 	}
 
-	let { overlayOpen = false }: Props = $props();
+	let { overlayOpen = false, drawer = false }: Props = $props();
+
+	const folded = $derived(settings.sidebarCollapsed && !drawer);
+	const showFold = $derived(!narrowViewport.current && !drawer);
 
 	function isActive(path: AppPath): boolean {
 		return isPathActive(path, page.url.pathname);
@@ -66,7 +75,7 @@
 		class="nav-item"
 		class:active={isActive(item.path)}
 		aria-current={isActive(item.path) ? 'page' : undefined}
-		title={settings.sidebarCollapsed ? navLabel(item) : undefined}
+		title={folded ? navLabel(item) : undefined}
 	>
 		<span class="icon"><Icon size={20} aria-hidden="true" /></span>
 		<span class="label">{navLabel(item)}</span>
@@ -80,12 +89,12 @@
 
 <aside
 	id="app-sidebar"
-	class:collapsed={settings.sidebarCollapsed}
+	class:collapsed={folded}
 	class:overlay-open={overlayOpen}
 	class:compact={settings.kiosk}
 >
-	<div class="brand" class:with-toggle={!narrowViewport.current}>
-		{#if !narrowViewport.current}
+	<div class="brand" class:with-toggle={showFold}>
+		{#if showFold}
 			<!-- One persistent element: folding only changes its props, so focus
 			     stays on it. Not rendered at <=900px (the header's drawer button
 			     is the control there). -->

@@ -1,7 +1,8 @@
 <script lang="ts">
 	/**
 	 * 外観・言語カテゴリ（choiapp-feedback-2026-09 §3）: テーマ / 言語 /
-	 * ナビゲーション（サイドバー / ドック、nav-launcher-plan.md §3）/
+	 * ナビゲーション（サイドバー / ドック / メニューバー、nav-launcher-plan.md §3・
+	 * nav-menubar-plan.md §3）/
 	 * キオスク / ウィンドウ効果(vibrancy)。`+page.svelte` の
 	 * `<section id="appearance">` ラッパーから描画される（settings-split
 	 * refactor: markup/state/CSS の移動のみ、挙動は変えない）。
@@ -60,7 +61,9 @@
 	// value is 'launcher'). The opacity slider only matters for the dock.
 	const navLayouts: { value: NavLayout; label: string; icon: Component }[] = [
 		{ value: 'sidebar', label: m['settings.navLayoutSidebar'](), icon: PanelLeft },
-		{ value: 'launcher', label: m['settings.navLayoutLauncher'](), icon: PanelBottom }
+		{ value: 'launcher', label: m['settings.navLayoutLauncher'](), icon: PanelBottom },
+		// nav-menubar-plan.md §3: the links in the header row; no sub-settings.
+		{ value: 'menubar', label: m['settings.navLayoutMenubar'](), icon: PanelTop }
 	];
 
 	// The dock's screen edge (D4); <=900px is always the bottom tab bar (D5).

@@ -198,6 +198,31 @@
 	border-radius: var(--banto-radius-sm);
 }
 
+/* Menu bar (nav-menubar-plan.md §3): a band across the top with short
+   lines for the links. */
+.settings-page .nav-layout-preview[data-nav-layout='menubar'] .preview-nav {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 12px;
+	border-bottom-width: var(--banto-border-width);
+}
+
+.settings-page .nav-layout-preview[data-nav-layout='menubar'] .preview-nav::before {
+	content: '';
+	position: absolute;
+	top: 5px;
+	left: 6px;
+	right: 30%;
+	height: 2px;
+	background: repeating-linear-gradient(
+		to right,
+		var(--banto-border-strong) 0 8px,
+		transparent 8px 12px
+	);
+}
+
 /* Dock opacity slider + its D7 preview: striped "content" under a sample
    bar whose background is the theme's own formula with the token
    overridden on .launcher-preview (inline style from the slider). Token

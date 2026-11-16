@@ -14,6 +14,7 @@
 	import Sidebar from '#lib/components/Sidebar.svelte';
 	import ShellLauncher from '#lib/components/ShellLauncher.svelte';
 	import { settings } from '#lib/settings.svelte.js';
+	import { narrowViewport } from '#lib/narrowViewport.svelte.js';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import { appShortcuts, commandPaletteCommand } from '#lib/shortcuts.js';
@@ -225,6 +226,27 @@
 
 	const launcherPosition = $derived(settings.launcherPosition);
 
+	// Menu bar layout (nav-menubar-plan.md §4.9, D10-a): above 900px the
+	// header carries the nav and there is no sidebar; at <=900px the sidebar
+	// is the drawer, as in the sidebar layout. Above 900px the drawer also
+	// stands in while the header's main nav is too narrow even for "more"
+	// (200% text, long translations): `menubarInsufficient`, reported by
+	// HeaderNav through Header.svelte. The header leaves the bar at <=900px
+	// (and on a layout switch), so the flag is dropped there - a fresh bar
+	// measures from scratch and reports again.
+	const menubar = $derived(settings.navLayout === 'menubar');
+	let menubarInsufficient = $state(false);
+	$effect(() => {
+		if (!menubar || narrowViewport.current) menubarInsufficient = false;
+	});
+	const menubarWideDrawer = $derived(menubar && !narrowViewport.current && menubarInsufficient);
+	const showSidebar = $derived(!menubar || narrowViewport.current || menubarInsufficient);
+	// The drawer is gone once the bar is back (wider than 900px, or the room
+	// came back): close one left open, like the sidebar layout's resize.
+	$effect(() => {
+		if (menubar && !showSidebar) closeOverlay();
+	});
+
 	// The toast stack is a sibling of this shell (routes/+layout.svelte), so a
 	// variable set here would not reach it: while the dock is shown, root
 	// attributes (the layout and the bar's edge, D4) let banto.css move
@@ -287,19 +309,34 @@
 >
 	{#if launcher}
 		<ShellLauncher />
-	{:else}
-		<Sidebar {overlayOpen} />
+	{:else if showSidebar}
+		{#if menubarWideDrawer}
+			<!-- Above 900px Sidebar.svelte is a column, not a drawer: this
+			     wrapper slides it in like its <=900px drawer (§4.9). Hidden
+			     while closed so its links leave the tab order and the a11y tree. -->
+			<div class="menubar-drawer" class:open={overlayOpen}>
+				<Sidebar {overlayOpen} drawer />
+			</div>
+		{:else}
+			<Sidebar {overlayOpen} />
+		{/if}
 		{#if overlayOpen}
 			<button
 				type="button"
 				class="overlay-backdrop"
+				class:wide={menubarWideDrawer}
 				aria-label={m['shell.closeSidebar']()}
 				onclick={closeOverlay}
 			></button>
 		{/if}
 	{/if}
 	<div class="main">
-		<Header {overlayOpen} onToggleOverlay={toggleOverlay} />
+		<Header
+			{overlayOpen}
+			onToggleOverlay={toggleOverlay}
+			{menubarInsufficient}
+			onMenubarInsufficient={(insufficient) => (menubarInsufficient = insufficient)}
+		/>
 		<main>
 			{#if data.sessionGeneration === sessionController.snapshot.generation}
 				{#key `${data.sessionGeneration}:${JSON.stringify(page.params)}`}
@@ -379,6 +416,40 @@
 
 	.overlay-backdrop {
 		display: none;
+		position: fixed;
+		inset: 0;
+		z-index: var(--banto-z-sidebar-scrim);
+		margin: 0;
+		padding: 0;
+		border: none;
+		cursor: default;
+		/* Theme scrim token (#220 phase 2a): the same dimming film as the
+		   CommandPalette overlay, intentionally black in every theme. */
+		background: var(--banto-scrim);
+	}
+
+	/* Menu bar layout, too narrow above 900px (nav-menubar-plan.md §4.9): the
+	   same drawer as Sidebar.svelte's <=900px one, around the sidebar column. */
+	.overlay-backdrop.wide {
+		display: block;
+	}
+
+	.menubar-drawer {
+		position: fixed;
+		inset: 0 auto 0 0;
+		z-index: var(--banto-z-sidebar);
+		box-shadow: var(--banto-shadow-lg);
+		transform: translateX(-100%);
+		visibility: hidden;
+		transition:
+			transform var(--banto-duration-base) var(--banto-ease-spring),
+			visibility 0s linear var(--banto-duration-base);
+	}
+
+	.menubar-drawer.open {
+		transform: translateX(0);
+		visibility: visible;
+		transition: transform var(--banto-duration-base) var(--banto-ease-spring);
 	}
 
 	@media (max-width: 900px) {
@@ -393,16 +464,6 @@
 
 		.overlay-backdrop {
 			display: block;
-			position: fixed;
-			inset: 0;
-			z-index: var(--banto-z-sidebar-scrim);
-			margin: 0;
-			padding: 0;
-			border: none;
-			cursor: default;
-			/* Theme scrim token (#220 phase 2a): the same dimming film as the
-			   CommandPalette overlay, intentionally black in every theme. */
-			background: var(--banto-scrim);
 		}
 	}
 </style>

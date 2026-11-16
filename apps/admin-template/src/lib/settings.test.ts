@@ -88,10 +88,25 @@ describe('settings: navigation layout and launcher opacity', () => {
 		expect(settings.launcherOpacity).toBe(80);
 	});
 
-	it.each([['dock'], ['']])('an unknown layout %j falls back to the default', async (stored) => {
-		const settings = await loadSettings({ 'banto.navLayout': stored });
-		expect(settings.navLayout).toBe('sidebar');
+	it('loads, writes and syncs the menu bar layout (nav-menubar-plan.md §3)', async () => {
+		const settings = await loadSettings({ 'banto.navLayout': 'menubar' });
+		expect(settings.navLayout).toBe('menubar');
+		settings.setNavLayout('sidebar');
+		settings.setNavLayout('menubar');
+		expect(store.get('banto.navLayout')).toBe('menubar');
+		expect(mocks.set).toHaveBeenCalledWith('shell.navLayout', 'menubar');
+		providerHolds({ 'shell.navLayout': 'menubar' });
+		await settings.syncFromProvider();
+		expect(settings.navLayout).toBe('menubar');
 	});
+
+	it.each([['dock'], [''], ['menu-bar']])(
+		'an unknown layout %j falls back to the default',
+		async (stored) => {
+			const settings = await loadSettings({ 'banto.navLayout': stored });
+			expect(settings.navLayout).toBe('sidebar');
+		}
+	);
 
 	it.each([['35'], ['105'], ['42'], ['50.5'], ['abc'], ['-50']])(
 		'an off-grid opacity %j falls back to the default',

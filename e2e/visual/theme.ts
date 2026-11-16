@@ -150,3 +150,20 @@ export async function primeLauncher(
 		}
 	);
 }
+
+/**
+ * Forces the menu bar layout (nav-menubar-plan.md §3) before first paint,
+ * like `primeLauncher` (both the cache key and the demo provider's key). Runs
+ * on every navigation of the page, so a test that switches the layout in the
+ * UI must not use it. Call alongside `primeThemeAndAuth`, before the test's
+ * first `page.goto()`.
+ */
+export async function primeMenubar(page: Page): Promise<void> {
+	await page.addInitScript(
+		({ cacheKey, providerKey }) => {
+			window.localStorage.setItem(cacheKey, 'menubar');
+			window.localStorage.setItem(providerKey, 'menubar');
+		},
+		{ cacheKey: NAV_LAYOUT_KEY, providerKey: NAV_LAYOUT_PROVIDER_KEY }
+	);
+}
