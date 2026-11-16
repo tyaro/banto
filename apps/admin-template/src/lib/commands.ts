@@ -44,7 +44,8 @@ function navigationCommands(): PaletteCommand[] {
 		id: `nav.${item.path}`,
 		title: navLabel(item),
 		group: m['commandPalette.groupNavigation'](),
-		keywords: item.group ? [item.path, m[item.group]()] : [item.path],
+		// The group name only where the bar shows the group: adminOnly entries ignore it (navBarEntries).
+		keywords: item.group && !item.adminOnly ? [item.path, m[item.group]()] : [item.path],
 		// Spec M10 RBAC + viewer-public allowlist (ADR-0012): visible iff the
 		// sidebar would list it. Evaluated per call so it follows the session.
 		visible: () => isNavItemVisible(item),
