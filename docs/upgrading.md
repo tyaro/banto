@@ -774,8 +774,11 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 
 1. A のタグを上げ、`pnpm check` を通す。自前のシェルを持つアプリ（banto-hub・temp-scada など）は、自分のヘッダーに
    `HeaderNav` を置き、自分のナビ定義からグループと項目を渡す（`ShellMenubar.svelte` を手本にする）。
-2. コピーしたテンプレートは、B の差分を読んで写す。メニューバーを使わない派生アプリは `ShellMenubar` 一式を
-   取り込まなくてよい（`'menubar'` を選ばせなければ動かない）。
+2. コピーしたテンプレートは、B の差分を読んで写す。メニューバーを使わない派生アプリは、`ShellMenubar.svelte` と
+   それを参照する分岐（`Header.svelte` の import と `<ShellMenubar>`・`handleMenubarInsufficient`、
+   `(app)/+layout.svelte` の `menubar`・`menubarInsufficient`・`menubarWideDrawer` まわり）をまとめて取り込まない
+   （参照だけ写すとビルドが通らない）。あわせて `NavLayout`・`isNavLayout()` にも `'menubar'` を足さず、外観カードの
+   3 つ目のラジオと `settings.navLayoutMenubar` も写さない。
 3. グループを使うなら、`NavGroupKey` の union に語を足し、名前を辞書（ja / en）に書いて、項目に `group` を付ける。
    使い方は [README](../README.md) の「ナビの表示形式」。
 4. メニューバーを既定にするなら `NAV_LAYOUT_DEFAULT` を `'menubar'` にする。
