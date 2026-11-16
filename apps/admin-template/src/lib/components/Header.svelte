@@ -118,12 +118,20 @@
 			(drawerButtonHost?.contains(active) === true ||
 				document.getElementById('app-sidebar')?.contains(active) === true);
 		if (!fromBar && !fromDrawer) return;
-		void tick().then(() => {
+		// A freshly mounted bar stays `visibility: hidden` until HeaderNav has
+		// measured it (a ResizeObserver tick), and a hidden element refuses the
+		// focus: retry for a few frames while focus is still nowhere (body).
+		let frames = 10;
+		const handOver = (): void => {
 			const target = fromBar
 				? drawerButtonHost?.querySelector<HTMLElement>('button')
 				: barHost?.querySelector<HTMLElement>('[data-header-nav-top]');
-			if (target?.isConnected && !target.closest('[inert]')) target.focus();
-		});
+			if (!target?.isConnected || target.closest('[inert]')) return;
+			target.focus();
+			const lost = document.activeElement === null || document.activeElement === document.body;
+			if (lost && --frames > 0) requestAnimationFrame(handOver);
+		};
+		void tick().then(handOver);
 	});
 
 	const pageTitleText = $derived(pageTitle(page.url.pathname, page.route.id));
