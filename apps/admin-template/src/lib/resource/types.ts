@@ -15,6 +15,7 @@ import type { Component } from 'svelte';
 import type { ResourceDefinition } from '@banto/admin-core';
 import type { FilterState, GridColumn, SortState } from '@banto/grid-svelte';
 import type { AppPath } from '#lib/appPath.js';
+import type { NavGroupKey } from '#lib/navigation.js';
 
 export interface ResourceNav {
 	/** lucide component held directly by the definition file. */
@@ -27,6 +28,8 @@ export interface ResourceNav {
 	badge?: boolean;
 	/** Only shown to the `admin` role. */
 	adminOnly?: boolean;
+	/** Nav group (`NavItem.group`): entries with the same key are gathered in the menubar. */
+	group?: NavGroupKey;
 }
 
 /**

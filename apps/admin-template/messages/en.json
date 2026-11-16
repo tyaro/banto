@@ -809,6 +809,7 @@
   "tree.demo.selectMultiLabel": "Multiple",
   "tree.demo.selectedPrefix": "Selected",
   "tree.demo.none": "(none)",
+  "nav.group.demo": "Examples",
   "nav.chartGallery": "Chart gallery",
   "nav.uiDemo": "UI components",
   "uiDemo.intro": "The main states of the @banto/ui components (shown in the nav only in demo mode).",

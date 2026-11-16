@@ -16,11 +16,13 @@ vi.mock('$app/paths', () => ({
 
 import {
 	isPathActive,
+	navBarEntries,
 	navItems,
 	navLabel,
 	navSections,
 	pageTitle,
-	type AppPath
+	type AppPath,
+	type NavItem
 } from './navigation';
 import { navBadges } from './navBadges.svelte';
 import type { AppResourceDefinition } from './resource/types';
@@ -153,6 +155,66 @@ describe('navSections', () => {
 // ADR-0030 §8: the entries for resources are derived from the resource definitions.
 // The module reads `resources` once at import, so each case mocks the array and
 // re-imports `./navigation` (independent of which scaffold preset the copy is).
+// navBarEntries() (nav-menubar-plan §4.10): the group sits at its first member's position.
+describe('navBarEntries', () => {
+	const item = (path: string, extra: Partial<NavItem> = {}) =>
+		({ path, icon: 'dashboard', ...extra }) as NavItem;
+	const shape = (items: NavItem[]) =>
+		navBarEntries(items).map((e) =>
+			e.kind === 'item' ? e.item.path : `${e.key}[${e.items.map((i) => i.path).join(',')}]`
+		);
+
+	it('no groups: every entry stays a standalone item, in order', () => {
+		expect(shape([item('/a'), item('/b'), item('/c')])).toEqual(['/a', '/b', '/c']);
+		expect(navBarEntries([])).toEqual([]);
+	});
+
+	it('a group sits at its first member and gathers distant members in original order', () => {
+		const g = { group: 'nav.group.demo' } as const;
+		expect(shape([item('/a'), item('/x', g), item('/b'), item('/y', g), item('/c')])).toEqual([
+			'/a',
+			'nav.group.demo[/x,/y]',
+			'/b',
+			'/c'
+		]);
+	});
+
+	it('a single-member group stays a group', () => {
+		expect(shape([item('/a'), item('/x', { group: 'nav.group.demo' })])).toEqual([
+			'/a',
+			'nav.group.demo[/x]'
+		]);
+	});
+
+	it('ignores group on adminOnly entries', () => {
+		expect(
+			shape([
+				item('/a', { group: 'nav.group.demo' }),
+				item('/u', { group: 'nav.group.demo', adminOnly: true })
+			])
+		).toEqual(['nav.group.demo[/a]', '/u']);
+	});
+
+	it('holds after the public-viewer narrowing (a group with no public member disappears)', () => {
+		const g = { group: 'nav.group.demo' } as const;
+		const all = [
+			item('/a', { publicViewer: true }),
+			item('/x', g),
+			item('/y', { ...g, publicViewer: true }),
+			item('/z', g)
+		];
+		expect(shape(all.filter((i) => i.publicViewer))).toEqual(['/a', 'nav.group.demo[/y]']);
+		expect(shape(all.filter((i) => i.publicViewer && (i.path as string) === '/a'))).toEqual(['/a']);
+	});
+
+	it('works on the real navSections() output', () => {
+		const { main } = navSections({ publicViewer: false, role: 'admin' });
+		expect(navBarEntries(main).flatMap((e) => (e.kind === 'item' ? [e.item] : e.items))).toEqual(
+			expect.arrayContaining(main)
+		);
+	});
+});
+
 describe('navigation derived from resource definitions', () => {
 	const Icon = (() => {}) as unknown as Component;
 	const def = (
@@ -183,6 +245,15 @@ describe('navigation derived from resource definitions', () => {
 	// /monitor), so read them from a copy with no resources instead of hard-coding.
 	const fixedPaths = async () => (await load([])).navItems.map((item) => item.path);
 	const fixedPublicPaths = async () => (await load([])).publicNavItems().map((item) => item.path);
+
+	it('passes nav.group through to the entry', async () => {
+		const nav = await load([
+			def('alpha', { icon: Icon, group: 'nav.group.demo' }),
+			def('beta', { icon: Icon })
+		]);
+		expect(nav.navItems.find((i) => (i.path as string) === '/alpha')?.group).toBe('nav.group.demo');
+		expect(nav.navItems.find((i) => (i.path as string) === '/beta')?.group).toBeUndefined();
+	});
 
 	it('lists nav resources in array order, right after the first fixed page', async () => {
 		const [home] = await fixedPaths();

@@ -345,7 +345,13 @@ function removeCharts() {
 	drop(
 		NAV,
 		'nav: /chart-gallery 行除去',
-		`	{ path: '/chart-gallery', labelKey: 'nav.chartGallery', icon: 'chart-gallery', demoOnly: true },
+		`	{
+		path: '/chart-gallery',
+		labelKey: 'nav.chartGallery',
+		icon: 'chart-gallery',
+		demoOnly: true,
+		group: 'nav.group.demo'
+	},
 `
 	);
 	swapText(
