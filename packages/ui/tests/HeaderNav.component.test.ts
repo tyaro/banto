@@ -175,7 +175,7 @@ describe('HeaderNav', () => {
 
 	it('keeps the measuring row out of the a11y tree, with no links or buttons', async () => {
 		const { nav } = await setup();
-		const measure = nav.querySelector('[aria-hidden="true"][inert]') as HTMLElement;
+		const measure = nav.querySelector('.measure-clip[aria-hidden="true"][inert]') as HTMLElement;
 		expect(measure).not.toBeNull();
 		expect(measure.querySelectorAll('a, button')).toHaveLength(0);
 		expect(measure.querySelectorAll('[data-header-nav-measure]')).toHaveLength(4);
@@ -360,7 +360,7 @@ describe('HeaderNav', () => {
 		expect(document.activeElement).toBe(more);
 	});
 
-	it('moves inside an open dropdown with up / down / Home / End; left / right do nothing', async () => {
+	it('moves inside an open dropdown with up / down / Home / End', async () => {
 		const { nav } = await setup();
 		const group = within(nav).getByRole('button', { name: 'Group' });
 		await fireEvent.keyDown(group, { key: 'ArrowUp' });
@@ -374,10 +374,54 @@ describe('HeaderNav', () => {
 		expect(document.activeElement).toBe(g2);
 		await fireEvent.keyDown(g2, { key: 'Home' });
 		expect(document.activeElement).toBe(g1);
-		await fireEvent.keyDown(g1, { key: 'ArrowRight' });
-		await fireEvent.keyDown(g1, { key: 'ArrowLeft' });
-		expect(document.activeElement).toBe(g1);
-		expect(group.getAttribute('aria-expanded')).toBe('true');
+	});
+
+	it('closes on left / right and moves to the neighbouring top item (wrapping, not opened)', async () => {
+		const { nav } = await setup();
+		const [a, b, group, c] = topControls(nav);
+		await fireEvent.keyDown(group, { key: 'ArrowDown' });
+		await flush();
+		await fireEvent.keyDown(screen.getByRole('link', { name: 'G1' }), { key: 'ArrowRight' });
+		await flush();
+		expect(document.activeElement).toBe(c);
+		expect(group.getAttribute('aria-expanded')).toBe('false');
+		expect(c.getAttribute('aria-expanded')).toBeNull();
+		await fireEvent.keyDown(group, { key: 'ArrowDown' });
+		await flush();
+		await fireEvent.keyDown(screen.getByRole('link', { name: 'G1' }), { key: 'ArrowLeft' });
+		await flush();
+		expect(document.activeElement).toBe(b);
+		expect(group.getAttribute('aria-expanded')).toBe('false');
+		expect(a).toBeTruthy();
+	});
+
+	it('closes when focus leaves the button backwards (Shift+Tab)', async () => {
+		const { nav } = await setup();
+		const [, b, group] = topControls(nav);
+		await fireEvent.keyDown(group, { key: 'ArrowDown' });
+		await flush();
+		await fireEvent.focusOut(group, { relatedTarget: b });
+		await flush();
+		expect(group.getAttribute('aria-expanded')).toBe('false');
+	});
+
+	it('keeps the same group open when an item is inserted before it', async () => {
+		const result = await setup();
+		const group = within(result.nav).getByRole('button', { name: 'Group' });
+		await fireEvent.keyDown(group, { key: 'ArrowDown' });
+		await flush();
+		const base = entries();
+		await result.rerender({
+			entries: [{ kind: 'link', id: 'z', href: '/z', label: 'Z', icon: CustomIcon }, ...base]
+		});
+		await flush();
+		const again = within(result.nav).getByRole('button', { name: 'Group' });
+		expect(again.getAttribute('aria-expanded')).toBe('true');
+		expect(
+			within(result.nav)
+				.getAllByRole('button')
+				.filter((el) => el.getAttribute('aria-expanded') === 'true')
+		).toHaveLength(1);
 	});
 
 	it('closes when focus leaves the dropdown', async () => {

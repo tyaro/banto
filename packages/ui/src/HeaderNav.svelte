@@ -8,8 +8,9 @@
 	 *   `role="menubar"`. Every top item stays a Tab stop (no roving
 	 *   tabindex); ArrowLeft / ArrowRight (wrapping) and Home / End move
 	 *   along the top row as a help. Inside an open dropdown ArrowUp /
-	 *   ArrowDown / Home / End move between the links; ArrowLeft / Right do
-	 *   nothing there (`headerNav.ts` `listTarget`).
+	 *   ArrowDown / Home / End move between the links; ArrowLeft / Right close
+	 *   it and move to the neighbouring top item (wrapping, not opened;
+	 *   `headerNav.ts` `listTarget`, `topRowTarget`).
 	 * - Dropdowns open on click / tap only (D9), as `popover="auto"` (top
 	 *   layer: a glass header's `backdrop-filter` would offset a plain
 	 *   `position: fixed` child, §2.6), placed by `anchoredPopover.ts`. The
@@ -97,15 +98,20 @@
 
 	// ---- dropdowns -------------------------------------------------------
 
-	/** Which dropdown is open: a group's index as a string, or `MORE`. */
+	/** Which dropdown is open: `g:<group id>` (stable across inserts), or `MORE`. */
 	let openKey = $state<string | null>(null);
 	let coords = $state<{ key: string; top: number; left: number } | null>(null);
 	const popovers: Record<string, HTMLElement> = {};
 	const buttons: Record<string, HTMLElement> = {};
 	let focusIntent: 'first' | 'last' | 'none' = 'none';
 
+	function groupKey(id: string): string {
+		return `g:${id}`;
+	}
+
 	function popoverId(key: string): string {
-		return `${uid}-dropdown-${key}`;
+		// `key` carries a group id, which may hold characters unfit for an id.
+		return `${uid}-dropdown-${key.replace(/[^A-Za-z0-9_-]/g, (c) => `_${c.charCodeAt(0).toString(16)}_`)}`;
 	}
 
 	function linksIn(key: string): HTMLElement[] {
@@ -204,6 +210,20 @@
 			buttons[key]?.focus();
 			return;
 		}
+		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+			// Close and step to the neighbouring top item (§4.7); it is not opened.
+			const items = rowEl
+				? Array.from(rowEl.querySelectorAll<HTMLElement>('[data-header-nav-top]'))
+				: [];
+			const button = buttons[key];
+			const target = button ? topRowTarget(items.indexOf(button), items.length, event.key) : null;
+			if (target === null) return;
+			event.preventDefault();
+			event.stopPropagation();
+			closeDropdown(key);
+			items[target]?.focus();
+			return;
+		}
 		const links = linksIn(key);
 		const target = listTarget(
 			links.indexOf(document.activeElement as HTMLElement),
@@ -215,10 +235,13 @@
 		links[target]?.focus();
 	}
 
-	function handlePopoverFocusout(key: string, event: FocusEvent): void {
+	/** On the cell (button + popover): focus leaving both closes the dropdown. */
+	function handleCellFocusout(key: string, event: FocusEvent): void {
 		const next = event.relatedTarget;
-		// Tab past the last link (or Shift+Tab back to the button) closes it.
-		if (next instanceof Node && !popovers[key]?.contains(next)) closeDropdown(key);
+		// Tab past the last link or Shift+Tab off the button closes it; focus
+		// is not returned (it went where the user chose).
+		if (next instanceof Node && !(event.currentTarget as HTMLElement).contains(next))
+			closeDropdown(key);
 	}
 
 	function handleTopKeydown(event: KeyboardEvent): void {
@@ -236,7 +259,7 @@
 	/** Dropdown keys rendered right now; an open one that moved away is dropped. */
 	const renderedKeys = $derived(
 		new Set([
-			...shown.flatMap((entry, index) => (entry.kind === 'group' ? [String(index)] : [])),
+			...shown.flatMap((entry) => (entry.kind === 'group' ? [groupKey(entry.id)] : [])),
 			...(moved.length > 0 ? [MORE] : [])
 		])
 	);
@@ -407,7 +430,6 @@
 		style:left={coords?.key === key ? `${coords.left}px` : undefined}
 		style:visibility={coords?.key === key ? 'visible' : 'hidden'}
 		ontoggle={(event) => handleToggle(key, event)}
-		onfocusout={(event) => handlePopoverFocusout(key, event)}
 	>
 		{@render content()}
 	</div>
@@ -423,25 +445,27 @@
 	{#if overflow}
 		<!-- Measuring row (§4.4): every top item + "more", out of the flow and
 		     out of the a11y tree; spans only, so no link or button is doubled. -->
-		<div bind:this={measureEl} class="row measure" aria-hidden="true" inert>
-			{#each entries as entry (entry.id)}
-				<span class="item" data-header-nav-measure={entry.id}>
-					<span>{entry.label}</span>
-					{#if entry.kind === 'link'}
-						{#if (entry.count ?? 0) > 0}<span class="badge"
-								>{headerNavBadgeText(entry.count ?? 0)}</span
-							>{/if}
-					{:else}
-						{#if entryCount(entry) > 0}<span class="dot"></span>{/if}
-						{@render caret()}
-					{/if}
-				</span>
-			{/each}
-			<!-- "more" is measured with its dot so a dot appearing never
+		<div class="measure-clip" aria-hidden="true" inert>
+			<div bind:this={measureEl} class="row measure">
+				{#each entries as entry (entry.id)}
+					<span class="item" data-header-nav-measure={entry.id}>
+						<span>{entry.label}</span>
+						{#if entry.kind === 'link'}
+							{#if (entry.count ?? 0) > 0}<span class="badge"
+									>{headerNavBadgeText(entry.count ?? 0)}</span
+								>{/if}
+						{:else}
+							{#if entryCount(entry) > 0}<span class="dot"></span>{/if}
+							{@render caret()}
+						{/if}
+					</span>
+				{/each}
+				<!-- "more" is measured with its dot so a dot appearing never
 			     overflows the row. -->
-			<span class="item" data-header-nav-measure-more>
-				<span>{moreLabel}</span><span class="dot"></span>{@render caret()}
-			</span>
+				<span class="item" data-header-nav-measure-more>
+					<span>{moreLabel}</span><span class="dot"></span>{@render caret()}
+				</span>
+			</div>
 		</div>
 	{/if}
 
@@ -450,8 +474,13 @@
 		class="row"
 		style:visibility={overflow && (!measured || insufficient) ? 'hidden' : undefined}
 	>
-		{#each shown as entry, index (entry.id)}
-			<li class="cell">
+		{#each shown as entry (entry.id)}
+			<li
+				class="cell"
+				onfocusout={(event) => {
+					if (entry.kind === 'group') handleCellFocusout(groupKey(entry.id), event);
+				}}
+			>
 				{#if entry.kind === 'link'}
 					<a
 						href={entry.href}
@@ -465,7 +494,7 @@
 						{@render badge(entry.count ?? 0)}
 					</a>
 				{:else}
-					{@const key = String(index)}
+					{@const key = groupKey(entry.id)}
 					<button
 						bind:this={buttons[key]}
 						type="button"
@@ -489,7 +518,7 @@
 			</li>
 		{/each}
 		{#if moved.length > 0}
-			<li class="cell">
+			<li class="cell" onfocusout={(event) => handleCellFocusout(MORE, event)}>
 				<button
 					bind:this={buttons[MORE]}
 					type="button"
@@ -529,6 +558,11 @@
 <style>
 	.header-nav {
 		position: relative;
+		/* The hidden measuring row and a not-yet-fitted row must not widen the
+		   page; the margin keeps the focus ring (box-shadow) from being cut.
+		   Popovers live in the top layer and are not clipped. */
+		overflow-x: clip;
+		overflow-clip-margin: var(--banto-space-1);
 		display: flex;
 		align-items: center;
 		/* The nav's width must not follow its content (§4.4): it takes what
@@ -552,6 +586,13 @@
 	}
 
 	/* Same classes on both rows so the measured widths match the visible row. */
+	.measure-clip {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		pointer-events: none;
+	}
+
 	.measure {
 		position: absolute;
 		top: 0;
