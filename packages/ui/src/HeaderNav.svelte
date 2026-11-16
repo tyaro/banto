@@ -276,11 +276,12 @@
 
 	function measure(): void {
 		if (!overflow || !navEl || !measureEl) return;
-		const items = Array.from(measureEl.querySelectorAll<HTMLElement>('[data-header-nav-measure]'));
-		const moreEl = items.find((item) => item.dataset.headerNavMeasure === MORE);
-		const widths = items
-			.filter((item) => item !== moreEl)
-			.map((item) => item.getBoundingClientRect().width);
+		// "more" carries its own marker so an entry whose id is 'more' is never mistaken for it.
+		const widths = Array.from(
+			measureEl.querySelectorAll<HTMLElement>('[data-header-nav-measure]'),
+			(item) => item.getBoundingClientRect().width
+		);
+		const moreEl = measureEl.querySelector<HTMLElement>('[data-header-nav-measure-more]');
 		const next = fitCount(
 			widths,
 			navEl.getBoundingClientRect().width,
@@ -328,7 +329,10 @@
 		if (typeof ResizeObserver !== 'function') return;
 		const observer = new ResizeObserver(() => schedule());
 		observer.observe(nav);
-		for (const item of row.querySelectorAll('[data-header-nav-measure]')) observer.observe(item);
+		for (const item of row.querySelectorAll(
+			'[data-header-nav-measure], [data-header-nav-measure-more]'
+		))
+			observer.observe(item);
 		return () => observer.disconnect();
 	});
 
@@ -435,7 +439,7 @@
 			{/each}
 			<!-- "more" is measured with its dot so a dot appearing never
 			     overflows the row. -->
-			<span class="item" data-header-nav-measure={MORE}>
+			<span class="item" data-header-nav-measure-more>
 				<span>{moreLabel}</span><span class="dot"></span>{@render caret()}
 			</span>
 		</div>

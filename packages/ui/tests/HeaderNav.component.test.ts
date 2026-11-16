@@ -38,6 +38,8 @@ function notifyResize(): void {
 }
 
 let navWidth = 1000;
+/** Width key of the "more" measuring item (its own marker, not an entry id). */
+const MORE_KEY = '<more>';
 const widthOf: Record<string, number> = {};
 
 beforeAll(() => {
@@ -70,7 +72,8 @@ beforeAll(() => {
 
 beforeEach(() => {
 	navWidth = 1000;
-	Object.assign(widthOf, { a: 100, b: 100, g: 100, c: 100, more: 60 });
+	for (const key of Object.keys(widthOf)) delete widthOf[key];
+	Object.assign(widthOf, { a: 100, b: 100, g: 100, c: 100, [MORE_KEY]: 60 });
 	vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
 		callback(0);
 		return 1;
@@ -78,7 +81,8 @@ beforeEach(() => {
 	vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
 		this: HTMLElement
 	) {
-		const id = this.dataset.headerNavMeasure;
+		const id =
+			this.dataset.headerNavMeasureMore !== undefined ? MORE_KEY : this.dataset.headerNavMeasure;
 		const width = id !== undefined ? (widthOf[id] ?? 0) : this.tagName === 'NAV' ? navWidth : 0;
 		return {
 			width,
@@ -174,7 +178,8 @@ describe('HeaderNav', () => {
 		const measure = nav.querySelector('[aria-hidden="true"][inert]') as HTMLElement;
 		expect(measure).not.toBeNull();
 		expect(measure.querySelectorAll('a, button')).toHaveLength(0);
-		expect(measure.querySelectorAll('[data-header-nav-measure]')).toHaveLength(5);
+		expect(measure.querySelectorAll('[data-header-nav-measure]')).toHaveLength(4);
+		expect(measure.querySelectorAll('[data-header-nav-measure-more]')).toHaveLength(1);
 	});
 
 	it('marks the active link with aria-current, and only the look on its group button', async () => {
@@ -247,6 +252,20 @@ describe('HeaderNav', () => {
 				.getAllByRole('link')
 				.map((link) => link.textContent?.trim())
 		).toEqual(['G1', 'G2', 'C']);
+	});
+
+	it('does not mistake an entry whose id is "more" for the "more" button', async () => {
+		Object.assign(widthOf, { a: 200, more: 100 });
+		const link = (id: string) => ({ id, href: `/${id}`, label: id.toUpperCase() });
+		const { nav } = await setup({
+			entries: [
+				{ kind: 'link', ...link('a') },
+				{ kind: 'link', ...link('more') }
+			]
+		});
+		// 200 + 100 = 300 > 180, and 60 + 200 > 180: only the "more" button stays on top.
+		await resizeTo(180);
+		expect(topControls(nav).map((control) => control.textContent?.trim())).toEqual(['More']);
 	});
 
 	it('marks "more" active when the current page moved into it', async () => {
