@@ -75,7 +75,7 @@
 		class="nav-item"
 		class:active={isActive(item.path)}
 		aria-current={isActive(item.path) ? 'page' : undefined}
-		title={settings.sidebarCollapsed ? navLabel(item) : undefined}
+		title={folded ? navLabel(item) : undefined}
 	>
 		<span class="icon"><Icon size={20} aria-hidden="true" /></span>
 		<span class="label">{navLabel(item)}</span>
