@@ -21,6 +21,7 @@
 /* --- light x glass ------------------------------------------------------ */
 :root[data-banto-preset='glass'] {
 	--banto-surface: color-mix(in srgb, var(--banto-neutral-1) 62%, transparent);
+	--banto-card-subtle-bg: color-mix(in srgb, var(--banto-neutral-3) 62%, transparent);
 	--banto-surface-raised: color-mix(in srgb, var(--banto-neutral-1) 55%, transparent);
 	/* Floating surfaces (menus, pickers, popovers, dialogs, toasts) sit on top of
      page text, so they stay OPAQUE even under glass - the standard theme's
@@ -60,6 +61,7 @@
 :root[data-theme='dark'][data-banto-preset='glass'] {
 	--banto-shell-launcher-tabbar-base: var(--banto-neutral-4);
 	--banto-surface: color-mix(in srgb, var(--banto-neutral-2) 55%, transparent);
+	--banto-card-subtle-bg: color-mix(in srgb, var(--banto-neutral-3) 55%, transparent);
 	--banto-surface-raised: color-mix(in srgb, var(--banto-neutral-4) 50%, transparent);
 	--banto-shell-header-bg: color-mix(in srgb, var(--banto-neutral-2) 84%, transparent);
 	/* Opaque floating surface (see the light x glass block; = standard dark raised). */
@@ -109,6 +111,7 @@
 	:root[data-banto-preset='glass'] {
 		--banto-surface: var(--banto-neutral-1);
 		--banto-surface-raised: var(--banto-neutral-1);
+		--banto-card-subtle-bg: var(--banto-neutral-3);
 		--banto-border: var(--banto-neutral-6);
 		--banto-backdrop: none;
 		--banto-shell-header-bg: var(--banto-neutral-1);
@@ -119,6 +122,7 @@
 	:root[data-theme='dark'][data-banto-preset='glass'] {
 		--banto-surface: var(--banto-neutral-2);
 		--banto-surface-raised: var(--banto-neutral-4);
+		--banto-card-subtle-bg: var(--banto-neutral-3);
 		--banto-shell-header-bg: var(--banto-neutral-2);
 		--banto-border: var(--banto-neutral-6);
 	}
@@ -128,6 +132,7 @@
 	:root[data-banto-preset='glass'] {
 		--banto-surface: var(--banto-neutral-1);
 		--banto-surface-raised: var(--banto-neutral-1);
+		--banto-card-subtle-bg: var(--banto-neutral-3);
 		--banto-border: var(--banto-neutral-6);
 		--banto-backdrop: none;
 		--banto-shell-header-bg: var(--banto-neutral-1);
@@ -138,6 +143,7 @@
 	:root[data-theme='dark'][data-banto-preset='glass'] {
 		--banto-surface: var(--banto-neutral-2);
 		--banto-surface-raised: var(--banto-neutral-4);
+		--banto-card-subtle-bg: var(--banto-neutral-3);
 		--banto-shell-header-bg: var(--banto-neutral-2);
 		--banto-border: var(--banto-neutral-6);
 	}

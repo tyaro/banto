@@ -421,6 +421,14 @@
 					<p class="body-text">{m['uiDemo.card.sampleBody']()}</p>
 				</SurfaceCard>
 			</div>
+			{#each ['primary', 'default', 'subtle'] as const as tone (tone)}
+				<div class="sample">
+					<span class="caption">{m[`uiDemo.card.tone.${tone}`]()}</span>
+					<SurfaceCard {tone} title={m['uiDemo.card.sampleTitle']()}>
+						<p class="body-text">{m['uiDemo.card.sampleBody']()}</p>
+					</SurfaceCard>
+				</div>
+			{/each}
 			<div class="sample">
 				<span class="caption">{m['uiDemo.card.withFooter']()}</span>
 				<SurfaceCard title={m['uiDemo.card.sampleTitle']()}>

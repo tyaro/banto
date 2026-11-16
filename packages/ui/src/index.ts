@@ -177,6 +177,7 @@ export { default as PageHeader } from './PageHeader.svelte';
 export { default as SegmentedControl } from './SegmentedControl.svelte';
 export { default as StatusBadge } from './StatusBadge.svelte';
 export { default as SurfaceCard } from './SurfaceCard.svelte';
+export type { SurfaceCardTone } from './SurfaceCard.svelte';
 export { default as Tabs } from './Tabs.svelte';
 export { default as ToastHost } from './ToastHost.svelte';
 export { default as Tooltip } from './Tooltip.svelte';

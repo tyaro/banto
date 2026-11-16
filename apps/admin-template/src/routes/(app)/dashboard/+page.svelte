@@ -627,11 +627,13 @@
 		gap: var(--banto-space-4);
 	}
 
+	/* Card tiers (#623): KPI row = subtle (flat), the main chart = primary,
+	   the other charts = default. Tokens in banto.css (--banto-card-*). */
 	.stat-tile {
-		background: var(--banto-surface);
+		background: var(--banto-card-subtle-bg);
 		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
-		box-shadow: var(--banto-shadow-sm);
+		box-shadow: var(--banto-card-subtle-shadow);
 		padding: var(--banto-space-4) var(--banto-space-5);
 		display: flex;
 		align-items: center;
@@ -710,10 +712,14 @@
 		background: var(--banto-surface);
 		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
-		box-shadow: var(--banto-shadow-sm);
+		box-shadow: var(--banto-card-default-shadow);
 		padding: var(--banto-space-4) var(--banto-space-5);
 		min-width: 0;
 		grid-column: span 12;
+	}
+
+	.card.primary {
+		box-shadow: var(--banto-card-primary-shadow);
 	}
 
 	@media (min-width: 901px) {

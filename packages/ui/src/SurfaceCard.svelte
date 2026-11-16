@@ -1,3 +1,11 @@
+<script lang="ts" module>
+	/**
+	 * Visual tier (#623): `primary` = emphasised (shadow md), `default` = the
+	 * standard card, `subtle` = flat auxiliary (border only, subtle surface).
+	 */
+	export type SurfaceCardTone = 'primary' | 'default' | 'subtle';
+</script>
+
 <script lang="ts">
 	/**
 	 * Generic elevated surface for section/card content
@@ -7,16 +15,17 @@
 	import type { Snippet } from 'svelte';
 
 	interface Props {
+		tone?: SurfaceCardTone;
 		title?: string;
 		description?: string;
 		children: Snippet;
 		footer?: Snippet;
 	}
 
-	let { title, description, children, footer }: Props = $props();
+	let { tone = 'default', title, description, children, footer }: Props = $props();
 </script>
 
-<section class="surface-card">
+<section class="surface-card" data-tone={tone}>
 	{#if title || description}
 		<header>
 			{#if title}
@@ -45,12 +54,21 @@
 		background: var(--banto-surface);
 		border: var(--banto-border-width) solid var(--banto-border);
 		border-radius: var(--banto-radius-lg);
-		box-shadow: var(--banto-shadow-sm);
+		box-shadow: var(--banto-card-default-shadow);
 		padding: var(--banto-space-5);
 		/* Glass preset (spec M12): cards are in the translucent scope
 		   (plan §3.3) - no-op under standard (--banto-backdrop: none). */
 		backdrop-filter: var(--banto-backdrop, none);
 		-webkit-backdrop-filter: var(--banto-backdrop, none);
+	}
+
+	.surface-card[data-tone='primary'] {
+		box-shadow: var(--banto-card-primary-shadow);
+	}
+
+	.surface-card[data-tone='subtle'] {
+		background: var(--banto-card-subtle-bg);
+		box-shadow: var(--banto-card-subtle-shadow);
 	}
 
 	h2 {

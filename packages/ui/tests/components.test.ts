@@ -215,6 +215,18 @@ describe('SurfaceCard', () => {
 		expect(container.querySelector('header')?.textContent).toContain('Sub');
 	});
 
+	it('tone (#623) sets data-tone: default unless primary / subtle is given', () => {
+		const tone = (props: { tone?: 'primary' | 'default' | 'subtle' }) => {
+			const { container, unmount } = render(SurfaceCard, { ...props, children: text('Body') });
+			const value = container.querySelector('section')?.getAttribute('data-tone');
+			unmount();
+			return value;
+		};
+		expect(tone({})).toBe('default');
+		expect(tone({ tone: 'primary' })).toBe('primary');
+		expect(tone({ tone: 'subtle' })).toBe('subtle');
+	});
+
 	it('omits header and footer when none are given', () => {
 		const { container } = render(SurfaceCard, { children: text('Body') });
 		expect(container.querySelector('header')).toBeNull();
