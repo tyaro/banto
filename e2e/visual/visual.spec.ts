@@ -23,6 +23,7 @@ import {
 	comboLabel,
 	primeKiosk,
 	primeLauncher,
+	primeMenubar,
 	primeTheme,
 	primeThemeAndAuth,
 	type LauncherPosition,
@@ -146,6 +147,35 @@ test.describe('dock layout', () => {
 			await expect(page).toHaveScreenshot(
 				`dashboard-launcher-${side}${comboLabel(combo)}-${size}.png`
 			);
+		});
+	}
+});
+
+// Menu bar layout (nav-menubar-plan.md §7.3): the diagonal at the baseline
+// viewport, plus a narrower one where part of the main nav moves into
+// "その他". Primed like the dock, so every other test here keeps the default
+// sidebar. The dropdowns stay closed (an open popover's place depends on font
+// metrics; the behaviour is covered by menubar.spec.ts).
+const MENUBAR_SHOTS: { combo: ThemeCombo; viewport: { width: number; height: number } }[] = [
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1440, height: 900 } },
+	{ combo: DIAGONAL_MATRIX[1], viewport: { width: 1440, height: 900 } },
+	{ combo: DIAGONAL_MATRIX[0], viewport: { width: 1024, height: 768 } }
+];
+
+test.describe('menu bar layout', () => {
+	for (const { combo, viewport } of MENUBAR_SHOTS) {
+		const size = `${viewport.width}x${viewport.height}`;
+		test(`dashboard menubar ${comboLabel(combo)} ${size}`, async ({ page }) => {
+			await page.setViewportSize(viewport);
+			await primeThemeAndAuth(page, combo);
+			await primeMenubar(page);
+			await page.goto('/dashboard');
+			await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+			await expect(page.locator('svg').first()).toBeVisible();
+			const nav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+			await expect(nav.getByRole('link', { name: 'ダッシュボード' })).toBeVisible();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(`dashboard-menubar-${comboLabel(combo)}-${size}.png`);
 		});
 	}
 });

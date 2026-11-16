@@ -13,7 +13,14 @@
  */
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { DIAGONAL_MATRIX, comboLabel, primeLauncher, primeTheme, primeThemeAndAuth } from './theme';
+import {
+	DIAGONAL_MATRIX,
+	comboLabel,
+	primeLauncher,
+	primeMenubar,
+	primeTheme,
+	primeThemeAndAuth
+} from './theme';
 
 interface ScannedPage {
 	name: string;
@@ -106,3 +113,27 @@ test(`a11y ${comboLabel(DIAGONAL_MATRIX[1])} dashboard with a left dock has no w
 
 	expect(results.violations, formatViolations(results.violations)).toEqual([]);
 });
+
+// Menu bar layout (nav-menubar-plan.md §4.8/§7.3): the header nav closed,
+// and with the admin group's dropdown open (a popover in the top layer).
+for (const combo of DIAGONAL_MATRIX) {
+	test(`a11y ${comboLabel(combo)} dashboard with the menu bar has no wcag2a/wcag2aa violations`, async ({
+		page
+	}) => {
+		await primeThemeAndAuth(page, combo);
+		await primeMenubar(page);
+		await gotoScanned(page, PAGES[0]);
+		const mainNav = page.getByRole('navigation', { name: '主要ナビゲーション' });
+		await expect(mainNav.getByRole('link', { name: 'ダッシュボード' })).toBeVisible();
+
+		const closed = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(closed.violations, formatViolations(closed.violations)).toEqual([]);
+
+		const adminNav = page.getByRole('navigation', { name: '管理ナビゲーション' });
+		await adminNav.getByRole('button', { name: '管理' }).click();
+		await expect(adminNav.getByRole('link', { name: 'ユーザー管理' })).toBeVisible();
+
+		const open = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+		expect(open.violations, formatViolations(open.violations)).toEqual([]);
+	});
+}

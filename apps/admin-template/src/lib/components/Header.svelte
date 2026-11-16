@@ -9,7 +9,15 @@
 	 * In the dock layout (nav-launcher-plan.md §4.1/§4.6) no toggle is shown
 	 * (there is no drawer) and the brand the sidebar carried takes its place
 	 * at the left.
+	 * In the menu bar layout (nav-menubar-plan.md §4.1/§4.6/§4.9) the brand and
+	 * ShellMenubar lead the row above 900px: the page title is capped at
+	 * `--banto-shell-menubar-title-max` (full text in `title`, D6) and the
+	 * search is always the icon (D6). At <=900px, or when the main nav is too
+	 * narrow even for "more" (`menubarInsufficient`, §4.9), the drawer button
+	 * comes back and the sidebar is the drawer; while insufficient the bar
+	 * stays mounted (hidden) so it can report the width coming back.
 	 */
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -26,6 +34,7 @@
 	import { commandPaletteStore } from '#lib/commandPalette.svelte.js';
 	import { appShortcuts, COMMAND_PALETTE_SHORTCUT } from '#lib/shortcuts.js';
 	import { IconButton, Menu, MenuGroup, MenuItem, MenuSeparator, StatusBadge } from '@banto/ui';
+	import ShellMenubar from './ShellMenubar.svelte';
 	import {
 		Menu as MenuIcon,
 		Search,
@@ -42,9 +51,55 @@
 		/** <=900px overlay drawer state, owned by (app)/+layout.svelte (design.md §8.1). */
 		overlayOpen?: boolean;
 		onToggleOverlay?: () => void;
+		/** Menu bar layout: the main nav is too narrow even for "more" (nav-menubar-plan.md §4.9), owned by the layout. */
+		menubarInsufficient?: boolean;
+		onMenubarInsufficient?: (insufficient: boolean) => void;
 	}
 
-	let { overlayOpen = false, onToggleOverlay }: Props = $props();
+	let {
+		overlayOpen = false,
+		onToggleOverlay,
+		menubarInsufficient = false,
+		onMenubarInsufficient
+	}: Props = $props();
+
+	// Menu bar layout (nav-menubar-plan.md §4.9, D10-a): the bar is mounted
+	// above 900px; the drawer button shows at <=900px (as in the sidebar
+	// layout) and while the bar is insufficient. The brand stays while
+	// insufficient - swapping it for the narrower button would hand the nav
+	// the width back and flip the state again.
+	const menubar = $derived(settings.navLayout === 'menubar');
+	const showBar = $derived(menubar && !narrowViewport.current);
+	const showDrawerButton = $derived(
+		settings.navLayout !== 'launcher' &&
+			(narrowViewport.current || (showBar && menubarInsufficient))
+	);
+
+	let barHost: HTMLElement | undefined = $state();
+	let drawerButtonHost: HTMLElement | undefined = $state();
+
+	// PR-2 hand-over (§4.9): HeaderNav only closes its dropdown when it turns
+	// insufficient; where focus goes is the shell's call. Focus inside the bar
+	// (now hidden) moves to the drawer button that replaces it; focus on the
+	// drawer button or in the drawer moves back to the bar's first item when
+	// it fits again (the button and the drawer go away).
+	async function handleMenubarInsufficient(insufficient: boolean): Promise<void> {
+		const active = document.activeElement;
+		const focusToButton = insufficient && barHost?.contains(active) === true;
+		const focusToBar =
+			!insufficient &&
+			(drawerButtonHost?.contains(active) === true ||
+				document.getElementById('app-sidebar')?.contains(active) === true);
+		onMenubarInsufficient?.(insufficient);
+		if (!focusToButton && !focusToBar) return;
+		await tick();
+		const target = focusToButton
+			? drawerButtonHost?.querySelector<HTMLElement>('button')
+			: barHost?.querySelector<HTMLElement>('[data-header-nav-top]');
+		target?.focus();
+	}
+
+	const pageTitleText = $derived(pageTitle(page.url.pathname, page.route.id));
 
 	// <=900px: the one button that opens/closes the overlay drawer. Above 900px
 	// the sidebar's own top row carries the fold button instead (one control
@@ -152,8 +207,19 @@
 	}
 </script>
 
-<header class:compact={settings.kiosk}>
-	{#if settings.navLayout === 'launcher'}
+<header class:compact={settings.kiosk} class:menubar-shown={showBar}>
+	{#if showDrawerButton}
+		<span class="drawer-button" bind:this={drawerButtonHost}>
+			<IconButton
+				label={drawerLabel}
+				icon={MenuIcon}
+				expanded={overlayOpen}
+				controls="app-sidebar"
+				onclick={() => onToggleOverlay?.()}
+			/>
+		</span>
+	{/if}
+	{#if settings.navLayout === 'launcher' || showBar}
 		<div class="brand">
 			<span class="brand-mark" aria-hidden="true">
 				<svg viewBox="0 0 24 24" width="14" height="14">
@@ -166,23 +232,31 @@
 			     never keyed - same as Sidebar.svelte. -->
 			<span class="brand-name">Banto</span>
 		</div>
-	{:else}
-		{#if narrowViewport.current}
-			<IconButton
-				label={drawerLabel}
-				icon={MenuIcon}
-				expanded={overlayOpen}
-				controls="app-sidebar"
-				onclick={() => onToggleOverlay?.()}
-			/>
-		{/if}
+	{/if}
+	{#if showBar}
+		<!-- Menu bar (nav-menubar-plan.md §4.1): takes the room the row leaves
+		     (no spacer). While insufficient (§4.9) it is hidden and inert -
+		     the drawer carries the same landmarks then - but keeps its width so
+		     HeaderNav can see the room come back. -->
+		<div
+			class="menubar"
+			bind:this={barHost}
+			style:visibility={menubarInsufficient ? 'hidden' : undefined}
+			inert={menubarInsufficient}
+		>
+			<ShellMenubar onInsufficient={handleMenubarInsufficient} />
+		</div>
 	{/if}
 
 	<!-- The shell shows the title visually. Page content retains its document
 	     h1 for assistive technology, using PageHeader's hideTitle option. -->
-	<p class="page-title">{pageTitle(page.url.pathname, page.route.id)}</p>
+	<p class="page-title" class:menubar-title={showBar} title={showBar ? pageTitleText : undefined}>
+		{pageTitleText}
+	</p>
 
-	<div class="spacer"></div>
+	{#if !showBar}
+		<div class="spacer"></div>
+	{/if}
 
 	<!-- Status area: chips render only while their state applies. Hidden on
 	     narrow viewports (same breakpoint as .user-name) to keep the bar
@@ -232,7 +306,12 @@
 		</button>
 		<div class="search-icon-only">
 			<IconButton
-				label={m['shell.openCommandPalette']()}
+				label={showBar
+					? m['shell.openCommandPaletteWithShortcut']({
+							label: m['shell.openCommandPalette'](),
+							shortcut: appShortcuts.format(COMMAND_PALETTE_SHORTCUT)
+						})
+					: m['shell.openCommandPalette']()}
 				icon={Search}
 				onclick={() => commandPaletteStore.show()}
 			/>
@@ -402,6 +481,27 @@
 		flex: 1;
 	}
 
+	/* Menu bar layout (nav-menubar-plan.md §4.6): the bar takes what the row
+	   leaves; the main HeaderNav inside grows the same way and measures it. */
+	.menubar {
+		display: flex;
+		align-items: center;
+		gap: var(--banto-space-1);
+		flex: 1 1 0;
+		min-width: 0;
+		height: 100%;
+	}
+
+	/* D6: the title stays, capped and cut with an ellipsis. */
+	.page-title.menubar-title {
+		flex: 0 1 auto;
+		max-width: var(--banto-shell-menubar-title-max);
+	}
+
+	.drawer-button {
+		display: contents;
+	}
+
 	.search-pill {
 		display: inline-flex;
 		align-items: center;
@@ -452,6 +552,16 @@
 		.search-icon-only {
 			display: block;
 		}
+	}
+
+	/* Menu bar layout (nav-menubar-plan.md §4.6, D6): always the icon, with
+	   the key in its tooltip, so the nav keeps the room. */
+	header.menubar-shown .search-pill {
+		display: none;
+	}
+
+	header.menubar-shown .search-icon-only {
+		display: block;
 	}
 
 	.user-trigger {

@@ -57,8 +57,13 @@ const LAUNCHER_POSITION_SETTING = 'shell.launcherPosition';
  */
 export const KIOSK_DEFAULT = false;
 
-/** Shell navigation layout (nav-launcher-plan.md §3, D1): the sidebar or the dock-like launcher (shown as "Dock"). */
-export type NavLayout = 'sidebar' | 'launcher';
+/**
+ * Shell navigation layout (nav-launcher-plan.md §3, D1): the sidebar, the
+ * dock-like launcher (shown as "Dock"), or the menu bar in the header row
+ * (nav-menubar-plan.md §3, D1). An older app reading `'menubar'` falls back
+ * to the default through `isNavLayout()`.
+ */
+export type NavLayout = 'sidebar' | 'launcher' | 'menubar';
 
 /**
  * Navigation layout default (nav-launcher-plan.md §3, D3-a). `'sidebar'`
@@ -89,7 +94,7 @@ export const LAUNCHER_OPACITY_DEFAULT = 50;
 const LAUNCHER_OPACITY_TOKEN = '--banto-shell-launcher-opacity';
 
 export function isNavLayout(value: unknown): value is NavLayout {
-	return value === 'sidebar' || value === 'launcher';
+	return value === 'sidebar' || value === 'launcher' || value === 'menubar';
 }
 
 export function isLauncherPosition(value: unknown): value is LauncherPosition {

@@ -648,7 +648,12 @@ function removeCommandPalette() {
 		</button>
 		<div class="search-icon-only">
 			<IconButton
-				label={m['shell.openCommandPalette']()}
+				label={showBar
+					? m['shell.openCommandPaletteWithShortcut']({
+							label: m['shell.openCommandPalette'](),
+							shortcut: appShortcuts.format(COMMAND_PALETTE_SHORTCUT)
+						})
+					: m['shell.openCommandPalette']()}
 				icon={Search}
 				onclick={() => commandPaletteStore.show()}
 			/>
