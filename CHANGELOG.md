@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- feat(ui): `SurfaceCard` に `tone`（`primary` / `default` / `subtle`、既定は従来の見た目）を追加し、カードの面を 3 段に（トークン `--banto-card-*`、dashboard の KPI 行・主役チャート・標準カードへ適用）（#623 PR-2）
+
 ## [7.2.0] - 2026-11-17
 
 **v7.2.0 — ナビの「メニューバー」表示（`@banto/ui` の `HeaderNav`、テンプレートの `ShellMenubar`・ナビのグループ）、レコード履歴の充実（添付の追加・削除、`items`・`users` の create/delete と `users` の update の差分）、ログイン画面の接続先・版・お知らせ、監査表への生成列と索引（migration 0010）。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加は `@banto/ui` の `HeaderNav` 一式ほか）。監査 `detail` の形の追加（`changes`・`parentResource`・`parentId`）と汎用 `SettingsService::set` / `set_many` の `login.notice` 拒否は、追加または運用上の挙動変更で、[docs/publishing.md](docs/publishing.md)「バージョニング規約」の運用上の例外（移行手順を「消費側への注意」に明記して minor）に当たる。migration 0010 は既存の列・行を変えない追加（生成列と索引）で、同じ規約の「DB の migration の扱い」により minor（前例 v1.7.0・v6.5.0。旧版へ戻すには更新前のバックアップの復元が要る点は C 節の「戻せる条件」）。既存のデータを書き換える・消す変更は無い。

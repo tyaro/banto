@@ -416,6 +416,16 @@
 
 	--banto-surface-overlay: var(--banto-surface);
 
+	/* Card tiers (#623 PR-2). SurfaceCard 'tone' and the dashboard cards read
+	   these: primary = one step above standard (shadow md), default = the
+	   standard card (border + shadow sm), subtle = border only on the subtle
+	   surface, no shadow. Only existing tokens are referenced, so the glass
+	   preset and the dark column follow without redefinition. */
+	--banto-card-primary-shadow: var(--banto-shadow-md);
+	--banto-card-default-shadow: var(--banto-shadow-sm);
+	--banto-card-subtle-bg: var(--banto-surface-subtle);
+	--banto-card-subtle-shadow: none;
+
 	--banto-border-strong: var(--banto-neutral-9);
 
 	/* State colors: text/solid/tint 3-系統 (visual-refresh-plan.md 付録A.3).

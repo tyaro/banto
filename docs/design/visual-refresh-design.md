@@ -319,7 +319,9 @@ named import で使用する。**`import * as` 形式は禁止**（ツリーシ�
 
 ### 6.4 SurfaceCard
 
-- props: `title?`、`description?`、children snippet、`footer?` snippet
+- props: `tone?`（`'primary' | 'default' | 'subtle'`、既定 `default`）、`title?`、`description?`、children snippet、`footer?` snippet
+- 面の 3 段（#623）: primary = 影 md、default = 枠＋影 sm（従来）、subtle = `--banto-surface-subtle` 地・影なし。
+  トークンは `--banto-card-*`（`banto.css`、既存の面・影トークンを参照するだけなので Glass／ダークは再定義不要）。
 - `--banto-surface` + `--banto-border`（弱）+ `--banto-radius-lg` +
   `--banto-shadow-sm`。Glass ではプリセット CSS が面変数を上書きするため
   コンポーネント側の分岐は不要。
