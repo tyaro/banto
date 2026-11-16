@@ -222,6 +222,7 @@ PR #463（ファイアウォールの許可に必要な情報の表示、#219 �
 	--banto-font-size-lg: 1.1429rem; /* 16px   heading */
 	--banto-font-size-xl: 1.4286rem; /* 20px   見出し */
 	--banto-font-size-2xl: 2rem; /* 28px   display・大きな KPI の数値（#557 で追加） */
+	--banto-font-size-3xl: 3.4286rem; /* 48px   キオスクの大型 KPI（#624 で追加） */
 
 	/* Border widths */
 	--banto-border-width: 1px;

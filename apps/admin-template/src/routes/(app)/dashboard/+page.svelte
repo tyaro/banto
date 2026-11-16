@@ -693,6 +693,36 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	/* Kiosk (#624 PR-2): KPIs readable from across the room. Keyed on the
+	   shell's .kiosk class (settings.kiosk), not on density. The number caps
+	   at 9vw so a long value still fits a 375px tile; overflow-wrap is the
+	   last resort. */
+	:global(.shell.kiosk) .stat-row {
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	}
+
+	:global(.shell.kiosk) .stat-icon {
+		width: 56px;
+		height: 56px;
+	}
+
+	:global(.shell.kiosk) .stat-label {
+		font-size: var(--banto-font-size-lg);
+	}
+
+	:global(.shell.kiosk) .stat-value {
+		font-size: min(var(--banto-font-size-3xl), 9vw);
+		line-height: 1.1;
+		overflow-wrap: anywhere;
+	}
+
+	@media (max-width: 600px) {
+		:global(.shell.kiosk) .stat-icon {
+			width: 36px;
+			height: 36px;
+		}
+	}
+
 	.stat-value-row {
 		display: flex;
 		align-items: center;

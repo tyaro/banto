@@ -168,10 +168,10 @@
 	/* 42px — 空状態など */
 
 	/* Type scale (付録 A.5 の役割。#557 で最小 12px に底上げ: 12 / 13 / 14 / 16 /
-     20 / 28px). Body text inherits the root 1rem and needs no declaration;
+     20 / 28 / 48px). Body text inherits the root 1rem and needs no declaration;
      --banto-font-size-base (= 1rem) is for an element that must state the body
      size explicitly (e.g. a card heading that resets a smaller parent).
-     Order: xs < sm <= md = base < lg < xl < 2xl. md is the same size as body
+     Order: xs < sm <= md = base < lg < xl < 2xl < 3xl. md is the same size as body
      now (14px) but stays a separate name for "secondary text" so a consumer
      can still retune it. Not to be confused with --banto-font-size above (the
      root size in px). */
@@ -189,6 +189,8 @@
 	/* 20px   見出し（ページ・ログインのタイトル） */
 	--banto-font-size-2xl: 2rem;
 	/* 28px   display・大きな KPI の数値 */
+	--banto-font-size-3xl: 3.4286rem;
+	/* 48px   キオスクの大型 KPI（遠くから読む数字。#624） */
 
 	/* Border widths */
 	--banto-border-width: 1px;
