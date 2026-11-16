@@ -10,6 +10,33 @@
  * label, so labels don't overlap when there are many more data points than
  * fit legibly across the plot width.
  */
+/**
+ * Drops tick labels whose rendered boxes would collide. The LAST index is
+ * always kept (it is end-anchored: its box extends LEFT of its x); earlier
+ * ones are middle-anchored. Walking backwards from the last, an earlier label
+ * yields when its right edge (+ `gap`) reaches the kept neighbour's left edge.
+ * `xs[i]` / `widths[i]` are parallel to `indices`.
+ */
+export function dropCollidingTicks(
+	indices: number[],
+	xs: number[],
+	widths: number[],
+	gap = 4
+): number[] {
+	const n = indices.length;
+	if (n <= 1) return indices.slice();
+	const kept: number[] = [indices[n - 1]];
+	let leftEdge = xs[n - 1] - widths[n - 1]; // end-anchored
+	for (let k = n - 2; k >= 0; k--) {
+		const right = xs[k] + widths[k] / 2;
+		if (right + gap <= leftEdge) {
+			kept.push(indices[k]);
+			leftEdge = xs[k] - widths[k] / 2;
+		}
+	}
+	return kept.reverse();
+}
+
 export function everyNthIndex(count: number, maxTicks: number): number[] {
 	if (count <= 0) return [];
 	if (maxTicks <= 0) return [];

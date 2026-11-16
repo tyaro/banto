@@ -29,9 +29,9 @@
 	import { linePathSegments, areaPathSegments } from './core/path';
 	import { seriesNumber, seriesSegments } from './core/series';
 	import { resolveBand } from './core/band';
-	import { everyNthIndex } from './core/ticks-time';
+	import { dropCollidingTicks, everyNthIndex } from './core/ticks-time';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginForTicks, rightMarginForTicks } from './core/labels';
+	import { estimateLabelWidth, leftMarginForTicks, rightMarginForTicks } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import {
 		fullViewport,
@@ -544,7 +544,12 @@
 
 			<!-- X labels. The right-edge tick is anchored 'end' so it doesn't
 			     overhang the right margin and clip. -->
-			{@const xTicks = xTickIndices(maxXTicksFor(m.innerWidth))}
+			{@const xCandidates = xTickIndices(maxXTicksFor(m.innerWidth))}
+			{@const xTicks = dropCollidingTicks(
+				xCandidates,
+				xCandidates.map((i) => xAt(i)),
+				xCandidates.map((i) => estimateLabelWidth(formatXValue(xLabels[i]), tickFontSize))
+			)}
 			{#each xTicks as i (i)}
 				<text
 					x={xAt(i)}
