@@ -22,6 +22,8 @@
 
 ## [Unreleased]
 
+- **theme**: 3 つ目の表示密度 `touch`（タッチ。`data-banto-density='touch'`）を追加（#624 PR-1）。操作高 `--banto-control-height` 48px（`-lg` 52px・`-sm` 40px）、グリッド行高 52px・ヘッダ 56px、root の文字サイズ 16px（rem の型スケールごと上がる。`space-*` の値は変えないが rem なので連れて約 14% 大きくなる）、シェルのヘッダ 56px・ランチャー項目 48px。**公開 API の追加（minor）**: `ThemeDensity` が `'standard' | 'compact' | 'touch'` になる。`ThemeDensity` を網羅的な `switch` で扱う派生アプリは `'touch'` の分岐の追加が要る（型検査で気づける）。`isThemeDensity('touch')` は真になり、設定の「表示密度」に「タッチ」が増える。派生アプリが `app.html` の first-paint スクリプトを持つなら `touch` を通す（`density === 'compact' || density === 'touch'`）。
+
 - **charts**: `LineChart` の x 軸で、末尾（右端寄せ）のラベルと手前のラベルが重なる不具合を修正。ラベルの推定幅で重なりを判定し、末尾を残して手前の目盛りを間引く（純関数 `dropCollidingTicks`）。コンパクト密度の dashboard の visual 基準画像（Linux）は再生成が要る
 
 - **theme**: コンパクト密度（`data-banto-density='compact'`）で余白トークン `--banto-space-3`〜`--banto-space-6` を 1 段下の値にした（#623 PR-1。D3 を案 a に変更。文字の段は変えない）。見た目の変更で公開 API は変わらない。`MenuItem` のチェック枠は余白トークンから `1rem` へ（標準密度では見た目不変）

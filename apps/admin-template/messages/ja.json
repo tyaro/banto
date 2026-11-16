@@ -365,6 +365,7 @@
   "settings.densityHeading": "表示密度",
   "settings.densityStandard": "標準",
   "settings.densityCompact": "コンパクト",
+  "settings.densityTouch": "タッチ",
   "settings.themeNote": "設定はこの端末に即時保存され、ログイン中はサーバーにも保存されて他の端末と共有されます。",
   "settings.navLayoutHeading": "ナビゲーション",
   "settings.navLayoutDesc": "ページへのリンクを、左のサイドバー・画面の端のドック・ヘッダーのメニューバーのどれで表示するか選びます。",

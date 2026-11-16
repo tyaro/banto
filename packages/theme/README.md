@@ -13,7 +13,7 @@ import { applyTheme, watchSystemTheme, applyPreset, applyDensity } from '@banto/
 
 applyTheme('system'); // <html data-theme="light|dark"> を反映
 applyPreset('standard'); // <html data-banto-preset="...">
-applyDensity('standard'); // <html data-banto-density="...">
+applyDensity('standard'); // <html data-banto-density="standard|compact|touch">
 
 const stop = watchSystemTheme((resolved) => {
 	console.log('OS テーマが変化:', resolved);

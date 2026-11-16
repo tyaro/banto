@@ -21,7 +21,8 @@
 		PanelsTopLeft,
 		Rows3,
 		Sparkles,
-		Rows4
+		Rows4,
+		Pointer
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
@@ -54,7 +55,8 @@
 	// this page only adds the picker UI (a SegmentedControl, #556).
 	const densities: SegmentedOption<ThemeDensity>[] = [
 		{ value: 'standard', label: m['settings.densityStandard'](), icon: Rows3 },
-		{ value: 'compact', label: m['settings.densityCompact'](), icon: Rows4 }
+		{ value: 'compact', label: m['settings.densityCompact'](), icon: Rows4 },
+		{ value: 'touch', label: m['settings.densityTouch'](), icon: Pointer }
 	];
 
 	// Navigation layout (nav-launcher-plan.md §3, D1: shown as "Dock", the

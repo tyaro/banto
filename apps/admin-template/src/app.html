@@ -42,7 +42,7 @@
 					document.documentElement.dataset.bantoPreset = preset === 'glass' ? 'glass' : 'standard';
 					var density = localStorage.getItem('banto.density');
 					document.documentElement.dataset.bantoDensity =
-						density === 'compact' ? 'compact' : 'standard';
+						density === 'compact' || density === 'touch' ? density : 'standard';
 					var locale = localStorage.getItem('banto.locale');
 					document.documentElement.lang = locale === 'en' || locale === 'ja' ? locale : 'ja';
 				} catch (_) {

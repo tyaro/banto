@@ -204,7 +204,7 @@ Light/Dark/Glass/密度に自動追従する。**パッケージ（`packages/*`�
 （hover/focus/disabled 状態は実装時に同ファイルへ揃えて定義する。
 focus は既存 `--banto-focus-ring` を使用。）
 
-## 4. 密度軸（standard / compact）
+## 4. 密度軸（standard / compact / touch）
 
 ### 4.1 CSS（`banto.css`）
 
@@ -218,6 +218,13 @@ focus は既存 `--banto-focus-ring` を使用。）
 ```
 
 グリッドは行高トークンを既に参照しているため、仮想化ロジックの変更は不要。
+
+（注記 2026-11 #624: 3 つ目の密度 `touch` を足した。`[data-banto-density='touch']` の節で、root の文字サイズ
+`--banto-font-size` を 14px → 16px に上げて rem の型スケールごと大きくし、`--banto-control-height` 48px・
+`-lg` 52px・`-sm` 40px、`--banto-grid-row-height` 52px・`--banto-grid-header-height` 56px、シェルのヘッダ
+56px（kiosk の低いヘッダ 48px）、ランチャーの項目 48px にする。`space-*` トークンは触らない（rem なので root
+に連れて約 14% 大きくなる）。型は `ThemeDensity = 'standard' | 'compact' | 'touch'`、`app.html` の first-paint は
+`compact` / `touch` を通す。）
 
 ### 4.2 ランタイム（`packages/theme/src/index.ts`）
 

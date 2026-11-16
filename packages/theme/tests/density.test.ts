@@ -48,3 +48,31 @@ describe('compact density spacing', () => {
 		}
 	});
 });
+
+/**
+ * #624 (owner decision 2026-11-17): the touch density has 48px controls, 52px
+ * grid rows and a 16px root size; the space scale is left to the standard one.
+ */
+describe('touch density', () => {
+	const touch = block("[data-banto-density='touch']");
+	const v = vars(touch, '--banto-');
+	const px = (n: string) => Number.parseInt(v[n], 10);
+
+	it('sets the owner-decided sizes', () => {
+		expect(v['--banto-control-height']).toBe('48px');
+		expect(v['--banto-grid-row-height']).toBe('52px');
+		expect(v['--banto-font-size']).toBe('16px');
+	});
+
+	it('moves the root size only, not the type scale tokens or the space scale', () => {
+		expect(vars(touch, '--banto-font-size-')).toEqual({});
+		expect(vars(touch, '--banto-space-')).toEqual({});
+	});
+
+	it('keeps control heights ordered and the bars taller than their controls', () => {
+		expect(px('--banto-control-height-sm')).toBeLessThan(px('--banto-control-height'));
+		expect(px('--banto-control-height')).toBeLessThan(px('--banto-control-height-lg'));
+		expect(px('--banto-grid-header-height')).toBeGreaterThan(px('--banto-grid-row-height'));
+		expect(px('--banto-shell-header-height')).toBeGreaterThanOrEqual(px('--banto-control-height'));
+	});
+});
