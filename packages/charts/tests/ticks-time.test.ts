@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { everyNthIndex } from '../src/core/ticks-time';
+import { dropCollidingTicks, everyNthIndex } from '../src/core/ticks-time';
+
+describe('dropCollidingTicks', () => {
+	it('keeps all ticks when boxes do not overlap', () => {
+		expect(dropCollidingTicks([0, 5, 10], [0, 100, 200], [40, 40, 40])).toEqual([0, 5, 10]);
+	});
+
+	it('keeps the last tick and drops the previous one when the end-anchored box overlaps', () => {
+		// 2nd (middle-anchored, x=100) spans 80..120; last (end-anchored, x=130) spans 90..130.
+		expect(dropCollidingTicks([0, 5, 6], [0, 100, 130], [40, 40, 40])).toEqual([0, 6]);
+	});
+
+	it('handles empty and single inputs', () => {
+		expect(dropCollidingTicks([], [], [])).toEqual([]);
+		expect(dropCollidingTicks([3], [10], [40])).toEqual([3]);
+	});
+});
 
 describe('everyNthIndex', () => {
 	it('returns every index when count fits within maxTicks', () => {
