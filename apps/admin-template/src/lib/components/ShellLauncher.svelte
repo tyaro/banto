@@ -13,6 +13,7 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import {
 		isPathActive,
+		navBarEntries,
 		navLabel,
 		navSections,
 		resolveAppPath,
@@ -46,8 +47,41 @@
 		};
 	}
 
+	/**
+	 * One dock group per run of the main nav: a nav group (`NavItem.group`, nav-menubar-plan D8-b)
+	 * is its own group (named by the group), so the bar draws its rule at the group's edges; the
+	 * standalone entries around it keep the main nav's name. With no group this is one `main`.
+	 */
+	function mainGroups(): LauncherGroup[] {
+		const result: LauncherGroup[] = [];
+		let run: NavItem[] = [];
+		const flush = () => {
+			if (run.length === 0) return;
+			result.push({
+				id: `main-${result.length}`,
+				ariaLabel: m['shell.mainNav'](),
+				items: run.map(toItem)
+			});
+			run = [];
+		};
+		for (const entry of navBarEntries(sections.main)) {
+			if (entry.kind === 'item') {
+				run.push(entry.item);
+				continue;
+			}
+			flush();
+			result.push({
+				id: `group-${entry.key}`,
+				ariaLabel: m[entry.key](),
+				items: entry.items.map(toItem)
+			});
+		}
+		flush();
+		return result;
+	}
+
 	const groups: LauncherGroup[] = $derived([
-		{ id: 'main', ariaLabel: m['shell.mainNav'](), items: sections.main.map(toItem) },
+		...mainGroups(),
 		...(sections.admin.length > 0
 			? [{ id: 'admin', ariaLabel: m['shell.adminNav'](), items: sections.admin.map(toItem) }]
 			: [])

@@ -14,10 +14,12 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import {
 		isPathActive,
+		navBarEntries,
 		navLabel,
 		navSections,
 		resolveAppPath,
-		type AppPath
+		type AppPath,
+		type NavItem
 	} from '#lib/navigation.js';
 	import { navIcon } from './navIcons';
 	import { navBadges } from '#lib/navBadges.svelte.js';
@@ -42,7 +44,8 @@
 	const sections = $derived(
 		navSections({ publicViewer: sessionStore.publicViewer, role: sessionStore.role })
 	);
-	const mainItems = $derived(sections.main);
+	// Grouped entries (NavItem.group) become headed groups; with no group this is the flat list.
+	const mainEntries = $derived(navBarEntries(sections.main));
 	const adminItems = $derived(sections.admin);
 
 	const foldLabel = $derived(
@@ -54,6 +57,26 @@
 		return count > 99 ? '99+' : String(count);
 	}
 </script>
+
+{#snippet navLink(item: NavItem)}
+	{@const Icon = navIcon(item.icon)}
+	{@const badgeCount = navBadges.count(item.path)}
+	<a
+		href={resolveAppPath(item.path)}
+		class="nav-item"
+		class:active={isActive(item.path)}
+		aria-current={isActive(item.path) ? 'page' : undefined}
+		title={settings.sidebarCollapsed ? navLabel(item) : undefined}
+	>
+		<span class="icon"><Icon size={20} aria-hidden="true" /></span>
+		<span class="label">{navLabel(item)}</span>
+		{#if badgeCount > 0}
+			<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
+				>{badgeText(badgeCount)}</span
+			>
+		{/if}
+	</a>
+{/snippet}
 
 <aside
 	id="app-sidebar"
@@ -90,24 +113,19 @@
 	</div>
 
 	<nav class="nav-section" aria-label={m['shell.mainNav']()}>
-		{#each mainItems as item (item.path)}
-			{@const Icon = navIcon(item.icon)}
-			{@const badgeCount = navBadges.count(item.path)}
-			<a
-				href={resolveAppPath(item.path)}
-				class="nav-item"
-				class:active={isActive(item.path)}
-				aria-current={isActive(item.path) ? 'page' : undefined}
-				title={settings.sidebarCollapsed ? navLabel(item) : undefined}
-			>
-				<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-				<span class="label">{navLabel(item)}</span>
-				{#if badgeCount > 0}
-					<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
-						>{badgeText(badgeCount)}</span
-					>
-				{/if}
-			</a>
+		{#each mainEntries as entry (entry.kind === 'item' ? entry.item.path : entry.key)}
+			{#if entry.kind === 'item'}
+				{@render navLink(entry.item)}
+			{:else}
+				<!-- A nav group (nav-menubar-plan D8-b): the visible heading is decoration for sighted
+				     users, the group's name is carried by role="group" (same as the admin heading). -->
+				<div class="nav-group" role="group" aria-label={m[entry.key]()}>
+					<p class="section-heading" aria-hidden="true">{m[entry.key]()}</p>
+					{#each entry.items as item (item.path)}
+						{@render navLink(item)}
+					{/each}
+				</div>
+			{/if}
 		{/each}
 	</nav>
 
@@ -116,23 +134,7 @@
 		<nav class="nav-section" aria-label={m['shell.adminNav']()}>
 			<p class="section-heading" aria-hidden="true">{m['shell.adminHeading']()}</p>
 			{#each adminItems as item (item.path)}
-				{@const Icon = navIcon(item.icon)}
-				{@const badgeCount = navBadges.count(item.path)}
-				<a
-					href={resolveAppPath(item.path)}
-					class="nav-item"
-					class:active={isActive(item.path)}
-					aria-current={isActive(item.path) ? 'page' : undefined}
-					title={settings.sidebarCollapsed ? navLabel(item) : undefined}
-				>
-					<span class="icon"><Icon size={20} aria-hidden="true" /></span>
-					<span class="label">{navLabel(item)}</span>
-					{#if badgeCount > 0}
-						<span class="nav-badge" aria-label={m['shell.navUpdates']({ count: badgeCount })}
-							>{badgeText(badgeCount)}</span
-						>
-					{/if}
-				</a>
+				{@render navLink(item)}
 			{/each}
 		</nav>
 	{/if}
@@ -240,6 +242,13 @@
 		display: flex;
 		flex-direction: column;
 		padding: var(--banto-space-2);
+		gap: 2px;
+	}
+
+	/* A group box keeps the same row rhythm as the section: links stack with the nav's own gap. */
+	.nav-group {
+		display: flex;
+		flex-direction: column;
 		gap: 2px;
 	}
 
