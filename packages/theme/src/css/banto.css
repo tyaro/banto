@@ -419,8 +419,9 @@
 	/* Card tiers (#623 PR-2). SurfaceCard 'tone' and the dashboard cards read
 	   these: primary = one step above standard (shadow md), default = the
 	   standard card (border + shadow sm), subtle = border only on the subtle
-	   surface, no shadow. Only existing tokens are referenced, so the glass
-	   preset and the dark column follow without redefinition. */
+	   surface, no shadow. The shadows and the dark column follow from the
+	   existing tokens; subtle-bg is redefined by banto-glass.css (translucent,
+	   opaque again in the no-blur / reduced-transparency fallbacks). */
 	--banto-card-primary-shadow: var(--banto-shadow-md);
 	--banto-card-default-shadow: var(--banto-shadow-sm);
 	--banto-card-subtle-bg: var(--banto-surface-subtle);

@@ -321,7 +321,8 @@ named import で使用する。**`import * as` 形式は禁止**（ツリーシ�
 
 - props: `tone?`（`'primary' | 'default' | 'subtle'`、既定 `default`）、`title?`、`description?`、children snippet、`footer?` snippet
 - 面の 3 段（#623）: primary = 影 md、default = 枠＋影 sm（従来）、subtle = `--banto-surface-subtle` 地・影なし。
-  トークンは `--banto-card-*`（`banto.css`、既存の面・影トークンを参照するだけなので Glass／ダークは再定義不要）。
+  トークンは `--banto-card-*`（`banto.css`、影とダークは既存トークンに追従する。`--banto-card-subtle-bg` だけは Glass が半透明に再定義し
+  （`banto-glass.css`、ライトは neutral-3 を 62%・ダークは 55%）、blur 非対応／透明度を下げる設定では不透明の neutral-3 に戻す）。
 - `--banto-surface` + `--banto-border`（弱）+ `--banto-radius-lg` +
   `--banto-shadow-sm`。Glass ではプリセット CSS が面変数を上書きするため
   コンポーネント側の分岐は不要。
