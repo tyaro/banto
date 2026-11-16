@@ -187,12 +187,18 @@ temp-scada）では、サイドバー（`--banto-shell-sidebar-width: 240px`、�
   （`position: absolute; visibility: hidden; pointer-events: none`、`aria-hidden="true"`、`inert`。
   中は `<a>` ではなく `<span>` にして、リンクやボタンが二重に a11y ツリーと e2e に出ないようにする）。
   測定用の行は流れの外に置くので、その幅は「何個見せるか」の結果に左右されない（ResizeObserver の
-  ループが起きない）。
+  ループが起きない）。**測定用の行は折り返さない**（`display: flex; flex-wrap: nowrap; width: max-content`、
+  各項目に `white-space: nowrap; flex: none`）。見える行も同じ指定にして、測った幅と見える 1 行の幅をそろえる
+  （項目の内側の余白・gap・フォントの指定は両方の行で同じクラスを使う）。
 - **使える幅**: 主要ナビの入れ物を `flex: 1 1 0; min-width: 0` にして、その幅を ResizeObserver で見る。
   入れ物の幅も中身に左右されない（中身が増えても入れ物は広がらない）。
-- **項目の幅**: 測定用の行の各項目の `getBoundingClientRect().width` を読む。測定用の行にも
-  ResizeObserver を付けると、**言語の切り替え**（文言の長さが変わる）・フォントの読み込み・
-  **文字だけの拡大（200%）**で幅が変わったときにも測り直せる。
+- **項目の幅**: 測定用の行の各項目の `getBoundingClientRect().width` を読む。行の幅の変化だけに頼らず、
+  次の 3 つで測り直す: (1) 測定用の行の**各項目**（と「その他」のボタン）を ResizeObserver で見る
+  （ある項目が縮み、別の項目が同じだけ伸びて行の幅が変わらない場合も拾う）。(2) `entries`（文言・
+  件数・グループの中身）が変わったら `$effect` で明示的に測り直す（**言語の切り替え**・未読バッジの
+  出入り）。(3) `document.fonts` の `loadingdone` とフォントの読み込み完了（`document.fonts.ready`）で
+  測り直す。**文字だけの拡大（200%）**は (1) で拾う。測り直しは `requestAnimationFrame` で 1 フレームに
+  まとめる。
 - **計算は純粋関数**: `fitCount(widths, available, moreWidth, gap)` → 上段に残す個数。
   部品から切り離して表でテストする（§7.1）。
 - **ちらつき防止**: (1) 最初の測定が済むまで見える行を `visibility: hidden` にする（行の高さは残すので
@@ -208,7 +214,8 @@ temp-scada）では、サイドバー（`--banto-shell-sidebar-width: 240px`、�
 
 - 上段の単独の項目: サイドバーと同じ数字のバッジ（99+ で頭打ち、名前に `shell.navUpdates`）。
 - グループと「その他」のボタン: 中の件数の合計があれば小さな点を出し、ボタンの名前に
-  `shell.navUpdates`（合計）を足す（例「その他、3件の未確認の更新」）。
+  `shell.navUpdates`（合計）を足す（例「その他、3件の未確認の更新」）。合計は**数値の件数**から
+  計算する（表示用の「99+」の文字列からは戻せないので、部品には数値を渡し、表示と名前は部品が作る。§5.1）。
 - ドロップダウンの中の項目: 数字のバッジ（上段と同じ）。
 
 ### 4.6 ヘッダーの中の幅の取り合い
@@ -248,10 +255,12 @@ WAI-ARIA の `menubar` の型（`role="menubar"` / `menuitem`、矢印で移動�
 - 「その他」の中のグループの見出しは、`<ul>` を `role="group"` + `aria-labelledby`（見出しの id）で包む。
 - **理由**: (1) 中身はページへのリンクで、アプリのコマンドではない。APG もサイトのナビには
   `menubar` ではなく disclosure を勧めている。(2) リンクのままなので、中クリック・新しいタブ・
-  `aria-current="page"`・SvelteKit のクライアント遷移がそのまま効く。(3) e2e が
-  `getByRole('navigation', { name: '主要ナビゲーション' })` の中の `getByRole('link', …)` で掴めるまま
-  （ドロップダウンの中も同じ `<nav>` の子孫。popover は DOM の位置を変えない）。
-  `menuitem` にするとリンクとして見つからない。(4) Menu の `MenuItem` に `href` を足す改修が要らない。
+  `aria-current="page"`・SvelteKit のクライアント遷移がそのまま効く。(3) e2e は
+  `getByRole('navigation', { name: '主要ナビゲーション' })` の中の `getByRole('link', …)` の形を使える
+  （`menuitem` にするとリンクとして見つからない）。ただし**閉じた popover の中のリンクは見えないので
+  `getByRole` で見つからない**。上段のリンクはそのまま掴めるが、グループ・「その他」・「管理」の中の
+  リンクは、先にボタンを開いてから探す（§7.2 の補助関数）。既存の e2e は既定のサイドバーで走るので
+  影響しない（メニューバーを選ぶ spec だけが開く手順を持つ）。(4) Menu の `MenuItem` に `href` を足す改修が要らない。
 - `Ctrl+K`（コマンドパレット）は今のまま。メニューバー固有のショートカットは足さない。
 - DOM の順は「ブランド → ナビ → ページ名 → … → ユーザー」になり、ナビが本文より先に来る
   （サイドバーと同じ体験）。
@@ -324,7 +333,9 @@ import しない、CSS は `--banto-*` だけ、ナビ定義を知らない汎�
 - `HeaderNav.svelte`（表示・開閉・あふれ）と `headerNav.ts`（型と純粋関数 `fitCount`）。
 - props（案）:
   - `entries: HeaderNavEntry[]`。
-    `HeaderNavLink = { id; href; label; icon?: UiIconComponent; active?: boolean; badge?: { text; label } }`、
+    `HeaderNavLink = { id; href; label; icon?: UiIconComponent; active?: boolean; count?: number }`
+    （未読の件数は**数値**で受ける。表示の「99+」の頭打ちと読み上げの名前 `updatesLabel(count)` は部品が作り、
+    グループ・「その他」の合計も同じ数値から出す）、
     `HeaderNavEntry = ({ kind: 'link' } & HeaderNavLink) | { kind: 'group'; id; label; items: HeaderNavLink[] }`
   - `ariaLabel: string`（`<nav>` の名前）、`moreLabel: string`（「その他」）、
     `updatesLabel?: (count: number) => string`（ボタンに足す未読の名前）
@@ -424,6 +435,11 @@ disclosure の型にした理由・`Menu` を使わない理由・`.svelte.ts` �
 - Sidebar（D8-b）: グループの見出しが出る・グループが無ければ今のまま。ドックの区切り線。
 
 ### 7.2 e2e（`pnpm e2e`、banto-serve）
+
+メニューバー表示の spec では、閉じた popover の中のリンクは `getByRole` で見つからない（§4.7）。
+そこで e2e に補助関数（例 `openMenubarLink(page, name)`: 上段にあればそのまま返し、無ければ所属の
+グループ・「その他」・「管理」のボタンを開いてから中のリンクを返す）を置き、メニューバーの spec はこれを使う。
+既定のサイドバーで走る既存の spec（8 ファイル・19 か所）は書き換えない。
 
 `e2e/tests/smoke.spec.ts` に足す:
 
