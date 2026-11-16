@@ -48,40 +48,27 @@
 	}
 
 	/**
-	 * One dock group per run of the main nav: a nav group (`NavItem.group`, nav-menubar-plan D8-b)
-	 * is its own group (named by the group), so the bar draws its rule at the group's edges; the
-	 * standalone entries around it keep the main nav's name. With no group this is one `main`.
+	 * The main nav is one dock group (one `<nav>` landmark). A nav group (`NavItem.group`,
+	 * nav-menubar-plan D8-b) is ruled off inside it: `separatorBefore` on the group's first item and
+	 * on the standalone item right after it. With no group this is a plain run of items.
 	 */
-	function mainGroups(): LauncherGroup[] {
-		const result: LauncherGroup[] = [];
-		let run: NavItem[] = [];
-		const flush = () => {
-			if (run.length === 0) return;
-			result.push({
-				id: `main-${result.length}`,
-				ariaLabel: m['shell.mainNav'](),
-				items: run.map(toItem)
-			});
-			run = [];
-		};
+	function mainGroup(): LauncherGroup {
+		const items: LauncherItem[] = [];
+		let afterGroup = false;
 		for (const entry of navBarEntries(sections.main)) {
-			if (entry.kind === 'item') {
-				run.push(entry.item);
-				continue;
-			}
-			flush();
-			result.push({
-				id: `group-${entry.key}`,
-				ariaLabel: m[entry.key](),
-				items: entry.items.map(toItem)
+			const own = entry.kind === 'group' ? entry.items : [entry.item];
+			own.forEach((item, index) => {
+				const rule = items.length > 0 && (afterGroup || (entry.kind === 'group' && index === 0));
+				items.push({ ...toItem(item), ...(rule ? { separatorBefore: true } : {}) });
+				afterGroup = false;
 			});
+			afterGroup = entry.kind === 'group';
 		}
-		flush();
-		return result;
+		return { id: 'main', ariaLabel: m['shell.mainNav'](), items };
 	}
 
 	const groups: LauncherGroup[] = $derived([
-		...mainGroups(),
+		mainGroup(),
 		...(sections.admin.length > 0
 			? [{ id: 'admin', ariaLabel: m['shell.adminNav'](), items: sections.admin.map(toItem) }]
 			: [])

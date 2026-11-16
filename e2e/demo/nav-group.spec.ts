@@ -1,8 +1,8 @@
 /**
  * Nav group in the demo build (nav-menubar-plan D8-b, PR-5): the demo-only
  * entries (/ui-demo, /chart-gallery) carry `group: 'nav.group.demo'`, so the
- * sidebar shows them under a heading and the dock puts them in a group of
- * their own with a rule at its edges. A production build has no group, so
+ * sidebar shows them under a heading and the dock rules them off inside the
+ * one main nav. A production build has no group, so
  * its sidebar and dock are unchanged (the existing visual baselines cover
  * that). Runs against `vite dev` with VITE_BANTO_DEMO=1 (the `demo` project).
  */
@@ -32,14 +32,20 @@ test('sidebar: the demo entries sit under a heading, the others stay flat', asyn
 	await expect(nav.locator('.section-heading')).toHaveCount(1);
 });
 
-test('dock: the demo entries are a group of their own, ruled off from the rest', async ({
-	page
-}) => {
+test('dock: the demo entries are ruled off inside the one main nav', async ({ page }) => {
 	await primeLauncher(page);
 	await page.goto('/dashboard');
 	await expect(page.locator('.launcher')).toBeVisible({ timeout: 60_000 });
-	const group = page.locator('.launcher').getByRole('navigation', { name: '見本' });
-	await expect(group.getByRole('link')).toHaveCount(2);
-	// main run / demo group / main run (settings) / admin: 3 rules between 4 groups.
+	// One main nav landmark; the demo group is not a nav of its own.
+	await expect(
+		page.locator('.launcher').getByRole('navigation', { name: '主要ナビゲーション' })
+	).toHaveCount(1);
+	await expect(page.locator('.launcher').getByRole('navigation', { name: '見本' })).toHaveCount(0);
+	const main = page.locator('.launcher').getByRole('navigation', { name: '主要ナビゲーション' });
+	await expect(main.getByRole('link', { name: 'UI 部品の見本' })).toBeVisible({ timeout: 60_000 });
+	await expect(main.getByRole('link', { name: 'チャート見本' })).toBeVisible();
+	// Rules inside main: before the demo group and before the standalone item after it (settings).
+	await expect(main.locator('.launcher__separator')).toHaveCount(2);
+	// Plus one rule between the main nav and the admin nav.
 	await expect(page.locator('.launcher .launcher__separator')).toHaveCount(3);
 });
