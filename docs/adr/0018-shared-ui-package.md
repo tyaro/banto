@@ -2,7 +2,7 @@
 
 > English: [0018-shared-ui-package.en.md](0018-shared-ui-package.en.md)
 
-- 状態: Accepted（段階 1〜5 完了。段階 4 = Modal / Drawer と層の補助、2026-10-11 オーナー決定で決定 10 を改めた。§10。段階 5 = LauncherBar、2026-10-20 オーナー決定。§11）
+- 状態: Accepted（段階 1〜5 完了。段階 4 = Modal / Drawer と層の補助、2026-10-11 オーナー決定で決定 10 を改めた。§10。段階 5 = LauncherBar、2026-10-20 オーナー決定。§11。段階 6 = HeaderNav、2026-11-16 オーナー決定。§12）
 - 日付: 2026-10-07
 - 関連: Issue #220 / [conventions.md](../conventions.md) §4・§5・§9・§13・§14 /
   [ADR-0002](0002-minimal-dependencies.md)・[ADR-0005](0005-i18n-paraglide.md)・
@@ -436,6 +436,46 @@ ChronoGazer）が共有できるよう、banto-hub の `Modal`・`Drawer` と層
   名前・`aria-current`・区切り・ツールチップの `aria-hidden` と Esc・層への譲り・拡大の配線）。見本ページ
   `/ui-demo` へのカードは見送った（固定配置のバーが見本ページの上に浮き、`ui-demo` の基準画像の作り直しが
   要るため）。実ブラウザの見た目と axe はシェルへの配線（計画の PR-3）の visual で見る。
+- **版**: 追加だけ（minor）。
+
+### 12. 段階 6: HeaderNav（2026-11-16 オーナー決定）
+
+オーナー決定（2026-11-16、[nav-menubar-plan.md](../design/nav-menubar-plan.md) §9 の D1〜D10。D3=c、D7=b、
+D8=b、ほかは a）: ナビをヘッダーの行に入れる「メニューバー」の表示を、サイドバー・ドックに続く第 3 の形として
+足す。その表示と操作を `@banto/ui` の `HeaderNav` に置き、配線（`ShellMenubar`）はアプリに残す。新しい ADR は
+作らず、置き場の判断の延長としてこの節に書く。
+
+- **パッケージに置くもの**: `HeaderNav.svelte`（表示・開閉・あふれ）と `headerNav.ts`（型 `HeaderNavLink`・
+  `HeaderNavEntry` と純粋関数 `fitCount`・矢印の移動先 `headerNavTopRowTarget` / `headerNavListTarget`・「その他」の中身
+  `headerNavOverflowSections` など）。props は `entries`（単独のリンクか、リンクを持つグループの並び）・`ariaLabel`・
+  `moreLabel`・`updatesLabel`・`overflow`（既定 `true`）・`onInsufficient`。未読は**数値**で受け、「99+」の
+  頭打ちと読み上げの名前、グループ・「その他」の合計は部品が作る（表示の文字列からは合計を戻せないため）。
+  主要ナビと管理ナビ（`overflow: false` で「管理 ▾」の 1 グループ）で 2 回使い、`<nav>` が 2 つになる。
+- **disclosure の型にした理由（D3-c）**: 中身はページへのリンクで、アプリのコマンドではない。APG も
+  サイトのナビには `menubar` ではなく disclosure navigation を勧めている。リンクのままなので中クリック・
+  新しいタブ・`aria-current="page"`・SvelteKit のクライアント遷移・e2e の `getByRole('link')` がそのまま効く。
+  上段の左右の矢印・Home / End は補助として足すが、`role="menubar"` / ロービング tabindex にはしない
+  （Tab で全項目に止まる）。
+- **`Menu` を使わない理由**: `MenuItem` は `<button role="menuitem">` で `href` を持てず、`role="menu"` の
+  型になる。`href` を足して menu の型で作る案（計画の D3-b）は上の理由で採らなかった。ドロップダウンの
+  出し方（`popover="auto"`、glass のヘッダーの `backdrop-filter` の中で `position: fixed` がずれないよう最上位の
+  層に出す）と位置（内部の `anchoredPopover.ts`）は `Menu` と同じものを使う。
+- **あふれ**: 見えない測定用の行（`aria-hidden`・`inert`、`<span>` だけで `<a>` もボタンも置かない）で全部の
+  上段の項目を測り、ResizeObserver（入れ物と各項目）・`entries` の変化・フォントの読み込みで 1 フレームに
+  まとめて測り直す。個数は純粋関数 `fitCount` が決め、変わったときだけ書き換える。「その他」のボタンも
+  入らないときは `onInsufficient(true)` でシェルに知らせ、シェルがドロワーに切り替える（戻すときは
+  `HEADER_NAV_RECOVER_SLACK` の余裕を見る）。
+- **`.svelte.ts` を足さない**: 状態は `.svelte` の中の `$state`。conventions §14 の同期の対象を増やさない。
+  文言は全部 props で受けるので `UiMessages` は増やしていない。
+- **テーマ**: 寸法を `--banto-shell-menubar-*`（`item-padding-x`・`gap`・`indicator`・`title-max`・
+  `popover-min-width`）として足した。色・重なり順のトークンは足さない（地・枠・影は `Menu` と同じ既存の
+  トークン、重なりは popover の最上位の層）。
+- **テスト**: `packages/ui/tests/headerNav.test.ts`（`fitCount`・矢印の移動・「その他」の中身の表）と
+  `HeaderNav.component.test.ts`（ランドマーク・リンクと `aria-current`・開閉ボタンの `aria-expanded` /
+  `aria-controls`・Esc・あふれと「その他」の見出し・バッジの名前・測定用の行・入りきらない状態・矢印）。
+  ファイル名を計画の `HeaderNav.test.ts` にしなかったのは、大文字小文字を区別しないファイルシステム
+  （Windows）で `headerNav.test.ts` と同じファイルになるため。見本ページ `/ui-demo` にグループとあふれの
+  カードを足した。シェルへの配線と visual・axe は計画の PR-3。
 - **版**: 追加だけ（minor）。
 
 ## 検討した代替案

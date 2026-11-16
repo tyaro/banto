@@ -37,6 +37,11 @@
  * (native radios in a radiogroup; `.banto-segmented`) and Tooltip (hover /
  * focus, hoverable, Esc; IconButton's label now shows through it instead of
  * `title`).
+ * Phase 6: HeaderNav, the nav links in the header row (disclosure buttons
+ * for groups, overflow into "more"), with its types and pure helpers
+ * (`headerNav.ts`: `fitCount`, the arrow-key tables; docs/design/
+ * nav-menubar-plan.md - the app keeps the nav definition, routing, `active`,
+ * RBAC, the text and the drawer fallback).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -138,6 +143,22 @@ export {
 } from './shortcut';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as ErrorState } from './ErrorState.svelte';
+export { default as HeaderNav } from './HeaderNav.svelte';
+export {
+	entryActive as headerNavEntryActive,
+	entryCount as headerNavEntryCount,
+	fitCount,
+	HEADER_NAV_INSUFFICIENT,
+	HEADER_NAV_RECOVER_SLACK,
+	headerNavBadgeText,
+	listTarget as headerNavListTarget,
+	overflowSections as headerNavOverflowSections,
+	topRowTarget as headerNavTopRowTarget,
+	type FitCountOptions,
+	type HeaderNavEntry,
+	type HeaderNavLink,
+	type HeaderNavSection
+} from './headerNav';
 export { default as IconButton } from './IconButton.svelte';
 export { default as LauncherBar } from './LauncherBar.svelte';
 export {

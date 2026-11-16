@@ -114,6 +114,18 @@
      routes/(app)/+layout.svelte) so the bar sits below the header. */
 	--banto-shell-launcher-inset-top: 0px;
 
+	/* Menu bar (nav-menubar-plan §5.3): @banto/ui's HeaderNav, the nav links
+     in the header row. No colours here - the dropdown reuses Menu's surface
+     tokens, and the popover's top layer needs no z token. */
+	--banto-shell-menubar-item-padding-x: var(--banto-space-3);
+	/* Between top-row items; HeaderNav's fitCount reads the same value. */
+	--banto-shell-menubar-gap: var(--banto-space-1);
+	/* The active item's underline (a component-shape edge, conventions §9). */
+	--banto-shell-menubar-indicator: 3px;
+	/* The page title's max width beside the menu bar (§4.6, D6). */
+	--banto-shell-menubar-title-max: 12rem;
+	--banto-shell-menubar-popover-min-width: 12rem;
+
 	/* Grid (consumed by @banto/grid-svelte from M1) */
 	--banto-grid-row-height: 36px;
 
