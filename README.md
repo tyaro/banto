@@ -257,11 +257,18 @@ PC1台で使う間は何も設定しない（組み込み Web サーバは既定
   デモモード/現在ロールのステータスチップが標準で付く。設定画面はカテゴリ（外観・言語/
   アカウント/サーバ・接続/データ管理/セキュリティ）ごとのルート（`/settings/appearance` 等）に
   分割し、カテゴリナビ（≥1024px は左レール、それ未満はタブ）で切り替え。
-- **ナビの表示形式（サイドバー / ドック）**: 設定の「外観」で、サイドバーの代わりに画面下の
-  ドック（`@banto/ui` の `LauncherBar`）を選べる（ユーザーごと。不透明度のスライダー付き）。
-  ドックを既定にするなら `src/lib/settings.svelte.ts` の `NAV_LAYOUT_DEFAULT` を `'launcher'` に、
-  選ばせないなら `AppearanceSection.svelte` の「ナビゲーション」カードと `settings.navLayout*`・
+- **ナビの表示形式（サイドバー / ドック / メニューバー）**: 設定の「外観」で、サイドバーの代わりに画面下の
+  ドック（`@banto/ui` の `LauncherBar`）か、ヘッダーに並べるメニューバー（`@banto/ui` の `HeaderNav`）を選べる
+  （ユーザーごと。ドックは不透明度のスライダー付き。メニューバーは入りきらない項目が「その他」に移る）。
+  ドックかメニューバーを既定にするなら `src/lib/settings.svelte.ts` の `NAV_LAYOUT_DEFAULT` を `'launcher'` /
+  `'menubar'` に、選ばせないなら `AppearanceSection.svelte` の「ナビゲーション」カードと `settings.navLayout*`・
   `settings.launcherOpacity*`・`settings.launcherOpaqueNote` のキーを消す（既定のサイドバーのまま）。
+  メニューバーだけを選択肢から外すなら、同じファイルの `navLayouts` から `'menubar'` の行と
+  `settings.navLayoutMenubar` を消す（保存済みの `'menubar'` は未知の値としてサイドバーに戻る）。
+  ナビの項目はグループにまとめられる。`navigation.ts` の `NavItem.group`（リソースは定義の `nav.group`）に
+  `NavGroupKey`（辞書キー。`nav.group.demo` が見本）を付けると、メニューバーではドロップダウン、サイドバーでは
+  見出し、ドックでは区切り線になる。新しいグループは `NavGroupKey` の union に足し、名前を `messages/ja.json` と
+  `en.json` に書く。`group` を付けなければ従来どおり。管理者専用の項目（`adminOnly`）は `group` を無視する。
 - **CSV/Excel 入出力**（M15）・**コマンドパレット**（M16、Ctrl+K）・**通知トースト**
   （[docs/recipes/notifications.md](docs/recipes/notifications.md)）。
 - **SQLite バックアップ/リストア**（M17）: 設定画面から。保存先は DB ファイルごとの

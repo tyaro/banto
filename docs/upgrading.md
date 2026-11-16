@@ -751,3 +751,39 @@ Issue #432〜#438（temp-scada からの共有部品の還元。計画は
 1. `pnpm check`・`pnpm build`・`pnpm dev`（image-assets を入れたアプリは dev で画面を開く）。
 2. dock を使うアプリは、保存済みの layout が復元されること（拒否されたら現行の layout のまま。空にならないこと）。
 3. 同期記録に「共有部品（#432〜#438）取込済・使った部品」を書く。
+
+### 例 6: メニューバー表示とナビのグループ（未リリース。A と B）
+
+ナビの「メニューバー」表示（計画は [design/nav-menubar-plan.md](design/nav-menubar-plan.md)、PR #616〜#619）で、
+`@banto/ui` に部品が増え、テンプレートのシェルに 3 つ目の表示形式が入る。版は次の minor の見込み
+（API の削除・改名なし。CHANGELOG の未リリースの節が全量。リリース時に版を確かめる）。
+**既定はサイドバーのまま。何もしなければ見た目は変わらない**。
+
+| 経路 | 項目 | 取り込み |
+| ---- | ---- | -------- |
+| A | `@banto/*` を上げる | タグを上げるだけで既存の挙動は保たれる。`@banto/ui` に `HeaderNav`・`LauncherItem.separatorBefore`、`@banto/theme` に `--banto-shell-menubar-*` が増える（追加のみ）。自前のシェルで使うときだけ取り込む |
+| B | `settings.svelte.ts` | `NavLayout` に `'menubar'` を足し、`isNavLayout()` が受け付ける。値は既存の `banto.navLayout` / `shell.navLayout` に保存されるのでサーバー・DB の変更は要らない。古いアプリが `'menubar'` を読んでも既定へ戻る |
+| B | `ShellMenubar.svelte`（新規）・`Header.svelte`・`(app)/+layout.svelte` | メニューバーの配線。ヘッダーとレイアウトを派生側で変えていれば差分を手で合わせる（scaffold のアンカーの対象のファイル） |
+| B | `AppearanceSection.svelte`・`messages/ja.json` / `en.json` | 外観カードの 3 つ目のラジオ。辞書に `settings.navLayoutMenubar`・`shell.navMore`・`shell.openCommandPaletteWithShortcut`・`nav.group.demo` を足し、`settings.navLayoutDesc` を書き直す |
+| B | `navigation.ts`・`resource/types.ts`・`commands.ts` | `NavGroupKey`・`NavItem.group`・`ResourceNav.group`・`navBarEntries()`。`group` は任意で、付けなければ従来どおり。デモ専用の項目に付けた `nav.group.demo` が派生側の `navigation.ts` の同じ行に当たれば、衝突を人が合わせる |
+| B | `Sidebar.svelte`・`ShellLauncher.svelte` | グループの見出しと区切り線。グループが無ければ DOM は変わらない |
+| B | `scripts/scaffold.mjs` を使う派生側 | charts の remover の文字列が `group` 付きの `/chart-gallery` の行に合わせて変わり、コマンドパレットの remover のアンカーが検索アイコンの `label` の変更に合う。派生側でこれらの行を変えていれば、`--dry-run` で確かめる |
+| C | DB・設定・配布資産 | 変更なし（マイグレーション・設定キーの追加なし） |
+
+進め方:
+
+1. A のタグを上げ、`pnpm check` を通す。自前のシェルを持つアプリ（banto-hub・temp-scada など）は、自分のヘッダーに
+   `HeaderNav` を置き、自分のナビ定義からグループと項目を渡す（`ShellMenubar.svelte` を手本にする）。
+2. コピーしたテンプレートは、B の差分を読んで写す。メニューバーを使わない派生アプリは `ShellMenubar` 一式を
+   取り込まなくてよい（`'menubar'` を選ばせなければ動かない）。
+3. グループを使うなら、`NavGroupKey` の union に語を足し、名前を辞書（ja / en）に書いて、項目に `group` を付ける。
+   使い方は [README](../README.md) の「ナビの表示形式」。
+4. メニューバーを既定にするなら `NAV_LAYOUT_DEFAULT` を `'menubar'` にする。
+
+確認項目:
+
+1. `pnpm check`・`pnpm build`・`pnpm dev`。
+2. 設定の「外観」で 3 つの表示を切り替え、メニューバーでリンクの移動・グループの開閉・幅を狭めたときの「その他」を確かめる。
+3. 900px 以下で、メニューバーの代わりにドロワーのボタンが出ること。
+4. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+5. 同期記録に「ナビのメニューバー表示取込済（PR 番号）」を書く。
