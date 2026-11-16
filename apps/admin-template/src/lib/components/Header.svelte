@@ -99,6 +99,33 @@
 		target?.focus();
 	}
 
+	// The 900px breakpoint (and a layout switch) swaps the bar and the drawer
+	// without going through `onInsufficient`: the focused nav element is
+	// unmounted. Capture where focus is before the DOM changes and hand it to
+	// the replacement - the drawer button for a bar that leaves, the bar's
+	// first item for a drawer that leaves (an inert, insufficient bar refuses
+	// the focus, and `handleMenubarInsufficient` moves it on).
+	let lastShowBar: boolean | undefined;
+	$effect.pre(() => {
+		const next = showBar;
+		const previous = lastShowBar;
+		lastShowBar = next;
+		if (previous === undefined || next === previous) return;
+		const active = document.activeElement;
+		const fromBar = !next && barHost?.contains(active) === true;
+		const fromDrawer =
+			next &&
+			(drawerButtonHost?.contains(active) === true ||
+				document.getElementById('app-sidebar')?.contains(active) === true);
+		if (!fromBar && !fromDrawer) return;
+		void tick().then(() => {
+			const target = fromBar
+				? drawerButtonHost?.querySelector<HTMLElement>('button')
+				: barHost?.querySelector<HTMLElement>('[data-header-nav-top]');
+			if (target?.isConnected && !target.closest('[inert]')) target.focus();
+		});
+	});
+
 	const pageTitleText = $derived(pageTitle(page.url.pathname, page.route.id));
 
 	// <=900px: the one button that opens/closes the overlay drawer. Above 900px

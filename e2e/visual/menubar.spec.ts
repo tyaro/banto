@@ -223,6 +223,18 @@ test.describe('menu bar layout (primed)', () => {
 		await expect(mainNav(page).getByRole('link', { name: 'ダッシュボード' })).toBeVisible();
 	});
 
+	test('crossing 900px hands focus between the bar and the drawer button', async ({ page }) => {
+		await page.setViewportSize({ width: 1200, height: 800 });
+		await gotoDashboard(page);
+		await mainNav(page).getByRole('link', { name: 'ダッシュボード' }).focus();
+
+		await page.setViewportSize({ width: 768, height: 1024 });
+		await expect(drawerButton(page)).toBeFocused();
+
+		await page.setViewportSize({ width: 1200, height: 800 });
+		await expect(mainNav(page).getByRole('link', { name: 'ダッシュボード' })).toBeFocused();
+	});
+
 	test('an open admin dropdown closes when the drawer stands in (§4.9)', async ({ page }) => {
 		await page.setViewportSize({ width: 1000, height: 800 });
 		await gotoDashboard(page);
