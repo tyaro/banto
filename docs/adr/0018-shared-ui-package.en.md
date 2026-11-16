@@ -2,7 +2,7 @@
 
 > 日本語: [0018-shared-ui-package.md](0018-shared-ui-package.md)
 
-- Status: Accepted (phases 1-5 done; phase 4 = Modal / Drawer and the layering helpers, after the owner revised decision 10 on 2026-10-11, §10; phase 5 = LauncherBar, 2026-10-20, §11)
+- Status: Accepted (phases 1-5 done; phase 4 = Modal / Drawer and the layering helpers, after the owner revised decision 10 on 2026-10-11, §10; phase 5 = LauncherBar, 2026-10-20, §11; phase 6 = HeaderNav, 2026-11-16, §12)
 - Date: 2026-10-07
 - Related: Issue #220 / [conventions.md](../conventions.en.md) §4, §5, §9, §13, §14 /
   [ADR-0002](0002-minimal-dependencies.en.md), [ADR-0005](0005-i18n-paraglide.en.md),
@@ -481,6 +481,50 @@ presentation and interaction live in `@banto/ui` as `LauncherBar`; the wiring st
   the demo page and force regenerating the `ui-demo` baselines); the real-browser look and axe
   come with the shell wiring's visual tests (plan PR-3).
 - **Version**: additive (minor).
+
+### 12. Phase 6: HeaderNav (owner decision, 2026-11-16)
+
+Owner decision (2026-11-16, D1-D10 in [nav-menubar-plan.md](../design/nav-menubar-plan.md) §9: D3=c,
+D7=b, D8=b, the rest a): a "menu bar" form puts the navigation into the header row, as a third
+choice after the sidebar and the dock. Its presentation and interaction live in `@banto/ui` as
+`HeaderNav`; the wiring (`ShellMenubar`) stays in the app. No new ADR - recorded here as an
+extension of the placement decision.
+
+- **In the package**: `HeaderNav.svelte` (presentation, open / close, overflow) and `headerNav.ts`
+  (types `HeaderNavLink`, `HeaderNavEntry` and the pure `fitCount`, the arrow-key targets
+  `headerNavTopRowTarget` / `headerNavListTarget`, the "more" content `headerNavOverflowSections`, ...). Props: `entries`
+  (single links or groups of links), `ariaLabel`, `moreLabel`, `updatesLabel`, `overflow` (default
+  `true`), `onInsufficient`. Unread counts come in as **numbers**; the component caps the badge at
+  "99+", builds the spoken name and sums groups / "more" (a display string cannot be summed back).
+  Used twice: the main nav and the admin nav (`overflow: false`, a single "Admin ▾" group), so two
+  `<nav>`s.
+- **Why the disclosure pattern (D3-c)**: the entries are page links, not application commands, and
+  the APG recommends disclosure navigation over `menubar` for site navigation. Links stay links:
+  middle click, new tab, `aria-current="page"`, SvelteKit client navigation and e2e
+  `getByRole('link')` keep working. ArrowLeft / ArrowRight and Home / End on the top row are added
+  as a help, without `role="menubar"` or a roving tabindex (every item stays a Tab stop).
+- **Why not `Menu`**: `MenuItem` is a `<button role="menuitem">` without `href`, in the `menu`
+  pattern; adding `href` and building on the menu pattern (D3-b) was rejected for the reasons above.
+  The dropdown display (`popover="auto"`, in the top layer so a glass header's `backdrop-filter`
+  does not offset a `position: fixed` child) and placement (the internal `anchoredPopover.ts`) are
+  the same as `Menu`'s.
+- **Overflow**: a hidden measuring row (`aria-hidden`, `inert`, `<span>`s only - no links or
+  buttons) holds every top item; ResizeObserver (the container and each item), an `entries` change
+  and font loading re-measure once per frame. The pure `fitCount` picks the count, written only
+  when it changes. When not even the "more" button fits, `onInsufficient(true)` tells the shell to
+  switch to its drawer (coming back needs `HEADER_NAV_RECOVER_SLACK` of extra room).
+- **No `.svelte.ts`**: state is `$state` inside the `.svelte`, so conventions §14 has nothing new to
+  sync. All text comes through props, so `UiMessages` did not grow.
+- **Theme**: sizes as `--banto-shell-menubar-*` (`item-padding-x`, `gap`, `indicator`,
+  `title-max`, `popover-min-width`). No colour or z tokens (the surface, border and shadow are
+  `Menu`'s existing tokens; the popover's top layer needs no z-index).
+- **Tests**: `packages/ui/tests/headerNav.test.ts` (tables for `fitCount`, the arrow keys and the
+  "more" content) and `HeaderNav.component.test.ts` (landmark, links and `aria-current`, the
+  buttons' `aria-expanded` / `aria-controls`, Esc, overflow and the "more" headings, badge names,
+  the measuring row, the insufficient state, arrows). Not the plan's `HeaderNav.test.ts`: on a
+  case-insensitive file system (Windows) it is the same file as `headerNav.test.ts`. The `/ui-demo`
+  page got a card with groups and overflow. The shell wiring, visual and axe are the plan's PR-3.
+- **Version**: additive only (minor).
 
 ## Alternatives considered
 

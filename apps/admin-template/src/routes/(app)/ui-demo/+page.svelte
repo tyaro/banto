@@ -18,7 +18,8 @@
 	 * column (PR-6),
 	 * the CommandPalette card (phase 2b), the
 	 * Toast card (phase 2c), the Modal / Drawer card (phase 4) and the
-	 * ConfirmDialog card (#556) and the Tooltip card (#556) are closed /
+	 * ConfirmDialog card (#556), the Tooltip card (#556) and the HeaderNav card's
+	 * dropdowns (nav-menubar-plan PR-2) are closed /
 	 * empty on load, so the screenshot shows only their triggers; opening,
 	 * keyboard and focus behaviour are covered by the package's jsdom tests
 	 * (and the open Modal / Drawer by the axe scan in e2e/visual/a11y.spec.ts),
@@ -37,6 +38,7 @@
 		Drawer,
 		EmptyState,
 		ErrorState,
+		HeaderNav,
 		IconButton,
 		LoadingState,
 		Menu,
@@ -52,15 +54,22 @@
 		TimeInput,
 		Tooltip,
 		type CommandPaletteItem,
+		type HeaderNavEntry,
 		type SegmentedOption,
 		type StatusBadgeVariant,
 		type TabItem,
 		type UiMessages
 	} from '@banto/ui';
 	import {
+		ChartColumn,
 		ChevronDown,
+		ClipboardList,
 		Copy,
+		Factory,
 		FilePlus,
+		Gauge,
+		House,
+		Package,
 		Pencil,
 		Plus,
 		RefreshCw,
@@ -69,6 +78,7 @@
 		ServerCrash,
 		Star,
 		Trash2,
+		Users,
 		X
 	} from '@lucide/svelte';
 	import * as m from '#lib/paraglide/messages.js';
@@ -83,6 +93,78 @@
 		dateTimeInputMessages,
 		gridMessages
 	} from '#lib/banto/i18n.js';
+
+	// HeaderNav card (nav-menubar-plan PR-2): one set of entries drawn twice -
+	// in a wide frame (groups, a badge) and a narrow one (entries moved into
+	// "more"). The links point at in-page anchors so a click goes nowhere.
+	const headerNavEntries: HeaderNavEntry[] = $derived([
+		{
+			kind: 'link',
+			id: 'home',
+			href: '#ui-demo-nav',
+			label: m['uiDemo.headerNav.home'](),
+			icon: House,
+			active: true
+		},
+		{
+			kind: 'link',
+			id: 'orders',
+			href: '#ui-demo-nav',
+			label: m['uiDemo.headerNav.orders'](),
+			icon: ClipboardList,
+			count: 3
+		},
+		{
+			kind: 'group',
+			id: 'plant',
+			label: m['uiDemo.headerNav.plant'](),
+			items: [
+				{
+					id: 'lines',
+					href: '#ui-demo-nav',
+					label: m['uiDemo.headerNav.lines'](),
+					icon: Factory
+				},
+				{
+					id: 'meters',
+					href: '#ui-demo-nav',
+					label: m['uiDemo.headerNav.meters'](),
+					icon: Gauge,
+					count: 2
+				}
+			]
+		},
+		{
+			kind: 'link',
+			id: 'stock',
+			href: '#ui-demo-nav',
+			label: m['uiDemo.headerNav.stock'](),
+			icon: Package
+		},
+		{
+			kind: 'link',
+			id: 'reports',
+			href: '#ui-demo-nav',
+			label: m['uiDemo.headerNav.reports'](),
+			icon: ChartColumn
+		}
+	]);
+	const headerNavAdmin: HeaderNavEntry[] = $derived([
+		{
+			kind: 'group',
+			id: 'admin',
+			label: m['shell.adminHeading'](),
+			items: [
+				{
+					id: 'users',
+					href: '#ui-demo-nav',
+					label: m['uiDemo.headerNav.users'](),
+					icon: Users
+				}
+			]
+		}
+	]);
+	const headerNavUpdates = (count: number) => m['shell.navUpdates']({ count });
 
 	const variants: StatusBadgeVariant[] = ['neutral', 'success', 'warning', 'danger', 'info'];
 
@@ -411,6 +493,40 @@
 			<span class="caption" data-testid="ui-demo-menu-selected">
 				{m['uiDemo.menu.selected']()}: {selected ?? m['uiDemo.menu.none']()}
 			</span>
+		</div>
+	</SurfaceCard>
+
+	<SurfaceCard title="HeaderNav" description={m['uiDemo.headerNav.desc']()}>
+		<div class="stack" id="ui-demo-nav">
+			<div class="sample">
+				<span class="caption">{m['uiDemo.headerNav.wide']()}</span>
+				<div class="header-nav-frame">
+					<HeaderNav
+						entries={headerNavEntries}
+						ariaLabel={m['uiDemo.headerNav.label']()}
+						moreLabel={m['uiDemo.headerNav.more']()}
+						updatesLabel={headerNavUpdates}
+					/>
+					<HeaderNav
+						entries={headerNavAdmin}
+						ariaLabel={m['uiDemo.headerNav.adminLabel']()}
+						moreLabel={m['uiDemo.headerNav.more']()}
+						updatesLabel={headerNavUpdates}
+						overflow={false}
+					/>
+				</div>
+			</div>
+			<div class="sample">
+				<span class="caption">{m['uiDemo.headerNav.narrow']()}</span>
+				<div class="header-nav-frame header-nav-frame--narrow">
+					<HeaderNav
+						entries={headerNavEntries}
+						ariaLabel={m['uiDemo.headerNav.narrowLabel']()}
+						moreLabel={m['uiDemo.headerNav.more']()}
+						updatesLabel={headerNavUpdates}
+					/>
+				</div>
+			</div>
 		</div>
 	</SurfaceCard>
 
@@ -929,6 +1045,23 @@
 	.caption {
 		color: var(--banto-text-muted);
 		font-size: var(--banto-font-size-sm);
+	}
+
+	/* HeaderNav samples: a header-like row (a part's shape, conventions §9);
+	   the narrow one is cut short so entries move into "more". */
+	.header-nav-frame {
+		display: flex;
+		align-items: center;
+		gap: var(--banto-space-2);
+		height: var(--banto-shell-header-height);
+		padding: 0 var(--banto-space-2);
+		border: var(--banto-border-width) solid var(--banto-border);
+		border-radius: var(--banto-radius-md);
+		background: var(--banto-surface);
+	}
+
+	.header-nav-frame--narrow {
+		max-width: 18rem;
 	}
 
 	.body-text {

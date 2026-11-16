@@ -162,6 +162,20 @@ forms と列表示メニューのネイティブ checkbox は `--banto-checkbox-
 半透明の 4 つは、`prefers-reduced-transparency: reduce` のときと `backdrop-filter` が使えないブラウザでは不透明（ぼかし無し）に戻る。
 ルート要素に `data-banto-shell-nav="launcher"` が付いているあいだは、`--banto-toast-bottom` をバー（900px 以下はタブバー）の上に上げる（アプリのシェルがドック表示のときに付ける）。あわせて `data-banto-shell-launcher-position` が `top` / `left` / `right` のときは下を空けたままにし、`right` ではトーストを `--banto-toast-right` でバーの左へ逃がす（900px 以下はどの位置でもタブバーの上）。
 
+## メニューバーのトークン（次の版から）
+
+`@banto/ui` の `HeaderNav`（ヘッダーの行に入れるナビ、[nav-menubar-plan.md](../../docs/design/nav-menubar-plan.md) §5.3）が
+使う寸法。色は足さない（ドロップダウンの地・枠・影は `Menu` と同じ既存のトークン）。ドロップダウンは
+popover の最上位の層に出すので、重なり順のトークンも要らない。
+
+| トークン                                  | 値                     | 用途                                                                 |
+| ----------------------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `--banto-shell-menubar-item-padding-x`    | `var(--banto-space-3)` | 上段の項目の左右の余白                                               |
+| `--banto-shell-menubar-gap`               | `var(--banto-space-1)` | 上段の項目の間隔（あふれの計算 `fitCount` も同じ値を読む）           |
+| `--banto-shell-menubar-indicator`         | `3px`                  | アクティブの下線の太さ                                               |
+| `--banto-shell-menubar-title-max`         | `12rem`                | メニューバー表示のときのページ名の最大幅（超えた分は省略記号で切る） |
+| `--banto-shell-menubar-popover-min-width` | `12rem`                | ドロップダウンの最小幅                                               |
+
 ## 寸法のトークン（次の版から）
 
 余白・文字サイズ・枠線幅の段階（[theme-dimension-tokens.md](../../docs/design/theme-dimension-tokens.md) §5.2）。

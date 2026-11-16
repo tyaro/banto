@@ -11,7 +11,8 @@ props / snippet / コールバックで受け取り、アプリのストア・`$
 `CommandPalette`（その後）、段階 2c でトースト（`createToastStore()` + `ToastHost`、その後の節）を足した
 （段階 2 は完了。ADR-0018 §8）。段階 4 で `Modal`・`Drawer` と Esc・フォーカスの層の補助を足した
 （トーストの後の節。ADR-0018 §10）。段階 5 でドック風のランチャー `LauncherBar` を足した
-（層の補助の後の節。ADR-0018 §11）。
+（層の補助の後の節。ADR-0018 §11）。段階 6 でヘッダーの行に入れるナビ `HeaderNav` を足した
+（`LauncherBar` の後の節。ADR-0018 §12）。
 
 | 部品               | 役割                                                                                                       | props / snippet                                                                                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -369,6 +370,85 @@ SvelteKit のクライアント遷移は呼び出し側のアプリでそのま�
 </script>
 
 <LauncherBar {groups} />
+```
+
+## HeaderNav（段階 6）
+
+ナビのリンクをヘッダーの 1 行に並べる「メニューバー」（[nav-menubar-plan.md](../../docs/design/nav-menubar-plan.md)、
+ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグループの開閉ボタン（`<button aria-expanded aria-controls>`）で、
+グループのリンクはクリック（タップ）したときだけドロップダウン（`popover="auto"`）に出す。幅に入りきらない項目は
+右端から「その他 ▾」へ移し、その中ではグループを見出しで区切ってリンクを平らに並べる。**表示と操作だけ**を持ち、
+ナビの定義・どの項目を出すか（権限）・現在のページの判定（`active`）・未読の件数・文言はすべて呼び出し側が渡す。
+
+| props            | 型                                | 既定         | 内容                                                                                                                           |
+| ---------------- | --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `entries`        | `HeaderNavEntry[]`                | （必須）     | `{ kind: 'link', ...HeaderNavLink }` か `{ kind: 'group', id, label, items: HeaderNavLink[] }` の並び                          |
+| `ariaLabel`      | `string`                          | （必須）     | `<nav>` の名前                                                                                                                 |
+| `moreLabel`      | `string`                          | （必須）     | 「その他」のボタンの文言                                                                                                       |
+| `updatesLabel`   | `(count: number) => string`       | 件数そのもの | 未読の件数の読み上げ（リンクとボタンの名前に足す。例: 3 →「3 件の未確認の更新」）                                              |
+| `overflow`       | `boolean`                         | `true`       | `false` ではあふれを測らず「その他」も出さず、入れ物も伸ばさない（管理ナビの「管理 ▾」1 グループのように、いつも全部出すもの） |
+| `onInsufficient` | `(insufficient: boolean) => void` | なし         | 「その他」のボタンさえ入らなくなったとき `true`、戻ったとき `false`。シェルはこの間ドロワーに切り替える                        |
+
+`HeaderNavLink` は `{ id, href, label, icon?, active?, count? }`。上段は文字だけで、`icon` はドロップダウンの中でだけ
+描く。`active` のリンクに `aria-current="page"` が付き、それを持つグループ・「その他」のボタンには見た目のアクティブ
+表示だけが付く（ボタンはページではないので `aria-current` は付けない）。`count` は**数値**で渡す: リンクは「99+」で
+頭打ちのバッジ、グループ・「その他」のボタンは中の合計があれば点を出し、それぞれの名前に `updatesLabel(件数)` を足す。
+
+- **キーボード**（APG の disclosure navigation。`role="menubar"` / ロービング tabindex は使わない）: Tab で上段の
+  全項目に止まる。上段では左右の矢印で隣へ（端で回り込む。「その他」も 1 項目）、Home / End で先頭 / 末尾へ。
+  開閉ボタンで Enter / Space が開閉、下 / 上の矢印は開いて先頭 / 末尾のリンクへ。開いた一覧の中は上下の矢印・
+  Home / End で移り（左右の矢印は一覧を閉じて上段の隣の項目へ移る。隣は開かない）、Tab で一覧の外へ出ると閉じ、Esc で閉じてボタンへ戻る。
+- **あふれ**: 入れ物は `flex: 1 1 0; min-width: 0` で、ヘッダーの行が残した幅を取る。見えない測定用の行
+  （`aria-hidden`・`inert`、`<span>` だけ）で全部の項目を測り、ResizeObserver・`entries` の変化・フォントの読み込みで
+  測り直す（1 フレームにまとめ、個数が変わったときだけ書き換える）。個数の計算は純粋関数
+  `fitCount(widths, available, moreWidth, gap, { previous? })` として公開している（入りきらないときは
+  `HEADER_NAV_INSUFFICIENT`（-1）。そこから戻るには `HEADER_NAV_RECOVER_SLACK` px の余裕が要る）。
+- **寸法**はトークン `--banto-shell-menubar-*`（[@banto/theme](../theme/README.md)）。ドロップダウンは popover の
+  最上位の層に出すので、glass のヘッダー（`backdrop-filter`）の中に置いても位置がずれない。
+
+```svelte
+<script lang="ts">
+	import { HeaderNav, type HeaderNavEntry } from '@banto/ui';
+	import { Factory, Gauge, House } from '@lucide/svelte';
+	import { page } from '$app/state';
+
+	const at = (href: string) => page.url.pathname === href;
+	const entries: HeaderNavEntry[] = $derived([
+		{ kind: 'link', id: 'home', href: '/', label: 'ホーム', icon: House, active: at('/') },
+		{
+			kind: 'group',
+			id: 'plant',
+			label: '工場',
+			items: [
+				{ id: 'lines', href: '/lines', label: 'ライン', icon: Factory, active: at('/lines') },
+				{
+					id: 'meters',
+					href: '/meters',
+					label: '計器',
+					icon: Gauge,
+					active: at('/meters'),
+					count: 3
+				}
+			]
+		}
+	]);
+</script>
+
+<header class="app-header">
+	<HeaderNav
+		{entries}
+		ariaLabel="主要ナビゲーション"
+		moreLabel="その他"
+		updatesLabel={(n) => `${n} 件の未確認の更新`}
+	/>
+	<!-- 管理ナビは別の <nav>。権限で出し分けるのは呼び出し側 -->
+	<HeaderNav
+		entries={adminEntries}
+		ariaLabel="管理ナビゲーション"
+		moreLabel="その他"
+		overflow={false}
+	/>
+</header>
 ```
 
 ## 使用例
