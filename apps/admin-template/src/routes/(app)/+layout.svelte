@@ -315,7 +315,7 @@
 			     wrapper slides it in like its <=900px drawer (§4.9). Hidden
 			     while closed so its links leave the tab order and the a11y tree. -->
 			<div class="menubar-drawer" class:open={overlayOpen}>
-				<Sidebar {overlayOpen} />
+				<Sidebar {overlayOpen} drawer />
 			</div>
 		{:else}
 			<Sidebar {overlayOpen} />
