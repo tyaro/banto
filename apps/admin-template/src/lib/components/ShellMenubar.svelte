@@ -36,6 +36,18 @@
 
 	let { onInsufficient }: Props = $props();
 
+	// The admin HeaderNav never overflows, so HeaderNav's own "close the open
+	// dropdown when insufficient" path does not reach it - and its top-layer
+	// dropdown would stay shown over the hidden, inert bar. Remount it closed
+	// each time the main nav turns insufficient (same width, so the main nav's
+	// measurement is unaffected).
+	let adminGeneration = $state(0);
+
+	function handleInsufficient(insufficient: boolean): void {
+		if (insufficient) adminGeneration += 1;
+		onInsufficient?.(insufficient);
+	}
+
 	const sections = $derived(
 		navSections({ publicViewer: sessionStore.publicViewer, role: sessionStore.role })
 	);
@@ -82,14 +94,16 @@
 	ariaLabel={m['shell.mainNav']()}
 	moreLabel={m['shell.navMore']()}
 	{updatesLabel}
-	{onInsufficient}
+	onInsufficient={handleInsufficient}
 />
 {#if adminEntries.length > 0}
-	<HeaderNav
-		entries={adminEntries}
-		ariaLabel={m['shell.adminNav']()}
-		moreLabel={m['shell.navMore']()}
-		{updatesLabel}
-		overflow={false}
-	/>
+	{#key adminGeneration}
+		<HeaderNav
+			entries={adminEntries}
+			ariaLabel={m['shell.adminNav']()}
+			moreLabel={m['shell.navMore']()}
+			{updatesLabel}
+			overflow={false}
+		/>
+	{/key}
 {/if}

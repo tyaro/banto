@@ -219,6 +219,19 @@ test.describe('menu bar layout (primed)', () => {
 		await expect(page.locator('aside')).toHaveCount(0);
 		await expect(mainNav(page).getByRole('link', { name: 'ダッシュボード' })).toBeVisible();
 	});
+
+	test('an open admin dropdown closes when the drawer stands in (§4.9)', async ({ page }) => {
+		await page.setViewportSize({ width: 1000, height: 800 });
+		await gotoDashboard(page);
+		const button = adminNav(page).getByRole('button', { name: '管理' });
+		await button.click();
+		const users = adminNav(page).getByRole('link', { name: 'ユーザー管理' });
+		await expect(users).toBeVisible();
+
+		await page.evaluate(() => (document.documentElement.style.fontSize = '250%'));
+		await expect(drawerButton(page)).toBeVisible();
+		await expect(page.getByRole('link', { name: 'ユーザー管理' })).toBeHidden();
+	});
 });
 
 test('the 外観 card switches to the menu bar and back', async ({ page }) => {
