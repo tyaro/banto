@@ -809,6 +809,7 @@
   "tree.demo.selectMultiLabel": "複数選択",
   "tree.demo.selectedPrefix": "選択中",
   "tree.demo.none": "（なし）",
+  "nav.group.demo": "見本",
   "nav.chartGallery": "チャート見本",
   "nav.uiDemo": "UI 部品の見本",
   "uiDemo.intro": "@banto/ui の部品の主要な状態を並べた見本です（ナビにはデモモードのときだけ出ます）。",

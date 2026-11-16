@@ -28,6 +28,10 @@ export type NavLabelKey =
 export type DemoNavIconKey = 'ui-demo' | 'chart-gallery';
 export type DemoNavLabelKey = 'nav.uiDemo' | 'nav.chartGallery';
 
+/** Dictionary key of a nav group's name (`NavItem.group`). A separate union from the icon / label
+ *  unions above on purpose: scaffold's removers edit those by exact text (scripts/scaffold.mjs). */
+export type NavGroupKey = 'nav.group.demo';
+
 export interface NavItem {
 	path: AppPath;
 	/** Fixed pages name a dictionary key; resource entries give `label` instead. */
@@ -69,6 +73,13 @@ export interface NavItem {
 	 * (a catalog page like `/ui-demo`, not a feature).
 	 */
 	demoOnly?: boolean;
+
+	/**
+	 * Group this entry belongs to (nav-menubar-plan §4.10). Entries sharing a key are gathered at the
+	 * first member's position by `navBarEntries()`. Ignored for `adminOnly` entries (the admin nav is
+	 * one group of its own). Undefined = a standalone entry.
+	 */
+	group?: NavGroupKey;
 }
 
 export { isPathActive, resolveAppPath, type AppPath } from '#lib/appPath.js';
@@ -102,7 +113,8 @@ function resourceNavItems(): NavItem[] {
 					[editRoute]: (name: string) => m['resource.editTitle']({ resource: name })
 				} as NavItem['pageTitles'],
 				publicViewer: nav.publicViewer,
-				adminOnly: nav.adminOnly
+				adminOnly: nav.adminOnly,
+				group: nav.group
 			}
 		];
 	});
@@ -112,8 +124,20 @@ const allNavItems: NavItem[] = [
 	{ path: '/dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', publicViewer: true },
 	...resourceNavItems(),
 	{ path: '/tree', labelKey: 'nav.tree', icon: 'tree' },
-	{ path: '/ui-demo', labelKey: 'nav.uiDemo', icon: 'ui-demo', demoOnly: true },
-	{ path: '/chart-gallery', labelKey: 'nav.chartGallery', icon: 'chart-gallery', demoOnly: true },
+	{
+		path: '/ui-demo',
+		labelKey: 'nav.uiDemo',
+		icon: 'ui-demo',
+		demoOnly: true,
+		group: 'nav.group.demo'
+	},
+	{
+		path: '/chart-gallery',
+		labelKey: 'nav.chartGallery',
+		icon: 'chart-gallery',
+		demoOnly: true,
+		group: 'nav.group.demo'
+	},
 	{ path: '/users', labelKey: 'nav.users', icon: 'users', adminOnly: true },
 	{ path: '/audit-log', labelKey: 'nav.auditLog', icon: 'audit-log', adminOnly: true },
 	{ path: '/settings', labelKey: 'nav.settings', icon: 'settings' }
@@ -154,6 +178,35 @@ export function navSections(session: { publicViewer: boolean; role: Role }): {
 				? navItems.filter((item) => item.adminOnly)
 				: []
 	};
+}
+
+/** One slot of a grouped nav bar: a standalone entry, or a group of entries gathered at the first member's position. */
+export type NavBarEntry =
+	{ kind: 'item'; item: NavItem } | { kind: 'group'; key: NavGroupKey; items: NavItem[] };
+
+/**
+ * Orders `items` into bar slots (nav-menubar-plan §4.10). A group sits where its first member is and
+ * collects the later members too, in their original order. `adminOnly` entries ignore `group`. Pure -
+ * apply it to an already-filtered list (e.g. `navSections().main`).
+ */
+export function navBarEntries(items: NavItem[]): NavBarEntry[] {
+	const entries: NavBarEntry[] = [];
+	const groups = new Map<NavGroupKey, NavItem[]>();
+	for (const item of items) {
+		if (!item.group || item.adminOnly) {
+			entries.push({ kind: 'item', item });
+			continue;
+		}
+		const members = groups.get(item.group);
+		if (members) {
+			members.push(item);
+		} else {
+			const created = [item];
+			groups.set(item.group, created);
+			entries.push({ kind: 'group', key: item.group, items: created });
+		}
+	}
+	return entries;
 }
 
 // "Banto" is the product brand (owner-fixed): kept as a component constant,

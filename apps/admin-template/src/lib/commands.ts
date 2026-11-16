@@ -44,7 +44,7 @@ function navigationCommands(): PaletteCommand[] {
 		id: `nav.${item.path}`,
 		title: navLabel(item),
 		group: m['commandPalette.groupNavigation'](),
-		keywords: [item.path],
+		keywords: item.group ? [item.path, m[item.group]()] : [item.path],
 		// Spec M10 RBAC + viewer-public allowlist (ADR-0012): visible iff the
 		// sidebar would list it. Evaluated per call so it follows the session.
 		visible: () => isNavItemVisible(item),
