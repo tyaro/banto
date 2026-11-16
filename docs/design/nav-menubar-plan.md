@@ -299,8 +299,10 @@ WAI-ARIA の `menubar` の型（`role="menubar"` / `menuitem`、矢印で移動�
   （`scripts/scaffold.mjs`。ほかのアンカーの行 — tree・adminPages・display — には `group` を足さない）。
   4 プリセットの `--dry-run` で確かめる。
   - **デモと本番でナビの形が変わる**: `demoOnly` は `navItems` の段階で外れるので、本番のアプリには
-    「見本」グループが出ない（上段は単独のリンクだけ）。デモ（banto-serve の e2e と visual）では出る。
-  - 利点: e2e と visual で、実物のグループ（開閉・`aria-current`・「その他」の中の見出し）を試せる。
+    「見本」グループが出ない（上段は単独のリンクだけ）。`isDemoBuild()`（`VITE_BANTO_DEMO=1`）のビルドでだけ出る。
+    e2e の `chromium`（smoke）・`public-viewer`・`visual` の各プロジェクトは本番と同じビルドなので**出ない**。
+    出るのは `vite dev` に `VITE_BANTO_DEMO=1` を付けた `demo` プロジェクト（`e2e/demo`）だけ（`e2e/playwright.config.ts`）。
+  - 利点: `e2e/demo` で、実物のグループ（開閉・`aria-current`・「その他」の中の見出し）を試せる。
   - `/ui-demo` のカードと単体テストの見本は、そのまま残す。使い方は README / recipes に書く。
 
 ### 4.11 キオスク・閲覧公開・demoOnly
@@ -430,19 +432,23 @@ disclosure の型にした理由・`Menu` を使わない理由・`.svelte.ts` �
 2. 幅を狭める（例 1000×800）→「その他」が出る → 開いて中のリンクで移れる。**個数は数えない**
    （フォントで幅が OS ごとに違うため）。「上段 + その他の中」が全部の項目と同じ集合であることを見る。
 3. キーボード: Tab で「その他」へ → Enter で開く → Tab で中のリンクへ → Esc で閉じてボタンに戻る。
-   矢印（D3-c）: 上段で右 / 左 / Home / End を押すとフォーカスが移る。「見本」グループを開き、矢印の上下で中を移る。
+   矢印（D3-c）: 上段で右 / 左 / Home / End を押すとフォーカスが移る（グループの無い本番の項目と管理ナビで見る）。
 4. 768×1024 でハンバーガーが出て、サイドバーのドロワーが開く。
 
 `e2e/tests-public-viewer` に、メニューバー表示でも許可リストの項目だけが出ることを 1 本足す。
-デモのナビには「見本」グループがある（D7-b）ので、グループの開閉・`aria-current`・「その他」の中の見出しは
-e2e の実物で見る（本番のアプリには出ない点に注意。テストはデモの項目に依存する）。
+「見本」グループ（D7-b）は `demoOnly` の項目なので、smoke（`chromium`）や visual のビルドには出ない。
+グループの e2e は **`e2e/demo` に新しい spec を足す**（`demo` プロジェクト。`vite dev` + `VITE_BANTO_DEMO=1`）:
+外観でメニューバーを選ぶ →「見本」グループを開閉 → 中のリンクで移って `aria-current` とグループのボタンの
+「現在地」表示を見る → 矢印の上下で中を移る → 幅を狭めて「その他」の中の見出しを見る → サイドバーに戻して
+見出し（D8-b、PR-5）・ドックの区切り線を見る。テストはデモの項目に依存する（派生アプリでは使えない）。
 
 ### 7.3 visual（基準画像は Linux でだけ作る）
 
-- 既定はサイドバーのままだが、**デモのナビに「見本」グループが付く（D7-b）ので、サイドバーを写す基準画像
-  （`dashboard-*` など）は見出しの分だけ動く可能性が高い**（D8-b）。PR-1 / PR-5 の
-  どちらで動くかを見て、作り直しの対象を PR の説明に書く。ただし外観カードのラジオと説明文が
-  変わるので `settings-light-standard` / `settings-dark-glass` は作り直し。ドックの基準画像は区切り線の分を確かめる。ui-demo にカードを足すなら `ui-demo-*` も。
+- 既定はサイドバーのまま。visual は本番と同じビルドで「見本」グループ（`demoOnly`）が出ないので、
+  D7-b・D8-b でもサイドバー・ドックを写す既存の基準画像（`dashboard-*`・`launcher-*`）は**動かない見込み**
+  （動いたら原因を調べる）。グループの見た目は visual では写せないので、`e2e/demo` の e2e と ui-demo の
+  カード（`ui-demo-*` は visual が写す）で確かめる。ただし外観カードのラジオと説明文が
+  変わるので `settings-light-standard` / `settings-dark-glass` は作り直し。ui-demo にカードを足すなら `ui-demo-*` も。
 - 足すもの: `dashboard-menubar-light-standard-1440x900`、`dashboard-menubar-dark-glass-1440x900`、
   `dashboard-menubar-light-standard-1024x768`（あふれ。「その他」を開いた状態も撮るかは安定性を見て決める）。
   ドックと同じく localStorage を事前に入れて撮る（`e2e/visual/launcher.spec.ts` の形）。
@@ -461,11 +467,11 @@ no-app-import・raw-jp-in-app）・`pnpm format:check`。Rust の変更は無い
 | # | PR | 中身 | 画面の変化 / 基準画像 | モデル |
 |---|---|---|---|---|
 | 0 | 計画（本書） | 本書の追加。オーナー決定を §9 に書き込む | なし | — |
-| 1 | ナビのグループ | `NavGroupKey`・`NavItem.group`・`ResourceNav.group`・`navBarEntries()`・パレットの `keywords`・表のテスト。デモ専用の 2 項目に「見本」グループを付け、charts の remover を直す（D7-b） | サイドバーを写す基準画像が動く可能性（PR-5 とまとめて判断） | sonnet |
+| 1 | ナビのグループ | `NavGroupKey`・`NavItem.group`・`ResourceNav.group`・`navBarEntries()`・パレットの `keywords`・表のテスト。デモ専用の 2 項目に「見本」グループを付け、charts の remover を直す（D7-b） | 本番の画面は変わらない（基準画像は動かない見込み）。`e2e/demo` にグループの確認を足すのは PR-3 | sonnet |
 | 2 | トークン + `HeaderNav` | `banto.css` に §5.3、`@banto/ui` に `HeaderNav` / `headerNav.ts`、単体テスト、README、ADR-0018 §12。矢印の補助（D3-c）、ui-demo のカード（グループとあふれの見本） | `ui-demo-*` 作り直し（カードを足すとき） | 上位 |
 | 3 | シェルへの配線と設定 | `'menubar'` の値、`ShellMenubar`、レイアウトとヘッダーの分岐（ページ名・検索の縮め方、900px 以下のドロワー）、外観カード、辞書、e2e、a11y、visual 追加 | `settings-*` 作り直し + `dashboard-menubar-*` 追加 | 上位 |
 | 4 | 文書 | README / recipes（既定にする・外す）、template-scope §2.2、CHANGELOG、upgrading.md、本書の状態行 | なし | sonnet |
-| 5 | サイドバーのグループ見出しとドックの区切り線（D8-b） | Sidebar でグループを見出しにし、ドックは区切り線にする。`navBarEntries()` を共用 | デモ版のサイドバー・ドックを写す基準画像の作り直し（`dashboard-*`・`launcher-*` など） | sonnet |
+| 5 | サイドバーのグループ見出しとドックの区切り線（D8-b） | Sidebar でグループを見出しにし、ドックは区切り線にする。`navBarEntries()` を共用 | デモ版だけ見た目が変わる（基準画像は動かない見込み）。`e2e/demo` の spec に見出し・区切り線の確認を足す | sonnet |
 
 - 1 と 2 は独立なので並べて進められる。3 は 1 と 2 の後。5 は 1 の後（3 と並べてよい）。4 は 3 と 5 の後（CHANGELOG は各 PR で 1 行ずつ足してよい）。
 - 各 PR で 4 プリセットの scaffold `--dry-run` を確かめる（§6）。自作の PR はセルフマージしない。
@@ -537,17 +543,17 @@ no-app-import・raw-jp-in-app）・`pnpm format:check`。Rust の変更は無い
 
 - a（推奨）: テンプレートの既定のナビにはグループを付けない。scaffold のアンカー（§2.2）を守り、
   既存のアプリの見た目も変えない。グループの見本は ui-demo のカードと単体テスト、使い方は recipes。
-- **b（決定）**: デモ専用の項目（`/ui-demo`・`/chart-gallery`）を「見本」グループにまとめる。e2e で実物の
-  グループを試せる。charts の remover のアンカーを同じ PR で直す必要があり、デモと本番でナビの形が変わる
+- **b（決定）**: デモ専用の項目（`/ui-demo`・`/chart-gallery`）を「見本」グループにまとめる。`e2e/demo`
+  （`demo` プロジェクト）で実物のグループを試せる（smoke・visual は本番と同じビルドなので出ない）。charts の remover のアンカーを同じ PR で直す必要があり、デモと本番でナビの形が変わる
   （本番には「見本」が出ない）。§4.10。
 
 ### D8. ほかの表示でのグループ
 
 - a（推奨）: サイドバーとドックはグループを無視する（平らなまま）。パレットはグループ名を
   `keywords` に足すだけ。見出しの要望が出たら別計画。
-- **b（決定）**: サイドバーでもグループを見出しにする（PR-5）。ドックは区切り線にする。サイドバーの基準画像に
-  響くのは、グループを付けたアプリだけだが、D7-b でデモ版（e2e・visual が使うアプリ）に「見本」グループが
-  付くので、**デモ版のサイドバーの基準画像が動く可能性が高い**。パレットは `keywords` に足す。
+- **b（決定）**: サイドバーでもグループを見出しにする（PR-5）。ドックは区切り線にする。見た目が変わるのは
+  グループを付けたアプリだけ。D7-b の「見本」グループはデモ版にだけ出て、visual は本番と同じビルドなので
+  既存の基準画像は動かない見込み。確認は `e2e/demo` で行う。パレットは `keywords` に足す。
 
 ### D9. 開き方
 
