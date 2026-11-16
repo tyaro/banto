@@ -145,9 +145,10 @@
 
 	/* Dimension scales (theme-dimension-tokens.md §5.2; visual-refresh-plan.md
      付録A.4・A.5). All rem, so they follow the root size above (1rem =
-     --banto-font-size, 14px by default). Not switched by the density axis
-     yet (D3). Component shapes (widths, heights, column widths, icon sizes)
-     are not part of these scales (D7). */
+     --banto-font-size, 14px by default). The density axis shifts only the
+     spacing scale (space-3..6 in compact, see [data-banto-density='compact']
+     below; D3, #623), never the type scale. Component shapes (widths,
+     heights, column widths, icon sizes) are not part of these scales (D7). */
 	/* Spacing scale (theme-dimension-tokens.md §5.2). Ordinal names: the value is not part of the name. */
 	--banto-space-1: 0.25rem;
 	/* 3.5px */
@@ -563,6 +564,15 @@
 	--banto-control-height-lg: 36px;
 	--banto-grid-row-height: 32px;
 	--banto-grid-header-height: 36px;
+
+	/* Spacing: space-3..6 step down one rung (theme-dimension-tokens.md D3,
+     owner decision 2026-11, #623). space-1/2/7/8 and the type scale stay put
+     (#557). Every value of a density lives in its own block, so a further
+     density (touch, #624) only adds a block. */
+	--banto-space-3: 0.5rem;
+	--banto-space-4: 0.75rem;
+	--banto-space-5: 1rem;
+	--banto-space-6: 1.25rem;
 }
 
 /* <=900px the launcher is a full-width tab bar (nav-launcher-plan.md §4.6)
