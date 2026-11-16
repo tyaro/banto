@@ -167,3 +167,23 @@ export async function primeMenubar(page: Page): Promise<void> {
 		{ cacheKey: NAV_LAYOUT_KEY, providerKey: NAV_LAYOUT_PROVIDER_KEY }
 	);
 }
+
+/** The demo `UiSettingsProvider`'s key for density (`theme.density`, prefix `banto.ui.`), primed alongside the cache key like `primeMenubar`. */
+const DENSITY_PROVIDER_KEY = 'banto.ui.theme.density';
+
+/**
+ * Overrides the density `primeTheme` fixed at 'standard' (cache key and demo
+ * provider key, so `syncFromProvider()` does not undo it). Only the test that
+ * calls it changes; every other test keeps 'standard'. Call after
+ * `primeThemeAndAuth` (init scripts run in registration order) and before the
+ * test's first `page.goto()`.
+ */
+export async function primeDensity(page: Page, density: 'standard' | 'compact'): Promise<void> {
+	await page.addInitScript(
+		({ cacheKey, providerKey, value }) => {
+			window.localStorage.setItem(cacheKey, value);
+			window.localStorage.setItem(providerKey, value);
+		},
+		{ cacheKey: DENSITY_KEY, providerKey: DENSITY_PROVIDER_KEY, value: density }
+	);
+}
