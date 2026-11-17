@@ -12,6 +12,8 @@
  * convention (spec §6 rule 1).
  */
 
+import { niceTicks } from './scale';
+
 export interface GanttTask {
 	/** Stable identifier; also the Svelte `#each` key. */
 	id: string;
@@ -34,6 +36,21 @@ export function toMs(value: number | Date | string): number {
 	if (value instanceof Date) return value.getTime();
 	if (typeof value === 'number') return value;
 	return new Date(value).getTime();
+}
+
+/**
+ * Time-axis ticks that stay inside the domain. `niceTicks` rounds outward, so
+ * the last tick can land past the plot's right edge and its label would be
+ * clipped (the right margin assumes the label sits at or inside the edge).
+ * Out-of-domain ticks are dropped; if none remain the domain endpoints are
+ * used so the axis never goes blank.
+ */
+export function ganttTimeTicks(domain: [number, number], maxTicks: number): number[] {
+	const ticks = niceTicks(domain[0], domain[1], maxTicks).filter(
+		(t) => t >= domain[0] && t <= domain[1]
+	);
+	if (ticks.length > 0) return ticks;
+	return domain[0] === domain[1] ? [domain[0]] : [domain[0], domain[1]];
 }
 
 /**

@@ -11,8 +11,8 @@
 	 * axis/tooltip formatting is delegated to `formatDate` so the caller owns
 	 * locale/granularity. Height is derived from `rowHeight` × task count.
 	 */
-	import { linearScale, niceTicks } from './core/scale';
-	import { ganttDomain, ganttLayout, toMs, type GanttTask } from './core/gantt';
+	import { linearScale } from './core/scale';
+	import { ganttDomain, ganttLayout, ganttTimeTicks, toMs, type GanttTask } from './core/gantt';
 	import { seriesColorVar } from './core/color';
 	import { leftMarginFor, rightMarginForLastTick, truncateLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
@@ -119,7 +119,7 @@
 	const timeTicks = $derived.by(() => {
 		if (!domain) return [] as number[];
 		const maxTicks = Math.max(2, Math.min(8, Math.floor(metrics.innerWidth / MIN_TICK_SPACING)));
-		return niceTicks(domain[0], domain[1], maxTicks);
+		return ganttTimeTicks(domain, maxTicks);
 	});
 
 	const timeScale = $derived(
