@@ -28,6 +28,8 @@
 </script>
 
 <div class="detail">
+	<!-- h2: the page's h1 is PageHeader's sr-only one, like the centre pane's settings h2. -->
+	<h2>{m['tree.workspace.paneDetail']()}</h2>
 	{#if row}
 		<dl>
 			<dt>{m['tree.workspace.colEquipment']()}</dt>
@@ -52,6 +54,11 @@
 <style>
 	.detail {
 		padding: var(--banto-space-3);
+	}
+
+	h2 {
+		margin: 0 0 var(--banto-space-3);
+		font-size: var(--banto-font-size-lg, 1.1em);
 	}
 
 	dl {

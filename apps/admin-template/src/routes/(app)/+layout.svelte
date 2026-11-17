@@ -412,6 +412,53 @@
 		padding-right: calc(var(--banto-space-5) + var(--banto-shell-launcher-reserve));
 	}
 
+	/* The vertical room <main> leaves around its content: the header plus main's
+	   top and bottom padding plus the dock's / tab bar's vertical reserve. A page
+	   that sizes itself to the viewport (/tree/workspace) subtracts only this.
+	   Private to the template shell, not a theme token. Change it together with
+	   the main padding rules above and in the 900px media below. */
+	.shell {
+		--banto-shell-main-block-inset: calc(
+			var(--banto-shell-header-height) + var(--banto-space-5) * 2
+		);
+	}
+
+	.shell.kiosk {
+		--banto-shell-main-block-inset: calc(
+			var(--banto-shell-header-height-compact) + var(--banto-space-5) * 2
+		);
+	}
+
+	.shell.with-launcher,
+	.shell.launcher-top {
+		--banto-shell-main-block-inset: calc(
+			var(--banto-shell-header-height) + var(--banto-space-5) * 2 +
+				var(--banto-shell-launcher-reserve)
+		);
+	}
+
+	.shell.with-launcher.kiosk,
+	.shell.launcher-top.kiosk {
+		--banto-shell-main-block-inset: calc(
+			var(--banto-shell-header-height-compact) + var(--banto-space-5) * 2 +
+				var(--banto-shell-launcher-reserve)
+		);
+	}
+
+	.shell.launcher-left,
+	.shell.launcher-right {
+		--banto-shell-main-block-inset: calc(
+			var(--banto-shell-header-height) + var(--banto-space-5) * 2
+		);
+	}
+
+	.shell.launcher-left.kiosk,
+	.shell.launcher-right.kiosk {
+		--banto-shell-main-block-inset: calc(
+			var(--banto-shell-header-height-compact) + var(--banto-space-5) * 2
+		);
+	}
+
 	.palette-host {
 		display: contents;
 	}
@@ -462,6 +509,26 @@
 		.shell.launcher-right main {
 			padding: var(--banto-space-5) var(--banto-space-5)
 				calc(var(--banto-space-5) + var(--banto-shell-launcher-tabbar-reserve));
+		}
+
+		.shell.with-launcher,
+		.shell.launcher-top,
+		.shell.launcher-left,
+		.shell.launcher-right {
+			--banto-shell-main-block-inset: calc(
+				var(--banto-shell-header-height) + var(--banto-space-5) * 2 +
+					var(--banto-shell-launcher-tabbar-reserve)
+			);
+		}
+
+		.shell.with-launcher.kiosk,
+		.shell.launcher-top.kiosk,
+		.shell.launcher-left.kiosk,
+		.shell.launcher-right.kiosk {
+			--banto-shell-main-block-inset: calc(
+				var(--banto-shell-header-height-compact) + var(--banto-space-5) * 2 +
+					var(--banto-shell-launcher-tabbar-reserve)
+			);
 		}
 
 		.overlay-backdrop {

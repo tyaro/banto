@@ -306,19 +306,32 @@
 </div>
 
 <style>
+	/* The shell's <main> gives its children no height, so the page takes the viewport
+	   minus the shell's vertical room (header, main padding, dock reserve: the
+	   shell's --banto-shell-main-block-inset), and the frame fills what is left.
+	   The floor keeps the frame usable on a 1366x768 screen at 125%. */
 	.page {
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-3);
+		height: max(
+			26rem,
+			calc(
+				100dvh -
+					var(
+						--banto-shell-main-block-inset,
+						calc(var(--banto-shell-header-height) + var(--banto-space-5) * 2)
+					)
+			)
+		);
 	}
 
 	.body {
 		padding: var(--banto-space-3);
 	}
 
-	/* The frame fills its parent's height: give it one that still fits a 1366x768 screen at 125%. */
 	.frame {
-		height: clamp(26rem, calc(100dvh - 11rem), 60rem);
+		flex: 1;
 		min-height: 0;
 	}
 </style>
