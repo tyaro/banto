@@ -101,13 +101,10 @@ describe('ganttTimeTicks', () => {
 		expect(Math.min(...ticks)).toBeGreaterThanOrEqual(domain[0]);
 	});
 	it('falls back to the domain endpoints when no nice tick fits', () => {
-		const domain: [number, number] = [1, 2];
-		const ticks = ganttTimeTicks(domain, 2);
-		expect(ticks.length).toBeGreaterThan(0);
-		for (const t of ticks) {
-			expect(t).toBeGreaterThanOrEqual(1);
-			expect(t).toBeLessThanOrEqual(2);
-		}
+		// niceTicks rounds [1.1, 1.9] out to [1, 2]; both fall outside, so the
+		// fallback branch returns the domain endpoints themselves.
+		const domain: [number, number] = [1.1, 1.9];
+		expect(ganttTimeTicks(domain, 2)).toEqual([1.1, 1.9]);
 	});
 	it('returns a single tick for a zero-width domain', () => {
 		expect(ganttTimeTicks([5, 5], 4)).toEqual([5]);
