@@ -19,6 +19,13 @@
 枠 `ThreePaneLayout` はレイアウトだけを持つ（左右の幅の調節と収納、枠自身の幅が 900px 以下で左右が
 ドロワーになる）。中身はスニペットで渡す。
 
+枠を外から扱う口（`onToggle`・`leftToggleEl`／`rightToggleEl`・`leftOpen`／`rightOpen`・
+`rightDrawerModal`・`narrowOverride`、`data-three-pane-scrim`）は任意で、渡さなければ上の挙動のまま。
+右ペインを「選んだときだけ出す」なら `right` を `undefined` にせず `rightOpen` で出し入れする
+（帯のボタンで畳んだ状態 `rightCollapsed` は、出し入れで変わらない）。編集中も一覧とツリーを触れる右ペインは
+`rightDrawerModal={false}`、狭い幅の境をビューポートに合わせたいときは `narrowOverride` を使う。
+詳細は [README](../../packages/ui/README.md) の ThreePaneLayout の節。
+
 ## 状態はページが持つ（URL が一次情報）
 
 選んだ対象・タブ・行は URL の `?target=<id>&tab=list|settings&row=<id>` に持つ。再読み込み・

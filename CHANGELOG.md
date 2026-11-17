@@ -22,6 +22,16 @@
 
 ## [Unreleased]
 
+### 追加（minor）: ThreePaneLayout を外から扱う 5 つの口（#655、#631 のフォロー）
+
+- `@banto/ui` の `ThreePaneLayout` に追加（すべて任意。渡さなければ見た目・挙動は変わらない）:
+  - `onToggle?: (side, open) => void`（帯のボタンで状態を変える直前に同期で呼ぶ。`open` は押した後の値）と、`leftToggleEl` / `rightToggleEl`（bindable、読むだけの出力。無いときは `undefined`）。
+  - `leftOpen` / `rightOpen`（既定 `true`、bindable）。`false` でそのペインと帯のボタンを出さない（中身はアンマウント）。`leftCollapsed` / `rightCollapsed`（畳む＝中身は保つ）は変えない。出さない間は、そのペインのドロワーの開閉状態も閉じに戻る。
+  - `leftDrawerModal` / `rightDrawerModal`（既定 `true`）。`false` で狭い幅のドロワーが非モーダルになる（中央は `inert` にならず、スクリムも出ず、開いてもフォーカスを奪わない。Esc で閉じる・同時に 1 つは同じ）。
+  - スクリムに `data-three-pane-scrim`（外から当ててよい属性として README に公開の約束。`role="presentation"` のまま）。
+  - `narrowOverride?: boolean`。指定すると測った枠の幅より優先して狭い／広いを決める（`bind:narrow` も従う）。
+- 消費側への注意: 型 `ThreePaneLayoutProps` に任意のプロパティが増えただけで、既存の呼び出しはそのまま動く。
+
 ## [7.4.0] - 2026-11-18
 
 **v7.4.0 — users の楽観ロック（migration 0012・衝突のトースト）、`BantoTree`（`@banto/tree-svelte`）の 3 つの口（`selectionFollowsFocus`・`emptyChildren`・`data-depth`）。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。ソース互換を壊しうる変更は 3 つあり、いずれも [docs/publishing.md](docs/publishing.md)「バージョニング規約」の運用上の例外（移行手順を「消費側への注意」に明記して minor）に当てはめた。(1) `banto_admin_services::users::UserSummary` に `version` フィールドが増えた（構造体リテラルで作るコードに影響）。(2) テンプレート（`src-tauri`）の `users_update_body`・`users_delete_body` に引数が増えた（公開パッケージ・クレートではない）。(3) migration 0012 は `users.version` 列の追加だけ（既存の行は書き換えない。前例 v1.7.0・v6.5.0・v7.2.0・v7.3.0）。

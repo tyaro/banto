@@ -9,6 +9,14 @@
 		leftDrawerOpen = $bindable(false),
 		rightDrawerOpen = $bindable(false),
 		narrow = $bindable(false),
+		leftOpen = $bindable(true),
+		rightOpen = $bindable(true),
+		leftToggleEl = $bindable(),
+		rightToggleEl = $bindable(),
+		leftDrawerModal,
+		rightDrawerModal,
+		narrowOverride,
+		onToggle,
 		leftMinWidth,
 		leftMaxWidth,
 		rightMinWidth,
@@ -27,6 +35,14 @@
 		leftDrawerOpen?: boolean;
 		rightDrawerOpen?: boolean;
 		narrow?: boolean;
+		leftOpen?: boolean;
+		rightOpen?: boolean;
+		leftToggleEl?: HTMLElement;
+		rightToggleEl?: HTMLElement;
+		leftDrawerModal?: boolean;
+		rightDrawerModal?: boolean;
+		narrowOverride?: boolean;
+		onToggle?: (side: 'left' | 'right', open: boolean) => void;
 		leftMinWidth?: number;
 		leftMaxWidth?: number;
 		rightMinWidth?: number;
@@ -49,6 +65,14 @@
 	bind:leftDrawerOpen
 	bind:rightDrawerOpen
 	bind:narrow
+	bind:leftOpen
+	bind:rightOpen
+	bind:leftToggleEl
+	bind:rightToggleEl
+	{leftDrawerModal}
+	{rightDrawerModal}
+	{narrowOverride}
+	{onToggle}
 	{leftMinWidth}
 	{leftMaxWidth}
 	{rightMinWidth}
@@ -78,6 +102,13 @@
 		rightCollapsed,
 		leftDrawerOpen,
 		rightDrawerOpen,
-		narrow
+		narrow,
+		leftOpen,
+		rightOpen
 	})}</output
 >
+<output
+	data-testid="toggles"
+	data-left={leftToggleEl?.getAttribute('aria-controls') ?? ''}
+	data-right={rightToggleEl?.getAttribute('aria-controls') ?? ''}
+></output>

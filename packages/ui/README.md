@@ -468,6 +468,12 @@ ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグル�
   フォーカスは開いたときの要素（なければ帯のボタン）へ戻る。広い幅へ戻るとドロワーの状態は閉じに戻る。
   いまの判定は `bind:narrow` で読める。
 - 文言は `messages`（`threePaneLeft` / `threePaneRight` / `threePaneResizeLeft` / `threePaneResizeRight`）。
+- **外から扱う口**（#655。すべて任意で、渡さなければ上の挙動のまま）:
+  - `onToggle(side, open)`: 帯のボタンで状態を変える**直前**に同期で呼ぶ。`open` は押した後の値（狭い幅はドロワーの開閉、広い幅は畳まれていない＝見える）。アプリ側の変更（`leftDrawerOpen = false` など）では呼ばない。`leftToggleEl` / `rightToggleEl`（bindable、読むだけの出力）は帯のボタン要素（無いときは `undefined`）で、フォーカスの戻し先などに使う。
+  - `leftOpen` / `rightOpen`（既定 `true`、bindable）: `false` でそのペインと帯のボタンを出さない。**中身はアンマウントされる**（「閉じる」＝中身を捨てる）。中身を保つ「畳む」は従来の `leftCollapsed` / `rightCollapsed` で、`leftOpen` / `rightOpen` の切り替えでは変えない・戻さない。出さない間は、そのペインのドロワーの開閉状態も閉じに戻る。スニペットを渡さないペインは従来どおり出ない。
+  - `leftDrawerModal` / `rightDrawerModal`（既定 `true`）: `false` で、狭い幅のそのドロワーを**非モーダル**にする。中央は `inert` にならず（一覧やツリーを触れる）、背景（スクリム）も出ず、開いてもフォーカスを奪わない。Esc での閉じ方・もう一方のドロワーとの排他（同時に 1 つ）・`data-esc-layer` は同じ。閉じるときにフォーカスがドロワー内にあれば帯のボタンへ戻す（開く前の要素は覚えない）。
+  - スクリムには `data-three-pane-scrim` が付く（外から当ててよい属性として公開の約束。`role="presentation"` のまま。非モーダルのドロワーでは出ない）。
+  - `narrowOverride`（`boolean`、未指定なら測った枠の幅と `narrowBreakpoint`）: 指定すると狭い／広いをそちらで決める（`bind:narrow` もこれに従う）。ビューポートの幅など、枠の幅以外に合わせたいときに使う。
 
 ```svelte
 <ThreePaneLayout
