@@ -236,6 +236,8 @@
 		overlayClosed += 1;
 	}
 	let selected = $state<string | undefined>(undefined);
+	let colName = $state(true);
+	let colUpdated = $state(false);
 
 	// ConfirmDialog card (#556): the app's confirm store (shown by the root
 	// layout's ConfirmHost), plain and with a name to type.
@@ -505,6 +507,29 @@
 						onSelect={() => (selected = m['uiDemo.menu.duplicate']())}
 					/>
 					<MenuItem label={m['uiDemo.menu.unavailable']()} disabled onSelect={() => {}} />
+				</MenuGroup>
+				<MenuSeparator />
+				<MenuGroup label={m['uiDemo.menu.colGroup']()}>
+					<MenuItem
+						kind="checkbox"
+						checked={colName}
+						label={m['uiDemo.menu.colName']()}
+						onSelect={() => (colName = !colName)}
+					/>
+					<MenuItem
+						kind="checkbox"
+						checked={colUpdated}
+						label={m['uiDemo.menu.colUpdated']()}
+						onSelect={() => (colUpdated = !colUpdated)}
+					/>
+					<MenuItem
+						kind="checkbox"
+						checked={true}
+						disabled
+						title={m['uiDemo.menu.colLockedTitle']()}
+						label={m['uiDemo.menu.colLocked']()}
+						onSelect={() => {}}
+					/>
 				</MenuGroup>
 				<MenuSeparator />
 				<MenuItem

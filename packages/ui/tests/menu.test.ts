@@ -19,6 +19,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import MenuHarness from './fixtures/MenuHarness.svelte';
+import MenuCheckboxHarness from './fixtures/MenuCheckboxHarness.svelte';
 
 type PopoverElement = HTMLElement & { showPopover(): void; hidePopover(): void };
 
@@ -278,5 +279,106 @@ describe('Menu', () => {
 			await flush();
 			expect(menu.dataset.popoverOpen).toBeUndefined();
 		});
+	});
+});
+
+describe('MenuItem kind="checkbox"', () => {
+	async function setupCheckbox() {
+		const fns = {
+			onColA: vi.fn(),
+			onColB: vi.fn(),
+			onColLocked: vi.fn(),
+			onRadio: vi.fn(),
+			onPlain: vi.fn()
+		};
+		render(MenuCheckboxHarness, fns);
+		const trigger = screen.getByRole('button', { name: 'Open' });
+		const menu = screen.getByRole('menu', { hidden: true });
+		await fireEvent.click(trigger);
+		await flush();
+		return { ...fns, trigger, menu };
+	}
+
+	it('exposes menuitemcheckbox with aria-checked, and keeps radio/plain roles', async () => {
+		await setupCheckbox();
+		const a = item('Col A');
+		const b = item('Col B');
+		expect(a.getAttribute('role')).toBe('menuitemcheckbox');
+		expect(a.getAttribute('aria-checked')).toBe('true');
+		expect(b.getAttribute('role')).toBe('menuitemcheckbox');
+		expect(b.getAttribute('aria-checked')).toBe('false');
+		expect(item('Radio').getAttribute('role')).toBe('menuitemradio');
+		expect(item('Plain').getAttribute('role')).toBe('menuitem');
+		expect(a.querySelector('.check.on')).not.toBeNull();
+		expect(b.querySelector('.check.on')).toBeNull();
+	});
+
+	it('does not close on click: onSelect runs, menu stays open, focus stays on the item', async () => {
+		const { menu, onColB } = await setupCheckbox();
+		const b = item('Col B');
+		b.focus();
+		await fireEvent.click(b);
+		await flush();
+		expect(onColB).toHaveBeenCalledTimes(1);
+		expect(menu.dataset.popoverOpen).toBe('true');
+		expect(document.activeElement).toBe(b);
+	});
+
+	it('stays open on repeated selection and on Enter/Space keys', async () => {
+		const { menu, onColA } = await setupCheckbox();
+		const a = item('Col A');
+		a.focus();
+		// A real <button> turns Enter/Space into click; emulate that here.
+		for (const key of ['Enter', ' ']) {
+			await fireEvent.keyDown(a, { key });
+			await fireEvent.click(a);
+			await flush();
+			expect(menu.dataset.popoverOpen).toBe('true');
+			expect(document.activeElement).toBe(a);
+		}
+		expect(onColA).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps logical focus and DOM focus aligned when moving with arrows after a select', async () => {
+		const { menu } = await setupCheckbox();
+		const a = item('Col A');
+		const b = item('Col B');
+		a.focus();
+		await fireEvent.click(a);
+		await fireEvent.keyDown(a, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(b);
+		await fireEvent.keyDown(b, { key: 'ArrowUp' });
+		expect(document.activeElement).toBe(a);
+		expect(menu.dataset.popoverOpen).toBe('true');
+	});
+
+	it('an aria-disabled checkbox item neither selects nor closes, and shows its title', async () => {
+		const { menu, onColLocked } = await setupCheckbox();
+		const locked = item('Col Locked');
+		expect(locked.getAttribute('aria-disabled')).toBe('true');
+		expect(locked.getAttribute('title')).toBe('Last column cannot be hidden');
+		await fireEvent.click(locked);
+		await flush();
+		expect(onColLocked).not.toHaveBeenCalled();
+		expect(menu.dataset.popoverOpen).toBe('true');
+	});
+
+	it('radio and plain items still close the menu after onSelect', async () => {
+		const { menu, trigger, onRadio, onPlain } = await setupCheckbox();
+		await fireEvent.click(item('Radio'));
+		await flush();
+		expect(onRadio).toHaveBeenCalledTimes(1);
+		expect(menu.dataset.popoverOpen).toBeUndefined();
+		await fireEvent.click(trigger);
+		await flush();
+		await fireEvent.click(item('Plain'));
+		await flush();
+		expect(onPlain).toHaveBeenCalledTimes(1);
+		expect(menu.dataset.popoverOpen).toBeUndefined();
+	});
+
+	it('omits title when not given', async () => {
+		await setupCheckbox();
+		expect(item('Col A').hasAttribute('title')).toBe(false);
 	});
 });

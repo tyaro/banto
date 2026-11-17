@@ -23,10 +23,29 @@
 		 * a check mark. Omit it for an ordinary action item.
 		 */
 		checked?: boolean;
+		/**
+		 * Shape of a `checked` item. `'radio'` (default) is a single choice
+		 * (`menuitemradio`) that closes the menu on select. `'checkbox'` is a
+		 * multi-select toggle (`menuitemcheckbox`): selecting it calls
+		 * `onSelect()` only, leaving the menu open and focus on the item.
+		 * Without `checked` this has no effect.
+		 */
+		kind?: 'radio' | 'checkbox';
+		/** Native tooltip (e.g. why a disabled item is unavailable). */
+		title?: string;
 		onSelect: () => void;
 	}
 
-	let { label, icon: Icon, danger = false, disabled = false, checked, onSelect }: Props = $props();
+	let {
+		label,
+		icon: Icon,
+		danger = false,
+		disabled = false,
+		checked,
+		kind = 'radio',
+		title,
+		onSelect
+	}: Props = $props();
 
 	const menu = getMenuContext();
 
@@ -40,6 +59,7 @@
 	function handleClick(): void {
 		if (disabled) return;
 		onSelect();
+		if (checked !== undefined && kind === 'checkbox') return;
 		menu.close();
 	}
 </script>
@@ -47,7 +67,12 @@
 <button
 	bind:this={itemEl}
 	type="button"
-	role={checked === undefined ? 'menuitem' : 'menuitemradio'}
+	role={checked === undefined
+		? 'menuitem'
+		: kind === 'checkbox'
+			? 'menuitemcheckbox'
+			: 'menuitemradio'}
+	{title}
 	aria-checked={checked === undefined ? undefined : checked}
 	tabindex="-1"
 	class="menu-item"
