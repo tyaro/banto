@@ -58,6 +58,27 @@ describe('editableFieldNames / composeEditableValues', () => {
 			price: 10
 		});
 	});
+
+	it('sends the row version of a versioned row, and no other readonly field (Issue #638)', () => {
+		const fields = editableFieldNames(schema);
+		const row = { id: 3, name: 'a', price: 10, updatedAt: '2026-01-01', version: 4 };
+		expect(composeEditableValues(fields, row, { price: 20 })).toEqual({
+			name: 'a',
+			price: 20,
+			version: 4
+		});
+		// A change cannot move the version: it is the base row's.
+		expect(composeEditableValues(fields, row, { version: 99 })).toEqual({
+			name: 'a',
+			price: 10,
+			version: 4
+		});
+		// A row without a numeric version sends none (an unversioned resource).
+		expect(composeEditableValues(fields, { name: 'a', price: 1, version: '4' }, {})).toEqual({
+			name: 'a',
+			price: 1
+		});
+	});
 });
 
 describe('exportListParams', () => {

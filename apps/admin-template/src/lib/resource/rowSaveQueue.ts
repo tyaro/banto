@@ -17,6 +17,12 @@
  * later saves are based on the last confirmed values. Results are produced in
  * send order (the chain guarantees it).
  *
+ * Issue #638: when `isConflict` says a save was refused by the optimistic
+ * lock, the saves of that row still waiting in the same burst are refused
+ * with the same error without being sent - they were composed against the
+ * row the user had before the conflict, and the user re-enters them on the
+ * latest row instead.
+ *
  * The confirmed row for an id is dropped once its queue drains, so a later
  * edit is based on `currentRow` (the row as displayed at send time, already
  * updated with the saved result), falling back to the enqueue-time snapshot.
@@ -32,6 +38,8 @@ export interface RowSaveQueueOptions<TRow> {
 	 * fallbackRow (which may predate an earlier save that already drained).
 	 */
 	currentRow?: (rowId: string | number) => TRow | undefined;
+	/** Issue #638: whether a failed save was an optimistic-lock conflict (see above). */
+	isConflict?: (err: unknown) => boolean;
 }
 
 export interface RowSaveQueue<TRow> {
@@ -52,6 +60,8 @@ export function createRowSaveQueue<TRow>(options: RowSaveQueueOptions<TRow>): Ro
 		tail: Promise<unknown>;
 		pending: number;
 		confirmed: TRow | undefined;
+		/** The conflict that refused a save of this burst (Issue #638). */
+		conflict: { error: unknown } | undefined;
 	}
 	const lanes = new Map<string | number, Lane>();
 
@@ -60,17 +70,24 @@ export function createRowSaveQueue<TRow>(options: RowSaveQueueOptions<TRow>): Ro
 			const lane: Lane = lanes.get(rowId) ?? {
 				tail: Promise.resolve(),
 				pending: 0,
-				confirmed: undefined
+				confirmed: undefined,
+				conflict: undefined
 			};
 			lanes.set(rowId, lane);
 			lane.pending += 1;
 
 			const run = async (): Promise<TRow> => {
+				if (lane.conflict) throw lane.conflict.error;
 				// Composed here, at send time - not when the edit was enqueued.
 				const base = lane.confirmed ?? options.currentRow?.(rowId) ?? fallbackRow;
-				const saved = await options.save(rowId, options.compose(base, changes));
-				lane.confirmed = saved;
-				return saved;
+				try {
+					const saved = await options.save(rowId, options.compose(base, changes));
+					lane.confirmed = saved;
+					return saved;
+				} catch (err) {
+					if (options.isConflict?.(err)) lane.conflict = { error: err };
+					throw err;
+				}
 			};
 			const result = lane.tail.then(run, run);
 			const settle = (): void => {

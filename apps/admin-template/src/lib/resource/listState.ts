@@ -3,6 +3,7 @@
  * component so they can be unit-tested without a DOM.
  */
 import type { FilterState, SortState } from '@banto/grid-svelte';
+import { LOCK_VERSION_FIELD, lockVersionOf } from './conflict';
 import type { AppResourceDefinition, ListLoadMode } from './types';
 
 /** The load modes a resource offers, in the definition's order. Default `['server']` (ADR-0030 decision 3). */
@@ -36,7 +37,10 @@ export function editableFieldNames(
 /**
  * `DataProvider.update` expects the full editable value set: the base row's
  * editable values, overwritten by this save's changed columns. Columns outside
- * the schema (the row's id, a client-only derived field) are never sent.
+ * the schema (the row's id, a client-only derived field) are never sent -
+ * except the optimistic-lock `version` of a versioned row (Issue #638), so the
+ * save is checked against the row it was based on. Other readonly fields stay
+ * unsent.
  */
 export function composeEditableValues(
 	fields: readonly string[],
@@ -47,6 +51,10 @@ export function composeEditableValues(
 	for (const field of fields) values[field] = row[field];
 	for (const [field, value] of Object.entries(changes)) {
 		if (fields.includes(field)) values[field] = value;
+	}
+	const version = lockVersionOf(row);
+	if (version !== undefined && !fields.includes(LOCK_VERSION_FIELD)) {
+		values[LOCK_VERSION_FIELD] = version;
 	}
 	return values;
 }

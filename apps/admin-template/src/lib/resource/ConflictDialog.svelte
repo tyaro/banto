@@ -1,0 +1,237 @@
+<!--
+	@component
+	Issue #638: the dialog of a save refused by the optimistic lock. It lists the
+	fields the other person changed - their value next to this form's - and asks
+	which to keep: "take theirs" (the form takes their record, nothing is sent),
+	"overwrite with mine" (re-send this form's values) or "choose per field"
+	(a radio per field, then re-send). Cancel / Esc / × keeps the draft.
+
+	It only draws `conflicts` (`conflict.ts` computes them) and reports the
+	answer; the host (`ResourceDetail`) re-sends. The table reuses the audit
+	diff's field labels and value formatting (`auditChanges.ts`) and its look;
+	the radios are why it is not `AuditChanges` itself.
+
+	Messages are `resource.conflict*` (the display preset keeps `resource.*`).
+-->
+<script lang="ts">
+	import { Modal } from '@banto/ui';
+	import * as m from '#lib/paraglide/messages.js';
+	import { auditFieldLabel, formatAuditValue } from './auditChanges';
+	import { defaultConflictChoices, type ConflictChoice, type ConflictField } from './conflict';
+
+	interface Props {
+		open: boolean;
+		/** The resource name, for the field labels. */
+		resource: string;
+		conflicts: ConflictField[];
+		/** A re-send is in flight: the actions wait. */
+		busy?: boolean;
+		onTakeTheirs: () => void;
+		onOverwrite: () => void;
+		onSaveChoices: (choices: Record<string, ConflictChoice>) => void;
+		onCancel: () => void;
+	}
+
+	let {
+		open,
+		resource,
+		conflicts,
+		busy = false,
+		onTakeTheirs,
+		onOverwrite,
+		onSaveChoices,
+		onCancel
+	}: Props = $props();
+
+	let choosing = $state(false);
+	let choices: Record<string, ConflictChoice> = $state({});
+
+	// Every new set of conflicts (a dialog opened, or reopened after a re-send
+	// conflicted again) starts from the summary and the default choices.
+	$effect.pre(() => {
+		const next = conflicts;
+		choosing = false;
+		choices = defaultConflictChoices(next);
+	});
+
+	const overlayMessages = { overlayClose: () => m['common.close']() };
+
+	function requestClose(): boolean {
+		return !busy;
+	}
+</script>
+
+<Modal
+	{open}
+	title={m['resource.conflictTitle']()}
+	width="40rem"
+	messages={overlayMessages}
+	onRequestClose={requestClose}
+	onclose={onCancel}
+>
+	<p class="body">
+		{choosing ? m['resource.conflictChooseHint']() : m['resource.conflictBody']()}
+	</p>
+	<div class="table-wrap">
+		<table data-testid="conflict-changes">
+			<caption class="sr-only">{m['resource.conflictCaption']()}</caption>
+			<thead>
+				<tr>
+					<th scope="col">{m['resource.changesColField']()}</th>
+					<th scope="col">{m['resource.conflictColTheirs']()}</th>
+					<th scope="col">{m['resource.conflictColMine']()}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each conflicts as conflict (conflict.field)}
+					{@const label = auditFieldLabel(resource, conflict.field)}
+					<tr>
+						<th scope="row">{label}</th>
+						{#if choosing}
+							<td>
+								<label class="pick">
+									<input
+										type="radio"
+										name="conflict-{conflict.field}"
+										value="theirs"
+										aria-label={m['resource.conflictPickTheirs']({ field: label })}
+										bind:group={choices[conflict.field]}
+									/>
+									<span>{formatAuditValue(conflict.theirs)}</span>
+								</label>
+							</td>
+							<td>
+								<label class="pick">
+									<input
+										type="radio"
+										name="conflict-{conflict.field}"
+										value="mine"
+										aria-label={m['resource.conflictPickMine']({ field: label })}
+										bind:group={choices[conflict.field]}
+									/>
+									<span>{formatAuditValue(conflict.mine)}</span>
+								</label>
+							</td>
+						{:else}
+							<td>{formatAuditValue(conflict.theirs)}</td>
+							<td>
+								{formatAuditValue(conflict.mine)}
+								{#if !conflict.mineChanged}
+									<span class="muted">{m['resource.conflictMineUnchanged']()}</span>
+								{/if}
+							</td>
+						{/if}
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+	<div class="actions">
+		{#if choosing}
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				disabled={busy}
+				onclick={() => (choosing = false)}
+			>
+				{m['resource.conflictBack']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--primary"
+				disabled={busy}
+				onclick={() => onSaveChoices({ ...choices })}
+			>
+				{m['resource.conflictSaveChoices']()}
+			</button>
+		{:else}
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				disabled={busy}
+				onclick={onCancel}
+			>
+				{m['common.cancel']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--secondary"
+				disabled={busy}
+				onclick={() => (choosing = true)}
+			>
+				{m['resource.conflictChoose']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--danger"
+				disabled={busy}
+				onclick={onOverwrite}
+			>
+				{m['resource.conflictOverwrite']()}
+			</button>
+			<button
+				type="button"
+				class="banto-btn banto-btn--primary"
+				disabled={busy}
+				onclick={onTakeTheirs}
+			>
+				{m['resource.conflictTakeTheirs']()}
+			</button>
+		{/if}
+	</div>
+</Modal>
+
+<style>
+	.body {
+		margin: 0 0 var(--banto-space-4);
+		color: var(--banto-text);
+		text-wrap: pretty;
+	}
+
+	.table-wrap {
+		overflow-x: auto;
+		margin-bottom: var(--banto-space-4);
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: var(--banto-font-size-sm);
+	}
+
+	th,
+	td {
+		text-align: start;
+		padding: var(--banto-space-2) var(--banto-space-3);
+		border-bottom: var(--banto-border-width) solid var(--banto-border);
+		overflow-wrap: anywhere;
+	}
+
+	thead th {
+		color: var(--banto-text-muted);
+		font-weight: 600;
+	}
+
+	tbody th {
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.muted {
+		color: var(--banto-text-muted);
+	}
+
+	.pick {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--banto-space-2);
+		cursor: pointer;
+	}
+
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: var(--banto-space-2);
+	}
+</style>

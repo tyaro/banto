@@ -161,3 +161,80 @@ describe('createRowSaveQueue', () => {
 		expect(sent[0]).toEqual({ name: 'original', price: 100, stock: 1 });
 	});
 });
+
+describe('createRowSaveQueue optimistic lock (Issue #638)', () => {
+	interface VRow extends Row {
+		version: number;
+	}
+	const v1: VRow = { ...original, version: 1 };
+	const composeV = (base: VRow, changes: Record<string, unknown>) => ({
+		name: base.name,
+		price: base.price,
+		stock: base.stock,
+		version: base.version,
+		...changes
+	});
+	const conflict = { kind: 'conflict' };
+
+	it('two edits in a row each send the version the previous save returned', async () => {
+		const sent: Record<string, unknown>[] = [];
+		let stored: VRow = { ...v1 };
+		const queue = createRowSaveQueue<VRow>({
+			compose: composeV,
+			save: async (_id, values) => {
+				sent.push(values);
+				if (values.version !== stored.version) throw conflict;
+				stored = { ...stored, ...values, version: stored.version + 1 } as VRow;
+				return stored;
+			}
+		});
+		const [a, b] = await Promise.all([
+			queue.enqueue(1, v1, { name: 'first' }),
+			queue.enqueue(1, v1, { stock: 5 })
+		]);
+		expect(sent.map((values) => values.version)).toEqual([1, 2]);
+		expect(a.version).toBe(2);
+		expect(b).toMatchObject({ name: 'first', stock: 5, version: 3 });
+	});
+
+	it('a conflict refuses the saves of that row still waiting in the burst, unsent', async () => {
+		const sent: Record<string, unknown>[] = [];
+		const queue = createRowSaveQueue<VRow>({
+			compose: composeV,
+			isConflict: (err) => err === conflict,
+			save: async (_id, values) => {
+				sent.push(values);
+				if (values.name === 'refused') throw conflict;
+				return { ...v1, ...values } as VRow;
+			}
+		});
+		const results = await Promise.allSettled([
+			queue.enqueue(1, v1, { name: 'refused' }),
+			queue.enqueue(1, v1, { stock: 5 }),
+			queue.enqueue(2, { ...v1, id: 2 }, { stock: 6 })
+		]);
+		expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected', 'fulfilled']);
+		expect((results[1] as PromiseRejectedResult).reason).toBe(conflict);
+		// Row 1's second save was never sent; row 2 is another lane.
+		expect(sent).toHaveLength(2);
+		// Once the lane drained, a new edit is sent again.
+		await queue.enqueue(1, v1, { stock: 7 });
+		expect(sent).toHaveLength(3);
+	});
+
+	it('another failure does not refuse the waiting saves', async () => {
+		const queue = createRowSaveQueue<VRow>({
+			compose: composeV,
+			isConflict: (err) => err === conflict,
+			save: async (_id, values) => {
+				if (values.name === 'bad') throw new Error('network');
+				return { ...v1, ...values } as VRow;
+			}
+		});
+		const results = await Promise.allSettled([
+			queue.enqueue(1, v1, { name: 'bad' }),
+			queue.enqueue(1, v1, { stock: 5 })
+		]);
+		expect(results.map((result) => result.status)).toEqual(['rejected', 'fulfilled']);
+	});
+});

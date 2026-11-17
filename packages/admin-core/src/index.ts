@@ -105,7 +105,9 @@ export {
 } from './snapshot.svelte';
 export {
 	FormResource,
+	conflictOf,
 	createFormResource,
+	type FormConflict,
 	type FormResourceOptions,
 	type SubmitResult
 } from './form.svelte';
