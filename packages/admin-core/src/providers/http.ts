@@ -27,7 +27,7 @@ import type {
 	ResolvedAuth
 } from '../provider';
 import type { ListParams, ListResult } from '../types';
-import { ProviderError, StaleAnswerError, type ErrorBody } from '../errors';
+import { ProviderError, StaleAnswerError, type ErrorBody, type NetworkFailure } from '../errors';
 
 const CLIENT_HEADER_NAME = 'X-Banto-Client';
 const CLIENT_HEADER_VALUE = 'banto';
@@ -55,7 +55,10 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	let body: unknown;
 	try {
 		body = await response.json();
-	} catch {
+	} catch (error) {
+		// An abort while reading is the request's own timeout / caller abort,
+		// not "an unparseable body": let `guardedFetch` classify it.
+		if (isAbortError(error)) throw error;
 		return new ProviderError({
 			kind: 'other',
 			message: `${response.status} ${response.statusText}`
@@ -65,8 +68,140 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	return new ProviderError({ kind: 'other', message: `${response.status} ${response.statusText}` });
 }
 
-function networkError(): ProviderError {
+/** The server never answered (Issue #637): same body as ever, marked `networkFailure`. */
+function networkError(failure: NetworkFailure = 'network'): ProviderError {
+	return new ProviderError(
+		{ kind: 'other', message: NETWORK_ERROR_MESSAGE },
+		{ networkFailure: failure }
+	);
+}
+
+/**
+ * The caller aborted the request itself (`resolve({ signal })`): the same
+ * body a failed `resolve()` always had, but NOT marked as a network failure
+ * - nothing was learned about the connection.
+ */
+function callerAbortedError(): ProviderError {
 	return new ProviderError({ kind: 'other', message: NETWORK_ERROR_MESSAGE });
+}
+
+/** Default deadline of a `createHttpDataProvider` request (Issue #637). */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+
+/**
+ * What one request learned about the connection (Issue #637), reported to
+ * `onRequestResult`. `ok: true` - the server answered, whatever the status
+ * (a `4xx`/`5xx` is still an answer). `ok: false` - it never did
+ * (`failure` says why). `startedAt` is `Date.now()` when the request was
+ * sent, so a listener can discard an answer older than what it already
+ * knows (`createConnectionMonitor` does). A request the caller aborted is
+ * not reported.
+ */
+export type HttpRequestResult =
+	{ ok: true; startedAt: number } | { ok: false; failure: NetworkFailure; startedAt: number };
+
+interface GuardOptions {
+	/** `<= 0`, `NaN` or `Infinity` disables the deadline. */
+	timeoutMs: number;
+	/** The caller's own signal: aborting it aborts the request too, unmarked and unreported. */
+	signal?: AbortSignal;
+	onResult?: (result: HttpRequestResult) => void;
+}
+
+function isAbortError(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		(error as { name?: unknown }).name === 'AbortError'
+	);
+}
+
+function report(onResult: GuardOptions['onResult'], result: HttpRequestResult): void {
+	if (!onResult) return;
+	try {
+		onResult(result);
+	} catch {
+		// A listener must not turn the request's own outcome into its error.
+	}
+}
+
+/**
+ * `fetchFn(url, init)` followed by `read(response)` under one deadline
+ * (Issue #637). The deadline covers the body too: a server that sends
+ * headers and then stalls is as unreachable as one that never answers.
+ *
+ * Abort precedence: whichever of the deadline and the caller's signal fired
+ * FIRST decides - `'timeout'` becomes `networkError('timeout')` (reported),
+ * the caller's becomes `callerAbortedError()` (not reported). Combining the
+ * two does not use `AbortSignal.any` (missing from older WebViews/Safari):
+ * the caller's signal is forwarded to an own `AbortController` by a
+ * listener that is removed when the request settles. With the deadline off,
+ * `init` is passed through unchanged (its own `signal`, if any, included).
+ *
+ * `read` errors pass through unchanged and count as "the server answered",
+ * except an `AbortError` raised by this request's own abort while reading.
+ */
+async function guardedFetch<T>(
+	fetchFn: typeof fetch,
+	url: string,
+	init: globalThis.RequestInit,
+	guard: GuardOptions,
+	read: (response: Response) => Promise<T>
+): Promise<T> {
+	const startedAt = Date.now();
+	const external = guard.signal;
+	let abortedBy: 'timeout' | 'caller' | null = null;
+	let effectiveInit = init;
+	let cleanup = (): void => {};
+	if (guard.timeoutMs > 0 && Number.isFinite(guard.timeoutMs)) {
+		const controller = new AbortController();
+		const abort = (by: 'timeout' | 'caller'): void => {
+			if (abortedBy === null) abortedBy = by;
+			controller.abort();
+		};
+		const timer = setTimeout(() => abort('timeout'), guard.timeoutMs);
+		const onExternalAbort = (): void => abort('caller');
+		if (external?.aborted) abort('caller');
+		else external?.addEventListener('abort', onExternalAbort, { once: true });
+		effectiveInit = { ...init, signal: controller.signal };
+		cleanup = () => {
+			clearTimeout(timer);
+			external?.removeEventListener('abort', onExternalAbort);
+		};
+	}
+	const abortCause = (): 'timeout' | 'caller' | null =>
+		abortedBy ?? (external?.aborted ? 'caller' : null);
+
+	try {
+		let response: Response;
+		try {
+			response = await fetchFn(url, effectiveInit);
+		} catch {
+			const cause = abortCause();
+			if (cause === 'caller') throw callerAbortedError();
+			const failure: NetworkFailure = cause === 'timeout' ? 'timeout' : 'network';
+			report(guard.onResult, { ok: false, failure, startedAt });
+			throw networkError(failure);
+		}
+		try {
+			const value = await read(response);
+			report(guard.onResult, { ok: true, startedAt });
+			return value;
+		} catch (error) {
+			// Only the abort itself is re-labelled: anything else `read` threw
+			// (a `StaleAnswerError`, a malformed JSON body) is its own answer.
+			const cause = isAbortError(error) ? abortCause() : null;
+			if (cause === 'caller') throw callerAbortedError();
+			if (cause === 'timeout') {
+				report(guard.onResult, { ok: false, failure: 'timeout', startedAt });
+				throw networkError('timeout');
+			}
+			report(guard.onResult, { ok: true, startedAt });
+			throw error;
+		}
+	} finally {
+		cleanup();
+	}
 }
 
 /**
@@ -97,6 +232,19 @@ export interface HttpDataProviderOptions {
 	/** Shares the bearer token with whichever `AuthProvider` logged in (typically `createHttpAuthProvider`'s `getToken`). */
 	getToken: () => string | null;
 	fetchFn?: typeof fetch;
+	/**
+	 * Deadline of each request, body included (Issue #637). Default
+	 * `DEFAULT_REQUEST_TIMEOUT_MS` (20 s); `0` disables it. On expiry the
+	 * request rejects with a `ProviderError` whose `networkFailure` is
+	 * `'timeout'` (`isNetworkError` is true).
+	 */
+	timeoutMs?: number;
+	/**
+	 * Hears what each request learned about the connection (Issue #637) -
+	 * e.g. `createConnectionMonitor().reportRequest`. The provider knows
+	 * nothing about who listens. Must not throw (a throw is swallowed).
+	 */
+	onRequestResult?: (result: HttpRequestResult) => void;
 }
 
 interface RequestInit {
@@ -110,22 +258,25 @@ interface RequestInit {
 export function createHttpDataProvider(options: HttpDataProviderOptions): DataProvider {
 	const baseUrl = options.baseUrl ?? '';
 	const fetchFn = options.fetchFn ?? fetch;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
 	async function request<T>(path: string, init: RequestInit): Promise<T> {
 		const hasBody = init.body !== undefined;
-		let response: Response;
-		try {
-			response = await fetchFn(`${baseUrl}${path}`, {
+		return guardedFetch(
+			fetchFn,
+			`${baseUrl}${path}`,
+			{
 				method: init.method,
 				headers: headersFor(options.getToken(), hasBody),
 				body: hasBody ? JSON.stringify(init.body) : undefined
-			});
-		} catch {
-			throw networkError();
-		}
-		if (!response.ok) throw await errorFromResponse(response);
-		if (init.expectNoContent) return undefined as T;
-		return (await response.json()) as T;
+			},
+			{ timeoutMs, onResult: options.onRequestResult },
+			async (response) => {
+				if (!response.ok) throw await errorFromResponse(response);
+				if (init.expectNoContent) return undefined as T;
+				return (await response.json()) as T;
+			}
+		);
 	}
 
 	return {
@@ -156,6 +307,22 @@ export interface HttpAuthProviderOptions {
 	fetchFn?: typeof fetch;
 	/** sessionStorage key the bearer token is kept under. Default `'banto.auth.token'`. */
 	storageKey?: string;
+	/**
+	 * Deadline of `resolve()`'s request (Issue #637). Default `0` (off): the
+	 * `SessionController` already gives every probe its own deadline and
+	 * aborts it through `resolve({ signal })`. A positive value combines
+	 * with that signal (whichever fires first decides, as in
+	 * `HttpDataProviderOptions.timeoutMs`).
+	 */
+	resolveTimeoutMs?: number;
+	/**
+	 * Hears what `resolve()`'s request learned about the connection (Issue
+	 * #637), as `HttpDataProviderOptions.onRequestResult`. Only `resolve()`
+	 * reports: it is the session check the controller repeats while the
+	 * server cannot answer, and its `401` is an answer too. A `resolve()`
+	 * without a stored token sends nothing and reports nothing.
+	 */
+	onRequestResult?: (result: HttpRequestResult) => void;
 }
 
 const DEFAULT_STORAGE_KEY = 'banto.auth.token';
@@ -380,44 +547,52 @@ export function createHttpAuthProvider(
 			const checked = revisionOf(counter);
 			const token = getToken();
 			if (!token) return { status: 'none', checked, current: checked };
-			let response: Response;
-			try {
-				response = await fetchFn(`${baseUrl}/api/auth/identity`, {
+			return guardedFetch(
+				fetchFn,
+				`${baseUrl}/api/auth/identity`,
+				{
 					method: 'GET',
 					headers: headersFor(token, false),
 					signal: resolveOptions?.signal
-				});
-			} catch {
-				throw networkError();
-			}
-			// Freshness audit of #266 (P3-3, S-105): another tab may have
-			// replaced the shared token while this request was in flight, its
-			// `storage` event not delivered yet (so the revision has not moved).
-			// The answer is about the OLD token: not an answer about what is
-			// stored now - reject it as stale (the Tauri `stale` twin; the
-			// controller asks again without touching `verification`).
-			if (getToken() !== token) throw new StaleAnswerError();
-			const none = (): ResolvedAuth => ({
-				status: 'none',
-				checked,
-				current: clearTokenIfCurrent(token) ? revisionOf(counter) : checked
-			});
-			if (response.status === 401) return none();
-			if (!response.ok) throw await errorFromResponse(response);
-			let body: unknown;
-			try {
-				body = await response.json();
-			} catch {
-				body = undefined;
-			}
-			if (body === null) return none();
-			if (!isIdentity(body)) {
-				throw new ProviderError({
-					kind: 'other',
-					message: `${response.status} ${response.statusText}`
-				});
-			}
-			return { status: 'active', checked, current: checked, identity: body };
+				},
+				{
+					timeoutMs: options.resolveTimeoutMs ?? 0,
+					signal: resolveOptions?.signal,
+					onResult: options.onRequestResult
+				},
+				async (response): Promise<ResolvedAuth> => {
+					// Freshness audit of #266 (P3-3, S-105): another tab may have
+					// replaced the shared token while this request was in flight, its
+					// `storage` event not delivered yet (so the revision has not moved).
+					// The answer is about the OLD token: not an answer about what is
+					// stored now - reject it as stale (the Tauri `stale` twin; the
+					// controller asks again without touching `verification`).
+					if (getToken() !== token) throw new StaleAnswerError();
+					const none = (): ResolvedAuth => ({
+						status: 'none',
+						checked,
+						current: clearTokenIfCurrent(token) ? revisionOf(counter) : checked
+					});
+					if (response.status === 401) return none();
+					if (!response.ok) throw await errorFromResponse(response);
+					let body: unknown;
+					try {
+						body = await response.json();
+					} catch (error) {
+						// An abort is not a malformed body: `guardedFetch` classifies it.
+						if (isAbortError(error)) throw error;
+						body = undefined;
+					}
+					if (body === null) return none();
+					if (!isIdentity(body)) {
+						throw new ProviderError({
+							kind: 'other',
+							message: `${response.status} ${response.statusText}`
+						});
+					}
+					return { status: 'active', checked, current: checked, identity: body };
+				}
+			);
 		},
 
 		credentialRevision(): CredentialRevision {

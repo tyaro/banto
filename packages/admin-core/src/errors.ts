@@ -59,19 +59,44 @@ function describe(body: ErrorBody): string {
 	}
 }
 
+/**
+ * Why a request never got an answer from the server (Issue #637): `'network'`
+ * - `fetch` rejected (unreachable, connection refused/reset, DNS);
+ * `'timeout'` - the request's own deadline expired first. Carried on a
+ * `ProviderError` as `networkFailure`, never as an `ErrorBody` kind: a new
+ * kind would break every consumer's exhaustive `switch (body.kind)`. The
+ * body stays `{ kind: 'other', message }` as before.
+ */
+export type NetworkFailure = 'network' | 'timeout';
+
 /** Thrown by DataProvider/AuthProvider implementations; carries the wire-shaped `ErrorBody`. */
 export class ProviderError extends Error {
 	readonly body: ErrorBody;
+	/** Set only when the server never answered (see `NetworkFailure`, `isNetworkError`). */
+	readonly networkFailure?: NetworkFailure;
 
-	constructor(body: ErrorBody) {
+	constructor(body: ErrorBody, options?: { networkFailure?: NetworkFailure }) {
 		super(describe(body));
 		this.name = 'ProviderError';
 		this.body = body;
+		if (options?.networkFailure) this.networkFailure = options.networkFailure;
 	}
 }
 
 export function isProviderError(error: unknown): error is ProviderError {
 	return error instanceof ProviderError;
+}
+
+/**
+ * Did this request fail because the server could not be reached (a `fetch`
+ * rejection or a timeout, Issue #637)? `false` for every answer the server
+ * gave - a `4xx`/`5xx` is the server speaking - and for a request the caller
+ * aborted itself. Read `error.networkFailure` for which of the two it was.
+ */
+export function isNetworkError(
+	error: unknown
+): error is ProviderError & { readonly networkFailure: NetworkFailure } {
+	return error instanceof ProviderError && error.networkFailure !== undefined;
 }
 
 export function notFound(resource: string, id: string | number): ProviderError {

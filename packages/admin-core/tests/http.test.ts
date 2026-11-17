@@ -63,7 +63,9 @@ describe('createHttpDataProvider', () => {
 				'Content-Type': 'application/json',
 				Authorization: 'Bearer tok'
 			},
-			body: JSON.stringify(params)
+			body: JSON.stringify(params),
+			// Issue #637: every data request carries its deadline signal.
+			signal: expect.any(AbortSignal)
 		});
 		expect(result).toEqual({ rows: [{ id: 1, name: 'a', price: 10 }], totalCount: 1 });
 	});
@@ -77,7 +79,9 @@ describe('createHttpDataProvider', () => {
 		expect(fetchFn).toHaveBeenCalledWith('http://h/api/items/1', {
 			method: 'GET',
 			headers: { 'X-Banto-Client': 'banto' },
-			body: undefined
+			body: undefined,
+			// Issue #637: every data request carries its deadline signal.
+			signal: expect.any(AbortSignal)
 		});
 	});
 
@@ -102,7 +106,9 @@ describe('createHttpDataProvider', () => {
 				'Content-Type': 'application/json',
 				Authorization: 'Bearer tok'
 			},
-			body: JSON.stringify({ name: 'b', price: 20 })
+			body: JSON.stringify({ name: 'b', price: 20 }),
+			// Issue #637: every data request carries its deadline signal.
+			signal: expect.any(AbortSignal)
 		});
 	});
 
@@ -119,7 +125,9 @@ describe('createHttpDataProvider', () => {
 				'Content-Type': 'application/json',
 				Authorization: 'Bearer tok'
 			},
-			body: JSON.stringify({ price: 30 })
+			body: JSON.stringify({ price: 30 }),
+			// Issue #637: every data request carries its deadline signal.
+			signal: expect.any(AbortSignal)
 		});
 	});
 
@@ -131,7 +139,9 @@ describe('createHttpDataProvider', () => {
 		expect(fetchFn).toHaveBeenCalledWith('/api/items/1', {
 			method: 'DELETE',
 			headers: { 'X-Banto-Client': 'banto', Authorization: 'Bearer tok' },
-			body: undefined
+			body: undefined,
+			// Issue #637: every data request carries its deadline signal.
+			signal: expect.any(AbortSignal)
 		});
 	});
 
