@@ -232,15 +232,15 @@
 	}
 
 	function onRowClick(event: MouseEvent, index: number): void {
-		if (isControl(event.target)) return;
+		if (isControl(event.target) || flat[index]?.node.disabled) return;
 		selectAt(index, event);
 		tree.focusedId = flat[index]?.node.id ?? tree.focusedId;
 		focusNodeEl(flat[index]?.node.id ?? null);
 	}
 
 	function onRowDblClick(event: MouseEvent, node: TreeNode<TData>): void {
-		if (isControl(event.target)) return;
-		if (editable && !node.disabled) beginRename(node);
+		if (isControl(event.target) || node.disabled) return;
+		if (editable) beginRename(node);
 		else if (!nodeHasChildren(node)) onActivate?.(node);
 		else toggleExpand(node);
 	}
@@ -257,7 +257,11 @@
 		// Right-click inside the rename input keeps the native text menu.
 		if (editing?.id === node.id && event.target instanceof HTMLInputElement) return;
 		event.preventDefault();
-		focusNodeEl(node.id); // focus follows the click; selection is NOT moved
+		// Focus follows the click (selection is NOT moved). Done synchronously,
+		// BEFORE the callback, so a host that moves focus into its menu inside
+		// the callback is not pulled back to the row afterwards.
+		tree.focusedId = node.id;
+		elements.get(node.id)?.focus();
 		onContextMenu(node, { x: event.clientX, y: event.clientY });
 	}
 
@@ -432,6 +436,11 @@
 		const y = event.clientY - rect.top;
 		const third = rect.height / 3;
 		const targetNode = findNode(roots, targetId);
+		if (targetNode?.disabled) {
+			// disabled rows used to be skipped by pointer-events: none
+			dropTarget = null;
+			return;
+		}
 		let position: DropPosition;
 		if (y < third) position = 'before';
 		else if (y > rect.height - third) position = 'after';
@@ -521,6 +530,7 @@
 			aria-expanded={f.hasChildren ? f.expanded : undefined}
 			aria-selected={selectionMode !== 'none' ? tree.isSelected(node.id) : undefined}
 			aria-disabled={node.disabled ? 'true' : undefined}
+			aria-label={label ? node.label : undefined}
 			tabindex={(tree.focusedId ?? flat[0]?.node.id) === node.id ? 0 : -1}
 			style:grid-template-columns={columns ? templateColumns : undefined}
 			use:register={node.id}
@@ -539,6 +549,7 @@
 						aria-label={f.expanded ? t.collapse(node.label) : t.expand(node.label)}
 						onclick={(e) => {
 							e.stopPropagation();
+							if (node.disabled) return;
 							toggleExpand(node);
 						}}
 					>
@@ -644,7 +655,7 @@
 	}
 	.tree-row.disabled {
 		opacity: 0.5;
-		pointer-events: none;
+		cursor: not-allowed;
 	}
 	.tree-row.focused:focus-visible {
 		outline: none;

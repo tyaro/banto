@@ -27,6 +27,14 @@ describe('label snippet', () => {
 		expect(screen.getByRole('checkbox', { name: /Bravo/ })).toBeTruthy();
 	});
 
+	it('keeps the treeitem accessible name as node.label when the snippet adds a badge', () => {
+		const withBadge = createRawSnippet<[TreeNode, TreeLabelContext]>((node) => ({
+			render: () => `<span>${node().label}<i>(3)</i><svg aria-hidden="true"></svg></span>`
+		}));
+		render(BantoTree, { nodes: forest(), label: withBadge });
+		expect(screen.getByRole('treeitem', { name: 'Bravo' })).toBeTruthy();
+	});
+
 	it('falls back to node.label without a snippet', () => {
 		render(BantoTree, { nodes: forest() });
 		expect(screen.getByText('Alpha')).toBeTruthy();
@@ -99,6 +107,19 @@ describe('onContextMenu', () => {
 		expect(onContextMenu.mock.calls[0][1]).toEqual({ x: 5, y: 40 });
 	});
 
+	it('moves focus to the row before the callback so the host can take focus', async () => {
+		const target = document.createElement('button');
+		document.body.appendChild(target);
+		const onContextMenu = vi.fn(() => target.focus());
+		render(BantoTree, { nodes: forest(), onContextMenu });
+		const row = screen.getByText('Bravo').closest('[role="treeitem"]') as HTMLElement;
+		row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(target);
+		target.remove();
+	});
+
 	it('ignores plain F10', () => {
 		const onContextMenu = vi.fn();
 		render(BantoTree, { nodes: forest(), onContextMenu });
@@ -126,6 +147,38 @@ describe('onContextMenu', () => {
 			.getByRole('tree')
 			.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }));
 		expect(onContextMenu).not.toHaveBeenCalled();
+	});
+});
+
+describe('disabled rows', () => {
+	const disabledForest = (): TreeNode[] => [
+		{ id: 'd', label: 'Dis', disabled: true, children: [{ id: 'd1', label: 'Dis-1' }] }
+	];
+
+	it('notifies the mouse right-click', () => {
+		const onContextMenu = vi.fn();
+		render(BantoTree, { nodes: disabledForest(), onContextMenu });
+		const row = screen.getByText('Dis').closest('[role="treeitem"]') as HTMLElement;
+		row.dispatchEvent(
+			new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 3, clientY: 4 })
+		);
+		expect(onContextMenu).toHaveBeenCalledTimes(1);
+		expect(onContextMenu.mock.calls[0][0].id).toBe('d');
+	});
+
+	it('does not select, expand or activate on click / double-click / toggle', async () => {
+		const onSelectionChange = vi.fn();
+		const onActivate = vi.fn();
+		render(BantoTree, { nodes: disabledForest(), onSelectionChange, onActivate });
+		const row = screen.getByText('Dis').closest('[role="treeitem"]') as HTMLElement;
+		await fireEvent.click(row);
+		await fireEvent.dblClick(row);
+		await fireEvent.click(screen.getByRole('button', { name: /Dis/ }));
+		await tick();
+		expect(onSelectionChange).not.toHaveBeenCalled();
+		expect(onActivate).not.toHaveBeenCalled();
+		expect(row.getAttribute('aria-expanded')).toBe('false');
+		expect(screen.queryByText('Dis-1')).toBeNull();
 	});
 });
 
