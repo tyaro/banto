@@ -18,7 +18,7 @@
 	 * edited immutably; every mutation also fires a callback so a host can
 	 * persist it (and re-drive via a new `nodes` reference).
 	 */
-	import { tick } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import { computeCheckState, subtreeCheckToggle } from './core/checkbox';
 	import {
 		canDrop,
@@ -30,7 +30,14 @@
 		rangeIds,
 		setNodeChildren
 	} from './core/tree';
-	import type { CheckState, DropPosition, NodeId, TreeColumn, TreeNode } from './core/types';
+	import type {
+		CheckState,
+		DropPosition,
+		NodeId,
+		TreeColumn,
+		TreeLabelContext,
+		TreeNode
+	} from './core/types';
 	import { defaultTreeMessages, type TreeMessages } from './messages';
 	import { TreeState, type SelectionMode } from './tree-state.svelte';
 
@@ -67,6 +74,26 @@
 		onRename?: (id: NodeId, label: string) => void;
 		/** A leaf was activated (Enter / double-click on a non-editable leaf). */
 		onActivate?: (node: TreeNode<TData>) => void;
+		/**
+		 * Custom label content (e.g. a count / status badge). Replaces ONLY the
+		 * visible label text; the accessible names (toggle / checkbox / rename)
+		 * are always built from `node.label`, and an inline rename shows the input
+		 * instead. Also applies to the tree-grid's first column (the tree column).
+		 */
+		label?: Snippet<[TreeNode<TData>, TreeLabelContext]>;
+		/**
+		 * A node's context menu was requested: mouse right-click, the ContextMenu
+		 * key, or Shift+F10 (keyboard: `x`/`y` = the row's left / bottom edge).
+		 * When provided the browser's default menu is suppressed; when omitted it
+		 * is left alone. Does NOT change the selection (the focus moves to the row).
+		 */
+		onContextMenu?: (node: TreeNode<TData>, position: { x: number; y: number }) => void;
+		/**
+		 * Auto-expand root nodes: those in the first `nodes` and any root that
+		 * appears later. A root the user collapsed is not re-opened by a later
+		 * `nodes` swap (each root id is auto-expanded at most once). Default `false`.
+		 */
+		autoExpandNewRoots?: boolean;
 	}
 
 	let {
@@ -85,7 +112,10 @@
 		onCheckChange,
 		onMove,
 		onRename,
-		onActivate
+		onActivate,
+		label,
+		onContextMenu,
+		autoExpandNewRoots = false
 	}: Props = $props();
 
 	const t = $derived({ ...defaultTreeMessages, ...messages });
@@ -150,6 +180,19 @@
 		}
 	}
 
+	// Root ids already auto-expanded once (never re-opened after a user collapse).
+	// `$effect.pre` so the first render already shows them open (no flash).
+	const seenRootIds = new Set<NodeId>();
+	$effect.pre(() => {
+		if (!autoExpandNewRoots) return;
+		for (const root of nodes) {
+			if (seenRootIds.has(root.id)) continue;
+			seenRootIds.add(root.id);
+			tree.expand(root.id);
+			void ensureLoaded(root);
+		}
+	});
+
 	function toggleExpand(node: TreeNode<TData>): void {
 		if (tree.isExpanded(node.id)) {
 			tree.collapse(node.id);
@@ -206,6 +249,16 @@
 		if (node.disabled) return;
 		tree.applyCheck(subtreeCheckToggle(node, tree.checkedIds));
 		emitCheck();
+	}
+
+	// --- context menu (mouse / ContextMenu key / Shift+F10) ---
+	function onRowContextMenu(event: MouseEvent, node: TreeNode<TData>): void {
+		if (!onContextMenu) return; // pass through: the browser's own menu
+		// Right-click inside the rename input keeps the native text menu.
+		if (editing?.id === node.id && event.target instanceof HTMLInputElement) return;
+		event.preventDefault();
+		focusNodeEl(node.id); // focus follows the click; selection is NOT moved
+		onContextMenu(node, { x: event.clientX, y: event.clientY });
 	}
 
 	// --- inline rename ---
@@ -312,6 +365,15 @@
 					}
 				} else selectAt(index, event);
 				break;
+			case 'ContextMenu':
+			case 'F10': {
+				if (event.key === 'F10' && !event.shiftKey) break;
+				if (!onContextMenu) break;
+				event.preventDefault();
+				const rect = elements.get(f.node.id)?.getBoundingClientRect();
+				onContextMenu(f.node, { x: rect?.left ?? 0, y: rect?.bottom ?? 0 });
+				break;
+			}
 			case 'F2':
 				if (editable) {
 					event.preventDefault();
@@ -465,6 +527,7 @@
 			onclick={(e) => onRowClick(e, index)}
 			ondblclick={(e) => onRowDblClick(e, node)}
 			onpointerdown={(e) => onRowPointerDown(e, node)}
+			oncontextmenu={(e) => onRowContextMenu(e, node)}
 		>
 			<div class="primary" style:padding-left={`${f.depth * INDENT_PX}px`}>
 				{#if f.hasChildren}
@@ -511,7 +574,20 @@
 						use:autofocus
 					/>
 				{:else}
-					<span class="label">{node.label}</span>
+					<span class="label">
+						{#if label}
+							{@render label(node, {
+								selected: selectionMode !== 'none' && tree.isSelected(node.id),
+								focused: tree.focusedId === node.id,
+								expanded: f.expanded,
+								hasChildren: f.hasChildren,
+								depth: f.depth,
+								disabled: !!node.disabled
+							})}
+						{:else}
+							{node.label}
+						{/if}
+					</span>
 				{/if}
 
 				{#if tree.getLoadStatus(node.id) === 'loading'}

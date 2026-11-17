@@ -21,6 +21,25 @@ UI で、展開/折りたたみ・単一/複数選択・三状態チェックボ
 <BantoTree {nodes} expanded={['src']} onSelectionChange={(ids) => console.log('selected', ids)} />
 ```
 
+### ラベルのバッジ・右クリック・ルートの自動展開（任意の追加 prop）
+
+```svelte
+{#snippet badge(node, ctx)}
+	{node.label} <span class="count">{node.children?.length ?? 0}</span>
+{/snippet}
+
+<BantoTree
+	{nodes}
+	label={badge}
+	autoExpandNewRoots
+	onContextMenu={(node, { x, y }) => openMenu(node, x, y)}
+/>
+```
+
+`label` は見た目だけを差し替える（アクセシブル名は `node.label` のまま、編集中は入力欄、
+`columns` 時は先頭列）。`onContextMenu` はマウス右クリック・ContextMenu キー・Shift+F10 で
+呼ばれ、指定時だけ既定メニューを抑止する（選択は動かさない）。
+
 複数選択 + 三状態チェックボックス・遅延読み込み・tree-grid・`TreeSelect`・
 ドラッグ/リネームの各形態は
 [docs/recipes/tree-svelte.md](../../docs/recipes/tree-svelte.md) を参照。

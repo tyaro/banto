@@ -14,7 +14,13 @@
 	 * `.svelte`). Not screenshotted (absent from e2e/visual DIAGONAL_PAGES), so
 	 * adding it only drifts the shared sidebar baselines, not a new page shot.
 	 */
-	import { BantoTree, TreeSelect, findNode, type TreeColumn } from '@banto/tree-svelte';
+	import {
+		BantoTree,
+		TreeSelect,
+		findNode,
+		type TreeColumn,
+		type TreeNode
+	} from '@banto/tree-svelte';
 	import * as m from '#lib/paraglide/messages.js';
 	import { PageHeader, SurfaceCard } from '@banto/ui';
 	import { treeMessages } from '#lib/banto/i18n.js';
@@ -61,7 +67,14 @@
 	const deptMultiLabels = $derived(
 		deptValues.map((id) => findNode(categoryTree, id)?.label ?? '').filter(Boolean)
 	);
+
+	let contextInfo = $state('');
 </script>
+
+{#snippet countLabel(node: TreeNode)}
+	{node.label}
+	{#if node.children?.length}<span class="count">{node.children.length}</span>{/if}
+{/snippet}
 
 <div class="page">
 	<PageHeader hideTitle title={m['nav.tree']()} description={m['tree.demo.intro']()} />
@@ -74,6 +87,22 @@
 			draggable
 			messages={treeMsg}
 		/>
+	</SurfaceCard>
+
+	<SurfaceCard title={m['tree.demo.extTitle']()} description={m['tree.demo.extHint']()}>
+		<BantoTree
+			nodes={explorerTree}
+			label={countLabel}
+			autoExpandNewRoots
+			messages={treeMsg}
+			onContextMenu={(node, { x, y }) =>
+				(contextInfo = m['tree.demo.contextAt']({
+					label: node.label,
+					x: Math.round(x),
+					y: Math.round(y)
+				}))}
+		/>
+		<p class="selection">{contextInfo}</p>
 	</SurfaceCard>
 
 	<SurfaceCard title={m['tree.demo.multiTitle']()} description={m['tree.demo.multiHint']()}>
@@ -141,6 +170,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--banto-space-4);
+	}
+
+	.count {
+		margin-inline-start: var(--banto-space-2);
+		padding: 0 var(--banto-space-2);
+		border-radius: var(--banto-radius-full, 999px);
+		background: var(--banto-surface-muted, var(--banto-border));
+		font-size: var(--banto-font-size-sm);
+		color: var(--banto-text-muted);
 	}
 
 	.selection {
