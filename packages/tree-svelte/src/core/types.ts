@@ -64,6 +64,12 @@ export interface TreeLabelContext {
 	disabled: boolean;
 }
 
+/** Context handed to the `emptyChildren` snippet of `BantoTree`. */
+export interface TreeEmptyContext {
+	/** 0-based depth of the empty line itself (the branch's depth + 1). */
+	depth: number;
+}
+
 /** Tri-state check value for a node's checkbox. */
 export type CheckState = 'checked' | 'unchecked' | 'indeterminate';
 

@@ -44,6 +44,30 @@ UI で、展開/折りたたみ・単一/複数選択・三状態チェックボ
 だけで、強調は常に `selection` に従う（ページが URL に選択を持つ、確認で拒否したら元に戻す、など）。
 省略時は従来どおり（`selected` は初期値）。
 
+`selectionFollowsFocus={false}`（単一選択のみ。既定 `true`）にすると、上下・Home・End などの移動キーは
+フォーカスだけを動かし `onSelectionChange` を呼ばない。Space・Enter・クリックで選ぶ（WAI-ARIA の
+「選択がフォーカスに付いてこない」形。狭い画面のドロワーを選択で閉じる、選択のたびに重い読み込みが走る、
+といった画面向け）。Enter は選んだうえで従来の動作（枝の開閉・葉の `onActivate`）も行う。
+
+`emptyChildren` スニペット（`(node, { depth })`）を渡すと、`children` が空配列の枝を開いたときに案内行
+（「項目がありません」など）を出す。渡したときだけ、その枝に開閉の三角が付く。案内行は上下キーの
+フォーカスが止まらず、選択・チェックの対象にならず、`aria-disabled` の `treeitem` として読み上げられる。
+遅延読み込みの枝は、読み込みが終わって 0 件だったときだけ「空」とみなす（未読み込み・読み込み中・失敗は別）。
+
+#### 外から当ててよい属性（公開の約束）
+
+各行（`role="treeitem"`）には `data-depth`（0 始まり。`aria-level` - 1 と同じ）が付く。階層ごとに
+見た目を変えるときは、行クラスの上書きではなくこの属性を CSS で当てる:
+
+```css
+[role='tree'] [data-depth='0'] {
+	background: var(--banto-surface-subtle);
+}
+```
+
+`emptyChildren` の案内行にも `data-depth`（その枝の深さ + 1）と `data-empty-children`（枝の id）が付く。
+内部のクラス名（`.tree-row` など）は公開の約束ではない。
+
 複数選択 + 三状態チェックボックス・遅延読み込み・tree-grid・`TreeSelect`・
 ドラッグ/リネームの各形態は
 [docs/recipes/tree-svelte.md](../../docs/recipes/tree-svelte.md) を参照。

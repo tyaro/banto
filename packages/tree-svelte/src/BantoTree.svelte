@@ -33,8 +33,10 @@
 	import type {
 		CheckState,
 		DropPosition,
+		FlatNode,
 		NodeId,
 		TreeColumn,
+		TreeEmptyContext,
 		TreeLabelContext,
 		TreeNode
 	} from './core/types';
@@ -104,6 +106,24 @@
 		 * `nodes` swap (each root id is auto-expanded at most once). Default `false`.
 		 */
 		autoExpandNewRoots?: boolean;
+		/**
+		 * `selectionMode: 'single'` only. `true` (default): moving the focus with the keys (arrows,
+		 * Home, End) also selects the row and calls `onSelectionChange` (the long-standing behaviour).
+		 * `false`: those keys move only the focus; a row is picked with Space, Enter or a click
+		 * (WAI-ARIA tree "selection does not follow focus"). Enter in this mode selects the row and
+		 * then does what it always did (toggle a branch / `onActivate` a leaf). `'multi'` and
+		 * `'none'` are unaffected.
+		 */
+		selectionFollowsFocus?: boolean;
+		/**
+		 * Shown as one extra line under an expanded branch whose `children` is an empty array
+		 * (not `undefined`; a lazy branch that is unloaded / loading / failed is not "empty", a
+		 * lazy branch that loaded zero children is). Passing it also gives such a branch a
+		 * disclosure toggle (without it, an empty branch looks and behaves as a leaf). The line is
+		 * not a node: arrow keys skip it, it is never selected / checked, and it is exposed to
+		 * assistive tech as a disabled `treeitem` one level below the branch.
+		 */
+		emptyChildren?: Snippet<[TreeNode<TData>, TreeEmptyContext]>;
 	}
 
 	let {
@@ -126,7 +146,9 @@
 		onActivate,
 		label,
 		onContextMenu,
-		autoExpandNewRoots = false
+		autoExpandNewRoots = false,
+		selectionFollowsFocus = true,
+		emptyChildren
 	}: Props = $props();
 
 	const t = $derived({ ...defaultTreeMessages, ...messages });
@@ -203,6 +225,23 @@
 			void ensureLoaded(root);
 		}
 	});
+
+	/**
+	 * A branch with an empty `children` array that the host wants an "empty" line for. A lazy
+	 * branch is only empty once its load finished (idle / loading / error are not empty).
+	 */
+	function isEmptyBranch(node: TreeNode<TData>): boolean {
+		if (!emptyChildren || node.children === undefined || node.children.length > 0) return false;
+		if (!node.hasChildren) return true;
+		return tree.getLoadStatus(node.id) === 'loaded';
+	}
+	/** Shows a disclosure toggle: has children, or is an empty branch with an `emptyChildren` line. */
+	function expandable(f: FlatNode<TData>): boolean {
+		return f.hasChildren || isEmptyBranch(f.node);
+	}
+	function isOpen(f: FlatNode<TData>): boolean {
+		return expandable(f) && tree.isExpanded(f.node.id);
+	}
 
 	function toggleExpand(node: TreeNode<TData>): void {
 		if (tree.isExpanded(node.id)) {
@@ -308,7 +347,7 @@
 	function onRowDblClick(event: MouseEvent, node: TreeNode<TData>): void {
 		if (isControl(event.target) || node.disabled) return;
 		if (editable) beginRename(node);
-		else if (!nodeHasChildren(node)) onActivate?.(node);
+		else if (!nodeHasChildren(node) && !isEmptyBranch(node)) onActivate?.(node);
 		else toggleExpand(node);
 	}
 
@@ -397,7 +436,7 @@
 			tree.selectRange(rangeIds(flat, tree.anchorId, id));
 			tree.focusedId = id;
 			emitSelection();
-		} else if (selectionMode === 'single' && !target.node.disabled) {
+		} else if (selectionMode === 'single' && selectionFollowsFocus && !target.node.disabled) {
 			tree.selectOnly(id);
 			emitSelection();
 		} else {
@@ -427,12 +466,12 @@
 				break;
 			case 'ArrowRight':
 				event.preventDefault();
-				if (f.hasChildren && !f.expanded) toggleExpand(f.node);
+				if (expandable(f) && !isOpen(f)) toggleExpand(f.node);
 				else if (f.expanded) moveFocus(index + 1, false);
 				break;
 			case 'ArrowLeft':
 				event.preventDefault();
-				if (f.expanded) tree.collapse(f.node.id);
+				if (isOpen(f)) tree.collapse(f.node.id);
 				else if (f.parentId !== null) focusNodeEl(f.parentId);
 				break;
 			case 'Home':
@@ -445,7 +484,8 @@
 				break;
 			case 'Enter':
 				event.preventDefault();
-				if (f.hasChildren) toggleExpand(f.node);
+				if (selectionMode === 'single' && !selectionFollowsFocus) selectAt(index, event);
+				if (expandable(f)) toggleExpand(f.node);
 				else onActivate?.(f.node);
 				break;
 			case ' ':
@@ -614,9 +654,10 @@
 			role="treeitem"
 			data-node-id={node.id}
 			aria-level={f.depth + 1}
+			data-depth={f.depth}
 			aria-setsize={f.setSize}
 			aria-posinset={f.posInSet}
-			aria-expanded={f.hasChildren ? f.expanded : undefined}
+			aria-expanded={expandable(f) ? isOpen(f) : undefined}
 			aria-selected={selectionMode !== 'none' ? tree.isSelected(node.id) : undefined}
 			aria-disabled={node.disabled ? 'true' : undefined}
 			aria-label={label ? node.label : undefined}
@@ -629,20 +670,20 @@
 			oncontextmenu={(e) => onRowContextMenu(e, node)}
 		>
 			<div class="primary" style:padding-left={`${f.depth * INDENT_PX}px`}>
-				{#if f.hasChildren}
+				{#if expandable(f)}
 					<button
 						type="button"
 						class="toggle"
 						data-tree-control
 						tabindex="-1"
-						aria-label={f.expanded ? t.collapse(node.label) : t.expand(node.label)}
+						aria-label={isOpen(f) ? t.collapse(node.label) : t.expand(node.label)}
 						onclick={(e) => {
 							e.stopPropagation();
 							if (node.disabled) return;
 							toggleExpand(node);
 						}}
 					>
-						<span class="chevron" class:open={f.expanded} aria-hidden="true">▸</span>
+						<span class="chevron" class:open={isOpen(f)} aria-hidden="true">▸</span>
 					</button>
 				{:else}
 					<span class="toggle-spacer" aria-hidden="true"></span>
@@ -703,6 +744,28 @@
 				{/each}
 			{/if}
 		</div>
+		{#if emptyChildren && isOpen(f) && isEmptyBranch(node)}
+			<!-- Not a node: not in `flat` (so the arrow keys skip it), no tabindex stop, no
+			     aria-selected. A disabled treeitem one level down is the only role a tree allows here. -->
+			<!-- svelte-ignore a11y_role_has_required_aria_props (aria-selected would claim it is selectable) -->
+			<div
+				class="tree-row empty-children"
+				role="treeitem"
+				aria-disabled="true"
+				aria-level={f.depth + 2}
+				aria-setsize="1"
+				aria-posinset="1"
+				data-depth={f.depth + 1}
+				data-empty-children={node.id}
+				tabindex="-1"
+				style:grid-template-columns={columns ? templateColumns : undefined}
+			>
+				<div class="primary" style:padding-left={`${(f.depth + 1) * INDENT_PX}px`}>
+					<span class="toggle-spacer" aria-hidden="true"></span>
+					<span class="label">{@render emptyChildren(node, { depth: f.depth + 1 })}</span>
+				</div>
+			</div>
+		{/if}
 	{:else}
 		<div class="empty">{t.empty()}</div>
 	{/each}
@@ -888,6 +951,13 @@
 	}
 	.grid-header-cell.name {
 		padding-inline-start: var(--banto-space-2);
+	}
+
+	.tree-row.empty-children {
+		color: var(--banto-text-muted);
+	}
+	.tree-row.empty-children:hover {
+		background: transparent;
 	}
 
 	.empty {
