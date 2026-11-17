@@ -56,7 +56,6 @@
 <script lang="ts">
 	import { tick, untrack, type Snippet } from 'svelte';
 	import {
-		ColumnsMenu,
 		FilterChips,
 		GridState,
 		csvFilename,
@@ -272,6 +271,12 @@
 	const clientGridState = new GridState<ResourceRow>(clientColumns);
 	// svelte-ignore state_referenced_locally
 	const serverGridState = new GridState<ResourceRow>(columns);
+	/** The column menu follows the active mode's GridState (separate column sets). */
+	const columnsState = $derived(mode === 'client' ? clientGridState : serverGridState);
+	/** The one visible column left stays checked and disabled (setColumnHidden refuses to hide it). */
+	const lockedColumnId = $derived(
+		columnsState.orderedColumns.length === 1 ? columnsState.orderedColumns[0]?.id : undefined
+	);
 
 	// Issue #215: restore whatever sort/filters/groupBy this session last
 	// left each mode with, BEFORE either grid's first render (plain
@@ -1264,10 +1269,8 @@
 				</Menu>
 			{/if}
 			<!-- #555 (1): "New" is the only action left in view. Everything else is
-			     in two menus: "View" (how the list looks) and "…" (what to do with
-			     its data). The column manager stays a button next to "View": a
-			     Menu item closes the menu on every pick, and a menu item has no
-			     checkbox role, so a multi-toggle list does not fit one. -->
+			     in menus: "View" (how the list looks), "Columns" (which columns show)
+			     and "…" (what to do with the data). -->
 			{#if hasViewMenu}
 				<Menu label={m['resource.viewMenu']()} placement="bottom-start">
 					{#snippet trigger(props)}
@@ -1314,16 +1317,37 @@
 					{@render viewMenu?.()}
 				</Menu>
 			{/if}
-			<!-- Column manager (spec §4.4, issue #168): takes the SAME GridState
+			<!-- Column manager (spec §4.4, issue #168): toggles the SAME GridState
 			     the active grid was handed, so hiding a column here immediately
 			     drops it from that grid. Deliberately per-mode - the client and
 			     server grids own separate GridStates (and separate column sets),
 			     so one shared menu would show the wrong list for whichever mode
-			     is not active. -->
-			<ColumnsMenu
-				state={mode === 'client' ? clientGridState : serverGridState}
-				messages={gridMessages()}
-			/>
+			     is not active. A checkbox-kind MenuItem stays open on pick, so
+			     several columns can be toggled in one go. -->
+			<Menu label={m['grid.columnsMenuTitle']()} placement="bottom-start">
+				{#snippet trigger(props)}
+					<button {...props} type="button" class="banto-btn banto-btn--ghost columns-trigger">
+						{m['grid.columnsMenuButton']()}
+						<span class="columns-count"
+							>{m['grid.columnsMenuCount']({
+								visible: columnsState.orderedColumns.length,
+								total: columnsState.allColumns.length
+							})}</span
+						>
+					</button>
+				{/snippet}
+				{#each columnsState.allColumns as column (column.id)}
+					{@const locked = column.id === lockedColumnId}
+					<MenuItem
+						kind="checkbox"
+						label={column.header.trim() === '' ? column.id : column.header}
+						checked={!columnsState.isHidden(column.id)}
+						disabled={locked}
+						title={locked ? m['grid.columnsMenuLastColumn']() : undefined}
+						onSelect={() => columnsState.toggleColumnHidden(column.id)}
+					/>
+				{/each}
+			</Menu>
 			{#if hasMoreMenu}
 				<Menu label={m['resource.moreMenu']()} placement="bottom-end">
 					{#snippet trigger(props)}
@@ -1640,10 +1664,16 @@
 	   once the toolbar wraps under 768px, below. */
 	.views-trigger,
 	.view-trigger,
+	.columns-trigger,
 	.more-trigger {
 		height: var(--banto-control-height-sm);
 		padding: 0 var(--banto-space-3);
 		font-size: var(--banto-font-size-sm);
+	}
+
+	.columns-count {
+		color: var(--banto-text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* #555 (4): the "save the current view" dialog. */
