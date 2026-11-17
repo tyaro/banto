@@ -451,6 +451,39 @@ ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグル�
 </header>
 ```
 
+## ThreePaneLayout（#631）
+
+左（ツリーなど対象の選択）・中央（タブなどの本体）・右（選んだ行の詳細）の 3 ペインの枠。中身はすべて
+スニペットで受け、枠は中身に何も要求しない（context も型も渡さない。後で `@banto/dock-svelte` に同じ部品を
+並べられるように）。中央の上の帯に、左右の開閉ボタンと選択中の対象名（`title` か `titleContent`）を出す。
+
+- **広い幅**: 左右を帯のボタンで畳める（`leftCollapsed` / `rightCollapsed`、bindable）。境界は
+  `role="separator"`（`aria-valuenow/min/max`・`aria-controls`）で、ドラッグか ←→（`resizeStep`、既定 16px）・
+  Home（最小）・End（最大）で幅を変える。幅は `leftWidth` / `rightWidth`（px、bindable。保存はアプリの責務）。
+  中央が `centerMinWidth` を割るときは右から順に左右を最小まで縮めて見せる（bind した幅は変えないので、
+  広げれば戻る）。
+- **狭い幅**: **枠自身の幅**（ビューポートではない。ResizeObserver）が `narrowBreakpoint`（既定 900）以下の
+  とき、左右は中央に重なるドロワーになる（左は左端から、右は右端から、同時に 1 つ）。開くとフォーカスが中へ
+  移り、中央は `inert`。Esc・背景のクリック・アプリ（`leftDrawerOpen = false`、ツリーで選んだ後など）で閉じ、
+  フォーカスは開いたときの要素（なければ帯のボタン）へ戻る。広い幅へ戻るとドロワーの状態は閉じに戻る。
+  いまの判定は `bind:narrow` で読める。
+- 文言は `messages`（`threePaneLeft` / `threePaneRight` / `threePaneResizeLeft` / `threePaneResizeRight`）。
+
+```svelte
+<ThreePaneLayout
+	title={selected?.name}
+	bind:leftWidth
+	bind:leftDrawerOpen={treeOpen}
+	messages={{ threePaneLeft: () => 'ツリー', threePaneRight: () => '詳細' }}
+>
+	{#snippet left()}<MyTree onselect={(n) => ((selected = n), (treeOpen = false))} />{/snippet}
+	{#snippet right()}<RowDetail row={selectedRow} />{/snippet}
+	<Tabs {tabs} bind:value={tab} label="表示">…</Tabs>
+</ThreePaneLayout>
+```
+
+枠は `height: 100%` で親の高さに合わせる（親に高さを与える）。
+
 ## 使用例
 
 ```svelte
@@ -525,7 +558,7 @@ ADR-0018 §12）。上段は単独のリンク（素の `<a href>`）とグル�
 `UiIconComponent`）。`@lucide/svelte` の部品はそのまま渡せる。このパッケージは lucide に
 依存しない。**既定のアイコン**（Inbox・OctagonAlert・Circle・CircleCheck・TriangleAlert・
 CircleAlert・Info の 7 つと、`Modal`・`Drawer` の × に使う X、`DateInput` の Calendar・ChevronLeft・ChevronRight・
-ChevronsLeft・ChevronsRight、`TimeInput` の Clock）は lucide の SVG を `src/icons/` に同梱した
+ChevronsLeft・ChevronsRight、`TimeInput` の Clock、`ThreePaneLayout` の PanelLeft・PanelRight）は lucide の SVG を `src/icons/` に同梱した
 もので、アイコン集としては公開しない。同梱アイコンは ISC（一部は Feather 由来の MIT）で、表記は各ファイルの先頭と
 [src/icons/LICENSE](src/icons/LICENSE) にある。
 

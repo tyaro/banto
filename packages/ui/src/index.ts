@@ -42,6 +42,10 @@
  * (`headerNav.ts`: `fitCount`, the arrow-key tables; docs/design/
  * nav-menubar-plan.md - the app keeps the nav definition, routing, `active`,
  * RBAC, the text and the drawer fallback).
+ * #631 PR-1: ThreePaneLayout, the left / centre / right frame (fold, resize
+ * handles, drawers at or below its own 900px; `threePane.ts` holds the props
+ * and the pure width rules - the app keeps the pane contents, the target's
+ * name and where the widths are saved).
  * Components take text, icons, state and actions through props / snippets /
  * callbacks and import nothing but `svelte` (verify:architecture rule
  * `package-bare-imports`). Consumers
@@ -179,6 +183,16 @@ export { default as StatusBadge } from './StatusBadge.svelte';
 export { default as SurfaceCard } from './SurfaceCard.svelte';
 export type { SurfaceCardTone } from './SurfaceCard.svelte';
 export { default as Tabs } from './Tabs.svelte';
+export { default as ThreePaneLayout } from './ThreePaneLayout.svelte';
+export {
+	clampPaneWidth,
+	fitPaneWidths,
+	isNarrowWidth,
+	paneMaxWidth,
+	THREE_PANE_DEFAULTS,
+	type PaneFitInput,
+	type ThreePaneLayoutProps
+} from './threePane';
 export { default as ToastHost } from './ToastHost.svelte';
 export { default as Tooltip } from './Tooltip.svelte';
 export {

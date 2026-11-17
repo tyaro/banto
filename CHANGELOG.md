@@ -30,6 +30,7 @@
 - **charts**: 文字が大きいとき（touch 密度）に x 軸の末尾ラベルが右端で欠ける不具合を修正（#624）。`Histogram`・`GanttChart` は右余白を末尾の目盛りラベルの幅から決める（既定の 16px 以上、`margins.right` の指定は下回らない）。縦向き `BarChart`（積み上げ・グループ含む）のカテゴリラベルは、多いか文字が大きく重なるとき先頭と末尾を残して間引く（棒とグリッド線は全カテゴリのまま。純関数 `thinCategoryLabels`）。visual 基準画像（Linux）は再生成が要る
 
 - **theme**: コンパクト密度（`data-banto-density='compact'`）で余白トークン `--banto-space-3`〜`--banto-space-6` を 1 段下の値にした（#623 PR-1。D3 を案 a に変更。文字の段は変えない）。見た目の変更で公開 API は変わらない。`MenuItem` のチェック枠は余白トークンから `1rem` へ（標準密度では見た目不変）
+- **ui**: 3 ペインの枠 `ThreePaneLayout` を追加（#631 PR-1。**公開 API の追加（minor）**: `ThreePaneLayout`・型 `ThreePaneLayoutProps`・`PaneFitInput`・純関数 `clampPaneWidth` / `fitPaneWidths` / `paneMaxWidth` / `isNarrowWidth`・`THREE_PANE_DEFAULTS`、`UiMessages` のキー `threePaneLeft` / `threePaneRight` / `threePaneResizeLeft` / `threePaneResizeRight`）。左（対象の選択）・中央（帯に左右の開閉ボタンと対象名）・右（選んだ行の詳細）をスニペットで受け、広い幅では左右を畳め、境界（`role="separator"`）をドラッグか ←→・Home・End で幅を変える（幅は bindable、中央の最小幅を守って左右が縮む）。枠自身の幅が 900px 以下（`narrowBreakpoint`）では左右がドロワー（Esc・背景のクリックで閉じ、フォーカスは開いたボタンへ戻る）。ui-demo に見本を追加（ui-demo の visual 基準画像（Linux）は再生成が要る）
 - **ui**: `SurfaceCard` に `tone`（`primary` / `default` / `subtle`、既定は従来の見た目）を追加し、カードの面を 3 段に（トークン `--banto-card-*`、dashboard の KPI 行・主役チャート・標準カードへ適用）（#623 PR-2）
 
 ## [7.2.0] - 2026-11-17
