@@ -120,6 +120,30 @@ create/update/delete の監査 `detail.changes` は変更表用の予約キー�
 
 セッション管理の設計は [session-controller-design.md](../design/session-controller-design.md) §6.1。
 
+## 楽観ロック（任意、Issue #638）
+
+2 人が同じレコードを開いて保存したとき、後の保存が先の変更を黙って消さない
+ようにするには、items の版（`version`）の仕組みを真似る（手本は
+`apps/admin-template/core/src/items.rs` の `check_version`・`VERSION_BUMP`）。
+
+1. migration を新しい連番で足す（SQLite は `version INTEGER NOT NULL DEFAULT 1`、
+   PostgreSQL は `BIGINT`。手本は `0011_items_version.sql`）。行の型と全 SELECT・
+   RETURNING に `version` を足す。
+2. 入力の型に `#[serde(default)] version: Option<i64>` を足す。更新は今の
+   トランザクションの中で先に読み（SQLite は `BEGIN IMMEDIATE`、PostgreSQL は
+   `FOR UPDATE`）、`Some` で値が違えば `BantoError::Conflict { message, current }`
+   （`current` は今のレコード）を返す。同じか `None` なら書き、`version` を +1 する。
+   削除も `version` を受けるときは同じように先に読んで比べる。
+3. REST（更新は本文、削除は `?version=`）と Tauri（コマンドの任意の引数）の
+   両方で同じ判定にする（conventions §1）。衝突した操作は監査に残さない。
+4. 監査の差分（`*_update_detail`）の除外に `version` を足す。フォームの項目
+   （`schema`）には入れない（一覧・詳細に出さない）。
+5. フロントは `update` の `values` に読んだ `version` を入れ、削除は
+   `deleteOne(resource, id, { version })`。衝突は `ProviderError` の
+   `body.kind === 'conflict'`（`body.current` が相手の最新値）で分かる。
+
+`version` を送らなければ従来どおり上書きになる。
+
 ## 検証
 
 ```bash

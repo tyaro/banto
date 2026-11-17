@@ -28,6 +28,7 @@ fn status_for(err: &BantoError) -> StatusCode {
         BantoError::BadRequest(_) => StatusCode::BAD_REQUEST,
         BantoError::Unauthorized => StatusCode::UNAUTHORIZED,
         BantoError::Forbidden => StatusCode::FORBIDDEN,
+        BantoError::Conflict { .. } => StatusCode::CONFLICT,
         BantoError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
         BantoError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
@@ -73,6 +74,13 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(status_for(&BantoError::Forbidden), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_for(&BantoError::Conflict {
+                message: "changed".to_string(),
+                current: None,
+            }),
+            StatusCode::CONFLICT
+        );
         assert_eq!(
             status_for(&BantoError::Storage("boom".to_string())),
             StatusCode::INTERNAL_SERVER_ERROR

@@ -4,13 +4,30 @@
  */
 import type { ListParams, ListResult } from './types';
 
-/** Backend-agnostic CRUD abstraction. Implementations throw `ProviderError`. */
+/**
+ * Options of `DataProvider.deleteOne` (Issue #638). `version` is the
+ * optimistic-lock check: the record's `version` as the caller last read it.
+ * A different current version rejects with a `conflict` `ProviderError` and
+ * deletes nothing; left out, the delete overwrites as before. A resource
+ * without a `version` ignores it.
+ */
+export interface DeleteOneOptions {
+	version?: number;
+}
+
+/**
+ * Backend-agnostic CRUD abstraction. Implementations throw `ProviderError`.
+ *
+ * Optimistic locking (Issue #638) rides on the existing shapes: `update`
+ * carries the read `version` inside `values` (absent = overwrite, as
+ * before), `deleteOne` in its optional `options`.
+ */
 export interface DataProvider {
 	getList<T>(resource: string, params: ListParams): Promise<ListResult<T>>;
 	getOne<T>(resource: string, id: string | number): Promise<T>;
 	create<T>(resource: string, values: Record<string, unknown>): Promise<T>;
 	update<T>(resource: string, id: string | number, values: Record<string, unknown>): Promise<T>;
-	deleteOne(resource: string, id: string | number): Promise<void>;
+	deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void>;
 }
 
 export interface Identity {

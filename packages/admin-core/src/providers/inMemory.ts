@@ -4,9 +4,30 @@
  * semantics (spec §4.3) rather than importing @banto/grid-svelte, since
  * admin-core must stay UI-agnostic.
  */
-import { notFound } from '../errors';
-import type { DataProvider } from '../provider';
+import { notFound, ProviderError } from '../errors';
+import type { DataProvider, DeleteOneOptions } from '../provider';
 import type { FilterState, ListParams, ListResult, SortState } from '../types';
+
+/** A row of a versioned resource (Issue #638): it holds a numeric `version`. */
+function isVersioned(row: Record<string, unknown>): boolean {
+	return typeof row.version === 'number';
+}
+
+/**
+ * The server's optimistic-lock rule (Issue #638, `items.rs`'s
+ * `check_version`): a `sent` version (not `undefined`/`null`) that differs
+ * from the row's is a `conflict` carrying a copy of the current row. Rows of
+ * a resource without a `version` are never checked.
+ */
+function checkVersion(row: Record<string, unknown>, sent: unknown): void {
+	if (!isVersioned(row) || sent === undefined || sent === null) return;
+	if (Number(sent) === row.version) return;
+	throw new ProviderError({
+		kind: 'conflict',
+		message: '他の人が先にこのレコードを変更しました',
+		current: { ...row }
+	});
+}
 
 export interface InMemorySeed {
 	rows: Record<string, unknown>[];
@@ -285,20 +306,28 @@ export function createInMemoryDataProvider(
 		rows: Record<string, unknown>[];
 		idField: string;
 		searchFields?: readonly string[];
+		/**
+		 * Whether the resource is versioned (Issue #638). Table metadata, not
+		 * inferred from the current rows: set by a versioned seed row or a create
+		 * that sent `version`, and kept after every row is deleted (the server's
+		 * items table always versions, even when empty).
+		 */
+		versioned: boolean;
 	}
 	const tables = new Map<string, Table>();
 	for (const [resource, def] of Object.entries(seed)) {
 		tables.set(resource, {
 			rows: def.rows.slice(),
 			idField: def.idField ?? 'id',
-			searchFields: def.searchFields
+			searchFields: def.searchFields,
+			versioned: def.rows.some(isVersioned)
 		});
 	}
 
 	function table(resource: string): Table {
 		let found = tables.get(resource);
 		if (!found) {
-			found = { rows: [], idField: 'id' };
+			found = { rows: [], idField: 'id', versioned: false };
 			tables.set(resource, found);
 		}
 		return found;
@@ -346,8 +375,12 @@ export function createInMemoryDataProvider(
 				return Number.isFinite(value) && value > max ? value : max;
 			}, 0);
 			const hasUpdatedAt = 'updatedAt' in values || entry.rows.some((row) => 'updatedAt' in row);
+			if ('version' in values) entry.versioned = true;
 			const row: Record<string, unknown> = { ...values, [entry.idField]: maxId + 1 };
 			if (hasUpdatedAt) row.updatedAt = todayIso();
+			// Issue #638, like the server: a new row starts at version 1,
+			// whatever the caller sent.
+			if (entry.versioned) row.version = 1;
 			entry.rows.push(row);
 			return row as T;
 		},
@@ -361,17 +394,25 @@ export function createInMemoryDataProvider(
 			const entry = table(resource);
 			const index = entry.rows.findIndex((row) => looseEquals(row[entry.idField], id));
 			if (index === -1) throw notFound(resource, id);
-			const merged: Record<string, unknown> = { ...entry.rows[index], ...values };
+			const current = entry.rows[index];
+			checkVersion(current, values.version);
+			const merged: Record<string, unknown> = { ...current, ...values };
 			if ('updatedAt' in merged) merged.updatedAt = todayIso();
+			if (isVersioned(current)) merged.version = (current.version as number) + 1;
 			entry.rows[index] = merged;
 			return merged as T;
 		},
 
-		async deleteOne(resource: string, id: string | number): Promise<void> {
+		async deleteOne(
+			resource: string,
+			id: string | number,
+			options?: DeleteOneOptions
+		): Promise<void> {
 			await delay();
 			const entry = table(resource);
 			const index = entry.rows.findIndex((row) => looseEquals(row[entry.idField], id));
 			if (index === -1) throw notFound(resource, id);
+			checkVersion(entry.rows[index], options?.version);
 			entry.rows.splice(index, 1);
 		}
 	};

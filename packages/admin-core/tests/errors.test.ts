@@ -18,3 +18,26 @@ describe('ProviderError kind "forbidden" (spec M10 RBAC)', () => {
 		expect(err.message).toBe('この操作を行う権限がありません');
 	});
 });
+
+describe('ProviderError kind "conflict" (Issue #638 optimistic lock)', () => {
+	it('carries the current record, mirroring BantoError::Conflict', () => {
+		const err = new ProviderError({
+			kind: 'conflict',
+			message: 'changed',
+			current: { id: 1, version: 2 }
+		});
+
+		expect(isProviderError(err)).toBe(true);
+		expect(err.body).toEqual({
+			kind: 'conflict',
+			message: 'changed',
+			current: { id: 1, version: 2 }
+		});
+	});
+
+	it('describes itself with the Japanese user-facing message, like "forbidden"', () => {
+		const err = new ProviderError({ kind: 'conflict', message: 'changed' });
+
+		expect(err.message).toBe('他の人が先に変更しました。最新の内容を確かめてください');
+	});
+});

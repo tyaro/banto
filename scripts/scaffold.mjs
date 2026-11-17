@@ -1303,6 +1303,16 @@ function removeItems() {
 		`${APP}/core/migrations-postgres/0009_items_updated_at_index.sql`,
 		'migrations-postgres/0009_items_updated_at_index.sql 削除'
 	);
+	// 0011 は items に version 列を足す（#638 の楽観ロック）。0001 を外すと
+	// ALTER TABLE items が失敗するので一緒に外す。
+	removeFile(
+		`${APP}/core/migrations-sqlite/0011_items_version.sql`,
+		'migrations-sqlite/0011_items_version.sql 削除'
+	);
+	removeFile(
+		`${APP}/core/migrations-postgres/0011_items_version.sql`,
+		'migrations-postgres/0011_items_version.sql 削除'
+	);
 	cutMarked(CORE_LIB, 'core/lib.rs: pub mod items 除去', 'items');
 
 	// db.rs: 列0のマーカー2つ（SEED_ROW_COUNT / デモ seed 生成一式）と

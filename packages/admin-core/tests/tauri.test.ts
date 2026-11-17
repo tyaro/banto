@@ -58,6 +58,29 @@ describe('createTauriDataProvider', () => {
 		expect(invoke).toHaveBeenCalledWith('items_delete', { id: 1 });
 	});
 
+	it('deleteOne with options.version passes `version` to `${resource}_delete` (Issue #638)', async () => {
+		const invoke = vi.fn().mockResolvedValue(undefined);
+		const provider = createTauriDataProvider({ invoke });
+
+		await provider.deleteOne('items', 1, { version: 3 });
+
+		expect(invoke).toHaveBeenCalledWith('items_delete', { id: 1, version: 3 });
+	});
+
+	it('a rejected invoke() carrying a conflict ErrorBody keeps kind "conflict" (Issue #638)', async () => {
+		const body = { kind: 'conflict', message: 'changed', current: { id: 1, version: 2 } };
+		const invoke = vi.fn().mockRejectedValue(body);
+		const provider = createTauriDataProvider({ invoke });
+
+		try {
+			await provider.update('items', 1, { version: 1 });
+			expect.unreachable('expected a ProviderError to be thrown');
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) expect(err.body).toEqual(body);
+		}
+	});
+
 	it('rethrows a rejected invoke() carrying an ErrorBody as a ProviderError', async () => {
 		const invoke = vi.fn().mockRejectedValue({ kind: 'not_found', resource: 'items', id: '42' });
 		const provider = createTauriDataProvider({ invoke });

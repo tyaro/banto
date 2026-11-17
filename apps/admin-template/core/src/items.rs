@@ -24,6 +24,11 @@ pub struct Item {
     pub stock: i64,
     #[sqlx(rename = "updated_at")]
     pub updated_at: String,
+    /// Row version for optimistic locking (Issue #638, migration 0011):
+    /// 1 on create, +1 on every update (incl. CSV import). A client sends
+    /// back the version it read in [`ItemInput::version`] / the delete's
+    /// `version`; a mismatch is `BantoError::Conflict`.
+    pub version: i64,
 }
 
 /// Only fields intentionally approved for audit. When an app adds an item
@@ -40,13 +45,14 @@ fn item_audit_fields(item: &Item) -> serde_json::Value {
 /// changes: [{ field, before, after }] }`. Both the REST and the Tauri wiring
 /// call this, so the two routes record the same shape (conventions section 1).
 /// `items` has no secret column, so nothing is masked; `updatedAt` is a stamp,
-/// not a user edit, and `id` never changes.
+/// not a user edit, `version` is the optimistic-lock counter (Issue #638, it
+/// changes on every update), and `id` never changes.
 pub fn item_update_detail(before: &Item, after: &Item) -> serde_json::Value {
     let changes = banto_admin_services::audit::diff::diff_changes(
         &serde_json::to_value(before).unwrap_or_default(),
         &serde_json::to_value(after).unwrap_or_default(),
         &[],
-        &["id", "updatedAt"],
+        &["id", "updatedAt", "version"],
     );
     serde_json::json!({ "name": after.name, "changes": changes })
 }
@@ -82,11 +88,18 @@ pub fn item_delete_detail(item: &Item, sweep: Option<serde_json::Value>) -> serd
 /// Create/update payload. Field names match the frontend form schema's
 /// field names exactly (`name`, `price`, `stock`) so that
 /// `BantoError::Validation`'s per-field messages land on the right inputs.
+///
+/// `version` (Issue #638) is the optimistic-lock check for an update: the
+/// [`Item::version`] the client last read. `Some` and different from the
+/// stored one -> `BantoError::Conflict`; absent / `null` -> the old
+/// last-write-wins overwrite. `create` ignores it (a new row starts at 1).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ItemInput {
     pub name: String,
     pub price: i64,
     pub stock: i64,
+    #[serde(default)]
+    pub version: Option<i64>,
 }
 
 const MAX_NAME_LEN: usize = 40;
@@ -230,6 +243,31 @@ fn column_map() -> ColumnMap {
 
 const RESOURCE: &str = "items";
 
+/// The `SET version = ...` expression of every update (Issue #638): +1, but
+/// back to 1 at `i64::MAX` instead of overflowing (PostgreSQL BIGINT would
+/// raise, SQLite would turn the value into a REAL that no longer decodes into
+/// `i64`). Wrapping is harmless in practice: a client would have to hold a
+/// version read 2^63 updates ago.
+const VERSION_BUMP: &str = "CASE WHEN version < 9223372036854775807 THEN version + 1 ELSE 1 END";
+
+/// The conflict message (Issue #638). The client shows its own text; this is
+/// the fallback `ProviderError.message`.
+const CONFLICT_MESSAGE: &str = "他の人が先にこのレコードを変更しました";
+
+/// Optimistic-lock check (Issue #638): `expected` is the version the client
+/// read (`None` = no check, the old overwrite). Any other value than the
+/// stored one - including 0, a negative or a future version - is a
+/// `Conflict` carrying the current row, so the client can show what changed.
+fn check_version(expected: Option<i64>, current: &Item) -> Result<(), BantoError> {
+    match expected {
+        Some(version) if version != current.version => Err(BantoError::Conflict {
+            message: CONFLICT_MESSAGE.to_string(),
+            current: serde_json::to_value(current).ok(),
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// "Today" as the **local** date of the machine running the app process,
 /// rendered `YYYY-MM-DD`; stamped into `items.updated_at` by
 /// `create`/`update`/`import` (bound as a parameter, never interpolated).
@@ -306,7 +344,7 @@ impl ItemsService {
 
     pub async fn list(&self, params: ListParams) -> Result<ListResult<Item>, BantoError> {
         let columns = column_map();
-        const SELECT_ROWS: &str = "SELECT id, name, price, stock, updated_at FROM items";
+        const SELECT_ROWS: &str = "SELECT id, name, price, stock, updated_at, version FROM items";
         const SELECT_COUNT: &str = "SELECT COUNT(*) FROM items";
 
         // `QueryBuilder`/`list_query` are per-backend (the module is
@@ -388,7 +426,7 @@ impl ItemsService {
         // input. Every actual value (incl. the `updated_at` date) is bound
         // below via `.bind(...)`.
         let sql = format!(
-            "SELECT id, name, price, stock, updated_at FROM items WHERE id = {}",
+            "SELECT id, name, price, stock, updated_at, version FROM items WHERE id = {}",
             dialect.placeholder(1)
         );
         match &self.db {
@@ -415,7 +453,7 @@ impl ItemsService {
         // AssertSqlSafe: see the note in `get` above.
         let sql = format!(
             "INSERT INTO items (name, price, stock, updated_at) VALUES ({}, {}, {}, {}) \
-             RETURNING id, name, price, stock, updated_at",
+             RETURNING id, name, price, stock, updated_at, version",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
@@ -475,12 +513,13 @@ impl ItemsService {
             " FOR UPDATE"
         };
         let select_sql = format!(
-            "SELECT id, name, price, stock, updated_at FROM items WHERE id = {}{lock}",
+            "SELECT id, name, price, stock, updated_at, version FROM items WHERE id = {}{lock}",
             dialect.placeholder(1),
         );
         let sql = format!(
-            "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {} WHERE id = {} \
-             RETURNING id, name, price, stock, updated_at",
+            "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {}, \
+             version = {VERSION_BUMP} WHERE id = {} \
+             RETURNING id, name, price, stock, updated_at, version",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
@@ -489,6 +528,12 @@ impl ItemsService {
         );
         let today = (self.today)();
         let not_found = |err| banto_storage::not_found(err, RESOURCE, id.to_string());
+        // Issue #638: the version check runs on the row read under the same
+        // lock as the write below (SQLite BEGIN IMMEDIATE / PostgreSQL FOR
+        // UPDATE), so two concurrent updates carrying the same version are
+        // serialized and the second one sees the first one's bump. A missing
+        // id is still `NotFound` (the read fails before any comparison). An
+        // early return drops `tx`, which rolls it back.
         let (previous, item) = match &self.db {
             Db::Sqlite(pool) => {
                 // Reserve the writer BEFORE reading: a deferred transaction that
@@ -502,6 +547,7 @@ impl ItemsService {
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(not_found)?;
+                check_version(input.version, &previous)?;
                 let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
@@ -527,6 +573,7 @@ impl ItemsService {
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(not_found)?;
+                check_version(input.version, &previous)?;
                 let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(input.name.trim())
                     .bind(input.price)
@@ -544,26 +591,59 @@ impl ItemsService {
         Ok((previous, item))
     }
 
+    /// Delete without a version check (last-write-wins, as before #638).
     pub async fn delete(&self, id: i64) -> Result<(), BantoError> {
-        self.delete_returning_previous(id).await.map(|_| ())
+        self.delete_returning_previous(id, None).await.map(|_| ())
     }
 
     /// Delete and return the exact removed row for the audit snapshot. Decode
     /// RETURNING before commit, so a decode failure cannot delete the row
     /// without letting the wiring layer write its audit entry.
-    pub async fn delete_returning_previous(&self, id: i64) -> Result<Item, BantoError> {
+    ///
+    /// `expected_version` (Issue #638): `Some` -> the row is read first in the
+    /// same transaction (SQLite BEGIN IMMEDIATE / PostgreSQL FOR UPDATE) and a
+    /// different stored version is `BantoError::Conflict` with nothing
+    /// deleted; a missing id is `NotFound` before any comparison. `None` ->
+    /// the old single-statement delete.
+    pub async fn delete_returning_previous(
+        &self,
+        id: i64,
+        expected_version: Option<i64>,
+    ) -> Result<Item, BantoError> {
         let dialect = self.db.dialect();
         // AssertSqlSafe: see the note in `get` above.
         let sql = format!(
-            "DELETE FROM items WHERE id = {} RETURNING id, name, price, stock, updated_at",
+            "DELETE FROM items WHERE id = {} RETURNING id, name, price, stock, updated_at, version",
             dialect.placeholder(1)
         );
+        let lock = if matches!(self.db, Db::Sqlite(_)) {
+            ""
+        } else {
+            " FOR UPDATE"
+        };
+        let check_sql = format!(
+            "SELECT id, name, price, stock, updated_at, version FROM items WHERE id = {}{lock}",
+            dialect.placeholder(1)
+        );
+        let missing = || BantoError::NotFound {
+            resource: RESOURCE.to_string(),
+            id: id.to_string(),
+        };
         let item = match &self.db {
             Db::Sqlite(pool) => {
                 let mut tx = pool
                     .begin_with("BEGIN IMMEDIATE")
                     .await
                     .map_err(banto_storage::storage_error)?;
+                if expected_version.is_some() {
+                    let current = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(check_sql))
+                        .bind(id)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .ok_or_else(missing)?;
+                    check_version(expected_version, &current)?;
+                }
                 let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(id)
                     .fetch_optional(&mut *tx)
@@ -578,6 +658,15 @@ impl ItemsService {
                     .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
                     .await
                     .map_err(banto_storage::storage_error)?;
+                if expected_version.is_some() {
+                    let current = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(check_sql))
+                        .bind(id)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(banto_storage::storage_error)?
+                        .ok_or_else(missing)?;
+                    check_version(expected_version, &current)?;
+                }
                 let item = sqlx::query_as::<_, Item>(sqlx::AssertSqlSafe(sql))
                     .bind(id)
                     .fetch_optional(&mut *tx)
@@ -587,10 +676,7 @@ impl ItemsService {
                 item
             }
         };
-        let item = item.ok_or_else(|| BantoError::NotFound {
-            resource: RESOURCE.to_string(),
-            id: id.to_string(),
-        })?;
+        let item = item.ok_or_else(missing)?;
         self.notify_changed();
         Ok(item)
     }
@@ -641,6 +727,7 @@ impl ItemsService {
                 name: row.name.clone(),
                 price: row.price,
                 stock: row.stock,
+                version: None,
             };
             if let Err(BantoError::Validation { field_errors }) = validate_item_input(&input) {
                 errors.push(ImportRowError {
@@ -661,7 +748,10 @@ impl ItemsService {
         // arms) and only the transaction execution dispatches per backend.
         let dialect = self.db.dialect();
         let update_sql = format!(
-            "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {} WHERE id = {}",
+            // Issue #638: CSV import still overwrites (no version check), but
+            // bumps the version so a form/grid holding the old one conflicts.
+            "UPDATE items SET name = {}, price = {}, stock = {}, updated_at = {}, \
+             version = {VERSION_BUMP} WHERE id = {}",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
@@ -867,6 +957,7 @@ mod tests {
                 name: "Test Item".into(),
                 price: 100,
                 stock: 5,
+                version: None,
             })
             .await
             .unwrap();
@@ -880,7 +971,7 @@ mod tests {
                 { "field": "stock", "before": null, "after": 5 }
             ])
         );
-        let removed = svc.delete_returning_previous(item.id).await.unwrap();
+        let removed = svc.delete_returning_previous(item.id, None).await.unwrap();
         assert_eq!(removed, item);
         let deleted = item_delete_detail(&removed, Some(json!({ "attachmentsRemoved": 2 })));
         assert_eq!(deleted["attachmentsRemoved"], 2);
@@ -899,7 +990,7 @@ mod tests {
             assert!(detail.get("parentId").is_none());
         }
         assert!(matches!(
-            svc.delete_returning_previous(item.id).await,
+            svc.delete_returning_previous(item.id, None).await,
             Err(BantoError::NotFound { .. })
         ));
     }
@@ -912,6 +1003,7 @@ mod tests {
                 name: "Invalid storage value".into(),
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -922,7 +1014,7 @@ mod tests {
             .execute(svc.db.as_sqlite().unwrap())
             .await
             .unwrap();
-        assert!(svc.delete_returning_previous(item.id).await.is_err());
+        assert!(svc.delete_returning_previous(item.id, None).await.is_err());
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE id = ?")
             .bind(item.id)
             .fetch_one(svc.db.as_sqlite().unwrap())
@@ -939,6 +1031,7 @@ mod tests {
                 name: "Test Item".to_string(),
                 price: 100,
                 stock: 5,
+                version: None,
             })
             .await
             .expect("create should succeed");
@@ -959,6 +1052,7 @@ mod tests {
                 name: "  Padded  ".to_string(),
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .expect("create should succeed");
@@ -973,6 +1067,7 @@ mod tests {
                 name: "Before".to_string(),
                 price: 10,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -983,6 +1078,7 @@ mod tests {
                     name: "After".to_string(),
                     price: 20,
                     stock: 2,
+                    version: None,
                 },
             )
             .await
@@ -1000,6 +1096,7 @@ mod tests {
                 name: "Before".to_string(),
                 price: 10,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -1010,6 +1107,7 @@ mod tests {
                     name: "Before".to_string(),
                     price: 20,
                     stock: 1,
+                    version: None,
                 },
             )
             .await
@@ -1032,6 +1130,7 @@ mod tests {
                     name: "Before".to_string(),
                     price: 20,
                     stock: 1,
+                    version: None,
                 },
             )
             .await
@@ -1048,6 +1147,7 @@ mod tests {
                     name: "x".to_string(),
                     price: 1,
                     stock: 1,
+                    version: None,
                 },
             )
             .await
@@ -1065,15 +1165,18 @@ mod tests {
             price: 10,
             stock: 1,
             updated_at: "2031-02-03".to_string(),
+            version: 1,
         };
+        // Issue #638: the optimistic-lock counter changes on every update
+        // and is not a user edit either.
         let after = Item {
             updated_at: "2031-02-04".to_string(),
+            version: 2,
             ..before.clone()
         };
-        assert!(serde_json::to_value(&before)
-            .unwrap()
-            .get("updatedAt")
-            .is_some());
+        let wire = serde_json::to_value(&before).unwrap();
+        assert!(wire.get("updatedAt").is_some());
+        assert!(wire.get("version").is_some());
         assert_eq!(
             item_update_detail(&before, &after)["changes"],
             serde_json::json!([])
@@ -1093,6 +1196,7 @@ mod tests {
                 name: "A".to_string(),
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -1104,6 +1208,7 @@ mod tests {
                     name: "B".to_string(),
                     price: 2,
                     stock: 2,
+                    version: None,
                 },
             )
             .await
@@ -1147,6 +1252,7 @@ mod tests {
                     name: "X".to_string(),
                     price: 1,
                     stock: 1,
+                    version: None,
                 },
             )
             .await
@@ -1173,6 +1279,7 @@ mod tests {
                 name: "Doomed".to_string(),
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -1198,6 +1305,7 @@ mod tests {
                 name: "   ".to_string(),
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap_err();
@@ -1220,6 +1328,7 @@ mod tests {
                 name: long_name,
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap_err();
@@ -1240,6 +1349,7 @@ mod tests {
                 name: "Valid".to_string(),
                 price: -1,
                 stock: -5,
+                version: None,
             })
             .await
             .unwrap_err();
@@ -1263,6 +1373,7 @@ mod tests {
                 name: "Valid".to_string(),
                 price: 100_000,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap_err();
@@ -1283,6 +1394,7 @@ mod tests {
                 name: name.to_string(),
                 price,
                 stock,
+                version: None,
             })
             .await
             .unwrap();
@@ -1327,6 +1439,7 @@ mod tests {
                 name: name.to_string(),
                 price,
                 stock,
+                version: None,
             })
             .await
             .unwrap();
@@ -1362,6 +1475,7 @@ mod tests {
                 name: "Before".to_string(),
                 price: 10,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -1375,6 +1489,7 @@ mod tests {
                 name: "After".to_string(),
                 price: 20,
                 stock: 2,
+                version: None,
             },
         )
         .await
@@ -1400,6 +1515,7 @@ mod tests {
                 name: "Before".to_string(),
                 price: 10,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -1412,6 +1528,7 @@ mod tests {
                     name: "".to_string(), // fails validation
                     price: 20,
                     stock: 2,
+                    version: None,
                 },
             )
             .await
@@ -1437,6 +1554,7 @@ mod tests {
                 name: "Before".to_string(),
                 price: 10,
                 stock: 1,
+                version: None,
             })
             .await
             .unwrap();
@@ -1595,5 +1713,232 @@ mod tests {
             rx.try_recv().is_err(),
             "an empty import must not emit a resource_changed event"
         );
+    }
+
+    // --- Issue #638: optimistic locking -------------------------------------
+
+    fn input(name: &str, version: Option<i64>) -> ItemInput {
+        ItemInput {
+            name: name.to_string(),
+            price: 10,
+            stock: 1,
+            version,
+        }
+    }
+
+    fn conflict_current(result: Result<impl std::fmt::Debug, BantoError>) -> serde_json::Value {
+        match result {
+            Err(BantoError::Conflict { current, .. }) => current.expect("current row"),
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_starts_at_version_1_and_ignores_a_sent_version() {
+        let svc = service().await;
+        let created = svc.create(input("A", Some(42))).await.unwrap();
+        assert_eq!(created.version, 1);
+        assert_eq!(svc.get(created.id).await.unwrap().version, 1);
+    }
+
+    #[tokio::test]
+    async fn update_with_the_current_version_applies_and_bumps_it() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        let (previous, updated) = svc
+            .update_returning_previous(created.id, input("B", Some(1)))
+            .await
+            .unwrap();
+        assert_eq!(previous.version, 1);
+        assert_eq!(updated.version, 2);
+        assert_eq!(updated.name, "B");
+        let again = svc.update(created.id, input("C", Some(2))).await.unwrap();
+        assert_eq!(again.version, 3);
+    }
+
+    #[tokio::test]
+    async fn update_with_a_stale_version_conflicts_with_the_current_row_and_changes_nothing() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        let theirs = svc
+            .update(created.id, input("Theirs", Some(1)))
+            .await
+            .unwrap();
+        let (tx, mut rx) = broadcast::channel(4);
+        let svc = svc.with_events(tx);
+
+        let current = conflict_current(svc.update(created.id, input("Mine", Some(1))).await);
+        assert_eq!(current, serde_json::to_value(&theirs).unwrap());
+        assert_eq!(current["version"], 2);
+        assert_eq!(svc.get(created.id).await.unwrap(), theirs);
+        assert!(rx.try_recv().is_err(), "a conflict must not emit an event");
+    }
+
+    #[tokio::test]
+    async fn update_edge_versions_all_conflict() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        for version in [0, -1, 2, i64::MAX, i64::MIN] {
+            conflict_current(svc.update(created.id, input("X", Some(version))).await);
+        }
+        assert_eq!(svc.get(created.id).await.unwrap().version, 1);
+    }
+
+    #[tokio::test]
+    async fn update_without_a_version_overwrites_and_still_bumps() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        svc.update(created.id, input("B", Some(1))).await.unwrap();
+        let overwritten = svc.update(created.id, input("C", None)).await.unwrap();
+        assert_eq!(overwritten.name, "C");
+        assert_eq!(overwritten.version, 3);
+    }
+
+    #[tokio::test]
+    async fn update_missing_id_with_a_version_is_not_found_not_conflict() {
+        let svc = service().await;
+        let result = svc.update(999_999, input("X", Some(1))).await;
+        assert!(
+            matches!(result, Err(BantoError::NotFound { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_version_wraps_to_1_at_i64_max_instead_of_overflowing() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        // Refutable only with the `postgres` feature on.
+        #[allow(irrefutable_let_patterns)]
+        let Db::Sqlite(pool) = &svc.db
+        else {
+            unreachable!("migrate_memory is SQLite")
+        };
+        sqlx::query("UPDATE items SET version = ? WHERE id = ?")
+            .bind(i64::MAX)
+            .bind(created.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        let updated = svc
+            .update(created.id, input("B", Some(i64::MAX)))
+            .await
+            .unwrap();
+        assert_eq!(updated.version, 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_updates_with_the_same_version_let_exactly_one_win() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        let (a, b) = tokio::join!(
+            svc.update(created.id, input("First", Some(1))),
+            svc.update(created.id, input("Second", Some(1))),
+        );
+        let wins = [a.is_ok(), b.is_ok()].iter().filter(|ok| **ok).count();
+        assert_eq!(wins, 1, "a: {a:?} / b: {b:?}");
+        let loser = if a.is_ok() { b } else { a };
+        assert!(matches!(loser, Err(BantoError::Conflict { .. })));
+        assert_eq!(svc.get(created.id).await.unwrap().version, 2);
+    }
+
+    #[tokio::test]
+    async fn delete_with_the_current_version_removes_the_row() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        let removed = svc
+            .delete_returning_previous(created.id, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(removed, created);
+        assert!(matches!(
+            svc.get(created.id).await,
+            Err(BantoError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_with_a_stale_version_conflicts_and_keeps_the_row() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        let theirs = svc.update(created.id, input("Theirs", None)).await.unwrap();
+        let (tx, mut rx) = broadcast::channel(4);
+        let svc = svc.with_events(tx);
+        let current = conflict_current(svc.delete_returning_previous(created.id, Some(1)).await);
+        assert_eq!(current, serde_json::to_value(&theirs).unwrap());
+        assert_eq!(svc.get(created.id).await.unwrap(), theirs);
+        assert!(rx.try_recv().is_err(), "a conflict must not emit an event");
+    }
+
+    #[tokio::test]
+    async fn delete_without_a_version_overwrites() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        svc.update(created.id, input("B", None)).await.unwrap();
+        svc.delete_returning_previous(created.id, None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            svc.get(created.id).await,
+            Err(BantoError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_missing_id_with_a_version_is_not_found_not_conflict() {
+        let svc = service().await;
+        let result = svc.delete_returning_previous(999_999, Some(1)).await;
+        assert!(
+            matches!(result, Err(BantoError::NotFound { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn import_update_overwrites_without_a_check_but_bumps_the_version() {
+        let svc = service().await;
+        let created = svc.create(input("A", None)).await.unwrap();
+        let result = svc
+            .import(vec![
+                ItemImportRow {
+                    id: Some(created.id),
+                    name: "Imported".to_string(),
+                    price: 5,
+                    stock: 5,
+                },
+                ItemImportRow {
+                    id: None,
+                    name: "New".to_string(),
+                    price: 5,
+                    stock: 5,
+                },
+            ])
+            .await
+            .unwrap();
+        assert!(result.errors.is_empty());
+        assert_eq!(svc.get(created.id).await.unwrap().version, 2);
+        let rows = svc.list(ListParams::default()).await.unwrap().rows;
+        let new_row = rows.iter().find(|r| r.name == "New").unwrap();
+        assert_eq!(new_row.version, 1);
+        // A form still holding version 1 now conflicts.
+        conflict_current(svc.update(created.id, input("Mine", Some(1))).await);
+    }
+
+    #[test]
+    fn item_input_version_is_optional_on_the_wire() {
+        let without: ItemInput =
+            serde_json::from_value(serde_json::json!({ "name": "A", "price": 1, "stock": 1 }))
+                .unwrap();
+        assert_eq!(without.version, None);
+        let null: ItemInput = serde_json::from_value(
+            serde_json::json!({ "name": "A", "price": 1, "stock": 1, "version": null }),
+        )
+        .unwrap();
+        assert_eq!(null.version, None);
+        let some: ItemInput = serde_json::from_value(serde_json::json!({
+            "name": "A", "price": 1, "stock": 1, "version": 7, "updatedAt": "2031-01-01"
+        }))
+        .unwrap();
+        assert_eq!(some.version, Some(7));
     }
 }

@@ -174,6 +174,28 @@ describe('createHttpDataProvider', () => {
 		}
 	});
 
+	it('deleteOne with options.version adds ?version= (Issue #638)', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(noContentResponse());
+		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
+
+		await provider.deleteOne('items', 1, { version: 3 });
+		expect(fetchFn.mock.calls[0][0]).toBe('/api/items/1?version=3');
+	});
+
+	it('maps a 409 conflict ErrorBody with its current record instead of falling to "other" (Issue #638)', async () => {
+		const body = { kind: 'conflict', message: 'changed', current: { id: 1, version: 2 } };
+		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(409, body));
+		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });
+
+		try {
+			await provider.update('items', 1, { price: 1, version: 1 });
+			expect.unreachable('expected a ProviderError to be thrown');
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err)) expect(err.body).toEqual(body);
+		}
+	});
+
 	it('maps a 403 forbidden ErrorBody (spec M10 RBAC) the same way as any other error kind', async () => {
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(403, { kind: 'forbidden' }));
 		const provider = createHttpDataProvider({ getToken: () => 'tok', fetchFn });

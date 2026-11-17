@@ -160,3 +160,100 @@ describe('createInMemoryDataProvider', () => {
 		expect(result.rows.map((row) => row.label).sort()).toEqual(['middle', 'newest']);
 	});
 });
+
+describe('createInMemoryDataProvider optimistic lock (Issue #638, same rules as items.rs)', () => {
+	function versioned() {
+		return createInMemoryDataProvider(
+			{
+				items: {
+					rows: [
+						{ id: 1, name: 'Green Tea', price: 140, version: 1 },
+						{ id: 2, name: 'Coffee', price: 130, version: 1 }
+					]
+				}
+			},
+			{ latencyMs: 0 }
+		);
+	}
+
+	async function expectConflict(promise: Promise<unknown>): Promise<unknown> {
+		try {
+			await promise;
+		} catch (err) {
+			expect(isProviderError(err)).toBe(true);
+			if (isProviderError(err) && err.body.kind === 'conflict') return err.body.current;
+			throw err;
+		}
+		return expect.unreachable('expected a conflict');
+	}
+
+	it('create starts at version 1 whatever was sent', async () => {
+		const provider = versioned();
+		const row = await provider.create<Item>('items', { name: 'New', price: 1, version: 9 });
+		expect(row.version).toBe(1);
+	});
+
+	it('update with the current version applies and bumps it', async () => {
+		const provider = versioned();
+		const row = await provider.update<Item>('items', 1, { price: 150, version: 1 });
+		expect(row.version).toBe(2);
+		expect(row.price).toBe(150);
+	});
+
+	it('update with a stale version conflicts with the current row and changes nothing', async () => {
+		const provider = versioned();
+		await provider.update('items', 1, { price: 150, version: 1 });
+		const current = await expectConflict(provider.update('items', 1, { price: 999, version: 1 }));
+		expect(current).toEqual({ id: 1, name: 'Green Tea', price: 150, version: 2 });
+		expect((await provider.getOne<Item>('items', 1)).price).toBe(150);
+	});
+
+	it('update without a version overwrites and still bumps', async () => {
+		const provider = versioned();
+		const row = await provider.update<Item>('items', 1, { price: 1 });
+		expect(row.version).toBe(2);
+	});
+
+	it('deleteOne checks options.version; without it, it deletes as before', async () => {
+		const provider = versioned();
+		await provider.update('items', 1, { price: 150 });
+		await expectConflict(provider.deleteOne('items', 1, { version: 1 }));
+		await provider.deleteOne('items', 1, { version: 2 });
+		await provider.deleteOne('items', 2);
+		const result = await provider.getList<Item>('items', { sort: [], filters: [] });
+		expect(result.rows).toEqual([]);
+	});
+
+	it('a missing id is not_found before any version check', async () => {
+		const provider = versioned();
+		await expectNotFound(provider.update('items', 999, { version: 1 }));
+		await expectNotFound(provider.deleteOne('items', 999, { version: 1 }));
+	});
+
+	it('a resource without version is never checked', async () => {
+		const provider = createInMemoryDataProvider({ items: { rows: seedItems() } }, { latencyMs: 0 });
+		await expect(provider.deleteOne('items', 1, { version: 5 })).resolves.toBeUndefined();
+	});
+
+	it('stays versioned after every row is deleted (create without version starts at 1)', async () => {
+		const provider = versioned();
+		await provider.deleteOne('items', 1);
+		await provider.deleteOne('items', 2);
+		const row = await provider.create<Item>('items', { name: 'Fresh', price: 1 });
+		expect(row.version).toBe(1);
+		await expectConflict(provider.update('items', row.id, { price: 2, version: 99 }));
+		await expectConflict(provider.deleteOne('items', row.id, { version: 99 }));
+		const updated = await provider.update<Item>('items', row.id, { price: 2, version: 1 });
+		expect(updated.version).toBe(2);
+		await expect(provider.deleteOne('items', row.id, { version: 2 })).resolves.toBeUndefined();
+	});
+
+	it('a non-versioned resource gets no version on create and is never compared', async () => {
+		const provider = createInMemoryDataProvider({ items: { rows: seedItems() } }, { latencyMs: 0 });
+		const row = await provider.create<Item>('items', { name: 'Plain', price: 1 });
+		expect(row.version).toBeUndefined();
+		await expect(
+			provider.update('items', row.id, { price: 2, version: 99 })
+		).resolves.toBeDefined();
+	});
+});

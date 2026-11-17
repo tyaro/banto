@@ -10,6 +10,7 @@ const ERROR_KINDS = new Set<ErrorBody['kind']>([
 	'bad_request',
 	'unauthorized',
 	'forbidden',
+	'conflict',
 	'storage',
 	'other'
 ]);

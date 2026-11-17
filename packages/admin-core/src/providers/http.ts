@@ -11,6 +11,7 @@
  * - `create`    -> `POST {base}/api/{resource}` with the values body
  * - `update`    -> `PUT {base}/api/{resource}/{id}` with the values body
  * - `deleteOne` -> `DELETE {base}/api/{resource}/{id}`, expects `204`
+ *   (`?version=N` when `options.version` is given, Issue #638)
  *
  * Every request carries `X-Banto-Client: banto` (spec §11.2's CSRF
  * mitigation, `banto_server::csrf`) and, once logged in,
@@ -23,6 +24,7 @@ import type {
 	AuthProvider,
 	CredentialRevision,
 	DataProvider,
+	DeleteOneOptions,
 	Identity,
 	ResolvedAuth
 } from '../provider';
@@ -39,6 +41,7 @@ const ERROR_KINDS = new Set([
 	'bad_request',
 	'unauthorized',
 	'forbidden',
+	'conflict',
 	'storage',
 	'other'
 ]);
@@ -296,8 +299,13 @@ export function createHttpDataProvider(options: HttpDataProviderOptions): DataPr
 			return request<T>(`/api/${resource}/${id}`, { method: 'PUT', body: values });
 		},
 
-		deleteOne(resource: string, id: string | number): Promise<void> {
-			return request<void>(`/api/${resource}/${id}`, { method: 'DELETE', expectNoContent: true });
+		deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void> {
+			const version = options?.version;
+			const query = version === undefined ? '' : `?version=${encodeURIComponent(String(version))}`;
+			return request<void>(`/api/${resource}/${id}${query}`, {
+				method: 'DELETE',
+				expectNoContent: true
+			});
 		}
 	};
 }

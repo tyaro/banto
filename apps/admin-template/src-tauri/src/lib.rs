@@ -754,9 +754,17 @@ async fn items_update(
 /// Body of [`items_delete`], split out (spec M14 pattern, see
 /// [`items_import_body`]) so its authz + attachment-sweep + audit behavior is
 /// testable with a plain `&AppState` in this crate's own `cargo test`.
-async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
+///
+/// `version` (Issue #638) is the optimistic-lock check, the same as REST's
+/// `DELETE /api/items/{id}?version=N`: a different stored version is a
+/// `conflict` and nothing is deleted or audited; `None` deletes as before.
+async fn items_delete_body(
+    state: &AppState,
+    id: i64,
+    version: Option<i64>,
+) -> Result<(), BantoError> {
     let actor = require_role(state, Role::Editor, "items").await?;
-    let item = state.items.delete_returning_previous(id).await?;
+    let item = state.items.delete_returning_previous(id, version).await?;
     // M20 unit C demo wiring (spec docs/design/attachments-plan.md §3.8): sweep up
     // any attachments left pointing at the now-deleted record (best-effort).
     let sweep = sweep_item_attachments(&state.attachments, id).await;
@@ -773,8 +781,12 @@ async fn items_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> 
 }
 
 #[tauri::command]
-async fn items_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    items_delete_body(&state, id).await
+async fn items_delete(
+    state: State<'_, AppState>,
+    id: i64,
+    version: Option<i64>,
+) -> Result<(), BantoError> {
+    items_delete_body(&state, id, version).await
 }
 
 /// Body of [`items_import`], split out the same way [`change_own_password`]
@@ -4591,6 +4603,7 @@ mod tests {
                 name: "Existing".to_string(),
                 price: 10,
                 stock: 1,
+                version: None,
             })
             .await
             .expect("seed create");
@@ -4869,6 +4882,55 @@ mod tests {
     }
 
     // [scaffold:items] begin
+    /// Issue #638: [`items_delete_body`] with a stale `version` answers a
+    /// `Conflict`, deletes nothing and records nothing - the same as REST's
+    /// `DELETE /api/items/{id}?version=N` (conventions section 1); the
+    /// matching version deletes and records as usual.
+    #[tokio::test]
+    async fn items_delete_with_a_stale_version_conflicts_without_an_audit_row() {
+        let state = app_state().await;
+        let editor = state
+            .users
+            .create_user("editor", "password123", "編集者", Role::Editor)
+            .await
+            .expect("create_user");
+        state.set_session_for_test(Some(DesktopSession::Account(editor)));
+        let item = state
+            .items
+            .create(ItemInput {
+                name: "Locked".to_string(),
+                price: 1,
+                stock: 1,
+                version: None,
+            })
+            .await
+            .expect("seed item");
+
+        let result = items_delete_body(&state, item.id, Some(2)).await;
+        assert!(
+            matches!(result, Err(BantoError::Conflict { .. })),
+            "{result:?}"
+        );
+        assert!(state.items.get(item.id).await.is_ok(), "row must remain");
+        let audit = state
+            .audit
+            .list(ListParams::default())
+            .await
+            .expect("audit list");
+        assert!(
+            !audit
+                .rows
+                .iter()
+                .any(|r| r.action == "delete" && r.resource == "items"),
+            "a conflict must not be recorded: {:?}",
+            audit.rows
+        );
+
+        items_delete_body(&state, item.id, Some(1))
+            .await
+            .expect("matching version deletes");
+    }
+
     /// [`items_delete_body`] records the removed values in its audit detail.
     #[tokio::test]
     async fn items_delete_is_recorded_as_delete() {
@@ -4885,11 +4947,12 @@ mod tests {
                 name: "Doomed".to_string(),
                 price: 1,
                 stock: 1,
+                version: None,
             })
             .await
             .expect("seed item");
 
-        items_delete_body(&state, item.id)
+        items_delete_body(&state, item.id, None)
             .await
             .expect("delete should succeed");
 

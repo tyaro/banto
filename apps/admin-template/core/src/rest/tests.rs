@@ -778,6 +778,119 @@ async fn items_update_records_a_field_diff_in_the_audit_log() {
     );
 }
 
+/// Issue #638: the optimistic lock over REST. A stale `version` on PUT and on
+/// `DELETE ?version=` answers `409 { kind: "conflict", current }`, changes
+/// nothing and leaves no audit row (a failed write is never recorded, same
+/// as a validation or not-found failure); the matching version applies and
+/// its audit diff leaves `version` out.
+#[tokio::test]
+async fn items_optimistic_lock_over_rest() {
+    let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/items",
+                &editor,
+                json!({ "name": "Locked", "price": 10, "stock": 1, "version": 99 }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(created["version"], 1);
+    let id = created["id"].as_i64().unwrap();
+
+    let ok = router
+        .clone()
+        .oneshot(put_json_auth(
+            &format!("/api/items/{id}"),
+            &editor,
+            json!({ "name": "Locked", "price": 20, "stock": 1, "version": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), StatusCode::OK);
+    assert_eq!(body_json(ok).await["version"], 2);
+
+    let stale = router
+        .clone()
+        .oneshot(put_json_auth(
+            &format!("/api/items/{id}"),
+            &editor,
+            json!({ "name": "Mine", "price": 30, "stock": 1, "version": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let body = body_json(stale).await;
+    assert_eq!(body["kind"], "conflict");
+    assert_eq!(body["current"]["price"], 20);
+    assert_eq!(body["current"]["version"], 2);
+
+    let stale_delete = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/items/{id}?version=1"), &editor))
+        .await
+        .unwrap();
+    assert_eq!(stale_delete.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(stale_delete).await["current"]["version"], 2);
+
+    let malformed = router
+        .clone()
+        .oneshot(delete_auth(
+            &format!("/api/items/{id}?version=abc"),
+            &editor,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(malformed).await["kind"], "bad_request");
+
+    let deleted = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/items/{id}?version=2"), &editor))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let rows = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let entity_id = id.to_string();
+    let mine: Vec<_> = rows
+        .iter()
+        .filter(|r| r["resource"] == "items" && r["entityId"] == entity_id)
+        .collect();
+    let actions: Vec<_> = mine.iter().map(|r| r["action"].as_str().unwrap()).collect();
+    assert_eq!(
+        actions.len(),
+        3,
+        "create + update + delete only: {actions:?}"
+    );
+    for action in ["create", "update", "delete"] {
+        assert!(actions.contains(&action), "{actions:?}");
+    }
+    let update = mine.iter().find(|r| r["action"] == "update").unwrap();
+    let detail: serde_json::Value =
+        serde_json::from_str(update["detail"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        detail["changes"],
+        json!([{ "field": "price", "before": 10, "after": 20 }])
+    );
+}
+
 #[tokio::test]
 async fn items_create_and_delete_record_values_via_rest() {
     let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;
@@ -3217,6 +3330,7 @@ async fn attachment_upload_and_delete_are_observable_on_the_event_channel() {
             name: "attachment parent".into(),
             price: 1,
             stock: 1,
+            version: None,
         })
         .await
         .expect("seed item 1");
@@ -3279,6 +3393,7 @@ async fn attachment_upload_survives_a_thumbnail_flag_update_failure_with_audit_a
             name: "attachment parent".into(),
             price: 1,
             stock: 1,
+            version: None,
         })
         .await
         .expect("seed item 1");
