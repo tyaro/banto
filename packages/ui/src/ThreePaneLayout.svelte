@@ -16,7 +16,8 @@
 	 *   the scrim or the app (`leftDrawerOpen = false`) closes and focus goes
 	 *   back to where it was (else the toggle). A non-modal layer that follows
 	 *   `layering.ts`'s promises: `data-esc-layer` while open, Esc at window
-	 *   level that yields to a layer above, `visibility: hidden` + `inert` when
+	 *   level (modal drawers only; a non-modal drawer closes on Esc only with
+	 *   focus inside it) that yields to a layer above, `visibility: hidden` + `inert` when
 	 *   closed, never transitioning `visibility` on open.
 	 *
 	 * The panes stay mounted across every switch (wide <-> narrow, fold,
@@ -401,14 +402,17 @@
 
 	/*
 	 * Esc closes the open drawer (layering.ts promises 1-3): the pane's own
-	 * keydown consumes and stops it (other window handlers never see it); the
-	 * window listener covers focus elsewhere. Both yield to a layer above (a
+	 * keydown consumes and stops it (other window handlers never see it); for a
+	 * modal drawer the window listener covers focus elsewhere (a non-modal one
+	 * closes only with focus inside, so the centre's own Esc is left alone). Both yield to a layer above (a
 	 * Modal opened from the drawer, a menu).
 	 */
 	$effect(() => {
 		if (!anyOverlay) return;
 		const pane = leftOverlay ? leftEl : rightEl;
 		if (!pane) return;
+		// Only one drawer is open at a time; which one decides the modality.
+		const modal = leftOverlay ? leftDrawerModal : rightDrawerModal;
 		const onPane = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape' || event.defaultPrevented) return;
 			if (hasVisibleLayerAbove({ except: pane })) return;
@@ -423,10 +427,12 @@
 			closeDrawers();
 		};
 		pane.addEventListener('keydown', onPane);
-		window.addEventListener('keydown', onWindow);
+		// A non-modal drawer sits beside live work in the centre (a grid cell
+		// edit, a search box): their Esc must not close it, so no window listener.
+		if (modal) window.addEventListener('keydown', onWindow);
 		return () => {
 			pane.removeEventListener('keydown', onPane);
-			window.removeEventListener('keydown', onWindow);
+			if (modal) window.removeEventListener('keydown', onWindow);
 		};
 	});
 </script>

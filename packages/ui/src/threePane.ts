@@ -42,7 +42,9 @@ export interface ThreePaneLayoutProps {
 	/**
 	 * The left pane exists (bindable). `false` = the pane and its band toggle are not rendered (its
 	 * content is unmounted: "close" drops it; folding with `leftCollapsed` keeps it). Does not touch
-	 * `leftCollapsed`. Default `true`. No `left` snippet = no pane either way.
+	 * `leftCollapsed`. If focus is inside the pane when it goes false, it falls to `body` (the pane
+	 * and its toggle are gone): the component picks no target, the app moves focus itself (e.g. to
+	 * the selected row of the list, after closing from the pane header's close button). Default `true`. No `left` snippet = no pane either way.
 	 */
 	leftOpen?: boolean;
 	/** Same for the right pane. Default `true`. */
@@ -67,8 +69,9 @@ export interface ThreePaneLayoutProps {
 	narrowOverride?: boolean;
 	/**
 	 * Narrow layout: the left drawer is modal (centre `inert`, scrim, focus moves in). `false` = a
-	 * non-modal drawer: the centre stays usable, no scrim, focus is not taken (Esc still closes it;
-	 * focus goes back to the toggle only if it was inside). Default `true`.
+	 * non-modal drawer: the centre stays usable, no scrim, focus is not taken. Esc closes it only
+	 * while focus is inside the drawer (not from the centre, so a cell edit or search box in the
+	 * centre keeps its own Esc); focus goes back to the toggle only if it was inside). Default `true`.
 	 */
 	leftDrawerModal?: boolean;
 	/** Same for the right drawer. Default `true`. */

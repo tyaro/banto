@@ -23,7 +23,8 @@
 `rightDrawerModal`・`narrowOverride`、`data-three-pane-scrim`）は任意で、渡さなければ上の挙動のまま。
 右ペインを「選んだときだけ出す」なら `right` を `undefined` にせず `rightOpen` で出し入れする
 （帯のボタンで畳んだ状態 `rightCollapsed` は、出し入れで変わらない）。編集中も一覧とツリーを触れる右ペインは
-`rightDrawerModal={false}`、狭い幅の境をビューポートに合わせたいときは `narrowOverride` を使う。
+`rightDrawerModal={false}`（Esc で閉じるのはフォーカスがドロワーの中にあるときだけ）、狭い幅の境をビューポートに合わせたいときは `narrowOverride` を使う。
+`rightOpen` を `false` にしたとき、フォーカスがペインの中にあると `body` に落ちる。戻し先はアプリが決める（閉じたら一覧の選択行へ `focus()` など）。
 詳細は [README](../../packages/ui/README.md) の ThreePaneLayout の節。
 
 ## 状態はページが持つ（URL が一次情報）

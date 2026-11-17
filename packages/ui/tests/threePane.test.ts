@@ -421,7 +421,7 @@ describe('ThreePaneLayout - outside hooks (#655)', () => {
 		expect(isInert(center())).toBe(false);
 	});
 
-	it('a non-modal right drawer: no inert centre, no scrim, no focus grab; Esc closes; one at a time', async () => {
+	it('a non-modal right drawer: no inert centre, no scrim, no focus grab; Esc from inside closes; one at a time', async () => {
 		await mount({ rightDrawerModal: false }, 800);
 		const body = screen.getByText('Body');
 		body.focus();
@@ -442,6 +442,33 @@ describe('ThreePaneLayout - outside hooks (#655)', () => {
 		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
 		await flush();
 		expect(state().leftDrawerOpen).toBe(false);
+		await fireEvent.click(rightToggle());
+		await flush();
+		screen.getByText('Detail').focus();
+		await fireEvent.keyDown(screen.getByText('Detail'), { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+	});
+
+	it('a non-modal drawer ignores Esc from the centre or elsewhere (only focus inside closes it)', async () => {
+		await mount({ rightDrawerModal: false }, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		const body = screen.getByText('Body');
+		body.focus();
+		await fireEvent.keyDown(body, { key: 'Escape' });
+		await fireEvent.keyDown(screen.getByText('Outside'), { key: 'Escape' });
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(true);
+		await fireEvent.keyDown(screen.getByText('Detail'), { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+	});
+
+	it('a modal drawer still closes on Esc from outside the pane (window listener)', async () => {
+		await mount({}, 800);
 		await fireEvent.click(rightToggle());
 		await flush();
 		await fireEvent.keyDown(screen.getByText('Outside'), { key: 'Escape' });

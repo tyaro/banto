@@ -27,7 +27,7 @@
 - `@banto/ui` の `ThreePaneLayout` に追加（すべて任意。渡さなければ見た目・挙動は変わらない）:
   - `onToggle?: (side, open) => void`（帯のボタンで状態を変える直前に同期で呼ぶ。`open` は押した後の値）と、`leftToggleEl` / `rightToggleEl`（bindable、読むだけの出力。無いときは `undefined`）。
   - `leftOpen` / `rightOpen`（既定 `true`、bindable）。`false` でそのペインと帯のボタンを出さない（中身はアンマウント）。`leftCollapsed` / `rightCollapsed`（畳む＝中身は保つ）は変えない。出さない間は、そのペインのドロワーの開閉状態も閉じに戻る。
-  - `leftDrawerModal` / `rightDrawerModal`（既定 `true`）。`false` で狭い幅のドロワーが非モーダルになる（中央は `inert` にならず、スクリムも出ず、開いてもフォーカスを奪わない。Esc で閉じる・同時に 1 つは同じ）。
+  - `leftDrawerModal` / `rightDrawerModal`（既定 `true`）。`false` で狭い幅のドロワーが非モーダルになる（中央は `inert` にならず、スクリムも出ず、開いてもフォーカスを奪わない。Esc で閉じるのはフォーカスがドロワーの中にあるときだけで、window では拾わない（中央のセル編集・検索欄の Esc でドロワーまで閉じない）。同時に 1 つは同じ）。
   - スクリムに `data-three-pane-scrim`（外から当ててよい属性として README に公開の約束。`role="presentation"` のまま）。
   - `narrowOverride?: boolean`。指定すると測った枠の幅より優先して狭い／広いを決める（`bind:narrow` も従う）。
 - 消費側への注意: 型 `ThreePaneLayoutProps` に任意のプロパティが増えただけで、既存の呼び出しはそのまま動く。
