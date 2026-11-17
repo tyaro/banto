@@ -22,7 +22,7 @@
 
 ## [Unreleased]
 
-- **ui**: 閉じた `Menu` の中で、選択中の `MenuItem` のチェックの印（`visibility: visible`）が見えないまま残り、メニューの下にある要素のクリックを横取りする不具合を修正（印を `visibility: inherit` に）。項目の多いチェックボックスのメニュー（一覧の「列」）で、閉じた後にグリッドの先頭行を押せなくなっていた。
+- **ui**: 閉じた `Menu` の中で、選択中の `MenuItem` のチェックの印（`visibility: visible`）が見えないまま残り、メニューの下にある要素のクリックを横取りする不具合を修正（印を `visibility: inherit` に）。項目の多いチェックボックスのメニュー（一覧の「列」）で、閉じた後にグリッドの先頭行を押せなくなっていた。あわせて、`Menu` の矢印・Home・End のフォーカス移動を項目の現在の DOM 順にした（キー付き each で項目が並べ替わると、マウント順のままずれていた。列を並べ替えた後の「列」メニュー）。
 - **admin-template**: 一覧画面の「列」を `@banto/ui` の `Menu`＋`MenuItem kind="checkbox"` に置き換えた（`ResourceListPage.svelte`。grid-svelte の `ColumnsMenu` は公開部品のまま変えておらず、テンプレートが使わなくなっただけ）。**派生アプリへの注意**: `ResourceListPage.svelte` の差分を取り込む。列メニューは `role=menu`＋`menuitemcheckbox` になり、選んでも閉じない（件数 `3/5` の表示、最後の 1 列の無効化と理由の `title`、client/server で列の一覧が切り替わる動作は従来どおり）。辞書キーの追加なし。`e2e/visual/columns-checkbox.spec.ts` を新しい形に合わせて書き換えた（native checkbox の寸法の確認は外れた）。
 - **ui**: `MenuItem` にチェックボックスの形を追加（`kind?: 'radio' | 'checkbox'`・`title?: string`。**公開 API の追加（minor）**、既定の動きは不変）。`kind="checkbox"` かつ `checked` 指定で `role="menuitemcheckbox"`＋`aria-checked`、選んでもメニューを閉じず（`onSelect()` のみ・フォーカスはその項目に残る）、radio と普通の項目は従来どおり閉じる。`title` は button の `title` に出る（無効な項目の理由など）。ui-demo の Menu の見本に例を追加。
 - **admin-template**: 使われていない辞書のキー `resource.groupByLabel`（#576 で「表示」メニューの `resource.groupByMenu` に置き換わった）と `settings.running`（接続の状態の文言を bind ごとに分けたときから未使用）を `messages/ja.json`・`en.json` から消した。画面の見た目・動きは不変。派生アプリが自分の画面でこれらのキーを使っていれば、自分の辞書に残すこと。ADR 索引の「ADR 化候補」から、ADR-0030 で記録済みの「リソースのルートを動的化しない」の項を外した（ADR-0030 の決定どおり）。
