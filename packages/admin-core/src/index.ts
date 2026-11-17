@@ -29,14 +29,15 @@ export type {
 	StandardAuthProvider
 } from './provider';
 
-export type { FieldError, ErrorBody } from './errors';
+export type { FieldError, ErrorBody, NetworkFailure } from './errors';
 export {
 	ProviderError,
 	isProviderError,
 	notFound,
 	validation,
 	StaleAnswerError,
-	isStaleAnswerError
+	isStaleAnswerError,
+	isNetworkError
 } from './errors';
 
 export type { ResourceDefinition, InitBantoConfig } from './registry.svelte';
@@ -139,9 +140,25 @@ export { adaptLegacyAuthProvider, ADAPTER_REVISION } from './providers/legacyAda
 export {
 	createHttpDataProvider,
 	createHttpAuthProvider,
+	DEFAULT_REQUEST_TIMEOUT_MS,
 	type HttpDataProviderOptions,
-	type HttpAuthProviderOptions
+	type HttpAuthProviderOptions,
+	type HttpRequestResult
 } from './providers/http';
+
+export {
+	createConnectionMonitor,
+	nextConnectionState,
+	connectionStatusOf,
+	initialConnectionState,
+	DEFAULT_FAILURE_THRESHOLD,
+	type ConnectionMonitor,
+	type ConnectionMonitorOptions,
+	type ConnectionStatus,
+	type ConnectionState,
+	type ConnectionEvent,
+	type ConnectionEventTarget
+} from './connectionMonitor.svelte';
 
 export {
 	createLocalUiSettings,
@@ -158,7 +175,8 @@ export type {
 	EventProvider,
 	EventSubscriptionHooks,
 	TauriEventListenOptions,
-	SseEventProviderOptions
+	SseEventProviderOptions,
+	StreamConnectionListener
 } from './events';
 export { createTauriEventProvider, createSseEventProvider, connectEvents } from './events';
 

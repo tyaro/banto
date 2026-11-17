@@ -162,6 +162,43 @@ onDestroy(() => layout.dispose());
 - 破損・未知の version は `parse` に任せる（`'invalid'` で `current` は `fallback()`、例外は外へ出さない）。
 - 即時保存のテーマ設定など既存の画面は載せ替えていない。
 
+## 切断を見分ける（`isNetworkError`・`createConnectionMonitor`）
+
+LAN のブラウザ（`server` モード）でサーバーに届かないことを、フロントだけで判定する（#637。Tauri の
+`invoke` は切れないので作らない。どのモードで作るかは呼び出し側が決める）。
+
+- `isNetworkError(e)`: `fetch` の reject かタイムアウトなら true（`e.networkFailure` が `'network'` か
+  `'timeout'`）。4xx/5xx（サーバーの応答）と、呼び出し側が自分で中断した要求は false。`ErrorBody` の
+  kind は増やしていない（`{ kind: 'other' }` のまま）。
+- HTTP のデータ要求は既定 20 秒（`timeoutMs`、本文の読み込みまで含む、`0` で無効）で打ち切る。SSE には効かない。
+
+```ts
+import {
+	connectEvents,
+	createConnectionMonitor,
+	createHttpAuthProvider,
+	createHttpDataProvider,
+	createSseEventProvider,
+	invalidateAll
+} from '@banto/admin-core';
+
+const connection = createConnectionMonitor();
+const auth = createHttpAuthProvider({ onRequestResult: connection.reportRequest });
+createHttpDataProvider({ getToken: auth.getToken, onRequestResult: connection.reportRequest });
+connectEvents(createSseEventProvider({ getToken: auth.getToken }), { connection });
+
+connection.status; // 'online' | 'reconnecting' | 'offline'（reactive）
+connection.onRecovered(() => invalidateAll()); // 切断から戻ったとき 1 回
+```
+
+- 切断（`reconnecting`）: 開いていた SSE を失った、またはネットワーク失敗が 2 回続いた（`failureThreshold`）。
+  `offline`: ブラウザの `offline` イベント（起動時の `navigator.onLine === false` も）。
+- 復帰: サーバーの応答（状態コードは問わない）か SSE の再接続。`online` イベントだけでは戻らない。
+  古い要求の結果（最後の反対向きの証拠より前に送った要求）は捨てる。判定は純関数
+  `nextConnectionState`・`connectionStatusOf`。
+- 自分では再接続もポーリングもしない（SSE の再接続・セッション確認のバックオフ・利用者の操作で戻る）。
+- SSE の再接続は `connectEvents` が既に `invalidateAll()` するので、`onRecovered` で読み直すと二重になりうる。
+
 ## 依存
 
 `dependencies`/`peerDependencies` は空。`@banto/*` 間の import もゼロ

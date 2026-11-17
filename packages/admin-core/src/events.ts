@@ -59,6 +59,24 @@ export interface EventSubscriptionHooks {
 	 * `connectEvents` wires this to `invalidateAll()`.
 	 */
 	onReconnected?: () => void;
+	/**
+	 * An established stream was lost (Issue #637): it ended or failed while
+	 * its token was still the stored one. Called once per lost stream - the
+	 * failed reconnect attempts that follow are not reported again - and
+	 * never for a stream this provider ended itself (unsubscribe, a token
+	 * switch), a `401`, a logout (the token is gone), or a first connection
+	 * that never opened. Paired with `onReconnected` when the same session's
+	 * stream comes back; a different session's first stream does not call
+	 * `onReconnected`, so a listener must also accept other evidence of
+	 * recovery (`createConnectionMonitor` takes a request's answer).
+	 */
+	onDisconnected?: () => void;
+}
+
+/** What `connectEvents` tells about the stream itself (Issue #637); `ConnectionMonitor` implements it. */
+export interface StreamConnectionListener {
+	reportStreamDisconnected(): void;
+	reportStreamReconnected(): void;
 }
 
 /** Backend-agnostic subscription to `AppEvent`s. Returns an unsubscribe function. */
@@ -227,6 +245,8 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 				usedToken = token;
 
 				controller = new AbortController();
+				// Issue #637: this attempt opened a stream (so its end is a loss).
+				let established = false;
 				try {
 					const response = await fetchFn(`${baseUrl}/api/events`, {
 						headers: { ...SSE_HEADERS, Authorization: `Bearer ${token}` },
@@ -252,6 +272,7 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 					// failures cause no requests; one successful connect = one re-sync.
 					const wasReconnect = hasConnected;
 					hasConnected = true;
+					established = true;
 					if (wasReconnect && !stopped && options.getToken() === token) {
 						hooks?.onReconnected?.();
 					}
@@ -297,6 +318,12 @@ export function createSseEventProvider(options: SseEventProviderOptions): EventP
 					scheduleReconnect(0);
 					return;
 				}
+				// Issue #637: report the loss of an open stream once, unless this
+				// provider ended it (stopped) or the session it belonged to is gone
+				// (a logout clears the token; the server then ends the stream).
+				if (established && !stopped && options.getToken() === token) {
+					hooks?.onDisconnected?.();
+				}
 				scheduleReconnect();
 			}
 
@@ -335,8 +362,16 @@ function toNotificationKind(level: string): NotificationKind {
  * protected layout turns into a re-run of its route guard (wiring ①). The
  * stream itself stays stopped for a rejected token. Returns an unsubscribe
  * function (the controller's background confirmation is not tied to it).
+ *
+ * `options.connection` (Issue #637, e.g. a `createConnectionMonitor()`)
+ * hears the stream's loss and its same-session return; the bridge itself
+ * knows nothing more about it.
  */
-export function connectEvents(provider: EventProvider): () => void {
+export function connectEvents(
+	provider: EventProvider,
+	options?: { connection?: StreamConnectionListener }
+): () => void {
+	const connection = options?.connection;
 	const unsubscribe = provider.subscribe(
 		(event) => {
 			if (event.kind === 'resource_changed') {
@@ -352,8 +387,10 @@ export function connectEvents(provider: EventProvider): () => void {
 			// the stream was down, so re-read every subscribed resource once
 			// (same path as `resource_changed`). Not for an ended session.
 			onReconnected: () => {
+				connection?.reportStreamReconnected();
 				if (getSessionController().snapshot.status !== 'none') invalidateAll();
-			}
+			},
+			onDisconnected: () => connection?.reportStreamDisconnected()
 		}
 	);
 	return unsubscribe;
