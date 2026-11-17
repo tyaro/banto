@@ -450,6 +450,26 @@ describe('ThreePaneLayout - outside hooks (#655)', () => {
 		expect(state().rightDrawerOpen).toBe(false);
 	});
 
+	it('a non-modal drawer: Esc after focusing inside returns focus to the band toggle (right and left)', async () => {
+		await mount({ leftDrawerModal: false, rightDrawerModal: false }, 800);
+		await fireEvent.click(rightToggle());
+		await flush();
+		screen.getByText('Detail').focus();
+		expect(document.activeElement).toBe(screen.getByText('Detail'));
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().rightDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(rightToggle());
+		await fireEvent.click(leftToggle());
+		await flush();
+		screen.getByText('Node A').focus();
+		expect(document.activeElement).toBe(screen.getByText('Node A'));
+		await fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' });
+		await flush();
+		expect(state().leftDrawerOpen).toBe(false);
+		expect(document.activeElement).toBe(leftToggle());
+	});
+
 	it('a non-modal drawer ignores Esc from the centre or elsewhere (only focus inside closes it)', async () => {
 		await mount({ rightDrawerModal: false }, 800);
 		await fireEvent.click(rightToggle());
