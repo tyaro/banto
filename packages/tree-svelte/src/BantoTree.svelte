@@ -18,7 +18,7 @@
 	 * edited immutably; every mutation also fires a callback so a host can
 	 * persist it (and re-drive via a new `nodes` reference).
 	 */
-	import { tick, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import { computeCheckState, subtreeCheckToggle } from './core/checkbox';
 	import {
 		canDrop,
@@ -58,6 +58,16 @@
 		expanded?: NodeId[];
 		/** Initially highlight-selected node ids. */
 		selected?: NodeId[];
+		/**
+		 * Host-controlled highlight selection (a page that keeps the selected id in
+		 * its URL, or that may refuse a pick - e.g. behind an unsaved-changes
+		 * confirm). When given, the tree always shows exactly these ids: a click or
+		 * key still calls `onSelectionChange`, but the highlight goes back to
+		 * `selection` unless the host changed it (synchronously or later). Changing
+		 * `selection` moves the highlight (and the roving focus stop). Omitted =
+		 * uncontrolled (`selected` is only the initial value).
+		 */
+		selection?: NodeId[];
 		/** Initially checkbox-checked leaf ids. */
 		checked?: NodeId[];
 		/** Fetch a lazy branch's children on first expand. */
@@ -105,6 +115,7 @@
 		columns,
 		expanded,
 		selected,
+		selection,
 		checked,
 		loadChildren,
 		messages,
@@ -204,7 +215,63 @@
 
 	function emitSelection(): void {
 		onSelectionChange?.([...tree.selectedIds]);
+		// Controlled: the host decides. Whatever `selection` is once the callback
+		// (and its synchronous effects) are done wins - a refused pick snaps back.
+		if (selection) void tick().then(() => syncSelection(true));
 	}
+
+	/**
+	 * Controlled mode: make the highlight equal `selection` (and park the focus stop on it).
+	 * `afterPick` = called right after a user pick was reported. A refused pick then undoes
+	 * the whole move - selection AND focus go back to the host's row, so the highlight, the
+	 * tab stop, the key handling and the browser focus never disagree - but only while the
+	 * focus has not left the tree: a host that moved it elsewhere (a confirm dialog) keeps it.
+	 */
+	function syncSelection(afterPick = false): void {
+		const wanted = untrack(() => selection);
+		if (!wanted) return;
+		const hostTookFocus = focusIsElsewhere();
+		// The host took the focus out of the tree: drop the row focus the pick reserved.
+		if (afterPick && hostTookFocus) cancelPendingFocus();
+		const current = tree.selectedIds;
+		const same = current.size === wanted.length && wanted.every((id) => current.has(id));
+		if (same) return;
+		current.clear();
+		for (const id of wanted) current.add(id);
+		// Show what was picked: open the (already loaded) branches above each id.
+		for (const id of wanted)
+			for (const ancestor of ancestorIds(roots, id) ?? []) tree.expand(ancestor);
+		const first = wanted[0];
+		if (first === undefined) return;
+		tree.focusedId = first;
+		if (afterPick && !hostTookFocus) scheduleFocus(first, true);
+	}
+
+	/** Ids of the branches above `id` among the loaded nodes (root first); `null` when absent. */
+	function ancestorIds(list: TreeNode<TData>[], id: NodeId, path: NodeId[] = []): NodeId[] | null {
+		for (const node of list) {
+			if (node.id === id) return path;
+			const found = node.children ? ancestorIds(node.children, id, [...path, node.id]) : null;
+			if (found) return found;
+		}
+		return null;
+	}
+
+	/**
+	 * The one row that takes Tab: the focused row when it is shown, else the first
+	 * shown selected row, else the first row - so a hidden focus never strands the tree.
+	 */
+	const tabStopId = $derived.by(() => {
+		const shown = flat.map((f) => f.node.id);
+		const focused = tree.focusedId;
+		if (focused !== null && shown.includes(focused)) return focused;
+		return shown.find((id) => tree.selectedIds.has(id)) ?? shown[0] ?? null;
+	});
+	$effect.pre(() => {
+		void selection?.length;
+		for (const id of selection ?? []) void id;
+		untrack(syncSelection);
+	});
 	function emitCheck(): void {
 		onCheckChange?.([...tree.checkedIds]);
 	}
@@ -297,10 +364,29 @@
 	}
 
 	// --- keyboard navigation (roving focus) ---
+	// The DOM focus follows the logical focus after the next render. Only the newest
+	// request counts, so a reservation made before a refused pick cannot land late.
+	let focusRequest = 0;
+	function scheduleFocus(id: NodeId, unlessElsewhere = false): void {
+		const request = ++focusRequest;
+		void tick().then(() => {
+			if (request !== focusRequest) return;
+			if (unlessElsewhere && focusIsElsewhere()) return;
+			elements.get(id)?.focus();
+		});
+	}
+	/** The browser focus sits on something outside the tree (not just on the page body). */
+	function focusIsElsewhere(): boolean {
+		const active = document.activeElement;
+		return !!active && active !== document.body && !(containerEl?.contains(active) ?? false);
+	}
+	function cancelPendingFocus(): void {
+		focusRequest++;
+	}
 	function focusNodeEl(id: NodeId | null): void {
 		if (id === null) return;
 		tree.focusedId = id;
-		void tick().then(() => elements.get(id)?.focus());
+		scheduleFocus(id);
 	}
 	function moveFocus(toIndex: number, extend: boolean): void {
 		const clamped = Math.min(Math.max(toIndex, 0), flat.length - 1);
@@ -317,13 +403,16 @@
 		} else {
 			tree.focusedId = id;
 		}
-		void tick().then(() => elements.get(id)?.focus());
+		scheduleFocus(id);
 	}
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (editing) return;
-		const focusedId = tree.focusedId ?? flat[0]?.node.id ?? null;
+		// Keys act on the row that holds the tab stop: a focus id that is hidden (a closed
+		// branch, an unknown `selection`) falls back to the shown row the user tabbed into.
+		const focusedId = tabStopId;
 		if (focusedId === null) return;
+		if (tree.focusedId !== focusedId) tree.focusedId = focusedId;
 		const index = flat.findIndex((f) => f.node.id === focusedId);
 		if (index === -1) return;
 		const f = flat[index];
@@ -531,7 +620,7 @@
 			aria-selected={selectionMode !== 'none' ? tree.isSelected(node.id) : undefined}
 			aria-disabled={node.disabled ? 'true' : undefined}
 			aria-label={label ? node.label : undefined}
-			tabindex={(tree.focusedId ?? flat[0]?.node.id) === node.id ? 0 : -1}
+			tabindex={tabStopId === node.id ? 0 : -1}
 			style:grid-template-columns={columns ? templateColumns : undefined}
 			use:register={node.id}
 			onclick={(e) => onRowClick(e, index)}

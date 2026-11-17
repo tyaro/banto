@@ -128,5 +128,8 @@
 できる（`packages/tree-svelte/tests/`）。詳細な API は
 `packages/tree-svelte/src/index.ts` の re-export と各 JSDoc を参照。
 
+選択を URL やページの状態に従わせる（拒否されたら戻す）`selection` prop と、ツリー + タブ + 詳細の
+画面の組み方は [three-pane-screen.md](three-pane-screen.md) を参照。
+
 このパッケージを使わない場合は `packages/tree-svelte/` ごと削除してよい
 （本体はこのパッケージに一切依存していない）。

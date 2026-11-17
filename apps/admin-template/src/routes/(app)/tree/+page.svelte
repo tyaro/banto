@@ -21,6 +21,7 @@
 		type TreeColumn,
 		type TreeNode
 	} from '@banto/tree-svelte';
+	import { resolve } from '$app/paths';
 	import * as m from '#lib/paraglide/messages.js';
 	import { PageHeader, SurfaceCard } from '@banto/ui';
 	import { treeMessages } from '#lib/banto/i18n.js';
@@ -78,6 +79,12 @@
 
 <div class="page">
 	<PageHeader hideTitle title={m['nav.tree']()} description={m['tree.demo.intro']()} />
+
+	<SurfaceCard title={m['tree.workspace.linkTitle']()} description={m['tree.workspace.linkHint']()}>
+		<a class="banto-btn banto-btn--secondary" href={resolve('tree/workspace')}
+			>{m['tree.workspace.linkOpen']()}</a
+		>
+	</SurfaceCard>
 
 	<SurfaceCard title={m['tree.demo.explorerTitle']()} description={m['tree.demo.explorerHint']()}>
 		<BantoTree

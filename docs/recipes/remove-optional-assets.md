@@ -221,7 +221,7 @@ DB/バックエンド配線を一切持たない最小デモのため、以下�
 DB/バックエンド配線を持たない最小デモ。`pnpm scaffold` の minimal / standard
 プリセット（または `--interactive`）で自動削除できる。手動で外す場合は以下。
 
-1. `apps/admin-template/src/routes/(app)/tree/`（ルート丸ごと）と
+1. `apps/admin-template/src/routes/(app)/tree/`（ルート丸ごと。3 ペインの見本 `tree/workspace/` を含む）と
    `src/lib/banto/treeSample.ts` を削除。
 2. `src/lib/navigation.ts` の `'tree'`/`'nav.tree'`（`NavIconKey`/`NavLabelKey`
    の union と navItems の `/tree` 行）、`src/lib/components/navIcons.ts` の
