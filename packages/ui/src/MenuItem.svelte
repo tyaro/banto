@@ -80,6 +80,11 @@
 	class:disabled
 	aria-disabled={disabled ? 'true' : undefined}
 	onclick={handleClick}
+	onmousedown={(event) => {
+		// Keep focus where it was: a click on a disabled item does nothing,
+		// so it must not pull DOM focus off the roving-focus item either.
+		if (disabled) event.preventDefault();
+	}}
 >
 	{#if checked !== undefined}
 		<svg class="check" class:on={checked} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -139,7 +144,22 @@
 	.menu-item.disabled {
 		color: var(--banto-text-muted);
 		cursor: not-allowed;
-		pointer-events: none;
 		opacity: 0.6;
+	}
+
+	/* No pointer-events: none here - a disabled item must stay the hover
+	   target so its `title` (why it is unavailable) shows. `handleClick`
+	   already ignores it; the hover tint is suppressed instead. */
+	.menu-item.disabled:hover {
+		background: transparent;
+	}
+
+	/* Forced colors drop the hover/focus background, which is the only focus
+	   mark above - draw a system-colour outline so keyboard focus stays visible. */
+	@media (forced-colors: active) {
+		.menu-item:focus-visible {
+			outline: var(--banto-border-width-strong) solid Highlight;
+			outline-offset: calc(-1 * var(--banto-border-width-strong));
+		}
 	}
 </style>
