@@ -6,7 +6,7 @@
 	 * minimum without a separate invisible hit-circle.
 	 */
 	import { linearScale, niceTicks } from './core/scale';
-	import { leftMarginForTicks } from './core/labels';
+	import { leftMarginForTicks, rightMarginForLastTick } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import { seriesColorVar } from './core/color';
 	import { getValue, toNumber, type Accessor, type ChartMargin } from './types';
@@ -56,6 +56,14 @@
 		const m = { ...DEFAULT_MARGIN, ...margins };
 		return {
 			...m,
+			// The last x tick is middle-anchored: half of it overhangs the plot.
+			right: Math.max(
+				m.right,
+				rightMarginForLastTick(formatXValue(xTicks[xTicks.length - 1] ?? 0), {
+					totalWidth: plotWidth,
+					fontSize: tickFontSize
+				})
+			),
 			left: leftMarginForTicks(
 				yTicks.map((t) => formatYValue(t)),
 				m.left,

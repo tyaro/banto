@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropCollidingTicks, everyNthIndex } from '../src/core/ticks-time';
+import { dropCollidingTicks, everyNthIndex, thinCenteredTicks } from '../src/core/ticks-time';
 
 describe('dropCollidingTicks', () => {
 	it('keeps all ticks when boxes do not overlap', () => {
@@ -50,5 +50,31 @@ describe('everyNthIndex', () => {
 		const result = everyNthIndex(100, 7);
 		for (let i = 1; i < result.length; i++) expect(result[i]).toBeGreaterThan(result[i - 1]);
 		expect(result[result.length - 1]).toBe(99);
+	});
+});
+
+describe('thinCenteredTicks', () => {
+	it('keeps every tick when no boxes collide', () => {
+		expect(thinCenteredTicks([0, 100, 200, 300], [40, 40, 40, 40])).toEqual([0, 1, 2, 3]);
+	});
+
+	it('steps evenly back from the last tick until boxes fit', () => {
+		// 4 ticks 50px apart, 60px wide boxes: step 1 and 2 (100px apart, 60+4 fits) -> 1,3.
+		expect(thinCenteredTicks([0, 50, 100, 150], [60, 60, 60, 60])).toEqual([1, 3]);
+	});
+
+	it('falls back to the last tick alone when even the widest step collides', () => {
+		expect(thinCenteredTicks([0, 10, 20], [500, 500, 500])).toEqual([2]);
+	});
+
+	it('handles 0, 1 and 2 ticks', () => {
+		expect(thinCenteredTicks([], [])).toEqual([]);
+		expect(thinCenteredTicks([5], [900])).toEqual([0]);
+		expect(thinCenteredTicks([0, 1], [50, 50])).toEqual([1]);
+		expect(thinCenteredTicks([0, 200], [50, 50])).toEqual([0, 1]);
+	});
+
+	it('copes with a degenerate zero-width plot (all ticks at one x)', () => {
+		expect(thinCenteredTicks([0, 0, 0], [30, 30, 30])).toEqual([2]);
 	});
 });

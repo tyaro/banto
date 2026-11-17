@@ -23,6 +23,7 @@
 ## [Unreleased]
 
 - **theme**: 3 つ目の表示密度 `touch`（タッチ。`data-banto-density='touch'`）を追加（#624 PR-1）。操作高 `--banto-control-height` 48px（`-lg` 52px・`-sm` 40px）、グリッド行高 52px・ヘッダ 56px、root の文字サイズ 16px（rem の型スケールごと上がる。`space-*` の値は変えないが rem なので連れて約 14% 大きくなる）、シェルのヘッダ 56px・ランチャー項目 48px。**公開 API の追加（minor）**: `ThemeDensity` が `'standard' | 'compact' | 'touch'` になる。`ThemeDensity` を網羅的な `switch` で扱う派生アプリは `'touch'` の分岐の追加が要る（型検査で気づける）。`isThemeDensity('touch')` は真になり、設定の「表示密度」に「タッチ」が増える。派生アプリが `app.html` の first-paint スクリプトを持つなら `touch` を通す（`density === 'compact' || density === 'touch'`）。
+- **charts**: 横向き `BarChart` の値軸の目盛り（`100,000` など）が、文字が大きいとき（touch 密度・キオスクの狭い幅）に重なる不具合を修正。重なる分は等間隔に間引く（グリッド線は全 tick のまま）。`ScatterChart` は右端の x 目盛り（`¥250` など）が右余白 16px 固定で欠けていたので、末尾ラベルの幅から右余白を決める。
 
 - **charts**: `LineChart` の x 軸で、末尾（右端寄せ）のラベルと手前のラベルが重なる不具合を修正。ラベルの推定幅で重なりを判定し、末尾を残して手前の目盛りを間引く（純関数 `dropCollidingTicks`）。コンパクト密度の dashboard の visual 基準画像（Linux）は再生成が要る
 

@@ -194,3 +194,15 @@ describe('narrow containers (150px) keep a plot area', () => {
 		expect(src).toMatch(/rightMarginForTicks\([\s\S]*?totalWidth: plotWidth/);
 	});
 });
+
+describe('ScatterChart reserves the last x tick overhang', () => {
+	it('uses rightMarginForLastTick on the last x tick label', () => {
+		expect(ScatterChartSrc).toContain('rightMarginForLastTick(formatXValue(');
+	});
+
+	it('right margin follows the label width and is capped at 40% of a tiny container', () => {
+		expect(rightMarginForLastTick('¥250', { fontSize: 16 })).toBeGreaterThan(16);
+		expect(rightMarginForLastTick('1'.repeat(60), { fontSize: 16, totalWidth: 100 })).toBe(40);
+		expect(rightMarginForLastTick('', { fontSize: 16 })).toBe(16);
+	});
+});
