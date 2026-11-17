@@ -82,12 +82,35 @@ async fn items_update(
     Ok(Json(item))
 }
 
+/// `DELETE /api/items/{id}?version=N` (Issue #638): the optional `version`
+/// is the optimistic-lock check (a different stored version is a `409`
+/// `conflict`, nothing deleted); without it the delete overwrites as before.
+/// A query string, not a body, since this route had no body and some
+/// clients/proxies drop a DELETE body. The Tauri `items_delete` command takes
+/// the same `version` argument.
+///
+/// Paths are spelled out (`serde::Deserialize`, `axum::extract::Query`,
+/// `banto_core::BantoError`): `pnpm scaffold` drops those imports from
+/// `rest/mod.rs` when it removes attachments, and this file must still build.
+#[derive(Debug, Default, serde::Deserialize)]
+struct ItemsDeleteQuery {
+    version: Option<i64>,
+}
+
 async fn items_delete(
     State(state): State<ItemsWriteState>,
     headers: HeaderMap,
     Path(id): Path<i64>,
+    query: Result<axum::extract::Query<ItemsDeleteQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<StatusCode, ApiError> {
-    let item = state.items.delete_returning_previous(id).await?;
+    // A malformed `version` (`?version=abc`) answers the usual `ErrorBody`
+    // (`bad_request`), not axum's plain-text rejection.
+    let axum::extract::Query(query) =
+        query.map_err(|err| banto_core::BantoError::BadRequest(err.body_text()))?;
+    let item = state
+        .items
+        .delete_returning_previous(id, query.version)
+        .await?;
     // M20 unit C demo wiring (attachments-plan §3.8): sweep up any attachments left
     // pointing at the now-deleted record (best-effort).
     let sweep = crate::attachment_wiring::sweep_item_attachments(&state.attachments, id).await;

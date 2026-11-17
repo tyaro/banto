@@ -17,6 +17,7 @@ export type {
 
 export type {
 	DataProvider,
+	DeleteOneOptions,
 	AuthProvider,
 	AuthOperationResult,
 	CredentialRevision,

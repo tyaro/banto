@@ -109,6 +109,7 @@ async fn app_layer_crud_round_trips_on_postgres() {
             name: "テスト商品".to_string(),
             price: 123,
             stock: 7,
+            version: None,
         })
         .await
         .expect("items create");
@@ -132,15 +133,40 @@ async fn app_layer_crud_round_trips_on_postgres() {
                 name: "テスト商品(改)".to_string(),
                 price: 200,
                 stock: 3,
+                version: None,
             },
         )
         .await
         .expect("items update");
     assert_eq!(updated.price, 200);
     assert_eq!(updated.stock, 3);
+    // Issue #638: migration 0011's BIGINT `version` - 1 on create, +1 per
+    // update; a stale version is a Conflict (the FOR UPDATE read path).
+    assert_eq!(created.version, 1);
+    assert_eq!(updated.version, 2);
+    let stale = items
+        .update(
+            created.id,
+            ItemInput {
+                name: "古い版".to_string(),
+                price: 1,
+                stock: 1,
+                version: Some(1),
+            },
+        )
+        .await;
+    assert!(
+        matches!(stale, Err(banto_core::BantoError::Conflict { .. })),
+        "stale update must conflict, got {stale:?}"
+    );
+    let stale_delete = items.delete_returning_previous(created.id, Some(1)).await;
+    assert!(
+        matches!(stale_delete, Err(banto_core::BantoError::Conflict { .. })),
+        "stale delete must conflict, got {stale_delete:?}"
+    );
 
     let removed_item = items
-        .delete_returning_previous(created.id)
+        .delete_returning_previous(created.id, Some(2))
         .await
         .expect("items delete returning previous");
     assert_eq!(

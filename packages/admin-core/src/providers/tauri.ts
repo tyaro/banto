@@ -19,6 +19,7 @@ import type {
 	AuthProvider,
 	CredentialRevision,
 	DataProvider,
+	DeleteOneOptions,
 	Identity,
 	ResolvedAuth,
 	SessionKind
@@ -37,6 +38,7 @@ const ERROR_KINDS = new Set([
 	'bad_request',
 	'unauthorized',
 	'forbidden',
+	'conflict',
 	'storage',
 	'other'
 ]);
@@ -109,8 +111,11 @@ export function createTauriDataProvider(options: TauriInvokeOptions): DataProvid
 			return call<T>(`${resource}_update`, { id, values });
 		},
 
-		deleteOne(resource: string, id: string | number): Promise<void> {
-			return call<void>(`${resource}_delete`, { id });
+		// Issue #638: `version` is the `${resource}_delete` command's optional
+		// argument (Rust `Option<i64>`), sent only when given.
+		deleteOne(resource: string, id: string | number, options?: DeleteOneOptions): Promise<void> {
+			const version = options?.version;
+			return call<void>(`${resource}_delete`, version === undefined ? { id } : { id, version });
 		}
 	};
 }

@@ -18,6 +18,12 @@ export interface Item {
 	price: number;
 	stock: number;
 	updatedAt: string;
+	/**
+	 * Optimistic-lock row version (Issue #638, Rust `Item::version`): 1 on
+	 * create, +1 per update. Not a form field, so the list and the detail
+	 * form never show it (`itemsSchema` leaves it out).
+	 */
+	version: number;
 	// Index signature so `Item[]` satisfies @banto/admin-core's
 	// `InMemorySeed.rows: Record<string, unknown>[]`.
 	[key: string]: unknown;
@@ -101,7 +107,7 @@ export function generateSampleItems(count: number = ROW_COUNT): Item[] {
 		const daysAgo = Math.floor(random() * UPDATED_AT_SPAN_DAYS);
 		const updatedAt = toIsoDate(UPDATED_AT_END - daysAgo * DAY_MS);
 
-		rows.push({ id, name, price, stock, updatedAt });
+		rows.push({ id, name, price, stock, updatedAt, version: 1 });
 	}
 
 	return rows;

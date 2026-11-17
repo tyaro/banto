@@ -31,6 +31,18 @@ pub enum BantoError {
     #[error("forbidden")]
     Forbidden,
 
+    /// Optimistic-lock failure (Issue #638): the record changed since the
+    /// caller read it (the `version` it sent is not the current one). Maps to
+    /// HTTP 409. `current` carries the record as it is now (the service's
+    /// wire shape, e.g. an `Item`), so the client can show what the other
+    /// side changed without another round trip; `None` when the service has
+    /// nothing to show.
+    #[error("conflict: {message}")]
+    Conflict {
+        message: String,
+        current: Option<serde_json::Value>,
+    },
+
     #[error("storage error: {0}")]
     Storage(String),
 
@@ -49,13 +61,31 @@ pub struct FieldError {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ErrorBody {
-    NotFound { resource: String, id: String },
-    Validation { field_errors: Vec<FieldError> },
-    BadRequest { message: String },
+    NotFound {
+        resource: String,
+        id: String,
+    },
+    Validation {
+        field_errors: Vec<FieldError>,
+    },
+    BadRequest {
+        message: String,
+    },
     Unauthorized,
     Forbidden,
-    Storage { message: String },
-    Other { message: String },
+    /// `current` is left out of the wire body when the service had nothing
+    /// to send (`packages/admin-core/src/errors.ts`: `current?`).
+    Conflict {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current: Option<serde_json::Value>,
+    },
+    Storage {
+        message: String,
+    },
+    Other {
+        message: String,
+    },
 }
 
 impl From<&BantoError> for ErrorBody {
@@ -73,6 +103,10 @@ impl From<&BantoError> for ErrorBody {
             },
             BantoError::Unauthorized => ErrorBody::Unauthorized,
             BantoError::Forbidden => ErrorBody::Forbidden,
+            BantoError::Conflict { message, current } => ErrorBody::Conflict {
+                message: message.clone(),
+                current: current.clone(),
+            },
             BantoError::Storage(message) => ErrorBody::Storage {
                 message: message.clone(),
             },
@@ -126,6 +160,24 @@ mod tests {
             ),
             (BantoError::Unauthorized, json!({ "kind": "unauthorized" })),
             (BantoError::Forbidden, json!({ "kind": "forbidden" })),
+            (
+                BantoError::Conflict {
+                    message: "changed".into(),
+                    current: Some(json!({ "id": 1, "version": 3 })),
+                },
+                json!({
+                    "kind": "conflict",
+                    "message": "changed",
+                    "current": { "id": 1, "version": 3 },
+                }),
+            ),
+            (
+                BantoError::Conflict {
+                    message: "changed".into(),
+                    current: None,
+                },
+                json!({ "kind": "conflict", "message": "changed" }),
+            ),
             (
                 BantoError::Storage("boom".into()),
                 json!({ "kind": "storage", "message": "boom" }),

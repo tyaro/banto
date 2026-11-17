@@ -30,6 +30,14 @@ export type ErrorBody =
 	 * `unauthorized` (no/invalid session at all).
 	 */
 	| { kind: 'forbidden' }
+	/**
+	 * Issue #638 optimistic lock: the record changed since it was read (the
+	 * `version` sent with an update / delete is not the current one) - HTTP
+	 * 409. Mirrors `crates/banto-core/src/error.rs`'s `BantoError::Conflict` /
+	 * `ErrorBody::Conflict`. `current` is the record as it is now, in the
+	 * resource's own wire shape (absent when the server had none to send).
+	 */
+	| { kind: 'conflict'; message: string; current?: unknown }
 	| { kind: 'storage'; message: string }
 	| { kind: 'other'; message: string };
 
@@ -52,6 +60,10 @@ function describe(body: ErrorBody): string {
 		// reaches a toast at all (it triggers a redirect to /login instead).
 		case 'forbidden':
 			return 'この操作を行う権限がありません';
+		// Like 'forbidden': a toast may show it as is ("someone else changed
+		// it first"), so it is the user-facing text, not the server's message.
+		case 'conflict':
+			return '他の人が先に変更しました。最新の内容を確かめてください';
 		case 'storage':
 			return `storage error: ${body.message}`;
 		case 'other':

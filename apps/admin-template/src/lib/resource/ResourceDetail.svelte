@@ -200,11 +200,28 @@
 		return isProviderError(err) && err.body.kind === 'not_found';
 	});
 
+	/**
+	 * Issue #638 PR-1: the loaded record now carries the optimistic-lock
+	 * `version`, and the form store keeps every loaded key, so the form would
+	 * start sending it. Until PR-2 wires the conflict dialog, leave it out so
+	 * a save overwrites as before (no `version` = last write wins). A schema
+	 * field that is itself named `version` is a real business value and is
+	 * sent as usual.
+	 */
+	function withoutLockVersion(values: Record<string, unknown>): Record<string, unknown> {
+		if (!('version' in values) || schema.fields.some((field) => field.name === 'version')) {
+			return values;
+		}
+		const sent = { ...values };
+		delete sent.version;
+		return sent;
+	}
+
 	async function handleSubmit(values: Record<string, unknown>) {
 		// Defense in depth: the form is read-only for a role that may not save,
 		// and the backend rejects it anyway - this just avoids a round trip.
 		if (!formResource || !canSave) return;
-		const result = await formResource.submit(values);
+		const result = await formResource.submit(withoutLockVersion(values));
 		if (result.ok) {
 			// Issue #215/#255 review: only write the marker if this form hasn't
 			// been torn down since AND its session is still the live one
