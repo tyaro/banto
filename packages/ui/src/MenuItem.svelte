@@ -105,8 +105,12 @@
 		visibility: hidden;
 	}
 
+	/* `inherit`, not `visible`: a closed Menu keeps its box (display: flex for
+	   the exit transition) and hides it with `visibility: hidden` only. A
+	   `visible` child would escape that and, invisible at opacity 0, still
+	   take clicks over whatever lies under the closed menu. */
 	.check.on {
-		visibility: visible;
+		visibility: inherit;
 	}
 
 	.menu-item {
