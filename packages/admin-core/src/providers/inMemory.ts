@@ -306,20 +306,28 @@ export function createInMemoryDataProvider(
 		rows: Record<string, unknown>[];
 		idField: string;
 		searchFields?: readonly string[];
+		/**
+		 * Whether the resource is versioned (Issue #638). Table metadata, not
+		 * inferred from the current rows: set by a versioned seed row or a create
+		 * that sent `version`, and kept after every row is deleted (the server's
+		 * items table always versions, even when empty).
+		 */
+		versioned: boolean;
 	}
 	const tables = new Map<string, Table>();
 	for (const [resource, def] of Object.entries(seed)) {
 		tables.set(resource, {
 			rows: def.rows.slice(),
 			idField: def.idField ?? 'id',
-			searchFields: def.searchFields
+			searchFields: def.searchFields,
+			versioned: def.rows.some(isVersioned)
 		});
 	}
 
 	function table(resource: string): Table {
 		let found = tables.get(resource);
 		if (!found) {
-			found = { rows: [], idField: 'id' };
+			found = { rows: [], idField: 'id', versioned: false };
 			tables.set(resource, found);
 		}
 		return found;
@@ -367,12 +375,12 @@ export function createInMemoryDataProvider(
 				return Number.isFinite(value) && value > max ? value : max;
 			}, 0);
 			const hasUpdatedAt = 'updatedAt' in values || entry.rows.some((row) => 'updatedAt' in row);
-			const hasVersion = 'version' in values || entry.rows.some(isVersioned);
+			if ('version' in values) entry.versioned = true;
 			const row: Record<string, unknown> = { ...values, [entry.idField]: maxId + 1 };
 			if (hasUpdatedAt) row.updatedAt = todayIso();
 			// Issue #638, like the server: a new row starts at version 1,
 			// whatever the caller sent.
-			if (hasVersion) row.version = 1;
+			if (entry.versioned) row.version = 1;
 			entry.rows.push(row);
 			return row as T;
 		},

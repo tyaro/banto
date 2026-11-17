@@ -234,4 +234,26 @@ describe('createInMemoryDataProvider optimistic lock (Issue #638, same rules as 
 		const provider = createInMemoryDataProvider({ items: { rows: seedItems() } }, { latencyMs: 0 });
 		await expect(provider.deleteOne('items', 1, { version: 5 })).resolves.toBeUndefined();
 	});
+
+	it('stays versioned after every row is deleted (create without version starts at 1)', async () => {
+		const provider = versioned();
+		await provider.deleteOne('items', 1);
+		await provider.deleteOne('items', 2);
+		const row = await provider.create<Item>('items', { name: 'Fresh', price: 1 });
+		expect(row.version).toBe(1);
+		await expectConflict(provider.update('items', row.id, { price: 2, version: 99 }));
+		await expectConflict(provider.deleteOne('items', row.id, { version: 99 }));
+		const updated = await provider.update<Item>('items', row.id, { price: 2, version: 1 });
+		expect(updated.version).toBe(2);
+		await expect(provider.deleteOne('items', row.id, { version: 2 })).resolves.toBeUndefined();
+	});
+
+	it('a non-versioned resource gets no version on create and is never compared', async () => {
+		const provider = createInMemoryDataProvider({ items: { rows: seedItems() } }, { latencyMs: 0 });
+		const row = await provider.create<Item>('items', { name: 'Plain', price: 1 });
+		expect(row.version).toBeUndefined();
+		await expect(
+			provider.update('items', row.id, { price: 2, version: 99 })
+		).resolves.toBeDefined();
+	});
 });
