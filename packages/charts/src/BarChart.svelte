@@ -306,7 +306,10 @@
 				{@const shownTicks = new Set(
 					thinCenteredTicks(
 						valueTicks.map((t) => valueScale(t)),
-						valueTicks.map((t) => estimateLabelWidth(formatValueDisplay(t), tickFontSize))
+						valueTicks.map((t) => estimateLabelWidth(formatValueDisplay(t), tickFontSize)),
+						// No extra gap: estimateLabelWidth already over-counts digits and the narrow
+						// ',' / '.', and a 4px gap thinned labels the standard density shows legibly.
+						0
 					).map((i) => valueTicks[i])
 				)}
 				{#each valueTicks as tick (tick)}
