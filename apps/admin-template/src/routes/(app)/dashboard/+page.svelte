@@ -693,6 +693,49 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	/* Kiosk (#624 PR-2): KPIs readable from across the room. Keyed on the
+	   shell's .kiosk class (settings.kiosk), not on density. The number never
+	   wraps; its size shrinks with the width of the text column (.stat-body is
+	   an inline-size container), not the viewport. 15cqi fits ~9 bold
+	   tabular digits (about 5.8em). The sparkline drops below the number so it
+	   does not eat that width. */
+	:global(.shell.kiosk) .stat-row {
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	}
+
+	:global(.shell.kiosk) .stat-icon {
+		width: 56px;
+		height: 56px;
+	}
+
+	:global(.shell.kiosk) .stat-label {
+		font-size: var(--banto-font-size-lg);
+	}
+
+	:global(.shell.kiosk) .stat-body {
+		flex: 1 1 0;
+		container-type: inline-size;
+	}
+
+	:global(.shell.kiosk) .stat-value {
+		font-size: min(var(--banto-font-size-3xl), 15cqi);
+		line-height: 1.1;
+		white-space: nowrap;
+	}
+
+	:global(.shell.kiosk) .stat-value-row {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--banto-space-1);
+	}
+
+	@media (max-width: 600px) {
+		:global(.shell.kiosk) .stat-icon {
+			width: 36px;
+			height: 36px;
+		}
+	}
+
 	.stat-value-row {
 		display: flex;
 		align-items: center;

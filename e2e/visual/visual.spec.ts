@@ -99,6 +99,20 @@ test.describe('kiosk shell', () => {
 			fullPage: true
 		});
 	});
+
+	// #624 PR-2: the large KPI must not overflow a phone-width tile.
+	test('dashboard kiosk light-standard 375x812', async ({ page }) => {
+		await page.setViewportSize({ width: 375, height: 812 });
+		await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
+		await primeKiosk(page);
+		await page.goto('/dashboard');
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		await expect(page.locator('svg').first()).toBeVisible();
+		await page.waitForTimeout(SETTLE_MS);
+		await expect(page).toHaveScreenshot('dashboard-kiosk-light-standard-375x812.png', {
+			fullPage: true
+		});
+	});
 });
 
 // Compact density (#623): the only full-page shot with density 'compact'.
