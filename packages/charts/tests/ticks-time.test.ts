@@ -58,23 +58,33 @@ describe('thinCenteredTicks', () => {
 		expect(thinCenteredTicks([0, 100, 200, 300], [40, 40, 40, 40])).toEqual([0, 1, 2, 3]);
 	});
 
-	it('steps evenly back from the last tick until boxes fit', () => {
-		// 4 ticks 50px apart, 60px wide boxes: step 1 and 2 (100px apart, 60+4 fits) -> 1,3.
-		expect(thinCenteredTicks([0, 50, 100, 150], [60, 60, 60, 60])).toEqual([1, 3]);
+	it('keeps the origin and the last tick, dropping the stepped tick that collides with the last', () => {
+		// 4 ticks 50px apart, 60px wide boxes: step 1 collides; step 2 -> 0,2 + last 3
+		// (2 collides with 3, dropped) -> 0,3.
+		expect(thinCenteredTicks([0, 50, 100, 150], [60, 60, 60, 60])).toEqual([0, 3]);
 	});
 
-	it('falls back to the last tick alone when even the widest step collides', () => {
-		expect(thinCenteredTicks([0, 10, 20], [500, 500, 500])).toEqual([2]);
+	it('keeps 0 and the last when 0,100k,200k,300k labels overlap neighbours', () => {
+		expect(thinCenteredTicks([0, 40, 80, 120], [50, 50, 50, 50])).toEqual([0, 3]);
+	});
+
+	it('steps evenly from the origin when the last tick lands on the step', () => {
+		// 5 ticks 30px apart, 40px boxes: step 1 collides; step 2 (60px) -> 0,2,4.
+		expect(thinCenteredTicks([0, 30, 60, 90, 120], [40, 40, 40, 40, 40])).toEqual([0, 2, 4]);
+	});
+
+	it('keeps only the origin when even first and last collide', () => {
+		expect(thinCenteredTicks([0, 10, 20], [500, 500, 500])).toEqual([0]);
 	});
 
 	it('handles 0, 1 and 2 ticks', () => {
 		expect(thinCenteredTicks([], [])).toEqual([]);
 		expect(thinCenteredTicks([5], [900])).toEqual([0]);
-		expect(thinCenteredTicks([0, 1], [50, 50])).toEqual([1]);
+		expect(thinCenteredTicks([0, 1], [50, 50])).toEqual([0]);
 		expect(thinCenteredTicks([0, 200], [50, 50])).toEqual([0, 1]);
 	});
 
 	it('copes with a degenerate zero-width plot (all ticks at one x)', () => {
-		expect(thinCenteredTicks([0, 0, 0], [30, 30, 30])).toEqual([2]);
+		expect(thinCenteredTicks([0, 0, 0], [30, 30, 30])).toEqual([0]);
 	});
 });
