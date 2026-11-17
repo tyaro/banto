@@ -60,3 +60,34 @@ describe('selection (host-controlled)', () => {
 		expect(selectedIds()).toEqual(['Alpha']);
 	});
 });
+
+describe('selection inside a closed branch', () => {
+	const tabStops = () =>
+		screen.getAllByRole('treeitem').filter((el) => el.getAttribute('tabindex') === '0');
+
+	it('opens the branches above a selected child and parks the tab stop on it', async () => {
+		render(BantoTree, { nodes: forest(), selection: ['a1'] });
+		await tick();
+		await tick();
+		const child = screen.getByRole('treeitem', { name: 'Alpha-1' });
+		expect(child.getAttribute('aria-selected')).toBe('true');
+		expect(tabStops()).toEqual([child]);
+	});
+
+	it('does the same when the host moves `selection` into a closed branch', async () => {
+		const view = render(BantoTree, { nodes: forest(), selection: ['b'] });
+		expect(screen.queryByRole('treeitem', { name: 'Alpha-1' })).toBeNull();
+		await view.rerender({ nodes: forest(), selection: ['a1'] });
+		await tick();
+		await tick();
+		const child = screen.getByRole('treeitem', { name: 'Alpha-1' });
+		expect(tabStops()).toEqual([child]);
+	});
+
+	it('still leaves exactly one shown row on the tab stop when the id cannot be shown', async () => {
+		render(BantoTree, { nodes: forest(), selection: ['missing'] });
+		await tick();
+		await tick();
+		expect(tabStops()).toHaveLength(1);
+	});
+});

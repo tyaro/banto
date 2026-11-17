@@ -229,9 +229,32 @@
 		if (same) return;
 		current.clear();
 		for (const id of wanted) current.add(id);
+		// Show what was picked: open the (already loaded) branches above each id.
+		for (const id of wanted) for (const ancestor of ancestorIds(roots, id)) tree.expand(ancestor);
 		const first = wanted[0];
 		if (first !== undefined) tree.focusedId = first;
 	}
+
+	/** Ids of the branches above `id` among the loaded nodes (root first); `[]` when absent. */
+	function ancestorIds(list: TreeNode<TData>[], id: NodeId, path: NodeId[] = []): NodeId[] {
+		for (const node of list) {
+			if (node.id === id) return path;
+			const found = node.children ? ancestorIds(node.children, id, [...path, node.id]) : null;
+			if (found) return found;
+		}
+		return [];
+	}
+
+	/**
+	 * The one row that takes Tab: the focused row when it is shown, else the first
+	 * shown selected row, else the first row - so a hidden focus never strands the tree.
+	 */
+	const tabStopId = $derived.by(() => {
+		const shown = flat.map((f) => f.node.id);
+		const focused = tree.focusedId;
+		if (focused !== null && shown.includes(focused)) return focused;
+		return shown.find((id) => tree.selectedIds.has(id)) ?? shown[0] ?? null;
+	});
 	$effect.pre(() => {
 		void selection?.length;
 		for (const id of selection ?? []) void id;
@@ -563,7 +586,7 @@
 			aria-selected={selectionMode !== 'none' ? tree.isSelected(node.id) : undefined}
 			aria-disabled={node.disabled ? 'true' : undefined}
 			aria-label={label ? node.label : undefined}
-			tabindex={(tree.focusedId ?? flat[0]?.node.id) === node.id ? 0 : -1}
+			tabindex={tabStopId === node.id ? 0 : -1}
 			style:grid-template-columns={columns ? templateColumns : undefined}
 			use:register={node.id}
 			onclick={(e) => onRowClick(e, index)}

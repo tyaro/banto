@@ -145,6 +145,37 @@ test.describe('three-pane workspace', () => {
 		await expect(page.getByRole('alertdialog')).toBeHidden();
 	});
 
+	test('unsaved settings: Back asks; discard walks the history (no new entry), cancel stays with the draft', async ({
+		page
+	}) => {
+		await open(page);
+		await row(page, '溶接機').click();
+		await expect.poll(() => search(page)).toBe('?target=line-a-weld');
+		await row(page, 'プレス機').click();
+		await expect.poll(() => search(page)).toBe('?target=line-a-press');
+		await tab(page, '設定').click();
+		const name = page.getByRole('textbox', { name: '表示名', exact: true });
+		await name.fill('プレス機（改）');
+		const dialog = page.getByRole('alertdialog', { name: '未保存の変更があります', exact: true });
+
+		// cancel: stay on the second target with the draft
+		await page.goBack();
+		await expect(dialog).toBeVisible();
+		await dialog.getByRole('button', { name: '編集に戻る', exact: true }).click();
+		await expect(dialog).toBeHidden();
+		await expect.poll(() => search(page)).toBe('?target=line-a-press&tab=settings');
+		await expect(name).toHaveValue('プレス機（改）');
+
+		// discard: land on the first target, and Forward still reaches the second one
+		await page.goBack();
+		await dialog.getByRole('button', { name: '破棄して移動', exact: true }).click();
+		await expect.poll(() => search(page)).toBe('?target=line-a-weld');
+		await expect(dialog).toBeHidden();
+		await page.goForward();
+		await expect.poll(() => search(page)).toContain('target=line-a-press');
+		await expect(dialog).toBeHidden();
+	});
+
 	test('unsaved settings: switching the tab asks; cancel keeps the settings tab focused', async ({
 		page
 	}) => {

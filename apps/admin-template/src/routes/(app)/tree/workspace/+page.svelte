@@ -132,8 +132,14 @@
 
 	/** True while the page carries on with a move the user agreed to (the guard must not ask again). */
 	let proceeding = false;
+	/** Set for the one history walk that follows an agreed Back / Forward. */
+	let retracing = false;
 
 	beforeNavigate((navigation) => {
+		if (retracing) {
+			retracing = false;
+			return;
+		}
 		if (proceeding || !dirty) return;
 		// Reload / tab close / leaving the site: the package guard cancels so the browser asks.
 		if (navigation.type === 'leave' || navigation.willUnload || !navigation.to) return;
@@ -143,7 +149,10 @@
 			if (sameWorkspaceScope(parse(navigation.to.url), view)) return;
 		}
 		navigation.cancel();
-		void askThenGo(navigation.to.url);
+		void askThenGo(
+			navigation.to.url,
+			navigation.type === 'popstate' ? (navigation.delta ?? null) : null
+		);
 	});
 
 	/**
@@ -164,7 +173,7 @@
 		if (target) document.querySelector<HTMLElement>(target)?.focus();
 	}
 
-	async function askThenGo(to: URL): Promise<void> {
+	async function askThenGo(to: URL, delta: number | null): Promise<void> {
 		const opener = document.activeElement;
 		// The root layout's ConfirmHost answers an open question "cancel" from its own
 		// beforeNavigate callback, which may run after this one for the same
@@ -179,6 +188,14 @@
 		});
 		if (!agreed) {
 			await refocusShown(opener);
+			return;
+		}
+		if (delta) {
+			// Back / Forward: walk the history again instead of pushing a new entry, so
+			// the entries (and the forward ones) stay as they were.
+			discard();
+			retracing = true;
+			history.go(delta);
 			return;
 		}
 		const next = to.pathname === page.url.pathname ? parse(to) : null;
