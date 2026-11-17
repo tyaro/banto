@@ -43,6 +43,13 @@ for (const [index, locale] of ['ja', 'en'].entries()) {
 		await expect(last).toHaveAttribute('title', copy['grid.columnsMenuLastColumn']);
 		await page.emulateMedia({ forcedColors: 'active' });
 		await first.focus();
+		// Re-enter by keyboard (the clicks above dropped focus-visible), then check
+		// that forced colors still mark the focused item with a solid outline.
+		await page.keyboard.press('End');
+		await page.keyboard.press('Home');
+		await expect(first).toBeFocused();
+		await expect(first).toHaveCSS('outline-style', 'solid');
+		await expect(first).toHaveCSS('outline-width', '2px');
 		await first.press('Space');
 		await expect(first).toHaveAttribute('aria-checked', 'true');
 		await expect(last).toBeEnabled();
