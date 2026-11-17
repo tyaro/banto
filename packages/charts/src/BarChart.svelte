@@ -16,7 +16,9 @@
 	import { stackSeries, type StackSegment } from './core/stack';
 	import { roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
+	import { thinCenteredTicks } from './core/ticks-time';
 	import {
+		estimateLabelWidth,
 		leftMarginFor,
 		leftMarginForTicks,
 		rightMarginForLastTick,
@@ -299,6 +301,17 @@
 					[domainMin, domainMax],
 					[m.innerLeft, m.innerLeft + m.innerWidth]
 				)}
+				<!-- Value labels are thinned so neighbours never collide (large root
+				     font / narrow plot); gridlines stay at every tick. -->
+				{@const shownTicks = new Set(
+					thinCenteredTicks(
+						valueTicks.map((t) => valueScale(t)),
+						valueTicks.map((t) => estimateLabelWidth(formatValueDisplay(t), tickFontSize)),
+						// No extra gap: estimateLabelWidth already over-counts digits and the narrow
+						// ',' / '.', and a 4px gap thinned labels the standard density shows legibly.
+						0
+					).map((i) => valueTicks[i])
+				)}
 				{#each valueTicks as tick (tick)}
 					<line
 						x1={valueScale(tick)}
@@ -307,14 +320,16 @@
 						y2={m.innerTop + m.innerHeight}
 						class="gridline"
 					/>
-					<text
-						x={valueScale(tick)}
-						y={m.innerTop + m.innerHeight + 16}
-						class="tick-label"
-						text-anchor="middle"
-					>
-						{formatValueDisplay(tick)}
-					</text>
+					{#if shownTicks.has(tick)}
+						<text
+							x={valueScale(tick)}
+							y={m.innerTop + m.innerHeight + 16}
+							class="tick-label"
+							text-anchor="middle"
+						>
+							{formatValueDisplay(tick)}
+						</text>
+					{/if}
 				{/each}
 				{#each categories as cat, i (i)}
 					{@const catScale = bandScale(

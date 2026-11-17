@@ -132,6 +132,22 @@ test.describe('compact density', () => {
 	});
 });
 
+// Touch density (#624): the only full-page shot with density 'touch'.
+test.describe('touch density', () => {
+	test('dashboard touch light-standard 1440x900', async ({ page }) => {
+		await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
+		await primeDensity(page, 'touch');
+		await page.goto('/dashboard');
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'touch');
+		await expect(page.locator('svg').first()).toBeVisible();
+		await page.waitForTimeout(SETTLE_MS);
+		await expect(page).toHaveScreenshot('dashboard-touch-light-standard-1440x900.png', {
+			fullPage: true
+		});
+	});
+});
+
 // Dock layout (nav-launcher-plan.md §7.3): the diagonal at the baseline
 // viewport plus the <=900px tab bar, and one shot per other edge (D4, one
 // combo each). Primed like the kiosk shell, so every other test here keeps

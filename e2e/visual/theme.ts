@@ -178,7 +178,10 @@ const DENSITY_PROVIDER_KEY = 'banto.ui.theme.density';
  * `primeThemeAndAuth` (init scripts run in registration order) and before the
  * test's first `page.goto()`.
  */
-export async function primeDensity(page: Page, density: 'standard' | 'compact'): Promise<void> {
+export async function primeDensity(
+	page: Page,
+	density: 'standard' | 'compact' | 'touch'
+): Promise<void> {
 	await page.addInitScript(
 		({ cacheKey, providerKey, value }) => {
 			window.localStorage.setItem(cacheKey, value);

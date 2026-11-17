@@ -37,6 +37,35 @@ export function dropCollidingTicks(
 	return kept.reverse();
 }
 
+/**
+ * Thins MIDDLE-anchored tick labels (e.g. a horizontal bar chart's value
+ * axis) so rendered boxes never collide. The FIRST tick (the origin) and the
+ * LAST tick are always kept; between them the ticks are evenly stepped:
+ * every `step`-th tick counting from the first (0, k, 2k, ...), smallest
+ * step that fits. When the last tick is off the stepping, it is appended and
+ * the stepped ticks that would collide with it are dropped (never the
+ * first). If even first + last collide, only the first (origin) is kept.
+ * `xs[i]` / `widths[i]` are the centre and estimated width of tick `i`.
+ * Returns the kept indices into `xs` in ascending order.
+ */
+export function thinCenteredTicks(xs: number[], widths: number[], gap = 4): number[] {
+	const n = xs.length;
+	if (n <= 1) return xs.map((_, i) => i);
+	const fits = (a: number, b: number) => xs[a] + widths[a] / 2 + gap <= xs[b] - widths[b] / 2;
+	for (let step = 1; step < n; step++) {
+		const kept: number[] = [];
+		for (let i = 0; i < n; i += step) kept.push(i);
+		if (kept[kept.length - 1] !== n - 1) {
+			while (kept.length > 1 && !fits(kept[kept.length - 1], n - 1)) kept.pop();
+			kept.push(n - 1);
+		}
+		let ok = true;
+		for (let k = 1; k < kept.length && ok; k++) ok = fits(kept[k - 1], kept[k]);
+		if (ok) return kept;
+	}
+	return [0];
+}
+
 export function everyNthIndex(count: number, maxTicks: number): number[] {
 	if (count <= 0) return [];
 	if (maxTicks <= 0) return [];

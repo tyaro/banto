@@ -64,9 +64,11 @@ export function isThemePreset(value: unknown): value is ThemePreset {
  * and preset above: `data-banto-density` on <html>. `standard` is the
  * existing control/grid-row sizing; `compact` switches to the smaller
  * dimension tokens defined under [data-banto-density="compact"] in
- * css/banto.css (a pure variable swap, same approach as the preset axis).
+ * css/banto.css (a pure variable swap, same approach as the preset axis);
+ * `touch` (#624) is the larger one for fingers: 48px controls, 52px grid rows
+ * and a 16px root size.
  */
-export type ThemeDensity = 'standard' | 'compact';
+export type ThemeDensity = 'standard' | 'compact' | 'touch';
 
 /** Apply the density to the document root (`data-banto-density`). */
 export function applyDensity(density: ThemeDensity): void {
@@ -74,5 +76,5 @@ export function applyDensity(density: ThemeDensity): void {
 }
 
 export function isThemeDensity(value: unknown): value is ThemeDensity {
-	return value === 'standard' || value === 'compact';
+	return value === 'standard' || value === 'compact' || value === 'touch';
 }

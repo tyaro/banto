@@ -570,11 +570,30 @@
 	/* Spacing: space-3..6 step down one rung (theme-dimension-tokens.md D3,
      owner decision 2026-11, #623). space-1/2/7/8 and the type scale stay put
      (#557). Every value of a density lives in its own block, so a further
-     density (touch, #624) only adds a block. */
+     density only adds a block (touch, #624, below). */
 	--banto-space-3: 0.5rem;
 	--banto-space-4: 0.75rem;
 	--banto-space-5: 1rem;
 	--banto-space-6: 1.25rem;
+}
+
+/* Touch density (#624, owner decision 2026-11-17): bigger targets and type for
+   fingers and wall panels. Unlike compact it moves the body size: root
+   --banto-font-size 14px -> 16px, and because every dimension scale is rem the
+   whole type scale follows (about 13.7/14.9/16/16/18.3/22.9/32px). The
+   space-* tokens are left alone (their rem values grow with the root, ~14%).
+   Control heights, the grid rows and the shell bars are fixed px, so they are
+   set here; the launcher item is 48px. */
+[data-banto-density='touch'] {
+	--banto-font-size: 16px;
+	--banto-control-height-sm: 40px;
+	--banto-control-height: 48px;
+	--banto-control-height-lg: 52px;
+	--banto-grid-row-height: 52px;
+	--banto-grid-header-height: 56px;
+	--banto-shell-header-height: 56px;
+	--banto-shell-header-height-compact: 48px;
+	--banto-shell-launcher-item-size: 48px;
 }
 
 /* <=900px the launcher is a full-width tab bar (nav-launcher-plan.md §4.6)

@@ -365,6 +365,7 @@
   "settings.densityHeading": "Display density",
   "settings.densityStandard": "Standard",
   "settings.densityCompact": "Compact",
+  "settings.densityTouch": "Touch",
   "settings.themeNote": "Settings are saved to this device immediately, and while you are logged in they are also saved to the server and shared with your other devices.",
   "settings.navLayoutHeading": "Navigation",
   "settings.navLayoutDesc": "Choose where the page links appear: a sidebar on the left, a dock at an edge of the screen, or a menu bar in the header.",

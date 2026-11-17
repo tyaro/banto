@@ -3311,6 +3311,20 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		}
 	});
 
+	// #624: the touch density is chosen in 外観, lands on <html> and survives a
+	// reload. The admin's setting is put back to the standard density at the end.
+	test('13k2. touch density: chosen in 外観, kept across a reload', async () => {
+		const densityGroup = () => page.getByRole('radiogroup', { name: '表示密度' });
+		await page.goto('/settings/appearance');
+		await densityGroup().getByText('タッチ', { exact: true }).click();
+		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'touch');
+		await page.reload();
+		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'touch');
+		await expect(densityGroup().getByRole('radio', { name: 'タッチ' })).toBeChecked();
+		await densityGroup().getByText('標準', { exact: true }).click();
+		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'standard');
+	});
+
 	// Issue #432 PR-10 (shared-primitives-upstream-plan §3.5・D9): the dashboard
 	// メモ pane keeps unapplied input across the dock's structure changes (the
 	// draft is owned by the page, the pane is re-created), a close settles it
