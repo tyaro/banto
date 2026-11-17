@@ -51,6 +51,7 @@
 		StatusBadge,
 		SurfaceCard,
 		Tabs,
+		ThreePaneLayout,
 		TimeInput,
 		Tooltip,
 		type CommandPaletteItem,
@@ -193,6 +194,21 @@
 		{ id: 'archived', label: m['uiDemo.tabs.archived'](), disabled: true }
 	];
 	let demoTab = $state('overview');
+
+	// ThreePaneLayout (#631): the picked line names the target; a pick closes
+	// the narrow drawer, as an app would.
+	const threePaneLines = [
+		{ id: 'line1', label: () => m['uiDemo.threePane.line1']() },
+		{ id: 'line2', label: () => m['uiDemo.threePane.line2']() }
+	];
+	let threePaneLine = $state('line1');
+	let threePaneDrawer = $state(false);
+	const threePaneMessages: UiMessages = {
+		threePaneLeft: () => m['uiDemo.threePane.tree'](),
+		threePaneRight: () => m['uiDemo.threePane.detail'](),
+		threePaneResizeLeft: () => m['uiDemo.threePane.treeWidth'](),
+		threePaneResizeRight: () => m['uiDemo.threePane.detailWidth']()
+	};
 	type DemoView = 'list' | 'cards' | 'map';
 	const demoViews: SegmentedOption<DemoView>[] = [
 		{ value: 'list', label: m['uiDemo.segmented.list']() },
@@ -742,6 +758,38 @@
 		</Tabs>
 	</SurfaceCard>
 
+	<SurfaceCard title="ThreePaneLayout" description={m['uiDemo.threePane.desc']()}>
+		<div class="three-pane-box">
+			<ThreePaneLayout
+				title={threePaneLines.find((line) => line.id === threePaneLine)?.label()}
+				bind:leftDrawerOpen={threePaneDrawer}
+				messages={threePaneMessages}
+			>
+				{#snippet left()}
+					<ul class="three-pane-list">
+						{#each threePaneLines as line (line.id)}
+							<li>
+								<button
+									type="button"
+									class="banto-btn banto-btn--ghost"
+									aria-pressed={threePaneLine === line.id}
+									onclick={() => {
+										threePaneLine = line.id;
+										threePaneDrawer = false;
+									}}>{line.label()}</button
+								>
+							</li>
+						{/each}
+					</ul>
+				{/snippet}
+				{#snippet right()}
+					<p class="body-text three-pane-text">{m['uiDemo.threePane.detailBody']()}</p>
+				{/snippet}
+				<p class="body-text three-pane-text">{m['uiDemo.threePane.body']()}</p>
+			</ThreePaneLayout>
+		</div>
+	</SurfaceCard>
+
 	<SurfaceCard title="SegmentedControl" description={m['uiDemo.segmented.desc']()}>
 		<div class="row">
 			<SegmentedControl
@@ -996,6 +1044,31 @@
 />
 
 <style>
+	/* The frame decides narrow by its own width: the box's corner narrows it. */
+	.three-pane-box {
+		height: 16rem;
+		min-width: 12rem;
+		max-width: 100%;
+		overflow: hidden;
+		resize: horizontal;
+		border: var(--banto-border-width) solid var(--banto-border);
+		border-radius: var(--banto-radius-md);
+	}
+
+	.three-pane-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--banto-space-1);
+		margin: 0;
+		padding: var(--banto-space-2);
+		list-style: none;
+	}
+
+	.three-pane-text {
+		margin: 0;
+		padding: var(--banto-space-3);
+	}
+
 	.page {
 		display: flex;
 		flex-direction: column;

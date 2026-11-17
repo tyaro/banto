@@ -6,7 +6,7 @@
  * verbatim, so passing nothing reproduces the stock output.
  *
  * Components with their own text take `messages?: UiMessages` and merge it
- * over the defaults (CommandPalette, ToastHost, Modal, Drawer, ConfirmDialog, DateInput, TimeInput, DateTimeInput, DateRangeInput). Apps that localise (admin-template
+ * over the defaults (CommandPalette, ToastHost, Modal, Drawer, ConfirmDialog, DateInput, TimeInput, DateTimeInput, DateRangeInput, ThreePaneLayout). Apps that localise (admin-template
  * does, via Paraglide) pass their own text explicitly - see `LoadingState`'s
  * `label` and admin-template's CommandPalette wrapper.
  */
@@ -72,6 +72,14 @@ export interface UiMessages {
 	dateRangeStart?: () => string;
 	/** DateRangeInput: the end day's text box. */
 	dateRangeEnd?: () => string;
+	/** ThreePaneLayout: the left pane's name (its region and the band's toggle). */
+	threePaneLeft?: () => string;
+	/** ThreePaneLayout: the right pane's name (its region and the band's toggle). */
+	threePaneRight?: () => string;
+	/** ThreePaneLayout: the left pane's resize handle (`role="separator"`). */
+	threePaneResizeLeft?: () => string;
+	/** ThreePaneLayout: the right pane's resize handle. */
+	threePaneResizeRight?: () => string;
 }
 
 export const defaultUiMessages: Required<UiMessages> = {
@@ -104,5 +112,9 @@ export const defaultUiMessages: Required<UiMessages> = {
 	dateTimePickerDialog: () => '日時の選択',
 	dateTimeFormatHint: () => 'YYYY-MM-DD HH:mm の形で入力（例: 2026-11-07 09:30）',
 	dateRangeStart: () => '開始日',
-	dateRangeEnd: () => '終了日'
+	dateRangeEnd: () => '終了日',
+	threePaneLeft: () => '左のペイン',
+	threePaneRight: () => '右のペイン',
+	threePaneResizeLeft: () => '左のペインの幅',
+	threePaneResizeRight: () => '右のペインの幅'
 };
