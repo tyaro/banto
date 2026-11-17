@@ -1618,7 +1618,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				await save.click();
 				const request = await subsequentSave;
 				expect(new URL(request.url()).pathname).toBe(`/api/users/${targetId}`);
-				expect(request.postDataJSON()).toEqual({ displayName: draft, role: targetRole });
+				expect(request.postDataJSON()).toEqual({
+					displayName: draft,
+					role: targetRole,
+					version: expect.any(Number)
+				});
 				await expect(
 					rowWithText(page, targetUsername).locator('[data-cell-field="displayName"]')
 				).toHaveText(draft);
