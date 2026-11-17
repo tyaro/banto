@@ -36,12 +36,12 @@ function hangingFetch() {
 }
 
 /** A response whose headers arrived but whose body never does (until aborted). */
-function stallingBodyFetch() {
+function stallingBodyFetch(status = 200) {
 	return vi.fn((_url: RequestInfo | URL, init?: RequestInit) =>
 		Promise.resolve({
-			ok: true,
-			status: 200,
-			statusText: 'OK',
+			ok: status >= 200 && status < 300,
+			status,
+			statusText: status === 200 ? 'OK' : 'Error',
 			json: () =>
 				new Promise((_resolve, reject) => {
 					init?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
@@ -247,6 +247,22 @@ describe('createHttpDataProvider: network failures (Issue #637)', () => {
 		expect(results.map((r) => r.ok)).toEqual([true]);
 	});
 
+	it('an error status whose body stalls past the deadline is a timeout, not an answer', async () => {
+		const results: HttpRequestResult[] = [];
+		const provider = createHttpDataProvider({
+			getToken: () => null,
+			fetchFn: stallingBodyFetch(503),
+			timeoutMs: 1000,
+			onRequestResult: (r) => results.push(r)
+		});
+		const pending = caught(provider.getOne('items', 1));
+		await vi.advanceTimersByTimeAsync(1000);
+		const err = await pending;
+		expect(isNetworkError(err)).toBe(true);
+		expect((err as ProviderError).networkFailure).toBe('timeout');
+		expect(results).toEqual([{ ok: false, failure: 'timeout', startedAt: Date.now() - 1000 }]);
+	});
+
 	it('a throwing listener does not change the request outcome', async () => {
 		const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { id: 7 }));
 		const provider = createHttpDataProvider({
@@ -345,6 +361,51 @@ describe('createHttpAuthProvider.resolve: timeout and the caller signal (Issue #
 		const err = await pending;
 		expect(isNetworkError(err)).toBe(false);
 		expect(results).toEqual([]);
+	});
+
+	it('a 200 whose body stalls past resolveTimeoutMs is a timeout, not an answer', async () => {
+		const results: HttpRequestResult[] = [];
+		const auth = createHttpAuthProvider({
+			fetchFn: stallingBodyFetch(200),
+			resolveTimeoutMs: 1000,
+			onRequestResult: (r) => results.push(r)
+		});
+		const pending = caught(auth.resolve());
+		await vi.advanceTimersByTimeAsync(1000);
+		const err = await pending;
+		expect((err as ProviderError).networkFailure).toBe('timeout');
+		expect(results.map((r) => r.ok)).toEqual([false]);
+	});
+
+	it('a caller abort while the body is being read is neither reported nor marked', async () => {
+		const results: HttpRequestResult[] = [];
+		const auth = createHttpAuthProvider({
+			fetchFn: stallingBodyFetch(200),
+			resolveTimeoutMs: 1000,
+			onRequestResult: (r) => results.push(r)
+		});
+		const abort = new AbortController();
+		const pending = caught(auth.resolve({ signal: abort.signal }));
+		await vi.advanceTimersByTimeAsync(10);
+		abort.abort();
+		const err = await pending;
+		expect(isProviderError(err)).toBe(true);
+		expect(isNetworkError(err)).toBe(false);
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(results).toEqual([]);
+	});
+
+	it('a malformed (non-abort) identity body still rejects as an answer', async () => {
+		const results: HttpRequestResult[] = [];
+		const auth = createHttpAuthProvider({
+			fetchFn: vi.fn().mockResolvedValue(new Response('not json', { status: 200 })),
+			resolveTimeoutMs: 1000,
+			onRequestResult: (r) => results.push(r)
+		});
+		const err = await caught(auth.resolve());
+		expect(isProviderError(err)).toBe(true);
+		expect(isNetworkError(err)).toBe(false);
+		expect(results.map((r) => r.ok)).toEqual([true]);
 	});
 
 	it('removes its listener from the caller signal after settling', async () => {

@@ -55,7 +55,10 @@ async function errorFromResponse(response: Response): Promise<ProviderError> {
 	let body: unknown;
 	try {
 		body = await response.json();
-	} catch {
+	} catch (error) {
+		// An abort while reading is the request's own timeout / caller abort,
+		// not "an unparseable body": let `guardedFetch` classify it.
+		if (isAbortError(error)) throw error;
 		return new ProviderError({
 			kind: 'other',
 			message: `${response.status} ${response.statusText}`
@@ -575,7 +578,9 @@ export function createHttpAuthProvider(
 					let body: unknown;
 					try {
 						body = await response.json();
-					} catch {
+					} catch (error) {
+						// An abort is not a malformed body: `guardedFetch` classifies it.
+						if (isAbortError(error)) throw error;
 						body = undefined;
 					}
 					if (body === null) return none();
