@@ -153,4 +153,13 @@
 	.menu-item.disabled:hover {
 		background: transparent;
 	}
+
+	/* Forced colors drop the hover/focus background, which is the only focus
+	   mark above - draw a system-colour outline so keyboard focus stays visible. */
+	@media (forced-colors: active) {
+		.menu-item:focus-visible {
+			outline: var(--banto-border-width-strong) solid Highlight;
+			outline-offset: calc(-1 * var(--banto-border-width-strong));
+		}
+	}
 </style>
