@@ -120,6 +120,20 @@ describe('emptyChildren', () => {
 		expect(screen.getByTestId('none-e').textContent).toBe('none d1');
 	});
 
+	it('the label snippet sees the branch as expandable and open', () => {
+		const label = createRawSnippet(
+			(node: () => TreeNode, ctx: () => { expanded: boolean; hasChildren: boolean }) => ({
+				render: () =>
+					`<span data-testid="lbl-${node().id}">${ctx().hasChildren ? 'branch' : 'leaf'}-${ctx().expanded ? 'open' : 'closed'}</span>`
+			})
+		);
+		render(BantoTree, { nodes: forest(), emptyChildren: none, label });
+		expect(screen.getByTestId('lbl-e').textContent).toBe('branch-closed');
+		cleanup();
+		render(BantoTree, { nodes: forest(), emptyChildren: none, label, expanded: ['e'] });
+		expect(screen.getByTestId('lbl-e').textContent).toBe('branch-open');
+	});
+
 	it('arrow keys skip the line; it cannot be selected', async () => {
 		const onSelectionChange = vi.fn();
 		render(BantoTree, {

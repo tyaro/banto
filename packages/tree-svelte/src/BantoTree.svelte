@@ -720,8 +720,8 @@
 							{@render label(node, {
 								selected: selectionMode !== 'none' && tree.isSelected(node.id),
 								focused: tree.focusedId === node.id,
-								expanded: f.expanded,
-								hasChildren: f.hasChildren,
+								expanded: isOpen(f),
+								hasChildren: expandable(f),
 								depth: f.depth,
 								disabled: !!node.disabled
 							})}
