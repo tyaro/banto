@@ -66,6 +66,16 @@ export function thinCenteredTicks(xs: number[], widths: number[], gap = 4): numb
 	return [0];
 }
 
+/**
+ * Indices of category labels (centred on `centers`, estimated `widths` px
+ * wide) to render on a band axis: all of them while they fit, otherwise
+ * thinned evenly with the first and last kept (`thinCenteredTicks`). Only the
+ * labels are thinned - bars and gridlines are drawn for every category.
+ */
+export function thinCategoryLabels(centers: number[], widths: number[], gap = 4): number[] {
+	return thinCenteredTicks(centers, widths, gap);
+}
+
 export function everyNthIndex(count: number, maxTicks: number): number[] {
 	if (count <= 0) return [];
 	if (maxTicks <= 0) return [];

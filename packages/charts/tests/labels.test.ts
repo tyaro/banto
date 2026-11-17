@@ -206,3 +206,12 @@ describe('ScatterChart reserves the last x tick overhang', () => {
 		expect(rightMarginForLastTick('', { fontSize: 16 })).toBe(16);
 	});
 });
+
+describe('rightMarginForLastTick at the touch font (16px)', () => {
+	it('reserves more than the 16px minimum for a wide last x tick and grows with the font', () => {
+		const std = rightMarginForLastTick('2026-11-17', { fontSize: 14 });
+		const touch = rightMarginForLastTick('2026-11-17', { fontSize: 16 });
+		expect(touch).toBeGreaterThan(16);
+		expect(touch).toBeGreaterThan(std);
+	});
+});

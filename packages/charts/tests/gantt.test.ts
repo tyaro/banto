@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ganttDomain, ganttLayout, toMs, type GanttTask } from '../src/core/gantt';
+import { ganttDomain, ganttLayout, ganttTimeTicks, toMs, type GanttTask } from '../src/core/gantt';
 
 const D = (s: string) => new Date(s).getTime();
 
@@ -89,5 +89,24 @@ describe('ganttLayout', () => {
 		);
 		expect(bar.startFrac).toBe(0);
 		expect(bar.widthFrac).toBe(0);
+	});
+});
+
+describe('ganttTimeTicks', () => {
+	it('drops nice ticks past the domain end (domain end is not a nice tick)', () => {
+		const domain: [number, number] = [D('2026-11-01T00:00:00Z'), D('2026-11-17T00:00:00Z')];
+		const ticks = ganttTimeTicks(domain, 6);
+		expect(ticks.length).toBeGreaterThan(0);
+		expect(Math.max(...ticks)).toBeLessThanOrEqual(domain[1]);
+		expect(Math.min(...ticks)).toBeGreaterThanOrEqual(domain[0]);
+	});
+	it('falls back to the domain endpoints when no nice tick fits', () => {
+		// niceTicks rounds [1.1, 1.9] out to [1, 2]; both fall outside, so the
+		// fallback branch returns the domain endpoints themselves.
+		const domain: [number, number] = [1.1, 1.9];
+		expect(ganttTimeTicks(domain, 2)).toEqual([1.1, 1.9]);
+	});
+	it('returns a single tick for a zero-width domain', () => {
+		expect(ganttTimeTicks([5, 5], 4)).toEqual([5]);
 	});
 });
