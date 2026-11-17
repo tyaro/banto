@@ -22,6 +22,7 @@
 
 ## [Unreleased]
 
+- **ui**: `MenuItem` にチェックボックスの形を追加（`kind?: 'radio' | 'checkbox'`・`title?: string`。**公開 API の追加（minor）**、既定の動きは不変）。`kind="checkbox"` かつ `checked` 指定で `role="menuitemcheckbox"`＋`aria-checked`、選んでもメニューを閉じず（`onSelect()` のみ・フォーカスはその項目に残る）、radio と普通の項目は従来どおり閉じる。`title` は button の `title` に出る（無効な項目の理由など）。ui-demo の Menu の見本に例を追加。
 - **admin-template**: 使われていない辞書のキー `resource.groupByLabel`（#576 で「表示」メニューの `resource.groupByMenu` に置き換わった）と `settings.running`（接続の状態の文言を bind ごとに分けたときから未使用）を `messages/ja.json`・`en.json` から消した。画面の見た目・動きは不変。派生アプリが自分の画面でこれらのキーを使っていれば、自分の辞書に残すこと。ADR 索引の「ADR 化候補」から、ADR-0030 で記録済みの「リソースのルートを動的化しない」の項を外した（ADR-0030 の決定どおり）。
 
 - **admin-template / admin-core / grid-svelte**: items の楽観ロックを画面に配線（#638 PR-2。**公開 API の追加（minor）**、省略時の動きは不変）。詳細フォームと一覧のセル編集・範囲貼り付けが行の `version` を送り、削除も `deleteOne(…, { version })`。保存が衝突したら、詳細フォームは差分のダイアログ（相手が変えた欄の「相手の値／あなたの値」、「相手の値を採る／自分の値で上書き／項目ごとに選ぶ」。送り直しは相手の `version` で、また衝突すれば再表示）、一覧はその行を最新値に戻して「他の人が変更したため保存しませんでした」（貼り付けは件数）、削除は「他の人が変更したため削除しませんでした」と知らせて最新値を表示。一覧のセル編集が送る `version` は編集を開いた時点の行のもの（SSE の再取得で他人の新しい版が届いても、その版では送らない）で、自分の保存の成功で進んだ版だけを追う（連続のセル編集・貼り付けは衝突しない）。grid-svelte: `CellEdit` に任意の `baseRow`（インライン編集で、編集を開いた時点の行。`row` は従来どおりコミット時に読み直した行。完全一致で比べるテストは `baseRow` を足す）。admin-core: `createFormResource` の `handlesConflict`、`SubmitResult` の失敗に任意の `conflict`、`FormResource.lastError`・`remove(options?)`、`conflictOf(err)`・型 `FormConflict`。新規文言 `resource.conflict*`（ja/en）。手順は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)「楽観ロック」。Refs #638

@@ -23,10 +23,29 @@
 		 * a check mark. Omit it for an ordinary action item.
 		 */
 		checked?: boolean;
+		/**
+		 * Shape of a `checked` item. `'radio'` (default) is a single choice
+		 * (`menuitemradio`) that closes the menu on select. `'checkbox'` is a
+		 * multi-select toggle (`menuitemcheckbox`): selecting it calls
+		 * `onSelect()` only, leaving the menu open and focus on the item.
+		 * Without `checked` this has no effect.
+		 */
+		kind?: 'radio' | 'checkbox';
+		/** Native tooltip (e.g. why a disabled item is unavailable). */
+		title?: string;
 		onSelect: () => void;
 	}
 
-	let { label, icon: Icon, danger = false, disabled = false, checked, onSelect }: Props = $props();
+	let {
+		label,
+		icon: Icon,
+		danger = false,
+		disabled = false,
+		checked,
+		kind = 'radio',
+		title,
+		onSelect
+	}: Props = $props();
 
 	const menu = getMenuContext();
 
@@ -40,6 +59,7 @@
 	function handleClick(): void {
 		if (disabled) return;
 		onSelect();
+		if (checked !== undefined && kind === 'checkbox') return;
 		menu.close();
 	}
 </script>
@@ -47,7 +67,12 @@
 <button
 	bind:this={itemEl}
 	type="button"
-	role={checked === undefined ? 'menuitem' : 'menuitemradio'}
+	role={checked === undefined
+		? 'menuitem'
+		: kind === 'checkbox'
+			? 'menuitemcheckbox'
+			: 'menuitemradio'}
+	{title}
 	aria-checked={checked === undefined ? undefined : checked}
 	tabindex="-1"
 	class="menu-item"
@@ -55,6 +80,11 @@
 	class:disabled
 	aria-disabled={disabled ? 'true' : undefined}
 	onclick={handleClick}
+	onmousedown={(event) => {
+		// Keep focus where it was: a click on a disabled item does nothing,
+		// so it must not pull DOM focus off the roving-focus item either.
+		if (disabled) event.preventDefault();
+	}}
 >
 	{#if checked !== undefined}
 		<svg class="check" class:on={checked} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -114,7 +144,22 @@
 	.menu-item.disabled {
 		color: var(--banto-text-muted);
 		cursor: not-allowed;
-		pointer-events: none;
 		opacity: 0.6;
+	}
+
+	/* No pointer-events: none here - a disabled item must stay the hover
+	   target so its `title` (why it is unavailable) shows. `handleClick`
+	   already ignores it; the hover tint is suppressed instead. */
+	.menu-item.disabled:hover {
+		background: transparent;
+	}
+
+	/* Forced colors drop the hover/focus background, which is the only focus
+	   mark above - draw a system-colour outline so keyboard focus stays visible. */
+	@media (forced-colors: active) {
+		.menu-item:focus-visible {
+			outline: var(--banto-border-width-strong) solid Highlight;
+			outline-offset: calc(-1 * var(--banto-border-width-strong));
+		}
 	}
 </style>
