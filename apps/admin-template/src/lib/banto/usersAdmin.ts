@@ -220,3 +220,23 @@ export async function deleteUser(id: number, version?: number): Promise<void> {
 		expectNoContent: true
 	});
 }
+
+/**
+ * Issue #651: after our own save succeeded, may the open form's base version
+ * advance to the saved version? Only when the form is still on the same user,
+ * was opened from exactly the version we sent, and nothing was written in
+ * between (saved === sent + 1). Otherwise the base is left alone.
+ */
+export function shouldAdvanceEditVersion(args: {
+	selectedId: number | null | undefined;
+	targetId: number;
+	editVersion: number;
+	sentVersion: number;
+	savedVersion: number;
+}): boolean {
+	return (
+		args.selectedId === args.targetId &&
+		args.editVersion === args.sentVersion &&
+		args.savedVersion === args.sentVersion + 1
+	);
+}

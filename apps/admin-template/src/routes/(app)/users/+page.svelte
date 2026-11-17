@@ -45,6 +45,7 @@
 		isUsersAdminAvailable,
 		listUsers,
 		resetUserPassword,
+		shouldAdvanceEditVersion,
 		updateUser,
 		type Role as UserRole,
 		type UserSummary
@@ -256,6 +257,19 @@
 				// Fields remain editable while saving; retain input made after submission.
 				if (editDisplayName === draft.displayName) editDisplayName = updated.displayName;
 				if (editRole === draft.role) editRole = updated.role;
+			} else if (
+				// Selection moved on (e.g. reselected the same user from a stale list
+				// row) before our reply: advance only the base version so the next
+				// save does not conflict with our own write. Draft/panel untouched.
+				shouldAdvanceEditVersion({
+					selectedId: selected?.id,
+					targetId,
+					editVersion,
+					sentVersion: draft.version,
+					savedVersion: updated.version
+				})
+			) {
+				editVersion = updated.version;
 			}
 			await reload();
 		} catch (err) {

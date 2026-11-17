@@ -98,3 +98,15 @@ describe('updateUser / deleteUser version (Issue #651)', () => {
 		]);
 	});
 });
+
+describe('shouldAdvanceEditVersion (Issue #651)', () => {
+	const base = { selectedId: 7, targetId: 7, editVersion: 3, sentVersion: 3, savedVersion: 4 };
+	it('advances only for same user, same base, and consecutive version', async () => {
+		const { shouldAdvanceEditVersion: f } = await import('./usersAdmin');
+		expect(f(base)).toBe(true);
+		expect(f({ ...base, selectedId: 8 })).toBe(false);
+		expect(f({ ...base, selectedId: null })).toBe(false);
+		expect(f({ ...base, editVersion: 2 })).toBe(false);
+		expect(f({ ...base, savedVersion: 5 })).toBe(false);
+	});
+});
