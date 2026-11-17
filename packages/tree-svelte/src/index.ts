@@ -42,5 +42,6 @@ export type {
 	CheckState,
 	LoadStatus,
 	DropPosition,
-	TreeColumn
+	TreeColumn,
+	TreeLabelContext
 } from './core/types';
