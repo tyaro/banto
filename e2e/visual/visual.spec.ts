@@ -133,6 +133,23 @@ test.describe('compact density', () => {
 });
 
 // Touch density (#624): the only full-page shot with density 'touch'.
+// The three-pane screen pattern (#631 PR③): a target and a row picked in the list tab,
+// so the tree badges, the table and the right pane's details are all on screen.
+test.describe('three-pane workspace', () => {
+	for (const size of ['1440x900', '1366x768'] as const) {
+		test(`tree workspace light-standard ${size}`, async ({ page }) => {
+			const [width, height] = size.split('x').map(Number);
+			await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });
+			await page.setViewportSize({ width, height });
+			await page.goto('/tree/workspace?target=line-a-press&row=line-a-press-3');
+			await expect(page.getByRole('tree')).toBeVisible();
+			await expect(page.getByText('3.9 mm/s', { exact: true }).last()).toBeVisible();
+			await page.waitForTimeout(SETTLE_MS);
+			await expect(page).toHaveScreenshot(`tree-workspace-light-standard-${size}.png`);
+		});
+	}
+});
+
 test.describe('touch density', () => {
 	test('dashboard touch light-standard 1440x900', async ({ page }) => {
 		await primeThemeAndAuth(page, { theme: 'light', preset: 'standard' });

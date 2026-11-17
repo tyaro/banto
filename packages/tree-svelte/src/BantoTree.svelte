@@ -18,7 +18,7 @@
 	 * edited immutably; every mutation also fires a callback so a host can
 	 * persist it (and re-drive via a new `nodes` reference).
 	 */
-	import { tick, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import { computeCheckState, subtreeCheckToggle } from './core/checkbox';
 	import {
 		canDrop,
@@ -58,6 +58,16 @@
 		expanded?: NodeId[];
 		/** Initially highlight-selected node ids. */
 		selected?: NodeId[];
+		/**
+		 * Host-controlled highlight selection (a page that keeps the selected id in
+		 * its URL, or that may refuse a pick - e.g. behind an unsaved-changes
+		 * confirm). When given, the tree always shows exactly these ids: a click or
+		 * key still calls `onSelectionChange`, but the highlight goes back to
+		 * `selection` unless the host changed it (synchronously or later). Changing
+		 * `selection` moves the highlight (and the roving focus stop). Omitted =
+		 * uncontrolled (`selected` is only the initial value).
+		 */
+		selection?: NodeId[];
 		/** Initially checkbox-checked leaf ids. */
 		checked?: NodeId[];
 		/** Fetch a lazy branch's children on first expand. */
@@ -105,6 +115,7 @@
 		columns,
 		expanded,
 		selected,
+		selection,
 		checked,
 		loadChildren,
 		messages,
@@ -204,7 +215,28 @@
 
 	function emitSelection(): void {
 		onSelectionChange?.([...tree.selectedIds]);
+		// Controlled: the host decides. Whatever `selection` is once the callback
+		// (and its synchronous effects) are done wins - a refused pick snaps back.
+		if (selection) void tick().then(syncSelection);
 	}
+
+	/** Controlled mode: make the highlight equal `selection` (and park the focus stop on it). */
+	function syncSelection(): void {
+		const wanted = untrack(() => selection);
+		if (!wanted) return;
+		const current = tree.selectedIds;
+		const same = current.size === wanted.length && wanted.every((id) => current.has(id));
+		if (same) return;
+		current.clear();
+		for (const id of wanted) current.add(id);
+		const first = wanted[0];
+		if (first !== undefined) tree.focusedId = first;
+	}
+	$effect.pre(() => {
+		void selection?.length;
+		for (const id of selection ?? []) void id;
+		untrack(syncSelection);
+	});
 	function emitCheck(): void {
 		onCheckChange?.([...tree.checkedIds]);
 	}

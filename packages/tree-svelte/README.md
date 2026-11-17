@@ -40,6 +40,10 @@ UI で、展開/折りたたみ・単一/複数選択・三状態チェックボ
 `columns` 時は先頭列）。`onContextMenu` はマウス右クリック・ContextMenu キー・Shift+F10 で
 呼ばれ、指定時だけ既定メニューを抑止する（選択は動かさない）。
 
+`selection`（`NodeId[]`）を渡すとホスト主導の選択になる: クリック・キーは `onSelectionChange` で通知される
+だけで、強調は常に `selection` に従う（ページが URL に選択を持つ、確認で拒否したら元に戻す、など）。
+省略時は従来どおり（`selected` は初期値）。
+
 複数選択 + 三状態チェックボックス・遅延読み込み・tree-grid・`TreeSelect`・
 ドラッグ/リネームの各形態は
 [docs/recipes/tree-svelte.md](../../docs/recipes/tree-svelte.md) を参照。
