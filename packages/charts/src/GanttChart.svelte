@@ -14,7 +14,7 @@
 	import { linearScale, niceTicks } from './core/scale';
 	import { ganttDomain, ganttLayout, toMs, type GanttTask } from './core/gantt';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginFor, truncateLabel } from './core/labels';
+	import { leftMarginFor, rightMarginForLastTick, truncateLabel } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -65,7 +65,21 @@
 	let taskFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTaskFont = trackFontSize((px) => (taskFontSize = px));
 	const MARGIN = $derived.by(() => {
-		const base = { ...DEFAULT_MARGIN, ...margins };
+		const m = { ...DEFAULT_MARGIN, ...margins };
+		// The last top-axis date tick is middle-anchored at the plot's right edge:
+		// half of it overhangs. The domain end stands in for the last tick (its
+		// label has the same shape) - the real ticks depend on the inner width,
+		// which depends on this margin.
+		const base = {
+			...m,
+			right: Math.max(
+				m.right,
+				rightMarginForLastTick(domain ? formatDateValue(domain[1]) : '', {
+					fontSize: taskFontSize,
+					totalWidth: plotWidth
+				})
+			)
+		};
 		if (margins?.left !== undefined) return base;
 		return {
 			...base,

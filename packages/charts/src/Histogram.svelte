@@ -22,7 +22,7 @@
 	import { linearScale, niceTicks } from './core/scale';
 	import { linePath, roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
-	import { leftMarginForTicks } from './core/labels';
+	import { leftMarginForTicks, rightMarginForLastTick } from './core/labels';
 	import { DEFAULT_LABEL_FONT_SIZE, trackFontSize } from './internal/label-font';
 	import type { ChartMargin, TooltipRow } from './types';
 	import ChartContainer from './internal/ChartContainer.svelte';
@@ -72,14 +72,28 @@
 	let tickFontSize = $state(DEFAULT_LABEL_FONT_SIZE);
 	const trackTickFont = trackFontSize((px) => (tickFontSize = px));
 	// Lazy (`$derived.by`): the ticks/formatters are declared below.
-	const MARGIN = $derived.by((): ChartMargin => ({
-		...DEFAULT_MARGIN,
-		left: leftMarginForTicks(valueTicks.map(formatCount), DEFAULT_MARGIN.left, {
-			fontSize: tickFontSize,
-			totalWidth: plotWidth
-		}),
-		...margins
-	}));
+	const MARGIN = $derived.by((): ChartMargin => {
+		const m = {
+			...DEFAULT_MARGIN,
+			left: leftMarginForTicks(valueTicks.map(formatCount), DEFAULT_MARGIN.left, {
+				fontSize: tickFontSize,
+				totalWidth: plotWidth
+			}),
+			...margins
+		};
+		return {
+			...m,
+			// The last x tick is middle-anchored: half of it overhangs the plot
+			// (never below the caller's/default right margin).
+			right: Math.max(
+				m.right,
+				rightMarginForLastTick(formatValueDisplay(xTicks[xTicks.length - 1] ?? 0), {
+					totalWidth: plotWidth,
+					fontSize: tickFontSize
+				})
+			)
+		};
+	});
 	const RADIUS = 4;
 	const CURVE_SAMPLES = 64;
 

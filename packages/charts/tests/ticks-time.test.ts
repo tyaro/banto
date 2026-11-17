@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { dropCollidingTicks, everyNthIndex, thinCenteredTicks } from '../src/core/ticks-time';
+import {
+	dropCollidingTicks,
+	everyNthIndex,
+	thinCategoryLabels,
+	thinCenteredTicks
+} from '../src/core/ticks-time';
 
 describe('dropCollidingTicks', () => {
 	it('keeps all ticks when boxes do not overlap', () => {
@@ -86,5 +91,28 @@ describe('thinCenteredTicks', () => {
 
 	it('copes with a degenerate zero-width plot (all ticks at one x)', () => {
 		expect(thinCenteredTicks([0, 0, 0], [30, 30, 30])).toEqual([0]);
+	});
+});
+
+describe('thinCategoryLabels', () => {
+	const centers = (n: number, pitch: number) =>
+		Array.from({ length: n }, (_, i) => pitch / 2 + i * pitch);
+
+	it('keeps every label while they fit', () => {
+		expect(thinCategoryLabels(centers(4, 80), [40, 40, 40, 40])).toEqual([0, 1, 2, 3]);
+	});
+
+	it('thins evenly but keeps first and last when labels are too wide', () => {
+		const kept = thinCategoryLabels(centers(8, 30), Array(8).fill(50));
+		expect(kept[0]).toBe(0);
+		expect(kept[kept.length - 1]).toBe(7);
+		expect(kept.length).toBeLessThan(8);
+	});
+
+	it('thins more at a larger font (wider estimated labels)', () => {
+		const c = centers(10, 40);
+		const std = thinCategoryLabels(c, Array(10).fill(30)).length;
+		const touch = thinCategoryLabels(c, Array(10).fill(45)).length;
+		expect(touch).toBeLessThan(std);
 	});
 });

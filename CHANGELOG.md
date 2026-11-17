@@ -26,6 +26,7 @@
 - **charts**: 横向き `BarChart` の値軸の目盛り（`100,000` など）が、文字が大きいとき（touch 密度・キオスクの狭い幅）に重なる不具合を修正。原点（先頭）と末尾のラベルは残し、間を等間隔に間引く（グリッド線は全 tick のまま）。`ScatterChart` は右端の x 目盛り（`¥250` など）が右余白 16px 固定で欠けていたので、末尾ラベルの幅から右余白を決める。
 - **dashboard / theme**: キオスク表示（`settings.kiosk`）で dashboard の KPI を大きくする（#624 PR-2。数字 48px・ラベル 16px・アイコン 56px、タイルの最小幅 280px。375px では数字を 9vw に縮める）。`@banto/theme` に文字サイズのトークン `--banto-font-size-3xl`（48px）を追加（公開 API の追加）。キオスクの dashboard の visual 基準画像（Linux）は再生成が要る
 - **charts**: `LineChart` の x 軸で、末尾（右端寄せ）のラベルと手前のラベルが重なる不具合を修正。ラベルの推定幅で重なりを判定し、末尾を残して手前の目盛りを間引く（純関数 `dropCollidingTicks`）。コンパクト密度の dashboard の visual 基準画像（Linux）は再生成が要る
+- **charts**: 文字が大きいとき（touch 密度）に x 軸の末尾ラベルが右端で欠ける不具合を修正（#624）。`Histogram`・`GanttChart` は右余白を末尾の目盛りラベルの幅から決める（既定の 16px 以上、`margins.right` の指定は下回らない）。縦向き `BarChart`（積み上げ・グループ含む）のカテゴリラベルは、多いか文字が大きく重なるとき先頭と末尾を残して間引く（棒とグリッド線は全カテゴリのまま。純関数 `thinCategoryLabels`）。visual 基準画像（Linux）は再生成が要る
 
 - **theme**: コンパクト密度（`data-banto-density='compact'`）で余白トークン `--banto-space-3`〜`--banto-space-6` を 1 段下の値にした（#623 PR-1。D3 を案 a に変更。文字の段は変えない）。見た目の変更で公開 API は変わらない。`MenuItem` のチェック枠は余白トークンから `1rem` へ（標準密度では見た目不変）
 - **ui**: `SurfaceCard` に `tone`（`primary` / `default` / `subtle`、既定は従来の見た目）を追加し、カードの面を 3 段に（トークン `--banto-card-*`、dashboard の KPI 行・主役チャート・標準カードへ適用）（#623 PR-2）

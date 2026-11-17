@@ -16,7 +16,7 @@
 	import { stackSeries, type StackSegment } from './core/stack';
 	import { roundedTopBarPath } from './core/path';
 	import { seriesColorVar } from './core/color';
-	import { thinCenteredTicks } from './core/ticks-time';
+	import { thinCategoryLabels, thinCenteredTicks } from './core/ticks-time';
 	import {
 		estimateLabelWidth,
 		leftMarginFor,
@@ -382,20 +382,30 @@
 						{formatValueDisplay(tick)}
 					</text>
 				{/each}
+				{@const catScaleX = bandScale(
+					data.length,
+					[m.innerLeft, m.innerLeft + m.innerWidth],
+					CATEGORY_PADDING
+				)}
+				<!-- Category labels are thinned when crowded (many categories / large
+				     root font); bars stay at every category. -->
+				{@const shownCats = new Set(
+					thinCategoryLabels(
+						categories.map((_, i) => catScaleX.center(i)),
+						categories.map((cat) => estimateLabelWidth(String(cat ?? ''), tickFontSize))
+					)
+				)}
 				{#each categories as cat, i (i)}
-					{@const catScale = bandScale(
-						data.length,
-						[m.innerLeft, m.innerLeft + m.innerWidth],
-						CATEGORY_PADDING
-					)}
-					<text
-						x={catScale.center(i)}
-						y={m.innerTop + m.innerHeight + 16}
-						class="tick-label"
-						text-anchor="middle"
-					>
-						{cat}
-					</text>
+					{#if shownCats.has(i)}
+						<text
+							x={catScaleX.center(i)}
+							y={m.innerTop + m.innerHeight + 16}
+							class="tick-label"
+							text-anchor="middle"
+						>
+							{cat}
+						</text>
+					{/if}
 				{/each}
 				<line
 					x1={m.innerLeft}
