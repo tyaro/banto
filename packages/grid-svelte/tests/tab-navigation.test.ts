@@ -213,6 +213,7 @@ it.each([
 		expect(onCellEdit).toHaveBeenCalledTimes(1);
 		expect(onCellEdit).toHaveBeenCalledWith({
 			row: rows[0],
+			baseRow: rows[0],
 			rowId: 1,
 			field: 'category',
 			oldValue: 'First',

@@ -32,14 +32,17 @@
 	`actions`.
 -->
 <script lang="ts">
-	import { onDestroy, untrack, type Snippet } from 'svelte';
+	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { BantoForm, UnsavedChangesNotice, createFormStore } from '@banto/forms';
 	import type { FormSchema } from '@banto/forms';
 	import {
+		conflictOf,
 		createFormResource,
 		currentSessionScope,
+		getDataProvider,
 		isProviderError,
+		notify,
 		noteLastEditedRecord,
 		saveLastOpenedId
 	} from '@banto/admin-core';
@@ -51,6 +54,18 @@
 	import { sessionStore } from '#lib/session.svelte.js';
 	import { guardUnsavedChanges } from '#lib/unsavedChanges.js';
 	import { resolveAppPath } from '#lib/appPath.js';
+	import ConflictDialog from './ConflictDialog.svelte';
+	import {
+		conflictFields,
+		keptEditsOverTheirs,
+		inputTypedDuringSave,
+		LOCK_VERSION_FIELD,
+		lockVersionOf,
+		resolvedValues,
+		type ConflictChoice,
+		type ConflictField
+	} from './conflict';
+	import { editableFieldNames } from './listState';
 	import { resourcePermissions } from './permissions';
 	import type { AppResourceDefinition, ResourceRow } from './types';
 
@@ -131,8 +146,11 @@
 
 	// Issue #637: a save that fails because the connection is down says so; the
 	// form's store is untouched on any failed save, so the draft stays.
+	// Issue #638: an optimistic-lock conflict is resolved here (the diff
+	// dialog / the delete notice below), not toasted by `createFormResource`.
 	const formOptions = {
-		submitErrorMessage: (err: unknown) => saveErrorMessage(err, m['connection.saveFailed'])
+		submitErrorMessage: (err: unknown) => saveErrorMessage(err, m['connection.saveFailed']),
+		handlesConflict: true
 	};
 	const formResource = isNew
 		? createFormResource(def.name, undefined, formOptions)
@@ -177,6 +195,16 @@
 		destroyed = true;
 	});
 
+	/**
+	 * Issue #638: the record as this form last knew it from the server - the
+	 * loaded record, then each saved / resolved one. Its `version` is what a
+	 * delete is checked against (a save sends the `version` key the store's
+	 * values carry), and it is the "before" that tells which fields someone
+	 * else changed when a save conflicts.
+	 */
+	let base: Record<string, unknown> = {};
+	const conflictFieldNames = editableFieldNames(schema);
+
 	// Shared by the initial load and the "reload" action. Only a `not_found`
 	// ProviderError shows the not-found copy; anything else gets its own
 	// message plus a way to retry without a full page navigation.
@@ -184,6 +212,7 @@
 		if (!formResource) return;
 		await formResource.load();
 		if (!isNew && formResource.initialValues) {
+			base = formResource.initialValues;
 			store = createFormStore(schema, formResource.initialValues, formValidationMessages());
 			storeReady = true;
 		}
@@ -200,29 +229,125 @@
 		return isProviderError(err) && err.body.kind === 'not_found';
 	});
 
-	/**
-	 * Issue #638 PR-1: the loaded record now carries the optimistic-lock
-	 * `version`, and the form store keeps every loaded key, so the form would
-	 * start sending it. Until PR-2 wires the conflict dialog, leave it out so
-	 * a save overwrites as before (no `version` = last write wins). A schema
-	 * field that is itself named `version` is a real business value and is
-	 * sent as usual.
-	 */
-	function withoutLockVersion(values: Record<string, unknown>): Record<string, unknown> {
-		if (!('version' in values) || schema.fields.some((field) => field.name === 'version')) {
-			return values;
-		}
-		const sent = { ...values };
-		delete sent.version;
-		return sent;
+	// --- Issue #638: a save refused by the optimistic lock -----------------
+
+	/** The open conflict dialog: the other person's record and the draft it compares. */
+	let conflict: {
+		current: Record<string, unknown>;
+		draft: Record<string, unknown>;
+		fields: ConflictField[];
+	} | null = $state(null);
+	/** Fetching the latest record for a conflict that came without `current`. */
+	let resolving = $state(false);
+	let formPanel: HTMLElement | undefined = $state();
+
+	function saveButton(): HTMLButtonElement | null {
+		return formPanel?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null;
 	}
 
-	async function handleSubmit(values: Record<string, unknown>) {
+	/**
+	 * The other person's record for a conflict: the conflict's `current`, or
+	 * fetched when the backend sent none. `null` (after a toast) when it
+	 * cannot be had - the record was deleted meanwhile, or the fetch failed.
+	 */
+	async function latestRecord(
+		current: Record<string, unknown> | undefined
+	): Promise<Record<string, unknown> | null> {
+		if (current) return current;
+		try {
+			return await getDataProvider().getOne<Record<string, unknown>>(def.name, parsedId);
+		} catch (err) {
+			notify(
+				'error',
+				isProviderError(err) && err.body.kind === 'not_found'
+					? m['resource.conflictDeleted']()
+					: saveErrorMessage(err, m['connection.saveFailed'])
+			);
+			return null;
+		}
+	}
+
+	async function handleConflict(
+		draft: Record<string, unknown>,
+		reported: Record<string, unknown> | undefined,
+		retried: boolean
+	): Promise<void> {
+		resolving = true;
+		const current = await latestRecord(reported);
+		resolving = false;
+		if (!current || destroyed) return;
+		const fields = conflictFields(conflictFieldNames, base, current, draft);
+		if (fields.length === 0) {
+			// None of the form's fields was changed by the other person (only
+			// the version moved, or a field the form does not edit): re-send
+			// the draft against their version - no value of theirs is lost.
+			// Once per save: if that conflicts again with nothing to show, the
+			// draft stays and the user saves again.
+			base = current;
+			// The re-send carries their version: the store's values must too, or
+			// the saved form is compared against the stale one afterwards.
+			const version = lockVersionOf(current);
+			if (version !== undefined) store.values = { ...store.values, [LOCK_VERSION_FIELD]: version };
+			if (retried) {
+				notify('error', m['resource.conflictNotSaved']());
+				return;
+			}
+			await handleSubmit(resolvedValues(draft, current, [], {}), true);
+			return;
+		}
+		// The dialog gives focus back to whatever had it when it opened: make
+		// that the save button (a save started by Enter in a field would
+		// otherwise return there).
+		await tick();
+		saveButton()?.focus();
+		// A copy: `draft` may be the form store's live values.
+		conflict = { current, draft: { ...draft }, fields };
+	}
+
+	/** "Take theirs": the form becomes their record; this form's edits elsewhere stay unsaved. */
+	function takeTheirs(): void {
+		if (!conflict) return;
+		const { current, draft } = conflict;
+		const kept = keptEditsOverTheirs(conflictFieldNames, base, current, draft);
+		base = current;
+		store.reset(current);
+		if (Object.keys(kept).length > 0) store.values = { ...store.values, ...kept };
+		conflict = null;
+		notify('info', m['resource.conflictTookTheirs']());
+	}
+
+	/** "Overwrite with mine" / "save the chosen values": re-send against their version. */
+	async function resend(choices: Record<string, ConflictChoice>): Promise<void> {
+		if (!conflict) return;
+		const { current, draft, fields } = conflict;
+		const values = resolvedValues(draft, current, fields, choices);
+		base = current;
+		conflict = null;
+		// The form shows what is being sent, so a re-send that conflicts once
+		// more compares the values the user just chose.
+		store.values = { ...store.values, ...values };
+		await handleSubmit(values);
+	}
+
+	function overwriteWithMine(): void {
+		const fields = conflict?.fields ?? [];
+		void resend(Object.fromEntries(fields.map((field) => [field.field, 'mine' as const])));
+	}
+
+	/** `retried`: this is the automatic re-send of a conflict that showed no field (above). */
+	async function handleSubmit(values: Record<string, unknown>, retried = false) {
 		// Defense in depth: the form is read-only for a role that may not save,
 		// and the backend rejects it anyway - this just avoids a round trip.
-		if (!formResource || !canSave) return;
-		const result = await formResource.submit(withoutLockVersion(values));
+		if (!formResource || !canSave || resolving) return;
+		const result = await formResource.submit(values);
+		if (!result.ok && result.conflict) {
+			await handleConflict(values, result.conflict.current, retried);
+			return;
+		}
 		if (result.ok) {
+			// Issue #638: the saved record (its new `version`) is what the next
+			// save and delete are checked against.
+			base = { ...values, ...(result.row as Record<string, unknown>) };
 			// Issue #215/#255 review: only write the marker if this form hasn't
 			// been torn down since AND its session is still the live one
 			// (`noteLastEditedRecord` refuses a stale `scope` itself).
@@ -254,10 +379,7 @@
 				store.reset({ ...values, ...((result.row ?? {}) as Record<string, unknown>) });
 				// Only the fields edited during the save go back on top - the
 				// others keep what the server stored.
-				const typed: Record<string, unknown> = {};
-				for (const [key, value] of Object.entries(current)) {
-					if (JSON.stringify(value) !== JSON.stringify(values[key])) typed[key] = value;
-				}
+				const typed = inputTypedDuringSave(current, values);
 				if (Object.keys(typed).length > 0) store.values = { ...store.values, ...typed };
 			} else {
 				store.markClean();
@@ -279,8 +401,23 @@
 		// `destroyed`: the page may have gone while the dialog was open (the
 		// host cancels on navigation; this is the second guard).
 		if (!confirmed || destroyed) return;
-		const removed = await formResource.remove();
-		if (!removed) return;
+		// Issue #638: delete only the record this form shows; a refusal
+		// (someone changed it meanwhile) shows their record instead.
+		const version = lockVersionOf(base);
+		const removed = await formResource.remove(version === undefined ? undefined : { version });
+		if (!removed) {
+			const refused = conflictOf(formResource.lastError);
+			if (refused && !destroyed) {
+				notify('error', m['resource.conflictNotDeleted']());
+				if (refused.current) {
+					base = refused.current;
+					store.reset(refused.current);
+				} else {
+					await loadForm();
+				}
+			}
+			return;
+		}
 		// The record is gone: unsaved edits to it are moot, don't prompt.
 		store.markClean();
 		if (onDeleted) {
@@ -301,7 +438,7 @@
 	{/if}
 {/snippet}
 
-<div class="form-panel" class:embedded={onClose !== undefined}>
+<div class="form-panel" class:embedded={onClose !== undefined} bind:this={formPanel}>
 	{#if isNotFoundError}
 		<EmptyState
 			title={m['resource.notFoundTitle']({ resource: def.label })}
@@ -334,7 +471,7 @@
 			{schema}
 			{store}
 			onSubmit={handleSubmit}
-			submitting={(formResource?.saving ?? false) || !canSave}
+			submitting={(formResource?.saving ?? false) || resolving || !canSave}
 			submitLabel={m['common.save']()}
 		>
 			<UnsavedChangesNotice pending={guard.pending} label={m['unsaved.notice']()} />
@@ -349,6 +486,19 @@
 		</BantoForm>
 	{/if}
 </div>
+
+{#if !isNew}
+	<ConflictDialog
+		open={conflict !== null}
+		resource={def.name}
+		conflicts={conflict?.fields ?? []}
+		busy={formResource?.saving ?? false}
+		onTakeTheirs={takeTheirs}
+		onOverwrite={overwriteWithMine}
+		onSaveChoices={(choices) => void resend(choices)}
+		onCancel={() => (conflict = null)}
+	/>
+{/if}
 
 {#if after && idValid && storeReady}
 	{@render after({ id: parsedId, canWrite: perms.edit })}

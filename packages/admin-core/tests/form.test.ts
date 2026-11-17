@@ -205,3 +205,109 @@ describe('createFormResource', () => {
 		expect(seen).toEqual([{ kind: 'success', message: '削除しました' }]);
 	});
 });
+
+describe('createFormResource optimistic-lock conflict (Issue #638)', () => {
+	const conflictError = (current?: unknown) =>
+		new ProviderError({ kind: 'conflict', message: 'changed', current });
+
+	it('submit() returns the conflict with `current` and no toast when the caller handles it', async () => {
+		const seen: { kind: string; message: string }[] = [];
+		initBanto({
+			dataProvider: unusedProvider({
+				update: async () => {
+					throw conflictError({ id: 1, name: 'theirs', version: 3 });
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: (kind, message) => seen.push({ kind, message }) }
+		});
+		const form = createFormResource('items', 1, { handlesConflict: true });
+		const result = await form.submit({ name: 'mine', version: 2 });
+		expect(result).toEqual({
+			ok: false,
+			fieldErrors: [],
+			conflict: { current: { id: 1, name: 'theirs', version: 3 } }
+		});
+		expect(form.lastError?.body.kind).toBe('conflict');
+		expect(seen).toEqual([]);
+	});
+
+	it('a conflict without an object `current` reports `current: undefined`', async () => {
+		initBanto({
+			dataProvider: unusedProvider({
+				update: async () => {
+					throw conflictError('not a row');
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: () => {} }
+		});
+		const form = createFormResource('items', 1, { handlesConflict: true });
+		const result = await form.submit({ version: 1 });
+		expect(result).toEqual({ ok: false, fieldErrors: [], conflict: { current: undefined } });
+	});
+
+	it('without handlesConflict a conflict is toasted and still returned', async () => {
+		const seen: { kind: string; message: string }[] = [];
+		initBanto({
+			dataProvider: unusedProvider({
+				update: async () => {
+					throw conflictError();
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: (kind, message) => seen.push({ kind, message }) }
+		});
+		const form = createFormResource('items', 1);
+		const result = await form.submit({ version: 1 });
+		expect(result.ok).toBe(false);
+		expect(result.ok === false && result.conflict).toEqual({ current: undefined });
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.kind).toBe('error');
+	});
+
+	it('remove() passes the version and leaves a conflict in lastError without a toast', async () => {
+		const seen: { kind: string; message: string }[] = [];
+		const calls: unknown[] = [];
+		initBanto({
+			dataProvider: unusedProvider({
+				deleteOne: async (_resource, id, options) => {
+					calls.push({ id, options });
+					throw conflictError({ id, version: 9 });
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: (kind, message) => seen.push({ kind, message }) }
+		});
+		const form = createFormResource('items', 4, { handlesConflict: true });
+		expect(await form.remove({ version: 8 })).toBe(false);
+		expect(calls).toEqual([{ id: 4, options: { version: 8 } }]);
+		expect(form.lastError?.body.kind).toBe('conflict');
+		expect(seen).toEqual([]);
+	});
+
+	it('a successful submit clears the last failure', async () => {
+		let fail = true;
+		initBanto({
+			dataProvider: unusedProvider({
+				update: async <T>(_r: string, _id: string | number, values: Record<string, unknown>) => {
+					if (fail) throw conflictError();
+					return values as T;
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: () => {} }
+		});
+		const form = createFormResource('items', 1, { handlesConflict: true });
+		await form.submit({ version: 1 });
+		expect(form.lastError).not.toBeNull();
+		fail = false;
+		await form.submit({ version: 2 });
+		expect(form.lastError).toBeNull();
+	});
+});

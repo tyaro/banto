@@ -818,6 +818,9 @@
 	// starts a new session. Keep the counter after a session closes so a
 	// delayed post-commit navigation cannot move a newer selection.
 	let editSessionId = 0;
+	// The row as displayed when the session opened (`CellEdit.baseRow`). Kept
+	// outside `editing` so it stays the caller's object, not a $state proxy.
+	let editBase: { sessionId: number; row: TRow } | null = null;
 	// Saving/validation replaces `editing`; keep those state changes from
 	// invalidating the row lookup or taking over a user's newer selection.
 	const editingRowId = $derived.by(() => editing?.rowId);
@@ -888,6 +891,7 @@
 		selection.setActive(rowIndex, column.id, false);
 		previousEditingPosition = { rowId, field: column.id, rowIndex };
 		editFocus = { sessionId: ++editSessionId, owned: true };
+		editBase = { sessionId: editSessionId, row };
 		editing = {
 			sessionId: editSessionId,
 			rowId,
@@ -911,6 +915,7 @@
 		const currentRow = rowAtDisplayIndex(editingRowIndex);
 		if (currentRow === undefined || getRowId(currentRow) !== rowId) return false;
 		const result = prepareCommit(column, currentRow, rowId, value);
+		const baseRow = editBase?.sessionId === sessionId ? editBase.row : currentRow;
 
 		if (result.kind === 'noop') {
 			editing = null;
@@ -934,7 +939,7 @@
 		}
 		editing = { sessionId, rowId, field: column.id, draft: value, error: null, pending: true };
 		try {
-			await onCellEdit(result.edit);
+			await onCellEdit({ ...result.edit, baseRow });
 			// The caller's save still completes, but only the session that
 			// submitted it owns these UI updates (including the failure path).
 			if (editing?.sessionId !== sessionId) return false;

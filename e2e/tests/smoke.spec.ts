@@ -2677,6 +2677,146 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page).toHaveURL(/\/items$/);
 	});
 
+	// Issue #638 (optimistic lock): two clients edit the same item. (a) The
+	// detail form's second save opens the diff dialog, and "choose per field"
+	// saves one field from each side. (b) A grid cell edit on a row someone
+	// else changed is not saved: the row shows the latest values and a toast
+	// says why - also when their change already reached this list through
+	// the SSE refresh while the editor was open. (c) A delete of a record
+	// someone else changed is refused and the form shows their record.
+	test('13a5. #638: concurrent edits - the diff dialog, a refused cell edit, a refused delete', async ({
+		browser
+	}) => {
+		test.setTimeout(90_000);
+		const NAME = `E2E楽観ロック商品-${Date.now()}`;
+		const CONFLICT_TITLE = '他の人が先に変更しました';
+		const NOT_SAVED = '他の人が変更したため保存しませんでした。最新の値を表示しています。';
+		const NOT_DELETED = '他の人が変更したため削除しませんでした。最新の値を表示しています。';
+
+		/** REST call with a page's session (no `version` = overwrite, like another client). */
+		async function api(
+			method: string,
+			path: string,
+			body?: unknown,
+			on: Page = page
+		): Promise<Record<string, unknown>> {
+			return on.evaluate(
+				async ({ method, path, body }) => {
+					const token =
+						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
+					const res = await fetch(path, {
+						method,
+						headers: {
+							'Content-Type': 'application/json',
+							'X-Banto-Client': 'banto',
+							Authorization: `Bearer ${token}`
+						},
+						body: body === undefined ? undefined : JSON.stringify(body)
+					});
+					if (!res.ok) throw new Error(`${method} ${path} failed: ${res.status}`);
+					return res.status === 204 ? {} : ((await res.json()) as Record<string, unknown>);
+				},
+				{ method, path, body }
+			);
+		}
+
+		await page.goto('/items');
+		const created = await api('POST', '/api/items', { name: NAME, price: 100, stock: 10 });
+		const id = String(created.id);
+
+		const context = await browser.newContext({ reducedMotion: 'reduce' });
+		const other = await context.newPage();
+		try {
+			await other.goto('/login');
+			await other.getByLabel('ユーザー名').fill(ADMIN_USERNAME);
+			await other.getByLabel('パスワード').fill(ADMIN_PASSWORD);
+			await other.getByRole('button', { name: 'ログイン' }).click();
+			await expect(other).toHaveURL(/\/dashboard$/);
+
+			// (a) Both open the record; this page saves first.
+			await page.goto(`/items/${id}`);
+			await other.goto(`/items/${id}`);
+			await expect(page.getByLabel('価格')).toHaveValue('100');
+			await expect(other.getByLabel('価格')).toHaveValue('100');
+			await page.getByLabel('価格').fill('200');
+			await page.getByLabel('在庫').fill('20');
+			await page.getByRole('button', { name: '保存', exact: true }).click();
+			await expect(page).toHaveURL(/\/items$/);
+
+			// The other client saves on the version it loaded: the dialog shows
+			// the two fields this page changed (not the name, only theirs).
+			await other.getByLabel('商品名').fill(`${NAME}-B`);
+			await other.getByLabel('価格').fill('300');
+			await other.getByLabel('在庫').fill('30');
+			await other.getByRole('button', { name: '保存', exact: true }).click();
+			const dialog = other.getByRole('dialog', { name: CONFLICT_TITLE, exact: true });
+			await expect(dialog).toBeVisible();
+			const table = dialog.getByTestId('conflict-changes');
+			await expect(table.getByRole('row')).toHaveCount(3);
+			await expect(table.getByRole('row', { name: /価格/ })).toContainText('200');
+			await expect(table.getByRole('row', { name: /価格/ })).toContainText('300');
+
+			await dialog.getByRole('button', { name: '項目ごとに選ぶ', exact: true }).click();
+			await dialog.getByRole('radio', { name: '「価格」は相手の値を残す', exact: true }).check();
+			await expect(
+				dialog.getByRole('radio', { name: '「在庫」はあなたの値を残す', exact: true })
+			).toBeChecked();
+			await dialog.getByRole('button', { name: '選んだ値で保存', exact: true }).click();
+			await expect(dialog).toBeHidden();
+			await expect(other).toHaveURL(/\/items$/);
+			await expect
+				.poll(async () => {
+					const saved = await api('GET', `/api/items/${id}`);
+					return { name: saved.name, price: saved.price, stock: saved.stock };
+				})
+				.toEqual({ name: `${NAME}-B`, price: 200, stock: 30 });
+
+			// (b) This page opens a price editor; the other client then saves the
+			// same row, and the SSE refresh brings it into this list while the
+			// editor is still open (the name cell changes). Enter must not save
+			// the draft on the refreshed row's newer version: it was typed
+			// against the old row, so it is refused and the latest value shows.
+			await applyColumnFilter(page, '商品名', NAME);
+			const row = rowWithText(page, `${NAME}-B`);
+			await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥200');
+			const editor = page.getByRole('grid').locator('.cell-editor');
+			await expect(async () => {
+				if (!(await editor.isVisible())) await row.locator('[data-cell-field="price"]').dblclick();
+				await expect(editor).toBeVisible({ timeout: 1_000 });
+			}).toPass();
+			await editor.fill('555');
+			await api('PUT', `/api/items/${id}`, { name: `${NAME}-B2`, price: 777, stock: 30 }, other);
+			await expect(row.locator('[data-cell-field="name"]')).toHaveText(`${NAME}-B2`);
+			await expect(editor).toBeVisible();
+			await editor.press('Enter');
+			await expect(page.getByText(NOT_SAVED, { exact: true }).first()).toBeVisible();
+			await expect(editor).toHaveCount(0);
+			await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥777');
+			expect((await api('GET', `/api/items/${id}`)).price).toBe(777);
+
+			// (c) A delete of a record someone else changed after it was opened.
+			await page.goto(`/items/${id}`);
+			await expect(page.getByLabel('価格')).toHaveValue('777');
+			await api('PUT', `/api/items/${id}`, { name: `${NAME}-C`, price: 777, stock: 30 });
+			await confirmInDialog(page, page.getByRole('button', { name: '削除', exact: true }), {
+				title: '削除の確認',
+				confirm: '削除'
+			});
+			await expect(page.getByText(NOT_DELETED, { exact: true }).first()).toBeVisible();
+			await expect(page).toHaveURL(new RegExp(`/items/${id}$`));
+			await expect(page.getByLabel('商品名')).toHaveValue(`${NAME}-C`);
+
+			// The form now holds the latest version: deleting again goes through.
+			await confirmInDialog(page, page.getByRole('button', { name: '削除', exact: true }), {
+				title: '削除の確認',
+				confirm: '削除'
+			});
+			await expect(page).toHaveURL(/\/items$/);
+		} finally {
+			await context.close();
+		}
+	});
+
 	// Issue #637: the browser's own offline state is its own banner, and it goes
 	// when the network is back (`online` event) without any request being sent.
 	test('13a4. #637: the browser going offline shows its own banner and clears when it is back', async () => {

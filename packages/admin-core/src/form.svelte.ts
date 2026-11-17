@@ -5,6 +5,7 @@
  */
 import { isProviderError, ProviderError, type FieldError } from './errors';
 import { invalidate } from './invalidate';
+import type { DeleteOneOptions } from './provider';
 import { getDataProvider, notify } from './registry.svelte';
 
 export interface FormResourceOptions {
@@ -15,15 +16,50 @@ export interface FormResourceOptions {
 	 * `ProviderError.message`.
 	 */
 	submitErrorMessage?: (err: unknown) => string;
+	/**
+	 * Issue #638: the caller resolves an optimistic-lock `conflict` itself (a
+	 * diff dialog): `submit()` returns it as `conflict` and `remove()` leaves
+	 * it in `lastError`, with no toast. Default `false` - a conflict is toasted
+	 * like any other failure (and still returned).
+	 */
+	handlesConflict?: boolean;
 }
 
-export type SubmitResult<T> = { ok: true; row: T } | { ok: false; fieldErrors: FieldError[] };
+/**
+ * Issue #638: a save or delete was refused because someone else changed the
+ * record first. `current` is their latest record when the backend sent it
+ * (the wire's `current` is optional).
+ */
+export interface FormConflict {
+	current: Record<string, unknown> | undefined;
+}
+
+export type SubmitResult<T> =
+	{ ok: true; row: T } | { ok: false; fieldErrors: FieldError[]; conflict?: FormConflict };
+
+/** The `conflict` a failed operation carries (Issue #638), or `null`. */
+export function conflictOf(err: unknown): FormConflict | null {
+	if (!isProviderError(err) || err.body.kind !== 'conflict') return null;
+	const current = err.body.current;
+	return {
+		current:
+			typeof current === 'object' && current !== null && !Array.isArray(current)
+				? (current as Record<string, unknown>)
+				: undefined
+	};
+}
 
 export class FormResource<T> {
 	initialValues: Record<string, unknown> | null = $state(null);
 	loading = $state(false);
 	saving = $state(false);
 	error: ProviderError | null = $state(null);
+	/**
+	 * The failure of the last `submit()` / `remove()` (cleared when either
+	 * starts; `null` after a success). Issue #638: lets a caller tell a
+	 * delete refused by the optimistic lock from any other failure.
+	 */
+	lastError: ProviderError | null = $state(null);
 
 	#resource: string;
 	#id: string | number | undefined;
@@ -57,6 +93,7 @@ export class FormResource<T> {
 	/** create when constructed without an id, update otherwise. */
 	async submit(values: Record<string, unknown>): Promise<SubmitResult<T>> {
 		this.saving = true;
+		this.lastError = null;
 		try {
 			const row =
 				this.#id !== undefined
@@ -66,33 +103,50 @@ export class FormResource<T> {
 			invalidate(this.#resource);
 			return { ok: true, row };
 		} catch (err) {
+			this.lastError = toProviderError(err);
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				return { ok: false, fieldErrors: err.body.field_errors };
+			}
+			const conflict = conflictOf(err);
+			if (conflict && this.#options.handlesConflict) {
+				return { ok: false, fieldErrors: [], conflict };
 			}
 			notify(
 				'error',
 				this.#options.submitErrorMessage?.(err) ??
 					(isProviderError(err) ? err.message : String(err))
 			);
-			return { ok: false, fieldErrors: [] };
+			return conflict ? { ok: false, fieldErrors: [], conflict } : { ok: false, fieldErrors: [] };
 		} finally {
 			this.saving = false;
 		}
 	}
 
-	/** Delete the current record. No-op (returns false) when there is no id. */
-	async remove(): Promise<boolean> {
+	/**
+	 * Delete the current record. No-op (returns false) when there is no id.
+	 * `options.version` (Issue #638) deletes only while the record is still at
+	 * that version; a refusal is in `lastError` (`kind: 'conflict'`).
+	 */
+	async remove(options?: DeleteOneOptions): Promise<boolean> {
 		if (this.#id === undefined) return false;
+		this.lastError = null;
 		try {
-			await getDataProvider().deleteOne(this.#resource, this.#id);
+			await getDataProvider().deleteOne(this.#resource, this.#id, options);
 			notify('success', '削除しました');
 			invalidate(this.#resource);
 			return true;
 		} catch (err) {
-			notify('error', isProviderError(err) ? err.message : String(err));
+			this.lastError = toProviderError(err);
+			if (!(this.#options.handlesConflict && conflictOf(err))) {
+				notify('error', isProviderError(err) ? err.message : String(err));
+			}
 			return false;
 		}
 	}
+}
+
+function toProviderError(err: unknown): ProviderError {
+	return isProviderError(err) ? err : new ProviderError({ kind: 'other', message: String(err) });
 }
 
 export function createFormResource<T>(

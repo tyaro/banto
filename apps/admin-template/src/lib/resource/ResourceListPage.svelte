@@ -71,6 +71,7 @@
 		createSavedSetting,
 		currentSessionScope,
 		getDataProvider,
+		conflictOf,
 		getSessionController,
 		invalidate,
 		isNetworkError,
@@ -125,6 +126,7 @@
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { detailHref, resourceColumns } from './columns';
+	import { LOCK_VERSION_FIELD, lockVersionOf } from './conflict';
 	import {
 		buildImportPreview,
 		canRunImport,
@@ -869,8 +871,45 @@
 	const saveQueue = createRowSaveQueue<ResourceRow>({
 		save: (rowId, values) => getDataProvider().update<ResourceRow>(name, rowId, values),
 		compose: (row, changes) => composeEditableValues(editableFields, row, changes),
-		currentRow: (rowId) => currentRowLookup?.(rowId)
+		currentRow: (rowId) => currentRowLookup?.(rowId),
+		isConflict: (err) => conflictOf(err) !== null,
+		// Issue #638: send the version the edit was based on, not the one a
+		// refetch brought in while the editor was open (see rowSaveQueue).
+		lock: {
+			versionOf: lockVersionOf,
+			withVersion: (values, version) =>
+				LOCK_VERSION_FIELD in values ? { ...values, [LOCK_VERSION_FIELD]: version } : values
+		}
 	});
+
+	/**
+	 * Issue #638: a cell edit / paste refused by the optimistic lock (someone
+	 * else changed the row first) is not retried - the row goes back to the
+	 * latest record and the user re-enters the value there. The latest record
+	 * is the conflict's `current`; without one it is fetched. A fetched row is
+	 * not shown over a newer one already on screen (a later save of the row
+	 * may have landed while it was in flight), and when the fetch fails the
+	 * row stays as displayed - the list reloads right after (`publishSaved`
+	 * invalidates).
+	 */
+	async function latestRowAfterConflict(
+		rowId: string | number,
+		err: unknown,
+		fallback: ResourceRow
+	): Promise<ResourceRow> {
+		const current = conflictOf(err)?.current;
+		if (current) return current as ResourceRow;
+		const shown = currentRowLookup?.(rowId) ?? fallback;
+		try {
+			const fetched = await getDataProvider().getOne<ResourceRow>(name, rowId);
+			const shownNow = currentRowLookup?.(rowId) ?? shown;
+			return (lockVersionOf(shownNow) ?? -Infinity) > (lockVersionOf(fetched) ?? -Infinity)
+				? shownNow
+				: fetched;
+		} catch {
+			return shown;
+		}
+	}
 
 	// M3 (spec §4.5): commit a single inline cell edit. A validation error
 	// from the provider is re-thrown as a plain Error so BantoGrid re-enters
@@ -891,8 +930,19 @@
 	// values even while the follow-up list request is still in flight (spec §4.5).
 	async function handleCellEdit(edit: CellEdit<ResourceRow>): Promise<ResourceRow> {
 		try {
-			return await saveQueue.enqueue(edit.rowId, edit.row, { [edit.field]: edit.value });
+			return await saveQueue.enqueue(
+				edit.rowId,
+				edit.row,
+				{ [edit.field]: edit.value },
+				edit.baseRow ?? edit.row
+			);
 		} catch (err) {
+			// Issue #638: resolve with the latest row (the grid shows it and
+			// closes the editor) instead of keeping the refused value in the cell.
+			if (conflictOf(err)) {
+				notify('error', m['resource.conflictNotSaved']());
+				return await latestRowAfterConflict(edit.rowId, err, edit.row);
+			}
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				const fieldError =
 					err.body.field_errors.find((fe) => fe.field === edit.field) ?? err.body.field_errors[0];
@@ -924,25 +974,38 @@
 
 		// Enqueue every row first (rows are independent lanes), then settle in
 		// row order. A failed row only toasts; it never poisons later saves.
+		const entries = [...byRow];
 		const results = await Promise.allSettled(
-			[...byRow].map(([rowId, entry]) => saveQueue.enqueue(rowId, entry.row, entry.changes))
+			entries.map(([rowId, entry]) => saveQueue.enqueue(rowId, entry.row, entry.changes))
 		);
 		const saved: ResourceRow[] = [];
-		for (const result of results) {
+		// Issue #638: rows refused by the optimistic lock go back to their
+		// latest record (published with the saved rows); one toast counts them.
+		const conflicted: Promise<ResourceRow>[] = [];
+		results.forEach((result, index) => {
 			if (result.status === 'fulfilled') {
 				saved.push(result.value);
+				return;
+			}
+			const pasted = entries[index];
+			if (pasted && conflictOf(result.reason)) {
+				conflicted.push(latestRowAfterConflict(pasted[0], result.reason, pasted[1].row));
 			} else {
 				notify('error', saveErrorMessage(result.reason, m['connection.saveFailed']));
 			}
-		}
+		});
+		const latest = await Promise.all(conflicted);
 
 		if (saved.length > 0) {
 			notify('success', m['resource.updatedCount']({ count: saved.length }));
 		}
+		if (latest.length > 0) {
+			notify('error', m['resource.conflictNotSavedCount']({ count: latest.length }));
+		}
 		if (info.skipped > 0) {
 			notify('info', m['resource.skippedCells']({ count: info.skipped }));
 		}
-		return saved;
+		return [...saved, ...latest];
 	}
 
 	// --- M15 Phase C: CSV export -------------------------------------------
