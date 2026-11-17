@@ -70,6 +70,14 @@ export interface CellEdit<TRow> {
 	field: string;
 	value: unknown;
 	oldValue: unknown;
+	/**
+	 * Inline edits only: the row as displayed when the edit session opened.
+	 * `row` is re-read at commit time (it may already carry someone else's
+	 * update that arrived while the editor was open); `baseRow` is what the
+	 * user's draft was based on, e.g. for an optimistic-lock version. Absent
+	 * on `onRangePaste` edits, whose `row` is read at paste time.
+	 */
+	baseRow?: TRow;
 }
 
 /**

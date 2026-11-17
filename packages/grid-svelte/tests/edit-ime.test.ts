@@ -96,6 +96,7 @@ describe.each(['client', 'server'] as const)('%s editor key ownership', (mode) =
 				await tick();
 				expect(view.onCellEdit).toHaveBeenCalledExactlyOnceWith({
 					row: rows[0],
+					baseRow: rows[0],
 					rowId: 1,
 					field: 'name',
 					oldValue: 'Original',

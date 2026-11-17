@@ -132,6 +132,18 @@ describe.each(['client', 'server'] as const)('inline edit row identity (%s)', (m
 		await assertDraftAndCommit(0, edits);
 	});
 
+	it('passes the row as it was when the edit opened as baseRow after a refresh (#638)', async () => {
+		const { container, rerender, edits } = setup(mode);
+		await startDraft(container, 1);
+		// Someone else's update arrives while the editor is open.
+		const refreshed = rows.map((row) => (row.id === 2 ? { ...row, category: 'Updated' } : row));
+		await rerender({ rows: refreshed });
+		await fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+		expect(edits).toHaveLength(1);
+		expect(edits[0]!.row).toBe(refreshed[1]);
+		expect(edits[0]!.baseRow).toBe(rows[1]);
+	});
+
 	it('keeps the draft on the same row after a preceding row is deleted', async () => {
 		const { container, rerender, edits } = setup(mode);
 		await startDraft(container, 1);

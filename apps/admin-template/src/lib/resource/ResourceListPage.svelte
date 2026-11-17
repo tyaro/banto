@@ -126,7 +126,7 @@
 	import AnnotationButton from '#lib/components/AnnotationButton.svelte';
 	import AnnotationDrawer from '#lib/components/AnnotationDrawer.svelte';
 	import { detailHref, resourceColumns } from './columns';
-	import { lockVersionOf } from './conflict';
+	import { LOCK_VERSION_FIELD, lockVersionOf } from './conflict';
 	import {
 		buildImportPreview,
 		canRunImport,
@@ -872,7 +872,14 @@
 		save: (rowId, values) => getDataProvider().update<ResourceRow>(name, rowId, values),
 		compose: (row, changes) => composeEditableValues(editableFields, row, changes),
 		currentRow: (rowId) => currentRowLookup?.(rowId),
-		isConflict: (err) => conflictOf(err) !== null
+		isConflict: (err) => conflictOf(err) !== null,
+		// Issue #638: send the version the edit was based on, not the one a
+		// refetch brought in while the editor was open (see rowSaveQueue).
+		lock: {
+			versionOf: lockVersionOf,
+			withVersion: (values, version) =>
+				LOCK_VERSION_FIELD in values ? { ...values, [LOCK_VERSION_FIELD]: version } : values
+		}
 	});
 
 	/**
@@ -923,7 +930,12 @@
 	// values even while the follow-up list request is still in flight (spec §4.5).
 	async function handleCellEdit(edit: CellEdit<ResourceRow>): Promise<ResourceRow> {
 		try {
-			return await saveQueue.enqueue(edit.rowId, edit.row, { [edit.field]: edit.value });
+			return await saveQueue.enqueue(
+				edit.rowId,
+				edit.row,
+				{ [edit.field]: edit.value },
+				edit.baseRow ?? edit.row
+			);
 		} catch (err) {
 			// Issue #638: resolve with the latest row (the grid shows it and
 			// closes the editor) instead of keeping the refused value in the cell.

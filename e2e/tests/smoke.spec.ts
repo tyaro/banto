@@ -2681,8 +2681,9 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 	// detail form's second save opens the diff dialog, and "choose per field"
 	// saves one field from each side. (b) A grid cell edit on a row someone
 	// else changed is not saved: the row shows the latest values and a toast
-	// says why. (c) A delete of a record someone else changed is refused and
-	// the form shows their record.
+	// says why - also when their change already reached this list through
+	// the SSE refresh while the editor was open. (c) A delete of a record
+	// someone else changed is refused and the form shows their record.
 	test('13a5. #638: concurrent edits - the diff dialog, a refused cell edit, a refused delete', async ({
 		browser
 	}) => {
@@ -2692,13 +2693,14 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		const NOT_SAVED = '他の人が変更したため保存しませんでした。最新の値を表示しています。';
 		const NOT_DELETED = '他の人が変更したため削除しませんでした。最新の値を表示しています。';
 
-		/** REST call with this page's session (no `version` = overwrite, like another client). */
+		/** REST call with a page's session (no `version` = overwrite, like another client). */
 		async function api(
 			method: string,
 			path: string,
-			body?: unknown
+			body?: unknown,
+			on: Page = page
 		): Promise<Record<string, unknown>> {
-			return page.evaluate(
+			return on.evaluate(
 				async ({ method, path, body }) => {
 					const token =
 						localStorage.getItem('banto.auth.token') ?? sessionStorage.getItem('banto.auth.token');
@@ -2769,39 +2771,27 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				})
 				.toEqual({ name: `${NAME}-B`, price: 200, stock: 30 });
 
-			// (b) The grid shows the row; another client changes it while the
-			// list's refresh is held (so the grid still has the old version).
+			// (b) This page opens a price editor; the other client then saves the
+			// same row, and the SSE refresh brings it into this list while the
+			// editor is still open (the name cell changes). Enter must not save
+			// the draft on the refreshed row's newer version: it was typed
+			// against the old row, so it is refused and the latest value shows.
 			await applyColumnFilter(page, '商品名', NAME);
 			const row = rowWithText(page, `${NAME}-B`);
 			await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥200');
-			let releaseLists!: () => void;
-			const listGate = new Promise<void>((resolve) => {
-				releaseLists = resolve;
-			});
-			const listUrl = /\/api\/items\/list$/;
-			await page.route(listUrl, async (route) => {
-				if (route.request().method() !== 'POST') return route.continue();
-				const response = await route.fetch();
-				await listGate;
-				await route.fulfill({ response }).catch(() => {});
-			});
-			try {
-				await api('PUT', `/api/items/${id}`, { name: `${NAME}-B`, price: 777, stock: 30 });
-				const editor = page.getByRole('grid').locator('.cell-editor');
-				await expect(async () => {
-					if (!(await editor.isVisible()))
-						await row.locator('[data-cell-field="price"]').dblclick();
-					await expect(editor).toBeVisible({ timeout: 1_000 });
-				}).toPass();
-				await editor.fill('555');
-				await page.keyboard.press('Enter');
-				await expect(page.getByText(NOT_SAVED, { exact: true }).first()).toBeVisible();
-				await expect(editor).toHaveCount(0);
-				await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥777');
-			} finally {
-				releaseLists();
-				await page.unroute(listUrl);
-			}
+			const editor = page.getByRole('grid').locator('.cell-editor');
+			await expect(async () => {
+				if (!(await editor.isVisible())) await row.locator('[data-cell-field="price"]').dblclick();
+				await expect(editor).toBeVisible({ timeout: 1_000 });
+			}).toPass();
+			await editor.fill('555');
+			await api('PUT', `/api/items/${id}`, { name: `${NAME}-B2`, price: 777, stock: 30 }, other);
+			await expect(row.locator('[data-cell-field="name"]')).toHaveText(`${NAME}-B2`);
+			await expect(editor).toBeVisible();
+			await editor.press('Enter');
+			await expect(page.getByText(NOT_SAVED, { exact: true }).first()).toBeVisible();
+			await expect(editor).toHaveCount(0);
+			await expect(row.locator('[data-cell-field="price"]')).toHaveText('¥777');
 			expect((await api('GET', `/api/items/${id}`)).price).toBe(777);
 
 			// (c) A delete of a record someone else changed after it was opened.
