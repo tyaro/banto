@@ -22,14 +22,83 @@
 
 ## [Unreleased]
 
-### 追加（minor）: BantoTree の 3 つの口（#653、#631 のフォロー）
+## [7.4.0] - 2026-11-18
+
+**v7.4.0 — users の楽観ロック（migration 0012・衝突のトースト）、`BantoTree`（`@banto/tree-svelte`）の 3 つの口（`selectionFollowsFocus`・`emptyChildren`・`data-depth`）。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。ソース互換を壊しうる変更は 3 つあり、いずれも [docs/publishing.md](docs/publishing.md)「バージョニング規約」の運用上の例外（移行手順を「消費側への注意」に明記して minor）に当てはめた。(1) `banto_admin_services::users::UserSummary` に `version` フィールドが増えた（構造体リテラルで作るコードに影響）。(2) テンプレート（`src-tauri`）の `users_update_body`・`users_delete_body` に引数が増えた（公開パッケージ・クレートではない）。(3) migration 0012 は `users.version` 列の追加だけ（既存の行は書き換えない。前例 v1.7.0・v6.5.0・v7.2.0・v7.3.0）。
+派生アプリへの影響: 依存のタグを `v7.3.0` から `v7.4.0` に上げるだけなら、`banto_admin_services::users::UserSummary` を構造体リテラルで作る・網羅的に分解するコードと、`UsersService` を使う派生アプリ（`users.version` 列が要る）を除き、コンパイルエラーになる変更は無い。コピーしたテンプレートを取り込む場合は、migration 0012、辞書のキー（追加 2 キー）、ユーザー管理画面の衝突の扱い、`users_update_body`・`users_delete_body` の引数が中心になる。`BantoTree` の追加の口は任意で、渡さなければ見た目・挙動は変わらない。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.3.0` → `v7.4.0`（npm と Rust を同じタグに）。API の削除・改名は無い。追加のみ（`BantoTree` の `selectionFollowsFocus`・`emptyChildren`・`TreeEmptyContext`・`data-depth`、`UsersService` の `*_checked_returning_previous`、REST の `version`）。`UserSummary` の `version` は構造体リテラルに影響する。 |
+| B. コピーしたテンプレート        | あり | ユーザー管理画面の楽観ロックの配線（衝突のトースト）、`usersAdmin.ts`、辞書のキー（追加 2・削除 0）、migration 0012、`src-tauri` の `users_update_body`・`users_delete_body`。取り込みは任意。                                                                                                               |
+| C. DB・設定・配布資産            | あり | migration 0012（`users.version` 列の追加。SQLite・PostgreSQL）。`tauri.conf.json` は版数のみ。`.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続。                                                                                                                                                    |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/tree-svelte`・`banto-admin-services`・`banto-server`。
+- 更新: `v7.3.0` → `v7.4.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。既定の挙動は維持）:
+  - `@banto/tree-svelte`: `BantoTree` の `selectionFollowsFocus`・`emptyChildren`、型 `TreeEmptyContext`、各行の `data-depth`。
+  - `banto-admin-services`: `UsersService::update_user_checked_returning_previous`・`delete_user_checked_returning_previous`、`UserSummary.version`。
+  - `banto-server`: `PUT /api/users/{id}` の任意の `version`、`DELETE /api/users/{id}?version=N`。
+- 移行注意（ソース互換の破壊）:
+  1. **`UserSummary.version`**: `banto_admin_services::users::UserSummary` を構造体リテラルで作る・網羅的に分解するコードは `version` を足す（型検査で気づける）。TS 側の `UserSummary`（`usersAdmin.ts`、テンプレート）も同じ。
+  2. **`users_update_body`・`users_delete_body` の引数 `version: Option<i64>`**（テンプレートの `src-tauri`。公開パッケージ・クレートではない）: 呼ぶ側は `None` を渡す。
+- 消費側への注意（型エラーにはならないが、確かめるもの）:
+  1. **migration 0012（`users.version`）**: `UsersService` を使う派生アプリは、先に `users.version` 列を足す（足さないと `list_users` などの SELECT が失敗する）。SQLite: `ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 1;` PostgreSQL: `ALTER TABLE users ADD COLUMN version BIGINT NOT NULL DEFAULT 1;`（テンプレートの `core/migrations-*/0012_users_version.sql` と同じ）。
+  2. **`version` を送らなければ従来どおり上書き**になる（`update_user`・`delete_user`・`*_returning_previous` のシグネチャは変えていない。楽観ロックは画面の配線を取り込んだ場合に働く）。
+  3. **`BantoTree` の既定は変わらない**（`selectionFollowsFocus` の既定は `true`、`emptyChildren` を渡さなければ従来どおり）。行に `data-depth` が付くので、行の属性を完全一致で比べるテスト・スナップショットがあれば足す。
+- 依存を上げずに留まれるか: できる（`v7.3.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 対象ファイル・ルート: `src/routes/(app)/users/+page.svelte`・`src/lib/banto/usersAdmin.ts`（衝突の扱いとトースト）、`core/src/rest/mod.rs`、`src-tauri/src/lib.rs`（`users_update`・`users_delete`・`users_update_body`・`users_delete_body`）、`messages/*.json`、`core/migrations-*/0012_users_version.sql`。
+- 関連 PR・コミット: #651、#653。
+- 手で取り込む変更（辞書のキー。**`messages/*.json` の差分をまとめて取り込む**。v7.3.0 の `ja.json` との比較では、削除は 0 キー、追加は 2 キー（`users.conflictNotSaved`・`users.conflictNotDeleted`。1089 → 1091）、値の書き換えは 0 キー。`en.json` も同じ結果）。
+- 手で取り込む変更（そのほか）:
+  - migration 0012（SQLite・PostgreSQL）を適用する。
+  - ユーザー管理画面の衝突の扱い（保存の衝突はフォームを相手の最新値に戻してトースト、削除の衝突は一覧を読み直してトースト）。
+  - `src-tauri` の `users_update`・`users_delete` に任意の `version` を通す。
+- 派生側の独自変更と衝突しやすい箇所: ユーザー管理画面・`usersAdmin.ts`・`messages/*.json`・`src-tauri/src/lib.rs`。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.4.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」は A のタグに伴う。Git 依存での導入は下の「検証した組み合わせ」で確かめる（テンプレートを取り込まない派生アプリそのものでの確認は未実施）。
+- 手本: 上記の `apps/admin-template/` のファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 0012（`users.version` 列の追加。SQLite・PostgreSQL。既存の行は書き換えない。適用は起動時に自動）。コピーしたテンプレートと、`UsersService` を使う派生アプリが適用する。
+- 設定キー・`tauri.conf.json`: 設定キーの追加は無い。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+- 依存監査: `.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続（下の「セキュリティ」）。
+- 戻せる条件: 新版を本番 DB で最初に起動するまで（以降はバックアップの復元）。migration 0012 を適用した DB は `_sqlx_migrations` に 12 が残り、0011 までしか持たない v7.3.0 のバイナリは起動時の migration の検証で拒否する見込み（0011 のときと同じ仕組みからの見込みで、未検証）なので、タグを戻すだけでは戻らない。起動前に DB のバックアップを取り、戻すときは [upgrading.md §4](docs/upgrading.md#4-db設定配布資産の移行) のとおり更新前のバックアップを復元する。
+- 順序: A・B を先に完成 → 検証用 DB で migration 0012 を適用 → 本番。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。
+2. 辞書のキー（`messages/*.json`）の取りこぼしが無いこと（追加の 2 キーが画面に生のキーで出ない）。
+3. Rust: `cargo check` / `cargo test`。migration 0012 の適用後、ユーザー管理で表示名・ロールを更新すると `version` が進むこと。同じユーザーを 2 か所で編集したとき、後から保存した側（保存・削除とも）に衝突のトーストが出ること。
+4. `BantoTree` を使う画面: 新しい口（`selectionFollowsFocus`・`emptyChildren`）を渡さない限り、見た目・挙動は変わらないこと。
+5. visual の基準画像（Linux で生成）の再生成が要る変更は無い見込み（`BantoTree` は既定で見た目が変わらず、users の楽観ロックは衝突時のトーストだけ）。違えば `visual-baselines.yml` を dispatch して再生成する。
+6. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること（`usersAdmin.test.ts` の削除を scaffold に足した）。
+
+### セキュリティ
+
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けず、今は上げられない。見直しの条件: libsqlite3-sys 0.39 以上を許す sqlx のリリースが出たら `cargo update -p libsqlite3-sys` で上げ、除外を外す。派生アプリの `cargo audit` でも同じ警告が出る。
+
+### 検証した組み合わせ（タグ後に追記）
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグの後に追記（`external-consumer.yml` の run と版）。
+
+### 変更の一覧
+
+#### 追加（minor）: BantoTree の 3 つの口（#653、#631 のフォロー）
 
 - `@banto/tree-svelte` の `BantoTree` に追加（既定は従来どおりで、渡さなければ見た目・挙動は変わらない）:
   - `selectionFollowsFocus?: boolean`（既定 `true`）。単一選択で `false` にすると、上下・Home・End などの移動キーはフォーカスだけを動かし `onSelectionChange` を呼ばない。Space・Enter・クリックで選ぶ（Enter は選んだうえで従来の開閉・`onActivate` も行う）。`multi`・`none` は変わらない。
   - `emptyChildren?: Snippet<[TreeNode, TreeEmptyContext]>`。`children` が空配列の枝を開いたときの案内行。渡したときだけその枝に開閉の三角が付く。案内行は上下キーを素通りし、選択・チェックの対象にならず、`aria-disabled` の `treeitem`（`aria-level` は枝 + 1）。遅延読み込みの枝は読み込み完了後に 0 件のときだけ空とみなす。型 `TreeEmptyContext`（`{ depth }`）を export。
   - 各行に `data-depth`（0 始まり。`aria-level` - 1）を付け、外から当ててよい属性として公開の約束にした（README に記載）。案内行にも `data-depth` と `data-empty-children` が付く。
 
-### 追加（minor）: users の楽観ロック（#651、#638 の続き）
+#### 追加（minor）: users の楽観ロック（#651、#638 の続き）
 
 - **migration 0012（`users.version`）**: `ALTER TABLE users ADD COLUMN version`（SQLite `INTEGER NOT NULL DEFAULT 1`／PostgreSQL `BIGINT NOT NULL DEFAULT 1`）。既存の行を書き換えない列の追加なので minor（前例 0007 の `auth_epoch`・0011）。
 - `banto_admin_services::users::UserSummary` に `version: i64` が増えた。表示名・ロールの更新（`update_user*`）が版を +1 する。パスワードの変更・リセットは版を上げない（`auth_epoch` だけが動く）。
