@@ -91,3 +91,110 @@ describe('selection inside a closed branch', () => {
 		expect(tabStops()).toHaveLength(1);
 	});
 });
+
+describe('a refused pick keeps the browser focus with the highlight', () => {
+	const leaves = (): TreeNode[] => [
+		{ id: 'a', label: 'Alpha' },
+		{ id: 'b', label: 'Bravo' },
+		{ id: 'c', label: 'Charlie' }
+	];
+	const item = (name: string) => screen.getByRole('treeitem', { name });
+	const settle = async () => {
+		await tick();
+		await tick();
+	};
+
+	it('a refused click puts the focus back on the selected row, and keys act there', async () => {
+		const onSelectionChange = vi.fn();
+		const onActivate = vi.fn();
+		render(BantoTree, { nodes: leaves(), selection: ['b'], onSelectionChange, onActivate });
+		item('Alpha').focus(); // what the browser does on mousedown
+		await fireEvent.click(item('Alpha'));
+		await settle();
+		expect(selectedIds()).toEqual(['Bravo']);
+		expect(document.activeElement).toBe(item('Bravo'));
+		expect(item('Bravo').getAttribute('tabindex')).toBe('0');
+		await fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+		expect(onActivate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'b' }));
+		await fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+		expect(onSelectionChange).toHaveBeenLastCalledWith(['c']);
+	});
+
+	it('a refused arrow key puts the focus back too', async () => {
+		const onSelectionChange = vi.fn();
+		const onActivate = vi.fn();
+		render(BantoTree, { nodes: leaves(), selection: ['b'], onSelectionChange, onActivate });
+		item('Bravo').focus();
+		await fireEvent.keyDown(item('Bravo'), { key: 'ArrowDown' });
+		expect(onSelectionChange).toHaveBeenLastCalledWith(['c']);
+		await settle();
+		expect(selectedIds()).toEqual(['Bravo']);
+		expect(document.activeElement).toBe(item('Bravo'));
+		await fireEvent.keyDown(document.activeElement!, { key: 'Enter' });
+		expect(onActivate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'b' }));
+		await fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+		expect(onSelectionChange).toHaveBeenLastCalledWith(['a']);
+	});
+
+	it('leaves the focus where the host put it (a dialog opened from onSelectionChange)', async () => {
+		const outside = document.createElement('button');
+		document.body.append(outside);
+		try {
+			render(BantoTree, {
+				nodes: leaves(),
+				selection: ['b'],
+				onSelectionChange: () => outside.focus()
+			});
+			item('Bravo').focus();
+			await fireEvent.keyDown(item('Bravo'), { key: 'ArrowDown' });
+			await settle();
+			await settle();
+			expect(document.activeElement).toBe(outside);
+
+			item('Alpha').focus();
+			await fireEvent.click(item('Alpha'));
+			await settle();
+			await settle();
+			expect(document.activeElement).toBe(outside);
+			expect(selectedIds()).toEqual(['Bravo']);
+		} finally {
+			outside.remove();
+		}
+	});
+});
+
+describe('the keys start from the shown tab stop', () => {
+	const twoBranches = (): TreeNode[] => [
+		{ id: 'a', label: 'Alpha', children: [{ id: 'a1', label: 'Alpha-1' }] },
+		{ id: 'b', label: 'Bravo', children: [{ id: 'b1', label: 'Bravo-1' }] }
+	];
+	const tabStops = () =>
+		screen.getAllByRole('treeitem').filter((el) => el.getAttribute('tabindex') === '0');
+
+	it('opens the second branch for its selected child and moves from there', async () => {
+		const onSelectionChange = vi.fn();
+		const onActivate = vi.fn();
+		render(BantoTree, { nodes: twoBranches(), selection: ['b1'], onSelectionChange, onActivate });
+		await tick();
+		await tick();
+		const child = screen.getByRole('treeitem', { name: 'Bravo-1' });
+		expect(tabStops()).toEqual([child]);
+		child.focus(); // Tab into the tree
+		await fireEvent.keyDown(child, { key: 'Enter' });
+		expect(onActivate).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'b1' }));
+		await fireEvent.keyDown(child, { key: 'ArrowUp' });
+		expect(onSelectionChange).toHaveBeenLastCalledWith(['b']);
+	});
+
+	it('an unknown `selection` still lets the arrow keys move from the one tab stop', async () => {
+		const onSelectionChange = vi.fn();
+		render(BantoTree, { nodes: twoBranches(), selection: ['missing'], onSelectionChange });
+		await tick();
+		await tick();
+		const stops = tabStops();
+		expect(stops).toHaveLength(1);
+		stops[0].focus();
+		await fireEvent.keyDown(stops[0], { key: 'ArrowDown' });
+		expect(onSelectionChange).toHaveBeenLastCalledWith(['b']);
+	});
+});
