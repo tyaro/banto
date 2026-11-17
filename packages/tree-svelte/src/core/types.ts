@@ -51,6 +51,19 @@ export interface FlatNode<TData = unknown> {
 	parentId: NodeId | null;
 }
 
+/** State handed to the `label` snippet of `BantoTree` (read-only snapshot per row). */
+export interface TreeLabelContext {
+	/** Highlight-selected (always `false` when `selectionMode` is `'none'`). */
+	selected: boolean;
+	/** Holds the roving focus. */
+	focused: boolean;
+	expanded: boolean;
+	hasChildren: boolean;
+	/** 0-based depth; roots are `0`. */
+	depth: number;
+	disabled: boolean;
+}
+
 /** Tri-state check value for a node's checkbox. */
 export type CheckState = 'checked' | 'unchecked' | 'indeterminate';
 
