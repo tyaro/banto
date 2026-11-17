@@ -158,6 +158,17 @@ describe('Menu', () => {
 		expect(menu.dataset.popoverOpen).toBe('true');
 	});
 
+	it('keeps focus off a disabled item on mousedown (it stays a hover target for its title)', async () => {
+		const { trigger } = setup();
+		await fireEvent.click(trigger);
+		await flush();
+		const billing = item('Billing');
+		const down = () => new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+		// dispatchEvent returns false when default was prevented -> the browser does not move focus
+		expect(billing.dispatchEvent(down())).toBe(false);
+		expect(item('Log out').dispatchEvent(down())).toBe(true);
+	});
+
 	it('gives items tabindex=-1 (roving focus only) and hides item icons from AT', () => {
 		setup();
 		for (const item of screen.getAllByRole('menuitem', { hidden: true })) {
