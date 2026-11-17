@@ -22,6 +22,84 @@
 
 ## [Unreleased]
 
+## [7.3.0] - 2026-11-17
+
+**v7.3.0 — items の楽観ロック（migration 0011・新しいエラー種別 `conflict`・衝突のダイアログ）、LAN ブラウザの切断の検出と帯（`admin-core` の接続状態・タイムアウト）、3 つ目の表示密度 `touch` とキオスクの dashboard、3 ペインの枠 `ThreePaneLayout`（`@banto/ui`）・`BantoTree` の拡張、`MenuItem` のチェックボックス、監査の主体を受ける `record_write_as` / `record_denied_as`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。ソース互換を壊す変更は 4 つあり、いずれも [docs/publishing.md](docs/publishing.md)「バージョニング規約」の運用上の例外（移行手順を「消費側への注意」に明記して minor）に当てはめた。(1) `ThemeDensity` に `'touch'` が増えた。(2) エラー種別 `conflict`（Rust の `BantoError::Conflict`・TS の `ErrorBody`）が増えた。(3) `ItemsService::delete_returning_previous` に引数が、`ItemInput.version` にフィールドが増えた。(4) migration 0011 は `items.version` 列の追加だけの追加（既存の行は書き換えない。前例 v1.7.0・v6.5.0・v7.2.0）。
+派生アプリへの影響: git 依存のタグを `v7.2.0` から `v7.3.0` に上げるだけなら、`ErrorBody` / `BantoError` / `ThemeDensity` を網羅的に扱う箇所と、テンプレート（`admin_template_core`）の `ItemsService`・`ItemInput` を使う箇所を除き、コンパイルエラーになる変更は無い。items の楽観ロックを使うには migration 0011 が要る。コピーしたテンプレートを取り込む場合は、migration 0011、辞書のキー（追加 87 キー・削除 2 キー）、`ResourceListPage.svelte` の列メニュー、楽観ロックの配線、切断の帯が中心になる。
+
+| 経路                             | 影響 | 内容                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. 依存（`@banto/*`・`banto-*`） | あり | `v7.2.0` → `v7.3.0`（npm と Rust を同じタグに）。API の削除・改名は無い。追加のみ（`ThreePaneLayout`・`MenuItem kind="checkbox"`・`BantoTree` の `label` ほか・`ThemeDensity` の `'touch'`・接続状態のストア・`CellEdit.baseRow`・`record_write_as`）。エラー種別 `conflict` と `ThemeDensity` の `'touch'` は網羅的な分岐に影響する。 |
+| B. コピーしたテンプレート        | あり | 楽観ロックの配線、切断の帯、列メニューの置き換え、3 ペインの見本、touch 密度、辞書のキー（追加 87・削除 2）、migration 0011。取り込みは任意。                                                                                                                                                                                          |
+| C. DB・設定・配布資産            | あり | migration 0011（`items.version` 列の追加。SQLite・PostgreSQL）。`tauri.conf.json` は版数のみ。`.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続。                                                                                                                                                                              |
+
+### A. 共通パッケージ・クレート
+
+- 対象: `@banto/ui`・`@banto/theme`・`@banto/charts`・`@banto/grid-svelte`・`@banto/admin-core`・`@banto/dock-svelte`・`@banto/tree-svelte`・`banto-core`・`banto-server`。
+- 更新: `v7.2.0` → `v7.3.0`（npm と Rust を同じタグに）。
+- 追加 API（いずれも任意。既定の挙動は維持）:
+  - `@banto/ui`: `ThreePaneLayout` 一式（`ThreePaneLayoutProps`・`PaneFitInput`・`clampPaneWidth` / `fitPaneWidths` / `paneMaxWidth` / `isNarrowWidth`・`THREE_PANE_DEFAULTS`・`UiMessages` の 4 キー）、`MenuItem` の `kind?: 'radio' | 'checkbox'`・`title?`、`SurfaceCard` の `tone`。
+  - `@banto/theme`: 表示密度 `touch`（`ThemeDensity` に `'touch'`）、`--banto-font-size-3xl`・`--banto-dock-button-size`・`--banto-tree-toggle-size`・`--banto-card-*`。
+  - `@banto/tree-svelte`: `BantoTree` の任意の prop 3 つ（`label` ほか）。
+  - `@banto/admin-core`: 切断の判別・タイムアウト・接続状態（`isNetworkError`・`createConnectionMonitor`・`timeoutMs`・`onRequestResult` ほか）、楽観ロック（`DeleteOneOptions`・`createFormResource` の `handlesConflict`・`conflictOf`・`FormConflict` ほか）、`createFormResource` の `submitErrorMessage`。
+  - `@banto/grid-svelte`: `CellEdit.baseRow`。
+  - `banto-server`: `routes::{AuditActor, record_write_as, record_denied_as}`。
+  - `banto-core`: エラー種別 `BantoError::Conflict`。
+- 移行注意（ソース互換の破壊）:
+  1. **エラー種別 `conflict`**: Rust の `BantoError`・`ErrorBody` に `Conflict` が、TS の `ErrorBody` に `kind: 'conflict'` が増えた。網羅的な `match`・`switch (body.kind)` に `conflict` を足す。自前の `ERROR_KINDS` の Set があれば `'conflict'` を足す（無いと `other` に落ちる）。
+  2. **`ThemeDensity` の `'touch'`**: `ThemeDensity` を網羅的な `switch` で扱うなら `'touch'` の分岐を足す（型検査で気づける）。`app.html` の first-paint スクリプトを持つ派生アプリは `touch` を通す（`density === 'compact' || density === 'touch'`）。
+  3. **`ItemsService::delete_returning_previous` の引数 `expected_version: Option<i64>`、`ItemInput.version`**（テンプレートの `admin_template_core`。公開パッケージ・クレートではない）: `ItemInput` を構造体リテラルで作るなら `version: None` を足し、`delete_returning_previous` の呼び出しに `None` を渡す。
+- 消費側への注意（型エラーにはならないが、確かめるもの）:
+  1. **データ要求の `fetch` の init に `signal` が付くようになった**（`createHttpDataProvider` の `timeoutMs`、既定 20 秒）。init を完全一致で比べるテストは `signal: expect.any(AbortSignal)` を足す。
+  2. **`CellEdit` に任意の `baseRow` が増えた**（grid-svelte。インライン編集で編集を開いた時点の行）。完全一致で比べるテストは `baseRow` を足す。
+  3. **`DataProvider.deleteOne` の第 3 引数 `options?: DeleteOneOptions`**: 自前の `DataProvider` 実装はそのまま動く（引数の追加は任意）。
+  4. **`version` を送らなければ従来どおり上書き**になる（楽観ロックは画面の配線を取り込んだ場合に働く）。
+  5. **migration 0011（`items.version`）**: 共通クレートだけを更新する派生アプリでも、`Item.version` を使うなら先に列を追加する。
+  6. **コンパクト密度の余白トークン `--banto-space-3`〜`-6` が 1 段下の値になった**（見た目の変更）。
+- 依存を上げずに留まれるか: できる（`v7.2.0` のタグに固定したまま使える）。
+
+### B. コピーしたテンプレート
+
+- 対象ファイル・ルート: `ResourceListPage.svelte`（列メニューを `Menu`＋`MenuItem kind="checkbox"` に置き換え）、items の詳細フォーム・一覧のセル編集・範囲貼り付け・削除（楽観ロックの配線と衝突のダイアログ）、切断の帯（`server` モードのみ）、`/tree/workspace`（3 ペインの見本）、`core/src` の items・`messages/*.json`、`core/migrations-*/0011_items_version.sql`、`app.html` の first-paint スクリプト。
+- 関連 PR・コミット: #638（PR-1・PR-2）、#637（PR-1・PR-2）、#631、#624、#623、#646、#647。
+- 手で取り込む変更（辞書のキー。**`messages/*.json` の差分をまとめて取り込む**。v7.2.0 の `ja.json` との比較では、削除は 2 キー（`resource.groupByLabel`・`settings.running`。どちらも未使用）、追加は 87 キー（1004 → 1089）、値の書き換えは 0 キー。`en.json` も同じ結果）。自分の画面で削った 2 キーを使っているなら、自分の辞書に残す。
+- 手で取り込む変更（そのほか）:
+  - migration 0011（SQLite・PostgreSQL）を適用する。
+  - **`ResourceListPage.svelte` の差分を取り込む**（列メニュー。`role=menu`＋`menuitemcheckbox`。grid-svelte の `ColumnsMenu` は公開部品のまま）。
+  - items の楽観ロックの配線（手順は [docs/recipes/add-resource.md](docs/recipes/add-resource.md)「楽観ロック」）。
+  - 切断の帯（手順は [docs/recipes/lan-access.md](docs/recipes/lan-access.md)）。
+  - 表示密度 `touch`（設定の「表示密度」）。
+- 派生側の独自変更と衝突しやすい箇所: `ResourceListPage.svelte`・items の詳細フォーム・`messages/*.json`・`core/src` の items・`app.html`。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.3.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」は A のタグに伴う。Git 依存での導入は下の「検証した組み合わせ」で確かめる（テンプレートを取り込まない派生アプリそのものでの確認は未実施）。
+- 手本: 上記の `apps/admin-template/` のファイル。
+
+### C. DB・設定・配布資産
+
+- マイグレーション: 0011（`items.version` 列の追加。SQLite・PostgreSQL。既存の行は書き換えない。適用は起動時に自動）。コピーしたテンプレートと、`Item.version` を使う派生アプリが適用する。
+- 設定キー・`tauri.conf.json`: 設定キーの追加は無い。`tauri.conf.json` は版数のみ。
+- 配布物: 変更なし。
+- 依存監査: `.cargo/audit.toml` の RUSTSEC-2026-0459 の一時除外は継続（下の「セキュリティ」）。
+- 戻せる条件: 新版を本番 DB で最初に起動するまで（以降はバックアップの復元）。migration 0011 を適用した DB は `_sqlx_migrations` に 11 が残り、0010 までしか持たない v7.2.0 のバイナリは起動時の migration の検証で拒否する見込みなので、タグを戻すだけでは戻らない。起動前に DB のバックアップを取り、戻すときは [upgrading.md §4](docs/upgrading.md#4-db設定配布資産の移行) のとおり更新前のバックアップを復元する。
+- 順序: A・B を先に完成 → 検証用 DB で migration 0011 を適用 → 本番。
+
+### 更新後の確認（この版に関係する範囲）
+
+1. `pnpm check` / `pnpm build` / `pnpm dev`（画面が描画される）。
+2. 辞書のキー（`messages/*.json`）の取りこぼしが無いこと（画面に生のキーが出ない）。設定の「表示密度」で「タッチ」を選べること。
+3. visual の基準画像（Linux で生成）の更新が要るか。この版では `/tree/workspace`・コンパクト密度の dashboard（`LineChart` の x 軸）・キオスクの dashboard・一覧の「列」メニュー（`e2e/visual/columns-checkbox.spec.ts`）が対象。
+4. Rust: `cargo check` / `cargo test`。migration 0011 の適用後、items の更新が `version` を進めること。同じ行を 2 か所で編集したとき、後から保存した側に衝突のダイアログが出ること。
+5. scaffold を使う派生アプリは、4 プリセットの `pnpm scaffold --dry-run` が通ること。
+
+### セキュリティ
+
+- **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けず、今は上げられない。見直しの条件: libsqlite3-sys 0.39 以上を許す sqlx のリリースが出たら `cargo update -p libsqlite3-sys` で上げ、除外を外す。派生アプリの `cargo audit` でも同じ警告が出る。
+
+### 検証した組み合わせ
+
+- 外部利用（Git 依存 + dev 起動）の検証: タグの後に追記（`external-consumer.yml` の run と版）。
+
+### 変更の一覧
+
 - **banto-server**: 監査の記録に、主体と `origin` を引数で受ける公開関数を追加（#647。**公開 API の追加（minor）**、既存の挙動は不変）。`routes::{AuditActor { username, role }, record_write_as, record_denied_as}`。`record_write_as(audit, actor: Option<AuditActor>, origin, action, resource, entity_id, detail)` は `result = "ok"` の行を書き、API キー・MCP など、セッションの bearer ではない主体や REST 以外の経路から使える（`actor` が `None` なら主体の列は NULL）。`record_denied_as(audit, actor, origin, resource, detail)` は `require_role_at_least` が書く `denied` 行（`action = "denied"`・`entity_id` 無し・`result = "denied"`）と同じ形。既存の `record_write` は `record_write_as(…, "rest", …)` の薄い包みに、`require_role_at_least` は `record_denied_as` 経由にしたので、書かれる行の各列は従来と同じ。
 - **ui**: 閉じた `Menu` の中で、選択中の `MenuItem` のチェックの印（`visibility: visible`）が見えないまま残り、メニューの下にある要素のクリックを横取りする不具合を修正（印を `visibility: inherit` に）。項目の多いチェックボックスのメニュー（一覧の「列」）で、閉じた後にグリッドの先頭行を押せなくなっていた。あわせて、`Menu` の矢印・Home・End のフォーカス移動を項目の現在の DOM 順にした（キー付き each で項目が並べ替わると、マウント順のままずれていた。列を並べ替えた後の「列」メニュー）。
 - **admin-template**: 一覧画面の「列」を `@banto/ui` の `Menu`＋`MenuItem kind="checkbox"` に置き換えた（`ResourceListPage.svelte`。grid-svelte の `ColumnsMenu` は公開部品のまま変えておらず、テンプレートが使わなくなっただけ）。**派生アプリへの注意**: `ResourceListPage.svelte` の差分を取り込む。列メニューは `role=menu`＋`menuitemcheckbox` になり、選んでも閉じない（件数 `3/5` の表示、最後の 1 列の無効化と理由の `title`、client/server で列の一覧が切り替わる動作は従来どおり）。辞書キーの追加なし。`e2e/visual/columns-checkbox.spec.ts` を新しい形に合わせて書き換えた（native checkbox の寸法の確認は外れた）。
