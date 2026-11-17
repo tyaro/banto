@@ -36,6 +36,8 @@ export interface UserSummary {
 	displayName: string;
 	role: Role;
 	createdAt: string;
+	/** Optimistic-lock version (Issue #651); send back the one read when the form opened. */
+	version: number;
 }
 
 /** Mirrors `users_create`'s `UserIdentityView` (Tauri and REST alike) - no `createdAt` (see its doc comment). */
@@ -56,6 +58,8 @@ export interface CreateUserInput {
 export interface UpdateUserInput {
 	displayName: string;
 	role: Role;
+	/** The `UserSummary.version` the form was opened with (Issue #651). Omitted -> overwrite as before. */
+	version?: number;
 }
 
 export const DEMO_MODE_MESSAGE = 'デモモードでは利用できません';
@@ -181,7 +185,8 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<Us
 		return invokeCommand<UserSummary>('users_update', {
 			id,
 			displayName: input.displayName,
-			role: input.role
+			role: input.role,
+			version: input.version ?? null
 		});
 	}
 	return httpRequest<UserSummary>(`/api/users/${id}`, { method: 'PUT', body: input });
@@ -202,11 +207,36 @@ export async function resetUserPassword(id: number, newPassword: string): Promis
 	});
 }
 
-export async function deleteUser(id: number): Promise<void> {
+/** `version` (Issue #651): the version the row had when it was last read; a stale one is a `conflict` ProviderError and nothing is deleted. */
+export async function deleteUser(id: number, version?: number): Promise<void> {
 	if (!isUsersAdminAvailable()) throw demoModeError();
 	if (getBantoMode() === 'tauri') {
-		await invokeCommand<void>('users_delete', { id });
+		await invokeCommand<void>('users_delete', { id, version: version ?? null });
 		return;
 	}
-	await httpRequest<void>(`/api/users/${id}`, { method: 'DELETE', expectNoContent: true });
+	const query = version === undefined ? '' : `?version=${encodeURIComponent(String(version))}`;
+	await httpRequest<void>(`/api/users/${id}${query}`, {
+		method: 'DELETE',
+		expectNoContent: true
+	});
+}
+
+/**
+ * Issue #651: after our own save succeeded, may the open form's base version
+ * advance to the saved version? Only when the form is still on the same user,
+ * was opened from exactly the version we sent, and nothing was written in
+ * between (saved === sent + 1). Otherwise the base is left alone.
+ */
+export function shouldAdvanceEditVersion(args: {
+	selectedId: number | null | undefined;
+	targetId: number;
+	editVersion: number;
+	sentVersion: number;
+	savedVersion: number;
+}): boolean {
+	return (
+		args.selectedId === args.targetId &&
+		args.editVersion === args.sentVersion &&
+		args.savedVersion === args.sentVersion + 1
+	);
 }

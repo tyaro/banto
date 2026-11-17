@@ -183,6 +183,11 @@ pub struct UserSummary {
     pub display_name: String,
     pub role: Role,
     pub created_at: String,
+    /// Row version for optimistic locking (Issue #651, migration 0012): bumped
+    /// by every display-name/role update, untouched by password changes. A
+    /// client sends back the version it read; a mismatch is
+    /// `BantoError::Conflict`.
+    pub version: i64,
 }
 
 /// Wire shape of a freshly created account (`users_create`'s REST body and
@@ -303,19 +308,58 @@ fn ensure_admin_removal_allowed(
     Ok(())
 }
 
+/// The `SET version = ...` expression of an account update (Issue #651): +1,
+/// but back to 1 at `i64::MAX` instead of overflowing (same as items, #638).
+const VERSION_BUMP: &str = "CASE WHEN version < 9223372036854775807 THEN version + 1 ELSE 1 END";
+
+/// The conflict message (Issue #651). The client shows its own text; this is
+/// the fallback `ProviderError.message`.
+const CONFLICT_MESSAGE: &str = "他の人が先にこのアカウントを変更しました";
+
+/// Guard row of an update/delete: `(role, admin count, id, username,
+/// display_name, created_at, version)`, read inside the write transaction.
+type GuardRow = (String, i64, i64, String, String, String, i64);
+
+/// The guard row as the public row it was before the write.
+fn guard_summary(g: &GuardRow) -> Result<UserSummary, BantoError> {
+    Ok(UserSummary {
+        id: g.2,
+        username: g.3.clone(),
+        display_name: g.4.clone(),
+        role: Role::from_str(&g.0)?,
+        created_at: g.5.clone(),
+        version: g.6,
+    })
+}
+
+/// Optimistic-lock check (Issue #651): `expected` is the version the client
+/// read (`None` = no check, the old overwrite). Any other value than the
+/// stored one - including 0, a negative or a future version - is a
+/// `Conflict` carrying the current row.
+fn check_version(expected: Option<i64>, current: &UserSummary) -> Result<(), BantoError> {
+    match expected {
+        Some(version) if version != current.version => Err(BantoError::Conflict {
+            message: CONFLICT_MESSAGE.to_string(),
+            current: serde_json::to_value(current).ok(),
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// Audit `detail` for a `users` update (Issue #597): `{ username, role,
 /// changes }`. Both the REST and the Tauri wiring call this so the two routes
 /// record the same shape (conventions section 1). `role` stays for readers of
 /// the old shape; `username` names the target. `UserSummary` has no secret
 /// column, but the secret names are still masked in case a field is added
 /// later (conventions section 5). `username` cannot change and `createdAt` is
-/// a stamp, so both are ignored.
+/// a stamp, and `version` is the optimistic-lock counter (Issue #651, not a
+/// user edit), so all three are ignored.
 pub fn user_update_detail(before: &UserSummary, after: &UserSummary) -> serde_json::Value {
     let changes = crate::audit::diff::diff_changes(
         &serde_json::to_value(before).unwrap_or_default(),
         &serde_json::to_value(after).unwrap_or_default(),
         &["password", "passwordHash", "authEpoch"],
-        &["id", "username", "createdAt"],
+        &["id", "username", "createdAt", "version"],
     );
     serde_json::json!({ "username": after.username, "role": after.role, "changes": changes })
 }
@@ -656,8 +700,8 @@ impl UsersService {
     /// [`UserSummary`].
     pub async fn list_users(&self) -> Result<Vec<UserSummary>, BantoError> {
         const SQL: &str =
-            "SELECT id, username, display_name, role, created_at FROM users ORDER BY id";
-        let rows: Vec<(i64, String, String, String, String)> = match &self.db {
+            "SELECT id, username, display_name, role, created_at, version FROM users ORDER BY id";
+        let rows: Vec<(i64, String, String, String, String, i64)> = match &self.db {
             Db::Sqlite(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
             #[cfg(feature = "postgres")]
             Db::Postgres(pool) => sqlx::query_as(SQL).fetch_all(pool).await,
@@ -665,13 +709,14 @@ impl UsersService {
         .map_err(banto_storage::storage_error)?;
 
         rows.into_iter()
-            .map(|(id, username, display_name, role, created_at)| {
+            .map(|(id, username, display_name, role, created_at, version)| {
                 Ok(UserSummary {
                     id,
                     username,
                     display_name,
                     role: Role::from_str(&role)?,
                     created_at,
+                    version,
                 })
             })
             .collect()
@@ -855,6 +900,25 @@ impl UsersService {
         display_name: &str,
         role: Role,
     ) -> Result<(UserSummary, UserSummary), BantoError> {
+        self.update_user_checked_returning_previous(id, display_name, role, None)
+            .await
+    }
+
+    /// [`UsersService::update_user_returning_previous`] with the optimistic
+    /// lock (Issue #651): `expected_version` is the [`UserSummary::version`]
+    /// the client read. `Some` and different from the stored one is
+    /// `BantoError::Conflict` (carrying the current row) with nothing
+    /// written; `None` overwrites as before. The check runs on the row the
+    /// guard `SELECT` reads inside the write transaction, so two concurrent
+    /// updates carrying the same version cannot both succeed. Every
+    /// successful update bumps the version; password changes do not.
+    pub async fn update_user_checked_returning_previous(
+        &self,
+        id: i64,
+        display_name: &str,
+        role: Role,
+        expected_version: Option<i64>,
+    ) -> Result<(UserSummary, UserSummary), BantoError> {
         let display_name = display_name.trim();
 
         let dialect = self.db.dialect();
@@ -862,8 +926,8 @@ impl UsersService {
         let sql = format!(
             "UPDATE users SET display_name = {}, \
              auth_epoch = auth_epoch + CASE WHEN role = {} THEN 0 ELSE 1 END, \
-             role = {}, updated_at = {} WHERE id = {} \
-             RETURNING id, username, display_name, role, created_at",
+             role = {}, updated_at = {}, version = {VERSION_BUMP} WHERE id = {} \
+             RETURNING id, username, display_name, role, created_at, version",
             dialect.placeholder(1),
             dialect.placeholder(2),
             dialect.placeholder(3),
@@ -872,12 +936,12 @@ impl UsersService {
         );
         let guard_sql = format!(
             "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin'), \
-             id, username, display_name, created_at \
+             id, username, display_name, created_at, version \
              FROM users WHERE id = {}",
             dialect.placeholder(1),
         );
-        type Guard = (String, i64, i64, String, String, String);
-        type Updated = (i64, String, String, String, String);
+        type Guard = GuardRow;
+        type Updated = (i64, String, String, String, String, i64);
         let rows: (Option<Guard>, Option<Updated>) =
             with_users_write_transaction!(&self.db, |tx| {
                 let guard: Option<Guard> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
@@ -885,6 +949,10 @@ impl UsersService {
                     .fetch_optional(&mut *tx)
                     .await
                     .map_err(banto_storage::storage_error)?;
+                // A missing row stays NotFound (below) even with a version.
+                if let Some(g) = guard.as_ref() {
+                    check_version(expected_version, &guard_summary(g)?)?;
+                }
                 ensure_admin_removal_allowed(
                     id,
                     guard.as_ref().map(|g| (g.0.clone(), g.1)),
@@ -901,7 +969,8 @@ impl UsersService {
                 (guard, updated)
             });
 
-        let (Some(guard), Some((row_id, username, display_name, role_str, created_at))) = rows
+        let (Some(guard), Some((row_id, username, display_name, role_str, created_at, version))) =
+            rows
         else {
             return Err(BantoError::NotFound {
                 resource: "users".to_string(),
@@ -909,19 +978,14 @@ impl UsersService {
             });
         };
 
-        let previous = UserSummary {
-            id: guard.2,
-            username: guard.3,
-            display_name: guard.4,
-            role: Role::from_str(&guard.0)?,
-            created_at: guard.5,
-        };
+        let previous = guard_summary(&guard)?;
         let updated = UserSummary {
             id: row_id,
             username,
             display_name,
             role: Role::from_str(&role_str)?,
             created_at,
+            version,
         };
         Ok((previous, updated))
     }
@@ -1004,6 +1068,21 @@ impl UsersService {
         id: i64,
         acting_user_id: Option<i64>,
     ) -> Result<UserSummary, BantoError> {
+        self.delete_user_checked_returning_previous(id, acting_user_id, None)
+            .await
+    }
+
+    /// [`UsersService::delete_user_returning_previous`] with the optimistic
+    /// lock (Issue #651): `Some(version)` different from the stored one is
+    /// `BantoError::Conflict` (carrying the current row) with nothing
+    /// deleted. The row is read inside the same write transaction as the
+    /// delete.
+    pub async fn delete_user_checked_returning_previous(
+        &self,
+        id: i64,
+        acting_user_id: Option<i64>,
+        expected_version: Option<i64>,
+    ) -> Result<UserSummary, BantoError> {
         if acting_user_id == Some(id) {
             return Err(BantoError::Other(
                 "自分自身を削除することはできません".to_string(),
@@ -1012,22 +1091,27 @@ impl UsersService {
 
         // AssertSqlSafe: see the note in `setup_first_user` above.
         let sql = format!(
-            "DELETE FROM users WHERE id = {} RETURNING id, username, display_name, role, created_at",
+            "DELETE FROM users WHERE id = {} RETURNING id, username, display_name, role, created_at, version",
             self.db.dialect().placeholder(1)
         );
         let guard_sql = format!(
-            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin') \
+            "SELECT role, (SELECT COUNT(*) FROM users WHERE role = 'admin'), \
+             id, username, display_name, created_at, version \
              FROM users WHERE id = {}",
             self.db.dialect().placeholder(1),
         );
-        type Deleted = (i64, String, String, String, String);
+        type Deleted = (i64, String, String, String, String, i64);
         let deleted: Option<UserSummary> = with_users_write_transaction!(&self.db, |tx| {
-            let state: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
+            let guard: Option<GuardRow> = sqlx::query_as(sqlx::AssertSqlSafe(guard_sql))
                 .bind(id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(banto_storage::storage_error)?;
-            ensure_admin_removal_allowed(id, state, true)?;
+            // A missing row stays NotFound (below) even with a version.
+            if let Some(g) = guard.as_ref() {
+                check_version(expected_version, &guard_summary(g)?)?;
+            }
+            ensure_admin_removal_allowed(id, guard.map(|g| (g.0, g.1)), true)?;
             let row: Option<Deleted> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
                 .bind(id)
                 .fetch_optional(&mut *tx)
@@ -1035,13 +1119,14 @@ impl UsersService {
                 .map_err(banto_storage::storage_error)?;
             // Convert before commit: an unexpected role must roll the delete back,
             // never leave a deleted user with a failed, unaudited response.
-            row.map(|(id, username, display_name, role, created_at)| {
+            row.map(|(id, username, display_name, role, created_at, version)| {
                 Ok(UserSummary {
                     id,
                     username,
                     display_name,
                     role: Role::from_str(&role)?,
                     created_at,
+                    version,
                 })
             })
             .transpose()?
@@ -1078,7 +1163,8 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
-                auth_epoch INTEGER NOT NULL DEFAULT 0
+                auth_epoch INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL DEFAULT 1
             )",
         )
         .execute(
@@ -1242,7 +1328,8 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
-                auth_epoch INTEGER NOT NULL DEFAULT 0
+                auth_epoch INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL DEFAULT 1
             )";
 
     /// Issue #277: concurrent first-run setups with different usernames must
@@ -1325,7 +1412,8 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT now()::text,
                 updated_at TEXT NOT NULL DEFAULT now()::text,
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
-                auth_epoch BIGINT NOT NULL DEFAULT 0
+                auth_epoch BIGINT NOT NULL DEFAULT 0,
+                version BIGINT NOT NULL DEFAULT 1
             )",
         )
         .execute(db.as_postgres().unwrap())
@@ -1698,6 +1786,183 @@ mod tests {
         assert_eq!(demoted.role, Role::Viewer);
     }
 
+    // --- Issue #651: optimistic lock (version) ------------------------------
+
+    #[tokio::test]
+    async fn user_version_starts_at_1_and_each_update_bumps_it() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        let version_of = |users: Vec<UserSummary>| {
+            users
+                .into_iter()
+                .find(|u| u.id == editor.id)
+                .unwrap()
+                .version
+        };
+        assert_eq!(version_of(svc.list_users().await.unwrap()), 1);
+
+        let (prev, next) = svc
+            .update_user_checked_returning_previous(editor.id, "A", Role::Editor, Some(1))
+            .await
+            .unwrap();
+        assert_eq!((prev.version, next.version), (1, 2));
+        // The old (unchecked) entry point bumps too.
+        let next = svc.update_user(editor.id, "B", Role::Editor).await.unwrap();
+        assert_eq!(next.version, 3);
+        // `version` never appears in the audit diff.
+        let (prev, next) = svc
+            .update_user_returning_previous(editor.id, "B", Role::Editor)
+            .await
+            .unwrap();
+        assert_eq!(next.version, 4);
+        assert_eq!(
+            user_update_detail(&prev, &next)["changes"],
+            serde_json::json!([])
+        );
+    }
+
+    #[tokio::test]
+    async fn update_with_a_stale_version_conflicts_with_the_current_row_and_writes_nothing() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        svc.update_user_checked_returning_previous(editor.id, "先", Role::Editor, Some(1))
+            .await
+            .unwrap();
+
+        let err = svc
+            .update_user_checked_returning_previous(editor.id, "後", Role::Viewer, Some(1))
+            .await
+            .unwrap_err();
+        let BantoError::Conflict { current, .. } = err else {
+            panic!("expected Conflict, got {err:?}");
+        };
+        let current = current.expect("conflict carries the current row");
+        assert_eq!(current["displayName"], "先");
+        assert_eq!(current["version"], 2);
+        assert!(current.get("authEpoch").is_none());
+
+        let row = svc
+            .list_users()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|u| u.id == editor.id)
+            .unwrap();
+        assert_eq!(
+            (row.display_name.as_str(), row.role, row.version),
+            ("先", Role::Editor, 2)
+        );
+        // A role demotion that conflicted did not move auth_epoch either.
+        let identity = svc.get_by_username("editor1").await.unwrap().unwrap();
+        assert_eq!(identity.auth_epoch, 0);
+
+        // 0 / negative / future versions are conflicts too; None overwrites.
+        for v in [0, -1, 99] {
+            assert!(matches!(
+                svc.update_user_checked_returning_previous(editor.id, "x", Role::Editor, Some(v))
+                    .await,
+                Err(BantoError::Conflict { .. })
+            ));
+        }
+        svc.update_user_checked_returning_previous(editor.id, "強制", Role::Editor, None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn password_changes_do_not_bump_the_user_version() {
+        let svc = service().await;
+        svc.setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        svc.reset_password(editor.id, "another-password-1")
+            .await
+            .unwrap();
+        svc.change_password("editor1", "another-password-1", "third-password-12")
+            .await
+            .unwrap();
+        let row = svc
+            .list_users()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|u| u.id == editor.id)
+            .unwrap();
+        assert_eq!(row.version, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_with_a_stale_version_conflicts_and_keeps_the_row() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        let editor = svc
+            .create_user("editor1", "password123", "編集者1", Role::Editor)
+            .await
+            .unwrap();
+        svc.update_user(editor.id, "改", Role::Editor)
+            .await
+            .unwrap();
+
+        let err = svc
+            .delete_user_checked_returning_previous(editor.id, Some(owner.id), Some(1))
+            .await
+            .unwrap_err();
+        let BantoError::Conflict { current, .. } = err else {
+            panic!("expected Conflict, got {err:?}");
+        };
+        assert_eq!(current.unwrap()["version"], 2);
+        assert_eq!(svc.list_users().await.unwrap().len(), 2);
+
+        let removed = svc
+            .delete_user_checked_returning_previous(editor.id, Some(owner.id), Some(2))
+            .await
+            .unwrap();
+        assert_eq!(removed.version, 2);
+        assert_eq!(svc.list_users().await.unwrap().len(), 1);
+        // A missing row is NotFound, not a conflict, even with a version.
+        assert!(matches!(
+            svc.delete_user_checked_returning_previous(editor.id, Some(owner.id), Some(2))
+                .await,
+            Err(BantoError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_last_admin_guard_still_applies_with_a_matching_version() {
+        let svc = service().await;
+        let owner = svc
+            .setup_first_user("owner", "password123", "オーナー")
+            .await
+            .unwrap();
+        assert!(svc
+            .update_user_checked_returning_previous(owner.id, "オーナー", Role::Viewer, Some(1))
+            .await
+            .is_err());
+        assert!(svc
+            .delete_user_checked_returning_previous(owner.id, None, Some(1))
+            .await
+            .is_err());
+    }
+
     #[tokio::test]
     async fn update_user_returning_previous_gives_before_and_after_and_detail() {
         let svc = service().await;
@@ -1973,7 +2238,8 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','editor','viewer')),
-                auth_epoch INTEGER NOT NULL DEFAULT 0
+                auth_epoch INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL DEFAULT 1
             )",
         )
         .execute(&first_pool)

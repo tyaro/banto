@@ -22,6 +22,18 @@
 
 ## [Unreleased]
 
+### 追加（minor）: users の楽観ロック（#651、#638 の続き）
+
+- **migration 0012（`users.version`）**: `ALTER TABLE users ADD COLUMN version`（SQLite `INTEGER NOT NULL DEFAULT 1`／PostgreSQL `BIGINT NOT NULL DEFAULT 1`）。既存の行を書き換えない列の追加なので minor（前例 0007 の `auth_epoch`・0011）。
+- `banto_admin_services::users::UserSummary` に `version: i64` が増えた。表示名・ロールの更新（`update_user*`）が版を +1 する。パスワードの変更・リセットは版を上げない（`auth_epoch` だけが動く）。
+- 版を受ける口は新関数 `UsersService::update_user_checked_returning_previous(id, display_name, role, expected_version)` と `delete_user_checked_returning_previous(id, acting_user_id, expected_version)`。`update_user`・`delete_user`・`*_returning_previous` のシグネチャは変えない（版なし＝従来どおり上書き）。期待する版が違えば `BantoError::Conflict`（`current` は相手の最新の `UserSummary`）。衝突は監査に残さない。
+- REST: `PUT /api/users/{id}` の本文に任意の `version`、`DELETE /api/users/{id}?version=N`（不正は 400）。Tauri の `users_update`・`users_delete` に任意の `version`。
+- テンプレートの画面: ユーザー管理で、保存の衝突はフォームを相手の最新値に戻してトースト、削除の衝突は一覧を読み直してトースト（辞書に `users.conflictNotSaved`・`users.conflictNotDeleted`）。基準の版は「フォームを開いた時点（または直近の保存成功）の版」で、一覧の読み直しでは動かない。
+- 消費側への注意:
+  1. `banto_admin_services::users::UsersService` を使う派生アプリは、先に `users.version` 列を足す（足さないと `list_users` などの SELECT が失敗する）。SQLite: `ALTER TABLE users ADD COLUMN version INTEGER NOT NULL DEFAULT 1;` PostgreSQL: `ALTER TABLE users ADD COLUMN version BIGINT NOT NULL DEFAULT 1;`（テンプレートの `core/migrations-*/0012_users_version.sql` と同じ）。
+  2. `UserSummary` を構造体リテラルで作る・網羅的に分解するコードは `version` を足す（型検査で気づける）。TS 側の `UserSummary`（`usersAdmin.ts`）も同じ。
+  3. `users_update_body`・`users_delete_body`（テンプレートの `src-tauri`）の引数に `version: Option<i64>` が増えた。呼ぶ側は `None` を渡す。
+
 ## [7.3.0] - 2026-11-17
 
 **v7.3.0 — items の楽観ロック（migration 0011・新しいエラー種別 `conflict`・衝突のダイアログ）、LAN ブラウザの切断の検出と帯（`admin-core` の接続状態・タイムアウト）、3 つ目の表示密度 `touch` とキオスクの dashboard、3 ペインの枠 `ThreePaneLayout`（`@banto/ui`）・`BantoTree` の拡張、`MenuItem` のチェックボックス、監査の主体を受ける `record_write_as` / `record_denied_as`。** 版の種類: minor（機能追加。公開 API の削除・改名は無い）。理由: `crates/*/src` の `pub` の削除と `packages/*/src/index.ts` の export の削除は無い（追加だけ）。ソース互換を壊す変更は 4 つあり、いずれも [docs/publishing.md](docs/publishing.md)「バージョニング規約」の運用上の例外（移行手順を「消費側への注意」に明記して minor）に当てはめた。(1) `ThemeDensity` に `'touch'` が増えた。(2) エラー種別 `conflict`（Rust の `BantoError::Conflict`・TS の `ErrorBody`）が増えた。(3) `ItemsService::delete_returning_previous` に引数が、`ItemInput.version` にフィールドが増えた。(4) migration 0011 は `items.version` 列の追加だけの追加（既存の行は書き換えない。前例 v1.7.0・v6.5.0・v7.2.0）。

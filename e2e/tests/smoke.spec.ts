@@ -1618,7 +1618,11 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 				await save.click();
 				const request = await subsequentSave;
 				expect(new URL(request.url()).pathname).toBe(`/api/users/${targetId}`);
-				expect(request.postDataJSON()).toEqual({ displayName: draft, role: targetRole });
+				expect(request.postDataJSON()).toEqual({
+					displayName: draft,
+					role: targetRole,
+					version: expect.any(Number)
+				});
 				await expect(
 					rowWithText(page, targetUsername).locator('[data-cell-field="displayName"]')
 				).toHaveText(draft);
@@ -1751,20 +1755,25 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 			let deleteArrived!: () => void;
 			const deleted = new Promise<void>((resolve) => (deleteArrived = resolve));
 			const pendingReplies = new Set<Promise<void>>();
-			await page.route(`**/api/users/${id}`, (route) => {
-				if (route.request().method() !== 'DELETE') return route.continue();
-				const pending = (async () => {
-					// Delete in the real database now, but let the user change
-					// selection before the browser receives the success response.
-					const response = await route.fetch();
-					expect(response.status()).toBe(204);
-					deleteArrived();
-					await replyGate;
-					await route.fulfill({ response });
-				})();
-				pendingReplies.add(pending);
-				return pending.finally(() => pendingReplies.delete(pending));
-			});
+			// Matched by pathname: the DELETE carries `?version=` (Issue #651),
+			// which a `**/api/users/${id}` glob would not match.
+			await page.route(
+				(url) => url.pathname === `/api/users/${id}`,
+				(route) => {
+					if (route.request().method() !== 'DELETE') return route.continue();
+					const pending = (async () => {
+						// Delete in the real database now, but let the user change
+						// selection before the browser receives the success response.
+						const response = await route.fetch();
+						expect(response.status()).toBe(204);
+						deleteArrived();
+						await replyGate;
+						await route.fulfill({ response });
+					})();
+					pendingReplies.add(pending);
+					return pending.finally(() => pendingReplies.delete(pending));
+				}
+			);
 			try {
 				// Cannot be undone: the dialog asks for the user name (Issue #556).
 				await confirmInDialog(page, panel.getByRole('button', { name: '削除', exact: true }), {

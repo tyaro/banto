@@ -794,6 +794,8 @@
   "users.updated": "Updated",
   "users.passwordReset": "Reset the password",
   "users.deleted": "Deleted",
+  "users.conflictNotSaved": "Not saved because someone else changed this account. Showing the latest values.",
+  "users.conflictNotDeleted": "Not deleted because someone else changed this account. Showing the latest values.",
   "users.deleteConfirm": "Delete {username}?",
   "users.deleteConfirmTitle": "Delete user",
   "panels.monthly": "Monthly update count",

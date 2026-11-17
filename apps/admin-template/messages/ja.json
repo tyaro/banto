@@ -794,6 +794,8 @@
   "users.updated": "更新しました",
   "users.passwordReset": "パスワードをリセットしました",
   "users.deleted": "削除しました",
+  "users.conflictNotSaved": "他の人が先にこのアカウントを変更したため保存できませんでした。最新の内容を表示しています。",
+  "users.conflictNotDeleted": "他の人が先にこのアカウントを変更したため削除しませんでした。最新の内容を表示しています。",
   "users.deleteConfirm": "{username} を削除しますか？",
   "users.deleteConfirmTitle": "ユーザーの削除",
   "panels.monthly": "月別更新件数",

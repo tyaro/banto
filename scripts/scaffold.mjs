@@ -1694,6 +1694,7 @@ function removeAdminPages() {
 	removeDir(`${APP}/src/routes/(app)/users`, 'users 画面削除');
 	removeDir(`${APP}/src/routes/(app)/audit-log`, 'audit-log 画面削除');
 	removeFile(`${APP}/src/lib/banto/usersAdmin.ts`, 'usersAdmin.ts 削除（参照元なし）');
+	removeFile(`${APP}/src/lib/banto/usersAdmin.test.ts`, 'usersAdmin.test.ts 削除（参照元なし）');
 
 	drop(
 		NAV,

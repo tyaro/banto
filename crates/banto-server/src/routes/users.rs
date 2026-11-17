@@ -14,6 +14,19 @@ struct CreateUserRequest {
 struct UpdateUserRequest {
     display_name: String,
     role: Role,
+    /// Optimistic-lock check (Issue #651): the `version` the client read.
+    /// Absent / `null` keeps the old last-write-wins update.
+    #[serde(default)]
+    version: Option<i64>,
+}
+
+/// `DELETE /api/users/{id}?version=N` (Issue #651): the optional `version` is
+/// the optimistic-lock check (a different stored version is a `409`
+/// `conflict`, nothing deleted). A query string, not a body, since this route
+/// had no body and some clients/proxies drop a DELETE body.
+#[derive(Debug, Default, Deserialize)]
+struct UsersDeleteQuery {
+    version: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,7 +117,7 @@ async fn users_update(
 ) -> Result<Json<UserSummary>, ApiError> {
     let (previous, updated) = state
         .users
-        .update_user_returning_previous(id, &body.display_name, body.role)
+        .update_user_checked_returning_previous(id, &body.display_name, body.role, body.version)
         .await?;
     record_write(
         &state.audit,
@@ -155,7 +168,12 @@ async fn users_delete(
     session: Option<axum::Extension<AuthenticatedSession>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
+    query: Result<axum::extract::Query<UsersDeleteQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<StatusCode, ApiError> {
+    // A malformed `version` (`?version=abc`) answers the usual `ErrorBody`
+    // (`bad_request`), not axum's plain-text rejection.
+    let axum::extract::Query(query) =
+        query.map_err(|err| BantoError::BadRequest(err.body_text()))?;
     let is_grant = session.is_some_and(|axum::Extension(session)| session.grant.is_some());
     let acting_id = if is_grant {
         None
@@ -164,7 +182,7 @@ async fn users_delete(
     };
     let removed = state
         .users
-        .delete_user_returning_previous(id, acting_id)
+        .delete_user_checked_returning_previous(id, acting_id, query.version)
         .await?;
     record_write(
         &state.audit,

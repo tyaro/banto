@@ -327,10 +327,21 @@ async fn app_layer_crud_round_trips_on_postgres() {
         .expect("users verify")
         .expect("alice verifies with the reset password");
     assert_eq!(verified.auth_epoch, 3);
+    // Issue #651 (migration 0012): the BIGINT `version` decodes into i64, two
+    // updates took it 1 -> 3 (the password changes above left it alone), and a
+    // stale version conflicts inside the write transaction.
+    let stale = users
+        .delete_user_checked_returning_previous(identity.id, Some(existing.id), Some(1))
+        .await;
+    assert!(
+        matches!(stale, Err(banto_core::BantoError::Conflict { .. })),
+        "stale version must conflict: {stale:?}"
+    );
     let removed_user = users
-        .delete_user_returning_previous(identity.id, Some(existing.id))
+        .delete_user_checked_returning_previous(identity.id, Some(existing.id), Some(3))
         .await
         .expect("users delete returning previous");
+    assert_eq!(removed_user.version, 3);
     assert_eq!(removed_user.username, "alice");
     assert_eq!(removed_user.display_name, "Alice A.");
     assert_eq!(removed_user.role, Role::Viewer);
