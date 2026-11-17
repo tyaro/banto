@@ -891,6 +891,140 @@ async fn items_optimistic_lock_over_rest() {
     );
 }
 
+/// Issue #651: the optimistic lock over REST for users. A stale `version` on
+/// PUT and on `DELETE ?version=` answers `409 { kind: "conflict", current }`
+/// (`current` has no secret), changes nothing and leaves no audit row; a
+/// malformed `?version=` is a 400; the matching version applies; no version
+/// keeps the old overwrite.
+#[tokio::test]
+async fn users_optimistic_lock_over_rest() {
+    let (router, admin, _editor, _viewer) = router_with_role_tokens().await;
+    let created = body_json(
+        router
+            .clone()
+            .oneshot(post_json_auth(
+                "/api/users",
+                &admin,
+                json!({
+                    "username": "lockedperson",
+                    "password": "password123",
+                    "displayName": "Locked",
+                    "role": "editor"
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap();
+
+    let list = body_json(
+        router
+            .clone()
+            .oneshot(get_auth("/api/users", &admin))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let row = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == id)
+        .unwrap();
+    assert_eq!(row["version"], 1);
+
+    let ok = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/users/{id}"),
+            &admin,
+            json!({ "displayName": "First", "role": "editor", "version": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), StatusCode::OK);
+    assert_eq!(body_json(ok).await["version"], 2);
+
+    let stale = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/users/{id}"),
+            &admin,
+            json!({ "displayName": "Mine", "role": "viewer", "version": 1 }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let body = body_json(stale).await;
+    assert_eq!(body["kind"], "conflict");
+    assert_eq!(body["current"]["displayName"], "First");
+    assert_eq!(body["current"]["version"], 2);
+    assert!(body["current"].get("authEpoch").is_none());
+
+    let stale_delete = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/users/{id}?version=1"), &admin))
+        .await
+        .unwrap();
+    assert_eq!(stale_delete.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(stale_delete).await["current"]["version"], 2);
+
+    let malformed = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/users/{id}?version=abc"), &admin))
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(malformed).await["kind"], "bad_request");
+
+    // No version: overwrite as before.
+    let forced = router
+        .clone()
+        .oneshot(put_json(
+            &format!("/api/users/{id}"),
+            &admin,
+            json!({ "displayName": "Forced", "role": "editor" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(forced.status(), StatusCode::OK);
+    assert_eq!(body_json(forced).await["version"], 3);
+
+    let deleted = router
+        .clone()
+        .oneshot(delete_auth(&format!("/api/users/{id}?version=3"), &admin))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let rows = body_json(
+        router
+            .oneshot(post_json_auth(
+                "/api/audit-log/list",
+                &admin,
+                json!(ListParams::default()),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["rows"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let entity_id = id.to_string();
+    let actions: Vec<_> = rows
+        .iter()
+        .filter(|r| r["resource"] == "users" && r["entityId"] == entity_id)
+        .map(|r| r["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        actions.len(),
+        4,
+        "create + 2 updates + delete only: {actions:?}"
+    );
+}
+
 #[tokio::test]
 async fn items_create_and_delete_record_values_via_rest() {
     let (router, _dir, admin, editor, _viewer) = router_with_role_tokens_and_backup().await;

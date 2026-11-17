@@ -198,6 +198,11 @@
 	let selectionEpoch = 0;
 	let editDisplayName = $state('');
 	let editRole: UserRole = $state('viewer');
+	// Issue #651 (optimistic lock): the version the edit form was opened with
+	// (or last saved / reset to). Deliberately NOT the list's current row: a
+	// list reload or SSE refresh while the form is open must not move it, or a
+	// change made by someone else in between would be overwritten silently.
+	let editVersion = $state(0);
 	let saving = $state(false);
 
 	function selectUser(user: UserSummary): void {
@@ -205,27 +210,64 @@
 		selected = user;
 		editDisplayName = user.displayName;
 		editRole = user.role;
+		editVersion = user.version;
 		resetPassword = '';
+	}
+
+	/** The `current` of a `conflict` error (the other side's latest row), or null when absent / not a user row. */
+	function conflictCurrent(err: unknown): UserSummary | null {
+		if (!isProviderError(err) || err.body.kind !== 'conflict') return null;
+		const current = err.body.current as Partial<UserSummary> | null | undefined;
+		if (
+			current &&
+			typeof current.id === 'number' &&
+			typeof current.version === 'number' &&
+			typeof current.displayName === 'string' &&
+			typeof current.role === 'string'
+		) {
+			return current as UserSummary;
+		}
+		return null;
+	}
+
+	/** Put the form on the other side's latest row (and its version as the new base), if this selection is still the one that conflicted. */
+	function showLatest(current: UserSummary | null, targetId: number, epoch: number): void {
+		if (!current || epoch !== selectionEpoch || selected?.id !== targetId) return;
+		selected = current;
+		editDisplayName = current.displayName;
+		editRole = current.role;
+		editVersion = current.version;
 	}
 
 	async function saveEdit(): Promise<void> {
 		if (!selected || saving) return;
 		const targetId = selected.id;
 		const epoch = selectionEpoch;
-		const draft = { displayName: editDisplayName, role: editRole };
+		// The base version is the one the form was opened with, read now (before
+		// the await), never re-read from the list afterwards.
+		const draft = { displayName: editDisplayName, role: editRole, version: editVersion };
 		saving = true;
 		try {
 			const updated = await updateUser(targetId, draft);
 			toastStore.push('success', m['users.updated']());
 			if (epoch === selectionEpoch && selected?.id === targetId) {
 				selected = updated;
+				editVersion = updated.version;
 				// Fields remain editable while saving; retain input made after submission.
 				if (editDisplayName === draft.displayName) editDisplayName = updated.displayName;
 				if (editRole === draft.role) editRole = updated.role;
 			}
 			await reload();
 		} catch (err) {
-			toastStore.push('error', errorMessage(err));
+			if (isProviderError(err) && err.body.kind === 'conflict') {
+				// Someone else saved first: show their latest values (the form's
+				// base version follows) instead of overwriting them.
+				showLatest(conflictCurrent(err), targetId, epoch);
+				toastStore.push('error', m['users.conflictNotSaved']());
+				await reload();
+			} else {
+				toastStore.push('error', errorMessage(err));
+			}
 		} finally {
 			saving = false;
 		}
@@ -263,6 +305,8 @@
 		if (!selected || deleting) return;
 		// Cannot be undone: the user types the user name to confirm (Issue #556).
 		const { id: targetId, username } = selected;
+		const epoch = selectionEpoch;
+		const version = editVersion;
 		const confirmed = await confirmAction({
 			title: m['users.deleteConfirmTitle'](),
 			message: m['users.deleteConfirm']({ username }),
@@ -273,7 +317,7 @@
 		if (!confirmed || deleting) return;
 		deleting = true;
 		try {
-			await deleteUser(targetId);
+			await deleteUser(targetId, version);
 			toastStore.push('success', m['users.deleted']());
 			// roadmap M10: even a new selection of this ID no longer exists.
 			// Advance the epoch so pending saves cannot reopen the deleted user.
@@ -283,7 +327,15 @@
 			}
 			await reload();
 		} catch (err) {
-			toastStore.push('error', errorMessage(err));
+			if (isProviderError(err) && err.body.kind === 'conflict') {
+				// Someone else changed the account first: nothing was deleted.
+				// Show their latest values and re-read the list.
+				showLatest(conflictCurrent(err), targetId, epoch);
+				toastStore.push('error', m['users.conflictNotDeleted']());
+				await reload();
+			} else {
+				toastStore.push('error', errorMessage(err));
+			}
 		} finally {
 			deleting = false;
 		}

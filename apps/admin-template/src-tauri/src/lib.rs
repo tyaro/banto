@@ -3272,14 +3272,19 @@ async fn users_create_body(
 /// `admin`-only (spec M10): update an account's display name/role. Refuses
 /// to demote the last remaining `admin` (`UsersService::update_user`'s
 /// guard).
+///
+/// `version` (Issue #651) is the optimistic-lock check, the same as REST's
+/// `PUT /api/users/{id}` body field: a different stored version is a
+/// `conflict` and nothing is written or audited; `None` overwrites as before.
 #[tauri::command]
 async fn users_update(
     state: State<'_, AppState>,
     id: i64,
     display_name: String,
     role: Role,
+    version: Option<i64>,
 ) -> Result<UserSummary, BantoError> {
-    users_update_body(&state, id, &display_name, role).await
+    users_update_body(&state, id, &display_name, role, version).await
 }
 
 /// Body of [`users_update`] (spec M14 pattern, see [`users_create_body`]).
@@ -3288,11 +3293,12 @@ async fn users_update_body(
     id: i64,
     display_name: &str,
     role: Role,
+    version: Option<i64>,
 ) -> Result<UserSummary, BantoError> {
     let actor = require_role(state, Role::Admin, "users").await?;
     let (previous, updated) = state
         .users
-        .update_user_returning_previous(id, display_name, role)
+        .update_user_checked_returning_previous(id, display_name, role, version)
         .await?;
     record_ok(
         &state.audit,
@@ -3345,17 +3351,29 @@ async fn users_reset_password_body(
 /// (`UsersService::delete_user`'s guards) - the acting admin's id comes
 /// from the session `require_role` just verified, not from an argument, so
 /// a caller cannot spoof a different acting user.
+///
+/// `version` (Issue #651) is the optimistic-lock check, the same as REST's
+/// `DELETE /api/users/{id}?version=N`: a different stored version is a
+/// `conflict` and nothing is deleted or audited; `None` deletes as before.
 #[tauri::command]
-async fn users_delete(state: State<'_, AppState>, id: i64) -> Result<(), BantoError> {
-    users_delete_body(&state, id).await
+async fn users_delete(
+    state: State<'_, AppState>,
+    id: i64,
+    version: Option<i64>,
+) -> Result<(), BantoError> {
+    users_delete_body(&state, id, version).await
 }
 
 /// Body of [`users_delete`] (spec M14 pattern, see [`users_create_body`]).
-async fn users_delete_body(state: &AppState, id: i64) -> Result<(), BantoError> {
+async fn users_delete_body(
+    state: &AppState,
+    id: i64,
+    version: Option<i64>,
+) -> Result<(), BantoError> {
     let acting = require_role(state, Role::Admin, "users").await?;
     let removed = state
         .users
-        .delete_user_returning_previous(id, Some(acting.id))
+        .delete_user_checked_returning_previous(id, Some(acting.id), version)
         .await?;
     record_ok(
         &state.audit,
@@ -4995,7 +5013,7 @@ mod tests {
         let created = users_create_body(&state, "target", "password123", "Target", Role::Editor)
             .await
             .unwrap();
-        users_delete_body(&state, created.id).await.unwrap();
+        users_delete_body(&state, created.id, None).await.unwrap();
         let rows = state.audit.list(ListParams::default()).await.unwrap().rows;
         for (action, before, after) in [
             (
@@ -5028,6 +5046,48 @@ mod tests {
                 })));
             assert!(!entry.detail.as_deref().unwrap().contains("password123"));
         }
+    }
+
+    /// Issue #651: [`users_update_body`] / [`users_delete_body`] with a stale
+    /// `version` answer a `Conflict`, change nothing and record nothing - the
+    /// same as REST (conventions section 1); the matching version applies.
+    #[tokio::test]
+    async fn users_update_and_delete_with_a_stale_version_conflict_without_audit() {
+        let state = admin_app_state().await;
+        let created = users_create_body(&state, "target", "password123", "Target", Role::Editor)
+            .await
+            .unwrap();
+        let updated = users_update_body(&state, created.id, "改", Role::Editor, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(updated.version, 2);
+
+        let stale = users_update_body(&state, created.id, "遅", Role::Viewer, Some(1)).await;
+        assert!(
+            matches!(stale, Err(BantoError::Conflict { .. })),
+            "{stale:?}"
+        );
+        let stale = users_delete_body(&state, created.id, Some(1)).await;
+        assert!(
+            matches!(stale, Err(BantoError::Conflict { .. })),
+            "{stale:?}"
+        );
+
+        let rows = state.audit.list(ListParams::default()).await.unwrap().rows;
+        let mine = |action: &str| {
+            rows.iter()
+                .filter(|r| {
+                    r.action == action
+                        && r.resource == "users"
+                        && r.entity_id.as_deref() == Some(created.id.to_string().as_str())
+                })
+                .count()
+        };
+        assert_eq!((mine("update"), mine("delete")), (1, 0));
+
+        users_delete_body(&state, created.id, Some(2))
+            .await
+            .expect("matching version deletes");
     }
 
     /// [`auth_config_apply_body`]'s normal (non-escape-hatch) path records a
@@ -5712,13 +5772,13 @@ mod tests {
 
             let self_service_desktop = match change {
                 AccountChange::Delete => {
-                    users_delete_body(&operator_desktop, target_id)
+                    users_delete_body(&operator_desktop, target_id, None)
                         .await
                         .unwrap();
                     None
                 }
                 AccountChange::Demote => {
-                    users_update_body(&operator_desktop, target_id, "対象", Role::Viewer)
+                    users_update_body(&operator_desktop, target_id, "対象", Role::Viewer, None)
                         .await
                         .unwrap();
                     None
@@ -5851,9 +5911,15 @@ mod tests {
         desktop_login(&operator_desktop, "operator").await;
         desktop_login(&target_desktop, "target").await;
 
-        users_update_body(&operator_desktop, target_id, "対象（改名）", Role::Admin)
-            .await
-            .unwrap();
+        users_update_body(
+            &operator_desktop,
+            target_id,
+            "対象（改名）",
+            Role::Admin,
+            None,
+        )
+        .await
+        .unwrap();
 
         let current = require_role(&target_desktop, Role::Admin, "users")
             .await
@@ -5925,7 +5991,7 @@ mod tests {
         desktop_login(&operator_desktop, "operator").await;
         desktop_login(&target_desktop, "target").await;
 
-        users_delete_body(&operator_desktop, target_id)
+        users_delete_body(&operator_desktop, target_id, None)
             .await
             .unwrap();
         users_create_body(
