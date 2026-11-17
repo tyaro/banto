@@ -7,6 +7,16 @@ import { isProviderError, ProviderError, type FieldError } from './errors';
 import { invalidate } from './invalidate';
 import { getDataProvider, notify } from './registry.svelte';
 
+export interface FormResourceOptions {
+	/**
+	 * The toast text for a failed `submit()` that is not a validation error
+	 * (Issue #637: a lost connection says "could not save, save again when it
+	 * is back" instead of the provider's bare message). Default
+	 * `ProviderError.message`.
+	 */
+	submitErrorMessage?: (err: unknown) => string;
+}
+
 export type SubmitResult<T> = { ok: true; row: T } | { ok: false; fieldErrors: FieldError[] };
 
 export class FormResource<T> {
@@ -17,10 +27,12 @@ export class FormResource<T> {
 
 	#resource: string;
 	#id: string | number | undefined;
+	#options: FormResourceOptions;
 
-	constructor(resource: string, id?: string | number) {
+	constructor(resource: string, id?: string | number, options: FormResourceOptions = {}) {
 		this.#resource = resource;
 		this.#id = id;
+		this.#options = options;
 	}
 
 	/** Load initial values: `getOne` when editing, `{}` when creating. */
@@ -57,7 +69,11 @@ export class FormResource<T> {
 			if (isProviderError(err) && err.body.kind === 'validation') {
 				return { ok: false, fieldErrors: err.body.field_errors };
 			}
-			notify('error', isProviderError(err) ? err.message : String(err));
+			notify(
+				'error',
+				this.#options.submitErrorMessage?.(err) ??
+					(isProviderError(err) ? err.message : String(err))
+			);
 			return { ok: false, fieldErrors: [] };
 		} finally {
 			this.saving = false;
@@ -79,6 +95,10 @@ export class FormResource<T> {
 	}
 }
 
-export function createFormResource<T>(resource: string, id?: string | number): FormResource<T> {
-	return new FormResource<T>(resource, id);
+export function createFormResource<T>(
+	resource: string,
+	id?: string | number,
+	options?: FormResourceOptions
+): FormResource<T> {
+	return new FormResource<T>(resource, id, options);
 }

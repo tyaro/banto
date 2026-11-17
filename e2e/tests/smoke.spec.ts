@@ -2601,6 +2601,101 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await expect(page.getByText('サーバーに接続できません')).toHaveCount(0);
 	});
 
+	// Issue #637 (D-4): a LAN browser that loses the server shows a banner under
+	// the header, a failed save keeps what was typed (form and grid cell) and
+	// says the connection is the reason, and once requests are answered again
+	// the banner goes, "再接続しました" is toasted once, and the same input saves.
+	// Requests are made to fail with `page.route`; the already-open event stream
+	// is untouched, so it is the requests that tell the page.
+	test('13a3. #637: a lost connection shows the banner; failed saves keep the input; retry brings it back', async () => {
+		const DRAFT_NAME = `E2E切断テスト商品-${Date.now()}`;
+		const banner = page.getByTestId('connection-region');
+		const serverDown = (route: Route) => route.abort('connectionrefused');
+
+		await page.goto('/items/new');
+		await expect(page.getByTestId('connection-region')).toBeAttached();
+		await expect(banner.getByRole('button', { name: '再試行', exact: true })).toHaveCount(0);
+		await page.getByLabel('商品名').fill(DRAFT_NAME);
+		await page.getByLabel('価格').fill('321');
+		await page.getByLabel('在庫').fill('7');
+
+		await page.route('**/api/**', serverDown);
+		try {
+			// One failed request is not a disconnect; the second is.
+			await page.getByRole('button', { name: '保存' }).click();
+			await expect(page.getByText('接続できないため保存できませんでした').first()).toBeVisible();
+			await page.getByRole('button', { name: '保存' }).click();
+			await expect(banner).toContainText('サーバーに接続できません。再接続しています…');
+			await expect(banner).toContainText('再読み込みすると、編集中の内容は消えます。');
+			await expect(page).toHaveURL(/\/items\/new$/);
+			// The draft is still there.
+			await expect(page.getByLabel('商品名')).toHaveValue(DRAFT_NAME);
+			await expect(page.getByLabel('価格')).toHaveValue('321');
+			await expect(page.getByLabel('在庫')).toHaveValue('7');
+			// Retrying while it is still down changes nothing.
+			await banner.getByRole('button', { name: '再試行', exact: true }).click();
+			await expect(banner).toContainText('サーバーに接続できません。再接続しています…');
+		} finally {
+			await page.unroute('**/api/**', serverDown);
+		}
+
+		await banner.getByRole('button', { name: '再試行', exact: true }).click();
+		await expect(banner.getByRole('button', { name: '再試行', exact: true })).toHaveCount(0);
+		await expect(page.getByText('再接続しました', { exact: true })).toHaveCount(1);
+		await expect(page.getByLabel('商品名')).toHaveValue(DRAFT_NAME);
+
+		await page.getByRole('button', { name: '保存' }).click();
+		await expect(page).toHaveURL(/\/items$/);
+
+		// The grid cell: a failed inline save keeps the typed value in the editor.
+		await applyColumnFilter(page, '商品名', DRAFT_NAME);
+		const row = rowWithText(page, DRAFT_NAME);
+		await expect(row).toBeVisible();
+		const itemId = await rowItemId(row);
+		const editor = page.getByRole('grid').locator('.cell-editor');
+		await page.route('**/api/**', serverDown);
+		try {
+			await row.locator('[data-cell-field="price"]').dblclick();
+			await editor.fill('654');
+			await page.keyboard.press('Enter');
+			await expect(editor).toBeVisible();
+			await expect(editor).toHaveValue('654');
+			await expect(page.getByText('接続できないため保存できませんでした').first()).toBeVisible();
+		} finally {
+			await page.unroute('**/api/**', serverDown);
+		}
+		await editor.press('Enter');
+		await expect(editor).toHaveCount(0);
+		await expect(row.locator('[data-cell-field="price"]')).toContainText('654');
+
+		// Clean up so later scenarios see the data they expect.
+		await page.goto(`/items/${itemId}`);
+		await confirmInDialog(page, page.getByRole('button', { name: '削除' }), {
+			title: '削除の確認',
+			confirm: '削除'
+		});
+		await expect(page).toHaveURL(/\/items$/);
+	});
+
+	// Issue #637: the browser's own offline state is its own banner, and it goes
+	// when the network is back (`online` event) without any request being sent.
+	test('13a4. #637: the browser going offline shows its own banner and clears when it is back', async () => {
+		const banner = page.getByTestId('connection-region');
+		await page.goto('/dashboard');
+		await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible();
+		await expect(banner.getByText('ネットワークに接続されていません')).toHaveCount(0);
+
+		await page.context().setOffline(true);
+		try {
+			await expect(banner).toContainText('ネットワークに接続されていません');
+			await expect(banner).toContainText('再読み込みすると、編集中の内容は消えます。');
+		} finally {
+			await page.context().setOffline(false);
+		}
+		await expect(banner.getByText('ネットワークに接続されていません')).toHaveCount(0);
+		await expect(page.getByText('再接続しました', { exact: true })).toHaveCount(1);
+	});
+
 	// Issue #241: a session revoked while its screen is open. A second
 	// browser (its own storage) logs in as the viewer with "Remember me"; the
 	// admin page then resets that account's password (Issue #204: this ends

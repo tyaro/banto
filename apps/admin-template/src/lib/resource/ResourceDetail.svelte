@@ -45,6 +45,7 @@
 	} from '@banto/admin-core';
 	import { EmptyState, ErrorState, LoadingState } from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
+	import { saveErrorMessage } from '#lib/banto/connectionRecovery.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
 	import { formValidationMessages } from '#lib/banto/i18n.js';
 	import { sessionStore } from '#lib/session.svelte.js';
@@ -128,10 +129,15 @@
 	// harmless (no row to highlight).
 	if (idValid) saveLastOpenedId(scope, def.name, parsedId);
 
+	// Issue #637: a save that fails because the connection is down says so; the
+	// form's store is untouched on any failed save, so the draft stays.
+	const formOptions = {
+		submitErrorMessage: (err: unknown) => saveErrorMessage(err, m['connection.saveFailed'])
+	};
 	const formResource = isNew
-		? createFormResource(def.name)
+		? createFormResource(def.name, undefined, formOptions)
 		: idValid
-			? createFormResource(def.name, parsedId)
+			? createFormResource(def.name, parsedId, formOptions)
 			: null;
 	// i18n layer ② (ADR-0005): inject Paraglide-backed validation messages.
 	let store = $state(createFormStore(schema, undefined, formValidationMessages()));

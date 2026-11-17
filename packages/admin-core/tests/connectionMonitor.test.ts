@@ -101,6 +101,15 @@ describe('nextConnectionState / connectionStatusOf (pure rules)', () => {
 		expect(connectionStatusOf(s, T)).toBe('reconnecting'); // the stream has not come back yet
 	});
 
+	it('online also forgets the failures counted while offline (a quiet screen recovers)', () => {
+		let s = nextConnectionState(start, { type: 'browserOffline', at: 1 });
+		s = nextConnectionState(s, { type: 'request', result: fail(2), at: 2 });
+		s = nextConnectionState(s, { type: 'request', result: fail(3), at: 3 });
+		expect(connectionStatusOf(s, T)).toBe('offline');
+		s = nextConnectionState(s, { type: 'browserOnline', at: 4 });
+		expect(connectionStatusOf(s, T)).toBe('online');
+	});
+
 	it('discards a success sent before the last failure evidence (stale)', () => {
 		const lost = nextConnectionState(start, { type: 'streamDisconnected', at: 100 });
 		const stale = nextConnectionState(lost, { type: 'request', result: ok(99), at: 101 });

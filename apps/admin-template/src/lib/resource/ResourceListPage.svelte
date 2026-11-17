@@ -73,6 +73,7 @@
 		getDataProvider,
 		getSessionController,
 		invalidate,
+		isNetworkError,
 		isProviderError,
 		loadActiveListMode,
 		loadLastOpenedId,
@@ -113,6 +114,7 @@
 		type TabItem
 	} from '@banto/ui';
 	import * as m from '#lib/paraglide/messages.js';
+	import { saveErrorMessage } from '#lib/banto/connectionRecovery.js';
 	import { gridMessages } from '#lib/banto/i18n.js';
 	import { getBantoMode, getUiSettings } from '#lib/banto/setup.js';
 	import { confirmAction } from '#lib/confirm.svelte.js';
@@ -896,8 +898,10 @@
 					err.body.field_errors.find((fe) => fe.field === edit.field) ?? err.body.field_errors[0];
 				throw new Error(fieldError?.message ?? err.message, { cause: err });
 			}
-			notify('error', isProviderError(err) ? err.message : String(err));
-			throw err;
+			notify('error', saveErrorMessage(err, m['connection.saveFailed']));
+			// BantoGrid shows the thrown message in the cell and keeps what was
+			// typed; a lost connection explains itself there too (Issue #637).
+			throw isNetworkError(err) ? new Error(m['connection.saveFailed'](), { cause: err }) : err;
 		}
 	}
 
@@ -928,8 +932,7 @@
 			if (result.status === 'fulfilled') {
 				saved.push(result.value);
 			} else {
-				const err = result.reason;
-				notify('error', isProviderError(err) ? err.message : String(err));
+				notify('error', saveErrorMessage(result.reason, m['connection.saveFailed']));
 			}
 		}
 

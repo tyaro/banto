@@ -102,7 +102,12 @@ export {
 	type SnapshotListRequest,
 	type SnapshotListResult
 } from './snapshot.svelte';
-export { FormResource, createFormResource, type SubmitResult } from './form.svelte';
+export {
+	FormResource,
+	createFormResource,
+	type FormResourceOptions,
+	type SubmitResult
+} from './form.svelte';
 // Stale async results and temporary resources (spec §3; shared-primitives-upstream-plan
 // §3.1・D1, conventions §8). The contract table is tests/contracts/request-owner.json.
 export {
