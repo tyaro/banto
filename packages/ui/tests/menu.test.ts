@@ -20,6 +20,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import MenuHarness from './fixtures/MenuHarness.svelte';
 import MenuCheckboxHarness from './fixtures/MenuCheckboxHarness.svelte';
+import MenuReorderHarness from './fixtures/MenuReorderHarness.svelte';
 
 type PopoverElement = HTMLElement & { showPopover(): void; hidePopover(): void };
 
@@ -105,6 +106,23 @@ describe('Menu', () => {
 		await fireEvent.keyDown(trigger, { key: 'ArrowUp' });
 		await flush();
 		expect(document.activeElement).toBe(item('Log out'));
+	});
+
+	it('follows the DOM order after a keyed each reorders its items', async () => {
+		const { rerender } = render(MenuReorderHarness, { labels: ['A', 'B', 'C'] });
+		await rerender({ labels: ['C', 'A', 'B'] });
+		await flush();
+		const trigger = screen.getByText('Open');
+		const menu = screen.getByRole('menu', { hidden: true });
+		await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+		await flush();
+		expect(document.activeElement).toBe(item('C'));
+		await fireEvent.keyDown(menu, { key: 'ArrowDown' });
+		expect(document.activeElement).toBe(item('A'));
+		await fireEvent.keyDown(menu, { key: 'End' });
+		expect(document.activeElement).toBe(item('B'));
+		await fireEvent.keyDown(menu, { key: 'Home' });
+		expect(document.activeElement).toBe(item('C'));
 	});
 
 	it('roves focus with arrows (wrapping, skipping disabled), Home and End', async () => {

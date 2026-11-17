@@ -53,7 +53,8 @@
 	// the caller for an extra ref prop.
 	let triggerEl: HTMLElement | undefined;
 
-	// Items registered by MenuItem (menuContext.ts), in mount order.
+	// Items registered by MenuItem (menuContext.ts), in mount order
+	// (`enabledItems()` re-sorts them into DOM order).
 	let items: HTMLElement[] = [];
 
 	function registerItem(element: HTMLElement): () => void {
@@ -64,7 +65,12 @@
 	}
 
 	function enabledItems(): HTMLElement[] {
-		return items.filter((el) => el.getAttribute('aria-disabled') !== 'true');
+		// Sorted into current DOM order: a keyed {#each} that reorders its
+		// items (e.g. the column menu after a column drag) moves the nodes
+		// without re-mounting them, so mount order goes stale.
+		return items
+			.filter((el) => el.getAttribute('aria-disabled') !== 'true')
+			.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
 	}
 
 	function focusItem(index: number): void {
