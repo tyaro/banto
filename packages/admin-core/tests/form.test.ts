@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validation } from '../src/errors';
+import { ProviderError, validation } from '../src/errors';
 import { createFormResource } from '../src/form.svelte';
 import type { AuthProvider, DataProvider } from '../src/provider';
 import { initBanto } from '../src/registry.svelte';
@@ -138,6 +138,48 @@ describe('createFormResource', () => {
 		const result = await form.submit({ name: 'a' });
 		expect(result).toEqual({ ok: false, fieldErrors: [] });
 		expect(seen).toEqual([{ kind: 'error', message: 'Error: network down' }]);
+	});
+
+	it('submit() uses submitErrorMessage for a non-validation failure (Issue #637)', async () => {
+		const seen: { kind: string; message: string }[] = [];
+		const lost = new ProviderError(
+			{ kind: 'other', message: 'サーバーに接続できません' },
+			{ networkFailure: 'network' }
+		);
+		initBanto({
+			dataProvider: unusedProvider({
+				create: async () => {
+					throw lost;
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: (kind, message) => seen.push({ kind, message }) }
+		});
+
+		const form = createFormResource('items', undefined, {
+			submitErrorMessage: (err) => (err === lost ? 'could not save' : 'other')
+		});
+		expect(await form.submit({ name: 'a' })).toEqual({ ok: false, fieldErrors: [] });
+		expect(form.saving).toBe(false);
+		expect(seen).toEqual([{ kind: 'error', message: 'could not save' }]);
+	});
+
+	it('submit() reports field errors, not submitErrorMessage, for validation', async () => {
+		const seen: string[] = [];
+		initBanto({
+			dataProvider: unusedProvider({
+				create: async () => {
+					throw validation([{ field: 'name', message: '必須項目です' }]);
+				}
+			}),
+			authProvider,
+			resources: [{ name: 'items', label: 'Items' }],
+			notifier: { notify: (_kind, message) => seen.push(message) }
+		});
+		const form = createFormResource('items', undefined, { submitErrorMessage: () => 'x' });
+		expect((await form.submit({ name: '' })).ok).toBe(false);
+		expect(seen).toEqual([]);
 	});
 
 	it('remove() deletes, notifies, and returns true; false without an id', async () => {

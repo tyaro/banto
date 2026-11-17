@@ -11,6 +11,7 @@
 	import { OWNER_CHANGE_POLICY, watchOwnerChanges } from '#lib/banto/ownerChange.js';
 	import { isNavigationSettled } from '#lib/banto/navigationSettled.svelte.js';
 	import Header from '#lib/components/Header.svelte';
+	import ConnectionBanner from '#lib/components/ConnectionBanner.svelte';
 	import Sidebar from '#lib/components/Sidebar.svelte';
 	import ShellLauncher from '#lib/components/ShellLauncher.svelte';
 	import { settings } from '#lib/settings.svelte.js';
@@ -337,6 +338,7 @@
 			{menubarInsufficient}
 			onMenubarInsufficient={(insufficient) => (menubarInsufficient = insufficient)}
 		/>
+		<ConnectionBanner />
 		<main>
 			{#if data.sessionGeneration === sessionController.snapshot.generation}
 				{#key `${data.sessionGeneration}:${JSON.stringify(page.params)}`}

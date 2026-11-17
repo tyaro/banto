@@ -53,6 +53,7 @@ import type { Notifier, UiSettingsProvider } from '@banto/admin-core';
 // when isTauri() is true.
 import { invoke } from '@tauri-apps/api/core';
 import { toastStore } from '#lib/toast.svelte.js';
+import { startConnectionMonitor } from './connection.svelte';
 import { CSRF_HEADER, isDemoBuild, isTauri, probeBackend } from './environment';
 import { demoAuthProvider } from './providers/demo';
 import { resources } from './resources';
@@ -146,11 +147,21 @@ export const bantoReady: Promise<void> = (async () => {
 
 	if (target === 'server') {
 		bantoMode = 'server';
-		const authProvider = createHttpAuthProvider();
-		const dataProvider = createHttpDataProvider({ getToken: authProvider.getToken });
+		// Issue #637: the connection banner exists only here - a Tauri webview
+		// has nothing to lose and the demo has no server (conventions §10).
+		const connection = startConnectionMonitor();
+		// The page lives as long as the monitor; only a dev hot-reload replaces the module.
+		import.meta.hot?.dispose(() => connection.dispose());
+		const authProvider = createHttpAuthProvider({ onRequestResult: connection.reportRequest });
+		const dataProvider = createHttpDataProvider({
+			getToken: authProvider.getToken,
+			onRequestResult: connection.reportRequest
+		});
 		uiSettings = createHttpUiSettings({ getToken: authProvider.getToken });
 		initBanto({ dataProvider, authProvider, notifier, resources });
-		connectEvents(createSseEventProvider({ getToken: authProvider.getToken }));
+		connectEvents(createSseEventProvider({ getToken: authProvider.getToken }), {
+			connection: connection.stream
+		});
 		return;
 	}
 
