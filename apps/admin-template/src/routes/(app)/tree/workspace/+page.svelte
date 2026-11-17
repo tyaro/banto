@@ -307,9 +307,9 @@
 
 <style>
 	/* The shell's <main> gives its children no height, so the page takes the viewport
-	   minus the header, the main padding and the dock's reserve (the dock may sit at
-	   the bottom) itself, and the frame fills what is left. The floor keeps the frame
-	   usable on a 1366x768 screen at 125%. */
+	   minus the shell's vertical room (header, main padding, dock reserve: the
+	   shell's --banto-shell-main-block-inset), and the frame fills what is left.
+	   The floor keeps the frame usable on a 1366x768 screen at 125%. */
 	.page {
 		display: flex;
 		flex-direction: column;
@@ -317,22 +317,13 @@
 		height: max(
 			26rem,
 			calc(
-				100dvh - var(--banto-shell-header-height) - var(--banto-space-5) * 2 -
-					var(--banto-shell-launcher-reserve)
+				100dvh -
+					var(
+						--banto-shell-main-block-inset,
+						calc(var(--banto-shell-header-height) + var(--banto-space-5) * 2)
+					)
 			)
 		);
-	}
-
-	@media (max-width: 900px) {
-		.page {
-			height: max(
-				26rem,
-				calc(
-					100dvh - var(--banto-shell-header-height) - var(--banto-space-5) * 2 -
-						var(--banto-shell-launcher-tabbar-reserve)
-				)
-			);
-		}
 	}
 
 	.body {
