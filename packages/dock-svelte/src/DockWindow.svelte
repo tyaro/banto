@@ -496,8 +496,8 @@
 	.popout-btn,
 	.key-btn {
 		flex: 0 0 auto;
-		width: 22px;
-		height: 22px;
+		width: var(--banto-dock-button-size, 22px);
+		height: var(--banto-dock-button-size, 22px);
 		display: flex;
 		align-items: center;
 		justify-content: center;

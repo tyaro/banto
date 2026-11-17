@@ -613,8 +613,8 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 1.25rem;
-		height: 1.25rem;
+		width: var(--banto-tree-toggle-size, 1.25rem);
+		height: var(--banto-tree-toggle-size, 1.25rem);
 		flex: 0 0 auto;
 		border: none;
 		background: none;
@@ -628,8 +628,8 @@
 		background: color-mix(in srgb, currentColor 12%, transparent);
 	}
 	.toggle-spacer {
-		width: 1.25rem;
-		height: 1.25rem;
+		width: var(--banto-tree-toggle-size, 1.25rem);
+		height: var(--banto-tree-toggle-size, 1.25rem);
 		flex: 0 0 auto;
 	}
 	.chevron {
