@@ -3321,6 +3321,12 @@ test.describe.serial('Banto LAN/REST smoke', () => {
 		await page.reload();
 		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'touch');
 		await expect(densityGroup().getByRole('radio', { name: 'タッチ' })).toBeChecked();
+		// Dock window buttons are a tap target: at least the small control height.
+		await page.goto('/dashboard');
+		const dockButton = page.locator('.dock-wrapper .close-btn, .dock-wrapper .popout-btn').first();
+		await dockButton.scrollIntoViewIfNeeded();
+		expect((await dockButton.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(40);
+		await page.goto('/settings/appearance');
 		await densityGroup().getByText('標準', { exact: true }).click();
 		await expect(page.locator('html')).toHaveAttribute('data-banto-density', 'standard');
 	});

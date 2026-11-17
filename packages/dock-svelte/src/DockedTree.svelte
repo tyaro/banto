@@ -563,8 +563,8 @@
 	.close-btn,
 	.popout-btn {
 		flex: 0 0 auto;
-		width: 20px;
-		height: 20px;
+		width: var(--banto-dock-button-size, 20px);
+		height: var(--banto-dock-button-size, 20px);
 		display: flex;
 		align-items: center;
 		justify-content: center;
