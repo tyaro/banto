@@ -60,7 +60,7 @@
   - ユーザー管理画面の衝突の扱い（保存の衝突はフォームを相手の最新値に戻してトースト、削除の衝突は一覧を読み直してトースト）。
   - `src-tauri` の `users_update`・`users_delete` に任意の `version` を通す。
 - 派生側の独自変更と衝突しやすい箇所: ユーザー管理画面・`usersAdmin.ts`・`messages/*.json`・`src-tauri/src/lib.rs`。
-- 取り込まなくても動くか: 動く見込み。A のタグを `v7.4.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」は A のタグに伴う。Git 依存での導入は下の「検証した組み合わせ」で確かめる（テンプレートを取り込まない派生アプリそのものでの確認は未実施）。
+- 取り込まなくても動くか: 動く見込み。A のタグを `v7.4.0` に上げるだけなら、テンプレートの取り込みは不要。ただし A の「移行注意」は A のタグに伴う。Git 依存での導入は下の「検証した組み合わせ」で確かめた（テンプレートを取り込まない派生アプリそのものでの確認は未実施）。
 - 手本: 上記の `apps/admin-template/` のファイル。
 
 ### C. DB・設定・配布資産
@@ -85,9 +85,25 @@
 
 - **RUSTSEC-2026-0459**（libsqlite3-sys 0.30.1 の同梱 SQLite）の `.cargo/audit.toml` での一時的な除外は、この版でも継続している。理由: sqlx 0.9.0 が libsqlite3-sys 0.39 以上を受け付けず、今は上げられない。見直しの条件: libsqlite3-sys 0.39 以上を許す sqlx のリリースが出たら `cargo update -p libsqlite3-sys` で上げ、除外を外す。派生アプリの `cargo audit` でも同じ警告が出る。
 
-### 検証した組み合わせ（タグ後に追記）
+### 検証した組み合わせ
 
-- 外部利用（Git 依存 + dev 起動）の検証: タグの後に追記（`external-consumer.yml` の run と版）。
+- 外部利用（Git 依存 + dev 起動）の検証: タグを打つ前に main の SHA で `workflow_dispatch` し、タグの push でも `external-consumer.yml` を確認した。[upgrading.md 8.3](docs/upgrading.md#83-候補-commitリリースタグの検証手順)。
+  - タグの前（main の `b8b12b91`、`workflow_dispatch`）: [run 44195068546](https://github.com/tyaro/banto/actions/runs/44195068546)（success）。
+  - タグの push（`v7.4.0`、main の `b8b12b91`）: [run 44195947297](https://github.com/tyaro/banto/actions/runs/44195947297)（success）。
+  - 2 つの run の版は同じ（ubuntu-latest、ログの install 行と toolchain 行から取った）。
+
+    | 項目               | 版                              |
+    | ------------------ | ------------------------------- |
+    | Node.js            | 24.22.2                         |
+    | pnpm               | 10.33.0                         |
+    | Svelte             | 5.57.3                          |
+    | SvelteKit          | 3.2.0                           |
+    | Vite               | 8.3.8                           |
+    | vite-plugin-svelte | 7.3.1                           |
+    | TypeScript         | 6.0.3                           |
+    | Rust               | 1.100.0（0ef1bc386 2026-11-09） |
+
+  - 出所: Node.js は `node: v24.22.2`、pnpm は `Done in ... using pnpm v10.33.0`、Svelte・SvelteKit・Vite・vite-plugin-svelte・TypeScript は fixture の `pnpm install` の出力（`+ svelte 5.57.3` など）、Rust は `Setup Rust toolchain` の `rustc 1.100.0`。
 
 ### 変更の一覧
 
